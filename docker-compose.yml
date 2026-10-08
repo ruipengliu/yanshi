@@ -1,0 +1,19 @@
+# 开发依赖。启动：make deps-up；停止：make deps-down。
+services:
+  postgres:
+    image: postgres:16.4-alpine
+    environment:
+      POSTGRES_USER: yanshi
+      POSTGRES_PASSWORD: yanshi
+      POSTGRES_DB: yanshi
+    ports:
+      - "127.0.0.1:54329:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yanshi -d yanshi"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+volumes:
+  pgdata:

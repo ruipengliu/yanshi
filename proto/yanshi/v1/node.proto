@@ -96,3 +96,8 @@ message InvokeResult {
 message ResultAck {
   string call_id = 1;
 }
+
+// CapabilitySet 用于持久化 Node 的能力声明。
+message CapabilitySet {
+  repeated CapabilitySpec capabilities = 1;
+}

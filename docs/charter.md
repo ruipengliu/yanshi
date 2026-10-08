@@ -91,7 +91,7 @@ yanshi 是公司内部的**分布式 Agent 运行时基础设施**，承载多�
 |---|---|
 | M0 骨架 ✅ | 单二进制模式；Session / Run / Event 原语；模型网关（火山）；文本问答；确定性模拟测试框架（见 [设计](./design/m0-core-primitives.md)） |
 | M1 设备即节点 🟡 | 设备节点协议 ✅；Go SDK ✅（移动端 gomobile 绑定未验证）；能力路由 ✅；Approval ✅；离线挂起 ✅；推送唤醒（仅桩）；见 [设计](./design/m1-device-nodes.md) |
-| M2 长任务与执行 | Sandbox 代码执行；小时级 Run 故障恢复；多 Worker 水平扩展与扩容压测；跑通场景 A |
+| M2 长任务与执行 | Sandbox 代码执行；小时级 Run 故障恢复；多 Worker 水平扩展（多进程共享 PostgreSQL ✅）与扩容压测；跨进程实时增量；跑通场景 A |
 | M3 实时 | Call 全双工通道；端侧 VAD/AEC；Call 与后台 Run 协同；跑通场景 B |
 | M4 个性化与治理 | Memory 与 Grant；内容安全；配额计费；评测与回放；AgentDef 灰度 |
 | M5 生态 | 注册中心；声明式 AgentDef 规范；MCP/A2A 适配；跨节点多 Agent 编排 |
@@ -100,7 +100,7 @@ yanshi 是公司内部的**分布式 Agent 运行时基础设施**，承载多�
 
 | 问题 | 备注 |
 |---|---|
-| Event 日志存储选型 | 提议 PostgreSQL，待确认：[ADR-0007](./adr/0007-postgresql-as-storage-baseline.md) |
+| ~~Event 日志存储选型~~ | 已定 PostgreSQL 并实现：[ADR-0007](./adr/0007-postgresql-as-storage-baseline.md) |
 | ~~持久执行：自研 vs Temporal~~ | M0 已按 ADR-0004 自研（日志 fencing + 租约队列），经确定性模拟验证 |
 | ~~设备节点协议~~ | M1 已定：WebSocket + protobuf，SDK 以 call_id 去重（[设计](./design/m1-device-nodes.md)） |
 | 端侧 SDK 实现方式 | Go 共享核心（gomobile）vs 协议先行 + 各平台原生实现 |

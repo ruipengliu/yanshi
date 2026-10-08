@@ -1,6 +1,6 @@
 # yanshi
 
-分布式 Agent 运行时基础设施，Go 实现。`make check` 是提交前的完成标准：必须全绿。
+分布式 Agent 运行时基础设施，Go 实现。`make check` 是提交前的完成标准：必须全绿（需要 Docker，它会启动 PostgreSQL；PG 测试经 `YANSHI_TEST_PG` 定位数据库，未设置时跳过）。
 
 ## 先读
 
@@ -16,7 +16,7 @@
 - **契约在 `proto/`。** 修改 `.proto` 后运行 `make gen`，生成代码 `gen/` 一并提交；只做向后兼容的修改（`buf breaking`）。
 - **Worker.Step 是确定性的单步。** 时间取自 `clock.Clock`，ID 取自 `ids.Generator`；影响结果的逻辑放在 Step 的同步路径里，以便 `internal/sim` 在任意两步之间注入故障。
 - **模拟测试是执行语义的裁判。** 改动 runtime / session / service / workqueue 后运行 `make sim`；失败信息里的种子可复现：`go test ./internal/sim -run <Test> -sim.seed=<N>`。新增故障类型或路径时，同时在 `internal/sim` 中注入并加入覆盖统计。
-- **新存储实现必须通过一致性套件**，如 `eventlogtest.Run`。
+- **新存储实现必须通过一致性套件**（`eventlogtest`、`workqueuetest`、`nodetest`），并接入 `internal/sim` 的差分测试。数据库变更只通过新增 `internal/pg/migrations/NNNN_*.sql`，不修改已有迁移。
 - **路由调用可以安全重投递，前提是 SDK 以 call_id 去重**（`sdk/nodesdk.Executor`）。修改 Executor 或 Ledger 时，保持"started 状态先落盘、再执行"的顺序。
 
 ## 风格

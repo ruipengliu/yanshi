@@ -1,0 +1,108 @@
+// Package pgqueue 是 workqueue.Queue 的 PostgreSQL 实现。认领使用 FOR UPDATE SKIP LOCKED，
+// 多个实例可并发认领而互不阻塞。时间由 clock.Clock 提供，便于测试与模拟。
+package pgqueue
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"yanshi/internal/clock"
+	"yanshi/internal/workqueue"
+)
+
+type Queue struct {
+	pool  *pgxpool.Pool
+	clock clock.Clock
+}
+
+func New(pool *pgxpool.Pool, c clock.Clock) *Queue { return &Queue{pool: pool, clock: c} }
+
+var _ workqueue.Queue = (*Queue)(nil)
+
+func (q *Queue) Enqueue(ctx context.Context, sessionID string) error {
+	_, err := q.pool.Exec(ctx, `
+		INSERT INTO work_items (session_id, ord) VALUES ($1, nextval('work_seq'))
+		ON CONFLICT (session_id) DO UPDATE
+		SET dirty = work_items.dirty OR work_items.leased, parked_until = NULL`, sessionID)
+	return err
+}
+
+func (q *Queue) Claim(ctx context.Context, holder string, ttl time.Duration) (*workqueue.Lease, error) {
+	now := q.clock.Now()
+	l := &workqueue.Lease{Holder: holder}
+	err := q.pool.QueryRow(ctx, `
+		UPDATE work_items SET leased = true, holder = $1, token = nextval('work_seq'),
+			lease_expires = $3, dirty = false
+		WHERE session_id = (
+			SELECT session_id FROM work_items
+			WHERE (leased AND lease_expires <= $2)
+			   OR (NOT leased AND (parked_until IS NULL OR parked_until <= $2))
+			ORDER BY ord LIMIT 1
+			FOR UPDATE SKIP LOCKED)
+		RETURNING session_id, token, lease_expires`, holder, now, now.Add(ttl)).Scan(&l.SessionID, &l.Token, &l.Expires)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, workqueue.ErrEmpty
+	}
+	if err != nil {
+		return nil, err
+	}
+	return l, nil
+}
+
+// held 是"租约仍有效"的条件，参数 $1 session_id、$2 token、$3 now。
+const held = `session_id = $1 AND leased AND token = $2 AND lease_expires > $3`
+
+func (q *Queue) Renew(ctx context.Context, l *workqueue.Lease, ttl time.Duration) error {
+	now := q.clock.Now()
+	tag, err := q.pool.Exec(ctx, `UPDATE work_items SET lease_expires = $4 WHERE `+held,
+		l.SessionID, int64(l.Token), now, now.Add(ttl))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return workqueue.ErrLeaseLost
+	}
+	l.Expires = now.Add(ttl)
+	return nil
+}
+
+func (q *Queue) Park(ctx context.Context, l *workqueue.Lease, until time.Time) error {
+	tag, err := q.pool.Exec(ctx, `
+		UPDATE work_items SET leased = false, ord = nextval('work_seq'),
+			parked_until = CASE WHEN dirty THEN NULL ELSE $4::timestamptz END, dirty = false
+		WHERE `+held, l.SessionID, int64(l.Token), q.clock.Now(), until)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return workqueue.ErrLeaseLost
+	}
+	return nil
+}
+
+func (q *Queue) Release(ctx context.Context, l *workqueue.Lease, done bool) error {
+	now := q.clock.Now()
+	if done {
+		tag, err := q.pool.Exec(ctx, `DELETE FROM work_items WHERE `+held+` AND NOT dirty`, l.SessionID, int64(l.Token), now)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 1 {
+			return nil
+		}
+	}
+	tag, err := q.pool.Exec(ctx, `
+		UPDATE work_items SET leased = false, dirty = false, parked_until = NULL, ord = nextval('work_seq')
+		WHERE `+held, l.SessionID, int64(l.Token), now)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return workqueue.ErrLeaseLost
+	}
+	return nil
+}

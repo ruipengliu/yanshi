@@ -763,6 +763,51 @@ func (x *ResultAck) GetCallId() string {
 	return ""
 }
 
+// CapabilitySet 用于持久化 Node 的能力声明。
+type CapabilitySet struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Capabilities  []*CapabilitySpec      `protobuf:"bytes,1,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CapabilitySet) Reset() {
+	*x = CapabilitySet{}
+	mi := &file_yanshi_v1_node_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CapabilitySet) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CapabilitySet) ProtoMessage() {}
+
+func (x *CapabilitySet) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_node_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CapabilitySet.ProtoReflect.Descriptor instead.
+func (*CapabilitySet) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *CapabilitySet) GetCapabilities() []*CapabilitySpec {
+	if x != nil {
+		return x.Capabilities
+	}
+	return nil
+}
+
 var File_yanshi_v1_node_proto protoreflect.FileDescriptor
 
 const file_yanshi_v1_node_proto_rawDesc = "" +
@@ -819,7 +864,9 @@ const file_yanshi_v1_node_proto_rawDesc = "" +
 	"\acontent\x18\x02 \x03(\v2\x17.yanshi.v1.ContentBlockR\acontent\x12\x19\n" +
 	"\bis_error\x18\x03 \x01(\bR\aisError\"$\n" +
 	"\tResultAck\x12\x17\n" +
-	"\acall_id\x18\x01 \x01(\tR\x06callId*9\n" +
+	"\acall_id\x18\x01 \x01(\tR\x06callId\"N\n" +
+	"\rCapabilitySet\x12=\n" +
+	"\fcapabilities\x18\x01 \x03(\v2\x19.yanshi.v1.CapabilitySpecR\fcapabilities*9\n" +
 	"\x04Risk\x12\x14\n" +
 	"\x10RISK_UNSPECIFIED\x10\x00\x12\f\n" +
 	"\bRISK_LOW\x10\x01\x12\r\n" +
@@ -838,7 +885,7 @@ func file_yanshi_v1_node_proto_rawDescGZIP() []byte {
 }
 
 var file_yanshi_v1_node_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_yanshi_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_yanshi_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_yanshi_v1_node_proto_goTypes = []any{
 	(Risk)(0),                     // 0: yanshi.v1.Risk
 	(*CapabilitySpec)(nil),        // 1: yanshi.v1.CapabilitySpec
@@ -850,8 +897,9 @@ var file_yanshi_v1_node_proto_goTypes = []any{
 	(*Cancel)(nil),                // 7: yanshi.v1.Cancel
 	(*InvokeResult)(nil),          // 8: yanshi.v1.InvokeResult
 	(*ResultAck)(nil),             // 9: yanshi.v1.ResultAck
-	(*timestamppb.Timestamp)(nil), // 10: google.protobuf.Timestamp
-	(*ContentBlock)(nil),          // 11: yanshi.v1.ContentBlock
+	(*CapabilitySet)(nil),         // 10: yanshi.v1.CapabilitySet
+	(*timestamppb.Timestamp)(nil), // 11: google.protobuf.Timestamp
+	(*ContentBlock)(nil),          // 12: yanshi.v1.ContentBlock
 }
 var file_yanshi_v1_node_proto_depIdxs = []int32{
 	0,  // 0: yanshi.v1.CapabilitySpec.risk:type_name -> yanshi.v1.Risk
@@ -862,13 +910,14 @@ var file_yanshi_v1_node_proto_depIdxs = []int32{
 	7,  // 5: yanshi.v1.GatewayMessage.cancel:type_name -> yanshi.v1.Cancel
 	9,  // 6: yanshi.v1.GatewayMessage.result_ack:type_name -> yanshi.v1.ResultAck
 	1,  // 7: yanshi.v1.Hello.capabilities:type_name -> yanshi.v1.CapabilitySpec
-	10, // 8: yanshi.v1.Invoke.deadline:type_name -> google.protobuf.Timestamp
-	11, // 9: yanshi.v1.InvokeResult.content:type_name -> yanshi.v1.ContentBlock
-	10, // [10:10] is the sub-list for method output_type
-	10, // [10:10] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	11, // 8: yanshi.v1.Invoke.deadline:type_name -> google.protobuf.Timestamp
+	12, // 9: yanshi.v1.InvokeResult.content:type_name -> yanshi.v1.ContentBlock
+	1,  // 10: yanshi.v1.CapabilitySet.capabilities:type_name -> yanshi.v1.CapabilitySpec
+	11, // [11:11] is the sub-list for method output_type
+	11, // [11:11] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_yanshi_v1_node_proto_init() }
@@ -893,7 +942,7 @@ func file_yanshi_v1_node_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_yanshi_v1_node_proto_rawDesc), len(file_yanshi_v1_node_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   9,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

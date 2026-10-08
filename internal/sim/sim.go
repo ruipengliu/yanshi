@@ -29,14 +29,25 @@ import (
 	"yanshi/internal/runtime"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
+	"yanshi/internal/workqueue"
 	"yanshi/internal/workqueue/memqueue"
 	"yanshi/sdk/nodesdk"
 )
 
+// Stores 是模拟使用的存储实现；默认为内存实现。
+type Stores struct {
+	Log   eventlog.Log
+	Queue workqueue.Queue
+	Dir   node.Directory
+	Inbox node.Inbox
+}
+
 type Options struct {
-	Seed     uint64
-	Workers  int
-	Sessions int
+	// NewStores 为 nil 时使用内存实现；传入的时钟是模拟的虚拟时钟。
+	NewStores func(c clock.Clock) Stores
+	Seed      uint64
+	Workers   int
+	Sessions  int
 	// Ticks 是注入故障与客户端动作的阶段长度。
 	Ticks int
 	// Faults 为 false 时不注入任何故障。
@@ -71,9 +82,9 @@ type World struct {
 	opts    Options
 	rng     *rand.Rand
 	clock   *clock.Fake
-	log     *memlog.Log
+	log     eventlog.Log
 	store   *session.Store
-	queue   *memqueue.Queue
+	queue   workqueue.Queue
 	svc     *service.Service
 	agents  *agentdef.Registry
 	catalog *capability.Catalog
@@ -100,12 +111,15 @@ func New(opts Options) (*World, error) {
 		opts:    opts,
 		rng:     rand.New(rand.NewPCG(opts.Seed, opts.Seed^0x9e3779b97f4a7c15)),
 		clock:   clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
-		log:     memlog.New(),
 		effects: map[string]int{},
 		faults:  opts.Faults,
 	}
+	stores := Stores{Log: memlog.New(), Queue: memqueue.New(w.clock), Dir: node.NewMemDirectory(w.clock), Inbox: node.NewMemInbox()}
+	if opts.NewStores != nil {
+		stores = opts.NewStores(w.clock)
+	}
+	w.log, w.queue = stores.Log, stores.Queue
 	w.store = &session.Store{Log: w.log, IDs: ids.Sequential("id"), Clock: w.clock}
-	w.queue = memqueue.New(w.clock)
 	agents, err := agentdef.NewRegistry(&agentdef.Def{
 		Name: "sim", Version: "1", Model: "sim/m", Capabilities: []string{"echo", "send", "device:*"}, MaxTurns: 6,
 	})
@@ -113,9 +127,8 @@ func New(opts Options) (*World, error) {
 		return nil, err
 	}
 	w.agents = agents
-	dir := node.NewMemDirectory(w.clock)
-	w.catalog = &capability.Catalog{Local: capability.NewRegistry(w.echoCap(), w.sendCap()), Nodes: dir, DefaultTimeout: deviceTimeout}
-	w.hub = &node.Hub{Dir: dir, Inbox: node.NewMemInbox(), Store: w.store, Queue: w.queue, Auth: node.InsecureDevAuth{}}
+	w.catalog = &capability.Catalog{Local: capability.NewRegistry(w.echoCap(), w.sendCap()), Nodes: stores.Dir, DefaultTimeout: deviceTimeout}
+	w.hub = &node.Hub{Dir: stores.Dir, Inbox: stores.Inbox, Store: w.store, Queue: w.queue, Auth: node.InsecureDevAuth{}}
 	w.svc = &service.Service{Store: w.store, Queue: w.queue, Agents: agents, Nodes: w.hub}
 	for range opts.Workers {
 		w.workers = append(w.workers, w.newWorker())

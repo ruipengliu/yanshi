@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,17 +18,23 @@ import (
 	"yanshi/internal/agentdef"
 	"yanshi/internal/capability"
 	"yanshi/internal/clock"
+	"yanshi/internal/eventlog"
 	"yanshi/internal/eventlog/memlog"
+	"yanshi/internal/eventlog/pglog"
 	"yanshi/internal/httpapi"
 	"yanshi/internal/ids"
 	"yanshi/internal/live"
 	"yanshi/internal/model"
 	"yanshi/internal/node"
+	"yanshi/internal/node/pgnode"
 	"yanshi/internal/node/wsgateway"
+	"yanshi/internal/pg/pgtest"
 	"yanshi/internal/runtime"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
+	"yanshi/internal/workqueue"
 	"yanshi/internal/workqueue/memqueue"
+	"yanshi/internal/workqueue/pgqueue"
 	"yanshi/sdk/nodesdk"
 )
 
@@ -55,35 +62,54 @@ type env struct {
 	writes atomic.Int32
 }
 
-func setup(t *testing.T) *env {
+// stores 是一个实例使用的存储；多个实例共享同一套 PostgreSQL 存储即构成分布式部署。
+type stores struct {
+	log   eventlog.Log
+	queue workqueue.Queue
+	dir   node.Directory
+	inbox node.Inbox
+}
+
+func memStores() stores {
+	clk := clock.Real{}
+	return stores{log: memlog.New(), queue: memqueue.New(clk), dir: node.NewMemDirectory(clk), inbox: node.NewMemInbox()}
+}
+
+// instance 启动一个 yanshi 实例：workers 个 Worker，serve 为 true 时提供 HTTP API 与 Node 网关。
+func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server {
 	agents, err := agentdef.NewRegistry(&agentdef.Def{Name: "dev", Version: "1", Model: "script/any", Capabilities: []string{"device:*"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	clk := clock.Real{}
-	store := &session.Store{Log: memlog.New(), IDs: ids.Random(), Clock: clk}
-	queue := memqueue.New(clk)
+	store := &session.Store{Log: st.log, IDs: ids.Random(), Clock: clk}
 	bus := live.NewMemBus()
-	dir := node.NewMemDirectory(clk)
-	hub := &node.Hub{Dir: dir, Inbox: node.NewMemInbox(), Store: store, Queue: queue, Auth: node.InsecureDevAuth{}}
-	catalog := &capability.Catalog{Local: capability.NewRegistry(), Nodes: dir, DefaultTimeout: time.Minute}
+	hub := &node.Hub{Dir: st.dir, Inbox: st.inbox, Store: store, Queue: st.queue, Auth: node.InsecureDevAuth{}}
+	catalog := &capability.Catalog{Local: capability.NewRegistry(), Nodes: st.dir, DefaultTimeout: time.Minute}
 	gw := model.NewGateway()
 	gw.Register("script", script{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	for _, id := range []string{"w1", "w2"} {
-		w := runtime.New(runtime.Config{ID: id, Store: store, Queue: queue, Agents: agents, Model: gw,
+	for i := range workers {
+		w := runtime.New(runtime.Config{ID: fmt.Sprintf("w%d", i), Store: store, Queue: st.queue, Agents: agents, Model: gw,
 			Catalog: catalog, Dispatch: hub, Live: bus, IdleWait: 5 * time.Millisecond})
 		go w.Run(ctx)
 	}
-	svc := &service.Service{Store: store, Queue: queue, Agents: agents, Nodes: hub}
+	if !serve {
+		return nil
+	}
+	svc := &service.Service{Store: store, Queue: st.queue, Agents: agents, Nodes: hub}
 	mux := http.NewServeMux()
 	mux.Handle("/v1/nodes/connect", &wsgateway.Gateway{Hub: hub})
-	mux.Handle("/", (&httpapi.Server{Service: svc, Live: bus, Nodes: dir}).Handler())
+	mux.Handle("/", (&httpapi.Server{Service: svc, Live: bus, Nodes: st.dir}).Handler())
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return &env{t: t, srv: srv}
+	return srv
+}
+
+func setup(t *testing.T) *env {
+	return &env{t: t, srv: instance(t, memStores(), 2, true)}
 }
 
 // startNode 启动一个 SDK 节点并等待其上线；返回停止函数。
@@ -261,5 +287,28 @@ func TestHighRiskCallRequiresApproval(t *testing.T) {
 		if code := e.do(http.MethodPost, "/v1/sessions/"+sid+"/approvals/"+call, map[string]bool{"approve": true}, nil); code != http.StatusNotFound && code != http.StatusConflict {
 			t.Fatalf("second decision: %d", code)
 		}
+	}
+}
+
+// TestCrossInstanceOnPostgres：设备连在实例 A（只提供 API 与网关，没有 Worker），
+// Run 由实例 B（只有 Worker）执行。调用经 PostgreSQL 中的 Inbox 与 LISTEN/NOTIFY 跨实例投递。
+func TestCrossInstanceOnPostgres(t *testing.T) {
+	pool, notifier := pgtest.Fresh(t)
+	clk := clock.Real{}
+	shared := func() stores {
+		return stores{
+			log: pglog.New(pool, notifier), queue: pgqueue.New(pool, clk),
+			dir: pgnode.NewDirectory(pool, clk), inbox: pgnode.NewInbox(pool, notifier),
+		}
+	}
+	e := &env{t: t, srv: instance(t, shared(), 0, true)}
+	instance(t, shared(), 2, false)
+	defer e.startNode(nodesdk.NewMemLedger())()
+
+	sid := e.newSession()
+	e.do(http.MethodPost, "/v1/sessions/"+sid+"/inputs", map[string]string{"text": "call __read_file"}, nil)
+	e.until(sid, func(v sessionView) bool { st, _ := lastRun(v); return st == "completed" })
+	if got := e.lastAssistantText(sid); got != "done: meeting notes" {
+		t.Fatalf("assistant = %q", got)
 	}
 }

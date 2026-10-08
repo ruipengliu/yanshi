@@ -2,11 +2,13 @@
 
 承载多条 C 端业务线的分布式 Agent 运行时基础设施。见 [项目章程](docs/charter.md) 与 [术语表](CONTEXT.md)。
 
-## 快速开始（单二进制，M0）
+## 快速开始
 
 ```sh
 make build
 ./bin/yanshi serve                       # 内存存储 + 4 个 Worker，监听 127.0.0.1:8080
+make deps-up                             # 用 docker 启动 PostgreSQL
+./bin/yanshi serve -storage postgres     # 持久化；多个进程可共享同一数据库水平扩展
 ./bin/yanshi chat -agent echo            # 离线：复述输入
 ARK_API_KEY=... ./bin/yanshi serve       # 启用火山方舟，然后 chat -agent assistant
 ```
