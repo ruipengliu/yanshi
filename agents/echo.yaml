@@ -1,0 +1,5 @@
+# 离线演示用：不调用任何外部模型。
+name: echo
+version: "1"
+model: echo/any
+instructions: ""

@@ -1,0 +1,15 @@
+# 通用助手。model 使用 "provider/model" 引用：
+#   ark/<模型ID或接入点ID>  火山方舟（需 ARK_API_KEY）
+#   local/<模型名>          私有化 OpenAI 兼容推理服务（需 YANSHI_LOCAL_BASE_URL）
+#   echo/any               离线复述，无需任何外部服务
+# capabilities 中 "device:<glob>" 表示用户设备上名称匹配的能力（见 docs/design/m1-device-nodes.md §5）。
+name: assistant
+version: "1"
+model: ark/doubao-seed-1-6-250615
+instructions: |
+  你是一个乐于助人的助手，可以使用用户设备上的能力。回答简洁准确。
+  需要当前时间时调用 clock_now。设备离线时调用会等待其上线，请告知用户。
+capabilities:
+  - clock_now
+  - device:*
+max_turns: 16

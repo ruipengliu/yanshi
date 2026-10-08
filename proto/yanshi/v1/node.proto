@@ -1,0 +1,98 @@
+syntax = "proto3";
+
+// Node 协议：HostApp 内的 SDK 经 WebSocket 连接网关，每个二进制帧一条消息。
+// 语义见 docs/design/m1-device-nodes.md。
+package yanshi.v1;
+
+import "google/protobuf/timestamp.proto";
+import "yanshi/v1/event.proto";
+
+option go_package = "yanshi/gen/yanshi/v1;yanshiv1";
+
+enum Risk {
+  RISK_UNSPECIFIED = 0;
+  // 只读或无副作用，无需审批。
+  RISK_LOW = 1;
+  // 有副作用或涉及隐私，执行前需 EndUser 审批。
+  RISK_HIGH = 2;
+}
+
+message CapabilitySpec {
+  // 须匹配 ^[a-zA-Z0-9_-]+$。
+  string name = 1;
+  string description = 2;
+  // JSON Schema 对象。
+  string input_schema_json = 3;
+  // 为 true 时，执行中断后可重新执行。
+  bool idempotent = 4;
+  Risk risk = 5;
+  // 结果截止时长；0 使用平台默认值。
+  uint32 timeout_seconds = 6;
+}
+
+// NodeMessage 是 Node 发往网关的消息。
+message NodeMessage {
+  oneof msg {
+    Hello hello = 1;
+    InvokeResult result = 2;
+  }
+}
+
+// GatewayMessage 是网关发往 Node 的消息。
+message GatewayMessage {
+  oneof msg {
+    Welcome welcome = 1;
+    Invoke invoke = 2;
+    Cancel cancel = 3;
+    ResultAck result_ack = 4;
+  }
+}
+
+// Hello 是连接后的第一条消息。
+message Hello {
+  // 由 SDK 生成并持久保存在设备上，跨重连不变。
+  string node_id = 1;
+  // 身份凭证，由网关的 Authenticator 校验。
+  string token = 2;
+  string business_line = 3;
+  string end_user = 4;
+  // 人类可读的标签，如 "macbook"；同一用户下由网关去重。
+  string label = 5;
+  // Device 类型，如 "desktop"、"phone"。
+  string kind = 6;
+  string host_app = 7;
+  string sdk_version = 8;
+  repeated CapabilitySpec capabilities = 9;
+}
+
+message Welcome {
+  string node_id = 1;
+  // 网关最终分配的标签。
+  string label = 2;
+}
+
+// Invoke 请求 Node 执行一次调用；同一 call_id 可能被重复投递，Node 必须去重。
+message Invoke {
+  string session_id = 1;
+  string run_id = 2;
+  string call_id = 3;
+  string capability = 4;
+  string arguments_json = 5;
+  google.protobuf.Timestamp deadline = 6;
+}
+
+// Cancel 尽力取消一次已投递的调用。
+message Cancel {
+  string call_id = 1;
+}
+
+message InvokeResult {
+  string call_id = 1;
+  repeated ContentBlock content = 2;
+  bool is_error = 3;
+}
+
+// ResultAck 表示结果已持久化，Node 可不再重发。
+message ResultAck {
+  string call_id = 1;
+}

@@ -1,0 +1,170 @@
+syntax = "proto3";
+
+// Package yanshi.v1 定义 Session Event 日志的契约。
+// Event 是 Session 与 Run 状态的唯一事实源（ADR-0004），
+// 同时用于存储与跨端传输，修改须保持向后兼容（buf breaking）。
+package yanshi.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "yanshi/gen/yanshi/v1;yanshiv1";
+
+// Event 是 Session 日志中只追加、不可修改的一条记录。
+message Event {
+  // 全局唯一 ID。
+  string id = 1;
+  string session_id = 2;
+  // 由日志分配，Session 内从 1 开始连续递增。
+  uint64 seq = 3;
+  google.protobuf.Timestamp time = 4;
+
+  oneof payload {
+    SessionCreated session_created = 10;
+    RunRequested run_requested = 11;
+    Steered steered = 12;
+    AttemptStarted attempt_started = 13;
+    AssistantMessage assistant_message = 14;
+    ToolCallStarted tool_call_started = 15;
+    ToolResult tool_result = 16;
+    RunCompleted run_completed = 17;
+    RunFailed run_failed = 18;
+    RunInterrupted run_interrupted = 19;
+    RunSuspended run_suspended = 20;
+    ApprovalRequested approval_requested = 21;
+    ApprovalDecided approval_decided = 22;
+  }
+}
+
+// ContentBlock 承载一段多模态内容。
+message ContentBlock {
+  oneof kind {
+    Text text = 1;
+    Media media = 2;
+  }
+}
+
+message Text {
+  string text = 1;
+}
+
+// Media 是非文本内容：大对象以 uri 引用 Artifact，小对象可内联 data。
+message Media {
+  string mime_type = 1;
+  string uri = 2;
+  bytes data = 3;
+}
+
+message AgentRef {
+  string name = 1;
+  string version = 2;
+}
+
+// SessionCreated 总是 Session 的第一个事件；AgentDef 版本在此固定。
+message SessionCreated {
+  string business_line = 1;
+  string end_user = 2;
+  AgentRef agent = 3;
+}
+
+// RunRequested 在 Session 无活跃 Run 时由用户输入触发。
+message RunRequested {
+  string run_id = 1;
+  repeated ContentBlock input = 2;
+}
+
+// Steered 是活跃 Run 进行中的追加输入，不改变 Run 状态。
+message Steered {
+  string run_id = 1;
+  repeated ContentBlock input = 2;
+}
+
+// AttemptStarted 标志某个 Worker 开始（或接管）执行 Run；attempt 是 fencing 令牌。
+message AttemptStarted {
+  string run_id = 1;
+  uint32 attempt = 2;
+  string worker_id = 3;
+}
+
+message ToolCall {
+  string call_id = 1;
+  string capability = 2;
+  // JSON 对象。
+  string arguments_json = 3;
+}
+
+message Usage {
+  uint64 input_tokens = 1;
+  uint64 output_tokens = 2;
+}
+
+// AssistantMessage 是一次完整的模型输出；tool_calls 即 Capability 调用请求。
+message AssistantMessage {
+  string run_id = 1;
+  uint32 attempt = 2;
+  repeated ContentBlock content = 3;
+  repeated ToolCall tool_calls = 4;
+  string model = 5;
+  Usage usage = 6;
+}
+
+// ToolCallStarted 在执行 Capability 之前落盘，用于故障恢复时判断调用是否可能已产生副作用。
+// node_id 非空表示路由调用：已派发到该 Node 的 Inbox，结果异步返回（见 m1 设计 §3）。
+message ToolCallStarted {
+  string run_id = 1;
+  uint32 attempt = 2;
+  string call_id = 3;
+  string node_id = 4;
+  // 路由调用的结果截止时间。
+  google.protobuf.Timestamp deadline = 5;
+}
+
+message ToolResult {
+  string run_id = 1;
+  // 0 表示由网关追加的路由调用结果，不受 Attempt fencing。
+  uint32 attempt = 2;
+  string call_id = 3;
+  repeated ContentBlock content = 4;
+  bool is_error = 5;
+}
+
+message RunCompleted {
+  string run_id = 1;
+  uint32 attempt = 2;
+}
+
+message RunFailed {
+  string run_id = 1;
+  uint32 attempt = 2;
+  string reason = 3;
+}
+
+message RunInterrupted {
+  string run_id = 1;
+  // 主动中断方，如 "user"。
+  string by = 2;
+}
+
+// RunSuspended 表示当前 Attempt 正常结束、Run 等待外部条件；从 suspended 恢复不计为接管。
+message RunSuspended {
+  string run_id = 1;
+  uint32 attempt = 2;
+}
+
+// ApprovalRequested 请求 EndUser 批准一次高风险调用。
+message ApprovalRequested {
+  string run_id = 1;
+  uint32 attempt = 2;
+  string call_id = 3;
+  // 给用户看的说明，如 "在 macbook 上执行 send_message"。
+  string summary = 4;
+  google.protobuf.Timestamp deadline = 5;
+}
+
+// ApprovalDecided 是 EndUser 的审批决定（外部事件，不受 Attempt fencing）。
+message ApprovalDecided {
+  string run_id = 1;
+  string call_id = 2;
+  bool approved = 3;
+  // 决定来源，如 Device 或 Node ID。
+  string by = 4;
+}

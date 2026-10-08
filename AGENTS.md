@@ -1,0 +1,24 @@
+# yanshi
+
+分布式 Agent 运行时基础设施，Go 实现。`make check` 是提交前的完成标准：必须全绿。
+
+## 先读
+
+- 术语：`CONTEXT.md`。代码、注释、文档只用其中的名词；出现新概念时先在那里定义。
+- 目标与原则：`docs/charter.md`。
+- 改动执行语义（Session / Run / Event / Attempt / Worker）之前：`docs/design/m0-core-primitives.md`。
+- 改动 Node、能力路由、审批或挂起之前：`docs/design/m1-device-nodes.md`。
+- 做出难以逆转的架构决策时：在 `docs/adr/` 新增一条 ADR。
+
+## 不变量
+
+- **Event 日志是唯一事实源。** 状态只能由 `session.Reduce` 从日志投影得到；所有写入经 `session.Store.Commit`（先校验、再乐观并发追加）。
+- **契约在 `proto/`。** 修改 `.proto` 后运行 `make gen`，生成代码 `gen/` 一并提交；只做向后兼容的修改（`buf breaking`）。
+- **Worker.Step 是确定性的单步。** 时间取自 `clock.Clock`，ID 取自 `ids.Generator`；影响结果的逻辑放在 Step 的同步路径里，以便 `internal/sim` 在任意两步之间注入故障。
+- **模拟测试是执行语义的裁判。** 改动 runtime / session / service / workqueue 后运行 `make sim`；失败信息里的种子可复现：`go test ./internal/sim -run <Test> -sim.seed=<N>`。新增故障类型或路径时，同时在 `internal/sim` 中注入并加入覆盖统计。
+- **新存储实现必须通过一致性套件**，如 `eventlogtest.Run`。
+- **路由调用可以安全重投递，前提是 SDK 以 call_id 去重**（`sdk/nodesdk.Executor`）。修改 Executor 或 Ledger 时，保持"started 状态先落盘、再执行"的顺序。
+
+## 风格
+
+注释与文档使用中文，标识符使用英文。注释说明"为什么"。
