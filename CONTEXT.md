@@ -27,8 +27,12 @@ _Avoid_: 客户端、插件
 _Avoid_: Worker、Agent、端
 
 **Sandbox（沙箱）**:
-由 yanshi 在云端托管、隔离的代码执行环境，是一种 Node。
+由 yanshi 在云端托管、隔离的代码执行环境，每个 Session 一个，是一种 Node；其中只运行不可信代码，由沙箱外的受信控制器驱动。
 _Avoid_: 容器、VM、执行器
+
+**Workspace（工作区）**:
+Sandbox 中跨 Run 保留的文件系统（`/workspace`）；Sandbox 空闲回收时计算资源释放而工作区保留。
+_Avoid_: 磁盘、卷、目录
 
 **Inbox（收件箱）**:
 某个 Node 待投递的 Capability 调用集合；Node 上线后由网关投递，结果回写日志后移出。

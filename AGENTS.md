@@ -1,6 +1,6 @@
 # yanshi
 
-分布式 Agent 运行时基础设施，Go 实现。`make check` 是提交前的完成标准：必须全绿（需要 Docker，它会启动 PostgreSQL；PG 测试经 `YANSHI_TEST_PG` 定位数据库，未设置时跳过）。
+分布式 Agent 运行时基础设施，Go 实现。`make check` 是提交前的完成标准：必须全绿（需要 Docker：它会启动 PostgreSQL 并运行沙箱测试；PG 与 Docker 测试分别由 `YANSHI_TEST_PG`、`YANSHI_TEST_DOCKER` 启用，未设置时跳过）。
 
 ## 先读
 
@@ -8,6 +8,7 @@
 - 目标与原则：`docs/charter.md`。
 - 改动执行语义（Session / Run / Event / Attempt / Worker）之前：`docs/design/m0-core-primitives.md`。
 - 改动 Node、能力路由、审批或挂起之前：`docs/design/m1-device-nodes.md`。
+- 改动云端沙箱之前：`docs/design/m2-sandbox.md`。沙箱内只运行不可信代码，受信逻辑一律放在控制器（ADR-0008）。
 - 做出难以逆转的架构决策时：在 `docs/adr/` 新增一条 ADR。
 
 ## 不变量

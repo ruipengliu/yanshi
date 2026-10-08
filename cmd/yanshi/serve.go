@@ -30,11 +30,15 @@ import (
 	"yanshi/internal/node/wsgateway"
 	"yanshi/internal/pg"
 	"yanshi/internal/runtime"
+	"yanshi/internal/sandbox"
+	sandboxdocker "yanshi/internal/sandbox/docker"
+	"yanshi/internal/sandbox/pgsandbox"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
 	"yanshi/internal/workqueue"
 	"yanshi/internal/workqueue/memqueue"
 	"yanshi/internal/workqueue/pgqueue"
+	"yanshi/sdk/nodesdk"
 )
 
 // devPGDSN 对应 docker-compose.yml 中的开发数据库。
@@ -45,13 +49,18 @@ type backends struct {
 	queue workqueue.Queue
 	dir   node.Directory
 	inbox node.Inbox
+
+	sandboxQueue workqueue.Queue
+	ledger       nodesdk.Ledger
+	activity     sandbox.Activity
 }
 
 // openStorage 按 kind 创建存储。postgres 模式下多个 serve 进程可共享同一数据库水平扩展。
 func openStorage(ctx context.Context, kind, dsn string, clk clock.Clock, logger *slog.Logger) (backends, func(), error) {
 	switch kind {
 	case "memory":
-		return backends{memlog.New(), memqueue.New(clk), node.NewMemDirectory(clk), node.NewMemInbox()}, func() {}, nil
+		return backends{memlog.New(), memqueue.New(clk), node.NewMemDirectory(clk), node.NewMemInbox(),
+			memqueue.New(clk), nodesdk.NewMemLedger(), sandbox.NewMemActivity()}, func() {}, nil
 	case "postgres":
 		pool, err := pg.Open(ctx, dsn, "")
 		if err != nil {
@@ -64,7 +73,8 @@ func openStorage(ctx context.Context, kind, dsn string, clk clock.Clock, logger 
 		n := pg.NewNotifier(pool, logger)
 		nctx, cancel := context.WithCancel(ctx)
 		go n.Run(nctx)
-		b := backends{pglog.New(pool, n), pgqueue.New(pool, clk), pgnode.NewDirectory(pool, clk), pgnode.NewInbox(pool, n)}
+		b := backends{pglog.New(pool, n), pgqueue.New(pool, clk, pgqueue.Sessions), pgnode.NewDirectory(pool, clk), pgnode.NewInbox(pool, n),
+			pgqueue.New(pool, clk, pgqueue.Sandboxes), pgsandbox.Ledger{Pool: pool}, pgsandbox.Activity{Pool: pool}}
 		return b, func() { cancel(); pool.Close() }, nil
 	}
 	return backends{}, nil, fmt.Errorf("unknown storage %q (memory | postgres)", kind)
@@ -107,6 +117,10 @@ func serve(args []string) error {
 	workers := fs.Int("workers", 4, "Worker 数量")
 	storage := fs.String("storage", "memory", "存储：memory | postgres")
 	dsn := fs.String("pg-dsn", envOr("YANSHI_PG_DSN", devPGDSN), "PostgreSQL 地址（storage=postgres）")
+	sandboxKind := fs.String("sandbox", "none", "代码沙箱：none | docker")
+	sandboxImage := fs.String("sandbox-image", "yanshi-sandbox:dev", "沙箱镜像（make sandbox-image 构建）")
+	sandboxRuntime := fs.String("sandbox-runtime", "", "沙箱容器运行时，如 runsc（gVisor）")
+	controllers := fs.Int("sandbox-controllers", 2, "沙箱控制器数量")
 	_ = fs.Parse(args)
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -137,17 +151,37 @@ func serve(args []string) error {
 	catalog := &capability.Catalog{
 		Local: capability.NewRegistry(capability.ClockNow(clk)), Nodes: dir, DefaultTimeout: 30 * time.Minute,
 	}
-	svc := &service.Service{Store: store, Queue: queue, Agents: agents, Nodes: hub}
+	router := &sandbox.Router{Hub: hub, Queue: b.sandboxQueue}
+	svc := &service.Service{Store: store, Queue: queue, Agents: agents, Nodes: router}
 
 	var wg sync.WaitGroup
 	for i := range *workers {
 		w := runtime.New(runtime.Config{
 			ID: fmt.Sprintf("worker-%d", i), Store: store, Queue: queue, Agents: agents,
-			Model: gw, Catalog: catalog, Dispatch: hub, Live: bus, Logger: logger,
+			Model: gw, Catalog: catalog, Dispatch: router, Live: bus, Logger: logger,
 			LeaseTTL: 30 * time.Second, Heartbeat: 10 * time.Second,
 		})
 		wg.Add(1)
 		go func() { defer wg.Done(); w.Run(ctx) }()
+	}
+
+	switch *sandboxKind {
+	case "none":
+	case "docker":
+		catalog.Sandbox = &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID}
+		provider := &sandboxdocker.Provider{Image: *sandboxImage, Runtime: *sandboxRuntime}
+		for i := range *controllers {
+			c := &sandbox.Controller{
+				ID: fmt.Sprintf("sandbox-%d", i), Queue: b.sandboxQueue, Hub: hub, Provider: provider,
+				Activity: b.activity, Ledger: b.ledger, Clock: clk, Logger: logger,
+				LeaseTTL: 30 * time.Second, Heartbeat: 10 * time.Second,
+			}
+			wg.Add(1)
+			go func() { defer wg.Done(); c.Run(ctx) }()
+		}
+		logger.Info("sandbox enabled", "provider", "docker", "image", *sandboxImage, "runtime", *sandboxRuntime)
+	default:
+		return fmt.Errorf("unknown sandbox %q (none | docker)", *sandboxKind)
 	}
 
 	mux := http.NewServeMux()

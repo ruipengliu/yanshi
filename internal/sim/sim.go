@@ -27,6 +27,7 @@ import (
 	"yanshi/internal/model"
 	"yanshi/internal/node"
 	"yanshi/internal/runtime"
+	"yanshi/internal/sandbox"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
 	"yanshi/internal/workqueue"
@@ -40,6 +41,10 @@ type Stores struct {
 	Queue workqueue.Queue
 	Dir   node.Directory
 	Inbox node.Inbox
+	// 沙箱控制器的队列与共享状态
+	SandboxQueue workqueue.Queue
+	Ledger       nodesdk.Ledger
+	Activity     sandbox.Activity
 }
 
 type Options struct {
@@ -59,6 +64,7 @@ type Stats struct {
 	Runs, Steers, Interrupts, Crashes, ModelErrors int
 	Takeovers, OutcomeUnknown, Retried, Failed     int
 	NodeCrashes, Redeliveries, Approvals, Denials  int
+	ControllerCrashes, SandboxExecs, Reaps         int
 	Suspensions, DeviceResults, Timeouts           int
 	// TurnLimited 是因超过 AgentDef.MaxTurns 而失败的 Run，属于策略结果而非故障。
 	TurnLimited int
@@ -89,9 +95,17 @@ type World struct {
 	agents  *agentdef.Registry
 	catalog *capability.Catalog
 	hub     *node.Hub
+	router  *sandbox.Router
 	nodes   []*simNode
-	workers []*runtime.Worker
-	nextW   int
+
+	sandboxQueue workqueue.Queue
+	provider     *sandbox.Fake
+	ledger       nodesdk.Ledger
+	activity     sandbox.Activity
+	controllers  []*sandbox.Controller
+	nextC        int
+	workers      []*runtime.Worker
+	nextW        int
 
 	sessions []string
 	// effects 记录非幂等 Capability（进程内与设备上）每个调用 ID 的实际执行次数。
@@ -114,22 +128,35 @@ func New(opts Options) (*World, error) {
 		effects: map[string]int{},
 		faults:  opts.Faults,
 	}
-	stores := Stores{Log: memlog.New(), Queue: memqueue.New(w.clock), Dir: node.NewMemDirectory(w.clock), Inbox: node.NewMemInbox()}
+	stores := Stores{
+		Log: memlog.New(), Queue: memqueue.New(w.clock), Dir: node.NewMemDirectory(w.clock), Inbox: node.NewMemInbox(),
+		SandboxQueue: memqueue.New(w.clock), Ledger: nodesdk.NewMemLedger(), Activity: sandbox.NewMemActivity(),
+	}
 	if opts.NewStores != nil {
 		stores = opts.NewStores(w.clock)
 	}
 	w.log, w.queue = stores.Log, stores.Queue
 	w.store = &session.Store{Log: w.log, IDs: ids.Sequential("id"), Clock: w.clock}
 	agents, err := agentdef.NewRegistry(&agentdef.Def{
-		Name: "sim", Version: "1", Model: "sim/m", Capabilities: []string{"echo", "send", "device:*"}, MaxTurns: 6,
+		Name: "sim", Version: "1", Model: "sim/m", Capabilities: []string{"echo", "send", "device:*", "sandbox:*"}, MaxTurns: 6,
 	})
 	if err != nil {
 		return nil, err
 	}
 	w.agents = agents
-	w.catalog = &capability.Catalog{Local: capability.NewRegistry(w.echoCap(), w.sendCap()), Nodes: stores.Dir, DefaultTimeout: deviceTimeout}
+	w.catalog = &capability.Catalog{
+		Local: capability.NewRegistry(w.echoCap(), w.sendCap()), Nodes: stores.Dir, DefaultTimeout: deviceTimeout,
+		Sandbox: &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID},
+	}
 	w.hub = &node.Hub{Dir: stores.Dir, Inbox: stores.Inbox, Store: w.store, Queue: w.queue, Auth: node.InsecureDevAuth{}}
-	w.svc = &service.Service{Store: w.store, Queue: w.queue, Agents: agents, Nodes: w.hub}
+	w.sandboxQueue, w.ledger, w.activity = stores.SandboxQueue, stores.Ledger, stores.Activity
+	w.router = &sandbox.Router{Hub: w.hub, Queue: w.sandboxQueue}
+	w.provider = sandbox.NewFake()
+	w.provider.ExecFunc = w.sandboxExec
+	w.svc = &service.Service{Store: w.store, Queue: w.queue, Agents: agents, Nodes: w.router}
+	for range 2 {
+		w.controllers = append(w.controllers, w.newController())
+	}
 	for range opts.Workers {
 		w.workers = append(w.workers, w.newWorker())
 	}
@@ -148,6 +175,47 @@ func New(opts Options) (*World, error) {
 		}
 	}
 	return w, nil
+}
+
+func (w *World) newController() *sandbox.Controller {
+	w.nextC++
+	return &sandbox.Controller{
+		ID: fmt.Sprintf("c%d", w.nextC), Queue: w.sandboxQueue, Hub: w.hub, Provider: w.provider,
+		Activity: w.activity, Ledger: w.ledger, Clock: w.clock, LeaseTTL: leaseTTL, IdleTTL: 2 * time.Minute,
+	}
+}
+
+func (w *World) stepController(i int) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	crashed := false
+	w.crash = func() { crashed = true; cancel() }
+	defer func() { w.crash = nil; cancel() }()
+	c := w.controllers[i]
+	did, err := c.Step(ctx)
+	if crashed {
+		w.tracef("crash %s (mid-exec)", c.ID)
+		w.Stats.ControllerCrashes++
+		w.controllers[i] = w.newController()
+		return nil
+	}
+	if did {
+		w.tracef("step %s", c.ID)
+	}
+	if err != nil {
+		return fmt.Errorf("controller %s step: %w", c.ID, err)
+	}
+	return nil
+}
+
+// sandboxExec 是假沙箱的执行：记录副作用，并可能在产生副作用后、返回结果前让控制器崩溃。
+func (w *World) sandboxExec(ctx context.Context, id string, _ sandbox.ExecRequest) (*sandbox.ExecResult, error) {
+	w.effects[id+"/"+sandbox.CallID(ctx)]++
+	w.Stats.SandboxExecs++
+	if w.faults && w.chance(0.15) {
+		w.crash()
+		return nil, ctx.Err()
+	}
+	return &sandbox.ExecResult{Stdout: []byte("42\n")}, nil
 }
 
 func (w *World) newNode(i int) *simNode {
@@ -281,7 +349,7 @@ func (w *World) newWorker() *runtime.Worker {
 	gw.Register("sim", &simModel{w: w})
 	return runtime.New(runtime.Config{
 		ID: fmt.Sprintf("w%d", w.nextW), Store: w.store, Queue: w.queue, Agents: w.agents,
-		Model: gw, Catalog: w.catalog, Dispatch: w.hub, LeaseTTL: leaseTTL,
+		Model: gw, Catalog: w.catalog, Dispatch: w.router, LeaseTTL: leaseTTL,
 		MaxTakeovers: 4, MaxModelErrors: 3, ApprovalTimeout: approvalTimeout,
 	})
 }
@@ -307,10 +375,15 @@ func (w *World) Run() error {
 
 func (w *World) tick() error {
 	switch x := w.rng.Float64(); {
-	case x < 0.55:
+	case x < 0.50:
 		return w.stepWorker(w.rng.IntN(len(w.workers)))
-	case x < 0.70:
+	case x < 0.60:
 		return w.stepNode(w.nodes[w.rng.IntN(len(w.nodes))])
+	case x < 0.68:
+		return w.stepController(w.rng.IntN(len(w.controllers)))
+	case x < 0.70:
+		w.Stats.Reaps++
+		return w.controllers[0].Reap(context.Background())
 	case x < 0.76:
 		return w.decide(false)
 	case x < 0.84:
@@ -327,10 +400,15 @@ func (w *World) tick() error {
 		w.clock.Advance(d)
 		w.tracef("clock +%s", d)
 	default:
-		if w.faults {
+		if w.faults && w.chance(0.5) {
 			i := w.rng.IntN(len(w.workers))
 			w.tracef("crash %s (idle)", w.workers[i].ID())
 			w.restart(i)
+		} else if w.faults {
+			i := w.rng.IntN(len(w.controllers))
+			w.tracef("crash %s (idle)", w.controllers[i].ID)
+			w.Stats.ControllerCrashes++
+			w.controllers[i] = w.newController()
 		}
 	}
 	return nil
@@ -422,6 +500,11 @@ func (w *World) quiesce() error {
 		}
 		for _, n := range w.nodes {
 			if err := w.stepNode(n); err != nil {
+				return fmt.Errorf("quiesce round %d: %w", round, err)
+			}
+		}
+		for i := range w.controllers {
+			if err := w.stepController(i); err != nil {
 				return fmt.Errorf("quiesce round %d: %w", round, err)
 			}
 		}

@@ -20,6 +20,13 @@ ARK_API_KEY=... ./bin/yanshi serve       # 启用火山方舟，然后 chat -age
 ./bin/yanshi chat                         # 例如：读一下电脑上 notes.txt 并总结
 ```
 
+启用云端代码沙箱（代码解释器，默认无网络）：
+
+```sh
+make sandbox-image
+./bin/yanshi serve -sandbox docker       # 可加 -sandbox-runtime runsc 使用 gVisor
+```
+
 模型通过 AgentDef（`agents/*.yaml`）的 `model: provider/model` 选择：`ark/…`（火山方舟）、`local/…`（私有化 OpenAI 兼容服务，`YANSHI_LOCAL_BASE_URL`）、`echo/any`。
 
 ## HTTP API

@@ -12,8 +12,28 @@ import (
 	"yanshi/internal/node"
 )
 
-// DevicePrefix 标记 AgentDef 白名单中的设备能力条目，如 "device:*"、"device:read_*"。
-const DevicePrefix = "device:"
+// AgentDef 白名单中的前缀条目：
+//
+//	"device:<glob>"   EndUser 设备上名称匹配的能力，如 "device:*"
+//	"sandbox:<glob>"  本 Session 云端沙箱中名称匹配的能力（docs/design/m2-sandbox.md）
+const (
+	DevicePrefix  = "device:"
+	SandboxPrefix = "sandbox:"
+	// SandboxLabel 是沙箱工具名的前缀部分："sandbox__<capability>"。
+	SandboxLabel = "sandbox"
+)
+
+// Target 是解析工具时的上下文：Scope 决定可见的设备，SessionID 决定沙箱。
+type Target struct {
+	Scope     node.Scope
+	SessionID string
+}
+
+// SandboxTools 配置沙箱能力；Catalog.Sandbox 为 nil 时不提供沙箱。
+type SandboxTools struct {
+	Specs  []*v1.CapabilitySpec
+	NodeID func(sessionID string) string
+}
 
 // Tool 是面向模型的一个工具及其执行目标：Local 非空为进程内调用，否则路由到 NodeID。
 type Tool struct {
@@ -32,15 +52,16 @@ func (t *Tool) RequiresApproval() bool { return t.Spec.Risk == v1.Risk_RISK_HIGH
 type Catalog struct {
 	Local *Registry
 	// Nodes 为 nil 时没有设备能力。
-	Nodes node.Directory
+	Nodes   node.Directory
+	Sandbox *SandboxTools
 	// DefaultTimeout 用于未声明超时的设备能力。
 	DefaultTimeout time.Duration
 }
 
-// Tools 返回 allow 白名单允许、Scope 内可见的全部工具，进程内工具在前，设备工具按标签排序。
-func (c *Catalog) Tools(ctx context.Context, scope node.Scope, allow []string) ([]Tool, error) {
+// Tools 返回 allow 白名单允许、对 target 可见的全部工具：进程内工具、沙箱工具、设备工具（按标签排序）。
+func (c *Catalog) Tools(ctx context.Context, target Target, allow []string) ([]Tool, error) {
 	var out []Tool
-	var globs []string
+	var globs, sandboxGlobs []string
 	for _, a := range allow {
 		if g, ok := strings.CutPrefix(a, DevicePrefix); ok {
 			if _, err := path.Match(g, ""); err != nil {
@@ -49,16 +70,34 @@ func (c *Catalog) Tools(ctx context.Context, scope node.Scope, allow []string) (
 			globs = append(globs, g)
 			continue
 		}
+		if g, ok := strings.CutPrefix(a, SandboxPrefix); ok {
+			if _, err := path.Match(g, ""); err != nil {
+				return nil, fmt.Errorf("bad capability pattern %q: %w", a, err)
+			}
+			sandboxGlobs = append(sandboxGlobs, g)
+			continue
+		}
 		cp, ok := c.Local.Get(a)
 		if !ok {
 			return nil, fmt.Errorf("unknown capability %q", a)
 		}
 		out = append(out, Tool{Spec: cp.Spec(), Local: cp})
 	}
+	if c.Sandbox != nil && target.SessionID != "" {
+		for _, cs := range c.Sandbox.Specs {
+			if matchAny(sandboxGlobs, cs.GetName()) {
+				out = append(out, Tool{
+					Spec:   Spec{Name: SandboxLabel + "__" + cs.GetName(), Description: cs.GetDescription(), InputSchema: json.RawMessage(cs.GetInputSchemaJson()), Idempotent: cs.GetIdempotent(), Risk: cs.GetRisk()},
+					NodeID: c.Sandbox.NodeID(target.SessionID), Capability: cs.GetName(),
+					Timeout: time.Duration(cs.GetTimeoutSeconds()) * time.Second,
+				})
+			}
+		}
+	}
 	if len(globs) == 0 || c.Nodes == nil {
 		return out, nil
 	}
-	nodes, err := c.Nodes.List(ctx, scope)
+	nodes, err := c.Nodes.List(ctx, target.Scope)
 	if err != nil {
 		return nil, err
 	}
@@ -74,8 +113,8 @@ func (c *Catalog) Tools(ctx context.Context, scope node.Scope, allow []string) (
 }
 
 // Resolve 按工具名解析；不存在时返回 nil。
-func (c *Catalog) Resolve(ctx context.Context, scope node.Scope, allow []string, name string) (*Tool, error) {
-	tools, err := c.Tools(ctx, scope, allow)
+func (c *Catalog) Resolve(ctx context.Context, target Target, allow []string, name string) (*Tool, error) {
+	tools, err := c.Tools(ctx, target, allow)
 	if err != nil {
 		return nil, err
 	}

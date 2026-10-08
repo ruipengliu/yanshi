@@ -5,6 +5,7 @@ package pgqueue
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -14,27 +15,43 @@ import (
 	"yanshi/internal/workqueue"
 )
 
+// 队列表：Sessions 是 Worker 的工作队列，Sandboxes 是沙箱控制器的队列。
+const (
+	Sessions  = "work_items"
+	Sandboxes = "sandbox_items"
+)
+
 type Queue struct {
 	pool  *pgxpool.Pool
 	clock clock.Clock
+	table string
 }
 
-func New(pool *pgxpool.Pool, c clock.Clock) *Queue { return &Queue{pool: pool, clock: c} }
+// New 返回基于 table（Sessions 或 Sandboxes）的队列。
+func New(pool *pgxpool.Pool, c clock.Clock, table string) *Queue {
+	if table != Sessions && table != Sandboxes {
+		panic("pgqueue: unknown table " + table)
+	}
+	return &Queue{pool: pool, clock: c, table: table}
+}
+
+// q 把 SQL 中的 work_items 替换为本队列的表名。
+func (q *Queue) q(sql string) string { return strings.ReplaceAll(sql, "work_items", q.table) }
 
 var _ workqueue.Queue = (*Queue)(nil)
 
 func (q *Queue) Enqueue(ctx context.Context, sessionID string) error {
-	_, err := q.pool.Exec(ctx, `
+	_, err := q.pool.Exec(ctx, q.q(`
 		INSERT INTO work_items (session_id, ord) VALUES ($1, nextval('work_seq'))
 		ON CONFLICT (session_id) DO UPDATE
-		SET dirty = work_items.dirty OR work_items.leased, parked_until = NULL`, sessionID)
+		SET dirty = work_items.dirty OR work_items.leased, parked_until = NULL`), sessionID)
 	return err
 }
 
 func (q *Queue) Claim(ctx context.Context, holder string, ttl time.Duration) (*workqueue.Lease, error) {
 	now := q.clock.Now()
 	l := &workqueue.Lease{Holder: holder}
-	err := q.pool.QueryRow(ctx, `
+	err := q.pool.QueryRow(ctx, q.q(`
 		UPDATE work_items SET leased = true, holder = $1, token = nextval('work_seq'),
 			lease_expires = $3, dirty = false
 		WHERE session_id = (
@@ -43,7 +60,7 @@ func (q *Queue) Claim(ctx context.Context, holder string, ttl time.Duration) (*w
 			   OR (NOT leased AND (parked_until IS NULL OR parked_until <= $2))
 			ORDER BY ord LIMIT 1
 			FOR UPDATE SKIP LOCKED)
-		RETURNING session_id, token, lease_expires`, holder, now, now.Add(ttl)).Scan(&l.SessionID, &l.Token, &l.Expires)
+		RETURNING session_id, token, lease_expires`), holder, now, now.Add(ttl)).Scan(&l.SessionID, &l.Token, &l.Expires)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, workqueue.ErrEmpty
 	}
@@ -58,7 +75,7 @@ const held = `session_id = $1 AND leased AND token = $2 AND lease_expires > $3`
 
 func (q *Queue) Renew(ctx context.Context, l *workqueue.Lease, ttl time.Duration) error {
 	now := q.clock.Now()
-	tag, err := q.pool.Exec(ctx, `UPDATE work_items SET lease_expires = $4 WHERE `+held,
+	tag, err := q.pool.Exec(ctx, q.q(`UPDATE work_items SET lease_expires = $4 WHERE `+held),
 		l.SessionID, int64(l.Token), now, now.Add(ttl))
 	if err != nil {
 		return err
@@ -71,10 +88,10 @@ func (q *Queue) Renew(ctx context.Context, l *workqueue.Lease, ttl time.Duration
 }
 
 func (q *Queue) Park(ctx context.Context, l *workqueue.Lease, until time.Time) error {
-	tag, err := q.pool.Exec(ctx, `
+	tag, err := q.pool.Exec(ctx, q.q(`
 		UPDATE work_items SET leased = false, ord = nextval('work_seq'),
 			parked_until = CASE WHEN dirty THEN NULL ELSE $4::timestamptz END, dirty = false
-		WHERE `+held, l.SessionID, int64(l.Token), q.clock.Now(), until)
+		WHERE `+held), l.SessionID, int64(l.Token), q.clock.Now(), until)
 	if err != nil {
 		return err
 	}
@@ -87,7 +104,7 @@ func (q *Queue) Park(ctx context.Context, l *workqueue.Lease, until time.Time) e
 func (q *Queue) Release(ctx context.Context, l *workqueue.Lease, done bool) error {
 	now := q.clock.Now()
 	if done {
-		tag, err := q.pool.Exec(ctx, `DELETE FROM work_items WHERE `+held+` AND NOT dirty`, l.SessionID, int64(l.Token), now)
+		tag, err := q.pool.Exec(ctx, q.q(`DELETE FROM work_items WHERE `+held+` AND NOT dirty`), l.SessionID, int64(l.Token), now)
 		if err != nil {
 			return err
 		}
@@ -95,9 +112,9 @@ func (q *Queue) Release(ctx context.Context, l *workqueue.Lease, done bool) erro
 			return nil
 		}
 	}
-	tag, err := q.pool.Exec(ctx, `
+	tag, err := q.pool.Exec(ctx, q.q(`
 		UPDATE work_items SET leased = false, dirty = false, parked_until = NULL, ord = nextval('work_seq')
-		WHERE `+held, l.SessionID, int64(l.Token), now)
+		WHERE `+held), l.SessionID, int64(l.Token), now)
 	if err != nil {
 		return err
 	}

@@ -258,8 +258,11 @@ func (w *Worker) toolResult(r *session.Run, callID string, content []*v1.Content
 	}}}
 }
 
-func (w *Worker) scope() node.Scope {
-	return node.Scope{BusinessLine: w.st.Created.GetBusinessLine(), EndUser: w.st.Created.GetEndUser()}
+func (w *Worker) target() capability.Target {
+	return capability.Target{
+		Scope:     node.Scope{BusinessLine: w.st.Created.GetBusinessLine(), EndUser: w.st.Created.GetEndUser()},
+		SessionID: w.st.SessionID,
+	}
 }
 
 // advanceCall 推进一次 Capability 调用的一个阶段：
@@ -269,7 +272,7 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 	if c.Dispatched() {
 		return w.awaitDispatched(ctx, r, c)
 	}
-	tool, err := w.cfg.Catalog.Resolve(ctx, w.scope(), def.Capabilities, name)
+	tool, err := w.cfg.Catalog.Resolve(ctx, w.target(), def.Capabilities, name)
 	if err != nil {
 		return err
 	}
@@ -355,7 +358,7 @@ func (w *Worker) awaitDispatched(ctx context.Context, r *session.Run, c *session
 
 func approvalSummary(t *capability.Tool, c *v1.ToolCall) string {
 	where := "云端"
-	if t.NodeID != "" {
+	if t.NodeID != "" && !strings.HasPrefix(t.Spec.Name, capability.SandboxLabel+"__") {
 		where = "设备 " + strings.SplitN(t.Spec.Name, "__", 2)[0]
 	}
 	args := c.GetArgumentsJson()
@@ -366,7 +369,7 @@ func approvalSummary(t *capability.Tool, c *v1.ToolCall) string {
 }
 
 func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.Def) error {
-	tools, err := w.cfg.Catalog.Tools(ctx, w.scope(), def.Capabilities)
+	tools, err := w.cfg.Catalog.Tools(ctx, w.target(), def.Capabilities)
 	if err != nil {
 		return w.fail(ctx, r, err.Error())
 	}

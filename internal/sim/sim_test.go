@@ -61,6 +61,9 @@ func TestSimulationWithFaults(t *testing.T) {
 		total.Suspensions += st.Suspensions
 		total.DeviceResults += st.DeviceResults
 		total.Timeouts += st.Timeouts
+		total.ControllerCrashes += st.ControllerCrashes
+		total.SandboxExecs += st.SandboxExecs
+		total.Reaps += st.Reaps
 	}
 	t.Logf("coverage: %+v", total)
 	if *seed != 0 {
@@ -73,7 +76,8 @@ func TestSimulationWithFaults(t *testing.T) {
 		"outcome unknown": total.OutcomeUnknown, "idempotent retries": total.Retried,
 		"node crashes": total.NodeCrashes, "redeliveries": total.Redeliveries, "approvals": total.Approvals,
 		"denials": total.Denials, "suspensions": total.Suspensions, "device results": total.DeviceResults,
-		"timeouts": total.Timeouts,
+		"timeouts": total.Timeouts, "controller crashes": total.ControllerCrashes, "sandbox execs": total.SandboxExecs,
+		"reaps": total.Reaps,
 	} {
 		if n == 0 {
 			t.Errorf("simulation never exercised %s", name)
