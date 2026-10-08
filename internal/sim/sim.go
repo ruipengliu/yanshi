@@ -19,6 +19,7 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
+	"yanshi/internal/artifact"
 	"yanshi/internal/capability"
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog"
@@ -100,6 +101,7 @@ type World struct {
 
 	sandboxQueue workqueue.Queue
 	provider     *sandbox.Fake
+	artifacts    *artifact.Service
 	ledger       nodesdk.Ledger
 	activity     sandbox.Activity
 	controllers  []*sandbox.Controller
@@ -151,6 +153,7 @@ func New(opts Options) (*World, error) {
 	w.hub = &node.Hub{Dir: stores.Dir, Inbox: stores.Inbox, Store: w.store, Queue: w.queue, Auth: node.InsecureDevAuth{}}
 	w.sandboxQueue, w.ledger, w.activity = stores.SandboxQueue, stores.Ledger, stores.Activity
 	w.router = &sandbox.Router{Hub: w.hub, Queue: w.sandboxQueue}
+	w.artifacts = &artifact.Service{Meta: artifact.NewMemMeta(), Blobs: artifact.NewMemBlobs(), IDs: ids.Sequential("art"), Clock: w.clock}
 	w.provider = sandbox.NewFake()
 	w.provider.ExecFunc = w.sandboxExec
 	w.svc = &service.Service{Store: w.store, Queue: w.queue, Agents: agents, Nodes: w.router}
@@ -182,6 +185,7 @@ func (w *World) newController() *sandbox.Controller {
 	return &sandbox.Controller{
 		ID: fmt.Sprintf("c%d", w.nextC), Queue: w.sandboxQueue, Hub: w.hub, Provider: w.provider,
 		Activity: w.activity, Ledger: w.ledger, Clock: w.clock, LeaseTTL: leaseTTL, IdleTTL: 2 * time.Minute,
+		Artifacts: w.artifacts,
 	}
 }
 

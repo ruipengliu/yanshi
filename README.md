@@ -8,7 +8,7 @@
 make build
 ./bin/yanshi serve                       # 内存存储 + 4 个 Worker，监听 127.0.0.1:8080
 make deps-up                             # 用 docker 启动 PostgreSQL
-./bin/yanshi serve -storage postgres     # 持久化；多个进程可共享同一数据库水平扩展
+./bin/yanshi serve -storage postgres -blob s3   # 持久化（PostgreSQL + S3 兼容对象存储）；多个进程可共享水平扩展
 ./bin/yanshi chat -agent echo            # 离线：复述输入
 ARK_API_KEY=... ./bin/yanshi serve       # 启用火山方舟，然后 chat -agent assistant
 ```
@@ -17,7 +17,7 @@ ARK_API_KEY=... ./bin/yanshi serve       # 启用火山方舟，然后 chat -age
 
 ```sh
 ./bin/yanshi node -root ~/Documents/share -label macbook
-./bin/yanshi chat                         # 例如：读一下电脑上 notes.txt 并总结
+./bin/yanshi chat                         # 例如：读一下电脑上 notes.txt 并总结；/upload <文件> 上传给助手
 ```
 
 启用云端代码沙箱（代码解释器，默认无网络）：

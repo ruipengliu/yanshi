@@ -1,13 +1,17 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"path"
 	"strings"
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/artifact"
 	"yanshi/sdk/nodesdk"
 )
 
@@ -65,6 +69,16 @@ func Specs() []*v1.CapabilitySpec {
 			Description:     "读取沙箱工作区中的文本文件（最多 64KB）。路径相对于 /workspace。",
 			InputSchemaJson: `{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`,
 		},
+		{
+			Name: "import_file", Risk: v1.Risk_RISK_LOW, Idempotent: true, TimeoutSeconds: timeout,
+			Description:     "把一个 artifact（如用户上传或设备提供的文件）复制到沙箱工作区，供代码处理。",
+			InputSchemaJson: `{"type":"object","properties":{"artifact":{"type":"string","description":"artifact ID，如 art_xxx"},"path":{"type":"string","description":"工作区内的目标路径"}},"required":["artifact","path"]}`,
+		},
+		{
+			Name: "export_file", Risk: v1.Risk_RISK_LOW, Idempotent: true, TimeoutSeconds: timeout,
+			Description:     "把沙箱工作区中的文件（如生成的图表、表格）导出为 artifact，以便交给用户或传到设备。",
+			InputSchemaJson: `{"type":"object","properties":{"path":{"type":"string"},"name":{"type":"string","description":"可选的文件名"}},"required":["path"]}`,
+		},
 	}
 }
 
@@ -108,8 +122,11 @@ func FormatExec(r *ExecResult) string {
 	return b.String()
 }
 
-// Capabilities 把沙箱能力绑定到 Provider，供控制器的 Executor 使用。
-func Capabilities(p Provider) []nodesdk.Capability {
+// SessionOf 返回沙箱所属的 Session。
+func SessionOf(sandboxID string) string { return strings.TrimPrefix(sandboxID, NodePrefix) }
+
+// Capabilities 把沙箱能力绑定到 Provider 与工件存储，供控制器的 Executor 使用。
+func Capabilities(p Provider, arts *artifact.Service) []nodesdk.Capability {
 	run := func(ctx context.Context, req ExecRequest) ([]*v1.ContentBlock, error) {
 		r, err := p.Exec(ctx, sandboxID(ctx), req)
 		if err != nil {
@@ -147,7 +164,7 @@ func Capabilities(p Provider) []nodesdk.Capability {
 			if err != nil {
 				return nil, err
 			}
-			if err := p.WriteFile(ctx, sandboxID(ctx), path, []byte(in.Content)); err != nil {
+			if err := p.CopyIn(ctx, sandboxID(ctx), path, bytes.NewReader([]byte(in.Content))); err != nil {
 				return nil, err
 			}
 			return text(fmt.Sprintf("wrote %d bytes to %s", len(in.Content), path)), nil
@@ -170,6 +187,56 @@ func Capabilities(p Provider) []nodesdk.Capability {
 				out += fmt.Sprintf("\n[truncated to %d bytes]", ReadLimit)
 			}
 			return text(out), nil
+		}},
+		{Spec: specByName("import_file"), Handler: func(ctx context.Context, args string) ([]*v1.ContentBlock, error) {
+			var in struct{ Artifact, Path string }
+			if err := json.Unmarshal([]byte(args), &in); err != nil {
+				return nil, fmt.Errorf("invalid arguments: %w", err)
+			}
+			dst, err := WorkspacePath(in.Path)
+			if err != nil {
+				return nil, err
+			}
+			id, _ := artifact.ParseURI(in.Artifact)
+			if id == "" {
+				id = in.Artifact
+			}
+			m, rc, err := arts.Open(ctx, id)
+			if err != nil {
+				return nil, fmt.Errorf("artifact %s: %w", id, err)
+			}
+			defer rc.Close()
+			// 工件只能导入其所属 Session 的沙箱。
+			if m.SessionID != SessionOf(sandboxID(ctx)) {
+				return nil, fmt.Errorf("artifact %s: %w", id, artifact.ErrNotFound)
+			}
+			if err := p.CopyIn(ctx, sandboxID(ctx), dst, rc); err != nil {
+				return nil, err
+			}
+			return text(fmt.Sprintf("imported %s (%s) to %s", m.Name, artifact.HumanSize(m.Size), dst)), nil
+		}},
+		{Spec: specByName("export_file"), Handler: func(ctx context.Context, args string) ([]*v1.ContentBlock, error) {
+			var in struct{ Path, Name string }
+			if err := json.Unmarshal([]byte(args), &in); err != nil {
+				return nil, fmt.Errorf("invalid arguments: %w", err)
+			}
+			src, err := WorkspacePath(in.Path)
+			if err != nil {
+				return nil, err
+			}
+			name := in.Name
+			if name == "" {
+				name = path.Base(src)
+			}
+			pr, pw := io.Pipe()
+			go func() { pw.CloseWithError(p.CopyOut(ctx, sandboxID(ctx), src, pw)) }()
+			m, err := arts.Put(ctx, SessionOf(sandboxID(ctx)), name, "", pr)
+			pr.CloseWithError(err)
+			if err != nil {
+				return nil, err
+			}
+			block := m.Block()
+			return []*v1.ContentBlock{text("exported " + artifact.Describe(block.GetMedia()))[0], block}, nil
 		}},
 	}
 }

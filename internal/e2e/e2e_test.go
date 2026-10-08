@@ -7,16 +7,22 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
+
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
+	"yanshi/internal/artifact"
+	"yanshi/internal/artifact/pgartifact"
 	"yanshi/internal/capability"
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog"
@@ -68,6 +74,9 @@ type env struct {
 	t      *testing.T
 	srv    *httptest.Server
 	writes atomic.Int32
+	// disk 模拟设备上的文件。
+	diskMu sync.Mutex
+	disk   map[string][]byte
 }
 
 // stores 是一个实例使用的存储；多个实例共享同一套 PostgreSQL 存储即构成分布式部署。
@@ -81,7 +90,8 @@ type stores struct {
 	ledger       nodesdk.Ledger
 	activity     sandbox.Activity
 	// provider 为 nil 时不启动沙箱控制器。
-	provider sandbox.Provider
+	provider  sandbox.Provider
+	artifacts *artifact.Service
 }
 
 func memStores() stores {
@@ -89,6 +99,7 @@ func memStores() stores {
 	return stores{
 		log: memlog.New(), queue: memqueue.New(clk), dir: node.NewMemDirectory(clk), inbox: node.NewMemInbox(),
 		sandboxQueue: memqueue.New(clk), ledger: nodesdk.NewMemLedger(), activity: sandbox.NewMemActivity(),
+		artifacts: &artifact.Service{Meta: artifact.NewMemMeta(), Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk},
 	}
 }
 
@@ -112,12 +123,12 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 	t.Cleanup(cancel)
 	for i := range workers {
 		w := runtime.New(runtime.Config{ID: fmt.Sprintf("w%d", i), Store: store, Queue: st.queue, Agents: agents, Model: gw,
-			Catalog: catalog, Dispatch: router, Live: bus, IdleWait: 5 * time.Millisecond})
+			Catalog: catalog, Dispatch: router, Artifacts: st.artifacts, Live: bus, IdleWait: 5 * time.Millisecond})
 		go w.Run(ctx)
 	}
 	if st.provider != nil {
 		c := &sandbox.Controller{ID: "c1", Queue: st.sandboxQueue, Hub: hub, Provider: st.provider, Activity: st.activity,
-			Ledger: st.ledger, Clock: clk, IdleWait: 5 * time.Millisecond}
+			Ledger: st.ledger, Artifacts: st.artifacts, Clock: clk, IdleWait: 5 * time.Millisecond}
 		go c.Run(ctx)
 	}
 	if !serve {
@@ -126,7 +137,7 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 	svc := &service.Service{Store: store, Queue: st.queue, Agents: agents, Nodes: router}
 	mux := http.NewServeMux()
 	mux.Handle("/v1/nodes/connect", &wsgateway.Gateway{Hub: hub})
-	mux.Handle("/", (&httpapi.Server{Service: svc, Live: bus, Nodes: st.dir}).Handler())
+	mux.Handle("/", (&httpapi.Server{Service: svc, Live: bus, Nodes: st.dir, Artifacts: st.artifacts}).Handler())
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
@@ -142,7 +153,49 @@ func (e *env) startNode(ledger nodesdk.Ledger) func() {
 	text := func(s string) []*v1.ContentBlock {
 		return []*v1.ContentBlock{{Kind: &v1.ContentBlock_Text{Text: &v1.Text{Text: s}}}}
 	}
+	arts := &nodesdk.Artifacts{BaseURL: e.srv.URL}
 	exec := nodesdk.NewExecutor(ledger,
+		nodesdk.Capability{
+			Spec: &v1.CapabilitySpec{Name: "upload_file", Idempotent: true, Risk: v1.Risk_RISK_LOW},
+			Handler: func(ctx context.Context, args string) ([]*v1.ContentBlock, error) {
+				var in struct{ Path string }
+				_ = json.Unmarshal([]byte(args), &in)
+				e.diskMu.Lock()
+				data, ok := e.disk[in.Path]
+				e.diskMu.Unlock()
+				if !ok {
+					return nil, fmt.Errorf("no such file %s", in.Path)
+				}
+				b, err := arts.Upload(ctx, nodesdk.Invocation(ctx).GetSessionId(), in.Path, "", bytes.NewReader(data))
+				if err != nil {
+					return nil, err
+				}
+				return []*v1.ContentBlock{b}, nil
+			},
+		},
+		nodesdk.Capability{
+			Spec: &v1.CapabilitySpec{Name: "save_artifact", Risk: v1.Risk_RISK_HIGH},
+			Handler: func(ctx context.Context, args string) ([]*v1.ContentBlock, error) {
+				var in struct{ Artifact, Path string }
+				_ = json.Unmarshal([]byte(args), &in)
+				body, _, sid, err := arts.Download(ctx, in.Artifact)
+				if err != nil {
+					return nil, err
+				}
+				defer body.Close()
+				if sid != nodesdk.Invocation(ctx).GetSessionId() {
+					return nil, fmt.Errorf("artifact belongs to another session")
+				}
+				data, err := io.ReadAll(body)
+				if err != nil {
+					return nil, err
+				}
+				e.diskMu.Lock()
+				e.disk[in.Path] = data
+				e.diskMu.Unlock()
+				return text("saved"), nil
+			},
+		},
 		nodesdk.Capability{
 			Spec:    &v1.CapabilitySpec{Name: "read_file", Idempotent: true, Risk: v1.Risk_RISK_LOW},
 			Handler: func(context.Context, string) ([]*v1.ContentBlock, error) { return text("meeting notes"), nil },
@@ -325,6 +378,7 @@ func TestCrossInstanceOnPostgres(t *testing.T) {
 			dir: pgnode.NewDirectory(pool, clk), inbox: pgnode.NewInbox(pool, notifier),
 			sandboxQueue: pgqueue.New(pool, clk, pgqueue.Sandboxes),
 			ledger:       pgsandbox.Ledger{Pool: pool}, activity: pgsandbox.Activity{Pool: pool},
+			artifacts: &artifact.Service{Meta: pgartifact.Meta{Pool: pool}, Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk},
 		}
 	}
 	e := &env{t: t, srv: instance(t, shared(), 0, true)}
@@ -367,5 +421,81 @@ func TestSandboxInDocker(t *testing.T) {
 	}
 	if got := e.lastAssistantText(sid); !strings.Contains(got, "1000") {
 		t.Fatalf("sandbox did not run as uid 1000: %q", got)
+	}
+}
+
+// lastToolMedia 返回最近一个调用结果中引用的工件 ID。
+func (e *env) lastToolMedia(sid string) string {
+	var res struct {
+		Events []json.RawMessage `json:"events"`
+	}
+	e.do(http.MethodGet, "/v1/sessions/"+sid+"/events", nil, &res)
+	id := ""
+	for _, raw := range res.Events {
+		ev := &v1.Event{}
+		if err := protojson.Unmarshal(raw, ev); err != nil {
+			e.t.Fatal(err)
+		}
+		for _, c := range ev.GetToolResult().GetContent() {
+			if a, ok := artifact.ParseURI(c.GetMedia().GetUri()); ok {
+				id = a
+			}
+		}
+	}
+	return id
+}
+
+// TestScenarioADataPath 走通北极星场景 A 的数据通路（真实 Docker 沙箱）：
+// 电脑上的文件 → 工件 → 沙箱处理 → 结果工件 → 经审批保存回电脑。
+func TestScenarioADataPath(t *testing.T) {
+	if os.Getenv("YANSHI_TEST_DOCKER") == "" {
+		t.Skip("YANSHI_TEST_DOCKER not set")
+	}
+	st := memStores()
+	p := &sandboxdocker.Provider{Image: "python:3.12-slim", MemoryMB: 256}
+	st.provider = p
+	e := &env{t: t, srv: instance(t, st, 2, true), disk: map[string][]byte{
+		"meeting.csv": []byte("speaker,minutes\n张三,12\n李四,30\n张三,8\n"),
+	}}
+	defer e.startNode(nodesdk.NewMemLedger())()
+	sid := e.newSession()
+	t.Cleanup(func() { _ = p.Destroy(context.Background(), sandbox.NodeID(sid)) })
+
+	run := func(i int, input string) {
+		t.Helper()
+		e.do(http.MethodPost, "/v1/sessions/"+sid+"/inputs", map[string]string{"text": input}, nil)
+		e.until(sid, func(v sessionView) bool {
+			if len(v.Runs) == i+1 && v.Runs[i].Waiting != nil && v.Runs[i].Waiting.Kind == "approval" {
+				e.do(http.MethodPost, "/v1/sessions/"+sid+"/approvals/"+v.Runs[i].Waiting.CallID, map[string]bool{"approve": true}, nil)
+			}
+			return len(v.Runs) == i+1 && v.Runs[i].Status == "completed"
+		})
+	}
+	run(0, `call macbook__upload_file {"path":"meeting.csv"}`)
+	in := e.lastToolMedia(sid)
+	if in == "" {
+		t.Fatal("device upload produced no artifact")
+	}
+	run(1, `call sandbox__import_file {"artifact":"`+in+`","path":"data/meeting.csv"}`)
+	code := "import csv, collections\n" +
+		"c = collections.Counter()\n" +
+		"for r in csv.DictReader(open('data/meeting.csv')): c[r['speaker']] += int(r['minutes'])\n" +
+		"open('summary.txt', 'w').write(chr(10).join(f'{k}: {v} 分钟' for k, v in c.most_common()))\n"
+	args, _ := json.Marshal(map[string]string{"code": code})
+	run(2, "call sandbox__run_python "+string(args))
+	if got := e.lastAssistantText(sid); !strings.Contains(got, "exit_code: 0") {
+		t.Fatalf("python failed: %s", got)
+	}
+	run(3, `call sandbox__export_file {"path":"summary.txt"}`)
+	out := e.lastToolMedia(sid)
+	if out == "" || out == in {
+		t.Fatalf("export produced no new artifact (%q)", out)
+	}
+	run(4, `call macbook__save_artifact {"artifact":"`+out+`","path":"summary.txt"}`)
+
+	e.diskMu.Lock()
+	defer e.diskMu.Unlock()
+	if got := string(e.disk["summary.txt"]); got != "李四: 30 分钟\n张三: 20 分钟" {
+		t.Fatalf("summary on device = %q", got)
 	}
 }

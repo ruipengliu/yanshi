@@ -1,6 +1,6 @@
 # yanshi
 
-分布式 Agent 运行时基础设施，Go 实现。`make check` 是提交前的完成标准：必须全绿（需要 Docker：它会启动 PostgreSQL 并运行沙箱测试；PG 与 Docker 测试分别由 `YANSHI_TEST_PG`、`YANSHI_TEST_DOCKER` 启用，未设置时跳过）。
+分布式 Agent 运行时基础设施，Go 实现。`make check` 是提交前的完成标准：必须全绿（需要 Docker：它会启动 PostgreSQL、S3 兼容存储并运行沙箱测试；对应测试分别由 `YANSHI_TEST_PG`、`YANSHI_TEST_S3`、`YANSHI_TEST_DOCKER` 启用，未设置时跳过）。
 
 ## 先读
 
@@ -9,6 +9,7 @@
 - 改动执行语义（Session / Run / Event / Attempt / Worker）之前：`docs/design/m0-core-primitives.md`。
 - 改动 Node、能力路由、审批或挂起之前：`docs/design/m1-device-nodes.md`。
 - 改动云端沙箱之前：`docs/design/m2-sandbox.md`。沙箱内只运行不可信代码，受信逻辑一律放在控制器（ADR-0008）。
+- 改动工件之前：`docs/design/m2-artifacts.md`。Event 中只放 `artifact://` 引用，不放文件内容；工件只对其所属 Session 可见。
 - 做出难以逆转的架构决策时：在 `docs/adr/` 新增一条 ADR。
 
 ## 不变量
@@ -17,7 +18,7 @@
 - **契约在 `proto/`。** 修改 `.proto` 后运行 `make gen`，生成代码 `gen/` 一并提交；只做向后兼容的修改（`buf breaking`）。
 - **Worker.Step 是确定性的单步。** 时间取自 `clock.Clock`，ID 取自 `ids.Generator`；影响结果的逻辑放在 Step 的同步路径里，以便 `internal/sim` 在任意两步之间注入故障。
 - **模拟测试是执行语义的裁判。** 改动 runtime / session / service / workqueue 后运行 `make sim`；失败信息里的种子可复现：`go test ./internal/sim -run <Test> -sim.seed=<N>`。新增故障类型或路径时，同时在 `internal/sim` 中注入并加入覆盖统计。
-- **新存储实现必须通过一致性套件**（`eventlogtest`、`workqueuetest`、`nodetest`），并接入 `internal/sim` 的差分测试。数据库变更只通过新增 `internal/pg/migrations/NNNN_*.sql`，不修改已有迁移。
+- **新存储实现必须通过一致性套件**（`eventlogtest`、`workqueuetest`、`nodetest`、`ledgertest`、`sandboxtest`、`artifacttest`），并接入 `internal/sim` 的差分测试。数据库变更只通过新增 `internal/pg/migrations/NNNN_*.sql`，不修改已有迁移。
 - **路由调用可以安全重投递，前提是 SDK 以 call_id 去重**（`sdk/nodesdk.Executor`）。修改 Executor 或 Ledger 时，保持"started 状态先落盘、再执行"的顺序。
 
 ## 风格

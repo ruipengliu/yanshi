@@ -14,6 +14,10 @@ import (
 	"time"
 
 	"yanshi/internal/agentdef"
+	"yanshi/internal/artifact"
+	"yanshi/internal/artifact/fsblob"
+	"yanshi/internal/artifact/pgartifact"
+	"yanshi/internal/artifact/s3blob"
 	"yanshi/internal/capability"
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog"
@@ -53,6 +57,7 @@ type backends struct {
 	sandboxQueue workqueue.Queue
 	ledger       nodesdk.Ledger
 	activity     sandbox.Activity
+	artifactMeta artifact.MetaStore
 }
 
 // openStorage 按 kind 创建存储。postgres 模式下多个 serve 进程可共享同一数据库水平扩展。
@@ -60,7 +65,7 @@ func openStorage(ctx context.Context, kind, dsn string, clk clock.Clock, logger 
 	switch kind {
 	case "memory":
 		return backends{memlog.New(), memqueue.New(clk), node.NewMemDirectory(clk), node.NewMemInbox(),
-			memqueue.New(clk), nodesdk.NewMemLedger(), sandbox.NewMemActivity()}, func() {}, nil
+			memqueue.New(clk), nodesdk.NewMemLedger(), sandbox.NewMemActivity(), artifact.NewMemMeta()}, func() {}, nil
 	case "postgres":
 		pool, err := pg.Open(ctx, dsn, "")
 		if err != nil {
@@ -74,7 +79,8 @@ func openStorage(ctx context.Context, kind, dsn string, clk clock.Clock, logger 
 		nctx, cancel := context.WithCancel(ctx)
 		go n.Run(nctx)
 		b := backends{pglog.New(pool, n), pgqueue.New(pool, clk, pgqueue.Sessions), pgnode.NewDirectory(pool, clk), pgnode.NewInbox(pool, n),
-			pgqueue.New(pool, clk, pgqueue.Sandboxes), pgsandbox.Ledger{Pool: pool}, pgsandbox.Activity{Pool: pool}}
+			pgqueue.New(pool, clk, pgqueue.Sandboxes), pgsandbox.Ledger{Pool: pool}, pgsandbox.Activity{Pool: pool},
+			pgartifact.Meta{Pool: pool}}
 		return b, func() { cancel(); pool.Close() }, nil
 	}
 	return backends{}, nil, fmt.Errorf("unknown storage %q (memory | postgres)", kind)
@@ -121,6 +127,11 @@ func serve(args []string) error {
 	sandboxImage := fs.String("sandbox-image", "yanshi-sandbox:dev", "沙箱镜像（make sandbox-image 构建）")
 	sandboxRuntime := fs.String("sandbox-runtime", "", "沙箱容器运行时，如 runsc（gVisor）")
 	controllers := fs.Int("sandbox-controllers", 2, "沙箱控制器数量")
+	blobKind := fs.String("blob", "fs", "工件内容存储：fs | s3")
+	blobDir := fs.String("blob-dir", "data/artifacts", "工件目录（blob=fs）")
+	s3Endpoint := fs.String("s3-endpoint", envOr("YANSHI_S3_ENDPOINT", "127.0.0.1:58333"), "S3 地址 host:port（blob=s3）")
+	s3Bucket := fs.String("s3-bucket", envOr("YANSHI_S3_BUCKET", "yanshi-artifacts"), "S3 桶")
+	s3SSL := fs.Bool("s3-ssl", false, "S3 使用 HTTPS")
 	_ = fs.Parse(args)
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -139,6 +150,23 @@ func serve(args []string) error {
 	}
 	defer closeStorage()
 	store := &session.Store{Log: b.log, IDs: ids.Random(), Clock: clk}
+	var blobs artifact.BlobStore
+	switch *blobKind {
+	case "fs":
+		blobs = fsblob.Store{Dir: *blobDir}
+	case "s3":
+		s3, err := s3blob.New(ctx, s3blob.Config{
+			Endpoint: *s3Endpoint, Bucket: *s3Bucket, UseSSL: *s3SSL,
+			AccessKey: envOr("YANSHI_S3_ACCESS_KEY", "yanshi"), SecretKey: envOr("YANSHI_S3_SECRET_KEY", "yanshi-dev-secret"),
+		})
+		if err != nil {
+			return fmt.Errorf("connect s3: %w", err)
+		}
+		blobs = s3
+	default:
+		return fmt.Errorf("unknown blob store %q (fs | s3)", *blobKind)
+	}
+	arts := &artifact.Service{Meta: b.artifactMeta, Blobs: blobs, IDs: ids.Random(), Clock: clk}
 	queue := b.queue
 	// LiveBus 是进程内的：多进程部署时 token 增量只送达连在同一进程的客户端，已提交事件不受影响。
 	bus := live.NewMemBus()
@@ -158,7 +186,7 @@ func serve(args []string) error {
 	for i := range *workers {
 		w := runtime.New(runtime.Config{
 			ID: fmt.Sprintf("worker-%d", i), Store: store, Queue: queue, Agents: agents,
-			Model: gw, Catalog: catalog, Dispatch: router, Live: bus, Logger: logger,
+			Model: gw, Catalog: catalog, Dispatch: router, Artifacts: arts, Live: bus, Logger: logger,
 			LeaseTTL: 30 * time.Second, Heartbeat: 10 * time.Second,
 		})
 		wg.Add(1)
@@ -173,7 +201,7 @@ func serve(args []string) error {
 		for i := range *controllers {
 			c := &sandbox.Controller{
 				ID: fmt.Sprintf("sandbox-%d", i), Queue: b.sandboxQueue, Hub: hub, Provider: provider,
-				Activity: b.activity, Ledger: b.ledger, Clock: clk, Logger: logger,
+				Activity: b.activity, Ledger: b.ledger, Artifacts: arts, Clock: clk, Logger: logger,
 				LeaseTTL: 30 * time.Second, Heartbeat: 10 * time.Second,
 			}
 			wg.Add(1)
@@ -186,7 +214,7 @@ func serve(args []string) error {
 
 	mux := http.NewServeMux()
 	mux.Handle("/v1/nodes/connect", &wsgateway.Gateway{Hub: hub, Logger: logger})
-	mux.Handle("/", (&httpapi.Server{Service: svc, Live: bus, Nodes: dir, Logger: logger}).Handler())
+	mux.Handle("/", (&httpapi.Server{Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Logger: logger}).Handler())
 	srv := &http.Server{
 		Addr:              *addr,
 		Handler:           mux,
@@ -198,7 +226,7 @@ func serve(args []string) error {
 		defer cancel()
 		_ = srv.Shutdown(shutdown)
 	}()
-	logger.Info("yanshi serving", "addr", *addr, "workers", *workers, "storage", *storage)
+	logger.Info("yanshi serving", "addr", *addr, "workers", *workers, "storage", *storage, "blob", *blobKind)
 	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}

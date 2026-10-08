@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
+	"yanshi/internal/artifact"
 	"yanshi/internal/capability"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/live"
@@ -40,8 +42,10 @@ type Config struct {
 	Model    model.Provider
 	Catalog  *capability.Catalog
 	Dispatch Dispatcher
-	Live     live.Bus
-	Logger   *slog.Logger
+	// Artifacts 非空时，用户消息中的图片工件会内联给模型（docs/design/m2-artifacts.md §4）。
+	Artifacts *artifact.Service
+	Live      live.Bus
+	Logger    *slog.Logger
 
 	LeaseTTL time.Duration
 	// Heartbeat > 0 时，在模型调用与 Capability 执行期间按此间隔续约（真实时间）。
@@ -373,7 +377,7 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 	if err != nil {
 		return w.fail(ctx, r, err.Error())
 	}
-	req := &model.Request{Model: def.Model, System: def.Instructions, Messages: Transcript(w.st)}
+	req := &model.Request{Model: def.Model, System: def.Instructions, Messages: w.inlineImages(ctx, Transcript(w.st))}
 	for _, t := range tools {
 		req.Tools = append(req.Tools, model.ToolSpec{Name: t.Spec.Name, Description: t.Spec.Description, InputSchema: t.Spec.InputSchema})
 	}
@@ -413,6 +417,54 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 		events = append(events, &v1.Event{Payload: &v1.Event_RunCompleted{RunCompleted: &v1.RunCompleted{RunId: r.ID, Attempt: w.attempt}}})
 	}
 	return w.commit(ctx, events...)
+}
+
+// inlineImageLimit 是内联给模型的单张图片上限。
+const inlineImageLimit = 4 << 20
+
+// inlineImages 把用户消息中的图片工件读出并内联；读取失败或过大时保留原引用（模型看到描述文本）。
+func (w *Worker) inlineImages(ctx context.Context, msgs []model.Message) []model.Message {
+	if w.cfg.Artifacts == nil {
+		return msgs
+	}
+	for i, m := range msgs {
+		if m.Role != model.RoleUser {
+			continue
+		}
+		var blocks []*v1.ContentBlock
+		for _, b := range m.Content {
+			media := b.GetMedia()
+			id, ok := artifact.ParseURI(media.GetUri())
+			if !ok || !strings.HasPrefix(media.GetMimeType(), "image/") || media.GetSize() > inlineImageLimit {
+				blocks = append(blocks, b)
+				continue
+			}
+			data, err := w.readArtifact(ctx, id)
+			if err != nil {
+				w.cfg.Logger.Warn("inline image failed", "artifact", id, "err", err)
+				blocks = append(blocks, b)
+				continue
+			}
+			blocks = append(blocks, &v1.ContentBlock{Kind: &v1.ContentBlock_Media{Media: &v1.Media{
+				MimeType: media.GetMimeType(), Name: media.GetName(), Size: media.GetSize(), Uri: media.GetUri(), Data: data,
+			}}})
+		}
+		msgs[i].Content = blocks
+	}
+	return msgs
+}
+
+func (w *Worker) readArtifact(ctx context.Context, id string) ([]byte, error) {
+	m, rc, err := w.cfg.Artifacts.Open(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	// 工件只对其所属 Session 可见。
+	if m.SessionID != w.st.SessionID {
+		return nil, artifact.ErrNotFound
+	}
+	return io.ReadAll(io.LimitReader(rc, inlineImageLimit))
 }
 
 var errSuperseded = errors.New("attempt superseded")

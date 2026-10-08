@@ -47,11 +47,14 @@ message Text {
   string text = 1;
 }
 
-// Media 是非文本内容：大对象以 uri 引用 Artifact，小对象可内联 data。
+// Media 是非文本内容：大对象以 uri 引用 Artifact（"artifact://<id>"），小对象可内联 data。
 message Media {
   string mime_type = 1;
   string uri = 2;
   bytes data = 3;
+  // 文件名与字节数，供展示与模型理解。
+  string name = 4;
+  uint64 size = 5;
 }
 
 message AgentRef {

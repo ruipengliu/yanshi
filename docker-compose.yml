@@ -1,4 +1,4 @@
-# 开发依赖。启动：make deps-up；停止：make deps-down。
+# 开发依赖（PostgreSQL、S3 兼容对象存储）。启动：make deps-up；停止：make deps-down。
 services:
   postgres:
     image: postgres:16.4-alpine
@@ -15,5 +15,20 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+  # S3 兼容对象存储（ADR-0011）：开发环境用 SeaweedFS，生产可替换为任何 S3 兼容实现。
+  s3:
+    image: chrislusf/seaweedfs:3.80
+    command: server -s3 -s3.config=/etc/seaweedfs/s3.json -dir=/data -master.volumeSizeLimitMB=64 -volume.max=50
+    ports:
+      - "127.0.0.1:58333:8333"
+    volumes:
+      - ./deploy/dev/seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro
+      - s3data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8333/status || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
 volumes:
   pgdata:
+  s3data:

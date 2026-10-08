@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "yanshi",
+      "credentials": [{"accessKey": "yanshi", "secretKey": "yanshi-dev-secret"}],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

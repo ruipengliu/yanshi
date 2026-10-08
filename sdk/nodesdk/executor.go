@@ -20,6 +20,15 @@ type Capability struct {
 	Handler Handler
 }
 
+type invocationKey struct{}
+
+// Invocation 返回当前正在执行的调用（Session、Run、call_id 等），供能力处理函数使用，
+// 例如把上传的工件归属到正确的 Session。
+func Invocation(ctx context.Context) *v1.Invoke {
+	inv, _ := ctx.Value(invocationKey{}).(*v1.Invoke)
+	return inv
+}
+
 type State int
 
 const (
@@ -108,7 +117,7 @@ func (e *Executor) Execute(ctx context.Context, inv *v1.Invoke) (*v1.InvokeResul
 		if err := e.ledger.Put(id, &Record{State: StateStarted}); err != nil {
 			return nil, err
 		}
-		content, err := c.Handler(ctx, inv.GetArgumentsJson())
+		content, err := c.Handler(context.WithValue(ctx, invocationKey{}, inv), inv.GetArgumentsJson())
 		if err != nil {
 			if ctx.Err() != nil {
 				// 被取消或进程退出：保持 started，下次投递按"结果未知"处理。

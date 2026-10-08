@@ -7,6 +7,7 @@ import (
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/artifact"
 	"yanshi/internal/clock"
 	"yanshi/internal/node"
 	"yanshi/internal/workqueue"
@@ -22,8 +23,10 @@ type Controller struct {
 	Provider Provider
 	Activity Activity
 	Ledger   nodesdk.Ledger // 共享存储，使任一控制器都能接管
-	Clock    clock.Clock
-	Logger   *slog.Logger
+	// Artifacts 用于工作区与工件之间的导入导出。
+	Artifacts *artifact.Service
+	Clock     clock.Clock
+	Logger    *slog.Logger
 
 	LeaseTTL time.Duration
 	// Heartbeat > 0 时在执行期间续约（真实时间）；模拟测试置 0。
@@ -38,7 +41,7 @@ type Controller struct {
 
 func (c *Controller) init() {
 	if c.exec == nil {
-		c.exec = nodesdk.NewExecutor(c.Ledger, Capabilities(c.Provider)...)
+		c.exec = nodesdk.NewExecutor(c.Ledger, Capabilities(c.Provider, c.Artifacts)...)
 	}
 	if c.LeaseTTL == 0 {
 		c.LeaseTTL = 30 * time.Second

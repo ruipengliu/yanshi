@@ -102,6 +102,23 @@ func Text(blocks []*v1.ContentBlock) string {
 	return b.String()
 }
 
+// DescribeMedia 把非文本内容呈现为给模型看的一行文本，如 "[artifact art_x: chart.png, image/png, 7.6 KB]"。
+func DescribeMedia(m *v1.Media) string {
+	id, ok := strings.CutPrefix(m.GetUri(), "artifact://")
+	if !ok || id == "" {
+		id = "inline"
+	}
+	n := m.GetSize()
+	size := fmt.Sprintf("%d B", n)
+	switch {
+	case n >= 1<<20:
+		size = fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		size = fmt.Sprintf("%.1f KB", float64(n)/(1<<10))
+	}
+	return fmt.Sprintf("[artifact %s: %s, %s, %s]", id, m.GetName(), m.GetMimeType(), size)
+}
+
 // TextBlocks 把一段文本包装为内容块。
 func TextBlocks(s string) []*v1.ContentBlock {
 	return []*v1.ContentBlock{{Kind: &v1.ContentBlock_Text{Text: &v1.Text{Text: s}}}}

@@ -446,12 +446,15 @@ func (x *Text) GetText() string {
 	return ""
 }
 
-// Media 是非文本内容：大对象以 uri 引用 Artifact，小对象可内联 data。
+// Media 是非文本内容：大对象以 uri 引用 Artifact（"artifact://<id>"），小对象可内联 data。
 type Media struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	MimeType      string                 `protobuf:"bytes,1,opt,name=mime_type,json=mimeType,proto3" json:"mime_type,omitempty"`
-	Uri           string                 `protobuf:"bytes,2,opt,name=uri,proto3" json:"uri,omitempty"`
-	Data          []byte                 `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	MimeType string                 `protobuf:"bytes,1,opt,name=mime_type,json=mimeType,proto3" json:"mime_type,omitempty"`
+	Uri      string                 `protobuf:"bytes,2,opt,name=uri,proto3" json:"uri,omitempty"`
+	Data     []byte                 `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	// 文件名与字节数，供展示与模型理解。
+	Name          string `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
+	Size          uint64 `protobuf:"varint,5,opt,name=size,proto3" json:"size,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -505,6 +508,20 @@ func (x *Media) GetData() []byte {
 		return x.Data
 	}
 	return nil
+}
+
+func (x *Media) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Media) GetSize() uint64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
 }
 
 type AgentRef struct {
@@ -1540,11 +1557,13 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\x05media\x18\x02 \x01(\v2\x10.yanshi.v1.MediaH\x00R\x05mediaB\x06\n" +
 	"\x04kind\"\x1a\n" +
 	"\x04Text\x12\x12\n" +
-	"\x04text\x18\x01 \x01(\tR\x04text\"J\n" +
+	"\x04text\x18\x01 \x01(\tR\x04text\"r\n" +
 	"\x05Media\x12\x1b\n" +
 	"\tmime_type\x18\x01 \x01(\tR\bmimeType\x12\x10\n" +
 	"\x03uri\x18\x02 \x01(\tR\x03uri\x12\x12\n" +
-	"\x04data\x18\x03 \x01(\fR\x04data\"8\n" +
+	"\x04data\x18\x03 \x01(\fR\x04data\x12\x12\n" +
+	"\x04name\x18\x04 \x01(\tR\x04name\x12\x12\n" +
+	"\x04size\x18\x05 \x01(\x04R\x04size\"8\n" +
 	"\bAgentRef\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\"{\n" +

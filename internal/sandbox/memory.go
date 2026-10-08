@@ -1,7 +1,9 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"sort"
 	"sync"
 	"time"
@@ -88,14 +90,33 @@ func (f *Fake) Exec(ctx context.Context, id string, req ExecRequest) (*ExecResul
 	return &ExecResult{Stdout: []byte("ok")}, nil
 }
 
-func (f *Fake) WriteFile(_ context.Context, id, p string, data []byte) error {
+func (f *Fake) CopyIn(_ context.Context, id, p string, r io.Reader) error {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if !f.running[id] {
 		return errNotRunning(id)
 	}
-	f.files[id][p] = append([]byte(nil), data...)
+	f.files[id][p] = data
 	return nil
+}
+
+func (f *Fake) CopyOut(_ context.Context, id, p string, w io.Writer) error {
+	f.mu.Lock()
+	b, ok := f.files[id][p]
+	running := f.running[id]
+	f.mu.Unlock()
+	if !running {
+		return errNotRunning(id)
+	}
+	if !ok {
+		return errNoFile(p)
+	}
+	_, err := io.Copy(w, bytes.NewReader(b))
+	return err
 }
 
 func (f *Fake) ReadFile(_ context.Context, id, p string, max int) ([]byte, bool, error) {

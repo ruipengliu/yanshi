@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"path"
 	"strings"
 	"time"
@@ -58,7 +59,10 @@ type Provider interface {
 	Ensure(ctx context.Context, id string) error
 	// Exec 在工作区中执行命令；超时在沙箱内强制执行。
 	Exec(ctx context.Context, id string, req ExecRequest) (*ExecResult, error)
-	WriteFile(ctx context.Context, id, path string, data []byte) error
+	// CopyIn 把 r 的内容写入工作区文件（覆盖，按需创建目录）。
+	CopyIn(ctx context.Context, id, path string, r io.Reader) error
+	// CopyOut 把工作区文件的内容写入 w。
+	CopyOut(ctx context.Context, id, path string, w io.Writer) error
 	// ReadFile 至多读取 max 字节；文件更长时 truncated 为 true。
 	ReadFile(ctx context.Context, id, path string, max int) (data []byte, truncated bool, err error)
 	// Stop 释放计算资源，保留工作区。

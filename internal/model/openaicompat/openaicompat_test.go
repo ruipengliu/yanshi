@@ -76,3 +76,22 @@ func TestGenerateHTTPError(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestMediaEncoding(t *testing.T) {
+	img := &v1.ContentBlock{Kind: &v1.ContentBlock_Media{Media: &v1.Media{
+		MimeType: "image/png", Name: "chart.png", Size: 2048, Uri: "artifact://art_1", Data: []byte{0x89, 'P'},
+	}}}
+	w := encode(&model.Request{Model: "m", Messages: []model.Message{
+		{Role: model.RoleUser, Content: append(model.TextBlocks("看图"), img)},
+		{Role: model.RoleAssistant, ToolCalls: []*v1.ToolCall{{CallId: "c", Capability: "x", ArgumentsJson: "{}"}}},
+		{Role: model.RoleTool, ToolCallID: "c", Content: append(model.TextBlocks("exported"), img)},
+	}})
+	parts, ok := w.Messages[0].Content.([]wirePart)
+	if !ok || len(parts) != 2 || parts[1].Type != "image_url" || !strings.HasPrefix(parts[1].ImageURL.URL, "data:image/png;base64,") {
+		t.Fatalf("user content = %#v", w.Messages[0].Content)
+	}
+	tool, ok := w.Messages[2].Content.(string)
+	if !ok || !strings.Contains(tool, "[artifact art_1: chart.png, image/png, 2.0 KB]") {
+		t.Fatalf("tool content = %#v", w.Messages[2].Content)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -17,6 +18,7 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/model"
+	"yanshi/sdk/nodesdk"
 )
 
 type client struct {
@@ -61,7 +63,7 @@ func chat(args []string) error {
 		return err
 	}
 	sid := created.SessionID
-	fmt.Printf("session %s · 直接输入即可对话；运行中输入会作为插话；/stop 中断；/approve、/deny 审批；Ctrl-D 退出\n", sid)
+	fmt.Printf("session %s · 直接输入即可对话；运行中输入会作为插话；/stop 中断；/approve、/deny 审批；/upload <文件> [说明] 上传；Ctrl-D 退出\n", sid)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -83,6 +85,27 @@ func chat(args []string) error {
 			if err := c.post("/v1/sessions/"+sid+"/runs/"+run+"/interrupt", struct{}{}, nil); err != nil {
 				fmt.Println("[中断失败]", err)
 			}
+		case strings.HasPrefix(line, "/upload "):
+			path, note, _ := strings.Cut(strings.TrimSpace(strings.TrimPrefix(line, "/upload ")), " ")
+			block, err := c.upload(sid, path)
+			if err != nil {
+				fmt.Println("[上传失败]", err)
+				continue
+			}
+			if note == "" {
+				note = "我上传了一个文件。"
+			}
+			content := []json.RawMessage{json.RawMessage(mustProtoJSON(block))}
+			var res struct {
+				RunID string `json:"run_id"`
+			}
+			if err := c.post("/v1/sessions/"+sid+"/inputs", map[string]any{"text": note, "content": content}, &res); err != nil {
+				fmt.Println("[发送失败]", err)
+				continue
+			}
+			c.mu.Lock()
+			c.active = res.RunID
+			c.mu.Unlock()
 		case line == "/approve" || line == "/deny":
 			c.mu.Lock()
 			var call string
@@ -172,6 +195,11 @@ func (c *client) render(e *v1.Event) {
 			out = out[:300] + "…"
 		}
 		fmt.Printf("[结果 %s]\n", out)
+		for _, b := range p.ToolResult.GetContent() {
+			if id, ok := strings.CutPrefix(b.GetMedia().GetUri(), "artifact://"); ok {
+				fmt.Printf("[文件 %s → %s/v1/artifacts/%s]\n", b.GetMedia().GetName(), c.base, id)
+			}
+		}
 	case *v1.Event_ApprovalRequested:
 		c.mu.Lock()
 		c.approvals = append(c.approvals, p.ApprovalRequested.GetCallId())
@@ -199,4 +227,23 @@ func (c *client) render(e *v1.Event) {
 			fmt.Println("\n[已中断]")
 		}
 	}
+}
+
+// upload 上传本地文件为工件，返回引用它的内容块。
+func (c *client) upload(sid, path string) (*v1.ContentBlock, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	a := &nodesdk.Artifacts{BaseURL: c.base}
+	return a.Upload(context.Background(), sid, filepath.Base(path), "", f)
+}
+
+func mustProtoJSON(b *v1.ContentBlock) []byte {
+	out, err := protojson.Marshal(b)
+	if err != nil {
+		panic(err)
+	}
+	return out
 }

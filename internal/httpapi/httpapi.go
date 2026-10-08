@@ -8,6 +8,10 @@
 //	GET  /v1/sessions/{id}/stream?after=N          已提交事件 + 实时增量（SSE，支持 Last-Event-ID 续传）
 //	POST /v1/sessions/{id}/approvals/{call}        审批决定 {"approve": bool}
 //	GET  /v1/nodes?business_line=&end_user=        EndUser 的 Node 列表
+//	POST /v1/sessions/{id}/artifacts?name=         上传工件（请求体为文件内容，Content-Type 为 MIME 类型）
+//	GET  /v1/sessions/{id}/artifacts               Session 的工件列表
+//	GET  /v1/artifacts/{id}                        下载工件
+//	GET  /v1/artifacts/{id}/meta                   工件元数据
 //
 // M0 无鉴权，仅用于单机开发。
 package httpapi
@@ -17,14 +21,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"mime"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/artifact"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/live"
 	"yanshi/internal/model"
@@ -37,8 +45,10 @@ type Server struct {
 	Service *service.Service
 	Live    live.Bus
 	// Nodes 为 nil 时不提供 Node 相关信息。
-	Nodes  node.Directory
-	Logger *slog.Logger
+	Nodes node.Directory
+	// Artifacts 为 nil 时不提供工件接口。
+	Artifacts *artifact.Service
+	Logger    *slog.Logger
 }
 
 var pj = protojson.MarshalOptions{UseProtoNames: true}
@@ -53,6 +63,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sessions/{id}/stream", s.stream)
 	mux.HandleFunc("POST /v1/sessions/{id}/approvals/{call}", s.decide)
 	mux.HandleFunc("GET /v1/nodes", s.listNodes)
+	mux.HandleFunc("POST /v1/sessions/{id}/artifacts", s.uploadArtifact)
+	mux.HandleFunc("GET /v1/sessions/{id}/artifacts", s.listArtifacts)
+	mux.HandleFunc("GET /v1/artifacts/{id}", s.downloadArtifact)
+	mux.HandleFunc("GET /v1/artifacts/{id}/meta", s.artifactMeta)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	return mux
 }
@@ -72,6 +86,10 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		code = http.StatusBadRequest
 	case errors.Is(err, service.ErrConflict):
 		code = http.StatusConflict
+	case errors.Is(err, artifact.ErrNotFound):
+		code = http.StatusNotFound
+	case errors.Is(err, artifact.ErrTooLarge):
+		code = http.StatusRequestEntityTooLarge
 	}
 	if code == http.StatusInternalServerError && s.Logger != nil {
 		s.Logger.Error("request failed", "err", err)
@@ -260,6 +278,97 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 		out = append(out, v)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"nodes": out})
+}
+
+type artifactView struct {
+	ID        string    `json:"id"`
+	URI       string    `json:"uri"`
+	SessionID string    `json:"session_id"`
+	Name      string    `json:"name"`
+	MimeType  string    `json:"mime_type"`
+	Size      int64     `json:"size"`
+	SHA256    string    `json:"sha256"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func viewArtifact(m *artifact.Meta) artifactView {
+	return artifactView{ID: m.ID, URI: artifact.URI(m.ID), SessionID: m.SessionID, Name: m.Name,
+		MimeType: m.MimeType, Size: m.Size, SHA256: m.SHA256, CreatedAt: m.CreatedAt}
+}
+
+func (s *Server) artifacts(w http.ResponseWriter) bool {
+	if s.Artifacts == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "artifacts are not configured"})
+		return false
+	}
+	return true
+}
+
+func (s *Server) uploadArtifact(w http.ResponseWriter, r *http.Request) {
+	if !s.artifacts(w) {
+		return
+	}
+	sid := r.PathValue("id")
+	if _, err := s.Service.Load(r.Context(), sid); err != nil {
+		s.fail(w, err)
+		return
+	}
+	mimeType := r.Header.Get("Content-Type")
+	if mimeType == "application/octet-stream" {
+		mimeType = "" // 交给扩展名与内容推断
+	}
+	m, err := s.Artifacts.Put(r.Context(), sid, r.URL.Query().Get("name"), mimeType, r.Body)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, viewArtifact(m))
+}
+
+func (s *Server) listArtifacts(w http.ResponseWriter, r *http.Request) {
+	if !s.artifacts(w) {
+		return
+	}
+	list, err := s.Artifacts.List(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	out := []artifactView{}
+	for _, m := range list {
+		out = append(out, viewArtifact(m))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"artifacts": out})
+}
+
+func (s *Server) artifactMeta(w http.ResponseWriter, r *http.Request) {
+	if !s.artifacts(w) {
+		return
+	}
+	m, err := s.Artifacts.Stat(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, viewArtifact(m))
+}
+
+func (s *Server) downloadArtifact(w http.ResponseWriter, r *http.Request) {
+	if !s.artifacts(w) {
+		return
+	}
+	m, rc, err := s.Artifacts.Open(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	defer rc.Close()
+	w.Header().Set("Content-Type", m.MimeType)
+	w.Header().Set("Content-Length", strconv.FormatInt(m.Size, 10))
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": m.Name}))
+	w.Header().Set("X-Yanshi-Session", m.SessionID)
+	w.Header().Set("X-Yanshi-Artifact-Name", url.QueryEscape(m.Name))
+	_, _ = io.Copy(w, rc)
 }
 
 func parseUint(s string) (uint64, error) {

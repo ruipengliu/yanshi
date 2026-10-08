@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -163,9 +164,27 @@ func (p *Provider) Exec(ctx context.Context, id string, req sandbox.ExecRequest)
 	return res, nil
 }
 
-func (p *Provider) WriteFile(ctx context.Context, id, path string, data []byte) error {
-	_, err := docker(ctx, data, "exec", "-i", container(id), "sh", "-c", `mkdir -p "$(dirname "$1")" && cat > "$1"`, "sh", path)
-	return err
+func (p *Provider) CopyIn(ctx context.Context, id, path string, r io.Reader) error {
+	cmd := exec.CommandContext(ctx, "docker", "exec", "-i", container(id), "sh", "-c", `mkdir -p "$(dirname "$1")" && cat > "$1"`, "sh", path)
+	var errb bytes.Buffer
+	cmd.Stdin, cmd.Stderr = r, &errb
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("copy into sandbox: %w: %s", err, strings.TrimSpace(errb.String()))
+	}
+	return nil
+}
+
+func (p *Provider) CopyOut(ctx context.Context, id, path string, w io.Writer) error {
+	cmd := exec.CommandContext(ctx, "docker", "exec", container(id), "sh", "-c", `test -f "$1" && cat "$1"`, "sh", path)
+	var errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = w, &errb
+	if err := cmd.Run(); err != nil {
+		if errb.Len() == 0 {
+			return fmt.Errorf("%s is not a regular file", path)
+		}
+		return fmt.Errorf("copy out of sandbox: %w: %s", err, strings.TrimSpace(errb.String()))
+	}
+	return nil
 }
 
 func (p *Provider) ReadFile(ctx context.Context, id, path string, max int) ([]byte, bool, error) {

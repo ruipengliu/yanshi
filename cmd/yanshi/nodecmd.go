@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -39,7 +40,12 @@ func nodeCmd(args []string) error {
 		return err
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	exec := nodesdk.NewExecutor(nodesdk.FileLedger{Dir: filepath.Join(*state, "ledger")}, fileCapabilities(absRoot)...)
+	apiBase, err := nodesdk.APIBaseFromGateway(*server)
+	if err != nil {
+		return err
+	}
+	arts := &nodesdk.Artifacts{BaseURL: apiBase}
+	exec := nodesdk.NewExecutor(nodesdk.FileLedger{Dir: filepath.Join(*state, "ledger")}, fileCapabilities(absRoot, arts)...)
 	c := nodesdk.NewClient(nodesdk.Config{
 		URL: *server, NodeID: nodeID, BusinessLine: *bl, EndUser: *user, Label: *label,
 		Kind: "desktop", HostApp: "yanshi-node-demo", Executor: exec, Logger: logger,
@@ -97,7 +103,7 @@ func within(root, rel string) (string, error) {
 	return p, nil
 }
 
-func fileCapabilities(root string) []nodesdk.Capability {
+func fileCapabilities(root string, arts *nodesdk.Artifacts) []nodesdk.Capability {
 	pathSchema := `{"type":"object","properties":{"path":{"type":"string","description":"相对于共享目录的路径"}},"required":["path"]}`
 	parse := func(args string) (string, map[string]string, error) {
 		var in map[string]string
@@ -147,6 +153,58 @@ func fileCapabilities(root string) []nodesdk.Capability {
 				b := make([]byte, 64<<10)
 				n, _ := f.Read(b)
 				return textBlocks(string(b[:n])), nil
+			},
+		},
+		{
+			Spec: &v1.CapabilitySpec{Name: "upload_file", Description: "把电脑共享目录中的文件（任意类型，如录音、表格）上传为 artifact，供云端沙箱处理。",
+				InputSchemaJson: pathSchema, Idempotent: true, Risk: v1.Risk_RISK_LOW},
+			Handler: func(ctx context.Context, args string) ([]*v1.ContentBlock, error) {
+				p, in, err := parse(args)
+				if err != nil {
+					return nil, err
+				}
+				f, err := os.Open(p)
+				if err != nil {
+					return nil, err
+				}
+				defer f.Close()
+				b, err := arts.Upload(ctx, nodesdk.Invocation(ctx).GetSessionId(), filepath.Base(in["path"]), "", f)
+				if err != nil {
+					return nil, err
+				}
+				return []*v1.ContentBlock{b}, nil
+			},
+		},
+		{
+			Spec: &v1.CapabilitySpec{Name: "save_artifact", Description: "把一个 artifact（如沙箱生成的图表、纪要）保存到电脑共享目录。需要用户审批。",
+				InputSchemaJson: `{"type":"object","properties":{"artifact":{"type":"string"},"path":{"type":"string"}},"required":["artifact","path"]}`,
+				Risk:            v1.Risk_RISK_HIGH},
+			Handler: func(ctx context.Context, args string) ([]*v1.ContentBlock, error) {
+				p, in, err := parse(args)
+				if err != nil {
+					return nil, err
+				}
+				body, _, sid, err := arts.Download(ctx, in["artifact"])
+				if err != nil {
+					return nil, err
+				}
+				defer body.Close()
+				// 只接受本次调用所属 Session 的工件。
+				if sid != nodesdk.Invocation(ctx).GetSessionId() {
+					return nil, fmt.Errorf("artifact %s belongs to another session", in["artifact"])
+				}
+				f, err := os.Create(p)
+				if err != nil {
+					return nil, err
+				}
+				n, err := io.Copy(f, body)
+				if cerr := f.Close(); err == nil {
+					err = cerr
+				}
+				if err != nil {
+					return nil, err
+				}
+				return textBlocks(fmt.Sprintf("saved %d bytes to %s", n, in["path"])), nil
 			},
 		},
 		{

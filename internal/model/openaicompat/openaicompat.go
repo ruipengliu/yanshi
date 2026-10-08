@@ -91,35 +91,46 @@ type wireChunk struct {
 	} `json:"error"`
 }
 
-func content(blocks []*v1.ContentBlock) any {
-	allText := true
-	for _, b := range blocks {
-		if b.GetText() == nil {
-			allText = false
-		}
+// imageURL 返回可直接发给模型的图片地址；不可直接发送时返回空串。
+func imageURL(m *v1.Media) string {
+	if !strings.HasPrefix(m.GetMimeType(), "image/") {
+		return ""
 	}
-	if allText {
-		return model.Text(blocks)
+	if len(m.GetData()) > 0 {
+		return "data:" + m.GetMimeType() + ";base64," + base64.StdEncoding.EncodeToString(m.GetData())
 	}
-	parts := make([]wirePart, 0, len(blocks))
+	if u := m.GetUri(); strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "http://") {
+		return u
+	}
+	return ""
+}
+
+// content 编码消息内容。只有 allowImages（用户消息）时图片才以 image_url 发送；
+// 其余非文本内容（含工具结果中的图片，多数模型接口不支持）呈现为一行描述文本。
+func content(blocks []*v1.ContentBlock, allowImages bool) any {
+	var parts []wirePart
+	hasImage := false
 	for _, b := range blocks {
 		switch k := b.GetKind().(type) {
 		case *v1.ContentBlock_Text:
 			parts = append(parts, wirePart{Type: "text", Text: k.Text.GetText()})
 		case *v1.ContentBlock_Media:
-			m := k.Media
-			if !strings.HasPrefix(m.GetMimeType(), "image/") {
-				parts = append(parts, wirePart{Type: "text", Text: fmt.Sprintf("[unsupported media %s]", m.GetMimeType())})
-				continue
+			if url := imageURL(k.Media); allowImages && url != "" {
+				parts = append(parts, wirePart{Type: "image_url", ImageURL: &wireImageURL{URL: url}})
+				hasImage = true
+			} else {
+				parts = append(parts, wirePart{Type: "text", Text: model.DescribeMedia(k.Media)})
 			}
-			url := m.GetUri()
-			if len(m.GetData()) > 0 {
-				url = "data:" + m.GetMimeType() + ";base64," + base64.StdEncoding.EncodeToString(m.GetData())
-			}
-			parts = append(parts, wirePart{Type: "image_url", ImageURL: &wireImageURL{URL: url}})
 		}
 	}
-	return parts
+	if hasImage {
+		return parts
+	}
+	texts := make([]string, len(parts))
+	for i, p := range parts {
+		texts[i] = p.Text
+	}
+	return strings.Join(texts, "\n")
 }
 
 func encode(req *model.Request) *wireRequest {
@@ -131,7 +142,7 @@ func encode(req *model.Request) *wireRequest {
 	for _, m := range req.Messages {
 		wm := wireMessage{Role: string(m.Role), ToolCallID: m.ToolCallID}
 		if len(m.Content) > 0 || m.Role != model.RoleAssistant {
-			wm.Content = content(m.Content)
+			wm.Content = content(m.Content, m.Role == model.RoleUser)
 		}
 		for _, tc := range m.ToolCalls {
 			var c wireToolCall

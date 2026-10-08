@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
+	"yanshi/internal/artifact"
 	"yanshi/internal/capability"
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog/memlog"
@@ -65,7 +67,8 @@ func setup(t *testing.T) (*httptest.Server, *blocking) {
 		go w.Run(ctx)
 	}
 	svc := &service.Service{Store: store, Queue: queue, Agents: agents}
-	srv := httptest.NewServer((&httpapi.Server{Service: svc, Live: bus}).Handler())
+	arts := &artifact.Service{Meta: artifact.NewMemMeta(), Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk, MaxSize: 1 << 20}
+	srv := httptest.NewServer((&httpapi.Server{Service: svc, Live: bus, Artifacts: arts}).Handler())
 	t.Cleanup(srv.Close)
 	return srv, blk
 }
@@ -224,5 +227,63 @@ func TestErrors(t *testing.T) {
 	}
 	if code := post(t, srv.URL+"/v1/sessions/missing/inputs", map[string]string{"text": "x"}, nil); code != http.StatusNotFound {
 		t.Fatalf("missing session: %d", code)
+	}
+}
+
+func TestArtifacts(t *testing.T) {
+	srv, _ := setup(t)
+	sid := createSession(t, srv, "echo")
+	data := []byte("周一例会纪要")
+	resp, err := http.Post(srv.URL+"/v1/sessions/"+sid+"/artifacts?name=notes.txt", "application/octet-stream", bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m struct {
+		ID, URI, Name string
+		MimeType      string `json:"mime_type"`
+		Size          int
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&m)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated || m.URI != "artifact://"+m.ID || m.Size != len(data) || !strings.HasPrefix(m.MimeType, "text/plain") {
+		t.Fatalf("upload: %d %+v", resp.StatusCode, m)
+	}
+
+	resp, err = http.Get(srv.URL + "/v1/artifacts/" + m.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !bytes.Equal(got, data) || resp.Header.Get("X-Yanshi-Session") != sid || !strings.Contains(resp.Header.Get("Content-Disposition"), "notes.txt") {
+		t.Fatalf("download: %q headers %v", got, resp.Header)
+	}
+
+	var list struct {
+		Artifacts []struct{ ID string } `json:"artifacts"`
+	}
+	r2, _ := http.Get(srv.URL + "/v1/sessions/" + sid + "/artifacts")
+	_ = json.NewDecoder(r2.Body).Decode(&list)
+	r2.Body.Close()
+	if len(list.Artifacts) != 1 || list.Artifacts[0].ID != m.ID {
+		t.Fatalf("list = %+v", list)
+	}
+
+	for path, want := range map[string]int{"/v1/artifacts/art_missing": 404, "/v1/artifacts/art_missing/meta": 404} {
+		r, _ := http.Get(srv.URL + path)
+		r.Body.Close()
+		if r.StatusCode != want {
+			t.Fatalf("%s: %d", path, r.StatusCode)
+		}
+	}
+	r3, _ := http.Post(srv.URL+"/v1/sessions/"+sid+"/artifacts?name=big", "", bytes.NewReader(make([]byte, 2<<20)))
+	r3.Body.Close()
+	if r3.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversize upload: %d", r3.StatusCode)
+	}
+	r4, _ := http.Post(srv.URL+"/v1/sessions/missing/artifacts?name=x", "", strings.NewReader("x"))
+	r4.Body.Close()
+	if r4.StatusCode != http.StatusNotFound {
+		t.Fatalf("upload to missing session: %d", r4.StatusCode)
 	}
 }

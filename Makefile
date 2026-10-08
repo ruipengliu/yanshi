@@ -1,8 +1,9 @@
 GOBIN := $(shell go env GOPATH)/bin
 # 与 docker-compose.yml 一致的开发数据库。
 export YANSHI_TEST_PG ?= postgres://yanshi:yanshi@127.0.0.1:54329/yanshi?sslmode=disable
-# 沙箱测试使用本机 Docker。
+# 沙箱测试使用本机 Docker；对象存储测试使用 docker compose 中的 S3。
 export YANSHI_TEST_DOCKER ?= 1
+export YANSHI_TEST_S3 ?= 127.0.0.1:58333
 
 .PHONY: check gen lint test sim build tools deps-up deps-down sandbox-image
 
@@ -12,7 +13,7 @@ tools:
 	go install github.com/bufbuild/buf/cmd/buf@v1.50.0
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.6
 
-# 开发依赖（PostgreSQL；沙箱测试所用的基础镜像）
+# 开发依赖（PostgreSQL、S3 兼容对象存储；沙箱测试所用的基础镜像）
 deps-up:
 	docker compose up -d --wait
 	docker image inspect python:3.12-slim >/dev/null 2>&1 || docker pull -q python:3.12-slim
