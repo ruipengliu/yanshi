@@ -20,6 +20,7 @@ import (
 	"yanshi/internal/eventlog/memlog"
 	"yanshi/internal/httpapi"
 	"yanshi/internal/ids"
+	"yanshi/internal/lifecycle"
 	"yanshi/internal/live"
 	"yanshi/internal/node"
 	"yanshi/internal/service"
@@ -33,6 +34,7 @@ type authzEnv struct {
 	srv       *httptest.Server
 	api       *httpapi.Server
 	sid, art  string
+	deletion  string
 	keys      map[string]*auth.SigningKey
 	ownedNode string
 }
@@ -57,7 +59,8 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "echo", Version: "1", Model: "echo/any"})
 	clk := clock.Real{}
 	store := &session.Store{Log: memlog.New(), IDs: ids.Random(), Clock: clk}
-	svc := &service.Service{Store: store, Queue: memqueue.New(clk), Agents: agents}
+	svc := &service.Service{Store: store, Queue: memqueue.New(clk), Agents: agents,
+		Index: lifecycle.NewMemIndex(), Deletions: lifecycle.NewMemDeletions(), Janitor: memqueue.New(clk)}
 	arts := &artifact.Service{Meta: artifact.NewMemMeta(), Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk}
 	dir := node.NewMemDirectory(clk)
 	ctx := context.Background()
@@ -88,6 +91,10 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 		t.Fatal(err)
 	}
 
+	// demo 业务线的一次删除请求（针对没有数据的用户），供 GET /v1/deletions/{id} 使用。
+	if e.deletion, err = svc.DeleteEndUser(ctx, "demo", "ghost", nil); err != nil {
+		t.Fatal(err)
+	}
 	e.api = &httpapi.Server{Auth: verifier, Service: svc, Live: live.NewMemBus(), Nodes: dir, Artifacts: arts}
 	e.srv = httptest.NewServer(e.api.Handler())
 	t.Cleanup(e.srv.Close)
@@ -160,6 +167,11 @@ func (e *authzEnv) cases() map[string]routeCase {
 		"GET /v1/sessions/{id}/artifacts":             {"GET", s + "/artifacts", nil, http.StatusOK},
 		"GET /v1/artifacts/{id}":                      {"GET", a, nil, http.StatusOK},
 		"GET /v1/artifacts/{id}/meta":                 {"GET", a + "/meta", nil, http.StatusOK},
+		"GET /v1/sessions":                            {"GET", "/v1/sessions?end_user=u1", nil, http.StatusOK},
+		"POST /v1/sessions/{id}/close":                {"POST", s + "/close", nil, http.StatusNoContent},
+		"DELETE /v1/sessions/{id}":                    {"DELETE", s, nil, http.StatusAccepted},
+		"DELETE /v1/end_users/{id}":                   {"DELETE", "/v1/end_users/u1", nil, http.StatusAccepted},
+		"GET /v1/deletions/{id}":                      {"GET", "/v1/deletions/" + e.deletion, nil, http.StatusOK},
 	}
 }
 
@@ -202,6 +214,29 @@ func TestAuthorizationMatrix(t *testing.T) {
 					// 创建不针对既有资源：身份取自令牌，body 中的 end_user=u1 只是自报值。
 					// demo/u2 自报 u1 与令牌不符；other/u1 创建的是自己（other 业务线下的 u1）的 Session。
 					want := map[string]int{"demo/u1": 201, "demo/": 201, "demo/u2": 403, "other/u1": 201, "other/": 201}[principal]
+					if code != want {
+						t.Fatalf("got %d (%s), want %d", code, body, want)
+					}
+				case route == "GET /v1/sessions":
+					// 列表不返回 404，但别人看不到 demo/u1 的 Session；用户令牌自报他人 end_user 时 403。
+					if code != http.StatusOK && code != http.StatusForbidden {
+						t.Fatalf("got %d (%s)", code, body)
+					}
+					if sees := strings.Contains(body, e.sid); sees != allowed {
+						t.Fatalf("sees owner's session = %v, want %v (%s)", sees, allowed, body)
+					}
+				case route == "DELETE /v1/end_users/{id}":
+					// 只接受服务令牌；其他业务线的服务令牌删除的是它自己业务线下的 u1，与 demo 无关。
+					want := map[string]int{"demo/u1": 403, "demo/u2": 403, "other/u1": 403, "demo/": 202, "other/": 202}[principal]
+					if code != want {
+						t.Fatalf("got %d (%s), want %d", code, body, want)
+					}
+					_, err := e.api.Service.Load(context.Background(), e.sid)
+					if deleted := err != nil; deleted != (principal == "demo/") {
+						t.Fatalf("owner's session deleted = %v", deleted)
+					}
+				case route == "GET /v1/deletions/{id}":
+					want := map[string]int{"demo/u1": 403, "demo/u2": 403, "other/u1": 403, "demo/": 200, "other/": 404}[principal]
 					if code != want {
 						t.Fatalf("got %d (%s), want %d", code, body, want)
 					}

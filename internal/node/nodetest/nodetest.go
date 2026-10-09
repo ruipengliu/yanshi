@@ -80,6 +80,23 @@ func RunDirectory(t *testing.T, newDir func(t *testing.T, c clock.Clock) node.Di
 		}
 	})
 
+	t.Run("DeleteScope", func(t *testing.T) {
+		d := setup(t)
+		_, _, _ = d.Register(ctx, info("n1", "u", "a"))
+		_, _, _ = d.Register(ctx, info("n2", "u", "b"))
+		_, _, _ = d.Register(ctx, info("n3", "v", "a"))
+		ids, err := d.DeleteScope(ctx, node.Scope{BusinessLine: "bl", EndUser: "u"})
+		if err != nil || len(ids) != 2 || ids[0] != "n1" || ids[1] != "n2" {
+			t.Fatalf("deleted = %v, %v", ids, err)
+		}
+		if _, err := d.Get(ctx, "n1"); !errors.Is(err, node.ErrNotFound) {
+			t.Fatal("deleted node still registered")
+		}
+		if _, err := d.Get(ctx, "n3"); err != nil {
+			t.Fatal("delete touched another user")
+		}
+	})
+
 	t.Run("ListByScopeSortedByLabel", func(t *testing.T) {
 		d := setup(t)
 		_, _, _ = d.Register(ctx, info("n1", "u", "phone"))
@@ -134,6 +151,26 @@ func RunInbox(t *testing.T, newInbox func(t *testing.T) node.Inbox) {
 		}
 		if items, _, _ := in.Pending(ctx, "n2"); len(items) != 1 {
 			t.Fatalf("n2 = %v", ids(items))
+		}
+	})
+
+	t.Run("RemoveSessionAcrossNodes", func(t *testing.T) {
+		b := newInbox(t)
+		put := func(nodeID, sid, call string) { _ = b.Put(ctx, nodeID, &v1.Invoke{SessionId: sid, CallId: call}) }
+		put("n1", "s1", "c1")
+		put("n1", "s2", "c2")
+		put("n2", "s1", "c3")
+		_, v1Before, _ := b.Pending(ctx, "n1")
+		if err := b.RemoveSession(ctx, "s1"); err != nil {
+			t.Fatal(err)
+		}
+		p1, v1After, _ := b.Pending(ctx, "n1")
+		p2, _, _ := b.Pending(ctx, "n2")
+		if len(p1) != 1 || p1[0].GetCallId() != "c2" || len(p2) != 0 {
+			t.Fatalf("pending n1 = %v, n2 = %v", p1, p2)
+		}
+		if v1After == v1Before {
+			t.Fatal("version not bumped: watchers would not see the withdrawal")
 		}
 	})
 

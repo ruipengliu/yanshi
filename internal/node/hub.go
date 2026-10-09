@@ -9,19 +9,31 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/eventlog"
+	"yanshi/internal/lifecycle"
 	"yanshi/internal/session"
 	"yanshi/internal/workqueue"
 )
 
 // Hub 是网关的传输无关核心：所有方法同步执行，WebSocket 网关与模拟测试都通过它工作。
 type Hub struct {
-	Dir    Directory
-	Inbox  Inbox
-	Store  *session.Store
-	Queue  workqueue.Queue
-	Auth   Authenticator
-	Waker  Waker
-	Logger *slog.Logger
+	Dir   Directory
+	Inbox Inbox
+	Store *session.Store
+	Queue workqueue.Queue
+	Auth  Authenticator
+	Waker Waker
+	// Deletions 非 nil 时，派发后复查删除记录，撤回属于已删除 Session 的调用（ADR-0015）。
+	Deletions lifecycle.Deletions
+	Logger    *slog.Logger
+}
+
+// Withdrawn 报告刚写入的、属于 sessionID 的数据是否应撤回：Session 已有删除记录。
+// 写入方"先写、后查"，Janitor"先记、后清"，二者无论如何交错，总有一方会清除它（ADR-0015）。
+func Withdrawn(ctx context.Context, d lifecycle.Deletions, sessionID string) (bool, error) {
+	if d == nil || sessionID == "" {
+		return false, nil
+	}
+	return lifecycle.Deleted(ctx, d, sessionID)
 }
 
 // Conn 是一条已认证的 Node 连接。
@@ -70,6 +82,12 @@ func (h *Hub) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke) error
 	if err := h.Inbox.Put(ctx, nodeID, inv); err != nil {
 		return err
 	}
+	if gone, err := Withdrawn(ctx, h.Deletions, inv.GetSessionId()); err != nil || gone {
+		if gone {
+			return h.Inbox.Remove(ctx, nodeID, inv.GetCallId())
+		}
+		return err
+	}
 	info, err := h.Dir.Get(ctx, nodeID)
 	if err != nil {
 		return err
@@ -101,6 +119,10 @@ func (h *Hub) Result(ctx context.Context, nodeID string, res *v1.InvokeResult) e
 	if inv == nil {
 		return nil
 	}
+	if inv.GetSessionId() == "" {
+		// 不属于任何 Session 的平台调用（如清除本地记录），没有结果要写入日志。
+		return h.Inbox.Remove(ctx, nodeID, inv.GetCallId())
+	}
 	if err := h.commitResult(ctx, inv, res); err != nil {
 		return err
 	}
@@ -121,7 +143,11 @@ func (h *Hub) commitResult(ctx context.Context, inv *v1.Invoke, res *v1.InvokeRe
 		}}}
 		err := h.Store.Commit(ctx, st, e)
 		if errors.Is(err, eventlog.ErrConflict) {
-			if err := h.Store.Sync(ctx, st); err != nil {
+			if err := h.Store.SyncAfterConflict(ctx, st); err != nil {
+				if errors.Is(err, session.ErrGone) {
+					h.log().Info("node result dropped", "session", inv.GetSessionId(), "call", inv.GetCallId(), "reason", "session deleted")
+					return nil
+				}
 				return err
 			}
 			continue
@@ -142,4 +168,10 @@ func (w LogWaker) Wake(_ context.Context, info *Info) {
 	if w.Logger != nil {
 		w.Logger.Info("wake offline node (push stub)", "node", info.NodeID, "label", info.Label, "host_app", info.HostApp)
 	}
+}
+
+// DeleteEndUser 删除 EndUser 的全部 Node 登记（注销账号，ADR-0015）。
+func (h *Hub) DeleteEndUser(ctx context.Context, businessLine, endUser string) error {
+	_, err := h.Dir.DeleteScope(ctx, Scope{BusinessLine: businessLine, EndUser: endUser})
+	return err
 }

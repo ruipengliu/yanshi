@@ -225,7 +225,13 @@ func (w *Worker) tryCommit(ctx context.Context, events ...*v1.Event) (bool, erro
 			return err == nil, err
 		}
 		metrics.CommitConflicts.WithLabelValues().Inc()
-		if err := w.cfg.Store.Sync(ctx, w.st); err != nil {
+		if err := w.cfg.Store.SyncAfterConflict(ctx, w.st); err != nil {
+			if errors.Is(err, session.ErrGone) {
+				// Session 已删除：放弃并丢弃全部本地状态。否则本地投影仍认为调用"已由我开始、尚无结果"，
+				// 而按需续约又可能尚未发现租约已被移除，下一步会再次执行非幂等调用（模拟测试发现）。
+				w.drop()
+				return false, nil
+			}
 			return false, err
 		}
 		if r := w.st.Run(w.runID); r == nil || !w.owns(r) {

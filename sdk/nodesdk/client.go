@@ -36,6 +36,8 @@ type Config struct {
 	Logger       *slog.Logger
 	// OnConnected 在每次连接成功后调用，参数为网关分配的标签。
 	OnConnected func(label string)
+	// LedgerRetention 是账本记录的保留期，默认 DefaultLedgerRetention（7 天）；SDK 每小时清理一次过期记录。
+	LedgerRetention time.Duration
 }
 
 type Client struct{ cfg Config }
@@ -47,8 +49,9 @@ func NewClient(cfg Config) *Client {
 	return &Client{cfg: cfg}
 }
 
-// Run 保持与网关的连接，断开后以指数退避重连，直到 ctx 结束。
+// Run 保持与网关的连接，断开后以指数退避重连，直到 ctx 结束；期间定期按保留期清理账本。
 func (c *Client) Run(ctx context.Context) error {
+	go c.pruneLoop(ctx)
 	backoff := 500 * time.Millisecond
 	for {
 		connected, err := c.session(ctx)
@@ -148,4 +151,24 @@ func (c *Client) read(ctx context.Context, conn *websocket.Conn) (*v1.GatewayMes
 	}
 	m := &v1.GatewayMessage{}
 	return m, proto.Unmarshal(b, m)
+}
+
+// pruneLoop 每小时清理一次超过保留期的账本记录：调用结果可能含有个人数据，不应在设备上长期留存。
+func (c *Client) pruneLoop(ctx context.Context) {
+	retention := c.cfg.LedgerRetention
+	if retention <= 0 {
+		retention = DefaultLedgerRetention
+	}
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	for {
+		if err := c.cfg.Executor.Prune(time.Now().Add(-retention)); err != nil {
+			c.cfg.Logger.Warn("ledger prune failed", "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }

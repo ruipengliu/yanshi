@@ -19,6 +19,7 @@ import (
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/clock"
 	"yanshi/internal/ids"
+	"yanshi/internal/lifecycle"
 	"yanshi/internal/model"
 )
 
@@ -73,6 +74,8 @@ type MetaStore interface {
 	Get(ctx context.Context, id string) (*Meta, error)
 	// List 返回 Session 的全部工件，按创建时间排序。
 	List(ctx context.Context, sessionID string) ([]*Meta, error)
+	// Delete 删除元数据；不存在时不报错。
+	Delete(ctx context.Context, id string) error
 }
 
 type BlobStore interface {
@@ -86,11 +89,13 @@ type BlobStore interface {
 const DefaultMaxSize = 512 << 20
 
 type Service struct {
-	Meta    MetaStore
-	Blobs   BlobStore
-	IDs     ids.Generator
-	Clock   clock.Clock
-	MaxSize int64
+	// Deletions 非 nil 时，上传后复查删除记录（ADR-0015）。
+	Deletions lifecycle.Deletions
+	Meta      MetaStore
+	Blobs     BlobStore
+	IDs       ids.Generator
+	Clock     clock.Clock
+	MaxSize   int64
 }
 
 // limitReader 在超过上限时返回 ErrTooLarge，而不是静默截断。
@@ -152,7 +157,39 @@ func (s *Service) Put(ctx context.Context, sessionID, name, mimeType string, r i
 		_ = s.Blobs.Delete(context.WithoutCancel(ctx), m.ID)
 		return nil, err
 	}
+	// 先写、后查：上传期间 Session 被删除时撤回（ADR-0015）。
+	if s.Deletions != nil {
+		gone, err := lifecycle.Deleted(ctx, s.Deletions, sessionID)
+		if err != nil || gone {
+			_ = s.delete(context.WithoutCancel(ctx), m.ID)
+			if gone {
+				return nil, fmt.Errorf("%w: session %s", ErrNotFound, sessionID)
+			}
+			return nil, err
+		}
+	}
 	return m, nil
+}
+
+// DeleteSession 删除 Session 的全部工件：先删内容，再删元数据，使中途失败时仍能按元数据重试。
+func (s *Service) DeleteSession(ctx context.Context, sessionID string) error {
+	list, err := s.Meta.List(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	for _, m := range list {
+		if err := s.delete(ctx, m.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) delete(ctx context.Context, id string) error {
+	if err := s.Blobs.Delete(ctx, id); err != nil {
+		return err
+	}
+	return s.Meta.Delete(ctx, id)
 }
 
 type countWriter struct{ n int64 }

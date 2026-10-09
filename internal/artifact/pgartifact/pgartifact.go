@@ -47,3 +47,8 @@ func (s Meta) List(ctx context.Context, sessionID string) ([]*artifact.Meta, err
 	}
 	return pgx.CollectRows(rows, scan)
 }
+
+func (s Meta) Delete(ctx context.Context, id string) error {
+	_, err := s.Pool.Exec(ctx, `DELETE FROM artifacts WHERE id = $1`, id)
+	return err
+}

@@ -26,6 +26,10 @@ type Log interface {
 
 	// Wait 阻塞直到日志末尾 seq > after，或 ctx 结束；返回当前末尾 seq。
 	Wait(ctx context.Context, sessionID string, after uint64) (uint64, error)
+
+	// Delete 物理删除整个 Session 的日志（ADR-0015）。只能在 Session 已有删除记录、
+	// 不再有任何写入方之后调用；之后该 Session 视为空日志。
+	Delete(ctx context.Context, sessionID string) error
 }
 
 // ReadAll 读取 seq > after 的全部事件。

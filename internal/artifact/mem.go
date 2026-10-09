@@ -89,3 +89,10 @@ func (s *MemBlobs) Delete(_ context.Context, key string) error {
 	delete(s.m, key)
 	return nil
 }
+
+func (s *MemMeta) Delete(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.m, id)
+	return nil
+}

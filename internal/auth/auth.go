@@ -25,6 +25,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"yanshi/internal/clock"
+	"yanshi/internal/lifecycle"
 )
 
 // Principal 是已验证的调用方身份。
@@ -75,6 +76,8 @@ type BusinessLine struct {
 	Keys []Key  `yaml:"keys"`
 	// MaxTTL 是令牌允许的最长有效期，默认 1 小时。
 	MaxTTL time.Duration `yaml:"max_ttl"`
+	// Retention 是该业务线 Session 的保留策略（docs/design/m2-session-lifecycle.md §5）。
+	Retention lifecycle.Retention `yaml:"retention"`
 }
 
 // LoadDir 读取 dir 下所有 *.yaml 业务线配置。

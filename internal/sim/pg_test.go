@@ -7,6 +7,7 @@ import (
 
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog/pglog"
+	"yanshi/internal/lifecycle/pglifecycle"
 	"yanshi/internal/node/pgnode"
 	"yanshi/internal/pg/pgtest"
 	"yanshi/internal/sandbox/pgsandbox"
@@ -48,6 +49,8 @@ func diffSeed(t *testing.T, s uint64) {
 			Dir: pgnode.NewDirectory(pool, c), Inbox: pgnode.NewInbox(pool, notifier),
 			SandboxQueue: pgqueue.New(pool, c, pgqueue.Sandboxes),
 			Ledger:       pgsandbox.Ledger{Pool: pool}, Activity: pgsandbox.Activity{Pool: pool},
+			Index: pglifecycle.Index{Pool: pool}, Deletions: pglifecycle.Deletions{Pool: pool},
+			JanitorQueue: pgqueue.New(pool, c, pgqueue.Janitor),
 		}
 	}
 	onPG, err := New(opts)

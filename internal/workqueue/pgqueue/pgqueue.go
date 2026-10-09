@@ -21,6 +21,8 @@ import (
 const (
 	Sessions  = "work_items"
 	Sandboxes = "sandbox_items"
+	// Janitor 是 Session 清理（关闭与删除）的队列，键为 Session ID。
+	Janitor = "janitor_items"
 )
 
 type Queue struct {
@@ -50,7 +52,7 @@ func (q *Queue) Ready() <-chan struct{} {
 
 // New 返回基于 table（Sessions 或 Sandboxes）的队列。
 func New(pool *pgxpool.Pool, c clock.Clock, table string) *Queue {
-	if table != Sessions && table != Sandboxes {
+	if table != Sessions && table != Sandboxes && table != Janitor {
 		panic("pgqueue: unknown table " + table)
 	}
 	return &Queue{pool: pool, clock: c, table: table}
@@ -150,4 +152,9 @@ func (q *Queue) Release(ctx context.Context, l *workqueue.Lease, done bool) erro
 		return workqueue.ErrLeaseLost
 	}
 	return nil
+}
+
+func (q *Queue) Remove(ctx context.Context, sessionID string) error {
+	_, err := q.pool.Exec(ctx, q.q(`DELETE FROM work_items WHERE session_id = $1`), sessionID)
+	return err
 }

@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -34,6 +35,22 @@ func (s *Store) Sync(ctx context.Context, st *State) error {
 		if err := st.Apply(e); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// ErrGone 表示 Session 的日志已被删除（ADR-0015）：追加冲突后同步，却没有任何新事件，说明日志变短了。
+var ErrGone = errors.New("session log is gone")
+
+// SyncAfterConflict 在追加冲突后同步投影。冲突必然意味着日志前进了；若同步没有读到新事件，
+// 日志只可能已被删除，返回 ErrGone，调用方应放弃而不是重试。
+func (s *Store) SyncAfterConflict(ctx context.Context, st *State) error {
+	before := st.Seq
+	if err := s.Sync(ctx, st); err != nil {
+		return err
+	}
+	if st.Seq == before {
+		return ErrGone
 	}
 	return nil
 }

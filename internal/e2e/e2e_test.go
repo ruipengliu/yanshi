@@ -33,6 +33,9 @@ import (
 	"yanshi/internal/eventlog/pglog"
 	"yanshi/internal/httpapi"
 	"yanshi/internal/ids"
+	"yanshi/internal/janitor"
+	"yanshi/internal/lifecycle"
+	"yanshi/internal/lifecycle/pglifecycle"
 	"yanshi/internal/live"
 	"yanshi/internal/live/peer"
 	"yanshi/internal/model"
@@ -142,6 +145,10 @@ type stores struct {
 	// provider 为 nil 时不启动沙箱控制器。
 	provider  sandbox.Provider
 	artifacts *artifact.Service
+
+	index        lifecycle.Index
+	deletions    lifecycle.Deletions
+	janitorQueue workqueue.Queue
 }
 
 func memStores() stores {
@@ -150,6 +157,7 @@ func memStores() stores {
 		log: memlog.New(), queue: memqueue.New(clk), dir: node.NewMemDirectory(clk), inbox: node.NewMemInbox(),
 		sandboxQueue: memqueue.New(clk), ledger: nodesdk.NewMemLedger(), activity: sandbox.NewMemActivity(),
 		artifacts: &artifact.Service{Meta: artifact.NewMemMeta(), Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk},
+		index:     lifecycle.NewMemIndex(), deletions: lifecycle.NewMemDeletions(), janitorQueue: memqueue.New(clk),
 	}
 }
 
@@ -168,7 +176,8 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 	peerSrv := httptest.NewServer(peerMux)
 	t.Cleanup(peerSrv.Close)
 	bus := &peer.Bus{Local: local, Log: st.log, Self: peerSrv.URL, Token: "t", Retry: 20 * time.Millisecond}
-	hub := &node.Hub{Dir: st.dir, Inbox: st.inbox, Store: store, Queue: st.queue, Auth: node.TokenAuth{Verifier: verifier}}
+	st.artifacts.Deletions = st.deletions
+	hub := &node.Hub{Dir: st.dir, Inbox: st.inbox, Store: store, Queue: st.queue, Auth: node.TokenAuth{Verifier: verifier}, Deletions: st.deletions}
 	catalog := &capability.Catalog{Local: capability.NewRegistry(), Nodes: st.dir, DefaultTimeout: time.Minute,
 		Sandbox: &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID}}
 	router := &sandbox.Router{Hub: hub, Queue: st.sandboxQueue}
@@ -184,13 +193,22 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 	}
 	if st.provider != nil {
 		c := &sandbox.Controller{ID: "c1", Queue: st.sandboxQueue, Hub: hub, Provider: st.provider, Activity: st.activity,
-			Ledger: st.ledger, Artifacts: st.artifacts, Clock: clk, IdleWait: 5 * time.Millisecond}
+			Ledger: st.ledger, Artifacts: st.artifacts, Clock: clk, IdleWait: 5 * time.Millisecond,
+			Lifecycle: &lifecycle.Guard{Index: st.index, Deletions: st.deletions}}
 		go c.Run(ctx)
+	}
+	svc := &service.Service{Store: store, Queue: st.queue, Agents: agents, Nodes: router,
+		Index: st.index, Deletions: st.deletions, Janitor: st.janitorQueue}
+	if workers > 0 {
+		j := &janitor.Janitor{ID: "j1", Queue: st.janitorQueue, Service: svc, Store: store, Sessions: st.queue,
+			SandboxQueue: st.sandboxQueue, Inbox: st.inbox, Nodes: st.dir, Sandbox: st.provider, Activity: st.activity,
+			Ledger: st.ledger, Artifacts: st.artifacts, Index: st.index, Deletions: st.deletions, Clock: clk,
+			IdleWait: 10 * time.Millisecond}
+		go j.Run(ctx)
 	}
 	if !serve {
 		return nil
 	}
-	svc := &service.Service{Store: store, Queue: st.queue, Agents: agents, Nodes: router}
 	mux := http.NewServeMux()
 	mux.Handle("/v1/nodes/connect", &wsgateway.Gateway{Hub: hub})
 	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: st.dir, Artifacts: st.artifacts}).Handler())
@@ -437,6 +455,7 @@ func TestCrossInstanceOnPostgres(t *testing.T) {
 			sandboxQueue: pgqueue.New(pool, clk, pgqueue.Sandboxes),
 			ledger:       pgsandbox.Ledger{Pool: pool}, activity: pgsandbox.Activity{Pool: pool},
 			artifacts: &artifact.Service{Meta: pgartifact.Meta{Pool: pool}, Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk},
+			index:     pglifecycle.Index{Pool: pool}, deletions: pglifecycle.Deletions{Pool: pool}, janitorQueue: pgqueue.New(pool, clk, pgqueue.Janitor),
 		}
 	}
 	e := &env{t: t, srv: instance(t, shared(), 0, true)}

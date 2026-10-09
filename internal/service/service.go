@@ -10,6 +10,7 @@ import (
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
 	"yanshi/internal/eventlog"
+	"yanshi/internal/lifecycle"
 	"yanshi/internal/metrics"
 	"yanshi/internal/session"
 	"yanshi/internal/workqueue"
@@ -31,6 +32,12 @@ type Service struct {
 	Agents *agentdef.Registry
 	// Nodes 为 nil 时中断不撤回设备调用。
 	Nodes Canceler
+
+	// 生命周期（docs/design/m2-session-lifecycle.md）：Index 与 Deletions 为 nil 时不维护索引、
+	// 不支持删除；Janitor 是清理队列，关闭与删除后入队由 Janitor 回收资源。
+	Index     lifecycle.Index
+	Deletions lifecycle.Deletions
+	Janitor   workqueue.Queue
 }
 
 // ErrConflict 表示请求与 Session 当前状态冲突（如审批已决定）。
@@ -62,6 +69,15 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (string, error)
 		return "", fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
 	st := &session.State{SessionID: "ses_" + s.Store.IDs()}
+	// 先写索引、再写日志：日志写入失败只会留下一条找不到日志的索引（列表与删除都能处理），
+	// 反过来则会出现索引之外的 Session，按 EndUser 删除时会被遗漏。
+	if s.Index != nil {
+		now := s.Store.Clock.Now()
+		if err := s.Index.Put(ctx, &lifecycle.Session{ID: st.SessionID, BusinessLine: req.BusinessLine, EndUser: req.EndUser,
+			Agent: def.Name, CreatedAt: now, LastInputAt: now}); err != nil {
+			return "", err
+		}
+	}
 	err = s.Store.Commit(ctx, st, &v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{
 		BusinessLine: req.BusinessLine, EndUser: req.EndUser, Agent: def.Ref(),
 	}}})
@@ -79,6 +95,15 @@ func (s *Service) Load(ctx context.Context, sessionID string) (*session.State, e
 	}
 	if st.Created == nil {
 		return nil, fmt.Errorf("%w: session %s", ErrNotFound, sessionID)
+	}
+	// 有删除记录的 Session 对外不可见，即使清理尚未完成（ADR-0015）。
+	if s.Deletions != nil {
+		if gone, err := lifecycle.Deleted(ctx, s.Deletions, sessionID); err != nil || gone {
+			if gone {
+				return nil, fmt.Errorf("%w: session %s", ErrNotFound, sessionID)
+			}
+			return nil, err
+		}
 	}
 	return st, nil
 }
@@ -108,6 +133,9 @@ func (s *Service) Submit(ctx context.Context, sessionID string, input []*v1.Cont
 		return nil, err
 	}
 	for range maxConflictRetries {
+		if st.Closed != nil {
+			return nil, fmt.Errorf("%w: session %s is closed", ErrConflict, sessionID)
+		}
 		var e *v1.Event
 		res := &SubmitResult{}
 		if a := st.Active(); a != nil {
@@ -119,13 +147,18 @@ func (s *Service) Submit(ctx context.Context, sessionID string, input []*v1.Cont
 		}
 		err := s.Store.Commit(ctx, st, e)
 		if err == nil {
+			if s.Index != nil {
+				if err := s.Index.Touch(ctx, sessionID, s.Store.Clock.Now()); err != nil {
+					return res, err
+				}
+			}
 			return res, s.Queue.Enqueue(ctx, sessionID)
 		}
 		if !errors.Is(err, eventlog.ErrConflict) {
 			return nil, err
 		}
-		if err := s.Store.Sync(ctx, st); err != nil {
-			return nil, err
+		if err := s.Store.SyncAfterConflict(ctx, st); err != nil {
+			return nil, gone(sessionID, err)
 		}
 	}
 	return nil, fmt.Errorf("submit to session %s: too many conflicts", sessionID)
@@ -155,8 +188,8 @@ func (s *Service) Interrupt(ctx context.Context, sessionID, runID string) error 
 		if !errors.Is(err, eventlog.ErrConflict) {
 			return err
 		}
-		if err := s.Store.Sync(ctx, st); err != nil {
-			return err
+		if err := s.Store.SyncAfterConflict(ctx, st); err != nil {
+			return gone(sessionID, err)
 		}
 	}
 	return fmt.Errorf("interrupt run %s: too many conflicts", runID)
@@ -208,9 +241,122 @@ func (s *Service) Decide(ctx context.Context, sessionID, callID string, approved
 		if !errors.Is(err, eventlog.ErrConflict) {
 			return err
 		}
-		if err := s.Store.Sync(ctx, st); err != nil {
-			return err
+		if err := s.Store.SyncAfterConflict(ctx, st); err != nil {
+			return gone(sessionID, err)
 		}
 	}
 	return fmt.Errorf("decide call %s: too many conflicts", callID)
+}
+
+// Close 关闭 Session（终态，不可逆）：中断活跃的 Run，追加 SessionClosed，由 Janitor 销毁沙箱工作区。
+// 已关闭时无操作。
+func (s *Service) Close(ctx context.Context, sessionID, by, reason string) error {
+	st, err := s.Load(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	for range maxConflictRetries {
+		if st.Closed != nil {
+			return nil
+		}
+		var events []*v1.Event
+		a := st.Active()
+		if a != nil {
+			events = append(events, &v1.Event{Payload: &v1.Event_RunInterrupted{RunInterrupted: &v1.RunInterrupted{RunId: a.ID, By: by}}})
+		}
+		events = append(events, &v1.Event{Payload: &v1.Event_SessionClosed{SessionClosed: &v1.SessionClosed{By: by, Reason: reason}}})
+		err := s.Store.Commit(ctx, st, events...)
+		if err == nil {
+			if a != nil {
+				metrics.RunsFinished.WithLabelValues("interrupted").Inc()
+				if err := s.cancelDispatched(ctx, a); err != nil {
+					return err
+				}
+			}
+			if s.Index != nil {
+				if err := s.Index.MarkClosed(ctx, sessionID, s.Store.Clock.Now()); err != nil {
+					return err
+				}
+			}
+			return s.enqueueJanitor(ctx, sessionID)
+		}
+		if !errors.Is(err, eventlog.ErrConflict) {
+			return err
+		}
+		if err := s.Store.SyncAfterConflict(ctx, st); err != nil {
+			return gone(sessionID, err)
+		}
+	}
+	return fmt.Errorf("close session %s: too many conflicts", sessionID)
+}
+
+func (s *Service) enqueueJanitor(ctx context.Context, sessionID string) error {
+	if s.Janitor == nil {
+		return nil
+	}
+	return s.Janitor.Enqueue(ctx, sessionID)
+}
+
+// Delete 删除 Session：写入删除记录（立即对外不可见），由 Janitor 在后台清除全部数据。
+// 已删除时无操作。requestID 非空表示属于一次按 EndUser 的删除请求。
+func (s *Service) Delete(ctx context.Context, sessionID, reason, requestID string) error {
+	if s.Deletions == nil {
+		return fmt.Errorf("%w: deletion is not configured", ErrInvalid)
+	}
+	businessLine := ""
+	if st, err := s.Store.Load(ctx, sessionID); err == nil && st.Created != nil {
+		businessLine = st.Created.GetBusinessLine()
+	} else if s.Index != nil {
+		if x, err := s.Index.Get(ctx, sessionID); err == nil {
+			businessLine = x.BusinessLine
+		}
+	}
+	if businessLine == "" {
+		return fmt.Errorf("%w: session %s", ErrNotFound, sessionID)
+	}
+	if _, err := s.Deletions.Mark(ctx, &lifecycle.Tombstone{SessionID: sessionID, BusinessLine: businessLine,
+		Reason: reason, RequestID: requestID, RequestedAt: s.Store.Clock.Now()}); err != nil {
+		return err
+	}
+	return s.enqueueJanitor(ctx, sessionID)
+}
+
+// DeleteEndUser 删除 EndUser 在业务线下的全部 Session 与 Node 登记（注销账号），返回删除请求 ID。
+// 删除请求开始后新建的 Session 不在其中：调用方应先让该用户的令牌失效。
+func (s *Service) DeleteEndUser(ctx context.Context, businessLine, endUser string, nodes NodeRemover) (string, error) {
+	if s.Index == nil || s.Deletions == nil {
+		return "", fmt.Errorf("%w: deletion is not configured", ErrInvalid)
+	}
+	req := &lifecycle.Request{ID: "del_" + s.Store.IDs(), BusinessLine: businessLine, CreatedAt: s.Store.Clock.Now()}
+	if err := s.Deletions.CreateRequest(ctx, req); err != nil {
+		return "", err
+	}
+	ids, err := s.Index.IDsOf(ctx, businessLine, endUser)
+	if err != nil {
+		return "", err
+	}
+	for _, id := range ids {
+		if err := s.Delete(ctx, id, "account_deletion", req.ID); err != nil && !errors.Is(err, ErrNotFound) {
+			return "", err
+		}
+	}
+	if nodes != nil {
+		if err := nodes.DeleteEndUser(ctx, businessLine, endUser); err != nil {
+			return "", err
+		}
+	}
+	return req.ID, nil
+}
+
+// NodeRemover 删除 EndUser 的 Node 登记。
+type NodeRemover interface {
+	DeleteEndUser(ctx context.Context, businessLine, endUser string) error
+}
+
+// gone 把"日志已被删除"转换为不存在。
+func gone(sessionID string, err error) error {
+	if errors.Is(err, session.ErrGone) {
+		return fmt.Errorf("%w: session %s", ErrNotFound, sessionID)
+	}
+	return err
 }

@@ -171,3 +171,35 @@ func (m *MemInbox) Wait(ctx context.Context, nodeID string, version uint64) erro
 		return nil
 	}
 }
+
+func (m *MemInbox) RemoveSession(_ context.Context, sessionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, b := range m.boxes {
+		kept := b.items[:0:0]
+		for _, it := range b.items {
+			if it.GetSessionId() != sessionID {
+				kept = append(kept, it)
+			}
+		}
+		if len(kept) != len(b.items) {
+			b.items = kept
+			b.bump()
+		}
+	}
+	return nil
+}
+
+func (d *MemDirectory) DeleteScope(_ context.Context, scope Scope) ([]string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var ids []string
+	for id, n := range d.nodes {
+		if n.Scope == scope {
+			ids = append(ids, id)
+			delete(d.nodes, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
+}

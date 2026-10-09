@@ -90,3 +90,13 @@ func (l *Log) Wait(ctx context.Context, sessionID string, after uint64) (uint64,
 		}
 	}
 }
+
+func (l *Log) Delete(_ context.Context, sessionID string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if s := l.sessions[sessionID]; s != nil {
+		close(s.changed) // 唤醒等待者，使其重新检查
+		delete(l.sessions, sessionID)
+	}
+	return nil
+}

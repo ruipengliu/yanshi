@@ -136,6 +136,8 @@ type State struct {
 	// History 是构成对话上下文的事件（用户输入、模型输出、调用结果），按日志顺序；
 	// 只含最近一次 Compaction 之后的事件，因此随上下文窗口有界，而不随日志增长。
 	History []*v1.Event
+	// Closed 非 nil 表示 Session 已关闭（终态）。
+	Closed *v1.SessionClosed
 	// Compaction 是最近一次上下文压缩，nil 表示从未压缩（ADR-0012）；CompactedAt 是该事件自身的 seq。
 	Compaction  *v1.ContextCompacted
 	CompactedAt uint64
@@ -229,10 +231,20 @@ func (s *State) apply(e *v1.Event) error {
 	if e.GetSessionId() != s.SessionID {
 		return fmt.Errorf("event belongs to session %q", e.GetSessionId())
 	}
+	if s.Closed != nil {
+		return fmt.Errorf("session is closed")
+	}
 
 	switch p := e.GetPayload().(type) {
 	case *v1.Event_SessionCreated:
 		return fmt.Errorf("duplicate SessionCreated")
+
+	case *v1.Event_SessionClosed:
+		// 关闭方须先中断活跃的 Run（可与本事件同批提交）。
+		if a := s.Active(); a != nil {
+			return fmt.Errorf("session closed while run %s is active", a.ID)
+		}
+		s.Closed = p.SessionClosed
 
 	case *v1.Event_RunRequested:
 		if a := s.Active(); a != nil {

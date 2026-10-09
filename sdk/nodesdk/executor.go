@@ -6,8 +6,10 @@ package nodesdk
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
 )
@@ -41,15 +43,31 @@ const (
 type Record struct {
 	State  State
 	Result *v1.InvokeResult
+	// SessionID 与 UpdatedAt 用于按 Session 清除与按保留期清理（docs/design/m2-session-lifecycle.md §3.5）。
+	SessionID string
+	UpdatedAt time.Time
 }
 
 // Ledger 持久记录每个 call_id 的执行状态。实现必须在 Put 返回前落盘，
 // 否则 App 被杀后可能重复执行有副作用的调用。
+//
+// 调用结果可能含有个人数据：Session 删除时由 Forget 清除，其余记录由 Prune 按保留期清理。
 type Ledger interface {
 	// Get 返回记录；不存在时返回 State 为 StateNew 的记录。
 	Get(callID string) (*Record, error)
 	Put(callID string, r *Record) error
+	// Forget 删除属于该 Session 的全部记录。
+	Forget(sessionID string) error
+	// Prune 删除最后更新早于 before 的记录。
+	Prune(before time.Time) error
 }
+
+// ForgetCapability 是保留的能力名：平台以它投递"清除某 Session 的本地记录"，
+// 复用 Inbox 的离线投递与重试（docs/design/m2-session-lifecycle.md §3.5）。
+const ForgetCapability = "__forget_session"
+
+// DefaultLedgerRetention 是设备端账本记录的默认保留期。
+const DefaultLedgerRetention = 7 * 24 * time.Hour
 
 // Executor 以 call_id 去重地执行调用。并发安全。
 type Executor struct {
@@ -99,10 +117,24 @@ func (e *Executor) Execute(ctx context.Context, inv *v1.Invoke) (*v1.InvokeResul
 		cancel()
 	}()
 
+	if inv.GetCapability() == ForgetCapability {
+		// 目标 Session 在参数中：该调用本身不属于任何 Session，不会随 Session 的清理被撤回。
+		var args struct {
+			SessionID string `json:"session_id"`
+		}
+		if err := json.Unmarshal([]byte(inv.GetArgumentsJson()), &args); err != nil || args.SessionID == "" {
+			return errorResult(id, "forget: session_id is required"), nil
+		}
+		if err := e.ledger.Forget(args.SessionID); err != nil {
+			return nil, err
+		}
+		return &v1.InvokeResult{CallId: id, Content: []*v1.ContentBlock{{Kind: &v1.ContentBlock_Text{Text: &v1.Text{Text: "forgotten"}}}}}, nil
+	}
 	rec, err := e.ledger.Get(id)
 	if err != nil {
 		return nil, err
 	}
+	sid := inv.GetSessionId()
 	if rec.State == StateDone {
 		return rec.Result, nil
 	}
@@ -114,7 +146,7 @@ func (e *Executor) Execute(ctx context.Context, inv *v1.Invoke) (*v1.InvokeResul
 	case rec.State == StateStarted && !c.Spec.GetIdempotent():
 		res = errorResult(id, "outcome unknown: the app stopped while executing this call; it was not retried")
 	default:
-		if err := e.ledger.Put(id, &Record{State: StateStarted}); err != nil {
+		if err := e.ledger.Put(id, &Record{State: StateStarted, SessionID: sid, UpdatedAt: time.Now()}); err != nil {
 			return nil, err
 		}
 		content, err := c.Handler(context.WithValue(ctx, invocationKey{}, inv), inv.GetArgumentsJson())
@@ -128,7 +160,7 @@ func (e *Executor) Execute(ctx context.Context, inv *v1.Invoke) (*v1.InvokeResul
 			res = &v1.InvokeResult{CallId: id, Content: content}
 		}
 	}
-	if err := e.ledger.Put(id, &Record{State: StateDone, Result: res}); err != nil {
+	if err := e.ledger.Put(id, &Record{State: StateDone, Result: res, SessionID: sid, UpdatedAt: time.Now()}); err != nil {
 		return nil, err
 	}
 	return res, nil
@@ -142,3 +174,6 @@ func (e *Executor) Cancel(callID string) {
 		cancel()
 	}
 }
+
+// Prune 按保留期清理账本。
+func (e *Executor) Prune(before time.Time) error { return e.ledger.Prune(before) }

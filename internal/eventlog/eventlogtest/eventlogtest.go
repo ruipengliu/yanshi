@@ -147,6 +147,24 @@ func Run(t *testing.T, newLog func(t *testing.T) eventlog.Log) {
 		}
 	})
 
+	t.Run("DeleteRemovesOnlyThatSession", func(t *testing.T) {
+		l := newLog(t)
+		_, _ = l.Append(ctx, "s", 0, ev("a"), ev("b"))
+		_, _ = l.Append(ctx, "other", 0, ev("x"))
+		if err := l.Delete(ctx, "s"); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := eventlog.ReadAll(ctx, l, "s", 0); len(got) != 0 {
+			t.Fatalf("deleted session still has %d events", len(got))
+		}
+		if got, _ := eventlog.ReadAll(ctx, l, "other", 0); len(got) != 1 {
+			t.Fatal("delete touched another session")
+		}
+		if err := l.Delete(ctx, "s"); err != nil {
+			t.Fatalf("delete is not idempotent: %v", err)
+		}
+	})
+
 	t.Run("WaitHonorsContext", func(t *testing.T) {
 		l := newLog(t)
 		c, cancel := context.WithTimeout(ctx, 20*time.Millisecond)

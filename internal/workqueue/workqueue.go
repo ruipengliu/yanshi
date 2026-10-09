@@ -26,6 +26,9 @@ type Lease struct {
 }
 
 type Queue interface {
+	// Remove 无条件移除键（包括已租出的）：持有者随后的续约与释放得到 ErrLeaseLost。
+	// 用于 Session 删除（ADR-0015）。
+	Remove(ctx context.Context, sessionID string) error
 	// Enqueue 标记 Session 需要推进；幂等。对已被租出的 Session 调用，
 	// 会使其在 Release(done=true) 或 Park 后仍立即可认领；对已 Park 的 Session 调用会唤醒它。
 	Enqueue(ctx context.Context, sessionID string) error

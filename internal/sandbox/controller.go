@@ -9,6 +9,7 @@ import (
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/artifact"
 	"yanshi/internal/clock"
+	"yanshi/internal/lifecycle"
 	"yanshi/internal/node"
 	"yanshi/internal/workqueue"
 	"yanshi/sdk/nodesdk"
@@ -25,6 +26,8 @@ type Controller struct {
 	Ledger   nodesdk.Ledger // 共享存储，使任一控制器都能接管
 	// Artifacts 用于工作区与工件之间的导入导出。
 	Artifacts *artifact.Service
+	// Lifecycle 非 nil 时，创建沙箱后复查 Session 是否已关闭或删除，是则销毁（ADR-0015）。
+	Lifecycle *lifecycle.Guard
 	Clock     clock.Clock
 	Logger    *slog.Logger
 
@@ -122,6 +125,15 @@ func (c *Controller) Step(ctx context.Context) (bool, error) {
 	if err := c.Provider.Ensure(ctx, id); err != nil {
 		return false, err
 	}
+	// 先创建、后复查：Session 已关闭或删除时销毁刚创建（或恢复）的沙箱，不执行调用（ADR-0015）。
+	// 关闭方先记关闭、再让 Janitor 销毁沙箱，因此二者无论如何交错，工作区都不会残留。
+	if gone, err := c.ended(ctx, inv.GetSessionId()); err != nil || gone {
+		if gone {
+			err = c.destroy(ctx, id)
+			_ = c.Hub.Inbox.Remove(ctx, id, inv.GetCallId())
+		}
+		return false, err
+	}
 	res, err := c.during(ctx, id, inv.GetCallId(), func(ctx context.Context) (*v1.InvokeResult, error) {
 		return c.exec.Execute(WithSandbox(ctx, id, inv.GetCallId()), inv)
 	})
@@ -132,6 +144,13 @@ func (c *Controller) Step(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	if err := c.Activity.Touch(ctx, id, c.Clock.Now()); err != nil {
+		return false, err
+	}
+	// 执行期间 Session 被删除：账本中刚写下的结果也要清除（先写、后查）。
+	if gone, err := node.Withdrawn(ctx, c.Hub.Deletions, inv.GetSessionId()); err != nil || gone {
+		if gone {
+			err = c.Ledger.Forget(inv.GetSessionId())
+		}
 		return false, err
 	}
 	if res == nil {
@@ -219,9 +238,29 @@ func (r *Router) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke) er
 	if err := r.Hub.Inbox.Put(ctx, nodeID, inv); err != nil {
 		return err
 	}
+	if gone, err := node.Withdrawn(ctx, r.Hub.Deletions, inv.GetSessionId()); err != nil || gone {
+		if gone {
+			return r.Hub.Inbox.Remove(ctx, nodeID, inv.GetCallId())
+		}
+		return err
+	}
 	return r.Queue.Enqueue(ctx, nodeID)
 }
 
 func (r *Router) Cancel(ctx context.Context, nodeID, callID string) error {
 	return r.Hub.Cancel(ctx, nodeID, callID)
+}
+
+func (c *Controller) destroy(ctx context.Context, id string) error {
+	if err := c.Provider.Destroy(ctx, id); err != nil {
+		return err
+	}
+	return c.Activity.Delete(ctx, id)
+}
+
+func (c *Controller) ended(ctx context.Context, sessionID string) (bool, error) {
+	if c.Lifecycle != nil {
+		return c.Lifecycle.Ended(ctx, sessionID)
+	}
+	return node.Withdrawn(ctx, c.Hub.Deletions, sessionID)
 }

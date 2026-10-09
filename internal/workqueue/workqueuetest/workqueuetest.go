@@ -70,6 +70,29 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 		_ = q.Release(ctx, l, true)
 	})
 
+	t.Run("RemoveEvenWhileLeased", func(t *testing.T) {
+		_, q := setup(t)
+		_ = q.Enqueue(ctx, "s")
+		_ = q.Enqueue(ctx, "t")
+		l, _ := q.Claim(ctx, "w1", time.Minute)
+		if err := q.Remove(ctx, l.SessionID); err != nil {
+			t.Fatal(err)
+		}
+		if err := q.Renew(ctx, l, time.Minute); !errors.Is(err, workqueue.ErrLeaseLost) {
+			t.Fatalf("renew after remove = %v", err)
+		}
+		next, err := q.Claim(ctx, "w2", time.Minute)
+		if err != nil || next.SessionID == l.SessionID {
+			t.Fatalf("claim = %+v, %v", next, err)
+		}
+		if _, err := q.Claim(ctx, "w3", time.Minute); !errors.Is(err, workqueue.ErrEmpty) {
+			t.Fatalf("removed item still claimable: %v", err)
+		}
+		if err := q.Remove(ctx, "missing"); err != nil {
+			t.Fatal(err)
+		}
+	})
+
 	t.Run("ReleaseDoneRemoves", func(t *testing.T) {
 		_, q := setup(t)
 		_ = q.Enqueue(ctx, "s")

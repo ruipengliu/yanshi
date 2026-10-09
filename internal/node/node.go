@@ -50,6 +50,8 @@ type Directory interface {
 	Get(ctx context.Context, nodeID string) (*Info, error)
 	// List 返回 Scope 内全部 Node（含离线），按标签排序。
 	List(ctx context.Context, scope Scope) ([]*Info, error)
+	// DeleteScope 删除 Scope 内全部 Node 的登记（EndUser 注销），返回被删除的 Node ID。
+	DeleteScope(ctx context.Context, scope Scope) ([]string, error)
 }
 
 // Inbox 保存每个 Node 待投递的 Invocation。
@@ -57,6 +59,8 @@ type Inbox interface {
 	// Put 按 call_id 幂等地加入。
 	Put(ctx context.Context, nodeID string, inv *v1.Invoke) error
 	Remove(ctx context.Context, nodeID, callID string) error
+	// RemoveSession 从所有 Node 的 Inbox 中撤回属于该 Session 的调用（ADR-0015）。
+	RemoveSession(ctx context.Context, sessionID string) error
 	// Pending 返回当前全部待投递项（按加入顺序）与版本号。
 	Pending(ctx context.Context, nodeID string) ([]*v1.Invoke, uint64, error)
 	// Wait 阻塞直到版本号不再等于 version，或 ctx 结束。

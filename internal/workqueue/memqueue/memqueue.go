@@ -140,3 +140,12 @@ func (q *Queue) Release(_ context.Context, l *workqueue.Lease, done bool) error 
 	q.items = append(append(q.items[:i], q.items[i+1:]...), it)
 	return nil
 }
+
+func (q *Queue) Remove(_ context.Context, sessionID string) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if i, _ := q.find(sessionID); i >= 0 {
+		q.items = append(q.items[:i], q.items[i+1:]...)
+	}
+	return nil
+}

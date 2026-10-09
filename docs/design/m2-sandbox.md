@@ -38,7 +38,7 @@ Worker ──Dispatch(sbx_X)──▶ Inbox[sbx_X] + 沙箱队列.Enqueue(sbx_X)
 - **创建**：首次执行时 `Provider.Ensure` 创建沙箱（幂等）。
 - **活跃记录**：每次执行开始和结束都记入 `Activity` 存储（共享）。
 - **回收**：任一控制器实例周期性检查空闲超过 `IdleTTL` 的沙箱，停止其计算资源，保留工作区。下次执行时 `Ensure` 重新创建并挂回原工作区。
-- **销毁**：Session 结束后的工作区清理留到后续阶段（需要 Session 关闭语义）。
+- **销毁**：Session 关闭或删除后，由 Janitor 销毁沙箱及其工作区（[Session 生命周期](./m2-session-lifecycle.md)）。
 
 ## 5. Provider 接口与 Docker 实现
 

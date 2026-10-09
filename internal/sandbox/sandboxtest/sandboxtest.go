@@ -26,6 +26,17 @@ func RunActivity(t *testing.T, newActivity func(t *testing.T) sandbox.Activity) 
 		}
 	})
 
+	t.Run("Delete", func(t *testing.T) {
+		a := newActivity(t)
+		_ = a.Touch(ctx, "x", t0)
+		if err := a.Delete(ctx, "x"); err != nil {
+			t.Fatal(err)
+		}
+		if ids, _ := a.ClaimIdle(ctx, t0.Add(time.Hour), 10); len(ids) != 0 {
+			t.Fatalf("deleted record still claimable: %v", ids)
+		}
+	})
+
 	t.Run("TouchNeverMovesBackwards", func(t *testing.T) {
 		a := newActivity(t)
 		_ = a.Touch(ctx, "s", t0.Add(time.Hour))

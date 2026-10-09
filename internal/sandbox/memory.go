@@ -156,3 +156,17 @@ func (e sandboxError) Error() string { return string(e) }
 
 func errNotRunning(id string) error { return sandboxError("sandbox " + id + " is not running") }
 func errNoFile(p string) error      { return sandboxError("no such file: " + p) }
+
+func (a *MemActivity) Delete(_ context.Context, id string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.last, id)
+	return nil
+}
+
+// Exists 报告沙箱的工作区是否仍存在（Destroy 之后为 false）。
+func (f *Fake) Exists(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.files[id] != nil
+}

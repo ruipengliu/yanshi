@@ -101,3 +101,8 @@ func (l *Log) Wait(ctx context.Context, sessionID string, after uint64) (uint64,
 		return l.head(ctx, sessionID)
 	})
 }
+
+func (l *Log) Delete(ctx context.Context, sessionID string) error {
+	_, err := l.pool.Exec(ctx, `DELETE FROM events WHERE session_id = $1`, sessionID)
+	return err
+}

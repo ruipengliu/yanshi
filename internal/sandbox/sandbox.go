@@ -76,6 +76,8 @@ type Activity interface {
 	Touch(ctx context.Context, id string, at time.Time) error
 	// ClaimIdle 认领最近活跃早于 before 的沙箱（删除其记录并返回），至多 limit 个。
 	ClaimIdle(ctx context.Context, before time.Time, limit int) ([]string, error)
+	// Delete 删除活跃记录（沙箱销毁时）。
+	Delete(ctx context.Context, id string) error
 }
 
 // LimitedBuffer 只保留前 Max 个字节，其余丢弃并标记截断。

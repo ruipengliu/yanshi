@@ -27,6 +27,9 @@ import (
 	"yanshi/internal/eventlog/pglog"
 	"yanshi/internal/httpapi"
 	"yanshi/internal/ids"
+	"yanshi/internal/janitor"
+	"yanshi/internal/lifecycle"
+	"yanshi/internal/lifecycle/pglifecycle"
 	"yanshi/internal/live"
 	"yanshi/internal/live/peer"
 	"yanshi/internal/metrics"
@@ -63,6 +66,10 @@ type backends struct {
 	ledger       nodesdk.Ledger
 	activity     sandbox.Activity
 	artifactMeta artifact.MetaStore
+
+	index        lifecycle.Index
+	deletions    lifecycle.Deletions
+	janitorQueue workqueue.Queue
 }
 
 // openStorage 按 kind 创建存储。postgres 模式下多个 serve 进程可共享同一数据库水平扩展。
@@ -70,7 +77,8 @@ func openStorage(ctx context.Context, kind, dsn string, clk clock.Clock, logger 
 	switch kind {
 	case "memory":
 		return backends{memlog.New(), memqueue.New(clk), node.NewMemDirectory(clk), node.NewMemInbox(),
-			memqueue.New(clk), nodesdk.NewMemLedger(), sandbox.NewMemActivity(), artifact.NewMemMeta()}, func() {}, nil
+			memqueue.New(clk), nodesdk.NewMemLedger(), sandbox.NewMemActivity(), artifact.NewMemMeta(),
+			lifecycle.NewMemIndex(), lifecycle.NewMemDeletions(), memqueue.New(clk)}, func() {}, nil
 	case "postgres":
 		pool, err := pg.Open(ctx, dsn, "")
 		if err != nil {
@@ -89,7 +97,8 @@ func openStorage(ctx context.Context, kind, dsn string, clk clock.Clock, logger 
 		go n.Run(nctx)
 		b := backends{pglog.New(pool, n), pgqueue.New(pool, clk, pgqueue.Sessions).WithNotifier(n), pgnode.NewDirectory(pool, clk), pgnode.NewInbox(pool, n),
 			pgqueue.New(pool, clk, pgqueue.Sandboxes), pgsandbox.Ledger{Pool: pool}, pgsandbox.Activity{Pool: pool},
-			pgartifact.Meta{Pool: pool}}
+			pgartifact.Meta{Pool: pool},
+			pglifecycle.Index{Pool: pool}, pglifecycle.Deletions{Pool: pool}, pgqueue.New(pool, clk, pgqueue.Janitor)}
 		return b, func() { cancel(); pool.Close() }, nil
 	}
 	return backends{}, nil, fmt.Errorf("unknown storage %q (memory | postgres)", kind)
@@ -160,7 +169,7 @@ func serve(args []string) error {
 	defer stop()
 
 	clk := clock.Real{}
-	verifier, nodeAuth, err := authenticator(*authMode, *addr, *blDir, *audience, clk)
+	verifier, nodeAuth, lines, err := authenticator(*authMode, *addr, *blDir, *audience, clk)
 	if err != nil {
 		return err
 	}
@@ -186,7 +195,7 @@ func serve(args []string) error {
 	default:
 		return fmt.Errorf("unknown blob store %q (fs | s3)", *blobKind)
 	}
-	arts := &artifact.Service{Meta: b.artifactMeta, Blobs: blobs, IDs: ids.Random(), Clock: clk}
+	arts := &artifact.Service{Meta: b.artifactMeta, Blobs: blobs, IDs: ids.Random(), Clock: clk, Deletions: b.deletions}
 	queue := b.queue
 	// 进程 ID 使 Worker 与控制器的 ID 在多进程部署中唯一，日志中的 worker_id 可以对应到进程。
 	proc := ids.Random()()[:8]
@@ -212,8 +221,10 @@ func serve(args []string) error {
 	catalog := &capability.Catalog{
 		Local: capability.NewRegistry(capability.ClockNow(clk)), Nodes: dir, DefaultTimeout: 30 * time.Minute,
 	}
+	hub.Deletions = b.deletions
 	router := &sandbox.Router{Hub: hub, Queue: b.sandboxQueue}
-	svc := &service.Service{Store: store, Queue: queue, Agents: agents, Nodes: router}
+	svc := &service.Service{Store: store, Queue: queue, Agents: agents, Nodes: router,
+		Index: b.index, Deletions: b.deletions, Janitor: b.janitorQueue}
 
 	var wg sync.WaitGroup
 	// 本进程的 Worker 共享空闲门控：空闲时只有一个 Worker 轮询队列，入队信号到达时立即认领。
@@ -231,16 +242,18 @@ func serve(args []string) error {
 		go func() { defer wg.Done(); w.Run(ctx) }()
 	}
 
+	var provider sandbox.Provider
 	switch *sandboxKind {
 	case "none":
 	case "docker":
 		catalog.Sandbox = &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID}
-		provider := &sandboxdocker.Provider{Image: *sandboxImage, Runtime: *sandboxRuntime}
+		provider = &sandboxdocker.Provider{Image: *sandboxImage, Runtime: *sandboxRuntime}
 		for i := range *controllers {
 			c := &sandbox.Controller{
 				ID: fmt.Sprintf("%s-sandbox-%d", proc, i), Queue: b.sandboxQueue, Hub: hub, Provider: provider,
 				Activity: b.activity, Ledger: b.ledger, Artifacts: arts, Clock: clk, Logger: logger,
-				LeaseTTL: *leaseTTL, Heartbeat: *leaseTTL / 3,
+				Lifecycle: &lifecycle.Guard{Index: b.index, Deletions: b.deletions},
+				LeaseTTL:  *leaseTTL, Heartbeat: *leaseTTL / 3,
 			}
 			wg.Add(1)
 			go func() { defer wg.Done(); c.Run(ctx) }()
@@ -249,6 +262,19 @@ func serve(args []string) error {
 	default:
 		return fmt.Errorf("unknown sandbox %q (none | docker)", *sandboxKind)
 	}
+
+	// Janitor 回收已关闭与已删除 Session 的资源，并执行各业务线的保留策略（docs/design/m2-session-lifecycle.md）。
+	retention := map[string]lifecycle.Retention{}
+	for _, bl := range lines {
+		retention[bl.Name] = bl.Retention
+	}
+	jan := &janitor.Janitor{
+		ID: proc + "-janitor", Queue: b.janitorQueue, Service: svc, Store: store, Sessions: queue, SandboxQueue: b.sandboxQueue,
+		Inbox: b.inbox, Nodes: dir, Sandbox: provider, Activity: b.activity, Ledger: b.ledger, Artifacts: arts,
+		Index: b.index, Deletions: b.deletions, Retention: retention, Clock: clk, Logger: logger, LeaseTTL: *leaseTTL,
+	}
+	wg.Add(1)
+	go func() { defer wg.Done(); jan.Run(ctx) }()
 
 	mux := http.NewServeMux()
 	mux.Handle("/v1/nodes/connect", &wsgateway.Gateway{Hub: hub, Logger: logger})
@@ -303,28 +329,29 @@ func startPeer(addr, advertise string, local *live.MemBus, log eventlog.Log, log
 
 // authenticator 按 -auth 构造 API 与 Node 接入的鉴权（docs/design/auth.md §5）。
 // none 信任自报身份，只允许监听回环地址：误部署到网络上时直接启动失败，而不是不设防地运行。
-func authenticator(mode, addr, dir, audience string, clk clock.Clock) (auth.Verifier, node.Authenticator, error) {
+// 同时返回业务线配置，供保留策略使用（auth=none 时没有业务线配置，不执行保留策略）。
+func authenticator(mode, addr, dir, audience string, clk clock.Clock) (auth.Verifier, node.Authenticator, []auth.BusinessLine, error) {
 	switch mode {
 	case "none":
 		if !loopback(addr) {
-			return nil, nil, fmt.Errorf("-auth none only allows a loopback -addr (got %s); use -auth jwt", addr)
+			return nil, nil, nil, fmt.Errorf("-auth none only allows a loopback -addr (got %s); use -auth jwt", addr)
 		}
-		return auth.Insecure{}, node.InsecureDevAuth{}, nil
+		return auth.Insecure{}, node.InsecureDevAuth{}, nil, nil
 	case "jwt":
 		lines, err := auth.LoadDir(dir)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if len(lines) == 0 {
-			return nil, nil, fmt.Errorf("no business lines in %s; run yanshi keygen for a dev key", dir)
+			return nil, nil, nil, fmt.Errorf("no business lines in %s; run yanshi keygen for a dev key", dir)
 		}
 		v, err := auth.NewJWT(audience, clk, lines...)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
-		return v, node.TokenAuth{Verifier: v}, nil
+		return v, node.TokenAuth{Verifier: v}, lines, nil
 	}
-	return nil, nil, fmt.Errorf("unknown auth %q (none | jwt)", mode)
+	return nil, nil, nil, fmt.Errorf("unknown auth %q (none | jwt)", mode)
 }
 
 func loopback(addr string) bool {

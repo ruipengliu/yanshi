@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"slices"
 	"strings"
 	"time"
 
@@ -25,6 +26,8 @@ import (
 	"yanshi/internal/eventlog"
 	"yanshi/internal/eventlog/memlog"
 	"yanshi/internal/ids"
+	"yanshi/internal/janitor"
+	"yanshi/internal/lifecycle"
 	"yanshi/internal/model"
 	"yanshi/internal/node"
 	"yanshi/internal/runtime"
@@ -46,6 +49,10 @@ type Stores struct {
 	SandboxQueue workqueue.Queue
 	Ledger       nodesdk.Ledger
 	Activity     sandbox.Activity
+	// Session 生命周期：索引、删除记录与清理队列
+	Index        lifecycle.Index
+	Deletions    lifecycle.Deletions
+	JanitorQueue workqueue.Queue
 }
 
 type Options struct {
@@ -72,6 +79,8 @@ type Stats struct {
 	Suspensions, DeviceResults, Timeouts           int
 	// TurnLimited 是因超过 AgentDef.MaxTurns 而失败的 Run，属于策略结果而非故障。
 	TurnLimited int
+	// Session 生命周期：关闭、删除、Janitor 清理中途崩溃、完成的删除。
+	Closes, Deletions, JanitorCrashes, DeletionsCompleted int
 	// 上下文压缩：压缩次数、摘要调用中的故障、模型报告的上下文超长、
 	// 压缩之后同一 Run 开启的 Attempt（接管或恢复），以及完成的长 Run（≥ longRunTurns 轮）。
 	Compactions, SummaryFaults, Overflows      int
@@ -106,10 +115,11 @@ const (
 
 // simNode 是一台模拟设备：SDK 的 Executor 与 Ledger 跨崩溃保留，连接随上下线变化。
 type simNode struct {
-	id    string
-	hello *v1.Hello
-	exec  *nodesdk.Executor
-	conn  *node.Conn
+	id     string
+	hello  *v1.Hello
+	exec   *nodesdk.Executor
+	ledger *nodesdk.MemLedger
+	conn   *node.Conn
 }
 
 type World struct {
@@ -133,8 +143,16 @@ type World struct {
 	activity     sandbox.Activity
 	controllers  []*sandbox.Controller
 	nextC        int
-	workers      []*runtime.Worker
-	nextW        int
+	index        lifecycle.Index
+	deletions    lifecycle.Deletions
+	janitorQueue workqueue.Queue
+	janitors     []*janitor.Janitor
+	nextJ        int
+	// deleted 与 closed 是已删除、已关闭（已从 sessions 中替换掉）的 Session。
+	deleted []string
+	closed  []string
+	workers []*runtime.Worker
+	nextW   int
 
 	sessions []string
 	// effects 记录非幂等 Capability（进程内与设备上）每个调用 ID 的实际执行次数。
@@ -164,6 +182,7 @@ func New(opts Options) (*World, error) {
 	stores := Stores{
 		Log: memlog.New(), Queue: memqueue.New(w.clock), Dir: node.NewMemDirectory(w.clock), Inbox: node.NewMemInbox(),
 		SandboxQueue: memqueue.New(w.clock), Ledger: nodesdk.NewMemLedger(), Activity: sandbox.NewMemActivity(),
+		Index: lifecycle.NewMemIndex(), Deletions: lifecycle.NewMemDeletions(), JanitorQueue: memqueue.New(w.clock),
 	}
 	if opts.NewStores != nil {
 		stores = opts.NewStores(w.clock)
@@ -186,10 +205,11 @@ func New(opts Options) (*World, error) {
 		Local: capability.NewRegistry(w.echoCap(), w.sendCap()), Nodes: stores.Dir, DefaultTimeout: deviceTimeout,
 		Sandbox: &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID},
 	}
-	w.hub = &node.Hub{Dir: stores.Dir, Inbox: stores.Inbox, Store: w.store, Queue: w.queue, Auth: node.InsecureDevAuth{}}
+	w.index, w.deletions, w.janitorQueue = stores.Index, stores.Deletions, stores.JanitorQueue
+	w.hub = &node.Hub{Dir: stores.Dir, Inbox: stores.Inbox, Store: w.store, Queue: w.queue, Auth: node.InsecureDevAuth{}, Deletions: w.deletions}
 	w.sandboxQueue, w.ledger, w.activity = stores.SandboxQueue, stores.Ledger, stores.Activity
 	w.router = &sandbox.Router{Hub: w.hub, Queue: w.sandboxQueue}
-	w.artifacts = &artifact.Service{Meta: artifact.NewMemMeta(), Blobs: artifact.NewMemBlobs(), IDs: ids.Sequential("art"), Clock: w.clock}
+	w.artifacts = &artifact.Service{Meta: artifact.NewMemMeta(), Blobs: artifact.NewMemBlobs(), IDs: ids.Sequential("art"), Clock: w.clock, Deletions: w.deletions}
 	w.provider = sandbox.NewFake()
 	w.provider.ExecFunc = w.sandboxExec
 	// Service 的入队可能在写日志之前或之后，模拟在入队之后插入 Worker 的一步，
@@ -199,9 +219,12 @@ func New(opts Options) (*World, error) {
 			return nil
 		}
 		return w.afterEnqueue()
-	}}, Agents: agents, Nodes: w.router}
+	}}, Agents: agents, Nodes: w.router, Index: w.index, Deletions: w.deletions, Janitor: w.janitorQueue}
 	for range 2 {
 		w.controllers = append(w.controllers, w.newController())
+	}
+	for range 2 {
+		w.janitors = append(w.janitors, w.newJanitor())
 	}
 	for range opts.Workers {
 		w.workers = append(w.workers, w.newWorker())
@@ -228,7 +251,7 @@ func (w *World) newController() *sandbox.Controller {
 	return &sandbox.Controller{
 		ID: fmt.Sprintf("c%d", w.nextC), Queue: w.sandboxQueue, Hub: w.hub, Provider: w.provider,
 		Activity: w.activity, Ledger: w.ledger, Clock: w.clock, LeaseTTL: leaseTTL, IdleTTL: 2 * time.Minute,
-		Artifacts: w.artifacts,
+		Artifacts: w.artifacts, Lifecycle: &lifecycle.Guard{Index: w.index, Deletions: w.deletions},
 	}
 }
 
@@ -283,7 +306,8 @@ func (w *World) newNode(i int) *simNode {
 		}
 		return model.TextBlocks("file content"), nil
 	}
-	n.exec = nodesdk.NewExecutor(nodesdk.NewMemLedger(),
+	n.ledger = nodesdk.NewMemLedger()
+	n.exec = nodesdk.NewExecutor(n.ledger,
 		nodesdk.Capability{Spec: &v1.CapabilitySpec{Name: "dev_read", Idempotent: true, Risk: v1.Risk_RISK_LOW}, Handler: read},
 		nodesdk.Capability{Spec: &v1.CapabilitySpec{Name: "dev_send", Risk: v1.Risk_RISK_HIGH}, Handler: effect},
 	)
@@ -422,8 +446,13 @@ func (w *World) Run() error {
 
 func (w *World) tick() error {
 	switch x := w.rng.Float64(); {
-	case x < 0.50:
+	case x < 0.47:
 		return w.stepWorker(w.rng.IntN(len(w.workers)))
+	case x < 0.50:
+		if w.chance(0.1) {
+			return w.janitors[0].Sweep(context.Background())
+		}
+		return w.stepJanitor(w.rng.IntN(len(w.janitors)))
 	case x < 0.60:
 		return w.stepNode(w.nodes[w.rng.IntN(len(w.nodes))])
 	case x < 0.68:
@@ -433,8 +462,16 @@ func (w *World) tick() error {
 		return w.controllers[0].Reap(context.Background())
 	case x < 0.76:
 		return w.decide(false)
-	case x < 0.84:
+	case x < 0.83:
 		return w.submit()
+	case x < 0.84:
+		if w.opts.LongRuns && !w.chance(0.1) {
+			return nil // 长 Run 模式下少关、少删，否则 Run 很难跑满
+		}
+		if w.chance(0.5) {
+			return w.closeSession()
+		}
+		return w.deleteSession()
 	case x < 0.87:
 		if w.opts.LongRuns && !w.chance(0.05) {
 			return nil // 长 Run 模式下中断要少，否则 Run 很难跑满
@@ -537,6 +574,9 @@ func (w *World) interrupt() error {
 // quiesce 停止故障与客户端动作，持续推进直到所有 Run 终态。
 func (w *World) quiesce() error {
 	w.faults = false
+	// idleRounds 是所有 Janitor 连续无事可做的轮数。须超过一个租约 TTL（每轮 1 秒）才算清理队列已空：
+	// 崩溃的 Janitor 持有的租约到期前，其他 Janitor 认领不到它的任务。
+	idleRounds := 0
 	for round := range 2000 {
 		active := false
 		for _, sid := range w.sessions {
@@ -548,8 +588,15 @@ func (w *World) quiesce() error {
 				active = true
 			}
 		}
-		if !active {
-			return w.CheckInvariants()
+		done, err := w.lifecycleDone()
+		if err != nil {
+			return err
+		}
+		if !active && done && idleRounds > int(leaseTTL/time.Second) {
+			if err := w.CheckInvariants(); err != nil {
+				return err
+			}
+			return w.checkDeleted(true)
 		}
 		for i := range w.workers {
 			if err := w.stepWorker(i); err != nil {
@@ -566,6 +613,21 @@ func (w *World) quiesce() error {
 				return fmt.Errorf("quiesce round %d: %w", round, err)
 			}
 		}
+		idleRounds++
+		for i := range w.janitors {
+			did, err := w.stepJanitorDid(i)
+			if err != nil {
+				return fmt.Errorf("quiesce round %d: %w", round, err)
+			}
+			if did {
+				idleRounds = 0
+			}
+		}
+		if round%10 == 0 {
+			if err := w.janitors[0].Sweep(context.Background()); err != nil {
+				return err
+			}
+		}
 		if err := w.decide(true); err != nil {
 			return err
 		}
@@ -576,7 +638,7 @@ func (w *World) quiesce() error {
 
 // CheckInvariants 独立于写入方重新投影每个 Session 日志，并检查跨组件不变量。
 func (w *World) CheckInvariants() error {
-	for _, sid := range w.sessions {
+	for _, sid := range append(slices.Clone(w.sessions), w.closed...) {
 		events, err := eventlog.ReadAll(context.Background(), w.log, sid, 0)
 		if err != nil {
 			return err
@@ -599,11 +661,16 @@ func (w *World) CheckInvariants() error {
 	if len(w.violations) > 0 {
 		return fmt.Errorf("invariant: %s", w.violations[0])
 	}
-	return nil
+	return w.checkDeleted(false)
 }
 
 // CollectStats 从最终日志统计 Takeover、未知结果等路径的覆盖情况。
 func (w *World) CollectStats() {
+	for _, sid := range w.deleted {
+		if t, err := w.deletions.Get(context.Background(), sid); err == nil && !t.CompletedAt.IsZero() {
+			w.Stats.DeletionsCompleted++
+		}
+	}
 	for _, sid := range w.sessions {
 		events, _ := eventlog.ReadAll(context.Background(), w.log, sid, 0)
 		if st, err := session.Reduce(events); err == nil {

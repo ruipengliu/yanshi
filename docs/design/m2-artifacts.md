@@ -34,4 +34,4 @@ Artifact 是 Run 产出或用户、设备提供的、可独立引用的文件，
 
 - 单个 Artifact 最大 512MB。
 - M2 的 HTTP API 仍无鉴权（同 M0），Artifact 下载不做访问控制。鉴权方案确定后再补。
-- 尚未实现保留策略与删除（需要 Session 关闭语义）。
+- 删除随 Session 一起进行，保留期由业务线配置（[Session 生命周期](./m2-session-lifecycle.md)）。

@@ -33,6 +33,7 @@ message Event {
     ApprovalRequested approval_requested = 21;
     ApprovalDecided approval_decided = 22;
     ContextCompacted context_compacted = 23;
+    SessionClosed session_closed = 24;
   }
 }
 
@@ -185,4 +186,12 @@ message ContextCompacted {
   repeated ContentBlock summary = 4;
   string model = 5;
   Usage usage = 6;
+}
+
+// SessionClosed 是 Session 的终态：之后不再接收任何输入与 Run 事件（docs/design/m2-session-lifecycle.md §2）。
+// 关闭不可逆；对话与工件仍可查看，沙箱工作区随之销毁。
+message SessionClosed {
+  // 关闭方，如 "end_user:u1"、"service:demo"、"retention"。
+  string by = 1;
+  string reason = 2;
 }

@@ -1,7 +1,12 @@
 // Package httpapi 以 HTTP/JSON + SSE 暴露 Session 操作。
 //
 //	POST /v1/sessions                              创建 Session
+//	GET  /v1/sessions?end_user=&cursor=&limit=     列出 Session（按最近输入倒序）
 //	GET  /v1/sessions/{id}                         Session 投影
+//	POST /v1/sessions/{id}/close                   关闭 Session（不可逆）
+//	DELETE /v1/sessions/{id}                       删除 Session（异步，202）
+//	DELETE /v1/end_users/{id}                      删除 EndUser 的全部数据（仅服务令牌，异步，202）
+//	GET  /v1/deletions/{id}                        删除请求的进度（仅服务令牌）
 //	POST /v1/sessions/{id}/inputs                  提交输入（新 Run 或 Steer）
 //	POST /v1/sessions/{id}/runs/{run}/interrupt    中断 Run
 //	GET  /v1/sessions/{id}/events?after=N&limit=M  已提交事件（JSON）
@@ -37,6 +42,7 @@ import (
 	"yanshi/internal/artifact"
 	"yanshi/internal/auth"
 	"yanshi/internal/eventlog"
+	"yanshi/internal/lifecycle"
 	"yanshi/internal/live"
 	"yanshi/internal/metrics"
 	"yanshi/internal/model"
@@ -63,7 +69,12 @@ var pj = protojson.MarshalOptions{UseProtoNames: true}
 func (s *Server) routes() map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
 		"POST /v1/sessions":                           s.create,
+		"GET /v1/sessions":                            s.list,
 		"GET /v1/sessions/{id}":                       s.get,
+		"POST /v1/sessions/{id}/close":                s.close,
+		"DELETE /v1/sessions/{id}":                    s.delete,
+		"DELETE /v1/end_users/{id}":                   s.deleteEndUser,
+		"GET /v1/deletions/{id}":                      s.deletion,
 		"POST /v1/sessions/{id}/inputs":               s.submit,
 		"POST /v1/sessions/{id}/runs/{run}/interrupt": s.interrupt,
 		"GET /v1/sessions/{id}/events":                s.events,
@@ -372,13 +383,8 @@ func (s *Server) decide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 审批记录的决定者取自令牌，而不是请求中自报的值。
-	switch p := principal(r); {
-	case p.Service():
-		req.By = "service:" + p.BusinessLine
-	case !p.Unrestricted:
-		req.By = "end_user:" + p.EndUser
-	case req.By == "":
-		req.By = "api"
+	if p := principal(r); !p.Unrestricted || req.By == "" {
+		req.By = actor(p)
 	}
 	if err := s.Service.Decide(r.Context(), r.PathValue("id"), r.PathValue("call"), *req.Approve, req.By); err != nil {
 		s.fail(w, err)
@@ -617,12 +623,19 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		case <-expired:
 			fmt.Fprint(w, "event: token_expired\ndata: {}\n\n")
 			return
+		case <-ping.C:
+			// 删除后日志不再增长：借心跳复查删除记录，及时结束流（ADR-0015）。
+			if s.Service.Deletions != nil {
+				if gone, _ := lifecycle.Deleted(ctx, s.Service.Deletions, id); gone {
+					fmt.Fprint(w, "event: session_deleted\ndata: {}\n\n")
+					return
+				}
+			}
+			fmt.Fprint(w, ": ping\n\n")
 		case <-heads:
 		case d := <-deltas:
 			b, _ := json.Marshal(d)
 			fmt.Fprintf(w, "event: delta\ndata: %s\n\n", b)
-		case <-ping.C:
-			fmt.Fprint(w, ": ping\n\n")
 		}
 	}
 }
@@ -651,4 +664,170 @@ func waitHeads(ctx context.Context, log eventlog.Log, id string, after uint64, h
 		default:
 		}
 	}
+}
+
+// actor 描述调用方，记入关闭、审批等事件。
+func actor(p auth.Principal) string {
+	switch {
+	case p.Unrestricted:
+		return "api"
+	case p.Service():
+		return "service:" + p.BusinessLine
+	}
+	return "end_user:" + p.EndUser
+}
+
+type sessionSummary struct {
+	SessionID   string     `json:"session_id"`
+	EndUser     string     `json:"end_user"`
+	Agent       string     `json:"agent"`
+	CreatedAt   time.Time  `json:"created_at"`
+	LastInputAt time.Time  `json:"last_input_at"`
+	ClosedAt    *time.Time `json:"closed_at,omitempty"`
+}
+
+func (s *Server) list(w http.ResponseWriter, r *http.Request) {
+	if s.Service.Index == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "session index is not configured"})
+		return
+	}
+	q := r.URL.Query()
+	p := principal(r)
+	bl, eu := p.BusinessLine, p.EndUser
+	switch {
+	case p.Unrestricted:
+		bl, eu = q.Get("business_line"), q.Get("end_user")
+	case p.Service():
+		eu = q.Get("end_user") // 为空表示整个业务线
+	case q.Get("end_user") != "" && q.Get("end_user") != eu:
+		s.fail(w, fmt.Errorf("%w: end_user does not match token", errForbidden))
+		return
+	}
+	limit, err := parseUint(q.Get("limit"))
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	if limit == 0 || limit > 200 {
+		limit = 50
+	}
+	page, next, err := s.Service.Index.List(r.Context(), bl, eu, q.Get("cursor"), int(limit))
+	if err != nil {
+		s.fail(w, fmt.Errorf("%w: %v", service.ErrInvalid, err))
+		return
+	}
+	out := []sessionSummary{}
+	for _, x := range page {
+		v := sessionSummary{SessionID: x.ID, EndUser: x.EndUser, Agent: x.Agent, CreatedAt: x.CreatedAt, LastInputAt: x.LastInputAt}
+		if !x.ClosedAt.IsZero() {
+			v.ClosedAt = &x.ClosedAt
+		}
+		out = append(out, v)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": out, "next_cursor": next})
+}
+
+func (s *Server) close(w http.ResponseWriter, r *http.Request) {
+	st, ok := s.session(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if r.ContentLength > 0 {
+		if err := decode(r, &req); err != nil {
+			s.fail(w, err)
+			return
+		}
+	}
+	if err := s.Service.Close(r.Context(), st.SessionID, actor(principal(r)), req.Reason); err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) delete(w http.ResponseWriter, r *http.Request) {
+	st, ok := s.session(w, r)
+	if !ok {
+		return
+	}
+	reason := "end_user"
+	if principal(r).Service() {
+		reason = "service"
+	}
+	if err := s.Service.Delete(r.Context(), st.SessionID, reason, ""); err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// nodeRemover 让注销账号同时删除 EndUser 的 Node 登记。
+type nodeRemover struct{ dir node.Directory }
+
+func (n nodeRemover) DeleteEndUser(ctx context.Context, businessLine, endUser string) error {
+	_, err := n.dir.DeleteScope(ctx, node.Scope{BusinessLine: businessLine, EndUser: endUser})
+	return err
+}
+
+// businessLineOf 返回只接受服务令牌的接口所作用的业务线：开发模式下取自查询参数。
+func businessLineOf(w http.ResponseWriter, r *http.Request, s *Server) (string, bool) {
+	p := principal(r)
+	switch {
+	case p.Unrestricted:
+		if bl := r.URL.Query().Get("business_line"); bl != "" {
+			return bl, true
+		}
+		s.fail(w, fmt.Errorf("%w: business_line is required", service.ErrInvalid))
+		return "", false
+	case p.Service():
+		return p.BusinessLine, true
+	}
+	s.fail(w, fmt.Errorf("%w: a service token is required", errForbidden))
+	return "", false
+}
+
+func (s *Server) deleteEndUser(w http.ResponseWriter, r *http.Request) {
+	bl, ok := businessLineOf(w, r, s)
+	if !ok {
+		return
+	}
+	var nodes service.NodeRemover
+	if s.Nodes != nil {
+		nodes = nodeRemover{s.Nodes}
+	}
+	id, err := s.Service.DeleteEndUser(r.Context(), bl, r.PathValue("id"), nodes)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"request_id": id})
+}
+
+func (s *Server) deletion(w http.ResponseWriter, r *http.Request) {
+	bl, ok := businessLineOf(w, r, s)
+	if !ok {
+		return
+	}
+	if s.Service.Deletions == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "deletion is not configured"})
+		return
+	}
+	req, err := s.Service.Deletions.Request(r.Context(), r.PathValue("id"))
+	if err == nil && req.BusinessLine != bl {
+		err = lifecycle.ErrNotFound
+	}
+	if errors.Is(err, lifecycle.ErrNotFound) {
+		err = fmt.Errorf("%w: deletion %s", service.ErrNotFound, r.PathValue("id"))
+	}
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"request_id": req.ID, "created_at": req.CreatedAt, "sessions": req.Sessions, "completed": req.Completed,
+		"done": req.Completed == req.Sessions,
+	})
 }

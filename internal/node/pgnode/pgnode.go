@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -162,8 +163,8 @@ func (in *Inbox) Put(ctx context.Context, nodeID string, inv *v1.Invoke) error {
 	}
 	return pgx.BeginFunc(ctx, in.pool, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
-			INSERT INTO inbox (node_id, call_id, data, ord) VALUES ($1, $2, $3, nextval('inbox_seq'))
-			ON CONFLICT DO NOTHING`, nodeID, inv.GetCallId(), b)
+			INSERT INTO inbox (node_id, call_id, data, ord, session_id) VALUES ($1, $2, $3, nextval('inbox_seq'), $4)
+			ON CONFLICT DO NOTHING`, nodeID, inv.GetCallId(), b, inv.GetSessionId())
 		if err != nil || tag.RowsAffected() == 0 {
 			return err
 		}
@@ -221,4 +222,35 @@ func (in *Inbox) Wait(ctx context.Context, nodeID string, version uint64) error 
 		v, err := in.version(ctx, in.pool, nodeID)
 		return v != version, err
 	})
+}
+
+func (in *Inbox) RemoveSession(ctx context.Context, sessionID string) error {
+	return pgx.BeginFunc(ctx, in.pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `DELETE FROM inbox WHERE session_id = $1 RETURNING node_id`, sessionID)
+		if err != nil {
+			return err
+		}
+		nodes, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return err
+		}
+		slices.Sort(nodes)
+		for _, n := range slices.Compact(nodes) {
+			if err := bump(ctx, tx, n); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (d *Directory) DeleteScope(ctx context.Context, scope node.Scope) ([]string, error) {
+	rows, err := d.pool.Query(ctx, `DELETE FROM nodes WHERE business_line = $1 AND end_user = $2 RETURNING node_id`,
+		scope.BusinessLine, scope.EndUser)
+	if err != nil {
+		return nil, err
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	slices.Sort(ids)
+	return ids, err
 }

@@ -114,6 +114,10 @@ _Avoid_: 确认框、授权（与 Grant 区分）
 由 BusinessLine 签发、证明调用方身份的短期凭证。用户令牌代表一个 EndUser，服务令牌代表业务线服务端；yanshi 只验证，不签发。
 _Avoid_: 会话（与 Session 区分）、票据、凭据（泛指时）
 
+**Retention（保留策略）**:
+BusinessLine 为其 Session 声明的保留期限：最后一次输入后多久自动关闭、关闭后多久自动删除。
+_Avoid_: 过期策略、TTL（泛指时）
+
 **Policy（策略）**:
 约束 Run 能做什么的规则集合，涵盖 Capability 访问、Approval 要求、预算与内容安全。
 _Avoid_: 规则、配置

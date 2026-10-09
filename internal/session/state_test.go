@@ -275,3 +275,23 @@ func TestStalledTakeoversResetOnProgress(t *testing.T) {
 		t.Fatalf("takeovers = %d, stalled = %d", r.Takeovers, r.StalledTakeovers)
 	}
 }
+
+func closed() *v1.Event {
+	return &v1.Event{Payload: &v1.Event_SessionClosed{SessionClosed: &v1.SessionClosed{By: "end_user:u"}}}
+}
+
+func TestSessionClosedIsTerminal(t *testing.T) {
+	st, err := Reduce(build(created(), requested("r1"), attempt("r1", 1), interrupted("r1"), closed()))
+	if err != nil || st.Closed == nil || st.Active() != nil {
+		t.Fatalf("st = %+v, err = %v", st, err)
+	}
+	for name, tail := range map[string][]*v1.Event{
+		"close with active run": {created(), requested("r1"), closed()},
+		"input after close":     {created(), closed(), requested("r2")},
+		"close twice":           {created(), closed(), closed()},
+	} {
+		if _, err := Reduce(build(tail...)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

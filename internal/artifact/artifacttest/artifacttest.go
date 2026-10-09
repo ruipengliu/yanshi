@@ -89,5 +89,17 @@ func RunMeta(t *testing.T, newStore func(t *testing.T) artifact.MetaStore) {
 		if _, err := s.Get(ctx, "zz"); !errors.Is(err, artifact.ErrNotFound) {
 			t.Fatalf("missing err = %v", err)
 		}
+		if err := s.Delete(ctx, "a"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Get(ctx, "a"); !errors.Is(err, artifact.ErrNotFound) {
+			t.Fatal("deleted meta still present")
+		}
+		if list, _ := s.List(ctx, "s1"); len(list) != 1 {
+			t.Fatalf("list after delete = %d", len(list))
+		}
+		if err := s.Delete(ctx, "a"); err != nil {
+			t.Fatalf("delete is not idempotent: %v", err)
+		}
 	})
 }
