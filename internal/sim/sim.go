@@ -28,6 +28,7 @@ import (
 	"yanshi/internal/ids"
 	"yanshi/internal/janitor"
 	"yanshi/internal/lifecycle"
+	"yanshi/internal/memory"
 	"yanshi/internal/model"
 	"yanshi/internal/node"
 	"yanshi/internal/runtime"
@@ -53,6 +54,9 @@ type Stores struct {
 	Index        lifecycle.Index
 	Deletions    lifecycle.Deletions
 	JanitorQueue workqueue.Queue
+	// Memory（docs/design/m4-memory-grant.md）
+	Memory memory.Store
+	Grants memory.Grants
 }
 
 type Options struct {
@@ -81,6 +85,8 @@ type Stats struct {
 	TurnLimited int
 	// Session 生命周期：关闭、删除、Janitor 清理中途崩溃、完成的删除。
 	Closes, Deletions, JanitorCrashes, DeletionsCompleted int
+	// Memory：带有结果的召回次数、成功写入次数。
+	Recalls, MemorySaves int
 	// 上下文压缩：压缩次数、摘要调用中的故障、模型报告的上下文超长、
 	// 压缩之后同一 Run 开启的 Attempt（接管或恢复），以及完成的长 Run（≥ longRunTurns 轮）。
 	Compactions, SummaryFaults, Overflows      int
@@ -146,6 +152,7 @@ type World struct {
 	index        lifecycle.Index
 	deletions    lifecycle.Deletions
 	janitorQueue workqueue.Queue
+	memories     *memory.Service
 	janitors     []*janitor.Janitor
 	nextJ        int
 	// deleted 与 closed 是已删除、已关闭（已从 sessions 中替换掉）的 Session。
@@ -183,6 +190,7 @@ func New(opts Options) (*World, error) {
 		Log: memlog.New(), Queue: memqueue.New(w.clock), Dir: node.NewMemDirectory(w.clock), Inbox: node.NewMemInbox(),
 		SandboxQueue: memqueue.New(w.clock), Ledger: nodesdk.NewMemLedger(), Activity: sandbox.NewMemActivity(),
 		Index: lifecycle.NewMemIndex(), Deletions: lifecycle.NewMemDeletions(), JanitorQueue: memqueue.New(w.clock),
+		Memory: memory.NewMemStore(), Grants: memory.NewMemGrants(),
 	}
 	if opts.NewStores != nil {
 		stores = opts.NewStores(w.clock)
@@ -194,15 +202,19 @@ func New(opts Options) (*World, error) {
 		maxTurns = 120
 	}
 	agents, err := agentdef.NewRegistry(&agentdef.Def{
-		Name: "sim", Version: "1", Model: "sim/m", Capabilities: []string{"echo", "send", "device:*", "sandbox:*"},
-		MaxTurns: maxTurns, Context: simContext,
+		Name: "sim", Version: "1", Model: "sim/m",
+		Capabilities: []string{"echo", "send", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*"},
+		MaxTurns:     maxTurns, Context: simContext, Memory: agentdef.MemoryConfig{Recall: 3},
 	})
 	if err != nil {
 		return nil, err
 	}
 	w.agents = agents
+	w.memories = &memory.Service{Store: stores.Memory, Grants: stores.Grants, Deletions: stores.Deletions, Clock: w.clock,
+		IDs: ids.Sequential("mem"), MaxPerUser: 20}
 	w.catalog = &capability.Catalog{
-		Local: capability.NewRegistry(w.echoCap(), w.sendCap()), Nodes: stores.Dir, DefaultTimeout: deviceTimeout,
+		Local: capability.NewRegistry(append([]capability.Capability{w.echoCap(), w.sendCap()}, memory.Capabilities(w.memories)...)...),
+		Nodes: stores.Dir, DefaultTimeout: deviceTimeout,
 		Sandbox: &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID},
 	}
 	w.index, w.deletions, w.janitorQueue = stores.Index, stores.Deletions, stores.JanitorQueue
@@ -421,7 +433,7 @@ func (w *World) newWorker() *runtime.Worker {
 	return runtime.New(runtime.Config{
 		ID: fmt.Sprintf("w%d", w.nextW), Store: w.store, Queue: w.queue, Agents: w.agents,
 		Model: gw, Catalog: w.catalog, Dispatch: w.router, LeaseTTL: leaseTTL,
-		MaxTakeovers: 4, MaxModelErrors: 3, ApprovalTimeout: approvalTimeout,
+		MaxTakeovers: 4, MaxModelErrors: 3, ApprovalTimeout: approvalTimeout, Memory: w.memories,
 	})
 }
 
@@ -689,6 +701,10 @@ func (w *World) CollectStats() {
 		compacted := map[string]bool{}
 		for _, e := range events {
 			switch p := e.GetPayload().(type) {
+			case *v1.Event_MemoryRecalled:
+				if len(p.MemoryRecalled.GetItems()) > 0 {
+					w.Stats.Recalls++
+				}
 			case *v1.Event_ContextCompacted:
 				w.Stats.Compactions++
 				compacted[p.ContextCompacted.GetRunId()] = true
@@ -849,7 +865,7 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 			if w.chance(0.3) {
 				id = ""
 			}
-			resp.ToolCalls = append(resp.ToolCalls, &v1.ToolCall{CallId: id, Capability: name, ArgumentsJson: `{"pad":"` + w.pad() + `"}`})
+			resp.ToolCalls = append(resp.ToolCalls, &v1.ToolCall{CallId: id, Capability: name, ArgumentsJson: w.toolArgs(name)})
 		}
 		return resp, nil
 	}
@@ -883,4 +899,18 @@ func (m *simModel) summarize(ctx context.Context, req *model.Request) (*model.Re
 	}
 	text := fmt.Sprintf("summary of %d bytes", len(model.Text(req.Messages[0].Content)))
 	return &model.Response{Model: "sim/m", Content: model.TextBlocks(text), Usage: &v1.Usage{InputTokens: uint64(model.EstimateRequest(req))}}, nil
+}
+
+// toolArgs 为工具生成参数：Memory 工具需要合法参数才能写入，其余工具用随机长度的负载使上下文增长。
+func (w *World) toolArgs(name string) string {
+	switch name {
+	case "memory_save":
+		w.Stats.MemorySaves++
+		return fmt.Sprintf(`{"category":"preference","content":"偏好 %d"}`, w.rng.IntN(50))
+	case "memory_search":
+		return `{"query":"偏好"}`
+	case "memory_forget":
+		return fmt.Sprintf(`{"id":"mem_call_id-%d"}`, w.rng.IntN(500))
+	}
+	return `{"pad":"` + w.pad() + `"}`
 }

@@ -89,7 +89,10 @@ type Run struct {
 	StalledTakeovers int
 	// Turns 是该 Run 已提交的 AssistantMessage 数。
 	Turns int
-	Calls []*Call
+	// Recall 是 Run 开始时召回的 Memory；Recalled 表示已经召回过（结果可能为空）。
+	Recall   []*v1.RecalledMemory
+	Recalled bool
+	Calls    []*Call
 }
 
 // PendingCall 返回第一个尚无结果的调用，没有则返回 nil。
@@ -380,6 +383,18 @@ func (s *State) apply(e *v1.Event) error {
 		c.Done = true
 		r.StalledTakeovers = 0
 		s.History = append(s.History, e)
+
+	case *v1.Event_MemoryRecalled:
+		m := p.MemoryRecalled
+		r, err := s.fencedRun(m.GetRunId(), m.GetAttempt())
+		if err != nil {
+			return err
+		}
+		if r.Recalled || r.Turns > 0 {
+			return fmt.Errorf("run %s: memory recalled twice or after the first turn", r.ID)
+		}
+		r.Recall, r.Recalled = m.GetItems(), true
+		r.StalledTakeovers = 0
 
 	case *v1.Event_ContextCompacted:
 		m := p.ContextCompacted

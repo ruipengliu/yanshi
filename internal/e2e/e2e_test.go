@@ -38,6 +38,8 @@ import (
 	"yanshi/internal/lifecycle/pglifecycle"
 	"yanshi/internal/live"
 	"yanshi/internal/live/peer"
+	"yanshi/internal/memory"
+	"yanshi/internal/memory/pgmemory"
 	"yanshi/internal/model"
 	"yanshi/internal/node"
 	"yanshi/internal/node/pgnode"
@@ -149,6 +151,8 @@ type stores struct {
 	index        lifecycle.Index
 	deletions    lifecycle.Deletions
 	janitorQueue workqueue.Queue
+	memories     memory.Store
+	grants       memory.Grants
 }
 
 func memStores() stores {
@@ -158,12 +162,14 @@ func memStores() stores {
 		sandboxQueue: memqueue.New(clk), ledger: nodesdk.NewMemLedger(), activity: sandbox.NewMemActivity(),
 		artifacts: &artifact.Service{Meta: artifact.NewMemMeta(), Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk},
 		index:     lifecycle.NewMemIndex(), deletions: lifecycle.NewMemDeletions(), janitorQueue: memqueue.New(clk),
+		memories: memory.NewMemStore(), grants: memory.NewMemGrants(),
 	}
 }
 
 // instance 启动一个 yanshi 实例：workers 个 Worker，serve 为 true 时提供 HTTP API 与 Node 网关。
 func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server {
-	agents, err := agentdef.NewRegistry(&agentdef.Def{Name: "dev", Version: "1", Model: "script/any", Capabilities: []string{"device:*", "sandbox:*"}})
+	agents, err := agentdef.NewRegistry(&agentdef.Def{Name: "dev", Version: "1", Model: "script/any",
+		Capabilities: []string{"memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*"}, Memory: agentdef.MemoryConfig{Recall: 5}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +184,8 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 	bus := &peer.Bus{Local: local, Log: st.log, Self: peerSrv.URL, Token: "t", Retry: 20 * time.Millisecond}
 	st.artifacts.Deletions = st.deletions
 	hub := &node.Hub{Dir: st.dir, Inbox: st.inbox, Store: store, Queue: st.queue, Auth: node.TokenAuth{Verifier: verifier}, Deletions: st.deletions}
-	catalog := &capability.Catalog{Local: capability.NewRegistry(), Nodes: st.dir, DefaultTimeout: time.Minute,
+	mems := &memory.Service{Store: st.memories, Grants: st.grants, Deletions: st.deletions, Clock: clk, IDs: ids.Random()}
+	catalog := &capability.Catalog{Local: capability.NewRegistry(memory.Capabilities(mems)...), Nodes: st.dir, DefaultTimeout: time.Minute,
 		Sandbox: &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID}}
 	router := &sandbox.Router{Hub: hub, Queue: st.sandboxQueue}
 	gw := model.NewGateway()
@@ -188,7 +195,7 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 	t.Cleanup(cancel)
 	for i := range workers {
 		w := runtime.New(runtime.Config{ID: fmt.Sprintf("w%d", i), Store: store, Queue: st.queue, Agents: agents, Model: gw,
-			Catalog: catalog, Dispatch: router, Artifacts: st.artifacts, Live: bus, LiveEndpoint: peerSrv.URL, IdleWait: 5 * time.Millisecond})
+			Catalog: catalog, Dispatch: router, Artifacts: st.artifacts, Memory: mems, Live: bus, LiveEndpoint: peerSrv.URL, IdleWait: 5 * time.Millisecond})
 		go w.Run(ctx)
 	}
 	if st.provider != nil {
@@ -202,7 +209,7 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 	if workers > 0 {
 		j := &janitor.Janitor{ID: "j1", Queue: st.janitorQueue, Service: svc, Store: store, Sessions: st.queue,
 			SandboxQueue: st.sandboxQueue, Inbox: st.inbox, Nodes: st.dir, Sandbox: st.provider, Activity: st.activity,
-			Ledger: st.ledger, Artifacts: st.artifacts, Index: st.index, Deletions: st.deletions, Clock: clk,
+			Ledger: st.ledger, Artifacts: st.artifacts, Memory: st.memories, Index: st.index, Deletions: st.deletions, Clock: clk,
 			IdleWait: 10 * time.Millisecond}
 		go j.Run(ctx)
 	}
@@ -211,7 +218,7 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/v1/nodes/connect", &wsgateway.Gateway{Hub: hub})
-	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: st.dir, Artifacts: st.artifacts}).Handler())
+	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: st.dir, Artifacts: st.artifacts, Memory: mems}).Handler())
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
@@ -456,6 +463,7 @@ func TestCrossInstanceOnPostgres(t *testing.T) {
 			ledger:       pgsandbox.Ledger{Pool: pool}, activity: pgsandbox.Activity{Pool: pool},
 			artifacts: &artifact.Service{Meta: pgartifact.Meta{Pool: pool}, Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk},
 			index:     pglifecycle.Index{Pool: pool}, deletions: pglifecycle.Deletions{Pool: pool}, janitorQueue: pgqueue.New(pool, clk, pgqueue.Janitor),
+			memories: pgmemory.Store{Pool: pool}, grants: pgmemory.Grants{Pool: pool},
 		}
 	}
 	e := &env{t: t, srv: instance(t, shared(), 0, true)}

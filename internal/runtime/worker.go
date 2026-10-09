@@ -45,6 +45,8 @@ type Config struct {
 	Compactor Compactor
 	Catalog   *capability.Catalog
 	Dispatch  Dispatcher
+	// Memory 非空且 AgentDef 配置了召回时，每个 Run 开始先召回 Memory（docs/design/m4-memory-grant.md §3）。
+	Memory Recaller
 	// Artifacts 非空时，用户消息中的图片工件会内联给模型（docs/design/m2-artifacts.md §4）。
 	Artifacts *artifact.Service
 	Live      live.Bus
@@ -304,6 +306,9 @@ func (w *Worker) advance(ctx context.Context, r *session.Run) error {
 	if r.Turns >= def.MaxTurns {
 		return w.fail(ctx, r, fmt.Sprintf("exceeded %d turns", def.MaxTurns))
 	}
+	if w.cfg.Memory != nil && def.Memory.Recall > 0 && !r.Recalled && r.Turns == 0 {
+		return w.recall(ctx, r, def)
+	}
 	return w.callModel(ctx, r, def)
 }
 
@@ -375,6 +380,7 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 		var err error
 		content, err = cp.Invoke(ctx, capability.Invocation{
 			SessionID: w.st.SessionID, RunID: r.ID, CallID: id, Arguments: c.Call.GetArgumentsJson(),
+			BusinessLine: w.st.Created.GetBusinessLine(), EndUser: w.st.Created.GetEndUser(),
 		})
 		return err
 	})
@@ -428,7 +434,7 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 	if err != nil {
 		return w.fail(ctx, r, err.Error())
 	}
-	req := &model.Request{Model: def.Model, System: def.Instructions, Messages: w.inlineImages(ctx, Transcript(w.st, def.Context.MaxToolResult))}
+	req := &model.Request{Model: def.Model, System: def.Instructions + memoryPrompt(w.st, r), Messages: w.inlineImages(ctx, Transcript(w.st, def.Context.MaxToolResult))}
 	for _, t := range tools {
 		req.Tools = append(req.Tools, model.ToolSpec{Name: t.Spec.Name, Description: t.Spec.Description, InputSchema: t.Spec.InputSchema})
 	}

@@ -287,3 +287,55 @@ func contextOverflow(body string) bool {
 	}
 	return false
 }
+
+// Embed 调用 OpenAI 兼容的 /embeddings 接口。火山方舟多模态嵌入模型的接口形式待用真实请求确认
+// （docs/design/m4-memory-grant.md §10）。
+func (p *Provider) Embed(ctx context.Context, model string, texts []string) ([][]float32, error) {
+	body, err := json.Marshal(map[string]any{"model": model, "input": texts, "encoding_format": "float"})
+	if err != nil {
+		return nil, err
+	}
+	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(p.BaseURL, "/")+"/embeddings", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	hreq.Header.Set("Content-Type", "application/json")
+	if p.APIKey != "" {
+		hreq.Header.Set("Authorization", "Bearer "+p.APIKey)
+	}
+	client := p.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(hreq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("embed %s: http %d: %s", model, resp.StatusCode, bytes.TrimSpace(b))
+	}
+	var out struct {
+		Data []struct {
+			Index     int       `json:"index"`
+			Embedding []float32 `json:"embedding"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("embed %s: %w", model, err)
+	}
+	vecs := make([][]float32, len(texts))
+	for _, d := range out.Data {
+		if d.Index < 0 || d.Index >= len(vecs) {
+			return nil, fmt.Errorf("embed %s: index %d out of range", model, d.Index)
+		}
+		vecs[d.Index] = d.Embedding
+	}
+	for i, v := range vecs {
+		if len(v) == 0 {
+			return nil, fmt.Errorf("embed %s: no embedding for input %d", model, i)
+		}
+	}
+	return vecs, nil
+}

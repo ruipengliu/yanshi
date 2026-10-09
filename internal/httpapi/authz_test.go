@@ -22,6 +22,7 @@ import (
 	"yanshi/internal/ids"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/live"
+	"yanshi/internal/memory"
 	"yanshi/internal/node"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
@@ -31,12 +32,14 @@ import (
 // authzEnv 是一个开启鉴权的 API：demo/u1 拥有一个 Session（含进行中的 Run 与一个未完成调用）、
 // 一个工件和一个 Node。
 type authzEnv struct {
-	srv       *httptest.Server
-	api       *httpapi.Server
-	sid, art  string
-	deletion  string
-	keys      map[string]*auth.SigningKey
-	ownedNode string
+	srv      *httptest.Server
+	api      *httpapi.Server
+	sid, art string
+	deletion string
+	// memory 是 demo/u1 的一条 Memory（有一条读取记录）；grant 是 u1 授予 other 读取 demo 偏好的授权。
+	memory, grant string
+	keys          map[string]*auth.SigningKey
+	ownedNode     string
 }
 
 func newAuthzEnv(t *testing.T) *authzEnv {
@@ -92,10 +95,23 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 	}
 
 	// demo 业务线的一次删除请求（针对没有数据的用户），供 GET /v1/deletions/{id} 使用。
-	if e.deletion, err = svc.DeleteEndUser(ctx, "demo", "ghost", nil); err != nil {
+	if e.deletion, err = svc.DeleteEndUser(ctx, "demo", "ghost"); err != nil {
 		t.Fatal(err)
 	}
-	e.api = &httpapi.Server{Auth: verifier, Service: svc, Live: live.NewMemBus(), Nodes: dir, Artifacts: arts}
+	mems := &memory.Service{Store: memory.NewMemStore(), Grants: memory.NewMemGrants(), Clock: clk, IDs: ids.Random()}
+	mm, err := mems.Save(ctx, memory.SaveRequest{BusinessLine: "demo", EndUser: "u1", SessionID: e.sid, CallID: "c0",
+		Category: memory.Preference, Content: "偏好简洁的回答"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.memory = mm.ID
+	_ = mems.RecordAccess(ctx, []memory.Access{{MemoryID: mm.ID, Owner: "demo", EndUser: "u1", Reader: "demo", SessionID: e.sid, RunID: "r", At: time.Now()}})
+	g, err := mems.CreateGrant(ctx, "u1", "demo", "other", []memory.Category{memory.Preference}, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.grant = g.ID
+	e.api = &httpapi.Server{Auth: verifier, Service: svc, Live: live.NewMemBus(), Nodes: dir, Artifacts: arts, Memory: mems}
 	e.srv = httptest.NewServer(e.api.Handler())
 	t.Cleanup(e.srv.Close)
 	return e
@@ -172,6 +188,12 @@ func (e *authzEnv) cases() map[string]routeCase {
 		"DELETE /v1/sessions/{id}":                    {"DELETE", s, nil, http.StatusAccepted},
 		"DELETE /v1/end_users/{id}":                   {"DELETE", "/v1/end_users/u1", nil, http.StatusAccepted},
 		"GET /v1/deletions/{id}":                      {"GET", "/v1/deletions/" + e.deletion, nil, http.StatusOK},
+		"GET /v1/memories":                            {"GET", "/v1/memories?end_user=u1", nil, http.StatusOK},
+		"DELETE /v1/memories/{id}":                    {"DELETE", "/v1/memories/" + e.memory + "?end_user=u1", nil, http.StatusNoContent},
+		"GET /v1/memories/access":                     {"GET", "/v1/memories/access?end_user=u1", nil, http.StatusOK},
+		"GET /v1/grants":                              {"GET", "/v1/grants", nil, http.StatusOK},
+		"POST /v1/grants":                             {"POST", "/v1/grants", map[string]any{"from": "demo", "to": "other", "categories": []string{"interest"}}, http.StatusCreated},
+		"DELETE /v1/grants/{id}":                      {"DELETE", "/v1/grants/" + e.grant, nil, http.StatusNoContent},
 	}
 }
 
@@ -239,6 +261,36 @@ func TestAuthorizationMatrix(t *testing.T) {
 					want := map[string]int{"demo/u1": 403, "demo/u2": 403, "other/u1": 403, "demo/": 200, "other/": 404}[principal]
 					if code != want {
 						t.Fatalf("got %d (%s), want %d", code, body, want)
+					}
+				case route == "GET /v1/memories" || route == "GET /v1/memories/access":
+					// 列表：只有 demo/u1 本人与 demo 的服务令牌能看到 demo/u1 的 Memory；自报他人 end_user 时 403。
+					if code != http.StatusOK && code != http.StatusForbidden {
+						t.Fatalf("got %d (%s)", code, body)
+					}
+					if sees := strings.Contains(body, e.memory); sees != allowed {
+						t.Fatalf("sees owner's memory = %v, want %v (%s)", sees, allowed, body)
+					}
+				case route == "DELETE /v1/memories/{id}":
+					// 其他用户自报 end_user=u1 与令牌不符（403）；其他业务线删的是"自己业务线下的"这条，不存在（404）。
+					want := map[string]int{"demo/u1": 204, "demo/": 204, "demo/u2": 403, "other/u1": 404, "other/": 404}[principal]
+					if code != want {
+						t.Fatalf("got %d (%s), want %d", code, body, want)
+					}
+				case strings.Contains(route, "/v1/grants"):
+					// 授权只由 EndUser 本人管理（服务令牌 403）。EndUser ID 跨业务线统一：other/u1 与 demo/u1 是同一人，
+					// 可以管理涉及 other 的授权；demo/u2 是另一个人，看不到也撤销不了 u1 的授权。
+					want := map[string]map[string]int{
+						"GET /v1/grants":         {"demo/u1": 200, "other/u1": 200, "demo/u2": 200, "demo/": 403, "other/": 403},
+						"POST /v1/grants":        {"demo/u1": 201, "other/u1": 201, "demo/u2": 201, "demo/": 403, "other/": 403},
+						"DELETE /v1/grants/{id}": {"demo/u1": 204, "other/u1": 204, "demo/u2": 404, "demo/": 403, "other/": 403},
+					}[route][principal]
+					if code != want {
+						t.Fatalf("got %d (%s), want %d", code, body, want)
+					}
+					if route == "GET /v1/grants" {
+						if sees, should := strings.Contains(body, e.grant), principal == "demo/u1" || principal == "other/u1"; sees != should {
+							t.Fatalf("sees u1's grant = %v, want %v", sees, should)
+						}
 					}
 				case route == "GET /v1/nodes":
 					// 列表不返回 404，但别人看不到 demo/u1 的 Node。

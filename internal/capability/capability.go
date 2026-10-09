@@ -31,6 +31,9 @@ type Invocation struct {
 	RunID     string
 	CallID    string
 	Arguments string
+	// BusinessLine 与 EndUser 是 Session 的所属方，供按用户隔离数据的能力使用（如 Memory）。
+	BusinessLine string
+	EndUser      string
 }
 
 type Capability interface {

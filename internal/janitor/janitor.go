@@ -17,6 +17,7 @@ import (
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/lifecycle"
+	"yanshi/internal/memory"
 	"yanshi/internal/node"
 	"yanshi/internal/sandbox"
 	"yanshi/internal/service"
@@ -41,6 +42,8 @@ type Janitor struct {
 	Activity  sandbox.Activity
 	Ledger    nodesdk.Ledger // 沙箱控制器共享的去重账本
 	Artifacts *artifact.Service
+	// Memory 为 nil 表示未启用 Memory；删除 Session 时一并删除由它写入的 Memory（ADR-0016）。
+	Memory    memory.Store
 	Index     lifecycle.Index
 	Deletions lifecycle.Deletions
 	// Retention 是各业务线的保留策略，键为业务线名。
@@ -263,6 +266,11 @@ func (j *Janitor) sweep(ctx context.Context, sid string) error {
 	}
 	if err := j.Ledger.Forget(sid); err != nil {
 		return err
+	}
+	if j.Memory != nil {
+		if err := j.Memory.DeleteSession(ctx, sid); err != nil {
+			return err
+		}
 	}
 	return j.Artifacts.DeleteSession(ctx, sid)
 }

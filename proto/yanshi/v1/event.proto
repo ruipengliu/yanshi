@@ -34,6 +34,7 @@ message Event {
     ApprovalDecided approval_decided = 22;
     ContextCompacted context_compacted = 23;
     SessionClosed session_closed = 24;
+    MemoryRecalled memory_recalled = 25;
   }
 }
 
@@ -194,4 +195,20 @@ message SessionClosed {
   // 关闭方，如 "end_user:u1"、"service:demo"、"retention"。
   string by = 1;
   string reason = 2;
+}
+
+// MemoryRecalled 记录 Run 开始时召回的 Memory（ADR-0016）：只用于当前 Run 的上下文，
+// 使接管与回放看到相同的上下文，同时也是 Memory 的访问记录。每个 Run 至多一次。
+message MemoryRecalled {
+  string run_id = 1;
+  uint32 attempt = 2;
+  repeated RecalledMemory items = 3;
+}
+
+message RecalledMemory {
+  string id = 1;
+  // 所属业务线：与 Session 的业务线不同时，表示经 Grant 读取。
+  string business_line = 2;
+  string category = 3;
+  string content = 4;
 }

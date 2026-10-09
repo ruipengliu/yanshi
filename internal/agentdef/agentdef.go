@@ -28,6 +28,14 @@ type Def struct {
 	MaxTurns int `yaml:"max_turns"`
 	// Context 控制上下文窗口与压缩（docs/design/m2-long-runs.md §4）。
 	Context Context `yaml:"context"`
+	// Memory 控制 Run 开始时的召回（docs/design/m4-memory-grant.md §3）。能否写入由能力白名单中
+	// 是否包含 memory_save 决定。
+	Memory MemoryConfig `yaml:"memory"`
+}
+
+type MemoryConfig struct {
+	// Recall 是每个 Run 开始时召回的条数；0 表示不召回。
+	Recall int `yaml:"recall"`
 }
 
 // Context 是上下文压缩策略的参数，单位均为（估算的）token。

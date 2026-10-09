@@ -8,6 +8,7 @@ import (
 	"yanshi/internal/eventlog"
 	"yanshi/internal/janitor"
 	"yanshi/internal/lifecycle"
+	"yanshi/internal/memory"
 	"yanshi/internal/sandbox"
 	"yanshi/internal/service"
 	"yanshi/sdk/nodesdk"
@@ -22,7 +23,8 @@ func (w *World) newJanitor() *janitor.Janitor {
 	return &janitor.Janitor{
 		ID: fmt.Sprintf("j%d", w.nextJ), Queue: w.janitorQueue, Service: w.svc, Store: w.store, Sessions: w.queue,
 		SandboxQueue: w.sandboxQueue, Inbox: w.hub.Inbox, Nodes: w.hub.Dir, Sandbox: w.provider, Activity: w.activity,
-		Ledger: w.ledger, Artifacts: w.artifacts, Index: w.index, Deletions: w.deletions, Clock: w.clock, LeaseTTL: leaseTTL,
+		Ledger: w.ledger, Artifacts: w.artifacts, Memory: w.memories.Store, Index: w.index, Deletions: w.deletions,
+		Clock: w.clock, LeaseTTL: leaseTTL,
 		BeforeStage: func(context.Context, string) {
 			if w.faults && w.crash != nil && w.chance(0.1) {
 				w.crash()
@@ -141,6 +143,9 @@ func (w *World) checkDeleted(final bool) error {
 					return fmt.Errorf("invariant: deleted session %s has call %s pending on %s", sid, it.GetCallId(), b)
 				}
 			}
+		}
+		if s, ok := w.memories.Store.(*memory.MemStore); ok && s.HasSession(sid) {
+			return fmt.Errorf("invariant: deleted session %s still has memories", sid)
 		}
 		if l, ok := w.ledger.(*nodesdk.MemLedger); ok && l.HasSession(sid) {
 			return fmt.Errorf("invariant: deleted session %s still in the sandbox ledger", sid)

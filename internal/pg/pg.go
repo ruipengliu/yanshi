@@ -26,7 +26,8 @@ func Open(ctx context.Context, dsn, schema string) (*pgxpool.Pool, error) {
 		return nil, err
 	}
 	if schema != "" {
-		cfg.ConnConfig.RuntimeParams["search_path"] = schema
+		// public 在后：扩展（如 pgvector）安装在 public 中，所有 schema 共用。
+		cfg.ConnConfig.RuntimeParams["search_path"] = schema + ", public"
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
@@ -40,6 +41,7 @@ func Open(ctx context.Context, dsn, schema string) (*pgxpool.Pool, error) {
 }
 
 // Migrate 按版本号顺序应用尚未应用的迁移；以 advisory lock 串行化多个实例的并发启动。
+// 锁是全库范围的：迁移会创建扩展（CREATE EXTENSION 是库级操作），并发创建会冲突。
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	files, err := fs.Glob(migrations, "migrations/*.sql")
 	if err != nil {
@@ -47,7 +49,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	}
 	sort.Strings(files)
 	return pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext(current_schema() || ':yanshi_migrate'))`); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('yanshi_migrate'))`); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version int PRIMARY KEY)`); err != nil {

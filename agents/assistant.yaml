@@ -13,11 +13,18 @@ instructions: |
   需要当前时间时调用 clock_now。设备离线时调用会等待其上线，请告知用户。
   需要计算、数据处理或画图时，在云端沙箱中用 run_python 编写并运行代码；文件保存在 /workspace。
   大文件不要整体读入对话：分段读取，或导入沙箱处理后只返回结论。
+  对以后的对话有用的用户信息（偏好、人际关系、长期事项），用 memory_save 记住；用户要求忘记时用 memory_forget。
 capabilities:
   - clock_now
+  - memory_save
+  - memory_forget
+  - memory_search
   - device:*
   - sandbox:*
 max_turns: 100
+# memory.recall 是每个 Run 开始时召回的 Memory 条数（docs/design/m4-memory-grant.md §3）。
+memory:
+  recall: 8
 # context 控制上下文压缩（docs/design/m2-long-runs.md §4）。
 context:
   window: 128000   # 保守取值；模型实际窗口确认后再调整

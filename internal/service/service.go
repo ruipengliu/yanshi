@@ -321,9 +321,9 @@ func (s *Service) Delete(ctx context.Context, sessionID, reason, requestID strin
 	return s.enqueueJanitor(ctx, sessionID)
 }
 
-// DeleteEndUser 删除 EndUser 在业务线下的全部 Session 与 Node 登记（注销账号），返回删除请求 ID。
-// 删除请求开始后新建的 Session 不在其中：调用方应先让该用户的令牌失效。
-func (s *Service) DeleteEndUser(ctx context.Context, businessLine, endUser string, nodes NodeRemover) (string, error) {
+// DeleteEndUser 删除 EndUser 在业务线下的全部 Session，并由 removers 删除其余用户数据（Node 登记、
+// Memory 与 Grant 等），返回删除请求 ID。删除请求开始后新建的 Session 不在其中：调用方应先让该用户的令牌失效。
+func (s *Service) DeleteEndUser(ctx context.Context, businessLine, endUser string, removers ...UserDataRemover) (string, error) {
 	if s.Index == nil || s.Deletions == nil {
 		return "", fmt.Errorf("%w: deletion is not configured", ErrInvalid)
 	}
@@ -340,16 +340,16 @@ func (s *Service) DeleteEndUser(ctx context.Context, businessLine, endUser strin
 			return "", err
 		}
 	}
-	if nodes != nil {
-		if err := nodes.DeleteEndUser(ctx, businessLine, endUser); err != nil {
+	for _, r := range removers {
+		if err := r.DeleteEndUser(ctx, businessLine, endUser); err != nil {
 			return "", err
 		}
 	}
 	return req.ID, nil
 }
 
-// NodeRemover 删除 EndUser 的 Node 登记。
-type NodeRemover interface {
+// UserDataRemover 删除 EndUser 在业务线下的一类数据（注销账号时调用）。
+type UserDataRemover interface {
 	DeleteEndUser(ctx context.Context, businessLine, endUser string) error
 }
 

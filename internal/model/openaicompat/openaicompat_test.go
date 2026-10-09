@@ -107,3 +107,26 @@ func TestMediaEncoding(t *testing.T) {
 		t.Fatalf("tool content = %#v", w.Messages[2].Content)
 	}
 }
+
+func TestEmbed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Model string   `json:"model"`
+			Input []string `json:"input"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if r.URL.Path != "/embeddings" || req.Model != "emb" || len(req.Input) != 2 {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		// 故意乱序返回，验证按 index 归位。
+		fmt.Fprint(w, `{"data":[{"index":1,"embedding":[0,1]},{"index":0,"embedding":[1,0]}]}`)
+	}))
+	defer srv.Close()
+	gw := model.NewGateway()
+	gw.Register("p", &Provider{BaseURL: srv.URL})
+	vecs, err := gw.Embed(context.Background(), "p/emb", []string{"a", "b"})
+	if err != nil || len(vecs) != 2 || vecs[0][0] != 1 || vecs[1][1] != 1 {
+		t.Fatalf("vecs = %v, %v", vecs, err)
+	}
+}

@@ -60,6 +60,11 @@ type Provider interface {
 	Generate(ctx context.Context, req *Request, onDelta func(Delta)) (*Response, error)
 }
 
+// Embedder 是可选的 Provider 能力：计算文本的嵌入向量（Memory 检索，docs/design/m4-memory-grant.md §5）。
+type Embedder interface {
+	Embed(ctx context.Context, model string, texts []string) ([][]float32, error)
+}
+
 // Gateway 按 "provider/model" 形式的模型引用把请求路由到对应 Provider。
 type Gateway struct {
 	providers map[string]Provider
@@ -122,4 +127,21 @@ func DescribeMedia(m *v1.Media) string {
 // TextBlocks 把一段文本包装为内容块。
 func TextBlocks(s string) []*v1.ContentBlock {
 	return []*v1.ContentBlock{{Kind: &v1.ContentBlock_Text{Text: &v1.Text{Text: s}}}}
+}
+
+// Embed 中 model 是完整的 "provider/model" 引用；供应商须实现 Embedder。
+func (g *Gateway) Embed(ctx context.Context, model string, texts []string) ([][]float32, error) {
+	provider, m, err := SplitRef(model)
+	if err != nil {
+		return nil, err
+	}
+	p, ok := g.providers[provider]
+	if !ok {
+		return nil, fmt.Errorf("model provider %q not configured", provider)
+	}
+	e, ok := p.(Embedder)
+	if !ok {
+		return nil, fmt.Errorf("model provider %q does not support embeddings", provider)
+	}
+	return e.Embed(ctx, m, texts)
 }

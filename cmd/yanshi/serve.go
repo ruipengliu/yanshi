@@ -32,6 +32,8 @@ import (
 	"yanshi/internal/lifecycle/pglifecycle"
 	"yanshi/internal/live"
 	"yanshi/internal/live/peer"
+	"yanshi/internal/memory"
+	"yanshi/internal/memory/pgmemory"
 	"yanshi/internal/metrics"
 	"yanshi/internal/model"
 	"yanshi/internal/model/bench"
@@ -67,6 +69,8 @@ type backends struct {
 	activity     sandbox.Activity
 	artifactMeta artifact.MetaStore
 
+	memories     memory.Store
+	grants       memory.Grants
 	index        lifecycle.Index
 	deletions    lifecycle.Deletions
 	janitorQueue workqueue.Queue
@@ -78,6 +82,7 @@ func openStorage(ctx context.Context, kind, dsn string, clk clock.Clock, logger 
 	case "memory":
 		return backends{memlog.New(), memqueue.New(clk), node.NewMemDirectory(clk), node.NewMemInbox(),
 			memqueue.New(clk), nodesdk.NewMemLedger(), sandbox.NewMemActivity(), artifact.NewMemMeta(),
+			memory.NewMemStore(), memory.NewMemGrants(),
 			lifecycle.NewMemIndex(), lifecycle.NewMemDeletions(), memqueue.New(clk)}, func() {}, nil
 	case "postgres":
 		pool, err := pg.Open(ctx, dsn, "")
@@ -98,6 +103,7 @@ func openStorage(ctx context.Context, kind, dsn string, clk clock.Clock, logger 
 		b := backends{pglog.New(pool, n), pgqueue.New(pool, clk, pgqueue.Sessions).WithNotifier(n), pgnode.NewDirectory(pool, clk), pgnode.NewInbox(pool, n),
 			pgqueue.New(pool, clk, pgqueue.Sandboxes), pgsandbox.Ledger{Pool: pool}, pgsandbox.Activity{Pool: pool},
 			pgartifact.Meta{Pool: pool},
+			pgmemory.Store{Pool: pool}, pgmemory.Grants{Pool: pool},
 			pglifecycle.Index{Pool: pool}, pglifecycle.Deletions{Pool: pool}, pgqueue.New(pool, clk, pgqueue.Janitor)}
 		return b, func() { cancel(); pool.Close() }, nil
 	}
@@ -145,6 +151,7 @@ func serve(args []string) error {
 	sandboxKind := fs.String("sandbox", "none", "代码沙箱：none | docker")
 	sandboxImage := fs.String("sandbox-image", "yanshi-sandbox:dev", "沙箱镜像（make sandbox-image 构建）")
 	sandboxRuntime := fs.String("sandbox-runtime", "", "沙箱容器运行时，如 runsc（gVisor）")
+	embedModel := fs.String("embedding-model", os.Getenv("YANSHI_EMBEDDING_MODEL"), "Memory 检索用的嵌入模型（provider/model，如 ark/doubao-embedding-vision）；为空时按文本相似度检索")
 	controllers := fs.Int("sandbox-controllers", 2, "沙箱控制器数量")
 	blobKind := fs.String("blob", "fs", "工件内容存储：fs | s3")
 	blobDir := fs.String("blob-dir", "data/artifacts", "工件目录（blob=fs）")
@@ -218,8 +225,14 @@ func serve(args []string) error {
 		Dir: dir, Inbox: b.inbox, Store: store, Queue: queue,
 		Auth: nodeAuth, Waker: node.LogWaker{Logger: logger}, Logger: logger,
 	}
+	// Memory（docs/design/m4-memory-grant.md）：Agent 通过能力读写，Run 开始时召回。
+	mems := &memory.Service{Store: b.memories, Grants: b.grants, Deletions: b.deletions, Clock: clk, IDs: ids.Random()}
+	if *embedModel != "" {
+		mems.Embedder, mems.EmbedModel = gw, *embedModel
+	}
 	catalog := &capability.Catalog{
-		Local: capability.NewRegistry(capability.ClockNow(clk)), Nodes: dir, DefaultTimeout: 30 * time.Minute,
+		Local: capability.NewRegistry(append([]capability.Capability{capability.ClockNow(clk)}, memory.Capabilities(mems)...)...),
+		Nodes: dir, DefaultTimeout: 30 * time.Minute,
 	}
 	hub.Deletions = b.deletions
 	router := &sandbox.Router{Hub: hub, Queue: b.sandboxQueue}
@@ -235,7 +248,7 @@ func serve(args []string) error {
 	for i := range *workers {
 		w := runtime.New(runtime.Config{
 			ID: fmt.Sprintf("%s-worker-%d", proc, i), Store: store, Queue: queue, Agents: agents,
-			Model: gw, Catalog: catalog, Dispatch: router, Artifacts: arts, Live: bus, LiveEndpoint: liveEndpoint, Logger: logger,
+			Model: gw, Catalog: catalog, Dispatch: router, Artifacts: arts, Memory: mems, Live: bus, LiveEndpoint: liveEndpoint, Logger: logger,
 			LeaseTTL: *leaseTTL, Heartbeat: *leaseTTL / 3, Idle: idle,
 		})
 		wg.Add(1)
@@ -271,14 +284,14 @@ func serve(args []string) error {
 	jan := &janitor.Janitor{
 		ID: proc + "-janitor", Queue: b.janitorQueue, Service: svc, Store: store, Sessions: queue, SandboxQueue: b.sandboxQueue,
 		Inbox: b.inbox, Nodes: dir, Sandbox: provider, Activity: b.activity, Ledger: b.ledger, Artifacts: arts,
-		Index: b.index, Deletions: b.deletions, Retention: retention, Clock: clk, Logger: logger, LeaseTTL: *leaseTTL,
+		Memory: b.memories, Index: b.index, Deletions: b.deletions, Retention: retention, Clock: clk, Logger: logger, LeaseTTL: *leaseTTL,
 	}
 	wg.Add(1)
 	go func() { defer wg.Done(); jan.Run(ctx) }()
 
 	mux := http.NewServeMux()
 	mux.Handle("/v1/nodes/connect", &wsgateway.Gateway{Hub: hub, Logger: logger})
-	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Logger: logger}).Handler())
+	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Logger: logger}).Handler())
 	srv := &http.Server{
 		Addr:              *addr,
 		Handler:           mux,

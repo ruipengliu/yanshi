@@ -1,6 +1,6 @@
 # M4 Memory 与 Grant
 
-> 状态：已定稿，待实现 · 依赖：ADR-0003、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[鉴权](./auth.md) · ADR-0016
+> 状态：已实现（向量检索待用真实嵌入模型验证，§10 第 6 步）· 依赖：ADR-0003、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[鉴权](./auth.md) · ADR-0016
 
 ## 1. 目标
 
@@ -10,6 +10,8 @@
 - **可删除**：Memory 和 Session 数据一样遵循 ADR-0015，账号注销时随之删除。
 
 不做：模型训练与微调；面向业务线的用户画像分析接口（Memory 只供 Agent 在对话中使用）。
+
+**前提：EndUser ID 跨业务线统一**（公司统一账号）。跨业务线的 Grant 依赖"业务线 A 的 u1 与业务线 B 的 u1 是同一个人"；如果各业务线的用户 ID 不统一，需要先有账号关联，这不在本设计范围内。
 
 ## 2. 数据模型
 
@@ -40,12 +42,12 @@ Memory {
 
 ### 写入：由 Agent 通过能力调用
 
-Agent 通过进程内的能力写入和删除 Memory：
+Agent 通过进程内的能力写入和删除 Memory（能力名用单下划线：双下划线是"设备标签__能力"的分隔符）：
 
-- `memory__save{category, content, replaces?}`：写入一条，可替换旧的一条，用于处理"搬家了"这类更新；
-- `memory__forget{id}`：删除一条。
+- `memory_save{category, content, replaces?}`：写入一条，可替换旧的一条，用于处理"搬家了"这类更新；
+- `memory_forget{id}`：删除一条（只能删除本业务线的）。
 
-AgentDef 的 `memory:` 配置段控制该 Agent 能否写入、能写哪些类别。
+Agent 能否写入由能力白名单中是否包含 `memory_save` 决定，与其他能力一致；AgentDef 的 `memory.recall` 配置召回条数。
 
 - 写入是调用，所以天然记录在日志里（`ToolCallStarted` / `ToolResult`）：何时、因为哪句话写了什么，都可以审计。
 - Memory ID 由 `call_id` 派生，因此重复执行是幂等的，不需要额外的去重。
@@ -60,7 +62,9 @@ Worker 开始每个 Run 时：
 
 为什么要记录为 Event：检索结果会随时间变化，只有记在日志里，接管、回放和评测看到的上下文才一致（ADR-0004）。它同时也是**访问记录**：EndUser 可以看到哪个业务线在什么时候用了哪些 Memory。
 
-另外提供 `memory__search{query}` 供 Agent 主动查询，结果作为普通的调用结果记录。
+另外提供 `memory_search{query}` 供 Agent 主动查询，结果作为普通的调用结果记录。
+
+召回时还写入一条**访问索引**（Memory ID、读取方业务线、Session、时间，不含内容），供 `GET /v1/memories/access` 查询。访问索引在提交召回事件**之前**写入：宁可多记一次"可能被读取"，也不漏记。访问索引随 Memory 删除。
 
 ## 4. Grant
 
@@ -77,7 +81,8 @@ Grant { id, end_user, from_business_line, to_business_line, categories[], create
 
 - **存储**：PostgreSQL + pgvector（ADR-0007 的基线数据库，不新增组件；私有化部署只需安装扩展）。开发环境的 compose 改用带 pgvector 的镜像。
 - **嵌入**：模型网关新增 `Embedder` 接口，第一个实现是 OpenAI 兼容的 `/embeddings`，对应火山方舟的 `doubao-embedding-vision` 和私有化服务。换嵌入模型需要重新计算向量，所以向量要记录模型名，检索时只比较同一模型的向量。
-- **没有嵌入服务时**（开发、测试、模拟）：退化为字符三元组相似度检索（`pg_trgm`；内存实现用同样的算法），结果是确定的。
+- **没有嵌入服务时**（开发、测试、模拟）：退化为字符二元组相似度（Dice 系数），在应用层计算。没有采用 `pg_trgm`，因为它对中文的切分依赖数据库的 locale；而每个 EndUser 每个业务线至多数百条，在应用层计算开销很小，内存与 PG 两种实现的结果也完全一致。
+- **向量检索**：按所属方过滤后精确比较（`<=>`），不建向量索引；向量列不固定维度，只比较同一模型、同一维度的向量。
 - **规模**：每个 EndUser 每个业务线最多保留 N 条（默认 500）。超出时拒绝写入，并提示 Agent 先删除或合并。
 
 ## 6. 用户可见的接口

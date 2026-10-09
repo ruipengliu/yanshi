@@ -52,6 +52,7 @@ type Event struct {
 	//	*Event_ApprovalDecided
 	//	*Event_ContextCompacted
 	//	*Event_SessionClosed
+	//	*Event_MemoryRecalled
 	Payload       isEvent_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -257,6 +258,15 @@ func (x *Event) GetSessionClosed() *SessionClosed {
 	return nil
 }
 
+func (x *Event) GetMemoryRecalled() *MemoryRecalled {
+	if x != nil {
+		if x, ok := x.Payload.(*Event_MemoryRecalled); ok {
+			return x.MemoryRecalled
+		}
+	}
+	return nil
+}
+
 type isEvent_Payload interface {
 	isEvent_Payload()
 }
@@ -321,6 +331,10 @@ type Event_SessionClosed struct {
 	SessionClosed *SessionClosed `protobuf:"bytes,24,opt,name=session_closed,json=sessionClosed,proto3,oneof"`
 }
 
+type Event_MemoryRecalled struct {
+	MemoryRecalled *MemoryRecalled `protobuf:"bytes,25,opt,name=memory_recalled,json=memoryRecalled,proto3,oneof"`
+}
+
 func (*Event_SessionCreated) isEvent_Payload() {}
 
 func (*Event_RunRequested) isEvent_Payload() {}
@@ -350,6 +364,8 @@ func (*Event_ApprovalDecided) isEvent_Payload() {}
 func (*Event_ContextCompacted) isEvent_Payload() {}
 
 func (*Event_SessionClosed) isEvent_Payload() {}
+
+func (*Event_MemoryRecalled) isEvent_Payload() {}
 
 // ContentBlock 承载一段多模态内容。
 type ContentBlock struct {
@@ -1707,11 +1723,142 @@ func (x *SessionClosed) GetReason() string {
 	return ""
 }
 
+// MemoryRecalled 记录 Run 开始时召回的 Memory（ADR-0016）：只用于当前 Run 的上下文，
+// 使接管与回放看到相同的上下文，同时也是 Memory 的访问记录。每个 Run 至多一次。
+type MemoryRecalled struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	Attempt       uint32                 `protobuf:"varint,2,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	Items         []*RecalledMemory      `protobuf:"bytes,3,rep,name=items,proto3" json:"items,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MemoryRecalled) Reset() {
+	*x = MemoryRecalled{}
+	mi := &file_yanshi_v1_event_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MemoryRecalled) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MemoryRecalled) ProtoMessage() {}
+
+func (x *MemoryRecalled) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_event_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MemoryRecalled.ProtoReflect.Descriptor instead.
+func (*MemoryRecalled) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *MemoryRecalled) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *MemoryRecalled) GetAttempt() uint32 {
+	if x != nil {
+		return x.Attempt
+	}
+	return 0
+}
+
+func (x *MemoryRecalled) GetItems() []*RecalledMemory {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
+type RecalledMemory struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	// 所属业务线：与 Session 的业务线不同时，表示经 Grant 读取。
+	BusinessLine  string `protobuf:"bytes,2,opt,name=business_line,json=businessLine,proto3" json:"business_line,omitempty"`
+	Category      string `protobuf:"bytes,3,opt,name=category,proto3" json:"category,omitempty"`
+	Content       string `protobuf:"bytes,4,opt,name=content,proto3" json:"content,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RecalledMemory) Reset() {
+	*x = RecalledMemory{}
+	mi := &file_yanshi_v1_event_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RecalledMemory) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RecalledMemory) ProtoMessage() {}
+
+func (x *RecalledMemory) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_event_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RecalledMemory.ProtoReflect.Descriptor instead.
+func (*RecalledMemory) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *RecalledMemory) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *RecalledMemory) GetBusinessLine() string {
+	if x != nil {
+		return x.BusinessLine
+	}
+	return ""
+}
+
+func (x *RecalledMemory) GetCategory() string {
+	if x != nil {
+		return x.Category
+	}
+	return ""
+}
+
+func (x *RecalledMemory) GetContent() string {
+	if x != nil {
+		return x.Content
+	}
+	return ""
+}
+
 var File_yanshi_v1_event_proto protoreflect.FileDescriptor
 
 const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\n" +
-	"\x15yanshi/v1/event.proto\x12\tyanshi.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf3\b\n" +
+	"\x15yanshi/v1/event.proto\x12\tyanshi.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xb9\t\n" +
 	"\x05Event\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -1735,7 +1882,8 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\x12approval_requested\x18\x15 \x01(\v2\x1c.yanshi.v1.ApprovalRequestedH\x00R\x11approvalRequested\x12G\n" +
 	"\x10approval_decided\x18\x16 \x01(\v2\x1a.yanshi.v1.ApprovalDecidedH\x00R\x0fapprovalDecided\x12J\n" +
 	"\x11context_compacted\x18\x17 \x01(\v2\x1b.yanshi.v1.ContextCompactedH\x00R\x10contextCompacted\x12A\n" +
-	"\x0esession_closed\x18\x18 \x01(\v2\x18.yanshi.v1.SessionClosedH\x00R\rsessionClosedB\t\n" +
+	"\x0esession_closed\x18\x18 \x01(\v2\x18.yanshi.v1.SessionClosedH\x00R\rsessionClosed\x12D\n" +
+	"\x0fmemory_recalled\x18\x19 \x01(\v2\x19.yanshi.v1.MemoryRecalledH\x00R\x0ememoryRecalledB\t\n" +
 	"\apayload\"g\n" +
 	"\fContentBlock\x12%\n" +
 	"\x04text\x18\x01 \x01(\v2\x0f.yanshi.v1.TextH\x00R\x04text\x12(\n" +
@@ -1831,7 +1979,16 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\x05usage\x18\x06 \x01(\v2\x10.yanshi.v1.UsageR\x05usage\"7\n" +
 	"\rSessionClosed\x12\x0e\n" +
 	"\x02by\x18\x01 \x01(\tR\x02by\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reasonB\x1fZ\x1dyanshi/gen/yanshi/v1;yanshiv1b\x06proto3"
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"r\n" +
+	"\x0eMemoryRecalled\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
+	"\aattempt\x18\x02 \x01(\rR\aattempt\x12/\n" +
+	"\x05items\x18\x03 \x03(\v2\x19.yanshi.v1.RecalledMemoryR\x05items\"{\n" +
+	"\x0eRecalledMemory\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12#\n" +
+	"\rbusiness_line\x18\x02 \x01(\tR\fbusinessLine\x12\x1a\n" +
+	"\bcategory\x18\x03 \x01(\tR\bcategory\x12\x18\n" +
+	"\acontent\x18\x04 \x01(\tR\acontentB\x1fZ\x1dyanshi/gen/yanshi/v1;yanshiv1b\x06proto3"
 
 var (
 	file_yanshi_v1_event_proto_rawDescOnce sync.Once
@@ -1845,7 +2002,7 @@ func file_yanshi_v1_event_proto_rawDescGZIP() []byte {
 	return file_yanshi_v1_event_proto_rawDescData
 }
 
-var file_yanshi_v1_event_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
+var file_yanshi_v1_event_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_yanshi_v1_event_proto_goTypes = []any{
 	(*Event)(nil),                 // 0: yanshi.v1.Event
 	(*ContentBlock)(nil),          // 1: yanshi.v1.ContentBlock
@@ -1869,10 +2026,12 @@ var file_yanshi_v1_event_proto_goTypes = []any{
 	(*ApprovalDecided)(nil),       // 19: yanshi.v1.ApprovalDecided
 	(*ContextCompacted)(nil),      // 20: yanshi.v1.ContextCompacted
 	(*SessionClosed)(nil),         // 21: yanshi.v1.SessionClosed
-	(*timestamppb.Timestamp)(nil), // 22: google.protobuf.Timestamp
+	(*MemoryRecalled)(nil),        // 22: yanshi.v1.MemoryRecalled
+	(*RecalledMemory)(nil),        // 23: yanshi.v1.RecalledMemory
+	(*timestamppb.Timestamp)(nil), // 24: google.protobuf.Timestamp
 }
 var file_yanshi_v1_event_proto_depIdxs = []int32{
-	22, // 0: yanshi.v1.Event.time:type_name -> google.protobuf.Timestamp
+	24, // 0: yanshi.v1.Event.time:type_name -> google.protobuf.Timestamp
 	5,  // 1: yanshi.v1.Event.session_created:type_name -> yanshi.v1.SessionCreated
 	6,  // 2: yanshi.v1.Event.run_requested:type_name -> yanshi.v1.RunRequested
 	7,  // 3: yanshi.v1.Event.steered:type_name -> yanshi.v1.Steered
@@ -1888,24 +2047,26 @@ var file_yanshi_v1_event_proto_depIdxs = []int32{
 	19, // 13: yanshi.v1.Event.approval_decided:type_name -> yanshi.v1.ApprovalDecided
 	20, // 14: yanshi.v1.Event.context_compacted:type_name -> yanshi.v1.ContextCompacted
 	21, // 15: yanshi.v1.Event.session_closed:type_name -> yanshi.v1.SessionClosed
-	2,  // 16: yanshi.v1.ContentBlock.text:type_name -> yanshi.v1.Text
-	3,  // 17: yanshi.v1.ContentBlock.media:type_name -> yanshi.v1.Media
-	4,  // 18: yanshi.v1.SessionCreated.agent:type_name -> yanshi.v1.AgentRef
-	1,  // 19: yanshi.v1.RunRequested.input:type_name -> yanshi.v1.ContentBlock
-	1,  // 20: yanshi.v1.Steered.input:type_name -> yanshi.v1.ContentBlock
-	1,  // 21: yanshi.v1.AssistantMessage.content:type_name -> yanshi.v1.ContentBlock
-	9,  // 22: yanshi.v1.AssistantMessage.tool_calls:type_name -> yanshi.v1.ToolCall
-	10, // 23: yanshi.v1.AssistantMessage.usage:type_name -> yanshi.v1.Usage
-	22, // 24: yanshi.v1.ToolCallStarted.deadline:type_name -> google.protobuf.Timestamp
-	1,  // 25: yanshi.v1.ToolResult.content:type_name -> yanshi.v1.ContentBlock
-	22, // 26: yanshi.v1.ApprovalRequested.deadline:type_name -> google.protobuf.Timestamp
-	1,  // 27: yanshi.v1.ContextCompacted.summary:type_name -> yanshi.v1.ContentBlock
-	10, // 28: yanshi.v1.ContextCompacted.usage:type_name -> yanshi.v1.Usage
-	29, // [29:29] is the sub-list for method output_type
-	29, // [29:29] is the sub-list for method input_type
-	29, // [29:29] is the sub-list for extension type_name
-	29, // [29:29] is the sub-list for extension extendee
-	0,  // [0:29] is the sub-list for field type_name
+	22, // 16: yanshi.v1.Event.memory_recalled:type_name -> yanshi.v1.MemoryRecalled
+	2,  // 17: yanshi.v1.ContentBlock.text:type_name -> yanshi.v1.Text
+	3,  // 18: yanshi.v1.ContentBlock.media:type_name -> yanshi.v1.Media
+	4,  // 19: yanshi.v1.SessionCreated.agent:type_name -> yanshi.v1.AgentRef
+	1,  // 20: yanshi.v1.RunRequested.input:type_name -> yanshi.v1.ContentBlock
+	1,  // 21: yanshi.v1.Steered.input:type_name -> yanshi.v1.ContentBlock
+	1,  // 22: yanshi.v1.AssistantMessage.content:type_name -> yanshi.v1.ContentBlock
+	9,  // 23: yanshi.v1.AssistantMessage.tool_calls:type_name -> yanshi.v1.ToolCall
+	10, // 24: yanshi.v1.AssistantMessage.usage:type_name -> yanshi.v1.Usage
+	24, // 25: yanshi.v1.ToolCallStarted.deadline:type_name -> google.protobuf.Timestamp
+	1,  // 26: yanshi.v1.ToolResult.content:type_name -> yanshi.v1.ContentBlock
+	24, // 27: yanshi.v1.ApprovalRequested.deadline:type_name -> google.protobuf.Timestamp
+	1,  // 28: yanshi.v1.ContextCompacted.summary:type_name -> yanshi.v1.ContentBlock
+	10, // 29: yanshi.v1.ContextCompacted.usage:type_name -> yanshi.v1.Usage
+	23, // 30: yanshi.v1.MemoryRecalled.items:type_name -> yanshi.v1.RecalledMemory
+	31, // [31:31] is the sub-list for method output_type
+	31, // [31:31] is the sub-list for method input_type
+	31, // [31:31] is the sub-list for extension type_name
+	31, // [31:31] is the sub-list for extension extendee
+	0,  // [0:31] is the sub-list for field type_name
 }
 
 func init() { file_yanshi_v1_event_proto_init() }
@@ -1929,6 +2090,7 @@ func file_yanshi_v1_event_proto_init() {
 		(*Event_ApprovalDecided)(nil),
 		(*Event_ContextCompacted)(nil),
 		(*Event_SessionClosed)(nil),
+		(*Event_MemoryRecalled)(nil),
 	}
 	file_yanshi_v1_event_proto_msgTypes[1].OneofWrappers = []any{
 		(*ContentBlock_Text)(nil),
@@ -1940,7 +2102,7 @@ func file_yanshi_v1_event_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_yanshi_v1_event_proto_rawDesc), len(file_yanshi_v1_event_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   22,
+			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

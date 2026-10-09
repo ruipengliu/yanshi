@@ -206,3 +206,58 @@ func TestDeleteEndUser(t *testing.T) {
 		}
 	}
 }
+
+// TestMemoryAcrossSessions：在一个 Session 中记住的信息，在同一用户的另一个 Session 开始时被召回并留下访问记录；
+// 删除写入它的 Session 后，Memory 随之删除（docs/design/m4-memory-grant.md §7），而另一个 Session 中的召回记录作为其历史保留。
+func TestMemoryAcrossSessions(t *testing.T) {
+	e, st, _, _ := lifecycleEnv(t)
+	a := e.newSession()
+	e.run(a, `call memory_save {"category":"relationship","content":"张三是同事，邮箱 zs@example.com"}`)
+
+	var mems struct {
+		Memories []struct{ ID, Content string } `json:"memories"`
+	}
+	e.do(http.MethodGet, "/v1/memories", nil, &mems)
+	if len(mems.Memories) != 1 || !strings.Contains(mems.Memories[0].Content, "张三") {
+		t.Fatalf("memories = %+v", mems)
+	}
+	id := mems.Memories[0].ID
+
+	b := e.newSession()
+	e.run(b, "帮我给同事张三发邮件")
+	var events struct {
+		Events []json.RawMessage `json:"events"`
+	}
+	e.do(http.MethodGet, "/v1/sessions/"+b+"/events", nil, &events)
+	recalled := false
+	for _, raw := range events.Events {
+		recalled = recalled || (strings.Contains(string(raw), "memory_recalled") && strings.Contains(string(raw), id))
+	}
+	if !recalled {
+		t.Fatal("the new session did not recall the memory")
+	}
+	var access struct {
+		Accesses []struct {
+			MemoryID string `json:"memory_id"`
+		} `json:"accesses"`
+	}
+	e.do(http.MethodGet, "/v1/memories/access", nil, &access)
+	if len(access.Accesses) == 0 || access.Accesses[0].MemoryID != id {
+		t.Fatalf("access log = %+v", access)
+	}
+
+	if code := e.do(http.MethodDelete, "/v1/sessions/"+a, nil, nil); code != http.StatusAccepted {
+		t.Fatalf("delete: %d", code)
+	}
+	eventually(t, "the memory written by the deleted session to be removed", 30*time.Second, func() bool {
+		_, err := st.memories.Get(context.Background(), id)
+		return err != nil
+	})
+	e.do(http.MethodGet, "/v1/memories", nil, &mems)
+	if len(mems.Memories) != 0 {
+		t.Fatalf("memories after deleting the source session = %+v", mems)
+	}
+	if code := e.do(http.MethodGet, "/v1/sessions/"+b, nil, nil); code != http.StatusOK {
+		t.Fatalf("the reading session should be unaffected: %d", code)
+	}
+}
