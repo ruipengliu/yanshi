@@ -153,6 +153,8 @@ type stores struct {
 	janitorQueue workqueue.Queue
 	memories     memory.Store
 	grants       memory.Grants
+	// mcp 为 nil 时没有远程 MCP 工具。
+	mcp capability.MCPSource
 }
 
 func memStores() stores {
@@ -169,7 +171,7 @@ func memStores() stores {
 // instance 启动一个 yanshi 实例：workers 个 Worker，serve 为 true 时提供 HTTP API 与 Node 网关。
 func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server {
 	agents, err := agentdef.NewRegistry(&agentdef.Def{Name: "dev", Version: "1", Model: "script/any",
-		Capabilities: []string{"memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*"}, Memory: agentdef.MemoryConfig{Recall: 5}})
+		Capabilities: []string{"memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*", "mcp:*/*"}, Memory: agentdef.MemoryConfig{Recall: 5}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +188,7 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 	hub := &node.Hub{Dir: st.dir, Inbox: st.inbox, Store: store, Queue: st.queue, Auth: node.TokenAuth{Verifier: verifier}, Deletions: st.deletions}
 	mems := &memory.Service{Store: st.memories, Grants: st.grants, Deletions: st.deletions, Clock: clk, IDs: ids.Random()}
 	catalog := &capability.Catalog{Local: capability.NewRegistry(memory.Capabilities(mems)...), Nodes: st.dir, DefaultTimeout: time.Minute,
-		Sandbox: &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID}}
+		Sandbox: &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID}, MCP: st.mcp}
 	router := &sandbox.Router{Hub: hub, Queue: st.sandboxQueue}
 	gw := model.NewGateway()
 	gw.Register("script", script{})

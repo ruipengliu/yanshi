@@ -17,6 +17,8 @@ import (
 //	"device:<glob>"   EndUser 设备上名称匹配的能力，如 "device:*"
 //	"sandbox:<glob>"  本 Session 云端沙箱中名称匹配的能力（docs/design/m2-sandbox.md）
 const (
+	// MCPPrefix 标记远程 MCP 工具："mcp:<server>/<glob>"。
+	MCPPrefix     = "mcp:"
 	DevicePrefix  = "device:"
 	SandboxPrefix = "sandbox:"
 	// SandboxLabel 是沙箱工具名的前缀部分："sandbox__<capability>"。
@@ -54,6 +56,8 @@ type Catalog struct {
 	// Nodes 为 nil 时没有设备能力。
 	Nodes   node.Directory
 	Sandbox *SandboxTools
+	// MCP 为 nil 时没有远程 MCP 工具（docs/design/m5-mcp.md）。
+	MCP MCPSource
 	// DefaultTimeout 用于未声明超时的设备能力。
 	DefaultTimeout time.Duration
 }
@@ -61,8 +65,12 @@ type Catalog struct {
 // Tools 返回 allow 白名单允许、对 target 可见的全部工具：进程内工具、沙箱工具、设备工具（按标签排序）。
 func (c *Catalog) Tools(ctx context.Context, target Target, allow []string) ([]Tool, error) {
 	var out []Tool
-	var globs, sandboxGlobs []string
+	var globs, sandboxGlobs, mcpPatterns []string
 	for _, a := range allow {
+		if p, ok := strings.CutPrefix(a, MCPPrefix); ok {
+			mcpPatterns = append(mcpPatterns, p)
+			continue
+		}
 		if g, ok := strings.CutPrefix(a, DevicePrefix); ok {
 			if _, err := path.Match(g, ""); err != nil {
 				return nil, fmt.Errorf("bad capability pattern %q: %w", a, err)
@@ -82,6 +90,13 @@ func (c *Catalog) Tools(ctx context.Context, target Target, allow []string) ([]T
 			return nil, fmt.Errorf("unknown capability %q", a)
 		}
 		out = append(out, Tool{Spec: cp.Spec(), Local: cp})
+	}
+	if c.MCP != nil && len(mcpPatterns) > 0 {
+		tools, err := c.MCP.Tools(ctx, target.Scope.BusinessLine, mcpPatterns)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, tools...)
 	}
 	if c.Sandbox != nil && target.SessionID != "" {
 		for _, cs := range c.Sandbox.Specs {
@@ -158,4 +173,9 @@ func (c *Catalog) deviceTool(n *node.Info, cs *v1.CapabilitySpec) Tool {
 		},
 		NodeID: n.NodeID, Capability: cs.GetName(), Timeout: timeout,
 	}
+}
+
+// MCPSource 提供业务线登记的远程 MCP 工具（mcpcap.Connector）。patterns 已去掉 "mcp:" 前缀。
+type MCPSource interface {
+	Tools(ctx context.Context, businessLine string, patterns []string) ([]Tool, error)
 }

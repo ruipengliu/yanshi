@@ -9,6 +9,7 @@
 - 改动执行语义（Session / Run / Event / Attempt / Worker）之前：`docs/design/m0-core-primitives.md`。
 - 改动 Node、能力路由、审批或挂起之前：`docs/design/m1-device-nodes.md`。
 - 改动云端沙箱之前：`docs/design/m2-sandbox.md`。沙箱内只运行不可信代码，受信逻辑一律放在控制器（ADR-0008）。
+- 改动 MCP 适配之前：`docs/design/m5-mcp.md`。云端不运行 stdio 型 MCP Server；未声明只读的工具默认需要审批（ADR-0017）。
 - 改动工件之前：`docs/design/m2-artifacts.md`。Event 中只放 `artifact://` 引用，不放文件内容；工件只对其所属 Session 可见。
 - 新增任何存放 Session 数据的地方之前：`docs/design/m2-session-lifecycle.md`。它必须能被 Janitor 按 Session 删除，写入入口要"先写、后查"删除记录（ADR-0015），并在 `internal/sim` 的删除不变量中检查。
 - 做出难以逆转的架构决策时：在 `docs/adr/` 新增一条 ADR。

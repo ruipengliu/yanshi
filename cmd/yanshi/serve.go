@@ -32,6 +32,7 @@ import (
 	"yanshi/internal/lifecycle/pglifecycle"
 	"yanshi/internal/live"
 	"yanshi/internal/live/peer"
+	"yanshi/internal/mcpcap"
 	"yanshi/internal/memory"
 	"yanshi/internal/memory/pgmemory"
 	"yanshi/internal/metrics"
@@ -159,6 +160,7 @@ func serve(args []string) error {
 	sandboxKind := fs.String("sandbox", "none", "代码沙箱：none | docker")
 	sandboxImage := fs.String("sandbox-image", "yanshi-sandbox:dev", "沙箱镜像（make sandbox-image 构建）")
 	sandboxRuntime := fs.String("sandbox-runtime", "", "沙箱容器运行时，如 runsc（gVisor）")
+	mcpDir := fs.String("mcp", "mcp", "远程 MCP Server 登记目录（docs/design/m5-mcp.md）；不存在时不启用")
 	embedModel := fs.String("embedding-model", os.Getenv("YANSHI_EMBEDDING_MODEL"), "Memory 检索用的嵌入模型（provider/model，如 ark/doubao-embedding-vision）；为空时按文本相似度检索")
 	controllers := fs.Int("sandbox-controllers", 2, "沙箱控制器数量")
 	blobKind := fs.String("blob", "fs", "工件内容存储：fs | s3")
@@ -241,6 +243,18 @@ func serve(args []string) error {
 	catalog := &capability.Catalog{
 		Local: capability.NewRegistry(append([]capability.Capability{capability.ClockNow(clk)}, memory.Capabilities(mems)...)...),
 		Nodes: dir, DefaultTimeout: 30 * time.Minute,
+	}
+	mcpServers, err := mcpcap.LoadDir(*mcpDir)
+	if err != nil {
+		return fmt.Errorf("load MCP servers: %w", err)
+	}
+	if len(mcpServers) > 0 {
+		conn := &mcpcap.Connector{Servers: mcpServers, Artifacts: arts, Logger: logger}
+		defer conn.Close()
+		catalog.MCP = conn
+		for _, s := range mcpServers {
+			logger.Info("MCP server registered", "name", s.Name, "business_line", s.BusinessLine, "url", s.URL)
+		}
 	}
 	hub.Deletions = b.deletions
 	router := &sandbox.Router{Hub: hub, Queue: b.sandboxQueue}

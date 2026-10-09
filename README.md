@@ -38,6 +38,14 @@ make sandbox-image
 ./bin/yanshi token -key demo.key -user u1   # 打印令牌，供 curl 使用：-H "Authorization: Bearer $TOKEN"
 ```
 
+MCP（[设计](docs/design/m5-mcp.md)）：远程 MCP Server 登记在 `mcp/*.yaml`（`name`、`business_line`、`url`、`headers` 中的 `${VAR}` 从环境变量注入），AgentDef 用 `mcp:<server>/<glob>` 开放；电脑上的本机 MCP Server 由设备 SDK 桥接，例如：
+
+```sh
+./bin/yanshi node -label laptop -mcp "fs=npx -y @modelcontextprotocol/server-filesystem ~/Documents"
+```
+
+未声明只读的 MCP 工具默认需要审批。
+
 模型通过 AgentDef（`agents/*.yaml`）的 `model: provider/model` 选择：`ark/…`（火山方舟）、`local/…`（私有化 OpenAI 兼容服务，`YANSHI_LOCAL_BASE_URL`）、`echo/any`。
 
 ## HTTP API

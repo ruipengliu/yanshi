@@ -1,6 +1,6 @@
 # M5 MCP 适配
 
-> 状态：设计中 · 依赖：[M1 设备即节点](./m1-device-nodes.md)、[鉴权](./auth.md)、ADR-0008 · ADR-0017
+> 状态：已实现（远程 MCP 与设备端桥接；已用真实模型与官方 filesystem MCP Server 验证）· 依赖：[M1 设备即节点](./m1-device-nodes.md)、[鉴权](./auth.md)、ADR-0008 · ADR-0017
 
 ## 1. 定位
 

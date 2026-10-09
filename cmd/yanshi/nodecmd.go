@@ -29,6 +29,8 @@ func nodeCmd(args []string) error {
 	user := fs.String("user", "dev", "终端用户 ID")
 	bl := fs.String("business-line", "dev", "业务线")
 	state := fs.String("state", filepath.Join(userConfigDir(), "yanshi", "node"), "节点状态目录（node_id 与调用账本）")
+	var mcpServers multiFlag
+	fs.Var(&mcpServers, "mcp", "把本机 stdio 型 MCP Server 桥接为设备能力，格式 name=command，可重复（docs/design/m5-mcp.md §5）")
 	tf := addTokenFlags(fs)
 	_ = fs.Parse(args)
 
@@ -51,7 +53,25 @@ func nodeCmd(args []string) error {
 		return err
 	}
 	arts := &nodesdk.Artifacts{BaseURL: apiBase, TokenSource: token}
-	exec := nodesdk.NewExecutor(nodesdk.FileLedger{Dir: filepath.Join(*state, "ledger")}, fileCapabilities(absRoot, arts)...)
+	caps := fileCapabilities(absRoot, arts)
+	for _, spec := range mcpServers {
+		name, command, ok := strings.Cut(spec, "=")
+		if !ok {
+			return fmt.Errorf("-mcp %q: want name=command", spec)
+		}
+		cs, err := nodesdk.ConnectMCPCommand(context.Background(), command)
+		if err != nil {
+			return fmt.Errorf("start MCP server %s: %w", name, err)
+		}
+		defer cs.Close()
+		mcpCaps, err := nodesdk.MCPCapabilities(context.Background(), name, cs, arts)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("已桥接本机 MCP Server %s：%d 个工具\n", name, len(mcpCaps))
+		caps = append(caps, mcpCaps...)
+	}
+	exec := nodesdk.NewExecutor(nodesdk.FileLedger{Dir: filepath.Join(*state, "ledger")}, caps...)
 	c := nodesdk.NewClient(nodesdk.Config{
 		URL: *server, NodeID: nodeID, TokenSource: token, BusinessLine: businessLine, EndUser: *user, Label: *label,
 		Kind: "desktop", HostApp: "yanshi-node-demo", Executor: exec, Logger: logger,
@@ -230,3 +250,9 @@ func fileCapabilities(root string, arts *nodesdk.Artifacts) []nodesdk.Capability
 		},
 	}
 }
+
+// multiFlag 收集可重复的字符串参数。
+type multiFlag []string
+
+func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
+func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
