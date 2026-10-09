@@ -10,6 +10,8 @@ import (
 	"slices"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	v1 "yanshi/gen/yanshi/v1"
 )
 
@@ -141,7 +143,10 @@ type State struct {
 	// Seq 是已应用的最后一个事件的 seq；0 表示空日志。
 	Seq     uint64
 	Created *v1.SessionCreated
-	Runs    []*Run
+	// Agent 是当前使用的 AgentDef 版本：创建时取自 SessionCreated，撤回版本时由 AgentSwitched 改变
+	// （ADR-0020）。读取版本一律用它，而不是 Created.Agent。
+	Agent *v1.AgentRef
+	Runs  []*Run
 	// History 是构成对话上下文的事件（用户输入、模型输出、调用结果），按日志顺序；
 	// 只含最近一次 Compaction 之后的事件，因此随上下文窗口有界，而不随日志增长。
 	History []*v1.Event
@@ -234,7 +239,7 @@ func (s *State) apply(e *v1.Event) error {
 		if c == nil {
 			return fmt.Errorf("first event must be SessionCreated, got %T", e.GetPayload())
 		}
-		s.SessionID, s.Created, s.Seq = e.GetSessionId(), c, e.GetSeq()
+		s.SessionID, s.Created, s.Agent, s.Seq = e.GetSessionId(), c, c.GetAgent(), e.GetSeq()
 		return nil
 	}
 	if e.GetSessionId() != s.SessionID {
@@ -254,6 +259,16 @@ func (s *State) apply(e *v1.Event) error {
 			return fmt.Errorf("session closed while run %s is active", a.ID)
 		}
 		s.Closed = p.SessionClosed
+
+	case *v1.Event_AgentSwitched:
+		m := p.AgentSwitched
+		if a := s.Active(); a != nil {
+			return fmt.Errorf("agent switched while run %s is active", a.ID)
+		}
+		if !proto.Equal(m.GetFrom(), s.Agent) || m.GetTo().GetName() != s.Agent.GetName() || m.GetTo().GetVersion() == "" {
+			return fmt.Errorf("invalid agent switch %v → %v from %v", m.GetFrom(), m.GetTo(), s.Agent)
+		}
+		s.Agent = m.GetTo()
 
 	case *v1.Event_RunRequested:
 		if a := s.Active(); a != nil {

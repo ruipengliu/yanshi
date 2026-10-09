@@ -33,7 +33,9 @@ type Entry struct {
 	EndUser      string
 	Kind         Kind
 	// Model 是模型引用（provider/model）；沙箱执行为 "sandbox"。
-	Model         string
+	Model string
+	// Agent 是发起调用的 AgentDef 版本（name@version），用于比较灰度版本的成本；沙箱执行为空。
+	Agent         string
 	InputTokens   uint64
 	OutputTokens  uint64
 	SandboxMillis uint64
@@ -54,6 +56,7 @@ const (
 	ByDay     GroupBy = "day"
 	ByEndUser GroupBy = "end_user"
 	ByModel   GroupBy = "model"
+	ByAgent   GroupBy = "agent"
 )
 
 // Query 汇总 [From, To) 内的用量；EndUser 为空表示整个业务线。按日汇总时日期取 Location 中的日期，

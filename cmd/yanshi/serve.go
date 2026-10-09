@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"sync"
 	"syscall"
@@ -187,6 +188,13 @@ func serve(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load agents: %w", err)
 	}
+	// 发布配置（docs/design/m4-agent-rollout.md）：启动时必须合法；运行中定期重新加载，回滚无需重启。
+	releasesPath := filepath.Join(*agentsDir, agentdef.ReleasesFile)
+	rel, releasesLoaded, err := agents.LoadReleases(releasesPath)
+	if err != nil {
+		return fmt.Errorf("load releases: %w", err)
+	}
+	agents.SetReleases(rel)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -272,6 +280,11 @@ func serve(args []string) error {
 		Index: b.index, Deletions: b.deletions, Janitor: b.janitorQueue, Quotas: quotas}
 
 	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		agents.WatchReleases(ctx, releasesPath, releasesLoaded, 10*time.Second, logger)
+	}()
 	// 本进程的 Worker 共享空闲门控：空闲时只有一个 Worker 轮询队列，入队信号到达时立即认领。
 	idle := &workqueue.IdleGate{}
 	if s, ok := queue.(workqueue.Signaler); ok {

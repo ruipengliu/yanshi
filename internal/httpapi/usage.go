@@ -80,14 +80,14 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 	switch by {
 	case "":
 		by = usage.ByDay
-	case usage.ByDay, usage.ByModel:
+	case usage.ByDay, usage.ByModel, usage.ByAgent:
 	case usage.ByEndUser:
 		if principal(r).EndUser != "" {
 			s.fail(w, fmt.Errorf("%w: end user tokens cannot group by end_user", errForbidden))
 			return
 		}
 	default:
-		s.fail(w, fmt.Errorf("%w: group_by must be day, end_user or model", service.ErrInvalid))
+		s.fail(w, fmt.Errorf("%w: group_by must be day, end_user, model or agent", service.ErrInvalid))
 		return
 	}
 	if !from.Before(to) || to.Sub(from) > 400*24*time.Hour {

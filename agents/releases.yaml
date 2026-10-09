@@ -1,0 +1,11 @@
+# AgentDef 发布配置（docs/design/m4-agent-rollout.md）。serve 每 10 秒检查一次本文件，改比例与回滚无需重启。
+# 未列出的 Agent 默认使用最后加载的版本。新版本进入灰度或成为 stable 之前，须通过
+#   make eval EVAL_FLAGS="-sandbox docker -agent-version <版本>"
+# 且与基线相比没有回归。
+#
+# assistant:
+#   stable: "1"
+#   canary: {version: "2", percent: 10, end_users: [qa-zhang]}   # 按 EndUser 稳定分流
+#   withdrawn: ["2"]   # 回滚：新 Session 不再使用；已有 Session 在下一个 Run 切到 stable
+assistant:
+  stable: "1"

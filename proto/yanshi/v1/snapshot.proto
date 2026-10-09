@@ -24,6 +24,8 @@ message SessionSnapshot {
   repeated Event history = 9;
   // Session 内出现过的全部调用 ID，排序后存放。
   repeated string call_ids = 10;
+  // Session 当前使用的 AgentDef 版本（SessionCreated 固定，AgentSwitched 改变）。
+  AgentRef agent = 11;
 }
 
 message RunSnapshot {

@@ -14,7 +14,7 @@ import (
 var t0 = time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
 
 func entry(id, bl, eu string, cost int64, at time.Time) *usage.Entry {
-	return &usage.Entry{ID: id, BusinessLine: bl, EndUser: eu, Kind: usage.Model, Model: "p/m", InputTokens: 10, OutputTokens: 2, Cost: cost, At: at}
+	return &usage.Entry{ID: id, BusinessLine: bl, EndUser: eu, Kind: usage.Model, Model: "p/m", Agent: "a@" + eu, InputTokens: 10, OutputTokens: 2, Cost: cost, At: at}
 }
 
 func spent(t *testing.T, s usage.Store, bl, eu string, from, to time.Time) int64 {
@@ -116,6 +116,7 @@ func Run(t *testing.T, newStore func(t *testing.T) usage.Store) {
 		check(usage.ByEndUser, "", "[{x 2 3 20 4 0} {y 2 12 10 2 1500}]")
 		check(usage.ByModel, "", "[{p/m 3 7 30 6 0} {sandbox 1 8 0 0 1500}]")
 		check(usage.ByModel, "y", "[{p/m 1 4 10 2 0} {sandbox 1 8 0 0 1500}]")
+		check(usage.ByAgent, "", "[{ 1 8 0 0 1500} {a@x 2 3 20 4 0} {a@y 1 4 10 2 0}]")
 	})
 
 	t.Run("DeleteEndUserKeepsTotals", func(t *testing.T) {

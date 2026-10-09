@@ -40,7 +40,9 @@ type SessionSnapshot struct {
 	// 构成对话上下文的事件（最近一次压缩之后）。
 	History []*Event `protobuf:"bytes,9,rep,name=history,proto3" json:"history,omitempty"`
 	// Session 内出现过的全部调用 ID，排序后存放。
-	CallIds       []string `protobuf:"bytes,10,rep,name=call_ids,json=callIds,proto3" json:"call_ids,omitempty"`
+	CallIds []string `protobuf:"bytes,10,rep,name=call_ids,json=callIds,proto3" json:"call_ids,omitempty"`
+	// Session 当前使用的 AgentDef 版本（SessionCreated 固定，AgentSwitched 改变）。
+	Agent         *AgentRef `protobuf:"bytes,11,opt,name=agent,proto3" json:"agent,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -141,6 +143,13 @@ func (x *SessionSnapshot) GetHistory() []*Event {
 func (x *SessionSnapshot) GetCallIds() []string {
 	if x != nil {
 		return x.CallIds
+	}
+	return nil
+}
+
+func (x *SessionSnapshot) GetAgent() *AgentRef {
+	if x != nil {
+		return x.Agent
 	}
 	return nil
 }
@@ -441,7 +450,7 @@ var File_yanshi_v1_snapshot_proto protoreflect.FileDescriptor
 
 const file_yanshi_v1_snapshot_proto_rawDesc = "" +
 	"\n" +
-	"\x18yanshi/v1/snapshot.proto\x12\tyanshi.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x15yanshi/v1/event.proto\"\x96\x03\n" +
+	"\x18yanshi/v1/snapshot.proto\x12\tyanshi.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x15yanshi/v1/event.proto\"\xc1\x03\n" +
 	"\x0fSessionSnapshot\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12\x1d\n" +
 	"\n" +
@@ -456,7 +465,8 @@ const file_yanshi_v1_snapshot_proto_rawDesc = "" +
 	"\x04runs\x18\b \x03(\v2\x16.yanshi.v1.RunSnapshotR\x04runs\x12*\n" +
 	"\ahistory\x18\t \x03(\v2\x10.yanshi.v1.EventR\ahistory\x12\x19\n" +
 	"\bcall_ids\x18\n" +
-	" \x03(\tR\acallIds\"\xfe\x03\n" +
+	" \x03(\tR\acallIds\x12)\n" +
+	"\x05agent\x18\v \x01(\v2\x13.yanshi.v1.AgentRefR\x05agent\"\xfe\x03\n" +
 	"\vRunSnapshot\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\x05R\x06status\x12=\n" +
@@ -507,9 +517,10 @@ var file_yanshi_v1_snapshot_proto_goTypes = []any{
 	(*SessionClosed)(nil),         // 5: yanshi.v1.SessionClosed
 	(*ContextCompacted)(nil),      // 6: yanshi.v1.ContextCompacted
 	(*Event)(nil),                 // 7: yanshi.v1.Event
-	(*timestamppb.Timestamp)(nil), // 8: google.protobuf.Timestamp
-	(*RecalledMemory)(nil),        // 9: yanshi.v1.RecalledMemory
-	(*ToolCall)(nil),              // 10: yanshi.v1.ToolCall
+	(*AgentRef)(nil),              // 8: yanshi.v1.AgentRef
+	(*timestamppb.Timestamp)(nil), // 9: google.protobuf.Timestamp
+	(*RecalledMemory)(nil),        // 10: yanshi.v1.RecalledMemory
+	(*ToolCall)(nil),              // 11: yanshi.v1.ToolCall
 }
 var file_yanshi_v1_snapshot_proto_depIdxs = []int32{
 	4,  // 0: yanshi.v1.SessionSnapshot.created:type_name -> yanshi.v1.SessionCreated
@@ -517,19 +528,20 @@ var file_yanshi_v1_snapshot_proto_depIdxs = []int32{
 	6,  // 2: yanshi.v1.SessionSnapshot.compaction:type_name -> yanshi.v1.ContextCompacted
 	1,  // 3: yanshi.v1.SessionSnapshot.runs:type_name -> yanshi.v1.RunSnapshot
 	7,  // 4: yanshi.v1.SessionSnapshot.history:type_name -> yanshi.v1.Event
-	8,  // 5: yanshi.v1.RunSnapshot.requested_at:type_name -> google.protobuf.Timestamp
-	9,  // 6: yanshi.v1.RunSnapshot.recall:type_name -> yanshi.v1.RecalledMemory
-	2,  // 7: yanshi.v1.RunSnapshot.calls:type_name -> yanshi.v1.CallSnapshot
-	8,  // 8: yanshi.v1.RunSnapshot.suspended_until:type_name -> google.protobuf.Timestamp
-	10, // 9: yanshi.v1.CallSnapshot.call:type_name -> yanshi.v1.ToolCall
-	8,  // 10: yanshi.v1.CallSnapshot.deadline:type_name -> google.protobuf.Timestamp
-	3,  // 11: yanshi.v1.CallSnapshot.approval:type_name -> yanshi.v1.ApprovalSnapshot
-	8,  // 12: yanshi.v1.ApprovalSnapshot.deadline:type_name -> google.protobuf.Timestamp
-	13, // [13:13] is the sub-list for method output_type
-	13, // [13:13] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	8,  // 5: yanshi.v1.SessionSnapshot.agent:type_name -> yanshi.v1.AgentRef
+	9,  // 6: yanshi.v1.RunSnapshot.requested_at:type_name -> google.protobuf.Timestamp
+	10, // 7: yanshi.v1.RunSnapshot.recall:type_name -> yanshi.v1.RecalledMemory
+	2,  // 8: yanshi.v1.RunSnapshot.calls:type_name -> yanshi.v1.CallSnapshot
+	9,  // 9: yanshi.v1.RunSnapshot.suspended_until:type_name -> google.protobuf.Timestamp
+	11, // 10: yanshi.v1.CallSnapshot.call:type_name -> yanshi.v1.ToolCall
+	9,  // 11: yanshi.v1.CallSnapshot.deadline:type_name -> google.protobuf.Timestamp
+	3,  // 12: yanshi.v1.CallSnapshot.approval:type_name -> yanshi.v1.ApprovalSnapshot
+	9,  // 13: yanshi.v1.ApprovalSnapshot.deadline:type_name -> google.protobuf.Timestamp
+	14, // [14:14] is the sub-list for method output_type
+	14, // [14:14] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_yanshi_v1_snapshot_proto_init() }

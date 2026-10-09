@@ -100,6 +100,8 @@ type Stats struct {
 	EnqueueInterleavings int
 	// 配额：因配额挂起的次数、提交时被拒绝的次数、挂起后恢复并结束的 Run；注销账号的次数。
 	QuotaSuspensions, QuotaRejections, QuotaResumes, AccountDeletions int
+	// 灰度：撤回版本后在下一个 Run 切换到稳定版本的次数。
+	AgentSwitches int
 }
 
 // hookQueue 在 Enqueue 成功后调用 after。
@@ -218,15 +220,23 @@ func New(opts Options) (*World, error) {
 	if opts.LongRuns {
 		maxTurns = 120
 	}
-	agents, err := agentdef.NewRegistry(&agentdef.Def{
-		Name: "sim", Version: "1", Model: "sim/m",
-		Capabilities: []string{"echo", "send", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*"},
-		MaxTurns:     maxTurns, Context: simContext, Memory: agentdef.MemoryConfig{Recall: 3},
-	})
+	// 两个版本，配合随机的灰度与撤回（docs/design/m4-agent-rollout.md §7）。
+	var defs []*agentdef.Def
+	for _, v := range []string{"1", "2"} {
+		defs = append(defs, &agentdef.Def{
+			Name: "sim", Version: v, Model: "sim/m",
+			Capabilities: []string{"echo", "send", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*"},
+			MaxTurns:     maxTurns, Context: simContext, Memory: agentdef.MemoryConfig{Recall: 3},
+		})
+	}
+	agents, err := agentdef.NewRegistry(defs...)
 	if err != nil {
 		return nil, err
 	}
 	w.agents = agents
+	if err := w.setRelease(0); err != nil {
+		return nil, err
+	}
 	w.memories = &memory.Service{Store: stores.Memory, Grants: stores.Grants, Deletions: stores.Deletions, Clock: w.clock,
 		IDs: ids.Sequential("mem"), MaxPerUser: 20}
 	w.catalog = &capability.Catalog{
@@ -493,6 +503,9 @@ func (w *World) tick() error {
 	case x < 0.68:
 		return w.stepController(w.rng.IntN(len(w.controllers)))
 	case x < 0.70:
+		if w.chance(0.2) {
+			return w.setRelease(w.rng.IntN(len(simReleases)))
+		}
 		w.Stats.Reaps++
 		return w.controllers[0].Reap(context.Background())
 	case x < 0.76:
@@ -593,6 +606,9 @@ func (w *World) submit() error {
 		w.Stats.Steers++
 	} else {
 		w.Stats.Runs++
+		if err := w.checkNewRunVersion(sid); err != nil {
+			return err
+		}
 	}
 	w.tracef("submit %s → %s steered=%v", sid, res.RunID, res.Steered)
 	return nil
@@ -767,6 +783,8 @@ func (w *World) CollectStats() {
 				if strings.HasPrefix(text, "timed out") || strings.HasPrefix(text, "approval timed out") {
 					w.Stats.Timeouts++
 				}
+			case *v1.Event_AgentSwitched:
+				w.Stats.AgentSwitches++
 			case *v1.Event_RunSuspended:
 				w.Stats.Suspensions++
 				if p.RunSuspended.GetReason() != "" {

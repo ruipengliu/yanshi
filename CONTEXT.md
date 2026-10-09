@@ -48,6 +48,18 @@ _Avoid_: 工具（指声明时）、插件、函数
 一份版本化的声明，描述一个 Agent 的指令、技能、可用 Capability、模型策略与预算。
 _Avoid_: Bot、智能体配置、Prompt
 
+**Release（发布配置）**:
+某个 AgentDef 名下各版本的发布状态：稳定版本、灰度版本（Canary）与比例、撤回的版本；新 Session 据此决定使用哪个版本。
+_Avoid_: 上线配置、版本策略
+
+**Canary（灰度版本）**:
+按比例（按 EndUser 稳定分流）或白名单分给一部分 EndUser 的 AgentDef 新版本，用于在全量之前比较效果。
+_Avoid_: 实验组、Beta
+
+**Withdraw（撤回）**:
+回滚一个 AgentDef 版本：新 Session 不再使用它，已有 Session 在下一个 Run 开始时切换到稳定版本。
+_Avoid_: 下线、删除版本
+
 **Session（会话）**:
 EndUser 与某个 AgentDef 之间长期存在的交互容器，可被多个 Device 同时接入。
 _Avoid_: 对话、聊天、线程

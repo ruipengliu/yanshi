@@ -24,7 +24,7 @@
 //	GET  /v1/artifacts/{id}                        下载工件
 //	GET  /v1/artifacts/{id}/meta                   工件元数据
 //	GET  /v1/quota?end_user=                       当前周期的配额与已用（docs/design/m4-quota-usage.md §5）
-//	GET  /v1/usage?from=&to=&group_by=&end_user=   用量汇总（金额单位：微元）
+//	GET  /v1/usage?from=&to=&group_by=&end_user=   用量汇总（day | end_user | model | agent；金额单位：微元）
 //
 // 除 /healthz 外，所有请求须携带业务线签发的令牌（Authorization: Bearer），
 // 调用方只能访问自己的 Session、Node 与工件，其余一律 404（docs/design/auth.md）。
@@ -358,7 +358,7 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 		"seq":           st.Seq,
 		"business_line": st.Created.GetBusinessLine(),
 		"end_user":      st.Created.GetEndUser(),
-		"agent":         map[string]string{"name": st.Created.GetAgent().GetName(), "version": st.Created.GetAgent().GetVersion()},
+		"agent":         map[string]string{"name": st.Agent.GetName(), "version": st.Agent.GetVersion()},
 		"runs":          runs,
 	})
 }

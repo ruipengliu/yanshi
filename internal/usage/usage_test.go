@@ -101,7 +101,7 @@ func TestMeterAnonymizesAfterDeletion(t *testing.T) {
 	s := usage.Scope{SessionID: "s1", BusinessLine: "a", EndUser: "x"}
 	at := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
 	m := &usage.Meter{Store: store, Deletions: deletions{}}
-	m.Model(ctx, s, "1", "p/m", &v1.Usage{InputTokens: 1}, at)
+	m.Model(ctx, s, "1", "a@1", "p/m", &v1.Usage{InputTokens: 1}, at)
 	if !store.EndUsers()[[2]string{"a", "x"}] {
 		t.Fatal("usage not recorded")
 	}

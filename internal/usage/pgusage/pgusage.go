@@ -24,8 +24,8 @@ func (s Store) Record(ctx context.Context, e *usage.Entry) error {
 	}
 	_, err := s.Pool.Exec(ctx, `
 		WITH ins AS (
-			INSERT INTO usage_entries (id, business_line, end_user, kind, model, input_tokens, output_tokens, sandbox_millis, cost, at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			INSERT INTO usage_entries (id, business_line, end_user, kind, model, input_tokens, output_tokens, sandbox_millis, cost, at, agent)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 			ON CONFLICT (id) DO NOTHING
 			RETURNING business_line, end_user, date_trunc('hour', at, 'UTC') AS hour, cost, input_tokens, output_tokens, sandbox_millis
 		)
@@ -35,7 +35,7 @@ func (s Store) Record(ctx context.Context, e *usage.Entry) error {
 		ON CONFLICT (business_line, end_user, hour) DO UPDATE SET
 			cost = h.cost + EXCLUDED.cost, input_tokens = h.input_tokens + EXCLUDED.input_tokens,
 			output_tokens = h.output_tokens + EXCLUDED.output_tokens, sandbox_millis = h.sandbox_millis + EXCLUDED.sandbox_millis`,
-		e.ID, e.BusinessLine, e.EndUser, string(e.Kind), e.Model, int64(e.InputTokens), int64(e.OutputTokens), int64(e.SandboxMillis), e.Cost, e.At)
+		e.ID, e.BusinessLine, e.EndUser, string(e.Kind), e.Model, int64(e.InputTokens), int64(e.OutputTokens), int64(e.SandboxMillis), e.Cost, e.At, e.Agent)
 	return err
 }
 
@@ -62,6 +62,8 @@ func (s Store) Report(ctx context.Context, q usage.Query) ([]usage.Row, error) {
 		key = `end_user`
 	case usage.ByModel:
 		key = `model`
+	case usage.ByAgent:
+		key = `agent`
 	default:
 		return nil, errors.New("usage: unknown group_by")
 	}

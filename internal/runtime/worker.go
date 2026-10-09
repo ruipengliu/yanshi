@@ -347,7 +347,7 @@ func (w *Worker) fail(ctx context.Context, r *session.Run, reason string) error 
 }
 
 func (w *Worker) advance(ctx context.Context, r *session.Run) error {
-	def, err := w.cfg.Agents.Get(w.st.Created.GetAgent())
+	def, err := w.cfg.Agents.Get(w.st.Agent)
 	if err != nil {
 		return w.fail(ctx, r, err.Error())
 	}
@@ -515,7 +515,7 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 	}
 	w.modelErrors = 0
 	// 在写日志之前计量：token 已经消耗，之后写日志失败（被接管、Session 被删除）也应计费（ADR-0019）。
-	w.cfg.Meter.Model(ctx, w.usageScope(), "use_"+w.cfg.Store.IDs(), def.Model, resp.Usage, w.now())
+	w.cfg.Meter.Model(ctx, w.usageScope(), "use_"+w.cfg.Store.IDs(), agentdef.Label(w.st.Agent), def.Model, resp.Usage, w.now())
 
 	// 模型给出的调用 ID 可能为空或跨轮、跨 Run 重复；一律改写为全局唯一 ID，
 	// 使其可作为下游幂等键。改写后的 ID 随事件落盘，后续上下文都使用它。
@@ -625,9 +625,10 @@ func (w *Worker) observeCommitted(events []*v1.Event) {
 		default:
 			continue
 		}
-		metrics.RunsFinished.WithLabelValues(status).Inc()
+		agent := agentdef.Label(w.st.Agent)
+		metrics.RunsFinished.WithLabelValues(status, agent).Inc()
 		if r := w.st.Run(runID); r != nil {
-			metrics.RunDuration.WithLabelValues(status).Observe(e.GetTime().AsTime().Sub(r.RequestedAt).Seconds())
+			metrics.RunDuration.WithLabelValues(status, agent).Observe(e.GetTime().AsTime().Sub(r.RequestedAt).Seconds())
 		}
 	}
 }

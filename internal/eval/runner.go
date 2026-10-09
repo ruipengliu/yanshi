@@ -46,6 +46,8 @@ type Config struct {
 	EmbedModel string
 	// ModelOverride 非空时替换被评测 AgentDef 的模型，用于在同一评测集上比较模型。
 	ModelOverride string
+	// AgentVersion 非空时评测该版本，而不是默认（稳定）版本：灰度前的评测门槛（docs/design/m4-agent-rollout.md §6）。
+	AgentVersion string
 	// Sandbox 为 nil 时跳过 requires: [sandbox] 的用例。
 	Sandbox sandbox.Provider
 	// Trials > 0 时覆盖用例的运行次数。
@@ -177,7 +179,10 @@ func derive(cfg Config, cases []*Case) (*agentdef.Registry, map[string]string, e
 	defs := cfg.Agents.All()
 	versions := map[string]string{}
 	for _, c := range cases {
-		base, err := cfg.Agents.Latest(c.Agent)
+		base, err := cfg.Agents.Default(c.Agent)
+		if cfg.AgentVersion != "" {
+			base, err = cfg.Agents.Get(&v1.AgentRef{Name: c.Agent, Version: cfg.AgentVersion})
+		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("case %s: %w", c.Name, err)
 		}

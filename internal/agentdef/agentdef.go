@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"sync/atomic"
 
 	"gopkg.in/yaml.v3"
 
@@ -99,8 +100,10 @@ func (d *Def) validate() error {
 
 type Registry struct {
 	defs map[string]map[string]*Def
-	// latest 记录每个 name 最后加载的版本（按文件名排序）。
+	// latest 记录每个 name 最后加载的版本（按文件名排序），是没有发布配置时的默认版本。
 	latest map[string]string
+	// releases 是发布配置（灰度与撤回），运行中可替换。
+	releases atomic.Pointer[Releases]
 }
 
 func NewRegistry(defs ...*Def) (*Registry, error) {
@@ -128,7 +131,10 @@ func (r *Registry) add(d *Def) error {
 	return nil
 }
 
-// LoadDir 加载 dir 下所有 *.yaml 文件。
+// ReleasesFile 是发布配置在 AgentDef 目录中的文件名；LoadDir 跳过它。
+const ReleasesFile = "releases.yaml"
+
+// LoadDir 加载 dir 下所有 *.yaml 文件（发布配置除外）。
 func LoadDir(dir string) (*Registry, error) {
 	files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
 	if err != nil {
@@ -137,6 +143,9 @@ func LoadDir(dir string) (*Registry, error) {
 	sort.Strings(files)
 	r, _ := NewRegistry()
 	for _, f := range files {
+		if filepath.Base(f) == ReleasesFile {
+			continue
+		}
 		b, err := os.ReadFile(f)
 		if err != nil {
 			return nil, err

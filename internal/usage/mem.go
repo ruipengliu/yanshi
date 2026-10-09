@@ -70,6 +70,8 @@ func (m *Mem) Report(_ context.Context, q Query) ([]Row, error) {
 			key = e.EndUser
 		case ByModel:
 			key = e.Model
+		case ByAgent:
+			key = e.Agent
 		default:
 			return nil, errors.New("usage: unknown group_by")
 		}

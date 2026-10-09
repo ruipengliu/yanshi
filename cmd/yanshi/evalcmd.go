@@ -34,6 +34,7 @@ func evalCmd(args []string) error {
 	agentsDir := fs.String("agents", "agents", "AgentDef 目录")
 	caseGlob := fs.String("case", "*", "只运行名称匹配的用例")
 	trials := fs.Int("trials", 0, "覆盖每个用例的运行次数")
+	agentVersion := fs.String("agent-version", "", "评测该 AgentDef 版本而不是稳定版本（灰度前的评测门槛）")
 	modelOverride := fs.String("model", "", "替换被评测 AgentDef 的模型（provider/model），用于比较模型")
 	judgeModel := fs.String("judge", envOr("YANSHI_JUDGE_MODEL", "tokenhub/glm-5.3"), "评分模型（与被评测模型不同系列，ADR-0018）")
 	embedModel := fs.String("embedding-model", os.Getenv("YANSHI_EMBEDDING_MODEL"), "Memory 检索用的嵌入模型")
@@ -49,6 +50,11 @@ func evalCmd(args []string) error {
 	if err != nil {
 		return err
 	}
+	rel, _, err := agents.LoadReleases(filepath.Join(*agentsDir, agentdef.ReleasesFile))
+	if err != nil {
+		return err
+	}
+	agents.SetReleases(rel)
 	all, err := eval.LoadSuite(*suite)
 	if err != nil {
 		return err
@@ -64,7 +70,7 @@ func evalCmd(args []string) error {
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := eval.Config{Agents: agents, Model: gateway(logger), Judge: *judgeModel, EmbedModel: *embedModel,
-		ModelOverride: *modelOverride, Trials: *trials, Parallel: *parallel, Logger: logger,
+		ModelOverride: *modelOverride, AgentVersion: *agentVersion, Trials: *trials, Parallel: *parallel, Logger: logger,
 		Progress: func(name string, trial int, passed bool) {
 			mark := "✓"
 			if !passed {

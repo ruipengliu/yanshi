@@ -32,12 +32,12 @@ type Scope struct {
 	EndUser      string
 }
 
-// Model 记录一次模型调用（含上下文压缩）。id 是本次调用的唯一 ID。
-func (m *Meter) Model(ctx context.Context, s Scope, id, model string, u *v1.Usage, at time.Time) {
+// Model 记录一次模型调用（含上下文压缩）。id 是本次调用的唯一 ID，agent 是 name@version。
+func (m *Meter) Model(ctx context.Context, s Scope, id, agent, model string, u *v1.Usage, at time.Time) {
 	if m == nil || u == nil {
 		return
 	}
-	m.record(ctx, s, &Entry{ID: id, BusinessLine: s.BusinessLine, EndUser: s.EndUser, Kind: Model, Model: model,
+	m.record(ctx, s, &Entry{ID: id, BusinessLine: s.BusinessLine, EndUser: s.EndUser, Kind: Model, Model: model, Agent: agent,
 		InputTokens: u.GetInputTokens(), OutputTokens: u.GetOutputTokens(),
 		Cost: m.Prices.ModelCost(model, u.GetInputTokens(), u.GetOutputTokens()), At: at})
 }

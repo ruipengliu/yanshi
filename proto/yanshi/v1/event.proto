@@ -35,6 +35,7 @@ message Event {
     ContextCompacted context_compacted = 23;
     SessionClosed session_closed = 24;
     MemoryRecalled memory_recalled = 25;
+    AgentSwitched agent_switched = 26;
   }
 }
 
@@ -70,6 +71,14 @@ message SessionCreated {
   string business_line = 1;
   string end_user = 2;
   AgentRef agent = 3;
+}
+
+// AgentSwitched 把 Session 当前使用的 AgentDef 换成同名的另一个版本，只发生在两个 Run 之间
+// （docs/design/m4-agent-rollout.md §4，ADR-0020）。reason 如 "withdrawn"。
+message AgentSwitched {
+  AgentRef from = 1;
+  AgentRef to = 2;
+  string reason = 3;
 }
 
 // RunRequested 在 Session 无活跃 Run 时由用户输入触发。

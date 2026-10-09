@@ -63,10 +63,16 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (string, error)
 	}
 	var def *agentdef.Def
 	var err error
+	// 未指定版本时按发布配置分流（docs/design/m4-agent-rollout.md §3）；撤回的版本不能指定。
 	if req.AgentVersion == "" {
-		def, err = s.Agents.Latest(req.Agent)
+		def, err = s.Agents.Resolve(req.Agent, req.EndUser)
 	} else {
-		def, err = s.Agents.Get(&v1.AgentRef{Name: req.Agent, Version: req.AgentVersion})
+		ref := &v1.AgentRef{Name: req.Agent, Version: req.AgentVersion}
+		if def, err = s.Agents.Get(ref); err == nil {
+			if _, withdrawn := s.Agents.Withdrawn(ref); withdrawn {
+				err = fmt.Errorf("agent %s@%s is withdrawn", req.Agent, req.AgentVersion)
+			}
+		}
 	}
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrInvalid, err)
@@ -150,16 +156,21 @@ func (s *Service) Submit(ctx context.Context, sessionID string, input []*v1.Cont
 		if st.Closed != nil {
 			return nil, fmt.Errorf("%w: session %s is closed", ErrConflict, sessionID)
 		}
-		var e *v1.Event
+		var events []*v1.Event
 		res := &SubmitResult{}
 		if a := st.Active(); a != nil {
 			res.RunID, res.Steered = a.ID, true
-			e = &v1.Event{Payload: &v1.Event_Steered{Steered: &v1.Steered{RunId: a.ID, Input: input}}}
+			events = append(events, &v1.Event{Payload: &v1.Event_Steered{Steered: &v1.Steered{RunId: a.ID, Input: input}}})
 		} else {
+			// 当前版本已撤回：新 Run 从稳定版本开始，切换与 RunRequested 同批提交（ADR-0020）。
+			if to, ok := s.Agents.Withdrawn(st.Agent); ok {
+				events = append(events, &v1.Event{Payload: &v1.Event_AgentSwitched{AgentSwitched: &v1.AgentSwitched{
+					From: st.Agent, To: to.Ref(), Reason: "withdrawn"}}})
+			}
 			res.RunID = "run_" + s.Store.IDs()
-			e = &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: res.RunID, Input: input}}}
+			events = append(events, &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: res.RunID, Input: input}}})
 		}
-		err := s.Store.Commit(ctx, st, e)
+		err := s.Store.Commit(ctx, st, events...)
 		if err == nil {
 			if s.Index != nil {
 				if err := s.Index.Touch(ctx, sessionID, s.Store.Clock.Now()); err != nil {
@@ -196,7 +207,7 @@ func (s *Service) Interrupt(ctx context.Context, sessionID, runID string) error 
 			RunInterrupted: &v1.RunInterrupted{RunId: runID, By: "user"},
 		}})
 		if err == nil {
-			metrics.RunsFinished.WithLabelValues("interrupted").Inc()
+			metrics.RunsFinished.WithLabelValues("interrupted", agentdef.Label(st.Agent)).Inc()
 			return s.cancelDispatched(ctx, r)
 		}
 		if !errors.Is(err, eventlog.ErrConflict) {
@@ -282,7 +293,7 @@ func (s *Service) Close(ctx context.Context, sessionID, by, reason string) error
 		err := s.Store.Commit(ctx, st, events...)
 		if err == nil {
 			if a != nil {
-				metrics.RunsFinished.WithLabelValues("interrupted").Inc()
+				metrics.RunsFinished.WithLabelValues("interrupted", agentdef.Label(st.Agent)).Inc()
 				if err := s.cancelDispatched(ctx, a); err != nil {
 					return err
 				}

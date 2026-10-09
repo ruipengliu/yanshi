@@ -57,6 +57,8 @@ func richLog() []*v1.Event {
 			e.Payload = &v1.Event_RunInterrupted{RunInterrupted: p}
 		case *v1.SessionClosed:
 			e.Payload = &v1.Event_SessionClosed{SessionClosed: p}
+		case *v1.AgentSwitched:
+			e.Payload = &v1.Event_AgentSwitched{AgentSwitched: p}
 		}
 		return e
 	}
@@ -82,6 +84,7 @@ func richLog() []*v1.Event {
 		ev(&v1.ContextCompacted{RunId: "r1", Attempt: 4, ThroughSeq: 12, Summary: text}),
 		ev(&v1.AssistantMessage{RunId: "r1", Attempt: 4, Content: text}),
 		ev(&v1.RunCompleted{RunId: "r1", Attempt: 4}),
+		ev(&v1.AgentSwitched{From: &v1.AgentRef{Name: "a", Version: "1"}, To: &v1.AgentRef{Name: "a", Version: "2"}, Reason: "withdrawn"}),
 		ev(&v1.RunRequested{RunId: "r2", Input: text}),
 		ev(&v1.AttemptStarted{RunId: "r2", Attempt: 1}),
 		ev(&v1.RunSuspended{RunId: "r2", Attempt: 1, Reason: "end_user_quota", Until: timestamppb.New(t0.Add(24 * time.Hour))}),
@@ -156,7 +159,7 @@ func TestSnapshotIgnoredAfterLogDeleted(t *testing.T) {
 // 否则从快照恢复会悄悄丢失它——而 Equal 按快照比较，看不出差别。
 func TestSnapshotCoversEveryField(t *testing.T) {
 	covered := map[string][]string{
-		"State":    {"SessionID", "Seq", "Created", "Closed", "Compaction", "CompactedAt", "Runs", "History", "callIDs"},
+		"State":    {"SessionID", "Seq", "Created", "Agent", "Closed", "Compaction", "CompactedAt", "Runs", "History", "callIDs"},
 		"Run":      {"ID", "Status", "RequestedAt", "Attempt", "LiveEndpoint", "Takeovers", "StalledTakeovers", "Turns", "Recall", "Recalled", "Calls", "SuspendReason", "SuspendedUntil"},
 		"Call":     {"Call", "StartedAttempts", "NodeID", "Deadline", "Done", "Approval"},
 		"Approval": {"Summary", "Deadline", "Decided", "Approved"},

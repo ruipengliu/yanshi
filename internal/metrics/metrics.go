@@ -47,8 +47,8 @@ var (
 var (
 	ModelCallDuration = histogram("model_call_duration_seconds", "模型调用耗时；kind = turn | summary。", latency, "kind", "outcome")
 	ModelTokens       = counter("model_tokens_total", "模型输入、输出 token 数。", "direction")
-	RunsFinished      = counter("runs_finished_total", "进入终态的 Run。", "status")
-	RunDuration       = histogram("run_duration_seconds", "Run 从请求到终态的时长。", runDuration, "status")
+	RunsFinished      = counter("runs_finished_total", "进入终态的 Run；agent = name@version，用于比较灰度版本。", "status", "agent")
+	RunDuration       = histogram("run_duration_seconds", "Run 从请求到终态的时长。", runDuration, "status", "agent")
 	Attempts          = counter("attempts_total", "开始的 Attempt；kind = start | takeover | resume。", "kind")
 	CommitConflicts   = counter("commit_conflicts_total", "Worker 追加事件时的乐观并发冲突。")
 	SessionLoadEvents = histogram("session_load_events", "加载 Session 时回放的事件数（最新快照之后的部分）。", prometheus.ExponentialBuckets(1, 2, 16))
@@ -60,9 +60,10 @@ var (
 	NodesConnected    = gauge("nodes_connected", "本进程网关上已接入的 Node 连接数。")
 	LivePeerStreams   = gauge("live_peer_streams", "本进程向其他进程拉取实时增量的连接数。")
 	// 业务线名不是个人数据，可以作为标签（docs/design/m4-quota-usage.md §5）。
-	UsageCost         = counter("usage_cost_micros_total", "记录的用量金额（微元）；kind = model | sandbox。", "business_line", "kind")
-	UsageRecordErrors = counter("usage_record_errors_total", "写入用量失败的次数（少计）。")
-	QuotaRejections   = counter("quota_rejections_total", "因配额拒绝或挂起；scope = end_user | business_line，where = submit | run。", "scope", "where")
+	UsageCost           = counter("usage_cost_micros_total", "记录的用量金额（微元）；kind = model | sandbox。", "business_line", "kind")
+	UsageRecordErrors   = counter("usage_record_errors_total", "写入用量失败的次数（少计）。")
+	ReleaseReloadErrors = counter("release_reload_errors_total", "发布配置重新加载被拒绝（校验失败，保留原配置）的次数。")
+	QuotaRejections     = counter("quota_rejections_total", "因配额拒绝或挂起；scope = end_user | business_line，where = submit | run。", "scope", "where")
 )
 
 // PoolStats 是数据库连接池的统计来源（由 pgxpool.Pool.Stat 适配）。
