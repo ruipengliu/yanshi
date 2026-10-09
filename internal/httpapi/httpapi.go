@@ -23,6 +23,8 @@
 //	GET  /v1/sessions/{id}/artifacts               Session 的工件列表
 //	GET  /v1/artifacts/{id}                        下载工件
 //	GET  /v1/artifacts/{id}/meta                   工件元数据
+//	GET  /v1/quota?end_user=                       当前周期的配额与已用（docs/design/m4-quota-usage.md §5）
+//	GET  /v1/usage?from=&to=&group_by=&end_user=   用量汇总（金额单位：微元）
 //
 // 除 /healthz 外，所有请求须携带业务线签发的令牌（Authorization: Bearer），
 // 调用方只能访问自己的 Session、Node 与工件，其余一律 404（docs/design/auth.md）。
@@ -35,6 +37,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"mime"
 	"net/http"
 	"net/url"
@@ -56,6 +59,7 @@ import (
 	"yanshi/internal/node"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
+	"yanshi/internal/usage"
 )
 
 type Server struct {
@@ -69,6 +73,8 @@ type Server struct {
 	Artifacts *artifact.Service
 	// Memory 为 nil 时不提供 Memory 与 Grant 接口。
 	Memory *memory.Service
+	// Usage 为 nil 时不提供用量接口；配额取自 Service.Quotas（docs/design/m4-quota-usage.md §5）。
+	Usage  usage.Store
 	Logger *slog.Logger
 }
 
@@ -96,6 +102,8 @@ func (s *Server) routes() map[string]http.HandlerFunc {
 		"GET /v1/sessions/{id}/stream":                s.stream,
 		"POST /v1/sessions/{id}/approvals/{call}":     s.decide,
 		"GET /v1/nodes":                               s.listNodes,
+		"GET /v1/quota":                               s.quota,
+		"GET /v1/usage":                               s.usage,
 		"POST /v1/sessions/{id}/artifacts":            s.uploadArtifact,
 		"GET /v1/sessions/{id}/artifacts":             s.listArtifacts,
 		"GET /v1/artifacts/{id}":                      s.downloadArtifact,
@@ -241,6 +249,15 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		code = http.StatusConflict
 	case errors.Is(err, artifact.ErrTooLarge):
 		code = http.StatusRequestEntityTooLarge
+	case errors.Is(err, usage.ErrExceeded):
+		code = http.StatusTooManyRequests
+		var ex *usage.ExceededError
+		if errors.As(err, &ex) {
+			secs := int(math.Ceil(time.Until(ex.Period.ResetAt).Seconds()))
+			w.Header().Set("Retry-After", strconv.Itoa(max(secs, 1)))
+			writeJSON(w, code, map[string]any{"error": err.Error(), "quota": ex.Period})
+			return
+		}
 	}
 	if code == http.StatusInternalServerError && s.Logger != nil {
 		s.Logger.Error("request failed", "err", err)
@@ -291,10 +308,11 @@ type runView struct {
 
 // waitingView 说明挂起中的 Run 在等什么。
 type waitingView struct {
-	// Kind 为 "approval" 或 "node"。
+	// Kind 为 "approval"、"node" 或 "quota"（配额用尽，Deadline 为重置时间）。
 	Kind       string    `json:"kind"`
-	CallID     string    `json:"call_id"`
-	Capability string    `json:"capability"`
+	CallID     string    `json:"call_id,omitempty"`
+	Capability string    `json:"capability,omitempty"`
+	Reason     string    `json:"reason,omitempty"`
 	Summary    string    `json:"summary,omitempty"`
 	NodeID     string    `json:"node_id,omitempty"`
 	NodeOnline *bool     `json:"node_online,omitempty"`
@@ -303,10 +321,12 @@ type waitingView struct {
 
 func (s *Server) waiting(r *http.Request, run *session.Run) *waitingView {
 	c := run.PendingCall()
-	if run.Status.Terminal() || c == nil {
+	if run.Status.Terminal() || (c == nil && run.SuspendReason == "") {
 		return nil
 	}
 	switch {
+	case run.Status == session.RunSuspended && run.SuspendReason != "":
+		return &waitingView{Kind: "quota", Reason: run.SuspendReason, Deadline: run.SuspendedUntil}
 	case c.AwaitingApproval():
 		return &waitingView{Kind: "approval", CallID: c.Call.GetCallId(), Capability: c.Call.GetCapability(),
 			Summary: c.Approval.Summary, Deadline: c.Approval.Deadline}
@@ -852,6 +872,9 @@ func (s *Server) deleteEndUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.Memory != nil {
 		removers = append(removers, s.Memory)
+	}
+	if s.Usage != nil {
+		removers = append(removers, s.Usage) // 匿名化，不删除（ADR-0019）
 	}
 	id, err := s.Service.DeleteEndUser(r.Context(), bl, r.PathValue("id"), removers...)
 	if err != nil {

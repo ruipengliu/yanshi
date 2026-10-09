@@ -122,6 +122,18 @@ _Avoid_: 会话（与 Session 区分）、票据、凭据（泛指时）
 BusinessLine 为其 Session 声明的保留期限：最后一次输入后多久自动关闭、关闭后多久自动删除。
 _Avoid_: 过期策略、TTL（泛指时）
 
+**Usage（用量）**:
+一次模型调用或沙箱执行消耗的资源（模型 token、执行时长）及按价格表折算的金额；独立于 Event 日志长期保存，不含 Session 与内容。这里的 token 指模型计量单位，与 Token（令牌）无关。
+_Avoid_: 账单、消费记录
+
+**Quota（配额）**:
+在一个周期内允许的 Usage 金额上限：BusinessLine 每月一份，EndUser 每日一份。超出时拒绝新 Run、挂起进行中的 Run。
+_Avoid_: 额度（指剩余量时可用）、预算（与 Policy 中的预算区分）、限流
+
+**PriceList（价格表）**:
+部署配置中每个模型的 token 单价与沙箱的时长单价，用于把 Usage 折算为金额。
+_Avoid_: 费率、定价策略
+
 **Policy（策略）**:
 约束 Run 能做什么的规则集合，涵盖 Capability 访问、Approval 要求、预算与内容安全。
 _Avoid_: 规则、配置

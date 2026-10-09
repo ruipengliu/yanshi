@@ -26,6 +26,7 @@ import (
 
 	"yanshi/internal/clock"
 	"yanshi/internal/lifecycle"
+	"yanshi/internal/usage"
 )
 
 // Principal 是已验证的调用方身份。
@@ -78,6 +79,8 @@ type BusinessLine struct {
 	MaxTTL time.Duration `yaml:"max_ttl"`
 	// Retention 是该业务线 Session 的保留策略（docs/design/m2-session-lifecycle.md §5）。
 	Retention lifecycle.Retention `yaml:"retention"`
+	// Quota 是该业务线的配额（docs/design/m4-quota-usage.md §3）。
+	Quota usage.Limits `yaml:"quota,omitempty"`
 }
 
 // LoadDir 读取 dir 下所有 *.yaml 业务线配置。
@@ -95,6 +98,9 @@ func LoadDir(dir string) ([]BusinessLine, error) {
 		}
 		var bl BusinessLine
 		if err := yaml.Unmarshal(b, &bl); err != nil {
+			return nil, fmt.Errorf("%s: %w", f, err)
+		}
+		if err := bl.Quota.Prepare(); err != nil {
 			return nil, fmt.Errorf("%s: %w", f, err)
 		}
 		out = append(out, bl)

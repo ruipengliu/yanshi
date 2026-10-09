@@ -157,6 +157,10 @@ message RunInterrupted {
 message RunSuspended {
   string run_id = 1;
   uint32 attempt = 2;
+  // reason 为空表示等待审批或设备结果（由挂起的调用可知）；"end_user_quota" / "business_line_quota"
+  // 表示配额用尽（docs/design/m4-quota-usage.md §3），until 为配额重置时间。
+  string reason = 3;
+  google.protobuf.Timestamp until = 4;
 }
 
 // ApprovalRequested 请求 EndUser 批准一次高风险调用。

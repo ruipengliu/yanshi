@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -51,6 +52,8 @@ import (
 	"yanshi/internal/service"
 	"yanshi/internal/session"
 	"yanshi/internal/session/pgsnapshot"
+	"yanshi/internal/usage"
+	"yanshi/internal/usage/pgusage"
 	"yanshi/internal/workqueue"
 	"yanshi/internal/workqueue/memqueue"
 	"yanshi/internal/workqueue/pgqueue"
@@ -77,6 +80,7 @@ type backends struct {
 	index        lifecycle.Index
 	deletions    lifecycle.Deletions
 	janitorQueue workqueue.Queue
+	usage        usage.Store
 }
 
 // openStorage 按 kind 创建存储。postgres 模式下多个 serve 进程可共享同一数据库水平扩展。
@@ -86,7 +90,7 @@ func openStorage(ctx context.Context, kind, dsn string, clk clock.Clock, logger 
 		return backends{memlog.New(), memqueue.New(clk), node.NewMemDirectory(clk), node.NewMemInbox(),
 			memqueue.New(clk), nodesdk.NewMemLedger(), sandbox.NewMemActivity(), artifact.NewMemMeta(),
 			memory.NewMemStore(), memory.NewMemGrants(), session.NewMemSnapshots(),
-			lifecycle.NewMemIndex(), lifecycle.NewMemDeletions(), memqueue.New(clk)}, func() {}, nil
+			lifecycle.NewMemIndex(), lifecycle.NewMemDeletions(), memqueue.New(clk), usage.NewMem()}, func() {}, nil
 	case "postgres":
 		pool, err := pg.Open(ctx, dsn, "")
 		if err != nil {
@@ -107,7 +111,7 @@ func openStorage(ctx context.Context, kind, dsn string, clk clock.Clock, logger 
 			pgqueue.New(pool, clk, pgqueue.Sandboxes).WithNotifier(n), pgsandbox.Ledger{Pool: pool}, pgsandbox.Activity{Pool: pool},
 			pgartifact.Meta{Pool: pool},
 			pgmemory.Store{Pool: pool}, pgmemory.Grants{Pool: pool}, pgsnapshot.Store{Pool: pool},
-			pglifecycle.Index{Pool: pool}, pglifecycle.Deletions{Pool: pool}, pgqueue.New(pool, clk, pgqueue.Janitor)}
+			pglifecycle.Index{Pool: pool}, pglifecycle.Deletions{Pool: pool}, pgqueue.New(pool, clk, pgqueue.Janitor), pgusage.Store{Pool: pool}}
 		return b, func() { cancel(); pool.Close() }, nil
 	}
 	return backends{}, nil, fmt.Errorf("unknown storage %q (memory | postgres)", kind)
@@ -174,6 +178,8 @@ func serve(args []string) error {
 	authMode := fs.String("auth", "none", "鉴权：none（信任自报身份，仅允许监听回环地址）| jwt（业务线签发的令牌，docs/design/auth.md）")
 	blDir := fs.String("businesslines", "businesslines", "业务线公钥配置目录（auth=jwt；yanshi keygen 生成开发配置）")
 	audience := fs.String("auth-audience", "yanshi", "本部署的标识，令牌的 aud 须包含它")
+	pricing := fs.String("pricing", "pricing.yaml", "价格表（docs/design/m4-quota-usage.md §2）；不存在时用量只计 token、不折算金额")
+	usageRetention := fs.Duration("usage-retention", 400*24*time.Hour, "用量记录的保留期")
 	_ = fs.Parse(args)
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -258,8 +264,12 @@ func serve(args []string) error {
 	}
 	hub.Deletions = b.deletions
 	router := &sandbox.Router{Hub: hub, Queue: b.sandboxQueue}
+	meter, quotas, err := metering(*pricing, lines, agents, b, logger)
+	if err != nil {
+		return err
+	}
 	svc := &service.Service{Store: store, Queue: queue, Agents: agents, Nodes: router,
-		Index: b.index, Deletions: b.deletions, Janitor: b.janitorQueue}
+		Index: b.index, Deletions: b.deletions, Janitor: b.janitorQueue, Quotas: quotas}
 
 	var wg sync.WaitGroup
 	// 本进程的 Worker 共享空闲门控：空闲时只有一个 Worker 轮询队列，入队信号到达时立即认领。
@@ -271,7 +281,7 @@ func serve(args []string) error {
 		w := runtime.New(runtime.Config{
 			ID: fmt.Sprintf("%s-worker-%d", proc, i), Store: store, Queue: queue, Agents: agents,
 			Model: gw, Catalog: catalog, Dispatch: router, Artifacts: arts, Memory: mems, Live: bus, LiveEndpoint: liveEndpoint, Logger: logger,
-			LeaseTTL: *leaseTTL, Heartbeat: *leaseTTL / 3, Idle: idle,
+			LeaseTTL: *leaseTTL, Heartbeat: *leaseTTL / 3, Idle: idle, Meter: meter, Quotas: quotas,
 		})
 		wg.Add(1)
 		go func() { defer wg.Done(); w.Run(ctx) }()
@@ -291,7 +301,7 @@ func serve(args []string) error {
 			c := &sandbox.Controller{
 				ID: fmt.Sprintf("%s-sandbox-%d", proc, i), Queue: b.sandboxQueue, Hub: hub, Provider: provider,
 				Activity: b.activity, Ledger: b.ledger, Artifacts: arts, Clock: clk, Logger: logger,
-				Lifecycle: &lifecycle.Guard{Index: b.index, Deletions: b.deletions}, Idle: sbxIdle,
+				Lifecycle: &lifecycle.Guard{Index: b.index, Deletions: b.deletions}, Idle: sbxIdle, Meter: meter,
 				LeaseTTL: *leaseTTL, Heartbeat: *leaseTTL / 3,
 			}
 			wg.Add(1)
@@ -311,13 +321,14 @@ func serve(args []string) error {
 		ID: proc + "-janitor", Queue: b.janitorQueue, Service: svc, Store: store, Sessions: queue, SandboxQueue: b.sandboxQueue,
 		Inbox: b.inbox, Nodes: dir, Sandbox: provider, Activity: b.activity, Ledger: b.ledger, Artifacts: arts,
 		Memory: b.memories, Index: b.index, Deletions: b.deletions, Retention: retention, Clock: clk, Logger: logger, LeaseTTL: *leaseTTL,
+		Usage: b.usage, UsageRetention: *usageRetention,
 	}
 	wg.Add(1)
 	go func() { defer wg.Done(); jan.Run(ctx) }()
 
 	mux := http.NewServeMux()
 	mux.Handle("/v1/nodes/connect", &wsgateway.Gateway{Hub: hub, Logger: logger})
-	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Logger: logger}).Handler())
+	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.usage, Logger: logger}).Handler())
 	srv := &http.Server{
 		Addr:              *addr,
 		Handler:           mux,
@@ -403,4 +414,41 @@ func loopback(addr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// metering 加载价格表并汇总各业务线的配额（docs/design/m4-quota-usage.md）。任一业务线配置了配额时，
+// 所有 AgentDef 引用的模型都必须有价格：没有价格的模型等于不受配额约束。
+func metering(path string, lines []auth.BusinessLine, agents *agentdef.Registry, b backends, logger *slog.Logger) (*usage.Meter, *usage.Quotas, error) {
+	prices, err := usage.LoadPriceList(path)
+	if errors.Is(err, os.ErrNotExist) {
+		prices, err = nil, nil
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("load price list: %w", err)
+	}
+	limits := map[string]usage.Limits{}
+	for _, bl := range lines {
+		if bl.Quota.Enabled() {
+			limits[bl.Name] = bl.Quota
+		}
+	}
+	var missing []string
+	for _, d := range agents.All() {
+		for _, m := range []string{d.Model, d.Context.SummaryModel} {
+			if m != "" && !prices.Has(m) && !slices.Contains(missing, m) {
+				missing = append(missing, m)
+			}
+		}
+	}
+	if len(missing) > 0 {
+		if len(limits) > 0 {
+			return nil, nil, fmt.Errorf("quotas are configured but %s has no price for %v", path, missing)
+		}
+		logger.Warn("models without price: usage is recorded at zero cost", "models", missing)
+	}
+	meter := &usage.Meter{Store: b.usage, Prices: prices, Deletions: b.deletions, Logger: logger}
+	if len(limits) == 0 {
+		return meter, nil, nil
+	}
+	return meter, &usage.Quotas{Store: b.usage, Limits: limits}, nil
 }

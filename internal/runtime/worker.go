@@ -26,6 +26,7 @@ import (
 	"yanshi/internal/model"
 	"yanshi/internal/node"
 	"yanshi/internal/session"
+	"yanshi/internal/usage"
 	"yanshi/internal/workqueue"
 )
 
@@ -72,6 +73,12 @@ type Config struct {
 	IdleWait time.Duration
 	// Idle 非空时，同一进程的 Worker 共享它：空闲时至多一个 Worker 轮询队列（见 workqueue.IdleGate）。
 	Idle *workqueue.IdleGate
+	// Meter 非空时记录每次模型调用的用量；Quotas 非空时在每次模型调用前检查配额
+	// （docs/design/m4-quota-usage.md）。
+	Meter  *usage.Meter
+	Quotas *usage.Quotas
+	// QuotaRecheck 是因配额挂起的 Run 重新检查的最长间隔（默认 10 分钟），使调高配额后及时恢复。
+	QuotaRecheck time.Duration
 }
 
 func (c *Config) defaults() {
@@ -92,6 +99,9 @@ func (c *Config) defaults() {
 	}
 	if c.StepErrorBudget == 0 {
 		c.StepErrorBudget = 2 * time.Minute
+	}
+	if c.QuotaRecheck == 0 {
+		c.QuotaRecheck = 10 * time.Minute
 	}
 	if c.Live == nil {
 		c.Live = live.Discard{}
@@ -209,6 +219,11 @@ func (w *Worker) Step(ctx context.Context) (bool, error) {
 		return true, err
 	}
 	if !w.owns(r) {
+		if r.Status == session.RunSuspended && r.SuspendReason != "" {
+			if parked, err := w.reparkOverQuota(ctx); parked || err != nil {
+				return true, err
+			}
+		}
 		return true, w.startAttempt(ctx, r)
 	}
 	err := w.advance(ctx, r)
@@ -276,7 +291,11 @@ func (w *Worker) tryCommit(ctx context.Context, events ...*v1.Event) (bool, erro
 
 // suspend 追加 events 与 RunSuspended，并把 Session 停放到 until；之后本 Worker 不再持有该 Run。
 func (w *Worker) suspend(ctx context.Context, r *session.Run, until time.Time, events ...*v1.Event) error {
-	events = append(events, &v1.Event{Payload: &v1.Event_RunSuspended{RunSuspended: &v1.RunSuspended{RunId: r.ID, Attempt: w.attempt}}})
+	return w.suspendWith(ctx, &v1.RunSuspended{RunId: r.ID, Attempt: w.attempt}, until, events...)
+}
+
+func (w *Worker) suspendWith(ctx context.Context, s *v1.RunSuspended, until time.Time, events ...*v1.Event) error {
+	events = append(events, &v1.Event{Payload: &v1.Event_RunSuspended{RunSuspended: s}})
 	ok, err := w.tryCommit(ctx, events...)
 	if err != nil || !ok {
 		return err
@@ -462,6 +481,13 @@ func approvalSummary(t *capability.Tool, c *v1.ToolCall) string {
 }
 
 func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.Def) error {
+	if p, err := w.overQuota(ctx, "run"); err != nil || p != nil {
+		if err != nil {
+			return err
+		}
+		return w.suspendWith(ctx, &v1.RunSuspended{RunId: r.ID, Attempt: w.attempt, Reason: p.Reason(), Until: timestamppb.New(p.ResetAt)},
+			w.quotaPark(p))
+	}
 	tools, err := w.cfg.Catalog.Tools(ctx, w.target(), def.Capabilities)
 	if err != nil {
 		return w.fail(ctx, r, err.Error())
@@ -488,6 +514,8 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 		return w.modelFailed(ctx, r, "model", err)
 	}
 	w.modelErrors = 0
+	// 在写日志之前计量：token 已经消耗，之后写日志失败（被接管、Session 被删除）也应计费（ADR-0019）。
+	w.cfg.Meter.Model(ctx, w.usageScope(), "use_"+w.cfg.Store.IDs(), def.Model, resp.Usage, w.now())
 
 	// 模型给出的调用 ID 可能为空或跨轮、跨 Run 重复；一律改写为全局唯一 ID，
 	// 使其可作为下游幂等键。改写后的 ID 随事件落盘，后续上下文都使用它。

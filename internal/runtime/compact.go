@@ -220,6 +220,7 @@ func (w *Worker) compact(ctx context.Context, r *session.Run, def *agentdef.Def,
 		return w.modelFailed(ctx, r, "summary", err)
 	}
 	w.modelErrors, w.forceCompact = 0, false
+	w.cfg.Meter.Model(ctx, w.usageScope(), "use_"+w.cfg.Store.IDs(), in.Model, resp.Usage, w.now())
 	w.cfg.Logger.Info("context compacted", "session", w.st.SessionID, "run", r.ID, "through_seq", through, "events", len(hist))
 	return w.commit(ctx, &v1.Event{Payload: &v1.Event_ContextCompacted{ContextCompacted: &v1.ContextCompacted{
 		RunId: r.ID, Attempt: w.attempt, ThroughSeq: through, Summary: resp.Content, Model: resp.Model, Usage: resp.Usage,

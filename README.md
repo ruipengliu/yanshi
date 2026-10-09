@@ -58,6 +58,10 @@ curl -XPOST localhost:8080/v1/sessions/$SID/inputs -d '{"text":"你好"}'
 curl -N localhost:8080/v1/sessions/$SID/stream          # SSE，支持 Last-Event-ID 续传
 ```
 
+## 配额与用量
+
+业务线配置（`businesslines/*.yaml`）中的 `quota` 声明业务线每月、EndUser 每日的金额上限，价格表在 `pricing.yaml`（[设计](docs/design/m4-quota-usage.md)）。超额时新 Run 返回 429，进行中的 Run 挂起到额度恢复；`GET /v1/quota`、`GET /v1/usage` 查询配额与用量。
+
 ## 压测与指标
 
 `scripts/bench.sh` 在全新数据库上启动多个进程并压测（见[设计与结果](docs/design/m2-scale-test.md)），例如 `POOL=20 P=4 W=32 S=256 scripts/bench.sh`。Prometheus 指标在内部监听地址（`-peer-addr`）的 `/metrics` 上。

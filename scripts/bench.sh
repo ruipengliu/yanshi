@@ -7,6 +7,7 @@
 #   API=1 ...            只有第一个进程对外提供 API（其余 -workers 但不接客户端）
 #   POOL=40 ...          每个进程的数据库连接池上限（默认 pgx：max(4, CPU 数)）
 #   S=0 ...              空闲实验：不施加负载，只观察 DURATION 内空闲 Worker 的数据库开销
+#   QUOTA=1 ...          为业务线配置（不会触发的）配额，测量配额检查的开销
 #
 # 结果写入 bench-results/<时间戳>/：bench.json、各进程 metrics 与日志。
 set -euo pipefail
@@ -27,6 +28,10 @@ DSN="postgres://yanshi:yanshi@127.0.0.1:54329/$DB?sslmode=disable${POOL:+&pool_m
 
 KEYDIR=$(mktemp -d)
 (cd "$KEYDIR" && "$OLDPWD/bin/yanshi" keygen -business-line bench >/dev/null)
+if [ -n "${QUOTA:-}" ]; then
+  # 配额足够大、不会触发，只测量每次模型调用前检查配额的开销（docs/design/m4-quota-usage.md）。
+  printf 'quota:\n  monthly: 1000000\n  end_user_daily: 1000\n' >> "$KEYDIR/businesslines/bench.yaml"
+fi
 export YANSHI_PEER_TOKEN=bench-peer-token
 
 pids=() servers=()

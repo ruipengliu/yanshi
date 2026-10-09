@@ -26,6 +26,7 @@ import (
 	"yanshi/internal/node"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
+	"yanshi/internal/usage"
 	"yanshi/internal/workqueue/memqueue"
 )
 
@@ -111,7 +112,15 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 		t.Fatal(err)
 	}
 	e.grant = g.ID
-	e.api = &httpapi.Server{Auth: verifier, Service: svc, Live: live.NewMemBus(), Nodes: dir, Artifacts: arts, Memory: mems}
+	// demo 配置了配额；demo/u1 用过一个可辨认的模型，供用量接口检查可见性。
+	uses := usage.NewMem()
+	_ = uses.Record(ctx, &usage.Entry{ID: "use1", BusinessLine: "demo", EndUser: "u1", Kind: usage.Model, Model: "p/u1-model", Cost: 5, At: time.Now()})
+	limits := usage.Limits{Monthly: 10, EndUserDaily: 1}
+	if err := limits.Prepare(); err != nil {
+		t.Fatal(err)
+	}
+	svc.Quotas = &usage.Quotas{Store: uses, Limits: map[string]usage.Limits{"demo": limits}}
+	e.api = &httpapi.Server{Auth: verifier, Service: svc, Live: live.NewMemBus(), Nodes: dir, Artifacts: arts, Memory: mems, Usage: uses}
 	e.srv = httptest.NewServer(e.api.Handler())
 	t.Cleanup(e.srv.Close)
 	return e
@@ -194,6 +203,8 @@ func (e *authzEnv) cases() map[string]routeCase {
 		"GET /v1/grants":                              {"GET", "/v1/grants", nil, http.StatusOK},
 		"POST /v1/grants":                             {"POST", "/v1/grants", map[string]any{"from": "demo", "to": "other", "categories": []string{"interest"}}, http.StatusCreated},
 		"DELETE /v1/grants/{id}":                      {"DELETE", "/v1/grants/" + e.grant, nil, http.StatusNoContent},
+		"GET /v1/quota":                               {"GET", "/v1/quota?end_user=u1", nil, http.StatusOK},
+		"GET /v1/usage":                               {"GET", "/v1/usage?end_user=u1&group_by=model", nil, http.StatusOK},
 	}
 }
 
@@ -291,6 +302,15 @@ func TestAuthorizationMatrix(t *testing.T) {
 						if sees, should := strings.Contains(body, e.grant), principal == "demo/u1" || principal == "other/u1"; sees != should {
 							t.Fatalf("sees u1's grant = %v, want %v", sees, should)
 						}
+					}
+				case route == "GET /v1/quota" || route == "GET /v1/usage":
+					// 只有 demo/u1 本人与 demo 的服务令牌能看到 demo/u1 的配额与用量；自报他人 end_user 时 403。
+					if code != http.StatusOK && code != http.StatusForbidden {
+						t.Fatalf("got %d (%s)", code, body)
+					}
+					mark := map[string]string{"GET /v1/quota": `"end_user":"u1"`, "GET /v1/usage": "u1-model"}[route]
+					if sees := code == http.StatusOK && strings.Contains(body, mark) && strings.Contains(body, "demo"); sees != allowed {
+						t.Fatalf("sees owner's usage = %v, want %v (%s)", sees, allowed, body)
 					}
 				case route == "GET /v1/nodes":
 					// 列表不返回 404，但别人看不到 demo/u1 的 Node。

@@ -38,6 +38,8 @@ message RunSnapshot {
   repeated RecalledMemory recall = 9;
   bool recalled = 10;
   repeated CallSnapshot calls = 11;
+  string suspend_reason = 12;
+  google.protobuf.Timestamp suspended_until = 13;
 }
 
 message CallSnapshot {

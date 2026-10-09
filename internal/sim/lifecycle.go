@@ -64,7 +64,7 @@ func (w *World) stepJanitorDid(i int) (bool, error) {
 
 // replace 用同一 EndUser 的新 Session 替换 sessions[i]。
 func (w *World) replace(i int) error {
-	id, err := w.svc.Create(context.Background(), service.CreateRequest{BusinessLine: "bl", EndUser: fmt.Sprintf("u%d", i), Agent: "sim"})
+	id, err := w.svc.Create(context.Background(), service.CreateRequest{BusinessLine: "bl", EndUser: w.users[i], Agent: "sim"})
 	if err != nil {
 		return err
 	}

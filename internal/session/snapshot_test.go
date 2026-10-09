@@ -83,6 +83,8 @@ func richLog() []*v1.Event {
 		ev(&v1.AssistantMessage{RunId: "r1", Attempt: 4, Content: text}),
 		ev(&v1.RunCompleted{RunId: "r1", Attempt: 4}),
 		ev(&v1.RunRequested{RunId: "r2", Input: text}),
+		ev(&v1.AttemptStarted{RunId: "r2", Attempt: 1}),
+		ev(&v1.RunSuspended{RunId: "r2", Attempt: 1, Reason: "end_user_quota", Until: timestamppb.New(t0.Add(24 * time.Hour))}),
 		ev(&v1.Steered{RunId: "r2", Input: text}),
 		ev(&v1.RunInterrupted{RunId: "r2", By: "user"}),
 		ev(&v1.SessionClosed{By: "user"}),
@@ -155,7 +157,7 @@ func TestSnapshotIgnoredAfterLogDeleted(t *testing.T) {
 func TestSnapshotCoversEveryField(t *testing.T) {
 	covered := map[string][]string{
 		"State":    {"SessionID", "Seq", "Created", "Closed", "Compaction", "CompactedAt", "Runs", "History", "callIDs"},
-		"Run":      {"ID", "Status", "RequestedAt", "Attempt", "LiveEndpoint", "Takeovers", "StalledTakeovers", "Turns", "Recall", "Recalled", "Calls"},
+		"Run":      {"ID", "Status", "RequestedAt", "Attempt", "LiveEndpoint", "Takeovers", "StalledTakeovers", "Turns", "Recall", "Recalled", "Calls", "SuspendReason", "SuspendedUntil"},
 		"Call":     {"Call", "StartedAttempts", "NodeID", "Deadline", "Done", "Approval"},
 		"Approval": {"Summary", "Deadline", "Decided", "Approved"},
 	}

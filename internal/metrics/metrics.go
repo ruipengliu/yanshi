@@ -59,6 +59,10 @@ var (
 	HTTPDuration      = histogram("http_request_duration_seconds", "对外 API 请求耗时（流式接口为连接时长）。", latency, "route")
 	NodesConnected    = gauge("nodes_connected", "本进程网关上已接入的 Node 连接数。")
 	LivePeerStreams   = gauge("live_peer_streams", "本进程向其他进程拉取实时增量的连接数。")
+	// 业务线名不是个人数据，可以作为标签（docs/design/m4-quota-usage.md §5）。
+	UsageCost         = counter("usage_cost_micros_total", "记录的用量金额（微元）；kind = model | sandbox。", "business_line", "kind")
+	UsageRecordErrors = counter("usage_record_errors_total", "写入用量失败的次数（少计）。")
+	QuotaRejections   = counter("quota_rejections_total", "因配额拒绝或挂起；scope = end_user | business_line，where = submit | run。", "scope", "where")
 )
 
 // PoolStats 是数据库连接池的统计来源（由 pgxpool.Pool.Stat 适配）。

@@ -14,7 +14,7 @@ import (
 
 // ProjectionVersion 是投影语义的版本。改动 Apply 或 State 的字段时必须递增：旧快照随之作废，
 // 加载退回完整回放，因此快照永远不会与当前代码的投影结果不一致。
-const ProjectionVersion = 1
+const ProjectionVersion = 2
 
 // Snapshots 存放每个 Session 最新的投影快照。快照只是加速加载的缓存，删除或丢失都不影响正确性。
 type Snapshots interface {
@@ -49,7 +49,7 @@ func (s *State) Snapshot() *v1.SessionSnapshot {
 		rs := &v1.RunSnapshot{
 			Id: r.ID, Status: int32(r.Status), RequestedAt: ts(r.RequestedAt), Attempt: r.Attempt, LiveEndpoint: r.LiveEndpoint,
 			Takeovers: int32(r.Takeovers), StalledTakeovers: int32(r.StalledTakeovers), Turns: int32(r.Turns),
-			Recall: r.Recall, Recalled: r.Recalled,
+			Recall: r.Recall, Recalled: r.Recalled, SuspendReason: r.SuspendReason, SuspendedUntil: ts(r.SuspendedUntil),
 		}
 		for _, c := range r.Calls {
 			cs := &v1.CallSnapshot{Call: c.Call, StartedAttempts: c.StartedAttempts, NodeId: c.NodeID, Deadline: ts(c.Deadline), Done: c.Done}
@@ -82,6 +82,7 @@ func FromSnapshot(snap *v1.SessionSnapshot) (*State, error) {
 			ID: rs.GetId(), Status: RunStatus(rs.GetStatus()), RequestedAt: fromTS(rs.GetRequestedAt()), Attempt: rs.GetAttempt(),
 			LiveEndpoint: rs.GetLiveEndpoint(), Takeovers: int(rs.GetTakeovers()), StalledTakeovers: int(rs.GetStalledTakeovers()),
 			Turns: int(rs.GetTurns()), Recall: rs.GetRecall(), Recalled: rs.GetRecalled(),
+			SuspendReason: rs.GetSuspendReason(), SuspendedUntil: fromTS(rs.GetSuspendedUntil()),
 		}
 		for _, cs := range rs.GetCalls() {
 			c := &Call{Call: cs.GetCall(), StartedAttempts: cs.GetStartedAttempts(), NodeID: cs.GetNodeId(), Deadline: fromTS(cs.GetDeadline()), Done: cs.GetDone()}

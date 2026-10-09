@@ -1,0 +1,10 @@
+# 价格表（docs/design/m4-quota-usage.md §2）：把用量折算为金额，配额按金额计算。
+# 以下 tokenhub 价格是占位的示例值，上线前按合同价填写。任一业务线配置了配额时，
+# agents/ 中引用的每个模型都必须在这里有价格，否则 serve 拒绝启动。
+currency: CNY
+models:                                   # 元 / 百万 token（数值等于微元 / token）
+  tokenhub/deepseek-v4.1-flash: {input: 1.0, output: 4.0}
+  echo/any: {input: 0, output: 0}         # 离线复述与压测模型不产生费用
+  bench/latency=200ms,turns=2,tool=clock_now: {input: 0, output: 0}
+sandbox:
+  per_hour: 0.36                          # 元 / 小时执行时间（示例值）

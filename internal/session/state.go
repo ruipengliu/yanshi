@@ -95,6 +95,10 @@ type Run struct {
 	Recall   []*v1.RecalledMemory
 	Recalled bool
 	Calls    []*Call
+	// SuspendReason 是最近一次挂起的原因（RunSuspended.reason），开始新 Attempt 时清空；
+	// 非空表示因配额挂起，SuspendedUntil 为配额重置时间（docs/design/m4-quota-usage.md §3）。
+	SuspendReason  string
+	SuspendedUntil time.Time
 }
 
 // PendingCall 返回第一个尚无结果的调用，没有则返回 nil。
@@ -280,12 +284,18 @@ func (s *State) apply(e *v1.Event) error {
 			r.StalledTakeovers++
 		}
 		r.Attempt, r.Status, r.LiveEndpoint = p.AttemptStarted.GetAttempt(), RunRunning, p.AttemptStarted.GetLiveEndpoint()
+		r.SuspendReason, r.SuspendedUntil = "", time.Time{}
 
 	case *v1.Event_RunSuspended:
 		if _, err := s.fencedRun(p.RunSuspended.GetRunId(), p.RunSuspended.GetAttempt()); err != nil {
 			return err
 		}
-		s.Run(p.RunSuspended.GetRunId()).Status = RunSuspended
+		r := s.Run(p.RunSuspended.GetRunId())
+		r.Status, r.SuspendReason = RunSuspended, p.RunSuspended.GetReason()
+		r.SuspendedUntil = time.Time{}
+		if u := p.RunSuspended.GetUntil(); u != nil {
+			r.SuspendedUntil = u.AsTime()
+		}
 
 	case *v1.Event_ApprovalRequested:
 		m := p.ApprovalRequested

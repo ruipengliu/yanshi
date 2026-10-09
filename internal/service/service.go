@@ -13,6 +13,7 @@ import (
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/metrics"
 	"yanshi/internal/session"
+	"yanshi/internal/usage"
 	"yanshi/internal/workqueue"
 )
 
@@ -38,6 +39,8 @@ type Service struct {
 	Index     lifecycle.Index
 	Deletions lifecycle.Deletions
 	Janitor   workqueue.Queue
+	// Quotas 非空时，配额用尽的业务线或 EndUser 不能开始新 Run（docs/design/m4-quota-usage.md §3）。
+	Quotas *usage.Quotas
 }
 
 // ErrConflict 表示请求与 Session 当前状态冲突（如审批已决定）。
@@ -129,6 +132,17 @@ func (s *Service) Submit(ctx context.Context, sessionID string, input []*v1.Cont
 	//     只有写日志之后的入队（租约期间置 dirty，或重新插入）能保证新 Run 被看到（丢失唤醒）。
 	// 两者同时失效需要"恰好在该窗口内被认领"且"写日志后立即崩溃"，此时 Run 停留在 queued，
 	// 直到该 Session 的下一次输入。
+	// 配额只拦新 Run：插话属于进行中的 Run，后者在下一次模型调用前自行检查。
+	if bl := st.Created.GetBusinessLine(); st.Active() == nil && s.Quotas.Enabled(bl) {
+		p, err := s.Quotas.Check(ctx, bl, st.Created.GetEndUser(), s.Store.Clock.Now())
+		if err != nil {
+			return nil, err
+		}
+		if p != nil {
+			metrics.QuotaRejections.WithLabelValues(p.Scope, "submit").Inc()
+			return nil, &usage.ExceededError{Period: p}
+		}
+	}
 	if err := s.Queue.Enqueue(ctx, sessionID); err != nil {
 		return nil, err
 	}

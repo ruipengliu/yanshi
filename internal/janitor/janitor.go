@@ -22,6 +22,7 @@ import (
 	"yanshi/internal/sandbox"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
+	"yanshi/internal/usage"
 	"yanshi/internal/workqueue"
 	"yanshi/sdk/nodesdk"
 )
@@ -48,8 +49,11 @@ type Janitor struct {
 	Deletions lifecycle.Deletions
 	// Retention 是各业务线的保留策略，键为业务线名。
 	Retention map[string]lifecycle.Retention
-	Clock     clock.Clock
-	Logger    *slog.Logger
+	// Usage 非 nil 时清理早于 UsageRetention 的用量（docs/design/m4-quota-usage.md §4）。
+	Usage          usage.Store
+	UsageRetention time.Duration
+	Clock          clock.Clock
+	Logger         *slog.Logger
 
 	LeaseTTL time.Duration
 	IdleWait time.Duration
@@ -334,6 +338,11 @@ func (j *Janitor) Sweep(ctx context.Context) error {
 	}
 	for _, id := range pending {
 		if err := j.Queue.Enqueue(ctx, id); err != nil {
+			return err
+		}
+	}
+	if j.Usage != nil && j.UsageRetention > 0 {
+		if err := j.Usage.Prune(ctx, now.Add(-j.UsageRetention)); err != nil {
 			return err
 		}
 	}

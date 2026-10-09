@@ -11,6 +11,7 @@ import (
 	"yanshi/internal/clock"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/node"
+	"yanshi/internal/usage"
 	"yanshi/internal/workqueue"
 	"yanshi/sdk/nodesdk"
 )
@@ -28,8 +29,10 @@ type Controller struct {
 	Artifacts *artifact.Service
 	// Lifecycle 非 nil 时，创建沙箱后复查 Session 是否已关闭或删除，是则销毁（ADR-0015）。
 	Lifecycle *lifecycle.Guard
-	Clock     clock.Clock
-	Logger    *slog.Logger
+	// Meter 非空时按执行时长记录用量（需要 Lifecycle 的索引查得 Session 的归属，docs/design/m4-quota-usage.md §2）。
+	Meter  *usage.Meter
+	Clock  clock.Clock
+	Logger *slog.Logger
 
 	LeaseTTL time.Duration
 	// Heartbeat > 0 时在执行期间续约（真实时间）；模拟测试置 0。
@@ -148,9 +151,13 @@ func (c *Controller) Step(ctx context.Context) (bool, error) {
 		}
 		return false, err
 	}
+	start := c.Clock.Now()
 	res, err := c.during(ctx, id, inv.GetCallId(), func(ctx context.Context) (*v1.InvokeResult, error) {
 		return c.exec.Execute(WithSandbox(ctx, id, inv.GetCallId()), inv)
 	})
+	if err == nil && res != nil {
+		c.meter(ctx, inv, c.Clock.Now().Sub(start))
+	}
 	if errors.Is(err, errWithdrawn) {
 		return true, nil
 	}
@@ -270,6 +277,18 @@ func (c *Controller) destroy(ctx context.Context, id string) error {
 		return err
 	}
 	return c.Activity.Delete(ctx, id)
+}
+
+// meter 记录一次执行的用量。以 call_id 为幂等键：调用被重新投递、由账本返回已有结果时不重复计费。
+func (c *Controller) meter(ctx context.Context, inv *v1.Invoke, d time.Duration) {
+	if c.Meter == nil || c.Lifecycle == nil || c.Lifecycle.Index == nil {
+		return
+	}
+	s, err := c.Lifecycle.Index.Get(ctx, inv.GetSessionId())
+	if err != nil {
+		return // Session 已删除：执行结果也会被撤回，不计费
+	}
+	c.Meter.Sandbox(ctx, usage.Scope{SessionID: s.ID, BusinessLine: s.BusinessLine, EndUser: s.EndUser}, "sbx_"+inv.GetCallId(), d, c.Clock.Now())
 }
 
 func (c *Controller) ended(ctx context.Context, sessionID string) (bool, error) {

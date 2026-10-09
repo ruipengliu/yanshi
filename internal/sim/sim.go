@@ -35,6 +35,7 @@ import (
 	"yanshi/internal/sandbox"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
+	"yanshi/internal/usage"
 	"yanshi/internal/workqueue"
 	"yanshi/internal/workqueue/memqueue"
 	"yanshi/sdk/nodesdk"
@@ -59,6 +60,8 @@ type Stores struct {
 	Grants memory.Grants
 	// 投影快照（docs/design/m2-scale-test.md §6）
 	Snapshots session.Snapshots
+	// 用量（docs/design/m4-quota-usage.md）
+	Usage usage.Store
 }
 
 type Options struct {
@@ -95,6 +98,8 @@ type Stats struct {
 	AttemptsAfterCompaction, LongRunsCompleted int
 	// EnqueueInterleavings 是在客户端入队与写日志之间插入 Worker 步骤的次数。
 	EnqueueInterleavings int
+	// 配额：因配额挂起的次数、提交时被拒绝的次数、挂起后恢复并结束的 Run；注销账号的次数。
+	QuotaSuspensions, QuotaRejections, QuotaResumes, AccountDeletions int
 }
 
 // hookQueue 在 Enqueue 成功后调用 after。
@@ -155,6 +160,13 @@ type World struct {
 	deletions    lifecycle.Deletions
 	janitorQueue workqueue.Queue
 	memories     *memory.Service
+	usage        usage.Store
+	quotas       *usage.Quotas
+	meter        *usage.Meter
+	// users 是每个 Session 位置当前的 EndUser；注销账号后换成新的 EndUser。
+	users        []string
+	deletedUsers []string
+	generation   int
 	janitors     []*janitor.Janitor
 	nextJ        int
 	// deleted 与 closed 是已删除、已关闭（已从 sessions 中替换掉）的 Session。
@@ -193,6 +205,7 @@ func New(opts Options) (*World, error) {
 		SandboxQueue: memqueue.New(w.clock), Ledger: nodesdk.NewMemLedger(), Activity: sandbox.NewMemActivity(),
 		Index: lifecycle.NewMemIndex(), Deletions: lifecycle.NewMemDeletions(), JanitorQueue: memqueue.New(w.clock),
 		Memory: memory.NewMemStore(), Grants: memory.NewMemGrants(), Snapshots: session.NewMemSnapshots(),
+		Usage: usage.NewMem(),
 	}
 	if opts.NewStores != nil {
 		stores = opts.NewStores(w.clock)
@@ -222,6 +235,9 @@ func New(opts Options) (*World, error) {
 		Sandbox: &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID},
 	}
 	w.index, w.deletions, w.janitorQueue = stores.Index, stores.Deletions, stores.JanitorQueue
+	w.usage = &checkedUsage{Store: stores.Usage, w: w}
+	w.quotas = &usage.Quotas{Store: stores.Usage, Limits: simLimits(opts.LongRuns)}
+	w.meter = &usage.Meter{Store: w.usage, Prices: simPrices, Deletions: w.deletions}
 	w.hub = &node.Hub{Dir: stores.Dir, Inbox: stores.Inbox, Store: w.store, Queue: w.queue, Auth: node.InsecureDevAuth{}, Deletions: w.deletions}
 	w.sandboxQueue, w.ledger, w.activity = stores.SandboxQueue, stores.Ledger, stores.Activity
 	w.router = &sandbox.Router{Hub: w.hub, Queue: w.sandboxQueue}
@@ -235,7 +251,7 @@ func New(opts Options) (*World, error) {
 			return nil
 		}
 		return w.afterEnqueue()
-	}}, Agents: agents, Nodes: w.router, Index: w.index, Deletions: w.deletions, Janitor: w.janitorQueue}
+	}}, Agents: agents, Nodes: w.router, Index: w.index, Deletions: w.deletions, Janitor: w.janitorQueue, Quotas: w.quotas}
 	for range 2 {
 		w.controllers = append(w.controllers, w.newController())
 	}
@@ -246,8 +262,9 @@ func New(opts Options) (*World, error) {
 		w.workers = append(w.workers, w.newWorker())
 	}
 	for i := range opts.Sessions {
+		w.users = append(w.users, fmt.Sprintf("u%d", i))
 		id, err := w.svc.Create(context.Background(), service.CreateRequest{
-			BusinessLine: "bl", EndUser: fmt.Sprintf("u%d", i), Agent: "sim",
+			BusinessLine: "bl", EndUser: w.users[i], Agent: "sim",
 		})
 		if err != nil {
 			return nil, err
@@ -267,7 +284,7 @@ func (w *World) newController() *sandbox.Controller {
 	return &sandbox.Controller{
 		ID: fmt.Sprintf("c%d", w.nextC), Queue: w.sandboxQueue, Hub: w.hub, Provider: w.provider,
 		Activity: w.activity, Ledger: w.ledger, Clock: w.clock, LeaseTTL: leaseTTL, IdleTTL: 2 * time.Minute,
-		Artifacts: w.artifacts, Lifecycle: &lifecycle.Guard{Index: w.index, Deletions: w.deletions},
+		Artifacts: w.artifacts, Lifecycle: &lifecycle.Guard{Index: w.index, Deletions: w.deletions}, Meter: w.meter,
 	}
 }
 
@@ -297,6 +314,7 @@ func (w *World) stepController(i int) error {
 func (w *World) sandboxExec(ctx context.Context, id string, _ sandbox.ExecRequest) (*sandbox.ExecResult, error) {
 	w.effects[id+"/"+sandbox.CallID(ctx)]++
 	w.Stats.SandboxExecs++
+	w.clock.Advance(time.Second) // 执行占用时间，按时长计量
 	if w.faults && w.chance(0.15) {
 		w.crash()
 		return nil, ctx.Err()
@@ -438,6 +456,7 @@ func (w *World) newWorker() *runtime.Worker {
 		ID: fmt.Sprintf("w%d", w.nextW), Store: w.store, Queue: w.queue, Agents: w.agents,
 		Model: gw, Catalog: w.catalog, Dispatch: w.router, LeaseTTL: leaseTTL,
 		MaxTakeovers: 4, MaxModelErrors: 3, ApprovalTimeout: approvalTimeout, Memory: w.memories,
+		Meter: w.meter, Quotas: w.quotas, QuotaRecheck: time.Minute,
 	})
 }
 
@@ -484,8 +503,11 @@ func (w *World) tick() error {
 		if w.opts.LongRuns && !w.chance(0.1) {
 			return nil // 长 Run 模式下少关、少删，否则 Run 很难跑满
 		}
-		if w.chance(0.5) {
+		switch x := w.rng.Float64(); {
+		case x < 0.5:
 			return w.closeSession()
+		case x < 0.6:
+			return w.deleteAccount()
 		}
 		return w.deleteSession()
 	case x < 0.87:
@@ -560,6 +582,10 @@ func (w *World) submit() error {
 	}
 	defer func() { w.afterEnqueue = nil }()
 	res, err := w.svc.Submit(context.Background(), sid, model.TextBlocks(fmt.Sprintf("msg %d", w.rng.IntN(1000))))
+	if w.submitOverQuota(err) {
+		w.tracef("submit %s rejected: %v", sid, err)
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("submit: %w", err)
 	}
@@ -590,6 +616,8 @@ func (w *World) interrupt() error {
 // quiesce 停止故障与客户端动作，持续推进直到所有 Run 终态。
 func (w *World) quiesce() error {
 	w.faults = false
+	// 撤销配额（相当于调高配额）：因配额挂起的 Run 须在定期复查时恢复。
+	w.quotas.Limits = nil
 	// idleRounds 是所有 Janitor 连续无事可做的轮数。须超过一个租约 TTL（每轮 1 秒）才算清理队列已空：
 	// 崩溃的 Janitor 持有的租约到期前，其他 Janitor 认领不到它的任务。
 	idleRounds := 0
@@ -685,6 +713,9 @@ func (w *World) CheckInvariants() error {
 	if len(w.violations) > 0 {
 		return fmt.Errorf("invariant: %s", w.violations[0])
 	}
+	if err := w.checkUsage(); err != nil {
+		return err
+	}
 	return w.checkDeleted(false)
 }
 
@@ -711,6 +742,7 @@ func (w *World) CollectStats() {
 			}
 		}
 		compacted := map[string]bool{}
+		quotaSuspended := map[string]bool{}
 		for _, e := range events {
 			switch p := e.GetPayload().(type) {
 			case *v1.Event_MemoryRecalled:
@@ -737,6 +769,14 @@ func (w *World) CollectStats() {
 				}
 			case *v1.Event_RunSuspended:
 				w.Stats.Suspensions++
+				if p.RunSuspended.GetReason() != "" {
+					w.Stats.QuotaSuspensions++
+					quotaSuspended[p.RunSuspended.GetRunId()] = true
+				}
+			case *v1.Event_RunCompleted:
+				if quotaSuspended[p.RunCompleted.GetRunId()] {
+					w.Stats.QuotaResumes++
+				}
 			case *v1.Event_RunFailed:
 				if strings.HasSuffix(p.RunFailed.GetReason(), " turns") {
 					w.Stats.TurnLimited++
@@ -865,7 +905,7 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 			turns++
 		}
 	}
-	resp := &model.Response{Model: "sim/m", Usage: &v1.Usage{InputTokens: uint64(model.EstimateRequest(req))}}
+	resp := &model.Response{Model: "sim/m", Usage: &v1.Usage{InputTokens: uint64(model.EstimateRequest(req)), OutputTokens: 20}}
 	more := turns < 3 && w.chance(0.6)
 	if w.opts.LongRuns {
 		more = turns < 100 && w.chance(0.97)

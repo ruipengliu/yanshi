@@ -6,7 +6,7 @@ import (
 	"os"
 )
 
-const usage = `usage:
+const usageText = `usage:
   yanshi serve [flags]   启动单进程服务（API + Worker）
   yanshi chat  [flags]   命令行对话客户端
   yanshi node  [flags]   模拟电脑上的 HostApp，把共享目录作为 Node 接入
@@ -20,7 +20,7 @@ const usage = `usage:
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, usage)
+		fmt.Fprintln(os.Stderr, usageText)
 		os.Exit(2)
 	}
 	var err error
@@ -42,7 +42,7 @@ func main() {
 	case "export-case":
 		err = exportCaseCmd(os.Args[2:])
 	default:
-		fmt.Fprintln(os.Stderr, usage)
+		fmt.Fprintln(os.Stderr, usageText)
 		os.Exit(2)
 	}
 	if err != nil {

@@ -158,6 +158,8 @@ type RunSnapshot struct {
 	Recall           []*RecalledMemory      `protobuf:"bytes,9,rep,name=recall,proto3" json:"recall,omitempty"`
 	Recalled         bool                   `protobuf:"varint,10,opt,name=recalled,proto3" json:"recalled,omitempty"`
 	Calls            []*CallSnapshot        `protobuf:"bytes,11,rep,name=calls,proto3" json:"calls,omitempty"`
+	SuspendReason    string                 `protobuf:"bytes,12,opt,name=suspend_reason,json=suspendReason,proto3" json:"suspend_reason,omitempty"`
+	SuspendedUntil   *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=suspended_until,json=suspendedUntil,proto3" json:"suspended_until,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -265,6 +267,20 @@ func (x *RunSnapshot) GetRecalled() bool {
 func (x *RunSnapshot) GetCalls() []*CallSnapshot {
 	if x != nil {
 		return x.Calls
+	}
+	return nil
+}
+
+func (x *RunSnapshot) GetSuspendReason() string {
+	if x != nil {
+		return x.SuspendReason
+	}
+	return ""
+}
+
+func (x *RunSnapshot) GetSuspendedUntil() *timestamppb.Timestamp {
+	if x != nil {
+		return x.SuspendedUntil
 	}
 	return nil
 }
@@ -440,7 +456,7 @@ const file_yanshi_v1_snapshot_proto_rawDesc = "" +
 	"\x04runs\x18\b \x03(\v2\x16.yanshi.v1.RunSnapshotR\x04runs\x12*\n" +
 	"\ahistory\x18\t \x03(\v2\x10.yanshi.v1.EventR\ahistory\x12\x19\n" +
 	"\bcall_ids\x18\n" +
-	" \x03(\tR\acallIds\"\x92\x03\n" +
+	" \x03(\tR\acallIds\"\xfe\x03\n" +
 	"\vRunSnapshot\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\x05R\x06status\x12=\n" +
@@ -453,7 +469,9 @@ const file_yanshi_v1_snapshot_proto_rawDesc = "" +
 	"\x06recall\x18\t \x03(\v2\x19.yanshi.v1.RecalledMemoryR\x06recall\x12\x1a\n" +
 	"\brecalled\x18\n" +
 	" \x01(\bR\brecalled\x12-\n" +
-	"\x05calls\x18\v \x03(\v2\x17.yanshi.v1.CallSnapshotR\x05calls\"\x80\x02\n" +
+	"\x05calls\x18\v \x03(\v2\x17.yanshi.v1.CallSnapshotR\x05calls\x12%\n" +
+	"\x0esuspend_reason\x18\f \x01(\tR\rsuspendReason\x12C\n" +
+	"\x0fsuspended_until\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\x0esuspendedUntil\"\x80\x02\n" +
 	"\fCallSnapshot\x12'\n" +
 	"\x04call\x18\x01 \x01(\v2\x13.yanshi.v1.ToolCallR\x04call\x12)\n" +
 	"\x10started_attempts\x18\x02 \x03(\rR\x0fstartedAttempts\x12\x17\n" +
@@ -502,15 +520,16 @@ var file_yanshi_v1_snapshot_proto_depIdxs = []int32{
 	8,  // 5: yanshi.v1.RunSnapshot.requested_at:type_name -> google.protobuf.Timestamp
 	9,  // 6: yanshi.v1.RunSnapshot.recall:type_name -> yanshi.v1.RecalledMemory
 	2,  // 7: yanshi.v1.RunSnapshot.calls:type_name -> yanshi.v1.CallSnapshot
-	10, // 8: yanshi.v1.CallSnapshot.call:type_name -> yanshi.v1.ToolCall
-	8,  // 9: yanshi.v1.CallSnapshot.deadline:type_name -> google.protobuf.Timestamp
-	3,  // 10: yanshi.v1.CallSnapshot.approval:type_name -> yanshi.v1.ApprovalSnapshot
-	8,  // 11: yanshi.v1.ApprovalSnapshot.deadline:type_name -> google.protobuf.Timestamp
-	12, // [12:12] is the sub-list for method output_type
-	12, // [12:12] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	8,  // 8: yanshi.v1.RunSnapshot.suspended_until:type_name -> google.protobuf.Timestamp
+	10, // 9: yanshi.v1.CallSnapshot.call:type_name -> yanshi.v1.ToolCall
+	8,  // 10: yanshi.v1.CallSnapshot.deadline:type_name -> google.protobuf.Timestamp
+	3,  // 11: yanshi.v1.CallSnapshot.approval:type_name -> yanshi.v1.ApprovalSnapshot
+	8,  // 12: yanshi.v1.ApprovalSnapshot.deadline:type_name -> google.protobuf.Timestamp
+	13, // [13:13] is the sub-list for method output_type
+	13, // [13:13] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_yanshi_v1_snapshot_proto_init() }

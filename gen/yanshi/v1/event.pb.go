@@ -1383,9 +1383,13 @@ func (x *RunInterrupted) GetBy() string {
 
 // RunSuspended 表示当前 Attempt 正常结束、Run 等待外部条件；从 suspended 恢复不计为接管。
 type RunSuspended struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	Attempt       uint32                 `protobuf:"varint,2,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	RunId   string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	Attempt uint32                 `protobuf:"varint,2,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	// reason 为空表示等待审批或设备结果（由挂起的调用可知）；"end_user_quota" / "business_line_quota"
+	// 表示配额用尽（docs/design/m4-quota-usage.md §3），until 为配额重置时间。
+	Reason        string                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+	Until         *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=until,proto3" json:"until,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1432,6 +1436,20 @@ func (x *RunSuspended) GetAttempt() uint32 {
 		return x.Attempt
 	}
 	return 0
+}
+
+func (x *RunSuspended) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *RunSuspended) GetUntil() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Until
+	}
+	return nil
 }
 
 // ApprovalRequested 请求 EndUser 批准一次高风险调用。
@@ -1954,10 +1972,12 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\"7\n" +
 	"\x0eRunInterrupted\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x0e\n" +
-	"\x02by\x18\x02 \x01(\tR\x02by\"?\n" +
+	"\x02by\x18\x02 \x01(\tR\x02by\"\x89\x01\n" +
 	"\fRunSuspended\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
-	"\aattempt\x18\x02 \x01(\rR\aattempt\"\xaf\x01\n" +
+	"\aattempt\x18\x02 \x01(\rR\aattempt\x12\x16\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\x120\n" +
+	"\x05until\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x05until\"\xaf\x01\n" +
 	"\x11ApprovalRequested\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x12\x17\n" +
@@ -2058,15 +2078,16 @@ var file_yanshi_v1_event_proto_depIdxs = []int32{
 	10, // 24: yanshi.v1.AssistantMessage.usage:type_name -> yanshi.v1.Usage
 	24, // 25: yanshi.v1.ToolCallStarted.deadline:type_name -> google.protobuf.Timestamp
 	1,  // 26: yanshi.v1.ToolResult.content:type_name -> yanshi.v1.ContentBlock
-	24, // 27: yanshi.v1.ApprovalRequested.deadline:type_name -> google.protobuf.Timestamp
-	1,  // 28: yanshi.v1.ContextCompacted.summary:type_name -> yanshi.v1.ContentBlock
-	10, // 29: yanshi.v1.ContextCompacted.usage:type_name -> yanshi.v1.Usage
-	23, // 30: yanshi.v1.MemoryRecalled.items:type_name -> yanshi.v1.RecalledMemory
-	31, // [31:31] is the sub-list for method output_type
-	31, // [31:31] is the sub-list for method input_type
-	31, // [31:31] is the sub-list for extension type_name
-	31, // [31:31] is the sub-list for extension extendee
-	0,  // [0:31] is the sub-list for field type_name
+	24, // 27: yanshi.v1.RunSuspended.until:type_name -> google.protobuf.Timestamp
+	24, // 28: yanshi.v1.ApprovalRequested.deadline:type_name -> google.protobuf.Timestamp
+	1,  // 29: yanshi.v1.ContextCompacted.summary:type_name -> yanshi.v1.ContentBlock
+	10, // 30: yanshi.v1.ContextCompacted.usage:type_name -> yanshi.v1.Usage
+	23, // 31: yanshi.v1.MemoryRecalled.items:type_name -> yanshi.v1.RecalledMemory
+	32, // [32:32] is the sub-list for method output_type
+	32, // [32:32] is the sub-list for method input_type
+	32, // [32:32] is the sub-list for extension type_name
+	32, // [32:32] is the sub-list for extension extendee
+	0,  // [0:32] is the sub-list for field type_name
 }
 
 func init() { file_yanshi_v1_event_proto_init() }
