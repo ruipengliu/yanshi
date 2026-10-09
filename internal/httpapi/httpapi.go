@@ -585,7 +585,8 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if _, ok := s.session(w, r); !ok {
+	st, ok := s.session(w, r)
+	if !ok {
 		return
 	}
 	cursor := r.URL.Query().Get("after")
@@ -603,9 +604,38 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	// 先订阅增量再读日志，避免两者之间的增量丢失。
-	deltas, unsubscribe := s.Live.Subscribe(id)
-	defer unsubscribe()
+	// 先订阅增量再读日志，避免两者之间的增量丢失。增量总线支持跟随时，由本流告知当前执行进程
+	// （投影中活跃 Run 的当前 Attempt，之后按读到的事件推进），总线不必再读一遍日志。
+	var deltas <-chan live.Delta
+	follow := func([]*v1.Event) {}
+	if f, ok := s.Live.(live.Follower); ok {
+		ch, setEndpoint, cancel := f.SubscribeFollowing(id)
+		defer cancel()
+		endpoint := ""
+		if a := st.Active(); a != nil && a.Status == session.RunRunning {
+			endpoint = a.LiveEndpoint
+		}
+		setEndpoint(endpoint)
+		// 已读到 st.Seq 的投影；之后只按新读到的事件推进。
+		seen := st.Seq
+		deltas, follow = ch, func(events []*v1.Event) {
+			var fresh []*v1.Event
+			for _, e := range events {
+				if e.GetSeq() > seen {
+					fresh = append(fresh, e)
+					seen = e.GetSeq()
+				}
+			}
+			if len(fresh) > 0 {
+				endpoint = live.Endpoint(endpoint, fresh)
+				setEndpoint(endpoint)
+			}
+		}
+	} else {
+		ch, unsubscribe := s.Live.Subscribe(id)
+		defer unsubscribe()
+		deltas = ch
+	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -636,6 +666,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(w, "id: %d\nevent: event\ndata: %s\n\n", e.GetSeq(), b)
 			after = e.GetSeq()
 		}
+		follow(events)
 		flusher.Flush()
 
 		select {

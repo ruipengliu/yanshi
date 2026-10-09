@@ -177,6 +177,9 @@ func (n *Notifier) WaitAbove(ctx context.Context, channel, key string, after uin
 	}
 }
 
+// Latest 返回本次连接期间收到的 (channel, key) 的最新值；没有时 ok 为 false。
+func (n *Notifier) Latest(channel, key string) (uint64, bool) { return n.value(channel, key) }
+
 func (n *Notifier) value(channel, key string) (uint64, bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()

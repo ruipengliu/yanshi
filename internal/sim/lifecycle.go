@@ -11,6 +11,7 @@ import (
 	"yanshi/internal/memory"
 	"yanshi/internal/sandbox"
 	"yanshi/internal/service"
+	"yanshi/internal/session"
 	"yanshi/sdk/nodesdk"
 )
 
@@ -143,6 +144,9 @@ func (w *World) checkDeleted(final bool) error {
 					return fmt.Errorf("invariant: deleted session %s has call %s pending on %s", sid, it.GetCallId(), b)
 				}
 			}
+		}
+		if s, ok := w.store.Snapshots.(*session.MemSnapshots); ok && s.Has(sid) {
+			return fmt.Errorf("invariant: deleted session %s still has a projection snapshot", sid)
 		}
 		if s, ok := w.memories.Store.(*memory.MemStore); ok && s.HasSession(sid) {
 			return fmt.Errorf("invariant: deleted session %s still has memories", sid)

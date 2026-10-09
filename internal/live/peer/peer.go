@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
@@ -228,4 +229,43 @@ func (b *Bus) sleep(ctx context.Context) bool {
 	case <-time.After(d):
 		return true
 	}
+}
+
+var _ live.Follower = (*Bus)(nil)
+
+// SubscribeFollowing 与 Subscribe 相同，但由调用方通过 follow 告知执行进程，不读取日志。
+func (b *Bus) SubscribeFollowing(sessionID string) (<-chan live.Delta, func(endpoint string), func()) {
+	out := make(chan live.Delta, 256)
+	local, unsubscribe := b.Local.Subscribe(sessionID)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case d := <-local:
+				offer(out, d)
+			}
+		}
+	}()
+	var mu sync.Mutex
+	connected, stop := "", func() {}
+	follow := func(endpoint string) {
+		if endpoint == b.Self {
+			endpoint = "" // 本进程的增量已由 Local 送达
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if endpoint == connected || ctx.Err() != nil {
+			return
+		}
+		stop()
+		connected, stop = endpoint, func() {}
+		if endpoint != "" {
+			pctx, pcancel := context.WithCancel(ctx)
+			go b.pull(pctx, endpoint, sessionID, out)
+			stop = pcancel
+		}
+	}
+	return out, follow, func() { cancel(); unsubscribe() }
 }

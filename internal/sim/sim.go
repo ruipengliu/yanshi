@@ -57,6 +57,8 @@ type Stores struct {
 	// Memory（docs/design/m4-memory-grant.md）
 	Memory memory.Store
 	Grants memory.Grants
+	// 投影快照（docs/design/m2-scale-test.md §6）
+	Snapshots session.Snapshots
 }
 
 type Options struct {
@@ -190,13 +192,15 @@ func New(opts Options) (*World, error) {
 		Log: memlog.New(), Queue: memqueue.New(w.clock), Dir: node.NewMemDirectory(w.clock), Inbox: node.NewMemInbox(),
 		SandboxQueue: memqueue.New(w.clock), Ledger: nodesdk.NewMemLedger(), Activity: sandbox.NewMemActivity(),
 		Index: lifecycle.NewMemIndex(), Deletions: lifecycle.NewMemDeletions(), JanitorQueue: memqueue.New(w.clock),
-		Memory: memory.NewMemStore(), Grants: memory.NewMemGrants(),
+		Memory: memory.NewMemStore(), Grants: memory.NewMemGrants(), Snapshots: session.NewMemSnapshots(),
 	}
 	if opts.NewStores != nil {
 		stores = opts.NewStores(w.clock)
 	}
 	w.log, w.queue = stores.Log, stores.Queue
-	w.store = &session.Store{Log: w.log, IDs: ids.Sequential("id"), Clock: w.clock}
+	// 快照每 5 条写一次，使加载几乎总是走"快照 + 剩余日志"的路径。
+	w.store = &session.Store{Log: w.log, IDs: ids.Sequential("id"), Clock: w.clock, Snapshots: stores.Snapshots,
+		SnapshotEvery: 5, Deletions: stores.Deletions}
 	maxTurns := 6
 	if opts.LongRuns {
 		maxTurns = 120
@@ -658,6 +662,14 @@ func (w *World) CheckInvariants() error {
 		st, err := session.Reduce(events)
 		if err != nil {
 			return fmt.Errorf("invariant: log of %s is invalid: %w", sid, err)
+		}
+		// 由快照加剩余日志恢复的投影必须与完整回放逐字节一致。
+		loaded, err := w.store.Load(context.Background(), sid)
+		if err != nil {
+			return err
+		}
+		if !session.Equal(loaded, st) {
+			return fmt.Errorf("invariant: snapshot-based load of %s diverges from full replay at seq %d", sid, st.Seq)
 		}
 		for _, r := range st.Runs {
 			if r.Status == session.RunCompleted && r.PendingCall() != nil {

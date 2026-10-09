@@ -106,3 +106,8 @@ func (l *Log) Delete(ctx context.Context, sessionID string) error {
 	_, err := l.pool.Exec(ctx, `DELETE FROM events WHERE session_id = $1`, sessionID)
 	return err
 }
+
+// HeadHint 来自本进程收到的提交通知（pg.Notifier 的缓存）。
+func (l *Log) HeadHint(sessionID string) (uint64, bool) {
+	return l.notifier.Latest(pg.ChannelEvents, sessionID)
+}

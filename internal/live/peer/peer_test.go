@@ -143,3 +143,43 @@ func TestHandlerRequiresToken(t *testing.T) {
 		t.Fatalf("status = %d, want 403", resp.StatusCode)
 	}
 }
+
+func TestSubscribeFollowingIsDrivenByCaller(t *testing.T) {
+	a, c := newProcess(t, "secret"), newProcess(t, "secret")
+	local := live.NewMemBus()
+	b := &Bus{Local: local, Log: memlog.New(), Self: "http://b.internal", Token: "secret", Retry: 20 * time.Millisecond}
+	deltas, follow, cancel := b.SubscribeFollowing("s1")
+	defer cancel()
+
+	receive(t, local, deltas, "local")
+	follow(a.srv.URL)
+	receive(t, a.bus.MemBus, deltas, "from a")
+	follow(c.srv.URL)
+	receive(t, c.bus.MemBus, deltas, "from c")
+	eventually(t, "disconnect from a", func() bool { return a.bus.subs.Load() == 0 })
+	follow("")
+	eventually(t, "disconnect from c", func() bool { return c.bus.subs.Load() == 0 })
+	follow(b.Self)
+	receive(t, local, deltas, "local again")
+	if a.bus.subs.Load() != 0 || c.bus.subs.Load() != 0 {
+		t.Fatal("pulled from a remote process for a local attempt")
+	}
+}
+
+func TestEndpointFollowsAttempts(t *testing.T) {
+	ev := func(p any) *v1.Event {
+		switch p := p.(type) {
+		case *v1.AttemptStarted:
+			return &v1.Event{Payload: &v1.Event_AttemptStarted{AttemptStarted: p}}
+		case *v1.RunSuspended:
+			return &v1.Event{Payload: &v1.Event_RunSuspended{RunSuspended: p}}
+		}
+		return &v1.Event{Payload: &v1.Event_Steered{Steered: &v1.Steered{}}}
+	}
+	if got := live.Endpoint("x", []*v1.Event{ev(&v1.AttemptStarted{LiveEndpoint: "a"}), ev(nil)}); got != "a" {
+		t.Fatalf("after attempt = %q", got)
+	}
+	if got := live.Endpoint("a", []*v1.Event{ev(&v1.RunSuspended{})}); got != "" {
+		t.Fatalf("after suspend = %q", got)
+	}
+}

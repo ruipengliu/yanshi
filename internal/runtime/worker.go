@@ -70,8 +70,8 @@ type Config struct {
 	StepErrorBudget time.Duration
 	// IdleWait 是 Run 循环在无事可做时的等待时间（未配置 Idle 时）。
 	IdleWait time.Duration
-	// Idle 非空时，同一进程的 Worker 共享它：空闲时至多一个 Worker 轮询队列（见 IdleGate）。
-	Idle *IdleGate
+	// Idle 非空时，同一进程的 Worker 共享它：空闲时至多一个 Worker 轮询队列（见 workqueue.IdleGate）。
+	Idle *workqueue.IdleGate
 }
 
 func (c *Config) defaults() {
@@ -131,7 +131,7 @@ func (w *Worker) ID() string { return w.cfg.ID }
 func (w *Worker) Run(ctx context.Context) {
 	for ctx.Err() == nil {
 		if w.lease == nil && w.cfg.Idle != nil {
-			w.cfg.Idle.idle(ctx, func() bool {
+			w.cfg.Idle.Idle(ctx, func() bool {
 				did, err := w.Step(ctx)
 				if err != nil && ctx.Err() == nil {
 					w.cfg.Logger.Warn("worker step failed", "worker", w.cfg.ID, "err", err)
@@ -192,10 +192,11 @@ func (w *Worker) Step(ctx context.Context) (bool, error) {
 			return false, err
 		}
 		metrics.SessionLoad.WithLabelValues().Observe(metrics.Since(start))
-		metrics.SessionLoadEvents.WithLabelValues().Observe(float64(st.Seq))
 		w.st = st
-	} else if err := w.cfg.Store.Sync(ctx, w.st); err != nil {
-		return false, err
+	} else if !w.upToDate() {
+		if err := w.cfg.Store.Sync(ctx, w.st); err != nil {
+			return false, err
+		}
 	}
 
 	r := w.st.Active()
@@ -222,6 +223,17 @@ func (w *Worker) Step(ctx context.Context) (bool, error) {
 		return true, w.fail(ctx, r, "internal error: "+err.Error())
 	}
 	return true, err
+}
+
+// upToDate 报告已知日志末尾没有超过本地投影，可以跳过本步的 Sync（压测中每个 Run 约 10 次读取）。
+// 提示可能滞后：据此做出的决定若基于过期状态，追加时会冲突并重新同步，与没有提示时的竞争相同。
+func (w *Worker) upToDate() bool {
+	h, ok := w.cfg.Store.Log.(eventlog.HeadHinter)
+	if !ok {
+		return false
+	}
+	head, known := h.HeadHint(w.st.SessionID)
+	return known && head <= w.st.Seq
 }
 
 func (w *Worker) owns(r *session.Run) bool {

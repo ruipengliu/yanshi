@@ -51,7 +51,7 @@ var (
 	RunDuration       = histogram("run_duration_seconds", "Run 从请求到终态的时长。", runDuration, "status")
 	Attempts          = counter("attempts_total", "开始的 Attempt；kind = start | takeover | resume。", "kind")
 	CommitConflicts   = counter("commit_conflicts_total", "Worker 追加事件时的乐观并发冲突。")
-	SessionLoadEvents = histogram("session_load_events", "认领 Session 时读取的事件数。", prometheus.ExponentialBuckets(1, 2, 16))
+	SessionLoadEvents = histogram("session_load_events", "加载 Session 时回放的事件数（最新快照之后的部分）。", prometheus.ExponentialBuckets(1, 2, 16))
 	SessionLoad       = histogram("session_load_seconds", "认领 Session 时读取并投影日志的耗时。", latency)
 	QueueClaims       = counter("queue_claims_total", "Worker 认领工作队列的结果；result = ok | empty | error。", "result")
 	Compactions       = counter("compactions_total", "上下文压缩次数。")

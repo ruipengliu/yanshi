@@ -36,3 +36,9 @@ type Log interface {
 func ReadAll(ctx context.Context, l Log, sessionID string, after uint64) ([]*v1.Event, error) {
 	return l.Read(ctx, sessionID, after, 0)
 }
+
+// HeadHinter 是 Log 的可选接口：不访问存储就给出日志末尾 seq 的提示。提示可能滞后（新提交的通知尚未到达），
+// 但不会超前；ok 为 false 表示不知道。调用方据此跳过不必要的读取，滞后由追加时的乐观并发冲突兜底。
+type HeadHinter interface {
+	HeadHint(sessionID string) (head uint64, ok bool)
+}

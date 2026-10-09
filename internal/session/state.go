@@ -81,6 +81,8 @@ type Run struct {
 	RequestedAt time.Time
 	// Attempt 是当前 Attempt 号；0 表示尚未有 Worker 认领。
 	Attempt uint32
+	// LiveEndpoint 是当前 Attempt 的执行进程地址，实时增量从这里拉取（ADR-0013）。
+	LiveEndpoint string
 	// Takeovers 是在 running 状态下开启新 Attempt 的次数，即上一个 Worker 未正常结束的次数。
 	Takeovers int
 	// StalledTakeovers 是自上次进展（上下文前进：模型输出、调用结果、上下文压缩）以来的接管次数，
@@ -277,7 +279,7 @@ func (s *State) apply(e *v1.Event) error {
 			r.Takeovers++
 			r.StalledTakeovers++
 		}
-		r.Attempt, r.Status = p.AttemptStarted.GetAttempt(), RunRunning
+		r.Attempt, r.Status, r.LiveEndpoint = p.AttemptStarted.GetAttempt(), RunRunning, p.AttemptStarted.GetLiveEndpoint()
 
 	case *v1.Event_RunSuspended:
 		if _, err := s.fencedRun(p.RunSuspended.GetRunId(), p.RunSuspended.GetAttempt()); err != nil {

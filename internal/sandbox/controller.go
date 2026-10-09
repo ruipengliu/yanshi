@@ -37,10 +37,16 @@ type Controller struct {
 	// IdleTTL 是沙箱空闲多久后回收计算资源。
 	IdleTTL  time.Duration
 	IdleWait time.Duration
+	// Idle 非空时，同一进程的控制器共享它：空闲时至多一个控制器轮询沙箱队列。
+	Idle *workqueue.IdleGate
 
-	exec  *nodesdk.Executor
-	lease *workqueue.Lease
+	exec     *nodesdk.Executor
+	lease    *workqueue.Lease
+	lastReap time.Time
 }
+
+// reapDue 报告是否到了回收空闲沙箱的时间：持有门控等待时也要定期离开，执行回收。
+func (c *Controller) reapDue() bool { return c.Clock.Now().Sub(c.lastReap) > c.IdleTTL/4 }
 
 func (c *Controller) init() {
 	if c.exec == nil {
@@ -63,14 +69,22 @@ func (c *Controller) init() {
 // Run 持续执行 Step，并周期性回收空闲沙箱，直到 ctx 结束。
 func (c *Controller) Run(ctx context.Context) {
 	c.init()
-	lastReap := time.Time{}
 	for ctx.Err() == nil {
-		did, err := c.Step(ctx)
+		var did bool
+		var err error
+		if c.lease == nil && c.Idle != nil {
+			c.Idle.Idle(ctx, func() bool {
+				did, err = c.Step(ctx)
+				return c.lease != nil || (did && err == nil) || c.reapDue()
+			})
+		} else {
+			did, err = c.Step(ctx)
+		}
 		if err != nil && ctx.Err() == nil {
 			c.Logger.Warn("sandbox controller step failed", "controller", c.ID, "err", err)
 		}
-		if now := c.Clock.Now(); now.Sub(lastReap) > c.IdleTTL/4 {
-			lastReap = now
+		if c.reapDue() {
+			c.lastReap = c.Clock.Now()
 			if err := c.Reap(ctx); err != nil && ctx.Err() == nil {
 				c.Logger.Warn("sandbox reap failed", "err", err)
 			}

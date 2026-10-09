@@ -188,6 +188,11 @@ func (j *Janitor) delete(ctx context.Context, sid string, st *session.State) err
 	if err := j.Store.Log.Delete(ctx, sid); err != nil {
 		return err
 	}
+	if j.Store.Snapshots != nil {
+		if err := j.Store.Snapshots.Delete(ctx, sid); err != nil {
+			return err
+		}
+	}
 	if err := j.Index.Delete(ctx, sid); err != nil {
 		return err
 	}
@@ -266,6 +271,12 @@ func (j *Janitor) sweep(ctx context.Context, sid string) error {
 	}
 	if err := j.Ledger.Forget(sid); err != nil {
 		return err
+	}
+	// 快照含有对话内容：日志删除前后各删一次，第二遍清扫兜住删除期间写入的快照。
+	if j.Store.Snapshots != nil {
+		if err := j.Store.Snapshots.Delete(ctx, sid); err != nil {
+			return err
+		}
 	}
 	if j.Memory != nil {
 		if err := j.Memory.DeleteSession(ctx, sid); err != nil {

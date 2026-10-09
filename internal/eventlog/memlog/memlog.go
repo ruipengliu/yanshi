@@ -106,3 +106,12 @@ func (l *Log) Delete(_ context.Context, sessionID string) error {
 	}
 	return nil
 }
+
+func (l *Log) HeadHint(sessionID string) (uint64, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if s := l.sessions[sessionID]; s != nil {
+		return uint64(len(s.events)), true
+	}
+	return 0, true
+}

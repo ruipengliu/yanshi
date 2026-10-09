@@ -49,6 +49,7 @@ import (
 	"yanshi/internal/sandbox/pgsandbox"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
+	"yanshi/internal/session/pgsnapshot"
 	"yanshi/internal/workqueue"
 	"yanshi/internal/workqueue/memqueue"
 	"yanshi/internal/workqueue/pgqueue"
@@ -71,6 +72,7 @@ type backends struct {
 
 	memories     memory.Store
 	grants       memory.Grants
+	snapshots    session.Snapshots
 	index        lifecycle.Index
 	deletions    lifecycle.Deletions
 	janitorQueue workqueue.Queue
@@ -82,7 +84,7 @@ func openStorage(ctx context.Context, kind, dsn string, clk clock.Clock, logger 
 	case "memory":
 		return backends{memlog.New(), memqueue.New(clk), node.NewMemDirectory(clk), node.NewMemInbox(),
 			memqueue.New(clk), nodesdk.NewMemLedger(), sandbox.NewMemActivity(), artifact.NewMemMeta(),
-			memory.NewMemStore(), memory.NewMemGrants(),
+			memory.NewMemStore(), memory.NewMemGrants(), session.NewMemSnapshots(),
 			lifecycle.NewMemIndex(), lifecycle.NewMemDeletions(), memqueue.New(clk)}, func() {}, nil
 	case "postgres":
 		pool, err := pg.Open(ctx, dsn, "")
@@ -101,9 +103,9 @@ func openStorage(ctx context.Context, kind, dsn string, clk clock.Clock, logger 
 		nctx, cancel := context.WithCancel(ctx)
 		go n.Run(nctx)
 		b := backends{pglog.New(pool, n), pgqueue.New(pool, clk, pgqueue.Sessions).WithNotifier(n), pgnode.NewDirectory(pool, clk), pgnode.NewInbox(pool, n),
-			pgqueue.New(pool, clk, pgqueue.Sandboxes), pgsandbox.Ledger{Pool: pool}, pgsandbox.Activity{Pool: pool},
+			pgqueue.New(pool, clk, pgqueue.Sandboxes).WithNotifier(n), pgsandbox.Ledger{Pool: pool}, pgsandbox.Activity{Pool: pool},
 			pgartifact.Meta{Pool: pool},
-			pgmemory.Store{Pool: pool}, pgmemory.Grants{Pool: pool},
+			pgmemory.Store{Pool: pool}, pgmemory.Grants{Pool: pool}, pgsnapshot.Store{Pool: pool},
 			pglifecycle.Index{Pool: pool}, pglifecycle.Deletions{Pool: pool}, pgqueue.New(pool, clk, pgqueue.Janitor)}
 		return b, func() { cancel(); pool.Close() }, nil
 	}
@@ -191,7 +193,7 @@ func serve(args []string) error {
 		return err
 	}
 	defer closeStorage()
-	store := &session.Store{Log: b.log, IDs: ids.Random(), Clock: clk}
+	store := &session.Store{Log: b.log, IDs: ids.Random(), Clock: clk, Snapshots: b.snapshots, Deletions: b.deletions}
 	var blobs artifact.BlobStore
 	switch *blobKind {
 	case "fs":
@@ -247,7 +249,7 @@ func serve(args []string) error {
 
 	var wg sync.WaitGroup
 	// 本进程的 Worker 共享空闲门控：空闲时只有一个 Worker 轮询队列，入队信号到达时立即认领。
-	idle := &runtime.IdleGate{}
+	idle := &workqueue.IdleGate{}
 	if s, ok := queue.(workqueue.Signaler); ok {
 		idle.Ready = s.Ready()
 	}
@@ -267,12 +269,16 @@ func serve(args []string) error {
 	case "docker":
 		catalog.Sandbox = &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID}
 		provider = &sandboxdocker.Provider{Image: *sandboxImage, Runtime: *sandboxRuntime}
+		sbxIdle := &workqueue.IdleGate{}
+		if s, ok := b.sandboxQueue.(workqueue.Signaler); ok {
+			sbxIdle.Ready = s.Ready()
+		}
 		for i := range *controllers {
 			c := &sandbox.Controller{
 				ID: fmt.Sprintf("%s-sandbox-%d", proc, i), Queue: b.sandboxQueue, Hub: hub, Provider: provider,
 				Activity: b.activity, Ledger: b.ledger, Artifacts: arts, Clock: clk, Logger: logger,
-				Lifecycle: &lifecycle.Guard{Index: b.index, Deletions: b.deletions},
-				LeaseTTL:  *leaseTTL, Heartbeat: *leaseTTL / 3,
+				Lifecycle: &lifecycle.Guard{Index: b.index, Deletions: b.deletions}, Idle: sbxIdle,
+				LeaseTTL: *leaseTTL, Heartbeat: *leaseTTL / 3,
 			}
 			wg.Add(1)
 			go func() { defer wg.Done(); c.Run(ctx) }()

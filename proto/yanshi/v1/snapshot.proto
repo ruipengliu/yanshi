@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+// Session 投影的快照（docs/design/m2-scale-test.md §6）：只是加速加载的缓存，不是事实源。
+// 投影语义变化时递增 version，旧快照作废，退回完整回放。
+package yanshi.v1;
+
+import "google/protobuf/timestamp.proto";
+import "yanshi/v1/event.proto";
+
+option go_package = "yanshi/gen/yanshi/v1;yanshiv1";
+
+message SessionSnapshot {
+  // 投影版本（session.ProjectionVersion）；与当前代码不一致时忽略。
+  uint32 version = 1;
+  string session_id = 2;
+  // 快照对应的日志位置：投影已应用到 seq（含）。
+  uint64 seq = 3;
+  SessionCreated created = 4;
+  SessionClosed closed = 5;
+  ContextCompacted compaction = 6;
+  uint64 compacted_at = 7;
+  repeated RunSnapshot runs = 8;
+  // 构成对话上下文的事件（最近一次压缩之后）。
+  repeated Event history = 9;
+  // Session 内出现过的全部调用 ID，排序后存放。
+  repeated string call_ids = 10;
+}
+
+message RunSnapshot {
+  string id = 1;
+  int32 status = 2;
+  google.protobuf.Timestamp requested_at = 3;
+  uint32 attempt = 4;
+  string live_endpoint = 5;
+  int32 takeovers = 6;
+  int32 stalled_takeovers = 7;
+  int32 turns = 8;
+  repeated RecalledMemory recall = 9;
+  bool recalled = 10;
+  repeated CallSnapshot calls = 11;
+}
+
+message CallSnapshot {
+  ToolCall call = 1;
+  repeated uint32 started_attempts = 2;
+  string node_id = 3;
+  google.protobuf.Timestamp deadline = 4;
+  bool done = 5;
+  ApprovalSnapshot approval = 6;
+}
+
+message ApprovalSnapshot {
+  string summary = 1;
+  google.protobuf.Timestamp deadline = 2;
+  bool decided = 3;
+  bool approved = 4;
+}

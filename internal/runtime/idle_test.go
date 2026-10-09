@@ -40,7 +40,7 @@ func TestIdleGateBoundsPollingAndWakesOnEnqueue(t *testing.T) {
 	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "echo", Version: "1", Model: "echo/any"})
 	gw := model.NewGateway()
 	gw.Register("echo", echo.Provider{})
-	gate := &IdleGate{Ready: q.Ready(), Min: 20 * time.Millisecond, Max: 300 * time.Millisecond}
+	gate := &workqueue.IdleGate{Ready: q.Ready(), Min: 20 * time.Millisecond, Max: 300 * time.Millisecond}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	for i := range 20 {
