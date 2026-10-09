@@ -107,4 +107,4 @@ yanshi 是公司内部的**分布式 Agent 运行时基础设施**，承载多�
 | Sandbox 隔离方案 | 自托管（gVisor / Firecracker / Kata）或云厂商沙箱服务；与私有化约束（ADR-0001）的关系待定，见 ADR-0010 |
 | Call 媒体通道 | WebRTC 自托管方案；与实时语音模型的对接方式 |
 | 私有化下的模型接入 | 火山私有化方案与开源模型自托管推理服务的统一网关抽象 |
-| Memory 的数据模型与 Grant 粒度 | 按业务线、按记忆类别还是按单条记忆授权 |
+| ~~Memory 的数据模型与 Grant 粒度~~ | 已定：业务线对加类别授权，召回记录为 Event（[设计](./design/m4-memory-grant.md)，ADR-0016） |

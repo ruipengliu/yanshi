@@ -102,6 +102,10 @@ _Avoid_: Node（Node 提供 Capability，Worker 执行 Run）、执行器
 关于某个 EndUser、跨 Session 留存的个性化信息；默认归属产生它的 BusinessLine。
 _Avoid_: 画像、上下文、知识库
 
+**Recall（召回）**:
+Run 开始时检索 EndUser 的 Memory（本业务线的，以及经 Grant 可读的其他业务线的）并记录为 Event，作为当前 Run 的上下文；同时也是 Memory 的访问记录。
+_Avoid_: 注入、加载（泛指时）
+
 **Grant（授权）**:
 EndUser 显式同意某个 BusinessLine 读取其在另一 BusinessLine 下的 Memory。
 _Avoid_: 共享、权限
