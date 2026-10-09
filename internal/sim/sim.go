@@ -76,6 +76,21 @@ type Stats struct {
 	// 压缩之后同一 Run 开启的 Attempt（接管或恢复），以及完成的长 Run（≥ longRunTurns 轮）。
 	Compactions, SummaryFaults, Overflows      int
 	AttemptsAfterCompaction, LongRunsCompleted int
+	// EnqueueInterleavings 是在客户端入队与写日志之间插入 Worker 步骤的次数。
+	EnqueueInterleavings int
+}
+
+// hookQueue 在 Enqueue 成功后调用 after。
+type hookQueue struct {
+	workqueue.Queue
+	after func() error
+}
+
+func (q *hookQueue) Enqueue(ctx context.Context, sessionID string) error {
+	if err := q.Queue.Enqueue(ctx, sessionID); err != nil {
+		return err
+	}
+	return q.after()
 }
 
 // simContext 是模拟 AgentDef 的上下文配置：窗口很小（工具声明约占 650），使压缩频繁发生。
@@ -129,6 +144,8 @@ type World struct {
 	// currentCall 是设备正在执行的调用 ID。
 	currentCall string
 	faults      bool
+	// afterEnqueue 非空时，在客户端动作内部的每次入队之后调用。
+	afterEnqueue func() error
 	// violations 记录脚本化模型观察到的请求级不变量违反（超出窗口、调用配对残缺）。
 	violations []string
 	Stats      Stats
@@ -175,7 +192,14 @@ func New(opts Options) (*World, error) {
 	w.artifacts = &artifact.Service{Meta: artifact.NewMemMeta(), Blobs: artifact.NewMemBlobs(), IDs: ids.Sequential("art"), Clock: w.clock}
 	w.provider = sandbox.NewFake()
 	w.provider.ExecFunc = w.sandboxExec
-	w.svc = &service.Service{Store: w.store, Queue: w.queue, Agents: agents, Nodes: w.router}
+	// Service 的入队可能在写日志之前或之后，模拟在入队之后插入 Worker 的一步，
+	// 以覆盖"入队、认领、写日志、释放"的交错（丢失唤醒）。
+	w.svc = &service.Service{Store: w.store, Queue: &hookQueue{Queue: w.queue, after: func() error {
+		if w.afterEnqueue == nil {
+			return nil
+		}
+		return w.afterEnqueue()
+	}}, Agents: agents, Nodes: w.router}
 	for range 2 {
 		w.controllers = append(w.controllers, w.newController())
 	}
@@ -474,6 +498,14 @@ func (w *World) stepWorker(i int) error {
 
 func (w *World) submit() error {
 	sid := w.sessions[w.rng.IntN(len(w.sessions))]
+	w.afterEnqueue = func() error {
+		if !w.chance(0.3) {
+			return nil
+		}
+		w.Stats.EnqueueInterleavings++
+		return w.stepWorker(w.rng.IntN(len(w.workers)))
+	}
+	defer func() { w.afterEnqueue = nil }()
 	res, err := w.svc.Submit(context.Background(), sid, model.TextBlocks(fmt.Sprintf("msg %d", w.rng.IntN(1000))))
 	if err != nil {
 		return fmt.Errorf("submit: %w", err)

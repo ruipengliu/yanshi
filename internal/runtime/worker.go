@@ -47,7 +47,9 @@ type Config struct {
 	// Artifacts 非空时，用户消息中的图片工件会内联给模型（docs/design/m2-artifacts.md §4）。
 	Artifacts *artifact.Service
 	Live      live.Bus
-	Logger    *slog.Logger
+	// LiveEndpoint 是本进程的内部地址，写入 AttemptStarted，供其他进程拉取增量（ADR-0013）。
+	LiveEndpoint string
+	Logger       *slog.Logger
 
 	LeaseTTL time.Duration
 	// Heartbeat > 0 时，在模型调用与 Capability 执行期间按此间隔续约（真实时间）。
@@ -226,7 +228,7 @@ func (w *Worker) startAttempt(ctx context.Context, r *session.Run) error {
 	}
 	next := r.Attempt + 1
 	err := w.cfg.Store.Commit(ctx, w.st, &v1.Event{Payload: &v1.Event_AttemptStarted{
-		AttemptStarted: &v1.AttemptStarted{RunId: r.ID, Attempt: next, WorkerId: w.cfg.ID},
+		AttemptStarted: &v1.AttemptStarted{RunId: r.ID, Attempt: next, WorkerId: w.cfg.ID, LiveEndpoint: w.cfg.LiveEndpoint},
 	}})
 	if errors.Is(err, eventlog.ErrConflict) {
 		return nil // 下一步 Sync 后重新决策

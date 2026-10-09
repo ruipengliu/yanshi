@@ -87,6 +87,9 @@ message AttemptStarted {
   string run_id = 1;
   uint32 attempt = 2;
   string worker_id = 3;
+  // live_endpoint 是执行该 Attempt 的进程的内部地址，其他进程从这里拉取实时增量（ADR-0013）；
+  // 为空表示增量只在本进程内可见。不对客户端暴露。
+  string live_endpoint = 4;
 }
 
 message ToolCall {

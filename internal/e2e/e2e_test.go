@@ -3,6 +3,7 @@
 package e2e
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,6 +33,7 @@ import (
 	"yanshi/internal/httpapi"
 	"yanshi/internal/ids"
 	"yanshi/internal/live"
+	"yanshi/internal/live/peer"
 	"yanshi/internal/model"
 	"yanshi/internal/node"
 	"yanshi/internal/node/pgnode"
@@ -49,13 +52,27 @@ import (
 )
 
 // script 是脚本化模型：用户消息形如 "call <工具名后缀> [JSON 参数]"，即调用名称以该后缀结尾的工具；
-// 收到工具结果后回复 "done: <结果>"。
+// 收到工具结果后回复 "done: <结果>"。"stream <n>" 则在约 n×20ms 内逐段流式输出，用于观察实时增量。
 type script struct{}
 
-func (script) Generate(_ context.Context, req *model.Request, _ func(model.Delta)) (*model.Response, error) {
+func (script) Generate(ctx context.Context, req *model.Request, onDelta func(model.Delta)) (*model.Response, error) {
 	last := req.Messages[len(req.Messages)-1]
 	if last.Role == model.RoleTool {
 		return &model.Response{Content: model.TextBlocks("done: " + model.Text(last.Content))}, nil
+	}
+	if n, ok := strings.CutPrefix(model.Text(last.Content), "stream "); ok {
+		count, _ := strconv.Atoi(n)
+		for i := range count {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(20 * time.Millisecond):
+			}
+			if onDelta != nil {
+				onDelta(model.Delta{Text: fmt.Sprintf("chunk%d ", i)})
+			}
+		}
+		return &model.Response{Content: model.TextBlocks("streamed")}, nil
 	}
 	rest, _ := strings.CutPrefix(model.Text(last.Content), "call ")
 	suffix, args, _ := strings.Cut(rest, " ")
@@ -111,7 +128,13 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 	}
 	clk := clock.Real{}
 	store := &session.Store{Log: st.log, IDs: ids.Random(), Clock: clk}
-	bus := live.NewMemBus()
+	// 每个实例都有内部增量接口，多实例共享存储时增量可跨实例送达（ADR-0013）。
+	local := live.NewMemBus()
+	peerMux := http.NewServeMux()
+	peerMux.Handle(peer.Path, peer.Handler{Local: local, Token: "t"})
+	peerSrv := httptest.NewServer(peerMux)
+	t.Cleanup(peerSrv.Close)
+	bus := &peer.Bus{Local: local, Log: st.log, Self: peerSrv.URL, Token: "t", Retry: 20 * time.Millisecond}
 	hub := &node.Hub{Dir: st.dir, Inbox: st.inbox, Store: store, Queue: st.queue, Auth: node.InsecureDevAuth{}}
 	catalog := &capability.Catalog{Local: capability.NewRegistry(), Nodes: st.dir, DefaultTimeout: time.Minute,
 		Sandbox: &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID}}
@@ -123,7 +146,7 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 	t.Cleanup(cancel)
 	for i := range workers {
 		w := runtime.New(runtime.Config{ID: fmt.Sprintf("w%d", i), Store: store, Queue: st.queue, Agents: agents, Model: gw,
-			Catalog: catalog, Dispatch: router, Artifacts: st.artifacts, Live: bus, IdleWait: 5 * time.Millisecond})
+			Catalog: catalog, Dispatch: router, Artifacts: st.artifacts, Live: bus, LiveEndpoint: peerSrv.URL, IdleWait: 5 * time.Millisecond})
 		go w.Run(ctx)
 	}
 	if st.provider != nil {
@@ -391,6 +414,71 @@ func TestCrossInstanceOnPostgres(t *testing.T) {
 	if got := e.lastAssistantText(sid); got != "done: meeting notes" {
 		t.Fatalf("assistant = %q", got)
 	}
+
+	// API 实例没有 Worker：它的 SSE 收到的增量全部来自执行实例；内部地址不暴露给客户端。
+	deltas, events := e.subscribe(sid)
+	e.do(http.MethodPost, "/v1/sessions/"+sid+"/inputs", map[string]string{"text": "stream 50"}, nil)
+	select {
+	case d := <-deltas:
+		if !strings.HasPrefix(d.Text, "chunk") {
+			t.Fatalf("delta = %+v", d)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no live delta crossed instances")
+	}
+	e.until(sid, func(v sessionView) bool {
+		st, _ := lastRun(v)
+		return st == "completed" && e.lastAssistantText(sid) == "streamed"
+	})
+	for len(events) > 0 {
+		if raw := <-events; strings.Contains(raw, "live_endpoint") {
+			t.Fatalf("event leaks internal endpoint: %s", raw)
+		}
+	}
+}
+
+// subscribe 打开 Session 的 SSE 流，分别送出增量与事件原文。
+func (e *env) subscribe(sid string) (<-chan live.Delta, chan string) {
+	e.t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	e.t.Cleanup(cancel)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, e.srv.URL+"/v1/sessions/"+sid+"/stream", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	deltas, events := make(chan live.Delta, 1024), make(chan string, 1024)
+	go func() {
+		defer resp.Body.Close()
+		sc := bufio.NewScanner(resp.Body)
+		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+		kind := ""
+		for sc.Scan() {
+			line := sc.Text()
+			if k, ok := strings.CutPrefix(line, "event: "); ok {
+				kind = k
+			}
+			data, ok := strings.CutPrefix(line, "data: ")
+			if !ok {
+				continue
+			}
+			if kind == "delta" {
+				var d live.Delta
+				if json.Unmarshal([]byte(data), &d) == nil {
+					select {
+					case deltas <- d:
+					default:
+					}
+				}
+			} else {
+				select {
+				case events <- data:
+				default:
+				}
+			}
+		}
+	}()
+	return deltas, events
 }
 
 // TestSandboxInDocker 走完整链路：HTTP → Worker → 沙箱队列 → 控制器 → 真实 Docker 沙箱。

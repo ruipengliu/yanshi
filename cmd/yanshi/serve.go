@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -26,6 +27,7 @@ import (
 	"yanshi/internal/httpapi"
 	"yanshi/internal/ids"
 	"yanshi/internal/live"
+	"yanshi/internal/live/peer"
 	"yanshi/internal/model"
 	"yanshi/internal/model/echo"
 	"yanshi/internal/model/openaicompat"
@@ -132,6 +134,8 @@ func serve(args []string) error {
 	s3Endpoint := fs.String("s3-endpoint", envOr("YANSHI_S3_ENDPOINT", "127.0.0.1:58333"), "S3 地址 host:port（blob=s3）")
 	s3Bucket := fs.String("s3-bucket", envOr("YANSHI_S3_BUCKET", "yanshi-artifacts"), "S3 桶")
 	s3SSL := fs.Bool("s3-ssl", false, "S3 使用 HTTPS")
+	peerAddr := fs.String("peer-addr", "", "内部监听地址，其他进程从这里拉取实时增量（ADR-0013）；storage=postgres 时默认 127.0.0.1:0，off 表示关闭")
+	peerAdvertise := fs.String("peer-advertise", "", "其他进程访问本进程内部地址所用的 URL，如 http://$POD_IP:7070；默认取监听地址")
 	_ = fs.Parse(args)
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -168,8 +172,21 @@ func serve(args []string) error {
 	}
 	arts := &artifact.Service{Meta: b.artifactMeta, Blobs: blobs, IDs: ids.Random(), Clock: clk}
 	queue := b.queue
-	// LiveBus 是进程内的：多进程部署时 token 增量只送达连在同一进程的客户端，已提交事件不受影响。
-	bus := live.NewMemBus()
+	// 进程 ID 使 Worker 与控制器的 ID 在多进程部署中唯一，日志中的 worker_id 可以对应到进程。
+	proc := ids.Random()()[:8]
+	var bus live.Bus = live.NewMemBus()
+	var liveEndpoint string
+	if *peerAddr == "" && *storage == "postgres" {
+		*peerAddr = "127.0.0.1:0"
+	}
+	if *peerAddr != "" && *peerAddr != "off" {
+		var stopPeer func()
+		bus, liveEndpoint, stopPeer, err = startPeer(*peerAddr, *peerAdvertise, bus.(*live.MemBus), b.log, logger)
+		if err != nil {
+			return err
+		}
+		defer stopPeer()
+	}
 	gw := gateway(logger)
 	dir := b.dir
 	hub := &node.Hub{
@@ -185,8 +202,8 @@ func serve(args []string) error {
 	var wg sync.WaitGroup
 	for i := range *workers {
 		w := runtime.New(runtime.Config{
-			ID: fmt.Sprintf("worker-%d", i), Store: store, Queue: queue, Agents: agents,
-			Model: gw, Catalog: catalog, Dispatch: router, Artifacts: arts, Live: bus, Logger: logger,
+			ID: fmt.Sprintf("%s-worker-%d", proc, i), Store: store, Queue: queue, Agents: agents,
+			Model: gw, Catalog: catalog, Dispatch: router, Artifacts: arts, Live: bus, LiveEndpoint: liveEndpoint, Logger: logger,
 			LeaseTTL: 30 * time.Second, Heartbeat: 10 * time.Second,
 		})
 		wg.Add(1)
@@ -200,7 +217,7 @@ func serve(args []string) error {
 		provider := &sandboxdocker.Provider{Image: *sandboxImage, Runtime: *sandboxRuntime}
 		for i := range *controllers {
 			c := &sandbox.Controller{
-				ID: fmt.Sprintf("sandbox-%d", i), Queue: b.sandboxQueue, Hub: hub, Provider: provider,
+				ID: fmt.Sprintf("%s-sandbox-%d", proc, i), Queue: b.sandboxQueue, Hub: hub, Provider: provider,
 				Activity: b.activity, Ledger: b.ledger, Artifacts: arts, Clock: clk, Logger: logger,
 				LeaseTTL: 30 * time.Second, Heartbeat: 10 * time.Second,
 			}
@@ -226,10 +243,38 @@ func serve(args []string) error {
 		defer cancel()
 		_ = srv.Shutdown(shutdown)
 	}()
-	logger.Info("yanshi serving", "addr", *addr, "workers", *workers, "storage", *storage, "blob", *blobKind)
+	logger.Info("yanshi serving", "addr", *addr, "process", proc, "workers", *workers, "storage", *storage, "blob", *blobKind, "live_endpoint", liveEndpoint)
 	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	wg.Wait()
 	return nil
+}
+
+// startPeer 在内部地址上提供本进程的实时增量，并返回跨进程的 live.Bus 与本进程的地址（ADR-0013）。
+// 令牌取自 YANSHI_PEER_TOKEN；内部地址不应对外暴露。
+func startPeer(addr, advertise string, local *live.MemBus, log eventlog.Log, logger *slog.Logger) (live.Bus, string, func(), error) {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("peer listen: %w", err)
+	}
+	if advertise == "" {
+		host, _, _ := net.SplitHostPort(ln.Addr().String())
+		if ip := net.ParseIP(host); ip == nil || ip.IsUnspecified() {
+			ln.Close()
+			return nil, "", nil, fmt.Errorf("peer-addr %s listens on all interfaces; set -peer-advertise", addr)
+		}
+		advertise = "http://" + ln.Addr().String()
+	}
+	token := os.Getenv("YANSHI_PEER_TOKEN")
+	mux := http.NewServeMux()
+	mux.Handle(peer.Path, peer.Handler{Local: local, Token: token})
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	go func() {
+		if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("peer server stopped", "err", err)
+		}
+	}()
+	bus := &peer.Bus{Local: local, Log: log, Self: advertise, Token: token, Logger: logger}
+	return bus, advertise, func() { _ = srv.Close() }, nil
 }

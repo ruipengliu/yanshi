@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/artifact"
@@ -405,7 +406,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]json.RawMessage, 0, len(events))
 	for _, e := range events {
-		b, err := pj.Marshal(e)
+		b, err := pj.Marshal(public(e))
 		if err != nil {
 			s.fail(w, err)
 			return
@@ -455,7 +456,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, e := range events {
-			b, err := pj.Marshal(e)
+			b, err := pj.Marshal(public(e))
 			if err != nil {
 				return
 			}
@@ -475,6 +476,17 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprint(w, ": ping\n\n")
 		}
 	}
+}
+
+// public 返回可以发给客户端的事件：清除进程内部地址（ADR-0013）。事件不可修改，因此按需复制。
+func public(e *v1.Event) *v1.Event {
+	a := e.GetAttemptStarted()
+	if a.GetLiveEndpoint() == "" {
+		return e
+	}
+	cp := proto.Clone(e).(*v1.Event)
+	cp.GetAttemptStarted().LiveEndpoint = ""
+	return cp
 }
 
 // waitHeads 每当日志前进时向 heads 发一个合并后的通知。

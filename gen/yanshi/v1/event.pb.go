@@ -761,10 +761,13 @@ func (x *Steered) GetInput() []*ContentBlock {
 
 // AttemptStarted 标志某个 Worker 开始（或接管）执行 Run；attempt 是 fencing 令牌。
 type AttemptStarted struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	Attempt       uint32                 `protobuf:"varint,2,opt,name=attempt,proto3" json:"attempt,omitempty"`
-	WorkerId      string                 `protobuf:"bytes,3,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	RunId    string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	Attempt  uint32                 `protobuf:"varint,2,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	WorkerId string                 `protobuf:"bytes,3,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
+	// live_endpoint 是执行该 Attempt 的进程的内部地址，其他进程从这里拉取实时增量（ADR-0013）；
+	// 为空表示增量只在本进程内可见。不对客户端暴露。
+	LiveEndpoint  string `protobuf:"bytes,4,opt,name=live_endpoint,json=liveEndpoint,proto3" json:"live_endpoint,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -816,6 +819,13 @@ func (x *AttemptStarted) GetAttempt() uint32 {
 func (x *AttemptStarted) GetWorkerId() string {
 	if x != nil {
 		return x.WorkerId
+	}
+	return ""
+}
+
+func (x *AttemptStarted) GetLiveEndpoint() string {
+	if x != nil {
+		return x.LiveEndpoint
 	}
 	return ""
 }
@@ -1679,11 +1689,12 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\x05input\x18\x02 \x03(\v2\x17.yanshi.v1.ContentBlockR\x05input\"O\n" +
 	"\aSteered\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12-\n" +
-	"\x05input\x18\x02 \x03(\v2\x17.yanshi.v1.ContentBlockR\x05input\"^\n" +
+	"\x05input\x18\x02 \x03(\v2\x17.yanshi.v1.ContentBlockR\x05input\"\x83\x01\n" +
 	"\x0eAttemptStarted\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x12\x1b\n" +
-	"\tworker_id\x18\x03 \x01(\tR\bworkerId\"j\n" +
+	"\tworker_id\x18\x03 \x01(\tR\bworkerId\x12#\n" +
+	"\rlive_endpoint\x18\x04 \x01(\tR\fliveEndpoint\"j\n" +
 	"\bToolCall\x12\x17\n" +
 	"\acall_id\x18\x01 \x01(\tR\x06callId\x12\x1e\n" +
 	"\n" +

@@ -97,7 +97,12 @@ func (s *Service) Submit(ctx context.Context, sessionID string, input []*v1.Cont
 	if err != nil {
 		return nil, err
 	}
-	// 先入队再写日志：即使写日志后进程崩溃，Run 也不会无人认领；多余的入队无害。
+	// 写日志前后各入队一次，多余的入队无害：
+	//   - 之前：写日志后、再次入队前进程崩溃时，Run 仍有人认领；
+	//   - 之后：若 Worker 在第一次入队后、写日志前认领并读到"无事可做"，它会以 done 释放并删除队列项，
+	//     只有写日志之后的入队（租约期间置 dirty，或重新插入）能保证新 Run 被看到（丢失唤醒）。
+	// 两者同时失效需要"恰好在该窗口内被认领"且"写日志后立即崩溃"，此时 Run 停留在 queued，
+	// 直到该 Session 的下一次输入。
 	if err := s.Queue.Enqueue(ctx, sessionID); err != nil {
 		return nil, err
 	}
@@ -113,7 +118,7 @@ func (s *Service) Submit(ctx context.Context, sessionID string, input []*v1.Cont
 		}
 		err := s.Store.Commit(ctx, st, e)
 		if err == nil {
-			return res, nil
+			return res, s.Queue.Enqueue(ctx, sessionID)
 		}
 		if !errors.Is(err, eventlog.ErrConflict) {
 			return nil, err
