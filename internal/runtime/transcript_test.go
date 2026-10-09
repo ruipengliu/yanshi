@@ -29,6 +29,8 @@ func (b *logBuilder) add(p any) *logBuilder {
 		e.Payload = &v1.Event_ToolResult{ToolResult: p}
 	case *v1.RunInterrupted:
 		e.Payload = &v1.Event_RunInterrupted{RunInterrupted: p}
+	case *v1.ContextCompacted:
+		e.Payload = &v1.Event_ContextCompacted{ContextCompacted: p}
 	}
 	b.events = append(b.events, e)
 	return b
@@ -74,7 +76,7 @@ func TestTranscriptDefersSteerUntilToolResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := shape(Transcript(st))
+	got := shape(Transcript(st, 0))
 	want := "user:a assistant[c1 c2] tool:c1 tool:c2 user:b"
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
@@ -93,7 +95,7 @@ func TestTranscriptClosesCallsOfInterruptedRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	msgs := Transcript(st)
+	msgs := Transcript(st, 0)
 	if got, want := shape(msgs), "user:a assistant[c1] tool:c1 user:b"; got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}

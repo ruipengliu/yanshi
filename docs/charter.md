@@ -91,7 +91,7 @@ yanshi 是公司内部的**分布式 Agent 运行时基础设施**，承载多�
 |---|---|
 | M0 骨架 ✅ | 单二进制模式；Session / Run / Event 原语；模型网关（火山）；文本问答；确定性模拟测试框架（见 [设计](./design/m0-core-primitives.md)） |
 | M1 设备即节点 🟡 | 设备节点协议 ✅；Go SDK ✅（移动端 gomobile 绑定未验证）；能力路由 ✅；Approval ✅；离线挂起 ✅；推送唤醒（仅桩）；见 [设计](./design/m1-device-nodes.md) |
-| M2 长任务与执行 🟡 | Sandbox 代码执行（S1 ✅ Docker 实现、代码解释器；S2 ✅ [工件存储](./design/m2-artifacts.md)，场景 A 数据通路已通；S3 gVisor 快照与预热池、S4 K8s 待做，见 [设计](./design/m2-sandbox.md)）；小时级 Run 故障恢复；多 Worker 水平扩展（多进程共享 PostgreSQL ✅）与扩容压测；跨进程实时增量；跑通场景 A |
+| M2 长任务与执行 🟡 | Sandbox 代码执行（S1 ✅ Docker 实现、代码解释器；S2 ✅ [工件存储](./design/m2-artifacts.md)，场景 A 数据通路已通；S3 gVisor 快照与预热池、S4 K8s 待做，见 [设计](./design/m2-sandbox.md)）；小时级 Run（[上下文压缩与无进展接管上限](./design/m2-long-runs.md) ✅，经长 Run 模拟验证；真实模型验证待做）；多 Worker 水平扩展（多进程共享 PostgreSQL ✅）与扩容压测；跨进程实时增量；跑通场景 A |
 | M3 实时 | Call 全双工通道；端侧 VAD/AEC；Call 与后台 Run 协同；跑通场景 B |
 | M4 个性化与治理 | Memory 与 Grant；内容安全；配额计费；评测与回放；AgentDef 灰度 |
 | M5 生态 | 注册中心；声明式 AgentDef 规范；MCP/A2A 适配；跨节点多 Agent 编排 |

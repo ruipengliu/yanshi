@@ -1,19 +1,31 @@
 package runtime
 
 import (
+	"fmt"
+
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/model"
 	"yanshi/internal/session"
 )
 
+// summaryPrefix 引出上下文中的压缩摘要。
+const summaryPrefix = "[此前的对话已压缩为以下摘要；更早的原文不再可见]\n"
+
 // Transcript 把 Session 历史转换为模型上下文。
 //
+// 若发生过 Compaction，上下文以最新摘要开头，其后是摘要之后的历史（docs/design/m2-long-runs.md §2）。
 // 模型接口要求带 tool_calls 的助手消息之后紧跟全部调用结果，因此：
 //   - 调用进行中到达的用户输入（Steered 或新 Run）被推迟到结果之后；
 //   - 因 Run 中断或失败而永远不会有结果的调用，补一个"未执行"的结果。
-func Transcript(st *session.State) []model.Message {
+//
+// maxToolResult > 0 时，单条调用结果截断到约该 token 数；日志中的原文不受影响。
+func Transcript(st *session.State, maxToolResult int) []model.Message {
 	var out, deferred []model.Message
 	var pending []string // 当前助手消息中尚无结果的调用，按顺序
+
+	if c := st.Compaction; c != nil {
+		out = append(out, model.Message{Role: model.RoleUser, Content: append(model.TextBlocks(summaryPrefix), c.GetSummary()...)})
+	}
 
 	closePending := func() {
 		for _, id := range pending {
@@ -40,11 +52,7 @@ func Transcript(st *session.State) []model.Message {
 			}
 		case *v1.Event_ToolResult:
 			m := p.ToolResult
-			content := m.GetContent()
-			if m.GetIsError() {
-				content = append(model.TextBlocks("[error] "), content...)
-			}
-			out = append(out, model.Message{Role: model.RoleTool, ToolCallID: m.GetCallId(), Content: content})
+			out = append(out, toolMessage(m, maxToolResult))
 			for i, id := range pending {
 				if id == m.GetCallId() {
 					pending = append(pending[:i:i], pending[i+1:]...)
@@ -68,4 +76,36 @@ func deferUser(out, deferred *[]model.Message, pending []string, input []*v1.Con
 	} else {
 		*out = append(*out, m)
 	}
+}
+
+func toolMessage(m *v1.ToolResult, maxTokens int) model.Message {
+	content := truncateBlocks(m.GetContent(), maxTokens)
+	if m.GetIsError() {
+		content = append(model.TextBlocks("[error] "), content...)
+	}
+	return model.Message{Role: model.RoleTool, ToolCallID: m.GetCallId(), Content: content}
+}
+
+// truncateBlocks 把内容截断到约 maxTokens 个 token（maxTokens <= 0 表示不限），并注明原始大小。
+func truncateBlocks(blocks []*v1.ContentBlock, maxTokens int) []*v1.ContentBlock {
+	total := model.EstimateTokens(blocks)
+	if maxTokens <= 0 || total <= maxTokens {
+		return blocks
+	}
+	var out []*v1.ContentBlock
+	budget := maxTokens
+	for _, b := range blocks {
+		n := model.EstimateTokens([]*v1.ContentBlock{b})
+		if n <= budget {
+			out = append(out, b)
+			budget -= n
+			continue
+		}
+		if t := b.GetText(); t != nil && budget > 0 {
+			head, _ := model.TruncateText(t.GetText(), budget)
+			out = append(out, model.TextBlocks(head)...)
+		}
+		break
+	}
+	return append(out, model.TextBlocks(fmt.Sprintf("\n[已截断：原始约 %d tokens]", total))...)
 }

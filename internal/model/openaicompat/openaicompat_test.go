@@ -3,6 +3,7 @@ package openaicompat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -74,6 +75,17 @@ func TestGenerateHTTPError(t *testing.T) {
 	_, err := (&Provider{BaseURL: srv.URL}).Generate(context.Background(), &model.Request{Model: "m"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "401") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestGenerateContextOverflow(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":{"code":"context_length_exceeded","message":"This model's maximum context length is 8192 tokens"}}`, http.StatusBadRequest)
+	}))
+	defer srv.Close()
+	_, err := (&Provider{BaseURL: srv.URL}).Generate(context.Background(), &model.Request{Model: "m"}, nil)
+	if !errors.Is(err, model.ErrContextOverflow) {
+		t.Fatalf("err = %v, want ErrContextOverflow", err)
 	}
 }
 

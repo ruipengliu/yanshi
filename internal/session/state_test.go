@@ -203,3 +203,75 @@ func TestM1InvalidTransitions(t *testing.T) {
 		})
 	}
 }
+
+func compacted(run string, n uint32, through uint64) *v1.Event {
+	return &v1.Event{Payload: &v1.Event_ContextCompacted{ContextCompacted: &v1.ContextCompacted{RunId: run, Attempt: n, ThroughSeq: through}}}
+}
+
+func TestCompactionTrimsHistory(t *testing.T) {
+	st, err := Reduce(build(
+		created(), requested("r1"), attempt("r1", 1), // 1-3
+		assistant("r1", 1, "c1"), result("r1", 1, "c1"), // 4-5
+		assistant("r1", 1, "c2"), result("r1", 1, "c2"), // 6-7
+		compacted("r1", 1, 5),                           // 8
+		assistant("r1", 1, "c3"), result("r1", 1, "c3"), // 9-10
+		compacted("r1", 1, 9), // 11：c3 的请求在 9、结果在 10，不能在 9 截断
+	))
+	if err == nil || !strings.Contains(err.Error(), "splits call c3") {
+		t.Fatalf("err = %v, want split error", err)
+	}
+
+	st, err = Reduce(build(
+		created(), requested("r1"), attempt("r1", 1),
+		assistant("r1", 1, "c1"), result("r1", 1, "c1"),
+		assistant("r1", 1, "c2"), result("r1", 1, "c2"),
+		compacted("r1", 1, 5),
+		assistant("r1", 1, "c3"), result("r1", 1, "c3"),
+		compacted("r1", 1, 10),
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Compaction.GetThroughSeq() != 10 || len(st.History) != 0 {
+		t.Fatalf("compaction = %v, history = %d events", st.Compaction, len(st.History))
+	}
+}
+
+func TestCompactionInvalid(t *testing.T) {
+	base := []*v1.Event{created(), requested("r1"), attempt("r1", 1), assistant("r1", 1, "c1")}
+	cases := map[string]struct {
+		tail []*v1.Event
+		want string
+	}{
+		"while call pending":     {[]*v1.Event{compacted("r1", 1, 4)}, "pending"},
+		"splits call and result": {[]*v1.Event{result("r1", 1, "c1"), compacted("r1", 1, 4)}, "splits call c1"},
+		"beyond log end":         {[]*v1.Event{result("r1", 1, "c1"), compacted("r1", 1, 6)}, "out of range"},
+		"not after previous":     {[]*v1.Event{result("r1", 1, "c1"), compacted("r1", 1, 5), compacted("r1", 1, 5)}, "out of range"},
+		"stale attempt":          {[]*v1.Event{result("r1", 1, "c1"), attempt("r1", 2), compacted("r1", 1, 5)}, "stale attempt"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := Reduce(build(append(append([]*v1.Event{}, base...), c.tail...)...))
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("err = %v, want containing %q", err, c.want)
+			}
+		})
+	}
+}
+
+func TestStalledTakeoversResetOnProgress(t *testing.T) {
+	st, err := Reduce(build(
+		created(), requested("r1"), attempt("r1", 1),
+		attempt("r1", 2), attempt("r1", 3), // 两次无进展的接管
+		assistant("r1", 3, "c1"), // 进展
+		attempt("r1", 4),
+		started("r1", 4, "c1"), // 开始执行不算进展
+		attempt("r1", 5),
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := st.Run("r1"); r.Takeovers != 4 || r.StalledTakeovers != 2 {
+		t.Fatalf("takeovers = %d, stalled = %d", r.Takeovers, r.StalledTakeovers)
+	}
+}

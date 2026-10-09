@@ -21,7 +21,7 @@ running ──RunSuspended──▶ suspended ──AttemptStarted──▶ runn
 - Worker 在需要等待时追加 `RunSuspended{attempt}`，并以 `Park(lease, until)` 归还租约：该 Session 在 `until` 之前不可认领，除非被 `Enqueue` 唤醒。
 - 等待什么不单独记录，而是由日志推导：第一个未完成调用处于"待审批"或"已派发、待结果"。
 - 唤醒来源：设备返回结果、用户审批、用户插话或中断，以及 `until` 到期（超时检查）。
-- **接管计数**：只有在 `running` 状态下开始新 Attempt 才算接管（说明上一个 Worker 没有正常结束）。从 `suspended` 恢复不计数。`MaxTakeovers` 只限制接管，小时级任务可以挂起、恢复任意多次。
+- **接管计数**：只有在 `running` 状态下开始新 Attempt 才算接管（说明上一个 Worker 没有正常结束）。从 `suspended` 恢复不计数。`MaxTakeovers` 只限制无进展的连续接管（[长任务设计](./m2-long-runs.md) §6），小时级任务可以挂起、恢复任意多次。
 
 ## 3. 路由调用的生命周期
 

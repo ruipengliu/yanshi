@@ -50,6 +50,7 @@ type Event struct {
 	//	*Event_RunSuspended
 	//	*Event_ApprovalRequested
 	//	*Event_ApprovalDecided
+	//	*Event_ContextCompacted
 	Payload       isEvent_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -237,6 +238,15 @@ func (x *Event) GetApprovalDecided() *ApprovalDecided {
 	return nil
 }
 
+func (x *Event) GetContextCompacted() *ContextCompacted {
+	if x != nil {
+		if x, ok := x.Payload.(*Event_ContextCompacted); ok {
+			return x.ContextCompacted
+		}
+	}
+	return nil
+}
+
 type isEvent_Payload interface {
 	isEvent_Payload()
 }
@@ -293,6 +303,10 @@ type Event_ApprovalDecided struct {
 	ApprovalDecided *ApprovalDecided `protobuf:"bytes,22,opt,name=approval_decided,json=approvalDecided,proto3,oneof"`
 }
 
+type Event_ContextCompacted struct {
+	ContextCompacted *ContextCompacted `protobuf:"bytes,23,opt,name=context_compacted,json=contextCompacted,proto3,oneof"`
+}
+
 func (*Event_SessionCreated) isEvent_Payload() {}
 
 func (*Event_RunRequested) isEvent_Payload() {}
@@ -318,6 +332,8 @@ func (*Event_RunSuspended) isEvent_Payload() {}
 func (*Event_ApprovalRequested) isEvent_Payload() {}
 
 func (*Event_ApprovalDecided) isEvent_Payload() {}
+
+func (*Event_ContextCompacted) isEvent_Payload() {}
 
 // ContentBlock 承载一段多模态内容。
 type ContentBlock struct {
@@ -1524,11 +1540,97 @@ func (x *ApprovalDecided) GetBy() string {
 	return ""
 }
 
+// ContextCompacted 记录一次上下文压缩（ADR-0012）：seq ≤ through_seq 的历史在模型上下文中由 summary 代替。
+// through_seq 必须是闭合边界：此前请求的调用都已有结果。原始事件不删除。
+type ContextCompacted struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	Attempt       uint32                 `protobuf:"varint,2,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	ThroughSeq    uint64                 `protobuf:"varint,3,opt,name=through_seq,json=throughSeq,proto3" json:"through_seq,omitempty"`
+	Summary       []*ContentBlock        `protobuf:"bytes,4,rep,name=summary,proto3" json:"summary,omitempty"`
+	Model         string                 `protobuf:"bytes,5,opt,name=model,proto3" json:"model,omitempty"`
+	Usage         *Usage                 `protobuf:"bytes,6,opt,name=usage,proto3" json:"usage,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ContextCompacted) Reset() {
+	*x = ContextCompacted{}
+	mi := &file_yanshi_v1_event_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ContextCompacted) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ContextCompacted) ProtoMessage() {}
+
+func (x *ContextCompacted) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_event_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ContextCompacted.ProtoReflect.Descriptor instead.
+func (*ContextCompacted) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *ContextCompacted) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *ContextCompacted) GetAttempt() uint32 {
+	if x != nil {
+		return x.Attempt
+	}
+	return 0
+}
+
+func (x *ContextCompacted) GetThroughSeq() uint64 {
+	if x != nil {
+		return x.ThroughSeq
+	}
+	return 0
+}
+
+func (x *ContextCompacted) GetSummary() []*ContentBlock {
+	if x != nil {
+		return x.Summary
+	}
+	return nil
+}
+
+func (x *ContextCompacted) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
+func (x *ContextCompacted) GetUsage() *Usage {
+	if x != nil {
+		return x.Usage
+	}
+	return nil
+}
+
 var File_yanshi_v1_event_proto protoreflect.FileDescriptor
 
 const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\n" +
-	"\x15yanshi/v1/event.proto\x12\tyanshi.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xe4\a\n" +
+	"\x15yanshi/v1/event.proto\x12\tyanshi.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xb0\b\n" +
 	"\x05Event\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -1550,7 +1652,8 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\x0frun_interrupted\x18\x13 \x01(\v2\x19.yanshi.v1.RunInterruptedH\x00R\x0erunInterrupted\x12>\n" +
 	"\rrun_suspended\x18\x14 \x01(\v2\x17.yanshi.v1.RunSuspendedH\x00R\frunSuspended\x12M\n" +
 	"\x12approval_requested\x18\x15 \x01(\v2\x1c.yanshi.v1.ApprovalRequestedH\x00R\x11approvalRequested\x12G\n" +
-	"\x10approval_decided\x18\x16 \x01(\v2\x1a.yanshi.v1.ApprovalDecidedH\x00R\x0fapprovalDecidedB\t\n" +
+	"\x10approval_decided\x18\x16 \x01(\v2\x1a.yanshi.v1.ApprovalDecidedH\x00R\x0fapprovalDecided\x12J\n" +
+	"\x11context_compacted\x18\x17 \x01(\v2\x1b.yanshi.v1.ContextCompactedH\x00R\x10contextCompactedB\t\n" +
 	"\apayload\"g\n" +
 	"\fContentBlock\x12%\n" +
 	"\x04text\x18\x01 \x01(\v2\x0f.yanshi.v1.TextH\x00R\x04text\x12(\n" +
@@ -1634,7 +1737,15 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x17\n" +
 	"\acall_id\x18\x02 \x01(\tR\x06callId\x12\x1a\n" +
 	"\bapproved\x18\x03 \x01(\bR\bapproved\x12\x0e\n" +
-	"\x02by\x18\x04 \x01(\tR\x02byB\x1fZ\x1dyanshi/gen/yanshi/v1;yanshiv1b\x06proto3"
+	"\x02by\x18\x04 \x01(\tR\x02by\"\xd5\x01\n" +
+	"\x10ContextCompacted\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
+	"\aattempt\x18\x02 \x01(\rR\aattempt\x12\x1f\n" +
+	"\vthrough_seq\x18\x03 \x01(\x04R\n" +
+	"throughSeq\x121\n" +
+	"\asummary\x18\x04 \x03(\v2\x17.yanshi.v1.ContentBlockR\asummary\x12\x14\n" +
+	"\x05model\x18\x05 \x01(\tR\x05model\x12&\n" +
+	"\x05usage\x18\x06 \x01(\v2\x10.yanshi.v1.UsageR\x05usageB\x1fZ\x1dyanshi/gen/yanshi/v1;yanshiv1b\x06proto3"
 
 var (
 	file_yanshi_v1_event_proto_rawDescOnce sync.Once
@@ -1648,7 +1759,7 @@ func file_yanshi_v1_event_proto_rawDescGZIP() []byte {
 	return file_yanshi_v1_event_proto_rawDescData
 }
 
-var file_yanshi_v1_event_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_yanshi_v1_event_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
 var file_yanshi_v1_event_proto_goTypes = []any{
 	(*Event)(nil),                 // 0: yanshi.v1.Event
 	(*ContentBlock)(nil),          // 1: yanshi.v1.ContentBlock
@@ -1670,10 +1781,11 @@ var file_yanshi_v1_event_proto_goTypes = []any{
 	(*RunSuspended)(nil),          // 17: yanshi.v1.RunSuspended
 	(*ApprovalRequested)(nil),     // 18: yanshi.v1.ApprovalRequested
 	(*ApprovalDecided)(nil),       // 19: yanshi.v1.ApprovalDecided
-	(*timestamppb.Timestamp)(nil), // 20: google.protobuf.Timestamp
+	(*ContextCompacted)(nil),      // 20: yanshi.v1.ContextCompacted
+	(*timestamppb.Timestamp)(nil), // 21: google.protobuf.Timestamp
 }
 var file_yanshi_v1_event_proto_depIdxs = []int32{
-	20, // 0: yanshi.v1.Event.time:type_name -> google.protobuf.Timestamp
+	21, // 0: yanshi.v1.Event.time:type_name -> google.protobuf.Timestamp
 	5,  // 1: yanshi.v1.Event.session_created:type_name -> yanshi.v1.SessionCreated
 	6,  // 2: yanshi.v1.Event.run_requested:type_name -> yanshi.v1.RunRequested
 	7,  // 3: yanshi.v1.Event.steered:type_name -> yanshi.v1.Steered
@@ -1687,22 +1799,25 @@ var file_yanshi_v1_event_proto_depIdxs = []int32{
 	17, // 11: yanshi.v1.Event.run_suspended:type_name -> yanshi.v1.RunSuspended
 	18, // 12: yanshi.v1.Event.approval_requested:type_name -> yanshi.v1.ApprovalRequested
 	19, // 13: yanshi.v1.Event.approval_decided:type_name -> yanshi.v1.ApprovalDecided
-	2,  // 14: yanshi.v1.ContentBlock.text:type_name -> yanshi.v1.Text
-	3,  // 15: yanshi.v1.ContentBlock.media:type_name -> yanshi.v1.Media
-	4,  // 16: yanshi.v1.SessionCreated.agent:type_name -> yanshi.v1.AgentRef
-	1,  // 17: yanshi.v1.RunRequested.input:type_name -> yanshi.v1.ContentBlock
-	1,  // 18: yanshi.v1.Steered.input:type_name -> yanshi.v1.ContentBlock
-	1,  // 19: yanshi.v1.AssistantMessage.content:type_name -> yanshi.v1.ContentBlock
-	9,  // 20: yanshi.v1.AssistantMessage.tool_calls:type_name -> yanshi.v1.ToolCall
-	10, // 21: yanshi.v1.AssistantMessage.usage:type_name -> yanshi.v1.Usage
-	20, // 22: yanshi.v1.ToolCallStarted.deadline:type_name -> google.protobuf.Timestamp
-	1,  // 23: yanshi.v1.ToolResult.content:type_name -> yanshi.v1.ContentBlock
-	20, // 24: yanshi.v1.ApprovalRequested.deadline:type_name -> google.protobuf.Timestamp
-	25, // [25:25] is the sub-list for method output_type
-	25, // [25:25] is the sub-list for method input_type
-	25, // [25:25] is the sub-list for extension type_name
-	25, // [25:25] is the sub-list for extension extendee
-	0,  // [0:25] is the sub-list for field type_name
+	20, // 14: yanshi.v1.Event.context_compacted:type_name -> yanshi.v1.ContextCompacted
+	2,  // 15: yanshi.v1.ContentBlock.text:type_name -> yanshi.v1.Text
+	3,  // 16: yanshi.v1.ContentBlock.media:type_name -> yanshi.v1.Media
+	4,  // 17: yanshi.v1.SessionCreated.agent:type_name -> yanshi.v1.AgentRef
+	1,  // 18: yanshi.v1.RunRequested.input:type_name -> yanshi.v1.ContentBlock
+	1,  // 19: yanshi.v1.Steered.input:type_name -> yanshi.v1.ContentBlock
+	1,  // 20: yanshi.v1.AssistantMessage.content:type_name -> yanshi.v1.ContentBlock
+	9,  // 21: yanshi.v1.AssistantMessage.tool_calls:type_name -> yanshi.v1.ToolCall
+	10, // 22: yanshi.v1.AssistantMessage.usage:type_name -> yanshi.v1.Usage
+	21, // 23: yanshi.v1.ToolCallStarted.deadline:type_name -> google.protobuf.Timestamp
+	1,  // 24: yanshi.v1.ToolResult.content:type_name -> yanshi.v1.ContentBlock
+	21, // 25: yanshi.v1.ApprovalRequested.deadline:type_name -> google.protobuf.Timestamp
+	1,  // 26: yanshi.v1.ContextCompacted.summary:type_name -> yanshi.v1.ContentBlock
+	10, // 27: yanshi.v1.ContextCompacted.usage:type_name -> yanshi.v1.Usage
+	28, // [28:28] is the sub-list for method output_type
+	28, // [28:28] is the sub-list for method input_type
+	28, // [28:28] is the sub-list for extension type_name
+	28, // [28:28] is the sub-list for extension extendee
+	0,  // [0:28] is the sub-list for field type_name
 }
 
 func init() { file_yanshi_v1_event_proto_init() }
@@ -1724,6 +1839,7 @@ func file_yanshi_v1_event_proto_init() {
 		(*Event_RunSuspended)(nil),
 		(*Event_ApprovalRequested)(nil),
 		(*Event_ApprovalDecided)(nil),
+		(*Event_ContextCompacted)(nil),
 	}
 	file_yanshi_v1_event_proto_msgTypes[1].OneofWrappers = []any{
 		(*ContentBlock_Text)(nil),
@@ -1735,7 +1851,7 @@ func file_yanshi_v1_event_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_yanshi_v1_event_proto_rawDesc), len(file_yanshi_v1_event_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   20,
+			NumMessages:   21,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

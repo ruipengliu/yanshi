@@ -186,7 +186,11 @@ func (p *Provider) Generate(ctx context.Context, req *model.Request, onDelta fun
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("model %s: http %d: %s", req.Model, resp.StatusCode, bytes.TrimSpace(b))
+		err := fmt.Errorf("model %s: http %d: %s", req.Model, resp.StatusCode, bytes.TrimSpace(b))
+		if resp.StatusCode == http.StatusBadRequest && contextOverflow(string(b)) {
+			err = fmt.Errorf("%w: %w", model.ErrContextOverflow, err)
+		}
+		return nil, err
 	}
 	return decodeStream(resp.Body, req.Model, onDelta)
 }
@@ -211,7 +215,11 @@ func decodeStream(r io.Reader, modelID string, onDelta func(model.Delta)) (*mode
 			return nil, fmt.Errorf("model %s: bad stream chunk: %w", modelID, err)
 		}
 		if c.Error != nil {
-			return nil, fmt.Errorf("model %s: %s", modelID, c.Error.Message)
+			err := fmt.Errorf("model %s: %s", modelID, c.Error.Message)
+			if contextOverflow(c.Error.Message) {
+				err = fmt.Errorf("%w: %w", model.ErrContextOverflow, err)
+			}
+			return nil, err
 		}
 		if c.Model != "" {
 			out.Model = c.Model
@@ -265,4 +273,17 @@ func decodeStream(r io.Reader, modelID string, onDelta func(model.Delta)) (*mode
 		out.ToolCalls = append(out.ToolCalls, c)
 	}
 	return out, nil
+}
+
+// contextOverflow 识别"上下文超长"错误。各供应商没有统一的错误码，只能按文本匹配：
+// OpenAI 与 vLLM 使用 context_length_exceeded / "maximum context length"。
+// 火山方舟的具体形式尚未用真实请求确认（docs/design/m2-long-runs.md §9）。
+func contextOverflow(body string) bool {
+	b := strings.ToLower(body)
+	for _, s := range []string{"context_length_exceeded", "maximum context length", "context length", "context window", "too many tokens", "prompt is too long"} {
+		if strings.Contains(b, s) {
+			return true
+		}
+	}
+	return false
 }

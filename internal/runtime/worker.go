@@ -35,13 +35,15 @@ type Dispatcher interface {
 }
 
 type Config struct {
-	ID       string
-	Store    *session.Store
-	Queue    workqueue.Queue
-	Agents   *agentdef.Registry
-	Model    model.Provider
-	Catalog  *capability.Catalog
-	Dispatch Dispatcher
+	ID     string
+	Store  *session.Store
+	Queue  workqueue.Queue
+	Agents *agentdef.Registry
+	Model  model.Provider
+	// Compactor 生成上下文压缩摘要；nil 时使用以 Model 为后端的 ModelCompactor。
+	Compactor Compactor
+	Catalog   *capability.Catalog
+	Dispatch  Dispatcher
 	// Artifacts 非空时，用户消息中的图片工件会内联给模型（docs/design/m2-artifacts.md §4）。
 	Artifacts *artifact.Service
 	Live      live.Bus
@@ -51,7 +53,8 @@ type Config struct {
 	// Heartbeat > 0 时，在模型调用与 Capability 执行期间按此间隔续约（真实时间）。
 	// 模拟测试置 0。
 	Heartbeat time.Duration
-	// MaxTakeovers 是一个 Run 最多被接管的次数，超过则 RunFailed。从挂起恢复不计入。
+	// MaxTakeovers 是一个 Run 在没有进展的情况下最多被连续接管的次数，超过则 RunFailed
+	// （docs/design/m2-long-runs.md §6）。从挂起恢复不计入。
 	MaxTakeovers int
 	// ApprovalTimeout 是审批的等待时长。
 	ApprovalTimeout time.Duration
@@ -80,6 +83,9 @@ func (c *Config) defaults() {
 	if c.Live == nil {
 		c.Live = live.Discard{}
 	}
+	if c.Compactor == nil {
+		c.Compactor = ModelCompactor{Model: c.Model}
+	}
 	if c.Logger == nil {
 		c.Logger = slog.New(slog.DiscardHandler)
 	}
@@ -93,6 +99,8 @@ type Worker struct {
 	runID       string
 	attempt     uint32
 	modelErrors int
+	// forceCompact 在模型报告上下文超长后置位：下一步无论估算如何都先压缩。
+	forceCompact bool
 }
 
 func New(cfg Config) *Worker {
@@ -119,7 +127,7 @@ func (w *Worker) Run(ctx context.Context) {
 }
 
 func (w *Worker) drop() {
-	w.lease, w.st, w.runID, w.attempt, w.modelErrors = nil, nil, "", 0, 0
+	w.lease, w.st, w.runID, w.attempt, w.modelErrors, w.forceCompact = nil, nil, "", 0, 0, false
 }
 
 // Step 推进一件工作；返回 false 表示当前无事可做。
@@ -213,8 +221,8 @@ func (w *Worker) suspend(ctx context.Context, r *session.Run, until time.Time, e
 func (w *Worker) now() time.Time { return w.cfg.Store.Clock.Now() }
 
 func (w *Worker) startAttempt(ctx context.Context, r *session.Run) error {
-	if r.Status == session.RunRunning && r.Takeovers >= w.cfg.MaxTakeovers {
-		return w.fail(ctx, r, fmt.Sprintf("exceeded %d takeovers", w.cfg.MaxTakeovers))
+	if r.Status == session.RunRunning && r.StalledTakeovers >= w.cfg.MaxTakeovers {
+		return w.fail(ctx, r, fmt.Sprintf("exceeded %d takeovers without progress", w.cfg.MaxTakeovers))
 	}
 	next := r.Attempt + 1
 	err := w.cfg.Store.Commit(ctx, w.st, &v1.Event{Payload: &v1.Event_AttemptStarted{
@@ -226,7 +234,7 @@ func (w *Worker) startAttempt(ctx context.Context, r *session.Run) error {
 	if err != nil {
 		return err
 	}
-	w.runID, w.attempt, w.modelErrors = r.ID, next, 0
+	w.runID, w.attempt, w.modelErrors, w.forceCompact = r.ID, next, 0, false
 	w.cfg.Logger.Info("attempt started", "worker", w.cfg.ID, "session", w.st.SessionID, "run", r.ID, "attempt", next)
 	return nil
 }
@@ -377,9 +385,12 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 	if err != nil {
 		return w.fail(ctx, r, err.Error())
 	}
-	req := &model.Request{Model: def.Model, System: def.Instructions, Messages: w.inlineImages(ctx, Transcript(w.st))}
+	req := &model.Request{Model: def.Model, System: def.Instructions, Messages: w.inlineImages(ctx, Transcript(w.st, def.Context.MaxToolResult))}
 	for _, t := range tools {
 		req.Tools = append(req.Tools, model.ToolSpec{Name: t.Spec.Name, Description: t.Spec.Description, InputSchema: t.Spec.InputSchema})
+	}
+	if through := planCompaction(w.st, req, def.Context, w.forceCompact); through > 0 {
+		return w.compact(ctx, r, def, through)
 	}
 
 	var resp *model.Response
@@ -391,17 +402,7 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 		return err
 	})
 	if err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if errors.Is(err, errSuperseded) {
-			return nil
-		}
-		w.modelErrors++
-		if w.modelErrors >= w.cfg.MaxModelErrors {
-			return w.fail(ctx, r, fmt.Sprintf("model error: %v", err))
-		}
-		return fmt.Errorf("model: %w", err)
+		return w.modelFailed(ctx, r, "model", err)
 	}
 	w.modelErrors = 0
 
@@ -465,6 +466,25 @@ func (w *Worker) readArtifact(ctx context.Context, id string) ([]byte, error) {
 		return nil, artifact.ErrNotFound
 	}
 	return io.ReadAll(io.LimitReader(rc, inlineImageLimit))
+}
+
+// modelFailed 处理模型调用（含摘要）的失败：连续失败达到上限则 RunFailed，否则留待下一步重试。
+// 上下文超长同样计入失败次数，并让下一步先压缩；压缩无法缓解时最终以 RunFailed 结束而不是无限重试。
+func (w *Worker) modelFailed(ctx context.Context, r *session.Run, what string, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if errors.Is(err, errSuperseded) {
+		return nil
+	}
+	if errors.Is(err, model.ErrContextOverflow) {
+		w.forceCompact = true
+	}
+	w.modelErrors++
+	if w.modelErrors >= w.cfg.MaxModelErrors {
+		return w.fail(ctx, r, fmt.Sprintf("%s error: %v", what, err))
+	}
+	return fmt.Errorf("%s: %w", what, err)
 }
 
 var errSuperseded = errors.New("attempt superseded")

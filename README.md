@@ -11,6 +11,7 @@ make deps-up                             # 用 docker 启动 PostgreSQL
 ./bin/yanshi serve -storage postgres -blob s3   # 持久化（PostgreSQL + S3 兼容对象存储）；多个进程可共享水平扩展
 ./bin/yanshi chat -agent echo            # 离线：复述输入
 ARK_API_KEY=... ./bin/yanshi serve       # 启用火山方舟，然后 chat -agent assistant
+# 火山方舟 coding plan：另设 ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/coding/v3
 ```
 
 接入一台"电脑"（把某个目录作为 Node 暴露，`write_file` 需审批）：

@@ -2,6 +2,7 @@ package sim
 
 import (
 	"flag"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -11,9 +12,19 @@ var (
 	seed  = flag.Uint64("sim.seed", 0, "run only this seed (0 = all)")
 )
 
-func run(t *testing.T, s uint64, faults bool) *World {
+func run(t *testing.T, s uint64, opts Options) *World {
 	t.Helper()
-	w, err := New(Options{Seed: s, Workers: 3, Sessions: 3, Ticks: 400, Faults: faults})
+	opts.Seed = s
+	if opts.Workers == 0 {
+		opts.Workers = 3
+	}
+	if opts.Sessions == 0 {
+		opts.Sessions = 3
+	}
+	if opts.Ticks == 0 {
+		opts.Ticks = 400
+	}
+	w, err := New(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,54 +51,56 @@ func seedList() []uint64 {
 	return out
 }
 
-func TestSimulationWithFaults(t *testing.T) {
-	var total Stats
-	for _, s := range seedList() {
-		st := run(t, s, true).Stats
-		total.Runs += st.Runs
-		total.Steers += st.Steers
-		total.Interrupts += st.Interrupts
-		total.Crashes += st.Crashes
-		total.ModelErrors += st.ModelErrors
-		total.Takeovers += st.Takeovers
-		total.OutcomeUnknown += st.OutcomeUnknown
-		total.Retried += st.Retried
-		total.Failed += st.Failed
-		total.TurnLimited += st.TurnLimited
-		total.NodeCrashes += st.NodeCrashes
-		total.Redeliveries += st.Redeliveries
-		total.Approvals += st.Approvals
-		total.Denials += st.Denials
-		total.Suspensions += st.Suspensions
-		total.DeviceResults += st.DeviceResults
-		total.Timeouts += st.Timeouts
-		total.ControllerCrashes += st.ControllerCrashes
-		total.SandboxExecs += st.SandboxExecs
-		total.Reaps += st.Reaps
+// add 把 o 的各项计数累加到 s。
+func (s *Stats) add(o Stats) {
+	a, b := reflect.ValueOf(s).Elem(), reflect.ValueOf(o)
+	for i := range a.NumField() {
+		a.Field(i).SetInt(a.Field(i).Int() + b.Field(i).Int())
 	}
+}
+
+// requireCoverage 要求模拟真正触达 names 列出的路径，否则通过没有意义。
+func requireCoverage(t *testing.T, total Stats, names ...string) {
+	t.Helper()
 	t.Logf("coverage: %+v", total)
 	if *seed != 0 {
 		return
 	}
-	// 模拟必须真正触达关键路径，否则通过没有意义。
-	for name, n := range map[string]int{
-		"runs": total.Runs, "steers": total.Steers, "interrupts": total.Interrupts,
-		"crashes": total.Crashes, "takeovers": total.Takeovers,
-		"outcome unknown": total.OutcomeUnknown, "idempotent retries": total.Retried,
-		"node crashes": total.NodeCrashes, "redeliveries": total.Redeliveries, "approvals": total.Approvals,
-		"denials": total.Denials, "suspensions": total.Suspensions, "device results": total.DeviceResults,
-		"timeouts": total.Timeouts, "controller crashes": total.ControllerCrashes, "sandbox execs": total.SandboxExecs,
-		"reaps": total.Reaps,
-	} {
-		if n == 0 {
+	v := reflect.ValueOf(total)
+	for _, name := range names {
+		if v.FieldByName(name).Int() == 0 {
 			t.Errorf("simulation never exercised %s", name)
 		}
 	}
 }
 
+func TestSimulationWithFaults(t *testing.T) {
+	var total Stats
+	for _, s := range seedList() {
+		total.add(run(t, s, Options{Faults: true}).Stats)
+	}
+	requireCoverage(t, total, "Runs", "Steers", "Interrupts", "Crashes", "Takeovers", "OutcomeUnknown", "Retried",
+		"NodeCrashes", "Redeliveries", "Approvals", "Denials", "Suspensions", "DeviceResults", "Timeouts",
+		"ControllerCrashes", "SandboxExecs", "Reaps", "Compactions", "SummaryFaults", "Overflows", "AttemptsAfterCompaction")
+}
+
+// TestLongRunsWithFaults 让 Run 持续上百轮，检验压缩在故障下保持上下文有界、调用配对完整，且长 Run 能跑完。
+func TestLongRunsWithFaults(t *testing.T) {
+	var total Stats
+	list := seedList()
+	if *seed == 0 {
+		list = list[:max(len(list)/5, 1)]
+	}
+	for _, s := range list {
+		total.add(run(t, s, Options{Faults: true, LongRuns: true, Sessions: 2, Ticks: 1500}).Stats)
+	}
+	requireCoverage(t, total, "Compactions", "SummaryFaults", "Overflows", "AttemptsAfterCompaction", "Takeovers",
+		"Suspensions", "LongRunsCompleted")
+}
+
 func TestSimulationWithoutFaultsNeverFails(t *testing.T) {
 	for _, s := range seedList() {
-		if st := run(t, s, false).Stats; st.Failed != 0 || st.Takeovers != 0 || st.OutcomeUnknown != 0 {
+		if st := run(t, s, Options{}).Stats; st.Failed != 0 || st.Takeovers != 0 || st.OutcomeUnknown != 0 {
 			t.Fatalf("seed %d: fault-free run had failures/takeovers: %+v", s, st)
 		}
 	}
@@ -95,7 +108,7 @@ func TestSimulationWithoutFaultsNeverFails(t *testing.T) {
 
 func TestSimulationIsDeterministic(t *testing.T) {
 	for _, s := range []uint64{1, 7, 42} {
-		a, b := run(t, s, true), run(t, s, true)
+		a, b := run(t, s, Options{Faults: true, LongRuns: s == 7}), run(t, s, Options{Faults: true, LongRuns: s == 7})
 		if a.Fingerprint() != b.Fingerprint() {
 			t.Fatalf("seed %d produced different logs", s)
 		}

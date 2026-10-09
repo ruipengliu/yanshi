@@ -32,6 +32,7 @@ message Event {
     RunSuspended run_suspended = 20;
     ApprovalRequested approval_requested = 21;
     ApprovalDecided approval_decided = 22;
+    ContextCompacted context_compacted = 23;
   }
 }
 
@@ -170,4 +171,15 @@ message ApprovalDecided {
   bool approved = 3;
   // 决定来源，如 Device 或 Node ID。
   string by = 4;
+}
+
+// ContextCompacted 记录一次上下文压缩（ADR-0012）：seq ≤ through_seq 的历史在模型上下文中由 summary 代替。
+// through_seq 必须是闭合边界：此前请求的调用都已有结果。原始事件不删除。
+message ContextCompacted {
+  string run_id = 1;
+  uint32 attempt = 2;
+  uint64 through_seq = 3;
+  repeated ContentBlock summary = 4;
+  string model = 5;
+  Usage usage = 6;
 }

@@ -81,6 +81,10 @@ type Run struct {
 	Attempt uint32
 	// Takeovers 是在 running 状态下开启新 Attempt 的次数，即上一个 Worker 未正常结束的次数。
 	Takeovers int
+	// StalledTakeovers 是自上次进展（上下文前进：模型输出、调用结果、上下文压缩）以来的接管次数，
+	// 用于识别反复弄崩 Worker 的 Run；小时级 Run 期间零散的接管（如 Worker 滚动发布）不会累积。
+	// ToolCallStarted 不算进展，否则"执行即崩溃"的幂等调用会无限重试。
+	StalledTakeovers int
 	// Turns 是该 Run 已提交的 AssistantMessage 数。
 	Turns int
 	Calls []*Call
@@ -127,8 +131,12 @@ type State struct {
 	Seq     uint64
 	Created *v1.SessionCreated
 	Runs    []*Run
-	// History 是构成对话上下文的事件（用户输入、模型输出、调用结果），按日志顺序。
+	// History 是构成对话上下文的事件（用户输入、模型输出、调用结果），按日志顺序；
+	// 只含最近一次 Compaction 之后的事件，因此随上下文窗口有界，而不随日志增长。
 	History []*v1.Event
+	// Compaction 是最近一次上下文压缩，nil 表示从未压缩（ADR-0012）；CompactedAt 是该事件自身的 seq。
+	Compaction  *v1.ContextCompacted
+	CompactedAt uint64
 	// callIDs 是 Session 内出现过的全部调用 ID；调用 ID 在 Session 内必须唯一。
 	callIDs map[string]bool
 }
@@ -250,6 +258,7 @@ func (s *State) apply(e *v1.Event) error {
 		}
 		if r.Status == RunRunning {
 			r.Takeovers++
+			r.StalledTakeovers++
 		}
 		r.Attempt, r.Status = p.AttemptStarted.GetAttempt(), RunRunning
 
@@ -307,6 +316,7 @@ func (s *State) apply(e *v1.Event) error {
 			s.callIDs[tc.GetCallId()] = true
 		}
 		r.Turns++
+		r.StalledTakeovers = 0
 		s.History = append(s.History, e)
 
 	case *v1.Event_ToolCallStarted:
@@ -354,7 +364,28 @@ func (s *State) apply(e *v1.Event) error {
 			return fmt.Errorf("external result for call %q that was not dispatched to a node", m.GetCallId())
 		}
 		c.Done = true
+		r.StalledTakeovers = 0
 		s.History = append(s.History, e)
+
+	case *v1.Event_ContextCompacted:
+		m := p.ContextCompacted
+		r, err := s.fencedRun(m.GetRunId(), m.GetAttempt())
+		if err != nil {
+			return err
+		}
+		if c := r.PendingCall(); c != nil {
+			return fmt.Errorf("context compacted while call %s is pending", c.Call.GetCallId())
+		}
+		if err := s.checkCut(m.GetThroughSeq()); err != nil {
+			return err
+		}
+		i := 0
+		for i < len(s.History) && s.History[i].GetSeq() <= m.GetThroughSeq() {
+			i++
+		}
+		s.History = slices.Clone(s.History[i:])
+		s.Compaction, s.CompactedAt = m, e.GetSeq()
+		r.StalledTakeovers = 0
 
 	case *v1.Event_RunCompleted:
 		r, err := s.fencedRun(p.RunCompleted.GetRunId(), p.RunCompleted.GetAttempt())
@@ -384,6 +415,36 @@ func (s *State) apply(e *v1.Event) error {
 		return fmt.Errorf("unknown payload %T", p)
 	}
 	s.Seq = e.GetSeq()
+	return nil
+}
+
+// CanCut 报告 History 能否在 seq 处截断：seq 之后的调用结果都不指向 seq 及之前请求的调用，
+// 这样截断后的上下文中不会出现没有请求的孤立结果。调用方还须保证此时没有未完成的调用。
+func (s *State) CanCut(seq uint64) bool { return s.checkCut(seq) == nil }
+
+func (s *State) checkCut(seq uint64) error {
+	prev := uint64(0)
+	if s.Compaction != nil {
+		prev = s.Compaction.GetThroughSeq()
+	}
+	if seq <= prev || seq > s.Seq {
+		return fmt.Errorf("compaction through seq %d out of range (%d, %d]", seq, prev, s.Seq)
+	}
+	before := map[string]bool{}
+	for _, e := range s.History {
+		switch p := e.GetPayload().(type) {
+		case *v1.Event_AssistantMessage:
+			if e.GetSeq() <= seq {
+				for _, tc := range p.AssistantMessage.GetToolCalls() {
+					before[tc.GetCallId()] = true
+				}
+			}
+		case *v1.Event_ToolResult:
+			if e.GetSeq() > seq && before[p.ToolResult.GetCallId()] {
+				return fmt.Errorf("compaction through seq %d splits call %s from its result", seq, p.ToolResult.GetCallId())
+			}
+		}
+	}
 	return nil
 }
 

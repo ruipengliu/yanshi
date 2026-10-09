@@ -58,6 +58,9 @@ type Options struct {
 	Ticks int
 	// Faults 为 false 时不注入任何故障。
 	Faults bool
+	// LongRuns 让脚本化模型在一个 Run 内持续调用工具上百轮，并降低中断频率，
+	// 用于检验小时级 Run 的上下文压缩与恢复（docs/design/m2-long-runs.md §8）。
+	LongRuns bool
 }
 
 // Stats 统计模拟中被覆盖到的路径，防止模拟"空转"。
@@ -69,7 +72,16 @@ type Stats struct {
 	Suspensions, DeviceResults, Timeouts           int
 	// TurnLimited 是因超过 AgentDef.MaxTurns 而失败的 Run，属于策略结果而非故障。
 	TurnLimited int
+	// 上下文压缩：压缩次数、摘要调用中的故障、模型报告的上下文超长、
+	// 压缩之后同一 Run 开启的 Attempt（接管或恢复），以及完成的长 Run（≥ longRunTurns 轮）。
+	Compactions, SummaryFaults, Overflows      int
+	AttemptsAfterCompaction, LongRunsCompleted int
 }
+
+// simContext 是模拟 AgentDef 的上下文配置：窗口很小（工具声明约占 650），使压缩频繁发生。
+var simContext = agentdef.Context{Window: 2000, CompactAt: 0.75, KeepRecent: 300, MaxToolResult: 250}
+
+const longRunTurns = 20
 
 const (
 	leaseTTL        = 10 * time.Second
@@ -117,7 +129,9 @@ type World struct {
 	// currentCall 是设备正在执行的调用 ID。
 	currentCall string
 	faults      bool
-	Stats       Stats
+	// violations 记录脚本化模型观察到的请求级不变量违反（超出窗口、调用配对残缺）。
+	violations []string
+	Stats      Stats
 	// Trace 记录每一步的动作，失败时用于定位。
 	Trace []string
 }
@@ -139,8 +153,13 @@ func New(opts Options) (*World, error) {
 	}
 	w.log, w.queue = stores.Log, stores.Queue
 	w.store = &session.Store{Log: w.log, IDs: ids.Sequential("id"), Clock: w.clock}
+	maxTurns := 6
+	if opts.LongRuns {
+		maxTurns = 120
+	}
 	agents, err := agentdef.NewRegistry(&agentdef.Def{
-		Name: "sim", Version: "1", Model: "sim/m", Capabilities: []string{"echo", "send", "device:*", "sandbox:*"}, MaxTurns: 6,
+		Name: "sim", Version: "1", Model: "sim/m", Capabilities: []string{"echo", "send", "device:*", "sandbox:*"},
+		MaxTurns: maxTurns, Context: simContext,
 	})
 	if err != nil {
 		return nil, err
@@ -393,6 +412,9 @@ func (w *World) tick() error {
 	case x < 0.84:
 		return w.submit()
 	case x < 0.87:
+		if w.opts.LongRuns && !w.chance(0.05) {
+			return nil // 长 Run 模式下中断要少，否则 Run 很难跑满
+		}
 		return w.interrupt()
 	case x < 0.94:
 		// 大幅跳动时钟相当于 Worker 卡顿（GC、网络抖动）导致租约过期，属于故障。
@@ -542,6 +564,9 @@ func (w *World) CheckInvariants() error {
 			return fmt.Errorf("invariant: non-idempotent call %s executed %d times", id, n)
 		}
 	}
+	if len(w.violations) > 0 {
+		return fmt.Errorf("invariant: %s", w.violations[0])
+	}
 	return nil
 }
 
@@ -551,6 +576,9 @@ func (w *World) CollectStats() {
 		events, _ := eventlog.ReadAll(context.Background(), w.log, sid, 0)
 		if st, err := session.Reduce(events); err == nil {
 			for _, r := range st.Runs {
+				if r.Status == session.RunCompleted && r.Turns >= longRunTurns {
+					w.Stats.LongRunsCompleted++
+				}
 				w.Stats.Takeovers += r.Takeovers
 				for _, c := range r.Calls {
 					if len(c.StartedAttempts) > 1 {
@@ -559,8 +587,16 @@ func (w *World) CollectStats() {
 				}
 			}
 		}
+		compacted := map[string]bool{}
 		for _, e := range events {
 			switch p := e.GetPayload().(type) {
+			case *v1.Event_ContextCompacted:
+				w.Stats.Compactions++
+				compacted[p.ContextCompacted.GetRunId()] = true
+			case *v1.Event_AttemptStarted:
+				if compacted[p.AttemptStarted.GetRunId()] {
+					w.Stats.AttemptsAfterCompaction++
+				}
 			case *v1.Event_ToolResult:
 				text := model.Text(p.ToolResult.GetContent())
 				if p.ToolResult.GetIsError() && strings.HasPrefix(text, "outcome unknown") {
@@ -626,15 +662,62 @@ func (w *World) sendCap() capability.Capability {
 	}
 }
 
-type modelError struct{}
+type modelError struct{ overflow bool }
 
-func (*modelError) Error() string { return "simulated model error" }
+func (e *modelError) Error() string {
+	if e.overflow {
+		return "simulated context overflow"
+	}
+	return "simulated model error"
+}
+
+// Is 让模拟的超长错误同时满足 errors.Is(err, model.ErrContextOverflow)。
+func (e *modelError) Is(target error) bool { return e.overflow && target == model.ErrContextOverflow }
+
+// checkRequest 检查发给模型的请求：估算大小不超过窗口；每个调用请求之后紧跟其全部结果，且没有孤立的结果。
+func checkRequest(req *model.Request) error {
+	if n := model.EstimateRequest(req); n > simContext.Window {
+		return fmt.Errorf("model request of ~%d tokens exceeds window %d", n, simContext.Window)
+	}
+	var open []string
+	for i, m := range req.Messages {
+		switch {
+		case m.Role == model.RoleTool:
+			if len(open) == 0 || open[0] != m.ToolCallID {
+				return fmt.Errorf("message %d: tool result %s without matching call", i, m.ToolCallID)
+			}
+			open = open[1:]
+		case len(open) > 0:
+			return fmt.Errorf("message %d: %s before results of %v", i, m.Role, open)
+		}
+		for _, tc := range m.ToolCalls {
+			open = append(open, tc.GetCallId())
+		}
+	}
+	if len(open) > 0 {
+		return fmt.Errorf("request ends with calls %v lacking results", open)
+	}
+	return nil
+}
+
+// pad 生成随机长度的负载，使上下文持续增长。
+func (w *World) pad() string { return strings.Repeat("p", w.rng.IntN(400)) }
 
 // simModel 是由 World 随机源驱动的脚本化模型。
 type simModel struct{ w *World }
 
 func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta func(model.Delta)) (*model.Response, error) {
 	w := m.w
+	if runtime.IsSummaryRequest(req) {
+		return m.summarize(ctx, req)
+	}
+	if err := checkRequest(req); err != nil {
+		w.violations = append(w.violations, err.Error())
+	}
+	if w.faults && w.chance(0.02) {
+		w.Stats.Overflows++
+		return nil, &modelError{overflow: true}
+	}
 	if w.faults {
 		switch {
 		case w.chance(0.05):
@@ -655,15 +738,19 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 			turns++
 		}
 	}
-	resp := &model.Response{Model: "sim/m", Usage: &v1.Usage{InputTokens: uint64(len(req.Messages))}}
-	if turns < 3 && w.chance(0.6) {
+	resp := &model.Response{Model: "sim/m", Usage: &v1.Usage{InputTokens: uint64(model.EstimateRequest(req))}}
+	more := turns < 3 && w.chance(0.6)
+	if w.opts.LongRuns {
+		more = turns < 100 && w.chance(0.97)
+	}
+	if more {
 		for i := range 1 + w.rng.IntN(2) {
 			name := req.Tools[w.rng.IntN(len(req.Tools))].Name
 			id := fmt.Sprintf("call_%d", i) // 故意跨轮重复，检验运行时的 ID 改写
 			if w.chance(0.3) {
 				id = ""
 			}
-			resp.ToolCalls = append(resp.ToolCalls, &v1.ToolCall{CallId: id, Capability: name, ArgumentsJson: `{"n":1}`})
+			resp.ToolCalls = append(resp.ToolCalls, &v1.ToolCall{CallId: id, Capability: name, ArgumentsJson: `{"pad":"` + w.pad() + `"}`})
 		}
 		return resp, nil
 	}
@@ -673,4 +760,28 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 	}
 	resp.Content = model.TextBlocks(text)
 	return resp, nil
+}
+
+// summarize 是脚本化的摘要模型：可能报错、崩溃或报告超长，否则返回简短摘要。
+func (m *simModel) summarize(ctx context.Context, req *model.Request) (*model.Response, error) {
+	w := m.w
+	if n := model.EstimateRequest(req); n > simContext.Window {
+		w.violations = append(w.violations, fmt.Sprintf("summary request of ~%d tokens exceeds window %d", n, simContext.Window))
+	}
+	if w.faults {
+		switch x := w.rng.Float64(); {
+		case x < 0.05:
+			w.Stats.SummaryFaults++
+			return nil, &modelError{}
+		case x < 0.08:
+			w.Stats.SummaryFaults++
+			w.crash()
+			return nil, ctx.Err()
+		case x < 0.10:
+			w.Stats.SummaryFaults++
+			return nil, &modelError{overflow: true}
+		}
+	}
+	text := fmt.Sprintf("summary of %d bytes", len(model.Text(req.Messages[0].Content)))
+	return &model.Response{Model: "sim/m", Content: model.TextBlocks(text), Usage: &v1.Usage{InputTokens: uint64(model.EstimateRequest(req))}}, nil
 }

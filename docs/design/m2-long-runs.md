@@ -1,0 +1,148 @@
+# M2 小时级 Run：上下文压缩与长任务恢复
+
+> 状态：已实现（真实模型验证待做，见 §9）· 依赖：[M0 核心原语](./m0-core-primitives.md)、[M1 设计](./m1-device-nodes.md) · ADR-0004、ADR-0012 · 契约：`event.proto`
+
+## 1. 要解决的问题
+
+M0 的执行语义能让 Run 在故障后恢复，但有三处会让小时级 Run 跑不完：
+
+1. **上下文无界增长。** `Transcript` 把整个 Session 的历史（包括之前的 Run）原样交给模型。几十轮工具调用之后必然超过模型的上下文窗口，模型调用失败三次后 Run 就会 `RunFailed`。
+2. **单个调用结果可能很大。** 设备读一个大文件，或者沙箱输出很长，单条 `ToolResult` 就可能占满窗口。
+3. **接管上限按 Run 的整个生命周期累计。** `MaxTakeovers = 4` 的本意是阻止"毒丸 Run"反复弄崩 Worker，但一个小时级 Run 期间，Worker 滚动发布几次就会把额度用光，然后被误判失败。
+
+本设计不涉及：Session 快照（`Store.Load` 仍然读取全部日志，见 §7）、Memory、按时间或费用计算的 Run 预算。
+
+## 2. 上下文压缩是一条 Event
+
+**Compaction（上下文压缩）**：把 Session 中较早的历史替换为一段摘要。之后组装模型上下文时，用"摘要 + 摘要之后的历史"代替完整历史。
+
+```proto
+// ContextCompacted 记录一次上下文压缩：seq ≤ through_seq 的历史在模型上下文中由 summary 代替。
+message ContextCompacted {
+  string run_id = 1;
+  uint32 attempt = 2;
+  uint64 through_seq = 3;
+  repeated ContentBlock summary = 4;
+  string model = 5;
+  Usage usage = 6;
+}
+```
+
+把压缩记录为 Event，而不是每次组装上下文时临时计算，原因如下（ADR-0012）：
+
+- **重放确定。** 摘要由模型生成，结果不确定。只有把摘要写进日志，接管者、评测回放和多端看到的上下文才完全一致。
+- **符合 fencing 语义。** 生成摘要是一次耗时的模型调用，与普通模型调用一样受 Attempt fencing 约束：被中断或接管时摘要作废，什么都不提交。
+- **日志不删除任何内容。** 原始事件仍然留在日志里，审计、回放和客户端展示都不受影响。被替换的只是"模型看到的上下文"。
+
+### 投影规则（`session.Reduce` 校验）
+
+- 必须由当前 Attempt 追加（`fencedRun`），且 Run 没有未完成的调用。
+- `through_seq` 必须大于上一次压缩的 `through_seq`，并且小于当前 seq。
+- **闭合边界**：在 `through_seq` 处，此前请求的所有调用都已有结果。这样截断后的上下文不会出现"有调用请求、没有结果"的残缺配对。
+- 投影只保留 `seq > through_seq` 的 `History`，加上最新一次的摘要。这样 Worker 的内存占用随窗口有界，不再随日志增长。
+
+### 上下文组装（`runtime.Transcript`）
+
+```
+[user]  <摘要前缀说明> + summary          ← 最新一次 ContextCompacted
+...     seq > through_seq 的历史，按现有规则转换
+```
+
+多次压缩是滚动进行的：新的压缩以"上一份摘要 + 其后到新截断点之间的历史"为输入。
+
+## 3. 何时压缩、截断在哪里
+
+压缩发生在 `advance` 的同步路径上，是一个独立的 Step：
+
+```
+advance:
+  有未完成调用        → advanceCall（不变）
+  超过 MaxTurns       → RunFailed（不变）
+  需要压缩            → compact：一次摘要模型调用，提交 ContextCompacted   ← 新增
+  否则                → callModel（不变）
+```
+
+"一个 Step 只做一件事"保持不变，`internal/sim` 可以在摘要调用的前、中、后注入故障。
+
+**估算请求大小**（必须是确定性计算，不能读取外部状态）：
+
+- `model.EstimateTokens` 按内容字节数和固定的媒体开销做保守估算。
+- 如果上一条 `AssistantMessage` 之后没有发生过压缩，就用它的真实用量校准：`估算 = max(全量估算, 上次 input + 上次 output + 其后新增事件的估算)`。
+
+**触发条件**：`估算 > compact_at × window`。
+
+**截断点**须同时满足以下条件：
+- 是闭合边界（`State.CanCut`）；
+- 不是最后一个历史事件，保证最新的输入或结果保留原文；
+- "上一份摘要 + 被压缩的历史"不超过阈值，保证摘要请求本身不超限。
+
+在这些条件下，取仍能保留约 `keep_recent` tokens 原文的最晚截断点。如果做不到，或者是强制压缩，就退到满足条件的最晚截断点。积压远超阈值时，受摘要请求预算的限制，一次压缩不够，需要连续压缩多次。每次压缩都严格推进 `through_seq`，所以这个过程一定会结束。如果找不到任何截断点，就直接调用模型。
+
+**兜底**：Provider 把"上下文超长"错误映射为 `model.ErrContextOverflow`。Worker 收到这个错误后，在下一个 Step 强制压缩；估算偏低时靠这条路径恢复。超长错误仍然计入 `MaxModelErrors`：压缩缓解不了的话，Run 以 `RunFailed` 结束，而不是无限重试。
+
+## 4. 压缩策略是可替换插件
+
+```go
+// Compactor 生成摘要；运行时负责何时压缩、截断在哪里、如何提交。
+type Compactor interface {
+    Summarize(ctx context.Context, req SummaryRequest) (*model.Response, error)
+}
+```
+
+默认实现用 AgentDef 的模型（可以另行指定 `summary_model`）生成摘要。摘要指令要求保留以下内容：
+
+- 用户的目标、约束和尚未完成的事项；
+- **已经执行、产生过副作用的操作，以及结果未知的操作**，防止模型在摘要之后重复执行（例如重复发消息）；
+- 用到的 `artifact://` ID、文件路径和设备名，模型需要它们才能继续接力处理。
+
+AgentDef 新增可选配置段：
+
+```yaml
+context:
+  window: 128000            # 模型的上下文窗口（tokens）；默认 64000
+  compact_at: 0.75          # 估算超过 window 的这个比例时压缩
+  keep_recent: 16000        # 压缩后保留原文的历史量（tokens）
+  max_tool_result: 8000     # 单条调用结果在上下文中的上限（tokens），超出截断
+  summary_model: ""         # 留空表示与 model 相同
+```
+
+窗口大小属于模型的属性，但目前还没有模型元数据注册表，所以暂时跟 `model` 一起写在 AgentDef 里。这也符合"换模型只改 AgentDef"的原则。
+
+## 5. 大调用结果
+
+组装上下文时，单条 `ToolResult` 超过 `max_tool_result` 就截断成"开头部分 + `[已截断：原始约 N tokens]`"。日志中的原始内容不受影响。截断规则是确定性的，因此重放的上下文保持一致。
+
+模型需要完整内容时，应该用分段读取的能力，或者在沙箱里处理对应的 Artifact，而不是把大文件整个读进上下文。这一点写进默认指令。
+
+## 6. 接管上限改为"无进展的连续接管"
+
+`MaxTakeovers` 原来限制 Run 生命周期内的接管总数，现在改为限制**自上次进展以来的接管次数**：
+
+- **进展**指当前 Attempt 提交了 `AssistantMessage`、`ToolResult` 或 `ContextCompacted`，也就是上下文向前推进了。
+- `ToolCallStarted` **不算**进展。否则一个幂等 Capability 每次执行都弄崩 Worker 时，`ToolCallStarted → 崩溃 → 接管` 会无限循环下去。
+- 投影新增 `Run.StalledTakeovers` 用于判断上限；`Run.Takeovers` 仍然保留总数，供观测使用。
+
+这只改变投影，不改变日志。旧日志重放后得到的 `StalledTakeovers` 不会大于原来的值，所以向后兼容。
+
+## 7. 暂不做：Session 快照
+
+`Store.Load` 每次认领都读取全部日志。以每轮约 3 个事件估算，500 轮的 Run 大约 1500 个事件，对 PostgreSQL 来说是毫秒级。压测中如果 Load 成为瓶颈，再引入投影快照。快照只是性能优化，不是事实源，它的设计需要另写。
+
+## 8. 模拟测试
+
+- **长 Run 负载**：新增模拟选项，让脚本化模型持续发起调用直到上百轮（AgentDef 的 `max_turns` 相应调大），并配一个很小的 `window`，使压缩频繁发生。期间照常注入崩溃、接管、挂起/恢复、插话和中断。
+- **故障注入**：在摘要模型调用中注入报错、崩溃，以及 `ErrContextOverflow`。
+- **新增不变量**：
+  - 脚本化模型收到的每个请求，估算大小都 ≤ `window`；
+  - `Transcript` 输出的调用配对完整：每个调用请求后面都有结果；
+  - 每次压缩的 `through_seq` 都是闭合边界（由 Reduce 校验，模拟测试独立复查）。
+- **覆盖统计**：`Compactions`、压缩期间的崩溃、`ContextOverflow`、跨压缩接管、长 Run 完成数。
+- **PG 差分测试**：长 Run 负载也在 PostgreSQL 存储上运行。
+
+## 9. 实施顺序
+
+1. `event.proto` 新增 `ContextCompacted`，然后 `make gen`；Reduce 实现投影规则和闭合边界校验；`StalledTakeovers`。
+2. `model.EstimateTokens`、`ErrContextOverflow`，以及 openaicompat 的错误映射。火山方舟超长错误的具体形式，需要用真实请求确认后再写进映射。
+3. `Transcript` 支持摘要前缀和单条结果截断；Worker 增加 compact Step；AgentDef 增加 `context` 配置段。
+4. `internal/sim`：长 Run 负载、故障注入、不变量和覆盖统计；运行 `make sim` 和 `make check`。
+5. 用真实模型手工验证一次：让 assistant 连续处理大量文件，观察压缩前后的效果。

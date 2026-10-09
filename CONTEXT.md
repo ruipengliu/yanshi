@@ -72,6 +72,10 @@ _Avoid_: 消息、日志条目
 Event 中承载一段多模态内容（文本、图片、音频、视频、文件引用）的单元。
 _Avoid_: 消息体、Part
 
+**Compaction（上下文压缩）**:
+把 Session 中较早的历史替换为一段摘要，记录为 Event；之后的模型上下文由"最新摘要 + 其后的历史"组成。原始 Event 不删除。
+_Avoid_: 截断、记忆（与 Memory 区分：Compaction 只作用于本 Session 的模型上下文）
+
 **Artifact（工件）**:
 属于某个 Session、不可变、可被独立引用和下载的文件（录音、图表、表格等）；Event 中只以 `artifact://<id>` 引用，不内嵌内容。
 _Avoid_: 附件、输出、文件（泛指时）

@@ -26,6 +26,50 @@ type Def struct {
 	Capabilities []string `yaml:"capabilities"`
 	// MaxTurns 限制一个 Run 内模型调用的次数。
 	MaxTurns int `yaml:"max_turns"`
+	// Context 控制上下文窗口与压缩（docs/design/m2-long-runs.md §4）。
+	Context Context `yaml:"context"`
+}
+
+// Context 是上下文压缩策略的参数，单位均为（估算的）token。
+type Context struct {
+	// Window 是模型的上下文窗口。
+	Window int `yaml:"window"`
+	// CompactAt 是触发压缩的比例：估算请求大小超过 Window × CompactAt 时压缩。
+	CompactAt float64 `yaml:"compact_at"`
+	// KeepRecent 是压缩后保留原文的历史量。
+	KeepRecent int `yaml:"keep_recent"`
+	// MaxToolResult 是单条调用结果在上下文中的上限，超出部分截断（日志中保留全文）。
+	MaxToolResult int `yaml:"max_tool_result"`
+	// SummaryModel 是生成摘要的模型引用，留空表示与 Def.Model 相同。
+	SummaryModel string `yaml:"summary_model"`
+}
+
+// Threshold 是触发压缩的请求大小。
+func (c Context) Threshold() int { return int(float64(c.Window) * c.CompactAt) }
+
+func (c *Context) validate() error {
+	if c.Window == 0 {
+		c.Window = 64000
+	}
+	if c.CompactAt == 0 {
+		c.CompactAt = 0.75
+	}
+	if c.KeepRecent == 0 {
+		c.KeepRecent = c.Window / 8
+	}
+	if c.MaxToolResult == 0 {
+		c.MaxToolResult = c.Window / 8
+	}
+	// 保留量与单条结果都必须明显小于阈值，否则压缩后仍可能立即超限、无法收敛。
+	switch {
+	case c.Window < 0 || c.CompactAt <= 0 || c.CompactAt > 0.95:
+		return fmt.Errorf("context: window must be positive and compact_at in (0, 0.95]")
+	case c.KeepRecent < 0 || c.KeepRecent > c.Threshold()/2:
+		return fmt.Errorf("context: keep_recent must be at most half of window × compact_at")
+	case c.MaxToolResult < 0 || c.MaxToolResult > c.Window/4:
+		return fmt.Errorf("context: max_tool_result must be at most a quarter of window")
+	}
+	return nil
 }
 
 func (d *Def) Ref() *v1.AgentRef { return &v1.AgentRef{Name: d.Name, Version: d.Version} }
@@ -38,6 +82,9 @@ func (d *Def) validate() error {
 	}
 	if d.MaxTurns <= 0 {
 		d.MaxTurns = 16
+	}
+	if err := d.Context.validate(); err != nil {
+		return fmt.Errorf("agent %s@%s: %w", d.Name, d.Version, err)
 	}
 	return nil
 }
