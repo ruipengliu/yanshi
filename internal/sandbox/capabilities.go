@@ -119,7 +119,8 @@ func FormatExec(r *ExecResult) string {
 	}
 	section("stdout", r.Stdout, r.StdoutTruncated)
 	section("stderr", r.Stderr, r.StderrTruncated)
-	return b.String()
+	// 进程输出是任意字节，且按字节截断，可能不是合法的 UTF-8。
+	return strings.ToValidUTF8(b.String(), "\uFFFD")
 }
 
 // SessionOf 返回沙箱所属的 Session。
@@ -182,7 +183,7 @@ func Capabilities(p Provider, arts *artifact.Service) []nodesdk.Capability {
 			if err != nil {
 				return nil, err
 			}
-			out := string(data)
+			out := strings.ToValidUTF8(string(data), "\uFFFD")
 			if truncated {
 				out += fmt.Sprintf("\n[truncated to %d bytes]", ReadLimit)
 			}

@@ -21,6 +21,9 @@ import (
 // ArkBaseURL 是火山方舟（北京区域）的默认地址。
 const ArkBaseURL = "https://ark.cn-beijing.volces.com/api/v3"
 
+// TokenHubBaseURL 是腾讯云 TokenHub 的 OpenAI 兼容地址。
+const TokenHubBaseURL = "https://tokenhub.tencentmaas.com/v1"
+
 type Provider struct {
 	// BaseURL 不含 /chat/completions 后缀。
 	BaseURL string

@@ -10,8 +10,9 @@ make build
 make deps-up                             # 用 docker 启动 PostgreSQL
 ./bin/yanshi serve -storage postgres -blob s3   # 持久化（PostgreSQL + S3 兼容对象存储）；多个进程可共享水平扩展
 ./bin/yanshi chat -agent echo            # 离线：复述输入
-ARK_API_KEY=... ./bin/yanshi serve       # 启用火山方舟，然后 chat -agent assistant
-# 火山方舟 coding plan：另设 ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/coding/v3
+TOKENHUB_API_KEY=... ./bin/yanshi serve  # 启用腾讯云 TokenHub（assistant 默认使用 tokenhub/deepseek-v4.1-flash），然后 chat
+# Memory 的向量检索：另设 YANSHI_EMBEDDING_MODEL=tokenhub/kinfra-text-embedding-0.6b（不设时按文本相似度检索）
+# 也支持火山方舟（ARK_API_KEY）与私有化 OpenAI 兼容服务（YANSHI_LOCAL_BASE_URL）
 ```
 
 接入一台"电脑"（把某个目录作为 Node 暴露，`write_file` 需审批）：

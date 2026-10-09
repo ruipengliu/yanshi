@@ -39,6 +39,12 @@ func (l *Log) Append(ctx context.Context, sessionID string, expectedSeq uint64, 
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
+	// 与持久化实现一致：无法序列化的事件（如含非法 UTF-8）一律拒绝，而不是只在内存中存在。
+	for _, e := range events {
+		if _, err := proto.Marshal(e); err != nil {
+			return 0, err
+		}
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	s := l.stream(sessionID)

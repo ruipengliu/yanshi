@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	v1 "yanshi/gen/yanshi/v1"
 )
@@ -124,9 +125,21 @@ func DescribeMedia(m *v1.Media) string {
 	return fmt.Sprintf("[artifact %s: %s, %s, %s]", id, m.GetName(), m.GetMimeType(), size)
 }
 
-// TextBlocks 把一段文本包装为内容块。
+// TextBlocks 把一段文本包装为内容块。来自外部的字节（进程输出、文件、按字节截断的文本）可能不是
+// 合法的 UTF-8，而 protobuf 拒绝序列化这样的字符串，会使 Event 无法写入日志，因此在此替换非法字节。
 func TextBlocks(s string) []*v1.ContentBlock {
-	return []*v1.ContentBlock{{Kind: &v1.ContentBlock_Text{Text: &v1.Text{Text: s}}}}
+	return []*v1.ContentBlock{{Kind: &v1.ContentBlock_Text{Text: &v1.Text{Text: strings.ToValidUTF8(s, "\uFFFD")}}}}
+}
+
+// Truncate 把 s 截断到至多 n 字节，截断处落在字符边界上。
+func Truncate(s string, n int) (string, bool) {
+	if len(s) <= n {
+		return s, false
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n], true
 }
 
 // Embed 中 model 是完整的 "provider/model" 引用；供应商须实现 Embedder。

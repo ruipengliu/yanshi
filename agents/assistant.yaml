@@ -1,4 +1,5 @@
 # 通用助手。model 使用 "provider/model" 引用：
+#   tokenhub/<模型ID>       腾讯云 TokenHub（需 TOKENHUB_API_KEY）
 #   ark/<模型ID或接入点ID>  火山方舟（需 ARK_API_KEY；coding plan 另设
 #                          ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/coding/v3）
 #   local/<模型名>          私有化 OpenAI 兼容推理服务（需 YANSHI_LOCAL_BASE_URL）
@@ -7,7 +8,7 @@
 # "sandbox:<glob>" 表示本会话云端沙箱中的能力（docs/design/m2-sandbox.md，需 serve -sandbox docker）。
 name: assistant
 version: "1"
-model: ark/doubao-seed-2.1-lite
+model: tokenhub/deepseek-v4.1-flash
 instructions: |
   你是一个乐于助人的助手，可以使用用户设备上的能力。回答简洁准确。
   需要当前时间时调用 clock_now。设备离线时调用会等待其上线，请告知用户。
@@ -27,7 +28,7 @@ memory:
   recall: 8
 # context 控制上下文压缩（docs/design/m2-long-runs.md §4）。
 context:
-  window: 128000   # 保守取值；模型实际窗口确认后再调整
+  window: 128000   # 保守取值：实测窗口不小于 200k，压缩早一些只会更省
   compact_at: 0.75
   keep_recent: 16000
   max_tool_result: 8000

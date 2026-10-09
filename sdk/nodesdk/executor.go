@@ -8,8 +8,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	v1 "yanshi/gen/yanshi/v1"
 )
@@ -157,7 +159,7 @@ func (e *Executor) Execute(ctx context.Context, inv *v1.Invoke) (*v1.InvokeResul
 			}
 			res = errorResult(id, err.Error())
 		} else {
-			res = &v1.InvokeResult{CallId: id, Content: content}
+			res = &v1.InvokeResult{CallId: id, Content: validUTF8(content)}
 		}
 	}
 	if err := e.ledger.Put(id, &Record{State: StateDone, Result: res, SessionID: sid, UpdatedAt: time.Now()}); err != nil {
@@ -177,3 +179,14 @@ func (e *Executor) Cancel(callID string) {
 
 // Prune 按保留期清理账本。
 func (e *Executor) Prune(before time.Time) error { return e.ledger.Prune(before) }
+
+// validUTF8 替换文本中的非法 UTF-8 字节：处理函数可能返回按字节截断的文件内容，
+// 而 protobuf 拒绝序列化非法 UTF-8，结果将无法回传，调用只能等到超时。
+func validUTF8(blocks []*v1.ContentBlock) []*v1.ContentBlock {
+	for _, b := range blocks {
+		if t := b.GetText(); t != nil && !utf8.ValidString(t.GetText()) {
+			t.Text = strings.ToValidUTF8(t.GetText(), "\uFFFD")
+		}
+	}
+	return blocks
+}

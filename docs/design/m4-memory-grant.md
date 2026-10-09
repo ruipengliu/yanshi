@@ -1,6 +1,6 @@
 # M4 Memory 与 Grant
 
-> 状态：已实现（向量检索待用真实嵌入模型验证，§10 第 6 步）· 依赖：ADR-0003、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[鉴权](./auth.md) · ADR-0016
+> 状态：已实现，已用真实模型验证（§10 第 6 步）· 依赖：ADR-0003、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[鉴权](./auth.md) · ADR-0016
 
 ## 1. 目标
 
@@ -120,4 +120,4 @@ Grant { id, end_user, from_business_line, to_business_line, categories[], create
 3. `MemoryRecalled` 事件；Worker 在 Run 开始时召回；上下文组装；能力 `memory__save` / `memory__forget` / `memory__search`；AgentDef `memory:` 配置段。
 4. 接入删除：Janitor 按 Session 删除 Memory，注销账号时删除 Memory 与 Grant；模拟测试加入 Memory 的删除不变量与召回的确定性回放。
 5. API：Memory 列表、搜索、删除，Grant 的创建与撤销，访问记录；扩展授权矩阵与跨业务线召回矩阵。
-6. 网络可用后：用 `doubao-embedding-vision` 和真实对话验证召回质量。
+6. 用真实模型验证召回质量。**已验证（2026-10-09）**：嵌入模型改用 TokenHub `kinfra-text-embedding-0.6b`（1024 维，在相关与无关记忆之间的区分度优于 4b 版本），对话模型 `deepseek-v4.1-flash`。模型能主动把称呼、同事邮箱、回答偏好分别存为三个类别；新 Session 能通过向量召回；其他业务线在授权前读不到、只授权"人际关系"后只读到这一类、撤销后从下一个 Run 起读不到；访问记录中能看到读取方。

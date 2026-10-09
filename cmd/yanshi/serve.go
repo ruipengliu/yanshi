@@ -113,7 +113,8 @@ func openStorage(ctx context.Context, kind, dsn string, clk clock.Clock, logger 
 // gateway 按环境变量配置模型供应商：
 //
 //	echo   始终可用
-//	ark    ARK_API_KEY（可选 ARK_BASE_URL）
+//	ark       ARK_API_KEY（可选 ARK_BASE_URL）
+//	tokenhub  TOKENHUB_API_KEY（可选 TOKENHUB_BASE_URL），腾讯云 TokenHub 的 OpenAI 兼容接口
 //	local  YANSHI_LOCAL_BASE_URL（可选 YANSHI_LOCAL_API_KEY），私有化 OpenAI 兼容推理服务
 func gateway(logger *slog.Logger) *model.Gateway {
 	gw := model.NewGateway()
@@ -126,6 +127,11 @@ func gateway(logger *slog.Logger) *model.Gateway {
 		}
 		gw.Register("ark", &openaicompat.Provider{BaseURL: base, APIKey: key})
 		logger.Info("model provider configured", "provider", "ark", "base_url", base)
+	}
+	if key := os.Getenv("TOKENHUB_API_KEY"); key != "" {
+		base := envOr("TOKENHUB_BASE_URL", openaicompat.TokenHubBaseURL)
+		gw.Register("tokenhub", &openaicompat.Provider{BaseURL: base, APIKey: key})
+		logger.Info("model provider configured", "provider", "tokenhub", "base_url", base)
 	}
 	if base := os.Getenv("YANSHI_LOCAL_BASE_URL"); base != "" {
 		gw.Register("local", &openaicompat.Provider{BaseURL: base, APIKey: os.Getenv("YANSHI_LOCAL_API_KEY")})

@@ -158,7 +158,7 @@ func fileCapabilities(root string, arts *nodesdk.Artifacts) []nodesdk.Capability
 				defer f.Close()
 				b := make([]byte, 64<<10)
 				n, _ := f.Read(b)
-				return textBlocks(string(b[:n])), nil
+				return textBlocks(strings.ToValidUTF8(string(b[:n]), "\uFFFD")), nil
 			},
 		},
 		{

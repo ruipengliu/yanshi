@@ -65,6 +65,9 @@ type Config struct {
 	ApprovalTimeout time.Duration
 	// MaxModelErrors 是同一 Attempt 内连续模型错误的上限，超过则 RunFailed。
 	MaxModelErrors int
+	// StepErrorBudget 是同一 Run 的 Step 连续出错多久后判为失败（默认 2 分钟）。避免确定性的错误
+	// （如无法序列化的事件）使 Run 永远停在 running：用户既得不到结果，也看不到失败。
+	StepErrorBudget time.Duration
 	// IdleWait 是 Run 循环在无事可做时的等待时间（未配置 Idle 时）。
 	IdleWait time.Duration
 	// Idle 非空时，同一进程的 Worker 共享它：空闲时至多一个 Worker 轮询队列（见 IdleGate）。
@@ -86,6 +89,9 @@ func (c *Config) defaults() {
 	}
 	if c.IdleWait == 0 {
 		c.IdleWait = 100 * time.Millisecond
+	}
+	if c.StepErrorBudget == 0 {
+		c.StepErrorBudget = 2 * time.Minute
 	}
 	if c.Live == nil {
 		c.Live = live.Discard{}
@@ -110,6 +116,8 @@ type Worker struct {
 	modelErrors int
 	// forceCompact 在模型报告上下文超长后置位：下一步无论估算如何都先压缩。
 	forceCompact bool
+	// failingSince 是当前 Run 的 Step 开始连续出错的时间；零值表示上一步成功。
+	failingSince time.Time
 }
 
 func New(cfg Config) *Worker {
@@ -147,7 +155,7 @@ func (w *Worker) Run(ctx context.Context) {
 }
 
 func (w *Worker) drop() {
-	w.lease, w.st, w.runID, w.attempt, w.modelErrors, w.forceCompact = nil, nil, "", 0, 0, false
+	w.lease, w.st, w.runID, w.attempt, w.modelErrors, w.forceCompact, w.failingSince = nil, nil, "", 0, 0, false, time.Time{}
 }
 
 // Step 推进一件工作；返回 false 表示当前无事可做。
@@ -202,7 +210,18 @@ func (w *Worker) Step(ctx context.Context) (bool, error) {
 	if !w.owns(r) {
 		return true, w.startAttempt(ctx, r)
 	}
-	return true, w.advance(ctx, r)
+	err := w.advance(ctx, r)
+	if err == nil || ctx.Err() != nil {
+		w.failingSince = time.Time{}
+		return true, err
+	}
+	if w.failingSince.IsZero() {
+		w.failingSince = w.now()
+	} else if w.now().Sub(w.failingSince) >= w.cfg.StepErrorBudget {
+		w.failingSince = time.Time{}
+		return true, w.fail(ctx, r, "internal error: "+err.Error())
+	}
+	return true, err
 }
 
 func (w *Worker) owns(r *session.Run) bool {
@@ -283,6 +302,7 @@ func (w *Worker) startAttempt(ctx context.Context, r *session.Run) error {
 }
 
 func (w *Worker) fail(ctx context.Context, r *session.Run, reason string) error {
+	reason = strings.ToValidUTF8(reason, "\uFFFD")
 	w.cfg.Logger.Warn("run failed", "session", w.st.SessionID, "run", r.ID, "reason", reason)
 	e := &v1.Event{Payload: &v1.Event_RunFailed{RunFailed: &v1.RunFailed{RunId: r.ID, Attempt: r.Attempt, Reason: reason}}}
 	err := w.cfg.Store.Commit(ctx, w.st, e)
@@ -422,9 +442,9 @@ func approvalSummary(t *capability.Tool, c *v1.ToolCall) string {
 	if t.NodeID != "" && !strings.HasPrefix(t.Spec.Name, capability.SandboxLabel+"__") {
 		where = "设备 " + strings.SplitN(t.Spec.Name, "__", 2)[0]
 	}
-	args := c.GetArgumentsJson()
-	if len(args) > 200 {
-		args = args[:200] + "…"
+	args, cut := model.Truncate(c.GetArgumentsJson(), 200)
+	if cut {
+		args += "…"
 	}
 	return fmt.Sprintf("在%s上执行 %s，参数 %s", where, t.Spec.Name, args)
 }

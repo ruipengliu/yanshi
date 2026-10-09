@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -10,8 +11,10 @@ import (
 	"yanshi/internal/agentdef"
 	"yanshi/internal/capability"
 	"yanshi/internal/clock"
+	"yanshi/internal/eventlog"
 	"yanshi/internal/eventlog/memlog"
 	"yanshi/internal/ids"
+	"yanshi/internal/memory"
 	"yanshi/internal/model"
 	"yanshi/internal/model/echo"
 	"yanshi/internal/session"
@@ -72,4 +75,48 @@ func TestIdleGateBoundsPollingAndWakesOnEnqueue(t *testing.T) {
 
 func sessionCreated() *v1.Event {
 	return &v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u"}}}
+}
+
+// brokenMemory 的召回总是失败：模拟每次都在同一处失败的 Step。
+type brokenMemory struct{}
+
+func (brokenMemory) Search(context.Context, string, string, string, int) ([]memory.Hit, error) {
+	return nil, errors.New("store unavailable")
+}
+func (brokenMemory) RecordAccess(context.Context, []memory.Access) error { return nil }
+
+func TestPoisonStepFailsRunAfterBudget(t *testing.T) {
+	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	store := &session.Store{Log: memlog.New(), IDs: ids.Sequential("e"), Clock: clk}
+	q := memqueue.New(clk)
+	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "p", Version: "1", Model: "echo/any", Memory: agentdef.MemoryConfig{Recall: 3}})
+	gw := model.NewGateway()
+	gw.Register("echo", echo.Provider{})
+	w := New(Config{ID: "w", Store: store, Queue: q, Agents: agents, Model: gw, Memory: brokenMemory{},
+		Catalog: &capability.Catalog{Local: capability.NewRegistry()}, StepErrorBudget: time.Minute})
+	ctx := context.Background()
+	st := &session.State{SessionID: "s"}
+	created := &v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u",
+		Agent: &v1.AgentRef{Name: "p", Version: "1"}}}}
+	if err := store.Commit(ctx, st, created,
+		&v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r", Input: model.TextBlocks("go")}}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = q.Enqueue(ctx, "s")
+	errs := 0
+	for range 50 {
+		if _, err := w.Step(ctx); err != nil {
+			errs++
+		}
+		clk.Advance(10 * time.Second)
+		_ = store.Sync(ctx, st)
+		if r := st.Run("r"); r != nil && r.Status == session.RunFailed {
+			if errs < 3 {
+				evs, _ := eventlog.ReadAll(ctx, store.Log, "s", 0)
+				t.Fatalf("failed after %d errors; transient errors deserve retries: %v", errs, evs[len(evs)-1])
+			}
+			return
+		}
+	}
+	t.Fatalf("run stuck after %d step errors", errs)
 }

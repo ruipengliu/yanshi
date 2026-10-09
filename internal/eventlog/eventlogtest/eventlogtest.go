@@ -147,6 +147,17 @@ func Run(t *testing.T, newLog func(t *testing.T) eventlog.Log) {
 		}
 	})
 
+	t.Run("RejectsUnserializableEvents", func(t *testing.T) {
+		l := newLog(t)
+		bad := &v1.Event{Payload: &v1.Event_Steered{Steered: &v1.Steered{RunId: "r\xff"}}}
+		if _, err := l.Append(ctx, "s", 0, ev("a"), bad); err == nil {
+			t.Fatal("accepted an event with invalid UTF-8")
+		}
+		if got, _ := eventlog.ReadAll(ctx, l, "s", 0); len(got) != 0 {
+			t.Fatalf("partial append: %d events", len(got))
+		}
+	})
+
 	t.Run("DeleteRemovesOnlyThatSession", func(t *testing.T) {
 		l := newLog(t)
 		_, _ = l.Append(ctx, "s", 0, ev("a"), ev("b"))
