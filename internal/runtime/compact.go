@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
@@ -204,7 +205,10 @@ func (w *Worker) compact(ctx context.Context, r *session.Run, def *agentdef.Def,
 		in.Model = def.Context.SummaryModel
 	}
 	var resp *model.Response
-	err := w.during(ctx, r, func(ctx context.Context) error {
+	start := time.Now()
+	var err error
+	defer func() { observeModel("summary", start, resp, err) }()
+	err = w.during(ctx, r, func(ctx context.Context) error {
 		var err error
 		resp, err = w.cfg.Compactor.Summarize(ctx, in)
 		if err == nil && model.Text(resp.Content) == "" {

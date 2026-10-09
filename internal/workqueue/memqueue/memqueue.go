@@ -27,11 +27,17 @@ type Queue struct {
 	mu    sync.Mutex
 	items []*item
 	next  uint64
+	ready chan struct{}
 }
 
-func New(c clock.Clock) *Queue { return &Queue{clock: c} }
+func New(c clock.Clock) *Queue { return &Queue{clock: c, ready: make(chan struct{}, 1)} }
 
-var _ workqueue.Queue = (*Queue)(nil)
+var (
+	_ workqueue.Queue    = (*Queue)(nil)
+	_ workqueue.Signaler = (*Queue)(nil)
+)
+
+func (q *Queue) Ready() <-chan struct{} { return q.ready }
 
 func (q *Queue) find(id string) (int, *item) {
 	for i, it := range q.items {
@@ -45,6 +51,12 @@ func (q *Queue) find(id string) (int, *item) {
 func (q *Queue) Enqueue(_ context.Context, sessionID string) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	defer func() {
+		select {
+		case q.ready <- struct{}{}:
+		default:
+		}
+	}()
 	if _, it := q.find(sessionID); it != nil {
 		if it.leased {
 			it.dirty = true

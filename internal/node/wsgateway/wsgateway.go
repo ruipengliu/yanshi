@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/metrics"
 	"yanshi/internal/node"
 )
 
@@ -82,6 +83,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// 断开时用独立 context 标记离线，避免请求 context 已取消导致漏标。
 	defer g.Hub.Disconnect(context.WithoutCancel(ctx), nc)
+	metrics.NodesConnected.Inc()
+	defer metrics.NodesConnected.Dec()
 	if err := c.send(ctx, &v1.GatewayMessage{Msg: &v1.GatewayMessage_Welcome{Welcome: &v1.Welcome{
 		NodeId: nc.NodeID, Label: nc.Label,
 	}}}); err != nil {

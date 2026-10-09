@@ -38,6 +38,7 @@ import (
 	"yanshi/internal/auth"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/live"
+	"yanshi/internal/metrics"
 	"yanshi/internal/model"
 	"yanshi/internal/node"
 	"yanshi/internal/service"
@@ -92,12 +93,36 @@ func (s *Server) Handler() http.Handler {
 	}
 	api := http.NewServeMux()
 	for p, h := range s.routes() {
-		api.HandleFunc(p, h)
+		api.Handle(p, instrument(p, h))
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/v1/", auth.Middleware(v, api))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	return mux
+}
+
+// statusWriter 记录响应码；保留 Flush 以支持 SSE。
+type statusWriter struct {
+	http.ResponseWriter
+	code int
+}
+
+func (w *statusWriter) WriteHeader(code int) { w.code = code; w.ResponseWriter.WriteHeader(code) }
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// instrument 按路由模式记录请求数与耗时（模式而非路径，避免标签基数随 ID 增长）。
+func instrument(route string, h http.HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		sw := &statusWriter{ResponseWriter: w, code: http.StatusOK}
+		h(sw, r)
+		metrics.HTTPRequests.WithLabelValues(route, strconv.Itoa(sw.code)).Inc()
+		metrics.HTTPDuration.WithLabelValues(route).Observe(metrics.Since(start))
+	})
 }
 
 func principal(r *http.Request) auth.Principal {

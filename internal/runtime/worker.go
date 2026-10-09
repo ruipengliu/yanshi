@@ -22,6 +22,7 @@ import (
 	"yanshi/internal/capability"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/live"
+	"yanshi/internal/metrics"
 	"yanshi/internal/model"
 	"yanshi/internal/node"
 	"yanshi/internal/session"
@@ -62,8 +63,10 @@ type Config struct {
 	ApprovalTimeout time.Duration
 	// MaxModelErrors 是同一 Attempt 内连续模型错误的上限，超过则 RunFailed。
 	MaxModelErrors int
-	// IdleWait 是 Run 循环在无事可做时的等待时间。
+	// IdleWait 是 Run 循环在无事可做时的等待时间（未配置 Idle 时）。
 	IdleWait time.Duration
+	// Idle 非空时，同一进程的 Worker 共享它：空闲时至多一个 Worker 轮询队列（见 IdleGate）。
+	Idle *IdleGate
 }
 
 func (c *Config) defaults() {
@@ -98,6 +101,8 @@ type Worker struct {
 	lease *workqueue.Lease
 	st    *session.State
 	// 本 Worker 当前持有的 Attempt。
+	// renewed 是上次续约（或认领）的时间。
+	renewed     time.Time
 	runID       string
 	attempt     uint32
 	modelErrors int
@@ -115,6 +120,17 @@ func (w *Worker) ID() string { return w.cfg.ID }
 // Run 持续执行 Step 直到 ctx 结束。
 func (w *Worker) Run(ctx context.Context) {
 	for ctx.Err() == nil {
+		if w.lease == nil && w.cfg.Idle != nil {
+			w.cfg.Idle.idle(ctx, func() bool {
+				did, err := w.Step(ctx)
+				if err != nil && ctx.Err() == nil {
+					w.cfg.Logger.Warn("worker step failed", "worker", w.cfg.ID, "err", err)
+				}
+				// 认领到工作（持有租约）或有进展时离开门控；出错时留在门控内退避，避免空转。
+				return w.lease != nil || (did && err == nil)
+			})
+			continue
+		}
 		did, err := w.Step(ctx)
 		if err != nil && ctx.Err() == nil {
 			w.cfg.Logger.Warn("worker step failed", "worker", w.cfg.ID, "err", err)
@@ -137,26 +153,36 @@ func (w *Worker) Step(ctx context.Context) (bool, error) {
 	if w.lease == nil {
 		l, err := w.cfg.Queue.Claim(ctx, w.cfg.ID, w.cfg.LeaseTTL)
 		if errors.Is(err, workqueue.ErrEmpty) {
+			metrics.QueueClaims.WithLabelValues("empty").Inc()
 			return false, nil
 		}
 		if err != nil {
+			metrics.QueueClaims.WithLabelValues("error").Inc()
 			return false, err
 		}
+		metrics.QueueClaims.WithLabelValues("ok").Inc()
 		w.drop()
-		w.lease = l
-	} else if err := w.cfg.Queue.Renew(ctx, w.lease, w.cfg.LeaseTTL); err != nil {
-		w.drop()
-		if errors.Is(err, workqueue.ErrLeaseLost) {
-			return true, nil
+		w.lease, w.renewed = l, w.now()
+	} else if w.now().Sub(w.renewed) >= w.cfg.LeaseTTL/3 {
+		// 距上次续约不足 TTL/3 时租约必然仍有效，跳过续约以减少每步的数据库往返（m2-scale-test）。
+		if err := w.cfg.Queue.Renew(ctx, w.lease, w.cfg.LeaseTTL); err != nil {
+			w.drop()
+			if errors.Is(err, workqueue.ErrLeaseLost) {
+				return true, nil
+			}
+			return false, err
 		}
-		return false, err
+		w.renewed = w.now()
 	}
 
 	if w.st == nil {
+		start := time.Now()
 		st, err := w.cfg.Store.Load(ctx, w.lease.SessionID)
 		if err != nil {
 			return false, err
 		}
+		metrics.SessionLoad.WithLabelValues().Observe(metrics.Since(start))
+		metrics.SessionLoadEvents.WithLabelValues().Observe(float64(st.Seq))
 		w.st = st
 	} else if err := w.cfg.Store.Sync(ctx, w.st); err != nil {
 		return false, err
@@ -193,8 +219,12 @@ func (w *Worker) tryCommit(ctx context.Context, events ...*v1.Event) (bool, erro
 	for range 3 {
 		err := w.cfg.Store.Commit(ctx, w.st, events...)
 		if !errors.Is(err, eventlog.ErrConflict) {
+			if err == nil {
+				w.observeCommitted(events)
+			}
 			return err == nil, err
 		}
+		metrics.CommitConflicts.WithLabelValues().Inc()
 		if err := w.cfg.Store.Sync(ctx, w.st); err != nil {
 			return false, err
 		}
@@ -227,6 +257,8 @@ func (w *Worker) startAttempt(ctx context.Context, r *session.Run) error {
 		return w.fail(ctx, r, fmt.Sprintf("exceeded %d takeovers without progress", w.cfg.MaxTakeovers))
 	}
 	next := r.Attempt + 1
+	// 提交前确定 Attempt 的类型：提交后投影中的状态已是 running。
+	kind := map[session.RunStatus]string{session.RunQueued: "start", session.RunRunning: "takeover", session.RunSuspended: "resume"}[r.Status]
 	err := w.cfg.Store.Commit(ctx, w.st, &v1.Event{Payload: &v1.Event_AttemptStarted{
 		AttemptStarted: &v1.AttemptStarted{RunId: r.ID, Attempt: next, WorkerId: w.cfg.ID, LiveEndpoint: w.cfg.LiveEndpoint},
 	}})
@@ -237,17 +269,20 @@ func (w *Worker) startAttempt(ctx context.Context, r *session.Run) error {
 		return err
 	}
 	w.runID, w.attempt, w.modelErrors, w.forceCompact = r.ID, next, 0, false
+	metrics.Attempts.WithLabelValues(kind).Inc()
 	w.cfg.Logger.Info("attempt started", "worker", w.cfg.ID, "session", w.st.SessionID, "run", r.ID, "attempt", next)
 	return nil
 }
 
 func (w *Worker) fail(ctx context.Context, r *session.Run, reason string) error {
 	w.cfg.Logger.Warn("run failed", "session", w.st.SessionID, "run", r.ID, "reason", reason)
-	err := w.cfg.Store.Commit(ctx, w.st, &v1.Event{Payload: &v1.Event_RunFailed{
-		RunFailed: &v1.RunFailed{RunId: r.ID, Attempt: r.Attempt, Reason: reason},
-	}})
+	e := &v1.Event{Payload: &v1.Event_RunFailed{RunFailed: &v1.RunFailed{RunId: r.ID, Attempt: r.Attempt, Reason: reason}}}
+	err := w.cfg.Store.Commit(ctx, w.st, e)
 	if errors.Is(err, eventlog.ErrConflict) {
 		return nil
+	}
+	if err == nil {
+		w.observeCommitted([]*v1.Event{e})
 	}
 	return err
 }
@@ -396,6 +431,8 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 	}
 
 	var resp *model.Response
+	start := time.Now()
+	defer func() { observeModel("turn", start, resp, err) }()
 	err = w.during(ctx, r, func(ctx context.Context) error {
 		var err error
 		resp, err = w.cfg.Model.Generate(ctx, req, func(d model.Delta) {
@@ -487,6 +524,40 @@ func (w *Worker) modelFailed(ctx context.Context, r *session.Run, what string, e
 		return w.fail(ctx, r, fmt.Sprintf("%s error: %v", what, err))
 	}
 	return fmt.Errorf("%s: %w", what, err)
+}
+
+func observeModel(kind string, start time.Time, resp *model.Response, err error) {
+	outcome := "ok"
+	if err != nil {
+		outcome = "error"
+	}
+	metrics.ModelCallDuration.WithLabelValues(kind, outcome).Observe(metrics.Since(start))
+	if resp != nil && resp.Usage != nil {
+		metrics.ModelTokens.WithLabelValues("input").Add(float64(resp.Usage.GetInputTokens()))
+		metrics.ModelTokens.WithLabelValues("output").Add(float64(resp.Usage.GetOutputTokens()))
+	}
+}
+
+// observeCommitted 为刚提交的事件记录指标：Run 终态（时长按事件时间计算）与上下文压缩。
+func (w *Worker) observeCommitted(events []*v1.Event) {
+	for _, e := range events {
+		var runID, status string
+		switch p := e.GetPayload().(type) {
+		case *v1.Event_RunCompleted:
+			runID, status = p.RunCompleted.GetRunId(), "completed"
+		case *v1.Event_RunFailed:
+			runID, status = p.RunFailed.GetRunId(), "failed"
+		case *v1.Event_ContextCompacted:
+			metrics.Compactions.WithLabelValues().Inc()
+			continue
+		default:
+			continue
+		}
+		metrics.RunsFinished.WithLabelValues(status).Inc()
+		if r := w.st.Run(runID); r != nil {
+			metrics.RunDuration.WithLabelValues(status).Observe(e.GetTime().AsTime().Sub(r.RequestedAt).Seconds())
+		}
+	}
 }
 
 var errSuperseded = errors.New("attempt superseded")

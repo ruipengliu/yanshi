@@ -1,0 +1,8 @@
+# 压测用 Agent（docs/design/m2-scale-test.md）：模拟模型，每个 Run 先调用 2 次工具再回复。
+name: bench
+version: "1"
+model: bench/latency=200ms,turns=2,tool=clock_now
+instructions: ""
+capabilities:
+  - clock_now
+max_turns: 8

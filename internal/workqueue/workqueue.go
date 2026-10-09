@@ -44,3 +44,9 @@ type Queue interface {
 	// （除非认领后又被 Enqueue）；done=false 表示立即可被他人认领。
 	Release(ctx context.Context, lease *Lease, done bool) error
 }
+
+// Signaler 是 Queue 的可选接口：Ready 返回的通道在可能有新工作入队时收到信号。信号只是提示，
+// 可能合并或丢失；挂起到期与租约过期也不会发信号，因此等待者仍须定时轮询兜底。
+type Signaler interface {
+	Ready() <-chan struct{}
+}

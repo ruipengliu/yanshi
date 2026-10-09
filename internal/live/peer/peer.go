@@ -19,6 +19,7 @@ import (
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/live"
+	"yanshi/internal/metrics"
 )
 
 // Path 是内部增量接口的路径前缀，其后是 Session ID。
@@ -197,6 +198,8 @@ func (b *Bus) stream(ctx context.Context, endpoint, sessionID string, out chan<-
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("live peer %s: http %d", endpoint, resp.StatusCode)
 	}
+	metrics.LivePeerStreams.Inc()
+	defer metrics.LivePeerStreams.Dec()
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	for sc.Scan() {

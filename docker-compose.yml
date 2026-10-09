@@ -2,6 +2,8 @@
 services:
   postgres:
     image: postgres:16.4-alpine
+    # pg_stat_statements 用于性能分析（scripts/bench.sh 输出每类查询的次数与耗时）。
+    command: postgres -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all
     environment:
       POSTGRES_USER: yanshi
       POSTGRES_PASSWORD: yanshi

@@ -12,6 +12,7 @@ const usage = `usage:
   yanshi node  [flags]   模拟电脑上的 HostApp，把共享目录作为 Node 接入
   yanshi keygen [flags]  生成开发用的业务线密钥对（serve -auth jwt）
   yanshi token  [flags]  用业务线私钥签发令牌
+  yanshi bench  [flags]  压测客户端（docs/design/m2-scale-test.md）
 
 运行 yanshi <command> -h 查看参数。`
 
@@ -32,6 +33,8 @@ func main() {
 		err = keygen(os.Args[2:])
 	case "token":
 		err = tokenCmd(os.Args[2:])
+	case "bench":
+		err = benchCmd(os.Args[2:])
 	default:
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)

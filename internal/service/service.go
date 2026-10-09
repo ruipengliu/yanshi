@@ -10,6 +10,7 @@ import (
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
 	"yanshi/internal/eventlog"
+	"yanshi/internal/metrics"
 	"yanshi/internal/session"
 	"yanshi/internal/workqueue"
 )
@@ -148,6 +149,7 @@ func (s *Service) Interrupt(ctx context.Context, sessionID, runID string) error 
 			RunInterrupted: &v1.RunInterrupted{RunId: runID, By: "user"},
 		}})
 		if err == nil {
+			metrics.RunsFinished.WithLabelValues("interrupted").Inc()
 			return s.cancelDispatched(ctx, r)
 		}
 		if !errors.Is(err, eventlog.ErrConflict) {

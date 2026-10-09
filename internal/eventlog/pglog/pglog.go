@@ -52,7 +52,8 @@ func (l *Log) Append(ctx context.Context, sessionID string, expectedSeq uint64, 
 		for i, b := range rows {
 			batch.Queue(`INSERT INTO events (session_id, seq, data) VALUES ($1, $2, $3)`, sessionID, int64(expectedSeq)+int64(i)+1, b)
 		}
-		batch.Queue(`SELECT pg_notify($1, $2)`, pg.ChannelEvents, sessionID)
+		// 负载带上新的末尾 seq，等待者无需再查询（pg.Notifier.WaitAbove）。
+		batch.Queue(`SELECT pg_notify($1, $2)`, pg.ChannelEvents, fmt.Sprintf("%s:%d", sessionID, expectedSeq+uint64(len(events))))
 		return tx.SendBatch(ctx, batch).Close()
 	})
 	if pg.IsUniqueViolation(err) {
@@ -96,11 +97,7 @@ func (l *Log) head(ctx context.Context, sessionID string) (uint64, error) {
 }
 
 func (l *Log) Wait(ctx context.Context, sessionID string, after uint64) (uint64, error) {
-	var head uint64
-	err := l.notifier.WaitFor(ctx, pg.ChannelEvents, sessionID, func(ctx context.Context) (bool, error) {
-		h, err := l.head(ctx, sessionID)
-		head = h
-		return h > after, err
+	return l.notifier.WaitAbove(ctx, pg.ChannelEvents, sessionID, after, func(ctx context.Context) (uint64, error) {
+		return l.head(ctx, sessionID)
 	})
-	return head, err
 }

@@ -29,7 +29,9 @@ import (
 	"yanshi/internal/ids"
 	"yanshi/internal/live"
 	"yanshi/internal/live/peer"
+	"yanshi/internal/metrics"
 	"yanshi/internal/model"
+	"yanshi/internal/model/bench"
 	"yanshi/internal/model/echo"
 	"yanshi/internal/model/openaicompat"
 	"yanshi/internal/node"
@@ -78,10 +80,14 @@ func openStorage(ctx context.Context, kind, dsn string, clk clock.Clock, logger 
 			pool.Close()
 			return backends{}, nil, fmt.Errorf("migrate: %w", err)
 		}
+		metrics.RegisterPool(func() (int32, int32, int32, int64, int64, time.Duration) {
+			s := pool.Stat()
+			return s.AcquiredConns(), s.TotalConns(), s.MaxConns(), s.AcquireCount(), s.EmptyAcquireCount(), s.AcquireDuration()
+		})
 		n := pg.NewNotifier(pool, logger)
 		nctx, cancel := context.WithCancel(ctx)
 		go n.Run(nctx)
-		b := backends{pglog.New(pool, n), pgqueue.New(pool, clk, pgqueue.Sessions), pgnode.NewDirectory(pool, clk), pgnode.NewInbox(pool, n),
+		b := backends{pglog.New(pool, n), pgqueue.New(pool, clk, pgqueue.Sessions).WithNotifier(n), pgnode.NewDirectory(pool, clk), pgnode.NewInbox(pool, n),
 			pgqueue.New(pool, clk, pgqueue.Sandboxes), pgsandbox.Ledger{Pool: pool}, pgsandbox.Activity{Pool: pool},
 			pgartifact.Meta{Pool: pool}}
 		return b, func() { cancel(); pool.Close() }, nil
@@ -97,6 +103,7 @@ func openStorage(ctx context.Context, kind, dsn string, clk clock.Clock, logger 
 func gateway(logger *slog.Logger) *model.Gateway {
 	gw := model.NewGateway()
 	gw.Register("echo", echo.Provider{})
+	gw.Register("bench", bench.Provider{})
 	if key := os.Getenv("ARK_API_KEY"); key != "" {
 		base := os.Getenv("ARK_BASE_URL")
 		if base == "" {
@@ -135,8 +142,9 @@ func serve(args []string) error {
 	s3Endpoint := fs.String("s3-endpoint", envOr("YANSHI_S3_ENDPOINT", "127.0.0.1:58333"), "S3 地址 host:port（blob=s3）")
 	s3Bucket := fs.String("s3-bucket", envOr("YANSHI_S3_BUCKET", "yanshi-artifacts"), "S3 桶")
 	s3SSL := fs.Bool("s3-ssl", false, "S3 使用 HTTPS")
-	peerAddr := fs.String("peer-addr", "", "内部监听地址，其他进程从这里拉取实时增量（ADR-0013）；storage=postgres 时默认 127.0.0.1:0，off 表示关闭")
+	peerAddr := fs.String("peer-addr", "", "内部监听地址：其他进程从这里拉取实时增量（ADR-0013），Prometheus 从 /metrics 抓取指标；storage=postgres 时默认 127.0.0.1:0，off 表示关闭")
 	peerAdvertise := fs.String("peer-advertise", "", "其他进程访问本进程内部地址所用的 URL，如 http://$POD_IP:7070；默认取监听地址")
+	leaseTTL := fs.Duration("lease-ttl", 10*time.Second, "工作队列租约时长：进程崩溃后，其进行中的 Run 约在此时长后被接管（心跳为其 1/3）")
 	authMode := fs.String("auth", "none", "鉴权：none（信任自报身份，仅允许监听回环地址）| jwt（业务线签发的令牌，docs/design/auth.md）")
 	blDir := fs.String("businesslines", "businesslines", "业务线公钥配置目录（auth=jwt；yanshi keygen 生成开发配置）")
 	audience := fs.String("auth-audience", "yanshi", "本部署的标识，令牌的 aud 须包含它")
@@ -208,11 +216,16 @@ func serve(args []string) error {
 	svc := &service.Service{Store: store, Queue: queue, Agents: agents, Nodes: router}
 
 	var wg sync.WaitGroup
+	// 本进程的 Worker 共享空闲门控：空闲时只有一个 Worker 轮询队列，入队信号到达时立即认领。
+	idle := &runtime.IdleGate{}
+	if s, ok := queue.(workqueue.Signaler); ok {
+		idle.Ready = s.Ready()
+	}
 	for i := range *workers {
 		w := runtime.New(runtime.Config{
 			ID: fmt.Sprintf("%s-worker-%d", proc, i), Store: store, Queue: queue, Agents: agents,
 			Model: gw, Catalog: catalog, Dispatch: router, Artifacts: arts, Live: bus, LiveEndpoint: liveEndpoint, Logger: logger,
-			LeaseTTL: 30 * time.Second, Heartbeat: 10 * time.Second,
+			LeaseTTL: *leaseTTL, Heartbeat: *leaseTTL / 3, Idle: idle,
 		})
 		wg.Add(1)
 		go func() { defer wg.Done(); w.Run(ctx) }()
@@ -227,7 +240,7 @@ func serve(args []string) error {
 			c := &sandbox.Controller{
 				ID: fmt.Sprintf("%s-sandbox-%d", proc, i), Queue: b.sandboxQueue, Hub: hub, Provider: provider,
 				Activity: b.activity, Ledger: b.ledger, Artifacts: arts, Clock: clk, Logger: logger,
-				LeaseTTL: 30 * time.Second, Heartbeat: 10 * time.Second,
+				LeaseTTL: *leaseTTL, Heartbeat: *leaseTTL / 3,
 			}
 			wg.Add(1)
 			go func() { defer wg.Done(); c.Run(ctx) }()
@@ -277,6 +290,7 @@ func startPeer(addr, advertise string, local *live.MemBus, log eventlog.Log, log
 	token := os.Getenv("YANSHI_PEER_TOKEN")
 	mux := http.NewServeMux()
 	mux.Handle(peer.Path, peer.Handler{Local: local, Token: token})
+	mux.Handle("/metrics", metrics.Handler())
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {

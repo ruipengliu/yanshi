@@ -77,6 +77,8 @@ func (c *Call) Started() bool { return len(c.StartedAttempts) > 0 }
 type Run struct {
 	ID     string
 	Status RunStatus
+	// RequestedAt 是 RunRequested 的事件时间。
+	RequestedAt time.Time
 	// Attempt 是当前 Attempt 号；0 表示尚未有 Worker 认领。
 	Attempt uint32
 	// Takeovers 是在 running 状态下开启新 Attempt 的次数，即上一个 Worker 未正常结束的次数。
@@ -239,7 +241,7 @@ func (s *State) apply(e *v1.Event) error {
 		if p.RunRequested.GetRunId() == "" || s.Run(p.RunRequested.GetRunId()) != nil {
 			return fmt.Errorf("invalid or duplicate run id %q", p.RunRequested.GetRunId())
 		}
-		s.Runs = append(s.Runs, &Run{ID: p.RunRequested.GetRunId(), Status: RunQueued})
+		s.Runs = append(s.Runs, &Run{ID: p.RunRequested.GetRunId(), Status: RunQueued, RequestedAt: e.GetTime().AsTime()})
 		s.History = append(s.History, e)
 
 	case *v1.Event_Steered:

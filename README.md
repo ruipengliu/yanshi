@@ -49,6 +49,10 @@ curl -XPOST localhost:8080/v1/sessions/$SID/inputs -d '{"text":"你好"}'
 curl -N localhost:8080/v1/sessions/$SID/stream          # SSE，支持 Last-Event-ID 续传
 ```
 
+## 压测与指标
+
+`scripts/bench.sh` 在全新数据库上启动多个进程并压测（见[设计与结果](docs/design/m2-scale-test.md)），例如 `POOL=20 P=4 W=32 S=256 scripts/bench.sh`。Prometheus 指标在内部监听地址（`-peer-addr`）的 `/metrics` 上。
+
 ## 开发
 
 `make check`（格式、vet、buf lint、全部测试含确定性模拟）。面向 Agent 的开发约定见 [AGENTS.md](AGENTS.md)。

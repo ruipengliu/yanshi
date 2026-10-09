@@ -6,12 +6,14 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"yanshi/internal/clock"
+	"yanshi/internal/pg"
 	"yanshi/internal/workqueue"
 )
 
@@ -25,6 +27,25 @@ type Queue struct {
 	pool  *pgxpool.Pool
 	clock clock.Clock
 	table string
+
+	notifier  *pg.Notifier
+	readyOnce sync.Once
+	ready     <-chan struct{}
+}
+
+// WithNotifier 启用入队信号（workqueue.Signaler）：入队时 NOTIFY，各进程的空闲 Worker 立即认领。
+func (q *Queue) WithNotifier(n *pg.Notifier) *Queue {
+	q.notifier = n
+	return q
+}
+
+// Ready 返回入队信号；未启用时返回 nil（永不就绪，等待者只靠轮询）。
+func (q *Queue) Ready() <-chan struct{} {
+	if q.notifier == nil {
+		return nil
+	}
+	q.readyOnce.Do(func() { q.ready, _ = q.notifier.Subscribe(pg.ChannelWork, q.table) })
+	return q.ready
 }
 
 // New 返回基于 table（Sessions 或 Sandboxes）的队列。
@@ -38,13 +59,20 @@ func New(pool *pgxpool.Pool, c clock.Clock, table string) *Queue {
 // q 把 SQL 中的 work_items 替换为本队列的表名。
 func (q *Queue) q(sql string) string { return strings.ReplaceAll(sql, "work_items", q.table) }
 
-var _ workqueue.Queue = (*Queue)(nil)
+var (
+	_ workqueue.Queue    = (*Queue)(nil)
+	_ workqueue.Signaler = (*Queue)(nil)
+)
 
 func (q *Queue) Enqueue(ctx context.Context, sessionID string) error {
+	// 同一语句内入队并通知，不增加往返；通知在提交后送达。
 	_, err := q.pool.Exec(ctx, q.q(`
-		INSERT INTO work_items (session_id, ord) VALUES ($1, nextval('work_seq'))
-		ON CONFLICT (session_id) DO UPDATE
-		SET dirty = work_items.dirty OR work_items.leased, parked_until = NULL`), sessionID)
+		WITH up AS (
+			INSERT INTO work_items (session_id, ord) VALUES ($1, nextval('work_seq'))
+			ON CONFLICT (session_id) DO UPDATE
+			SET dirty = work_items.dirty OR work_items.leased, parked_until = NULL
+			RETURNING 1)
+		SELECT pg_notify($2, $3) FROM up`), sessionID, pg.ChannelWork, q.table)
 	return err
 }
 
