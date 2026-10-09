@@ -4,3 +4,4 @@ data/
 *.key
 /businesslines/
 /bench-results/
+/eval-results/

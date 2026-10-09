@@ -1,0 +1,9 @@
+name: sandbox-compute
+description: 精确计算交给沙箱运行代码
+requires: [sandbox]
+turns:
+  - input: "算一下 1 到 2000 之间所有质数的和，给出精确数值。"
+    expect:
+      status: completed
+      calls: ["sandbox__*"]
+      reply_contains: ["277050"]

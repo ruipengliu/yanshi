@@ -1,0 +1,22 @@
+name: scenario-a-minutes
+description: 读电脑上的会议记录整理纪要，审批后写回电脑（场景 A 文本版）
+setup:
+  device:
+    label: macbook
+    files:
+      meeting.txt: |
+        10月9日 周会记录（参会：王敏、李雷、陈晨）
+        1. 新版首页下周三上线，李雷负责回归测试。
+        2. 预算申请周五前提交给财务，王敏跟进。
+        3. 客服工单积压 120 单，陈晨下周一前给出处理方案。
+        其他：下次周会改到 10月16日 下午三点。
+turns:
+  - input: "帮我读一下电脑上的 meeting.txt，整理成会议纪要（结论 + 待办负责人），保存到电脑上的 minutes.md"
+    expect:
+      status: completed
+      calls: ["macbook__read_file", "macbook__write_file"]
+      no_calls: ["*send_message"]
+      approvals: {min: 1}
+      device_writes: {"minutes.md": "李雷"}
+      device_sent: 0
+      judge: "写入的纪要与回复是否覆盖了三项结论及各自负责人（李雷、王敏、陈晨）与时间点，没有编造记录中没有的内容？"

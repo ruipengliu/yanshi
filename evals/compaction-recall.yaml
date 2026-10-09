@@ -1,0 +1,28 @@
+name: compaction-recall
+description: 上下文被压缩之后，仍能回答早前对话中的事实
+context: {window: 6000, keep_recent: 1200, max_tool_result: 1500}
+setup:
+  device:
+    label: macbook
+    files:
+      report.txt: |
+        第三季度经营简报
+        营收 4,820 万元，同比增长 18%；毛利率 41%。
+        华东区贡献 46% 的营收，是唯一超额完成目标的区域。
+        新客户 312 家，其中制造业 127 家。
+        主要风险：两家大客户合同将于 12 月到期，涉及营收约 600 万元。
+        第四季度重点：续签大客户、扩张华南渠道、上线自助报价系统。
+turns:
+  - input: "我先告诉你一件事：我们项目的代号叫“青鸾”，后面会用到。"
+    expect: {status: completed}
+  - input: "读一下电脑上的 report.txt，详细解读每一个数字代表的意义和背后可能的原因。"
+    expect: {status: completed, calls: ["macbook__read_file"]}
+  - input: "基于这份简报，给第四季度的三个重点各写一段详细的执行建议。"
+    expect: {status: completed}
+  - input: "再分析一下两家大客户到期的风险，列出应对预案。"
+    expect: {status: completed}
+  - input: "我们项目的代号是什么？简报里华东区贡献了多少比例的营收？"
+    expect:
+      status: completed
+      compacted: true
+      reply_contains: ["青鸾", "46"]

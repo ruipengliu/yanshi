@@ -1,0 +1,8 @@
+name: memory-save-intro
+description: 用户自我介绍中的长期信息应被记住
+turns:
+  - input: "以后叫我小周就行。我对花生过敏，订餐的时候要注意。"
+    expect:
+      status: completed
+      calls: ["memory_save"]
+      memories: [{contains: "花生"}]

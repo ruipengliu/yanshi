@@ -1,0 +1,11 @@
+name: concise-preference
+description: 已知的简洁偏好应被遵守
+setup:
+  memories:
+    - {category: preference, content: "用户希望回答尽量简短，不超过三句话，不要列表"}
+turns:
+  - input: "HTTP 和 HTTPS 有什么区别？"
+    expect:
+      status: completed
+      reply_max_chars: 200
+      judge: "回复是否简短（不超过三句话、没有列表）且技术上正确？"

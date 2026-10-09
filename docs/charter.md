@@ -93,7 +93,7 @@ yanshi 是公司内部的**分布式 Agent 运行时基础设施**，承载多�
 | M1 设备即节点 🟡 | 设备节点协议 ✅；Go SDK ✅（移动端 gomobile 绑定未验证）；能力路由 ✅；Approval ✅；离线挂起 ✅；推送唤醒（仅桩）；见 [设计](./design/m1-device-nodes.md) |
 | M2 长任务与执行 🟡 | Sandbox 代码执行（S1 ✅ Docker 实现、代码解释器；S2 ✅ [工件存储](./design/m2-artifacts.md)，场景 A 数据通路已通；S3 预热池、S4 生产 Provider 暂缓，待沙箱服务选型（ADR-0010），见 [设计](./design/m2-sandbox.md)）；小时级 Run（[上下文压缩与无进展接管上限](./design/m2-long-runs.md) ✅，经长 Run 模拟验证；真实模型验证待做）；多 Worker 水平扩展（多进程共享 PostgreSQL ✅）与[扩容压测](./design/m2-scale-test.md) ✅（1→4 进程 3.67×，kill -9 不丢 Run）；[跨进程实时增量](./design/m2-live-deltas.md) ✅；[鉴权](./design/auth.md) ✅（业务线签发令牌）；[Session 生命周期与数据删除](./design/m2-session-lifecycle.md) ✅；跑通场景 A（文字版已用真实模型跑通：读电脑文件 → 沙箱处理 → Memory 识别同事 → 审批后写回电脑；语音输入与推送唤醒属于 M3） |
 | M3 实时 | Call 全双工通道；端侧 VAD/AEC；Call 与后台 Run 协同；跑通场景 B |
-| M4 个性化与治理 | [Memory 与 Grant](./design/m4-memory-grant.md) ✅（已用真实模型验证）；内容安全；配额计费；评测与回放；AgentDef 灰度 |
+| M4 个性化与治理 | [Memory 与 Grant](./design/m4-memory-grant.md) ✅（已用真实模型验证）；[评测](./design/m4-eval.md) ✅（固定用例集 + 基线，线上回放只经导出）；内容安全；配额计费；AgentDef 灰度 |
 | M5 生态 | 注册中心；声明式 AgentDef 规范；[MCP 适配](./design/m5-mcp.md) ✅（远程 HTTP 与设备端桥接；A2A 待做）；跨节点多 Agent 编排 |
 
 ## 10. 待决架构问题

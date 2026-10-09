@@ -62,6 +62,10 @@ curl -N localhost:8080/v1/sessions/$SID/stream          # SSE，支持 Last-Even
 
 `scripts/bench.sh` 在全新数据库上启动多个进程并压测（见[设计与结果](docs/design/m2-scale-test.md)），例如 `POOL=20 P=4 W=32 S=256 scripts/bench.sh`。Prometheus 指标在内部监听地址（`-peer-addr`）的 `/metrics` 上。
 
+## 评测
+
+`make eval` 用真实模型运行 `evals/` 中的用例并与基线比较，出现回归时失败（需要 `TOKENHUB_API_KEY`，见[设计](docs/design/m4-eval.md)）。比较其他模型：`make eval EVAL_FLAGS="-sandbox docker -model tokenhub/<模型ID>"`。
+
 ## 开发
 
 `make check`（格式、vet、buf lint、全部测试含确定性模拟）。面向 Agent 的开发约定见 [AGENTS.md](AGENTS.md)。

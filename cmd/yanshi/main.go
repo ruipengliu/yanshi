@@ -13,6 +13,8 @@ const usage = `usage:
   yanshi keygen [flags]  生成开发用的业务线密钥对（serve -auth jwt）
   yanshi token  [flags]  用业务线私钥签发令牌
   yanshi bench  [flags]  压测客户端（docs/design/m2-scale-test.md）
+  yanshi eval   [flags]  运行评测集并与基线比较（docs/design/m4-eval.md）
+  yanshi export-case [flags]  把一个 Session 导出为评测用例骨架
 
 运行 yanshi <command> -h 查看参数。`
 
@@ -35,6 +37,10 @@ func main() {
 		err = tokenCmd(os.Args[2:])
 	case "bench":
 		err = benchCmd(os.Args[2:])
+	case "eval":
+		err = evalCmd(os.Args[2:])
+	case "export-case":
+		err = exportCaseCmd(os.Args[2:])
 	default:
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)

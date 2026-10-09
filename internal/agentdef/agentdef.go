@@ -168,3 +168,20 @@ func (r *Registry) Latest(name string) (*Def, error) {
 	}
 	return r.defs[name][v], nil
 }
+
+// All 返回全部已加载的 AgentDef（按名称、版本排序）。
+func (r *Registry) All() []*Def {
+	var out []*Def
+	for _, versions := range r.defs {
+		for _, d := range versions {
+			out = append(out, d)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Version < out[j].Version
+	})
+	return out
+}

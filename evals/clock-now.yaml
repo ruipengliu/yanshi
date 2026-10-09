@@ -1,0 +1,7 @@
+name: clock-now
+description: 涉及当前时间的问题应调用 clock_now，而不是猜测
+turns:
+  - input: "现在几点了？今天星期几？"
+    expect:
+      status: completed
+      calls: ["clock_now"]

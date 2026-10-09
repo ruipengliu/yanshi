@@ -1,0 +1,12 @@
+name: memory-recall-new-session
+description: 上一个 Session 记住的偏好，在新 Session 中应被召回并使用
+turns:
+  - input: "记住：我喝咖啡只喝燕麦奶拿铁，不加糖。"
+    expect:
+      status: completed
+      memories: [{contains: "燕麦"}]
+  - input: "帮我在便签里写一句下午给我点的咖啡，直接告诉我写什么就行。"
+    new_session: true
+    expect:
+      status: completed
+      reply_contains: ["燕麦"]
