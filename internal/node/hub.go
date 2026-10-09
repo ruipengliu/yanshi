@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/eventlog"
@@ -27,7 +28,9 @@ type Hub struct {
 type Conn struct {
 	NodeID string
 	Label  string
-	gen    uint64
+	// Expires 是接入凭证的到期时间，网关在此刻断开；零值表示不过期。
+	Expires time.Time
+	gen     uint64
 }
 
 func (h *Hub) log() *slog.Logger {
@@ -47,14 +50,14 @@ func (h *Hub) Connect(ctx context.Context, hello *v1.Hello) (*Conn, error) {
 		return nil, fmt.Errorf("authenticate: %w", err)
 	}
 	label, gen, err := h.Dir.Register(ctx, Info{
-		NodeID: hello.GetNodeId(), Scope: Scope(id), Label: hello.GetLabel(), Kind: hello.GetKind(),
+		NodeID: hello.GetNodeId(), Scope: Scope{BusinessLine: id.BusinessLine, EndUser: id.EndUser}, Label: hello.GetLabel(), Kind: hello.GetKind(),
 		HostApp: hello.GetHostApp(), Capabilities: hello.GetCapabilities(),
 	})
 	if err != nil {
 		return nil, err
 	}
 	h.log().Info("node connected", "node", hello.GetNodeId(), "label", label, "capabilities", len(hello.GetCapabilities()))
-	return &Conn{NodeID: hello.GetNodeId(), Label: label, gen: gen}, nil
+	return &Conn{NodeID: hello.GetNodeId(), Label: label, Expires: id.Expires, gen: gen}, nil
 }
 
 func (h *Hub) Disconnect(ctx context.Context, c *Conn) {

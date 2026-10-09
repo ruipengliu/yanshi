@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
 
@@ -22,17 +23,39 @@ import (
 )
 
 type client struct {
-	base string
-	mu   sync.Mutex
+	base  string
+	token nodesdk.TokenSource
+	mu    sync.Mutex
 	// active 是最近一个未结束的 Run，用于 /stop。
 	active string
 	// approvals 是待审批的调用 ID，按到达顺序。
 	approvals []string
 }
 
+// authorize 为请求加上令牌（未配置令牌时不加）。
+func (c *client) authorize(req *http.Request) error {
+	if c.token == nil {
+		return nil
+	}
+	t, err := c.token(req.Context())
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+t)
+	return nil
+}
+
 func (c *client) post(path string, body any, out any) error {
 	b, _ := json.Marshal(body)
-	resp, err := http.Post(c.base+path, "application/json", bytes.NewReader(b))
+	req, err := http.NewRequest(http.MethodPost, c.base+path, bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if err := c.authorize(req); err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -53,13 +76,18 @@ func chat(args []string) error {
 	agent := fs.String("agent", "assistant", "AgentDef 名称")
 	user := fs.String("user", "dev", "终端用户 ID")
 	bl := fs.String("business-line", "dev", "业务线")
+	tf := addTokenFlags(fs)
 	_ = fs.Parse(args)
 
-	c := &client{base: strings.TrimRight(*server, "/")}
+	token, businessLine, err := tf.source(*bl, *user)
+	if err != nil {
+		return err
+	}
+	c := &client{base: strings.TrimRight(*server, "/"), token: token}
 	var created struct {
 		SessionID string `json:"session_id"`
 	}
-	if err := c.post("/v1/sessions", map[string]string{"business_line": *bl, "end_user": *user, "agent": *agent}, &created); err != nil {
+	if err := c.post("/v1/sessions", map[string]string{"business_line": businessLine, "end_user": *user, "agent": *agent}, &created); err != nil {
 		return err
 	}
 	sid := created.SessionID
@@ -139,19 +167,45 @@ func chat(args []string) error {
 }
 
 // follow 订阅 SSE：打印增量，并以已提交事件为准标注工具调用与 Run 结束。
+// 连接断开（包括令牌到期）后带新令牌与 Last-Event-ID 重连，已提交事件不重不漏。
 func (c *client) follow(ctx context.Context, sid string) {
+	var last string
+	for ctx.Err() == nil {
+		if err := c.followOnce(ctx, sid, &last); err != nil && ctx.Err() == nil {
+			fmt.Println("[订阅中断，重连]", err)
+			select {
+			case <-ctx.Done():
+			case <-time.After(time.Second):
+			}
+		}
+	}
+}
+
+func (c *client) followOnce(ctx context.Context, sid string, last *string) error {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/v1/sessions/"+sid+"/stream", nil)
+	if *last != "" {
+		req.Header.Set("Last-Event-ID", *last)
+	}
+	if err := c.authorize(req); err != nil {
+		return err
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		fmt.Println("[订阅失败]", err)
-		return
+		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("stream: %s", resp.Status)
+	}
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	var kind string
 	for sc.Scan() {
 		line := sc.Text()
+		if id, ok := strings.CutPrefix(line, "id: "); ok {
+			*last = id
+			continue
+		}
 		if k, ok := strings.CutPrefix(line, "event: "); ok {
 			kind = k
 			continue
@@ -174,6 +228,7 @@ func (c *client) follow(ctx context.Context, sid string) {
 			}
 		}
 	}
+	return sc.Err()
 }
 
 func (c *client) render(e *v1.Event) {
@@ -236,7 +291,7 @@ func (c *client) upload(sid, path string) (*v1.ContentBlock, error) {
 		return nil, err
 	}
 	defer f.Close()
-	a := &nodesdk.Artifacts{BaseURL: c.base}
+	a := &nodesdk.Artifacts{BaseURL: c.base, TokenSource: c.token}
 	return a.Upload(context.Background(), sid, filepath.Base(path), "", f)
 }
 

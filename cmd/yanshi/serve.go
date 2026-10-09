@@ -19,6 +19,7 @@ import (
 	"yanshi/internal/artifact/fsblob"
 	"yanshi/internal/artifact/pgartifact"
 	"yanshi/internal/artifact/s3blob"
+	"yanshi/internal/auth"
 	"yanshi/internal/capability"
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog"
@@ -136,6 +137,9 @@ func serve(args []string) error {
 	s3SSL := fs.Bool("s3-ssl", false, "S3 使用 HTTPS")
 	peerAddr := fs.String("peer-addr", "", "内部监听地址，其他进程从这里拉取实时增量（ADR-0013）；storage=postgres 时默认 127.0.0.1:0，off 表示关闭")
 	peerAdvertise := fs.String("peer-advertise", "", "其他进程访问本进程内部地址所用的 URL，如 http://$POD_IP:7070；默认取监听地址")
+	authMode := fs.String("auth", "none", "鉴权：none（信任自报身份，仅允许监听回环地址）| jwt（业务线签发的令牌，docs/design/auth.md）")
+	blDir := fs.String("businesslines", "businesslines", "业务线公钥配置目录（auth=jwt；yanshi keygen 生成开发配置）")
+	audience := fs.String("auth-audience", "yanshi", "本部署的标识，令牌的 aud 须包含它")
 	_ = fs.Parse(args)
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -148,6 +152,10 @@ func serve(args []string) error {
 	defer stop()
 
 	clk := clock.Real{}
+	verifier, nodeAuth, err := authenticator(*authMode, *addr, *blDir, *audience, clk)
+	if err != nil {
+		return err
+	}
 	b, closeStorage, err := openStorage(ctx, *storage, *dsn, clk, logger)
 	if err != nil {
 		return err
@@ -191,7 +199,7 @@ func serve(args []string) error {
 	dir := b.dir
 	hub := &node.Hub{
 		Dir: dir, Inbox: b.inbox, Store: store, Queue: queue,
-		Auth: node.InsecureDevAuth{}, Waker: node.LogWaker{Logger: logger}, Logger: logger,
+		Auth: nodeAuth, Waker: node.LogWaker{Logger: logger}, Logger: logger,
 	}
 	catalog := &capability.Catalog{
 		Local: capability.NewRegistry(capability.ClockNow(clk)), Nodes: dir, DefaultTimeout: 30 * time.Minute,
@@ -231,7 +239,7 @@ func serve(args []string) error {
 
 	mux := http.NewServeMux()
 	mux.Handle("/v1/nodes/connect", &wsgateway.Gateway{Hub: hub, Logger: logger})
-	mux.Handle("/", (&httpapi.Server{Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Logger: logger}).Handler())
+	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Logger: logger}).Handler())
 	srv := &http.Server{
 		Addr:              *addr,
 		Handler:           mux,
@@ -243,7 +251,7 @@ func serve(args []string) error {
 		defer cancel()
 		_ = srv.Shutdown(shutdown)
 	}()
-	logger.Info("yanshi serving", "addr", *addr, "process", proc, "workers", *workers, "storage", *storage, "blob", *blobKind, "live_endpoint", liveEndpoint)
+	logger.Info("yanshi serving", "addr", *addr, "auth", *authMode, "process", proc, "workers", *workers, "storage", *storage, "blob", *blobKind, "live_endpoint", liveEndpoint)
 	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
@@ -277,4 +285,42 @@ func startPeer(addr, advertise string, local *live.MemBus, log eventlog.Log, log
 	}()
 	bus := &peer.Bus{Local: local, Log: log, Self: advertise, Token: token, Logger: logger}
 	return bus, advertise, func() { _ = srv.Close() }, nil
+}
+
+// authenticator 按 -auth 构造 API 与 Node 接入的鉴权（docs/design/auth.md §5）。
+// none 信任自报身份，只允许监听回环地址：误部署到网络上时直接启动失败，而不是不设防地运行。
+func authenticator(mode, addr, dir, audience string, clk clock.Clock) (auth.Verifier, node.Authenticator, error) {
+	switch mode {
+	case "none":
+		if !loopback(addr) {
+			return nil, nil, fmt.Errorf("-auth none only allows a loopback -addr (got %s); use -auth jwt", addr)
+		}
+		return auth.Insecure{}, node.InsecureDevAuth{}, nil
+	case "jwt":
+		lines, err := auth.LoadDir(dir)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(lines) == 0 {
+			return nil, nil, fmt.Errorf("no business lines in %s; run yanshi keygen for a dev key", dir)
+		}
+		v, err := auth.NewJWT(audience, clk, lines...)
+		if err != nil {
+			return nil, nil, err
+		}
+		return v, node.TokenAuth{Verifier: v}, nil
+	}
+	return nil, nil, fmt.Errorf("unknown auth %q (none | jwt)", mode)
+}
+
+func loopback(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

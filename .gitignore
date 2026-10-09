@@ -1,2 +1,5 @@
 bin/
 data/
+# 开发用业务线密钥与配置（yanshi keygen 生成）
+*.key
+/businesslines/

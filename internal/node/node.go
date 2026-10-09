@@ -10,6 +10,7 @@ import (
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/auth"
 )
 
 var ErrNotFound = errors.New("node: not found")
@@ -70,13 +71,33 @@ type Waker interface {
 type Identity struct {
 	BusinessLine string
 	EndUser      string
+	// Expires 是凭证到期时间，网关在此刻断开连接；零值表示不过期。
+	Expires time.Time
 }
 
 type Authenticator interface {
 	Authenticate(ctx context.Context, hello *v1.Hello) (Identity, error)
 }
 
-// InsecureDevAuth 信任 Hello 中自报的身份，仅用于开发（m1 设计 §7）。
+// TokenAuth 以 Hello.token 中业务线签发的用户令牌确定身份（docs/design/auth.md §3）。
+// Hello 中自报的业务线与 EndUser 只能为空或与令牌一致；服务令牌不能接入 Node。
+type TokenAuth struct{ Verifier auth.Verifier }
+
+func (a TokenAuth) Authenticate(_ context.Context, h *v1.Hello) (Identity, error) {
+	p, err := a.Verifier.Verify(h.GetToken())
+	if err != nil {
+		return Identity{}, err
+	}
+	if p.Service() {
+		return Identity{}, errors.New("a node must act for an end user; service tokens are not accepted")
+	}
+	if (h.GetBusinessLine() != "" && h.GetBusinessLine() != p.BusinessLine) || (h.GetEndUser() != "" && h.GetEndUser() != p.EndUser) {
+		return Identity{}, errors.New("hello identity does not match token")
+	}
+	return Identity{BusinessLine: p.BusinessLine, EndUser: p.EndUser, Expires: p.Expires}, nil
+}
+
+// InsecureDevAuth 信任 Hello 中自报的身份，仅用于开发（serve -auth none，仅限回环地址）。
 type InsecureDevAuth struct{}
 
 func (InsecureDevAuth) Authenticate(_ context.Context, h *v1.Hello) (Identity, error) {

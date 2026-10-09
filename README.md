@@ -28,6 +28,15 @@ make sandbox-image
 ./bin/yanshi serve -sandbox docker       # 可加 -sandbox-runtime runsc 使用 gVisor
 ```
 
+鉴权（[设计](docs/design/auth.md)）：默认 `-auth none` 信任客户端自报的身份，只允许监听回环地址。开启业务线签发的令牌：
+
+```sh
+./bin/yanshi keygen -business-line demo  # 生成 demo.key（私钥，扮演业务线服务端）与 businesslines/demo.yaml（公钥）
+./bin/yanshi serve -auth jwt             # 只加载 businesslines/ 中的公钥
+./bin/yanshi chat -key demo.key -user u1 # 用私钥自行签发用户令牌；node 命令同样支持 -key
+./bin/yanshi token -key demo.key -user u1   # 打印令牌，供 curl 使用：-H "Authorization: Bearer $TOKEN"
+```
+
 模型通过 AgentDef（`agents/*.yaml`）的 `model: provider/model` 选择：`ark/…`（火山方舟）、`local/…`（私有化 OpenAI 兼容服务，`YANSHI_LOCAL_BASE_URL`）、`echo/any`。
 
 ## HTTP API

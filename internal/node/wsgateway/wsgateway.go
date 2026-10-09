@@ -88,7 +88,20 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	errc := make(chan error, 3)
+	errc := make(chan error, 4)
+	if !nc.Expires.IsZero() {
+		// 令牌到期即断开，SDK 取新令牌重连（docs/design/auth.md §4）。
+		t := time.NewTimer(time.Until(nc.Expires))
+		defer t.Stop()
+		go func() {
+			select {
+			case <-t.C:
+				ws.Close(websocket.StatusPolicyViolation, "token expired")
+				errc <- errors.New("token expired")
+			case <-ctx.Done():
+			}
+		}()
+	}
 	go func() { errc <- g.deliver(ctx, c, nc.NodeID) }()
 	go func() { errc <- g.receive(ctx, c, nc.NodeID) }()
 	go func() { errc <- g.keepalive(ctx, ws) }()

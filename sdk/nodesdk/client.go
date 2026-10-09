@@ -21,7 +21,11 @@ type Config struct {
 	// URL 是网关地址，如 ws://127.0.0.1:8080/v1/nodes/connect。
 	URL string
 	// NodeID 必须在设备上持久保存，跨重启不变。
-	NodeID       string
+	NodeID string
+	// TokenSource 返回业务线签发的用户令牌，每次连接时调用；令牌到期时网关断开连接，
+	// SDK 重连并重新取令牌（docs/design/auth.md §4）。HostApp 通常向自己的业务线服务端换取。
+	TokenSource TokenSource
+	// Token 是固定令牌，仅在 TokenSource 为空时使用（开发）。
 	Token        string
 	BusinessLine string
 	EndUser      string
@@ -69,6 +73,10 @@ func (c *Client) Run(ctx context.Context) error {
 func (c *Client) session(ctx context.Context) (bool, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	token, err := tokenOf(ctx, c.cfg.TokenSource, c.cfg.Token)
+	if err != nil {
+		return false, fmt.Errorf("token: %w", err)
+	}
 	conn, _, err := websocket.Dial(ctx, c.cfg.URL, nil)
 	if err != nil {
 		return false, err
@@ -88,7 +96,7 @@ func (c *Client) session(ctx context.Context) (bool, error) {
 	}
 
 	err = send(&v1.NodeMessage{Msg: &v1.NodeMessage_Hello{Hello: &v1.Hello{
-		NodeId: c.cfg.NodeID, Token: c.cfg.Token, BusinessLine: c.cfg.BusinessLine, EndUser: c.cfg.EndUser,
+		NodeId: c.cfg.NodeID, Token: token, BusinessLine: c.cfg.BusinessLine, EndUser: c.cfg.EndUser,
 		Label: c.cfg.Label, Kind: c.cfg.Kind, HostApp: c.cfg.HostApp, SdkVersion: Version,
 		Capabilities: c.cfg.Executor.Specs(),
 	}}})

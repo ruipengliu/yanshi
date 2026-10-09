@@ -13,7 +13,8 @@
 //	GET  /v1/artifacts/{id}                        下载工件
 //	GET  /v1/artifacts/{id}/meta                   工件元数据
 //
-// M0 无鉴权，仅用于单机开发。
+// 除 /healthz 外，所有请求须携带业务线签发的令牌（Authorization: Bearer），
+// 调用方只能访问自己的 Session、Node 与工件，其余一律 404（docs/design/auth.md）。
 package httpapi
 
 import (
@@ -34,6 +35,7 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/artifact"
+	"yanshi/internal/auth"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/live"
 	"yanshi/internal/model"
@@ -43,6 +45,8 @@ import (
 )
 
 type Server struct {
+	// Auth 校验令牌；nil 时等同 auth.Insecure（信任自报身份，仅限回环地址开发）。
+	Auth    auth.Verifier
 	Service *service.Service
 	Live    live.Bus
 	// Nodes 为 nil 时不提供 Node 相关信息。
@@ -54,22 +58,109 @@ type Server struct {
 
 var pj = protojson.MarshalOptions{UseProtoNames: true}
 
+// routes 是全部需要鉴权的接口；授权矩阵测试据此检查每个接口都被覆盖。
+func (s *Server) routes() map[string]http.HandlerFunc {
+	return map[string]http.HandlerFunc{
+		"POST /v1/sessions":                           s.create,
+		"GET /v1/sessions/{id}":                       s.get,
+		"POST /v1/sessions/{id}/inputs":               s.submit,
+		"POST /v1/sessions/{id}/runs/{run}/interrupt": s.interrupt,
+		"GET /v1/sessions/{id}/events":                s.events,
+		"GET /v1/sessions/{id}/stream":                s.stream,
+		"POST /v1/sessions/{id}/approvals/{call}":     s.decide,
+		"GET /v1/nodes":                               s.listNodes,
+		"POST /v1/sessions/{id}/artifacts":            s.uploadArtifact,
+		"GET /v1/sessions/{id}/artifacts":             s.listArtifacts,
+		"GET /v1/artifacts/{id}":                      s.downloadArtifact,
+		"GET /v1/artifacts/{id}/meta":                 s.artifactMeta,
+	}
+}
+
+// Routes 返回全部需要鉴权的接口模式。
+func (s *Server) Routes() []string {
+	var out []string
+	for p := range s.routes() {
+		out = append(out, p)
+	}
+	return out
+}
+
 func (s *Server) Handler() http.Handler {
+	v := s.Auth
+	if v == nil {
+		v = auth.Insecure{}
+	}
+	api := http.NewServeMux()
+	for p, h := range s.routes() {
+		api.HandleFunc(p, h)
+	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/sessions", s.create)
-	mux.HandleFunc("GET /v1/sessions/{id}", s.get)
-	mux.HandleFunc("POST /v1/sessions/{id}/inputs", s.submit)
-	mux.HandleFunc("POST /v1/sessions/{id}/runs/{run}/interrupt", s.interrupt)
-	mux.HandleFunc("GET /v1/sessions/{id}/events", s.events)
-	mux.HandleFunc("GET /v1/sessions/{id}/stream", s.stream)
-	mux.HandleFunc("POST /v1/sessions/{id}/approvals/{call}", s.decide)
-	mux.HandleFunc("GET /v1/nodes", s.listNodes)
-	mux.HandleFunc("POST /v1/sessions/{id}/artifacts", s.uploadArtifact)
-	mux.HandleFunc("GET /v1/sessions/{id}/artifacts", s.listArtifacts)
-	mux.HandleFunc("GET /v1/artifacts/{id}", s.downloadArtifact)
-	mux.HandleFunc("GET /v1/artifacts/{id}/meta", s.artifactMeta)
+	mux.Handle("/v1/", auth.Middleware(v, api))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	return mux
+}
+
+func principal(r *http.Request) auth.Principal {
+	p, _ := auth.FromContext(r.Context())
+	return p
+}
+
+// errForbidden 用于调用方自报的身份与令牌不符；访问别人的资源则返回 404，不泄露其存在。
+var errForbidden = errors.New("forbidden")
+
+// session 读取 Session 并要求它属于调用方；否则按不存在处理。
+func (s *Server) session(w http.ResponseWriter, r *http.Request) (*session.State, bool) {
+	id := r.PathValue("id")
+	st, err := s.Service.Load(r.Context(), id)
+	if err == nil && !principal(r).Allows(st.Created.GetBusinessLine(), st.Created.GetEndUser()) {
+		err = fmt.Errorf("%w: session %s", service.ErrNotFound, id)
+	}
+	if err != nil {
+		s.fail(w, err)
+		return nil, false
+	}
+	return st, true
+}
+
+// artifact 读取工件元数据并要求其所属 Session 属于调用方。
+func (s *Server) artifact(w http.ResponseWriter, r *http.Request) (*artifact.Meta, bool) {
+	if !s.artifacts(w) {
+		return nil, false
+	}
+	id := r.PathValue("id")
+	m, err := s.Artifacts.Stat(r.Context(), id)
+	if err == nil {
+		st, lerr := s.Service.Load(r.Context(), m.SessionID)
+		if lerr != nil || !principal(r).Allows(st.Created.GetBusinessLine(), st.Created.GetEndUser()) {
+			err = fmt.Errorf("%w: artifact %s", artifact.ErrNotFound, id)
+		}
+	}
+	if err != nil {
+		s.fail(w, err)
+		return nil, false
+	}
+	return m, true
+}
+
+// claim 返回调用方以 (businessLine, endUser) 身份行事时实际生效的值：令牌中有的以令牌为准，
+// 请求中自报的值只能为空或与令牌一致。服务令牌须由请求给出 endUser。
+func claim(p auth.Principal, businessLine, endUser string) (string, string, error) {
+	if p.Unrestricted {
+		return businessLine, endUser, nil
+	}
+	if businessLine != "" && businessLine != p.BusinessLine {
+		return "", "", fmt.Errorf("%w: business_line does not match token", errForbidden)
+	}
+	if p.EndUser != "" {
+		if endUser != "" && endUser != p.EndUser {
+			return "", "", fmt.Errorf("%w: end_user does not match token", errForbidden)
+		}
+		endUser = p.EndUser
+	}
+	if endUser == "" {
+		return "", "", fmt.Errorf("%w: end_user is required for service tokens", service.ErrInvalid)
+	}
+	return p.BusinessLine, endUser, nil
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -83,6 +174,8 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, service.ErrNotFound):
 		code = http.StatusNotFound
+	case errors.Is(err, errForbidden):
+		code = http.StatusForbidden
 	case errors.Is(err, service.ErrInvalid):
 		code = http.StatusBadRequest
 	case errors.Is(err, service.ErrConflict):
@@ -116,8 +209,13 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	bl, eu, err := claim(principal(r), req.BusinessLine, req.EndUser)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
 	id, err := s.Service.Create(r.Context(), service.CreateRequest{
-		BusinessLine: req.BusinessLine, EndUser: req.EndUser, Agent: req.Agent, AgentVersion: req.AgentVersion,
+		BusinessLine: bl, EndUser: eu, Agent: req.Agent, AgentVersion: req.AgentVersion,
 	})
 	if err != nil {
 		s.fail(w, err)
@@ -169,9 +267,8 @@ func (s *Server) waiting(r *http.Request, run *session.Run) *waitingView {
 }
 
 func (s *Server) get(w http.ResponseWriter, r *http.Request) {
-	st, err := s.Service.Load(r.Context(), r.PathValue("id"))
-	if err != nil {
-		s.fail(w, err)
+	st, ok := s.session(w, r)
+	if !ok {
 		return
 	}
 	runs := []runView{}
@@ -190,6 +287,9 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.session(w, r); !ok {
+		return
+	}
 	var req struct {
 		Text string `json:"text"`
 		// Content 是 ContentBlock 的 JSON 数组；与 Text 同时给出时 Text 在前。
@@ -220,6 +320,9 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) interrupt(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.session(w, r); !ok {
+		return
+	}
 	if err := s.Service.Interrupt(r.Context(), r.PathValue("id"), r.PathValue("run")); err != nil {
 		s.fail(w, err)
 		return
@@ -228,6 +331,9 @@ func (s *Server) interrupt(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) decide(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.session(w, r); !ok {
+		return
+	}
 	var req struct {
 		Approve *bool  `json:"approve"`
 		By      string `json:"by"`
@@ -240,7 +346,13 @@ func (s *Server) decide(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, fmt.Errorf("%w: approve is required", service.ErrInvalid))
 		return
 	}
-	if req.By == "" {
+	// 审批记录的决定者取自令牌，而不是请求中自报的值。
+	switch p := principal(r); {
+	case p.Service():
+		req.By = "service:" + p.BusinessLine
+	case !p.Unrestricted:
+		req.By = "end_user:" + p.EndUser
+	case req.By == "":
 		req.By = "api"
 	}
 	if err := s.Service.Decide(r.Context(), r.PathValue("id"), r.PathValue("call"), *req.Approve, req.By); err != nil {
@@ -265,7 +377,12 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	nodes, err := s.Nodes.List(r.Context(), node.Scope{BusinessLine: q.Get("business_line"), EndUser: q.Get("end_user")})
+	bl, eu, err := claim(principal(r), q.Get("business_line"), q.Get("end_user"))
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	nodes, err := s.Nodes.List(r.Context(), node.Scope{BusinessLine: bl, EndUser: eu})
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -309,11 +426,11 @@ func (s *Server) uploadArtifact(w http.ResponseWriter, r *http.Request) {
 	if !s.artifacts(w) {
 		return
 	}
-	sid := r.PathValue("id")
-	if _, err := s.Service.Load(r.Context(), sid); err != nil {
-		s.fail(w, err)
+	st, ok := s.session(w, r)
+	if !ok {
 		return
 	}
+	sid := st.SessionID
 	mimeType := r.Header.Get("Content-Type")
 	if mimeType == "application/octet-stream" {
 		mimeType = "" // 交给扩展名与内容推断
@@ -330,6 +447,9 @@ func (s *Server) listArtifacts(w http.ResponseWriter, r *http.Request) {
 	if !s.artifacts(w) {
 		return
 	}
+	if _, ok := s.session(w, r); !ok {
+		return
+	}
 	list, err := s.Artifacts.List(r.Context(), r.PathValue("id"))
 	if err != nil {
 		s.fail(w, err)
@@ -343,19 +463,15 @@ func (s *Server) listArtifacts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) artifactMeta(w http.ResponseWriter, r *http.Request) {
-	if !s.artifacts(w) {
-		return
-	}
-	m, err := s.Artifacts.Stat(r.Context(), r.PathValue("id"))
-	if err != nil {
-		s.fail(w, err)
+	m, ok := s.artifact(w, r)
+	if !ok {
 		return
 	}
 	writeJSON(w, http.StatusOK, viewArtifact(m))
 }
 
 func (s *Server) downloadArtifact(w http.ResponseWriter, r *http.Request) {
-	if !s.artifacts(w) {
+	if _, ok := s.artifact(w, r); !ok {
 		return
 	}
 	m, rc, err := s.Artifacts.Open(r.Context(), r.PathValue("id"))
@@ -385,8 +501,7 @@ func parseUint(s string) (uint64, error) {
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if _, err := s.Service.Load(r.Context(), id); err != nil {
-		s.fail(w, err)
+	if _, ok := s.session(w, r); !ok {
 		return
 	}
 	after, err := parseUint(r.URL.Query().Get("after"))
@@ -418,8 +533,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if _, err := s.Service.Load(r.Context(), id); err != nil {
-		s.fail(w, err)
+	if _, ok := s.session(w, r); !ok {
 		return
 	}
 	cursor := r.URL.Query().Get("after")
@@ -449,6 +563,13 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	go waitHeads(ctx, s.Service.Store.Log, id, after, heads)
 	ping := time.NewTicker(15 * time.Second)
 	defer ping.Stop()
+	// 令牌到期时断开，客户端带新令牌与 Last-Event-ID 重连（docs/design/auth.md §4）。
+	var expired <-chan time.Time
+	if exp := principal(r).Expires; !exp.IsZero() {
+		t := time.NewTimer(time.Until(exp))
+		defer t.Stop()
+		expired = t.C
+	}
 
 	for {
 		events, err := eventlog.ReadAll(ctx, s.Service.Store.Log, id, after)
@@ -467,6 +588,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 
 		select {
 		case <-ctx.Done():
+			return
+		case <-expired:
+			fmt.Fprint(w, "event: token_expired\ndata: {}\n\n")
 			return
 		case <-heads:
 		case d := <-deltas:

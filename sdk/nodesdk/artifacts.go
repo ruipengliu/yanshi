@@ -17,6 +17,29 @@ type Artifacts struct {
 	// BaseURL 是 yanshi API 地址，如 http://127.0.0.1:8080。
 	BaseURL string
 	Client  *http.Client
+	// TokenSource 返回访问 API 的令牌，每次请求时调用；为空时不带令牌（开发模式）。
+	TokenSource TokenSource
+}
+
+// TokenSource 返回当前有效的令牌。实现应缓存令牌并在到期前刷新。
+type TokenSource func(ctx context.Context) (string, error)
+
+func tokenOf(ctx context.Context, src TokenSource, fixed string) (string, error) {
+	if src == nil {
+		return fixed, nil
+	}
+	return src(ctx)
+}
+
+func (a *Artifacts) do(req *http.Request) (*http.Response, error) {
+	token, err := tokenOf(req.Context(), a.TokenSource, "")
+	if err != nil {
+		return nil, fmt.Errorf("token: %w", err)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return a.client().Do(req)
 }
 
 // APIBaseFromGateway 由网关地址（ws://host/v1/nodes/connect）推导 API 地址。
@@ -53,7 +76,7 @@ func (a *Artifacts) Upload(ctx context.Context, sessionID, name, mimeType string
 		mimeType = "application/octet-stream"
 	}
 	req.Header.Set("Content-Type", mimeType)
-	resp, err := a.client().Do(req)
+	resp, err := a.do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +104,7 @@ func (a *Artifacts) Download(ctx context.Context, id string) (body io.ReadCloser
 	if err != nil {
 		return nil, "", "", err
 	}
-	resp, err := a.client().Do(req)
+	resp, err := a.do(req)
 	if err != nil {
 		return nil, "", "", err
 	}

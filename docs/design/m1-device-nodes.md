@@ -69,7 +69,7 @@ Node 协议：WebSocket 二进制帧，每帧一个 protobuf 消息（`NodeMessa
 
 ## 7. 安全（M1 的限度）
 
-- `Hello` 中的身份由 `Authenticator` 校验。M1 的开发实现信任客户端自报的身份，**不可用于生产**；正式方案（HostApp 通过业务线服务端换取短期令牌）在后续 ADR 中确定。
+- `Hello` 中的身份由 `Authenticator` 校验：生产使用 `Hello.token` 中业务线签发的用户令牌（[鉴权设计](./auth.md)，ADR-0014），令牌到期时网关断开连接；开发模式（`-auth none`，仅限回环地址）信任客户端自报的身份。
 - Capability 结果视为不可信数据，不能提升权限（章程原则 6）。
 
 ## 8. 模拟测试扩展

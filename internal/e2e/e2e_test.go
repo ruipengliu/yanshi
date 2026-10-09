@@ -25,6 +25,7 @@ import (
 	"yanshi/internal/agentdef"
 	"yanshi/internal/artifact"
 	"yanshi/internal/artifact/pgartifact"
+	"yanshi/internal/auth"
 	"yanshi/internal/capability"
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog"
@@ -96,6 +97,38 @@ type env struct {
 	disk   map[string][]byte
 }
 
+// e2e 全程开启鉴权：业务线 "bl" 的开发密钥扮演业务线服务端，为 EndUser "u" 签发令牌。
+var (
+	blKey     = mustKey()
+	verifier  = mustVerifier(blKey)
+	userToken = func(context.Context) (string, error) { return blKey.Sign("yanshi", "u", time.Hour, time.Now()) }
+)
+
+func mustKey() *auth.SigningKey {
+	k, err := auth.GenerateDevKey("bl", "bl-1")
+	if err != nil {
+		panic(err)
+	}
+	return k
+}
+
+func mustVerifier(k *auth.SigningKey) *auth.JWT {
+	pub, err := k.Public()
+	if err != nil {
+		panic(err)
+	}
+	v, err := auth.NewJWT("yanshi", clock.Real{}, pub)
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func bearer(req *http.Request) {
+	t, _ := userToken(req.Context())
+	req.Header.Set("Authorization", "Bearer "+t)
+}
+
 // stores 是一个实例使用的存储；多个实例共享同一套 PostgreSQL 存储即构成分布式部署。
 type stores struct {
 	log   eventlog.Log
@@ -135,7 +168,7 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 	peerSrv := httptest.NewServer(peerMux)
 	t.Cleanup(peerSrv.Close)
 	bus := &peer.Bus{Local: local, Log: st.log, Self: peerSrv.URL, Token: "t", Retry: 20 * time.Millisecond}
-	hub := &node.Hub{Dir: st.dir, Inbox: st.inbox, Store: store, Queue: st.queue, Auth: node.InsecureDevAuth{}}
+	hub := &node.Hub{Dir: st.dir, Inbox: st.inbox, Store: store, Queue: st.queue, Auth: node.TokenAuth{Verifier: verifier}}
 	catalog := &capability.Catalog{Local: capability.NewRegistry(), Nodes: st.dir, DefaultTimeout: time.Minute,
 		Sandbox: &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID}}
 	router := &sandbox.Router{Hub: hub, Queue: st.sandboxQueue}
@@ -160,7 +193,7 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 	svc := &service.Service{Store: store, Queue: st.queue, Agents: agents, Nodes: router}
 	mux := http.NewServeMux()
 	mux.Handle("/v1/nodes/connect", &wsgateway.Gateway{Hub: hub})
-	mux.Handle("/", (&httpapi.Server{Service: svc, Live: bus, Nodes: st.dir, Artifacts: st.artifacts}).Handler())
+	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: st.dir, Artifacts: st.artifacts}).Handler())
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
@@ -176,7 +209,7 @@ func (e *env) startNode(ledger nodesdk.Ledger) func() {
 	text := func(s string) []*v1.ContentBlock {
 		return []*v1.ContentBlock{{Kind: &v1.ContentBlock_Text{Text: &v1.Text{Text: s}}}}
 	}
-	arts := &nodesdk.Artifacts{BaseURL: e.srv.URL}
+	arts := &nodesdk.Artifacts{BaseURL: e.srv.URL, TokenSource: userToken}
 	exec := nodesdk.NewExecutor(ledger,
 		nodesdk.Capability{
 			Spec: &v1.CapabilitySpec{Name: "upload_file", Idempotent: true, Risk: v1.Risk_RISK_LOW},
@@ -235,7 +268,7 @@ func (e *env) startNode(ledger nodesdk.Ledger) func() {
 	connected := make(chan struct{}, 1)
 	c := nodesdk.NewClient(nodesdk.Config{
 		URL: "ws" + strings.TrimPrefix(e.srv.URL, "http") + "/v1/nodes/connect", NodeID: "node-1",
-		BusinessLine: "bl", EndUser: "u", Label: "MacBook", Kind: "desktop", Executor: exec,
+		TokenSource: userToken, Label: "MacBook", Kind: "desktop", Executor: exec,
 		OnConnected: func(string) { connected <- struct{}{} },
 	})
 	done := make(chan struct{})
@@ -255,6 +288,7 @@ func (e *env) do(method, path string, body any, out any) int {
 		b, _ = json.Marshal(body)
 	}
 	req, _ := http.NewRequest(method, e.srv.URL+path, bytes.NewReader(b))
+	bearer(req)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		e.t.Fatal(err)
@@ -307,7 +341,8 @@ func (e *env) newSession() string {
 	var res struct {
 		SessionID string `json:"session_id"`
 	}
-	e.do(http.MethodPost, "/v1/sessions", map[string]string{"business_line": "bl", "end_user": "u", "agent": "dev"}, &res)
+	// 身份取自令牌，不再自报。
+	e.do(http.MethodPost, "/v1/sessions", map[string]string{"agent": "dev"}, &res)
 	return res.SessionID
 }
 
@@ -443,6 +478,7 @@ func (e *env) subscribe(sid string) (<-chan live.Delta, chan string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	e.t.Cleanup(cancel)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, e.srv.URL+"/v1/sessions/"+sid+"/stream", nil)
+	bearer(req)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		e.t.Fatal(err)
@@ -586,4 +622,45 @@ func TestScenarioADataPath(t *testing.T) {
 	if got := string(e.disk["summary.txt"]); got != "李四: 30 分钟\n张三: 20 分钟" {
 		t.Fatalf("summary on device = %q", got)
 	}
+}
+
+// TestNodeReconnectsWhenTokenExpires：网关在令牌到期时断开 Node，SDK 通过 TokenSource 取新令牌重连。
+func TestNodeReconnectsWhenTokenExpires(t *testing.T) {
+	e := setup(t)
+	var issued atomic.Int32
+	short := func(context.Context) (string, error) {
+		issued.Add(1)
+		return blKey.Sign("yanshi", "u", 2*time.Second, time.Now())
+	}
+	connected := make(chan struct{}, 4)
+	exec := nodesdk.NewExecutor(nodesdk.NewMemLedger())
+	c := nodesdk.NewClient(nodesdk.Config{
+		URL: "ws" + strings.TrimPrefix(e.srv.URL, "http") + "/v1/nodes/connect", NodeID: "node-exp",
+		TokenSource: short, Label: "phone", Kind: "mobile", Executor: exec,
+		OnConnected: func(string) { connected <- struct{}{} },
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = c.Run(ctx) }()
+	for i := range 2 {
+		select {
+		case <-connected:
+		case <-time.After(8 * time.Second):
+			t.Fatalf("connection %d never happened", i+1)
+		}
+	}
+	if issued.Load() < 2 {
+		t.Fatalf("reconnected without a fresh token (issued %d)", issued.Load())
+	}
+
+	// 令牌不属于 Hello 自报的身份时拒绝接入。
+	other, _ := blKey.Sign("yanshi", "someone-else", time.Hour, time.Now())
+	bad := nodesdk.NewClient(nodesdk.Config{
+		URL: "ws" + strings.TrimPrefix(e.srv.URL, "http") + "/v1/nodes/connect", NodeID: "node-bad",
+		Token: other, EndUser: "u", Label: "x", Executor: exec,
+		OnConnected: func(string) { t.Error("node with mismatched identity was accepted") },
+	})
+	bctx, bcancel := context.WithTimeout(context.Background(), time.Second)
+	defer bcancel()
+	_ = bad.Run(bctx)
 }

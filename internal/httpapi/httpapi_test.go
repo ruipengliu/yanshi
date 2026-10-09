@@ -32,13 +32,21 @@ import (
 )
 
 // blocking 一直阻塞到 ctx 取消，用于验证中断会取消进行中的模型调用。
+// 期间持续发布增量：增量是尽力而为的，订阅晚于某次发布时会错过它。
 type blocking struct{ canceled chan struct{} }
 
 func (b *blocking) Generate(ctx context.Context, _ *model.Request, onDelta func(model.Delta)) (*model.Response, error) {
-	onDelta(model.Delta{Text: "thinking"})
-	<-ctx.Done()
-	close(b.canceled)
-	return nil, ctx.Err()
+	t := time.NewTicker(20 * time.Millisecond)
+	defer t.Stop()
+	for {
+		onDelta(model.Delta{Text: "thinking"})
+		select {
+		case <-ctx.Done():
+			close(b.canceled)
+			return nil, ctx.Err()
+		case <-t.C:
+		}
+	}
 }
 
 func setup(t *testing.T) (*httptest.Server, *blocking) {

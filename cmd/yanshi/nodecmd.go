@@ -29,7 +29,13 @@ func nodeCmd(args []string) error {
 	user := fs.String("user", "dev", "终端用户 ID")
 	bl := fs.String("business-line", "dev", "业务线")
 	state := fs.String("state", filepath.Join(userConfigDir(), "yanshi", "node"), "节点状态目录（node_id 与调用账本）")
+	tf := addTokenFlags(fs)
 	_ = fs.Parse(args)
+
+	token, businessLine, err := tf.source(*bl, *user)
+	if err != nil {
+		return err
+	}
 
 	absRoot, err := filepath.Abs(*root)
 	if err != nil {
@@ -44,10 +50,10 @@ func nodeCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	arts := &nodesdk.Artifacts{BaseURL: apiBase}
+	arts := &nodesdk.Artifacts{BaseURL: apiBase, TokenSource: token}
 	exec := nodesdk.NewExecutor(nodesdk.FileLedger{Dir: filepath.Join(*state, "ledger")}, fileCapabilities(absRoot, arts)...)
 	c := nodesdk.NewClient(nodesdk.Config{
-		URL: *server, NodeID: nodeID, BusinessLine: *bl, EndUser: *user, Label: *label,
+		URL: *server, NodeID: nodeID, TokenSource: token, BusinessLine: businessLine, EndUser: *user, Label: *label,
 		Kind: "desktop", HostApp: "yanshi-node-demo", Executor: exec, Logger: logger,
 		OnConnected: func(l string) { fmt.Printf("已上线：标签 %s，开放目录 %s\n", l, absRoot) },
 	})

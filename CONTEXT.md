@@ -110,6 +110,10 @@ _Avoid_: 共享、权限
 执行高风险 Capability 前，由 EndUser 在某台 Device 上做出的单次确认。
 _Avoid_: 确认框、授权（与 Grant 区分）
 
+**Token（令牌）**:
+由 BusinessLine 签发、证明调用方身份的短期凭证。用户令牌代表一个 EndUser，服务令牌代表业务线服务端；yanshi 只验证，不签发。
+_Avoid_: 会话（与 Session 区分）、票据、凭据（泛指时）
+
 **Policy（策略）**:
 约束 Run 能做什么的规则集合，涵盖 Capability 访问、Approval 要求、预算与内容安全。
 _Avoid_: 规则、配置
