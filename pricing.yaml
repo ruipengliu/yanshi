@@ -3,7 +3,8 @@
 # agents/ 中引用的每个模型都必须在这里有价格，否则 serve 拒绝启动。
 currency: CNY
 models:                                   # 元 / 百万 token（数值等于微元 / token）
-  tokenhub/deepseek-v4.1-flash: {input: 1.0, output: 4.0}
+  # cached_input 是命中前缀缓存的输入单价；不写时按 input 计（不假设折扣）。
+  tokenhub/deepseek-v4.1-flash: {input: 1.0, cached_input: 0.25, output: 4.0}
   echo/any: {input: 0, output: 0}         # 离线复述与压测模型不产生费用
   bench/latency=200ms,turns=2,tool=clock_now: {input: 0, output: 0}
 sandbox:

@@ -1,0 +1,20 @@
+name: multi-turn-memory-chat
+description: >-
+  多轮对话（同一 Session 的多个 Run）且有召回的 Memory：检验偏好在每一轮都被使用，
+  并观察前缀缓存在 Run 之间的命中（召回不放在系统指令里，Run 之间前缀保持稳定）。
+setup:
+  memories:
+    - {category: preference, content: "用户喜欢简短的回答，不要列表"}
+    - {category: profile, content: "用户常驻杭州，是一名产品经理"}
+    - {category: interest, content: "用户周末喜欢徒步"}
+turns:
+  - input: 这周六杭州周边有什么适合的活动？
+    expect: {status: completed}
+  - input: 那天大概要准备些什么？
+    expect: {status: completed}
+  - input: 如果下雨呢？
+    expect: {status: completed}
+  - input: 帮我想一句发朋友圈的文案。
+    expect:
+      status: completed
+      judge: 整段对话中的回复是否都较简短且没有使用列表（用户偏好），并结合了徒步/杭州的背景？

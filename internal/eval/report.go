@@ -28,10 +28,12 @@ type CaseResult struct {
 	AvgTokens  uint64  `json:"avg_tokens"`
 	AvgSeconds float64 `json:"avg_seconds"`
 	// 每次运行平均的调用、上下文压缩与接管次数（观察长 Run 的形态）。
-	AvgCalls       float64        `json:"avg_calls"`
-	AvgCompactions float64        `json:"avg_compactions"`
-	AvgTakeovers   float64        `json:"avg_takeovers"`
-	Failures       map[string]int `json:"failures,omitempty"`
+	AvgCalls       float64 `json:"avg_calls"`
+	AvgCompactions float64 `json:"avg_compactions"`
+	AvgTakeovers   float64 `json:"avg_takeovers"`
+	// CacheHit 是输入 token 中命中前缀缓存的比例（全部运行合计）。
+	CacheHit float64        `json:"cache_hit"`
+	Failures map[string]int `json:"failures,omitempty"`
 	// Samples 是失败的示例（每种失败一条），便于定位。
 	Samples []string `json:"samples,omitempty"`
 
@@ -40,6 +42,7 @@ type CaseResult struct {
 	seconds                       float64
 	runs                          int
 	calls, compactions, takeovers int
+	input, cached                 uint64
 }
 
 func (r *CaseResult) add(t TrialResult) {
@@ -50,6 +53,7 @@ func (r *CaseResult) add(t TrialResult) {
 	r.tokens += t.Tokens
 	r.seconds += t.Duration.Seconds()
 	r.calls, r.compactions, r.takeovers = r.calls+t.Calls, r.compactions+t.Compactions, r.takeovers+t.Takeovers
+	r.input, r.cached = r.input+t.InputTokens, r.cached+t.CachedInputTokens
 	r.scores = append(r.scores, t.JudgeScore...)
 	if t.Err != "" {
 		r.fail("error", t.Err)
@@ -77,6 +81,9 @@ func (r *CaseResult) finish() {
 	r.AvgSeconds = r.seconds / float64(r.runs)
 	n := float64(r.runs)
 	r.AvgCalls, r.AvgCompactions, r.AvgTakeovers = float64(r.calls)/n, float64(r.compactions)/n, float64(r.takeovers)/n
+	if r.input > 0 {
+		r.CacheHit = float64(r.cached) / float64(r.input)
+	}
 	if len(r.scores) > 0 {
 		sum := 0
 		for _, s := range r.scores {
@@ -153,18 +160,18 @@ func (r *Report) Markdown(baseline *Report, regressions []string) string {
 			base[c.Name] = c
 		}
 	}
-	b.WriteString("| 用例 | 通过 | 基线 | 评分 | 基线评分 | 平均 tokens | 平均耗时 | 调用/压缩/接管 |\n|---|---|---|---|---|---|---|---|\n")
+	b.WriteString("| 用例 | 通过 | 基线 | 评分 | 基线评分 | 平均 tokens | 缓存命中 | 平均耗时 | 调用/压缩/接管 |\n|---|---|---|---|---|---|---|---|---|\n")
 	for _, c := range r.Cases {
 		if c.Skipped != "" {
-			fmt.Fprintf(&b, "| %s | 跳过（%s） | | | | | | |\n", c.Name, c.Skipped)
+			fmt.Fprintf(&b, "| %s | 跳过（%s） | | | | | | | |\n", c.Name, c.Skipped)
 			continue
 		}
 		bp, bj := "", ""
 		if x, ok := base[c.Name]; ok {
 			bp, bj = fmt.Sprintf("%d/%d", x.Passed, x.Trials), score(x.JudgeAvg)
 		}
-		fmt.Fprintf(&b, "| %s | %d/%d | %s | %s | %s | %d | %.1fs | %.1f/%.1f/%.1f |\n", c.Name, c.Passed, c.Trials, bp, score(c.JudgeAvg), bj,
-			c.AvgTokens, c.AvgSeconds, c.AvgCalls, c.AvgCompactions, c.AvgTakeovers)
+		fmt.Fprintf(&b, "| %s | %d/%d | %s | %s | %s | %d | %.0f%% | %.1fs | %.1f/%.1f/%.1f |\n", c.Name, c.Passed, c.Trials, bp, score(c.JudgeAvg), bj,
+			c.AvgTokens, 100*c.CacheHit, c.AvgSeconds, c.AvgCalls, c.AvgCompactions, c.AvgTakeovers)
 	}
 	var failing []CaseResult
 	for _, c := range r.Cases {

@@ -35,12 +35,14 @@ type Entry struct {
 	// Model 是模型引用（provider/model）；沙箱执行为 "sandbox"。
 	Model string
 	// Agent 是发起调用的 AgentDef 版本（name@version），用于比较灰度版本的成本；沙箱执行为空。
-	Agent         string
-	InputTokens   uint64
-	OutputTokens  uint64
-	SandboxMillis uint64
-	Cost          int64
-	At            time.Time
+	Agent       string
+	InputTokens uint64
+	// CachedInputTokens 是 InputTokens 中命中前缀缓存的部分。
+	CachedInputTokens uint64
+	OutputTokens      uint64
+	SandboxMillis     uint64
+	Cost              int64
+	At                time.Time
 }
 
 func (e *Entry) Validate() error {
@@ -70,12 +72,13 @@ type Query struct {
 }
 
 type Row struct {
-	Key           string `json:"key"`
-	Calls         int64  `json:"calls"`
-	Cost          int64  `json:"cost_micros"`
-	InputTokens   uint64 `json:"input_tokens"`
-	OutputTokens  uint64 `json:"output_tokens"`
-	SandboxMillis uint64 `json:"sandbox_millis"`
+	Key               string `json:"key"`
+	Calls             int64  `json:"calls"`
+	Cost              int64  `json:"cost_micros"`
+	InputTokens       uint64 `json:"input_tokens"`
+	CachedInputTokens uint64 `json:"cached_input_tokens"`
+	OutputTokens      uint64 `json:"output_tokens"`
+	SandboxMillis     uint64 `json:"sandbox_millis"`
 }
 
 // Store 保存用量。实现须通过 usagetest 一致性套件。
@@ -98,6 +101,8 @@ type Store interface {
 type Price struct {
 	Input  float64 `yaml:"input"`
 	Output float64 `yaml:"output"`
+	// CachedInput 是命中前缀缓存的输入单价；未配置时按 Input 计（不假设折扣）。
+	CachedInput *float64 `yaml:"cached_input"`
 }
 
 // PriceList 是部署配置中的价格表（pricing.yaml）。
@@ -120,7 +125,7 @@ func LoadPriceList(path string) (*PriceList, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	for m, pr := range p.Models {
-		if pr.Input < 0 || pr.Output < 0 {
+		if pr.Input < 0 || pr.Output < 0 || (pr.CachedInput != nil && *pr.CachedInput < 0) {
 			return nil, fmt.Errorf("%s: negative price for %s", path, m)
 		}
 	}
@@ -139,13 +144,18 @@ func (p *PriceList) Has(model string) bool {
 	return ok
 }
 
-// ModelCost 返回一次模型调用的金额（微元）；没有价格时为 0。
-func (p *PriceList) ModelCost(model string, input, output uint64) int64 {
+// ModelCost 返回一次模型调用的金额（微元）；没有价格时为 0。cached 是 input 中命中缓存的部分。
+func (p *PriceList) ModelCost(model string, input, cached, output uint64) int64 {
 	if p == nil {
 		return 0
 	}
 	pr := p.Models[model]
-	return int64(math.Round(float64(input)*pr.Input + float64(output)*pr.Output))
+	cached = min(cached, input)
+	cachedPrice := pr.Input
+	if pr.CachedInput != nil {
+		cachedPrice = *pr.CachedInput
+	}
+	return int64(math.Round(float64(input-cached)*pr.Input + float64(cached)*cachedPrice + float64(output)*pr.Output))
 }
 
 // SandboxCost 返回沙箱执行 d 的金额（微元）。

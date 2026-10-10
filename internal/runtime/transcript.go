@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"slices"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/model"
@@ -26,6 +27,16 @@ func Transcript(st *session.State, maxToolResult int) []model.Message {
 	if c := st.Compaction; c != nil {
 		out = append(out, model.Message{Role: model.RoleUser, Content: append(model.TextBlocks(summaryPrefix), c.GetSummary()...)})
 	}
+	// 当前 Run 的召回放在它的用户输入之前，而不是系统指令里：系统指令与工具定义保持不变，Run 内只在尾部追加，
+	// 前缀缓存才能命中。该输入已被压缩进摘要时，放在摘要之后。
+	var recall []*v1.ContentBlock
+	active := st.Active()
+	if active != nil {
+		if t := memoryText(st, active); t != "" {
+			recall = model.TextBlocks(t)
+		}
+	}
+	placed := false
 
 	closePending := func() {
 		for _, id := range pending {
@@ -40,6 +51,10 @@ func Transcript(st *session.State, maxToolResult int) []model.Message {
 	for _, e := range st.History {
 		switch p := e.GetPayload().(type) {
 		case *v1.Event_RunRequested:
+			if recall != nil && p.RunRequested.GetRunId() == active.ID {
+				deferUser(&out, &deferred, pending, recall)
+				placed = true
+			}
 			deferUser(&out, &deferred, pending, p.RunRequested.GetInput())
 		case *v1.Event_Steered:
 			deferUser(&out, &deferred, pending, p.Steered.GetInput())
@@ -66,6 +81,13 @@ func Transcript(st *session.State, maxToolResult int) []model.Message {
 		}
 	}
 	closePending()
+	if recall != nil && !placed {
+		at := 0
+		if st.Compaction != nil {
+			at = 1
+		}
+		out = slices.Insert(out, at, model.Message{Role: model.RoleUser, Content: recall})
+	}
 	return out
 }
 

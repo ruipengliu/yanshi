@@ -1089,11 +1089,13 @@ func (x *ToolCall) GetArgumentsJson() string {
 }
 
 type Usage struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	InputTokens   uint64                 `protobuf:"varint,1,opt,name=input_tokens,json=inputTokens,proto3" json:"input_tokens,omitempty"`
-	OutputTokens  uint64                 `protobuf:"varint,2,opt,name=output_tokens,json=outputTokens,proto3" json:"output_tokens,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	InputTokens  uint64                 `protobuf:"varint,1,opt,name=input_tokens,json=inputTokens,proto3" json:"input_tokens,omitempty"`
+	OutputTokens uint64                 `protobuf:"varint,2,opt,name=output_tokens,json=outputTokens,proto3" json:"output_tokens,omitempty"`
+	// input_tokens 中命中提供商前缀缓存的部分（价格通常远低于普通输入），用于计量与观察缓存命中率。
+	CachedInputTokens uint64 `protobuf:"varint,3,opt,name=cached_input_tokens,json=cachedInputTokens,proto3" json:"cached_input_tokens,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *Usage) Reset() {
@@ -1136,6 +1138,13 @@ func (x *Usage) GetInputTokens() uint64 {
 func (x *Usage) GetOutputTokens() uint64 {
 	if x != nil {
 		return x.OutputTokens
+	}
+	return 0
+}
+
+func (x *Usage) GetCachedInputTokens() uint64 {
+	if x != nil {
+		return x.CachedInputTokens
 	}
 	return 0
 }
@@ -2115,10 +2124,11 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\n" +
 	"capability\x18\x02 \x01(\tR\n" +
 	"capability\x12%\n" +
-	"\x0earguments_json\x18\x03 \x01(\tR\rargumentsJson\"O\n" +
+	"\x0earguments_json\x18\x03 \x01(\tR\rargumentsJson\"\x7f\n" +
 	"\x05Usage\x12!\n" +
 	"\finput_tokens\x18\x01 \x01(\x04R\vinputTokens\x12#\n" +
-	"\routput_tokens\x18\x02 \x01(\x04R\foutputTokens\"\xe8\x01\n" +
+	"\routput_tokens\x18\x02 \x01(\x04R\foutputTokens\x12.\n" +
+	"\x13cached_input_tokens\x18\x03 \x01(\x04R\x11cachedInputTokens\"\xe8\x01\n" +
 	"\x10AssistantMessage\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x121\n" +

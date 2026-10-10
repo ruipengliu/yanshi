@@ -83,6 +83,7 @@ func (m *Mem) Report(_ context.Context, q Query) ([]Row, error) {
 		r.Calls++
 		r.Cost += e.Cost
 		r.InputTokens += e.InputTokens
+		r.CachedInputTokens += e.CachedInputTokens
 		r.OutputTokens += e.OutputTokens
 		r.SandboxMillis += e.SandboxMillis
 	}

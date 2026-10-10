@@ -124,6 +124,8 @@ message ToolCall {
 message Usage {
   uint64 input_tokens = 1;
   uint64 output_tokens = 2;
+  // input_tokens 中命中提供商前缀缓存的部分（价格通常远低于普通输入），用于计量与观察缓存命中率。
+  uint64 cached_input_tokens = 3;
 }
 
 // AssistantMessage 是一次完整的模型输出；tool_calls 即 Capability 调用请求。

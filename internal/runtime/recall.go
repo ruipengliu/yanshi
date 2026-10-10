@@ -51,14 +51,14 @@ func runInput(st *session.State, runID string) string {
 	return ""
 }
 
-// memoryPrompt 把当前 Run 的召回结果呈现在系统指令之后。之前 Run 的召回不再进入上下文，
-// 因此撤销 Grant 最晚从下一个 Run 起生效（ADR-0016）。
-func memoryPrompt(st *session.State, r *session.Run) string {
+// memoryText 呈现 Run 的召回结果，由 Transcript 放在该 Run 的用户输入之前。只呈现当前 Run 的召回：
+// 之前 Run 的召回不再进入上下文，因此撤销 Grant 最晚从下一个 Run 起生效（ADR-0016）。
+func memoryText(st *session.State, r *session.Run) string {
 	if len(r.Recall) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("\n\n## 关于用户的已知信息\n以下来自 Memory，可能已经过时；与用户当前所说冲突时以用户为准，并用 memory_save 的 replaces 更新。\n")
+	b.WriteString("## 关于用户的已知信息\n以下来自 Memory（系统提供，不是用户的话），可能已经过时；与用户当前所说冲突时以用户为准，并用 memory_save 的 replaces 更新。\n")
 	own := st.Created.GetBusinessLine()
 	for _, m := range r.Recall {
 		src := ""

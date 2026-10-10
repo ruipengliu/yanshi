@@ -275,7 +275,9 @@ type TrialResult struct {
 	Duration   time.Duration
 	// 各轮合计的调用、上下文压缩与接管次数。
 	Calls, Compactions, Takeovers int
-	Err                           string
+	// InputTokens 与 CachedInputTokens 用于计算前缀缓存命中率。
+	InputTokens, CachedInputTokens uint64
+	Err                            string
 }
 
 type Assertion struct {
@@ -341,6 +343,7 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		}
 		tr.Tokens += obs.tokens
 		tr.Calls, tr.Compactions, tr.Takeovers = tr.Calls+len(obs.calls), tr.Compactions+obs.compactions, tr.Takeovers+obs.takeovers
+		tr.InputTokens, tr.CachedInputTokens = tr.InputTokens+obs.inTokens, tr.CachedInputTokens+obs.cachedTokens
 		if dev != nil {
 			obs.writes, obs.sent = dev.snapshot()
 		}
@@ -371,6 +374,7 @@ type observation struct {
 	// compactions 是本轮的上下文压缩次数，takeovers 是本轮 Run 的接管次数。
 	compactions, takeovers int
 	tickets                []string // CRM 中本 EndUser 的工单
+	inTokens, cachedTokens uint64   // 本轮模型调用的输入 token 与其中命中前缀缓存的部分
 }
 
 // turn 提交一轮输入，按 approve 自动作出审批决定，等待 Run 结束并收集本轮的事件。
@@ -437,6 +441,7 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 		case *v1.Event_AssistantMessage:
 			m := p.AssistantMessage
 			obs.tokens += m.GetUsage().GetInputTokens() + m.GetUsage().GetOutputTokens()
+			obs.inTokens, obs.cachedTokens = obs.inTokens+m.GetUsage().GetInputTokens(), obs.cachedTokens+m.GetUsage().GetCachedInputTokens()
 			for _, tc := range m.GetToolCalls() {
 				obs.calls = append(obs.calls, tc.GetCapability())
 				obs.steps = append(obs.steps, fmt.Sprintf("调用 %s %s", tc.GetCapability(), clip(tc.GetArgumentsJson(), judgeStepBytes)))
@@ -464,7 +469,9 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 			obs.steps = append(obs.steps, fmt.Sprintf("用户审批：%v", p.ApprovalDecided.GetApproved()))
 		case *v1.Event_ContextCompacted:
 			obs.compactions++
-			obs.tokens += p.ContextCompacted.GetUsage().GetInputTokens() + p.ContextCompacted.GetUsage().GetOutputTokens()
+			u := p.ContextCompacted.GetUsage()
+			obs.tokens += u.GetInputTokens() + u.GetOutputTokens()
+			obs.inTokens, obs.cachedTokens = obs.inTokens+u.GetInputTokens(), obs.cachedTokens+u.GetCachedInputTokens()
 		}
 	}
 	return obs, nil
@@ -608,7 +615,8 @@ func (in *instance) dumpLogs(ctx context.Context, name string, sessions []string
 	_ = os.WriteFile(filepath.Join(in.cfg.LogDir, name+".jsonl"), []byte(b.String()), 0o644)
 }
 
-var digitGroup = regexp.MustCompile(`(\d)[,，](\d{3})`)
+// digitGroup 匹配数字中的千分位分隔符：逗号、空格及各种窄空格（"277,050"、"277 050"）。
+var digitGroup = regexp.MustCompile(`(\d)[,，\x{0020}\x{00a0}\x{2009}\x{202f}](\d{3})`)
 
 // plainNumbers 去掉数字中的千分位分隔符（"277,050" → "277050"），使 reply_contains 不受数字格式影响。
 func plainNumbers(s string) string {

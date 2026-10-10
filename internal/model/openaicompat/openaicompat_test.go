@@ -26,7 +26,7 @@ func TestGenerateStreamsTextAndToolCalls(t *testing.T) {
 			`{"choices":[{"delta":{"content":"好"}}]}`,
 			`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"clock_now","arguments":"{\"tz\":"}}]}}]}`,
 			`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"UTC\"}"}}]}}]}`,
-			`{"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3}}`,
+			`{"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"prompt_tokens_details":{"cached_tokens":5}}}`,
 		}
 		for _, c := range chunks {
 			fmt.Fprintf(w, "data: %s\n\n", c)
@@ -56,7 +56,7 @@ func TestGenerateStreamsTextAndToolCalls(t *testing.T) {
 	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].GetCallId() != "c1" || resp.ToolCalls[0].GetArgumentsJson() != `{"tz":"UTC"}` {
 		t.Fatalf("tool calls %v", resp.ToolCalls)
 	}
-	if resp.Usage.GetInputTokens() != 7 || resp.Model != "m-1" {
+	if resp.Usage.GetInputTokens() != 7 || resp.Usage.GetCachedInputTokens() != 5 || resp.Model != "m-1" {
 		t.Fatalf("usage %v model %s", resp.Usage, resp.Model)
 	}
 	if len(got.Messages) != 4 || got.Messages[0].Role != "system" || got.Messages[2].ToolCalls[0].ID != "c0" || got.Messages[3].ToolCallID != "c0" {

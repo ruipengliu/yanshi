@@ -34,6 +34,8 @@ sandbox:
   per_hour: 0.36                # 元 / 小时执行时间
 ```
 
+`cached_input` 是命中提供商前缀缓存的输入单价（`Usage.cached_input_tokens`，TokenHub 在 `prompt_tokens_details.cached_tokens` 中报告）；不写时按 `input` 计，不假设折扣。用量记录与 `GET /v1/usage` 同时给出缓存命中的 token 数，指标 `yanshi_model_tokens_total{direction="cached_input"}`。
+
 金额按记录时的价格计算，之后调价不影响已有记录。任一业务线配置了配额时，所有 AgentDef 引用的模型都必须有价格，否则启动失败：没有价格的模型等于不受配额约束。
 
 ## 3. 配额

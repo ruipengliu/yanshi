@@ -31,6 +31,10 @@ func (b *logBuilder) add(p any) *logBuilder {
 		e.Payload = &v1.Event_RunInterrupted{RunInterrupted: p}
 	case *v1.ContextCompacted:
 		e.Payload = &v1.Event_ContextCompacted{ContextCompacted: p}
+	case *v1.MemoryRecalled:
+		e.Payload = &v1.Event_MemoryRecalled{MemoryRecalled: p}
+	case *v1.RunCompleted:
+		e.Payload = &v1.Event_RunCompleted{RunCompleted: p}
 	}
 	b.events = append(b.events, e)
 	return b
@@ -101,5 +105,47 @@ func TestTranscriptClosesCallsOfInterruptedRun(t *testing.T) {
 	}
 	if !strings.Contains(model.Text(msgs[2].Content), "not executed") {
 		t.Fatalf("synthesized result = %q", model.Text(msgs[2].Content))
+	}
+}
+
+// TestRecallSitsBeforeTheCurrentRunInput：召回只呈现当前 Run 的，位置在它的用户输入之前（之前 Run 的召回不再出现）；
+// 系统指令因此不随召回变化，前缀缓存可以命中。
+func TestRecallSitsBeforeTheCurrentRunInput(t *testing.T) {
+	mem := func(c string) []*v1.RecalledMemory {
+		return []*v1.RecalledMemory{{Id: "m", BusinessLine: "bl", Category: "preference", Content: c}}
+	}
+	b := (&logBuilder{}).
+		add(&v1.SessionCreated{BusinessLine: "bl"}).
+		add(&v1.RunRequested{RunId: "r1", Input: model.TextBlocks("a")}).
+		add(&v1.AttemptStarted{RunId: "r1", Attempt: 1}).
+		add(&v1.MemoryRecalled{RunId: "r1", Attempt: 1, Items: mem("旧")}).
+		add(&v1.AssistantMessage{RunId: "r1", Attempt: 1, Content: model.TextBlocks("ok")}).
+		add(&v1.RunCompleted{RunId: "r1", Attempt: 1}).
+		add(&v1.RunRequested{RunId: "r2", Input: model.TextBlocks("b")}).
+		add(&v1.AttemptStarted{RunId: "r2", Attempt: 1}).
+		add(&v1.MemoryRecalled{RunId: "r2", Attempt: 1, Items: mem("新")}).
+		add(&v1.AssistantMessage{RunId: "r2", Attempt: 1, ToolCalls: calls("c1")}).
+		add(&v1.ToolResult{RunId: "r2", Attempt: 1, CallId: "c1"})
+	st, err := session.Reduce(b.events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := shape(Transcript(st, 0))
+	if strings.Contains(got, "旧") || !strings.Contains(got, "新") {
+		t.Fatalf("only the current run's recall belongs in the transcript: %s", got)
+	}
+	if i, j := strings.Index(got, "新"), strings.Index(got, "user:b"); i < 0 || j < i || strings.Index(got, "user:a") > i {
+		t.Fatalf("recall not placed right before the current run's input: %s", got)
+	}
+
+	// 当前 Run 的输入被压缩进摘要后，召回紧跟摘要。
+	b.add(&v1.ContextCompacted{RunId: "r2", Attempt: 1, ThroughSeq: 11, Summary: model.TextBlocks("S")})
+	st, err = session.Reduce(b.events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs := Transcript(st, 0)
+	if len(msgs) < 2 || !strings.Contains(model.Text(msgs[0].Content), "S") || !strings.Contains(model.Text(msgs[1].Content), "新") {
+		t.Fatalf("recall not right after the summary: %s", shape(msgs))
 	}
 }

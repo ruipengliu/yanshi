@@ -38,8 +38,8 @@ func (m *Meter) Model(ctx context.Context, s Scope, id, agent, model string, u *
 		return
 	}
 	m.record(ctx, s, &Entry{ID: id, BusinessLine: s.BusinessLine, EndUser: s.EndUser, Kind: Model, Model: model, Agent: agent,
-		InputTokens: u.GetInputTokens(), OutputTokens: u.GetOutputTokens(),
-		Cost: m.Prices.ModelCost(model, u.GetInputTokens(), u.GetOutputTokens()), At: at})
+		InputTokens: u.GetInputTokens(), CachedInputTokens: u.GetCachedInputTokens(), OutputTokens: u.GetOutputTokens(),
+		Cost: m.Prices.ModelCost(model, u.GetInputTokens(), u.GetCachedInputTokens(), u.GetOutputTokens()), At: at})
 }
 
 // Sandbox 记录一次沙箱执行。id 取自调用的 call_id：同一调用被重新投递时不重复计费。

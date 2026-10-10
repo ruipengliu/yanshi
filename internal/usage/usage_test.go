@@ -19,10 +19,19 @@ func TestMem(t *testing.T) {
 func TestPrices(t *testing.T) {
 	p := &usage.PriceList{Models: map[string]usage.Price{"p/m": {Input: 1, Output: 4}}}
 	p.Sandbox.PerHour = 0.36
-	if got := p.ModelCost("p/m", 1000, 500); got != 3000 {
+	if got := p.ModelCost("p/m", 1000, 0, 500); got != 3000 {
 		t.Fatalf("model cost %d, want 3000 micros", got)
 	}
-	if got := p.ModelCost("p/other", 1000, 500); got != 0 {
+	// 未配置缓存单价时缓存命中按普通输入计。
+	if got := p.ModelCost("p/m", 1000, 800, 500); got != 3000 {
+		t.Fatalf("cached input without a cached price %d, want 3000", got)
+	}
+	cached := 0.25
+	p.Models["p/m"] = usage.Price{Input: 1, Output: 4, CachedInput: &cached}
+	if got := p.ModelCost("p/m", 1000, 800, 500); got != 200+200+2000 {
+		t.Fatalf("cached input cost %d, want 2400", got)
+	}
+	if got := p.ModelCost("p/other", 1000, 0, 500); got != 0 {
 		t.Fatalf("unpriced model cost %d", got)
 	}
 	if got := p.SandboxCost(10 * time.Second); got != 1000 {

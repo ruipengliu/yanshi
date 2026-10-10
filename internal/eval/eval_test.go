@@ -201,7 +201,7 @@ func TestMergeBaselineKeepsOtherCases(t *testing.T) {
 }
 
 func TestPlainNumbers(t *testing.T) {
-	if got := plainNumbers("总额 1,234,567 元，另 277，050"); got != "总额 1234567 元，另 277050" {
+	if got := plainNumbers("总额 1,234,567 元，另 277，050，又 277 050 与 277\u202f050"); got != "总额 1234567 元，另 277050，又 277050 与 277050" {
 		t.Fatalf("plainNumbers = %q", got)
 	}
 }

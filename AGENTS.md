@@ -22,6 +22,7 @@
 - **Event 日志是唯一事实源。** 状态只能由 `session.Reduce` 从日志投影得到；所有写入经 `session.Store.Commit`（先校验、再乐观并发追加）。投影快照只是缓存：**改动 `Apply` 或 `State` 的字段时递增 `session.ProjectionVersion`**，旧快照随之作废。
 - **契约在 `proto/`。** 修改 `.proto` 后运行 `make gen`，生成代码 `gen/` 一并提交；只做向后兼容的修改（`buf breaking`）。
 - **Worker.Step 是确定性的单步。** 时间取自 `clock.Clock`，ID 取自 `ids.Generator`；影响结果的逻辑放在 Step 的同步路径里，以便 `internal/sim` 在任意两步之间注入故障。
+- **请求前缀保持稳定。** 提供商的前缀缓存是长 Run 成本的主要杠杆：系统指令只放 AgentDef 的指令，不放每个 Run 都变化的内容（召回放在 Run 的位置上，见 `runtime.Transcript`）；工具按名称排序；Run 内的上下文只在尾部追加。改动 Transcript 或请求组装时，用评测报告的"缓存命中"列确认没有退化。
 - **评测是效果的裁判。** 改动模型、提示词、AgentDef，或召回、压缩、Memory、MCP、审批摘要等给模型看的文本时，运行 `make eval`（需要 `TOKENHUB_API_KEY`）并与 `evals/baselines/` 比较，不得有回归；有意的效果变化用 `-update-baseline` 更新基线并随代码提交。新增给模型看的能力或文本时，同时在 `evals/` 增加覆盖它的用例（`docs/design/m4-eval.md`）。
 - **模拟测试是执行语义的裁判。** 改动 runtime / session / service / workqueue 后运行 `make sim`；失败信息里的种子可复现：`go test ./internal/sim -run <Test> -sim.seed=<N>`。新增故障类型或路径时，同时在 `internal/sim` 中注入并加入覆盖统计。
 - **新存储实现必须通过一致性套件**（`eventlogtest`、`workqueuetest`、`nodetest`、`ledgertest`、`sandboxtest`、`artifacttest`、`lifecycletest`、`memorytest`、`snapshottest`、`usagetest`），并接入 `internal/sim` 的差分测试。数据库变更只通过新增 `internal/pg/migrations/NNNN_*.sql`，不修改已有迁移。

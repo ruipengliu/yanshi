@@ -34,8 +34,8 @@ func (s Store) Record(ctx context.Context, e *usage.Entry) error {
 	}
 	_, err := s.Pool.Exec(ctx, `
 		WITH ins AS (
-			INSERT INTO usage_entries (id, business_line, end_user, kind, model, input_tokens, output_tokens, sandbox_millis, cost, at, agent)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			INSERT INTO usage_entries (id, business_line, end_user, kind, model, input_tokens, output_tokens, sandbox_millis, cost, at, agent, cached_input_tokens)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $13)
 			ON CONFLICT (id) DO NOTHING
 			RETURNING business_line, end_user, date_trunc('hour', at, 'UTC') AS hour, cost, input_tokens, output_tokens, sandbox_millis
 		)
@@ -45,7 +45,7 @@ func (s Store) Record(ctx context.Context, e *usage.Entry) error {
 		ON CONFLICT (business_line, end_user, hour, shard) DO UPDATE SET
 			cost = h.cost + EXCLUDED.cost, input_tokens = h.input_tokens + EXCLUDED.input_tokens,
 			output_tokens = h.output_tokens + EXCLUDED.output_tokens, sandbox_millis = h.sandbox_millis + EXCLUDED.sandbox_millis`,
-		e.ID, e.BusinessLine, e.EndUser, string(e.Kind), e.Model, int64(e.InputTokens), int64(e.OutputTokens), int64(e.SandboxMillis), e.Cost, e.At, e.Agent, shardOf(e.ID))
+		e.ID, e.BusinessLine, e.EndUser, string(e.Kind), e.Model, int64(e.InputTokens), int64(e.OutputTokens), int64(e.SandboxMillis), e.Cost, e.At, e.Agent, shardOf(e.ID), int64(e.CachedInputTokens))
 	return err
 }
 
@@ -80,7 +80,8 @@ func (s Store) Report(ctx context.Context, q usage.Query) ([]usage.Row, error) {
 	// 按字节序排序，与内存实现一致（匿名值 '~' 排在最后）。
 	rows, err := s.Pool.Query(ctx, `
 		SELECT * FROM (
-			SELECT `+key+` AS k, count(*), sum(cost)::bigint, sum(input_tokens)::bigint, sum(output_tokens)::bigint, sum(sandbox_millis)::bigint
+			SELECT `+key+` AS k, count(*), sum(cost)::bigint, sum(input_tokens)::bigint, sum(output_tokens)::bigint, sum(sandbox_millis)::bigint,
+				sum(cached_input_tokens)::bigint
 			FROM usage_entries
 			WHERE business_line = $1 AND ($2 = '' OR end_user = $2) AND at >= $3 AND at < $4
 			GROUP BY k
@@ -90,9 +91,9 @@ func (s Store) Report(ctx context.Context, q usage.Query) ([]usage.Row, error) {
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (usage.Row, error) {
 		var row usage.Row
-		var in, out, ms int64
-		err := r.Scan(&row.Key, &row.Calls, &row.Cost, &in, &out, &ms)
-		row.InputTokens, row.OutputTokens, row.SandboxMillis = uint64(in), uint64(out), uint64(ms)
+		var in, out, ms, cached int64
+		err := r.Scan(&row.Key, &row.Calls, &row.Cost, &in, &out, &ms, &cached)
+		row.InputTokens, row.OutputTokens, row.SandboxMillis, row.CachedInputTokens = uint64(in), uint64(out), uint64(ms), uint64(cached)
 		return row, err
 	})
 }

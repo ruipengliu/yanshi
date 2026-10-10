@@ -86,8 +86,11 @@ type wireChunk struct {
 		} `json:"delta"`
 	} `json:"choices"`
 	Usage *struct {
-		PromptTokens     uint64 `json:"prompt_tokens"`
-		CompletionTokens uint64 `json:"completion_tokens"`
+		PromptTokens        uint64 `json:"prompt_tokens"`
+		CompletionTokens    uint64 `json:"completion_tokens"`
+		PromptTokensDetails *struct {
+			CachedTokens uint64 `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
 	} `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
@@ -229,6 +232,9 @@ func decodeStream(r io.Reader, modelID string, onDelta func(model.Delta)) (*mode
 		}
 		if c.Usage != nil {
 			out.Usage = &v1.Usage{InputTokens: c.Usage.PromptTokens, OutputTokens: c.Usage.CompletionTokens}
+			if d := c.Usage.PromptTokensDetails; d != nil {
+				out.Usage.CachedInputTokens = d.CachedTokens
+			}
 		}
 		for _, ch := range c.Choices {
 			if d := ch.Delta.Content; d != "" {

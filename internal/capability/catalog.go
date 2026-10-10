@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -96,7 +97,7 @@ func (c *Catalog) Tools(ctx context.Context, target Target, allow []string) ([]T
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, tools...)
+		out = append(out, byName(tools)...)
 	}
 	if c.Sandbox != nil && target.SessionID != "" {
 		for _, cs := range c.Sandbox.Specs {
@@ -116,15 +117,23 @@ func (c *Catalog) Tools(ctx context.Context, target Target, allow []string) ([]T
 	if err != nil {
 		return nil, err
 	}
+	var devices []Tool
 	for _, n := range nodes {
 		for _, cs := range n.Capabilities {
 			if !matchAny(globs, cs.GetName()) {
 				continue
 			}
-			out = append(out, c.deviceTool(n, cs))
+			devices = append(devices, c.deviceTool(n, cs))
 		}
 	}
-	return out, nil
+	return append(out, byName(devices)...), nil
+}
+
+// byName 按名称排序：工具定义是请求前缀的一部分，顺序不能随 Node 列表或 MCP Server 的返回顺序变化，
+// 否则提供商的前缀缓存失效。
+func byName(tools []Tool) []Tool {
+	slices.SortFunc(tools, func(a, b Tool) int { return strings.Compare(a.Spec.Name, b.Spec.Name) })
+	return tools
 }
 
 // Resolve 按工具名解析；不存在时返回 nil。

@@ -46,7 +46,7 @@ var (
 
 var (
 	ModelCallDuration = histogram("model_call_duration_seconds", "模型调用耗时；kind = turn | summary。", latency, "kind", "outcome")
-	ModelTokens       = counter("model_tokens_total", "模型输入、输出 token 数。", "direction")
+	ModelTokens       = counter("model_tokens_total", "模型 token 数；direction = input | output | cached_input（input 中命中前缀缓存的部分）。", "direction")
 	RunsFinished      = counter("runs_finished_total", "进入终态的 Run；agent = name@version，用于比较灰度版本。", "status", "agent")
 	RunDuration       = histogram("run_duration_seconds", "Run 从请求到终态的时长。", runDuration, "status", "agent")
 	Attempts          = counter("attempts_total", "开始的 Attempt；kind = start | takeover | resume。", "kind")
