@@ -26,7 +26,7 @@ func judge(ctx context.Context, gw *model.Gateway, judgeModel, rubric string, o 
 	for _, s := range o.steps {
 		fmt.Fprintf(&b, "- %s\n", s)
 	}
-	fmt.Fprintf(&b, "\n助手的最终回复：\n%s\n", o.reply)
+	fmt.Fprintf(&b, "\n助手本轮的回复（全部文本）：\n%s\n", o.reply)
 	req := &model.Request{Model: judgeModel, System: judgeInstructions, Messages: []model.Message{{Role: model.RoleUser, Content: model.TextBlocks(b.String())}}}
 	var lastErr error
 	for range 2 {

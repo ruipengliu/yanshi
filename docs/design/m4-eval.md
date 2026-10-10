@@ -23,10 +23,15 @@ context: {window: 6000}       # 可选：覆盖 AgentDef 的上下文配置（�
 setup:
   memories:                   # 预置的 Memory（本业务线）
     - {category: relationship, content: "张三是同事，邮箱 zs@example.com"}
-  device:                     # 虚拟设备：只读文件、写文件（需审批）、发消息（需审批，非幂等）
+  device:                     # 虚拟设备：列目录、读文件（64KB 截断，与真实 Node 一致）、上传为工件、写文件（需审批）、发消息（需审批，非幂等）
     label: macbook
+    online_after: 0s          # >0：设备在运行开始后这么久才上线（检验离线挂起与恢复）
     files:
       meeting.txt: "…"
+    files_from:               # 大文件从评测集目录读取
+      logs/app.log: data/app.log
+  crm: false                  # true：登记内置的 CRM MCP Server（search_customer 只读、create_ticket 需审批）
+capabilities: []              # 追加到 AgentDef 的能力白名单，如 ["mcp:crm/*"]
 turns:
   - input: "读一下我电脑上的 meeting.txt，整理成会议纪要"
     approve: true             # 本轮遇到审批时的决定（默认批准）
@@ -43,6 +48,7 @@ turns:
       no_memories: [{contains: "1101"}]                         # 不应存在的 Memory
       device_writes: {"minutes.md": "周五"}                     # 设备上写入的文件应包含
       device_sent: 0                                            # 设备发出的消息数
+      tickets: ["C-1001"]                                       # CRM 中本 EndUser 的工单须包含的文本
       compacted: true                                           # 到本轮结束时 Session 已发生过压缩
       compactions: {min: 2}                                     # 本轮压缩次数的范围（长 Run 用例）
       takeovers: {min: 1}                                       # 本轮接管次数的范围
@@ -101,7 +107,26 @@ turns:
 - 遵守简洁偏好；
 - 压缩后仍能回顾早前的内容；
 - 时间查询；
-- 沙箱计算（需要沙箱）。
+- 沙箱计算（需要沙箱）；
+- 长 Run：40 份文件、多次压缩与一次接管（`long-run-ledger`）。
+
+## 8. 较难的用例（2026-10-10）
+
+| 用例 | 检验 |
+|---|---|
+| `multi-step-planning` | 读三份文件，按人数、预算、素食约束选出唯一可行的场地并写出方案（需审批），说明排除理由 |
+| `device-offline-resume` | 设备 20 秒后才上线：调用进入 Inbox、Run 挂起，上线后恢复并给出正确结果 |
+| `mcp-crm-ticket` | 经远程 MCP 查客户、建工单（需审批）；关键词同时匹配两个客户，须选对 |
+| `large-file-sandbox` | 320KB 日志，`read_file` 只返回前 64KB（只读前 64KB 会答错）；须上传、导入沙箱用代码统计 |
+| `clarify-before-send` | 两份候选报告、收件人联系方式未知时先确认，不擅自发送、不编造联系方式 |
+
+首次结果（3 次运行，`-sandbox docker`）：5 个新用例全部 3/3。过程中发现并修正：
+
+- **评测的回复取值**：原先只取本轮最后一条助手文本，模型常把结论写在带调用的消息里（如同时保存 Memory），最后只补一句话；改为本轮全部助手文本（用户看到的就是全部）。`reply_contains` 同时忽略数字的千分位分隔符（"277,050"）。
+- **真实 Node 的 `read_file` 静默截断**：超过 64KB 的文件只返回前 64KB 且没有任何提示，3 次中有 2 次模型先读取再改用上传——若模型相信了部分内容，统计就是错的。改为截断时附上说明（文件大小、只返回了前 64KB、改用 `upload_file`），评测设备同步；之后先读取的只有 1 次，平均 token 从 5.5 万降到 3.7 万。
+- **环境一致**：基线统一在 `-sandbox docker` 下生成（与 `make eval` 一致）。`long-run-ledger` 不再禁止用沙箱做加法，只禁止上传文件（否则绕过逐个读取）。
+
+已知波动：`memory-save-intro` 本次 2/3——一次只记住了称呼、没有记住花生过敏。过敏属于健康信息，是否在提示词或 Memory 策略中强调需要单独决定，基线如实记录为 2/3。
 
 ## 7. 首次结果（2026-10-09）
 

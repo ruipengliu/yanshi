@@ -176,9 +176,13 @@ func fileCapabilities(root string, arts *nodesdk.Artifacts) []nodesdk.Capability
 					return nil, err
 				}
 				defer f.Close()
-				b := make([]byte, 64<<10)
-				n, _ := f.Read(b)
-				return textBlocks(strings.ToValidUTF8(string(b[:n]), "\uFFFD")), nil
+				b := make([]byte, nodesdk.ReadLimit)
+				n, _ := io.ReadFull(f, b)
+				body := strings.ToValidUTF8(string(b[:n]), "\uFFFD")
+				if fi, err := f.Stat(); err == nil && fi.Size() > int64(n) {
+					body += nodesdk.TruncatedNotice(fi.Size())
+				}
+				return textBlocks(body), nil
 			},
 		},
 		{

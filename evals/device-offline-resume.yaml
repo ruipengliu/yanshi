@@ -1,0 +1,19 @@
+name: device-offline-resume
+description: 设备离线 20 秒后才上线：调用进入 Inbox、Run 挂起，设备上线后投递并恢复，最终给出正确结果。
+timeout: 6m
+setup:
+  device:
+    label: macbook
+    online_after: 20s
+    files:
+      todo.txt: |
+        本周待办：
+        1. 周三前把报价单发给北辰物流
+        2. 周四下午三点和设计团队评审首页改版
+        3. 周五提交 Q3 报销
+turns:
+  - input: 看一下我电脑上的 todo.txt，周四有什么安排？
+    expect:
+      status: completed
+      calls: ["macbook__read_file"]
+      reply_contains: ["设计"]

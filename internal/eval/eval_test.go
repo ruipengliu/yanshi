@@ -199,3 +199,28 @@ func TestMergeBaselineKeepsOtherCases(t *testing.T) {
 		t.Fatalf("merged baseline %s", got)
 	}
 }
+
+func TestPlainNumbers(t *testing.T) {
+	if got := plainNumbers("总额 1,234,567 元，另 277，050"); got != "总额 1234567 元，另 277050" {
+		t.Fatalf("plainNumbers = %q", got)
+	}
+}
+
+// TestDeviceReadTruncatesWithNotice：超过上限的文件被截断，并附上说明（与真实 Node 一致）。
+func TestDeviceReadTruncatesWithNotice(t *testing.T) {
+	d := &device{files: map[string]string{"big.log": strings.Repeat("x", 70<<10), "small.txt": "hi"}, writes: map[string]string{}}
+	var read func(context.Context, string) ([]*v1.ContentBlock, error)
+	for _, c := range d.capabilities() {
+		if c.Spec.GetName() == "read_file" {
+			read = c.Handler
+		}
+	}
+	big, _ := read(context.Background(), `{"path":"big.log"}`)
+	if s := model.Text(big); !strings.Contains(s, "已截断：文件共 71680 字节") || len(s) > 70<<10 {
+		t.Fatalf("big file not truncated with a notice (%d bytes)", len(s))
+	}
+	small, _ := read(context.Background(), `{"path":"small.txt"}`)
+	if model.Text(small) != "hi" {
+		t.Fatal("small file altered")
+	}
+}

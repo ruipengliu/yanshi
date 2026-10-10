@@ -1,0 +1,18 @@
+name: large-file-sandbox
+description: >-
+  大文件：电脑上 320KB 的日志，read_file 只返回前 64KB（与真实 Node 一致），只读前 64KB 会得到错误答案
+  （6 条 ERROR、最多的是 E205）。正确做法是上传为工件、导入沙箱用代码统计。
+  正确答案（evals/data/app.log）：ERROR 共 172 条，出现最多的错误码 E307（91 条）。
+requires: [sandbox]
+timeout: 8m
+setup:
+  device:
+    label: macbook
+    files_from:
+      logs/app.log: data/app.log
+turns:
+  - input: 电脑上 logs/app.log 里一共有多少条 ERROR 级别的日志？出现次数最多的错误码是哪个、出现了几次？
+    expect:
+      status: completed
+      calls: ["macbook__upload_file", "sandbox__*"]
+      reply_contains: ["172", "E307", "91"]

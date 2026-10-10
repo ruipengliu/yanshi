@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -77,6 +78,8 @@ type instance struct {
 	agents  *agentdef.Registry
 	version map[string]string // 用例名 → 派生的 AgentDef 版本
 	workers *workerPool
+	arts    *artifact.Service
+	crm     *crmServer
 }
 
 // workerPool 管理 Worker，支持"杀掉"一个 Worker 并补充新的（CrashAfterCalls）。
@@ -221,7 +224,15 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 			Ledger: nodesdk.NewMemLedger(), Artifacts: arts, Clock: clk, Logger: cfg.Logger, LeaseTTL: 30 * time.Second, Heartbeat: 10 * time.Second}
 		go c.Run(ctx)
 	}
-	return &instance{cfg: cfg, svc: svc, hub: hub, mems: mems, agents: agents, version: versions, workers: pool}, nil
+	in := &instance{cfg: cfg, svc: svc, hub: hub, mems: mems, agents: agents, version: versions, workers: pool, arts: arts}
+	if slices.ContainsFunc(cases, func(c *Case) bool { return c.Setup.CRM }) {
+		crm, err := startCRM(ctx, arts, cfg.Logger)
+		if err != nil {
+			return nil, err
+		}
+		in.crm, catalog.MCP = crm, crm.connector
+	}
+	return in, nil
 }
 
 // derive 为每个用例派生 AgentDef：应用用例的上下文覆盖与 ModelOverride，版本号带上用例名以免冲突。
@@ -238,6 +249,7 @@ func derive(cfg Config, cases []*Case) (*agentdef.Registry, map[string]string, e
 		}
 		d := *base
 		d.Version = base.Version + "+eval-" + c.Name
+		d.Capabilities = append(slices.Clone(base.Capabilities), c.Capabilities...)
 		if cfg.ModelOverride != "" {
 			d.Model = cfg.ModelOverride
 		}
@@ -292,7 +304,7 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 	}
 	var dev *device
 	if s := c.Setup.Device; s != nil {
-		dev = &device{files: map[string]string{}, writes: map[string]string{}}
+		dev = &device{files: map[string]string{}, writes: map[string]string{}, arts: in.arts}
 		for k, v := range s.Files {
 			dev.files[k] = v
 		}
@@ -300,7 +312,7 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		if label == "" {
 			label = "macbook"
 		}
-		if err := dev.run(tctx, in.hub, "node-"+endUser, BusinessLine, endUser, label); err != nil {
+		if err := dev.run(tctx, in.hub, "node-"+endUser, BusinessLine, endUser, label, s.OnlineAfter); err != nil {
 			tr.Err = "setup device: " + err.Error()
 			return tr
 		}
@@ -330,6 +342,7 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		if dev != nil {
 			obs.writes, obs.sent = dev.snapshot()
 		}
+		obs.tickets = in.crm.ticketsOf(endUser)
 		obs.memories, _ = in.mems.Store.List(tctx, endUser, []memory.Scope{{BusinessLine: BusinessLine}}, memory.DefaultMaxPerUser)
 		as, score := in.check(tctx, ti+1, turn, obs)
 		tr.Assertions = append(tr.Assertions, as...)
@@ -355,6 +368,7 @@ type observation struct {
 	compacted bool // 到本轮结束时 Session 是否发生过上下文压缩
 	// compactions 是本轮的上下文压缩次数，takeovers 是本轮 Run 的接管次数。
 	compactions, takeovers int
+	tickets                []string // CRM 中本 EndUser 的工单
 }
 
 // turn 提交一轮输入，按 approve 自动作出审批决定，等待 Run 结束并收集本轮的事件。
@@ -425,8 +439,13 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 				obs.calls = append(obs.calls, tc.GetCapability())
 				obs.steps = append(obs.steps, fmt.Sprintf("调用 %s %s", tc.GetCapability(), clip(tc.GetArgumentsJson(), 200)))
 			}
+			// 回复是本轮全部助手文本：模型常把结论写在带调用的消息里（如同时保存 Memory），
+			// 之后只补一句话；用户看到的是全部文本。
 			if t := model.Text(m.GetContent()); t != "" {
-				obs.reply = t
+				if obs.reply != "" {
+					obs.reply += "\n\n"
+				}
+				obs.reply += t
 			}
 		case *v1.Event_ToolResult:
 			r := p.ToolResult
@@ -495,7 +514,7 @@ func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation)
 		add("approvals", ok, fmt.Sprintf("approvals %d", o.approvals))
 	}
 	for _, s := range e.ReplyContains {
-		add("reply_contains "+s, strings.Contains(o.reply, s), "reply: "+clip(o.reply, 200))
+		add("reply_contains "+s, strings.Contains(o.reply, s) || strings.Contains(plainNumbers(o.reply), s), "reply: "+clip(o.reply, 200))
 	}
 	if e.ReplyMaxChars > 0 {
 		n := utf8.RuneCountInString(o.reply)
@@ -520,6 +539,9 @@ func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation)
 		if r != nil {
 			add(name, (r.Min == nil || n >= *r.Min) && (r.Max == nil || n <= *r.Max), fmt.Sprintf("%s %d", name, n))
 		}
+	}
+	for _, want := range e.Tickets {
+		add("tickets "+want, slices.ContainsFunc(o.tickets, func(t string) bool { return strings.Contains(t, want) }), fmt.Sprintf("tickets %v", o.tickets))
 	}
 	inRange("compactions", e.Compactions, o.compactions)
 	inRange("takeovers", e.Takeovers, o.takeovers)
@@ -578,4 +600,17 @@ func (in *instance) dumpLogs(ctx context.Context, name string, sessions []string
 	}
 	_ = os.MkdirAll(in.cfg.LogDir, 0o755)
 	_ = os.WriteFile(filepath.Join(in.cfg.LogDir, name+".jsonl"), []byte(b.String()), 0o644)
+}
+
+var digitGroup = regexp.MustCompile(`(\d)[,，](\d{3})`)
+
+// plainNumbers 去掉数字中的千分位分隔符（"277,050" → "277050"），使 reply_contains 不受数字格式影响。
+func plainNumbers(s string) string {
+	for {
+		t := digitGroup.ReplaceAllString(s, "$1$2")
+		if t == s {
+			return s
+		}
+		s = t
+	}
 }

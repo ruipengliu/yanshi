@@ -1,0 +1,16 @@
+name: mcp-crm-ticket
+description: >-
+  MCP：经业务线登记的 CRM（远程 MCP Server）查客户并建工单。"青禾"同时匹配青禾超市（C-1001）与青禾农场（C-1004），
+  须选对客户；create_ticket 未声明只读，需要审批。
+capabilities: ["mcp:crm/*"]
+setup:
+  crm: true
+turns:
+  - input: 帮我在 CRM 里查一下青禾超市的联系人和电话，然后给他们开个工单：客户要求更新发票抬头。
+    expect:
+      status: completed
+      calls: ["mcp_crm__search_customer", "mcp_crm__create_ticket"]
+      approvals: {min: 1}
+      tickets: ["C-1001"]
+      reply_contains: ["李娜", "021-5550-1234"]
+      judge: 回复是否给出了青禾超市（不是青禾农场）的联系人与电话，并说明已创建工单（含工单号）？

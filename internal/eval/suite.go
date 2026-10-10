@@ -22,6 +22,8 @@ type Case struct {
 	Timeout time.Duration `yaml:"timeout"`
 	// Requires 列出所需的环境，如 "sandbox"；不满足时跳过。
 	Requires []string `yaml:"requires"`
+	// Capabilities 追加到被评测 AgentDef 的能力白名单（如 "mcp:crm/*"）。
+	Capabilities []string `yaml:"capabilities"`
 	// Context 覆盖 AgentDef 的上下文配置（零值字段不覆盖）。
 	Context struct {
 		Window        int `yaml:"window"`
@@ -34,6 +36,8 @@ type Case struct {
 			Content  string `yaml:"content"`
 		} `yaml:"memories"`
 		Device *DeviceSetup `yaml:"device"`
+		// CRM 为 true 时为评测业务线登记内置的 CRM MCP Server（工具 search_customer、create_ticket）。
+		CRM bool `yaml:"crm"`
 	} `yaml:"setup"`
 	Turns []Turn `yaml:"turns"`
 }
@@ -42,6 +46,10 @@ type Case struct {
 type DeviceSetup struct {
 	Label string            `yaml:"label"`
 	Files map[string]string `yaml:"files"`
+	// FilesFrom 从评测集目录下的文件读取设备文件内容（大文件），键为设备上的路径。
+	FilesFrom map[string]string `yaml:"files_from"`
+	// OnlineAfter > 0 时设备在本次运行开始后这么久才上线：检验设备离线时 Run 挂起、上线后恢复。
+	OnlineAfter time.Duration `yaml:"online_after"`
 }
 
 type Turn struct {
@@ -83,7 +91,9 @@ type Expect struct {
 	// Compactions 与 Takeovers 是本轮 Run 内上下文压缩与接管次数的范围（长 Run 用例）。
 	Compactions *Range `yaml:"compactions"`
 	Takeovers   *Range `yaml:"takeovers"`
-	Judge       string `yaml:"judge"`
+	// Tickets 是本轮之后 CRM 中本 EndUser 的工单应包含的文本（每项须出现在某个工单中）。
+	Tickets []string `yaml:"tickets"`
+	Judge   string   `yaml:"judge"`
 }
 
 var caseNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
@@ -116,6 +126,18 @@ func LoadSuite(dir string) ([]*Case, error) {
 		}
 		if c.Agent == "" {
 			c.Agent = "assistant"
+		}
+		if d := c.Setup.Device; d != nil {
+			for path, src := range d.FilesFrom {
+				b, err := os.ReadFile(filepath.Join(dir, src))
+				if err != nil {
+					return nil, fmt.Errorf("%s: %w", f, err)
+				}
+				if d.Files == nil {
+					d.Files = map[string]string{}
+				}
+				d.Files[path] = string(b)
+			}
 		}
 		seen[c.Name] = true
 		out = append(out, c)

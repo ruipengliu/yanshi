@@ -618,12 +618,12 @@ setup:
 turns:
   - input: >-
       我电脑上 orders 目录里有 9 月 1 日起连续 40 天的销售日报（orders/0901.txt 这样的文件名）。
-      请逐个读取全部日报，不要用沙箱，读完后告诉我：1）全部订单的总金额；2）按客户汇总后金额最高的三个客户及各自金额。
+      请用 read_file 逐个读取全部日报（不要上传文件），读完后告诉我：1）全部订单的总金额；2）按客户汇总后金额最高的三个客户及各自金额。
     crash_after_calls: 15
     expect:
       status: completed
       calls: ["macbook__read_file"]
-      no_calls: ["sandbox__*", "*write_file", "*send_message"]
+      no_calls: ["*upload_file", "*write_file", "*send_message"]
       compactions: {min: 2}
       takeovers: {min: 1}
       reply_contains: ["北辰物流", "王记餐饮", "青禾超市"]
