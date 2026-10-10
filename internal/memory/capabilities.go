@@ -33,7 +33,9 @@ func Capabilities(s *Service) []capability.Capability {
 			S: capability.Spec{
 				Name: "memory_save",
 				Description: "记住关于用户的一条长期有用的信息，供以后的对话使用。一条只写一个事实，用简短的陈述句。" +
-					"类别：" + help + "。不得保存健康、金融账户、证件号码、精确位置等敏感个人信息，也不要保存一次性的对话内容。" +
+					"类别：" + help + "。过敏、饮食禁忌、慢性病与用药等健康信息关系到安全，用户提到时用类别 health 记住" +
+					"（业务线未开启时会被拒绝，此时告诉用户无法记住）。不得保存金融账户、证件号码、精确位置等其他敏感个人信息，" +
+					"也不要保存一次性的对话内容。" +
 					"与已有信息冲突时，用 replaces 指定被替换的旧记忆 ID。",
 				InputSchema: json.RawMessage(`{"type":"object","properties":{"category":{"type":"string","enum":[` + enum + `]},` +
 					`"content":{"type":"string"},"replaces":{"type":"string","description":"被替换的旧记忆 ID（可选）"}},"required":["category","content"]}`),

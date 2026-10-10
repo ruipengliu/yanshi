@@ -36,6 +36,23 @@ type Service struct {
 	Clock      clock.Clock
 	IDs        ids.Generator
 	MaxPerUser int
+	// HealthAllowed 报告业务线是否已取得用户对健康信息的单独同意（业务线配置 memory.health）；
+	// nil 表示所有业务线都未开启。未开启的业务线不能写入 health 类别，也不召回、不检索该类别（ADR-0022）。
+	HealthAllowed func(businessLine string) bool
+}
+
+func (s *Service) healthAllowed(businessLine string) bool {
+	return s.HealthAllowed != nil && s.HealthAllowed(businessLine)
+}
+
+// withoutHealth 返回除 health 外的全部类别。
+func withoutHealth(cats []Category) []Category {
+	if len(cats) == 0 {
+		for _, c := range Categories {
+			cats = append(cats, c.Category)
+		}
+	}
+	return slices.DeleteFunc(slices.Clone(cats), func(c Category) bool { return c == Health })
 }
 
 func (s *Service) max() int {
@@ -52,8 +69,8 @@ var (
 	digitRunRE = regexp.MustCompile(`\d[\d -]{14,24}\d`)
 )
 
-// sensitive 拒绝明显的证件号与银行卡号。其余敏感个人信息（健康、金融、精确位置等）由写入指令约束，
-// 并留待内容安全能力（M4）进一步识别。
+// sensitive 拒绝明显的证件号与银行卡号。其余敏感个人信息（金融、精确位置等）由写入指令约束；健康信息按业务线开关处理（ADR-0022）。
+// 这些也留待内容安全能力进一步识别。
 func sensitive(content string) bool {
 	if idCardRE.MatchString(content) {
 		return true
@@ -103,6 +120,8 @@ func (s *Service) Save(ctx context.Context, r SaveRequest) (*Memory, error) {
 		return nil, fmt.Errorf("%w: content longer than %d characters; store one short statement", ErrRejected, MaxContentRunes)
 	case sensitive(content):
 		return nil, fmt.Errorf("%w: sensitive personal information (ID or bank card numbers) must not be stored", ErrRejected)
+	case r.Category == Health && !s.healthAllowed(r.BusinessLine):
+		return nil, fmt.Errorf("%w: health information is not enabled for this business line (it requires the user's separate consent); tell the user it cannot be remembered", ErrRejected)
 	}
 	id := "mem_" + r.CallID
 	if r.CallID == "" {
@@ -174,6 +193,9 @@ func (s *Service) Forget(ctx context.Context, businessLine, endUser, id string) 
 // 授权在每次检索时实时读取，撤销立即生效（ADR-0016）。
 func (s *Service) Scopes(ctx context.Context, endUser, reader string, t time.Time) ([]Scope, error) {
 	scopes := []Scope{{BusinessLine: reader}}
+	if !s.healthAllowed(reader) {
+		scopes[0].Categories = withoutHealth(nil)
+	}
 	if s.Grants == nil {
 		return scopes, nil
 	}
@@ -199,6 +221,10 @@ func (s *Service) Scopes(ctx context.Context, endUser, reader string, t time.Tim
 	slices.Sort(order)
 	for _, from := range order {
 		cats := byFrom[from]
+		// 健康信息只在写入它的业务线已取得单独同意时才可被其他业务线读取（即使用户授权了该类别）。
+		if !s.healthAllowed(from) {
+			cats = withoutHealth(cats)
+		}
 		slices.Sort(cats)
 		if len(cats) > 0 {
 			scopes = append(scopes, Scope{BusinessLine: from, Categories: cats})

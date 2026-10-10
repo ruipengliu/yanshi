@@ -1,0 +1,15 @@
+name: memory-health-recall
+description: >-
+  健康信息（ADR-0022）：在已取得单独同意的业务线中，用户提到的药物过敏应记入 health 类别，
+  并在之后的新 Session 中被召回、用于提醒。
+turns:
+  - input: 跟你说一声，我对青霉素过敏，以后涉及用药的时候记得提醒我。
+    expect:
+      status: completed
+      calls: ["memory_save"]
+      memories: [{category: health, contains: "青霉素"}]
+  - input: 我嗓子疼得厉害，可能是扁桃体发炎，明天去医院看病，有什么要特别跟医生说的吗？
+    new_session: true
+    expect:
+      status: completed
+      reply_contains: ["青霉素"]

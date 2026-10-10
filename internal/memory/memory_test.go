@@ -3,6 +3,7 @@ package memory_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -176,5 +177,53 @@ func TestGrantsControlCrossLineRecall(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestHealthRequiresBusinessLineConsent：health 类别只有开启了单独同意的业务线可以写入、召回；
+// 其他业务线即使得到用户对该类别的授权，也只能读取到已开启业务线写入的健康信息。
+func TestHealthRequiresBusinessLineConsent(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newService(clock.Real{})
+	s.MaxPerUser = 10
+	enabled := map[string]bool{"clinic": true}
+	s.HealthAllowed = func(bl string) bool { return enabled[bl] }
+
+	if _, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "shop", EndUser: "u", CallID: "c1", Category: memory.Health, Content: "对花生过敏"}); !errors.Is(err, memory.ErrRejected) {
+		t.Fatalf("health saved without consent: %v", err)
+	}
+	if _, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "clinic", EndUser: "u", CallID: "c2", Category: memory.Health, Content: "对青霉素过敏"}); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = s.Save(ctx, memory.SaveRequest{BusinessLine: "clinic", EndUser: "u", CallID: "c3", Category: memory.Preference, Content: "喜欢清淡"})
+	contents := func(reader string) []string {
+		hits, err := s.Search(ctx, "u", reader, "", 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, h := range hits {
+			out = append(out, h.Content)
+		}
+		slices.Sort(out)
+		return out
+	}
+	if got := contents("clinic"); !slices.Equal(got, []string{"喜欢清淡", "对青霉素过敏"}) {
+		t.Fatalf("clinic recall %v", got)
+	}
+	// 用户把 clinic 的健康与偏好授权给 shop：shop 可以读到（写入方 clinic 已取得同意）。
+	if _, err := s.CreateGrant(ctx, "u", "clinic", "shop", []memory.Category{memory.Health, memory.Preference}, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := contents("shop"); !slices.Equal(got, []string{"喜欢清淡", "对青霉素过敏"}) {
+		t.Fatalf("shop with grant %v", got)
+	}
+	// clinic 关闭开关（撤回同意）：它自己与被授权方都不再召回健康信息。
+	enabled["clinic"] = false
+	if got := contents("clinic"); !slices.Equal(got, []string{"喜欢清淡"}) {
+		t.Fatalf("clinic after disabling %v", got)
+	}
+	if got := contents("shop"); !slices.Equal(got, []string{"喜欢清淡"}) {
+		t.Fatalf("shop after clinic disabled %v", got)
 	}
 }

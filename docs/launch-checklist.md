@@ -12,6 +12,7 @@
 - [ ] **价格表填入合同价**（[设计](./design/m4-quota-usage.md)）。`pricing.yaml` 中 tokenhub 的价格与沙箱单价是占位值。
 - [ ] **生产沙箱**（ADR-0010，[设计](./design/m2-sandbox.md)）。当前只有 Docker 实现；选定云厂商服务或自托管隔离方案后实现生产 Provider。
 - [ ] **业务线配置**：每条业务线的密钥、保留策略与配额已按约定填写（`businesslines/*.yaml`）。
+- [ ] **健康信息的单独同意**（ADR-0022）：开启 `memory.health` 的业务线须在产品中取得用户的单独同意，并能出示同意记录；未取得的不得开启。
 - [ ] **评测基线**：上线所用的 AgentDef 版本与模型通过 `make eval`，基线随代码提交（ADR-0018）。
 
 ## 建议确认

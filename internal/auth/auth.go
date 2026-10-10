@@ -81,6 +81,14 @@ type BusinessLine struct {
 	Retention lifecycle.Retention `yaml:"retention"`
 	// Quota 是该业务线的配额（docs/design/m4-quota-usage.md §3）。
 	Quota usage.Limits `yaml:"quota,omitempty"`
+	// Memory 是该业务线的 Memory 设置（docs/design/m4-memory-grant.md §3）。
+	Memory MemorySettings `yaml:"memory,omitempty"`
+}
+
+// MemorySettings 是业务线的 Memory 设置。
+type MemorySettings struct {
+	// Health 为 true 表示业务线已在产品流程中取得用户对健康信息的单独同意，允许写入与召回 health 类别（ADR-0022）。
+	Health bool `yaml:"health"`
 }
 
 // LoadDir 读取 dir 下所有 *.yaml 业务线配置。

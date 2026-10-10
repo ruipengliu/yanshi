@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted（健康信息部分由 ADR-0022 修订）
 ---
 
 # Memory 召回记录为 Event，Grant 按"业务线对 + 类别"授权

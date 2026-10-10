@@ -193,7 +193,9 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 	sbxQueue := memqueue.New(clk)
 	router := &sandbox.Router{Hub: hub, Queue: sbxQueue}
 	arts := &artifact.Service{Meta: artifact.NewMemMeta(), Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk}
-	mems := &memory.Service{Store: memory.NewMemStore(), Grants: memory.NewMemGrants(), Clock: clk, IDs: ids.Random()}
+	// 评测业务线视为已取得健康信息的单独同意，以评测模型对健康信息的处理（ADR-0022）。
+	mems := &memory.Service{Store: memory.NewMemStore(), Grants: memory.NewMemGrants(), Clock: clk, IDs: ids.Random(),
+		HealthAllowed: func(bl string) bool { return bl == BusinessLine }}
 	if cfg.EmbedModel != "" {
 		mems.Embedder, mems.EmbedModel = cfg.Model, cfg.EmbedModel
 	}
@@ -437,7 +439,7 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 			obs.tokens += m.GetUsage().GetInputTokens() + m.GetUsage().GetOutputTokens()
 			for _, tc := range m.GetToolCalls() {
 				obs.calls = append(obs.calls, tc.GetCapability())
-				obs.steps = append(obs.steps, fmt.Sprintf("调用 %s %s", tc.GetCapability(), clip(tc.GetArgumentsJson(), 200)))
+				obs.steps = append(obs.steps, fmt.Sprintf("调用 %s %s", tc.GetCapability(), clip(tc.GetArgumentsJson(), judgeStepBytes)))
 			}
 			// 回复是本轮全部助手文本：模型常把结论写在带调用的消息里（如同时保存 Memory），
 			// 之后只补一句话；用户看到的是全部文本。
@@ -454,7 +456,7 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 				prefix = "错误"
 			}
 			results[r.GetCallId()] = prefix
-			obs.steps = append(obs.steps, fmt.Sprintf("%s %s", prefix, clip(model.Text(r.GetContent()), 200)))
+			obs.steps = append(obs.steps, fmt.Sprintf("%s %s", prefix, clip(model.Text(r.GetContent()), judgeStepBytes)))
 		case *v1.Event_ApprovalRequested:
 			obs.approvals++
 			obs.steps = append(obs.steps, "请求审批："+clip(p.ApprovalRequested.GetSummary(), 120))
@@ -467,6 +469,10 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 	}
 	return obs, nil
 }
+
+// judgeStepBytes 是给评分模型看的每个调用参数与结果的上限。太短时评分模型看不到文件的后半部分，
+// 会把回复中来自那里的内容判为"编造"（scenario-a-minutes 中观察到：200 字节时把会议记录的末尾判为编造）。
+const judgeStepBytes = 3000
 
 func clip(s string, n int) string {
 	if len(s) <= n {

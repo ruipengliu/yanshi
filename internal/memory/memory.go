@@ -32,6 +32,8 @@ const (
 	Relationship Category = "relationship"
 	Interest     Category = "interest"
 	Plan         Category = "plan"
+	// Health 是健康信息（敏感个人信息）：只有声明已取得用户单独同意的业务线可以写入与召回（ADR-0022）。
+	Health Category = "health"
 )
 
 // Categories 是全部类别及其说明（用于工具描述与界面）。
@@ -44,6 +46,7 @@ var Categories = []struct {
 	{Relationship, "人际关系：家人、同事及其联系方式"},
 	{Interest, "兴趣：关注的话题与爱好"},
 	{Plan, "长期事项：计划、正在进行的事"},
+	{Health, "健康：过敏、饮食禁忌、慢性病与用药等与安全相关的信息"},
 }
 
 func ValidCategory(c Category) bool {

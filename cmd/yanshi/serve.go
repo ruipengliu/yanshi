@@ -253,7 +253,8 @@ func serve(args []string) error {
 		Auth: nodeAuth, Waker: node.LogWaker{Logger: logger}, Logger: logger,
 	}
 	// Memory（docs/design/m4-memory-grant.md）：Agent 通过能力读写，Run 开始时召回。
-	mems := &memory.Service{Store: b.memories, Grants: b.grants, Deletions: b.deletions, Clock: clk, IDs: ids.Random()}
+	mems := &memory.Service{Store: b.memories, Grants: b.grants, Deletions: b.deletions, Clock: clk, IDs: ids.Random(),
+		HealthAllowed: healthAllowed(*authMode, lines)}
 	if *embedModel != "" {
 		mems.Embedder, mems.EmbedModel = gw, *embedModel
 	}
@@ -494,4 +495,17 @@ func moderatorFor(kind, termsPath string, logger *slog.Logger) (moderation.Moder
 		return m, nil
 	}
 	return nil, fmt.Errorf("unknown moderation provider %q (mock | none)", kind)
+}
+
+// healthAllowed 返回各业务线是否允许健康信息（ADR-0022）：业务线配置 memory.health 声明已取得单独同意。
+// -auth none 是只监听回环地址的开发模式，没有业务线配置，一律允许，便于开发与演示。
+func healthAllowed(authMode string, lines []auth.BusinessLine) func(string) bool {
+	if authMode == "none" {
+		return func(string) bool { return true }
+	}
+	enabled := map[string]bool{}
+	for _, bl := range lines {
+		enabled[bl.Name] = bl.Memory.Health
+	}
+	return func(bl string) bool { return enabled[bl] }
 }

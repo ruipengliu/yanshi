@@ -1,5 +1,5 @@
 {
-  "started_at": "2026-10-10T03:48:29.722481Z",
+  "started_at": "2026-10-10T04:38:26.533271Z",
   "judge": "tokenhub/glm-5.3",
   "cases": [
     {
@@ -8,8 +8,8 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 5,
-      "avg_tokens": 3582,
-      "avg_seconds": 14.733546972333334,
+      "avg_tokens": 3698,
+      "avg_seconds": 11.456496888999999,
       "avg_calls": 1,
       "avg_compactions": 0,
       "avg_takeovers": 0
@@ -20,9 +20,9 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 5,
-      "avg_tokens": 5865,
-      "avg_seconds": 22.469609583333334,
-      "avg_calls": 3.6666666666666665,
+      "avg_tokens": 6712,
+      "avg_seconds": 19.463419152666663,
+      "avg_calls": 4.333333333333333,
       "avg_compactions": 0,
       "avg_takeovers": 0
     },
@@ -32,8 +32,8 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 0,
-      "avg_tokens": 2898,
-      "avg_seconds": 7.316114263999999,
+      "avg_tokens": 3499,
+      "avg_seconds": 6.575667291666666,
       "avg_calls": 1.6666666666666667,
       "avg_compactions": 0,
       "avg_takeovers": 0
@@ -44,10 +44,10 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 0,
-      "avg_tokens": 43194,
-      "avg_seconds": 118.37505862533334,
-      "avg_calls": 5.666666666666667,
-      "avg_compactions": 2.6666666666666665,
+      "avg_tokens": 46110,
+      "avg_seconds": 109.69144011099998,
+      "avg_calls": 7,
+      "avg_compactions": 3,
       "avg_takeovers": 0
     },
     {
@@ -56,8 +56,8 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 5,
-      "avg_tokens": 1537,
-      "avg_seconds": 12.322594180000001,
+      "avg_tokens": 1574,
+      "avg_seconds": 10.896709722333334,
       "avg_calls": 0,
       "avg_compactions": 0,
       "avg_takeovers": 0
@@ -68,9 +68,9 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 0,
-      "avg_tokens": 4930,
-      "avg_seconds": 24.522836083333335,
-      "avg_calls": 2.3333333333333335,
+      "avg_tokens": 3975,
+      "avg_seconds": 23.117436958,
+      "avg_calls": 1.6666666666666667,
       "avg_compactions": 0,
       "avg_takeovers": 0
     },
@@ -80,9 +80,9 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 0,
-      "avg_tokens": 36636,
-      "avg_seconds": 24.307590083666668,
-      "avg_calls": 6.333333333333333,
+      "avg_tokens": 68768,
+      "avg_seconds": 16.702765903,
+      "avg_calls": 5.666666666666667,
       "avg_compactions": 0,
       "avg_takeovers": 0
     },
@@ -92,10 +92,10 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 5,
-      "avg_tokens": 58427,
-      "avg_seconds": 121.87431209733332,
-      "avg_calls": 49.333333333333336,
-      "avg_compactions": 4.333333333333333,
+      "avg_tokens": 48312,
+      "avg_seconds": 83.863572625,
+      "avg_calls": 42,
+      "avg_compactions": 3.3333333333333335,
       "avg_takeovers": 1
     },
     {
@@ -104,9 +104,21 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 5,
-      "avg_tokens": 4876,
-      "avg_seconds": 13.819370680333334,
+      "avg_tokens": 5048,
+      "avg_seconds": 10.963046555666667,
       "avg_calls": 2,
+      "avg_compactions": 0,
+      "avg_takeovers": 0
+    },
+    {
+      "name": "memory-health-recall",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 0,
+      "avg_tokens": 6082,
+      "avg_seconds": 14.539454513999999,
+      "avg_calls": 1.6666666666666667,
       "avg_compactions": 0,
       "avg_takeovers": 0
     },
@@ -116,9 +128,9 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 0,
-      "avg_tokens": 4595,
-      "avg_seconds": 12.805109958333333,
-      "avg_calls": 1,
+      "avg_tokens": 5285,
+      "avg_seconds": 11.261128902666668,
+      "avg_calls": 1.3333333333333333,
       "avg_compactions": 0,
       "avg_takeovers": 0
     },
@@ -128,8 +140,8 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 5,
-      "avg_tokens": 1558,
-      "avg_seconds": 10.73584504166667,
+      "avg_tokens": 1695,
+      "avg_seconds": 12.566794319666668,
       "avg_calls": 0,
       "avg_compactions": 0,
       "avg_takeovers": 0
@@ -137,20 +149,14 @@
     {
       "name": "memory-save-intro",
       "trials": 3,
-      "passed": 2,
-      "pass_rate": 0.6666666666666666,
+      "passed": 3,
+      "pass_rate": 1,
       "judge_avg": 0,
-      "avg_tokens": 3640,
-      "avg_seconds": 14.411510403,
-      "avg_calls": 1.6666666666666667,
+      "avg_tokens": 3131,
+      "avg_seconds": 7.114453055666666,
+      "avg_calls": 2,
       "avg_compactions": 0,
-      "avg_takeovers": 0,
-      "failures": {
-        "turn 1: memory  \"花生\"": 1
-      },
-      "samples": [
-        "turn 1: memory  \"花生\" — 1 memories"
-      ]
+      "avg_takeovers": 0
     },
     {
       "name": "multi-step-planning",
@@ -158,9 +164,9 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 5,
-      "avg_tokens": 9253,
-      "avg_seconds": 19.186182611,
-      "avg_calls": 5,
+      "avg_tokens": 8830,
+      "avg_seconds": 17.078616347666667,
+      "avg_calls": 5.666666666666667,
       "avg_compactions": 0,
       "avg_takeovers": 0
     },
@@ -170,9 +176,9 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 0,
-      "avg_tokens": 3629,
-      "avg_seconds": 6.509569111333334,
-      "avg_calls": 1.6666666666666667,
+      "avg_tokens": 3728,
+      "avg_seconds": 5.294213402666666,
+      "avg_calls": 1,
       "avg_compactions": 0,
       "avg_takeovers": 0
     },
@@ -182,9 +188,9 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 0,
-      "avg_tokens": 3668,
-      "avg_seconds": 7.917318847000001,
-      "avg_calls": 1.3333333333333333,
+      "avg_tokens": 5123,
+      "avg_seconds": 8.249547917,
+      "avg_calls": 2,
       "avg_compactions": 0,
       "avg_takeovers": 0
     },
@@ -194,9 +200,9 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 5,
-      "avg_tokens": 8254,
-      "avg_seconds": 69.97959797233334,
-      "avg_calls": 3,
+      "avg_tokens": 6312,
+      "avg_seconds": 22.109380583333333,
+      "avg_calls": 2,
       "avg_compactions": 0,
       "avg_takeovers": 0
     }
