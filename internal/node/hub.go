@@ -8,8 +8,10 @@ import (
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/clock"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/lifecycle"
+	"yanshi/internal/notify"
 	"yanshi/internal/session"
 	"yanshi/internal/workqueue"
 )
@@ -24,7 +26,23 @@ type Hub struct {
 	Waker Waker
 	// Deletions 非 nil 时，派发后复查删除记录，撤回属于已删除 Session 的调用（ADR-0015）。
 	Deletions lifecycle.Deletions
-	Logger    *slog.Logger
+	// Push 非 nil 时，Hello 中带推送令牌的连接登记为推送设备（docs/design/m3-duplex-channel.md §9）。
+	Push   notify.Registry
+	Clock  clock.Clock
+	Logger *slog.Logger
+}
+
+// registerPush 登记连接的推送令牌（如有）。
+func (h *Hub) registerPush(ctx context.Context, hello *v1.Hello, id Identity, label string) error {
+	if h.Push == nil || hello.GetPushToken() == "" {
+		return nil
+	}
+	now := time.Now()
+	if h.Clock != nil {
+		now = h.Clock.Now()
+	}
+	return h.Push.Register(ctx, &notify.Device{BusinessLine: id.BusinessLine, EndUser: id.EndUser, DeviceID: hello.GetNodeId(),
+		Label: label, Kind: hello.GetKind(), Platform: hello.GetPushPlatform(), Token: hello.GetPushToken()}, now)
 }
 
 // Withdrawn 报告刚写入的、属于 sessionID 的数据是否应撤回：Session 已有删除记录。
@@ -70,7 +88,11 @@ func (h *Hub) Connect(ctx context.Context, hello *v1.Hello) (*Conn, error) {
 		if err != nil {
 			return nil, fmt.Errorf("authenticate: %w", err)
 		}
-		return &Conn{NodeID: hello.GetNodeId(), Label: SanitizeLabel(hello.GetLabel()), BusinessLine: id.BusinessLine,
+		label := SanitizeLabel(hello.GetLabel())
+		if err := h.registerPush(ctx, hello, id, label); err != nil {
+			return nil, err
+		}
+		return &Conn{NodeID: hello.GetNodeId(), Label: label, BusinessLine: id.BusinessLine,
 			EndUser: id.EndUser, Expires: id.Expires, ClientOnly: true}, nil
 	}
 	id, err := h.Auth.Authenticate(ctx, hello)
@@ -82,6 +104,9 @@ func (h *Hub) Connect(ctx context.Context, hello *v1.Hello) (*Conn, error) {
 		HostApp: hello.GetHostApp(), Capabilities: hello.GetCapabilities(),
 	})
 	if err != nil {
+		return nil, err
+	}
+	if err := h.registerPush(ctx, hello, id, label); err != nil {
 		return nil, err
 	}
 	h.log().Info("node connected", "node", hello.GetNodeId(), "label", label, "capabilities", len(hello.GetCapabilities()))

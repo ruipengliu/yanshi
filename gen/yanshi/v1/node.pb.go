@@ -527,7 +527,11 @@ type Hello struct {
 	SdkVersion   string            `protobuf:"bytes,8,opt,name=sdk_version,json=sdkVersion,proto3" json:"sdk_version,omitempty"`
 	Capabilities []*CapabilitySpec `protobuf:"bytes,9,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
 	// 为 true 时只作会话客户端，不登记为 Node（如网页）；此时 capabilities 须为空。
-	ClientOnly    bool `protobuf:"varint,10,opt,name=client_only,json=clientOnly,proto3" json:"client_only,omitempty"`
+	ClientOnly bool `protobuf:"varint,10,opt,name=client_only,json=clientOnly,proto3" json:"client_only,omitempty"`
+	// 推送通道（如 "apns"、"fcm" 或厂商名）与该通道的设备令牌。给出时登记该设备接收提醒
+	// （docs/design/m3-duplex-channel.md §9）；令牌变化时重新连接即可更新。
+	PushPlatform  string `protobuf:"bytes,11,opt,name=push_platform,json=pushPlatform,proto3" json:"push_platform,omitempty"`
+	PushToken     string `protobuf:"bytes,12,opt,name=push_token,json=pushToken,proto3" json:"push_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -630,6 +634,20 @@ func (x *Hello) GetClientOnly() bool {
 		return x.ClientOnly
 	}
 	return false
+}
+
+func (x *Hello) GetPushPlatform() string {
+	if x != nil {
+		return x.PushPlatform
+	}
+	return ""
+}
+
+func (x *Hello) GetPushToken() string {
+	if x != nil {
+		return x.PushToken
+	}
+	return ""
 }
 
 type Welcome struct {
@@ -2120,7 +2138,7 @@ const file_yanshi_v1_node_proto_rawDesc = "" +
 	"\bresponse\x18\a \x01(\v2\x19.yanshi.v1.ClientResponseH\x00R\bresponse\x12M\n" +
 	"\x12subscription_ended\x18\b \x01(\v2\x1c.yanshi.v1.SubscriptionEndedH\x00R\x11subscriptionEnded\x121\n" +
 	"\bpresence\x18\t \x01(\v2\x13.yanshi.v1.PresenceH\x00R\bpresenceB\x05\n" +
-	"\x03msg\"\xbc\x02\n" +
+	"\x03msg\"\x80\x03\n" +
 	"\x05Hello\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x14\n" +
 	"\x05token\x18\x02 \x01(\tR\x05token\x12#\n" +
@@ -2134,7 +2152,10 @@ const file_yanshi_v1_node_proto_rawDesc = "" +
 	"\fcapabilities\x18\t \x03(\v2\x19.yanshi.v1.CapabilitySpecR\fcapabilities\x12\x1f\n" +
 	"\vclient_only\x18\n" +
 	" \x01(\bR\n" +
-	"clientOnly\"8\n" +
+	"clientOnly\x12#\n" +
+	"\rpush_platform\x18\v \x01(\tR\fpushPlatform\x12\x1d\n" +
+	"\n" +
+	"push_token\x18\f \x01(\tR\tpushToken\"8\n" +
 	"\aWelcome\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x14\n" +
 	"\x05label\x18\x02 \x01(\tR\x05label\"\xd6\x01\n" +

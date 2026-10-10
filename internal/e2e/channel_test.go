@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +23,7 @@ import (
 	"yanshi/internal/memory/pgmemory"
 	"yanshi/internal/model"
 	"yanshi/internal/node/pgnode"
+	"yanshi/internal/notify"
 	"yanshi/internal/pg/pgtest"
 	"yanshi/internal/presence/pgpresence"
 	"yanshi/internal/sandbox/pgsandbox"
@@ -389,7 +391,7 @@ func TestPresenceAcrossInstances(t *testing.T) {
 			artifacts: &artifact.Service{Meta: pgartifact.Meta{Pool: pool}, Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk},
 			index:     pglifecycle.Index{Pool: pool}, deletions: pglifecycle.Deletions{Pool: pool}, janitorQueue: pgqueue.New(pool, clk, pgqueue.Janitor),
 			memories: pgmemory.Store{Pool: pool}, grants: pgmemory.Grants{Pool: pool},
-			presence: pgpresence.Store{Pool: pool, Notifier: notifier},
+			presence: pgpresence.Store{Pool: pool, Notifier: notifier}, push: notify.NewMemRegistry(),
 		}
 	}
 	a := &env{t: t, srv: instance(t, shared(), 1, true)}
@@ -578,5 +580,88 @@ func TestRetryAfterLostResponseAppliesOnce(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("input applied %d times", n)
+	}
+}
+
+// recPusher 记录推送。
+type recPusher struct {
+	mu   sync.Mutex
+	msgs []string // "设备/种类"
+}
+
+func (p *recPusher) Push(_ context.Context, d *notify.Device, m notify.Message) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.msgs = append(p.msgs, d.DeviceID+"/"+string(m.Kind))
+	return nil
+}
+
+func (p *recPusher) got() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.msgs...)
+}
+
+// TestNotifiesWhenNobodyIsWatching：手机登记了推送。它没在看时，待审批推送给它；它把 Session 显示在前台时不推送。
+func TestNotifiesWhenNobodyIsWatching(t *testing.T) {
+	st := memStores()
+	push := &recPusher{}
+	st.pusher = push
+	e := &env{t: t, srv: instance(t, st, 2, true), disk: map[string][]byte{}}
+	defer e.startNode(nodesdk.NewMemLedger())()
+	ctx := context.Background()
+	connected := make(chan struct{}, 1)
+	phone := nodesdk.NewClient(nodesdk.Config{URL: e.connURL(), NodeID: "iphone", TokenSource: userToken, Label: "iphone", Kind: "phone",
+		PushPlatform: "apns", PushToken: func() string { return "apns-token" }, OnConnected: func(string) { connected <- struct{}{} }})
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() { _ = phone.Run(cctx) }()
+	<-connected
+
+	sid, err := phone.CreateSession(ctx, "dev", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rec recorder
+	phone.Subscribe(sid, 0, &rec)
+	if _, _, err := phone.SubmitText(ctx, sid, "call macbook__write_file"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "approval pushed to the phone", 5*time.Second, func() bool {
+		return slices.Contains(push.got(), "iphone/approval")
+	})
+	approve := func() {
+		t.Helper()
+		var callID string
+		eventually(t, "approval requested", 5*time.Second, func() bool {
+			events, _, _ := rec.snapshot()
+			callID = ""
+			for _, ev := range events {
+				if a := ev.GetApprovalRequested(); a != nil {
+					callID = a.GetCallId()
+				}
+				if d := ev.GetApprovalDecided(); d != nil && d.GetCallId() == callID {
+					callID = ""
+				}
+			}
+			return callID != ""
+		})
+		if err := phone.Decide(ctx, sid, callID, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	approve()
+	eventually(t, "first run completes", 5*time.Second, func() bool { return rec.completed(1) })
+
+	// 手机把这个 Session 显示在前台：再次审批不推送。
+	phone.SetActivity(sid, true, false)
+	time.Sleep(100 * time.Millisecond)
+	if _, _, err := phone.SubmitText(ctx, sid, "call macbook__write_file"); err != nil {
+		t.Fatal(err)
+	}
+	approve()
+	eventually(t, "second run completes", 5*time.Second, func() bool { return rec.completed(2) })
+	if n := len(push.got()); n != 1 {
+		t.Fatalf("pushes %v, want only the first approval", push.got())
 	}
 }

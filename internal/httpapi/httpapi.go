@@ -60,6 +60,7 @@ import (
 	"yanshi/internal/model"
 	"yanshi/internal/moderation"
 	"yanshi/internal/node"
+	"yanshi/internal/notify"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
 	"yanshi/internal/usage"
@@ -77,7 +78,9 @@ type Server struct {
 	// Memory 为 nil 时不提供 Memory 与 Grant 接口。
 	Memory *memory.Service
 	// Usage 为 nil 时不提供用量接口；配额取自 Service.Quotas（docs/design/m4-quota-usage.md §5）。
-	Usage  usage.Store
+	Usage usage.Store
+	// Push 非 nil 时，注销账号一并删除推送设备登记。
+	Push   notify.Registry
 	Logger *slog.Logger
 }
 
@@ -847,6 +850,9 @@ func (s *Server) deleteEndUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.Usage != nil {
 		removers = append(removers, s.Usage) // 匿名化，不删除（ADR-0019）
+	}
+	if s.Push != nil {
+		removers = append(removers, s.Push)
 	}
 	id, err := s.Service.DeleteEndUser(r.Context(), bl, r.PathValue("id"), removers...)
 	if err != nil {

@@ -17,5 +17,5 @@
 
 ## 建议确认
 
-- [ ] 推送唤醒接入真实推送通道（M1 中仅为桩）。
+- [ ] 推送接入真实通道（APNs、各厂商推送，私有化环境的自建通道；作为外联项列入部署文档，ADR-0001）：提醒（`notify.Pusher`，[多端双工通道](./design/m3-duplex-channel.md) §9）与设备离线唤醒（`node.Waker`）目前都只是日志桩。
 - [ ] 监控告警覆盖：`yanshi_moderation_checks_total{result="error"}`、`yanshi_usage_record_errors_total`、`yanshi_release_reload_errors_total`、Run 失败率（按 `agent` 版本）。

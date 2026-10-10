@@ -27,6 +27,7 @@ import (
 	"yanshi/internal/model"
 	"yanshi/internal/moderation"
 	"yanshi/internal/node"
+	"yanshi/internal/notify"
 	"yanshi/internal/session"
 	"yanshi/internal/usage"
 	"yanshi/internal/workqueue"
@@ -83,6 +84,15 @@ type Config struct {
 	Moderator moderation.Moderator
 	// QuotaRecheck 是因配额挂起的 Run 重新检查的最长间隔（默认 10 分钟），使调高配额后及时恢复。
 	QuotaRecheck time.Duration
+	// Notify 非空时，写入需要 EndUser 注意的事件之后发出提醒：待审批、待回答的提问、持续超过
+	// NotifyRunsAfter（默认 2 分钟）的 Run 结束（docs/design/m3-duplex-channel.md §9）。
+	Notify          Notifier
+	NotifyRunsAfter time.Duration
+}
+
+// Notifier 处理提醒（由 notify.Notifier 实现）。它不得阻塞 Step：推送经网络，应在后台进行。
+type Notifier interface {
+	Notify(ctx context.Context, n notify.Notification)
 }
 
 func (c *Config) defaults() {
@@ -103,6 +113,9 @@ func (c *Config) defaults() {
 	}
 	if c.StepErrorBudget == 0 {
 		c.StepErrorBudget = 2 * time.Minute
+	}
+	if c.NotifyRunsAfter == 0 {
+		c.NotifyRunsAfter = 2 * time.Minute
 	}
 	if c.QuotaRecheck == 0 {
 		c.QuotaRecheck = 10 * time.Minute
@@ -665,6 +678,7 @@ func observeModel(kind string, start time.Time, resp *model.Response, err error)
 
 // observeCommitted 为刚提交的事件记录指标：Run 终态（时长按事件时间计算）与上下文压缩。
 func (w *Worker) observeCommitted(events []*v1.Event) {
+	w.notifyCommitted(events)
 	for _, e := range events {
 		var runID, status string
 		switch p := e.GetPayload().(type) {
@@ -683,6 +697,38 @@ func (w *Worker) observeCommitted(events []*v1.Event) {
 		if r := w.st.Run(runID); r != nil {
 			metrics.RunDuration.WithLabelValues(status, agent).Observe(e.GetTime().AsTime().Sub(r.RequestedAt).Seconds())
 		}
+	}
+}
+
+// notifyCommitted 为刚写入的、需要 EndUser 注意的事件发出提醒。只在写入时发一次：挂起后的重复检查、
+// 接管后的重放都不会再发（写入后、提醒前崩溃则丢失这次提醒，提醒是尽力而为的）。
+func (w *Worker) notifyCommitted(events []*v1.Event) {
+	if w.cfg.Notify == nil {
+		return
+	}
+	base := notify.Notification{BusinessLine: w.st.Created.GetBusinessLine(), EndUser: w.st.Created.GetEndUser(), SessionID: w.st.SessionID}
+	for _, e := range events {
+		n := base
+		switch p := e.GetPayload().(type) {
+		case *v1.Event_ApprovalRequested:
+			n.Kind, n.RunID, n.CallID = notify.Approval, p.ApprovalRequested.GetRunId(), p.ApprovalRequested.GetCallId()
+		case *v1.Event_ToolCallStarted:
+			if p.ToolCallStarted.GetNodeId() != askuser.NodeID {
+				continue
+			}
+			n.Kind, n.RunID, n.CallID = notify.Question, p.ToolCallStarted.GetRunId(), p.ToolCallStarted.GetCallId()
+		case *v1.Event_RunCompleted, *v1.Event_RunFailed:
+			runID := e.GetRunCompleted().GetRunId() + e.GetRunFailed().GetRunId()
+			r := w.st.Run(runID)
+			// 短问答不提醒：用户多半还在等着看。
+			if r == nil || e.GetTime().AsTime().Sub(r.RequestedAt) < w.cfg.NotifyRunsAfter {
+				continue
+			}
+			n.Kind, n.RunID, n.Failed = notify.RunFinished, runID, e.GetRunFailed() != nil
+		default:
+			continue
+		}
+		w.cfg.Notify.Notify(context.Background(), n)
 	}
 }
 

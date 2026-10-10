@@ -78,6 +78,10 @@ message Hello {
   repeated CapabilitySpec capabilities = 9;
   // 为 true 时只作会话客户端，不登记为 Node（如网页）；此时 capabilities 须为空。
   bool client_only = 10;
+  // 推送通道（如 "apns"、"fcm" 或厂商名）与该通道的设备令牌。给出时登记该设备接收提醒
+  // （docs/design/m3-duplex-channel.md §9）；令牌变化时重新连接即可更新。
+  string push_platform = 11;
+  string push_token = 12;
 }
 
 message Welcome {

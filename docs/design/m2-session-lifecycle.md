@@ -67,7 +67,7 @@
 
 1. 通过 Session 索引找到该 EndUser 在该业务线下的全部 Session，逐个写入删除记录；
 2. 删除该 EndUser 的 Node 登记。设备如果仍持有有效令牌，重连时会重新登记，因此业务线应先让该用户的令牌失效；
-3. 将来还要删除 Memory（M4）。
+3. 删除该 EndUser 的 Memory 与 Grant（M4）、推送设备登记（[多端双工通道](./m3-duplex-channel.md) §9），并匿名化用量（ADR-0019）。
 
 ### 3.5 设备端数据
 

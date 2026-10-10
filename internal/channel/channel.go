@@ -22,6 +22,7 @@ import (
 	"yanshi/internal/ids"
 	"yanshi/internal/live"
 	"yanshi/internal/moderation"
+	"yanshi/internal/notify"
 	"yanshi/internal/presence"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
@@ -50,7 +51,10 @@ type Handler struct {
 	Live    live.Bus
 	// Presence 为 nil 时不记录、不推送在场（§6）。
 	Presence *presence.Service
-	Clock    clock.Clock
+	// Push 非 nil 时，设备在前台使用（聚焦 Session、提交输入、审批、回答、中断）时更新其最近使用时间，
+	// 提醒据此选择设备（§9）。
+	Push  notify.Registry
+	Clock clock.Clock
 	// IDs 生成连接 ID，默认随机。
 	IDs    ids.Generator
 	Logger *slog.Logger
@@ -77,6 +81,8 @@ type Conn struct {
 
 	mu   sync.Mutex
 	subs map[string]*subscription
+	// touched 是最近一次更新推送设备最近使用时间的时刻，用于限频。
+	touched time.Time
 	// last 是每个 Session 最近一次的订阅（含已退订、尚未退出的）：新订阅须等它退出后再写在场记录。
 	last map[string]*subscription
 }
@@ -114,6 +120,27 @@ func (h *Handler) Open(ctx context.Context, id Identity, send func(*v1.GatewayMe
 	return c
 }
 
+// touchEvery 限制更新推送设备最近使用时间的频率：选择设备只需要分钟级的精度。
+const touchEvery = time.Minute
+
+// touch 记下本设备刚在前台使用过。
+func (c *Conn) touch() {
+	if c.h.Push == nil {
+		return
+	}
+	now := c.h.now()
+	c.mu.Lock()
+	if now.Sub(c.touched) < touchEvery {
+		c.mu.Unlock()
+		return
+	}
+	c.touched = now
+	c.mu.Unlock()
+	if err := c.h.Push.Touch(c.ctx, c.id.BusinessLine, c.id.EndUser, c.id.DeviceID, now); err != nil && c.ctx.Err() == nil {
+		c.h.log().Warn("push device touch failed", "err", err)
+	}
+}
+
 // heartbeat 定期为本连接的全部在场记录续期。
 func (c *Conn) heartbeat() {
 	t := time.NewTicker(presence.Heartbeat)
@@ -144,8 +171,14 @@ func (c *Conn) Handle(m *v1.NodeMessage) bool {
 	case *v1.NodeMessage_Unsubscribe:
 		c.unsubscribe(m.Unsubscribe.GetSessionId())
 	case *v1.NodeMessage_Activity:
+		if m.Activity.GetFocused() {
+			c.touch()
+		}
 		c.activity(m.Activity)
 	case *v1.NodeMessage_Request:
+		if _, ok := m.Request.GetOp().(*v1.ClientRequest_CreateSession); !ok {
+			c.touch()
+		}
 		// 占满时在读循环中等待：对过快的客户端施加背压，而不是无限开 goroutine。
 		select {
 		case c.inflight <- struct{}{}:

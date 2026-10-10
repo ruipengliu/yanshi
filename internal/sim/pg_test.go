@@ -10,6 +10,7 @@ import (
 	"yanshi/internal/lifecycle/pglifecycle"
 	"yanshi/internal/memory/pgmemory"
 	"yanshi/internal/node/pgnode"
+	"yanshi/internal/notify/pgnotify"
 	"yanshi/internal/pg/pgtest"
 	"yanshi/internal/presence/pgpresence"
 	"yanshi/internal/sandbox/pgsandbox"
@@ -57,7 +58,7 @@ func diffSeed(t *testing.T, s uint64) {
 			JanitorQueue: pgqueue.New(pool, c, pgqueue.Janitor),
 			Memory:       pgmemory.Store{Pool: pool}, Grants: pgmemory.Grants{Pool: pool},
 			Snapshots: pgsnapshot.Store{Pool: pool}, Usage: pgusage.Store{Pool: pool},
-			Presence: pgpresence.Store{Pool: pool, Notifier: notifier},
+			Presence: pgpresence.Store{Pool: pool, Notifier: notifier}, Push: pgnotify.Registry{Pool: pool},
 		}
 	}
 	onPG, err := New(opts)

@@ -58,8 +58,11 @@ func (w *World) deleteAccount() error {
 	if err != nil {
 		return err
 	}
-	if _, err := w.svc.DeleteEndUser(ctx, "bl", user, w.memories, w.usage); err != nil {
+	if _, err := w.svc.DeleteEndUser(ctx, "bl", user, w.memories, w.usage, w.push); err != nil {
 		return fmt.Errorf("delete account %s: %w", user, err)
+	}
+	if devices, err := w.push.List(ctx, "bl", user); err != nil || len(devices) > 0 {
+		return fmt.Errorf("invariant: deleted account %s still has %d push devices (err %v)", user, len(devices), err)
 	}
 	w.Stats.AccountDeletions++
 	w.deletedUsers = append(w.deletedUsers, user)

@@ -33,6 +33,7 @@ import (
 	"yanshi/internal/model"
 	"yanshi/internal/moderation"
 	"yanshi/internal/node"
+	"yanshi/internal/notify"
 	"yanshi/internal/presence"
 	"yanshi/internal/runtime"
 	"yanshi/internal/sandbox"
@@ -67,6 +68,8 @@ type Stores struct {
 	Usage usage.Store
 	// 在场（docs/design/m3-duplex-channel.md §6）
 	Presence presence.Store
+	// 推送设备（docs/design/m3-duplex-channel.md §9）
+	Push notify.Registry
 }
 
 type Options struct {
@@ -117,6 +120,8 @@ type Stats struct {
 	Questions, Answers, TypedAnswers, InvalidAnswers, QuestionTimeouts int
 	// 附带界面上下文的输入；以同一输入 ID 重试而被去重的提交。
 	UIContextInputs, DuplicateInputs int
+	// 提醒：推送出去的、因用户正在看而不推的、推送通道失败（含令牌无效）的次数。
+	Notifications, NotificationsWatching, PushFailures int
 }
 
 // hookQueue 在 Enqueue 成功后调用 after。
@@ -179,9 +184,13 @@ type World struct {
 	janitorQueue workqueue.Queue
 	memories     *memory.Service
 	presence     *presence.Service
-	usage        usage.Store
-	quotas       *usage.Quotas
-	meter        *usage.Meter
+	push         notify.Registry
+	notifier     *notify.Notifier
+	// notified 记录已提醒过的事（Session/种类/Run/调用），检查至多提醒一次。
+	notified map[string]bool
+	usage    usage.Store
+	quotas   *usage.Quotas
+	meter    *usage.Meter
 	// users 是每个 Session 位置当前的 EndUser；注销账号后换成新的 EndUser。
 	users        []string
 	deletedUsers []string
@@ -226,7 +235,7 @@ func New(opts Options) (*World, error) {
 		SandboxQueue: memqueue.New(w.clock), Ledger: nodesdk.NewMemLedger(), Activity: sandbox.NewMemActivity(),
 		Index: lifecycle.NewMemIndex(), Deletions: lifecycle.NewMemDeletions(), JanitorQueue: memqueue.New(w.clock),
 		Memory: memory.NewMemStore(), Grants: memory.NewMemGrants(), Snapshots: session.NewMemSnapshots(),
-		Usage: usage.NewMem(), Presence: presence.NewMem(),
+		Usage: usage.NewMem(), Presence: presence.NewMem(), Push: notify.NewMemRegistry(),
 	}
 	if opts.NewStores != nil {
 		stores = opts.NewStores(w.clock)
@@ -265,10 +274,13 @@ func New(opts Options) (*World, error) {
 	}
 	w.index, w.deletions, w.janitorQueue = stores.Index, stores.Deletions, stores.JanitorQueue
 	w.presence = &presence.Service{Store: stores.Presence, Deletions: stores.Deletions, Clock: w.clock}
+	w.push, w.notified = stores.Push, map[string]bool{}
+	w.notifier = &notify.Notifier{Registry: stores.Push, Presence: stores.Presence, Pusher: simPusher{w}, Clock: w.clock}
 	w.usage = &checkedUsage{Store: stores.Usage, w: w}
 	w.quotas = &usage.Quotas{Store: stores.Usage, Limits: simLimits(opts.LongRuns)}
 	w.meter = &usage.Meter{Store: w.usage, Prices: simPrices, Deletions: w.deletions}
-	w.hub = &node.Hub{Dir: stores.Dir, Inbox: stores.Inbox, Store: w.store, Queue: w.queue, Auth: node.InsecureDevAuth{}, Deletions: w.deletions}
+	w.hub = &node.Hub{Dir: stores.Dir, Inbox: stores.Inbox, Store: w.store, Queue: w.queue, Auth: node.InsecureDevAuth{}, Deletions: w.deletions,
+		Push: stores.Push, Clock: w.clock}
 	w.sandboxQueue, w.ledger, w.activity = stores.SandboxQueue, stores.Ledger, stores.Activity
 	w.router = &sandbox.Router{Hub: w.hub, Queue: w.sandboxQueue}
 	w.artifacts = &artifact.Service{Meta: artifact.NewMemMeta(), Blobs: artifact.NewMemBlobs(), IDs: ids.Sequential("art"), Clock: w.clock, Deletions: w.deletions}
@@ -355,7 +367,8 @@ func (w *World) sandboxExec(ctx context.Context, id string, _ sandbox.ExecReques
 
 func (w *World) newNode(i int) *simNode {
 	n := &simNode{id: fmt.Sprintf("node%d", i)}
-	n.hello = &v1.Hello{NodeId: n.id, BusinessLine: "bl", EndUser: fmt.Sprintf("u%d", i), Label: "pc", Kind: "desktop"}
+	n.hello = &v1.Hello{NodeId: n.id, BusinessLine: "bl", EndUser: fmt.Sprintf("u%d", i), Label: "pc", Kind: "desktop",
+		PushPlatform: "sim", PushToken: "tok-" + n.id}
 	effect := func(ctx context.Context, _ string) ([]*v1.ContentBlock, error) {
 		w.effects[n.id+"/"+w.currentCall]++
 		if w.faults && w.chance(0.2) {
@@ -513,6 +526,7 @@ func (w *World) newWorker() *runtime.Worker {
 		Model: gw, Catalog: w.catalog, Dispatch: w.router, LeaseTTL: leaseTTL,
 		MaxTakeovers: 4, MaxModelErrors: 3, ApprovalTimeout: approvalTimeout, Memory: w.memories,
 		Meter: w.meter, Quotas: w.quotas, QuotaRecheck: time.Minute, Moderator: simModerator{w},
+		Notify: simNotifier{w}, NotifyRunsAfter: 30 * time.Second,
 	})
 }
 
@@ -942,6 +956,12 @@ func (w *World) Fingerprint() string {
 		entries, _, _ := w.presence.Store.List(context.Background(), sid, w.clock.Now())
 		for _, e := range entries {
 			fmt.Fprintf(h, "%s|%s|%s|%v|%d|%d;", e.ConnID, e.DeviceID, e.Label, e.Focused, e.TypingUntil.Unix(), e.Expires.Unix())
+		}
+	}
+	for i := range w.users {
+		devices, _ := w.push.List(context.Background(), "bl", fmt.Sprintf("u%d", i))
+		for _, d := range devices {
+			fmt.Fprintf(h, "%s|%s|%d;", d.DeviceID, d.Token, d.LastActive.Unix())
 		}
 	}
 	return hex.EncodeToString(h.Sum(nil))

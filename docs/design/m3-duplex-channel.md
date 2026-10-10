@@ -168,7 +168,36 @@ Agent 需要用户在几个明确的候选中选择，或补充少量结构化�
 
 模拟测试中，一部分输入附带界面上下文（`UIContextInputs`），经过渲染、估算与写入闸门。
 
-## 9. 测试
+## 9. 提醒
+
+需要 EndUser 注意、而他没在看时，推送一条提醒（`notify`）：
+
+| 种类 | 何时 |
+|---|---|
+| `approval` | 写入 `ApprovalRequested`（高风险调用、Memory 写入闸门） |
+| `question` | 写入路由到用户的 `ToolCallStarted`（ask_user 提问） |
+| `run_finished` | 写入 `RunCompleted` / `RunFailed`，且 Run 持续超过 `NotifyRunsAfter`（默认 2 分钟）；短问答不提醒，用户多半还在等着看。用户自己中断的不提醒 |
+
+**规则**
+
+- **有人在看就不推。** 有设备正把该 Session 显示在前台（在场记录 `focused`，§6）时不推送：界面上已经能看到。只是订阅着、不在前台不算。
+- **只推一台。** 推给该 EndUser 最近在前台使用过、登记了推送的设备；推送失败时依次退到下一台。通道报告令牌无效（应用已卸载、令牌过期）时，该设备撤销登记，重连时会重新登记。这样手机和电脑不会同时响。
+- **内容只含种类与 ID。** 推送经过第三方厂商通道，所以不带用户输入、模型输出或问题文字。App 收到后经连接取详情。
+
+**设备登记（`notify.Registry`，mem / PostgreSQL，迁移 0012）**
+
+- 连接的 `Hello.push_platform` 与 `push_token` 登记该设备接收提醒；令牌轮换后，下次连接即更新。SDK：`Config.PushPlatform`、`Config.PushToken`。
+- "最近使用"：设备聚焦一个 Session、提交输入、审批、回答或中断时，更新它的最近使用时间。每条连接每分钟至多写一次。
+- 登记属于 EndUser 数据，不属于任何 Session：注销账号时删除（`DELETE /v1/end_users/{id}` 的删除项之一）。
+
+**触发与可靠性。** Worker 在写入上述事件之后发出提醒（`runtime.Config.Notify`）：
+- 只在写入时发一次。挂起后的重复检查、接管后的重放都不会再发；
+- 推送在后台进行，不阻塞 Step；
+- 写入之后、提醒之前进程崩溃，这次提醒就丢了。提醒是尽力而为的：用户打开 App 时仍能从 Session 看到待办。
+
+**通道。** 目前只有接口（`notify.Pusher`）与日志桩（`LogPusher`，只记 ID，不记令牌）。真实通道（APNs、厂商推送、私有化环境的自建通道）列入[上线检查清单](../launch-checklist.md)，它属于 ADR-0001 须显式列出的外联项。现有的 `node.Waker`（设备离线时唤醒执行调用的那台设备）与提醒是两回事，仍是桩。
+
+## 10. 测试
 
 - `live`：晚加入者收到 Snapshot；结束标记清除草稿；新的生成重新累积；草稿溢出时不补发；并发发布与订阅时，Snapshot 加上其后的增量恰好是全文。
 - `live/peer`：远程晚加入者从执行进程收到 Snapshot。
@@ -185,3 +214,6 @@ Agent 需要用户在几个明确的候选中选择，或补充少量结构化�
 - 模拟测试（输入去重）：一部分提交在"响应丢失"后以同一 ID 重试，其间可能有 Worker 推进了 Run；重试须返回首次的结果且不写日志（`DuplicateInputs`）。不变量：同一输入 ID 在日志中至多出现一次。
 - 模拟测试（ask_user）：模型随机提问（含不合法的提问），客户端随机点选、给出不合法的回答（须被拒绝）、或打字回答，时钟跳动触发超时；覆盖 `Questions`、`Answers`、`TypedAnswers`、`InvalidAnswers`、`QuestionTimeouts`。不变量：任何时候都没有投给 `@user` 的 Inbox 项。
 - e2e：手机提问、电脑点选回答，两端都看到结果，重复回答为冲突；打字回答不记为插话。
+- `notify`：只推最近使用的一台、消息只含种类与 ID；有设备聚焦该 Session 时不推，只订阅不算；推送失败退到下一台，令牌无效时撤销登记；`notifytest` 一致性套件（mem、PostgreSQL）。
+- e2e：登记了推送的手机没在看时，待审批推送给它；它把 Session 显示在前台后，不再推送。
+- 模拟测试（提醒）：Worker 的提醒交给真实的决定逻辑，推送通道随机失败或报告令牌无效（`Notifications`、`NotificationsWatching`、`PushFailures`）。不变量：每条提醒对应日志中已写入的事件；同一件事至多提醒一次（挂起后的重复检查、接管后的重放都不再提醒）；注销账号后没有推送设备登记。差分指纹包含推送设备。

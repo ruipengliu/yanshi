@@ -32,6 +32,10 @@ type Config struct {
 	Label        string
 	Kind         string
 	HostApp      string
+	// PushPlatform 与 PushToken 登记本设备接收提醒（待审批、待回答的提问、长任务结束）：PushToken 在每次连接时调用，
+	// 返回该推送通道当前的设备令牌；为空或返回空串时不登记。令牌轮换后，下次连接即更新。
+	PushPlatform string
+	PushToken    func() string
 	// Executor 为 nil 时连接只作会话客户端，不登记为 Node（Hello.client_only）。
 	Executor *Executor
 	Logger   *slog.Logger
@@ -109,6 +113,9 @@ func (c *Client) session(ctx context.Context) (bool, error) {
 	hello := &v1.Hello{
 		NodeId: c.cfg.NodeID, Token: token, BusinessLine: c.cfg.BusinessLine, EndUser: c.cfg.EndUser,
 		Label: c.cfg.Label, Kind: c.cfg.Kind, HostApp: c.cfg.HostApp, SdkVersion: Version,
+	}
+	if c.cfg.PushToken != nil {
+		hello.PushPlatform, hello.PushToken = c.cfg.PushPlatform, c.cfg.PushToken()
 	}
 	if c.cfg.Executor == nil {
 		hello.ClientOnly = true

@@ -47,6 +47,8 @@ import (
 	"yanshi/internal/node"
 	"yanshi/internal/node/pgnode"
 	"yanshi/internal/node/wsgateway"
+	"yanshi/internal/notify"
+	"yanshi/internal/notify/pgnotify"
 	"yanshi/internal/pg"
 	"yanshi/internal/presence"
 	"yanshi/internal/presence/pgpresence"
@@ -87,6 +89,7 @@ type backends struct {
 	janitorQueue workqueue.Queue
 	usage        usage.Store
 	presence     presence.Store
+	push         notify.Registry
 }
 
 // openStorage 按 kind 创建存储。postgres 模式下多个 serve 进程可共享同一数据库水平扩展。
@@ -96,7 +99,7 @@ func openStorage(ctx context.Context, kind, dsn string, clk clock.Clock, logger 
 		return backends{memlog.New(), memqueue.New(clk), node.NewMemDirectory(clk), node.NewMemInbox(),
 			memqueue.New(clk), nodesdk.NewMemLedger(), sandbox.NewMemActivity(), artifact.NewMemMeta(),
 			memory.NewMemStore(), memory.NewMemGrants(), session.NewMemSnapshots(),
-			lifecycle.NewMemIndex(), lifecycle.NewMemDeletions(), memqueue.New(clk), usage.NewMem(), presence.NewMem()}, func() {}, nil
+			lifecycle.NewMemIndex(), lifecycle.NewMemDeletions(), memqueue.New(clk), usage.NewMem(), presence.NewMem(), notify.NewMemRegistry()}, func() {}, nil
 	case "postgres":
 		pool, err := pg.Open(ctx, dsn, "")
 		if err != nil {
@@ -118,7 +121,7 @@ func openStorage(ctx context.Context, kind, dsn string, clk clock.Clock, logger 
 			pgartifact.Meta{Pool: pool},
 			pgmemory.Store{Pool: pool}, pgmemory.Grants{Pool: pool}, pgsnapshot.Store{Pool: pool},
 			pglifecycle.Index{Pool: pool}, pglifecycle.Deletions{Pool: pool}, pgqueue.New(pool, clk, pgqueue.Janitor), pgusage.Store{Pool: pool},
-			pgpresence.Store{Pool: pool, Notifier: n}}
+			pgpresence.Store{Pool: pool, Notifier: n}, pgnotify.Registry{Pool: pool}}
 		return b, func() { cancel(); pool.Close() }, nil
 	}
 	return backends{}, nil, fmt.Errorf("unknown storage %q (memory | postgres)", kind)
@@ -255,8 +258,10 @@ func serve(args []string) error {
 	dir := b.dir
 	hub := &node.Hub{
 		Dir: dir, Inbox: b.inbox, Store: store, Queue: queue,
-		Auth: nodeAuth, Waker: node.LogWaker{Logger: logger}, Logger: logger,
+		Auth: nodeAuth, Waker: node.LogWaker{Logger: logger}, Push: b.push, Clock: clk, Logger: logger,
 	}
+	// 提醒（docs/design/m3-duplex-channel.md §9）：推送通道目前是日志桩，真实通道见上线检查清单。
+	notifier := &notify.Notifier{Registry: b.push, Presence: b.presence, Pusher: notify.LogPusher{Logger: logger}, Clock: clk, Logger: logger}
 	// Memory（docs/design/m4-memory-grant.md）：Agent 通过能力读写，Run 开始时召回。
 	mems := &memory.Service{Store: b.memories, Grants: b.grants, Deletions: b.deletions, Clock: clk, IDs: ids.Random(),
 		HealthAllowed: healthAllowed(*authMode, lines)}
@@ -308,6 +313,7 @@ func serve(args []string) error {
 			ID: fmt.Sprintf("%s-worker-%d", proc, i), Store: store, Queue: queue, Agents: agents,
 			Model: gw, Catalog: catalog, Dispatch: router, Artifacts: arts, Memory: mems, Live: bus, LiveEndpoint: liveEndpoint, Logger: logger,
 			LeaseTTL: *leaseTTL, Heartbeat: *leaseTTL / 3, Idle: idle, Meter: meter, Quotas: quotas, Moderator: moderator,
+			Notify: notifier,
 		})
 		wg.Add(1)
 		go func() { defer wg.Done(); w.Run(ctx) }()
@@ -355,10 +361,10 @@ func serve(args []string) error {
 	mux := http.NewServeMux()
 	// 同一条连接兼任 Node 与会话客户端（ADR-0024）；/v1/nodes/connect 是早期路径，保留兼容。
 	connGW := &wsgateway.Gateway{Hub: hub, Channel: &channel.Handler{Service: svc, Live: bus,
-		Presence: &presence.Service{Store: b.presence, Deletions: b.deletions, Clock: clk}, Clock: clk, Logger: logger}, Logger: logger}
+		Presence: &presence.Service{Store: b.presence, Deletions: b.deletions, Clock: clk}, Push: b.push, Clock: clk, Logger: logger}, Logger: logger}
 	mux.Handle("/v1/connect", connGW)
 	mux.Handle("/v1/nodes/connect", connGW)
-	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.usage, Logger: logger}).Handler())
+	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.usage, Push: b.push, Logger: logger}).Handler())
 	srv := &http.Server{
 		Addr:              *addr,
 		Handler:           mux,
