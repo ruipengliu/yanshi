@@ -24,6 +24,7 @@ import (
 	"yanshi/internal/live"
 	"yanshi/internal/metrics"
 	"yanshi/internal/model"
+	"yanshi/internal/moderation"
 	"yanshi/internal/node"
 	"yanshi/internal/session"
 	"yanshi/internal/usage"
@@ -77,6 +78,8 @@ type Config struct {
 	// （docs/design/m4-quota-usage.md）。
 	Meter  *usage.Meter
 	Quotas *usage.Quotas
+	// Moderator 非空时，模型输出（回复文本与调用参数）在写日志之前检查（docs/design/m4-moderation.md）。
+	Moderator moderation.Moderator
 	// QuotaRecheck 是因配额挂起的 Run 重新检查的最长间隔（默认 10 分钟），使调高配额后及时恢复。
 	QuotaRecheck time.Duration
 }
@@ -522,9 +525,24 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 	for _, tc := range resp.ToolCalls {
 		tc.CallId = "call_" + w.cfg.Store.IDs()
 	}
-	events := []*v1.Event{{Payload: &v1.Event_AssistantMessage{AssistantMessage: &v1.AssistantMessage{
+	var events []*v1.Event
+	// 内容安全（ADR-0021）：违规的回复替换为拒答文本、丢弃调用，原文不写入日志。服务不可用时不放行：
+	// 返回错误使本步重试（下一步重新调用模型），持续不可用时由 StepErrorBudget 使 Run 失败。
+	// 用单独的变量：err 被上面的 defer 用来记录模型调用的结果。
+	v, merr := moderation.Check(ctx, w.cfg.Moderator, moderation.Request{Stage: moderation.Output,
+		BusinessLine: w.st.Created.GetBusinessLine(), Text: ModerationText(resp.Content, resp.ToolCalls)})
+	if merr != nil {
+		return merr
+	}
+	if v.Block {
+		w.cfg.Logger.Warn("model output blocked by moderation", "session", w.st.SessionID, "run", r.ID, "labels", v.Labels)
+		events = append(events, &v1.Event{Payload: &v1.Event_ContentModerated{ContentModerated: &v1.ContentModerated{
+			RunId: r.ID, Attempt: w.attempt, Stage: string(moderation.Output), Labels: v.Labels}}})
+		resp.Content, resp.ToolCalls = model.TextBlocks(moderation.Refusal), nil
+	}
+	events = append(events, &v1.Event{Payload: &v1.Event_AssistantMessage{AssistantMessage: &v1.AssistantMessage{
 		RunId: r.ID, Attempt: w.attempt, Content: resp.Content, ToolCalls: resp.ToolCalls, Model: resp.Model, Usage: resp.Usage,
-	}}}}
+	}}})
 	if len(resp.ToolCalls) == 0 {
 		events = append(events, &v1.Event{Payload: &v1.Event_RunCompleted{RunCompleted: &v1.RunCompleted{RunId: r.ID, Attempt: w.attempt}}})
 	}
@@ -693,4 +711,15 @@ func (w *Worker) watchSupersede(ctx context.Context, cancel context.CancelCauseF
 			}
 		}
 	}
+}
+
+// ModerationText 是送检的模型输出：回复文本加每个调用的能力名与参数。调用参数可能携带以用户名义发出的内容
+// （消息、写入的文件、保存的 Memory），同样需要检查。
+func ModerationText(content []*v1.ContentBlock, calls []*v1.ToolCall) string {
+	var b strings.Builder
+	b.WriteString(model.Text(content))
+	for _, tc := range calls {
+		fmt.Fprintf(&b, "\n%s %s", tc.GetCapability(), tc.GetArgumentsJson())
+	}
+	return b.String()
 }

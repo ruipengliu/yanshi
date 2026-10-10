@@ -14,7 +14,7 @@ import (
 
 // ProjectionVersion 是投影语义的版本。改动 Apply 或 State 的字段时必须递增：旧快照随之作废，
 // 加载退回完整回放，因此快照永远不会与当前代码的投影结果不一致。
-const ProjectionVersion = 3
+const ProjectionVersion = 4
 
 // Snapshots 存放每个 Session 最新的投影快照。快照只是加速加载的缓存，删除或丢失都不影响正确性。
 type Snapshots interface {

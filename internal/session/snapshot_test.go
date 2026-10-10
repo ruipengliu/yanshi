@@ -59,6 +59,8 @@ func richLog() []*v1.Event {
 			e.Payload = &v1.Event_SessionClosed{SessionClosed: p}
 		case *v1.AgentSwitched:
 			e.Payload = &v1.Event_AgentSwitched{AgentSwitched: p}
+		case *v1.ContentModerated:
+			e.Payload = &v1.Event_ContentModerated{ContentModerated: p}
 		}
 		return e
 	}
@@ -82,6 +84,7 @@ func richLog() []*v1.Event {
 		ev(&v1.AttemptStarted{RunId: "r1", Attempt: 3}),
 		ev(&v1.AttemptStarted{RunId: "r1", Attempt: 4}), // 接管
 		ev(&v1.ContextCompacted{RunId: "r1", Attempt: 4, ThroughSeq: 12, Summary: text}),
+		ev(&v1.ContentModerated{RunId: "r1", Attempt: 4, Stage: "output", Labels: []string{"mock"}}),
 		ev(&v1.AssistantMessage{RunId: "r1", Attempt: 4, Content: text}),
 		ev(&v1.RunCompleted{RunId: "r1", Attempt: 4}),
 		ev(&v1.AgentSwitched{From: &v1.AgentRef{Name: "a", Version: "1"}, To: &v1.AgentRef{Name: "a", Version: "2"}, Reason: "withdrawn"}),

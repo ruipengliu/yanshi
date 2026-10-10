@@ -30,6 +30,7 @@ import (
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/memory"
 	"yanshi/internal/model"
+	"yanshi/internal/moderation"
 	"yanshi/internal/node"
 	"yanshi/internal/runtime"
 	"yanshi/internal/sandbox"
@@ -102,6 +103,8 @@ type Stats struct {
 	QuotaSuspensions, QuotaRejections, QuotaResumes, AccountDeletions int
 	// 灰度：撤回版本后在下一个 Run 切换到稳定版本的次数。
 	AgentSwitches int
+	// 内容安全：被拒绝的输入、被拦截的输出、提供商错误。
+	InputBlocks, OutputBlocks, ModerationErrors int
 }
 
 // hookQueue 在 Enqueue 成功后调用 after。
@@ -261,7 +264,8 @@ func New(opts Options) (*World, error) {
 			return nil
 		}
 		return w.afterEnqueue()
-	}}, Agents: agents, Nodes: w.router, Index: w.index, Deletions: w.deletions, Janitor: w.janitorQueue, Quotas: w.quotas}
+	}}, Agents: agents, Nodes: w.router, Index: w.index, Deletions: w.deletions, Janitor: w.janitorQueue, Quotas: w.quotas,
+		Moderator: simModerator{w}}
 	for range 2 {
 		w.controllers = append(w.controllers, w.newController())
 	}
@@ -466,7 +470,7 @@ func (w *World) newWorker() *runtime.Worker {
 		ID: fmt.Sprintf("w%d", w.nextW), Store: w.store, Queue: w.queue, Agents: w.agents,
 		Model: gw, Catalog: w.catalog, Dispatch: w.router, LeaseTTL: leaseTTL,
 		MaxTakeovers: 4, MaxModelErrors: 3, ApprovalTimeout: approvalTimeout, Memory: w.memories,
-		Meter: w.meter, Quotas: w.quotas, QuotaRecheck: time.Minute,
+		Meter: w.meter, Quotas: w.quotas, QuotaRecheck: time.Minute, Moderator: simModerator{w},
 	})
 }
 
@@ -576,7 +580,7 @@ func (w *World) stepWorker(i int) error {
 	if err != nil {
 		w.tracef("step %s: %v", wk.ID(), err)
 		var me *modelError
-		if errors.As(err, &me) {
+		if errors.As(err, &me) || errors.Is(err, moderation.ErrUnavailable) {
 			return nil
 		}
 		return fmt.Errorf("worker %s step: %w", wk.ID(), err)
@@ -595,6 +599,10 @@ func (w *World) submit() error {
 	}
 	defer func() { w.afterEnqueue = nil }()
 	res, err := w.svc.Submit(context.Background(), sid, model.TextBlocks(fmt.Sprintf("msg %d", w.rng.IntN(1000))))
+	if w.submitModerated(err) {
+		w.tracef("submit %s rejected by moderation: %v", sid, err)
+		return nil
+	}
 	if w.submitOverQuota(err) {
 		w.tracef("submit %s rejected: %v", sid, err)
 		return nil
@@ -730,6 +738,9 @@ func (w *World) CheckInvariants() error {
 		return fmt.Errorf("invariant: %s", w.violations[0])
 	}
 	if err := w.checkUsage(); err != nil {
+		return err
+	}
+	if err := w.checkModeration(); err != nil {
 		return err
 	}
 	return w.checkDeleted(false)

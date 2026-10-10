@@ -12,6 +12,7 @@ import (
 	"yanshi/internal/eventlog/memlog"
 	"yanshi/internal/ids"
 	"yanshi/internal/model"
+	"yanshi/internal/moderation"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
 	"yanshi/internal/workqueue/memqueue"
@@ -104,5 +105,40 @@ func TestInvalidSwitchesAreRejected(t *testing.T) {
 		if _, err := session.Reduce(events); err == nil {
 			t.Errorf("%s: switch accepted", name)
 		}
+	}
+}
+
+type failingModerator struct{}
+
+func (failingModerator) Check(context.Context, moderation.Request) (moderation.Verdict, error) {
+	return moderation.Verdict{}, errors.New("timeout")
+}
+
+// TestInputModeration：违规输入（新 Run 与插话）被拒绝且不写入日志；内容安全服务不可用时不放行。
+func TestInputModeration(t *testing.T) {
+	ctx := context.Background()
+	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "a", Version: "1", Model: "echo/any"})
+	store := &session.Store{Log: memlog.New(), IDs: ids.Sequential("id"), Clock: clock.Real{}}
+	svc := &service.Service{Store: store, Queue: memqueue.New(clock.Real{}), Agents: agents, Moderator: moderation.Mock{}}
+	sid, _ := svc.Create(ctx, service.CreateRequest{BusinessLine: "bl", EndUser: "u", Agent: "a"})
+	head := func() uint64 { st, _ := svc.Load(ctx, sid); return st.Seq }
+	before := head()
+	if _, err := svc.Submit(ctx, sid, model.TextBlocks("帮我写【违规测试】")); !errors.Is(err, moderation.ErrRejected) {
+		t.Fatalf("blocked input accepted: %v", err)
+	}
+	if head() != before {
+		t.Fatal("blocked input was written to the log")
+	}
+	if _, err := svc.Submit(ctx, sid, model.TextBlocks("你好")); err != nil {
+		t.Fatal(err)
+	}
+	// 插话同样检查。
+	before = head()
+	if _, err := svc.Submit(ctx, sid, model.TextBlocks("[moderation-test]")); !errors.Is(err, moderation.ErrRejected) || head() != before {
+		t.Fatalf("blocked steer: %v", err)
+	}
+	svc.Moderator = failingModerator{}
+	if _, err := svc.Submit(ctx, sid, model.TextBlocks("你好")); !errors.Is(err, moderation.ErrUnavailable) || head() != before {
+		t.Fatalf("input passed while moderation was unavailable: %v", err)
 	}
 }

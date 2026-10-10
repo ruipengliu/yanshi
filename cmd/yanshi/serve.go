@@ -42,6 +42,7 @@ import (
 	"yanshi/internal/model/bench"
 	"yanshi/internal/model/echo"
 	"yanshi/internal/model/openaicompat"
+	"yanshi/internal/moderation"
 	"yanshi/internal/node"
 	"yanshi/internal/node/pgnode"
 	"yanshi/internal/node/wsgateway"
@@ -180,6 +181,8 @@ func serve(args []string) error {
 	blDir := fs.String("businesslines", "businesslines", "业务线公钥配置目录（auth=jwt；yanshi keygen 生成开发配置）")
 	audience := fs.String("auth-audience", "yanshi", "本部署的标识，令牌的 aud 须包含它")
 	pricing := fs.String("pricing", "pricing.yaml", "价格表（docs/design/m4-quota-usage.md §2）；不存在时用量只计 token、不折算金额")
+	moderationKind := fs.String("moderation", "mock", "内容安全提供商（docs/design/m4-moderation.md）：mock（关键词，仅开发测试；上线前须接入真实提供商）| none")
+	moderationTerms := fs.String("moderation-terms", "", "mock 提供商的关键词文件（每行一个）；默认只含测试标记词")
 	usageRetention := fs.Duration("usage-retention", 400*24*time.Hour, "用量记录的保留期")
 	_ = fs.Parse(args)
 
@@ -276,8 +279,12 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	moderator, err := moderatorFor(*moderationKind, *moderationTerms, logger)
+	if err != nil {
+		return err
+	}
 	svc := &service.Service{Store: store, Queue: queue, Agents: agents, Nodes: router,
-		Index: b.index, Deletions: b.deletions, Janitor: b.janitorQueue, Quotas: quotas}
+		Index: b.index, Deletions: b.deletions, Janitor: b.janitorQueue, Quotas: quotas, Moderator: moderator}
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -294,7 +301,7 @@ func serve(args []string) error {
 		w := runtime.New(runtime.Config{
 			ID: fmt.Sprintf("%s-worker-%d", proc, i), Store: store, Queue: queue, Agents: agents,
 			Model: gw, Catalog: catalog, Dispatch: router, Artifacts: arts, Memory: mems, Live: bus, LiveEndpoint: liveEndpoint, Logger: logger,
-			LeaseTTL: *leaseTTL, Heartbeat: *leaseTTL / 3, Idle: idle, Meter: meter, Quotas: quotas,
+			LeaseTTL: *leaseTTL, Heartbeat: *leaseTTL / 3, Idle: idle, Meter: meter, Quotas: quotas, Moderator: moderator,
 		})
 		wg.Add(1)
 		go func() { defer wg.Done(); w.Run(ctx) }()
@@ -464,4 +471,27 @@ func metering(path string, lines []auth.BusinessLine, agents *agentdef.Registry,
 		return meter, nil, nil
 	}
 	return meter, &usage.Quotas{Store: b.usage, Limits: limits}, nil
+}
+
+// moderatorFor 选择内容安全提供商。目前只有模拟实现：它没有真实的识别能力，启动时打印警告并置指标，
+// 上线前须接入真实提供商（docs/launch-checklist.md）。
+func moderatorFor(kind, termsPath string, logger *slog.Logger) (moderation.Moderator, error) {
+	switch kind {
+	case "none":
+		logger.Warn("content moderation is disabled (-moderation none): not allowed in production")
+		return nil, nil
+	case "mock":
+		m := moderation.Mock{Terms: moderation.MockTerms}
+		if termsPath != "" {
+			terms, err := moderation.LoadTerms(termsPath)
+			if err != nil {
+				return nil, fmt.Errorf("load moderation terms: %w", err)
+			}
+			m.Terms = terms
+		}
+		metrics.ModerationMock.Set(1)
+		logger.Warn("content moderation uses the MOCK provider (keyword list): replace it with a real provider before launch", "terms", len(m.Terms))
+		return m, nil
+	}
+	return nil, fmt.Errorf("unknown moderation provider %q (mock | none)", kind)
 }

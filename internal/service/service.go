@@ -6,12 +6,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/metrics"
+	"yanshi/internal/model"
+	"yanshi/internal/moderation"
 	"yanshi/internal/session"
 	"yanshi/internal/usage"
 	"yanshi/internal/workqueue"
@@ -41,6 +44,8 @@ type Service struct {
 	Janitor   workqueue.Queue
 	// Quotas 非空时，配额用尽的业务线或 EndUser 不能开始新 Run（docs/design/m4-quota-usage.md §3）。
 	Quotas *usage.Quotas
+	// Moderator 非空时，输入（新 Run 与插话）在写日志之前检查，违规的不写入（ADR-0021）。
+	Moderator moderation.Moderator
 }
 
 // ErrConflict 表示请求与 Session 当前状态冲突（如审批已决定）。
@@ -138,6 +143,9 @@ func (s *Service) Submit(ctx context.Context, sessionID string, input []*v1.Cont
 	//     只有写日志之后的入队（租约期间置 dirty，或重新插入）能保证新 Run 被看到（丢失唤醒）。
 	// 两者同时失效需要"恰好在该窗口内被认领"且"写日志后立即崩溃"，此时 Run 停留在 queued，
 	// 直到该 Session 的下一次输入。
+	if err := s.moderateInput(ctx, st, input); err != nil {
+		return nil, err
+	}
 	// 配额只拦新 Run：插话属于进行中的 Run，后者在下一次模型调用前自行检查。
 	if bl := st.Created.GetBusinessLine(); st.Active() == nil && s.Quotas.Enabled(bl) {
 		p, err := s.Quotas.Check(ctx, bl, st.Created.GetEndUser(), s.Store.Clock.Now())
@@ -384,4 +392,23 @@ func gone(sessionID string, err error) error {
 		return fmt.Errorf("%w: session %s", ErrNotFound, sessionID)
 	}
 	return err
+}
+
+// moderateInput 检查用户输入（文本与图片工件）。违规返回 ErrRejected，服务不可用返回 ErrUnavailable：都不写日志。
+func (s *Service) moderateInput(ctx context.Context, st *session.State, input []*v1.ContentBlock) error {
+	req := moderation.Request{Stage: moderation.Input, BusinessLine: st.Created.GetBusinessLine(), Text: model.Text(input)}
+	for _, b := range input {
+		if m := b.GetMedia(); m != nil && strings.HasPrefix(m.GetMimeType(), "image/") {
+			id, _ := strings.CutPrefix(m.GetUri(), "artifact://")
+			req.Images = append(req.Images, moderation.Image{ArtifactID: id, MimeType: m.GetMimeType()})
+		}
+	}
+	v, err := moderation.Check(ctx, s.Moderator, req)
+	if err != nil {
+		return err
+	}
+	if v.Block {
+		return fmt.Errorf("%w: %s", moderation.ErrRejected, strings.Join(v.Labels, ","))
+	}
+	return nil
 }

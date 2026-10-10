@@ -36,6 +36,7 @@ message Event {
     SessionClosed session_closed = 24;
     MemoryRecalled memory_recalled = 25;
     AgentSwitched agent_switched = 26;
+    ContentModerated content_moderated = 27;
   }
 }
 
@@ -79,6 +80,16 @@ message AgentSwitched {
   AgentRef from = 1;
   AgentRef to = 2;
   string reason = 3;
+}
+
+// ContentModerated 记录一轮模型输出被内容安全拦截（docs/design/m4-moderation.md，ADR-0021）。
+// 不含原文：与它同批提交的 AssistantMessage 是替换后的拒答文本，且没有调用。
+message ContentModerated {
+  string run_id = 1;
+  uint32 attempt = 2;
+  // stage 目前只有 "output"（输入被拦截时不写日志）。
+  string stage = 3;
+  repeated string labels = 4;
 }
 
 // RunRequested 在 Session 无活跃 Run 时由用户输入触发。

@@ -62,6 +62,10 @@ curl -N localhost:8080/v1/sessions/$SID/stream          # SSE，支持 Last-Even
 
 业务线配置（`businesslines/*.yaml`）中的 `quota` 声明业务线每月、EndUser 每日的金额上限，价格表在 `pricing.yaml`（[设计](docs/design/m4-quota-usage.md)）。超额时新 Run 返回 429，进行中的 Run 挂起到额度恢复；`GET /v1/quota`、`GET /v1/usage` 查询配额与用量。
 
+## 内容安全
+
+用户输入与模型输出在写日志之前检查（[设计](docs/design/m4-moderation.md)）。当前提供商是模拟实现（`serve -moderation mock`，关键词列表），**上线前须接入真实提供商**，见[上线检查清单](docs/launch-checklist.md)。
+
 ## AgentDef 灰度
 
 `agents/releases.yaml` 声明每个 Agent 的稳定版本、灰度版本与比例、撤回的版本，`serve` 每 10 秒重新加载（[设计](docs/design/m4-agent-rollout.md)）。新版本先评测：`make eval EVAL_FLAGS="-sandbox docker -agent-version 2"`；按版本比较：指标的 `agent` 标签与 `GET /v1/usage?group_by=agent`。

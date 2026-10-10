@@ -13,7 +13,7 @@
 //	GET  /v1/grants                                EndUser 涉及本业务线的授权（仅用户令牌）
 //	POST /v1/grants                                创建授权 {"from","to","categories","expires_at"}（仅用户令牌）
 //	DELETE /v1/grants/{id}                         撤销授权（仅用户令牌）
-//	POST /v1/sessions/{id}/inputs                  提交输入（新 Run 或 Steer）
+//	POST /v1/sessions/{id}/inputs                  提交输入（新 Run 或 Steer；内容安全拒绝 422、不可用 503）
 //	POST /v1/sessions/{id}/runs/{run}/interrupt    中断 Run
 //	GET  /v1/sessions/{id}/events?after=N&limit=M  已提交事件（JSON）
 //	GET  /v1/sessions/{id}/stream?after=N          已提交事件 + 实时增量（SSE，支持 Last-Event-ID 续传）
@@ -56,6 +56,7 @@ import (
 	"yanshi/internal/memory"
 	"yanshi/internal/metrics"
 	"yanshi/internal/model"
+	"yanshi/internal/moderation"
 	"yanshi/internal/node"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
@@ -249,6 +250,10 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		code = http.StatusConflict
 	case errors.Is(err, artifact.ErrTooLarge):
 		code = http.StatusRequestEntityTooLarge
+	case errors.Is(err, moderation.ErrRejected):
+		code = http.StatusUnprocessableEntity
+	case errors.Is(err, moderation.ErrUnavailable):
+		code = http.StatusServiceUnavailable
 	case errors.Is(err, usage.ErrExceeded):
 		code = http.StatusTooManyRequests
 		var ex *usage.ExceededError

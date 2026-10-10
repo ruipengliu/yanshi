@@ -260,6 +260,12 @@ func (s *State) apply(e *v1.Event) error {
 		}
 		s.Closed = p.SessionClosed
 
+	case *v1.Event_ContentModerated:
+		// 只校验归属：拦截不改变状态，替换后的 AssistantMessage 随后照常应用。
+		if _, err := s.fencedRun(p.ContentModerated.GetRunId(), p.ContentModerated.GetAttempt()); err != nil {
+			return err
+		}
+
 	case *v1.Event_AgentSwitched:
 		m := p.AgentSwitched
 		if a := s.Active(); a != nil {
