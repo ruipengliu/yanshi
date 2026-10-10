@@ -1,6 +1,6 @@
 # yanshi
 
-分布式 Agent 运行时基础设施，Go 实现。`make check` 是提交前的完成标准：必须全绿（需要 Docker：它会启动 PostgreSQL、S3 兼容存储并运行沙箱测试；对应测试分别由 `YANSHI_TEST_PG`、`YANSHI_TEST_S3`、`YANSHI_TEST_DOCKER` 启用，未设置时跳过）。
+分布式 Agent 运行时基础设施，Go 实现。`make check` 是提交前的完成标准：必须全绿（需要 Docker：它会启动 PostgreSQL、S3 兼容存储并运行沙箱测试；还需要 Node.js 与 pnpm：网页 SDK 的检查与互通测试。对应测试分别由 `YANSHI_TEST_PG`、`YANSHI_TEST_S3`、`YANSHI_TEST_DOCKER`、`YANSHI_TEST_NODE` 启用，未设置时跳过）。
 
 ## 先读
 
@@ -10,6 +10,7 @@
 - 改动 Node、能力路由、审批或挂起之前：`docs/design/m1-device-nodes.md`。
 - 改动云端沙箱之前：`docs/design/m2-sandbox.md`。沙箱内只运行不可信代码，受信逻辑一律放在控制器（ADR-0008）。
 - 改动 Connection 协议（`node.proto`）、会话客户端或事件流（`feed`）之前：`docs/design/m3-duplex-channel.md`。一条 Connection 兼任 Node 与会话客户端（ADR-0024）；会话客户端的请求必须经 `service`，与 HTTP API 走同一条路径。`ask_user` 是路由到用户本人的调用，不经 Inbox（ADR-0025）。
+- 改动端侧 SDK（`sdk/`）之前：`docs/design/m3-client-sdks.md`。三个 SDK 语义一致，消息类型一律从 `proto/` 生成（ADR-0026）；改动 `sdk/nodesdk`、`sdk/mobile` 或 `node.proto` 后运行 `make mobile`（需要 Xcode 与 JDK），在 macOS 与 iOS 模拟器上实测 gomobile 绑定。
 - 改动 MCP 适配之前：`docs/design/m5-mcp.md`。云端不运行 stdio 型 MCP Server；未声明只读的工具默认需要审批（ADR-0017）。
 - 改动工件之前：`docs/design/m2-artifacts.md`。Event 中只放 `artifact://` 引用，不放文件内容；工件只对其所属 Session 可见。
 - 新增任何存放 Session 数据的地方之前：`docs/design/m2-session-lifecycle.md`。它必须能被 Janitor 按 Session 删除，写入入口要"先写、后查"删除记录（ADR-0015），并在 `internal/sim` 的删除不变量中检查。
@@ -22,7 +23,7 @@
 ## 不变量
 
 - **Event 日志是唯一事实源。** 状态只能由 `session.Reduce` 从日志投影得到；所有写入经 `session.Store.Commit`（先校验、再乐观并发追加）。投影快照只是缓存：**改动 `Apply` 或 `State` 的字段时递增 `session.ProjectionVersion`**，旧快照随之作废。
-- **契约在 `proto/`。** 修改 `.proto` 后运行 `make gen`，生成代码 `gen/` 一并提交；只做向后兼容的修改（`buf breaking`）。
+- **契约在 `proto/`。** 修改 `.proto` 后运行 `make gen`，生成代码（`gen/` 与 `sdk/web/src/gen/`）一并提交；只做向后兼容的修改（`buf breaking`）。
 - **Worker.Step 是确定性的单步。** 时间取自 `clock.Clock`，ID 取自 `ids.Generator`；影响结果的逻辑放在 Step 的同步路径里，以便 `internal/sim` 在任意两步之间注入故障。
 - **请求前缀保持稳定。** 提供商的前缀缓存是长 Run 成本的主要杠杆：系统指令只放 AgentDef 的指令，不放每个 Run 都变化的内容（召回放在 Run 的位置上，见 `runtime.Transcript`）；工具按名称排序；Run 内的上下文只在尾部追加。改动 Transcript 或请求组装时，用评测报告的"缓存命中"列确认没有退化。
 - **评测是效果的裁判。** 改动模型、提示词、AgentDef，或召回、压缩、Memory、MCP、审批摘要等给模型看的文本时，运行 `make eval`（需要 `TOKENHUB_API_KEY`）并与 `evals/baselines/` 比较，不得有回归；有意的效果变化用 `-update-baseline` 更新基线并随代码提交。新增给模型看的能力或文本时，同时在 `evals/` 增加覆盖它的用例（`docs/design/m4-eval.md`）。
@@ -32,6 +33,6 @@
 
 ## 风格
 
-注释与文档使用中文，标识符使用英文。注释说明"为什么"。
+注释与文档使用中文，标识符使用英文。注释说明"为什么"。TypeScript 由 prettier 格式化（`cd sdk/web && pnpm format`）。
 
 日志与指标中只记录 ID（Session、Run、调用、工件），不记录用户输入、模型输出、调用参数或结果：这些是个人数据，只能存放在可被删除的地方（ADR-0015）。

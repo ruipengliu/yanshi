@@ -3,3 +3,9 @@ plugins:
   - local: protoc-gen-go
     out: gen
     opt: paths=source_relative
+  # TypeScript SDK 的消息类型（sdk/web）；插件随 sdk/web 的开发依赖安装。
+  - local: sdk/web/node_modules/.bin/protoc-gen-es
+    out: sdk/web/src/gen
+    opt:
+      - target=ts
+      - import_extension=js

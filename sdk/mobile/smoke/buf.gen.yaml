@@ -1,0 +1,5 @@
+# 冒烟程序所用的 Swift 消息类型（不提交）；插件由 swift-protobuf 依赖构建（make mobile）。
+version: v2
+plugins:
+  - local: sdk/mobile/smoke/.build/release/protoc-gen-swift
+    out: sdk/mobile/smoke/Sources/Smoke/gen

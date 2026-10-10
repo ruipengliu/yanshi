@@ -70,7 +70,7 @@ HostApp 实例与网关之间只保持一条 **Connection**（WebSocket，路径
   - Go SDK 的 `Submit` 为每次提交生成 ID，`ErrDisconnected` 时重连后以同一 ID 自动重试，直到得到结果或 ctx 结束。需要跨进程重启继续重试的 HostApp，自己生成并持久保存 ID，调用 `SubmitInput`；
   - 其余请求：中断、关闭重复执行是无操作，审批、回答重复执行返回 `conflict`，都不会产生重复效果；重试创建 Session 会再创建一个。
 
-SDK（`sdk/nodesdk`）：`Executor` 为 nil 时连接只作会话客户端。主要方法有 `Subscribe(sessionID, after, handler)`、`CreateSession`、`Submit` / `SubmitText`、`Interrupt`、`Decide`、`CloseSession`。回调在接收 goroutine 中按到达顺序串行调用，不应阻塞。
+SDK（`sdk/nodesdk`）：`Executor` 为 nil 时连接只作会话客户端。主要方法有 `Subscribe(sessionID, after, handler)`、`CreateSession`、`Submit` / `SubmitText`、`Interrupt`、`Decide`、`CloseSession`。回调在接收 goroutine 中按到达顺序串行调用，不应阻塞。网页（TypeScript）与移动端（gomobile）SDK 语义相同，见[端侧 SDK](./m3-client-sdks.md)。
 
 ## 6. 在场
 

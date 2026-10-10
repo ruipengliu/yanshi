@@ -18,4 +18,6 @@
 ## 建议确认
 
 - [ ] 推送接入真实通道（APNs、各厂商推送，私有化环境的自建通道；作为外联项列入部署文档，ADR-0001）：提醒（`notify.Pusher`，[多端双工通道](./design/m3-duplex-channel.md) §9）与设备离线唤醒（`node.Waker`）目前都只是日志桩。
+- [ ] Android 绑定实测（[端侧 SDK](./design/m3-client-sdks.md) §4）：开发机没有 NDK，`make mobile` 只编译了 Java 绑定。需要在装有 NDK 的机器上 `gomobile bind -target=android` 生成 aar，并在真机上跑一遍冒烟流程（原生能力、订阅、提交、推送登记）。
+- [ ] SDK 分发：`@yanshi/client` 发布到业务线可访问的 npm 仓库，`Yanshi.xcframework` 与 aar 的分发方式（私有 CocoaPods / SwiftPM 二进制包 / Maven）及版本号约定。
 - [ ] 监控告警覆盖：`yanshi_moderation_checks_total{result="error"}`、`yanshi_usage_record_errors_total`、`yanshi_release_reload_errors_total`、Run 失败率（按 `agent` 版本）。

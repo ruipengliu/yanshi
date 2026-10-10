@@ -48,6 +48,10 @@ MCP（[设计](docs/design/m5-mcp.md)）：远程 MCP Server 登记在 `mcp/*.ya
 
 模型通过 AgentDef（`agents/*.yaml`）的 `model: provider/model` 选择：`ark/…`（火山方舟）、`local/…`（私有化 OpenAI 兼容服务，`YANSHI_LOCAL_BASE_URL`）、`echo/any`。
 
+## 端侧 SDK
+
+接入网关的 SDK（[设计](docs/design/m3-client-sdks.md)）：`sdk/nodesdk`（Go，电脑与服务端）、`sdk/web`（TypeScript，`@yanshi/client`，网页只作会话客户端）、`sdk/mobile`（gomobile 绑定，`make mobile` 生成 `build/mobile/Yanshi.xcframework` 并在 macOS 与 iOS 模拟器上实测）。
+
 ## HTTP API
 
 见 `internal/httpapi/httpapi.go` 包注释。最小示例：
@@ -80,4 +84,4 @@ curl -N localhost:8080/v1/sessions/$SID/stream          # SSE，支持 Last-Even
 
 ## 开发
 
-`make check`（格式、vet、buf lint、全部测试含确定性模拟）。面向 Agent 的开发约定见 [AGENTS.md](AGENTS.md)。
+`make check`（格式、vet、buf lint、网页 SDK 的类型检查与测试、全部 Go 测试含确定性模拟与网页 SDK 互通；需要 Docker、Node.js 与 pnpm）。面向 Agent 的开发约定见 [AGENTS.md](AGENTS.md)。
