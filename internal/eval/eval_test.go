@@ -2,6 +2,7 @@ package eval
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,8 +17,27 @@ import (
 // script 是脚本化的被评测模型：输入以 "call <工具> <参数>" 开头时调用该工具，之后回复 "done"；否则复述输入。
 type script struct{}
 
-func (script) Generate(_ context.Context, req *model.Request, _ func(model.Delta)) (*model.Response, error) {
+func (script) Generate(ctx context.Context, req *model.Request, _ func(model.Delta)) (*model.Response, error) {
 	last := req.Messages[len(req.Messages)-1]
+	// "loop N"：连续调用 clock_now，直到上下文中有 N 个结果（模拟长 Run）。
+	var n, results int
+	for _, m := range req.Messages {
+		if m.Role == model.RoleUser {
+			_, _ = fmt.Sscanf(model.Text(m.Content), "loop %d", &n)
+		}
+		if m.Role == model.RoleTool {
+			results++
+		}
+	}
+	if n > 0 && results < n {
+		// 每次调用耗时 150ms，使评测有机会在 Run 进行中杀掉 Worker；被取消时像真实调用一样返回错误。
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(150 * time.Millisecond):
+		}
+		return &model.Response{ToolCalls: []*v1.ToolCall{{CallId: "x", Capability: "clock_now", ArgumentsJson: "{}"}}}, nil
+	}
 	if last.Role == model.RoleTool {
 		return &model.Response{Content: model.TextBlocks("done: " + model.Text(last.Content))}, nil
 	}
@@ -62,7 +82,7 @@ func run(t *testing.T, suite string) *Report {
 	gw.Register("judge", fixedJudge{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rep, err := Run(ctx, Config{Agents: agents, Model: gw, Judge: "judge/any", TurnTimeout: 20 * time.Second}, cases)
+	rep, err := Run(ctx, Config{Agents: agents, Model: gw, Judge: "judge/any", TurnTimeout: 20 * time.Second, LeaseTTL: time.Second}, cases)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,5 +167,35 @@ func TestCompareFlagsRegressions(t *testing.T) {
 	got := Compare(base, cur)
 	if len(got) != 2 || !strings.Contains(got[0], "a: judge") || !strings.Contains(got[1], "b: pass rate") {
 		t.Fatalf("regressions = %v", got)
+	}
+}
+
+// TestCrashLeadsToTakeover：本轮发起 2 次调用后杀掉持有 Run 的 Worker，Run 由其他 Worker 接管并完成。
+func TestCrashLeadsToTakeover(t *testing.T) {
+	dir := t.TempDir()
+	writeCase(t, dir, "crash", `
+name: crash
+trials: 1
+turns:
+  - input: loop 5
+    crash_after_calls: 2
+    expect:
+      calls: [clock_now]
+      takeovers: {min: 1}
+      compactions: {max: 0}
+`)
+	rep := run(t, dir)
+	if c := rep.Cases[0]; c.Passed != 1 {
+		t.Fatalf("crash case failed: %+v", c)
+	}
+}
+
+func TestMergeBaselineKeepsOtherCases(t *testing.T) {
+	base := &Report{Cases: []CaseResult{{Name: "a", Passed: 1}, {Name: "b", Passed: 1}}}
+	cur := &Report{Cases: []CaseResult{{Name: "b", Passed: 3}, {Name: "c", Passed: 2}}}
+	m := MergeBaseline(base, cur)
+	got := fmt.Sprintln(len(m.Cases), m.Cases[0].Name, m.Cases[1].Passed, m.Cases[2].Name)
+	if got != "3 a 3 c\n" {
+		t.Fatalf("merged baseline %s", got)
 	}
 }

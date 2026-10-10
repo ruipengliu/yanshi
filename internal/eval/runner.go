@@ -5,12 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"google.golang.org/protobuf/encoding/protojson"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
@@ -55,7 +59,12 @@ type Config struct {
 	// Parallel 是同时运行的次数，默认 4。
 	Parallel    int
 	TurnTimeout time.Duration
-	Logger      *slog.Logger
+	// LogDir 非空时，把每次运行的 Session 日志写成 <用例>-<序号>.jsonl，用于查看压缩摘要、调用顺序等过程
+	// （评测数据是合成的，不含个人数据）。
+	LogDir string
+	// LeaseTTL 是 Worker 的租约时长，决定"杀掉" Worker 后多久被接管（默认 10 秒）。
+	LeaseTTL time.Duration
+	Logger   *slog.Logger
 	// Progress 在每次运行结束时调用，用于显示进度。
 	Progress func(caseName string, trial int, passed bool)
 }
@@ -67,6 +76,42 @@ type instance struct {
 	mems    *memory.Service
 	agents  *agentdef.Registry
 	version map[string]string // 用例名 → 派生的 AgentDef 版本
+	workers *workerPool
+}
+
+// workerPool 管理 Worker，支持"杀掉"一个 Worker 并补充新的（CrashAfterCalls）。
+type workerPool struct {
+	mu      sync.Mutex
+	ctx     context.Context
+	cancels map[string]context.CancelFunc
+	next    int
+	newCfg  func(id string) runtime.Config
+}
+
+func (p *workerPool) spawn() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	id := fmt.Sprintf("eval-worker-%d", p.next)
+	p.next++
+	ctx, cancel := context.WithCancel(p.ctx)
+	p.cancels[id] = cancel
+	w := runtime.New(p.newCfg(id))
+	go w.Run(ctx)
+}
+
+// crash 取消 Worker 的上下文：进行中的模型调用或能力调用被中断，租约不释放，与进程崩溃相同。
+// 随后补充一个新 Worker，保持并发度。
+func (p *workerPool) crash(id string) bool {
+	p.mu.Lock()
+	cancel, ok := p.cancels[id]
+	delete(p.cancels, id)
+	p.mu.Unlock()
+	if !ok {
+		return false
+	}
+	cancel()
+	p.spawn()
+	return true
 }
 
 func (c *Config) defaults() {
@@ -75,6 +120,9 @@ func (c *Config) defaults() {
 	}
 	if c.TurnTimeout <= 0 {
 		c.TurnTimeout = 4 * time.Minute
+	}
+	if c.LeaseTTL <= 0 {
+		c.LeaseTTL = 10 * time.Second
 	}
 	if c.Logger == nil {
 		c.Logger = slog.New(slog.DiscardHandler)
@@ -160,18 +208,20 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 	svc := &service.Service{Store: store, Queue: queue, Agents: agents, Nodes: router,
 		Index: lifecycle.NewMemIndex(), Deletions: lifecycle.NewMemDeletions()}
 	idle := &workqueue.IdleGate{Ready: queue.Ready()}
-	for i := range 2 * cfg.Parallel {
-		w := runtime.New(runtime.Config{ID: fmt.Sprintf("eval-worker-%d", i), Store: store, Queue: queue, Agents: agents,
+	pool := &workerPool{ctx: ctx, cancels: map[string]context.CancelFunc{}, newCfg: func(id string) runtime.Config {
+		return runtime.Config{ID: id, Store: store, Queue: queue, Agents: agents,
 			Model: cfg.Model, Catalog: catalog, Dispatch: router, Artifacts: arts, Memory: mems, Logger: cfg.Logger,
-			LeaseTTL: 30 * time.Second, Heartbeat: 10 * time.Second, Idle: idle})
-		go w.Run(ctx)
+			LeaseTTL: cfg.LeaseTTL, Heartbeat: cfg.LeaseTTL / 3, Idle: idle}
+	}}
+	for range 2 * cfg.Parallel {
+		pool.spawn()
 	}
 	if cfg.Sandbox != nil {
 		c := &sandbox.Controller{ID: "eval-sandbox", Queue: sbxQueue, Hub: hub, Provider: cfg.Sandbox, Activity: sandbox.NewMemActivity(),
 			Ledger: nodesdk.NewMemLedger(), Artifacts: arts, Clock: clk, Logger: cfg.Logger, LeaseTTL: 30 * time.Second, Heartbeat: 10 * time.Second}
 		go c.Run(ctx)
 	}
-	return &instance{cfg: cfg, svc: svc, hub: hub, mems: mems, agents: agents, version: versions}, nil
+	return &instance{cfg: cfg, svc: svc, hub: hub, mems: mems, agents: agents, version: versions, workers: pool}, nil
 }
 
 // derive 为每个用例派生 AgentDef：应用用例的上下文覆盖与 ModelOverride，版本号带上用例名以免冲突。
@@ -209,7 +259,9 @@ type TrialResult struct {
 	JudgeScore []int
 	Tokens     uint64
 	Duration   time.Duration
-	Err        string
+	// 各轮合计的调用、上下文压缩与接管次数。
+	Calls, Compactions, Takeovers int
+	Err                           string
 }
 
 type Assertion struct {
@@ -254,6 +306,10 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		}
 	}
 	var sid string
+	var sessions []string
+	if in.cfg.LogDir != "" {
+		defer func() { in.dumpLogs(ctx, fmt.Sprintf("%s-%d", c.Name, trial+1), sessions) }()
+	}
 	for ti, turn := range c.Turns {
 		if sid == "" || turn.NewSession {
 			id, err := in.svc.Create(tctx, service.CreateRequest{BusinessLine: BusinessLine, EndUser: endUser, Agent: c.Agent, AgentVersion: in.version[c.Name]})
@@ -262,13 +318,15 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 				return tr
 			}
 			sid = id
+			sessions = append(sessions, id)
 		}
-		obs, err := in.turn(tctx, sid, turn)
+		obs, err := in.turn(tctx, sid, turn, c.Timeout)
 		if err != nil {
 			tr.Err = fmt.Sprintf("turn %d: %v", ti+1, err)
 			return tr
 		}
 		tr.Tokens += obs.tokens
+		tr.Calls, tr.Compactions, tr.Takeovers = tr.Calls+len(obs.calls), tr.Compactions+obs.compactions, tr.Takeovers+obs.takeovers
 		if dev != nil {
 			obs.writes, obs.sent = dev.snapshot()
 		}
@@ -295,10 +353,12 @@ type observation struct {
 	sent      int
 	memories  []*memory.Memory
 	compacted bool // 到本轮结束时 Session 是否发生过上下文压缩
+	// compactions 是本轮的上下文压缩次数，takeovers 是本轮 Run 的接管次数。
+	compactions, takeovers int
 }
 
 // turn 提交一轮输入，按 approve 自动作出审批决定，等待 Run 结束并收集本轮的事件。
-func (in *instance) turn(ctx context.Context, sid string, turn Turn) (*observation, error) {
+func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout time.Duration) (*observation, error) {
 	st, err := in.svc.Load(ctx, sid)
 	if err != nil {
 		return nil, err
@@ -309,7 +369,11 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn) (*observati
 		return nil, err
 	}
 	approve := turn.Approve == nil || *turn.Approve
-	deadline := time.Now().Add(in.cfg.TurnTimeout)
+	if timeout <= 0 {
+		timeout = in.cfg.TurnTimeout
+	}
+	deadline := time.Now().Add(timeout)
+	crashed := false
 	var run *session.Run
 	var compacted bool
 	for {
@@ -322,6 +386,12 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn) (*observati
 			compacted = st.Compaction != nil
 			break
 		}
+		if run != nil && turn.CrashAfterCalls > 0 && !crashed && len(run.Calls) >= turn.CrashAfterCalls && run.Status == session.RunRunning {
+			if err := in.crashHolder(ctx, sid, run); err != nil {
+				return nil, err
+			}
+			crashed = true
+		}
 		if run != nil {
 			for _, c := range run.Calls {
 				if c.AwaitingApproval() {
@@ -332,7 +402,7 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn) (*observati
 			}
 		}
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("run %s did not finish within %s", res.RunID, in.cfg.TurnTimeout)
+			return nil, fmt.Errorf("run %s did not finish within %s", res.RunID, timeout)
 		}
 		select {
 		case <-ctx.Done():
@@ -344,7 +414,7 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn) (*observati
 	if err != nil {
 		return nil, err
 	}
-	obs := &observation{input: turn.Input, status: run.Status.String(), compacted: compacted}
+	obs := &observation{input: turn.Input, status: run.Status.String(), compacted: compacted, takeovers: run.Takeovers}
 	results := map[string]string{}
 	for _, e := range events {
 		switch p := e.GetPayload().(type) {
@@ -372,6 +442,7 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn) (*observati
 		case *v1.Event_ApprovalDecided:
 			obs.steps = append(obs.steps, fmt.Sprintf("用户审批：%v", p.ApprovalDecided.GetApproved()))
 		case *v1.Event_ContextCompacted:
+			obs.compactions++
 			obs.tokens += p.ContextCompacted.GetUsage().GetInputTokens() + p.ContextCompacted.GetUsage().GetOutputTokens()
 		}
 	}
@@ -445,6 +516,13 @@ func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation)
 	if e.Compacted {
 		add("compacted", o.compacted, "session never compacted")
 	}
+	inRange := func(name string, r *Range, n int) {
+		if r != nil {
+			add(name, (r.Min == nil || n >= *r.Min) && (r.Max == nil || n <= *r.Max), fmt.Sprintf("%s %d", name, n))
+		}
+	}
+	inRange("compactions", e.Compactions, o.compactions)
+	inRange("takeovers", e.Takeovers, o.takeovers)
 	if e.DeviceSent != nil {
 		add("device_sent", o.sent == *e.DeviceSent, fmt.Sprintf("sent %d, want %d", o.sent, *e.DeviceSent))
 	}
@@ -459,4 +537,45 @@ func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation)
 		}
 	}
 	return out, score
+}
+
+// crashHolder 找到当前持有 run 的 Worker（最近一次 AttemptStarted）并"杀掉"它。
+func (in *instance) crashHolder(ctx context.Context, sid string, run *session.Run) error {
+	events, err := eventlog.ReadAll(ctx, in.svc.Store.Log, sid, 0)
+	if err != nil {
+		return err
+	}
+	var holder string
+	for _, e := range events {
+		if a := e.GetAttemptStarted(); a != nil && a.GetRunId() == run.ID {
+			holder = a.GetWorkerId()
+		}
+	}
+	if holder == "" || !in.workers.crash(holder) {
+		return fmt.Errorf("no worker holds run %s", run.ID)
+	}
+	if in.cfg.Logger != nil {
+		in.cfg.Logger.Info("eval: crashed worker", "worker", holder, "session", sid, "run", run.ID)
+	}
+	return nil
+}
+
+// dumpLogs 把 sessions 的日志依次写入 LogDir/<name>.jsonl，每行一个事件（protojson）。
+func (in *instance) dumpLogs(ctx context.Context, name string, sessions []string) {
+	var b strings.Builder
+	for _, sid := range sessions {
+		events, err := eventlog.ReadAll(ctx, in.svc.Store.Log, sid, 0)
+		if err != nil {
+			continue
+		}
+		for _, e := range events {
+			j, err := protojson.Marshal(e)
+			if err == nil {
+				b.Write(j)
+				b.WriteByte('\n')
+			}
+		}
+	}
+	_ = os.MkdirAll(in.cfg.LogDir, 0o755)
+	_ = os.WriteFile(filepath.Join(in.cfg.LogDir, name+".jsonl"), []byte(b.String()), 0o644)
 }

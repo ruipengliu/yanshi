@@ -44,6 +44,7 @@ func evalCmd(args []string) error {
 	baselinePath := fs.String("baseline", "", "基线文件；默认 <suite>/baselines/<被评测模型或 default>.json")
 	update := fs.Bool("update-baseline", false, "用本次结果更新基线（有意的效果变化，随代码提交）")
 	outDir := fs.String("out", "eval-results", "报告输出目录")
+	keepLogs := fs.Bool("logs", false, "同时保存每次运行的 Session 日志（<out>/<时间>/logs/），查看压缩摘要与调用过程")
 	_ = fs.Parse(args)
 
 	agents, err := agentdef.LoadDir(*agentsDir)
@@ -84,6 +85,10 @@ func evalCmd(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	start := time.Now()
+	dir := filepath.Join(*outDir, start.Format("20060102-150405"))
+	if *keepLogs {
+		cfg.LogDir = filepath.Join(dir, "logs")
+	}
 	rep, err := eval.Run(ctx, cfg, cases)
 	if err != nil {
 		return err
@@ -104,7 +109,6 @@ func evalCmd(args []string) error {
 	if baseline != nil {
 		regressions = eval.Compare(baseline, rep)
 	}
-	dir := filepath.Join(*outDir, start.Format("20060102-150405"))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -121,7 +125,9 @@ func evalCmd(args []string) error {
 		if err := os.MkdirAll(filepath.Dir(*baselinePath), 0o755); err != nil {
 			return err
 		}
-		if err := rep.WriteJSON(*baselinePath); err != nil {
+		// 只运行了部分用例（-case）时并入原基线，不丢失其余用例的基线。
+		merged := eval.MergeBaseline(baseline, rep)
+		if err := merged.WriteJSON(*baselinePath); err != nil {
 			return err
 		}
 		fmt.Printf("已更新基线：%s\n", *baselinePath)

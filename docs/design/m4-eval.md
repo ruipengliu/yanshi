@@ -18,6 +18,7 @@ description: 读电脑上的会议记录整理纪要，写回电脑前需要审�
 agent: assistant              # 使用的 AgentDef（可被 -agent 覆盖）
 trials: 3                     # 同一用例运行次数，衡量模型输出的波动
 requires: []                  # 如 [sandbox]：环境不满足时跳过
+timeout: 4m                   # 每轮等待 Run 结束的上限（长 Run 用例调大）
 context: {window: 6000}       # 可选：覆盖 AgentDef 的上下文配置（压缩类用例）
 setup:
   memories:                   # 预置的 Memory（本业务线）
@@ -30,6 +31,7 @@ turns:
   - input: "读一下我电脑上的 meeting.txt，整理成会议纪要"
     approve: true             # 本轮遇到审批时的决定（默认批准）
     new_session: false        # true 表示开一个新 Session（跨 Session 的 Memory 用例）
+    crash_after_calls: 0      # >0：Run 发起这么多次调用后"杀掉"执行它的 Worker，检验接管（长 Run 用例）
     expect:
       status: completed
       calls: ["macbook__read_file"]        # 必须出现的调用（glob）
@@ -42,6 +44,8 @@ turns:
       device_writes: {"minutes.md": "周五"}                     # 设备上写入的文件应包含
       device_sent: 0                                            # 设备发出的消息数
       compacted: true                                           # 到本轮结束时 Session 已发生过压缩
+      compactions: {min: 2}                                     # 本轮压缩次数的范围（长 Run 用例）
+      takeovers: {min: 1}                                       # 本轮接管次数的范围
       judge: "回复是否准确概括了会议结论与参会人？"            # 由评分模型按标准打分
 ```
 
@@ -76,7 +80,9 @@ turns:
 - 某用例的通过率比基线下降 0.34 以上（3 次运行中多失败 1 次以上）；
 - 评分平均值下降 0.5 以上。
 
-`-update-baseline` 用当前结果更新基线，作为有意的改动一并提交。
+`-update-baseline` 用当前结果更新基线，作为有意的改动一并提交；只运行部分用例（`-case`）时并入原基线，其余用例的基线保留。
+
+`-logs` 同时保存每次运行的 Session 日志（`logs/<用例>-<序号>.jsonl`），用于查看压缩摘要、调用顺序等过程；评测数据是合成的，不含个人数据。报告中每个用例还给出平均的调用、压缩与接管次数。
 
 ## 5. 从线上 Session 导出用例
 

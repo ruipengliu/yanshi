@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -17,6 +18,8 @@ type Case struct {
 	Description string `yaml:"description"`
 	Agent       string `yaml:"agent"`
 	Trials      int    `yaml:"trials"`
+	// Timeout 是每一轮等待 Run 结束的上限，默认取 Config.TurnTimeout（长 Run 用例需要更长）。
+	Timeout time.Duration `yaml:"timeout"`
 	// Requires 列出所需的环境，如 "sandbox"；不满足时跳过。
 	Requires []string `yaml:"requires"`
 	// Context 覆盖 AgentDef 的上下文配置（零值字段不覆盖）。
@@ -46,8 +49,11 @@ type Turn struct {
 	// Approve 是本轮遇到审批时的决定，默认批准。
 	Approve *bool `yaml:"approve"`
 	// NewSession 为 true 时本轮在新的 Session 中进行（同一 EndUser）。
-	NewSession bool   `yaml:"new_session"`
-	Expect     Expect `yaml:"expect"`
+	NewSession bool `yaml:"new_session"`
+	// CrashAfterCalls > 0 时，本轮的 Run 发起这么多次调用后，"杀掉"正在执行它的 Worker（取消其上下文，
+	// 不释放租约），由其他 Worker 在租约到期后接管：用真实模型检验接管后能否接着完成。
+	CrashAfterCalls int    `yaml:"crash_after_calls"`
+	Expect          Expect `yaml:"expect"`
 }
 
 type Range struct {
@@ -73,8 +79,11 @@ type Expect struct {
 	DeviceWrites  map[string]string `yaml:"device_writes"`
 	DeviceSent    *int              `yaml:"device_sent"`
 	// Compacted 要求到本轮结束时 Session 已发生过上下文压缩（压缩类用例据此确认确实测到了压缩）。
-	Compacted bool   `yaml:"compacted"`
-	Judge     string `yaml:"judge"`
+	Compacted bool `yaml:"compacted"`
+	// Compactions 与 Takeovers 是本轮 Run 内上下文压缩与接管次数的范围（长 Run 用例）。
+	Compactions *Range `yaml:"compactions"`
+	Takeovers   *Range `yaml:"takeovers"`
+	Judge       string `yaml:"judge"`
 }
 
 var caseNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
