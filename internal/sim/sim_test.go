@@ -83,7 +83,7 @@ func TestSimulationWithFaults(t *testing.T) {
 		"NodeCrashes", "Redeliveries", "Approvals", "Denials", "Suspensions", "DeviceResults", "Timeouts",
 		"ControllerCrashes", "SandboxExecs", "Reaps", "EnqueueInterleavings", "Closes", "Deletions", "JanitorCrashes", "DeletionsCompleted", "Recalls", "MemorySaves", "Compactions", "SummaryFaults", "Overflows", "AttemptsAfterCompaction",
 		"QuotaSuspensions", "QuotaRejections", "QuotaResumes", "AccountDeletions", "AgentSwitches",
-		"InputBlocks", "OutputBlocks", "ModerationErrors")
+		"InputBlocks", "OutputBlocks", "ModerationErrors", "MemoryApprovals")
 }
 
 // TestLongRunsWithFaults 让 Run 持续上百轮，检验压缩在故障下保持上下文有界、调用配对完整，且长 Run 能跑完。

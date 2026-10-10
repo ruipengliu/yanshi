@@ -12,6 +12,7 @@
 - 改动 MCP 适配之前：`docs/design/m5-mcp.md`。云端不运行 stdio 型 MCP Server；未声明只读的工具默认需要审批（ADR-0017）。
 - 改动工件之前：`docs/design/m2-artifacts.md`。Event 中只放 `artifact://` 引用，不放文件内容；工件只对其所属 Session 可见。
 - 新增任何存放 Session 数据的地方之前：`docs/design/m2-session-lifecycle.md`。它必须能被 Janitor 按 Session 删除，写入入口要"先写、后查"删除记录（ADR-0015），并在 `internal/sim` 的删除不变量中检查。
+- 改动 Memory 的写入、召回或授权之前：`docs/design/m4-memory-grant.md`。外部内容影响下的写入须经用户批准，写入闸门只收紧不放宽（ADR-0023）；健康类须业务线开启（ADR-0022）。
 - 改动 AgentDef 的版本选择或发布配置之前：`docs/design/m4-agent-rollout.md`。Session 当前使用的版本读 `State.Agent`（投影），不读 `Created.Agent`；新版本进入灰度或成为 stable 之前，须用 `make eval EVAL_FLAGS="-sandbox docker -agent-version <版本>"` 评测且与基线相比没有回归（ADR-0020）。
 - 改动内容安全的检查点或提供商之前：`docs/design/m4-moderation.md`。输入与输出都在写日志之前检查，失败即拒绝（ADR-0021）。上线前须完成 `docs/launch-checklist.md`。
 - 改动计量、配额或价格表之前：`docs/design/m4-quota-usage.md`。用量独立于 Event 日志保存，不含 Session 与内容；在模型调用返回后、写日志前计量（ADR-0019）。

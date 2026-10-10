@@ -105,6 +105,8 @@ type Stats struct {
 	AgentSwitches int
 	// 内容安全：被拒绝的输入、被拦截的输出、提供商错误。
 	InputBlocks, OutputBlocks, ModerationErrors int
+	// Memory 写入闸门要求的审批（ADR-0023）。
+	MemoryApprovals int
 }
 
 // hookQueue 在 Enqueue 成功后调用 after。
@@ -770,6 +772,7 @@ func (w *World) CollectStats() {
 		}
 		compacted := map[string]bool{}
 		quotaSuspended := map[string]bool{}
+		capOf := map[string]string{}
 		for _, e := range events {
 			switch p := e.GetPayload().(type) {
 			case *v1.Event_MemoryRecalled:
@@ -796,6 +799,14 @@ func (w *World) CollectStats() {
 				}
 			case *v1.Event_AgentSwitched:
 				w.Stats.AgentSwitches++
+			case *v1.Event_AssistantMessage:
+				for _, tc := range p.AssistantMessage.GetToolCalls() {
+					capOf[tc.GetCallId()] = tc.GetCapability()
+				}
+			case *v1.Event_ApprovalRequested:
+				if capOf[p.ApprovalRequested.GetCallId()] == "memory_save" {
+					w.Stats.MemoryApprovals++
+				}
 			case *v1.Event_RunSuspended:
 				w.Stats.Suspensions++
 				if p.RunSuspended.GetReason() != "" {

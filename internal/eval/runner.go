@@ -299,7 +299,9 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 	tctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	endUser := fmt.Sprintf("eval-%s-%d-%s", c.Name, trial, ids.Random()()[:6])
-	for i, m := range c.Setup.Memories {
+	// 预置记忆的 ID 与生产一致不可猜（由随机调用 ID 派生）：顺序 ID 会让模型按规律"猜出"未见过的 ID，
+	// 替换掉另一条记忆（memory-update-crowded 中观察到）。
+	for _, m := range c.Setup.Memories {
 		var at time.Time
 		if m.Recorded != "" {
 			t, err := time.Parse(time.DateOnly, m.Recorded)
@@ -309,7 +311,7 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 			}
 			at = t
 		}
-		if _, err := in.mems.Save(tctx, memory.SaveRequest{BusinessLine: BusinessLine, EndUser: endUser, CallID: fmt.Sprintf("setup-%s-%d", endUser, i),
+		if _, err := in.mems.Save(tctx, memory.SaveRequest{BusinessLine: BusinessLine, EndUser: endUser, CallID: "setup_" + ids.Random()(),
 			Category: memory.Category(m.Category), Content: m.Content, At: at}); err != nil {
 			tr.Err = "setup memory: " + err.Error()
 			return tr

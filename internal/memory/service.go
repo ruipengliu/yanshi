@@ -138,6 +138,10 @@ func (s *Service) Save(ctx context.Context, r SaveRequest) (*Memory, error) {
 		if err != nil || m.BusinessLine != r.BusinessLine || m.EndUser != r.EndUser {
 			return nil, fmt.Errorf("%w: memory %s", ErrNotFound, r.Replaces)
 		}
+		// 只能替换同类别的记忆：替换会删除旧条目，类别不同多半是 ID 用错，会悄悄删掉一条无关的信息。
+		if m.Category != r.Category {
+			return nil, fmt.Errorf("%w: memory %s is %s, not %s; use memory_forget and memory_save to move it", ErrRejected, r.Replaces, m.Category, r.Category)
+		}
 		old = m
 	}
 	if old == nil {
@@ -260,6 +264,12 @@ func (s *Service) Search(ctx context.Context, endUser, reader, text string, limi
 		hits[i] = Hit{Memory: m, Score: TextSimilarity(text, m.Content)}
 	}
 	return rank(hits, limit), nil
+}
+
+// ForgetSession 删除由某个 Session 写入的全部 Memory：发现记忆投毒后按来源撤销（ADR-0023）。
+// 调用方须已确认该 Session 属于请求方的业务线。
+func (s *Service) ForgetSession(ctx context.Context, sessionID string) error {
+	return s.Store.DeleteSession(ctx, sessionID)
 }
 
 // CreateGrant 记录 EndUser 允许业务线 to 读取自己在业务线 from 中 categories 类别的 Memory。

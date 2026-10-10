@@ -9,6 +9,7 @@
 //	GET  /v1/deletions/{id}                        删除请求的进度（仅服务令牌）
 //	GET  /v1/memories?category=&q=&end_user=       本业务线的 Memory（docs/design/m4-memory-grant.md §6）
 //	DELETE /v1/memories/{id}                       删除一条 Memory
+//	DELETE /v1/sessions/{id}/memories              删除该 Session 写入的全部 Memory（仅服务令牌；按来源撤销投毒）
 //	GET  /v1/memories/access?since=&end_user=      本业务线 Memory 的读取记录
 //	GET  /v1/grants                                EndUser 涉及本业务线的授权（仅用户令牌）
 //	POST /v1/grants                                创建授权 {"from","to","categories","expires_at"}（仅用户令牌）
@@ -93,6 +94,7 @@ func (s *Server) routes() map[string]http.HandlerFunc {
 		"GET /v1/deletions/{id}":                      s.deletion,
 		"GET /v1/memories":                            s.listMemories,
 		"DELETE /v1/memories/{id}":                    s.forgetMemory,
+		"DELETE /v1/sessions/{id}/memories":           s.forgetSessionMemories,
 		"GET /v1/memories/access":                     s.memoryAccess,
 		"GET /v1/grants":                              s.listGrants,
 		"POST /v1/grants":                             s.createGrant,
@@ -991,6 +993,26 @@ func (s *Server) forgetMemory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Memory.Forget(r.Context(), bl, eu, r.PathValue("id")); err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// forgetSessionMemories 按来源 Session 撤销 Memory（ADR-0023）：运维发现投毒后，删除由该 Session 写入的全部记忆。
+// 只接受服务令牌：这是业务线的运维操作，不是 EndUser 的日常操作（EndUser 用 DELETE /v1/memories/{id}）。
+func (s *Server) forgetSessionMemories(w http.ResponseWriter, r *http.Request) {
+	if !s.memoryEnabled(w) {
+		return
+	}
+	if _, ok := s.session(w, r); !ok {
+		return
+	}
+	if p := principal(r); !p.Service() && !p.Unrestricted {
+		s.fail(w, fmt.Errorf("%w: a service token is required", errForbidden))
+		return
+	}
+	if err := s.Memory.ForgetSession(r.Context(), r.PathValue("id")); err != nil {
 		s.fail(w, err)
 		return
 	}

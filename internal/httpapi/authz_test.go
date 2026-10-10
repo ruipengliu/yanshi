@@ -204,6 +204,7 @@ func (e *authzEnv) cases() map[string]routeCase {
 		"POST /v1/grants":                             {"POST", "/v1/grants", map[string]any{"from": "demo", "to": "other", "categories": []string{"interest"}}, http.StatusCreated},
 		"DELETE /v1/grants/{id}":                      {"DELETE", "/v1/grants/" + e.grant, nil, http.StatusNoContent},
 		"GET /v1/quota":                               {"GET", "/v1/quota?end_user=u1", nil, http.StatusOK},
+		"DELETE /v1/sessions/{id}/memories":           {"DELETE", s + "/memories", nil, http.StatusNoContent},
 		"GET /v1/usage":                               {"GET", "/v1/usage?end_user=u1&group_by=model", nil, http.StatusOK},
 	}
 }
@@ -302,6 +303,16 @@ func TestAuthorizationMatrix(t *testing.T) {
 						if sees, should := strings.Contains(body, e.grant), principal == "demo/u1" || principal == "other/u1"; sees != should {
 							t.Fatalf("sees u1's grant = %v, want %v", sees, should)
 						}
+					}
+				case route == "DELETE /v1/sessions/{id}/memories":
+					// 只有本业务线的服务令牌可以按来源撤销；Session 的主人（用户令牌）403，其他业务线 404。
+					want := map[string]int{"demo/": 204, "demo/u1": 403, "demo/u2": 404, "other/u1": 404, "other/": 404}[principal]
+					if code != want {
+						t.Fatalf("got %d (%s), want %d", code, body, want)
+					}
+					_, err := e.api.Memory.Store.Get(context.Background(), e.memory)
+					if gone := err != nil; gone != (principal == "demo/") {
+						t.Fatalf("memory written by the session deleted = %v", gone)
 					}
 				case route == "GET /v1/quota" || route == "GET /v1/usage":
 					// 只有 demo/u1 本人与 demo 的服务令牌能看到 demo/u1 的配额与用量；自报他人 end_user 时 403。

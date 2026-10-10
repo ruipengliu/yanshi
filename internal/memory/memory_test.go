@@ -227,3 +227,19 @@ func TestHealthRequiresBusinessLineConsent(t *testing.T) {
 		t.Fatalf("shop after clinic disabled %v", got)
 	}
 }
+
+// TestReplaceRequiresSameCategory：replaces 指向不同类别的记忆时拒绝，旧记忆保留。
+func TestReplaceRequiresSameCategory(t *testing.T) {
+	ctx := context.Background()
+	s, st := newService(clock.Real{})
+	old, _ := s.Save(ctx, memory.SaveRequest{BusinessLine: "a", EndUser: "u", CallID: "c1", Category: memory.Relationship, Content: "张三的邮箱是 zs@example.com"})
+	if _, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "a", EndUser: "u", CallID: "c2", Category: memory.Preference, Content: "喜欢清淡", Replaces: old.ID}); !errors.Is(err, memory.ErrRejected) {
+		t.Fatalf("cross-category replace: %v", err)
+	}
+	if _, err := st.Get(ctx, old.ID); err != nil {
+		t.Fatal("old memory deleted by a rejected replace")
+	}
+	if _, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "a", EndUser: "u", CallID: "c3", Category: memory.Relationship, Content: "张三的邮箱是 zhangsan@example.com", Replaces: old.ID}); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -394,12 +394,19 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 		return w.commit(ctx, w.toolResult(r, id, model.TextBlocks(fmt.Sprintf("capability %q is not available", name)), true))
 	}
 
-	if tool.RequiresApproval() {
+	// 需要审批：高风险能力；或 Memory 写入闸门判定（ADR-0023）；已经请求过审批的调用一律走完审批，
+	// 即使之后的上下文变化使闸门不再触发。
+	summary := approvalSummary(tool, c.Call)
+	gateSummary, gated := memoryGate(w.st, c.Call)
+	if gated {
+		summary = gateSummary
+	}
+	if tool.RequiresApproval() || gated || c.Approval != nil {
 		switch {
 		case c.Approval == nil:
 			deadline := w.now().Add(w.cfg.ApprovalTimeout)
 			return w.suspend(ctx, r, deadline, &v1.Event{Payload: &v1.Event_ApprovalRequested{ApprovalRequested: &v1.ApprovalRequested{
-				RunId: r.ID, Attempt: w.attempt, CallId: id, Summary: approvalSummary(tool, c.Call), Deadline: timestamppb.New(deadline),
+				RunId: r.ID, Attempt: w.attempt, CallId: id, Summary: summary, Deadline: timestamppb.New(deadline),
 			}}})
 		case c.AwaitingApproval() && !w.now().Before(c.Approval.Deadline):
 			return w.commit(ctx, w.toolResult(r, id, model.TextBlocks("approval timed out: the user did not respond; the call was not executed"), true))
