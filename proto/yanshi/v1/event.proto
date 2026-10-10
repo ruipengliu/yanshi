@@ -111,12 +111,16 @@ message ContentModerated {
 message RunRequested {
   string run_id = 1;
   repeated ContentBlock input = 2;
+  // 客户端为这条输入生成的 ID（可为空）：同一 ID 的重复提交返回首次的结果而不再写入（docs/design/m3-duplex-channel.md §5）。
+  string input_id = 3;
 }
 
 // Steered 是活跃 Run 进行中的追加输入，不改变 Run 状态。
 message Steered {
   string run_id = 1;
   repeated ContentBlock input = 2;
+  // 客户端为这条输入生成的 ID（可为空）：同一 ID 的重复提交返回首次的结果而不再写入（docs/design/m3-duplex-channel.md §5）。
+  string input_id = 3;
 }
 
 // AttemptStarted 标志某个 Worker 开始（或接管）执行 Run；attempt 是 fencing 令牌。
@@ -171,6 +175,8 @@ message ToolResult {
   string call_id = 3;
   repeated ContentBlock content = 4;
   bool is_error = 5;
+  // 用户直接打字回答 ask_user 提问时，这条输入的 ID（见 RunRequested.input_id）。
+  string input_id = 6;
 }
 
 message RunCompleted {

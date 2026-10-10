@@ -151,7 +151,8 @@ message LiveDelta {
 }
 
 // ClientRequest 是会话客户端的操作；每个请求恰有一个 ClientResponse。
-// 连接断开时结果未知：提交输入不是幂等的，客户端应从订阅中确认是否已生效后再决定是否重试。
+// 连接断开时结果未知：带 input_id 的提交可以原样重试（按 ID 去重）；中断、关闭重复执行是无操作，审批、回答重复执行
+// 返回 conflict，都不会产生重复效果；重试创建 Session 会再创建一个。
 message ClientRequest {
   // 由客户端生成，在本连接内唯一；响应原样带回。
   string request_id = 1;
@@ -175,6 +176,9 @@ message CreateSession {
 message SubmitInput {
   string session_id = 1;
   repeated ContentBlock input = 2;
+  // 客户端为这条输入生成的 ID（建议每条输入一个随机值，最长 128 字符）。连接断开、结果未知时，
+  // 以同一 ID 重新提交是安全的：已生效的输入返回首次的结果（duplicate = true），不会重复写入。
+  string input_id = 3;
 }
 
 message InterruptRun {
@@ -216,6 +220,8 @@ message ClientResponse {
   bool steered = 5;
   // 非空表示输入作为对该 ask_user 提问的回答（Run 正在等用户回答，ADR-0025）。
   string answered = 6;
+  // 为 true 表示同一 input_id 的输入此前已生效，本次没有写入，结果为首次的结果。
+  bool duplicate = 7;
 }
 
 message ClientError {

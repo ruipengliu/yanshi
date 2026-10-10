@@ -157,6 +157,49 @@ type State struct {
 	CompactedAt uint64
 	// callIDs 是 Session 内出现过的全部调用 ID；调用 ID 在 Session 内必须唯一。
 	callIDs map[string]bool
+	// Inputs 是最近 MaxRecentInputs 条带 ID 的输入（旧的在前），用于去重重复提交。
+	Inputs []InputRef
+}
+
+// MaxRecentInputs 是去重窗口：客户端在结果未知时重新提交，通常在几秒内，窗口无需很大；
+// 投影随之有界。
+const MaxRecentInputs = 64
+
+// InputRef 记录一条带 ID 的输入的结果，重复提交时据此原样返回。
+type InputRef struct {
+	ID    string
+	RunID string
+	// Steered 表示并入了进行中的 Run；Answered 非空表示作为对该 ask_user 提问的回答。
+	Steered  bool
+	Answered string
+}
+
+// Input 返回 ID 为 id 的最近输入；不在窗口内时返回 nil。
+func (s *State) Input(id string) *InputRef {
+	if id == "" {
+		return nil
+	}
+	for i := range s.Inputs {
+		if s.Inputs[i].ID == id {
+			return &s.Inputs[i]
+		}
+	}
+	return nil
+}
+
+// recordInput 记下带 ID 的输入；窗口内重复的 ID 不合法（写入方应先去重）。
+func (s *State) recordInput(ref InputRef) error {
+	if ref.ID == "" {
+		return nil
+	}
+	if s.Input(ref.ID) != nil {
+		return fmt.Errorf("duplicate input id %q", ref.ID)
+	}
+	s.Inputs = append(s.Inputs, ref)
+	if n := len(s.Inputs); n > MaxRecentInputs {
+		s.Inputs = slices.Clone(s.Inputs[n-MaxRecentInputs:])
+	}
+	return nil
 }
 
 // Reduce 从空状态依次应用 events。
@@ -195,6 +238,7 @@ func (s *State) Clone() *State {
 		cp.Runs[i] = r.clone()
 	}
 	cp.History = slices.Clip(s.History)
+	cp.Inputs = slices.Clone(s.Inputs)
 	cp.callIDs = make(map[string]bool, len(s.callIDs))
 	for id := range s.callIDs {
 		cp.callIDs[id] = true
@@ -283,11 +327,17 @@ func (s *State) apply(e *v1.Event) error {
 		if p.RunRequested.GetRunId() == "" || s.Run(p.RunRequested.GetRunId()) != nil {
 			return fmt.Errorf("invalid or duplicate run id %q", p.RunRequested.GetRunId())
 		}
+		if err := s.recordInput(InputRef{ID: p.RunRequested.GetInputId(), RunID: p.RunRequested.GetRunId()}); err != nil {
+			return err
+		}
 		s.Runs = append(s.Runs, &Run{ID: p.RunRequested.GetRunId(), Status: RunQueued, RequestedAt: e.GetTime().AsTime()})
 		s.History = append(s.History, e)
 
 	case *v1.Event_Steered:
 		if _, err := s.activeRun(p.Steered.GetRunId()); err != nil {
+			return err
+		}
+		if err := s.recordInput(InputRef{ID: p.Steered.GetInputId(), RunID: p.Steered.GetRunId(), Steered: true}); err != nil {
 			return err
 		}
 		s.History = append(s.History, e)
@@ -412,6 +462,12 @@ func (s *State) apply(e *v1.Event) error {
 		}
 		if m.GetAttempt() == 0 && !c.Dispatched() {
 			return fmt.Errorf("external result for call %q that was not dispatched to a node", m.GetCallId())
+		}
+		if m.GetInputId() != "" && m.GetAttempt() != 0 {
+			return fmt.Errorf("input id on a worker result for call %q", m.GetCallId())
+		}
+		if err := s.recordInput(InputRef{ID: m.GetInputId(), RunID: r.ID, Steered: true, Answered: m.GetCallId()}); err != nil {
+			return err
 		}
 		c.Done = true
 		r.StalledTakeovers = 0

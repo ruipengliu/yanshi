@@ -2,6 +2,8 @@ package nodesdk
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"strconv"
 	"sync"
@@ -262,13 +264,34 @@ func (c *Client) CreateSession(ctx context.Context, agent, version string) (stri
 }
 
 // Submit 提交输入：有活跃 Run 时作为插话（steered 为 true），否则开启新 Run。
+//
+// SDK 为每次提交生成输入 ID：连接在响应之前断开时，重连后以同一 ID 自动重试，直到得到结果或 ctx 结束。
+// 网关按 ID 去重，因此输入恰好生效一次。
 func (c *Client) Submit(ctx context.Context, sessionID string, input ...*v1.ContentBlock) (runID string, steered bool, err error) {
-	resp, err := c.Request(ctx, &v1.ClientRequest{Op: &v1.ClientRequest_Submit{Submit: &v1.SubmitInput{
-		SessionId: sessionID, Input: input}}})
+	resp, err := c.SubmitInput(ctx, &v1.SubmitInput{SessionId: sessionID, Input: input, InputId: NewInputID()})
 	if err != nil {
 		return "", false, err
 	}
 	return resp.GetRunId(), resp.GetSteered(), nil
+}
+
+// SubmitInput 提交输入并返回完整的响应（answered、duplicate 等）。in.InputId 为空时不去重、断线不重试；
+// 需要在进程重启后继续重试的 HostApp 应自己生成并持久保存 ID。
+func (c *Client) SubmitInput(ctx context.Context, in *v1.SubmitInput) (*v1.ClientResponse, error) {
+	for {
+		resp, err := c.Request(ctx, &v1.ClientRequest{Op: &v1.ClientRequest_Submit{Submit: in}})
+		if errors.Is(err, ErrDisconnected) && in.GetInputId() != "" {
+			continue // Request 会等到重新连接
+		}
+		return resp, err
+	}
+}
+
+// NewInputID 生成一个随机的输入 ID。
+func NewInputID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return "in_" + hex.EncodeToString(b[:])
 }
 
 // UIContext 返回界面上下文内容块，与用户的话一并提交（Submit），帮助模型理解"这个""这里"指什么

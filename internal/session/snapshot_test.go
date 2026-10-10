@@ -162,12 +162,13 @@ func TestSnapshotIgnoredAfterLogDeleted(t *testing.T) {
 // 否则从快照恢复会悄悄丢失它——而 Equal 按快照比较，看不出差别。
 func TestSnapshotCoversEveryField(t *testing.T) {
 	covered := map[string][]string{
-		"State":    {"SessionID", "Seq", "Created", "Agent", "Closed", "Compaction", "CompactedAt", "Runs", "History", "callIDs"},
+		"State":    {"SessionID", "Seq", "Created", "Agent", "Closed", "Compaction", "CompactedAt", "Runs", "History", "callIDs", "Inputs"},
 		"Run":      {"ID", "Status", "RequestedAt", "Attempt", "LiveEndpoint", "Takeovers", "StalledTakeovers", "Turns", "Recall", "Recalled", "Calls", "SuspendReason", "SuspendedUntil"},
 		"Call":     {"Call", "StartedAttempts", "NodeID", "Deadline", "Done", "Approval"},
 		"Approval": {"Summary", "Deadline", "Decided", "Approved"},
+		"InputRef": {"ID", "RunID", "Steered", "Answered"},
 	}
-	for _, v := range []any{session.State{}, session.Run{}, session.Call{}, session.Approval{}} {
+	for _, v := range []any{session.State{}, session.Run{}, session.Call{}, session.Approval{}, session.InputRef{}} {
 		typ := reflect.TypeOf(v)
 		want := covered[typ.Name()]
 		var got []string

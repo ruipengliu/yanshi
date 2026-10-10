@@ -943,9 +943,11 @@ func (x *ContentModerated) GetLabels() []string {
 
 // RunRequested 在 Session 无活跃 Run 时由用户输入触发。
 type RunRequested struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	Input         []*ContentBlock        `protobuf:"bytes,2,rep,name=input,proto3" json:"input,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	RunId string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	Input []*ContentBlock        `protobuf:"bytes,2,rep,name=input,proto3" json:"input,omitempty"`
+	// 客户端为这条输入生成的 ID（可为空）：同一 ID 的重复提交返回首次的结果而不再写入（docs/design/m3-duplex-channel.md §5）。
+	InputId       string `protobuf:"bytes,3,opt,name=input_id,json=inputId,proto3" json:"input_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -994,11 +996,20 @@ func (x *RunRequested) GetInput() []*ContentBlock {
 	return nil
 }
 
+func (x *RunRequested) GetInputId() string {
+	if x != nil {
+		return x.InputId
+	}
+	return ""
+}
+
 // Steered 是活跃 Run 进行中的追加输入，不改变 Run 状态。
 type Steered struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	Input         []*ContentBlock        `protobuf:"bytes,2,rep,name=input,proto3" json:"input,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	RunId string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	Input []*ContentBlock        `protobuf:"bytes,2,rep,name=input,proto3" json:"input,omitempty"`
+	// 客户端为这条输入生成的 ID（可为空）：同一 ID 的重复提交返回首次的结果而不再写入（docs/design/m3-duplex-channel.md §5）。
+	InputId       string `protobuf:"bytes,3,opt,name=input_id,json=inputId,proto3" json:"input_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1045,6 +1056,13 @@ func (x *Steered) GetInput() []*ContentBlock {
 		return x.Input
 	}
 	return nil
+}
+
+func (x *Steered) GetInputId() string {
+	if x != nil {
+		return x.InputId
+	}
+	return ""
 }
 
 // AttemptStarted 标志某个 Worker 开始（或接管）执行 Run；attempt 是 fencing 令牌。
@@ -1408,10 +1426,12 @@ type ToolResult struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	RunId string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	// 0 表示由网关追加的路由调用结果，不受 Attempt fencing。
-	Attempt       uint32          `protobuf:"varint,2,opt,name=attempt,proto3" json:"attempt,omitempty"`
-	CallId        string          `protobuf:"bytes,3,opt,name=call_id,json=callId,proto3" json:"call_id,omitempty"`
-	Content       []*ContentBlock `protobuf:"bytes,4,rep,name=content,proto3" json:"content,omitempty"`
-	IsError       bool            `protobuf:"varint,5,opt,name=is_error,json=isError,proto3" json:"is_error,omitempty"`
+	Attempt uint32          `protobuf:"varint,2,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	CallId  string          `protobuf:"bytes,3,opt,name=call_id,json=callId,proto3" json:"call_id,omitempty"`
+	Content []*ContentBlock `protobuf:"bytes,4,rep,name=content,proto3" json:"content,omitempty"`
+	IsError bool            `protobuf:"varint,5,opt,name=is_error,json=isError,proto3" json:"is_error,omitempty"`
+	// 用户直接打字回答 ask_user 提问时，这条输入的 ID（见 RunRequested.input_id）。
+	InputId       string `protobuf:"bytes,6,opt,name=input_id,json=inputId,proto3" json:"input_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1479,6 +1499,13 @@ func (x *ToolResult) GetIsError() bool {
 		return x.IsError
 	}
 	return false
+}
+
+func (x *ToolResult) GetInputId() string {
+	if x != nil {
+		return x.InputId
+	}
+	return ""
 }
 
 type RunCompleted struct {
@@ -2205,13 +2232,15 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x12\x14\n" +
 	"\x05stage\x18\x03 \x01(\tR\x05stage\x12\x16\n" +
-	"\x06labels\x18\x04 \x03(\tR\x06labels\"T\n" +
+	"\x06labels\x18\x04 \x03(\tR\x06labels\"o\n" +
 	"\fRunRequested\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12-\n" +
-	"\x05input\x18\x02 \x03(\v2\x17.yanshi.v1.ContentBlockR\x05input\"O\n" +
+	"\x05input\x18\x02 \x03(\v2\x17.yanshi.v1.ContentBlockR\x05input\x12\x19\n" +
+	"\binput_id\x18\x03 \x01(\tR\ainputId\"j\n" +
 	"\aSteered\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12-\n" +
-	"\x05input\x18\x02 \x03(\v2\x17.yanshi.v1.ContentBlockR\x05input\"\x83\x01\n" +
+	"\x05input\x18\x02 \x03(\v2\x17.yanshi.v1.ContentBlockR\x05input\x12\x19\n" +
+	"\binput_id\x18\x03 \x01(\tR\ainputId\"\x83\x01\n" +
 	"\x0eAttemptStarted\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x12\x1b\n" +
@@ -2240,14 +2269,15 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x12\x17\n" +
 	"\acall_id\x18\x03 \x01(\tR\x06callId\x12\x17\n" +
 	"\anode_id\x18\x04 \x01(\tR\x06nodeId\x126\n" +
-	"\bdeadline\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bdeadline\"\xa4\x01\n" +
+	"\bdeadline\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bdeadline\"\xbf\x01\n" +
 	"\n" +
 	"ToolResult\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x12\x17\n" +
 	"\acall_id\x18\x03 \x01(\tR\x06callId\x121\n" +
 	"\acontent\x18\x04 \x03(\v2\x17.yanshi.v1.ContentBlockR\acontent\x12\x19\n" +
-	"\bis_error\x18\x05 \x01(\bR\aisError\"?\n" +
+	"\bis_error\x18\x05 \x01(\bR\aisError\x12\x19\n" +
+	"\binput_id\x18\x06 \x01(\tR\ainputId\"?\n" +
 	"\fRunCompleted\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\"T\n" +

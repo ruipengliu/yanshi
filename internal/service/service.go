@@ -125,7 +125,9 @@ func (s *Service) Load(ctx context.Context, sessionID string) (*session.State, e
 }
 
 type SubmitResult struct {
-	RunID string
+	// Duplicate 为 true 表示同一 InputID 的输入此前已生效：本次没有写入，其余字段是首次的结果。
+	Duplicate bool
+	RunID     string
 	// Steered 为 true 表示输入并入了进行中的 Run，而非开启新 Run。
 	Steered bool
 	// Answered 非空表示输入作为对该 ask_user 提问的回答（ADR-0025）：Run 正在等用户回答时，
@@ -133,14 +135,30 @@ type SubmitResult struct {
 	Answered string
 }
 
+// MaxInputIDLen 是客户端输入 ID 的长度上限。
+const MaxInputIDLen = 128
+
 // Submit 提交用户输入：有活跃 Run 时作为 Steer，否则开启新 Run。
 func (s *Service) Submit(ctx context.Context, sessionID string, input []*v1.ContentBlock) (*SubmitResult, error) {
+	return s.SubmitWithID(ctx, sessionID, "", input)
+}
+
+// SubmitWithID 与 Submit 相同，但带客户端生成的输入 ID：结果未知（连接断开）时以同一 ID 重新提交是安全的，
+// 已生效的输入返回首次的结果（Duplicate），不会重复写入。去重窗口是最近 session.MaxRecentInputs 条输入。
+func (s *Service) SubmitWithID(ctx context.Context, sessionID, inputID string, input []*v1.ContentBlock) (*SubmitResult, error) {
 	if len(input) == 0 {
 		return nil, fmt.Errorf("%w: empty input", ErrInvalid)
+	}
+	if len(inputID) > MaxInputIDLen {
+		return nil, fmt.Errorf("%w: input_id exceeds %d bytes", ErrInvalid, MaxInputIDLen)
 	}
 	st, err := s.Load(ctx, sessionID)
 	if err != nil {
 		return nil, err
+	}
+	// 重复提交在任何检查之前返回：首次已经通过了内容安全与配额，结果也已确定。
+	if res := duplicate(st, inputID); res != nil {
+		return res, nil
 	}
 	// 写日志前后各入队一次，多余的入队无害：
 	//   - 之前：写日志后、再次入队前进程崩溃时，Run 仍有人认领；
@@ -169,6 +187,10 @@ func (s *Service) Submit(ctx context.Context, sessionID string, input []*v1.Cont
 		return nil, err
 	}
 	for range maxConflictRetries {
+		// 并发的同 ID 提交可能刚刚生效（冲突后重读到了它）。
+		if res := duplicate(st, inputID); res != nil {
+			return res, nil
+		}
 		if st.Closed != nil {
 			return nil, fmt.Errorf("%w: session %s is closed", ErrConflict, sessionID)
 		}
@@ -181,10 +203,11 @@ func (s *Service) Submit(ctx context.Context, sessionID string, input []*v1.Cont
 				if err != nil {
 					return nil, err
 				}
+				ev.GetToolResult().InputId = inputID
 				res.Answered = c.Call.GetCallId()
 				events = append(events, ev)
 			} else {
-				events = append(events, &v1.Event{Payload: &v1.Event_Steered{Steered: &v1.Steered{RunId: a.ID, Input: input}}})
+				events = append(events, &v1.Event{Payload: &v1.Event_Steered{Steered: &v1.Steered{RunId: a.ID, Input: input, InputId: inputID}}})
 			}
 		} else {
 			// 当前版本已撤回：新 Run 从稳定版本开始，切换与 RunRequested 同批提交（ADR-0020）。
@@ -193,7 +216,7 @@ func (s *Service) Submit(ctx context.Context, sessionID string, input []*v1.Cont
 					From: st.Agent, To: to.Ref(), Reason: "withdrawn"}}})
 			}
 			res.RunID = "run_" + s.Store.IDs()
-			events = append(events, &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: res.RunID, Input: input}}})
+			events = append(events, &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: res.RunID, Input: input, InputId: inputID}}})
 		}
 		err := s.Store.Commit(ctx, st, events...)
 		if err == nil {
@@ -258,6 +281,15 @@ func (s *Service) cancelDispatched(ctx context.Context, r *session.Run) error {
 		}
 	}
 	return nil
+}
+
+// duplicate 返回 inputID 此前生效时的结果；没有 ID 或不在去重窗口内时返回 nil。
+func duplicate(st *session.State, inputID string) *SubmitResult {
+	ref := st.Input(inputID)
+	if ref == nil {
+		return nil
+	}
+	return &SubmitResult{Duplicate: true, RunID: ref.RunID, Steered: ref.Steered, Answered: ref.Answered}
 }
 
 // pendingQuestion 返回 Run 中等待回答的 ask_user 提问；callID 为空时返回第一个。

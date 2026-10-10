@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -209,9 +210,12 @@ func TestAnswer(t *testing.T) {
 
 	// 打字回答：Run 等回答时，输入作为回答。
 	ask("q2")
-	sub, err := svc.Submit(ctx, sid, model.TextBlocks("下周一吧"))
+	sub, err := svc.SubmitWithID(ctx, sid, "typed-1", model.TextBlocks("下周一吧"))
 	if err != nil || sub.Answered != "q2" || sub.RunID != res.RunID {
 		t.Fatalf("typed answer: %+v %v", sub, err)
+	}
+	if again, err := svc.SubmitWithID(ctx, sid, "typed-1", model.TextBlocks("下周一吧")); err != nil || !again.Duplicate || again.Answered != "q2" {
+		t.Fatalf("retry of a typed answer: %+v %v", again, err)
 	}
 	st, _ = svc.Load(ctx, sid)
 	if r := st.History[len(st.History)-1].GetToolResult(); r.GetCallId() != "q2" || model.Text(r.GetContent()) != `{"text":"下周一吧"}` {
@@ -254,3 +258,54 @@ func TestUIContextLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestSubmitWithIDIsIdempotent：同一输入 ID 的重复提交返回首次的结果，不再写入（新 Run、插话、打字回答都如此）；
+// 去重窗口之外的旧 ID 不再去重。
+func TestSubmitWithIDIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "a", Version: "1", Model: "echo/any"})
+	store := &session.Store{Log: memlog.New(), IDs: ids.Sequential("id"), Clock: clock.Real{}}
+	svc := &service.Service{Store: store, Queue: memqueue.New(clock.Real{}), Agents: agents}
+	sid, _ := svc.Create(ctx, service.CreateRequest{BusinessLine: "bl", EndUser: "u", Agent: "a"})
+	head := func() uint64 { st, _ := svc.Load(ctx, sid); return st.Seq }
+	submit := func(id, text string) *service.SubmitResult {
+		t.Helper()
+		res, err := svc.SubmitWithID(ctx, sid, id, model.TextBlocks(text))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	first := submit("in-1", "你好")
+	before := head()
+	again := submit("in-1", "你好")
+	if !again.Duplicate || again.RunID != first.RunID || again.Steered || head() != before {
+		t.Fatalf("retry of a new run: %+v (first %+v), log %d→%d", again, first, before, head())
+	}
+	steer := submit("in-2", "补充一句")
+	if !steer.Steered || steer.Duplicate {
+		t.Fatalf("steer: %+v", steer)
+	}
+	if again := submit("in-2", "补充一句"); !again.Duplicate || !again.Steered || again.RunID != first.RunID {
+		t.Fatalf("retry of a steer: %+v", again)
+	}
+	// 没有 ID 的提交不去重。
+	before = head()
+	submit("", "x")
+	submit("", "x")
+	if head() != before+2 {
+		t.Fatal("inputs without an id were deduplicated")
+	}
+	// 窗口之外的旧 ID 不再去重。
+	for i := range session.MaxRecentInputs {
+		submit(fmt.Sprintf("fill-%d", i), "x")
+	}
+	if res := submit("in-1", "你好"); res.Duplicate {
+		t.Fatal("an id outside the window was still deduplicated")
+	}
+	if _, err := svc.SubmitWithID(ctx, sid, strings.Repeat("x", service.MaxInputIDLen+1), text("x")); !errors.Is(err, service.ErrInvalid) {
+		t.Fatalf("overlong input id: %v", err)
+	}
+}
+
+func text(s string) []*v1.ContentBlock { return model.TextBlocks(s) }

@@ -14,7 +14,7 @@ import (
 
 // ProjectionVersion 是投影语义的版本。改动 Apply 或 State 的字段时必须递增：旧快照随之作废，
 // 加载退回完整回放，因此快照永远不会与当前代码的投影结果不一致。
-const ProjectionVersion = 4
+const ProjectionVersion = 5
 
 // Snapshots 存放每个 Session 最新的投影快照。快照只是加速加载的缓存，删除或丢失都不影响正确性。
 type Snapshots interface {
@@ -64,6 +64,9 @@ func (s *State) Snapshot() *v1.SessionSnapshot {
 		snap.CallIds = append(snap.CallIds, id)
 	}
 	slices.Sort(snap.CallIds)
+	for _, in := range s.Inputs {
+		snap.Inputs = append(snap.Inputs, &v1.InputSnapshot{Id: in.ID, RunId: in.RunID, Steered: in.Steered, Answered: in.Answered})
+	}
 	return snap
 }
 
@@ -95,6 +98,9 @@ func FromSnapshot(snap *v1.SessionSnapshot) (*State, error) {
 	}
 	for _, id := range snap.GetCallIds() {
 		s.callIDs[id] = true
+	}
+	for _, in := range snap.GetInputs() {
+		s.Inputs = append(s.Inputs, InputRef{ID: in.GetId(), RunID: in.GetRunId(), Steered: in.GetSteered(), Answered: in.GetAnswered()})
 	}
 	return s, nil
 }

@@ -1215,7 +1215,8 @@ func (x *LiveDelta) GetEnd() bool {
 }
 
 // ClientRequest 是会话客户端的操作；每个请求恰有一个 ClientResponse。
-// 连接断开时结果未知：提交输入不是幂等的，客户端应从订阅中确认是否已生效后再决定是否重试。
+// 连接断开时结果未知：带 input_id 的提交可以原样重试（按 ID 去重）；中断、关闭重复执行是无操作，审批、回答重复执行
+// 返回 conflict，都不会产生重复效果；重试创建 Session 会再创建一个。
 type ClientRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 由客户端生成，在本连接内唯一；响应原样带回。
@@ -1426,9 +1427,12 @@ func (x *CreateSession) GetAgentVersion() string {
 
 // SubmitInput 有活跃 Run 时作为插话，否则开启新 Run。
 type SubmitInput struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Input         []*ContentBlock        `protobuf:"bytes,2,rep,name=input,proto3" json:"input,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Input     []*ContentBlock        `protobuf:"bytes,2,rep,name=input,proto3" json:"input,omitempty"`
+	// 客户端为这条输入生成的 ID（建议每条输入一个随机值，最长 128 字符）。连接断开、结果未知时，
+	// 以同一 ID 重新提交是安全的：已生效的输入返回首次的结果（duplicate = true），不会重复写入。
+	InputId       string `protobuf:"bytes,3,opt,name=input_id,json=inputId,proto3" json:"input_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1475,6 +1479,13 @@ func (x *SubmitInput) GetInput() []*ContentBlock {
 		return x.Input
 	}
 	return nil
+}
+
+func (x *SubmitInput) GetInputId() string {
+	if x != nil {
+		return x.InputId
+	}
+	return ""
 }
 
 type InterruptRun struct {
@@ -1732,7 +1743,9 @@ type ClientResponse struct {
 	RunId   string `protobuf:"bytes,4,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	Steered bool   `protobuf:"varint,5,opt,name=steered,proto3" json:"steered,omitempty"`
 	// 非空表示输入作为对该 ask_user 提问的回答（Run 正在等用户回答，ADR-0025）。
-	Answered      string `protobuf:"bytes,6,opt,name=answered,proto3" json:"answered,omitempty"`
+	Answered string `protobuf:"bytes,6,opt,name=answered,proto3" json:"answered,omitempty"`
+	// 为 true 表示同一 input_id 的输入此前已生效，本次没有写入，结果为首次的结果。
+	Duplicate     bool `protobuf:"varint,7,opt,name=duplicate,proto3" json:"duplicate,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1807,6 +1820,13 @@ func (x *ClientResponse) GetAnswered() string {
 		return x.Answered
 	}
 	return ""
+}
+
+func (x *ClientResponse) GetDuplicate() bool {
+	if x != nil {
+		return x.Duplicate
+	}
+	return false
 }
 
 type ClientError struct {
@@ -2170,11 +2190,12 @@ const file_yanshi_v1_node_proto_rawDesc = "" +
 	"\x02op\"J\n" +
 	"\rCreateSession\x12\x14\n" +
 	"\x05agent\x18\x01 \x01(\tR\x05agent\x12#\n" +
-	"\ragent_version\x18\x02 \x01(\tR\fagentVersion\"[\n" +
+	"\ragent_version\x18\x02 \x01(\tR\fagentVersion\"v\n" +
 	"\vSubmitInput\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12-\n" +
-	"\x05input\x18\x02 \x03(\v2\x17.yanshi.v1.ContentBlockR\x05input\"D\n" +
+	"\x05input\x18\x02 \x03(\v2\x17.yanshi.v1.ContentBlockR\x05input\x12\x19\n" +
+	"\binput_id\x18\x03 \x01(\tR\ainputId\"D\n" +
 	"\fInterruptRun\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x15\n" +
@@ -2197,7 +2218,7 @@ const file_yanshi_v1_node_proto_rawDesc = "" +
 	"\x04text\x18\x05 \x01(\tR\x04text\x1a9\n" +
 	"\vValuesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xc9\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe7\x01\n" +
 	"\x0eClientResponse\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12,\n" +
@@ -2206,7 +2227,8 @@ const file_yanshi_v1_node_proto_rawDesc = "" +
 	"session_id\x18\x03 \x01(\tR\tsessionId\x12\x15\n" +
 	"\x06run_id\x18\x04 \x01(\tR\x05runId\x12\x18\n" +
 	"\asteered\x18\x05 \x01(\bR\asteered\x12\x1a\n" +
-	"\banswered\x18\x06 \x01(\tR\banswered\"r\n" +
+	"\banswered\x18\x06 \x01(\tR\banswered\x12\x1c\n" +
+	"\tduplicate\x18\a \x01(\bR\tduplicate\"r\n" +
 	"\vClientError\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x125\n" +

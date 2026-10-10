@@ -315,11 +315,11 @@ func (h *Handler) do(ctx context.Context, id Identity, req *v1.ClientRequest, re
 		if _, err := h.load(ctx, id, op.Submit.GetSessionId()); err != nil {
 			return err
 		}
-		res, err := h.Service.Submit(ctx, op.Submit.GetSessionId(), op.Submit.GetInput())
+		res, err := h.Service.SubmitWithID(ctx, op.Submit.GetSessionId(), op.Submit.GetInputId(), op.Submit.GetInput())
 		if err != nil {
 			return err
 		}
-		resp.RunId, resp.Steered, resp.Answered = res.RunID, res.Steered, res.Answered
+		resp.RunId, resp.Steered, resp.Answered, resp.Duplicate = res.RunID, res.Steered, res.Answered, res.Duplicate
 		return nil
 	case *v1.ClientRequest_Interrupt:
 		if _, err := h.load(ctx, id, op.Interrupt.GetSessionId()); err != nil {

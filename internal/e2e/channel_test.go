@@ -529,3 +529,54 @@ func TestTypingAnswersTheQuestion(t *testing.T) {
 		t.Fatalf("model saw %q", got)
 	}
 }
+
+// TestRetryAfterLostResponseAppliesOnce：提交后连接立即断开（结果未知），另一条连接以同一输入 ID 重试：
+// 输入恰好生效一次；再重试一次得到首次的结果（duplicate）。
+func TestRetryAfterLostResponseAppliesOnce(t *testing.T) {
+	e := setup(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c := e.startClient("phone", userToken, nil)
+	sid, err := c.CreateSession(ctx, "dev", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := &v1.SubmitInput{SessionId: sid, Input: model.TextBlocks("hello"), InputId: nodesdk.NewInputID()}
+
+	ws, _, err := websocket.Dial(ctx, e.connURL(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range []*v1.NodeMessage{
+		{Msg: &v1.NodeMessage_Hello{Hello: &v1.Hello{NodeId: "flaky", Token: mustSign("u"), ClientOnly: true}}},
+		{Msg: &v1.NodeMessage_Request{Request: &v1.ClientRequest{RequestId: "r", Op: &v1.ClientRequest_Submit{Submit: in}}}},
+	} {
+		b, _ := protojson.Marshal(m)
+		if err := ws.Write(ctx, websocket.MessageText, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ws.CloseNow() // 不等响应
+
+	first, err := c.SubmitInput(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := c.SubmitInput(ctx, in)
+	if err != nil || !again.GetDuplicate() || again.GetRunId() != first.GetRunId() {
+		t.Fatalf("second retry: %v %v (first %v)", again, err, first)
+	}
+	var rec recorder
+	c.Subscribe(sid, 0, &rec)
+	eventually(t, "run completes", 5*time.Second, func() bool { return rec.completed(1) })
+	events, _, _ := rec.snapshot()
+	n := 0
+	for _, ev := range events {
+		if ev.GetRunRequested().GetInputId() == in.GetInputId() || ev.GetSteered().GetInputId() == in.GetInputId() {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("input applied %d times", n)
+	}
+}

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -293,5 +294,50 @@ func TestSessionClosedIsTerminal(t *testing.T) {
 		if _, err := Reduce(build(tail...)); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// TestInputIDs：窗口内重复的输入 ID 不合法；调用结果只有外部结果（打字回答）可以带输入 ID；窗口有界。
+func TestInputIDs(t *testing.T) {
+	withID := func(e *v1.Event, id string) *v1.Event {
+		switch p := e.GetPayload().(type) {
+		case *v1.Event_RunRequested:
+			p.RunRequested.InputId = id
+		case *v1.Event_Steered:
+			p.Steered.InputId = id
+		case *v1.Event_ToolResult:
+			p.ToolResult.InputId = id
+		}
+		return e
+	}
+	seqd := func(events ...*v1.Event) []*v1.Event {
+		for i, e := range events {
+			e.Seq = uint64(i + 1)
+		}
+		return events
+	}
+	st, err := Reduce(seqd(created(), withID(requested("r1"), "a"), withID(steered("r1"), "b")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in := st.Input("b"); in == nil || !in.Steered || in.RunID != "r1" || st.Input("a").Steered {
+		t.Fatalf("inputs = %+v", st.Inputs)
+	}
+	if _, err := Reduce(seqd(created(), withID(requested("r1"), "a"), withID(steered("r1"), "a"))); err == nil {
+		t.Fatal("duplicate input id accepted")
+	}
+	if _, err := Reduce(seqd(created(), requested("r1"), attempt("r1", 1), assistant("r1", 1, "c1"), withID(result("r1", 1, "c1"), "x"))); err == nil {
+		t.Fatal("input id on a worker result accepted")
+	}
+	events := []*v1.Event{created(), requested("r1")}
+	for i := range MaxRecentInputs + 5 {
+		events = append(events, withID(steered("r1"), fmt.Sprintf("s%d", i)))
+	}
+	st, err = Reduce(seqd(events...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Inputs) != MaxRecentInputs || st.Input("s0") != nil || st.Input(fmt.Sprintf("s%d", MaxRecentInputs+4)) == nil {
+		t.Fatalf("window holds %d inputs", len(st.Inputs))
 	}
 }

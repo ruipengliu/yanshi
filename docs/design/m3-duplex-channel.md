@@ -61,7 +61,14 @@ HostApp 实例与网关之间只保持一条 **Connection**（WebSocket，路径
 
 - **与 HTTP 走同一条路径。** 请求直接调用 `service.Service`，内容安全、配额、发布配置、删除记录检查都与 HTTP 相同。错误码与 HTTP 状态码一一对应：`invalid` 400、`not_found` 404、`conflict` 409、`rejected` 422、`quota_exceeded` 429（带 `retry_at`）、`unavailable` 503、`internal` 500。
 - **不阻塞 Node 角色。** 每个请求在独立的 goroutine 中执行（内容安全检查可能较慢），每条连接最多 8 个并发请求，超出时在读循环中等待，以此对客户端施加背压。
-- **结果未知。** 响应到达之前连接断开时，SDK 返回 `ErrDisconnected`。提交输入不是幂等的：客户端应先从订阅中确认输入是否已出现，再决定是否重试。以客户端生成的输入 ID 去重，留待需要时再做。
+- **结果未知与重试。** 手机网络上，"请求已发出、响应没回来"很常见。提交输入因此带一个客户端生成的 `input_id`（Connection 的 `SubmitInput.input_id`，HTTP 的 `input_id`，最长 128 字节）：
+  - ID 随输入写进日志：`RunRequested.input_id`、`Steered.input_id`，打字回答提问时写在 `ToolResult.input_id`；
+  - 投影记下最近 64 条带 ID 的输入及其结果（`State.Inputs`，进快照，`ProjectionVersion` 5）。窗口内重复的 ID 是不合法的写入，所以同一输入最多生效一次；
+  - `service.SubmitWithID` 在任何检查之前先查窗口：命中就返回首次的结果（`duplicate = true`，以及原来的 `run_id`、`steered`、`answered`），不写日志；乐观并发冲突后重读时再查一次，并发的同 ID 提交也只生效一个；
+  - 首次因内容安全或配额被拒绝的输入没有生效，重试时照常检查；
+  - 窗口有界：客户端通常在几秒内重试，超出 64 条之后的旧 ID 不再去重；
+  - Go SDK 的 `Submit` 为每次提交生成 ID，`ErrDisconnected` 时重连后以同一 ID 自动重试，直到得到结果或 ctx 结束。需要跨进程重启继续重试的 HostApp，自己生成并持久保存 ID，调用 `SubmitInput`；
+  - 其余请求：中断、关闭重复执行是无操作，审批、回答重复执行返回 `conflict`，都不会产生重复效果；重试创建 Session 会再创建一个。
 
 SDK（`sdk/nodesdk`）：`Executor` 为 nil 时连接只作会话客户端。主要方法有 `Subscribe(sessionID, after, handler)`、`CreateSession`、`Submit` / `SubmitText`、`Interrupt`、`Decide`、`CloseSession`。回调在接收 goroutine 中按到达顺序串行调用，不应阻塞。
 
@@ -171,8 +178,10 @@ Agent 需要用户在几个明确的候选中选择，或补充少量结构化�
   - 访问他人的 Session 一律 `not_found`；
   - 文本帧按 protojson 收发，且 `client_only` 的连接不出现在 Node 列表中；
   - 令牌到期重连后续订，事件连续；
+  - 提交后连接立即断开、另一条连接以同一输入 ID 重试：输入恰好生效一次，再次重试得到 `duplicate`；
   - 两台设备连在共享 PostgreSQL 的两个实例上，互相看到对方加入、聚焦、正在输入、停止输入、离开。
 - `presencetest` 一致性套件（mem、PostgreSQL）：只有显示内容变化才递增版本，过期记录不列出，删除与隔离，等待被变化唤醒，按 Session 删除。
 - 模拟测试：在场写入与删除竞争时被撤回（`PresenceWrites`、`PresenceWithdrawn`），删除不变量，差分指纹包含在场记录。
+- 模拟测试（输入去重）：一部分提交在"响应丢失"后以同一 ID 重试，其间可能有 Worker 推进了 Run；重试须返回首次的结果且不写日志（`DuplicateInputs`）。不变量：同一输入 ID 在日志中至多出现一次。
 - 模拟测试（ask_user）：模型随机提问（含不合法的提问），客户端随机点选、给出不合法的回答（须被拒绝）、或打字回答，时钟跳动触发超时；覆盖 `Questions`、`Answers`、`TypedAnswers`、`InvalidAnswers`、`QuestionTimeouts`。不变量：任何时候都没有投给 `@user` 的 Inbox 项。
 - e2e：手机提问、电脑点选回答，两端都看到结果，重复回答为冲突；打字回答不记为插话。

@@ -115,8 +115,8 @@ type Stats struct {
 	PresenceWrites, PresenceWithdrawn int
 	// ask_user（ADR-0025）：提问、点选回答、打字回答、被拒绝的不合法回答、无人回答而超时。
 	Questions, Answers, TypedAnswers, InvalidAnswers, QuestionTimeouts int
-	// 附带界面上下文的输入。
-	UIContextInputs int
+	// 附带界面上下文的输入；以同一输入 ID 重试而被去重的提交。
+	UIContextInputs, DuplicateInputs int
 }
 
 // hookQueue 在 Enqueue 成功后调用 after。
@@ -195,6 +195,8 @@ type World struct {
 	nextW   int
 
 	sessions []string
+	// nextInput 生成客户端输入 ID。
+	nextInput int
 	// effects 记录非幂等 Capability（进程内与设备上）每个调用 ID 的实际执行次数。
 	effects map[string]int
 	// crash 在一次 Step 或设备执行期间可用：调用它模拟该进程在此刻崩溃。
@@ -647,7 +649,9 @@ func (w *World) submit() error {
 		input = append([]*v1.ContentBlock{{Kind: &v1.ContentBlock_UiContext{UiContext: &v1.UIContext{
 			Screen: "详情", Content: strings.Repeat("c", w.rng.IntN(200))}}}}, input...)
 	}
-	res, err := w.svc.Submit(context.Background(), sid, input)
+	w.nextInput++
+	inputID := fmt.Sprintf("in-%d", w.nextInput)
+	res, err := w.svc.SubmitWithID(context.Background(), sid, inputID, input)
 	if w.submitModerated(err) {
 		w.tracef("submit %s rejected by moderation: %v", sid, err)
 		return nil
@@ -670,6 +674,37 @@ func (w *World) submit() error {
 		}
 	}
 	w.tracef("submit %s → %s steered=%v", sid, res.RunID, res.Steered)
+	if w.chance(0.2) {
+		return w.retrySubmit(sid, inputID, input, res)
+	}
+	return nil
+}
+
+// retrySubmit 模拟"响应丢失后以同一输入 ID 重试"：其间可能有 Worker 推进了 Run；重试必须返回首次的结果，
+// 且不写入任何事件（docs/design/m3-duplex-channel.md §5）。
+func (w *World) retrySubmit(sid, inputID string, input []*v1.ContentBlock, first *service.SubmitResult) error {
+	if w.chance(0.5) {
+		if err := w.stepWorker(w.rng.IntN(len(w.workers))); err != nil {
+			return err
+		}
+	}
+	st, err := w.svc.Load(context.Background(), sid)
+	if err != nil {
+		return nil // 期间被删除：重试得到 not found，与去重无关
+	}
+	res, err := w.svc.SubmitWithID(context.Background(), sid, inputID, input)
+	if err != nil {
+		return fmt.Errorf("retry of input %s: %w", inputID, err)
+	}
+	after, err := w.svc.Load(context.Background(), sid)
+	if err != nil {
+		return err
+	}
+	if !res.Duplicate || res.RunID != first.RunID || res.Steered != first.Steered || res.Answered != first.Answered || after.Seq != st.Seq {
+		return fmt.Errorf("invariant: retry of input %s returned %+v (first %+v), log %d→%d", inputID, res, first, st.Seq, after.Seq)
+	}
+	w.Stats.DuplicateInputs++
+	w.tracef("retry %s → duplicate", inputID)
 	return nil
 }
 
@@ -778,6 +813,15 @@ func (w *World) CheckInvariants() error {
 			if r.Status == session.RunCompleted && r.PendingCall() != nil {
 				return fmt.Errorf("invariant: run %s completed with pending call", r.ID)
 			}
+		}
+		// 同一输入 ID 至多生效一次。
+		inputs := map[string]bool{}
+		for _, e := range events {
+			id := e.GetRunRequested().GetInputId() + e.GetSteered().GetInputId() + e.GetToolResult().GetInputId()
+			if id != "" && inputs[id] {
+				return fmt.Errorf("invariant: input %s applied twice in %s", id, sid)
+			}
+			inputs[id] = true
 		}
 	}
 	// 提问不经 Inbox（ADR-0025）：任何时候都不应有投给用户本人的待投递项。

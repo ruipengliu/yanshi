@@ -26,6 +26,15 @@ message SessionSnapshot {
   repeated string call_ids = 10;
   // Session 当前使用的 AgentDef 版本（SessionCreated 固定，AgentSwitched 改变）。
   AgentRef agent = 11;
+  // 最近的输入 ID 及其结果，用于去重（session.MaxRecentInputs）。
+  repeated InputSnapshot inputs = 12;
+}
+
+message InputSnapshot {
+  string id = 1;
+  string run_id = 2;
+  bool steered = 3;
+  string answered = 4;
 }
 
 message RunSnapshot {

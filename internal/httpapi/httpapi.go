@@ -14,7 +14,7 @@
 //	GET  /v1/grants                                EndUser 涉及本业务线的授权（仅用户令牌）
 //	POST /v1/grants                                创建授权 {"from","to","categories","expires_at"}（仅用户令牌）
 //	DELETE /v1/grants/{id}                         撤销授权（仅用户令牌）
-//	POST /v1/sessions/{id}/inputs                  提交输入（新 Run 或 Steer；内容安全拒绝 422、不可用 503）
+//	POST /v1/sessions/{id}/inputs                  提交输入（新 Run 或 Steer；带 input_id 可安全重试；内容安全拒绝 422、不可用 503）
 //	POST /v1/sessions/{id}/runs/{run}/interrupt    中断 Run
 //	GET  /v1/sessions/{id}/events?after=N&limit=M  已提交事件（JSON）
 //	GET  /v1/sessions/{id}/stream?after=N          已提交事件 + 实时增量（SSE，支持 Last-Event-ID 续传）
@@ -382,6 +382,8 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		Text string `json:"text"`
 		// Content 是 ContentBlock 的 JSON 数组；与 Text 同时给出时 Text 在前。
 		Content []json.RawMessage `json:"content"`
+		// InputID 是客户端生成的输入 ID：超时等结果未知时以同一 ID 重试是安全的（docs/design/m3-duplex-channel.md §5）。
+		InputID string `json:"input_id"`
 	}
 	if err := decode(r, &req); err != nil {
 		s.fail(w, err)
@@ -399,7 +401,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		}
 		input = append(input, b)
 	}
-	res, err := s.Service.Submit(r.Context(), r.PathValue("id"), input)
+	res, err := s.Service.SubmitWithID(r.Context(), r.PathValue("id"), req.InputID, input)
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -407,6 +409,9 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{"run_id": res.RunID, "steered": res.Steered}
 	if res.Answered != "" {
 		out["answered"] = res.Answered
+	}
+	if res.Duplicate {
+		out["duplicate"] = true
 	}
 	writeJSON(w, http.StatusAccepted, out)
 }
