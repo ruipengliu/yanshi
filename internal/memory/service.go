@@ -106,6 +106,8 @@ type SaveRequest struct {
 	Content               string
 	// Replaces 非空时，写入后删除这条旧 Memory（须属于同一 EndUser 与业务线）。
 	Replaces string
+	// At 非零时作为记录时间（导入已有记忆、评测预置不同时间的记忆）；否则取当前时间。
+	At time.Time
 }
 
 // Save 写入一条 Memory。ID 由调用 ID 派生，因此同一调用重复执行是幂等的。
@@ -148,6 +150,9 @@ func (s *Service) Save(ctx context.Context, r SaveRequest) (*Memory, error) {
 		}
 	}
 	now := s.Clock.Now()
+	if !r.At.IsZero() {
+		now = r.At
+	}
 	m := &Memory{ID: id, BusinessLine: r.BusinessLine, EndUser: r.EndUser, Category: r.Category, Content: content,
 		SourceSession: r.SessionID, SourceCall: r.CallID, CreatedAt: now, UpdatedAt: now}
 	var vec *Vector

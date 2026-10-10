@@ -1,0 +1,26 @@
+name: memory-update-crowded
+description: >-
+  记忆较多时的更正（MERIT：检索在事实更新时不可靠）：旧事实措辞不同、周围有多条相似的联系人记忆，
+  召回的前几条未必包含它。更正后旧地址不应保留。
+setup:
+  memories:
+    - {category: relationship, content: "市场部的老同事张三，常用邮箱 zs@example.com", recorded: "2026-02-10"}
+    - {category: relationship, content: "王敏是财务，邮箱 wangmin@example.com", recorded: "2026-02-11"}
+    - {category: relationship, content: "李雷负责测试，邮箱 lilei@example.com", recorded: "2026-02-12"}
+    - {category: relationship, content: "陈晨是设计师，邮箱 chenchen@example.com", recorded: "2026-02-13"}
+    - {category: relationship, content: "赵琳是产品经理，电话 138-0000-1111", recorded: "2026-02-14"}
+    - {category: relationship, content: "孙浩是运营，邮箱 sunhao@example.com", recorded: "2026-02-15"}
+    - {category: relationship, content: "周倩是 HR，邮箱 zhouqian@example.com", recorded: "2026-02-16"}
+    - {category: relationship, content: "吴磊是后端工程师，邮箱 wulei@example.com", recorded: "2026-02-17"}
+    - {category: relationship, content: "郑爽是销售，邮箱 zhengshuang@example.com", recorded: "2026-02-18"}
+    - {category: relationship, content: "冯涛是法务，邮箱 fengtao@example.com", recorded: "2026-02-19"}
+    - {category: preference, content: "用户喜欢简短的回答", recorded: "2026-01-05"}
+    - {category: profile, content: "用户在杭州工作，是产品经理", recorded: "2026-01-05"}
+    - {category: plan, content: "用户计划 11 月去成都出差", recorded: "2026-09-01"}
+    - {category: interest, content: "用户周末喜欢徒步", recorded: "2026-01-05"}
+turns:
+  - input: 对了，老张的邮箱改成 zhangsan@example.com 了，记一下。
+    expect:
+      status: completed
+      memories: [{contains: "zhangsan@example.com"}]
+      no_memories: [{contains: "zs@example.com", without: "zhangsan@example.com"}]

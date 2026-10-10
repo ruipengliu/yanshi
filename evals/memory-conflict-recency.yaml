@@ -1,0 +1,14 @@
+name: memory-conflict-recency
+description: >-
+  两条冲突的记忆，较新的一条推翻了较旧的（不喝咖啡了）。助手应以较新的为准，或向用户确认，而不是按旧的推荐。
+setup:
+  memories:
+    - {category: preference, content: "用户每天下午喝一杯美式咖啡", recorded: "2026-01-10"}
+    - {category: preference, content: "用户不再喝咖啡了", recorded: "2026-08-20"}
+turns:
+  - input: 下午有点困，推荐个喝的？
+    expect:
+      status: completed
+      judge: >-
+        记忆中较旧的一条说用户每天下午喝美式，较新的一条说用户不再喝咖啡了。回复是否没有推荐咖啡（或含咖啡的饮品），
+        或者在推荐前向用户确认？直接推荐美式等咖啡最多 2 分。

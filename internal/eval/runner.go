@@ -300,8 +300,17 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 	defer cancel()
 	endUser := fmt.Sprintf("eval-%s-%d-%s", c.Name, trial, ids.Random()()[:6])
 	for i, m := range c.Setup.Memories {
+		var at time.Time
+		if m.Recorded != "" {
+			t, err := time.Parse(time.DateOnly, m.Recorded)
+			if err != nil {
+				tr.Err = "setup memory: " + err.Error()
+				return tr
+			}
+			at = t
+		}
 		if _, err := in.mems.Save(tctx, memory.SaveRequest{BusinessLine: BusinessLine, EndUser: endUser, CallID: fmt.Sprintf("setup-%s-%d", endUser, i),
-			Category: memory.Category(m.Category), Content: m.Content}); err != nil {
+			Category: memory.Category(m.Category), Content: m.Content, At: at}); err != nil {
 			tr.Err = "setup memory: " + err.Error()
 			return tr
 		}
@@ -375,6 +384,7 @@ type observation struct {
 	compactions, takeovers int
 	tickets                []string // CRM 中本 EndUser 的工单
 	inTokens, cachedTokens uint64   // 本轮模型调用的输入 token 与其中命中前缀缓存的部分
+	callArgs               []string // 与 calls 一一对应的调用参数
 }
 
 // turn 提交一轮输入，按 approve 自动作出审批决定，等待 Run 结束并收集本轮的事件。
@@ -444,6 +454,7 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 			obs.inTokens, obs.cachedTokens = obs.inTokens+m.GetUsage().GetInputTokens(), obs.cachedTokens+m.GetUsage().GetCachedInputTokens()
 			for _, tc := range m.GetToolCalls() {
 				obs.calls = append(obs.calls, tc.GetCapability())
+				obs.callArgs = append(obs.callArgs, tc.GetArgumentsJson())
 				obs.steps = append(obs.steps, fmt.Sprintf("调用 %s %s", tc.GetCapability(), clip(tc.GetArgumentsJson(), judgeStepBytes)))
 			}
 			// 回复是本轮全部助手文本：模型常把结论写在带调用的消息里（如同时保存 Memory），
@@ -501,7 +512,8 @@ func matches(globs []string, name string) bool {
 }
 
 func memoryMatches(m *memory.Memory, want MemoryMatch) bool {
-	return (want.Category == "" || string(m.Category) == want.Category) && strings.Contains(m.Content, want.Contains)
+	return (want.Category == "" || string(m.Category) == want.Category) && strings.Contains(m.Content, want.Contains) &&
+		(want.Without == "" || !strings.Contains(m.Content, want.Without))
 }
 
 // check 判定一轮的断言；有评分标准时请评分模型打分，返回分数（0 表示没有评分）。
@@ -552,6 +564,15 @@ func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation)
 		if r != nil {
 			add(name, (r.Min == nil || n >= *r.Min) && (r.Max == nil || n <= *r.Max), fmt.Sprintf("%s %d", name, n))
 		}
+	}
+	for g, sub := range e.CallArgs {
+		ok := false
+		for i, c := range o.calls {
+			if matches([]string{g}, c) && strings.Contains(o.callArgs[i], sub) {
+				ok = true
+			}
+		}
+		add("call_args "+g, ok, fmt.Sprintf("calls %v", o.calls))
 	}
 	for _, want := range e.Tickets {
 		add("tickets "+want, slices.ContainsFunc(o.tickets, func(t string) bool { return strings.Contains(t, want) }), fmt.Sprintf("tickets %v", o.tickets))

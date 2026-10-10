@@ -34,6 +34,8 @@ type Case struct {
 		Memories []struct {
 			Category string `yaml:"category"`
 			Content  string `yaml:"content"`
+			// Recorded 是记录日期（YYYY-MM-DD），用于预置新旧不同的记忆；默认为当前时间。
+			Recorded string `yaml:"recorded"`
 		} `yaml:"memories"`
 		Device *DeviceSetup `yaml:"device"`
 		// CRM 为 true 时为评测业务线登记内置的 CRM MCP Server（工具 search_customer、create_ticket）。
@@ -72,6 +74,9 @@ type Range struct {
 type MemoryMatch struct {
 	Category string `yaml:"category"`
 	Contains string `yaml:"contains"`
+	// Without 非空时，包含它的记忆不算匹配。例如更正后旧地址可以作为历史出现在新记忆里，
+	// 但不应有只含旧地址的记忆：{contains: 旧, without: 新}。
+	Without string `yaml:"without"`
 }
 
 // Expect 是一轮的断言；未写的字段不检查。
@@ -86,6 +91,8 @@ type Expect struct {
 	NoMemories    []MemoryMatch     `yaml:"no_memories"`
 	DeviceWrites  map[string]string `yaml:"device_writes"`
 	DeviceSent    *int              `yaml:"device_sent"`
+	// CallArgs 要求某个名称匹配（glob）的调用的参数包含给定文本，如 {"*send_message": "lilei@example.com"}。
+	CallArgs map[string]string `yaml:"call_args"`
 	// Compacted 要求到本轮结束时 Session 已发生过上下文压缩（压缩类用例据此确认确实测到了压缩）。
 	Compacted bool `yaml:"compacted"`
 	// Compactions 与 Takeovers 是本轮 Run 内上下文压缩与接管次数的范围（长 Run 用例）。

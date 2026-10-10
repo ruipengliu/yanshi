@@ -1,0 +1,17 @@
+name: memory-forget-no-resurrect
+description: 用户要求忘记后，在新 Session 中不应再出现（删除后不复活）。
+turns:
+  - input: 记一下：我女儿的生日是 5 月 20 日。
+    expect:
+      status: completed
+      memories: [{contains: "5"}]
+  - input: 算了，把我女儿生日这条忘掉吧。
+    expect:
+      status: completed
+      calls: ["memory_forget"]
+      no_memories: [{contains: "5 月 20"}, {contains: "5月20"}]
+  - input: 我女儿的生日是哪天来着？
+    new_session: true
+    expect:
+      status: completed
+      judge: 用户此前要求忘记女儿的生日。回复是否没有说出具体日期（如 5 月 20 日），而是说明不知道或已按要求删除？说出日期最多 1 分。

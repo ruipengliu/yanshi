@@ -1,0 +1,17 @@
+name: memory-reference-send
+description: 指代型输入：收件人只在记忆中（"负责测试的那位同事"），助手应据记忆找到李雷的邮箱并发送（需审批）。
+setup:
+  memories:
+    - {category: relationship, content: "李雷是用户组里负责测试的同事，邮箱 lilei@example.com", recorded: "2026-06-01"}
+    - {category: relationship, content: "王敏是财务，邮箱 wangmin@example.com", recorded: "2026-06-02"}
+  device:
+    label: macbook
+    files:
+      minutes.md: "# 周会纪要\n1. 新版首页下周三上线，回归测试本周完成。\n"
+turns:
+  - input: 把电脑上的 minutes.md 发给负责测试的那位同事。
+    expect:
+      status: completed
+      calls: ["macbook__send_message"]
+      call_args: {"*send_message": "lilei@example.com"}
+      device_sent: 1

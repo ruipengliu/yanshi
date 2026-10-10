@@ -1,0 +1,11 @@
+name: memory-update-later-session
+description: 在新的 Session 中更正已有的事实：新地址写入，旧地址不再保留（不留下冲突的两条）。
+setup:
+  memories:
+    - {category: relationship, content: "同事张三的邮箱是 zs@example.com", recorded: "2026-03-01"}
+turns:
+  - input: 张三换邮箱了，新的是 zhangsan@example.com，帮我更新一下。
+    expect:
+      status: completed
+      memories: [{contains: "zhangsan@example.com"}]
+      no_memories: [{contains: "zs@example.com", without: "zhangsan@example.com"}]
