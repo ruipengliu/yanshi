@@ -121,7 +121,7 @@
 
 | # | 改进 | 依据 | 涉及 |
 |---|---|---|---|
-| 1 | Compaction 之前加"规则省略旧调用结果"一级 | 2609.20804 | `runtime/compact.go`、Transcript；须评测（`compaction-recall` 等用例） |
+| 1 | ~~Compaction 之前加"规则省略旧调用结果"一级~~ **已试验，未采纳**：汇总类长任务中模型重新读取被省略的结果，`long-run-ledger` 的调用与 token 翻倍、通过率 3/3 → 2/3（见 m2-long-runs §11） | 2609.20804 | — |
 | 2 | 前缀缓存友好的 Transcript 组装 + 计量缓存命中 token | DeepSeek-Reasonix | Transcript、`model.Usage`、ADR-0019 |
 | 3 | 压缩、恢复、插话之后在上下文中重述关键约束 | OPENDEV | Transcript；新增长 Run 漂移用例 |
 | 4 | 发送类 Capability 前自检 | OneDayAgent | AgentDef 策略；场景 A 用例 |

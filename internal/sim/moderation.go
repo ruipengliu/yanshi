@@ -19,13 +19,17 @@ import (
 
 type simModerator struct{ w *World }
 
-// blocked 按散列拦截约 1/12 的文本；拒答文本本身不拦截。
-func blocked(text string) bool {
+// blocked 按散列拦截约 1/12 的文本（长 Run 模式下约 1/400：被拦截的输出会使 Run 以拒答结束，
+// 拦截太多则长 Run 几乎跑不满）；拒答文本本身不拦截。
+func (w *World) blocked(text string) bool {
 	if text == moderation.Refusal {
 		return false
 	}
 	h := fnv.New32a()
 	h.Write([]byte(text))
+	if w.opts.LongRuns {
+		return h.Sum32()%400 == 0
+	}
 	return h.Sum32()%12 == 0
 }
 
@@ -34,7 +38,7 @@ func (m simModerator) Check(_ context.Context, req moderation.Request) (moderati
 		m.w.Stats.ModerationErrors++
 		return moderation.Verdict{}, errors.New("simulated moderation outage")
 	}
-	if !blocked(req.Text) {
+	if !m.w.blocked(req.Text) {
 		return moderation.Verdict{}, nil
 	}
 	if req.Stage == moderation.Output {
@@ -66,15 +70,15 @@ func (w *World) checkModeration() error {
 		for i, e := range events {
 			switch p := e.GetPayload().(type) {
 			case *v1.Event_RunRequested:
-				if blocked(model.Text(p.RunRequested.GetInput())) {
+				if w.blocked(model.Text(p.RunRequested.GetInput())) {
 					return fmt.Errorf("invariant: blocked input reached the log of %s at seq %d", sid, e.GetSeq())
 				}
 			case *v1.Event_Steered:
-				if blocked(model.Text(p.Steered.GetInput())) {
+				if w.blocked(model.Text(p.Steered.GetInput())) {
 					return fmt.Errorf("invariant: blocked steer reached the log of %s at seq %d", sid, e.GetSeq())
 				}
 			case *v1.Event_AssistantMessage:
-				if blocked(runtime.ModerationText(p.AssistantMessage.GetContent(), p.AssistantMessage.GetToolCalls())) {
+				if w.blocked(runtime.ModerationText(p.AssistantMessage.GetContent(), p.AssistantMessage.GetToolCalls())) {
 					return fmt.Errorf("invariant: blocked output reached the log of %s at seq %d", sid, e.GetSeq())
 				}
 			case *v1.Event_ContentModerated:
