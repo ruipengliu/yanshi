@@ -4,8 +4,11 @@
 // 	protoc        (unknown)
 // source: yanshi/v1/node.proto
 
-// Node 协议：HostApp 内的 SDK 经 WebSocket 连接网关，每个二进制帧一条消息。
-// 语义见 docs/design/m1-device-nodes.md。
+// Connection 协议：HostApp 内的 SDK 经 WebSocket 连接网关，每帧一条消息。
+// 一条 Connection 可兼任两种角色（ADR-0024）：
+//   - Node：声明 Capability、执行调用（docs/design/m1-device-nodes.md）；
+//   - 会话客户端：订阅 Session、提交输入与审批（docs/design/m3-duplex-channel.md）。
+// 帧的编码跟随 Hello：二进制帧为 protobuf，文本帧为 protojson（便于网页与调试）。
 
 package yanshiv1
 
@@ -171,6 +174,10 @@ type NodeMessage struct {
 	//
 	//	*NodeMessage_Hello
 	//	*NodeMessage_Result
+	//	*NodeMessage_Subscribe
+	//	*NodeMessage_Unsubscribe
+	//	*NodeMessage_Request
+	//	*NodeMessage_Activity
 	Msg           isNodeMessage_Msg `protobuf_oneof:"msg"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -231,6 +238,42 @@ func (x *NodeMessage) GetResult() *InvokeResult {
 	return nil
 }
 
+func (x *NodeMessage) GetSubscribe() *Subscribe {
+	if x != nil {
+		if x, ok := x.Msg.(*NodeMessage_Subscribe); ok {
+			return x.Subscribe
+		}
+	}
+	return nil
+}
+
+func (x *NodeMessage) GetUnsubscribe() *Unsubscribe {
+	if x != nil {
+		if x, ok := x.Msg.(*NodeMessage_Unsubscribe); ok {
+			return x.Unsubscribe
+		}
+	}
+	return nil
+}
+
+func (x *NodeMessage) GetRequest() *ClientRequest {
+	if x != nil {
+		if x, ok := x.Msg.(*NodeMessage_Request); ok {
+			return x.Request
+		}
+	}
+	return nil
+}
+
+func (x *NodeMessage) GetActivity() *Activity {
+	if x != nil {
+		if x, ok := x.Msg.(*NodeMessage_Activity); ok {
+			return x.Activity
+		}
+	}
+	return nil
+}
+
 type isNodeMessage_Msg interface {
 	isNodeMessage_Msg()
 }
@@ -243,9 +286,33 @@ type NodeMessage_Result struct {
 	Result *InvokeResult `protobuf:"bytes,2,opt,name=result,proto3,oneof"`
 }
 
+type NodeMessage_Subscribe struct {
+	Subscribe *Subscribe `protobuf:"bytes,3,opt,name=subscribe,proto3,oneof"`
+}
+
+type NodeMessage_Unsubscribe struct {
+	Unsubscribe *Unsubscribe `protobuf:"bytes,4,opt,name=unsubscribe,proto3,oneof"`
+}
+
+type NodeMessage_Request struct {
+	Request *ClientRequest `protobuf:"bytes,5,opt,name=request,proto3,oneof"`
+}
+
+type NodeMessage_Activity struct {
+	Activity *Activity `protobuf:"bytes,6,opt,name=activity,proto3,oneof"`
+}
+
 func (*NodeMessage_Hello) isNodeMessage_Msg() {}
 
 func (*NodeMessage_Result) isNodeMessage_Msg() {}
+
+func (*NodeMessage_Subscribe) isNodeMessage_Msg() {}
+
+func (*NodeMessage_Unsubscribe) isNodeMessage_Msg() {}
+
+func (*NodeMessage_Request) isNodeMessage_Msg() {}
+
+func (*NodeMessage_Activity) isNodeMessage_Msg() {}
 
 // GatewayMessage 是网关发往 Node 的消息。
 type GatewayMessage struct {
@@ -256,6 +323,11 @@ type GatewayMessage struct {
 	//	*GatewayMessage_Invoke
 	//	*GatewayMessage_Cancel
 	//	*GatewayMessage_ResultAck
+	//	*GatewayMessage_Event
+	//	*GatewayMessage_Delta
+	//	*GatewayMessage_Response
+	//	*GatewayMessage_SubscriptionEnded
+	//	*GatewayMessage_Presence
 	Msg           isGatewayMessage_Msg `protobuf_oneof:"msg"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -334,6 +406,51 @@ func (x *GatewayMessage) GetResultAck() *ResultAck {
 	return nil
 }
 
+func (x *GatewayMessage) GetEvent() *Event {
+	if x != nil {
+		if x, ok := x.Msg.(*GatewayMessage_Event); ok {
+			return x.Event
+		}
+	}
+	return nil
+}
+
+func (x *GatewayMessage) GetDelta() *LiveDelta {
+	if x != nil {
+		if x, ok := x.Msg.(*GatewayMessage_Delta); ok {
+			return x.Delta
+		}
+	}
+	return nil
+}
+
+func (x *GatewayMessage) GetResponse() *ClientResponse {
+	if x != nil {
+		if x, ok := x.Msg.(*GatewayMessage_Response); ok {
+			return x.Response
+		}
+	}
+	return nil
+}
+
+func (x *GatewayMessage) GetSubscriptionEnded() *SubscriptionEnded {
+	if x != nil {
+		if x, ok := x.Msg.(*GatewayMessage_SubscriptionEnded); ok {
+			return x.SubscriptionEnded
+		}
+	}
+	return nil
+}
+
+func (x *GatewayMessage) GetPresence() *Presence {
+	if x != nil {
+		if x, ok := x.Msg.(*GatewayMessage_Presence); ok {
+			return x.Presence
+		}
+	}
+	return nil
+}
+
 type isGatewayMessage_Msg interface {
 	isGatewayMessage_Msg()
 }
@@ -354,6 +471,27 @@ type GatewayMessage_ResultAck struct {
 	ResultAck *ResultAck `protobuf:"bytes,4,opt,name=result_ack,json=resultAck,proto3,oneof"`
 }
 
+type GatewayMessage_Event struct {
+	// 已订阅 Session 的已提交事件，按 seq 递增。
+	Event *Event `protobuf:"bytes,5,opt,name=event,proto3,oneof"`
+}
+
+type GatewayMessage_Delta struct {
+	Delta *LiveDelta `protobuf:"bytes,6,opt,name=delta,proto3,oneof"`
+}
+
+type GatewayMessage_Response struct {
+	Response *ClientResponse `protobuf:"bytes,7,opt,name=response,proto3,oneof"`
+}
+
+type GatewayMessage_SubscriptionEnded struct {
+	SubscriptionEnded *SubscriptionEnded `protobuf:"bytes,8,opt,name=subscription_ended,json=subscriptionEnded,proto3,oneof"`
+}
+
+type GatewayMessage_Presence struct {
+	Presence *Presence `protobuf:"bytes,9,opt,name=presence,proto3,oneof"`
+}
+
 func (*GatewayMessage_Welcome) isGatewayMessage_Msg() {}
 
 func (*GatewayMessage_Invoke) isGatewayMessage_Msg() {}
@@ -361,6 +499,16 @@ func (*GatewayMessage_Invoke) isGatewayMessage_Msg() {}
 func (*GatewayMessage_Cancel) isGatewayMessage_Msg() {}
 
 func (*GatewayMessage_ResultAck) isGatewayMessage_Msg() {}
+
+func (*GatewayMessage_Event) isGatewayMessage_Msg() {}
+
+func (*GatewayMessage_Delta) isGatewayMessage_Msg() {}
+
+func (*GatewayMessage_Response) isGatewayMessage_Msg() {}
+
+func (*GatewayMessage_SubscriptionEnded) isGatewayMessage_Msg() {}
+
+func (*GatewayMessage_Presence) isGatewayMessage_Msg() {}
 
 // Hello 是连接后的第一条消息。
 type Hello struct {
@@ -374,10 +522,12 @@ type Hello struct {
 	// 人类可读的标签，如 "macbook"；同一用户下由网关去重。
 	Label string `protobuf:"bytes,5,opt,name=label,proto3" json:"label,omitempty"`
 	// Device 类型，如 "desktop"、"phone"。
-	Kind          string            `protobuf:"bytes,6,opt,name=kind,proto3" json:"kind,omitempty"`
-	HostApp       string            `protobuf:"bytes,7,opt,name=host_app,json=hostApp,proto3" json:"host_app,omitempty"`
-	SdkVersion    string            `protobuf:"bytes,8,opt,name=sdk_version,json=sdkVersion,proto3" json:"sdk_version,omitempty"`
-	Capabilities  []*CapabilitySpec `protobuf:"bytes,9,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
+	Kind         string            `protobuf:"bytes,6,opt,name=kind,proto3" json:"kind,omitempty"`
+	HostApp      string            `protobuf:"bytes,7,opt,name=host_app,json=hostApp,proto3" json:"host_app,omitempty"`
+	SdkVersion   string            `protobuf:"bytes,8,opt,name=sdk_version,json=sdkVersion,proto3" json:"sdk_version,omitempty"`
+	Capabilities []*CapabilitySpec `protobuf:"bytes,9,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
+	// 为 true 时只作会话客户端，不登记为 Node（如网页）；此时 capabilities 须为空。
+	ClientOnly    bool `protobuf:"varint,10,opt,name=client_only,json=clientOnly,proto3" json:"client_only,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -473,6 +623,13 @@ func (x *Hello) GetCapabilities() []*CapabilitySpec {
 		return x.Capabilities
 	}
 	return nil
+}
+
+func (x *Hello) GetClientOnly() bool {
+	if x != nil {
+		return x.ClientOnly
+	}
+	return false
 }
 
 type Welcome struct {
@@ -808,6 +965,1003 @@ func (x *CapabilitySet) GetCapabilities() []*CapabilitySpec {
 	return nil
 }
 
+// Subscribe 订阅一个 Session：先补发 seq 大于 after_seq 的已提交事件，之后实时推送新事件与增量。
+// 重连后带上最后收到的 seq 重新订阅即可续传。重复订阅同一 Session 以最新的 after_seq 重新开始。
+type Subscribe struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	AfterSeq      uint64                 `protobuf:"varint,2,opt,name=after_seq,json=afterSeq,proto3" json:"after_seq,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Subscribe) Reset() {
+	*x = Subscribe{}
+	mi := &file_yanshi_v1_node_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Subscribe) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Subscribe) ProtoMessage() {}
+
+func (x *Subscribe) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_node_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Subscribe.ProtoReflect.Descriptor instead.
+func (*Subscribe) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *Subscribe) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *Subscribe) GetAfterSeq() uint64 {
+	if x != nil {
+		return x.AfterSeq
+	}
+	return 0
+}
+
+type Unsubscribe struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Unsubscribe) Reset() {
+	*x = Unsubscribe{}
+	mi := &file_yanshi_v1_node_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Unsubscribe) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Unsubscribe) ProtoMessage() {}
+
+func (x *Unsubscribe) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_node_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Unsubscribe.ProtoReflect.Descriptor instead.
+func (*Unsubscribe) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *Unsubscribe) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+// SubscriptionEnded 表示网关结束了一个订阅；之后不再推送该 Session 的消息。
+type SubscriptionEnded struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// "not_found"（不存在或无权访问）、"deleted"、"limit"（连接上的订阅数已达上限）、"error"（可重新订阅）。
+	Reason        string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubscriptionEnded) Reset() {
+	*x = SubscriptionEnded{}
+	mi := &file_yanshi_v1_node_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubscriptionEnded) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubscriptionEnded) ProtoMessage() {}
+
+func (x *SubscriptionEnded) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_node_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubscriptionEnded.ProtoReflect.Descriptor instead.
+func (*SubscriptionEnded) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *SubscriptionEnded) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *SubscriptionEnded) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+// LiveDelta 是模型输出的实时增量（易失，不进日志，丢失后由随后提交的事件覆盖）。
+type LiveDelta struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	RunId     string                 `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	Attempt   uint32                 `protobuf:"varint,3,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	// 这次生成接在日志的哪个位置之后：after_seq 相同的增量属于同一条消息，
+	// 收到 seq 大于它的 AssistantMessage 后，客户端以提交的内容为准。
+	AfterSeq uint64 `protobuf:"varint,4,opt,name=after_seq,json=afterSeq,proto3" json:"after_seq,omitempty"`
+	Text     string `protobuf:"bytes,5,opt,name=text,proto3" json:"text,omitempty"`
+	// 为 true 时 text 是这条消息到目前为止的全文（订阅时正在生成），替换而非追加。
+	Snapshot bool `protobuf:"varint,6,opt,name=snapshot,proto3" json:"snapshot,omitempty"`
+	// 这次生成已结束（提交或失败）；客户端丢弃尚未被提交事件覆盖的文本。
+	End           bool `protobuf:"varint,7,opt,name=end,proto3" json:"end,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LiveDelta) Reset() {
+	*x = LiveDelta{}
+	mi := &file_yanshi_v1_node_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LiveDelta) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LiveDelta) ProtoMessage() {}
+
+func (x *LiveDelta) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_node_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LiveDelta.ProtoReflect.Descriptor instead.
+func (*LiveDelta) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *LiveDelta) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *LiveDelta) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *LiveDelta) GetAttempt() uint32 {
+	if x != nil {
+		return x.Attempt
+	}
+	return 0
+}
+
+func (x *LiveDelta) GetAfterSeq() uint64 {
+	if x != nil {
+		return x.AfterSeq
+	}
+	return 0
+}
+
+func (x *LiveDelta) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *LiveDelta) GetSnapshot() bool {
+	if x != nil {
+		return x.Snapshot
+	}
+	return false
+}
+
+func (x *LiveDelta) GetEnd() bool {
+	if x != nil {
+		return x.End
+	}
+	return false
+}
+
+// ClientRequest 是会话客户端的操作；每个请求恰有一个 ClientResponse。
+// 连接断开时结果未知：提交输入不是幂等的，客户端应从订阅中确认是否已生效后再决定是否重试。
+type ClientRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 由客户端生成，在本连接内唯一；响应原样带回。
+	RequestId string `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// Types that are valid to be assigned to Op:
+	//
+	//	*ClientRequest_CreateSession
+	//	*ClientRequest_Submit
+	//	*ClientRequest_Interrupt
+	//	*ClientRequest_Decide
+	//	*ClientRequest_Close
+	Op            isClientRequest_Op `protobuf_oneof:"op"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClientRequest) Reset() {
+	*x = ClientRequest{}
+	mi := &file_yanshi_v1_node_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClientRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClientRequest) ProtoMessage() {}
+
+func (x *ClientRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_node_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClientRequest.ProtoReflect.Descriptor instead.
+func (*ClientRequest) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *ClientRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *ClientRequest) GetOp() isClientRequest_Op {
+	if x != nil {
+		return x.Op
+	}
+	return nil
+}
+
+func (x *ClientRequest) GetCreateSession() *CreateSession {
+	if x != nil {
+		if x, ok := x.Op.(*ClientRequest_CreateSession); ok {
+			return x.CreateSession
+		}
+	}
+	return nil
+}
+
+func (x *ClientRequest) GetSubmit() *SubmitInput {
+	if x != nil {
+		if x, ok := x.Op.(*ClientRequest_Submit); ok {
+			return x.Submit
+		}
+	}
+	return nil
+}
+
+func (x *ClientRequest) GetInterrupt() *InterruptRun {
+	if x != nil {
+		if x, ok := x.Op.(*ClientRequest_Interrupt); ok {
+			return x.Interrupt
+		}
+	}
+	return nil
+}
+
+func (x *ClientRequest) GetDecide() *DecideApproval {
+	if x != nil {
+		if x, ok := x.Op.(*ClientRequest_Decide); ok {
+			return x.Decide
+		}
+	}
+	return nil
+}
+
+func (x *ClientRequest) GetClose() *CloseSession {
+	if x != nil {
+		if x, ok := x.Op.(*ClientRequest_Close); ok {
+			return x.Close
+		}
+	}
+	return nil
+}
+
+type isClientRequest_Op interface {
+	isClientRequest_Op()
+}
+
+type ClientRequest_CreateSession struct {
+	CreateSession *CreateSession `protobuf:"bytes,2,opt,name=create_session,json=createSession,proto3,oneof"`
+}
+
+type ClientRequest_Submit struct {
+	Submit *SubmitInput `protobuf:"bytes,3,opt,name=submit,proto3,oneof"`
+}
+
+type ClientRequest_Interrupt struct {
+	Interrupt *InterruptRun `protobuf:"bytes,4,opt,name=interrupt,proto3,oneof"`
+}
+
+type ClientRequest_Decide struct {
+	Decide *DecideApproval `protobuf:"bytes,5,opt,name=decide,proto3,oneof"`
+}
+
+type ClientRequest_Close struct {
+	Close *CloseSession `protobuf:"bytes,6,opt,name=close,proto3,oneof"`
+}
+
+func (*ClientRequest_CreateSession) isClientRequest_Op() {}
+
+func (*ClientRequest_Submit) isClientRequest_Op() {}
+
+func (*ClientRequest_Interrupt) isClientRequest_Op() {}
+
+func (*ClientRequest_Decide) isClientRequest_Op() {}
+
+func (*ClientRequest_Close) isClientRequest_Op() {}
+
+type CreateSession struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Agent string                 `protobuf:"bytes,1,opt,name=agent,proto3" json:"agent,omitempty"`
+	// 为空时按发布配置分流。
+	AgentVersion  string `protobuf:"bytes,2,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateSession) Reset() {
+	*x = CreateSession{}
+	mi := &file_yanshi_v1_node_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateSession) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateSession) ProtoMessage() {}
+
+func (x *CreateSession) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_node_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateSession.ProtoReflect.Descriptor instead.
+func (*CreateSession) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *CreateSession) GetAgent() string {
+	if x != nil {
+		return x.Agent
+	}
+	return ""
+}
+
+func (x *CreateSession) GetAgentVersion() string {
+	if x != nil {
+		return x.AgentVersion
+	}
+	return ""
+}
+
+// SubmitInput 有活跃 Run 时作为插话，否则开启新 Run。
+type SubmitInput struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Input         []*ContentBlock        `protobuf:"bytes,2,rep,name=input,proto3" json:"input,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubmitInput) Reset() {
+	*x = SubmitInput{}
+	mi := &file_yanshi_v1_node_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubmitInput) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubmitInput) ProtoMessage() {}
+
+func (x *SubmitInput) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_node_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubmitInput.ProtoReflect.Descriptor instead.
+func (*SubmitInput) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *SubmitInput) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *SubmitInput) GetInput() []*ContentBlock {
+	if x != nil {
+		return x.Input
+	}
+	return nil
+}
+
+type InterruptRun struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	RunId         string                 `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InterruptRun) Reset() {
+	*x = InterruptRun{}
+	mi := &file_yanshi_v1_node_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InterruptRun) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InterruptRun) ProtoMessage() {}
+
+func (x *InterruptRun) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_node_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InterruptRun.ProtoReflect.Descriptor instead.
+func (*InterruptRun) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *InterruptRun) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *InterruptRun) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+type DecideApproval struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	CallId        string                 `protobuf:"bytes,2,opt,name=call_id,json=callId,proto3" json:"call_id,omitempty"`
+	Approve       bool                   `protobuf:"varint,3,opt,name=approve,proto3" json:"approve,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DecideApproval) Reset() {
+	*x = DecideApproval{}
+	mi := &file_yanshi_v1_node_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DecideApproval) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DecideApproval) ProtoMessage() {}
+
+func (x *DecideApproval) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_node_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DecideApproval.ProtoReflect.Descriptor instead.
+func (*DecideApproval) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *DecideApproval) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *DecideApproval) GetCallId() string {
+	if x != nil {
+		return x.CallId
+	}
+	return ""
+}
+
+func (x *DecideApproval) GetApprove() bool {
+	if x != nil {
+		return x.Approve
+	}
+	return false
+}
+
+type CloseSession struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CloseSession) Reset() {
+	*x = CloseSession{}
+	mi := &file_yanshi_v1_node_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CloseSession) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CloseSession) ProtoMessage() {}
+
+func (x *CloseSession) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_node_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CloseSession.ProtoReflect.Descriptor instead.
+func (*CloseSession) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *CloseSession) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *CloseSession) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type ClientResponse struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	RequestId string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// 为空表示成功。
+	Error *ClientError `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	// CreateSession 的结果。
+	SessionId string `protobuf:"bytes,3,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// SubmitInput 的结果。
+	RunId         string `protobuf:"bytes,4,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	Steered       bool   `protobuf:"varint,5,opt,name=steered,proto3" json:"steered,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClientResponse) Reset() {
+	*x = ClientResponse{}
+	mi := &file_yanshi_v1_node_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClientResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClientResponse) ProtoMessage() {}
+
+func (x *ClientResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_node_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClientResponse.ProtoReflect.Descriptor instead.
+func (*ClientResponse) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *ClientResponse) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *ClientResponse) GetError() *ClientError {
+	if x != nil {
+		return x.Error
+	}
+	return nil
+}
+
+func (x *ClientResponse) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *ClientResponse) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *ClientResponse) GetSteered() bool {
+	if x != nil {
+		return x.Steered
+	}
+	return false
+}
+
+type ClientError struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 与 HTTP API 的状态码对应："invalid"、"not_found"、"conflict"、"rejected"（内容安全）、
+	// "unavailable"、"quota_exceeded"、"internal"。
+	Code    string `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	// quota_exceeded 时为配额重置时间。
+	RetryAt       *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=retry_at,json=retryAt,proto3" json:"retry_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClientError) Reset() {
+	*x = ClientError{}
+	mi := &file_yanshi_v1_node_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClientError) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClientError) ProtoMessage() {}
+
+func (x *ClientError) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_node_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClientError.ProtoReflect.Descriptor instead.
+func (*ClientError) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *ClientError) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *ClientError) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *ClientError) GetRetryAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.RetryAt
+	}
+	return nil
+}
+
+// Activity 报告本设备在一个已订阅 Session 中的状态，供其他设备显示在场（docs/design/m3-duplex-channel.md §6）。
+// 对未订阅的 Session 无效。
+type Activity struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// 该 Session 正显示在本设备的前台。
+	Focused bool `protobuf:"varint,2,opt,name=focused,proto3" json:"focused,omitempty"`
+	// 正在输入。网关在 10 秒后视为停止：持续输入时每隔几秒重发，停止或发送后置为 false。
+	Typing        bool `protobuf:"varint,3,opt,name=typing,proto3" json:"typing,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Activity) Reset() {
+	*x = Activity{}
+	mi := &file_yanshi_v1_node_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Activity) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Activity) ProtoMessage() {}
+
+func (x *Activity) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_node_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Activity.ProtoReflect.Descriptor instead.
+func (*Activity) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *Activity) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *Activity) GetFocused() bool {
+	if x != nil {
+		return x.Focused
+	}
+	return false
+}
+
+func (x *Activity) GetTyping() bool {
+	if x != nil {
+		return x.Typing
+	}
+	return false
+}
+
+// Presence 是一个已订阅 Session 当前的在场设备：订阅后先发一次，之后每次变化时发送全量。
+// 列表包含本设备自己，客户端按 device_id 区分。
+type Presence struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Viewers       []*Viewer              `protobuf:"bytes,2,rep,name=viewers,proto3" json:"viewers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Presence) Reset() {
+	*x = Presence{}
+	mi := &file_yanshi_v1_node_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Presence) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Presence) ProtoMessage() {}
+
+func (x *Presence) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_node_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Presence.ProtoReflect.Descriptor instead.
+func (*Presence) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *Presence) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *Presence) GetViewers() []*Viewer {
+	if x != nil {
+		return x.Viewers
+	}
+	return nil
+}
+
+type Viewer struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 设备连接时的 Hello.node_id；同一设备的多条连接合并为一项。
+	DeviceId      string `protobuf:"bytes,1,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
+	Label         string `protobuf:"bytes,2,opt,name=label,proto3" json:"label,omitempty"`
+	Kind          string `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`
+	Focused       bool   `protobuf:"varint,4,opt,name=focused,proto3" json:"focused,omitempty"`
+	Typing        bool   `protobuf:"varint,5,opt,name=typing,proto3" json:"typing,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Viewer) Reset() {
+	*x = Viewer{}
+	mi := &file_yanshi_v1_node_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Viewer) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Viewer) ProtoMessage() {}
+
+func (x *Viewer) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_node_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Viewer.ProtoReflect.Descriptor instead.
+func (*Viewer) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *Viewer) GetDeviceId() string {
+	if x != nil {
+		return x.DeviceId
+	}
+	return ""
+}
+
+func (x *Viewer) GetLabel() string {
+	if x != nil {
+		return x.Label
+	}
+	return ""
+}
+
+func (x *Viewer) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *Viewer) GetFocused() bool {
+	if x != nil {
+		return x.Focused
+	}
+	return false
+}
+
+func (x *Viewer) GetTyping() bool {
+	if x != nil {
+		return x.Typing
+	}
+	return false
+}
+
 var File_yanshi_v1_node_proto protoreflect.FileDescriptor
 
 const file_yanshi_v1_node_proto_rawDesc = "" +
@@ -821,18 +1975,27 @@ const file_yanshi_v1_node_proto_rawDesc = "" +
 	"idempotent\x18\x04 \x01(\bR\n" +
 	"idempotent\x12#\n" +
 	"\x04risk\x18\x05 \x01(\x0e2\x0f.yanshi.v1.RiskR\x04risk\x12'\n" +
-	"\x0ftimeout_seconds\x18\x06 \x01(\rR\x0etimeoutSeconds\"q\n" +
+	"\x0ftimeout_seconds\x18\x06 \x01(\rR\x0etimeoutSeconds\"\xcc\x02\n" +
 	"\vNodeMessage\x12(\n" +
 	"\x05hello\x18\x01 \x01(\v2\x10.yanshi.v1.HelloH\x00R\x05hello\x121\n" +
-	"\x06result\x18\x02 \x01(\v2\x17.yanshi.v1.InvokeResultH\x00R\x06resultB\x05\n" +
-	"\x03msg\"\xd8\x01\n" +
+	"\x06result\x18\x02 \x01(\v2\x17.yanshi.v1.InvokeResultH\x00R\x06result\x124\n" +
+	"\tsubscribe\x18\x03 \x01(\v2\x14.yanshi.v1.SubscribeH\x00R\tsubscribe\x12:\n" +
+	"\vunsubscribe\x18\x04 \x01(\v2\x16.yanshi.v1.UnsubscribeH\x00R\vunsubscribe\x124\n" +
+	"\arequest\x18\x05 \x01(\v2\x18.yanshi.v1.ClientRequestH\x00R\arequest\x121\n" +
+	"\bactivity\x18\x06 \x01(\v2\x13.yanshi.v1.ActivityH\x00R\bactivityB\x05\n" +
+	"\x03msg\"\xeb\x03\n" +
 	"\x0eGatewayMessage\x12.\n" +
 	"\awelcome\x18\x01 \x01(\v2\x12.yanshi.v1.WelcomeH\x00R\awelcome\x12+\n" +
 	"\x06invoke\x18\x02 \x01(\v2\x11.yanshi.v1.InvokeH\x00R\x06invoke\x12+\n" +
 	"\x06cancel\x18\x03 \x01(\v2\x11.yanshi.v1.CancelH\x00R\x06cancel\x125\n" +
 	"\n" +
-	"result_ack\x18\x04 \x01(\v2\x14.yanshi.v1.ResultAckH\x00R\tresultAckB\x05\n" +
-	"\x03msg\"\x9b\x02\n" +
+	"result_ack\x18\x04 \x01(\v2\x14.yanshi.v1.ResultAckH\x00R\tresultAck\x12(\n" +
+	"\x05event\x18\x05 \x01(\v2\x10.yanshi.v1.EventH\x00R\x05event\x12,\n" +
+	"\x05delta\x18\x06 \x01(\v2\x14.yanshi.v1.LiveDeltaH\x00R\x05delta\x127\n" +
+	"\bresponse\x18\a \x01(\v2\x19.yanshi.v1.ClientResponseH\x00R\bresponse\x12M\n" +
+	"\x12subscription_ended\x18\b \x01(\v2\x1c.yanshi.v1.SubscriptionEndedH\x00R\x11subscriptionEnded\x121\n" +
+	"\bpresence\x18\t \x01(\v2\x13.yanshi.v1.PresenceH\x00R\bpresenceB\x05\n" +
+	"\x03msg\"\xbc\x02\n" +
 	"\x05Hello\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x14\n" +
 	"\x05token\x18\x02 \x01(\tR\x05token\x12#\n" +
@@ -843,7 +2006,10 @@ const file_yanshi_v1_node_proto_rawDesc = "" +
 	"\bhost_app\x18\a \x01(\tR\ahostApp\x12\x1f\n" +
 	"\vsdk_version\x18\b \x01(\tR\n" +
 	"sdkVersion\x12=\n" +
-	"\fcapabilities\x18\t \x03(\v2\x19.yanshi.v1.CapabilitySpecR\fcapabilities\"8\n" +
+	"\fcapabilities\x18\t \x03(\v2\x19.yanshi.v1.CapabilitySpecR\fcapabilities\x12\x1f\n" +
+	"\vclient_only\x18\n" +
+	" \x01(\bR\n" +
+	"clientOnly\"8\n" +
 	"\aWelcome\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x14\n" +
 	"\x05label\x18\x02 \x01(\tR\x05label\"\xd6\x01\n" +
@@ -866,7 +2032,83 @@ const file_yanshi_v1_node_proto_rawDesc = "" +
 	"\tResultAck\x12\x17\n" +
 	"\acall_id\x18\x01 \x01(\tR\x06callId\"N\n" +
 	"\rCapabilitySet\x12=\n" +
-	"\fcapabilities\x18\x01 \x03(\v2\x19.yanshi.v1.CapabilitySpecR\fcapabilities*9\n" +
+	"\fcapabilities\x18\x01 \x03(\v2\x19.yanshi.v1.CapabilitySpecR\fcapabilities\"G\n" +
+	"\tSubscribe\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
+	"\tafter_seq\x18\x02 \x01(\x04R\bafterSeq\",\n" +
+	"\vUnsubscribe\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"J\n" +
+	"\x11SubscriptionEnded\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xba\x01\n" +
+	"\tLiveDelta\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x15\n" +
+	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x18\n" +
+	"\aattempt\x18\x03 \x01(\rR\aattempt\x12\x1b\n" +
+	"\tafter_seq\x18\x04 \x01(\x04R\bafterSeq\x12\x12\n" +
+	"\x04text\x18\x05 \x01(\tR\x04text\x12\x1a\n" +
+	"\bsnapshot\x18\x06 \x01(\bR\bsnapshot\x12\x10\n" +
+	"\x03end\x18\a \x01(\bR\x03end\"\xc8\x02\n" +
+	"\rClientRequest\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12A\n" +
+	"\x0ecreate_session\x18\x02 \x01(\v2\x18.yanshi.v1.CreateSessionH\x00R\rcreateSession\x120\n" +
+	"\x06submit\x18\x03 \x01(\v2\x16.yanshi.v1.SubmitInputH\x00R\x06submit\x127\n" +
+	"\tinterrupt\x18\x04 \x01(\v2\x17.yanshi.v1.InterruptRunH\x00R\tinterrupt\x123\n" +
+	"\x06decide\x18\x05 \x01(\v2\x19.yanshi.v1.DecideApprovalH\x00R\x06decide\x12/\n" +
+	"\x05close\x18\x06 \x01(\v2\x17.yanshi.v1.CloseSessionH\x00R\x05closeB\x04\n" +
+	"\x02op\"J\n" +
+	"\rCreateSession\x12\x14\n" +
+	"\x05agent\x18\x01 \x01(\tR\x05agent\x12#\n" +
+	"\ragent_version\x18\x02 \x01(\tR\fagentVersion\"[\n" +
+	"\vSubmitInput\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12-\n" +
+	"\x05input\x18\x02 \x03(\v2\x17.yanshi.v1.ContentBlockR\x05input\"D\n" +
+	"\fInterruptRun\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x15\n" +
+	"\x06run_id\x18\x02 \x01(\tR\x05runId\"b\n" +
+	"\x0eDecideApproval\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x17\n" +
+	"\acall_id\x18\x02 \x01(\tR\x06callId\x12\x18\n" +
+	"\aapprove\x18\x03 \x01(\bR\aapprove\"E\n" +
+	"\fCloseSession\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xad\x01\n" +
+	"\x0eClientResponse\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12,\n" +
+	"\x05error\x18\x02 \x01(\v2\x16.yanshi.v1.ClientErrorR\x05error\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x03 \x01(\tR\tsessionId\x12\x15\n" +
+	"\x06run_id\x18\x04 \x01(\tR\x05runId\x12\x18\n" +
+	"\asteered\x18\x05 \x01(\bR\asteered\"r\n" +
+	"\vClientError\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x125\n" +
+	"\bretry_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\aretryAt\"[\n" +
+	"\bActivity\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x18\n" +
+	"\afocused\x18\x02 \x01(\bR\afocused\x12\x16\n" +
+	"\x06typing\x18\x03 \x01(\bR\x06typing\"V\n" +
+	"\bPresence\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12+\n" +
+	"\aviewers\x18\x02 \x03(\v2\x11.yanshi.v1.ViewerR\aviewers\"\x81\x01\n" +
+	"\x06Viewer\x12\x1b\n" +
+	"\tdevice_id\x18\x01 \x01(\tR\bdeviceId\x12\x14\n" +
+	"\x05label\x18\x02 \x01(\tR\x05label\x12\x12\n" +
+	"\x04kind\x18\x03 \x01(\tR\x04kind\x12\x18\n" +
+	"\afocused\x18\x04 \x01(\bR\afocused\x12\x16\n" +
+	"\x06typing\x18\x05 \x01(\bR\x06typing*9\n" +
 	"\x04Risk\x12\x14\n" +
 	"\x10RISK_UNSPECIFIED\x10\x00\x12\f\n" +
 	"\bRISK_LOW\x10\x01\x12\r\n" +
@@ -885,7 +2127,7 @@ func file_yanshi_v1_node_proto_rawDescGZIP() []byte {
 }
 
 var file_yanshi_v1_node_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_yanshi_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_yanshi_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
 var file_yanshi_v1_node_proto_goTypes = []any{
 	(Risk)(0),                     // 0: yanshi.v1.Risk
 	(*CapabilitySpec)(nil),        // 1: yanshi.v1.CapabilitySpec
@@ -898,26 +2140,60 @@ var file_yanshi_v1_node_proto_goTypes = []any{
 	(*InvokeResult)(nil),          // 8: yanshi.v1.InvokeResult
 	(*ResultAck)(nil),             // 9: yanshi.v1.ResultAck
 	(*CapabilitySet)(nil),         // 10: yanshi.v1.CapabilitySet
-	(*timestamppb.Timestamp)(nil), // 11: google.protobuf.Timestamp
-	(*ContentBlock)(nil),          // 12: yanshi.v1.ContentBlock
+	(*Subscribe)(nil),             // 11: yanshi.v1.Subscribe
+	(*Unsubscribe)(nil),           // 12: yanshi.v1.Unsubscribe
+	(*SubscriptionEnded)(nil),     // 13: yanshi.v1.SubscriptionEnded
+	(*LiveDelta)(nil),             // 14: yanshi.v1.LiveDelta
+	(*ClientRequest)(nil),         // 15: yanshi.v1.ClientRequest
+	(*CreateSession)(nil),         // 16: yanshi.v1.CreateSession
+	(*SubmitInput)(nil),           // 17: yanshi.v1.SubmitInput
+	(*InterruptRun)(nil),          // 18: yanshi.v1.InterruptRun
+	(*DecideApproval)(nil),        // 19: yanshi.v1.DecideApproval
+	(*CloseSession)(nil),          // 20: yanshi.v1.CloseSession
+	(*ClientResponse)(nil),        // 21: yanshi.v1.ClientResponse
+	(*ClientError)(nil),           // 22: yanshi.v1.ClientError
+	(*Activity)(nil),              // 23: yanshi.v1.Activity
+	(*Presence)(nil),              // 24: yanshi.v1.Presence
+	(*Viewer)(nil),                // 25: yanshi.v1.Viewer
+	(*Event)(nil),                 // 26: yanshi.v1.Event
+	(*timestamppb.Timestamp)(nil), // 27: google.protobuf.Timestamp
+	(*ContentBlock)(nil),          // 28: yanshi.v1.ContentBlock
 }
 var file_yanshi_v1_node_proto_depIdxs = []int32{
 	0,  // 0: yanshi.v1.CapabilitySpec.risk:type_name -> yanshi.v1.Risk
 	4,  // 1: yanshi.v1.NodeMessage.hello:type_name -> yanshi.v1.Hello
 	8,  // 2: yanshi.v1.NodeMessage.result:type_name -> yanshi.v1.InvokeResult
-	5,  // 3: yanshi.v1.GatewayMessage.welcome:type_name -> yanshi.v1.Welcome
-	6,  // 4: yanshi.v1.GatewayMessage.invoke:type_name -> yanshi.v1.Invoke
-	7,  // 5: yanshi.v1.GatewayMessage.cancel:type_name -> yanshi.v1.Cancel
-	9,  // 6: yanshi.v1.GatewayMessage.result_ack:type_name -> yanshi.v1.ResultAck
-	1,  // 7: yanshi.v1.Hello.capabilities:type_name -> yanshi.v1.CapabilitySpec
-	11, // 8: yanshi.v1.Invoke.deadline:type_name -> google.protobuf.Timestamp
-	12, // 9: yanshi.v1.InvokeResult.content:type_name -> yanshi.v1.ContentBlock
-	1,  // 10: yanshi.v1.CapabilitySet.capabilities:type_name -> yanshi.v1.CapabilitySpec
-	11, // [11:11] is the sub-list for method output_type
-	11, // [11:11] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	11, // 3: yanshi.v1.NodeMessage.subscribe:type_name -> yanshi.v1.Subscribe
+	12, // 4: yanshi.v1.NodeMessage.unsubscribe:type_name -> yanshi.v1.Unsubscribe
+	15, // 5: yanshi.v1.NodeMessage.request:type_name -> yanshi.v1.ClientRequest
+	23, // 6: yanshi.v1.NodeMessage.activity:type_name -> yanshi.v1.Activity
+	5,  // 7: yanshi.v1.GatewayMessage.welcome:type_name -> yanshi.v1.Welcome
+	6,  // 8: yanshi.v1.GatewayMessage.invoke:type_name -> yanshi.v1.Invoke
+	7,  // 9: yanshi.v1.GatewayMessage.cancel:type_name -> yanshi.v1.Cancel
+	9,  // 10: yanshi.v1.GatewayMessage.result_ack:type_name -> yanshi.v1.ResultAck
+	26, // 11: yanshi.v1.GatewayMessage.event:type_name -> yanshi.v1.Event
+	14, // 12: yanshi.v1.GatewayMessage.delta:type_name -> yanshi.v1.LiveDelta
+	21, // 13: yanshi.v1.GatewayMessage.response:type_name -> yanshi.v1.ClientResponse
+	13, // 14: yanshi.v1.GatewayMessage.subscription_ended:type_name -> yanshi.v1.SubscriptionEnded
+	24, // 15: yanshi.v1.GatewayMessage.presence:type_name -> yanshi.v1.Presence
+	1,  // 16: yanshi.v1.Hello.capabilities:type_name -> yanshi.v1.CapabilitySpec
+	27, // 17: yanshi.v1.Invoke.deadline:type_name -> google.protobuf.Timestamp
+	28, // 18: yanshi.v1.InvokeResult.content:type_name -> yanshi.v1.ContentBlock
+	1,  // 19: yanshi.v1.CapabilitySet.capabilities:type_name -> yanshi.v1.CapabilitySpec
+	16, // 20: yanshi.v1.ClientRequest.create_session:type_name -> yanshi.v1.CreateSession
+	17, // 21: yanshi.v1.ClientRequest.submit:type_name -> yanshi.v1.SubmitInput
+	18, // 22: yanshi.v1.ClientRequest.interrupt:type_name -> yanshi.v1.InterruptRun
+	19, // 23: yanshi.v1.ClientRequest.decide:type_name -> yanshi.v1.DecideApproval
+	20, // 24: yanshi.v1.ClientRequest.close:type_name -> yanshi.v1.CloseSession
+	28, // 25: yanshi.v1.SubmitInput.input:type_name -> yanshi.v1.ContentBlock
+	22, // 26: yanshi.v1.ClientResponse.error:type_name -> yanshi.v1.ClientError
+	27, // 27: yanshi.v1.ClientError.retry_at:type_name -> google.protobuf.Timestamp
+	25, // 28: yanshi.v1.Presence.viewers:type_name -> yanshi.v1.Viewer
+	29, // [29:29] is the sub-list for method output_type
+	29, // [29:29] is the sub-list for method input_type
+	29, // [29:29] is the sub-list for extension type_name
+	29, // [29:29] is the sub-list for extension extendee
+	0,  // [0:29] is the sub-list for field type_name
 }
 
 func init() { file_yanshi_v1_node_proto_init() }
@@ -929,12 +2205,28 @@ func file_yanshi_v1_node_proto_init() {
 	file_yanshi_v1_node_proto_msgTypes[1].OneofWrappers = []any{
 		(*NodeMessage_Hello)(nil),
 		(*NodeMessage_Result)(nil),
+		(*NodeMessage_Subscribe)(nil),
+		(*NodeMessage_Unsubscribe)(nil),
+		(*NodeMessage_Request)(nil),
+		(*NodeMessage_Activity)(nil),
 	}
 	file_yanshi_v1_node_proto_msgTypes[2].OneofWrappers = []any{
 		(*GatewayMessage_Welcome)(nil),
 		(*GatewayMessage_Invoke)(nil),
 		(*GatewayMessage_Cancel)(nil),
 		(*GatewayMessage_ResultAck)(nil),
+		(*GatewayMessage_Event)(nil),
+		(*GatewayMessage_Delta)(nil),
+		(*GatewayMessage_Response)(nil),
+		(*GatewayMessage_SubscriptionEnded)(nil),
+		(*GatewayMessage_Presence)(nil),
+	}
+	file_yanshi_v1_node_proto_msgTypes[14].OneofWrappers = []any{
+		(*ClientRequest_CreateSession)(nil),
+		(*ClientRequest_Submit)(nil),
+		(*ClientRequest_Interrupt)(nil),
+		(*ClientRequest_Decide)(nil),
+		(*ClientRequest_Close)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -942,7 +2234,7 @@ func file_yanshi_v1_node_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_yanshi_v1_node_proto_rawDesc), len(file_yanshi_v1_node_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   10,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

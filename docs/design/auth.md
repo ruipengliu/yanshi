@@ -10,7 +10,7 @@
 | **服务令牌**（BusinessLine） | 业务线服务端 | 可以访问该 BusinessLine 下所有 EndUser 的资源；创建 Session 时须指明 EndUser |
 | 内部令牌 | yanshi 进程之间 | 只用于内部增量接口（已实现，ADR-0013） |
 
-需要鉴权的入口：HTTP API 的全部 `/v1/*` 接口（包括 SSE 与工件上传下载），以及 Node 的 WebSocket 接入（`/v1/nodes/connect`）。`/healthz` 不需要鉴权。
+需要鉴权的入口：HTTP API 的全部 `/v1/*` 接口（包括 SSE 与工件上传下载），以及 Connection 的 WebSocket 接入（`/v1/connect`，兼容路径 `/v1/nodes/connect`；Node 与会话客户端共用，ADR-0024）。`/healthz` 不需要鉴权。
 
 ## 2. 令牌
 

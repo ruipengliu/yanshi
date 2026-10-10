@@ -1,7 +1,10 @@
 syntax = "proto3";
 
-// Node 协议：HostApp 内的 SDK 经 WebSocket 连接网关，每个二进制帧一条消息。
-// 语义见 docs/design/m1-device-nodes.md。
+// Connection 协议：HostApp 内的 SDK 经 WebSocket 连接网关，每帧一条消息。
+// 一条 Connection 可兼任两种角色（ADR-0024）：
+//   - Node：声明 Capability、执行调用（docs/design/m1-device-nodes.md）；
+//   - 会话客户端：订阅 Session、提交输入与审批（docs/design/m3-duplex-channel.md）。
+// 帧的编码跟随 Hello：二进制帧为 protobuf，文本帧为 protojson（便于网页与调试）。
 package yanshi.v1;
 
 import "google/protobuf/timestamp.proto";
@@ -35,6 +38,10 @@ message NodeMessage {
   oneof msg {
     Hello hello = 1;
     InvokeResult result = 2;
+    Subscribe subscribe = 3;
+    Unsubscribe unsubscribe = 4;
+    ClientRequest request = 5;
+    Activity activity = 6;
   }
 }
 
@@ -45,6 +52,12 @@ message GatewayMessage {
     Invoke invoke = 2;
     Cancel cancel = 3;
     ResultAck result_ack = 4;
+    // 已订阅 Session 的已提交事件，按 seq 递增。
+    Event event = 5;
+    LiveDelta delta = 6;
+    ClientResponse response = 7;
+    SubscriptionEnded subscription_ended = 8;
+    Presence presence = 9;
   }
 }
 
@@ -63,6 +76,8 @@ message Hello {
   string host_app = 7;
   string sdk_version = 8;
   repeated CapabilitySpec capabilities = 9;
+  // 为 true 时只作会话客户端，不登记为 Node（如网页）；此时 capabilities 须为空。
+  bool client_only = 10;
 }
 
 message Welcome {
@@ -100,4 +115,125 @@ message ResultAck {
 // CapabilitySet 用于持久化 Node 的能力声明。
 message CapabilitySet {
   repeated CapabilitySpec capabilities = 1;
+}
+
+// Subscribe 订阅一个 Session：先补发 seq 大于 after_seq 的已提交事件，之后实时推送新事件与增量。
+// 重连后带上最后收到的 seq 重新订阅即可续传。重复订阅同一 Session 以最新的 after_seq 重新开始。
+message Subscribe {
+  string session_id = 1;
+  uint64 after_seq = 2;
+}
+
+message Unsubscribe {
+  string session_id = 1;
+}
+
+// SubscriptionEnded 表示网关结束了一个订阅；之后不再推送该 Session 的消息。
+message SubscriptionEnded {
+  string session_id = 1;
+  // "not_found"（不存在或无权访问）、"deleted"、"limit"（连接上的订阅数已达上限）、"error"（可重新订阅）。
+  string reason = 2;
+}
+
+// LiveDelta 是模型输出的实时增量（易失，不进日志，丢失后由随后提交的事件覆盖）。
+message LiveDelta {
+  string session_id = 1;
+  string run_id = 2;
+  uint32 attempt = 3;
+  // 这次生成接在日志的哪个位置之后：after_seq 相同的增量属于同一条消息，
+  // 收到 seq 大于它的 AssistantMessage 后，客户端以提交的内容为准。
+  uint64 after_seq = 4;
+  string text = 5;
+  // 为 true 时 text 是这条消息到目前为止的全文（订阅时正在生成），替换而非追加。
+  bool snapshot = 6;
+  // 这次生成已结束（提交或失败）；客户端丢弃尚未被提交事件覆盖的文本。
+  bool end = 7;
+}
+
+// ClientRequest 是会话客户端的操作；每个请求恰有一个 ClientResponse。
+// 连接断开时结果未知：提交输入不是幂等的，客户端应从订阅中确认是否已生效后再决定是否重试。
+message ClientRequest {
+  // 由客户端生成，在本连接内唯一；响应原样带回。
+  string request_id = 1;
+  oneof op {
+    CreateSession create_session = 2;
+    SubmitInput submit = 3;
+    InterruptRun interrupt = 4;
+    DecideApproval decide = 5;
+    CloseSession close = 6;
+  }
+}
+
+message CreateSession {
+  string agent = 1;
+  // 为空时按发布配置分流。
+  string agent_version = 2;
+}
+
+// SubmitInput 有活跃 Run 时作为插话，否则开启新 Run。
+message SubmitInput {
+  string session_id = 1;
+  repeated ContentBlock input = 2;
+}
+
+message InterruptRun {
+  string session_id = 1;
+  string run_id = 2;
+}
+
+message DecideApproval {
+  string session_id = 1;
+  string call_id = 2;
+  bool approve = 3;
+}
+
+message CloseSession {
+  string session_id = 1;
+  string reason = 2;
+}
+
+message ClientResponse {
+  string request_id = 1;
+  // 为空表示成功。
+  ClientError error = 2;
+  // CreateSession 的结果。
+  string session_id = 3;
+  // SubmitInput 的结果。
+  string run_id = 4;
+  bool steered = 5;
+}
+
+message ClientError {
+  // 与 HTTP API 的状态码对应："invalid"、"not_found"、"conflict"、"rejected"（内容安全）、
+  // "unavailable"、"quota_exceeded"、"internal"。
+  string code = 1;
+  string message = 2;
+  // quota_exceeded 时为配额重置时间。
+  google.protobuf.Timestamp retry_at = 3;
+}
+
+// Activity 报告本设备在一个已订阅 Session 中的状态，供其他设备显示在场（docs/design/m3-duplex-channel.md §6）。
+// 对未订阅的 Session 无效。
+message Activity {
+  string session_id = 1;
+  // 该 Session 正显示在本设备的前台。
+  bool focused = 2;
+  // 正在输入。网关在 10 秒后视为停止：持续输入时每隔几秒重发，停止或发送后置为 false。
+  bool typing = 3;
+}
+
+// Presence 是一个已订阅 Session 当前的在场设备：订阅后先发一次，之后每次变化时发送全量。
+// 列表包含本设备自己，客户端按 device_id 区分。
+message Presence {
+  string session_id = 1;
+  repeated Viewer viewers = 2;
+}
+
+message Viewer {
+  // 设备连接时的 Hello.node_id；同一设备的多条连接合并为一项。
+  string device_id = 1;
+  string label = 2;
+  string kind = 3;
+  bool focused = 4;
+  bool typing = 5;
 }

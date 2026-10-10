@@ -3,6 +3,7 @@
 package live
 
 import (
+	"strings"
 	"sync"
 
 	v1 "yanshi/gen/yanshi/v1"
@@ -12,7 +13,29 @@ type Delta struct {
 	SessionID string `json:"session_id"`
 	RunID     string `json:"run_id"`
 	Attempt   uint32 `json:"attempt"`
-	Text      string `json:"text"`
+	// AfterSeq 是这次生成接在日志中的位置：同一 (RunID, Attempt, AfterSeq) 的增量属于同一条消息。
+	AfterSeq uint64 `json:"after_seq,omitempty"`
+	Text     string `json:"text,omitempty"`
+	// Snapshot 为 true 时 Text 是这条消息到目前为止的全文，由 Subscribe 补发给晚加入的订阅者。
+	Snapshot bool `json:"snapshot,omitempty"`
+	// End 表示这次生成结束（提交或失败），之后不再有它的增量。
+	End bool `json:"end,omitempty"`
+}
+
+// maxDraft 限制为晚加入者缓存的草稿长度；超出后不再补发全文（订阅者等提交的事件）。
+const maxDraft = 256 << 10
+
+// draft 是某个 Session 正在生成的消息到目前为止的文本。
+type draft struct {
+	run      string
+	attempt  uint32
+	after    uint64
+	text     strings.Builder
+	overflow bool
+}
+
+func (d *draft) same(x Delta) bool {
+	return d.run == x.RunID && d.attempt == x.Attempt && d.after == x.AfterSeq
 }
 
 type Bus interface {
@@ -21,16 +44,37 @@ type Bus interface {
 	Subscribe(sessionID string) (<-chan Delta, func())
 }
 
+// MemBus 是进程内的 Bus。它为每个 Session 缓存正在生成的消息，新订阅者先收到一条 Snapshot，
+// 再接着收到之后的增量；缓存与扇出在同一把锁下，二者之间不会漏也不会重。
 type MemBus struct {
-	mu   sync.Mutex
-	subs map[string]map[chan Delta]struct{}
+	mu     sync.Mutex
+	subs   map[string]map[chan Delta]struct{}
+	drafts map[string]*draft
 }
 
-func NewMemBus() *MemBus { return &MemBus{subs: map[string]map[chan Delta]struct{}{}} }
+func NewMemBus() *MemBus {
+	return &MemBus{subs: map[string]map[chan Delta]struct{}{}, drafts: map[string]*draft{}}
+}
 
 func (b *MemBus) Publish(d Delta) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	switch cur := b.drafts[d.SessionID]; {
+	case d.Snapshot:
+		// 从其他进程转来的补发不进入本进程的缓存。
+	case d.End:
+		delete(b.drafts, d.SessionID)
+	case cur == nil || !cur.same(d):
+		cur = &draft{run: d.RunID, attempt: d.Attempt, after: d.AfterSeq}
+		cur.text.WriteString(d.Text)
+		b.drafts[d.SessionID] = cur
+	case !cur.overflow:
+		if cur.text.Len()+len(d.Text) > maxDraft {
+			cur.overflow = true
+		} else {
+			cur.text.WriteString(d.Text)
+		}
+	}
 	for ch := range b.subs[d.SessionID] {
 		select {
 		case ch <- d:
@@ -46,6 +90,9 @@ func (b *MemBus) Subscribe(sessionID string) (<-chan Delta, func()) {
 		b.subs[sessionID] = map[chan Delta]struct{}{}
 	}
 	b.subs[sessionID][ch] = struct{}{}
+	if d := b.drafts[sessionID]; d != nil && !d.overflow && d.text.Len() > 0 {
+		ch <- Delta{SessionID: sessionID, RunID: d.run, Attempt: d.attempt, AfterSeq: d.after, Text: d.text.String(), Snapshot: true}
+	}
 	b.mu.Unlock()
 	return ch, func() {
 		b.mu.Lock()

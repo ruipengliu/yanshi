@@ -38,11 +38,15 @@ func Withdrawn(ctx context.Context, d lifecycle.Deletions, sessionID string) (bo
 
 // Conn 是一条已认证的 Node 连接。
 type Conn struct {
-	NodeID string
-	Label  string
+	NodeID       string
+	Label        string
+	BusinessLine string
+	EndUser      string
 	// Expires 是接入凭证的到期时间，网关在此刻断开；零值表示不过期。
 	Expires time.Time
-	gen     uint64
+	// ClientOnly 表示只作会话客户端，未登记为 Node。
+	ClientOnly bool
+	gen        uint64
 }
 
 func (h *Hub) log() *slog.Logger {
@@ -52,10 +56,22 @@ func (h *Hub) log() *slog.Logger {
 	return h.Logger
 }
 
-// Connect 认证并注册 Node。
+// Connect 认证并注册 Node。Hello.client_only 时只认证、不登记为 Node（ADR-0024），返回的 Conn
+// 不能用于 Disconnect。
 func (h *Hub) Connect(ctx context.Context, hello *v1.Hello) (*Conn, error) {
 	if hello.GetNodeId() == "" {
 		return nil, errors.New("hello: node_id is required")
+	}
+	if hello.GetClientOnly() {
+		if len(hello.GetCapabilities()) > 0 {
+			return nil, errors.New("hello: a client-only connection cannot declare capabilities")
+		}
+		id, err := h.Auth.Authenticate(ctx, hello)
+		if err != nil {
+			return nil, fmt.Errorf("authenticate: %w", err)
+		}
+		return &Conn{NodeID: hello.GetNodeId(), Label: SanitizeLabel(hello.GetLabel()), BusinessLine: id.BusinessLine,
+			EndUser: id.EndUser, Expires: id.Expires, ClientOnly: true}, nil
 	}
 	id, err := h.Auth.Authenticate(ctx, hello)
 	if err != nil {
@@ -69,7 +85,8 @@ func (h *Hub) Connect(ctx context.Context, hello *v1.Hello) (*Conn, error) {
 		return nil, err
 	}
 	h.log().Info("node connected", "node", hello.GetNodeId(), "label", label, "capabilities", len(hello.GetCapabilities()))
-	return &Conn{NodeID: hello.GetNodeId(), Label: label, Expires: id.Expires, gen: gen}, nil
+	return &Conn{NodeID: hello.GetNodeId(), Label: label, BusinessLine: id.BusinessLine, EndUser: id.EndUser,
+		Expires: id.Expires, gen: gen}, nil
 }
 
 func (h *Hub) Disconnect(ctx context.Context, c *Conn) {

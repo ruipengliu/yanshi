@@ -9,6 +9,7 @@
 - 改动执行语义（Session / Run / Event / Attempt / Worker）之前：`docs/design/m0-core-primitives.md`。
 - 改动 Node、能力路由、审批或挂起之前：`docs/design/m1-device-nodes.md`。
 - 改动云端沙箱之前：`docs/design/m2-sandbox.md`。沙箱内只运行不可信代码，受信逻辑一律放在控制器（ADR-0008）。
+- 改动 Connection 协议（`node.proto`）、会话客户端或事件流（`feed`）之前：`docs/design/m3-duplex-channel.md`。一条 Connection 兼任 Node 与会话客户端（ADR-0024）；会话客户端的请求必须经 `service`，与 HTTP API 走同一条路径。
 - 改动 MCP 适配之前：`docs/design/m5-mcp.md`。云端不运行 stdio 型 MCP Server；未声明只读的工具默认需要审批（ADR-0017）。
 - 改动工件之前：`docs/design/m2-artifacts.md`。Event 中只放 `artifact://` 引用，不放文件内容；工件只对其所属 Session 可见。
 - 新增任何存放 Session 数据的地方之前：`docs/design/m2-session-lifecycle.md`。它必须能被 Janitor 按 Session 删除，写入入口要"先写、后查"删除记录（ADR-0015），并在 `internal/sim` 的删除不变量中检查。
@@ -26,7 +27,7 @@
 - **请求前缀保持稳定。** 提供商的前缀缓存是长 Run 成本的主要杠杆：系统指令只放 AgentDef 的指令，不放每个 Run 都变化的内容（召回放在 Run 的位置上，见 `runtime.Transcript`）；工具按名称排序；Run 内的上下文只在尾部追加。改动 Transcript 或请求组装时，用评测报告的"缓存命中"列确认没有退化。
 - **评测是效果的裁判。** 改动模型、提示词、AgentDef，或召回、压缩、Memory、MCP、审批摘要等给模型看的文本时，运行 `make eval`（需要 `TOKENHUB_API_KEY`）并与 `evals/baselines/` 比较，不得有回归；有意的效果变化用 `-update-baseline` 更新基线并随代码提交。新增给模型看的能力或文本时，同时在 `evals/` 增加覆盖它的用例（`docs/design/m4-eval.md`）。
 - **模拟测试是执行语义的裁判。** 改动 runtime / session / service / workqueue 后运行 `make sim`；失败信息里的种子可复现：`go test ./internal/sim -run <Test> -sim.seed=<N>`。新增故障类型或路径时，同时在 `internal/sim` 中注入并加入覆盖统计。
-- **新存储实现必须通过一致性套件**（`eventlogtest`、`workqueuetest`、`nodetest`、`ledgertest`、`sandboxtest`、`artifacttest`、`lifecycletest`、`memorytest`、`snapshottest`、`usagetest`），并接入 `internal/sim` 的差分测试。数据库变更只通过新增 `internal/pg/migrations/NNNN_*.sql`，不修改已有迁移。
+- **新存储实现必须通过一致性套件**（`eventlogtest`、`workqueuetest`、`nodetest`、`ledgertest`、`sandboxtest`、`artifacttest`、`lifecycletest`、`memorytest`、`snapshottest`、`usagetest`、`presencetest`），并接入 `internal/sim` 的差分测试。数据库变更只通过新增 `internal/pg/migrations/NNNN_*.sql`，不修改已有迁移。
 - **路由调用可以安全重投递，前提是 SDK 以 call_id 去重**（`sdk/nodesdk.Executor`）。修改 Executor 或 Ledger 时，保持"started 状态先落盘、再执行"的顺序。
 
 ## 风格

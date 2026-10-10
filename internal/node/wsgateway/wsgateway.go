@@ -1,4 +1,5 @@
-// Package wsgateway 以 WebSocket 承载 Node 协议，业务逻辑全部委托给 node.Hub。
+// Package wsgateway 以 WebSocket 承载 Connection 协议：Node 角色委托给 node.Hub，
+// 会话客户端角色委托给 channel（ADR-0024）。帧编码跟随 Hello：二进制帧为 protobuf，文本帧为 protojson。
 package wsgateway
 
 import (
@@ -10,16 +11,20 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/channel"
 	"yanshi/internal/metrics"
 	"yanshi/internal/node"
 )
 
 type Gateway struct {
-	Hub    *node.Hub
-	Logger *slog.Logger
+	Hub *node.Hub
+	// Channel 为 nil 时不支持会话客户端消息（只作 Node）。
+	Channel *channel.Handler
+	Logger  *slog.Logger
 	// PingInterval 是心跳间隔；对端无响应时断开，Node 随之标记离线。
 	PingInterval time.Duration
 }
@@ -32,12 +37,20 @@ func (g *Gateway) log() *slog.Logger {
 }
 
 type conn struct {
-	ws  *websocket.Conn
-	wmu sync.Mutex
+	ws *websocket.Conn
+	// text 为 true 时以 protojson 文本帧收发，由第一帧（Hello）的类型决定。
+	text bool
+	wmu  sync.Mutex
 }
 
+var pj = protojson.MarshalOptions{UseProtoNames: true}
+
 func (c *conn) send(ctx context.Context, m *v1.GatewayMessage) error {
-	b, err := proto.Marshal(m)
+	typ, marshal := websocket.MessageBinary, proto.Marshal
+	if c.text {
+		typ, marshal = websocket.MessageText, pj.Marshal
+	}
+	b, err := marshal(m)
 	if err != nil {
 		return err
 	}
@@ -45,15 +58,18 @@ func (c *conn) send(ctx context.Context, m *v1.GatewayMessage) error {
 	defer c.wmu.Unlock()
 	wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	return c.ws.Write(wctx, websocket.MessageBinary, b)
+	return c.ws.Write(wctx, typ, b)
 }
 
 func (c *conn) read(ctx context.Context) (*v1.NodeMessage, error) {
-	_, b, err := c.ws.Read(ctx)
+	typ, b, err := c.ws.Read(ctx)
 	if err != nil {
 		return nil, err
 	}
 	m := &v1.NodeMessage{}
+	if typ == websocket.MessageText {
+		return m, protojson.Unmarshal(b, m)
+	}
 	return m, proto.Unmarshal(b, m)
 }
 
@@ -69,8 +85,17 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	hctx, hcancel := context.WithTimeout(ctx, 10*time.Second)
-	first, err := c.read(hctx)
+	typ, b, err := ws.Read(hctx)
 	hcancel()
+	first := &v1.NodeMessage{}
+	if err == nil {
+		c.text = typ == websocket.MessageText
+		if c.text {
+			err = protojson.Unmarshal(b, first)
+		} else {
+			err = proto.Unmarshal(b, first)
+		}
+	}
 	if err != nil || first.GetHello() == nil {
 		ws.Close(websocket.StatusPolicyViolation, "expected hello")
 		return
@@ -81,14 +106,25 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ws.Close(websocket.StatusPolicyViolation, err.Error())
 		return
 	}
-	// 断开时用独立 context 标记离线，避免请求 context 已取消导致漏标。
-	defer g.Hub.Disconnect(context.WithoutCancel(ctx), nc)
-	metrics.NodesConnected.Inc()
-	defer metrics.NodesConnected.Dec()
+	if !nc.ClientOnly {
+		// 断开时用独立 context 标记离线，避免请求 context 已取消导致漏标。
+		defer g.Hub.Disconnect(context.WithoutCancel(ctx), nc)
+		metrics.NodesConnected.Inc()
+		defer metrics.NodesConnected.Dec()
+	}
 	if err := c.send(ctx, &v1.GatewayMessage{Msg: &v1.GatewayMessage_Welcome{Welcome: &v1.Welcome{
 		NodeId: nc.NodeID, Label: nc.Label,
 	}}}); err != nil {
 		return
+	}
+	var cc *channel.Conn
+	if g.Channel != nil {
+		cc = g.Channel.Open(ctx, channel.Identity{BusinessLine: nc.BusinessLine, EndUser: nc.EndUser,
+			DeviceID: nc.NodeID, Label: nc.Label, Kind: first.GetHello().GetKind()},
+			func(m *v1.GatewayMessage) error { return c.send(ctx, m) })
+		// 先于 ws.CloseNow 执行（defer 后进先出）：等订阅与请求退出后再关闭连接。
+		defer cc.Close()
+		defer cancel()
 	}
 
 	errc := make(chan error, 4)
@@ -105,8 +141,10 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 	}
-	go func() { errc <- g.deliver(ctx, c, nc.NodeID) }()
-	go func() { errc <- g.receive(ctx, c, nc.NodeID) }()
+	if !nc.ClientOnly {
+		go func() { errc <- g.deliver(ctx, c, nc.NodeID) }()
+	}
+	go func() { errc <- g.receive(ctx, c, nc, cc) }()
 	go func() { errc <- g.keepalive(ctx, ws) }()
 	err = <-errc
 	if err != nil && !errors.Is(err, context.Canceled) {
@@ -147,16 +185,20 @@ func (g *Gateway) deliver(ctx context.Context, c *conn, nodeID string) error {
 	}
 }
 
-func (g *Gateway) receive(ctx context.Context, c *conn, nodeID string) error {
+func (g *Gateway) receive(ctx context.Context, c *conn, nc *node.Conn, cc *channel.Conn) error {
 	for {
 		m, err := c.read(ctx)
 		if err != nil {
 			return err
 		}
-		res := m.GetResult()
-		if res == nil {
+		if cc != nil && cc.Handle(m) {
 			continue
 		}
+		res := m.GetResult()
+		if res == nil || nc.ClientOnly {
+			continue
+		}
+		nodeID := nc.NodeID
 		if err := g.Hub.Result(ctx, nodeID, res); err != nil {
 			// 未确认的结果会在重连后因重新投递而再次返回。
 			return err

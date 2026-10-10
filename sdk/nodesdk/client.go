@@ -18,7 +18,7 @@ import (
 const Version = "0.1.0"
 
 type Config struct {
-	// URL 是网关地址，如 ws://127.0.0.1:8080/v1/nodes/connect。
+	// URL 是网关地址，如 ws://127.0.0.1:8080/v1/connect。
 	URL string
 	// NodeID 必须在设备上持久保存，跨重启不变。
 	NodeID string
@@ -32,26 +32,34 @@ type Config struct {
 	Label        string
 	Kind         string
 	HostApp      string
-	Executor     *Executor
-	Logger       *slog.Logger
+	// Executor 为 nil 时连接只作会话客户端，不登记为 Node（Hello.client_only）。
+	Executor *Executor
+	Logger   *slog.Logger
 	// OnConnected 在每次连接成功后调用，参数为网关分配的标签。
 	OnConnected func(label string)
 	// LedgerRetention 是账本记录的保留期，默认 DefaultLedgerRetention（7 天）；SDK 每小时清理一次过期记录。
 	LedgerRetention time.Duration
 }
 
-type Client struct{ cfg Config }
+type Client struct {
+	cfg      Config
+	sessions sessions
+}
 
 func NewClient(cfg Config) *Client {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
-	return &Client{cfg: cfg}
+	c := &Client{cfg: cfg}
+	c.sessions.init()
+	return c
 }
 
 // Run 保持与网关的连接，断开后以指数退避重连，直到 ctx 结束；期间定期按保留期清理账本。
 func (c *Client) Run(ctx context.Context) error {
-	go c.pruneLoop(ctx)
+	if c.cfg.Executor != nil {
+		go c.pruneLoop(ctx)
+	}
 	backoff := 500 * time.Millisecond
 	for {
 		connected, err := c.session(ctx)
@@ -98,11 +106,16 @@ func (c *Client) session(ctx context.Context) (bool, error) {
 		return conn.Write(ctx, websocket.MessageBinary, b)
 	}
 
-	err = send(&v1.NodeMessage{Msg: &v1.NodeMessage_Hello{Hello: &v1.Hello{
+	hello := &v1.Hello{
 		NodeId: c.cfg.NodeID, Token: token, BusinessLine: c.cfg.BusinessLine, EndUser: c.cfg.EndUser,
 		Label: c.cfg.Label, Kind: c.cfg.Kind, HostApp: c.cfg.HostApp, SdkVersion: Version,
-		Capabilities: c.cfg.Executor.Specs(),
-	}}})
+	}
+	if c.cfg.Executor == nil {
+		hello.ClientOnly = true
+	} else {
+		hello.Capabilities = c.cfg.Executor.Specs()
+	}
+	err = send(&v1.NodeMessage{Msg: &v1.NodeMessage_Hello{Hello: hello}})
 	if err != nil {
 		return false, err
 	}
@@ -118,14 +131,25 @@ func (c *Client) session(ctx context.Context) (bool, error) {
 	if c.cfg.OnConnected != nil {
 		c.cfg.OnConnected(w.GetLabel())
 	}
+	// 重新订阅（带上各自最后收到的 seq 续传），并让等待连接的请求发出。
+	if err := c.sessions.attach(send); err != nil {
+		return true, err
+	}
+	defer c.sessions.detach()
 
 	for {
 		m, err := c.read(ctx, conn)
 		if err != nil {
 			return true, err
 		}
+		if c.sessions.handle(m) {
+			continue
+		}
 		switch m := m.GetMsg().(type) {
 		case *v1.GatewayMessage_Invoke:
+			if c.cfg.Executor == nil {
+				continue
+			}
 			go func(inv *v1.Invoke) {
 				res, err := c.cfg.Executor.Execute(ctx, inv)
 				if err != nil || res == nil {
@@ -137,7 +161,9 @@ func (c *Client) session(ctx context.Context) (bool, error) {
 				_ = send(&v1.NodeMessage{Msg: &v1.NodeMessage_Result{Result: res}})
 			}(m.Invoke)
 		case *v1.GatewayMessage_Cancel:
-			c.cfg.Executor.Cancel(m.Cancel.GetCallId())
+			if c.cfg.Executor != nil {
+				c.cfg.Executor.Cancel(m.Cancel.GetCallId())
+			}
 		case *v1.GatewayMessage_ResultAck:
 			// 结果已持久化；Ledger 中的记录保留用于去重。
 		}

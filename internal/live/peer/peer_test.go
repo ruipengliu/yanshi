@@ -183,3 +183,21 @@ func TestEndpointFollowsAttempts(t *testing.T) {
 		t.Fatalf("after suspend = %q", got)
 	}
 }
+
+// TestRemoteLateSubscriberGetsSnapshot：执行进程把正在生成的草稿补发给晚加入的远程订阅者。
+func TestRemoteLateSubscriberGetsSnapshot(t *testing.T) {
+	a := newProcess(t, "secret")
+	a.bus.Publish(live.Delta{SessionID: "s1", RunID: "r1", Attempt: 1, AfterSeq: 3, Text: "so far"})
+	b := &Bus{Local: live.NewMemBus(), Log: memlog.New(), Self: "http://b.internal", Token: "secret", Retry: 20 * time.Millisecond}
+	deltas, follow, cancel := b.SubscribeFollowing("s1")
+	defer cancel()
+	follow(a.srv.URL)
+	select {
+	case d := <-deltas:
+		if !d.Snapshot || d.Text != "so far" || d.AfterSeq != 3 {
+			t.Fatalf("first remote delta = %+v", d)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no snapshot from the executing process")
+	}
+}

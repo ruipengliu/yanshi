@@ -520,9 +520,13 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 	defer func() { observeModel("turn", start, resp, err) }()
 	err = w.during(ctx, r, func(ctx context.Context) error {
 		var err error
+		draft := live.Delta{SessionID: w.st.SessionID, RunID: r.ID, Attempt: w.attempt, AfterSeq: w.st.Seq}
 		resp, err = w.cfg.Model.Generate(ctx, req, func(d model.Delta) {
-			w.cfg.Live.Publish(live.Delta{SessionID: w.st.SessionID, RunID: r.ID, Attempt: w.attempt, Text: d.Text})
+			draft.Text = d.Text
+			w.cfg.Live.Publish(draft)
 		})
+		draft.Text, draft.End = "", true
+		w.cfg.Live.Publish(draft)
 		return err
 	})
 	if err != nil {

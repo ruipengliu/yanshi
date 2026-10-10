@@ -23,6 +23,7 @@ import (
 	"yanshi/internal/artifact/s3blob"
 	"yanshi/internal/auth"
 	"yanshi/internal/capability"
+	"yanshi/internal/channel"
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/eventlog/memlog"
@@ -47,6 +48,8 @@ import (
 	"yanshi/internal/node/pgnode"
 	"yanshi/internal/node/wsgateway"
 	"yanshi/internal/pg"
+	"yanshi/internal/presence"
+	"yanshi/internal/presence/pgpresence"
 	"yanshi/internal/runtime"
 	"yanshi/internal/sandbox"
 	sandboxdocker "yanshi/internal/sandbox/docker"
@@ -83,6 +86,7 @@ type backends struct {
 	deletions    lifecycle.Deletions
 	janitorQueue workqueue.Queue
 	usage        usage.Store
+	presence     presence.Store
 }
 
 // openStorage 按 kind 创建存储。postgres 模式下多个 serve 进程可共享同一数据库水平扩展。
@@ -92,7 +96,7 @@ func openStorage(ctx context.Context, kind, dsn string, clk clock.Clock, logger 
 		return backends{memlog.New(), memqueue.New(clk), node.NewMemDirectory(clk), node.NewMemInbox(),
 			memqueue.New(clk), nodesdk.NewMemLedger(), sandbox.NewMemActivity(), artifact.NewMemMeta(),
 			memory.NewMemStore(), memory.NewMemGrants(), session.NewMemSnapshots(),
-			lifecycle.NewMemIndex(), lifecycle.NewMemDeletions(), memqueue.New(clk), usage.NewMem()}, func() {}, nil
+			lifecycle.NewMemIndex(), lifecycle.NewMemDeletions(), memqueue.New(clk), usage.NewMem(), presence.NewMem()}, func() {}, nil
 	case "postgres":
 		pool, err := pg.Open(ctx, dsn, "")
 		if err != nil {
@@ -113,7 +117,8 @@ func openStorage(ctx context.Context, kind, dsn string, clk clock.Clock, logger 
 			pgqueue.New(pool, clk, pgqueue.Sandboxes).WithNotifier(n), pgsandbox.Ledger{Pool: pool}, pgsandbox.Activity{Pool: pool},
 			pgartifact.Meta{Pool: pool},
 			pgmemory.Store{Pool: pool}, pgmemory.Grants{Pool: pool}, pgsnapshot.Store{Pool: pool},
-			pglifecycle.Index{Pool: pool}, pglifecycle.Deletions{Pool: pool}, pgqueue.New(pool, clk, pgqueue.Janitor), pgusage.Store{Pool: pool}}
+			pglifecycle.Index{Pool: pool}, pglifecycle.Deletions{Pool: pool}, pgqueue.New(pool, clk, pgqueue.Janitor), pgusage.Store{Pool: pool},
+			pgpresence.Store{Pool: pool, Notifier: n}}
 		return b, func() { cancel(); pool.Close() }, nil
 	}
 	return backends{}, nil, fmt.Errorf("unknown storage %q (memory | postgres)", kind)
@@ -342,13 +347,17 @@ func serve(args []string) error {
 		ID: proc + "-janitor", Queue: b.janitorQueue, Service: svc, Store: store, Sessions: queue, SandboxQueue: b.sandboxQueue,
 		Inbox: b.inbox, Nodes: dir, Sandbox: provider, Activity: b.activity, Ledger: b.ledger, Artifacts: arts,
 		Memory: b.memories, Index: b.index, Deletions: b.deletions, Retention: retention, Clock: clk, Logger: logger, LeaseTTL: *leaseTTL,
-		Usage: b.usage, UsageRetention: *usageRetention,
+		Usage: b.usage, UsageRetention: *usageRetention, Presence: b.presence,
 	}
 	wg.Add(1)
 	go func() { defer wg.Done(); jan.Run(ctx) }()
 
 	mux := http.NewServeMux()
-	mux.Handle("/v1/nodes/connect", &wsgateway.Gateway{Hub: hub, Logger: logger})
+	// 同一条连接兼任 Node 与会话客户端（ADR-0024）；/v1/nodes/connect 是早期路径，保留兼容。
+	connGW := &wsgateway.Gateway{Hub: hub, Channel: &channel.Handler{Service: svc, Live: bus,
+		Presence: &presence.Service{Store: b.presence, Deletions: b.deletions, Clock: clk}, Clock: clk, Logger: logger}, Logger: logger}
+	mux.Handle("/v1/connect", connGW)
+	mux.Handle("/v1/nodes/connect", connGW)
 	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.usage, Logger: logger}).Handler())
 	srv := &http.Server{
 		Addr:              *addr,

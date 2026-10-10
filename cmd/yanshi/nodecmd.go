@@ -23,7 +23,7 @@ import (
 // nodeCmd 模拟电脑上的 HostApp：把 root 目录下的文件能力作为 Node 接入。
 func nodeCmd(args []string) error {
 	fs := flag.NewFlagSet("node", flag.ExitOnError)
-	server := fs.String("server", "ws://127.0.0.1:8080/v1/nodes/connect", "网关地址")
+	server := fs.String("server", "ws://127.0.0.1:8080/v1/connect", "网关地址")
 	root := fs.String("root", ".", "允许访问的目录")
 	label := fs.String("label", hostname(), "设备标签")
 	user := fs.String("user", "dev", "终端用户 ID")

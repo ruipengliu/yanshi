@@ -32,6 +32,7 @@ import (
 	"yanshi/internal/model"
 	"yanshi/internal/moderation"
 	"yanshi/internal/node"
+	"yanshi/internal/presence"
 	"yanshi/internal/runtime"
 	"yanshi/internal/sandbox"
 	"yanshi/internal/service"
@@ -63,6 +64,8 @@ type Stores struct {
 	Snapshots session.Snapshots
 	// 用量（docs/design/m4-quota-usage.md）
 	Usage usage.Store
+	// 在场（docs/design/m3-duplex-channel.md §6）
+	Presence presence.Store
 }
 
 type Options struct {
@@ -107,6 +110,8 @@ type Stats struct {
 	InputBlocks, OutputBlocks, ModerationErrors int
 	// Memory 写入闸门要求的审批（ADR-0023）。
 	MemoryApprovals int
+	// 在场：写入次数，以及写入时 Session 已被删除、因"先写、后查"而撤回的次数。
+	PresenceWrites, PresenceWithdrawn int
 }
 
 // hookQueue 在 Enqueue 成功后调用 after。
@@ -167,6 +172,7 @@ type World struct {
 	deletions    lifecycle.Deletions
 	janitorQueue workqueue.Queue
 	memories     *memory.Service
+	presence     *presence.Service
 	usage        usage.Store
 	quotas       *usage.Quotas
 	meter        *usage.Meter
@@ -212,7 +218,7 @@ func New(opts Options) (*World, error) {
 		SandboxQueue: memqueue.New(w.clock), Ledger: nodesdk.NewMemLedger(), Activity: sandbox.NewMemActivity(),
 		Index: lifecycle.NewMemIndex(), Deletions: lifecycle.NewMemDeletions(), JanitorQueue: memqueue.New(w.clock),
 		Memory: memory.NewMemStore(), Grants: memory.NewMemGrants(), Snapshots: session.NewMemSnapshots(),
-		Usage: usage.NewMem(),
+		Usage: usage.NewMem(), Presence: presence.NewMem(),
 	}
 	if opts.NewStores != nil {
 		stores = opts.NewStores(w.clock)
@@ -250,6 +256,7 @@ func New(opts Options) (*World, error) {
 		Sandbox: &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID},
 	}
 	w.index, w.deletions, w.janitorQueue = stores.Index, stores.Deletions, stores.JanitorQueue
+	w.presence = &presence.Service{Store: stores.Presence, Deletions: stores.Deletions, Clock: w.clock}
 	w.usage = &checkedUsage{Store: stores.Usage, w: w}
 	w.quotas = &usage.Quotas{Store: stores.Usage, Limits: simLimits(opts.LongRuns)}
 	w.meter = &usage.Meter{Store: w.usage, Prices: simPrices, Deletions: w.deletions}
@@ -516,8 +523,10 @@ func (w *World) tick() error {
 		return w.controllers[0].Reap(context.Background())
 	case x < 0.76:
 		return w.decide(false)
-	case x < 0.83:
+	case x < 0.82:
 		return w.submit()
+	case x < 0.83:
+		return w.presenceStep()
 	case x < 0.84:
 		if w.opts.LongRuns && !w.chance(0.1) {
 			return nil // 长 Run 模式下少关、少删，否则 Run 很难跑满
@@ -837,8 +846,54 @@ func (w *World) Fingerprint() string {
 			b, _ := proto.MarshalOptions{Deterministic: true}.Marshal(e)
 			h.Write(b)
 		}
+		entries, _, _ := w.presence.Store.List(context.Background(), sid, w.clock.Now())
+		for _, e := range entries {
+			fmt.Fprintf(h, "%s|%s|%s|%v|%d|%d;", e.ConnID, e.DeviceID, e.Label, e.Focused, e.TypingUntil.Unix(), e.Expires.Unix())
+		}
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// presenceStep 模拟会话客户端的在场写入：加入或更新、离开、续期。有时写向已删除的 Session——
+// 对应"授权检查通过之后、写入之前 Session 被删除"的竞争，写入必须被撤回（ADR-0015）。
+func (w *World) presenceStep() error {
+	ctx := context.Background()
+	sid := w.sessions[w.rng.IntN(len(w.sessions))]
+	if len(w.deleted) > 0 && w.chance(0.2) {
+		sid = w.deleted[w.rng.IntN(len(w.deleted))]
+	}
+	conn := fmt.Sprintf("conn%d", w.rng.IntN(3))
+	now := w.clock.Now()
+	switch x := w.rng.Float64(); {
+	case x < 0.6:
+		e := &presence.Entry{SessionID: sid, ConnID: conn, DeviceID: "dev-" + conn, Label: "phone", Kind: "mobile",
+			Focused: w.chance(0.5), Expires: now.Add(presence.TTL)}
+		if w.chance(0.3) {
+			e.TypingUntil = now.Add(presence.TypingFor)
+		}
+		gone, err := lifecycle.Deleted(ctx, w.deletions, sid)
+		if err != nil {
+			return err
+		}
+		if err := w.presence.Put(ctx, e); err != nil {
+			return fmt.Errorf("presence put: %w", err)
+		}
+		w.Stats.PresenceWrites++
+		if gone {
+			if entries, _, err := w.presence.Store.List(ctx, sid, time.Time{}); err != nil || len(entries) > 0 {
+				return fmt.Errorf("invariant: presence written to deleted session %s was not withdrawn (err %v)", sid, err)
+			}
+			w.Stats.PresenceWithdrawn++
+		}
+		w.tracef("presence put %s %s", sid, conn)
+	case x < 0.8:
+		w.tracef("presence remove %s %s", sid, conn)
+		return w.presence.Store.Remove(ctx, sid, conn)
+	default:
+		w.tracef("presence touch %s", conn)
+		return w.presence.Store.Touch(ctx, conn, now.Add(presence.TTL))
+	}
+	return nil
 }
 
 func (w *World) echoCap() capability.Capability {

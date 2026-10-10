@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"yanshi/internal/eventlog"
 	"yanshi/internal/janitor"
@@ -25,7 +26,7 @@ func (w *World) newJanitor() *janitor.Janitor {
 		ID: fmt.Sprintf("j%d", w.nextJ), Queue: w.janitorQueue, Service: w.svc, Store: w.store, Sessions: w.queue,
 		SandboxQueue: w.sandboxQueue, Inbox: w.hub.Inbox, Nodes: w.hub.Dir, Sandbox: w.provider, Activity: w.activity,
 		Ledger: w.ledger, Artifacts: w.artifacts, Memory: w.memories.Store, Index: w.index, Deletions: w.deletions,
-		Clock: w.clock, LeaseTTL: leaseTTL,
+		Presence: w.presence.Store, Clock: w.clock, LeaseTTL: leaseTTL,
 		BeforeStage: func(context.Context, string) {
 			if w.faults && w.crash != nil && w.chance(0.1) {
 				w.crash()
@@ -150,6 +151,10 @@ func (w *World) checkDeleted(final bool) error {
 		}
 		if s, ok := w.memories.Store.(*memory.MemStore); ok && s.HasSession(sid) {
 			return fmt.Errorf("invariant: deleted session %s still has memories", sid)
+		}
+		// 零时刻作为"现在"：连已过期、尚未清理的记录也算在内。
+		if entries, _, _ := w.presence.Store.List(ctx, sid, time.Time{}); len(entries) > 0 {
+			return fmt.Errorf("invariant: deleted session %s still has %d presence entries", sid, len(entries))
 		}
 		if l, ok := w.ledger.(*nodesdk.MemLedger); ok && l.HasSession(sid) {
 			return fmt.Errorf("invariant: deleted session %s still in the sandbox ledger", sid)

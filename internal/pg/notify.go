@@ -18,6 +18,8 @@ const (
 	ChannelInbox  = "yanshi_inbox"
 	// ChannelWork 的负载是队列表名：有新工作入队（workqueue.Signaler）。
 	ChannelWork = "yanshi_work"
+	// ChannelPresence 的负载是 Session ID：其在场内容有变化。
+	ChannelPresence = "yanshi_presence"
 )
 
 // Notifier 用一条专用连接 LISTEN 全部频道，并按 (频道, 键) 把通知分发给订阅者。
@@ -70,7 +72,7 @@ func (n *Notifier) listen(ctx context.Context) error {
 		return err
 	}
 	defer conn.Release()
-	for _, ch := range []string{ChannelEvents, ChannelInbox, ChannelWork} {
+	for _, ch := range []string{ChannelEvents, ChannelInbox, ChannelWork, ChannelPresence} {
 		if _, err := conn.Exec(ctx, "LISTEN "+ch); err != nil {
 			return err
 		}
@@ -189,9 +191,15 @@ func (n *Notifier) value(channel, key string) (uint64, bool) {
 
 // WaitFor 在 check 返回 true 前阻塞：先订阅再检查，避免检查与订阅之间的通知丢失。
 func (n *Notifier) WaitFor(ctx context.Context, channel, key string, check func(context.Context) (bool, error)) error {
+	return n.WaitForEvery(ctx, channel, key, PollInterval, check)
+}
+
+// WaitForEvery 与 WaitFor 相同，但兜底轮询的间隔为 every：等待者很多、对延迟不敏感时用更长的间隔，
+// 以免空闲时的轮询压在数据库上。
+func (n *Notifier) WaitForEvery(ctx context.Context, channel, key string, every time.Duration, check func(context.Context) (bool, error)) error {
 	ch, unsubscribe := n.Subscribe(channel, key)
 	defer unsubscribe()
-	t := time.NewTicker(PollInterval)
+	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
 		done, err := check(ctx)

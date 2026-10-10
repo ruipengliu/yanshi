@@ -27,6 +27,7 @@ import (
 	"yanshi/internal/artifact/pgartifact"
 	"yanshi/internal/auth"
 	"yanshi/internal/capability"
+	"yanshi/internal/channel"
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/eventlog/memlog"
@@ -45,6 +46,8 @@ import (
 	"yanshi/internal/node/pgnode"
 	"yanshi/internal/node/wsgateway"
 	"yanshi/internal/pg/pgtest"
+	"yanshi/internal/presence"
+	"yanshi/internal/presence/pgpresence"
 	"yanshi/internal/runtime"
 	"yanshi/internal/sandbox"
 	sandboxdocker "yanshi/internal/sandbox/docker"
@@ -154,7 +157,8 @@ type stores struct {
 	memories     memory.Store
 	grants       memory.Grants
 	// mcp 为 nil 时没有远程 MCP 工具。
-	mcp capability.MCPSource
+	mcp      capability.MCPSource
+	presence presence.Store
 }
 
 func memStores() stores {
@@ -164,7 +168,7 @@ func memStores() stores {
 		sandboxQueue: memqueue.New(clk), ledger: nodesdk.NewMemLedger(), activity: sandbox.NewMemActivity(),
 		artifacts: &artifact.Service{Meta: artifact.NewMemMeta(), Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk},
 		index:     lifecycle.NewMemIndex(), deletions: lifecycle.NewMemDeletions(), janitorQueue: memqueue.New(clk),
-		memories: memory.NewMemStore(), grants: memory.NewMemGrants(),
+		memories: memory.NewMemStore(), grants: memory.NewMemGrants(), presence: presence.NewMem(),
 	}
 }
 
@@ -219,7 +223,10 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 		return nil
 	}
 	mux := http.NewServeMux()
-	mux.Handle("/v1/nodes/connect", &wsgateway.Gateway{Hub: hub})
+	gwy := &wsgateway.Gateway{Hub: hub, Channel: &channel.Handler{Service: svc, Live: bus,
+		Presence: &presence.Service{Store: st.presence, Deletions: st.deletions, Clock: clk}}}
+	mux.Handle("/v1/connect", gwy)
+	mux.Handle("/v1/nodes/connect", gwy)
 	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: st.dir, Artifacts: st.artifacts, Memory: mems}).Handler())
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -466,6 +473,7 @@ func TestCrossInstanceOnPostgres(t *testing.T) {
 			artifacts: &artifact.Service{Meta: pgartifact.Meta{Pool: pool}, Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk},
 			index:     pglifecycle.Index{Pool: pool}, deletions: pglifecycle.Deletions{Pool: pool}, janitorQueue: pgqueue.New(pool, clk, pgqueue.Janitor),
 			memories: pgmemory.Store{Pool: pool}, grants: pgmemory.Grants{Pool: pool},
+			presence: pgpresence.Store{Pool: pool, Notifier: notifier},
 		}
 	}
 	e := &env{t: t, srv: instance(t, shared(), 0, true)}

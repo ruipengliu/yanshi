@@ -34,6 +34,14 @@ _Avoid_: 容器、VM、执行器
 Sandbox 中跨 Run 保留的文件系统（`/workspace`）；Sandbox 空闲回收时计算资源释放而工作区保留。
 _Avoid_: 磁盘、卷、目录
 
+**Connection（连接）**:
+HostApp 实例与网关之间的一条长连接（WebSocket）。它可以作为 Node 声明 Capability，也可以作为会话客户端订阅 Session、提交输入与审批，或两者兼任（ADR-0024）。
+_Avoid_: 通道、长链接、Socket
+
+**Presence（在场）**:
+哪些 Device 此刻订阅着某个 Session，以及它是否显示在前台、用户是否正在输入。易失、带有效期，不进 Event 日志。
+_Avoid_: 在线状态（指 Node 是否连接时）、已读
+
 **Inbox（收件箱）**:
 某个 Node 待投递的 Capability 调用集合；Node 上线后由网关投递，结果回写日志后移出。
 _Avoid_: 队列、任务列表

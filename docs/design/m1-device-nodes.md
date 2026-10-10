@@ -65,7 +65,7 @@ AssistantMessage.tool_calls      模型请求
 | `node/wsgateway` | WebSocket 传输，包装 Hub | coder/websocket |
 | `sdk/nodesdk` | 设备 SDK：连接、重连、能力注册、`call_id` 去重执行 | Go（gomobile 可编译到移动端） |
 
-Node 协议：WebSocket 二进制帧，每帧一个 protobuf 消息（`NodeMessage` / `GatewayMessage`）。
+Node 协议：WebSocket 二进制帧，每帧一个 protobuf 消息（`NodeMessage` / `GatewayMessage`）。同一条连接也可以作为会话客户端，见[多端双工通道](./m3-duplex-channel.md)（ADR-0024）。
 
 ## 7. 安全（M1 的限度）
 

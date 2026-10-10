@@ -46,12 +46,11 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/proto"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/artifact"
 	"yanshi/internal/auth"
-	"yanshi/internal/eventlog"
+	"yanshi/internal/feed"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/live"
 	"yanshi/internal/memory"
@@ -600,7 +599,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]json.RawMessage, 0, len(events))
 	for _, e := range events {
-		b, err := pj.Marshal(public(e))
+		b, err := pj.Marshal(feed.Public(e))
 		if err != nil {
 			s.fail(w, err)
 			return
@@ -611,7 +610,6 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
 	st, ok := s.session(w, r)
 	if !ok {
 		return
@@ -630,119 +628,56 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, errors.New("streaming unsupported"))
 		return
 	}
-	ctx := r.Context()
-	// 先订阅增量再读日志，避免两者之间的增量丢失。增量总线支持跟随时，由本流告知当前执行进程
-	// （投影中活跃 Run 的当前 Attempt，之后按读到的事件推进），总线不必再读一遍日志。
-	var deltas <-chan live.Delta
-	follow := func([]*v1.Event) {}
-	if f, ok := s.Live.(live.Follower); ok {
-		ch, setEndpoint, cancel := f.SubscribeFollowing(id)
-		defer cancel()
-		endpoint := ""
-		if a := st.Active(); a != nil && a.Status == session.RunRunning {
-			endpoint = a.LiveEndpoint
-		}
-		setEndpoint(endpoint)
-		// 已读到 st.Seq 的投影；之后只按新读到的事件推进。
-		seen := st.Seq
-		deltas, follow = ch, func(events []*v1.Event) {
-			var fresh []*v1.Event
-			for _, e := range events {
-				if e.GetSeq() > seen {
-					fresh = append(fresh, e)
-					seen = e.GetSeq()
-				}
-			}
-			if len(fresh) > 0 {
-				endpoint = live.Endpoint(endpoint, fresh)
-				setEndpoint(endpoint)
-			}
-		}
-	} else {
-		ch, unsubscribe := s.Live.Subscribe(id)
-		defer unsubscribe()
-		deltas = ch
-	}
-
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 
-	heads := make(chan struct{}, 1)
-	go waitHeads(ctx, s.Service.Store.Log, id, after, heads)
-	ping := time.NewTicker(15 * time.Second)
-	defer ping.Stop()
+	ctx := r.Context()
 	// 令牌到期时断开，客户端带新令牌与 Last-Event-ID 重连（docs/design/auth.md §4）。
-	var expired <-chan time.Time
 	if exp := principal(r).Expires; !exp.IsZero() {
-		t := time.NewTimer(time.Until(exp))
-		defer t.Stop()
-		expired = t.C
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, exp)
+		defer cancel()
 	}
-
-	for {
-		events, err := eventlog.ReadAll(ctx, s.Service.Store.Log, id, after)
-		if err != nil {
-			return
-		}
-		for _, e := range events {
-			b, err := pj.Marshal(public(e))
-			if err != nil {
-				return
-			}
-			fmt.Fprintf(w, "id: %d\nevent: event\ndata: %s\n\n", e.GetSeq(), b)
-			after = e.GetSeq()
-		}
-		follow(events)
-		flusher.Flush()
-
-		select {
-		case <-ctx.Done():
-			return
-		case <-expired:
-			fmt.Fprint(w, "event: token_expired\ndata: {}\n\n")
-			return
-		case <-ping.C:
-			// 删除后日志不再增长：借心跳复查删除记录，及时结束流（ADR-0015）。
-			if s.Service.Deletions != nil {
-				if gone, _ := lifecycle.Deleted(ctx, s.Service.Deletions, id); gone {
-					fmt.Fprint(w, "event: session_deleted\ndata: {}\n\n")
-					return
-				}
-			}
-			fmt.Fprint(w, ": ping\n\n")
-		case <-heads:
-		case d := <-deltas:
-			b, _ := json.Marshal(d)
-			fmt.Fprintf(w, "event: delta\ndata: %s\n\n", b)
-		}
+	src := feed.Source{Log: s.Service.Store.Log, Live: s.Live, Deletions: s.Service.Deletions}
+	err = src.Stream(ctx, st, after, sseSink{w: w, f: flusher})
+	switch {
+	case errors.Is(err, feed.ErrDeleted):
+		fmt.Fprint(w, "event: session_deleted\ndata: {}\n\n")
+	case errors.Is(err, context.DeadlineExceeded) && r.Context().Err() == nil:
+		fmt.Fprint(w, "event: token_expired\ndata: {}\n\n")
 	}
 }
 
-// public 返回可以发给客户端的事件：清除进程内部地址（ADR-0013）。事件不可修改，因此按需复制。
-func public(e *v1.Event) *v1.Event {
-	a := e.GetAttemptStarted()
-	if a.GetLiveEndpoint() == "" {
-		return e
-	}
-	cp := proto.Clone(e).(*v1.Event)
-	cp.GetAttemptStarted().LiveEndpoint = ""
-	return cp
+// sseSink 把事件流写成 SSE：已提交事件带 id（seq），供 Last-Event-ID 续传。
+type sseSink struct {
+	w io.Writer
+	f http.Flusher
 }
 
-// waitHeads 每当日志前进时向 heads 发一个合并后的通知。
-func waitHeads(ctx context.Context, log eventlog.Log, id string, after uint64, heads chan<- struct{}) {
-	for {
-		head, err := log.Wait(ctx, id, after)
-		if err != nil {
-			return
-		}
-		after = head
-		select {
-		case heads <- struct{}{}:
-		default:
-		}
+func (k sseSink) Event(e *v1.Event) error {
+	b, err := pj.Marshal(e)
+	if err != nil {
+		return err
 	}
+	_, err = fmt.Fprintf(k.w, "id: %d\nevent: event\ndata: %s\n\n", e.GetSeq(), b)
+	return err
+}
+
+func (k sseSink) Delta(d live.Delta) error {
+	b, _ := json.Marshal(d)
+	_, err := fmt.Fprintf(k.w, "event: delta\ndata: %s\n\n", b)
+	return err
+}
+
+func (k sseSink) Ping() error {
+	_, err := fmt.Fprint(k.w, ": ping\n\n")
+	return err
+}
+
+func (k sseSink) Flush() error {
+	k.f.Flush()
+	return nil
 }
 
 // actor 描述调用方，记入关闭、审批等事件。

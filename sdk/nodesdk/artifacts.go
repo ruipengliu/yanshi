@@ -42,7 +42,7 @@ func (a *Artifacts) do(req *http.Request) (*http.Response, error) {
 	return a.client().Do(req)
 }
 
-// APIBaseFromGateway 由网关地址（ws://host/v1/nodes/connect）推导 API 地址。
+// APIBaseFromGateway 由网关地址（ws://host/v1/connect）推导 API 地址。
 func APIBaseFromGateway(gateway string) (string, error) {
 	u, err := url.Parse(gateway)
 	if err != nil {

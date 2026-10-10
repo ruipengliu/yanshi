@@ -19,6 +19,7 @@ import (
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/memory"
 	"yanshi/internal/node"
+	"yanshi/internal/presence"
 	"yanshi/internal/sandbox"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
@@ -52,8 +53,10 @@ type Janitor struct {
 	// Usage 非 nil 时清理早于 UsageRetention 的用量（docs/design/m4-quota-usage.md §4）。
 	Usage          usage.Store
 	UsageRetention time.Duration
-	Clock          clock.Clock
-	Logger         *slog.Logger
+	// Presence 非 nil 时随 Session 删除在场记录，并清理过期的记录（docs/design/m3-duplex-channel.md §6）。
+	Presence presence.Store
+	Clock    clock.Clock
+	Logger   *slog.Logger
 
 	LeaseTTL time.Duration
 	IdleWait time.Duration
@@ -287,6 +290,11 @@ func (j *Janitor) sweep(ctx context.Context, sid string) error {
 			return err
 		}
 	}
+	if j.Presence != nil {
+		if err := j.Presence.DeleteSession(ctx, sid); err != nil {
+			return err
+		}
+	}
 	return j.Artifacts.DeleteSession(ctx, sid)
 }
 
@@ -338,6 +346,11 @@ func (j *Janitor) Sweep(ctx context.Context) error {
 	}
 	for _, id := range pending {
 		if err := j.Queue.Enqueue(ctx, id); err != nil {
+			return err
+		}
+	}
+	if j.Presence != nil {
+		if err := j.Presence.Prune(ctx, now); err != nil {
 			return err
 		}
 	}
