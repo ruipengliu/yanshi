@@ -52,6 +52,12 @@ MCP（[设计](docs/design/m5-mcp.md)）：远程 MCP Server 登记在 `mcp/*.ya
 
 接入网关的 SDK（[设计](docs/design/m3-client-sdks.md)）：`sdk/nodesdk`（Go，电脑与服务端）、`sdk/web`（TypeScript，`@yanshi/client`，网页只作会话客户端）、`sdk/mobile`（gomobile 绑定，`make mobile` 生成 `build/mobile/Yanshi.xcframework` 并在 macOS 与 iOS 模拟器上实测）。
 
+## 语音通话
+
+设置 `VOLC_SPEECH_API_KEY`（豆包语音控制台的 API Key）后，`serve` 支持 Call（[设计](docs/design/m3-call.md)）：实时语音模型应答，需要做事时派生后台 Run。
+
+浏览器打开 `http://localhost:8080/call`，填写业务线与用户（`-auth none`）或令牌（`-auth jwt`），连接后点"开始通话"。浏览器只在 localhost 或 HTTPS 下允许使用麦克风，建议戴耳机。
+
 ## HTTP API
 
 见 `internal/httpapi/httpapi.go` 包注释。最小示例：

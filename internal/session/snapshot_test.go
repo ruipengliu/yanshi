@@ -61,6 +61,12 @@ func richLog() []*v1.Event {
 			e.Payload = &v1.Event_AgentSwitched{AgentSwitched: p}
 		case *v1.ContentModerated:
 			e.Payload = &v1.Event_ContentModerated{ContentModerated: p}
+		case *v1.CallStarted:
+			e.Payload = &v1.Event_CallStarted{CallStarted: p}
+		case *v1.CallTranscript:
+			e.Payload = &v1.Event_CallTranscript{CallTranscript: p}
+		case *v1.CallEnded:
+			e.Payload = &v1.Event_CallEnded{CallEnded: p}
 		}
 		return e
 	}
@@ -88,11 +94,15 @@ func richLog() []*v1.Event {
 		ev(&v1.AssistantMessage{RunId: "r1", Attempt: 4, Content: text}),
 		ev(&v1.RunCompleted{RunId: "r1", Attempt: 4}),
 		ev(&v1.AgentSwitched{From: &v1.AgentRef{Name: "a", Version: "1"}, To: &v1.AgentRef{Name: "a", Version: "2"}, Reason: "withdrawn"}),
-		ev(&v1.RunRequested{RunId: "r2", Input: text}),
+		ev(&v1.CallStarted{CallId: "vc1", DeviceId: "phone", Model: "volc/x", Voice: "v"}),
+		ev(&v1.CallTranscript{CallId: "vc1", Role: "user", Text: "看看 PPT"}),
+		ev(&v1.RunRequested{RunId: "r2", Input: text, FromCall: "vc1"}),
+		ev(&v1.CallTranscript{CallId: "vc1", Role: "assistant", Text: "好的", Interrupted: true}),
 		ev(&v1.AttemptStarted{RunId: "r2", Attempt: 1}),
 		ev(&v1.RunSuspended{RunId: "r2", Attempt: 1, Reason: "end_user_quota", Until: timestamppb.New(t0.Add(24 * time.Hour))}),
 		ev(&v1.Steered{RunId: "r2", Input: text}),
 		ev(&v1.RunInterrupted{RunId: "r2", By: "user"}),
+		ev(&v1.CallEnded{CallId: "vc1", Reason: "hangup"}),
 		ev(&v1.SessionClosed{By: "user"}),
 	}
 }
@@ -162,13 +172,14 @@ func TestSnapshotIgnoredAfterLogDeleted(t *testing.T) {
 // 否则从快照恢复会悄悄丢失它——而 Equal 按快照比较，看不出差别。
 func TestSnapshotCoversEveryField(t *testing.T) {
 	covered := map[string][]string{
-		"State":    {"SessionID", "Seq", "Created", "Agent", "Closed", "Compaction", "CompactedAt", "Runs", "History", "callIDs", "Inputs"},
-		"Run":      {"ID", "Status", "RequestedAt", "Attempt", "LiveEndpoint", "Takeovers", "StalledTakeovers", "Turns", "Recall", "Recalled", "Calls", "SuspendReason", "SuspendedUntil"},
-		"Call":     {"Call", "StartedAttempts", "NodeID", "Deadline", "Done", "Approval"},
-		"Approval": {"Summary", "Deadline", "Decided", "Approved"},
-		"InputRef": {"ID", "RunID", "Steered", "Answered"},
+		"State":      {"SessionID", "Seq", "Created", "Agent", "Closed", "Compaction", "CompactedAt", "Runs", "History", "callIDs", "Inputs", "ActiveCall"},
+		"Run":        {"ID", "Status", "RequestedAt", "Attempt", "LiveEndpoint", "Takeovers", "StalledTakeovers", "Turns", "Recall", "Recalled", "Calls", "SuspendReason", "SuspendedUntil"},
+		"Call":       {"Call", "StartedAttempts", "NodeID", "Deadline", "Done", "Approval"},
+		"Approval":   {"Summary", "Deadline", "Decided", "Approved"},
+		"InputRef":   {"ID", "RunID", "Steered", "Answered"},
+		"ActiveCall": {"ID", "DeviceID", "StartedAt"},
 	}
-	for _, v := range []any{session.State{}, session.Run{}, session.Call{}, session.Approval{}, session.InputRef{}} {
+	for _, v := range []any{session.State{}, session.Run{}, session.Call{}, session.Approval{}, session.InputRef{}, session.ActiveCall{}} {
 		typ := reflect.TypeOf(v)
 		want := covered[typ.Name()]
 		var got []string

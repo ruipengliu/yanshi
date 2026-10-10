@@ -146,6 +146,19 @@ func (s *Service) Submit(ctx context.Context, sessionID string, input []*v1.Cont
 // SubmitWithID 与 Submit 相同，但带客户端生成的输入 ID：结果未知（连接断开）时以同一 ID 重新提交是安全的，
 // 已生效的输入返回首次的结果（Duplicate），不会重复写入。去重窗口是最近 session.MaxRecentInputs 条输入。
 func (s *Service) SubmitWithID(ctx context.Context, sessionID, inputID string, input []*v1.ContentBlock) (*SubmitResult, error) {
+	return s.submit(ctx, sessionID, inputID, "", input)
+}
+
+// SubmitFromCall 提交 Call 中语音模型派生的任务（run_task，docs/design/m3-call.md §5）：语义同 SubmitWithID，
+// 输入带上 from_call，Run 据此把结果写成适合朗读的形式。Call 已不在进行中时返回 ErrConflict。
+func (s *Service) SubmitFromCall(ctx context.Context, sessionID, callID, inputID string, input []*v1.ContentBlock) (*SubmitResult, error) {
+	if callID == "" {
+		return nil, fmt.Errorf("%w: call id is required", ErrInvalid)
+	}
+	return s.submit(ctx, sessionID, inputID, callID, input)
+}
+
+func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall string, input []*v1.ContentBlock) (*SubmitResult, error) {
 	if len(input) == 0 {
 		return nil, fmt.Errorf("%w: empty input", ErrInvalid)
 	}
@@ -194,6 +207,9 @@ func (s *Service) SubmitWithID(ctx context.Context, sessionID, inputID string, i
 		if st.Closed != nil {
 			return nil, fmt.Errorf("%w: session %s is closed", ErrConflict, sessionID)
 		}
+		if fromCall != "" && (st.ActiveCall == nil || st.ActiveCall.ID != fromCall) {
+			return nil, fmt.Errorf("%w: call %s is not active", ErrConflict, fromCall)
+		}
 		var events []*v1.Event
 		res := &SubmitResult{}
 		if a := st.Active(); a != nil {
@@ -207,7 +223,7 @@ func (s *Service) SubmitWithID(ctx context.Context, sessionID, inputID string, i
 				res.Answered = c.Call.GetCallId()
 				events = append(events, ev)
 			} else {
-				events = append(events, &v1.Event{Payload: &v1.Event_Steered{Steered: &v1.Steered{RunId: a.ID, Input: input, InputId: inputID}}})
+				events = append(events, &v1.Event{Payload: &v1.Event_Steered{Steered: &v1.Steered{RunId: a.ID, Input: input, InputId: inputID, FromCall: fromCall}}})
 			}
 		} else {
 			// 当前版本已撤回：新 Run 从稳定版本开始，切换与 RunRequested 同批提交（ADR-0020）。
@@ -216,7 +232,7 @@ func (s *Service) SubmitWithID(ctx context.Context, sessionID, inputID string, i
 					From: st.Agent, To: to.Ref(), Reason: "withdrawn"}}})
 			}
 			res.RunID = "run_" + s.Store.IDs()
-			events = append(events, &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: res.RunID, Input: input, InputId: inputID}}})
+			events = append(events, &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: res.RunID, Input: input, InputId: inputID, FromCall: fromCall}}})
 		}
 		err := s.Store.Commit(ctx, st, events...)
 		if err == nil {
@@ -440,6 +456,10 @@ func (s *Service) Close(ctx context.Context, sessionID, by, reason string) error
 		a := st.Active()
 		if a != nil {
 			events = append(events, &v1.Event{Payload: &v1.Event_RunInterrupted{RunInterrupted: &v1.RunInterrupted{RunId: a.ID, By: by}}})
+		}
+		// 进行中的 Call 随之结束；中转它的进程下一次写入时发现并挂断。
+		if c := st.ActiveCall; c != nil {
+			events = append(events, callEnded(c.ID, CallEndSessionClosed))
 		}
 		events = append(events, &v1.Event{Payload: &v1.Event_SessionClosed{SessionClosed: &v1.SessionClosed{By: by, Reason: reason}}})
 		err := s.Store.Commit(ctx, st, events...)

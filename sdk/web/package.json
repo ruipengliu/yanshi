@@ -20,7 +20,9 @@
     "build": "tsc -p .",
     "lint": "prettier --check .",
     "format": "prettier --write .",
-    "test": "tsc -p . && node --test dist/test/*.test.js"
+    "test": "tsc -p . && node --test dist/test/*.test.js",
+    "bundle": "esbuild src/index.ts --bundle --format=esm --minify --target=es2022 --legal-comments=none --outfile=../../internal/webui/static/yanshi.js",
+    "bundle:check": "esbuild src/index.ts --bundle --format=esm --minify --target=es2022 --legal-comments=none --outfile=dist/yanshi.js --log-level=warning && cmp -s dist/yanshi.js ../../internal/webui/static/yanshi.js || (echo 'internal/webui/static/yanshi.js is stale: run pnpm bundle in sdk/web' && exit 1)"
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.16.0"
@@ -28,6 +30,7 @@
   "devDependencies": {
     "@bufbuild/protoc-gen-es": "2.16.0",
     "@types/node": "^26.0.0",
+    "esbuild": "0.28.2",
     "prettier": "3.9.10",
     "typescript": "^7.0.0"
   }

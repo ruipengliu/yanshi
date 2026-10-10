@@ -82,6 +82,10 @@ func (w *World) checkModeration() error {
 				if w.blocked(runtime.ModerationText(p.AssistantMessage.GetContent(), p.AssistantMessage.GetToolCalls())) {
 					return fmt.Errorf("invariant: blocked output reached the log of %s at seq %d", sid, e.GetSeq())
 				}
+			case *v1.Event_CallTranscript:
+				if w.blocked(p.CallTranscript.GetText()) {
+					return fmt.Errorf("invariant: blocked call transcript reached the log of %s at seq %d", sid, e.GetSeq())
+				}
 			case *v1.Event_ContentModerated:
 				var next *v1.AssistantMessage
 				if i+1 < len(events) {

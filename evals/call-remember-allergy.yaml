@@ -1,0 +1,13 @@
+name: call-remember-allergy
+description: >-
+  通话中让助手记住健康信息：语音模型应交给后台助手保存（run_task），而不是口头答应"记住了"；
+  保存的记忆进入 health 类别（用户本人说的话，写入闸门放行）。
+call: true
+trials: 3
+turns:
+  - input: "帮我记一下，我对花生过敏。"
+    expect:
+      tasks: {min: 1}
+      task_contains: ["花生"]
+      calls: ["memory_save"]
+      memories: [{category: health, contains: "花生"}]

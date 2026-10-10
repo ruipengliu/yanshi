@@ -1,0 +1,31 @@
+name: call-scenario-b
+description: >-
+  场景 B（章程 §6）：做饭时通话让助手看电脑上 PPT 第三页写了什么，再把标题改得口语一点。
+  语音模型派生任务，后台助手读设备文件、结果以口语转述；改写需要审批（评测自动批准），写回电脑。
+call: true
+trials: 3
+setup:
+  device:
+    label: macbook
+    files:
+      季度汇报.md: |
+        # 第三季度汇报
+        ## 第一页 目标回顾
+        营收目标 1200 万。
+        ## 第二页 完成情况
+        实际营收 1350 万，完成率 112%。
+        ## 第三页 下季度计划
+        标题：拓展华南市场，新开广州、深圳两个办事处。
+turns:
+  - input: "帮我看看电脑上那份季度汇报，第三页写了什么？"
+    expect:
+      tasks: {min: 1}
+      calls: ["macbook__read_file"]
+      reply_contains: ["华南"]
+      judge: "语音助手的回答（会被朗读）是否简短口语化地说出了第三页的内容（拓展华南市场、广州深圳两个办事处），没有念 Markdown 符号或编造内容？"
+  - input: "把第三页的标题改得更口语一点，改完保存回去。"
+    expect:
+      tasks: {min: 1}
+      calls: ["macbook__write_file"]
+      approvals: {min: 1}
+      device_writes: {"季度汇报.md": "第三页"}

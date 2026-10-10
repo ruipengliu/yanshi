@@ -11,8 +11,13 @@ import { timestampDate } from "@bufbuild/protobuf/wkt";
 import type { ContentBlock, Event } from "./gen/yanshi/v1/event_pb.js";
 import { ContentBlockSchema } from "./gen/yanshi/v1/event_pb.js";
 import {
+  CallAction,
   GatewayMessageSchema,
   NodeMessageSchema,
+  type CallEvent,
+  type CallReady,
+  type CallTask,
+  type CallText,
   type ClientRequestSchema,
   type ClientResponse,
   type GatewayMessage,
@@ -150,6 +155,8 @@ export class Client {
   readonly #cfg: ClientConfig;
   readonly #subs = new Map<string, Subscriber>();
   readonly #pending = new Map<string, Pending>();
+  // 本连接上的 Call（开始中与进行中的），以 call_id 关联。
+  readonly #calls = new Map<string, Call>();
   // 等待连接建立的请求。
   #waiters: Array<{ resolve(): void; reject(e: unknown): void }> = [];
   #ws: WebSocketLike | null = null;
@@ -313,6 +320,8 @@ export class Client {
     this.#ws = null;
     this.#ready = false;
     this.#failPending(new DisconnectedError());
+    // Call 不跨连接：连接断开时网关已挂断（"disconnected"）。
+    for (const c of [...this.#calls.values()]) c._ended("disconnected");
   }
 
   #failPending(e: unknown): void {
@@ -367,6 +376,12 @@ export class Client {
         const sub = this.#subs.get(sessionId);
         this.#subs.delete(sessionId);
         if (sub?.handler.onEnded) this.#call(() => sub.handler.onEnded!(reason));
+        return;
+      }
+      case "callEvent": {
+        const e = m.msg.value;
+        const c = this.#calls.get(e.callId);
+        if (c) this.#call(() => c._event(e));
         return;
       }
       case "response": {
@@ -430,6 +445,27 @@ export class Client {
       throw e;
     }
     return abortable(p, signal, () => this.#pending.delete(requestId));
+  }
+
+  /**
+   * 在 Session 中开始一次 Call（全双工语音通话，docs/design/m3-call.md），接通（CallReady）后返回。
+   * 同一 Session 中已有进行中的 Call 时，旧的随之结束；一条连接同一时刻至多一个 Call。
+   * 失败（Session 不存在、Agent 不支持通话、配额用尽等）时以 RequestError 拒绝。
+   */
+  async startCall(sessionId: string, handler: CallHandler, opts: RequestOptions = {}): Promise<Call> {
+    while (!this.#ready) {
+      if (this.#stopped) throw new StoppedError();
+      await abortable(new Promise<void>((resolve, reject) => this.#waiters.push({ resolve, reject })), opts.signal);
+    }
+    const id = "call_" + newInputId().slice(3);
+    const ws = this.#ws!;
+    const c = new Call(id, sessionId, handler, (m) => {
+      if (this.#ws === ws) ws.send(encode(m));
+    });
+    this.#calls.set(id, c);
+    c._onEnd = () => this.#calls.delete(id);
+    ws.send(encode(create(NodeMessageSchema, { msg: { case: "callStart", value: { callId: id, sessionId } } })));
+    return abortable(c._ready, opts.signal, () => c.hangup());
   }
 
   /** 为连接的 EndUser 创建 Session；version 为空时按发布配置分流。返回 Session ID。 */
@@ -572,4 +608,136 @@ function abortable<T>(p: Promise<T>, signal: AbortSignal | undefined, onAbort?: 
       },
     );
   });
+}
+
+/** 一次 Call 的回调。按到达顺序串行调用。 */
+export interface CallHandler {
+  /** 助手的语音：PCM 16 位、单声道，采样率见 Call.outputSampleRate（24000）。 */
+  onAudio(pcm: Int16Array, responseId: string): void;
+  /** 检测到用户开始说话：立即停止播放尚未播完的音频（打断），并丢弃该回复迟到的音频。 */
+  onSpeech?(): void;
+  /** 转写：用户的话（final 为 false 时是识别中的整句，替换上一条）与助手的话（final 为 false 时是增量）。 */
+  onText?(t: CallText): void;
+  onResponseDone?(responseId: string): void;
+  /** 通话中派生的后台任务的进展。 */
+  onTask?(t: CallTask): void;
+  /** Call 结束："hangup"、"disconnected"、"provider"、"replaced"、"session_closed"、"quota"、"error"。 */
+  onEnded?(reason: string): void;
+}
+
+/** 进行中的 Call。上行音频为 PCM 16 位、单声道、16000 Hz，按实时节奏发送，建议每帧 20 ms（320 个采样）。 */
+export class Call {
+  readonly inputSampleRate = 16000;
+  outputSampleRate = 24000;
+  model = "";
+  #ended = false;
+  #resolve!: (c: Call) => void;
+  #reject!: (e: unknown) => void;
+  /** @internal */
+  readonly _ready: Promise<Call>;
+  /** @internal */
+  _onEnd: () => void = () => {};
+
+  constructor(
+    readonly id: string,
+    readonly sessionId: string,
+    readonly handler: CallHandler,
+    readonly send: (m: NodeMessage) => void,
+  ) {
+    this._ready = new Promise((resolve, reject) => {
+      this.#resolve = resolve;
+      this.#reject = reject;
+    });
+    // 未被等待时（abort 之后）不产生未处理的拒绝。
+    this._ready.catch(() => {});
+  }
+
+  get ended(): boolean {
+    return this.#ended;
+  }
+
+  /** 发送麦克风音频。 */
+  sendAudio(pcm: Int16Array | Uint8Array): void {
+    if (this.#ended) return;
+    const bytes = pcm instanceof Uint8Array ? pcm : new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+    this.send(create(NodeMessageSchema, { msg: { case: "callAudio", value: { callId: this.id, pcm: bytes } } }));
+  }
+
+  /** 关闭 / 打开麦克风：静音期间无需发送音频。 */
+  mute(muted: boolean): void {
+    this.#control(muted ? CallAction.MUTE : CallAction.UNMUTE);
+  }
+
+  /** 在界面上打断助手的播报（说话打断由模型检测，无需调用）。 */
+  interrupt(): void {
+    this.#control(CallAction.INTERRUPT);
+  }
+
+  hangup(): void {
+    this.#control(CallAction.HANGUP);
+  }
+
+  #control(action: CallAction): void {
+    if (this.#ended) return;
+    try {
+      this.send(create(NodeMessageSchema, { msg: { case: "callControl", value: { callId: this.id, action } } }));
+    } catch {
+      // 连接已断开：Call 随之结束，无需控制。
+    }
+  }
+
+  /** @internal */
+  _event(e: CallEvent): void {
+    const h = this.handler;
+    switch (e.kind.case) {
+      case "ready":
+        this.#onReady(e.kind.value);
+        return;
+      case "audio": {
+        const b = e.kind.value.pcm;
+        // 复制到对齐的缓冲区：protobuf 解出的字节可能不按 2 字节对齐。
+        const pcm = new Int16Array(b.byteLength >> 1);
+        new Uint8Array(pcm.buffer).set(b.subarray(0, pcm.byteLength));
+        h.onAudio(pcm, e.kind.value.responseId);
+        return;
+      }
+      case "speech":
+        h.onSpeech?.();
+        return;
+      case "text":
+        h.onText?.(e.kind.value);
+        return;
+      case "responseDone":
+        h.onResponseDone?.(e.kind.value.responseId);
+        return;
+      case "task":
+        h.onTask?.(e.kind.value);
+        return;
+      case "ended":
+        this._ended(e.kind.value.reason);
+        return;
+      case "error": {
+        const err = e.kind.value;
+        this.#ended = true;
+        this._onEnd();
+        this.#reject(new RequestError(err.code, err.message, err.retryAt ? timestampDate(err.retryAt) : undefined));
+        return;
+      }
+    }
+  }
+
+  #onReady(r: CallReady): void {
+    this.outputSampleRate = r.outputSampleRate || 24000;
+    this.model = r.model;
+    this.#resolve(this);
+  }
+
+  /** @internal */
+  _ended(reason: string): void {
+    if (this.#ended) return;
+    this.#ended = true;
+    this._onEnd();
+    this.#reject(new Error(`call ended: ${reason}`));
+    this.handler.onEnded?.(reason);
+  }
 }

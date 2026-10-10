@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>yanshi 通话</title>
+    <style>
+      :root {
+        --fg: #1d1d1f;
+        --muted: #6e6e73;
+        --line: #e5e5ea;
+        --accent: #0a84ff;
+        --danger: #ff3b30;
+        --ok: #34c759;
+        --bg: #f5f5f7;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font: 15px/1.5 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+        color: var(--fg);
+        background: var(--bg);
+      }
+      main {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        min-height: 100vh;
+      }
+      .card {
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px 14px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      label {
+        font-size: 12px;
+        color: var(--muted);
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      input {
+        font: inherit;
+        padding: 6px 8px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        min-width: 0;
+      }
+      button {
+        font: inherit;
+        padding: 7px 14px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: #fff;
+        cursor: pointer;
+      }
+      button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+      button.danger {
+        background: var(--danger);
+        border-color: var(--danger);
+        color: #fff;
+      }
+      button:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      #status {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      #log {
+        flex: 1;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        min-height: 240px;
+      }
+      .msg {
+        max-width: 85%;
+        padding: 8px 12px;
+        border-radius: 14px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .msg.user {
+        align-self: flex-end;
+        background: var(--accent);
+        color: #fff;
+      }
+      .msg.assistant {
+        align-self: flex-start;
+        background: #fff;
+        border: 1px solid var(--line);
+      }
+      .msg.voice::before {
+        content: "🎙 ";
+      }
+      .msg.partial {
+        opacity: 0.6;
+      }
+      .note {
+        align-self: center;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .pending {
+        border-color: #ff9f0a;
+      }
+      .pending .row {
+        margin-top: 6px;
+      }
+      #meter {
+        width: 80px;
+        height: 6px;
+        background: var(--line);
+        border-radius: 3px;
+        overflow: hidden;
+      }
+      #meter > div {
+        height: 100%;
+        width: 0;
+        background: var(--ok);
+        transition: width 80ms linear;
+      }
+      .hint {
+        font-size: 12px;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="card">
+        <div class="row">
+          <label>业务线<input id="bl" value="demo" size="8" /></label>
+          <label>用户<input id="user" value="u1" size="8" /></label>
+          <label style="flex: 1">令牌（-auth jwt 时必填）<input id="token" placeholder="yanshi token -key demo.key -user u1" /></label>
+        </div>
+        <div class="row" style="margin-top: 8px">
+          <label>Agent<input id="agent" value="assistant" size="10" /></label>
+          <label style="flex: 1">Session（留空则新建）<input id="sid" /></label>
+          <button id="connect" class="primary">连接</button>
+        </div>
+        <div id="status" style="margin-top: 6px">未连接</div>
+      </div>
+
+      <div class="card row">
+        <button id="call" class="primary" disabled>开始通话</button>
+        <button id="mute" disabled>静音</button>
+        <button id="interrupt" disabled>打断</button>
+        <div id="meter" title="麦克风音量"><div></div></div>
+        <span id="callStatus" class="hint"></span>
+      </div>
+
+      <div id="pending"></div>
+      <div id="log" class="card"></div>
+
+      <div class="card row">
+        <input id="text" style="flex: 1" placeholder="也可以打字…" disabled />
+        <button id="send" disabled>发送</button>
+      </div>
+      <div class="hint">建议戴耳机：外放时麦克风会收到助手的声音。浏览器只在 localhost 或 HTTPS 下允许使用麦克风。</div>
+    </main>
+    <script type="module" src="/call/call.js"></script>
+  </body>
+</html>

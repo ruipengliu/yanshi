@@ -37,6 +37,10 @@ func (b *logBuilder) add(p any) *logBuilder {
 		e.Payload = &v1.Event_MemoryRecalled{MemoryRecalled: p}
 	case *v1.RunCompleted:
 		e.Payload = &v1.Event_RunCompleted{RunCompleted: p}
+	case *v1.CallStarted:
+		e.Payload = &v1.Event_CallStarted{CallStarted: p}
+	case *v1.CallTranscript:
+		e.Payload = &v1.Event_CallTranscript{CallTranscript: p}
 	}
 	b.events = append(b.events, e)
 	return b
@@ -149,5 +153,29 @@ func TestRecallSitsBeforeTheCurrentRunInput(t *testing.T) {
 	msgs := Transcript(st, 0)
 	if len(msgs) < 2 || !strings.Contains(model.Text(msgs[0].Content), "S") || !strings.Contains(model.Text(msgs[1].Content), "新") {
 		t.Fatalf("recall not right after the summary: %s", shape(msgs))
+	}
+}
+
+// TestCallInTranscript：Call 中双方的话以用户消息进入上下文（调用尚无结果时顺延到结果之后）；
+// Call 派生的任务附上"结果会被朗读"的说明。
+func TestCallInTranscript(t *testing.T) {
+	b := (&logBuilder{}).
+		add(&v1.SessionCreated{}).
+		add(&v1.CallStarted{CallId: "vc"}).
+		add(&v1.CallTranscript{CallId: "vc", Role: "user", Text: "PPT 第三页写了什么"}).
+		add(&v1.RunRequested{RunId: "r1", Input: model.TextBlocks("读取 PPT 第三页"), FromCall: "vc"}).
+		add(&v1.AttemptStarted{RunId: "r1", Attempt: 1}).
+		add(&v1.AssistantMessage{RunId: "r1", Attempt: 1, ToolCalls: calls("c1")}).
+		add(&v1.CallTranscript{CallId: "vc", Role: "assistant", Text: "我去看看", Interrupted: true}).
+		add(&v1.ToolResult{RunId: "r1", Attempt: 1, CallId: "c1"})
+	st, err := session.Reduce(b.events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := shape(Transcript(st, 0))
+	want := "user:[语音通话] 用户：PPT 第三页写了什么 user:读取 PPT 第三页" + model.FromCallNote +
+		" assistant[c1] tool:c1 user:[语音通话] 语音助手：我去看看……（被用户打断）"
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }

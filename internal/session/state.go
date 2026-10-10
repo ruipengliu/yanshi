@@ -159,7 +159,19 @@ type State struct {
 	callIDs map[string]bool
 	// Inputs 是最近 MaxRecentInputs 条带 ID 的输入（旧的在前），用于去重重复提交。
 	Inputs []InputRef
+	// ActiveCall 是进行中的 Call（语音通话，docs/design/m3-call.md），没有时为 nil。
+	ActiveCall *ActiveCall
 }
+
+// ActiveCall 是进行中的 Call。注意与 Call（Run 中的一次 Capability 调用）区分。
+type ActiveCall struct {
+	ID        string
+	DeviceID  string
+	StartedAt time.Time
+}
+
+// CallRoles 是 CallTranscript.role 的合法取值。
+var CallRoles = []string{"user", "assistant"}
 
 // MaxRecentInputs 是去重窗口：客户端在结果未知时重新提交，通常在几秒内，窗口无需很大；
 // 投影随之有界。
@@ -239,6 +251,10 @@ func (s *State) Clone() *State {
 	}
 	cp.History = slices.Clip(s.History)
 	cp.Inputs = slices.Clone(s.Inputs)
+	if s.ActiveCall != nil {
+		c := *s.ActiveCall
+		cp.ActiveCall = &c
+	}
 	cp.callIDs = make(map[string]bool, len(s.callIDs))
 	for id := range s.callIDs {
 		cp.callIDs[id] = true
@@ -298,11 +314,41 @@ func (s *State) apply(e *v1.Event) error {
 		return fmt.Errorf("duplicate SessionCreated")
 
 	case *v1.Event_SessionClosed:
-		// 关闭方须先中断活跃的 Run（可与本事件同批提交）。
+		// 关闭方须先中断活跃的 Run、结束进行中的 Call（可与本事件同批提交）。
 		if a := s.Active(); a != nil {
 			return fmt.Errorf("session closed while run %s is active", a.ID)
 		}
+		if s.ActiveCall != nil {
+			return fmt.Errorf("session closed while call %s is active", s.ActiveCall.ID)
+		}
 		s.Closed = p.SessionClosed
+
+	case *v1.Event_CallStarted:
+		m := p.CallStarted
+		// 新 Call 开始前，写入方须先结束旧的（"replaced"，可同批提交）。
+		if s.ActiveCall != nil {
+			return fmt.Errorf("call %s started while call %s is active", m.GetCallId(), s.ActiveCall.ID)
+		}
+		if m.GetCallId() == "" {
+			return fmt.Errorf("call started without an id")
+		}
+		s.ActiveCall = &ActiveCall{ID: m.GetCallId(), DeviceID: m.GetDeviceId(), StartedAt: e.GetTime().AsTime()}
+
+	case *v1.Event_CallTranscript:
+		m := p.CallTranscript
+		if err := s.checkCall(m.GetCallId()); err != nil {
+			return err
+		}
+		if !slices.Contains(CallRoles, m.GetRole()) || m.GetText() == "" {
+			return fmt.Errorf("invalid call transcript (role %q, %d bytes)", m.GetRole(), len(m.GetText()))
+		}
+		s.History = append(s.History, e)
+
+	case *v1.Event_CallEnded:
+		if err := s.checkCall(p.CallEnded.GetCallId()); err != nil {
+			return err
+		}
+		s.ActiveCall = nil
 
 	case *v1.Event_ContentModerated:
 		// 只校验归属：拦截不改变状态，替换后的 AssistantMessage 随后照常应用。
@@ -321,6 +367,9 @@ func (s *State) apply(e *v1.Event) error {
 		s.Agent = m.GetTo()
 
 	case *v1.Event_RunRequested:
+		if err := s.checkFromCall(p.RunRequested.GetFromCall()); err != nil {
+			return err
+		}
 		if a := s.Active(); a != nil {
 			return fmt.Errorf("run %s requested while run %s is active", p.RunRequested.GetRunId(), a.ID)
 		}
@@ -335,6 +384,9 @@ func (s *State) apply(e *v1.Event) error {
 
 	case *v1.Event_Steered:
 		if _, err := s.activeRun(p.Steered.GetRunId()); err != nil {
+			return err
+		}
+		if err := s.checkFromCall(p.Steered.GetFromCall()); err != nil {
 			return err
 		}
 		if err := s.recordInput(InputRef{ID: p.Steered.GetInputId(), RunID: p.Steered.GetRunId(), Steered: true}); err != nil {
@@ -564,6 +616,22 @@ func (s *State) checkCut(seq uint64) error {
 		}
 	}
 	return nil
+}
+
+// checkCall 要求 id 是进行中的 Call。
+func (s *State) checkCall(id string) error {
+	if s.ActiveCall == nil || s.ActiveCall.ID != id {
+		return fmt.Errorf("call %q is not active", id)
+	}
+	return nil
+}
+
+// checkFromCall 要求由 Call 派生的输入来自进行中的 Call：结束的 Call 不再派生任务。
+func (s *State) checkFromCall(id string) error {
+	if id == "" {
+		return nil
+	}
+	return s.checkCall(id)
 }
 
 func (s *State) activeRun(id string) (*Run, error) {

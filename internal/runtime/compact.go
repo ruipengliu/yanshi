@@ -108,9 +108,11 @@ func renderForSummary(in SummaryInput) string {
 	for _, e := range in.History {
 		switch p := e.GetPayload().(type) {
 		case *v1.Event_RunRequested:
-			fmt.Fprintf(&b, "[用户] %s\n", blocksText(p.RunRequested.GetInput()))
+			fmt.Fprintf(&b, "%s %s\n", inputSpeaker("[用户]", p.RunRequested.GetFromCall()), blocksText(p.RunRequested.GetInput()))
 		case *v1.Event_Steered:
-			fmt.Fprintf(&b, "[用户插话] %s\n", blocksText(p.Steered.GetInput()))
+			fmt.Fprintf(&b, "%s %s\n", inputSpeaker("[用户插话]", p.Steered.GetFromCall()), blocksText(p.Steered.GetInput()))
+		case *v1.Event_CallTranscript:
+			fmt.Fprintf(&b, "%s\n", model.CallTranscriptText(p.CallTranscript))
 		case *v1.Event_AssistantMessage:
 			if t := blocksText(p.AssistantMessage.GetContent()); t != "" {
 				fmt.Fprintf(&b, "[助手] %s\n", t)
@@ -128,6 +130,14 @@ func renderForSummary(in SummaryInput) string {
 	}
 	b.WriteString("</对话记录>")
 	return b.String()
+}
+
+// inputSpeaker 注明 Call 派生的输入是语音助手转述的任务，而不是用户的原话。
+func inputSpeaker(label, fromCall string) string {
+	if fromCall != "" {
+		return "[语音助手转述的任务]"
+	}
+	return label
 }
 
 func blocksText(blocks []*v1.ContentBlock) string {
@@ -148,9 +158,11 @@ func blocksText(blocks []*v1.ContentBlock) string {
 func eventTokens(e *v1.Event, maxToolResult int) int {
 	switch p := e.GetPayload().(type) {
 	case *v1.Event_RunRequested:
-		return model.EstimateMessage(model.Message{Content: p.RunRequested.GetInput()})
+		return model.EstimateMessage(model.Message{Content: model.InputBlocks(p.RunRequested.GetInput(), p.RunRequested.GetFromCall())})
 	case *v1.Event_Steered:
-		return model.EstimateMessage(model.Message{Content: p.Steered.GetInput()})
+		return model.EstimateMessage(model.Message{Content: model.InputBlocks(p.Steered.GetInput(), p.Steered.GetFromCall())})
+	case *v1.Event_CallTranscript:
+		return model.EstimateMessage(model.Message{Content: model.TextBlocks(model.CallTranscriptText(p.CallTranscript))})
 	case *v1.Event_AssistantMessage:
 		m := p.AssistantMessage
 		return model.EstimateMessage(model.Message{Content: m.GetContent(), ToolCalls: m.GetToolCalls()})

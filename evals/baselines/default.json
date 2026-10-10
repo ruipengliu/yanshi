@@ -1,5 +1,5 @@
 {
-  "started_at": "2026-10-10T13:13:44.570819Z",
+  "started_at": "2026-10-10T17:38:56.715982Z",
   "judge": "tokenhub/glm-5.3",
   "cases": [
     {
@@ -53,6 +53,45 @@
       "avg_compactions": 0,
       "avg_takeovers": 0,
       "cache_hit": 0.9250893102500687
+    },
+    {
+      "name": "call-chitchat",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 0,
+      "avg_tokens": 0,
+      "avg_seconds": 24.402296708333335,
+      "avg_calls": 0,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0
+    },
+    {
+      "name": "call-remember-allergy",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 0,
+      "avg_tokens": 2770,
+      "avg_seconds": 20.255634541333333,
+      "avg_calls": 1,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.9554615576013934
+    },
+    {
+      "name": "call-time",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 0,
+      "avg_tokens": 2741,
+      "avg_seconds": 17.812734486,
+      "avg_calls": 1.3333333333333333,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.9712912609080562
     },
     {
       "name": "clarify-before-send",

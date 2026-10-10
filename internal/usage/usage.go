@@ -21,6 +21,8 @@ type Kind string
 const (
 	Model   Kind = "model"
 	Sandbox Kind = "sandbox"
+	// Call 是 Call 中实时语音模型的用量（docs/design/m3-call.md §7）。
+	Call Kind = "call"
 )
 
 // Anonymous 是注销后的 EndUser：其用量仍计入业务线合计，但不再留存个人标识。
@@ -103,6 +105,9 @@ type Price struct {
 	Output float64 `yaml:"output"`
 	// CachedInput 是命中前缀缓存的输入单价；未配置时按 Input 计（不假设折扣）。
 	CachedInput *float64 `yaml:"cached_input"`
+	// InputAudio、OutputAudio 是实时语音模型的音频 token 单价；未配置时按 Input、Output 计。
+	InputAudio  *float64 `yaml:"input_audio"`
+	OutputAudio *float64 `yaml:"output_audio"`
 }
 
 // PriceList 是部署配置中的价格表（pricing.yaml）。
@@ -159,6 +164,31 @@ func (p *PriceList) ModelCost(model string, input, cached, output uint64) int64 
 }
 
 // SandboxCost 返回沙箱执行 d 的金额（微元）。
+// CallTokens 是实时语音模型一轮交互的用量。CachedInput 是输入中命中缓存的部分。
+type CallTokens struct {
+	InputText, InputAudio, CachedInput, OutputText, OutputAudio uint64
+}
+
+// CallCost 按文本与音频分别计价。厂商只给出命中缓存的总数：先从文本输入中扣除（缓存的主要是系统指令与上下文）。
+func (p *PriceList) CallCost(model string, t CallTokens) int64 {
+	if p == nil {
+		return 0
+	}
+	pr := p.Models[model]
+	or := func(x *float64, d float64) float64 {
+		if x != nil {
+			return *x
+		}
+		return d
+	}
+	cached := min(t.CachedInput, t.InputText+t.InputAudio)
+	cachedText := min(cached, t.InputText)
+	cachedAudio := cached - cachedText
+	cost := float64(t.InputText-cachedText)*pr.Input + float64(t.InputAudio-cachedAudio)*or(pr.InputAudio, pr.Input) +
+		float64(cached)*or(pr.CachedInput, pr.Input) + float64(t.OutputText)*pr.Output + float64(t.OutputAudio)*or(pr.OutputAudio, pr.Output)
+	return int64(math.Round(cost))
+}
+
 func (p *PriceList) SandboxCost(d time.Duration) int64 {
 	if p == nil || d <= 0 {
 		return 0

@@ -32,6 +32,18 @@ type Def struct {
 	// Memory 控制 Run 开始时的召回（docs/design/m4-memory-grant.md §3）。能否写入由能力白名单中
 	// 是否包含 memory_save 决定。
 	Memory MemoryConfig `yaml:"memory"`
+	// Call 配置 Session 中的 Call（全双工语音通话，docs/design/m3-call.md）；Model 为空表示不支持通话。
+	Call CallConfig `yaml:"call"`
+}
+
+// CallConfig 是通话中语音模型的配置。语音模型只负责对话；需要能力的工作经 run_task 交给本 AgentDef 的 Run 执行。
+type CallConfig struct {
+	// Model 是实时语音模型引用，如 "volc/1.2.6.1"。
+	Model string `yaml:"model"`
+	// Voice 是音色 ID，留空使用提供商的默认音色。
+	Voice string `yaml:"voice"`
+	// Instructions 是语音模型的系统指令（人设、说话风格）；run_task 的用法由工具说明给出。
+	Instructions string `yaml:"instructions"`
 }
 
 type MemoryConfig struct {

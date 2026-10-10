@@ -12,7 +12,7 @@ import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2"
 import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
-import type { ContentBlock, Event } from "./event_pb.js";
+import type { CallEnded, ContentBlock, Event } from "./event_pb.js";
 import { file_yanshi_v1_event } from "./event_pb.js";
 import type { Message } from "@bufbuild/protobuf";
 
@@ -20,7 +20,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file yanshi/v1/node.proto.
  */
 export const file_yanshi_v1_node: GenFile = /*@__PURE__*/
-  fileDesc("ChR5YW5zaGkvdjEvbm9kZS5wcm90bxIJeWFuc2hpLnYxIpoBCg5DYXBhYmlsaXR5U3BlYxIMCgRuYW1lGAEgASgJEhMKC2Rlc2NyaXB0aW9uGAIgASgJEhkKEWlucHV0X3NjaGVtYV9qc29uGAMgASgJEhIKCmlkZW1wb3RlbnQYBCABKAgSHQoEcmlzaxgFIAEoDjIPLnlhbnNoaS52MS5SaXNrEhcKD3RpbWVvdXRfc2Vjb25kcxgGIAEoDSKSAgoLTm9kZU1lc3NhZ2USIQoFaGVsbG8YASABKAsyEC55YW5zaGkudjEuSGVsbG9IABIpCgZyZXN1bHQYAiABKAsyFy55YW5zaGkudjEuSW52b2tlUmVzdWx0SAASKQoJc3Vic2NyaWJlGAMgASgLMhQueWFuc2hpLnYxLlN1YnNjcmliZUgAEi0KC3Vuc3Vic2NyaWJlGAQgASgLMhYueWFuc2hpLnYxLlVuc3Vic2NyaWJlSAASKwoHcmVxdWVzdBgFIAEoCzIYLnlhbnNoaS52MS5DbGllbnRSZXF1ZXN0SAASJwoIYWN0aXZpdHkYBiABKAsyEy55YW5zaGkudjEuQWN0aXZpdHlIAEIFCgNtc2cikgMKDkdhdGV3YXlNZXNzYWdlEiUKB3dlbGNvbWUYASABKAsyEi55YW5zaGkudjEuV2VsY29tZUgAEiMKBmludm9rZRgCIAEoCzIRLnlhbnNoaS52MS5JbnZva2VIABIjCgZjYW5jZWwYAyABKAsyES55YW5zaGkudjEuQ2FuY2VsSAASKgoKcmVzdWx0X2FjaxgEIAEoCzIULnlhbnNoaS52MS5SZXN1bHRBY2tIABIhCgVldmVudBgFIAEoCzIQLnlhbnNoaS52MS5FdmVudEgAEiUKBWRlbHRhGAYgASgLMhQueWFuc2hpLnYxLkxpdmVEZWx0YUgAEi0KCHJlc3BvbnNlGAcgASgLMhkueWFuc2hpLnYxLkNsaWVudFJlc3BvbnNlSAASOgoSc3Vic2NyaXB0aW9uX2VuZGVkGAggASgLMhwueWFuc2hpLnYxLlN1YnNjcmlwdGlvbkVuZGVkSAASJwoIcHJlc2VuY2UYCSABKAsyEy55YW5zaGkudjEuUHJlc2VuY2VIAEIFCgNtc2cihQIKBUhlbGxvEg8KB25vZGVfaWQYASABKAkSDQoFdG9rZW4YAiABKAkSFQoNYnVzaW5lc3NfbGluZRgDIAEoCRIQCghlbmRfdXNlchgEIAEoCRINCgVsYWJlbBgFIAEoCRIMCgRraW5kGAYgASgJEhAKCGhvc3RfYXBwGAcgASgJEhMKC3Nka192ZXJzaW9uGAggASgJEi8KDGNhcGFiaWxpdGllcxgJIAMoCzIZLnlhbnNoaS52MS5DYXBhYmlsaXR5U3BlYxITCgtjbGllbnRfb25seRgKIAEoCBIVCg1wdXNoX3BsYXRmb3JtGAsgASgJEhIKCnB1c2hfdG9rZW4YDCABKAkiKQoHV2VsY29tZRIPCgdub2RlX2lkGAEgASgJEg0KBWxhYmVsGAIgASgJIpcBCgZJbnZva2USEgoKc2Vzc2lvbl9pZBgBIAEoCRIOCgZydW5faWQYAiABKAkSDwoHY2FsbF9pZBgDIAEoCRISCgpjYXBhYmlsaXR5GAQgASgJEhYKDmFyZ3VtZW50c19qc29uGAUgASgJEiwKCGRlYWRsaW5lGAYgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCIZCgZDYW5jZWwSDwoHY2FsbF9pZBgBIAEoCSJbCgxJbnZva2VSZXN1bHQSDwoHY2FsbF9pZBgBIAEoCRIoCgdjb250ZW50GAIgAygLMhcueWFuc2hpLnYxLkNvbnRlbnRCbG9jaxIQCghpc19lcnJvchgDIAEoCCIcCglSZXN1bHRBY2sSDwoHY2FsbF9pZBgBIAEoCSJACg1DYXBhYmlsaXR5U2V0Ei8KDGNhcGFiaWxpdGllcxgBIAMoCzIZLnlhbnNoaS52MS5DYXBhYmlsaXR5U3BlYyIyCglTdWJzY3JpYmUSEgoKc2Vzc2lvbl9pZBgBIAEoCRIRCglhZnRlcl9zZXEYAiABKAQiIQoLVW5zdWJzY3JpYmUSEgoKc2Vzc2lvbl9pZBgBIAEoCSI3ChFTdWJzY3JpcHRpb25FbmRlZBISCgpzZXNzaW9uX2lkGAEgASgJEg4KBnJlYXNvbhgCIAEoCSKAAQoJTGl2ZURlbHRhEhIKCnNlc3Npb25faWQYASABKAkSDgoGcnVuX2lkGAIgASgJEg8KB2F0dGVtcHQYAyABKA0SEQoJYWZ0ZXJfc2VxGAQgASgEEgwKBHRleHQYBSABKAkSEAoIc25hcHNob3QYBiABKAgSCwoDZW5kGAcgASgIIrkCCg1DbGllbnRSZXF1ZXN0EhIKCnJlcXVlc3RfaWQYASABKAkSMgoOY3JlYXRlX3Nlc3Npb24YAiABKAsyGC55YW5zaGkudjEuQ3JlYXRlU2Vzc2lvbkgAEigKBnN1Ym1pdBgDIAEoCzIWLnlhbnNoaS52MS5TdWJtaXRJbnB1dEgAEiwKCWludGVycnVwdBgEIAEoCzIXLnlhbnNoaS52MS5JbnRlcnJ1cHRSdW5IABIrCgZkZWNpZGUYBSABKAsyGS55YW5zaGkudjEuRGVjaWRlQXBwcm92YWxIABIoCgVjbG9zZRgGIAEoCzIXLnlhbnNoaS52MS5DbG9zZVNlc3Npb25IABIrCgZhbnN3ZXIYByABKAsyGS55YW5zaGkudjEuQW5zd2VyUXVlc3Rpb25IAEIECgJvcCI1Cg1DcmVhdGVTZXNzaW9uEg0KBWFnZW50GAEgASgJEhUKDWFnZW50X3ZlcnNpb24YAiABKAkiWwoLU3VibWl0SW5wdXQSEgoKc2Vzc2lvbl9pZBgBIAEoCRImCgVpbnB1dBgCIAMoCzIXLnlhbnNoaS52MS5Db250ZW50QmxvY2sSEAoIaW5wdXRfaWQYAyABKAkiMgoMSW50ZXJydXB0UnVuEhIKCnNlc3Npb25faWQYASABKAkSDgoGcnVuX2lkGAIgASgJIkYKDkRlY2lkZUFwcHJvdmFsEhIKCnNlc3Npb25faWQYASABKAkSDwoHY2FsbF9pZBgCIAEoCRIPCgdhcHByb3ZlGAMgASgIIjIKDENsb3NlU2Vzc2lvbhISCgpzZXNzaW9uX2lkGAEgASgJEg4KBnJlYXNvbhgCIAEoCSK7AQoOQW5zd2VyUXVlc3Rpb24SEgoKc2Vzc2lvbl9pZBgBIAEoCRIPCgdjYWxsX2lkGAIgASgJEhAKCHNlbGVjdGVkGAMgAygJEjUKBnZhbHVlcxgEIAMoCzIlLnlhbnNoaS52MS5BbnN3ZXJRdWVzdGlvbi5WYWx1ZXNFbnRyeRIMCgR0ZXh0GAUgASgJGi0KC1ZhbHVlc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEipQEKDkNsaWVudFJlc3BvbnNlEhIKCnJlcXVlc3RfaWQYASABKAkSJQoFZXJyb3IYAiABKAsyFi55YW5zaGkudjEuQ2xpZW50RXJyb3ISEgoKc2Vzc2lvbl9pZBgDIAEoCRIOCgZydW5faWQYBCABKAkSDwoHc3RlZXJlZBgFIAEoCBIQCghhbnN3ZXJlZBgGIAEoCRIRCglkdXBsaWNhdGUYByABKAgiWgoLQ2xpZW50RXJyb3ISDAoEY29kZRgBIAEoCRIPCgdtZXNzYWdlGAIgASgJEiwKCHJldHJ5X2F0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCI/CghBY3Rpdml0eRISCgpzZXNzaW9uX2lkGAEgASgJEg8KB2ZvY3VzZWQYAiABKAgSDgoGdHlwaW5nGAMgASgIIkIKCFByZXNlbmNlEhIKCnNlc3Npb25faWQYASABKAkSIgoHdmlld2VycxgCIAMoCzIRLnlhbnNoaS52MS5WaWV3ZXIiWQoGVmlld2VyEhEKCWRldmljZV9pZBgBIAEoCRINCgVsYWJlbBgCIAEoCRIMCgRraW5kGAMgASgJEg8KB2ZvY3VzZWQYBCABKAgSDgoGdHlwaW5nGAUgASgIKjkKBFJpc2sSFAoQUklTS19VTlNQRUNJRklFRBAAEgwKCFJJU0tfTE9XEAESDQoJUklTS19ISUdIEAJCH1odeWFuc2hpL2dlbi95YW5zaGkvdjE7eWFuc2hpdjFiBnByb3RvMw", [file_google_protobuf_timestamp, file_yanshi_v1_event]);
+  fileDesc("ChR5YW5zaGkvdjEvbm9kZS5wcm90bxIJeWFuc2hpLnYxIpoBCg5DYXBhYmlsaXR5U3BlYxIMCgRuYW1lGAEgASgJEhMKC2Rlc2NyaXB0aW9uGAIgASgJEhkKEWlucHV0X3NjaGVtYV9qc29uGAMgASgJEhIKCmlkZW1wb3RlbnQYBCABKAgSHQoEcmlzaxgFIAEoDjIPLnlhbnNoaS52MS5SaXNrEhcKD3RpbWVvdXRfc2Vjb25kcxgGIAEoDSKaAwoLTm9kZU1lc3NhZ2USIQoFaGVsbG8YASABKAsyEC55YW5zaGkudjEuSGVsbG9IABIpCgZyZXN1bHQYAiABKAsyFy55YW5zaGkudjEuSW52b2tlUmVzdWx0SAASKQoJc3Vic2NyaWJlGAMgASgLMhQueWFuc2hpLnYxLlN1YnNjcmliZUgAEi0KC3Vuc3Vic2NyaWJlGAQgASgLMhYueWFuc2hpLnYxLlVuc3Vic2NyaWJlSAASKwoHcmVxdWVzdBgFIAEoCzIYLnlhbnNoaS52MS5DbGllbnRSZXF1ZXN0SAASJwoIYWN0aXZpdHkYBiABKAsyEy55YW5zaGkudjEuQWN0aXZpdHlIABIqCgpjYWxsX3N0YXJ0GAcgASgLMhQueWFuc2hpLnYxLkNhbGxTdGFydEgAEioKCmNhbGxfYXVkaW8YCCABKAsyFC55YW5zaGkudjEuQ2FsbEF1ZGlvSAASLgoMY2FsbF9jb250cm9sGAkgASgLMhYueWFuc2hpLnYxLkNhbGxDb250cm9sSABCBQoDbXNnIr4DCg5HYXRld2F5TWVzc2FnZRIlCgd3ZWxjb21lGAEgASgLMhIueWFuc2hpLnYxLldlbGNvbWVIABIjCgZpbnZva2UYAiABKAsyES55YW5zaGkudjEuSW52b2tlSAASIwoGY2FuY2VsGAMgASgLMhEueWFuc2hpLnYxLkNhbmNlbEgAEioKCnJlc3VsdF9hY2sYBCABKAsyFC55YW5zaGkudjEuUmVzdWx0QWNrSAASIQoFZXZlbnQYBSABKAsyEC55YW5zaGkudjEuRXZlbnRIABIlCgVkZWx0YRgGIAEoCzIULnlhbnNoaS52MS5MaXZlRGVsdGFIABItCghyZXNwb25zZRgHIAEoCzIZLnlhbnNoaS52MS5DbGllbnRSZXNwb25zZUgAEjoKEnN1YnNjcmlwdGlvbl9lbmRlZBgIIAEoCzIcLnlhbnNoaS52MS5TdWJzY3JpcHRpb25FbmRlZEgAEicKCHByZXNlbmNlGAkgASgLMhMueWFuc2hpLnYxLlByZXNlbmNlSAASKgoKY2FsbF9ldmVudBgKIAEoCzIULnlhbnNoaS52MS5DYWxsRXZlbnRIAEIFCgNtc2cihQIKBUhlbGxvEg8KB25vZGVfaWQYASABKAkSDQoFdG9rZW4YAiABKAkSFQoNYnVzaW5lc3NfbGluZRgDIAEoCRIQCghlbmRfdXNlchgEIAEoCRINCgVsYWJlbBgFIAEoCRIMCgRraW5kGAYgASgJEhAKCGhvc3RfYXBwGAcgASgJEhMKC3Nka192ZXJzaW9uGAggASgJEi8KDGNhcGFiaWxpdGllcxgJIAMoCzIZLnlhbnNoaS52MS5DYXBhYmlsaXR5U3BlYxITCgtjbGllbnRfb25seRgKIAEoCBIVCg1wdXNoX3BsYXRmb3JtGAsgASgJEhIKCnB1c2hfdG9rZW4YDCABKAkiKQoHV2VsY29tZRIPCgdub2RlX2lkGAEgASgJEg0KBWxhYmVsGAIgASgJIpcBCgZJbnZva2USEgoKc2Vzc2lvbl9pZBgBIAEoCRIOCgZydW5faWQYAiABKAkSDwoHY2FsbF9pZBgDIAEoCRISCgpjYXBhYmlsaXR5GAQgASgJEhYKDmFyZ3VtZW50c19qc29uGAUgASgJEiwKCGRlYWRsaW5lGAYgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCIZCgZDYW5jZWwSDwoHY2FsbF9pZBgBIAEoCSJbCgxJbnZva2VSZXN1bHQSDwoHY2FsbF9pZBgBIAEoCRIoCgdjb250ZW50GAIgAygLMhcueWFuc2hpLnYxLkNvbnRlbnRCbG9jaxIQCghpc19lcnJvchgDIAEoCCIcCglSZXN1bHRBY2sSDwoHY2FsbF9pZBgBIAEoCSJACg1DYXBhYmlsaXR5U2V0Ei8KDGNhcGFiaWxpdGllcxgBIAMoCzIZLnlhbnNoaS52MS5DYXBhYmlsaXR5U3BlYyIyCglTdWJzY3JpYmUSEgoKc2Vzc2lvbl9pZBgBIAEoCRIRCglhZnRlcl9zZXEYAiABKAQiIQoLVW5zdWJzY3JpYmUSEgoKc2Vzc2lvbl9pZBgBIAEoCSI3ChFTdWJzY3JpcHRpb25FbmRlZBISCgpzZXNzaW9uX2lkGAEgASgJEg4KBnJlYXNvbhgCIAEoCSKAAQoJTGl2ZURlbHRhEhIKCnNlc3Npb25faWQYASABKAkSDgoGcnVuX2lkGAIgASgJEg8KB2F0dGVtcHQYAyABKA0SEQoJYWZ0ZXJfc2VxGAQgASgEEgwKBHRleHQYBSABKAkSEAoIc25hcHNob3QYBiABKAgSCwoDZW5kGAcgASgIIrkCCg1DbGllbnRSZXF1ZXN0EhIKCnJlcXVlc3RfaWQYASABKAkSMgoOY3JlYXRlX3Nlc3Npb24YAiABKAsyGC55YW5zaGkudjEuQ3JlYXRlU2Vzc2lvbkgAEigKBnN1Ym1pdBgDIAEoCzIWLnlhbnNoaS52MS5TdWJtaXRJbnB1dEgAEiwKCWludGVycnVwdBgEIAEoCzIXLnlhbnNoaS52MS5JbnRlcnJ1cHRSdW5IABIrCgZkZWNpZGUYBSABKAsyGS55YW5zaGkudjEuRGVjaWRlQXBwcm92YWxIABIoCgVjbG9zZRgGIAEoCzIXLnlhbnNoaS52MS5DbG9zZVNlc3Npb25IABIrCgZhbnN3ZXIYByABKAsyGS55YW5zaGkudjEuQW5zd2VyUXVlc3Rpb25IAEIECgJvcCI1Cg1DcmVhdGVTZXNzaW9uEg0KBWFnZW50GAEgASgJEhUKDWFnZW50X3ZlcnNpb24YAiABKAkiWwoLU3VibWl0SW5wdXQSEgoKc2Vzc2lvbl9pZBgBIAEoCRImCgVpbnB1dBgCIAMoCzIXLnlhbnNoaS52MS5Db250ZW50QmxvY2sSEAoIaW5wdXRfaWQYAyABKAkiMgoMSW50ZXJydXB0UnVuEhIKCnNlc3Npb25faWQYASABKAkSDgoGcnVuX2lkGAIgASgJIkYKDkRlY2lkZUFwcHJvdmFsEhIKCnNlc3Npb25faWQYASABKAkSDwoHY2FsbF9pZBgCIAEoCRIPCgdhcHByb3ZlGAMgASgIIjIKDENsb3NlU2Vzc2lvbhISCgpzZXNzaW9uX2lkGAEgASgJEg4KBnJlYXNvbhgCIAEoCSK7AQoOQW5zd2VyUXVlc3Rpb24SEgoKc2Vzc2lvbl9pZBgBIAEoCRIPCgdjYWxsX2lkGAIgASgJEhAKCHNlbGVjdGVkGAMgAygJEjUKBnZhbHVlcxgEIAMoCzIlLnlhbnNoaS52MS5BbnN3ZXJRdWVzdGlvbi5WYWx1ZXNFbnRyeRIMCgR0ZXh0GAUgASgJGi0KC1ZhbHVlc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEipQEKDkNsaWVudFJlc3BvbnNlEhIKCnJlcXVlc3RfaWQYASABKAkSJQoFZXJyb3IYAiABKAsyFi55YW5zaGkudjEuQ2xpZW50RXJyb3ISEgoKc2Vzc2lvbl9pZBgDIAEoCRIOCgZydW5faWQYBCABKAkSDwoHc3RlZXJlZBgFIAEoCBIQCghhbnN3ZXJlZBgGIAEoCRIRCglkdXBsaWNhdGUYByABKAgiWgoLQ2xpZW50RXJyb3ISDAoEY29kZRgBIAEoCRIPCgdtZXNzYWdlGAIgASgJEiwKCHJldHJ5X2F0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCI/CghBY3Rpdml0eRISCgpzZXNzaW9uX2lkGAEgASgJEg8KB2ZvY3VzZWQYAiABKAgSDgoGdHlwaW5nGAMgASgIIkIKCFByZXNlbmNlEhIKCnNlc3Npb25faWQYASABKAkSIgoHdmlld2VycxgCIAMoCzIRLnlhbnNoaS52MS5WaWV3ZXIiWQoGVmlld2VyEhEKCWRldmljZV9pZBgBIAEoCRINCgVsYWJlbBgCIAEoCRIMCgRraW5kGAMgASgJEg8KB2ZvY3VzZWQYBCABKAgSDgoGdHlwaW5nGAUgASgIIjAKCUNhbGxTdGFydBIPCgdjYWxsX2lkGAEgASgJEhIKCnNlc3Npb25faWQYAiABKAkiKQoJQ2FsbEF1ZGlvEg8KB2NhbGxfaWQYASABKAkSCwoDcGNtGAIgASgMIkUKC0NhbGxDb250cm9sEg8KB2NhbGxfaWQYASABKAkSJQoGYWN0aW9uGAIgASgOMhUueWFuc2hpLnYxLkNhbGxBY3Rpb24i8QIKCUNhbGxFdmVudBIPCgdjYWxsX2lkGAEgASgJEiUKBXJlYWR5GAIgASgLMhQueWFuc2hpLnYxLkNhbGxSZWFkeUgAEisKBWF1ZGlvGAMgASgLMhoueWFuc2hpLnYxLkNhbGxPdXRwdXRBdWRpb0gAEicKBnNwZWVjaBgEIAEoCzIVLnlhbnNoaS52MS5DYWxsU3BlZWNoSAASIwoEdGV4dBgFIAEoCzITLnlhbnNoaS52MS5DYWxsVGV4dEgAEjQKDXJlc3BvbnNlX2RvbmUYBiABKAsyGy55YW5zaGkudjEuQ2FsbFJlc3BvbnNlRG9uZUgAEiMKBHRhc2sYByABKAsyEy55YW5zaGkudjEuQ2FsbFRhc2tIABIlCgVlbmRlZBgIIAEoCzIULnlhbnNoaS52MS5DYWxsRW5kZWRIABInCgVlcnJvchgJIAEoCzIWLnlhbnNoaS52MS5DbGllbnRFcnJvckgAQgYKBGtpbmQiYAoJQ2FsbFJlYWR5Eg0KBW1vZGVsGAEgASgJEg0KBXZvaWNlGAIgASgJEhkKEWlucHV0X3NhbXBsZV9yYXRlGAMgASgNEhoKEm91dHB1dF9zYW1wbGVfcmF0ZRgEIAEoDSIzCg9DYWxsT3V0cHV0QXVkaW8SCwoDcGNtGAEgASgMEhMKC3Jlc3BvbnNlX2lkGAIgASgJIgwKCkNhbGxTcGVlY2giSgoIQ2FsbFRleHQSDAoEcm9sZRgBIAEoCRIMCgR0ZXh0GAIgASgJEg0KBWZpbmFsGAMgASgIEhMKC3Jlc3BvbnNlX2lkGAQgASgJIicKEENhbGxSZXNwb25zZURvbmUSEwoLcmVzcG9uc2VfaWQYASABKAkiKgoIQ2FsbFRhc2sSDgoGcnVuX2lkGAEgASgJEg4KBnN0YXR1cxgCIAEoCSo5CgRSaXNrEhQKEFJJU0tfVU5TUEVDSUZJRUQQABIMCghSSVNLX0xPVxABEg0KCVJJU0tfSElHSBACKooBCgpDYWxsQWN0aW9uEhsKF0NBTExfQUNUSU9OX1VOU1BFQ0lGSUVEEAASFAoQQ0FMTF9BQ1RJT05fTVVURRABEhYKEkNBTExfQUNUSU9OX1VOTVVURRACEhkKFUNBTExfQUNUSU9OX0lOVEVSUlVQVBADEhYKEkNBTExfQUNUSU9OX0hBTkdVUBAEQh9aHXlhbnNoaS9nZW4veWFuc2hpL3YxO3lhbnNoaXYxYgZwcm90bzM", [file_google_protobuf_timestamp, file_yanshi_v1_event]);
 
 /**
  * @generated from message yanshi.v1.CapabilitySpec
@@ -117,6 +117,24 @@ export type NodeMessage = Message<"yanshi.v1.NodeMessage"> & {
      */
     value: Activity;
     case: "activity";
+  } | {
+    /**
+     * @generated from field: yanshi.v1.CallStart call_start = 7;
+     */
+    value: CallStart;
+    case: "callStart";
+  } | {
+    /**
+     * @generated from field: yanshi.v1.CallAudio call_audio = 8;
+     */
+    value: CallAudio;
+    case: "callAudio";
+  } | {
+    /**
+     * @generated from field: yanshi.v1.CallControl call_control = 9;
+     */
+    value: CallControl;
+    case: "callControl";
   } | { case: undefined; value?: undefined };
 };
 
@@ -192,6 +210,12 @@ export type GatewayMessage = Message<"yanshi.v1.GatewayMessage"> & {
      */
     value: Presence;
     case: "presence";
+  } | {
+    /**
+     * @generated from field: yanshi.v1.CallEvent call_event = 10;
+     */
+    value: CallEvent;
+    case: "callEvent";
   } | { case: undefined; value?: undefined };
 };
 
@@ -988,6 +1012,313 @@ export const ViewerSchema: GenMessage<Viewer> = /*@__PURE__*/
   messageDesc(file_yanshi_v1_node, 25);
 
 /**
+ * CallStart 在 Session 中开始一次 Call。成功时收到 CallEvent.ready，之后才发送音频；失败时收到 CallEvent.error。
+ * 同一 Session 中已有进行中的 Call 时，旧的随之结束（"replaced"）。
+ *
+ * @generated from message yanshi.v1.CallStart
+ */
+export type CallStart = Message<"yanshi.v1.CallStart"> & {
+  /**
+   * 客户端生成（建议随机），之后的消息以它关联。
+   *
+   * @generated from field: string call_id = 1;
+   */
+  callId: string;
+
+  /**
+   * @generated from field: string session_id = 2;
+   */
+  sessionId: string;
+};
+
+/**
+ * Describes the message yanshi.v1.CallStart.
+ * Use `create(CallStartSchema)` to create a new message.
+ */
+export const CallStartSchema: GenMessage<CallStart> = /*@__PURE__*/
+  messageDesc(file_yanshi_v1_node, 26);
+
+/**
+ * CallAudio 是麦克风音频：PCM 16 位小端、单声道、16000 Hz。按实时节奏发送，建议每帧 20 ms（640 字节）；
+ * 网关按 20 ms 的节奏转发给模型，网络抖动造成的积压在 1 秒以内会被平滑，超过时丢弃最旧的音频。
+ *
+ * @generated from message yanshi.v1.CallAudio
+ */
+export type CallAudio = Message<"yanshi.v1.CallAudio"> & {
+  /**
+   * @generated from field: string call_id = 1;
+   */
+  callId: string;
+
+  /**
+   * @generated from field: bytes pcm = 2;
+   */
+  pcm: Uint8Array;
+};
+
+/**
+ * Describes the message yanshi.v1.CallAudio.
+ * Use `create(CallAudioSchema)` to create a new message.
+ */
+export const CallAudioSchema: GenMessage<CallAudio> = /*@__PURE__*/
+  messageDesc(file_yanshi_v1_node, 27);
+
+/**
+ * @generated from message yanshi.v1.CallControl
+ */
+export type CallControl = Message<"yanshi.v1.CallControl"> & {
+  /**
+   * @generated from field: string call_id = 1;
+   */
+  callId: string;
+
+  /**
+   * @generated from field: yanshi.v1.CallAction action = 2;
+   */
+  action: CallAction;
+};
+
+/**
+ * Describes the message yanshi.v1.CallControl.
+ * Use `create(CallControlSchema)` to create a new message.
+ */
+export const CallControlSchema: GenMessage<CallControl> = /*@__PURE__*/
+  messageDesc(file_yanshi_v1_node, 28);
+
+/**
+ * CallEvent 是网关发给发起设备的 Call 消息。其他设备经订阅看到日志中的 CallStarted / CallTranscript / CallEnded。
+ *
+ * @generated from message yanshi.v1.CallEvent
+ */
+export type CallEvent = Message<"yanshi.v1.CallEvent"> & {
+  /**
+   * @generated from field: string call_id = 1;
+   */
+  callId: string;
+
+  /**
+   * @generated from oneof yanshi.v1.CallEvent.kind
+   */
+  kind: {
+    /**
+     * @generated from field: yanshi.v1.CallReady ready = 2;
+     */
+    value: CallReady;
+    case: "ready";
+  } | {
+    /**
+     * @generated from field: yanshi.v1.CallOutputAudio audio = 3;
+     */
+    value: CallOutputAudio;
+    case: "audio";
+  } | {
+    /**
+     * 检测到用户开始说话：客户端立即停止播放尚未播完的音频（打断）。
+     *
+     * @generated from field: yanshi.v1.CallSpeech speech = 4;
+     */
+    value: CallSpeech;
+    case: "speech";
+  } | {
+    /**
+     * @generated from field: yanshi.v1.CallText text = 5;
+     */
+    value: CallText;
+    case: "text";
+  } | {
+    /**
+     * @generated from field: yanshi.v1.CallResponseDone response_done = 6;
+     */
+    value: CallResponseDone;
+    case: "responseDone";
+  } | {
+    /**
+     * @generated from field: yanshi.v1.CallTask task = 7;
+     */
+    value: CallTask;
+    case: "task";
+  } | {
+    /**
+     * @generated from field: yanshi.v1.CallEnded ended = 8;
+     */
+    value: CallEnded;
+    case: "ended";
+  } | {
+    /**
+     * CallStart 失败（Session 不存在、Agent 不支持通话、配额用尽等）；Call 没有开始。
+     *
+     * @generated from field: yanshi.v1.ClientError error = 9;
+     */
+    value: ClientError;
+    case: "error";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message yanshi.v1.CallEvent.
+ * Use `create(CallEventSchema)` to create a new message.
+ */
+export const CallEventSchema: GenMessage<CallEvent> = /*@__PURE__*/
+  messageDesc(file_yanshi_v1_node, 29);
+
+/**
+ * @generated from message yanshi.v1.CallReady
+ */
+export type CallReady = Message<"yanshi.v1.CallReady"> & {
+  /**
+   * 实时语音模型引用与音色。
+   *
+   * @generated from field: string model = 1;
+   */
+  model: string;
+
+  /**
+   * @generated from field: string voice = 2;
+   */
+  voice: string;
+
+  /**
+   * 上行与下行音频的采样率（Hz）；均为 PCM 16 位小端、单声道。
+   *
+   * @generated from field: uint32 input_sample_rate = 3;
+   */
+  inputSampleRate: number;
+
+  /**
+   * @generated from field: uint32 output_sample_rate = 4;
+   */
+  outputSampleRate: number;
+};
+
+/**
+ * Describes the message yanshi.v1.CallReady.
+ * Use `create(CallReadySchema)` to create a new message.
+ */
+export const CallReadySchema: GenMessage<CallReady> = /*@__PURE__*/
+  messageDesc(file_yanshi_v1_node, 30);
+
+/**
+ * CallOutputAudio 是助手的语音：PCM 16 位小端、单声道，采样率见 CallReady。
+ *
+ * @generated from message yanshi.v1.CallOutputAudio
+ */
+export type CallOutputAudio = Message<"yanshi.v1.CallOutputAudio"> & {
+  /**
+   * @generated from field: bytes pcm = 1;
+   */
+  pcm: Uint8Array;
+
+  /**
+   * 所属的一次回复；被打断后，旧回复迟到的音频应丢弃。
+   *
+   * @generated from field: string response_id = 2;
+   */
+  responseId: string;
+};
+
+/**
+ * Describes the message yanshi.v1.CallOutputAudio.
+ * Use `create(CallOutputAudioSchema)` to create a new message.
+ */
+export const CallOutputAudioSchema: GenMessage<CallOutputAudio> = /*@__PURE__*/
+  messageDesc(file_yanshi_v1_node, 31);
+
+/**
+ * @generated from message yanshi.v1.CallSpeech
+ */
+export type CallSpeech = Message<"yanshi.v1.CallSpeech"> & {
+};
+
+/**
+ * Describes the message yanshi.v1.CallSpeech.
+ * Use `create(CallSpeechSchema)` to create a new message.
+ */
+export const CallSpeechSchema: GenMessage<CallSpeech> = /*@__PURE__*/
+  messageDesc(file_yanshi_v1_node, 32);
+
+/**
+ * CallText 是转写：用户的话（识别中的与整句）与助手的话（增量与整句）。整句同时以 CallTranscript 写入日志。
+ *
+ * @generated from message yanshi.v1.CallText
+ */
+export type CallText = Message<"yanshi.v1.CallText"> & {
+  /**
+   * "user" 或 "assistant"。
+   *
+   * @generated from field: string role = 1;
+   */
+  role: string;
+
+  /**
+   * @generated from field: string text = 2;
+   */
+  text: string;
+
+  /**
+   * false 时 text 是增量（助手）或识别中的整句（用户，替换上一条）；true 时是整句。
+   *
+   * @generated from field: bool final = 3;
+   */
+  final: boolean;
+
+  /**
+   * @generated from field: string response_id = 4;
+   */
+  responseId: string;
+};
+
+/**
+ * Describes the message yanshi.v1.CallText.
+ * Use `create(CallTextSchema)` to create a new message.
+ */
+export const CallTextSchema: GenMessage<CallText> = /*@__PURE__*/
+  messageDesc(file_yanshi_v1_node, 33);
+
+/**
+ * @generated from message yanshi.v1.CallResponseDone
+ */
+export type CallResponseDone = Message<"yanshi.v1.CallResponseDone"> & {
+  /**
+   * @generated from field: string response_id = 1;
+   */
+  responseId: string;
+};
+
+/**
+ * Describes the message yanshi.v1.CallResponseDone.
+ * Use `create(CallResponseDoneSchema)` to create a new message.
+ */
+export const CallResponseDoneSchema: GenMessage<CallResponseDone> = /*@__PURE__*/
+  messageDesc(file_yanshi_v1_node, 34);
+
+/**
+ * CallTask 是通话中派生的后台任务（run_task）的进展。
+ *
+ * @generated from message yanshi.v1.CallTask
+ */
+export type CallTask = Message<"yanshi.v1.CallTask"> & {
+  /**
+   * @generated from field: string run_id = 1;
+   */
+  runId: string;
+
+  /**
+   * "started"（开启新 Run）、"steered"（并入进行中的 Run）、"answered"（回答了 Run 的提问）、
+   * "waiting"（Run 在等用户审批或回答）、"completed"、"failed"、"interrupted"。
+   *
+   * @generated from field: string status = 2;
+   */
+  status: string;
+};
+
+/**
+ * Describes the message yanshi.v1.CallTask.
+ * Use `create(CallTaskSchema)` to create a new message.
+ */
+export const CallTaskSchema: GenMessage<CallTask> = /*@__PURE__*/
+  messageDesc(file_yanshi_v1_node, 35);
+
+/**
  * @generated from enum yanshi.v1.Risk
  */
 export enum Risk {
@@ -1016,4 +1347,44 @@ export enum Risk {
  */
 export const RiskSchema: GenEnum<Risk> = /*@__PURE__*/
   enumDesc(file_yanshi_v1_node, 0);
+
+/**
+ * @generated from enum yanshi.v1.CallAction
+ */
+export enum CallAction {
+  /**
+   * @generated from enum value: CALL_ACTION_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * 关闭 / 打开麦克风：静音期间无需发送音频。
+   *
+   * @generated from enum value: CALL_ACTION_MUTE = 1;
+   */
+  MUTE = 1,
+
+  /**
+   * @generated from enum value: CALL_ACTION_UNMUTE = 2;
+   */
+  UNMUTE = 2,
+
+  /**
+   * 用户在界面上打断助手的播报（说话打断由模型检测，无需发送）。
+   *
+   * @generated from enum value: CALL_ACTION_INTERRUPT = 3;
+   */
+  INTERRUPT = 3,
+
+  /**
+   * @generated from enum value: CALL_ACTION_HANGUP = 4;
+   */
+  HANGUP = 4,
+}
+
+/**
+ * Describes the enum yanshi.v1.CallAction.
+ */
+export const CallActionSchema: GenEnum<CallAction> = /*@__PURE__*/
+  enumDesc(file_yanshi_v1_node, 1);
 

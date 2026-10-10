@@ -28,6 +28,14 @@ message SessionSnapshot {
   AgentRef agent = 11;
   // 最近的输入 ID 及其结果，用于去重（session.MaxRecentInputs）。
   repeated InputSnapshot inputs = 12;
+  // 进行中的 Call；没有时为空。
+  ActiveCallSnapshot active_call = 13;
+}
+
+message ActiveCallSnapshot {
+  string call_id = 1;
+  string device_id = 2;
+  google.protobuf.Timestamp started_at = 3;
 }
 
 message InputSnapshot {

@@ -24,6 +24,7 @@ import (
 	"yanshi/internal/agentdef"
 	"yanshi/internal/eval"
 	"yanshi/internal/model"
+	"yanshi/internal/realtime/volc"
 	sandboxdocker "yanshi/internal/sandbox/docker"
 )
 
@@ -81,6 +82,11 @@ func evalCmd(args []string) error {
 		}}
 	if *sandboxKind == "docker" {
 		cfg.Sandbox = &sandboxdocker.Provider{Image: *sandboxImage}
+	}
+	// Call 用例（docs/design/m3-call.md §9）：实时语音模型与语音合成共用 VOLC_SPEECH_API_KEY，未设置时跳过。
+	if key := os.Getenv("VOLC_SPEECH_API_KEY"); key != "" {
+		cfg.Realtime = realtimeGateway(logger)
+		cfg.Speak = func(ctx context.Context, text string) ([]byte, error) { return volc.Synthesize(ctx, key, "", text) }
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

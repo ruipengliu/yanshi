@@ -26,12 +26,14 @@ import (
 	"yanshi/internal/artifact"
 	"yanshi/internal/artifact/pgartifact"
 	"yanshi/internal/auth"
+	"yanshi/internal/call"
 	"yanshi/internal/capability"
 	"yanshi/internal/channel"
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/eventlog/memlog"
 	"yanshi/internal/eventlog/pglog"
+	"yanshi/internal/feed"
 	"yanshi/internal/httpapi"
 	"yanshi/internal/ids"
 	"yanshi/internal/janitor"
@@ -49,6 +51,8 @@ import (
 	"yanshi/internal/pg/pgtest"
 	"yanshi/internal/presence"
 	"yanshi/internal/presence/pgpresence"
+	"yanshi/internal/realtime"
+	"yanshi/internal/realtime/fake"
 	"yanshi/internal/runtime"
 	"yanshi/internal/sandbox"
 	sandboxdocker "yanshi/internal/sandbox/docker"
@@ -66,11 +70,17 @@ import (
 type script struct{}
 
 func (script) Generate(ctx context.Context, req *model.Request, onDelta func(model.Delta)) (*model.Response, error) {
+	// 通话的转写（"[语音通话] …"）不是给脚本的命令：取它之前的最后一条消息。
 	last := req.Messages[len(req.Messages)-1]
+	for i := len(req.Messages) - 1; i > 0 && strings.HasPrefix(model.Text(last.Content), "[语音通话]"); i-- {
+		last = req.Messages[i-1]
+	}
 	if last.Role == model.RoleTool {
 		return &model.Response{Content: model.TextBlocks("done: " + model.Text(last.Content))}, nil
 	}
-	if n, ok := strings.CutPrefix(model.Text(last.Content), "stream "); ok {
+	// 命令只看第一行：Call 派生的任务后附有说明（model.FromCallNote）。
+	command, _, _ := strings.Cut(strings.TrimSpace(model.Text(last.Content)), "\n")
+	if n, ok := strings.CutPrefix(command, "stream "); ok {
 		count, _ := strconv.Atoi(n)
 		for i := range count {
 			select {
@@ -84,7 +94,7 @@ func (script) Generate(ctx context.Context, req *model.Request, onDelta func(mod
 		}
 		return &model.Response{Content: model.TextBlocks("streamed")}, nil
 	}
-	rest, _ := strings.CutPrefix(model.Text(last.Content), "call ")
+	rest, _ := strings.CutPrefix(command, "call ")
 	suffix, args, _ := strings.Cut(rest, " ")
 	if args == "" {
 		args = "{}"
@@ -163,6 +173,9 @@ type stores struct {
 	push     notify.Registry
 	// pusher 非 nil 时启用提醒，推送交给它。
 	pusher notify.Pusher
+	// voice 是 Call 的脚本化实时语音模型；holdFor 是 run_task 挂起等待结果的时长（0 为默认）。
+	voice   *fake.Provider
+	holdFor time.Duration
 }
 
 func memStores() stores {
@@ -173,14 +186,15 @@ func memStores() stores {
 		artifacts: &artifact.Service{Meta: artifact.NewMemMeta(), Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk},
 		index:     lifecycle.NewMemIndex(), deletions: lifecycle.NewMemDeletions(), janitorQueue: memqueue.New(clk),
 		memories: memory.NewMemStore(), grants: memory.NewMemGrants(), presence: presence.NewMem(),
-		push: notify.NewMemRegistry(),
+		push: notify.NewMemRegistry(), voice: &fake.Provider{},
 	}
 }
 
 // instance 启动一个 yanshi 实例：workers 个 Worker，serve 为 true 时提供 HTTP API 与 Node 网关。
 func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server {
 	agents, err := agentdef.NewRegistry(&agentdef.Def{Name: "dev", Version: "1", Model: "script/any",
-		Capabilities: []string{"ask_user", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*", "mcp:*/*"}, Memory: agentdef.MemoryConfig{Recall: 5}})
+		Capabilities: []string{"ask_user", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*", "mcp:*/*"}, Memory: agentdef.MemoryConfig{Recall: 5},
+		Call: agentdef.CallConfig{Model: "fake/voice", Voice: "v1", Instructions: "你是语音助手"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,8 +248,13 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 		return nil
 	}
 	mux := http.NewServeMux()
+	rg := realtime.NewGateway()
+	if st.voice != nil {
+		rg.Register("fake", st.voice)
+	}
+	calls := &call.Manager{Service: svc, Realtime: rg, Feed: feed.Source{Log: st.log, Live: bus, Deletions: st.deletions}, HoldFor: st.holdFor}
 	gwy := &wsgateway.Gateway{Hub: hub, Channel: &channel.Handler{Service: svc, Live: bus,
-		Presence: &presence.Service{Store: st.presence, Deletions: st.deletions, Clock: clk}, Push: st.push}}
+		Presence: &presence.Service{Store: st.presence, Deletions: st.deletions, Clock: clk}, Push: st.push, Calls: calls}}
 	mux.Handle("/v1/connect", gwy)
 	mux.Handle("/v1/nodes/connect", gwy)
 	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: st.dir, Artifacts: st.artifacts, Memory: mems}).Handler())

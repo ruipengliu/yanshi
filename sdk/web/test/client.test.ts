@@ -224,3 +224,72 @@ test("the token is fetched again on every connection", async () => {
   assert.equal(s.sent[0]?.msg.case === "hello" && s.sent[0].msg.value.token, "tok-2");
   c.stop();
 });
+
+test("a call starts, relays audio both ways and ends", async () => {
+  const net = new FakeNetwork();
+  const c = client(net);
+  const s = await net.connect(1);
+  const heard: number[] = [];
+  const ended: string[] = [];
+  const texts: string[] = [];
+  const pending = c.startCall("s1", {
+    onAudio: (pcm) => heard.push(...pcm),
+    onText: (t) => texts.push(`${t.role}:${t.text}`),
+    onEnded: (r) => ended.push(r),
+  });
+  const start = await s.next("callStart");
+  assert.equal(start.sessionId, "s1");
+  s.push({
+    msg: {
+      case: "callEvent",
+      value: { callId: start.callId, kind: { case: "ready", value: { model: "volc/x", outputSampleRate: 24000 } } },
+    },
+  });
+  const call = await pending;
+  assert.equal(call.model, "volc/x");
+
+  call.sendAudio(new Int16Array([1, -1, 256]));
+  const audio = await s.next("callAudio");
+  assert.deepEqual([...audio.pcm], [1, 0, 255, 255, 0, 1], "little-endian PCM16");
+  // 下行音频的字节可能不按 2 字节对齐。
+  const odd = new Uint8Array([9, 2, 0, 3, 0]).subarray(1);
+  s.push({ msg: { case: "callEvent", value: { callId: call.id, kind: { case: "audio", value: { pcm: odd, responseId: "r1" } } } } });
+  assert.deepEqual(heard, [2, 3]);
+  s.push({
+    msg: { case: "callEvent", value: { callId: call.id, kind: { case: "text", value: { role: "user", text: "你好", final: true } } } },
+  });
+  assert.deepEqual(texts, ["user:你好"]);
+
+  call.mute(true);
+  call.hangup();
+  const controls = s.sent.filter((m) => m.msg.case === "callControl").map((m) => (m.msg.case === "callControl" ? m.msg.value.action : 0));
+  assert.deepEqual(controls, [1, 4]);
+  s.push({ msg: { case: "callEvent", value: { callId: call.id, kind: { case: "ended", value: { callId: call.id, reason: "hangup" } } } } });
+  assert.deepEqual(ended, ["hangup"]);
+  assert.equal(call.ended, true);
+  c.stop();
+});
+
+test("a call that cannot start is rejected; a dropped connection ends the call", async () => {
+  const net = new FakeNetwork();
+  const c = client(net);
+  let s = await net.connect(1);
+  const refused = c.startCall("s1", { onAudio() {} });
+  const start = await s.next("callStart");
+  s.push({
+    msg: { case: "callEvent", value: { callId: start.callId, kind: { case: "error", value: { code: "invalid", message: "no calls" } } } },
+  });
+  await assert.rejects(refused, (e) => e instanceof RequestError && e.code === "invalid");
+
+  const ended: string[] = [];
+  const pending = c.startCall("s1", { onAudio() {}, onEnded: (r) => ended.push(r) });
+  const second = await s.next("callStart", s.sent.indexOf(s.sent.find((m) => m.msg.case === "callStart")!) + 1);
+  s.push({ msg: { case: "callEvent", value: { callId: second.callId, kind: { case: "ready", value: {} } } } });
+  const call = await pending;
+  s.drop();
+  s = await net.connect(2);
+  assert.deepEqual(ended, ["disconnected"]);
+  call.sendAudio(new Int16Array(4));
+  assert.equal(s.sent.filter((m) => m.msg.case === "callAudio").length, 0, "an ended call sends nothing");
+  c.stop();
+});

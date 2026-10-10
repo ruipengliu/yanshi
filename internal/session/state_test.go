@@ -341,3 +341,60 @@ func TestInputIDs(t *testing.T) {
 		t.Fatalf("window holds %d inputs", len(st.Inputs))
 	}
 }
+
+func callStarted(id string) *v1.Event {
+	return &v1.Event{Payload: &v1.Event_CallStarted{CallStarted: &v1.CallStarted{CallId: id, DeviceId: "phone"}}}
+}
+func transcript(id, role, text string) *v1.Event {
+	return &v1.Event{Payload: &v1.Event_CallTranscript{CallTranscript: &v1.CallTranscript{CallId: id, Role: role, Text: text}}}
+}
+func callEnded(id string) *v1.Event {
+	return &v1.Event{Payload: &v1.Event_CallEnded{CallEnded: &v1.CallEnded{CallId: id, Reason: "hangup"}}}
+}
+func fromCall(e *v1.Event, id string) *v1.Event {
+	switch p := e.GetPayload().(type) {
+	case *v1.Event_RunRequested:
+		p.RunRequested.FromCall = id
+	case *v1.Event_Steered:
+		p.Steered.FromCall = id
+	}
+	return e
+}
+
+// TestCalls：一个 Session 同一时刻至多一个 Call；转写与派生的输入只属于进行中的 Call；转写进入对话上下文；
+// 关闭 Session 前须结束 Call。
+func TestCalls(t *testing.T) {
+	st, err := Reduce(build(created(), callStarted("a"), transcript("a", "user", "hi"), fromCall(requested("r1"), "a"),
+		fromCall(steered("r1"), "a"), transcript("a", "assistant", "ok"), callEnded("a"), callStarted("b")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.ActiveCall == nil || st.ActiveCall.ID != "b" || st.ActiveCall.DeviceID != "phone" {
+		t.Fatalf("active call = %+v", st.ActiveCall)
+	}
+	n := 0
+	for _, e := range st.History {
+		if e.GetCallTranscript() != nil {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("history holds %d transcripts", n)
+	}
+	for name, events := range map[string][]*v1.Event{
+		"two calls at once":           {created(), callStarted("a"), callStarted("b")},
+		"transcript without a call":   {created(), transcript("a", "user", "hi")},
+		"transcript of another call":  {created(), callStarted("a"), transcript("b", "user", "hi")},
+		"transcript with a bad role":  {created(), callStarted("a"), transcript("a", "system", "hi")},
+		"empty transcript":            {created(), callStarted("a"), transcript("a", "user", "")},
+		"run from an ended call":      {created(), callStarted("a"), callEnded("a"), fromCall(requested("r1"), "a")},
+		"steer from an inactive call": {created(), requested("r1"), fromCall(steered("r1"), "a")},
+		"end an unknown call":         {created(), callEnded("a")},
+		"close during a call":         {created(), callStarted("a"), closed()},
+		"call without an id":          {created(), callStarted("")},
+	} {
+		if _, err := Reduce(build(events...)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

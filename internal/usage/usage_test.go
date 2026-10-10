@@ -122,3 +122,21 @@ func TestMeterAnonymizesAfterDeletion(t *testing.T) {
 		t.Fatalf("late usage after session deletion: %+v", rows)
 	}
 }
+
+// TestCallCost：实时语音模型按文本与音频分别计价；命中缓存的部分先从文本输入中扣除；未配置音频单价时按文本单价计。
+func TestCallCost(t *testing.T) {
+	cached, inAudio, outAudio := 5.0, 80.0, 300.0
+	p := &usage.PriceList{Models: map[string]usage.Price{
+		"volc/x": {Input: 10, Output: 80, CachedInput: &cached, InputAudio: &inAudio, OutputAudio: &outAudio},
+		"plain":  {Input: 1, Output: 2},
+	}}
+	// 文本输入 5000（其中缓存 4000）、音频输入 100、文本输出 50、音频输出 200。
+	got := p.CallCost("volc/x", usage.CallTokens{InputText: 5000, InputAudio: 100, CachedInput: 4000, OutputText: 50, OutputAudio: 200})
+	want := int64(1000*10 + 100*80 + 4000*5 + 50*80 + 200*300)
+	if got != want {
+		t.Fatalf("cost = %d, want %d", got, want)
+	}
+	if got := p.CallCost("plain", usage.CallTokens{InputText: 10, InputAudio: 10, OutputText: 1, OutputAudio: 1}); got != 20*1+2*2 {
+		t.Fatalf("fallback cost = %d", got)
+	}
+}

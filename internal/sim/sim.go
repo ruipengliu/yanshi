@@ -122,6 +122,10 @@ type Stats struct {
 	UIContextInputs, DuplicateInputs int
 	// 提醒：推送出去的、因用户正在看而不推的、推送通道失败（含令牌无效）的次数。
 	Notifications, NotificationsWatching, PushFailures int
+	// Call：开始（其中取代旧 Call 的）、写入的转写、被拦截的转写、派生的任务，以及中转进程的写入因 Call
+	// 已结束、Session 已关闭或删除而被拒绝的次数。
+	// CallAnswers 是派生的任务恰好回答了 Run 正在等的提问的次数。
+	CallsStarted, CallsReplaced, CallTranscripts, CallTranscriptsBlocked, CallTasks, CallAnswers, CallConflicts int
 }
 
 // hookQueue 在 Enqueue 成功后调用 after。
@@ -206,6 +210,9 @@ type World struct {
 	sessions []string
 	// nextInput 生成客户端输入 ID。
 	nextInput int
+	// calls 是各 Session 上中转进程以为进行中的 Call（可能已过时）；nextCall 生成 Call ID。
+	calls    map[string]string
+	nextCall int
 	// effects 记录非幂等 Capability（进程内与设备上）每个调用 ID 的实际执行次数。
 	effects map[string]int
 	// crash 在一次 Step 或设备执行期间可用：调用它模拟该进程在此刻崩溃。
@@ -275,6 +282,7 @@ func New(opts Options) (*World, error) {
 	w.index, w.deletions, w.janitorQueue = stores.Index, stores.Deletions, stores.JanitorQueue
 	w.presence = &presence.Service{Store: stores.Presence, Deletions: stores.Deletions, Clock: w.clock}
 	w.push, w.notified = stores.Push, map[string]bool{}
+	w.calls = map[string]string{}
 	w.notifier = &notify.Notifier{Registry: stores.Push, Presence: stores.Presence, Pusher: simPusher{w}, Clock: w.clock}
 	w.usage = &checkedUsage{Store: stores.Usage, w: w}
 	w.quotas = &usage.Quotas{Store: stores.Usage, Limits: simLimits(opts.LongRuns)}
@@ -571,6 +579,9 @@ func (w *World) tick() error {
 	case x < 0.76:
 		return w.decide(false)
 	case x < 0.82:
+		if w.chance(0.25) {
+			return w.callStep()
+		}
 		return w.submit()
 	case x < 0.83:
 		return w.presenceStep()

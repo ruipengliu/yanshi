@@ -1,0 +1,12 @@
+name: call-chitchat
+description: 通话中的闲聊与常识问答由语音模型直接回答，不派生后台任务（docs/design/m3-call.md §5）
+call: true
+trials: 3
+turns:
+  - input: "你好呀，今天心情还不错，跟我随便聊两句吧。"
+    expect:
+      tasks: {max: 0}
+  - input: "一年有多少天？"
+    expect:
+      tasks: {max: 0}
+      reply_contains: ["365"]

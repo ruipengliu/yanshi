@@ -42,6 +42,16 @@ func (m *Meter) Model(ctx context.Context, s Scope, id, agent, model string, u *
 		Cost: m.Prices.ModelCost(model, u.GetInputTokens(), u.GetCachedInputTokens(), u.GetOutputTokens()), At: at})
 }
 
+// Call 记录 Call 中实时语音模型的一轮交互。id 是该轮的唯一 ID（Call ID 加轮次），agent 是 name@version。
+func (m *Meter) Call(ctx context.Context, s Scope, id, agent, model string, t CallTokens, at time.Time) {
+	if m == nil {
+		return
+	}
+	m.record(ctx, s, &Entry{ID: id, BusinessLine: s.BusinessLine, EndUser: s.EndUser, Kind: Call, Model: model, Agent: agent,
+		InputTokens: t.InputText + t.InputAudio, CachedInputTokens: min(t.CachedInput, t.InputText+t.InputAudio),
+		OutputTokens: t.OutputText + t.OutputAudio, Cost: m.Prices.CallCost(model, t), At: at})
+}
+
 // Sandbox 记录一次沙箱执行。id 取自调用的 call_id：同一调用被重新投递时不重复计费。
 func (m *Meter) Sandbox(ctx context.Context, s Scope, id string, d time.Duration, at time.Time) {
 	if m == nil {

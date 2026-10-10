@@ -17,6 +17,7 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/askuser"
+	"yanshi/internal/call"
 	"yanshi/internal/clock"
 	"yanshi/internal/feed"
 	"yanshi/internal/ids"
@@ -53,7 +54,9 @@ type Handler struct {
 	Presence *presence.Service
 	// Push 非 nil 时，设备在前台使用（聚焦 Session、提交输入、审批、回答、中断）时更新其最近使用时间，
 	// 提醒据此选择设备（§9）。
-	Push  notify.Registry
+	Push notify.Registry
+	// Calls 为 nil 时不支持 Call（docs/design/m3-call.md）。
+	Calls *call.Manager
 	Clock clock.Clock
 	// IDs 生成连接 ID，默认随机。
 	IDs    ids.Generator
@@ -85,6 +88,14 @@ type Conn struct {
 	touched time.Time
 	// last 是每个 Session 最近一次的订阅（含已退订、尚未退出的）：新订阅须等它退出后再写在场记录。
 	last map[string]*subscription
+	// call 是本连接正在进行（或正在开始）的 Call；一条连接同一时刻至多一个。
+	call *callSlot
+}
+
+// callSlot 是本连接的 Call：开始期间 c 为 nil（音频与控制在接通之前丢弃）。
+type callSlot struct {
+	id string
+	c  *call.Call
 }
 
 type subscription struct {
@@ -160,6 +171,12 @@ func (c *Conn) heartbeat() {
 // Close 结束全部订阅与进行中的请求，并等待它们退出。
 func (c *Conn) Close() {
 	c.cancel()
+	c.mu.Lock()
+	slot := c.call
+	c.mu.Unlock()
+	if slot != nil && slot.c != nil {
+		slot.c.End("disconnected")
+	}
 	c.wg.Wait()
 }
 
@@ -175,6 +192,17 @@ func (c *Conn) Handle(m *v1.NodeMessage) bool {
 			c.touch()
 		}
 		c.activity(m.Activity)
+	case *v1.NodeMessage_CallStart:
+		c.touch()
+		c.startCall(m.CallStart)
+	case *v1.NodeMessage_CallAudio:
+		if cl := c.activeCall(m.CallAudio.GetCallId()); cl != nil {
+			cl.Audio(m.CallAudio.GetPcm())
+		}
+	case *v1.NodeMessage_CallControl:
+		if cl := c.activeCall(m.CallControl.GetCallId()); cl != nil {
+			cl.Control(m.CallControl.GetAction())
+		}
 	case *v1.NodeMessage_Request:
 		if _, ok := m.Request.GetOp().(*v1.ClientRequest_CreateSession); !ok {
 			c.touch()
@@ -379,6 +407,71 @@ func (h *Handler) do(ctx context.Context, id Identity, req *v1.ClientRequest, re
 	return fmt.Errorf("%w: unknown request", service.ErrInvalid)
 }
 
+// activeCall 返回本连接上 ID 为 id 的已接通的 Call。
+func (c *Conn) activeCall(id string) *call.Call {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.call == nil || c.call.id != id {
+		return nil
+	}
+	return c.call.c
+}
+
+// startCall 在独立的 goroutine 中开始 Call（连接实时语音模型需要时间），不阻塞读循环。
+func (c *Conn) startCall(m *v1.CallStart) {
+	fail := func(err error) {
+		_ = c.send(&v1.GatewayMessage{Msg: &v1.GatewayMessage_CallEvent{CallEvent: &v1.CallEvent{CallId: m.GetCallId(),
+			Kind: &v1.CallEvent_Error{Error: c.h.clientError(err)}}}})
+	}
+	if c.h.Calls == nil {
+		fail(call.ErrNotSupported)
+		return
+	}
+	c.mu.Lock()
+	if c.call != nil {
+		c.mu.Unlock()
+		fail(fmt.Errorf("%w: a call is already in progress on this connection", service.ErrConflict))
+		return
+	}
+	slot := &callSlot{id: m.GetCallId()}
+	c.call = slot
+	c.mu.Unlock()
+	release := func() {
+		c.mu.Lock()
+		if c.call == slot {
+			c.call = nil
+		}
+		c.mu.Unlock()
+	}
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		if _, err := c.h.load(c.ctx, c.id, m.GetSessionId()); err != nil {
+			release()
+			fail(err)
+			return
+		}
+		out := func(e *v1.CallEvent) error {
+			return c.send(&v1.GatewayMessage{Msg: &v1.GatewayMessage_CallEvent{CallEvent: e}})
+		}
+		cl, err := c.h.Calls.Start(c.ctx, call.StartRequest{SessionID: m.GetSessionId(), CallID: m.GetCallId(), DeviceID: c.id.DeviceID}, out)
+		if err != nil {
+			release()
+			fail(err)
+			return
+		}
+		c.mu.Lock()
+		slot.c = cl
+		c.mu.Unlock()
+		// 连接在开始期间断开：Close 看不到这个 Call，由这里挂断。
+		if c.ctx.Err() != nil {
+			cl.End("disconnected")
+		}
+		<-cl.Done()
+		release()
+	}()
+}
+
 // clientError 与 HTTP API 的状态码一一对应（httpapi.Server.fail）。
 func (h *Handler) clientError(err error) *v1.ClientError {
 	e := &v1.ClientError{Code: "internal", Message: err.Error()}
@@ -392,7 +485,7 @@ func (h *Handler) clientError(err error) *v1.ClientError {
 		e.Code = "conflict"
 	case errors.Is(err, moderation.ErrRejected):
 		e.Code = "rejected"
-	case errors.Is(err, moderation.ErrUnavailable):
+	case errors.Is(err, moderation.ErrUnavailable), errors.Is(err, call.ErrProvider):
 		e.Code = "unavailable"
 	case errors.As(err, &ex):
 		e.Code, e.RetryAt = "quota_exceeded", timestamppb.New(ex.Period.ResetAt)

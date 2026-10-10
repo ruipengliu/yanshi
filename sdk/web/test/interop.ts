@@ -121,6 +121,29 @@ async function main(): Promise<void> {
   await until("run completes", () => onA.completed() === 3);
   assert.equal(onA.events.filter((e) => e.payload.case === "runRequested").length, 3);
 
+  // Call：经网关中转到 e2e 的脚本化语音模型——上行一帧以 "utt:" 开头即一整句话（internal/realtime/fake）。
+  const utter = (text: string) => {
+    const b = new Uint8Array(640);
+    b.set(new TextEncoder().encode("utt:" + text));
+    return b;
+  };
+  const heard = { audio: 0, texts: [] as string[], tasks: [] as string[], ended: "" };
+  const call = await a.startCall(sid, {
+    onAudio: (pcm) => (heard.audio += pcm.length),
+    onText: (t) => t.final && heard.texts.push(`${t.role}:${t.text}`),
+    onTask: (t) => heard.tasks.push(t.status),
+    onEnded: (r) => (heard.ended = r),
+  });
+  assert.equal(call.outputSampleRate, 24000);
+  call.sendAudio(utter("你好"));
+  await until("call reply", () => heard.texts.includes("assistant:你说：你好") && heard.audio > 0);
+  call.sendAudio(utter("task stream 2"));
+  await until("call task completed", () => heard.tasks.includes("completed"));
+  call.hangup();
+  await until("call ended", () => heard.ended === "hangup");
+  // 另一台设备经订阅看到通话的转写（跨端一致）。
+  await until("B sees the call", () => onB.events.some((e) => e.payload.case === "callTranscript" && e.payload.value.text === "你好"));
+
   // 他人的 Session 一律不存在。
   const other = await connect("web-other", otherToken);
   const onOther = new View();

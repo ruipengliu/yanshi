@@ -37,6 +37,9 @@ message Event {
     MemoryRecalled memory_recalled = 25;
     AgentSwitched agent_switched = 26;
     ContentModerated content_moderated = 27;
+    CallStarted call_started = 28;
+    CallTranscript call_transcript = 29;
+    CallEnded call_ended = 30;
   }
 }
 
@@ -113,6 +116,8 @@ message RunRequested {
   repeated ContentBlock input = 2;
   // 客户端为这条输入生成的 ID（可为空）：同一 ID 的重复提交返回首次的结果而不再写入（docs/design/m3-duplex-channel.md §5）。
   string input_id = 3;
+  // 非空表示输入由该 Call 中的语音模型派生（run_task，docs/design/m3-call.md §5）：结果会被朗读。
+  string from_call = 4;
 }
 
 // Steered 是活跃 Run 进行中的追加输入，不改变 Run 状态。
@@ -121,6 +126,8 @@ message Steered {
   repeated ContentBlock input = 2;
   // 客户端为这条输入生成的 ID（可为空）：同一 ID 的重复提交返回首次的结果而不再写入（docs/design/m3-duplex-channel.md §5）。
   string input_id = 3;
+  // 同 RunRequested.from_call。
+  string from_call = 4;
 }
 
 // AttemptStarted 标志某个 Worker 开始（或接管）执行 Run；attempt 是 fencing 令牌。
@@ -258,4 +265,35 @@ message RecalledMemory {
   string business_line = 2;
   string category = 3;
   string content = 4;
+}
+
+// CallStarted 表示 Session 中开始了一次 Call（全双工语音通话，docs/design/m3-call.md）。媒体流不进日志（ADR-0005），
+// 只记录开始、双方每句话的转写与结束。一个 Session 同一时刻至多一个进行中的 Call。
+message CallStarted {
+  // 客户端生成，在 Session 内唯一。
+  string call_id = 1;
+  // 发起通话的设备（Hello.node_id）。
+  string device_id = 2;
+  // 实时语音模型引用（provider/model）与音色。
+  string model = 3;
+  string voice = 4;
+}
+
+// CallTranscript 是 Call 中一句话的转写，写入前经过内容安全检查（ADR-0021）。它进入对话上下文：
+// 之后的 Run 与文字对话都能看到通话中说过什么。
+message CallTranscript {
+  string call_id = 1;
+  // "user" 或 "assistant"。
+  string role = 2;
+  string text = 3;
+  // 助手的话被用户打断：text 是打断前已生成的部分（不一定都播出了）。
+  bool interrupted = 4;
+}
+
+// CallEnded 表示 Call 结束。
+message CallEnded {
+  string call_id = 1;
+  // "hangup"（用户挂断）、"disconnected"（连接断开）、"provider"（实时模型结束或出错）、
+  // "replaced"（同一 Session 开始了新的 Call）、"session_closed"、"quota"、"error"。
+  string reason = 2;
 }

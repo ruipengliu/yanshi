@@ -92,7 +92,7 @@ yanshi 是公司内部的**分布式 Agent 运行时基础设施**，承载多�
 | M0 骨架 ✅ | 单二进制模式；Session / Run / Event 原语；模型网关（火山）；文本问答；确定性模拟测试框架（见 [设计](./design/m0-core-primitives.md)） |
 | M1 设备即节点 🟡 | 设备节点协议 ✅；Go SDK ✅（[移动端 gomobile 绑定](./design/m3-client-sdks.md) ✅，iOS 实测，Android 仅编译检查）；能力路由 ✅；Approval ✅；离线挂起 ✅；推送唤醒（仅桩）；见 [设计](./design/m1-device-nodes.md) |
 | M2 长任务与执行 🟡 | Sandbox 代码执行（S1 ✅ Docker 实现、代码解释器；S2 ✅ [工件存储](./design/m2-artifacts.md)，场景 A 数据通路已通；S3 预热池、S4 生产 Provider 暂缓，待沙箱服务选型（ADR-0010），见 [设计](./design/m2-sandbox.md)）；小时级 Run（[上下文压缩与无进展接管上限](./design/m2-long-runs.md) ✅，经长 Run 模拟验证；真实模型下 40 份文件、3 次压缩与 1 次接管后结果正确，固定为评测用例）；多 Worker 水平扩展（多进程共享 PostgreSQL ✅）与[扩容压测](./design/m2-scale-test.md) ✅（1→4 进程 3.67×，kill -9 不丢 Run）；[跨进程实时增量](./design/m2-live-deltas.md) ✅；[鉴权](./design/auth.md) ✅（业务线签发令牌）；[Session 生命周期与数据删除](./design/m2-session-lifecycle.md) ✅；跑通场景 A（文字版已用真实模型跑通：读电脑文件 → 沙箱处理 → Memory 识别同事 → 审批后写回电脑；语音输入与推送唤醒属于 M3） |
-| M3 实时 🟡 | [多端双工通道](./design/m3-duplex-channel.md)（一条 Connection 兼任 Node 与会话客户端 ✅、晚加入者补齐增量 ✅、在场 ✅、Agent 提问（ask_user）✅、界面上下文 ✅、输入去重 ✅、提醒 ✅（推送通道为桩））；[端侧 SDK](./design/m3-client-sdks.md) ✅（网页 TypeScript、移动端绑定）；Call 全双工通道、端侧 VAD/AEC、Call 与后台 Run 协同、跑通场景 B（语音暂缓：开发环境无法访问实时语音服务，待其余功能完成后再做） |
+| M3 实时 🟡 | [多端双工通道](./design/m3-duplex-channel.md)（一条 Connection 兼任 Node 与会话客户端 ✅、晚加入者补齐增量 ✅、在场 ✅、Agent 提问（ask_user）✅、界面上下文 ✅、输入去重 ✅、提醒 ✅（推送通道为桩））；[端侧 SDK](./design/m3-client-sdks.md) ✅（网页 TypeScript、移动端绑定）；[Call](./design/m3-call.md) ✅（豆包 Seeduplex 经网关中转、run_task 派生 Run 并回注、网页通话页；场景 B 以合成语音评测跑通：读电脑文件并口语转述、改写经审批写回）；Go 与移动端 SDK 的通话接口、语音审批、Opus 与弱网待做 |
 | M4 个性化与治理 | [Memory 与 Grant](./design/m4-memory-grant.md) ✅（已用真实模型验证）；[评测](./design/m4-eval.md) ✅（固定用例集 + 基线，线上回放只经导出）；[配额与用量计量](./design/m4-quota-usage.md) ✅（业务线月度 + EndUser 日度，按价格折算，超额挂起）；[AgentDef 灰度](./design/m4-agent-rollout.md) ✅（按 EndUser 稳定分流，撤回版本在下一个 Run 切换）；[内容安全](./design/m4-moderation.md) 🟡（检查点已实现，提供商为模拟实现，上线前接入真实提供商，见[上线检查清单](./launch-checklist.md)） |
 | M5 生态 | 注册中心；声明式 AgentDef 规范；[MCP 适配](./design/m5-mcp.md) ✅（远程 HTTP 与设备端桥接；A2A 待做）；跨节点多 Agent 编排 |
 
@@ -105,6 +105,6 @@ yanshi 是公司内部的**分布式 Agent 运行时基础设施**，承载多�
 | ~~设备节点协议~~ | M1 已定：WebSocket + protobuf，SDK 以 call_id 去重（[设计](./design/m1-device-nodes.md)） |
 | ~~端侧 SDK 实现方式~~ | 已定：手机与电脑共享 Go 核心（gomobile），网页按协议以 TypeScript 实现，消息类型一律从契约生成（[ADR-0026](./adr/0026-client-sdks-share-the-contract.md)） |
 | Sandbox 隔离方案 | 自托管（gVisor / Firecracker / Kata）或云厂商沙箱服务；与私有化约束（ADR-0001）的关系待定，见 ADR-0010 |
-| Call 媒体通道 | WebRTC 自托管方案；与实时语音模型的对接方式 |
+| ~~Call 媒体通道~~ | 已定：设备经 Connection 送 PCM 到网关，网关中转到实时语音模型（[ADR-0027](./adr/0027-call-relayed-through-the-gateway.md)）；弱网下的 Opus / RTC 待评估 |
 | 私有化下的模型接入 | 火山私有化方案与开源模型自托管推理服务的统一网关抽象 |
 | ~~Memory 的数据模型与 Grant 粒度~~ | 已定：业务线对加类别授权，召回记录为 Event（[设计](./design/m4-memory-grant.md)，ADR-0016） |

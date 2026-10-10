@@ -76,9 +76,12 @@ func transcript(st *session.State, maxToolResult int, through uint64) []model.Me
 				deferUser(&out, &deferred, pending, recall)
 				placed = true
 			}
-			deferUser(&out, &deferred, pending, p.RunRequested.GetInput())
+			deferUser(&out, &deferred, pending, model.InputBlocks(p.RunRequested.GetInput(), p.RunRequested.GetFromCall()))
 		case *v1.Event_Steered:
-			deferUser(&out, &deferred, pending, p.Steered.GetInput())
+			deferUser(&out, &deferred, pending, model.InputBlocks(p.Steered.GetInput(), p.Steered.GetFromCall()))
+		case *v1.Event_CallTranscript:
+			// 双方的话都以用户消息呈现（文本注明说话方）：助手消息只能是模型自己的输出，且不能插在调用与结果之间。
+			deferUser(&out, &deferred, pending, model.TextBlocks(model.CallTranscriptText(p.CallTranscript)))
 		case *v1.Event_AssistantMessage:
 			closePending()
 			m := p.AssistantMessage

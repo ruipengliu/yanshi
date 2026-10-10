@@ -21,15 +21,19 @@ import (
 	"yanshi/internal/agentdef"
 	"yanshi/internal/artifact"
 	"yanshi/internal/askuser"
+	"yanshi/internal/call"
 	"yanshi/internal/capability"
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/eventlog/memlog"
+	"yanshi/internal/feed"
 	"yanshi/internal/ids"
 	"yanshi/internal/lifecycle"
+	"yanshi/internal/live"
 	"yanshi/internal/memory"
 	"yanshi/internal/model"
 	"yanshi/internal/node"
+	"yanshi/internal/realtime"
 	"yanshi/internal/runtime"
 	"yanshi/internal/sandbox"
 	"yanshi/internal/service"
@@ -56,6 +60,9 @@ type Config struct {
 	AgentVersion string
 	// Sandbox 为 nil 时跳过 requires: [sandbox] 的用例。
 	Sandbox sandbox.Provider
+	// Realtime 与 Speak（把文字合成为 16 kHz PCM 语音）都配置时才运行 Call 用例（call: true），否则跳过。
+	Realtime *realtime.Gateway
+	Speak    func(ctx context.Context, text string) ([]byte, error)
 	// Trials > 0 时覆盖用例的运行次数。
 	Trials int
 	// Parallel 是同时运行的次数，默认 4。
@@ -81,6 +88,7 @@ type instance struct {
 	workers *workerPool
 	arts    *artifact.Service
 	crm     *crmServer
+	calls   *call.Manager
 }
 
 // workerPool 管理 Worker，支持"杀掉"一个 Worker 并补充新的（CrashAfterCalls）。
@@ -151,6 +159,10 @@ func Run(ctx context.Context, cfg Config, cases []*Case) (*Report, error) {
 			res.Skipped = "requires sandbox"
 			continue
 		}
+		if c.Call && (cfg.Realtime == nil || cfg.Speak == nil) {
+			res.Skipped = "requires a realtime model and speech synthesis"
+			continue
+		}
 		res.Trials = c.Trials
 		if cfg.Trials > 0 {
 			res.Trials = cfg.Trials
@@ -214,10 +226,11 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 	svc := &service.Service{Store: store, Queue: queue, Agents: agents, Nodes: router,
 		Index: lifecycle.NewMemIndex(), Deletions: lifecycle.NewMemDeletions()}
 	idle := &workqueue.IdleGate{Ready: queue.Ready()}
+	bus := live.NewMemBus()
 	pool := &workerPool{ctx: ctx, cancels: map[string]context.CancelFunc{}, newCfg: func(id string) runtime.Config {
 		return runtime.Config{ID: id, Store: store, Queue: queue, Agents: agents,
 			Model: cfg.Model, Catalog: catalog, Dispatch: router, Artifacts: arts, Memory: mems, Logger: cfg.Logger,
-			LeaseTTL: cfg.LeaseTTL, Heartbeat: cfg.LeaseTTL / 3, Idle: idle}
+			LeaseTTL: cfg.LeaseTTL, Heartbeat: cfg.LeaseTTL / 3, Idle: idle, Live: bus}
 	}}
 	for range 2 * cfg.Parallel {
 		pool.spawn()
@@ -227,7 +240,8 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 			Ledger: nodesdk.NewMemLedger(), Artifacts: arts, Clock: clk, Logger: cfg.Logger, LeaseTTL: 30 * time.Second, Heartbeat: 10 * time.Second}
 		go c.Run(ctx)
 	}
-	in := &instance{cfg: cfg, svc: svc, hub: hub, mems: mems, agents: agents, version: versions, workers: pool, arts: arts}
+	in := &instance{cfg: cfg, svc: svc, hub: hub, mems: mems, agents: agents, version: versions, workers: pool, arts: arts,
+		calls: &call.Manager{Service: svc, Realtime: cfg.Realtime, Feed: feed.Source{Log: store.Log, Live: bus}, Logger: cfg.Logger}}
 	if slices.ContainsFunc(cases, func(c *Case) bool { return c.Setup.CRM }) {
 		crm, err := startCRM(ctx, arts, cfg.Logger)
 		if err != nil {
@@ -340,8 +354,19 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 	if in.cfg.LogDir != "" {
 		defer func() { in.dumpLogs(ctx, fmt.Sprintf("%s-%d", c.Name, trial+1), sessions) }()
 	}
+	var voice *call.Call
+	var rec *callRecorder
+	defer func() {
+		if voice != nil {
+			voice.End(service.CallEndHangup)
+		}
+	}()
 	for ti, turn := range c.Turns {
 		if sid == "" || turn.NewSession {
+			if c.Call && sid != "" {
+				tr.Err = "call cases do not support new_session"
+				return tr
+			}
 			id, err := in.svc.Create(tctx, service.CreateRequest{BusinessLine: BusinessLine, EndUser: endUser, Agent: c.Agent, AgentVersion: in.version[c.Name]})
 			if err != nil {
 				tr.Err = "create session: " + err.Error()
@@ -349,8 +374,20 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 			}
 			sid = id
 			sessions = append(sessions, id)
+			if c.Call {
+				if voice, rec, err = in.startCall(tctx, sid); err != nil {
+					tr.Err = "start call: " + err.Error()
+					return tr
+				}
+			}
 		}
-		obs, err := in.turn(tctx, sid, turn, c.Timeout)
+		var obs *observation
+		var err error
+		if c.Call {
+			obs, err = in.callTurn(tctx, voice, rec, sid, turn, c.Timeout)
+		} else {
+			obs, err = in.turn(tctx, sid, turn, c.Timeout)
+		}
 		if err != nil {
 			tr.Err = fmt.Sprintf("turn %d: %v", ti+1, err)
 			return tr
@@ -391,6 +428,7 @@ type observation struct {
 	tickets                []string // CRM 中本 EndUser 的工单
 	inTokens, cachedTokens uint64   // 本轮模型调用的输入 token 与其中命中前缀缓存的部分
 	callArgs               []string // 与 calls 一一对应的调用参数
+	tasks                  []string // Call 中派生的任务（run_task 的 task）
 }
 
 // turn 提交一轮输入，按 approve 自动作出审批决定，等待 Run 结束并收集本轮的事件。
@@ -474,6 +512,12 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 	if asked {
 		obs.status = "asked"
 	}
+	collect(events, obs)
+	return obs, nil
+}
+
+// collect 从本轮的事件中收集调用、审批、回复与用量。
+func collect(events []*v1.Event, obs *observation) {
 	results := map[string]string{}
 	for _, e := range events {
 		switch p := e.GetPayload().(type) {
@@ -524,7 +568,6 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 			obs.inTokens, obs.cachedTokens = obs.inTokens+u.GetInputTokens(), obs.cachedTokens+u.GetCachedInputTokens()
 		}
 	}
-	return obs, nil
 }
 
 // pendingQuestion 返回 Run 中尚未回答、也未经本轮脚本回答过的 ask_user 提问。
@@ -676,6 +719,10 @@ func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation)
 	}
 	for _, want := range e.Tickets {
 		add("tickets "+want, slices.ContainsFunc(o.tickets, func(t string) bool { return strings.Contains(t, want) }), fmt.Sprintf("tickets %v", o.tickets))
+	}
+	inRange("tasks", e.Tasks, len(o.tasks))
+	for _, sub := range e.TaskContains {
+		add("task_contains "+sub, slices.ContainsFunc(o.tasks, func(t string) bool { return strings.Contains(t, sub) }), fmt.Sprintf("tasks %q", o.tasks))
 	}
 	inRange("compactions", e.Compactions, o.compactions)
 	inRange("takeovers", e.Takeovers, o.takeovers)

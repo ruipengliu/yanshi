@@ -66,16 +66,25 @@ func hasUIContext(blocks []*v1.ContentBlock) bool {
 	return false
 }
 
-// userText 是上下文中 EndUser 本人的输入：新 Run、插话，以及对 ask_user 提问的回答（ADR-0025）。
+// userText 是上下文中 EndUser 本人的输入：新 Run、插话、对 ask_user 提问的回答（ADR-0025），以及 Call 中
+// 用户说的话（转写）。Call 派生的任务是语音模型的转述，不是用户的原话，不计入（docs/design/m3-call.md §6）。
 func userText(st *session.State) string {
 	var b strings.Builder
 	questions := map[string]bool{}
 	for _, e := range st.History {
 		switch p := e.GetPayload().(type) {
 		case *v1.Event_RunRequested:
-			b.WriteString(model.Text(p.RunRequested.GetInput()))
+			if p.RunRequested.GetFromCall() == "" {
+				b.WriteString(model.Text(p.RunRequested.GetInput()))
+			}
 		case *v1.Event_Steered:
-			b.WriteString(model.Text(p.Steered.GetInput()))
+			if p.Steered.GetFromCall() == "" {
+				b.WriteString(model.Text(p.Steered.GetInput()))
+			}
+		case *v1.Event_CallTranscript:
+			if p.CallTranscript.GetRole() == "user" {
+				b.WriteString(p.CallTranscript.GetText())
+			}
 		case *v1.Event_AssistantMessage:
 			for _, tc := range p.AssistantMessage.GetToolCalls() {
 				if tc.GetCapability() == askuser.Capability {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -122,6 +123,32 @@ func UIContextText(u *v1.UIContext) string {
 	}
 	b.WriteString("[界面上下文结束]\n")
 	return b.String()
+}
+
+// CallTranscriptText 把 Call 中的一句话呈现为给模型看的文本（docs/design/m3-call.md §4）：
+// 通话内容以用户消息的形式进入上下文，前缀注明来自语音通话与说话的一方。
+func CallTranscriptText(t *v1.CallTranscript) string {
+	who := "用户"
+	if t.GetRole() == "assistant" {
+		who = "语音助手"
+	}
+	text := t.GetText()
+	if t.GetInterrupted() {
+		text += "……（被用户打断）"
+	}
+	return fmt.Sprintf("[语音通话] %s：%s", who, text)
+}
+
+// FromCallNote 附在 Call 中派生的任务之后（docs/design/m3-call.md §5）：任务由通话中的语音助手转述，
+// 最终回复会被朗读给用户。
+const FromCallNote = "\n[这条任务由语音通话中的语音助手转述，你的最终回复会被朗读给用户：用一两句口语说出结果，不要用 Markdown、列表、表格或链接；细节已经保存在对话中时，提一句即可]"
+
+// InputBlocks 是一条输入在模型上下文中的内容：Call 派生的输入后附 FromCallNote。
+func InputBlocks(input []*v1.ContentBlock, fromCall string) []*v1.ContentBlock {
+	if fromCall == "" {
+		return input
+	}
+	return append(slices.Clip(input), TextBlocks(FromCallNote)...)
 }
 
 // DescribeMedia 把非文本内容呈现为给模型看的一行文本，如 "[artifact art_x: chart.png, image/png, 7.6 KB]"。

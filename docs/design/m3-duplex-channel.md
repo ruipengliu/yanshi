@@ -22,6 +22,7 @@ HostApp 实例与网关之间只保持一条 **Connection**（WebSocket，路径
 |---|---|---|
 | Node | `Hello.capabilities`、`Invoke` / `InvokeResult` / `Cancel` / `ResultAck` | `node.Hub`（M1） |
 | 会话客户端 | `Subscribe` / `Unsubscribe`、`ClientRequest` / `ClientResponse`、`Event`、`LiveDelta`、`SubscriptionEnded` | `channel` 包 |
+| Call | `CallStart` / `CallAudio` / `CallControl`、`CallEvent` | `channel` 包转给 `call`（[Call](./m3-call.md)） |
 
 - **Node 角色可选。** `Hello.client_only = true` 时只认证、不登记为 Node，用于网页等不提供 Capability 的端；此时不能声明 Capability。
 - **身份来自令牌。** 和 Node 一样，以 `Hello.token` 中的用户令牌认证（[鉴权](./auth.md)）。会话客户端只能访问令牌中 EndUser 在该业务线下的 Session，其余一律按不存在处理（`not_found`），与 HTTP API 一致。令牌到期时整条连接断开，SDK 取新令牌重连。

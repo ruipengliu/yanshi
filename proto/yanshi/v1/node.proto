@@ -42,6 +42,9 @@ message NodeMessage {
     Unsubscribe unsubscribe = 4;
     ClientRequest request = 5;
     Activity activity = 6;
+    CallStart call_start = 7;
+    CallAudio call_audio = 8;
+    CallControl call_control = 9;
   }
 }
 
@@ -58,6 +61,7 @@ message GatewayMessage {
     ClientResponse response = 7;
     SubscriptionEnded subscription_ended = 8;
     Presence presence = 9;
+    CallEvent call_event = 10;
   }
 }
 
@@ -261,4 +265,94 @@ message Viewer {
   string kind = 3;
   bool focused = 4;
   bool typing = 5;
+}
+
+// —— Call（全双工语音通话，docs/design/m3-call.md）——
+// 音频经连接中转：设备 ⇄ 网关 ⇄ 实时语音模型（ADR-0027）。一条连接同一时刻至多一个 Call。
+
+// CallStart 在 Session 中开始一次 Call。成功时收到 CallEvent.ready，之后才发送音频；失败时收到 CallEvent.error。
+// 同一 Session 中已有进行中的 Call 时，旧的随之结束（"replaced"）。
+message CallStart {
+  // 客户端生成（建议随机），之后的消息以它关联。
+  string call_id = 1;
+  string session_id = 2;
+}
+
+// CallAudio 是麦克风音频：PCM 16 位小端、单声道、16000 Hz。按实时节奏发送，建议每帧 20 ms（640 字节）；
+// 网关按 20 ms 的节奏转发给模型，网络抖动造成的积压在 1 秒以内会被平滑，超过时丢弃最旧的音频。
+message CallAudio {
+  string call_id = 1;
+  bytes pcm = 2;
+}
+
+message CallControl {
+  string call_id = 1;
+  CallAction action = 2;
+}
+
+enum CallAction {
+  CALL_ACTION_UNSPECIFIED = 0;
+  // 关闭 / 打开麦克风：静音期间无需发送音频。
+  CALL_ACTION_MUTE = 1;
+  CALL_ACTION_UNMUTE = 2;
+  // 用户在界面上打断助手的播报（说话打断由模型检测，无需发送）。
+  CALL_ACTION_INTERRUPT = 3;
+  CALL_ACTION_HANGUP = 4;
+}
+
+// CallEvent 是网关发给发起设备的 Call 消息。其他设备经订阅看到日志中的 CallStarted / CallTranscript / CallEnded。
+message CallEvent {
+  string call_id = 1;
+  oneof kind {
+    CallReady ready = 2;
+    CallOutputAudio audio = 3;
+    // 检测到用户开始说话：客户端立即停止播放尚未播完的音频（打断）。
+    CallSpeech speech = 4;
+    CallText text = 5;
+    CallResponseDone response_done = 6;
+    CallTask task = 7;
+    CallEnded ended = 8;
+    // CallStart 失败（Session 不存在、Agent 不支持通话、配额用尽等）；Call 没有开始。
+    ClientError error = 9;
+  }
+}
+
+message CallReady {
+  // 实时语音模型引用与音色。
+  string model = 1;
+  string voice = 2;
+  // 上行与下行音频的采样率（Hz）；均为 PCM 16 位小端、单声道。
+  uint32 input_sample_rate = 3;
+  uint32 output_sample_rate = 4;
+}
+
+// CallOutputAudio 是助手的语音：PCM 16 位小端、单声道，采样率见 CallReady。
+message CallOutputAudio {
+  bytes pcm = 1;
+  // 所属的一次回复；被打断后，旧回复迟到的音频应丢弃。
+  string response_id = 2;
+}
+
+message CallSpeech {}
+
+// CallText 是转写：用户的话（识别中的与整句）与助手的话（增量与整句）。整句同时以 CallTranscript 写入日志。
+message CallText {
+  // "user" 或 "assistant"。
+  string role = 1;
+  string text = 2;
+  // false 时 text 是增量（助手）或识别中的整句（用户，替换上一条）；true 时是整句。
+  bool final = 3;
+  string response_id = 4;
+}
+
+message CallResponseDone {
+  string response_id = 1;
+}
+
+// CallTask 是通话中派生的后台任务（run_task）的进展。
+message CallTask {
+  string run_id = 1;
+  // "started"（开启新 Run）、"steered"（并入进行中的 Run）、"answered"（回答了 Run 的提问）、
+  // "waiting"（Run 在等用户审批或回答）、"completed"、"failed"、"interrupted"。
+  string status = 2;
 }

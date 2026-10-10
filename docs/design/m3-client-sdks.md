@@ -56,6 +56,14 @@ await client.answer(sessionId, questions.questions[0].callId, { selected: ["b"] 
   - 请求接受 `AbortSignal`。
   - 回调抛出的异常交给 `onHandlerError`，不中断连接。
 
+**通话**（[Call](./m3-call.md) §8）：`await client.startCall(sessionId, {onAudio, onSpeech, onText, onTask, onEnded})` 在接通后返回 `Call`：
+- `sendAudio(Int16Array)` 发送 16 kHz 的麦克风音频；
+- `mute`、`interrupt`、`hangup`；
+- `onAudio` 收到 24 kHz 的语音；
+- 连接断开时 `onEnded("disconnected")`。
+
+麦克风采集、重采样与播放见网页通话页（`internal/webui/static/call.js`）。Go 与移动端的通话接口尚未提供。
+
 ## 3. 移动端（`sdk/mobile`）
 
 gomobile 只能跨语言传基本类型、`[]byte`、结构体指针与接口，所以：

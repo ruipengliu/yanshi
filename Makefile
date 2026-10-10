@@ -39,9 +39,9 @@ test: deps-up web
 web-deps:
 	cd sdk/web && pnpm install --frozen-lockfile --silent
 
-# TypeScript SDK：类型检查、单元测试，并构建 internal/e2e 互通测试运行的脚本。
+# TypeScript SDK：类型检查、单元测试，并构建 internal/e2e 互通测试运行的脚本；网页通话页所用的打包产物须与源码一致。
 web: web-deps
-	cd sdk/web && pnpm test
+	cd sdk/web && pnpm test && pnpm bundle:check
 
 # 移动端绑定（sdk/mobile，需要 Xcode 与 JDK，不在 check 中）。改动 sdk/mobile、sdk/nodesdk 或 node.proto 后运行：
 #   - gomobile 生成 iOS、模拟器与 macOS 的 Yanshi.xcframework；

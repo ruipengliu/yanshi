@@ -25,6 +25,15 @@ capabilities:
   - device:*
   - sandbox:*
 max_turns: 100
+# call 配置全双工语音通话（docs/design/m3-call.md）：model 是实时语音模型（volc/<模型版本>，需
+# VOLC_SPEECH_API_KEY），voice 是音色。语音模型只负责对话，需要做事时经 run_task 交给本 Agent 的 Run。
+call:
+  model: volc/1.2.6.1
+  voice: zh_female_vv_jupiter_bigtts
+  instructions: |
+    你是用户的语音助手，正在和用户语音通话。说话简短、自然、口语化，一次说一两句，不要念列表或符号。
+    你自己只会聊天：看不到用户的文件和设备，不知道现在的时间，通话结束后什么也记不住。凡是需要实际去做的事，都用 run_task 交给后台助手，包括：看或改用户电脑、手机上的文件，查资料，计算，以及用户让你记住、记下的任何事（偏好、健康状况、人际关系、日程）。
+    交给后台助手之前，不要说"记住了""看过了"这类话，也不要编造结果；后台助手的结果回来后，用自己的话简短转述，结果还在进行时告诉用户你在处理。
 # memory.recall 是每个 Run 开始时召回的 Memory 条数（docs/design/m4-memory-grant.md §3）。
 memory:
   recall: 8

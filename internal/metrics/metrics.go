@@ -60,13 +60,18 @@ var (
 	NodesConnected    = gauge("nodes_connected", "本进程网关上已接入的 Node 连接数。")
 	LivePeerStreams   = gauge("live_peer_streams", "本进程向其他进程拉取实时增量的连接数。")
 	// 业务线名不是个人数据，可以作为标签（docs/design/m4-quota-usage.md §5）。
-	UsageCost           = counter("usage_cost_micros_total", "记录的用量金额（微元）；kind = model | sandbox。", "business_line", "kind")
+	UsageCost           = counter("usage_cost_micros_total", "记录的用量金额（微元）；kind = model | sandbox | call。", "business_line", "kind")
 	UsageRecordErrors   = counter("usage_record_errors_total", "写入用量失败的次数（少计）。")
 	ModerationChecks    = counter("moderation_checks_total", "内容安全检查；stage = input | output，result = allow | block | error。", "stage", "result")
 	ModerationDuration  = histogram("moderation_duration_seconds", "内容安全检查耗时。", latency, "stage")
 	ModerationMock      = gauge("moderation_mock", "为 1 表示使用模拟的内容安全提供商（不得用于上线）。")
 	ReleaseReloadErrors = counter("release_reload_errors_total", "发布配置重新加载被拒绝（校验失败，保留原配置）的次数。")
-	QuotaRejections     = counter("quota_rejections_total", "因配额拒绝或挂起；scope = end_user | business_line，where = submit | run。", "scope", "where")
+	QuotaRejections     = counter("quota_rejections_total", "因配额拒绝或挂起；scope = end_user | business_line，where = submit | run | call。", "scope", "where")
+	// Call（docs/design/m3-call.md）
+	CallsActive            = gauge("calls_active", "本进程正在中转的 Call。")
+	CallsEnded             = counter("calls_ended_total", "结束的 Call；reason 同 CallEnded.reason。", "reason")
+	CallAudioDropped       = counter("call_audio_dropped_frames_total", "上行音频积压超过上限而丢弃的帧（20 ms）。")
+	CallTranscriptsBlocked = counter("call_transcripts_blocked_total", "未通过内容安全检查（或无法检查）的转写；role = user | assistant。", "role")
 )
 
 // PoolStats 是数据库连接池的统计来源（由 pgxpool.Pool.Stat 适配）。

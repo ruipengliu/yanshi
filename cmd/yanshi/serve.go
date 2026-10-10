@@ -22,12 +22,14 @@ import (
 	"yanshi/internal/artifact/pgartifact"
 	"yanshi/internal/artifact/s3blob"
 	"yanshi/internal/auth"
+	"yanshi/internal/call"
 	"yanshi/internal/capability"
 	"yanshi/internal/channel"
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/eventlog/memlog"
 	"yanshi/internal/eventlog/pglog"
+	"yanshi/internal/feed"
 	"yanshi/internal/httpapi"
 	"yanshi/internal/ids"
 	"yanshi/internal/janitor"
@@ -52,6 +54,8 @@ import (
 	"yanshi/internal/pg"
 	"yanshi/internal/presence"
 	"yanshi/internal/presence/pgpresence"
+	"yanshi/internal/realtime"
+	"yanshi/internal/realtime/volc"
 	"yanshi/internal/runtime"
 	"yanshi/internal/sandbox"
 	sandboxdocker "yanshi/internal/sandbox/docker"
@@ -61,6 +65,7 @@ import (
 	"yanshi/internal/session/pgsnapshot"
 	"yanshi/internal/usage"
 	"yanshi/internal/usage/pgusage"
+	"yanshi/internal/webui"
 	"yanshi/internal/workqueue"
 	"yanshi/internal/workqueue/memqueue"
 	"yanshi/internal/workqueue/pgqueue"
@@ -153,6 +158,18 @@ func gateway(logger *slog.Logger) *model.Gateway {
 	if base := os.Getenv("YANSHI_LOCAL_BASE_URL"); base != "" {
 		gw.Register("local", &openaicompat.Provider{BaseURL: base, APIKey: os.Getenv("YANSHI_LOCAL_API_KEY")})
 		logger.Info("model provider configured", "provider", "local", "base_url", base)
+	}
+	return gw
+}
+
+// realtimeGateway 按环境变量配置实时语音模型（Call，docs/design/m3-call.md）：
+//
+//	volc  VOLC_SPEECH_API_KEY（可选 VOLC_SPEECH_URL），豆包实时语音 Seeduplex
+func realtimeGateway(logger *slog.Logger) *realtime.Gateway {
+	gw := realtime.NewGateway()
+	if key := os.Getenv("VOLC_SPEECH_API_KEY"); key != "" {
+		gw.Register("volc", &volc.Provider{APIKey: key, URL: os.Getenv("VOLC_SPEECH_URL")})
+		logger.Info("realtime provider configured", "provider", "volc")
 	}
 	return gw
 }
@@ -360,10 +377,15 @@ func serve(args []string) error {
 
 	mux := http.NewServeMux()
 	// 同一条连接兼任 Node 与会话客户端（ADR-0024）；/v1/nodes/connect 是早期路径，保留兼容。
+	calls := &call.Manager{Service: svc, Realtime: realtimeGateway(logger), Meter: meter, Logger: logger,
+		Feed: feed.Source{Log: b.log, Live: bus, Deletions: b.deletions}}
 	connGW := &wsgateway.Gateway{Hub: hub, Channel: &channel.Handler{Service: svc, Live: bus,
-		Presence: &presence.Service{Store: b.presence, Deletions: b.deletions, Clock: clk}, Push: b.push, Clock: clk, Logger: logger}, Logger: logger}
+		Presence: &presence.Service{Store: b.presence, Deletions: b.deletions, Clock: clk}, Push: b.push, Calls: calls, Clock: clk, Logger: logger}, Logger: logger}
 	mux.Handle("/v1/connect", connGW)
 	mux.Handle("/v1/nodes/connect", connGW)
+	// 网页通话页（开发与演示，docs/design/m3-call.md §8）。
+	mux.Handle("/call", webui.Handler())
+	mux.Handle("/call/", webui.Handler())
 	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.usage, Push: b.push, Logger: logger}).Handler())
 	srv := &http.Server{
 		Addr:              *addr,
@@ -470,7 +492,7 @@ func metering(path string, lines []auth.BusinessLine, agents *agentdef.Registry,
 	}
 	var missing []string
 	for _, d := range agents.All() {
-		for _, m := range []string{d.Model, d.Context.SummaryModel} {
+		for _, m := range []string{d.Model, d.Context.SummaryModel, d.Call.Model} {
 			if m != "" && !prices.Has(m) && !slices.Contains(missing, m) {
 				missing = append(missing, m)
 			}

@@ -93,7 +93,7 @@ _Avoid_: 任务、Job、Turn
 _Avoid_: 重试、执行实例
 
 **Call（通话）**:
-Session 内的一段全双工实时音视频交互；耗时工作由 Call 派生 Run 完成。
+Session 内的一段全双工实时音视频交互；耗时工作由 Call 派生 Run 完成（run_task，ADR-0027）。音频不进日志，双方每句话的转写（CallTranscript）进日志。代码中"调用"（call_id、ToolCall、`session.Call`）指一次 Capability 调用，与 Call 无关：表示通话的标识符一律带 Call 前缀（`CallStarted`、`CallEvent`、`State.ActiveCall`、`from_call`）。
 _Avoid_: 实时会话、语音模式、Live
 
 **Event（事件）**:

@@ -30,6 +30,9 @@ type Case struct {
 		KeepRecent    int `yaml:"keep_recent"`
 		MaxToolResult int `yaml:"max_tool_result"`
 	} `yaml:"context"`
+	// Call 为 true 时用例在一次 Call 中进行（docs/design/m3-call.md §9）：每轮的 input 合成为语音说出，
+	// 由实时语音模型应答、经 run_task 派生任务。需要实时语音模型与语音合成，不满足时跳过。
+	Call  bool `yaml:"call"`
 	Setup struct {
 		Memories []struct {
 			Category string `yaml:"category"`
@@ -121,6 +124,9 @@ type Expect struct {
 	// Compactions 与 Takeovers 是本轮 Run 内上下文压缩与接管次数的范围（长 Run 用例）。
 	Compactions *Range `yaml:"compactions"`
 	Takeovers   *Range `yaml:"takeovers"`
+	// Tasks 是本轮 Call 中派生任务（run_task）次数的范围；TaskContains 要求某个任务的内容包含给定文本。
+	Tasks        *Range   `yaml:"tasks"`
+	TaskContains []string `yaml:"task_contains"`
 	// Tickets 是本轮之后 CRM 中本 EndUser 的工单应包含的文本（每项须出现在某个工单中）。
 	Tickets []string `yaml:"tickets"`
 	Judge   string   `yaml:"judge"`

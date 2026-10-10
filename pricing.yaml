@@ -5,6 +5,8 @@ currency: CNY
 models:                                   # 元 / 百万 token（数值等于微元 / token）
   # cached_input 是命中前缀缓存的输入单价；不写时按 input 计（不假设折扣）。
   tokenhub/deepseek-v4.1-flash: {input: 1.0, cached_input: 0.25, output: 4.0}
+  # 实时语音模型（Call）：文本与音频分别计价（input_audio / output_audio）。以下为火山引擎公开刊例价。
+  volc/1.2.6.1: {input: 10, cached_input: 5, input_audio: 80, output: 80, output_audio: 300}
   echo/any: {input: 0, output: 0}         # 离线复述与压测模型不产生费用
   bench/latency=200ms,turns=2,tool=clock_now: {input: 0, output: 0}
 sandbox:

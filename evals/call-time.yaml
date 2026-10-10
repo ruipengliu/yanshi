@@ -1,0 +1,9 @@
+name: call-time
+description: 通话中问当前时间：语音模型不知道时间，应交给后台助手（clock_now），再口头转述
+call: true
+trials: 3
+turns:
+  - input: "现在几点了？"
+    expect:
+      tasks: {min: 1}
+      calls: ["clock_now"]
