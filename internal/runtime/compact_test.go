@@ -78,10 +78,10 @@ func TestPlanCompaction(t *testing.T) {
 	}
 
 	st := longRun(3, 50)
-	if got := planCompaction(st, req(st), cfg, false); got != 0 {
+	if got, _ := planCompaction(st, req(st), cfg, false); got != 0 {
 		t.Fatalf("small context compacted through %d", got)
 	}
-	if got := planCompaction(st, req(st), cfg, true); got == 0 {
+	if got, _ := planCompaction(st, req(st), cfg, true); got == 0 {
 		t.Fatal("forced compaction found no cut")
 	}
 
@@ -90,7 +90,7 @@ func TestPlanCompaction(t *testing.T) {
 	st = longRun(20, 100)
 	steps := 0
 	for {
-		through := planCompaction(st, req(st), cfg, false)
+		through, _ := planCompaction(st, req(st), cfg, false)
 		if through == 0 {
 			break
 		}

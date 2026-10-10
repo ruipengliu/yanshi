@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"math"
 	"slices"
 
 	v1 "yanshi/gen/yanshi/v1"
@@ -21,6 +22,16 @@ const summaryPrefix = "[此前的对话已压缩为以下摘要；更早的原�
 //
 // maxToolResult > 0 时，单条调用结果截断到约该 token 数；日志中的原文不受影响。
 func Transcript(st *session.State, maxToolResult int) []model.Message {
+	return transcript(st, maxToolResult, math.MaxUint64)
+}
+
+// transcriptThrough 是 Transcript 中对应 seq ≤ through 的前缀：摘要请求以它为前缀，与主请求共享前缀缓存。
+// through 须是闭合边界（session.State.CanCut），此时前缀中没有尚无结果的调用。
+func transcriptThrough(st *session.State, maxToolResult int, through uint64) []model.Message {
+	return transcript(st, maxToolResult, through)
+}
+
+func transcript(st *session.State, maxToolResult int, through uint64) []model.Message {
 	var out, deferred []model.Message
 	var pending []string // 当前助手消息中尚无结果的调用，按顺序
 
@@ -37,6 +48,13 @@ func Transcript(st *session.State, maxToolResult int) []model.Message {
 		}
 	}
 	placed := false
+	// 当前 Run 的输入不在历史中（已被压缩）时，召回紧跟摘要；这一位置在完整上下文与前缀中相同。
+	inHistory := false
+	for _, e := range st.History {
+		if active != nil && e.GetRunRequested().GetRunId() == active.ID {
+			inHistory = true
+		}
+	}
 
 	closePending := func() {
 		for _, id := range pending {
@@ -49,6 +67,9 @@ func Transcript(st *session.State, maxToolResult int) []model.Message {
 	}
 
 	for _, e := range st.History {
+		if e.GetSeq() > through {
+			break
+		}
 		switch p := e.GetPayload().(type) {
 		case *v1.Event_RunRequested:
 			if recall != nil && p.RunRequested.GetRunId() == active.ID {
@@ -81,7 +102,7 @@ func Transcript(st *session.State, maxToolResult int) []model.Message {
 		}
 	}
 	closePending()
-	if recall != nil && !placed {
+	if recall != nil && !placed && !inHistory {
 		at := 0
 		if st.Compaction != nil {
 			at = 1

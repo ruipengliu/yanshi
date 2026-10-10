@@ -508,8 +508,11 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 	for _, t := range tools {
 		req.Tools = append(req.Tools, model.ToolSpec{Name: t.Spec.Name, Description: t.Spec.Description, InputSchema: t.Spec.InputSchema})
 	}
-	if through := planCompaction(w.st, req, def.Context, w.forceCompact); through > 0 {
-		return w.compact(ctx, r, def, through)
+	if through, usePrefix := planCompaction(w.st, req, def.Context, w.forceCompact); through > 0 {
+		if !usePrefix {
+			req = nil
+		}
+		return w.compact(ctx, r, def, through, req)
 	}
 
 	var resp *model.Response
