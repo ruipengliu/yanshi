@@ -4,6 +4,7 @@ package pgusage
 import (
 	"context"
 	"errors"
+	"hash/fnv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -16,7 +17,16 @@ type Store struct{ Pool *pgxpool.Pool }
 
 var _ usage.Store = Store{}
 
-// Record 在一条语句中插入明细，并仅在插入成功（非重复）时累加 EndUser 与业务线合计两行聚合，
+// totalShards 是业务线合计行的分片数（迁移 0009）：同一业务线的并发记录分散到不同的行上，避免行锁排队。
+const totalShards = 16
+
+func shardOf(id string) int16 {
+	h := fnv.New32a()
+	h.Write([]byte(id))
+	return int16(h.Sum32() % totalShards)
+}
+
+// Record 在一条语句中插入明细，并仅在插入成功（非重复）时累加 EndUser 行与业务线合计行（按 ID 散列分片），
 // 因此重复记录不会重复计入，聚合与明细也不会出现部分写入。
 func (s Store) Record(ctx context.Context, e *usage.Entry) error {
 	if err := e.Validate(); err != nil {
@@ -29,13 +39,13 @@ func (s Store) Record(ctx context.Context, e *usage.Entry) error {
 			ON CONFLICT (id) DO NOTHING
 			RETURNING business_line, end_user, date_trunc('hour', at, 'UTC') AS hour, cost, input_tokens, output_tokens, sandbox_millis
 		)
-		INSERT INTO usage_hourly AS h (business_line, end_user, hour, cost, input_tokens, output_tokens, sandbox_millis)
-		SELECT ins.business_line, u.end_user, ins.hour, ins.cost, ins.input_tokens, ins.output_tokens, ins.sandbox_millis
-		FROM ins CROSS JOIN LATERAL (VALUES (ins.end_user), ('')) AS u(end_user)
-		ON CONFLICT (business_line, end_user, hour) DO UPDATE SET
+		INSERT INTO usage_hourly AS h (business_line, end_user, hour, shard, cost, input_tokens, output_tokens, sandbox_millis)
+		SELECT ins.business_line, u.end_user, ins.hour, u.shard, ins.cost, ins.input_tokens, ins.output_tokens, ins.sandbox_millis
+		FROM ins CROSS JOIN LATERAL (VALUES (ins.end_user, 0::smallint), ('', $12::smallint)) AS u(end_user, shard)
+		ON CONFLICT (business_line, end_user, hour, shard) DO UPDATE SET
 			cost = h.cost + EXCLUDED.cost, input_tokens = h.input_tokens + EXCLUDED.input_tokens,
 			output_tokens = h.output_tokens + EXCLUDED.output_tokens, sandbox_millis = h.sandbox_millis + EXCLUDED.sandbox_millis`,
-		e.ID, e.BusinessLine, e.EndUser, string(e.Kind), e.Model, int64(e.InputTokens), int64(e.OutputTokens), int64(e.SandboxMillis), e.Cost, e.At, e.Agent)
+		e.ID, e.BusinessLine, e.EndUser, string(e.Kind), e.Model, int64(e.InputTokens), int64(e.OutputTokens), int64(e.SandboxMillis), e.Cost, e.At, e.Agent, shardOf(e.ID))
 	return err
 }
 
@@ -101,9 +111,9 @@ func (s Store) DeleteEndUser(ctx context.Context, businessLine, endUser string) 
 		}
 		_, err := tx.Exec(ctx, `
 			WITH moved AS (DELETE FROM usage_hourly WHERE business_line = $1 AND end_user = $2 RETURNING *)
-			INSERT INTO usage_hourly AS h (business_line, end_user, hour, cost, input_tokens, output_tokens, sandbox_millis)
-			SELECT business_line, $3, hour, cost, input_tokens, output_tokens, sandbox_millis FROM moved
-			ON CONFLICT (business_line, end_user, hour) DO UPDATE SET
+			INSERT INTO usage_hourly AS h (business_line, end_user, hour, shard, cost, input_tokens, output_tokens, sandbox_millis)
+			SELECT business_line, $3, hour, shard, cost, input_tokens, output_tokens, sandbox_millis FROM moved
+			ON CONFLICT (business_line, end_user, hour, shard) DO UPDATE SET
 				cost = h.cost + EXCLUDED.cost, input_tokens = h.input_tokens + EXCLUDED.input_tokens,
 				output_tokens = h.output_tokens + EXCLUDED.output_tokens, sandbox_millis = h.sandbox_millis + EXCLUDED.sandbox_millis`,
 			businessLine, endUser, usage.Anonymous)
@@ -124,12 +134,12 @@ func (s Store) AnonymizeEntry(ctx context.Context, id string) error {
 		dec AS (
 			UPDATE usage_hourly h SET cost = h.cost - upd.cost, input_tokens = h.input_tokens - upd.input_tokens,
 				output_tokens = h.output_tokens - upd.output_tokens, sandbox_millis = h.sandbox_millis - upd.sandbox_millis
-			FROM upd WHERE h.business_line = upd.business_line AND h.end_user = upd.prev AND h.hour = upd.hour
+			FROM upd WHERE h.business_line = upd.business_line AND h.end_user = upd.prev AND h.hour = upd.hour AND h.shard = 0
 			RETURNING 1
 		)
-		INSERT INTO usage_hourly AS h (business_line, end_user, hour, cost, input_tokens, output_tokens, sandbox_millis)
-		SELECT business_line, $2, hour, cost, input_tokens, output_tokens, sandbox_millis FROM upd
-		ON CONFLICT (business_line, end_user, hour) DO UPDATE SET
+		INSERT INTO usage_hourly AS h (business_line, end_user, hour, shard, cost, input_tokens, output_tokens, sandbox_millis)
+		SELECT business_line, $2, hour, 0, cost, input_tokens, output_tokens, sandbox_millis FROM upd
+		ON CONFLICT (business_line, end_user, hour, shard) DO UPDATE SET
 			cost = h.cost + EXCLUDED.cost, input_tokens = h.input_tokens + EXCLUDED.input_tokens,
 			output_tokens = h.output_tokens + EXCLUDED.output_tokens, sandbox_millis = h.sandbox_millis + EXCLUDED.sandbox_millis`,
 		id, usage.Anonymous)
