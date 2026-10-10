@@ -62,8 +62,20 @@ type Turn struct {
 	NewSession bool `yaml:"new_session"`
 	// CrashAfterCalls > 0 时，本轮的 Run 发起这么多次调用后，"杀掉"正在执行它的 Worker（取消其上下文，
 	// 不释放租约），由其他 Worker 在租约到期后接管：用真实模型检验接管后能否接着完成。
-	CrashAfterCalls int    `yaml:"crash_after_calls"`
-	Expect          Expect `yaml:"expect"`
+	CrashAfterCalls int `yaml:"crash_after_calls"`
+	// Answer 是本轮遇到 ask_user 提问时的回答方式；为空时本轮停在提问处（状态 asked），
+	// 下一轮的输入即作为回答（与用户直接打字回答一致）。
+	Answer *AnswerScript `yaml:"answer"`
+	Expect Expect        `yaml:"expect"`
+}
+
+// AnswerScript 模拟用户回答 ask_user：点选标签含 Choose 的选项、填写 Values、或输入 Text；
+// Reply 非空时改为在对话中直接打字回答（经提交输入，而不是回答接口）。
+type AnswerScript struct {
+	Choose string            `yaml:"choose"`
+	Values map[string]string `yaml:"values"`
+	Text   string            `yaml:"text"`
+	Reply  string            `yaml:"reply"`
 }
 
 type Range struct {
@@ -81,10 +93,14 @@ type MemoryMatch struct {
 
 // Expect 是一轮的断言；未写的字段不检查。
 type Expect struct {
-	Status        string            `yaml:"status"`
-	Calls         []string          `yaml:"calls"`
-	NoCalls       []string          `yaml:"no_calls"`
-	Approvals     *Range            `yaml:"approvals"`
+	// Status 是本轮结束时 Run 的状态，可用 "|" 列出多个可接受的值，如 "completed|asked"
+	// （asked：停在 ask_user 提问处等待回答）。默认 completed。
+	Status    string   `yaml:"status"`
+	Calls     []string `yaml:"calls"`
+	NoCalls   []string `yaml:"no_calls"`
+	Approvals *Range   `yaml:"approvals"`
+	// Questions 是本轮 ask_user 提问次数的范围。
+	Questions     *Range            `yaml:"questions"`
 	ReplyContains []string          `yaml:"reply_contains"`
 	ReplyMaxChars int               `yaml:"reply_max_chars"`
 	Memories      []MemoryMatch     `yaml:"memories"`

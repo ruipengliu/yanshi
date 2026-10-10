@@ -161,6 +161,7 @@ message ClientRequest {
     InterruptRun interrupt = 4;
     DecideApproval decide = 5;
     CloseSession close = 6;
+    AnswerQuestion answer = 7;
   }
 }
 
@@ -192,6 +193,18 @@ message CloseSession {
   string reason = 2;
 }
 
+// AnswerQuestion 回答 Agent 的 ask_user 提问（docs/design/m3-duplex-channel.md §7，ADR-0025）。
+// 问题、选项与字段见该调用的参数；可以只给出其中一部分（例如只输入文字）。
+message AnswerQuestion {
+  string session_id = 1;
+  string call_id = 2;
+  // 点选的选项 ID。
+  repeated string selected = 3;
+  // 填写的字段，键为字段 name。
+  map<string, string> values = 4;
+  string text = 5;
+}
+
 message ClientResponse {
   string request_id = 1;
   // 为空表示成功。
@@ -201,6 +214,8 @@ message ClientResponse {
   // SubmitInput 的结果。
   string run_id = 4;
   bool steered = 5;
+  // 非空表示输入作为对该 ask_user 提问的回答（Run 正在等用户回答，ADR-0025）。
+  string answered = 6;
 }
 
 message ClientError {

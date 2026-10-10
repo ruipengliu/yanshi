@@ -21,6 +21,7 @@ import (
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
 	"yanshi/internal/artifact"
+	"yanshi/internal/askuser"
 	"yanshi/internal/capability"
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog"
@@ -112,6 +113,8 @@ type Stats struct {
 	MemoryApprovals int
 	// 在场：写入次数，以及写入时 Session 已被删除、因"先写、后查"而撤回的次数。
 	PresenceWrites, PresenceWithdrawn int
+	// ask_user（ADR-0025）：提问、点选回答、打字回答、被拒绝的不合法回答、无人回答而超时。
+	Questions, Answers, TypedAnswers, InvalidAnswers, QuestionTimeouts int
 }
 
 // hookQueue 在 Enqueue 成功后调用 after。
@@ -127,8 +130,8 @@ func (q *hookQueue) Enqueue(ctx context.Context, sessionID string) error {
 	return q.after()
 }
 
-// simContext 是模拟 AgentDef 的上下文配置：窗口很小（工具声明约占 650），使压缩频繁发生。
-var simContext = agentdef.Context{Window: 2000, CompactAt: 0.75, KeepRecent: 300, MaxToolResult: 250}
+// simContext 是模拟 AgentDef 的上下文配置：窗口很小（工具声明约占 1100，其中 ask_user 约 450），使压缩频繁发生。
+var simContext = agentdef.Context{Window: 2400, CompactAt: 0.75, KeepRecent: 300, MaxToolResult: 250}
 
 const longRunTurns = 20
 
@@ -136,6 +139,7 @@ const (
 	leaseTTL        = 10 * time.Second
 	approvalTimeout = 30 * time.Second
 	deviceTimeout   = 60 * time.Second
+	askTimeout      = 90 * time.Second
 )
 
 // simNode 是一台模拟设备：SDK 的 Executor 与 Ledger 跨崩溃保留，连接随上下线变化。
@@ -236,7 +240,7 @@ func New(opts Options) (*World, error) {
 	for _, v := range []string{"1", "2"} {
 		defs = append(defs, &agentdef.Def{
 			Name: "sim", Version: v, Model: "sim/m",
-			Capabilities: []string{"echo", "send", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*"},
+			Capabilities: []string{"echo", "send", "ask_user", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*"},
 			MaxTurns:     maxTurns, Context: simContext, Memory: agentdef.MemoryConfig{Recall: 3},
 		})
 	}
@@ -252,7 +256,7 @@ func New(opts Options) (*World, error) {
 		IDs: ids.Sequential("mem"), MaxPerUser: 20}
 	w.catalog = &capability.Catalog{
 		Local: capability.NewRegistry(append([]capability.Capability{w.echoCap(), w.sendCap()}, memory.Capabilities(w.memories)...)...),
-		Nodes: stores.Dir, DefaultTimeout: deviceTimeout,
+		Nodes: stores.Dir, DefaultTimeout: deviceTimeout, AskTimeout: askTimeout,
 		Sandbox: &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID},
 	}
 	w.index, w.deletions, w.janitorQueue = stores.Index, stores.Deletions, stores.JanitorQueue
@@ -455,6 +459,9 @@ func (w *World) decide(approveAll bool) error {
 			continue
 		}
 		for _, c := range a.Calls {
+			if c.Dispatched() && c.NodeID == askuser.NodeID {
+				return w.answer(sid, c, approveAll)
+			}
 			if !c.AwaitingApproval() {
 				continue
 			}
@@ -469,6 +476,28 @@ func (w *World) decide(approveAll bool) error {
 		}
 	}
 	return nil
+}
+
+// answer 在界面上回答一次 ask_user 提问：通常点选一个选项，有时给出不合法的回答（须被拒绝且不影响提问）。
+// 打字回答走 submit：Run 等回答时提交的输入就是回答。
+func (w *World) answer(sid string, c *session.Call, valid bool) error {
+	q, err := askuser.Parse(c.Call.GetArgumentsJson())
+	if err != nil {
+		return fmt.Errorf("invariant: question %s was asked with invalid arguments: %w", c.Call.GetCallId(), err)
+	}
+	a := &askuser.Answer{Selected: []string{q.Options[w.rng.IntN(len(q.Options))].ID}}
+	if !valid && w.chance(0.2) {
+		a.Selected = []string{"no-such-option"}
+		err := w.svc.Answer(context.Background(), sid, c.Call.GetCallId(), a)
+		if !errors.Is(err, service.ErrInvalid) {
+			return fmt.Errorf("invariant: invalid answer to %s was not rejected: %v", c.Call.GetCallId(), err)
+		}
+		w.Stats.InvalidAnswers++
+		w.tracef("answer %s rejected", c.Call.GetCallId())
+		return nil
+	}
+	w.tracef("answer %s %v", c.Call.GetCallId(), a.Selected)
+	return w.svc.Answer(context.Background(), sid, c.Call.GetCallId(), a)
 }
 
 func (w *World) newWorker() *runtime.Worker {
@@ -621,7 +650,9 @@ func (w *World) submit() error {
 	if err != nil {
 		return fmt.Errorf("submit: %w", err)
 	}
-	if res.Steered {
+	if res.Answered != "" {
+		w.Stats.TypedAnswers++
+	} else if res.Steered {
 		w.Stats.Steers++
 	} else {
 		w.Stats.Runs++
@@ -740,6 +771,10 @@ func (w *World) CheckInvariants() error {
 			}
 		}
 	}
+	// 提问不经 Inbox（ADR-0025）：任何时候都不应有投给用户本人的待投递项。
+	if items, _, err := w.hub.Inbox.Pending(context.Background(), askuser.NodeID); err != nil || len(items) > 0 {
+		return fmt.Errorf("invariant: %d invocations queued for %s (err %v)", len(items), askuser.NodeID, err)
+	}
 	for id, n := range w.effects {
 		if n > 1 {
 			return fmt.Errorf("invariant: non-idempotent call %s executed %d times", id, n)
@@ -800,7 +835,12 @@ func (w *World) CollectStats() {
 				if p.ToolResult.GetIsError() && strings.HasPrefix(text, "outcome unknown") {
 					w.Stats.OutcomeUnknown++
 				}
-				if p.ToolResult.GetAttempt() == 0 {
+				switch {
+				case capOf[p.ToolResult.GetCallId()] == askuser.Capability && strings.HasPrefix(text, "timed out"):
+					w.Stats.QuestionTimeouts++
+				case capOf[p.ToolResult.GetCallId()] == askuser.Capability && p.ToolResult.GetAttempt() == 0:
+					w.Stats.Answers++
+				case p.ToolResult.GetAttempt() == 0:
 					w.Stats.DeviceResults++
 				}
 				if strings.HasPrefix(text, "timed out") || strings.HasPrefix(text, "approval timed out") {
@@ -1056,6 +1096,12 @@ func (w *World) toolArgs(name string) string {
 		return fmt.Sprintf(`{"category":"preference","content":"偏好 %d"}`, w.rng.IntN(50))
 	case "memory_search":
 		return `{"query":"偏好"}`
+	case askuser.Capability:
+		if w.chance(0.1) {
+			return `{"question":"只有一个选项？","options":[{"id":"a","label":"甲"}]}` // 不合法：交还模型改正
+		}
+		w.Stats.Questions++
+		return fmt.Sprintf(`{"question":"选哪个？%s","options":[{"id":"a","label":"甲"},{"id":"b","label":"乙"},{"id":"c","label":"丙"}]}`, strings.Repeat("p", w.rng.IntN(50)))
 	case "memory_forget":
 		return fmt.Sprintf(`{"id":"mem_call_id-%d"}`, w.rng.IntN(500))
 	}

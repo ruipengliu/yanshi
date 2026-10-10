@@ -20,6 +20,7 @@ import (
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
 	"yanshi/internal/artifact"
+	"yanshi/internal/askuser"
 	"yanshi/internal/capability"
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog"
@@ -375,6 +376,7 @@ type observation struct {
 	status    string
 	calls     []string
 	approvals int
+	questions int
 	reply     string
 	tokens    uint64
 	steps     []string // 给评分模型看的调用摘要
@@ -406,6 +408,8 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 	}
 	deadline := time.Now().Add(timeout)
 	crashed := false
+	asked := false
+	answered := map[string]bool{}
 	var run *session.Run
 	var compacted bool
 	for {
@@ -417,6 +421,19 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 		if run != nil && run.Status.Terminal() {
 			compacted = st.Compaction != nil
 			break
+		}
+		if run != nil {
+			// ask_user 提问：按脚本回答；没有脚本时本轮停在提问处。
+			if c := pendingQuestion(run, answered); c != nil {
+				if turn.Answer == nil {
+					compacted, asked = st.Compaction != nil, true
+					break
+				}
+				answered[c.Call.GetCallId()] = true
+				if err := in.answer(ctx, sid, c, turn.Answer); err != nil {
+					return nil, err
+				}
+			}
 		}
 		if run != nil && turn.CrashAfterCalls > 0 && !crashed && len(run.Calls) >= turn.CrashAfterCalls && run.Status == session.RunRunning {
 			if err := in.crashHolder(ctx, sid, run); err != nil {
@@ -447,6 +464,9 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 		return nil, err
 	}
 	obs := &observation{input: turn.Input, status: run.Status.String(), compacted: compacted, takeovers: run.Takeovers}
+	if asked {
+		obs.status = "asked"
+	}
 	results := map[string]string{}
 	for _, e := range events {
 		switch p := e.GetPayload().(type) {
@@ -455,6 +475,16 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 			obs.tokens += m.GetUsage().GetInputTokens() + m.GetUsage().GetOutputTokens()
 			obs.inTokens, obs.cachedTokens = obs.inTokens+m.GetUsage().GetInputTokens(), obs.cachedTokens+m.GetUsage().GetCachedInputTokens()
 			for _, tc := range m.GetToolCalls() {
+				if tc.GetCapability() == askuser.Capability {
+					obs.questions++
+					// 提问也是给用户看的回复：评分模型据此判断是否问得恰当。
+					if q, err := askuser.Parse(tc.GetArgumentsJson()); err == nil {
+						if obs.reply != "" {
+							obs.reply += "\n\n"
+						}
+						obs.reply += describeQuestion(q)
+					}
+				}
 				obs.calls = append(obs.calls, tc.GetCapability())
 				obs.callArgs = append(obs.callArgs, tc.GetArgumentsJson())
 				obs.steps = append(obs.steps, fmt.Sprintf("调用 %s %s", tc.GetCapability(), clip(tc.GetArgumentsJson(), judgeStepBytes)))
@@ -488,6 +518,63 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 		}
 	}
 	return obs, nil
+}
+
+// pendingQuestion 返回 Run 中尚未回答、也未经本轮脚本回答过的 ask_user 提问。
+func pendingQuestion(run *session.Run, answered map[string]bool) *session.Call {
+	for _, c := range run.Calls {
+		if c.Dispatched() && c.NodeID == askuser.NodeID && !answered[c.Call.GetCallId()] {
+			return c
+		}
+	}
+	return nil
+}
+
+// answer 按脚本回答一次提问。
+func (in *instance) answer(ctx context.Context, sid string, c *session.Call, a *AnswerScript) error {
+	if a.Reply != "" {
+		_, err := in.svc.Submit(ctx, sid, model.TextBlocks(a.Reply))
+		return err
+	}
+	q, err := askuser.Parse(c.Call.GetArgumentsJson())
+	if err != nil {
+		return err
+	}
+	ans := &askuser.Answer{Values: a.Values, Text: a.Text}
+	if a.Choose != "" {
+		for _, o := range q.Options {
+			if strings.Contains(o.Label, a.Choose) || strings.Contains(o.ID, a.Choose) {
+				ans.Selected = append(ans.Selected, o.ID)
+				break
+			}
+		}
+		if len(ans.Selected) == 0 && ans.Text == "" {
+			// 没有匹配的选项：用户只能自己打字说明。
+			ans.Text = a.Choose
+		}
+	}
+	err = in.svc.Answer(ctx, sid, c.Call.GetCallId(), ans)
+	if errors.Is(err, service.ErrInvalid) && ans.Text == "" {
+		// 例如缺了必填字段：改为打字回答，与真实用户在表单不合适时的做法一致。
+		ans = &askuser.Answer{Text: a.Choose}
+		err = in.svc.Answer(ctx, sid, c.Call.GetCallId(), ans)
+	}
+	if errors.Is(err, service.ErrConflict) {
+		return nil
+	}
+	return err
+}
+
+func describeQuestion(q *askuser.Question) string {
+	var b strings.Builder
+	b.WriteString("（提问）" + q.Question)
+	for _, o := range q.Options {
+		b.WriteString("\n- " + o.Label)
+	}
+	for _, f := range q.Fields {
+		b.WriteString("\n- 填写：" + f.Label)
+	}
+	return b.String()
 }
 
 // judgeStepBytes 是给评分模型看的每个调用参数与结果的上限。太短时评分模型看不到文件的后半部分，
@@ -529,7 +616,7 @@ func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation)
 	if want == "" {
 		want = "completed"
 	}
-	add("status", o.status == want, fmt.Sprintf("status %s, want %s", o.status, want))
+	add("status", slices.Contains(strings.Split(want, "|"), o.status), fmt.Sprintf("status %s, want %s", o.status, want))
 	for _, g := range e.Calls {
 		add("calls "+g, slices.ContainsFunc(o.calls, func(c string) bool { return matches([]string{g}, c) }), fmt.Sprintf("calls %v", o.calls))
 	}
@@ -539,6 +626,10 @@ func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation)
 	if r := e.Approvals; r != nil {
 		ok := (r.Min == nil || o.approvals >= *r.Min) && (r.Max == nil || o.approvals <= *r.Max)
 		add("approvals", ok, fmt.Sprintf("approvals %d", o.approvals))
+	}
+	if r := e.Questions; r != nil {
+		ok := (r.Min == nil || o.questions >= *r.Min) && (r.Max == nil || o.questions <= *r.Max)
+		add("questions", ok, fmt.Sprintf("questions %d", o.questions))
 	}
 	for _, s := range e.ReplyContains {
 		add("reply_contains "+s, strings.Contains(o.reply, s) || strings.Contains(plainNumbers(o.reply), s), "reply: "+clip(o.reply, 200))

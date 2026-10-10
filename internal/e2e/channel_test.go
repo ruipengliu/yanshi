@@ -427,3 +427,105 @@ func TestPresenceAcrossInstances(t *testing.T) {
 	cancel()
 	eventually(t, "phone sees the mac leave", 5*time.Second, func() bool { return onPhone.viewers() == "iphone:focused" })
 }
+
+const roomQuestion = `{"question":"订哪个会议室？","options":[{"id":"a","label":"A201"},{"id":"b","label":"B302"}]}`
+
+// pendingQuestion 返回事件中最近一次 ask_user 调用的 ID（若尚无结果）。
+func pendingQuestionID(events []*v1.Event) string {
+	id := ""
+	for _, ev := range events {
+		for _, tc := range ev.GetAssistantMessage().GetToolCalls() {
+			if tc.GetCapability() == "ask_user" {
+				id = tc.GetCallId()
+			}
+		}
+		if ev.GetToolResult().GetCallId() == id {
+			id = ""
+		}
+	}
+	return id
+}
+
+// TestAskUserAcrossDevices：Agent 提问后 Run 挂起；手机看到问题，电脑上点选回答，回答作为调用结果
+// 回到 Run（模型看到选中项的标签）；两台设备都看到结果。再次回答同一问题是冲突。
+func TestAskUserAcrossDevices(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	phone, pc := e.startClient("phone", userToken, nil), e.startClient("pc", userToken, nil)
+	sid, err := phone.CreateSession(ctx, "dev", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var onPhone, onPC recorder
+	phone.Subscribe(sid, 0, &onPhone)
+	pc.Subscribe(sid, 0, &onPC)
+	if _, _, err := phone.SubmitText(ctx, sid, "call ask_user "+roomQuestion); err != nil {
+		t.Fatal(err)
+	}
+	var callID string
+	eventually(t, "question reaches the pc", 5*time.Second, func() bool {
+		events, _, _ := onPC.snapshot()
+		callID = pendingQuestionID(events)
+		return callID != ""
+	})
+	var view sessionView
+	e.until(sid, func(v sessionView) bool {
+		view = v
+		return len(v.Runs) > 0 && v.Runs[0].Waiting != nil && v.Runs[0].Waiting.Kind == "question"
+	})
+	if view.Runs[0].Waiting.CallID != callID {
+		t.Fatalf("waiting on %s, want question %s", view.Runs[0].Waiting.CallID, callID)
+	}
+
+	// 不合法的回答被拒绝，不影响提问。
+	err = pc.Answer(ctx, sid, callID, []string{"c"}, nil, "")
+	if re, ok := err.(*nodesdk.RequestError); !ok || re.Code != "invalid" {
+		t.Fatalf("answering with an unknown option: %v", err)
+	}
+	if err := pc.Answer(ctx, sid, callID, []string{"b"}, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "both see the run complete", 5*time.Second, func() bool { return onPhone.completed(1) && onPC.completed(1) })
+	if got := e.lastAssistantText(sid); !strings.Contains(got, `"label":"B302"`) {
+		t.Fatalf("model saw %q, want the selected label", got)
+	}
+	err = phone.Answer(ctx, sid, callID, []string{"a"}, nil, "")
+	if re, ok := err.(*nodesdk.RequestError); !ok || re.Code != "conflict" {
+		t.Fatalf("answering twice: %v", err)
+	}
+}
+
+// TestTypingAnswersTheQuestion：Run 等用户回答时，用户直接打字就是在回答（而不是插话）。
+func TestTypingAnswersTheQuestion(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	c := e.startClient("phone", userToken, nil)
+	sid, err := c.CreateSession(ctx, "dev", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rec recorder
+	c.Subscribe(sid, 0, &rec)
+	runID, _, err := c.SubmitText(ctx, sid, "call ask_user "+roomQuestion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "question asked", 5*time.Second, func() bool {
+		events, _, _ := rec.snapshot()
+		return pendingQuestionID(events) != ""
+	})
+	again, steered, err := c.SubmitText(ctx, sid, "都不行，换周五")
+	if err != nil || !steered || again != runID {
+		t.Fatalf("typed answer: run %s steered %v err %v", again, steered, err)
+	}
+	eventually(t, "run completes", 5*time.Second, func() bool { return rec.completed(1) })
+	events, _, _ := rec.snapshot()
+	for _, ev := range events {
+		if ev.GetSteered() != nil {
+			t.Fatal("typed answer was recorded as a steer")
+		}
+	}
+	if got := e.lastAssistantText(sid); !strings.Contains(got, `"text":"都不行，换周五"`) {
+		t.Fatalf("model saw %q", got)
+	}
+}

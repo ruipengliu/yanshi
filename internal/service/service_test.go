@@ -7,6 +7,7 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
+	"yanshi/internal/askuser"
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/eventlog/memlog"
@@ -140,5 +141,84 @@ func TestInputModeration(t *testing.T) {
 	svc.Moderator = failingModerator{}
 	if _, err := svc.Submit(ctx, sid, model.TextBlocks("你好")); !errors.Is(err, moderation.ErrUnavailable) || head() != before {
 		t.Fatalf("input passed while moderation was unavailable: %v", err)
+	}
+}
+
+// TestAnswer：回答 ask_user 提问（ADR-0025）。不合法的回答、违规的文字被拒绝且不写日志；合法的回答作为外部结果写入；
+// 已回答的提问再回答是冲突；Run 等回答时提交的输入作为回答而不是插话。
+func TestAnswer(t *testing.T) {
+	ctx := context.Background()
+	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "a", Version: "1", Model: "echo/any"})
+	store := &session.Store{Log: memlog.New(), IDs: ids.Sequential("id"), Clock: clock.Real{}}
+	svc := &service.Service{Store: store, Queue: memqueue.New(clock.Real{}), Agents: agents, Moderator: moderation.Mock{}}
+	sid, _ := svc.Create(ctx, service.CreateRequest{BusinessLine: "bl", EndUser: "u", Agent: "a"})
+	res, err := svc.Submit(ctx, sid, model.TextBlocks("约个会"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 模拟 Worker：提问并挂起。
+	ask := func(callID string) {
+		t.Helper()
+		st, _ := svc.Load(ctx, sid)
+		attempt := st.Active().Attempt + 1
+		err := store.Commit(ctx, st,
+			&v1.Event{Payload: &v1.Event_AttemptStarted{AttemptStarted: &v1.AttemptStarted{RunId: res.RunID, Attempt: attempt}}},
+			&v1.Event{Payload: &v1.Event_AssistantMessage{AssistantMessage: &v1.AssistantMessage{RunId: res.RunID, Attempt: attempt,
+				ToolCalls: []*v1.ToolCall{{CallId: callID, Capability: askuser.Capability,
+					ArgumentsJson: `{"question":"哪天？","options":[{"id":"wed","label":"周三"},{"id":"fri","label":"周五"}]}`}}}}},
+			&v1.Event{Payload: &v1.Event_ToolCallStarted{ToolCallStarted: &v1.ToolCallStarted{RunId: res.RunID, Attempt: attempt,
+				CallId: callID, NodeId: askuser.NodeID}}},
+			&v1.Event{Payload: &v1.Event_RunSuspended{RunSuspended: &v1.RunSuspended{RunId: res.RunID, Attempt: attempt}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	ask("q1")
+	head := func() uint64 { st, _ := svc.Load(ctx, sid); return st.Seq }
+	before := head()
+	for name, c := range map[string]struct {
+		call string
+		a    askuser.Answer
+		want error
+	}{
+		"unknown option": {"q1", askuser.Answer{Selected: []string{"sun"}}, service.ErrInvalid},
+		"two options":    {"q1", askuser.Answer{Selected: []string{"wed", "fri"}}, service.ErrInvalid},
+		"empty":          {"q1", askuser.Answer{}, service.ErrInvalid},
+		"no question":    {"q9", askuser.Answer{Text: "x"}, service.ErrNotFound},
+		"blocked text":   {"q1", askuser.Answer{Text: "【违规测试】"}, moderation.ErrRejected},
+	} {
+		if err := svc.Answer(ctx, sid, c.call, &c.a); !errors.Is(err, c.want) {
+			t.Errorf("%s: %v, want %v", name, err, c.want)
+		}
+	}
+	if head() != before {
+		t.Fatal("a rejected answer was written to the log")
+	}
+	if err := svc.Answer(ctx, sid, "q1", &askuser.Answer{Selected: []string{"fri"}}); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := svc.Load(ctx, sid)
+	last := st.History[len(st.History)-1].GetToolResult()
+	if last.GetCallId() != "q1" || last.GetAttempt() != 0 || model.Text(last.GetContent()) != `{"selected":[{"id":"fri","label":"周五"}]}` {
+		t.Fatalf("answer recorded as %v", last)
+	}
+	if err := svc.Answer(ctx, sid, "q1", &askuser.Answer{Selected: []string{"wed"}}); !errors.Is(err, service.ErrConflict) {
+		t.Fatalf("second answer: %v", err)
+	}
+
+	// 打字回答：Run 等回答时，输入作为回答。
+	ask("q2")
+	sub, err := svc.Submit(ctx, sid, model.TextBlocks("下周一吧"))
+	if err != nil || sub.Answered != "q2" || sub.RunID != res.RunID {
+		t.Fatalf("typed answer: %+v %v", sub, err)
+	}
+	st, _ = svc.Load(ctx, sid)
+	if r := st.History[len(st.History)-1].GetToolResult(); r.GetCallId() != "q2" || model.Text(r.GetContent()) != `{"text":"下周一吧"}` {
+		t.Fatalf("typed answer recorded as %v", st.History[len(st.History)-1])
+	}
+	// 没有待回答的提问时，输入照常是插话。
+	sub, err = svc.Submit(ctx, sid, model.TextBlocks("另外记得订会议室"))
+	if err != nil || sub.Answered != "" || !sub.Steered {
+		t.Fatalf("steer: %+v %v", sub, err)
 	}
 }

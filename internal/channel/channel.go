@@ -16,6 +16,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/askuser"
 	"yanshi/internal/clock"
 	"yanshi/internal/feed"
 	"yanshi/internal/ids"
@@ -76,6 +77,8 @@ type Conn struct {
 
 	mu   sync.Mutex
 	subs map[string]*subscription
+	// last 是每个 Session 最近一次的订阅（含已退订、尚未退出的）：新订阅须等它退出后再写在场记录。
+	last map[string]*subscription
 }
 
 type subscription struct {
@@ -103,7 +106,7 @@ func (h *Handler) Open(ctx context.Context, id Identity, send func(*v1.GatewayMe
 		gen = ids.Random()
 	}
 	c := &Conn{h: h, id: id, connID: "conn_" + gen(), send: send, ctx: ctx, cancel: cancel,
-		inflight: make(chan struct{}, maxInflight), subs: map[string]*subscription{}}
+		inflight: make(chan struct{}, maxInflight), subs: map[string]*subscription{}, last: map[string]*subscription{}}
 	if h.Presence != nil {
 		c.wg.Add(1)
 		go func() { defer c.wg.Done(); c.heartbeat() }()
@@ -179,22 +182,26 @@ func (c *Conn) subscribe(sub *v1.Subscribe) {
 		// 沿用旧订阅的设备状态。
 		s.focused, s.typingUntil = old.focused, old.typingUntil
 	}
-	c.subs[sid] = s
+	prev := c.last[sid]
+	c.subs[sid], c.last[sid] = s, s
 	c.mu.Unlock()
 
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
 		defer close(s.done)
-		// 等旧订阅退出：它撤下在场记录用的是同一个 (Session, 连接) 键，不能晚于新订阅写入。
-		if old != nil {
-			<-old.done
+		// 等上一个订阅（被取代或已退订）退出：它撤下在场记录用的是同一个 (Session, 连接) 键，不能晚于新订阅写入。
+		if prev != nil {
+			<-prev.done
 		}
 		reason := c.stream(ctx, s, sid, sub.GetAfterSeq())
 		c.mu.Lock()
 		mine := c.subs[sid] == s
 		if mine {
 			delete(c.subs, sid)
+		}
+		if c.last[sid] == s {
+			delete(c.last, sid)
 		}
 		c.mu.Unlock()
 		cancel()
@@ -312,7 +319,7 @@ func (h *Handler) do(ctx context.Context, id Identity, req *v1.ClientRequest, re
 		if err != nil {
 			return err
 		}
-		resp.RunId, resp.Steered = res.RunID, res.Steered
+		resp.RunId, resp.Steered, resp.Answered = res.RunID, res.Steered, res.Answered
 		return nil
 	case *v1.ClientRequest_Interrupt:
 		if _, err := h.load(ctx, id, op.Interrupt.GetSessionId()); err != nil {
@@ -324,6 +331,12 @@ func (h *Handler) do(ctx context.Context, id Identity, req *v1.ClientRequest, re
 			return err
 		}
 		return h.Service.Decide(ctx, op.Decide.GetSessionId(), op.Decide.GetCallId(), op.Decide.GetApprove(), by)
+	case *v1.ClientRequest_Answer:
+		if _, err := h.load(ctx, id, op.Answer.GetSessionId()); err != nil {
+			return err
+		}
+		return h.Service.Answer(ctx, op.Answer.GetSessionId(), op.Answer.GetCallId(), &askuser.Answer{
+			Selected: op.Answer.GetSelected(), Values: op.Answer.GetValues(), Text: op.Answer.GetText()})
 	case *v1.ClientRequest_Close:
 		if _, err := h.load(ctx, id, op.Close.GetSessionId()); err != nil {
 			return err

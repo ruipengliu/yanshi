@@ -27,6 +27,8 @@ func (b *logBuilder) add(p any) *logBuilder {
 		e.Payload = &v1.Event_AssistantMessage{AssistantMessage: p}
 	case *v1.ToolResult:
 		e.Payload = &v1.Event_ToolResult{ToolResult: p}
+	case *v1.ToolCallStarted:
+		e.Payload = &v1.Event_ToolCallStarted{ToolCallStarted: p}
 	case *v1.RunInterrupted:
 		e.Payload = &v1.Event_RunInterrupted{RunInterrupted: p}
 	case *v1.ContextCompacted:

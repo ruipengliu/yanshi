@@ -19,6 +19,7 @@ import (
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
 	"yanshi/internal/artifact"
+	"yanshi/internal/askuser"
 	"yanshi/internal/capability"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/live"
@@ -418,6 +419,12 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 	}
 
 	if tool.Local == nil {
+		if tool.NodeID == askuser.NodeID {
+			// 不合法的提问不去打扰用户：错误作为结果交还模型，由它改正。
+			if _, err := askuser.Parse(c.Call.GetArgumentsJson()); err != nil {
+				return w.commit(ctx, w.toolResult(r, id, model.TextBlocks(err.Error()), true))
+			}
+		}
 		deadline := w.now().Add(tool.Timeout)
 		return w.commit(ctx, &v1.Event{Payload: &v1.Event_ToolCallStarted{ToolCallStarted: &v1.ToolCallStarted{
 			RunId: r.ID, Attempt: w.attempt, CallId: id, NodeId: tool.NodeID, Deadline: timestamppb.New(deadline),
@@ -461,6 +468,13 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 // 重复投递是安全的：Node SDK 以 call_id 去重。
 func (w *Worker) awaitDispatched(ctx context.Context, r *session.Run, c *session.Call) error {
 	id := c.Call.GetCallId()
+	if c.NodeID == askuser.NodeID {
+		// 提问不经 Inbox（ADR-0025）：回答由用户经 Service 写入，这里只等待或超时。
+		if !w.now().Before(c.Deadline) {
+			return w.commit(ctx, w.toolResult(r, id, model.TextBlocks("timed out: the user did not answer the question in time"), true))
+		}
+		return w.suspend(ctx, r, c.Deadline)
+	}
 	if !w.now().Before(c.Deadline) {
 		if err := w.cfg.Dispatch.Cancel(ctx, c.NodeID, id); err != nil {
 			return err

@@ -175,7 +175,7 @@ func memStores() stores {
 // instance 启动一个 yanshi 实例：workers 个 Worker，serve 为 true 时提供 HTTP API 与 Node 网关。
 func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server {
 	agents, err := agentdef.NewRegistry(&agentdef.Def{Name: "dev", Version: "1", Model: "script/any",
-		Capabilities: []string{"memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*", "mcp:*/*"}, Memory: agentdef.MemoryConfig{Recall: 5}})
+		Capabilities: []string{"ask_user", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*", "mcp:*/*"}, Memory: agentdef.MemoryConfig{Recall: 5}})
 	if err != nil {
 		t.Fatal(err)
 	}

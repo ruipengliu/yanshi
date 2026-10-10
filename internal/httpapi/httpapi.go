@@ -19,6 +19,7 @@
 //	GET  /v1/sessions/{id}/events?after=N&limit=M  已提交事件（JSON）
 //	GET  /v1/sessions/{id}/stream?after=N          已提交事件 + 实时增量（SSE，支持 Last-Event-ID 续传）
 //	POST /v1/sessions/{id}/approvals/{call}        审批决定 {"approve": bool}
+//	POST /v1/sessions/{id}/answers/{call}          回答 ask_user 提问 {"selected": [...], "values": {...}, "text": ""}（ADR-0025）
 //	GET  /v1/nodes?business_line=&end_user=        EndUser 的 Node 列表
 //	POST /v1/sessions/{id}/artifacts?name=         上传工件（请求体为文件内容，Content-Type 为 MIME 类型）
 //	GET  /v1/sessions/{id}/artifacts               Session 的工件列表
@@ -49,6 +50,7 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/artifact"
+	"yanshi/internal/askuser"
 	"yanshi/internal/auth"
 	"yanshi/internal/feed"
 	"yanshi/internal/lifecycle"
@@ -103,6 +105,7 @@ func (s *Server) routes() map[string]http.HandlerFunc {
 		"GET /v1/sessions/{id}/events":                s.events,
 		"GET /v1/sessions/{id}/stream":                s.stream,
 		"POST /v1/sessions/{id}/approvals/{call}":     s.decide,
+		"POST /v1/sessions/{id}/answers/{call}":       s.answer,
 		"GET /v1/nodes":                               s.listNodes,
 		"GET /v1/quota":                               s.quota,
 		"GET /v1/usage":                               s.usage,
@@ -314,7 +317,7 @@ type runView struct {
 
 // waitingView 说明挂起中的 Run 在等什么。
 type waitingView struct {
-	// Kind 为 "approval"、"node" 或 "quota"（配额用尽，Deadline 为重置时间）。
+	// Kind 为 "approval"、"node"、"question"（等待用户回答 ask_user，ADR-0025）或 "quota"（配额用尽，Deadline 为重置时间）。
 	Kind       string    `json:"kind"`
 	CallID     string    `json:"call_id,omitempty"`
 	Capability string    `json:"capability,omitempty"`
@@ -336,6 +339,8 @@ func (s *Server) waiting(r *http.Request, run *session.Run) *waitingView {
 	case c.AwaitingApproval():
 		return &waitingView{Kind: "approval", CallID: c.Call.GetCallId(), Capability: c.Call.GetCapability(),
 			Summary: c.Approval.Summary, Deadline: c.Approval.Deadline}
+	case c.Dispatched() && c.NodeID == askuser.NodeID:
+		return &waitingView{Kind: "question", CallID: c.Call.GetCallId(), Capability: c.Call.GetCapability(), Deadline: c.Deadline}
 	case c.Dispatched():
 		v := &waitingView{Kind: "node", CallID: c.Call.GetCallId(), Capability: c.Call.GetCapability(),
 			NodeID: c.NodeID, Deadline: c.Deadline}
@@ -399,7 +404,11 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"run_id": res.RunID, "steered": res.Steered})
+	out := map[string]any{"run_id": res.RunID, "steered": res.Steered}
+	if res.Answered != "" {
+		out["answered"] = res.Answered
+	}
+	writeJSON(w, http.StatusAccepted, out)
 }
 
 func (s *Server) interrupt(w http.ResponseWriter, r *http.Request) {
@@ -407,6 +416,22 @@ func (s *Server) interrupt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Service.Interrupt(r.Context(), r.PathValue("id"), r.PathValue("run")); err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.session(w, r); !ok {
+		return
+	}
+	var req askuser.Answer
+	if err := decode(r, &req); err != nil {
+		s.fail(w, err)
+		return
+	}
+	if err := s.Service.Answer(r.Context(), r.PathValue("id"), r.PathValue("call"), &req); err != nil {
 		s.fail(w, err)
 		return
 	}

@@ -1,0 +1,16 @@
+name: ask-user-not-needed
+description: 信息已经足够时直接执行，不为确认而调用 ask_user（只有一份合同、收件人明确）。
+setup:
+  device:
+    label: macbook
+    files:
+      contracts/采购合同-华东电子.md: "# 采购合同（华东电子）\n第七条 付款：签约后预付 30%，验收合格后 15 个工作日内付清尾款。\n"
+turns:
+  - input: 把采购合同里的付款条款发给李律师，邮箱 lilv@example.com。
+    expect:
+      status: completed
+      calls: ["*send_message"]
+      no_calls: ["ask_user"]
+      call_args:
+        "*send_message": "预付 30%"
+      device_sent: 1

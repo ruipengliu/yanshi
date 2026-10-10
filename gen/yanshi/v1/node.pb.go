@@ -1227,6 +1227,7 @@ type ClientRequest struct {
 	//	*ClientRequest_Interrupt
 	//	*ClientRequest_Decide
 	//	*ClientRequest_Close
+	//	*ClientRequest_Answer
 	Op            isClientRequest_Op `protobuf_oneof:"op"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1321,6 +1322,15 @@ func (x *ClientRequest) GetClose() *CloseSession {
 	return nil
 }
 
+func (x *ClientRequest) GetAnswer() *AnswerQuestion {
+	if x != nil {
+		if x, ok := x.Op.(*ClientRequest_Answer); ok {
+			return x.Answer
+		}
+	}
+	return nil
+}
+
 type isClientRequest_Op interface {
 	isClientRequest_Op()
 }
@@ -1345,6 +1355,10 @@ type ClientRequest_Close struct {
 	Close *CloseSession `protobuf:"bytes,6,opt,name=close,proto3,oneof"`
 }
 
+type ClientRequest_Answer struct {
+	Answer *AnswerQuestion `protobuf:"bytes,7,opt,name=answer,proto3,oneof"`
+}
+
 func (*ClientRequest_CreateSession) isClientRequest_Op() {}
 
 func (*ClientRequest_Submit) isClientRequest_Op() {}
@@ -1354,6 +1368,8 @@ func (*ClientRequest_Interrupt) isClientRequest_Op() {}
 func (*ClientRequest_Decide) isClientRequest_Op() {}
 
 func (*ClientRequest_Close) isClientRequest_Op() {}
+
+func (*ClientRequest_Answer) isClientRequest_Op() {}
 
 type CreateSession struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -1625,6 +1641,86 @@ func (x *CloseSession) GetReason() string {
 	return ""
 }
 
+// AnswerQuestion 回答 Agent 的 ask_user 提问（docs/design/m3-duplex-channel.md §7，ADR-0025）。
+// 问题、选项与字段见该调用的参数；可以只给出其中一部分（例如只输入文字）。
+type AnswerQuestion struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	CallId    string                 `protobuf:"bytes,2,opt,name=call_id,json=callId,proto3" json:"call_id,omitempty"`
+	// 点选的选项 ID。
+	Selected []string `protobuf:"bytes,3,rep,name=selected,proto3" json:"selected,omitempty"`
+	// 填写的字段，键为字段 name。
+	Values        map[string]string `protobuf:"bytes,4,rep,name=values,proto3" json:"values,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Text          string            `protobuf:"bytes,5,opt,name=text,proto3" json:"text,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AnswerQuestion) Reset() {
+	*x = AnswerQuestion{}
+	mi := &file_yanshi_v1_node_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AnswerQuestion) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AnswerQuestion) ProtoMessage() {}
+
+func (x *AnswerQuestion) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_node_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AnswerQuestion.ProtoReflect.Descriptor instead.
+func (*AnswerQuestion) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *AnswerQuestion) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *AnswerQuestion) GetCallId() string {
+	if x != nil {
+		return x.CallId
+	}
+	return ""
+}
+
+func (x *AnswerQuestion) GetSelected() []string {
+	if x != nil {
+		return x.Selected
+	}
+	return nil
+}
+
+func (x *AnswerQuestion) GetValues() map[string]string {
+	if x != nil {
+		return x.Values
+	}
+	return nil
+}
+
+func (x *AnswerQuestion) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
 type ClientResponse struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	RequestId string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
@@ -1633,15 +1729,17 @@ type ClientResponse struct {
 	// CreateSession 的结果。
 	SessionId string `protobuf:"bytes,3,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	// SubmitInput 的结果。
-	RunId         string `protobuf:"bytes,4,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	Steered       bool   `protobuf:"varint,5,opt,name=steered,proto3" json:"steered,omitempty"`
+	RunId   string `protobuf:"bytes,4,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	Steered bool   `protobuf:"varint,5,opt,name=steered,proto3" json:"steered,omitempty"`
+	// 非空表示输入作为对该 ask_user 提问的回答（Run 正在等用户回答，ADR-0025）。
+	Answered      string `protobuf:"bytes,6,opt,name=answered,proto3" json:"answered,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ClientResponse) Reset() {
 	*x = ClientResponse{}
-	mi := &file_yanshi_v1_node_proto_msgTypes[20]
+	mi := &file_yanshi_v1_node_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1653,7 +1751,7 @@ func (x *ClientResponse) String() string {
 func (*ClientResponse) ProtoMessage() {}
 
 func (x *ClientResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_node_proto_msgTypes[20]
+	mi := &file_yanshi_v1_node_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1666,7 +1764,7 @@ func (x *ClientResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClientResponse.ProtoReflect.Descriptor instead.
 func (*ClientResponse) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{20}
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ClientResponse) GetRequestId() string {
@@ -1704,6 +1802,13 @@ func (x *ClientResponse) GetSteered() bool {
 	return false
 }
 
+func (x *ClientResponse) GetAnswered() string {
+	if x != nil {
+		return x.Answered
+	}
+	return ""
+}
+
 type ClientError struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 与 HTTP API 的状态码对应："invalid"、"not_found"、"conflict"、"rejected"（内容安全）、
@@ -1718,7 +1823,7 @@ type ClientError struct {
 
 func (x *ClientError) Reset() {
 	*x = ClientError{}
-	mi := &file_yanshi_v1_node_proto_msgTypes[21]
+	mi := &file_yanshi_v1_node_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1730,7 +1835,7 @@ func (x *ClientError) String() string {
 func (*ClientError) ProtoMessage() {}
 
 func (x *ClientError) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_node_proto_msgTypes[21]
+	mi := &file_yanshi_v1_node_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1743,7 +1848,7 @@ func (x *ClientError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClientError.ProtoReflect.Descriptor instead.
 func (*ClientError) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{21}
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ClientError) GetCode() string {
@@ -1782,7 +1887,7 @@ type Activity struct {
 
 func (x *Activity) Reset() {
 	*x = Activity{}
-	mi := &file_yanshi_v1_node_proto_msgTypes[22]
+	mi := &file_yanshi_v1_node_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1794,7 +1899,7 @@ func (x *Activity) String() string {
 func (*Activity) ProtoMessage() {}
 
 func (x *Activity) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_node_proto_msgTypes[22]
+	mi := &file_yanshi_v1_node_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1807,7 +1912,7 @@ func (x *Activity) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Activity.ProtoReflect.Descriptor instead.
 func (*Activity) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{22}
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *Activity) GetSessionId() string {
@@ -1843,7 +1948,7 @@ type Presence struct {
 
 func (x *Presence) Reset() {
 	*x = Presence{}
-	mi := &file_yanshi_v1_node_proto_msgTypes[23]
+	mi := &file_yanshi_v1_node_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1855,7 +1960,7 @@ func (x *Presence) String() string {
 func (*Presence) ProtoMessage() {}
 
 func (x *Presence) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_node_proto_msgTypes[23]
+	mi := &file_yanshi_v1_node_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1868,7 +1973,7 @@ func (x *Presence) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Presence.ProtoReflect.Descriptor instead.
 func (*Presence) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{23}
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *Presence) GetSessionId() string {
@@ -1899,7 +2004,7 @@ type Viewer struct {
 
 func (x *Viewer) Reset() {
 	*x = Viewer{}
-	mi := &file_yanshi_v1_node_proto_msgTypes[24]
+	mi := &file_yanshi_v1_node_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1911,7 +2016,7 @@ func (x *Viewer) String() string {
 func (*Viewer) ProtoMessage() {}
 
 func (x *Viewer) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_node_proto_msgTypes[24]
+	mi := &file_yanshi_v1_node_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1924,7 +2029,7 @@ func (x *Viewer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Viewer.ProtoReflect.Descriptor instead.
 func (*Viewer) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{24}
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *Viewer) GetDeviceId() string {
@@ -2052,7 +2157,7 @@ const file_yanshi_v1_node_proto_rawDesc = "" +
 	"\tafter_seq\x18\x04 \x01(\x04R\bafterSeq\x12\x12\n" +
 	"\x04text\x18\x05 \x01(\tR\x04text\x12\x1a\n" +
 	"\bsnapshot\x18\x06 \x01(\bR\bsnapshot\x12\x10\n" +
-	"\x03end\x18\a \x01(\bR\x03end\"\xc8\x02\n" +
+	"\x03end\x18\a \x01(\bR\x03end\"\xfd\x02\n" +
 	"\rClientRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12A\n" +
@@ -2060,7 +2165,8 @@ const file_yanshi_v1_node_proto_rawDesc = "" +
 	"\x06submit\x18\x03 \x01(\v2\x16.yanshi.v1.SubmitInputH\x00R\x06submit\x127\n" +
 	"\tinterrupt\x18\x04 \x01(\v2\x17.yanshi.v1.InterruptRunH\x00R\tinterrupt\x123\n" +
 	"\x06decide\x18\x05 \x01(\v2\x19.yanshi.v1.DecideApprovalH\x00R\x06decide\x12/\n" +
-	"\x05close\x18\x06 \x01(\v2\x17.yanshi.v1.CloseSessionH\x00R\x05closeB\x04\n" +
+	"\x05close\x18\x06 \x01(\v2\x17.yanshi.v1.CloseSessionH\x00R\x05close\x123\n" +
+	"\x06answer\x18\a \x01(\v2\x19.yanshi.v1.AnswerQuestionH\x00R\x06answerB\x04\n" +
 	"\x02op\"J\n" +
 	"\rCreateSession\x12\x14\n" +
 	"\x05agent\x18\x01 \x01(\tR\x05agent\x12#\n" +
@@ -2081,7 +2187,17 @@ const file_yanshi_v1_node_proto_rawDesc = "" +
 	"\fCloseSession\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xad\x01\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xf2\x01\n" +
+	"\x0eAnswerQuestion\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x17\n" +
+	"\acall_id\x18\x02 \x01(\tR\x06callId\x12\x1a\n" +
+	"\bselected\x18\x03 \x03(\tR\bselected\x12=\n" +
+	"\x06values\x18\x04 \x03(\v2%.yanshi.v1.AnswerQuestion.ValuesEntryR\x06values\x12\x12\n" +
+	"\x04text\x18\x05 \x01(\tR\x04text\x1a9\n" +
+	"\vValuesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xc9\x01\n" +
 	"\x0eClientResponse\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12,\n" +
@@ -2089,7 +2205,8 @@ const file_yanshi_v1_node_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x03 \x01(\tR\tsessionId\x12\x15\n" +
 	"\x06run_id\x18\x04 \x01(\tR\x05runId\x12\x18\n" +
-	"\asteered\x18\x05 \x01(\bR\asteered\"r\n" +
+	"\asteered\x18\x05 \x01(\bR\asteered\x12\x1a\n" +
+	"\banswered\x18\x06 \x01(\tR\banswered\"r\n" +
 	"\vClientError\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x125\n" +
@@ -2127,7 +2244,7 @@ func file_yanshi_v1_node_proto_rawDescGZIP() []byte {
 }
 
 var file_yanshi_v1_node_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_yanshi_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
+var file_yanshi_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
 var file_yanshi_v1_node_proto_goTypes = []any{
 	(Risk)(0),                     // 0: yanshi.v1.Risk
 	(*CapabilitySpec)(nil),        // 1: yanshi.v1.CapabilitySpec
@@ -2150,14 +2267,16 @@ var file_yanshi_v1_node_proto_goTypes = []any{
 	(*InterruptRun)(nil),          // 18: yanshi.v1.InterruptRun
 	(*DecideApproval)(nil),        // 19: yanshi.v1.DecideApproval
 	(*CloseSession)(nil),          // 20: yanshi.v1.CloseSession
-	(*ClientResponse)(nil),        // 21: yanshi.v1.ClientResponse
-	(*ClientError)(nil),           // 22: yanshi.v1.ClientError
-	(*Activity)(nil),              // 23: yanshi.v1.Activity
-	(*Presence)(nil),              // 24: yanshi.v1.Presence
-	(*Viewer)(nil),                // 25: yanshi.v1.Viewer
-	(*Event)(nil),                 // 26: yanshi.v1.Event
-	(*timestamppb.Timestamp)(nil), // 27: google.protobuf.Timestamp
-	(*ContentBlock)(nil),          // 28: yanshi.v1.ContentBlock
+	(*AnswerQuestion)(nil),        // 21: yanshi.v1.AnswerQuestion
+	(*ClientResponse)(nil),        // 22: yanshi.v1.ClientResponse
+	(*ClientError)(nil),           // 23: yanshi.v1.ClientError
+	(*Activity)(nil),              // 24: yanshi.v1.Activity
+	(*Presence)(nil),              // 25: yanshi.v1.Presence
+	(*Viewer)(nil),                // 26: yanshi.v1.Viewer
+	nil,                           // 27: yanshi.v1.AnswerQuestion.ValuesEntry
+	(*Event)(nil),                 // 28: yanshi.v1.Event
+	(*timestamppb.Timestamp)(nil), // 29: google.protobuf.Timestamp
+	(*ContentBlock)(nil),          // 30: yanshi.v1.ContentBlock
 }
 var file_yanshi_v1_node_proto_depIdxs = []int32{
 	0,  // 0: yanshi.v1.CapabilitySpec.risk:type_name -> yanshi.v1.Risk
@@ -2166,34 +2285,36 @@ var file_yanshi_v1_node_proto_depIdxs = []int32{
 	11, // 3: yanshi.v1.NodeMessage.subscribe:type_name -> yanshi.v1.Subscribe
 	12, // 4: yanshi.v1.NodeMessage.unsubscribe:type_name -> yanshi.v1.Unsubscribe
 	15, // 5: yanshi.v1.NodeMessage.request:type_name -> yanshi.v1.ClientRequest
-	23, // 6: yanshi.v1.NodeMessage.activity:type_name -> yanshi.v1.Activity
+	24, // 6: yanshi.v1.NodeMessage.activity:type_name -> yanshi.v1.Activity
 	5,  // 7: yanshi.v1.GatewayMessage.welcome:type_name -> yanshi.v1.Welcome
 	6,  // 8: yanshi.v1.GatewayMessage.invoke:type_name -> yanshi.v1.Invoke
 	7,  // 9: yanshi.v1.GatewayMessage.cancel:type_name -> yanshi.v1.Cancel
 	9,  // 10: yanshi.v1.GatewayMessage.result_ack:type_name -> yanshi.v1.ResultAck
-	26, // 11: yanshi.v1.GatewayMessage.event:type_name -> yanshi.v1.Event
+	28, // 11: yanshi.v1.GatewayMessage.event:type_name -> yanshi.v1.Event
 	14, // 12: yanshi.v1.GatewayMessage.delta:type_name -> yanshi.v1.LiveDelta
-	21, // 13: yanshi.v1.GatewayMessage.response:type_name -> yanshi.v1.ClientResponse
+	22, // 13: yanshi.v1.GatewayMessage.response:type_name -> yanshi.v1.ClientResponse
 	13, // 14: yanshi.v1.GatewayMessage.subscription_ended:type_name -> yanshi.v1.SubscriptionEnded
-	24, // 15: yanshi.v1.GatewayMessage.presence:type_name -> yanshi.v1.Presence
+	25, // 15: yanshi.v1.GatewayMessage.presence:type_name -> yanshi.v1.Presence
 	1,  // 16: yanshi.v1.Hello.capabilities:type_name -> yanshi.v1.CapabilitySpec
-	27, // 17: yanshi.v1.Invoke.deadline:type_name -> google.protobuf.Timestamp
-	28, // 18: yanshi.v1.InvokeResult.content:type_name -> yanshi.v1.ContentBlock
+	29, // 17: yanshi.v1.Invoke.deadline:type_name -> google.protobuf.Timestamp
+	30, // 18: yanshi.v1.InvokeResult.content:type_name -> yanshi.v1.ContentBlock
 	1,  // 19: yanshi.v1.CapabilitySet.capabilities:type_name -> yanshi.v1.CapabilitySpec
 	16, // 20: yanshi.v1.ClientRequest.create_session:type_name -> yanshi.v1.CreateSession
 	17, // 21: yanshi.v1.ClientRequest.submit:type_name -> yanshi.v1.SubmitInput
 	18, // 22: yanshi.v1.ClientRequest.interrupt:type_name -> yanshi.v1.InterruptRun
 	19, // 23: yanshi.v1.ClientRequest.decide:type_name -> yanshi.v1.DecideApproval
 	20, // 24: yanshi.v1.ClientRequest.close:type_name -> yanshi.v1.CloseSession
-	28, // 25: yanshi.v1.SubmitInput.input:type_name -> yanshi.v1.ContentBlock
-	22, // 26: yanshi.v1.ClientResponse.error:type_name -> yanshi.v1.ClientError
-	27, // 27: yanshi.v1.ClientError.retry_at:type_name -> google.protobuf.Timestamp
-	25, // 28: yanshi.v1.Presence.viewers:type_name -> yanshi.v1.Viewer
-	29, // [29:29] is the sub-list for method output_type
-	29, // [29:29] is the sub-list for method input_type
-	29, // [29:29] is the sub-list for extension type_name
-	29, // [29:29] is the sub-list for extension extendee
-	0,  // [0:29] is the sub-list for field type_name
+	21, // 25: yanshi.v1.ClientRequest.answer:type_name -> yanshi.v1.AnswerQuestion
+	30, // 26: yanshi.v1.SubmitInput.input:type_name -> yanshi.v1.ContentBlock
+	27, // 27: yanshi.v1.AnswerQuestion.values:type_name -> yanshi.v1.AnswerQuestion.ValuesEntry
+	23, // 28: yanshi.v1.ClientResponse.error:type_name -> yanshi.v1.ClientError
+	29, // 29: yanshi.v1.ClientError.retry_at:type_name -> google.protobuf.Timestamp
+	26, // 30: yanshi.v1.Presence.viewers:type_name -> yanshi.v1.Viewer
+	31, // [31:31] is the sub-list for method output_type
+	31, // [31:31] is the sub-list for method input_type
+	31, // [31:31] is the sub-list for extension type_name
+	31, // [31:31] is the sub-list for extension extendee
+	0,  // [0:31] is the sub-list for field type_name
 }
 
 func init() { file_yanshi_v1_node_proto_init() }
@@ -2227,6 +2348,7 @@ func file_yanshi_v1_node_proto_init() {
 		(*ClientRequest_Interrupt)(nil),
 		(*ClientRequest_Decide)(nil),
 		(*ClientRequest_Close)(nil),
+		(*ClientRequest_Answer)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -2234,7 +2356,7 @@ func file_yanshi_v1_node_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_yanshi_v1_node_proto_rawDesc), len(file_yanshi_v1_node_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   25,
+			NumMessages:   27,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -1,0 +1,19 @@
+name: ask-user-typed-answer
+description: 用户不点选、直接打字回答 ask_user 的问题时，文字作为回答回到同一个 Run，助手按其继续。
+setup:
+  device:
+    label: macbook
+    files:
+      contracts/租赁合同-张江园区.md: "# 租赁合同（张江园区）\n第五条 付款：租金按季度支付，每季度首月 10 日前付清。\n"
+      contracts/采购合同-华东电子.md: "# 采购合同（华东电子）\n第七条 付款：签约后预付 30%，验收合格后 15 个工作日内付清尾款。\n"
+      contracts/服务合同-星河科技.md: "# 服务合同（星河科技）\n第四条 付款：按月结算，次月 5 日前支付上月服务费。\n"
+turns:
+  - input: 把合同里的付款条款发给李律师，邮箱 lilv@example.com。
+    answer:
+      reply: 星河那份
+    expect:
+      status: completed
+      calls: ["ask_user", "*send_message"]
+      call_args:
+        "*send_message": "次月 5 日"
+      device_sent: 1

@@ -15,8 +15,10 @@ instructions: |
   需要计算、数据处理或画图时，在云端沙箱中用 run_python 编写并运行代码；文件保存在 /workspace。
   大文件不要整体读入对话：分段读取，或导入沙箱处理后只返回结论。
   对以后的对话有用的用户信息（偏好、人际关系、长期事项），用 memory_save 记住；用户要求忘记时用 memory_forget。
+  要操作的对象有多个候选而用户没有指明时，用 ask_user 让用户选择；其余情况不要停下来提问，按合理假设完成并说明假设。
 capabilities:
   - clock_now
+  - ask_user
   - memory_save
   - memory_forget
   - memory_search

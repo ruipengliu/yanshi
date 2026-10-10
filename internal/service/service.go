@@ -10,6 +10,7 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
+	"yanshi/internal/askuser"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/metrics"
@@ -126,6 +127,9 @@ type SubmitResult struct {
 	RunID string
 	// Steered 为 true 表示输入并入了进行中的 Run，而非开启新 Run。
 	Steered bool
+	// Answered 非空表示输入作为对该 ask_user 提问的回答（ADR-0025）：Run 正在等用户回答时，
+	// 用户直接打字就是在回答，而不是插话。
+	Answered string
 }
 
 // Submit 提交用户输入：有活跃 Run 时作为 Steer，否则开启新 Run。
@@ -168,7 +172,16 @@ func (s *Service) Submit(ctx context.Context, sessionID string, input []*v1.Cont
 		res := &SubmitResult{}
 		if a := st.Active(); a != nil {
 			res.RunID, res.Steered = a.ID, true
-			events = append(events, &v1.Event{Payload: &v1.Event_Steered{Steered: &v1.Steered{RunId: a.ID, Input: input}}})
+			if c := pendingQuestion(a, ""); c != nil {
+				ev, err := typedAnswer(a, c, input)
+				if err != nil {
+					return nil, err
+				}
+				res.Answered = c.Call.GetCallId()
+				events = append(events, ev)
+			} else {
+				events = append(events, &v1.Event{Payload: &v1.Event_Steered{Steered: &v1.Steered{RunId: a.ID, Input: input}}})
+			}
 		} else {
 			// 当前版本已撤回：新 Run 从稳定版本开始，切换与 RunRequested 同批提交（ADR-0020）。
 			if to, ok := s.Agents.Withdrawn(st.Agent); ok {
@@ -228,19 +241,114 @@ func (s *Service) Interrupt(ctx context.Context, sessionID, runID string) error 
 	return fmt.Errorf("interrupt run %s: too many conflicts", runID)
 }
 
-// cancelDispatched 尽力撤回 Run 中已派发、未完成的路由调用。
+// cancelDispatched 尽力撤回 Run 中已派发、未完成的路由调用。提问不经 Inbox，无需撤回（ADR-0025）。
 func (s *Service) cancelDispatched(ctx context.Context, r *session.Run) error {
 	if s.Nodes == nil {
 		return nil
 	}
 	for _, c := range r.Calls {
-		if c.Dispatched() {
+		if c.Dispatched() && c.NodeID != askuser.NodeID {
 			if err := s.Nodes.Cancel(ctx, c.NodeID, c.Call.GetCallId()); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// pendingQuestion 返回 Run 中等待回答的 ask_user 提问；callID 为空时返回第一个。
+func pendingQuestion(r *session.Run, callID string) *session.Call {
+	for _, c := range r.Calls {
+		if c.Dispatched() && c.NodeID == askuser.NodeID && (callID == "" || c.Call.GetCallId() == callID) {
+			return c
+		}
+	}
+	return nil
+}
+
+// askedBefore 报告 callID 是否是本 Session 中的一次 ask_user 提问（可能已回答或已结束）。
+func askedBefore(st *session.State, callID string) bool {
+	for _, r := range st.Runs {
+		for _, c := range r.Calls {
+			if c.Call.GetCallId() == callID && c.Call.GetCapability() == askuser.Capability {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// typedAnswer 把用户在对话中直接输入的内容作为对提问的回答：文字为回答文字，其余内容块（图片等）随附。
+func typedAnswer(r *session.Run, c *session.Call, input []*v1.ContentBlock) (*v1.Event, error) {
+	q, err := askuser.Parse(c.Call.GetArgumentsJson())
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
+	a := &askuser.Answer{Text: strings.TrimSpace(model.Text(input))}
+	var extra []*v1.ContentBlock
+	for _, b := range input {
+		if b.GetText() == nil {
+			extra = append(extra, b)
+		}
+	}
+	if a.Text == "" {
+		a.Text = "（见附件）"
+	}
+	if err := q.Check(a); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
+	return answerEvent(r, c, askuser.Result(q, a, extra...)), nil
+}
+
+// answerEvent 是回答对应的外部结果（attempt = 0）。
+func answerEvent(r *session.Run, c *session.Call, content []*v1.ContentBlock) *v1.Event {
+	return &v1.Event{Payload: &v1.Event_ToolResult{ToolResult: &v1.ToolResult{RunId: r.ID, CallId: c.Call.GetCallId(), Content: content}}}
+}
+
+// Answer 记录用户在界面上对 ask_user 提问的回答（点选、填写或文字），作为该调用的结果写入日志并唤醒
+// Session（ADR-0025）。回答不合法返回 ErrInvalid；提问已被回答、超时或随 Run 结束时返回 ErrConflict。
+func (s *Service) Answer(ctx context.Context, sessionID, callID string, a *askuser.Answer) error {
+	st, err := s.Load(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	// 选项是模型给出的、已在输出时检查；用户输入的文字与填写的值按输入检查（ADR-0021）。
+	if text := a.Moderated(); text != "" {
+		if err := s.moderateInput(ctx, st, model.TextBlocks(text)); err != nil {
+			return err
+		}
+	}
+	for range maxConflictRetries {
+		r := st.Active()
+		var c *session.Call
+		if r != nil {
+			c = pendingQuestion(r, callID)
+		}
+		if c == nil {
+			if askedBefore(st, callID) {
+				return fmt.Errorf("%w: question %s is no longer waiting for an answer", ErrConflict, callID)
+			}
+			return fmt.Errorf("%w: no question %s", ErrNotFound, callID)
+		}
+		q, err := askuser.Parse(c.Call.GetArgumentsJson())
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalid, err)
+		}
+		if err := q.Check(a); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalid, err)
+		}
+		err = s.Store.Commit(ctx, st, answerEvent(r, c, askuser.Result(q, a)))
+		if err == nil {
+			return s.Queue.Enqueue(ctx, sessionID)
+		}
+		if !errors.Is(err, eventlog.ErrConflict) {
+			return err
+		}
+		if err := s.Store.SyncAfterConflict(ctx, st); err != nil {
+			return gone(sessionID, err)
+		}
+	}
+	return fmt.Errorf("answer question %s: too many conflicts", callID)
 }
 
 // Decide 记录 EndUser 对一次调用的审批决定，并唤醒 Session。

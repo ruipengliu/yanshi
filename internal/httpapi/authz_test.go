@@ -81,7 +81,8 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 	err = store.Commit(ctx, st,
 		&v1.Event{Payload: &v1.Event_AttemptStarted{AttemptStarted: &v1.AttemptStarted{RunId: res.RunID, Attempt: 1, LiveEndpoint: "http://10.0.0.1:7070"}}},
 		&v1.Event{Payload: &v1.Event_AssistantMessage{AssistantMessage: &v1.AssistantMessage{RunId: res.RunID, Attempt: 1,
-			ToolCalls: []*v1.ToolCall{{CallId: "c1", Capability: "x", ArgumentsJson: "{}"}}}}})
+			ToolCalls: []*v1.ToolCall{{CallId: "c1", Capability: "x", ArgumentsJson: "{}"},
+				{CallId: "q1", Capability: "ask_user", ArgumentsJson: `{"question":"q"}`}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,6 +188,7 @@ func (e *authzEnv) cases() map[string]routeCase {
 		"GET /v1/sessions/{id}/events":                {"GET", s + "/events", nil, http.StatusOK},
 		"GET /v1/sessions/{id}/stream":                {"GET", s + "/stream", nil, http.StatusOK},
 		"POST /v1/sessions/{id}/approvals/{call}":     {"POST", s + "/approvals/c1", map[string]bool{"approve": true}, http.StatusConflict},
+		"POST /v1/sessions/{id}/answers/{call}":       {"POST", s + "/answers/q1", map[string]string{"text": "x"}, http.StatusConflict},
 		"GET /v1/nodes":                               {"GET", "/v1/nodes?end_user=u1", nil, http.StatusOK},
 		"POST /v1/sessions/{id}/artifacts":            {"POST", s + "/artifacts?name=b.txt", "data", http.StatusCreated},
 		"GET /v1/sessions/{id}/artifacts":             {"GET", s + "/artifacts", nil, http.StatusOK},

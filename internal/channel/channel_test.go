@@ -93,9 +93,15 @@ func TestResubscribeKeepsPresence(t *testing.T) {
 		es, _, _ := mem.List(context.Background(), sid, time.Now())
 		return len(es) == 1 && es[0].Focused && es[0].DeviceID == "d1"
 	}
-	// 每次都等前一个订阅写入记录之后再重复订阅：此时旧订阅退出时一定会撤下记录。
-	for range 3 {
+	// 每次都等前一个订阅写入记录之后再重复订阅（或先退订再订阅）：此时旧订阅退出时一定会撤下记录。
+	for i := range 4 {
 		eventually(t, "focused entry", focused)
+		if i%2 == 1 {
+			c.Handle(&v1.NodeMessage{Msg: &v1.NodeMessage_Unsubscribe{Unsubscribe: &v1.Unsubscribe{SessionId: sid}}})
+			c.Handle(subscribe(sid))
+			c.Handle(&v1.NodeMessage{Msg: &v1.NodeMessage_Activity{Activity: &v1.Activity{SessionId: sid, Focused: true}}})
+			continue
+		}
 		c.Handle(subscribe(sid))
 	}
 	eventually(t, "one focused entry after resubscribing", focused)

@@ -11,7 +11,8 @@ turns:
     expect: {status: completed, calls: ["macbook__read_file"]}
   - input: 好的。另外记一下，我对芒果过敏。
     expect:
-      status: completed
+      # "好的"回应的是上一轮助手的提议，助手可以用 ask_user 澄清（asked）；本用例检查的是写入闸门。
+      status: completed|asked
       calls: ["memory_save"]
       approvals: {max: 0}
       memories: [{contains: "芒果"}]

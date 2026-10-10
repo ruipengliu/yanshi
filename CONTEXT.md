@@ -42,6 +42,10 @@ _Avoid_: 通道、长链接、Socket
 哪些 Device 此刻订阅着某个 Session，以及它是否显示在前台、用户是否正在输入。易失、带有效期，不进 Event 日志。
 _Avoid_: 在线状态（指 Node 是否连接时）、已读
 
+**Question（提问）**:
+Agent 经 `ask_user` 向 EndUser 提出的、可点选或填写的问题；Run 挂起等待，回答作为该调用的结果回到 Run。
+_Avoid_: 表单、弹窗、确认框（与 Approval 区分）
+
 **Inbox（收件箱）**:
 某个 Node 待投递的 Capability 调用集合；Node 上线后由网关投递，结果回写日志后移出。
 _Avoid_: 队列、任务列表

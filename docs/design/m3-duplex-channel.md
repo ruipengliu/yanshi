@@ -1,6 +1,6 @@
 # M3 多端双工通道
 
-> 状态：§2–§6 已实现，§7–§8 规划中 · 依赖：[M1 设备即节点](./m1-device-nodes.md)、[跨进程实时增量](./m2-live-deltas.md) · ADR-0024 · 契约：[`node.proto`](../../proto/yanshi/v1/node.proto)
+> 状态：§2–§7 已实现，§8 规划中 · 依赖：[M1 设备即节点](./m1-device-nodes.md)、[跨进程实时增量](./m2-live-deltas.md) · ADR-0024 · 契约：[`node.proto`](../../proto/yanshi/v1/node.proto)
 
 ## 1. 问题
 
@@ -88,7 +88,52 @@ SDK（`sdk/nodesdk`）：`Executor` 为 nil 时连接只作会话客户端。主
 
 SDK：`SetActivity(sessionID, focused, typing)`；处理器实现可选接口 `PresenceHandler.OnPresence` 即可收到列表。重连后，SDK 随订阅重发前台状态，"正在输入"是瞬时的，不重发。
 
-## 7. Agent 生成的交互式界面（规划中）
+## 7. Agent 生成的交互式界面：ask_user（ADR-0025）
+
+Agent 需要用户在几个明确的候选中选择，或补充少量结构化信息时，调用内置能力 `ask_user`：
+
+```json
+{"question": "发哪份合同？",
+ "options": [{"id": "a", "label": "租赁合同（张江园区）"}, {"id": "b", "label": "采购合同（华东电子）"}],
+ "multiple": false,
+ "fields": [{"name": "date", "label": "日期", "type": "date", "required": true}]}
+```
+
+最多 8 个选项、6 个字段；字段类型为 text、number、date 或 time。AgentDef 的 `capabilities` 中写 `ask_user` 即可启用（`agents/assistant.yaml` 已启用）。
+
+**执行。** 它是一次路由到用户本人的调用（`NodeID = "@user"`），沿用路由调用的生命周期，不新增事件类型：
+
+- 参数不合法（例如只有一个选项、选项 ID 重复）时，不去打扰用户：错误直接作为结果交还模型，由它改正。
+- 合法时，Worker 记下 `ToolCallStarted{node_id: "@user", deadline}`（默认 24 小时）后挂起 Run，不经任何 Inbox。
+- 截止时间到了仍没有回答时，调用以 `timed out: the user did not answer the question in time` 结束。
+- 中断 Run 时，提问随之作废，没有要撤回的投递。
+
+**回答。** 回答可以来自任一设备：
+
+- 界面上点选或填写：`ClientRequest.answer`（`AnswerQuestion{call_id, selected, values, text}`）或 `POST /v1/sessions/{id}/answers/{call}`。`service.Answer` 先按问题校验，选项必须存在、单选只能选一个、必填字段要有值、日期和数字的格式要正确；不合法返回 `invalid`。然后对输入的文字与填写的值做内容安全检查（选项是模型给出的，已在输出时检查过），最后写入外部结果（`ToolResult`，attempt = 0）并唤醒 Run。提问已被回答、超时或随 Run 结束时返回 `conflict`。
+- 直接打字：Run 正在等回答时提交的输入就是回答，不是插话。文字成为回答的 `text`，图片等内容块随附在结果中；`SubmitResult.answered` 指出回答的是哪个提问。
+- 模型看到的结果是 JSON：`{"selected":[{"id":"b","label":"采购合同（华东电子）"}],"values":{...},"text":"..."}`。选中的选项带上标签，模型不必再对照 ID。
+
+**客户端。** 从 `AssistantMessage.tool_calls` 中 `capability == "ask_user"` 的调用读出问题，渲染为卡片；该调用出现 `ToolResult` 时收起卡片（任一设备回答后，其他设备随之收起）。Session 投影中等待的类型为 `question`。
+
+**Memory 写入闸门。** 回答是用户本人的话：闸门把它算作用户输入，以回答为依据的写入不需要审批（ADR-0023）。
+
+**评测。**
+
+- `ask-user-pick-file`：三份候选合同，用户点选后按所选合同发送。
+- `ask-user-typed-answer`：用户打字回答"星河那份"。
+- `ask-user-not-needed`：只有一份合同，不应为确认而提问。
+- `clarify-before-send`：既可以用文字确认，也可以用 `ask_user` 提问（状态 `asked`：本轮停在提问处）。
+- 评测脚本的 `answer: {choose | values | text | reply}` 模拟用户回答。
+
+**提问过度。** 加入 ask_user 后的第一轮评测里，模型（deepseek-v4.1-flash）把它当成了低成本的确认手段：
+
+- `compaction-recall` 中有一半的试验在解读简报时停下来问"全文就这几行吗""600 万是年度还是季度口径""要要点还是逐句"；
+- `multi-turn-memory-chat` 中，问杭州周边活动时先问偏好。
+
+没有回答脚本时，下一轮的输入成了上一个问题的回答，对话随之偏离。工具说明从"适用于……、不要为确认而提问"改为以限制开头："仅在无法继续时提问：缺少必需的信息、且猜错会做错事；分析、解读、写作、推荐类的请求不要提问，按合理假设完成并说明假设"。`assistant` 的指令中也加了一句同样意思的话。
+
+改写后，`compaction-recall` 6/6 没有提问；`ask-user-pick-file`、`ask-user-typed-answer`、`clarify-before-send` 仍然 6/6 提问。`memory-gate-user-stated` 第 2 轮接受 `asked`：用户的"好的"回应的是上一轮助手的提议，用提问澄清是合理的，而本用例检查的是写入闸门。
 
 ## 8. 界面上下文（规划中）
 
@@ -105,3 +150,5 @@ SDK：`SetActivity(sessionID, focused, typing)`；处理器实现可选接口 `P
   - 两台设备连在共享 PostgreSQL 的两个实例上，互相看到对方加入、聚焦、正在输入、停止输入、离开。
 - `presencetest` 一致性套件（mem、PostgreSQL）：只有显示内容变化才递增版本，过期记录不列出，删除与隔离，等待被变化唤醒，按 Session 删除。
 - 模拟测试：在场写入与删除竞争时被撤回（`PresenceWrites`、`PresenceWithdrawn`），删除不变量，差分指纹包含在场记录。
+- 模拟测试（ask_user）：模型随机提问（含不合法的提问），客户端随机点选、给出不合法的回答（须被拒绝）、或打字回答，时钟跳动触发超时；覆盖 `Questions`、`Answers`、`TypedAnswers`、`InvalidAnswers`、`QuestionTimeouts`。不变量：任何时候都没有投给 `@user` 的 Inbox 项。
+- e2e：手机提问、电脑点选回答，两端都看到结果，重复回答为冲突；打字回答不记为插话。

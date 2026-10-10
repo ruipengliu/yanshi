@@ -288,6 +288,14 @@ func (c *Client) Decide(ctx context.Context, sessionID, callID string, approve b
 	return err
 }
 
+// Answer 回答 Agent 的 ask_user 提问：selected 是点选的选项 ID，values 是填写的字段，text 是输入的文字，
+// 可以只给出其中一部分。提问的内容见 AssistantMessage 中该调用的参数。
+func (c *Client) Answer(ctx context.Context, sessionID, callID string, selected []string, values map[string]string, text string) error {
+	_, err := c.Request(ctx, &v1.ClientRequest{Op: &v1.ClientRequest_Answer{Answer: &v1.AnswerQuestion{
+		SessionId: sessionID, CallId: callID, Selected: selected, Values: values, Text: text}}})
+	return err
+}
+
 func (c *Client) CloseSession(ctx context.Context, sessionID, reason string) error {
 	_, err := c.Request(ctx, &v1.ClientRequest{Op: &v1.ClientRequest_Close{Close: &v1.CloseSession{
 		SessionId: sessionID, Reason: reason}}})

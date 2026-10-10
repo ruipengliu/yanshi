@@ -10,6 +10,7 @@ import (
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/askuser"
 	"yanshi/internal/node"
 )
 
@@ -61,6 +62,8 @@ type Catalog struct {
 	MCP MCPSource
 	// DefaultTimeout 用于未声明超时的设备能力。
 	DefaultTimeout time.Duration
+	// AskTimeout 是 ask_user 等待回答的上限，默认 askuser.DefaultTimeout（ADR-0025）。
+	AskTimeout time.Duration
 }
 
 // Tools 返回 allow 白名单允许、对 target 可见的全部工具：进程内工具、沙箱工具、设备工具（按标签排序）。
@@ -84,6 +87,10 @@ func (c *Catalog) Tools(ctx context.Context, target Target, allow []string) ([]T
 				return nil, fmt.Errorf("bad capability pattern %q: %w", a, err)
 			}
 			sandboxGlobs = append(sandboxGlobs, g)
+			continue
+		}
+		if a == askuser.Capability {
+			out = append(out, c.askTool())
 			continue
 		}
 		cp, ok := c.Local.Get(a)
@@ -127,6 +134,19 @@ func (c *Catalog) Tools(ctx context.Context, target Target, allow []string) ([]T
 		}
 	}
 	return append(out, byName(devices)...), nil
+}
+
+// askTool 是 ask_user：路由到用户本人的调用（ADR-0025），不经 Inbox。
+func (c *Catalog) askTool() Tool {
+	timeout := c.AskTimeout
+	if timeout == 0 {
+		timeout = askuser.DefaultTimeout
+	}
+	return Tool{
+		Spec: Spec{Name: askuser.Capability, Description: askuser.Description, InputSchema: json.RawMessage(askuser.InputSchema),
+			Idempotent: true, Risk: v1.Risk_RISK_LOW},
+		NodeID: askuser.NodeID, Capability: askuser.Capability, Timeout: timeout,
+	}
 }
 
 // byName 按名称排序：工具定义是请求前缀的一部分，顺序不能随 Node 列表或 MCP Server 的返回顺序变化，

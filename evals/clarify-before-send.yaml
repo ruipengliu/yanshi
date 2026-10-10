@@ -10,7 +10,8 @@ turns:
   - input: 把那份报告发给张总。
     approve: false
     expect:
-      status: completed
+      # 可以用文字确认（completed），也可以用 ask_user 给出可点选的候选（asked，停在提问处）。
+      status: completed|asked
       no_calls: ["*send_message"]
       device_sent: 0
       judge: >-

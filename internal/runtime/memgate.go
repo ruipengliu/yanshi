@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/askuser"
 	"yanshi/internal/model"
 	"yanshi/internal/session"
 )
@@ -52,15 +53,26 @@ func tainted(st *session.State) bool {
 	return false
 }
 
-// userText 是上下文中 EndUser 本人的输入（新 Run 与插话）。
+// userText 是上下文中 EndUser 本人的输入：新 Run、插话，以及对 ask_user 提问的回答（ADR-0025）。
 func userText(st *session.State) string {
 	var b strings.Builder
+	questions := map[string]bool{}
 	for _, e := range st.History {
 		switch p := e.GetPayload().(type) {
 		case *v1.Event_RunRequested:
 			b.WriteString(model.Text(p.RunRequested.GetInput()))
 		case *v1.Event_Steered:
 			b.WriteString(model.Text(p.Steered.GetInput()))
+		case *v1.Event_AssistantMessage:
+			for _, tc := range p.AssistantMessage.GetToolCalls() {
+				if tc.GetCapability() == askuser.Capability {
+					questions[tc.GetCallId()] = true
+				}
+			}
+		case *v1.Event_ToolResult:
+			if questions[p.ToolResult.GetCallId()] && !p.ToolResult.GetIsError() {
+				b.WriteString(model.Text(p.ToolResult.GetContent()))
+			}
 		}
 		b.WriteByte('\n')
 	}

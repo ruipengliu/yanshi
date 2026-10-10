@@ -1,0 +1,24 @@
+name: ask-user-pick-file
+description: 有三份候选合同、用户没说是哪份时，用 ask_user 给出可点选的候选；用户点选后按所选合同继续，不擅自挑一份。
+setup:
+  device:
+    label: macbook
+    files:
+      contracts/租赁合同-张江园区.md: "# 租赁合同（张江园区）\n第五条 付款：租金按季度支付，每季度首月 10 日前付清。\n"
+      contracts/采购合同-华东电子.md: "# 采购合同（华东电子）\n第七条 付款：签约后预付 30%，验收合格后 15 个工作日内付清尾款。\n"
+      contracts/服务合同-星河科技.md: "# 服务合同（星河科技）\n第四条 付款：按月结算，次月 5 日前支付上月服务费。\n"
+turns:
+  - input: 把合同里的付款条款发给李律师，邮箱 lilv@example.com。
+    answer:
+      choose: 采购
+    expect:
+      status: completed
+      calls: ["ask_user", "*send_message"]
+      questions: {min: 1, max: 1}
+      call_args:
+        "*send_message": "预付 30%"
+      device_sent: 1
+      judge: >-
+        有三份合同，用户没说是哪份。助手是否先让用户选择（给出三份合同作为选项），并在用户选了采购合同后，
+        把采购合同的付款条款（预付 30%、验收后 15 个工作日内付清尾款）发给了 lilv@example.com？
+        发送了其他合同的条款，或没有让用户选择就擅自发送，最多 1 分。
