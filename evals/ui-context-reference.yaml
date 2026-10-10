@@ -1,0 +1,13 @@
+name: ui-context-reference
+description: 用户在订单详情界面问"这个什么时候到"，助手据界面上下文知道"这个"指哪个订单，直接回答，不反问是哪个订单。
+turns:
+  - input: 这个什么时候能到？
+    ui_context:
+      screen: 订单详情
+      ref: order://A1029
+      content: "订单 A1029：降噪耳机 ×1，¥899。状态：已发货，承运商顺丰（SF1234567890），预计 10 月 14 日送达。"
+    expect:
+      status: completed
+      no_calls: ["ask_user"]
+      reply_contains: ["14"]
+      judge: 回答是否根据界面上的订单信息，指出降噪耳机预计 10 月 14 日送达（可提及顺丰单号），而不是反问用户指的是哪个订单？

@@ -1,5 +1,5 @@
 {
-  "started_at": "2026-10-10T12:54:26.155064Z",
+  "started_at": "2026-10-10T13:13:44.570819Z",
   "judge": "tokenhub/glm-5.3",
   "cases": [
     {
@@ -378,6 +378,32 @@
       "avg_compactions": 0,
       "avg_takeovers": 0,
       "cache_hit": 0.9008905486929043
+    },
+    {
+      "name": "ui-context-injection",
+      "trials": 6,
+      "passed": 6,
+      "pass_rate": 1,
+      "judge_avg": 5,
+      "avg_tokens": 2031,
+      "avg_seconds": 18.96746763883333,
+      "avg_calls": 0,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.8975609756097561
+    },
+    {
+      "name": "ui-context-reference",
+      "trials": 6,
+      "passed": 6,
+      "pass_rate": 1,
+      "judge_avg": 5,
+      "avg_tokens": 2912,
+      "avg_seconds": 26.832067104,
+      "avg_calls": 1,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.9317705120296114
     }
   ]
 }

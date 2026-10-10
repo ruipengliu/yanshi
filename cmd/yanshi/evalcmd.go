@@ -126,11 +126,14 @@ func evalCmd(args []string) error {
 			return err
 		}
 		// 只运行了部分用例（-case）时并入原基线，不丢失其余用例的基线。
-		merged := eval.MergeBaseline(baseline, rep)
+		merged, skipped := eval.MergeBaseline(baseline, rep)
 		if err := merged.WriteJSON(*baselinePath); err != nil {
 			return err
 		}
 		fmt.Printf("已更新基线：%s\n", *baselinePath)
+		if len(skipped) > 0 {
+			fmt.Printf("以下用例因评测设施失败（如评分模型不可用）未写入基线，保留原值：%v\n", skipped)
+		}
 		return nil
 	}
 	if baseline == nil {

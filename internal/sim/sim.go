@@ -115,6 +115,8 @@ type Stats struct {
 	PresenceWrites, PresenceWithdrawn int
 	// ask_user（ADR-0025）：提问、点选回答、打字回答、被拒绝的不合法回答、无人回答而超时。
 	Questions, Answers, TypedAnswers, InvalidAnswers, QuestionTimeouts int
+	// 附带界面上下文的输入。
+	UIContextInputs int
 }
 
 // hookQueue 在 Enqueue 成功后调用 after。
@@ -130,8 +132,8 @@ func (q *hookQueue) Enqueue(ctx context.Context, sessionID string) error {
 	return q.after()
 }
 
-// simContext 是模拟 AgentDef 的上下文配置：窗口很小（工具声明约占 1100，其中 ask_user 约 450），使压缩频繁发生。
-var simContext = agentdef.Context{Window: 2400, CompactAt: 0.75, KeepRecent: 300, MaxToolResult: 250}
+// simContext 是模拟 AgentDef 的上下文配置：窗口很小（工具声明约占 1100，其中 ask_user 约 450），使压缩频繁发生；须容得下工具声明、摘要、KeepRecent 与一条最大的消息（含界面上下文）。
+var simContext = agentdef.Context{Window: 2600, CompactAt: 0.75, KeepRecent: 300, MaxToolResult: 250}
 
 const longRunTurns = 20
 
@@ -638,7 +640,14 @@ func (w *World) submit() error {
 		return w.stepWorker(w.rng.IntN(len(w.workers)))
 	}
 	defer func() { w.afterEnqueue = nil }()
-	res, err := w.svc.Submit(context.Background(), sid, model.TextBlocks(fmt.Sprintf("msg %d", w.rng.IntN(1000))))
+	input := model.TextBlocks(fmt.Sprintf("msg %d", w.rng.IntN(1000)))
+	if w.chance(0.1) {
+		// 界面上下文：使上下文带有外部内容（Memory 写入闸门），并经过渲染与估算。
+		w.Stats.UIContextInputs++
+		input = append([]*v1.ContentBlock{{Kind: &v1.ContentBlock_UiContext{UiContext: &v1.UIContext{
+			Screen: "详情", Content: strings.Repeat("c", w.rng.IntN(200))}}}}, input...)
+	}
+	res, err := w.svc.Submit(context.Background(), sid, input)
 	if w.submitModerated(err) {
 		w.tracef("submit %s rejected by moderation: %v", sid, err)
 		return nil

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
@@ -147,6 +148,9 @@ func (s *Service) Submit(ctx context.Context, sessionID string, input []*v1.Cont
 	//     只有写日志之后的入队（租约期间置 dirty，或重新插入）能保证新 Run 被看到（丢失唤醒）。
 	// 两者同时失效需要"恰好在该窗口内被认领"且"写日志后立即崩溃"，此时 Run 停留在 queued，
 	// 直到该 Session 的下一次输入。
+	if err := checkUIContext(input); err != nil {
+		return nil, err
+	}
 	if err := s.moderateInput(ctx, st, input); err != nil {
 		return nil, err
 	}
@@ -502,9 +506,57 @@ func gone(sessionID string, err error) error {
 	return err
 }
 
+// 界面上下文各字段的长度上限（字符）：它随每条输入进入上下文，过长会挤占窗口、稀释用户的话。
+const (
+	MaxUIContextScreen    = 100
+	MaxUIContextRef       = 500
+	MaxUIContextSelection = 2000
+	MaxUIContextContent   = 8000
+)
+
+// checkUIContext 要求每条输入至多一个界面上下文、各字段不超过上限，且不能只有界面上下文而没有用户的话。
+func checkUIContext(input []*v1.ContentBlock) error {
+	n := 0
+	for _, b := range input {
+		u := b.GetUiContext()
+		if u == nil {
+			continue
+		}
+		n++
+		for _, f := range []struct {
+			name  string
+			value string
+			max   int
+		}{{"screen", u.GetScreen(), MaxUIContextScreen}, {"ref", u.GetRef(), MaxUIContextRef},
+			{"selection", u.GetSelection(), MaxUIContextSelection}, {"content", u.GetContent(), MaxUIContextContent}} {
+			if utf8.RuneCountInString(f.value) > f.max {
+				return fmt.Errorf("%w: ui_context.%s exceeds %d characters", ErrInvalid, f.name, f.max)
+			}
+		}
+	}
+	switch {
+	case n > 1:
+		return fmt.Errorf("%w: at most one ui_context per input", ErrInvalid)
+	case n == 1 && len(input) == 1:
+		return fmt.Errorf("%w: ui_context must accompany the user's input", ErrInvalid)
+	}
+	return nil
+}
+
+// InputModerationText 是输入中需要内容安全检查的文字：用户的话，以及界面上下文——它同样由用户提交、会给模型看。
+func InputModerationText(input []*v1.ContentBlock) string {
+	text := model.Text(input)
+	for _, b := range input {
+		if u := b.GetUiContext(); u != nil {
+			text += "\n" + strings.Join([]string{u.GetScreen(), u.GetRef(), u.GetSelection(), u.GetContent()}, "\n")
+		}
+	}
+	return text
+}
+
 // moderateInput 检查用户输入（文本与图片工件）。违规返回 ErrRejected，服务不可用返回 ErrUnavailable：都不写日志。
 func (s *Service) moderateInput(ctx context.Context, st *session.State, input []*v1.ContentBlock) error {
-	req := moderation.Request{Stage: moderation.Input, BusinessLine: st.Created.GetBusinessLine(), Text: model.Text(input)}
+	req := moderation.Request{Stage: moderation.Input, BusinessLine: st.Created.GetBusinessLine(), Text: InputModerationText(input)}
 	for _, b := range input {
 		if m := b.GetMedia(); m != nil && strings.HasPrefix(m.GetMimeType(), "image/") {
 			id, _ := strings.CutPrefix(m.GetUri(), "artifact://")

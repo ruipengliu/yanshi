@@ -56,6 +56,13 @@ type DeviceSetup struct {
 
 type Turn struct {
 	Input string `yaml:"input"`
+	// UIContext 随输入一并提交的界面上下文（docs/design/m3-duplex-channel.md §8）。
+	UIContext *struct {
+		Screen    string `yaml:"screen"`
+		Ref       string `yaml:"ref"`
+		Selection string `yaml:"selection"`
+		Content   string `yaml:"content"`
+	} `yaml:"ui_context"`
 	// Approve 是本轮遇到审批时的决定，默认批准。
 	Approve *bool `yaml:"approve"`
 	// NewSession 为 true 时本轮在新的 Session 中进行（同一 EndUser）。

@@ -271,6 +271,13 @@ func (c *Client) Submit(ctx context.Context, sessionID string, input ...*v1.Cont
 	return resp.GetRunId(), resp.GetSteered(), nil
 }
 
+// UIContext 返回界面上下文内容块，与用户的话一并提交（Submit），帮助模型理解"这个""这里"指什么
+// （docs/design/m3-duplex-channel.md §8）。各字段有长度上限，超出时提交被拒绝（invalid）。
+func UIContext(screen, ref, selection, content string) *v1.ContentBlock {
+	return &v1.ContentBlock{Kind: &v1.ContentBlock_UiContext{UiContext: &v1.UIContext{
+		Screen: screen, Ref: ref, Selection: selection, Content: content}}}
+}
+
 // SubmitText 提交一段文本输入。
 func (c *Client) SubmitText(ctx context.Context, sessionID, text string) (runID string, steered bool, err error) {
 	return c.Submit(ctx, sessionID, &v1.ContentBlock{Kind: &v1.ContentBlock_Text{Text: &v1.Text{Text: text}}})

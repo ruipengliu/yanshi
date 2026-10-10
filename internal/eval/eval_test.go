@@ -193,10 +193,27 @@ turns:
 func TestMergeBaselineKeepsOtherCases(t *testing.T) {
 	base := &Report{Cases: []CaseResult{{Name: "a", Passed: 1}, {Name: "b", Passed: 1}}}
 	cur := &Report{Cases: []CaseResult{{Name: "b", Passed: 3}, {Name: "c", Passed: 2}}}
-	m := MergeBaseline(base, cur)
+	m, skipped := MergeBaseline(base, cur)
 	got := fmt.Sprintln(len(m.Cases), m.Cases[0].Name, m.Cases[1].Passed, m.Cases[2].Name)
-	if got != "3 a 3 c\n" {
-		t.Fatalf("merged baseline %s", got)
+	if got != "3 a 3 c\n" || len(skipped) != 0 {
+		t.Fatalf("merged baseline %s, skipped %v", got, skipped)
+	}
+}
+
+// TestMergeBaselineSkipsInfraErrors：评分模型不可用的用例不写入基线，保留原值。
+func TestMergeBaselineSkipsInfraErrors(t *testing.T) {
+	base := &Report{Cases: []CaseResult{{Name: "a", Passed: 3}}}
+	cur := &Report{Cases: []CaseResult{{Name: "a", Passed: 0, InfraErrors: 3}, {Name: "b", Passed: 0, InfraErrors: 1}}}
+	m, skipped := MergeBaseline(base, cur)
+	if len(m.Cases) != 1 || m.Cases[0].Passed != 3 || fmt.Sprint(skipped) != "[a b]" {
+		t.Fatalf("merged %+v, skipped %v", m.Cases, skipped)
+	}
+	var r CaseResult
+	r.Failures = map[string]int{}
+	r.add(TrialResult{Assertions: []Assertion{{Turn: 1, Name: "judge", Detail: "judge error: http 402", Infra: true}}})
+	r.add(TrialResult{Assertions: []Assertion{{Turn: 1, Name: "status", Detail: "x"}}})
+	if r.InfraErrors != 1 {
+		t.Fatalf("infra errors = %d, want 1", r.InfraErrors)
 	}
 }
 

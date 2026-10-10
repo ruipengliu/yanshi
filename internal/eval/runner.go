@@ -286,6 +286,8 @@ type Assertion struct {
 	Name   string
 	Pass   bool
 	Detail string
+	// Infra 表示失败源于评测设施（如评分模型不可用），而不是被评测的 Agent。
+	Infra bool
 }
 
 func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResult) {
@@ -398,7 +400,12 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 		return nil, err
 	}
 	after := st.Seq
-	res, err := in.svc.Submit(ctx, sid, model.TextBlocks(turn.Input))
+	input := model.TextBlocks(turn.Input)
+	if u := turn.UIContext; u != nil {
+		input = append([]*v1.ContentBlock{{Kind: &v1.ContentBlock_UiContext{UiContext: &v1.UIContext{
+			Screen: u.Screen, Ref: u.Ref, Selection: u.Selection, Content: u.Content}}}}, input...)
+	}
+	res, err := in.svc.Submit(ctx, sid, input)
 	if err != nil {
 		return nil, err
 	}
@@ -679,7 +686,7 @@ func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation)
 	if e.Judge != "" {
 		s, reason, err := judge(ctx, in.cfg.Model, in.cfg.Judge, e.Judge, o)
 		if err != nil {
-			add("judge", false, "judge error: "+err.Error())
+			out = append(out, Assertion{Turn: turn, Name: "judge", Detail: "judge error: " + err.Error(), Infra: true})
 		} else {
 			score = s
 			add("judge", s >= PassScore, fmt.Sprintf("score %d: %s", s, reason))

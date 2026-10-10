@@ -31,6 +31,8 @@ func EstimateTokens(blocks []*v1.ContentBlock) int {
 		switch k := b.GetKind().(type) {
 		case *v1.ContentBlock_Text:
 			n += EstimateText(k.Text.GetText())
+		case *v1.ContentBlock_UiContext:
+			n += EstimateText(UIContextText(k.UiContext))
 		case *v1.ContentBlock_Media:
 			if len(k.Media.GetData()) > 0 {
 				n += inlineImageTokens

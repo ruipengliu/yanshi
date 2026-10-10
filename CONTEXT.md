@@ -46,6 +46,10 @@ _Avoid_: 在线状态（指 Node 是否连接时）、已读
 Agent 经 `ask_user` 向 EndUser 提出的、可点选或填写的问题；Run 挂起等待，回答作为该调用的结果回到 Run。
 _Avoid_: 表单、弹窗、确认框（与 Approval 区分）
 
+**UIContext（界面上下文）**:
+EndUser 提交输入时所在界面的内容（界面、对象、选中文字、可见内容），由 HostApp 附在输入上，帮助模型理解"这个""这里"指什么；按不可信数据对待。
+_Avoid_: 屏幕内容、页面状态
+
 **Inbox（收件箱）**:
 某个 Node 待投递的 Capability 调用集合；Node 上线后由网关投递，结果回写日志后移出。
 _Avoid_: 队列、任务列表

@@ -34,6 +34,8 @@ type CaseResult struct {
 	// CacheHit 是输入 token 中命中前缀缓存的比例（全部运行合计）。
 	CacheHit float64        `json:"cache_hit"`
 	Failures map[string]int `json:"failures,omitempty"`
+	// InfraErrors 是因评测设施失败（如评分模型不可用）而无法判定的运行次数；这样的结果不写入基线。
+	InfraErrors int `json:"infra_errors,omitempty"`
 	// Samples 是失败的示例（每种失败一条），便于定位。
 	Samples []string `json:"samples,omitempty"`
 
@@ -58,10 +60,15 @@ func (r *CaseResult) add(t TrialResult) {
 	if t.Err != "" {
 		r.fail("error", t.Err)
 	}
+	infra := false
 	for _, a := range t.Assertions {
 		if !a.Pass {
 			r.fail(fmt.Sprintf("turn %d: %s", a.Turn, a.Name), a.Detail)
+			infra = infra || a.Infra
 		}
+	}
+	if infra {
+		r.InfraErrors++
 	}
 }
 
@@ -199,21 +206,28 @@ func score(v float64) string {
 	return fmt.Sprintf("%.2f", v)
 }
 
-// MergeBaseline 用 current 中的用例替换或补充 baseline，其余用例保留；baseline 为 nil 时返回 current。
-func MergeBaseline(baseline, current *Report) *Report {
-	if baseline == nil {
-		return current
-	}
+// MergeBaseline 用 current 中的用例替换或补充 baseline，其余用例保留；baseline 为 nil 时视为空。
+// 有评测设施失败的用例（InfraErrors > 0）不写入，保留原基线，并在 skipped 中返回其名称：
+// 评分模型不可用不代表 Agent 变差，不能被记成新的基线。
+func MergeBaseline(baseline, current *Report) (merged *Report, skipped []string) {
 	out := *current
+	out.Cases = nil
 	seen := map[string]bool{}
 	for _, c := range current.Cases {
+		if c.InfraErrors > 0 {
+			skipped = append(skipped, c.Name)
+			continue
+		}
 		seen[c.Name] = true
+		out.Cases = append(out.Cases, c)
 	}
-	for _, c := range baseline.Cases {
-		if !seen[c.Name] {
-			out.Cases = append(out.Cases, c)
+	if baseline != nil {
+		for _, c := range baseline.Cases {
+			if !seen[c.Name] {
+				out.Cases = append(out.Cases, c)
+			}
 		}
 	}
 	sort.Slice(out.Cases, func(i, j int) bool { return out.Cases[i].Name < out.Cases[j].Name })
-	return &out
+	return &out, skipped
 }

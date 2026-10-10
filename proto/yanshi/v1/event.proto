@@ -45,7 +45,22 @@ message ContentBlock {
   oneof kind {
     Text text = 1;
     Media media = 2;
+    UIContext ui_context = 3;
   }
+}
+
+// UIContext 是用户提交输入时所在界面的上下文，由 HostApp 附在输入上（docs/design/m3-duplex-channel.md §8），
+// 帮助模型理解"这个""这里"指什么。内容可能来自第三方（正在看的网页、别人发来的消息），按不可信数据对待。
+// 每条输入至多一个；各字段有长度上限（service.MaxUIContext*）。
+message UIContext {
+  // HostApp 中的界面，如 "订单详情"。
+  string screen = 1;
+  // 界面对应的业务对象或链接，如 "order://A1029"。
+  string ref = 2;
+  // 用户选中的文字。
+  string selection = 3;
+  // 界面上与输入相关的可见内容，由 HostApp 摘录。
+  string content = 4;
 }
 
 message Text {

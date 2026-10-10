@@ -135,6 +135,8 @@ func blocksText(blocks []*v1.ContentBlock) string {
 	for _, c := range blocks {
 		if m := c.GetMedia(); m != nil {
 			parts = append(parts, model.DescribeMedia(m))
+		} else if u := c.GetUiContext(); u != nil {
+			parts = append(parts, model.UIContextText(u))
 		} else {
 			parts = append(parts, c.GetText().GetText())
 		}

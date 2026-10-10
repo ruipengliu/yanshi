@@ -396,9 +396,13 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 	}
 
 	// 需要审批：高风险能力；或 Memory 写入闸门判定（ADR-0023）；已经请求过审批的调用一律走完审批，
-	// 即使之后的上下文变化使闸门不再触发。
+	// 即使之后的上下文变化使闸门不再触发。闸门只在调用开始前判定：开始之后到达的插话（例如附带界面上下文）
+	// 可能使上下文变为含外部内容，此时已开始的调用不能再回头请求审批（模拟测试发现）。
 	summary := approvalSummary(tool, c.Call)
-	gateSummary, gated := memoryGate(w.st, c.Call)
+	gateSummary, gated := "", false
+	if !c.Started() {
+		gateSummary, gated = memoryGate(w.st, c.Call)
+	}
 	if gated {
 		summary = gateSummary
 	}

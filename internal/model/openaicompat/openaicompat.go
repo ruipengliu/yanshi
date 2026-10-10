@@ -120,6 +120,8 @@ func content(blocks []*v1.ContentBlock, allowImages bool) any {
 		switch k := b.GetKind().(type) {
 		case *v1.ContentBlock_Text:
 			parts = append(parts, wirePart{Type: "text", Text: k.Text.GetText()})
+		case *v1.ContentBlock_UiContext:
+			parts = append(parts, wirePart{Type: "text", Text: model.UIContextText(k.UiContext)})
 		case *v1.ContentBlock_Media:
 			if url := imageURL(k.Media); allowImages && url != "" {
 				parts = append(parts, wirePart{Type: "image_url", ImageURL: &wireImageURL{URL: url}})

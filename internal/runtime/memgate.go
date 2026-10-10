@@ -32,13 +32,17 @@ var (
 // （"<label>__<能力>"、"sandbox__<能力>"、"mcp_<server>__<工具>"），进程内能力不含。
 func externalCall(capability string) bool { return strings.Contains(capability, "__") }
 
-// tainted 报告当前模型上下文中是否有外部来源的内容。压缩摘要可能概括了外部结果，保守地视为外部。
+// tainted 报告当前模型上下文中是否有外部来源的内容。压缩摘要可能概括了外部结果，保守地视为外部；
+// 输入附带的界面上下文可能含第三方内容，也视为外部（docs/design/m3-duplex-channel.md §8）。
 func tainted(st *session.State) bool {
 	if st.Compaction != nil {
 		return true
 	}
 	external := map[string]bool{}
 	for _, e := range st.History {
+		if hasUIContext(e.GetRunRequested().GetInput()) || hasUIContext(e.GetSteered().GetInput()) {
+			return true
+		}
 		if m := e.GetAssistantMessage(); m != nil {
 			for _, tc := range m.GetToolCalls() {
 				if externalCall(tc.GetCapability()) {
@@ -47,6 +51,15 @@ func tainted(st *session.State) bool {
 			}
 		}
 		if r := e.GetToolResult(); r != nil && external[r.GetCallId()] {
+			return true
+		}
+	}
+	return false
+}
+
+func hasUIContext(blocks []*v1.ContentBlock) bool {
+	for _, b := range blocks {
+		if b.GetUiContext() != nil {
 			return true
 		}
 	}

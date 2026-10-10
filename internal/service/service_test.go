@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	v1 "yanshi/gen/yanshi/v1"
@@ -220,5 +221,36 @@ func TestAnswer(t *testing.T) {
 	sub, err = svc.Submit(ctx, sid, model.TextBlocks("另外记得订会议室"))
 	if err != nil || sub.Answered != "" || !sub.Steered {
 		t.Fatalf("steer: %+v %v", sub, err)
+	}
+}
+
+// TestUIContextLimits：每条输入至多一个界面上下文，字段不超过上限，且须伴随用户的话；违规的界面内容同样被拒绝。
+func TestUIContextLimits(t *testing.T) {
+	ctx := context.Background()
+	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "a", Version: "1", Model: "echo/any"})
+	store := &session.Store{Log: memlog.New(), IDs: ids.Sequential("id"), Clock: clock.Real{}}
+	svc := &service.Service{Store: store, Queue: memqueue.New(clock.Real{}), Agents: agents, Moderator: moderation.Mock{}}
+	sid, _ := svc.Create(ctx, service.CreateRequest{BusinessLine: "bl", EndUser: "u", Agent: "a"})
+	ui := func(u *v1.UIContext) *v1.ContentBlock {
+		return &v1.ContentBlock{Kind: &v1.ContentBlock_UiContext{UiContext: u}}
+	}
+	text := model.TextBlocks("这个是什么？")
+	for name, c := range map[string]struct {
+		input []*v1.ContentBlock
+		want  error
+	}{
+		"only ui context": {[]*v1.ContentBlock{ui(&v1.UIContext{Screen: "s"})}, service.ErrInvalid},
+		"two":             {append([]*v1.ContentBlock{ui(&v1.UIContext{}), ui(&v1.UIContext{})}, text...), service.ErrInvalid},
+		"content too long": {append([]*v1.ContentBlock{ui(&v1.UIContext{Content: strings.Repeat("长", service.MaxUIContextContent+1)})}, text...),
+			service.ErrInvalid},
+		"blocked content": {append([]*v1.ContentBlock{ui(&v1.UIContext{Content: "【违规测试】"})}, text...), moderation.ErrRejected},
+	} {
+		if _, err := svc.Submit(ctx, sid, c.input); !errors.Is(err, c.want) {
+			t.Errorf("%s: %v, want %v", name, err, c.want)
+		}
+	}
+	ok := append([]*v1.ContentBlock{ui(&v1.UIContext{Screen: "订单详情", Content: strings.Repeat("长", service.MaxUIContextContent)})}, text...)
+	if _, err := svc.Submit(ctx, sid, ok); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -130,3 +130,18 @@ func TestEmbed(t *testing.T) {
 		t.Fatalf("vecs = %v, %v", vecs, err)
 	}
 }
+
+// TestUIContextEncoding：界面上下文以带说明的文本发给模型，位于用户的话之前；估算与之一致。
+func TestUIContextEncoding(t *testing.T) {
+	ui := &v1.ContentBlock{Kind: &v1.ContentBlock_UiContext{UiContext: &v1.UIContext{Screen: "订单详情", Ref: "order://A1029", Content: "预计 10 月 14 日送达"}}}
+	blocks := append([]*v1.ContentBlock{ui}, model.TextBlocks("这个什么时候到？")...)
+	w := encode(&model.Request{Model: "m", Messages: []model.Message{{Role: model.RoleUser, Content: blocks}}})
+	text, ok := w.Messages[0].Content.(string)
+	if !ok || !strings.HasPrefix(text, "[界面上下文") || !strings.Contains(text, "界面：订单详情\n对象：order://A1029\n内容：预计 10 月 14 日送达\n[界面上下文结束]") ||
+		!strings.HasSuffix(text, "这个什么时候到？") || strings.Contains(text, "选中：") {
+		t.Fatalf("user content = %q", text)
+	}
+	if got, want := model.EstimateTokens(blocks), model.EstimateText(model.UIContextText(ui.GetUiContext()))+model.EstimateText("这个什么时候到？"); got != want {
+		t.Fatalf("estimate %d, want %d", got, want)
+	}
+}
