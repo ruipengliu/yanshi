@@ -2301,8 +2301,10 @@ type Usage struct {
 	OutputTokens uint64                 `protobuf:"varint,2,opt,name=output_tokens,json=outputTokens,proto3" json:"output_tokens,omitempty"`
 	// input_tokens 中命中提供商前缀缓存的部分（价格通常远低于普通输入），用于计量与观察缓存命中率。
 	CachedInputTokens uint64 `protobuf:"varint,3,opt,name=cached_input_tokens,json=cachedInputTokens,proto3" json:"cached_input_tokens,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// output_tokens 中用于思考的部分（提供商报告时才有）。
+	ReasoningTokens uint64 `protobuf:"varint,4,opt,name=reasoning_tokens,json=reasoningTokens,proto3" json:"reasoning_tokens,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Usage) Reset() {
@@ -2356,15 +2358,31 @@ func (x *Usage) GetCachedInputTokens() uint64 {
 	return 0
 }
 
+func (x *Usage) GetReasoningTokens() uint64 {
+	if x != nil {
+		return x.ReasoningTokens
+	}
+	return 0
+}
+
 // AssistantMessage 是一次完整的模型输出；tool_calls 即 Capability 调用请求。
 type AssistantMessage struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	Attempt       uint32                 `protobuf:"varint,2,opt,name=attempt,proto3" json:"attempt,omitempty"`
-	Content       []*ContentBlock        `protobuf:"bytes,3,rep,name=content,proto3" json:"content,omitempty"`
-	ToolCalls     []*ToolCall            `protobuf:"bytes,4,rep,name=tool_calls,json=toolCalls,proto3" json:"tool_calls,omitempty"`
-	Model         string                 `protobuf:"bytes,5,opt,name=model,proto3" json:"model,omitempty"`
-	Usage         *Usage                 `protobuf:"bytes,6,opt,name=usage,proto3" json:"usage,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	RunId     string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	Attempt   uint32                 `protobuf:"varint,2,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	Content   []*ContentBlock        `protobuf:"bytes,3,rep,name=content,proto3" json:"content,omitempty"`
+	ToolCalls []*ToolCall            `protobuf:"bytes,4,rep,name=tool_calls,json=toolCalls,proto3" json:"tool_calls,omitempty"`
+	Model     string                 `protobuf:"bytes,5,opt,name=model,proto3" json:"model,omitempty"`
+	Usage     *Usage                 `protobuf:"bytes,6,opt,name=usage,proto3" json:"usage,omitempty"`
+	// reasoning 是模型的思考过程（提供商流式给出时才有，ADR-0034）：给人看，不再发回给模型；与回复一样在写日志之前
+	// 做内容安全检查，随 Session 删除。
+	Reasoning string `protobuf:"bytes,7,opt,name=reasoning,proto3" json:"reasoning,omitempty"`
+	// duration_ms 是这次模型调用的耗时（含提供商层的重试），first_token_ms 是到第一段输出（思考或正文）的时间；
+	// 由 Worker 按 clock.Clock 计时，只用于观察。
+	DurationMs   uint32 `protobuf:"varint,8,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	FirstTokenMs uint32 `protobuf:"varint,9,opt,name=first_token_ms,json=firstTokenMs,proto3" json:"first_token_ms,omitempty"`
+	// finish_reason 是提供商给出的结束原因，如 "stop"、"tool_calls"、"length"。
+	FinishReason  string `protobuf:"bytes,10,opt,name=finish_reason,json=finishReason,proto3" json:"finish_reason,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2439,6 +2457,34 @@ func (x *AssistantMessage) GetUsage() *Usage {
 		return x.Usage
 	}
 	return nil
+}
+
+func (x *AssistantMessage) GetReasoning() string {
+	if x != nil {
+		return x.Reasoning
+	}
+	return ""
+}
+
+func (x *AssistantMessage) GetDurationMs() uint32 {
+	if x != nil {
+		return x.DurationMs
+	}
+	return 0
+}
+
+func (x *AssistantMessage) GetFirstTokenMs() uint32 {
+	if x != nil {
+		return x.FirstTokenMs
+	}
+	return 0
+}
+
+func (x *AssistantMessage) GetFinishReason() string {
+	if x != nil {
+		return x.FinishReason
+	}
+	return ""
 }
 
 // ToolCallStarted 在执行 Capability 之前落盘，用于故障恢复时判断调用是否可能已产生副作用。
@@ -3643,11 +3689,12 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\n" +
 	"capability\x18\x02 \x01(\tR\n" +
 	"capability\x12%\n" +
-	"\x0earguments_json\x18\x03 \x01(\tR\rargumentsJson\"\x7f\n" +
+	"\x0earguments_json\x18\x03 \x01(\tR\rargumentsJson\"\xaa\x01\n" +
 	"\x05Usage\x12!\n" +
 	"\finput_tokens\x18\x01 \x01(\x04R\vinputTokens\x12#\n" +
 	"\routput_tokens\x18\x02 \x01(\x04R\foutputTokens\x12.\n" +
-	"\x13cached_input_tokens\x18\x03 \x01(\x04R\x11cachedInputTokens\"\xe8\x01\n" +
+	"\x13cached_input_tokens\x18\x03 \x01(\x04R\x11cachedInputTokens\x12)\n" +
+	"\x10reasoning_tokens\x18\x04 \x01(\x04R\x0freasoningTokens\"\xf2\x02\n" +
 	"\x10AssistantMessage\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x121\n" +
@@ -3655,7 +3702,13 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\n" +
 	"tool_calls\x18\x04 \x03(\v2\x13.yanshi.v1.ToolCallR\ttoolCalls\x12\x14\n" +
 	"\x05model\x18\x05 \x01(\tR\x05model\x12&\n" +
-	"\x05usage\x18\x06 \x01(\v2\x10.yanshi.v1.UsageR\x05usage\"\xac\x01\n" +
+	"\x05usage\x18\x06 \x01(\v2\x10.yanshi.v1.UsageR\x05usage\x12\x1c\n" +
+	"\treasoning\x18\a \x01(\tR\treasoning\x12\x1f\n" +
+	"\vduration_ms\x18\b \x01(\rR\n" +
+	"durationMs\x12$\n" +
+	"\x0efirst_token_ms\x18\t \x01(\rR\ffirstTokenMs\x12#\n" +
+	"\rfinish_reason\x18\n" +
+	" \x01(\tR\ffinishReason\"\xac\x01\n" +
 	"\x0fToolCallStarted\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x12\x17\n" +

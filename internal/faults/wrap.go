@@ -50,7 +50,7 @@ func (m Model) Generate(ctx context.Context, req *model.Request, onDelta func(mo
 			d.Text = string([]rune(d.Text)[:limit-sent])
 		}
 		sent += utf8.RuneCountInString(d.Text)
-		if onDelta != nil && d.Text != "" {
+		if onDelta != nil && (d.Text != "" || d.Reasoning != "") {
 			onDelta(d)
 		}
 	})

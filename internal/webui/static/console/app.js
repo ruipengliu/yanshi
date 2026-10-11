@@ -6,11 +6,12 @@
 // 设备与设置保存在浏览器的 localStorage 中：刷新后设备 ID 不变，在网关看来是同一台设备重新上线。
 
 import { ChatPanel } from "./chat.js";
-import { DEVICE_PRESETS, SessionView, SimDevice, payloadOf, randomHex } from "./device.js";
+import { renderDrawer as drawerContent } from "./drawer.js";
+import { DEVICE_PRESETS, SessionView, SimDevice, payloadOf, randomHex, textOf } from "./device.js";
 import { DeviceTile } from "./devices.js";
 import { Inspector, summarize } from "./inspector.js";
 import { runScenario } from "./scenarios.js";
-import { $, Artifacts, h, hue, short, toast, fill } from "./ui.js";
+import { $, Artifacts, ago, fill, h, hue, toast } from "./ui.js";
 
 const WS_URL = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/v1/connect`;
 const HTTP = location.origin;
@@ -39,6 +40,7 @@ const S = {
   view: saved.view ?? "chat",
   devices: saved.devices ?? [],
   chatDevice: saved.chatDevice ?? {},
+  drawer: saved.drawer ?? true,
 };
 
 function persist() {
@@ -207,6 +209,7 @@ function onViewChange(entry, v, kind) {
 }
 
 function openSession(sid) {
+  selection = null;
   S.sid = sid;
   persist();
   for (const d of userDevices()) ensureSubscribed(d);
@@ -269,17 +272,16 @@ function renderTop() {
     h("b", { class: "brand" }, "yanshi"),
     h(
       "nav",
-      { class: "views" },
+      { class: "segmented" },
       [
         ["chat", "💬 对话"],
         ["devices", "📱 设备"],
         ["console", "🛠 控制台"],
-      ].map(([id, name]) => h("button", { class: S.view === id ? "active" : "", onclick: () => setView(id) }, name)),
+      ].map(([id, name]) => h("button", { class: S.view === id ? "selected" : "", onclick: () => setView(id) }, name)),
     ),
-    h("span", { class: "sep" }),
     h(
       "label",
-      { class: "field" },
+      { class: "top-select" },
       "用户",
       h(
         "select",
@@ -290,42 +292,29 @@ function renderTop() {
     ),
     h(
       "label",
-      { class: "field" },
+      { class: "top-select", title: "新建会话时使用" },
       "Agent",
       h(
         "select",
-        { title: "新建 Session 时使用", onchange: (e) => ((S.agent = e.target.value), persist(), scheduleSide()) },
+        {
+          onchange: (e) => {
+            S.agent = e.target.value;
+            persist();
+            scheduleSide();
+          },
+        },
         AGENTS.map(([id, desc]) => h("option", { value: id, selected: id === S.agent, title: desc }, id)),
         AGENTS.some(([id]) => id === S.agent) ? null : h("option", { value: S.agent, selected: true }, S.agent),
       ),
     ),
-    h(
-      "label",
-      { class: "field grow" },
-      "Session",
-      h(
-        "select",
-        { onchange: (e) => e.target.value && openSession(e.target.value), onfocus: refreshSessions },
-        h("option", { value: "" }, S.sid ? "" : "（未打开）"),
-        sessionOptions(),
-      ),
-    ),
-    h("button", { class: "primary", onclick: newSession }, "+ 新建"),
     h("span", { class: "spacer" }),
-    h("span", { class: `gw ${online ? "ok" : "bad"}`, title: "当前用户在线的设备" }, `${online}/${live.length} 台设备在线`),
-    h("button", { class: "ghost", title: "设置", onclick: () => $("settings").showModal() }, "⚙"),
-  );
-}
-
-function sessionOptions() {
-  const list = [...sessions];
-  if (S.sid && !list.some((s) => s.session_id === S.sid)) list.unshift({ session_id: S.sid, agent: "" });
-  return list.map((s) =>
     h(
-      "option",
-      { value: s.session_id, selected: s.session_id === S.sid },
-      `${short(s.session_id)} · ${s.agent || "?"}${s.closed_at ? " · 已关闭" : ""}`,
+      "span",
+      { class: `online-chip ${online ? "" : "bad"}`, title: "当前用户在线的设备" },
+      h("span", { class: `dot ${online ? "online" : ""}` }),
+      `${online}/${live.length} 台设备在线`,
     ),
+    h("button", { class: "icon-btn", title: "设置", onclick: () => $("settings").showModal() }, "⚙"),
   );
 }
 
@@ -342,6 +331,7 @@ function switchUser(name) {
   persist();
   chat?.dispose();
   chat = null;
+  selection = null;
   refreshSessions();
   renderAll();
 }
@@ -352,17 +342,58 @@ function setView(v) {
   renderAll();
 }
 
-// —— 对话视图 ——
+// —— 对话视图：会话列表 · 对话 · 详情抽屉 ——
 
 let chat = null;
+let selection = null;
 let sideQueued = false;
 function scheduleSide() {
   if (sideQueued) return;
   sideQueued = true;
-  setTimeout(() => ((sideQueued = false), S.view === "chat" && renderSide()), 200);
+  setTimeout(() => {
+    sideQueued = false;
+    if (S.view === "chat") {
+      renderSide();
+      renderDrawer();
+    }
+  }, 200);
+}
+
+const chatCtx = () => ({
+  artifacts,
+  user: S.user,
+  children: childView,
+  agentName: () => sessions.find((s) => s.session_id === S.sid)?.agent ?? S.agent,
+  selected: () => selection,
+  onSelect: (sel) => {
+    selection = sel;
+    S.drawer = true;
+    persist();
+    layoutChat();
+    renderDrawer();
+    chat?.schedule();
+  },
+  onTimeline: (runId) => {
+    S.view = "console";
+    persist();
+    renderAll();
+    inspector.focusRun(runId);
+  },
+  toggleDrawer: () => {
+    S.drawer = !S.drawer;
+    persist();
+    layoutChat();
+    renderDrawer();
+  },
+});
+
+function layoutChat() {
+  $("view-chat").classList.toggle("drawer-open", !!S.drawer);
+  $("drawer").hidden = !S.drawer;
 }
 
 function renderChat() {
+  layoutChat();
   const e = chatEntry();
   const view = viewOf(e, S.sid);
   if (!view) {
@@ -377,26 +408,55 @@ function renderChat() {
         h(
           "p",
           {},
-          "选择 Agent 后新建 Session。推荐 ",
+          "在左上角新建会话（⌘K），Agent 在顶栏选择。推荐 ",
           h("b", {}, "concierge"),
-          "：它把闹钟、导航、查资料分别委托给专员，在你的模拟设备上执行，再用卡片汇总结果。",
+          "：它把闹钟、导航、查资料分别委托给专员，在模拟设备上执行，再用卡片汇总结果。",
         ),
         h(
           "div",
-          { class: "row" },
-          h("button", { class: "primary big", onclick: newSession }, `新建 Session（${S.agent}）`),
-          h("button", { class: "big", onclick: () => setupScene() }, "一键搭建设备：手机 + 电脑 + 手表 + 音箱 + 车机"),
+          { class: "row center" },
+          h("button", { class: "btn primary", onclick: newSession }, `新建会话（${S.agent}）`),
+          h("button", { class: "btn", onclick: () => setupScene() }, "一键搭建设备"),
         ),
-        h("p", { class: "muted" }, '没有模型密钥时选 console（脚本化模型）：输入 call iphone__set_alarm {"time":"07:00"} 这样的命令。'),
+        h(
+          "p",
+          { class: "muted" },
+          '没有模型密钥时选 console（脚本化模型），输入 call iphone__set_alarm {"time":"07:00"} 这样的命令；加一行 think 20 演示思考过程。',
+        ),
       ),
     );
   } else if (!chat || chat.view !== view) {
     chat?.dispose();
-    chat = new ChatPanel({ device: e.sim, view, ctx: { artifacts, user: S.user, children: childView } });
+    selection = null;
+    chat = new ChatPanel({ device: e.sim, view, ctx: chatCtx() });
     e.sim.setActivity(S.sid, true);
     fill($("chat-main"), chat.root);
   }
   renderSide();
+  renderDrawer();
+}
+
+function renderDrawer() {
+  if (!S.drawer) return;
+  const e = devices.get(S.chatDevice[S.user]);
+  const view = e && S.sid ? e.views.get(S.sid) : undefined;
+  fill(
+    $("drawer"),
+    drawerContent(selection, {
+      view,
+      childView,
+      openSession,
+      onSelect: (sel) => chatCtx().onSelect(sel),
+      onTimeline: (runId) => chatCtx().onTimeline(runId),
+      close: () => {
+        selection = null;
+        S.drawer = false;
+        persist();
+        layoutChat();
+        chat?.schedule();
+      },
+    }),
+  );
 }
 
 const EXAMPLES = {
@@ -408,7 +468,7 @@ const EXAMPLES = {
   ],
   assistant: ["明早 7 点叫我起床", "帮我拍张照片看看桌上有什么", "看一下电脑上的 notes.txt", "记住：我对花生过敏"],
   console: [
-    'call iphone__set_alarm {"time":"07:00","label":"晨跑"}',
+    'think 20\ncall iphone__set_alarm {"time":"07:00","label":"晨跑"}',
     'call show_card {"title":"天气","image":"icon:weather","body":[{"type":"facts","facts":[{"label":"今天","value":"晴 25℃"}]}],"buttons":[{"id":"more","label":"看明天"}]}',
     "ask 选哪个？ | 甲 | 乙",
     'call agent__console-helper {"task":"复述这句话"}',
@@ -416,74 +476,123 @@ const EXAMPLES = {
   ],
 };
 
+/** 会话的标题：第一条输入的文字（读一次事件，缓存在本机）。 */
+const titles = new Map(Object.entries(JSON.parse(localStorage.getItem("yanshi.console.titles") ?? "{}")));
+const titleLoading = new Set();
+function sessionTitle(s) {
+  const t = titles.get(s.session_id);
+  if (t !== undefined) return t;
+  if (!titleLoading.has(s.session_id)) {
+    titleLoading.add(s.session_id);
+    http("GET", `/v1/sessions/${s.session_id}/events?limit=20`).then((r) => {
+      // 委托派生的子会话（SessionCreated.parent）不在列表中显示：从父会话的调用详情跳过去。
+      if ((r.json?.events ?? [])[0]?.session_created?.parent) {
+        children.add(s.session_id);
+        localStorage.setItem("yanshi.console.children", JSON.stringify([...children].slice(-300)));
+        scheduleSide();
+      }
+      const ev = (r.json?.events ?? []).find((e) => e.run_requested);
+      if (!ev) {
+        // 还没有输入（或读取失败）：稍后再读，不缓存。
+        setTimeout(() => titleLoading.delete(s.session_id), 5000);
+        return;
+      }
+      const text = (ev?.run_requested.input ?? [])
+        .map((b) => b.text?.text ?? (b.media ? `[${b.media.name}]` : ""))
+        .join(" ")
+        .trim();
+      titles.set(s.session_id, text || "（非文字输入）");
+      localStorage.setItem("yanshi.console.titles", JSON.stringify(Object.fromEntries([...titles].slice(-300))));
+      scheduleSide();
+    });
+  }
+  return "";
+}
+
+/** 委托派生的子会话（不在列表中显示，当前打开的除外）。 */
+const children = new Set(JSON.parse(localStorage.getItem("yanshi.console.children") ?? "[]"));
+
+let sessionFilter = "";
 function renderSide() {
   const e = devices.get(S.chatDevice[S.user]);
   const view = e && S.sid ? e.views.get(S.sid) : undefined;
-  const others = userDevices().filter((d) => !d.sim.cfg.clientOnly);
+  // 当前会话的标题随第一条输入出现。
+  if (view && !titles.get(S.sid)) {
+    const first = view.payloads("run_requested")[0];
+    if (first) titles.set(S.sid, textOf(first.input) || "（非文字输入）");
+    else titles.delete(S.sid);
+  }
+  const q = sessionFilter.toLowerCase();
+  const list = sessions.filter(
+    (s) => (!children.has(s.session_id) || s.session_id === S.sid) && (!q || `${sessionTitle(s)} ${s.agent} ${s.session_id}`.toLowerCase().includes(q)),
+  );
+  const today = new Date().toDateString();
+  const groups = [
+    ["今天", list.filter((s) => new Date(s.last_input_at || s.created_at).toDateString() === today)],
+    ["更早", list.filter((s) => new Date(s.last_input_at || s.created_at).toDateString() !== today)],
+  ];
   const agent = S.sid ? (sessions.find((s) => s.session_id === S.sid)?.agent ?? S.agent) : S.agent;
+  const search = h("input", { placeholder: "搜索会话…", value: sessionFilter });
+  search.addEventListener("input", () => {
+    sessionFilter = search.value;
+    renderSide();
+    $("chat-side").querySelector(".search input")?.focus();
+  });
   fill(
     $("chat-side"),
+    h("button", { class: "new-session", onclick: newSession }, h("span", {}, "＋ 新建会话"), h("kbd", {}, "⌘K")),
+    h("label", { class: "search" }, "🔍", search),
     h(
-      "section",
-      {},
-      h("h4", {}, "对话所用设备"),
-      h(
-        "select",
-        {
-          onchange: (ev) => {
-            S.chatDevice[S.user] = ev.target.value;
-            persist();
-            chat?.dispose();
-            chat = null;
-            renderChat();
-          },
-        },
-        userDevices().map((d) =>
-          h("option", { value: d.rec.id, selected: d === e }, `${DEVICE_PRESETS[d.rec.preset]?.icon ?? ""} ${d.sim.label || d.rec.label}`),
-        ),
-      ),
-      h("p", { class: "muted" }, "从哪台设备发消息：输入会注明这台设备（设备歧义消解）。"),
-    ),
-    h(
-      "section",
-      {},
-      h("h4", {}, "设备 ", h("button", { class: "tiny", onclick: () => setView("devices") }, "管理")),
-      others.length
-        ? others.map((d) =>
-            h(
-              "div",
-              { class: "side-dev" },
-              h("span", { class: `dot ${d.sim.status}` }),
-              DEVICE_PRESETS[d.rec.preset]?.icon,
-              " ",
-              d.sim.label || d.rec.label,
-              h("span", { class: "spacer" }),
-              h(
-                "button",
-                {
-                  class: "tiny",
-                  onclick: () => {
-                    d.sim.wanted ? d.sim.disconnect() : d.sim.connect();
-                    persist();
-                    setTimeout(renderSide, 50);
+      "div",
+      { class: "sessions" },
+      groups.map(([name, xs]) =>
+        xs.length
+          ? [
+              h("div", { class: "list-label" }, name),
+              xs.map((s) =>
+                h(
+                  "div",
+                  {
+                    class: `session ${s.session_id === S.sid ? "active" : ""} ${s.closed_at ? "closed" : ""}`,
+                    onclick: () => s.session_id !== S.sid && openSession(s.session_id),
                   },
-                },
-                d.sim.wanted ? "下线" : "上线",
+                  h("span", { class: "session-title" }, sessionTitle(s) || h("span", { class: "muted" }, "新会话")),
+                  h(
+                    "span",
+                    { class: "session-meta" },
+                    s.agent,
+                    s.closed_at ? h("span", { class: "closed-label" }, "已关闭") : null,
+                    h("time", {}, ago(s.last_input_at && !s.last_input_at.startsWith("0001") ? s.last_input_at : s.created_at)),
+                    s.closed_at
+                      ? null
+                      : h(
+                          "button",
+                          {
+                            class: "close-session",
+                            title: "关闭会话（不可逆）",
+                            onclick: async (ev) => {
+                              ev.stopPropagation();
+                              if (!confirm("关闭这个会话？关闭后不能再提交输入。")) return;
+                              const r = await http("POST", `/v1/sessions/${s.session_id}/close`, {});
+                              if (r.status >= 300) toast(`关闭失败：${r.status}`, "error");
+                              refreshSessions();
+                            },
+                          },
+                          "✕",
+                        ),
+                  ),
+                ),
               ),
-            ),
-          )
-        : h(
-            "div",
-            {},
-            h("p", { class: "muted" }, "还没有可以执行能力的设备。"),
-            h("button", { class: "small primary", onclick: () => setupScene() }, "一键搭建"),
-          ),
+            ]
+          : null,
+      ),
+      list.length ? null : h("div", { class: "muted pad" }, sessions.length ? "没有匹配的会话" : "还没有会话"),
     ),
-    view ? h("section", {}, h("h4", {}, "委托"), delegationTree(view)) : null,
+    h("span", { class: "spacer" }),
     h(
-      "section",
-      {},
-      h("h4", {}, "试试"),
+      "details",
+      { class: "examples" },
+      h("summary", {}, `试试（${agent}）`),
       (EXAMPLES[agent] ?? EXAMPLES.assistant).map((t) =>
         h(
           "button",
@@ -499,35 +608,38 @@ function renderSide() {
         ),
       ),
     ),
+    h(
+      "div",
+      { class: "device-picker" },
+      h("label", {}, "对话所用设备（输入注明来源设备）"),
+      h(
+        "select",
+        {
+          onchange: (ev) => {
+            S.chatDevice[S.user] = ev.target.value;
+            persist();
+            chat?.dispose();
+            chat = null;
+            renderChat();
+          },
+        },
+        userDevices().map((d) =>
+          h("option", { value: d.rec.id, selected: d === e }, `${DEVICE_PRESETS[d.rec.preset]?.icon ?? ""} ${d.sim.label || d.rec.label}`),
+        ),
+      ),
+    ),
   );
 }
 
-function delegationTree(view, depth = 0) {
-  const list = view.delegations();
-  if (!list.length) return depth ? null : h("div", { class: "muted" }, "本 Session 还没有委托");
-  return h(
-    "ul",
-    { class: "tree" },
-    list.map((d) => {
-      const child = childView(d.childSessionId);
-      const last = child?.payloads("run_requested").at(-1);
-      const end = last && child.runEnd(last.run_id);
-      return h(
-        "li",
-        {},
-        h(
-          "span",
-          { class: `pill ${end?.kind ?? "running"}` },
-          end ? { run_completed: "完成", run_failed: "失败", run_interrupted: "中断" }[end.kind] : "进行中",
-        ),
-        " 🤝 ",
-        h("b", {}, d.agent),
-        h("code", { class: "muted", title: d.childSessionId }, " ", short(d.childSessionId)),
-        child ? delegationTree(child, depth + 1) : null,
-      );
-    }),
-  );
-}
+document.addEventListener("keydown", (e) => {
+  if (document.querySelector("dialog[open]")) return;
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    newSession();
+  } else if (e.key === "Escape" && S.view === "chat" && chat) {
+    chat.interrupt();
+  }
+});
 
 // —— 设备视图 ——
 
@@ -557,6 +669,12 @@ function renderDevices() {
     }
     return t.root;
   });
+  const shown = grid.filter((_, i) => !S.onlyOnline || list[i].sim.wanted);
+  const setAll = (collapsed) => {
+    for (const d of list) d.rec.collapsed = collapsed;
+    for (const t of tiles.values()) (t.root.classList.toggle("collapsed", collapsed), t.renderHead());
+    persist();
+  };
   fill(
     $("devices-main"),
     h(
@@ -567,7 +685,7 @@ function renderDevices() {
         h(
           "button",
           {
-            class: "small",
+            class: "btn small",
             onclick: () => {
               const e = addDevice(newRecord(k, S.user));
               ensureSubscribed(e);
@@ -579,14 +697,34 @@ function renderDevices() {
         ),
       ),
       h("span", { class: "spacer" }),
-      h("button", { class: "small primary", onclick: () => setupScene() }, "一键搭建全套"),
+      h(
+        "label",
+        { class: "inline" },
+        h("input", {
+          type: "checkbox",
+          checked: !!S.onlyOnline,
+          onchange: (e) => {
+            S.onlyOnline = e.target.checked;
+            persist();
+            renderDevices();
+          },
+        }),
+        " 只看在线",
+      ),
+      h("button", { class: "btn small", onclick: () => setAll(true) }, "全部折叠"),
+      h("button", { class: "btn small", onclick: () => setAll(false) }, "全部展开"),
+      h("button", { class: "btn small primary", onclick: () => setupScene() }, "一键搭建全套"),
     ),
     h(
       "p",
       { class: "muted hint" },
       "下线：Run 挂起等待设备上线；断网：自动重连、续订、重发未确认的结果；崩溃：执行中的调用留下记录，重新投递后按 call_id 去重。",
     ),
-    h("div", { class: "grid" }, grid.length ? grid : h("div", { class: "empty big" }, "还没有设备。添加一台，或一键搭建全套。")),
+    h(
+      "div",
+      { class: "grid" },
+      shown.length ? shown : h("div", { class: "empty big" }, grid.length ? "没有在线的设备" : "还没有设备。添加一台，或一键搭建全套。"),
+    ),
   );
 }
 
@@ -622,6 +760,7 @@ const inspector = new Inspector($("console-main"), {
   idQuery: () => idQuery(),
   verifyEnv,
   runScenario,
+  goChat: () => setView("chat"),
   artifacts,
   user: () => S.user,
 });

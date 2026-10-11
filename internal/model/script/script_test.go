@@ -87,3 +87,14 @@ func TestCallTranscriptsAreSkipped(t *testing.T) {
 		t.Fatalf("transcript treated as a script: %v", resp.ToolCalls)
 	}
 }
+
+// TestThink：think 命令先流式输出思考过程，再照常回复；思考过程汇总到 Response.Reasoning。
+func TestThink(t *testing.T) {
+	var reasoning, text string
+	resp, err := Provider{}.Generate(context.Background(), &model.Request{Model: "any", Messages: []model.Message{
+		{Role: model.RoleUser, Content: model.TextBlocks("think 3\nhi")},
+	}}, func(d model.Delta) { reasoning += d.Reasoning; text += d.Text })
+	if err != nil || reasoning != "思考第 1 步。思考第 2 步。思考第 3 步。" || resp.Reasoning != reasoning || !strings.HasPrefix(text, "echo:") || resp.FinishReason != "stop" {
+		t.Fatalf("reasoning %q text %q resp %+v err %v", reasoning, text, resp, err)
+	}
+}

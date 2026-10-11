@@ -14,9 +14,10 @@
     <header id="top"></header>
 
     <!-- 对话：一台设备全屏展示聊天（docs/design/console.md §2） -->
-    <main id="view-chat" class="view" hidden>
+    <main id="view-chat" class="view chat-layout" hidden>
+      <aside id="chat-side" class="sidebar"></aside>
       <div id="chat-main" class="chat-main"></div>
-      <aside id="chat-side" class="chat-side"></aside>
+      <aside id="drawer" class="drawer" hidden></aside>
     </main>
 
     <!-- 设备：每台模拟设备的状态、应用、能力与调用（§3） -->

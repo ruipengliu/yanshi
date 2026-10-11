@@ -346,7 +346,7 @@ func (k sink) Event(e *v1.Event) error {
 func (k sink) Delta(d live.Delta) error {
 	return k.send(&v1.GatewayMessage{Msg: &v1.GatewayMessage_Delta{Delta: &v1.LiveDelta{
 		SessionId: d.SessionID, RunId: d.RunID, Attempt: d.Attempt, AfterSeq: d.AfterSeq,
-		Text: d.Text, Snapshot: d.Snapshot, End: d.End,
+		Text: d.Text, Reasoning: d.Reasoning, Snapshot: d.Snapshot, End: d.End,
 	}}})
 }
 

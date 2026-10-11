@@ -90,3 +90,16 @@ func TestSnapshotAndDeltasNeitherGapNorOverlap(t *testing.T) {
 		}
 	}
 }
+
+// TestSnapshotCarriesReasoning：晚加入者补齐思考过程与正文，二者分开（ADR-0034）。
+func TestSnapshotCarriesReasoning(t *testing.T) {
+	b := NewMemBus()
+	b.Publish(Delta{SessionID: "s", RunID: "r", Attempt: 1, AfterSeq: 3, Reasoning: "先想"})
+	b.Publish(Delta{SessionID: "s", RunID: "r", Attempt: 1, AfterSeq: 3, Reasoning: "一想"})
+	b.Publish(Delta{SessionID: "s", RunID: "r", Attempt: 1, AfterSeq: 3, Text: "答案"})
+	ch, cancel := b.Subscribe("s")
+	defer cancel()
+	if got := drain(ch); len(got) != 1 || !got[0].Snapshot || got[0].Reasoning != "先想一想" || got[0].Text != "答案" {
+		t.Fatalf("late subscriber got %+v", got)
+	}
+}

@@ -34,7 +34,10 @@ export class DeviceTile {
       if (n.type === "status") this.renderHead();
       if ((n.type === "apps" && this.tab === "apps") || (n.type === "ledger" && this.tab === "calls")) this.renderBody();
       if (n.type === "ledger" && n.entry.state === "awaiting") this.renderTabs();
+      if (n.type === "ledger" && (n.entry.state === "awaiting" || (n.entry.deliveries === 1 && n.entry.state === "executing")))
+        this.flash();
     });
+    this.root.classList.toggle("collapsed", !!entry.rec.collapsed);
     this.renderHead();
     this.renderTabs();
     this.renderBody();
@@ -56,46 +59,78 @@ export class DeviceTile {
     const d = this.entry.sim;
     const rec = this.entry.rec;
     const st = d.status;
+    const menu = h(
+      "details",
+      { class: "menu" },
+      h("summary", { class: "icon-btn", title: "更多" }, "⋯"),
+      h(
+        "div",
+        { class: "menu-list" },
+        h(
+          "button",
+          { title: "断开后自动重连：续订、重发未确认的结果", disabled: !d.online, onclick: () => ((menu.open = false), d.drop()) },
+          "断网（自动重连）",
+        ),
+        d.cfg.clientOnly
+          ? null
+          : h(
+              "button",
+              {
+                title: '执行中的调用留下"执行中"记录，随后自动重连',
+                disabled: !d.online,
+                onclick: () => ((menu.open = false), d.drop({ crash: true })),
+              },
+              "进程崩溃",
+            ),
+        h("button", { class: "danger", onclick: () => ((menu.open = false), this.ctx.onRemove(this.entry)) }, "移除设备"),
+      ),
+    );
     fill(
       this.head,
+      h(
+        "button",
+        { class: "icon-btn collapse", title: rec.collapsed ? "展开" : "折叠", onclick: () => this.toggle() },
+        rec.collapsed ? "▸" : "▾",
+      ),
       h("span", { class: "tile-icon" }, this.icon),
       h(
         "div",
         { class: "tile-name" },
         h("b", {}, d.label || rec.label),
-        h("small", {}, `${rec.user} · ${DEVICE_PRESETS[rec.preset]?.title ?? rec.preset}${d.cfg.clientOnly ? " · 只作会话客户端" : ""}`),
+        h(
+          "small",
+          {},
+          `${DEVICE_PRESETS[rec.preset]?.title ?? rec.preset}${d.cfg.clientOnly ? " · 只作会话客户端" : ""} · ${{ online: "在线", connecting: "连接中", offline: "离线" }[st] ?? st}`,
+        ),
       ),
       h("span", { class: `dot ${st}`, title: d.lastError || st }),
       h("span", { class: "spacer" }),
       h(
         "button",
         {
-          class: `tiny ${d.wanted ? "" : "primary"}`,
+          class: `btn small ${d.wanted ? "" : "primary"}`,
           title: d.wanted ? "下线：断开且不再重连（Run 挂起等待设备上线）" : "上线",
           onclick: () => (d.wanted ? d.disconnect() : d.connect(), this.renderHead(), this.ctx.onChange?.()),
         },
         d.wanted ? "下线" : "上线",
       ),
-      h(
-        "button",
-        { class: "tiny", title: "断网：断开后自动重连（续订、重发未确认的结果）", disabled: !d.online, onclick: () => d.drop() },
-        "断网",
-      ),
-      d.cfg.clientOnly
-        ? null
-        : h(
-            "button",
-            {
-              class: "tiny",
-              title: '进程崩溃：执行中的调用留下"执行中"记录，随后自动重连',
-              disabled: !d.online,
-              onclick: () => d.drop({ crash: true }),
-            },
-            "崩溃",
-          ),
-      h("button", { class: "tiny ghost", title: "移除设备", onclick: () => this.ctx.onRemove(this.entry) }, "✕"),
+      menu,
     );
     this.root.classList.toggle("offline", st !== "online");
+  }
+
+  toggle() {
+    this.entry.rec.collapsed = !this.entry.rec.collapsed;
+    this.root.classList.toggle("collapsed", this.entry.rec.collapsed);
+    this.renderHead();
+    this.ctx.onChange?.();
+  }
+
+  /** 有需要注意的事（收到调用、等待手工填写结果）时闪一下。 */
+  flash() {
+    this.root.classList.remove("flash");
+    void this.root.offsetWidth;
+    this.root.classList.add("flash");
   }
 
   renderTabs() {

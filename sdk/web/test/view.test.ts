@@ -96,3 +96,16 @@ test("cards: show_card results appear, the same card_id replaces the earlier ver
   const b = cardAction({ cardId: v.card.cardId, callId: v.card.callId, action: "ok", seq: v.seq });
   assert.equal(b.kind?.case, "cardAction");
 });
+
+test("draft: reasoning accumulates apart from the text and clears on commit", () => {
+  const d = new Draft();
+  d.onDelta(delta({ afterSeq: 2n, reasoning: "想" }));
+  d.onDelta(delta({ afterSeq: 2n, reasoning: "一想" }));
+  d.onDelta(delta({ afterSeq: 2n, text: "好" }));
+  assert.equal(d.reasoning, "想一想");
+  assert.equal(d.text, "好");
+  d.onDelta(delta({ afterSeq: 2n, text: "好的", reasoning: "重来", snapshot: true }));
+  assert.equal(d.reasoning, "重来");
+  assert.equal(d.onEvent(assistant(3n)), true);
+  assert.equal(d.reasoning, "");
+});

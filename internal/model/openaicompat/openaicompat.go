@@ -148,10 +148,13 @@ type wireChunk struct {
 	Model   string `json:"model"`
 	Choices []struct {
 		Delta struct {
-			Content   string         `json:"content"`
-			ToolCalls []wireToolCall `json:"tool_calls"`
+			Content string `json:"content"`
+			// ReasoningContent 是思考过程（火山方舟、DeepSeek 等在流式输出中给出）。
+			ReasoningContent string         `json:"reasoning_content"`
+			ToolCalls        []wireToolCall `json:"tool_calls"`
 		} `json:"delta"`
-		Logprobs *struct {
+		FinishReason string `json:"finish_reason"`
+		Logprobs     *struct {
 			Content []struct {
 				TopLogprobs []struct {
 					Token   string  `json:"token"`
@@ -166,6 +169,9 @@ type wireChunk struct {
 		PromptTokensDetails *struct {
 			CachedTokens uint64 `json:"cached_tokens"`
 		} `json:"prompt_tokens_details"`
+		CompletionTokensDetails *struct {
+			ReasoningTokens uint64 `json:"reasoning_tokens"`
+		} `json:"completion_tokens_details"`
 	} `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
@@ -313,7 +319,7 @@ func (p *Provider) Generate(ctx context.Context, req *model.Request, onDelta fun
 
 func decodeStream(r io.Reader, modelID string, onDelta func(model.Delta)) (*model.Response, error) {
 	out := &model.Response{Model: modelID, Usage: &v1.Usage{}}
-	var text strings.Builder
+	var text, reasoning strings.Builder
 	calls := map[int]*v1.ToolCall{}
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -345,6 +351,9 @@ func decodeStream(r io.Reader, modelID string, onDelta func(model.Delta)) (*mode
 			if d := c.Usage.PromptTokensDetails; d != nil {
 				out.Usage.CachedInputTokens = d.CachedTokens
 			}
+			if d := c.Usage.CompletionTokensDetails; d != nil {
+				out.Usage.ReasoningTokens = d.ReasoningTokens
+			}
 		}
 		for _, ch := range c.Choices {
 			if lp := ch.Logprobs; lp != nil {
@@ -356,11 +365,20 @@ func decodeStream(r io.Reader, modelID string, onDelta func(model.Delta)) (*mode
 					out.Logprobs = append(out.Logprobs, top)
 				}
 			}
+			if d := ch.Delta.ReasoningContent; d != "" {
+				reasoning.WriteString(d)
+				if onDelta != nil {
+					onDelta(model.Delta{Reasoning: d})
+				}
+			}
 			if d := ch.Delta.Content; d != "" {
 				text.WriteString(d)
 				if onDelta != nil {
 					onDelta(model.Delta{Text: d})
 				}
+			}
+			if ch.FinishReason != "" {
+				out.FinishReason = ch.FinishReason
 			}
 			for i, tc := range ch.Delta.ToolCalls {
 				idx := i
@@ -388,6 +406,7 @@ func decodeStream(r io.Reader, modelID string, onDelta func(model.Delta)) (*mode
 	if text.Len() > 0 {
 		out.Content = model.TextBlocks(text.String())
 	}
+	out.Reasoning = strings.ToValidUTF8(reasoning.String(), "\uFFFD")
 	idxs := make([]int, 0, len(calls))
 	for i := range calls {
 		idxs = append(idxs, i)

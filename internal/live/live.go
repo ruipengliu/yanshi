@@ -16,7 +16,9 @@ type Delta struct {
 	// AfterSeq 是这次生成接在日志中的位置：同一 (RunID, Attempt, AfterSeq) 的增量属于同一条消息。
 	AfterSeq uint64 `json:"after_seq,omitempty"`
 	Text     string `json:"text,omitempty"`
-	// Snapshot 为 true 时 Text 是这条消息到目前为止的全文，由 Subscribe 补发给晚加入的订阅者。
+	// Reasoning 是思考过程的增量（ADR-0034），与 Text 分开累积与补发。
+	Reasoning string `json:"reasoning,omitempty"`
+	// Snapshot 为 true 时 Text 与 Reasoning 是这条消息到目前为止的全文，由 Subscribe 补发给晚加入的订阅者。
 	Snapshot bool `json:"snapshot,omitempty"`
 	// End 表示这次生成结束（提交或失败），之后不再有它的增量。
 	End bool `json:"end,omitempty"`
@@ -27,11 +29,12 @@ const maxDraft = 256 << 10
 
 // draft 是某个 Session 正在生成的消息到目前为止的文本。
 type draft struct {
-	run      string
-	attempt  uint32
-	after    uint64
-	text     strings.Builder
-	overflow bool
+	run       string
+	attempt   uint32
+	after     uint64
+	text      strings.Builder
+	reasoning strings.Builder
+	overflow  bool
 }
 
 func (d *draft) same(x Delta) bool {
@@ -67,12 +70,14 @@ func (b *MemBus) Publish(d Delta) {
 	case cur == nil || !cur.same(d):
 		cur = &draft{run: d.RunID, attempt: d.Attempt, after: d.AfterSeq}
 		cur.text.WriteString(d.Text)
+		cur.reasoning.WriteString(d.Reasoning)
 		b.drafts[d.SessionID] = cur
 	case !cur.overflow:
-		if cur.text.Len()+len(d.Text) > maxDraft {
+		if cur.text.Len()+cur.reasoning.Len()+len(d.Text)+len(d.Reasoning) > maxDraft {
 			cur.overflow = true
 		} else {
 			cur.text.WriteString(d.Text)
+			cur.reasoning.WriteString(d.Reasoning)
 		}
 	}
 	for ch := range b.subs[d.SessionID] {
@@ -90,8 +95,8 @@ func (b *MemBus) Subscribe(sessionID string) (<-chan Delta, func()) {
 		b.subs[sessionID] = map[chan Delta]struct{}{}
 	}
 	b.subs[sessionID][ch] = struct{}{}
-	if d := b.drafts[sessionID]; d != nil && !d.overflow && d.text.Len() > 0 {
-		ch <- Delta{SessionID: sessionID, RunID: d.run, Attempt: d.attempt, AfterSeq: d.after, Text: d.text.String(), Snapshot: true}
+	if d := b.drafts[sessionID]; d != nil && !d.overflow && d.text.Len()+d.reasoning.Len() > 0 {
+		ch <- Delta{SessionID: sessionID, RunID: d.run, Attempt: d.attempt, AfterSeq: d.after, Text: d.text.String(), Reasoning: d.reasoning.String(), Snapshot: true}
 	}
 	b.mu.Unlock()
 	return ch, func() {

@@ -298,3 +298,32 @@ func TestLogprobs(t *testing.T) {
 		t.Fatalf("logprobs %v", resp.Logprobs)
 	}
 }
+
+// TestReasoningStream：思考过程（reasoning_content）以单独的增量交出并汇总到 Response.Reasoning；结束原因与思考 token
+// 一并记录（ADR-0034）。思考过程不进入之后的请求：encode 只发送 Content。
+func TestReasoningStream(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, c := range []string{
+			`{"choices":[{"delta":{"reasoning_content":"用户问"}}]}`,
+			`{"choices":[{"delta":{"reasoning_content":"时间"}}]}`,
+			`{"choices":[{"delta":{"content":"现在"}}]}`,
+			`{"choices":[{"delta":{"content":"七点"},"finish_reason":"stop"}]}`,
+			`{"choices":[],"usage":{"prompt_tokens":9,"completion_tokens":6,"completion_tokens_details":{"reasoning_tokens":4}}}`,
+		} {
+			fmt.Fprintf(w, "data: %s\n\n", c)
+		}
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+	var text, reasoning string
+	resp, err := (&Provider{BaseURL: srv.URL}).Generate(context.Background(), &model.Request{Model: "m"}, func(d model.Delta) {
+		text += d.Text
+		reasoning += d.Reasoning
+	})
+	if err != nil || text != "现在七点" || reasoning != "用户问时间" || resp.Reasoning != "用户问时间" || model.Text(resp.Content) != "现在七点" {
+		t.Fatalf("text %q reasoning %q resp %+v err %v", text, reasoning, resp, err)
+	}
+	if resp.FinishReason != "stop" || resp.Usage.GetReasoningTokens() != 4 {
+		t.Fatalf("finish %q usage %v", resp.FinishReason, resp.Usage)
+	}
+}

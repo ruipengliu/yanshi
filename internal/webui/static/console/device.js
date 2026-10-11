@@ -904,7 +904,7 @@ export class SessionView {
     this.sessionId = sessionId;
     this.events = [];
     this.deltas = [];
-    this.draft = { text: "", runId: "", attempt: 0, afterSeq: -1n };
+    this.draft = { text: "", reasoning: "", runId: "", attempt: 0, afterSeq: -1n };
     this.committed = 0n;
     this.presence = [];
     this.ended = "";
@@ -958,10 +958,11 @@ export class SessionView {
       return true;
     }
     if (d.snapshot || !same) {
-      this.draft = { text: d.text ?? "", runId: d.run_id, attempt: d.attempt ?? 0, afterSeq: after };
+      this.draft = { text: d.text ?? "", reasoning: d.reasoning ?? "", runId: d.run_id, attempt: d.attempt ?? 0, afterSeq: after };
       return true;
     }
     this.draft.text += d.text ?? "";
+    this.draft.reasoning += d.reasoning ?? "";
     return true;
   }
 
@@ -974,7 +975,7 @@ export class SessionView {
   }
 
   clearDraft() {
-    this.draft = { text: "", runId: "", attempt: 0, afterSeq: -1n };
+    this.draft = { text: "", reasoning: "", runId: "", attempt: 0, afterSeq: -1n };
   }
 
   /** 种类为 kind 的事件载荷（带 seq）。 */

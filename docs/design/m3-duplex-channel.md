@@ -54,6 +54,8 @@ HostApp 实例与网关之间只保持一条 **Connection**（WebSocket，路径
 
 客户端的规则：Snapshot 替换草稿；普通增量追加到草稿；`end` 或 seq 大于 `after_seq` 的 `AssistantMessage` 到达时，以提交的内容为准。
 
+思考过程（`reasoning`，ADR-0034）与正文用同一套规则，分开累积：Snapshot 同时带上二者到目前为止的全文，提交后以 `AssistantMessage.reasoning` 为准。
+
 增量仍是检查之前的草稿（ADR-0021），Snapshot 也一样。
 
 ## 5. 请求

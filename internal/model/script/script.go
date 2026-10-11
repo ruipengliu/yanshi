@@ -7,6 +7,7 @@
 //	                                "call read_file {"path":"a.txt"}" 匹配 "macbook__read_file"；多行 call 依次执行
 //	ask <问题> [| 选项 | 选项…]      经 ask_user 向用户提问（ADR-0025）
 //	stream <n>                      全部调用完成后，在约 n×20ms 内逐段流式输出 n 段
+//	think <n>                       每次模型调用先流式输出 n 段思考过程（ADR-0034），约 n×20ms
 //
 // 有调用时，全部完成后回复 "done: <最后一个结果>"（有 stream 时改为流式输出）；没有命令时复述输入（"echo: …"）。
 // 插话开启新的命令序列：最后一条用户输入才是当前的脚本。
@@ -41,6 +42,7 @@ type command struct {
 type plan struct {
 	calls  []command
 	stream int
+	think  int
 	text   string
 }
 
@@ -48,6 +50,9 @@ func (Provider) Generate(ctx context.Context, req *model.Request, onDelta func(m
 	input, results := current(req.Messages)
 	p := parse(input)
 	resp := &model.Response{Model: "script/" + req.Model, Usage: &v1.Usage{InputTokens: uint64(model.EstimateRequest(req))}}
+	if err := think(ctx, resp, p.think, onDelta); err != nil {
+		return nil, err
+	}
 	if len(results) < len(p.calls) {
 		c := p.calls[len(results)]
 		name := match(req.Tools, c.tool)
@@ -55,6 +60,7 @@ func (Provider) Generate(ctx context.Context, req *model.Request, onDelta func(m
 			return reply(ctx, resp, "no such tool: "+c.tool, 0, onDelta)
 		}
 		resp.ToolCalls = []*v1.ToolCall{{CallId: "x", Capability: name, ArgumentsJson: c.args}}
+		resp.FinishReason = "tool_calls"
 		return resp, nil
 	}
 	switch {
@@ -132,6 +138,10 @@ func parse(input string) plan {
 			if n, err := strconv.Atoi(rest); err == nil && n > 0 {
 				p.stream = min(n, MaxStream)
 			}
+		case "think":
+			if n, err := strconv.Atoi(rest); err == nil && n > 0 {
+				p.think = min(n, MaxStream)
+			}
 		}
 	}
 	return p
@@ -184,6 +194,27 @@ func reply(ctx context.Context, resp *model.Response, text string, stream int, o
 		}
 	}
 	resp.Content = model.TextBlocks(text)
-	resp.Usage.OutputTokens = uint64(model.EstimateTokens(resp.Content))
+	resp.Usage.OutputTokens = uint64(model.EstimateTokens(resp.Content)) + resp.Usage.GetReasoningTokens()
+	resp.FinishReason = "stop"
 	return resp, nil
+}
+
+// think 按 ChunkInterval 逐段输出思考过程 "思考第 i 步。"，汇总到 resp.Reasoning。
+func think(ctx context.Context, resp *model.Response, n int, onDelta func(model.Delta)) error {
+	var b strings.Builder
+	for i := range n {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(ChunkInterval):
+		}
+		s := fmt.Sprintf("思考第 %d 步。", i+1)
+		b.WriteString(s)
+		if onDelta != nil {
+			onDelta(model.Delta{Reasoning: s})
+		}
+	}
+	resp.Reasoning = b.String()
+	resp.Usage.ReasoningTokens = uint64(model.EstimateText(resp.Reasoning))
+	return nil
 }

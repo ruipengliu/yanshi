@@ -1,12 +1,15 @@
 // 对话组件：一台模拟设备上一个 Session 的聊天界面（"对话"视图全屏使用，"设备"视图中每台设备一个迷你版）。
 // 只用公开协议：事件来自订阅（SessionView），输入、卡片动作、审批、回答、中断与通话都经这台设备的 Connection 发出，
 // 附件经 HTTP API 上传为工件。多台设备打开同一个 Session 时，它们看到的是同一份事件。
+//
+// 助手的一轮（同一个 Run）依次显示：思考过程（可折叠，生成中实时展开）、正文、本次调用（折叠成一行）、模型信息行、
+// 卡片。点调用、模型信息行或卡片，在详情抽屉中查看全部信息（ctx.onSelect）。
 
-import { Player, Recorder, Mic } from "./audio.js";
+import { Mic, Player, Recorder } from "./audio.js";
 import { renderApproval, renderCard, renderQuestion } from "./cards.js";
 import { payloadOf, textOf } from "./device.js";
 import { render as markdown } from "./markdown.js";
-import { bytes, clock, h, hue, short, toast, fill } from "./ui.js";
+import { bytes, clock, copyButton, dur, fill, h, hue, num, short, toast } from "./ui.js";
 
 /** 工具名去掉设备标签前缀后的能力名与目标："iphone__set_alarm" → ["set_alarm", "iphone"]。 */
 export function splitTool(name) {
@@ -14,7 +17,7 @@ export function splitTool(name) {
   return i < 0 ? [name, ""] : [name.slice(i + 2), name.slice(0, i)];
 }
 
-const TOOL_ICON = {
+export const TOOL_ICON = {
   set_alarm: "⏰",
   list_alarms: "⏰",
   cancel_alarm: "⏰",
@@ -41,13 +44,79 @@ const TOOL_ICON = {
   show_card: "🃏",
 };
 
+/** 调用的显示名与图标：委托显示为"委托 <Agent>"。 */
+export function toolLabel(capability) {
+  const [cap, target] = splitTool(capability);
+  if (target === "agent") return { icon: "🤝", name: `委托 ${cap}`, target: "", delegate: true };
+  return { icon: TOOL_ICON[cap] ?? "🔧", name: cap, target, delegate: false };
+}
+
+/**
+ * callIndex 汇总每个调用的进展：call_id → {capability, args, runId, attempt, asked, started, startedAt, nodeId,
+ * executions, done, error, result, blocks, doneAt, approval, summary}。
+ */
+export function callIndex(view) {
+  const out = new Map();
+  const get = (id) => {
+    if (!out.has(id)) out.set(id, { executions: 0 });
+    return out.get(id);
+  };
+  for (const e of view.events) {
+    const [kind, p] = payloadOf(e);
+    const t = Date.parse(e.time);
+    if (kind === "assistant_message") {
+      for (const c of p.tool_calls ?? [])
+        Object.assign(get(c.call_id), {
+          capability: c.capability,
+          args: c.arguments_json,
+          runId: p.run_id,
+          attempt: p.attempt ?? 0,
+          askedAt: t,
+        });
+    } else if (kind === "tool_call_started") {
+      const c = get(p.call_id);
+      c.executions++;
+      Object.assign(c, { started: true, startedAt: c.startedAt ?? t, nodeId: p.node_id ?? "", attempt: p.attempt ?? c.attempt });
+    } else if (kind === "tool_result")
+      Object.assign(get(p.call_id), { done: true, error: !!p.is_error, result: textOf(p.content), blocks: p.content, doneAt: t });
+    else if (kind === "approval_requested") Object.assign(get(p.call_id), { approval: "pending", summary: p.summary, approvalAt: t });
+    else if (kind === "approval_decided") Object.assign(get(p.call_id), { approval: p.approved ? "approved" : "denied", decidedAt: t });
+  }
+  return out;
+}
+
+/** 调用的状态：queued、running、approval、denied、error、done。 */
+export function callState(st = {}) {
+  if (st.approval === "pending" && !st.done) return "approval";
+  if (st.approval === "denied") return "denied";
+  if (st.done) return st.error ? "error" : "done";
+  if (st.started) return "running";
+  return "queued";
+}
+
+const STATE_TEXT = { queued: "排队", running: "执行中", approval: "待审批", denied: "已拒绝", error: "出错", done: "完成" };
+
+/** 模型信息行的文字：模型 · 输入（缓存）· 输出 · 思考 · 首字 · 耗时 · 结束原因。 */
+export function modelLine(m) {
+  const u = m.usage ?? {};
+  const bits = [m.model ?? "?"];
+  if (u.input_tokens) bits.push(`输入 ${num(u.input_tokens)}${u.cached_input_tokens ? `（缓存 ${num(u.cached_input_tokens)}）` : ""}`);
+  if (u.output_tokens) bits.push(`输出 ${num(u.output_tokens)}`);
+  if (u.reasoning_tokens) bits.push(`思考 ${num(u.reasoning_tokens)}`);
+  if (m.first_token_ms) bits.push(`首字 ${dur(m.first_token_ms)}`);
+  if (m.duration_ms) bits.push(`耗时 ${dur(m.duration_ms)}`);
+  const fin = { stop: "结束", tool_calls: "工具调用", length: "长度截断", content_filter: "内容过滤" }[m.finish_reason] ?? m.finish_reason;
+  if (fin) bits.push(fin);
+  return bits.join(" · ");
+}
+
 export class ChatPanel {
   /**
    * @param {object} o
    *   device   SimDevice（会话客户端）
    *   view     该设备上的 SessionView
-   *   ctx      {artifacts, user, children(sessionId) → SessionView|undefined, onInspect(event)}
-   *   compact  迷你版：隐藏通话与部分说明
+   *   ctx      {artifacts, user, children(sessionId), onSelect(sel), selected(), onTimeline(runId), toggleDrawer()}
+   *   compact  迷你版：没有页头、通话与说明
    */
   constructor({ device, view, ctx, compact = false }) {
     this.device = device;
@@ -57,12 +126,23 @@ export class ChatPanel {
     this.attachments = [];
     this.call = null;
     this.queued = false;
-    this.root = h("div", { class: `chat ${compact ? "compact" : ""}` });
-    this.log = h("div", { class: "chat-log" });
-    this.pending = h("div", { class: "chat-pending" });
-    this.status = h("div", { class: "chat-status" });
+    this.seen = 0;
+    this.root = h("div", { class: `chatpane ${compact ? "compact" : ""}` });
+    this.header = h("div", { class: "chat-header" });
     this.callBar = h("div", { class: "call-bar", hidden: true });
-    this.root.append(this.callBar, this.log, this.status, this.pending, this.composer());
+    this.log = h("div", { class: "messages" });
+    this.newBtn = h("button", { class: "new-messages", hidden: true, onclick: () => this.scrollBottom() }, "↓ 新消息");
+    this.status = h("div", { class: "composer-status" });
+    this.pending = h("div", { class: "pending" });
+    // 用 fill 而不是 append：append(null) 会插入文字 "null"。
+    fill(
+      this.root,
+      compact ? null : this.header,
+      this.callBar,
+      h("div", { class: "messages-wrap" }, this.log, this.newBtn),
+      this.composer(),
+    );
+    this.log.addEventListener("scroll", () => this.nearBottom() && (this.newBtn.hidden = true));
     this.off = view.on(() => this.schedule());
     this.offDev = device.on((n) => {
       if (n.type === "status") this.schedule();
@@ -74,6 +154,7 @@ export class ChatPanel {
       this.addFiles([...(e.dataTransfer?.files ?? [])]);
     });
     this.render();
+    requestAnimationFrame(() => this.scrollBottom());
   }
 
   dispose() {
@@ -91,68 +172,90 @@ export class ChatPanel {
     });
   }
 
+  nearBottom() {
+    return this.log.scrollHeight - this.log.scrollTop - this.log.clientHeight < 80;
+  }
+
+  scrollBottom() {
+    this.log.scrollTop = this.log.scrollHeight;
+    this.newBtn.hidden = true;
+  }
+
+  /** 中断进行中的 Run（Esc）。 */
+  interrupt() {
+    const run = this.view.activeRun();
+    if (run) this.device.interrupt(this.view.sessionId, run).catch((e) => toast(e.message, "error"));
+  }
+
   // —— 渲染 ——
 
   render() {
-    const near = this.log.scrollHeight - this.log.scrollTop - this.log.clientHeight < 80;
+    const near = this.nearBottom();
+    const before = this.log.scrollHeight;
+    const blocks = this.blocks();
+    fill(
+      this.log,
+      h(
+        "div",
+        { class: "conversation" },
+        blocks.length
+          ? blocks
+          : h("div", { class: "empty" }, this.compact ? "还没有消息" : "发一条消息开始对话。可以附图片、发语音，或者打电话。"),
+      ),
+    );
+    if (near) this.log.scrollTop = this.log.scrollHeight;
+    else if (this.log.scrollHeight > before && this.view.events.length !== this.seen) this.newBtn.hidden = false;
+    this.seen = this.view.events.length;
+    if (!this.compact) this.renderHeader();
+    this.renderPending();
+    this.renderStatus();
+  }
+
+  /** blocks 把事件组织成用户消息与助手的轮次。 */
+  blocks() {
     const v = this.view;
-    const calls = this.callIndex();
+    const calls = callIndex(v);
     const cards = v.cards();
     const taken = v.cardActions();
     const versions = new Map();
     for (const e of v.events)
       for (const b of e.tool_result?.content ?? []) if (b.card) versions.set(b.card.card_id, (versions.get(b.card.card_id) ?? 0) + 1);
     const fromCall = new Set();
-    const items = [];
+    const out = [];
+    let turn = null;
+    const turnFor = (runId, e) => {
+      if (turn?.runId !== runId) {
+        turn = { runId, body: h("div", { class: "turn-body" }) };
+        out.push(this.turnShell(turn, e));
+      }
+      return turn.body;
+    };
     for (const e of v.events) {
       const [kind, p] = payloadOf(e);
       switch (kind) {
         case "run_requested":
-        case "steered": {
+        case "steered":
           if (p.from_call) fromCall.add(p.run_id);
-          items.push(this.userBubble(p, e));
+          out.push(this.userBubble(p, e));
+          turn = null;
           break;
-        }
-        case "assistant_message": {
-          const text = textOf(p.content);
-          const tools = (p.tool_calls ?? []).filter((c) => c.capability !== "ask_user");
-          if (!text && !tools.length) break;
-          items.push(
-            h(
-              "div",
-              { class: "msg assistant", style: { "--run": hue(p.run_id) } },
-              text
-                ? h(
-                    "div",
-                    { class: "bubble md" },
-                    fromCall.has(p.run_id) ? h("div", { class: "tag" }, "后台任务") : null,
-                    markdown(text, this.mdCtx()),
-                  )
-                : null,
-              tools.length
-                ? h(
-                    "div",
-                    { class: "tools" },
-                    tools.map((c) => this.toolChip(c, calls.get(c.call_id))),
-                  )
-                : null,
-              this.meta(e, p),
-            ),
-          );
+        case "assistant_message":
+          turnFor(p.run_id, e).append(...this.step(p, e, calls, fromCall.has(p.run_id)));
           break;
-        }
-        case "tool_result": {
+        case "tool_result":
           for (const b of p.content ?? []) {
             if (b.card) {
               const latest = cards.get(b.card.card_id);
-              if (latest && latest.card.call_id !== b.card.call_id) {
-                items.push(h("div", { class: "note small" }, `卡片「${b.card.title}」已更新，见下方最新版`));
-                continue;
-              }
-              items.push(
+              if (latest && latest.card.call_id !== b.card.call_id) continue; // 只显示最新版
+              const sel = this.ctx.selected?.();
+              turnFor(p.run_id, e).append(
                 h(
                   "div",
-                  { class: "msg assistant card-msg" },
+                  {
+                    class: `card-slot ${sel?.kind === "card" && sel.cardId === b.card.card_id ? "selected" : ""}`,
+                    onclick: (ev) =>
+                      !ev.target.closest("button,input,select,a") && this.ctx.onSelect?.({ kind: "card", cardId: b.card.card_id }),
+                  },
                   renderCard(b.card, {
                     ...this.mdCtx(),
                     taken,
@@ -162,69 +265,222 @@ export class ChatPanel {
                 ),
               );
             } else if (b.media && !p.attempt) {
-              items.push(
-                h(
-                  "div",
-                  { class: "msg assistant" },
-                  h("div", { class: "bubble media" }, h("div", { class: "tag" }, "设备返回"), this.media(b.media)),
-                ),
-              );
+              turnFor(p.run_id, e).append(h("div", { class: "device-media" }, h("div", { class: "tag" }, "设备返回"), this.media(b.media)));
             }
           }
           break;
-        }
         case "call_transcript":
-          items.push(
+          out.push(
             h(
               "div",
-              { class: `msg ${p.role === "assistant" ? "assistant" : "user"} voice` },
-              h("div", { class: "bubble" }, "🎙 ", p.text, p.interrupted ? "……" : ""),
+              { class: `voice-line ${p.role === "assistant" ? "assistant" : "user"}` },
+              h("span", { class: "tag" }, p.role === "assistant" ? "🎙 助手" : "🎙 你"),
+              p.text,
+              p.interrupted ? "……" : "",
             ),
           );
+          turn = null;
           break;
         case "call_started":
-          items.push(h("div", { class: "note" }, `📞 通话开始 · ${p.model ?? ""}`));
+          out.push(h("div", { class: "note" }, `📞 通话开始 · ${p.model ?? ""}`));
           break;
         case "call_ended":
-          items.push(h("div", { class: "note" }, `通话结束：${p.reason ?? ""}`));
+          out.push(h("div", { class: "note" }, `通话结束：${p.reason ?? ""}`));
           break;
         case "run_failed":
-          items.push(h("div", { class: "note error" }, `Run 失败：${p.reason ?? ""}`));
+          turnFor(p.run_id, e).append(h("div", { class: "note error" }, `Run 失败：${p.reason ?? ""}`));
           break;
         case "run_interrupted":
-          items.push(h("div", { class: "note" }, "已中断"));
+          turnFor(p.run_id, e).append(h("div", { class: "note" }, "已中断"));
           break;
         case "content_moderated":
-          items.push(h("div", { class: "note error" }, `内容安全拦截（${p.stage}）`));
+          turnFor(p.run_id, e).append(h("div", { class: "note error" }, `内容安全拦截（${p.stage}）`));
           break;
         case "context_compacted":
-          items.push(h("div", { class: "note small" }, "上下文已压缩"));
-          break;
-        case "agent_switched":
-          items.push(h("div", { class: "note small" }, `Agent 切换：${p.from?.version ?? ""} → ${p.to?.version ?? ""}`));
+          turnFor(p.run_id, e).append(h("div", { class: "note" }, "上下文已压缩"));
           break;
         case "memory_recalled":
-          if ((p.items ?? []).length) items.push(h("div", { class: "note small" }, `🧠 召回 ${p.items.length} 条记忆`));
+          if ((p.items ?? []).length) turnFor(p.run_id, e).append(h("div", { class: "note" }, `🧠 召回 ${p.items.length} 条记忆`));
+          break;
+        case "agent_switched":
+          out.push(h("div", { class: "note" }, `Agent 切换：${p.from?.version ?? ""} → ${p.to?.version ?? ""}`));
           break;
       }
     }
-    if (v.draft.text)
-      items.push(
+    const d = v.draft;
+    if (d.runId && (d.text || d.reasoning)) {
+      const body = turnFor(d.runId, { time: new Date().toISOString() });
+      if (d.reasoning) body.append(this.thinking(d.reasoning, !d.text, true));
+      if (d.text) body.append(h("div", { class: "prose md" }, markdown(d.text, this.mdCtx()), h("span", { class: "cursor" })));
+    }
+    return out;
+  }
+
+  turnShell(turn, e) {
+    const agent = this.ctx.agentName?.() ?? "助手";
+    return h(
+      "div",
+      { class: "assistant-turn", style: { "--run": hue(turn.runId) } },
+      this.compact ? null : h("div", { class: "avatar" }, "◆"),
+      h(
+        "div",
+        { class: "turn-main" },
+        this.compact
+          ? null
+          : h(
+              "div",
+              { class: "speaker" },
+              h("b", {}, agent),
+              h("time", {}, clock(e.time)),
+              h("code", { class: "run-id", title: turn.runId }, short(turn.runId)),
+            ),
+        turn.body,
+      ),
+    );
+  }
+
+  /** 一次模型调用：思考、正文、调用、模型信息行。 */
+  step(p, e, calls, fromCall) {
+    const parts = [];
+    if (p.reasoning) parts.push(this.thinking(p.reasoning, false, false, p.usage?.reasoning_tokens));
+    const text = textOf(p.content);
+    if (text) {
+      parts.push(
         h(
           "div",
-          { class: "msg assistant draft" },
-          h("div", { class: "bubble md" }, markdown(v.draft.text, this.mdCtx()), h("span", { class: "caret" })),
+          { class: "prose md hoverable" },
+          fromCall ? h("div", { class: "tag" }, "后台任务") : null,
+          markdown(text, this.mdCtx()),
+          this.compact
+            ? null
+            : h(
+                "div",
+                { class: "msg-tools" },
+                copyButton(text),
+                h("button", { type: "button", onclick: () => this.ctx.onTimeline?.(p.run_id) }, "在时间线中查看"),
+              ),
         ),
       );
-    fill(
-      this.log,
-      ...(items.length
-        ? items
-        : [h("div", { class: "empty" }, this.compact ? "还没有消息" : "发一条消息开始对话。可以附图片、发语音，或者打电话。")]),
+    }
+    const tools = (p.tool_calls ?? []).filter((c) => c.capability !== "ask_user");
+    if (tools.length) parts.push(this.callGroup(tools, calls, p.run_id));
+    const sel = this.ctx.selected?.();
+    if (p.model || p.usage)
+      parts.push(
+        h(
+          "button",
+          {
+            class: `model-info ${sel?.kind === "model" && sel.seq === String(e.seq) ? "selected" : ""}`,
+            title: "查看这次模型调用的详情",
+            onclick: () => this.ctx.onSelect?.({ kind: "model", seq: String(e.seq) }),
+          },
+          modelLine(p),
+        ),
+      );
+    return parts;
+  }
+
+  thinking(text, open, live, tokens) {
+    return h(
+      "details",
+      { class: `thinking ${live ? "live" : ""}`, open },
+      h(
+        "summary",
+        {},
+        live && open ? h("span", { class: "pulse" }) : "💭",
+        live && open ? " 正在思考…" : ` 思考过程${tokens ? ` · ${num(tokens)} tokens` : ` · ${text.length} 字`}`,
+      ),
+      h("div", { class: "thinking-text" }, text, live && open ? h("span", { class: "cursor" }) : null),
     );
-    if (near) this.log.scrollTop = this.log.scrollHeight;
-    this.renderPending();
-    this.renderStatus(calls);
+  }
+
+  /**
+   * callGroup 是一次模型调用发起的调用：一个时直接是一行，多个时折叠成"N 个调用"一行。被后续同名调用改正的出错调用
+   * （如参数不合法后重试）弱化显示。
+   */
+  callGroup(tools, calls, runId) {
+    const sel = this.ctx.selected?.();
+    const runCalls = [...calls.values()].filter((c) => c.runId === runId);
+    const rows = tools.map((c) => {
+      const st = calls.get(c.call_id) ?? {};
+      const state = callState(st);
+      const retried =
+        state === "error" && runCalls.some((o) => o.capability === c.capability && o.askedAt > st.askedAt && o.done && !o.error);
+      const l = toolLabel(c.capability);
+      const took = st.doneAt && st.askedAt ? dur(st.doneAt - st.askedAt) : "";
+      return h(
+        "button",
+        {
+          class: `call-row ${state} ${retried ? "retried" : ""} ${l.delegate ? "delegate" : ""} ${sel?.kind === "call" && sel.callId === c.call_id ? "selected" : ""}`,
+          title: retried ? "出错后模型重试成功" : "查看调用详情",
+          onclick: () => this.ctx.onSelect?.({ kind: "call", callId: c.call_id }),
+        },
+        h("span", { class: "call-icon" }, l.icon),
+        h("code", {}, l.name),
+        l.target ? h("span", { class: "muted" }, "@", l.target) : null,
+        l.delegate && st.nodeId ? h("span", { class: "muted" }, "子 Session ", short(st.nodeId.slice(7))) : null,
+        h(
+          "span",
+          { class: "row-status" },
+          retried ? "出错，已重试" : STATE_TEXT[state],
+          took && !retried ? h("span", { class: "took" }, took) : null,
+        ),
+      );
+    });
+    if (rows.length === 1) return h("div", { class: "calls single" }, rows);
+    const states = tools.map((c) => callState(calls.get(c.call_id)));
+    const live = states.filter((s) => s === "running" || s === "queued" || s === "approval").length;
+    const errs = states.filter((s) => s === "error" || s === "denied").length;
+    const span = (() => {
+      const xs = tools.map((c) => calls.get(c.call_id)).filter((s) => s?.doneAt);
+      return xs.length ? dur(Math.max(...xs.map((s) => s.doneAt)) - Math.min(...xs.map((s) => s.askedAt))) : "";
+    })();
+    const summary = live ? `${live} 个进行中` : errs ? `${errs} 个出错` : "全部完成";
+    return h(
+      "details",
+      { class: `calls ${live ? "running" : errs ? "error" : "done"}`, open: live > 0 || tools.some((c) => sel?.callId === c.call_id) },
+      h(
+        "summary",
+        {},
+        h("span", { class: "chev" }, "›"),
+        `🔧 ${tools.length} 个调用 · `,
+        h("span", { class: "group-state" }, summary),
+        span ? h("span", { class: "took" }, span) : null,
+      ),
+      h("div", { class: "call-list" }, rows),
+    );
+  }
+
+  renderHeader() {
+    const v = this.view;
+    const first = v.payloads("run_requested")[0];
+    const title = first ? (textOf(first.input) || "（非文字输入）").slice(0, 60) : "新会话";
+    const run = v.activeRun();
+    const attempt = run
+      ? (v
+          .payloads("attempt_started")
+          .filter((a) => a.run_id === run)
+          .at(-1)?.attempt ?? 0)
+      : 0;
+    fill(
+      this.header,
+      h(
+        "div",
+        { class: "chat-title" },
+        h("div", { class: "chat-heading" }, title),
+        h(
+          "div",
+          { class: "chat-subtitle" },
+          h("span", { class: `dot ${run ? "busy" : "online"}` }),
+          run ? "进行中" : "空闲",
+          " · Session ",
+          h("code", { title: v.sessionId }, short(v.sessionId)),
+        ),
+      ),
+      h("span", { class: "spacer" }),
+      attempt ? h("span", { class: "chip mono", title: `进行中的 Run ${run}` }, `Attempt A${attempt}`) : null,
+      h("button", { class: "icon-btn", title: "详情抽屉", onclick: () => this.ctx.toggleDrawer?.() }, "▥"),
+    );
   }
 
   mdCtx() {
@@ -279,139 +535,65 @@ export class ChatPanel {
     const device = (p.input ?? []).find((b) => b.ui_context?.device)?.ui_context.device;
     return h(
       "div",
-      { class: `msg user ${p.from_call ? "from-call" : ""}`, style: { "--run": hue(p.run_id) } },
-      h("div", { class: "bubble" }, p.from_call ? h("div", { class: "tag" }, "🎙 通话中交给后台") : null, parts),
-      h("div", { class: "meta" }, device ? `来自 ${device} · ` : "", e.steered ? "插话 · " : "", clock(e.time)),
+      { class: `user-message ${p.from_call ? "from-call" : ""}` },
+      h("div", { class: "user-bubble" }, p.from_call ? h("div", { class: "tag" }, "🎙 通话中交给后台") : null, parts),
+      h("div", { class: "message-origin" }, device ? `来自 ${device} · ` : "", e.steered ? "插话 · " : "", clock(e.time)),
     );
-  }
-
-  meta(e, p) {
-    const u = p.usage;
-    return h(
-      "div",
-      { class: "meta" },
-      clock(e.time),
-      u ? ` · ${u.input_tokens ?? 0}+${u.output_tokens ?? 0} tok` : "",
-      p.model ? ` · ${p.model}` : "",
-    );
-  }
-
-  /** 每个调用的进展：call_id → {started, nodeId, result, error, approval, child}。 */
-  callIndex() {
-    const out = new Map();
-    const get = (id) => {
-      if (!out.has(id)) out.set(id, {});
-      return out.get(id);
-    };
-    for (const e of this.view.events) {
-      const [kind, p] = payloadOf(e);
-      if (kind === "tool_call_started") Object.assign(get(p.call_id), { started: true, nodeId: p.node_id ?? "" });
-      else if (kind === "tool_result")
-        Object.assign(get(p.call_id), { done: true, error: !!p.is_error, result: textOf(p.content), blocks: p.content });
-      else if (kind === "approval_requested") Object.assign(get(p.call_id), { approval: "pending", summary: p.summary });
-      else if (kind === "approval_decided") Object.assign(get(p.call_id), { approval: p.approved ? "approved" : "denied" });
-    }
-    return out;
-  }
-
-  toolChip(c, st = {}) {
-    const [cap, target] = splitTool(c.capability);
-    const delegate = target === "agent";
-    let state = "queued";
-    if (st.approval === "pending") state = "approval";
-    else if (st.approval === "denied") state = "denied";
-    else if (st.done) state = st.error ? "error" : "done";
-    else if (st.started) state = "running";
-    const label = delegate ? `委托 ${cap}` : cap;
-    const icon = delegate ? "🤝" : (TOOL_ICON[cap] ?? "🔧");
-    const child = delegate && st.nodeId ? this.ctx.children?.(st.nodeId.slice("@agent/".length)) : undefined;
-    const detail = h(
-      "div",
-      { class: "chip-detail" },
-      h("div", {}, h("b", {}, "参数 "), h("code", {}, c.arguments_json)),
-      st.result ? h("div", {}, h("b", {}, st.error ? "错误 " : "结果 "), h("code", {}, st.result.slice(0, 2000))) : null,
-      child ? h("div", { class: "child-run" }, h("b", {}, `子 Session ${short(child.sessionId)}：`), childSummary(child)) : null,
-    );
-    const chip = h(
-      "div",
-      { class: `chip ${state}` },
-      h(
-        "button",
-        { class: "chip-head", onclick: () => chip.classList.toggle("open") },
-        h("span", { class: "chip-icon" }, icon),
-        h("span", { class: "chip-name" }, label),
-        target && !delegate ? h("span", { class: "chip-target" }, "@", target) : null,
-        h(
-          "span",
-          { class: "chip-state" },
-          { queued: "…", running: "执行中", approval: "待审批", denied: "已拒绝", error: "出错", done: "✓" }[state],
-        ),
-      ),
-      detail,
-    );
-    return chip;
   }
 
   renderPending() {
     const v = this.view;
     const out = [];
-    for (const a of v.pendingApprovals()) {
-      out.push(renderApproval(a, { onDecide: (ok) => this.device.decide(v.sessionId, a.callId, ok) }));
-    }
-    for (const q of v.pendingQuestions()) {
+    for (const a of v.pendingApprovals()) out.push(renderApproval(a, { onDecide: (ok) => this.device.decide(v.sessionId, a.callId, ok) }));
+    for (const q of v.pendingQuestions())
       out.push(renderQuestion(q, { ...this.mdCtx(), onAnswer: (a) => this.device.answer(v.sessionId, q.callId, a) }));
-    }
-    fill(this.pending, ...out);
+    fill(this.pending, out);
   }
 
-  renderStatus(calls) {
+  renderStatus() {
     const v = this.view;
     const run = v.activeRun();
-    const bits = [];
+    const left = [];
     if (this.device.status !== "online")
-      bits.push(h("span", { class: "warn" }, this.device.status === "connecting" ? "连接中…" : "设备离线"));
+      left.push(h("span", { class: "warn" }, this.device.status === "connecting" ? "连接中…" : "设备离线"));
     if (run) {
-      const waiting = [...calls.entries()].filter(([, s]) => s.started && !s.done);
-      const devices = waiting.map(([id]) => {
-        const c = v.payloads("tool_call_started").find((p) => p.call_id === id);
-        return c?.node_id?.startsWith("@agent/") ? "子 Agent" : c?.node_id === "@user" ? "你的回答" : "设备";
-      });
-      bits.push(
-        h(
-          "span",
-          { class: "running" },
-          h("i", { class: "spinner" }),
-          devices.length ? `等待${[...new Set(devices)].join("、")}…` : v.draft.text ? "正在输入…" : "思考中…",
-        ),
-      );
-      bits.push(
-        h(
-          "button",
-          { class: "tiny", onclick: () => this.device.interrupt(v.sessionId, run).catch((e) => toast(e.message, "error")) },
-          "⏹ 中断",
-        ),
+      const waiting = new Set();
+      for (const p of v.payloads("tool_call_started")) {
+        if (p.run_id !== run || v.payloads("tool_result").some((r) => r.call_id === p.call_id)) continue;
+        waiting.add(p.node_id?.startsWith("@agent/") ? "子 Agent" : p.node_id === "@user" ? "你的回答" : p.node_id ? "设备" : "调用");
+      }
+      const what = waiting.size
+        ? `等待${[...waiting].join("、")}…`
+        : v.draft.text
+          ? "正在输出…"
+          : v.draft.reasoning
+            ? "正在思考…"
+            : "等待模型…";
+      left.push(
+        h("span", { class: "waiting" }, h("span", { class: "pulse" }), what),
+        h("button", { class: "kbd-btn", title: "中断进行中的 Run", onclick: () => this.interrupt() }, "⏹ 中断", h("kbd", {}, "Esc")),
       );
     }
     const others = (v.presence ?? []).filter((p) => p.device_id !== this.device.id);
-    if (others.length)
-      bits.push(
-        h(
-          "span",
-          { class: "presence" },
-          "👀 ",
-          others.map((p) => `${p.label || short(p.device_id)}${p.typing ? "（正在输入）" : ""}`).join("、"),
-        ),
-      );
-    fill(this.status, ...bits);
+    fill(
+      this.status,
+      h("div", { class: "row" }, left),
+      others.length
+        ? h(
+            "span",
+            { class: "watching" },
+            "👀 ",
+            others.map((p) => `${p.label || short(p.device_id)}${p.typing ? "（正在输入）" : ""}`).join("、"),
+            " 在看",
+          )
+        : null,
+    );
   }
 
   // —— 输入 ——
 
   composer() {
-    this.input = h("textarea", {
-      rows: this.compact ? 1 : 2,
-      placeholder: this.compact ? "输入…" : "输入消息，Enter 发送，Shift+Enter 换行；可粘贴或拖入图片",
-    });
+    this.input = h("textarea", { rows: this.compact ? 1 : 2, placeholder: this.compact ? "输入…" : "输入消息；可粘贴或拖入图片" });
     this.input.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
@@ -446,40 +628,62 @@ export class ChatPanel {
       hidden: true,
       onchange: (e) => (this.addFiles([...e.target.files]), (e.target.value = "")),
     });
-    this.micBtn = h("button", { class: "icon", title: "按住说话：松开发送语音消息（模型直接听）" }, "🎤");
+    this.micBtn = h(
+      "button",
+      { class: "tool voice", type: "button", title: "按住说话：松开发送语音消息（模型直接听）" },
+      "🎤",
+      this.compact ? null : " 按住说话",
+    );
     this.micBtn.addEventListener("pointerdown", (e) => (e.preventDefault(), this.startVoice()));
     for (const ev of ["pointerup", "pointerleave"]) this.micBtn.addEventListener(ev, () => this.stopVoice());
     this.ctxToggle = h("input", { type: "checkbox" });
     this.ctxScreen = h("input", { placeholder: "界面，如 订单详情" });
     this.ctxContent = h("input", { placeholder: "可见内容（按不可信数据对待）" });
+    const ctxPanel = h(
+      "div",
+      { class: "ctx-panel", hidden: true },
+      h("label", { class: "inline" }, this.ctxToggle, " 随下一条消息附上界面上下文"),
+      this.ctxScreen,
+      this.ctxContent,
+    );
     return h(
       "div",
-      { class: "composer" },
-      this.staged,
+      { class: "composer-wrap" },
+      this.status,
+      this.pending,
       h(
         "div",
-        { class: "composer-row" },
-        h("button", { class: "icon", title: "附件（图片、音频、文件）", onclick: () => file.click() }, "📎"),
-        this.compact ? null : h("button", { class: "icon", title: "拍照（手机上打开相机）", onclick: () => camera.click() }, "📷"),
-        this.micBtn,
+        { class: "composer" },
+        this.staged,
         this.input,
-        this.compact
-          ? null
-          : h("button", { class: "icon", title: "语音通话（全双工，需要 VOLC_SPEECH_API_KEY）", onclick: () => this.toggleCall() }, "📞"),
-        h("button", { class: "primary send", onclick: () => this.send() }, "发送"),
-        file,
-        camera,
+        h(
+          "div",
+          { class: "composer-tools" },
+          h("button", { class: "tool", type: "button", title: "附件（图片、音频、文件）", onclick: () => file.click() }, "📎"),
+          this.compact ? null : h("button", { class: "tool", type: "button", title: "拍照", onclick: () => camera.click() }, "📷"),
+          this.micBtn,
+          this.compact
+            ? null
+            : h(
+                "button",
+                { class: "tool", type: "button", title: "界面上下文", onclick: () => (ctxPanel.hidden = !ctxPanel.hidden) },
+                "🪟",
+              ),
+          h("span", { class: "spacer" }),
+          this.compact
+            ? null
+            : h(
+                "button",
+                { class: "tool", type: "button", title: "语音通话（全双工，需要 VOLC_SPEECH_API_KEY）", onclick: () => this.toggleCall() },
+                "📞",
+              ),
+          h("button", { class: "send", type: "button", title: "发送（Enter）", onclick: () => this.send() }, "发送"),
+          file,
+          camera,
+        ),
+        this.compact ? null : ctxPanel,
       ),
-      this.compact
-        ? null
-        : h(
-            "details",
-            { class: "composer-opts" },
-            h("summary", {}, "界面上下文"),
-            h("label", { class: "inline" }, this.ctxToggle, " 随下一条消息附上"),
-            this.ctxScreen,
-            this.ctxContent,
-          ),
+      this.compact ? null : h("div", { class: "composer-hint" }, "Enter 发送 · Shift+Enter 换行 · Esc 中断 · ⌘K 新建会话"),
     );
   }
 
@@ -501,7 +705,11 @@ export class ChatPanel {
         chip.classList.remove("uploading");
         if (f.type.startsWith("image/")) chip.prepend(h("img", { src: URL.createObjectURL(f), class: "thumb" }));
         chip.append(
-          h("button", { class: "x", onclick: () => (this.attachments.splice(this.attachments.indexOf(item), 1), chip.remove()) }, "×"),
+          h(
+            "button",
+            { class: "x", type: "button", onclick: () => (this.attachments.splice(this.attachments.indexOf(item), 1), chip.remove()) },
+            "×",
+          ),
         );
       } catch (e) {
         chip.remove();
@@ -526,6 +734,7 @@ export class ChatPanel {
     for (const a of this.attachments) a.chip.remove();
     this.attachments = [];
     this.device.setActivity(this.view.sessionId, true, false);
+    this.scrollBottom();
     try {
       const r = await this.device.submitInput(this.view.sessionId, input);
       if (r.duplicate) toast("重复提交：按 input_id 去重，没有再次生效");
@@ -653,13 +862,4 @@ export class ChatPanel {
     c.player.close();
     this.callBar.hidden = true;
   }
-}
-
-function childSummary(view) {
-  const runs = view.payloads("run_requested");
-  const last = runs.at(-1);
-  if (!last) return "尚未开始";
-  const end = view.runEnd(last.run_id);
-  const reply = view.reply(last.run_id);
-  return `${end ? { run_completed: "已完成", run_failed: "失败", run_interrupted: "已中断" }[end.kind] : "进行中"}${reply ? "：" + reply.slice(0, 200) : ""}`;
 }

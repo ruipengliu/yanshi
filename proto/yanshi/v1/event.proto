@@ -287,6 +287,8 @@ message Usage {
   uint64 output_tokens = 2;
   // input_tokens 中命中提供商前缀缓存的部分（价格通常远低于普通输入），用于计量与观察缓存命中率。
   uint64 cached_input_tokens = 3;
+  // output_tokens 中用于思考的部分（提供商报告时才有）。
+  uint64 reasoning_tokens = 4;
 }
 
 // AssistantMessage 是一次完整的模型输出；tool_calls 即 Capability 调用请求。
@@ -297,6 +299,15 @@ message AssistantMessage {
   repeated ToolCall tool_calls = 4;
   string model = 5;
   Usage usage = 6;
+  // reasoning 是模型的思考过程（提供商流式给出时才有，ADR-0034）：给人看，不再发回给模型；与回复一样在写日志之前
+  // 做内容安全检查，随 Session 删除。
+  string reasoning = 7;
+  // duration_ms 是这次模型调用的耗时（含提供商层的重试），first_token_ms 是到第一段输出（思考或正文）的时间；
+  // 由 Worker 按 clock.Clock 计时，只用于观察。
+  uint32 duration_ms = 8;
+  uint32 first_token_ms = 9;
+  // finish_reason 是提供商给出的结束原因，如 "stop"、"tool_calls"、"length"。
+  string finish_reason = 10;
 }
 
 // ToolCallStarted 在执行 Capability 之前落盘，用于故障恢复时判断调用是否可能已产生副作用。

@@ -8,10 +8,10 @@
 //   指标    本进程的 yanshi_* 指标（/v1/debug/stats）。
 //   验证    验证场景（scenarios.js）。
 
-import { splitTool } from "./chat.js";
+import { modelLine, splitTool } from "./chat.js";
 import { payloadOf, textOf } from "./device.js";
 import { SCENARIOS } from "./scenarios.js";
-import { clock, h, hue, short, toast, fill } from "./ui.js";
+import { clock, fill, h, hue, jsonView, short, toast } from "./ui.js";
 
 const TABS = [
   ["timeline", "时间线"],
@@ -141,6 +141,20 @@ export class Inspector {
     const o = this.ctx.observer();
     if (!o?.view) return fill(this.body, h("div", { class: "empty" }, "没有打开的 Session。在顶栏新建或选择一个。"));
     const firings = this.faultState.recent ?? [];
+    this.hidden ??= new Set();
+    const chip = (cls, name) =>
+      h(
+        "button",
+        {
+          class: `lg ${cls} ${this.hidden.has(cls) ? "off" : ""}`,
+          title: "点击显示或隐藏这类事件",
+          onclick: () => {
+            this.hidden.has(cls) ? this.hidden.delete(cls) : this.hidden.add(cls);
+            this.render();
+          },
+        },
+        name,
+      );
     fill(
       this.body,
       h(
@@ -149,17 +163,30 @@ export class Inspector {
         h(
           "div",
           { class: "legend" },
-          legend("model", "模型调用"),
-          legend("call", "调用"),
-          legend("approval", "审批 / 提问"),
-          legend("delegate", "委托"),
-          legend("decision", "判断"),
-          legend("fault", "注入的故障"),
-          legend("sys", "挂起 / 压缩 / 接管"),
+          h("span", { class: "muted" }, "显示："),
+          chip("input", "输入"),
+          chip("model", "模型调用"),
+          chip("call", "调用"),
+          chip("approval", "审批 / 提问"),
+          chip("delegate", "委托"),
+          chip("decision", "判断"),
+          chip("fault", "注入的故障"),
+          chip("sys", "Attempt / 挂起 / 压缩"),
+          this.focus ? h("button", { class: "btn small", onclick: () => ((this.focus = ""), this.render()) }, "展开全部 Run") : null,
+          h("span", { class: "muted" }, "时间为相对 Run 开始的偏移，悬停看时刻"),
         ),
-        sessionTimeline(o.view, { childView: this.ctx.childView, firings, depth: 0 }),
+        sessionTimeline(o.view, { childView: this.ctx.childView, firings, depth: 0, hidden: this.hidden, focus: this.focus }),
       ),
     );
+    if (this.focus) this.body.querySelector(`[data-run="${this.focus}"]`)?.scrollIntoView({ block: "start" });
+  }
+
+  /** 定位到某个 Run（"在时间线中查看"）：只展开它并滚动过去。 */
+  focusRun(runId) {
+    this.tab = "timeline";
+    this.focus = runId;
+    this.renderNav();
+    this.render();
   }
 
   // —— 事件 ——
@@ -170,7 +197,11 @@ export class Inspector {
     const pick = views.find((v) => v.label === this.eventView) ?? views[0];
     const filter = (this.eventFilter ?? "").toLowerCase();
     const list = pick.view.events.filter((e) => !filter || JSON.stringify(e).toLowerCase().includes(filter));
-    const detail = h("pre", { class: "detail" }, this.selectedEvent ? JSON.stringify(this.selectedEvent, null, 2) : "选择一条事件");
+    const detail = h(
+      "div",
+      { class: "detail" },
+      this.selectedEvent ? jsonView(this.selectedEvent, { open: 4 }) : h("div", { class: "muted" }, "选择一条事件"),
+    );
     fill(
       this.body,
       h(
@@ -309,7 +340,7 @@ export class Inspector {
         h(
           "div",
           { class: "detail-col" },
-          h("pre", { class: "detail" }, sel ? JSON.stringify(sel.msg ?? sel.raw, null, 2) : "选择一帧"),
+          h("div", { class: "detail" }, sel ? jsonView(sel.msg ?? sel.raw, { open: 4 }) : h("div", { class: "muted" }, "选择一帧")),
           h(
             "div",
             { class: "raw" },
@@ -388,7 +419,7 @@ export class Inspector {
         "div",
         { class: "split" },
         h("div", { class: "list state-summary" }, stateSummary(this.stateQuery, r?.json)),
-        h("pre", { class: "detail" }, r ? JSON.stringify(r.json, null, 2) : ""),
+        h("div", { class: "detail" }, r ? jsonView(r.json ?? "", { open: 3 }) : null),
       ),
     );
   }
@@ -414,7 +445,7 @@ export class Inspector {
       body.params = Object.fromEntries(Object.entries(FAULTS[rule.kind].params).map(([k, v]) => [k, String(v)]));
     const r = await this.ctx.http("POST", "/v1/debug/faults", body);
     if (r.status !== 201) toast(`注入失败：${r.status} ${JSON.stringify(r.json)}`, "error");
-    else toast(`已注入：${FAULTS[rule.kind]?.name ?? rule.kind}${body.count ? ` ×${body.count}` : "（直到删除）"}`);
+    else this.injected = `${FAULTS[rule.kind]?.name ?? rule.kind}${body.count ? ` ×${body.count}` : "（直到删除）"}`;
     await this.loadFaults();
     this.render();
   }
@@ -455,6 +486,15 @@ export class Inspector {
         h(
           "div",
           { class: "panel" },
+          this.injected
+            ? h(
+                "div",
+                { class: "banner" },
+                `已注入：${this.injected}。去对话发一条消息，观察它如何被处理。`,
+                h("button", { class: "btn small primary", onclick: () => this.ctx.goChat() }, "去对话 →"),
+                h("button", { class: "icon-btn", onclick: () => ((this.injected = ""), this.render()) }, "✕"),
+              )
+            : null,
           h("h4", {}, "快速注入（当前 Session）"),
           h(
             "div",
@@ -609,20 +649,27 @@ export class Inspector {
       const r = (sum(name, pred) - before) / dt;
       return r > 0 ? `+${r.toFixed(1)}/s` : "";
     };
+    // 计数器的趋势画每次刷新的增量，当前值（gauge）画值本身；保留最近 40 次刷新。
     const tiles = [
-      ["Run 完成", sum("yanshi_runs_finished_total", (l) => l.status === "completed"), rate("yanshi_runs_finished_total")],
-      ["Run 失败", sum("yanshi_runs_finished_total", (l) => l.status === "failed"), ""],
-      ["模型调用", sum("yanshi_model_call_duration_seconds"), rate("yanshi_model_call_duration_seconds")],
-      ["模型重试", sum("yanshi_model_retries_total"), rate("yanshi_model_retries_total")],
-      ["Attempt（含接管）", sum("yanshi_attempts_total"), rate("yanshi_attempts_total")],
-      ["注入的故障", sum("yanshi_faults_injected_total"), rate("yanshi_faults_injected_total")],
-      ["队列中可认领", sum("yanshi_queue_ready"), ""],
-      ["在线连接", sum("yanshi_nodes_connected"), ""],
+      ["Run 完成", sum("yanshi_runs_finished_total", (l) => l.status === "completed"), rate("yanshi_runs_finished_total"), true],
+      ["Run 失败", sum("yanshi_runs_finished_total", (l) => l.status === "failed"), "", true],
+      ["模型调用", sum("yanshi_model_call_duration_seconds"), rate("yanshi_model_call_duration_seconds"), true],
+      ["模型重试", sum("yanshi_model_retries_total"), rate("yanshi_model_retries_total"), true],
+      ["Attempt（含接管）", sum("yanshi_attempts_total"), rate("yanshi_attempts_total"), true],
+      ["注入的故障", sum("yanshi_faults_injected_total"), rate("yanshi_faults_injected_total"), true],
+      ["队列中可认领", sum("yanshi_queue_ready"), "", false],
+      ["在线连接", sum("yanshi_nodes_connected"), "", false],
     ];
+    this.hist ??= new Map();
+    if (this.histAt !== m.at) {
+      this.histAt = m.at;
+      for (const [name, v] of tiles) this.hist.set(name, [...(this.hist.get(name) ?? []), v].slice(-41));
+    }
     const filter = (this.metricFilter ?? "").toLowerCase();
-    const rows = [];
+    const groups = new Map(GROUPS.map(([name]) => [name, []]));
     for (const [name, series] of Object.entries(d).sort()) {
       if (filter && !name.includes(filter)) continue;
+      const rows = groups.get(GROUPS.find(([, re]) => re.test(name))?.[0] ?? "其他");
       for (const s of series) {
         const labels = Object.entries(s.labels ?? {})
           .map(([k, v]) => `${k}=${v}`)
@@ -647,13 +694,13 @@ export class Inspector {
       h(
         "div",
         { class: "tiles" },
-        tiles.map(([name, v, r]) =>
+        tiles.map(([name, v, r, counter]) =>
           h(
             "div",
             { class: "metric" },
-            h("div", { class: "metric-v" }, fmt(v)),
             h("div", { class: "metric-n" }, name),
-            r ? h("div", { class: "metric-r" }, r) : null,
+            h("div", { class: "metric-v" }, fmt(v), r ? h("span", { class: "metric-r" }, r) : null),
+            spark(this.hist.get(name) ?? [], counter),
           ),
         ),
       ),
@@ -667,7 +714,13 @@ export class Inspector {
         }),
         h("span", { class: "muted" }, "每 2 秒刷新；只含 ID 与计数，不含内容"),
       ),
-      h("div", { class: "list" }, h("table", { class: "tbl metrics" }, rows)),
+      h(
+        "div",
+        { class: "metric-groups" },
+        [...groups]
+          .filter(([, rows]) => rows.length)
+          .map(([name, rows]) => h("section", { class: "panel" }, h("h4", {}, name), h("table", { class: "tbl metrics" }, rows))),
+      ),
     );
   }
 
@@ -726,8 +779,40 @@ export class Inspector {
   }
 }
 
-function legend(cls, name) {
-  return h("span", { class: `lg ${cls}` }, name);
+// 指标分组：按名称前缀。
+const GROUPS = [
+  ["Run 与 Attempt", /^yanshi_(runs?_|attempts_|handoffs_|compactions_|commit_conflicts_)/],
+  ["模型调用", /^yanshi_model_/],
+  ["队列与准入", /^yanshi_(queue_|admission_)/],
+  ["判断", /^yanshi_decision/],
+  ["内容安全", /^yanshi_moderation_/],
+  ["连接与通话", /^yanshi_(http_|nodes_|handshakes_|live_|calls?_)/],
+  ["计量与配额", /^yanshi_(usage_|quota_)/],
+  ["存储", /^yanshi_session_/],
+  ["故障注入", /^yanshi_faults_/],
+  ["其他", /./],
+];
+
+/** spark 是趋势小图：计数器画相邻两次刷新的差，当前值画值本身。 */
+function spark(values, counter) {
+  const ys = counter ? values.slice(1).map((v, i) => v - values[i]) : values;
+  if (ys.length < 2) return h("div", { class: "spark empty" });
+  const max = Math.max(...ys, 1);
+  const pts = ys.map((y, i) => `${((i / (ys.length - 1)) * 100).toFixed(1)},${(28 - (y / max) * 26).toFixed(1)}`).join(" ");
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 100 30");
+  svg.setAttribute("preserveAspectRatio", "none");
+  svg.setAttribute("class", "spark");
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+  line.setAttribute("points", pts);
+  svg.append(line);
+  return svg;
+}
+
+/** 相对 Run 开始的偏移："+1.2s"。 */
+function offset(ms) {
+  if (!Number.isFinite(ms)) return "";
+  return `+${(Math.max(0, ms) / 1000).toFixed(1)}s`;
 }
 
 function fmt(v) {
@@ -791,14 +876,14 @@ function runTimeline(view, req, opts) {
   const firings = (opts.firings ?? []).filter(
     (f) => f.session_id === view.sessionId && Date.parse(f.time) >= t0 - 1000 && Date.parse(f.time) <= tEnd + 1000,
   );
-  const items = timelineItems(view, events, opts);
-  for (const f of firings)
+  const items = timelineItems(view, events, { ...opts, t0 });
+  for (const f of opts.hidden?.has("fault") ? [] : firings)
     items.push({
       t: Date.parse(f.time),
       node: h(
         "div",
         { class: "tl-item fault" },
-        h("span", { class: "tl-time" }, clock(f.time)),
+        h("span", { class: "tl-time", title: clock(f.time) }, offset(Date.parse(f.time) - t0)),
         h("span", { class: "tl-lane" }),
         h("b", {}, "⚡ 注入故障 "),
         f.kind,
@@ -810,14 +895,18 @@ function runTimeline(view, req, opts) {
     "details",
     {
       class: `run-tl ${end?.kind ?? "running"}`,
-      open: !end || opts.depth > 0 || view.payloads("run_requested").at(-1)?.run_id === runId,
+      open:
+        opts.focus && opts.depth === 0
+          ? opts.focus === runId
+          : !end || opts.depth > 0 || view.payloads("run_requested").at(-1)?.run_id === runId,
       style: { "--h": hue(runId) },
+      dataset: { run: runId },
     },
     h(
       "summary",
       {},
       h("code", { class: "run" }, short(runId)),
-      h("span", { class: "run-input" }, inputText(req.input) || "（无文本）"),
+      h("span", { class: "run-input", title: inputText(req.input, Infinity) }, inputText(req.input) || "（无文本）"),
       h("span", { class: `pill ${end?.kind ?? "running"}` }, status),
       h("span", { class: "muted" }, `${attempts.length} 次 Attempt · ${((tEnd - t0) / 1000).toFixed(1)}s`),
     ),
@@ -848,11 +937,21 @@ function timelineItems(view, events, opts) {
       },
       attempt ? `A${attempt}` : "外部",
     );
-  const item = (e, cls, attempt, ...body) =>
+  const item = (e, cls, attempt, ...body) => {
+    if (opts.hidden?.has(cls.split(" ")[0])) return;
+    const text = h("span", { class: "tl-text" }, body);
+    text.title = text.textContent;
     out.push({
       t: Date.parse(e.time),
-      node: h("div", { class: `tl-item ${cls}` }, h("span", { class: "tl-time" }, clock(e.time)), lane(attempt), body),
+      node: h(
+        "div",
+        { class: `tl-item ${cls}` },
+        h("span", { class: "tl-time", title: clock(e.time) }, offset(Date.parse(e.time) - opts.t0)),
+        lane(attempt),
+        text,
+      ),
     });
+  };
   for (const e of events) {
     const [kind, p] = payloadOf(e);
     switch (kind) {
@@ -870,7 +969,6 @@ function timelineItems(view, events, opts) {
         );
         break;
       case "assistant_message": {
-        const u = p.usage ?? {};
         const calls = (p.tool_calls ?? []).map((c) =>
           splitTool(c.capability)[1] ? `${splitTool(c.capability)[1]}·${splitTool(c.capability)[0]}` : c.capability,
         );
@@ -879,11 +977,8 @@ function timelineItems(view, events, opts) {
           "model",
           p.attempt,
           h("b", {}, "模型 "),
-          h(
-            "span",
-            { class: "muted" },
-            `${p.model ?? ""} · ${u.input_tokens ?? 0}+${u.output_tokens ?? 0} tok${u.cached_input_tokens ? ` · 缓存 ${u.cached_input_tokens}` : ""}`,
-          ),
+          h("span", { class: "muted" }, modelLine(p)),
+          p.reasoning ? h("span", { class: "muted" }, ` · 💭 ${p.reasoning.length} 字思考`) : null,
           " ",
           calls.length ? `→ ${calls.join("、")}` : textOf(p.content).slice(0, 120),
         );
@@ -970,14 +1065,14 @@ function timelineItems(view, events, opts) {
   return out;
 }
 
-function inputText(input) {
+function inputText(input, max = 160) {
   const parts = [];
   for (const b of input ?? []) {
     if (b.text?.text) parts.push(b.text.text);
     else if (b.media) parts.push(`[${(b.media.mime_type ?? "").split("/")[0] || "文件"}：${b.media.name}]`);
     else if (b.card_action) parts.push(`[卡片动作：${b.card_action.label || b.card_action.action}]`);
   }
-  return parts.join(" ").slice(0, 160);
+  return parts.join(" ").slice(0, max);
 }
 
 /** summarize 是事件的一行摘要（事件列表）。 */

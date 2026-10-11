@@ -104,3 +104,93 @@ export class Artifacts {
     return this.cache.get(id);
   }
 }
+
+/** 复制文本到剪贴板，并在按钮上短暂显示"已复制"。 */
+export function copyButton(text, label = "复制") {
+  const b = h("button", { class: "copy", type: "button", title: "复制" }, label);
+  b.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(typeof text === "function" ? text() : text);
+      b.textContent = "已复制";
+    } catch {
+      b.textContent = "复制失败";
+    }
+    setTimeout(() => (b.textContent = label), 1200);
+  });
+  return b;
+}
+
+/** 耗时：1234 → "1.2s"，80 → "80ms"。 */
+export function dur(ms) {
+  ms = Number(ms ?? 0);
+  if (!ms) return "";
+  return ms >= 1000 ? `${(ms / 1000).toFixed(ms >= 10_000 ? 0 : 1)}s` : `${ms}ms`;
+}
+
+/** 相对时间："刚刚"、"5 分钟前"、"昨天 20:31"。 */
+export function ago(t) {
+  const d = new Date(t);
+  const s = (Date.now() - d.getTime()) / 1000;
+  if (Number.isNaN(s)) return "";
+  if (s < 60) return "刚刚";
+  if (s < 3600) return `${Math.floor(s / 60)} 分钟前`;
+  if (s < 86400 && new Date().getDate() === d.getDate()) return `${Math.floor(s / 3600)} 小时前`;
+  return d.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" }) + " " + clock(d).slice(0, 5);
+}
+
+export function num(n) {
+  return Number(n ?? 0).toLocaleString("en-US");
+}
+
+/**
+ * jsonView 渲染带语法高亮、可折叠的 JSON（对象与数组超过一层时可点开），右上角可复制。value 为字符串时先尝试解析，
+ * 不是 JSON 时按原文显示。
+ */
+export function jsonView(value, { open = 2 } = {}) {
+  let v = value;
+  let raw = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  if (typeof value === "string") {
+    try {
+      v = JSON.parse(value);
+      raw = JSON.stringify(v, null, 2);
+    } catch {
+      return h("div", { class: "code-box" }, copyButton(value), h("pre", { class: "plain-code" }, value));
+    }
+  }
+  return h("div", { class: "code-box" }, copyButton(raw), h("div", { class: "json" }, node(v, open, 0)));
+}
+
+function node(v, open, depth) {
+  if (v === null) return h("span", { class: "j-null" }, "null");
+  if (Array.isArray(v) || typeof v === "object") {
+    const entries = Array.isArray(v) ? v.map((x, i) => [i, x]) : Object.entries(v);
+    const [l, r] = Array.isArray(v) ? ["[", "]"] : ["{", "}"];
+    if (!entries.length) return h("span", { class: "j-punc" }, l + r);
+    const body = h(
+      "div",
+      { class: "j-body" },
+      entries.map(([k, x], i) =>
+        h(
+          "div",
+          { class: "j-row" },
+          Array.isArray(v) ? null : [h("span", { class: "j-key" }, JSON.stringify(k)), h("span", { class: "j-punc" }, ": ")],
+          node(x, open, depth + 1),
+          i < entries.length - 1 ? h("span", { class: "j-punc" }, ",") : null,
+        ),
+      ),
+    );
+    const d = h(
+      "details",
+      { class: "j-node", open: depth < open },
+      h("summary", {}, h("span", { class: "j-punc" }, l), h("span", { class: "j-more" }, ` ${entries.length} 项 … ${r}`)),
+      body,
+      h("span", { class: "j-punc" }, r),
+    );
+    return d;
+  }
+  if (typeof v === "string") return h("span", { class: "j-str" }, JSON.stringify(v));
+  if (typeof v === "number") return h("span", { class: "j-num" }, String(v));
+  if (typeof v === "boolean") return h("span", { class: "j-bool" }, String(v));
+  return h("span", {}, String(v));
+}

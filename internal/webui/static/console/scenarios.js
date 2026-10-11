@@ -463,6 +463,29 @@ export const SCENARIOS = [
     },
   },
   {
+    id: "reasoning",
+    title: "思考过程",
+    description: "思考过程以单独的增量推送（与正文分开），生成中途订阅的设备在 snapshot 中补齐它，提交后写入 AssistantMessage.reasoning，并带上耗时与 token（ADR-0034）。",
+    async run(c) {
+      const phone = await c.device("phone", { preset: "web" });
+      const web = await c.device("web", { preset: "web" });
+      const sid = await c.newSession(phone);
+      const pv = c.view(phone, sid);
+      const r = await phone.submit(sid, "think 60\n你好");
+      await pv.waitFor("reasoning deltas", () => pv.draft.reasoning.length > 40);
+      c.check(pv.draft.text === "" && pv.draft.reasoning.startsWith("思考第 1 步。"), "思考过程以单独的增量推送，正文尚未开始");
+      const wv = c.view(web, sid);
+      const first = await wv.waitFor("first delta on the web", () => wv.deltas[0]);
+      c.check(first.snapshot === true && (first.reasoning ?? "").startsWith("思考第 1 步。"), "生成中途订阅的设备在 snapshot 中补齐思考过程");
+      await c.runEnd(wv, r.runId, 20_000);
+      const m = wv.payloads("assistant_message").find((p) => p.run_id === r.runId);
+      c.check((m.reasoning ?? "").includes("思考第 60 步。") && !textOf(m.content).includes("思考"), "提交后思考过程写入 reasoning，与正文分开");
+      c.check(Number(m.usage?.reasoning_tokens ?? 0) > 0 && m.finish_reason === "stop" && m.duration_ms > 0, "记录了思考 token、结束原因与耗时");
+      c.check(wv.draft.reasoning === "" && wv.draft.text === "", "提交后草稿（含思考过程）清空");
+      return { sessionId: sid };
+    },
+  },
+  {
     id: "cards",
     title: "卡片",
     description:

@@ -123,12 +123,11 @@ func TestGuardGivesUpWhenRetryWouldMissDeadline(t *testing.T) {
 // 在并发上限处排队计入总时限：上游被占满时，调用在时限到期时返回 ErrTimeout，而不是无限排队。
 func TestGuardDeadlineCoversQueueing(t *testing.T) {
 	release, started := make(chan struct{}), make(chan struct{}, 1)
-	busy := providerFunc(func(ctx context.Context, _ *Request, _ func(Delta)) (*Response, error) {
+	// 占着名额的调用不理会自己的时限，直到测试放行：否则它到期释放名额时，排队的调用可能恰好在自己到期前拿到名额
+	// 而成功（机器繁忙时出现过）。
+	busy := providerFunc(func(context.Context, *Request, func(Delta)) (*Response, error) {
 		started <- struct{}{}
-		select {
-		case <-release:
-		case <-ctx.Done():
-		}
+		<-release
 		return &Response{}, nil
 	})
 	g := &Guard{Name: "p", Provider: busy, Limits: Limits{MaxConcurrency: 1, Deadline: 50 * time.Millisecond}}

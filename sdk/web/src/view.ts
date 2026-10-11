@@ -13,6 +13,8 @@ import type { LiveDelta } from "./gen/yanshi/v1/node_pb.js";
 export class Draft {
   /** 草稿全文；没有正在生成的消息时为空。 */
   text = "";
+  /** 正在生成的思考过程（ADR-0034），与正文分开显示；提交后以 AssistantMessage.reasoning 为准。 */
+  reasoning = "";
   /** 草稿所属的 Run；没有正在生成的消息时为空。 */
   runId = "";
   #attempt = 0;
@@ -38,10 +40,12 @@ export class Draft {
       this.#attempt = d.attempt;
       this.#afterSeq = d.afterSeq;
       this.text = d.text;
+      this.reasoning = d.reasoning;
       return true;
     }
     this.text += d.text;
-    return d.text !== "";
+    this.reasoning += d.reasoning;
+    return d.text !== "" || d.reasoning !== "";
   }
 
   /** 应用一条已提交的事件；返回草稿是否变化。 */
@@ -55,6 +59,7 @@ export class Draft {
 
   #clear(): void {
     this.text = "";
+    this.reasoning = "";
     this.runId = "";
     this.#attempt = 0;
     this.#afterSeq = -1n;

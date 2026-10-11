@@ -55,11 +55,16 @@ type Response struct {
 	Model     string
 	// Logprobs 是各输出位置上概率最高的 token 的对数概率（请求了 TopLogprobs 且提供商支持时）。
 	Logprobs []map[string]float64
+	// Reasoning 是思考过程（提供商给出时）：写入日志给人看，不进入之后的请求（ADR-0034）。
+	Reasoning string
+	// FinishReason 是提供商给出的结束原因（stop、tool_calls、length…）。
+	FinishReason string
 }
 
-// Delta 是流式输出的一段增量文本。
+// Delta 是流式输出的一段增量：正文或思考过程。
 type Delta struct {
-	Text string
+	Text      string
+	Reasoning string
 }
 
 type Provider interface {

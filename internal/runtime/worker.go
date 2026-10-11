@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"slices"
 	"strings"
 	"sync"
@@ -874,13 +875,20 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 	var resp *model.Response
 	start := time.Now()
 	defer func() { observeModel("turn", start, resp, err) }()
+	// 耗时与首字延迟只用于观察，但写入日志：按 clock.Clock 计时，模拟测试中确定（ADR-0034）。
+	called := w.now()
+	var firstToken time.Duration
 	err = w.during(ctx, r, func(ctx context.Context) error {
 		var err error
 		draft := live.Delta{SessionID: w.st.SessionID, RunID: r.ID, Attempt: w.attempt, AfterSeq: w.st.Seq}
 		resp, err = w.cfg.Model.Generate(ctx, req, func(d model.Delta) {
-			draft.Text = d.Text
+			if firstToken == 0 {
+				firstToken = max(w.now().Sub(called), time.Millisecond)
+			}
+			draft.Text, draft.Reasoning = d.Text, d.Reasoning
 			w.cfg.Live.Publish(draft)
 		})
+		draft.Reasoning = ""
 		draft.Text, draft.End = "", true
 		w.cfg.Live.Publish(draft)
 		return err
@@ -901,8 +909,13 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 	// 内容安全（ADR-0021）：违规的回复替换为拒答文本、丢弃调用，原文不写入日志。服务不可用时不放行：
 	// 返回错误使本步重试（下一步重新调用模型），持续不可用时由 StepErrorBudget 使 Run 失败。
 	// 用单独的变量：err 被上面的 defer 用来记录模型调用的结果。
+	// 思考过程同样给人看：与回复一起检查（ADR-0034）。
+	modText := ModerationText(resp.Content, resp.ToolCalls)
+	if resp.Reasoning != "" {
+		modText += "\n" + resp.Reasoning
+	}
 	v, merr := moderation.Check(ctx, w.cfg.Moderator, moderation.Request{Stage: moderation.Output,
-		BusinessLine: w.st.Created.GetBusinessLine(), Text: ModerationText(resp.Content, resp.ToolCalls)})
+		BusinessLine: w.st.Created.GetBusinessLine(), Text: modText})
 	if merr != nil {
 		return merr
 	}
@@ -910,10 +923,12 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 		w.cfg.Logger.Warn("model output blocked by moderation", "session", w.st.SessionID, "run", r.ID, "labels", v.Labels)
 		events = append(events, &v1.Event{Payload: &v1.Event_ContentModerated{ContentModerated: &v1.ContentModerated{
 			RunId: r.ID, Attempt: w.attempt, Stage: string(moderation.Output), Labels: v.Labels}}})
-		resp.Content, resp.ToolCalls = model.TextBlocks(moderation.Refusal), nil
+		resp.Content, resp.ToolCalls, resp.Reasoning = model.TextBlocks(moderation.Refusal), nil, ""
 	}
 	events = append(events, &v1.Event{Payload: &v1.Event_AssistantMessage{AssistantMessage: &v1.AssistantMessage{
 		RunId: r.ID, Attempt: w.attempt, Content: resp.Content, ToolCalls: resp.ToolCalls, Model: resp.Model, Usage: resp.Usage,
+		Reasoning: truncateReasoning(resp.Reasoning), DurationMs: millis(w.now().Sub(called)), FirstTokenMs: millis(firstToken),
+		FinishReason: model.SafeCode(resp.FinishReason),
 	}}})
 	if len(resp.ToolCalls) == 0 {
 		events = append(events, &v1.Event{Payload: &v1.Event_RunCompleted{RunCompleted: &v1.RunCompleted{RunId: r.ID, Attempt: w.attempt}}})
@@ -1134,4 +1149,18 @@ func ModerationText(content []*v1.ContentBlock, calls []*v1.ToolCall) string {
 		fmt.Fprintf(&b, "\n%s %s", tc.GetCapability(), tc.GetArgumentsJson())
 	}
 	return b.String()
+}
+
+// maxReasoning 是写入日志的思考过程上限：思考常比回复长得多，事件过大会拖慢每一次读取与推送。
+const maxReasoning = 32 << 10
+
+func truncateReasoning(s string) string {
+	if t, cut := model.Truncate(s, maxReasoning); cut {
+		return t + "\n…（思考过程过长，已截断）"
+	}
+	return s
+}
+
+func millis(d time.Duration) uint32 {
+	return uint32(min(max(d.Milliseconds(), 0), math.MaxUint32))
 }

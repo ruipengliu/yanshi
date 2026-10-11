@@ -1269,7 +1269,9 @@ type LiveDelta struct {
 	// 为 true 时 text 是这条消息到目前为止的全文（订阅时正在生成），替换而非追加。
 	Snapshot bool `protobuf:"varint,6,opt,name=snapshot,proto3" json:"snapshot,omitempty"`
 	// 这次生成已结束（提交或失败）；客户端丢弃尚未被提交事件覆盖的文本。
-	End           bool `protobuf:"varint,7,opt,name=end,proto3" json:"end,omitempty"`
+	End bool `protobuf:"varint,7,opt,name=end,proto3" json:"end,omitempty"`
+	// reasoning 是思考过程的增量（snapshot 时为到目前为止的全文），与 text 分开显示（ADR-0034）。
+	Reasoning     string `protobuf:"bytes,8,opt,name=reasoning,proto3" json:"reasoning,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1351,6 +1353,13 @@ func (x *LiveDelta) GetEnd() bool {
 		return x.End
 	}
 	return false
+}
+
+func (x *LiveDelta) GetReasoning() string {
+	if x != nil {
+		return x.Reasoning
+	}
+	return ""
 }
 
 // ClientRequest 是会话客户端的操作；每个请求恰有一个 ClientResponse。
@@ -2998,7 +3007,7 @@ const file_yanshi_v1_node_proto_rawDesc = "" +
 	"\x11SubscriptionEnded\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xba\x01\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xd8\x01\n" +
 	"\tLiveDelta\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x15\n" +
@@ -3007,7 +3016,8 @@ const file_yanshi_v1_node_proto_rawDesc = "" +
 	"\tafter_seq\x18\x04 \x01(\x04R\bafterSeq\x12\x12\n" +
 	"\x04text\x18\x05 \x01(\tR\x04text\x12\x1a\n" +
 	"\bsnapshot\x18\x06 \x01(\bR\bsnapshot\x12\x10\n" +
-	"\x03end\x18\a \x01(\bR\x03end\"\xfd\x02\n" +
+	"\x03end\x18\a \x01(\bR\x03end\x12\x1c\n" +
+	"\treasoning\x18\b \x01(\tR\treasoning\"\xfd\x02\n" +
 	"\rClientRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12A\n" +

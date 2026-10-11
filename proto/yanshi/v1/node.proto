@@ -156,6 +156,8 @@ message LiveDelta {
   bool snapshot = 6;
   // 这次生成已结束（提交或失败）；客户端丢弃尚未被提交事件覆盖的文本。
   bool end = 7;
+  // reasoning 是思考过程的增量（snapshot 时为到目前为止的全文），与 text 分开显示（ADR-0034）。
+  string reasoning = 8;
 }
 
 // ClientRequest 是会话客户端的操作；每个请求恰有一个 ClientResponse。
