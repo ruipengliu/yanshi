@@ -18,6 +18,7 @@ import (
 	"yanshi/internal/artifact"
 	"yanshi/internal/askuser"
 	"yanshi/internal/eventlog"
+	"yanshi/internal/faults"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/metrics"
 	"yanshi/internal/model"
@@ -218,6 +219,12 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 	st, err := s.Load(ctx, sessionID)
 	if err != nil {
 		return nil, err
+	}
+	// 卡片动作的输入 ID 由平台推导：同一版卡片上的同一动作只生效一次，与客户端是否带 ID 无关。
+	if id, in, err := s.cardAction(ctx, st, input); err != nil {
+		return nil, err
+	} else if id != "" {
+		inputID, input = id, in
 	}
 	// 重复提交在任何检查之前返回：首次已经通过了内容安全与配额，结果也已确定。
 	if res := duplicate(st, inputID); res != nil {
@@ -442,6 +449,11 @@ func typedAnswer(r *session.Run, c *session.Call, input []*v1.ContentBlock) (*v1
 	a := &askuser.Answer{Text: strings.TrimSpace(model.Text(input))}
 	var extra []*v1.ContentBlock
 	for _, b := range input {
+		if ca := b.GetCardAction(); ca != nil && a.Text == "" {
+			// 等回答时点了卡片上的动作：动作作为回答文字。
+			a.Text = model.CardActionText(ca)
+			continue
+		}
 		if b.GetText() == nil {
 			extra = append(extra, b)
 		}
@@ -765,6 +777,9 @@ func (s *Service) normalizeMedia(ctx context.Context, sessionID string, input []
 func InputModerationText(input []*v1.ContentBlock) string {
 	text := model.Text(input)
 	for _, b := range input {
+		if a := b.GetCardAction(); a != nil {
+			text += "\n" + model.CardActionText(a)
+		}
 		if u := b.GetUiContext(); u != nil {
 			text += "\n" + strings.Join([]string{u.GetScreen(), u.GetRef(), u.GetSelection(), u.GetContent()}, "\n")
 		}
@@ -774,11 +789,16 @@ func InputModerationText(input []*v1.ContentBlock) string {
 
 // moderateInput 检查用户输入（文本与图片工件）。违规返回 ErrRejected，服务不可用返回 ErrUnavailable：都不写日志。
 func (s *Service) moderateInput(ctx context.Context, st *session.State, input []*v1.ContentBlock) error {
+	ctx = faults.WithSession(ctx, st.SessionID)
 	req := moderation.Request{Stage: moderation.Input, BusinessLine: st.Created.GetBusinessLine(), Text: InputModerationText(input)}
 	for _, b := range input {
 		if m := b.GetMedia(); m != nil && strings.HasPrefix(m.GetMimeType(), "image/") {
 			id, _ := strings.CutPrefix(m.GetUri(), "artifact://")
 			req.Images = append(req.Images, moderation.Image{ArtifactID: id, MimeType: m.GetMimeType()})
+		}
+		if m := b.GetMedia(); m != nil && strings.HasPrefix(m.GetMimeType(), "audio/") {
+			id, _ := strings.CutPrefix(m.GetUri(), "artifact://")
+			req.Audio = append(req.Audio, moderation.Audio{ArtifactID: id, MimeType: m.GetMimeType()})
 		}
 	}
 	v, err := moderation.Check(ctx, s.Moderator, req)

@@ -3,7 +3,8 @@ import { test } from "node:test";
 import { create, type MessageInitShape } from "@bufbuild/protobuf";
 import { EventSchema } from "../src/gen/yanshi/v1/event_pb.js";
 import { LiveDeltaSchema } from "../src/gen/yanshi/v1/node_pb.js";
-import { Draft, PendingQuestions, questionOf } from "../src/view.js";
+import { Cards, Draft, PendingQuestions, questionOf } from "../src/view.js";
+import { cardAction } from "../src/client.js";
 
 const delta = (d: MessageInitShape<typeof LiveDeltaSchema>) => create(LiveDeltaSchema, { sessionId: "s", runId: "r1", attempt: 1, ...d });
 const ev = (e: MessageInitShape<typeof EventSchema>) => create(EventSchema, { sessionId: "s", ...e });
@@ -68,4 +69,30 @@ test("questions: parsed from the call, closed by the result or the end of the ru
   assert.equal(p.onEvent(ev({ seq: 4n, payload: { case: "toolResult", value: { runId: "r1", callId: "c1" } } })), true);
   assert.equal(p.onEvent(ev({ seq: 5n, payload: { case: "runInterrupted", value: { runId: "r2" } } })), true);
   assert.equal(p.questions.length, 0);
+});
+
+test("cards: show_card results appear, the same card_id replaces the earlier version", () => {
+  const shown = (seq: bigint, cardId: string, callId: string, title: string) =>
+    ev({
+      seq,
+      payload: {
+        case: "toolResult",
+        value: { runId: "r1", callId, content: [{ kind: { case: "card", value: { cardId, callId, title } } }] },
+      },
+    });
+  const c = new Cards();
+  assert.equal(c.onEvent(assistant(1n)), false);
+  assert.equal(c.onEvent(shown(2n, "alarm", "c1", "正在设置")), true);
+  assert.equal(c.onEvent(shown(3n, "weather", "c2", "天气")), true);
+  assert.equal(c.onEvent(shown(5n, "alarm", "c3", "已设置 07:00")), true);
+  assert.deepEqual(
+    c.cards.map((v) => [v.card.cardId, v.card.title, v.seq]),
+    [
+      ["alarm", "已设置 07:00", 5n],
+      ["weather", "天气", 3n],
+    ],
+  );
+  const v = c.get("alarm")!;
+  const b = cardAction({ cardId: v.card.cardId, callId: v.card.callId, action: "ok", seq: v.seq });
+  assert.equal(b.kind?.case, "cardAction");
 });

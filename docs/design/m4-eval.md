@@ -64,13 +64,13 @@ turns:
 
 ## 3. 运行
 
-`yanshi eval -suite evals [-model tokenhub/…] [-case glob] [-trials N] [-judge …] [-sandbox docker] [-baseline …] [-update-baseline]`：
+`yanshi eval -suite evals [-model ark/…] [-case glob] [-trials N] [-judge …] [-sandbox docker] [-baseline …] [-update-baseline]`：
 
 - **进程内运行**：内存存储、真实的模型网关；虚拟设备是一个进程内的 Node，与 e2e 一样经由 Hub、Inbox 路由。沙箱可选（`-sandbox docker`），不可用时跳过 `requires: [sandbox]` 的用例。
 - **用例隔离**：每个用例的每次运行都使用新的 EndUser，互不影响。
 - **`-model`**：覆盖 AgentDef 的模型，用来在同一评测集上比较不同模型。
 
-`make eval` 读取环境中的 `TOKENHUB_API_KEY`。评测消耗真实 token，不放进 `make check`；但**改动模型、提示词、AgentDef，或召回、压缩、Memory、MCP 的给模型的文本时必须运行**，并与基线比较（写入 AGENTS.md）。
+`make eval` 读取环境中的 `ARK_API_KEY`（2026-10-11 起被评测模型为火山方舟 `doubao-seed-2-1-lite`；此前为 TokenHub `deepseek-v4.1-flash`）。评测消耗真实 token，不放进 `make check`；但**改动模型、提示词、AgentDef，或召回、压缩、Memory、MCP 的给模型的文本时必须运行**，并与基线比较（写入 AGENTS.md）。
 
 ## 4. 报告与基线
 

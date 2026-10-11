@@ -529,6 +529,19 @@ export class Client {
     await this.request({ op: { case: "answer", value: { sessionId, callId, ...a } } }, opts);
   }
 
+  /**
+   * 提交用户在卡片上的动作（点按钮或点选列表项，docs/design/cards.md §4），values 是卡片上字段的填写值。
+   * 有进行中的 Run 时并入它，否则开启新 Run；同一版卡片上的同一动作只生效一次（重复点击返回 duplicate）。
+   * seq 是收到这一版卡片的事件序号（见 Cards），平台据此直接读取卡片。
+   */
+  submitCardAction(
+    sessionId: string,
+    a: { cardId: string; callId: string; action: string; values?: Record<string, string>; seq?: bigint },
+    opts?: RequestOptions,
+  ): Promise<SubmitResult> {
+    return this.submit(sessionId, [cardAction(a)], opts);
+  }
+
   async closeSession(sessionId: string, reason = "", opts?: RequestOptions): Promise<void> {
     await this.request({ op: { case: "close", value: { sessionId, reason } } }, opts);
   }
@@ -543,6 +556,19 @@ export interface UIContextInit {
   selection?: string;
   /** 界面上与输入相关的可见内容（≤8000）。 */
   content?: string;
+}
+
+/** 卡片动作内容块（见 submitCardAction）。 */
+export function cardAction(a: {
+  cardId: string;
+  callId: string;
+  action: string;
+  values?: Record<string, string>;
+  seq?: bigint;
+}): ContentBlockInit {
+  return {
+    kind: { case: "cardAction", value: { cardId: a.cardId, callId: a.callId, action: a.action, values: a.values ?? {}, seq: a.seq ?? 0n } },
+  };
 }
 
 /** 文本内容块。 */

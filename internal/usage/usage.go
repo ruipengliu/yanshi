@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -145,8 +146,21 @@ func (p *PriceList) Has(model string) bool {
 	if p == nil {
 		return false
 	}
-	_, ok := p.Models[model]
+	_, ok := p.price(model)
 	return ok
+}
+
+// price 查找模型单价。模型引用可以带思考强度后缀（"ark/doubao-seed-2-1-lite-260915:minimal"）：
+// 没有为带后缀的引用单独定价时按不带后缀的模型计价——同一模型的单价不随思考强度变化，思考的 token 计入输出。
+func (p *PriceList) price(model string) (Price, bool) {
+	if pr, ok := p.Models[model]; ok {
+		return pr, true
+	}
+	if i := strings.LastIndexByte(model, ':'); i > 0 {
+		pr, ok := p.Models[model[:i]]
+		return pr, ok
+	}
+	return Price{}, false
 }
 
 // ModelCost 返回一次模型调用的金额（微元）；没有价格时为 0。cached 是 input 中命中缓存的部分。
@@ -154,7 +168,7 @@ func (p *PriceList) ModelCost(model string, input, cached, output uint64) int64 
 	if p == nil {
 		return 0
 	}
-	pr := p.Models[model]
+	pr, _ := p.price(model)
 	cached = min(cached, input)
 	cachedPrice := pr.Input
 	if pr.CachedInput != nil {
@@ -174,7 +188,7 @@ func (p *PriceList) CallCost(model string, t CallTokens) int64 {
 	if p == nil {
 		return 0
 	}
-	pr := p.Models[model]
+	pr, _ := p.price(model)
 	or := func(x *float64, d float64) float64 {
 		if x != nil {
 			return *x

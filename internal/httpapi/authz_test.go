@@ -18,6 +18,7 @@ import (
 	"yanshi/internal/auth"
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog/memlog"
+	"yanshi/internal/faults"
 	"yanshi/internal/httpapi"
 	"yanshi/internal/ids"
 	"yanshi/internal/lifecycle"
@@ -41,6 +42,8 @@ type authzEnv struct {
 	memory, grant string
 	keys          map[string]*auth.SigningKey
 	ownedNode     string
+	// fault 是注入到 demo/u1 的 Session 的故障规则（调试接口，ADR-0033）。
+	fault string
 }
 
 func newAuthzEnv(t *testing.T) *authzEnv {
@@ -122,7 +125,10 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 		t.Fatal(err)
 	}
 	svc.Quotas = &usage.Quotas{Store: uses, Limits: map[string]usage.Limits{"demo": limits}}
-	e.api = &httpapi.Server{Auth: verifier, Service: svc, Live: live.NewMemBus(), Nodes: dir, Artifacts: arts, Memory: mems, Usage: uses}
+	injector := &faults.Injector{}
+	rule, _ := injector.Add(faults.Rule{Kind: faults.ModelDelay, SessionID: e.sid})
+	e.fault = rule.ID
+	e.api = &httpapi.Server{Auth: verifier, Service: svc, Live: live.NewMemBus(), Nodes: dir, Artifacts: arts, Memory: mems, Usage: uses, Faults: injector}
 	e.srv = httptest.NewServer(e.api.Handler())
 	t.Cleanup(e.srv.Close)
 	return e
@@ -209,6 +215,10 @@ func (e *authzEnv) cases() map[string]routeCase {
 		"GET /v1/quota":                               {"GET", "/v1/quota?end_user=u1", nil, http.StatusOK},
 		"DELETE /v1/sessions/{id}/memories":           {"DELETE", s + "/memories", nil, http.StatusNoContent},
 		"GET /v1/usage":                               {"GET", "/v1/usage?end_user=u1&group_by=model", nil, http.StatusOK},
+		"GET /v1/debug/faults":                        {"GET", "/v1/debug/faults", nil, http.StatusOK},
+		"POST /v1/debug/faults":                       {"POST", "/v1/debug/faults", map[string]any{"kind": "model_error", "session_id": e.sid, "count": 1}, http.StatusCreated},
+		"DELETE /v1/debug/faults":                     {"DELETE", "/v1/debug/faults?id=" + e.fault, nil, http.StatusNoContent},
+		"GET /v1/debug/stats":                         {"GET", "/v1/debug/stats", nil, http.StatusOK},
 	}
 }
 
@@ -325,6 +335,23 @@ func TestAuthorizationMatrix(t *testing.T) {
 					mark := map[string]string{"GET /v1/quota": `"end_user":"u1"`, "GET /v1/usage": "u1-model"}[route]
 					if sees := code == http.StatusOK && strings.Contains(body, mark) && strings.Contains(body, "demo"); sees != allowed {
 						t.Fatalf("sees owner's usage = %v, want %v (%s)", sees, allowed, body)
+					}
+				case route == "GET /v1/debug/faults" || route == "DELETE /v1/debug/faults":
+					// 规则只对能访问其 Session 的调用方可见、可删除；列表与删除本身不返回 404。
+					if code != c.ok {
+						t.Fatalf("got %d (%s), want %d", code, body, c.ok)
+					}
+					rules, _ := e.api.Faults.Snapshot()
+					if route == "GET /v1/debug/faults" {
+						if sees := strings.Contains(body, e.fault); sees != allowed {
+							t.Fatalf("sees owner's fault rule = %v, want %v (%s)", sees, allowed, body)
+						}
+					} else if deleted := len(rules) == 0; deleted != allowed {
+						t.Fatalf("owner's fault rule deleted = %v, want %v", deleted, allowed)
+					}
+				case route == "GET /v1/debug/stats":
+					if code != http.StatusOK {
+						t.Fatalf("got %d (%s)", code, body)
 					}
 				case route == "GET /v1/nodes":
 					// 列表不返回 404，但别人看不到 demo/u1 的 Node。

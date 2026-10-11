@@ -51,9 +51,11 @@ var (
 )
 
 var (
-	ModelCallDuration   = histogram("model_call_duration_seconds", "模型调用耗时；kind = turn | summary。", latency, "kind", "outcome")
-	ModelTokens         = counter("model_tokens_total", "模型 token 数；direction = input | output | cached_input（input 中命中前缀缓存的部分）。", "direction")
-	ModelRetries        = counter("model_retries_total", "模型调用因暂时性失败（限流、服务端错误、连接中断）重试的次数。", "provider")
+	ModelCallDuration = histogram("model_call_duration_seconds", "模型调用耗时；kind = turn | summary。", latency, "kind", "outcome")
+	ModelTokens       = counter("model_tokens_total", "模型 token 数；direction = input | output | cached_input（input 中命中前缀缓存的部分）。", "direction")
+	ModelRetries      = counter("model_retries_total", "模型调用因暂时性失败（限流、服务端错误、连接中断）重试的次数。", "provider")
+	// FaultsInjected 只在 serve -faults 的调试部署中出现（ADR-0033）。
+	FaultsInjected      = counter("faults_injected_total", "注入的故障次数（调试部署）。", "kind")
 	ModelDeadlines      = counter("model_deadlines_total", "模型调用在总时限（含排队与重试等待）内没有结果的次数。", "provider")
 	ModelAdmissionWait  = histogram("model_admission_wait_seconds", "模型调用在提供商准入（速率与并发上限）处排队的时间。", latency, "provider")
 	RunsFinished        = counter("runs_finished_total", "进入终态的 Run；agent = name@version，用于比较灰度版本。", "status", "agent")

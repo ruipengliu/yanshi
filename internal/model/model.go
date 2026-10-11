@@ -137,6 +137,27 @@ func UIContextText(u *v1.UIContext) string {
 	return b.String()
 }
 
+// CardActionText 把用户在卡片上的动作呈现为给模型看的文本（docs/design/cards.md）。字段值来自用户，按用户输入对待。
+func CardActionText(a *v1.CardAction) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "[卡片动作] 用户在卡片 %s 上选择了「%s」（动作 %s）", a.GetCardId(), a.GetLabel(), a.GetAction())
+	if len(a.GetValues()) > 0 {
+		keys := make([]string, 0, len(a.GetValues()))
+		for k := range a.GetValues() {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		b.WriteString("，填写：")
+		for i, k := range keys {
+			if i > 0 {
+				b.WriteString("；")
+			}
+			fmt.Fprintf(&b, "%s=%s", k, a.GetValues()[k])
+		}
+	}
+	return b.String()
+}
+
 // CallTranscriptText 把 Call 中的一句话呈现为给模型看的文本（docs/design/m3-call.md §4）：
 // 通话内容以用户消息的形式进入上下文，前缀注明来自语音通话与说话的一方。
 func CallTranscriptText(t *v1.CallTranscript) string {

@@ -1,14 +1,17 @@
 # 通用助手。model 使用 "provider/model" 引用：
-#   tokenhub/<模型ID>       腾讯云 TokenHub（需 TOKENHUB_API_KEY）
 #   ark/<模型ID或接入点ID>  火山方舟（需 ARK_API_KEY；coding plan 另设
 #                          ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/coding/v3）
+#   tokenhub/<模型ID>       腾讯云 TokenHub（需 TOKENHUB_API_KEY）
 #   local/<模型名>          私有化 OpenAI 兼容推理服务（需 YANSHI_LOCAL_BASE_URL）
 #   echo/any               离线复述，无需任何外部服务
 # capabilities 中 "device:<glob>" 表示用户设备上名称匹配的能力（docs/design/m1-device-nodes.md §5），
 # "sandbox:<glob>" 表示本会话云端沙箱中的能力（docs/design/m2-sandbox.md，需 serve -sandbox docker）。
 name: assistant
 version: "1"
-model: tokenhub/deepseek-v4.1-flash
+# 后缀 ":low" 是思考强度（reasoning_effort：minimal | low | medium | high，docs/design/model-calls.md §4）。
+# minimal 延迟最低，但评测中不按指令用卡片展示结果（card-alarm-result），所以取 low。
+# doubao-seed-2-1-lite 能看图、听语音消息。
+model: ark/doubao-seed-2-1-lite-260915:low
 instructions: |
   你是一个乐于助人的助手，可以使用用户设备上的能力。回答简洁准确。
   需要当前时间时调用 clock_now。设备离线时调用会等待其上线，请告知用户。
@@ -16,9 +19,12 @@ instructions: |
   大文件不要整体读入对话：分段读取，或导入沙箱处理后只返回结论。
   对以后的对话有用的用户信息（偏好、人际关系、长期事项），用 memory_save 记住；用户要求忘记时用 memory_forget。
   要操作的对象有多个候选而用户没有指明时，用 ask_user 让用户选择；其余情况不要停下来提问，按合理假设完成并说明假设。
+  设好闹钟、建好日程、规划好行程这类操作完成后，或给出几个选项的对比时，用 show_card 把结果展示成卡片，回复中仍要说出关键结论；
+  用户点卡片上的按钮时，你会收到一条"[卡片动作]"输入，照它的意思继续做。
 capabilities:
   - clock_now
   - ask_user
+  - show_card
   - memory_save
   - memory_forget
   - memory_search

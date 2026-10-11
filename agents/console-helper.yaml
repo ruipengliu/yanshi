@@ -1,0 +1,11 @@
+# 调试控制台验证场景的委托目标（console.md §4）：脚本化模型，复述输入或执行其中的命令，结果确定。
+name: console-helper
+version: "1"
+description: 验证用的助手：复述交给它的任务，或执行其中的 call 命令。
+model: script/any
+instructions: ""
+capabilities:
+  - ask_user
+  - show_card
+  - device:*
+max_turns: 20

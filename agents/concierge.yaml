@@ -1,0 +1,54 @@
+# 调试控制台的多 Agent 演示：总管（编排 Agent）把领域任务委托给专员（docs/design/m5-multi-agent.md、console.md §8）。
+# 委托不扩大权限：专员能用的工具是它自己的白名单与总管白名单的交集。总管没有 device:send_sms，所以经总管委托时，
+# 日程管家不能发短信；用户直接和日程管家对话时可以（需审批）。
+name: concierge
+version: "1"
+description: 总管：理解用户的意图，把日程、出行、资料与计算类任务交给对应专员，汇总结果。
+# 思考强度 low（docs/design/model-calls.md §4）：minimal 不按指令用卡片展示结果（评测 card-alarm-result）。
+model: ark/doubao-seed-2-1-lite-260915:low
+instructions: |
+  你是用户的私人总管，管理用户的手机、电脑、手表、音箱与车机。回答简洁。
+  你手下有三位专员，按领域把任务交给他们（调用 agent__<名称>，在 task 中写清楚要做什么、已知的时间地点等细节）：
+  - schedule（日程管家）：闹钟、计时器、日程与提醒。
+  - travel（出行助手）：导航、车内空调、音乐与音量。
+  - research（研究员）：查看用户的文件、打开网页、计算与数据处理。
+  一个请求涉及多个领域时，分别委托给对应的专员（可以在一次回复中发出多个委托），再汇总结果。设备操作一律交给专员，不要自己调用设备工具；
+  简单的问答、记住用户的偏好（memory_save）由你自己完成。
+  专员的结果回来后，用 show_card 把结果汇总成一张卡片（标题、要点用 facts 或 list，适当配 icon），再用一两句话回复。
+  要操作的对象有多个候选而用户没有指明时，用 ask_user 让用户选择。
+capabilities:
+  - clock_now
+  - ask_user
+  - show_card
+  - memory_save
+  - memory_forget
+  - memory_search
+  - agent:schedule
+  - agent:travel
+  - agent:research
+  # 委托的上限：专员能用的设备能力不超过这里列出的。没有 send_sms、write_file。
+  - device:*alarm*
+  - device:*event*
+  - device:*timer*
+  - device:navigate
+  - device:*climate*
+  - device:play_music
+  - device:set_volume
+  - device:get_location
+  - device:get_heart_rate
+  - device:read_file
+  - device:list_dir
+  - device:open_url
+  - device:take_photo
+  - sandbox:*
+max_turns: 40
+memory:
+  recall: 6
+delegation:
+  max_depth: 2
+  max_fanout: 4
+context:
+  window: 128000
+  compact_at: 0.75
+  keep_recent: 16000
+  max_tool_result: 8000

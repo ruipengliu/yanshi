@@ -19,6 +19,7 @@ type Request struct {
     BusinessLine string
     Text         string  // 输入文本；输出时为回复文本与调用参数
     Images       []Image // 输入中的图片工件（artifact ID 与 MIME 类型），由提供商自行读取
+    Audio        []Audio // 输入中的语音消息工件：模型直接听音频、不经转写，所以须检查音频本身
 }
 type Verdict struct {
     Block  bool

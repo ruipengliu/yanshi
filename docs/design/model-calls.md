@@ -37,7 +37,16 @@
 | `yanshi_model_admission_wait_seconds{provider}` | 在速率与并发上限处排队的时间 |
 | `yanshi_model_deadlines_total{provider}` | 总时限内没有结果的调用（排队过久或重试耗尽时间） |
 
-## 4. 遗留
+## 4. 提供商：火山方舟（2026-10-11 起默认）
+
+对话与嵌入默认使用火山方舟（`ark`，`ARK_API_KEY`；coding plan 的 `ARK_BASE_URL` 为 `…/api/coding/v3`）。以下行为都用真实请求确认过：
+
+- **思考强度写在模型引用的后缀上**：`ark/doubao-seed-2-1-lite-260915:minimal`。后缀取 `minimal | low | medium | high`，以 `reasoning_effort` 发送（`openaicompat.SplitEffort`）；其他带冒号的模型 ID 原样发送。方舟不接受 `thinking: auto`。默认会先思考，首字延迟明显变长。`minimal` 最快，但评测中 `doubao-seed-2-1-lite` 在 `minimal` 下不按指令用 `show_card` 展示结果（`low` 与 `pro:minimal` 都能），所以各 Agent 取 `low`。价格表按不带后缀的模型计价。
+- **图片与音频**：用户消息中的图片以 `image_url`（data URL）发送，语音消息以 `input_audio` 发送（格式 wav、mp3、m4a；不支持 webm、ogg，所以控制台录音在浏览器中编码为 16kHz WAV）。二者都由 Worker 从工件内联（单个不超过 4 MB）；语音消息的内容安全检查须覆盖音频本身（`moderation.Request.Audio`）。
+- **多模态嵌入**（`doubao-embedding-vision-*`）只提供 `/embeddings/multimodal`：一次请求的全部输入合成一个向量，所以每段文本单独请求（并发 4）。2048 维。Memory 目前只嵌入文本。
+- 流式输出中的思考过程（`reasoning_content`）不进日志，也不推送给订阅者；思考的 token 计入输出用量。
+
+## 5. 遗留
 
 - 上限目前对每个提供商取同一组值。提供商之间的容量差别大时（如 TokenHub 与私有化 vLLM），改为按提供商配置。
 - 准入是单进程的。多个进程的总并发等于进程数乘以上限；要做全局准入，需要一个共享的令牌服务。等确定部署形态时一起设计。

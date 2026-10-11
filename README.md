@@ -10,8 +10,8 @@ make build
 make deps-up                             # 用 docker 启动 PostgreSQL
 ./bin/yanshi serve -storage postgres -blob s3   # 持久化（PostgreSQL + S3 兼容对象存储）；多个进程可共享水平扩展
 ./bin/yanshi chat -agent echo            # 离线：复述输入
-TOKENHUB_API_KEY=... ./bin/yanshi serve  # 启用腾讯云 TokenHub（assistant 默认使用 tokenhub/deepseek-v4.1-flash），然后 chat
-# Memory 的向量检索：另设 YANSHI_EMBEDDING_MODEL=tokenhub/kinfra-text-embedding-0.6b（不设时按文本相似度检索）
+ARK_API_KEY=... ./bin/yanshi serve  # 启用火山方舟（assistant 默认使用 ark/doubao-seed-2-1-lite-260915，能看图、听语音），然后 chat
+# Memory 的向量检索：另设 YANSHI_EMBEDDING_MODEL=ark/doubao-embedding-vision-251215（不设时按文本相似度检索）
 # 也支持火山方舟（ARK_API_KEY）与私有化 OpenAI 兼容服务（YANSHI_LOCAL_BASE_URL）
 ```
 
@@ -90,7 +90,7 @@ curl -N localhost:8080/v1/sessions/$SID/stream          # SSE，支持 Last-Even
 
 ## 评测
 
-`make eval` 用真实模型运行 `evals/` 中的用例并与基线比较，出现回归时失败（需要 `TOKENHUB_API_KEY`，见[设计](docs/design/m4-eval.md)）。比较其他模型：`make eval EVAL_FLAGS="-sandbox docker -model tokenhub/<模型ID>"`。
+`make eval` 用真实模型运行 `evals/` 中的用例并与基线比较，出现回归时失败（需要 `ARK_API_KEY`，见[设计](docs/design/m4-eval.md)）。比较其他模型：`make eval EVAL_FLAGS="-sandbox docker -model ark/<模型ID>"`。
 
 ## 开发
 

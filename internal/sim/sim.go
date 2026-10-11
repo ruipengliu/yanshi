@@ -24,6 +24,7 @@ import (
 	"yanshi/internal/artifact"
 	"yanshi/internal/askuser"
 	"yanshi/internal/capability"
+	"yanshi/internal/card"
 	"yanshi/internal/clock"
 	"yanshi/internal/delegation"
 	"yanshi/internal/eventlog"
@@ -113,6 +114,8 @@ type Stats struct {
 	Questions, Answers, TypedAnswers, InvalidAnswers, QuestionTimeouts int
 	// 附带界面上下文的输入；以同一输入 ID 重试而被去重的提交。
 	UIContextInputs, DuplicateInputs int
+	// 卡片（ADR-0032）：展示的卡片，提交的卡片动作，其中因同一版卡片上的同一动作已生效而被去重的。
+	Cards, CardActions, CardDuplicates int
 	// 提醒：推送出去的、因用户正在看而不推的、推送通道失败（含令牌无效）的次数。
 	Notifications, NotificationsWatching, PushFailures int
 	// Call：开始（其中取代旧 Call 的）、写入的转写、被拦截的转写、派生的任务，以及中转进程的写入因 Call
@@ -356,7 +359,7 @@ func New(opts Options) (*World, error) {
 	for _, v := range []string{"1", "2"} {
 		defs = append(defs, &agentdef.Def{
 			Name: "sim", Version: v, Model: "sim/m",
-			Capabilities: []string{"echo", "send", "ask_user", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*", "agent:sim"},
+			Capabilities: []string{"echo", "send", "ask_user", "show_card", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*", "agent:sim"},
 			MaxTurns:     maxTurns, Context: simContext, Memory: agentdef.MemoryConfig{Recall: 3},
 		})
 	}
@@ -371,7 +374,7 @@ func New(opts Options) (*World, error) {
 	w.memories = &memory.Service{Store: stores.Memories, Grants: stores.Grants, Deletions: stores.Deletions, Clock: w.clock,
 		IDs: ids.Sequential("mem"), MaxPerUser: 20}
 	w.catalog = &capability.Catalog{
-		Local: capability.NewRegistry(append([]capability.Capability{w.echoCap(), w.sendCap()}, memory.Capabilities(w.memories)...)...),
+		Local: capability.NewRegistry(append([]capability.Capability{w.echoCap(), w.sendCap(), simCardCap()}, memory.Capabilities(w.memories)...)...),
 		Nodes: flakyDirectory{Directory: stores.Dir, w: w}, DefaultTimeout: deviceTimeout, AskTimeout: askTimeout,
 		Sandbox:      &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID},
 		NodeCacheTTL: 5 * time.Second, Clock: w.clock,
@@ -809,7 +812,9 @@ func (w *World) submit() error {
 	}
 	defer func() { w.afterEnqueue = nil }()
 	input := model.TextBlocks(fmt.Sprintf("msg %d", w.rng.IntN(1000)))
-	if w.chance(0.1) {
+	if a := w.cardAction(sid); a != nil {
+		input = a
+	} else if w.chance(0.1) {
 		// 界面上下文：使上下文带有外部内容（Memory 写入闸门），并经过渲染与估算。
 		w.Stats.UIContextInputs++
 		input = append([]*v1.ContentBlock{{Kind: &v1.ContentBlock_UiContext{UiContext: &v1.UIContext{
@@ -833,7 +838,25 @@ func (w *World) submit() error {
 	if err != nil {
 		return fmt.Errorf("submit: %w", err)
 	}
-	if res.Answered != "" {
+	if input[0].GetCardAction() != nil {
+		w.Stats.CardActions++
+		if res.Duplicate {
+			w.Stats.CardDuplicates++ // 同一版卡片上的同一动作已经生效过：不写入
+		} else if w.chance(0.5) {
+			// 连点两次（另一台设备上也点了）：客户端的输入 ID 不同，平台按卡片推导的 ID 去重。
+			again, err := w.svc.SubmitWithID(context.Background(), sid, inputID+"-again", input)
+			if err == nil && !again.Duplicate {
+				return fmt.Errorf("invariant: second click on card %s was not deduplicated: %+v", input[0].GetCardAction().GetCardId(), again)
+			}
+			if err == nil {
+				w.Stats.CardDuplicates++
+			}
+		}
+	}
+	if res.Duplicate {
+		w.tracef("submit %s → duplicate of %s", sid, res.RunID)
+		return nil
+	} else if res.Answered != "" {
 		w.Stats.TypedAnswers++
 	} else if res.Steered {
 		w.Stats.Steers++
@@ -1479,6 +1502,13 @@ func (w *World) toolArgs(name string) string {
 		return fmt.Sprintf(`{"question":"选哪个？%s","options":[{"id":"a","label":"甲"},{"id":"b","label":"乙"},{"id":"c","label":"丙"}]}`, strings.Repeat("p", w.rng.IntN(50)))
 	case "memory_forget":
 		return fmt.Sprintf(`{"id":"mem_call_id-%d"}`, w.rng.IntN(500))
+	case card.Capability:
+		if w.chance(0.1) {
+			return `{"title":""}` // 不合法：错误结果交还模型
+		}
+		w.Stats.Cards++
+		// card_id 取自很小的集合：同一 ID 再次展示即替换前一版，旧版本上的动作与新版本的互不混淆。
+		return fmt.Sprintf(`{"card_id":"c%d","title":"卡片 %s","buttons":[{"id":"ok","label":"好"},{"id":"no","label":"不"}]}`, w.rng.IntN(3), w.pad())
 	case "agent__sim":
 		if w.chance(0.1) {
 			return `{}` // 没有 task：不派发，错误交还模型
@@ -1515,4 +1545,40 @@ func (w *World) stuck() string {
 		out = append(out, desc)
 	}
 	return strings.Join(out, "; ")
+}
+
+// simCardCap 是 show_card，工具声明缩短：模拟的上下文窗口很小（simContext），完整的卡片 Schema 会挤占压缩的余地。
+// 执行路径与真实能力相同（card.New）。
+func simCardCap() capability.Capability {
+	c := card.New(nil)
+	spec := c.Spec()
+	spec.Description, spec.InputSchema = "card", json.RawMessage(`{"type":"object"}`)
+	return capability.Func{S: spec, Fn: c.Invoke}
+}
+
+// cardAction 有时返回对 Session 最近展示过的某张卡片的动作（点按钮）：有时不带事件序号，迫使平台扫描日志。
+func (w *World) cardAction(sid string) []*v1.ContentBlock {
+	if !w.chance(0.5) {
+		return nil
+	}
+	st, err := w.svc.Load(context.Background(), sid)
+	if err != nil {
+		return nil
+	}
+	var cards []*v1.Event
+	for _, e := range st.History {
+		if card.Find(e.GetToolResult().GetContent()) != nil {
+			cards = append(cards, e)
+		}
+	}
+	if len(cards) == 0 {
+		return nil
+	}
+	e := cards[w.rng.IntN(len(cards))]
+	c := card.Find(e.GetToolResult().GetContent())
+	a := &v1.CardAction{CardId: c.GetCardId(), CallId: c.GetCallId(), Action: []string{"ok", "no"}[w.rng.IntN(2)]}
+	if w.chance(0.7) {
+		a.Seq = e.GetSeq()
+	}
+	return []*v1.ContentBlock{{Kind: &v1.ContentBlock_CardAction{CardAction: a}}}
 }

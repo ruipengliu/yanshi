@@ -22,6 +22,10 @@ func TestPrices(t *testing.T) {
 	if got := p.ModelCost("p/m", 1000, 0, 500); got != 3000 {
 		t.Fatalf("model cost %d, want 3000 micros", got)
 	}
+	// 带思考强度后缀的引用按不带后缀的模型计价。
+	if got := p.ModelCost("p/m:minimal", 1000, 0, 500); got != 3000 || !p.Has("p/m:high") || p.Has("p/x:high") {
+		t.Fatalf("suffixed model cost %d, want 3000 micros", got)
+	}
 	// 未配置缓存单价时缓存命中按普通输入计。
 	if got := p.ModelCost("p/m", 1000, 800, 500); got != 3000 {
 		t.Fatalf("cached input without a cached price %d, want 3000", got)

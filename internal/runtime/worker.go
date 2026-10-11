@@ -27,6 +27,7 @@ import (
 	"yanshi/internal/decision"
 	"yanshi/internal/delegation"
 	"yanshi/internal/eventlog"
+	"yanshi/internal/faults"
 	"yanshi/internal/live"
 	"yanshi/internal/metrics"
 	"yanshi/internal/model"
@@ -111,6 +112,9 @@ type Config struct {
 	// NotifyRunsAfter（默认 2 分钟）的 Run 结束（docs/design/m3-duplex-channel.md §9）。
 	Notify          Notifier
 	NotifyRunsAfter time.Duration
+	// Faults 非空时按规则注入 Worker 崩溃（serve -faults 的调试部署，ADR-0033）；模型、内容安全与设备目录的故障
+	// 由各自的包装注入（internal/faults）。
+	Faults *faults.Injector
 }
 
 // Notifier 处理提醒（由 notify.Notifier 实现）。它不得阻塞 Step：推送经网络，应在后台进行。
@@ -316,7 +320,16 @@ func (w *Worker) Step(ctx context.Context) (bool, error) {
 	if w.st.WorkClass().Priority == workqueue.Background {
 		ctx = model.WithBackground(ctx) // 长任务的模型调用在提供商准入处让交互调用先行（ADR-0029）
 	}
+	ctx = faults.WithSession(ctx, w.st.SessionID)
 	err := w.advance(ctx, r)
+	if err == nil && w.cfg.Faults != nil {
+		if _, crash := w.cfg.Faults.Take(ctx, faults.WorkerCrash); crash {
+			// 注入的崩溃（ADR-0033）：这一步已写入日志，Worker 不释放租约、不移交，Run 在租约过期后被接管。
+			w.cfg.Logger.Warn("injected worker crash", "worker", w.cfg.ID, "session", w.st.SessionID, "run", r.ID)
+			w.drop()
+			return true, nil
+		}
+	}
 	if err == nil || ctx.Err() != nil {
 		w.failingSince = time.Time{}
 		return true, err
@@ -908,10 +921,16 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 	return w.commit(ctx, events...)
 }
 
-// inlineImageLimit 是内联给模型的单张图片上限。
+// inlineImageLimit 是内联给模型的单个图片或音频的上限（16kHz 单声道 WAV 约两分钟）。
 const inlineImageLimit = 4 << 20
 
-// inlineImages 把用户消息中的图片工件读出并内联；读取失败或过大时保留原引用（模型看到描述文本）。
+// inlinable 报告用户消息中的媒体是否内联给模型：图片与音频（语音消息）。是否真的以图片、音频发送由提供商决定，
+// 不支持的格式仍呈现为描述文本。
+func inlinable(mime string) bool {
+	return strings.HasPrefix(mime, "image/") || strings.HasPrefix(mime, "audio/")
+}
+
+// inlineImages 把用户消息中的图片与音频工件读出并内联；读取失败或过大时保留原引用（模型看到描述文本）。
 func (w *Worker) inlineImages(ctx context.Context, msgs []model.Message) []model.Message {
 	if w.cfg.Artifacts == nil {
 		return msgs
@@ -924,7 +943,7 @@ func (w *Worker) inlineImages(ctx context.Context, msgs []model.Message) []model
 		for _, b := range m.Content {
 			media := b.GetMedia()
 			id, ok := artifact.ParseURI(media.GetUri())
-			if !ok || !strings.HasPrefix(media.GetMimeType(), "image/") || media.GetSize() > inlineImageLimit {
+			if !ok || !inlinable(media.GetMimeType()) || media.GetSize() > inlineImageLimit {
 				blocks = append(blocks, b)
 				continue
 			}

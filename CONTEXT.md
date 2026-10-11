@@ -128,6 +128,18 @@ _Avoid_: 追加消息、打断
 无状态的执行进程，认领 Session 并以 Attempt 推进其中的 Run。
 _Avoid_: Node（Node 提供 Capability，Worker 执行 Run）、执行器
 
+**Card（卡片）**（[设计](docs/design/cards.md)、ADR-0032）:
+Agent 经内置工具 `show_card` 展示给用户的结构化内容：标题、Markdown、图片、键值、列表、待填写的字段与按钮。随调用结果写入日志；同一 card_id 再次展示即替换。卡片不阻塞 Run。
+_Avoid_: 富文本消息、组件、Widget
+
+**Card Action（卡片动作）**:
+用户在卡片上点按钮或点选列表项，连同填写的字段作为一条输入提交；同一版卡片上的同一动作只生效一次。
+_Avoid_: 回调、按钮事件、Postback
+
+**Fault Rule（故障规则）**（ADR-0033）:
+调试部署（`serve -faults`）中向本进程注入一种服务端故障的规则：类型（模型错误、限流、流中断、延迟、Worker 崩溃、内容安全不可用、设备目录不可用）、可选的 Session 与次数。
+_Avoid_: 混沌实验、Mock 故障
+
 **Delegation（委托）**（[设计](docs/design/m5-multi-agent.md)、ADR-0031）:
 一个 Run 把任务交给另一个 AgentDef 执行：在同一 BusinessLine、同一 EndUser 下派生子 Session 与 Run，父 Run 挂起等待其终态作为调用结果。Agent 在模型眼里是一种 Capability（`agent__<名称>`），子 Run 的能力不超出任何祖先的白名单。
 _Avoid_: 编排、子 Agent（指 AgentDef 时）、多 Agent（泛指时）

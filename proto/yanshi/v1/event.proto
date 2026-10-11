@@ -69,7 +69,106 @@ message ContentBlock {
     Text text = 1;
     Media media = 2;
     UIContext ui_context = 3;
+    // card 只出现在 show_card 的结果中（由平台校验后写入），card_action 只出现在用户输入中。
+    Card card = 4;
+    CardAction card_action = 5;
   }
+}
+
+// Card 是 Agent 经内置工具 show_card 展示给用户的卡片：图文混排的内容，加上可点选的按钮、列表项与可填写的字段
+// （docs/design/cards.md，ADR-0032）。卡片随 show_card 的结果写入日志；同一 card_id 再次展示时替换前一版，
+// 客户端只显示最新版。卡片不阻塞 Run：需要等用户选择才能继续时用 ask_user。
+message Card {
+  // card_id 由模型指定或由平台按调用生成，在 Session 内标识一张卡片。
+  string card_id = 1;
+  // call_id 是展示这一版卡片的 show_card 调用：动作带上它，旧版本上的动作与新版本上的动作互不混淆。
+  string call_id = 2;
+  string title = 3;
+  string subtitle = 4;
+  // image 是头图：artifact://<id>（须属于本 Session）或 icon:<名称>（内置图标，见 card.Icons）。
+  // 不允许外部地址：外部图片可以追踪用户，也不随 Session 删除。
+  string image = 5;
+  repeated CardElement body = 6;
+  repeated CardButton buttons = 7;
+}
+
+message CardElement {
+  oneof kind {
+    // markdown 是 Markdown 文本（客户端只渲染安全的子集：不执行 HTML）。
+    CardMarkdown markdown = 1;
+    CardImage image = 2;
+    CardFacts facts = 3;
+    CardList list = 4;
+    CardField field = 5;
+  }
+}
+
+message CardMarkdown {
+  string text = 1;
+}
+
+message CardImage {
+  // uri 同 Card.image。
+  string uri = 1;
+  string alt = 2;
+}
+
+// CardFacts 是键值列表，如"时间 07:00""重复 工作日"。
+message CardFacts {
+  repeated CardFact facts = 1;
+}
+
+message CardFact {
+  string label = 1;
+  string value = 2;
+}
+
+message CardList {
+  repeated CardListItem items = 1;
+}
+
+message CardListItem {
+  string title = 1;
+  string subtitle = 2;
+  // image 同 Card.image。
+  string image = 3;
+  // action 非空时该项可点选，点选即执行这个动作（动作 ID）。
+  string action = 4;
+}
+
+// CardField 是用户可以填写的字段；随按钮动作一起提交。
+message CardField {
+  string id = 1;
+  string label = 2;
+  // type 为 text（默认）、number、date（YYYY-MM-DD）、time（HH:MM）、select 或 toggle（"true"/"false"）。
+  string type = 3;
+  // options 是 select 的选项。
+  repeated string options = 4;
+  // value 是初始值。
+  string value = 5;
+  bool required = 6;
+}
+
+message CardButton {
+  // id 是动作 ID，在卡片内唯一。
+  string id = 1;
+  string label = 2;
+  // style 为 primary、default（默认）或 danger，只影响显示。
+  string style = 3;
+}
+
+// CardAction 是用户在卡片上执行的动作（点按钮或点选列表项），作为一条输入提交：有进行中的 Run 时并入它，
+// 否则开启新 Run。同一版卡片上的同一动作只生效一次（输入 ID 由平台按 call_id 与动作推导）。
+message CardAction {
+  string card_id = 1;
+  string call_id = 2;
+  string action = 3;
+  // label 是动作的显示文字，由平台按卡片填写（客户端提交的值被忽略）。
+  string label = 4;
+  // values 是卡片上字段的填写值（字段 ID → 值），只含卡片声明过的字段。
+  map<string, string> values = 5;
+  // seq 是客户端收到这一版卡片的事件序号：平台据此直接读取卡片，而不必扫描日志。为 0 或不符时扫描日志。
+  uint64 seq = 6;
 }
 
 // UIContext 是用户提交输入时所在界面的上下文，由 HostApp 附在输入上（docs/design/m3-duplex-channel.md §8），

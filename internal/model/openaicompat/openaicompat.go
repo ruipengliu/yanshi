@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
@@ -81,9 +82,15 @@ type wireMessage struct {
 }
 
 type wirePart struct {
-	Type     string        `json:"type"`
-	Text     string        `json:"text,omitempty"`
-	ImageURL *wireImageURL `json:"image_url,omitempty"`
+	Type       string          `json:"type"`
+	Text       string          `json:"text,omitempty"`
+	ImageURL   *wireImageURL   `json:"image_url,omitempty"`
+	InputAudio *wireInputAudio `json:"input_audio,omitempty"`
+}
+
+type wireInputAudio struct {
+	Data   string `json:"data"`
+	Format string `json:"format"`
 }
 
 type wireImageURL struct {
@@ -120,6 +127,21 @@ type wireRequest struct {
 	MaxTokens   int  `json:"max_tokens,omitempty"`
 	Logprobs    bool `json:"logprobs,omitempty"`
 	TopLogprobs int  `json:"top_logprobs,omitempty"`
+	// ReasoningEffort 取自模型 ID 的后缀（SplitEffort）；为空时不发送，由模型按默认方式思考。
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+}
+
+// efforts 是可以写在模型 ID 后缀上的思考强度（OpenAI 与火山方舟的 reasoning_effort 取值）。
+// 只认这几个值：其他带冒号的模型 ID 原样发送。
+var efforts = map[string]bool{"minimal": true, "low": true, "medium": true, "high": true}
+
+// SplitEffort 拆开 "doubao-seed-2-1-lite-260915:minimal" 形式的模型 ID。思考强度是 AgentDef 的选择
+// （docs/design/model-calls.md §4），按评测结果选取：强度越低首字越快，但过低时模型不按指令使用工具。
+func SplitEffort(modelID string) (id, effort string) {
+	if i := strings.LastIndexByte(modelID, ':'); i > 0 && efforts[modelID[i+1:]] {
+		return modelID[:i], modelID[i+1:]
+	}
+	return modelID, ""
 }
 
 type wireChunk struct {
@@ -164,27 +186,46 @@ func imageURL(m *v1.Media) string {
 	return ""
 }
 
-// content 编码消息内容。只有 allowImages（用户消息）时图片才以 image_url 发送；
+// audioFormats 是可以以 input_audio 发送的音频类型（火山方舟实测支持 wav、mp3、m4a，不支持 webm 与 ogg）。
+var audioFormats = map[string]string{"audio/wav": "wav", "audio/x-wav": "wav", "audio/wave": "wav", "audio/mpeg": "mp3", "audio/mp3": "mp3", "audio/mp4": "m4a", "audio/x-m4a": "m4a", "audio/m4a": "m4a"}
+
+// inputAudio 返回可直接发给模型的音频；只有 Worker 内联了数据的音频可以发送。
+func inputAudio(m *v1.Media) *wireInputAudio {
+	f := audioFormats[m.GetMimeType()]
+	if f == "" || len(m.GetData()) == 0 {
+		return nil
+	}
+	return &wireInputAudio{Data: base64.StdEncoding.EncodeToString(m.GetData()), Format: f}
+}
+
+// content 编码消息内容。只有 allowMedia（用户消息）时图片与音频才以 image_url、input_audio 发送；
 // 其余非文本内容（含工具结果中的图片，多数模型接口不支持）呈现为一行描述文本。
-func content(blocks []*v1.ContentBlock, allowImages bool) any {
+func content(blocks []*v1.ContentBlock, allowMedia bool) any {
 	var parts []wirePart
-	hasImage := false
+	hasMedia := false
 	for _, b := range blocks {
 		switch k := b.GetKind().(type) {
 		case *v1.ContentBlock_Text:
 			parts = append(parts, wirePart{Type: "text", Text: k.Text.GetText()})
 		case *v1.ContentBlock_UiContext:
 			parts = append(parts, wirePart{Type: "text", Text: model.UIContextText(k.UiContext)})
+		case *v1.ContentBlock_CardAction:
+			parts = append(parts, wirePart{Type: "text", Text: model.CardActionText(k.CardAction)})
+		// Card 不发给模型：卡片是模型自己经 show_card 写的，结果中另有一行说明（card.ResultText）。
 		case *v1.ContentBlock_Media:
-			if url := imageURL(k.Media); allowImages && url != "" {
+			if url := imageURL(k.Media); allowMedia && url != "" {
 				parts = append(parts, wirePart{Type: "image_url", ImageURL: &wireImageURL{URL: url}})
-				hasImage = true
+				hasMedia = true
+			} else if a := inputAudio(k.Media); allowMedia && a != nil {
+				// 音频之外再给一行描述：模型据此知道这是一条语音消息、附件名是什么。
+				parts = append(parts, wirePart{Type: "text", Text: model.DescribeMedia(k.Media)}, wirePart{Type: "input_audio", InputAudio: a})
+				hasMedia = true
 			} else {
 				parts = append(parts, wirePart{Type: "text", Text: model.DescribeMedia(k.Media)})
 			}
 		}
 	}
-	if hasImage {
+	if hasMedia {
 		return parts
 	}
 	texts := make([]string, len(parts))
@@ -195,7 +236,8 @@ func content(blocks []*v1.ContentBlock, allowImages bool) any {
 }
 
 func encode(req *model.Request) *wireRequest {
-	w := &wireRequest{Model: req.Model, Stream: true, MaxTokens: req.MaxTokens}
+	id, effort := SplitEffort(req.Model)
+	w := &wireRequest{Model: id, Stream: true, MaxTokens: req.MaxTokens, ReasoningEffort: effort}
 	w.StreamOptions.IncludeUsage = true
 	if req.TopLogprobs > 0 {
 		w.Logprobs, w.TopLogprobs = true, req.TopLogprobs
@@ -384,31 +426,21 @@ func contextOverflow(body string) bool {
 	return false
 }
 
-// Embed 调用 OpenAI 兼容的 /embeddings 接口。火山方舟多模态嵌入模型的接口形式待用真实请求确认
-// （docs/design/m4-memory-grant.md §10）。
+// Embed 调用 OpenAI 兼容的 /embeddings 接口。火山方舟的多模态嵌入模型（doubao-embedding-vision-*）
+// 只提供 /embeddings/multimodal：一次请求的全部输入合成一个向量，所以每段文本单独请求（multimodalEmbed）。
 func (p *Provider) Embed(ctx context.Context, modelID string, texts []string) ([][]float32, error) {
+	if strings.Contains(modelID, "embedding-vision") {
+		return p.multimodalEmbed(ctx, modelID, texts)
+	}
 	body, err := json.Marshal(map[string]any{"model": modelID, "input": texts, "encoding_format": "float"})
 	if err != nil {
 		return nil, err
 	}
-	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(p.BaseURL, "/")+"/embeddings", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	hreq.Header.Set("Content-Type", "application/json")
-	if p.APIKey != "" {
-		hreq.Header.Set("Authorization", "Bearer "+p.APIKey)
-	}
-	resp, err := p.client().Do(hreq)
+	resp, err := p.postEmbed(ctx, "/embeddings", modelID, body)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("embed: %w", &model.ProviderError{Model: modelID, Status: resp.StatusCode, Code: model.ErrorCode(b),
-			RequestID: requestID(resp), RetryAfter: model.RetryAfter(resp.Header, time.Now())})
-	}
 	var out struct {
 		Data []struct {
 			Index     int       `json:"index"`
@@ -431,4 +463,74 @@ func (p *Provider) Embed(ctx context.Context, modelID string, texts []string) ([
 		}
 	}
 	return vecs, nil
+}
+
+// multimodalEmbedConcurrency 是多模态嵌入的并发请求数：每段文本一次请求，Memory 召回一次只嵌入少量文本。
+const multimodalEmbedConcurrency = 4
+
+func (p *Provider) multimodalEmbed(ctx context.Context, modelID string, texts []string) ([][]float32, error) {
+	vecs := make([][]float32, len(texts))
+	errs := make([]error, len(texts))
+	sem := make(chan struct{}, multimodalEmbedConcurrency)
+	var wg sync.WaitGroup
+	for i, text := range texts {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer func() { <-sem; wg.Done() }()
+			vecs[i], errs[i] = p.multimodalEmbedOne(ctx, modelID, text)
+		}()
+	}
+	wg.Wait()
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
+	}
+	return vecs, nil
+}
+
+func (p *Provider) multimodalEmbedOne(ctx context.Context, modelID, text string) ([]float32, error) {
+	body, err := json.Marshal(map[string]any{"model": modelID, "input": []map[string]string{{"type": "text", "text": text}}})
+	if err != nil {
+		return nil, err
+	}
+	resp, err := p.postEmbed(ctx, "/embeddings/multimodal", modelID, body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Data struct {
+			Embedding []float32 `json:"embedding"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("embed %s: %w", modelID, err)
+	}
+	if len(out.Data.Embedding) == 0 {
+		return nil, fmt.Errorf("embed %s: no embedding", modelID)
+	}
+	return out.Data.Embedding, nil
+}
+
+// postEmbed 发出嵌入请求；非 200 时返回 ProviderError（不含正文：它可能回显输入）。
+func (p *Provider) postEmbed(ctx context.Context, path, modelID string, body []byte) (*http.Response, error) {
+	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(p.BaseURL, "/")+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	hreq.Header.Set("Content-Type", "application/json")
+	if p.APIKey != "" {
+		hreq.Header.Set("Authorization", "Bearer "+p.APIKey)
+	}
+	resp, err := p.client().Do(hreq)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("embed: %w", &model.ProviderError{Model: modelID, Status: resp.StatusCode, Code: model.ErrorCode(b),
+			RequestID: requestID(resp), RetryAfter: model.RetryAfter(resp.Header, time.Now())})
+	}
+	return resp, nil
 }

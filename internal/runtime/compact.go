@@ -147,6 +147,8 @@ func blocksText(blocks []*v1.ContentBlock) string {
 			parts = append(parts, model.DescribeMedia(m))
 		} else if u := c.GetUiContext(); u != nil {
 			parts = append(parts, model.UIContextText(u))
+		} else if a := c.GetCardAction(); a != nil {
+			parts = append(parts, model.CardActionText(a))
 		} else {
 			parts = append(parts, c.GetText().GetText())
 		}

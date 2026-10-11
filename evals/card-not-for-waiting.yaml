@@ -1,0 +1,14 @@
+name: card-not-for-waiting
+description: >-
+  必须等用户回答才能继续时用 ask_user，不用卡片（ADR-0032：卡片不阻塞 Run）：用户要订闹钟却没说时间，
+  而且两个时间都说得通，应提问，而不是展示一张带按钮的卡片后就结束。
+setup:
+  device:
+    label: iphone
+    kind: phone
+turns:
+  - input: 明天有早班机，帮我在手机上订个闹钟。5 点半起还是 6 点起我还没想好，你让我选一下。
+    expect:
+      status: asked
+      questions: {min: 1}
+      no_calls: ["show_card", "iphone__set_alarm"]

@@ -16,7 +16,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file yanshi/v1/event.proto.
  */
 export const file_yanshi_v1_event: GenFile = /*@__PURE__*/
-  fileDesc("ChV5YW5zaGkvdjEvZXZlbnQucHJvdG8SCXlhbnNoaS52MSLfCQoFRXZlbnQSCgoCaWQYASABKAkSEgoKc2Vzc2lvbl9pZBgCIAEoCRILCgNzZXEYAyABKAQSKAoEdGltZRgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASNAoPc2Vzc2lvbl9jcmVhdGVkGAogASgLMhkueWFuc2hpLnYxLlNlc3Npb25DcmVhdGVkSAASMAoNcnVuX3JlcXVlc3RlZBgLIAEoCzIXLnlhbnNoaS52MS5SdW5SZXF1ZXN0ZWRIABIlCgdzdGVlcmVkGAwgASgLMhIueWFuc2hpLnYxLlN0ZWVyZWRIABI0Cg9hdHRlbXB0X3N0YXJ0ZWQYDSABKAsyGS55YW5zaGkudjEuQXR0ZW1wdFN0YXJ0ZWRIABI4ChFhc3Npc3RhbnRfbWVzc2FnZRgOIAEoCzIbLnlhbnNoaS52MS5Bc3Npc3RhbnRNZXNzYWdlSAASNwoRdG9vbF9jYWxsX3N0YXJ0ZWQYDyABKAsyGi55YW5zaGkudjEuVG9vbENhbGxTdGFydGVkSAASLAoLdG9vbF9yZXN1bHQYECABKAsyFS55YW5zaGkudjEuVG9vbFJlc3VsdEgAEjAKDXJ1bl9jb21wbGV0ZWQYESABKAsyFy55YW5zaGkudjEuUnVuQ29tcGxldGVkSAASKgoKcnVuX2ZhaWxlZBgSIAEoCzIULnlhbnNoaS52MS5SdW5GYWlsZWRIABI0Cg9ydW5faW50ZXJydXB0ZWQYEyABKAsyGS55YW5zaGkudjEuUnVuSW50ZXJydXB0ZWRIABIwCg1ydW5fc3VzcGVuZGVkGBQgASgLMhcueWFuc2hpLnYxLlJ1blN1c3BlbmRlZEgAEjoKEmFwcHJvdmFsX3JlcXVlc3RlZBgVIAEoCzIcLnlhbnNoaS52MS5BcHByb3ZhbFJlcXVlc3RlZEgAEjYKEGFwcHJvdmFsX2RlY2lkZWQYFiABKAsyGi55YW5zaGkudjEuQXBwcm92YWxEZWNpZGVkSAASOAoRY29udGV4dF9jb21wYWN0ZWQYFyABKAsyGy55YW5zaGkudjEuQ29udGV4dENvbXBhY3RlZEgAEjIKDnNlc3Npb25fY2xvc2VkGBggASgLMhgueWFuc2hpLnYxLlNlc3Npb25DbG9zZWRIABI0Cg9tZW1vcnlfcmVjYWxsZWQYGSABKAsyGS55YW5zaGkudjEuTWVtb3J5UmVjYWxsZWRIABIyCg5hZ2VudF9zd2l0Y2hlZBgaIAEoCzIYLnlhbnNoaS52MS5BZ2VudFN3aXRjaGVkSAASOAoRY29udGVudF9tb2RlcmF0ZWQYGyABKAsyGy55YW5zaGkudjEuQ29udGVudE1vZGVyYXRlZEgAEi4KDGNhbGxfc3RhcnRlZBgcIAEoCzIWLnlhbnNoaS52MS5DYWxsU3RhcnRlZEgAEjQKD2NhbGxfdHJhbnNjcmlwdBgdIAEoCzIZLnlhbnNoaS52MS5DYWxsVHJhbnNjcmlwdEgAEioKCmNhbGxfZW5kZWQYHiABKAsyFC55YW5zaGkudjEuQ2FsbEVuZGVkSAASMAoNZGVjaXNpb25fbWFkZRgfIAEoCzIXLnlhbnNoaS52MS5EZWNpc2lvbk1hZGVIAEIJCgdwYXlsb2FkIqIBCgxEZWNpc2lvbk1hZGUSDgoGcnVuX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SDAoEa2luZBgDIAEoCRIPCgdzdWJqZWN0GAQgASgJEg8KB29wdGlvbnMYBSADKAkSDgoGY2hvc2VuGAYgASgJEhIKCmNvbmZpZGVuY2UYByABKAISDQoFbW9kZWwYCCABKAkSDgoGc2hhZG93GAkgASgIIoYBCgxDb250ZW50QmxvY2sSHwoEdGV4dBgBIAEoCzIPLnlhbnNoaS52MS5UZXh0SAASIQoFbWVkaWEYAiABKAsyEC55YW5zaGkudjEuTWVkaWFIABIqCgp1aV9jb250ZXh0GAMgASgLMhQueWFuc2hpLnYxLlVJQ29udGV4dEgAQgYKBGtpbmQiXAoJVUlDb250ZXh0Eg4KBnNjcmVlbhgBIAEoCRILCgNyZWYYAiABKAkSEQoJc2VsZWN0aW9uGAMgASgJEg8KB2NvbnRlbnQYBCABKAkSDgoGZGV2aWNlGAUgASgJIhQKBFRleHQSDAoEdGV4dBgBIAEoCSJRCgVNZWRpYRIRCgltaW1lX3R5cGUYASABKAkSCwoDdXJpGAIgASgJEgwKBGRhdGEYAyABKAwSDAoEbmFtZRgEIAEoCRIMCgRzaXplGAUgASgEIikKCEFnZW50UmVmEgwKBG5hbWUYASABKAkSDwoHdmVyc2lvbhgCIAEoCSKDAQoOU2Vzc2lvbkNyZWF0ZWQSFQoNYnVzaW5lc3NfbGluZRgBIAEoCRIQCghlbmRfdXNlchgCIAEoCRIiCgVhZ2VudBgDIAEoCzITLnlhbnNoaS52MS5BZ2VudFJlZhIkCgZwYXJlbnQYBCABKAsyFC55YW5zaGkudjEuUGFyZW50UmVmImgKCVBhcmVudFJlZhISCgpzZXNzaW9uX2lkGAEgASgJEg4KBnJ1bl9pZBgCIAEoCRIPCgdjYWxsX2lkGAMgASgJEiYKCWFuY2VzdG9ycxgEIAMoCzITLnlhbnNoaS52MS5BZ2VudFJlZiJjCg1BZ2VudFN3aXRjaGVkEiEKBGZyb20YASABKAsyEy55YW5zaGkudjEuQWdlbnRSZWYSHwoCdG8YAiABKAsyEy55YW5zaGkudjEuQWdlbnRSZWYSDgoGcmVhc29uGAMgASgJIlIKEENvbnRlbnRNb2RlcmF0ZWQSDgoGcnVuX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SDQoFc3RhZ2UYAyABKAkSDgoGbGFiZWxzGAQgAygJImsKDFJ1blJlcXVlc3RlZBIOCgZydW5faWQYASABKAkSJgoFaW5wdXQYAiADKAsyFy55YW5zaGkudjEuQ29udGVudEJsb2NrEhAKCGlucHV0X2lkGAMgASgJEhEKCWZyb21fY2FsbBgEIAEoCSJmCgdTdGVlcmVkEg4KBnJ1bl9pZBgBIAEoCRImCgVpbnB1dBgCIAMoCzIXLnlhbnNoaS52MS5Db250ZW50QmxvY2sSEAoIaW5wdXRfaWQYAyABKAkSEQoJZnJvbV9jYWxsGAQgASgJIlsKDkF0dGVtcHRTdGFydGVkEg4KBnJ1bl9pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEhEKCXdvcmtlcl9pZBgDIAEoCRIVCg1saXZlX2VuZHBvaW50GAQgASgJIkcKCFRvb2xDYWxsEg8KB2NhbGxfaWQYASABKAkSEgoKY2FwYWJpbGl0eRgCIAEoCRIWCg5hcmd1bWVudHNfanNvbhgDIAEoCSJRCgVVc2FnZRIUCgxpbnB1dF90b2tlbnMYASABKAQSFQoNb3V0cHV0X3Rva2VucxgCIAEoBBIbChNjYWNoZWRfaW5wdXRfdG9rZW5zGAMgASgEIrYBChBBc3Npc3RhbnRNZXNzYWdlEg4KBnJ1bl9pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEigKB2NvbnRlbnQYAyADKAsyFy55YW5zaGkudjEuQ29udGVudEJsb2NrEicKCnRvb2xfY2FsbHMYBCADKAsyEy55YW5zaGkudjEuVG9vbENhbGwSDQoFbW9kZWwYBSABKAkSHwoFdXNhZ2UYBiABKAsyEC55YW5zaGkudjEuVXNhZ2UiggEKD1Rvb2xDYWxsU3RhcnRlZBIOCgZydW5faWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIPCgdjYWxsX2lkGAMgASgJEg8KB25vZGVfaWQYBCABKAkSLAoIZGVhZGxpbmUYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIp8BCgpUb29sUmVzdWx0Eg4KBnJ1bl9pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEg8KB2NhbGxfaWQYAyABKAkSKAoHY29udGVudBgEIAMoCzIXLnlhbnNoaS52MS5Db250ZW50QmxvY2sSEAoIaXNfZXJyb3IYBSABKAgSEAoIaW5wdXRfaWQYBiABKAkSEQoJZnJvbV9jYWxsGAcgASgJIi8KDFJ1bkNvbXBsZXRlZBIOCgZydW5faWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDSI8CglSdW5GYWlsZWQSDgoGcnVuX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SDgoGcmVhc29uGAMgASgJIiwKDlJ1bkludGVycnVwdGVkEg4KBnJ1bl9pZBgBIAEoCRIKCgJieRgCIAEoCSJqCgxSdW5TdXNwZW5kZWQSDgoGcnVuX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SDgoGcmVhc29uGAMgASgJEikKBXVudGlsGAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCKEAQoRQXBwcm92YWxSZXF1ZXN0ZWQSDgoGcnVuX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SDwoHY2FsbF9pZBgDIAEoCRIPCgdzdW1tYXJ5GAQgASgJEiwKCGRlYWRsaW5lGAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCJQCg9BcHByb3ZhbERlY2lkZWQSDgoGcnVuX2lkGAEgASgJEg8KB2NhbGxfaWQYAiABKAkSEAoIYXBwcm92ZWQYAyABKAgSCgoCYnkYBCABKAkiogEKEENvbnRleHRDb21wYWN0ZWQSDgoGcnVuX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SEwoLdGhyb3VnaF9zZXEYAyABKAQSKAoHc3VtbWFyeRgEIAMoCzIXLnlhbnNoaS52MS5Db250ZW50QmxvY2sSDQoFbW9kZWwYBSABKAkSHwoFdXNhZ2UYBiABKAsyEC55YW5zaGkudjEuVXNhZ2UiKwoNU2Vzc2lvbkNsb3NlZBIKCgJieRgBIAEoCRIOCgZyZWFzb24YAiABKAkiWwoOTWVtb3J5UmVjYWxsZWQSDgoGcnVuX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SKAoFaXRlbXMYAyADKAsyGS55YW5zaGkudjEuUmVjYWxsZWRNZW1vcnkiVgoOUmVjYWxsZWRNZW1vcnkSCgoCaWQYASABKAkSFQoNYnVzaW5lc3NfbGluZRgCIAEoCRIQCghjYXRlZ29yeRgDIAEoCRIPCgdjb250ZW50GAQgASgJIk8KC0NhbGxTdGFydGVkEg8KB2NhbGxfaWQYASABKAkSEQoJZGV2aWNlX2lkGAIgASgJEg0KBW1vZGVsGAMgASgJEg0KBXZvaWNlGAQgASgJIlIKDkNhbGxUcmFuc2NyaXB0Eg8KB2NhbGxfaWQYASABKAkSDAoEcm9sZRgCIAEoCRIMCgR0ZXh0GAMgASgJEhMKC2ludGVycnVwdGVkGAQgASgIIiwKCUNhbGxFbmRlZBIPCgdjYWxsX2lkGAEgASgJEg4KBnJlYXNvbhgCIAEoCUIfWh15YW5zaGkvZ2VuL3lhbnNoaS92MTt5YW5zaGl2MWIGcHJvdG8z", [file_google_protobuf_timestamp]);
+  fileDesc("ChV5YW5zaGkvdjEvZXZlbnQucHJvdG8SCXlhbnNoaS52MSLfCQoFRXZlbnQSCgoCaWQYASABKAkSEgoKc2Vzc2lvbl9pZBgCIAEoCRILCgNzZXEYAyABKAQSKAoEdGltZRgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASNAoPc2Vzc2lvbl9jcmVhdGVkGAogASgLMhkueWFuc2hpLnYxLlNlc3Npb25DcmVhdGVkSAASMAoNcnVuX3JlcXVlc3RlZBgLIAEoCzIXLnlhbnNoaS52MS5SdW5SZXF1ZXN0ZWRIABIlCgdzdGVlcmVkGAwgASgLMhIueWFuc2hpLnYxLlN0ZWVyZWRIABI0Cg9hdHRlbXB0X3N0YXJ0ZWQYDSABKAsyGS55YW5zaGkudjEuQXR0ZW1wdFN0YXJ0ZWRIABI4ChFhc3Npc3RhbnRfbWVzc2FnZRgOIAEoCzIbLnlhbnNoaS52MS5Bc3Npc3RhbnRNZXNzYWdlSAASNwoRdG9vbF9jYWxsX3N0YXJ0ZWQYDyABKAsyGi55YW5zaGkudjEuVG9vbENhbGxTdGFydGVkSAASLAoLdG9vbF9yZXN1bHQYECABKAsyFS55YW5zaGkudjEuVG9vbFJlc3VsdEgAEjAKDXJ1bl9jb21wbGV0ZWQYESABKAsyFy55YW5zaGkudjEuUnVuQ29tcGxldGVkSAASKgoKcnVuX2ZhaWxlZBgSIAEoCzIULnlhbnNoaS52MS5SdW5GYWlsZWRIABI0Cg9ydW5faW50ZXJydXB0ZWQYEyABKAsyGS55YW5zaGkudjEuUnVuSW50ZXJydXB0ZWRIABIwCg1ydW5fc3VzcGVuZGVkGBQgASgLMhcueWFuc2hpLnYxLlJ1blN1c3BlbmRlZEgAEjoKEmFwcHJvdmFsX3JlcXVlc3RlZBgVIAEoCzIcLnlhbnNoaS52MS5BcHByb3ZhbFJlcXVlc3RlZEgAEjYKEGFwcHJvdmFsX2RlY2lkZWQYFiABKAsyGi55YW5zaGkudjEuQXBwcm92YWxEZWNpZGVkSAASOAoRY29udGV4dF9jb21wYWN0ZWQYFyABKAsyGy55YW5zaGkudjEuQ29udGV4dENvbXBhY3RlZEgAEjIKDnNlc3Npb25fY2xvc2VkGBggASgLMhgueWFuc2hpLnYxLlNlc3Npb25DbG9zZWRIABI0Cg9tZW1vcnlfcmVjYWxsZWQYGSABKAsyGS55YW5zaGkudjEuTWVtb3J5UmVjYWxsZWRIABIyCg5hZ2VudF9zd2l0Y2hlZBgaIAEoCzIYLnlhbnNoaS52MS5BZ2VudFN3aXRjaGVkSAASOAoRY29udGVudF9tb2RlcmF0ZWQYGyABKAsyGy55YW5zaGkudjEuQ29udGVudE1vZGVyYXRlZEgAEi4KDGNhbGxfc3RhcnRlZBgcIAEoCzIWLnlhbnNoaS52MS5DYWxsU3RhcnRlZEgAEjQKD2NhbGxfdHJhbnNjcmlwdBgdIAEoCzIZLnlhbnNoaS52MS5DYWxsVHJhbnNjcmlwdEgAEioKCmNhbGxfZW5kZWQYHiABKAsyFC55YW5zaGkudjEuQ2FsbEVuZGVkSAASMAoNZGVjaXNpb25fbWFkZRgfIAEoCzIXLnlhbnNoaS52MS5EZWNpc2lvbk1hZGVIAEIJCgdwYXlsb2FkIqIBCgxEZWNpc2lvbk1hZGUSDgoGcnVuX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SDAoEa2luZBgDIAEoCRIPCgdzdWJqZWN0GAQgASgJEg8KB29wdGlvbnMYBSADKAkSDgoGY2hvc2VuGAYgASgJEhIKCmNvbmZpZGVuY2UYByABKAISDQoFbW9kZWwYCCABKAkSDgoGc2hhZG93GAkgASgIItUBCgxDb250ZW50QmxvY2sSHwoEdGV4dBgBIAEoCzIPLnlhbnNoaS52MS5UZXh0SAASIQoFbWVkaWEYAiABKAsyEC55YW5zaGkudjEuTWVkaWFIABIqCgp1aV9jb250ZXh0GAMgASgLMhQueWFuc2hpLnYxLlVJQ29udGV4dEgAEh8KBGNhcmQYBCABKAsyDy55YW5zaGkudjEuQ2FyZEgAEiwKC2NhcmRfYWN0aW9uGAUgASgLMhUueWFuc2hpLnYxLkNhcmRBY3Rpb25IAEIGCgRraW5kIqYBCgRDYXJkEg8KB2NhcmRfaWQYASABKAkSDwoHY2FsbF9pZBgCIAEoCRINCgV0aXRsZRgDIAEoCRIQCghzdWJ0aXRsZRgEIAEoCRINCgVpbWFnZRgFIAEoCRIkCgRib2R5GAYgAygLMhYueWFuc2hpLnYxLkNhcmRFbGVtZW50EiYKB2J1dHRvbnMYByADKAsyFS55YW5zaGkudjEuQ2FyZEJ1dHRvbiLcAQoLQ2FyZEVsZW1lbnQSKwoIbWFya2Rvd24YASABKAsyFy55YW5zaGkudjEuQ2FyZE1hcmtkb3duSAASJQoFaW1hZ2UYAiABKAsyFC55YW5zaGkudjEuQ2FyZEltYWdlSAASJQoFZmFjdHMYAyABKAsyFC55YW5zaGkudjEuQ2FyZEZhY3RzSAASIwoEbGlzdBgEIAEoCzITLnlhbnNoaS52MS5DYXJkTGlzdEgAEiUKBWZpZWxkGAUgASgLMhQueWFuc2hpLnYxLkNhcmRGaWVsZEgAQgYKBGtpbmQiHAoMQ2FyZE1hcmtkb3duEgwKBHRleHQYASABKAkiJQoJQ2FyZEltYWdlEgsKA3VyaRgBIAEoCRILCgNhbHQYAiABKAkiLwoJQ2FyZEZhY3RzEiIKBWZhY3RzGAEgAygLMhMueWFuc2hpLnYxLkNhcmRGYWN0IigKCENhcmRGYWN0Eg0KBWxhYmVsGAEgASgJEg0KBXZhbHVlGAIgASgJIjIKCENhcmRMaXN0EiYKBWl0ZW1zGAEgAygLMhcueWFuc2hpLnYxLkNhcmRMaXN0SXRlbSJOCgxDYXJkTGlzdEl0ZW0SDQoFdGl0bGUYASABKAkSEAoIc3VidGl0bGUYAiABKAkSDQoFaW1hZ2UYAyABKAkSDgoGYWN0aW9uGAQgASgJImYKCUNhcmRGaWVsZBIKCgJpZBgBIAEoCRINCgVsYWJlbBgCIAEoCRIMCgR0eXBlGAMgASgJEg8KB29wdGlvbnMYBCADKAkSDQoFdmFsdWUYBSABKAkSEAoIcmVxdWlyZWQYBiABKAgiNgoKQ2FyZEJ1dHRvbhIKCgJpZBgBIAEoCRINCgVsYWJlbBgCIAEoCRINCgVzdHlsZRgDIAEoCSK8AQoKQ2FyZEFjdGlvbhIPCgdjYXJkX2lkGAEgASgJEg8KB2NhbGxfaWQYAiABKAkSDgoGYWN0aW9uGAMgASgJEg0KBWxhYmVsGAQgASgJEjEKBnZhbHVlcxgFIAMoCzIhLnlhbnNoaS52MS5DYXJkQWN0aW9uLlZhbHVlc0VudHJ5EgsKA3NlcRgGIAEoBBotCgtWYWx1ZXNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIlwKCVVJQ29udGV4dBIOCgZzY3JlZW4YASABKAkSCwoDcmVmGAIgASgJEhEKCXNlbGVjdGlvbhgDIAEoCRIPCgdjb250ZW50GAQgASgJEg4KBmRldmljZRgFIAEoCSIUCgRUZXh0EgwKBHRleHQYASABKAkiUQoFTWVkaWESEQoJbWltZV90eXBlGAEgASgJEgsKA3VyaRgCIAEoCRIMCgRkYXRhGAMgASgMEgwKBG5hbWUYBCABKAkSDAoEc2l6ZRgFIAEoBCIpCghBZ2VudFJlZhIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkigwEKDlNlc3Npb25DcmVhdGVkEhUKDWJ1c2luZXNzX2xpbmUYASABKAkSEAoIZW5kX3VzZXIYAiABKAkSIgoFYWdlbnQYAyABKAsyEy55YW5zaGkudjEuQWdlbnRSZWYSJAoGcGFyZW50GAQgASgLMhQueWFuc2hpLnYxLlBhcmVudFJlZiJoCglQYXJlbnRSZWYSEgoKc2Vzc2lvbl9pZBgBIAEoCRIOCgZydW5faWQYAiABKAkSDwoHY2FsbF9pZBgDIAEoCRImCglhbmNlc3RvcnMYBCADKAsyEy55YW5zaGkudjEuQWdlbnRSZWYiYwoNQWdlbnRTd2l0Y2hlZBIhCgRmcm9tGAEgASgLMhMueWFuc2hpLnYxLkFnZW50UmVmEh8KAnRvGAIgASgLMhMueWFuc2hpLnYxLkFnZW50UmVmEg4KBnJlYXNvbhgDIAEoCSJSChBDb250ZW50TW9kZXJhdGVkEg4KBnJ1bl9pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEg0KBXN0YWdlGAMgASgJEg4KBmxhYmVscxgEIAMoCSJrCgxSdW5SZXF1ZXN0ZWQSDgoGcnVuX2lkGAEgASgJEiYKBWlucHV0GAIgAygLMhcueWFuc2hpLnYxLkNvbnRlbnRCbG9jaxIQCghpbnB1dF9pZBgDIAEoCRIRCglmcm9tX2NhbGwYBCABKAkiZgoHU3RlZXJlZBIOCgZydW5faWQYASABKAkSJgoFaW5wdXQYAiADKAsyFy55YW5zaGkudjEuQ29udGVudEJsb2NrEhAKCGlucHV0X2lkGAMgASgJEhEKCWZyb21fY2FsbBgEIAEoCSJbCg5BdHRlbXB0U3RhcnRlZBIOCgZydW5faWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIRCgl3b3JrZXJfaWQYAyABKAkSFQoNbGl2ZV9lbmRwb2ludBgEIAEoCSJHCghUb29sQ2FsbBIPCgdjYWxsX2lkGAEgASgJEhIKCmNhcGFiaWxpdHkYAiABKAkSFgoOYXJndW1lbnRzX2pzb24YAyABKAkiUQoFVXNhZ2USFAoMaW5wdXRfdG9rZW5zGAEgASgEEhUKDW91dHB1dF90b2tlbnMYAiABKAQSGwoTY2FjaGVkX2lucHV0X3Rva2VucxgDIAEoBCK2AQoQQXNzaXN0YW50TWVzc2FnZRIOCgZydW5faWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIoCgdjb250ZW50GAMgAygLMhcueWFuc2hpLnYxLkNvbnRlbnRCbG9jaxInCgp0b29sX2NhbGxzGAQgAygLMhMueWFuc2hpLnYxLlRvb2xDYWxsEg0KBW1vZGVsGAUgASgJEh8KBXVzYWdlGAYgASgLMhAueWFuc2hpLnYxLlVzYWdlIoIBCg9Ub29sQ2FsbFN0YXJ0ZWQSDgoGcnVuX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SDwoHY2FsbF9pZBgDIAEoCRIPCgdub2RlX2lkGAQgASgJEiwKCGRlYWRsaW5lGAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCKfAQoKVG9vbFJlc3VsdBIOCgZydW5faWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIPCgdjYWxsX2lkGAMgASgJEigKB2NvbnRlbnQYBCADKAsyFy55YW5zaGkudjEuQ29udGVudEJsb2NrEhAKCGlzX2Vycm9yGAUgASgIEhAKCGlucHV0X2lkGAYgASgJEhEKCWZyb21fY2FsbBgHIAEoCSIvCgxSdW5Db21wbGV0ZWQSDgoGcnVuX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0iPAoJUnVuRmFpbGVkEg4KBnJ1bl9pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEg4KBnJlYXNvbhgDIAEoCSIsCg5SdW5JbnRlcnJ1cHRlZBIOCgZydW5faWQYASABKAkSCgoCYnkYAiABKAkiagoMUnVuU3VzcGVuZGVkEg4KBnJ1bl9pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEg4KBnJlYXNvbhgDIAEoCRIpCgV1bnRpbBgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAihAEKEUFwcHJvdmFsUmVxdWVzdGVkEg4KBnJ1bl9pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEg8KB2NhbGxfaWQYAyABKAkSDwoHc3VtbWFyeRgEIAEoCRIsCghkZWFkbGluZRgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiUAoPQXBwcm92YWxEZWNpZGVkEg4KBnJ1bl9pZBgBIAEoCRIPCgdjYWxsX2lkGAIgASgJEhAKCGFwcHJvdmVkGAMgASgIEgoKAmJ5GAQgASgJIqIBChBDb250ZXh0Q29tcGFjdGVkEg4KBnJ1bl9pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEhMKC3Rocm91Z2hfc2VxGAMgASgEEigKB3N1bW1hcnkYBCADKAsyFy55YW5zaGkudjEuQ29udGVudEJsb2NrEg0KBW1vZGVsGAUgASgJEh8KBXVzYWdlGAYgASgLMhAueWFuc2hpLnYxLlVzYWdlIisKDVNlc3Npb25DbG9zZWQSCgoCYnkYASABKAkSDgoGcmVhc29uGAIgASgJIlsKDk1lbW9yeVJlY2FsbGVkEg4KBnJ1bl9pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEigKBWl0ZW1zGAMgAygLMhkueWFuc2hpLnYxLlJlY2FsbGVkTWVtb3J5IlYKDlJlY2FsbGVkTWVtb3J5EgoKAmlkGAEgASgJEhUKDWJ1c2luZXNzX2xpbmUYAiABKAkSEAoIY2F0ZWdvcnkYAyABKAkSDwoHY29udGVudBgEIAEoCSJPCgtDYWxsU3RhcnRlZBIPCgdjYWxsX2lkGAEgASgJEhEKCWRldmljZV9pZBgCIAEoCRINCgVtb2RlbBgDIAEoCRINCgV2b2ljZRgEIAEoCSJSCg5DYWxsVHJhbnNjcmlwdBIPCgdjYWxsX2lkGAEgASgJEgwKBHJvbGUYAiABKAkSDAoEdGV4dBgDIAEoCRITCgtpbnRlcnJ1cHRlZBgEIAEoCCIsCglDYWxsRW5kZWQSDwoHY2FsbF9pZBgBIAEoCRIOCgZyZWFzb24YAiABKAlCH1odeWFuc2hpL2dlbi95YW5zaGkvdjE7eWFuc2hpdjFiBnByb3RvMw", [file_google_protobuf_timestamp]);
 
 /**
  * Event 是 Session 日志中只追加、不可修改的一条记录。
@@ -290,6 +290,20 @@ export type ContentBlock = Message<"yanshi.v1.ContentBlock"> & {
      */
     value: UIContext;
     case: "uiContext";
+  } | {
+    /**
+     * card 只出现在 show_card 的结果中（由平台校验后写入），card_action 只出现在用户输入中。
+     *
+     * @generated from field: yanshi.v1.Card card = 4;
+     */
+    value: Card;
+    case: "card";
+  } | {
+    /**
+     * @generated from field: yanshi.v1.CardAction card_action = 5;
+     */
+    value: CardAction;
+    case: "cardAction";
   } | { case: undefined; value?: undefined };
 };
 
@@ -299,6 +313,380 @@ export type ContentBlock = Message<"yanshi.v1.ContentBlock"> & {
  */
 export const ContentBlockSchema: GenMessage<ContentBlock> = /*@__PURE__*/
   messageDesc(file_yanshi_v1_event, 2);
+
+/**
+ * Card 是 Agent 经内置工具 show_card 展示给用户的卡片：图文混排的内容，加上可点选的按钮、列表项与可填写的字段
+ * （docs/design/cards.md，ADR-0032）。卡片随 show_card 的结果写入日志；同一 card_id 再次展示时替换前一版，
+ * 客户端只显示最新版。卡片不阻塞 Run：需要等用户选择才能继续时用 ask_user。
+ *
+ * @generated from message yanshi.v1.Card
+ */
+export type Card = Message<"yanshi.v1.Card"> & {
+  /**
+   * card_id 由模型指定或由平台按调用生成，在 Session 内标识一张卡片。
+   *
+   * @generated from field: string card_id = 1;
+   */
+  cardId: string;
+
+  /**
+   * call_id 是展示这一版卡片的 show_card 调用：动作带上它，旧版本上的动作与新版本上的动作互不混淆。
+   *
+   * @generated from field: string call_id = 2;
+   */
+  callId: string;
+
+  /**
+   * @generated from field: string title = 3;
+   */
+  title: string;
+
+  /**
+   * @generated from field: string subtitle = 4;
+   */
+  subtitle: string;
+
+  /**
+   * image 是头图：artifact://<id>（须属于本 Session）或 icon:<名称>（内置图标，见 card.Icons）。
+   * 不允许外部地址：外部图片可以追踪用户，也不随 Session 删除。
+   *
+   * @generated from field: string image = 5;
+   */
+  image: string;
+
+  /**
+   * @generated from field: repeated yanshi.v1.CardElement body = 6;
+   */
+  body: CardElement[];
+
+  /**
+   * @generated from field: repeated yanshi.v1.CardButton buttons = 7;
+   */
+  buttons: CardButton[];
+};
+
+/**
+ * Describes the message yanshi.v1.Card.
+ * Use `create(CardSchema)` to create a new message.
+ */
+export const CardSchema: GenMessage<Card> = /*@__PURE__*/
+  messageDesc(file_yanshi_v1_event, 3);
+
+/**
+ * @generated from message yanshi.v1.CardElement
+ */
+export type CardElement = Message<"yanshi.v1.CardElement"> & {
+  /**
+   * @generated from oneof yanshi.v1.CardElement.kind
+   */
+  kind: {
+    /**
+     * markdown 是 Markdown 文本（客户端只渲染安全的子集：不执行 HTML）。
+     *
+     * @generated from field: yanshi.v1.CardMarkdown markdown = 1;
+     */
+    value: CardMarkdown;
+    case: "markdown";
+  } | {
+    /**
+     * @generated from field: yanshi.v1.CardImage image = 2;
+     */
+    value: CardImage;
+    case: "image";
+  } | {
+    /**
+     * @generated from field: yanshi.v1.CardFacts facts = 3;
+     */
+    value: CardFacts;
+    case: "facts";
+  } | {
+    /**
+     * @generated from field: yanshi.v1.CardList list = 4;
+     */
+    value: CardList;
+    case: "list";
+  } | {
+    /**
+     * @generated from field: yanshi.v1.CardField field = 5;
+     */
+    value: CardField;
+    case: "field";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message yanshi.v1.CardElement.
+ * Use `create(CardElementSchema)` to create a new message.
+ */
+export const CardElementSchema: GenMessage<CardElement> = /*@__PURE__*/
+  messageDesc(file_yanshi_v1_event, 4);
+
+/**
+ * @generated from message yanshi.v1.CardMarkdown
+ */
+export type CardMarkdown = Message<"yanshi.v1.CardMarkdown"> & {
+  /**
+   * @generated from field: string text = 1;
+   */
+  text: string;
+};
+
+/**
+ * Describes the message yanshi.v1.CardMarkdown.
+ * Use `create(CardMarkdownSchema)` to create a new message.
+ */
+export const CardMarkdownSchema: GenMessage<CardMarkdown> = /*@__PURE__*/
+  messageDesc(file_yanshi_v1_event, 5);
+
+/**
+ * @generated from message yanshi.v1.CardImage
+ */
+export type CardImage = Message<"yanshi.v1.CardImage"> & {
+  /**
+   * uri 同 Card.image。
+   *
+   * @generated from field: string uri = 1;
+   */
+  uri: string;
+
+  /**
+   * @generated from field: string alt = 2;
+   */
+  alt: string;
+};
+
+/**
+ * Describes the message yanshi.v1.CardImage.
+ * Use `create(CardImageSchema)` to create a new message.
+ */
+export const CardImageSchema: GenMessage<CardImage> = /*@__PURE__*/
+  messageDesc(file_yanshi_v1_event, 6);
+
+/**
+ * CardFacts 是键值列表，如"时间 07:00""重复 工作日"。
+ *
+ * @generated from message yanshi.v1.CardFacts
+ */
+export type CardFacts = Message<"yanshi.v1.CardFacts"> & {
+  /**
+   * @generated from field: repeated yanshi.v1.CardFact facts = 1;
+   */
+  facts: CardFact[];
+};
+
+/**
+ * Describes the message yanshi.v1.CardFacts.
+ * Use `create(CardFactsSchema)` to create a new message.
+ */
+export const CardFactsSchema: GenMessage<CardFacts> = /*@__PURE__*/
+  messageDesc(file_yanshi_v1_event, 7);
+
+/**
+ * @generated from message yanshi.v1.CardFact
+ */
+export type CardFact = Message<"yanshi.v1.CardFact"> & {
+  /**
+   * @generated from field: string label = 1;
+   */
+  label: string;
+
+  /**
+   * @generated from field: string value = 2;
+   */
+  value: string;
+};
+
+/**
+ * Describes the message yanshi.v1.CardFact.
+ * Use `create(CardFactSchema)` to create a new message.
+ */
+export const CardFactSchema: GenMessage<CardFact> = /*@__PURE__*/
+  messageDesc(file_yanshi_v1_event, 8);
+
+/**
+ * @generated from message yanshi.v1.CardList
+ */
+export type CardList = Message<"yanshi.v1.CardList"> & {
+  /**
+   * @generated from field: repeated yanshi.v1.CardListItem items = 1;
+   */
+  items: CardListItem[];
+};
+
+/**
+ * Describes the message yanshi.v1.CardList.
+ * Use `create(CardListSchema)` to create a new message.
+ */
+export const CardListSchema: GenMessage<CardList> = /*@__PURE__*/
+  messageDesc(file_yanshi_v1_event, 9);
+
+/**
+ * @generated from message yanshi.v1.CardListItem
+ */
+export type CardListItem = Message<"yanshi.v1.CardListItem"> & {
+  /**
+   * @generated from field: string title = 1;
+   */
+  title: string;
+
+  /**
+   * @generated from field: string subtitle = 2;
+   */
+  subtitle: string;
+
+  /**
+   * image 同 Card.image。
+   *
+   * @generated from field: string image = 3;
+   */
+  image: string;
+
+  /**
+   * action 非空时该项可点选，点选即执行这个动作（动作 ID）。
+   *
+   * @generated from field: string action = 4;
+   */
+  action: string;
+};
+
+/**
+ * Describes the message yanshi.v1.CardListItem.
+ * Use `create(CardListItemSchema)` to create a new message.
+ */
+export const CardListItemSchema: GenMessage<CardListItem> = /*@__PURE__*/
+  messageDesc(file_yanshi_v1_event, 10);
+
+/**
+ * CardField 是用户可以填写的字段；随按钮动作一起提交。
+ *
+ * @generated from message yanshi.v1.CardField
+ */
+export type CardField = Message<"yanshi.v1.CardField"> & {
+  /**
+   * @generated from field: string id = 1;
+   */
+  id: string;
+
+  /**
+   * @generated from field: string label = 2;
+   */
+  label: string;
+
+  /**
+   * type 为 text（默认）、number、date（YYYY-MM-DD）、time（HH:MM）、select 或 toggle（"true"/"false"）。
+   *
+   * @generated from field: string type = 3;
+   */
+  type: string;
+
+  /**
+   * options 是 select 的选项。
+   *
+   * @generated from field: repeated string options = 4;
+   */
+  options: string[];
+
+  /**
+   * value 是初始值。
+   *
+   * @generated from field: string value = 5;
+   */
+  value: string;
+
+  /**
+   * @generated from field: bool required = 6;
+   */
+  required: boolean;
+};
+
+/**
+ * Describes the message yanshi.v1.CardField.
+ * Use `create(CardFieldSchema)` to create a new message.
+ */
+export const CardFieldSchema: GenMessage<CardField> = /*@__PURE__*/
+  messageDesc(file_yanshi_v1_event, 11);
+
+/**
+ * @generated from message yanshi.v1.CardButton
+ */
+export type CardButton = Message<"yanshi.v1.CardButton"> & {
+  /**
+   * id 是动作 ID，在卡片内唯一。
+   *
+   * @generated from field: string id = 1;
+   */
+  id: string;
+
+  /**
+   * @generated from field: string label = 2;
+   */
+  label: string;
+
+  /**
+   * style 为 primary、default（默认）或 danger，只影响显示。
+   *
+   * @generated from field: string style = 3;
+   */
+  style: string;
+};
+
+/**
+ * Describes the message yanshi.v1.CardButton.
+ * Use `create(CardButtonSchema)` to create a new message.
+ */
+export const CardButtonSchema: GenMessage<CardButton> = /*@__PURE__*/
+  messageDesc(file_yanshi_v1_event, 12);
+
+/**
+ * CardAction 是用户在卡片上执行的动作（点按钮或点选列表项），作为一条输入提交：有进行中的 Run 时并入它，
+ * 否则开启新 Run。同一版卡片上的同一动作只生效一次（输入 ID 由平台按 call_id 与动作推导）。
+ *
+ * @generated from message yanshi.v1.CardAction
+ */
+export type CardAction = Message<"yanshi.v1.CardAction"> & {
+  /**
+   * @generated from field: string card_id = 1;
+   */
+  cardId: string;
+
+  /**
+   * @generated from field: string call_id = 2;
+   */
+  callId: string;
+
+  /**
+   * @generated from field: string action = 3;
+   */
+  action: string;
+
+  /**
+   * label 是动作的显示文字，由平台按卡片填写（客户端提交的值被忽略）。
+   *
+   * @generated from field: string label = 4;
+   */
+  label: string;
+
+  /**
+   * values 是卡片上字段的填写值（字段 ID → 值），只含卡片声明过的字段。
+   *
+   * @generated from field: map<string, string> values = 5;
+   */
+  values: { [key: string]: string };
+
+  /**
+   * seq 是客户端收到这一版卡片的事件序号：平台据此直接读取卡片，而不必扫描日志。为 0 或不符时扫描日志。
+   *
+   * @generated from field: uint64 seq = 6;
+   */
+  seq: bigint;
+};
+
+/**
+ * Describes the message yanshi.v1.CardAction.
+ * Use `create(CardActionSchema)` to create a new message.
+ */
+export const CardActionSchema: GenMessage<CardAction> = /*@__PURE__*/
+  messageDesc(file_yanshi_v1_event, 13);
 
 /**
  * UIContext 是用户提交输入时所在界面的上下文，由 HostApp 附在输入上（docs/design/m3-duplex-channel.md §8），
@@ -350,7 +738,7 @@ export type UIContext = Message<"yanshi.v1.UIContext"> & {
  * Use `create(UIContextSchema)` to create a new message.
  */
 export const UIContextSchema: GenMessage<UIContext> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 3);
+  messageDesc(file_yanshi_v1_event, 14);
 
 /**
  * @generated from message yanshi.v1.Text
@@ -367,7 +755,7 @@ export type Text = Message<"yanshi.v1.Text"> & {
  * Use `create(TextSchema)` to create a new message.
  */
 export const TextSchema: GenMessage<Text> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 4);
+  messageDesc(file_yanshi_v1_event, 15);
 
 /**
  * Media 是非文本内容，以 uri 引用 Artifact（"artifact://<id>"）。data 只在发给模型的请求副本中填入（Worker 内联图片），
@@ -409,7 +797,7 @@ export type Media = Message<"yanshi.v1.Media"> & {
  * Use `create(MediaSchema)` to create a new message.
  */
 export const MediaSchema: GenMessage<Media> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 5);
+  messageDesc(file_yanshi_v1_event, 16);
 
 /**
  * @generated from message yanshi.v1.AgentRef
@@ -431,7 +819,7 @@ export type AgentRef = Message<"yanshi.v1.AgentRef"> & {
  * Use `create(AgentRefSchema)` to create a new message.
  */
 export const AgentRefSchema: GenMessage<AgentRef> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 6);
+  messageDesc(file_yanshi_v1_event, 17);
 
 /**
  * SessionCreated 总是 Session 的第一个事件；AgentDef 版本在此固定。
@@ -467,7 +855,7 @@ export type SessionCreated = Message<"yanshi.v1.SessionCreated"> & {
  * Use `create(SessionCreatedSchema)` to create a new message.
  */
 export const SessionCreatedSchema: GenMessage<SessionCreated> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 7);
+  messageDesc(file_yanshi_v1_event, 18);
 
 /**
  * ParentRef 是子 Session 的来处：父 Session 中的哪个 Run、哪次调用派生了它。
@@ -504,7 +892,7 @@ export type ParentRef = Message<"yanshi.v1.ParentRef"> & {
  * Use `create(ParentRefSchema)` to create a new message.
  */
 export const ParentRefSchema: GenMessage<ParentRef> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 8);
+  messageDesc(file_yanshi_v1_event, 19);
 
 /**
  * AgentSwitched 把 Session 当前使用的 AgentDef 换成同名的另一个版本，只发生在两个 Run 之间
@@ -534,7 +922,7 @@ export type AgentSwitched = Message<"yanshi.v1.AgentSwitched"> & {
  * Use `create(AgentSwitchedSchema)` to create a new message.
  */
 export const AgentSwitchedSchema: GenMessage<AgentSwitched> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 9);
+  messageDesc(file_yanshi_v1_event, 20);
 
 /**
  * ContentModerated 记录一轮模型输出被内容安全拦截（docs/design/m4-moderation.md，ADR-0021）。
@@ -571,7 +959,7 @@ export type ContentModerated = Message<"yanshi.v1.ContentModerated"> & {
  * Use `create(ContentModeratedSchema)` to create a new message.
  */
 export const ContentModeratedSchema: GenMessage<ContentModerated> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 10);
+  messageDesc(file_yanshi_v1_event, 21);
 
 /**
  * RunRequested 在 Session 无活跃 Run 时由用户输入触发。
@@ -609,7 +997,7 @@ export type RunRequested = Message<"yanshi.v1.RunRequested"> & {
  * Use `create(RunRequestedSchema)` to create a new message.
  */
 export const RunRequestedSchema: GenMessage<RunRequested> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 11);
+  messageDesc(file_yanshi_v1_event, 22);
 
 /**
  * Steered 是活跃 Run 进行中的追加输入，不改变 Run 状态。
@@ -647,7 +1035,7 @@ export type Steered = Message<"yanshi.v1.Steered"> & {
  * Use `create(SteeredSchema)` to create a new message.
  */
 export const SteeredSchema: GenMessage<Steered> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 12);
+  messageDesc(file_yanshi_v1_event, 23);
 
 /**
  * AttemptStarted 标志某个 Worker 开始（或接管）执行 Run；attempt 是 fencing 令牌。
@@ -684,7 +1072,7 @@ export type AttemptStarted = Message<"yanshi.v1.AttemptStarted"> & {
  * Use `create(AttemptStartedSchema)` to create a new message.
  */
 export const AttemptStartedSchema: GenMessage<AttemptStarted> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 13);
+  messageDesc(file_yanshi_v1_event, 24);
 
 /**
  * @generated from message yanshi.v1.ToolCall
@@ -713,7 +1101,7 @@ export type ToolCall = Message<"yanshi.v1.ToolCall"> & {
  * Use `create(ToolCallSchema)` to create a new message.
  */
 export const ToolCallSchema: GenMessage<ToolCall> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 14);
+  messageDesc(file_yanshi_v1_event, 25);
 
 /**
  * @generated from message yanshi.v1.Usage
@@ -742,7 +1130,7 @@ export type Usage = Message<"yanshi.v1.Usage"> & {
  * Use `create(UsageSchema)` to create a new message.
  */
 export const UsageSchema: GenMessage<Usage> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 15);
+  messageDesc(file_yanshi_v1_event, 26);
 
 /**
  * AssistantMessage 是一次完整的模型输出；tool_calls 即 Capability 调用请求。
@@ -786,7 +1174,7 @@ export type AssistantMessage = Message<"yanshi.v1.AssistantMessage"> & {
  * Use `create(AssistantMessageSchema)` to create a new message.
  */
 export const AssistantMessageSchema: GenMessage<AssistantMessage> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 16);
+  messageDesc(file_yanshi_v1_event, 27);
 
 /**
  * ToolCallStarted 在执行 Capability 之前落盘，用于故障恢复时判断调用是否可能已产生副作用。
@@ -828,7 +1216,7 @@ export type ToolCallStarted = Message<"yanshi.v1.ToolCallStarted"> & {
  * Use `create(ToolCallStartedSchema)` to create a new message.
  */
 export const ToolCallStartedSchema: GenMessage<ToolCallStarted> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 17);
+  messageDesc(file_yanshi_v1_event, 28);
 
 /**
  * @generated from message yanshi.v1.ToolResult
@@ -881,7 +1269,7 @@ export type ToolResult = Message<"yanshi.v1.ToolResult"> & {
  * Use `create(ToolResultSchema)` to create a new message.
  */
 export const ToolResultSchema: GenMessage<ToolResult> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 18);
+  messageDesc(file_yanshi_v1_event, 29);
 
 /**
  * @generated from message yanshi.v1.RunCompleted
@@ -903,7 +1291,7 @@ export type RunCompleted = Message<"yanshi.v1.RunCompleted"> & {
  * Use `create(RunCompletedSchema)` to create a new message.
  */
 export const RunCompletedSchema: GenMessage<RunCompleted> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 19);
+  messageDesc(file_yanshi_v1_event, 30);
 
 /**
  * @generated from message yanshi.v1.RunFailed
@@ -930,7 +1318,7 @@ export type RunFailed = Message<"yanshi.v1.RunFailed"> & {
  * Use `create(RunFailedSchema)` to create a new message.
  */
 export const RunFailedSchema: GenMessage<RunFailed> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 20);
+  messageDesc(file_yanshi_v1_event, 31);
 
 /**
  * @generated from message yanshi.v1.RunInterrupted
@@ -954,7 +1342,7 @@ export type RunInterrupted = Message<"yanshi.v1.RunInterrupted"> & {
  * Use `create(RunInterruptedSchema)` to create a new message.
  */
 export const RunInterruptedSchema: GenMessage<RunInterrupted> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 21);
+  messageDesc(file_yanshi_v1_event, 32);
 
 /**
  * RunSuspended 表示当前 Attempt 正常结束、Run 等待外部条件；从 suspended 恢复不计为接管。
@@ -992,7 +1380,7 @@ export type RunSuspended = Message<"yanshi.v1.RunSuspended"> & {
  * Use `create(RunSuspendedSchema)` to create a new message.
  */
 export const RunSuspendedSchema: GenMessage<RunSuspended> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 22);
+  messageDesc(file_yanshi_v1_event, 33);
 
 /**
  * ApprovalRequested 请求 EndUser 批准一次高风险调用。
@@ -1033,7 +1421,7 @@ export type ApprovalRequested = Message<"yanshi.v1.ApprovalRequested"> & {
  * Use `create(ApprovalRequestedSchema)` to create a new message.
  */
 export const ApprovalRequestedSchema: GenMessage<ApprovalRequested> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 23);
+  messageDesc(file_yanshi_v1_event, 34);
 
 /**
  * ApprovalDecided 是 EndUser 的审批决定（外部事件，不受 Attempt fencing）。
@@ -1069,7 +1457,7 @@ export type ApprovalDecided = Message<"yanshi.v1.ApprovalDecided"> & {
  * Use `create(ApprovalDecidedSchema)` to create a new message.
  */
 export const ApprovalDecidedSchema: GenMessage<ApprovalDecided> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 24);
+  messageDesc(file_yanshi_v1_event, 35);
 
 /**
  * ContextCompacted 记录一次上下文压缩（ADR-0012）：seq ≤ through_seq 的历史在模型上下文中由 summary 代替。
@@ -1114,7 +1502,7 @@ export type ContextCompacted = Message<"yanshi.v1.ContextCompacted"> & {
  * Use `create(ContextCompactedSchema)` to create a new message.
  */
 export const ContextCompactedSchema: GenMessage<ContextCompacted> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 25);
+  messageDesc(file_yanshi_v1_event, 36);
 
 /**
  * SessionClosed 是 Session 的终态：之后不再接收任何输入与 Run 事件（docs/design/m2-session-lifecycle.md §2）。
@@ -1141,7 +1529,7 @@ export type SessionClosed = Message<"yanshi.v1.SessionClosed"> & {
  * Use `create(SessionClosedSchema)` to create a new message.
  */
 export const SessionClosedSchema: GenMessage<SessionClosed> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 26);
+  messageDesc(file_yanshi_v1_event, 37);
 
 /**
  * MemoryRecalled 记录 Run 开始时召回的 Memory（ADR-0016）：只用于当前 Run 的上下文，
@@ -1171,7 +1559,7 @@ export type MemoryRecalled = Message<"yanshi.v1.MemoryRecalled"> & {
  * Use `create(MemoryRecalledSchema)` to create a new message.
  */
 export const MemoryRecalledSchema: GenMessage<MemoryRecalled> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 27);
+  messageDesc(file_yanshi_v1_event, 38);
 
 /**
  * @generated from message yanshi.v1.RecalledMemory
@@ -1205,7 +1593,7 @@ export type RecalledMemory = Message<"yanshi.v1.RecalledMemory"> & {
  * Use `create(RecalledMemorySchema)` to create a new message.
  */
 export const RecalledMemorySchema: GenMessage<RecalledMemory> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 28);
+  messageDesc(file_yanshi_v1_event, 39);
 
 /**
  * CallStarted 表示 Session 中开始了一次 Call（全双工语音通话，docs/design/m3-call.md）。媒体流不进日志（ADR-0005），
@@ -1246,7 +1634,7 @@ export type CallStarted = Message<"yanshi.v1.CallStarted"> & {
  * Use `create(CallStartedSchema)` to create a new message.
  */
 export const CallStartedSchema: GenMessage<CallStarted> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 29);
+  messageDesc(file_yanshi_v1_event, 40);
 
 /**
  * CallTranscript 是 Call 中一句话的转写，写入前经过内容安全检查（ADR-0021）。它进入对话上下文：
@@ -1285,7 +1673,7 @@ export type CallTranscript = Message<"yanshi.v1.CallTranscript"> & {
  * Use `create(CallTranscriptSchema)` to create a new message.
  */
 export const CallTranscriptSchema: GenMessage<CallTranscript> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 30);
+  messageDesc(file_yanshi_v1_event, 41);
 
 /**
  * CallEnded 表示 Call 结束。
@@ -1312,5 +1700,5 @@ export type CallEnded = Message<"yanshi.v1.CallEnded"> & {
  * Use `create(CallEndedSchema)` to create a new message.
  */
 export const CallEndedSchema: GenMessage<CallEnded> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_event, 31);
+  messageDesc(file_yanshi_v1_event, 42);
 

@@ -27,11 +27,13 @@ import (
 	"yanshi/internal/auth"
 	"yanshi/internal/call"
 	"yanshi/internal/capability"
+	"yanshi/internal/card"
 	"yanshi/internal/channel"
 	"yanshi/internal/clock"
 	"yanshi/internal/decision"
 	"yanshi/internal/delegation"
 	"yanshi/internal/eventlog"
+	"yanshi/internal/faults"
 	"yanshi/internal/feed"
 	"yanshi/internal/httpapi"
 	"yanshi/internal/ids"
@@ -174,13 +176,21 @@ var defaultModelLimits = model.Limits{Timeout: 10 * time.Minute, Deadline: 15 * 
 //	ark       ARK_API_KEY（可选 ARK_BASE_URL）
 //	tokenhub  TOKENHUB_API_KEY（可选 TOKENHUB_BASE_URL），腾讯云 TokenHub 的 OpenAI 兼容接口
 //	local  YANSHI_LOCAL_BASE_URL（可选 YANSHI_LOCAL_API_KEY），私有化 OpenAI 兼容推理服务
-func gateway(logger *slog.Logger, limits model.Limits) *model.Gateway {
+//
+// injector 非 nil 时（serve -faults）每个提供商都包上故障注入；真实提供商的注入点在 Guard 之内，注入的错误同样经过退避重试。
+func gateway(logger *slog.Logger, limits model.Limits, injector *faults.Injector) *model.Gateway {
+	wrap := func(p model.Provider) model.Provider {
+		if injector == nil {
+			return p
+		}
+		return faults.Model{Next: p, Injector: injector}
+	}
 	gw := model.NewGateway()
-	gw.Register("echo", echo.Provider{})
-	gw.Register("bench", bench.Provider{})
-	gw.Register("script", script.Provider{})
+	gw.Register("echo", wrap(echo.Provider{}))
+	gw.Register("bench", wrap(bench.Provider{}))
+	gw.Register("script", wrap(script.Provider{}))
 	register := func(name, base, key string) {
-		gw.Register(name, &model.Guard{Name: name, Provider: &openaicompat.Provider{BaseURL: base, APIKey: key}, Limits: limits})
+		gw.Register(name, &model.Guard{Name: name, Provider: wrap(&openaicompat.Provider{BaseURL: base, APIKey: key}), Limits: limits})
 		logger.Info("model provider configured", "provider", name, "base_url", base,
 			"max_concurrency", limits.MaxConcurrency, "rps", limits.RPS, "timeout", limits.Timeout)
 	}
@@ -233,7 +243,7 @@ func serve(args []string) error {
 	sandboxImage := fs.String("sandbox-image", "yanshi-sandbox:dev", "沙箱镜像（make sandbox-image 构建）")
 	sandboxRuntime := fs.String("sandbox-runtime", "", "沙箱容器运行时，如 runsc（gVisor）")
 	mcpDir := fs.String("mcp", "mcp", "远程 MCP Server 登记目录（docs/design/m5-mcp.md）；不存在时不启用")
-	embedModel := fs.String("embedding-model", os.Getenv("YANSHI_EMBEDDING_MODEL"), "Memory 检索用的嵌入模型（provider/model，如 ark/doubao-embedding-vision）；为空时按文本相似度检索")
+	embedModel := fs.String("embedding-model", os.Getenv("YANSHI_EMBEDDING_MODEL"), "Memory 检索用的嵌入模型（provider/model，如 ark/doubao-embedding-vision-251215）；为空时按文本相似度检索")
 	controllers := fs.Int("sandbox-controllers", 2, "沙箱控制器数量")
 	blobKind := fs.String("blob", "fs", "工件内容存储：fs | s3")
 	blobDir := fs.String("blob-dir", "data/artifacts", "工件目录（blob=fs）")
@@ -253,6 +263,7 @@ func serve(args []string) error {
 	injectionCheck := fs.String("injection-check", "off", "以影子模式判断外部调用结果是否含提示注入（docs/design/m6-decisions.md）：off | rules | <provider/model>（返回 logprobs 的自托管小模型，置信度不足时退回规则）；只记录 DecisionMade，不影响执行")
 	admissionMaxWait := fs.Duration("admission-max-wait", 0, "Submit 准入：业务线中等得最久的交互工作超过它时拒绝新 Run（503 与 Retry-After），0 表示不启用；阈值依据 yanshi_queue_wait_seconds 的线上分布确定")
 	admissionResumeWait := fs.Duration("admission-resume-wait", 0, "Submit 准入的恢复阈值：等待回落到它以下才重新接受新 Run，默认为 -admission-max-wait 的一半")
+	faultsOn := fs.Bool("faults", false, "调试部署：开启服务端故障注入与 /v1/debug/* 接口（调试控制台，ADR-0033）。只用于开发与测试，不得用于生产")
 	usageRetention := fs.Duration("usage-retention", 400*24*time.Hour, "用量记录的保留期")
 	modelLimits := defaultModelLimits
 	fs.DurationVar(&modelLimits.Timeout, "model-timeout", modelLimits.Timeout, "一次模型调用的时限（不含排队与重试等待）")
@@ -330,7 +341,12 @@ func serve(args []string) error {
 		}
 		defer stopPeer()
 	}
-	gw := gateway(logger, modelLimits)
+	var injector *faults.Injector
+	if *faultsOn {
+		injector = &faults.Injector{}
+		logger.Warn("fault injection enabled (-faults): debug deployments only")
+	}
+	gw := gateway(logger, modelLimits, injector)
 	dir := b.Dir
 	hub := &node.Hub{
 		Dir: dir, Inbox: b.Inbox, Store: store,
@@ -345,8 +361,11 @@ func serve(args []string) error {
 		mems.Embedder, mems.EmbedModel = gw, *embedModel
 	}
 	catalog := &capability.Catalog{
-		Local: capability.NewRegistry(append([]capability.Capability{capability.ClockNow(clk)}, memory.Capabilities(mems)...)...),
+		Local: capability.NewRegistry(append([]capability.Capability{capability.ClockNow(clk), card.New(arts.Meta)}, memory.Capabilities(mems)...)...),
 		Nodes: dir, DefaultTimeout: 30 * time.Minute, NodeCacheTTL: 10 * time.Second, Clock: clk,
+	}
+	if injector != nil {
+		catalog.Nodes = faults.Directory{Directory: dir, Injector: injector}
 	}
 	mcpServers, err := mcpcap.LoadDir(*mcpDir)
 	if err != nil {
@@ -369,6 +388,9 @@ func serve(args []string) error {
 	moderator, err := moderatorFor(*moderationKind, *moderationTerms, *moderationTimeout, logger)
 	if err != nil {
 		return err
+	}
+	if injector != nil {
+		moderator = faults.Moderator{Next: moderator, Injector: injector}
 	}
 	injection, err := injectionDecider(*injectionCheck, gw, clk)
 	if err != nil {
@@ -433,7 +455,7 @@ func serve(args []string) error {
 			ID: fmt.Sprintf("%s-worker-%d", proc, i), Store: store, Queue: queue, Agents: agents,
 			Model: gw, Catalog: catalog, Dispatch: dispatch, Delegation: delegator, InjectionCheck: injection, Artifacts: arts, Memory: mems, Live: bus, LiveEndpoint: liveEndpoint, Logger: logger,
 			LeaseTTL: *leaseTTL, Heartbeat: *leaseTTL / 3, Idle: gate, Meter: meter, Quotas: quotas, Moderator: moderator,
-			Notify: notifier, Pool: pool, DrainTimeout: *drainTimeout,
+			Notify: notifier, Pool: pool, DrainTimeout: *drainTimeout, Faults: injector,
 		})
 		wg.Add(1)
 		go func() { defer wg.Done(); w.Run(ctx) }()
@@ -503,7 +525,7 @@ func serve(args []string) error {
 	mux.Handle("/console", webui.Handler())
 	mux.Handle("/console/", webui.Handler())
 	mux.Handle("GET /readyz", ready)
-	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.Usage, Push: b.Push, Feeds: feeds, Logger: logger}).Handler())
+	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.Usage, Push: b.Push, Feeds: feeds, Faults: injector, Logger: logger}).Handler())
 	srv := &http.Server{
 		Addr:              *addr,
 		Handler:           mux,

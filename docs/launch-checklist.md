@@ -5,12 +5,12 @@
 ## 必须完成
 
 - [ ] **内容安全接入真实提供商**（[设计](./design/m4-moderation.md)，ADR-0021）。当前 `serve -moderation mock` 只是关键词模拟，没有真实识别能力。接入时：
-  - 实现 `moderation.Moderator`（文本与图片），按提供商的错误语义区分"违规"与"不可用"；
+  - 实现 `moderation.Moderator`（文本、图片与音频：语音消息由模型直接听，不经转写），按提供商的错误语义区分"违规"与"不可用"；
   - 确认流式草稿的处理是否满足监管要求，必要时实现流式检查（按片段检查、违规时取消生成）；
   - 评估是否需要对外部来源（MCP、网页）的调用结果单独检查；
   - 上线配置中 `yanshi_moderation_mock` 必须为 0；
   - 容灾：与合规确认一个故障域独立的等价提供商，配置为 `-moderation 主,备`（`moderation.Failover`，备用方只在主方超时或出错时使用）；全部不可用时是否允许暂存输出、恢复后重试检查。
-- [ ] **价格表填入合同价**（[设计](./design/m4-quota-usage.md)）。`pricing.yaml` 中 tokenhub 的价格与沙箱单价是占位值。
+- [ ] **价格表填入合同价**（[设计](./design/m4-quota-usage.md)）。`pricing.yaml` 中 ark、tokenhub 的价格与沙箱单价是占位值。
 - [ ] **生产沙箱**（ADR-0010，[设计](./design/m2-sandbox.md)）。当前只有 Docker 实现；选定云厂商服务或自托管隔离方案后实现生产 Provider。
 - [ ] **业务线配置**：每条业务线的密钥、保留策略与配额已按约定填写（`businesslines/*.yaml`）。
 - [ ] **健康信息的单独同意**（ADR-0022）：开启 `memory.health` 的业务线须在产品中取得用户的单独同意，并能出示同意记录；未取得的不得开启。
@@ -27,6 +27,7 @@
   - 沙箱控制器运行在独立节点池，使用 gVisor RuntimeClass，只有它持有容器或 K8s API 权限（ADR-0008、ADR-0010）；
   - `-model-concurrency`、`-model-rps` 按提供商的账号上限除以进程数配置（[模型调用](./design/model-calls.md)），弹性扩容时随副本数联动；
   - 所有进程的 `-notify-shards` 一致（ADR-0028）；
+  - 生产进程不带 `-faults`（服务端故障注入与 `/v1/debug/*` 只用于调试部署，ADR-0033）；
   - 部署清单（Helm 或 Kustomize）进仓库，含网络策略：出网只允许模型、内容安全、推送三类外联（ADR-0001）；
   - 配置分发（AgentDef、发布配置、业务线公钥、价格表在所有进程一致）与按 `run_id` 的链路追踪；
   - 容量矩阵与准入阈值在目标环境实测后填入（评审 §8.4 第 4、6 项）。

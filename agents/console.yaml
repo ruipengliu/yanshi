@@ -1,5 +1,6 @@
 # 调试控制台（/console）用 Agent：脚本化模型，无需模型密钥，结果确定（internal/model/script）。
 # 输入中的命令：call <工具名后缀> [JSON]、ask <问题> | 选项…、stream <n>；没有命令时复述输入。
+# 卡片：call show_card {"title":…}；委托：call agent__console-helper {"task":"…"}。
 name: console
 version: "1"
 model: script/any
@@ -7,11 +8,13 @@ instructions: ""
 capabilities:
   - clock_now
   - ask_user
+  - show_card
   - memory_save
   - memory_forget
   - memory_search
   - device:*
   - sandbox:*
+  - agent:console-helper
 max_turns: 50
 memory:
   recall: 4

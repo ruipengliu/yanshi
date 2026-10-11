@@ -1,0 +1,20 @@
+name: card-action-followup
+description: >-
+  卡片动作驱动后续操作（docs/design/cards.md §4）：第一轮设好闹钟并在卡片上给出"改到 7:30"的按钮；
+  第二轮用户点这个按钮（CardAction 输入），模型应把闹钟改为 7:30，而不是停下来问。
+setup:
+  device:
+    label: iphone
+    kind: phone
+turns:
+  - input: 在手机上订明早 7 点的闹钟。订好后给我一张卡片，带一个"改到 7:30"的按钮，我可能想多睡一会儿。
+    expect:
+      status: completed
+      calls: ["iphone__set_alarm", "show_card"]
+      call_args: {"show_card": "7:30"}
+  - card_action: {label: "7:30"}
+    expect:
+      status: completed
+      calls: ["iphone__set_alarm"]
+      call_args: {"*set_alarm": "07:30"}
+      questions: {max: 0}

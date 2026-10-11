@@ -34,6 +34,14 @@ type Request struct {
 	// Text 是要检查的文本：输入时为用户输入，输出时为回复文本与调用参数。
 	Text   string
 	Images []Image
+	// Audio 是输入中的语音消息（模型直接听，不经转写）：提供商须检查音频本身。
+	Audio []Audio
+}
+
+// Audio 是待检查的音频工件。
+type Audio struct {
+	ArtifactID string
+	MimeType   string
 }
 
 // Verdict 是检查结果。Labels 是提供商给出的违规类别，用于统计与审计，不含原文。

@@ -313,6 +313,24 @@ func UIContext(screen, ref, selection, content string) *v1.ContentBlock {
 		Screen: screen, Ref: ref, Selection: selection, Content: content}}}
 }
 
+// SubmitCardAction 提交用户在卡片上的动作（点按钮或点选列表项，docs/design/cards.md §4）：a 填 card_id、call_id、
+// action、字段值与收到这一版卡片的事件序号（CardOf）。有进行中的 Run 时并入它，否则开启新 Run；同一版卡片上的同一动作
+// 只生效一次（重复点击的响应 duplicate 为 true）。
+func (c *Client) SubmitCardAction(ctx context.Context, sessionID string, a *v1.CardAction) (*v1.ClientResponse, error) {
+	return c.SubmitInput(ctx, &v1.SubmitInput{SessionId: sessionID, InputId: NewInputID(),
+		Input: []*v1.ContentBlock{{Kind: &v1.ContentBlock_CardAction{CardAction: a}}}})
+}
+
+// CardOf 返回事件中的卡片（show_card 的结果）；没有时返回 nil。同一 card_id 的卡片以最新的一版为准。
+func CardOf(e *v1.Event) *v1.Card {
+	for _, b := range e.GetToolResult().GetContent() {
+		if c := b.GetCard(); c != nil {
+			return c
+		}
+	}
+	return nil
+}
+
 // SubmitText 提交一段文本输入。
 func (c *Client) SubmitText(ctx context.Context, sessionID, text string) (runID string, steered bool, err error) {
 	return c.Submit(ctx, sessionID, &v1.ContentBlock{Kind: &v1.ContentBlock_Text{Text: &v1.Text{Text: text}}})

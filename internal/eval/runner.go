@@ -25,6 +25,7 @@ import (
 	"yanshi/internal/askuser"
 	"yanshi/internal/call"
 	"yanshi/internal/capability"
+	"yanshi/internal/card"
 	"yanshi/internal/clock"
 	"yanshi/internal/delegation"
 	"yanshi/internal/eventlog"
@@ -213,7 +214,7 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 		mems.Embedder, mems.EmbedModel = cfg.Model, cfg.EmbedModel
 	}
 	catalog := &capability.Catalog{
-		Local: capability.NewRegistry(append([]capability.Capability{capability.ClockNow(clk)}, memory.Capabilities(mems)...)...),
+		Local: capability.NewRegistry(append([]capability.Capability{capability.ClockNow(clk), card.New(arts.Meta)}, memory.Capabilities(mems)...)...),
 		Nodes: dir, DefaultTimeout: 10 * time.Minute,
 	}
 	if cfg.Sandbox != nil {
@@ -348,7 +349,7 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		setups = append([]DeviceSetup{*s}, setups...)
 	}
 	for i, s := range setups {
-		dev := &device{files: map[string]string{}, writes: map[string]string{}, arts: in.arts}
+		dev := &device{kind: s.Kind, files: map[string]string{}, writes: map[string]string{}, arts: in.arts}
 		for k, v := range s.Files {
 			dev.files[k] = v
 		}
@@ -463,6 +464,11 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 	if u := turn.UIContext; u != nil {
 		input = append([]*v1.ContentBlock{{Kind: &v1.ContentBlock_UiContext{UiContext: &v1.UIContext{
 			Screen: u.Screen, Ref: u.Ref, Selection: u.Selection, Content: u.Content}}}}, input...)
+	}
+	if turn.CardAction != nil {
+		if input, err = in.cardAction(ctx, sid, turn.CardAction); err != nil {
+			return nil, err
+		}
 	}
 	if turn.FromDevice != "" {
 		input = service.WithDevice(input, turn.FromDevice, true)
@@ -871,4 +877,40 @@ func plainNumbers(s string) string {
 		}
 		s = t
 	}
+}
+
+// cardAction 组装本轮的卡片动作：在 Session 最近展示的卡片（或指定 card_id 的最新一版）上选按钮或条目。
+func (in *instance) cardAction(ctx context.Context, sid string, a *CardActionScript) ([]*v1.ContentBlock, error) {
+	var found *v1.Card
+	var seq uint64
+	err := session.ScanLog(ctx, in.svc.Store.Log, sid, func(e *v1.Event) bool {
+		if c := card.Find(e.GetToolResult().GetContent()); c != nil && (a.Card == "" || c.GetCardId() == a.Card) {
+			found, seq = c, e.GetSeq()
+		}
+		return true
+	})
+	if err != nil {
+		return nil, err
+	}
+	if found == nil {
+		return nil, fmt.Errorf("card_action: no card %q was shown", a.Card)
+	}
+	action := a.Action
+	for _, b := range found.GetButtons() {
+		if action == "" && (a.Label == "" || strings.Contains(b.GetLabel(), a.Label)) {
+			action = b.GetId()
+		}
+	}
+	for _, e := range found.GetBody() {
+		for _, it := range e.GetList().GetItems() {
+			if action == "" && a.Label != "" && it.GetAction() != "" && strings.Contains(it.GetTitle(), a.Label) {
+				action = it.GetAction()
+			}
+		}
+	}
+	if action == "" {
+		return nil, fmt.Errorf("card_action: card %s has no matching action", found.GetCardId())
+	}
+	return []*v1.ContentBlock{{Kind: &v1.ContentBlock_CardAction{CardAction: &v1.CardAction{
+		CardId: found.GetCardId(), CallId: found.GetCallId(), Action: action, Values: a.Values, Seq: seq}}}}, nil
 }

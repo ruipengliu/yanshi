@@ -1,0 +1,16 @@
+name: card-alarm-result
+description: >-
+  卡片展示结构化结果（docs/design/cards.md）：在手机上设好闹钟后，用 show_card 展示结果（时间等要点），
+  回复中仍说出关键结论，而不是只有卡片或只有文字。
+setup:
+  device:
+    label: iphone
+    kind: phone
+turns:
+  - input: 帮我在手机上订一个明天早上 7 点的闹钟，备注"晨跑"。
+    expect:
+      status: completed
+      calls: ["iphone__set_alarm", "show_card"]
+      call_args: {"*set_alarm": "07:00", "show_card": "7"}
+      reply_contains: ["7"]
+      judge: 是否设好了明早 7 点、备注晨跑的闹钟，并用卡片展示了闹钟的时间等要点，回复简洁地说明已设好？

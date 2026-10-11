@@ -15,6 +15,7 @@ package yanshi
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -341,6 +342,24 @@ func (c *Client) SubmitText(sessionID, text string, timeoutMillis int64) ([]byte
 	req, err := proto.Marshal(&v1.ClientRequest{Op: &v1.ClientRequest_Submit{Submit: &v1.SubmitInput{
 		SessionId: sessionID, InputId: NewInputID(),
 		Input: []*v1.ContentBlock{{Kind: &v1.ContentBlock_Text{Text: &v1.Text{Text: text}}}}}}})
+	if err != nil {
+		return nil, err
+	}
+	return c.Request(req, timeoutMillis)
+}
+
+// SubmitCardAction 提交用户在卡片上的动作（docs/design/cards.md §4）。valuesJSON 是字段 ID 到填写值的 JSON 对象，
+// 可为空；seq 是收到这一版卡片的事件序号。返回序列化的 ClientResponse，含义同 Request；重复点击时 duplicate 为 true。
+func (c *Client) SubmitCardAction(sessionID, cardID, callID, action, valuesJSON string, seq int64, timeoutMillis int64) ([]byte, error) {
+	a := &v1.CardAction{CardId: cardID, CallId: callID, Action: action, Seq: uint64(max(seq, 0))}
+	if valuesJSON != "" {
+		if err := json.Unmarshal([]byte(valuesJSON), &a.Values); err != nil {
+			return nil, fmt.Errorf("values: %w", err)
+		}
+	}
+	req, err := proto.Marshal(&v1.ClientRequest{Op: &v1.ClientRequest_Submit{Submit: &v1.SubmitInput{
+		SessionId: sessionID, InputId: NewInputID(),
+		Input: []*v1.ContentBlock{{Kind: &v1.ContentBlock_CardAction{CardAction: a}}}}}})
 	if err != nil {
 		return nil, err
 	}

@@ -29,10 +29,12 @@ import (
 	"yanshi/internal/auth"
 	"yanshi/internal/call"
 	"yanshi/internal/capability"
+	"yanshi/internal/card"
 	"yanshi/internal/channel"
 	"yanshi/internal/clock"
 	"yanshi/internal/decision"
 	"yanshi/internal/delegation"
+	"yanshi/internal/faults"
 	"yanshi/internal/feed"
 	"yanshi/internal/httpapi"
 	"yanshi/internal/ids"
@@ -136,7 +138,7 @@ func pgStores(pool *pgxpool.Pool, n *pg.Notifier) stores {
 // instance 启动一个 yanshi 实例：workers 个 Worker，serve 为 true 时提供 HTTP API 与 Node 网关。
 func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server {
 	agents, err := agentdef.NewRegistry(&agentdef.Def{Name: "dev", Version: "1", Model: "script/any",
-		Capabilities: []string{"ask_user", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*", "mcp:*/*", "agent:helper"},
+		Capabilities: []string{"ask_user", "show_card", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*", "mcp:*/*", "agent:helper"},
 		Memory:       agentdef.MemoryConfig{Recall: 5},
 		Call:         agentdef.CallConfig{Model: "fake/voice", Voice: "v1", Instructions: "你是语音助手"}},
 		// helper 是委托的目标（docs/design/m5-multi-agent.md）。
@@ -162,21 +164,24 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 		notifier = &notify.Notifier{Registry: st.Push, Presence: st.Presence, Pusher: st.pusher, Clock: clk}
 	}
 	mems := &memory.Service{Store: st.Memories, Grants: st.Grants, Deletions: st.Deletions, Clock: clk, IDs: ids.Random()}
-	catalog := &capability.Catalog{Local: capability.NewRegistry(memory.Capabilities(mems)...), Nodes: st.Dir, DefaultTimeout: time.Minute,
+	// 故障注入始终装配（与 serve -faults 相同）：没有规则时不影响执行，调试控制台的故障场景经 /v1/debug/faults 添加规则。
+	injector := &faults.Injector{}
+	catalog := &capability.Catalog{Local: capability.NewRegistry(append([]capability.Capability{card.New(st.artifacts.Meta)}, memory.Capabilities(mems)...)...),
+		Nodes: faults.Directory{Directory: st.Dir, Injector: injector}, DefaultTimeout: time.Minute,
 		Sandbox: &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID}, MCP: st.mcp}
 	router := &sandbox.Router{Hub: hub, Queue: st.SandboxQueue}
 	delegator := &delegation.Delegator{}
 	dispatch := &delegation.Router{Next: router, Delegator: delegator}
 	catalog.Agents = delegation.Directory{Registry: agents}
 	gw := model.NewGateway()
-	gw.Register("script", script.Provider{})
+	gw.Register("script", faults.Model{Next: script.Provider{}, Injector: injector})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	for i := range workers {
 		w := runtime.New(runtime.Config{ID: fmt.Sprintf("w%d", i), Store: store, Queue: st.Queue, Agents: agents, Model: gw,
 			Catalog: catalog, Dispatch: dispatch, Delegation: delegator, InjectionCheck: decision.InjectionRules{}, Artifacts: st.artifacts, Memory: mems, Live: bus, LiveEndpoint: peerSrv.URL, IdleWait: 5 * time.Millisecond,
-			Notify: notifier})
+			Notify: notifier, Faults: injector, LeaseTTL: 5 * time.Second})
 		go w.Run(ctx)
 	}
 	if st.provider != nil {
@@ -186,7 +191,7 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 		go c.Run(ctx)
 	}
 	svc := &service.Service{Store: store, Agents: agents, Nodes: dispatch,
-		Index: st.Index, Deletions: st.Deletions, Janitor: st.JanitorQueue, Moderator: st.moderator, Artifacts: st.artifacts}
+		Index: st.Index, Deletions: st.Deletions, Janitor: st.JanitorQueue, Moderator: faults.Moderator{Next: st.moderator, Injector: injector}, Artifacts: st.artifacts}
 	delegator.Service = svc
 	if workers > 0 {
 		ws := sandbox.Workspaces{Queue: st.SandboxQueue, Provider: st.provider, Activity: st.Activity}
@@ -210,7 +215,7 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 		Presence: &presence.Service{Store: st.Presence, Deletions: st.Deletions, Clock: clk}, Push: st.Push, Calls: calls}}
 	mux.Handle("/v1/connect", gwy)
 	mux.Handle("/v1/nodes/connect", gwy)
-	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: st.Dir, Artifacts: st.artifacts, Memory: mems, Feeds: feeds}).Handler())
+	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: st.Dir, Artifacts: st.artifacts, Memory: mems, Feeds: feeds, Faults: injector}).Handler())
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv

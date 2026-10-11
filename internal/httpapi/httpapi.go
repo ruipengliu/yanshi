@@ -27,6 +27,7 @@
 //	GET  /v1/artifacts/{id}/meta                   工件元数据
 //	GET  /v1/quota?end_user=                       当前周期的配额与已用（docs/design/m4-quota-usage.md §5）
 //	GET  /v1/usage?from=&to=&group_by=&end_user=   用量汇总（day | end_user | model | agent；金额单位：微元）
+//	/v1/debug/*                                    故障注入与进程指标，只在 serve -faults 时提供（debug.go）
 //
 // 除 /healthz 外，所有请求须携带业务线签发的令牌（Authorization: Bearer），
 // 调用方只能访问自己的 Session、Node 与工件，其余一律 404（docs/design/auth.md）。
@@ -53,6 +54,7 @@ import (
 	"yanshi/internal/askuser"
 	"yanshi/internal/auth"
 	"yanshi/internal/delegation"
+	"yanshi/internal/faults"
 	"yanshi/internal/feed"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/live"
@@ -83,7 +85,9 @@ type Server struct {
 	// Push 非 nil 时，注销账号一并删除推送设备登记。
 	Push notify.Registry
 	// Feeds 非 nil 时，本进程同一 Session 的事件流共用一个读者（feed.Hub）。
-	Feeds  *feed.Hub
+	Feeds *feed.Hub
+	// Faults 非 nil 时注册调试接口（/v1/debug/*，serve -faults，ADR-0033）。
+	Faults *faults.Injector
 	Logger *slog.Logger
 }
 
@@ -91,7 +95,7 @@ var pj = protojson.MarshalOptions{UseProtoNames: true}
 
 // routes 是全部需要鉴权的接口；授权矩阵测试据此检查每个接口都被覆盖。
 func (s *Server) routes() map[string]http.HandlerFunc {
-	return map[string]http.HandlerFunc{
+	routes := map[string]http.HandlerFunc{
 		"POST /v1/sessions":                           s.create,
 		"GET /v1/sessions":                            s.list,
 		"GET /v1/sessions/{id}":                       s.get,
@@ -120,6 +124,10 @@ func (s *Server) routes() map[string]http.HandlerFunc {
 		"GET /v1/artifacts/{id}":                      s.downloadArtifact,
 		"GET /v1/artifacts/{id}/meta":                 s.artifactMeta,
 	}
+	for p, h := range s.debugRoutes() {
+		routes[p] = h
+	}
+	return routes
 }
 
 // Routes 返回全部需要鉴权的接口模式。

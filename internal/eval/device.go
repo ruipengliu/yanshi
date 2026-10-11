@@ -19,6 +19,8 @@ import (
 // device 是评测用的虚拟设备：以 Hub 直接接入（与模拟测试相同，不经 WebSocket），
 // 提供只读文件与两个需要审批的副作用能力，并记录副作用供断言。
 type device struct {
+	// kind 是设备类型（DeviceSetup.Kind）。
+	kind   string
 	mu     sync.Mutex
 	files  map[string]string
 	writes map[string]string
@@ -31,8 +33,52 @@ func text(s string) []*v1.ContentBlock {
 	return []*v1.ContentBlock{{Kind: &v1.ContentBlock_Text{Text: &v1.Text{Text: s}}}}
 }
 
+// ok 是手机、车机能力的处理：只返回成功说明（调用与参数由评测从日志中断言）。
+func ok(format string, fields ...string) func(context.Context, string) ([]*v1.ContentBlock, error) {
+	return func(_ context.Context, args string) ([]*v1.ContentBlock, error) {
+		var in map[string]any
+		_ = json.Unmarshal([]byte(args), &in)
+		vals := make([]any, len(fields))
+		for i, f := range fields {
+			vals[i] = in[f]
+		}
+		return text(fmt.Sprintf(format, vals...)), nil
+	}
+}
+
 func (d *device) capabilities() []nodesdk.Capability {
 	str := `{"type":"object","properties":{%s},"required":[%s]}`
+	low := func(name, desc, props, required string, h func(context.Context, string) ([]*v1.ContentBlock, error)) nodesdk.Capability {
+		return nodesdk.Capability{Spec: &v1.CapabilitySpec{Name: name, Description: desc, Idempotent: true, Risk: v1.Risk_RISK_LOW,
+			InputSchemaJson: fmt.Sprintf(str, props, required)}, Handler: h}
+	}
+	music := low("play_music", "播放音乐。", `"query":{"type":"string","description":"歌名、歌手或风格"}`, `"query"`, ok("正在播放：%v"))
+	switch d.kind {
+	case "phone":
+		return []nodesdk.Capability{
+			low("set_alarm", "在手机上设置闹钟。", `"time":{"type":"string","description":"HH:MM"},"label":{"type":"string"},"repeat":{"type":"string","description":"不重复、每天、工作日或周末"}`, `"time"`,
+				ok("闹钟已设置：%v %v", "time", "repeat")),
+			low("list_alarms", "列出手机上的闹钟。", ``, ``, ok("（没有闹钟）")),
+			low("create_event", "在手机日历中创建日程。", `"title":{"type":"string"},"start":{"type":"string","description":"YYYY-MM-DD HH:MM"},"end":{"type":"string"}`, `"title","start"`,
+				ok("日程已创建：%v %v", "title", "start")),
+			low("get_location", "获取手机的当前位置。", ``, ``, ok("北京市海淀区中关村大街 27 号")),
+			music,
+			{Spec: &v1.CapabilitySpec{Name: "send_sms", Description: "用手机给联系人发短信。", Risk: v1.Risk_RISK_HIGH,
+				InputSchemaJson: fmt.Sprintf(str, `"to":{"type":"string"},"text":{"type":"string"}`, `"to","text"`)},
+				Handler: func(context.Context, string) ([]*v1.ContentBlock, error) {
+					d.mu.Lock()
+					defer d.mu.Unlock()
+					d.sent++
+					return text("sent"), nil
+				}},
+		}
+	case "car":
+		return []nodesdk.Capability{
+			low("navigate", "车机导航到目的地。", `"destination":{"type":"string"}`, `"destination"`, ok("已开始导航到 %v，预计 25 分钟", "destination")),
+			low("set_climate", "设置车内空调温度。", `"temperature":{"type":"number"}`, `"temperature"`, ok("空调已设为 %v℃", "temperature")),
+			music,
+		}
+	}
 	return []nodesdk.Capability{
 		{Spec: &v1.CapabilitySpec{Name: "list_files", Description: "列出电脑共享目录中的文件。", Idempotent: true, Risk: v1.Risk_RISK_LOW,
 			InputSchemaJson: `{"type":"object"}`},
@@ -111,7 +157,7 @@ func (d *device) run(ctx context.Context, hub *node.Hub, nodeID, businessLine, e
 		for _, c := range d.capabilities() {
 			caps = append(caps, c.Spec)
 		}
-		conn, err := hub.Connect(ctx, &v1.Hello{NodeId: nodeID, BusinessLine: businessLine, EndUser: endUser, Label: label, Kind: "desktop", Capabilities: caps})
+		conn, err := hub.Connect(ctx, &v1.Hello{NodeId: nodeID, BusinessLine: businessLine, EndUser: endUser, Label: label, Kind: d.helloKind(), Capabilities: caps})
 		if err != nil {
 			return err
 		}
@@ -134,7 +180,7 @@ func (d *device) connect(ctx context.Context, hub *node.Hub, nodeID, businessLin
 	for _, c := range d.capabilities() {
 		caps = append(caps, c.Spec)
 	}
-	conn, err := hub.Connect(ctx, &v1.Hello{NodeId: nodeID, BusinessLine: businessLine, EndUser: endUser, Label: label, Kind: "desktop", Capabilities: caps})
+	conn, err := hub.Connect(ctx, &v1.Hello{NodeId: nodeID, BusinessLine: businessLine, EndUser: endUser, Label: label, Kind: d.helloKind(), Capabilities: caps})
 	if err != nil {
 		return err
 	}
@@ -168,4 +214,12 @@ func (d *device) snapshot() (map[string]string, int) {
 		w[k] = v
 	}
 	return w, d.sent
+}
+
+func (d *device) helloKind() string {
+	switch d.kind {
+	case "phone", "car":
+		return d.kind
+	}
+	return "desktop"
 }

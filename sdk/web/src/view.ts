@@ -1,6 +1,6 @@
 // 渲染 Session 的辅助：正在生成的草稿与 ask_user 提问（docs/design/m3-duplex-channel.md §4、§7）。
 
-import type { Event, ToolCall } from "./gen/yanshi/v1/event_pb.js";
+import type { Card, Event, ToolCall } from "./gen/yanshi/v1/event_pb.js";
 import type { LiveDelta } from "./gen/yanshi/v1/node_pb.js";
 
 /**
@@ -148,4 +148,43 @@ export class PendingQuestions {
         return false;
     }
   }
+}
+
+/** 卡片的一个版本：卡片本身与收到它的事件序号（提交动作时带上，见 YanshiClient.submitCardAction）。 */
+export interface CardVersion {
+  card: Card;
+  seq: bigint;
+}
+
+/**
+ * Cards 跟踪一个 Session 中展示过的卡片（docs/design/cards.md）：卡片随 show_card 的结果出现，同一 card_id
+ * 再次展示时替换前一版，只保留最新版。cards 按卡片第一次出现的顺序排列。
+ */
+export class Cards {
+  readonly #byId = new Map<string, CardVersion>();
+
+  get cards(): CardVersion[] {
+    return [...this.#byId.values()];
+  }
+
+  get(cardId: string): CardVersion | undefined {
+    return this.#byId.get(cardId);
+  }
+
+  /** 应用一条已提交的事件；返回是否有卡片出现或被替换。 */
+  onEvent(e: Event): boolean {
+    const c = cardOf(e);
+    if (!c) return false;
+    this.#byId.set(c.cardId, { card: c, seq: e.seq });
+    return true;
+  }
+}
+
+/** 返回事件中的卡片（show_card 的结果）；没有时返回 undefined。 */
+export function cardOf(e: Event): Card | undefined {
+  if (e.payload.case !== "toolResult") return undefined;
+  for (const b of e.payload.value.content) {
+    if (b.kind.case === "card") return b.kind.value;
+  }
+  return undefined;
 }

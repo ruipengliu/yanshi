@@ -62,7 +62,10 @@ type AgentSetup struct {
 
 // DeviceSetup 是虚拟设备：只读的文件、需审批的写文件与发消息。
 type DeviceSetup struct {
-	Label string            `yaml:"label"`
+	Label string `yaml:"label"`
+	// Kind 是设备类型：pc（默认：文件、写文件、发消息）、phone（闹钟、日程、音乐、定位）或 car（导航、空调、音乐）。
+	// 手机与车机的能力只记录调用并返回成功，用于检验选对设备、选对工具与卡片展示。
+	Kind  string            `yaml:"kind"`
 	Files map[string]string `yaml:"files"`
 	// FilesFrom 从评测集目录下的文件读取设备文件内容（大文件），键为设备上的路径。
 	FilesFrom map[string]string `yaml:"files_from"`
@@ -88,10 +91,21 @@ type Turn struct {
 	// CrashAfterCalls > 0 时，本轮的 Run 发起这么多次调用后，"杀掉"正在执行它的 Worker（取消其上下文，
 	// 不释放租约），由其他 Worker 在租约到期后接管：用真实模型检验接管后能否接着完成。
 	CrashAfterCalls int `yaml:"crash_after_calls"`
+	// CardAction 非空时本轮不提交文字，而是在 Session 最近展示的卡片（或 Card 指定的卡片）上执行动作
+	// （docs/design/cards.md §4）。
+	CardAction *CardActionScript `yaml:"card_action"`
 	// Answer 是本轮遇到 ask_user 提问时的回答方式；为空时本轮停在提问处（状态 asked），
 	// 下一轮的输入即作为回答（与用户直接打字回答一致）。
 	Answer *AnswerScript `yaml:"answer"`
 	Expect Expect        `yaml:"expect"`
+}
+
+// CardActionScript 模拟用户在卡片上点按钮或点选列表项。Action 为空时点第一个按钮；Label 非空时点标签包含它的按钮或条目。
+type CardActionScript struct {
+	Card   string            `yaml:"card"`
+	Action string            `yaml:"action"`
+	Label  string            `yaml:"label"`
+	Values map[string]string `yaml:"values"`
 }
 
 // AnswerScript 模拟用户回答 ask_user：点选标签含 Choose 的选项、填写 Values、或输入 Text；

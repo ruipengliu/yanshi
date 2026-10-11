@@ -99,7 +99,7 @@ Grant { id, end_user, from_business_line, to_business_line, categories[], create
 ## 5. 检索与存储
 
 - **存储**：PostgreSQL + pgvector（ADR-0007 的基线数据库，不新增组件；私有化部署只需安装扩展）。开发环境的 compose 改用带 pgvector 的镜像。
-- **嵌入**：模型网关新增 `Embedder` 接口，第一个实现是 OpenAI 兼容的 `/embeddings`，对应火山方舟的 `doubao-embedding-vision` 和私有化服务。换嵌入模型需要重新计算向量，所以向量要记录模型名，检索时只比较同一模型的向量。
+- **嵌入**：模型网关新增 `Embedder` 接口，第一个实现是 OpenAI 兼容的 `/embeddings`（私有化服务、TokenHub）；火山方舟的多模态嵌入模型 `doubao-embedding-vision-*` 走 `/embeddings/multimodal`，每段文本单独请求（2026-10-11 起默认使用，见 model-calls.md §4）。换嵌入模型需要重新计算向量，所以向量要记录模型名，检索时只比较同一模型的向量。
 - **没有嵌入服务时**（开发、测试、模拟）：退化为字符二元组相似度（Dice 系数），在应用层计算。没有采用 `pg_trgm`，因为它对中文的切分依赖数据库的 locale；而每个 EndUser 每个业务线至多数百条，在应用层计算开销很小，内存与 PG 两种实现的结果也完全一致。
 - **向量检索**：按所属方过滤后精确比较（`<=>`），不建向量索引；向量列不固定维度，只比较同一模型、同一维度的向量。
 - **规模**：每个 EndUser 每个业务线最多保留 N 条（默认 500）。超出时拒绝写入，并提示 Agent 先删除或合并。

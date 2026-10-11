@@ -1,0 +1,19 @@
+name: concierge-delegates-domains
+description: >-
+  多 Agent 编排（docs/design/m5-multi-agent.md、console.md §8）：总管把涉及两个领域的请求分别委托给日程管家与出行助手，
+  它们在各自的设备上完成（手机闹钟、车机导航），总管汇总成卡片。
+agent: concierge
+setup:
+  devices:
+    - label: iphone
+      kind: phone
+    - label: car
+      kind: car
+turns:
+  - input: 明早 7 点叫我起床；另外现在帮我导航去公司（望京 SOHO）。
+    expect:
+      status: completed
+      calls: ["agent__schedule", "agent__travel"]
+      no_calls: ["iphone__set_alarm", "car__navigate"]
+      reply_contains: ["7"]
+      judge: 回复是否确认明早 7 点的闹钟已设好、已开始导航去望京 SOHO（可以有预计时间），且没有编造未执行的操作？

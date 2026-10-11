@@ -76,7 +76,7 @@ mobile: build/swift-protobuf/Package.swift
 sim: deps-up
 	go test ./internal/sim -sim.seeds=2000 -sim.pgseeds=100 -timeout 40m
 
-# 评测（docs/design/m4-eval.md）：消耗真实 token，不在 check 中；需要 TOKENHUB_API_KEY。
+# 评测（docs/design/m4-eval.md）：消耗真实 token，不在 check 中；需要 ARK_API_KEY（火山方舟）。
 # 改动模型、提示词、AgentDef 或召回、压缩、Memory、MCP 中给模型的文本时必须运行。
 EVAL_FLAGS ?= -sandbox docker
 eval: build

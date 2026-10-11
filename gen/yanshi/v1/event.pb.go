@@ -586,6 +586,8 @@ type ContentBlock struct {
 	//	*ContentBlock_Text
 	//	*ContentBlock_Media
 	//	*ContentBlock_UiContext
+	//	*ContentBlock_Card
+	//	*ContentBlock_CardAction
 	Kind          isContentBlock_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -655,6 +657,24 @@ func (x *ContentBlock) GetUiContext() *UIContext {
 	return nil
 }
 
+func (x *ContentBlock) GetCard() *Card {
+	if x != nil {
+		if x, ok := x.Kind.(*ContentBlock_Card); ok {
+			return x.Card
+		}
+	}
+	return nil
+}
+
+func (x *ContentBlock) GetCardAction() *CardAction {
+	if x != nil {
+		if x, ok := x.Kind.(*ContentBlock_CardAction); ok {
+			return x.CardAction
+		}
+	}
+	return nil
+}
+
 type isContentBlock_Kind interface {
 	isContentBlock_Kind()
 }
@@ -671,11 +691,801 @@ type ContentBlock_UiContext struct {
 	UiContext *UIContext `protobuf:"bytes,3,opt,name=ui_context,json=uiContext,proto3,oneof"`
 }
 
+type ContentBlock_Card struct {
+	// card 只出现在 show_card 的结果中（由平台校验后写入），card_action 只出现在用户输入中。
+	Card *Card `protobuf:"bytes,4,opt,name=card,proto3,oneof"`
+}
+
+type ContentBlock_CardAction struct {
+	CardAction *CardAction `protobuf:"bytes,5,opt,name=card_action,json=cardAction,proto3,oneof"`
+}
+
 func (*ContentBlock_Text) isContentBlock_Kind() {}
 
 func (*ContentBlock_Media) isContentBlock_Kind() {}
 
 func (*ContentBlock_UiContext) isContentBlock_Kind() {}
+
+func (*ContentBlock_Card) isContentBlock_Kind() {}
+
+func (*ContentBlock_CardAction) isContentBlock_Kind() {}
+
+// Card 是 Agent 经内置工具 show_card 展示给用户的卡片：图文混排的内容，加上可点选的按钮、列表项与可填写的字段
+// （docs/design/cards.md，ADR-0032）。卡片随 show_card 的结果写入日志；同一 card_id 再次展示时替换前一版，
+// 客户端只显示最新版。卡片不阻塞 Run：需要等用户选择才能继续时用 ask_user。
+type Card struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// card_id 由模型指定或由平台按调用生成，在 Session 内标识一张卡片。
+	CardId string `protobuf:"bytes,1,opt,name=card_id,json=cardId,proto3" json:"card_id,omitempty"`
+	// call_id 是展示这一版卡片的 show_card 调用：动作带上它，旧版本上的动作与新版本上的动作互不混淆。
+	CallId   string `protobuf:"bytes,2,opt,name=call_id,json=callId,proto3" json:"call_id,omitempty"`
+	Title    string `protobuf:"bytes,3,opt,name=title,proto3" json:"title,omitempty"`
+	Subtitle string `protobuf:"bytes,4,opt,name=subtitle,proto3" json:"subtitle,omitempty"`
+	// image 是头图：artifact://<id>（须属于本 Session）或 icon:<名称>（内置图标，见 card.Icons）。
+	// 不允许外部地址：外部图片可以追踪用户，也不随 Session 删除。
+	Image         string         `protobuf:"bytes,5,opt,name=image,proto3" json:"image,omitempty"`
+	Body          []*CardElement `protobuf:"bytes,6,rep,name=body,proto3" json:"body,omitempty"`
+	Buttons       []*CardButton  `protobuf:"bytes,7,rep,name=buttons,proto3" json:"buttons,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Card) Reset() {
+	*x = Card{}
+	mi := &file_yanshi_v1_event_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Card) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Card) ProtoMessage() {}
+
+func (x *Card) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_event_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Card.ProtoReflect.Descriptor instead.
+func (*Card) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *Card) GetCardId() string {
+	if x != nil {
+		return x.CardId
+	}
+	return ""
+}
+
+func (x *Card) GetCallId() string {
+	if x != nil {
+		return x.CallId
+	}
+	return ""
+}
+
+func (x *Card) GetTitle() string {
+	if x != nil {
+		return x.Title
+	}
+	return ""
+}
+
+func (x *Card) GetSubtitle() string {
+	if x != nil {
+		return x.Subtitle
+	}
+	return ""
+}
+
+func (x *Card) GetImage() string {
+	if x != nil {
+		return x.Image
+	}
+	return ""
+}
+
+func (x *Card) GetBody() []*CardElement {
+	if x != nil {
+		return x.Body
+	}
+	return nil
+}
+
+func (x *Card) GetButtons() []*CardButton {
+	if x != nil {
+		return x.Buttons
+	}
+	return nil
+}
+
+type CardElement struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Kind:
+	//
+	//	*CardElement_Markdown
+	//	*CardElement_Image
+	//	*CardElement_Facts
+	//	*CardElement_List
+	//	*CardElement_Field
+	Kind          isCardElement_Kind `protobuf_oneof:"kind"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CardElement) Reset() {
+	*x = CardElement{}
+	mi := &file_yanshi_v1_event_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CardElement) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CardElement) ProtoMessage() {}
+
+func (x *CardElement) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_event_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CardElement.ProtoReflect.Descriptor instead.
+func (*CardElement) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *CardElement) GetKind() isCardElement_Kind {
+	if x != nil {
+		return x.Kind
+	}
+	return nil
+}
+
+func (x *CardElement) GetMarkdown() *CardMarkdown {
+	if x != nil {
+		if x, ok := x.Kind.(*CardElement_Markdown); ok {
+			return x.Markdown
+		}
+	}
+	return nil
+}
+
+func (x *CardElement) GetImage() *CardImage {
+	if x != nil {
+		if x, ok := x.Kind.(*CardElement_Image); ok {
+			return x.Image
+		}
+	}
+	return nil
+}
+
+func (x *CardElement) GetFacts() *CardFacts {
+	if x != nil {
+		if x, ok := x.Kind.(*CardElement_Facts); ok {
+			return x.Facts
+		}
+	}
+	return nil
+}
+
+func (x *CardElement) GetList() *CardList {
+	if x != nil {
+		if x, ok := x.Kind.(*CardElement_List); ok {
+			return x.List
+		}
+	}
+	return nil
+}
+
+func (x *CardElement) GetField() *CardField {
+	if x != nil {
+		if x, ok := x.Kind.(*CardElement_Field); ok {
+			return x.Field
+		}
+	}
+	return nil
+}
+
+type isCardElement_Kind interface {
+	isCardElement_Kind()
+}
+
+type CardElement_Markdown struct {
+	// markdown 是 Markdown 文本（客户端只渲染安全的子集：不执行 HTML）。
+	Markdown *CardMarkdown `protobuf:"bytes,1,opt,name=markdown,proto3,oneof"`
+}
+
+type CardElement_Image struct {
+	Image *CardImage `protobuf:"bytes,2,opt,name=image,proto3,oneof"`
+}
+
+type CardElement_Facts struct {
+	Facts *CardFacts `protobuf:"bytes,3,opt,name=facts,proto3,oneof"`
+}
+
+type CardElement_List struct {
+	List *CardList `protobuf:"bytes,4,opt,name=list,proto3,oneof"`
+}
+
+type CardElement_Field struct {
+	Field *CardField `protobuf:"bytes,5,opt,name=field,proto3,oneof"`
+}
+
+func (*CardElement_Markdown) isCardElement_Kind() {}
+
+func (*CardElement_Image) isCardElement_Kind() {}
+
+func (*CardElement_Facts) isCardElement_Kind() {}
+
+func (*CardElement_List) isCardElement_Kind() {}
+
+func (*CardElement_Field) isCardElement_Kind() {}
+
+type CardMarkdown struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Text          string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CardMarkdown) Reset() {
+	*x = CardMarkdown{}
+	mi := &file_yanshi_v1_event_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CardMarkdown) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CardMarkdown) ProtoMessage() {}
+
+func (x *CardMarkdown) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_event_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CardMarkdown.ProtoReflect.Descriptor instead.
+func (*CardMarkdown) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *CardMarkdown) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+type CardImage struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// uri 同 Card.image。
+	Uri           string `protobuf:"bytes,1,opt,name=uri,proto3" json:"uri,omitempty"`
+	Alt           string `protobuf:"bytes,2,opt,name=alt,proto3" json:"alt,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CardImage) Reset() {
+	*x = CardImage{}
+	mi := &file_yanshi_v1_event_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CardImage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CardImage) ProtoMessage() {}
+
+func (x *CardImage) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_event_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CardImage.ProtoReflect.Descriptor instead.
+func (*CardImage) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *CardImage) GetUri() string {
+	if x != nil {
+		return x.Uri
+	}
+	return ""
+}
+
+func (x *CardImage) GetAlt() string {
+	if x != nil {
+		return x.Alt
+	}
+	return ""
+}
+
+// CardFacts 是键值列表，如"时间 07:00""重复 工作日"。
+type CardFacts struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Facts         []*CardFact            `protobuf:"bytes,1,rep,name=facts,proto3" json:"facts,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CardFacts) Reset() {
+	*x = CardFacts{}
+	mi := &file_yanshi_v1_event_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CardFacts) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CardFacts) ProtoMessage() {}
+
+func (x *CardFacts) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_event_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CardFacts.ProtoReflect.Descriptor instead.
+func (*CardFacts) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *CardFacts) GetFacts() []*CardFact {
+	if x != nil {
+		return x.Facts
+	}
+	return nil
+}
+
+type CardFact struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Label         string                 `protobuf:"bytes,1,opt,name=label,proto3" json:"label,omitempty"`
+	Value         string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CardFact) Reset() {
+	*x = CardFact{}
+	mi := &file_yanshi_v1_event_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CardFact) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CardFact) ProtoMessage() {}
+
+func (x *CardFact) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_event_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CardFact.ProtoReflect.Descriptor instead.
+func (*CardFact) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *CardFact) GetLabel() string {
+	if x != nil {
+		return x.Label
+	}
+	return ""
+}
+
+func (x *CardFact) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
+type CardList struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Items         []*CardListItem        `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CardList) Reset() {
+	*x = CardList{}
+	mi := &file_yanshi_v1_event_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CardList) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CardList) ProtoMessage() {}
+
+func (x *CardList) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_event_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CardList.ProtoReflect.Descriptor instead.
+func (*CardList) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *CardList) GetItems() []*CardListItem {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
+type CardListItem struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Title    string                 `protobuf:"bytes,1,opt,name=title,proto3" json:"title,omitempty"`
+	Subtitle string                 `protobuf:"bytes,2,opt,name=subtitle,proto3" json:"subtitle,omitempty"`
+	// image 同 Card.image。
+	Image string `protobuf:"bytes,3,opt,name=image,proto3" json:"image,omitempty"`
+	// action 非空时该项可点选，点选即执行这个动作（动作 ID）。
+	Action        string `protobuf:"bytes,4,opt,name=action,proto3" json:"action,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CardListItem) Reset() {
+	*x = CardListItem{}
+	mi := &file_yanshi_v1_event_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CardListItem) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CardListItem) ProtoMessage() {}
+
+func (x *CardListItem) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_event_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CardListItem.ProtoReflect.Descriptor instead.
+func (*CardListItem) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *CardListItem) GetTitle() string {
+	if x != nil {
+		return x.Title
+	}
+	return ""
+}
+
+func (x *CardListItem) GetSubtitle() string {
+	if x != nil {
+		return x.Subtitle
+	}
+	return ""
+}
+
+func (x *CardListItem) GetImage() string {
+	if x != nil {
+		return x.Image
+	}
+	return ""
+}
+
+func (x *CardListItem) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
+// CardField 是用户可以填写的字段；随按钮动作一起提交。
+type CardField struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Label string                 `protobuf:"bytes,2,opt,name=label,proto3" json:"label,omitempty"`
+	// type 为 text（默认）、number、date（YYYY-MM-DD）、time（HH:MM）、select 或 toggle（"true"/"false"）。
+	Type string `protobuf:"bytes,3,opt,name=type,proto3" json:"type,omitempty"`
+	// options 是 select 的选项。
+	Options []string `protobuf:"bytes,4,rep,name=options,proto3" json:"options,omitempty"`
+	// value 是初始值。
+	Value         string `protobuf:"bytes,5,opt,name=value,proto3" json:"value,omitempty"`
+	Required      bool   `protobuf:"varint,6,opt,name=required,proto3" json:"required,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CardField) Reset() {
+	*x = CardField{}
+	mi := &file_yanshi_v1_event_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CardField) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CardField) ProtoMessage() {}
+
+func (x *CardField) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_event_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CardField.ProtoReflect.Descriptor instead.
+func (*CardField) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *CardField) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *CardField) GetLabel() string {
+	if x != nil {
+		return x.Label
+	}
+	return ""
+}
+
+func (x *CardField) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *CardField) GetOptions() []string {
+	if x != nil {
+		return x.Options
+	}
+	return nil
+}
+
+func (x *CardField) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
+func (x *CardField) GetRequired() bool {
+	if x != nil {
+		return x.Required
+	}
+	return false
+}
+
+type CardButton struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// id 是动作 ID，在卡片内唯一。
+	Id    string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Label string `protobuf:"bytes,2,opt,name=label,proto3" json:"label,omitempty"`
+	// style 为 primary、default（默认）或 danger，只影响显示。
+	Style         string `protobuf:"bytes,3,opt,name=style,proto3" json:"style,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CardButton) Reset() {
+	*x = CardButton{}
+	mi := &file_yanshi_v1_event_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CardButton) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CardButton) ProtoMessage() {}
+
+func (x *CardButton) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_event_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CardButton.ProtoReflect.Descriptor instead.
+func (*CardButton) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *CardButton) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *CardButton) GetLabel() string {
+	if x != nil {
+		return x.Label
+	}
+	return ""
+}
+
+func (x *CardButton) GetStyle() string {
+	if x != nil {
+		return x.Style
+	}
+	return ""
+}
+
+// CardAction 是用户在卡片上执行的动作（点按钮或点选列表项），作为一条输入提交：有进行中的 Run 时并入它，
+// 否则开启新 Run。同一版卡片上的同一动作只生效一次（输入 ID 由平台按 call_id 与动作推导）。
+type CardAction struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	CardId string                 `protobuf:"bytes,1,opt,name=card_id,json=cardId,proto3" json:"card_id,omitempty"`
+	CallId string                 `protobuf:"bytes,2,opt,name=call_id,json=callId,proto3" json:"call_id,omitempty"`
+	Action string                 `protobuf:"bytes,3,opt,name=action,proto3" json:"action,omitempty"`
+	// label 是动作的显示文字，由平台按卡片填写（客户端提交的值被忽略）。
+	Label string `protobuf:"bytes,4,opt,name=label,proto3" json:"label,omitempty"`
+	// values 是卡片上字段的填写值（字段 ID → 值），只含卡片声明过的字段。
+	Values map[string]string `protobuf:"bytes,5,rep,name=values,proto3" json:"values,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// seq 是客户端收到这一版卡片的事件序号：平台据此直接读取卡片，而不必扫描日志。为 0 或不符时扫描日志。
+	Seq           uint64 `protobuf:"varint,6,opt,name=seq,proto3" json:"seq,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CardAction) Reset() {
+	*x = CardAction{}
+	mi := &file_yanshi_v1_event_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CardAction) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CardAction) ProtoMessage() {}
+
+func (x *CardAction) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_event_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CardAction.ProtoReflect.Descriptor instead.
+func (*CardAction) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *CardAction) GetCardId() string {
+	if x != nil {
+		return x.CardId
+	}
+	return ""
+}
+
+func (x *CardAction) GetCallId() string {
+	if x != nil {
+		return x.CallId
+	}
+	return ""
+}
+
+func (x *CardAction) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
+func (x *CardAction) GetLabel() string {
+	if x != nil {
+		return x.Label
+	}
+	return ""
+}
+
+func (x *CardAction) GetValues() map[string]string {
+	if x != nil {
+		return x.Values
+	}
+	return nil
+}
+
+func (x *CardAction) GetSeq() uint64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
 
 // UIContext 是用户提交输入时所在界面的上下文，由 HostApp 附在输入上（docs/design/m3-duplex-channel.md §8），
 // 帮助模型理解"这个""这里"指什么。内容可能来自第三方（正在看的网页、别人发来的消息），按不可信数据对待。
@@ -699,7 +1509,7 @@ type UIContext struct {
 
 func (x *UIContext) Reset() {
 	*x = UIContext{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[3]
+	mi := &file_yanshi_v1_event_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -711,7 +1521,7 @@ func (x *UIContext) String() string {
 func (*UIContext) ProtoMessage() {}
 
 func (x *UIContext) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[3]
+	mi := &file_yanshi_v1_event_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -724,7 +1534,7 @@ func (x *UIContext) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UIContext.ProtoReflect.Descriptor instead.
 func (*UIContext) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{3}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *UIContext) GetScreen() string {
@@ -771,7 +1581,7 @@ type Text struct {
 
 func (x *Text) Reset() {
 	*x = Text{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[4]
+	mi := &file_yanshi_v1_event_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -783,7 +1593,7 @@ func (x *Text) String() string {
 func (*Text) ProtoMessage() {}
 
 func (x *Text) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[4]
+	mi := &file_yanshi_v1_event_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -796,7 +1606,7 @@ func (x *Text) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Text.ProtoReflect.Descriptor instead.
 func (*Text) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{4}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *Text) GetText() string {
@@ -822,7 +1632,7 @@ type Media struct {
 
 func (x *Media) Reset() {
 	*x = Media{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[5]
+	mi := &file_yanshi_v1_event_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -834,7 +1644,7 @@ func (x *Media) String() string {
 func (*Media) ProtoMessage() {}
 
 func (x *Media) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[5]
+	mi := &file_yanshi_v1_event_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -847,7 +1657,7 @@ func (x *Media) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Media.ProtoReflect.Descriptor instead.
 func (*Media) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{5}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *Media) GetMimeType() string {
@@ -895,7 +1705,7 @@ type AgentRef struct {
 
 func (x *AgentRef) Reset() {
 	*x = AgentRef{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[6]
+	mi := &file_yanshi_v1_event_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -907,7 +1717,7 @@ func (x *AgentRef) String() string {
 func (*AgentRef) ProtoMessage() {}
 
 func (x *AgentRef) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[6]
+	mi := &file_yanshi_v1_event_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -920,7 +1730,7 @@ func (x *AgentRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentRef.ProtoReflect.Descriptor instead.
 func (*AgentRef) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{6}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *AgentRef) GetName() string {
@@ -951,7 +1761,7 @@ type SessionCreated struct {
 
 func (x *SessionCreated) Reset() {
 	*x = SessionCreated{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[7]
+	mi := &file_yanshi_v1_event_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -963,7 +1773,7 @@ func (x *SessionCreated) String() string {
 func (*SessionCreated) ProtoMessage() {}
 
 func (x *SessionCreated) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[7]
+	mi := &file_yanshi_v1_event_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -976,7 +1786,7 @@ func (x *SessionCreated) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionCreated.ProtoReflect.Descriptor instead.
 func (*SessionCreated) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{7}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *SessionCreated) GetBusinessLine() string {
@@ -1022,7 +1832,7 @@ type ParentRef struct {
 
 func (x *ParentRef) Reset() {
 	*x = ParentRef{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[8]
+	mi := &file_yanshi_v1_event_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1034,7 +1844,7 @@ func (x *ParentRef) String() string {
 func (*ParentRef) ProtoMessage() {}
 
 func (x *ParentRef) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[8]
+	mi := &file_yanshi_v1_event_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1047,7 +1857,7 @@ func (x *ParentRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ParentRef.ProtoReflect.Descriptor instead.
 func (*ParentRef) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{8}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ParentRef) GetSessionId() string {
@@ -1091,7 +1901,7 @@ type AgentSwitched struct {
 
 func (x *AgentSwitched) Reset() {
 	*x = AgentSwitched{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[9]
+	mi := &file_yanshi_v1_event_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1103,7 +1913,7 @@ func (x *AgentSwitched) String() string {
 func (*AgentSwitched) ProtoMessage() {}
 
 func (x *AgentSwitched) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[9]
+	mi := &file_yanshi_v1_event_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1116,7 +1926,7 @@ func (x *AgentSwitched) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentSwitched.ProtoReflect.Descriptor instead.
 func (*AgentSwitched) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{9}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *AgentSwitched) GetFrom() *AgentRef {
@@ -1155,7 +1965,7 @@ type ContentModerated struct {
 
 func (x *ContentModerated) Reset() {
 	*x = ContentModerated{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[10]
+	mi := &file_yanshi_v1_event_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1167,7 +1977,7 @@ func (x *ContentModerated) String() string {
 func (*ContentModerated) ProtoMessage() {}
 
 func (x *ContentModerated) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[10]
+	mi := &file_yanshi_v1_event_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1180,7 +1990,7 @@ func (x *ContentModerated) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ContentModerated.ProtoReflect.Descriptor instead.
 func (*ContentModerated) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{10}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ContentModerated) GetRunId() string {
@@ -1226,7 +2036,7 @@ type RunRequested struct {
 
 func (x *RunRequested) Reset() {
 	*x = RunRequested{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[11]
+	mi := &file_yanshi_v1_event_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1238,7 +2048,7 @@ func (x *RunRequested) String() string {
 func (*RunRequested) ProtoMessage() {}
 
 func (x *RunRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[11]
+	mi := &file_yanshi_v1_event_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1251,7 +2061,7 @@ func (x *RunRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunRequested.ProtoReflect.Descriptor instead.
 func (*RunRequested) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{11}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *RunRequested) GetRunId() string {
@@ -1297,7 +2107,7 @@ type Steered struct {
 
 func (x *Steered) Reset() {
 	*x = Steered{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[12]
+	mi := &file_yanshi_v1_event_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1309,7 +2119,7 @@ func (x *Steered) String() string {
 func (*Steered) ProtoMessage() {}
 
 func (x *Steered) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[12]
+	mi := &file_yanshi_v1_event_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1322,7 +2132,7 @@ func (x *Steered) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Steered.ProtoReflect.Descriptor instead.
 func (*Steered) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{12}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *Steered) GetRunId() string {
@@ -1368,7 +2178,7 @@ type AttemptStarted struct {
 
 func (x *AttemptStarted) Reset() {
 	*x = AttemptStarted{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[13]
+	mi := &file_yanshi_v1_event_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1380,7 +2190,7 @@ func (x *AttemptStarted) String() string {
 func (*AttemptStarted) ProtoMessage() {}
 
 func (x *AttemptStarted) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[13]
+	mi := &file_yanshi_v1_event_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1393,7 +2203,7 @@ func (x *AttemptStarted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttemptStarted.ProtoReflect.Descriptor instead.
 func (*AttemptStarted) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{13}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *AttemptStarted) GetRunId() string {
@@ -1436,7 +2246,7 @@ type ToolCall struct {
 
 func (x *ToolCall) Reset() {
 	*x = ToolCall{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[14]
+	mi := &file_yanshi_v1_event_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1448,7 +2258,7 @@ func (x *ToolCall) String() string {
 func (*ToolCall) ProtoMessage() {}
 
 func (x *ToolCall) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[14]
+	mi := &file_yanshi_v1_event_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1461,7 +2271,7 @@ func (x *ToolCall) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolCall.ProtoReflect.Descriptor instead.
 func (*ToolCall) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{14}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *ToolCall) GetCallId() string {
@@ -1497,7 +2307,7 @@ type Usage struct {
 
 func (x *Usage) Reset() {
 	*x = Usage{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[15]
+	mi := &file_yanshi_v1_event_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1509,7 +2319,7 @@ func (x *Usage) String() string {
 func (*Usage) ProtoMessage() {}
 
 func (x *Usage) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[15]
+	mi := &file_yanshi_v1_event_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1522,7 +2332,7 @@ func (x *Usage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Usage.ProtoReflect.Descriptor instead.
 func (*Usage) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{15}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *Usage) GetInputTokens() uint64 {
@@ -1561,7 +2371,7 @@ type AssistantMessage struct {
 
 func (x *AssistantMessage) Reset() {
 	*x = AssistantMessage{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[16]
+	mi := &file_yanshi_v1_event_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1573,7 +2383,7 @@ func (x *AssistantMessage) String() string {
 func (*AssistantMessage) ProtoMessage() {}
 
 func (x *AssistantMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[16]
+	mi := &file_yanshi_v1_event_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1586,7 +2396,7 @@ func (x *AssistantMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssistantMessage.ProtoReflect.Descriptor instead.
 func (*AssistantMessage) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{16}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *AssistantMessage) GetRunId() string {
@@ -1647,7 +2457,7 @@ type ToolCallStarted struct {
 
 func (x *ToolCallStarted) Reset() {
 	*x = ToolCallStarted{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[17]
+	mi := &file_yanshi_v1_event_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1659,7 +2469,7 @@ func (x *ToolCallStarted) String() string {
 func (*ToolCallStarted) ProtoMessage() {}
 
 func (x *ToolCallStarted) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[17]
+	mi := &file_yanshi_v1_event_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1672,7 +2482,7 @@ func (x *ToolCallStarted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolCallStarted.ProtoReflect.Descriptor instead.
 func (*ToolCallStarted) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{17}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ToolCallStarted) GetRunId() string {
@@ -1728,7 +2538,7 @@ type ToolResult struct {
 
 func (x *ToolResult) Reset() {
 	*x = ToolResult{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[18]
+	mi := &file_yanshi_v1_event_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1740,7 +2550,7 @@ func (x *ToolResult) String() string {
 func (*ToolResult) ProtoMessage() {}
 
 func (x *ToolResult) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[18]
+	mi := &file_yanshi_v1_event_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1753,7 +2563,7 @@ func (x *ToolResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolResult.ProtoReflect.Descriptor instead.
 func (*ToolResult) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{18}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *ToolResult) GetRunId() string {
@@ -1815,7 +2625,7 @@ type RunCompleted struct {
 
 func (x *RunCompleted) Reset() {
 	*x = RunCompleted{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[19]
+	mi := &file_yanshi_v1_event_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1827,7 +2637,7 @@ func (x *RunCompleted) String() string {
 func (*RunCompleted) ProtoMessage() {}
 
 func (x *RunCompleted) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[19]
+	mi := &file_yanshi_v1_event_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1840,7 +2650,7 @@ func (x *RunCompleted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunCompleted.ProtoReflect.Descriptor instead.
 func (*RunCompleted) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{19}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *RunCompleted) GetRunId() string {
@@ -1868,7 +2678,7 @@ type RunFailed struct {
 
 func (x *RunFailed) Reset() {
 	*x = RunFailed{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[20]
+	mi := &file_yanshi_v1_event_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1880,7 +2690,7 @@ func (x *RunFailed) String() string {
 func (*RunFailed) ProtoMessage() {}
 
 func (x *RunFailed) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[20]
+	mi := &file_yanshi_v1_event_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1893,7 +2703,7 @@ func (x *RunFailed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunFailed.ProtoReflect.Descriptor instead.
 func (*RunFailed) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{20}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *RunFailed) GetRunId() string {
@@ -1928,7 +2738,7 @@ type RunInterrupted struct {
 
 func (x *RunInterrupted) Reset() {
 	*x = RunInterrupted{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[21]
+	mi := &file_yanshi_v1_event_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1940,7 +2750,7 @@ func (x *RunInterrupted) String() string {
 func (*RunInterrupted) ProtoMessage() {}
 
 func (x *RunInterrupted) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[21]
+	mi := &file_yanshi_v1_event_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1953,7 +2763,7 @@ func (x *RunInterrupted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunInterrupted.ProtoReflect.Descriptor instead.
 func (*RunInterrupted) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{21}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *RunInterrupted) GetRunId() string {
@@ -1986,7 +2796,7 @@ type RunSuspended struct {
 
 func (x *RunSuspended) Reset() {
 	*x = RunSuspended{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[22]
+	mi := &file_yanshi_v1_event_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1998,7 +2808,7 @@ func (x *RunSuspended) String() string {
 func (*RunSuspended) ProtoMessage() {}
 
 func (x *RunSuspended) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[22]
+	mi := &file_yanshi_v1_event_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2011,7 +2821,7 @@ func (x *RunSuspended) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunSuspended.ProtoReflect.Descriptor instead.
 func (*RunSuspended) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{22}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *RunSuspended) GetRunId() string {
@@ -2057,7 +2867,7 @@ type ApprovalRequested struct {
 
 func (x *ApprovalRequested) Reset() {
 	*x = ApprovalRequested{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[23]
+	mi := &file_yanshi_v1_event_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2069,7 +2879,7 @@ func (x *ApprovalRequested) String() string {
 func (*ApprovalRequested) ProtoMessage() {}
 
 func (x *ApprovalRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[23]
+	mi := &file_yanshi_v1_event_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2082,7 +2892,7 @@ func (x *ApprovalRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApprovalRequested.ProtoReflect.Descriptor instead.
 func (*ApprovalRequested) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{23}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ApprovalRequested) GetRunId() string {
@@ -2134,7 +2944,7 @@ type ApprovalDecided struct {
 
 func (x *ApprovalDecided) Reset() {
 	*x = ApprovalDecided{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[24]
+	mi := &file_yanshi_v1_event_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2146,7 +2956,7 @@ func (x *ApprovalDecided) String() string {
 func (*ApprovalDecided) ProtoMessage() {}
 
 func (x *ApprovalDecided) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[24]
+	mi := &file_yanshi_v1_event_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2159,7 +2969,7 @@ func (x *ApprovalDecided) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApprovalDecided.ProtoReflect.Descriptor instead.
 func (*ApprovalDecided) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{24}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *ApprovalDecided) GetRunId() string {
@@ -2206,7 +3016,7 @@ type ContextCompacted struct {
 
 func (x *ContextCompacted) Reset() {
 	*x = ContextCompacted{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[25]
+	mi := &file_yanshi_v1_event_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2218,7 +3028,7 @@ func (x *ContextCompacted) String() string {
 func (*ContextCompacted) ProtoMessage() {}
 
 func (x *ContextCompacted) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[25]
+	mi := &file_yanshi_v1_event_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2231,7 +3041,7 @@ func (x *ContextCompacted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ContextCompacted.ProtoReflect.Descriptor instead.
 func (*ContextCompacted) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{25}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *ContextCompacted) GetRunId() string {
@@ -2289,7 +3099,7 @@ type SessionClosed struct {
 
 func (x *SessionClosed) Reset() {
 	*x = SessionClosed{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[26]
+	mi := &file_yanshi_v1_event_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2301,7 +3111,7 @@ func (x *SessionClosed) String() string {
 func (*SessionClosed) ProtoMessage() {}
 
 func (x *SessionClosed) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[26]
+	mi := &file_yanshi_v1_event_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2314,7 +3124,7 @@ func (x *SessionClosed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionClosed.ProtoReflect.Descriptor instead.
 func (*SessionClosed) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{26}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *SessionClosed) GetBy() string {
@@ -2344,7 +3154,7 @@ type MemoryRecalled struct {
 
 func (x *MemoryRecalled) Reset() {
 	*x = MemoryRecalled{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[27]
+	mi := &file_yanshi_v1_event_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2356,7 +3166,7 @@ func (x *MemoryRecalled) String() string {
 func (*MemoryRecalled) ProtoMessage() {}
 
 func (x *MemoryRecalled) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[27]
+	mi := &file_yanshi_v1_event_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2369,7 +3179,7 @@ func (x *MemoryRecalled) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MemoryRecalled.ProtoReflect.Descriptor instead.
 func (*MemoryRecalled) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{27}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *MemoryRecalled) GetRunId() string {
@@ -2406,7 +3216,7 @@ type RecalledMemory struct {
 
 func (x *RecalledMemory) Reset() {
 	*x = RecalledMemory{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[28]
+	mi := &file_yanshi_v1_event_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2418,7 +3228,7 @@ func (x *RecalledMemory) String() string {
 func (*RecalledMemory) ProtoMessage() {}
 
 func (x *RecalledMemory) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[28]
+	mi := &file_yanshi_v1_event_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2431,7 +3241,7 @@ func (x *RecalledMemory) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecalledMemory.ProtoReflect.Descriptor instead.
 func (*RecalledMemory) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{28}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *RecalledMemory) GetId() string {
@@ -2479,7 +3289,7 @@ type CallStarted struct {
 
 func (x *CallStarted) Reset() {
 	*x = CallStarted{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[29]
+	mi := &file_yanshi_v1_event_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2491,7 +3301,7 @@ func (x *CallStarted) String() string {
 func (*CallStarted) ProtoMessage() {}
 
 func (x *CallStarted) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[29]
+	mi := &file_yanshi_v1_event_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2504,7 +3314,7 @@ func (x *CallStarted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallStarted.ProtoReflect.Descriptor instead.
 func (*CallStarted) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{29}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *CallStarted) GetCallId() string {
@@ -2551,7 +3361,7 @@ type CallTranscript struct {
 
 func (x *CallTranscript) Reset() {
 	*x = CallTranscript{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[30]
+	mi := &file_yanshi_v1_event_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2563,7 +3373,7 @@ func (x *CallTranscript) String() string {
 func (*CallTranscript) ProtoMessage() {}
 
 func (x *CallTranscript) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[30]
+	mi := &file_yanshi_v1_event_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2576,7 +3386,7 @@ func (x *CallTranscript) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallTranscript.ProtoReflect.Descriptor instead.
 func (*CallTranscript) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{30}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *CallTranscript) GetCallId() string {
@@ -2620,7 +3430,7 @@ type CallEnded struct {
 
 func (x *CallEnded) Reset() {
 	*x = CallEnded{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[31]
+	mi := &file_yanshi_v1_event_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2632,7 +3442,7 @@ func (x *CallEnded) String() string {
 func (*CallEnded) ProtoMessage() {}
 
 func (x *CallEnded) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[31]
+	mi := &file_yanshi_v1_event_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2645,7 +3455,7 @@ func (x *CallEnded) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallEnded.ProtoReflect.Descriptor instead.
 func (*CallEnded) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{31}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *CallEnded) GetCallId() string {
@@ -2711,13 +3521,71 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"confidence\x18\a \x01(\x02R\n" +
 	"confidence\x12\x14\n" +
 	"\x05model\x18\b \x01(\tR\x05model\x12\x16\n" +
-	"\x06shadow\x18\t \x01(\bR\x06shadow\"\x9e\x01\n" +
+	"\x06shadow\x18\t \x01(\bR\x06shadow\"\xff\x01\n" +
 	"\fContentBlock\x12%\n" +
 	"\x04text\x18\x01 \x01(\v2\x0f.yanshi.v1.TextH\x00R\x04text\x12(\n" +
 	"\x05media\x18\x02 \x01(\v2\x10.yanshi.v1.MediaH\x00R\x05media\x125\n" +
 	"\n" +
-	"ui_context\x18\x03 \x01(\v2\x14.yanshi.v1.UIContextH\x00R\tuiContextB\x06\n" +
-	"\x04kind\"\x85\x01\n" +
+	"ui_context\x18\x03 \x01(\v2\x14.yanshi.v1.UIContextH\x00R\tuiContext\x12%\n" +
+	"\x04card\x18\x04 \x01(\v2\x0f.yanshi.v1.CardH\x00R\x04card\x128\n" +
+	"\vcard_action\x18\x05 \x01(\v2\x15.yanshi.v1.CardActionH\x00R\n" +
+	"cardActionB\x06\n" +
+	"\x04kind\"\xdd\x01\n" +
+	"\x04Card\x12\x17\n" +
+	"\acard_id\x18\x01 \x01(\tR\x06cardId\x12\x17\n" +
+	"\acall_id\x18\x02 \x01(\tR\x06callId\x12\x14\n" +
+	"\x05title\x18\x03 \x01(\tR\x05title\x12\x1a\n" +
+	"\bsubtitle\x18\x04 \x01(\tR\bsubtitle\x12\x14\n" +
+	"\x05image\x18\x05 \x01(\tR\x05image\x12*\n" +
+	"\x04body\x18\x06 \x03(\v2\x16.yanshi.v1.CardElementR\x04body\x12/\n" +
+	"\abuttons\x18\a \x03(\v2\x15.yanshi.v1.CardButtonR\abuttons\"\x81\x02\n" +
+	"\vCardElement\x125\n" +
+	"\bmarkdown\x18\x01 \x01(\v2\x17.yanshi.v1.CardMarkdownH\x00R\bmarkdown\x12,\n" +
+	"\x05image\x18\x02 \x01(\v2\x14.yanshi.v1.CardImageH\x00R\x05image\x12,\n" +
+	"\x05facts\x18\x03 \x01(\v2\x14.yanshi.v1.CardFactsH\x00R\x05facts\x12)\n" +
+	"\x04list\x18\x04 \x01(\v2\x13.yanshi.v1.CardListH\x00R\x04list\x12,\n" +
+	"\x05field\x18\x05 \x01(\v2\x14.yanshi.v1.CardFieldH\x00R\x05fieldB\x06\n" +
+	"\x04kind\"\"\n" +
+	"\fCardMarkdown\x12\x12\n" +
+	"\x04text\x18\x01 \x01(\tR\x04text\"/\n" +
+	"\tCardImage\x12\x10\n" +
+	"\x03uri\x18\x01 \x01(\tR\x03uri\x12\x10\n" +
+	"\x03alt\x18\x02 \x01(\tR\x03alt\"6\n" +
+	"\tCardFacts\x12)\n" +
+	"\x05facts\x18\x01 \x03(\v2\x13.yanshi.v1.CardFactR\x05facts\"6\n" +
+	"\bCardFact\x12\x14\n" +
+	"\x05label\x18\x01 \x01(\tR\x05label\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\"9\n" +
+	"\bCardList\x12-\n" +
+	"\x05items\x18\x01 \x03(\v2\x17.yanshi.v1.CardListItemR\x05items\"n\n" +
+	"\fCardListItem\x12\x14\n" +
+	"\x05title\x18\x01 \x01(\tR\x05title\x12\x1a\n" +
+	"\bsubtitle\x18\x02 \x01(\tR\bsubtitle\x12\x14\n" +
+	"\x05image\x18\x03 \x01(\tR\x05image\x12\x16\n" +
+	"\x06action\x18\x04 \x01(\tR\x06action\"\x91\x01\n" +
+	"\tCardField\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
+	"\x05label\x18\x02 \x01(\tR\x05label\x12\x12\n" +
+	"\x04type\x18\x03 \x01(\tR\x04type\x12\x18\n" +
+	"\aoptions\x18\x04 \x03(\tR\aoptions\x12\x14\n" +
+	"\x05value\x18\x05 \x01(\tR\x05value\x12\x1a\n" +
+	"\brequired\x18\x06 \x01(\bR\brequired\"H\n" +
+	"\n" +
+	"CardButton\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
+	"\x05label\x18\x02 \x01(\tR\x05label\x12\x14\n" +
+	"\x05style\x18\x03 \x01(\tR\x05style\"\xf4\x01\n" +
+	"\n" +
+	"CardAction\x12\x17\n" +
+	"\acard_id\x18\x01 \x01(\tR\x06cardId\x12\x17\n" +
+	"\acall_id\x18\x02 \x01(\tR\x06callId\x12\x16\n" +
+	"\x06action\x18\x03 \x01(\tR\x06action\x12\x14\n" +
+	"\x05label\x18\x04 \x01(\tR\x05label\x129\n" +
+	"\x06values\x18\x05 \x03(\v2!.yanshi.v1.CardAction.ValuesEntryR\x06values\x12\x10\n" +
+	"\x03seq\x18\x06 \x01(\x04R\x03seq\x1a9\n" +
+	"\vValuesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x85\x01\n" +
 	"\tUIContext\x12\x16\n" +
 	"\x06screen\x18\x01 \x01(\tR\x06screen\x12\x10\n" +
 	"\x03ref\x18\x02 \x01(\tR\x03ref\x12\x1c\n" +
@@ -2875,91 +3743,115 @@ func file_yanshi_v1_event_proto_rawDescGZIP() []byte {
 	return file_yanshi_v1_event_proto_rawDescData
 }
 
-var file_yanshi_v1_event_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
+var file_yanshi_v1_event_proto_msgTypes = make([]protoimpl.MessageInfo, 44)
 var file_yanshi_v1_event_proto_goTypes = []any{
 	(*Event)(nil),                 // 0: yanshi.v1.Event
 	(*DecisionMade)(nil),          // 1: yanshi.v1.DecisionMade
 	(*ContentBlock)(nil),          // 2: yanshi.v1.ContentBlock
-	(*UIContext)(nil),             // 3: yanshi.v1.UIContext
-	(*Text)(nil),                  // 4: yanshi.v1.Text
-	(*Media)(nil),                 // 5: yanshi.v1.Media
-	(*AgentRef)(nil),              // 6: yanshi.v1.AgentRef
-	(*SessionCreated)(nil),        // 7: yanshi.v1.SessionCreated
-	(*ParentRef)(nil),             // 8: yanshi.v1.ParentRef
-	(*AgentSwitched)(nil),         // 9: yanshi.v1.AgentSwitched
-	(*ContentModerated)(nil),      // 10: yanshi.v1.ContentModerated
-	(*RunRequested)(nil),          // 11: yanshi.v1.RunRequested
-	(*Steered)(nil),               // 12: yanshi.v1.Steered
-	(*AttemptStarted)(nil),        // 13: yanshi.v1.AttemptStarted
-	(*ToolCall)(nil),              // 14: yanshi.v1.ToolCall
-	(*Usage)(nil),                 // 15: yanshi.v1.Usage
-	(*AssistantMessage)(nil),      // 16: yanshi.v1.AssistantMessage
-	(*ToolCallStarted)(nil),       // 17: yanshi.v1.ToolCallStarted
-	(*ToolResult)(nil),            // 18: yanshi.v1.ToolResult
-	(*RunCompleted)(nil),          // 19: yanshi.v1.RunCompleted
-	(*RunFailed)(nil),             // 20: yanshi.v1.RunFailed
-	(*RunInterrupted)(nil),        // 21: yanshi.v1.RunInterrupted
-	(*RunSuspended)(nil),          // 22: yanshi.v1.RunSuspended
-	(*ApprovalRequested)(nil),     // 23: yanshi.v1.ApprovalRequested
-	(*ApprovalDecided)(nil),       // 24: yanshi.v1.ApprovalDecided
-	(*ContextCompacted)(nil),      // 25: yanshi.v1.ContextCompacted
-	(*SessionClosed)(nil),         // 26: yanshi.v1.SessionClosed
-	(*MemoryRecalled)(nil),        // 27: yanshi.v1.MemoryRecalled
-	(*RecalledMemory)(nil),        // 28: yanshi.v1.RecalledMemory
-	(*CallStarted)(nil),           // 29: yanshi.v1.CallStarted
-	(*CallTranscript)(nil),        // 30: yanshi.v1.CallTranscript
-	(*CallEnded)(nil),             // 31: yanshi.v1.CallEnded
-	(*timestamppb.Timestamp)(nil), // 32: google.protobuf.Timestamp
+	(*Card)(nil),                  // 3: yanshi.v1.Card
+	(*CardElement)(nil),           // 4: yanshi.v1.CardElement
+	(*CardMarkdown)(nil),          // 5: yanshi.v1.CardMarkdown
+	(*CardImage)(nil),             // 6: yanshi.v1.CardImage
+	(*CardFacts)(nil),             // 7: yanshi.v1.CardFacts
+	(*CardFact)(nil),              // 8: yanshi.v1.CardFact
+	(*CardList)(nil),              // 9: yanshi.v1.CardList
+	(*CardListItem)(nil),          // 10: yanshi.v1.CardListItem
+	(*CardField)(nil),             // 11: yanshi.v1.CardField
+	(*CardButton)(nil),            // 12: yanshi.v1.CardButton
+	(*CardAction)(nil),            // 13: yanshi.v1.CardAction
+	(*UIContext)(nil),             // 14: yanshi.v1.UIContext
+	(*Text)(nil),                  // 15: yanshi.v1.Text
+	(*Media)(nil),                 // 16: yanshi.v1.Media
+	(*AgentRef)(nil),              // 17: yanshi.v1.AgentRef
+	(*SessionCreated)(nil),        // 18: yanshi.v1.SessionCreated
+	(*ParentRef)(nil),             // 19: yanshi.v1.ParentRef
+	(*AgentSwitched)(nil),         // 20: yanshi.v1.AgentSwitched
+	(*ContentModerated)(nil),      // 21: yanshi.v1.ContentModerated
+	(*RunRequested)(nil),          // 22: yanshi.v1.RunRequested
+	(*Steered)(nil),               // 23: yanshi.v1.Steered
+	(*AttemptStarted)(nil),        // 24: yanshi.v1.AttemptStarted
+	(*ToolCall)(nil),              // 25: yanshi.v1.ToolCall
+	(*Usage)(nil),                 // 26: yanshi.v1.Usage
+	(*AssistantMessage)(nil),      // 27: yanshi.v1.AssistantMessage
+	(*ToolCallStarted)(nil),       // 28: yanshi.v1.ToolCallStarted
+	(*ToolResult)(nil),            // 29: yanshi.v1.ToolResult
+	(*RunCompleted)(nil),          // 30: yanshi.v1.RunCompleted
+	(*RunFailed)(nil),             // 31: yanshi.v1.RunFailed
+	(*RunInterrupted)(nil),        // 32: yanshi.v1.RunInterrupted
+	(*RunSuspended)(nil),          // 33: yanshi.v1.RunSuspended
+	(*ApprovalRequested)(nil),     // 34: yanshi.v1.ApprovalRequested
+	(*ApprovalDecided)(nil),       // 35: yanshi.v1.ApprovalDecided
+	(*ContextCompacted)(nil),      // 36: yanshi.v1.ContextCompacted
+	(*SessionClosed)(nil),         // 37: yanshi.v1.SessionClosed
+	(*MemoryRecalled)(nil),        // 38: yanshi.v1.MemoryRecalled
+	(*RecalledMemory)(nil),        // 39: yanshi.v1.RecalledMemory
+	(*CallStarted)(nil),           // 40: yanshi.v1.CallStarted
+	(*CallTranscript)(nil),        // 41: yanshi.v1.CallTranscript
+	(*CallEnded)(nil),             // 42: yanshi.v1.CallEnded
+	nil,                           // 43: yanshi.v1.CardAction.ValuesEntry
+	(*timestamppb.Timestamp)(nil), // 44: google.protobuf.Timestamp
 }
 var file_yanshi_v1_event_proto_depIdxs = []int32{
-	32, // 0: yanshi.v1.Event.time:type_name -> google.protobuf.Timestamp
-	7,  // 1: yanshi.v1.Event.session_created:type_name -> yanshi.v1.SessionCreated
-	11, // 2: yanshi.v1.Event.run_requested:type_name -> yanshi.v1.RunRequested
-	12, // 3: yanshi.v1.Event.steered:type_name -> yanshi.v1.Steered
-	13, // 4: yanshi.v1.Event.attempt_started:type_name -> yanshi.v1.AttemptStarted
-	16, // 5: yanshi.v1.Event.assistant_message:type_name -> yanshi.v1.AssistantMessage
-	17, // 6: yanshi.v1.Event.tool_call_started:type_name -> yanshi.v1.ToolCallStarted
-	18, // 7: yanshi.v1.Event.tool_result:type_name -> yanshi.v1.ToolResult
-	19, // 8: yanshi.v1.Event.run_completed:type_name -> yanshi.v1.RunCompleted
-	20, // 9: yanshi.v1.Event.run_failed:type_name -> yanshi.v1.RunFailed
-	21, // 10: yanshi.v1.Event.run_interrupted:type_name -> yanshi.v1.RunInterrupted
-	22, // 11: yanshi.v1.Event.run_suspended:type_name -> yanshi.v1.RunSuspended
-	23, // 12: yanshi.v1.Event.approval_requested:type_name -> yanshi.v1.ApprovalRequested
-	24, // 13: yanshi.v1.Event.approval_decided:type_name -> yanshi.v1.ApprovalDecided
-	25, // 14: yanshi.v1.Event.context_compacted:type_name -> yanshi.v1.ContextCompacted
-	26, // 15: yanshi.v1.Event.session_closed:type_name -> yanshi.v1.SessionClosed
-	27, // 16: yanshi.v1.Event.memory_recalled:type_name -> yanshi.v1.MemoryRecalled
-	9,  // 17: yanshi.v1.Event.agent_switched:type_name -> yanshi.v1.AgentSwitched
-	10, // 18: yanshi.v1.Event.content_moderated:type_name -> yanshi.v1.ContentModerated
-	29, // 19: yanshi.v1.Event.call_started:type_name -> yanshi.v1.CallStarted
-	30, // 20: yanshi.v1.Event.call_transcript:type_name -> yanshi.v1.CallTranscript
-	31, // 21: yanshi.v1.Event.call_ended:type_name -> yanshi.v1.CallEnded
+	44, // 0: yanshi.v1.Event.time:type_name -> google.protobuf.Timestamp
+	18, // 1: yanshi.v1.Event.session_created:type_name -> yanshi.v1.SessionCreated
+	22, // 2: yanshi.v1.Event.run_requested:type_name -> yanshi.v1.RunRequested
+	23, // 3: yanshi.v1.Event.steered:type_name -> yanshi.v1.Steered
+	24, // 4: yanshi.v1.Event.attempt_started:type_name -> yanshi.v1.AttemptStarted
+	27, // 5: yanshi.v1.Event.assistant_message:type_name -> yanshi.v1.AssistantMessage
+	28, // 6: yanshi.v1.Event.tool_call_started:type_name -> yanshi.v1.ToolCallStarted
+	29, // 7: yanshi.v1.Event.tool_result:type_name -> yanshi.v1.ToolResult
+	30, // 8: yanshi.v1.Event.run_completed:type_name -> yanshi.v1.RunCompleted
+	31, // 9: yanshi.v1.Event.run_failed:type_name -> yanshi.v1.RunFailed
+	32, // 10: yanshi.v1.Event.run_interrupted:type_name -> yanshi.v1.RunInterrupted
+	33, // 11: yanshi.v1.Event.run_suspended:type_name -> yanshi.v1.RunSuspended
+	34, // 12: yanshi.v1.Event.approval_requested:type_name -> yanshi.v1.ApprovalRequested
+	35, // 13: yanshi.v1.Event.approval_decided:type_name -> yanshi.v1.ApprovalDecided
+	36, // 14: yanshi.v1.Event.context_compacted:type_name -> yanshi.v1.ContextCompacted
+	37, // 15: yanshi.v1.Event.session_closed:type_name -> yanshi.v1.SessionClosed
+	38, // 16: yanshi.v1.Event.memory_recalled:type_name -> yanshi.v1.MemoryRecalled
+	20, // 17: yanshi.v1.Event.agent_switched:type_name -> yanshi.v1.AgentSwitched
+	21, // 18: yanshi.v1.Event.content_moderated:type_name -> yanshi.v1.ContentModerated
+	40, // 19: yanshi.v1.Event.call_started:type_name -> yanshi.v1.CallStarted
+	41, // 20: yanshi.v1.Event.call_transcript:type_name -> yanshi.v1.CallTranscript
+	42, // 21: yanshi.v1.Event.call_ended:type_name -> yanshi.v1.CallEnded
 	1,  // 22: yanshi.v1.Event.decision_made:type_name -> yanshi.v1.DecisionMade
-	4,  // 23: yanshi.v1.ContentBlock.text:type_name -> yanshi.v1.Text
-	5,  // 24: yanshi.v1.ContentBlock.media:type_name -> yanshi.v1.Media
-	3,  // 25: yanshi.v1.ContentBlock.ui_context:type_name -> yanshi.v1.UIContext
-	6,  // 26: yanshi.v1.SessionCreated.agent:type_name -> yanshi.v1.AgentRef
-	8,  // 27: yanshi.v1.SessionCreated.parent:type_name -> yanshi.v1.ParentRef
-	6,  // 28: yanshi.v1.ParentRef.ancestors:type_name -> yanshi.v1.AgentRef
-	6,  // 29: yanshi.v1.AgentSwitched.from:type_name -> yanshi.v1.AgentRef
-	6,  // 30: yanshi.v1.AgentSwitched.to:type_name -> yanshi.v1.AgentRef
-	2,  // 31: yanshi.v1.RunRequested.input:type_name -> yanshi.v1.ContentBlock
-	2,  // 32: yanshi.v1.Steered.input:type_name -> yanshi.v1.ContentBlock
-	2,  // 33: yanshi.v1.AssistantMessage.content:type_name -> yanshi.v1.ContentBlock
-	14, // 34: yanshi.v1.AssistantMessage.tool_calls:type_name -> yanshi.v1.ToolCall
-	15, // 35: yanshi.v1.AssistantMessage.usage:type_name -> yanshi.v1.Usage
-	32, // 36: yanshi.v1.ToolCallStarted.deadline:type_name -> google.protobuf.Timestamp
-	2,  // 37: yanshi.v1.ToolResult.content:type_name -> yanshi.v1.ContentBlock
-	32, // 38: yanshi.v1.RunSuspended.until:type_name -> google.protobuf.Timestamp
-	32, // 39: yanshi.v1.ApprovalRequested.deadline:type_name -> google.protobuf.Timestamp
-	2,  // 40: yanshi.v1.ContextCompacted.summary:type_name -> yanshi.v1.ContentBlock
-	15, // 41: yanshi.v1.ContextCompacted.usage:type_name -> yanshi.v1.Usage
-	28, // 42: yanshi.v1.MemoryRecalled.items:type_name -> yanshi.v1.RecalledMemory
-	43, // [43:43] is the sub-list for method output_type
-	43, // [43:43] is the sub-list for method input_type
-	43, // [43:43] is the sub-list for extension type_name
-	43, // [43:43] is the sub-list for extension extendee
-	0,  // [0:43] is the sub-list for field type_name
+	15, // 23: yanshi.v1.ContentBlock.text:type_name -> yanshi.v1.Text
+	16, // 24: yanshi.v1.ContentBlock.media:type_name -> yanshi.v1.Media
+	14, // 25: yanshi.v1.ContentBlock.ui_context:type_name -> yanshi.v1.UIContext
+	3,  // 26: yanshi.v1.ContentBlock.card:type_name -> yanshi.v1.Card
+	13, // 27: yanshi.v1.ContentBlock.card_action:type_name -> yanshi.v1.CardAction
+	4,  // 28: yanshi.v1.Card.body:type_name -> yanshi.v1.CardElement
+	12, // 29: yanshi.v1.Card.buttons:type_name -> yanshi.v1.CardButton
+	5,  // 30: yanshi.v1.CardElement.markdown:type_name -> yanshi.v1.CardMarkdown
+	6,  // 31: yanshi.v1.CardElement.image:type_name -> yanshi.v1.CardImage
+	7,  // 32: yanshi.v1.CardElement.facts:type_name -> yanshi.v1.CardFacts
+	9,  // 33: yanshi.v1.CardElement.list:type_name -> yanshi.v1.CardList
+	11, // 34: yanshi.v1.CardElement.field:type_name -> yanshi.v1.CardField
+	8,  // 35: yanshi.v1.CardFacts.facts:type_name -> yanshi.v1.CardFact
+	10, // 36: yanshi.v1.CardList.items:type_name -> yanshi.v1.CardListItem
+	43, // 37: yanshi.v1.CardAction.values:type_name -> yanshi.v1.CardAction.ValuesEntry
+	17, // 38: yanshi.v1.SessionCreated.agent:type_name -> yanshi.v1.AgentRef
+	19, // 39: yanshi.v1.SessionCreated.parent:type_name -> yanshi.v1.ParentRef
+	17, // 40: yanshi.v1.ParentRef.ancestors:type_name -> yanshi.v1.AgentRef
+	17, // 41: yanshi.v1.AgentSwitched.from:type_name -> yanshi.v1.AgentRef
+	17, // 42: yanshi.v1.AgentSwitched.to:type_name -> yanshi.v1.AgentRef
+	2,  // 43: yanshi.v1.RunRequested.input:type_name -> yanshi.v1.ContentBlock
+	2,  // 44: yanshi.v1.Steered.input:type_name -> yanshi.v1.ContentBlock
+	2,  // 45: yanshi.v1.AssistantMessage.content:type_name -> yanshi.v1.ContentBlock
+	25, // 46: yanshi.v1.AssistantMessage.tool_calls:type_name -> yanshi.v1.ToolCall
+	26, // 47: yanshi.v1.AssistantMessage.usage:type_name -> yanshi.v1.Usage
+	44, // 48: yanshi.v1.ToolCallStarted.deadline:type_name -> google.protobuf.Timestamp
+	2,  // 49: yanshi.v1.ToolResult.content:type_name -> yanshi.v1.ContentBlock
+	44, // 50: yanshi.v1.RunSuspended.until:type_name -> google.protobuf.Timestamp
+	44, // 51: yanshi.v1.ApprovalRequested.deadline:type_name -> google.protobuf.Timestamp
+	2,  // 52: yanshi.v1.ContextCompacted.summary:type_name -> yanshi.v1.ContentBlock
+	26, // 53: yanshi.v1.ContextCompacted.usage:type_name -> yanshi.v1.Usage
+	39, // 54: yanshi.v1.MemoryRecalled.items:type_name -> yanshi.v1.RecalledMemory
+	55, // [55:55] is the sub-list for method output_type
+	55, // [55:55] is the sub-list for method input_type
+	55, // [55:55] is the sub-list for extension type_name
+	55, // [55:55] is the sub-list for extension extendee
+	0,  // [0:55] is the sub-list for field type_name
 }
 
 func init() { file_yanshi_v1_event_proto_init() }
@@ -2995,6 +3887,15 @@ func file_yanshi_v1_event_proto_init() {
 		(*ContentBlock_Text)(nil),
 		(*ContentBlock_Media)(nil),
 		(*ContentBlock_UiContext)(nil),
+		(*ContentBlock_Card)(nil),
+		(*ContentBlock_CardAction)(nil),
+	}
+	file_yanshi_v1_event_proto_msgTypes[4].OneofWrappers = []any{
+		(*CardElement_Markdown)(nil),
+		(*CardElement_Image)(nil),
+		(*CardElement_Facts)(nil),
+		(*CardElement_List)(nil),
+		(*CardElement_Field)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -3002,7 +3903,7 @@ func file_yanshi_v1_event_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_yanshi_v1_event_proto_rawDesc), len(file_yanshi_v1_event_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   32,
+			NumMessages:   44,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

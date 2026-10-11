@@ -6,6 +6,7 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -510,6 +511,9 @@ func (s *State) apply(e *v1.Event) error {
 		if err := s.checkFromCall(p.RunRequested.GetFromCall()); err != nil {
 			return err
 		}
+		if hasCard(p.RunRequested.GetInput()) {
+			return errors.New("card in user input")
+		}
 		if a := s.Active(); a != nil {
 			return fmt.Errorf("run %s requested while run %s is active", p.RunRequested.GetRunId(), a.ID)
 		}
@@ -532,6 +536,9 @@ func (s *State) apply(e *v1.Event) error {
 		}
 		if err := s.checkFromCall(p.Steered.GetFromCall()); err != nil {
 			return err
+		}
+		if hasCard(p.Steered.GetInput()) {
+			return errors.New("card in user input")
 		}
 		if err := s.recordInput(InputRef{ID: p.Steered.GetInputId(), RunID: p.Steered.GetRunId(), Steered: true}); err != nil {
 			return err
@@ -663,6 +670,10 @@ func (s *State) apply(e *v1.Event) error {
 		}
 		if m.GetInputId() != "" && m.GetAttempt() != 0 {
 			return fmt.Errorf("input id on a worker result for call %q", m.GetCallId())
+		}
+		// 卡片只能由平台校验后写入 show_card 的结果（ADR-0032）：设备、用户不能伪造卡片。
+		if hasCard(m.GetContent()) && (m.GetAttempt() == 0 || c.Call.GetCapability() != ShowCardCapability) {
+			return fmt.Errorf("card in the result of call %q (%s)", m.GetCallId(), c.Call.GetCapability())
 		}
 		if err := s.recordInput(InputRef{ID: m.GetInputId(), RunID: r.ID, Steered: true, Answered: m.GetCallId()}); err != nil {
 			return err
@@ -826,4 +837,16 @@ func (s *State) fencedRun(id string, attempt uint32) (*Run, error) {
 		return nil, fmt.Errorf("stale attempt %d for run %s (current %d, %s)", attempt, id, r.Attempt, r.Status)
 	}
 	return r, nil
+}
+
+// ShowCardCapability 是 show_card 的工具名（card.Capability；session 不依赖 card 包）。
+const ShowCardCapability = "show_card"
+
+func hasCard(blocks []*v1.ContentBlock) bool {
+	for _, b := range blocks {
+		if b.GetCard() != nil {
+			return true
+		}
+	}
+	return false
 }

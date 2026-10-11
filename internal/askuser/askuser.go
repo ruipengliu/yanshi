@@ -44,7 +44,8 @@ const Description = "仅在无法继续时向用户提问：缺少必需的信�
 const InputSchema = `{"type":"object","properties":{` +
 	`"question":{"type":"string","description":"向用户提的问题"},` +
 	`"options":{"type":"array","maxItems":8,"description":"可点选的选项","items":{"type":"object","properties":{` +
-	`"id":{"type":"string"},"label":{"type":"string","description":"显示给用户的文字"},"description":{"type":"string"}},"required":["id","label"]}},` +
+	`"id":{"type":"string"},"label":{"type":"string","description":"显示给用户的文字"},"description":{"type":"string"},` +
+	`"image":{"type":"string","description":"可选的配图：本会话的 artifact://<id> 或内置图标 icon:<名称>"}},"required":["id","label"]}},` +
 	`"multiple":{"type":"boolean","description":"是否允许多选，默认单选"},` +
 	`"fields":{"type":"array","maxItems":6,"description":"需要用户填写的字段","items":{"type":"object","properties":{` +
 	`"name":{"type":"string"},"label":{"type":"string"},"type":{"type":"string","enum":["text","number","date","time"]},` +
@@ -55,7 +56,11 @@ type Option struct {
 	ID          string `json:"id"`
 	Label       string `json:"label"`
 	Description string `json:"description,omitempty"`
+	// Image 是选项的配图（客户端以卡片样式渲染提问，docs/design/cards.md §5）：artifact://<id> 或 icon:<名称>。
+	Image string `json:"image,omitempty"`
 }
+
+var imageRE = regexp.MustCompile(`^(icon:[a-z_]{1,32}|artifact://[A-Za-z0-9_-]{1,64})$`)
 
 type Field struct {
 	Name  string `json:"name"`
@@ -101,6 +106,9 @@ func Parse(args string) (*Question, error) {
 	for _, o := range q.Options {
 		if o.ID == "" || strings.TrimSpace(o.Label) == "" || seen[o.ID] || tooLong(o.Label) || tooLong(o.Description) {
 			return nil, invalid("each option needs a unique id and a label of at most %d characters", maxText)
+		}
+		if o.Image != "" && !imageRE.MatchString(o.Image) {
+			return nil, invalid("option %s: image must be artifact://<id> or icon:<name>", o.ID)
 		}
 		seen[o.ID] = true
 	}
