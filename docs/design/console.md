@@ -183,9 +183,12 @@ EndUser 的选取：
 
 ## 8. 鉴权
 
-- `-auth none`：设备在 Hello 中自报业务线与 EndUser；HTTP API 不校验身份（只允许回环地址）。
+- `-auth none`：设备在 Hello 中自报业务线与 EndUser；HTTP API 不校验身份。默认只允许监听回环地址。
 - `-auth jwt`：每个 EndUser 填写令牌（`yanshi token -key demo.key -user <用户>`），设备与 HTTP 请求都以令牌为准。令牌只保存在本机浏览器的 localStorage 中。也可以用链接带入：`/console#token.u1=<令牌>&token.u2=<令牌>`，片段不随请求发给服务端，读入后从地址栏清除。
-- 在同一网络的其他设备上使用：`-auth none` 只允许回环地址，须 `serve -addr 0.0.0.0:<端口> -auth jwt`，再把带令牌的链接发到那台设备上。手机浏览器打开后，对话视图的"拍照"直接调用相机。
+- 在同一网络的其他设备上使用，有两种方式：
+  - `serve -addr 0.0.0.0:<端口> -auth jwt`，再把带令牌的链接发到那台设备上；
+  - 调试阶段不想管令牌时用 `serve -addr 0.0.0.0:<端口> -auth none -insecure-remote`：同一网络中的任何人都能冒充任意用户、读写任意 Session，所以只在可信的局域网里用，启动时会打印警告，生产禁止（上线检查清单）。
+- 手机浏览器打开后，对话视图的"拍照"直接调用相机（文件选择）。语音消息与通话要用麦克风，浏览器只在 localhost 或 HTTPS 下允许，所以在局域网 IP 上用 http 打开时不可用。
 
 ## 9. 控制台发现的问题
 

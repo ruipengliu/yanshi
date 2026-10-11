@@ -254,6 +254,7 @@ func serve(args []string) error {
 	peerAdvertise := fs.String("peer-advertise", "", "其他进程访问本进程内部地址所用的 URL，如 http://$POD_IP:7070；默认取监听地址")
 	leaseTTL := fs.Duration("lease-ttl", 10*time.Second, "工作队列租约时长：进程崩溃后，其进行中的 Run 约在此时长后被接管（心跳为其 1/3）")
 	authMode := fs.String("auth", "none", "鉴权：none（信任自报身份，仅允许监听回环地址）| jwt（业务线签发的令牌，docs/design/auth.md）")
+	insecureRemote := fs.Bool("insecure-remote", false, "允许 -auth none 监听非回环地址（局域网调试）：同一网络中的任何人都能冒充任意用户、读写任意 Session。不得用于生产")
 	blDir := fs.String("businesslines", "businesslines", "业务线公钥配置目录（auth=jwt；yanshi keygen 生成开发配置）")
 	audience := fs.String("auth-audience", "yanshi", "本部署的标识，令牌的 aud 须包含它")
 	pricing := fs.String("pricing", "pricing.yaml", "价格表（docs/design/m4-quota-usage.md §2）；不存在时用量只计 token、不折算金额")
@@ -297,9 +298,12 @@ func serve(args []string) error {
 	defer stop()
 
 	clk := clock.Real{}
-	verifier, nodeAuth, lines, err := authenticator(*authMode, *addr, *blDir, *audience, clk)
+	verifier, nodeAuth, lines, err := authenticator(*authMode, *addr, *blDir, *audience, *insecureRemote, clk)
 	if err != nil {
 		return err
+	}
+	if *authMode == "none" && !loopback(*addr) {
+		logger.Warn("-auth none on a non-loopback address (-insecure-remote): anyone on this network can act as any user; debugging only", "addr", *addr)
 	}
 	b, closeStorage, err := openStorage(ctx, *storageKind, *dsn, *listenDSN, *notifyShards, *migrate, clk, logger)
 	if err != nil {
@@ -607,11 +611,12 @@ func startPeer(addr, advertise string, local *live.MemBus, log eventlog.Log, rea
 // authenticator 按 -auth 构造 API 与 Node 接入的鉴权（docs/design/auth.md §5）。
 // none 信任自报身份，只允许监听回环地址：误部署到网络上时直接启动失败，而不是不设防地运行。
 // 同时返回业务线配置，供保留策略使用（auth=none 时没有业务线配置，不执行保留策略）。
-func authenticator(mode, addr, dir, audience string, clk clock.Clock) (auth.Verifier, node.Authenticator, []auth.BusinessLine, error) {
+// insecureRemote 为 true 时 -auth none 也可以监听非回环地址（局域网调试，调用方须打印警告）。
+func authenticator(mode, addr, dir, audience string, insecureRemote bool, clk clock.Clock) (auth.Verifier, node.Authenticator, []auth.BusinessLine, error) {
 	switch mode {
 	case "none":
-		if !loopback(addr) {
-			return nil, nil, nil, fmt.Errorf("-auth none only allows a loopback -addr (got %s); use -auth jwt", addr)
+		if !loopback(addr) && !insecureRemote {
+			return nil, nil, nil, fmt.Errorf("-auth none only allows a loopback -addr (got %s); use -auth jwt, or -insecure-remote for a trusted LAN while debugging", addr)
 		}
 		return auth.Insecure{}, node.InsecureDevAuth{}, nil, nil
 	case "jwt":

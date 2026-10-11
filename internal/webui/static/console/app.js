@@ -664,7 +664,7 @@ function renderSettings() {
               renderSettings();
             },
           },
-          h("option", { value: "none", selected: S.auth === "none" }, "自报身份（serve -auth none，只允许回环地址）"),
+          h("option", { value: "none", selected: S.auth === "none" }, "自报身份（serve -auth none；局域网调试另加 -insecure-remote）"),
           h("option", { value: "jwt", selected: S.auth === "jwt" }, "令牌（serve -auth jwt）"),
         ),
       ),
