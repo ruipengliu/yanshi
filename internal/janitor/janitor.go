@@ -17,7 +17,6 @@ import (
 	"yanshi/internal/askuser"
 	"yanshi/internal/clock"
 	"yanshi/internal/delegation"
-	"yanshi/internal/eventlog"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/metrics"
 	"yanshi/internal/node"
@@ -271,23 +270,17 @@ func (j *Janitor) delete(ctx context.Context, sid string, st *session.State) err
 }
 
 func (j *Janitor) interrupt(ctx context.Context, st *session.State) error {
-	for range 16 {
+	err := j.Store.Update(ctx, st, func(st *session.State) (session.Decision, error) {
 		a := st.Active()
 		if st.Created == nil || a == nil {
-			return nil
+			return session.Decision{}, nil
 		}
-		err := j.Store.Commit(ctx, st, &v1.Event{Payload: &v1.Event_RunInterrupted{RunInterrupted: &v1.RunInterrupted{RunId: a.ID, By: "deletion"}}})
-		if !errors.Is(err, eventlog.ErrConflict) {
-			return err
-		}
-		if err := j.Store.SyncAfterConflict(ctx, st); err != nil {
-			if errors.Is(err, session.ErrGone) {
-				return nil
-			}
-			return err
-		}
+		return session.Decision{Events: []*v1.Event{{Payload: &v1.Event_RunInterrupted{RunInterrupted: &v1.RunInterrupted{RunId: a.ID, By: "deletion"}}}}}, nil
+	})
+	if errors.Is(err, session.ErrGone) {
+		return nil
 	}
-	return errors.New("interrupt before deletion: too many conflicts")
+	return err
 }
 
 // forgetOnDevices 请求曾执行过该 Session 调用的设备清除本地记录。投影只保留最近 Run 的明细，因此扫描日志。

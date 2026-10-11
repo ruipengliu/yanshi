@@ -3,13 +3,11 @@ package delegation
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
 	"yanshi/internal/capability"
-	"yanshi/internal/eventlog"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/model"
 	"yanshi/internal/moderation"
@@ -279,27 +277,18 @@ func (d *Delegator) result(ctx context.Context, sessionID, runID, callID, text s
 	if err != nil {
 		return err
 	}
-	for range 16 {
-		err := store.CommitAndWake(ctx, st, &v1.Event{Payload: &v1.Event_ToolResult{ToolResult: &v1.ToolResult{
-			RunId: runID, CallId: callID, Content: model.TextBlocks(text), IsError: isErr}}})
-		switch {
-		case err == nil:
-			return nil
-		case errors.Is(err, session.ErrInvalid):
-			d.log().Info("delegation result dropped", "session", sessionID, "call", callID, "reason", err)
-			return nil
-		case errors.Is(err, eventlog.ErrConflict):
-			if err := store.SyncAfterConflict(ctx, st); err != nil {
-				if errors.Is(err, session.ErrGone) {
-					return nil
-				}
-				return err
-			}
-		default:
-			return err
-		}
+	err = store.Update(ctx, st, func(*session.State) (session.Decision, error) {
+		e := session.ExternalResult(runID, callID, model.TextBlocks(text), isErr)
+		return session.Decision{Events: []*v1.Event{e}, Wake: true}, nil
+	})
+	switch {
+	case errors.Is(err, session.ErrInvalid):
+		d.log().Info("delegation result dropped", "session", sessionID, "call", callID, "reason", err)
+		return nil
+	case errors.Is(err, session.ErrGone):
+		return nil
 	}
-	return fmt.Errorf("delegation result for call %s: too many conflicts", callID)
+	return err
 }
 
 // Directory 是可委托的 AgentDef（capability.AgentSource），取自 AgentDef 注册表与发布配置。

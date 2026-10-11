@@ -9,7 +9,6 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/clock"
-	"yanshi/internal/eventlog"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/notify"
 	"yanshi/internal/session"
@@ -179,31 +178,22 @@ func (h *Hub) commitResult(ctx context.Context, inv *v1.Invoke, res *v1.InvokeRe
 	if err != nil {
 		return err
 	}
-	for range 16 {
-		e := &v1.Event{Payload: &v1.Event_ToolResult{ToolResult: &v1.ToolResult{
-			RunId: inv.GetRunId(), CallId: inv.GetCallId(), Content: res.GetContent(), IsError: res.GetIsError(),
-		}}}
-		err := h.Store.CommitAndWake(ctx, st, e)
-		if errors.Is(err, eventlog.ErrConflict) {
-			if err := h.Store.SyncAfterConflict(ctx, st); err != nil {
-				if errors.Is(err, session.ErrGone) {
-					h.log().Info("node result dropped", "session", inv.GetSessionId(), "call", inv.GetCallId(), "reason", "session deleted")
-					return nil
-				}
-				return err
-			}
-			continue
-		}
-		if errors.Is(err, session.ErrInvalid) {
-			// 校验失败：Run 已终态或调用已完成（超时、重复结果），结果作废。
-			h.log().Info("node result dropped", "session", inv.GetSessionId(), "call", inv.GetCallId(), "reason", err)
-			return nil
-		}
-		// 存储故障：结果没有写入，或写入了而回包丢失。返回错误，调用方不确认、不撤下 Inbox，重连后设备从账本
-		// 重新返回结果：没写入的这次写入，写入了的这次作废。
-		return err
+	err = h.Store.Update(ctx, st, func(*session.State) (session.Decision, error) {
+		e := session.ExternalResult(inv.GetRunId(), inv.GetCallId(), res.GetContent(), res.GetIsError())
+		return session.Decision{Events: []*v1.Event{e}, Wake: true}, nil
+	})
+	switch {
+	case errors.Is(err, session.ErrGone):
+		h.log().Info("node result dropped", "session", inv.GetSessionId(), "call", inv.GetCallId(), "reason", "session deleted")
+		return nil
+	case errors.Is(err, session.ErrInvalid):
+		// 校验失败：Run 已终态或调用已完成（超时、重复结果），结果作废。
+		h.log().Info("node result dropped", "session", inv.GetSessionId(), "call", inv.GetCallId(), "reason", err)
+		return nil
 	}
-	return fmt.Errorf("commit result for call %s: too many conflicts", inv.GetCallId())
+	// 存储故障：结果没有写入，或写入了而回包丢失。返回错误，调用方不确认、不撤下 Inbox，重连后设备从账本
+	// 重新返回结果：没写入的这次写入，写入了的这次作废。
+	return err
 }
 
 // LogWaker 只记录唤醒请求；真实推送通道见 ADR-0001。
