@@ -189,10 +189,9 @@ func (c *Controller) Step(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	// 执行期间 Session 被删除：账本中刚写下的结果也要清除（先写、后查）。
-	if gone, err := node.Withdrawn(ctx, c.Hub.Deletions, inv.GetSessionId()); err != nil || gone {
-		if gone {
-			err = c.Ledger.Forget(inv.GetSessionId())
-		}
+	if gone, err := lifecycle.Recheck(ctx, c.Hub.Deletions, inv.GetSessionId(), func(context.Context) error {
+		return c.Ledger.Forget(inv.GetSessionId())
+	}); err != nil || gone {
 		return false, err
 	}
 	if res == nil {
@@ -284,10 +283,9 @@ func (r *Router) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke, cl
 	if err := r.Hub.Inbox.Put(ctx, nodeID, inv); err != nil {
 		return err
 	}
-	if gone, err := node.Withdrawn(ctx, r.Hub.Deletions, inv.GetSessionId()); err != nil || gone {
-		if gone {
-			return r.Hub.Inbox.Remove(ctx, nodeID, inv.GetCallId())
-		}
+	if gone, err := lifecycle.Recheck(ctx, r.Hub.Deletions, inv.GetSessionId(), func(ctx context.Context) error {
+		return r.Hub.Inbox.Remove(ctx, nodeID, inv.GetCallId())
+	}); err != nil || gone {
 		return err
 	}
 	return r.Queue.Enqueue(ctx, nodeID, class)
@@ -321,4 +319,26 @@ func (c *Controller) ended(ctx context.Context, sessionID string) (bool, error) 
 		return c.Lifecycle.Ended(ctx, sessionID)
 	}
 	return node.Withdrawn(ctx, c.Hub.Deletions, sessionID)
+}
+
+// Workspaces 销毁 Session 的沙箱工作区：移出沙箱队列、销毁沙箱、删除活动记录。Session 关闭与删除时由 Janitor 调用。
+type Workspaces struct {
+	Queue workqueue.Queue // 沙箱队列
+	// Provider 为 nil 表示未启用沙箱。
+	Provider Provider
+	Activity Activity
+}
+
+// DeleteSession 销毁 sessionID 的沙箱工作区；幂等。
+func (w Workspaces) DeleteSession(ctx context.Context, sessionID string) error {
+	id := NodeID(sessionID)
+	if err := w.Queue.Remove(ctx, id); err != nil {
+		return err
+	}
+	if w.Provider != nil {
+		if err := w.Provider.Destroy(ctx, id); err != nil {
+			return err
+		}
+	}
+	return w.Activity.Delete(ctx, id)
 }

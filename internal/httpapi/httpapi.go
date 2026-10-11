@@ -80,7 +80,9 @@ type Server struct {
 	// Usage 为 nil 时不提供用量接口；配额取自 Service.Quotas（docs/design/m4-quota-usage.md §5）。
 	Usage usage.Store
 	// Push 非 nil 时，注销账号一并删除推送设备登记。
-	Push   notify.Registry
+	Push notify.Registry
+	// Feeds 非 nil 时，本进程同一 Session 的事件流共用一个读者（feed.Hub）。
+	Feeds  *feed.Hub
 	Logger *slog.Logger
 }
 
@@ -267,6 +269,12 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		code = http.StatusUnprocessableEntity
 	case errors.Is(err, moderation.ErrUnavailable):
 		code = http.StatusServiceUnavailable
+	case errors.Is(err, service.ErrOverloaded):
+		code = http.StatusServiceUnavailable
+		var ov *service.OverloadedError
+		if errors.As(err, &ov) {
+			w.Header().Set("Retry-After", strconv.Itoa(max(int(math.Ceil(time.Until(ov.RetryAt).Seconds())), 1)))
+		}
 	case errors.Is(err, usage.ErrExceeded):
 		code = http.StatusTooManyRequests
 		var ex *usage.ExceededError
@@ -371,6 +379,9 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	runs := []runView{}
+	for _, p := range st.Past {
+		runs = append(runs, runView{RunID: p.ID, Status: p.Status.String(), Attempt: p.Attempt, Turns: p.Turns})
+	}
 	for _, run := range st.Runs {
 		runs = append(runs, runView{RunID: run.ID, Status: run.Status.String(), Attempt: run.Attempt, Turns: run.Turns,
 			Waiting: s.waiting(r, run)})
@@ -668,7 +679,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel = context.WithDeadline(ctx, exp)
 		defer cancel()
 	}
-	src := feed.Source{Log: s.Service.Store.Log, Live: s.Live, Deletions: s.Service.Deletions}
+	src := feed.Source{Log: s.Service.Store.Log, Live: s.Live, Deletions: s.Service.Deletions, Hub: s.Feeds}
 	err = src.Stream(ctx, st, after, sseSink{w: w, f: flusher})
 	switch {
 	case errors.Is(err, feed.ErrDeleted):

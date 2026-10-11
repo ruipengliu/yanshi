@@ -14,9 +14,6 @@ import (
 	"yanshi/internal/presence"
 )
 
-// pollEvery 是兜底轮询间隔：通知是主要途径，在场对延迟不敏感，而等待者与订阅数一样多。
-const pollEvery = 15 * time.Second
-
 type Store struct {
 	Pool     *pgxpool.Pool
 	Notifier *pg.Notifier
@@ -134,7 +131,7 @@ func (s Store) List(ctx context.Context, sessionID string, now time.Time) ([]*pr
 }
 
 func (s Store) Wait(ctx context.Context, sessionID string, v uint64) error {
-	return s.Notifier.WaitForEvery(ctx, pg.TopicPresence, sessionID, pollEvery, func(ctx context.Context) (bool, error) {
+	return s.Notifier.WaitFor(ctx, pg.TopicPresence, sessionID, func(ctx context.Context) (bool, error) {
 		cur, err := version(ctx, s.Pool, sessionID)
 		return cur != v, err
 	})

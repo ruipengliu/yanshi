@@ -19,16 +19,15 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
+	"yanshi/internal/app"
 	"yanshi/internal/artifact"
 	"yanshi/internal/askuser"
 	"yanshi/internal/call"
 	"yanshi/internal/capability"
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog"
-	"yanshi/internal/eventlog/memlog"
 	"yanshi/internal/feed"
 	"yanshi/internal/ids"
-	"yanshi/internal/lifecycle"
 	"yanshi/internal/live"
 	"yanshi/internal/memory"
 	"yanshi/internal/model"
@@ -39,7 +38,6 @@ import (
 	"yanshi/internal/service"
 	"yanshi/internal/session"
 	"yanshi/internal/workqueue"
-	"yanshi/internal/workqueue/memqueue"
 	"yanshi/sdk/nodesdk"
 )
 
@@ -198,15 +196,16 @@ func Run(ctx context.Context, cfg Config, cases []*Case) (*Report, error) {
 
 func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 	clk := clock.Real{}
-	store := &session.Store{Log: memlog.New(), IDs: ids.Random(), Clock: clk, Snapshots: session.NewMemSnapshots()}
-	queue := memqueue.New(clk)
-	dir, inbox := node.NewMemDirectory(clk), node.NewMemInbox()
-	hub := &node.Hub{Dir: dir, Inbox: inbox, Store: store, Queue: queue, Auth: node.InsecureDevAuth{}}
-	sbxQueue := memqueue.New(clk)
+	st := app.Memory(clk)
+	queue := st.Queue
+	store := &session.Store{Log: st.Log, Waking: st.Waking, IDs: ids.Random(), Clock: clk, Snapshots: st.Snapshots}
+	dir, inbox := st.Dir, st.Inbox
+	hub := &node.Hub{Dir: dir, Inbox: inbox, Store: store, Auth: node.InsecureDevAuth{}}
+	sbxQueue := st.SandboxQueue
 	router := &sandbox.Router{Hub: hub, Queue: sbxQueue}
-	arts := &artifact.Service{Meta: artifact.NewMemMeta(), Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk}
+	arts := &artifact.Service{Meta: st.ArtifactMeta, Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk}
 	// 评测业务线视为已取得健康信息的单独同意，以评测模型对健康信息的处理（ADR-0022）。
-	mems := &memory.Service{Store: memory.NewMemStore(), Grants: memory.NewMemGrants(), Clock: clk, IDs: ids.Random(),
+	mems := &memory.Service{Store: st.Memories, Grants: st.Grants, Clock: clk, IDs: ids.Random(),
 		HealthAllowed: func(bl string) bool { return bl == BusinessLine }}
 	if cfg.EmbedModel != "" {
 		mems.Embedder, mems.EmbedModel = cfg.Model, cfg.EmbedModel
@@ -222,9 +221,9 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 	if err != nil {
 		return nil, err
 	}
-	svc := &service.Service{Store: store, Queue: queue, Agents: agents, Nodes: router,
-		Index: lifecycle.NewMemIndex(), Deletions: lifecycle.NewMemDeletions(), Artifacts: arts}
-	idle := &workqueue.IdleGate{Ready: queue.Ready()}
+	svc := &service.Service{Store: store, Agents: agents, Nodes: router,
+		Index: st.Index, Deletions: st.Deletions, Artifacts: arts}
+	idle := &workqueue.IdleGate{Ready: queue.(workqueue.Signaler).Ready()}
 	bus := live.NewMemBus()
 	pool := &workerPool{ctx: ctx, workers: map[string]*runtime.Worker{}, newCfg: func(id string) runtime.Config {
 		return runtime.Config{ID: id, Store: store, Queue: queue, Agents: agents,

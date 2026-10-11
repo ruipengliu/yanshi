@@ -144,14 +144,13 @@ func (d Deletions) Mark(ctx context.Context, t *lifecycle.Tombstone) (bool, erro
 	return err == nil, err
 }
 
-// deletionPoll 是等待删除时查询兜底的间隔：通知只在 LISTEN 连接重建期间丢失（重建时所有等待者会被唤醒重查），
-// 兜底很少需要，间隔可以很长；没有 Notifier 时用 noNotifierPoll。
-const deletionPoll, noNotifierPoll = 10 * time.Minute, 15 * time.Second
+// noNotifierPoll 是没有 Notifier 时等待删除的轮询间隔。有 Notifier 时靠通知，兜底由 Notifier 的校准统一限速。
+const noNotifierPoll = 15 * time.Second
 
 func (d Deletions) WaitDeleted(ctx context.Context, sessionID string) error {
 	check := func(ctx context.Context) (bool, error) { return lifecycle.Deleted(ctx, d, sessionID) }
 	if d.Notifier != nil {
-		return d.Notifier.WaitForEvery(ctx, pg.TopicDeletions, sessionID, deletionPoll, check)
+		return d.Notifier.WaitFor(ctx, pg.TopicDeletions, sessionID, check)
 	}
 	t := time.NewTicker(noNotifierPoll)
 	defer t.Stop()

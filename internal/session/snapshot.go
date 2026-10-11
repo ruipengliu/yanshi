@@ -14,7 +14,7 @@ import (
 
 // ProjectionVersion 是投影语义的版本。改动 Apply 或 State 的字段时必须递增：旧快照随之作废，
 // 加载退回完整回放，因此快照永远不会与当前代码的投影结果不一致。
-const ProjectionVersion = 6
+const ProjectionVersion = 8
 
 // Snapshots 存放每个 Session 最新的投影快照。快照只是加速加载的缓存，删除或丢失都不影响正确性。
 type Snapshots interface {
@@ -50,6 +50,7 @@ func (s *State) Snapshot() *v1.SessionSnapshot {
 			Id: r.ID, Status: int32(r.Status), RequestedAt: ts(r.RequestedAt), Attempt: r.Attempt, LiveEndpoint: r.LiveEndpoint,
 			Takeovers: int32(r.Takeovers), StalledTakeovers: int32(r.StalledTakeovers), Turns: int32(r.Turns),
 			Recall: r.Recall, Recalled: r.Recalled, SuspendReason: r.SuspendReason, SuspendedUntil: ts(r.SuspendedUntil),
+			Compactions: int32(r.Compactions), OutputTokens: r.OutputTokens, Resume: r.Resume,
 		}
 		for _, c := range r.Calls {
 			cs := &v1.CallSnapshot{Call: c.Call, StartedAttempts: c.StartedAttempts, NodeId: c.NodeID, Deadline: ts(c.Deadline), Done: c.Done}
@@ -59,6 +60,13 @@ func (s *State) Snapshot() *v1.SessionSnapshot {
 			rs.Calls = append(rs.Calls, cs)
 		}
 		snap.Runs = append(snap.Runs, rs)
+	}
+	for _, p := range s.Past {
+		snap.PastRuns = append(snap.PastRuns, &v1.PastRunSnapshot{Id: p.ID, Status: int32(p.Status), RequestedAt: ts(p.RequestedAt),
+			Attempt: p.Attempt, Turns: int32(p.Turns)})
+	}
+	for id := range s.callIDsOld {
+		snap.CallIds = append(snap.CallIds, id)
 	}
 	for id := range s.callIDs {
 		snap.CallIds = append(snap.CallIds, id)
@@ -81,7 +89,11 @@ func FromSnapshot(snap *v1.SessionSnapshot) (*State, error) {
 	s := &State{
 		SessionID: snap.GetSessionId(), Seq: snap.GetSeq(), Created: snap.GetCreated(), Agent: snap.GetAgent(), Closed: snap.GetClosed(),
 		Compaction: snap.GetCompaction(), CompactedAt: snap.GetCompactedAt(), History: snap.GetHistory(),
-		callIDs: map[string]bool{},
+		callIDsOld: map[string]bool{},
+	}
+	for _, p := range snap.GetPastRuns() {
+		s.Past = append(s.Past, RunSummary{ID: p.GetId(), Status: RunStatus(p.GetStatus()), RequestedAt: fromTS(p.GetRequestedAt()),
+			Attempt: p.GetAttempt(), Turns: int(p.GetTurns())})
 	}
 	for _, rs := range snap.GetRuns() {
 		r := &Run{
@@ -89,6 +101,7 @@ func FromSnapshot(snap *v1.SessionSnapshot) (*State, error) {
 			LiveEndpoint: rs.GetLiveEndpoint(), Takeovers: int(rs.GetTakeovers()), StalledTakeovers: int(rs.GetStalledTakeovers()),
 			Turns: int(rs.GetTurns()), Recall: rs.GetRecall(), Recalled: rs.GetRecalled(),
 			SuspendReason: rs.GetSuspendReason(), SuspendedUntil: fromTS(rs.GetSuspendedUntil()),
+			Compactions: int(rs.GetCompactions()), OutputTokens: rs.GetOutputTokens(), Resume: rs.GetResume(),
 		}
 		for _, cs := range rs.GetCalls() {
 			c := &Call{Call: cs.GetCall(), StartedAttempts: cs.GetStartedAttempts(), NodeID: cs.GetNodeId(), Deadline: fromTS(cs.GetDeadline()), Done: cs.GetDone()}
@@ -100,7 +113,7 @@ func FromSnapshot(snap *v1.SessionSnapshot) (*State, error) {
 		s.Runs = append(s.Runs, r)
 	}
 	for _, id := range snap.GetCallIds() {
-		s.callIDs[id] = true
+		s.callIDsOld[id] = true
 	}
 	for _, in := range snap.GetInputs() {
 		s.Inputs = append(s.Inputs, InputRef{ID: in.GetId(), RunID: in.GetRunId(), Steered: in.GetSteered(), Answered: in.GetAnswered()})

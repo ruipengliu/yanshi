@@ -899,7 +899,7 @@ export type ClientError = Message<"yanshi.v1.ClientError"> & {
   message: string;
 
   /**
-   * quota_exceeded 时为配额重置时间。
+   * quota_exceeded 时为配额重置时间；unavailable 且因交互工作积压而拒绝新 Run 时为建议的重试时刻。
    *
    * @generated from field: google.protobuf.Timestamp retry_at = 3;
    */

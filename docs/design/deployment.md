@@ -1,6 +1,6 @@
 # 生产部署形态：一个二进制、按角色分组的模块化单体
 
-> 状态：设计（2026-10-11），尚未实施 · 来源：[延展性评审](../review/2026-10-11-scalability-review.md) §8、§9 · 关联：[章程](../charter.md) §4、§5 原则 9，ADR-0001（私有化）、ADR-0008（沙箱信任边界）、ADR-0013（跨进程增量）、ADR-0028（分片键）、ADR-0029（工作类别与移交）· 术语以 [CONTEXT.md](../../CONTEXT.md) 为准
+> 状态：设计（2026-10-11）；§6 的角色开关、两个 DSN、就绪检查与队列指标已实现，部署清单已写、尚未在集群上验证 · 来源：[延展性评审](../review/2026-10-11-scalability-review.md) §8、§9 · 关联：[章程](../charter.md) §4、§5 原则 9，ADR-0001（私有化）、ADR-0008（沙箱信任边界）、ADR-0013（跨进程增量）、ADR-0028（分片键）、ADR-0029（工作类别与移交）· 术语以 [CONTEXT.md](../../CONTEXT.md) 为准
 >
 > 本文回答两个问题：生产环境怎么部署；进程边界按什么划。实施前须完成 §6 的代码改动，上线前逐项核对 [上线检查清单](../launch-checklist.md)。
 
@@ -77,14 +77,14 @@ worker        worker-bg     sandbox-ctl        janitor
 
 | 改动 | 说明 | 验收 |
 |---|---|---|
-| 角色开关 | `serve -roles gateway,worker,sandbox,janitor`（或子命令）；允许 Worker 数为 0、关闭 API 与 peer 服务；依赖评审 §9.1 的装配包，避免四处复制装配代码 | 任一角色组合都能启动；全部角色等价于现在的 serve；`internal/sim` 不变 |
-| 两个 DSN | `-pg-dsn` 经 PgBouncer 事务池；`-pg-listen-dsn` 直连，用于 `LISTEN` 与迁移锁 | 经事务池的部署中通知正常送达；故障切换后 LISTEN 在约定 RTO 内恢复 |
-| 就绪探针 | `/healthz` 只返回 200；新增就绪检查：数据库可达、本进程已 LISTEN 有订阅者的频道、迁移已全部应用 | 滚动发布时流量不会打到尚未监听通知的 Pod |
-| 部署清单 | Helm 或 Kustomize 进仓库：`terminationGracePeriodSeconds > drain-timeout`、PDB、沙箱控制器节点池与 RuntimeClass、网络策略、两个 DSN、`-notify-shards` 一致、模型准入参数按进程数折算 | 清单可审查；一套制品在无外网 K8s 完成部署（章程 §8） |
+| 角色开关（已实现） | `serve -roles gateway,worker,sandbox,janitor`，默认全部；没有 gateway 的进程不监听 `-addr`，存活与就绪检查在 `-peer-addr` 上；没有 worker 时 Worker 数为 0；没有 sandbox 时沙箱工具照常登记、调用由其他进程的控制器执行。存储由装配包 `internal/app` 构造（评审 §9.1） | 任一角色组合都能启动；全部角色等价于原来的 serve；已验证"只有 gateway"与"只有 worker、janitor"的两个进程共用 PostgreSQL 完成 Run |
+| 两个 DSN（已实现） | `-pg-dsn` 可经 PgBouncer 事务池；`-pg-listen-dsn`（`YANSHI_PG_LISTEN_DSN`）直连，用于 `LISTEN` 与迁移锁（`pg.OpenDirect`，小连接池）；为空时共用 `-pg-dsn` | 经事务池的部署中通知正常送达；故障切换后 LISTEN 在约定 RTO 内恢复（心跳 10 秒、超时 10 秒后重建，见 [M2 扩容压测](./m2-scale-test.md) §8） |
+| 就绪探针（已实现） | `/healthz` 只返回 200；`/readyz`：数据库可达、本进程的 LISTEN 连接已建立（`pg.Notifier.Ready`）、迁移已全部应用（每分钟复查） | 滚动发布时流量不会打到尚未监听通知的 Pod |
+| 部署清单（已写，未在集群上验证） | Kustomize：`deploy/k8s/base`（每个角色一个 Deployment、migrate Job、网关的 Service 与 PDB、网络策略、各角色共用的探针与配置挂载），`deploy/k8s/overlays/example`（以仓库中的开发配置生成 ConfigMap，密钥为占位值）；镜像 `deploy/Dockerfile`。交互池与后台池是两个 Deployment（`-worker-pool interactive` 与 `any`） | 清单可审查（`kubectl kustomize --load-restrictor LoadRestrictionsNone deploy/k8s/overlays/example`）；一套制品在无外网 K8s 完成部署（章程 §8），须在目标环境验证 |
 
 ## 7. 容量与扩缩
 
-- 扩缩信号：模型准入等待（`yanshi_model_admission_wait_seconds`）、连接数（`yanshi_nodes_connected`、`yanshi_live_peer_streams`）、握手拒绝（`yanshi_handshakes_rejected_total`）、认领结果（`yanshi_queue_claims_total`）。交互池与后台池的队列深度与等待时长目前没有指标，须随角色开关一起新增（按业务线与类别打标签），它们也是 Submit 准入阈值的依据（评审 §8.4 第 7 项）。
+- 扩缩信号：模型准入等待（`yanshi_model_admission_wait_seconds`）、连接数（`yanshi_nodes_connected`、`yanshi_live_peer_streams`）、握手拒绝（`yanshi_handshakes_rejected_total`）、认领结果（`yanshi_queue_claims_total`）。队列等待与积压：`yanshi_queue_wait_seconds{queue, priority}`（认领时观察，工作变为可认领到被认领的时长），`yanshi_queue_ready{queue, business_line, priority}` 与 `yanshi_queue_oldest_wait_seconds`（Janitor 所在进程每 15 秒统计）。它们也是 Submit 准入阈值的依据（`-admission-max-wait`，评审 §8.4 第 5 项）。
 - 单元容量上限由 PostgreSQL 分片数与通知投递次数决定（评审 §8.3）；容量矩阵与准入阈值由评审 §8.4 第 4 项的压测给出，在目标环境实测后填入部署清单。
 - 模型并发是全局约束：`-model-concurrency`、`-model-rps` 按账号上限除以持有该提供商的进程数配置（[模型调用](./model-calls.md) §4）；弹性扩容时须随副本数联动，或实现共享令牌服务。
 

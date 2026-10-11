@@ -1,0 +1,40 @@
+# 各角色共用的 Pod 设置（kustomization.yaml 以它修补全部 Deployment）：内部地址、存活与就绪检查、配置与密钥。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: common
+spec:
+  template:
+    spec:
+      # 大于 -drain-timeout（默认 20 秒）：进行中的这一步写完日志、移交 Run 之后再退出（ADR-0029）。
+      terminationGracePeriodSeconds: 40
+      containers:
+        - name: yanshi
+          env:
+            - name: POD_IP
+              valueFrom: {fieldRef: {fieldPath: status.podIP}}
+          envFrom:
+            # YANSHI_PG_DSN（可经 PgBouncer 事务池）、YANSHI_PG_LISTEN_DSN（直连）、YANSHI_PEER_TOKEN、
+            # YANSHI_S3_*、模型与内容安全提供商的密钥。
+            - secretRef: {name: yanshi-secrets}
+          ports:
+            - {name: peer, containerPort: 7070}
+          livenessProbe:
+            httpGet: {path: /healthz, port: peer}
+            periodSeconds: 10
+          readinessProbe:
+            # 数据库可达、LISTEN 连接已建立、迁移已全部应用（docs/design/deployment.md §6）。
+            httpGet: {path: /readyz, port: peer}
+            periodSeconds: 5
+          volumeMounts:
+            - {name: agents, mountPath: /etc/yanshi/agents, readOnly: true}
+            - {name: businesslines, mountPath: /etc/yanshi/businesslines, readOnly: true}
+            - {name: pricing, mountPath: /etc/yanshi/pricing, readOnly: true}
+      volumes:
+        # 所有进程同一版本的配置（AgentDef 与发布配置、业务线公钥、价格表）；发布配置每 10 秒热加载。
+        - name: agents
+          configMap: {name: yanshi-agents}
+        - name: businesslines
+          configMap: {name: yanshi-businesslines}
+        - name: pricing
+          configMap: {name: yanshi-pricing}

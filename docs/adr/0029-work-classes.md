@@ -29,3 +29,12 @@ status: accepted
 - 客户端看到短暂的挂起。`handoff` 不是在等审批、设备或配额，等待视图不显示它。
 - 沙箱队列沿用 Session 的类别（Worker 派发时带上），Janitor 队列一律为 `Background`。
 - Submit 准入（按队列深度或等待时长拒绝）尚未实现。准入阈值要依据队列深度与等待时长的指标来定。
+
+## 修订（2026-10-11）：按服务量判定，审批后的恢复名额
+
+依据[延展性评审](../review/2026-10-11-scalability-review.md) §8.2。
+
+- **长任务按服务量判定**（`workqueue.Classify`）：模型回合（已提交的 `AssistantMessage`）与上下文压缩（`ContextCompacted`）合计达到 `LongRunTurns`（6），或累计输出 token 达到 `LongRunOutputTokens`（16000）。压缩同样是一次模型调用；回合不多但每回合都很长的 Run（如撰写长文）同样长时间占用 Worker。阈值是代码常量，同一版本对同一段日志总给出同样的类别。
+- **恢复名额。** 用户做出审批或回答（`ApprovalDecided`、对 ask_user 的外部结果）后，Run 得到一个不可叠加的恢复名额（`session.Run.Resume`），由下一个 `AttemptStarted` 消费，按事件重放。有名额的长任务以 `Resumed` 优先级入队：介于 `Background` 与 `Interactive` 之间，只提高它在后台池中的认领次序，交互 Worker 不认领它，因此"每个长任务至多移交一次"不变。用户刚做出决定，多半还在等结果。
+- 优先级的取值随之改为 Background 0、Resumed 1、Interactive 2（迁移 `0014_resumed_priority.sql` 把已有的交互项从 1 改为 2）。
+- **Submit 准入**（`service.QueueAdmission`，`serve -admission-max-wait`）。业务线中等得最久的交互工作超过阈值时，拒绝该业务线的新 Run（HTTP 503 与 `Retry-After`；Connection 上为 `unavailable` 与 `retry_at`），回落到恢复阈值以下才恢复（滞回）。只拦新 Run：插话、同一输入 ID 的重试、中断、审批与回答属于进行中的工作，照常接受，积压时的容量由此留出。等待取自队列的积压统计（`workqueue.Stats`，新增 `ready_at` 记录工作变为可认领的时刻），是排队时长的直接测量，不必另行估计处理速率。默认不启用：阈值依据 `yanshi_queue_wait_seconds` 的线上分布确定。

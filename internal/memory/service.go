@@ -171,15 +171,15 @@ func (s *Service) Save(ctx context.Context, r SaveRequest) (*Memory, error) {
 		return nil, err
 	}
 	// 先写、后查：所属 Session 已删除时撤回（ADR-0015）。
-	if s.Deletions != nil && r.SessionID != "" {
-		gone, err := lifecycle.Deleted(ctx, s.Deletions, r.SessionID)
-		if err != nil || gone {
-			_ = s.Store.Delete(context.WithoutCancel(ctx), id)
-			if gone {
-				return nil, fmt.Errorf("%w: session %s", ErrNotFound, r.SessionID)
-			}
-			return nil, err
-		}
+	gone, err := lifecycle.Recheck(ctx, s.Deletions, r.SessionID, func(ctx context.Context) error { return s.Store.Delete(ctx, id) })
+	if err != nil && !gone {
+		_ = s.Store.Delete(context.WithoutCancel(ctx), id) // 无法确认时同样撤回：写入失败，调用方重试
+	}
+	if gone {
+		return nil, fmt.Errorf("%w: session %s", ErrNotFound, r.SessionID)
+	}
+	if err != nil {
+		return nil, err
 	}
 	if old != nil {
 		if err := s.Store.Delete(ctx, old.ID); err != nil {

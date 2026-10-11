@@ -3,6 +3,7 @@ package capability
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path"
 	"slices"
@@ -28,6 +29,15 @@ const (
 	// SandboxLabel 是沙箱工具名的前缀部分："sandbox__<capability>"。
 	SandboxLabel = "sandbox"
 )
+
+// ErrConfig 表示 AgentDef 的能力白名单本身有误（未知能力、非法的通配）：与查询设备目录、MCP Server 的
+// 暂时性故障不同，重试不会成功。Tools 返回的此类错误满足 errors.Is(err, ErrConfig)，错误文本不变。
+var ErrConfig = errors.New("invalid capability configuration")
+
+type configError struct{ err error }
+
+func (e configError) Error() string   { return e.err.Error() }
+func (e configError) Unwrap() []error { return []error{ErrConfig, e.err} }
 
 // Target 是解析工具时的上下文：Scope 决定可见的设备，SessionID 决定沙箱。
 type Target struct {
@@ -124,14 +134,14 @@ func (c *Catalog) Tools(ctx context.Context, target Target, allow []string) ([]T
 		}
 		if g, ok := strings.CutPrefix(a, DevicePrefix); ok {
 			if _, err := path.Match(g, ""); err != nil {
-				return nil, fmt.Errorf("bad capability pattern %q: %w", a, err)
+				return nil, configError{fmt.Errorf("bad capability pattern %q: %w", a, err)}
 			}
 			globs = append(globs, g)
 			continue
 		}
 		if g, ok := strings.CutPrefix(a, SandboxPrefix); ok {
 			if _, err := path.Match(g, ""); err != nil {
-				return nil, fmt.Errorf("bad capability pattern %q: %w", a, err)
+				return nil, configError{fmt.Errorf("bad capability pattern %q: %w", a, err)}
 			}
 			sandboxGlobs = append(sandboxGlobs, g)
 			continue
@@ -142,7 +152,7 @@ func (c *Catalog) Tools(ctx context.Context, target Target, allow []string) ([]T
 		}
 		cp, ok := c.Local.Get(a)
 		if !ok {
-			return nil, fmt.Errorf("unknown capability %q", a)
+			return nil, configError{fmt.Errorf("unknown capability %q", a)}
 		}
 		out = append(out, Tool{Spec: cp.Spec(), Local: cp})
 	}

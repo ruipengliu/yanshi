@@ -9,6 +9,8 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/eventlog"
+	"yanshi/internal/workqueue"
+	"yanshi/internal/workqueue/memqueue"
 )
 
 type Log struct {
@@ -61,6 +63,23 @@ func (l *Log) Append(ctx context.Context, sessionID string, expectedSeq uint64, 
 		s.changed = make(chan struct{})
 	}
 	return uint64(len(s.events)), nil
+}
+
+// Waking 返回日志与 q 的原子组合（eventlog.WakingLog）：追加在队列锁内完成，成功才入队。
+func (l *Log) Waking(q *memqueue.Queue) eventlog.WakingLog { return waking{l: l, q: q} }
+
+type waking struct {
+	l *Log
+	q *memqueue.Queue
+}
+
+func (w waking) AppendAndEnqueue(ctx context.Context, sessionID string, expectedSeq uint64, class workqueue.Class, events ...*v1.Event) (uint64, error) {
+	var head uint64
+	err := w.q.EnqueueIf(sessionID, class, func() (err error) {
+		head, err = w.l.Append(ctx, sessionID, expectedSeq, events...)
+		return err
+	})
+	return head, err
 }
 
 func (l *Log) Read(ctx context.Context, sessionID string, after uint64, limit int) ([]*v1.Event, error) {

@@ -62,8 +62,9 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 	}
 	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "echo", Version: "1", Model: "echo/any"})
 	clk := clock.Real{}
-	store := &session.Store{Log: memlog.New(), IDs: ids.Random(), Clock: clk}
-	svc := &service.Service{Store: store, Queue: memqueue.New(clk), Agents: agents,
+	mlog, mq := memlog.New(), memqueue.New(clk)
+	store := &session.Store{Log: mlog, Waking: mlog.Waking(mq), IDs: ids.Random(), Clock: clk}
+	svc := &service.Service{Store: store, Agents: agents,
 		Index: lifecycle.NewMemIndex(), Deletions: lifecycle.NewMemDeletions(), Janitor: memqueue.New(clk)}
 	arts := &artifact.Service{Meta: artifact.NewMemMeta(), Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk}
 	dir := node.NewMemDirectory(clk)

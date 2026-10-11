@@ -1,0 +1,24 @@
+# yanshi 的一个单元（cell）：一条业务线一套（docs/design/deployment.md §1、§2）。一个镜像，按 serve -roles 裁剪成
+# 不同的 Deployment；角色之间没有新的契约，全部角色合在一个进程里同样能运行。
+# 依赖由部署方提供：PostgreSQL（主 + 同步备，SQL 经 PgBouncer 事务池，另有直连地址）、S3 兼容对象存储、
+# Secret yanshi-secrets 与 ConfigMap yanshi-agents、yanshi-businesslines、yanshi-pricing（见 overlays/example）。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: yanshi
+resources:
+  - migrate-job.yaml
+  - gateway.yaml
+  - worker.yaml
+  - sandbox-ctl.yaml
+  - janitor.yaml
+  - network-policy.yaml
+patches:
+  - path: common.yaml
+    target:
+      kind: Deployment
+images:
+  - name: yanshi
+    newName: yanshi
+    newTag: dev

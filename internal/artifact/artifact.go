@@ -158,15 +158,15 @@ func (s *Service) Put(ctx context.Context, sessionID, name, mimeType string, r i
 		return nil, err
 	}
 	// 先写、后查：上传期间 Session 被删除时撤回（ADR-0015）。
-	if s.Deletions != nil {
-		gone, err := lifecycle.Deleted(ctx, s.Deletions, sessionID)
-		if err != nil || gone {
-			_ = s.delete(context.WithoutCancel(ctx), m.ID)
-			if gone {
-				return nil, fmt.Errorf("%w: session %s", ErrNotFound, sessionID)
-			}
-			return nil, err
-		}
+	gone, err := lifecycle.Recheck(ctx, s.Deletions, sessionID, func(ctx context.Context) error { return s.delete(ctx, m.ID) })
+	if err != nil && !gone {
+		_ = s.delete(context.WithoutCancel(ctx), m.ID) // 无法确认时同样撤回：上传失败，客户端重试
+	}
+	if gone {
+		return nil, fmt.Errorf("%w: session %s", ErrNotFound, sessionID)
+	}
+	if err != nil {
+		return nil, err
 	}
 	return m, nil
 }

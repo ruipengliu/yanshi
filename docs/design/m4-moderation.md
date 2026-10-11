@@ -52,10 +52,17 @@ type Verdict struct {
 
 `moderation.Mock`：命中关键词列表即拦截，标签为 `mock`。默认列表只包含测试用的标记词（如 `【违规测试】`），可用 `serve -moderation-terms <文件>` 替换。它不具备真实的识别能力，**只用于开发与测试**；`serve` 使用它时启动日志打印警告，指标 `yanshi_moderation_mock` 为 1。
 
+### 容灾（延展性评审 §8.2）
+
+失败即拒绝使内容安全提供商的可用性等于平台的可用性。`moderation.Failover`（`serve -moderation a,b`）依次询问提供商：前一个超时（`-moderation-timeout`，默认 3 秒）或出错时才改问下一个；第一个给出结论的即为结论，主提供商拦截时不再询问备用方，备用方的放行因此不会覆盖主方的拦截。全部不可用时照旧不放行。备用方须故障域独立、经合规确认与主方等价（上线检查清单）。
+
+尚未做（须先与合规确认）：全部不可用时暂存模型输出而不是重做——内容加密隔离、按 Session 可删、有 TTL，恢复后只重试检查、不重新生成。流式草稿与 Call 音频"先展示后检查"须另定策略：日志的失败即拒绝不等于展示合规。
+
 ## 5. 观测
 
 - `yanshi_moderation_checks_total{stage, result}`，result 为 allow | block | error；
-- `yanshi_moderation_duration_seconds{stage}`。
+- `yanshi_moderation_duration_seconds{stage}`；
+- `yanshi_moderation_failovers_total{provider}`：该提供商超时或出错、改问下一个的次数。
 
 日志只记录 Session、Run ID 与标签，不记录内容。
 

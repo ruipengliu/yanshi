@@ -209,3 +209,25 @@
 ### 9.3 不要做的
 
 拆微服务、引入依赖注入框架、把 Step 改成异步流水线。这些会破坏章程的"单进程可运行"与"确定性模拟"两条原则，收益为零。
+
+## 10. §8.4 与 §9.1 的落地情况（2026-10-11）
+
+| 项 | 状态 | 依据 |
+|---|---|---|
+| 1. 原子唤醒 | 已完成 | `Store.CommitAndWake`：输入、审批、回答、Node 结果在追加的同一语句中入队（`eventlog.WakingLog`，内存与 PostgreSQL 实现同一契约，无原子实现时报错而不退回两步）；Submit 的前后两次入队删除。组合套件 `eventlogtest.RunWaking` 覆盖冲突、重试、挂起、释放与删除的交错；模拟测试向外部写入注入"未生效"与"已生效但报告失败"，客户端以同一输入 ID 重试须得到 duplicate，停止注入后 Run 无须新输入即推进（把实现改回两步，模拟测试即报活性失败） |
+| 1. 错误分类 | 已完成 | `capability.ErrConfig`：只有白名单本身有误才立即 `RunFailed`；查询设备目录或 MCP 的故障本步重试，由 StepErrorBudget 兜底。模拟测试注入目录故障，不变量：目录故障不使 Run 立即失败 |
+| 2. 有界投影 | 已完成 | 旧 Run 只剩摘要，调用 ID 分层共享，历史访问（重复审批与回答、设备清除）改读日志；见 [M2 扩容压测](../design/m2-scale-test.md) §9 |
+| 3. 取消逐等待者轮询 | 已完成 | LISTEN 生效后再检查、连接心跳、重连后按速率分批重查、限速轮转校准；见 [M2 扩容压测](../design/m2-scale-test.md) §8 |
+| 3. 共享 feed | 已完成 | `feed.Hub`：每进程每 Session 一个读者；慢订阅者自己补读 |
+| 3. 通知分片归属到少数网关、小事件内联 NOTIFY | 未做 | 需要客户端按 Session 路由到归属进程，与部署形态一起做 |
+| 4. 容量基线 | 未做 | 须在目标环境压测；队列等待与积压的指标已具备（`yanshi_queue_wait_seconds`、`yanshi_queue_ready`） |
+| 5. 模型排队总时限、遵守 Retry-After | 已完成 | `model.Limits.Deadline`（`serve -model-deadline`，默认 15 分钟）计入排队与重试；Retry-After 不再被 MaxBackoff 截断，等不到下一次重试时立即放弃 |
+| 5. 长任务按服务量判定、恢复名额 | 已完成 | 回合与压缩合计 6 次或输出 16000 token；用户审批或回答后以 `Resumed` 优先级在后台池中先被认领（ADR-0029 修订） |
+| 5. Submit 准入 | 已完成（默认关闭） | `service.QueueAdmission`（`serve -admission-max-wait`）：按交互工作的排队等待、带滞回，只拦新 Run；阈值待线上指标确定 |
+| 6. 内容安全容灾 | 部分完成 | `moderation.Failover`（`-moderation 主,备`）：只在超时或出错时切换，备用方的放行不覆盖主方的拦截。暂存与重试检查须先与合规确认 |
+| 7. PostgreSQL 高可用演练 | 未做 | 待部署形态确定；代码侧已具备两个 DSN（`-pg-listen-dsn`）、心跳与就绪检查 |
+| 8. 分片验证 | 部分完成 | 队列契约改为分片内有序；分片层本身未做 |
+| §9.1 装配集中化 | 部分完成 | `internal/app`：一套存储由 `app.Memory`、`app.Postgres` 构造，serve、模拟测试、评测与 e2e 共用；组件图（Hub、Service、Worker）仍在各处装配 |
+| §9.1 Session 数据登记制 | 部分完成 | `app.SessionData` 登记各处数据，Janitor 按列表清除；写入入口统一经 `lifecycle.Recheck` 复查。删除不变量尚未对列表自动检查 |
+| §9.1 Worker 阶段化 | 未做 | 按评审，在下一个横切需求到来时做 |
+| 部署设计 §6 | 已完成（清单未在集群上验证） | `serve -roles`、`-worker-pool`、`-pg-listen-dsn`、`/readyz`；`deploy/Dockerfile` 与 `deploy/k8s`（Kustomize） |

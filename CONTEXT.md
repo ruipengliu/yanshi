@@ -132,6 +132,14 @@ _Avoid_: Node（Node 提供 Capability，Worker 执行 Run）、执行器
 Worker 主动结束自己的 Attempt，把 Run 交给其他 Worker：以 `handoff` 挂起并立即归还 Session，由任意 Worker 恢复。用于优雅停机，以及只认领交互工作的 Worker 交出已成为长任务的 Run（ADR-0029）。与接管不同，它不是故障，不计入接管次数。
 _Avoid_: 迁移、转交、让出
 
+**长任务**:
+活跃 Run 已经做了很多工作：模型回合与上下文压缩合计达到 6 次，或累计输出达到 16000 token（ADR-0029）。按已做的工作判定，不按经过的时间；它的工作以 Background 优先级排队，只由通用 Worker 认领。
+_Avoid_: 慢任务、后台任务
+
+**恢复名额**:
+用户对长任务做出审批或回答后，它在后台池中先被认领的一次机会，由下一个 Attempt 消费，不可叠加（ADR-0029）。它不让长任务回到交互池。
+_Avoid_: 插队、加急
+
 ## 个性化与治理
 
 **Memory（记忆）**:

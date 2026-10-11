@@ -23,9 +23,10 @@ func TestIndexTouchedAtMostEveryMinute(t *testing.T) {
 	ctx := context.Background()
 	clk := clock.NewFake(time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC))
 	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "a", Version: "1", Model: "echo/any"})
-	store := &session.Store{Log: memlog.New(), IDs: ids.Sequential("id"), Clock: clk}
+	mlog, mq := memlog.New(), memqueue.New(clk)
+	store := &session.Store{Log: mlog, Waking: mlog.Waking(mq), IDs: ids.Sequential("id"), Clock: clk}
 	index := lifecycle.NewMemIndex()
-	svc := &service.Service{Store: store, Queue: memqueue.New(clk), Agents: agents, Index: index}
+	svc := &service.Service{Store: store, Agents: agents, Index: index}
 	sid, err := svc.Create(ctx, service.CreateRequest{BusinessLine: "bl", EndUser: "u", Agent: "a"})
 	if err != nil {
 		t.Fatal(err)

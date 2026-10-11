@@ -13,11 +13,11 @@ import (
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
-	"yanshi/internal/artifact"
+	"yanshi/internal/askuser"
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/lifecycle"
-	"yanshi/internal/memory"
+	"yanshi/internal/metrics"
 	"yanshi/internal/node"
 	"yanshi/internal/presence"
 	"yanshi/internal/sandbox"
@@ -34,18 +34,17 @@ type Janitor struct {
 	// Service 用于保留策略触发的关闭与删除。
 	Service *service.Service
 	Store   *session.Store
-	// Sessions 是 Worker 的工作队列，SandboxQueue 是沙箱控制器的队列。
-	Sessions     workqueue.Queue
-	SandboxQueue workqueue.Queue
-	Inbox        node.Inbox
-	Nodes        node.Directory
-	// Sandbox 为 nil 表示未启用沙箱。
-	Sandbox   sandbox.Provider
-	Activity  sandbox.Activity
-	Ledger    nodesdk.Ledger // 沙箱控制器共享的去重账本
-	Artifacts *artifact.Service
-	// Memory 为 nil 表示未启用 Memory；删除 Session 时一并删除由它写入的 Memory（ADR-0016）。
-	Memory    memory.Store
+	// Data 是除日志与索引之外存放 Session 数据的全部地方，删除 Session 时按顺序清除（app.SessionData）。
+	Data []lifecycle.Holder
+	// Workspaces 在 Session 关闭时销毁其沙箱工作区（删除时它也在 Data 中）。
+	Workspaces sandbox.Workspaces
+	// Inbox 与 Nodes 用于请求设备清除本地记录。
+	Inbox node.Inbox
+	Nodes node.Directory
+	// Ledger 是沙箱控制器共享的去重账本，定期清理过期记录。
+	Ledger nodesdk.Ledger
+	// Queues 是统计积压的队列，键为指标中的队列名。
+	Queues    map[string]workqueue.Queue
 	Index     lifecycle.Index
 	Deletions lifecycle.Deletions
 	// Retention 是各业务线的保留策略，键为业务线名。
@@ -53,7 +52,7 @@ type Janitor struct {
 	// Usage 非 nil 时清理早于 UsageRetention 的用量（docs/design/m4-quota-usage.md §4）。
 	Usage          usage.Store
 	UsageRetention time.Duration
-	// Presence 非 nil 时随 Session 删除在场记录，并清理过期的记录（docs/design/m3-duplex-channel.md §6）。
+	// Presence 非 nil 时清理过期的在场记录（docs/design/m3-duplex-channel.md §6）。
 	Presence presence.Store
 	Clock    clock.Clock
 	Logger   *slog.Logger
@@ -62,6 +61,9 @@ type Janitor struct {
 	IdleWait time.Duration
 	// SweepEvery 是保留策略与兜底扫描的间隔。
 	SweepEvery time.Duration
+	// StatsEvery 是统计各队列积压（yanshi_queue_ready、yanshi_queue_oldest_wait_seconds）的间隔，默认 15 秒。
+	// 统计可能扫描整个队列，因此只由 Janitor 所在的少数进程做。
+	StatsEvery time.Duration
 	// BeforeStage 是测试钩子：每个清理阶段开始前调用，模拟测试在此注入崩溃。
 	BeforeStage func(ctx context.Context, stage string)
 
@@ -78,6 +80,9 @@ func (j *Janitor) init() {
 	if j.SweepEvery == 0 {
 		j.SweepEvery = time.Minute
 	}
+	if j.StatsEvery == 0 {
+		j.StatsEvery = 15 * time.Second
+	}
 	if j.Logger == nil {
 		j.Logger = slog.New(slog.DiscardHandler)
 	}
@@ -87,8 +92,12 @@ func (j *Janitor) init() {
 func (j *Janitor) Run(ctx context.Context) {
 	j.init()
 	defer j.release(ctx)
-	var lastSweep time.Time
+	var lastSweep, lastStats time.Time
 	for ctx.Err() == nil {
+		if now := j.Clock.Now(); now.Sub(lastStats) >= j.StatsEvery {
+			lastStats = now
+			j.sampleDepths(ctx)
+		}
 		did, err := j.Step(ctx)
 		if err != nil && ctx.Err() == nil {
 			j.Logger.Warn("janitor step failed", "janitor", j.ID, "err", err)
@@ -104,6 +113,27 @@ func (j *Janitor) Run(ctx context.Context) {
 			case <-ctx.Done():
 			case <-time.After(j.IdleWait):
 			}
+		}
+	}
+}
+
+// sampleDepths 统计 Session、沙箱与清理队列的积压，写入指标。
+func (j *Janitor) sampleDepths(ctx context.Context) {
+	metrics.QueueReady.Reset()
+	metrics.QueueOldestWait.Reset()
+	for name, q := range j.Queues {
+		st, ok := q.(workqueue.Stats)
+		if !ok {
+			continue
+		}
+		depths, err := st.Depths(ctx)
+		if err != nil {
+			j.Logger.Warn("queue depth sampling failed", "queue", name, "err", err)
+			continue
+		}
+		for _, d := range depths {
+			metrics.QueueReady.WithLabelValues(name, d.Class.BusinessLine, d.Class.Priority.String()).Set(float64(d.Ready))
+			metrics.QueueOldestWait.WithLabelValues(name, d.Class.BusinessLine, d.Class.Priority.String()).Set(d.OldestWait.Seconds())
 		}
 	}
 }
@@ -175,7 +205,7 @@ func (j *Janitor) process(ctx context.Context, sid string) error {
 		if err := j.stage(ctx, "close"); err != nil {
 			return err
 		}
-		return j.destroySandbox(ctx, sid)
+		return j.Workspaces.DeleteSession(ctx, sid)
 	}
 	return nil
 }
@@ -251,22 +281,28 @@ func (j *Janitor) interrupt(ctx context.Context, st *session.State) error {
 	return errors.New("interrupt before deletion: too many conflicts")
 }
 
+// forgetOnDevices 请求曾执行过该 Session 调用的设备清除本地记录。投影只保留最近 Run 的明细，因此扫描日志。
 func (j *Janitor) forgetOnDevices(ctx context.Context, sid string, st *session.State) error {
 	seen := map[string]bool{}
-	for _, r := range st.Runs {
-		for _, c := range r.Calls {
-			if c.NodeID == "" || sandbox.IsNode(c.NodeID) || seen[c.NodeID] {
-				continue
-			}
-			seen[c.NodeID] = true
-			if _, err := j.Nodes.Get(ctx, c.NodeID); errors.Is(err, node.ErrNotFound) {
-				continue // Node 已随 EndUser 注销而删除
-			} else if err != nil {
-				return err
-			}
-			if err := j.Inbox.Put(ctx, c.NodeID, ForgetInvoke(sid)); err != nil {
-				return err
-			}
+	var nodes []string
+	err := session.ScanLog(ctx, j.Store.Log, sid, func(e *v1.Event) bool {
+		if id := e.GetToolCallStarted().GetNodeId(); id != "" && !sandbox.IsNode(id) && id != askuser.NodeID && !seen[id] {
+			seen[id] = true
+			nodes = append(nodes, id)
+		}
+		return e.GetSeq() < st.Seq
+	})
+	if err != nil {
+		return err
+	}
+	for _, id := range nodes {
+		if _, err := j.Nodes.Get(ctx, id); errors.Is(err, node.ErrNotFound) {
+			continue // Node 已随 EndUser 注销而删除
+		} else if err != nil {
+			return err
+		}
+		if err := j.Inbox.Put(ctx, id, ForgetInvoke(sid)); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -279,50 +315,14 @@ func ForgetInvoke(sessionID string) *v1.Invoke {
 		ArgumentsJson: fmt.Sprintf(`{"session_id":%q}`, sessionID)}
 }
 
-// sweep 清除除日志与索引之外的全部数据；幂等，可重复执行。
+// sweep 按登记顺序清除除日志与索引之外的全部数据；幂等，可重复执行。
 func (j *Janitor) sweep(ctx context.Context, sid string) error {
-	if err := j.Inbox.RemoveSession(ctx, sid); err != nil {
-		return err
-	}
-	if err := j.Sessions.Remove(ctx, sid); err != nil {
-		return err
-	}
-	if err := j.destroySandbox(ctx, sid); err != nil {
-		return err
-	}
-	if err := j.Ledger.Forget(sid); err != nil {
-		return err
-	}
-	// 快照含有对话内容：日志删除前后各删一次，第二遍清扫兜住删除期间写入的快照。
-	if j.Store.Snapshots != nil {
-		if err := j.Store.Snapshots.Delete(ctx, sid); err != nil {
-			return err
+	for _, h := range j.Data {
+		if err := h.DeleteSession(ctx, sid); err != nil {
+			return fmt.Errorf("delete %s: %w", h.Name, err)
 		}
 	}
-	if j.Memory != nil {
-		if err := j.Memory.DeleteSession(ctx, sid); err != nil {
-			return err
-		}
-	}
-	if j.Presence != nil {
-		if err := j.Presence.DeleteSession(ctx, sid); err != nil {
-			return err
-		}
-	}
-	return j.Artifacts.DeleteSession(ctx, sid)
-}
-
-func (j *Janitor) destroySandbox(ctx context.Context, sid string) error {
-	id := sandbox.NodeID(sid)
-	if err := j.SandboxQueue.Remove(ctx, id); err != nil {
-		return err
-	}
-	if j.Sandbox != nil {
-		if err := j.Sandbox.Destroy(ctx, id); err != nil {
-			return err
-		}
-	}
-	return j.Activity.Delete(ctx, id)
+	return nil
 }
 
 // Sweep 执行保留策略（自动关闭与删除），重新入队未完成的删除（写入删除记录后、入队前崩溃的情况），

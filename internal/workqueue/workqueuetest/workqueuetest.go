@@ -17,7 +17,8 @@ var (
 	anyWork     = workqueue.Pool{}
 )
 
-// Run 对 newQueue 返回的实现运行全部用例；每个用例获得全新的队列与虚拟时钟。
+// Run 对 newQueue 返回的实现运行全部用例；每个用例获得全新的队列与虚拟时钟。用例中的顺序断言都在一个分片内：
+// 分片的实现按键路由时，以同一分片的键运行本套件（契约是分片内有序，延展性评审 §8.2）。
 func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queue) {
 	ctx := context.Background()
 	setup := func(t *testing.T) (*clock.Fake, workqueue.Queue) {
@@ -243,6 +244,83 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 		}
 		if l, err := q.Claim(ctx, "w", time.Minute, interactiveOnly); err != nil || l.Class != interactive {
 			t.Fatalf("park kept the old class: %+v, %v", l, err)
+		}
+	})
+
+	// Waited 是认领前已可认领的时长：入队、挂起到期、唤醒、归还、租约过期分别从各自的时刻算起（排队等待的指标）。
+	t.Run("ClaimReportsWait", func(t *testing.T) {
+		c, q := setup(t)
+		_ = q.Enqueue(ctx, "s", interactive)
+		c.Advance(3 * time.Second)
+		_ = q.Enqueue(ctx, "s", interactive) // 已在等的项再次入队不重新计时
+		c.Advance(time.Second)
+		l, err := q.Claim(ctx, "w", time.Minute, anyWork)
+		if err != nil || l.Waited != 4*time.Second {
+			t.Fatalf("after enqueue: %+v, %v", l, err)
+		}
+		if err := q.Park(ctx, l, c.Now().Add(10*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		c.Advance(12 * time.Second)
+		if l, err = q.Claim(ctx, "w", time.Minute, anyWork); err != nil || l.Waited != 2*time.Second {
+			t.Fatalf("after park deadline: %+v, %v", l, err)
+		}
+		if err := q.Park(ctx, l, c.Now().Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		c.Advance(time.Minute)
+		_ = q.Enqueue(ctx, "s", interactive) // 唤醒：从现在算起
+		c.Advance(time.Second)
+		if l, err = q.Claim(ctx, "w", time.Second, anyWork); err != nil || l.Waited != time.Second {
+			t.Fatalf("after wake: %+v, %v", l, err)
+		}
+		c.Advance(5 * time.Second) // 租约 1 秒前过期
+		if l, err = q.Claim(ctx, "w2", time.Minute, anyWork); err != nil || l.Waited != 4*time.Second {
+			t.Fatalf("after lease expiry: %+v, %v", l, err)
+		}
+		if err := q.Release(ctx, l, false); err != nil {
+			t.Fatal(err)
+		}
+		c.Advance(2 * time.Second)
+		if l, err = q.Claim(ctx, "w", time.Minute, anyWork); err != nil || l.Waited != 2*time.Second {
+			t.Fatalf("after release: %+v, %v", l, err)
+		}
+	})
+
+	t.Run("DepthsCountClaimableWork", func(t *testing.T) {
+		c, q := setup(t)
+		st, ok := q.(workqueue.Stats)
+		if !ok {
+			t.Skip("queue does not implement workqueue.Stats")
+		}
+		_ = q.Enqueue(ctx, "a", interactive)
+		c.Advance(5 * time.Second)
+		_ = q.Enqueue(ctx, "b", interactive)
+		_ = q.Enqueue(ctx, "c", background)
+		_ = q.Enqueue(ctx, "d", interactive)
+		l, _ := q.Claim(ctx, "w", time.Minute, anyWork) // a：已租出，不算
+		_ = q.Enqueue(ctx, "e", background)
+		c.Advance(time.Second)
+		if l.SessionID != "a" {
+			t.Fatalf("claimed %s", l.SessionID)
+		}
+		parked, _ := q.Claim(ctx, "w", time.Minute, anyWork) // b：挂起中，不算
+		if err := q.Park(ctx, parked, c.Now().Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		depths, err := st.Depths(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[workqueue.Class]workqueue.Depth{}
+		for _, d := range depths {
+			got[d.Class] = d
+		}
+		if d := got[interactive]; d.Ready != 1 || d.OldestWait != time.Second {
+			t.Fatalf("interactive depth %+v (all %+v)", d, depths)
+		}
+		if d := got[background]; d.Ready != 2 || d.OldestWait != time.Second {
+			t.Fatalf("background depth %+v (all %+v)", d, depths)
 		}
 	})
 }

@@ -3,6 +3,7 @@ package pg_test
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -74,5 +75,55 @@ func TestShardedChannelsListenOnDemand(t *testing.T) {
 	}
 	if v, ok := n.Latest(pg.TopicEvents, keys[2]); ok {
 		t.Fatalf("received %d on a channel without subscribers", v)
+	}
+}
+
+// TestWaiterConvergesAfterListenerLoss：LISTEN 连接断开期间发出的通知丢失（末条漏发），等待者没有各自的轮询，
+// 靠重连后的分批重查收敛。
+func TestWaiterConvergesAfterListenerLoss(t *testing.T) {
+	pool, _ := pgtest.Fresh(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	n := pg.NewNotifier(pool, nil)
+	n.Heartbeat, n.HeartbeatTimeout = 100*time.Millisecond, 500*time.Millisecond
+	done := make(chan struct{})
+	go func() { n.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+
+	var head atomic.Uint64
+	got := make(chan uint64, 1)
+	go func() {
+		v, _ := n.WaitAbove(ctx, pg.TopicEvents, "s1", 0, func(context.Context) (uint64, error) { return head.Load(), nil })
+		got <- v
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for n.Generation() == 0 || n.ListenerPID() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("notifier never connected")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	gen := n.Generation()
+	time.Sleep(800 * time.Millisecond) // 若干次心跳：健康的连接不应被重建
+	if g := n.Generation(); g != gen {
+		t.Fatalf("healthy listener reconnected: generation %d → %d", gen, g)
+	}
+	if _, err := pool.Exec(ctx, `SELECT pg_terminate_backend($1)`, int32(n.ListenerPID())); err != nil {
+		t.Fatal(err)
+	}
+	head.Store(1)
+	if _, err := pool.Exec(ctx, `SELECT pg_notify($1, 's1:1')`, n.Channel(pg.TopicEvents, "s1")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case v := <-got:
+		if v != 1 {
+			t.Fatalf("got %d", v)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("waiter never converged after the listener was lost")
+	}
+	if n.Generation() <= gen {
+		t.Fatalf("generation %d did not advance past %d", n.Generation(), gen)
 	}
 }

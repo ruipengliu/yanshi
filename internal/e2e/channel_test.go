@@ -14,20 +14,9 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	v1 "yanshi/gen/yanshi/v1"
-	"yanshi/internal/artifact"
-	"yanshi/internal/artifact/pgartifact"
-	"yanshi/internal/clock"
-	"yanshi/internal/eventlog/pglog"
-	"yanshi/internal/ids"
-	"yanshi/internal/lifecycle/pglifecycle"
-	"yanshi/internal/memory/pgmemory"
 	"yanshi/internal/model"
-	"yanshi/internal/node/pgnode"
 	"yanshi/internal/notify"
 	"yanshi/internal/pg/pgtest"
-	"yanshi/internal/presence/pgpresence"
-	"yanshi/internal/sandbox/pgsandbox"
-	"yanshi/internal/workqueue/pgqueue"
 	"yanshi/sdk/nodesdk"
 )
 
@@ -381,19 +370,7 @@ func (r *presenceRecorder) viewers() string {
 // 是否聚焦、是否正在输入；一台离开后另一台随即看到。
 func TestPresenceAcrossInstances(t *testing.T) {
 	pool, notifier := pgtest.Fresh(t)
-	clk := clock.Real{}
-	shared := func() stores {
-		return stores{
-			log: pglog.New(pool, notifier), queue: pgqueue.New(pool, clk, pgqueue.Sessions),
-			dir: pgnode.NewDirectory(pool, clk), inbox: pgnode.NewInbox(pool, notifier),
-			sandboxQueue: pgqueue.New(pool, clk, pgqueue.Sandboxes),
-			ledger:       pgsandbox.Ledger{Pool: pool}, activity: pgsandbox.Activity{Pool: pool},
-			artifacts: &artifact.Service{Meta: pgartifact.Meta{Pool: pool}, Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk},
-			index:     pglifecycle.Index{Pool: pool}, deletions: pglifecycle.Deletions{Pool: pool, Notifier: notifier}, janitorQueue: pgqueue.New(pool, clk, pgqueue.Janitor),
-			memories: pgmemory.Store{Pool: pool}, grants: pgmemory.Grants{Pool: pool},
-			presence: pgpresence.Store{Pool: pool, Notifier: notifier}, push: notify.NewMemRegistry(),
-		}
-	}
+	shared := func() stores { return pgStores(pool, notifier) }
 	a := &env{t: t, srv: instance(t, shared(), 1, true)}
 	b := &env{t: t, srv: instance(t, shared(), 0, true)}
 	ctx := context.Background()

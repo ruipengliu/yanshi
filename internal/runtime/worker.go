@@ -247,6 +247,7 @@ func (w *Worker) Step(ctx context.Context) (bool, error) {
 			return false, err
 		}
 		metrics.QueueClaims.WithLabelValues("ok").Inc()
+		metrics.QueueWait.WithLabelValues("sessions", l.Class.Priority.String()).Observe(l.Waited.Seconds())
 		w.drop()
 		w.lease, w.renewed = l, w.now()
 	} else if w.now().Sub(w.renewed) >= w.cfg.LeaseTTL/3 {
@@ -655,8 +656,12 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 			w.quotaPark(p))
 	}
 	tools, err := w.cfg.Catalog.Tools(ctx, w.target(), def.Capabilities)
-	if err != nil {
+	if errors.Is(err, capability.ErrConfig) {
 		return w.fail(ctx, r, err.Error())
+	}
+	if err != nil {
+		// 查询设备目录或 MCP Server 的暂时性故障：本步重试，持续出错时由 StepErrorBudget 使 Run 失败。
+		return fmt.Errorf("catalog: %w", err)
 	}
 	// 系统指令只含 AgentDef 的指令：召回放在 Run 的位置上（Transcript），使系统指令与工具定义构成的前缀
 	// 在整个 Session 中不变，提供商的前缀缓存得以命中（docs/research/2026-10-agent-harness-and-system1.md）。

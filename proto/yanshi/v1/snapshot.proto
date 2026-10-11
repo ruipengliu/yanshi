@@ -30,6 +30,16 @@ message SessionSnapshot {
   repeated InputSnapshot inputs = 12;
   // 进行中的 Call；没有时为空。
   ActiveCallSnapshot active_call = 13;
+  // 移出投影的终态 Run 的摘要（session.State.Past），按请求顺序。
+  repeated PastRunSnapshot past_runs = 14;
+}
+
+message PastRunSnapshot {
+  string id = 1;
+  int32 status = 2;
+  google.protobuf.Timestamp requested_at = 3;
+  uint32 attempt = 4;
+  int32 turns = 5;
 }
 
 message ActiveCallSnapshot {
@@ -59,6 +69,9 @@ message RunSnapshot {
   repeated CallSnapshot calls = 11;
   string suspend_reason = 12;
   google.protobuf.Timestamp suspended_until = 13;
+  int32 compactions = 14;
+  int64 output_tokens = 15;
+  bool resume = 16;
 }
 
 message CallSnapshot {

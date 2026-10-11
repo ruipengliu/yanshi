@@ -157,7 +157,7 @@ func isEnded(reason string) func(*v1.CallEvent) bool {
 // callLog 返回日志中与 Call 相关的事件，形如 "start"、"user:你好"、"assistant:你说：你好"、"run:<from_call>"、"end:hangup"。
 func (e *env) callLog(st stores, sid string) []string {
 	e.t.Helper()
-	events, err := eventlog.ReadAll(context.Background(), st.log, sid, 0)
+	events, err := eventlog.ReadAll(context.Background(), st.Log, sid, 0)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestCallRelay(t *testing.T) {
 // Run 等待审批时告知模型，批准后的结果再播报。
 func TestCallLongTaskAndApproval(t *testing.T) {
 	e, st := callEnv(t, 300*time.Millisecond)
-	stop := e.startNode(st.ledger)
+	stop := e.startNode(st.Ledger)
 	defer stop()
 	phone := e.dialCall("phone")
 	sid := phone.createSession()
@@ -290,7 +290,7 @@ func TestCallLongTaskAndApproval(t *testing.T) {
 	phone.say("vc1", "task call macbook__write_file")
 	t.Cleanup(func() {
 		if t.Failed() {
-			events, _ := eventlog.ReadAll(context.Background(), st.log, sid, 0)
+			events, _ := eventlog.ReadAll(context.Background(), st.Log, sid, 0)
 			for _, ev := range events {
 				t.Logf("%d %v", ev.GetSeq(), ev.GetPayload())
 			}
@@ -300,7 +300,7 @@ func TestCallLongTaskAndApproval(t *testing.T) {
 	phone.waitFor("asked to approve", func(ev *v1.CallEvent) bool {
 		return ev.GetText().GetFinal() && strings.Contains(ev.GetText().GetText(), "需要用户批准")
 	})
-	events, err := eventlog.ReadAll(context.Background(), st.log, sid, 0)
+	events, err := eventlog.ReadAll(context.Background(), st.Log, sid, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

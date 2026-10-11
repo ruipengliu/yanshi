@@ -57,6 +57,8 @@ type Handler struct {
 	Push notify.Registry
 	// Calls 为 nil 时不支持 Call（docs/design/m3-call.md）。
 	Calls *call.Manager
+	// Feeds 非 nil 时，本进程同一 Session 的事件流共用一个读者（feed.Hub）。
+	Feeds *feed.Hub
 	Clock clock.Clock
 	// IDs 生成连接 ID，默认随机。
 	IDs    ids.Generator
@@ -310,7 +312,7 @@ func (c *Conn) stream(ctx context.Context, s *subscription, sid string, after ui
 		err = c.join(ctx, s, sid)
 	}
 	if err == nil {
-		src := feed.Source{Log: h.Service.Store.Log, Live: h.Live, Deletions: h.Service.Deletions}
+		src := feed.Source{Log: h.Service.Store.Log, Live: h.Live, Deletions: h.Service.Deletions, Hub: h.Feeds}
 		if h.Presence == nil {
 			err = src.Stream(ctx, st, after, sink{send: c.send})
 		} else {
@@ -504,6 +506,7 @@ func (c *Conn) hangUpStarting(callID string) bool {
 func (h *Handler) clientError(err error) *v1.ClientError {
 	e := &v1.ClientError{Code: "internal", Message: err.Error()}
 	var ex *usage.ExceededError
+	var ov *service.OverloadedError
 	switch {
 	case errors.Is(err, service.ErrNotFound):
 		e.Code = "not_found"
@@ -515,6 +518,8 @@ func (h *Handler) clientError(err error) *v1.ClientError {
 		e.Code = "rejected"
 	case errors.Is(err, moderation.ErrUnavailable), errors.Is(err, call.ErrProvider):
 		e.Code = "unavailable"
+	case errors.As(err, &ov):
+		e.Code, e.RetryAt = "unavailable", timestamppb.New(ov.RetryAt)
 	case errors.As(err, &ex):
 		e.Code, e.RetryAt = "quota_exceeded", timestamppb.New(ex.Period.ResetAt)
 	case errors.Is(err, usage.ErrExceeded):

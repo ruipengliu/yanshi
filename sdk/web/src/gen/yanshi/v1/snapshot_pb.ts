@@ -17,7 +17,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file yanshi/v1/snapshot.proto.
  */
 export const file_yanshi_v1_snapshot: GenFile = /*@__PURE__*/
-  fileDesc("Chh5YW5zaGkvdjEvc25hcHNob3QucHJvdG8SCXlhbnNoaS52MSK9AwoPU2Vzc2lvblNuYXBzaG90Eg8KB3ZlcnNpb24YASABKA0SEgoKc2Vzc2lvbl9pZBgCIAEoCRILCgNzZXEYAyABKAQSKgoHY3JlYXRlZBgEIAEoCzIZLnlhbnNoaS52MS5TZXNzaW9uQ3JlYXRlZBIoCgZjbG9zZWQYBSABKAsyGC55YW5zaGkudjEuU2Vzc2lvbkNsb3NlZBIvCgpjb21wYWN0aW9uGAYgASgLMhsueWFuc2hpLnYxLkNvbnRleHRDb21wYWN0ZWQSFAoMY29tcGFjdGVkX2F0GAcgASgEEiQKBHJ1bnMYCCADKAsyFi55YW5zaGkudjEuUnVuU25hcHNob3QSIQoHaGlzdG9yeRgJIAMoCzIQLnlhbnNoaS52MS5FdmVudBIQCghjYWxsX2lkcxgKIAMoCRIiCgVhZ2VudBgLIAEoCzITLnlhbnNoaS52MS5BZ2VudFJlZhIoCgZpbnB1dHMYDCADKAsyGC55YW5zaGkudjEuSW5wdXRTbmFwc2hvdBIyCgthY3RpdmVfY2FsbBgNIAEoCzIdLnlhbnNoaS52MS5BY3RpdmVDYWxsU25hcHNob3QiaAoSQWN0aXZlQ2FsbFNuYXBzaG90Eg8KB2NhbGxfaWQYASABKAkSEQoJZGV2aWNlX2lkGAIgASgJEi4KCnN0YXJ0ZWRfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIk4KDUlucHV0U25hcHNob3QSCgoCaWQYASABKAkSDgoGcnVuX2lkGAIgASgJEg8KB3N0ZWVyZWQYAyABKAgSEAoIYW5zd2VyZWQYBCABKAki8gIKC1J1blNuYXBzaG90EgoKAmlkGAEgASgJEg4KBnN0YXR1cxgCIAEoBRIwCgxyZXF1ZXN0ZWRfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg8KB2F0dGVtcHQYBCABKA0SFQoNbGl2ZV9lbmRwb2ludBgFIAEoCRIRCgl0YWtlb3ZlcnMYBiABKAUSGQoRc3RhbGxlZF90YWtlb3ZlcnMYByABKAUSDQoFdHVybnMYCCABKAUSKQoGcmVjYWxsGAkgAygLMhkueWFuc2hpLnYxLlJlY2FsbGVkTWVtb3J5EhAKCHJlY2FsbGVkGAogASgIEiYKBWNhbGxzGAsgAygLMhcueWFuc2hpLnYxLkNhbGxTbmFwc2hvdBIWCg5zdXNwZW5kX3JlYXNvbhgMIAEoCRIzCg9zdXNwZW5kZWRfdW50aWwYDSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIscBCgxDYWxsU25hcHNob3QSIQoEY2FsbBgBIAEoCzITLnlhbnNoaS52MS5Ub29sQ2FsbBIYChBzdGFydGVkX2F0dGVtcHRzGAIgAygNEg8KB25vZGVfaWQYAyABKAkSLAoIZGVhZGxpbmUYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEgwKBGRvbmUYBSABKAgSLQoIYXBwcm92YWwYBiABKAsyGy55YW5zaGkudjEuQXBwcm92YWxTbmFwc2hvdCJ0ChBBcHByb3ZhbFNuYXBzaG90Eg8KB3N1bW1hcnkYASABKAkSLAoIZGVhZGxpbmUYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg8KB2RlY2lkZWQYAyABKAgSEAoIYXBwcm92ZWQYBCABKAhCH1odeWFuc2hpL2dlbi95YW5zaGkvdjE7eWFuc2hpdjFiBnByb3RvMw", [file_google_protobuf_timestamp, file_yanshi_v1_event]);
+  fileDesc("Chh5YW5zaGkvdjEvc25hcHNob3QucHJvdG8SCXlhbnNoaS52MSLsAwoPU2Vzc2lvblNuYXBzaG90Eg8KB3ZlcnNpb24YASABKA0SEgoKc2Vzc2lvbl9pZBgCIAEoCRILCgNzZXEYAyABKAQSKgoHY3JlYXRlZBgEIAEoCzIZLnlhbnNoaS52MS5TZXNzaW9uQ3JlYXRlZBIoCgZjbG9zZWQYBSABKAsyGC55YW5zaGkudjEuU2Vzc2lvbkNsb3NlZBIvCgpjb21wYWN0aW9uGAYgASgLMhsueWFuc2hpLnYxLkNvbnRleHRDb21wYWN0ZWQSFAoMY29tcGFjdGVkX2F0GAcgASgEEiQKBHJ1bnMYCCADKAsyFi55YW5zaGkudjEuUnVuU25hcHNob3QSIQoHaGlzdG9yeRgJIAMoCzIQLnlhbnNoaS52MS5FdmVudBIQCghjYWxsX2lkcxgKIAMoCRIiCgVhZ2VudBgLIAEoCzITLnlhbnNoaS52MS5BZ2VudFJlZhIoCgZpbnB1dHMYDCADKAsyGC55YW5zaGkudjEuSW5wdXRTbmFwc2hvdBIyCgthY3RpdmVfY2FsbBgNIAEoCzIdLnlhbnNoaS52MS5BY3RpdmVDYWxsU25hcHNob3QSLQoJcGFzdF9ydW5zGA4gAygLMhoueWFuc2hpLnYxLlBhc3RSdW5TbmFwc2hvdCJ/Cg9QYXN0UnVuU25hcHNob3QSCgoCaWQYASABKAkSDgoGc3RhdHVzGAIgASgFEjAKDHJlcXVlc3RlZF9hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDwoHYXR0ZW1wdBgEIAEoDRINCgV0dXJucxgFIAEoBSJoChJBY3RpdmVDYWxsU25hcHNob3QSDwoHY2FsbF9pZBgBIAEoCRIRCglkZXZpY2VfaWQYAiABKAkSLgoKc3RhcnRlZF9hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiTgoNSW5wdXRTbmFwc2hvdBIKCgJpZBgBIAEoCRIOCgZydW5faWQYAiABKAkSDwoHc3RlZXJlZBgDIAEoCBIQCghhbnN3ZXJlZBgEIAEoCSKuAwoLUnVuU25hcHNob3QSCgoCaWQYASABKAkSDgoGc3RhdHVzGAIgASgFEjAKDHJlcXVlc3RlZF9hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDwoHYXR0ZW1wdBgEIAEoDRIVCg1saXZlX2VuZHBvaW50GAUgASgJEhEKCXRha2VvdmVycxgGIAEoBRIZChFzdGFsbGVkX3Rha2VvdmVycxgHIAEoBRINCgV0dXJucxgIIAEoBRIpCgZyZWNhbGwYCSADKAsyGS55YW5zaGkudjEuUmVjYWxsZWRNZW1vcnkSEAoIcmVjYWxsZWQYCiABKAgSJgoFY2FsbHMYCyADKAsyFy55YW5zaGkudjEuQ2FsbFNuYXBzaG90EhYKDnN1c3BlbmRfcmVhc29uGAwgASgJEjMKD3N1c3BlbmRlZF91bnRpbBgNIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEwoLY29tcGFjdGlvbnMYDiABKAUSFQoNb3V0cHV0X3Rva2VucxgPIAEoAxIOCgZyZXN1bWUYECABKAgixwEKDENhbGxTbmFwc2hvdBIhCgRjYWxsGAEgASgLMhMueWFuc2hpLnYxLlRvb2xDYWxsEhgKEHN0YXJ0ZWRfYXR0ZW1wdHMYAiADKA0SDwoHbm9kZV9pZBgDIAEoCRIsCghkZWFkbGluZRgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZG9uZRgFIAEoCBItCghhcHByb3ZhbBgGIAEoCzIbLnlhbnNoaS52MS5BcHByb3ZhbFNuYXBzaG90InQKEEFwcHJvdmFsU25hcHNob3QSDwoHc3VtbWFyeRgBIAEoCRIsCghkZWFkbGluZRgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDwoHZGVjaWRlZBgDIAEoCBIQCghhcHByb3ZlZBgEIAEoCEIfWh15YW5zaGkvZ2VuL3lhbnNoaS92MTt5YW5zaGl2MWIGcHJvdG8z", [file_google_protobuf_timestamp, file_yanshi_v1_event]);
 
 /**
  * @generated from message yanshi.v1.SessionSnapshot
@@ -101,6 +101,13 @@ export type SessionSnapshot = Message<"yanshi.v1.SessionSnapshot"> & {
    * @generated from field: yanshi.v1.ActiveCallSnapshot active_call = 13;
    */
   activeCall?: ActiveCallSnapshot | undefined;
+
+  /**
+   * 移出投影的终态 Run 的摘要（session.State.Past），按请求顺序。
+   *
+   * @generated from field: repeated yanshi.v1.PastRunSnapshot past_runs = 14;
+   */
+  pastRuns: PastRunSnapshot[];
 };
 
 /**
@@ -109,6 +116,43 @@ export type SessionSnapshot = Message<"yanshi.v1.SessionSnapshot"> & {
  */
 export const SessionSnapshotSchema: GenMessage<SessionSnapshot> = /*@__PURE__*/
   messageDesc(file_yanshi_v1_snapshot, 0);
+
+/**
+ * @generated from message yanshi.v1.PastRunSnapshot
+ */
+export type PastRunSnapshot = Message<"yanshi.v1.PastRunSnapshot"> & {
+  /**
+   * @generated from field: string id = 1;
+   */
+  id: string;
+
+  /**
+   * @generated from field: int32 status = 2;
+   */
+  status: number;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp requested_at = 3;
+   */
+  requestedAt?: Timestamp | undefined;
+
+  /**
+   * @generated from field: uint32 attempt = 4;
+   */
+  attempt: number;
+
+  /**
+   * @generated from field: int32 turns = 5;
+   */
+  turns: number;
+};
+
+/**
+ * Describes the message yanshi.v1.PastRunSnapshot.
+ * Use `create(PastRunSnapshotSchema)` to create a new message.
+ */
+export const PastRunSnapshotSchema: GenMessage<PastRunSnapshot> = /*@__PURE__*/
+  messageDesc(file_yanshi_v1_snapshot, 1);
 
 /**
  * @generated from message yanshi.v1.ActiveCallSnapshot
@@ -135,7 +179,7 @@ export type ActiveCallSnapshot = Message<"yanshi.v1.ActiveCallSnapshot"> & {
  * Use `create(ActiveCallSnapshotSchema)` to create a new message.
  */
 export const ActiveCallSnapshotSchema: GenMessage<ActiveCallSnapshot> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_snapshot, 1);
+  messageDesc(file_yanshi_v1_snapshot, 2);
 
 /**
  * @generated from message yanshi.v1.InputSnapshot
@@ -167,7 +211,7 @@ export type InputSnapshot = Message<"yanshi.v1.InputSnapshot"> & {
  * Use `create(InputSnapshotSchema)` to create a new message.
  */
 export const InputSnapshotSchema: GenMessage<InputSnapshot> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_snapshot, 2);
+  messageDesc(file_yanshi_v1_snapshot, 3);
 
 /**
  * @generated from message yanshi.v1.RunSnapshot
@@ -237,6 +281,21 @@ export type RunSnapshot = Message<"yanshi.v1.RunSnapshot"> & {
    * @generated from field: google.protobuf.Timestamp suspended_until = 13;
    */
   suspendedUntil?: Timestamp | undefined;
+
+  /**
+   * @generated from field: int32 compactions = 14;
+   */
+  compactions: number;
+
+  /**
+   * @generated from field: int64 output_tokens = 15;
+   */
+  outputTokens: bigint;
+
+  /**
+   * @generated from field: bool resume = 16;
+   */
+  resume: boolean;
 };
 
 /**
@@ -244,7 +303,7 @@ export type RunSnapshot = Message<"yanshi.v1.RunSnapshot"> & {
  * Use `create(RunSnapshotSchema)` to create a new message.
  */
 export const RunSnapshotSchema: GenMessage<RunSnapshot> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_snapshot, 3);
+  messageDesc(file_yanshi_v1_snapshot, 4);
 
 /**
  * @generated from message yanshi.v1.CallSnapshot
@@ -286,7 +345,7 @@ export type CallSnapshot = Message<"yanshi.v1.CallSnapshot"> & {
  * Use `create(CallSnapshotSchema)` to create a new message.
  */
 export const CallSnapshotSchema: GenMessage<CallSnapshot> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_snapshot, 4);
+  messageDesc(file_yanshi_v1_snapshot, 5);
 
 /**
  * @generated from message yanshi.v1.ApprovalSnapshot
@@ -318,5 +377,5 @@ export type ApprovalSnapshot = Message<"yanshi.v1.ApprovalSnapshot"> & {
  * Use `create(ApprovalSnapshotSchema)` to create a new message.
  */
 export const ApprovalSnapshotSchema: GenMessage<ApprovalSnapshot> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_snapshot, 5);
+  messageDesc(file_yanshi_v1_snapshot, 6);
 

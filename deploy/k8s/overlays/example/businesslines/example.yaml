@@ -1,0 +1,3 @@
+# 业务线公钥配置（yanshi keygen 生成；格式见 docs/design/auth.md）。示例值，部署时替换。
+name: example
+keys: []

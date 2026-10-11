@@ -21,8 +21,9 @@ import (
 func callService(t *testing.T) (*service.Service, string) {
 	t.Helper()
 	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "a", Version: "1", Model: "echo/any"})
-	store := &session.Store{Log: memlog.New(), IDs: ids.Sequential("id"), Clock: clock.Real{}}
-	svc := &service.Service{Store: store, Queue: memqueue.New(clock.Real{}), Agents: agents, Moderator: moderation.Mock{}}
+	mlog, mq := memlog.New(), memqueue.New(clock.Real{})
+	store := &session.Store{Log: mlog, Waking: mlog.Waking(mq), IDs: ids.Sequential("id"), Clock: clock.Real{}}
+	svc := &service.Service{Store: store, Agents: agents, Moderator: moderation.Mock{}}
 	sid, err := svc.Create(context.Background(), service.CreateRequest{BusinessLine: "bl", EndUser: "u", Agent: "a"})
 	if err != nil {
 		t.Fatal(err)

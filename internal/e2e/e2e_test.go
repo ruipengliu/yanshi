@@ -3,6 +3,8 @@
 package e2e
 
 import (
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"bufio"
 	"bytes"
 	"context"
@@ -22,47 +24,37 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
+	"yanshi/internal/app"
 	"yanshi/internal/artifact"
-	"yanshi/internal/artifact/pgartifact"
 	"yanshi/internal/auth"
 	"yanshi/internal/call"
 	"yanshi/internal/capability"
 	"yanshi/internal/channel"
 	"yanshi/internal/clock"
-	"yanshi/internal/eventlog"
-	"yanshi/internal/eventlog/memlog"
-	"yanshi/internal/eventlog/pglog"
 	"yanshi/internal/feed"
 	"yanshi/internal/httpapi"
 	"yanshi/internal/ids"
 	"yanshi/internal/janitor"
 	"yanshi/internal/lifecycle"
-	"yanshi/internal/lifecycle/pglifecycle"
 	"yanshi/internal/live"
 	"yanshi/internal/live/peer"
 	"yanshi/internal/memory"
-	"yanshi/internal/memory/pgmemory"
 	"yanshi/internal/model"
 	"yanshi/internal/model/script"
 	"yanshi/internal/moderation"
 	"yanshi/internal/node"
-	"yanshi/internal/node/pgnode"
 	"yanshi/internal/node/wsgateway"
 	"yanshi/internal/notify"
+	"yanshi/internal/pg"
 	"yanshi/internal/pg/pgtest"
 	"yanshi/internal/presence"
-	"yanshi/internal/presence/pgpresence"
 	"yanshi/internal/realtime"
 	"yanshi/internal/realtime/fake"
 	"yanshi/internal/runtime"
 	"yanshi/internal/sandbox"
 	sandboxdocker "yanshi/internal/sandbox/docker"
-	"yanshi/internal/sandbox/pgsandbox"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
-	"yanshi/internal/workqueue"
-	"yanshi/internal/workqueue/memqueue"
-	"yanshi/internal/workqueue/pgqueue"
 	"yanshi/sdk/nodesdk"
 )
 
@@ -107,29 +99,14 @@ func bearer(req *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+t)
 }
 
-// stores 是一个实例使用的存储；多个实例共享同一套 PostgreSQL 存储即构成分布式部署。
+// stores 是一个实例使用的存储（app.Stores）与测试替身；多个实例共享同一套 PostgreSQL 存储即构成分布式部署。
 type stores struct {
-	log   eventlog.Log
-	queue workqueue.Queue
-	dir   node.Directory
-	inbox node.Inbox
-
-	sandboxQueue workqueue.Queue
-	ledger       nodesdk.Ledger
-	activity     sandbox.Activity
+	app.Stores
 	// provider 为 nil 时不启动沙箱控制器。
 	provider  sandbox.Provider
 	artifacts *artifact.Service
-
-	index        lifecycle.Index
-	deletions    lifecycle.Deletions
-	janitorQueue workqueue.Queue
-	memories     memory.Store
-	grants       memory.Grants
 	// mcp 为 nil 时没有远程 MCP 工具。
-	mcp      capability.MCPSource
-	presence presence.Store
-	push     notify.Registry
+	mcp capability.MCPSource
 	// pusher 非 nil 时启用提醒，推送交给它。
 	pusher notify.Pusher
 	// voice 是 Call 的脚本化实时语音模型；holdFor 是 run_task 挂起等待结果的时长（0 为默认）。
@@ -141,14 +118,17 @@ type stores struct {
 
 func memStores() stores {
 	clk := clock.Real{}
-	return stores{
-		log: memlog.New(), queue: memqueue.New(clk), dir: node.NewMemDirectory(clk), inbox: node.NewMemInbox(),
-		sandboxQueue: memqueue.New(clk), ledger: nodesdk.NewMemLedger(), activity: sandbox.NewMemActivity(),
-		artifacts: &artifact.Service{Meta: artifact.NewMemMeta(), Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk},
-		index:     lifecycle.NewMemIndex(), deletions: lifecycle.NewMemDeletions(), janitorQueue: memqueue.New(clk),
-		memories: memory.NewMemStore(), grants: memory.NewMemGrants(), presence: presence.NewMem(),
-		push: notify.NewMemRegistry(), voice: &fake.Provider{},
-	}
+	s := stores{Stores: app.Memory(clk), voice: &fake.Provider{}}
+	s.artifacts = &artifact.Service{Meta: s.ArtifactMeta, Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk}
+	return s
+}
+
+// pgStores 是共享 PostgreSQL 的一套存储：多个实例各取一套即构成分布式部署。
+func pgStores(pool *pgxpool.Pool, n *pg.Notifier) stores {
+	clk := clock.Real{}
+	s := stores{Stores: app.Postgres(pool, n, clk)}
+	s.artifacts = &artifact.Service{Meta: s.ArtifactMeta, Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk}
+	return s
 }
 
 // instance 启动一个 yanshi 实例：workers 个 Worker，serve 为 true 时提供 HTTP API 与 Node 网关。
@@ -160,48 +140,48 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 		t.Fatal(err)
 	}
 	clk := clock.Real{}
-	store := &session.Store{Log: st.log, IDs: ids.Random(), Clock: clk}
+	store := &session.Store{Log: st.Log, Waking: st.Waking, IDs: ids.Random(), Clock: clk}
 	// 每个实例都有内部增量接口，多实例共享存储时增量可跨实例送达（ADR-0013）。
 	local := live.NewMemBus()
 	peerMux := http.NewServeMux()
 	peerMux.Handle(peer.Path, peer.Handler{Local: local, Token: "t"})
 	peerSrv := httptest.NewServer(peerMux)
 	t.Cleanup(peerSrv.Close)
-	bus := &peer.Bus{Local: local, Log: st.log, Self: peerSrv.URL, Token: "t", Retry: 20 * time.Millisecond}
-	st.artifacts.Deletions = st.deletions
-	hub := &node.Hub{Dir: st.dir, Inbox: st.inbox, Store: store, Queue: st.queue, Auth: node.TokenAuth{Verifier: verifier}, Deletions: st.deletions,
-		Push: st.push}
+	bus := &peer.Bus{Local: local, Log: st.Log, Self: peerSrv.URL, Token: "t", Retry: 20 * time.Millisecond}
+	st.artifacts.Deletions = st.Deletions
+	hub := &node.Hub{Dir: st.Dir, Inbox: st.Inbox, Store: store, Auth: node.TokenAuth{Verifier: verifier}, Deletions: st.Deletions,
+		Push: st.Push}
 	var notifier runtime.Notifier
 	if st.pusher != nil {
-		notifier = &notify.Notifier{Registry: st.push, Presence: st.presence, Pusher: st.pusher, Clock: clk}
+		notifier = &notify.Notifier{Registry: st.Push, Presence: st.Presence, Pusher: st.pusher, Clock: clk}
 	}
-	mems := &memory.Service{Store: st.memories, Grants: st.grants, Deletions: st.deletions, Clock: clk, IDs: ids.Random()}
-	catalog := &capability.Catalog{Local: capability.NewRegistry(memory.Capabilities(mems)...), Nodes: st.dir, DefaultTimeout: time.Minute,
+	mems := &memory.Service{Store: st.Memories, Grants: st.Grants, Deletions: st.Deletions, Clock: clk, IDs: ids.Random()}
+	catalog := &capability.Catalog{Local: capability.NewRegistry(memory.Capabilities(mems)...), Nodes: st.Dir, DefaultTimeout: time.Minute,
 		Sandbox: &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID}, MCP: st.mcp}
-	router := &sandbox.Router{Hub: hub, Queue: st.sandboxQueue}
+	router := &sandbox.Router{Hub: hub, Queue: st.SandboxQueue}
 	gw := model.NewGateway()
 	gw.Register("script", script.Provider{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	for i := range workers {
-		w := runtime.New(runtime.Config{ID: fmt.Sprintf("w%d", i), Store: store, Queue: st.queue, Agents: agents, Model: gw,
+		w := runtime.New(runtime.Config{ID: fmt.Sprintf("w%d", i), Store: store, Queue: st.Queue, Agents: agents, Model: gw,
 			Catalog: catalog, Dispatch: router, Artifacts: st.artifacts, Memory: mems, Live: bus, LiveEndpoint: peerSrv.URL, IdleWait: 5 * time.Millisecond,
 			Notify: notifier})
 		go w.Run(ctx)
 	}
 	if st.provider != nil {
-		c := &sandbox.Controller{ID: "c1", Queue: st.sandboxQueue, Hub: hub, Provider: st.provider, Activity: st.activity,
-			Ledger: st.ledger, Artifacts: st.artifacts, Clock: clk, IdleWait: 5 * time.Millisecond,
-			Lifecycle: &lifecycle.Guard{Index: st.index, Deletions: st.deletions}}
+		c := &sandbox.Controller{ID: "c1", Queue: st.SandboxQueue, Hub: hub, Provider: st.provider, Activity: st.Activity,
+			Ledger: st.Ledger, Artifacts: st.artifacts, Clock: clk, IdleWait: 5 * time.Millisecond,
+			Lifecycle: &lifecycle.Guard{Index: st.Index, Deletions: st.Deletions}}
 		go c.Run(ctx)
 	}
-	svc := &service.Service{Store: store, Queue: st.queue, Agents: agents, Nodes: router,
-		Index: st.index, Deletions: st.deletions, Janitor: st.janitorQueue, Moderator: st.moderator, Artifacts: st.artifacts}
+	svc := &service.Service{Store: store, Agents: agents, Nodes: router,
+		Index: st.Index, Deletions: st.Deletions, Janitor: st.JanitorQueue, Moderator: st.moderator, Artifacts: st.artifacts}
 	if workers > 0 {
-		j := &janitor.Janitor{ID: "j1", Queue: st.janitorQueue, Service: svc, Store: store, Sessions: st.queue,
-			SandboxQueue: st.sandboxQueue, Inbox: st.inbox, Nodes: st.dir, Sandbox: st.provider, Activity: st.activity,
-			Ledger: st.ledger, Artifacts: st.artifacts, Memory: st.memories, Index: st.index, Deletions: st.deletions, Clock: clk,
+		ws := sandbox.Workspaces{Queue: st.SandboxQueue, Provider: st.provider, Activity: st.Activity}
+		j := &janitor.Janitor{ID: "j1", Queue: st.JanitorQueue, Service: svc, Store: store, Data: app.SessionData(st.Stores, ws, st.artifacts),
+			Workspaces: ws, Inbox: st.Inbox, Nodes: st.Dir, Ledger: st.Ledger, Index: st.Index, Deletions: st.Deletions, Clock: clk,
 			IdleWait: 10 * time.Millisecond}
 		go j.Run(ctx)
 	}
@@ -213,12 +193,14 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 	if st.voice != nil {
 		rg.Register("fake", st.voice)
 	}
-	calls := &call.Manager{Service: svc, Realtime: rg, Feed: feed.Source{Log: st.log, Live: bus, Deletions: st.deletions}, HoldFor: st.holdFor}
-	gwy := &wsgateway.Gateway{Hub: hub, Channel: &channel.Handler{Service: svc, Live: bus,
-		Presence: &presence.Service{Store: st.presence, Deletions: st.deletions, Clock: clk}, Push: st.push, Calls: calls}}
+	// 同一实例的事件流共用读者，与 serve 相同。
+	feeds := &feed.Hub{Log: st.Log}
+	calls := &call.Manager{Service: svc, Realtime: rg, Feed: feed.Source{Log: st.Log, Live: bus, Deletions: st.Deletions, Hub: feeds}, HoldFor: st.holdFor}
+	gwy := &wsgateway.Gateway{Hub: hub, Channel: &channel.Handler{Service: svc, Live: bus, Feeds: feeds,
+		Presence: &presence.Service{Store: st.Presence, Deletions: st.Deletions, Clock: clk}, Push: st.Push, Calls: calls}}
 	mux.Handle("/v1/connect", gwy)
 	mux.Handle("/v1/nodes/connect", gwy)
-	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: st.dir, Artifacts: st.artifacts, Memory: mems}).Handler())
+	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: st.Dir, Artifacts: st.artifacts, Memory: mems, Feeds: feeds}).Handler())
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
@@ -454,19 +436,7 @@ func TestHighRiskCallRequiresApproval(t *testing.T) {
 // Run 由实例 B（只有 Worker）执行。调用经 PostgreSQL 中的 Inbox 与 LISTEN/NOTIFY 跨实例投递。
 func TestCrossInstanceOnPostgres(t *testing.T) {
 	pool, notifier := pgtest.Fresh(t)
-	clk := clock.Real{}
-	shared := func() stores {
-		return stores{
-			log: pglog.New(pool, notifier), queue: pgqueue.New(pool, clk, pgqueue.Sessions),
-			dir: pgnode.NewDirectory(pool, clk), inbox: pgnode.NewInbox(pool, notifier),
-			sandboxQueue: pgqueue.New(pool, clk, pgqueue.Sandboxes),
-			ledger:       pgsandbox.Ledger{Pool: pool}, activity: pgsandbox.Activity{Pool: pool},
-			artifacts: &artifact.Service{Meta: pgartifact.Meta{Pool: pool}, Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk},
-			index:     pglifecycle.Index{Pool: pool}, deletions: pglifecycle.Deletions{Pool: pool, Notifier: notifier}, janitorQueue: pgqueue.New(pool, clk, pgqueue.Janitor),
-			memories: pgmemory.Store{Pool: pool}, grants: pgmemory.Grants{Pool: pool},
-			presence: pgpresence.Store{Pool: pool, Notifier: notifier}, push: notify.NewMemRegistry(),
-		}
-	}
+	shared := func() stores { return pgStores(pool, notifier) }
 	e := &env{t: t, srv: instance(t, shared(), 0, true)}
 	instance(t, shared(), 2, false)
 	defer e.startNode(nodesdk.NewMemLedger())()

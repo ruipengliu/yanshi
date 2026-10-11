@@ -1974,7 +1974,7 @@ type ClientError struct {
 	// "unavailable"、"quota_exceeded"、"internal"。
 	Code    string `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
 	Message string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	// quota_exceeded 时为配额重置时间。
+	// quota_exceeded 时为配额重置时间；unavailable 且因交互工作积压而拒绝新 Run 时为建议的重试时刻。
 	RetryAt       *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=retry_at,json=retryAt,proto3" json:"retry_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

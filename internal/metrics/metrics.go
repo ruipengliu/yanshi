@@ -32,6 +32,12 @@ func histogram(name, help string, buckets []float64, labels ...string) *promethe
 	return h
 }
 
+func gaugeVec(name, help string, labels ...string) *prometheus.GaugeVec {
+	g := prometheus.NewGaugeVec(prometheus.GaugeOpts{Namespace: "yanshi", Name: name, Help: help}, labels)
+	Registry.MustRegister(g)
+	return g
+}
+
 func gauge(name, help string) prometheus.Gauge {
 	g := prometheus.NewGauge(prometheus.GaugeOpts{Namespace: "yanshi", Name: name, Help: help})
 	Registry.MustRegister(g)
@@ -45,28 +51,34 @@ var (
 )
 
 var (
-	ModelCallDuration  = histogram("model_call_duration_seconds", "模型调用耗时；kind = turn | summary。", latency, "kind", "outcome")
-	ModelTokens        = counter("model_tokens_total", "模型 token 数；direction = input | output | cached_input（input 中命中前缀缓存的部分）。", "direction")
-	ModelRetries       = counter("model_retries_total", "模型调用因暂时性失败（限流、服务端错误、连接中断）重试的次数。", "provider")
-	ModelAdmissionWait = histogram("model_admission_wait_seconds", "模型调用在提供商准入（速率与并发上限）处排队的时间。", latency, "provider")
-	RunsFinished       = counter("runs_finished_total", "进入终态的 Run；agent = name@version，用于比较灰度版本。", "status", "agent")
-	RunDuration        = histogram("run_duration_seconds", "Run 从请求到终态的时长。", runDuration, "status", "agent")
-	Attempts           = counter("attempts_total", "开始的 Attempt；kind = start | takeover | resume。", "kind")
-	CommitConflicts    = counter("commit_conflicts_total", "Worker 追加事件时的乐观并发冲突。")
-	SessionLoadEvents  = histogram("session_load_events", "加载 Session 时回放的事件数（最新快照之后的部分）。", prometheus.ExponentialBuckets(1, 2, 16))
-	SessionLoad        = histogram("session_load_seconds", "认领 Session 时读取并投影日志的耗时。", latency)
-	QueueClaims        = counter("queue_claims_total", "Worker 认领工作队列的结果；result = ok | empty | error。", "result")
-	Handoffs           = counter("handoffs_total", "Worker 把 Run 移交给其他 Worker（ADR-0029）；reason = pool（交互 Worker 移交长任务）| shutdown（优雅停机）。", "reason")
-	Compactions        = counter("compactions_total", "上下文压缩次数。")
-	HTTPRequests       = counter("http_requests_total", "对外 API 请求。", "route", "code")
-	HTTPDuration       = histogram("http_request_duration_seconds", "对外 API 请求耗时（流式接口为连接时长）。", latency, "route")
-	NodesConnected     = gauge("nodes_connected", "本进程网关上已接入的 Node 连接数。")
-	HandshakesRejected = counter("handshakes_rejected_total", "因同时进行的接入握手过多而以 503 拒绝的连接（网关重启后的重连风暴）。")
-	LivePeerStreams    = gauge("live_peer_streams", "本进程向其他进程拉取实时增量的连接数。")
+	ModelCallDuration   = histogram("model_call_duration_seconds", "模型调用耗时；kind = turn | summary。", latency, "kind", "outcome")
+	ModelTokens         = counter("model_tokens_total", "模型 token 数；direction = input | output | cached_input（input 中命中前缀缓存的部分）。", "direction")
+	ModelRetries        = counter("model_retries_total", "模型调用因暂时性失败（限流、服务端错误、连接中断）重试的次数。", "provider")
+	ModelDeadlines      = counter("model_deadlines_total", "模型调用在总时限（含排队与重试等待）内没有结果的次数。", "provider")
+	ModelAdmissionWait  = histogram("model_admission_wait_seconds", "模型调用在提供商准入（速率与并发上限）处排队的时间。", latency, "provider")
+	RunsFinished        = counter("runs_finished_total", "进入终态的 Run；agent = name@version，用于比较灰度版本。", "status", "agent")
+	RunDuration         = histogram("run_duration_seconds", "Run 从请求到终态的时长。", runDuration, "status", "agent")
+	Attempts            = counter("attempts_total", "开始的 Attempt；kind = start | takeover | resume。", "kind")
+	CommitConflicts     = counter("commit_conflicts_total", "Worker 追加事件时的乐观并发冲突。")
+	SessionLoadEvents   = histogram("session_load_events", "加载 Session 时回放的事件数（最新快照之后的部分）。", prometheus.ExponentialBuckets(1, 2, 16))
+	SessionLoad         = histogram("session_load_seconds", "认领 Session 时读取并投影日志的耗时。", latency)
+	QueueClaims         = counter("queue_claims_total", "Worker 认领工作队列的结果；result = ok | empty | error。", "result")
+	QueueWait           = histogram("queue_wait_seconds", "工作在被认领之前已可认领多久（排队等待）；priority = interactive | resumed | background。", runDuration, "queue", "priority")
+	AdmissionRejections = counter("admission_rejections_total", "因交互工作积压过高而拒绝的新 Run（Submit 准入）。", "business_line")
+	QueueReady          = gaugeVec("queue_ready", "可认领而尚未被认领的工作数（积压），由 Janitor 所在进程定期统计。", "queue", "business_line", "priority")
+	QueueOldestWait     = gaugeVec("queue_oldest_wait_seconds", "积压中等得最久的工作已等待的时长，由 Janitor 所在进程定期统计。", "queue", "business_line", "priority")
+	Handoffs            = counter("handoffs_total", "Worker 把 Run 移交给其他 Worker（ADR-0029）；reason = pool（交互 Worker 移交长任务）| shutdown（优雅停机）。", "reason")
+	Compactions         = counter("compactions_total", "上下文压缩次数。")
+	HTTPRequests        = counter("http_requests_total", "对外 API 请求。", "route", "code")
+	HTTPDuration        = histogram("http_request_duration_seconds", "对外 API 请求耗时（流式接口为连接时长）。", latency, "route")
+	NodesConnected      = gauge("nodes_connected", "本进程网关上已接入的 Node 连接数。")
+	HandshakesRejected  = counter("handshakes_rejected_total", "因同时进行的接入握手过多而以 503 拒绝的连接（网关重启后的重连风暴）。")
+	LivePeerStreams     = gauge("live_peer_streams", "本进程向其他进程拉取实时增量的连接数。")
 	// 业务线名不是个人数据，可以作为标签（docs/design/m4-quota-usage.md §5）。
 	UsageCost           = counter("usage_cost_micros_total", "记录的用量金额（微元）；kind = model | sandbox | call。", "business_line", "kind")
 	UsageRecordErrors   = counter("usage_record_errors_total", "写入用量失败的次数（少计）。")
 	ModerationChecks    = counter("moderation_checks_total", "内容安全检查；stage = input | output，result = allow | block | error。", "stage", "result")
+	ModerationFailovers = counter("moderation_failovers_total", "内容安全提供商超时或出错、改问下一个提供商的次数。", "provider")
 	ModerationDuration  = histogram("moderation_duration_seconds", "内容安全检查耗时。", latency, "stage")
 	ModerationMock      = gauge("moderation_mock", "为 1 表示使用模拟的内容安全提供商（不得用于上线）。")
 	ReleaseReloadErrors = counter("release_reload_errors_total", "发布配置重新加载被拒绝（校验失败，保留原配置）的次数。")

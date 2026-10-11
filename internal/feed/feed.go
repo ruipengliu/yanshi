@@ -41,6 +41,8 @@ type Source struct {
 	Deletions lifecycle.Deletions
 	// PingInterval 默认 15 秒。
 	PingInterval time.Duration
+	// Hub 非 nil 时，本进程同一 Session 的流共用一个读者（Hub）；否则每个流各自等待并读取日志。
+	Hub *Hub
 }
 
 // Stream 推送 seq 大于 after 的已提交事件，之后持续推送新事件与增量，直到 ctx 结束、
@@ -85,9 +87,19 @@ func (s Source) Stream(ctx context.Context, st *session.State, after uint64, sin
 	defer wg.Wait()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	heads := make(chan struct{}, 1)
-	from := after // 闭包不能引用之后会被改写的 after
-	wg.Go(func() { waitHeads(ctx, s.Log, id, from, heads) })
+	var heads <-chan struct{}
+	var batches <-chan []*v1.Event
+	var lagged <-chan struct{}
+	if s.Hub != nil {
+		f, leave := s.Hub.join(id, after)
+		defer leave()
+		batches, lagged = f.batches, f.lagged
+	} else {
+		ch := make(chan struct{}, 1)
+		from := after // 闭包不能引用之后会被改写的 after
+		wg.Go(func() { waitHeads(ctx, s.Log, id, from, ch) })
+		heads = ch
+	}
 	deleted := make(chan struct{})
 	watcher, watching := s.Deletions.(lifecycle.Watcher)
 	if watching {
@@ -100,7 +112,24 @@ func (s Source) Stream(ctx context.Context, st *session.State, after uint64, sin
 	ping := time.NewTicker(interval)
 	defer ping.Stop()
 
-	// 只在日志前进时读日志：增量逐 token 到达，不应每个都引起一次读取。
+	// deliver 推送 seq 大于 after 的事件（共享流的一批可能与已读到的重叠）。
+	deliver := func(events []*v1.Event) error {
+		var fresh []*v1.Event
+		for _, e := range events {
+			if e.GetSeq() <= after {
+				continue
+			}
+			if err := sink.Event(Public(e)); err != nil {
+				return err
+			}
+			after = e.GetSeq()
+			fresh = append(fresh, e)
+		}
+		follow(fresh)
+		return nil
+	}
+	// 只在日志前进时读日志：增量逐 token 到达，不应每个都引起一次读取。共享流只在开始时（补齐此前的事件）、
+	// 批次不连续与跟不上时读日志。
 	read := true
 	for {
 		if read {
@@ -108,13 +137,9 @@ func (s Source) Stream(ctx context.Context, st *session.State, after uint64, sin
 			if err != nil {
 				return err
 			}
-			for _, e := range events {
-				if err := sink.Event(Public(e)); err != nil {
-					return err
-				}
-				after = e.GetSeq()
+			if err := deliver(events); err != nil {
+				return err
 			}
-			follow(events)
 			read = false
 		}
 		if err := sink.Flush(); err != nil {
@@ -136,6 +161,16 @@ func (s Source) Stream(ctx context.Context, st *session.State, after uint64, sin
 				return err
 			}
 		case <-heads:
+			read = true
+		case batch := <-batches:
+			if batch[0].GetSeq() > after+1 {
+				read = true // 加入之前的事件尚未读到
+				continue
+			}
+			if err := deliver(batch); err != nil {
+				return err
+			}
+		case <-lagged:
 			read = true
 		case d := <-deltas:
 			if err := sink.Delta(d); err != nil {

@@ -1,6 +1,6 @@
 # 模型调用的时限、重试与准入
 
-> 状态：已实现（2026-10-11）· 来源：[延展性评审](../review/2026-10-11-scalability-review.md) §4.2 · 关联：ADR-0029
+> 状态：已实现（2026-10-11）· 来源：[延展性评审](../review/2026-10-11-scalability-review.md) §4.2、§8.4 第 5 项 · 关联：ADR-0029
 
 ## 1. 要解决的问题
 
@@ -15,9 +15,10 @@
 | 约束 | 默认 | 配置 |
 |---|---|---|
 | 一次调用的时限（不含排队与重试等待） | 10 分钟；超时返回 `model.ErrTimeout`，不重试 | `serve -model-timeout` |
+| 总时限：准入排队、每次尝试、重试前的等待都计入 | 15 分钟；到期返回 `model.ErrTimeout`；剩余时间等不到下一次重试时立即放弃 | `serve -model-deadline` |
 | 流停滞：两次收到数据之间的最长间隔 | 2 分钟；返回 `model.ErrStalled` | `openaicompat.Provider.StallTimeout` |
 | 建连、TLS 握手、等待响应头 | 10 秒、10 秒、2 分钟 | `openaicompat.DefaultClient` |
-| 暂时性失败的重试 | 2 次，指数退避 1 秒起、最长 30 秒，带抖动；提供商给出 `Retry-After` 时取较大者 | `serve -model-retries` |
+| 暂时性失败的重试 | 2 次，指数退避 1 秒起、最长 30 秒，带抖动；提供商给出更长的 `Retry-After` 时以它为准，不受 30 秒截断（提前重试只会再被限流一次） | `serve -model-retries` |
 | 并发上限 | 不限；排队时交互调用优先 | `serve -model-concurrency` |
 | 发起速率 | 不限（令牌桶，突发量为一秒的量） | `serve -model-rps` |
 
@@ -34,6 +35,7 @@
 |---|---|
 | `yanshi_model_retries_total{provider}` | 因暂时性失败重试的次数 |
 | `yanshi_model_admission_wait_seconds{provider}` | 在速率与并发上限处排队的时间 |
+| `yanshi_model_deadlines_total{provider}` | 总时限内没有结果的调用（排队过久或重试耗尽时间） |
 
 ## 4. 遗留
 

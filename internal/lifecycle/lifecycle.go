@@ -111,6 +111,28 @@ func Deleted(ctx context.Context, d Deletions, sessionID string) (bool, error) {
 	return err == nil, err
 }
 
+// Holder 是一处存放 Session 数据的地方（ADR-0015）。Session 删除时 Janitor 按登记顺序逐一清除，删除日志之前与之后
+// 各一遍（第二遍兜住"先写、后查"窗口中漏进来的写入）。登记列表由装配包统一给出（app.SessionData）。
+type Holder struct {
+	Name string
+	// DeleteSession 清除 Session 在这里的全部数据；幂等，可重复执行。
+	DeleteSession func(ctx context.Context, sessionID string) error
+}
+
+// Recheck 是"先写、后查"的后半步（ADR-0015）：写入属于 sessionID 的数据之后复查删除记录，Session 已有删除记录时
+// 以 withdraw 撤回刚才的写入并返回 gone。写入方先写后查、Janitor 先记后清，二者无论如何交错，总有一方会清除它。
+// 每个存放 Session 数据的写入入口都经它复查（docs/design/m2-session-lifecycle.md）。d 为 nil 或 sessionID 为空时
+// 不检查。撤回不随 ctx 取消：写入已经生效，撤回必须完成。
+func Recheck(ctx context.Context, d Deletions, sessionID string, withdraw func(context.Context) error) (gone bool, err error) {
+	if d == nil || sessionID == "" {
+		return false, nil
+	}
+	if gone, err = Deleted(ctx, d, sessionID); err != nil || !gone {
+		return gone, err
+	}
+	return true, withdraw(context.WithoutCancel(ctx))
+}
+
 // EncodeCursor 与 DecodeCursor 编码列表位置：最后输入时间（纳秒）与 Session ID，二者共同确定唯一顺序。
 func EncodeCursor(s *Session) string {
 	return strconv.FormatInt(s.LastInputAt.UnixNano(), 10) + ":" + s.ID

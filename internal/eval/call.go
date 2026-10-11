@@ -179,7 +179,7 @@ func (in *instance) callTurn(ctx context.Context, c *call.Call, rec *callRecorde
 		}
 		obs.tasks = append(obs.tasks, text)
 		obs.steps = append(obs.steps, "派生任务："+clip(text, 200))
-		if r := st.Run(run); r != nil && r.Status.String() != "completed" {
+		if r, ok := st.RunSummary(run); ok && r.Status.String() != "completed" {
 			obs.status = r.Status.String()
 		}
 	}

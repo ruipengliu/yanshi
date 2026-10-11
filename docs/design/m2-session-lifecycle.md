@@ -40,7 +40,7 @@
 `session_tombstones(session_id, business_line, requested_at, completed_at, reason)`：
 
 - 记录写入即生效。之后对该 Session 的所有 API 请求都返回 404，所有组件都不能再为它创建数据。
-- 写入记录的同一条语句发出 `NOTIFY yanshi_deletions`（负载为 Session ID）。订阅中的事件流等这个通知结束自己（`lifecycle.Watcher`），兜底查询每 10 分钟一次，不再每个保活周期查一次。订阅者多时，周期查询本身就是可观的负载（[延展性评审](../review/2026-10-11-scalability-review.md) §4.3）。
+- 写入记录的同一条语句发出 `NOTIFY yanshi_deletions`（负载为 Session ID）。订阅中的事件流等这个通知结束自己（`lifecycle.Watcher`），不再每个保活周期查一次；兜底由 `pg.Notifier` 统一的限速校准承担（见 [M2 扩容压测](./m2-scale-test.md) §8）。订阅者多时，周期查询本身就是可观的负载（[延展性评审](../review/2026-10-11-scalability-review.md) §4.3）。
 - **记录中不保存 EndUser。** EndUser 是个人标识，只在删除执行期间通过 Session 索引关联，删除完成后不再留存。保留的记录只用于证明"某个 Session 已于某时被删除"。
 
 ### 3.3 清理过程
@@ -58,7 +58,8 @@
 
 - `Service`、`Hub.Result`、工件上传、沙箱 `Ensure` 在写入前检查删除记录；`presence.Service.Put` 在写入后复查；
 - Janitor 在第 5 步完成后**再扫一遍**第 1～4 步，清理检查与删除之间漏进来的写入。
-- 写入方的顺序是"先写、后查"：写入后查到删除记录，就撤回自己刚写的数据；Janitor 的顺序是"先记、后清"。两者无论如何交错，总有一方能看到另一方。
+- 写入方的顺序是"先写、后查"：写入后查到删除记录，就撤回自己刚写的数据；Janitor 的顺序是"先记、后清"。两者无论如何交错，总有一方能看到另一方。写入方一律经 `lifecycle.Recheck(ctx, deletions, sessionID, withdraw)` 复查与撤回，写法一致、可以 grep。
+- **登记制**（[延展性评审](../review/2026-10-11-scalability-review.md) §9.1）：第 1～4 步清除的各处数据登记在 `app.SessionData` 中（`lifecycle.Holder`：名称与按 Session 删除的函数），Janitor 按登记顺序逐一清除，不再逐个依赖各存储。新增一处存放 Session 数据的地方时：在 `app.SessionData` 登记、写入入口经 `lifecycle.Recheck` 复查、在 `internal/sim` 的删除不变量中检查。
 - **关闭也受同样的保护**：沙箱控制器创建（或恢复）沙箱之后，会复查 Session 是否已关闭或删除，是则销毁（`lifecycle.Guard`）。关闭方先在索引中记下关闭，再让 Janitor 入队，因此工作区不会残留。这一条是模拟测试发现的：关闭时控制器可能已经读到了待执行的调用。
 - **日志被删除时的冲突**：持有租约的 Worker 或网关追加事件时，如果日志已被删除，追加会冲突，同步后却读不到新事件。`session.Store.SyncAfterConflict` 把这种情况识别为 `ErrGone`，调用方放弃而不是重试（同样由模拟测试发现）。Worker 放弃时还必须**丢弃全部本地状态**：否则本地投影仍认为某个调用"已由我开始、尚无结果"，而按需续约可能还没发现租约已被移除，下一步就会再次执行非幂等调用（模拟测试在 2000 个种子中发现了这种情况）。
 

@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/askuser"
 	"yanshi/internal/workqueue"
 )
 
@@ -94,6 +95,13 @@ type Run struct {
 	StalledTakeovers int
 	// Turns 是该 Run 已提交的 AssistantMessage 数。
 	Turns int
+	// Compactions 是该 Run 中的上下文压缩次数；OutputTokens 是已提交的 AssistantMessage 累计的输出 token。
+	// 二者与 Turns 一起衡量 Run 已经做了多少工作（工作类别，ADR-0029）。
+	Compactions  int
+	OutputTokens int64
+	// Resume 表示用户刚做出审批或回答，下一个 Attempt 尚未开始：长任务因此在后台池中先被认领（恢复名额，
+	// 不可叠加，由下一个 AttemptStarted 消费）。
+	Resume bool
 	// Recall 是 Run 开始时召回的 Memory；Recalled 表示已经召回过（结果可能为空）。
 	Recall   []*v1.RecalledMemory
 	Recalled bool
@@ -156,7 +164,11 @@ type State struct {
 	// Agent 是当前使用的 AgentDef 版本：创建时取自 SessionCreated，撤回版本时由 AgentSwitched 改变
 	// （ADR-0020）。读取版本一律用它，而不是 Created.Agent。
 	Agent *v1.AgentRef
-	Runs  []*Run
+	// Runs 是最近的 Run（完整），至多 KeepRuns+1 个：新 Run 请求时只留最近 KeepRuns 个旧 Run。更早的终态 Run 只留摘要（Past）：投影、克隆与快照的代价
+	// 因此不随 Session 的历史增长（延展性评审 §8.3）。需要更早调用明细的少数路径读日志（HistoryCall）。
+	Runs []*Run
+	// Past 是更早的终态 Run 的摘要，按请求顺序。条目不再修改，在副本间共享。
+	Past []RunSummary
 	// History 是构成对话上下文的事件（用户输入、模型输出、调用结果），按日志顺序；
 	// 只含最近一次 Compaction 之后的事件，因此随上下文窗口有界，而不随日志增长。
 	History []*v1.Event
@@ -165,12 +177,87 @@ type State struct {
 	// Compaction 是最近一次上下文压缩，nil 表示从未压缩（ADR-0012）；CompactedAt 是该事件自身的 seq。
 	Compaction  *v1.ContextCompacted
 	CompactedAt uint64
-	// callIDs 是 Session 内出现过的全部调用 ID；调用 ID 在 Session 内必须唯一。
-	callIDs map[string]bool
+	// 调用 ID 在 Session 内必须唯一：callIDs 是出现过的全部调用 ID，分两层使克隆不随历史增长——callIDsOld 不再
+	// 修改、在副本间共享；callIDs 是最近加入的，克隆时复制，满 callIDBatch 个时连同旧的并入一个新的 callIDsOld。
+	callIDsOld map[string]bool
+	callIDs    map[string]bool
 	// Inputs 是最近 MaxRecentInputs 条带 ID 的输入（旧的在前），用于去重重复提交。
 	Inputs []InputRef
 	// ActiveCall 是进行中的 Call（语音通话，docs/design/m3-call.md），没有时为 nil。
 	ActiveCall *ActiveCall
+}
+
+// KeepRuns 是新 Run 请求时投影中保留完整明细的旧 Run 数。活跃推进只用到当前 Run；更早的 Run 只剩摘要，
+// 调用明细从日志读取（State.Past、Store.HistoryCall）。
+const KeepRuns = 2
+
+// callIDBatch 是 callIDs 的新层并入旧层的批量：克隆至多复制这么多个 ID。
+const callIDBatch = 256
+
+// RunSummary 是移出投影的终态 Run 的摘要：历史接口（Session 的 Run 列表）与按 ID 的查询仍然可用。
+type RunSummary struct {
+	ID          string
+	Status      RunStatus
+	RequestedAt time.Time
+	Attempt     uint32
+	Turns       int
+}
+
+func (r *Run) summary() RunSummary {
+	return RunSummary{ID: r.ID, Status: r.Status, RequestedAt: r.RequestedAt, Attempt: r.Attempt, Turns: r.Turns}
+}
+
+// Summaries 返回全部 Run 的摘要，按请求顺序。
+func (s *State) Summaries() []RunSummary {
+	out := slices.Clone(s.Past)
+	for _, r := range s.Runs {
+		out = append(out, r.summary())
+	}
+	return out
+}
+
+// RunSummary 返回 ID 为 id 的 Run 的摘要（含已移出投影的），没有时 ok 为 false。
+func (s *State) RunSummary(id string) (RunSummary, bool) {
+	if r := s.Run(id); r != nil {
+		return r.summary(), true
+	}
+	for _, p := range s.Past {
+		if p.ID == id {
+			return p, true
+		}
+	}
+	return RunSummary{}, false
+}
+
+// hasCallID 报告 id 是否在 Session 中出现过。
+func (s *State) hasCallID(id string) bool { return s.callIDs[id] || s.callIDsOld[id] }
+
+func (s *State) addCallID(id string) {
+	if s.callIDs == nil {
+		s.callIDs = map[string]bool{}
+	}
+	s.callIDs[id] = true
+	if len(s.callIDs) < callIDBatch {
+		return
+	}
+	merged := make(map[string]bool, len(s.callIDsOld)+len(s.callIDs))
+	for k := range s.callIDsOld {
+		merged[k] = true
+	}
+	for k := range s.callIDs {
+		merged[k] = true
+	}
+	s.callIDsOld, s.callIDs = merged, nil
+}
+
+// trimRuns 在新 Run 请求时调用：只留最近 KeepRuns 个旧 Run（它们都已终态），更早的移出投影，只留摘要。
+func (s *State) trimRuns() {
+	if n := len(s.Runs) - 1 - KeepRuns; n > 0 {
+		for _, r := range s.Runs[:n] {
+			s.Past = append(s.Past, r.summary())
+		}
+		s.Runs = slices.Clone(s.Runs[n:])
+	}
 }
 
 // ActiveCall 是进行中的 Call。注意与 Call（Run 中的一次 Capability 调用）区分。
@@ -243,14 +330,14 @@ func (s *State) Active() *Run {
 	return nil
 }
 
-// WorkClass 是推进本 Session 的工作在队列中的类别（ADR-0029）：活跃 Run 调用模型的次数达到
-// workqueue.LongRunTurns 时为 Background，否则为 Interactive。
+// WorkClass 是推进本 Session 的工作在队列中的类别（ADR-0029）：按活跃 Run 已经做的工作（模型回合与压缩次数、
+// 输出 token）判定是否为长任务，见 workqueue.Classify。
 func (s *State) WorkClass() workqueue.Class {
-	turns := 0
+	var w workqueue.Work
 	if a := s.Active(); a != nil {
-		turns = a.Turns
+		w = workqueue.Work{Turns: a.Turns + a.Compactions, OutputTokens: a.OutputTokens, Resume: a.Resume}
 	}
-	return workqueue.Classify(s.Created.GetBusinessLine(), turns)
+	return workqueue.Classify(s.Created.GetBusinessLine(), w)
 }
 
 func (s *State) Run(id string) *Run {
@@ -280,6 +367,7 @@ func (s *State) Clone() *State {
 		c := *s.ActiveCall
 		cp.ActiveCall = &c
 	}
+	cp.Past = slices.Clip(s.Past)
 	cp.callIDs = make(map[string]bool, len(s.callIDs))
 	for id := range s.callIDs {
 		cp.callIDs[id] = true
@@ -289,16 +377,22 @@ func (s *State) Clone() *State {
 
 // Check 校验 events 能否依次应用到 s 之后，不修改 s。events 的 seq 可以留空，按顺序补齐后校验。
 func (s *State) Check(events ...*v1.Event) error {
+	_, err := s.after(events...)
+	return err
+}
+
+// after 返回应用 events 之后的状态（副本），s 不变。
+func (s *State) after(events ...*v1.Event) (*State, error) {
 	cp := s.Clone()
 	for i, e := range events {
 		if e.GetSeq() == 0 {
 			e = withSeq(e, s.Seq+uint64(i)+1)
 		}
 		if err := cp.Apply(e); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return cp, nil
 }
 
 func withSeq(e *v1.Event, seq uint64) *v1.Event {
@@ -398,13 +492,14 @@ func (s *State) apply(e *v1.Event) error {
 		if a := s.Active(); a != nil {
 			return fmt.Errorf("run %s requested while run %s is active", p.RunRequested.GetRunId(), a.ID)
 		}
-		if p.RunRequested.GetRunId() == "" || s.Run(p.RunRequested.GetRunId()) != nil {
+		if _, known := s.RunSummary(p.RunRequested.GetRunId()); p.RunRequested.GetRunId() == "" || known {
 			return fmt.Errorf("invalid or duplicate run id %q", p.RunRequested.GetRunId())
 		}
 		if err := s.recordInput(InputRef{ID: p.RunRequested.GetInputId(), RunID: p.RunRequested.GetRunId()}); err != nil {
 			return err
 		}
 		s.Runs = append(s.Runs, &Run{ID: p.RunRequested.GetRunId(), Status: RunQueued, RequestedAt: e.GetTime().AsTime()})
+		s.trimRuns()
 		s.History = append(s.History, e)
 
 	case *v1.Event_Steered:
@@ -432,7 +527,7 @@ func (s *State) apply(e *v1.Event) error {
 			r.StalledTakeovers++
 		}
 		r.Attempt, r.Status, r.LiveEndpoint = p.AttemptStarted.GetAttempt(), RunRunning, p.AttemptStarted.GetLiveEndpoint()
-		r.SuspendReason, r.SuspendedUntil = "", time.Time{}
+		r.SuspendReason, r.SuspendedUntil, r.Resume = "", time.Time{}, false
 
 	case *v1.Event_RunSuspended:
 		if _, err := s.fencedRun(p.RunSuspended.GetRunId(), p.RunSuspended.GetAttempt()); err != nil {
@@ -468,6 +563,7 @@ func (s *State) apply(e *v1.Event) error {
 			return fmt.Errorf("call %q is not awaiting approval", m.GetCallId())
 		}
 		c.Approval.Decided, c.Approval.Approved = true, m.GetApproved()
+		r.Resume = true
 
 	case *v1.Event_AssistantMessage:
 		m := p.AssistantMessage
@@ -480,19 +576,17 @@ func (s *State) apply(e *v1.Event) error {
 		}
 		seen := map[string]bool{}
 		for _, tc := range m.GetToolCalls() {
-			if tc.GetCallId() == "" || seen[tc.GetCallId()] || s.callIDs[tc.GetCallId()] {
+			if tc.GetCallId() == "" || seen[tc.GetCallId()] || s.hasCallID(tc.GetCallId()) {
 				return fmt.Errorf("invalid or duplicate call id %q", tc.GetCallId())
 			}
 			seen[tc.GetCallId()] = true
 		}
-		if s.callIDs == nil {
-			s.callIDs = map[string]bool{}
-		}
 		for _, tc := range m.GetToolCalls() {
 			r.Calls = append(r.Calls, &Call{Call: tc})
-			s.callIDs[tc.GetCallId()] = true
+			s.addCallID(tc.GetCallId())
 		}
 		r.Turns++
+		r.OutputTokens += int64(m.GetUsage().GetOutputTokens())
 		r.StalledTakeovers = 0
 		s.History = append(s.History, e)
 
@@ -547,6 +641,9 @@ func (s *State) apply(e *v1.Event) error {
 			return err
 		}
 		c.Done = true
+		if m.GetAttempt() == 0 && c.NodeID == askuser.NodeID {
+			r.Resume = true // 用户回答了提问
+		}
 		r.StalledTakeovers = 0
 		s.History = append(s.History, e)
 
@@ -580,6 +677,7 @@ func (s *State) apply(e *v1.Event) error {
 		}
 		s.History = slices.Clone(s.History[i:])
 		s.Compaction, s.CompactedAt = m, e.GetSeq()
+		r.Compactions++
 		r.StalledTakeovers = 0
 
 	case *v1.Event_RunCompleted:

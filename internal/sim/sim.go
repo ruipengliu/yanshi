@@ -20,12 +20,12 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
+	"yanshi/internal/app"
 	"yanshi/internal/artifact"
 	"yanshi/internal/askuser"
 	"yanshi/internal/capability"
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog"
-	"yanshi/internal/eventlog/memlog"
 	"yanshi/internal/ids"
 	"yanshi/internal/janitor"
 	"yanshi/internal/lifecycle"
@@ -41,36 +41,11 @@ import (
 	"yanshi/internal/session"
 	"yanshi/internal/usage"
 	"yanshi/internal/workqueue"
-	"yanshi/internal/workqueue/memqueue"
 	"yanshi/sdk/nodesdk"
 )
 
-// Stores 是模拟使用的存储实现；默认为内存实现。
-type Stores struct {
-	Log   eventlog.Log
-	Queue workqueue.Queue
-	Dir   node.Directory
-	Inbox node.Inbox
-	// 沙箱控制器的队列与共享状态
-	SandboxQueue workqueue.Queue
-	Ledger       nodesdk.Ledger
-	Activity     sandbox.Activity
-	// Session 生命周期：索引、删除记录与清理队列
-	Index        lifecycle.Index
-	Deletions    lifecycle.Deletions
-	JanitorQueue workqueue.Queue
-	// Memory（docs/design/m4-memory-grant.md）
-	Memory memory.Store
-	Grants memory.Grants
-	// 投影快照（docs/design/m2-scale-test.md §6）
-	Snapshots session.Snapshots
-	// 用量（docs/design/m4-quota-usage.md）
-	Usage usage.Store
-	// 在场（docs/design/m3-duplex-channel.md §6）
-	Presence presence.Store
-	// 推送设备（docs/design/m3-duplex-channel.md §9）
-	Push notify.Registry
-}
+// Stores 是模拟使用的存储实现（app.Stores）；默认为内存实现。
+type Stores = app.Stores
 
 type Options struct {
 	// NewStores 为 nil 时使用内存实现；传入的时钟是模拟的虚拟时钟。
@@ -104,8 +79,17 @@ type Stats struct {
 	// 压缩之后同一 Run 开启的 Attempt（接管或恢复），以及完成的长 Run（≥ longRunTurns 轮）。
 	Compactions, SummaryFaults, Overflows      int
 	AttemptsAfterCompaction, LongRunsCompleted int
-	// EnqueueInterleavings 是在客户端入队与写日志之间插入 Worker 步骤的次数。
+	// EnqueueInterleavings 是在客户端写入日志并入队之后、返回之前插入 Worker 步骤的次数。
 	EnqueueInterleavings int
+	// 外部写入（输入、审批、回答、Node 结果）的存储故障：WakeFaults 是注入的次数（含已生效但报告失败的），
+	// UncertainRetries 是客户端随后以同一输入 ID 重试的次数。
+	WakeFaults, UncertainRetries int
+	// CatalogFaults 是 Worker 查询设备目录（解析工具）时注入的暂时性故障。
+	CatalogFaults int
+	// ResumedClaims 是以恢复名额认领的长任务（用户刚做出审批或回答，ADR-0029）。
+	ResumedClaims int
+	// PastRuns 是移出投影、只剩摘要的终态 Run（有界投影，延展性评审 §8.3）。
+	PastRuns int
 	// 配额：因配额挂起的次数、提交时被拒绝的次数、挂起后恢复并结束的 Run；注销账号的次数。
 	QuotaSuspensions, QuotaRejections, QuotaResumes, AccountDeletions int
 	// 灰度：撤回版本后在下一个 Run 切换到稳定版本的次数。
@@ -164,17 +148,57 @@ func (l flakyLog) Append(ctx context.Context, sid string, expected uint64, event
 	return 0, &storeFault{written: true}
 }
 
-// hookQueue 在 Enqueue 成功后调用 after。
-type hookQueue struct {
-	workqueue.Queue
-	after func() error
+// flakyWaking 向外部写入（输入、审批、回答、Node 结果）注入存储故障：没有生效，或已经生效、调用方却只看到错误。
+// 写入与入队是原子的（CommitAndWake），所以无论哪种，Run 都无须新的输入就能推进，quiesce 检查这一点。
+// 写入生效后调用 afterEnqueue（如有），在客户端写入与返回之间插入 Worker 的一步。
+type flakyWaking struct {
+	eventlog.WakingLog
+	w *World
 }
 
-func (q *hookQueue) Enqueue(ctx context.Context, sessionID string, class workqueue.Class) error {
-	if err := q.Queue.Enqueue(ctx, sessionID, class); err != nil {
-		return err
+func (l flakyWaking) AppendAndEnqueue(ctx context.Context, sid string, expected uint64, class workqueue.Class, events ...*v1.Event) (uint64, error) {
+	if l.w.faults && l.w.chance(0.04) {
+		l.w.Stats.WakeFaults++
+		if l.w.chance(0.5) {
+			return 0, &storeFault{}
+		}
+		if _, err := l.WakingLog.AppendAndEnqueue(ctx, sid, expected, class, events...); err != nil {
+			return 0, err
+		}
+		if err := l.w.interleave(); err != nil {
+			return 0, err
+		}
+		return 0, &storeFault{written: true}
 	}
-	return q.after()
+	head, err := l.WakingLog.AppendAndEnqueue(ctx, sid, expected, class, events...)
+	if err != nil {
+		return 0, err
+	}
+	return head, l.w.interleave()
+}
+
+// errDirectoryDown 是注入的设备目录故障：暂时性的，不能使 Run 立即失败（延展性评审 §8.1）。
+var errDirectoryDown = errors.New("sim: node directory unavailable")
+
+// flakyDirectory 让 Worker 解析工具时查询设备目录偶尔失败。
+type flakyDirectory struct {
+	node.Directory
+	w *World
+}
+
+func (d flakyDirectory) List(ctx context.Context, scope node.Scope) ([]*node.Info, error) {
+	if d.w.faults && d.w.chance(0.05) {
+		d.w.Stats.CatalogFaults++
+		return nil, errDirectoryDown
+	}
+	return d.Directory.List(ctx, scope)
+}
+
+func (w *World) interleave() error {
+	if w.afterEnqueue == nil {
+		return nil
+	}
+	return w.afterEnqueue()
 }
 
 // poolQueue 是一个 Worker 看到的工作队列：检查认领到的工作属于该 Worker 的池（ADR-0029）。
@@ -187,6 +211,9 @@ func (q poolQueue) Claim(ctx context.Context, holder string, ttl time.Duration, 
 	l, err := q.Queue.Claim(ctx, holder, ttl, pool)
 	if err == nil && !pool.Admits(l.Class) {
 		q.w.poolViolation = fmt.Errorf("invariant: %s claimed %s of class %+v outside its pool %+v", holder, l.SessionID, l.Class, pool)
+	}
+	if err == nil && l.Class.Priority == workqueue.Resumed {
+		q.w.Stats.ResumedClaims++
 	}
 	return l, err
 }
@@ -217,6 +244,7 @@ type simNode struct {
 
 type World struct {
 	opts    Options
+	stores  Stores
 	rng     *rand.Rand
 	clock   *clock.Fake
 	log     eventlog.Log
@@ -292,20 +320,15 @@ func New(opts Options) (*World, error) {
 		effects: map[string]int{},
 		faults:  opts.Faults,
 	}
-	stores := Stores{
-		Log: memlog.New(), Queue: memqueue.New(w.clock), Dir: node.NewMemDirectory(w.clock), Inbox: node.NewMemInbox(),
-		SandboxQueue: memqueue.New(w.clock), Ledger: nodesdk.NewMemLedger(), Activity: sandbox.NewMemActivity(),
-		Index: lifecycle.NewMemIndex(), Deletions: lifecycle.NewMemDeletions(), JanitorQueue: memqueue.New(w.clock),
-		Memory: memory.NewMemStore(), Grants: memory.NewMemGrants(), Snapshots: session.NewMemSnapshots(),
-		Usage: usage.NewMem(), Presence: presence.NewMem(), Push: notify.NewMemRegistry(),
-	}
+	stores := app.Memory(w.clock)
 	if opts.NewStores != nil {
 		stores = opts.NewStores(w.clock)
 	}
+	w.stores = stores
 	w.log, w.queue = stores.Log, stores.Queue
 	// 快照每 5 条写一次，使加载几乎总是走"快照 + 剩余日志"的路径。
-	w.store = &session.Store{Log: w.log, IDs: ids.Sequential("id"), Clock: w.clock, Snapshots: stores.Snapshots,
-		SnapshotEvery: 5, Deletions: stores.Deletions}
+	w.store = &session.Store{Log: w.log, Waking: flakyWaking{WakingLog: stores.Waking, w: w}, IDs: ids.Sequential("id"),
+		Clock: w.clock, Snapshots: stores.Snapshots, SnapshotEvery: 5, Deletions: stores.Deletions}
 	maxTurns := 6
 	if opts.LongRuns {
 		maxTurns = 120
@@ -327,11 +350,11 @@ func New(opts Options) (*World, error) {
 	if err := w.setRelease(0); err != nil {
 		return nil, err
 	}
-	w.memories = &memory.Service{Store: stores.Memory, Grants: stores.Grants, Deletions: stores.Deletions, Clock: w.clock,
+	w.memories = &memory.Service{Store: stores.Memories, Grants: stores.Grants, Deletions: stores.Deletions, Clock: w.clock,
 		IDs: ids.Sequential("mem"), MaxPerUser: 20}
 	w.catalog = &capability.Catalog{
 		Local: capability.NewRegistry(append([]capability.Capability{w.echoCap(), w.sendCap()}, memory.Capabilities(w.memories)...)...),
-		Nodes: stores.Dir, DefaultTimeout: deviceTimeout, AskTimeout: askTimeout,
+		Nodes: flakyDirectory{Directory: stores.Dir, w: w}, DefaultTimeout: deviceTimeout, AskTimeout: askTimeout,
 		Sandbox:      &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID},
 		NodeCacheTTL: 5 * time.Second, Clock: w.clock,
 	}
@@ -346,21 +369,14 @@ func New(opts Options) (*World, error) {
 	w.usage = &checkedUsage{Store: spent, truth: stores.Usage, w: w}
 	w.quotas = &usage.Quotas{Store: spent, Limits: simLimits(opts.LongRuns)}
 	w.meter = &usage.Meter{Store: w.usage, Prices: simPrices, Deletions: w.deletions}
-	w.hub = &node.Hub{Dir: stores.Dir, Inbox: stores.Inbox, Store: w.store, Queue: w.queue, Auth: node.InsecureDevAuth{}, Deletions: w.deletions,
+	w.hub = &node.Hub{Dir: stores.Dir, Inbox: stores.Inbox, Store: w.store, Auth: node.InsecureDevAuth{}, Deletions: w.deletions,
 		Push: stores.Push, Clock: w.clock}
 	w.sandboxQueue, w.ledger, w.activity = stores.SandboxQueue, stores.Ledger, stores.Activity
 	w.router = &sandbox.Router{Hub: w.hub, Queue: w.sandboxQueue}
-	w.artifacts = &artifact.Service{Meta: artifact.NewMemMeta(), Blobs: artifact.NewMemBlobs(), IDs: ids.Sequential("art"), Clock: w.clock, Deletions: w.deletions}
+	w.artifacts = &artifact.Service{Meta: stores.ArtifactMeta, Blobs: artifact.NewMemBlobs(), IDs: ids.Sequential("art"), Clock: w.clock, Deletions: w.deletions}
 	w.provider = sandbox.NewFake()
 	w.provider.ExecFunc = w.sandboxExec
-	// Service 的入队可能在写日志之前或之后，模拟在入队之后插入 Worker 的一步，
-	// 以覆盖"入队、认领、写日志、释放"的交错（丢失唤醒）。
-	w.svc = &service.Service{Store: w.store, Queue: &hookQueue{Queue: w.queue, after: func() error {
-		if w.afterEnqueue == nil {
-			return nil
-		}
-		return w.afterEnqueue()
-	}}, Agents: agents, Nodes: w.router, Index: w.index, Deletions: w.deletions, Janitor: w.janitorQueue, Quotas: w.quotas,
+	w.svc = &service.Service{Store: w.store, Agents: agents, Nodes: w.router, Index: w.index, Deletions: w.deletions, Janitor: w.janitorQueue, Quotas: w.quotas,
 		Moderator: simModerator{w}}
 	for range 2 {
 		w.controllers = append(w.controllers, w.newController())
@@ -625,6 +641,18 @@ func (w *World) Run() error {
 }
 
 func (w *World) tick() error {
+	err := w.act()
+	// 外部写入的存储故障（flakyWaking）：客户端只看到错误，写入可能已经生效。设备与沙箱控制器不确认结果、
+	// 稍后重发；审批与回答由用户重试（decide 会再次选到它）。
+	var sf *storeFault
+	if errors.As(err, &sf) {
+		w.tracef("uncertain write: %v", err)
+		return nil
+	}
+	return err
+}
+
+func (w *World) act() error {
 	switch x := w.rng.Float64(); {
 	case x < 0.47:
 		return w.stepWorker(w.rng.IntN(len(w.workers)))
@@ -734,7 +762,7 @@ func (w *World) stepWorker(i int) error {
 		w.tracef("step %s: %v", wk.ID(), err)
 		var me *modelError
 		var sf *storeFault
-		if errors.As(err, &me) || errors.Is(err, moderation.ErrUnavailable) || errors.As(err, &sf) {
+		if errors.As(err, &me) || errors.Is(err, moderation.ErrUnavailable) || errors.As(err, &sf) || errors.Is(err, errDirectoryDown) {
 			return nil
 		}
 		return fmt.Errorf("worker %s step: %w", wk.ID(), err)
@@ -762,6 +790,10 @@ func (w *World) submit() error {
 	w.nextInput++
 	inputID := fmt.Sprintf("in-%d", w.nextInput)
 	res, err := w.svc.SubmitWithID(context.Background(), sid, inputID, input)
+	var sf *storeFault
+	if errors.As(err, &sf) && w.chance(0.5) {
+		return w.retryUncertain(sid, inputID, input, sf.written)
+	}
 	if w.submitModerated(err) {
 		w.tracef("submit %s rejected by moderation: %v", sid, err)
 		return nil
@@ -787,6 +819,29 @@ func (w *World) submit() error {
 	if w.chance(0.2) {
 		return w.retrySubmit(sid, inputID, input, res)
 	}
+	return nil
+}
+
+// retryUncertain 模拟"提交结果未知（存储故障）后以同一输入 ID 重试"：已生效的必须返回 duplicate，
+// 没有生效的照常生效。
+func (w *World) retryUncertain(sid, inputID string, input []*v1.ContentBlock, written bool) error {
+	w.Stats.UncertainRetries++
+	res, err := w.svc.SubmitWithID(context.Background(), sid, inputID, input)
+	var sf *storeFault
+	if errors.As(err, &sf) || (!written && (w.submitModerated(err) || w.submitOverQuota(err))) {
+		w.tracef("retry %s: %v", inputID, err)
+		return nil
+	}
+	if err != nil {
+		if errors.Is(err, service.ErrNotFound) || errors.Is(err, service.ErrConflict) {
+			return nil // 期间被删除或关闭（重试之间插入了 Worker 步骤），与去重无关
+		}
+		return fmt.Errorf("retry of uncertain input %s: %w", inputID, err)
+	}
+	if res.Duplicate != written {
+		return fmt.Errorf("invariant: retry of input %s (written=%v) returned duplicate=%v", inputID, written, res.Duplicate)
+	}
+	w.tracef("retry %s → duplicate=%v", inputID, res.Duplicate)
 	return nil
 }
 
@@ -919,9 +974,26 @@ func (w *World) CheckInvariants() error {
 		if !session.Equal(loaded, st) {
 			return fmt.Errorf("invariant: snapshot-based load of %s diverges from full replay at seq %d", sid, st.Seq)
 		}
-		for _, r := range st.Runs {
-			if r.Status == session.RunCompleted && r.PendingCall() != nil {
-				return fmt.Errorf("invariant: run %s completed with pending call", r.ID)
+		var pending error
+		eachRun(events, func(r *session.Run) {
+			if r.Status == session.RunCompleted && r.PendingCall() != nil && pending == nil {
+				pending = fmt.Errorf("invariant: run %s completed with pending call", r.ID)
+			}
+		})
+		if pending != nil {
+			return pending
+		}
+		// 投影有界（延展性评审 §8.3）：保留明细的 Run 至多 KeepRuns+1 个，其余只剩摘要，摘要与 Run 合起来覆盖全部 Run。
+		if len(st.Runs) > session.KeepRuns+1 {
+			return fmt.Errorf("invariant: %s keeps %d runs in full, limit %d", sid, len(st.Runs), session.KeepRuns+1)
+		}
+		if requested := countPayload[*v1.Event_RunRequested](events); len(st.Summaries()) != requested {
+			return fmt.Errorf("invariant: %s summarizes %d runs, log has %d", sid, len(st.Summaries()), requested)
+		}
+		for _, e := range events {
+			// 暂时性的目录故障只能经 StepErrorBudget（持续出错）使 Run 失败，不能一次就失败。
+			if e.GetRunFailed().GetReason() == errDirectoryDown.Error() {
+				return fmt.Errorf("invariant: run %s failed on a transient directory error", e.GetRunFailed().GetRunId())
 			}
 		}
 		if err := checkInteractiveWorkers(events); err != nil {
@@ -961,23 +1033,48 @@ func (w *World) CheckInvariants() error {
 	return w.checkDeleted(false)
 }
 
+// eachRun 重放 events，对每个 Run 调用一次 fn：终态的在进入终态时（此时仍在投影中，之后可能只剩摘要），
+// 未终态的在最后。重放出错时停止。
+func eachRun(events []*v1.Event, fn func(*session.Run)) {
+	st := &session.State{}
+	for _, e := range events {
+		if err := st.Apply(e); err != nil {
+			return
+		}
+		id := e.GetRunCompleted().GetRunId() + e.GetRunFailed().GetRunId() + e.GetRunInterrupted().GetRunId()
+		if r := st.Run(id); id != "" && r != nil {
+			fn(r)
+		}
+	}
+	if a := st.Active(); a != nil {
+		fn(a)
+	}
+}
+
 func attemptKey(runID string, attempt uint32) string { return fmt.Sprintf("%s/%d", runID, attempt) }
 
-// checkInteractiveWorkers 检查交互 Worker 不为长任务调用模型（ADR-0029）：Run 调用模型达到 LongRunTurns 次之后，
-// 交互 Worker 应在下一步之前移交它，而不是继续执行。
+// checkInteractiveWorkers 检查交互 Worker 不为长任务调用模型（ADR-0029）：Run 成为长任务（见 workqueue.Classify）
+// 之后，交互 Worker 应在下一步之前移交它，而不是继续执行模型回合或上下文压缩。
 func checkInteractiveWorkers(events []*v1.Event) error {
+	st := &session.State{}
 	workerOf := map[string]string{}
-	turns := map[string]int{}
 	for _, e := range events {
+		var runID string
+		var attempt uint32
 		switch p := e.GetPayload().(type) {
 		case *v1.Event_AttemptStarted:
 			workerOf[attemptKey(p.AttemptStarted.GetRunId(), p.AttemptStarted.GetAttempt())] = p.AttemptStarted.GetWorkerId()
 		case *v1.Event_AssistantMessage:
-			m := p.AssistantMessage
-			if wk := workerOf[attemptKey(m.GetRunId(), m.GetAttempt())]; strings.HasPrefix(wk, interactiveWorker) && turns[m.GetRunId()] >= workqueue.LongRunTurns {
-				return fmt.Errorf("interactive worker %s called the model for run %s after %d turns", wk, m.GetRunId(), turns[m.GetRunId()])
-			}
-			turns[m.GetRunId()]++
+			runID, attempt = p.AssistantMessage.GetRunId(), p.AssistantMessage.GetAttempt()
+		case *v1.Event_ContextCompacted:
+			runID, attempt = p.ContextCompacted.GetRunId(), p.ContextCompacted.GetAttempt()
+		}
+		if wk := workerOf[attemptKey(runID, attempt)]; runID != "" && strings.HasPrefix(wk, interactiveWorker) &&
+			st.WorkClass().Priority < workqueue.Interactive {
+			return fmt.Errorf("interactive worker %s called the model for long run %s (seq %d)", wk, runID, e.GetSeq())
+		}
+		if err := st.Apply(e); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -993,18 +1090,19 @@ func (w *World) CollectStats() {
 	for _, sid := range w.sessions {
 		events, _ := eventlog.ReadAll(context.Background(), w.log, sid, 0)
 		if st, err := session.Reduce(events); err == nil {
-			for _, r := range st.Runs {
-				if r.Status == session.RunCompleted && r.Turns >= longRunTurns {
-					w.Stats.LongRunsCompleted++
-				}
-				w.Stats.Takeovers += r.Takeovers
-				for _, c := range r.Calls {
-					if len(c.StartedAttempts) > 1 {
-						w.Stats.Retried++
-					}
+			w.Stats.PastRuns += len(st.Past)
+		}
+		eachRun(events, func(r *session.Run) {
+			if r.Status == session.RunCompleted && r.Turns >= longRunTurns {
+				w.Stats.LongRunsCompleted++
+			}
+			w.Stats.Takeovers += r.Takeovers
+			for _, c := range r.Calls {
+				if len(c.StartedAttempts) > 1 {
+					w.Stats.Retried++
 				}
 			}
-		}
+		})
 		compacted := map[string]bool{}
 		quotaSuspended := map[string]bool{}
 		capOf := map[string]string{}
@@ -1305,4 +1403,15 @@ func (w *World) toolArgs(name string) string {
 		return fmt.Sprintf(`{"id":"mem_call_id-%d"}`, w.rng.IntN(500))
 	}
 	return `{"pad":"` + w.pad() + `"}`
+}
+
+// countPayload 返回 events 中载荷为 T 的事件数。
+func countPayload[T any](events []*v1.Event) int {
+	n := 0
+	for _, e := range events {
+		if _, ok := e.GetPayload().(T); ok {
+			n++
+		}
+	}
+	return n
 }

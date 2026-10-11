@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"yanshi/internal/app"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/janitor"
 	"yanshi/internal/lifecycle"
@@ -22,11 +23,11 @@ import (
 
 func (w *World) newJanitor() *janitor.Janitor {
 	w.nextJ++
+	ws := sandbox.Workspaces{Queue: w.sandboxQueue, Provider: w.provider, Activity: w.activity}
 	return &janitor.Janitor{
-		ID: fmt.Sprintf("j%d", w.nextJ), Queue: w.janitorQueue, Service: w.svc, Store: w.store, Sessions: w.queue,
-		SandboxQueue: w.sandboxQueue, Inbox: w.hub.Inbox, Nodes: w.hub.Dir, Sandbox: w.provider, Activity: w.activity,
-		Ledger: w.ledger, Artifacts: w.artifacts, Memory: w.memories.Store, Index: w.index, Deletions: w.deletions,
-		Presence: w.presence.Store, Clock: w.clock, LeaseTTL: leaseTTL,
+		ID: fmt.Sprintf("j%d", w.nextJ), Queue: w.janitorQueue, Service: w.svc, Store: w.store,
+		Data: app.SessionData(w.stores, ws, w.artifacts), Workspaces: ws, Inbox: w.hub.Inbox, Nodes: w.hub.Dir,
+		Ledger: w.ledger, Index: w.index, Deletions: w.deletions, Presence: w.presence.Store, Clock: w.clock, LeaseTTL: leaseTTL,
 		BeforeStage: func(context.Context, string) {
 			if w.faults && w.crash != nil && w.chance(0.1) {
 				w.crash()

@@ -17,7 +17,7 @@
 - 改动进程角色、启动参数或部署形态之前：`docs/design/deployment.md`。进程边界只沿扩缩容维度、权限与故障域划分，不按领域拆服务；全部角色合在一个进程里必须仍能运行。
 - 改动 MCP 适配之前：`docs/design/m5-mcp.md`。云端不运行 stdio 型 MCP Server；未声明只读的工具默认需要审批（ADR-0017）。
 - 改动工件之前：`docs/design/m2-artifacts.md`。Event 中只放 `artifact://` 引用，不放文件内容；工件只对其所属 Session 可见。
-- 新增任何存放 Session 数据的地方之前：`docs/design/m2-session-lifecycle.md`。它必须能被 Janitor 按 Session 删除，写入入口要"先写、后查"删除记录（ADR-0015），并在 `internal/sim` 的删除不变量中检查。
+- 新增任何存放 Session 数据的地方之前：`docs/design/m2-session-lifecycle.md`。它必须能被 Janitor 按 Session 删除（在 `app.SessionData` 登记），写入入口要"先写、后查"删除记录（`lifecycle.Recheck`，ADR-0015），并在 `internal/sim` 的删除不变量中检查。
 - 改动 Memory 的写入、召回或授权之前：`docs/design/m4-memory-grant.md`。外部内容影响下的写入须经用户批准，写入闸门只收紧不放宽（ADR-0023）；健康类须业务线开启（ADR-0022）。
 - 改动 AgentDef 的版本选择或发布配置之前：`docs/design/m4-agent-rollout.md`。Session 当前使用的版本读 `State.Agent`（投影），不读 `Created.Agent`；新版本进入灰度或成为 stable 之前，须用 `make eval EVAL_FLAGS="-sandbox docker -agent-version <版本>"` 评测且与基线相比没有回归（ADR-0020）。
 - 改动内容安全的检查点或提供商之前：`docs/design/m4-moderation.md`。输入与输出都在写日志之前检查，失败即拒绝（ADR-0021）。上线前须完成 `docs/launch-checklist.md`。
@@ -32,7 +32,7 @@
 - **请求前缀保持稳定。** 提供商的前缀缓存是长 Run 成本的主要杠杆：系统指令只放 AgentDef 的指令，不放每个 Run 都变化的内容（召回放在 Run 的位置上，见 `runtime.Transcript`）；工具按名称排序；Run 内的上下文只在尾部追加。改动 Transcript 或请求组装时，用评测报告的"缓存命中"列确认没有退化。
 - **评测是效果的裁判。** 改动模型、提示词、AgentDef，或召回、压缩、Memory、MCP、审批摘要等给模型看的文本时，运行 `make eval`（需要 `TOKENHUB_API_KEY`）并与 `evals/baselines/` 比较，不得有回归；有意的效果变化用 `-update-baseline` 更新基线并随代码提交。新增给模型看的能力或文本时，同时在 `evals/` 增加覆盖它的用例（`docs/design/m4-eval.md`）。
 - **模拟测试是执行语义的裁判。** 改动 runtime / session / service / workqueue 后运行 `make sim`；失败信息里的种子可复现：`go test ./internal/sim -run <Test> -sim.seed=<N>`。新增故障类型或路径时，同时在 `internal/sim` 中注入并加入覆盖统计。
-- **新存储实现必须通过一致性套件**（`eventlogtest`、`workqueuetest`、`nodetest`、`ledgertest`、`sandboxtest`、`artifacttest`、`lifecycletest`、`memorytest`、`snapshottest`、`usagetest`、`presencetest`、`notifytest`），并接入 `internal/sim` 的差分测试。数据库变更只通过新增 `internal/pg/migrations/NNNN_*.sql`，不修改已有迁移；大表上建索引用 `CREATE INDEX CONCURRENTLY`，迁移首行写 `-- yanshi:no-transaction`（只含这一条语句，且可重复执行）。新表须在 `pg.Tables` 登记分片键（Session 或 EndUser）；在线路径按键访问，一条 SQL、一个事务只涉及一个键（ADR-0028）。
+- **新存储实现必须通过一致性套件**（`eventlogtest`、`workqueuetest`、`nodetest`、`ledgertest`、`sandboxtest`、`artifacttest`、`lifecycletest`、`memorytest`、`snapshottest`、`usagetest`、`presencetest`、`notifytest`），在装配包 `internal/app`（`app.Stores`，serve、模拟测试、评测与 e2e 共用）中构造，并接入 `internal/sim` 的差分测试。外部写入之后须唤醒 Session 的（输入、审批、回答、Node 结果）用 `Store.CommitAndWake`：日志与队列在同一事务中提交（`eventlogtest.RunWaking`）。数据库变更只通过新增 `internal/pg/migrations/NNNN_*.sql`，不修改已有迁移；大表上建索引用 `CREATE INDEX CONCURRENTLY`，迁移首行写 `-- yanshi:no-transaction`（只含这一条语句，且可重复执行）。新表须在 `pg.Tables` 登记分片键（Session 或 EndUser）；在线路径按键访问，一条 SQL、一个事务只涉及一个键（ADR-0028）。
 - **路由调用可以安全重投递，前提是 SDK 以 call_id 去重**（`sdk/nodesdk.Executor`）。修改 Executor 或 Ledger 时，保持"started 状态先落盘、再执行"的顺序。
 
 ## 风格

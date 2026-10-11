@@ -8,25 +8,27 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/clock"
+	"yanshi/internal/eventlog"
 	"yanshi/internal/eventlog/memlog"
 	"yanshi/internal/ids"
 	"yanshi/internal/model"
 	"yanshi/internal/node"
 	"yanshi/internal/session"
+	"yanshi/internal/workqueue"
 	"yanshi/internal/workqueue/memqueue"
 )
 
 // downLog 在 down 时拒绝一切追加（数据库不可用）。
 type downLog struct {
-	*memlog.Log
+	eventlog.WakingLog
 	down bool
 }
 
-func (l *downLog) Append(ctx context.Context, sid string, expected uint64, events ...*v1.Event) (uint64, error) {
+func (l *downLog) AppendAndEnqueue(ctx context.Context, sid string, expected uint64, class workqueue.Class, events ...*v1.Event) (uint64, error) {
 	if l.down {
 		return 0, errors.New("database unavailable")
 	}
-	return l.Log.Append(ctx, sid, expected, events...)
+	return l.WakingLog.AppendAndEnqueue(ctx, sid, expected, class, events...)
 }
 
 // 结果没有写入日志时不能确认：Inbox 保留调用，设备重连后从账本重新返回，结果最终写入。
@@ -34,9 +36,10 @@ func (l *downLog) Append(ctx context.Context, sid string, expected uint64, event
 func TestResultNotAcknowledgedUntilStored(t *testing.T) {
 	ctx := context.Background()
 	clk := clock.NewFake(time.Unix(1000, 0))
-	log := &downLog{Log: memlog.New()}
-	store := &session.Store{Log: log, IDs: ids.Sequential("e"), Clock: clk}
-	h := &node.Hub{Dir: node.NewMemDirectory(clk), Inbox: node.NewMemInbox(), Store: store, Queue: memqueue.New(clk), Clock: clk}
+	mlog, queue := memlog.New(), memqueue.New(clk)
+	log := &downLog{WakingLog: mlog.Waking(queue)}
+	store := &session.Store{Log: mlog, Waking: log, IDs: ids.Sequential("e"), Clock: clk}
+	h := &node.Hub{Dir: node.NewMemDirectory(clk), Inbox: node.NewMemInbox(), Store: store, Clock: clk}
 
 	st := &session.State{SessionID: "s1"}
 	if err := store.Commit(ctx, st,
@@ -70,6 +73,10 @@ func TestResultNotAcknowledgedUntilStored(t *testing.T) {
 	final, _ := store.Load(ctx, "s1")
 	if c := final.Run("r1").Calls[0]; !c.Done {
 		t.Fatal("result not stored after redelivery")
+	}
+	// 结果与唤醒在同一事务中：Session 已在队列中，等 Worker 推进。
+	if l, err := queue.Claim(ctx, "w", time.Second, workqueue.Pool{}); err != nil || l.SessionID != "s1" {
+		t.Fatalf("session not enqueued with the result: %+v, %v", l, err)
 	}
 	// 重复的结果（调用已有结果）作废：确认并撤下。
 	if err := h.Inbox.Put(ctx, "n1", inv); err != nil {

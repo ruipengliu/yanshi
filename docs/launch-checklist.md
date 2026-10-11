@@ -8,7 +8,8 @@
   - 实现 `moderation.Moderator`（文本与图片），按提供商的错误语义区分"违规"与"不可用"；
   - 确认流式草稿的处理是否满足监管要求，必要时实现流式检查（按片段检查、违规时取消生成）；
   - 评估是否需要对外部来源（MCP、网页）的调用结果单独检查；
-  - 上线配置中 `yanshi_moderation_mock` 必须为 0。
+  - 上线配置中 `yanshi_moderation_mock` 必须为 0；
+  - 容灾：与合规确认一个故障域独立的等价提供商，配置为 `-moderation 主,备`（`moderation.Failover`，备用方只在主方超时或出错时使用）；全部不可用时是否允许暂存输出、恢复后重试检查。
 - [ ] **价格表填入合同价**（[设计](./design/m4-quota-usage.md)）。`pricing.yaml` 中 tokenhub 的价格与沙箱单价是占位值。
 - [ ] **生产沙箱**（ADR-0010，[设计](./design/m2-sandbox.md)）。当前只有 Docker 实现；选定云厂商服务或自托管隔离方案后实现生产 Provider。
 - [ ] **业务线配置**：每条业务线的密钥、保留策略与配额已按约定填写（`businesslines/*.yaml`）。

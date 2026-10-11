@@ -113,13 +113,13 @@ func TestDeleteSessionRemovesEverything(t *testing.T) {
 		t.Fatalf("deleted session still visible: %d", code)
 	}
 	eventually(t, "deletion to complete and the device to forget", 30*time.Second, func() bool {
-		tb, err := st.deletions.Get(ctx, sid)
+		tb, err := st.Deletions.Get(ctx, sid)
 		return err == nil && !tb.CompletedAt.IsZero() && !deviceLedger.HasSession(sid)
 	})
-	if events, _ := eventlog.ReadAll(ctx, st.log, sid, 0); len(events) != 0 {
+	if events, _ := eventlog.ReadAll(ctx, st.Log, sid, 0); len(events) != 0 {
 		t.Errorf("log still has %d events", len(events))
 	}
-	if _, err := st.index.Get(ctx, sid); !errors.Is(err, lifecycle.ErrNotFound) {
+	if _, err := st.Index.Get(ctx, sid); !errors.Is(err, lifecycle.ErrNotFound) {
 		t.Errorf("session still indexed: %v", err)
 	}
 	if list, _ := st.artifacts.List(ctx, sid); len(list) != 0 {
@@ -128,7 +128,7 @@ func TestDeleteSessionRemovesEverything(t *testing.T) {
 	if workspaceExists(sbx) {
 		t.Errorf("sandbox workspace %s still exists", sbx)
 	}
-	if l, ok := st.ledger.(*nodesdk.MemLedger); ok && l.HasSession(sid) {
+	if l, ok := st.Ledger.(*nodesdk.MemLedger); ok && l.HasSession(sid) {
 		t.Error("sandbox ledger still has records")
 	}
 }
@@ -201,7 +201,7 @@ func TestDeleteEndUser(t *testing.T) {
 		t.Fatalf("progress = %+v", progress)
 	}
 	for _, sid := range []string{a, b} {
-		if events, _ := eventlog.ReadAll(context.Background(), st.log, sid, 0); len(events) != 0 {
+		if events, _ := eventlog.ReadAll(context.Background(), st.Log, sid, 0); len(events) != 0 {
 			t.Errorf("session %s still has events", sid)
 		}
 	}
@@ -250,7 +250,7 @@ func TestMemoryAcrossSessions(t *testing.T) {
 		t.Fatalf("delete: %d", code)
 	}
 	eventually(t, "the memory written by the deleted session to be removed", 30*time.Second, func() bool {
-		_, err := st.memories.Get(context.Background(), id)
+		_, err := st.Memories.Get(context.Background(), id)
 		return err != nil
 	})
 	e.do(http.MethodGet, "/v1/memories", nil, &mems)

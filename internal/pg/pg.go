@@ -41,6 +41,25 @@ func Open(ctx context.Context, dsn, schema string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
+// OpenDirect 打开直连 PostgreSQL 的小连接池，供 LISTEN（Notifier）与迁移锁使用：经 PgBouncer 事务池的连接
+// 不保留会话状态，LISTEN 与会话级 advisory lock 在其上不可用（docs/design/deployment.md §4）。
+func OpenDirect(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, err
+	}
+	cfg.MaxConns = 4 // LISTEN 一条、迁移一条，余量给重连
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	return pool, nil
+}
+
 // MigrateLock 是迁移所持会话级 advisory lock 的键（hashtext）。锁是全库范围的：迁移会创建扩展
 // （CREATE EXTENSION 是库级操作），并发创建会冲突。
 const MigrateLock = "yanshi_migrate"

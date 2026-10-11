@@ -40,7 +40,8 @@ Worker 无状态。一次 Worker 对某个 Run 的执行称为一个 **Attempt**
   - Run 已终态，或 `current_attempt` 已不是自己 → 放弃（被中断或被接管）；
   - 否则在新末尾上重试追加（冲突来自 `Steered` 等无害事件）。
 - **工作队列只负责活性。** 工作队列（WorkQueue）按 Session 发放带 TTL 的租约，避免多个 Worker 同时争抢；租约过期后其他 Worker 可接管。即使租约机制出错导致两个 Worker 同时执行，日志 fencing 也保证只有一个 Attempt 的事件能被提交。
-- **工作按类别认领**（ADR-0029）。入队时带上业务线与优先级：活跃 Run 调用模型不到 6 次为交互级，达到 6 次为长任务；认领时先取交互级。一部分 Worker 只认领交互级，持有的 Run 成为长任务时，在两步之间以 `RunSuspended{reason: "handoff"}` 正常结束 Attempt 并移交出去。进程优雅停机时同样移交，不必等租约过期。
+- **外部写入与唤醒原子提交。** 输入、审批、回答与 Node 结果之后必须有 Worker 推进 Session；它们以 `Store.CommitAndWake` 在追加的同一事务中入队（`eventlog.WakingLog`，内存与 PostgreSQL 实现同一契约，由 `eventlogtest.RunWaking` 检查），二者之间没有可以崩溃的窗口。没有原子实现时 `CommitAndWake` 报错，不退回"先追加、再入队"两步。Worker 自己的提交不唤醒：它提交 `RunSuspended` 后紧接着 Park，此时入队会使 Park 失效。
+- **工作按类别认领**（ADR-0029）。入队时带上业务线与优先级：活跃 Run 的模型回合与压缩合计不到 6 次、且累计输出不到 16000 token 为交互级，否则为长任务；用户刚做出审批或回答的长任务带恢复名额，在后台池中先被认领；认领时先取交互级。一部分 Worker 只认领交互级，持有的 Run 成为长任务时，在两步之间以 `RunSuspended{reason: "handoff"}` 正常结束 Attempt 并移交出去。进程优雅停机时同样移交，不必等租约过期。
 - 无进展的连续接管（在 `running` 状态下开启新 Attempt，且其间上下文没有前进）超过上限 → `RunFailed`。从挂起恢复不计入，见 [M1 设计](./m1-device-nodes.md) §2 与 [长任务设计](./m2-long-runs.md) §6。
 
 ## 4. Agent 循环（一步 = 一次 Step）
@@ -75,7 +76,7 @@ Worker 以 `Step()` 为单位推进，每个 Step 同步完成一件事，内部
 
 - 随机交错各 Worker 的 Step 与客户端动作（输入、插话、中断）；
 - 随机注入故障：Worker 崩溃（丢弃其内存状态）、租约过期、模型报错；
-- 在客户端动作内部的入队之后插入 Worker 步骤，覆盖"入队 → 认领 → 写日志 → 释放"的交错（丢失唤醒）；
+- 在客户端写入并入队之后、返回之前插入 Worker 步骤；外部写入随机失败或"已生效但报告失败"，客户端以同一输入 ID 重试须得到 duplicate，停止注入后 Run 无须新输入即可推进（丢失唤醒）；
 - 每步后检查不变量：终态后无事件、Attempt 单调、每个调用至多一个结果、非幂等调用不重复执行、至多一个活跃 Run；
 - 停止注入故障后，所有 Run 必须在有限步内进入终态。
 

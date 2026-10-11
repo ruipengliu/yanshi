@@ -1,0 +1,23 @@
+# 发布流水线中先于滚动更新运行；serve 以 -migrate=false 启动，缺迁移时拒绝启动（就绪检查也会失败）。
+# 迁移持会话级 advisory lock，必须直连（YANSHI_PG_LISTEN_DSN），不能经 PgBouncer 事务池。
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: yanshi-migrate
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: yanshi-migrate
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: yanshi
+          args: ["migrate"]
+          envFrom:
+            - secretRef:
+                name: yanshi-secrets
+          resources:
+            requests: {cpu: 100m, memory: 64Mi}

@@ -1,0 +1,21 @@
+# Janitor：关闭、删除、保留策略与清理，并定期统计各队列积压（yanshi_queue_ready）。靠租约互斥，1～2 个。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: yanshi-janitor
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: yanshi, app.kubernetes.io/component: janitor}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: yanshi, app.kubernetes.io/component: janitor}
+    spec:
+      containers:
+        - name: yanshi
+          image: yanshi
+          args: [serve, -roles=janitor, -peer-addr=0.0.0.0:7070, -peer-advertise=http://$(POD_IP):7070, -storage=postgres,
+            -migrate=false, -auth=jwt, -agents=/etc/yanshi/agents, -businesslines=/etc/yanshi/businesslines,
+            -pricing=/etc/yanshi/pricing/pricing.yaml, -blob=s3, -notify-shards=16]
+          resources:
+            requests: {cpu: 200m, memory: 256Mi}

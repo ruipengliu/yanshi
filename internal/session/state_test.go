@@ -2,10 +2,12 @@ package session
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/workqueue"
 )
 
 // 以下构造函数生成不带 seq 的事件，由 build 按顺序编号。
@@ -396,5 +398,132 @@ func TestCalls(t *testing.T) {
 		if _, err := Reduce(build(events...)); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// 工作类别按 Run 已做的工作判定（ADR-0029）：回合与压缩都计入；用户做出审批后的长任务在后台池中先被认领，
+// 名额由下一个 Attempt 消费。
+func TestWorkClass(t *testing.T) {
+	events := []*v1.Event{created(), requested("r1"), attempt("r1", 1)}
+	for i := range workqueue.LongRunTurns - 2 {
+		c := fmt.Sprintf("c%d", i)
+		events = append(events, assistant("r1", 1, c), result("r1", 1, c))
+	}
+	st, err := Reduce(build(events...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := st.WorkClass().Priority; p != workqueue.Interactive {
+		t.Fatalf("after %d turns: priority %d", workqueue.LongRunTurns-2, p)
+	}
+	events = append(events, compacted("r1", 1, st.Seq), assistant("r1", 1, "ca"), approvalReq("r1", 1, "ca"), suspended("r1", 1))
+	if st, err = Reduce(build(events...)); err != nil {
+		t.Fatal(err)
+	}
+	if p := st.WorkClass().Priority; p != workqueue.Background {
+		t.Fatalf("turns plus a compaction reach the threshold: priority %d", p)
+	}
+	events = append(events, decided("r1", "ca", true))
+	if st, err = Reduce(build(events...)); err != nil {
+		t.Fatal(err)
+	}
+	if p := st.WorkClass().Priority; p != workqueue.Resumed {
+		t.Fatalf("after the user's decision: priority %d", p)
+	}
+	events = append(events, attempt("r1", 2))
+	if st, err = Reduce(build(events...)); err != nil {
+		t.Fatal(err)
+	}
+	if p := st.WorkClass().Priority; p != workqueue.Background {
+		t.Fatalf("resume slot not consumed by the next attempt: priority %d", p)
+	}
+
+	// 回合不多、输出很长的 Run 同样是长任务。
+	long := assistant("r2", 1)
+	long.GetAssistantMessage().Usage = &v1.Usage{OutputTokens: workqueue.LongRunOutputTokens}
+	if st, err = Reduce(build(created(), requested("r2"), attempt("r2", 1), long)); err != nil {
+		t.Fatal(err)
+	}
+	if p := st.WorkClass().Priority; p != workqueue.Background {
+		t.Fatalf("long output: priority %d", p)
+	}
+}
+
+// 投影有界（延展性评审 §8.3）：旧 Run 只剩摘要，克隆只复制最近的调用 ID；运行 ID 与调用 ID 的唯一性仍对全部历史检查。
+func TestBoundedProjection(t *testing.T) {
+	events := []*v1.Event{created()}
+	const runs = 40
+	for i := range runs {
+		run := fmt.Sprintf("r%d", i)
+		events = append(events, requested(run), attempt(run, 1))
+		for j := range 10 {
+			c := fmt.Sprintf("c%d_%d", i, j)
+			events = append(events, assistant(run, 1, c), result(run, 1, c))
+		}
+		events = append(events, assistant(run, 1), completed(run, 1))
+	}
+	st, err := Reduce(build(events...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Runs) > KeepRuns+1 || len(st.Summaries()) != runs || st.Past[0].ID != "r0" || st.Past[0].Status != RunCompleted || st.Past[0].Turns != 11 {
+		t.Fatalf("runs %d, summaries %d, first %+v", len(st.Runs), len(st.Summaries()), st.Past[0])
+	}
+	if cp := st.Clone(); len(cp.callIDs) >= callIDBatch {
+		t.Fatalf("clone copied %d call ids", len(cp.callIDs))
+	}
+	seq := uint64(len(events))
+	reuse := func(e *v1.Event) error { e.SessionId, e.Seq = "s", seq+1; return st.Check(e) }
+	if err := reuse(requested("r0")); err == nil || !strings.Contains(err.Error(), "duplicate run id") {
+		t.Fatalf("reused run id of a trimmed run: %v", err)
+	}
+	next := build(append(append([]*v1.Event{}, events...), requested("rx"), attempt("rx", 1))...)
+	if st, err = Reduce(next); err != nil {
+		t.Fatal(err)
+	}
+	seq = uint64(len(next))
+	if err := reuse(assistant("rx", 1, "c0_0")); err == nil || !strings.Contains(err.Error(), "duplicate call id") {
+		t.Fatalf("reused call id of a trimmed run: %v", err)
+	}
+}
+
+// 历史扩大十倍时，每次提交的校验（克隆加应用）代价不随之线性增长（延展性评审 §8.4 第 2 项）。
+func TestCheckCostIndependentOfHistory(t *testing.T) {
+	stateWith := func(runs int) *State {
+		events := []*v1.Event{created()}
+		for i := range runs {
+			run := fmt.Sprintf("r%d", i)
+			events = append(events, requested(run), attempt(run, 1))
+			for j := range 5 {
+				c := fmt.Sprintf("c%d_%d", i, j)
+				events = append(events, assistant(run, 1, c), result(run, 1, c))
+			}
+			// 上下文压缩使 History 随窗口有界（ADR-0012），否则它本身随历史增长。
+			events = append(events, compacted(run, 1, uint64(len(events))), assistant(run, 1), completed(run, 1))
+		}
+		events = append(events, requested("live"), attempt("live", 1))
+		st, err := Reduce(build(events...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	// 每次校验分配的字节数：克隆复制的是指针与 ID，次数不随历史变化，字节数会。
+	bytesPerCheck := func(st *State) uint64 {
+		e := steered("live")
+		e.SessionId, e.Seq = "s", st.Seq+1
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		for range 50 {
+			if err := st.Check(e); err != nil {
+				t.Fatal(err)
+			}
+		}
+		runtime.ReadMemStats(&after)
+		return (after.TotalAlloc - before.TotalAlloc) / 50
+	}
+	small, large := bytesPerCheck(stateWith(100)), bytesPerCheck(stateWith(1000))
+	if large > 2*small+4096 {
+		t.Fatalf("check allocates %d bytes with 1000 past runs vs %d with 100", large, small)
 	}
 }

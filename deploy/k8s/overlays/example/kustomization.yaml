@@ -1,0 +1,34 @@
+# 示例 overlay：用仓库中的开发配置生成 ConfigMap，密钥为占位值。生产 overlay 以同样的方式提供：
+#   kubectl kustomize --load-restrictor LoadRestrictionsNone deploy/k8s/overlays/example
+# （ConfigMap 取自仓库根目录的 agents/、businesslines/ 与 pricing.yaml，须放开加载限制。）
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: yanshi
+resources:
+  - ../../base
+configMapGenerator:
+  - name: yanshi-agents
+    files:
+      - ../../../../agents/assistant.yaml
+      - ../../../../agents/console.yaml
+      - ../../../../agents/releases.yaml
+  - name: yanshi-businesslines
+    files:
+      - businesslines/example.yaml
+  - name: yanshi-pricing
+    files:
+      - ../../../../pricing.yaml
+secretGenerator:
+  - name: yanshi-secrets
+    literals:
+      # SQL 经 PgBouncer 事务池；LISTEN 与迁移锁直连主库。
+      - YANSHI_PG_DSN=postgres://yanshi:CHANGE_ME@pgbouncer:6432/yanshi?sslmode=require
+      - YANSHI_PG_LISTEN_DSN=postgres://yanshi:CHANGE_ME@postgres-primary:5432/yanshi?sslmode=require
+      - YANSHI_PEER_TOKEN=CHANGE_ME
+      - YANSHI_S3_ENDPOINT=s3.internal:443
+      - YANSHI_S3_ACCESS_KEY=CHANGE_ME
+      - YANSHI_S3_SECRET_KEY=CHANGE_ME
+images:
+  - name: yanshi
+    newName: registry.example.com/yanshi
+    newTag: "0.0.0"

@@ -29,12 +29,15 @@ var ErrStalled = errors.New("model stream stalled")
 type Limits struct {
 	// Timeout 是一次调用（不含排队与重试等待）的时限。
 	Timeout time.Duration
+	// Deadline 是整个调用的总时限：在速率与并发上限处的排队、每次尝试、重试前的等待都计入（延展性评审 §8.2）。
+	// 到期返回 ErrTimeout；剩余时间不够等到下一次重试时（如 Retry-After 更长）立即放弃。0 表示不限。
+	Deadline time.Duration
 	// MaxConcurrency 是同时进行的调用上限。
 	MaxConcurrency int
 	// RPS 是每秒发起调用的上限（令牌桶，突发量为一秒的量）。
 	RPS float64
 	// Retries 是可重试失败的重试次数；Backoff 是首次重试前的等待，之后翻倍，不超过 MaxBackoff。
-	// 提供商给出 Retry-After 时取较大者（同样不超过 MaxBackoff）。
+	// 提供商给出 Retry-After 时取较大者，且不受 MaxBackoff 截断：提前重试只会再被限流一次，白白消耗一次调用。
 	Retries             int
 	Backoff, MaxBackoff time.Duration
 }
@@ -109,15 +112,36 @@ func (g *Guard) Embed(ctx context.Context, modelID string, texts []string) ([][]
 	return vecs, err
 }
 
+// errDeadline 是总时限（Limits.Deadline）到期的原因。
+var errDeadline = errors.New("model call deadline")
+
 // do 执行 call，按需排队、限时与重试。call 返回这次失败是否可以安全重试（例如尚未输出任何内容）。
 func (g *Guard) do(ctx context.Context, modelID string, call func(context.Context) (bool, error)) error {
 	g.init()
+	parent := ctx
+	if g.Limits.Deadline > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeoutCause(ctx, g.Limits.Deadline, errDeadline)
+		defer cancel()
+	}
+	err := g.retry(ctx, modelID, call)
+	if err != nil && parent.Err() == nil && errors.Is(context.Cause(ctx), errDeadline) {
+		metrics.ModelDeadlines.WithLabelValues(g.Name).Inc()
+		return fmt.Errorf("model %s: %w: no result within %s including queueing and retries", modelID, ErrTimeout, g.Limits.Deadline)
+	}
+	return err
+}
+
+func (g *Guard) retry(ctx context.Context, modelID string, call func(context.Context) (bool, error)) error {
 	for attempt := 0; ; attempt++ {
 		safe, err := g.attempt(ctx, modelID, call)
 		if err == nil || ctx.Err() != nil || !safe || attempt >= g.Limits.Retries || !Retryable(err) {
 			return err
 		}
 		wait := g.backoff(attempt, err)
+		if dl, ok := ctx.Deadline(); ok && time.Until(dl) < wait {
+			return err // 等不到下一次重试：现在就交还这次的错误，而不是睡到总时限到期
+		}
 		metrics.ModelRetries.WithLabelValues(g.Name).Inc()
 		if err := g.sleep(ctx, wait); err != nil {
 			return err
@@ -152,7 +176,8 @@ func (g *Guard) attempt(ctx context.Context, modelID string, call func(context.C
 	return safe, err
 }
 
-// backoff 是第 attempt 次失败后的等待：指数退避加抖动（避免同时失败的调用一齐重试），参考 Retry-After。
+// backoff 是第 attempt 次失败后的等待：指数退避加抖动（避免同时失败的调用一齐重试）；提供商给出的 Retry-After
+// 更长时以它为准。
 func (g *Guard) backoff(attempt int, err error) time.Duration {
 	base := g.Limits.Backoff
 	if base <= 0 {
@@ -166,7 +191,7 @@ func (g *Guard) backoff(attempt int, err error) time.Duration {
 	d = d/2 + rand.N(d/2+1) // 抖动：[d/2, d]
 	var pe *ProviderError
 	if errors.As(err, &pe) && pe.RetryAfter > d {
-		d = min(pe.RetryAfter, ceiling)
+		d = pe.RetryAfter
 	}
 	return d
 }

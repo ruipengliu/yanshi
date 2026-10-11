@@ -5,18 +5,9 @@ import (
 	"fmt"
 	"testing"
 
+	"yanshi/internal/app"
 	"yanshi/internal/clock"
-	"yanshi/internal/eventlog/pglog"
-	"yanshi/internal/lifecycle/pglifecycle"
-	"yanshi/internal/memory/pgmemory"
-	"yanshi/internal/node/pgnode"
-	"yanshi/internal/notify/pgnotify"
 	"yanshi/internal/pg/pgtest"
-	"yanshi/internal/presence/pgpresence"
-	"yanshi/internal/sandbox/pgsandbox"
-	"yanshi/internal/session/pgsnapshot"
-	"yanshi/internal/usage/pgusage"
-	"yanshi/internal/workqueue/pgqueue"
 )
 
 var pgSeeds = flag.Int("sim.pgseeds", 15, "number of seeds to simulate on PostgreSQL")
@@ -48,19 +39,7 @@ func diffSeed(t *testing.T, s uint64) {
 	}
 
 	pool, notifier := pgtest.Fresh(t)
-	opts.NewStores = func(c clock.Clock) Stores {
-		return Stores{
-			Log: pglog.New(pool, notifier), Queue: pgqueue.New(pool, c, pgqueue.Sessions),
-			Dir: pgnode.NewDirectory(pool, c), Inbox: pgnode.NewInbox(pool, notifier),
-			SandboxQueue: pgqueue.New(pool, c, pgqueue.Sandboxes),
-			Ledger:       pgsandbox.Ledger{Pool: pool}, Activity: pgsandbox.Activity{Pool: pool},
-			Index: pglifecycle.Index{Pool: pool}, Deletions: pglifecycle.Deletions{Pool: pool, Notifier: notifier},
-			JanitorQueue: pgqueue.New(pool, c, pgqueue.Janitor),
-			Memory:       pgmemory.Store{Pool: pool}, Grants: pgmemory.Grants{Pool: pool},
-			Snapshots: pgsnapshot.Store{Pool: pool}, Usage: pgusage.Store{Pool: pool},
-			Presence: pgpresence.Store{Pool: pool, Notifier: notifier}, Push: pgnotify.Registry{Pool: pool},
-		}
-	}
+	opts.NewStores = func(c clock.Clock) Stores { return app.Postgres(pool, notifier, c) }
 	onPG, err := New(opts)
 	if err != nil {
 		t.Fatal(err)

@@ -13,15 +13,14 @@ import (
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/notify"
 	"yanshi/internal/session"
-	"yanshi/internal/workqueue"
 )
 
 // Hub 是网关的传输无关核心：所有方法同步执行，WebSocket 网关与模拟测试都通过它工作。
 type Hub struct {
 	Dir   Directory
 	Inbox Inbox
+	// Store 须配置 Waking：Node 结果在写日志的同一事务中唤醒 Session。
 	Store *session.Store
-	Queue workqueue.Queue
 	Auth  Authenticator
 	Waker Waker
 	// Deletions 非 nil 时，派发后复查删除记录，撤回属于已删除 Session 的调用（ADR-0015）。
@@ -127,10 +126,9 @@ func (h *Hub) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke) error
 	if err := h.Inbox.Put(ctx, nodeID, inv); err != nil {
 		return err
 	}
-	if gone, err := Withdrawn(ctx, h.Deletions, inv.GetSessionId()); err != nil || gone {
-		if gone {
-			return h.Inbox.Remove(ctx, nodeID, inv.GetCallId())
-		}
+	if gone, err := lifecycle.Recheck(ctx, h.Deletions, inv.GetSessionId(), func(ctx context.Context) error {
+		return h.Inbox.Remove(ctx, nodeID, inv.GetCallId())
+	}); err != nil || gone {
 		return err
 	}
 	info, err := h.Dir.Get(ctx, nodeID)
@@ -168,46 +166,44 @@ func (h *Hub) Result(ctx context.Context, nodeID string, res *v1.InvokeResult) e
 		// 不属于任何 Session 的平台调用（如清除本地记录），没有结果要写入日志。
 		return h.Inbox.Remove(ctx, nodeID, inv.GetCallId())
 	}
-	class, err := h.commitResult(ctx, inv, res)
-	if err != nil {
+	if err := h.commitResult(ctx, inv, res); err != nil {
 		return err
 	}
-	if err := h.Inbox.Remove(ctx, nodeID, inv.GetCallId()); err != nil {
-		return err
-	}
-	return h.Queue.Enqueue(ctx, inv.GetSessionId(), class)
+	return h.Inbox.Remove(ctx, nodeID, inv.GetCallId())
 }
 
-// commitResult 写入结果，并返回 Session 此后的工作类别（ADR-0029）。
-func (h *Hub) commitResult(ctx context.Context, inv *v1.Invoke, res *v1.InvokeResult) (workqueue.Class, error) {
+// commitResult 写入结果，并在同一事务中唤醒 Session（CommitAndWake）：写入之后、撤下 Inbox 之前崩溃时，
+// 设备重发的结果因调用已完成而作废，Session 已经在队列中。
+func (h *Hub) commitResult(ctx context.Context, inv *v1.Invoke, res *v1.InvokeResult) error {
 	st, err := h.Store.Load(ctx, inv.GetSessionId())
 	if err != nil {
-		return workqueue.Class{}, err
+		return err
 	}
 	for range 16 {
 		e := &v1.Event{Payload: &v1.Event_ToolResult{ToolResult: &v1.ToolResult{
 			RunId: inv.GetRunId(), CallId: inv.GetCallId(), Content: res.GetContent(), IsError: res.GetIsError(),
 		}}}
-		err := h.Store.Commit(ctx, st, e)
+		err := h.Store.CommitAndWake(ctx, st, e)
 		if errors.Is(err, eventlog.ErrConflict) {
 			if err := h.Store.SyncAfterConflict(ctx, st); err != nil {
 				if errors.Is(err, session.ErrGone) {
 					h.log().Info("node result dropped", "session", inv.GetSessionId(), "call", inv.GetCallId(), "reason", "session deleted")
-					return st.WorkClass(), nil
+					return nil
 				}
-				return workqueue.Class{}, err
+				return err
 			}
 			continue
 		}
 		if errors.Is(err, session.ErrInvalid) {
 			// 校验失败：Run 已终态或调用已完成（超时、重复结果），结果作废。
 			h.log().Info("node result dropped", "session", inv.GetSessionId(), "call", inv.GetCallId(), "reason", err)
-			return st.WorkClass(), nil
+			return nil
 		}
-		// 存储故障：结果没有写入。返回错误，调用方不确认、不撤下 Inbox，重连后设备从账本重新返回结果。
-		return st.WorkClass(), err
+		// 存储故障：结果没有写入，或写入了而回包丢失。返回错误，调用方不确认、不撤下 Inbox，重连后设备从账本
+		// 重新返回结果：没写入的这次写入，写入了的这次作废。
+		return err
 	}
-	return workqueue.Class{}, fmt.Errorf("commit result for call %s: too many conflicts", inv.GetCallId())
+	return fmt.Errorf("commit result for call %s: too many conflicts", inv.GetCallId())
 }
 
 // LogWaker 只记录唤醒请求；真实推送通道见 ADR-0001。

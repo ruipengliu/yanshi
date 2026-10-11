@@ -26,8 +26,9 @@ import (
 func TestWithdrawnVersionSwitchesAtNextRun(t *testing.T) {
 	ctx := context.Background()
 	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "a", Version: "1", Model: "echo/any"}, &agentdef.Def{Name: "a", Version: "2", Model: "echo/any"})
-	store := &session.Store{Log: memlog.New(), IDs: ids.Sequential("id"), Clock: clock.Real{}}
-	svc := &service.Service{Store: store, Queue: memqueue.New(clock.Real{}), Agents: agents}
+	mlog, mq := memlog.New(), memqueue.New(clock.Real{})
+	store := &session.Store{Log: mlog, Waking: mlog.Waking(mq), IDs: ids.Sequential("id"), Clock: clock.Real{}}
+	svc := &service.Service{Store: store, Agents: agents}
 	release := func(s string) {
 		rel, err := agents.ParseReleases([]byte(s))
 		if err != nil {
@@ -121,8 +122,9 @@ func (failingModerator) Check(context.Context, moderation.Request) (moderation.V
 func TestInputModeration(t *testing.T) {
 	ctx := context.Background()
 	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "a", Version: "1", Model: "echo/any"})
-	store := &session.Store{Log: memlog.New(), IDs: ids.Sequential("id"), Clock: clock.Real{}}
-	svc := &service.Service{Store: store, Queue: memqueue.New(clock.Real{}), Agents: agents, Moderator: moderation.Mock{}}
+	mlog, mq := memlog.New(), memqueue.New(clock.Real{})
+	store := &session.Store{Log: mlog, Waking: mlog.Waking(mq), IDs: ids.Sequential("id"), Clock: clock.Real{}}
+	svc := &service.Service{Store: store, Agents: agents, Moderator: moderation.Mock{}}
 	sid, _ := svc.Create(ctx, service.CreateRequest{BusinessLine: "bl", EndUser: "u", Agent: "a"})
 	head := func() uint64 { st, _ := svc.Load(ctx, sid); return st.Seq }
 	before := head()
@@ -151,8 +153,9 @@ func TestInputModeration(t *testing.T) {
 func TestAnswer(t *testing.T) {
 	ctx := context.Background()
 	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "a", Version: "1", Model: "echo/any"})
-	store := &session.Store{Log: memlog.New(), IDs: ids.Sequential("id"), Clock: clock.Real{}}
-	svc := &service.Service{Store: store, Queue: memqueue.New(clock.Real{}), Agents: agents, Moderator: moderation.Mock{}}
+	mlog, mq := memlog.New(), memqueue.New(clock.Real{})
+	store := &session.Store{Log: mlog, Waking: mlog.Waking(mq), IDs: ids.Sequential("id"), Clock: clock.Real{}}
+	svc := &service.Service{Store: store, Agents: agents, Moderator: moderation.Mock{}}
 	sid, _ := svc.Create(ctx, service.CreateRequest{BusinessLine: "bl", EndUser: "u", Agent: "a"})
 	res, err := svc.Submit(ctx, sid, model.TextBlocks("约个会"))
 	if err != nil {
@@ -233,8 +236,9 @@ func TestAnswer(t *testing.T) {
 func TestDecideAfterRunEnded(t *testing.T) {
 	ctx := context.Background()
 	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "a", Version: "1", Model: "echo/any"})
-	store := &session.Store{Log: memlog.New(), IDs: ids.Sequential("id"), Clock: clock.Real{}}
-	svc := &service.Service{Store: store, Queue: memqueue.New(clock.Real{}), Agents: agents}
+	mlog, mq := memlog.New(), memqueue.New(clock.Real{})
+	store := &session.Store{Log: mlog, Waking: mlog.Waking(mq), IDs: ids.Sequential("id"), Clock: clock.Real{}}
+	svc := &service.Service{Store: store, Agents: agents}
 	sid, _ := svc.Create(ctx, service.CreateRequest{BusinessLine: "bl", EndUser: "u", Agent: "a"})
 	res, err := svc.Submit(ctx, sid, model.TextBlocks("写文件"))
 	if err != nil {
@@ -271,8 +275,9 @@ func TestDecideAfterRunEnded(t *testing.T) {
 func TestUIContextLimits(t *testing.T) {
 	ctx := context.Background()
 	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "a", Version: "1", Model: "echo/any"})
-	store := &session.Store{Log: memlog.New(), IDs: ids.Sequential("id"), Clock: clock.Real{}}
-	svc := &service.Service{Store: store, Queue: memqueue.New(clock.Real{}), Agents: agents, Moderator: moderation.Mock{}}
+	mlog, mq := memlog.New(), memqueue.New(clock.Real{})
+	store := &session.Store{Log: mlog, Waking: mlog.Waking(mq), IDs: ids.Sequential("id"), Clock: clock.Real{}}
+	svc := &service.Service{Store: store, Agents: agents, Moderator: moderation.Mock{}}
 	sid, _ := svc.Create(ctx, service.CreateRequest{BusinessLine: "bl", EndUser: "u", Agent: "a"})
 	ui := func(u *v1.UIContext) *v1.ContentBlock {
 		return &v1.ContentBlock{Kind: &v1.ContentBlock_UiContext{UiContext: u}}
@@ -303,8 +308,9 @@ func TestUIContextLimits(t *testing.T) {
 func TestSubmitWithIDIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "a", Version: "1", Model: "echo/any"})
-	store := &session.Store{Log: memlog.New(), IDs: ids.Sequential("id"), Clock: clock.Real{}}
-	svc := &service.Service{Store: store, Queue: memqueue.New(clock.Real{}), Agents: agents}
+	mlog, mq := memlog.New(), memqueue.New(clock.Real{})
+	store := &session.Store{Log: mlog, Waking: mlog.Waking(mq), IDs: ids.Sequential("id"), Clock: clock.Real{}}
+	svc := &service.Service{Store: store, Agents: agents}
 	sid, _ := svc.Create(ctx, service.CreateRequest{BusinessLine: "bl", EndUser: "u", Agent: "a"})
 	head := func() uint64 { st, _ := svc.Load(ctx, sid); return st.Seq }
 	submit := func(id, text string) *service.SubmitResult {

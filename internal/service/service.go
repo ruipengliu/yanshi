@@ -36,8 +36,8 @@ type Canceler interface {
 }
 
 type Service struct {
+	// Store 须配置 Waking：输入、审批与回答在写日志的同一事务中唤醒 Session（CommitAndWake）。
 	Store  *session.Store
-	Queue  workqueue.Queue
 	Agents *agentdef.Registry
 	// Nodes 为 nil 时中断不撤回设备调用。
 	Nodes Canceler
@@ -49,6 +49,8 @@ type Service struct {
 	Janitor   workqueue.Queue
 	// Quotas 非空时，配额用尽的业务线或 EndUser 不能开始新 Run（docs/design/m4-quota-usage.md §3）。
 	Quotas *usage.Quotas
+	// Admission 非空时，交互工作积压过高的业务线暂不接受新 Run（ErrOverloaded）。
+	Admission Admission
 	// Moderator 非空时，输入（新 Run 与插话）在写日志之前检查，违规的不写入（ADR-0021）。
 	Moderator moderation.Moderator
 	// Artifacts 非空时，输入中的 Media 须引用本 Session 的工件，其类型、大小与名称取自工件的元数据。
@@ -195,12 +197,6 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 	if res := duplicate(st, inputID); res != nil {
 		return res, nil
 	}
-	// 写日志前后各入队一次，多余的入队无害：
-	//   - 之前：写日志后、再次入队前进程崩溃时，Run 仍有人认领；
-	//   - 之后：若 Worker 在第一次入队后、写日志前认领并读到"无事可做"，它会以 done 释放并删除队列项，
-	//     只有写日志之后的入队（租约期间置 dirty，或重新插入）能保证新 Run 被看到（丢失唤醒）。
-	// 两者同时失效需要"恰好在该窗口内被认领"且"写日志后立即崩溃"，此时 Run 停留在 queued，
-	// 直到该 Session 的下一次输入。
 	if err := checkUIContext(input); err != nil {
 		return nil, err
 	}
@@ -210,7 +206,12 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 	if err := s.moderateInput(ctx, st, input); err != nil {
 		return nil, err
 	}
-	// 配额只拦新 Run：插话属于进行中的 Run，后者在下一次模型调用前自行检查。
+	// 准入与配额只拦新 Run：插话属于进行中的 Run，后者在下一次模型调用前自行检查配额。
+	if st.Active() == nil && s.Admission != nil {
+		if err := s.Admission.Admit(ctx, st.Created.GetBusinessLine()); err != nil {
+			return nil, err
+		}
+	}
 	if bl := st.Created.GetBusinessLine(); st.Active() == nil && s.Quotas.Enabled(bl) {
 		p, err := s.Quotas.Check(ctx, bl, st.Created.GetEndUser(), s.Store.Clock.Now())
 		if err != nil {
@@ -220,9 +221,6 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 			metrics.QuotaRejections.WithLabelValues(p.Scope, "submit").Inc()
 			return nil, &usage.ExceededError{Period: p}
 		}
-	}
-	if err := s.Queue.Enqueue(ctx, sessionID, st.WorkClass()); err != nil {
-		return nil, err
 	}
 	for range maxConflictRetries {
 		// 并发的同 ID 提交可能刚刚生效（冲突后重读到了它）。
@@ -260,7 +258,8 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 			events = append(events, &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: res.RunID, Input: input, InputId: inputID, FromCall: fromCall}}})
 		}
 		prev := lastRunAt(st)
-		err := s.Store.Commit(ctx, st, events...)
+		// 写日志与入队在同一事务中（CommitAndWake）：二者之间没有可以崩溃的窗口，Run 不会停在 queued。
+		err := s.Store.CommitAndWake(ctx, st, events...)
 		if err == nil {
 			// 按 TouchEvery 分段：输入与上一个 Run 落在不同段时更新。每段的第一个输入都会写入，索引中的时间因此与
 			// 最近的输入在同一段内，滞后不到 TouchEvery；只比较间隔的话，间隔始终短于 TouchEvery 的连续对话永远不会更新。
@@ -269,7 +268,7 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 					return res, err
 				}
 			}
-			return res, s.Queue.Enqueue(ctx, sessionID, st.WorkClass())
+			return res, nil
 		}
 		if !errors.Is(err, eventlog.ErrConflict) {
 			return nil, err
@@ -290,6 +289,9 @@ func (s *Service) Interrupt(ctx context.Context, sessionID, runID string) error 
 	for range maxConflictRetries {
 		r := st.Run(runID)
 		if r == nil {
+			if _, ok := st.RunSummary(runID); ok {
+				return nil // 已移出投影的 Run 都是终态
+			}
 			return fmt.Errorf("%w: run %s", ErrNotFound, runID)
 		}
 		if r.Status.Terminal() {
@@ -354,28 +356,10 @@ func pendingQuestion(r *session.Run, callID string) *session.Call {
 	return nil
 }
 
-// askedBefore 报告 callID 是否是本 Session 中的一次 ask_user 提问（可能已回答或已结束）。
-func askedBefore(st *session.State, callID string) bool {
-	for _, r := range st.Runs {
-		for _, c := range r.Calls {
-			if c.Call.GetCallId() == callID && c.Call.GetCapability() == askuser.Capability {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// approvalRequestedBefore 报告 Session 中是否曾为该调用请求审批。
-func approvalRequestedBefore(st *session.State, callID string) bool {
-	for _, r := range st.Runs {
-		for _, c := range r.Calls {
-			if c.Call.GetCallId() == callID && c.Approval != nil {
-				return true
-			}
-		}
-	}
-	return false
+// history 返回调用在本 Session 中的记录（可能已回答、已决定或随 Run 结束）：重复的回答与决定据此返回 conflict 而不是
+// not found。Run 已移出投影时读日志，这条路径只在重复请求时走到。
+func (s *Service) history(ctx context.Context, st *session.State, callID string) (session.CallHistory, error) {
+	return s.Store.HistoryCall(ctx, st, callID, askuser.Capability)
 }
 
 // typedAnswer 把用户在对话中直接输入的内容作为对提问的回答：文字为回答文字，其余内容块（图片等）随附。
@@ -425,7 +409,11 @@ func (s *Service) Answer(ctx context.Context, sessionID, callID string, a *askus
 			c = pendingQuestion(r, callID)
 		}
 		if c == nil {
-			if askedBefore(st, callID) {
+			h, err := s.history(ctx, st, callID)
+			if err != nil {
+				return err
+			}
+			if h.Asked {
 				return fmt.Errorf("%w: question %s is no longer waiting for an answer", ErrConflict, callID)
 			}
 			return fmt.Errorf("%w: no question %s", ErrNotFound, callID)
@@ -437,9 +425,9 @@ func (s *Service) Answer(ctx context.Context, sessionID, callID string, a *askus
 		if err := q.Check(a); err != nil {
 			return fmt.Errorf("%w: %v", ErrInvalid, err)
 		}
-		err = s.Store.Commit(ctx, st, answerEvent(r, c, askuser.Result(q, a)))
+		err = s.Store.CommitAndWake(ctx, st, answerEvent(r, c, askuser.Result(q, a)))
 		if err == nil {
-			return s.Queue.Enqueue(ctx, sessionID, st.WorkClass())
+			return nil
 		}
 		if !errors.Is(err, eventlog.ErrConflict) {
 			return err
@@ -470,7 +458,11 @@ func (s *Service) Decide(ctx context.Context, sessionID, callID string, approved
 		if call == nil {
 			// 已结束的 Run 中请求过审批的调用：重复的决定（如响应丢失后的重试）与 Run 进行中时一样返回 conflict，
 			// 客户端不会误以为 Session 不存在（node.proto ClientRequest）。
-			if approvalRequestedBefore(st, callID) {
+			h, err := s.history(ctx, st, callID)
+			if err != nil {
+				return err
+			}
+			if h.ApprovalRequested {
 				return fmt.Errorf("%w: call %s is not awaiting approval", ErrConflict, callID)
 			}
 			return fmt.Errorf("%w: no active call %s", ErrNotFound, callID)
@@ -478,11 +470,11 @@ func (s *Service) Decide(ctx context.Context, sessionID, callID string, approved
 		if !call.AwaitingApproval() {
 			return fmt.Errorf("%w: call %s is not awaiting approval", ErrConflict, callID)
 		}
-		err := s.Store.Commit(ctx, st, &v1.Event{Payload: &v1.Event_ApprovalDecided{ApprovalDecided: &v1.ApprovalDecided{
+		err := s.Store.CommitAndWake(ctx, st, &v1.Event{Payload: &v1.Event_ApprovalDecided{ApprovalDecided: &v1.ApprovalDecided{
 			RunId: a.ID, CallId: callID, Approved: approved, By: by,
 		}}})
 		if err == nil {
-			return s.Queue.Enqueue(ctx, sessionID, st.WorkClass())
+			return nil
 		}
 		if !errors.Is(err, eventlog.ErrConflict) {
 			return err

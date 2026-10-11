@@ -1,0 +1,46 @@
+# Worker 两个池（ADR-0029）：交互池只认领交互工作，实例小而多，保证首字延迟；后台池认领任意工作，承接长任务。
+# 按 yanshi_queue_wait_seconds{priority} 与 yanshi_queue_ready 扩缩。-model-concurrency 与 -model-rps 是每个进程的
+# 上限：按提供商的账号上限除以持有该提供商的进程数配置，扩容时随副本数联动（docs/design/model-calls.md §4）。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: yanshi-worker
+spec:
+  replicas: 4
+  selector:
+    matchLabels: {app.kubernetes.io/name: yanshi, app.kubernetes.io/component: worker}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: yanshi, app.kubernetes.io/component: worker}
+    spec:
+      containers:
+        - name: yanshi
+          image: yanshi
+          args: [serve, -roles=worker, -worker-pool=interactive, -workers=16, -peer-addr=0.0.0.0:7070,
+            -peer-advertise=http://$(POD_IP):7070, -storage=postgres, -migrate=false, -auth=jwt, -agents=/etc/yanshi/agents,
+            -businesslines=/etc/yanshi/businesslines, -pricing=/etc/yanshi/pricing/pricing.yaml, -blob=s3, -notify-shards=16,
+            -model-concurrency=32, -model-rps=20]
+          resources:
+            requests: {cpu: 500m, memory: 512Mi}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: yanshi-worker-bg
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app.kubernetes.io/name: yanshi, app.kubernetes.io/component: worker-bg}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: yanshi, app.kubernetes.io/component: worker-bg}
+    spec:
+      containers:
+        - name: yanshi
+          image: yanshi
+          args: [serve, -roles=worker, -worker-pool=any, -workers=64, -peer-addr=0.0.0.0:7070,
+            -peer-advertise=http://$(POD_IP):7070, -storage=postgres, -migrate=false, -auth=jwt, -agents=/etc/yanshi/agents,
+            -businesslines=/etc/yanshi/businesslines, -pricing=/etc/yanshi/pricing/pricing.yaml, -blob=s3, -notify-shards=16,
+            -model-concurrency=32, -model-rps=20]
+          resources:
+            requests: {cpu: "1", memory: 1Gi}

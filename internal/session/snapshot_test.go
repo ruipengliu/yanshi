@@ -172,14 +172,15 @@ func TestSnapshotIgnoredAfterLogDeleted(t *testing.T) {
 // 否则从快照恢复会悄悄丢失它——而 Equal 按快照比较，看不出差别。
 func TestSnapshotCoversEveryField(t *testing.T) {
 	covered := map[string][]string{
-		"State":      {"SessionID", "Seq", "Created", "Agent", "Closed", "Compaction", "CompactedAt", "Runs", "History", "callIDs", "Inputs", "ActiveCall"},
-		"Run":        {"ID", "Status", "RequestedAt", "Attempt", "LiveEndpoint", "Takeovers", "StalledTakeovers", "Turns", "Recall", "Recalled", "Calls", "SuspendReason", "SuspendedUntil"},
+		"State":      {"SessionID", "Seq", "Created", "Agent", "Closed", "Compaction", "CompactedAt", "Runs", "Past", "History", "callIDsOld", "callIDs", "Inputs", "ActiveCall"},
+		"RunSummary": {"ID", "Status", "RequestedAt", "Attempt", "Turns"},
+		"Run":        {"ID", "Status", "RequestedAt", "Attempt", "LiveEndpoint", "Takeovers", "StalledTakeovers", "Turns", "Recall", "Recalled", "Calls", "SuspendReason", "SuspendedUntil", "Compactions", "OutputTokens", "Resume"},
 		"Call":       {"Call", "StartedAttempts", "NodeID", "Deadline", "Done", "Approval"},
 		"Approval":   {"Summary", "Deadline", "Decided", "Approved"},
 		"InputRef":   {"ID", "RunID", "Steered", "Answered"},
 		"ActiveCall": {"ID", "DeviceID", "StartedAt"},
 	}
-	for _, v := range []any{session.State{}, session.Run{}, session.Call{}, session.Approval{}, session.InputRef{}, session.ActiveCall{}} {
+	for _, v := range []any{session.State{}, session.RunSummary{}, session.Run{}, session.Call{}, session.Approval{}, session.InputRef{}, session.ActiveCall{}} {
 		typ := reflect.TypeOf(v)
 		want := covered[typ.Name()]
 		var got []string

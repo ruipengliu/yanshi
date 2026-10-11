@@ -75,14 +75,10 @@ func (s *Service) Put(ctx context.Context, e *Entry) error {
 	if err := s.Store.Put(ctx, e); err != nil {
 		return err
 	}
-	if s.Deletions == nil {
-		return nil
-	}
-	gone, err := lifecycle.Deleted(ctx, s.Deletions, e.SessionID)
-	if err != nil || !gone {
-		return err
-	}
-	return s.Store.DeleteSession(ctx, e.SessionID)
+	_, err := lifecycle.Recheck(ctx, s.Deletions, e.SessionID, func(ctx context.Context) error {
+		return s.Store.DeleteSession(ctx, e.SessionID)
+	})
+	return err
 }
 
 // Viewers 把记录按设备合并为对外的在场列表（按标签、设备排序）：同一设备任一连接聚焦或正在输入即算。

@@ -19,7 +19,7 @@ func TestSandboxRunsOnlyItsOwnSessionsCalls(t *testing.T) {
 	ctx := context.Background()
 	clk := clock.NewFake(time.Unix(1000, 0))
 	q := memqueue.New(clk)
-	hub := &node.Hub{Dir: node.NewMemDirectory(clk), Inbox: node.NewMemInbox(), Queue: memqueue.New(clk), Clock: clk}
+	hub := &node.Hub{Dir: node.NewMemDirectory(clk), Inbox: node.NewMemInbox(), Clock: clk}
 	fake := sandbox.NewFake()
 	r := &sandbox.Router{Hub: hub, Queue: q}
 	victim := sandbox.NodeID("s_victim")

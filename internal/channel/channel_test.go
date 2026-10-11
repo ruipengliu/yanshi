@@ -65,8 +65,9 @@ func setup(t *testing.T) (*channel.Handler, *presence.Mem, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := &session.Store{Log: memlog.New(), IDs: ids.Random(), Clock: clock.Real{}}
-	svc := &service.Service{Store: store, Queue: memqueue.New(clock.Real{}), Agents: agents}
+	mlog, mq := memlog.New(), memqueue.New(clock.Real{})
+	store := &session.Store{Log: mlog, Waking: mlog.Waking(mq), IDs: ids.Random(), Clock: clock.Real{}}
+	svc := &service.Service{Store: store, Agents: agents}
 	sid, err := svc.Create(context.Background(), service.CreateRequest{BusinessLine: "bl", EndUser: "u", Agent: "a"})
 	if err != nil {
 		t.Fatal(err)

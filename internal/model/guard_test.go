@@ -97,6 +97,58 @@ func TestGuardTimesOut(t *testing.T) {
 	}
 }
 
+// Retry-After 不受 MaxBackoff 截断：提前重试只会再被限流一次。
+func TestGuardHonorsLongRetryAfter(t *testing.T) {
+	p := &scripted{errs: []error{&ProviderError{Status: 429, RetryAfter: time.Minute}}}
+	g, waits := newGuard(p, Limits{Retries: 1, MaxBackoff: 30 * time.Second})
+	if _, err := g.Generate(context.Background(), &Request{Model: "m"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(*waits) != 1 || (*waits)[0] != time.Minute {
+		t.Fatalf("waits %v, want [1m]", *waits)
+	}
+}
+
+// 总时限内等不到下一次重试时立即放弃，交还提供商的错误，而不是睡到时限到期。
+func TestGuardGivesUpWhenRetryWouldMissDeadline(t *testing.T) {
+	p := &scripted{errs: []error{&ProviderError{Status: 429, RetryAfter: time.Minute}}}
+	g, waits := newGuard(p, Limits{Retries: 2, Deadline: time.Second})
+	_, err := g.Generate(context.Background(), &Request{Model: "m"}, nil)
+	var pe *ProviderError
+	if !errors.As(err, &pe) || pe.Status != 429 || len(*waits) != 0 || p.calls != 1 {
+		t.Fatalf("err %v, waits %v, calls %d", err, *waits, p.calls)
+	}
+}
+
+// 在并发上限处排队计入总时限：上游被占满时，调用在时限到期时返回 ErrTimeout，而不是无限排队。
+func TestGuardDeadlineCoversQueueing(t *testing.T) {
+	release, started := make(chan struct{}), make(chan struct{}, 1)
+	busy := providerFunc(func(ctx context.Context, _ *Request, _ func(Delta)) (*Response, error) {
+		started <- struct{}{}
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return &Response{}, nil
+	})
+	g := &Guard{Name: "p", Provider: busy, Limits: Limits{MaxConcurrency: 1, Deadline: 50 * time.Millisecond}}
+	held := make(chan error, 1)
+	go func() {
+		_, err := g.Generate(context.Background(), &Request{Model: "m"}, nil)
+		held <- err
+	}()
+	<-started
+	start := time.Now()
+	_, err := g.Generate(context.Background(), &Request{Model: "m"}, nil)
+	if !errors.Is(err, ErrTimeout) || time.Since(start) > time.Second {
+		t.Fatalf("queued call: err %v after %s", err, time.Since(start))
+	}
+	close(release)
+	if err := <-held; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRetryable(t *testing.T) {
 	for _, tc := range []struct {
 		err  error

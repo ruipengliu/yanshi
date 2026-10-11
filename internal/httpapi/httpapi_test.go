@@ -59,8 +59,8 @@ func setup(t *testing.T) (*httptest.Server, *blocking) {
 		t.Fatal(err)
 	}
 	clk := clock.Real{}
-	store := &session.Store{Log: memlog.New(), IDs: ids.Random(), Clock: clk}
-	queue := memqueue.New(clk)
+	mlog, queue := memlog.New(), memqueue.New(clk)
+	store := &session.Store{Log: mlog, Waking: mlog.Waking(queue), IDs: ids.Random(), Clock: clk}
 	bus := live.NewMemBus()
 	blk := &blocking{canceled: make(chan struct{})}
 	gw := model.NewGateway()
@@ -74,7 +74,7 @@ func setup(t *testing.T) (*httptest.Server, *blocking) {
 			Catalog: &capability.Catalog{Local: capability.NewRegistry()}, Live: bus, IdleWait: 5 * time.Millisecond})
 		go w.Run(ctx)
 	}
-	svc := &service.Service{Store: store, Queue: queue, Agents: agents}
+	svc := &service.Service{Store: store, Agents: agents}
 	arts := &artifact.Service{Meta: artifact.NewMemMeta(), Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk, MaxSize: 1 << 20}
 	srv := httptest.NewServer((&httpapi.Server{Service: svc, Live: bus, Artifacts: arts}).Handler())
 	t.Cleanup(srv.Close)

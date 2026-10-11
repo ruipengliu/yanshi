@@ -23,9 +23,10 @@ import (
 func TestMediaMustBeOwnArtifact(t *testing.T) {
 	ctx := context.Background()
 	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "a", Version: "1", Model: "echo/any"})
-	store := &session.Store{Log: memlog.New(), IDs: ids.Sequential("id"), Clock: clock.Real{}}
+	mlog, mq := memlog.New(), memqueue.New(clock.Real{})
+	store := &session.Store{Log: mlog, Waking: mlog.Waking(mq), IDs: ids.Sequential("id"), Clock: clock.Real{}}
 	arts := &artifact.Service{Meta: artifact.NewMemMeta(), Blobs: artifact.NewMemBlobs(), IDs: ids.Sequential("art"), Clock: clock.Real{}}
-	svc := &service.Service{Store: store, Queue: memqueue.New(clock.Real{}), Agents: agents, Artifacts: arts}
+	svc := &service.Service{Store: store, Agents: agents, Artifacts: arts}
 	mine, _ := svc.Create(ctx, service.CreateRequest{BusinessLine: "bl", EndUser: "u", Agent: "a"})
 	other, _ := svc.Create(ctx, service.CreateRequest{BusinessLine: "bl", EndUser: "v", Agent: "a"})
 	own, err := arts.Put(ctx, mine, "photo.png", "image/png", strings.NewReader("png bytes"))
