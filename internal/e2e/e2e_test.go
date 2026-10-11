@@ -29,20 +29,15 @@ import (
 	"yanshi/internal/auth"
 	"yanshi/internal/call"
 	"yanshi/internal/capability"
-	"yanshi/internal/card"
 	"yanshi/internal/channel"
 	"yanshi/internal/clock"
 	"yanshi/internal/decision"
-	"yanshi/internal/delegation"
 	"yanshi/internal/faults"
 	"yanshi/internal/feed"
 	"yanshi/internal/httpapi"
 	"yanshi/internal/ids"
-	"yanshi/internal/janitor"
-	"yanshi/internal/lifecycle"
 	"yanshi/internal/live"
 	"yanshi/internal/live/peer"
-	"yanshi/internal/memory"
 	"yanshi/internal/model"
 	"yanshi/internal/model/script"
 	"yanshi/internal/moderation"
@@ -57,8 +52,7 @@ import (
 	"yanshi/internal/runtime"
 	"yanshi/internal/sandbox"
 	sandboxdocker "yanshi/internal/sandbox/docker"
-	"yanshi/internal/service"
-	"yanshi/internal/session"
+	"yanshi/internal/workqueue"
 	"yanshi/sdk/nodesdk"
 )
 
@@ -107,7 +101,9 @@ func bearer(req *http.Request) {
 type stores struct {
 	app.Stores
 	// provider 为 nil 时不启动沙箱控制器。
-	provider  sandbox.Provider
+	provider sandbox.Provider
+	// blobs 是各实例共用的工件内容；artifacts 是测试侧读写工件的入口，与实例内的 artifact.Service 共用同一存储。
+	blobs     artifact.BlobStore
 	artifacts *artifact.Service
 	// mcp 为 nil 时没有远程 MCP 工具。
 	mcp capability.MCPSource
@@ -122,16 +118,16 @@ type stores struct {
 
 func memStores() stores {
 	clk := clock.Real{}
-	s := stores{Stores: app.Memory(clk), voice: &fake.Provider{}}
-	s.artifacts = &artifact.Service{Meta: s.ArtifactMeta, Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk}
+	s := stores{Stores: app.Memory(clk), voice: &fake.Provider{}, blobs: artifact.NewMemBlobs()}
+	s.artifacts = &artifact.Service{Meta: s.ArtifactMeta, Blobs: s.blobs, IDs: ids.Random(), Clock: clk, Deletions: s.Deletions}
 	return s
 }
 
 // pgStores 是共享 PostgreSQL 的一套存储：多个实例各取一套即构成分布式部署。
 func pgStores(pool *pgxpool.Pool, n *pg.Notifier) stores {
 	clk := clock.Real{}
-	s := stores{Stores: app.Postgres(pool, n, clk)}
-	s.artifacts = &artifact.Service{Meta: s.ArtifactMeta, Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk}
+	s := stores{Stores: app.Postgres(pool, n, clk), blobs: artifact.NewMemBlobs()}
+	s.artifacts = &artifact.Service{Meta: s.ArtifactMeta, Blobs: s.blobs, IDs: ids.Random(), Clock: clk, Deletions: s.Deletions}
 	return s
 }
 
@@ -148,7 +144,6 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 		t.Fatal(err)
 	}
 	clk := clock.Real{}
-	store := &session.Store{Log: st.Log, Waking: st.Waking, IDs: ids.Random(), Clock: clk}
 	// 每个实例都有内部增量接口，多实例共享存储时增量可跨实例送达（ADR-0013）。
 	local := live.NewMemBus()
 	peerMux := http.NewServeMux()
@@ -156,48 +151,33 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 	peerSrv := httptest.NewServer(peerMux)
 	t.Cleanup(peerSrv.Close)
 	bus := &peer.Bus{Local: local, Log: st.Log, Self: peerSrv.URL, Token: "t", Retry: 20 * time.Millisecond}
-	st.artifacts.Deletions = st.Deletions
-	hub := &node.Hub{Dir: st.Dir, Inbox: st.Inbox, Store: store, Auth: node.TokenAuth{Verifier: verifier}, Deletions: st.Deletions,
-		Push: st.Push}
-	var notifier runtime.Notifier
-	if st.pusher != nil {
-		notifier = &notify.Notifier{Registry: st.Push, Presence: st.Presence, Pusher: st.pusher, Clock: clk}
-	}
-	mems := &memory.Service{Store: st.Memories, Grants: st.Grants, Deletions: st.Deletions, Clock: clk, IDs: ids.Random()}
 	// 故障注入始终装配（与 serve -faults 相同）：没有规则时不影响执行，调试控制台的故障场景经 /v1/debug/faults 添加规则。
 	injector := &faults.Injector{}
-	catalog := &capability.Catalog{Local: capability.NewRegistry(append([]capability.Capability{card.New(st.artifacts.Meta)}, memory.Capabilities(mems)...)...),
-		Nodes: faults.Directory{Directory: st.Dir, Injector: injector}, DefaultTimeout: time.Minute,
-		Sandbox: &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID}, MCP: st.mcp}
-	router := &sandbox.Router{Hub: hub, Queue: st.SandboxQueue}
-	delegator := &delegation.Delegator{}
-	dispatch := &delegation.Router{Next: router, Delegator: delegator}
-	catalog.Agents = delegation.Directory{Registry: agents}
 	gw := model.NewGateway()
 	gw.Register("script", faults.Model{Next: script.Provider{}, Injector: injector})
+	core := app.NewCore(st.Stores, app.Options{
+		Clock: clk, Agents: agents, Model: gw, Blobs: st.blobs, NodeAuth: node.TokenAuth{Verifier: verifier},
+		SandboxTools: true, MCP: st.mcp, DefaultTimeout: time.Minute,
+		Moderator: st.moderator, Injector: injector, InjectionCheck: decision.InjectionRules{}, Pusher: st.pusher,
+		Live: bus, LiveEndpoint: peerSrv.URL, LeaseTTL: 5 * time.Second,
+	})
+	svc, hub := core.Service, core.Hub
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	for i := range workers {
-		w := runtime.New(runtime.Config{ID: fmt.Sprintf("w%d", i), Store: store, Queue: st.Queue, Agents: agents, Model: gw,
-			Catalog: catalog, Dispatch: dispatch, Delegation: delegator, InjectionCheck: decision.InjectionRules{}, Artifacts: st.artifacts, Memory: mems, Live: bus, LiveEndpoint: peerSrv.URL, IdleWait: 5 * time.Millisecond,
-			Notify: notifier, Faults: injector, LeaseTTL: 5 * time.Second})
-		go w.Run(ctx)
+		cfg := core.WorkerConfig(fmt.Sprintf("w%d", i), workqueue.Pool{}, nil)
+		cfg.IdleWait = 5 * time.Millisecond
+		go runtime.New(cfg).Run(ctx)
 	}
 	if st.provider != nil {
-		c := &sandbox.Controller{ID: "c1", Queue: st.SandboxQueue, Hub: hub, Provider: st.provider, Activity: st.Activity,
-			Ledger: st.Ledger, Artifacts: st.artifacts, Clock: clk, IdleWait: 5 * time.Millisecond,
-			Lifecycle: &lifecycle.Guard{Index: st.Index, Deletions: st.Deletions}}
+		c := core.ControllerConfig("c1", st.provider, nil)
+		c.IdleWait = 5 * time.Millisecond
 		go c.Run(ctx)
 	}
-	svc := &service.Service{Store: store, Agents: agents, Nodes: dispatch,
-		Index: st.Index, Deletions: st.Deletions, Janitor: st.JanitorQueue, Moderator: faults.Moderator{Next: st.moderator, Injector: injector}, Artifacts: st.artifacts}
-	delegator.Service = svc
 	if workers > 0 {
-		ws := sandbox.Workspaces{Queue: st.SandboxQueue, Provider: st.provider, Activity: st.Activity}
-		j := &janitor.Janitor{ID: "j1", Queue: st.JanitorQueue, Service: svc, Store: store, Data: app.SessionData(st.Stores, ws, st.artifacts),
-			Workspaces: ws, Inbox: st.Inbox, Nodes: st.Dir, Ledger: st.Ledger, Index: st.Index, Deletions: st.Deletions, Clock: clk,
-			IdleWait: 10 * time.Millisecond}
+		j := core.Janitor("j1", st.provider, nil, 0)
+		j.IdleWait = 10 * time.Millisecond
 		go j.Run(ctx)
 	}
 	if !serve {
@@ -215,7 +195,7 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 		Presence: &presence.Service{Store: st.Presence, Deletions: st.Deletions, Clock: clk}, Push: st.Push, Calls: calls}}
 	mux.Handle("/v1/connect", gwy)
 	mux.Handle("/v1/nodes/connect", gwy)
-	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: st.Dir, Artifacts: st.artifacts, Memory: mems, Feeds: feeds, Faults: injector}).Handler())
+	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: st.Dir, Artifacts: core.Artifacts, Memory: core.Memory, Feeds: feeds, Faults: injector}).Handler())
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
