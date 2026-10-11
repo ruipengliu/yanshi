@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -171,6 +172,53 @@ func (s *Store) commit(ctx context.Context, st *State, wake bool, events []*v1.E
 		}
 	}
 	return nil
+}
+
+// Decision 是一次决策的结果：要追加的事件，以及是否在同一事务中唤醒 Session（CommitAndWake）。
+type Decision struct {
+	Events []*v1.Event
+	Wake   bool
+}
+
+// MaxCommitRetries 是乐观并发冲突后重新决策的次数上限。
+const MaxCommitRetries = 16
+
+// ErrTooManyConflicts 表示连续 MaxCommitRetries 次冲突（包装时带 Session ID）。
+var ErrTooManyConflicts = errors.New("too many commit conflicts")
+
+// Update 以 st 为起点执行"决策-提交"循环：decide 看着当前投影决定事件；提交遇到 eventlog.ErrConflict 时
+// SyncAfterConflict 后重新 decide。decide 返回 error 时立即停止并原样返回；返回零个事件时不写、返回 nil。
+// SyncAfterConflict 的 ErrGone 与 Commit 的校验错误（ErrInvalid）原样返回，由调用方按各自策略处理。
+// 每次冲突递增 metrics.CommitConflicts。
+//
+// 冲突后必须重新决策而不是重放同一批事件：冲突意味着别人改变了投影（如 Run 已被中断、提问已被回答），
+// 原来的决定可能已不成立。协议集中在这里，各写入方只描述"看到这个状态时写什么"。
+func (s *Store) Update(ctx context.Context, st *State, decide func(*State) (Decision, error)) error {
+	for range MaxCommitRetries {
+		d, err := decide(st)
+		if err != nil {
+			return err
+		}
+		if len(d.Events) == 0 {
+			return nil
+		}
+		if d.Wake {
+			err = s.CommitAndWake(ctx, st, d.Events...)
+		} else {
+			err = s.Commit(ctx, st, d.Events...)
+		}
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, eventlog.ErrConflict) {
+			return err
+		}
+		metrics.CommitConflicts.WithLabelValues().Inc()
+		if err := s.SyncAfterConflict(ctx, st); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("%w: session %s", ErrTooManyConflicts, st.SessionID)
 }
 
 // CallHistory 是一个调用在日志中的记录：是否经 ask_user 提问、是否请求过审批。
