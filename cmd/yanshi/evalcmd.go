@@ -24,6 +24,7 @@ import (
 	"yanshi/internal/agentdef"
 	"yanshi/internal/eval"
 	"yanshi/internal/model"
+	"yanshi/internal/model/codex"
 	"yanshi/internal/realtime/volc"
 	sandboxdocker "yanshi/internal/sandbox/docker"
 )
@@ -37,7 +38,7 @@ func evalCmd(args []string) error {
 	trials := fs.Int("trials", 0, "覆盖每个用例的运行次数")
 	agentVersion := fs.String("agent-version", "", "评测该 AgentDef 版本而不是稳定版本（灰度前的评测门槛）")
 	modelOverride := fs.String("model", "", "替换被评测 AgentDef 的模型（provider/model），用于比较模型")
-	judgeModel := fs.String("judge", envOr("YANSHI_JUDGE_MODEL", "tokenhub/glm-5.3"), "评分模型（与被评测模型不同系列，ADR-0018）")
+	judgeModel := fs.String("judge", envOr("YANSHI_JUDGE_MODEL", "codex/gpt-6.1-sol:high"), "评分模型（与被评测模型不同系列，ADR-0018）；codex/<模型>:<推理强度> 经本机已登录的 Codex CLI 调用")
 	embedModel := fs.String("embedding-model", os.Getenv("YANSHI_EMBEDDING_MODEL"), "Memory 检索用的嵌入模型")
 	sandboxKind := fs.String("sandbox", "none", "代码沙箱：none | docker（none 时跳过需要沙箱的用例）")
 	sandboxImage := fs.String("sandbox-image", "yanshi-sandbox:dev", "沙箱镜像")
@@ -71,7 +72,10 @@ func evalCmd(args []string) error {
 		return fmt.Errorf("no cases match %q in %s", *caseGlob, *suite)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	cfg := eval.Config{Agents: agents, Model: gateway(logger, defaultModelLimits), Judge: *judgeModel, EmbedModel: *embedModel,
+	gw := gateway(logger, defaultModelLimits)
+	// 评分模型经本机的 Codex CLI 调用（只用于评测，serve 不注册）。
+	gw.Register("codex", codex.Provider{})
+	cfg := eval.Config{Agents: agents, Model: gw, Judge: *judgeModel, EmbedModel: *embedModel,
 		ModelOverride: *modelOverride, AgentVersion: *agentVersion, Trials: *trials, Parallel: *parallel, Logger: logger,
 		Progress: func(name string, trial int, passed bool) {
 			mark := "✓"
