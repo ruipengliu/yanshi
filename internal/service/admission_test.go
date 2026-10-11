@@ -132,3 +132,36 @@ func TestTrimmedRunsKeepTheirAnswers(t *testing.T) {
 		t.Fatalf("decision on an unknown call: %v", err)
 	}
 }
+
+// 设备歧义消解（docs/design/m6-decisions.md §3）：没有注明来源设备的输入注明最近在前台使用的设备；已注明的不覆盖。
+func TestSubmitNotesRecentDevice(t *testing.T) {
+	ctx := context.Background()
+	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "a", Version: "1", Model: "echo/any"})
+	mlog, mq := memlog.New(), memqueue.New(clock.Real{})
+	store := &session.Store{Log: mlog, Waking: mlog.Waking(mq), IDs: ids.Sequential("id"), Clock: clock.Real{}}
+	svc := &service.Service{Store: store, Agents: agents,
+		RecentDevice: func(context.Context, string, string) string { return "thinkpad" }}
+	sid, _ := svc.Create(ctx, service.CreateRequest{BusinessLine: "bl", EndUser: "u", Agent: "a"})
+	device := func(input []*v1.ContentBlock) string {
+		t.Helper()
+		if _, err := svc.Submit(ctx, sid, input); err != nil {
+			t.Fatal(err)
+		}
+		st, _ := svc.Load(ctx, sid)
+		for _, e := range st.History {
+			for _, b := range append(e.GetRunRequested().GetInput(), e.GetSteered().GetInput()...) {
+				if u := b.GetUiContext(); u != nil && e.GetSeq() == st.Seq {
+					return u.GetDevice()
+				}
+			}
+		}
+		return ""
+	}
+	if got := device(model.TextBlocks("打开 notes.txt")); got != "thinkpad" {
+		t.Fatalf("recent device %q", got)
+	}
+	ui := &v1.ContentBlock{Kind: &v1.ContentBlock_UiContext{UiContext: &v1.UIContext{Device: "phone", Screen: "相册"}}}
+	if got := device(append([]*v1.ContentBlock{ui}, model.TextBlocks("这张")...)); got != "phone" {
+		t.Fatalf("noted device overwritten: %q", got)
+	}
+}

@@ -7,6 +7,7 @@ package session
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"time"
 
@@ -102,6 +103,9 @@ type Run struct {
 	// Resume 表示用户刚做出审批或回答，下一个 Attempt 尚未开始：长任务因此在后台池中先被认领（恢复名额，
 	// 不可叠加，由下一个 AttemptStarted 消费）。
 	Resume bool
+	// Decisions 是本 Run 中已作出的判断（DecisionMade，ADR-0030），键为 DecisionKey(种类, 对象)，值为选中的选项
+	// （空表示判断不可用、走了默认路径）。同一对象的同一种判断只作一次，重放与接管都读它而不重新判断。
+	Decisions map[string]string
 	// Recall 是 Run 开始时召回的 Memory；Recalled 表示已经召回过（结果可能为空）。
 	Recall   []*v1.RecalledMemory
 	Recalled bool
@@ -140,8 +144,12 @@ func (r *Run) call(id string) *Call {
 	return nil
 }
 
+// DecisionKey 是 Run.Decisions 的键。
+func DecisionKey(kind, subject string) string { return kind + "/" + subject }
+
 func (r *Run) clone() *Run {
 	cp := *r
+	cp.Decisions = maps.Clone(r.Decisions)
 	cp.Calls = make([]*Call, len(r.Calls))
 	for i, c := range r.Calls {
 		cc := *c
@@ -679,6 +687,27 @@ func (s *State) apply(e *v1.Event) error {
 		s.Compaction, s.CompactedAt = m, e.GetSeq()
 		r.Compactions++
 		r.StalledTakeovers = 0
+
+	case *v1.Event_DecisionMade:
+		m := p.DecisionMade
+		r, err := s.fencedRun(m.GetRunId(), m.GetAttempt())
+		if err != nil {
+			return err
+		}
+		k := DecisionKey(m.GetKind(), m.GetSubject())
+		if m.GetKind() == "" || m.GetSubject() == "" {
+			return fmt.Errorf("decision without kind or subject")
+		}
+		if _, dup := r.Decisions[k]; dup {
+			return fmt.Errorf("decision %s made twice", k)
+		}
+		if m.GetChosen() != "" && !slices.Contains(m.GetOptions(), m.GetChosen()) {
+			return fmt.Errorf("decision %s chose %q outside its options", k, m.GetChosen())
+		}
+		if r.Decisions == nil {
+			r.Decisions = map[string]string{}
+		}
+		r.Decisions[k] = m.GetChosen()
 
 	case *v1.Event_RunCompleted:
 		r, err := s.fencedRun(p.RunCompleted.GetRunId(), p.RunCompleted.GetAttempt())

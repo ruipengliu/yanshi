@@ -2,10 +2,12 @@ package sim
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/decision"
 	"yanshi/internal/delegation"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/lifecycle"
@@ -108,3 +110,20 @@ func (w *World) countDelegationResults(events []*v1.Event) {
 
 // simMaxDepth 是 sim Agent 的委托链深度上限（AgentDef 默认值）。
 const simMaxDepth = 2
+
+// simDecider 是模拟的判断器（docs/design/m6-decisions.md）：按随机源给出选项，故障注入时可能失败或让 Worker 崩溃。
+type simDecider struct{ w *World }
+
+func (d simDecider) Decide(ctx context.Context, q decision.Question) (decision.Answer, error) {
+	w := d.w
+	if w.faults {
+		switch {
+		case w.chance(0.1):
+			return decision.Answer{}, errors.New("sim: decider unavailable")
+		case w.chance(0.02):
+			w.crash()
+			return decision.Answer{}, ctx.Err()
+		}
+	}
+	return decision.Answer{Chosen: q.Options[w.rng.IntN(len(q.Options))], Confidence: 0.8, Model: "sim/decider"}, nil
+}

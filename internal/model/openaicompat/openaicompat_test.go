@@ -224,3 +224,26 @@ func TestRetryAfterIsReported(t *testing.T) {
 		t.Fatalf("err = %#v", err)
 	}
 }
+
+// 请求 TopLogprobs 时发送 logprobs 参数，并读回各输出位置上的候选 token 概率（判断用的小模型，m6-decisions §4）。
+func TestLogprobs(t *testing.T) {
+	var got wireRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		fmt.Fprint(w, `data: {"choices":[{"delta":{"content":"A"},"logprobs":{"content":[{"token":"A","logprob":-0.1,"top_logprobs":[{"token":"A","logprob":-0.1},{"token":"B","logprob":-2.4}]}]}}]}`+"\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+	p := &Provider{BaseURL: srv.URL}
+	resp, err := p.Generate(context.Background(), &model.Request{Model: "m", Messages: []model.Message{{Role: model.RoleUser, Content: model.TextBlocks("q")}},
+		MaxTokens: 1, TopLogprobs: 5}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Logprobs || got.TopLogprobs != 5 || got.MaxTokens != 1 {
+		t.Fatalf("request %+v", got)
+	}
+	if len(resp.Logprobs) != 1 || resp.Logprobs[0]["A"] != -0.1 || resp.Logprobs[0]["B"] != -2.4 {
+		t.Fatalf("logprobs %v", resp.Logprobs)
+	}
+}

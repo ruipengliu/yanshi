@@ -24,6 +24,7 @@ import (
 	"yanshi/internal/artifact"
 	"yanshi/internal/askuser"
 	"yanshi/internal/capability"
+	"yanshi/internal/decision"
 	"yanshi/internal/delegation"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/live"
@@ -61,6 +62,9 @@ type Config struct {
 	Dispatch  Dispatcher
 	// Delegation 非空时，委托派生的子 Session 在 Run 结束后把终态写回父调用。
 	Delegation Reporter
+	// InjectionCheck 非空时，以影子模式判断来自外部的调用结果（设备、沙箱、MCP、委托）是否含提示注入，结果记为
+	// DecisionMade，不影响执行（docs/design/m6-decisions.md §6 第 2 步，ADR-0030）。
+	InjectionCheck decision.Decider
 	// Memory 非空且 AgentDef 配置了召回时，每个 Run 开始先召回 Memory（docs/design/m4-memory-grant.md §3）。
 	Memory Recaller
 	// Artifacts 非空时，用户消息中的图片工件会内联给模型（docs/design/m2-artifacts.md §4）。
@@ -501,7 +505,67 @@ func (w *Worker) advance(ctx context.Context, r *session.Run) error {
 	if w.cfg.Memory != nil && def.Memory.Recall > 0 && !r.Recalled && r.Turns == 0 {
 		return w.recall(ctx, r, def)
 	}
+	if w.cfg.InjectionCheck != nil {
+		if pending := w.unjudged(r); len(pending) > 0 {
+			return w.judgeResults(ctx, r, pending)
+		}
+	}
 	return w.callModel(ctx, r, def)
+}
+
+// maxJudgedPerStep 限制一步中判断的调用结果数，使一步的时长有界。
+const maxJudgedPerStep = 8
+
+// unjudged 返回本 Run 中来自外部、尚未判断的调用结果。外部指设备、沙箱、委托（路由调用）与 MCP 工具：它们的内容
+// 不由平台产生（工具名形如 "<来源>__<能力>"）；用户对提问的回答不算。
+func (w *Worker) unjudged(r *session.Run) []*v1.ToolResult {
+	external := map[string]bool{}
+	for _, c := range r.Calls {
+		if strings.Contains(c.Call.GetCapability(), "__") && c.NodeID != askuser.NodeID {
+			external[c.Call.GetCallId()] = true
+		}
+	}
+	var out []*v1.ToolResult
+	for _, e := range w.st.History {
+		res := e.GetToolResult()
+		if res.GetRunId() != r.ID || !external[res.GetCallId()] {
+			continue
+		}
+		if _, done := r.Decisions[session.DecisionKey(decision.ToolResultInjection, res.GetCallId())]; done {
+			continue
+		}
+		if out = append(out, res); len(out) == maxJudgedPerStep {
+			break
+		}
+	}
+	return out
+}
+
+// judgeResults 判断调用结果是否含注入，记为影子模式的 DecisionMade（只记录、不影响执行）。判断不可用时同样记录，
+// 选项为空（走默认路径），不在下一步重试。
+func (w *Worker) judgeResults(ctx context.Context, r *session.Run, results []*v1.ToolResult) error {
+	var events []*v1.Event
+	for _, res := range results {
+		q := decision.Question{Kind: decision.ToolResultInjection, Subject: res.GetCallId(),
+			Text: model.Text(res.GetContent()), Options: decision.Options(decision.ToolResultInjection)}
+		if t, cut := model.Truncate(q.Text, 8000); cut {
+			q.Text = t
+		}
+		a, err := w.cfg.InjectionCheck.Decide(ctx, q)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err != nil {
+			a = decision.Answer{Model: "unavailable"}
+		}
+		if a.Usage != nil {
+			w.cfg.Meter.Model(ctx, w.usageScope(), "use_"+w.cfg.Store.IDs(), agentdef.Label(w.st.Agent), a.Model, a.Usage, w.now())
+		}
+		events = append(events, &v1.Event{Payload: &v1.Event_DecisionMade{DecisionMade: &v1.DecisionMade{
+			RunId: r.ID, Attempt: w.attempt, Kind: q.Kind, Subject: q.Subject, Options: q.Options,
+			Chosen: a.Chosen, Confidence: float32(a.Confidence), Model: a.Model, Shadow: true}}})
+	}
+	return w.commit(ctx, events...)
 }
 
 func (w *Worker) toolResult(r *session.Run, callID string, content []*v1.ContentBlock, isErr bool) *v1.Event {

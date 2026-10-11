@@ -1,0 +1,20 @@
+name: device-pick-ui-context
+description: >-
+  设备歧义消解（docs/design/m6-decisions.md §3）：两台电脑都有 notes.txt，用户在 thinkpad 上发消息且没有指明哪台，
+  应读 thinkpad 上的（用户所在设备优先），而不是另一台或停下来问。
+setup:
+  devices:
+    - label: macbook
+      files:
+        notes.txt: "家里的待办：周六修自行车，周日去超市。"
+    - label: thinkpad
+      files:
+        notes.txt: "工作待办：周三前交季度预算，周四评审接口设计。"
+turns:
+  - input: 看一下 notes.txt 里写了什么。
+    from_device: thinkpad
+    expect:
+      status: completed
+      calls: ["thinkpad__read_file"]
+      no_calls: ["macbook__read_file"]
+      reply_contains: ["预算"]

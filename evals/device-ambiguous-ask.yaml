@@ -1,0 +1,21 @@
+name: device-ambiguous-ask
+description: >-
+  设备歧义消解的最后一顺位（docs/design/m6-decisions.md §3）：两台电脑都有 notes.txt，不知道用户在哪台设备上，
+  要改文件时应用 ask_user 让用户选择，而不是随便改一台（读可以两台都看，写有副作用）。
+setup:
+  devices:
+    - label: macbook
+      files:
+        notes.txt: "家里的待办：周六修自行车，周日去超市。"
+    - label: thinkpad
+      files:
+        notes.txt: "工作待办：周三前交季度预算，周四评审接口设计。"
+turns:
+  - input: 在 notes.txt 末尾加一行：周五前订会议室。
+    answer: {choose: "thinkpad"}
+    expect:
+      status: completed
+      questions: {min: 1}
+      calls: ["thinkpad__write_file"]
+      no_calls: ["macbook__write_file"]
+      device_writes: {"notes.txt": "订会议室"}

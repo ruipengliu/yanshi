@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -341,9 +342,13 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 			return tr
 		}
 	}
-	var dev *device
+	var devs []*device
+	setups := c.Setup.Devices
 	if s := c.Setup.Device; s != nil {
-		dev = &device{files: map[string]string{}, writes: map[string]string{}, arts: in.arts}
+		setups = append([]DeviceSetup{*s}, setups...)
+	}
+	for i, s := range setups {
+		dev := &device{files: map[string]string{}, writes: map[string]string{}, arts: in.arts}
 		for k, v := range s.Files {
 			dev.files[k] = v
 		}
@@ -351,10 +356,15 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		if label == "" {
 			label = "macbook"
 		}
-		if err := dev.run(tctx, in.hub, "node-"+endUser, BusinessLine, endUser, label, s.OnlineAfter); err != nil {
+		nodeID := "node-" + endUser
+		if i > 0 {
+			nodeID += "-" + label
+		}
+		if err := dev.run(tctx, in.hub, nodeID, BusinessLine, endUser, label, s.OnlineAfter); err != nil {
 			tr.Err = "setup device: " + err.Error()
 			return tr
 		}
+		devs = append(devs, dev)
 	}
 	var sid string
 	var sessions []string
@@ -403,8 +413,11 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		tr.Tokens += obs.tokens
 		tr.Calls, tr.Compactions, tr.Takeovers = tr.Calls+len(obs.calls), tr.Compactions+obs.compactions, tr.Takeovers+obs.takeovers
 		tr.InputTokens, tr.CachedInputTokens = tr.InputTokens+obs.inTokens, tr.CachedInputTokens+obs.cachedTokens
-		if dev != nil {
-			obs.writes, obs.sent = dev.snapshot()
+		obs.writes = map[string]string{}
+		for _, dev := range devs {
+			w, sent := dev.snapshot()
+			maps.Copy(obs.writes, w)
+			obs.sent += sent
 		}
 		obs.tickets = in.crm.ticketsOf(endUser)
 		obs.memories, _ = in.mems.Store.List(tctx, endUser, []memory.Scope{{BusinessLine: BusinessLine}}, memory.DefaultMaxPerUser)
@@ -450,6 +463,9 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 	if u := turn.UIContext; u != nil {
 		input = append([]*v1.ContentBlock{{Kind: &v1.ContentBlock_UiContext{UiContext: &v1.UIContext{
 			Screen: u.Screen, Ref: u.Ref, Selection: u.Selection, Content: u.Content}}}}, input...)
+	}
+	if turn.FromDevice != "" {
+		input = service.WithDevice(input, turn.FromDevice, true)
 	}
 	res, err := in.svc.Submit(ctx, sid, input)
 	if err != nil {

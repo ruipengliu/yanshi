@@ -174,7 +174,7 @@ func TestSnapshotCoversEveryField(t *testing.T) {
 	covered := map[string][]string{
 		"State":      {"SessionID", "Seq", "Created", "Agent", "Closed", "Compaction", "CompactedAt", "Runs", "Past", "History", "callIDsOld", "callIDs", "Inputs", "ActiveCall"},
 		"RunSummary": {"ID", "Status", "RequestedAt", "Attempt", "Turns"},
-		"Run":        {"ID", "Status", "RequestedAt", "Attempt", "LiveEndpoint", "Takeovers", "StalledTakeovers", "Turns", "Recall", "Recalled", "Calls", "SuspendReason", "SuspendedUntil", "Compactions", "OutputTokens", "Resume"},
+		"Run":        {"ID", "Status", "RequestedAt", "Attempt", "LiveEndpoint", "Takeovers", "StalledTakeovers", "Turns", "Recall", "Recalled", "Calls", "SuspendReason", "SuspendedUntil", "Compactions", "OutputTokens", "Resume", "Decisions"},
 		"Call":       {"Call", "StartedAttempts", "NodeID", "Deadline", "Done", "Approval"},
 		"Approval":   {"Summary", "Deadline", "Decided", "Approved"},
 		"InputRef":   {"ID", "RunID", "Steered", "Answered"},

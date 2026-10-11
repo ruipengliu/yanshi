@@ -1,8 +1,7 @@
 # M6 判断：规则、小模型与 LLM 的分层（草案）
 
-> 状态：草案（2026-10-11），未实施 · 来源：[调研：Agent harness 与 System 1](../research/2026-10-agent-harness-and-system1.md) §3、[延展性评审](../review/2026-10-11-scalability-review.md)讨论 · 关联：章程非目标（端侧智能按"规则 → 经典 ML → 小模型"逐级选用）、原则 2（薄 harness）、原则 10（评测即基础设施）、ADR-0012、ADR-0016、[ADR-0030（草案）](../adr/0030-decisions-as-events.md) · 术语以 [CONTEXT.md](../../CONTEXT.md) 为准
->
-> 实施前须：在 CONTEXT.md 中定稿 Decision 一词；ADR-0030 转为 accepted；`internal/model` 支持 logprobs；`internal/sim` 注入判断失败故障。
+> 状态：部分实现（2026-10-11）：§6 第 1、2 步已实现，见 §8 · 来源：[调研：Agent harness 与 System 1](../research/2026-10-agent-harness-and-system1.md) §3、[延展性评审](../review/2026-10-11-scalability-review.md)讨论 · 关联：章程非目标（端侧智能按"规则 → 经典 ML → 小模型"逐级选用）、原则 2（薄 harness）、原则 10（评测即基础设施）、ADR-0012、ADR-0016、[ADR-0030（草案）](../adr/0030-decisions-as-events.md) · 术语以 [CONTEXT.md](../../CONTEXT.md) 为准
+
 
 ## 1. 要解决的问题
 
@@ -65,3 +64,18 @@ harness 里有大量"给定状态、有限合法选项"的判断：暴露哪些�
 ## 7. 一个反例
 
 调研 §4 记录：Compaction 之前加"按规则省略旧调用结果"看起来必赚，实测汇总类长任务中模型重新读取被省略的结果，`long-run-ledger` 的调用与 token 翻倍、通过率下降，未采纳。任何判断层的引入都以评测为裁判，而不是以直觉。
+
+## 8. 实现（2026-10-11）
+
+**第 1 步：设备歧义消解的规则层。** 界面上下文新增 `device`（用户发这条输入时所在的设备），由平台填写：经 Connection 提交时网关填入连接的设备标签，经 HTTP 提交时填入最近在前台使用的设备（`notify.RecentDevices`，按 EndUser 缓存 30 秒）。`model.UIContextText` 把它呈现为一行"用户在设备 X 上；同一能力有多台设备、用户没有指明时用这台"，放在输入里（Run 的位置），AgentDef 的指令与工具说明都不变，请求前缀不受影响。没有设备线索时照旧由 `ask_user` 让用户选。只含设备的界面上下文不算外部内容（Memory 写入闸门不因此触发）。评测：`device-pick-ui-context`（两台电脑都有同名文件，用户在 thinkpad 上，读 thinkpad 的）、`device-ambiguous-ask`（不知道用户在哪台、要改文件时先问；只读时两台都看也可接受，所以用写入检验）。在线状态仍不进工具说明（M1 §5）。
+
+**第 2 步：调用结果的注入检测，影子模式。**
+
+- `internal/decision`：`Decider` 接口；`InjectionRules`（规则层：典型劫持措辞，中英文）；`Logits`（小模型层：一次前向传播，读首个输出位置上选项标签的对数概率、在合法选项上归一化，置信度低于阈值交给退路）；`Guarded`（时限 2 秒与指标）。`internal/model` 支持 `MaxTokens` 与 `TopLogprobs`（OpenAI 兼容接口的 `logprobs`）。
+- Event `DecisionMade{run_id, attempt, kind, subject, options, chosen, confidence, model, shadow}`，不含原文；投影记在 `Run.Decisions`，同一对象的同一种判断只作一次（投影版本 9）。
+- Worker 在调用模型之前，判断本 Run 中来自外部、尚未判断的调用结果（设备、沙箱、委托与 MCP，每步至多 8 条），与判断结果同批提交 `DecisionMade{shadow: true}`；判断不可用时记录空的选择（默认路径），不重试，不影响执行。判断调用了模型时计量（ADR-0019）。
+- `serve -injection-check off | rules | <provider/model>`，默认 off。小模型须是返回 logprobs 的自托管推理端点（TokenHub 不返回）；它置信度不足时退回规则层。小模型路径目前只有单元测试，没有接过真实端点。
+- 指标 `yanshi_decisions_total{kind, outcome}`、`yanshi_decision_duration_seconds{kind}`。
+- 模拟测试注入判断失败与判断中的崩溃；不变量：判断都是影子模式；覆盖统计 `Decisions`、`DecisionFallbacks`。
+
+**未做**：一到两周的影子数据之后再决定是否据判断驱动强制审批（"只收紧"）；中文注入样本的离线评测集；第 3 步工具折叠；第 4 步 Call 中的快速判断与交付前一致性检查。

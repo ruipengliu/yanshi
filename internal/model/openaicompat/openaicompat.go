@@ -117,6 +117,9 @@ type wireRequest struct {
 	StreamOptions struct {
 		IncludeUsage bool `json:"include_usage"`
 	} `json:"stream_options"`
+	MaxTokens   int  `json:"max_tokens,omitempty"`
+	Logprobs    bool `json:"logprobs,omitempty"`
+	TopLogprobs int  `json:"top_logprobs,omitempty"`
 }
 
 type wireChunk struct {
@@ -126,6 +129,14 @@ type wireChunk struct {
 			Content   string         `json:"content"`
 			ToolCalls []wireToolCall `json:"tool_calls"`
 		} `json:"delta"`
+		Logprobs *struct {
+			Content []struct {
+				TopLogprobs []struct {
+					Token   string  `json:"token"`
+					Logprob float64 `json:"logprob"`
+				} `json:"top_logprobs"`
+			} `json:"content"`
+		} `json:"logprobs"`
 	} `json:"choices"`
 	Usage *struct {
 		PromptTokens        uint64 `json:"prompt_tokens"`
@@ -184,8 +195,11 @@ func content(blocks []*v1.ContentBlock, allowImages bool) any {
 }
 
 func encode(req *model.Request) *wireRequest {
-	w := &wireRequest{Model: req.Model, Stream: true}
+	w := &wireRequest{Model: req.Model, Stream: true, MaxTokens: req.MaxTokens}
 	w.StreamOptions.IncludeUsage = true
+	if req.TopLogprobs > 0 {
+		w.Logprobs, w.TopLogprobs = true, req.TopLogprobs
+	}
 	if req.System != "" {
 		w.Messages = append(w.Messages, wireMessage{Role: "system", Content: req.System})
 	}
@@ -291,6 +305,15 @@ func decodeStream(r io.Reader, modelID string, onDelta func(model.Delta)) (*mode
 			}
 		}
 		for _, ch := range c.Choices {
+			if lp := ch.Logprobs; lp != nil {
+				for _, pos := range lp.Content {
+					top := map[string]float64{}
+					for _, t := range pos.TopLogprobs {
+						top[t.Token] = t.Logprob
+					}
+					out.Logprobs = append(out.Logprobs, top)
+				}
+			}
 			if d := ch.Delta.Content; d != "" {
 				text.WriteString(d)
 				if onDelta != nil {

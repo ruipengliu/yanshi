@@ -91,6 +91,8 @@ type Stats struct {
 	ResumedClaims int
 	// 委托（docs/design/m5-multi-agent.md）：创建的子 Session，子 Run 写回父调用的结果（完成、失败或中断）。
 	Delegations, DelegationResults int
+	// 判断（docs/design/m6-decisions.md）：记录的判断，其中判断不可用、走默认路径的。
+	Decisions, DecisionFallbacks int
 	// PastRuns 是移出投影、只剩摘要的终态 Run（有界投影，延展性评审 §8.3）。
 	PastRuns int
 	// 配额：因配额挂起的次数、提交时被拒绝的次数、挂起后恢复并结束的 Run；注销账号的次数。
@@ -631,7 +633,7 @@ func (w *World) newWorker(slot int) *runtime.Worker {
 	}
 	return runtime.New(runtime.Config{
 		ID: id, Store: &store, Queue: poolQueue{Queue: w.queue, w: w}, Pool: pool, Agents: w.agents,
-		Model: gw, Catalog: w.catalog, Dispatch: w.dispatch, Delegation: w.delegator, LeaseTTL: leaseTTL,
+		Model: gw, Catalog: w.catalog, Dispatch: w.dispatch, Delegation: w.delegator, InjectionCheck: simDecider{w}, LeaseTTL: leaseTTL,
 		MaxTakeovers: 4, MaxModelErrors: 3, ApprovalTimeout: approvalTimeout, Memory: w.memories,
 		Meter: w.meter, Quotas: w.quotas, QuotaRecheck: time.Minute, Moderator: simModerator{w},
 		Notify: simNotifier{w}, NotifyRunsAfter: 30 * time.Second,
@@ -1029,6 +1031,10 @@ func (w *World) CheckInvariants() error {
 			return fmt.Errorf("invariant: %s summarizes %d runs, log has %d", sid, len(st.Summaries()), requested)
 		}
 		for _, e := range events {
+			// 判断目前只有影子模式：只记录，不影响执行（ADR-0030）。
+			if d := e.GetDecisionMade(); d != nil && !d.GetShadow() {
+				return fmt.Errorf("invariant: decision %s/%s in %s is not in shadow mode", d.GetKind(), d.GetSubject(), sid)
+			}
 			// 暂时性的目录故障只能经 StepErrorBudget（持续出错）使 Run 失败，不能一次就失败。
 			if e.GetRunFailed().GetReason() == errDirectoryDown.Error() {
 				return fmt.Errorf("invariant: run %s failed on a transient directory error", e.GetRunFailed().GetRunId())
@@ -1134,6 +1140,14 @@ func (w *World) CollectStats() {
 			}
 		}
 		w.countDelegationResults(events)
+		for _, e := range events {
+			if d := e.GetDecisionMade(); d != nil {
+				w.Stats.Decisions++
+				if d.GetChosen() == "" {
+					w.Stats.DecisionFallbacks++
+				}
+			}
+		}
 		eachRun(events, func(r *session.Run) {
 			if r.Status == session.RunCompleted && r.Turns >= longRunTurns {
 				w.Stats.LongRunsCompleted++

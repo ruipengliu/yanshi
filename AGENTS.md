@@ -16,6 +16,7 @@
 - 改动模型提供商的接入、调用时限、重试或准入之前：`docs/design/model-calls.md`。已输出过增量的调用不在提供商层重试。
 - 改动进程角色、启动参数或部署形态之前：`docs/design/deployment.md`。进程边界只沿扩缩容维度、权限与故障域划分，不按领域拆服务；全部角色合在一个进程里必须仍能运行。
 - 改动委托（`internal/delegation`、`agent:` 白名单、`SessionCreated.parent`）之前：`docs/design/m5-multi-agent.md`。委托是路由到派生子 Session 的调用，结果由子 Session 的 Worker 写回（ADR-0031）；子 Run 的能力是自身与每个祖先白名单的交集，委托不扩大权限。
+- 改动判断（`internal/decision`、`DecisionMade`、`-injection-check`）或设备歧义消解之前：`docs/design/m6-decisions.md`。判断先记为 Event 再据此行动，只收紧不放宽，失败走默认路径（ADR-0030）；阈值只在评测留出集上确定。
 - 改动 MCP 适配之前：`docs/design/m5-mcp.md`。云端不运行 stdio 型 MCP Server；未声明只读的工具默认需要审批（ADR-0017）。
 - 改动工件之前：`docs/design/m2-artifacts.md`。Event 中只放 `artifact://` 引用，不放文件内容；工件只对其所属 Session 可见。
 - 新增任何存放 Session 数据的地方之前：`docs/design/m2-session-lifecycle.md`。它必须能被 Janitor 按 Session 删除（在 `app.SessionData` 登记），写入入口要"先写、后查"删除记录（`lifecycle.Recheck`，ADR-0015），并在 `internal/sim` 的删除不变量中检查。

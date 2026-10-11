@@ -386,7 +386,12 @@ func (h *Handler) do(ctx context.Context, id Identity, req *v1.ClientRequest, re
 		resp.SessionId = sid
 		return err
 	case *v1.ClientRequest_Submit:
-		res, err := h.Service.SubmitWithID(owned(ctx, id), op.Submit.GetSessionId(), op.Submit.GetInputId(), op.Submit.GetInput())
+		input := op.Submit.GetInput()
+		if id.Label != "" {
+			// 网关注明来源设备（覆盖客户端自报的值）：设备歧义消解的第一顺位（docs/design/m6-decisions.md §3）。
+			input = service.WithDevice(input, id.Label, true)
+		}
+		res, err := h.Service.SubmitWithID(owned(ctx, id), op.Submit.GetSessionId(), op.Submit.GetInputId(), input)
 		if err != nil {
 			return err
 		}

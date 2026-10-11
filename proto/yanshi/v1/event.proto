@@ -40,7 +40,27 @@ message Event {
     CallStarted call_started = 28;
     CallTranscript call_transcript = 29;
     CallEnded call_ended = 30;
+    DecisionMade decision_made = 31;
   }
+}
+
+// DecisionMade 记录一次判断（docs/design/m6-decisions.md，ADR-0030）：对"给定状态、有限选项"的问题由规则、小模型或
+// LLM 作出的选择。先写日志再据此行动，重放时读日志而不重新判断。不含被判断的原文（ADR-0015）。
+message DecisionMade {
+  string run_id = 1;
+  uint32 attempt = 2;
+  // kind 是判断点，如 "tool_result_injection"。
+  string kind = 3;
+  // subject 是被判断的对象，如调用 ID。
+  string subject = 4;
+  repeated string options = 5;
+  // chosen 是选中的选项；为空表示判断不可用，走默认路径。
+  string chosen = 6;
+  float confidence = 7;
+  // model 是作出判断的规则集或模型，如 "rules/v1"、"local/qwen3-0.8b"。
+  string model = 8;
+  // shadow 为 true 时只记录、不影响执行（影子模式）。
+  bool shadow = 9;
 }
 
 // ContentBlock 承载一段多模态内容。
@@ -64,6 +84,9 @@ message UIContext {
   string selection = 3;
   // 界面上与输入相关的可见内容，由 HostApp 摘录。
   string content = 4;
+  // 用户发这条输入时所在的设备（标签），由平台填写：经 Connection 提交时是这条连接的设备，否则是最近在前台使用的
+  // 设备。同一能力有多台设备可选时，模型据此消解歧义（docs/design/m6-decisions.md §3）。
+  string device = 5;
 }
 
 message Text {

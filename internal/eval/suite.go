@@ -41,6 +41,8 @@ type Case struct {
 			Recorded string `yaml:"recorded"`
 		} `yaml:"memories"`
 		Device *DeviceSetup `yaml:"device"`
+		// Devices 是另外几台设备（标签互不相同），用于检验同类能力有多台设备时的选择（docs/design/m6-decisions.md §3）。
+		Devices []DeviceSetup `yaml:"devices"`
 		// CRM 为 true 时为评测业务线登记内置的 CRM MCP Server（工具 search_customer、create_ticket）。
 		CRM bool `yaml:"crm"`
 		// Agents 是本用例可委托的 Agent（docs/design/m5-multi-agent.md）：与被评测的 Agent 使用同一模型；
@@ -70,6 +72,8 @@ type DeviceSetup struct {
 
 type Turn struct {
 	Input string `yaml:"input"`
+	// FromDevice 是用户发这条输入时所在的设备标签，与网关为经 Connection 的输入注明的一致。
+	FromDevice string `yaml:"from_device"`
 	// UIContext 随输入一并提交的界面上下文（docs/design/m3-duplex-channel.md §8）。
 	UIContext *struct {
 		Screen    string `yaml:"screen"`

@@ -11,6 +11,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"google.golang.org/protobuf/proto"
+
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
 	"yanshi/internal/artifact"
@@ -51,6 +53,9 @@ type Service struct {
 	Quotas *usage.Quotas
 	// Admission 非空时，交互工作积压过高的业务线暂不接受新 Run（ErrOverloaded）。
 	Admission Admission
+	// RecentDevice 非空时，没有注明来源设备的输入注明 EndUser 最近在前台使用的设备（设备歧义消解，
+	// docs/design/m6-decisions.md §3）；返回空串表示不知道。经 Connection 提交的输入由网关注明来源设备。
+	RecentDevice func(ctx context.Context, businessLine, endUser string) string
 	// Moderator 非空时，输入（新 Run 与插话）在写日志之前检查，违规的不写入（ADR-0021）。
 	Moderator moderation.Moderator
 	// Artifacts 非空时，输入中的 Media 须引用本 Session 的工件，其类型、大小与名称取自工件的元数据。
@@ -223,6 +228,11 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 	}
 	if input, err = s.normalizeMedia(ctx, sessionID, input); err != nil {
 		return nil, err
+	}
+	if s.RecentDevice != nil && fromCall == "" {
+		if d := s.RecentDevice(ctx, st.Created.GetBusinessLine(), st.Created.GetEndUser()); d != "" {
+			input = WithDevice(input, d, false)
+		}
 	}
 	if err := s.moderateInput(ctx, st, input); err != nil {
 		return nil, err
@@ -634,6 +644,24 @@ func gone(sessionID string, err error) error {
 	return err
 }
 
+// WithDevice 返回注明了用户所在设备的输入（返回新切片，不修改调用方的输入）：已有界面上下文时写入其 device 字段，
+// 否则在输入前加一个只含设备的界面上下文。override 为 false 时不覆盖已注明的设备。
+func WithDevice(input []*v1.ContentBlock, device string, override bool) []*v1.ContentBlock {
+	out := slices.Clone(input)
+	for i, b := range out {
+		if u := b.GetUiContext(); u != nil {
+			if u.GetDevice() != "" && !override {
+				return out
+			}
+			cp := proto.Clone(u).(*v1.UIContext)
+			cp.Device = device
+			out[i] = &v1.ContentBlock{Kind: &v1.ContentBlock_UiContext{UiContext: cp}}
+			return out
+		}
+	}
+	return append([]*v1.ContentBlock{{Kind: &v1.ContentBlock_UiContext{UiContext: &v1.UIContext{Device: device}}}}, out...)
+}
+
 // 界面上下文各字段的长度上限（字符）：它随每条输入进入上下文，过长会挤占窗口、稀释用户的话。
 const (
 	MaxUIContextScreen    = 100
@@ -655,7 +683,7 @@ func checkUIContext(input []*v1.ContentBlock) error {
 			name  string
 			value string
 			max   int
-		}{{"screen", u.GetScreen(), MaxUIContextScreen}, {"ref", u.GetRef(), MaxUIContextRef},
+		}{{"screen", u.GetScreen(), MaxUIContextScreen}, {"ref", u.GetRef(), MaxUIContextRef}, {"device", u.GetDevice(), MaxUIContextScreen},
 			{"selection", u.GetSelection(), MaxUIContextSelection}, {"content", u.GetContent(), MaxUIContextContent}} {
 			if utf8.RuneCountInString(f.value) > f.max {
 				return fmt.Errorf("%w: ui_context.%s exceeds %d characters", ErrInvalid, f.name, f.max)

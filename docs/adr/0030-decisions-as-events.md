@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # 判断记为 Event，只收紧不放宽，失败退回默认路径
@@ -24,4 +24,4 @@ harness 中"给定状态、有限选项"的判断（暴露哪些工具、调用�
 
 - 新增 Event 类型 `DecisionMade`；`session.Reduce` 据此投影"当前 Run 的候选工具集""已标记的调用结果"等，改动 `Apply` 时递增 `ProjectionVersion`。
 - 托管 API 形态的判断模型不可用于私有化部署（ADR-0001）；自托管小模型需要推理端点支持 logprobs。
-- 术语：Decision（判断）在 CONTEXT.md 定义；本 ADR 转为 accepted 时随第一个判断点一起实施。
+- 术语：Decision（判断）在 CONTEXT.md 定义。2026-10-11 随第一个判断点（调用结果的注入检测，影子模式）实施并转为 accepted。

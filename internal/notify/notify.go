@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"yanshi/internal/clock"
@@ -177,4 +178,51 @@ func (n *Notifier) Deliver(ctx context.Context, x Notification) (Outcome, error)
 		n.log().Warn("push failed, trying next device", "session", x.SessionID, "device", d.DeviceID, "err", err)
 	}
 	return PushFailed, nil
+}
+
+// RecentDevices 给出 EndUser 最近在前台使用的设备（设备歧义消解，docs/design/m6-decisions.md §3），按 EndUser 缓存
+// TTL：它在每次经 HTTP 的提交时查询，不应给每个 Run 增加一次数据库读取。
+type RecentDevices struct {
+	Registry Registry
+	TTL      time.Duration
+	Clock    interface{ Now() time.Time }
+
+	mu    sync.Mutex
+	cache map[string]recentEntry
+}
+
+type recentEntry struct {
+	label string
+	at    time.Time
+}
+
+// recentCap 是缓存的 EndUser 数上限，满时清空。
+const recentCap = 10_000
+
+// Label 返回最近在前台使用的设备标签；不知道时返回空串（查询出错也是，歧义消解退到下一顺位）。
+func (r *RecentDevices) Label(ctx context.Context, businessLine, endUser string) string {
+	key, now := businessLine+"\x00"+endUser, r.Clock.Now()
+	r.mu.Lock()
+	if e, ok := r.cache[key]; ok && now.Sub(e.at) < r.TTL {
+		r.mu.Unlock()
+		return e.label
+	}
+	r.mu.Unlock()
+	devices, err := r.Registry.List(ctx, businessLine, endUser)
+	if err != nil {
+		return ""
+	}
+	label, latest := "", time.Time{}
+	for _, d := range devices {
+		if d.LastActive.After(latest) {
+			label, latest = d.Label, d.LastActive
+		}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cache == nil || len(r.cache) >= recentCap {
+		r.cache = map[string]recentEntry{}
+	}
+	r.cache[key] = recentEntry{label: label, at: now}
+	return label
 }

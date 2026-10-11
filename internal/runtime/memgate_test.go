@@ -195,3 +195,20 @@ func TestParaphraseAloneTriggersTheGate(t *testing.T) {
 		t.Error("ui context attached to an answer did not count as external content")
 	}
 }
+
+// 只注明用户所在设备的界面上下文由平台填写，不是外部内容，不触发写入闸门。
+func TestDeviceOnlyUIContextDoesNotTaint(t *testing.T) {
+	ui := &v1.ContentBlock{Kind: &v1.ContentBlock_UiContext{UiContext: &v1.UIContext{Device: "phone"}}}
+	b := (&logBuilder{}).
+		add(&v1.SessionCreated{BusinessLine: "bl"}).
+		add(&v1.RunRequested{RunId: "r1", Input: append([]*v1.ContentBlock{ui}, model.TextBlocks("帮我记一下工作邮箱")...)}).
+		add(&v1.AttemptStarted{RunId: "r1", Attempt: 1})
+	st, err := session.Reduce(b.events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := &v1.ToolCall{CallId: "c", Capability: "memory_save", ArgumentsJson: `{"category":"preference","content":"工作邮箱是 zhou@corp.example.com"}`}
+	if _, gated := memoryGate(st, call); gated {
+		t.Error("a device-only ui context made the context external")
+	}
+}

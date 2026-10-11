@@ -62,9 +62,11 @@ func tainted(st *session.State) bool {
 	return false
 }
 
+// hasUIContext 报告输入是否带有界面内容（可能来自第三方的外部内容）。只注明了用户所在设备的界面上下文由平台填写，
+// 不算外部内容。
 func hasUIContext(blocks []*v1.ContentBlock) bool {
 	for _, b := range blocks {
-		if b.GetUiContext() != nil {
+		if u := b.GetUiContext(); u != nil && (u.GetScreen() != "" || u.GetRef() != "" || u.GetSelection() != "" || u.GetContent() != "") {
 			return true
 		}
 	}

@@ -64,6 +64,8 @@ var (
 	SessionLoad         = histogram("session_load_seconds", "认领 Session 时读取并投影日志的耗时。", latency)
 	QueueClaims         = counter("queue_claims_total", "Worker 认领工作队列的结果；result = ok | empty | error。", "result")
 	QueueWait           = histogram("queue_wait_seconds", "工作在被认领之前已可认领多久（排队等待）；priority = interactive | resumed | background。", runDuration, "queue", "priority")
+	Decisions           = counter("decisions_total", "判断（docs/design/m6-decisions.md）；outcome 为选中的选项，或 error（判断不可用，走默认路径）。", "kind", "outcome")
+	DecisionDuration    = histogram("decision_duration_seconds", "一次判断的耗时。", latency, "kind")
 	AdmissionRejections = counter("admission_rejections_total", "因交互工作积压过高而拒绝的新 Run（Submit 准入）。", "business_line")
 	QueueReady          = gaugeVec("queue_ready", "可认领而尚未被认领的工作数（积压），由 Janitor 所在进程定期统计。", "queue", "business_line", "priority")
 	QueueOldestWait     = gaugeVec("queue_oldest_wait_seconds", "积压中等得最久的工作已等待的时长，由 Janitor 所在进程定期统计。", "queue", "business_line", "priority")

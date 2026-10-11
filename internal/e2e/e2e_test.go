@@ -31,6 +31,7 @@ import (
 	"yanshi/internal/capability"
 	"yanshi/internal/channel"
 	"yanshi/internal/clock"
+	"yanshi/internal/decision"
 	"yanshi/internal/delegation"
 	"yanshi/internal/feed"
 	"yanshi/internal/httpapi"
@@ -174,7 +175,7 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 	t.Cleanup(cancel)
 	for i := range workers {
 		w := runtime.New(runtime.Config{ID: fmt.Sprintf("w%d", i), Store: store, Queue: st.Queue, Agents: agents, Model: gw,
-			Catalog: catalog, Dispatch: dispatch, Delegation: delegator, Artifacts: st.artifacts, Memory: mems, Live: bus, LiveEndpoint: peerSrv.URL, IdleWait: 5 * time.Millisecond,
+			Catalog: catalog, Dispatch: dispatch, Delegation: delegator, InjectionCheck: decision.InjectionRules{}, Artifacts: st.artifacts, Memory: mems, Live: bus, LiveEndpoint: peerSrv.URL, IdleWait: 5 * time.Millisecond,
 			Notify: notifier})
 		go w.Run(ctx)
 	}
