@@ -753,6 +753,29 @@ document.addEventListener("visibilitychange", () => {
 
 // —— 启动 ——
 
+/**
+ * detectAuth 探测服务端的鉴权方式：不带令牌请求 Session 列表，-auth none 时返回 200，-auth jwt 时返回 401。
+ * 本机保存的设置与服务端不一致（如服务端从 jwt 改为 none 后重启）时以服务端为准，否则设备的 Hello 全部被拒绝。
+ */
+async function detectAuth() {
+  try {
+    const r = await fetch(`${HTTP}/v1/sessions?business_line=${encodeURIComponent(S.bl)}&end_user=_probe&limit=1`);
+    const mode = r.status === 200 ? "none" : r.status === 401 ? "jwt" : "";
+    if (mode && mode !== S.auth) {
+      S.auth = mode;
+      // 不用 persist：它从已添加的设备重建列表，此时设备还没有添加，会清掉保存的设备。
+      localStorage.setItem(SAVED, JSON.stringify(S));
+      toast(
+        mode === "none" ? "服务端不校验令牌（-auth none），已切换为自报身份" : "服务端要求令牌（-auth jwt）：在 ⚙ 设置中填写各用户的令牌",
+        mode === "jwt" ? "error" : "",
+      );
+    }
+  } catch {
+    // 服务端不可达：沿用本机设置，设备连接时会重试。
+  }
+}
+
+await detectAuth();
 for (const rec of S.devices) addDevice(rec);
 renderSettings();
 if (S.sid) for (const d of userDevices()) ensureSubscribed(d);
