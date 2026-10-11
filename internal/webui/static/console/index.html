@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>yanshi 调试控制台</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/console/console.css" />
+  </head>
+  <body>
+    <header id="top">
+      <b class="brand">yanshi 调试控制台</b>
+      <label>业务线<input id="bl" size="8" /></label>
+      <label>Agent<input id="agent" size="10" list="agent-list" /></label>
+      <datalist id="agent-list">
+        <option value="console">脚本化模型，无需密钥</option>
+        <option value="assistant">真实模型</option>
+        <option value="echo">复述</option>
+      </datalist>
+      <label
+        >鉴权<select id="auth">
+          <option value="none">自报身份（serve -auth none）</option>
+          <option value="jwt">令牌（serve -auth jwt）</option>
+        </select></label
+      >
+      <span class="spacer"></span>
+      <span id="gw" class="muted"></span>
+      <a href="/call" target="_blank">通话页</a>
+    </header>
+
+    <div id="layout">
+      <aside id="side">
+        <section>
+          <h3>EndUser</h3>
+          <div id="users"></div>
+          <button id="add-user" class="small">+ 用户</button>
+          <p class="hint" id="jwt-hint" hidden>
+            令牌：<code>yanshi token -key demo.key -user &lt;用户&gt;</code>。网关以令牌中的身份为准。
+          </p>
+        </section>
+        <section>
+          <h3>设备</h3>
+          <div id="device-list"></div>
+          <div class="row">
+            <select id="new-user" title="设备所属的 EndUser"></select>
+            <button data-preset="phone" class="small add-device">+ 手机</button>
+            <button data-preset="desktop" class="small add-device">+ 电脑</button>
+            <button data-preset="web" class="small add-device">+ 网页</button>
+          </div>
+          <p class="hint">手机与电脑是 Node（声明 Capability、执行调用），同时作会话客户端；网页只作会话客户端。</p>
+        </section>
+        <section>
+          <h3>Session</h3>
+          <div class="row">
+            <input id="sid" placeholder="Session ID" />
+          </div>
+          <div class="row">
+            <button id="create" class="small primary">新建</button>
+            <button id="open" class="small">打开</button>
+            <button id="close-session" class="small">关闭</button>
+            <button id="list-sessions" class="small">列出</button>
+          </div>
+          <div id="sessions"></div>
+        </section>
+        <section>
+          <h3>演示</h3>
+          <button id="demo" class="small primary">一键搭建：手机 + 电脑 + 网页</button>
+          <p class="hint">
+            Agent <code>console</code> 按命令行事：<code>call &lt;工具&gt; {JSON}</code> 调用能力（工具名为
+            <code>&lt;设备标签&gt;__&lt;能力&gt;</code>，可多行依次调用），<code>ask 问题 | 选项 | 选项</code> 提问，
+            <code>stream 200</code> 长输出（插话、中断、晚加入）；其余输入原样复述。每台设备的输入框下有命令模板。
+          </p>
+        </section>
+      </aside>
+
+      <main id="stage">
+        <div id="session-bar" class="muted">没有打开的 Session：新建一个，或在左侧输入 ID 后打开。</div>
+        <div id="devices"></div>
+      </main>
+
+      <div id="splitter" title="拖动调整高度"></div>
+
+      <section id="inspector">
+        <nav id="tabs">
+          <button data-tab="events" class="active">事件</button>
+          <button data-tab="frames">帧</button>
+          <button data-tab="state">状态</button>
+          <button data-tab="verify">验证</button>
+        </nav>
+
+        <div class="tab" id="tab-events">
+          <div class="toolbar">
+            <label class="inline">视角<select id="ev-view"></select></label>
+            <input id="ev-filter" placeholder="过滤：种类、Run、调用 ID…" />
+            <button id="ev-http" class="small">从 HTTP 重新拉取</button>
+            <span id="ev-count" class="muted"></span>
+          </div>
+          <div class="split">
+            <div id="ev-list" class="list"></div>
+            <pre id="ev-detail" class="detail"></pre>
+          </div>
+        </div>
+
+        <div class="tab" id="tab-frames" hidden>
+          <div class="toolbar">
+            <select id="fr-device"></select>
+            <select id="fr-dir">
+              <option value="">双向</option>
+              <option value="out">↑ 设备→网关</option>
+              <option value="in">↓ 网关→设备</option>
+            </select>
+            <input id="fr-filter" placeholder="过滤：消息种类或内容" />
+            <label class="inline"><input type="checkbox" id="fr-deltas" /> 显示增量</label>
+            <label class="inline"><input type="checkbox" id="fr-pause" /> 暂停</label>
+            <button id="fr-clear" class="small">清空</button>
+            <span id="fr-count" class="muted"></span>
+          </div>
+          <div class="split">
+            <div id="fr-list" class="list"></div>
+            <div class="detail-col">
+              <pre id="fr-detail" class="detail"></pre>
+              <div class="raw">
+                <div class="row">
+                  <b>手工发送</b>
+                  <select id="raw-device"></select>
+                  <select id="raw-template"></select>
+                  <button id="raw-send" class="small primary">发送</button>
+                </div>
+                <textarea
+                  id="raw-body"
+                  spellcheck="false"
+                  placeholder='NodeMessage 的 protojson，如 {"subscribe": {"session_id": "…"}}'
+                ></textarea>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tab" id="tab-state" hidden>
+          <div class="toolbar">
+            <label class="inline">身份<select id="st-user"></select></label>
+            <button data-q="session" class="small primary">Session 投影</button>
+            <button data-q="nodes" class="small">Node 目录</button>
+            <button data-q="sessions" class="small">Session 列表</button>
+            <button data-q="events" class="small">事件（HTTP）</button>
+            <button data-q="artifacts" class="small">工件</button>
+            <button data-q="memories" class="small">Memory</button>
+            <button data-q="quota" class="small">配额</button>
+            <button data-q="usage" class="small">用量</button>
+            <label class="inline"><input type="checkbox" id="st-auto" /> 每 2 秒刷新</label>
+          </div>
+          <div class="split">
+            <div id="st-summary" class="list"></div>
+            <pre id="st-detail" class="detail"></pre>
+          </div>
+        </div>
+
+        <div class="tab" id="tab-verify" hidden>
+          <div class="toolbar">
+            <button id="vf-all" class="small primary">运行全部</button>
+            <span id="vf-summary" class="muted"></span>
+            <span class="muted">每个场景用自己的模拟设备与 Session 对网关逐项检查；需要 Agent 使用脚本化模型（console）。</span>
+          </div>
+          <div id="vf-list" class="list"></div>
+        </div>
+      </section>
+    </div>
+
+    <template id="device-tpl">
+      <div class="device">
+        <div class="dev-head">
+          <span class="dot"></span>
+          <b class="dev-label"></b>
+          <span class="dev-meta muted"></span>
+          <span class="spacer"></span>
+          <button class="tiny dev-online" title="连接 / 断开（断开后不重连）"></button>
+          <button class="tiny dev-drop" title="模拟网络中断：断开后自动重连">断网</button>
+          <button class="tiny dev-remove" title="移除设备">✕</button>
+        </div>
+        <div class="dev-sub">
+          <label class="inline"><input type="checkbox" class="dev-focus" /> 前台</label>
+          <span class="dev-presence"></span>
+        </div>
+        <div class="dev-log"></div>
+        <div class="dev-pending"></div>
+        <div class="dev-compose">
+          <textarea rows="2" placeholder="输入，Enter 发送，Shift+Enter 换行"></textarea>
+          <div class="row">
+            <select class="dev-templates"></select>
+            <span class="spacer"></span>
+            <button class="tiny dev-interrupt" title="中断进行中的 Run">中断</button>
+            <button class="tiny primary dev-send">发送</button>
+          </div>
+          <details class="dev-opts">
+            <summary>提交选项</summary>
+            <label class="inline"><input type="checkbox" class="opt-ui" /> 附界面上下文</label>
+            <input class="opt-ui-screen" placeholder="界面，如 订单详情" />
+            <input class="opt-ui-content" placeholder="可见内容" />
+            <label class="inline"><input type="checkbox" class="opt-drop" /> 发出后立即断网（结果未知，按 input_id 重试）</label>
+            <button class="tiny opt-resend" title="以上一条的 input_id 再提交一次：应返回 duplicate">重发上一条（同 input_id）</button>
+          </details>
+        </div>
+        <details class="dev-node">
+          <summary>Node：能力与调用</summary>
+          <table class="caps"></table>
+          <div class="ledger"></div>
+        </details>
+      </div>
+    </template>
+
+    <script type="module" src="/console/app.js"></script>
+  </body>
+</html>

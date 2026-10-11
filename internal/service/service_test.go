@@ -228,6 +228,45 @@ func TestAnswer(t *testing.T) {
 	}
 }
 
+// TestDecideAfterRunEnded：重复的审批决定在 Run 结束后同样返回 conflict（node.proto ClientRequest：响应丢失后重试
+// 审批不会被误报为 Session 不存在）；从未请求过审批的调用仍是 not_found。
+func TestDecideAfterRunEnded(t *testing.T) {
+	ctx := context.Background()
+	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "a", Version: "1", Model: "echo/any"})
+	store := &session.Store{Log: memlog.New(), IDs: ids.Sequential("id"), Clock: clock.Real{}}
+	svc := &service.Service{Store: store, Queue: memqueue.New(clock.Real{}), Agents: agents}
+	sid, _ := svc.Create(ctx, service.CreateRequest{BusinessLine: "bl", EndUser: "u", Agent: "a"})
+	res, err := svc.Submit(ctx, sid, model.TextBlocks("写文件"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, _ := svc.Load(ctx, sid)
+	err = store.Commit(ctx, st,
+		&v1.Event{Payload: &v1.Event_AttemptStarted{AttemptStarted: &v1.AttemptStarted{RunId: res.RunID, Attempt: 1}}},
+		&v1.Event{Payload: &v1.Event_AssistantMessage{AssistantMessage: &v1.AssistantMessage{RunId: res.RunID, Attempt: 1,
+			ToolCalls: []*v1.ToolCall{{CallId: "c1", Capability: "pc__write_file", ArgumentsJson: "{}"}}}}},
+		&v1.Event{Payload: &v1.Event_ApprovalRequested{ApprovalRequested: &v1.ApprovalRequested{RunId: res.RunID, Attempt: 1, CallId: "c1"}}},
+		&v1.Event{Payload: &v1.Event_RunSuspended{RunSuspended: &v1.RunSuspended{RunId: res.RunID, Attempt: 1}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Decide(ctx, sid, "c1", false, "u"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Decide(ctx, sid, "c1", true, "u"); !errors.Is(err, service.ErrConflict) {
+		t.Fatalf("second decision while the run is active: %v", err)
+	}
+	if err := svc.Interrupt(ctx, sid, res.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Decide(ctx, sid, "c1", true, "u"); !errors.Is(err, service.ErrConflict) {
+		t.Fatalf("second decision after the run ended: %v", err)
+	}
+	if err := svc.Decide(ctx, sid, "c9", true, "u"); !errors.Is(err, service.ErrNotFound) {
+		t.Fatalf("decision on an unknown call: %v", err)
+	}
+}
+
 // TestUIContextLimits：每条输入至多一个界面上下文，字段不超过上限，且须伴随用户的话；违规的界面内容同样被拒绝。
 func TestUIContextLimits(t *testing.T) {
 	ctx := context.Background()

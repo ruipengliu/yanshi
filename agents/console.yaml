@@ -1,0 +1,17 @@
+# 调试控制台（/console）用 Agent：脚本化模型，无需模型密钥，结果确定（internal/model/script）。
+# 输入中的命令：call <工具名后缀> [JSON]、ask <问题> | 选项…、stream <n>；没有命令时复述输入。
+name: console
+version: "1"
+model: script/any
+instructions: ""
+capabilities:
+  - clock_now
+  - ask_user
+  - memory_save
+  - memory_forget
+  - memory_search
+  - device:*
+  - sandbox:*
+max_turns: 50
+memory:
+  recall: 4

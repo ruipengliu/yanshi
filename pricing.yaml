@@ -9,5 +9,6 @@ models:                                   # 元 / 百万 token（数值等于微
   volc/1.2.6.1: {input: 10, cached_input: 5, input_audio: 80, output: 80, output_audio: 300}
   echo/any: {input: 0, output: 0}         # 离线复述与压测模型不产生费用
   bench/latency=200ms,turns=2,tool=clock_now: {input: 0, output: 0}
+  script/any: {input: 0, output: 0}       # 脚本化模型（调试控制台）
 sandbox:
   per_hour: 0.36                          # 元 / 小时执行时间（示例值）

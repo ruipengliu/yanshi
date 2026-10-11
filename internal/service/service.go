@@ -366,6 +366,18 @@ func askedBefore(st *session.State, callID string) bool {
 	return false
 }
 
+// approvalRequestedBefore 报告 Session 中是否曾为该调用请求审批。
+func approvalRequestedBefore(st *session.State, callID string) bool {
+	for _, r := range st.Runs {
+		for _, c := range r.Calls {
+			if c.Call.GetCallId() == callID && c.Approval != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // typedAnswer 把用户在对话中直接输入的内容作为对提问的回答：文字为回答文字，其余内容块（图片等）随附。
 func typedAnswer(r *session.Run, c *session.Call, input []*v1.ContentBlock) (*v1.Event, error) {
 	q, err := askuser.Parse(c.Call.GetArgumentsJson())
@@ -456,6 +468,11 @@ func (s *Service) Decide(ctx context.Context, sessionID, callID string, approved
 			}
 		}
 		if call == nil {
+			// 已结束的 Run 中请求过审批的调用：重复的决定（如响应丢失后的重试）与 Run 进行中时一样返回 conflict，
+			// 客户端不会误以为 Session 不存在（node.proto ClientRequest）。
+			if approvalRequestedBefore(st, callID) {
+				return fmt.Errorf("%w: call %s is not awaiting approval", ErrConflict, callID)
+			}
 			return fmt.Errorf("%w: no active call %s", ErrNotFound, callID)
 		}
 		if !call.AwaitingApproval() {

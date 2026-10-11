@@ -48,6 +48,10 @@ MCP（[设计](docs/design/m5-mcp.md)）：远程 MCP Server 登记在 `mcp/*.ya
 
 模型通过 AgentDef（`agents/*.yaml`）的 `model: provider/model` 选择：`ark/…`（火山方舟）、`local/…`（私有化 OpenAI 兼容服务，`YANSHI_LOCAL_BASE_URL`）、`echo/any`。
 
+## 调试控制台
+
+`serve` 后浏览器打开 `http://localhost:8080/console`（[设计](docs/design/console.md)）：在一个页面里模拟多台手机、电脑、网页接入同一 Session，查看每台设备收发的帧、事件与投影，手工构造帧，并一键运行多端语义的验证场景。Agent `console` 使用脚本化模型，无需模型密钥：`call <设备标签>__<能力> {JSON}` 调用设备能力，`ask 问题 | 选项 | 选项` 提问，`stream 200` 长输出。点"一键搭建"即可开始演示。
+
 ## 端侧 SDK
 
 接入网关的 SDK（[设计](docs/design/m3-client-sdks.md)）：`sdk/nodesdk`（Go，电脑与服务端）、`sdk/web`（TypeScript，`@yanshi/client`，网页只作会话客户端）、`sdk/mobile`（gomobile 绑定，`make mobile` 生成 `build/mobile/Yanshi.xcframework` 并在 macOS 与 iOS 模拟器上实测）。

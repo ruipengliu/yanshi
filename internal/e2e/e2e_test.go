@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -44,6 +43,7 @@ import (
 	"yanshi/internal/memory"
 	"yanshi/internal/memory/pgmemory"
 	"yanshi/internal/model"
+	"yanshi/internal/model/script"
 	"yanshi/internal/moderation"
 	"yanshi/internal/node"
 	"yanshi/internal/node/pgnode"
@@ -65,48 +65,6 @@ import (
 	"yanshi/internal/workqueue/pgqueue"
 	"yanshi/sdk/nodesdk"
 )
-
-// script 是脚本化模型：用户消息形如 "call <工具名后缀> [JSON 参数]"，即调用名称以该后缀结尾的工具；
-// 收到工具结果后回复 "done: <结果>"。"stream <n>" 则在约 n×20ms 内逐段流式输出，用于观察实时增量。
-type script struct{}
-
-func (script) Generate(ctx context.Context, req *model.Request, onDelta func(model.Delta)) (*model.Response, error) {
-	// 通话的转写（"[语音通话] …"）不是给脚本的命令：取它之前的最后一条消息。
-	last := req.Messages[len(req.Messages)-1]
-	for i := len(req.Messages) - 1; i > 0 && strings.HasPrefix(model.Text(last.Content), "[语音通话]"); i-- {
-		last = req.Messages[i-1]
-	}
-	if last.Role == model.RoleTool {
-		return &model.Response{Content: model.TextBlocks("done: " + model.Text(last.Content))}, nil
-	}
-	// 命令只看第一行：Call 派生的任务后附有说明（model.FromCallNote）。
-	command, _, _ := strings.Cut(strings.TrimSpace(model.Text(last.Content)), "\n")
-	if n, ok := strings.CutPrefix(command, "stream "); ok {
-		count, _ := strconv.Atoi(n)
-		for i := range count {
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(20 * time.Millisecond):
-			}
-			if onDelta != nil {
-				onDelta(model.Delta{Text: fmt.Sprintf("chunk%d ", i)})
-			}
-		}
-		return &model.Response{Content: model.TextBlocks("streamed")}, nil
-	}
-	rest, _ := strings.CutPrefix(command, "call ")
-	suffix, args, _ := strings.Cut(rest, " ")
-	if args == "" {
-		args = "{}"
-	}
-	for _, t := range req.Tools {
-		if strings.HasSuffix(t.Name, suffix) {
-			return &model.Response{ToolCalls: []*v1.ToolCall{{CallId: "x", Capability: t.Name, ArgumentsJson: args}}}, nil
-		}
-	}
-	return &model.Response{Content: model.TextBlocks("no such tool")}, nil
-}
 
 type env struct {
 	t      *testing.T
@@ -222,7 +180,7 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 		Sandbox: &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID}, MCP: st.mcp}
 	router := &sandbox.Router{Hub: hub, Queue: st.sandboxQueue}
 	gw := model.NewGateway()
-	gw.Register("script", script{})
+	gw.Register("script", script.Provider{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)

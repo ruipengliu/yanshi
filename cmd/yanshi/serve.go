@@ -47,6 +47,7 @@ import (
 	"yanshi/internal/model/bench"
 	"yanshi/internal/model/echo"
 	"yanshi/internal/model/openaicompat"
+	"yanshi/internal/model/script"
 	"yanshi/internal/moderation"
 	"yanshi/internal/node"
 	"yanshi/internal/node/pgnode"
@@ -185,6 +186,7 @@ var defaultModelLimits = model.Limits{Timeout: 10 * time.Minute, Retries: 2, Bac
 // gateway 按环境变量配置模型供应商；真实提供商经 model.Guard 施加 limits（每个提供商各自计数）：
 //
 //	echo   始终可用
+//	script 始终可用：按输入中的命令调用工具（调试控制台与测试，internal/model/script）
 //	ark       ARK_API_KEY（可选 ARK_BASE_URL）
 //	tokenhub  TOKENHUB_API_KEY（可选 TOKENHUB_BASE_URL），腾讯云 TokenHub 的 OpenAI 兼容接口
 //	local  YANSHI_LOCAL_BASE_URL（可选 YANSHI_LOCAL_API_KEY），私有化 OpenAI 兼容推理服务
@@ -192,6 +194,7 @@ func gateway(logger *slog.Logger, limits model.Limits) *model.Gateway {
 	gw := model.NewGateway()
 	gw.Register("echo", echo.Provider{})
 	gw.Register("bench", bench.Provider{})
+	gw.Register("script", script.Provider{})
 	register := func(name, base, key string) {
 		gw.Register(name, &model.Guard{Name: name, Provider: &openaicompat.Provider{BaseURL: base, APIKey: key}, Limits: limits})
 		logger.Info("model provider configured", "provider", name, "base_url", base,
@@ -452,9 +455,11 @@ func serve(args []string) error {
 		Presence: &presence.Service{Store: b.presence, Deletions: b.deletions, Clock: clk}, Push: b.push, Calls: calls, Clock: clk, Logger: logger}, Logger: logger}
 	mux.Handle("/v1/connect", connGW)
 	mux.Handle("/v1/nodes/connect", connGW)
-	// 网页通话页（开发与演示，docs/design/m3-call.md §8）。
+	// 网页通话页与调试控制台（开发与演示，docs/design/m3-call.md §8、docs/design/console.md）。
 	mux.Handle("/call", webui.Handler())
 	mux.Handle("/call/", webui.Handler())
+	mux.Handle("/console", webui.Handler())
+	mux.Handle("/console/", webui.Handler())
 	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.usage, Push: b.push, Logger: logger}).Handler())
 	srv := &http.Server{
 		Addr:              *addr,
