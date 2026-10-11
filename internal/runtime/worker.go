@@ -368,29 +368,28 @@ func (w *Worker) commit(ctx context.Context, events ...*v1.Event) error {
 
 // tryCommit 同 commit，并报告事件是否已写入。
 func (w *Worker) tryCommit(ctx context.Context, events ...*v1.Event) (bool, error) {
-	for range 3 {
-		err := w.cfg.Store.Commit(ctx, w.st, events...)
-		if !errors.Is(err, eventlog.ErrConflict) {
-			if err == nil {
-				w.observeCommitted(events)
-			}
-			return err == nil, err
+	// written 记录最后一次决策是否给出了事件：Update 返回 nil 时，给出事件的那次决策已提交，
+	// 不给事件（Attempt 已失效）则什么也没写。每次提交前都检查 Attempt，冲突后同步到的中断或接管随即生效。
+	written := false
+	err := w.cfg.Store.Update(ctx, w.st, func(st *session.State) (session.Decision, error) {
+		if r := st.Run(w.runID); r == nil || !w.owns(r) {
+			written = false
+			return session.Decision{}, nil
 		}
-		metrics.CommitConflicts.WithLabelValues().Inc()
-		if err := w.cfg.Store.SyncAfterConflict(ctx, w.st); err != nil {
-			if errors.Is(err, session.ErrGone) {
-				// Session 已删除：放弃并丢弃全部本地状态。否则本地投影仍认为调用"已由我开始、尚无结果"，
-				// 而按需续约又可能尚未发现租约已被移除，下一步会再次执行非幂等调用（模拟测试发现）。
-				w.drop()
-				return false, nil
-			}
-			return false, err
-		}
-		if r := w.st.Run(w.runID); r == nil || !w.owns(r) {
-			return false, nil
-		}
+		written = true
+		return session.Decision{Events: events}, nil
+	})
+	if errors.Is(err, session.ErrGone) {
+		// Session 已删除：放弃并丢弃全部本地状态。否则本地投影仍认为调用"已由我开始、尚无结果"，
+		// 而按需续约又可能尚未发现租约已被移除，下一步会再次执行非幂等调用（模拟测试发现）。
+		w.drop()
+		return false, nil
 	}
-	return false, fmt.Errorf("commit to session %s: too many conflicts", w.st.SessionID)
+	if err != nil || !written {
+		return false, err
+	}
+	w.observeCommitted(events)
+	return true, nil
 }
 
 // suspend 追加 events 与 RunSuspended，并把 Session 停放到 until；之后本 Worker 不再持有该 Run。
