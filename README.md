@@ -50,7 +50,13 @@ MCP（[设计](docs/design/m5-mcp.md)）：远程 MCP Server 登记在 `mcp/*.ya
 
 ## 调试控制台
 
-`serve` 后浏览器打开 `http://localhost:8080/console`（[设计](docs/design/console.md)）：在一个页面里模拟多台手机、电脑、网页接入同一 Session，查看每台设备收发的帧、事件与投影，手工构造帧，并一键运行多端语义的验证场景。Agent `console` 使用脚本化模型，无需模型密钥：`call <设备标签>__<能力> {JSON}` 调用设备能力，`ask 问题 | 选项 | 选项` 提问，`stream 200` 长输出。点"一键搭建"即可开始演示。
+`serve -faults` 后浏览器打开 `http://localhost:8080/console`（[设计](docs/design/console.md)），三个视图：
+
+- **对话**：一台设备全屏聊天，可以附图片和文件、按住说话发语音消息、打电话；Agent 的卡片、审批与提问都在对话里处理。推荐 Agent `concierge`：它把闹钟、导航、查资料委托给专员，在模拟设备上执行，再用卡片汇总（需要 `ARK_API_KEY`）。
+- **设备**：手机、电脑、手表、音箱、车机与网页，各自一条 Connection。可以上线、下线、断网、崩溃，看模拟应用的状态（闹钟、日程、短信、导航……），切换每个能力的执行方式（自动、手工、报错、不回应、执行中崩溃）。
+- **控制台**：按 Run 与 Attempt 分泳道的时间线（委托的子 Session 嵌套显示）、事件、帧、投影、服务端故障注入（`-faults`）、进程指标与一键运行的验证场景。
+
+没有模型密钥时选 Agent `console`（脚本化模型）：`call <设备标签>__<能力> {JSON}` 调用设备能力，`call show_card {…}` 展示卡片，`ask 问题 | 选项 | 选项` 提问，`stream 200` 长输出。
 
 ## 端侧 SDK
 
@@ -60,7 +66,7 @@ MCP（[设计](docs/design/m5-mcp.md)）：远程 MCP Server 登记在 `mcp/*.ya
 
 设置 `VOLC_SPEECH_API_KEY`（豆包语音控制台的 API Key）后，`serve` 支持 Call（[设计](docs/design/m3-call.md)）：实时语音模型应答，需要做事时派生后台 Run。
 
-浏览器打开 `http://localhost:8080/call`，填写业务线与用户（`-auth none`）或令牌（`-auth jwt`），连接后点"开始通话"。浏览器只在 localhost 或 HTTPS 下允许使用麦克风，建议戴耳机。
+浏览器打开调试控制台 `http://localhost:8080/console`，在对话视图中新建 Session 后点 📞。浏览器只在 localhost 或 HTTPS 下允许使用麦克风，建议戴耳机。
 
 ## HTTP API
 

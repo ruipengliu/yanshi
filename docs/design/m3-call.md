@@ -1,6 +1,6 @@
 # M3 Call：全双工语音通话
 
-> 状态：已实现（服务端、网页 SDK 与网页通话页；Go 与移动端 SDK 的通话接口待做） · 依赖：[多端双工通道](./m3-duplex-channel.md)、[端侧 SDK](./m3-client-sdks.md) · ADR-0005、ADR-0027 · 契约：[`node.proto`](../../proto/yanshi/v1/node.proto) 的 Call 消息、[`event.proto`](../../proto/yanshi/v1/event.proto) 的 `CallStarted` / `CallTranscript` / `CallEnded`
+> 状态：已实现（服务端、网页 SDK，调试控制台的对话视图中可通话；Go 与移动端 SDK 的通话接口待做） · 依赖：[多端双工通道](./m3-duplex-channel.md)、[端侧 SDK](./m3-client-sdks.md) · ADR-0005、ADR-0027 · 契约：[`node.proto`](../../proto/yanshi/v1/node.proto) 的 Call 消息、[`event.proto`](../../proto/yanshi/v1/event.proto) 的 `CallStarted` / `CallTranscript` / `CallEnded`
 
 ## 1. 目标
 
@@ -137,12 +137,13 @@
 
 **网页 SDK**：`client.startCall(sessionId, handler)` 在接通后返回 `Call`（`sendAudio`、`mute`、`interrupt`、`hangup`）。handler 的 `onAudio` 收到 `Int16Array`，连接断开时 `onEnded("disconnected")`。
 
-**网页通话页**：`serve` 提供 `/call`（`internal/webui`），用于开发与演示。
+**在浏览器中通话**：调试控制台（`/console`，[设计](./console.md) §2）的对话视图有通话按钮。原来的独立通话页 `/call` 已并入控制台，旧链接重定向到 `/console`。
 
-- 麦克风经浏览器的回声消除与降噪，AudioWorklet 重采样为 16 kHz 后按 20 ms 分帧；播放按到达顺序排队，打断时清空。
-- 页面同时显示对话（含通话转写、后台任务、审批与提问卡片），可打字。
+- 麦克风经浏览器的回声消除与降噪，AudioWorklet 重采样为 16 kHz 后按 20 ms 分帧（`static/console/audio.js`）；播放按到达顺序排队，打断时清空。
+- 控制台的模拟设备以 protojson 文本帧收发 Call 消息（音频为 base64），与网页 SDK 的二进制帧语义相同。
+- 通话转写、后台任务、审批与提问卡片显示在同一条对话里，可以同时打字。
 - 浏览器只在 localhost 或 HTTPS 下允许使用麦克风。外放时回声消除不一定完全有效，建议戴耳机。
-- 页面使用的 SDK 打包产物 `internal/webui/static/yanshi.js` 随代码提交，`make check` 检查它与源码一致。
+- 网页 SDK 的打包产物 `internal/webui/static/yanshi.js` 由 `/sdk/yanshi.js` 提供（在浏览器中直接试用 SDK），随代码提交，`make check` 检查它与源码一致。
 
 ## 9. 测试与评测
 
@@ -165,7 +166,7 @@
 - 网页 SDK：单元测试，以及 `TestWebSDK` 中经网关的通话（`make check`）。
 - 实测（不在 `make check` 中，需要 `VOLC_SPEECH_API_KEY`）：
   - `YANSHI_TEST_VOLC=1 go test ./internal/realtime/volc`：识别、函数调用、语音回复、用量、语音合成。
-  - 网页通话页以 headless Chrome 对真实模型跑通（以 WAV 代替麦克风）。
+  - 网页通话页以 headless Chrome 对真实模型跑通（以 WAV 代替麦克风）；并入控制台后以同样方式复测（2026-10-11）。
 - **评测**（`evals/call-*.yaml`，`call: true`）：每轮的 input 经豆包语音合成为用户语音，按实时节奏送入真实的 Call，检查派生任务（`tasks`、`task_contains`）、调用、Memory、语音回复。
   - `call-chitchat`：闲聊与常识不派生任务。
   - `call-remember-allergy`：让助手记住健康信息时交给后台保存，不口头答应。

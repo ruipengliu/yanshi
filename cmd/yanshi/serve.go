@@ -519,11 +519,11 @@ func serve(args []string) error {
 	// 同一条连接兼任 Node 与会话客户端（ADR-0024）；/v1/nodes/connect 是早期路径，保留兼容。
 	mux.Handle("/v1/connect", connGW)
 	mux.Handle("/v1/nodes/connect", connGW)
-	// 网页通话页与调试控制台（开发与演示，docs/design/m3-call.md §8、docs/design/console.md）。
+	// 调试控制台（开发与演示，docs/design/console.md）；/call 是并入控制台之前的通话页，重定向到 /console。
 	mux.Handle("/call", webui.Handler())
-	mux.Handle("/call/", webui.Handler())
 	mux.Handle("/console", webui.Handler())
 	mux.Handle("/console/", webui.Handler())
+	mux.Handle("/sdk/yanshi.js", webui.Handler())
 	mux.Handle("GET /readyz", ready)
 	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.Usage, Push: b.Push, Feeds: feeds, Faults: injector, Logger: logger}).Handler())
 	srv := &http.Server{

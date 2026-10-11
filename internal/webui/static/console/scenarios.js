@@ -12,6 +12,7 @@ import { DEFAULT_FILES, DEVICE_PRESETS, RequestError, SessionView, SimDevice, ne
  *   httpBase     HTTP API 地址，如 http://127.0.0.1:8080
  *   businessLine 业务线（-auth none 时自报；jwt 时以令牌为准，可为空）
  *   agent        使用脚本化模型的 Agent，默认 console
+ *   helper       委托场景的目标 Agent（脚本化模型），默认 console-helper
  *   users        [{endUser, token}, {endUser, token}]：EndUser A 与 B（B 只用于隔离检查）
  */
 export class Context {
@@ -25,6 +26,11 @@ export class Context {
 
   step(msg) {
     this.log(msg);
+  }
+
+  /** 环境不满足（如没有开启 serve -faults）时跳过场景。 */
+  skip(msg) {
+    throw new SkipError(msg);
   }
 
   check(cond, msg) {
@@ -42,6 +48,7 @@ export class Context {
     const p = DEVICE_PRESETS[preset];
     const d = new SimDevice({
       url: this.env.wsUrl,
+      httpBase: this.env.httpBase,
       deviceId: `console-${u.endUser}-${name}`,
       label: `t-${name}`,
       kind: p.kind,
@@ -116,6 +123,8 @@ export class Context {
     for (const d of this.devices) d.disconnect();
   }
 }
+
+class SkipError extends Error {}
 
 /** 断言 f 以 RequestError(code) 失败。 */
 async function rejects(c, f, code, msg) {
@@ -453,6 +462,144 @@ export const SCENARIOS = [
       return { sessionId: sid };
     },
   },
+  {
+    id: "cards",
+    title: "卡片",
+    description:
+      "show_card 展示的卡片多端可见；同一 card_id 再次展示即替换；点按钮作为一条输入，标签由平台按卡片填写；两台设备连点只生效一次；不存在的动作被拒绝。",
+    async run(c) {
+      const phone = await c.device("phone", { preset: "phone" });
+      const web = await c.device("web", { preset: "web" });
+      const sid = await c.newSession(web);
+      const pv = c.view(phone, sid);
+      const wv = c.view(web, sid);
+      const show = (title, buttons) =>
+        `call show_card ${JSON.stringify({ card_id: "alarm", title, image: "icon:alarm", body: [{ type: "facts", facts: [{ label: "设备", value: "手机" }] }], buttons })}`;
+      let r = await web.submit(
+        sid,
+        show("闹钟 07:00", [
+          { id: "ok", label: "好的" },
+          { id: "later", label: "改到 7:30" },
+        ]),
+      );
+      await c.runEnd(wv, r.runId);
+      const first = await pv.waitFor("card on the phone", () => pv.cards().get("alarm"));
+      c.check(first.card.title === "闹钟 07:00" && first.card.buttons.length === 2, "手机上看到网页那边展示的卡片");
+      r = await web.submit(sid, show("闹钟 07:30", [{ id: "ok", label: "好的" }]));
+      await c.runEnd(wv, r.runId);
+      const latest = await pv.waitFor(
+        "replaced card",
+        () => pv.cards().get("alarm")?.card.title === "闹钟 07:30" && pv.cards().get("alarm"),
+      );
+      const versions = pv.events.filter((e) => e.tool_result?.content?.some((b) => b.card?.card_id === "alarm")).length;
+      c.check(latest.card.call_id !== first.card.call_id && versions === 2, "同一 card_id 再次展示替换了前一版（日志中两版都在）");
+      const action = { card_id: "alarm", call_id: latest.card.call_id, action: "ok", seq: latest.seq };
+      const a = await phone.submitCardAction(sid, action);
+      c.check(!a.duplicate && !a.steered, '在手机上点"好的"：开启新 Run');
+      await c.runEnd(pv, a.runId);
+      const input = pv
+        .payloads("run_requested")
+        .find((p) => p.run_id === a.runId)
+        .input.find((b) => b.card_action).card_action;
+      c.check(input.label === "好的", "动作的标签由平台按卡片填写");
+      c.check(pv.reply(a.runId).includes("选择了「好的」"), "模型（脚本）看到的是卡片动作的文字");
+      const again = await web.submitCardAction(sid, action);
+      c.check(again.duplicate && again.runId === a.runId, "网页上再点一次同一个按钮：duplicate，不再生效");
+      await rejects(c, () => web.submitCardAction(sid, { ...action, action: "nope" }), "invalid", "卡片上没有的动作被拒绝");
+      return { sessionId: sid };
+    },
+  },
+  {
+    id: "delegation",
+    title: "委托",
+    description:
+      "委托是路由到子 Session 的调用（ADR-0031）：父 Run 挂起，子 Session 完成后由它的 Worker 写回结果，父 Run 接着完成；子 Session 可以订阅查看。",
+    async run(c) {
+      const web = await c.device("web", { preset: "web" });
+      const sid = await c.newSession(web);
+      const v = c.view(web, sid);
+      const helper = c.env.helper ?? "console-helper";
+      const r = await web.submit(sid, `call agent__${helper} {"task":"子任务：复述这句话"}`);
+      c.step(`委托给 ${helper}，Run ${r.runId}`);
+      const end = await c.runEnd(v, r.runId, 30_000);
+      c.check(end.kind === "run_completed", "父 Run 完成");
+      const d = v.delegations()[0];
+      c.check(d && d.childSessionId, `调用派发到子 Session（node ${d ? "@agent/" + d.childSessionId : "?"}）`);
+      const cv = c.view(web, d.childSessionId);
+      const child = await cv.waitFor("child run", () => cv.payloads("run_requested")[0]);
+      c.check(textOf(child.input).includes("子任务"), "子 Session 的输入是委托的任务");
+      await c.runEnd(cv, child.run_id);
+      c.check(v.reply(r.runId).includes("子任务"), "子 Run 的回复作为调用结果写回父 Run");
+      return { sessionId: sid };
+    },
+  },
+  {
+    id: "faults",
+    title: "服务端故障注入",
+    description:
+      "需要 serve -faults（ADR-0033）。模型调用失败后 Worker 重试、Run 照常完成；Worker 崩溃后租约过期被接管（新的 Attempt），Run 完成。",
+    async run(c) {
+      const probe = await c.http("GET", "/v1/debug/faults");
+      if (probe.status !== 200) c.skip(`服务端故障注入未开启（GET /v1/debug/faults → ${probe.status}）`);
+      const web = await c.device("web", { preset: "web" });
+      const sid = await c.newSession(web);
+      const v = c.view(web, sid);
+      let rule = await c.http("POST", "/v1/debug/faults", { body: { kind: "model_error", session_id: sid, count: 1 } });
+      c.check(rule.status === 201, "注入：下一次模型调用返回 503");
+      let r = await web.submit(sid, "第一句");
+      let end = await c.runEnd(v, r.runId, 30_000);
+      const fired = await c.http("GET", "/v1/debug/faults");
+      c.check(
+        end.kind === "run_completed" && fired.json.recent.some((f) => f.rule_id === rule.json.id && f.session_id === sid),
+        "故障已注入，Run 仍然完成（Worker 重试了这一步）",
+      );
+      rule = await c.http("POST", "/v1/debug/faults", { body: { kind: "worker_crash", session_id: sid, count: 1 } });
+      c.check(rule.status === 201, "注入：Worker 写完一步后崩溃（不释放租约）");
+      r = await web.submit(sid, "第二句");
+      end = await c.runEnd(v, r.runId, 45_000);
+      const attempts = v
+        .payloads("attempt_started")
+        .filter((a) => a.run_id === r.runId)
+        .map((a) => a.attempt);
+      c.check(end.kind === "run_completed" && attempts.length >= 2, `租约过期后被接管，Run 完成（Attempt ${attempts.join("、")}）`);
+      return { sessionId: sid };
+    },
+  },
+  {
+    id: "media",
+    title: "图片与设备返回的工件",
+    description: "用户上传的图片作为工件随输入提交（Media 只引用 artifact://）；手机拍照（需审批）把照片上传为工件，作为调用结果回到 Run。",
+    async run(c) {
+      const phone = await c.device("phone", { preset: "phone" });
+      const web = await c.device("web", { preset: "web" });
+      const sid = await c.newSession(web);
+      const wv = c.view(web, sid);
+      const png = Uint8Array.from(
+        atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="),
+        (x) => x.charCodeAt(0),
+      );
+      const block = await web.uploadArtifact(sid, "desk.png", "image/png", png);
+      c.check(block.media.uri.startsWith("artifact://"), `上传为工件 ${block.media.uri}`);
+      const r = await web.submitInput(sid, [{ text: { text: "看看这张图" } }, block]);
+      await c.runEnd(wv, r.runId);
+      const media = wv
+        .payloads("run_requested")
+        .find((p) => p.run_id === r.runId)
+        .input.find((b) => b.media)?.media;
+      c.check(media?.uri === block.media.uri && media.mime_type === "image/png", "输入中的图片只引用工件");
+      const t = await c.submitTool(web, wv, `call ${phone.label}__take_photo`);
+      const ap = await wv.waitFor("approval", () => wv.pendingApprovals().find((a) => a.runId === t.runId));
+      await web.decide(sid, ap.callId, true);
+      c.step("网页上批准拍照");
+      await c.runEnd(wv, t.runId, 20_000);
+      const res = wv.payloads("tool_result").find((p) => p.run_id === t.runId);
+      c.check(
+        res?.content?.some((b) => b.media?.uri?.startsWith("artifact://")),
+        "拍照的结果带回了照片工件",
+      );
+      return { sessionId: sid };
+    },
+  },
 ];
 
 /** 运行一个场景；返回 {ok, ms, error, sessionId}。 */
@@ -469,6 +616,10 @@ export async function runScenario(s, env, log, timeoutMs = 60_000) {
     ]);
     return { ok: true, ms: Date.now() - start, sessionId: out?.sessionId ?? c.sessions[0] ?? "" };
   } catch (e) {
+    if (e instanceof SkipError) {
+      log(`跳过：${e.message}`);
+      return { ok: true, skipped: true, ms: Date.now() - start, sessionId: c.sessions[0] ?? "" };
+    }
     log(`✗ ${e instanceof Error ? e.message : String(e)}`);
     return { ok: false, ms: Date.now() - start, error: String(e?.message ?? e), sessionId: c.sessions[0] ?? "" };
   } finally {
@@ -476,4 +627,3 @@ export async function runScenario(s, env, log, timeoutMs = 60_000) {
     c.cleanup();
   }
 }
-

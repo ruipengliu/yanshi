@@ -54,8 +54,39 @@ export function payloadOf(e) {
  *  crash 执行中"崩溃"——断开连接、留下"执行中"记录，之后自动重连（观察重新投递与去重）。 */
 export const MODES = ["auto", "manual", "error", "hang", "crash"];
 
+const obj = (properties = {}, required = []) => ({ type: "object", properties, required });
+const str = (description = "") => (description ? { type: "string", description } : { type: "string" });
+
+/** 设备上模拟应用的初始状态（按设备类型）。能力的处理函数读写它，界面据此显示"手机上多了一个闹钟"。 */
+export function defaultApps(kind) {
+  return {
+    alarms: [],
+    events: [],
+    timers: [],
+    sms: [],
+    photos: [],
+    music: { playing: "", volume: 40 },
+    nav: { destination: "", eta: "" },
+    climate: { temperature: 24, on: false },
+    browser: { url: "" },
+    heartRate: kind === "watch" ? 72 : 0,
+    location:
+      kind === "car"
+        ? { city: "北京", place: "望京 SOHO 地库", lat: 39.996, lng: 116.481 }
+        : { city: "北京", place: "中关村大街 27 号", lat: 39.9842, lng: 116.3076 },
+  };
+}
+
+let seqNo = 0;
+const nextId = (p) => `${p}${++seqNo}`;
+const hhmm = (t) => {
+  const m = /(\d{1,2})[:：点](\d{0,2})/.exec(String(t ?? ""));
+  return m ? `${m[1].padStart(2, "0")}:${(m[2] || "00").padStart(2, "0")}` : String(t ?? "");
+};
+
 /**
- * 预置的 Capability。handler(args, device) 返回结果文本，抛出异常表示错误结果。
+ * 预置的 Capability。handler(args, device) 返回结果文本，或 {text, blocks}（blocks 为额外的内容块，如工件），
+ * 可以是 Promise；抛出异常表示错误结果。处理函数修改 device.apps 后由 execute 通知界面刷新。
  * 设备的"文件"保存在 device.files 中，write_file 写入后 read_file 可读到。
  */
 export const CAPABILITY_PRESETS = {
@@ -63,7 +94,7 @@ export const CAPABILITY_PRESETS = {
     description: "读取设备上的文本文件",
     risk: "low",
     idempotent: true,
-    schema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+    schema: obj({ path: str() }, ["path"]),
     handler: (a, d) => {
       const f = d.files[a.path ?? ""];
       if (f === undefined) throw new Error(`no such file: ${a.path ?? ""}`);
@@ -74,69 +105,256 @@ export const CAPABILITY_PRESETS = {
     description: "列出设备上的文件",
     risk: "low",
     idempotent: true,
-    schema: { type: "object", properties: {} },
+    schema: obj(),
     handler: (_a, d) => Object.keys(d.files).sort().join("\n"),
   },
   write_file: {
     description: "在设备上写入文本文件",
     risk: "high",
     idempotent: false,
-    schema: {
-      type: "object",
-      properties: { path: { type: "string" }, content: { type: "string" } },
-      required: ["path", "content"],
-    },
+    schema: obj({ path: str(), content: str() }, ["path", "content"]),
     handler: (a, d) => {
       d.files[a.path ?? "untitled.txt"] = a.content ?? "";
       return `written: ${a.path ?? "untitled.txt"}`;
     },
   },
-  get_location: {
-    description: "获取手机的当前位置",
+  open_url: {
+    description: "在电脑的浏览器中打开网页",
     risk: "low",
     idempotent: true,
-    schema: { type: "object", properties: {} },
-    handler: () => JSON.stringify({ city: "北京", lat: 39.9042, lng: 116.4074 }),
+    schema: obj({ url: str("https 网址") }, ["url"]),
+    handler: (a, d) => {
+      d.apps.browser.url = a.url ?? "";
+      return `opened ${a.url ?? ""}`;
+    },
+  },
+  get_location: {
+    description: "获取设备的当前位置",
+    risk: "low",
+    idempotent: true,
+    schema: obj(),
+    handler: (_a, d) => JSON.stringify(d.apps.location),
   },
   take_photo: {
-    description: "用手机拍一张照片",
+    description: "用手机拍一张照片，返回图片",
     risk: "high",
     idempotent: false,
-    schema: { type: "object", properties: {} },
-    handler: (_a, d) => `photo saved: IMG_${String(++d.counter).padStart(4, "0")}.jpg`,
+    schema: obj(),
+    handler: async (_a, d, inv) => {
+      const name = `IMG_${String(++d.counter).padStart(4, "0")}.png`;
+      d.apps.photos.push({ name, at: Date.now() });
+      if (!inv?.session_id || !d.cfg.httpBase) return `photo saved: ${name}`;
+      const block = await d.uploadArtifact(inv.session_id, name, "image/png", await photoPNG(d.cfg.label ?? "", d.counter));
+      d.apps.photos.at(-1).uri = block.media.uri;
+      return { text: `photo saved: ${name}`, blocks: [block] };
+    },
   },
   send_sms: {
     description: "从手机发送短信",
     risk: "high",
     idempotent: false,
-    schema: {
-      type: "object",
-      properties: { to: { type: "string" }, text: { type: "string" } },
-      required: ["to", "text"],
+    schema: obj({ to: str("号码或联系人"), text: str() }, ["to", "text"]),
+    handler: (a, d) => {
+      d.apps.sms.push({ to: a.to ?? "?", text: a.text ?? "", at: Date.now() });
+      return `sent to ${a.to ?? "?"}`;
     },
-    handler: (a) => `sent to ${a.to ?? "?"}`,
+  },
+  set_alarm: {
+    description: "在设备上设置闹钟",
+    risk: "low",
+    idempotent: false,
+    schema: obj({ time: str("HH:MM"), label: str("备注"), repeat: str("不重复、每天、工作日或周末") }, ["time"]),
+    handler: (a, d) => {
+      const alarm = { id: nextId("alarm-"), time: hhmm(a.time), label: a.label ?? "", repeat: a.repeat || "不重复", enabled: true };
+      d.apps.alarms.push(alarm);
+      return JSON.stringify({ ok: true, alarm });
+    },
+  },
+  list_alarms: {
+    description: "列出设备上的闹钟",
+    risk: "low",
+    idempotent: true,
+    schema: obj(),
+    handler: (_a, d) => JSON.stringify(d.apps.alarms),
+  },
+  cancel_alarm: {
+    description: "取消设备上的一个闹钟（按 ID 或时间）",
+    risk: "low",
+    idempotent: true,
+    schema: obj({ id: str(), time: str("HH:MM") }),
+    handler: (a, d) => {
+      const before = d.apps.alarms.length;
+      d.apps.alarms = d.apps.alarms.filter((x) => x.id !== a.id && x.time !== hhmm(a.time));
+      if (d.apps.alarms.length === before) throw new Error("no such alarm");
+      return "cancelled";
+    },
+  },
+  create_event: {
+    description: "在日历中创建日程",
+    risk: "low",
+    idempotent: false,
+    schema: obj({ title: str(), start: str("YYYY-MM-DD HH:MM"), end: str("YYYY-MM-DD HH:MM"), place: str() }, ["title", "start"]),
+    handler: (a, d) => {
+      const ev = { id: nextId("event-"), title: a.title ?? "", start: a.start ?? "", end: a.end ?? "", place: a.place ?? "" };
+      d.apps.events.push(ev);
+      return JSON.stringify({ ok: true, event: ev });
+    },
+  },
+  list_events: {
+    description: "列出日历中的日程",
+    risk: "low",
+    idempotent: true,
+    schema: obj(),
+    handler: (_a, d) => JSON.stringify(d.apps.events),
+  },
+  start_timer: {
+    description: "开始一个倒计时",
+    risk: "low",
+    idempotent: false,
+    schema: obj({ minutes: { type: "number" }, label: str() }, ["minutes"]),
+    handler: (a, d) => {
+      const t = {
+        id: nextId("timer-"),
+        minutes: Number(a.minutes ?? 0),
+        label: a.label ?? "",
+        until: Date.now() + Number(a.minutes ?? 0) * 60_000,
+      };
+      d.apps.timers.push(t);
+      return JSON.stringify({ ok: true, timer: t });
+    },
+  },
+  get_heart_rate: {
+    description: "读取手表测得的心率",
+    risk: "low",
+    idempotent: true,
+    schema: obj(),
+    handler: (_a, d) => {
+      d.apps.heartRate = 64 + Math.floor(Math.random() * 20);
+      return JSON.stringify({ bpm: d.apps.heartRate });
+    },
+  },
+  play_music: {
+    description: "播放音乐",
+    risk: "low",
+    idempotent: true,
+    schema: obj({ query: str("歌名、歌手或风格") }, ["query"]),
+    handler: (a, d) => {
+      d.apps.music.playing = a.query ?? "";
+      return `正在播放：${a.query ?? ""}`;
+    },
+  },
+  set_volume: {
+    description: "设置音量（0-100）",
+    risk: "low",
+    idempotent: true,
+    schema: obj({ level: { type: "number" } }, ["level"]),
+    handler: (a, d) => {
+      d.apps.music.volume = Math.max(0, Math.min(100, Number(a.level ?? 40)));
+      return `音量 ${d.apps.music.volume}`;
+    },
+  },
+  navigate: {
+    description: "车机导航到目的地",
+    risk: "low",
+    idempotent: true,
+    schema: obj({ destination: str() }, ["destination"]),
+    handler: (a, d) => {
+      d.apps.nav = { destination: a.destination ?? "", eta: `${15 + Math.floor(Math.random() * 30)} 分钟` };
+      return `已开始导航到 ${d.apps.nav.destination}，预计 ${d.apps.nav.eta}`;
+    },
+  },
+  set_climate: {
+    description: "设置车内空调温度",
+    risk: "low",
+    idempotent: true,
+    schema: obj({ temperature: { type: "number" } }, ["temperature"]),
+    handler: (a, d) => {
+      d.apps.climate = { temperature: Number(a.temperature ?? 24), on: true };
+      return `空调已设为 ${d.apps.climate.temperature}℃`;
+    },
   },
   ping: {
     description: "回声：返回参数",
     risk: "low",
     idempotent: true,
-    schema: { type: "object", properties: {} },
+    schema: obj(),
     handler: (a) => `pong ${JSON.stringify(a)}`,
   },
 };
 
-/** 设备类型的预置：标签、类型、能力。 */
+/** 设备类型的预置：标签、类型、图标、能力。手机与电脑的前三项能力是验证场景依赖的（scenarios.js）。 */
 export const DEVICE_PRESETS = {
-  phone: { label: "phone", kind: "phone", capabilities: ["get_location", "take_photo", "send_sms"] },
-  desktop: { label: "macbook", kind: "desktop", capabilities: ["read_file", "list_dir", "write_file"] },
-  web: { label: "web", kind: "browser", clientOnly: true, capabilities: [] },
+  phone: {
+    label: "phone",
+    kind: "phone",
+    icon: "📱",
+    title: "手机",
+    capabilities: [
+      "get_location",
+      "take_photo",
+      "send_sms",
+      "set_alarm",
+      "list_alarms",
+      "cancel_alarm",
+      "create_event",
+      "list_events",
+      "play_music",
+    ],
+  },
+  desktop: {
+    label: "macbook",
+    kind: "desktop",
+    icon: "💻",
+    title: "电脑",
+    capabilities: ["read_file", "list_dir", "write_file", "open_url"],
+  },
+  watch: {
+    label: "watch",
+    kind: "watch",
+    icon: "⌚",
+    title: "手表",
+    capabilities: ["set_alarm", "list_alarms", "start_timer", "get_heart_rate"],
+  },
+  speaker: { label: "speaker", kind: "speaker", icon: "🔊", title: "音箱", capabilities: ["play_music", "set_volume", "set_alarm"] },
+  car: { label: "car", kind: "car", icon: "🚗", title: "车机", capabilities: ["navigate", "set_climate", "play_music", "get_location"] },
+  web: { label: "web", kind: "browser", icon: "🌐", title: "网页", clientOnly: true, capabilities: [] },
 };
 
 /** 新建设备时的默认文件。 */
 export const DEFAULT_FILES = {
   "notes.txt": "会议纪要：周四下午三点评审 M3 设计。",
   "todo.txt": "1. 回复邮件\n2. 预订会议室",
+  "budget.csv": "月份,收入,支出\n7,32000,21000\n8,32000,26500\n9,35000,24000",
 };
+
+/** 模拟照片：浏览器中画一张带标签与编号的图，Node.js 中是 1×1 的 PNG。 */
+async function photoPNG(label, n) {
+  if (typeof OffscreenCanvas !== "undefined") {
+    const c = new OffscreenCanvas(480, 320);
+    const g = c.getContext("2d");
+    const grad = g.createLinearGradient(0, 0, 480, 320);
+    grad.addColorStop(0, `hsl(${(n * 67) % 360} 70% 60%)`);
+    grad.addColorStop(1, `hsl(${(n * 67 + 80) % 360} 70% 40%)`);
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 480, 320);
+    g.fillStyle = "rgba(255,255,255,.9)";
+    g.font = "bold 36px system-ui, sans-serif";
+    g.fillText(`📷 ${label} #${n}`, 32, 170);
+    g.font = "20px system-ui, sans-serif";
+    g.fillText(new Date().toLocaleString(), 32, 210);
+    const blob = await c.convertToBlob({ type: "image/png" });
+    return new Uint8Array(await blob.arrayBuffer());
+  }
+  return Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="), (c) =>
+    c.charCodeAt(0),
+  );
+}
+
+export function b64(bytes) {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
 
 /** 一个 Capability 的声明与执行方式。 */
 function capability(name, overrides = {}) {
@@ -153,18 +371,20 @@ function capability(name, overrides = {}) {
 /**
  * SimDevice 是一台模拟设备的一条 Connection。listener 收到的通知：
  *   {type:"status"}、{type:"frame", dir:"in"|"out", msg, raw}、{type:"event", sessionId, event}、
- *   {type:"delta", delta}、{type:"presence", presence}、{type:"ended", sessionId, reason}、{type:"ledger", entry}
+ *   {type:"delta", delta}、{type:"presence", presence}、{type:"ended", sessionId, reason}、{type:"ledger", entry}、
+ *   {type:"apps"}（模拟应用的状态变了）、{type:"call", event}（CallEvent）
  */
 export class SimDevice {
   /**
-   * @param {object} cfg url、deviceId、label、kind、businessLine、endUser、token、clientOnly、
-   *   capabilities（名称或 {name, …覆盖}）、autoReconnect（默认 true）、files
+   * @param {object} cfg url、httpBase（上传工件用）、deviceId、label、kind、businessLine、endUser、token、clientOnly、
+   *   capabilities（名称或 {name, …覆盖}）、autoReconnect（默认 true）、files、apps
    */
   constructor(cfg) {
     this.cfg = { autoReconnect: true, hostApp: "yanshi-console", ...cfg };
     this.id = cfg.deviceId;
     this.capabilities = (cfg.capabilities ?? []).map((c) => (typeof c === "string" ? capability(c) : capability(c.name, c)));
     this.files = { ...(cfg.files ?? DEFAULT_FILES) };
+    this.apps = cfg.apps ?? defaultApps(cfg.kind);
     this.counter = 0;
     /** "offline" | "connecting" | "online" */
     this.status = "offline";
@@ -415,6 +635,8 @@ export class SimDevice {
         if (e.state === "executing" || e.state === "awaiting") e.state = "cancelled";
         this.emit({ type: "ledger", entry: e });
       }
+    } else if (m.call_event) {
+      this.emit({ type: "call", event: m.call_event });
     } else if (m.result_ack) {
       const e = this.ledger.get(m.result_ack.call_id);
       if (e) {
@@ -468,6 +690,11 @@ export class SimDevice {
   async submit(sessionId, text, { inputId = newInputId(), uiContext, dropAfterSend = false } = {}) {
     const input = [{ text: { text } }];
     if (uiContext) input.push({ ui_context: uiContext });
+    return this.submitInput(sessionId, input, { inputId, dropAfterSend });
+  }
+
+  /** 提交任意内容块（protojson）：文本、工件（media）、界面上下文、卡片动作。语义同 submit。 */
+  async submitInput(sessionId, input, { inputId = newInputId(), dropAfterSend = false } = {}) {
     let drop = dropAfterSend;
     for (;;) {
       try {
@@ -485,6 +712,47 @@ export class SimDevice {
         throw e;
       }
     }
+  }
+
+  /**
+   * 提交卡片动作（docs/design/cards.md §4）：a 为 {card_id, call_id, action, values, seq}。同一版卡片上的同一动作
+   * 只生效一次，重复点击返回 duplicate。
+   */
+  submitCardAction(sessionId, a) {
+    const action = { card_id: a.card_id, call_id: a.call_id, action: a.action, values: a.values ?? {}, seq: String(a.seq ?? 0) };
+    return this.submitInput(sessionId, [{ card_action: action }]);
+  }
+
+  /** 把字节上传为 Session 的工件（HTTP API），返回引用它的 media 内容块。 */
+  async uploadArtifact(sessionId, name, mimeType, bytes) {
+    const headers = { "Content-Type": mimeType || "application/octet-stream" };
+    if (this.cfg.token) headers.Authorization = `Bearer ${this.cfg.token}`;
+    const url = `${this.cfg.httpBase}/v1/sessions/${encodeURIComponent(sessionId)}/artifacts?name=${encodeURIComponent(name)}`;
+    const res = await fetch(url, { method: "POST", headers, body: bytes });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`upload ${name}: ${res.status} ${text}`);
+    const m = JSON.parse(text);
+    return { media: { mime_type: m.mime_type, uri: m.uri, name: m.name, size: String(m.size) } };
+  }
+
+  // —— Call（全双工语音，docs/design/m3-call.md）：以 {type:"call"} 通知 ——
+
+  /** 开始一次 Call，返回 call_id；CallReady 或 error 随后以 {type:"call"} 通知。 */
+  startCall(sessionId) {
+    const callId = "call-" + randomHex(8);
+    this.sendRaw({ call_start: { call_id: callId, session_id: sessionId } });
+    return callId;
+  }
+
+  /** 发送一帧麦克风音频（Int16Array，16 kHz）。音频帧不进帧列表：每 20 ms 一帧会淹没其他消息。 */
+  sendAudio(callId, pcm) {
+    if (!this.online) return;
+    this.ws.send(JSON.stringify({ call_audio: { call_id: callId, pcm: b64(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength)) } }));
+  }
+
+  /** action：MUTE、UNMUTE、INTERRUPT、HANGUP。 */
+  callControl(callId, action) {
+    this.send({ call_control: { call_id: callId, action: `CALL_ACTION_${action}` } });
   }
 
   interrupt(sessionId, runId) {
@@ -581,7 +849,7 @@ export class SimDevice {
         setTimeout(() => this.finish(e, `simulated failure in ${cap.name}`, true), cap.delayMs ?? 0);
         return;
     }
-    setTimeout(() => {
+    setTimeout(async () => {
       if (e.state !== "executing") return;
       let args = {};
       try {
@@ -590,26 +858,30 @@ export class SimDevice {
         // 参数不是 JSON：按空对象处理。
       }
       try {
-        this.finish(e, String(cap.handler(args, this)), false);
+        const out = await cap.handler(args, this, { session_id: e.sessionId, run_id: e.runId, call_id: e.callId });
+        this.emit({ type: "apps" });
+        if (out && typeof out === "object") this.finish(e, String(out.text ?? ""), false, out.blocks ?? []);
+        else this.finish(e, String(out), false);
       } catch (err) {
         this.finish(e, err instanceof Error ? err.message : String(err), true);
       }
     }, cap.delayMs ?? 0);
   }
 
-  /** 完成一次调用（manual 模式下由界面调用）。 */
-  finish(e, text, isError) {
+  /** 完成一次调用（manual 模式下由界面调用）。blocks 是文本之外的内容块（如工件）。 */
+  finish(e, text, isError, blocks = []) {
     if (typeof e === "string") e = this.ledger.get(e);
     if (!e || e.state === "done") return;
     e.state = "done";
     e.result = text;
+    e.blocks = blocks;
     e.isError = isError;
     this.sendResult(e);
     this.emit({ type: "ledger", entry: e });
   }
 
   sendResult(e) {
-    this.send({ result: { call_id: e.callId, content: [{ text: { text: e.result } }], is_error: e.isError } });
+    this.send({ result: { call_id: e.callId, content: [{ text: { text: e.result } }, ...(e.blocks ?? [])], is_error: e.isError } });
   }
 
   crashExecutions() {
@@ -767,6 +1039,40 @@ export class SessionView {
       for (const c of m.tool_calls ?? []) if (c.call_id === callId) return c.capability;
     }
     return "";
+  }
+
+  /** 展示过的卡片：card_id → {card, seq}，同一 card_id 只保留最新一版（docs/design/cards.md §5）。 */
+  cards() {
+    const out = new Map();
+    for (const e of this.events) {
+      for (const b of e.tool_result?.content ?? []) {
+        if (b.card) out.set(b.card.card_id, { card: b.card, seq: BigInt(e.seq) });
+      }
+    }
+    return out;
+  }
+
+  /** 已执行过的卡片动作："<call_id>/<action>"（任一设备提交的输入中的 card_action）。 */
+  cardActions() {
+    const out = new Set();
+    for (const e of this.events) {
+      for (const b of e.run_requested?.input ?? e.steered?.input ?? []) {
+        if (b.card_action) out.add(`${b.card_action.call_id}/${b.card_action.action}`);
+      }
+    }
+    return out;
+  }
+
+  /** 委托（docs/design/m5-multi-agent.md）：ToolCallStarted 的 node_id 为 "@agent/<子 Session>"。 */
+  delegations() {
+    return this.payloads("tool_call_started")
+      .filter((p) => (p.node_id ?? "").startsWith("@agent/"))
+      .map((p) => ({
+        callId: p.call_id,
+        runId: p.run_id,
+        childSessionId: p.node_id.slice("@agent/".length),
+        agent: this.callCapability(p.call_id).replace(/^agent__/, ""),
+      }));
   }
 
   /** Run 的终态事件（run_completed、run_failed、run_interrupted），尚未结束时为 undefined。 */

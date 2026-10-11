@@ -78,9 +78,11 @@ sim: deps-up
 
 # 评测（docs/design/m4-eval.md）：消耗真实 token，不在 check 中；需要 ARK_API_KEY（火山方舟）。
 # 改动模型、提示词、AgentDef 或召回、压缩、Memory、MCP 中给模型的文本时必须运行。
+# Memory 用例的召回依赖嵌入模型：默认用火山方舟的多模态嵌入，与基线一致（YANSHI_EMBEDDING_MODEL 可覆盖）。
 EVAL_FLAGS ?= -sandbox docker
+YANSHI_EMBEDDING_MODEL ?= ark/doubao-embedding-vision-251215
 eval: build
-	./bin/yanshi eval -suite evals $(EVAL_FLAGS)
+	./bin/yanshi eval -suite evals -embedding-model $(YANSHI_EMBEDDING_MODEL) $(EVAL_FLAGS)
 
 build:
 	go build -o bin/yanshi ./cmd/yanshi

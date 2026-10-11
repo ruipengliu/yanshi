@@ -1,1309 +1,760 @@
-// 调试控制台（docs/design/console.md）：在一个页面里模拟多台设备接入网关，观察并操作同一 Session，
-// 检查每一帧、每个事件与投影，并运行验证场景。设备与协议见 device.js，场景见 scenarios.js。
-import { DEVICE_PRESETS, MODES, SessionView, SimDevice, newInputId, payloadOf, randomHex, textOf } from "/console/device.js";
-import { SCENARIOS, runScenario } from "/console/scenarios.js";
+// 调试控制台（docs/design/console.md）：三个视图共用一组模拟设备与当前 Session。
+//   对话     一台设备（默认是网页客户端）全屏展示聊天：语音、图片与文件、卡片、审批与提问、通话。
+//   设备     每个 EndUser 的手机、电脑、手表、音箱、车机与网页：在线 / 离线 / 断网 / 崩溃，模拟应用的状态，能力的执行方式，
+//           调用账本；每台设备有自己的迷你对话，同一 Session 多端同步。
+//   控制台   时间线、事件、帧、状态、故障注入、指标与验证场景。
+// 设备与设置保存在浏览器的 localStorage 中：刷新后设备 ID 不变，在网关看来是同一台设备重新上线。
 
-const $ = (id) => document.getElementById(id);
-const el = (tag, attrs = {}, ...children) => {
-  const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === "class") e.className = v;
-    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
-    else if (v !== undefined && v !== null && v !== false) e.setAttribute(k, v === true ? "" : v);
-  }
-  for (const c of children) if (c !== null && c !== undefined) e.append(c);
-  return e;
-};
+import { ChatPanel } from "./chat.js";
+import { DEVICE_PRESETS, SessionView, SimDevice, payloadOf, randomHex } from "./device.js";
+import { DeviceTile } from "./devices.js";
+import { Inspector, summarize } from "./inspector.js";
+import { runScenario } from "./scenarios.js";
+import { $, Artifacts, h, hue, short, toast, fill } from "./ui.js";
 
 const WS_URL = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/v1/connect`;
 const HTTP = location.origin;
-$("gw").textContent = WS_URL;
+const SAVED = "yanshi.console.v2";
 
-// —— 持久化的设置：刷新后恢复设备（设备 ID 不变，在网关看来是同一台设备重新上线） ——
+const AGENTS = [
+  ["concierge", "总管：委托日程 / 出行 / 研究专员（真实模型）"],
+  ["assistant", "通用助手（真实模型，能看图、听语音）"],
+  ["schedule", "日程管家（专员）"],
+  ["travel", "出行助手（专员）"],
+  ["research", "研究员（专员，需要沙箱）"],
+  ["console", "脚本化模型：call / ask / stream 命令，无需密钥"],
+  ["echo", "复述"],
+];
 
-const SAVED = "yanshi.console";
+// —— 设置 ——
+
 const saved = JSON.parse(localStorage.getItem(SAVED) ?? "null") ?? {};
 const S = {
   bl: saved.bl ?? "demo",
-  agent: saved.agent ?? "console",
   auth: saved.auth ?? "none",
-  users: saved.users ?? [
-    { name: "u1", token: "" },
-    { name: "u2", token: "" },
-  ],
-  records: saved.records ?? [],
+  users: saved.users ?? [{ name: "alice", token: "" }],
+  user: saved.user ?? "alice",
+  agent: saved.agent ?? "concierge",
   sid: saved.sid ?? "",
-  inspector: saved.inspector ?? "",
+  view: saved.view ?? "chat",
+  devices: saved.devices ?? [],
+  chatDevice: saved.chatDevice ?? {},
 };
+
 function persist() {
-  localStorage.setItem(
-    SAVED,
-    JSON.stringify({ bl: S.bl, agent: S.agent, auth: S.auth, users: S.users, records: S.records, sid: S.sid, inspector: S.inspector }),
-  );
+  for (const d of devices.values()) {
+    d.rec.online = d.sim.wanted;
+    d.rec.modes = Object.fromEntries(d.sim.capabilities.map((c) => [c.name, { mode: c.mode, delayMs: c.delayMs }]));
+  }
+  S.devices = [...devices.values()].map((d) => d.rec);
+  localStorage.setItem(SAVED, JSON.stringify(S));
 }
 
-// 链接中的令牌：/console#token.u1=<令牌>&token.u2=<令牌>，用于在手机等不便粘贴的设备上打开（-auth jwt）。
-// 放在片段中，不随请求发给服务端；读入后从地址栏清除。
-{
-  const h = new URLSearchParams(location.hash.slice(1));
-  let found = false;
-  for (const [k, v] of h) {
-    const name = k.startsWith("token.") ? k.slice(6) : "";
-    if (!name || !v) continue;
-    found = true;
+// 链接带入令牌：/console#token.<用户>=<令牌>（片段不随请求发给服务端，读入后从地址栏清除）。
+if (location.hash.includes("token.")) {
+  for (const kv of location.hash.slice(1).split("&")) {
+    const [k, v] = kv.split("=");
+    if (!k?.startsWith("token.") || !v) continue;
+    const name = decodeURIComponent(k.slice(6));
     const u = S.users.find((x) => x.name === name);
-    if (u) u.token = v;
-    else S.users.push({ name, token: v });
-  }
-  if (found) {
+    if (u) u.token = decodeURIComponent(v);
+    else S.users.push({ name, token: decodeURIComponent(v) });
     S.auth = "jwt";
-    persist();
-    history.replaceState(null, "", location.pathname);
   }
+  history.replaceState(null, "", location.pathname);
 }
 
-/** id → {rec, dev: SimDevice, view: SessionView | null, ui, lastInput} */
-const devices = new Map();
-let selected = ""; // 事件视角
-const frames = [];
-let selectedFrame = null;
-let httpEvents = null; // "从 HTTP 拉取"的事件
-
-// —— 顶栏设置 ——
-
-$("bl").value = S.bl;
-$("agent").value = S.agent;
-$("auth").value = S.auth;
-$("bl").onchange = () => {
-  S.bl = $("bl").value.trim();
-  persist();
-  for (const d of devices.values()) applyIdentity(d);
-};
-$("agent").onchange = () => {
-  S.agent = $("agent").value.trim();
-  persist();
-};
-$("auth").onchange = () => {
-  S.auth = $("auth").value;
-  persist();
-  renderUsers();
-  for (const d of devices.values()) applyIdentity(d);
-};
-
-function token(user) {
-  return S.auth === "jwt" ? (S.users.find((u) => u.name === user)?.token ?? "") : "";
-}
-
-/** jwt 时身份以令牌为准，Hello 中不再自报。重新连接后生效。 */
-function applyIdentity(d) {
-  const jwt = S.auth === "jwt";
-  Object.assign(d.dev.cfg, {
-    businessLine: jwt ? "" : S.bl,
-    endUser: jwt ? "" : d.rec.user,
-    token: token(d.rec.user),
-  });
-}
-
-// —— EndUser ——
-
-function renderUsers() {
-  $("jwt-hint").hidden = S.auth !== "jwt";
-  const box = $("users");
-  box.replaceChildren(
-    ...S.users.map((u, i) => {
-      const name = el("input", { class: "name", value: u.name, title: "EndUser" });
-      name.onchange = () => {
-        const old = u.name;
-        u.name = name.value.trim() || old;
-        for (const r of S.records) if (r.user === old) r.user = u.name;
-        persist();
-        location.reload();
-      };
-      const tok = el("input", { class: "token", value: u.token, placeholder: "令牌（jwt）", hidden: S.auth !== "jwt" });
-      tok.onchange = () => {
-        u.token = tok.value.trim();
-        persist();
-        for (const d of devices.values()) applyIdentity(d);
-      };
-      const rm = el("button", { class: "tiny", title: "删除用户" }, "✕");
-      rm.onclick = () => {
-        if (S.records.some((r) => r.user === u.name)) return alert("先移除该用户的设备");
-        S.users.splice(i, 1);
-        persist();
-        renderUsers();
-      };
-      return el("div", { class: "user-row" }, name, tok, rm);
-    }),
-  );
-  const sel = $("new-user");
-  const cur = sel.value;
-  sel.replaceChildren(...S.users.map((u) => el("option", { value: u.name }, u.name)));
-  if (S.users.some((u) => u.name === cur)) sel.value = cur;
-  const st = $("st-user");
-  const scur = st.value;
-  st.replaceChildren(...S.users.map((u) => el("option", { value: u.name }, u.name)));
-  if (S.users.some((u) => u.name === scur)) st.value = scur;
-}
-$("add-user").onclick = () => {
-  let n = S.users.length + 1;
-  while (S.users.some((u) => u.name === `u${n}`)) n++;
-  S.users.push({ name: `u${n}`, token: "" });
-  persist();
-  renderUsers();
-};
+const tokenOf = (user) => (S.auth === "jwt" ? (S.users.find((u) => u.name === user)?.token ?? "") : "");
+const artifacts = new Artifacts(HTTP, tokenOf);
 
 // —— 设备 ——
 
+/** id → {rec, sim, views: Map<sid, SessionView>} */
+const devices = new Map();
+const frames = [];
+const frameListeners = new Set();
+const MAX_FRAMES = 4000;
+
 function newRecord(preset, user) {
   const p = DEVICE_PRESETS[preset];
-  return {
-    id: `con-${preset}-${randomHex(4)}`,
-    preset,
-    user,
-    label: p.label,
-    kind: p.kind,
-    clientOnly: !!p.clientOnly,
-    caps: p.capabilities.map((name) => ({ name, mode: "auto", delayMs: 300 })),
-    wanted: true,
-  };
+  const n = [...devices.values()].filter((d) => d.rec.user === user && d.rec.preset === preset).length;
+  return { id: `console-${user}-${preset}-${randomHex(3)}`, preset, user, label: n ? `${p.label}${n + 1}` : p.label, online: true };
 }
 
 function addDevice(rec) {
-  const dev = new SimDevice({
+  const p = DEVICE_PRESETS[rec.preset] ?? DEVICE_PRESETS.web;
+  const caps = p.capabilities.map((name) => ({ name, ...(rec.modes?.[name] ?? {}) }));
+  const sim = new SimDevice({
     url: WS_URL,
+    httpBase: HTTP,
     deviceId: rec.id,
     label: rec.label,
-    kind: rec.kind,
-    clientOnly: rec.clientOnly,
-    capabilities: rec.caps.map((c) => ({ ...c })),
+    kind: p.kind,
+    businessLine: S.auth === "none" ? S.bl : "",
+    endUser: S.auth === "none" ? rec.user : "",
+    token: tokenOf(rec.user),
+    clientOnly: !!p.clientOnly,
+    capabilities: caps,
   });
-  const d = { rec, dev, view: null, ui: null, lastInput: null };
-  applyIdentity(d);
-  devices.set(rec.id, d);
-  buildDevice(d);
-  dev.on((n) => onDeviceNotice(d, n));
-  if (rec.wanted) dev.connect();
-  if (S.sid) openOn(d);
-  renderDeviceList();
-  renderViewSelect();
-  return d;
+  const entry = { rec, sim, views: new Map() };
+  devices.set(rec.id, entry);
+  sim.on((n) => onNotice(entry, n));
+  if (rec.online !== false) sim.connect();
+  return entry;
 }
 
-function removeDevice(d) {
-  d.dev.disconnect();
-  d.view?.dispose();
-  d.ui.root.remove();
-  devices.delete(d.rec.id);
-  S.records = S.records.filter((r) => r.id !== d.rec.id);
+function removeDevice(entry) {
+  for (const v of entry.views.values()) v.dispose();
+  entry.sim.disconnect();
+  devices.delete(entry.rec.id);
+  if (S.chatDevice[entry.rec.user] === entry.rec.id) delete S.chatDevice[entry.rec.user];
   persist();
-  if (selected === d.rec.id) selected = "";
-  renderDeviceList();
-  renderViewSelect();
+  renderAll();
 }
 
-for (const b of document.querySelectorAll(".add-device")) {
-  b.onclick = () => {
-    const rec = newRecord(b.dataset.preset, $("new-user").value || S.users[0]?.name || "u1");
-    S.records.push(rec);
+function onNotice(entry, n) {
+  if (n.type === "frame") {
+    if (n.msg?.call_audio) return;
+    const kind = n.msg ? Object.keys(n.msg)[0] : "raw";
+    frames.push({
+      device: entry.rec.id,
+      label: entry.sim.label || entry.rec.label,
+      dir: n.dir,
+      kind: kind === "request" ? `request.${Object.keys(n.msg.request).find((k) => k !== "request_id")}` : kind,
+      summary: frameSummary(n.msg),
+      msg: n.msg,
+      raw: n.raw,
+      at: Date.now(),
+    });
+    if (frames.length > MAX_FRAMES) frames.splice(0, frames.length - MAX_FRAMES);
+    for (const fn of frameListeners) fn();
+  } else if (n.type === "status") {
+    if (entry.sim.online) ensureSubscribed(entry);
+    renderTop();
+    if (S.view === "chat") scheduleSide();
+  }
+}
+
+function frameSummary(m) {
+  if (!m) return "";
+  if (m.event) {
+    const [k, p] = payloadOf(m.event);
+    return `#${m.event.seq} ${k} ${summarize(k, p) ?? ""}`.slice(0, 160);
+  }
+  if (m.delta) return `${m.delta.snapshot ? "snapshot " : ""}${m.delta.end ? "end " : ""}${(m.delta.text ?? "").slice(0, 60)}`;
+  if (m.invoke) return `${m.invoke.capability} ${m.invoke.call_id}`;
+  if (m.result) return `${m.result.call_id}${m.result.is_error ? " ✗" : ""}`;
+  if (m.response) return m.response.error ? `${m.response.request_id} ✗ ${m.response.error.code}` : `${m.response.request_id} ok`;
+  if (m.request) return m.request.request_id;
+  if (m.call_event)
+    return Object.keys(m.call_event)
+      .filter((k) => k !== "call_id")
+      .join(",");
+  return JSON.stringify(m).slice(0, 120);
+}
+
+/** 当前 EndUser 的设备。 */
+const userDevices = () => [...devices.values()].filter((d) => d.rec.user === S.user);
+
+/** "对话"视图所用的设备：用户选定的，默认是网页客户端（没有时自动添加一台）。 */
+function chatEntry() {
+  let e = devices.get(S.chatDevice[S.user]);
+  if (!e || e.rec.user !== S.user) e = userDevices().find((d) => d.rec.preset === "web");
+  if (!e) {
+    e = addDevice({ ...newRecord("web", S.user), label: "web" });
     persist();
-    addDevice(rec);
-  };
-}
-
-function renderDeviceList() {
-  $("device-list").replaceChildren(
-    ...[...devices.values()].map((d) => {
-      const row = el(
-        "div",
-        { class: "device-row", title: d.rec.id },
-        el("span", { class: `dot ${d.dev.status}` }),
-        el("b", {}, d.dev.label || d.rec.label),
-        el("span", { class: "muted" }, `${d.rec.kind} · ${d.rec.user}${d.rec.clientOnly ? "" : " · Node"}`),
-      );
-      row.onclick = () => select(d.rec.id);
-      return row;
-    }),
-  );
-  renderFrameDevices();
-}
-
-function select(id) {
-  selected = id;
-  for (const d of devices.values()) d.ui.root.classList.toggle("selected", d.rec.id === id);
-  $("ev-view").value = id;
-  httpEvents = null;
-  scheduleEvents();
-  devices.get(id)?.ui.root.scrollIntoView({ behavior: "smooth", inline: "nearest", block: "nearest" });
-}
-
-function buildDevice(d) {
-  const root = $("device-tpl").content.firstElementChild.cloneNode(true);
-  const q = (s) => root.querySelector(s);
-  const ui = {
-    root,
-    dot: q(".dot"),
-    label: q(".dev-label"),
-    meta: q(".dev-meta"),
-    online: q(".dev-online"),
-    focus: q(".dev-focus"),
-    presence: q(".dev-presence"),
-    log: q(".dev-log"),
-    pending: q(".dev-pending"),
-    input: q("textarea"),
-    templates: q(".dev-templates"),
-    caps: q(".caps"),
-    ledger: q(".ledger"),
-    node: q(".dev-node"),
-    draft: null,
-  };
-  d.ui = ui;
-  root.addEventListener("mousedown", () => select(d.rec.id));
-  ui.online.onclick = () => {
-    if (d.dev.wanted) d.dev.disconnect();
-    else d.dev.connect();
-    d.rec.wanted = d.dev.wanted;
-    persist();
-  };
-  q(".dev-drop").onclick = () => d.dev.drop();
-  q(".dev-remove").onclick = () => removeDevice(d);
-  ui.focus.onchange = () => S.sid && d.dev.setActivity(S.sid, ui.focus.checked);
-  q(".dev-send").onclick = () => send(d);
-  q(".dev-interrupt").onclick = async () => {
-    const run = d.view?.activeRun();
-    if (!run) return note(d, "没有进行中的 Run");
-    try {
-      await d.dev.interrupt(S.sid, run);
-    } catch (e) {
-      note(d, `中断失败：${e.message}`, true);
-    }
-  };
-  let typingAt = 0;
-  ui.input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-      e.preventDefault();
-      send(d);
-    }
-  });
-  ui.input.addEventListener("input", () => {
-    // "正在输入"每 3 秒重发一次：网关 10 秒后视为停止。
-    if (!S.sid || Date.now() - typingAt < 3000) return;
-    typingAt = Date.now();
-    d.dev.setActivity(S.sid, ui.focus.checked, true);
-  });
-  ui.templates.addEventListener("focus", () => renderTemplates(d));
-  ui.templates.addEventListener("mousedown", () => renderTemplates(d));
-  ui.templates.onchange = () => {
-    if (ui.templates.value) {
-      ui.input.value = ui.templates.value;
-      ui.input.focus();
-    }
-    ui.templates.value = "";
-  };
-  q(".opt-resend").onclick = () => {
-    if (!d.lastInput) return note(d, "还没有提交过输入");
-    submit(d, d.lastInput.text, d.lastInput.inputId);
-  };
-  if (d.rec.clientOnly) ui.node.remove();
-  renderTemplates(d);
-  renderCaps(d);
-  renderHead(d);
-  $("devices").append(root);
-}
-
-function renderHead(d) {
-  const { ui, dev, rec } = d;
-  ui.dot.className = `dot ${dev.status}`;
-  ui.label.textContent = dev.label || rec.label;
-  const role = rec.clientOnly ? "客户端" : "Node";
-  const err = dev.status === "offline" && dev.lastError ? ` · ${dev.lastError}` : "";
-  ui.meta.textContent = `${rec.kind} · ${rec.user} · ${role}${err}`;
-  ui.meta.title = `设备 ID ${rec.id}`;
-  ui.online.textContent = dev.wanted ? "下线" : "上线";
-}
-
-function renderTemplates(d) {
-  const opts = [["", "命令模板…"]];
-  const sample = {
-    read_file: '{"path":"notes.txt"}',
-    write_file: '{"path":"plan.txt","content":"周五发布"}',
-    send_sms: '{"to":"10086","text":"晚上见"}',
-  };
-  opts.push(["你好", "复述：你好"]);
-  opts.push(["stream 200", "长输出 stream 200（插话、中断、晚加入）"]);
-  opts.push(["ask 周会改到哪天？| 周四 | 周五", "提问 ask_user"]);
-  opts.push(["call clock_now", "进程内能力 clock_now"]);
-  const nodes = [...devices.values()].filter((x) => !x.rec.clientOnly && x.rec.user === d.rec.user);
-  for (const n of nodes) {
-    const label = n.dev.label || n.rec.label;
-    for (const c of n.dev.capabilities) {
-      const cmd = `call ${label}__${c.name}${sample[c.name] ? " " + sample[c.name] : ""}`;
-      opts.push([cmd, `${label} · ${c.name}${c.risk === "high" ? "（需审批）" : ""}`]);
-    }
   }
-  const phone = nodes.find((n) => n.dev.capabilities.some((c) => c.name === "get_location"));
-  const pc = nodes.find((n) => n.dev.capabilities.some((c) => c.name === "write_file"));
-  if (phone && pc) {
-    const cmd = `call ${phone.dev.label || phone.rec.label}__get_location\ncall ${pc.dev.label || pc.rec.label}__write_file {"path":"where.txt","content":"在北京"}`;
-    opts.push([cmd, "多步：手机定位 → 电脑写文件"]);
+  S.chatDevice[S.user] = e.rec.id;
+  return e;
+}
+
+// —— Session ——
+
+/** 设备上 sid 的视图：首次使用时订阅（重连后 SimDevice 自动续订）。 */
+function viewOf(entry, sid) {
+  if (!sid) return undefined;
+  let v = entry.views.get(sid);
+  if (!v) {
+    v = new SessionView(entry.sim, sid);
+    entry.views.set(sid, v);
+    entry.sim.subscribe(sid, 0n);
+    v.on((kind) => onViewChange(entry, v, kind));
   }
-  d.ui.templates.replaceChildren(...opts.map(([v, t]) => el("option", { value: v }, t)));
+  return v;
 }
 
-function renderCaps(d) {
-  if (d.rec.clientOnly) return;
-  const rows = d.dev.capabilities.map((c) => {
-    const mode = el("select", {}, ...MODES.map((m) => el("option", { value: m, selected: c.mode === m }, modeName(m))));
-    mode.onchange = () => {
-      c.mode = mode.value;
-      save(d);
-    };
-    const delay = el("input", { type: "number", min: 0, step: 100, value: c.delayMs ?? 0, title: "执行耗时（毫秒）" });
-    delay.onchange = () => {
-      c.delayMs = Number(delay.value) || 0;
-      save(d);
-    };
-    return el(
-      "tr",
-      {},
-      el("td", { title: c.description }, el("b", {}, c.name)),
-      el("td", { class: c.risk === "high" ? "risk-high" : "" }, c.risk === "high" ? "需审批" : "低风险"),
-      el("td", { title: "幂等：执行中崩溃后可重新执行" }, c.idempotent ? "幂等" : ""),
-      el("td", {}, mode),
-      el("td", {}, delay, " ms"),
-    );
-  });
-  d.ui.caps.replaceChildren(...rows);
+function ensureSubscribed(entry) {
+  if (S.sid && entry.rec.user === S.user) viewOf(entry, S.sid);
 }
 
-function modeName(m) {
-  return { auto: "自动执行", manual: "手工填写结果", error: "返回错误", hang: "不回应（超时）", crash: "执行中崩溃" }[m];
+/** 子 Session 的视图（委托，docs/design/m5-multi-agent.md）：在"对话"设备上订阅，供时间线与调用条展示。 */
+function childView(sid) {
+  return viewOf(chatEntry(), sid);
 }
 
-function save(d) {
-  d.rec.caps = d.dev.capabilities.map((c) => ({ name: c.name, mode: c.mode, delayMs: c.delayMs }));
-  persist();
-}
-
-function renderLedger(d) {
-  if (d.rec.clientOnly) return;
-  const entries = [...d.dev.ledger.values()].reverse().slice(0, 30);
-  d.ui.ledger.replaceChildren(
-    ...entries.map((e) => {
-      const state = {
-        executing: "执行中",
-        awaiting: "等待手工结果",
-        started: "执行中断（崩溃）",
-        done: "已完成",
-        cancelled: "已取消",
-        new: "新",
-      }[e.state];
-      const box = el(
-        "div",
-        { class: `entry ${e.state}` },
-        el("div", {}, el("b", {}, e.capability), ` ${e.args}`),
-        el(
-          "div",
-          { class: "muted" },
-          `${e.callId} · ${state} · 投递 ${e.deliveries} 次 · 执行 ${e.executions} 次${e.state === "done" ? (e.acked ? " · 已确认" : " · 待确认") : ""}${e.cancelled ? " · 收到 Cancel" : ""}`,
-        ),
-      );
-      if (e.state === "done") box.append(el("div", { class: e.isError ? "note error" : "" }, (e.isError ? "错误：" : "结果：") + e.result));
-      if (e.state === "awaiting") {
-        const input = el("input", { placeholder: "结果文本" });
-        const ok = el("button", { class: "tiny primary" }, "返回结果");
-        const bad = el("button", { class: "tiny" }, "返回错误");
-        ok.onclick = () => d.dev.finish(e.callId, input.value || "ok", false);
-        bad.onclick = () => d.dev.finish(e.callId, input.value || "failed", true);
-        box.append(el("div", { class: "row" }, input, ok, bad));
-      }
-      return box;
-    }),
-  );
-  if (entries.some((e) => e.state === "awaiting")) d.ui.node.open = true;
-}
-
-// —— 设备上的 Session 视图 ——
-
-function onDeviceNotice(d, n) {
-  switch (n.type) {
-    case "status":
-      renderHead(d);
-      renderDeviceList();
-      break;
-    case "frame":
-      addFrame(d, n);
-      break;
-    case "ledger":
-      renderLedger(d);
-      break;
+let inspectQueued = false;
+function onViewChange(entry, v, kind) {
+  // 发现新的委托：订阅子 Session（递归：子 Session 的视图同样经过这里）。
+  if (kind === "event" && entry === devices.get(S.chatDevice[S.user])) {
+    for (const d of v.delegations()) if (!entry.views.has(d.childSessionId)) viewOf(entry, d.childSessionId);
   }
-}
-
-function openOn(d) {
-  d.view?.dispose();
-  d.ui.log.replaceChildren();
-  d.ui.pending.replaceChildren();
-  d.ui.presence.replaceChildren();
-  d.ui.draft = null;
-  d.view = null;
-  if (!S.sid) return;
-  const v = new SessionView(d.dev, S.sid);
-  d.view = v;
-  v.on((kind) => onViewChange(d, kind));
-  d.dev.subscribe(S.sid, 0n);
-  if (d.ui.focus.checked) d.dev.setActivity(S.sid, true);
+  if (kind === "ended" && v.sessionId === S.sid && v.ended) toast(`订阅结束：${v.ended}`, "error");
+  if (S.view === "console" && !inspectQueued) {
+    inspectQueued = true;
+    setTimeout(() => ((inspectQueued = false), inspector.schedule()), 150);
+  }
+  if (S.view === "chat" && kind === "event") scheduleSide();
 }
 
 function openSession(sid) {
-  for (const d of devices.values()) if (S.sid && d.dev.subs.has(S.sid)) d.dev.unsubscribe(S.sid);
-  S.sid = sid.trim();
-  $("sid").value = S.sid;
+  S.sid = sid;
   persist();
-  httpEvents = null;
-  for (const d of devices.values()) openOn(d);
-  scheduleEvents();
-  refreshProjection();
+  for (const d of userDevices()) ensureSubscribed(d);
+  chat?.dispose();
+  chat = null;
+  for (const t of tiles.values()) t.sessionChanged();
+  inspector.stateResult = null;
+  renderAll();
 }
 
-function onViewChange(d, kind) {
-  const v = d.view;
-  if (kind === "event") {
-    const e = v.events.at(-1);
-    renderEvent(d, e);
-    // 提交的助手消息取代草稿（SessionView 已清除）。
-    renderDraft(d);
-    renderPending(d);
-    if (d.rec.id === selected || !selected) scheduleEvents();
-    scheduleProjection();
-  } else if (kind === "draft") {
-    renderDraft(d);
-  } else if (kind === "presence") {
-    renderPresence(d);
-  } else if (kind === "ended") {
-    note(d, `订阅结束：${v.ended}${v.ended === "not_found" ? "（Session 不存在或不属于该设备的 EndUser）" : ""}`, true);
-  }
-}
-
-function runColor(runId) {
-  let h = 0;
-  for (const ch of runId ?? "") h = (h * 31 + ch.charCodeAt(0)) % 360;
-  return `hsl(${h} 70% 55%)`;
-}
-
-function append(d, node) {
-  const log = d.ui.log;
-  const stick = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
-  if (d.ui.draft) log.insertBefore(node, d.ui.draft);
-  else log.append(node);
-  if (stick) log.scrollTop = log.scrollHeight;
-}
-
-function note(d, text, error = false, e = null) {
-  const n = el("div", { class: `note${error ? " error" : ""}` }, text);
-  if (e) n.onclick = () => showEvent(d, e);
-  append(d, n);
-}
-
-function renderEvent(d, e) {
-  const [kind, p] = payloadOf(e);
-  const show = () => showEvent(d, e);
-  const tag = (s) => el("span", { class: "tag" }, s);
-  switch (kind) {
-    case "run_requested":
-    case "steered": {
-      const ui = (p.input ?? []).find((b) => b.ui_context);
-      const b = el(
-        "div",
-        { class: `msg user${kind === "steered" ? " steer" : ""}`, onclick: show },
-        tag(`${kind === "steered" ? "插话 · " : ""}#${e.seq} · ${short(p.run_id)}${p.from_call ? " · 来自通话" : ""}`),
-        textOf(p.input),
-      );
-      if (ui) b.append(tag(`界面上下文：${ui.ui_context.screen ?? ""}`));
-      append(d, b);
-      break;
-    }
-    case "assistant_message": {
-      const text = textOf(p.content);
-      if (text) append(d, el("div", { class: "msg assistant", onclick: show }, tag(`#${e.seq} · ${p.model ?? ""}`), text));
-      for (const c of p.tool_calls ?? []) {
-        append(d, el("div", { class: "tool", onclick: show }, `→ ${c.capability}(${c.arguments_json ?? ""})\n  ${c.call_id}`));
-      }
-      break;
-    }
-    case "tool_call_started":
-      note(d, `派发 ${short(p.call_id)} → ${p.node_id}`, false, e);
-      break;
-    case "tool_result":
-      append(
-        d,
-        el(
-          "div",
-          { class: `tool ${p.is_error ? "error" : "ok"}`, onclick: show },
-          `← ${short(p.call_id)}${p.attempt ? "" : "（外部结果）"}${p.input_id ? "（输入的回答）" : ""}\n${textOf(p.content)}`,
-        ),
-      );
-      break;
-    case "approval_requested":
-      note(d, `请求审批 ${short(p.call_id)}：${p.summary ?? ""}`, false, e);
-      break;
-    case "approval_decided":
-      note(d, `${p.approved ? "已批准" : "已拒绝"} ${short(p.call_id)}（${p.by ?? ""}）`, false, e);
-      break;
-    case "attempt_started":
-      note(d, `Attempt ${p.attempt} · ${p.worker_id ?? ""}`, false, e);
-      break;
-    case "run_suspended":
-      note(d, `挂起${p.reason ? `（${p.reason}）` : ""}`, false, e);
-      break;
-    case "run_completed":
-      note(d, `✓ Run ${short(p.run_id)} 完成`, false, e);
-      break;
-    case "run_failed":
-      note(d, `✗ Run ${short(p.run_id)} 失败：${p.reason ?? ""}`, true, e);
-      break;
-    case "run_interrupted":
-      note(d, `■ Run ${short(p.run_id)} 被中断（${p.by ?? ""}）`, true, e);
-      break;
-    default:
-      note(d, `${kind} ${summarize(kind, p)}`, kind === "content_moderated", e);
-  }
-}
-
-function renderDraft(d) {
-  const t = d.view.draft.text;
-  if (!t) {
-    d.ui.draft?.remove();
-    d.ui.draft = null;
-    return;
-  }
-  if (!d.ui.draft) {
-    d.ui.draft = el("div", { class: "msg assistant partial" });
-    d.ui.log.append(d.ui.draft);
-  }
-  d.ui.draft.textContent = t;
-  d.ui.log.scrollTop = d.ui.log.scrollHeight;
-}
-
-function renderPresence(d) {
-  d.ui.presence.replaceChildren(
-    ...d.view.presence
-      .filter((v) => v.device_id !== d.rec.id)
-      .map((v) =>
-        el(
-          "span",
-          { class: `viewer${v.focused ? " focused" : ""}${v.typing ? " typing" : ""}`, title: v.device_id },
-          v.label || v.device_id,
-        ),
-      ),
-  );
-  if (d.view.presence.some((v) => v.device_id !== d.rec.id)) d.ui.presence.prepend(el("span", { class: "muted" }, "也在看："));
-}
-
-function renderPending(d) {
-  const v = d.view;
-  const cards = [];
-  for (const a of v.pendingApprovals()) {
-    const ok = el("button", { class: "tiny primary" }, "批准");
-    const no = el("button", { class: "tiny" }, "拒绝");
-    const decide = (approve) => d.dev.decide(S.sid, a.callId, approve).catch((e) => note(d, `审批失败：${e.message}`, true));
-    ok.onclick = () => decide(true);
-    no.onclick = () => decide(false);
-    cards.push(
-      el(
-        "div",
-        { class: "card" },
-        el("div", {}, "需要审批：", el("b", {}, a.summary || a.capability)),
-        el("div", { class: "muted" }, `${a.capability} · ${a.callId}`),
-        el("div", { class: "row" }, ok, no),
-      ),
-    );
-  }
-  for (const q of v.pendingQuestions()) {
-    const card = el("div", { class: "card question" }, el("b", {}, q.question || "（提问）"));
-    const chosen = new Set();
-    const answer = (a) => d.dev.answer(S.sid, q.callId, a).catch((e) => note(d, `回答失败：${e.message}`, true));
-    if (q.options.length) {
-      const row = el("div", { class: "row" });
-      for (const o of q.options) {
-        const b = el("button", { class: "tiny", title: o.description ?? "" }, o.label);
-        b.onclick = () => {
-          if (!q.multiple) return answer({ selected: [o.id] });
-          chosen.has(o.id) ? chosen.delete(o.id) : chosen.add(o.id);
-          b.classList.toggle("primary", chosen.has(o.id));
-        };
-        row.append(b);
-      }
-      card.append(row);
-    }
-    const fields = q.fields.map((f) => el("input", { placeholder: `${f.label}${f.required ? "（必填）" : ""}`, "data-name": f.name }));
-    for (const f of fields) card.append(f);
-    const text = el("input", { placeholder: "或者输入文字回答" });
-    const go = el("button", { class: "tiny primary" }, "回答");
-    go.onclick = () => {
-      const values = {};
-      for (const f of fields) if (f.value) values[f.dataset.name] = f.value;
-      answer({ selected: [...chosen], values, text: text.value });
-    };
-    card.append(el("div", { class: "row" }, text, go));
-    cards.push(card);
-  }
-  d.ui.pending.replaceChildren(...cards);
-}
-
-async function send(d) {
-  const text = d.ui.input.value.trim();
-  if (!text) return;
-  if (!S.sid) return note(d, "先新建或打开一个 Session", true);
-  d.ui.input.value = "";
-  d.dev.setActivity(S.sid, d.ui.focus.checked, false);
-  await submit(d, text, newInputId());
-}
-
-async function submit(d, text, inputId) {
-  const root = d.ui.root;
-  const opts = { inputId };
-  if (root.querySelector(".opt-ui").checked) {
-    opts.uiContext = {
-      screen: root.querySelector(".opt-ui-screen").value || undefined,
-      content: root.querySelector(".opt-ui-content").value || undefined,
-    };
-  }
-  opts.dropAfterSend = root.querySelector(".opt-drop").checked;
-  d.lastInput = { text, inputId };
+async function newSession() {
+  const e = chatEntry();
   try {
-    const r = await d.dev.submit(S.sid, text, opts);
-    const how = r.duplicate
-      ? "重复的 input_id：返回首次的结果，没有写入"
-      : r.answered
-        ? `作为对 ${short(r.answered)} 的回答`
-        : r.steered
-          ? "并入进行中的 Run（插话）"
-          : "开启新 Run";
-    note(d, `提交 → ${short(r.runId)}：${how}`);
-  } catch (e) {
-    note(d, `提交失败：${e.message}`, true);
+    await e.sim.ready(5000);
+    const sid = await e.sim.createSession(S.agent);
+    openSession(sid);
+    toast(`已新建 Session（${S.agent}）`);
+    refreshSessions();
+  } catch (err) {
+    toast(`新建失败：${err.message}`, "error");
   }
 }
 
-function short(id) {
-  if (!id) return "";
-  return id.length > 14 ? id.slice(0, 9) + "…" + id.slice(-4) : id;
+let sessions = [];
+async function refreshSessions() {
+  const r = await http("GET", `/v1/sessions?${idQuery()}&limit=30`).catch(() => ({ status: 0 }));
+  sessions = r.status === 200 ? (r.json.sessions ?? []) : [];
+  renderTop();
+  if (S.view === "chat") scheduleSide();
 }
 
-function summarize(kind, p) {
-  switch (kind) {
-    case "session_created":
-      return `${p.business_line ?? ""}/${p.end_user ?? ""} · ${p.agent?.name ?? ""}@${p.agent?.version ?? ""}`;
-    case "run_requested":
-    case "steered":
-      return `${textOf(p.input)}${p.input_id ? `  [${p.input_id}]` : ""}`;
-    case "attempt_started":
-      return `attempt ${p.attempt} · ${p.worker_id ?? ""}`;
-    case "assistant_message": {
-      const calls = (p.tool_calls ?? []).map((c) => `→ ${c.capability}(${c.arguments_json ?? ""})`).join(" ");
-      return [textOf(p.content), calls].filter(Boolean).join(" ");
-    }
-    case "tool_call_started":
-      return `${p.call_id} → ${p.node_id ?? "进程内"}`;
-    case "tool_result":
-      return `${p.call_id}${p.is_error ? " [错误]" : ""} ${textOf(p.content)}`;
-    case "run_suspended":
-      return `${p.reason ?? ""}${p.until ? ` 至 ${p.until}` : ""}`;
-    case "approval_requested":
-      return `${p.call_id} ${p.summary ?? ""}`;
-    case "approval_decided":
-      return `${p.call_id} ${p.approved ? "批准" : "拒绝"} · ${p.by ?? ""}`;
-    case "run_failed":
-      return p.reason ?? "";
-    case "run_interrupted":
-      return `by ${p.by ?? ""}`;
-    case "memory_recalled":
-      return `${(p.items ?? []).length} 条`;
-    case "content_moderated":
-      return `${p.stage ?? ""} ${(p.labels ?? []).join(",")}`;
-    case "context_compacted":
-      return `至 #${p.through_seq}`;
-    case "session_closed":
-      return `${p.by ?? ""} ${p.reason ?? ""}`;
-    case "call_transcript":
-      return `${p.role}: ${p.text ?? ""}`;
-    default:
-      return "";
-  }
+// —— HTTP ——
+
+function idQuery(user = S.user) {
+  return S.auth === "none" ? `business_line=${encodeURIComponent(S.bl)}&end_user=${encodeURIComponent(user)}` : "";
 }
 
-// —— 检查器：事件 ——
-
-function renderViewSelect() {
-  const sel = $("ev-view");
-  const cur = selected;
-  sel.replaceChildren(
-    ...[...devices.values()].map((d) => el("option", { value: d.rec.id }, `${d.dev.label || d.rec.label}（${d.rec.user}）`)),
-    el("option", { value: "http" }, "HTTP 拉取"),
-  );
-  sel.value = httpEvents ? "http" : cur || [...devices.keys()][0] || "http";
-}
-$("ev-view").onchange = () => {
-  if ($("ev-view").value === "http") return fetchHTTPEvents();
-  select($("ev-view").value);
-};
-$("ev-filter").oninput = () => scheduleEvents();
-$("ev-http").onclick = () => fetchHTTPEvents();
-
-async function fetchHTTPEvents() {
-  if (!S.sid) return;
-  const r = await api("GET", `/v1/sessions/${S.sid}/events?after=0&limit=1000`, ownerUser());
-  httpEvents = r.json?.events ?? [];
-  $("ev-view").value = "http";
-  if (r.status !== 200) $("ev-detail").textContent = `HTTP ${r.status}\n${JSON.stringify(r.json, null, 2)}`;
-  scheduleEvents();
-}
-
-let eventsQueued = false;
-function scheduleEvents() {
-  if (eventsQueued) return;
-  eventsQueued = true;
-  requestAnimationFrame(() => {
-    eventsQueued = false;
-    renderEvents();
-  });
-}
-
-let selectedEvent = null;
-function renderEvents() {
-  const d = devices.get(selected) ?? [...devices.values()][0];
-  const list = httpEvents ?? d?.view?.events ?? [];
-  const f = $("ev-filter").value.trim().toLowerCase();
-  const rows = [];
-  for (const e of list) {
-    const [kind, p] = payloadOf(e);
-    const text = summarize(kind, p);
-    if (f && !`${kind} ${p.run_id ?? ""} ${p.call_id ?? ""} ${text}`.toLowerCase().includes(f)) continue;
-    const time = e.time ? new Date(e.time).toTimeString().slice(0, 8) : "";
-    const row = el(
-      "div",
-      {
-        class: `line ev-line run-stripe${selectedEvent === e ? " sel" : ""}`,
-        style: `border-left-color:${p.run_id ? runColor(p.run_id) : "transparent"}`,
-      },
-      el("span", {}, e.seq),
-      el("span", { class: "muted" }, time),
-      el("span", { class: `k-${kind}` }, kind),
-      el("span", { class: "muted", title: p.run_id ?? "" }, short(p.run_id)),
-      el("span", { title: text }, text),
-    );
-    row.onclick = () => {
-      selectedEvent = e;
-      $("ev-detail").textContent = JSON.stringify(e, null, 2);
-      for (const r of $("ev-list").querySelectorAll(".sel")) r.classList.remove("sel");
-      row.classList.add("sel");
-    };
-    rows.push(row);
-  }
-  const box = $("ev-list");
-  const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
-  box.replaceChildren(...rows);
-  if (stick) box.scrollTop = box.scrollHeight;
-  $("ev-count").textContent =
-    `${rows.length} / ${list.length} 个事件${httpEvents ? "（HTTP）" : d ? `（${d.dev.label || d.rec.label} 收到的）` : ""}`;
-}
-
-function showEvent(d, e) {
-  setTab("events");
-  if (selected !== d.rec.id) select(d.rec.id);
-  selectedEvent = e;
-  $("ev-detail").textContent = JSON.stringify(e, null, 2);
-  scheduleEvents();
-}
-
-// —— 检查器：帧 ——
-
-const MAX_FRAMES = 3000;
-function frameKind(m) {
-  if (!m) return "（无法解析）";
-  const [k] = Object.keys(m);
-  const v = m[k] ?? {};
-  if (k === "event") return `event.${payloadOf(v)[0]}`;
-  if (k === "request") return `request.${Object.keys(v).find((x) => x !== "request_id") ?? ""}`;
-  if (k === "response") return v.error ? `response.error` : "response";
-  return k;
-}
-
-function addFrame(d, n) {
-  if ($("fr-pause").checked) return;
-  frames.push({
-    t: new Date(),
-    id: d.rec.id,
-    label: d.dev.label || d.rec.label,
-    dir: n.dir,
-    msg: n.msg,
-    raw: n.raw,
-    kind: frameKind(n.msg),
-  });
-  if (frames.length > MAX_FRAMES) frames.splice(0, frames.length - MAX_FRAMES);
-  scheduleFrames();
-}
-
-let framesQueued = false;
-function scheduleFrames() {
-  if (framesQueued || $("tab-frames").hidden) return;
-  framesQueued = true;
-  requestAnimationFrame(() => {
-    framesQueued = false;
-    renderFrames();
-  });
-}
-
-function renderFrames() {
-  const dev = $("fr-device").value;
-  const dir = $("fr-dir").value;
-  const f = $("fr-filter").value.trim().toLowerCase();
-  const deltas = $("fr-deltas").checked;
-  const shown = frames.filter(
-    (x) =>
-      (!dev || x.id === dev) &&
-      (!dir || x.dir === dir) &&
-      (deltas || x.kind !== "delta") &&
-      (!f ||
-        x.kind.toLowerCase().includes(f) ||
-        JSON.stringify(x.msg ?? x.raw)
-          .toLowerCase()
-          .includes(f)),
-  );
-  const rows = shown.slice(-500).map((x) => {
-    const body = JSON.stringify(x.msg ?? x.raw);
-    const row = el(
-      "div",
-      { class: `line fr-line${selectedFrame === x ? " sel" : ""}` },
-      el("span", { class: "muted" }, x.t.toTimeString().slice(0, 8)),
-      el("span", {}, x.label),
-      el("span", { class: `dir-${x.dir}` }, x.dir === "out" ? "↑" : "↓"),
-      el("span", {}, x.kind),
-      el("span", { class: "muted" }, body.length > 300 ? body.slice(0, 300) + "…" : body),
-    );
-    row.onclick = () => {
-      selectedFrame = x;
-      $("fr-detail").textContent = x.msg ? JSON.stringify(x.msg, null, 2) : x.raw;
-      for (const r of $("fr-list").querySelectorAll(".sel")) r.classList.remove("sel");
-      row.classList.add("sel");
-    };
-    return row;
-  });
-  const box = $("fr-list");
-  const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
-  box.replaceChildren(...rows);
-  if (stick) box.scrollTop = box.scrollHeight;
-  $("fr-count").textContent = `${shown.length} 帧${shown.length > 500 ? "（显示最近 500）" : ""}`;
-}
-for (const id of ["fr-device", "fr-dir", "fr-deltas"]) $(id).onchange = () => scheduleFrames();
-$("fr-filter").oninput = () => scheduleFrames();
-$("fr-clear").onclick = () => {
-  frames.length = 0;
-  scheduleFrames();
-};
-
-function renderFrameDevices() {
-  for (const [id, all] of [
-    ["fr-device", true],
-    ["raw-device", false],
-  ]) {
-    const sel = $(id);
-    const cur = sel.value;
-    sel.replaceChildren(
-      ...(all ? [el("option", { value: "" }, "全部设备")] : []),
-      ...[...devices.values()].map((d) => el("option", { value: d.rec.id }, d.dev.label || d.rec.label)),
-    );
-    if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
-  }
-}
-
-const RAW_TEMPLATES = {
-  "": () => "",
-  subscribe: () => ({ subscribe: { session_id: S.sid, after_seq: "0" } }),
-  "subscribe（从 seq 3 续订）": () => ({ subscribe: { session_id: S.sid, after_seq: "3" } }),
-  unsubscribe: () => ({ unsubscribe: { session_id: S.sid } }),
-  "activity（前台、正在输入）": () => ({ activity: { session_id: S.sid, focused: true, typing: true } }),
-  "request.submit": () => ({
-    request: { request_id: "manual-1", submit: { session_id: S.sid, input: [{ text: { text: "你好" } }], input_id: newInputId() } },
-  }),
-  "request.submit（界面上下文过长，应 invalid）": () => ({
-    request: {
-      request_id: "manual-2",
-      submit: { session_id: S.sid, input: [{ text: { text: "这个" } }, { ui_context: { screen: "x".repeat(200) } }] },
-    },
-  }),
-  "request.create_session": () => ({ request: { request_id: "manual-3", create_session: { agent: S.agent } } }),
-  "request.close": () => ({ request: { request_id: "manual-4", close: { session_id: S.sid, reason: "manual" } } }),
-  "result（伪造未派发的调用结果）": () => ({ result: { call_id: "call_forged", content: [{ text: { text: "forged" } }] } }),
-  "未知字段（应断开连接）": () => ({ bogus: {} }),
-};
-$("raw-template").replaceChildren(...Object.keys(RAW_TEMPLATES).map((k) => el("option", { value: k }, k || "模板…")));
-$("raw-template").onchange = () => {
-  const v = RAW_TEMPLATES[$("raw-template").value]();
-  $("raw-body").value = v ? JSON.stringify(v, null, 2) : "";
-  $("raw-template").value = "";
-};
-$("raw-send").onclick = () => {
-  const d = devices.get($("raw-device").value);
-  if (!d) return;
-  try {
-    d.dev.sendRaw(JSON.parse($("raw-body").value));
-  } catch (e) {
-    $("fr-detail").textContent = `发送失败：${e.message}`;
-  }
-};
-
-// —— 检查器：状态 ——
-
-async function api(method, path, user, body) {
+async function http(method, path, body, user = S.user) {
   const headers = { "Content-Type": "application/json" };
-  const t = token(user);
-  if (t) headers.Authorization = `Bearer ${t}`;
+  const tok = tokenOf(user);
+  if (tok) headers.Authorization = `Bearer ${tok}`;
+  const res = await fetch(HTTP + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  const text = await res.text();
+  let json;
   try {
-    const res = await fetch(HTTP + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
-    const text = await res.text();
-    let json = text;
-    try {
-      json = text ? JSON.parse(text) : null;
-    } catch {
-      // 非 JSON 响应原样显示。
-    }
-    return { status: res.status, json };
-  } catch (e) {
-    return { status: 0, json: String(e) };
+    json = text ? JSON.parse(text) : undefined;
+  } catch {
+    json = text;
   }
+  return { status: res.status, json };
 }
 
-/** 当前 Session 所属的 EndUser：取已收到其事件的设备的用户（jwt 时用于选择令牌）。 */
-function ownerUser() {
-  for (const d of devices.values()) if (d.view?.events.length) return d.rec.user;
-  return $("st-user").value || S.users[0]?.name;
-}
+// —— 顶栏 ——
 
-function idQuery(user) {
-  const p = new URLSearchParams();
-  if (S.auth !== "jwt") {
-    p.set("business_line", S.bl);
-    p.set("end_user", user);
-  }
-  return p;
-}
-
-const QUERIES = {
-  session: (u) => S.sid && `/v1/sessions/${S.sid}`,
-  nodes: (u) => `/v1/nodes?${idQuery(u)}`,
-  sessions: (u) => `/v1/sessions?${idQuery(u)}`,
-  events: (u) => S.sid && `/v1/sessions/${S.sid}/events?after=0&limit=1000`,
-  artifacts: (u) => S.sid && `/v1/sessions/${S.sid}/artifacts`,
-  memories: (u) => `/v1/memories?${idQuery(u)}`,
-  quota: (u) => `/v1/quota?${idQuery(u)}`,
-  usage: (u) => {
-    const p = idQuery(u);
-    p.set("group_by", "day");
-    return `/v1/usage?${p}`;
-  },
-};
-let lastQuery = "session";
-for (const b of document.querySelectorAll("#tab-state [data-q]")) b.onclick = () => query(b.dataset.q);
-
-async function query(q) {
-  lastQuery = q;
-  const user = q === "session" || q === "events" || q === "artifacts" ? ownerUser() : $("st-user").value;
-  const path = QUERIES[q](user);
-  if (!path) {
-    $("st-detail").textContent = "先打开一个 Session";
-    return;
-  }
-  const r = await api("GET", path, user);
-  $("st-detail").textContent = `GET ${path}\nHTTP ${r.status}\n\n${typeof r.json === "string" ? r.json : JSON.stringify(r.json, null, 2)}`;
-  $("st-summary").replaceChildren(stateSummary(q, r));
-}
-
-function stateSummary(q, r) {
-  const j = r.json;
-  if (r.status !== 200 || !j || typeof j !== "object") return el("div", { class: "line" }, `HTTP ${r.status}`);
-  const table = (head, rows) =>
-    el(
-      "table",
-      { class: "summary-table" },
-      el("tr", {}, ...head.map((h) => el("th", {}, h))),
-      ...rows.map((cells) => el("tr", {}, ...cells.map((c) => el("td", {}, c)))),
-    );
-  if (q === "session") {
-    return el(
-      "div",
-      {},
-      el(
-        "div",
-        { class: "line" },
-        `${j.session_id} · ${j.business_line}/${j.end_user} · ${j.agent?.name}@${j.agent?.version} · seq ${j.seq}`,
+function renderTop() {
+  const live = userDevices();
+  const online = live.filter((d) => d.sim.online).length;
+  fill(
+    $("top"),
+    h("b", { class: "brand" }, "yanshi"),
+    h(
+      "nav",
+      { class: "views" },
+      [
+        ["chat", "💬 对话"],
+        ["devices", "📱 设备"],
+        ["console", "🛠 控制台"],
+      ].map(([id, name]) => h("button", { class: S.view === id ? "active" : "", onclick: () => setView(id) }, name)),
+    ),
+    h("span", { class: "sep" }),
+    h(
+      "label",
+      { class: "field" },
+      "用户",
+      h(
+        "select",
+        { onchange: (e) => (e.target.value === "+" ? addUser() : switchUser(e.target.value)) },
+        S.users.map((u) => h("option", { value: u.name, selected: u.name === S.user }, u.name)),
+        h("option", { value: "+" }, "+ 添加用户…"),
       ),
-      table(
-        ["Run", "状态", "Attempt", "轮次", "在等"],
-        (j.runs ?? []).map((x) => [
-          short(x.run_id),
-          el("span", { class: `badge ${x.status}` }, x.status),
-          String(x.attempt),
-          String(x.turns),
-          waitingText(x.waiting),
-        ]),
+    ),
+    h(
+      "label",
+      { class: "field" },
+      "Agent",
+      h(
+        "select",
+        { title: "新建 Session 时使用", onchange: (e) => ((S.agent = e.target.value), persist(), scheduleSide()) },
+        AGENTS.map(([id, desc]) => h("option", { value: id, selected: id === S.agent, title: desc }, id)),
+        AGENTS.some(([id]) => id === S.agent) ? null : h("option", { value: S.agent, selected: true }, S.agent),
       ),
-    );
-  }
-  if (q === "nodes") {
-    return table(
-      ["标签", "类型", "在线", "能力", "Node ID"],
-      (j.nodes ?? []).map((n) => [n.label, n.kind, n.online ? "在线" : "离线", n.capabilities.join(", "), n.node_id]),
-    );
-  }
-  if (q === "sessions") {
-    return table(
-      ["Session", "Agent", "最近输入", ""],
-      (j.sessions ?? []).map((s) => {
-        const b = el("button", { class: "tiny" }, "打开");
-        b.onclick = () => openSession(s.session_id);
-        return [s.session_id, s.agent, s.last_input_at ?? "", b];
-      }),
-    );
-  }
-  return el("div", { class: "line" }, `HTTP ${r.status}：详情见右侧`);
+    ),
+    h(
+      "label",
+      { class: "field grow" },
+      "Session",
+      h(
+        "select",
+        { onchange: (e) => e.target.value && openSession(e.target.value), onfocus: refreshSessions },
+        h("option", { value: "" }, S.sid ? "" : "（未打开）"),
+        sessionOptions(),
+      ),
+    ),
+    h("button", { class: "primary", onclick: newSession }, "+ 新建"),
+    h("span", { class: "spacer" }),
+    h("span", { class: `gw ${online ? "ok" : "bad"}`, title: "当前用户在线的设备" }, `${online}/${live.length} 台设备在线`),
+    h("button", { class: "ghost", title: "设置", onclick: () => $("settings").showModal() }, "⚙"),
+  );
 }
 
-function waitingText(w) {
-  if (!w) return "";
-  const parts = [w.kind, w.capability, w.node_id];
-  if (w.node_online !== undefined) parts.push(w.node_online ? "设备在线" : "设备离线");
-  if (w.summary) parts.push(w.summary);
-  return parts.filter(Boolean).join(" · ");
+function sessionOptions() {
+  const list = [...sessions];
+  if (S.sid && !list.some((s) => s.session_id === S.sid)) list.unshift({ session_id: S.sid, agent: "" });
+  return list.map((s) =>
+    h(
+      "option",
+      { value: s.session_id, selected: s.session_id === S.sid },
+      `${short(s.session_id)} · ${s.agent || "?"}${s.closed_at ? " · 已关闭" : ""}`,
+    ),
+  );
 }
 
-let autoTimer = null;
-$("st-auto").onchange = () => {
-  clearInterval(autoTimer);
-  if ($("st-auto").checked) autoTimer = setInterval(() => !$("tab-state").hidden && query(lastQuery), 2000);
-};
-
-// Session 条：投影摘要，事件到达后刷新。
-let projTimer = null;
-function scheduleProjection() {
-  clearTimeout(projTimer);
-  projTimer = setTimeout(refreshProjection, 250);
+function addUser() {
+  const name = prompt("EndUser 名称（-auth jwt 时用 yanshi token -key demo.key -user <名称> 签发令牌）");
+  if (!name) return renderTop();
+  if (!S.users.some((u) => u.name === name)) S.users.push({ name, token: "" });
+  switchUser(name);
 }
 
-async function refreshProjection() {
-  const bar = $("session-bar");
-  if (!S.sid) {
-    bar.textContent = "没有打开的 Session：新建一个，或在左侧输入 ID 后打开。";
-    return;
-  }
-  const r = await api("GET", `/v1/sessions/${S.sid}`, ownerUser());
-  const parts = [el("span", {}, "Session ", el("code", {}, S.sid))];
-  if (r.status === 200) {
-    const j = r.json;
-    parts.push(el("span", {}, `${j.end_user} · ${j.agent?.name}@${j.agent?.version} · seq ${j.seq}`));
-    const last = (j.runs ?? []).at(-1);
-    if (last) {
-      parts.push(el("span", { class: `badge ${last.status}` }, `${short(last.run_id)} ${last.status}`));
-      if (last.waiting) parts.push(el("span", { class: "muted" }, `在等：${waitingText(last.waiting)}`));
-    }
-  } else {
-    parts.push(el("span", { class: "muted" }, `投影：HTTP ${r.status}`));
-  }
-  bar.replaceChildren(...parts);
-  if (!$("tab-state").hidden && lastQuery === "session") query("session");
+function switchUser(name) {
+  S.user = name;
+  S.sid = "";
+  persist();
+  chat?.dispose();
+  chat = null;
+  refreshSessions();
+  renderAll();
 }
 
-// —— 检查器：验证 ——
+function setView(v) {
+  S.view = v;
+  persist();
+  renderAll();
+}
 
-const results = new Map();
-function renderVerify() {
-  $("vf-list").replaceChildren(
-    ...SCENARIOS.map((s) => {
-      const r = results.get(s.id);
-      const status = r?.running ? "running" : r ? (r.ok ? "pass" : "fail") : "";
-      const icon = { running: "…", pass: "✓", fail: "✗", "": "○" }[status];
-      const run = el("button", { class: "tiny", disabled: !!r?.running }, "运行");
-      run.onclick = () => verify([s]);
-      const open = el("button", { class: "tiny", hidden: !r?.sessionId }, "查看事件");
-      open.onclick = () => {
-        openSession(r.sessionId);
-        setTab("events");
-        fetchHTTPEvents();
-      };
-      const box = el(
+// —— 对话视图 ——
+
+let chat = null;
+let sideQueued = false;
+function scheduleSide() {
+  if (sideQueued) return;
+  sideQueued = true;
+  setTimeout(() => ((sideQueued = false), S.view === "chat" && renderSide()), 200);
+}
+
+function renderChat() {
+  const e = chatEntry();
+  const view = viewOf(e, S.sid);
+  if (!view) {
+    chat?.dispose();
+    chat = null;
+    fill(
+      $("chat-main"),
+      h(
         "div",
-        { class: "scenario" },
-        el(
+        { class: "welcome" },
+        h("h2", {}, "开始一段对话"),
+        h(
+          "p",
+          {},
+          "选择 Agent 后新建 Session。推荐 ",
+          h("b", {}, "concierge"),
+          "：它把闹钟、导航、查资料分别委托给专员，在你的模拟设备上执行，再用卡片汇总结果。",
+        ),
+        h(
           "div",
           { class: "row" },
-          el("span", { class: `status ${status}` }, icon),
-          el("span", { class: "title" }, s.title),
-          el("span", { class: "muted" }, s.id),
-          el("span", { class: "spacer" }),
-          el("span", { class: "muted" }, r && !r.running ? `${r.ms} ms` : ""),
-          open,
-          run,
+          h("button", { class: "primary big", onclick: newSession }, `新建 Session（${S.agent}）`),
+          h("button", { class: "big", onclick: () => setupScene() }, "一键搭建设备：手机 + 电脑 + 手表 + 音箱 + 车机"),
         ),
-        el("div", { class: "desc" }, s.description),
+        h("p", { class: "muted" }, '没有模型密钥时选 console（脚本化模型）：输入 call iphone__set_alarm {"time":"07:00"} 这样的命令。'),
+      ),
+    );
+  } else if (!chat || chat.view !== view) {
+    chat?.dispose();
+    chat = new ChatPanel({ device: e.sim, view, ctx: { artifacts, user: S.user, children: childView } });
+    e.sim.setActivity(S.sid, true);
+    fill($("chat-main"), chat.root);
+  }
+  renderSide();
+}
+
+const EXAMPLES = {
+  concierge: [
+    "明早 7 点叫我起床，顺便导航去公司（望京 SOHO）",
+    "我到家前把车里空调开到 22 度，再放点轻音乐",
+    "帮我看看电脑上 budget.csv 里哪个月结余最多",
+    "这周六下午 3 点和老王打球，帮我记到日历里",
+  ],
+  assistant: ["明早 7 点叫我起床", "帮我拍张照片看看桌上有什么", "看一下电脑上的 notes.txt", "记住：我对花生过敏"],
+  console: [
+    'call iphone__set_alarm {"time":"07:00","label":"晨跑"}',
+    'call show_card {"title":"天气","image":"icon:weather","body":[{"type":"facts","facts":[{"label":"今天","value":"晴 25℃"}]}],"buttons":[{"id":"more","label":"看明天"}]}',
+    "ask 选哪个？ | 甲 | 乙",
+    'call agent__console-helper {"task":"复述这句话"}',
+    "stream 100",
+  ],
+};
+
+function renderSide() {
+  const e = devices.get(S.chatDevice[S.user]);
+  const view = e && S.sid ? e.views.get(S.sid) : undefined;
+  const others = userDevices().filter((d) => !d.sim.cfg.clientOnly);
+  const agent = S.sid ? (sessions.find((s) => s.session_id === S.sid)?.agent ?? S.agent) : S.agent;
+  fill(
+    $("chat-side"),
+    h(
+      "section",
+      {},
+      h("h4", {}, "对话所用设备"),
+      h(
+        "select",
+        {
+          onchange: (ev) => {
+            S.chatDevice[S.user] = ev.target.value;
+            persist();
+            chat?.dispose();
+            chat = null;
+            renderChat();
+          },
+        },
+        userDevices().map((d) =>
+          h("option", { value: d.rec.id, selected: d === e }, `${DEVICE_PRESETS[d.rec.preset]?.icon ?? ""} ${d.sim.label || d.rec.label}`),
+        ),
+      ),
+      h("p", { class: "muted" }, "从哪台设备发消息：输入会注明这台设备（设备歧义消解）。"),
+    ),
+    h(
+      "section",
+      {},
+      h("h4", {}, "设备 ", h("button", { class: "tiny", onclick: () => setView("devices") }, "管理")),
+      others.length
+        ? others.map((d) =>
+            h(
+              "div",
+              { class: "side-dev" },
+              h("span", { class: `dot ${d.sim.status}` }),
+              DEVICE_PRESETS[d.rec.preset]?.icon,
+              " ",
+              d.sim.label || d.rec.label,
+              h("span", { class: "spacer" }),
+              h(
+                "button",
+                {
+                  class: "tiny",
+                  onclick: () => {
+                    d.sim.wanted ? d.sim.disconnect() : d.sim.connect();
+                    persist();
+                    setTimeout(renderSide, 50);
+                  },
+                },
+                d.sim.wanted ? "下线" : "上线",
+              ),
+            ),
+          )
+        : h(
+            "div",
+            {},
+            h("p", { class: "muted" }, "还没有可以执行能力的设备。"),
+            h("button", { class: "small primary", onclick: () => setupScene() }, "一键搭建"),
+          ),
+    ),
+    view ? h("section", {}, h("h4", {}, "委托"), delegationTree(view)) : null,
+    h(
+      "section",
+      {},
+      h("h4", {}, "试试"),
+      (EXAMPLES[agent] ?? EXAMPLES.assistant).map((t) =>
+        h(
+          "button",
+          {
+            class: "example",
+            onclick: () => {
+              if (!chat) return;
+              chat.input.value = t;
+              chat.input.focus();
+            },
+          },
+          t,
+        ),
+      ),
+    ),
+  );
+}
+
+function delegationTree(view, depth = 0) {
+  const list = view.delegations();
+  if (!list.length) return depth ? null : h("div", { class: "muted" }, "本 Session 还没有委托");
+  return h(
+    "ul",
+    { class: "tree" },
+    list.map((d) => {
+      const child = childView(d.childSessionId);
+      const last = child?.payloads("run_requested").at(-1);
+      const end = last && child.runEnd(last.run_id);
+      return h(
+        "li",
+        {},
+        h(
+          "span",
+          { class: `pill ${end?.kind ?? "running"}` },
+          end ? { run_completed: "完成", run_failed: "失败", run_interrupted: "中断" }[end.kind] : "进行中",
+        ),
+        " 🤝 ",
+        h("b", {}, d.agent),
+        h("code", { class: "muted", title: d.childSessionId }, " ", short(d.childSessionId)),
+        child ? delegationTree(child, depth + 1) : null,
       );
-      if (r?.log.length) {
-        const details = el(
-          "details",
-          { open: !r.ok || r.running },
-          el("summary", { class: "muted" }, "步骤"),
-          el("pre", {}, r.log.join("\n")),
-        );
-        box.append(details);
-      }
-      return box;
     }),
   );
-  const done = [...results.values()].filter((r) => !r.running);
-  $("vf-summary").textContent = done.length ? `${done.filter((r) => r.ok).length} / ${done.length} 通过` : "";
 }
 
-function verifyEnv() {
-  if (S.auth === "jwt") {
-    const users = S.users.filter((u) => u.token);
-    if (users.length < 2) throw new Error("jwt 模式下需要两个带令牌的 EndUser（第二个用于隔离检查）");
-    return { users: users.slice(0, 2).map((u) => ({ endUser: u.name, token: u.token })) };
-  }
-  // 每次运行使用新的 EndUser：设备与 Session 互不干扰，新登记的设备立即出现在工具中。
-  const tag = randomHex(3);
-  return {
-    users: [
-      { endUser: `qa-${tag}-a`, token: "" },
-      { endUser: `qa-${tag}-b`, token: "" },
-    ],
-  };
-}
+// —— 设备视图 ——
 
-async function verify(list) {
-  let ids;
-  try {
-    ids = verifyEnv();
-  } catch (e) {
-    $("vf-summary").textContent = e.message;
-    return;
-  }
-  const env = { wsUrl: WS_URL, httpBase: HTTP, businessLine: S.auth === "jwt" ? "" : S.bl, agent: "console", ...ids };
-  for (const s of list) {
-    const r = { running: true, ok: false, ms: 0, log: [], sessionId: "" };
-    results.set(s.id, r);
-    renderVerify();
-    const out = await runScenario(s, env, (m) => {
-      r.log.push(m);
-      renderVerify();
-    });
-    Object.assign(r, out, { running: false });
-    renderVerify();
-  }
-}
-$("vf-all").onclick = () => verify(SCENARIOS);
+const tiles = new Map();
 
-// —— Session 操作 ——
-
-$("create").onclick = async () => {
-  const user = $("new-user").value || S.users[0]?.name;
-  const body = { agent: S.agent };
-  if (S.auth !== "jwt") Object.assign(body, { business_line: S.bl, end_user: user });
-  const r = await api("POST", "/v1/sessions", user, body);
-  if (r.status !== 201) return alert(`创建失败：HTTP ${r.status} ${JSON.stringify(r.json)}`);
-  openSession(r.json.session_id);
-};
-$("open").onclick = () => openSession($("sid").value);
-$("close-session").onclick = async () => {
-  if (!S.sid || !confirm("关闭后 Session 不再接收输入（不可逆）。继续？")) return;
-  const r = await api("POST", `/v1/sessions/${S.sid}/close`, ownerUser(), { reason: "console" });
-  if (r.status >= 300) alert(`关闭失败：HTTP ${r.status} ${JSON.stringify(r.json)}`);
-};
-$("list-sessions").onclick = async () => {
-  const user = $("new-user").value || S.users[0]?.name;
-  const r = await api("GET", `/v1/sessions?${idQuery(user)}`, user);
-  $("sessions").replaceChildren(
-    ...(r.json?.sessions ?? []).slice(0, 12).map((s) => {
-      const row = el(
-        "div",
-        { class: "session-row", title: `${s.agent} · ${s.last_input_at ?? ""}` },
-        `${s.session_id}${s.closed_at ? "（已关闭）" : ""}`,
-      );
-      row.onclick = () => openSession(s.session_id);
-      return row;
-    }),
-  );
-  if (r.status !== 200) $("sessions").textContent = `HTTP ${r.status}`;
-};
-
-$("demo").onclick = async () => {
-  const user = $("new-user").value || S.users[0]?.name || "u1";
-  const want = ["phone", "desktop", "web"];
-  for (const preset of want) {
-    if ([...devices.values()].some((d) => d.rec.preset === preset && d.rec.user === user)) continue;
-    const rec = newRecord(preset, user);
-    S.records.push(rec);
-    persist();
-    addDevice(rec);
-  }
-  const mine = [...devices.values()].filter((d) => d.rec.user === user);
-  for (const d of mine) {
-    if (!d.dev.wanted) {
-      d.dev.connect();
-      d.rec.wanted = true;
+function renderDevices() {
+  const list = userDevices();
+  for (const [id, t] of tiles) {
+    if (!devices.has(id) || devices.get(id).rec.user !== S.user) {
+      t.dispose();
+      tiles.delete(id);
     }
   }
-  persist();
-  try {
-    await Promise.all(mine.map((d) => d.dev.ready()));
-  } catch (e) {
-    return alert(`设备连接失败：${e.message}`);
-  }
-  $("create").click();
-  const phone = mine.find((d) => d.rec.preset === "phone");
-  const pc = mine.find((d) => d.rec.preset === "desktop");
-  if (phone && pc) {
-    phone.ui.focus.checked = true;
-    phone.ui.input.value = `call ${pc.dev.label}__write_file {"path":"plan.txt","content":"周五发布"}`;
-    const web = mine.find((d) => d.rec.preset === "web");
-    if (web) web.ui.input.value = "ask 周会改到哪天？| 周四 | 周五";
-    pc.ui.input.value = `call ${phone.dev.label}__get_location`;
-  }
-};
-
-// —— 标签页与布局 ——
-
-function setTab(name) {
-  for (const b of document.querySelectorAll("#tabs button")) b.classList.toggle("active", b.dataset.tab === name);
-  for (const t of document.querySelectorAll(".tab")) t.hidden = t.id !== `tab-${name}`;
-  if (name === "frames") scheduleFrames();
-  if (name === "events") scheduleEvents();
-  if (name === "verify") renderVerify();
-  if (name === "state") query(lastQuery);
+  const grid = list.map((d) => {
+    let t = tiles.get(d.rec.id);
+    if (!t) {
+      t = new DeviceTile(d, {
+        artifacts,
+        user: S.user,
+        view: (entry) => viewOf(entry, S.sid),
+        children: childView,
+        onRemove: removeDevice,
+        onChange: persist,
+        save: persist,
+      });
+      tiles.set(d.rec.id, t);
+    }
+    return t.root;
+  });
+  fill(
+    $("devices-main"),
+    h(
+      "div",
+      { class: "toolbar" },
+      h("b", {}, `${S.user} 的设备`),
+      Object.entries(DEVICE_PRESETS).map(([k, p]) =>
+        h(
+          "button",
+          {
+            class: "small",
+            onclick: () => {
+              const e = addDevice(newRecord(k, S.user));
+              ensureSubscribed(e);
+              persist();
+              renderDevices();
+            },
+          },
+          `+ ${p.icon} ${p.title}`,
+        ),
+      ),
+      h("span", { class: "spacer" }),
+      h("button", { class: "small primary", onclick: () => setupScene() }, "一键搭建全套"),
+    ),
+    h(
+      "p",
+      { class: "muted hint" },
+      "下线：Run 挂起等待设备上线；断网：自动重连、续订、重发未确认的结果；崩溃：执行中的调用留下记录，重新投递后按 call_id 去重。",
+    ),
+    h("div", { class: "grid" }, grid.length ? grid : h("div", { class: "empty big" }, "还没有设备。添加一台，或一键搭建全套。")),
+  );
 }
-for (const b of document.querySelectorAll("#tabs button")) b.onclick = () => setTab(b.dataset.tab);
 
-if (S.inspector) document.documentElement.style.setProperty("--inspector", S.inspector);
-$("splitter").addEventListener("mousedown", (e) => {
-  e.preventDefault();
-  const move = (ev) => {
-    const h = Math.max(120, Math.min(window.innerHeight - 200, window.innerHeight - ev.clientY));
-    S.inspector = `${h}px`;
-    document.documentElement.style.setProperty("--inspector", S.inspector);
-  };
-  const up = () => {
-    window.removeEventListener("mousemove", move);
-    window.removeEventListener("mouseup", up);
-    persist();
-  };
-  window.addEventListener("mousemove", move);
-  window.addEventListener("mouseup", up);
+function setupScene() {
+  const have = new Set(userDevices().map((d) => d.rec.preset));
+  const labels = { phone: "iphone", desktop: "macbook", watch: "watch", speaker: "speaker", car: "car", web: "web" };
+  for (const k of ["web", "phone", "desktop", "watch", "speaker", "car"]) {
+    if (!have.has(k)) addDevice({ ...newRecord(k, S.user), label: labels[k] });
+  }
+  persist();
+  if (S.sid) for (const d of userDevices()) ensureSubscribed(d);
+  toast("已添加：网页、手机、电脑、手表、音箱、车机。新登记的设备至多 10 秒后出现在 Agent 的工具中。");
+  renderAll();
+}
+
+// —— 控制台视图 ——
+
+const inspector = new Inspector($("console-main"), {
+  sessionId: () => S.sid,
+  observer: () => {
+    const e = chatEntry();
+    return { device: e.sim, view: viewOf(e, S.sid) };
+  },
+  childView,
+  devices: () => [...devices.values()],
+  views: () =>
+    userDevices()
+      .filter((d) => d.views.has(S.sid))
+      .map((d) => ({ label: d.sim.label || d.rec.label, view: d.views.get(S.sid) })),
+  frames,
+  onFrames: (fn) => frameListeners.add(fn),
+  http: (method, path, body) => http(method, path, body),
+  idQuery: () => idQuery(),
+  verifyEnv,
+  runScenario,
+  artifacts,
+  user: () => S.user,
+});
+
+function verifyEnv() {
+  const users =
+    S.auth === "jwt"
+      ? S.users
+          .filter((u) => u.token)
+          .slice(0, 2)
+          .map((u) => ({ endUser: u.name, token: u.token }))
+      : [
+          { endUser: `qa-${randomHex(3)}-a`, token: "" },
+          { endUser: `qa-${randomHex(3)}-b`, token: "" },
+        ];
+  while (users.length < 2) users.push({ endUser: "", token: "" });
+  return { wsUrl: WS_URL, httpBase: HTTP, businessLine: S.auth === "none" ? S.bl : "", agent: "console", helper: "console-helper", users };
+}
+
+// —— 设置对话框 ——
+
+function renderSettings() {
+  const dlg = $("settings");
+  fill(
+    dlg,
+    h(
+      "form",
+      { method: "dialog" },
+      h("h3", {}, "设置"),
+      h(
+        "label",
+        { class: "field" },
+        "鉴权",
+        h(
+          "select",
+          {
+            onchange: (e) => {
+              S.auth = e.target.value;
+              persist();
+              renderSettings();
+            },
+          },
+          h("option", { value: "none", selected: S.auth === "none" }, "自报身份（serve -auth none，只允许回环地址）"),
+          h("option", { value: "jwt", selected: S.auth === "jwt" }, "令牌（serve -auth jwt）"),
+        ),
+      ),
+      S.auth === "none"
+        ? h("label", { class: "field" }, "业务线", h("input", { value: S.bl, onchange: (e) => ((S.bl = e.target.value), persist()) }))
+        : null,
+      h("h4", {}, "EndUser"),
+      S.users.map((u) =>
+        h(
+          "div",
+          { class: "row" },
+          h("b", { class: "user-name", style: { "--h": hue(u.name) } }, u.name),
+          S.auth === "jwt"
+            ? h("input", {
+                class: "grow",
+                placeholder: "令牌：yanshi token -key demo.key -user " + u.name,
+                value: u.token,
+                onchange: (e) => ((u.token = e.target.value.trim()), persist()),
+              })
+            : null,
+          S.users.length > 1
+            ? h(
+                "button",
+                {
+                  type: "button",
+                  class: "tiny",
+                  onclick: () => {
+                    S.users = S.users.filter((x) => x !== u);
+                    persist();
+                    renderSettings();
+                  },
+                },
+                "删除",
+              )
+            : null,
+        ),
+      ),
+      h("p", { class: "muted" }, '改了鉴权方式、业务线或令牌后点"应用"：设备以新的身份重新连接。'),
+      h(
+        "div",
+        { class: "row" },
+        h("button", { type: "button", class: "danger", onclick: resetAll }, "清空全部设备与设置"),
+        h("span", { class: "spacer" }),
+        h(
+          "button",
+          {
+            type: "button",
+            class: "primary",
+            onclick: () => {
+              persist();
+              location.reload();
+            },
+          },
+          "应用",
+        ),
+        h("button", {}, "关闭"),
+      ),
+    ),
+  );
+}
+
+function resetAll() {
+  if (!confirm("清空本机保存的设备与设置？（网关中的 Session 与 Node 登记不受影响）")) return;
+  for (const d of devices.values()) d.sim.disconnect();
+  localStorage.removeItem(SAVED);
+  location.reload();
+}
+
+// —— 布局 ——
+
+function renderAll() {
+  renderTop();
+  for (const v of ["chat", "devices", "console"]) $(`view-${v}`).hidden = S.view !== v;
+  if (S.view === "chat") renderChat();
+  if (S.view === "devices") renderDevices();
+  if (S.view === "console") {
+    inspector.render();
+    inspector.poll();
+  }
+}
+
+document.addEventListener("visibilitychange", () => {
+  const e = devices.get(S.chatDevice[S.user]);
+  if (e && S.sid) e.sim.setActivity(S.sid, document.visibilityState === "visible" && S.view === "chat");
 });
 
 // —— 启动 ——
 
-renderUsers();
-$("sid").value = S.sid;
-// 设备加入时订阅当前 Session（addDevice → openOn）。
-for (const rec of S.records) addDevice(rec);
-refreshProjection();
-if (devices.size) select([...devices.keys()][0]);
-renderVerify();
+for (const rec of S.devices) addDevice(rec);
+renderSettings();
+if (S.sid) for (const d of userDevices()) ensureSubscribed(d);
+renderAll();
+refreshSessions();

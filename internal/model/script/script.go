@@ -91,12 +91,24 @@ func current(msgs []model.Message) (string, []string) {
 		case model.RoleTool:
 			results = append([]string{model.Text(m.Content)}, results...)
 		case model.RoleUser:
-			if t := model.Text(m.Content); !strings.HasPrefix(t, "[语音通话]") {
+			if t := userText(m.Content); !strings.HasPrefix(t, "[语音通话]") {
 				return t, results
 			}
 		}
 	}
 	return "", results
+}
+
+// userText 是用户输入中的文字；卡片动作与真实提供商一样呈现为一行文字（model.CardActionText），脚本复述它。
+func userText(blocks []*v1.ContentBlock) string {
+	var b strings.Builder
+	for _, c := range blocks {
+		if a := c.GetCardAction(); a != nil {
+			b.WriteString(model.CardActionText(a))
+		}
+		b.WriteString(c.GetText().GetText())
+	}
+	return b.String()
 }
 
 func parse(input string) plan {

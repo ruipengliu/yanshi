@@ -1,27 +1,82 @@
 # 调试控制台
 
-> 状态：已实现 · 依赖：[多端双工通道](./m3-duplex-channel.md)、[M1 设备即节点](./m1-device-nodes.md)、[端侧 SDK](./m3-client-sdks.md) · 契约：[`node.proto`](../../proto/yanshi/v1/node.proto)
+> 状态：已实现（2026-10-11 重做为三个视图） · 依赖：[多端双工通道](./m3-duplex-channel.md)、[M1 设备即节点](./m1-device-nodes.md)、[端侧 SDK](./m3-client-sdks.md)、[卡片](./cards.md)、[委托](./m5-multi-agent.md)、[Call](./m3-call.md) · 契约：[`node.proto`](../../proto/yanshi/v1/node.proto) · ADR-0032、ADR-0033
 
 ## 1. 目的
 
-章程 G1 的多端语义（同一 Session 多台设备同时在线、跨端接续、设备即 Node）只靠单元测试与 e2e 很难让人看见，也难以手工复现。调试控制台（`serve` 的 `/console`）在一个页面里：
+章程 G1 的多端语义很难让人看见，也难以手工复现，只靠单元测试与 e2e 不够。这些语义包括：同一 Session 多台设备同时在线、跨端接续、设备即 Node、委托给其他 Agent、执行中的故障恢复。
 
-- **模拟多端**：任意多台手机、电脑、网页，分属一个或多个 EndUser，各自一条 Connection；
-- **调试**：看每台设备收发的每一帧、收到的事件、Session 的投影与 Node 目录，手工构造帧发给网关；
-- **验证**：一组验证场景对网关逐项检查多端语义，浏览器中一键运行，`make check` 中同样运行；
-- **演示**：一键搭建"手机 + 电脑 + 网页"，在三台设备之间演示能力路由、审批、提问、插话与中断。
+调试控制台（`serve` 的 `/console`）在一个页面里提供三个视图，共用一组模拟设备与当前 Session：
 
-它只使用公开的 Connection 协议与 HTTP API，不比其他客户端多任何权限，也没有调试专用的服务端接口。
+| 视图 | 做什么 |
+|---|---|
+| **对话** | 一台设备全屏展示聊天，支持文字、图片与文件、语音消息、实时通话。Agent 的卡片、审批与提问都在对话里处理 |
+| **设备** | 每个 EndUser 的手机、电脑、手表、音箱、车机与网页，各自一条 Connection。可以上线、下线、断网、崩溃，查看模拟应用的状态，切换能力的执行方式，查看调用账本。每台设备有自己的迷你对话 |
+| **控制台** | 时间线、事件、帧、投影、服务端故障注入、进程指标、验证场景 |
 
-## 2. 模拟设备（`static/console/device.js`）
+控制台只使用公开的 Connection 协议与 HTTP API，不比其他客户端多任何权限。
 
-模拟设备直接按协议以 **protojson 文本帧** 接入，不经网页 SDK：网页 SDK 只作会话客户端（ADR-0026），而控制台要模拟提供 Capability 的手机与电脑；文本帧也让每一帧可读、可手工构造。语义与 SDK 一致，便于用它检查网关：
+唯一的调试专用接口是故障注入与进程指标（`/v1/debug/*`），它们只在 `serve -faults` 时存在（ADR-0033）。
+
+## 2. 对话
+
+对话视图用一台模拟设备作为会话客户端，默认是该 EndUser 的网页设备，没有时自动添加一台。也可以选手机、电脑等设备：经 Connection 的输入会注明来源设备（`UIContext.device`），模型据此在多台设备中选择（[判断](./m6-decisions.md) §3）。
+
+| 输入 | 做法 |
+|---|---|
+| 文字 | `SubmitInput`；Run 进行中时并入它，等回答时作为回答 |
+| 图片、文件 | 选择、粘贴或拖入后，经 HTTP 上传为工件（`POST /v1/sessions/{id}/artifacts`），随下一条消息以 `media`（`artifact://`）提交。模型能看图（`doubao-seed-2-1-lite`） |
+| 拍照 | 文件选择加 `capture`：手机上直接打开相机 |
+| 语音消息 | 按住 🎤 录音，在浏览器中编码为 16 kHz 的 WAV（火山方舟接受 wav、mp3、m4a，不接受 webm），上传后作为 `audio/wav` 工件提交。由模型直接听，不经转写 |
+| 界面上下文 | 可选：随下一条消息附上界面与可见内容（`UIContext`） |
+| 卡片动作 | 点卡片上的按钮或列表项（`CardAction`，[卡片](./cards.md) §4） |
+| 通话 | 📞：经同一条 Connection 的 `CallStart` / `CallAudio`，上行 16 kHz、下行按到达顺序播放，说话时打断（[Call](./m3-call.md)）。需要 `VOLC_SPEECH_API_KEY` |
+
+事件流的呈现：
+
+- **回复**：Markdown 只渲染安全的子集（`markdown.js`），直接构造 DOM、不经 innerHTML。链接只允许 `https:` 与 `artifact://`，图片只允许本 Session 的工件。用户自己的输入按纯文本显示。
+- **调用**：每个调用一条可展开的状态条：排队、执行中、待审批、出错、完成。展开后显示参数、结果，以及路由到的设备。委托的调用显示子 Session 的状态与回复。
+- **卡片**（`cards.js`）：同一 `card_id` 只显示最新版。点过的动作在所有设备上显示为已选，判断依据是事件流中输入里的 `card_action`。
+- **待处理**：审批与 `ask_user` 提问以卡片样式显示在输入框上方，任一设备处理后从所有设备上收起。
+- **状态行**：Run 在等什么（设备、子 Agent、你的回答）、生成中、中断按钮、在场的其他设备与"正在输入"。
+
+`-auth jwt` 时工件要带令牌下载，`<img src>` 带不上令牌，所以先下载成 blob 再显示（`ui.js` 的 `Artifacts`）。
+
+## 3. 设备
+
+### 3.1 模拟设备（`static/console/device.js`）
+
+模拟设备直接按协议以 **protojson 文本帧** 接入，不经网页 SDK。原因有两个：网页 SDK 只作会话客户端（ADR-0026），而控制台要模拟提供 Capability 的手机与电脑；文本帧也让每一帧可读、可手工构造。语义与 SDK 一致，便于用它检查网关：
 
 - 断线自动重连，按各订阅最后收到的 seq 续订，丢弃不比它新的事件；
 - 带 `input_id` 的提交在响应之前断线时，以同一 ID 重试；
-- 调用按 `call_id` 记账（同 `sdk/nodesdk.Executor`）："执行中"先记下、再执行；重复投递返回已有结果；执行中崩溃后再投递，幂等能力重新执行，否则返回 outcome unknown；结果在收到 `ResultAck` 之前，重连后重发。
+- 调用按 `call_id` 记账，同 `sdk/nodesdk.Executor`：
+  - "执行中"先记下、再执行；
+  - 重复投递返回已有结果；
+  - 执行中崩溃后再投递时，幂等能力重新执行，否则返回 outcome unknown；
+  - 结果在收到 `ResultAck` 之前，重连后重发；
+- 能力的结果可以带工件：如拍照时先把照片上传为调用所属 Session 的工件，再以 `media` 返回。
 
-每个 Capability 可以切换执行方式：
+`device.js` 与 `scenarios.js` 不依赖 DOM，在浏览器与 Node.js 中都能运行。
+
+### 3.2 设备类型与模拟应用
+
+| 设备 | 能力 |
+|---|---|
+| 📱 手机 | `get_location`、`take_photo`（需审批）、`send_sms`（需审批）、`set_alarm`、`list_alarms`、`cancel_alarm`、`create_event`、`list_events`、`play_music` |
+| 💻 电脑 | `read_file`、`list_dir`、`write_file`（需审批）、`open_url` |
+| ⌚ 手表 | `set_alarm`、`list_alarms`、`start_timer`、`get_heart_rate` |
+| 🔊 音箱 | `play_music`、`set_volume`、`set_alarm` |
+| 🚗 车机 | `navigate`、`set_climate`、`play_music`、`get_location` |
+| 🌐 网页 | 只作会话客户端 |
+
+每台设备有模拟应用的状态（`SimDevice.apps`）：闹钟、日程、计时器、已发短信、相册、正在播放、导航、空调、浏览器、文件。能力的处理函数读写它，设备卡片的"应用"页签实时显示，例如"手机上多了一个 07:00 的闹钟"。
+
+同一种能力分布在几台设备上（闹钟、音乐），用于观察设备歧义消解。
+
+### 3.3 执行方式与连接故障
+
+每个能力可以切换执行方式：
 
 | 方式 | 行为 | 用来观察 |
 |---|---|---|
@@ -31,25 +86,31 @@
 | 不回应 | 永不返回 | 结果截止时间到期 |
 | 执行中崩溃 | 收到调用后断开连接、留下"执行中"记录，随后自动重连 | 重新投递与按 `call_id` 去重 |
 
-"下线"断开且不再重连（设备离线，Run 挂起等待它）；"断网"断开后自动重连（续订与重试）。预置的电脑有 `read_file`、`list_dir`、`write_file`（需审批），手机有 `get_location`、`take_photo`、`send_sms`（后两者需审批），网页只作会话客户端。设备 ID 保存在浏览器中，刷新后同一台设备重新上线。
+设备卡片上还有三种连接故障：
 
-`device.js` 与 `scenarios.js` 不依赖 DOM，在浏览器与 Node.js 中都能运行。
+- **下线**：断开且不再重连。设备离线时 Run 挂起等待它。
+- **断网**：断开后自动重连，观察续订与重试。
+- **崩溃**：执行中的调用留下"执行中"记录，随后自动重连。
 
-## 3. 脚本化模型（`internal/model/script`）
+设备 ID 保存在浏览器中，刷新后同一台设备重新上线。
 
-没有模型密钥时，演示与验证需要一个结果确定、能按指令发起工具调用的模型。`script/any`（`agents/console.yaml` 的 Agent `console`）按最后一条用户输入中的命令行事，每行一条：
+## 4. 控制台
 
-| 命令 | 行为 |
+| 页签 | 内容 |
 |---|---|
-| `call <工具> [JSON]` | 调用名称等于它、或以它结尾的工具；多行依次调用，每收到一个结果调用下一个 |
-| `ask <问题> \| 选项 \| 选项` | 经 `ask_user` 提问 |
-| `stream <n>` | 约 n×20ms 内逐段输出（插话、中断、晚加入者） |
+| 时间线 | 当前 Session 的每个 Run 一块，带甘特条：每个 Attempt 一段，每个调用一段，注入的故障是红线。下面按时间列出输入、Attempt 开始（标出接管或恢复）、模型调用（模型、token、缓存命中）、调用及其路由目标、结果、审批、挂起、压缩、判断（`DecisionMade`）、内容安全拦截与注入的故障，左侧标出所属的 Attempt。委托的子 Session 嵌套在委托调用下面，递归展开 |
+| 事件 | 任一设备视角下已提交的事件，可过滤，点开看 JSON |
+| 帧 | 每台设备收发的每一帧（音频帧除外），可按设备、方向过滤；可以手工构造帧发给网关（订阅、提交、卡片动作、不合法的请求） |
+| 状态 | HTTP API：Session 投影、Node 目录、Session 列表、事件、工件、Memory、配额与用量 |
+| 故障注入 | 服务端故障注入（§7） |
+| 指标 | 本进程的 `yanshi_*` 指标，每 2 秒刷新，显示速率。包括 Run 完成与失败、模型调用与重试、Attempt（含接管）、注入的故障、队列 |
+| 验证 | 验证场景（§5），一键运行 |
 
-调用全部完成后回复 `done: <最后一个结果>`；没有命令时复述输入。插话开启新的命令序列。e2e 测试使用同一个模型。
+控制台在"对话"所用的设备上订阅委托出去的子 Session（发现 `@agent/<子 Session>` 的 `ToolCallStarted` 即订阅）。所以时间线、调用条与委托树都是实时的。
 
-## 4. 验证场景（`static/console/scenarios.js`）
+## 5. 验证场景（`static/console/scenarios.js`）
 
-每个场景新建自己的设备与 Session，以检查项断言网关的行为，结束时断开设备；Session 保留，可在控制台中查看事件。
+每个场景新建自己的设备与 Session，以检查项断言网关的行为，结束时断开设备。Session 保留，可在控制台中查看事件。
 
 | 场景 | 检查 |
 |---|---|
@@ -65,18 +126,69 @@
 | 插话与中断 | 另一台设备的输入并入进行中的 Run；中断后新输入开启新 Run |
 | 在场 | 前台、正在输入、取消订阅在其他设备上实时更新 |
 | 隔离 | 另一个 EndUser 的订阅、提交、中断、关闭都是 not_found |
+| 卡片 | 卡片多端可见；同一 `card_id` 再次展示即替换；点按钮作为输入，标签由平台填写；两台设备连点只生效一次；卡片上没有的动作被拒绝 |
+| 委托 | 调用派发到子 Session；子 Session 的输入是任务；子 Run 的回复写回父 Run |
+| 服务端故障注入 | 需要 `-faults`，否则跳过。模型调用失败后 Worker 重试、Run 完成；Worker 崩溃后租约过期被接管（新的 Attempt）、Run 完成 |
+| 图片与工件 | 上传的图片以工件引用随输入提交；手机拍照（需审批）把照片作为工件带回 Run |
 
-`make check` 中由 `internal/e2e` 的 `TestConsoleScenarios` 以 Node.js 运行全部场景（`internal/webui/testdata/run-scenarios.mjs`，需要 `YANSHI_TEST_NODE`）。新增多端语义时，同时在这里增加场景。
+`make check` 中由 `internal/e2e` 的 `TestConsoleScenarios` 以 Node.js 运行全部场景（`internal/webui/testdata/run-scenarios.mjs`，需要 `YANSHI_TEST_NODE`）。e2e 的实例始终装配故障注入，租约 5 秒。新增多端语义时，同时在这里增加场景。
 
-`-auth none` 时每次运行使用新的 EndUser（`qa-<随机>-a/b`），新登记的设备立即出现在工具中；`-auth jwt` 时使用控制台中前两个带令牌的 EndUser。此时新登记的设备至多 10 秒后才出现在 Agent 的工具中（`Catalog.NodeCacheTTL`），场景在脚本回复 "no such tool" 时稍后重试。
+EndUser 的选取：
 
-## 5. 鉴权
+- `-auth none` 时，每次运行使用新的 EndUser（`qa-<随机>-a/b`），新登记的设备立即出现在工具中。
+- `-auth jwt` 时，使用控制台中前两个带令牌的 EndUser。此时新登记的设备至多 10 秒后才出现在 Agent 的工具中（`Catalog.NodeCacheTTL`），场景在脚本回复 "no such tool" 时稍后重试。
+
+## 6. 脚本化模型（`internal/model/script`）与演示 Agent
+
+没有模型密钥时，演示与验证需要一个结果确定、能按指令发起工具调用的模型。`script/any`（Agent `console`）按最后一条用户输入中的命令行事，每行一条：
+
+| 命令 | 行为 |
+|---|---|
+| `call <工具> [JSON]` | 调用名称等于它、或以它结尾的工具；多行依次调用，每收到一个结果调用下一个。卡片：`call show_card {…}`；委托：`call agent__console-helper {"task": …}` |
+| `ask <问题> \| 选项 \| 选项` | 经 `ask_user` 提问 |
+| `stream <n>` | 约 n×20ms 内逐段输出（插话、中断、晚加入者） |
+
+调用全部完成后回复 `done: <最后一个结果>`；没有命令时复述输入。卡片动作与真实提供商一样呈现为一行文字，脚本复述它。插话开启新的命令序列。e2e 测试使用同一个模型。
+
+真实模型的演示 Agent（火山方舟，`ARK_API_KEY`）：
+
+| Agent | 做什么 | 白名单 |
+|---|---|---|
+| `concierge`（总管） | 把领域任务委托给专员，汇总成卡片 | 委托三位专员；设备能力只列出专员需要的（没有 `send_sms`、`write_file`） |
+| `schedule`（日程管家） | 闹钟、计时器、日程；需要时发提醒短信 | 闹钟、日程、计时器、`send_sms` |
+| `travel`（出行助手） | 导航、空调、音乐、音量 | 车机与音乐 |
+| `research`（研究员） | 读文件、开网页、在沙箱中计算 | `device:*`、`sandbox:*` |
+
+委托不扩大权限：子 Run 的工具是自身白名单与每个祖先白名单的交集（ADR-0031）。所以经总管委托时，日程管家不能发短信，直接和日程管家对话时可以（需审批）。评测 `concierge-no-escalation` 检查这一点。
+
+## 7. 服务端故障注入（ADR-0033）
+
+`serve -faults` 时，控制台的"故障注入"页签可以对当前 Session（或全部 Session）注入以下故障，并指定次数：
+
+| 故障 | 注入点 | 观察 |
+|---|---|---|
+| 模型服务端错误（503） | 模型提供商（`model.Guard` 之内） | 真实提供商先在提供商层退避重试；脚本模型没有 Guard，Worker 这一步失败、下一步重来，连续 3 次 Run 失败 |
+| 模型限流（429，Retry-After） | 同上 | 按 Retry-After 等待后重试 |
+| 流式输出中断 | 同上，转发 N 个字符后失败 | 草稿被丢弃，Worker 重新调用（已输出过增量，提供商层不重试） |
+| 模型延迟 | 同上 | 插话、中断、晚加入的设备 |
+| Worker 崩溃 | Worker 写完一步之后 | 不释放租约；租约过期（`-lease-ttl`）后被接管，开启新的 Attempt |
+| 内容安全不可用 | 内容安全提供商 | 输入被拒绝（503，不写日志）；输出的这一步重试 |
+| 设备目录不可用 | 解析工具时查询设备目录 | 这一步重试 |
+
+规则只在进程内存中，只影响本进程。每次注入记录规则、类型与 Session ID，在时间线上以红线标出，计入 `yanshi_faults_injected_total`。
+
+用户令牌只能对自己的 Session 注入；不限 Session 的规则需要服务令牌或 `-auth none`。
+
+设备侧的故障（下线、断网、崩溃、不回应、返回错误）在"设备"视图中，经公开协议模拟，不需要 `-faults`。
+
+## 8. 鉴权
 
 - `-auth none`：设备在 Hello 中自报业务线与 EndUser；HTTP API 不校验身份（只允许回环地址）。
 - `-auth jwt`：每个 EndUser 填写令牌（`yanshi token -key demo.key -user <用户>`），设备与 HTTP 请求都以令牌为准。令牌只保存在本机浏览器的 localStorage 中。也可以用链接带入：`/console#token.u1=<令牌>&token.u2=<令牌>`，片段不随请求发给服务端，读入后从地址栏清除。
-- 在同一网络的其他设备上使用：`-auth none` 只允许回环地址，须 `serve -addr 0.0.0.0:<端口> -auth jwt`，再把带令牌的链接发到那台设备上。
+- 在同一网络的其他设备上使用：`-auth none` 只允许回环地址，须 `serve -addr 0.0.0.0:<端口> -auth jwt`，再把带令牌的链接发到那台设备上。手机浏览器打开后，对话视图的"拍照"直接调用相机。
 
-## 6. 控制台发现的问题
+## 9. 控制台发现的问题
 
 - 已修复：Run 结束后重复审批同一调用返回 not_found，与 `node.proto` 中"审批、回答重复执行返回 conflict"不一致（回答已是 conflict）。`service.Decide` 现在对请求过审批的调用返回 conflict。
 - 未改：调用完成、结果确认后，网关仍向设备发送一次 `Cancel`。`wsgateway.deliver` 只比较 Inbox 与已投递集合，分不清"完成后移出"与"被撤回"。SDK 对已完成调用的取消不做任何事，所以无害，只多一帧。
+- 已修复（2026-10-11）：总管在交给专员的任务里写了编造的日期。指令改为不确定的日期先调用 `clock_now`，否则照用户的原话转述。

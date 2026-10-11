@@ -64,7 +64,7 @@ await client.answer(sessionId, questions.questions[0].callId, { selected: ["b"] 
 - `onAudio` 收到 24 kHz 的语音；
 - 连接断开时 `onEnded("disconnected")`。
 
-麦克风采集、重采样与播放见网页通话页（`internal/webui/static/call.js`）。Go 与移动端的通话接口尚未提供。
+麦克风采集、重采样与播放见调试控制台（`internal/webui/static/console/audio.js`）。Go 与移动端的通话接口尚未提供。
 
 ## 3. 移动端（`sdk/mobile`）
 

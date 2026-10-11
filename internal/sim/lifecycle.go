@@ -76,14 +76,20 @@ func (w *World) replace(i int) error {
 
 func (w *World) closeSession() error {
 	i := w.rng.IntN(len(w.sessions))
+	return w.closeAt(i, w.svc.Close(context.Background(), w.sessions[i], "sim", "test"))
+}
+
+// closeAt 处理关闭第 i 个 Session 的结果 err：结果未知时客户端重试。
+func (w *World) closeAt(i int, err error) error {
 	sid := w.sessions[i]
-	err := w.svc.Close(context.Background(), sid, "sim", "test")
 	var cf cancelFault
-	for range 3 {
-		if !errors.As(err, &cf) {
+	var sf *storeFault
+	for range 6 {
+		if !errors.As(err, &cf) && !errors.As(err, &sf) {
 			break
 		}
-		// 关闭已写入、撤回委托失败：客户端重试，关闭之后的步骤（撤回、索引、销毁工作区）须在重试中补上。
+		// 关闭已写入、撤回委托失败，或写入的结果未知（存储故障）：客户端重试，关闭之后的步骤（撤回、索引、销毁工作区）
+		// 须在重试中补上。
 		w.tracef("close %s: %v; retrying", sid, err)
 		err = w.svc.Close(context.Background(), sid, "sim", "test")
 	}

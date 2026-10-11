@@ -237,8 +237,8 @@ func (q poolQueue) Claim(ctx context.Context, holder string, ttl time.Duration, 
 // interactiveWorker 是只认领交互工作的 Worker 的 ID 前缀：模拟中 0 号 Worker 是交互 Worker。
 const interactiveWorker = "wi"
 
-// simContext 是模拟 AgentDef 的上下文配置：窗口很小（工具声明约占 1100，其中 ask_user 约 450），使压缩频繁发生；须容得下工具声明、摘要、KeepRecent 与一条最大的消息（含界面上下文）。
-var simContext = agentdef.Context{Window: 2600, CompactAt: 0.75, KeepRecent: 300, MaxToolResult: 250}
+// simContext 是模拟 AgentDef 的上下文配置：窗口很小（工具声明约占 1150，其中 ask_user 约 450、缩短的 show_card 约 30），使压缩频繁发生；须容得下工具声明、摘要、KeepRecent 与一条最大的消息（含界面上下文）。
+var simContext = agentdef.Context{Window: 2800, CompactAt: 0.75, KeepRecent: 300, MaxToolResult: 250}
 
 const longRunTurns = 20
 
@@ -834,6 +834,14 @@ func (w *World) submit() error {
 	if w.submitOverQuota(err) {
 		w.tracef("submit %s rejected: %v", sid, err)
 		return nil
+	}
+	if errors.Is(err, service.ErrConflict) {
+		// 关闭的结果未知、重试也没有成功时（closeAt），模拟仍把 Session 当作打开的：提交得到 conflict 是对的。
+		// 客户端由此得知它已关闭，再次关闭以补上关闭之后的步骤。
+		if st, lerr := w.svc.Load(context.Background(), sid); lerr == nil && st.Closed != nil {
+			w.tracef("submit %s: closed by an uncertain close", sid)
+			return w.closeAt(slices.Index(w.sessions, sid), w.svc.Close(context.Background(), sid, "sim", "test"))
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("submit: %w", err)

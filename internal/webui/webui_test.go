@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestRoutes：通话页与控制台的页面、脚本按路径提供，脚本以 JavaScript 类型返回（浏览器据此加载 ES 模块）。
+// TestRoutes：控制台的页面、脚本按路径提供，脚本以 JavaScript 类型返回（浏览器据此加载 ES 模块）；旧的通话页重定向到控制台。
 func TestRoutes(t *testing.T) {
 	srv := httptest.NewServer(Handler())
 	defer srv.Close()
@@ -16,14 +16,16 @@ func TestRoutes(t *testing.T) {
 		path, contains, typ string
 		code                int
 	}{
-		{"/call", "yanshi 通话", "text/html", 200},
-		{"/call/call.js", "import", "text/javascript", 200},
+		{"/call", "yanshi 调试控制台", "text/html", 200},
 		{"/console", "yanshi 调试控制台", "text/html", 200},
 		{"/console/", "yanshi 调试控制台", "text/html", 200},
-		{"/console/app.js", "SCENARIOS", "text/javascript", 200},
+		{"/console/app.js", "runScenario", "text/javascript", 200},
 		{"/console/device.js", "class SimDevice", "text/javascript", 200},
+		{"/console/chat.js", "class ChatPanel", "text/javascript", 200},
+		{"/console/cards.js", "renderCard", "text/javascript", 200},
 		{"/console/scenarios.js", "export const SCENARIOS", "text/javascript", 200},
-		{"/console/console.css", ".device", "text/css", 200},
+		{"/console/console.css", ".ycard", "text/css", 200},
+		{"/sdk/yanshi.js", "export", "text/javascript", 200},
 		{"/console/missing.js", "", "", 404},
 		{"/other", "", "", 404},
 	} {
