@@ -665,7 +665,8 @@ func (x *Text) GetText() string {
 	return ""
 }
 
-// Media 是非文本内容：大对象以 uri 引用 Artifact（"artifact://<id>"），小对象可内联 data。
+// Media 是非文本内容，以 uri 引用 Artifact（"artifact://<id>"）。data 只在发给模型的请求副本中填入（Worker 内联图片），
+// 不进日志：用户输入中带 data 或其他地址的 Media 被拒绝（docs/design/m2-artifacts.md）。
 type Media struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	MimeType string                 `protobuf:"bytes,1,opt,name=mime_type,json=mimeType,proto3" json:"mime_type,omitempty"`
@@ -1497,7 +1498,9 @@ type ToolResult struct {
 	Content []*ContentBlock `protobuf:"bytes,4,rep,name=content,proto3" json:"content,omitempty"`
 	IsError bool            `protobuf:"varint,5,opt,name=is_error,json=isError,proto3" json:"is_error,omitempty"`
 	// 用户直接打字回答 ask_user 提问时，这条输入的 ID（见 RunRequested.input_id）。
-	InputId       string `protobuf:"bytes,6,opt,name=input_id,json=inputId,proto3" json:"input_id,omitempty"`
+	InputId string `protobuf:"bytes,6,opt,name=input_id,json=inputId,proto3" json:"input_id,omitempty"`
+	// 非空表示这条回答由该 Call 中的语音模型转述（run_task 恰好回答了提问）：不是用户的原话（Memory 写入闸门）。
+	FromCall      string `protobuf:"bytes,7,opt,name=from_call,json=fromCall,proto3" json:"from_call,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1570,6 +1573,13 @@ func (x *ToolResult) GetIsError() bool {
 func (x *ToolResult) GetInputId() string {
 	if x != nil {
 		return x.InputId
+	}
+	return ""
+}
+
+func (x *ToolResult) GetFromCall() string {
+	if x != nil {
+		return x.FromCall
 	}
 	return ""
 }
@@ -2540,7 +2550,7 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x12\x17\n" +
 	"\acall_id\x18\x03 \x01(\tR\x06callId\x12\x17\n" +
 	"\anode_id\x18\x04 \x01(\tR\x06nodeId\x126\n" +
-	"\bdeadline\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bdeadline\"\xbf\x01\n" +
+	"\bdeadline\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bdeadline\"\xdc\x01\n" +
 	"\n" +
 	"ToolResult\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
@@ -2548,7 +2558,8 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\acall_id\x18\x03 \x01(\tR\x06callId\x121\n" +
 	"\acontent\x18\x04 \x03(\v2\x17.yanshi.v1.ContentBlockR\acontent\x12\x19\n" +
 	"\bis_error\x18\x05 \x01(\bR\aisError\x12\x19\n" +
-	"\binput_id\x18\x06 \x01(\tR\ainputId\"?\n" +
+	"\binput_id\x18\x06 \x01(\tR\ainputId\x12\x1b\n" +
+	"\tfrom_call\x18\a \x01(\tR\bfromCall\"?\n" +
 	"\fRunCompleted\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\"T\n" +

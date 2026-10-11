@@ -65,14 +65,21 @@ func (d *Directory) Register(ctx context.Context, info node.Info) (string, uint6
 			for n := 2; used[label]; n++ {
 				label = fmt.Sprintf("%s-%d", base, n)
 			}
-			return tx.QueryRow(ctx, `
+			// 归属在 UPSERT 中再判一次：上面的 FOR UPDATE 锁不住尚不存在的行，两个 EndUser 并发首次注册同一 ID 时
+			// 都能通过前置检查，后到的一方在冲突后走 DO UPDATE；条件不满足时不更新、不返回行，注册失败。
+			err = tx.QueryRow(ctx, `
 				INSERT INTO nodes (node_id, business_line, end_user, label, kind, host_app, capabilities, online, last_seen, gen)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, 1)
 				ON CONFLICT (node_id) DO UPDATE SET label = $4, kind = $5, host_app = $6, capabilities = $7,
 					online = true, last_seen = $8, gen = nodes.gen + 1
+				WHERE nodes.business_line = EXCLUDED.business_line AND nodes.end_user = EXCLUDED.end_user
 				RETURNING gen`,
 				info.NodeID, info.Scope.BusinessLine, info.Scope.EndUser, label, info.Kind, info.HostApp, caps, d.clock.Now(),
 			).Scan(&gen)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return fmt.Errorf("node %s belongs to another end user", info.NodeID)
+			}
+			return err
 		})
 		if pg.IsUniqueViolation(err) {
 			continue

@@ -242,12 +242,17 @@ func (s *State) Run(id string) *Run {
 	return nil
 }
 
-// Clone 返回可独立修改的副本；事件本身不可变，因此共享。
+// Clone 返回可独立修改的副本。事件本身不可变，因此共享；终态的 Run 同样共享：Apply 只经 activeRun、fencedRun
+// 与 Active 修改 Run，它们都拒绝终态的 Run。Check 每次提交都要克隆，共享使代价不随历史 Run 的数量增长。
 func (s *State) Clone() *State {
 	cp := *s
 	cp.Runs = make([]*Run, len(s.Runs))
 	for i, r := range s.Runs {
-		cp.Runs[i] = r.clone()
+		if r.Status.Terminal() {
+			cp.Runs[i] = r
+		} else {
+			cp.Runs[i] = r.clone()
+		}
 	}
 	cp.History = slices.Clip(s.History)
 	cp.Inputs = slices.Clone(s.Inputs)

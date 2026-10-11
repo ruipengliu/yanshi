@@ -92,10 +92,13 @@ type Conn struct {
 	call *callSlot
 }
 
-// callSlot 是本连接的 Call：开始期间 c 为 nil（音频与控制在接通之前丢弃）。
+// callSlot 是本连接的 Call：开始期间 c 为 nil（音频在接通之前丢弃）。开始期间的挂断取消开始（cancel），
+// 并记下 hungUp：开始恰好已经成功时，接通后立即挂断。
 type callSlot struct {
-	id string
-	c  *call.Call
+	id     string
+	c      *call.Call
+	cancel context.CancelFunc
+	hungUp bool
 }
 
 type subscription struct {
@@ -175,7 +178,7 @@ func (c *Conn) Close() {
 	slot := c.call
 	c.mu.Unlock()
 	if slot != nil && slot.c != nil {
-		slot.c.End("disconnected")
+		slot.c.End(service.CallEndDisconnected)
 	}
 	c.wg.Wait()
 }
@@ -200,6 +203,9 @@ func (c *Conn) Handle(m *v1.NodeMessage) bool {
 			cl.Audio(m.CallAudio.GetPcm())
 		}
 	case *v1.NodeMessage_CallControl:
+		if m.CallControl.GetAction() == v1.CallAction_CALL_ACTION_HANGUP && c.hangUpStarting(m.CallControl.GetCallId()) {
+			break
+		}
 		if cl := c.activeCall(m.CallControl.GetCallId()); cl != nil {
 			cl.Control(m.CallControl.GetAction())
 		}
@@ -433,7 +439,8 @@ func (c *Conn) startCall(m *v1.CallStart) {
 		fail(fmt.Errorf("%w: a call is already in progress on this connection", service.ErrConflict))
 		return
 	}
-	slot := &callSlot{id: m.GetCallId()}
+	ctx, cancel := context.WithCancel(c.ctx)
+	slot := &callSlot{id: m.GetCallId(), cancel: cancel}
 	c.call = slot
 	c.mu.Unlock()
 	release := func() {
@@ -446,30 +453,61 @@ func (c *Conn) startCall(m *v1.CallStart) {
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
-		if _, err := c.h.load(c.ctx, c.id, m.GetSessionId()); err != nil {
+		defer cancel()
+		hungUp := func() bool {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			return slot.hungUp
+		}
+		if _, err := c.h.load(ctx, c.id, m.GetSessionId()); err != nil {
 			release()
-			fail(err)
+			if !hungUp() {
+				fail(err)
+			}
 			return
 		}
 		out := func(e *v1.CallEvent) error {
 			return c.send(&v1.GatewayMessage{Msg: &v1.GatewayMessage_CallEvent{CallEvent: e}})
 		}
-		cl, err := c.h.Calls.Start(c.ctx, call.StartRequest{SessionID: m.GetSessionId(), CallID: m.GetCallId(), DeviceID: c.id.DeviceID}, out)
+		cl, err := c.h.Calls.Start(ctx, call.StartRequest{SessionID: m.GetSessionId(), CallID: m.GetCallId(), DeviceID: c.id.DeviceID}, out)
 		if err != nil {
 			release()
-			fail(err)
+			if hungUp() {
+				// 设备在接通前挂断：开始被取消，没有产生 Call，告知它已结束即可。
+				_ = out(&v1.CallEvent{CallId: m.GetCallId(), Kind: &v1.CallEvent_Ended{Ended: &v1.CallEnded{CallId: m.GetCallId(), Reason: service.CallEndHangup}}})
+			} else {
+				fail(err)
+			}
 			return
 		}
 		c.mu.Lock()
 		slot.c = cl
 		c.mu.Unlock()
-		// 连接在开始期间断开：Close 看不到这个 Call，由这里挂断。
-		if c.ctx.Err() != nil {
-			cl.End("disconnected")
+		switch {
+		case c.ctx.Err() != nil:
+			// 连接在开始期间断开：Close 看不到这个 Call，由这里挂断。
+			cl.End(service.CallEndDisconnected)
+		case hungUp():
+			// 挂断与接通交错：开始已经成功，接通后立即挂断。
+			cl.End(service.CallEndHangup)
 		}
 		<-cl.Done()
 		release()
 	}()
+}
+
+// hangUpStarting 挂断本连接上正在开始、尚未接通的 Call：取消开始（打开语音模型、写入 CallStarted），
+// 避免设备放弃之后网关仍接通并产生费用。Call 不在开始中时返回 false。
+func (c *Conn) hangUpStarting(callID string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	slot := c.call
+	if slot == nil || slot.id != callID || slot.c != nil {
+		return false
+	}
+	slot.hungUp = true
+	slot.cancel()
+	return true
 }
 
 // clientError 与 HTTP API 的状态码一一对应（httpapi.Server.fail）。

@@ -6,6 +6,8 @@ import (
 	"fmt"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/askuser"
+	"yanshi/internal/eventlog"
 	"yanshi/internal/model"
 	"yanshi/internal/service"
 )
@@ -22,11 +24,16 @@ func (w *World) callStep() error {
 	if len(w.deleted) > 0 && w.chance(0.1) {
 		sid = w.deleted[w.rng.IntN(len(w.deleted))]
 	}
+	// 偏向正在等回答的 Session：通话中的话回答提问（经语音模型转述的打字回答）少见，但须覆盖。
+	asking := false
+	if q := w.asking(); q != "" && w.calls[q] != "" && w.chance(0.5) {
+		sid, asking = q, true
+	}
 	callID := w.calls[sid]
-	if callID == "" || w.chance(0.1) {
+	if !asking && (callID == "" || w.chance(0.1)) {
 		w.nextCall++
 		id := fmt.Sprintf("vc-%d", w.nextCall)
-		err := w.svc.StartCall(ctx, service.StartCallRequest{SessionID: sid, CallID: id, DeviceID: "phone", Model: "volc/sim", Voice: "v"})
+		_, err := w.svc.StartCall(ctx, service.StartCallRequest{SessionID: sid, CallID: id, DeviceID: "phone", Model: "volc/sim", Voice: "v"})
 		if w.callRejected(err) || w.submitOverQuota(err) {
 			w.tracef("call start %s rejected: %v", sid, err)
 			return nil
@@ -42,7 +49,11 @@ func (w *World) callStep() error {
 		w.tracef("call start %s %s", sid, id)
 		return nil
 	}
-	switch x := w.rng.Float64(); {
+	x := w.rng.Float64()
+	if asking {
+		x = 0.7
+	}
+	switch {
 	case x < 0.55:
 		role := "user"
 		if w.chance(0.5) {
@@ -82,8 +93,12 @@ func (w *World) callStep() error {
 		}
 		w.Stats.CallTasks++
 		if res.Answered != "" {
-			// 通话中的话回答了 Run 正在等的提问（ADR-0025 的打字回答，经语音模型转述）。
+			// 通话中的话回答了 Run 正在等的提问（ADR-0025 的打字回答，经语音模型转述）：回答须标明来自 Call，
+			// Memory 写入闸门才不会把转述当作用户的原话。
 			w.Stats.CallAnswers++
+			if err := w.checkCallAnswer(sid, res.Answered, callID); err != nil {
+				return err
+			}
 		}
 		w.tracef("call task %s → %s steered=%v answered=%q", callID, res.RunID, res.Steered, res.Answered)
 		if w.chance(0.2) {
@@ -99,6 +114,41 @@ func (w *World) callStep() error {
 		w.tracef("call end %s", callID)
 	}
 	return nil
+}
+
+// checkCallAnswer 检查对提问 q 的回答记下了它来自 Call。
+func (w *World) checkCallAnswer(sid, q, callID string) error {
+	events, err := eventlog.ReadAll(context.Background(), w.log, sid, 0)
+	if err != nil {
+		return err
+	}
+	for _, e := range events {
+		if r := e.GetToolResult(); r != nil && r.GetCallId() == q {
+			if r.GetFromCall() != callID {
+				return fmt.Errorf("invariant: answer to %s from call %s recorded with from_call %q", q, callID, r.GetFromCall())
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("invariant: answer to %s from call %s not in the log", q, callID)
+}
+
+// asking 返回一个有进行中提问的 Session；没有时返回空串。
+func (w *World) asking() string {
+	for _, sid := range w.sessions {
+		st, err := w.svc.Load(context.Background(), sid)
+		if err != nil {
+			continue
+		}
+		if a := st.Active(); a != nil {
+			for _, c := range a.Calls {
+				if c.Dispatched() && c.NodeID == askuser.NodeID {
+					return sid
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // callRejected 报告 Call 的写入是否因 Call 不在进行中、Session 已关闭或已删除而被拒绝（预期结果）。

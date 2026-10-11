@@ -44,6 +44,7 @@ import (
 	"yanshi/internal/memory"
 	"yanshi/internal/memory/pgmemory"
 	"yanshi/internal/model"
+	"yanshi/internal/moderation"
 	"yanshi/internal/node"
 	"yanshi/internal/node/pgnode"
 	"yanshi/internal/node/wsgateway"
@@ -176,6 +177,8 @@ type stores struct {
 	// voice 是 Call 的脚本化实时语音模型；holdFor 是 run_task 挂起等待结果的时长（0 为默认）。
 	voice   *fake.Provider
 	holdFor time.Duration
+	// moderator 非 nil 时检查输入与 Call 的转写。
+	moderator moderation.Moderator
 }
 
 func memStores() stores {
@@ -236,7 +239,7 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 		go c.Run(ctx)
 	}
 	svc := &service.Service{Store: store, Queue: st.queue, Agents: agents, Nodes: router,
-		Index: st.index, Deletions: st.deletions, Janitor: st.janitorQueue}
+		Index: st.index, Deletions: st.deletions, Janitor: st.janitorQueue, Moderator: st.moderator, Artifacts: st.artifacts}
 	if workers > 0 {
 		j := &janitor.Janitor{ID: "j1", Queue: st.janitorQueue, Service: svc, Store: store, Sessions: st.queue,
 			SandboxQueue: st.sandboxQueue, Inbox: st.inbox, Nodes: st.dir, Sandbox: st.provider, Activity: st.activity,

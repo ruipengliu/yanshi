@@ -37,6 +37,7 @@ AssistantMessage.tool_calls      模型请求
 - **投递由网关负责**：持有该 Node 连接的网关监视其 Inbox，把未投递的 Invocation 推给设备；断线重连后整个 Inbox 重新投递。
 - **去重由设备 SDK 负责**：SDK 以 `call_id` 为键持久记录执行状态（未执行 → 执行中 → 已完成及结果）。重复投递时返回缓存结果；发现"执行中"（App 在执行中被杀）时，幂等 Capability 重新执行，否则返回 `outcome unknown`。因此平台侧对路由调用总是可以安全地重新派发。
 - **外部结果**：网关以 `attempt = 0` 追加 `ToolResult`。投影只接受针对已派发、未完成的路由调用的外部结果。追加成功后从 Inbox 移除，并 `Enqueue` 唤醒 Session。
+  - 只有结果已写入日志或已作废（调用已有结果、Run 已终态）时才向设备确认（`ResultAck`）并移出 Inbox。存储故障时不确认：连接关闭，设备重连后从账本重新返回结果。
 - **超时**：`ToolCallStarted.deadline` 到期仍无结果时，Worker 追加超时错误结果。迟到的设备结果因调用已完成而被丢弃。
 - **中断**：Run 被中断后，Service 从 Inbox 移除其未完成的路由调用；网关对已投递的调用向设备发送 `Cancel`（尽力而为）。
 - **离线唤醒**：派发时若 Node 离线，调用 `Waker` 发送推送唤醒 HostApp（M1 为日志桩实现；真实推送通道属于 ADR-0001 列出的外联项）。
@@ -51,7 +52,10 @@ AssistantMessage.tool_calls      模型请求
 ## 5. Node 目录与能力路由
 
 - **Node 目录**按 `(BusinessLine, EndUser)` 记录该用户的 Node：标签、类型、能力、在线状态。离线的 Node 仍然保留在目录中。ADR-0002 的业务线边界在这里落实：Session 只能看到同一业务线的 Node。
-- **面向模型的工具名**是 `<node 标签>__<capability>`，例如 `macbook__read_file`。标签由 HostApp 提供，在同一用户下自动去重。工具描述会附上设备类型和在线状态，让模型知道调用离线设备时需要等待。
+  - 一个 Node ID 只属于一个 EndUser，归属在注册的写入本身中判定（并发的首次注册至多一方成功）。
+  - 平台保留的 Node ID 不能用于接入（`node.Reserved`）：沙箱的虚拟 Node `sbx_<Session ID>` 与用户本人 `@user`。否则设备可以冒名收到他人沙箱的调用、回写伪造的结果，或让自己声明的能力被当作沙箱调用、读到他人的工作区。沙箱控制器只执行属于本 Session 的调用。
+  - 标签 `sandbox` 保留给沙箱工具（`sandbox__<能力>`），设备以它注册时改为 `sandbox-device`。
+- **面向模型的工具名**是 `<node 标签>__<capability>`，例如 `macbook__read_file`。标签由 HostApp 提供，在同一用户下自动去重。工具描述附上设备类型，不附在线状态：工具定义是请求前缀的一部分，手机等设备频繁上下线会使同一 Run 之后每次请求的前缀缓存失效。调用离线设备时 Run 挂起，设备被唤醒、上线后继续。
 - **AgentDef 白名单**：`clock_now` 这类条目指进程内 Capability；`device:<glob>`（如 `device:*`、`device:read_*`）表示该用户任意 Node 上名称匹配的 Capability。
 - 工具在每次模型调用前解析一次，执行调用时再按工具名解析一次。Node 消失时返回错误结果。
 

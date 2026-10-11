@@ -111,7 +111,26 @@ func (InsecureDevAuth) Authenticate(_ context.Context, h *v1.Hello) (Identity, e
 	return Identity{BusinessLine: h.GetBusinessLine(), EndUser: h.GetEndUser()}, nil
 }
 
+// reservedPrefixes 是平台保留的 Node ID 前缀：沙箱的虚拟 Node（"sbx_<Session ID>"，ADR-0008）与用户本人
+// （ask_user 的 "@user"，ADR-0025）。
+var reservedPrefixes = []string{"sbx_", "@"}
+
+// Reserved 报告 Node ID 是否属于平台。设备不能以这些 ID 接入：否则持有合法令牌的设备可以收到他人沙箱的调用
+// （含参数）并回写伪造的结果，或让自己声明的能力被当作沙箱调用执行，读到他人的工作区。
+func Reserved(nodeID string) bool {
+	for _, p := range reservedPrefixes {
+		if strings.HasPrefix(nodeID, p) {
+			return true
+		}
+	}
+	return false
+}
+
 var labelInvalid = regexp.MustCompile(`[^a-z0-9-]+`)
+
+// sandboxLabel 是沙箱工具名的前缀部分（capability.SandboxLabel）：设备不能用它作标签，否则其工具名
+// 与沙箱工具相同，审批摘要会把设备上的调用说成"在云端"。
+const sandboxLabel = "sandbox"
 
 // SanitizeLabel 把标签规范为 [a-z0-9-]：不含下划线，使工具名 "<label>__<capability>" 可无歧义拆分。
 func SanitizeLabel(s string) string {
@@ -119,8 +138,11 @@ func SanitizeLabel(s string) string {
 	if len(s) > 24 {
 		s = s[:24]
 	}
-	if s == "" {
+	switch s {
+	case "":
 		s = "device"
+	case sandboxLabel:
+		s = sandboxLabel + "-device"
 	}
 	return s
 }

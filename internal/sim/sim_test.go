@@ -86,7 +86,8 @@ func TestSimulationWithFaults(t *testing.T) {
 		"InputBlocks", "OutputBlocks", "ModerationErrors", "MemoryApprovals", "PresenceWrites", "PresenceWithdrawn",
 		"Questions", "Answers", "TypedAnswers", "InvalidAnswers", "QuestionTimeouts", "UIContextInputs", "DuplicateInputs",
 		"Notifications", "NotificationsWatching", "PushFailures",
-		"CallsStarted", "CallsReplaced", "CallTranscripts", "CallTranscriptsBlocked", "CallTasks", "CallAnswers", "CallConflicts")
+		"CallsStarted", "CallsReplaced", "CallTranscripts", "CallTranscriptsBlocked", "CallTasks", "CallAnswers", "CallConflicts",
+		"StoreFaults")
 }
 
 // TestLongRunsWithFaults 让 Run 持续上百轮，检验压缩在故障下保持上下文有界、调用配对完整，且长 Run 能跑完。

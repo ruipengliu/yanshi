@@ -22,6 +22,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"yanshi/internal/model"
 	"yanshi/internal/realtime"
 )
 
@@ -135,9 +136,13 @@ func (p *Provider) Open(ctx context.Context, cfg realtime.Config) (realtime.Sess
 	}
 }
 
+// errorText 是厂商错误的错误码（model.ErrorCode）：错误消息可能回显对话内容，不进日志。
 func errorText(ev map[string]any) string {
 	b, _ := json.Marshal(ev["error"])
-	return string(b)
+	if c := model.ErrorCode(b); c != "" {
+		return "error " + c
+	}
+	return "error"
 }
 
 func (s *session) write(v any) error {
@@ -256,7 +261,7 @@ func (s *session) loop() {
 		case "session.closed":
 			return
 		case "error":
-			s.emit(realtime.Event{Kind: realtime.Failed, Err: fmt.Errorf("volc: %s", string(w.Error))})
+			s.emit(realtime.Event{Kind: realtime.Failed, Err: fmt.Errorf("volc: error %s", model.ErrorCode(w.Error))})
 			return
 		}
 	}

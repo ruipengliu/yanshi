@@ -145,6 +145,9 @@ type Worker struct {
 	forceCompact bool
 	// failingSince 是当前 Run 的 Step 开始连续出错的时间；零值表示上一步成功。
 	failingSince time.Time
+	// executed 是本 Attempt 已执行完、结果尚未写入日志的进程内调用（按 call_id）：写入失败后下一步只重试写入，
+	// 不再执行，否则非幂等的能力（如已批准的 MCP 写操作）会再次产生副作用。
+	executed map[string]*v1.Event
 }
 
 func New(cfg Config) *Worker {
@@ -183,6 +186,7 @@ func (w *Worker) Run(ctx context.Context) {
 
 func (w *Worker) drop() {
 	w.lease, w.st, w.runID, w.attempt, w.modelErrors, w.forceCompact, w.failingSince = nil, nil, "", 0, 0, false, time.Time{}
+	w.executed = nil
 }
 
 // Step 推进一件工作；返回 false 表示当前无事可做。
@@ -344,6 +348,7 @@ func (w *Worker) startAttempt(ctx context.Context, r *session.Run) error {
 		return err
 	}
 	w.runID, w.attempt, w.modelErrors, w.forceCompact = r.ID, next, 0, false
+	w.executed = nil
 	metrics.Attempts.WithLabelValues(kind).Inc()
 	w.cfg.Logger.Info("attempt started", "worker", w.cfg.ID, "session", w.st.SessionID, "run", r.ID, "attempt", next)
 	return nil
@@ -460,6 +465,9 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 		}}})
 	}
 
+	if res := w.executed[id]; res != nil {
+		return w.commitExecuted(ctx, id, res)
+	}
 	var content []*v1.ContentBlock
 	err = w.during(ctx, r, func(ctx context.Context) error {
 		var err error
@@ -469,16 +477,31 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 		})
 		return err
 	})
-	if err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if errors.Is(err, errSuperseded) {
-			return nil
-		}
-		return w.commit(ctx, w.toolResult(r, id, model.TextBlocks(err.Error()), true))
+	var res *v1.Event
+	switch {
+	case err == nil:
+		res = w.toolResult(r, id, content, false)
+	case ctx.Err() != nil:
+		return ctx.Err()
+	case errors.Is(err, errSuperseded):
+		return nil
+	default:
+		res = w.toolResult(r, id, model.TextBlocks(err.Error()), true)
 	}
-	return w.commit(ctx, w.toolResult(r, id, content, false))
+	if w.executed == nil {
+		w.executed = map[string]*v1.Event{}
+	}
+	w.executed[id] = res
+	return w.commitExecuted(ctx, id, res)
+}
+
+// commitExecuted 写入已执行调用的结果；写入成功（或 Attempt 已失效、结果作废）后不再保留。
+func (w *Worker) commitExecuted(ctx context.Context, id string, res *v1.Event) error {
+	if err := w.commit(ctx, res); err != nil {
+		return err
+	}
+	delete(w.executed, id)
+	return nil
 }
 
 // awaitDispatched 处理已派发的路由调用：超时则给出错误结果，否则（重新）投递并挂起等待。

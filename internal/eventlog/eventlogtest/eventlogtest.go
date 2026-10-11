@@ -68,6 +68,27 @@ func Run(t *testing.T, newLog func(t *testing.T) eventlog.Log) {
 		}
 	})
 
+	// 冲突的追加不改动调用方的事件：调用方同步后以同一批事件重试（session.Store 的冲突重试）。
+	t.Run("ConflictLeavesEventsUntouched", func(t *testing.T) {
+		l := newLog(t)
+		if _, err := l.Append(ctx, "s", 0, ev("a")); err != nil {
+			t.Fatal(err)
+		}
+		x := ev("x")
+		if _, err := l.Append(ctx, "s", 0, x); !errors.Is(err, eventlog.ErrConflict) {
+			t.Fatalf("err = %v, want ErrConflict", err)
+		}
+		if x.GetSeq() != 0 || x.GetSessionId() != "" {
+			t.Fatalf("failed append set seq %d session %q", x.GetSeq(), x.GetSessionId())
+		}
+		if _, err := l.Append(ctx, "s", 1, x); err != nil {
+			t.Fatal(err)
+		}
+		if x.GetSeq() != 2 || x.GetSessionId() != "s" {
+			t.Fatalf("append set seq %d session %q, want 2 s", x.GetSeq(), x.GetSessionId())
+		}
+	})
+
 	t.Run("SessionsAreIndependent", func(t *testing.T) {
 		l := newLog(t)
 		if _, err := l.Append(ctx, "s1", 0, ev("a")); err != nil {

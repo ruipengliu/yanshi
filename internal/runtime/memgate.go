@@ -32,15 +32,20 @@ var (
 // （"<label>__<能力>"、"sandbox__<能力>"、"mcp_<server>__<工具>"），进程内能力不含。
 func externalCall(capability string) bool { return strings.Contains(capability, "__") }
 
-// tainted 报告当前模型上下文中是否有外部来源的内容。压缩摘要可能概括了外部结果，保守地视为外部；
-// 输入附带的界面上下文可能含第三方内容，也视为外部（docs/design/m3-duplex-channel.md §8）。
+// tainted 报告当前模型上下文中是否有不是用户原话的内容：
+//   - 外部来源的调用结果；压缩摘要可能概括了它们，保守地视为外部；
+//   - 输入或回答附带的界面上下文，可能含第三方内容（docs/design/m3-duplex-channel.md §8）；
+//   - Call 中语音模型的转述（派生的任务、转述的回答）：可能夹带用户没说过的内容（docs/design/m3-call.md §6）。
 func tainted(st *session.State) bool {
 	if st.Compaction != nil {
 		return true
 	}
 	external := map[string]bool{}
 	for _, e := range st.History {
-		if hasUIContext(e.GetRunRequested().GetInput()) || hasUIContext(e.GetSteered().GetInput()) {
+		if hasUIContext(e.GetRunRequested().GetInput()) || hasUIContext(e.GetSteered().GetInput()) || hasUIContext(e.GetToolResult().GetContent()) {
+			return true
+		}
+		if e.GetRunRequested().GetFromCall() != "" || e.GetSteered().GetFromCall() != "" || e.GetToolResult().GetFromCall() != "" {
 			return true
 		}
 		if m := e.GetAssistantMessage(); m != nil {
@@ -67,7 +72,7 @@ func hasUIContext(blocks []*v1.ContentBlock) bool {
 }
 
 // userText 是上下文中 EndUser 本人的输入：新 Run、插话、对 ask_user 提问的回答（ADR-0025），以及 Call 中
-// 用户说的话（转写）。Call 派生的任务是语音模型的转述，不是用户的原话，不计入（docs/design/m3-call.md §6）。
+// 用户说的话（转写）。Call 派生的任务与转述的回答是语音模型的转述，不是用户的原话，不计入（docs/design/m3-call.md §6）。
 func userText(st *session.State) string {
 	var b strings.Builder
 	questions := map[string]bool{}
@@ -92,7 +97,7 @@ func userText(st *session.State) string {
 				}
 			}
 		case *v1.Event_ToolResult:
-			if questions[p.ToolResult.GetCallId()] && !p.ToolResult.GetIsError() {
+			if questions[p.ToolResult.GetCallId()] && !p.ToolResult.GetIsError() && p.ToolResult.GetFromCall() == "" {
 				b.WriteString(model.Text(p.ToolResult.GetContent()))
 			}
 		}

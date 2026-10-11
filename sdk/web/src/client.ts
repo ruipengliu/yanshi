@@ -435,6 +435,8 @@ export class Client {
       if (this.#stopped) throw new StoppedError();
       await abortable(new Promise<void>((resolve, reject) => this.#waiters.push({ resolve, reject })), signal);
     }
+    // 已取消的请求不发出：发出之后再取消只是不再等待，请求（如批准）仍会生效。
+    signal?.throwIfAborted();
     const requestId = `r${++this.#nextId}`;
     const msg = create(NodeMessageSchema, { msg: { case: "request", value: { ...req, requestId } } });
     const p = new Promise<ClientResponse>((resolve, reject) => this.#pending.set(requestId, { resolve, reject }));
@@ -457,6 +459,7 @@ export class Client {
       if (this.#stopped) throw new StoppedError();
       await abortable(new Promise<void>((resolve, reject) => this.#waiters.push({ resolve, reject })), opts.signal);
     }
+    opts.signal?.throwIfAborted();
     const id = "call_" + newInputId().slice(3);
     const ws = this.#ws!;
     const c = new Call(id, sessionId, handler, (m) => {

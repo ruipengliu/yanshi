@@ -28,6 +28,8 @@ Artifact 是 Run 产出或用户、设备提供的、可独立引用的文件，
 
 模型看到的 Artifact 是一行文本，例如 `[artifact art_x: chart.png, image/png, 7.6 KB]`。模型把其中的 ID 传给下一个工具，就能在设备与沙箱之间接力处理文件。
 
+用户输入中的 Media 只能引用本 Session 的 Artifact（`artifact://<id>`）：带内联字节、外部链接或别的 Session 的工件的输入被拒绝（`invalid`），类型、大小与名称以工件元数据为准（`service.normalizeMedia`）。这样内容安全检查的对象就是模型看到的内容，文件内容也不会进入日志。
+
 用户消息中的图片 Artifact（≤ 4MB）会内联给模型，以支持视觉理解。工具结果中的图片只以文本呈现，因为多数模型接口不支持在工具结果里放图片。
 
 ## 5. 限制（S2）

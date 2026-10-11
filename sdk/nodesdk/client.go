@@ -17,6 +17,9 @@ import (
 
 const Version = "0.1.0"
 
+// writeTimeout 是一次写入的上限：超过它的写入关闭连接并重连。
+const writeTimeout = 15 * time.Second
+
 type Config struct {
 	// URL 是网关地址，如 ws://127.0.0.1:8080/v1/connect。
 	URL string
@@ -100,14 +103,23 @@ func (c *Client) session(ctx context.Context) (bool, error) {
 	conn.SetReadLimit(16 << 20)
 
 	var wmu sync.Mutex
-	send := func(m *v1.NodeMessage) error {
+	// send 写一条消息。每次写入有上限（writeTimeout），rctx 结束时也放弃：写入卡住（网络黑洞、对端不读）时，
+	// 超时会关闭连接并触发重连，而不是让调用方无限期阻塞。
+	send := func(rctx context.Context, m *v1.NodeMessage) error {
 		b, err := proto.Marshal(m)
 		if err != nil {
 			return err
 		}
 		wmu.Lock()
 		defer wmu.Unlock()
-		return conn.Write(ctx, websocket.MessageBinary, b)
+		if err := rctx.Err(); err != nil {
+			return err
+		}
+		wctx, cancel := context.WithTimeout(ctx, writeTimeout)
+		defer cancel()
+		stop := context.AfterFunc(rctx, cancel)
+		defer stop()
+		return conn.Write(wctx, websocket.MessageBinary, b)
 	}
 
 	hello := &v1.Hello{
@@ -122,7 +134,7 @@ func (c *Client) session(ctx context.Context) (bool, error) {
 	} else {
 		hello.Capabilities = c.cfg.Executor.Specs()
 	}
-	err = send(&v1.NodeMessage{Msg: &v1.NodeMessage_Hello{Hello: hello}})
+	err = send(ctx, &v1.NodeMessage{Msg: &v1.NodeMessage_Hello{Hello: hello}})
 	if err != nil {
 		return false, err
 	}
@@ -165,7 +177,7 @@ func (c *Client) session(ctx context.Context) (bool, error) {
 					}
 					return
 				}
-				_ = send(&v1.NodeMessage{Msg: &v1.NodeMessage_Result{Result: res}})
+				_ = send(ctx, &v1.NodeMessage{Msg: &v1.NodeMessage_Result{Result: res}})
 			}(m.Invoke)
 		case *v1.GatewayMessage_Cancel:
 			if c.cfg.Executor != nil {

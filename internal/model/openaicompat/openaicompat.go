@@ -193,8 +193,9 @@ func (p *Provider) Generate(ctx context.Context, req *model.Request, onDelta fun
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		// 错误正文只用来识别错误码与"上下文超长"，不放进错误：它可能回显请求内容（model.ProviderError）。
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		err := fmt.Errorf("model %s: http %d: %s", req.Model, resp.StatusCode, bytes.TrimSpace(b))
+		var err error = &model.ProviderError{Model: req.Model, Status: resp.StatusCode, Code: model.ErrorCode(b), RequestID: requestID(resp)}
 		if resp.StatusCode == http.StatusBadRequest && contextOverflow(string(b)) {
 			err = fmt.Errorf("%w: %w", model.ErrContextOverflow, err)
 		}
@@ -223,7 +224,7 @@ func decodeStream(r io.Reader, modelID string, onDelta func(model.Delta)) (*mode
 			return nil, fmt.Errorf("model %s: bad stream chunk: %w", modelID, err)
 		}
 		if c.Error != nil {
-			err := fmt.Errorf("model %s: %s", modelID, c.Error.Message)
+			var err error = &model.ProviderError{Model: modelID, Code: model.ErrorCode([]byte(data))}
 			if contextOverflow(c.Error.Message) {
 				err = fmt.Errorf("%w: %w", model.ErrContextOverflow, err)
 			}
@@ -286,6 +287,16 @@ func decodeStream(r io.Reader, modelID string, onDelta func(model.Delta)) (*mode
 	return out, nil
 }
 
+// requestID 返回提供商在响应头中给出的请求 ID（排查时向提供商查询）。
+func requestID(resp *http.Response) string {
+	for _, h := range []string{"X-Request-Id", "Request-Id", "X-Tc-Requestid"} {
+		if v := resp.Header.Get(h); v != "" {
+			return model.SafeCode(v)
+		}
+	}
+	return ""
+}
+
 // contextOverflow 识别"上下文超长"错误。各供应商没有统一的错误码，只能按文本匹配：
 // OpenAI 与 vLLM 使用 context_length_exceeded / "maximum context length"。
 // 火山方舟的具体形式尚未用真实请求确认（docs/design/m2-long-runs.md §9）。
@@ -301,8 +312,8 @@ func contextOverflow(body string) bool {
 
 // Embed 调用 OpenAI 兼容的 /embeddings 接口。火山方舟多模态嵌入模型的接口形式待用真实请求确认
 // （docs/design/m4-memory-grant.md §10）。
-func (p *Provider) Embed(ctx context.Context, model string, texts []string) ([][]float32, error) {
-	body, err := json.Marshal(map[string]any{"model": model, "input": texts, "encoding_format": "float"})
+func (p *Provider) Embed(ctx context.Context, modelID string, texts []string) ([][]float32, error) {
+	body, err := json.Marshal(map[string]any{"model": modelID, "input": texts, "encoding_format": "float"})
 	if err != nil {
 		return nil, err
 	}
@@ -325,7 +336,7 @@ func (p *Provider) Embed(ctx context.Context, model string, texts []string) ([][
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("embed %s: http %d: %s", model, resp.StatusCode, bytes.TrimSpace(b))
+		return nil, fmt.Errorf("embed: %w", &model.ProviderError{Model: modelID, Status: resp.StatusCode, Code: model.ErrorCode(b), RequestID: requestID(resp)})
 	}
 	var out struct {
 		Data []struct {
@@ -334,18 +345,18 @@ func (p *Provider) Embed(ctx context.Context, model string, texts []string) ([][
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("embed %s: %w", model, err)
+		return nil, fmt.Errorf("embed %s: %w", modelID, err)
 	}
 	vecs := make([][]float32, len(texts))
 	for _, d := range out.Data {
 		if d.Index < 0 || d.Index >= len(vecs) {
-			return nil, fmt.Errorf("embed %s: index %d out of range", model, d.Index)
+			return nil, fmt.Errorf("embed %s: index %d out of range", modelID, d.Index)
 		}
 		vecs[d.Index] = d.Embedding
 	}
 	for i, v := range vecs {
 		if len(v) == 0 {
-			return nil, fmt.Errorf("embed %s: no embedding for input %d", model, i)
+			return nil, fmt.Errorf("embed %s: no embedding for input %d", modelID, i)
 		}
 	}
 	return vecs, nil

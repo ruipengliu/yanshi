@@ -224,7 +224,7 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 		return nil, err
 	}
 	svc := &service.Service{Store: store, Queue: queue, Agents: agents, Nodes: router,
-		Index: lifecycle.NewMemIndex(), Deletions: lifecycle.NewMemDeletions()}
+		Index: lifecycle.NewMemIndex(), Deletions: lifecycle.NewMemDeletions(), Artifacts: arts}
 	idle := &workqueue.IdleGate{Ready: queue.Ready()}
 	bus := live.NewMemBus()
 	pool := &workerPool{ctx: ctx, cancels: map[string]context.CancelFunc{}, newCfg: func(id string) runtime.Config {
@@ -359,6 +359,7 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 	defer func() {
 		if voice != nil {
 			voice.End(service.CallEndHangup)
+			<-voice.Done() // 结束记录写入之后再导出日志
 		}
 	}()
 	for ti, turn := range c.Turns {

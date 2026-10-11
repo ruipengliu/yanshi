@@ -70,7 +70,8 @@ message Text {
   string text = 1;
 }
 
-// Media 是非文本内容：大对象以 uri 引用 Artifact（"artifact://<id>"），小对象可内联 data。
+// Media 是非文本内容，以 uri 引用 Artifact（"artifact://<id>"）。data 只在发给模型的请求副本中填入（Worker 内联图片），
+// 不进日志：用户输入中带 data 或其他地址的 Media 被拒绝（docs/design/m2-artifacts.md）。
 message Media {
   string mime_type = 1;
   string uri = 2;
@@ -184,6 +185,8 @@ message ToolResult {
   bool is_error = 5;
   // 用户直接打字回答 ask_user 提问时，这条输入的 ID（见 RunRequested.input_id）。
   string input_id = 6;
+  // 非空表示这条回答由该 Call 中的语音模型转述（run_task 恰好回答了提问）：不是用户的原话（Memory 写入闸门）。
+  string from_call = 7;
 }
 
 message RunCompleted {

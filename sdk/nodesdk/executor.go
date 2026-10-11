@@ -77,11 +77,20 @@ type Executor struct {
 	ledger Ledger
 
 	mu       sync.Mutex
-	inflight map[string]context.CancelFunc
+	inflight map[string]running
+	// forgotten 是本进程中已清除记录的 Session 及清除时间。清除时仍在执行的调用之后才写下结果，
+	// 写下后复查这里并删除（"先写、后查"，ADR-0015），否则个人数据会在清除之后留在设备上。
+	// 只需在进程内记住：进程退出时正在执行的调用随之结束，不会再写入。
+	forgotten map[string]time.Time
+}
+
+type running struct {
+	cancel    context.CancelFunc
+	sessionID string
 }
 
 func NewExecutor(ledger Ledger, caps ...Capability) *Executor {
-	e := &Executor{caps: map[string]Capability{}, ledger: ledger, inflight: map[string]context.CancelFunc{}}
+	e := &Executor{caps: map[string]Capability{}, ledger: ledger, inflight: map[string]running{}, forgotten: map[string]time.Time{}}
 	for _, c := range caps {
 		e.caps[c.Spec.GetName()] = c
 	}
@@ -109,8 +118,12 @@ func (e *Executor) Execute(ctx context.Context, inv *v1.Invoke) (*v1.InvokeResul
 		e.mu.Unlock()
 		return nil, nil
 	}
+	if _, gone := e.forgotten[inv.GetSessionId()]; gone && inv.GetSessionId() != "" {
+		e.mu.Unlock()
+		return errorResult(id, "the session has been deleted; the call was not executed"), nil
+	}
 	ctx, cancel := context.WithCancel(ctx)
-	e.inflight[id] = cancel
+	e.inflight[id] = running{cancel: cancel, sessionID: inv.GetSessionId()}
 	e.mu.Unlock()
 	defer func() {
 		e.mu.Lock()
@@ -127,6 +140,15 @@ func (e *Executor) Execute(ctx context.Context, inv *v1.Invoke) (*v1.InvokeResul
 		if err := json.Unmarshal([]byte(inv.GetArgumentsJson()), &args); err != nil || args.SessionID == "" {
 			return errorResult(id, "forget: session_id is required"), nil
 		}
+		// 先记、后清：此后完成的调用会发现标记并删除自己写下的记录；正在执行的随之取消。
+		e.mu.Lock()
+		e.forgotten[args.SessionID] = time.Now()
+		for _, r := range e.inflight {
+			if r.sessionID == args.SessionID {
+				r.cancel()
+			}
+		}
+		e.mu.Unlock()
 		if err := e.ledger.Forget(args.SessionID); err != nil {
 			return nil, err
 		}
@@ -137,6 +159,12 @@ func (e *Executor) Execute(ctx context.Context, inv *v1.Invoke) (*v1.InvokeResul
 		return nil, err
 	}
 	sid := inv.GetSessionId()
+	// 写下记录之后复查：执行期间 Session 被清除时删除刚写下的记录（无论成功、出错还是被取消）。
+	defer func() {
+		if e.wasForgotten(sid) {
+			_ = e.ledger.Forget(sid)
+		}
+	}()
 	if rec.State == StateDone {
 		return rec.Result, nil
 	}
@@ -168,17 +196,36 @@ func (e *Executor) Execute(ctx context.Context, inv *v1.Invoke) (*v1.InvokeResul
 	return res, nil
 }
 
+func (e *Executor) wasForgotten(sessionID string) bool {
+	if sessionID == "" {
+		return false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	_, ok := e.forgotten[sessionID]
+	return ok
+}
+
 // Cancel 取消正在执行的调用（尽力而为）。
 func (e *Executor) Cancel(callID string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if cancel := e.inflight[callID]; cancel != nil {
-		cancel()
+	if r, ok := e.inflight[callID]; ok {
+		r.cancel()
 	}
 }
 
-// Prune 按保留期清理账本。
-func (e *Executor) Prune(before time.Time) error { return e.ledger.Prune(before) }
+// Prune 按保留期清理账本，并忘掉同样久远的清除标记（那时正在执行的调用早已结束）。
+func (e *Executor) Prune(before time.Time) error {
+	e.mu.Lock()
+	for sid, at := range e.forgotten {
+		if at.Before(before) {
+			delete(e.forgotten, sid)
+		}
+	}
+	e.mu.Unlock()
+	return e.ledger.Prune(before)
+}
 
 // validUTF8 替换文本中的非法 UTF-8 字节：处理函数可能返回按字节截断的文件内容，
 // 而 protobuf 拒绝序列化非法 UTF-8，结果将无法回传，调用只能等到超时。

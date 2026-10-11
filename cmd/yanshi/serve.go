@@ -312,7 +312,7 @@ func serve(args []string) error {
 		return err
 	}
 	svc := &service.Service{Store: store, Queue: queue, Agents: agents, Nodes: router,
-		Index: b.index, Deletions: b.deletions, Janitor: b.janitorQueue, Quotas: quotas, Moderator: moderator}
+		Index: b.index, Deletions: b.deletions, Janitor: b.janitorQueue, Quotas: quotas, Moderator: moderator, Artifacts: arts}
 
 	var wg sync.WaitGroup
 	wg.Add(1)

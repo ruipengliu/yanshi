@@ -80,6 +80,9 @@ func (h *Hub) Connect(ctx context.Context, hello *v1.Hello) (*Conn, error) {
 	if hello.GetNodeId() == "" {
 		return nil, errors.New("hello: node_id is required")
 	}
+	if Reserved(hello.GetNodeId()) {
+		return nil, fmt.Errorf("hello: node_id %q is reserved", hello.GetNodeId())
+	}
 	if hello.GetClientOnly() {
 		if len(hello.GetCapabilities()) > 0 {
 			return nil, errors.New("hello: a client-only connection cannot declare capabilities")
@@ -194,11 +197,13 @@ func (h *Hub) commitResult(ctx context.Context, inv *v1.Invoke, res *v1.InvokeRe
 			}
 			continue
 		}
-		if err != nil {
+		if errors.Is(err, session.ErrInvalid) {
 			// 校验失败：Run 已终态或调用已完成（超时、重复结果），结果作废。
 			h.log().Info("node result dropped", "session", inv.GetSessionId(), "call", inv.GetCallId(), "reason", err)
+			return nil
 		}
-		return nil
+		// 存储故障：结果没有写入。返回错误，调用方不确认、不撤下 Inbox，重连后设备从账本重新返回结果。
+		return err
 	}
 	return fmt.Errorf("commit result for call %s: too many conflicts", inv.GetCallId())
 }

@@ -4,6 +4,7 @@ package nodetest
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -61,6 +62,38 @@ func RunDirectory(t *testing.T, newDir func(t *testing.T, c clock.Clock) node.Di
 		_, _, _ = d.Register(ctx, info("n1", "u", "pc"))
 		if _, _, err := d.Register(ctx, info("n1", "intruder", "pc")); err == nil {
 			t.Fatal("node moved to another user")
+		}
+	})
+
+	// 两个 EndUser 并发首次注册同一个 ID：至多一方成功，登记的归属就是成功的一方。
+	// 前置的归属检查锁不住尚不存在的记录，归属必须在写入本身中判定。
+	t.Run("ConcurrentFirstRegistrationHasOneOwner", func(t *testing.T) {
+		d := setup(t)
+		for i := range 20 {
+			id := fmt.Sprintf("race%d", i)
+			users := []string{"alice", "mallory"}
+			errs := make([]error, len(users))
+			start := make(chan struct{})
+			var wg sync.WaitGroup
+			for j, u := range users {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					<-start
+					_, _, errs[j] = d.Register(ctx, info(id, u, "pc"))
+				}()
+			}
+			close(start)
+			wg.Wait()
+			n, err := d.Get(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for j, u := range users {
+				if errs[j] == nil && n.Scope.EndUser != u {
+					t.Fatalf("%s: %s registered but the node belongs to %s", id, u, n.Scope.EndUser)
+				}
+			}
 		}
 	})
 

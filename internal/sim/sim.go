@@ -126,6 +126,39 @@ type Stats struct {
 	// 已结束、Session 已关闭或删除而被拒绝的次数。
 	// CallAnswers 是派生的任务恰好回答了 Run 正在等的提问的次数。
 	CallsStarted, CallsReplaced, CallTranscripts, CallTranscriptsBlocked, CallTasks, CallAnswers, CallConflicts int
+	// Worker 的日志追加失败（含已生效但报告失败的）。
+	StoreFaults int
+}
+
+// storeFault 是注入的存储故障（数据库超时、连接中断）：written 表示追加其实已经生效，调用方却只看到错误。
+type storeFault struct{ written bool }
+
+func (f *storeFault) Error() string {
+	if f.written {
+		return "simulated storage failure (append applied)"
+	}
+	return "simulated storage failure"
+}
+
+// flakyLog 是 Worker 看到的日志：追加偶尔失败，一半在写入之前，一半在写入之后（结果未知）。
+// Worker 必须能从两者恢复：重试写入，而不是重新执行已经产生副作用的调用。
+type flakyLog struct {
+	eventlog.Log
+	w *World
+}
+
+func (l flakyLog) Append(ctx context.Context, sid string, expected uint64, events ...*v1.Event) (uint64, error) {
+	if !l.w.faults || !l.w.chance(0.03) {
+		return l.Log.Append(ctx, sid, expected, events...)
+	}
+	l.w.Stats.StoreFaults++
+	if l.w.chance(0.5) {
+		return 0, &storeFault{}
+	}
+	if _, err := l.Log.Append(ctx, sid, expected, events...); err != nil {
+		return 0, err
+	}
+	return 0, &storeFault{written: true}
 }
 
 // hookQueue 在 Enqueue 成功后调用 after。
@@ -529,8 +562,11 @@ func (w *World) newWorker() *runtime.Worker {
 	w.nextW++
 	gw := model.NewGateway()
 	gw.Register("sim", &simModel{w: w})
+	// Worker 的写入经 flakyLog；Service、Hub 与控制器用可靠的 Store。
+	store := *w.store
+	store.Log = flakyLog{Log: w.log, w: w}
 	return runtime.New(runtime.Config{
-		ID: fmt.Sprintf("w%d", w.nextW), Store: w.store, Queue: w.queue, Agents: w.agents,
+		ID: fmt.Sprintf("w%d", w.nextW), Store: &store, Queue: w.queue, Agents: w.agents,
 		Model: gw, Catalog: w.catalog, Dispatch: w.router, LeaseTTL: leaseTTL,
 		MaxTakeovers: 4, MaxModelErrors: 3, ApprovalTimeout: approvalTimeout, Memory: w.memories,
 		Meter: w.meter, Quotas: w.quotas, QuotaRecheck: time.Minute, Moderator: simModerator{w},
@@ -649,7 +685,8 @@ func (w *World) stepWorker(i int) error {
 	if err != nil {
 		w.tracef("step %s: %v", wk.ID(), err)
 		var me *modelError
-		if errors.As(err, &me) || errors.Is(err, moderation.ErrUnavailable) {
+		var sf *storeFault
+		if errors.As(err, &me) || errors.Is(err, moderation.ErrUnavailable) || errors.As(err, &sf) {
 			return nil
 		}
 		return fmt.Errorf("worker %s step: %w", wk.ID(), err)

@@ -93,26 +93,24 @@ func (m *Manager) Start(ctx context.Context, req StartRequest, out func(*v1.Call
 		m.log().Warn("realtime open failed", "session", req.SessionID, "model", cfg.Model, "err", err)
 		return nil, fmt.Errorf("%w: %v", ErrProvider, err)
 	}
-	if err := m.Service.StartCall(ctx, service.StartCallRequest{SessionID: req.SessionID, CallID: req.CallID,
-		DeviceID: req.DeviceID, Model: cfg.Model, Voice: cfg.Voice}); err != nil {
-		rt.Close()
-		return nil, err
-	}
-	// 从 CallStarted 之后跟随日志。
-	st, err = m.Service.Load(ctx, req.SessionID)
+	cs, err := m.Service.StartCall(ctx, service.StartCallRequest{SessionID: req.SessionID, CallID: req.CallID,
+		DeviceID: req.DeviceID, Model: cfg.Model, Voice: cfg.Voice})
 	if err != nil {
 		rt.Close()
 		return nil, err
 	}
+	// 从 CallStarted 之后跟随日志（写入后的投影，而不是重新加载：那可能已跨过此后的取代或关闭）。
+	st = cs.State
 	backlog := m.MaxBacklog
 	if backlog == 0 {
 		backlog = 15
 	}
-	c := &Call{m: m, sid: req.SessionID, id: req.CallID, model: cfg.Model, agent: def.Name + "@" + def.Version,
+	c := &Call{m: m, sid: req.SessionID, id: req.CallID, meterID: cs.MeterID, model: cfg.Model, agent: def.Name + "@" + def.Version,
 		scope: usage.Scope{SessionID: req.SessionID, BusinessLine: st.Created.GetBusinessLine(), EndUser: st.Created.GetEndUser()},
-		rt:    rt, out: out, backlog: backlog, writes: make(chan func(), 64), done: make(chan struct{}),
+		rt:    rt, out: out, backlog: backlog, writes: make(chan func(), 64), drained: make(chan struct{}), done: make(chan struct{}),
 		runs: map[string]*runState{}, watches: map[string]*watch{}, changed: make(chan struct{})}
 	c.ctx, c.cancel = context.WithCancel(context.WithoutCancel(ctx))
+	c.wctx, c.wcancel = context.WithCancel(context.WithoutCancel(ctx))
 	metrics.CallsActive.Inc()
 	c.send(&v1.CallEvent{Kind: &v1.CallEvent_Ready{Ready: &v1.CallReady{Model: cfg.Model, Voice: cfg.Voice,
 		InputSampleRate: realtime.InputSampleRate, OutputSampleRate: realtime.OutputSampleRate}}})
@@ -179,6 +177,8 @@ func textOf(blocks []*v1.ContentBlock) string {
 type Call struct {
 	m       *Manager
 	sid, id string
+	// meterID 是计量标识（service.CallStart.MeterID），每轮的用量记为 "call_<meterID>/<轮次>"。
+	meterID string
 	model   string
 	agent   string
 	scope   usage.Scope
@@ -186,13 +186,18 @@ type Call struct {
 	out     func(*v1.CallEvent) error
 	backlog int
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-	writes chan func()
-	done   chan struct{}
-	once   sync.Once
-	turns  int
+	// ctx 是媒体与任务的上下文，结束时立即取消；wctx 是写入转写的上下文，结束时等已收下的转写写完（有界）再取消。
+	ctx     context.Context
+	cancel  context.CancelFunc
+	wctx    context.Context
+	wcancel context.CancelFunc
+	wg      sync.WaitGroup
+	// writes 在结束时关闭（持有 mu、ended 置位之后），drained 在写入协程写完其中全部转写后关闭。
+	writes  chan func()
+	drained chan struct{}
+	done    chan struct{}
+	once    sync.Once
+	turns   int
 
 	mu sync.Mutex
 	// buf 是尚未转发的上行音频。
@@ -275,32 +280,49 @@ func (c *Call) Control(a v1.CallAction) {
 	}
 }
 
-// End 结束 Call：关闭语音模型会话，记录 CallEnded，通知设备。可重复调用。
+// End 结束 Call：立即关闭语音模型会话、停止中转；已收下的转写写完之后记录 CallEnded、通知设备，
+// 全部完成后关闭 Done。可重复调用。
 func (c *Call) End(reason string) { c.end(reason, true) }
+
+// drainTimeout 是结束时等待已收下的转写写完的上限（内容安全检查与写日志）。
+const drainTimeout = 5 * time.Second
 
 // end 的 record 为 false 时不写 CallEnded：Call 已在日志中结束（被取代、Session 已关闭或删除）。
 func (c *Call) end(reason string, record bool) {
 	c.once.Do(func() {
 		c.mu.Lock()
 		c.ended = true
+		close(c.writes) // 不再收下新的转写（recordLocked 持有 mu 并检查 ended）
 		c.mu.Unlock()
 		c.cancel()
 		c.rt.Close()
 		metrics.CallsActive.Dec()
 		metrics.CallsEnded.WithLabelValues(reason).Inc()
-		if record {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			if err := c.m.Service.EndCall(ctx, c.sid, c.id, reason); err != nil && !errors.Is(err, service.ErrNotFound) {
-				c.m.log().Warn("call end not recorded", "session", c.sid, "call", c.id, "err", err)
-			}
-			cancel()
-		}
-		_ = c.out(&v1.CallEvent{CallId: c.id, Kind: &v1.CallEvent_Ended{Ended: &v1.CallEnded{CallId: c.id, Reason: reason}}})
-		go func() {
-			c.wg.Wait()
-			close(c.done)
-		}()
+		// 收尾在另一个协程中：end 可能由写入协程自己调用（写入失败），不能在这里等它。
+		go c.finish(reason, record)
 	})
+}
+
+// finish 等已收下的转写写完，再记录结束：用户说完立即挂断时，最后一句话不丢，且排在 CallEnded 之前。
+func (c *Call) finish(reason string, record bool) {
+	select {
+	case <-c.drained:
+	case <-time.After(drainTimeout):
+		c.m.log().Warn("call transcripts not drained", "session", c.sid, "call", c.id)
+		c.wcancel()
+		<-c.drained
+	}
+	c.wcancel()
+	if record {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := c.m.Service.EndCall(ctx, c.sid, c.id, reason); err != nil && !errors.Is(err, service.ErrNotFound) {
+			c.m.log().Warn("call end not recorded", "session", c.sid, "call", c.id, "err", err)
+		}
+		cancel()
+	}
+	_ = c.out(&v1.CallEvent{CallId: c.id, Kind: &v1.CallEvent_Ended{Ended: &v1.CallEnded{CallId: c.id, Reason: reason}}})
+	c.wg.Wait()
+	close(c.done)
 }
 
 // pace 按 20 ms 的节拍把上行音频转给模型；没有音频时发静音：模型依赖连续的音频流（实测节奏偏离会报错）。
@@ -373,7 +395,7 @@ func (c *Call) listen() {
 			c.toolCall(ev)
 		case realtime.UsageReport:
 			c.turns++
-			c.meter(ev.Usage, fmt.Sprintf("%s/%d", c.id, c.turns))
+			c.meter(ev.Usage, fmt.Sprintf("call_%s/%d", c.meterID, c.turns))
 		case realtime.Failed:
 			c.m.log().Warn("realtime session failed", "session", c.sid, "call", c.id, "err", ev.Err)
 			c.End(service.CallEndProvider)
@@ -451,21 +473,18 @@ func (c *Call) recordLocked(role, text string, interrupted bool) {
 	}
 }
 
+// writer 按顺序写入转写，直到 writes 关闭且其中的都已写完。
 func (c *Call) writer() {
 	defer c.wg.Done()
-	for {
-		select {
-		case <-c.ctx.Done():
-			return
-		case f := <-c.writes:
-			f()
-		}
+	defer close(c.drained)
+	for f := range c.writes {
+		f()
 	}
 }
 
 // write 写入一句转写。违规（或无法检查）时中止回复并停止播放；Call 已不在进行中时挂断。
 func (c *Call) write(t *v1.CallTranscript) {
-	err := c.m.Service.AppendTranscript(c.ctx, c.sid, t)
+	err := c.m.Service.AppendTranscript(c.wctx, c.sid, t)
 	switch {
 	case err == nil:
 	case errors.Is(err, moderation.ErrRejected), errors.Is(err, moderation.ErrUnavailable):
@@ -478,7 +497,7 @@ func (c *Call) write(t *v1.CallTranscript) {
 		}
 	case errors.Is(err, service.ErrConflict), errors.Is(err, service.ErrNotFound):
 		c.end(c.endedReason(), false)
-	case c.ctx.Err() != nil:
+	case c.wctx.Err() != nil:
 	default:
 		c.m.log().Warn("call transcript not recorded", "session", c.sid, "call", c.id, "err", err)
 		c.End(service.CallEndError)

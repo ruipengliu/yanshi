@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strconv"
 	"sync"
 	"time"
@@ -53,7 +54,7 @@ type subscriber struct {
 type sessions struct {
 	mu sync.Mutex
 	// send 为 nil 表示当前未连接；ready 在连接建立时关闭，断开时换新。
-	send    func(*v1.NodeMessage) error
+	send    func(context.Context, *v1.NodeMessage) error
 	ready   chan struct{}
 	subs    map[string]*subscriber
 	pending map[string]chan *v1.ClientResponse
@@ -67,15 +68,16 @@ func (s *sessions) init() {
 }
 
 // attach 在连接建立后调用：重新订阅全部 Session，并放行等待连接的请求。
-func (s *sessions) attach(send func(*v1.NodeMessage) error) error {
+func (s *sessions) attach(send func(context.Context, *v1.NodeMessage) error) error {
+	ctx := context.Background()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for sid, sub := range s.subs {
-		if err := send(subscribeMsg(sid, sub.after)); err != nil {
+		if err := send(ctx, subscribeMsg(sid, sub.after)); err != nil {
 			return err
 		}
 		if sub.focused {
-			if err := send(activityMsg(sid, true, false)); err != nil {
+			if err := send(ctx, activityMsg(sid, true, false)); err != nil {
 				return err
 			}
 		}
@@ -164,7 +166,7 @@ func (c *Client) Subscribe(sessionID string, after uint64, h SessionHandler) (ca
 	s.mu.Lock()
 	s.subs[sessionID] = sub
 	if s.send != nil {
-		_ = s.send(subscribeMsg(sessionID, after))
+		_ = s.send(context.Background(), subscribeMsg(sessionID, after))
 	}
 	s.mu.Unlock()
 	return func() {
@@ -175,7 +177,7 @@ func (c *Client) Subscribe(sessionID string, after uint64, h SessionHandler) (ca
 		}
 		delete(s.subs, sessionID)
 		if s.send != nil {
-			_ = s.send(&v1.NodeMessage{Msg: &v1.NodeMessage_Unsubscribe{Unsubscribe: &v1.Unsubscribe{SessionId: sessionID}}})
+			_ = s.send(context.Background(), &v1.NodeMessage{Msg: &v1.NodeMessage_Unsubscribe{Unsubscribe: &v1.Unsubscribe{SessionId: sessionID}}})
 		}
 	}
 }
@@ -200,15 +202,19 @@ func (c *Client) SetActivity(sessionID string, focused, typing bool) {
 	}
 	sub.focused = focused
 	if s.send != nil {
-		_ = s.send(activityMsg(sessionID, focused, typing))
+		_ = s.send(context.Background(), activityMsg(sessionID, focused, typing))
 	}
 }
 
 // Request 发出一个客户端请求并等待响应；未连接时等待连接建立。request_id 由 SDK 填写。
+// ctx 结束时立即返回，包括写入卡住时（此时连接随之关闭、重连）；ctx 已结束的请求不发出。
 func (c *Client) Request(ctx context.Context, req *v1.ClientRequest) (*v1.ClientResponse, error) {
 	s := &c.sessions
 	var ch chan *v1.ClientResponse
 	for ch == nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		s.mu.Lock()
 		if s.send == nil {
 			ready := s.ready
@@ -224,13 +230,19 @@ func (c *Client) Request(ctx context.Context, req *v1.ClientRequest) (*v1.Client
 		req.RequestId = "r" + strconv.FormatUint(s.nextID, 10)
 		ch = make(chan *v1.ClientResponse, 1)
 		s.pending[req.RequestId] = ch
-		err := s.send(&v1.NodeMessage{Msg: &v1.NodeMessage_Request{Request: req}})
-		if err != nil {
+		send := s.send
+		s.mu.Unlock()
+		// 在锁外写：写入可能阻塞，持锁会挡住响应的分发、订阅变更与断线清理。
+		if err := send(ctx, &v1.NodeMessage{Msg: &v1.NodeMessage_Request{Request: req}}); err != nil {
+			s.mu.Lock()
 			delete(s.pending, req.RequestId)
 			s.mu.Unlock()
-			return nil, err
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			// 写入失败时连接已断开，请求可能已经到达：与断开在响应之前相同，结果未知（提交输入会以同一 ID 重试）。
+			return nil, fmt.Errorf("%w: %v", ErrDisconnected, err)
 		}
-		s.mu.Unlock()
 	}
 	select {
 	case <-ctx.Done():

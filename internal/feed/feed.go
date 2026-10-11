@@ -16,6 +16,9 @@ import (
 	"yanshi/internal/session"
 )
 
+// waitRetryMin 与 waitRetryMax 是日志等待出错后重试的退避范围。
+var waitRetryMin, waitRetryMax = 500 * time.Millisecond, 5 * time.Second
+
 // ErrDeleted 表示 Session 在订阅期间被删除（ADR-0015）。
 var ErrDeleted = errors.New("feed: session deleted")
 
@@ -140,13 +143,22 @@ func Public(e *v1.Event) *v1.Event {
 	return cp
 }
 
-// waitHeads 每当日志前进时向 heads 发一个合并后的通知。
+// waitHeads 每当日志前进时向 heads 发一个合并后的通知。等待出错（如数据库短暂不可用）时退避后重试：
+// 它是流推进的唯一来源，退出会让连接看似健康、却再也收不到新事件。重试从同一位置等待，期间追加的事件不会漏掉。
 func waitHeads(ctx context.Context, log eventlog.Log, id string, after uint64, heads chan<- struct{}) {
+	backoff := waitRetryMin
 	for {
 		head, err := log.Wait(ctx, id, after)
 		if err != nil {
-			return
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
+			backoff = min(2*backoff, waitRetryMax)
+			continue
 		}
+		backoff = waitRetryMin
 		after = head
 		select {
 		case heads <- struct{}{}:

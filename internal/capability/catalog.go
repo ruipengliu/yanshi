@@ -126,6 +126,9 @@ func (c *Catalog) Tools(ctx context.Context, target Target, allow []string) ([]T
 	}
 	var devices []Tool
 	for _, n := range nodes {
+		if node.Reserved(n.NodeID) || n.Label == SandboxLabel {
+			continue // 平台的 ID 与标签不属于设备（node.Hub.Connect 已拒绝，这里防御此前写入的登记）
+		}
 		for _, cs := range n.Capabilities {
 			if !matchAny(globs, cs.GetName()) {
 				continue
@@ -179,11 +182,9 @@ func matchAny(globs []string, name string) bool {
 	return false
 }
 
+// deviceTool 是设备能力对应的工具。描述只含设备的标签与类型，不含在线状态：工具定义在请求前缀中，手机等设备
+// 频繁上下线会使同一 Run 中之后每次请求的前缀缓存失效。调用离线设备时 Run 挂起，设备被唤醒、上线后继续。
 func (c *Catalog) deviceTool(n *node.Info, cs *v1.CapabilitySpec) Tool {
-	state := "在线"
-	if !n.Online {
-		state = "当前离线，调用会等待其上线"
-	}
 	schema := json.RawMessage(cs.GetInputSchemaJson())
 	if len(schema) == 0 {
 		schema = json.RawMessage(`{"type":"object"}`)
@@ -195,7 +196,7 @@ func (c *Catalog) deviceTool(n *node.Info, cs *v1.CapabilitySpec) Tool {
 	return Tool{
 		Spec: Spec{
 			Name:        n.Label + "__" + cs.GetName(),
-			Description: fmt.Sprintf("[设备 %s（%s）· %s] %s", n.Label, n.Kind, state, cs.GetDescription()),
+			Description: fmt.Sprintf("[设备 %s（%s）] %s", n.Label, n.Kind, cs.GetDescription()),
 			InputSchema: schema,
 			Idempotent:  cs.GetIdempotent(),
 			Risk:        cs.GetRisk(),

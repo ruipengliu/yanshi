@@ -45,55 +45,68 @@ type StartCallRequest struct {
 	Voice string
 }
 
+// CallStart 是记录下来的 Call 开始。
+type CallStart struct {
+	// State 是写入 CallStarted 之后的投影。中转进程从这里跟随日志：若重新加载，可能已经跨过此后的取代或关闭，
+	// 永远看不到自己的结束。
+	State *session.State
+	// MeterID 是本次 Call 的计量标识（CallStarted 事件的 ID）：由服务端生成，客户端复用 Call ID 不会使用量
+	// 因计量记录去重而丢失；也不含 Session ID（ADR-0019）。
+	MeterID string
+}
+
 // StartCall 记录 Call 开始。Session 中已有进行中的 Call 时，旧的以 "replaced" 结束（同批写入）：
 // 中转旧 Call 的进程可能已经崩溃，留下没有结束记录的 Call，新 Call 不能因此被永远挡住。
 // 与新 Run 一样，配额用尽时拒绝（docs/design/m4-quota-usage.md §3）。
-func (s *Service) StartCall(ctx context.Context, req StartCallRequest) error {
+func (s *Service) StartCall(ctx context.Context, req StartCallRequest) (*CallStart, error) {
 	if req.CallID == "" || len(req.CallID) > MaxCallIDLen {
-		return fmt.Errorf("%w: call_id is required and at most %d bytes", ErrInvalid, MaxCallIDLen)
+		return nil, fmt.Errorf("%w: call_id is required and at most %d bytes", ErrInvalid, MaxCallIDLen)
 	}
 	st, err := s.Load(ctx, req.SessionID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if bl := st.Created.GetBusinessLine(); s.Quotas.Enabled(bl) {
 		p, err := s.Quotas.Check(ctx, bl, st.Created.GetEndUser(), s.Store.Clock.Now())
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if p != nil {
 			metrics.QuotaRejections.WithLabelValues(p.Scope, "call").Inc()
-			return &usage.ExceededError{Period: p}
+			return nil, &usage.ExceededError{Period: p}
 		}
 	}
 	for range maxConflictRetries {
 		if st.Closed != nil {
-			return fmt.Errorf("%w: session %s is closed", ErrConflict, req.SessionID)
+			return nil, fmt.Errorf("%w: session %s is closed", ErrConflict, req.SessionID)
 		}
 		var events []*v1.Event
 		if c := st.ActiveCall; c != nil {
 			if c.ID == req.CallID {
-				return fmt.Errorf("%w: call %s already started", ErrConflict, req.CallID)
+				return nil, fmt.Errorf("%w: call %s already started", ErrConflict, req.CallID)
 			}
 			events = append(events, callEnded(c.ID, CallEndReplaced))
 		}
-		events = append(events, &v1.Event{Payload: &v1.Event_CallStarted{CallStarted: &v1.CallStarted{
-			CallId: req.CallID, DeviceId: req.DeviceID, Model: req.Model, Voice: req.Voice}}})
+		started := &v1.Event{Payload: &v1.Event_CallStarted{CallStarted: &v1.CallStarted{
+			CallId: req.CallID, DeviceId: req.DeviceID, Model: req.Model, Voice: req.Voice}}}
+		events = append(events, started)
 		err := s.Store.Commit(ctx, st, events...)
 		if err == nil {
 			if s.Index != nil {
-				return s.Index.Touch(ctx, req.SessionID, s.Store.Clock.Now())
+				if err := s.Index.Touch(ctx, req.SessionID, s.Store.Clock.Now()); err != nil {
+					return nil, err
+				}
 			}
-			return nil
+			return &CallStart{State: st, MeterID: started.GetId()}, nil
 		}
 		if !errors.Is(err, eventlog.ErrConflict) {
-			return err
+			return nil, err
 		}
 		if err := s.Store.SyncAfterConflict(ctx, st); err != nil {
-			return gone(req.SessionID, err)
+			return nil, gone(req.SessionID, err)
 		}
 	}
-	return fmt.Errorf("start call in session %s: too many conflicts", req.SessionID)
+	return nil, fmt.Errorf("start call in session %s: too many conflicts", req.SessionID)
 }
 
 // AppendTranscript 写入 Call 中一句话的转写。写入前做内容安全检查（用户的话按输入、助手的话按输出，ADR-0021）：

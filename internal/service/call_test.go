@@ -39,8 +39,16 @@ func line(call, role, text string) *v1.CallTranscript {
 func TestCallLifecycle(t *testing.T) {
 	ctx := context.Background()
 	svc, sid := callService(t)
+	var meterIDs []string
 	start := func(id string) error {
-		return svc.StartCall(ctx, service.StartCallRequest{SessionID: sid, CallID: id, DeviceID: "phone", Model: "volc/x"})
+		cs, err := svc.StartCall(ctx, service.StartCallRequest{SessionID: sid, CallID: id, DeviceID: "phone", Model: "volc/x"})
+		if err == nil {
+			if cs.State.ActiveCall == nil || cs.State.ActiveCall.ID != id {
+				t.Fatalf("state after start has active call %+v, want %s", cs.State.ActiveCall, id)
+			}
+			meterIDs = append(meterIDs, cs.MeterID)
+		}
+		return err
 	}
 	if err := start("a"); err != nil {
 		t.Fatal(err)
@@ -61,6 +69,9 @@ func TestCallLifecycle(t *testing.T) {
 	// 新 Call 取代旧 Call：旧 Call 的写入一律冲突，结束旧 Call 是无操作。
 	if err := start("b"); err != nil {
 		t.Fatal(err)
+	}
+	if len(meterIDs) != 2 || meterIDs[0] == "" || meterIDs[0] == meterIDs[1] {
+		t.Fatalf("meter ids %q: each call needs its own server-generated id", meterIDs)
 	}
 	if err := svc.AppendTranscript(ctx, sid, line("a", "assistant", "好的")); !errors.Is(err, service.ErrConflict) {
 		t.Fatalf("transcript of a replaced call: %v", err)

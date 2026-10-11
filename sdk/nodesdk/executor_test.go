@@ -104,3 +104,45 @@ func TestFileLedgerRejectsUnsafeIDs(t *testing.T) {
 		t.Fatal("path traversal accepted")
 	}
 }
+
+// 清除 Session 的记录时仍在执行的调用（处理函数不理会取消）：它之后写下的结果随即删除；
+// 清除之后到达的同一 Session 的调用不执行。
+func TestForgetWinsOverInflightCalls(t *testing.T) {
+	for name, l := range ledgers(t) {
+		t.Run(name, func(t *testing.T) {
+			entered, release := make(chan struct{}), make(chan struct{})
+			ran := 0
+			e := NewExecutor(l, Capability{
+				Spec: &v1.CapabilitySpec{Name: "read", Idempotent: true},
+				Handler: func(context.Context, string) ([]*v1.ContentBlock, error) {
+					ran++
+					close(entered)
+					<-release
+					return text("个人数据"), nil
+				},
+			})
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				_, _ = e.Execute(context.Background(), &v1.Invoke{SessionId: "s1", CallId: "c1", Capability: "read"})
+			}()
+			<-entered
+			forget := &v1.Invoke{CallId: "f1", Capability: ForgetCapability, ArgumentsJson: `{"session_id":"s1"}`}
+			if r, err := e.Execute(context.Background(), forget); err != nil || r.GetIsError() {
+				t.Fatalf("forget: %v %v", r, err)
+			}
+			close(release)
+			<-done
+			if r, _ := l.Get("c1"); r.State != StateNew {
+				t.Fatalf("record of a forgotten session written back: state %v", r.State)
+			}
+			r, err := e.Execute(context.Background(), &v1.Invoke{SessionId: "s1", CallId: "c2", Capability: "read"})
+			if err != nil || !r.GetIsError() || ran != 1 {
+				t.Fatalf("call after forget: %v %v (ran %d)", r, err, ran)
+			}
+			if rec, _ := l.Get("c2"); rec.State != StateNew {
+				t.Fatal("call after forget left a record")
+			}
+		})
+	}
+}

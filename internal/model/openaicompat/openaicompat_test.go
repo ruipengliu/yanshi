@@ -78,6 +78,46 @@ func TestGenerateHTTPError(t *testing.T) {
 	}
 }
 
+// 提供商的错误消息可能回显请求内容：错误只带状态码、错误码与请求 ID，进入日志与 RunFailed 的文本里没有消息原文。
+func TestProviderErrorsOmitMessages(t *testing.T) {
+	const secret = "我的身份证号 110101199001011234"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/chat/completions" && r.Header.Get("X-Stream") != "" {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte(`data: {"error":{"code":"content_filter","message":"blocked: ` + secret + `"}}` + "\n\n"))
+			return
+		}
+		w.Header().Set("X-Request-Id", "req-42")
+		http.Error(w, `{"error":{"code":"invalid_request","type":"invalid_request_error","message":"bad input: `+secret+`"}}`, http.StatusBadRequest)
+	}))
+	defer srv.Close()
+	p := &Provider{BaseURL: srv.URL}
+	_, err := p.Generate(context.Background(), &model.Request{Model: "m"}, nil)
+	var pe *model.ProviderError
+	if !errors.As(err, &pe) || pe.Status != 400 || pe.Code != "invalid_request/invalid_request_error" || pe.RequestID != "req-42" {
+		t.Fatalf("err = %v", err)
+	}
+	_, embedErr := p.Embed(context.Background(), "e", []string{"x"})
+	p.Client = &http.Client{Transport: headerTransport{"X-Stream", "1"}}
+	_, streamErr := p.Generate(context.Background(), &model.Request{Model: "m"}, nil)
+	if !errors.As(streamErr, &pe) || pe.Code != "content_filter" {
+		t.Fatalf("stream err = %v", streamErr)
+	}
+	for _, e := range []error{err, embedErr, streamErr} {
+		if e == nil || strings.Contains(e.Error(), "身份证") || strings.Contains(e.Error(), "bad input") {
+			t.Errorf("error text leaks the provider message: %v", e)
+		}
+	}
+}
+
+type headerTransport struct{ k, v string }
+
+func (h headerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Header.Set(h.k, h.v)
+	return http.DefaultTransport.RoundTrip(r)
+}
+
 func TestGenerateContextOverflow(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":{"code":"context_length_exceeded","message":"This model's maximum context length is 8192 tokens"}}`, http.StatusBadRequest)

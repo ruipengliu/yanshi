@@ -184,6 +184,23 @@ test("abort signal cancels a request", async () => {
   c.stop();
 });
 
+test("an already aborted request or call is never sent", async () => {
+  const net = new FakeNetwork();
+  const c = client(net);
+  const s = await net.connect(1);
+  const before = s.sent.length;
+  const ac = new AbortController();
+  ac.abort(new Error("gone"));
+  await assert.rejects(c.decide("s1", "call_1", true, { signal: ac.signal }), /gone/);
+  await assert.rejects(c.startCall("s1", { onAudio() {} }, { signal: ac.signal }), /gone/);
+  assert.deepEqual(
+    s.sent.slice(before).map((m) => m.msg.case),
+    [],
+    "an aborted approval must not reach the gateway",
+  );
+  c.stop();
+});
+
 test("subscription end, unsubscribe, presence and a throwing handler", async () => {
   const net = new FakeNetwork();
   const uncaught: unknown[] = [];

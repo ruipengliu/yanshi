@@ -34,6 +34,8 @@ type Provider struct {
 	sessions []*Session
 	// OpenErr 非 nil 时 Open 失败。
 	OpenErr error
+	// OpenGate 非 nil 时 Open 等它关闭才返回（模拟缓慢的握手），ctx 先结束时返回 ctx 的错误。
+	OpenGate chan struct{}
 }
 
 // Sessions 返回打开过的会话。
@@ -43,9 +45,16 @@ func (p *Provider) Sessions() []*Session {
 	return append([]*Session(nil), p.sessions...)
 }
 
-func (p *Provider) Open(_ context.Context, cfg realtime.Config) (realtime.Session, error) {
+func (p *Provider) Open(octx context.Context, cfg realtime.Config) (realtime.Session, error) {
 	if p.OpenErr != nil {
 		return nil, p.OpenErr
+	}
+	if p.OpenGate != nil {
+		select {
+		case <-p.OpenGate:
+		case <-octx.Done():
+			return nil, octx.Err()
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{Config: cfg, events: make(chan realtime.Event, 1024), ctx: ctx, cancel: cancel}

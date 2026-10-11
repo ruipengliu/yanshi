@@ -6,11 +6,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
+	"yanshi/internal/artifact"
 	"yanshi/internal/askuser"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/lifecycle"
@@ -48,6 +50,13 @@ type Service struct {
 	Quotas *usage.Quotas
 	// Moderator 非空时，输入（新 Run 与插话）在写日志之前检查，违规的不写入（ADR-0021）。
 	Moderator moderation.Moderator
+	// Artifacts 非空时，输入中的 Media 须引用本 Session 的工件，其类型、大小与名称取自工件的元数据。
+	Artifacts ArtifactStat
+}
+
+// ArtifactStat 查询工件元数据（artifact.Service）。
+type ArtifactStat interface {
+	Stat(ctx context.Context, id string) (*artifact.Meta, error)
 }
 
 // ErrConflict 表示请求与 Session 当前状态冲突（如审批已决定）。
@@ -182,6 +191,9 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 	if err := checkUIContext(input); err != nil {
 		return nil, err
 	}
+	if input, err = s.normalizeMedia(ctx, sessionID, input); err != nil {
+		return nil, err
+	}
 	if err := s.moderateInput(ctx, st, input); err != nil {
 		return nil, err
 	}
@@ -219,7 +231,7 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 				if err != nil {
 					return nil, err
 				}
-				ev.GetToolResult().InputId = inputID
+				ev.GetToolResult().InputId, ev.GetToolResult().FromCall = inputID, fromCall
 				res.Answered = c.Call.GetCallId()
 				events = append(events, ev)
 			} else {
@@ -593,6 +605,45 @@ func checkUIContext(input []*v1.ContentBlock) error {
 		return fmt.Errorf("%w: ui_context must accompany the user's input", ErrInvalid)
 	}
 	return nil
+}
+
+// normalizeMedia 把输入中的 Media 规范为本 Session 工件的引用（docs/design/m2-artifacts.md）：
+//   - 不接受内联的字节：Event 中只放引用，文件内容不进日志；内容安全检查的也是工件，与模型看到的一致；
+//   - 不接受其他地址（http 链接等）：模型适配器会把它直接交给模型，绕过内容安全检查；
+//   - 类型、大小、名称取自工件的元数据，而不是客户端自报的值。
+//
+// 返回新的切片，不修改调用方的输入。
+func (s *Service) normalizeMedia(ctx context.Context, sessionID string, input []*v1.ContentBlock) ([]*v1.ContentBlock, error) {
+	out, cloned := input, false
+	for i, b := range input {
+		m := b.GetMedia()
+		if m == nil {
+			continue
+		}
+		if len(m.GetData()) > 0 {
+			return nil, fmt.Errorf("%w: media must reference an uploaded artifact, not carry inline data", ErrInvalid)
+		}
+		id, ok := artifact.ParseURI(m.GetUri())
+		if !ok {
+			return nil, fmt.Errorf("%w: media uri must be an artifact:// reference", ErrInvalid)
+		}
+		if s.Artifacts == nil {
+			continue
+		}
+		meta, err := s.Artifacts.Stat(ctx, id)
+		if errors.Is(err, artifact.ErrNotFound) || (err == nil && meta.SessionID != sessionID) {
+			// 别的 Session 的工件与不存在的同样回答，不透露它是否存在。
+			return nil, fmt.Errorf("%w: artifact %s not found in this session", ErrInvalid, id)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !cloned {
+			out, cloned = slices.Clone(input), true
+		}
+		out[i] = meta.Block()
+	}
+	return out, nil
 }
 
 // InputModerationText 是输入中需要内容安全检查的文字：用户的话，以及界面上下文——它同样由用户提交、会给模型看。

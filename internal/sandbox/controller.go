@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -135,6 +136,11 @@ func (c *Controller) Step(ctx context.Context) (bool, error) {
 		return true, err
 	}
 	inv := pending[0]
+	if id != NodeID(inv.GetSessionId()) {
+		// 沙箱只执行本 Session 的调用：工作区按 Node ID 打开，调用方的 Session 必须与之一致（Router 已拒绝，这里防御）。
+		c.Logger.Warn("sandbox call for another session dropped", "sandbox", id, "session", inv.GetSessionId(), "call", inv.GetCallId())
+		return true, c.Hub.Inbox.Remove(ctx, id, inv.GetCallId())
+	}
 
 	if err := c.Activity.Touch(ctx, id, c.Clock.Now()); err != nil {
 		return false, err
@@ -255,6 +261,9 @@ type Router struct {
 func (r *Router) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke) error {
 	if !IsNode(nodeID) {
 		return r.Hub.Dispatch(ctx, nodeID, inv)
+	}
+	if nodeID != NodeID(inv.GetSessionId()) {
+		return fmt.Errorf("sandbox %s does not belong to session %s", nodeID, inv.GetSessionId())
 	}
 	if err := r.Hub.Inbox.Put(ctx, nodeID, inv); err != nil {
 		return err

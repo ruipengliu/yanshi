@@ -18,6 +18,8 @@
 - 其余请求在断线时报告"结果未知"，由调用方决定是否重试，因为重复执行不会产生重复效果。创建 Session 例外，重试会再创建一个。
 - 重连后随订阅重发前台状态；"正在输入"是瞬时的，不重发。
 - 回调按到达顺序串行调用。
+- 请求在发出之前已被取消（AbortSignal、ctx）时不发出：发出之后的取消只是不再等待，请求（例如批准）仍会生效。
+- 写入有期限：写入卡住（网络黑洞、对端不读）时，请求在自己的期限到时返回，连接随之关闭、重连；会话状态锁内不做网络写入（Go）。
 
 ## 2. 网页（`sdk/web`）
 
@@ -90,7 +92,7 @@ let resp = try Yanshi_V1_ClientResponse(serializedBytes: client.submitText(sid, 
 ```
 
 - **线程。** 回调在 Go 的线程中调用，更新界面前切回主线程。`Request`、`UploadArtifact` 会阻塞，应在后台线程调用。
-- **账本。** 声明了 Capability 时必须给出 `LedgerDir`（应用私有目录）。账本保证 App 被杀后重启时，有副作用的调用不会重复执行。
+- **账本。** 声明了 Capability 时必须给出 `LedgerDir`（应用私有目录）。账本保证 App 被杀后重启时，有副作用的调用不会重复执行。清除某 Session 的记录时，仍在执行的该 Session 的调用被取消，之后才写下的记录随即删除（`nodesdk.Executor` 在进程内记住清除标记）。
 - **取消。** 原生能力无法从 Go 中止：调用被取消时 SDK 不再等待结果，原生代码自行结束。
 - **消息类型。** 原生侧用 swift-protobuf / protobuf-javalite 从 `proto/` 生成，绑定层不附带。
 
@@ -103,7 +105,7 @@ let resp = try Yanshi_V1_ClientResponse(serializedBytes: client.submitText(sid, 
   - 响应丢失的提交以同一 ID 重试；
   - 其他请求在断线时报告结果未知；
   - stop 之后请求失败且不再重连；
-  - AbortSignal 取消请求；
+  - AbortSignal 取消请求，已取消的请求与 Call 不发出；
   - 订阅结束、取消订阅、在场；
   - 回调抛出异常不影响连接；
   - 每次连接重新取令牌；

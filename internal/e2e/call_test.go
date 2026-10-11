@@ -13,6 +13,7 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/eventlog"
+	"yanshi/internal/moderation"
 	"yanshi/internal/realtime/fake"
 	"yanshi/internal/session"
 )
@@ -372,4 +373,66 @@ func TestCallEndsWhenDeviceDisconnects(t *testing.T) {
 		got := e.callLog(st, sid)
 		return len(got) == 2 && got[1] == "end:disconnected"
 	})
+}
+
+// slowModerator 检查每句话前等 delay（内容安全服务较慢），ctx 先结束时失败。
+type slowModerator struct{ delay time.Duration }
+
+func (m slowModerator) Check(ctx context.Context, req moderation.Request) (moderation.Verdict, error) {
+	select {
+	case <-ctx.Done():
+		return moderation.Verdict{}, ctx.Err()
+	case <-time.After(m.delay):
+	}
+	return moderation.Mock{}.Check(ctx, req)
+}
+
+// TestCallKeepsLastWordsOnHangup：用户说完立即挂断，而内容安全检查还没做完：这句话仍写入日志，且在结束之前。
+func TestCallKeepsLastWordsOnHangup(t *testing.T) {
+	st := memStores()
+	st.moderator = slowModerator{delay: 300 * time.Millisecond}
+	e := &env{t: t, srv: instance(t, st, 2, true), disk: map[string][]byte{}}
+	phone := e.dialCall("phone")
+	sid := phone.createSession()
+	phone.start(sid, "a")
+	phone.waitFor("ready", func(ev *v1.CallEvent) bool { return ev.GetReady() != nil })
+	phone.say("a", "我明天上午有空")
+	phone.waitFor("heard", func(ev *v1.CallEvent) bool {
+		return ev.GetText().GetRole() == "user" && ev.GetText().GetFinal()
+	})
+	phone.control("a", v1.CallAction_CALL_ACTION_HANGUP)
+	phone.waitFor("ended", isEnded("hangup"))
+	var got []string
+	eventually(t, "call logged", 5*time.Second, func() bool {
+		got = e.callLog(st, sid)
+		return len(got) > 0 && got[len(got)-1] == "end:hangup"
+	})
+	if len(got) < 3 || got[1] != "user:我明天上午有空" {
+		t.Fatalf("log = %v: the last words before hanging up were lost", got)
+	}
+}
+
+// TestCallHangupBeforeReady：语音模型还在握手时设备挂断：开始被取消，不接通、不记录 Call，设备得到结束通知。
+func TestCallHangupBeforeReady(t *testing.T) {
+	st := memStores()
+	st.voice.OpenGate = make(chan struct{})
+	e := &env{t: t, srv: instance(t, st, 2, true), disk: map[string][]byte{}}
+	phone := e.dialCall("phone")
+	sid := phone.createSession()
+	phone.start(sid, "a")
+	time.Sleep(100 * time.Millisecond) // 让开始进入握手
+	phone.control("a", v1.CallAction_CALL_ACTION_HANGUP)
+	phone.waitFor("ended", isEnded("hangup"))
+	close(st.voice.OpenGate)
+	// 连接上可以再开始一个 Call：上一个的位置已经释放。
+	phone.start(sid, "b")
+	phone.waitFor("second call ready", func(ev *v1.CallEvent) bool { return ev.GetCallId() == "b" && ev.GetReady() != nil })
+	if n := phone.count(func(ev *v1.CallEvent) bool {
+		return ev.GetCallId() == "a" && (ev.GetReady() != nil || ev.GetError() != nil)
+	}); n != 0 {
+		t.Fatalf("the hung-up call reported ready or an error (%d)", n)
+	}
+	if got := e.callLog(st, sid); strings.Join(got, "|") != "start" {
+		t.Fatalf("log = %v, want only the second call", got)
+	}
 }

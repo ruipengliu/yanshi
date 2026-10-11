@@ -87,3 +87,21 @@ func TestOutputTruncated(t *testing.T) {
 		t.Fatalf("len %d truncated %v err %v", len(res.Stdout), res.StdoutTruncated, err)
 	}
 }
+
+// TestDestroyIsIdempotent：Janitor 的删除会清扫两次，容器也可能已被空闲回收或从未创建：
+// 对不存在的容器与卷，Destroy 视为已完成，而不是报错使删除无法结束。
+func TestDestroyIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	p, id := provider(t)
+	if err := p.Stop(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 2 {
+		if err := p.Destroy(ctx, id); err != nil {
+			t.Fatalf("destroy #%d: %v", i+1, err)
+		}
+	}
+	if err := p.Destroy(ctx, id+"-never-created"); err != nil {
+		t.Fatalf("destroy of a sandbox that never existed: %v", err)
+	}
+}

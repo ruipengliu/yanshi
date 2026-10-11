@@ -30,11 +30,14 @@ func (l *Log) Append(ctx context.Context, sessionID string, expectedSeq uint64, 
 	if len(events) == 0 {
 		return expectedSeq, nil
 	}
+	// 序列化时临时填入 Session 与 seq，成功后才写回调用方的事件：冲突时调用方同步后以同一批事件重试，
+	// 留下的旧 seq 会使重试校验失败（与 memlog 一致，eventlogtest 检查）。
 	rows := make([][]byte, len(events))
 	for i, e := range events {
-		e.SessionId = sessionID
-		e.Seq = expectedSeq + uint64(i) + 1
+		sid, seq := e.SessionId, e.Seq
+		e.SessionId, e.Seq = sessionID, expectedSeq+uint64(i)+1
 		b, err := proto.Marshal(e)
+		e.SessionId, e.Seq = sid, seq
 		if err != nil {
 			return 0, err
 		}
@@ -61,6 +64,9 @@ func (l *Log) Append(ctx context.Context, sessionID string, expectedSeq uint64, 
 	}
 	if err != nil {
 		return 0, err
+	}
+	for i, e := range events {
+		e.SessionId, e.Seq = sessionID, expectedSeq+uint64(i)+1
 	}
 	return expectedSeq + uint64(len(events)), nil
 }
