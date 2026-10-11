@@ -352,6 +352,11 @@ func (k sink) Delta(d live.Delta) error {
 func (sink) Ping() error  { return nil }
 func (sink) Flush() error { return nil }
 
+// owned 返回只能作用于连接的 EndUser 的 Session 的 ctx（service.WithAccess）：Service 读取 Session 时一并校验归属。
+func owned(ctx context.Context, id Identity) context.Context {
+	return service.WithAccess(ctx, func(bl, eu string) bool { return bl == id.BusinessLine && eu == id.EndUser })
+}
+
 // load 读取 Session 并要求它属于连接的 EndUser；否则一律视为不存在。
 func (h *Handler) load(ctx context.Context, id Identity, sid string) (*session.State, error) {
 	st, err := h.Service.Load(ctx, sid)
@@ -379,36 +384,21 @@ func (h *Handler) do(ctx context.Context, id Identity, req *v1.ClientRequest, re
 		resp.SessionId = sid
 		return err
 	case *v1.ClientRequest_Submit:
-		if _, err := h.load(ctx, id, op.Submit.GetSessionId()); err != nil {
-			return err
-		}
-		res, err := h.Service.SubmitWithID(ctx, op.Submit.GetSessionId(), op.Submit.GetInputId(), op.Submit.GetInput())
+		res, err := h.Service.SubmitWithID(owned(ctx, id), op.Submit.GetSessionId(), op.Submit.GetInputId(), op.Submit.GetInput())
 		if err != nil {
 			return err
 		}
 		resp.RunId, resp.Steered, resp.Answered, resp.Duplicate = res.RunID, res.Steered, res.Answered, res.Duplicate
 		return nil
 	case *v1.ClientRequest_Interrupt:
-		if _, err := h.load(ctx, id, op.Interrupt.GetSessionId()); err != nil {
-			return err
-		}
-		return h.Service.Interrupt(ctx, op.Interrupt.GetSessionId(), op.Interrupt.GetRunId())
+		return h.Service.Interrupt(owned(ctx, id), op.Interrupt.GetSessionId(), op.Interrupt.GetRunId())
 	case *v1.ClientRequest_Decide:
-		if _, err := h.load(ctx, id, op.Decide.GetSessionId()); err != nil {
-			return err
-		}
-		return h.Service.Decide(ctx, op.Decide.GetSessionId(), op.Decide.GetCallId(), op.Decide.GetApprove(), by)
+		return h.Service.Decide(owned(ctx, id), op.Decide.GetSessionId(), op.Decide.GetCallId(), op.Decide.GetApprove(), by)
 	case *v1.ClientRequest_Answer:
-		if _, err := h.load(ctx, id, op.Answer.GetSessionId()); err != nil {
-			return err
-		}
-		return h.Service.Answer(ctx, op.Answer.GetSessionId(), op.Answer.GetCallId(), &askuser.Answer{
+		return h.Service.Answer(owned(ctx, id), op.Answer.GetSessionId(), op.Answer.GetCallId(), &askuser.Answer{
 			Selected: op.Answer.GetSelected(), Values: op.Answer.GetValues(), Text: op.Answer.GetText()})
 	case *v1.ClientRequest_Close:
-		if _, err := h.load(ctx, id, op.Close.GetSessionId()); err != nil {
-			return err
-		}
-		return h.Service.Close(ctx, op.Close.GetSessionId(), by, op.Close.GetReason())
+		return h.Service.Close(owned(ctx, id), op.Close.GetSessionId(), by, op.Close.GetReason())
 	}
 	return fmt.Errorf("%w: unknown request", service.ErrInvalid)
 }

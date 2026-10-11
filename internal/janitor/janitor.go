@@ -332,7 +332,8 @@ func (j *Janitor) Sweep(ctx context.Context) error {
 	now := j.Clock.Now()
 	for bl, r := range j.Retention {
 		if r.CloseAfterIdle > 0 {
-			ids, err := j.Index.IdleBefore(ctx, bl, now.Add(-r.CloseAfterIdle), 100)
+			// 索引中的最后输入时间至多滞后 TouchEvery：多等这么久，不提前关闭。
+			ids, err := j.Index.IdleBefore(ctx, bl, now.Add(-r.CloseAfterIdle-lifecycle.TouchEvery), 100)
 			if err != nil {
 				return err
 			}

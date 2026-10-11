@@ -18,7 +18,7 @@ func TestIndex(t *testing.T) {
 
 func TestDeletions(t *testing.T) {
 	lifecycletest.RunDeletions(t, func(t *testing.T) lifecycle.Deletions {
-		pool, _ := pgtest.Fresh(t)
-		return pglifecycle.Deletions{Pool: pool}
+		pool, n := pgtest.Fresh(t)
+		return pglifecycle.Deletions{Pool: pool, Notifier: n}
 	})
 }

@@ -57,7 +57,7 @@ AssistantMessage.tool_calls      模型请求
   - 标签 `sandbox` 保留给沙箱工具（`sandbox__<能力>`），设备以它注册时改为 `sandbox-device`。
 - **面向模型的工具名**是 `<node 标签>__<capability>`，例如 `macbook__read_file`。标签由 HostApp 提供，在同一用户下自动去重。工具描述附上设备类型，不附在线状态：工具定义是请求前缀的一部分，手机等设备频繁上下线会使同一 Run 之后每次请求的前缀缓存失效。调用离线设备时 Run 挂起，设备被唤醒、上线后继续。
 - **AgentDef 白名单**：`clock_now` 这类条目指进程内 Capability；`device:<glob>`（如 `device:*`、`device:read_*`）表示该用户任意 Node 上名称匹配的 Capability。
-- 工具在每次模型调用前解析一次，执行调用时再按工具名解析一次。Node 消失时返回错误结果。
+- 工具在每次模型调用前解析一次，执行调用时再按工具名解析一次。Node 消失时返回错误结果。每个 EndUser 的 Node 列表在进程内缓存 10 秒（`Catalog.NodeCacheTTL`），新登记的设备至多 10 秒后出现在工具中。
 
 ## 6. 组件
 

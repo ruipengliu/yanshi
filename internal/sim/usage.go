@@ -34,14 +34,17 @@ func simLimits(long bool) map[string]usage.Limits {
 
 // checkedUsage 在每次记录模型用量时检查：该调用的业务线与 EndUser 在调用时都未超额。
 // 模拟中检查、调用与记录在同一个 Step 内完成，其间没有其他记录，因此记录时的已用即检查时的已用。
+// 已用金额从 truth（底层存储）直接求和，不经 Worker 所用的缓存（usage.SpentCache）：缓存若少计，这里能发现。
 type checkedUsage struct {
 	usage.Store
-	w *World
+	truth usage.Store
+	w     *World
 }
 
 func (s *checkedUsage) Record(ctx context.Context, e *usage.Entry) error {
 	if e.Kind == usage.Model {
-		if p, err := s.w.quotas.Check(ctx, e.BusinessLine, e.EndUser, e.At); err == nil && p != nil {
+		truth := &usage.Quotas{Store: s.truth, Limits: s.w.quotas.Limits}
+		if p, err := truth.Check(ctx, e.BusinessLine, e.EndUser, e.At); err == nil && p != nil {
 			s.w.violations = append(s.w.violations, fmt.Sprintf("model call for %s/%s recorded while the %s quota was exceeded (%d ≥ %d)",
 				e.BusinessLine, e.EndUser, p.Scope, p.Spent, p.Limit))
 		}

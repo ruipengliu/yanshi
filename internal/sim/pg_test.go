@@ -54,7 +54,7 @@ func diffSeed(t *testing.T, s uint64) {
 			Dir: pgnode.NewDirectory(pool, c), Inbox: pgnode.NewInbox(pool, notifier),
 			SandboxQueue: pgqueue.New(pool, c, pgqueue.Sandboxes),
 			Ledger:       pgsandbox.Ledger{Pool: pool}, Activity: pgsandbox.Activity{Pool: pool},
-			Index: pglifecycle.Index{Pool: pool}, Deletions: pglifecycle.Deletions{Pool: pool},
+			Index: pglifecycle.Index{Pool: pool}, Deletions: pglifecycle.Deletions{Pool: pool, Notifier: notifier},
 			JanitorQueue: pgqueue.New(pool, c, pgqueue.Janitor),
 			Memory:       pgmemory.Store{Pool: pool}, Grants: pgmemory.Grants{Pool: pool},
 			Snapshots: pgsnapshot.Store{Pool: pool}, Usage: pgusage.Store{Pool: pool},

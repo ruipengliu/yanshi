@@ -40,6 +40,7 @@
 `session_tombstones(session_id, business_line, requested_at, completed_at, reason)`：
 
 - 记录写入即生效。之后对该 Session 的所有 API 请求都返回 404，所有组件都不能再为它创建数据。
+- 写入记录的同一条语句发出 `NOTIFY yanshi_deletions`（负载为 Session ID）。订阅中的事件流等这个通知结束自己（`lifecycle.Watcher`），兜底查询每 10 分钟一次，不再每个保活周期查一次。订阅者多时，周期查询本身就是可观的负载（[延展性评审](../review/2026-10-11-scalability-review.md) §4.3）。
 - **记录中不保存 EndUser。** EndUser 是个人标识，只在删除执行期间通过 Session 索引关联，删除完成后不再留存。保留的记录只用于证明"某个 Session 已于某时被删除"。
 
 ### 3.3 清理过程
@@ -83,7 +84,7 @@
 `sessions(session_id, business_line, end_user, agent, created_at, last_input_at, closed_at)`：
 
 - 这是日志的**投影**，可以由日志重建，不是事实源（ADR-0004）。
-- 在创建、提交输入、关闭时写入，每个 Run 只多一次写入（参考压测：每个 Run 约 88 次查询）。
+- 在创建、提交输入、关闭时写入。距上一个 Run 不到一分钟（`lifecycle.TouchEvery`）的输入不更新最后输入时间，连续对话因此不必每个 Run 都写一次索引。代价是最后输入时间至多滞后一分钟：列表排序可能差这么多，按空闲时长关闭的保留策略多等一分钟。
 - 用途：`GET /v1/sessions` 列出调用方自己的 Session（分页）、按 EndUser 删除、按保留策略查找过期的 Session。
 
 ## 5. 保留策略

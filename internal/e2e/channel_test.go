@@ -389,7 +389,7 @@ func TestPresenceAcrossInstances(t *testing.T) {
 			sandboxQueue: pgqueue.New(pool, clk, pgqueue.Sandboxes),
 			ledger:       pgsandbox.Ledger{Pool: pool}, activity: pgsandbox.Activity{Pool: pool},
 			artifacts: &artifact.Service{Meta: pgartifact.Meta{Pool: pool}, Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk},
-			index:     pglifecycle.Index{Pool: pool}, deletions: pglifecycle.Deletions{Pool: pool}, janitorQueue: pgqueue.New(pool, clk, pgqueue.Janitor),
+			index:     pglifecycle.Index{Pool: pool}, deletions: pglifecycle.Deletions{Pool: pool, Notifier: notifier}, janitorQueue: pgqueue.New(pool, clk, pgqueue.Janitor),
 			memories: pgmemory.Store{Pool: pool}, grants: pgmemory.Grants{Pool: pool},
 			presence: pgpresence.Store{Pool: pool, Notifier: notifier}, push: notify.NewMemRegistry(),
 		}

@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"yanshi/internal/lifecycle"
+	"yanshi/internal/pg"
 )
 
 type Index struct{ Pool *pgxpool.Pool }
@@ -113,20 +114,57 @@ func (x Index) Delete(ctx context.Context, id string) error {
 	return err
 }
 
-type Deletions struct{ Pool *pgxpool.Pool }
+type Deletions struct {
+	Pool *pgxpool.Pool
+	// Notifier 非 nil 时，WaitDeleted 等删除记录写入时的通知，只以很长的间隔查询兜底。
+	Notifier *pg.Notifier
+}
 
-var _ lifecycle.Deletions = Deletions{}
+var (
+	_ lifecycle.Deletions = Deletions{}
+	_ lifecycle.Watcher   = Deletions{}
+)
 
 func (d Deletions) Mark(ctx context.Context, t *lifecycle.Tombstone) (bool, error) {
 	var req *string
 	if t.RequestID != "" {
 		req = &t.RequestID
 	}
-	tag, err := d.Pool.Exec(ctx, `
-		INSERT INTO session_tombstones (session_id, business_line, reason, request_id, requested_at)
-		VALUES ($1, $2, $3, $4, $5) ON CONFLICT (session_id) DO NOTHING`,
-		t.SessionID, t.BusinessLine, t.Reason, req, t.RequestedAt)
-	return tag.RowsAffected() == 1, err
+	// 写入并通知在同一条语句中；已有删除记录时什么也不做，也不通知。
+	err := d.Pool.QueryRow(ctx, `
+		WITH ins AS (
+			INSERT INTO session_tombstones (session_id, business_line, reason, request_id, requested_at)
+			VALUES ($1, $2, $3, $4, $5) ON CONFLICT (session_id) DO NOTHING
+			RETURNING 1)
+		SELECT pg_notify($6, $1) FROM ins`,
+		t.SessionID, t.BusinessLine, t.Reason, req, t.RequestedAt, d.Notifier.Channel(pg.TopicDeletions, t.SessionID)).Scan(nil)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// deletionPoll 是等待删除时查询兜底的间隔：通知只在 LISTEN 连接重建期间丢失（重建时所有等待者会被唤醒重查），
+// 兜底很少需要，间隔可以很长；没有 Notifier 时用 noNotifierPoll。
+const deletionPoll, noNotifierPoll = 10 * time.Minute, 15 * time.Second
+
+func (d Deletions) WaitDeleted(ctx context.Context, sessionID string) error {
+	check := func(ctx context.Context) (bool, error) { return lifecycle.Deleted(ctx, d, sessionID) }
+	if d.Notifier != nil {
+		return d.Notifier.WaitForEvery(ctx, pg.TopicDeletions, sessionID, deletionPoll, check)
+	}
+	t := time.NewTicker(noNotifierPoll)
+	defer t.Stop()
+	for {
+		if done, err := check(ctx); err != nil || done {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-t.C:
+		}
+	}
 }
 
 func (d Deletions) Get(ctx context.Context, id string) (*lifecycle.Tombstone, error) {

@@ -7,10 +7,12 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/askuser"
+	"yanshi/internal/clock"
 	"yanshi/internal/node"
 )
 
@@ -64,6 +66,51 @@ type Catalog struct {
 	DefaultTimeout time.Duration
 	// AskTimeout 是 ask_user 等待回答的上限，默认 askuser.DefaultTimeout（ADR-0025）。
 	AskTimeout time.Duration
+	// NodeCacheTTL > 0 时缓存每个 EndUser 的 Node 列表（时间取自 Clock）：每次模型调用与每个调用的每个阶段都要解析
+	// 工具，不缓存时每次都查一次 Node 目录（延展性评审 §4.3）。代价是新登记的设备、变化的能力至多晚 TTL 可见；
+	// 工具不含在线状态（见 deviceTool），设备上下线不受影响。
+	NodeCacheTTL time.Duration
+	Clock        clock.Clock
+
+	mu    sync.Mutex
+	nodes map[node.Scope]cachedNodes
+}
+
+type cachedNodes struct {
+	list []*node.Info
+	at   time.Time
+}
+
+// listNodes 返回 scope 的 Node 列表，按 NodeCacheTTL 缓存。
+func (c *Catalog) listNodes(ctx context.Context, scope node.Scope) ([]*node.Info, error) {
+	if c.NodeCacheTTL <= 0 {
+		return c.Nodes.List(ctx, scope)
+	}
+	now := c.Clock.Now()
+	c.mu.Lock()
+	if e, ok := c.nodes[scope]; ok && now.Sub(e.at) < c.NodeCacheTTL {
+		c.mu.Unlock()
+		return e.list, nil
+	}
+	c.mu.Unlock()
+	list, err := c.Nodes.List(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.nodes == nil {
+		c.nodes = map[node.Scope]cachedNodes{}
+	}
+	if len(c.nodes) >= 4096 {
+		for k, e := range c.nodes {
+			if now.Sub(e.at) >= c.NodeCacheTTL {
+				delete(c.nodes, k)
+			}
+		}
+	}
+	c.nodes[scope] = cachedNodes{list: list, at: now}
+	return list, nil
 }
 
 // Tools 返回 allow 白名单允许、对 target 可见的全部工具：进程内工具、沙箱工具、设备工具（按标签排序）。
@@ -120,7 +167,7 @@ func (c *Catalog) Tools(ctx context.Context, target Target, allow []string) ([]T
 	if len(globs) == 0 || c.Nodes == nil {
 		return out, nil
 	}
-	nodes, err := c.Nodes.List(ctx, target.Scope)
+	nodes, err := c.listNodes(ctx, target.Scope)
 	if err != nil {
 		return nil, err
 	}

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	v1 "yanshi/gen/yanshi/v1"
@@ -112,13 +113,25 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (string, error)
 	return st.SessionID, nil
 }
 
-// Load 返回 Session 的当前投影。
+type accessKey struct{}
+
+// WithAccess 使 ctx 中的 Service 调用只作用于 allows 允许的 Session（按业务线与 EndUser），其余一律视为不存在
+// （ErrNotFound）。入口（HTTP API、Connection）以此校验归属，而不是先读一遍 Session 再调用：每次读取是快照、
+// 日志与删除记录三次查询（延展性评审 §4.3）。
+func WithAccess(ctx context.Context, allows func(businessLine, endUser string) bool) context.Context {
+	return context.WithValue(ctx, accessKey{}, allows)
+}
+
+// Load 返回 Session 的当前投影；ctx 带有 WithAccess 时同时校验归属。
 func (s *Service) Load(ctx context.Context, sessionID string) (*session.State, error) {
 	st, err := s.Store.Load(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
 	if st.Created == nil {
+		return nil, fmt.Errorf("%w: session %s", ErrNotFound, sessionID)
+	}
+	if allows, _ := ctx.Value(accessKey{}).(func(string, string) bool); allows != nil && !allows(st.Created.GetBusinessLine(), st.Created.GetEndUser()) {
 		return nil, fmt.Errorf("%w: session %s", ErrNotFound, sessionID)
 	}
 	// 有删除记录的 Session 对外不可见，即使清理尚未完成（ADR-0015）。
@@ -246,10 +259,13 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 			res.RunID = "run_" + s.Store.IDs()
 			events = append(events, &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: res.RunID, Input: input, InputId: inputID, FromCall: fromCall}}})
 		}
+		prev := lastRunAt(st)
 		err := s.Store.Commit(ctx, st, events...)
 		if err == nil {
-			if s.Index != nil {
-				if err := s.Index.Touch(ctx, sessionID, s.Store.Clock.Now()); err != nil {
+			// 按 TouchEvery 分段：输入与上一个 Run 落在不同段时更新。每段的第一个输入都会写入，索引中的时间因此与
+			// 最近的输入在同一段内，滞后不到 TouchEvery；只比较间隔的话，间隔始终短于 TouchEvery 的连续对话永远不会更新。
+			if now := s.Store.Clock.Now(); s.Index != nil && (prev.IsZero() || !now.Truncate(lifecycle.TouchEvery).Equal(prev.Truncate(lifecycle.TouchEvery))) {
+				if err := s.Index.Touch(ctx, sessionID, now); err != nil {
 					return res, err
 				}
 			}
@@ -309,6 +325,14 @@ func (s *Service) cancelDispatched(ctx context.Context, r *session.Run) error {
 		}
 	}
 	return nil
+}
+
+// lastRunAt 是最近一个 Run 的请求时间，没有时为零值。
+func lastRunAt(st *session.State) time.Time {
+	if n := len(st.Runs); n > 0 {
+		return st.Runs[n-1].RequestedAt
+	}
+	return time.Time{}
 }
 
 // duplicate 返回 inputID 此前生效时的结果；没有 ID 或不在去重窗口内时返回 nil。

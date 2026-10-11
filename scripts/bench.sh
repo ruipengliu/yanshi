@@ -59,9 +59,10 @@ if [ -n "$FAULT_AFTER" ]; then
 fi
 
 echo "P=$P W=$W S=$S duration=$DURATION agent=$AGENT api=${#servers[@]} → $OUT" >&2
+# 只统计压测期间的语句（不含迁移与启动）。
+docker compose exec -T postgres psql -q -U yanshi -d "$DB" -c "SELECT pg_stat_statements_reset()" >/dev/null
 if [ "$S" = 0 ]; then
   # 空闲实验（E3）：不施加负载，只观察空闲 Worker 的开销。
-  docker compose exec -T postgres psql -q -U yanshi -d "$DB" -c "SELECT pg_stat_statements_reset()" >/dev/null
   sleep "${DURATION%s}"
   echo '{"RunsPerSecond":0,"Runs":{},"LatencyMs":null,"TTFTMs":null,"Errors":null}' >"$OUT/bench.json"
 else
@@ -69,18 +70,23 @@ else
   -agent "$AGENT" -key "$KEYDIR/bench.key" -out "$OUT/bench.json" >/dev/null
 fi
 
-# 每类查询的次数与总耗时（只统计本次压测的数据库）。
+# 每类查询的次数与总耗时（只统计本次压测的数据库），以及全部语句的次数（含 begin / commit）。
 docker compose exec -T postgres psql -U yanshi -d "$DB" -P pager=off -c "
   SELECT calls, round(total_exec_time::numeric) AS total_ms, round(mean_exec_time::numeric, 3) AS mean_ms,
          left(regexp_replace(query, '\s+', ' ', 'g'), 110) AS query
   FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
-  ORDER BY calls DESC LIMIT 15" >"$OUT/queries.txt" 2>&1 || true
+  ORDER BY calls DESC LIMIT 25" >"$OUT/queries.txt" 2>&1 || true
+STATEMENTS=$(docker compose exec -T postgres psql -U yanshi -d "$DB" -Atc "
+  SELECT sum(calls) FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())" 2>/dev/null || echo 0)
 
 for i in $(seq 0 $((P - 1))); do
   curl -sf "127.0.0.1:$((18400 + i))/metrics" >"$OUT/metrics-$i.txt" 2>/dev/null || true
 done
-python3 - "$OUT/bench.json" <<'EOF'
+python3 - "$OUT/bench.json" "$STATEMENTS" <<'EOF'
 import json, sys
 d = json.load(open(sys.argv[1]))
+done = d['Runs'].get('completed', 0)
+per_run = f"{int(sys.argv[2]) / done:.1f}" if done else "-"
 print(f"runs/s={d['RunsPerSecond']:.1f}  runs={d['Runs']}  latency={d['LatencyMs']}  ttft_p50={d['TTFTMs'] and d['TTFTMs']['p50']}  errors={d['Errors']}")
+print(f"statements={sys.argv[2]}  per_run={per_run}")
 EOF

@@ -332,15 +332,19 @@ func New(opts Options) (*World, error) {
 	w.catalog = &capability.Catalog{
 		Local: capability.NewRegistry(append([]capability.Capability{w.echoCap(), w.sendCap()}, memory.Capabilities(w.memories)...)...),
 		Nodes: stores.Dir, DefaultTimeout: deviceTimeout, AskTimeout: askTimeout,
-		Sandbox: &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID},
+		Sandbox:      &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID},
+		NodeCacheTTL: 5 * time.Second, Clock: w.clock,
 	}
 	w.index, w.deletions, w.janitorQueue = stores.Index, stores.Deletions, stores.JanitorQueue
 	w.presence = &presence.Service{Store: stores.Presence, Deletions: stores.Deletions, Clock: w.clock}
 	w.push, w.notified = stores.Push, map[string]bool{}
 	w.calls = map[string]string{}
 	w.notifier = &notify.Notifier{Registry: stores.Push, Presence: stores.Presence, Pusher: simPusher{w}, Clock: w.clock}
-	w.usage = &checkedUsage{Store: stores.Usage, w: w}
-	w.quotas = &usage.Quotas{Store: stores.Usage, Limits: simLimits(opts.LongRuns)}
+	// 配额读缓存的已用金额（usage.SpentCache），计量经同一个缓存写入：单进程中缓存值与实际一致，
+	// checkedUsage 的不变量照常成立。
+	spent := usage.NewSpentCache(stores.Usage, 30*time.Second, w.clock)
+	w.usage = &checkedUsage{Store: spent, truth: stores.Usage, w: w}
+	w.quotas = &usage.Quotas{Store: spent, Limits: simLimits(opts.LongRuns)}
 	w.meter = &usage.Meter{Store: w.usage, Prices: simPrices, Deletions: w.deletions}
 	w.hub = &node.Hub{Dir: stores.Dir, Inbox: stores.Inbox, Store: w.store, Queue: w.queue, Auth: node.InsecureDevAuth{}, Deletions: w.deletions,
 		Push: stores.Push, Clock: w.clock}

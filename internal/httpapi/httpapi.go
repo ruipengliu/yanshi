@@ -175,6 +175,12 @@ func principal(r *http.Request) auth.Principal {
 // errForbidden 用于调用方自报的身份与令牌不符；访问别人的资源则返回 404，不泄露其存在。
 var errForbidden = errors.New("forbidden")
 
+// owned 返回只能作用于调用方 Session 的 ctx（service.WithAccess）：写操作由 Service 读取 Session 时一并校验归属，
+// 不必先读一遍。
+func owned(r *http.Request) context.Context {
+	return service.WithAccess(r.Context(), principal(r).Allows)
+}
+
 // session 读取 Session 并要求它属于调用方；否则按不存在处理。
 func (s *Server) session(w http.ResponseWriter, r *http.Request) (*session.State, bool) {
 	id := r.PathValue("id")
@@ -380,9 +386,6 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.session(w, r); !ok {
-		return
-	}
 	var req struct {
 		Text string `json:"text"`
 		// Content 是 ContentBlock 的 JSON 数组；与 Text 同时给出时 Text 在前。
@@ -406,7 +409,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		}
 		input = append(input, b)
 	}
-	res, err := s.Service.SubmitWithID(r.Context(), r.PathValue("id"), req.InputID, input)
+	res, err := s.Service.SubmitWithID(owned(r), r.PathValue("id"), req.InputID, input)
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -422,10 +425,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) interrupt(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.session(w, r); !ok {
-		return
-	}
-	if err := s.Service.Interrupt(r.Context(), r.PathValue("id"), r.PathValue("run")); err != nil {
+	if err := s.Service.Interrupt(owned(r), r.PathValue("id"), r.PathValue("run")); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -433,15 +433,12 @@ func (s *Server) interrupt(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.session(w, r); !ok {
-		return
-	}
 	var req askuser.Answer
 	if err := decode(r, &req); err != nil {
 		s.fail(w, err)
 		return
 	}
-	if err := s.Service.Answer(r.Context(), r.PathValue("id"), r.PathValue("call"), &req); err != nil {
+	if err := s.Service.Answer(owned(r), r.PathValue("id"), r.PathValue("call"), &req); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -449,9 +446,6 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) decide(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.session(w, r); !ok {
-		return
-	}
 	var req struct {
 		Approve *bool  `json:"approve"`
 		By      string `json:"by"`
@@ -468,7 +462,7 @@ func (s *Server) decide(w http.ResponseWriter, r *http.Request) {
 	if p := principal(r); !p.Unrestricted || req.By == "" {
 		req.By = actor(p)
 	}
-	if err := s.Service.Decide(r.Context(), r.PathValue("id"), r.PathValue("call"), *req.Approve, req.By); err != nil {
+	if err := s.Service.Decide(owned(r), r.PathValue("id"), r.PathValue("call"), *req.Approve, req.By); err != nil {
 		s.fail(w, err)
 		return
 	}

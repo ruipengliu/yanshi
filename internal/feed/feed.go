@@ -5,6 +5,7 @@ package feed
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -35,7 +36,8 @@ type Sink interface {
 type Source struct {
 	Log  eventlog.Log
 	Live live.Bus
-	// Deletions 非 nil 时借保活周期复查删除记录：删除后日志不再增长，流需要主动结束。
+	// Deletions 非 nil 时，Session 被删除后流主动结束（删除后日志不再增长）：实现了 lifecycle.Watcher 的，
+	// 等删除通知；否则借保活周期复查删除记录。
 	Deletions lifecycle.Deletions
 	// PingInterval 默认 15 秒。
 	PingInterval time.Duration
@@ -78,10 +80,19 @@ func (s Source) Stream(ctx context.Context, st *session.State, after uint64, sin
 		deltas = ch
 	}
 
+	// 返回前先取消、再等辅助 goroutine 退出：流结束后不留下仍在访问存储的 goroutine。
+	var wg sync.WaitGroup
+	defer wg.Wait()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	heads := make(chan struct{}, 1)
-	go waitHeads(ctx, s.Log, id, after, heads)
+	from := after // 闭包不能引用之后会被改写的 after
+	wg.Go(func() { waitHeads(ctx, s.Log, id, from, heads) })
+	deleted := make(chan struct{})
+	watcher, watching := s.Deletions.(lifecycle.Watcher)
+	if watching {
+		wg.Go(func() { waitDeleted(ctx, watcher, id, deleted) })
+	}
 	interval := s.PingInterval
 	if interval == 0 {
 		interval = 15 * time.Second
@@ -113,8 +124,10 @@ func (s Source) Stream(ctx context.Context, st *session.State, after uint64, sin
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-deleted:
+			return ErrDeleted
 		case <-ping.C:
-			if s.Deletions != nil {
+			if s.Deletions != nil && !watching {
 				if gone, _ := lifecycle.Deleted(ctx, s.Deletions, id); gone {
 					return ErrDeleted
 				}
@@ -141,6 +154,24 @@ func Public(e *v1.Event) *v1.Event {
 	cp := proto.Clone(e).(*v1.Event)
 	cp.GetAttemptStarted().LiveEndpoint = ""
 	return cp
+}
+
+// waitDeleted 在 Session 有删除记录时关闭 deleted。等待出错时退避后重试，与 waitHeads 相同。
+func waitDeleted(ctx context.Context, w lifecycle.Watcher, id string, deleted chan<- struct{}) {
+	backoff := waitRetryMin
+	for {
+		err := w.WaitDeleted(ctx, id)
+		if err == nil {
+			close(deleted)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		backoff = min(2*backoff, waitRetryMax)
+	}
 }
 
 // waitHeads 每当日志前进时向 heads 发一个合并后的通知。等待出错（如数据库短暂不可用）时退避后重试：

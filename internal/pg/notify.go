@@ -26,6 +26,8 @@ const (
 	TopicWork Topic = "yanshi_work"
 	// TopicPresence 的负载是 Session ID：其在场内容有变化。
 	TopicPresence Topic = "yanshi_presence"
+	// TopicDeletions 的负载是 Session ID：它有了删除记录（ADR-0015），订阅它的事件流随之结束。
+	TopicDeletions Topic = "yanshi_deletions"
 )
 
 // Notifier 用一条专用连接 LISTEN 通知频道，并按 (频道, 键) 把通知分发给订阅者。

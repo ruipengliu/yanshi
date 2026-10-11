@@ -6,6 +6,7 @@ package pglog
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -43,23 +44,21 @@ func (l *Log) Append(ctx context.Context, sessionID string, expectedSeq uint64, 
 		}
 		rows[i] = b
 	}
-	err := pgx.BeginFunc(ctx, l.pool, func(tx pgx.Tx) error {
-		var head int64
-		if err := tx.QueryRow(ctx, `SELECT coalesce(max(seq), 0) FROM events WHERE session_id = $1`, sessionID).Scan(&head); err != nil {
-			return err
-		}
-		if uint64(head) != expectedSeq {
-			return eventlog.ErrConflict
-		}
-		batch := &pgx.Batch{}
-		for i, b := range rows {
-			batch.Queue(`INSERT INTO events (session_id, seq, data) VALUES ($1, $2, $3)`, sessionID, int64(expectedSeq)+int64(i)+1, b)
-		}
-		// 负载带上新的末尾 seq，等待者无需再查询（pg.Notifier.WaitAbove）。
-		batch.Queue(`SELECT pg_notify($1, $2)`, l.notifier.Channel(pg.TopicEvents, sessionID), fmt.Sprintf("%s:%d", sessionID, expectedSeq+uint64(len(events))))
-		return tx.SendBatch(ctx, batch).Close()
-	})
-	if pg.IsUniqueViolation(err) {
+	// 一条语句、一次往返完成检查、插入与通知（原来是事务中的五条语句）：末尾不是 expectedSeq 时不插入任何行；
+	// 并发的同 seq 追加由主键冲突裁决。只有插入成功才通知，负载带上新的末尾 seq，等待者无需再查询
+	// （pg.Notifier.WaitAbove）。
+	var n int
+	err := l.pool.QueryRow(ctx, `
+		WITH ins AS (
+			INSERT INTO events (session_id, seq, data)
+			SELECT $1, $2 + t.ord, t.d FROM unnest($3::bytea[]) WITH ORDINALITY AS t(d, ord)
+			WHERE (SELECT coalesce(max(seq), 0) FROM events WHERE session_id = $1) = $2
+			RETURNING 1)
+		SELECT count(*), pg_notify($4, $5) FROM ins HAVING count(*) > 0`,
+		sessionID, int64(expectedSeq), rows, l.notifier.Channel(pg.TopicEvents, sessionID),
+		fmt.Sprintf("%s:%d", sessionID, expectedSeq+uint64(len(events))),
+	).Scan(&n, nil)
+	if errors.Is(err, pgx.ErrNoRows) || pg.IsUniqueViolation(err) {
 		return 0, eventlog.ErrConflict
 	}
 	if err != nil {

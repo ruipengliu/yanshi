@@ -16,6 +16,11 @@ import (
 
 var ErrNotFound = errors.New("lifecycle: not found")
 
+// TouchEvery 是 Session 索引中最后输入时间的精度：与上一个 Run 落在同一个 TouchEvery 时段内的输入不更新索引，
+// 省掉连续对话中每个 Run 的一次写入（延展性评审 §4.3）。索引因此至多滞后 TouchEvery，按空闲时长关闭的保留策略
+// 多等这么久，不会提前关闭。
+const TouchEvery = time.Minute
+
 // Retention 是业务线的保留策略（docs/design/m2-session-lifecycle.md §5）；零值表示不自动处理。
 type Retention struct {
 	// CloseAfterIdle 是最后一次输入后多久自动关闭。
@@ -88,6 +93,13 @@ type Deletions interface {
 	CreateRequest(ctx context.Context, r *Request) error
 	// Request 返回删除请求及其进度。
 	Request(ctx context.Context, id string) (*Request, error)
+}
+
+// Watcher 是 Deletions 的可选接口：WaitDeleted 阻塞到 Session 有删除记录为止（返回 nil），或 ctx 结束。
+// 事件流据此在 Session 删除时主动结束，而不必每隔一段时间查询一次删除记录：订阅者多时，周期查询本身就是可观的负载
+// （延展性评审 §4.3）。
+type Watcher interface {
+	WaitDeleted(ctx context.Context, sessionID string) error
 }
 
 // Deleted 报告 Session 是否已有删除记录（不论清理是否完成）。

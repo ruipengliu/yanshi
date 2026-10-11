@@ -126,7 +126,7 @@ func openStorage(ctx context.Context, kind, dsn string, notifyShards int, clk cl
 			pgqueue.New(pool, clk, pgqueue.Sandboxes).WithNotifier(n), pgsandbox.Ledger{Pool: pool}, pgsandbox.Activity{Pool: pool},
 			pgartifact.Meta{Pool: pool},
 			pgmemory.Store{Pool: pool}, pgmemory.Grants{Pool: pool}, pgsnapshot.Store{Pool: pool},
-			pglifecycle.Index{Pool: pool}, pglifecycle.Deletions{Pool: pool}, pgqueue.New(pool, clk, pgqueue.Janitor), pgusage.Store{Pool: pool},
+			pglifecycle.Index{Pool: pool}, pglifecycle.Deletions{Pool: pool, Notifier: n}, pgqueue.New(pool, clk, pgqueue.Janitor), pgusage.Store{Pool: pool},
 			pgpresence.Store{Pool: pool, Notifier: n}, pgnotify.Registry{Pool: pool}}
 		return b, func() { cancel(); pool.Close() }, nil
 	}
@@ -297,7 +297,7 @@ func serve(args []string) error {
 	}
 	catalog := &capability.Catalog{
 		Local: capability.NewRegistry(append([]capability.Capability{capability.ClockNow(clk)}, memory.Capabilities(mems)...)...),
-		Nodes: dir, DefaultTimeout: 30 * time.Minute,
+		Nodes: dir, DefaultTimeout: 30 * time.Minute, NodeCacheTTL: 10 * time.Second, Clock: clk,
 	}
 	mcpServers, err := mcpcap.LoadDir(*mcpDir)
 	if err != nil {
@@ -528,11 +528,12 @@ func metering(path string, lines []auth.BusinessLine, agents *agentdef.Registry,
 		}
 		logger.Warn("models without price: usage is recorded at zero cost", "models", missing)
 	}
-	meter := &usage.Meter{Store: b.usage, Prices: prices, Deletions: b.deletions, Logger: logger}
 	if len(limits) == 0 {
-		return meter, nil, nil
+		return &usage.Meter{Store: b.usage, Prices: prices, Deletions: b.deletions, Logger: logger}, nil, nil
 	}
-	return meter, &usage.Quotas{Store: b.usage, Limits: limits}, nil
+	// 配额检查读缓存的已用金额（5 秒）；计量经同一个缓存写入，本进程的花费立即计入（usage.SpentCache）。
+	spent := usage.NewSpentCache(b.usage, 5*time.Second, clock.Real{})
+	return &usage.Meter{Store: spent, Prices: prices, Deletions: b.deletions, Logger: logger}, &usage.Quotas{Store: spent, Limits: limits}, nil
 }
 
 // moderatorFor 选择内容安全提供商。目前只有模拟实现：它没有真实的识别能力，启动时打印警告并置指标，

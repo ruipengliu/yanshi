@@ -162,4 +162,37 @@ func RunDeletions(t *testing.T, newDeletions func(t *testing.T) lifecycle.Deleti
 			t.Fatalf("missing request: %v", err)
 		}
 	})
+
+	t.Run("WaitDeletedWakesOnMark", func(t *testing.T) {
+		d := newDeletions(t)
+		w, ok := d.(lifecycle.Watcher)
+		if !ok {
+			t.Skip("not a lifecycle.Watcher")
+		}
+		short, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+		defer cancel()
+		if err := w.WaitDeleted(short, "s1"); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("wait on a live session = %v", err)
+		}
+		done := make(chan error, 1)
+		go func() { done <- w.WaitDeleted(ctx, "s1") }()
+		time.Sleep(50 * time.Millisecond) // 等待者已订阅
+		if _, err := d.Mark(ctx, &lifecycle.Tombstone{SessionID: "s2", BusinessLine: "bl", Reason: "user", RequestedAt: t0}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.Mark(ctx, &lifecycle.Tombstone{SessionID: "s1", BusinessLine: "bl", Reason: "user", RequestedAt: t0}); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("waiter not woken by the deletion")
+		}
+		if err := w.WaitDeleted(ctx, "s1"); err != nil {
+			t.Fatalf("wait on an already deleted session = %v", err)
+		}
+	})
 }

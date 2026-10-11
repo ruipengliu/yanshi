@@ -144,13 +144,35 @@ type MemDeletions struct {
 	mu       sync.Mutex
 	tombs    map[string]*Tombstone
 	requests map[string]*Request
+	// marked 在每次新增删除记录时关闭并换新，唤醒 WaitDeleted。
+	marked chan struct{}
 }
 
 func NewMemDeletions() *MemDeletions {
-	return &MemDeletions{tombs: map[string]*Tombstone{}, requests: map[string]*Request{}}
+	return &MemDeletions{tombs: map[string]*Tombstone{}, requests: map[string]*Request{}, marked: make(chan struct{})}
 }
 
-var _ Deletions = (*MemDeletions)(nil)
+var (
+	_ Deletions = (*MemDeletions)(nil)
+	_ Watcher   = (*MemDeletions)(nil)
+)
+
+func (d *MemDeletions) WaitDeleted(ctx context.Context, sessionID string) error {
+	for {
+		d.mu.Lock()
+		_, gone := d.tombs[sessionID]
+		ch := d.marked
+		d.mu.Unlock()
+		if gone {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ch:
+		}
+	}
+}
 
 func (d *MemDeletions) Mark(_ context.Context, t *Tombstone) (bool, error) {
 	d.mu.Lock()
@@ -158,6 +180,8 @@ func (d *MemDeletions) Mark(_ context.Context, t *Tombstone) (bool, error) {
 	if _, ok := d.tombs[t.SessionID]; ok {
 		return false, nil
 	}
+	close(d.marked)
+	d.marked = make(chan struct{})
 	cp := *t
 	d.tombs[t.SessionID] = &cp
 	return true, nil
