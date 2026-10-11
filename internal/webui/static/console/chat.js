@@ -9,7 +9,7 @@ import { Mic, Player, Recorder } from "./audio.js";
 import { renderApproval, renderCard, renderQuestion } from "./cards.js";
 import { payloadOf, textOf } from "./device.js";
 import { render as markdown } from "./markdown.js";
-import { bytes, clock, copyButton, dur, fill, h, hue, num, short, toast } from "./ui.js";
+import { bytes, clock, copyButton, dur, fill, h, hue, num, reconcile, short, toast } from "./ui.js";
 
 /** 工具名去掉设备标签前缀后的能力名与目标："iphone__set_alarm" → ["set_alarm", "iphone"]。 */
 export function splitTool(name) {
@@ -131,6 +131,24 @@ export class ChatPanel {
     this.header = h("div", { class: "chat-header" });
     this.callBar = h("div", { class: "call-bar", hidden: true });
     this.log = h("div", { class: "messages" });
+    // 已提交的内容只在有新事件时重建；正在生成的草稿单独放在 draftEl，按帧平滑地更新（renderDraft）。
+    this.committedEl = h("div", { class: "committed" });
+    this.draftEl = h("div", { class: "draft-area" });
+    this.log.append(h("div", { class: "conversation" }, this.committedEl, this.draftEl));
+    // 用户展开或收起的思考块、调用组（data-key → open），重建后保持。
+    this.openState = new Map();
+    this.log.addEventListener(
+      "toggle",
+      (ev) => {
+        const key = ev.target?.dataset?.key;
+        if (key && !ev.target.dataset.auto) this.openState.set(key, ev.target.open);
+        if (ev.target?.dataset) delete ev.target.dataset.auto;
+      },
+      true,
+    );
+    // 平滑输出：草稿中已显示的部分（shown）按稳定节奏追赶收到的部分（view.draft）。
+    this.shown = { key: "", text: "", reasoning: "" };
+    this.dirty = new Set(["event"]);
     this.newBtn = h("button", { class: "new-messages", hidden: true, onclick: () => this.scrollBottom() }, "↓ 新消息");
     this.status = h("div", { class: "composer-status" });
     this.pending = h("div", { class: "pending" });
@@ -143,9 +161,9 @@ export class ChatPanel {
       this.composer(),
     );
     this.log.addEventListener("scroll", () => this.nearBottom() && (this.newBtn.hidden = true));
-    this.off = view.on(() => this.schedule());
+    this.off = view.on((kind) => this.schedule(kind));
     this.offDev = device.on((n) => {
-      if (n.type === "status") this.schedule();
+      if (n.type === "status") this.schedule("status");
       if (n.type === "call") this.onCallEvent(n.event);
     });
     this.root.addEventListener("dragover", (e) => e.preventDefault());
@@ -163,12 +181,14 @@ export class ChatPanel {
     this.endCall("hangup");
   }
 
-  schedule() {
+  /** schedule 在下一帧重绘：kind 为 "draft" 时只更新草稿区，其余（事件、在场、连接）重建已提交的内容。 */
+  schedule(kind = "event") {
+    this.dirty.add(kind);
     if (this.queued) return;
     this.queued = true;
-    requestAnimationFrame(() => {
+    requestAnimationFrame((t) => {
       this.queued = false;
-      this.render();
+      this.render(t);
     });
   }
 
@@ -189,26 +209,85 @@ export class ChatPanel {
 
   // —— 渲染 ——
 
-  render() {
+  render(now = performance.now()) {
     const near = this.nearBottom();
     const before = this.log.scrollHeight;
-    const blocks = this.blocks();
-    fill(
-      this.log,
-      h(
-        "div",
-        { class: "conversation" },
-        blocks.length
+    // 在场的变化（谁在看、正在输入）只更新状态行，不重建对话：重建会打断正在进行的选择与滚动。
+    const committed = [...this.dirty].some((k) => k !== "draft" && k !== "presence");
+    this.dirty.clear();
+    if (committed) {
+      const blocks = this.blocks();
+      reconcile(
+        this.committedEl,
+        blocks.length || this.view.draft.runId
           ? blocks
-          : h("div", { class: "empty" }, this.compact ? "还没有消息" : "发一条消息开始对话。可以附图片、发语音，或者打电话。"),
-      ),
-    );
+          : [h("div", { class: "empty" }, this.compact ? "还没有消息" : "发一条消息开始对话。可以附图片、发语音，或者打电话。")],
+      );
+      if (!this.compact) this.renderHeader();
+      this.renderPending();
+    }
+    const behind = this.renderDraft(now);
     if (near) this.log.scrollTop = this.log.scrollHeight;
-    else if (this.log.scrollHeight > before && this.view.events.length !== this.seen) this.newBtn.hidden = false;
+    else if (committed && this.log.scrollHeight > before && this.view.events.length !== this.seen) this.newBtn.hidden = false;
     this.seen = this.view.events.length;
-    if (!this.compact) this.renderHeader();
-    this.renderPending();
     this.renderStatus();
+    // 草稿还没追上收到的内容：下一帧继续。
+    if (behind) this.schedule("draft");
+  }
+
+  /**
+   * renderDraft 把草稿中已显示的部分向收到的部分推进一帧并重绘草稿区，返回是否还没追上。速度随积压自适应：至少每秒
+   * 40 字，积压多时在约 250ms 内追上，所以模型一阵一阵地吐字时，界面上仍是均匀的。
+   */
+  renderDraft(now) {
+    const d = this.view.draft;
+    const key = `${d.runId}/${d.attempt}/${d.afterSeq}`;
+    const s = this.shown;
+    if (!d.runId || (!d.text && !d.reasoning)) {
+      s.key = "";
+      s.text = s.reasoning = "";
+      this.draftEl.replaceChildren();
+      return false;
+    }
+    if (s.key !== key) Object.assign(s, { key, text: "", reasoning: "", at: now });
+    const dt = Math.min(Math.max(now - (s.at ?? now), 0), 100);
+    s.at = now;
+    const advance = (cur, target) => {
+      if (!target.startsWith(cur)) return target.slice(0, Math.min(cur.length, target.length)); // snapshot 替换了草稿
+      const backlog = target.length - cur.length;
+      if (backlog <= 0) return cur;
+      let n = Math.max(1, Math.ceil(Math.max((backlog * dt) / 250, (40 * dt) / 1000)));
+      const code = target.charCodeAt(cur.length + n - 1);
+      if (code >= 0xd800 && code <= 0xdbff) n++; // 不切开代理对（emoji）
+      return target.slice(0, cur.length + n);
+    };
+    // 先显示思考过程，再显示正文：正文开始时思考已全部显示。
+    s.reasoning = advance(s.reasoning, d.reasoning ?? "");
+    s.text = s.reasoning.length >= (d.reasoning ?? "").length ? advance(s.text, d.text ?? "") : "";
+    const parts = [];
+    if (s.reasoning) parts.push(this.thinking(s.reasoning, !s.text, true, undefined, `draft-think:${key}`));
+    if (s.text) parts.push(h("div", { class: "prose md" }, markdown(s.text, this.mdCtx()), h("span", { class: "cursor" })));
+    const continued = this.lastTurnRun === d.runId;
+    fill(
+      this.draftEl,
+      parts.length
+        ? h(
+            "div",
+            { class: `assistant-turn draft ${continued ? "continued" : ""}`, style: { "--run": hue(d.runId) } },
+            this.compact ? null : h("div", { class: "avatar" }, continued ? "" : "◆"),
+            h(
+              "div",
+              { class: "turn-main" },
+              this.compact || continued ? null : h("div", { class: "speaker" }, h("b", {}, this.ctx.agentName?.() ?? "助手"), h("code", { class: "run-id" }, short(d.runId))),
+              h("div", { class: "turn-body" }, parts),
+            ),
+          )
+        : null,
+    );
+    // 思考区有最大高度：生成中保持滚动在末尾，看得到最新的思考。
+    const live = this.draftEl.querySelector(".thinking[open] .thinking-text");
+    if (live) live.scrollTop = live.scrollHeight;
+    return s.reasoning.length < (d.reasoning ?? "").length || s.text.length < (d.text ?? "").length;
   }
 
   /** blocks 把事件组织成用户消息与助手的轮次。 */
@@ -307,12 +386,7 @@ export class ChatPanel {
           break;
       }
     }
-    const d = v.draft;
-    if (d.runId && (d.text || d.reasoning)) {
-      const body = turnFor(d.runId, { time: new Date().toISOString() });
-      if (d.reasoning) body.append(this.thinking(d.reasoning, !d.text, true));
-      if (d.text) body.append(h("div", { class: "prose md" }, markdown(d.text, this.mdCtx()), h("span", { class: "cursor" })));
-    }
+    this.lastTurnRun = turn?.runId ?? "";
     return out;
   }
 
@@ -342,7 +416,7 @@ export class ChatPanel {
   /** 一次模型调用：思考、正文、调用、模型信息行。 */
   step(p, e, calls, fromCall) {
     const parts = [];
-    if (p.reasoning) parts.push(this.thinking(p.reasoning, false, false, p.usage?.reasoning_tokens));
+    if (p.reasoning) parts.push(this.thinking(p.reasoning, false, false, p.usage?.reasoning_tokens, `think:${e.seq}`));
     const text = textOf(p.content);
     if (text) {
       parts.push(
@@ -363,7 +437,7 @@ export class ChatPanel {
       );
     }
     const tools = (p.tool_calls ?? []).filter((c) => c.capability !== "ask_user");
-    if (tools.length) parts.push(this.callGroup(tools, calls, p.run_id));
+    if (tools.length) parts.push(this.callGroup(tools, calls, p.run_id, `calls:${e.seq}`));
     const sel = this.ctx.selected?.();
     if (p.model || p.usage)
       parts.push(
@@ -380,10 +454,11 @@ export class ChatPanel {
     return parts;
   }
 
-  thinking(text, open, live, tokens) {
-    return h(
+  thinking(text, open, live, tokens, key) {
+    const userSet = key && this.openState.has(key);
+    const d = h(
       "details",
-      { class: `thinking ${live ? "live" : ""}`, open },
+      { class: `thinking ${live ? "live" : ""}`, open: userSet ? this.openState.get(key) : open, dataset: key ? { key } : undefined },
       h(
         "summary",
         {},
@@ -392,13 +467,16 @@ export class ChatPanel {
       ),
       h("div", { class: "thinking-text" }, text, live && open ? h("span", { class: "cursor" }) : null),
     );
+    // 程序设定的展开状态不算用户的选择（toggle 事件在插入后异步触发）。
+    if (d.open && !userSet) d.dataset.auto = "1";
+    return d;
   }
 
   /**
    * callGroup 是一次模型调用发起的调用：一个时直接是一行，多个时折叠成"N 个调用"一行。被后续同名调用改正的出错调用
    * （如参数不合法后重试）弱化显示。
    */
-  callGroup(tools, calls, runId) {
+  callGroup(tools, calls, runId, key) {
     const sel = this.ctx.selected?.();
     const runCalls = [...calls.values()].filter((c) => c.runId === runId);
     const rows = tools.map((c) => {
@@ -436,9 +514,15 @@ export class ChatPanel {
       return xs.length ? dur(Math.max(...xs.map((s) => s.doneAt)) - Math.min(...xs.map((s) => s.askedAt))) : "";
     })();
     const summary = live ? `${live} 个进行中` : errs ? `${errs} 个出错` : "全部完成";
+    const groupOpen = this.openState.has(key) ? this.openState.get(key) : live > 0 || tools.some((c) => sel?.callId === c.call_id);
     return h(
       "details",
-      { class: `calls ${live ? "running" : errs ? "error" : "done"}`, open: live > 0 || tools.some((c) => sel?.callId === c.call_id) },
+      {
+        class: `calls ${live ? "running" : errs ? "error" : "done"}`,
+        open: groupOpen,
+        // 程序展开的（进行中、选中）标记为 auto：插入后触发的 toggle 事件不算用户的选择。
+        dataset: { key, ...(groupOpen && !this.openState.has(key) ? { auto: "1" } : {}) },
+      },
       h(
         "summary",
         {},
@@ -486,7 +570,7 @@ export class ChatPanel {
   mdCtx() {
     return {
       image: (uri, alt, cls = "") => {
-        const img = h("img", { class: `art ${cls}`, alt: alt ?? "", title: alt ?? uri });
+        const img = h("img", { class: `art ${cls}`, alt: alt ?? "", title: alt ?? uri, src: this.ctx.artifacts.peek?.(uri) });
         this.ctx.artifacts.url(uri, this.ctx.user).then(
           (u) => (img.src = u),
           () => img.replaceWith(h("span", { class: "md-blocked" }, alt || uri)),
@@ -502,7 +586,7 @@ export class ChatPanel {
     const mime = m.mime_type ?? "";
     if (mime.startsWith("image/")) return this.mdCtx().image(m.uri, m.name, "photo");
     if (mime.startsWith("audio/")) {
-      const a = h("audio", { controls: true, preload: "none" });
+      const a = h("audio", { controls: true, preload: "none", src: this.ctx.artifacts.peek?.(m.uri) });
       this.ctx.artifacts.url(m.uri, this.ctx.user).then((u) => (a.src = u));
       return h("div", { class: "voice-msg" }, "🎤 ", a);
     }

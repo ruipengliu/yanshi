@@ -198,3 +198,11 @@ turns:
 - `multi-turn-memory-chat`：一次没有结合用户背景。
 
 全量约 20 分钟。
+
+**改为 `minimal`（2026-10-12）**：`low` 先思考约 27 秒才出正文，交互上等待太久，各 Agent 改为 `minimal`（首字约 0.7 秒），以响应速度为先，效果的下降留待其他手段改进。重建的基线中 47 个用例里 37 个 3/3（`low` 时 43 个）：
+- 卡片用例反而都是 3/3；
+- `long-run-ledger` 0/3：找对了前三名客户，金额算错；
+- `clarify-before-send`、`concierge-delegates-domains`、`multi-turn-memory-chat` 各 1/3；
+- `concise-preference`、`memory-refuse-id-number` 又出现了停下来提问的情况。
+
+需要算账、多步规划的 Agent（如研究员）是首先考虑单独提高思考强度的对象。

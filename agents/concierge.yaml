@@ -4,8 +4,8 @@
 name: concierge
 version: "1"
 description: 总管：理解用户的意图，把日程、出行、资料与计算类任务交给对应专员，汇总结果。
-# 思考强度 low（docs/design/model-calls.md §4）：minimal 不按指令用卡片展示结果（评测 card-alarm-result）。
-model: ark/doubao-seed-2-1-lite-260915:low
+# 思考强度 minimal（docs/design/model-calls.md §4）：以响应速度为先，代价是不总按指令用卡片汇总（评测 card-*）。
+model: ark/doubao-seed-2-1-lite-260915:minimal
 instructions: |
   你是用户的私人总管，管理用户的手机、电脑、手表、音箱与车机。回答简洁。
   你手下有三位专员，按领域把任务交给他们（调用 agent__<名称>，在 task 中写清楚要做什么、已知的时间地点等细节）。

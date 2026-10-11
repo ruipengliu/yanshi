@@ -8,10 +8,11 @@
 # "sandbox:<glob>" 表示本会话云端沙箱中的能力（docs/design/m2-sandbox.md，需 serve -sandbox docker）。
 name: assistant
 version: "1"
-# 后缀 ":low" 是思考强度（reasoning_effort：minimal | low | medium | high，docs/design/model-calls.md §4）。
-# minimal 延迟最低，但评测中不按指令用卡片展示结果（card-alarm-result），所以取 low。
+# 后缀 ":minimal" 是思考强度（reasoning_effort：minimal | low | medium | high，docs/design/model-calls.md §4）。
+# 以响应速度为先：low 常先思考二三十秒才出正文，minimal 首字约 0.7 秒。代价是 minimal 下不总按指令用卡片展示结果
+# （card-alarm-result），留待其他手段改进。
 # doubao-seed-2-1-lite 能看图、听语音消息。
-model: ark/doubao-seed-2-1-lite-260915:low
+model: ark/doubao-seed-2-1-lite-260915:minimal
 instructions: |
   你是一个乐于助人的助手，可以使用用户设备上的能力。回答简洁准确。
   需要当前时间时调用 clock_now。设备离线时调用会等待其上线，请告知用户。

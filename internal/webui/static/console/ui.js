@@ -84,6 +84,12 @@ export class Artifacts {
     this.httpBase = httpBase;
     this.tokenFor = tokenFor;
     this.cache = new Map();
+    this.resolved = new Map();
+  }
+
+  /** 已经读取过的工件的对象 URL（同步），没有时为 undefined。 */
+  peek(uri) {
+    return this.resolved.get(String(uri ?? "").replace(/^artifact:\/\//, ""));
   }
 
   /** uri 为 artifact://<id>；user 是有权读取它的 EndUser（其令牌）。 */
@@ -96,7 +102,9 @@ export class Artifacts {
       if (tok) headers.Authorization = `Bearer ${tok}`;
       const p = fetch(`${this.httpBase}/v1/artifacts/${encodeURIComponent(id)}`, { headers }).then(async (r) => {
         if (!r.ok) throw new Error(`artifact ${id}: ${r.status}`);
-        return URL.createObjectURL(await r.blob());
+        const u = URL.createObjectURL(await r.blob());
+        this.resolved.set(id, u);
+        return u;
       });
       p.catch(() => this.cache.delete(id));
       this.cache.set(id, p);
@@ -193,4 +201,18 @@ function node(v, open, depth) {
   if (typeof v === "number") return h("span", { class: "j-num" }, String(v));
   if (typeof v === "boolean") return h("span", { class: "j-bool" }, String(v));
   return h("span", {}, String(v));
+}
+
+/**
+ * reconcile 用 nodes 替换 container 的子节点，但与原节点内容相同（isEqualNode）的位置保留原节点：
+ * 重建对话时，没有变化的消息不被替换，其中选中的文字、滚动位置都不受影响。
+ */
+export function reconcile(container, nodes) {
+  nodes.forEach((n, i) => {
+    const old = container.childNodes[i];
+    if (old && old.isEqualNode(n)) return;
+    if (old) container.replaceChild(n, old);
+    else container.append(n);
+  });
+  while (container.childNodes.length > nodes.length) container.lastChild.remove();
 }

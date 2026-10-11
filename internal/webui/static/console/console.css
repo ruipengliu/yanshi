@@ -2434,3 +2434,16 @@ dialog .row {
 .toast.out {
   opacity: 0;
 }
+
+/* 已提交的内容与正在生成的草稿分开渲染（chat.js render / renderDraft）。 */
+.committed {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.assistant-turn.continued .avatar {
+  visibility: hidden;
+}
+.assistant-turn.draft.continued {
+  margin-top: -10px;
+}
