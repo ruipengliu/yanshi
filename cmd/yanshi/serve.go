@@ -26,23 +26,18 @@ import (
 	"yanshi/internal/artifact/s3blob"
 	"yanshi/internal/auth"
 	"yanshi/internal/call"
-	"yanshi/internal/capability"
-	"yanshi/internal/card"
 	"yanshi/internal/channel"
 	"yanshi/internal/clock"
 	"yanshi/internal/decision"
-	"yanshi/internal/delegation"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/faults"
 	"yanshi/internal/feed"
 	"yanshi/internal/httpapi"
 	"yanshi/internal/ids"
-	"yanshi/internal/janitor"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/live"
 	"yanshi/internal/live/peer"
 	"yanshi/internal/mcpcap"
-	"yanshi/internal/memory"
 	"yanshi/internal/metrics"
 	"yanshi/internal/model"
 	"yanshi/internal/model/bench"
@@ -61,7 +56,6 @@ import (
 	"yanshi/internal/sandbox"
 	sandboxdocker "yanshi/internal/sandbox/docker"
 	"yanshi/internal/service"
-	"yanshi/internal/session"
 	"yanshi/internal/usage"
 	"yanshi/internal/webui"
 	"yanshi/internal/workqueue"
@@ -311,7 +305,6 @@ func serve(args []string) error {
 	}
 	defer closeStorage()
 	ready := &readiness{st: b}
-	store := &session.Store{Log: b.Log, Waking: b.Waking, IDs: ids.Random(), Clock: clk, Snapshots: b.Snapshots, Deletions: b.Deletions}
 	var blobs artifact.BlobStore
 	switch *blobKind {
 	case "fs":
@@ -328,7 +321,9 @@ func serve(args []string) error {
 	default:
 		return fmt.Errorf("unknown blob store %q (fs | s3)", *blobKind)
 	}
-	arts := &artifact.Service{Meta: b.ArtifactMeta, Blobs: blobs, IDs: ids.Random(), Clock: clk, Deletions: b.Deletions}
+	if *sandboxKind != "none" && *sandboxKind != "docker" {
+		return fmt.Errorf("unknown sandbox %q (none | docker)", *sandboxKind)
+	}
 	queue := b.Queue
 	// 进程 ID 使 Worker 与控制器的 ID 在多进程部署中唯一，日志中的 worker_id 可以对应到进程。
 	proc := ids.Random()()[:8]
@@ -351,40 +346,6 @@ func serve(args []string) error {
 		logger.Warn("fault injection enabled (-faults): debug deployments only")
 	}
 	gw := gateway(logger, modelLimits, injector)
-	dir := b.Dir
-	hub := &node.Hub{
-		Dir: dir, Inbox: b.Inbox, Store: store,
-		Auth: nodeAuth, Waker: node.LogWaker{Logger: logger}, Push: b.Push, Clock: clk, Logger: logger,
-	}
-	// 提醒（docs/design/m3-duplex-channel.md §9）：推送通道目前是日志桩，真实通道见上线检查清单。
-	notifier := &notify.Notifier{Registry: b.Push, Presence: b.Presence, Pusher: notify.LogPusher{Logger: logger}, Clock: clk, Logger: logger}
-	// Memory（docs/design/m4-memory-grant.md）：Agent 通过能力读写，Run 开始时召回。
-	mems := &memory.Service{Store: b.Memories, Grants: b.Grants, Deletions: b.Deletions, Clock: clk, IDs: ids.Random(),
-		HealthAllowed: healthAllowed(*authMode, lines)}
-	if *embedModel != "" {
-		mems.Embedder, mems.EmbedModel = gw, *embedModel
-	}
-	catalog := &capability.Catalog{
-		Local: capability.NewRegistry(append([]capability.Capability{capability.ClockNow(clk), card.New(arts.Meta)}, memory.Capabilities(mems)...)...),
-		Nodes: dir, DefaultTimeout: 30 * time.Minute, NodeCacheTTL: 10 * time.Second, Clock: clk,
-	}
-	if injector != nil {
-		catalog.Nodes = faults.Directory{Directory: dir, Injector: injector}
-	}
-	mcpServers, err := mcpcap.LoadDir(*mcpDir)
-	if err != nil {
-		return fmt.Errorf("load MCP servers: %w", err)
-	}
-	if len(mcpServers) > 0 {
-		conn := &mcpcap.Connector{Servers: mcpServers, Artifacts: arts, Logger: logger}
-		defer conn.Close()
-		catalog.MCP = conn
-		for _, s := range mcpServers {
-			logger.Info("MCP server registered", "name", s.Name, "business_line", s.BusinessLine, "url", s.URL)
-		}
-	}
-	hub.Deletions = b.Deletions
-	router := &sandbox.Router{Hub: hub, Queue: b.SandboxQueue}
 	meter, quotas, err := metering(*pricing, lines, agents, b, logger)
 	if err != nil {
 		return err
@@ -393,20 +354,40 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
-	if injector != nil {
-		moderator = faults.Moderator{Next: moderator, Injector: injector}
-	}
 	injection, err := injectionDecider(*injectionCheck, gw, clk)
 	if err != nil {
 		return err
 	}
-	// 委托（docs/design/m5-multi-agent.md）：Agent 是一种 Capability，派发目标是由调用派生的子 Session。
-	delegator := &delegation.Delegator{Logger: logger}
-	dispatch := &delegation.Router{Next: router, Delegator: delegator}
-	catalog.Agents = delegation.Directory{Registry: agents}
-	svc := &service.Service{Store: store, Agents: agents, Nodes: dispatch,
-		Index: b.Index, Deletions: b.Deletions, Janitor: b.JanitorQueue, Quotas: quotas, Moderator: moderator, Artifacts: arts}
-	delegator.Service = svc
+	opts := app.Options{
+		Clock: clk, Agents: agents, Model: gw, Blobs: blobs, NodeAuth: nodeAuth,
+		SandboxTools: *sandboxKind == "docker", DefaultTimeout: 30 * time.Minute, NodeCacheTTL: 10 * time.Second,
+		Moderator: moderator, Injector: injector, InjectionCheck: injection, Meter: meter, Quotas: quotas,
+		// 提醒（docs/design/m3-duplex-channel.md §9）：推送通道目前是日志桩，真实通道见上线检查清单。
+		Pusher:        notify.LogPusher{Logger: logger},
+		HealthAllowed: healthAllowed(*authMode, lines),
+		Live:          bus, LiveEndpoint: liveEndpoint, LeaseTTL: *leaseTTL, DrainTimeout: *drainTimeout, Logger: logger,
+	}
+	if *embedModel != "" {
+		opts.Embedder, opts.EmbedModel = gw, *embedModel
+	}
+	mcpServers, err := mcpcap.LoadDir(*mcpDir)
+	if err != nil {
+		return fmt.Errorf("load MCP servers: %w", err)
+	}
+	var mcpConn *mcpcap.Connector
+	if len(mcpServers) > 0 {
+		mcpConn = &mcpcap.Connector{Servers: mcpServers, Logger: logger}
+		defer mcpConn.Close()
+		opts.MCP = mcpConn
+		for _, s := range mcpServers {
+			logger.Info("MCP server registered", "name", s.Name, "business_line", s.BusinessLine, "url", s.URL)
+		}
+	}
+	core := app.NewCore(b.Stores, opts)
+	svc, hub, arts, mems, dir := core.Service, core.Hub, core.Artifacts, core.Memory, b.Dir
+	if mcpConn != nil {
+		mcpConn.Artifacts = arts
+	}
 	// 经 HTTP 的输入注明最近在前台使用的设备（设备歧义消解，docs/design/m6-decisions.md §3）；经 Connection 的由网关注明。
 	svc.RecentDevice = (&notify.RecentDevices{Registry: b.Push, TTL: 30 * time.Second, Clock: clk}).Label
 
@@ -455,21 +436,13 @@ func serve(args []string) error {
 		if i < *interactiveWorkers {
 			pool.MinPriority, gate = workqueue.Interactive, interactiveIdle
 		}
-		w := runtime.New(runtime.Config{
-			ID: fmt.Sprintf("%s-worker-%d", proc, i), Store: store, Queue: queue, Agents: agents,
-			Model: gw, Catalog: catalog, Dispatch: dispatch, Delegation: delegator, InjectionCheck: injection, Artifacts: arts, Memory: mems, Live: bus, LiveEndpoint: liveEndpoint, Logger: logger,
-			LeaseTTL: *leaseTTL, Heartbeat: *leaseTTL / 3, Idle: gate, Meter: meter, Quotas: quotas, Moderator: moderator,
-			Notify: notifier, Pool: pool, DrainTimeout: *drainTimeout, Faults: injector,
-		})
+		w := runtime.New(core.WorkerConfig(fmt.Sprintf("%s-worker-%d", proc, i), pool, gate))
 		wg.Add(1)
 		go func() { defer wg.Done(); w.Run(ctx) }()
 	}
 
 	var provider sandbox.Provider
-	switch *sandboxKind {
-	case "none":
-	case "docker":
-		catalog.Sandbox = &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID}
+	if *sandboxKind == "docker" {
 		provider = &sandboxdocker.Provider{Image: *sandboxImage, Runtime: *sandboxRuntime}
 		sbxIdle := &workqueue.IdleGate{}
 		if s, ok := b.SandboxQueue.(workqueue.Signaler); ok {
@@ -479,18 +452,11 @@ func serve(args []string) error {
 			*controllers = 0 // 沙箱工具仍然登记：Worker 把调用派发到沙箱队列，由其他进程的控制器执行
 		}
 		for i := range *controllers {
-			c := &sandbox.Controller{
-				ID: fmt.Sprintf("%s-sandbox-%d", proc, i), Queue: b.SandboxQueue, Hub: hub, Provider: provider,
-				Activity: b.Activity, Ledger: b.Ledger, Artifacts: arts, Clock: clk, Logger: logger,
-				Lifecycle: &lifecycle.Guard{Index: b.Index, Deletions: b.Deletions}, Idle: sbxIdle, Meter: meter,
-				LeaseTTL: *leaseTTL, Heartbeat: *leaseTTL / 3,
-			}
+			c := core.ControllerConfig(fmt.Sprintf("%s-sandbox-%d", proc, i), provider, sbxIdle)
 			wg.Add(1)
 			go func() { defer wg.Done(); c.Run(ctx) }()
 		}
 		logger.Info("sandbox enabled", "provider", "docker", "image", *sandboxImage, "runtime", *sandboxRuntime)
-	default:
-		return fmt.Errorf("unknown sandbox %q (none | docker)", *sandboxKind)
 	}
 
 	// Janitor 回收已关闭与已删除 Session 的资源，并执行各业务线的保留策略（docs/design/m2-session-lifecycle.md）。
@@ -498,14 +464,7 @@ func serve(args []string) error {
 	for _, bl := range lines {
 		retention[bl.Name] = bl.Retention
 	}
-	workspaces := sandbox.Workspaces{Queue: b.SandboxQueue, Provider: provider, Activity: b.Activity}
-	jan := &janitor.Janitor{
-		ID: proc + "-janitor", Queue: b.JanitorQueue, Service: svc, Store: store, Data: app.SessionData(b.Stores, workspaces, arts),
-		Workspaces: workspaces, Inbox: b.Inbox, Nodes: dir, Ledger: b.Ledger,
-		Queues: map[string]workqueue.Queue{"sessions": queue, "sandboxes": b.SandboxQueue, "janitor": b.JanitorQueue},
-		Index:  b.Index, Deletions: b.Deletions, Retention: retention, Clock: clk, Logger: logger, LeaseTTL: *leaseTTL,
-		Usage: b.Usage, UsageRetention: *usageRetention, Presence: b.Presence,
-	}
+	jan := core.Janitor(proc+"-janitor", provider, retention, *usageRetention)
 	wg.Add(1)
 	if roles["janitor"] {
 		go func() { defer wg.Done(); jan.Run(ctx) }()
