@@ -128,6 +128,14 @@ _Avoid_: 追加消息、打断
 无状态的执行进程，认领 Session 并以 Attempt 推进其中的 Run。
 _Avoid_: Node（Node 提供 Capability，Worker 执行 Run）、执行器
 
+**Delegation（委托）**（[设计](docs/design/m5-multi-agent.md)、ADR-0031）:
+一个 Run 把任务交给另一个 AgentDef 执行：在同一 BusinessLine、同一 EndUser 下派生子 Session 与 Run，父 Run 挂起等待其终态作为调用结果。Agent 在模型眼里是一种 Capability（`agent__<名称>`），子 Run 的能力不超出任何祖先的白名单。
+_Avoid_: 编排、子 Agent（指 AgentDef 时）、多 Agent（泛指时）
+
+**Decision（判断）**（草案，[设计](docs/design/m6-decisions.md)、ADR-0030）:
+对"给定状态、有限合法选项"的问题由规则、小模型或 LLM 作出的选择，只缩小候选、追加约束或触发默认路径，从不放宽安全要求；影响后续执行的 Decision 记为 Event。
+_Avoid_: 分类、路由（指模型路由时）、System 1（指模型类型时可用）
+
 **Handoff（移交）**:
 Worker 主动结束自己的 Attempt，把 Run 交给其他 Worker：以 `handoff` 挂起并立即归还 Session，由任意 Worker 恢复。用于优雅停机，以及只认领交互工作的 Worker 交出已成为长任务的 Run（ADR-0029）。与接管不同，它不是故障，不计入接管次数。
 _Avoid_: 迁移、转交、让出

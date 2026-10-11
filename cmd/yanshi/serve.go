@@ -29,6 +29,7 @@ import (
 	"yanshi/internal/capability"
 	"yanshi/internal/channel"
 	"yanshi/internal/clock"
+	"yanshi/internal/delegation"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/feed"
 	"yanshi/internal/httpapi"
@@ -367,8 +368,13 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
-	svc := &service.Service{Store: store, Agents: agents, Nodes: router,
+	// 委托（docs/design/m5-multi-agent.md）：Agent 是一种 Capability，派发目标是由调用派生的子 Session。
+	delegator := &delegation.Delegator{Logger: logger}
+	dispatch := &delegation.Router{Next: router, Delegator: delegator}
+	catalog.Agents = delegation.Directory{Registry: agents}
+	svc := &service.Service{Store: store, Agents: agents, Nodes: dispatch,
 		Index: b.Index, Deletions: b.Deletions, Janitor: b.JanitorQueue, Quotas: quotas, Moderator: moderator, Artifacts: arts}
+	delegator.Service = svc
 
 	if *admissionMaxWait > 0 {
 		st, ok := b.Queue.(workqueue.Stats)
@@ -417,7 +423,7 @@ func serve(args []string) error {
 		}
 		w := runtime.New(runtime.Config{
 			ID: fmt.Sprintf("%s-worker-%d", proc, i), Store: store, Queue: queue, Agents: agents,
-			Model: gw, Catalog: catalog, Dispatch: router, Artifacts: arts, Memory: mems, Live: bus, LiveEndpoint: liveEndpoint, Logger: logger,
+			Model: gw, Catalog: catalog, Dispatch: dispatch, Delegation: delegator, Artifacts: arts, Memory: mems, Live: bus, LiveEndpoint: liveEndpoint, Logger: logger,
 			LeaseTTL: *leaseTTL, Heartbeat: *leaseTTL / 3, Idle: gate, Meter: meter, Quotas: quotas, Moderator: moderator,
 			Notify: notifier, Pool: pool, DrainTimeout: *drainTimeout,
 		})

@@ -25,6 +25,7 @@ import (
 	"yanshi/internal/call"
 	"yanshi/internal/capability"
 	"yanshi/internal/clock"
+	"yanshi/internal/delegation"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/feed"
 	"yanshi/internal/ids"
@@ -221,13 +222,17 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 	if err != nil {
 		return nil, err
 	}
-	svc := &service.Service{Store: store, Agents: agents, Nodes: router,
+	delegator := &delegation.Delegator{}
+	dispatch := &delegation.Router{Next: router, Delegator: delegator}
+	catalog.Agents = delegation.Directory{Registry: agents}
+	svc := &service.Service{Store: store, Agents: agents, Nodes: dispatch,
 		Index: st.Index, Deletions: st.Deletions, Artifacts: arts}
+	delegator.Service = svc
 	idle := &workqueue.IdleGate{Ready: queue.(workqueue.Signaler).Ready()}
 	bus := live.NewMemBus()
 	pool := &workerPool{ctx: ctx, workers: map[string]*runtime.Worker{}, newCfg: func(id string) runtime.Config {
 		return runtime.Config{ID: id, Store: store, Queue: queue, Agents: agents,
-			Model: cfg.Model, Catalog: catalog, Dispatch: router, Artifacts: arts, Memory: mems, Logger: cfg.Logger,
+			Model: cfg.Model, Catalog: catalog, Dispatch: dispatch, Delegation: delegator, Artifacts: arts, Memory: mems, Logger: cfg.Logger,
 			LeaseTTL: cfg.LeaseTTL, Heartbeat: cfg.LeaseTTL / 3, Idle: idle, Live: bus}
 	}}
 	for range 2 * cfg.Parallel {
@@ -274,6 +279,10 @@ func derive(cfg Config, cases []*Case) (*agentdef.Registry, map[string]string, e
 		}
 		defs = append(defs, &d)
 		versions[c.Name] = d.Version
+		for _, a := range c.Setup.Agents {
+			defs = append(defs, &agentdef.Def{Name: a.Name, Version: "eval", Description: a.Description, Instructions: a.Instructions,
+				Model: d.Model, Capabilities: a.Capabilities, MaxTurns: base.MaxTurns, Context: base.Context})
+		}
 	}
 	reg, err := agentdef.NewRegistry(defs...)
 	return reg, versions, err
@@ -492,6 +501,12 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 						return nil, err
 					}
 				}
+				// 委托出去的子 Run 的审批与提问同样路由到用户本人（docs/design/m5-multi-agent.md §2）：照本轮的脚本处理。
+				if c.Dispatched() && delegation.IsNode(c.NodeID) {
+					if err := in.attendChild(ctx, delegation.ChildSession(c.NodeID), turn, approve, answered); err != nil {
+						return nil, err
+					}
+				}
 			}
 		}
 		if time.Now().After(deadline) {
@@ -512,7 +527,53 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 		obs.status = "asked"
 	}
 	collect(events, obs)
+	// 子 Session 中发生的事计入本轮（审批、给评分模型看的步骤）；子 Run 的调用不计入本轮的调用，
+	// 父 Run 只看到一次 agent__ 调用。
+	for _, e := range events {
+		if id := e.GetToolCallStarted().GetNodeId(); delegation.IsNode(id) {
+			childEvents, err := eventlog.ReadAll(ctx, in.svc.Store.Log, delegation.ChildSession(id), 0)
+			if err != nil {
+				return nil, err
+			}
+			child := &observation{}
+			collect(childEvents, child)
+			obs.approvals += child.approvals
+			for _, s := range child.steps {
+				obs.steps = append(obs.steps, "（子 Agent）"+s)
+			}
+			if child.reply != "" {
+				obs.steps = append(obs.steps, "（子 Agent）回复 "+clip(child.reply, judgeStepBytes))
+			}
+		}
+	}
 	return obs, nil
+}
+
+// attendChild 处理子 Session 中进行中 Run 的审批与提问，与父 Run 相同。
+func (in *instance) attendChild(ctx context.Context, child string, turn Turn, approve bool, answered map[string]bool) error {
+	st, err := in.svc.Load(ctx, child)
+	if errors.Is(err, service.ErrNotFound) {
+		return nil // 尚未创建
+	}
+	if err != nil {
+		return err
+	}
+	a := st.Active()
+	if a == nil {
+		return nil
+	}
+	for _, c := range a.Calls {
+		if c.AwaitingApproval() {
+			if err := in.svc.Decide(ctx, child, c.Call.GetCallId(), approve, "eval"); err != nil && !errors.Is(err, service.ErrConflict) {
+				return err
+			}
+		}
+	}
+	if c := pendingQuestion(a, answered); c != nil && turn.Answer != nil {
+		answered[c.Call.GetCallId()] = true
+		return in.answer(ctx, child, c, turn.Answer)
+	}
+	return nil
 }
 
 // collect 从本轮的事件中收集调用、审批、回复与用量。

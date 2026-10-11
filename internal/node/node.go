@@ -128,9 +128,12 @@ func Reserved(nodeID string) bool {
 
 var labelInvalid = regexp.MustCompile(`[^a-z0-9-]+`)
 
-// sandboxLabel 是沙箱工具名的前缀部分（capability.SandboxLabel）：设备不能用它作标签，否则其工具名
-// 与沙箱工具相同，审批摘要会把设备上的调用说成"在云端"。
-const sandboxLabel = "sandbox"
+// sandboxLabel 与 agentLabel 是沙箱与委托工具名的前缀部分（capability.SandboxLabel、AgentLabel）：设备不能用它们
+// 作标签，否则其工具名与沙箱或委托工具相同——审批摘要会把设备上的调用说成"在云端"，或把设备调用当作委托。
+const (
+	sandboxLabel = "sandbox"
+	agentLabel   = "agent"
+)
 
 // SanitizeLabel 把标签规范为 [a-z0-9-]：不含下划线，使工具名 "<label>__<capability>" 可无歧义拆分。
 func SanitizeLabel(s string) string {
@@ -141,8 +144,8 @@ func SanitizeLabel(s string) string {
 	switch s {
 	case "":
 		s = "device"
-	case sandboxLabel:
-		s = sandboxLabel + "-device"
+	case sandboxLabel, agentLabel:
+		s += "-device"
 	}
 	return s
 }

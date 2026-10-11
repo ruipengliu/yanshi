@@ -1,0 +1,22 @@
+name: delegate-result-cited
+description: >-
+  父 Run 转述子 Run 的结果时如实引用、不编造（docs/design/m5-multi-agent.md §7）：
+  销售数据只有 sales-analyst 知道——华东 1280 万（同比 +12%），华南 960 万（同比 -3%）。
+capabilities: ["agent:sales-analyst"]
+setup:
+  agents:
+    - name: sales-analyst
+      description: 销售数据分析员：查询本公司各区域的季度销售额与同比变化。
+      instructions: |
+        你是销售数据分析员。本公司 2026 年第三季度各区域销售额（仅以此为准，不要编造其他数据）：
+        - 华东 1280 万元，同比 +12%
+        - 华南 960 万元，同比 -3%
+        - 华北 1105 万元，同比 +5%
+      capabilities: []
+turns:
+  - input: 第三季度华东和华南的销售额各是多少？同比怎么样？
+    expect:
+      status: completed
+      calls: ["agent__sales-analyst"]
+      reply_contains: ["1280", "960"]
+      judge: 回复中华东 1280 万（+12%）、华南 960 万（-3%）的数据是否与分析员给出的一致，没有编造或混入其他数字？

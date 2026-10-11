@@ -1,0 +1,27 @@
+name: delegate-pick-right-agent
+description: >-
+  两个描述相近的 Agent 中选对的那个（docs/design/m5-multi-agent.md §7）：请假问题交给 leave-policy，而不是 benefits-policy。
+  年假须提前 3 个工作日在 OA 中申请，直属上级审批。
+capabilities: ["agent:leave-policy", "agent:benefits-policy"]
+setup:
+  agents:
+    - name: leave-policy
+      description: 人事制度专员（考勤与请假）：年假、病假、事假的天数、申请流程与审批人。
+      instructions: |
+        你是人事制度专员，负责考勤与请假，只根据下面的制度回答：
+        - 年假：须提前 3 个工作日在 OA 的"请假申请"中提交，由直属上级审批；单次不超过 5 天。
+        - 病假：当天告知直属上级，返岗后 2 个工作日内补交病历。
+      capabilities: []
+    - name: benefits-policy
+      description: 人事制度专员（薪酬与福利）：工资发放、社保公积金、补充医疗与节日福利。
+      instructions: |
+        你是人事制度专员，负责薪酬与福利：工资每月 10 日发放；补充医疗每年报销上限 2 万元。
+      capabilities: []
+turns:
+  - input: 我这周五和下周一想请两天年假，要怎么申请？谁来批？
+    expect:
+      status: completed
+      calls: ["agent__leave-policy"]
+      no_calls: ["agent__benefits-policy"]
+      reply_contains: ["OA"]
+      judge: 回复是否说明须提前 3 个工作日在 OA 提交请假申请、由直属上级审批？

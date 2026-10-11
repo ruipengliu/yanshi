@@ -91,6 +91,18 @@ message SessionCreated {
   string business_line = 1;
   string end_user = 2;
   AgentRef agent = 3;
+  // 非空表示这是委托派生的子 Session（docs/design/m5-multi-agent.md）：子 Run 的终态作为父调用的结果。
+  ParentRef parent = 4;
+}
+
+// ParentRef 是子 Session 的来处：父 Session 中的哪个 Run、哪次调用派生了它。
+message ParentRef {
+  string session_id = 1;
+  string run_id = 2;
+  string call_id = 3;
+  // 祖先的 AgentDef，由近及远（第一个是父 Session 的）。子 Run 的能力是自身白名单与每个祖先白名单的交集；
+  // 委托深度等于它的长度。
+  repeated AgentRef ancestors = 4;
 }
 
 // AgentSwitched 把 Session 当前使用的 AgentDef 换成同名的另一个版本，只发生在两个 Run 之间

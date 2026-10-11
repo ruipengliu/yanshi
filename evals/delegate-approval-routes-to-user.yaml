@@ -1,0 +1,26 @@
+name: delegate-approval-routes-to-user
+description: >-
+  子 Run 的高风险调用照常在用户设备上审批，父 Run 等待结果（docs/design/m5-multi-agent.md §2、§7）：
+  用户让"消息助手"代发短信，发送须经用户批准后才执行。
+capabilities: ["agent:messenger"]
+setup:
+  device:
+    label: phone
+    files: {}
+  agents:
+    - name: messenger
+      description: 消息助手：按用户的要求，用用户手机上的发消息能力代发短信，发送前会经用户批准。
+      instructions: >-
+        你是消息助手。收到发消息的任务时，用手机上的 send_message 发出，内容照任务原样，不要改写；
+        发送前平台会请用户审批，你不必再向用户确认。发完后报告结果。
+      capabilities: ["device:*"]
+turns:
+  - input: 请交给消息助手，帮我给 13800001111 发条短信：明天的会推迟到下午三点。
+    # 模型可能先请用户确认：确认即可。
+    answer: {choose: "确认", text: "确认，发吧"}
+    expect:
+      status: completed
+      calls: ["agent__messenger"]
+      approvals: {min: 1}
+      device_sent: 1
+      judge: 回复是否如实说明消息已经发出、内容是明天的会推迟到下午三点，没有编造未发生的事（如声称发送失败或改写了内容）？

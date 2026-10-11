@@ -28,7 +28,26 @@ const (
 	SandboxPrefix = "sandbox:"
 	// SandboxLabel 是沙箱工具名的前缀部分："sandbox__<capability>"。
 	SandboxLabel = "sandbox"
+	// AgentPrefix 标记可委托的 Agent："agent:<glob>"（docs/design/m5-multi-agent.md §3）；工具名为 "agent__<名称>"。
+	AgentPrefix = "agent:"
+	AgentLabel  = "agent"
 )
+
+// AgentInfo 是一个可委托的 AgentDef 对某个 EndUser 生效版本的说明。
+type AgentInfo struct {
+	Name, Description string
+	// Timeout 是委托给它的任务的时限（AgentDef 的 delegation.timeout）。
+	Timeout time.Duration
+}
+
+// AgentSource 列出可委托的 AgentDef；版本按发布配置对 endUser 分流（ADR-0020）。
+type AgentSource interface {
+	Agents(endUser string) []AgentInfo
+}
+
+// agentSchema 是委托工具的输入契约：task 必填，context 可选（docs/design/m5-multi-agent.md §3）。
+const agentSchema = `{"type":"object","properties":{"task":{"type":"string","description":"要交给这个 Agent 完成的任务，写清目标与交付物"},` +
+	`"context":{"type":"string","description":"它完成任务需要知道的背景（可选）"}},"required":["task"]}`
 
 // ErrConfig 表示 AgentDef 的能力白名单本身有误（未知能力、非法的通配）：与查询设备目录、MCP Server 的
 // 暂时性故障不同，重试不会成功。Tools 返回的此类错误满足 errors.Is(err, ErrConfig)，错误文本不变。
@@ -60,6 +79,8 @@ type Tool struct {
 	NodeID     string
 	Capability string
 	Timeout    time.Duration
+	// Agent 非空表示委托工具：调用派生子 Session，NodeID 按调用推导（delegation.NodeID），这里为空。
+	Agent string
 }
 
 func (t *Tool) RequiresApproval() bool { return t.Spec.Risk == v1.Risk_RISK_HIGH }
@@ -72,6 +93,8 @@ type Catalog struct {
 	Sandbox *SandboxTools
 	// MCP 为 nil 时没有远程 MCP 工具（docs/design/m5-mcp.md）。
 	MCP MCPSource
+	// Agents 为 nil 时不能委托（docs/design/m5-multi-agent.md）。
+	Agents AgentSource
 	// DefaultTimeout 用于未声明超时的设备能力。
 	DefaultTimeout time.Duration
 	// AskTimeout 是 ask_user 等待回答的上限，默认 askuser.DefaultTimeout（ADR-0025）。
@@ -126,8 +149,15 @@ func (c *Catalog) listNodes(ctx context.Context, scope node.Scope) ([]*node.Info
 // Tools 返回 allow 白名单允许、对 target 可见的全部工具：进程内工具、沙箱工具、设备工具（按标签排序）。
 func (c *Catalog) Tools(ctx context.Context, target Target, allow []string) ([]Tool, error) {
 	var out []Tool
-	var globs, sandboxGlobs, mcpPatterns []string
+	var globs, sandboxGlobs, mcpPatterns, agentGlobs []string
 	for _, a := range allow {
+		if g, ok := strings.CutPrefix(a, AgentPrefix); ok {
+			if _, err := path.Match(g, ""); err != nil {
+				return nil, configError{fmt.Errorf("bad capability pattern %q: %w", a, err)}
+			}
+			agentGlobs = append(agentGlobs, g)
+			continue
+		}
 		if p, ok := strings.CutPrefix(a, MCPPrefix); ok {
 			mcpPatterns = append(mcpPatterns, p)
 			continue
@@ -163,6 +193,23 @@ func (c *Catalog) Tools(ctx context.Context, target Target, allow []string) ([]T
 		}
 		out = append(out, byName(tools)...)
 	}
+	if c.Agents != nil && len(agentGlobs) > 0 {
+		var agents []Tool
+		for _, a := range c.Agents.Agents(target.Scope.EndUser) {
+			if !matchAny(agentGlobs, a.Name) {
+				continue
+			}
+			desc := a.Description
+			if desc == "" {
+				desc = "把任务委托给 Agent " + a.Name
+			}
+			agents = append(agents, Tool{
+				Spec:  Spec{Name: AgentLabel + "__" + a.Name, Description: desc, InputSchema: json.RawMessage(agentSchema), Risk: v1.Risk_RISK_LOW},
+				Agent: a.Name, Capability: a.Name, Timeout: a.Timeout,
+			})
+		}
+		out = append(out, byName(agents)...)
+	}
 	if c.Sandbox != nil && target.SessionID != "" {
 		for _, cs := range c.Sandbox.Specs {
 			if matchAny(sandboxGlobs, cs.GetName()) {
@@ -183,7 +230,7 @@ func (c *Catalog) Tools(ctx context.Context, target Target, allow []string) ([]T
 	}
 	var devices []Tool
 	for _, n := range nodes {
-		if node.Reserved(n.NodeID) || n.Label == SandboxLabel {
+		if node.Reserved(n.NodeID) || n.Label == SandboxLabel || n.Label == AgentLabel {
 			continue // 平台的 ID 与标签不属于设备（node.Hub.Connect 已拒绝，这里防御此前写入的登记）
 		}
 		for _, cs := range n.Capabilities {

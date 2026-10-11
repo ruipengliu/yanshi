@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"sync/atomic"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -20,6 +21,9 @@ import (
 type Def struct {
 	Name    string `yaml:"name"`
 	Version string `yaml:"version"`
+	// Description 一两句话说明这个 Agent 擅长什么、不做什么；其他 Agent 委托给它时，它是工具说明
+	// （docs/design/m5-multi-agent.md §3）。
+	Description string `yaml:"description"`
 	// Instructions 是系统指令。
 	Instructions string `yaml:"instructions"`
 	// Model 是 "provider/model" 形式的模型引用。
@@ -34,6 +38,18 @@ type Def struct {
 	Memory MemoryConfig `yaml:"memory"`
 	// Call 配置 Session 中的 Call（全双工语音通话，docs/design/m3-call.md）；Model 为空表示不支持通话。
 	Call CallConfig `yaml:"call"`
+	// Delegation 是委托的限制（docs/design/m5-multi-agent.md §4）。
+	Delegation DelegationConfig `yaml:"delegation"`
+}
+
+// DelegationConfig 限制委托。Timeout 属于被委托的 Agent（它多久应当做完）；MaxDepth 与 MaxFanout 属于委托方。
+type DelegationConfig struct {
+	// Timeout 是委托给本 Agent 的任务的时限，默认 1 小时；到期父调用得到超时错误，子 Run 被中断。
+	Timeout time.Duration `yaml:"timeout"`
+	// MaxDepth 是本 Agent 作为委托方时允许的委托链深度（含本层），默认 2。
+	MaxDepth int `yaml:"max_depth"`
+	// MaxFanout 是本 Agent 的一个 Run 同时未完成的委托数上限，默认 4。
+	MaxFanout int `yaml:"max_fanout"`
 }
 
 // CallConfig 是通话中语音模型的配置。语音模型只负责对话；需要能力的工作经 run_task 交给本 AgentDef 的 Run 执行。
@@ -103,6 +119,15 @@ func (d *Def) validate() error {
 	}
 	if d.MaxTurns <= 0 {
 		d.MaxTurns = 16
+	}
+	if d.Delegation.Timeout <= 0 {
+		d.Delegation.Timeout = time.Hour
+	}
+	if d.Delegation.MaxDepth <= 0 {
+		d.Delegation.MaxDepth = 2
+	}
+	if d.Delegation.MaxFanout <= 0 {
+		d.Delegation.MaxFanout = 4
 	}
 	if err := d.Context.validate(); err != nil {
 		return fmt.Errorf("agent %s@%s: %w", d.Name, d.Version, err)

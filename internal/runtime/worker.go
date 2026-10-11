@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,6 +24,7 @@ import (
 	"yanshi/internal/artifact"
 	"yanshi/internal/askuser"
 	"yanshi/internal/capability"
+	"yanshi/internal/delegation"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/live"
 	"yanshi/internal/metrics"
@@ -42,6 +44,11 @@ type Dispatcher interface {
 	Cancel(ctx context.Context, nodeID, callID string) error
 }
 
+// Reporter 把委托派生的子 Session 中 Run 的终态写回父调用（delegation.Delegator，docs/design/m5-multi-agent.md）。
+type Reporter interface {
+	Report(ctx context.Context, child *session.State) error
+}
+
 type Config struct {
 	ID     string
 	Store  *session.Store
@@ -52,6 +59,8 @@ type Config struct {
 	Compactor Compactor
 	Catalog   *capability.Catalog
 	Dispatch  Dispatcher
+	// Delegation 非空时，委托派生的子 Session 在 Run 结束后把终态写回父调用。
+	Delegation Reporter
 	// Memory 非空且 AgentDef 配置了召回时，每个 Run 开始先召回 Memory（docs/design/m4-memory-grant.md §3）。
 	Memory Recaller
 	// Artifacts 非空时，用户消息中的图片工件会内联给模型（docs/design/m2-artifacts.md §4）。
@@ -278,6 +287,13 @@ func (w *Worker) Step(ctx context.Context) (bool, error) {
 
 	r := w.st.Active()
 	if r == nil {
+		// 委托派生的子 Session：先把终态写回父调用，再归还。写回之前崩溃时租约留在队列中，接手的 Worker 走到这里
+		// 再写一次；写回幂等（父调用已有结果时作废）。
+		if w.st.Created.GetParent() != nil && w.cfg.Delegation != nil {
+			if err := w.cfg.Delegation.Report(ctx, w.st); err != nil {
+				return true, err
+			}
+		}
 		return true, w.release(ctx, true)
 	}
 	if !w.cfg.Pool.Admits(w.st.WorkClass()) {
@@ -508,7 +524,7 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 	if c.Dispatched() {
 		return w.awaitDispatched(ctx, r, c)
 	}
-	tool, err := w.cfg.Catalog.Resolve(ctx, w.target(), def.Capabilities, name)
+	tool, err := w.resolve(ctx, def, name)
 	if err != nil {
 		return err
 	}
@@ -544,15 +560,22 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 	}
 
 	if tool.Local == nil {
+		nodeID := tool.NodeID
 		if tool.NodeID == askuser.NodeID {
 			// 不合法的提问不去打扰用户：错误作为结果交还模型，由它改正。
 			if _, err := askuser.Parse(c.Call.GetArgumentsJson()); err != nil {
 				return w.commit(ctx, w.toolResult(r, id, model.TextBlocks(err.Error()), true))
 			}
 		}
+		if tool.Agent != "" {
+			if reason := w.delegationRefused(r, def, c); reason != "" {
+				return w.commit(ctx, w.toolResult(r, id, model.TextBlocks(reason), true))
+			}
+			nodeID = delegation.NodeID(delegation.ChildSessionID(w.st.SessionID, id))
+		}
 		deadline := w.now().Add(tool.Timeout)
 		return w.commit(ctx, &v1.Event{Payload: &v1.Event_ToolCallStarted{ToolCallStarted: &v1.ToolCallStarted{
-			RunId: r.ID, Attempt: w.attempt, CallId: id, NodeId: tool.NodeID, Deadline: timestamppb.New(deadline),
+			RunId: r.ID, Attempt: w.attempt, CallId: id, NodeId: nodeID, Deadline: timestamppb.New(deadline),
 		}}})
 	}
 
@@ -622,7 +645,11 @@ func (w *Worker) awaitDispatched(ctx context.Context, r *session.Run, c *session
 		if err := w.cfg.Dispatch.Cancel(ctx, c.NodeID, id); err != nil {
 			return err
 		}
-		return w.commit(ctx, w.toolResult(r, id, model.TextBlocks("timed out: the device did not return a result in time"), true))
+		msg := "timed out: the device did not return a result in time"
+		if delegation.IsNode(c.NodeID) {
+			msg = "timed out: the delegated agent did not finish in time; its task was interrupted"
+		}
+		return w.commit(ctx, w.toolResult(r, id, model.TextBlocks(msg), true))
 	}
 	_, capName, _ := strings.Cut(c.Call.GetCapability(), "__")
 	err := w.cfg.Dispatch.Dispatch(ctx, c.NodeID, &v1.Invoke{
@@ -633,6 +660,66 @@ func (w *Worker) awaitDispatched(ctx context.Context, r *session.Run, c *session
 		return err
 	}
 	return w.suspend(ctx, r, c.Deadline)
+}
+
+// tools 返回本 Run 可用的工具。委托派生的子 Session 只能用自身白名单与每个祖先白名单都允许的工具
+// （docs/design/m5-multi-agent.md §2）：委托不能借子 Agent 扩大权限。
+func (w *Worker) tools(ctx context.Context, def *agentdef.Def) ([]capability.Tool, error) {
+	tools, err := w.cfg.Catalog.Tools(ctx, w.target(), def.Capabilities)
+	if err != nil {
+		return nil, err
+	}
+	for _, ref := range w.st.Created.GetParent().GetAncestors() {
+		allow := []string{}
+		if a, err := w.cfg.Agents.Get(ref); err == nil {
+			allow = a.Capabilities
+		}
+		theirs, err := w.cfg.Catalog.Tools(ctx, w.target(), allow)
+		if err != nil {
+			return nil, err
+		}
+		names := map[string]bool{}
+		for _, t := range theirs {
+			names[t.Spec.Name] = true
+		}
+		tools = slices.DeleteFunc(tools, func(t capability.Tool) bool { return !names[t.Spec.Name] })
+	}
+	return tools, nil
+}
+
+// resolve 按名称解析本 Run 可用的工具；不存在时返回 nil。
+func (w *Worker) resolve(ctx context.Context, def *agentdef.Def, name string) (*capability.Tool, error) {
+	tools, err := w.tools(ctx, def)
+	if err != nil {
+		return nil, err
+	}
+	for i := range tools {
+		if tools[i].Spec.Name == name {
+			return &tools[i], nil
+		}
+	}
+	return nil, nil
+}
+
+// delegationRefused 检查一次委托能否派发：参数合法、委托链深度与同时未完成的委托数不超过委托方 AgentDef 的上限
+// （docs/design/m5-multi-agent.md §4）。不能派发时返回作为错误结果交还模型的原因。
+func (w *Worker) delegationRefused(r *session.Run, def *agentdef.Def, c *session.Call) string {
+	if _, err := delegation.ParseArgs(c.Call.GetArgumentsJson()); err != nil {
+		return err.Error()
+	}
+	if depth := len(w.st.Created.GetParent().GetAncestors()) + 1; depth > def.Delegation.MaxDepth {
+		return fmt.Sprintf("cannot delegate: delegation depth %d exceeds the limit of %d; do the task yourself", depth, def.Delegation.MaxDepth)
+	}
+	open := 0
+	for _, other := range r.Calls {
+		if other.Dispatched() && delegation.IsNode(other.NodeID) {
+			open++
+		}
+	}
+	if open >= def.Delegation.MaxFanout {
+		return fmt.Sprintf("cannot delegate: %d delegated tasks are still running (limit %d)", open, def.Delegation.MaxFanout)
+	}
+	return ""
 }
 
 func approvalSummary(t *capability.Tool, c *v1.ToolCall) string {
@@ -655,7 +742,7 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 		return w.suspendWith(ctx, &v1.RunSuspended{RunId: r.ID, Attempt: w.attempt, Reason: p.Reason(), Until: timestamppb.New(p.ResetAt)},
 			w.quotaPark(p))
 	}
-	tools, err := w.cfg.Catalog.Tools(ctx, w.target(), def.Capabilities)
+	tools, err := w.tools(ctx, def)
 	if errors.Is(err, capability.ErrConfig) {
 		return w.fail(ctx, r, err.Error())
 	}

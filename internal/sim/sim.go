@@ -25,6 +25,7 @@ import (
 	"yanshi/internal/askuser"
 	"yanshi/internal/capability"
 	"yanshi/internal/clock"
+	"yanshi/internal/delegation"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/ids"
 	"yanshi/internal/janitor"
@@ -88,6 +89,8 @@ type Stats struct {
 	CatalogFaults int
 	// ResumedClaims 是以恢复名额认领的长任务（用户刚做出审批或回答，ADR-0029）。
 	ResumedClaims int
+	// 委托（docs/design/m5-multi-agent.md）：创建的子 Session，子 Run 写回父调用的结果（完成、失败或中断）。
+	Delegations, DelegationResults int
 	// PastRuns 是移出投影、只剩摘要的终态 Run（有界投影，延展性评审 §8.3）。
 	PastRuns int
 	// 配额：因配额挂起的次数、提交时被拒绝的次数、挂起后恢复并结束的 Run；注销账号的次数。
@@ -194,11 +197,15 @@ func (d flakyDirectory) List(ctx context.Context, scope node.Scope) ([]*node.Inf
 	return d.Directory.List(ctx, scope)
 }
 
+// interleave 不可重入：插入的 Worker 步骤本身可能写入（如委托时向子 Session 提交任务），不能在其中再插入一步。
 func (w *World) interleave() error {
-	if w.afterEnqueue == nil {
+	hook := w.afterEnqueue
+	if hook == nil {
 		return nil
 	}
-	return w.afterEnqueue()
+	w.afterEnqueue = nil
+	defer func() { w.afterEnqueue = hook }()
+	return hook()
 }
 
 // poolQueue 是一个 Worker 看到的工作队列：检查认领到的工作属于该 Worker 的池（ADR-0029）。
@@ -289,6 +296,11 @@ type World struct {
 	nextW   int
 
 	sessions []string
+	// children 是发现的委托子 Session（discoverChildren），parentOf 是它们的父 Session。
+	children  []string
+	parentOf  map[string]string
+	delegator *delegation.Delegator
+	dispatch  *delegation.Router
 	// nextInput 生成客户端输入 ID。
 	nextInput int
 	// calls 是各 Session 上中转进程以为进行中的 Call（可能已过时）；nextCall 生成 Call ID。
@@ -338,7 +350,7 @@ func New(opts Options) (*World, error) {
 	for _, v := range []string{"1", "2"} {
 		defs = append(defs, &agentdef.Def{
 			Name: "sim", Version: v, Model: "sim/m",
-			Capabilities: []string{"echo", "send", "ask_user", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*"},
+			Capabilities: []string{"echo", "send", "ask_user", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*", "agent:sim"},
 			MaxTurns:     maxTurns, Context: simContext, Memory: agentdef.MemoryConfig{Recall: 3},
 		})
 	}
@@ -376,8 +388,13 @@ func New(opts Options) (*World, error) {
 	w.artifacts = &artifact.Service{Meta: stores.ArtifactMeta, Blobs: artifact.NewMemBlobs(), IDs: ids.Sequential("art"), Clock: w.clock, Deletions: w.deletions}
 	w.provider = sandbox.NewFake()
 	w.provider.ExecFunc = w.sandboxExec
-	w.svc = &service.Service{Store: w.store, Agents: agents, Nodes: w.router, Index: w.index, Deletions: w.deletions, Janitor: w.janitorQueue, Quotas: w.quotas,
+	w.delegator = &delegation.Delegator{}
+	w.dispatch = &delegation.Router{Next: w.router, Delegator: w.delegator}
+	w.parentOf = map[string]string{}
+	w.catalog.Agents = delegation.Directory{Registry: agents}
+	w.svc = &service.Service{Store: w.store, Agents: agents, Nodes: w.dispatch, Index: w.index, Deletions: w.deletions, Janitor: w.janitorQueue, Quotas: w.quotas,
 		Moderator: simModerator{w}}
+	w.delegator.Service = w.svc
 	for range 2 {
 		w.controllers = append(w.controllers, w.newController())
 	}
@@ -549,7 +566,7 @@ func (w *World) execute(n *simNode, inv *v1.Invoke) (*v1.InvokeResult, bool, err
 
 // decide 对一个待审批的调用随机做出决定。
 func (w *World) decide(approveAll bool) error {
-	for _, sid := range w.sessions {
+	for _, sid := range w.live() {
 		st, err := w.svc.Load(context.Background(), sid)
 		if err != nil {
 			return err
@@ -614,7 +631,7 @@ func (w *World) newWorker(slot int) *runtime.Worker {
 	}
 	return runtime.New(runtime.Config{
 		ID: id, Store: &store, Queue: poolQueue{Queue: w.queue, w: w}, Pool: pool, Agents: w.agents,
-		Model: gw, Catalog: w.catalog, Dispatch: w.router, LeaseTTL: leaseTTL,
+		Model: gw, Catalog: w.catalog, Dispatch: w.dispatch, Delegation: w.delegator, LeaseTTL: leaseTTL,
 		MaxTakeovers: 4, MaxModelErrors: 3, ApprovalTimeout: approvalTimeout, Memory: w.memories,
 		Meter: w.meter, Quotas: w.quotas, QuotaRecheck: time.Minute, Moderator: simModerator{w},
 		Notify: simNotifier{w}, NotifyRunsAfter: 30 * time.Second,
@@ -743,6 +760,11 @@ func (w *World) stopWorker(i int) {
 }
 
 func (w *World) stepWorker(i int) error {
+	// 插入 Worker 步骤的钩子只针对客户端自己的写入：Worker 步骤中的写入（如委托时向子 Session 提交任务、
+	// 把结果写回父 Session）不再插入步骤，否则会重入正在执行的 Worker。
+	hook := w.afterEnqueue
+	w.afterEnqueue = nil
+	defer func() { w.afterEnqueue = hook }()
 	ctx, cancel := context.WithCancel(context.Background())
 	crashed := false
 	w.crash = func() { crashed = true; cancel() }
@@ -874,7 +896,8 @@ func (w *World) retrySubmit(sid, inputID string, input []*v1.ContentBlock, first
 }
 
 func (w *World) interrupt() error {
-	sid := w.sessions[w.rng.IntN(len(w.sessions))]
+	live := w.live()
+	sid := live[w.rng.IntN(len(live))]
 	st, err := w.svc.Load(context.Background(), sid)
 	if err != nil {
 		return err
@@ -898,7 +921,10 @@ func (w *World) quiesce() error {
 	idleRounds := 0
 	for round := range 2000 {
 		active := false
-		for _, sid := range w.sessions {
+		if err := w.discoverChildren(); err != nil {
+			return err
+		}
+		for _, sid := range w.live() {
 			st, err := w.svc.Load(context.Background(), sid)
 			if err != nil {
 				return err
@@ -913,6 +939,9 @@ func (w *World) quiesce() error {
 		}
 		if !active && done && idleRounds > int(leaseTTL/time.Second) {
 			if err := w.CheckInvariants(); err != nil {
+				return err
+			}
+			if err := w.checkDelegation(true); err != nil {
 				return err
 			}
 			return w.checkDeleted(true)
@@ -952,15 +981,24 @@ func (w *World) quiesce() error {
 		}
 		w.clock.Advance(time.Second)
 	}
-	return errors.New("liveness: runs did not reach a terminal state after faults stopped")
+	return fmt.Errorf("liveness: runs did not reach a terminal state after faults stopped: %s", w.stuck())
 }
 
 // CheckInvariants 独立于写入方重新投影每个 Session 日志，并检查跨组件不变量。
 func (w *World) CheckInvariants() error {
-	for _, sid := range append(slices.Clone(w.sessions), w.closed...) {
+	if err := w.discoverChildren(); err != nil {
+		return err
+	}
+	if err := w.checkDelegation(false); err != nil {
+		return err
+	}
+	for _, sid := range w.known() {
 		events, err := eventlog.ReadAll(context.Background(), w.log, sid, 0)
 		if err != nil {
 			return err
+		}
+		if len(events) == 0 {
+			continue // 尚未创建（委托还没派发）或已删除的子 Session
 		}
 		st, err := session.Reduce(events)
 		if err != nil {
@@ -1087,11 +1125,15 @@ func (w *World) CollectStats() {
 			w.Stats.DeletionsCompleted++
 		}
 	}
-	for _, sid := range w.sessions {
+	for _, sid := range append(slices.Clone(w.sessions), w.children...) {
 		events, _ := eventlog.ReadAll(context.Background(), w.log, sid, 0)
 		if st, err := session.Reduce(events); err == nil {
 			w.Stats.PastRuns += len(st.Past)
+			if st.Created.GetParent() != nil {
+				w.Stats.Delegations++
+			}
 		}
+		w.countDelegationResults(events)
 		eachRun(events, func(r *session.Run) {
 			if r.Status == session.RunCompleted && r.Turns >= longRunTurns {
 				w.Stats.LongRunsCompleted++
@@ -1171,7 +1213,7 @@ func (w *World) CollectStats() {
 // Fingerprint 是全部日志的摘要，用于验证同一种子可复现。
 func (w *World) Fingerprint() string {
 	h := sha256.New()
-	for _, sid := range w.sessions {
+	for _, sid := range append(slices.Clone(w.sessions), w.children...) {
 		events, _ := eventlog.ReadAll(context.Background(), w.log, sid, 0)
 		for _, e := range events {
 			b, _ := proto.MarshalOptions{Deterministic: true}.Marshal(e)
@@ -1343,8 +1385,13 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 		more = turns < 100 && w.chance(0.97)
 	}
 	if more {
+		tools := req.Tools
+		if w.opts.LongRuns {
+			// 长 Run 模式下不委托：子 Run 同样要跑上百轮，层层委托使收敛远超模拟的时长。
+			tools = slices.DeleteFunc(slices.Clone(tools), func(t model.ToolSpec) bool { return strings.HasPrefix(t.Name, "agent__") })
+		}
 		for i := range 1 + w.rng.IntN(2) {
-			name := req.Tools[w.rng.IntN(len(req.Tools))].Name
+			name := tools[w.rng.IntN(len(tools))].Name
 			id := fmt.Sprintf("call_%d", i) // 故意跨轮重复，检验运行时的 ID 改写
 			if w.chance(0.3) {
 				id = ""
@@ -1401,6 +1448,11 @@ func (w *World) toolArgs(name string) string {
 		return fmt.Sprintf(`{"question":"选哪个？%s","options":[{"id":"a","label":"甲"},{"id":"b","label":"乙"},{"id":"c","label":"丙"}]}`, strings.Repeat("p", w.rng.IntN(50)))
 	case "memory_forget":
 		return fmt.Sprintf(`{"id":"mem_call_id-%d"}`, w.rng.IntN(500))
+	case "agent__sim":
+		if w.chance(0.1) {
+			return `{}` // 没有 task：不派发，错误交还模型
+		}
+		return fmt.Sprintf(`{"task":"子任务 %d"}`, w.rng.IntN(100))
 	}
 	return `{"pad":"` + w.pad() + `"}`
 }
@@ -1414,4 +1466,22 @@ func countPayload[T any](events []*v1.Event) int {
 		}
 	}
 	return n
+}
+
+// stuck 描述仍未终态的 Run 停在哪里，供活性失败时定位。
+func (w *World) stuck() string {
+	var out []string
+	for _, sid := range w.live() {
+		st, err := w.store.Load(context.Background(), sid)
+		if err != nil || st.Active() == nil {
+			continue
+		}
+		a := st.Active()
+		desc := fmt.Sprintf("%s/%s %s turns=%d", sid, a.ID, a.Status, a.Turns)
+		if c := a.PendingCall(); c != nil {
+			desc += fmt.Sprintf(" pending %s on %q approval=%v", c.Call.GetCapability(), c.NodeID, c.Approval != nil)
+		}
+		out = append(out, desc)
+	}
+	return strings.Join(out, "; ")
 }

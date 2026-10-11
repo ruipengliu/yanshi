@@ -1,0 +1,15 @@
+name: delegate-not-for-trivial
+description: 简单问题不委托：可以委托报销专员，但用户问的是与之无关的简单问题，应直接回答（docs/design/m5-multi-agent.md §7）。
+capabilities: ["agent:travel-policy"]
+setup:
+  agents:
+    - name: travel-policy
+      description: 本公司差旅制度专员：回答出差的住宿标准、交通舱位与审批流程。只回答差旅制度，不处理其他事。
+      instructions: 你是本公司的差旅制度专员。住宿一线城市每晚不超过 600 元，其他城市不超过 450 元；高铁二等座。
+      capabilities: []
+turns:
+  - input: 帮我把"非常感谢您的耐心等待"翻译成英文。
+    expect:
+      status: completed
+      no_calls: ["agent__travel-policy"]
+      judge: 回复是否直接给出了恰当的英文翻译（如 "Thank you very much for your patience"）？

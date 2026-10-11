@@ -31,6 +31,7 @@ import (
 	"yanshi/internal/capability"
 	"yanshi/internal/channel"
 	"yanshi/internal/clock"
+	"yanshi/internal/delegation"
 	"yanshi/internal/feed"
 	"yanshi/internal/httpapi"
 	"yanshi/internal/ids"
@@ -134,8 +135,12 @@ func pgStores(pool *pgxpool.Pool, n *pg.Notifier) stores {
 // instance 启动一个 yanshi 实例：workers 个 Worker，serve 为 true 时提供 HTTP API 与 Node 网关。
 func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server {
 	agents, err := agentdef.NewRegistry(&agentdef.Def{Name: "dev", Version: "1", Model: "script/any",
-		Capabilities: []string{"ask_user", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*", "mcp:*/*"}, Memory: agentdef.MemoryConfig{Recall: 5},
-		Call: agentdef.CallConfig{Model: "fake/voice", Voice: "v1", Instructions: "你是语音助手"}})
+		Capabilities: []string{"ask_user", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*", "mcp:*/*", "agent:helper"},
+		Memory:       agentdef.MemoryConfig{Recall: 5},
+		Call:         agentdef.CallConfig{Model: "fake/voice", Voice: "v1", Instructions: "你是语音助手"}},
+		// helper 是委托的目标（docs/design/m5-multi-agent.md）。
+		&agentdef.Def{Name: "helper", Version: "1", Model: "script/any", Description: "把输入复述一遍的助手",
+			Capabilities: []string{"ask_user", "device:*"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,6 +164,9 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 	catalog := &capability.Catalog{Local: capability.NewRegistry(memory.Capabilities(mems)...), Nodes: st.Dir, DefaultTimeout: time.Minute,
 		Sandbox: &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID}, MCP: st.mcp}
 	router := &sandbox.Router{Hub: hub, Queue: st.SandboxQueue}
+	delegator := &delegation.Delegator{}
+	dispatch := &delegation.Router{Next: router, Delegator: delegator}
+	catalog.Agents = delegation.Directory{Registry: agents}
 	gw := model.NewGateway()
 	gw.Register("script", script.Provider{})
 
@@ -166,7 +174,7 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 	t.Cleanup(cancel)
 	for i := range workers {
 		w := runtime.New(runtime.Config{ID: fmt.Sprintf("w%d", i), Store: store, Queue: st.Queue, Agents: agents, Model: gw,
-			Catalog: catalog, Dispatch: router, Artifacts: st.artifacts, Memory: mems, Live: bus, LiveEndpoint: peerSrv.URL, IdleWait: 5 * time.Millisecond,
+			Catalog: catalog, Dispatch: dispatch, Delegation: delegator, Artifacts: st.artifacts, Memory: mems, Live: bus, LiveEndpoint: peerSrv.URL, IdleWait: 5 * time.Millisecond,
 			Notify: notifier})
 		go w.Run(ctx)
 	}
@@ -176,8 +184,9 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 			Lifecycle: &lifecycle.Guard{Index: st.Index, Deletions: st.Deletions}}
 		go c.Run(ctx)
 	}
-	svc := &service.Service{Store: store, Agents: agents, Nodes: router,
+	svc := &service.Service{Store: store, Agents: agents, Nodes: dispatch,
 		Index: st.Index, Deletions: st.Deletions, Janitor: st.JanitorQueue, Moderator: st.moderator, Artifacts: st.artifacts}
+	delegator.Service = svc
 	if workers > 0 {
 		ws := sandbox.Workspaces{Queue: st.SandboxQueue, Provider: st.provider, Activity: st.Activity}
 		j := &janitor.Janitor{ID: "j1", Queue: st.JanitorQueue, Service: svc, Store: store, Data: app.SessionData(st.Stores, ws, st.artifacts),

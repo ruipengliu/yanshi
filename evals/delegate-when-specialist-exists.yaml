@@ -1,0 +1,22 @@
+name: delegate-when-specialist-exists
+description: >-
+  有擅长的子 Agent 时委托，而不是自己硬做（docs/design/m5-multi-agent.md §7）。报销制度只有 expense-policy 知道：
+  出差打车单程不超过 80 元、每天不超过 150 元，须附行程单。
+capabilities: ["agent:expense-policy"]
+setup:
+  agents:
+    - name: expense-policy
+      description: 本公司报销制度专员：回答差旅、餐费、打车等费用能报多少、需要什么凭证。只回答报销政策，不处理其他事。
+      instructions: |
+        你是本公司的报销制度专员，只根据下面的制度回答，不要编造制度以外的内容：
+        - 出差期间打车：单程不超过 80 元，每天合计不超过 150 元，须附电子行程单。
+        - 出差餐费：每天不超过 120 元，须附发票。
+        - 超出部分由员工自理。
+      capabilities: []
+turns:
+  - input: 我下周去上海出差，在那边打车的费用公司能报多少？要什么凭证？
+    expect:
+      status: completed
+      calls: ["agent__expense-policy"]
+      reply_contains: ["80", "150", "行程单"]
+      judge: 回复是否给出了单程 80 元、每天 150 元的上限，并说明须附电子行程单，没有编造其他制度？

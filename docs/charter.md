@@ -94,7 +94,7 @@ yanshi 是公司内部的**分布式 Agent 运行时基础设施**，承载多�
 | M2 长任务与执行 🟡 | Sandbox 代码执行（S1 ✅ Docker 实现、代码解释器；S2 ✅ [工件存储](./design/m2-artifacts.md)，场景 A 数据通路已通；S3 预热池、S4 生产 Provider 暂缓，待沙箱服务选型（ADR-0010），见 [设计](./design/m2-sandbox.md)）；小时级 Run（[上下文压缩与无进展接管上限](./design/m2-long-runs.md) ✅，经长 Run 模拟验证；真实模型下 40 份文件、3 次压缩与 1 次接管后结果正确，固定为评测用例）；多 Worker 水平扩展（多进程共享 PostgreSQL ✅）与[扩容压测](./design/m2-scale-test.md) ✅（1→4 进程 3.67×，kill -9 不丢 Run）；[跨进程实时增量](./design/m2-live-deltas.md) ✅；[鉴权](./design/auth.md) ✅（业务线签发令牌）；[Session 生命周期与数据删除](./design/m2-session-lifecycle.md) ✅；跑通场景 A（文字版已用真实模型跑通：读电脑文件 → 沙箱处理 → Memory 识别同事 → 审批后写回电脑；语音输入与推送唤醒属于 M3） |
 | M3 实时 🟡 | [多端双工通道](./design/m3-duplex-channel.md)（一条 Connection 兼任 Node 与会话客户端 ✅、晚加入者补齐增量 ✅、在场 ✅、Agent 提问（ask_user）✅、界面上下文 ✅、输入去重 ✅、提醒 ✅（推送通道为桩））；[端侧 SDK](./design/m3-client-sdks.md) ✅（网页 TypeScript、移动端绑定）；[Call](./design/m3-call.md) ✅（豆包 Seeduplex 经网关中转、run_task 派生 Run 并回注、网页通话页；场景 B 以合成语音评测跑通：读电脑文件并口语转述、改写经审批写回）；Go 与移动端 SDK 的通话接口、语音审批、Opus 与弱网待做 |
 | M4 个性化与治理 | [Memory 与 Grant](./design/m4-memory-grant.md) ✅（已用真实模型验证）；[评测](./design/m4-eval.md) ✅（固定用例集 + 基线，线上回放只经导出）；[配额与用量计量](./design/m4-quota-usage.md) ✅（业务线月度 + EndUser 日度，按价格折算，超额挂起）；[AgentDef 灰度](./design/m4-agent-rollout.md) ✅（按 EndUser 稳定分流，撤回版本在下一个 Run 切换）；[内容安全](./design/m4-moderation.md) 🟡（检查点已实现，提供商为模拟实现，上线前接入真实提供商，见[上线检查清单](./launch-checklist.md)） |
-| M5 生态 | 注册中心；声明式 AgentDef 规范；[MCP 适配](./design/m5-mcp.md) ✅（远程 HTTP 与设备端桥接；A2A 待做）；跨节点多 Agent 编排 |
+| M5 生态 | 注册中心；声明式 AgentDef 规范；[MCP 适配](./design/m5-mcp.md) ✅（远程 HTTP 与设备端桥接；A2A 待做）；跨节点多 Agent 编排：[委托](./design/m5-multi-agent.md) ✅（Agent 即 Capability、派生子 Session，ADR-0031；注册中心与 A2A 待做）；[判断分层](./design/m6-decisions.md)（草案，ADR-0030 提议） |
 
 ## 10. 待决架构问题
 

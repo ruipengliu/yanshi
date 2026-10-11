@@ -52,6 +52,7 @@ import (
 	"yanshi/internal/artifact"
 	"yanshi/internal/askuser"
 	"yanshi/internal/auth"
+	"yanshi/internal/delegation"
 	"yanshi/internal/feed"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/live"
@@ -334,8 +335,10 @@ type runView struct {
 
 // waitingView 说明挂起中的 Run 在等什么。
 type waitingView struct {
-	// Kind 为 "approval"、"node"、"question"（等待用户回答 ask_user，ADR-0025）或 "quota"（配额用尽，Deadline 为重置时间）。
+	// Kind 为 "approval"、"node"、"question"（等待用户回答 ask_user，ADR-0025）、"agent"（等待委托的子 Session，
+	// SessionID 是它）或 "quota"（配额用尽，Deadline 为重置时间）。
 	Kind       string    `json:"kind"`
+	SessionID  string    `json:"session_id,omitempty"`
 	CallID     string    `json:"call_id,omitempty"`
 	Capability string    `json:"capability,omitempty"`
 	Reason     string    `json:"reason,omitempty"`
@@ -358,6 +361,9 @@ func (s *Server) waiting(r *http.Request, run *session.Run) *waitingView {
 	case c.AwaitingApproval():
 		return &waitingView{Kind: "approval", CallID: c.Call.GetCallId(), Capability: c.Call.GetCapability(),
 			Summary: c.Approval.Summary, Deadline: c.Approval.Deadline}
+	case c.Dispatched() && delegation.IsNode(c.NodeID):
+		return &waitingView{Kind: "agent", CallID: c.Call.GetCallId(), Capability: c.Call.GetCapability(),
+			SessionID: delegation.ChildSession(c.NodeID), Deadline: c.Deadline}
 	case c.Dispatched() && c.NodeID == askuser.NodeID:
 		return &waitingView{Kind: "question", CallID: c.Call.GetCallId(), Capability: c.Call.GetCapability(), Deadline: c.Deadline}
 	case c.Dispatched():
@@ -393,7 +399,17 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 		"end_user":      st.Created.GetEndUser(),
 		"agent":         map[string]string{"name": st.Agent.GetName(), "version": st.Agent.GetVersion()},
 		"runs":          runs,
+		"parent":        parentView(st),
 	})
+}
+
+// parentView 是委托派生的子 Session 的来处（docs/design/m5-multi-agent.md）：客户端据此折叠展示。不是子 Session 时为 nil。
+func parentView(st *session.State) map[string]string {
+	p := st.Created.GetParent()
+	if p == nil {
+		return nil
+	}
+	return map[string]string{"session_id": p.GetSessionId(), "run_id": p.GetRunId(), "call_id": p.GetCallId()}
 }
 
 func (s *Server) submit(w http.ResponseWriter, r *http.Request) {

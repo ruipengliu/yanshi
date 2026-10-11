@@ -74,6 +74,10 @@ type CreateRequest struct {
 	// Agent 是 AgentDef 名称；AgentVersion 为空时取默认版本。
 	Agent        string
 	AgentVersion string
+	// SessionID 与 Parent 只用于委托派生的子 Session（docs/design/m5-multi-agent.md）：ID 由父调用推导，
+	// 重复创建返回已有的 Session（幂等）。
+	SessionID string
+	Parent    *v1.ParentRef
 }
 
 func (s *Service) Create(ctx context.Context, req CreateRequest) (string, error) {
@@ -96,7 +100,10 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
-	st := &session.State{SessionID: "ses_" + s.Store.IDs()}
+	st := &session.State{SessionID: req.SessionID}
+	if st.SessionID == "" {
+		st.SessionID = "ses_" + s.Store.IDs()
+	}
 	// 先写索引、再写日志：日志写入失败只会留下一条找不到日志的索引（列表与删除都能处理），
 	// 反过来则会出现索引之外的 Session，按 EndUser 删除时会被遗漏。
 	if s.Index != nil {
@@ -107,8 +114,16 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (string, error)
 		}
 	}
 	err = s.Store.Commit(ctx, st, &v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{
-		BusinessLine: req.BusinessLine, EndUser: req.EndUser, Agent: def.Ref(),
+		BusinessLine: req.BusinessLine, EndUser: req.EndUser, Agent: def.Ref(), Parent: req.Parent,
 	}}})
+	if errors.Is(err, eventlog.ErrConflict) && req.SessionID != "" {
+		// 指定 ID 的 Session 已存在：是同一次委托的重复创建时返回它。
+		if existing, lerr := s.Store.Load(ctx, req.SessionID); lerr == nil && existing.Created != nil &&
+			existing.Created.GetParent().GetCallId() == req.Parent.GetCallId() && existing.Created.GetParent().GetSessionId() == req.Parent.GetSessionId() {
+			return req.SessionID, nil
+		}
+		return "", fmt.Errorf("%w: session %s already exists", ErrConflict, req.SessionID)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -170,7 +185,13 @@ func (s *Service) Submit(ctx context.Context, sessionID string, input []*v1.Cont
 // SubmitWithID 与 Submit 相同，但带客户端生成的输入 ID：结果未知（连接断开）时以同一 ID 重新提交是安全的，
 // 已生效的输入返回首次的结果（Duplicate），不会重复写入。去重窗口是最近 session.MaxRecentInputs 条输入。
 func (s *Service) SubmitWithID(ctx context.Context, sessionID, inputID string, input []*v1.ContentBlock) (*SubmitResult, error) {
-	return s.submit(ctx, sessionID, inputID, "", input)
+	return s.submit(ctx, sessionID, inputID, "", input, false)
+}
+
+// SubmitDelegated 提交委托给子 Session 的任务（docs/design/m5-multi-agent.md）：语义同 SubmitWithID，但不经 Submit
+// 准入——子 Run 是进行中的父 Run 的一部分，不是新的交互请求。配额照常检查。
+func (s *Service) SubmitDelegated(ctx context.Context, sessionID, inputID string, input []*v1.ContentBlock) (*SubmitResult, error) {
+	return s.submit(ctx, sessionID, inputID, "", input, true)
 }
 
 // SubmitFromCall 提交 Call 中语音模型派生的任务（run_task，docs/design/m3-call.md §5）：语义同 SubmitWithID，
@@ -179,10 +200,10 @@ func (s *Service) SubmitFromCall(ctx context.Context, sessionID, callID, inputID
 	if callID == "" {
 		return nil, fmt.Errorf("%w: call id is required", ErrInvalid)
 	}
-	return s.submit(ctx, sessionID, inputID, callID, input)
+	return s.submit(ctx, sessionID, inputID, callID, input, false)
 }
 
-func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall string, input []*v1.ContentBlock) (*SubmitResult, error) {
+func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall string, input []*v1.ContentBlock, delegated bool) (*SubmitResult, error) {
 	if len(input) == 0 {
 		return nil, fmt.Errorf("%w: empty input", ErrInvalid)
 	}
@@ -207,7 +228,7 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 		return nil, err
 	}
 	// 准入与配额只拦新 Run：插话属于进行中的 Run，后者在下一次模型调用前自行检查配额。
-	if st.Active() == nil && s.Admission != nil {
+	if st.Active() == nil && s.Admission != nil && !delegated {
 		if err := s.Admission.Admit(ctx, st.Created.GetBusinessLine()); err != nil {
 			return nil, err
 		}
@@ -297,7 +318,7 @@ func (s *Service) Interrupt(ctx context.Context, sessionID, runID string) error 
 		if r.Status.Terminal() {
 			return nil
 		}
-		err := s.Store.Commit(ctx, st, &v1.Event{Payload: &v1.Event_RunInterrupted{
+		err := s.commitEnding(ctx, st, &v1.Event{Payload: &v1.Event_RunInterrupted{
 			RunInterrupted: &v1.RunInterrupted{RunId: runID, By: "user"},
 		}})
 		if err == nil {
@@ -312,6 +333,15 @@ func (s *Service) Interrupt(ctx context.Context, sessionID, runID string) error 
 		}
 	}
 	return fmt.Errorf("interrupt run %s: too many conflicts", runID)
+}
+
+// commitEnding 提交结束 Run 的事件。委托派生的子 Session 同时唤醒：由它的 Worker 把终态写回父调用
+// （docs/design/m5-multi-agent.md §4）。
+func (s *Service) commitEnding(ctx context.Context, st *session.State, events ...*v1.Event) error {
+	if st.Created.GetParent() != nil {
+		return s.Store.CommitAndWake(ctx, st, events...)
+	}
+	return s.Store.Commit(ctx, st, events...)
 }
 
 // cancelDispatched 尽力撤回 Run 中已派发、未完成的路由调用。提问不经 Inbox，无需撤回（ADR-0025）。
@@ -507,7 +537,7 @@ func (s *Service) Close(ctx context.Context, sessionID, by, reason string) error
 			events = append(events, callEnded(c.ID, CallEndSessionClosed))
 		}
 		events = append(events, &v1.Event{Payload: &v1.Event_SessionClosed{SessionClosed: &v1.SessionClosed{By: by, Reason: reason}}})
-		err := s.Store.Commit(ctx, st, events...)
+		err := s.commitEnding(ctx, st, events...)
 		if err == nil {
 			if a != nil {
 				metrics.RunsFinished.WithLabelValues("interrupted", agentdef.Label(st.Agent)).Inc()

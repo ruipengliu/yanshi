@@ -10,11 +10,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/askuser"
 	"yanshi/internal/clock"
+	"yanshi/internal/delegation"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/metrics"
@@ -225,6 +227,13 @@ func (j *Janitor) delete(ctx context.Context, sid string, st *session.State) err
 	if err := j.forgetOnDevices(ctx, sid, st); err != nil {
 		return err
 	}
+	// 2'. 委托派生的子 Session 一并删除（docs/design/m5-multi-agent.md §4）：它们各自由 Janitor 清理，子的子同样级联。
+	if err := j.stage(ctx, "children"); err != nil {
+		return err
+	}
+	if err := j.deleteChildren(ctx, sid, st); err != nil {
+		return err
+	}
 	// 3～5. 撤回待投递调用、移出队列、销毁沙箱、删除工件。
 	if err := j.stage(ctx, "withdraw"); err != nil {
 		return err
@@ -302,6 +311,26 @@ func (j *Janitor) forgetOnDevices(ctx context.Context, sid string, st *session.S
 			return err
 		}
 		if err := j.Inbox.Put(ctx, id, ForgetInvoke(sid)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// deleteChildren 删除委托派生的子 Session：子 Session ID 记在父日志的 ToolCallStarted 中（委托目标）。
+func (j *Janitor) deleteChildren(ctx context.Context, sid string, st *session.State) error {
+	var children []string
+	err := session.ScanLog(ctx, j.Store.Log, sid, func(e *v1.Event) bool {
+		if id := e.GetToolCallStarted().GetNodeId(); delegation.IsNode(id) && !slices.Contains(children, delegation.ChildSession(id)) {
+			children = append(children, delegation.ChildSession(id))
+		}
+		return e.GetSeq() < st.Seq
+	})
+	if err != nil {
+		return err
+	}
+	for _, child := range children {
+		if err := j.Service.Delete(ctx, child, "parent_deleted", ""); err != nil && !errors.Is(err, service.ErrNotFound) {
 			return err
 		}
 	}

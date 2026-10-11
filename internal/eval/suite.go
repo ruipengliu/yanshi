@@ -43,8 +43,19 @@ type Case struct {
 		Device *DeviceSetup `yaml:"device"`
 		// CRM 为 true 时为评测业务线登记内置的 CRM MCP Server（工具 search_customer、create_ticket）。
 		CRM bool `yaml:"crm"`
+		// Agents 是本用例可委托的 Agent（docs/design/m5-multi-agent.md）：与被评测的 Agent 使用同一模型；
+		// 名称在整个评测集中唯一，被评测的 Agent 须在 capabilities 中以 "agent:<名称>" 允许委托。
+		Agents []AgentSetup `yaml:"agents"`
 	} `yaml:"setup"`
 	Turns []Turn `yaml:"turns"`
+}
+
+// AgentSetup 是评测用的被委托 Agent。
+type AgentSetup struct {
+	Name         string   `yaml:"name"`
+	Description  string   `yaml:"description"`
+	Instructions string   `yaml:"instructions"`
+	Capabilities []string `yaml:"capabilities"`
 }
 
 // DeviceSetup 是虚拟设备：只读的文件、需审批的写文件与发消息。
@@ -141,7 +152,7 @@ func LoadSuite(dir string) ([]*Case, error) {
 		return nil, err
 	}
 	var out []*Case
-	seen := map[string]bool{}
+	seen, agents := map[string]bool{}, map[string]bool{}
 	for _, f := range files {
 		b, err := os.ReadFile(f)
 		if err != nil {
@@ -156,6 +167,12 @@ func LoadSuite(dir string) ([]*Case, error) {
 		}
 		if len(c.Turns) == 0 {
 			return nil, fmt.Errorf("%s: no turns", f)
+		}
+		for _, a := range c.Setup.Agents {
+			if agents[a.Name] {
+				return nil, fmt.Errorf("%s: agent %q is defined by another case", f, a.Name)
+			}
+			agents[a.Name] = true
 		}
 		if c.Trials <= 0 {
 			c.Trials = 3
