@@ -56,7 +56,7 @@ func (l *Log) Append(ctx context.Context, sessionID string, expectedSeq uint64, 
 			batch.Queue(`INSERT INTO events (session_id, seq, data) VALUES ($1, $2, $3)`, sessionID, int64(expectedSeq)+int64(i)+1, b)
 		}
 		// 负载带上新的末尾 seq，等待者无需再查询（pg.Notifier.WaitAbove）。
-		batch.Queue(`SELECT pg_notify($1, $2)`, pg.ChannelEvents, fmt.Sprintf("%s:%d", sessionID, expectedSeq+uint64(len(events))))
+		batch.Queue(`SELECT pg_notify($1, $2)`, l.notifier.Channel(pg.TopicEvents, sessionID), fmt.Sprintf("%s:%d", sessionID, expectedSeq+uint64(len(events))))
 		return tx.SendBatch(ctx, batch).Close()
 	})
 	if pg.IsUniqueViolation(err) {
@@ -103,7 +103,7 @@ func (l *Log) head(ctx context.Context, sessionID string) (uint64, error) {
 }
 
 func (l *Log) Wait(ctx context.Context, sessionID string, after uint64) (uint64, error) {
-	return l.notifier.WaitAbove(ctx, pg.ChannelEvents, sessionID, after, func(ctx context.Context) (uint64, error) {
+	return l.notifier.WaitAbove(ctx, pg.TopicEvents, sessionID, after, func(ctx context.Context) (uint64, error) {
 		return l.head(ctx, sessionID)
 	})
 }
@@ -115,5 +115,5 @@ func (l *Log) Delete(ctx context.Context, sessionID string) error {
 
 // HeadHint 来自本进程收到的提交通知（pg.Notifier 的缓存）。
 func (l *Log) HeadHint(sessionID string) (uint64, bool) {
-	return l.notifier.Latest(pg.ChannelEvents, sessionID)
+	return l.notifier.Latest(pg.TopicEvents, sessionID)
 }

@@ -25,13 +25,13 @@ type Store struct {
 var _ presence.Store = Store{}
 
 // bump 在同一事务内递增版本并通知。
-func bump(ctx context.Context, tx pgx.Tx, sid string) error {
+func (s Store) bump(ctx context.Context, tx pgx.Tx, sid string) error {
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO presence_versions (session_id, version) VALUES ($1, 1)
 		ON CONFLICT (session_id) DO UPDATE SET version = presence_versions.version + 1`, sid); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `SELECT pg_notify($1, $2)`, pg.ChannelPresence, sid)
+	_, err := tx.Exec(ctx, `SELECT pg_notify($1, $2)`, s.Notifier.Channel(pg.TopicPresence, sid), sid)
 	return err
 }
 
@@ -69,7 +69,7 @@ func (s Store) Put(ctx context.Context, e *presence.Entry) error {
 		if existed && sameVisible(&old, e) {
 			return nil
 		}
-		return bump(ctx, tx, e.SessionID)
+		return s.bump(ctx, tx, e.SessionID)
 	})
 }
 
@@ -90,7 +90,7 @@ func (s Store) Remove(ctx context.Context, sessionID, connID string) error {
 		if err != nil || tag.RowsAffected() == 0 {
 			return err
 		}
-		return bump(ctx, tx, sessionID)
+		return s.bump(ctx, tx, sessionID)
 	})
 }
 
@@ -134,7 +134,7 @@ func (s Store) List(ctx context.Context, sessionID string, now time.Time) ([]*pr
 }
 
 func (s Store) Wait(ctx context.Context, sessionID string, v uint64) error {
-	return s.Notifier.WaitForEvery(ctx, pg.ChannelPresence, sessionID, pollEvery, func(ctx context.Context) (bool, error) {
+	return s.Notifier.WaitForEvery(ctx, pg.TopicPresence, sessionID, pollEvery, func(ctx context.Context) (bool, error) {
 		cur, err := version(ctx, s.Pool, sessionID)
 		return cur != v, err
 	})
@@ -146,7 +146,7 @@ func (s Store) DeleteSession(ctx context.Context, sessionID string) error {
 			return err
 		}
 		// 先通知等待者，再删除版本号：Session 已删除，不会再有新的记录。
-		if _, err := tx.Exec(ctx, `SELECT pg_notify($1, $2)`, pg.ChannelPresence, sessionID); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT pg_notify($1, $2)`, s.Notifier.Channel(pg.TopicPresence, sessionID), sessionID); err != nil {
 			return err
 		}
 		_, err := tx.Exec(ctx, `DELETE FROM presence_versions WHERE session_id = $1`, sessionID)

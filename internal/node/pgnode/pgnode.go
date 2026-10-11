@@ -153,13 +153,13 @@ func NewInbox(pool *pgxpool.Pool, n *pg.Notifier) *Inbox { return &Inbox{pool: p
 var _ node.Inbox = (*Inbox)(nil)
 
 // bump 在同一事务内递增版本并发出通知。
-func bump(ctx context.Context, tx pgx.Tx, nodeID string) error {
+func (in *Inbox) bump(ctx context.Context, tx pgx.Tx, nodeID string) error {
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO inbox_versions (node_id, version) VALUES ($1, 1)
 		ON CONFLICT (node_id) DO UPDATE SET version = inbox_versions.version + 1`, nodeID); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `SELECT pg_notify($1, $2)`, pg.ChannelInbox, nodeID)
+	_, err := tx.Exec(ctx, `SELECT pg_notify($1, $2)`, in.notifier.Channel(pg.TopicInbox, nodeID), nodeID)
 	return err
 }
 
@@ -175,7 +175,7 @@ func (in *Inbox) Put(ctx context.Context, nodeID string, inv *v1.Invoke) error {
 		if err != nil || tag.RowsAffected() == 0 {
 			return err
 		}
-		return bump(ctx, tx, nodeID)
+		return in.bump(ctx, tx, nodeID)
 	})
 }
 
@@ -185,7 +185,7 @@ func (in *Inbox) Remove(ctx context.Context, nodeID, callID string) error {
 		if err != nil || tag.RowsAffected() == 0 {
 			return err
 		}
-		return bump(ctx, tx, nodeID)
+		return in.bump(ctx, tx, nodeID)
 	})
 }
 
@@ -225,7 +225,7 @@ func (in *Inbox) Pending(ctx context.Context, nodeID string) ([]*v1.Invoke, uint
 }
 
 func (in *Inbox) Wait(ctx context.Context, nodeID string, version uint64) error {
-	return in.notifier.WaitFor(ctx, pg.ChannelInbox, nodeID, func(ctx context.Context) (bool, error) {
+	return in.notifier.WaitFor(ctx, pg.TopicInbox, nodeID, func(ctx context.Context) (bool, error) {
 		v, err := in.version(ctx, in.pool, nodeID)
 		return v != version, err
 	})
@@ -243,7 +243,7 @@ func (in *Inbox) RemoveSession(ctx context.Context, sessionID string) error {
 		}
 		slices.Sort(nodes)
 		for _, n := range slices.Compact(nodes) {
-			if err := bump(ctx, tx, n); err != nil {
+			if err := in.bump(ctx, tx, n); err != nil {
 				return err
 			}
 		}

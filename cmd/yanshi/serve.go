@@ -98,7 +98,8 @@ type backends struct {
 }
 
 // openStorage 按 kind 创建存储。postgres 模式下多个 serve 进程可共享同一数据库水平扩展。
-func openStorage(ctx context.Context, kind, dsn string, clk clock.Clock, logger *slog.Logger) (backends, func(), error) {
+// notifyShards 是 PostgreSQL 通知的分片数（ADR-0028），所有进程须一致。
+func openStorage(ctx context.Context, kind, dsn string, notifyShards int, clk clock.Clock, logger *slog.Logger) (backends, func(), error) {
 	switch kind {
 	case "memory":
 		return backends{memlog.New(), memqueue.New(clk), node.NewMemDirectory(clk), node.NewMemInbox(),
@@ -118,7 +119,7 @@ func openStorage(ctx context.Context, kind, dsn string, clk clock.Clock, logger 
 			s := pool.Stat()
 			return s.AcquiredConns(), s.TotalConns(), s.MaxConns(), s.AcquireCount(), s.EmptyAcquireCount(), s.AcquireDuration()
 		})
-		n := pg.NewNotifier(pool, logger)
+		n := pg.NewNotifier(pool, logger).WithShards(notifyShards)
 		nctx, cancel := context.WithCancel(ctx)
 		go n.Run(nctx)
 		b := backends{pglog.New(pool, n), pgqueue.New(pool, clk, pgqueue.Sessions).WithNotifier(n), pgnode.NewDirectory(pool, clk), pgnode.NewInbox(pool, n),
@@ -188,6 +189,7 @@ func serve(args []string) error {
 	workers := fs.Int("workers", 4, "Worker 数量")
 	storage := fs.String("storage", "memory", "存储：memory | postgres")
 	dsn := fs.String("pg-dsn", envOr("YANSHI_PG_DSN", devPGDSN), "PostgreSQL 地址（storage=postgres）")
+	notifyShards := fs.Int("notify-shards", 1, "PostgreSQL 通知的分片数（ADR-0028）：进程只 LISTEN 有订阅者的分片频道；所有进程须一致")
 	sandboxKind := fs.String("sandbox", "none", "代码沙箱：none | docker")
 	sandboxImage := fs.String("sandbox-image", "yanshi-sandbox:dev", "沙箱镜像（make sandbox-image 构建）")
 	sandboxRuntime := fs.String("sandbox-runtime", "", "沙箱容器运行时，如 runsc（gVisor）")
@@ -232,7 +234,7 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
-	b, closeStorage, err := openStorage(ctx, *storage, *dsn, clk, logger)
+	b, closeStorage, err := openStorage(ctx, *storage, *dsn, *notifyShards, clk, logger)
 	if err != nil {
 		return err
 	}

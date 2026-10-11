@@ -46,7 +46,7 @@ func (q *Queue) Ready() <-chan struct{} {
 	if q.notifier == nil {
 		return nil
 	}
-	q.readyOnce.Do(func() { q.ready, _ = q.notifier.Subscribe(pg.ChannelWork, q.table) })
+	q.readyOnce.Do(func() { q.ready, _ = q.notifier.Subscribe(pg.TopicWork, q.table) })
 	return q.ready
 }
 
@@ -74,7 +74,7 @@ func (q *Queue) Enqueue(ctx context.Context, sessionID string) error {
 			ON CONFLICT (session_id) DO UPDATE
 			SET dirty = work_items.dirty OR work_items.leased, parked_until = NULL
 			RETURNING 1)
-		SELECT pg_notify($2, $3) FROM up`), sessionID, pg.ChannelWork, q.table)
+		SELECT pg_notify($2, $3) FROM up`), sessionID, q.notifier.Channel(pg.TopicWork, q.table), q.table)
 	return err
 }
 
