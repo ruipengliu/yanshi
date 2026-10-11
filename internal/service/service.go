@@ -71,9 +71,6 @@ type ArtifactStat interface {
 // ErrConflict 表示请求与 Session 当前状态冲突（如审批已决定）。
 var ErrConflict = errors.New("conflict")
 
-// maxConflictRetries 限制乐观并发冲突时的重试次数。
-const maxConflictRetries = 16
-
 type CreateRequest struct {
 	BusinessLine string
 	EndUser      string
@@ -260,25 +257,27 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 			return nil, &usage.ExceededError{Period: p}
 		}
 	}
-	for range maxConflictRetries {
+	var res *SubmitResult
+	var prev time.Time
+	err = s.Store.Update(ctx, st, func(st *session.State) (session.Decision, error) {
 		// 并发的同 ID 提交可能刚刚生效（冲突后重读到了它）。
-		if res := duplicate(st, inputID); res != nil {
-			return res, nil
+		if res = duplicate(st, inputID); res != nil {
+			return session.Decision{}, nil
 		}
 		if st.Closed != nil {
-			return nil, fmt.Errorf("%w: session %s is closed", ErrConflict, sessionID)
+			return session.Decision{}, fmt.Errorf("%w: session %s is closed", ErrConflict, sessionID)
 		}
 		if fromCall != "" && (st.ActiveCall == nil || st.ActiveCall.ID != fromCall) {
-			return nil, fmt.Errorf("%w: call %s is not active", ErrConflict, fromCall)
+			return session.Decision{}, fmt.Errorf("%w: call %s is not active", ErrConflict, fromCall)
 		}
 		var events []*v1.Event
-		res := &SubmitResult{}
+		res = &SubmitResult{}
 		if a := st.Active(); a != nil {
 			res.RunID, res.Steered = a.ID, true
 			if c := pendingQuestion(a, ""); c != nil {
 				ev, err := typedAnswer(a, c, input)
 				if err != nil {
-					return nil, err
+					return session.Decision{}, err
 				}
 				ev.GetToolResult().InputId, ev.GetToolResult().FromCall = inputID, fromCall
 				res.Answered = c.Call.GetCallId()
@@ -295,27 +294,24 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 			res.RunID = "run_" + s.Store.IDs()
 			events = append(events, &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: res.RunID, Input: input, InputId: inputID, FromCall: fromCall}}})
 		}
-		prev := lastRunAt(st)
+		prev = lastRunAt(st)
 		// 写日志与入队在同一事务中（CommitAndWake）：二者之间没有可以崩溃的窗口，Run 不会停在 queued。
-		err := s.Store.CommitAndWake(ctx, st, events...)
-		if err == nil {
-			// 按 TouchEvery 分段：输入与上一个 Run 落在不同段时更新。每段的第一个输入都会写入，索引中的时间因此与
-			// 最近的输入在同一段内，滞后不到 TouchEvery；只比较间隔的话，间隔始终短于 TouchEvery 的连续对话永远不会更新。
-			if now := s.Store.Clock.Now(); s.Index != nil && (prev.IsZero() || !now.Truncate(lifecycle.TouchEvery).Equal(prev.Truncate(lifecycle.TouchEvery))) {
-				if err := s.Index.Touch(ctx, sessionID, now); err != nil {
-					return res, err
-				}
-			}
-			return res, nil
-		}
-		if !errors.Is(err, eventlog.ErrConflict) {
-			return nil, err
-		}
-		if err := s.Store.SyncAfterConflict(ctx, st); err != nil {
-			return nil, gone(sessionID, err)
+		return session.Decision{Events: events, Wake: true}, nil
+	})
+	if err != nil {
+		return nil, gone(sessionID, err)
+	}
+	if res.Duplicate {
+		return res, nil
+	}
+	// 按 TouchEvery 分段：输入与上一个 Run 落在不同段时更新。每段的第一个输入都会写入，索引中的时间因此与
+	// 最近的输入在同一段内，滞后不到 TouchEvery；只比较间隔的话，间隔始终短于 TouchEvery 的连续对话永远不会更新。
+	if now := s.Store.Clock.Now(); s.Index != nil && (prev.IsZero() || !now.Truncate(lifecycle.TouchEvery).Equal(prev.Truncate(lifecycle.TouchEvery))) {
+		if err := s.Index.Touch(ctx, sessionID, now); err != nil {
+			return res, err
 		}
 	}
-	return nil, fmt.Errorf("submit to session %s: too many conflicts", sessionID)
+	return res, nil
 }
 
 // Interrupt 中断 Run（用户发起）；Run 已终态时不再写入并返回 nil。
@@ -331,44 +327,46 @@ func (s *Service) InterruptBy(ctx context.Context, sessionID, runID, by string) 
 	if err != nil {
 		return err
 	}
-	for range maxConflictRetries {
+	// cancel 是要撤回已派发调用的 Run：本次中断的，或此前已被中断的（重试的请求再撤回一次）；
+	// interrupted 表示本次写入了中断。
+	var cancel *session.Run
+	interrupted := false
+	err = s.Store.Update(ctx, st, func(st *session.State) (session.Decision, error) {
+		cancel, interrupted = nil, false
 		r := st.Run(runID)
 		if r == nil {
 			if _, ok := st.RunSummary(runID); ok {
-				return nil // 已移出投影的 Run 都是终态
+				return session.Decision{}, nil // 已移出投影的 Run 都是终态
 			}
-			return fmt.Errorf("%w: run %s", ErrNotFound, runID)
+			return session.Decision{}, fmt.Errorf("%w: run %s", ErrNotFound, runID)
 		}
 		if r.Status.Terminal() {
 			if r.Status == session.RunInterrupted {
-				return s.cancelDispatched(ctx, r)
+				cancel = r
 			}
-			return nil
+			return session.Decision{}, nil
 		}
-		err := s.commitEnding(ctx, st, &v1.Event{Payload: &v1.Event_RunInterrupted{
+		cancel, interrupted = r, true
+		return session.Decision{Events: []*v1.Event{{Payload: &v1.Event_RunInterrupted{
 			RunInterrupted: &v1.RunInterrupted{RunId: runID, By: by},
-		}})
-		if err == nil {
-			metrics.RunsFinished.WithLabelValues("interrupted", agentdef.Label(st.Agent)).Inc()
-			return s.cancelDispatched(ctx, r)
-		}
-		if !errors.Is(err, eventlog.ErrConflict) {
-			return err
-		}
-		if err := s.Store.SyncAfterConflict(ctx, st); err != nil {
-			return gone(sessionID, err)
-		}
+		}}}, Wake: wakeOnEnding(st)}, nil
+	})
+	if err != nil {
+		return gone(sessionID, err)
 	}
-	return fmt.Errorf("interrupt run %s: too many conflicts", runID)
+	if interrupted {
+		metrics.RunsFinished.WithLabelValues("interrupted", agentdef.Label(st.Agent)).Inc()
+	}
+	if cancel != nil {
+		return s.cancelDispatched(ctx, cancel)
+	}
+	return nil
 }
 
-// commitEnding 提交结束 Run 的事件。委托派生的子 Session 同时唤醒：由它的 Worker 把终态写回父调用
+// wakeOnEnding 报告结束 Run 的写入是否同时唤醒 Session：委托派生的子 Session 需要它的 Worker 把终态写回父调用
 // （docs/design/m5-multi-agent.md §4）。
-func (s *Service) commitEnding(ctx context.Context, st *session.State, events ...*v1.Event) error {
-	if st.Created.GetParent() != nil {
-		return s.Store.CommitAndWake(ctx, st, events...)
-	}
-	return s.Store.Commit(ctx, st, events...)
+func wakeOnEnding(st *session.State) bool {
+	return st.Created.GetParent() != nil
 }
 
 // afterClose 是关闭之后的步骤：撤回被关闭中断的 Run 中已派发的调用、在索引中记下关闭、交给 Janitor 销毁沙箱工作区。
@@ -464,12 +462,7 @@ func typedAnswer(r *session.Run, c *session.Call, input []*v1.ContentBlock) (*v1
 	if err := q.Check(a); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
-	return answerEvent(r, c, askuser.Result(q, a, extra...)), nil
-}
-
-// answerEvent 是回答对应的外部结果（attempt = 0）。
-func answerEvent(r *session.Run, c *session.Call, content []*v1.ContentBlock) *v1.Event {
-	return &v1.Event{Payload: &v1.Event_ToolResult{ToolResult: &v1.ToolResult{RunId: r.ID, CallId: c.Call.GetCallId(), Content: content}}}
+	return session.ExternalResult(r.ID, c.Call.GetCallId(), askuser.Result(q, a, extra...), false), nil
 }
 
 // Answer 记录用户在界面上对 ask_user 提问的回答（点选、填写或文字），作为该调用的结果写入日志并唤醒
@@ -485,7 +478,7 @@ func (s *Service) Answer(ctx context.Context, sessionID, callID string, a *askus
 			return err
 		}
 	}
-	for range maxConflictRetries {
+	return gone(sessionID, s.Store.Update(ctx, st, func(st *session.State) (session.Decision, error) {
 		r := st.Active()
 		var c *session.Call
 		if r != nil {
@@ -494,32 +487,23 @@ func (s *Service) Answer(ctx context.Context, sessionID, callID string, a *askus
 		if c == nil {
 			h, err := s.history(ctx, st, callID)
 			if err != nil {
-				return err
+				return session.Decision{}, err
 			}
 			if h.Asked {
-				return fmt.Errorf("%w: question %s is no longer waiting for an answer", ErrConflict, callID)
+				return session.Decision{}, fmt.Errorf("%w: question %s is no longer waiting for an answer", ErrConflict, callID)
 			}
-			return fmt.Errorf("%w: no question %s", ErrNotFound, callID)
+			return session.Decision{}, fmt.Errorf("%w: no question %s", ErrNotFound, callID)
 		}
 		q, err := askuser.Parse(c.Call.GetArgumentsJson())
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrInvalid, err)
+			return session.Decision{}, fmt.Errorf("%w: %v", ErrInvalid, err)
 		}
 		if err := q.Check(a); err != nil {
-			return fmt.Errorf("%w: %v", ErrInvalid, err)
+			return session.Decision{}, fmt.Errorf("%w: %v", ErrInvalid, err)
 		}
-		err = s.Store.CommitAndWake(ctx, st, answerEvent(r, c, askuser.Result(q, a)))
-		if err == nil {
-			return nil
-		}
-		if !errors.Is(err, eventlog.ErrConflict) {
-			return err
-		}
-		if err := s.Store.SyncAfterConflict(ctx, st); err != nil {
-			return gone(sessionID, err)
-		}
-	}
-	return fmt.Errorf("answer question %s: too many conflicts", callID)
+		ev := session.ExternalResult(r.ID, c.Call.GetCallId(), askuser.Result(q, a), false)
+		return session.Decision{Events: []*v1.Event{ev}, Wake: true}, nil
+	}))
 }
 
 // Decide 记录 EndUser 对一次调用的审批决定，并唤醒 Session。
@@ -528,7 +512,7 @@ func (s *Service) Decide(ctx context.Context, sessionID, callID string, approved
 	if err != nil {
 		return err
 	}
-	for range maxConflictRetries {
+	return gone(sessionID, s.Store.Update(ctx, st, func(st *session.State) (session.Decision, error) {
 		a := st.Active()
 		var call *session.Call
 		if a != nil {
@@ -543,30 +527,20 @@ func (s *Service) Decide(ctx context.Context, sessionID, callID string, approved
 			// 客户端不会误以为 Session 不存在（node.proto ClientRequest）。
 			h, err := s.history(ctx, st, callID)
 			if err != nil {
-				return err
+				return session.Decision{}, err
 			}
 			if h.ApprovalRequested {
-				return fmt.Errorf("%w: call %s is not awaiting approval", ErrConflict, callID)
+				return session.Decision{}, fmt.Errorf("%w: call %s is not awaiting approval", ErrConflict, callID)
 			}
-			return fmt.Errorf("%w: no active call %s", ErrNotFound, callID)
+			return session.Decision{}, fmt.Errorf("%w: no active call %s", ErrNotFound, callID)
 		}
 		if !call.AwaitingApproval() {
-			return fmt.Errorf("%w: call %s is not awaiting approval", ErrConflict, callID)
+			return session.Decision{}, fmt.Errorf("%w: call %s is not awaiting approval", ErrConflict, callID)
 		}
-		err := s.Store.CommitAndWake(ctx, st, &v1.Event{Payload: &v1.Event_ApprovalDecided{ApprovalDecided: &v1.ApprovalDecided{
+		return session.Decision{Events: []*v1.Event{{Payload: &v1.Event_ApprovalDecided{ApprovalDecided: &v1.ApprovalDecided{
 			RunId: a.ID, CallId: callID, Approved: approved, By: by,
-		}}})
-		if err == nil {
-			return nil
-		}
-		if !errors.Is(err, eventlog.ErrConflict) {
-			return err
-		}
-		if err := s.Store.SyncAfterConflict(ctx, st); err != nil {
-			return gone(sessionID, err)
-		}
-	}
-	return fmt.Errorf("decide call %s: too many conflicts", callID)
+		}}}}, Wake: true}, nil
+	}))
 }
 
 // Close 关闭 Session（终态，不可逆）：中断活跃的 Run，追加 SessionClosed，由 Janitor 销毁沙箱工作区。
@@ -576,9 +550,11 @@ func (s *Service) Close(ctx context.Context, sessionID, by, reason string) error
 	if err != nil {
 		return err
 	}
-	for range maxConflictRetries {
+	interrupted := false
+	err = s.Store.Update(ctx, st, func(st *session.State) (session.Decision, error) {
+		interrupted = false
 		if st.Closed != nil {
-			return s.afterClose(ctx, st)
+			return session.Decision{}, nil // 已关闭（如重试的 Close）：仍做一遍关闭之后的步骤
 		}
 		var events []*v1.Event
 		a := st.Active()
@@ -590,21 +566,16 @@ func (s *Service) Close(ctx context.Context, sessionID, by, reason string) error
 			events = append(events, callEnded(c.ID, CallEndSessionClosed))
 		}
 		events = append(events, &v1.Event{Payload: &v1.Event_SessionClosed{SessionClosed: &v1.SessionClosed{By: by, Reason: reason}}})
-		err := s.commitEnding(ctx, st, events...)
-		if err == nil {
-			if a != nil {
-				metrics.RunsFinished.WithLabelValues("interrupted", agentdef.Label(st.Agent)).Inc()
-			}
-			return s.afterClose(ctx, st)
-		}
-		if !errors.Is(err, eventlog.ErrConflict) {
-			return err
-		}
-		if err := s.Store.SyncAfterConflict(ctx, st); err != nil {
-			return gone(sessionID, err)
-		}
+		interrupted = a != nil
+		return session.Decision{Events: events, Wake: wakeOnEnding(st)}, nil
+	})
+	if err != nil {
+		return gone(sessionID, err)
 	}
-	return fmt.Errorf("close session %s: too many conflicts", sessionID)
+	if interrupted {
+		metrics.RunsFinished.WithLabelValues("interrupted", agentdef.Label(st.Agent)).Inc()
+	}
+	return s.afterClose(ctx, st)
 }
 
 // enqueueJanitor 让 Janitor 清理 Session；清理不急，一律为 Background。

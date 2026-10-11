@@ -2,13 +2,11 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
 	v1 "yanshi/gen/yanshi/v1"
-	"yanshi/internal/eventlog"
 	"yanshi/internal/metrics"
 	"yanshi/internal/moderation"
 	"yanshi/internal/session"
@@ -76,37 +74,33 @@ func (s *Service) StartCall(ctx context.Context, req StartCallRequest) (*CallSta
 			return nil, &usage.ExceededError{Period: p}
 		}
 	}
-	for range maxConflictRetries {
+	// started 是最后一次决策的 CallStarted：提交时由 Store 编上 ID，作为计量的 ID。
+	var started *v1.Event
+	err = s.Store.Update(ctx, st, func(st *session.State) (session.Decision, error) {
 		if st.Closed != nil {
-			return nil, fmt.Errorf("%w: session %s is closed", ErrConflict, req.SessionID)
+			return session.Decision{}, fmt.Errorf("%w: session %s is closed", ErrConflict, req.SessionID)
 		}
 		var events []*v1.Event
 		if c := st.ActiveCall; c != nil {
 			if c.ID == req.CallID {
-				return nil, fmt.Errorf("%w: call %s already started", ErrConflict, req.CallID)
+				return session.Decision{}, fmt.Errorf("%w: call %s already started", ErrConflict, req.CallID)
 			}
 			events = append(events, callEnded(c.ID, CallEndReplaced))
 		}
-		started := &v1.Event{Payload: &v1.Event_CallStarted{CallStarted: &v1.CallStarted{
+		started = &v1.Event{Payload: &v1.Event_CallStarted{CallStarted: &v1.CallStarted{
 			CallId: req.CallID, DeviceId: req.DeviceID, Model: req.Model, Voice: req.Voice}}}
 		events = append(events, started)
-		err := s.Store.Commit(ctx, st, events...)
-		if err == nil {
-			if s.Index != nil {
-				if err := s.Index.Touch(ctx, req.SessionID, s.Store.Clock.Now()); err != nil {
-					return nil, err
-				}
-			}
-			return &CallStart{State: st, MeterID: started.GetId()}, nil
-		}
-		if !errors.Is(err, eventlog.ErrConflict) {
+		return session.Decision{Events: events}, nil
+	})
+	if err != nil {
+		return nil, gone(req.SessionID, err)
+	}
+	if s.Index != nil {
+		if err := s.Index.Touch(ctx, req.SessionID, s.Store.Clock.Now()); err != nil {
 			return nil, err
 		}
-		if err := s.Store.SyncAfterConflict(ctx, st); err != nil {
-			return nil, gone(req.SessionID, err)
-		}
 	}
-	return nil, fmt.Errorf("start call in session %s: too many conflicts", req.SessionID)
+	return &CallStart{State: st, MeterID: started.GetId()}, nil
 }
 
 // AppendTranscript 写入 Call 中一句话的转写。写入前做内容安全检查（用户的话按输入、助手的话按输出，ADR-0021）：
@@ -134,22 +128,12 @@ func (s *Service) AppendTranscript(ctx context.Context, sessionID string, t *v1.
 	if v.Block {
 		return fmt.Errorf("%w: %s", moderation.ErrRejected, strings.Join(v.Labels, ","))
 	}
-	for range maxConflictRetries {
+	return gone(sessionID, s.Store.Update(ctx, st, func(st *session.State) (session.Decision, error) {
 		if c := st.ActiveCall; st.Closed != nil || c == nil || c.ID != t.GetCallId() {
-			return fmt.Errorf("%w: call %s is not active", ErrConflict, t.GetCallId())
+			return session.Decision{}, fmt.Errorf("%w: call %s is not active", ErrConflict, t.GetCallId())
 		}
-		err := s.Store.Commit(ctx, st, &v1.Event{Payload: &v1.Event_CallTranscript{CallTranscript: t}})
-		if err == nil {
-			return nil
-		}
-		if !errors.Is(err, eventlog.ErrConflict) {
-			return err
-		}
-		if err := s.Store.SyncAfterConflict(ctx, st); err != nil {
-			return gone(sessionID, err)
-		}
-	}
-	return fmt.Errorf("transcript in session %s: too many conflicts", sessionID)
+		return session.Decision{Events: []*v1.Event{{Payload: &v1.Event_CallTranscript{CallTranscript: t}}}}, nil
+	}))
 }
 
 // EndCall 记录 Call 结束；Call 已结束（或被取代）时无操作。
@@ -158,20 +142,10 @@ func (s *Service) EndCall(ctx context.Context, sessionID, callID, reason string)
 	if err != nil {
 		return err
 	}
-	for range maxConflictRetries {
+	return gone(sessionID, s.Store.Update(ctx, st, func(st *session.State) (session.Decision, error) {
 		if c := st.ActiveCall; st.Closed != nil || c == nil || c.ID != callID {
-			return nil
+			return session.Decision{}, nil
 		}
-		err := s.Store.Commit(ctx, st, callEnded(callID, reason))
-		if err == nil {
-			return nil
-		}
-		if !errors.Is(err, eventlog.ErrConflict) {
-			return err
-		}
-		if err := s.Store.SyncAfterConflict(ctx, st); err != nil {
-			return gone(sessionID, err)
-		}
-	}
-	return fmt.Errorf("end call %s: too many conflicts", callID)
+		return session.Decision{Events: []*v1.Event{callEnded(callID, reason)}}, nil
+	}))
 }
