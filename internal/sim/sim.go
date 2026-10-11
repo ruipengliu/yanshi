@@ -266,11 +266,11 @@ type World struct {
 	log     eventlog.Log
 	store   *session.Store
 	queue   workqueue.Queue
+	core    *app.Core
 	svc     *service.Service
 	agents  *agentdef.Registry
 	catalog *capability.Catalog
 	hub     *node.Hub
-	router  *sandbox.Router
 	nodes   []*simNode
 
 	sandboxQueue workqueue.Queue
@@ -347,9 +347,6 @@ func New(opts Options) (*World, error) {
 	}
 	w.stores = stores
 	w.log, w.queue = stores.Log, stores.Queue
-	// 快照每 5 条写一次，使加载几乎总是走"快照 + 剩余日志"的路径。
-	w.store = &session.Store{Log: w.log, Waking: flakyWaking{WakingLog: stores.Waking, w: w}, IDs: ids.Sequential("id"),
-		Clock: w.clock, Snapshots: stores.Snapshots, SnapshotEvery: 5, Deletions: stores.Deletions}
 	maxTurns := 6
 	if opts.LongRuns {
 		maxTurns = 120
@@ -371,39 +368,43 @@ func New(opts Options) (*World, error) {
 	if err := w.setRelease(0); err != nil {
 		return nil, err
 	}
-	w.memories = &memory.Service{Store: stores.Memories, Grants: stores.Grants, Deletions: stores.Deletions, Clock: w.clock,
-		IDs: ids.Sequential("mem"), MaxPerUser: 20}
-	w.catalog = &capability.Catalog{
-		Local: capability.NewRegistry(append([]capability.Capability{w.echoCap(), w.sendCap(), simCardCap()}, memory.Capabilities(w.memories)...)...),
-		Nodes: flakyDirectory{Directory: stores.Dir, w: w}, DefaultTimeout: deviceTimeout, AskTimeout: askTimeout,
-		Sandbox:      &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID},
-		NodeCacheTTL: 5 * time.Second, Clock: w.clock,
-	}
 	w.index, w.deletions, w.janitorQueue = stores.Index, stores.Deletions, stores.JanitorQueue
+	w.sandboxQueue, w.ledger, w.activity = stores.SandboxQueue, stores.Ledger, stores.Activity
 	w.presence = &presence.Service{Store: stores.Presence, Deletions: stores.Deletions, Clock: w.clock}
 	w.push, w.notified = stores.Push, map[string]bool{}
 	w.calls = map[string]string{}
-	w.notifier = &notify.Notifier{Registry: stores.Push, Presence: stores.Presence, Pusher: simPusher{w}, Clock: w.clock}
+	w.parentOf = map[string]string{}
 	// 配额读缓存的已用金额（usage.SpentCache），计量经同一个缓存写入：单进程中缓存值与实际一致，
 	// checkedUsage 的不变量照常成立。
 	spent := usage.NewSpentCache(stores.Usage, 30*time.Second, w.clock)
 	w.usage = &checkedUsage{Store: spent, truth: stores.Usage, w: w}
 	w.quotas = &usage.Quotas{Store: spent, Limits: simLimits(opts.LongRuns)}
 	w.meter = &usage.Meter{Store: w.usage, Prices: simPrices, Deletions: w.deletions}
-	w.hub = &node.Hub{Dir: stores.Dir, Inbox: stores.Inbox, Store: w.store, Auth: node.InsecureDevAuth{}, Deletions: w.deletions,
-		Push: stores.Push, Clock: w.clock}
-	w.sandboxQueue, w.ledger, w.activity = stores.SandboxQueue, stores.Ledger, stores.Activity
-	w.router = &sandbox.Router{Hub: w.hub, Queue: w.sandboxQueue}
-	w.artifacts = &artifact.Service{Meta: stores.ArtifactMeta, Blobs: artifact.NewMemBlobs(), IDs: ids.Sequential("art"), Clock: w.clock, Deletions: w.deletions}
 	w.provider = sandbox.NewFake()
 	w.provider.ExecFunc = w.sandboxExec
-	w.delegator = &delegation.Delegator{BeforeCreate: w.deleteChildMidDispatch}
-	w.dispatch = &delegation.Router{Next: w.router, Delegator: w.delegator}
-	w.parentOf = map[string]string{}
-	w.catalog.Agents = delegation.Directory{Registry: agents}
-	w.svc = &service.Service{Store: w.store, Agents: agents, Nodes: flakyCancel{Router: w.dispatch, w: w}, Index: w.index, Deletions: w.deletions, Janitor: w.janitorQueue, Quotas: w.quotas,
-		Moderator: simModerator{w}}
-	w.delegator.Service = w.svc
+	gw := model.NewGateway()
+	gw.Register("sim", &simModel{w: w})
+	// 对象图与 serve 相同（app.NewCore）；存储故障在 Stores 的 seam 上注入，其余替身在构造之后替换对应字段。
+	// 外部写入（输入、审批、回答、Node 结果）经 flakyWaking；Worker 的追加另经 flakyLog（newWorker）。
+	wrapped := stores
+	wrapped.Waking = flakyWaking{WakingLog: stores.Waking, w: w}
+	w.core = app.NewCore(wrapped, app.Options{
+		Clock: w.clock, IDs: ids.Sequential, Agents: agents, Model: gw, Blobs: artifact.NewMemBlobs(), NodeAuth: node.InsecureDevAuth{},
+		Local:        []capability.Capability{w.echoCap(), w.sendCap(), simCardCap()},
+		SandboxTools: true, DefaultTimeout: deviceTimeout, NodeCacheTTL: 5 * time.Second,
+		Moderator: simModerator{w}, InjectionCheck: simDecider{w}, Meter: w.meter, Quotas: w.quotas, Pusher: simPusher{w},
+		LeaseTTL: leaseTTL,
+	})
+	w.store, w.hub, w.catalog, w.memories, w.artifacts = w.core.Store, w.core.Hub, w.core.Catalog, w.core.Memory, w.core.Artifacts
+	w.delegator, w.dispatch, w.svc, w.notifier = w.core.Delegator, w.core.Dispatch, w.core.Service, w.core.Notifier
+	// 快照每 5 条写一次，使加载几乎总是走"快照 + 剩余日志"的路径。
+	w.store.SnapshotEvery = 5
+	w.memories.MaxPerUser = 20
+	// Worker 解析工具时查询设备目录偶尔失败；Hub 的登记与上下线不受影响。
+	w.catalog.Nodes = flakyDirectory{Directory: stores.Dir, w: w}
+	w.catalog.AskTimeout = askTimeout
+	w.delegator.BeforeCreate = w.deleteChildMidDispatch
+	w.svc.Nodes = flakyCancel{Router: w.dispatch, w: w}
 	for range 2 {
 		w.controllers = append(w.controllers, w.newController())
 	}
@@ -433,11 +434,9 @@ func New(opts Options) (*World, error) {
 
 func (w *World) newController() *sandbox.Controller {
 	w.nextC++
-	return &sandbox.Controller{
-		ID: fmt.Sprintf("c%d", w.nextC), Queue: w.sandboxQueue, Hub: w.hub, Provider: w.provider,
-		Activity: w.activity, Ledger: w.ledger, Clock: w.clock, LeaseTTL: leaseTTL, IdleTTL: 2 * time.Minute,
-		Artifacts: w.artifacts, Lifecycle: &lifecycle.Guard{Index: w.index, Deletions: w.deletions}, Meter: w.meter,
-	}
+	c := w.core.ControllerConfig(fmt.Sprintf("c%d", w.nextC), w.provider, nil)
+	c.Heartbeat, c.IdleTTL = 0, 2*time.Minute // 续约按真实时间，模拟中关闭
+	return c
 }
 
 func (w *World) stepController(i int) error {
@@ -629,22 +628,19 @@ func (w *World) answer(sid string, c *session.Call, valid bool) error {
 // newWorker 创建第 slot 个 Worker：0 号只认领交互工作，长任务移交给其他 Worker（ADR-0029）。
 func (w *World) newWorker(slot int) *runtime.Worker {
 	w.nextW++
-	gw := model.NewGateway()
-	gw.Register("sim", &simModel{w: w})
-	// Worker 的写入经 flakyLog；Service、Hub 与控制器用可靠的 Store。
-	store := *w.store
-	store.Log = flakyLog{Log: w.log, w: w}
 	id, pool := fmt.Sprintf("w%d", w.nextW), workqueue.Pool{}
 	if slot == 0 {
 		id, pool = fmt.Sprintf("%s%d", interactiveWorker, w.nextW), workqueue.Pool{MinPriority: workqueue.Interactive}
 	}
-	return runtime.New(runtime.Config{
-		ID: id, Store: &store, Queue: poolQueue{Queue: w.queue, w: w}, Pool: pool, Agents: w.agents,
-		Model: gw, Catalog: w.catalog, Dispatch: w.dispatch, Delegation: w.delegator, InjectionCheck: simDecider{w}, LeaseTTL: leaseTTL,
-		MaxTakeovers: 4, MaxModelErrors: 3, ApprovalTimeout: approvalTimeout, Memory: w.memories,
-		Meter: w.meter, Quotas: w.quotas, QuotaRecheck: time.Minute, Moderator: simModerator{w},
-		Notify: simNotifier{w}, NotifyRunsAfter: 30 * time.Second,
-	})
+	cfg := w.core.WorkerConfig(id, pool, nil)
+	// Worker 的写入经 flakyLog；Service、Hub 与控制器用可靠的 Store。
+	store := *w.store
+	store.Log = flakyLog{Log: w.log, w: w}
+	cfg.Store, cfg.Queue = &store, poolQueue{Queue: w.queue, w: w}
+	cfg.Heartbeat = 0 // 续约按真实时间，模拟中关闭
+	cfg.MaxTakeovers, cfg.MaxModelErrors, cfg.ApprovalTimeout, cfg.QuotaRecheck = 4, 3, approvalTimeout, time.Minute
+	cfg.Notify, cfg.NotifyRunsAfter = simNotifier{w}, 30*time.Second
+	return runtime.New(cfg)
 }
 
 func (w *World) chance(p float64) bool { return w.rng.Float64() < p }
