@@ -80,6 +80,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // Bus 是跨进程的 live.Bus：发布只写本进程；订阅合并本进程的增量与当前 Attempt 执行进程的增量。
+// 同一 Session 在本进程的多个订阅（同一用户的几台设备、HTTP 与 Connection）共用一条到执行进程的拉取连接
+// （延展性评审 §4.5）。
 type Bus struct {
 	Local *live.MemBus
 	Log   eventlog.Log
@@ -90,6 +92,53 @@ type Bus struct {
 	// Retry 是连接断开后的重连间隔，默认 1 秒。
 	Retry  time.Duration
 	Logger *slog.Logger
+
+	mu    sync.Mutex
+	pulls map[pullKey]*puller
+}
+
+type pullKey struct{ endpoint, sessionID string }
+
+// puller 是到一个执行进程、一个 Session 的拉取连接，收到的增量分发给本进程的全部订阅。
+type puller struct {
+	subs   map[chan<- live.Delta]struct{}
+	cancel context.CancelFunc
+}
+
+// attach 让 out 收到 endpoint 上 sessionID 的增量，返回取消函数。最后一个订阅取消时断开连接。
+func (b *Bus) attach(endpoint, sessionID string, out chan<- live.Delta) func() {
+	k := pullKey{endpoint, sessionID}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.pulls == nil {
+		b.pulls = map[pullKey]*puller{}
+	}
+	p := b.pulls[k]
+	if p == nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		p = &puller{subs: map[chan<- live.Delta]struct{}{}, cancel: cancel}
+		b.pulls[k] = p
+		go b.pull(ctx, endpoint, sessionID, func(d live.Delta) {
+			b.mu.Lock()
+			defer b.mu.Unlock()
+			for sub := range p.subs {
+				offer(sub, d)
+			}
+		})
+	}
+	p.subs[out] = struct{}{}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			b.mu.Lock()
+			defer b.mu.Unlock()
+			delete(p.subs, out)
+			if len(p.subs) == 0 {
+				p.cancel()
+				delete(b.pulls, k)
+			}
+		})
+	}
 }
 
 func (b *Bus) Publish(d live.Delta) { b.Local.Publish(d) }
@@ -152,9 +201,7 @@ func (b *Bus) follow(ctx context.Context, sessionID string, out chan<- live.Delt
 			stop()
 			stop, connected = func() {}, want
 			if want != "" {
-				pctx, cancel := context.WithCancel(ctx)
-				go b.pull(pctx, want, sessionID, out)
-				stop = cancel
+				stop = b.attach(want, sessionID, out)
 			}
 		}
 		if _, err := b.Log.Wait(ctx, sessionID, after); err != nil && !b.sleep(ctx) {
@@ -163,10 +210,10 @@ func (b *Bus) follow(ctx context.Context, sessionID string, out chan<- live.Delt
 	}
 }
 
-// pull 从 endpoint 持续拉取增量，断开后按 Retry 重连，直到 ctx 结束。
-func (b *Bus) pull(ctx context.Context, endpoint, sessionID string, out chan<- live.Delta) {
+// pull 从 endpoint 持续拉取增量交给 emit，断开后按 Retry 重连，直到 ctx 结束。
+func (b *Bus) pull(ctx context.Context, endpoint, sessionID string, emit func(live.Delta)) {
 	for {
-		err := b.stream(ctx, endpoint, sessionID, out)
+		err := b.stream(ctx, endpoint, sessionID, emit)
 		if ctx.Err() != nil {
 			return
 		}
@@ -179,7 +226,7 @@ func (b *Bus) pull(ctx context.Context, endpoint, sessionID string, out chan<- l
 	}
 }
 
-func (b *Bus) stream(ctx context.Context, endpoint, sessionID string, out chan<- live.Delta) error {
+func (b *Bus) stream(ctx context.Context, endpoint, sessionID string, emit func(live.Delta)) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(endpoint, "/")+Path+url.PathEscape(sessionID), nil)
 	if err != nil {
 		return err
@@ -212,7 +259,7 @@ func (b *Bus) stream(ctx context.Context, endpoint, sessionID string, out chan<-
 			return err
 		}
 		if d.SessionID == sessionID {
-			offer(out, d)
+			emit(d)
 		}
 	}
 	return sc.Err()
@@ -262,10 +309,14 @@ func (b *Bus) SubscribeFollowing(sessionID string) (<-chan live.Delta, func(endp
 		stop()
 		connected, stop = endpoint, func() {}
 		if endpoint != "" {
-			pctx, pcancel := context.WithCancel(ctx)
-			go b.pull(pctx, endpoint, sessionID, out)
-			stop = pcancel
+			stop = b.attach(endpoint, sessionID, out)
 		}
 	}
-	return out, follow, func() { cancel(); unsubscribe() }
+	return out, follow, func() {
+		cancel()
+		unsubscribe()
+		mu.Lock()
+		defer mu.Unlock()
+		stop()
+	}
 }

@@ -201,3 +201,26 @@ func TestRemoteLateSubscriberGetsSnapshot(t *testing.T) {
 		t.Fatal("no snapshot from the executing process")
 	}
 }
+
+// TestSubscriptionsShareOnePull：同一 Session 在本进程的多个订阅共用一条到执行进程的拉取连接；
+// 每个订阅都收到增量；最后一个订阅取消时连接断开。
+func TestSubscriptionsShareOnePull(t *testing.T) {
+	a := newProcess(t, "secret")
+	b := &Bus{Local: live.NewMemBus(), Log: memlog.New(), Self: "http://b.internal", Token: "secret", Retry: 20 * time.Millisecond}
+	d1, follow1, cancel1 := b.SubscribeFollowing("s1")
+	d2, follow2, cancel2 := b.SubscribeFollowing("s1")
+	follow1(a.srv.URL)
+	follow2(a.srv.URL)
+	receive(t, a.bus.MemBus, d1, "both")
+	receive(t, a.bus.MemBus, d2, "both")
+	if n := a.bus.subs.Load(); n != 1 {
+		t.Fatalf("%d pull connections for one session, want 1", n)
+	}
+	cancel1()
+	receive(t, a.bus.MemBus, d2, "still")
+	if n := a.bus.subs.Load(); n != 1 {
+		t.Fatalf("%d pull connections after one subscriber left", n)
+	}
+	cancel2()
+	eventually(t, "disconnect after the last subscriber", func() bool { return a.bus.subs.Load() == 0 })
+}

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -76,16 +78,32 @@ func (c *Client) Run(ctx context.Context) error {
 		if connected {
 			backoff = 500 * time.Millisecond
 		}
-		c.cfg.Logger.Warn("node connection lost", "err", err, "retry_in", backoff)
-		jitter := time.Duration(rand.Int64N(int64(backoff / 2)))
+		// 网关忙（503）时按它给出的 Retry-After 等待：重连风暴中让出握手名额（服务端已加了抖动）。
+		wait := backoff + time.Duration(rand.Int64N(int64(backoff/2)))
+		var busy *busyError
+		if errors.As(err, &busy) {
+			wait = max(wait, busy.retryAfter)
+		}
+		c.cfg.Logger.Warn("node connection lost", "err", err, "retry_in", wait)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(backoff + jitter):
+		case <-time.After(wait):
 		}
 		backoff = min(backoff*2, 30*time.Second)
 	}
 }
+
+// busyError 是网关以 503 拒绝握手（同时进行的握手过多）。
+type busyError struct {
+	retryAfter time.Duration
+	err        error
+}
+
+func (e *busyError) Error() string {
+	return fmt.Sprintf("gateway busy, retry after %s: %v", e.retryAfter, e.err)
+}
+func (e *busyError) Unwrap() error { return e.err }
 
 // session 处理一条连接直到断开；返回是否曾成功握手。
 func (c *Client) session(ctx context.Context) (bool, error) {
@@ -95,8 +113,13 @@ func (c *Client) session(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("token: %w", err)
 	}
-	conn, _, err := websocket.Dial(ctx, c.cfg.URL, nil)
+	conn, resp, err := websocket.Dial(ctx, c.cfg.URL, nil)
 	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusServiceUnavailable {
+			if n, perr := strconv.Atoi(resp.Header.Get("Retry-After")); perr == nil && n > 0 {
+				return false, &busyError{retryAfter: time.Duration(n) * time.Second, err: err}
+			}
+		}
 		return false, err
 	}
 	defer conn.CloseNow()

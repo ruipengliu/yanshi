@@ -6,7 +6,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -27,6 +29,39 @@ type Gateway struct {
 	Logger  *slog.Logger
 	// PingInterval 是心跳间隔；对端无响应时断开，Node 随之标记离线。
 	PingInterval time.Duration
+	// MaxHandshakes 是同时进行的接入握手（读 Hello、鉴权、登记 Node）上限，默认 128；HandshakeWait 是排队的上限，
+	// 默认 2 秒，超过时以 503 拒绝，Retry-After 为带抖动的 2～10 秒。网关滚动重启时成批的连接同时重连，而登记 Node
+	// 是一次数据库事务：不限制时重连风暴会压垮数据库（延展性评审 §4.5）。
+	MaxHandshakes int
+	HandshakeWait time.Duration
+
+	once  sync.Once
+	slots chan struct{}
+}
+
+// admit 取得一个握手名额；排队超过 HandshakeWait 时返回 false。
+func (g *Gateway) admit(ctx context.Context) (func(), bool) {
+	g.once.Do(func() {
+		n := g.MaxHandshakes
+		if n <= 0 {
+			n = 128
+		}
+		g.slots = make(chan struct{}, n)
+	})
+	wait := g.HandshakeWait
+	if wait <= 0 {
+		wait = 2 * time.Second
+	}
+	t := time.NewTimer(wait)
+	defer t.Stop()
+	select {
+	case g.slots <- struct{}{}:
+		var once sync.Once
+		return func() { once.Do(func() { <-g.slots }) }, true
+	case <-t.C:
+	case <-ctx.Done():
+	}
+	return nil, false
 }
 
 func (g *Gateway) log() *slog.Logger {
@@ -74,6 +109,14 @@ func (c *conn) read(ctx context.Context) (*v1.NodeMessage, error) {
 }
 
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	handshakeDone, ok := g.admit(r.Context())
+	if !ok {
+		metrics.HandshakesRejected.WithLabelValues().Inc()
+		w.Header().Set("Retry-After", strconv.Itoa(2+rand.IntN(9)))
+		http.Error(w, "too many connection attempts; retry later", http.StatusServiceUnavailable)
+		return
+	}
+	defer handshakeDone()
 	ws, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		return
@@ -117,6 +160,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}}}); err != nil {
 		return
 	}
+	handshakeDone()
 	var cc *channel.Conn
 	if g.Channel != nil {
 		cc = g.Channel.Open(ctx, channel.Identity{BusinessLine: nc.BusinessLine, EndUser: nc.EndUser,

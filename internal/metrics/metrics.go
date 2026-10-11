@@ -61,6 +61,7 @@ var (
 	HTTPRequests       = counter("http_requests_total", "对外 API 请求。", "route", "code")
 	HTTPDuration       = histogram("http_request_duration_seconds", "对外 API 请求耗时（流式接口为连接时长）。", latency, "route")
 	NodesConnected     = gauge("nodes_connected", "本进程网关上已接入的 Node 连接数。")
+	HandshakesRejected = counter("handshakes_rejected_total", "因同时进行的接入握手过多而以 503 拒绝的连接（网关重启后的重连风暴）。")
 	LivePeerStreams    = gauge("live_peer_streams", "本进程向其他进程拉取实时增量的连接数。")
 	// 业务线名不是个人数据，可以作为标签（docs/design/m4-quota-usage.md §5）。
 	UsageCost           = counter("usage_cost_micros_total", "记录的用量金额（微元）；kind = model | sandbox | call。", "business_line", "kind")

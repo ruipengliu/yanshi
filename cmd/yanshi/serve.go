@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"yanshi/internal/agentdef"
 	"yanshi/internal/artifact"
 	"yanshi/internal/artifact/fsblob"
@@ -98,8 +100,9 @@ type backends struct {
 }
 
 // openStorage 按 kind 创建存储。postgres 模式下多个 serve 进程可共享同一数据库水平扩展。
-// notifyShards 是 PostgreSQL 通知的分片数（ADR-0028），所有进程须一致。
-func openStorage(ctx context.Context, kind, dsn string, notifyShards int, clk clock.Clock, logger *slog.Logger) (backends, func(), error) {
+// notifyShards 是 PostgreSQL 通知的分片数（ADR-0028），所有进程须一致。migrate 为 false 时不执行迁移，只检查
+// 迁移都已应用（生产中由独立的 yanshi migrate 任务执行）。
+func openStorage(ctx context.Context, kind, dsn string, notifyShards int, migrate bool, clk clock.Clock, logger *slog.Logger) (backends, func(), error) {
 	switch kind {
 	case "memory":
 		return backends{memlog.New(), memqueue.New(clk), node.NewMemDirectory(clk), node.NewMemInbox(),
@@ -111,9 +114,9 @@ func openStorage(ctx context.Context, kind, dsn string, notifyShards int, clk cl
 		if err != nil {
 			return backends{}, nil, fmt.Errorf("connect postgres: %w", err)
 		}
-		if err := pg.Migrate(ctx, pool); err != nil {
+		if err := migrateOrCheck(ctx, pool, migrate); err != nil {
 			pool.Close()
-			return backends{}, nil, fmt.Errorf("migrate: %w", err)
+			return backends{}, nil, err
 		}
 		metrics.RegisterPool(func() (int32, int32, int32, int64, int64, time.Duration) {
 			s := pool.Stat()
@@ -131,6 +134,48 @@ func openStorage(ctx context.Context, kind, dsn string, notifyShards int, clk cl
 		return b, func() { cancel(); pool.Close() }, nil
 	}
 	return backends{}, nil, fmt.Errorf("unknown storage %q (memory | postgres)", kind)
+}
+
+// migrateOrCheck 在开发时直接迁移；生产中迁移由独立任务完成，这里只确认没有遗漏：版本不一致的进程不应启动。
+func migrateOrCheck(ctx context.Context, pool *pgxpool.Pool, migrate bool) error {
+	if migrate {
+		if err := pg.Migrate(ctx, pool); err != nil {
+			return fmt.Errorf("migrate: %w", err)
+		}
+		return nil
+	}
+	pending, err := pg.Pending(ctx, pool)
+	if err != nil {
+		return fmt.Errorf("check migrations: %w", err)
+	}
+	if len(pending) > 0 {
+		return fmt.Errorf("database is missing migrations %v: run yanshi migrate first", pending)
+	}
+	return nil
+}
+
+// migrateCmd 应用 PostgreSQL 迁移后退出。多个进程同时启动时由迁移锁串行化；生产部署中作为发布前的独立任务运行，
+// 使大表上的迁移（如 CREATE INDEX CONCURRENTLY，pg.NoTransaction）不必在每个 serve 进程启动时执行。
+func migrateCmd(args []string) error {
+	fs := flag.NewFlagSet("migrate", flag.ExitOnError)
+	dsn := fs.String("pg-dsn", envOr("YANSHI_PG_DSN", devPGDSN), "PostgreSQL 地址")
+	_ = fs.Parse(args)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	pool, err := pg.Open(ctx, *dsn, "")
+	if err != nil {
+		return fmt.Errorf("connect postgres: %w", err)
+	}
+	defer pool.Close()
+	pending, err := pg.Pending(ctx, pool)
+	if err != nil {
+		return err
+	}
+	if err := pg.Migrate(ctx, pool); err != nil {
+		return err
+	}
+	fmt.Printf("applied %d migration(s)\n", len(pending))
+	return nil
 }
 
 // defaultModelLimits 是调用真实模型提供商的默认约束（model.Limits）：每次调用 10 分钟时限，暂时性失败重试 2 次；
@@ -193,6 +238,7 @@ func serve(args []string) error {
 	storage := fs.String("storage", "memory", "存储：memory | postgres")
 	dsn := fs.String("pg-dsn", envOr("YANSHI_PG_DSN", devPGDSN), "PostgreSQL 地址（storage=postgres）")
 	notifyShards := fs.Int("notify-shards", 1, "PostgreSQL 通知的分片数（ADR-0028）：进程只 LISTEN 有订阅者的分片频道；所有进程须一致")
+	migrate := fs.Bool("migrate", true, "启动时应用 PostgreSQL 迁移；生产中由 yanshi migrate 任务执行，serve 置 false 时只检查迁移都已应用")
 	sandboxKind := fs.String("sandbox", "none", "代码沙箱：none | docker")
 	sandboxImage := fs.String("sandbox-image", "yanshi-sandbox:dev", "沙箱镜像（make sandbox-image 构建）")
 	sandboxRuntime := fs.String("sandbox-runtime", "", "沙箱容器运行时，如 runsc（gVisor）")
@@ -242,7 +288,7 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
-	b, closeStorage, err := openStorage(ctx, *storage, *dsn, *notifyShards, clk, logger)
+	b, closeStorage, err := openStorage(ctx, *storage, *dsn, *notifyShards, *migrate, clk, logger)
 	if err != nil {
 		return err
 	}
