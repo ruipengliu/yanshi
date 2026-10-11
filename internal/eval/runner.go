@@ -24,7 +24,6 @@ import (
 	"yanshi/internal/artifact"
 	"yanshi/internal/askuser"
 	"yanshi/internal/call"
-	"yanshi/internal/capability"
 	"yanshi/internal/card"
 	"yanshi/internal/clock"
 	"yanshi/internal/delegation"
@@ -41,7 +40,6 @@ import (
 	"yanshi/internal/service"
 	"yanshi/internal/session"
 	"yanshi/internal/workqueue"
-	"yanshi/sdk/nodesdk"
 )
 
 // BusinessLine 是评测使用的业务线。
@@ -200,59 +198,39 @@ func Run(ctx context.Context, cfg Config, cases []*Case) (*Report, error) {
 func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 	clk := clock.Real{}
 	st := app.Memory(clk)
-	queue := st.Queue
-	store := &session.Store{Log: st.Log, Waking: st.Waking, IDs: ids.Random(), Clock: clk, Snapshots: st.Snapshots}
-	dir, inbox := st.Dir, st.Inbox
-	hub := &node.Hub{Dir: dir, Inbox: inbox, Store: store, Auth: node.InsecureDevAuth{}}
-	sbxQueue := st.SandboxQueue
-	router := &sandbox.Router{Hub: hub, Queue: sbxQueue}
-	arts := &artifact.Service{Meta: st.ArtifactMeta, Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk}
-	// 评测业务线视为已取得健康信息的单独同意，以评测模型对健康信息的处理（ADR-0022）。
-	mems := &memory.Service{Store: st.Memories, Grants: st.Grants, Clock: clk, IDs: ids.Random(),
-		HealthAllowed: func(bl string) bool { return bl == BusinessLine }}
-	if cfg.EmbedModel != "" {
-		mems.Embedder, mems.EmbedModel = cfg.Model, cfg.EmbedModel
-	}
-	catalog := &capability.Catalog{
-		Local: capability.NewRegistry(append([]capability.Capability{capability.ClockNow(clk), card.New(arts.Meta)}, memory.Capabilities(mems)...)...),
-		Nodes: dir, DefaultTimeout: 10 * time.Minute,
-	}
-	if cfg.Sandbox != nil {
-		catalog.Sandbox = &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID}
-	}
 	agents, versions, err := derive(cfg, cases)
 	if err != nil {
 		return nil, err
 	}
-	delegator := &delegation.Delegator{}
-	dispatch := &delegation.Router{Next: router, Delegator: delegator}
-	catalog.Agents = delegation.Directory{Registry: agents}
-	svc := &service.Service{Store: store, Agents: agents, Nodes: dispatch,
-		Index: st.Index, Deletions: st.Deletions, Artifacts: arts}
-	delegator.Service = svc
-	idle := &workqueue.IdleGate{Ready: queue.(workqueue.Signaler).Ready()}
-	bus := live.NewMemBus()
+	opts := app.Options{
+		Clock: clk, Agents: agents, Model: cfg.Model, Blobs: artifact.NewMemBlobs(), NodeAuth: node.InsecureDevAuth{},
+		SandboxTools: cfg.Sandbox != nil, DefaultTimeout: 10 * time.Minute,
+		// 评测业务线视为已取得健康信息的单独同意，以评测模型对健康信息的处理（ADR-0022）。
+		HealthAllowed: func(bl string) bool { return bl == BusinessLine },
+		Live:          live.NewMemBus(), LeaseTTL: cfg.LeaseTTL, Logger: cfg.Logger,
+	}
+	if cfg.EmbedModel != "" {
+		opts.Embedder, opts.EmbedModel = cfg.Model, cfg.EmbedModel
+	}
+	core := app.NewCore(st, opts)
+	idle := &workqueue.IdleGate{Ready: st.Queue.(workqueue.Signaler).Ready()}
 	pool := &workerPool{ctx: ctx, workers: map[string]*runtime.Worker{}, newCfg: func(id string) runtime.Config {
-		return runtime.Config{ID: id, Store: store, Queue: queue, Agents: agents,
-			Model: cfg.Model, Catalog: catalog, Dispatch: dispatch, Delegation: delegator, Artifacts: arts, Memory: mems, Logger: cfg.Logger,
-			LeaseTTL: cfg.LeaseTTL, Heartbeat: cfg.LeaseTTL / 3, Idle: idle, Live: bus}
+		return core.WorkerConfig(id, workqueue.Pool{}, idle)
 	}}
 	for range 2 * cfg.Parallel {
 		pool.spawn()
 	}
 	if cfg.Sandbox != nil {
-		c := &sandbox.Controller{ID: "eval-sandbox", Queue: sbxQueue, Hub: hub, Provider: cfg.Sandbox, Activity: sandbox.NewMemActivity(),
-			Ledger: nodesdk.NewMemLedger(), Artifacts: arts, Clock: clk, Logger: cfg.Logger, LeaseTTL: 30 * time.Second, Heartbeat: 10 * time.Second}
-		go c.Run(ctx)
+		go core.ControllerConfig("eval-sandbox", cfg.Sandbox, nil).Run(ctx)
 	}
-	in := &instance{cfg: cfg, svc: svc, hub: hub, mems: mems, agents: agents, version: versions, workers: pool, arts: arts,
-		calls: &call.Manager{Service: svc, Realtime: cfg.Realtime, Feed: feed.Source{Log: store.Log, Live: bus}, Logger: cfg.Logger}}
+	in := &instance{cfg: cfg, svc: core.Service, hub: core.Hub, mems: core.Memory, agents: agents, version: versions, workers: pool, arts: core.Artifacts,
+		calls: &call.Manager{Service: core.Service, Realtime: cfg.Realtime, Feed: feed.Source{Log: st.Log, Live: opts.Live}, Logger: cfg.Logger}}
 	if slices.ContainsFunc(cases, func(c *Case) bool { return c.Setup.CRM }) {
-		crm, err := startCRM(ctx, arts, cfg.Logger)
+		crm, err := startCRM(ctx, core.Artifacts, cfg.Logger)
 		if err != nil {
 			return nil, err
 		}
-		in.crm, catalog.MCP = crm, crm.connector
+		in.crm, core.Catalog.MCP = crm, crm.connector
 	}
 	return in, nil
 }
