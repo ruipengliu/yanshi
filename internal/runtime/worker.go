@@ -290,6 +290,9 @@ func (w *Worker) Step(ctx context.Context) (bool, error) {
 		}
 		return true, w.startAttempt(ctx, r)
 	}
+	if w.st.WorkClass().Priority == workqueue.Background {
+		ctx = model.WithBackground(ctx) // 长任务的模型调用在提供商准入处让交互调用先行（ADR-0029）
+	}
 	err := w.advance(ctx, r)
 	if err == nil || ctx.Err() != nil {
 		w.failingSince = time.Time{}

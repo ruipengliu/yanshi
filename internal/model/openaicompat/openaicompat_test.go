@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/model"
@@ -183,5 +184,43 @@ func TestUIContextEncoding(t *testing.T) {
 	}
 	if got, want := model.EstimateTokens(blocks), model.EstimateText(model.UIContextText(ui.GetUiContext()))+model.EstimateText("这个什么时候到？"); got != want {
 		t.Fatalf("estimate %d, want %d", got, want)
+	}
+}
+
+// TestStalledStreamFails：流式响应在 StallTimeout 内没有任何数据时以 ErrStalled 结束，而不是无限等待。
+func TestStalledStreamFails(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"你\"}}]}\n\n")
+		w.(http.Flusher).Flush()
+		select { // 之后不再发送任何数据
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
+	p := &Provider{BaseURL: srv.URL, StallTimeout: 50 * time.Millisecond}
+	start := time.Now()
+	_, err := p.Generate(context.Background(), &model.Request{Model: "m"}, nil)
+	if !errors.Is(err, model.ErrStalled) || !model.Retryable(err) {
+		t.Fatalf("err = %v, want a retryable ErrStalled", err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("stall detected after %s", d)
+	}
+}
+
+func TestRetryAfterIsReported(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "7")
+		w.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprint(w, `{"error":{"code":"rate_limit_exceeded","message":"slow down"}}`)
+	}))
+	defer srv.Close()
+	_, err := (&Provider{BaseURL: srv.URL}).Generate(context.Background(), &model.Request{Model: "m"}, nil)
+	var pe *model.ProviderError
+	if !errors.As(err, &pe) || pe.Status != 429 || pe.RetryAfter != 7*time.Second || !model.Retryable(err) {
+		t.Fatalf("err = %#v", err)
 	}
 }

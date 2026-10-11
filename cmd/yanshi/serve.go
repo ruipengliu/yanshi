@@ -133,32 +133,33 @@ func openStorage(ctx context.Context, kind, dsn string, notifyShards int, clk cl
 	return backends{}, nil, fmt.Errorf("unknown storage %q (memory | postgres)", kind)
 }
 
-// gateway 按环境变量配置模型供应商：
+// defaultModelLimits 是调用真实模型提供商的默认约束（model.Limits）：每次调用 10 分钟时限，暂时性失败重试 2 次；
+// 不限并发与速率。提供商有账号级的并发或速率上限时，用 serve -model-concurrency / -model-rps 配置。
+var defaultModelLimits = model.Limits{Timeout: 10 * time.Minute, Retries: 2, Backoff: time.Second, MaxBackoff: 30 * time.Second}
+
+// gateway 按环境变量配置模型供应商；真实提供商经 model.Guard 施加 limits（每个提供商各自计数）：
 //
 //	echo   始终可用
 //	ark       ARK_API_KEY（可选 ARK_BASE_URL）
 //	tokenhub  TOKENHUB_API_KEY（可选 TOKENHUB_BASE_URL），腾讯云 TokenHub 的 OpenAI 兼容接口
 //	local  YANSHI_LOCAL_BASE_URL（可选 YANSHI_LOCAL_API_KEY），私有化 OpenAI 兼容推理服务
-func gateway(logger *slog.Logger) *model.Gateway {
+func gateway(logger *slog.Logger, limits model.Limits) *model.Gateway {
 	gw := model.NewGateway()
 	gw.Register("echo", echo.Provider{})
 	gw.Register("bench", bench.Provider{})
+	register := func(name, base, key string) {
+		gw.Register(name, &model.Guard{Name: name, Provider: &openaicompat.Provider{BaseURL: base, APIKey: key}, Limits: limits})
+		logger.Info("model provider configured", "provider", name, "base_url", base,
+			"max_concurrency", limits.MaxConcurrency, "rps", limits.RPS, "timeout", limits.Timeout)
+	}
 	if key := os.Getenv("ARK_API_KEY"); key != "" {
-		base := os.Getenv("ARK_BASE_URL")
-		if base == "" {
-			base = openaicompat.ArkBaseURL
-		}
-		gw.Register("ark", &openaicompat.Provider{BaseURL: base, APIKey: key})
-		logger.Info("model provider configured", "provider", "ark", "base_url", base)
+		register("ark", envOr("ARK_BASE_URL", openaicompat.ArkBaseURL), key)
 	}
 	if key := os.Getenv("TOKENHUB_API_KEY"); key != "" {
-		base := envOr("TOKENHUB_BASE_URL", openaicompat.TokenHubBaseURL)
-		gw.Register("tokenhub", &openaicompat.Provider{BaseURL: base, APIKey: key})
-		logger.Info("model provider configured", "provider", "tokenhub", "base_url", base)
+		register("tokenhub", envOr("TOKENHUB_BASE_URL", openaicompat.TokenHubBaseURL), key)
 	}
 	if base := os.Getenv("YANSHI_LOCAL_BASE_URL"); base != "" {
-		gw.Register("local", &openaicompat.Provider{BaseURL: base, APIKey: os.Getenv("YANSHI_LOCAL_API_KEY")})
-		logger.Info("model provider configured", "provider", "local", "base_url", base)
+		register("local", base, os.Getenv("YANSHI_LOCAL_API_KEY"))
 	}
 	return gw
 }
@@ -213,6 +214,11 @@ func serve(args []string) error {
 	moderationKind := fs.String("moderation", "mock", "内容安全提供商（docs/design/m4-moderation.md）：mock（关键词，仅开发测试；上线前须接入真实提供商）| none")
 	moderationTerms := fs.String("moderation-terms", "", "mock 提供商的关键词文件（每行一个）；默认只含测试标记词")
 	usageRetention := fs.Duration("usage-retention", 400*24*time.Hour, "用量记录的保留期")
+	modelLimits := defaultModelLimits
+	fs.DurationVar(&modelLimits.Timeout, "model-timeout", modelLimits.Timeout, "一次模型调用的时限（不含排队与重试等待）")
+	fs.IntVar(&modelLimits.Retries, "model-retries", modelLimits.Retries, "模型调用暂时性失败（限流、服务端错误、连接中断）的重试次数；已输出内容后不重试")
+	fs.IntVar(&modelLimits.MaxConcurrency, "model-concurrency", 0, "本进程对每个模型提供商的并发调用上限，0 表示不限；排队时交互调用优先（ADR-0029）")
+	fs.Float64Var(&modelLimits.RPS, "model-rps", 0, "本进程对每个模型提供商每秒发起调用的上限，0 表示不限")
 	_ = fs.Parse(args)
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -275,7 +281,7 @@ func serve(args []string) error {
 		}
 		defer stopPeer()
 	}
-	gw := gateway(logger)
+	gw := gateway(logger, modelLimits)
 	dir := b.dir
 	hub := &node.Hub{
 		Dir: dir, Inbox: b.inbox, Store: store, Queue: queue,

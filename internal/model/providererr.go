@@ -3,8 +3,11 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // ProviderError 是模型提供商报告的错误。Error() 只含模型、HTTP 状态码与提供商的错误码（经过滤的枚举值），
@@ -17,6 +20,8 @@ type ProviderError struct {
 	// Code 是提供商的错误码或类型（ErrorCode），可能为空。
 	Code      string
 	RequestID string
+	// RetryAfter 是提供商建议的重试等待（Retry-After），没有时为 0。
+	RetryAfter time.Duration
 }
 
 func (e *ProviderError) Error() string {
@@ -69,4 +74,19 @@ func ErrorCode(body []byte) string {
 		}
 	}
 	return strings.Join(parts, "/")
+}
+
+// RetryAfter 解析 Retry-After 响应头（秒数或 HTTP 日期）；没有或无法解析时返回 0。
+func RetryAfter(h http.Header, now time.Time) time.Duration {
+	v := h.Get("Retry-After")
+	if v == "" {
+		return 0
+	}
+	if n, err := strconv.Atoi(v); err == nil && n > 0 {
+		return time.Duration(n) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil && t.After(now) {
+		return t.Sub(now)
+	}
+	return 0
 }

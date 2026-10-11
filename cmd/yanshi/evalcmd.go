@@ -71,7 +71,7 @@ func evalCmd(args []string) error {
 		return fmt.Errorf("no cases match %q in %s", *caseGlob, *suite)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	cfg := eval.Config{Agents: agents, Model: gateway(logger), Judge: *judgeModel, EmbedModel: *embedModel,
+	cfg := eval.Config{Agents: agents, Model: gateway(logger, defaultModelLimits), Judge: *judgeModel, EmbedModel: *embedModel,
 		ModelOverride: *modelOverride, AgentVersion: *agentVersion, Trials: *trials, Parallel: *parallel, Logger: logger,
 		Progress: func(name string, trial int, passed bool) {
 			mark := "✓"

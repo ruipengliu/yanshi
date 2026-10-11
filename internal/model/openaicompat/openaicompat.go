@@ -8,11 +8,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/model"
@@ -28,7 +31,46 @@ type Provider struct {
 	// BaseURL 不含 /chat/completions 后缀。
 	BaseURL string
 	APIKey  string
-	Client  *http.Client
+	// Client 为 nil 时使用 DefaultClient。
+	Client *http.Client
+	// StallTimeout 是流式响应两次收到数据之间的最长间隔（默认 2 分钟），超过时以 model.ErrStalled 结束：
+	// 连接可能已经断开而未被察觉，不能让 Worker 无限等下去。
+	StallTimeout time.Duration
+}
+
+// DefaultClient 是调用模型的 HTTP 客户端。http.DefaultClient 没有建连与等待响应头的时限，且每个主机只保留
+// 2 个空闲连接：并发的流式调用多了，每次都要重新握手。整次调用的时限由 model.Guard 控制，这里不设。
+var DefaultClient = &http.Client{Transport: &http.Transport{
+	Proxy:                 http.ProxyFromEnvironment,
+	DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ResponseHeaderTimeout: 2 * time.Minute,
+	MaxIdleConns:          1024,
+	MaxIdleConnsPerHost:   256,
+	IdleConnTimeout:       90 * time.Second,
+	ForceAttemptHTTP2:     true,
+}}
+
+func (p *Provider) client() *http.Client {
+	if p.Client != nil {
+		return p.Client
+	}
+	return DefaultClient
+}
+
+// stallReader 每收到数据就推迟定时器；定时器触发时请求被取消，阻塞的读取随之返回。
+type stallReader struct {
+	r io.Reader
+	t *time.Timer
+	d time.Duration
+}
+
+func (s *stallReader) Read(b []byte) (int, error) {
+	n, err := s.r.Read(b)
+	if n > 0 {
+		s.t.Reset(s.d)
+	}
+	return n, err
 }
 
 type wireMessage struct {
@@ -174,6 +216,8 @@ func (p *Provider) Generate(ctx context.Context, req *model.Request, onDelta fun
 	if err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
 	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(p.BaseURL, "/")+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -183,11 +227,7 @@ func (p *Provider) Generate(ctx context.Context, req *model.Request, onDelta fun
 	if p.APIKey != "" {
 		hreq.Header.Set("Authorization", "Bearer "+p.APIKey)
 	}
-	client := p.Client
-	if client == nil {
-		client = http.DefaultClient
-	}
-	resp, err := client.Do(hreq)
+	resp, err := p.client().Do(hreq)
 	if err != nil {
 		return nil, err
 	}
@@ -195,13 +235,24 @@ func (p *Provider) Generate(ctx context.Context, req *model.Request, onDelta fun
 	if resp.StatusCode != http.StatusOK {
 		// 错误正文只用来识别错误码与"上下文超长"，不放进错误：它可能回显请求内容（model.ProviderError）。
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		var err error = &model.ProviderError{Model: req.Model, Status: resp.StatusCode, Code: model.ErrorCode(b), RequestID: requestID(resp)}
+		var err error = &model.ProviderError{Model: req.Model, Status: resp.StatusCode, Code: model.ErrorCode(b),
+			RequestID: requestID(resp), RetryAfter: model.RetryAfter(resp.Header, time.Now())}
 		if resp.StatusCode == http.StatusBadRequest && contextOverflow(string(b)) {
 			err = fmt.Errorf("%w: %w", model.ErrContextOverflow, err)
 		}
 		return nil, err
 	}
-	return decodeStream(resp.Body, req.Model, onDelta)
+	stall := p.StallTimeout
+	if stall <= 0 {
+		stall = 2 * time.Minute
+	}
+	t := time.AfterFunc(stall, func() { cancel(model.ErrStalled) })
+	defer t.Stop()
+	out, err := decodeStream(&stallReader{r: resp.Body, t: t, d: stall}, req.Model, onDelta)
+	if err != nil && errors.Is(context.Cause(ctx), model.ErrStalled) {
+		return nil, fmt.Errorf("model %s: %w (no data for %s)", req.Model, model.ErrStalled, stall)
+	}
+	return out, err
 }
 
 func decodeStream(r io.Reader, modelID string, onDelta func(model.Delta)) (*model.Response, error) {
@@ -325,18 +376,15 @@ func (p *Provider) Embed(ctx context.Context, modelID string, texts []string) ([
 	if p.APIKey != "" {
 		hreq.Header.Set("Authorization", "Bearer "+p.APIKey)
 	}
-	client := p.Client
-	if client == nil {
-		client = http.DefaultClient
-	}
-	resp, err := client.Do(hreq)
+	resp, err := p.client().Do(hreq)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("embed: %w", &model.ProviderError{Model: modelID, Status: resp.StatusCode, Code: model.ErrorCode(b), RequestID: requestID(resp)})
+		return nil, fmt.Errorf("embed: %w", &model.ProviderError{Model: modelID, Status: resp.StatusCode, Code: model.ErrorCode(b),
+			RequestID: requestID(resp), RetryAfter: model.RetryAfter(resp.Header, time.Now())})
 	}
 	var out struct {
 		Data []struct {
