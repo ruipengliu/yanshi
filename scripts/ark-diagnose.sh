@@ -119,7 +119,8 @@ if [ "${SYSTEM_OK}" = 1 ] || [ "${DIRECT_OK}" = 1 ]; then
   bold "附加：用 ${MODEL} 发一次最小对话"
   extra=()
   [ "${SYSTEM_OK}" = 0 ] && extra=("${DIRECT_ARGS[@]}" --resolve "${HOST}:443:$(echo ${REAL_IPS} | awk '{print $1}')")
-  resp=$(curl -sS -m 60 "${extra[@]}" "${ARK_BASE_URL}/chat/completions" \
+  # macOS 自带 bash 3.2 在 set -u 下展开空数组会报 unbound variable，故用 ${x[@]+...} 形式
+  resp=$(curl -sS -m 60 ${extra[@]+"${extra[@]}"} "${ARK_BASE_URL}/chat/completions" \
     -H "Authorization: Bearer ${ARK_API_KEY}" -H 'Content-Type: application/json' \
     -d "{\"model\":\"${MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"只回复两个字：收到\"}],\"stream\":false}" 2>&1)
   echo "${resp}" | sed "s/${ARK_API_KEY}/***/g" | cut -c1-400 | sed 's/^/    /'
