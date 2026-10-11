@@ -21,6 +21,24 @@ func (m textModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 	return &model.Response{Content: model.TextBlocks(m.text)}, nil
 }
 
+type embedModel struct{ textModel }
+
+func (embedModel) Embed(_ context.Context, _ string, texts []string) ([][]float32, error) {
+	return make([][]float32, len(texts)), nil
+}
+
+// TestEmbedPassesThrough：故障注入的包装转发嵌入请求（经 model.Guard 时同样可用），否则开启 -faults 后 Memory 召回失败。
+func TestEmbedPassesThrough(t *testing.T) {
+	gw := model.NewGateway()
+	gw.Register("p", &model.Guard{Name: "p", Provider: Model{Next: embedModel{}, Injector: &Injector{}}})
+	if vecs, err := gw.Embed(context.Background(), "p/e", []string{"a", "b"}); err != nil || len(vecs) != 2 {
+		t.Fatalf("embed through the fault wrapper: %v, %v", vecs, err)
+	}
+	if _, err := (Model{Next: textModel{}}).Embed(context.Background(), "m", []string{"a"}); err == nil {
+		t.Fatal("embed on a provider without embeddings succeeded")
+	}
+}
+
 func TestRules(t *testing.T) {
 	in := &Injector{}
 	if _, err := in.Add(Rule{Kind: "disk_full"}); !errors.Is(err, ErrInvalid) {

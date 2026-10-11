@@ -58,6 +58,17 @@ func (m Model) Generate(ctx context.Context, req *model.Request, onDelta func(mo
 	return nil, fmt.Errorf("model %s: %w (injected fault after %d characters)", req.Model, model.ErrStalled, sent)
 }
 
+// Embed 原样转发嵌入请求（Memory 召回）：包装不能挡住被包装提供商的可选能力，否则开启 -faults 后召回一律失败。
+func (m Model) Embed(ctx context.Context, modelID string, texts []string) ([][]float32, error) {
+	e, ok := m.Next.(model.Embedder)
+	if !ok {
+		return nil, fmt.Errorf("model %s: provider does not support embeddings", modelID)
+	}
+	return e.Embed(ctx, modelID, texts)
+}
+
+var _ model.Embedder = Model{}
+
 // Moderator 在内容安全提供商处注入"服务不可用"。
 type Moderator struct {
 	Next     moderation.Moderator
