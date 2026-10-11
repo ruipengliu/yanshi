@@ -16,13 +16,18 @@
 - [ ] **Call 的语音输出审核**（ADR-0027，[设计](./design/m3-call.md) §6）：播出的语音边生成边播放，我们的检查（助手整句生成时）只能中止剩余的播放，之前的部分依赖厂商的严格审核（`strict_audit`）。须与合规确认这一方式可接受；不可接受时改为按句缓冲、检查后再下发（增加数百毫秒延迟）。
 - [ ] **实时语音模型的价格与用量**：`pricing.yaml` 中 `volc/1.2.6.1` 为刊例价，按合同价填写；每个会话的第一轮约有 5K token 的内置文本输入，评估对短通话成本的影响。
 - [ ] **评测基线**：上线所用的 AgentDef 版本与模型通过 `make eval`，基线随代码提交（ADR-0018）。
-- [ ] **生产部署形态**（[延展性评审](./review/2026-10-11-scalability-review.md) §4.5、§4.6）：
-  - PostgreSQL 高可用与连接代理（事务模式），`LISTEN` 连接直连；
+- [ ] **生产部署形态**（[部署设计](./design/deployment.md)，[延展性评审](./review/2026-10-11-scalability-review.md) §4.5、§4.6、§8）。先完成设计 §6 的代码改动，再按清单部署：
+  - 角色开关：`serve -roles ...` 按角色裁剪（网关、交互池 Worker、后台池 Worker、沙箱控制器、Janitor），全部角色等价于现在的 serve；
+  - PostgreSQL 主 + 同步备，故障切换后已确认 Event 不丢、seq 不倒退，旧主隔离；SQL 经 PgBouncer 事务模式，`LISTEN` 与迁移锁经独立的直连 DSN（`-pg-listen-dsn`）；
+  - 就绪探针检查数据库可达、LISTEN 已生效、迁移已全部应用，而不是只返回 200；
   - 发布前以独立任务运行 `yanshi migrate`，serve 以 `-migrate=false` 启动（缺迁移时拒绝启动）；
-  - `-drain-timeout` 小于编排系统的终止宽限期，滚动发布时进行中的 Run 移交而不是等租约过期（ADR-0029）；
-  - `-model-concurrency`、`-model-rps` 按提供商的账号上限除以进程数配置（[模型调用](./design/model-calls.md)）；
+  - `-drain-timeout` 小于编排系统的终止宽限期，滚动发布时进行中的 Run 移交而不是等租约过期（ADR-0029）；PodDisruptionBudget 限制同时下线的网关数；
+  - 沙箱控制器运行在独立节点池，使用 gVisor RuntimeClass，只有它持有容器或 K8s API 权限（ADR-0008、ADR-0010）；
+  - `-model-concurrency`、`-model-rps` 按提供商的账号上限除以进程数配置（[模型调用](./design/model-calls.md)），弹性扩容时随副本数联动；
   - 所有进程的 `-notify-shards` 一致（ADR-0028）；
-  - 部署清单、配置分发（AgentDef 与发布配置在所有进程一致）与按 `run_id` 的链路追踪。
+  - 部署清单（Helm 或 Kustomize）进仓库，含网络策略：出网只允许模型、内容安全、推送三类外联（ADR-0001）；
+  - 配置分发（AgentDef、发布配置、业务线公钥、价格表在所有进程一致）与按 `run_id` 的链路追踪；
+  - 容量矩阵与准入阈值在目标环境实测后填入（评审 §8.4 第 4、6 项）。
 
 ## 建议确认
 
