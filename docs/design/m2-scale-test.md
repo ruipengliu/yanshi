@@ -85,7 +85,7 @@ P=4、W=32、无负载时的数据库查询：**优化前每秒 1218 次，优�
 | pgx 默认连接池（max(4, CPU 数)，本机为 10）远小于 Worker 数，94% 的取连接操作需要等待，P=1 只达到上限的 71% | 部署时按 Worker 数配置 `pool_max_conns`（压测中用 20）；见 §6 关于数据库连接总数 |
 | 每个 Run 约 48 次"查日志末尾"，因为每个等待者被通知唤醒后都要查一次 | `NOTIFY` 负载带上新的末尾 seq（`sid:seq`）；`Notifier` 缓存本次连接期间收到的值，`WaitAbove` 直接使用，只在缓存缺失或轮询兜底时查询。每个 Run 的查询从 109 次降到 88 次 |
 | Worker 每一步都续租 | 距上次续租不足 TTL/3 时跳过（租约必然仍有效） |
-| 空闲 Worker 各自每 100ms 轮询，开销与 Worker 总数成正比 | `runtime.IdleGate`：同一进程内同一时刻最多一个空闲 Worker 轮询；入队时发 `NOTIFY`（`workqueue.Signaler`）立即唤醒，否则以 50ms～1s 退避轮询 |
+| 空闲 Worker 各自每 100ms 轮询，开销与 Worker 总数成正比 | `workqueue.IdleGate`：同一进程内同一池（ADR-0029）同一时刻最多一个空闲 Worker 轮询；入队时发 `NOTIFY`（`workqueue.Signaler`）立即唤醒，否则以 50ms～1s 退避轮询 |
 | 进程崩溃后，Run 要等满 30s 租约才被接管 | 默认 `-lease-ttl 10s`，心跳为 TTL/3 |
 
 ## 6. 遗留问题

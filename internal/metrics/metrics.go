@@ -54,6 +54,7 @@ var (
 	SessionLoadEvents = histogram("session_load_events", "加载 Session 时回放的事件数（最新快照之后的部分）。", prometheus.ExponentialBuckets(1, 2, 16))
 	SessionLoad       = histogram("session_load_seconds", "认领 Session 时读取并投影日志的耗时。", latency)
 	QueueClaims       = counter("queue_claims_total", "Worker 认领工作队列的结果；result = ok | empty | error。", "result")
+	Handoffs          = counter("handoffs_total", "Worker 把 Run 移交给其他 Worker（ADR-0029）；reason = pool（交互 Worker 移交长任务）| shutdown（优雅停机）。", "reason")
 	Compactions       = counter("compactions_total", "上下文压缩次数。")
 	HTTPRequests      = counter("http_requests_total", "对外 API 请求。", "route", "code")
 	HTTPDuration      = histogram("http_request_duration_seconds", "对外 API 请求耗时（流式接口为连接时长）。", latency, "route")

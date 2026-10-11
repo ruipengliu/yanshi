@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/workqueue"
 )
 
 type RunStatus int
@@ -97,10 +98,19 @@ type Run struct {
 	Recall   []*v1.RecalledMemory
 	Recalled bool
 	Calls    []*Call
-	// SuspendReason 是最近一次挂起的原因（RunSuspended.reason），开始新 Attempt 时清空；
-	// 非空表示因配额挂起，SuspendedUntil 为配额重置时间（docs/design/m4-quota-usage.md §3）。
+	// SuspendReason 是最近一次挂起的原因（RunSuspended.reason），开始新 Attempt 时清空：配额用尽时
+	// SuspendedUntil 为配额重置时间（docs/design/m4-quota-usage.md §3）；SuspendHandoff 表示移交给其他 Worker。
 	SuspendReason  string
 	SuspendedUntil time.Time
+}
+
+// SuspendHandoff 是移交的挂起原因（ADR-0029）：Worker 正常结束 Attempt 并立即归还 Session，由其他 Worker 恢复，
+// 如交互 Worker 移交成为长任务的 Run、进程优雅停机。
+const SuspendHandoff = "handoff"
+
+// QuotaSuspended 报告 Run 是否因配额用尽而挂起。
+func (r *Run) QuotaSuspended() bool {
+	return r.Status == RunSuspended && r.SuspendReason != "" && r.SuspendReason != SuspendHandoff
 }
 
 // PendingCall 返回第一个尚无结果的调用，没有则返回 nil。
@@ -231,6 +241,16 @@ func (s *State) Active() *Run {
 		return s.Runs[n-1]
 	}
 	return nil
+}
+
+// WorkClass 是推进本 Session 的工作在队列中的类别（ADR-0029）：活跃 Run 调用模型的次数达到
+// workqueue.LongRunTurns 时为 Background，否则为 Interactive。
+func (s *State) WorkClass() workqueue.Class {
+	turns := 0
+	if a := s.Active(); a != nil {
+		turns = a.Turns
+	}
+	return workqueue.Classify(s.Created.GetBusinessLine(), turns)
 }
 
 func (s *State) Run(id string) *Run {

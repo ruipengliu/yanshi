@@ -95,7 +95,7 @@ type instance struct {
 type workerPool struct {
 	mu      sync.Mutex
 	ctx     context.Context
-	cancels map[string]context.CancelFunc
+	workers map[string]*runtime.Worker
 	next    int
 	newCfg  func(id string) runtime.Config
 }
@@ -105,23 +105,22 @@ func (p *workerPool) spawn() {
 	defer p.mu.Unlock()
 	id := fmt.Sprintf("eval-worker-%d", p.next)
 	p.next++
-	ctx, cancel := context.WithCancel(p.ctx)
-	p.cancels[id] = cancel
 	w := runtime.New(p.newCfg(id))
-	go w.Run(ctx)
+	p.workers[id] = w
+	go w.Run(p.ctx)
 }
 
-// crash 取消 Worker 的上下文：进行中的模型调用或能力调用被中断，租约不释放，与进程崩溃相同。
+// crash "杀掉" Worker（runtime.Worker.Kill）：进行中的模型调用或能力调用被中断，租约不释放，与进程崩溃相同。
 // 随后补充一个新 Worker，保持并发度。
 func (p *workerPool) crash(id string) bool {
 	p.mu.Lock()
-	cancel, ok := p.cancels[id]
-	delete(p.cancels, id)
+	w, ok := p.workers[id]
+	delete(p.workers, id)
 	p.mu.Unlock()
 	if !ok {
 		return false
 	}
-	cancel()
+	w.Kill()
 	p.spawn()
 	return true
 }
@@ -227,7 +226,7 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 		Index: lifecycle.NewMemIndex(), Deletions: lifecycle.NewMemDeletions(), Artifacts: arts}
 	idle := &workqueue.IdleGate{Ready: queue.Ready()}
 	bus := live.NewMemBus()
-	pool := &workerPool{ctx: ctx, cancels: map[string]context.CancelFunc{}, newCfg: func(id string) runtime.Config {
+	pool := &workerPool{ctx: ctx, workers: map[string]*runtime.Worker{}, newCfg: func(id string) runtime.Config {
 		return runtime.Config{ID: id, Store: store, Queue: queue, Agents: agents,
 			Model: cfg.Model, Catalog: catalog, Dispatch: router, Artifacts: arts, Memory: mems, Logger: cfg.Logger,
 			LeaseTTL: cfg.LeaseTTL, Heartbeat: cfg.LeaseTTL / 3, Idle: idle, Live: bus}

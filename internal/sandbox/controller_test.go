@@ -9,6 +9,7 @@ import (
 	"yanshi/internal/clock"
 	"yanshi/internal/node"
 	"yanshi/internal/sandbox"
+	"yanshi/internal/workqueue"
 	"yanshi/internal/workqueue/memqueue"
 	"yanshi/sdk/nodesdk"
 )
@@ -24,14 +25,14 @@ func TestSandboxRunsOnlyItsOwnSessionsCalls(t *testing.T) {
 	victim := sandbox.NodeID("s_victim")
 	inv := &v1.Invoke{SessionId: "s_mallory", RunId: "run_1", CallId: "call_1", Capability: "read_file", ArgumentsJson: `{"path":"notes.txt"}`}
 
-	if err := r.Dispatch(ctx, victim, inv); err == nil {
+	if err := r.Dispatch(ctx, victim, inv, workqueue.Class{}); err == nil {
 		t.Fatal("router dispatched another session's call to a sandbox")
 	}
 	// 绕过 Router 直接放入（例如来自此前的数据）：控制器丢弃它，不创建、不读取沙箱。
 	if err := hub.Inbox.Put(ctx, victim, inv); err != nil {
 		t.Fatal(err)
 	}
-	if err := q.Enqueue(ctx, victim); err != nil {
+	if err := q.Enqueue(ctx, victim, workqueue.Class{}); err != nil {
 		t.Fatal(err)
 	}
 	c := &sandbox.Controller{ID: "c1", Queue: q, Hub: hub, Provider: fake, Activity: sandbox.NewMemActivity(),

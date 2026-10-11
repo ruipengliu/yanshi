@@ -86,6 +86,7 @@ func (j *Janitor) init() {
 // Run 持续执行 Step，并周期性执行 Sweep，直到 ctx 结束。
 func (j *Janitor) Run(ctx context.Context) {
 	j.init()
+	defer j.release(ctx)
 	var lastSweep time.Time
 	for ctx.Err() == nil {
 		did, err := j.Step(ctx)
@@ -107,11 +108,24 @@ func (j *Janitor) Run(ctx context.Context) {
 	}
 }
 
+// release 在停机时归还持有的租约，使其他 Janitor 立即接手。清理是可重复的，接手者从头再做一遍。
+func (j *Janitor) release(ctx context.Context) {
+	if j.lease == nil {
+		return
+	}
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := j.Queue.Release(rctx, j.lease, false); err != nil && !errors.Is(err, workqueue.ErrLeaseLost) {
+		j.Logger.Warn("janitor release failed", "janitor", j.ID, "err", err)
+	}
+	j.lease = nil
+}
+
 // Step 认领并处理一个 Session；返回 false 表示无事可做。处理失败时保留租约，下一步重试。
 func (j *Janitor) Step(ctx context.Context) (bool, error) {
 	j.init()
 	if j.lease == nil {
-		l, err := j.Queue.Claim(ctx, j.ID, j.LeaseTTL)
+		l, err := j.Queue.Claim(ctx, j.ID, j.LeaseTTL, workqueue.Pool{})
 		if errors.Is(err, workqueue.ErrEmpty) {
 			return false, nil
 		}
@@ -345,7 +359,7 @@ func (j *Janitor) Sweep(ctx context.Context) error {
 		return err
 	}
 	for _, id := range pending {
-		if err := j.Queue.Enqueue(ctx, id); err != nil {
+		if err := j.Queue.Enqueue(ctx, id, workqueue.Class{Priority: workqueue.Background}); err != nil {
 			return err
 		}
 	}

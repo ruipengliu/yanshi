@@ -128,6 +128,9 @@ type Stats struct {
 	CallsStarted, CallsReplaced, CallTranscripts, CallTranscriptsBlocked, CallTasks, CallAnswers, CallConflicts int
 	// Worker 的日志追加失败（含已生效但报告失败的）。
 	StoreFaults int
+	// 工作类别（ADR-0029）：Worker 优雅停机，以及移交（以 handoff 挂起：交互 Worker 移交成为长任务的 Run，
+	// 或优雅停机时移交持有的 Run）。
+	GracefulStops, Handoffs int
 }
 
 // storeFault 是注入的存储故障（数据库超时、连接中断）：written 表示追加其实已经生效，调用方却只看到错误。
@@ -167,12 +170,29 @@ type hookQueue struct {
 	after func() error
 }
 
-func (q *hookQueue) Enqueue(ctx context.Context, sessionID string) error {
-	if err := q.Queue.Enqueue(ctx, sessionID); err != nil {
+func (q *hookQueue) Enqueue(ctx context.Context, sessionID string, class workqueue.Class) error {
+	if err := q.Queue.Enqueue(ctx, sessionID, class); err != nil {
 		return err
 	}
 	return q.after()
 }
+
+// poolQueue 是一个 Worker 看到的工作队列：检查认领到的工作属于该 Worker 的池（ADR-0029）。
+type poolQueue struct {
+	workqueue.Queue
+	w *World
+}
+
+func (q poolQueue) Claim(ctx context.Context, holder string, ttl time.Duration, pool workqueue.Pool) (*workqueue.Lease, error) {
+	l, err := q.Queue.Claim(ctx, holder, ttl, pool)
+	if err == nil && !pool.Admits(l.Class) {
+		q.w.poolViolation = fmt.Errorf("invariant: %s claimed %s of class %+v outside its pool %+v", holder, l.SessionID, l.Class, pool)
+	}
+	return l, err
+}
+
+// interactiveWorker 是只认领交互工作的 Worker 的 ID 前缀：模拟中 0 号 Worker 是交互 Worker。
+const interactiveWorker = "wi"
 
 // simContext 是模拟 AgentDef 的上下文配置：窗口很小（工具声明约占 1100，其中 ask_user 约 450），使压缩频繁发生；须容得下工具声明、摘要、KeepRecent 与一条最大的消息（含界面上下文）。
 var simContext = agentdef.Context{Window: 2600, CompactAt: 0.75, KeepRecent: 300, MaxToolResult: 250}
@@ -257,7 +277,9 @@ type World struct {
 	afterEnqueue func() error
 	// violations 记录脚本化模型观察到的请求级不变量违反（超出窗口、调用配对残缺）。
 	violations []string
-	Stats      Stats
+	// poolViolation 记录 Worker 认领到不属于其池的工作（ADR-0029）。
+	poolViolation error
+	Stats         Stats
 	// Trace 记录每一步的动作，失败时用于定位。
 	Trace []string
 }
@@ -342,8 +364,8 @@ func New(opts Options) (*World, error) {
 	for range 2 {
 		w.janitors = append(w.janitors, w.newJanitor())
 	}
-	for range opts.Workers {
-		w.workers = append(w.workers, w.newWorker())
+	for i := range opts.Workers {
+		w.workers = append(w.workers, w.newWorker(i))
 	}
 	for i := range opts.Sessions {
 		w.users = append(w.users, fmt.Sprintf("u%d", i))
@@ -558,15 +580,20 @@ func (w *World) answer(sid string, c *session.Call, valid bool) error {
 	return w.svc.Answer(context.Background(), sid, c.Call.GetCallId(), a)
 }
 
-func (w *World) newWorker() *runtime.Worker {
+// newWorker 创建第 slot 个 Worker：0 号只认领交互工作，长任务移交给其他 Worker（ADR-0029）。
+func (w *World) newWorker(slot int) *runtime.Worker {
 	w.nextW++
 	gw := model.NewGateway()
 	gw.Register("sim", &simModel{w: w})
 	// Worker 的写入经 flakyLog；Service、Hub 与控制器用可靠的 Store。
 	store := *w.store
 	store.Log = flakyLog{Log: w.log, w: w}
+	id, pool := fmt.Sprintf("w%d", w.nextW), workqueue.Pool{}
+	if slot == 0 {
+		id, pool = fmt.Sprintf("%s%d", interactiveWorker, w.nextW), workqueue.Pool{MinPriority: workqueue.Interactive}
+	}
 	return runtime.New(runtime.Config{
-		ID: fmt.Sprintf("w%d", w.nextW), Store: &store, Queue: w.queue, Agents: w.agents,
+		ID: id, Store: &store, Queue: poolQueue{Queue: w.queue, w: w}, Pool: pool, Agents: w.agents,
 		Model: gw, Catalog: w.catalog, Dispatch: w.router, LeaseTTL: leaseTTL,
 		MaxTakeovers: 4, MaxModelErrors: 3, ApprovalTimeout: approvalTimeout, Memory: w.memories,
 		Meter: w.meter, Quotas: w.quotas, QuotaRecheck: time.Minute, Moderator: simModerator{w},
@@ -649,6 +676,10 @@ func (w *World) tick() error {
 	default:
 		if w.faults && w.chance(0.5) {
 			i := w.rng.IntN(len(w.workers))
+			if w.chance(0.3) {
+				w.stopWorker(i)
+				return nil
+			}
 			w.tracef("crash %s (idle)", w.workers[i].ID())
 			w.restart(i)
 		} else if w.faults {
@@ -663,7 +694,20 @@ func (w *World) tick() error {
 
 func (w *World) restart(i int) {
 	w.Stats.Crashes++
-	w.workers[i] = w.newWorker()
+	w.workers[i] = w.newWorker(i)
+}
+
+// stopWorker 优雅停机一个 Worker（如滚动发布）：移交它持有的 Run，再换上新的 Worker。
+// 移交可能因存储故障失败，此时与崩溃相同，等租约过期后被接管。
+func (w *World) stopWorker(i int) {
+	w.Stats.GracefulStops++
+	wk := w.workers[i]
+	if err := wk.Stop(context.Background()); err != nil {
+		w.tracef("stop %s: %v", wk.ID(), err)
+	} else {
+		w.tracef("stop %s", wk.ID())
+	}
+	w.workers[i] = w.newWorker(i)
 }
 
 func (w *World) stepWorker(i int) error {
@@ -876,6 +920,9 @@ func (w *World) CheckInvariants() error {
 				return fmt.Errorf("invariant: run %s completed with pending call", r.ID)
 			}
 		}
+		if err := checkInteractiveWorkers(events); err != nil {
+			return fmt.Errorf("invariant: %s: %w", sid, err)
+		}
 		// 同一输入 ID 至多生效一次。
 		inputs := map[string]bool{}
 		for _, e := range events {
@@ -885,6 +932,9 @@ func (w *World) CheckInvariants() error {
 			}
 			inputs[id] = true
 		}
+	}
+	if w.poolViolation != nil {
+		return w.poolViolation
 	}
 	// 提问不经 Inbox（ADR-0025）：任何时候都不应有投给用户本人的待投递项。
 	if items, _, err := w.hub.Inbox.Pending(context.Background(), askuser.NodeID); err != nil || len(items) > 0 {
@@ -905,6 +955,28 @@ func (w *World) CheckInvariants() error {
 		return err
 	}
 	return w.checkDeleted(false)
+}
+
+func attemptKey(runID string, attempt uint32) string { return fmt.Sprintf("%s/%d", runID, attempt) }
+
+// checkInteractiveWorkers 检查交互 Worker 不为长任务调用模型（ADR-0029）：Run 调用模型达到 LongRunTurns 次之后，
+// 交互 Worker 应在下一步之前移交它，而不是继续执行。
+func checkInteractiveWorkers(events []*v1.Event) error {
+	workerOf := map[string]string{}
+	turns := map[string]int{}
+	for _, e := range events {
+		switch p := e.GetPayload().(type) {
+		case *v1.Event_AttemptStarted:
+			workerOf[attemptKey(p.AttemptStarted.GetRunId(), p.AttemptStarted.GetAttempt())] = p.AttemptStarted.GetWorkerId()
+		case *v1.Event_AssistantMessage:
+			m := p.AssistantMessage
+			if wk := workerOf[attemptKey(m.GetRunId(), m.GetAttempt())]; strings.HasPrefix(wk, interactiveWorker) && turns[m.GetRunId()] >= workqueue.LongRunTurns {
+				return fmt.Errorf("interactive worker %s called the model for run %s after %d turns", wk, m.GetRunId(), turns[m.GetRunId()])
+			}
+			turns[m.GetRunId()]++
+		}
+	}
+	return nil
 }
 
 // CollectStats 从最终日志统计 Takeover、未知结果等路径的覆盖情况。
@@ -973,7 +1045,9 @@ func (w *World) CollectStats() {
 				}
 			case *v1.Event_RunSuspended:
 				w.Stats.Suspensions++
-				if p.RunSuspended.GetReason() != "" {
+				if p.RunSuspended.GetReason() == session.SuspendHandoff {
+					w.Stats.Handoffs++
+				} else if p.RunSuspended.GetReason() != "" {
 					w.Stats.QuotaSuspensions++
 					quotaSuspended[p.RunSuspended.GetRunId()] = true
 				}

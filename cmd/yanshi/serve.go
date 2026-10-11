@@ -187,6 +187,8 @@ func serve(args []string) error {
 	addr := fs.String("addr", "127.0.0.1:8080", "HTTP 监听地址")
 	agentsDir := fs.String("agents", "agents", "AgentDef 目录")
 	workers := fs.Int("workers", 4, "Worker 数量")
+	interactiveWorkers := fs.Int("interactive-workers", -1, "其中只认领交互工作的 Worker 数（ADR-0029）：长任务占满其余 Worker 时问答仍有 Worker 可用；默认为 Worker 数的四分之一")
+	drainTimeout := fs.Duration("drain-timeout", 20*time.Second, "优雅停机时等待进行中的这一步（如模型调用）完成的上限，之后移交 Run；应小于编排系统的终止宽限期")
 	storage := fs.String("storage", "memory", "存储：memory | postgres")
 	dsn := fs.String("pg-dsn", envOr("YANSHI_PG_DSN", devPGDSN), "PostgreSQL 地址（storage=postgres）")
 	notifyShards := fs.Int("notify-shards", 1, "PostgreSQL 通知的分片数（ADR-0028）：进程只 LISTEN 有订阅者的分片频道；所有进程须一致")
@@ -322,17 +324,30 @@ func serve(args []string) error {
 		defer wg.Done()
 		agents.WatchReleases(ctx, releasesPath, releasesLoaded, 10*time.Second, logger)
 	}()
-	// 本进程的 Worker 共享空闲门控：空闲时只有一个 Worker 轮询队列，入队信号到达时立即认领。
-	idle := &workqueue.IdleGate{}
+	// 本进程同一池的 Worker 共享空闲门控：空闲时只有一个 Worker 轮询队列，入队信号到达时立即认领。
+	// 交互 Worker 与其余 Worker 各用一个门控（workqueue.Fanout）。
+	idle, interactiveIdle := &workqueue.IdleGate{}, &workqueue.IdleGate{}
 	if s, ok := queue.(workqueue.Signaler); ok {
-		idle.Ready = s.Ready()
+		ready := workqueue.Fanout(ctx, s.Ready(), 2)
+		idle.Ready, interactiveIdle.Ready = ready[0], ready[1]
+	}
+	if *interactiveWorkers < 0 {
+		*interactiveWorkers = *workers / 4
+	}
+	if *workers > 0 && *interactiveWorkers >= *workers {
+		return fmt.Errorf("-interactive-workers must leave at least one worker for long runs (got %d of %d)", *interactiveWorkers, *workers)
 	}
 	for i := range *workers {
+		// 前 interactiveWorkers 个只认领交互工作：长任务移交给其余 Worker（ADR-0029）。
+		pool, gate := workqueue.Pool{}, idle
+		if i < *interactiveWorkers {
+			pool.MinPriority, gate = workqueue.Interactive, interactiveIdle
+		}
 		w := runtime.New(runtime.Config{
 			ID: fmt.Sprintf("%s-worker-%d", proc, i), Store: store, Queue: queue, Agents: agents,
 			Model: gw, Catalog: catalog, Dispatch: router, Artifacts: arts, Memory: mems, Live: bus, LiveEndpoint: liveEndpoint, Logger: logger,
-			LeaseTTL: *leaseTTL, Heartbeat: *leaseTTL / 3, Idle: idle, Meter: meter, Quotas: quotas, Moderator: moderator,
-			Notify: notifier,
+			LeaseTTL: *leaseTTL, Heartbeat: *leaseTTL / 3, Idle: gate, Meter: meter, Quotas: quotas, Moderator: moderator,
+			Notify: notifier, Pool: pool, DrainTimeout: *drainTimeout,
 		})
 		wg.Add(1)
 		go func() { defer wg.Done(); w.Run(ctx) }()
@@ -400,7 +415,8 @@ func serve(args []string) error {
 		defer cancel()
 		_ = srv.Shutdown(shutdown)
 	}()
-	logger.Info("yanshi serving", "addr", *addr, "auth", *authMode, "process", proc, "workers", *workers, "storage", *storage, "blob", *blobKind, "live_endpoint", liveEndpoint)
+	logger.Info("yanshi serving", "addr", *addr, "auth", *authMode, "process", proc, "workers", *workers, "interactive_workers", *interactiveWorkers,
+		"storage", *storage, "blob", *blobKind, "live_endpoint", liveEndpoint)
 	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}

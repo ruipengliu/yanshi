@@ -12,6 +12,8 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -33,9 +35,10 @@ import (
 	"yanshi/internal/workqueue"
 )
 
-// Dispatcher 把路由调用投递到 Node 的 Inbox（由 node.Hub 实现）。
+// Dispatcher 把路由调用投递到 Node 的 Inbox（由 sandbox.Router 实现）。class 是 Session 的工作类别：
+// 执行调用的队列（如沙箱队列）沿用它（ADR-0029）。
 type Dispatcher interface {
-	Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke) error
+	Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke, class workqueue.Class) error
 	Cancel(ctx context.Context, nodeID, callID string) error
 }
 
@@ -76,6 +79,11 @@ type Config struct {
 	IdleWait time.Duration
 	// Idle 非空时，同一进程的 Worker 共享它：空闲时至多一个 Worker 轮询队列（见 workqueue.IdleGate）。
 	Idle *workqueue.IdleGate
+	// Pool 是本 Worker 认领的工作（ADR-0029），零值认领任意工作。持有的 Run 不再属于本池时（如交互 Worker
+	// 手中的 Run 成为长任务），在两步之间移交给其他 Worker。
+	Pool workqueue.Pool
+	// DrainTimeout 是优雅停机时等待当前这一步完成的上限（默认 20 秒），之后取消它并移交 Run。
+	DrainTimeout time.Duration
 	// Meter 非空时记录每次模型调用的用量；Quotas 非空时在每次模型调用前检查配额
 	// （docs/design/m4-quota-usage.md）。
 	Meter  *usage.Meter
@@ -114,6 +122,9 @@ func (c *Config) defaults() {
 	if c.StepErrorBudget == 0 {
 		c.StepErrorBudget = 2 * time.Minute
 	}
+	if c.DrainTimeout == 0 {
+		c.DrainTimeout = 20 * time.Second
+	}
 	if c.NotifyRunsAfter == 0 {
 		c.NotifyRunsAfter = 2 * time.Minute
 	}
@@ -148,6 +159,11 @@ type Worker struct {
 	// executed 是本 Attempt 已执行完、结果尚未写入日志的进程内调用（按 call_id）：写入失败后下一步只重试写入，
 	// 不再执行，否则非幂等的能力（如已批准的 MCP 写操作）会再次产生副作用。
 	executed map[string]*v1.Event
+
+	// killed 由 Kill 置位：Run 立即退出、不移交；kill 取消进行中的这一步。
+	killed atomic.Bool
+	killMu sync.Mutex
+	kill   context.CancelFunc
 }
 
 func New(cfg Config) *Worker {
@@ -157,12 +173,31 @@ func New(cfg Config) *Worker {
 
 func (w *Worker) ID() string { return w.cfg.ID }
 
-// Run 持续执行 Step 直到 ctx 结束。
+// Run 持续执行 Step 直到 ctx 结束，然后优雅停机（ADR-0029）：不再认领新工作，完成进行中的这一步
+// （最多等 DrainTimeout），再移交持有的 Run，其他进程立即接手，不必等租约过期。
 func (w *Worker) Run(ctx context.Context) {
-	for ctx.Err() == nil {
+	// 这一步不随 ctx 取消：进行中的模型调用写完日志再停，避免接手的 Worker 重做整次调用。
+	stepCtx, cancelStep := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelStep()
+	w.killMu.Lock()
+	w.kill = cancelStep
+	w.killMu.Unlock()
+	drain := context.AfterFunc(ctx, func() { time.AfterFunc(w.cfg.DrainTimeout, cancelStep) })
+	defer drain()
+	defer func() {
+		if w.killed.Load() {
+			return
+		}
+		hctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := w.Stop(hctx); err != nil {
+			w.cfg.Logger.Warn("worker hand-off failed", "worker", w.cfg.ID, "err", err)
+		}
+	}()
+	for ctx.Err() == nil && !w.killed.Load() {
 		if w.lease == nil && w.cfg.Idle != nil {
 			w.cfg.Idle.Idle(ctx, func() bool {
-				did, err := w.Step(ctx)
+				did, err := w.Step(stepCtx)
 				if err != nil && ctx.Err() == nil {
 					w.cfg.Logger.Warn("worker step failed", "worker", w.cfg.ID, "err", err)
 				}
@@ -171,7 +206,7 @@ func (w *Worker) Run(ctx context.Context) {
 			})
 			continue
 		}
-		did, err := w.Step(ctx)
+		did, err := w.Step(stepCtx)
 		if err != nil && ctx.Err() == nil {
 			w.cfg.Logger.Warn("worker step failed", "worker", w.cfg.ID, "err", err)
 		}
@@ -184,6 +219,16 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
+// Kill 模拟进程崩溃（测试与评测用）：立即取消进行中的这一步，Run 退出时不移交，租约留到过期后被接管。
+func (w *Worker) Kill() {
+	w.killed.Store(true)
+	w.killMu.Lock()
+	defer w.killMu.Unlock()
+	if w.kill != nil {
+		w.kill()
+	}
+}
+
 func (w *Worker) drop() {
 	w.lease, w.st, w.runID, w.attempt, w.modelErrors, w.forceCompact, w.failingSince = nil, nil, "", 0, 0, false, time.Time{}
 	w.executed = nil
@@ -192,7 +237,7 @@ func (w *Worker) drop() {
 // Step 推进一件工作；返回 false 表示当前无事可做。
 func (w *Worker) Step(ctx context.Context) (bool, error) {
 	if w.lease == nil {
-		l, err := w.cfg.Queue.Claim(ctx, w.cfg.ID, w.cfg.LeaseTTL)
+		l, err := w.cfg.Queue.Claim(ctx, w.cfg.ID, w.cfg.LeaseTTL, w.cfg.Pool)
 		if errors.Is(err, workqueue.ErrEmpty) {
 			metrics.QueueClaims.WithLabelValues("empty").Inc()
 			return false, nil
@@ -232,15 +277,13 @@ func (w *Worker) Step(ctx context.Context) (bool, error) {
 
 	r := w.st.Active()
 	if r == nil {
-		err := w.cfg.Queue.Release(ctx, w.lease, true)
-		w.drop()
-		if errors.Is(err, workqueue.ErrLeaseLost) {
-			err = nil
-		}
-		return true, err
+		return true, w.release(ctx, true)
+	}
+	if !w.cfg.Pool.Admits(w.st.WorkClass()) {
+		return true, w.handOff(ctx, r, "pool")
 	}
 	if !w.owns(r) {
-		if r.Status == session.RunSuspended && r.SuspendReason != "" {
+		if r.QuotaSuspended() {
 			if parked, err := w.reparkOverQuota(ctx); parked || err != nil {
 				return true, err
 			}
@@ -321,12 +364,68 @@ func (w *Worker) suspendWith(ctx context.Context, s *v1.RunSuspended, until time
 	if err != nil || !ok {
 		return err
 	}
-	err = w.cfg.Queue.Park(ctx, w.lease, until)
+	return w.park(ctx, until)
+}
+
+// park 以 Session 当前的类别停放到 until，之后本 Worker 不再持有它。
+func (w *Worker) park(ctx context.Context, until time.Time) error {
+	w.lease.Class = w.st.WorkClass()
+	err := w.cfg.Queue.Park(ctx, w.lease, until)
 	w.drop()
 	if errors.Is(err, workqueue.ErrLeaseLost) {
 		return nil
 	}
 	return err
+}
+
+// release 以 Session 当前的类别归还租约（done 见 workqueue.Queue.Release）。
+func (w *Worker) release(ctx context.Context, done bool) error {
+	if w.st != nil {
+		w.lease.Class = w.st.WorkClass()
+	}
+	err := w.cfg.Queue.Release(ctx, w.lease, done)
+	w.drop()
+	if errors.Is(err, workqueue.ErrLeaseLost) {
+		return nil
+	}
+	return err
+}
+
+// handOff 把 Run 移交给其他 Worker（ADR-0029）：持有 Attempt 时以 handoff 挂起，正常结束它，恢复不算接管；
+// 否则直接归还租约。Session 立即可被认领，类别随之更新。
+func (w *Worker) handOff(ctx context.Context, r *session.Run, reason string) error {
+	metrics.Handoffs.WithLabelValues(reason).Inc()
+	w.cfg.Logger.Info("run handed off", "worker", w.cfg.ID, "session", w.st.SessionID, "run", r.ID, "reason", reason)
+	if !w.owns(r) {
+		return w.release(ctx, false)
+	}
+	// 正在等待的调用已执行完、结果尚未写入：先写入结果，否则接手的 Worker 只能报告"结果未知"。只看当前等待的调用：
+	// 缓存中可能还有结果其实已经写入（追加报告失败却已生效）的旧条目。
+	if c := r.PendingCall(); c != nil {
+		if res := w.executed[c.Call.GetCallId()]; res != nil {
+			if err := w.commitExecuted(ctx, c.Call.GetCallId(), res); err != nil {
+				return err
+			}
+			if w.lease == nil || !w.owns(r) {
+				return nil // 写入时发现 Session 已删除或 Attempt 已失效
+			}
+		}
+	}
+	return w.suspendWith(ctx, &v1.RunSuspended{RunId: r.ID, Attempt: w.attempt, Reason: session.SuspendHandoff}, w.now())
+}
+
+// Stop 在停机时归还本 Worker 持有的工作：持有 Run 时移交它。之后 Worker 不再持有任何租约。
+func (w *Worker) Stop(ctx context.Context) error {
+	if w.lease == nil {
+		return nil
+	}
+	// 先同步：移交依据的状态必须是最新的，否则可能为已经有结果的调用再写一次结果。同步失败时只归还租约。
+	if w.st != nil && w.cfg.Store.Sync(ctx, w.st) == nil {
+		if r := w.st.Active(); r != nil {
+			return w.handOff(ctx, r, "shutdown")
+		}
+	}
+	return w.release(ctx, false)
 }
 
 func (w *Worker) now() time.Time { return w.cfg.Store.Clock.Now() }
@@ -525,7 +624,7 @@ func (w *Worker) awaitDispatched(ctx context.Context, r *session.Run, c *session
 	err := w.cfg.Dispatch.Dispatch(ctx, c.NodeID, &v1.Invoke{
 		SessionId: w.st.SessionID, RunId: r.ID, CallId: id, Capability: capName,
 		ArgumentsJson: c.Call.GetArgumentsJson(), Deadline: timestamppb.New(c.Deadline),
-	})
+	}, w.st.WorkClass())
 	if err != nil {
 		return err
 	}

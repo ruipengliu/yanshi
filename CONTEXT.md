@@ -128,6 +128,10 @@ _Avoid_: 追加消息、打断
 无状态的执行进程，认领 Session 并以 Attempt 推进其中的 Run。
 _Avoid_: Node（Node 提供 Capability，Worker 执行 Run）、执行器
 
+**Handoff（移交）**:
+Worker 主动结束自己的 Attempt，把 Run 交给其他 Worker：以 `handoff` 挂起并立即归还 Session，由任意 Worker 恢复。用于优雅停机，以及只认领交互工作的 Worker 交出已成为长任务的 Run（ADR-0029）。与接管不同，它不是故障，不计入接管次数。
+_Avoid_: 迁移、转交、让出
+
 ## 个性化与治理
 
 **Memory（记忆）**:

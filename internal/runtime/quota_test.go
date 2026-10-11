@@ -15,6 +15,7 @@ import (
 	"yanshi/internal/model/echo"
 	"yanshi/internal/session"
 	"yanshi/internal/usage"
+	"yanshi/internal/workqueue"
 	"yanshi/internal/workqueue/memqueue"
 )
 
@@ -44,7 +45,7 @@ func TestQuotaSuspendsRechecksQuietlyAndResumes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = q.Enqueue(ctx, "s1")
+	_ = q.Enqueue(ctx, "s1", workqueue.Class{})
 	_ = uses.Record(ctx, &usage.Entry{ID: "u1", BusinessLine: "bl", EndUser: "u", Kind: usage.Model, Cost: usage.Yuan(0.001), At: clk.Now()})
 
 	steps := func(n int) {

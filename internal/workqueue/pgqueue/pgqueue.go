@@ -66,31 +66,39 @@ var (
 	_ workqueue.Signaler = (*Queue)(nil)
 )
 
-func (q *Queue) Enqueue(ctx context.Context, sessionID string) error {
+func (q *Queue) Enqueue(ctx context.Context, sessionID string, class workqueue.Class) error {
 	// 同一语句内入队并通知，不增加往返；通知在提交后送达。
 	_, err := q.pool.Exec(ctx, q.q(`
 		WITH up AS (
-			INSERT INTO work_items (session_id, ord) VALUES ($1, nextval('work_seq'))
+			INSERT INTO work_items (session_id, ord, business_line, priority) VALUES ($1, nextval('work_seq'), $4, $5)
 			ON CONFLICT (session_id) DO UPDATE
-			SET dirty = work_items.dirty OR work_items.leased, parked_until = NULL
+			SET dirty = work_items.dirty OR work_items.leased, parked_until = NULL,
+				business_line = EXCLUDED.business_line, priority = EXCLUDED.priority
 			RETURNING 1)
-		SELECT pg_notify($2, $3) FROM up`), sessionID, q.notifier.Channel(pg.TopicWork, q.table), q.table)
+		SELECT pg_notify($2, $3) FROM up`), sessionID, q.notifier.Channel(pg.TopicWork, q.table), q.table,
+		class.BusinessLine, int16(class.Priority))
 	return err
 }
 
-func (q *Queue) Claim(ctx context.Context, holder string, ttl time.Duration) (*workqueue.Lease, error) {
+func (q *Queue) Claim(ctx context.Context, holder string, ttl time.Duration, p workqueue.Pool) (*workqueue.Lease, error) {
 	now := q.clock.Now()
 	l := &workqueue.Lease{Holder: holder}
+	var prio int16
+	// 索引 (priority DESC, ord) 使认领按优先级、再按入队顺序扫描。
 	err := q.pool.QueryRow(ctx, q.q(`
 		UPDATE work_items SET leased = true, holder = $1, token = nextval('work_seq'),
 			lease_expires = $3, dirty = false
 		WHERE session_id = (
 			SELECT session_id FROM work_items
-			WHERE (leased AND lease_expires <= $2)
-			   OR (NOT leased AND (parked_until IS NULL OR parked_until <= $2))
-			ORDER BY ord LIMIT 1
+			WHERE ((leased AND lease_expires <= $2)
+			    OR (NOT leased AND (parked_until IS NULL OR parked_until <= $2)))
+			  AND priority >= $4
+			  AND (coalesce(array_length($5::text[], 1), 0) = 0 OR business_line = ANY ($5::text[]))
+			ORDER BY priority DESC, ord LIMIT 1
 			FOR UPDATE SKIP LOCKED)
-		RETURNING session_id, token, lease_expires`), holder, now, now.Add(ttl)).Scan(&l.SessionID, &l.Token, &l.Expires)
+		RETURNING session_id, token, lease_expires, business_line, priority`),
+		holder, now, now.Add(ttl), int16(p.MinPriority), p.BusinessLines).Scan(&l.SessionID, &l.Token, &l.Expires, &l.Class.BusinessLine, &prio)
+	l.Class.Priority = workqueue.Priority(prio)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, workqueue.ErrEmpty
 	}
@@ -120,8 +128,9 @@ func (q *Queue) Renew(ctx context.Context, l *workqueue.Lease, ttl time.Duration
 func (q *Queue) Park(ctx context.Context, l *workqueue.Lease, until time.Time) error {
 	tag, err := q.pool.Exec(ctx, q.q(`
 		UPDATE work_items SET leased = false, ord = nextval('work_seq'),
-			parked_until = CASE WHEN dirty THEN NULL ELSE $4::timestamptz END, dirty = false
-		WHERE `+held), l.SessionID, int64(l.Token), q.clock.Now(), until)
+			parked_until = CASE WHEN dirty THEN NULL ELSE $4::timestamptz END, dirty = false,
+			business_line = $5, priority = $6
+		WHERE `+held), l.SessionID, int64(l.Token), q.clock.Now(), until, l.Class.BusinessLine, int16(l.Class.Priority))
 	if err != nil {
 		return err
 	}
@@ -143,8 +152,9 @@ func (q *Queue) Release(ctx context.Context, l *workqueue.Lease, done bool) erro
 		}
 	}
 	tag, err := q.pool.Exec(ctx, q.q(`
-		UPDATE work_items SET leased = false, dirty = false, parked_until = NULL, ord = nextval('work_seq')
-		WHERE `+held), l.SessionID, int64(l.Token), now)
+		UPDATE work_items SET leased = false, dirty = false, parked_until = NULL, ord = nextval('work_seq'),
+			business_line = $4, priority = $5
+		WHERE `+held), l.SessionID, int64(l.Token), now, l.Class.BusinessLine, int16(l.Class.Priority))
 	if err != nil {
 		return err
 	}

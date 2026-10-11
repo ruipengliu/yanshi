@@ -846,7 +846,8 @@ export type RunSuspended = Message<"yanshi.v1.RunSuspended"> & {
 
   /**
    * reason 为空表示等待审批或设备结果（由挂起的调用可知）；"end_user_quota" / "business_line_quota"
-   * 表示配额用尽（docs/design/m4-quota-usage.md §3），until 为配额重置时间。
+   * 表示配额用尽（docs/design/m4-quota-usage.md §3），until 为配额重置时间；"handoff" 表示移交给其他 Worker
+   * （交互 Worker 移交长任务、优雅停机，ADR-0029），立即可恢复。
    *
    * @generated from field: string reason = 3;
    */

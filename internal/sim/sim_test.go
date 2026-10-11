@@ -87,7 +87,7 @@ func TestSimulationWithFaults(t *testing.T) {
 		"Questions", "Answers", "TypedAnswers", "InvalidAnswers", "QuestionTimeouts", "UIContextInputs", "DuplicateInputs",
 		"Notifications", "NotificationsWatching", "PushFailures",
 		"CallsStarted", "CallsReplaced", "CallTranscripts", "CallTranscriptsBlocked", "CallTasks", "CallAnswers", "CallConflicts",
-		"StoreFaults")
+		"StoreFaults", "GracefulStops", "Handoffs")
 }
 
 // TestLongRunsWithFaults 让 Run 持续上百轮，检验压缩在故障下保持上下文有界、调用配对完整，且长 Run 能跑完。
@@ -101,15 +101,21 @@ func TestLongRunsWithFaults(t *testing.T) {
 		total.add(run(t, s, Options{Faults: true, LongRuns: true, Sessions: 2, Ticks: 1500}).Stats)
 	}
 	requireCoverage(t, total, "Compactions", "SummaryFaults", "Overflows", "AttemptsAfterCompaction", "Takeovers",
-		"Suspensions", "LongRunsCompleted")
+		"Suspensions", "LongRunsCompleted", "Handoffs")
 }
 
+// TestSimulationWithoutFaultsNeverFails：没有故障时 Run 不失败、不被接管。没有故障就没有停机，移交都来自交互 Worker
+// 移交长任务：它正常结束 Attempt，不算接管（ADR-0029）。
 func TestSimulationWithoutFaultsNeverFails(t *testing.T) {
+	var total Stats
 	for _, s := range seedList() {
-		if st := run(t, s, Options{}).Stats; st.Failed != 0 || st.Takeovers != 0 || st.OutcomeUnknown != 0 {
+		st := run(t, s, Options{}).Stats
+		if st.Failed != 0 || st.Takeovers != 0 || st.OutcomeUnknown != 0 {
 			t.Fatalf("seed %d: fault-free run had failures/takeovers: %+v", s, st)
 		}
+		total.add(st)
 	}
+	requireCoverage(t, total, "Handoffs")
 }
 
 func TestSimulationIsDeterministic(t *testing.T) {

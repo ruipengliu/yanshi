@@ -28,9 +28,9 @@ type countingQueue struct {
 	claims atomic.Int64
 }
 
-func (q *countingQueue) Claim(ctx context.Context, holder string, ttl time.Duration) (*workqueue.Lease, error) {
+func (q *countingQueue) Claim(ctx context.Context, holder string, ttl time.Duration, pool workqueue.Pool) (*workqueue.Lease, error) {
 	q.claims.Add(1)
-	return q.Queue.Claim(ctx, holder, ttl)
+	return q.Queue.Claim(ctx, holder, ttl, pool)
 }
 
 func TestIdleGateBoundsPollingAndWakesOnEnqueue(t *testing.T) {
@@ -62,7 +62,7 @@ func TestIdleGateBoundsPollingAndWakesOnEnqueue(t *testing.T) {
 	}
 	before := q.claims.Load()
 	start := time.Now()
-	if err := q.Enqueue(ctx, "s1"); err != nil {
+	if err := q.Enqueue(ctx, "s1", workqueue.Class{}); err != nil {
 		t.Fatal(err)
 	}
 	for q.claims.Load() == before {
@@ -102,7 +102,7 @@ func TestPoisonStepFailsRunAfterBudget(t *testing.T) {
 		&v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r", Input: model.TextBlocks("go")}}}); err != nil {
 		t.Fatal(err)
 	}
-	_ = q.Enqueue(ctx, "s")
+	_ = q.Enqueue(ctx, "s", workqueue.Class{})
 	errs := 0
 	for range 50 {
 		if _, err := w.Step(ctx); err != nil {

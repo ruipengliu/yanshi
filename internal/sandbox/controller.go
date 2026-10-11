@@ -73,6 +73,7 @@ func (c *Controller) init() {
 // Run 持续执行 Step，并周期性回收空闲沙箱，直到 ctx 结束。
 func (c *Controller) Run(ctx context.Context) {
 	c.init()
+	defer c.release(ctx)
 	for ctx.Err() == nil {
 		var did bool
 		var err error
@@ -102,11 +103,25 @@ func (c *Controller) Run(ctx context.Context) {
 	}
 }
 
+// release 在停机时归还持有的租约，使其他控制器立即接手，而不必等租约过期。进行中的执行已随 ctx 取消，
+// 接手的控制器按账本处理（非幂等的调用报告结果未知）。
+func (c *Controller) release(ctx context.Context) {
+	if c.lease == nil {
+		return
+	}
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := c.Queue.Release(rctx, c.lease, false); err != nil && !errors.Is(err, workqueue.ErrLeaseLost) {
+		c.Logger.Warn("sandbox controller release failed", "controller", c.ID, "err", err)
+	}
+	c.lease = nil
+}
+
 // Step 推进一件工作；返回 false 表示无事可做。
 func (c *Controller) Step(ctx context.Context) (bool, error) {
 	c.init()
 	if c.lease == nil {
-		l, err := c.Queue.Claim(ctx, c.ID, c.LeaseTTL)
+		l, err := c.Queue.Claim(ctx, c.ID, c.LeaseTTL, workqueue.Pool{})
 		if errors.Is(err, workqueue.ErrEmpty) {
 			return false, nil
 		}
@@ -258,7 +273,8 @@ type Router struct {
 	Queue workqueue.Queue // 沙箱队列
 }
 
-func (r *Router) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke) error {
+// Dispatch 派发调用；class 是调用所属 Session 的工作类别，沙箱队列沿用它（ADR-0029）。
+func (r *Router) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke, class workqueue.Class) error {
 	if !IsNode(nodeID) {
 		return r.Hub.Dispatch(ctx, nodeID, inv)
 	}
@@ -274,7 +290,7 @@ func (r *Router) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke) er
 		}
 		return err
 	}
-	return r.Queue.Enqueue(ctx, nodeID)
+	return r.Queue.Enqueue(ctx, nodeID, class)
 }
 
 func (r *Router) Cancel(ctx context.Context, nodeID, callID string) error {

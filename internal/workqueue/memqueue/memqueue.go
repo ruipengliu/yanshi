@@ -1,4 +1,4 @@
-// Package memqueue 是 workqueue.Queue 的进程内实现。按入队顺序认领，结果确定。
+// Package memqueue 是 workqueue.Queue 的进程内实现。按优先级与入队顺序认领，结果确定。
 package memqueue
 
 import (
@@ -12,6 +12,7 @@ import (
 
 type item struct {
 	sessionID string
+	class     workqueue.Class
 	holder    string
 	token     uint64
 	expires   time.Time
@@ -48,7 +49,7 @@ func (q *Queue) find(id string) (int, *item) {
 	return -1, nil
 }
 
-func (q *Queue) Enqueue(_ context.Context, sessionID string) error {
+func (q *Queue) Enqueue(_ context.Context, sessionID string, class workqueue.Class) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	defer func() {
@@ -61,17 +62,19 @@ func (q *Queue) Enqueue(_ context.Context, sessionID string) error {
 		if it.leased {
 			it.dirty = true
 		}
-		it.parkedUntil = time.Time{}
+		it.parkedUntil, it.class = time.Time{}, class
 		return nil
 	}
-	q.items = append(q.items, &item{sessionID: sessionID})
+	q.items = append(q.items, &item{sessionID: sessionID, class: class})
 	return nil
 }
 
-func (q *Queue) Claim(_ context.Context, holder string, ttl time.Duration) (*workqueue.Lease, error) {
+func (q *Queue) Claim(_ context.Context, holder string, ttl time.Duration, pool workqueue.Pool) (*workqueue.Lease, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	now := q.clock.Now()
+	// items 按入队顺序排列：只在优先级严格更高时替换，选中的就是最高优先级中最早入队的。
+	var best *item
 	for _, it := range q.items {
 		if it.leased && now.Before(it.expires) {
 			continue
@@ -79,11 +82,16 @@ func (q *Queue) Claim(_ context.Context, holder string, ttl time.Duration) (*wor
 		if !it.leased && now.Before(it.parkedUntil) {
 			continue
 		}
-		q.next++
-		it.leased, it.holder, it.token, it.expires, it.dirty = true, holder, q.next, now.Add(ttl), false
-		return &workqueue.Lease{SessionID: it.sessionID, Holder: holder, Token: it.token, Expires: it.expires}, nil
+		if pool.Admits(it.class) && (best == nil || it.class.Priority > best.class.Priority) {
+			best = it
+		}
 	}
-	return nil, workqueue.ErrEmpty
+	if best == nil {
+		return nil, workqueue.ErrEmpty
+	}
+	q.next++
+	best.leased, best.holder, best.token, best.expires, best.dirty = true, holder, q.next, now.Add(ttl), false
+	return &workqueue.Lease{SessionID: best.sessionID, Class: best.class, Holder: holder, Token: best.token, Expires: best.expires}, nil
 }
 
 // held 返回 lease 仍然有效时对应的 item。
@@ -114,7 +122,7 @@ func (q *Queue) Park(_ context.Context, l *workqueue.Lease, until time.Time) err
 	if it == nil {
 		return workqueue.ErrLeaseLost
 	}
-	it.leased = false
+	it.leased, it.class = false, l.Class
 	if it.dirty {
 		it.dirty, it.parkedUntil = false, time.Time{}
 	} else {
@@ -135,7 +143,7 @@ func (q *Queue) Release(_ context.Context, l *workqueue.Lease, done bool) error 
 		q.items = append(q.items[:i], q.items[i+1:]...)
 		return nil
 	}
-	it.leased, it.dirty, it.parkedUntil = false, false, time.Time{}
+	it.leased, it.dirty, it.parkedUntil, it.class = false, false, time.Time{}, l.Class
 	// 移到队尾，避免同一 Session 饿死其他 Session。
 	q.items = append(append(q.items[:i], q.items[i+1:]...), it)
 	return nil

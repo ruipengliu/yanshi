@@ -2,12 +2,10 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"yanshi/internal/metrics"
 	"yanshi/internal/usage"
-	"yanshi/internal/workqueue"
 )
 
 func (w *Worker) usageScope() usage.Scope {
@@ -43,10 +41,5 @@ func (w *Worker) reparkOverQuota(ctx context.Context) (bool, error) {
 	if err != nil || p == nil {
 		return false, err
 	}
-	err = w.cfg.Queue.Park(ctx, w.lease, w.quotaPark(p))
-	w.drop()
-	if errors.Is(err, workqueue.ErrLeaseLost) {
-		err = nil
-	}
-	return true, err
+	return true, w.park(ctx, w.quotaPark(p))
 }

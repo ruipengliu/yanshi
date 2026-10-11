@@ -333,12 +333,14 @@ type waitingView struct {
 
 func (s *Server) waiting(r *http.Request, run *session.Run) *waitingView {
 	c := run.PendingCall()
-	if run.Status.Terminal() || (c == nil && run.SuspendReason == "") {
+	if run.QuotaSuspended() {
+		return &waitingView{Kind: "quota", Reason: run.SuspendReason, Deadline: run.SuspendedUntil}
+	}
+	// 移交（handoff）只是换一个 Worker 继续，不是在等什么，不显示。
+	if run.Status.Terminal() || c == nil {
 		return nil
 	}
 	switch {
-	case run.Status == session.RunSuspended && run.SuspendReason != "":
-		return &waitingView{Kind: "quota", Reason: run.SuspendReason, Deadline: run.SuspendedUntil}
 	case c.AwaitingApproval():
 		return &waitingView{Kind: "approval", CallID: c.Call.GetCallId(), Capability: c.Call.GetCapability(),
 			Summary: c.Approval.Summary, Deadline: c.Approval.Deadline}

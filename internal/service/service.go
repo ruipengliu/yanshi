@@ -208,7 +208,7 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 			return nil, &usage.ExceededError{Period: p}
 		}
 	}
-	if err := s.Queue.Enqueue(ctx, sessionID); err != nil {
+	if err := s.Queue.Enqueue(ctx, sessionID, st.WorkClass()); err != nil {
 		return nil, err
 	}
 	for range maxConflictRetries {
@@ -253,7 +253,7 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 					return res, err
 				}
 			}
-			return res, s.Queue.Enqueue(ctx, sessionID)
+			return res, s.Queue.Enqueue(ctx, sessionID, st.WorkClass())
 		}
 		if !errors.Is(err, eventlog.ErrConflict) {
 			return nil, err
@@ -403,7 +403,7 @@ func (s *Service) Answer(ctx context.Context, sessionID, callID string, a *askus
 		}
 		err = s.Store.Commit(ctx, st, answerEvent(r, c, askuser.Result(q, a)))
 		if err == nil {
-			return s.Queue.Enqueue(ctx, sessionID)
+			return s.Queue.Enqueue(ctx, sessionID, st.WorkClass())
 		}
 		if !errors.Is(err, eventlog.ErrConflict) {
 			return err
@@ -441,7 +441,7 @@ func (s *Service) Decide(ctx context.Context, sessionID, callID string, approved
 			RunId: a.ID, CallId: callID, Approved: approved, By: by,
 		}}})
 		if err == nil {
-			return s.Queue.Enqueue(ctx, sessionID)
+			return s.Queue.Enqueue(ctx, sessionID, st.WorkClass())
 		}
 		if !errors.Is(err, eventlog.ErrConflict) {
 			return err
@@ -487,7 +487,7 @@ func (s *Service) Close(ctx context.Context, sessionID, by, reason string) error
 					return err
 				}
 			}
-			return s.enqueueJanitor(ctx, sessionID)
+			return s.enqueueJanitor(ctx, sessionID, st.Created.GetBusinessLine())
 		}
 		if !errors.Is(err, eventlog.ErrConflict) {
 			return err
@@ -499,11 +499,12 @@ func (s *Service) Close(ctx context.Context, sessionID, by, reason string) error
 	return fmt.Errorf("close session %s: too many conflicts", sessionID)
 }
 
-func (s *Service) enqueueJanitor(ctx context.Context, sessionID string) error {
+// enqueueJanitor 让 Janitor 清理 Session；清理不急，一律为 Background。
+func (s *Service) enqueueJanitor(ctx context.Context, sessionID, businessLine string) error {
 	if s.Janitor == nil {
 		return nil
 	}
-	return s.Janitor.Enqueue(ctx, sessionID)
+	return s.Janitor.Enqueue(ctx, sessionID, workqueue.Class{BusinessLine: businessLine, Priority: workqueue.Background})
 }
 
 // Delete 删除 Session：写入删除记录（立即对外不可见），由 Janitor 在后台清除全部数据。
@@ -527,7 +528,7 @@ func (s *Service) Delete(ctx context.Context, sessionID, reason, requestID strin
 		Reason: reason, RequestID: requestID, RequestedAt: s.Store.Clock.Now()}); err != nil {
 		return err
 	}
-	return s.enqueueJanitor(ctx, sessionID)
+	return s.enqueueJanitor(ctx, sessionID, businessLine)
 }
 
 // DeleteEndUser 删除 EndUser 在业务线下的全部 Session，并由 removers 删除其余用户数据（Node 登记、

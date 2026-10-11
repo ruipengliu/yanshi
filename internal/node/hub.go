@@ -168,19 +168,21 @@ func (h *Hub) Result(ctx context.Context, nodeID string, res *v1.InvokeResult) e
 		// 不属于任何 Session 的平台调用（如清除本地记录），没有结果要写入日志。
 		return h.Inbox.Remove(ctx, nodeID, inv.GetCallId())
 	}
-	if err := h.commitResult(ctx, inv, res); err != nil {
+	class, err := h.commitResult(ctx, inv, res)
+	if err != nil {
 		return err
 	}
 	if err := h.Inbox.Remove(ctx, nodeID, inv.GetCallId()); err != nil {
 		return err
 	}
-	return h.Queue.Enqueue(ctx, inv.GetSessionId())
+	return h.Queue.Enqueue(ctx, inv.GetSessionId(), class)
 }
 
-func (h *Hub) commitResult(ctx context.Context, inv *v1.Invoke, res *v1.InvokeResult) error {
+// commitResult 写入结果，并返回 Session 此后的工作类别（ADR-0029）。
+func (h *Hub) commitResult(ctx context.Context, inv *v1.Invoke, res *v1.InvokeResult) (workqueue.Class, error) {
 	st, err := h.Store.Load(ctx, inv.GetSessionId())
 	if err != nil {
-		return err
+		return workqueue.Class{}, err
 	}
 	for range 16 {
 		e := &v1.Event{Payload: &v1.Event_ToolResult{ToolResult: &v1.ToolResult{
@@ -191,21 +193,21 @@ func (h *Hub) commitResult(ctx context.Context, inv *v1.Invoke, res *v1.InvokeRe
 			if err := h.Store.SyncAfterConflict(ctx, st); err != nil {
 				if errors.Is(err, session.ErrGone) {
 					h.log().Info("node result dropped", "session", inv.GetSessionId(), "call", inv.GetCallId(), "reason", "session deleted")
-					return nil
+					return st.WorkClass(), nil
 				}
-				return err
+				return workqueue.Class{}, err
 			}
 			continue
 		}
 		if errors.Is(err, session.ErrInvalid) {
 			// 校验失败：Run 已终态或调用已完成（超时、重复结果），结果作废。
 			h.log().Info("node result dropped", "session", inv.GetSessionId(), "call", inv.GetCallId(), "reason", err)
-			return nil
+			return st.WorkClass(), nil
 		}
 		// 存储故障：结果没有写入。返回错误，调用方不确认、不撤下 Inbox，重连后设备从账本重新返回结果。
-		return err
+		return st.WorkClass(), err
 	}
-	return fmt.Errorf("commit result for call %s: too many conflicts", inv.GetCallId())
+	return workqueue.Class{}, fmt.Errorf("commit result for call %s: too many conflicts", inv.GetCallId())
 }
 
 // LogWaker 只记录唤醒请求；真实推送通道见 ADR-0001。

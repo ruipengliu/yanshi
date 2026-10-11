@@ -19,6 +19,7 @@ import (
 	"yanshi/internal/model"
 	"yanshi/internal/moderation"
 	"yanshi/internal/session"
+	"yanshi/internal/workqueue"
 	"yanshi/internal/workqueue/memqueue"
 )
 
@@ -58,7 +59,7 @@ func TestOutputModeration(t *testing.T) {
 	if err := store.Commit(ctx, st, created, &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r1", Input: model.TextBlocks("hi")}}}); err != nil {
 		t.Fatal(err)
 	}
-	_ = q.Enqueue(ctx, "s1")
+	_ = q.Enqueue(ctx, "s1", workqueue.Class{})
 	for range 4 {
 		_, _ = w.Step(ctx)
 	}

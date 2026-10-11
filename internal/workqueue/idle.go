@@ -60,3 +60,30 @@ func (g *IdleGate) Idle(ctx context.Context, try func() bool) {
 		t.Stop()
 	}
 }
+
+// Fanout 把入队信号复制给 n 个接收方，直到 ctx 结束。认领不同池的 Worker 各用一个 IdleGate（ADR-0029）：
+// 共用一个门控时，持有门控的交互 Worker 认领不到长任务，却挡住了能认领它的 Worker。信号只是提示，接收方来不及取的合并。
+func Fanout(ctx context.Context, ready <-chan struct{}, n int) []<-chan struct{} {
+	outs := make([]chan struct{}, n)
+	ro := make([]<-chan struct{}, n)
+	for i := range outs {
+		outs[i] = make(chan struct{}, 1)
+		ro[i] = outs[i]
+	}
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ready:
+				for _, o := range outs {
+					select {
+					case o <- struct{}{}:
+					default:
+					}
+				}
+			}
+		}
+	}()
+	return ro
+}

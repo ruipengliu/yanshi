@@ -11,7 +11,7 @@ import (
 )
 
 func TestConformance(t *testing.T) {
-	for _, table := range []string{pgqueue.Sessions, pgqueue.Sandboxes} {
+	for _, table := range []string{pgqueue.Sessions, pgqueue.Sandboxes, pgqueue.Janitor} {
 		t.Run(table, func(t *testing.T) {
 			workqueuetest.Run(t, func(t *testing.T, c clock.Clock) workqueue.Queue {
 				pool, _ := pgtest.Fresh(t)

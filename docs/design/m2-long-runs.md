@@ -120,6 +120,7 @@ context:
 
 - **进展**指当前 Attempt 提交了 `AssistantMessage`、`ToolResult` 或 `ContextCompacted`，也就是上下文向前推进了。
 - `ToolCallStarted` **不算**进展。否则一个幂等 Capability 每次执行都弄崩 Worker 时，`ToolCallStarted → 崩溃 → 接管` 会无限循环下去。
+- 优雅停机与交互 Worker 移交长任务（ADR-0029）不算接管：Worker 先以 `handoff` 挂起 Run、正常结束 Attempt，接手的 Worker 从挂起恢复。只有崩溃与租约过期才产生接管。
 - 投影新增 `Run.StalledTakeovers` 用于判断上限；`Run.Takeovers` 仍然保留总数，供观测使用。
 
 这只改变投影，不改变日志。旧日志重放后得到的 `StalledTakeovers` 不会大于原来的值，所以向后兼容。

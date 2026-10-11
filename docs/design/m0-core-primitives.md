@@ -40,6 +40,7 @@ Worker 无状态。一次 Worker 对某个 Run 的执行称为一个 **Attempt**
   - Run 已终态，或 `current_attempt` 已不是自己 → 放弃（被中断或被接管）；
   - 否则在新末尾上重试追加（冲突来自 `Steered` 等无害事件）。
 - **工作队列只负责活性。** 工作队列（WorkQueue）按 Session 发放带 TTL 的租约，避免多个 Worker 同时争抢；租约过期后其他 Worker 可接管。即使租约机制出错导致两个 Worker 同时执行，日志 fencing 也保证只有一个 Attempt 的事件能被提交。
+- **工作按类别认领**（ADR-0029）。入队时带上业务线与优先级：活跃 Run 调用模型不到 6 次为交互级，达到 6 次为长任务；认领时先取交互级。一部分 Worker 只认领交互级，持有的 Run 成为长任务时，在两步之间以 `RunSuspended{reason: "handoff"}` 正常结束 Attempt 并移交出去。进程优雅停机时同样移交，不必等租约过期。
 - 无进展的连续接管（在 `running` 状态下开启新 Attempt，且其间上下文没有前进）超过上限 → `RunFailed`。从挂起恢复不计入，见 [M1 设计](./m1-device-nodes.md) §2 与 [长任务设计](./m2-long-runs.md) §6。
 
 ## 4. Agent 循环（一步 = 一次 Step）
