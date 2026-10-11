@@ -17,6 +17,7 @@
 - [ ] **Call 的语音输出审核**（ADR-0027，[设计](./design/m3-call.md) §6）：播出的语音边生成边播放，我们的检查（助手整句生成时）只能中止剩余的播放，之前的部分依赖厂商的严格审核（`strict_audit`）。须与合规确认这一方式可接受；不可接受时改为按句缓冲、检查后再下发（增加数百毫秒延迟）。
 - [ ] **实时语音模型的价格与用量**：`pricing.yaml` 中 `volc/1.2.6.1` 为刊例价，按合同价填写；每个会话的第一轮约有 5K token 的内置文本输入，评估对短通话成本的影响。
 - [ ] **评测基线**：上线所用的 AgentDef 版本与模型通过 `make eval`，基线随代码提交（ADR-0018）。
+- [x] **委托的阻断项**（[评审](./review/2026-10-11-scalability-review.md) §11 问题 1、2）：对真实 EndUser 开放委托（AgentDef 白名单含 `agent:`）之前，修复委托输入绕过 Memory 写入闸门与子 Session 可被复活。2026-10-11 完成，见评审 §11.4。
 - [ ] **生产部署形态**（[部署设计](./design/deployment.md)，[延展性评审](./review/2026-10-11-scalability-review.md) §4.5、§4.6、§8）。先完成设计 §6 的代码改动，再按清单部署：
   - 角色开关：`serve -roles ...` 按角色裁剪（网关、交互池 Worker、后台池 Worker、沙箱控制器、Janitor），全部角色等价于现在的 serve；
   - PostgreSQL 主 + 同步备，故障切换后已确认 Event 不丢、seq 不倒退，旧主隔离；SQL 经 PgBouncer 事务模式，`LISTEN` 与迁移锁经独立的直连 DSN（`-pg-listen-dsn`）；

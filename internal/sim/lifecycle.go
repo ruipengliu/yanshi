@@ -77,7 +77,21 @@ func (w *World) replace(i int) error {
 func (w *World) closeSession() error {
 	i := w.rng.IntN(len(w.sessions))
 	sid := w.sessions[i]
-	if err := w.svc.Close(context.Background(), sid, "sim", "test"); err != nil {
+	err := w.svc.Close(context.Background(), sid, "sim", "test")
+	var cf cancelFault
+	for range 3 {
+		if !errors.As(err, &cf) {
+			break
+		}
+		// 关闭已写入、撤回委托失败：客户端重试，关闭之后的步骤（撤回、索引、销毁工作区）须在重试中补上。
+		w.tracef("close %s: %v; retrying", sid, err)
+		err = w.svc.Close(context.Background(), sid, "sim", "test")
+	}
+	if errors.As(err, &cf) {
+		w.tracef("close %s: %v; giving up", sid, err)
+		err = nil
+	}
+	if err != nil {
 		return fmt.Errorf("close %s: %w", sid, err)
 	}
 	w.Stats.Closes++

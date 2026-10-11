@@ -247,6 +247,40 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 		}
 	})
 
+	// 租约期间有人以 Resumed 入队（用户刚做出审批），持有者按尚未读到审批的投影以 Background 归还：恢复名额保留
+	// （workqueue.ReturnedClass，评审 §11 问题 7）。没有这次入队时，持有者给的类别照常生效。
+	t.Run("ReturnKeepsResumedEnqueuedDuringLease", func(t *testing.T) {
+		resumed := workqueue.Class{BusinessLine: "bl", Priority: workqueue.Resumed}
+		resumedOnly := workqueue.Pool{MinPriority: workqueue.Resumed}
+		for _, park := range []bool{false, true} {
+			c, q := setup(t)
+			_ = q.Enqueue(ctx, "s", background)
+			l, _ := q.Claim(ctx, "w", time.Minute, anyWork)
+			_ = q.Enqueue(ctx, "s", resumed)
+			l.Class = background
+			var err error
+			if park {
+				err = q.Park(ctx, l, c.Now().Add(time.Hour))
+			} else {
+				err = q.Release(ctx, l, false)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			l, err = q.Claim(ctx, "w", time.Minute, resumedOnly)
+			if err != nil || l.Class != resumed {
+				t.Fatalf("park=%v: the resumed slot was lost: %+v, %v", park, l, err)
+			}
+			l.Class = background
+			if err := q.Release(ctx, l, false); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := q.Claim(ctx, "w", time.Minute, resumedOnly); !errors.Is(err, workqueue.ErrEmpty) {
+				t.Fatalf("park=%v: without an enqueue during the lease the holder's class did not apply: %v", park, err)
+			}
+		}
+	})
+
 	// Waited 是认领前已可认领的时长：入队、挂起到期、唤醒、归还、租约过期分别从各自的时刻算起（排队等待的指标）。
 	t.Run("ClaimReportsWait", func(t *testing.T) {
 		c, q := setup(t)

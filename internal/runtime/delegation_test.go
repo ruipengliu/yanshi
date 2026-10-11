@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -53,9 +54,28 @@ func TestDelegationLimits(t *testing.T) {
 		t.Fatalf("child tools %s; write is not allowed by the parent", got)
 	}
 
+	// 祖先的版本不在注册表中：配置错误，而不是悄悄失去全部工具。
+	orphan := New(Config{ID: "w", Agents: agents, Catalog: catalog})
+	orphan.st = &session.State{SessionID: "o", Created: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u",
+		Parent: &v1.ParentRef{SessionId: "p", Ancestors: []*v1.AgentRef{{Name: "parent", Version: "9"}}}}}
+	if _, err := orphan.tools(ctx, def); !errors.Is(err, capability.ErrConfig) {
+		t.Fatalf("missing ancestor version: %v", err)
+	}
+
 	call := &session.Call{Call: &v1.ToolCall{CallId: "c", Capability: "agent__parent", ArgumentsJson: `{"task":"x"}`}}
 	if reason := w.delegationRefused(&session.Run{}, def, call); !strings.Contains(reason, "depth") {
 		t.Fatalf("delegation beyond max depth: %q", reason)
+	}
+	// 上限含本层：max_depth 为 2 时顶层可以委托，第 2 层的子 Session 不能再委托（评审 §11 问题 9）。
+	two := *def
+	two.Delegation.MaxDepth = 2
+	if reason := w.delegationRefused(&session.Run{}, &two, call); !strings.Contains(reason, "depth 3") {
+		t.Fatalf("a depth-2 child delegated under max_depth 2: %q", reason)
+	}
+	top := New(Config{ID: "w", Agents: agents, Catalog: catalog})
+	top.st = &session.State{SessionID: "t", Created: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u"}}
+	if reason := top.delegationRefused(&session.Run{}, &two, call); reason != "" {
+		t.Fatalf("a top-level session could not delegate under max_depth 2: %q", reason)
 	}
 	bad := &session.Call{Call: &v1.ToolCall{CallId: "c", Capability: "agent__parent", ArgumentsJson: `{}`}}
 	if reason := w.delegationRefused(&session.Run{}, def, bad); !strings.Contains(reason, "task is required") {

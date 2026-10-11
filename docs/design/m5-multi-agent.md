@@ -40,7 +40,7 @@
 - **超时**：`deadline` 取目标 AgentDef 声明的 `delegation.timeout`（默认 1 小时）。到期父 Run 追加超时错误结果，并中断子 Run。
 - **中断**：父 Run 被中断时，Service 中断其所有未完成的子 Run（级联，尽力而为，与撤回 Inbox 条目同一处）。子 Run 被用户单独中断时，父 Run 收到错误结果。
 - **插话**：父 Session 的 Steer 不自动转发给子 Run；模型若要改变子任务，应中断后重新委托。保持语义简单，后续按评测需要再放开。
-- **深度与扇出**：`SessionCreated.parent` 记录深度；超过 AgentDef 的 `delegation.max_depth`（默认 2）或同一父 Run 同时未完成的委托超过 `delegation.max_fanout`（默认 4）时，工具调用返回错误结果而不派发。
+- **深度与扇出**：`SessionCreated.parent` 记录深度（顶层 Session 为第 1 层，子 Session 的深度是祖先数加一）；委托出去的子 Session 的深度超过委托方 AgentDef 的 `delegation.max_depth`（默认 2，即顶层可以委托、子 Session 不再委托）或同一父 Run 同时未完成的委托超过 `delegation.max_fanout`（默认 4）时，工具调用返回错误结果而不派发。
 - **配额与计量**：子 Run 的用量按同一 EndUser、同一业务线计量（ADR-0019），`agent` 标签为子 AgentDef；父子共用 EndUser 的日配额。
 - **删除**：子 Session 是独立的 Session，索引中带 `parent_session`；删除父 Session 时 Janitor 级联删除所有子 Session（ADR-0015，写入入口照旧"先写、后查"）。按 EndUser 删除本来就覆盖全部。
 - **可见性**：子 Session 对 EndUser 可见、可订阅，客户端按 `parent` 字段折叠展示；子 Run 的 Approval 与提醒照常推送。
@@ -95,3 +95,10 @@
 - **级联只沿删除与中断。** 关闭父 Session 中断进行中的子 Run，子 Session 本身保留。
 - **模拟测试**：sim Agent 可以委托给自己（长 Run 模式下不委托），子 Session 由父日志中的委托目标发现，审批、中断、收敛、删除检查都覆盖它们。不变量：来处与父日志一致、深度不超过上限、父 Session 删除完成后子 Session 也删除完成；写回丢失会表现为父 Run 不能收敛（把写回去掉，模拟测试即报活性失败）。覆盖统计 `Delegations`、`DelegationResults`。
 - **评测**：§7 中除 `delegate-interrupt-cascades` 之外的五个用例在 `evals/delegate-*.yaml`，用例可以定义只给自己用的被委托 Agent（`setup.agents`）；中断的级联不依赖模型，由 e2e 测试 `TestDelegationCascades` 覆盖。
+- **评审修复**（[评审](../review/2026-10-11-scalability-review.md) §11，2026-10-11）：
+  - 子 Session 一律视为受外部内容影响，委托的任务不计入用户原话（Memory 写入闸门，ADR-0023）；
+  - 派发在创建子 Session 之后对子 Session 本身先写后查：它恰在此前被删除并清理完毕时，撤回刚重建的索引与日志并告诉父调用（模拟测试在检查与创建之间注入删除，覆盖统计 `ChildDeletionRaces`）；
+  - 委托 Run 记在投影的固定位置（`State.Delegated`，投影版本 10），写回、撤回与重复派发都用它，不受去重窗口淘汰；
+  - 深度按"委托出去的子 Session 的深度"判定，与 `delegation.max_depth` 的定义一致；
+  - 中断已终态的 Run 时仍撤回未完成的派发，重试中断或关闭即可补上失败的撤回；子 Worker 每次调用模型之前确认父调用仍在等待，不在等了就以 `parent_done` 中断委托 Run（`Delegator.Reconcile`，e2e `TestDelegationOrphanStops`；模拟测试注入撤回失败，覆盖统计 `CascadeFaults`）；
+  - 祖先 AgentDef 的版本取不到时是配置错误（Run 失败），不再悄悄失去全部工具。

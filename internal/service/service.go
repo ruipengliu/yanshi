@@ -311,8 +311,15 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 	return nil, fmt.Errorf("submit to session %s: too many conflicts", sessionID)
 }
 
-// Interrupt 中断 Run；Run 已终态时无操作并返回 nil。
+// Interrupt 中断 Run（用户发起）；Run 已终态时不再写入并返回 nil。
 func (s *Service) Interrupt(ctx context.Context, sessionID, runID string) error {
+	return s.InterruptBy(ctx, sessionID, runID, "user")
+}
+
+// InterruptBy 中断 Run，by 是中断方（RunInterrupted.by，如 "user"、委托级联的 "parent"）。中断之后撤回 Run 中已派发、
+// 未完成的路由调用；撤回失败时返回错误，重试同一请求会再撤回一次（Run 已终态，不再写入）：否则被中断的父 Run 的
+// 子 Run 会一直跑下去（评审 §11 问题 10）。
+func (s *Service) InterruptBy(ctx context.Context, sessionID, runID, by string) error {
 	st, err := s.Load(ctx, sessionID)
 	if err != nil {
 		return err
@@ -326,10 +333,13 @@ func (s *Service) Interrupt(ctx context.Context, sessionID, runID string) error 
 			return fmt.Errorf("%w: run %s", ErrNotFound, runID)
 		}
 		if r.Status.Terminal() {
+			if r.Status == session.RunInterrupted {
+				return s.cancelDispatched(ctx, r)
+			}
 			return nil
 		}
 		err := s.commitEnding(ctx, st, &v1.Event{Payload: &v1.Event_RunInterrupted{
-			RunInterrupted: &v1.RunInterrupted{RunId: runID, By: "user"},
+			RunInterrupted: &v1.RunInterrupted{RunId: runID, By: by},
 		}})
 		if err == nil {
 			metrics.RunsFinished.WithLabelValues("interrupted", agentdef.Label(st.Agent)).Inc()
@@ -352,6 +362,23 @@ func (s *Service) commitEnding(ctx context.Context, st *session.State, events ..
 		return s.Store.CommitAndWake(ctx, st, events...)
 	}
 	return s.Store.Commit(ctx, st, events...)
+}
+
+// afterClose 是关闭之后的步骤：撤回被关闭中断的 Run 中已派发的调用、在索引中记下关闭、交给 Janitor 销毁沙箱工作区。
+// 每一步都幂等；任一步失败时返回错误，重试 Close 会把它们再做一遍。以前重试遇到"已关闭"直接返回，失败的那一步
+// 及其后的步骤就再也不会执行。
+func (s *Service) afterClose(ctx context.Context, st *session.State) error {
+	if n := len(st.Runs); n > 0 && st.Runs[n-1].Status == session.RunInterrupted {
+		if err := s.cancelDispatched(ctx, st.Runs[n-1]); err != nil {
+			return err
+		}
+	}
+	if s.Index != nil {
+		if err := s.Index.MarkClosed(ctx, st.SessionID, s.Store.Clock.Now()); err != nil {
+			return err
+		}
+	}
+	return s.enqueueJanitor(ctx, st.SessionID, st.Created.GetBusinessLine())
 }
 
 // cancelDispatched 尽力撤回 Run 中已派发、未完成的路由调用。提问不经 Inbox，无需撤回（ADR-0025）。
@@ -381,6 +408,10 @@ func lastRunAt(st *session.State) time.Time {
 func duplicate(st *session.State, inputID string) *SubmitResult {
 	ref := st.Input(inputID)
 	if ref == nil {
+		// 委托的任务不受去重窗口限制：窗口被子 Session 中的其他输入挤出后，重复派发也不能再提交一次。
+		if p := st.Created.GetParent(); st.Delegated != "" && inputID == session.DelegatedInputID(p.GetCallId()) {
+			return &SubmitResult{Duplicate: true, RunID: st.Delegated}
+		}
 		return nil
 	}
 	return &SubmitResult{Duplicate: true, RunID: ref.RunID, Steered: ref.Steered, Answered: ref.Answered}
@@ -535,7 +566,7 @@ func (s *Service) Close(ctx context.Context, sessionID, by, reason string) error
 	}
 	for range maxConflictRetries {
 		if st.Closed != nil {
-			return nil
+			return s.afterClose(ctx, st)
 		}
 		var events []*v1.Event
 		a := st.Active()
@@ -551,16 +582,8 @@ func (s *Service) Close(ctx context.Context, sessionID, by, reason string) error
 		if err == nil {
 			if a != nil {
 				metrics.RunsFinished.WithLabelValues("interrupted", agentdef.Label(st.Agent)).Inc()
-				if err := s.cancelDispatched(ctx, a); err != nil {
-					return err
-				}
 			}
-			if s.Index != nil {
-				if err := s.Index.MarkClosed(ctx, sessionID, s.Store.Clock.Now()); err != nil {
-					return err
-				}
-			}
-			return s.enqueueJanitor(ctx, sessionID, st.Created.GetBusinessLine())
+			return s.afterClose(ctx, st)
 		}
 		if !errors.Is(err, eventlog.ErrConflict) {
 			return err

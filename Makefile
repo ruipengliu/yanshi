@@ -72,8 +72,9 @@ mobile: build/swift-protobuf/Package.swift
 	scripts/mobile-smoke-ios.sh
 
 # 更多种子的确定性模拟测试，含 PostgreSQL 差分测试
+# 全量种子约需 10 分钟（PostgreSQL 差分测试占大半），超过 go test 默认的 10 分钟时限。
 sim: deps-up
-	go test ./internal/sim -sim.seeds=2000 -sim.pgseeds=100
+	go test ./internal/sim -sim.seeds=2000 -sim.pgseeds=100 -timeout 40m
 
 # 评测（docs/design/m4-eval.md）：消耗真实 token，不在 check 中；需要 TOKENHUB_API_KEY。
 # 改动模型、提示词、AgentDef 或召回、压缩、Memory、MCP 中给模型的文本时必须运行。

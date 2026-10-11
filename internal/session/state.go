@@ -193,6 +193,19 @@ type State struct {
 	Inputs []InputRef
 	// ActiveCall 是进行中的 Call（语音通话，docs/design/m3-call.md），没有时为 nil。
 	ActiveCall *ActiveCall
+	// Delegated 是委托派生的子 Session 中，委托的任务（输入 ID 为 DelegatedInputID）所在的 Run；不是子 Session 或任务
+	// 尚未提交时为空。写回、撤回与重复派发都靠它找到委托 Run：去重窗口（Inputs）会被用户在子 Session 中的输入挤出
+	// （评审 §11 问题 3）。
+	Delegated string
+}
+
+// DelegatedInputID 是委托给子 Session 的任务的输入 ID（docs/design/m5-multi-agent.md §4）。
+func DelegatedInputID(callID string) string { return "delegate_" + callID }
+
+// delegatedInput 报告 inputID 是否是本 Session 的委托任务。
+func (s *State) delegatedInput(inputID string) bool {
+	p := s.Created.GetParent()
+	return p != nil && inputID != "" && inputID == DelegatedInputID(p.GetCallId())
 }
 
 // KeepRuns 是新 Run 请求时投影中保留完整明细的旧 Run 数。活跃推进只用到当前 Run；更早的 Run 只剩摘要，
@@ -506,6 +519,9 @@ func (s *State) apply(e *v1.Event) error {
 		if err := s.recordInput(InputRef{ID: p.RunRequested.GetInputId(), RunID: p.RunRequested.GetRunId()}); err != nil {
 			return err
 		}
+		if s.Delegated == "" && s.delegatedInput(p.RunRequested.GetInputId()) {
+			s.Delegated = p.RunRequested.GetRunId()
+		}
 		s.Runs = append(s.Runs, &Run{ID: p.RunRequested.GetRunId(), Status: RunQueued, RequestedAt: e.GetTime().AsTime()})
 		s.trimRuns()
 		s.History = append(s.History, e)
@@ -519,6 +535,9 @@ func (s *State) apply(e *v1.Event) error {
 		}
 		if err := s.recordInput(InputRef{ID: p.Steered.GetInputId(), RunID: p.Steered.GetRunId(), Steered: true}); err != nil {
 			return err
+		}
+		if s.Delegated == "" && s.delegatedInput(p.Steered.GetInputId()) {
+			s.Delegated = p.Steered.GetRunId()
 		}
 		s.History = append(s.History, e)
 

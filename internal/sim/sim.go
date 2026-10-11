@@ -90,7 +90,11 @@ type Stats struct {
 	// ResumedClaims 是以恢复名额认领的长任务（用户刚做出审批或回答，ADR-0029）。
 	ResumedClaims int
 	// 委托（docs/design/m5-multi-agent.md）：创建的子 Session，子 Run 写回父调用的结果（完成、失败或中断）。
-	Delegations, DelegationResults int
+	// ChildDeletionRaces 是重新派发时、在检查删除记录与创建子 Session 之间删除并清理完子 Session 的次数（评审 §11 问题 2）。
+	// CascadeFaults 是中断或关闭父 Session 后撤回委托失败的次数（评审 §11 问题 10）：客户端有时重试、有时放弃，
+	// 放弃时子 Run 由子 Worker 在下一次调用模型前停下（Delegator.Reconcile；模拟中的 Run 很短，这条路径由
+	// e2e 的 TestDelegationOrphanStops 覆盖）。
+	Delegations, DelegationResults, ChildDeletionRaces, CascadeFaults int
 	// 判断（docs/design/m6-decisions.md）：记录的判断，其中判断不可用、走默认路径的。
 	Decisions, DecisionFallbacks int
 	// PastRuns 是移出投影、只剩摘要的终态 Run（有界投影，延展性评审 §8.3）。
@@ -390,11 +394,11 @@ func New(opts Options) (*World, error) {
 	w.artifacts = &artifact.Service{Meta: stores.ArtifactMeta, Blobs: artifact.NewMemBlobs(), IDs: ids.Sequential("art"), Clock: w.clock, Deletions: w.deletions}
 	w.provider = sandbox.NewFake()
 	w.provider.ExecFunc = w.sandboxExec
-	w.delegator = &delegation.Delegator{}
+	w.delegator = &delegation.Delegator{BeforeCreate: w.deleteChildMidDispatch}
 	w.dispatch = &delegation.Router{Next: w.router, Delegator: w.delegator}
 	w.parentOf = map[string]string{}
 	w.catalog.Agents = delegation.Directory{Registry: agents}
-	w.svc = &service.Service{Store: w.store, Agents: agents, Nodes: w.dispatch, Index: w.index, Deletions: w.deletions, Janitor: w.janitorQueue, Quotas: w.quotas,
+	w.svc = &service.Service{Store: w.store, Agents: agents, Nodes: flakyCancel{Router: w.dispatch, w: w}, Index: w.index, Deletions: w.deletions, Janitor: w.janitorQueue, Quotas: w.quotas,
 		Moderator: simModerator{w}}
 	w.delegator.Service = w.svc
 	for range 2 {
@@ -910,7 +914,20 @@ func (w *World) interrupt() error {
 	}
 	w.Stats.Interrupts++
 	w.tracef("interrupt %s/%s", sid, a.ID)
-	return w.svc.Interrupt(context.Background(), sid, a.ID)
+	err = w.svc.Interrupt(context.Background(), sid, a.ID)
+	var cf cancelFault
+	if errors.As(err, &cf) {
+		// 中断已写入，撤回委托失败：客户端看到错误，有时重试（重试会再撤回一次），有时放弃（子 Run 成为孤儿）。
+		w.tracef("interrupt %s/%s: %v", sid, a.ID, err)
+		if w.chance(0.5) {
+			return nil
+		}
+		err = w.svc.Interrupt(context.Background(), sid, a.ID)
+		if errors.As(err, &cf) {
+			return nil
+		}
+	}
+	return err
 }
 
 // quiesce 停止故障与客户端动作，持续推进直到所有 Run 终态。

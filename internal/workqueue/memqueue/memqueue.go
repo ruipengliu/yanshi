@@ -176,7 +176,7 @@ func (q *Queue) Park(_ context.Context, l *workqueue.Lease, until time.Time) err
 	if it == nil {
 		return workqueue.ErrLeaseLost
 	}
-	it.leased, it.class = false, l.Class
+	it.leased, it.class = false, workqueue.ReturnedClass(it.class, l.Class, it.dirty)
 	if it.dirty {
 		it.dirty, it.parkedUntil, it.readyAt = false, time.Time{}, q.clock.Now()
 	} else {
@@ -197,7 +197,7 @@ func (q *Queue) Release(_ context.Context, l *workqueue.Lease, done bool) error 
 		q.items = append(q.items[:i], q.items[i+1:]...)
 		return nil
 	}
-	it.leased, it.dirty, it.parkedUntil, it.class, it.readyAt = false, false, time.Time{}, l.Class, q.clock.Now()
+	it.leased, it.dirty, it.parkedUntil, it.class, it.readyAt = false, false, time.Time{}, workqueue.ReturnedClass(it.class, l.Class, it.dirty), q.clock.Now()
 	// 移到队尾，避免同一 Session 饿死其他 Session。
 	q.items = append(append(q.items[:i], q.items[i+1:]...), it)
 	return nil

@@ -14,7 +14,7 @@ import (
 
 // ProjectionVersion 是投影语义的版本。改动 Apply 或 State 的字段时必须递增：旧快照随之作废，
 // 加载退回完整回放，因此快照永远不会与当前代码的投影结果不一致。
-const ProjectionVersion = 9
+const ProjectionVersion = 10
 
 // Snapshots 存放每个 Session 最新的投影快照。快照只是加速加载的缓存，删除或丢失都不影响正确性。
 type Snapshots interface {
@@ -43,7 +43,7 @@ func fromTS(t *timestamppb.Timestamp) time.Time {
 func (s *State) Snapshot() *v1.SessionSnapshot {
 	snap := &v1.SessionSnapshot{
 		Version: ProjectionVersion, SessionId: s.SessionID, Seq: s.Seq, Created: s.Created, Agent: s.Agent, Closed: s.Closed,
-		Compaction: s.Compaction, CompactedAt: s.CompactedAt, History: s.History,
+		Compaction: s.Compaction, CompactedAt: s.CompactedAt, History: s.History, DelegatedRun: s.Delegated,
 	}
 	for _, r := range s.Runs {
 		rs := &v1.RunSnapshot{
@@ -89,7 +89,7 @@ func FromSnapshot(snap *v1.SessionSnapshot) (*State, error) {
 	s := &State{
 		SessionID: snap.GetSessionId(), Seq: snap.GetSeq(), Created: snap.GetCreated(), Agent: snap.GetAgent(), Closed: snap.GetClosed(),
 		Compaction: snap.GetCompaction(), CompactedAt: snap.GetCompactedAt(), History: snap.GetHistory(),
-		callIDsOld: map[string]bool{},
+		Delegated: snap.GetDelegatedRun(), callIDsOld: map[string]bool{},
 	}
 	for _, p := range snap.GetPastRuns() {
 		s.Past = append(s.Past, RunSummary{ID: p.GetId(), Status: RunStatus(p.GetStatus()), RequestedAt: fromTS(p.GetRequestedAt()),

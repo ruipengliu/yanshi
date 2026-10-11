@@ -100,3 +100,33 @@ func TestHubSharesOneReader(t *testing.T) {
 		t.Fatalf("%d readers left after every subscriber left", n)
 	}
 }
+
+// 第一个订阅者的游标超过日志末尾时，共享读者不以它为起点：之后加入的订阅者照常收到新事件。
+func TestHubIgnoresCursorBeyondHead(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	log := memlog.New()
+	appendN(t, log, 1, 3)
+	hub := &Hub{Log: log}
+	src := Source{Log: log, Live: live.Discard{}, Hub: hub}
+	st := &session.State{SessionID: "s1", Seq: 3}
+
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	defer cancel()
+	ahead := chanSink{events: make(chan *v1.Event, 16)}
+	wg.Go(func() { _ = src.Stream(ctx, st, 1000, ahead) })
+	for hub.readers() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	normal := chanSink{events: make(chan *v1.Event, 16)}
+	wg.Go(func() { _ = src.Stream(ctx, st, 0, normal) })
+	receive(t, normal, 1, 3)
+	appendN(t, log, 4, 1)
+	receive(t, normal, 4, 4)
+	select {
+	case e := <-ahead.events:
+		t.Fatalf("subscriber with cursor 1000 got seq %d", e.GetSeq())
+	default:
+	}
+}

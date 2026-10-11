@@ -46,7 +46,8 @@ type Def struct {
 type DelegationConfig struct {
 	// Timeout 是委托给本 Agent 的任务的时限，默认 1 小时；到期父调用得到超时错误，子 Run 被中断。
 	Timeout time.Duration `yaml:"timeout"`
-	// MaxDepth 是本 Agent 作为委托方时允许的委托链深度（含本层），默认 2。
+	// MaxDepth 是本 Agent 作为委托方时允许的委托链深度（含本层；顶层 Session 为第 1 层），默认 2：顶层可以委托，
+	// 被委托的子 Session 不再委托。
 	MaxDepth int `yaml:"max_depth"`
 	// MaxFanout 是本 Agent 的一个 Run 同时未完成的委托数上限，默认 4。
 	MaxFanout int `yaml:"max_fanout"`

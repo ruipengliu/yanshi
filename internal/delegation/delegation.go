@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"yanshi/internal/session"
 )
 
 // Prefix 是委托目标的保留 Node ID 前缀：完整 ID 为 "@agent/<子 Session ID>"（node.Reserved 拒绝设备以它接入）。
@@ -30,8 +32,9 @@ func ChildSessionID(parentSession, callID string) string {
 	return "ses_" + hex.EncodeToString(h[:16])
 }
 
-// InputID 是子 Session 中委托输入的输入 ID：重复提交返回首次的结果（service.SubmitWithID 去重）。
-func InputID(callID string) string { return "delegate_" + callID }
+// InputID 是子 Session 中委托输入的输入 ID：重复提交返回首次的结果（service.SubmitDelegated 去重），投影据此记下
+// 委托 Run（session.State.Delegated）。
+func InputID(callID string) string { return session.DelegatedInputID(callID) }
 
 // Args 是委托工具的输入。
 type Args struct {

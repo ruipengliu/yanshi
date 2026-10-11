@@ -183,9 +183,17 @@ func (n *Notifier) listen(ctx context.Context) error {
 		_ = conn.Conn().Close(context.Background())
 		return err
 	}
+	// exec 在本连接上执行一条语句，以 HeartbeatTimeout 为时限：连接半开时语句回不来，不限时就会卡在这里，
+	// 同一循环里的心跳检查永远走不到（评审 §11 问题 6）。
+	exec := func(sql string) error {
+		sctx, cancel := context.WithTimeout(ctx, n.HeartbeatTimeout)
+		defer cancel()
+		_, err := conn.Exec(sctx, sql)
+		return err
+	}
 	n.pid.Store(conn.Conn().PgConn().PID())
 	hbChannel := fmt.Sprintf("yanshi_hb_%d_%d", conn.Conn().PgConn().PID(), time.Now().UnixNano())
-	if _, err := conn.Exec(ctx, "LISTEN "+pgx.Identifier{hbChannel}.Sanitize()); err != nil {
+	if err := exec("LISTEN " + pgx.Identifier{hbChannel}.Sanitize()); err != nil {
 		return fail(err)
 	}
 	n.mu.Lock()
@@ -196,7 +204,7 @@ func (n *Notifier) listen(ctx context.Context) error {
 	nextBeat, sentAt := time.Now().Add(n.Heartbeat), time.Time{}
 	for {
 		for _, ch := range n.unlistened() {
-			if _, err := conn.Exec(ctx, "LISTEN "+pgx.Identifier{ch}.Sanitize()); err != nil {
+			if err := exec("LISTEN " + pgx.Identifier{ch}.Sanitize()); err != nil {
 				return fail(err)
 			}
 			n.markListening(ch, first && reconnect)
@@ -212,10 +220,7 @@ func (n *Notifier) listen(ctx context.Context) error {
 		if sentAt.IsZero() && !now.Before(nextBeat) {
 			// 在本连接上 NOTIFY 自己监听的私有频道：语句往返说明连接仍在（半开的连接在时限内回不来），
 			// 收到这条通知说明 LISTEN 仍然生效。不经连接池，池被占满时不会误判。
-			hctx, cancel := context.WithTimeout(ctx, n.HeartbeatTimeout)
-			_, err := conn.Exec(hctx, "NOTIFY "+pgx.Identifier{hbChannel}.Sanitize())
-			cancel()
-			if err != nil {
+			if err := exec("NOTIFY " + pgx.Identifier{hbChannel}.Sanitize()); err != nil {
 				return fail(fmt.Errorf("%w: %v", errHeartbeat, err))
 			}
 			sentAt, nextBeat = now, now.Add(n.Heartbeat)

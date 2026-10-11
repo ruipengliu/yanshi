@@ -73,7 +73,7 @@ func (w *World) checkDelegation(final bool) error {
 			if p.GetSessionId() != w.parentOf[child] || delegation.ChildSessionID(p.GetSessionId(), p.GetCallId()) != child {
 				return fmt.Errorf("invariant: child session %s has parent %v, discovered under %s", child, p, w.parentOf[child])
 			}
-			if depth := len(p.GetAncestors()); depth > simMaxDepth {
+			if depth := len(p.GetAncestors()) + 1; depth > simMaxDepth {
 				return fmt.Errorf("invariant: child session %s is at delegation depth %d, limit %d", child, depth, simMaxDepth)
 			}
 		}
@@ -106,6 +106,58 @@ func (w *World) countDelegationResults(events []*v1.Event) {
 			w.Stats.DelegationResults++
 		}
 	}
+}
+
+// deleteChildMidDispatch 在派发检查过子 Session 的删除记录之后、创建它之前，模拟用户删除这个子 Session 且 Janitor
+// 清理完毕（重新派发时子 Session 已存在）。派发若不对子 Session 本身先写后查，会重建它的索引与日志，
+// 删除不变量（checkDeleted）随即报告复活。
+func (w *World) deleteChildMidDispatch(ctx context.Context, child string) {
+	if !w.faults || !w.chance(0.3) {
+		return
+	}
+	if st, err := w.store.Load(ctx, child); err != nil || st.Created == nil {
+		return
+	}
+	if gone, err := lifecycle.Deleted(ctx, w.deletions, child); err != nil || gone {
+		return
+	}
+	if err := w.svc.Delete(ctx, child, "end_user", ""); err != nil {
+		return
+	}
+	w.deleted = append(w.deleted, child)
+	w.tracef("delete child %s (mid-dispatch)", child)
+	// 专用的 Janitor 不注入崩溃：这里要的是"清理已完成"这一交错。清理队列中可能还有别的 Session，逐个处理完。
+	j := w.newJanitor()
+	j.BeforeStage = nil
+	for range 64 {
+		if t, err := w.deletions.Get(ctx, child); err == nil && !t.CompletedAt.IsZero() {
+			w.Stats.ChildDeletionRaces++
+			return
+		}
+		if did, err := j.Step(context.WithoutCancel(ctx)); err != nil || !did {
+			return
+		}
+	}
+}
+
+// cancelFault 是注入的撤回失败（存储故障）。
+type cancelFault struct{}
+
+func (cancelFault) Error() string { return "simulated failure withdrawing a delegated task" }
+
+// flakyCancel 是 Service 撤回路由调用所用的 Dispatcher：撤回委托偶尔在生效之前失败。中断父 Run 时撤回失败，子 Run
+// 就成了没人等的孤儿，须由子 Worker 自己发现并停下（Delegator.Reconcile）。
+type flakyCancel struct {
+	*delegation.Router
+	w *World
+}
+
+func (f flakyCancel) Cancel(ctx context.Context, nodeID, callID string) error {
+	if delegation.IsNode(nodeID) && f.w.faults && f.w.chance(0.3) {
+		f.w.Stats.CascadeFaults++
+		return cancelFault{}
+	}
+	return f.Router.Cancel(ctx, nodeID, callID)
 }
 
 // simMaxDepth 是 sim Agent 的委托链深度上限（AgentDef 默认值）。

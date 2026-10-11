@@ -5,7 +5,9 @@ import (
 	"errors"
 	"math"
 	"testing"
+	"time"
 
+	"yanshi/internal/clock"
 	"yanshi/internal/model"
 )
 
@@ -55,8 +57,43 @@ func TestLogits(t *testing.T) {
 	if a, err := l.Decide(context.Background(), q); err != nil || a.Model != "rules/injection-v1" {
 		t.Fatalf("low confidence did not fall back: %+v, %v", a, err)
 	}
+	if a, err := l.Decide(context.Background(), q); err != nil || a.Billed != "local/m" {
+		t.Fatalf("fallback answer is not billed to the model it called: %+v, %v", a, err)
+	}
 	p.top = nil
-	if _, err := l.Decide(context.Background(), q); err == nil {
+	a, err = l.Decide(context.Background(), q)
+	if err == nil {
 		t.Fatal("no logprobs: want an error")
+	}
+	if a.Billed != "local/m" {
+		t.Fatalf("the failed call's usage is not billed: %+v", a)
+	}
+}
+
+type failing struct{ calls int }
+
+func (f *failing) Decide(context.Context, Question) (Answer, error) {
+	f.calls++
+	return Answer{}, errors.New("down")
+}
+
+// 连续失败后熔断：冷却期内不再调用，期满后放行一次，再失败即重新熔断。
+func TestBreaker(t *testing.T) {
+	ctx := context.Background()
+	clk := clock.NewFake(time.Unix(0, 0))
+	f := &failing{}
+	b := &Breaker{Decider: f, Failures: 2, Cooldown: time.Minute, Clock: clk}
+	q := Question{Kind: ToolResultInjection}
+	for range 2 {
+		if _, err := b.Decide(ctx, q); err == nil || errors.Is(err, ErrOpen) {
+			t.Fatalf("before opening: %v", err)
+		}
+	}
+	if _, err := b.Decide(ctx, q); !errors.Is(err, ErrOpen) || f.calls != 2 {
+		t.Fatalf("after %d failures: %v, %d calls", 2, err, f.calls)
+	}
+	clk.Advance(time.Minute)
+	if _, err := b.Decide(ctx, q); errors.Is(err, ErrOpen) || f.calls != 3 {
+		t.Fatalf("after the cooldown: %v, %d calls", err, f.calls)
 	}
 }

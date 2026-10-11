@@ -49,6 +49,8 @@ func (r *Router) Cancel(ctx context.Context, nodeID, callID string) error {
 type Delegator struct {
 	Service *service.Service
 	Logger  *slog.Logger
+	// BeforeCreate 非 nil 时在创建子 Session 之前调用：模拟测试在这里注入"子 Session 恰好此时被删除"。
+	BeforeCreate func(ctx context.Context, child string)
 }
 
 func (d *Delegator) log() *slog.Logger {
@@ -86,6 +88,9 @@ func (d *Delegator) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke)
 		return d.result(ctx, inv.GetSessionId(), inv.GetRunId(), inv.GetCallId(), err.Error(), true)
 	}
 	ancestors := append([]*v1.AgentRef{parent.Agent}, parent.Created.GetParent().GetAncestors()...)
+	if d.BeforeCreate != nil {
+		d.BeforeCreate(ctx, child)
+	}
 	_, err = svc.Create(ctx, service.CreateRequest{
 		SessionID: child, BusinessLine: parent.Created.GetBusinessLine(), EndUser: parent.Created.GetEndUser(), Agent: inv.GetCapability(),
 		Parent: &v1.ParentRef{SessionId: inv.GetSessionId(), RunId: inv.GetRunId(), CallId: inv.GetCallId(), Ancestors: ancestors},
@@ -96,7 +101,17 @@ func (d *Delegator) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke)
 		}
 		return err
 	}
-	// 先写、后查（ADR-0015）：创建子 Session 的同时父 Session 被删除时，删除子 Session，不提交任务。
+	// 先写、后查（ADR-0015），对子 Session 本身：子 Session ID 由调用推导，开头的检查之后、创建之前它可能被删除
+	// 并清理完毕，创建会重建它的索引与日志。撤回之后告诉父调用它没了。
+	if gone, err := lifecycle.Recheck(ctx, svc.Deletions, child, func(ctx context.Context) error {
+		return d.withdrawChild(ctx, child)
+	}); err != nil || gone {
+		if gone {
+			return d.result(ctx, inv.GetSessionId(), inv.GetRunId(), inv.GetCallId(), "the delegated session was deleted", true)
+		}
+		return err
+	}
+	// 同样对父 Session：创建子 Session 的同时父 Session 被删除时，删除子 Session，不提交任务。
 	if gone, err := lifecycle.Recheck(ctx, svc.Deletions, inv.GetSessionId(), func(ctx context.Context) error {
 		return svc.Delete(ctx, child, "parent_deleted", "")
 	}); err != nil || gone {
@@ -116,22 +131,97 @@ func (d *Delegator) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke)
 	}
 }
 
+// withdrawChild 撤回对已有删除记录的子 Session 的创建。清理已完成时，创建只写了索引与 SessionCreated，原样删除即可；
+// 清理尚未完成时再交给 Janitor 清除一遍（已有删除记录的 Session 每次都会被完整清理）：它若已删过日志，重建的日志
+// 由这一遍兜住。
+func (d *Delegator) withdrawChild(ctx context.Context, child string) error {
+	svc := d.Service
+	t, err := svc.Deletions.Get(ctx, child)
+	if err != nil {
+		return err
+	}
+	if !t.CompletedAt.IsZero() {
+		if err := svc.Store.Log.Delete(ctx, child); err != nil {
+			return err
+		}
+		if svc.Store.Snapshots != nil {
+			if err := svc.Store.Snapshots.Delete(ctx, child); err != nil {
+				return err
+			}
+		}
+		if svc.Index != nil {
+			if err := svc.Index.Delete(ctx, child); err != nil {
+				return err
+			}
+		}
+	}
+	err = svc.Delete(ctx, child, t.Reason, t.RequestID)
+	if errors.Is(err, service.ErrNotFound) {
+		return nil // 日志与索引都已撤回：没有剩下的数据
+	}
+	return err
+}
+
 // Cancel 中断子 Session 中由这次委托开始的 Run（父 Run 被中断或委托超时）。子 Run 的中断照常级联到它自己的委托。
 func (d *Delegator) Cancel(ctx context.Context, nodeID, callID string) error {
 	child := ChildSession(nodeID)
 	st, err := d.Service.Store.Load(ctx, child)
-	if err != nil || st.Created == nil {
+	if err != nil || st.Created == nil || st.Delegated == "" {
 		return err
 	}
-	ref := st.Input(InputID(callID))
-	if ref == nil {
-		return nil
-	}
-	err = d.Service.Interrupt(ctx, child, ref.RunID)
+	err = d.Service.InterruptBy(ctx, child, st.Delegated, "parent")
 	if errors.Is(err, service.ErrNotFound) {
 		return nil
 	}
 	return err
+}
+
+// Reconcile 在子 Session 的委托 Run 进行中、父调用却不再等待（父调用已有结果、父 Run 已终态或父 Session 已删除）时
+// 中断委托 Run，返回 true。撤回委托（Cancel）是尽力而为的：撤回失败时子 Run 本会一直跑下去、白白消耗配额，
+// 由子 Worker 在每次调用模型之前自己发现（评审 §11 问题 10）。读父 Session 出错时不中断：这只是清理，不能因为
+// 存储抖动误停仍有人等待的任务。
+func (d *Delegator) Reconcile(ctx context.Context, child *session.State) (bool, error) {
+	p := child.Created.GetParent()
+	r := child.Active()
+	if p == nil || r == nil || r.ID != child.Delegated {
+		return false, nil
+	}
+	if waiting, err := d.parentWaiting(ctx, p); err != nil || waiting {
+		if err != nil {
+			d.log().Warn("delegation reconcile skipped", "session", child.SessionID, "parent", p.GetSessionId(), "err", err)
+		}
+		return false, nil
+	}
+	err := d.Service.InterruptBy(ctx, child.SessionID, r.ID, ParentDone)
+	if errors.Is(err, service.ErrNotFound) {
+		err = nil
+	}
+	return true, err
+}
+
+// ParentDone 是子 Worker 发现父调用不再等待、自行中断委托 Run 时的中断方（RunInterrupted.by）。
+const ParentDone = "parent_done"
+
+// parentWaiting 报告父调用是否仍在等待结果。
+func (d *Delegator) parentWaiting(ctx context.Context, p *v1.ParentRef) (bool, error) {
+	svc := d.Service
+	if gone, err := lifecycle.Deleted(ctx, svc.Deletions, p.GetSessionId()); err != nil || gone {
+		return false, err
+	}
+	st, err := svc.Store.Load(ctx, p.GetSessionId())
+	if err != nil {
+		return false, err
+	}
+	r := st.Run(p.GetRunId())
+	if r == nil || r.Status.Terminal() {
+		return false, nil // 已移出投影的 Run 都是终态
+	}
+	for _, c := range r.Calls {
+		if c.Call.GetCallId() == p.GetCallId() {
+			return !c.Done, nil
+		}
+	}
+	return true, nil // 父 Run 尚未记下这次调用（不会发生：调用先于派发写入）；保守地视为在等
 }
 
 // Report 把子 Session 中委托 Run 的终态写回父调用（外部结果，与父 Session 的唤醒同一事务）。子 Worker 在子 Session
@@ -141,15 +231,14 @@ func (d *Delegator) Report(ctx context.Context, child *session.State) error {
 	if p == nil {
 		return nil
 	}
-	ref := child.Input(InputID(p.GetCallId()))
-	if ref == nil {
+	if child.Delegated == "" {
 		return nil // 任务尚未提交（派发时会提交）
 	}
-	sum, ok := child.RunSummary(ref.RunID)
+	sum, ok := child.RunSummary(child.Delegated)
 	if !ok || !sum.Status.Terminal() {
 		return nil
 	}
-	text, err := d.lastMessage(ctx, child, ref.RunID)
+	text, err := d.lastMessage(ctx, child, child.Delegated)
 	if err != nil {
 		return err
 	}

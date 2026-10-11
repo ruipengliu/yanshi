@@ -527,3 +527,36 @@ func TestCheckCostIndependentOfHistory(t *testing.T) {
 		t.Fatalf("check allocates %d bytes with 1000 past runs vs %d with 100", large, small)
 	}
 }
+
+// 委托 Run 记在投影的固定位置，不随去重窗口淘汰；快照恢复后不变（评审 §11 问题 3）。
+func TestDelegatedRunOutlivesInputWindow(t *testing.T) {
+	child := &v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u",
+		Parent: &v1.ParentRef{SessionId: "p", RunId: "pr", CallId: "pc"}}}}
+	task := &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r0", InputId: DelegatedInputID("pc")}}}
+	events := []*v1.Event{child, task, interrupted("r0")}
+	for i := range MaxRecentInputs + 8 {
+		run := fmt.Sprintf("u%d", i)
+		events = append(events, &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: run, InputId: "in_" + run}}},
+			interrupted(run))
+	}
+	st, err := Reduce(build(events...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Input(DelegatedInputID("pc")) != nil {
+		t.Fatal("test setup: the delegated input is still in the window")
+	}
+	if st.Delegated != "r0" {
+		t.Fatalf("delegated run %q, want r0", st.Delegated)
+	}
+	restored, err := FromSnapshot(st.Snapshot())
+	if err != nil || restored.Delegated != "r0" {
+		t.Fatalf("delegated run after snapshot %q, %v", restored.Delegated, err)
+	}
+	// 不是子 Session 时，同名的输入 ID 不算委托任务。
+	plain, err := Reduce(build(created(), &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{
+		RunId: "r0", InputId: DelegatedInputID("pc")}}}))
+	if err != nil || plain.Delegated != "" {
+		t.Fatalf("top-level session recorded a delegated run %q, %v", plain.Delegated, err)
+	}
+}

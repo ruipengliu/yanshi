@@ -1,8 +1,8 @@
 # 讨论记录：与 Codex（gpt-6-astra，推理强度 max）的延展性方案讨论
 
-> 状态：讨论原文（2026-10-11），不是设计 · 结论见[延展性评审](./2026-10-11-scalability-review.md) §8 · 术语以 [CONTEXT.md](../../CONTEXT.md) 为准
+> 状态：讨论原文（2026-10-11），不是设计 · 结论见[延展性评审](./2026-10-11-scalability-review.md) §8（方案）与 §11（实现）· 术语以 [CONTEXT.md](../../CONTEXT.md) 为准
 >
-> 方式：Claude 出题，Codex 在只读沙箱中阅读仓库后作答；两轮。Codex 提出的代码级指控由 Claude 逐条在代码中核实后才进入结论。
+> 方式：Claude 出题，Codex 在只读沙箱中阅读仓库后作答；前两轮讨论方案，第三轮评审落地后的实现。Codex 提出的代码级指控由 Claude 逐条在代码中核实后才进入结论。
 
 ## 第一轮：问题
 
@@ -146,3 +146,93 @@ G. 把你第一轮的 8 项清单与上述 A–F 合并，给出最终的下一�
 8. 分片验证：片内契约及同拓扑差分全绿，迁移中的旧路由、旧租约、并发删除无反例。
 
 落地均须通过 `make check`，执行语义变更通过 `make sim`，AgentDef 变更另过 `make eval`；本次未修改文件。
+
+## 第三轮：对已落地实现的评审（提问）
+
+你是 yanshi（Go 分布式 Agent 运行时）的第二位评审者。前两轮我们讨论了延展性方案（见 docs/review/2026-10-11-codex-discussion.md、docs/review/2026-10-11-scalability-review.md §8–§10）。此后另一位实现者在三个提交里把下一阶段清单、多 Agent 委托与判断分层落了地：
+
+- `3ec1a4a` Scalability next stage: atomic wake, bounded projection, idle load, admission, roles
+- `425a63d` Delegation: agents as capabilities, child sessions, results written back
+- `e29eace` Decisions: device disambiguation rule, shadow-mode injection checks
+
+本轮请你评审这些实现（`git diff b658e09..HEAD`，约 6700 行），回答两部分。用中文，每条发现给出 `文件:行` 证据、严重程度（阻断 / 高 / 中 / 低）与具体改法；不要凑数，没有问题的地方直接说没有。总篇幅控制在 2500 字以内。
+
+### 第一部分：你独立的发现
+
+按下面六个区域逐一检查，重点是"实现是否兑现了 docs/review/2026-10-11-scalability-review.md §10 与设计文档的声明"，以及是否违反 AGENTS.md 的不变量（Event 日志唯一事实源、Worker.Step 确定性、先写后查、分片键、只记 ID）。
+
+1. 原子唤醒与通知器重写：`internal/eventlog/pglog/pglog.go` 的 `AppendAndEnqueue`、`internal/pg/notify.go`（心跳、半开、重连后分批重查、轮转校准）、`internal/session/store.go` 的 `CommitAndWake`。特别看：通知器重连期间的漏发是否真的收敛；校准预算在键很多时是否退化成"永远查不到"；`WaitAbove` 的缓存在重连后是否可能返回陈旧值。
+2. 有界投影：`internal/session/state.go`（`KeepRuns`、`callIDs`/`callIDsOld` 分层、`trimRuns`、`Past`）、`internal/session/snapshot.go`、`internal/session/store.go` 的 `HistoryCall`。特别看：调用 ID 唯一性契约是否仍然完整；快照与全量重放是否等价；克隆成本是否真的有界。
+3. 共享 feed 与空闲负载：`internal/feed/shared.go`、`internal/feed/feed.go`、`internal/pg/notify.go` 的 `WaitFor`。
+4. 准入与调度：`internal/service/admission.go`、`internal/workqueue/pgqueue/pgqueue.go`（`Depths`、`Resumed` 优先级、`ready_at`）、`internal/model/guard.go`（Deadline、Retry-After）。
+5. 委托：`internal/delegation/*`、`internal/runtime/worker.go` 的 `tools`/`delegationRefused`/`Report` 调用处、`internal/service/service.go` 的 `Create`/`SubmitDelegated`/`commitEnding`、`internal/janitor/janitor.go` 的 `deleteChildren`、`internal/sim/delegation.go`。对照 docs/design/m5-multi-agent.md 与 docs/adr/0031-delegation-as-routed-calls.md。
+6. 判断：`internal/decision/decision.go`、`internal/runtime/worker.go` 的 `unjudged`/`judgeResults`、`cmd/yanshi/serve.go` 的 `injectionDecider`。对照 docs/design/m6-decisions.md §4 的八条约束与 ADR-0030。
+
+### 第二部分：对我的初步发现表态
+
+逐条说同意还是不同意，不同意要给证据。
+
+A. **祖先白名单交集每步重算**（`internal/runtime/worker.go` `tools`）：每个祖先都再调一次 `Catalog.Tools`，含设备目录与 MCP 工具列表查询；深度 2 时每步三次。另外祖先 AgentDef 版本找不到（`Agents.Get` 出错）时 `allow` 为空，子 Run 静默失去全部工具。我认为应在子 Session 创建时把祖先白名单的交集算好写进 `SessionCreated.parent`（或只存名称交集），子 Run 只按一份白名单取工具；祖先版本缺失应是显式错误。
+
+B. **深度上限差一**：`delegationRefused` 以 `len(ancestors)+1 > MaxDepth` 判定，`max_depth = 2` 时允许 根 → 子 → 孙 三层（孙有 2 个祖先，sim 不变量 `len(ancestors) > 2` 也放过）。而 `agentdef.DelegationConfig.MaxDepth` 的注释说"允许的委托链深度（含本层）"，按它子（深度 2）再委托应被拒绝。我认为是契约表述与实现不一致，须二选一并让 sim 不变量与 AgentDef 注释一致。
+
+C. **注入判断串行超时**（`judgeResults`）：每步至多 8 条结果逐条判断，每条 `Guarded` 2 秒时限，判断端点宕机时一步最多多等 16 秒，且下一步对新的结果继续如此，没有熔断。影子模式下它只影响延迟，但一旦第 3 步（驱动审批）落地就会变成正确性路径。我认为应加熔断（连续失败 N 次后冷却期内直接记 `unavailable`），或者把一步内的判断并发并共用一个预算。
+
+D. **准入统计的全表扫描随网关数线性增长**（`QueueAdmission` 每进程每 2 秒调 `Depths`，它对 `work_items` 做分组聚合）。P 个网关就是 P/2 次/秒的聚合扫描。我认为规模到了应改为一处计算、各处读取（例如由 Janitor 或任一进程写入一张小表 / 指标，或 `pg` 侧物化），但现在可以只记一条"规模到了再做"。
+
+E. **子 Session 的写回依赖输入窗口**（`Delegator.Report` 用 `child.Input(InputID(callID))` 找委托 Run）：`Input` 只在 `MaxRecentInputs` 窗口内可见。用户可以向子 Session 提交输入（它对 EndUser 可见），窗口被挤出后写回找不到 Run，父调用只能等超时。我认为应把委托 Run 的 ID 记在投影的固定位置（如 `State.Delegated`），不依赖去重窗口。
+
+F. **级联中断尽力而为留下孤儿子 Run**：父 Run 中断时 `cancelDispatched` 调 `Delegator.Cancel`，失败即返回错误，但父 Run 已经终态，不会再重试；子 Run 继续跑完、消耗配额，结果作废。我认为可接受，但应由 Janitor 的 Sweep 或子 Worker 在 Report 时发现父调用已终态而自行中断（Report 时已经 Load 了父状态）。
+
+G. **`-injection-check` 的规则层措辞**（"system prompt"、"you are now"）在工具结果里会大量误报，影子模式下无害；第 3 步前须用留出集定阈值。不需要改代码，只需在设计 §8 注明。
+
+最后给出一份"本轮建议清单"（不超过 8 条，按严重程度排序），每条一句话，可直接作为任务。不要修改任何文件。
+
+## 第三轮：Codex 的回答
+
+对 `b658e09..7b31917` 的六个指定区域做了静态评审。**存在委托安全与删除阻断项。**未修改文件；只读环境下未运行 `make check`、`make sim`。
+
+### 第一部分：独立发现
+
+1. **原子唤醒与通知。**原子事务、重连清缓存未见问题。**高**：[notify.go:199](internal/pg/notify.go:199) 的 LISTEN 没有超时，新增频道时半开连接可卡住心跳循环；应给连接操作统一设置时限。**中**：[notify.go:325](internal/pg/notify.go:325) 按键唤醒全部等待者，`WaitFor` 每人查询，50 键/秒不等于50 查询/秒；应共享每键检查。静态键不会永久饥饿，但百万键理想轮转也需约5.6小时。
+
+2. **有界投影（高）。**[state.go:378](internal/session/state.go:378) 裁掉 `Past` 的备用容量，校验新 Run 时追加必复制全部摘要；[state.go:251](internal/session/state.go:251) 每256个调用 ID 重拷全部旧 ID。快照也保存全量摘要与 ID（[snapshot.go:64](internal/session/snapshot.go:64)）。常规 Clone 变便宜，推进成本仍有线性路径；改用分段共享结构或可重建索引，测试新 Run 和合并边界。现有成本测试只测 `Steered`（[state_test.go:513](internal/session/state_test.go:513)）。唯一性、快照重放等价未见破坏。
+
+3. **共享 feed（高）。**[shared.go:49](internal/feed/shared.go:49) 用首订阅者的 `after` 初始化公共游标；若它超过日志末尾，随后正常订阅者也收不到新事件，直到日志超过该值。应以可信日志位置初始化公共读者，拒绝或隔离越界游标。
+
+4. **准入与调度（中）。**[pgqueue.go:154](internal/workqueue/pgqueue/pgqueue.go:154)、[178](internal/workqueue/pgqueue/pgqueue.go:178) 归还时无条件覆盖类别：审批刚提高为 `Resumed`，旧 Worker 随后 Park/Release 又写成 `Background`，恢复名额失效。类别更新应带投影 seq，防止旧值覆盖；内存实现同步修复。Deadline、Retry-After 未见问题。
+
+5. **委托有两项阻断。**
+
+   **删除复活**：[delegator.go:67](internal/delegation/delegator.go:67) 检查子删除记录后，若子被完整删除，[service.go:116](internal/service/service.go:116) 仍可重建同 ID 的索引与日志；[delegator.go:100](internal/delegation/delegator.go:100) 只复查父，已完成的子删除不会再被 Sweep 扫描。Create 各返回路径应对子自身写后复查并撤回数据。
+
+   **审批绕过**：[service.go:199](internal/service/service.go:199) 把委托文本作为普通输入；[memgate.go:39](internal/runtime/memgate.go:39)、[84](internal/runtime/memgate.go:84) 既未将其标为外部内容，又视作 EndUser 原话。父读取的恶意内容可经委托直接 `memory_save`。须记录委托来源、保留外部内容属性，并从用户原话依据中排除。
+
+6. **判断（高）。**[worker.go:548](internal/runtime/worker.go:548) 逐条等待且未经 `during` 续约；8×2秒超过 [serve.go:245](cmd/yanshi/serve.go:245) 默认10秒租约，可反复接管直至 Run 失败。应采用整步预算、熔断及租约保护。另有**中**级计量错误：[decision.go:140](internal/decision/decision.go:140) 把模型 Usage 挂到规则 Model 下，缺 logprobs 时 [111](internal/decision/decision.go:111) 直接丢弃 Usage；须独立保留计费模型及已产生用量。
+
+### 第二部分：对 A–G 的表态
+
+- **A：部分同意（中）。**[worker.go:738](internal/runtime/worker.go:738) 吞祖先版本错误应修；但 [catalog.go:124](internal/capability/catalog.go:124)、[mcpcap.go:206](internal/mcpcap/mcpcap.go:206) 已有缓存，并非每步三次远程查询。建议缓存白名单策略，对一次目录结果过滤；固定当前工具名会屏蔽后来新增的 Device。
+
+- **B：同意（中）。**[worker.go:774](internal/runtime/worker.go:774) 检查当前层，而 [agentdef.go:49](internal/agentdef/agentdef.go:49) 声明含本层。建议按目标总层数改为 `len(ancestors)+2`，同步 [sim/delegation.go:76](internal/sim/delegation.go:76)。
+
+- **C：同意串行上限，不同意“只影响延迟”（高）**，见第6项；优先整步预算加续约，避免直接在 Step 内引入并发判断。
+
+- **D：同意（低）。**[pgqueue.go:189](internal/workqueue/pgqueue/pgqueue.go:189) 确有聚合扫描；但 [admission.go:57](internal/service/admission.go:57) 是启用且有请求才刷新缓存。集中采样可随规模推进，同时应登记分片统计路径。
+
+- **E：同意（高）。**[delegator.go:144](internal/delegation/delegator.go:144) 依赖64条窗口；[126](internal/delegation/delegator.go:126) 撤回、[105](internal/delegation/delegator.go:105) 重复派发也受影响，淘汰后还能重复提交任务。应以日志投影固定保留委托 Run/输入身份，三处共同使用。
+
+- **F：同意事实，不同意可接受（高）。**[service.go:328](internal/service/service.go:328) 终态重试跳过撤回；[worker.go:293](internal/runtime/worker.go:293) 只在没有活跃 Run 时 Report，届时补偿太迟。应持久重试取消，并在子 Step 执行前检查父调用；覆盖“取消先到、子后创建”。
+
+- **G：同意风险（低），但“大量”尚无数据。**[decision.go:61](internal/decision/decision.go:61) 确为子串命中；在设计 §8 明确启用审批前必须完成中文留出集、漏检率和误报率评估，当前不必改规则。
+
+### 本轮建议清单
+
+1. **阻断**：补齐委托输入来源，堵住 Memory 审批绕过。
+2. **阻断**：修复子 Session 重建与删除交错，补删除不变量测试。
+3. **高**：固定委托身份，保证窗口淘汰后的派发、写回与撤回幂等。
+4. **高**：让级联中断可重试，阻止父终态后的子任务继续执行。
+5. **高**：给判断增加整步预算与租约保护，同时修正计量归属。
+6. **高**：隔离客户端游标，补共享 feed 的未来游标测试。
+7. **高**：为 LISTEN 操作设置时限，按键共享检查落实查询预算。
+8. **高**：消除新 Run 校验及 ID 合并的全历史复制，扩大复杂度验收用例。

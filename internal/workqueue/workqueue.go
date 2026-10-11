@@ -127,12 +127,22 @@ type Queue interface {
 	Renew(ctx context.Context, lease *Lease, ttl time.Duration) error
 
 	// Park 归还租约，并使 Session 在 until 之前不可认领，除非期间被 Enqueue 唤醒
-	// （租约期间发生的 Enqueue 同样生效，此时 Session 立即可认领）。类别更新为 lease.Class。
+	// （租约期间发生的 Enqueue 同样生效，此时 Session 立即可认领）。类别更新为 lease.Class（见 ReturnedClass）。
 	Park(ctx context.Context, lease *Lease, until time.Time) error
 
 	// Release 归还租约。done=true 表示 Session 已无待办工作，从队列移除
-	// （除非认领后又被 Enqueue）；done=false 表示立即可被他人认领。类别更新为 lease.Class。
+	// （除非认领后又被 Enqueue）；done=false 表示立即可被他人认领。类别更新为 lease.Class（见 ReturnedClass）。
 	Release(ctx context.Context, lease *Lease, done bool) error
+}
+
+// ReturnedClass 是归还租约后项的类别。通常是持有者给的 lease.Class；例外是租约期间有人以 Resumed 入队
+// （用户刚做出审批或回答）而持有者给的是 Background：持有者的投影多半还没读到那条审批，按它写回会丢掉恢复名额
+// （评审 §11 问题 7）。名额由下一次 AttemptStarted 消费，那时的入队或归还会把类别降回 Background。
+func ReturnedClass(queued, lease Class, enqueuedDuringLease bool) Class {
+	if enqueuedDuringLease && queued.Priority == Resumed && lease.Priority == Background && queued.BusinessLine == lease.BusinessLine {
+		return queued
+	}
+	return lease
 }
 
 // Depth 是一类工作的积压：可认领（未租出且未挂起，或租约已过期）的工作数，以及其中等得最久的已等多久。

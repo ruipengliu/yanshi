@@ -48,7 +48,9 @@ type SessionSnapshot struct {
 	// 进行中的 Call；没有时为空。
 	ActiveCall *ActiveCallSnapshot `protobuf:"bytes,13,opt,name=active_call,json=activeCall,proto3" json:"active_call,omitempty"`
 	// 移出投影的终态 Run 的摘要（session.State.Past），按请求顺序。
-	PastRuns      []*PastRunSnapshot `protobuf:"bytes,14,rep,name=past_runs,json=pastRuns,proto3" json:"past_runs,omitempty"`
+	PastRuns []*PastRunSnapshot `protobuf:"bytes,14,rep,name=past_runs,json=pastRuns,proto3" json:"past_runs,omitempty"`
+	// 委托派生的子 Session 中，委托的任务所在的 Run（session.State.Delegated）；不是子 Session 或尚未提交时为空。
+	DelegatedRun  string `protobuf:"bytes,15,opt,name=delegated_run,json=delegatedRun,proto3" json:"delegated_run,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -179,6 +181,13 @@ func (x *SessionSnapshot) GetPastRuns() []*PastRunSnapshot {
 		return x.PastRuns
 	}
 	return nil
+}
+
+func (x *SessionSnapshot) GetDelegatedRun() string {
+	if x != nil {
+		return x.DelegatedRun
+	}
+	return ""
 }
 
 type PastRunSnapshot struct {
@@ -713,7 +722,7 @@ var File_yanshi_v1_snapshot_proto protoreflect.FileDescriptor
 
 const file_yanshi_v1_snapshot_proto_rawDesc = "" +
 	"\n" +
-	"\x18yanshi/v1/snapshot.proto\x12\tyanshi.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x15yanshi/v1/event.proto\"\xec\x04\n" +
+	"\x18yanshi/v1/snapshot.proto\x12\tyanshi.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x15yanshi/v1/event.proto\"\x91\x05\n" +
 	"\x0fSessionSnapshot\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12\x1d\n" +
 	"\n" +
@@ -733,7 +742,8 @@ const file_yanshi_v1_snapshot_proto_rawDesc = "" +
 	"\x06inputs\x18\f \x03(\v2\x18.yanshi.v1.InputSnapshotR\x06inputs\x12>\n" +
 	"\vactive_call\x18\r \x01(\v2\x1d.yanshi.v1.ActiveCallSnapshotR\n" +
 	"activeCall\x127\n" +
-	"\tpast_runs\x18\x0e \x03(\v2\x1a.yanshi.v1.PastRunSnapshotR\bpastRuns\"\xa8\x01\n" +
+	"\tpast_runs\x18\x0e \x03(\v2\x1a.yanshi.v1.PastRunSnapshotR\bpastRuns\x12#\n" +
+	"\rdelegated_run\x18\x0f \x01(\tR\fdelegatedRun\"\xa8\x01\n" +
 	"\x0fPastRunSnapshot\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\x05R\x06status\x12=\n" +

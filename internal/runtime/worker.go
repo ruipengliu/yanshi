@@ -48,6 +48,8 @@ type Dispatcher interface {
 // Reporter 把委托派生的子 Session 中 Run 的终态写回父调用（delegation.Delegator，docs/design/m5-multi-agent.md）。
 type Reporter interface {
 	Report(ctx context.Context, child *session.State) error
+	// Reconcile 在父调用不再等待时中断子 Session 中进行中的委托 Run，返回 true 表示已中断。
+	Reconcile(ctx context.Context, child *session.State) (bool, error)
 }
 
 type Config struct {
@@ -505,6 +507,12 @@ func (w *Worker) advance(ctx context.Context, r *session.Run) error {
 	if w.cfg.Memory != nil && def.Memory.Recall > 0 && !r.Recalled && r.Turns == 0 {
 		return w.recall(ctx, r, def)
 	}
+	// 委托派生的子 Session：每次调用模型之前确认父调用仍在等待，不在等了就停下，不再消耗配额。
+	if w.st.Created.GetParent() != nil && w.cfg.Delegation != nil {
+		if stopped, err := w.cfg.Delegation.Reconcile(ctx, w.st); err != nil || stopped {
+			return err
+		}
+	}
 	if w.cfg.InjectionCheck != nil {
 		if pending := w.unjudged(r); len(pending) > 0 {
 			return w.judgeResults(ctx, r, pending)
@@ -541,29 +549,48 @@ func (w *Worker) unjudged(r *session.Run) []*v1.ToolResult {
 	return out
 }
 
+// judgeStepBudget 是一步中全部判断的总时限：预算用完后，其余结果直接记为不可用（默认路径），一步的时长因此有界，
+// 与每步判断几条无关。
+const judgeStepBudget = 4 * time.Second
+
 // judgeResults 判断调用结果是否含注入，记为影子模式的 DecisionMade（只记录、不影响执行）。判断不可用时同样记录，
-// 选项为空（走默认路径），不在下一步重试。
+// 选项为空（走默认路径），不在下一步重试。判断与模型调用一样在 during 中进行：期间续约，本 Attempt 被接管或
+// 中断时作废（评审 §11 问题 5）。
 func (w *Worker) judgeResults(ctx context.Context, r *session.Run, results []*v1.ToolResult) error {
 	var events []*v1.Event
-	for _, res := range results {
-		q := decision.Question{Kind: decision.ToolResultInjection, Subject: res.GetCallId(),
-			Text: model.Text(res.GetContent()), Options: decision.Options(decision.ToolResultInjection)}
-		if t, cut := model.Truncate(q.Text, 8000); cut {
-			q.Text = t
+	err := w.during(ctx, r, func(ctx context.Context) error {
+		bctx, cancel := context.WithTimeout(ctx, judgeStepBudget)
+		defer cancel()
+		for _, res := range results {
+			q := decision.Question{Kind: decision.ToolResultInjection, Subject: res.GetCallId(),
+				Text: model.Text(res.GetContent()), Options: decision.Options(decision.ToolResultInjection)}
+			if t, cut := model.Truncate(q.Text, 8000); cut {
+				q.Text = t
+			}
+			a, err := w.cfg.InjectionCheck.Decide(bctx, q)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			// 用量与判断是否可用无关：调用了模型就计量（ADR-0019），记在被调用的模型名下。
+			if a.Usage != nil {
+				w.cfg.Meter.Model(ctx, w.usageScope(), "use_"+w.cfg.Store.IDs(), agentdef.Label(w.st.Agent), a.Billed, a.Usage, w.now())
+			}
+			if err != nil {
+				a = decision.Answer{Model: "unavailable"}
+			}
+			events = append(events, &v1.Event{Payload: &v1.Event_DecisionMade{DecisionMade: &v1.DecisionMade{
+				RunId: r.ID, Attempt: w.attempt, Kind: q.Kind, Subject: q.Subject, Options: q.Options,
+				Chosen: a.Chosen, Confidence: float32(a.Confidence), Model: a.Model, Shadow: true}}})
 		}
-		a, err := w.cfg.InjectionCheck.Decide(ctx, q)
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if err != nil {
-			a = decision.Answer{Model: "unavailable"}
-		}
-		if a.Usage != nil {
-			w.cfg.Meter.Model(ctx, w.usageScope(), "use_"+w.cfg.Store.IDs(), agentdef.Label(w.st.Agent), a.Model, a.Usage, w.now())
-		}
-		events = append(events, &v1.Event{Payload: &v1.Event_DecisionMade{DecisionMade: &v1.DecisionMade{
-			RunId: r.ID, Attempt: w.attempt, Kind: q.Kind, Subject: q.Subject, Options: q.Options,
-			Chosen: a.Chosen, Confidence: float32(a.Confidence), Model: a.Model, Shadow: true}}})
+		return nil
+	})
+	switch {
+	case ctx.Err() != nil:
+		return ctx.Err()
+	case errors.Is(err, errSuperseded):
+		return nil
+	case err != nil:
+		return err
 	}
 	return w.commit(ctx, events...)
 }
@@ -727,18 +754,21 @@ func (w *Worker) awaitDispatched(ctx context.Context, r *session.Run, c *session
 }
 
 // tools 返回本 Run 可用的工具。委托派生的子 Session 只能用自身白名单与每个祖先白名单都允许的工具
-// （docs/design/m5-multi-agent.md §2）：委托不能借子 Agent 扩大权限。
+// （docs/design/m5-multi-agent.md §2）：委托不能借子 Agent 扩大权限。每个祖先的工具都按当前目录重新解析再按名取交
+// （设备与 MCP 的目录有缓存），之后才接入、祖先白名单也允许的设备照常可用。
 func (w *Worker) tools(ctx context.Context, def *agentdef.Def) ([]capability.Tool, error) {
 	tools, err := w.cfg.Catalog.Tools(ctx, w.target(), def.Capabilities)
 	if err != nil {
 		return nil, err
 	}
 	for _, ref := range w.st.Created.GetParent().GetAncestors() {
-		allow := []string{}
-		if a, err := w.cfg.Agents.Get(ref); err == nil {
-			allow = a.Capabilities
+		// 祖先的版本取不到（被移出注册表）时无法确定交集：作为配置错误让 Run 失败，而不是悄悄失去全部工具
+		// （评审 §11 问题 11）。
+		a, err := w.cfg.Agents.Get(ref)
+		if err != nil {
+			return nil, fmt.Errorf("%w: ancestor agent %s@%s: %v", capability.ErrConfig, ref.GetName(), ref.GetVersion(), err)
 		}
-		theirs, err := w.cfg.Catalog.Tools(ctx, w.target(), allow)
+		theirs, err := w.cfg.Catalog.Tools(ctx, w.target(), a.Capabilities)
 		if err != nil {
 			return nil, err
 		}
@@ -771,7 +801,8 @@ func (w *Worker) delegationRefused(r *session.Run, def *agentdef.Def, c *session
 	if _, err := delegation.ParseArgs(c.Call.GetArgumentsJson()); err != nil {
 		return err.Error()
 	}
-	if depth := len(w.st.Created.GetParent().GetAncestors()) + 1; depth > def.Delegation.MaxDepth {
+	// 本 Session 的深度是祖先数加一（顶层为 1），委托出去的子 Session 再深一层；上限含本层（agentdef.DelegationConfig）。
+	if depth := len(w.st.Created.GetParent().GetAncestors()) + 2; depth > def.Delegation.MaxDepth {
 		return fmt.Sprintf("cannot delegate: delegation depth %d exceeds the limit of %d; do the task yourself", depth, def.Delegation.MaxDepth)
 	}
 	open := 0

@@ -123,7 +123,10 @@ func TestWaiterConvergesAfterListenerLoss(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("waiter never converged after the listener was lost")
 	}
-	if n.Generation() <= gen {
-		t.Fatalf("generation %d did not advance past %d", n.Generation(), gen)
+	// 等待者可能先由校准收敛，重连随后完成：等它，而不是要求二者同时发生。
+	for deadline := time.Now().Add(10 * time.Second); n.Generation() <= gen; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("generation %d did not advance past %d", n.Generation(), gen)
+		}
 	}
 }

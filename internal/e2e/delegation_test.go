@@ -1,12 +1,18 @@
 package e2e
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
+	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/clock"
 	"yanshi/internal/delegation"
+	"yanshi/internal/ids"
+	"yanshi/internal/session"
 )
 
 // 委托（docs/design/m5-multi-agent.md）：父 Run 调用 agent__helper，平台派生子 Session 执行，子 Run 的回复作为结果
@@ -74,6 +80,44 @@ func TestDelegationCascades(t *testing.T) {
 			t.Fatal("child session survived the deletion of its parent")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// 中断父 Run 时撤回委托失败（例如存储故障，客户端没有重试），子 Run 成了没人等的孤儿：子 Worker 在下一次调用模型
+// 之前发现父调用不再等待，自行中断（评审 §11 问题 10）。这里绕过 Service 直接写父 Run 的中断，相当于撤回丢失。
+func TestDelegationOrphanStops(t *testing.T) {
+	st := memStores()
+	e := &env{t: t, srv: instance(t, st, 2, true)}
+	sid := e.newSession()
+	e.do(http.MethodPost, "/v1/sessions/"+sid+"/inputs", map[string]string{"text": `call agent__helper {"task":"ask 要继续吗？"}`}, nil)
+	v := e.until(sid, func(v sessionView) bool {
+		return len(v.Runs) == 1 && v.Runs[0].Waiting != nil && v.Runs[0].Waiting.Kind == "agent"
+	})
+	child := delegation.ChildSessionID(sid, v.Runs[0].Waiting.CallID)
+	cv := e.until(child, func(v sessionView) bool {
+		return len(v.Runs) == 1 && v.Runs[0].Waiting != nil && v.Runs[0].Waiting.Kind == "question"
+	})
+
+	store := &session.Store{Log: st.Log, IDs: ids.Random(), Clock: clock.Real{}}
+	parent, err := store.Load(context.Background(), sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Commit(context.Background(), parent, &v1.Event{Payload: &v1.Event_RunInterrupted{
+		RunInterrupted: &v1.RunInterrupted{RunId: v.Runs[0].RunID, By: "user"}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if code := e.do(http.MethodPost, "/v1/sessions/"+child+"/answers/"+cv.Runs[0].Waiting.CallID, map[string]string{"text": "继续"}, nil); code >= 300 {
+		t.Fatalf("answer: %d", code)
+	}
+	e.until(child, func(v sessionView) bool { st, _ := lastRun(v); return st == "interrupted" })
+	var events struct {
+		Events []json.RawMessage `json:"events"`
+	}
+	e.do(http.MethodGet, "/v1/sessions/"+child+"/events", nil, &events)
+	if last := string(events.Events[len(events.Events)-1]); !strings.Contains(last, delegation.ParentDone) {
+		t.Fatalf("child run was not stopped for its parent: last event %s", last)
 	}
 }
 

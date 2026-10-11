@@ -8,6 +8,7 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/askuser"
+	"yanshi/internal/delegation"
 	"yanshi/internal/model"
 	"yanshi/internal/session"
 )
@@ -35,9 +36,10 @@ func externalCall(capability string) bool { return strings.Contains(capability, 
 // tainted 报告当前模型上下文中是否有不是用户原话的内容：
 //   - 外部来源的调用结果；压缩摘要可能概括了它们，保守地视为外部；
 //   - 输入或回答附带的界面上下文，可能含第三方内容（docs/design/m3-duplex-channel.md §8）；
-//   - Call 中语音模型的转述（派生的任务、转述的回答）：可能夹带用户没说过的内容（docs/design/m3-call.md §6）。
+//   - Call 中语音模型的转述（派生的任务、转述的回答）：可能夹带用户没说过的内容（docs/design/m3-call.md §6）；
+//   - 委托派生的子 Session：任务由父 Run 的模型写成，可能转述了父 Run 读到的外部内容（docs/design/m5-multi-agent.md §8）。
 func tainted(st *session.State) bool {
-	if st.Compaction != nil {
+	if st.Compaction != nil || st.Created.GetParent() != nil {
 		return true
 	}
 	external := map[string]bool{}
@@ -74,14 +76,19 @@ func hasUIContext(blocks []*v1.ContentBlock) bool {
 }
 
 // userText 是上下文中 EndUser 本人的输入：新 Run、插话、对 ask_user 提问的回答（ADR-0025），以及 Call 中
-// 用户说的话（转写）。Call 派生的任务与转述的回答是语音模型的转述，不是用户的原话，不计入（docs/design/m3-call.md §6）。
+// 用户说的话（转写）。Call 派生的任务与转述的回答是语音模型的转述，不是用户的原话，不计入（docs/design/m3-call.md §6）；
+// 委托给子 Session 的任务由父 Run 的模型写成，同样不计入。
 func userText(st *session.State) string {
 	var b strings.Builder
 	questions := map[string]bool{}
+	delegated := ""
+	if p := st.Created.GetParent(); p != nil {
+		delegated = delegation.InputID(p.GetCallId())
+	}
 	for _, e := range st.History {
 		switch p := e.GetPayload().(type) {
 		case *v1.Event_RunRequested:
-			if p.RunRequested.GetFromCall() == "" {
+			if p.RunRequested.GetFromCall() == "" && (delegated == "" || p.RunRequested.GetInputId() != delegated) {
 				b.WriteString(model.Text(p.RunRequested.GetInput()))
 			}
 		case *v1.Event_Steered:

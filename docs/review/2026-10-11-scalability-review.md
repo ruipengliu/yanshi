@@ -231,3 +231,62 @@
 | §9.1 Session 数据登记制 | 部分完成 | `app.SessionData` 登记各处数据，Janitor 按列表清除；写入入口统一经 `lifecycle.Recheck` 复查。删除不变量尚未对列表自动检查 |
 | §9.1 Worker 阶段化 | 未做 | 按评审，在下一个横切需求到来时做 |
 | 部署设计 §6 | 已完成（清单未在集群上验证） | `serve -roles`、`-worker-pool`、`-pg-listen-dsn`、`/readyz`；`deploy/Dockerfile` 与 `deploy/k8s`（Kustomize） |
+
+## 11. 第三轮：对实现的评审结论（2026-10-11）
+
+对 §10 所列实现（提交 `3ec1a4a`、`425a63d`、`e29eace`）与 Codex 的第三轮讨论（[讨论记录](./2026-10-11-codex-discussion.md)第三轮）。方法同前：Codex 的每条指控都在代码中核实，不属实或程度不符的按核实结果裁定。本轮没有修改代码；`go build`、`go vet`、改动包的单元测试与 `go test ./internal/sim` 在 HEAD 上全绿。
+
+### 11.1 核实属实的问题
+
+| # | 问题 | 程度 | 证据 | 改法 |
+|---|---|---|---|---|
+| 1 | **委托输入绕过 Memory 写入闸门。** 子 Session 的任务文本由父 Run 的模型写成，可能含父 Run 读到的外部内容；子 Session 的闸门把它当作 EndUser 原话，既不算外部内容，又计入"用户原话"依据，子 Run 可以不经审批写 Memory（违反 ADR-0023） | 阻断（委托对真实 EndUser 开放之前） | `internal/runtime/memgate.go` 的 `tainted`、`userText`；`internal/service/service.go` 的 `SubmitDelegated` | `Created.parent` 非空的 Session 一律视为受外部内容影响，委托输入不计入用户原话；只收紧 |
+| 2 | **子 Session 可被复活。** 派发先查子 Session 的删除记录再创建；二者之间子 Session 被删除（用户删除或保留策略）时，创建会重建它的索引与日志，事后只复查父 Session；已完成的删除不会再被 Sweep 扫到（违反"先写、后查"，ADR-0015） | 阻断（同上） | `internal/delegation/delegator.go` 的 `Dispatch`：删除检查在创建之前，`Recheck` 只对父 | 创建之后对子 Session 本身 `lifecycle.Recheck`，命中即删除并向父调用报告；`internal/sim` 覆盖"派发与删除子 Session 交错" |
+| 3 | **委托的身份依赖去重窗口。** 写回、撤回与重复派发都经 `State.Input("delegate_<调用 ID>")` 找委托 Run，窗口只有 64 条输入；用户可以向子 Session 提交输入，挤出窗口后写回找不到 Run（父调用等到超时）、撤回无效、重新派发会再提交一次任务 | 高 | `delegator.go` 的 `Dispatch`、`Cancel`、`Report`；`session.MaxRecentInputs` | 投影在固定位置记录委托 Run（按输入 ID 前缀识别，递增 `ProjectionVersion`），三处共用；派发幂等改为"子 Session 已有 Run 即已提交" |
+| 4 | **共享 feed 的游标可被客户端带偏。** `Stream` 把客户端的 `after` 原样交给 `Hub.join`，第一个订阅者的 `after` 成为公共读者的起点；它大于日志末尾时读者一直等待，之后加入的订阅者收不到任何新事件，直到日志超过那个值 | 高 | `internal/feed/feed.go` 的 `Stream`，`internal/feed/shared.go` 的 `join`；HTTP API 不校验 `after` | `Stream` 中 `after = min(after, st.Seq)`；测试"越界游标不影响其他订阅者" |
+| 5 | **注入判断不续约、无整步预算。** `judgeResults` 不在 `during` 内执行；每步至多 8 条、每条 2 秒时限，判断端点迟缓时一步可达 16 秒，超过默认 10 秒租约；接管后判断结果未提交，新 Worker 重做，反复接管直至 Run 失败。影子模式同样伤及执行 | 高 | `internal/runtime/worker.go` 的 `judgeResults`（对比 `callModel` 在 `during` 内）；`serve -lease-ttl` 默认 10s | 判断放进 `during`；整步总预算替代逐条时限；连续失败后熔断一段时间，直接记 `unavailable` |
+| 6 | **通知器新增频道的 `LISTEN` 没有时限。** 连接半开时卡在 `Exec` 上；心跳检查在同一循环里，永远走不到 | 高 | `internal/pg/notify.go` 的 `listen`：心跳 `NOTIFY` 有 `HeartbeatTimeout`，`LISTEN` 用进程 ctx | 连接上的所有语句统一以 `HeartbeatTimeout` 限时 |
+| 7 | **归还租约时覆盖队列类别。** 审批或回答在租约期间入队为 `Resumed`（项变 `dirty`），Worker 随后按自己可能未同步的投影 `Park` 或 `Release`，无条件写回 `Background`，恢复名额丢失一个周期 | 中 | `internal/workqueue/pgqueue/pgqueue.go` 的 `Park`、`Release`，`memqueue` 同；`runtime.Worker.release` 以 `w.st.WorkClass()` 覆盖 | `dirty` 的项只提升不降低优先级，两个实现同改，`workqueuetest` 增加用例 |
+| 8 | **判断的计量归属错误。** 置信度不足退回规则层时，模型用量挂在 `rules/injection-v1` 名下；模型不返回 logprobs 时返回错误，用量被丢弃（违反 ADR-0019） | 中 | `internal/decision/decision.go` 的 `Logits.Decide` | `Answer` 分开记"作出判断的来源"与"计费的模型"；出错路径也返回已产生的用量 |
+| 9 | **委托深度差一。** `delegationRefused` 以 `len(ancestors)+1 > max_depth` 判定，`max_depth = 2` 时允许根、子、孙三层；`DelegationConfig.MaxDepth` 注释说"含本层"，按它子 Run 不应再委托；sim 不变量照实现写，没有发现 | 中 | `worker.go` 的 `delegationRefused`，`internal/agentdef/agentdef.go`，`internal/sim/delegation.go` | 按注释：目标链长 `len(ancestors)+2 > max_depth` 即拒绝；sim 不变量同步 |
+| 10 | **级联中断留下孤儿子 Run。** 父 Run 中断后撤回子 Run 失败即放弃；重试 `Interrupt` 遇到已终态直接返回，不再撤回；子 Run 跑完消耗配额，结果作废 | 中 | `internal/service/service.go` 的 `Interrupt`、`cancelDispatched`；`delegator.go` 的 `Report` | `Interrupt` 对已终态的 Run 仍撤回未完成的派发；Janitor `Sweep` 对账"父调用已终态而子 Run 仍活跃"并中断 |
+| 11 | **祖先白名单交集。** 祖先 AgentDef 版本取不到时 `allow` 为空，子 Run 静默失去全部工具；按工具名求交集会屏蔽祖先本可用、之后才接入的设备 | 中 | `worker.go` 的 `tools` | 祖先版本缺失为显式错误（本步重试，持续失败由 StepErrorBudget 兜底）；对同一份目录结果按每个祖先的白名单模式过滤，不再按名取交 |
+| 12 | **准入统计的聚合扫描随进程数增长。** 每个有请求的进程每 2 秒对 `work_items` 做一次分组聚合 | 低 | `internal/service/admission.go`，`pgqueue.Depths` | 规模到了再做：一处计算、各处读取（Janitor 写小表或指标） |
+
+### 11.2 不采纳或降级的指控
+
+- **有界投影仍有线性路径**（Codex 评为高）。`Clone` 对 `Past` 做 `slices.Clip`，新 Run 校验时追加摘要会复制全部摘要；调用 ID 每 256 个合并一次时重拷旧层。属实，但成本只在新 Run 请求时与 Run 数成正比、在合并时每 256 个调用一次，不是每个事件；`Clip` 是有意的，克隆之间不能共享可追加的底层数组。裁定：低，不改；复杂度测试补一条"新 Run 校验"的用例即可。
+- **按键唤醒全部等待者、每人各自查询**（Codex 评为中）。事件主题的等待者在共享 feed 之后每进程每 Session 只有一个，其他主题的键通常只有一个等待者。裁定：不改。
+- **两项"阻断"的范围。** 问题 1、2 阻断的是"委托对真实 EndUser 开放"，不阻断平台其他部分；委托尚未开放，列入[上线检查清单](../launch-checklist.md)。
+- **原子唤醒、`Retry-After`、模型总时限、快照与全量重放的等价性**：Codex 与本轮核实都没有发现问题。
+
+### 11.3 本轮清单（取代 §8.4 中已完成的项，按顺序）
+
+1. 子 Session 一律视为受外部内容影响（问题 1）；创建后复查子 Session 的删除记录（问题 2）；sim 覆盖派发与删除的交错。
+2. 委托 Run 的固定身份（问题 3）；深度判定对齐注释（问题 9）。
+3. `Stream` 收紧游标（问题 4）。
+4. 判断进入 `during`、整步预算与熔断（问题 5）；计量归属（问题 8）。
+5. `LISTEN` 限时（问题 6）；归还不降级 `dirty` 项（问题 7）。
+6. `Interrupt` 对终态 Run 仍撤回派发，Janitor 对账孤儿子 Run（问题 10）；祖先白名单按模式过滤、缺失显式报错（问题 11）。
+7. 规模到了再做：准入统计集中计算（问题 12）。
+
+验收仍以 `make check`、`make sim` 全绿为底线；第 1、2、6 项改动执行语义，须过 `make sim`；没有一项改动给模型看的文本，不需要重跑 `make eval`。
+
+### 11.4 落地情况（2026-10-11）
+
+| 问题 | 状态 | 做法与验证 |
+|---|---|---|
+| 1 Memory 写入闸门 | 已修复 | `runtime.tainted` 对子 Session 返回 true，`userText` 不计入委托的任务；单元测试 `TestDelegatedTaskIsNotUserText` |
+| 2 子 Session 复活 | 已修复 | 创建后对子 Session 本身 `lifecycle.Recheck`；清理已完成时撤回刚写的索引与日志，未完成时再交给 Janitor。模拟测试在检查与创建之间删除并清理子 Session（`ChildDeletionRaces`）；去掉复查，删除不变量即报"已删除的 Session 有事件" |
+| 3 委托身份 | 已修复 | 投影 `State.Delegated`（快照字段 `delegated_run`，投影版本 10）；写回、撤回、重复派发共用；单元测试 `TestDelegatedRunOutlivesInputWindow` |
+| 4 共享 feed 游标 | 已修复 | 共享读者以 `min(after, st.Seq)` 为起点，订阅者自己仍按 after 过滤；`TestHubIgnoresCursorBeyondHead`（去掉修复即失败） |
+| 5 判断续约与预算 | 已修复 | `during` 内判断、整步 4 秒预算、`decision.Breaker`；`TestBreaker` |
+| 6 `LISTEN` 时限 | 已修复 | 连接上的语句统一以 `HeartbeatTimeout` 限时。顺带修正 `TestWaiterConvergesAfterListenerLoss` 的竞态：等待者可能先由校准收敛，测试改为等待重连完成 |
+| 7 归还降级 `Resumed` | 已修复 | `workqueue.ReturnedClass`：租约期间以 `Resumed` 入队、持有者以 `Background` 归还时保留 `Resumed`；两个实现一致，一致性用例 `ReturnKeepsResumedEnqueuedDuringLease`（内存与 PostgreSQL） |
+| 8 判断计量 | 已修复 | `Answer.Billed`；`TestLogits` 覆盖退路与出错时的计费 |
+| 9 深度差一 | 已修复 | `len(ancestors)+2 > max_depth`；sim 不变量与 AgentDef 注释一致 |
+| 10 孤儿子 Run | 已修复 | 中断已终态的 Run 时仍撤回派发；子 Worker 调用模型前 `Delegator.Reconcile`。模拟测试注入撤回失败（`CascadeFaults`）；模拟中的 Run 太短，自行停下的路径由 e2e `TestDelegationOrphanStops` 覆盖（去掉检查即失败）。**顺带发现**：`Service.Close` 在撤回失败时跳过索引与 Janitor，重试又因"已关闭"直接返回，沙箱工作区永远不会销毁；改为关闭之后的步骤幂等、重试时补做（`afterClose`），模拟测试的关闭在撤回失败后重试 |
+| 11 祖先白名单 | 部分采纳 | 祖先版本缺失改为 `capability.ErrConfig`（Run 失败）。不改为按模式过滤：MCP 工具只留下合成后的名称，按模式过滤要在 Catalog 之外重复一遍各类工具的匹配规则，容易与 `Catalog.Tools` 不一致；设备与 MCP 目录已有缓存，按名取交的代价只是 CPU，且对之后接入的设备同样正确 |
+| 12 准入统计 | 未做 | 规模到了再做 |
+
+验证：`make check` 全绿；`make sim`（2000 个种子、100 个 PostgreSQL 种子）全绿。`make sim` 在改动之前就已经超时：全量种子在 HEAD 上需 601 秒，超过 `go test` 默认的 10 分钟时限，Makefile 的 sim 目标改为 `-timeout 40m`。改动前后各测试耗时相当（PostgreSQL 差分 412 → 391 秒，长 Run 113 → 131 秒）。

@@ -32,6 +32,8 @@ message SessionSnapshot {
   ActiveCallSnapshot active_call = 13;
   // 移出投影的终态 Run 的摘要（session.State.Past），按请求顺序。
   repeated PastRunSnapshot past_runs = 14;
+  // 委托派生的子 Session 中，委托的任务所在的 Run（session.State.Delegated）；不是子 Session 或尚未提交时为空。
+  string delegated_run = 15;
 }
 
 message PastRunSnapshot {

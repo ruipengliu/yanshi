@@ -10,9 +10,11 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/clock"
 	"yanshi/internal/metrics"
 	"yanshi/internal/model"
 )
@@ -39,11 +41,15 @@ type Answer struct {
 	Confidence float64
 	// Model 是作出判断的规则集或模型引用。
 	Model string
-	// Usage 非空表示判断调用了模型，须计量（ADR-0019）。
-	Usage *v1.Usage
+	// Usage 非空表示判断调用了模型，须计量（ADR-0019）；Billed 是这次调用的模型引用。二者与 Model 分开：
+	// 小模型置信度不足、由规则作出判断时，用量仍属于小模型。
+	Usage  *v1.Usage
+	Billed string
 }
 
-// Decider 作出判断。返回错误表示判断不可用，调用方走默认路径。
+// Decider 作出判断。返回错误表示判断不可用，调用方走默认路径；即使出错，返回的 Answer 也带着已产生的用量
+// （Usage、Billed），调用方照常计量。
+
 type Decider interface {
 	Decide(ctx context.Context, q Question) (Answer, error)
 }
@@ -107,8 +113,9 @@ func (l *Logits) Decide(ctx context.Context, q Question) (Answer, error) {
 	if err != nil {
 		return Answer{}, err
 	}
+	billed := Answer{Usage: resp.Usage, Billed: l.Model}
 	if len(resp.Logprobs) == 0 {
-		return Answer{}, fmt.Errorf("decision: model %s returned no logprobs", l.Model)
+		return billed, fmt.Errorf("decision: model %s returned no logprobs", l.Model)
 	}
 	probs := make([]float64, len(q.Options))
 	total := 0.0
@@ -123,7 +130,7 @@ func (l *Logits) Decide(ctx context.Context, q Question) (Answer, error) {
 		}
 	}
 	if total == 0 {
-		return Answer{}, fmt.Errorf("decision: model %s put no probability on the option labels", l.Model)
+		return billed, fmt.Errorf("decision: model %s put no probability on the option labels", l.Model)
 	}
 	best := 0
 	for i := range probs {
@@ -131,14 +138,11 @@ func (l *Logits) Decide(ctx context.Context, q Question) (Answer, error) {
 			best = i
 		}
 	}
-	a := Answer{Chosen: q.Options[best], Confidence: probs[best] / total, Model: l.Model, Usage: resp.Usage}
+	a := Answer{Chosen: q.Options[best], Confidence: probs[best] / total, Model: l.Model, Usage: resp.Usage, Billed: l.Model}
 	if a.Confidence < l.MinConfidence && l.Fallback != nil {
 		fb, err := l.Fallback.Decide(ctx, q)
-		if err != nil {
-			return Answer{}, err
-		}
-		fb.Usage = a.Usage
-		return fb, nil
+		fb.Usage, fb.Billed = a.Usage, a.Billed
+		return fb, err
 	}
 	return a, nil
 }
@@ -162,10 +166,61 @@ func (g Guarded) Decide(ctx context.Context, q Question) (Answer, error) {
 	metrics.DecisionDuration.WithLabelValues(q.Kind).Observe(metrics.Since(start))
 	if err != nil {
 		metrics.Decisions.WithLabelValues(q.Kind, "error").Inc()
-		return Answer{}, err
+		return Answer{Usage: a.Usage, Billed: a.Billed}, err
 	}
 	metrics.Decisions.WithLabelValues(q.Kind, a.Chosen).Inc()
 	return a, nil
+}
+
+// ErrOpen 表示判断器已熔断：最近连续失败，冷却期内不再调用。
+var ErrOpen = errors.New("decision: circuit open")
+
+// Breaker 在判断连续失败 Failures 次后熔断 Cooldown：期间直接返回 ErrOpen，调用方走默认路径。端点宕机或迟缓时，
+// 不让每一步都等到时限才退回（评审 §11 问题 5）。冷却期满后放行调用，再失败即重新熔断。
+// 不支持的判断点与调用方取消不算失败。
+type Breaker struct {
+	Decider Decider
+	// Failures 默认 3，Cooldown 默认 30 秒。
+	Failures int
+	Cooldown time.Duration
+	Clock    clock.Clock
+
+	mu        sync.Mutex
+	fails     int
+	openUntil time.Time
+}
+
+func (b *Breaker) Decide(ctx context.Context, q Question) (Answer, error) {
+	now := b.Clock.Now()
+	b.mu.Lock()
+	open := now.Before(b.openUntil)
+	b.mu.Unlock()
+	if open {
+		metrics.Decisions.WithLabelValues(q.Kind, "open").Inc()
+		return Answer{}, ErrOpen
+	}
+	a, err := b.Decider.Decide(ctx, q)
+	if errors.Is(err, ErrUnsupported) || ctx.Err() != nil {
+		return a, err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if err == nil {
+		b.fails = 0
+		return a, nil
+	}
+	b.fails++
+	failures, cooldown := b.Failures, b.Cooldown
+	if failures <= 0 {
+		failures = 3
+	}
+	if cooldown <= 0 {
+		cooldown = 30 * time.Second
+	}
+	if b.fails >= failures {
+		b.fails, b.openUntil = 0, b.Clock.Now().Add(cooldown)
+	}
+	return a, err
 }
 
 // Options 返回判断点的合法选项（排序后的副本），未知的判断点返回 nil。

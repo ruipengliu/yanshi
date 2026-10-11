@@ -91,7 +91,10 @@ func (s Source) Stream(ctx context.Context, st *session.State, after uint64, sin
 	var batches <-chan []*v1.Event
 	var lagged <-chan struct{}
 	if s.Hub != nil {
-		f, leave := s.Hub.join(id, after)
+		// 共享读者以第一个订阅者的位置为起点。客户端给的游标不可信（可能超过日志末尾），超过投影位置时以投影为准：
+		// 否则读者一直等到日志超过那个值，之后加入的订阅者都收不到新事件（评审 §11 问题 4）。本订阅者自己仍只推送
+		// seq 大于 after 的事件。
+		f, leave := s.Hub.join(id, min(after, st.Seq))
 		defer leave()
 		batches, lagged = f.batches, f.lagged
 	} else {

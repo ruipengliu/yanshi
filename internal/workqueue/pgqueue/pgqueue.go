@@ -5,6 +5,7 @@ package pgqueue
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -129,6 +130,13 @@ func (q *Queue) Claim(ctx context.Context, holder string, ttl time.Duration, p w
 	return l, nil
 }
 
+// returnedPriority 是归还时的优先级，规则同 workqueue.ReturnedClass；bl 与 prio 是持有者给的业务线与优先级的参数。
+// SET 中的列引用读的是更新前的值。
+func returnedPriority(bl, prio string) string {
+	return fmt.Sprintf(`CASE WHEN dirty AND priority = %d AND %s::smallint = %d AND business_line = %s::text THEN priority ELSE %s::smallint END`,
+		workqueue.Resumed, prio, workqueue.Background, bl, prio)
+}
+
 // held 是"租约仍有效"的条件，参数 $1 session_id、$2 token、$3 now。
 const held = `session_id = $1 AND leased AND token = $2 AND lease_expires > $3`
 
@@ -151,7 +159,7 @@ func (q *Queue) Park(ctx context.Context, l *workqueue.Lease, until time.Time) e
 		UPDATE work_items SET leased = false, ord = nextval('work_seq'),
 			parked_until = CASE WHEN dirty THEN NULL ELSE $4::timestamptz END,
 			ready_at = CASE WHEN dirty THEN $3 ELSE $4::timestamptz END, dirty = false,
-			business_line = $5, priority = $6
+			business_line = $5, priority = `+returnedPriority("$5", "$6")+`
 		WHERE `+held), l.SessionID, int64(l.Token), q.clock.Now(), until, l.Class.BusinessLine, int16(l.Class.Priority))
 	if err != nil {
 		return err
@@ -175,7 +183,7 @@ func (q *Queue) Release(ctx context.Context, l *workqueue.Lease, done bool) erro
 	}
 	tag, err := q.pool.Exec(ctx, q.q(`
 		UPDATE work_items SET leased = false, dirty = false, parked_until = NULL, ord = nextval('work_seq'),
-			business_line = $4, priority = $5, ready_at = $3
+			business_line = $4, priority = `+returnedPriority("$4", "$5")+`, ready_at = $3
 		WHERE `+held), l.SessionID, int64(l.Token), now, l.Class.BusinessLine, int16(l.Class.Priority))
 	if err != nil {
 		return err
