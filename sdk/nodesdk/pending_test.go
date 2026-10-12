@@ -89,6 +89,12 @@ func (l *eventLog) calls(runID string, calls ...[3]string) *v1.Event {
 	return l.ev(&v1.Event{Payload: &v1.Event_AssistantMessage{AssistantMessage: m}})
 }
 
+// asked：ask_user 派发给用户本人，此后才算待回答。
+func (l *eventLog) asked(runID, callID string) *v1.Event {
+	return l.ev(&v1.Event{Payload: &v1.Event_ToolCallStarted{ToolCallStarted: &v1.ToolCallStarted{
+		RunId: runID, Attempt: 1, CallId: callID, NodeId: "@user"}}})
+}
+
 func (l *eventLog) delegate(runID, callID, child string) *v1.Event {
 	return l.ev(&v1.Event{Payload: &v1.Event_ToolCallStarted{ToolCallStarted: &v1.ToolCallStarted{
 		RunId: runID, Attempt: 1, CallId: callID, NodeId: "@agent/" + child}}})
@@ -165,6 +171,7 @@ func TestPendingFollowsDelegations(t *testing.T) {
 	g.waitSubs("+c1@0")
 
 	g.push(child.calls("cr1", [3]string{"q1", "ask_user", askArgs("去哪？")}))
+	g.push(child.asked("cr1", "q1"))
 	g.push(child.calls("cr1", [3]string{"w1", "phone__send_sms"}))
 	g.push(child.approval("cr1", "w1", "发短信"))
 	ch.wait(t, "approval:c1/w1:planner:c1:发短信 question:c1/q1:planner:c1:去哪？")
@@ -178,6 +185,7 @@ func TestPendingFollowsDelegations(t *testing.T) {
 	g.push(child.delegate("cr1", "d2", "g1"))
 	g.waitSubs("+c1@0", "+g1@0")
 	g.push(grand.calls("gr1", [3]string{"q2", "ask_user", askArgs("几点？")}))
+	g.push(grand.asked("gr1", "q2"))
 	ch.wait(t, "approval:c1/w1:planner:c1:发短信 question:g1/q2:helper:c1:几点？")
 
 	// 子 Run 结束：它的委托随之结束，孙 Session 退订，待处理项收起。
@@ -189,6 +197,7 @@ func TestPendingFollowsDelegations(t *testing.T) {
 	tr.OnEvent(top.result("r1", "d1"))
 	g.waitSubs("+c1@0", "+g1@0", "-g1", "-c1")
 	g.push(child.calls("cr1", [3]string{"q3", "ask_user", askArgs("还有？")}))
+	g.push(child.asked("cr1", "q3"))
 	if items := tr.Items(); len(items) != 0 {
 		t.Fatalf("items after the delegation ended: %s", brief(items))
 	}
@@ -199,6 +208,7 @@ func TestPendingFollowsDelegations(t *testing.T) {
 	tr.OnEvent(top.delegate("r2", "d3", "c2"))
 	g.waitSubs("+c1@0", "+g1@0", "-g1", "-c1", "+c2@0")
 	g.push(c2.calls("cr2", [3]string{"q4", "ask_user", askArgs("确定？")}))
+	g.push(c2.asked("cr2", "q4"))
 	ch.wait(t, "question:c2/q4:helper:c2:确定？")
 	tr.OnEvent(top.ev(&v1.Event{Payload: &v1.Event_RunInterrupted{RunInterrupted: &v1.RunInterrupted{RunId: "r2"}}}))
 	g.waitSubs("+c1@0", "+g1@0", "-g1", "-c1", "+c2@0", "-c2")
@@ -258,6 +268,7 @@ func TestPendingTypedAnswerTarget(t *testing.T) {
 	tr.OnEvent(top.delegate("r1", "d1", "c1"))
 	g.waitSubs("+c1@0")
 	g.push(child.calls("cr1", [3]string{"q1", "ask_user", askArgs("去哪？")}))
+	g.push(child.asked("cr1", "q1"))
 	g.push(child.calls("cr1", [3]string{"w1", "phone__send_sms"}))
 	g.push(child.approval("cr1", "w1", "发短信"))
 	if got := target(); got != "c1/q1" {
@@ -266,6 +277,7 @@ func TestPendingTypedAnswerTarget(t *testing.T) {
 
 	// 两个待回答的提问：不选中。
 	g.push(child.calls("cr1", [3]string{"q2", "ask_user", askArgs("几点？")}))
+	g.push(child.asked("cr1", "q2"))
 	if got := target(); got != "" {
 		t.Fatalf("two questions: %q", got)
 	}
@@ -273,6 +285,7 @@ func TestPendingTypedAnswerTarget(t *testing.T) {
 
 	// 顶层 Session 自己有提问：不选中子 Session 的。
 	tr.OnEvent(top.calls("r1", [3]string{"q3", "ask_user", askArgs("要继续吗？")}))
+	tr.OnEvent(top.asked("r1", "q3"))
 	if got := target(); got != "" {
 		t.Fatalf("top-level question: %q", got)
 	}
@@ -284,9 +297,98 @@ func TestPendingTypedAnswerTarget(t *testing.T) {
 	// 只有顶层自己的提问：不选中。
 	tr.OnEvent(top.result("r1", "d1"))
 	tr.OnEvent(top.calls("r1", [3]string{"q4", "ask_user", askArgs("好吗？")}))
+	tr.OnEvent(top.asked("r1", "q4"))
 	if got, n := target(), len(tr.Items()); got != "" || n != 1 {
 		t.Fatalf("only a top-level question: %q (%d items)", got, n)
 	}
+}
+
+// 提问派发给用户（ToolCallStarted{node_id: "@user"}）之后才算待回答：模型同一轮返回委托与提问时，Worker 先推进委托。
+func TestPendingQuestionOpensWhenDispatched(t *testing.T) {
+	g := newFakeGateway(t)
+	var ch changes
+	tr := NewPendingTracker(g.c, "top", ch.on)
+	defer tr.Close()
+	top, child := &eventLog{sid: "top"}, &eventLog{sid: "c1"}
+	tr.OnEvent(top.calls("r1", [3]string{"d1", "agent__helper"}, [3]string{"q0", "ask_user", askArgs("要订酒店吗？")}))
+	tr.OnEvent(top.delegate("r1", "d1", "c1"))
+	g.waitSubs("+c1@0")
+	g.push(child.calls("cr1", [3]string{"q1", "ask_user", askArgs("去哪？")}))
+	if items := tr.Items(); len(items) != 0 {
+		t.Fatalf("undispatched questions are open: %s", brief(items))
+	}
+	g.push(child.asked("cr1", "q1"))
+	ch.wait(t, "question:c1/q1:helper:c1:去哪？")
+	if q := tr.TypedAnswerTarget(); q == nil || q.CallID != "q1" {
+		t.Fatalf("the parent's undispatched question blocks the sub-agent's: %+v", q)
+	}
+
+	tr.OnEvent(top.result("r1", "d1"))
+	tr.OnEvent(top.asked("r1", "q0"))
+	ch.wait(t, "question:top/q0:::要订酒店吗？")
+	if q := tr.TypedAnswerTarget(); q != nil {
+		t.Fatalf("top-level question: %+v", q)
+	}
+	// 派发到别处的 ToolCallStarted 不算派发给用户。
+	tr.OnEvent(top.calls("r1", [3]string{"q9", "ask_user", askArgs("?")}))
+	tr.OnEvent(top.ev(&v1.Event{Payload: &v1.Event_ToolCallStarted{ToolCallStarted: &v1.ToolCallStarted{RunId: "r1", CallId: "q9", NodeId: "phone"}}}))
+	if n := len(tr.Items()); n != 1 {
+		t.Fatalf("items %s", brief(tr.Items()))
+	}
+}
+
+// 子 Session 的订阅以 not_found 或 error 结束而委托仍在进行时，退避后重订；deleted、委托结束或 Close 之后不再重订。
+func TestPendingRetriesChildSubscription(t *testing.T) {
+	retryMin, retryMax = 10*time.Millisecond, 40*time.Millisecond
+	defer func() { retryMin, retryMax = 200*time.Millisecond, 5*time.Second }()
+	g := newFakeGateway(t)
+	var ch changes
+	tr := NewPendingTracker(g.c, "top", ch.on)
+	defer tr.Close()
+	top, child := &eventLog{sid: "top"}, &eventLog{sid: "c1"}
+	ended := func(sid, reason string) {
+		g.c.sessions.handle(&v1.GatewayMessage{Msg: &v1.GatewayMessage_SubscriptionEnded{SubscriptionEnded: &v1.SubscriptionEnded{SessionId: sid, Reason: reason}}})
+	}
+	tr.OnEvent(top.calls("r1", [3]string{"d1", "agent__helper"}))
+	tr.OnEvent(top.delegate("r1", "d1", "c1"))
+	g.waitSubs("+c1@0")
+	// 子 Session 还没创建。
+	ended("c1", "not_found")
+	g.waitSubs("+c1@0", "+c1@0")
+	g.push(child.calls("cr1", [3]string{"q1", "ask_user", askArgs("去哪？")}))
+	g.push(child.asked("cr1", "q1"))
+	ch.wait(t, "question:c1/q1:helper:c1:去哪？")
+
+	// 网关一侧的错误：保留待处理项，从已收到的位置续订。
+	ended("c1", "error")
+	if n := len(tr.Items()); n != 1 {
+		t.Fatalf("items while retrying: %s", brief(tr.Items()))
+	}
+	g.waitSubs("+c1@0", "+c1@0", "+c1@2")
+
+	// deleted：收起，不再重订。
+	ended("c1", "deleted")
+	ch.wait(t, "")
+	time.Sleep(60 * time.Millisecond)
+	g.waitSubs("+c1@0", "+c1@0", "+c1@2")
+
+	// 委托在退避期间结束：不再重订。
+	tr.OnEvent(top.calls("r2", [3]string{"d2", "agent__helper"}))
+	tr.OnEvent(top.delegate("r2", "d2", "c2"))
+	g.waitSubs("+c1@0", "+c1@0", "+c1@2", "+c2@0")
+	ended("c2", "not_found")
+	tr.OnEvent(top.result("r2", "d2"))
+	time.Sleep(60 * time.Millisecond)
+	g.waitSubs("+c1@0", "+c1@0", "+c1@2", "+c2@0")
+
+	// Close 之后不再重订。
+	tr.OnEvent(top.calls("r3", [3]string{"d3", "agent__helper"}))
+	tr.OnEvent(top.delegate("r3", "d3", "c3"))
+	g.waitSubs("+c1@0", "+c1@0", "+c1@2", "+c2@0", "+c3@0")
+	ended("c3", "not_found")
+	tr.Close()
+	time.Sleep(60 * time.Millisecond)
+	g.waitSubs("+c1@0", "+c1@0", "+c1@2", "+c2@0", "+c3@0")
 }
 
 // 跟踪器对子 Session 的订阅与 HostApp 自己的订阅并存：应用打开子 Session 不挤掉跟踪器，各自取消。

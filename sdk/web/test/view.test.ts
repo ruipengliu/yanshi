@@ -60,14 +60,26 @@ test("questions: parsed from the call, closed by the result or the end of the ru
   assert.equal(questionOf({ callId: "c3", capability: "ask_user", argumentsJson: "{" } as never), undefined);
 
   const p = new PendingQuestions();
-  p.onEvent(assistant(2n, "r1", [{ callId: "c1", capability: "ask_user", argumentsJson: args }]));
-  p.onEvent(assistant(3n, "r2", [{ callId: "c9", capability: "ask_user", argumentsJson: args }]));
+  const started = (seq: bigint, runId: string, callId: string, nodeId = "@user") =>
+    ev({ seq, payload: { case: "toolCallStarted", value: { runId, attempt: 1, callId, nodeId } } });
+  assert.equal(p.onEvent(assistant(2n, "r1", [{ callId: "c1", capability: "ask_user", argumentsJson: args }])), false);
+  // 派发给用户之前不算待回答（Worker 可能还在推进同一轮里更早的调用）。
+  assert.equal(p.questions.length, 0);
+  assert.equal(p.onEvent(started(3n, "r1", "c1")), true);
+  p.onEvent(assistant(4n, "r2", [{ callId: "c9", capability: "ask_user", argumentsJson: args }]));
+  p.onEvent(started(5n, "r2", "c9"));
+  // 派发到别处的同名调用不是提问。
+  p.onEvent(assistant(6n, "r2", [{ callId: "c8", capability: "ask_user", argumentsJson: args }]));
+  assert.equal(p.onEvent(started(7n, "r2", "c8", "phone")), false);
   assert.deepEqual(
     p.questions.map((q) => q.callId),
     ["c1", "c9"],
   );
-  assert.equal(p.onEvent(ev({ seq: 4n, payload: { case: "toolResult", value: { runId: "r1", callId: "c1" } } })), true);
-  assert.equal(p.onEvent(ev({ seq: 5n, payload: { case: "runInterrupted", value: { runId: "r2" } } })), true);
+  assert.equal(p.onEvent(ev({ seq: 8n, payload: { case: "toolResult", value: { runId: "r1", callId: "c1" } } })), true);
+  assert.equal(p.onEvent(ev({ seq: 9n, payload: { case: "runInterrupted", value: { runId: "r2" } } })), true);
+  assert.equal(p.questions.length, 0);
+  // Run 结束后，它尚未派发的提问也不会再出现。
+  assert.equal(p.onEvent(started(10n, "r2", "c8")), false);
   assert.equal(p.questions.length, 0);
 });
 
