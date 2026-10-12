@@ -1,5 +1,7 @@
-// 渲染 Session 的辅助：正在生成的草稿与 ask_user 提问（docs/design/m3-duplex-channel.md §4、§7）。
+// 渲染 Session 的辅助：正在生成的草稿、ask_user 提问、卡片（docs/design/m3-duplex-channel.md §4、§7），
+// 以及进行中的委托里等待用户的提问与审批（docs/design/m5-multi-agent.md §4）。
 
+import type { Client } from "./client.js";
 import type { Card, Event, ToolCall } from "./gen/yanshi/v1/event_pb.js";
 import type { LiveDelta } from "./gen/yanshi/v1/node_pb.js";
 
@@ -192,4 +194,237 @@ export function cardOf(e: Event): Card | undefined {
     if (b.kind.case === "card") return b.kind.value;
   }
   return undefined;
+}
+
+/** 委托调用的 ToolCallStarted.node_id 前缀：其后是子 Session 的 ID（docs/design/m5-multi-agent.md §4）。 */
+export const AGENT_NODE_PREFIX = "@agent/";
+
+interface PendingBase {
+  /** 回答或审批发往的 Session：顶层 Session，或进行中的委托派生的子 Session。 */
+  sessionId: string;
+  callId: string;
+  runId: string;
+  /** 提出它的子 Agent（AgentDef 名，去掉 agent__ 前缀）；顶层 Session 自己的为空。 */
+  agent: string;
+  /** 经由顶层 Session 的哪个直接委托的子 Session（孙 Session 里的也归到它）；顶层 Session 自己的为空。 */
+  via: string;
+}
+
+/** 等待用户回答的 ask_user 提问。 */
+export interface PendingQuestion extends PendingBase {
+  kind: "question";
+  question: Question;
+}
+
+/** 等待用户审批的调用。 */
+export interface PendingApproval extends PendingBase {
+  kind: "approval";
+  /** 给用户看的说明（ApprovalRequested.summary）。 */
+  summary: string;
+  /** 要执行的能力（模型调用的工具名）。 */
+  capability: string;
+}
+
+export type PendingItem = PendingQuestion | PendingApproval;
+
+export interface PendingTrackerOptions {
+  /** 待处理项变化时调用，包括子 Session 中的变化（它们不经应用的订阅）。 */
+  onChange?: (items: PendingItem[]) => void;
+}
+
+// 被跟踪的一个 Session：顶层 Session，或进行中的委托派生的子 Session。
+class Tracked {
+  // 本 Session 的调用：call_id → 能力与所属 Run。审批的能力名、委托的子 Agent 名从这里取。
+  readonly calls = new Map<string, { capability: string; runId: string }>();
+  readonly questions = new Map<string, { question: Question; runId: string }>();
+  readonly approvals = new Map<string, { summary: string; capability: string; runId: string }>();
+  // 进行中的委托：call_id → 子 Session。
+  readonly delegations = new Map<string, { runId: string; child: Tracked }>();
+  off: (() => void) | undefined;
+
+  constructor(
+    readonly sessionId: string,
+    readonly agent: string,
+    readonly via: string,
+  ) {}
+}
+
+/**
+ * PendingTracker 跟踪一个顶层 Session 及其进行中的委托（递归）里等待用户的提问与审批。
+ *
+ * 委托出去的子 Run 的 ask_user 与审批路由到用户本人，却写在子 Session 的日志里：客户端只看顶层 Session 时看不到，
+ * 父 Run 就一直等着委托直到超时（docs/design/m5-multi-agent.md §4）。所以：
+ *   - 顶层 Session 的事件由应用喂给 onEvent（和 Draft、PendingQuestions 一样，从 seq 0 开始）；
+ *   - 被跟踪的 Session 出现委托（ToolCallStarted 的 node_id 为 "@agent/<子 Session>"）时，经 Client 订阅子 Session
+ *     的完整历史；该委托调用出现 ToolResult、或它所在的 Run 结束时，取消订阅并收起子 Session（及其后代）的待处理项；
+ *   - 提问随 AssistantMessage 出现，在该调用出现 ToolResult 或 Run 结束时收起；审批随 ApprovalRequested 出现，
+ *     在 ApprovalDecided、该调用的 ToolResult 或 Run 结束时收起。
+ *
+ * 回答与审批发往待处理项的 sessionId。辅助类对子 Session 的订阅与应用自己的订阅并存：应用另外打开子 Session 不受影响。
+ * 不再需要时调用 close。
+ */
+export class PendingTracker {
+  readonly #client: Client;
+  readonly #root: Tracked;
+  readonly #onChange: ((items: PendingItem[]) => void) | undefined;
+  // 树中的全部 Session：防止委托链成环时重复订阅。
+  readonly #tracked = new Set<string>();
+  #closed = false;
+
+  constructor(client: Client, sessionId: string, opts: PendingTrackerOptions = {}) {
+    this.#client = client;
+    this.#root = new Tracked(sessionId, "", "");
+    this.#tracked.add(sessionId);
+    this.#onChange = opts.onChange;
+  }
+
+  get sessionId(): string {
+    return this.#root.sessionId;
+  }
+
+  /** 全部待处理项，按委托树深度优先排列：每个 Session 先审批、后提问，然后是它的子 Session。 */
+  get items(): PendingItem[] {
+    const out: PendingItem[] = [];
+    const walk = (t: Tracked) => {
+      const base = { sessionId: t.sessionId, agent: t.agent, via: t.via };
+      for (const [callId, a] of t.approvals) out.push({ kind: "approval", ...base, callId, ...a });
+      for (const [callId, q] of t.questions) out.push({ kind: "question", ...base, callId, ...q });
+      for (const d of t.delegations.values()) walk(d.child);
+    };
+    walk(this.#root);
+    return out;
+  }
+
+  /**
+   * 输入框里的文字应作为哪个提问的回答（以 Client.answer 的 text 发往它的 sessionId）：顶层 Session 自己没有待回答的提问、
+   * 整棵树里恰好一个待回答的提问、且它在子 Session 中时返回它，否则返回 undefined，文字照旧提交给顶层 Session
+   * （顶层自己的提问由服务端把文字当作回答）。
+   *
+   * 不由服务端沿委托链把父 Session 的输入转给子 Session：一次输入跨两个 Session 不能在一个事务中提交（ADR-0028），
+   * 父日志里也没有可以去重的输入。回答按 call_id 去重：别的设备已经回答时得到 conflict，此时应保留文字、提示用户，
+   * 不要自动改投顶层 Session。
+   */
+  typedAnswerTarget(): PendingQuestion | undefined {
+    if (this.#root.questions.size > 0) return undefined;
+    const questions = this.items.filter((i): i is PendingQuestion => i.kind === "question");
+    return questions.length === 1 ? questions[0] : undefined;
+  }
+
+  /** 应用顶层 Session 的一条已提交事件；返回待处理项是否变化（变化时也调用 onChange）。其他 Session 的事件忽略。 */
+  onEvent(e: Event): boolean {
+    if (this.#closed || e.sessionId !== this.#root.sessionId) return false;
+    return this.#update(this.#root, e);
+  }
+
+  /** 取消全部子 Session 的订阅；之后不再回调。 */
+  close(): void {
+    if (this.#closed) return;
+    this.#closed = true;
+    for (const d of this.#root.delegations.values()) this.#drop(d.child);
+    this.#root.delegations.clear();
+    this.#root.questions.clear();
+    this.#root.approvals.clear();
+  }
+
+  #update(t: Tracked, e: Event): boolean {
+    const changed = this.#apply(t, e);
+    if (changed) this.#onChange?.(this.items);
+    return changed;
+  }
+
+  // #apply 把一条事件应用到被跟踪的 Session；返回待处理项是否变化。
+  #apply(t: Tracked, e: Event): boolean {
+    const p = e.payload;
+    switch (p.case) {
+      case "assistantMessage": {
+        let changed = false;
+        const runId = p.value.runId;
+        for (const c of p.value.toolCalls) {
+          t.calls.set(c.callId, { capability: c.capability, runId });
+          const q = questionOf(c);
+          if (q) {
+            t.questions.set(q.callId, { question: q, runId });
+            changed = true;
+          }
+        }
+        return changed;
+      }
+      case "approvalRequested": {
+        const { callId, runId, summary } = p.value;
+        t.approvals.set(callId, { summary, capability: t.calls.get(callId)?.capability ?? "", runId });
+        return true;
+      }
+      case "approvalDecided":
+        return t.approvals.delete(p.value.callId);
+      case "toolCallStarted": {
+        const { callId, runId, nodeId } = p.value;
+        if (!nodeId.startsWith(AGENT_NODE_PREFIX) || t.delegations.has(callId)) return false;
+        const sid = nodeId.slice(AGENT_NODE_PREFIX.length);
+        if (this.#tracked.has(sid)) return false;
+        const agent = (t.calls.get(callId)?.capability ?? "").replace(/^agent__/, "");
+        const child = new Tracked(sid, agent, t.via || sid);
+        t.delegations.set(callId, { runId, child });
+        this.#tracked.add(sid);
+        // 子 Session 的提问与审批可能早于这次订阅，所以从头订阅。
+        child.off = this.#client._observe(sid, 0n, {
+          onEvent: (ce) => {
+            if (!this.#closed && t.delegations.get(callId)?.child === child) this.#update(child, ce);
+          },
+          // 订阅被网关结束（子 Session 被删除等）：它的待处理项已无法处理，收起；委托本身仍等父 Session 的结果。
+          onEnded: () => {
+            if (this.#closed || t.delegations.get(callId)?.child !== child) return;
+            child.off = undefined;
+            if (this.#clear(child)) this.#onChange?.(this.items);
+          },
+        });
+        return false;
+      }
+      case "toolResult": {
+        const id = p.value.callId;
+        let changed = t.questions.delete(id);
+        changed = t.approvals.delete(id) || changed;
+        const d = t.delegations.get(id);
+        if (d) {
+          t.delegations.delete(id);
+          changed = this.#drop(d.child) || changed;
+        }
+        return changed;
+      }
+      case "runCompleted":
+      case "runFailed":
+      case "runInterrupted": {
+        const runId = p.value.runId;
+        let changed = false;
+        for (const [id, q] of t.questions) if (q.runId === runId) changed = t.questions.delete(id) || changed;
+        for (const [id, a] of t.approvals) if (a.runId === runId) changed = t.approvals.delete(id) || changed;
+        for (const [id, d] of t.delegations) {
+          if (d.runId !== runId) continue;
+          t.delegations.delete(id);
+          changed = this.#drop(d.child) || changed;
+        }
+        for (const [id, c] of t.calls) if (c.runId === runId) t.calls.delete(id);
+        return changed;
+      }
+      default:
+        return false;
+    }
+  }
+
+  // #drop 取消一个子 Session（及其后代）的订阅；返回是否收起了待处理项。
+  #drop(t: Tracked): boolean {
+    t.off?.();
+    t.off = undefined;
+    this.#tracked.delete(t.sessionId);
+    return this.#clear(t);
+  }
+
+  // #clear 收起一个 Session 的待处理项，并放下它的全部子 Session；返回是否收起了待处理项。
+  #clear(t: Tracked): boolean {
+    let changed = t.questions.size > 0 || t.approvals.size > 0;
+    t.questions.clear();
+    t.approvals.clear();
+    for (const d of t.delegations.values()) changed = this.#drop(d.child) || changed;
+    t.delegations.clear();
+    return changed;
+  }
 }

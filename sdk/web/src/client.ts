@@ -140,10 +140,31 @@ export type ContentBlockInit = MessageInitShape<typeof ContentBlockSchema>;
 export type ClientRequestInit = MessageInitShape<typeof ClientRequestSchema>;
 
 interface Subscriber {
+  /** 这个订阅者已收到的最后一个 seq：重新订阅与旧订阅的残留消息可能重叠，只交给它更新的事件。 */
   after: bigint;
   handler: SessionHandler;
-  /** 最近一次 setActivity 报告的前台状态，重连后随订阅重发（"正在输入"是瞬时的，不重发）。 */
+}
+
+/**
+ * 一个 Session 在本连接上的订阅。subscribe 的订阅者至多一个（新的取代旧的）；渲染辅助（PendingTracker）对子 Session
+ * 的订阅者与它并存、各自取消，这样应用打开子 Session 时不会挤掉辅助类的订阅，反之亦然。网关上一个 Session 只有一个订阅
+ * （重复订阅以新的 after_seq 重新开始），从各订阅者中最小的 after 续传，每个订阅者各自丢弃已收到的事件。
+ */
+interface Subscription {
+  primary?: Subscriber;
+  observers: Set<Subscriber>;
+  /** subscribe 的订阅者最近一次 setActivity 报告的前台状态，重连后随订阅重发（"正在输入"是瞬时的，不重发）。 */
   focused: boolean;
+}
+
+function members(sub: Subscription): Subscriber[] {
+  return sub.primary ? [sub.primary, ...sub.observers] : [...sub.observers];
+}
+
+function minAfter(sub: Subscription): bigint {
+  let after: bigint | undefined;
+  for (const s of members(sub)) if (after === undefined || s.after < after) after = s.after;
+  return after ?? 0n;
 }
 
 interface Pending {
@@ -153,7 +174,7 @@ interface Pending {
 
 export class Client {
   readonly #cfg: ClientConfig;
-  readonly #subs = new Map<string, Subscriber>();
+  readonly #subs = new Map<string, Subscription>();
   readonly #pending = new Map<string, Pending>();
   // 本连接上的 Call（开始中与进行中的），以 call_id 关联。
   readonly #calls = new Map<string, Call>();
@@ -304,7 +325,7 @@ export class Client {
   // #attach 在收到 Welcome 后调用：重新订阅全部 Session，并放行等待连接的请求。
   #attach(ws: WebSocketLike): void {
     for (const [sid, sub] of this.#subs) {
-      ws.send(encode(subscribeMsg(sid, sub.after)));
+      ws.send(encode(subscribeMsg(sid, minAfter(sub))));
       if (sub.focused) ws.send(encode(activityMsg(sid, true, false)));
     }
     this.#ready = true;
@@ -352,30 +373,33 @@ export class Client {
     switch (m.msg.case) {
       case "event": {
         const e = m.msg.value;
-        const sub = this.#subs.get(e.sessionId);
-        // 重新订阅与旧订阅的残留消息可能重叠：只接受比已收到的更新的事件。
-        if (!sub || e.seq <= sub.after) return;
-        sub.after = e.seq;
-        this.#call(() => sub.handler.onEvent(e));
+        // 重新订阅与旧订阅的残留消息可能重叠：每个订阅者只接受比自己已收到的更新的事件。
+        for (const s of this.#members(e.sessionId)) {
+          if (e.seq <= s.after || !this.#has(e.sessionId, s)) continue;
+          s.after = e.seq;
+          this.#call(() => s.handler.onEvent(e));
+        }
         return;
       }
       case "delta": {
         const d = m.msg.value;
-        const sub = this.#subs.get(d.sessionId);
-        if (sub?.handler.onDelta) this.#call(() => sub.handler.onDelta!(d));
+        for (const s of this.#members(d.sessionId)) {
+          if (s.handler.onDelta && this.#has(d.sessionId, s)) this.#call(() => s.handler.onDelta!(d));
+        }
         return;
       }
       case "presence": {
         const p = m.msg.value;
-        const sub = this.#subs.get(p.sessionId);
-        if (sub?.handler.onPresence) this.#call(() => sub.handler.onPresence!(p));
+        for (const s of this.#members(p.sessionId)) {
+          if (s.handler.onPresence && this.#has(p.sessionId, s)) this.#call(() => s.handler.onPresence!(p));
+        }
         return;
       }
       case "subscriptionEnded": {
         const { sessionId, reason } = m.msg.value;
-        const sub = this.#subs.get(sessionId);
+        const ended = this.#members(sessionId);
         this.#subs.delete(sessionId);
-        if (sub?.handler.onEnded) this.#call(() => sub.handler.onEnded!(reason));
+        for (const s of ended) if (s.handler.onEnded) this.#call(() => s.handler.onEnded!(reason));
         return;
       }
       case "callEvent": {
@@ -407,14 +431,66 @@ export class Client {
    * 未连接时在连接建立后自动订阅；同一 Session 重复订阅时以新的为准。
    */
   subscribe(sessionId: string, after: bigint, handler: SessionHandler): () => void {
-    const sub: Subscriber = { after, handler, focused: false };
-    this.#subs.set(sessionId, sub);
-    this.#send(subscribeMsg(sessionId, after));
+    const s: Subscriber = { after, handler };
+    const sub = this.#subscription(sessionId);
+    sub.primary = s;
+    this.#send(subscribeMsg(sessionId, minAfter(sub)));
     return () => {
-      if (this.#subs.get(sessionId) !== sub) return;
+      const cur = this.#subs.get(sessionId);
+      if (cur?.primary !== s) return;
+      cur.primary = undefined;
+      this.#release(sessionId, cur);
+    };
+  }
+
+  /**
+   * @internal 渲染辅助（PendingTracker）订阅子 Session：与 subscribe 的订阅者并存，互不取代，各自取消。
+   */
+  _observe(sessionId: string, after: bigint, handler: SessionHandler): () => void {
+    const s: Subscriber = { after, handler };
+    const sub = this.#subscription(sessionId);
+    sub.observers.add(s);
+    // 新的订阅者需要比已收到的更早的事件：网关上重新订阅，从最小的 after 续传；其他订阅者丢弃重放的事件。
+    this.#send(subscribeMsg(sessionId, minAfter(sub)));
+    return () => {
+      const cur = this.#subs.get(sessionId);
+      if (!cur?.observers.delete(s)) return;
+      this.#release(sessionId, cur);
+    };
+  }
+
+  #subscription(sessionId: string): Subscription {
+    let sub = this.#subs.get(sessionId);
+    if (!sub) {
+      sub = { observers: new Set(), focused: false };
+      this.#subs.set(sessionId, sub);
+    }
+    return sub;
+  }
+
+  #members(sessionId: string): Subscriber[] {
+    const sub = this.#subs.get(sessionId);
+    return sub ? members(sub) : [];
+  }
+
+  // 回调中可能取消了同一 Session 的其他订阅者：已取消的不再回调。
+  #has(sessionId: string, s: Subscriber): boolean {
+    const sub = this.#subs.get(sessionId);
+    return !!sub && (sub.primary === s || sub.observers.has(s));
+  }
+
+  // #release 在一个订阅者取消后调用：没有订阅者时退订；subscribe 的订阅者走了而辅助类还在时，撤下前台状态，
+  // 否则网关以为用户仍在看这个 Session，不再推送它的提醒。
+  #release(sessionId: string, sub: Subscription): void {
+    if (!sub.primary && sub.observers.size === 0) {
       this.#subs.delete(sessionId);
       this.#send(create(NodeMessageSchema, { msg: { case: "unsubscribe", value: { sessionId } } }));
-    };
+      return;
+    }
+    if (!sub.primary && sub.focused) {
+      sub.focused = false;
+      this.#send(activityMsg(sessionId, false, false));
+    }
   }
 
   /**
@@ -423,7 +499,7 @@ export class Client {
    */
   setActivity(sessionId: string, focused: boolean, typing = false): void {
     const sub = this.#subs.get(sessionId);
-    if (!sub) return;
+    if (!sub?.primary) return;
     sub.focused = focused;
     this.#send(activityMsg(sessionId, focused, typing));
   }

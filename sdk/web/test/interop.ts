@@ -2,13 +2,14 @@
 //
 //   YANSHI_URL=ws://…/v1/connect YANSHI_TOKEN=… YANSHI_OTHER_TOKEN=… node dist/test/interop.js
 //
-// 网关使用 e2e 的脚本化模型："stream <n>" 逐段输出，"call ask_user <JSON>" 提问。成功时输出 "ok" 并以 0 退出。
+// 网关使用 e2e 的脚本化模型："stream <n>" 逐段输出，"call ask_user <JSON>" 提问，"call agent__helper {…}" 委托给
+// helper（任务里的 "ask 问题 | 选项" 由它向用户提问）。成功时输出 "ok" 并以 0 退出。
 
 import assert from "node:assert/strict";
 import { Client, RequestError, newInputId, text, textOf, type SessionHandler } from "../src/client.js";
 import type { Event } from "../src/gen/yanshi/v1/event_pb.js";
 import type { LiveDelta, Presence } from "../src/gen/yanshi/v1/node_pb.js";
-import { Draft, PendingQuestions } from "../src/view.js";
+import { Draft, PendingQuestions, PendingTracker, type PendingItem } from "../src/view.js";
 
 const url = process.env.YANSHI_URL!;
 const token = process.env.YANSHI_TOKEN!;
@@ -143,6 +144,39 @@ async function main(): Promise<void> {
   await until("call ended", () => heard.ended === "hangup");
   // 另一台设备经订阅看到通话的转写（跨端一致）。
   await until("B sees the call", () => onB.events.some((e) => e.payload.case === "callTranscript" && e.payload.value.text === "你好"));
+
+  // 委托出去的子 Agent 提问：PendingTracker 跟随委托看到它，输入框的文字以 answer 发往子 Session，父 Run 随之完成。
+  const dsid = await a.createSession("dev");
+  let latest: PendingItem[] = [];
+  const tracker = new PendingTracker(a, dsid, { onChange: (items) => (latest = items) });
+  const onD = new View();
+  a.subscribe(dsid, 0n, {
+    onEvent: (e) => {
+      onD.onEvent(e);
+      tracker.onEvent(e);
+    },
+  });
+  const delegated = await a.submitText(dsid, 'call agent__helper {"task":"ask 去哪个城市？| 北京 | 上海"}');
+  await until("the sub-agent's question", () => latest.length === 1);
+  const target = tracker.typedAnswerTarget();
+  assert.ok(target, "typed text answers the sub-agent");
+  assert.equal(target.question.question, "去哪个城市？");
+  assert.equal(target.agent, "helper");
+  assert.notEqual(target.sessionId, dsid);
+  assert.equal(target.via, target.sessionId);
+  assert.equal(onD.questions.questions.length, 0, "the question is not in the parent Session");
+  await a.answer(target.sessionId, target.callId, { text: "上海" });
+  await until("the parent run completes", () =>
+    onD.events.some((e) => e.payload.case === "runCompleted" && e.payload.value.runId === delegated.runId),
+  );
+  assert.match(onD.lastAssistantText(), /上海/);
+  assert.deepEqual(tracker.items, []);
+  // 已回答的提问再以文字回答：conflict（应用保留文字、提示用户，不改投父 Session）。
+  await assert.rejects(
+    a.answer(target.sessionId, target.callId, { text: "北京" }),
+    (e) => e instanceof RequestError && e.code === "conflict",
+  );
+  tracker.close();
 
   // 他人的 Session 一律不存在。
   const other = await connect("web-other", otherToken);

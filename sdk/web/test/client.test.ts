@@ -310,3 +310,75 @@ test("a call that cannot start is rejected; a dropped connection ends the call",
   assert.equal(s.sent.filter((m) => m.msg.case === "callAudio").length, 0, "an ended call sends nothing");
   c.stop();
 });
+
+test("a helper's subscription coexists with the app's own subscription to the same Session", async () => {
+  const net = new FakeNetwork();
+  const c = client(net);
+  const s = await net.connect(1);
+  const app = new Recorder();
+  const helper = new Recorder();
+  const offApp = c.subscribe("s1", 2n, app);
+  assert.equal((await s.next("subscribe")).afterSeq, 2n);
+  c.setActivity("s1", true);
+  pushEvent(s, "s1", 3n);
+  // 辅助类要完整历史：网关上从 0 重新订阅，应用的订阅者丢弃重放的事件。
+  const from = s.sent.length;
+  const offHelper = c._observe("s1", 0n, helper);
+  assert.equal((await s.next("subscribe", from)).afterSeq, 0n);
+  for (const seq of [1n, 2n, 3n, 4n]) pushEvent(s, "s1", seq);
+  assert.deepEqual(
+    app.events.map((e) => e.seq),
+    [3n, 4n],
+  );
+  assert.deepEqual(
+    helper.events.map((e) => e.seq),
+    [1n, 2n, 3n, 4n],
+  );
+  // 应用取消订阅：辅助类仍在，网关上不退订，但撤下前台状态；之后的 setActivity 忽略（应用已不订阅它）。
+  const before = s.sent.length;
+  offApp();
+  assert.equal((await s.next("activity", before)).focused, false);
+  c.setActivity("s1", true);
+  pushEvent(s, "s1", 5n);
+  assert.equal(app.events.length, 2);
+  assert.equal(helper.events.at(-1)?.seq, 5n);
+  assert.deepEqual(
+    s.sent.slice(before).map((m) => m.msg.case),
+    ["activity"],
+  );
+  // 最后一个订阅者取消时退订。
+  offHelper();
+  assert.equal((await s.next("unsubscribe", before)).sessionId, "s1");
+  // 网关结束订阅时，所有订阅者都收到通知。
+  c.subscribe("s2", 0n, app);
+  c._observe("s2", 0n, helper);
+  s.push({ msg: { case: "subscriptionEnded", value: { sessionId: "s2", reason: "deleted" } } });
+  assert.deepEqual([app.ended, helper.ended], ["deleted", "deleted"]);
+  c.stop();
+});
+
+test("reconnect resubscribes each Session from its subscribers' earliest seq", async () => {
+  const net = new FakeNetwork();
+  const c = client(net);
+  let s = await net.connect(1);
+  const app = new Recorder();
+  const helper = new Recorder();
+  c.subscribe("s1", 0n, app);
+  for (const seq of [1n, 2n, 3n]) pushEvent(s, "s1", seq);
+  c._observe("s1", 1n, helper);
+  pushEvent(s, "s1", 2n);
+  s.drop();
+  s = await net.connect(2);
+  assert.equal((await s.next("subscribe")).afterSeq, 2n);
+  pushEvent(s, "s1", 3n);
+  pushEvent(s, "s1", 4n);
+  assert.deepEqual(
+    app.events.map((e) => e.seq),
+    [1n, 2n, 3n, 4n],
+  );
+  assert.deepEqual(
+    helper.events.map((e) => e.seq),
+    [2n, 3n, 4n],
+  );
+  c.stop();
+});
