@@ -17,7 +17,8 @@ type Moderator interface {
 type Request struct {
     Stage        Stage   // input | output
     BusinessLine string
-    Text         string  // 输入文本；输出时为回复文本与调用参数
+    SessionID    string  // 所属 Session：按 Session 注入故障（ADR-0033）与审计，不发给提供商的外部服务
+    Text         string  // 输入文本；输出时为回复文本、调用参数与写入日志的思考过程
     Images       []Image // 输入中的图片工件（artifact ID 与 MIME 类型），由提供商自行读取
     Audio        []Audio // 输入中的语音消息工件：模型直接听音频、不经转写，所以须检查音频本身
 }
@@ -32,7 +33,7 @@ type Verdict struct {
 | 检查点 | 位置 | 违规时 | 提供商不可用时 |
 |---|---|---|---|
 | 用户输入（新 Run 与插话） | Service.Submit，写日志之前 | 拒绝，HTTP 422；输入不写入日志 | 拒绝，HTTP 503 |
-| 模型输出（回复文本与调用参数） | Worker，模型返回之后、写日志之前（计量之后） | 回复替换为固定的拒答文本，丢弃全部调用，并写入 `ContentModerated`；Run 正常完成 | Step 出错重试；持续不可用时按 StepErrorBudget 使 Run 失败 |
+| 模型输出（回复文本、调用参数与写入日志的思考过程） | Worker，模型返回之后、写日志之前（计量之后） | 回复替换为固定的拒答文本，丢弃全部调用，并写入 `ContentModerated`；Run 正常完成 | Step 出错重试；持续不可用时按 StepErrorBudget 使 Run 失败 |
 | Call 的转写（用户的话、助手的话） | `service.AppendTranscript`，写日志之前（[Call](./m3-call.md) §6） | 不写日志；中止进行中的回复、停止播放；用户的话违规时说出拒答 | 同违规 |
 
 - **Call 播出的语音**边生成边播放，只能依赖厂商的严格审核；我们的检查在助手整句生成时进行（早于播完），违规时中止剩余的播放（ADR-0027）。
@@ -70,7 +71,7 @@ type Verdict struct {
 ## 6. 验证
 
 - 单元测试：输入拦截时日志中没有该输入；输出拦截时日志中只有拒答文本、没有调用、有 `ContentModerated`；提供商出错时输入返回不可用、输出重试。
-- 模拟测试：模拟提供商按随机源拦截或报错；不变量：被拦截的输出原文从不出现在日志中，每个 `ContentModerated` 之后的 AssistantMessage 是拒答文本且没有调用；覆盖统计包含输入拦截、输出拦截与提供商错误。
+- 模拟测试：模拟提供商按随机源拦截或报错；不变量：被拦截的输出原文从不出现在日志中，每个 `ContentModerated` 之后的 AssistantMessage 是拒答文本且没有调用；覆盖统计包含输入拦截、输出拦截与提供商错误。不变量的镜像与检查点对写入日志的值调用同一函数（输入用 `moderation.ForInput`，输出用 `runtime.ModerationText`），送检文本因此不会与镜像分叉。
 
 ## 7. 验证结果
 

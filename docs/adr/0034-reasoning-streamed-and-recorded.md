@@ -11,7 +11,7 @@ status: accepted
 1. **流式推送**：`model.Delta` 与 `live.Delta` 新增 `Reasoning`，`LiveDelta` 新增 `reasoning` 字段，与正文分开累积。晚加入的订阅者在 snapshot 中同时补齐二者。
 2. **随回复写入日志**：`AssistantMessage` 新增 `reasoning`，事后可以展开查看。写入时有两条限制：
    - 超过 32 KB 截断；
-   - 与回复文本一起在写日志之前做内容安全检查（ADR-0021），被拦截时思考过程同样不写入。
+   - 与回复文本一起在写日志之前做内容安全检查（ADR-0021；以写入日志、即截断后的形式），被拦截时思考过程同样不写入。
 3. **不发回给模型**：Transcript 只取回复内容与调用。思考过程不占上下文、不改变请求前缀，不影响前缀缓存。
 4. **记录调用信息**：`AssistantMessage` 新增 `duration_ms`、`first_token_ms`、`finish_reason`，`Usage` 新增 `reasoning_tokens`。
    - 耗时由 Worker 按 `clock.Clock` 计时，模拟测试中结果确定；
