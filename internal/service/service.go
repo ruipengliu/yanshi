@@ -18,7 +18,6 @@ import (
 	"yanshi/internal/artifact"
 	"yanshi/internal/askuser"
 	"yanshi/internal/eventlog"
-	"yanshi/internal/faults"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/metrics"
 	"yanshi/internal/model"
@@ -744,35 +743,9 @@ func (s *Service) normalizeMedia(ctx context.Context, sessionID string, input []
 	return out, nil
 }
 
-// InputModerationText 是输入中需要内容安全检查的文字：用户的话，以及界面上下文——它同样由用户提交、会给模型看。
-func InputModerationText(input []*v1.ContentBlock) string {
-	text := model.Text(input)
-	for _, b := range input {
-		if a := b.GetCardAction(); a != nil {
-			text += "\n" + model.CardActionText(a)
-		}
-		if u := b.GetUiContext(); u != nil {
-			text += "\n" + strings.Join([]string{u.GetScreen(), u.GetRef(), u.GetSelection(), u.GetContent()}, "\n")
-		}
-	}
-	return text
-}
-
-// moderateInput 检查用户输入（文本与图片工件）。违规返回 ErrRejected，服务不可用返回 ErrUnavailable：都不写日志。
+// moderateInput 检查用户输入（文本、界面上下文、图片与语音消息工件）。违规返回 ErrRejected，服务不可用返回 ErrUnavailable：都不写日志。
 func (s *Service) moderateInput(ctx context.Context, st *session.State, input []*v1.ContentBlock) error {
-	ctx = faults.WithSession(ctx, st.SessionID)
-	req := moderation.Request{Stage: moderation.Input, BusinessLine: st.Created.GetBusinessLine(), Text: InputModerationText(input)}
-	for _, b := range input {
-		if m := b.GetMedia(); m != nil && strings.HasPrefix(m.GetMimeType(), "image/") {
-			id, _ := strings.CutPrefix(m.GetUri(), "artifact://")
-			req.Images = append(req.Images, moderation.Image{ArtifactID: id, MimeType: m.GetMimeType()})
-		}
-		if m := b.GetMedia(); m != nil && strings.HasPrefix(m.GetMimeType(), "audio/") {
-			id, _ := strings.CutPrefix(m.GetUri(), "artifact://")
-			req.Audio = append(req.Audio, moderation.Audio{ArtifactID: id, MimeType: m.GetMimeType()})
-		}
-	}
-	v, err := moderation.Check(ctx, s.Moderator, req)
+	v, err := moderation.Check(ctx, s.Moderator, moderation.ForInput(st.Created.GetBusinessLine(), st.SessionID, input))
 	if err != nil {
 		return err
 	}

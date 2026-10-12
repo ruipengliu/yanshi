@@ -31,6 +31,9 @@ type Image struct {
 type Request struct {
 	Stage        Stage
 	BusinessLine string
+	// SessionID 是送检内容所属的 Session，用于按 Session 注入故障（faults.Moderator）与审计；
+	// 提供商不应把它发给外部服务。
+	SessionID string
 	// Text 是要检查的文本：输入时为用户输入，输出时为回复文本与调用参数。
 	Text   string
 	Images []Image

@@ -910,8 +910,7 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 	// 违规的回复替换为拒答文本、丢弃调用与思考过程，原文不写入日志。服务不可用时不放行：
 	// 返回错误使本步重试（下一步重新调用模型），持续不可用时由 StepErrorBudget 使 Run 失败。
 	// 用单独的变量：err 被上面的 defer 用来记录模型调用的结果。
-	v, merr := moderation.Check(ctx, w.cfg.Moderator, moderation.Request{Stage: moderation.Output,
-		BusinessLine: w.st.Created.GetBusinessLine(), Text: ModerationText(msg)})
+	v, merr := moderation.Check(ctx, w.cfg.Moderator, moderation.ForOutput(w.st.Created.GetBusinessLine(), w.st.SessionID, ModerationText(msg)))
 	if merr != nil {
 		return merr
 	}

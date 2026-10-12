@@ -12,7 +12,6 @@ import (
 	"yanshi/internal/model"
 	"yanshi/internal/moderation"
 	"yanshi/internal/runtime"
-	"yanshi/internal/service"
 )
 
 // 内容安全的模拟（docs/design/m4-moderation.md §6）：模拟提供商按文本的散列决定是否拦截——同一文本总得到
@@ -68,14 +67,18 @@ func (w *World) checkModeration() error {
 		if err != nil {
 			return err
 		}
+		// 与检查点调用同一构造函数（moderation.ForInput、runtime.ModerationText），镜像不会与真实的送检文本分叉。
+		var bl string
 		for i, e := range events {
 			switch p := e.GetPayload().(type) {
+			case *v1.Event_SessionCreated:
+				bl = p.SessionCreated.GetBusinessLine()
 			case *v1.Event_RunRequested:
-				if w.blocked(service.InputModerationText(p.RunRequested.GetInput())) {
+				if w.blocked(moderation.ForInput(bl, sid, p.RunRequested.GetInput()).Text) {
 					return fmt.Errorf("invariant: blocked input reached the log of %s at seq %d", sid, e.GetSeq())
 				}
 			case *v1.Event_Steered:
-				if w.blocked(service.InputModerationText(p.Steered.GetInput())) {
+				if w.blocked(moderation.ForInput(bl, sid, p.Steered.GetInput()).Text) {
 					return fmt.Errorf("invariant: blocked steer reached the log of %s at seq %d", sid, e.GetSeq())
 				}
 			case *v1.Event_AssistantMessage:

@@ -76,6 +76,10 @@ type Moderator struct {
 }
 
 func (m Moderator) Check(ctx context.Context, req moderation.Request) (moderation.Verdict, error) {
+	// 送检请求自带 Session：检查点不必各自在 ctx 中记下它，按 Session 的规则对每个检查点都生效。
+	if req.SessionID != "" {
+		ctx = WithSession(ctx, req.SessionID)
+	}
 	if _, ok := m.Injector.Take(ctx, ModerationDown); ok {
 		return moderation.Verdict{}, fmt.Errorf("moderation: injected fault (unavailable)")
 	}

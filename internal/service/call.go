@@ -117,11 +117,7 @@ func (s *Service) AppendTranscript(ctx context.Context, sessionID string, t *v1.
 	if err != nil {
 		return err
 	}
-	stage := moderation.Input
-	if t.GetRole() == "assistant" {
-		stage = moderation.Output
-	}
-	v, err := moderation.Check(ctx, s.Moderator, moderation.Request{Stage: stage, BusinessLine: st.Created.GetBusinessLine(), Text: t.GetText()})
+	v, err := moderation.Check(ctx, s.Moderator, moderation.ForTranscript(st.Created.GetBusinessLine(), st.SessionID, t.GetRole(), t.GetText()))
 	if err != nil {
 		return err
 	}

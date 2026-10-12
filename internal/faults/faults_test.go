@@ -75,6 +75,21 @@ func TestRules(t *testing.T) {
 	}
 }
 
+// TestModeratorSessionFromRequest：按 Session 的 ModerationDown 规则以送检请求自带的 Session 匹配，
+// 检查点不必在 ctx 中记下 Session（Call 的转写原来就没有记，规则从不生效）。
+func TestModeratorSessionFromRequest(t *testing.T) {
+	in := &Injector{}
+	in.Add(Rule{Kind: ModerationDown, SessionID: "s1"})
+	m := Moderator{Next: moderation.Mock{}, Injector: in}
+	ctx := context.Background()
+	if _, err := moderation.Check(ctx, m, moderation.ForTranscript("bl", "s2", "user", "你好")); err != nil {
+		t.Fatalf("rule for s1 fired for s2: %v", err)
+	}
+	if _, err := moderation.Check(ctx, m, moderation.ForTranscript("bl", "s1", "user", "你好")); !errors.Is(err, moderation.ErrUnavailable) {
+		t.Fatalf("rule for s1 did not fire: %v", err)
+	}
+}
+
 func TestModelFaults(t *testing.T) {
 	in := &Injector{}
 	m := Model{Next: textModel{"一二三四五六七八九十"}, Injector: in}
