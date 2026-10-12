@@ -423,6 +423,26 @@ func CardOf(e *v1.Event) *v1.Card {
 	return nil
 }
 
+// CardActionOf 返回事件记下的、已执行的卡片动作（平台核对、规范化后的，docs/design/cards.md §5）；没有时返回 nil。
+// 卡片动作作为输入时在 RunRequested 或 Steered 的输入中；Run 正在等 ask_user 的回答时，它成为回答，记在 ToolResult 的
+// card_action 中。客户端据此把 call_id 那一版卡片上的该动作显示为已选：三处都要看，否则作为回答的动作在各设备上都不显示，
+// 再点却得到 duplicate。
+func CardActionOf(e *v1.Event) *v1.CardAction {
+	if a := e.GetToolResult().GetCardAction(); a != nil {
+		return a
+	}
+	input := e.GetRunRequested().GetInput()
+	if s := e.GetSteered(); s != nil {
+		input = s.GetInput()
+	}
+	for _, b := range input {
+		if a := b.GetCardAction(); a != nil {
+			return a
+		}
+	}
+	return nil
+}
+
 // SubmitText 提交一段文本输入。
 func (c *Client) SubmitText(ctx context.Context, sessionID, text string) (runID string, steered bool, err error) {
 	return c.Submit(ctx, sessionID, &v1.ContentBlock{Kind: &v1.ContentBlock_Text{Text: &v1.Text{Text: text}}})

@@ -2,7 +2,7 @@
 // 以及进行中的委托里等待用户的提问与审批（docs/design/m5-multi-agent.md §4）。
 
 import type { Client } from "./client.js";
-import type { Card, Event, ToolCall } from "./gen/yanshi/v1/event_pb.js";
+import type { Card, CardAction, Event, ToolCall } from "./gen/yanshi/v1/event_pb.js";
 import type { LiveDelta } from "./gen/yanshi/v1/node_pb.js";
 
 /**
@@ -207,9 +207,14 @@ export interface CardVersion {
 /**
  * Cards 跟踪一个 Session 中展示过的卡片（docs/design/cards.md）：卡片随 show_card 的结果出现，同一 card_id
  * 再次展示时替换前一版，只保留最新版。cards 按卡片第一次出现的顺序排列。
+ *
+ * 它同时跟踪已执行的卡片动作（任一设备提交的，见 cardActionOf），界面据此把按钮显示为已选：同一版卡片上的同一动作
+ * 只生效一次，再点得到 duplicate。
  */
 export class Cards {
   readonly #byId = new Map<string, CardVersion>();
+  // 已执行的动作："<call_id>\0<action>"，与平台推导输入 ID 的键相同（call_id 标识卡片的那一版）。
+  readonly #taken = new Set<string>();
 
   get cards(): CardVersion[] {
     return [...this.#byId.values()];
@@ -219,8 +224,20 @@ export class Cards {
     return this.#byId.get(cardId);
   }
 
-  /** 应用一条已提交的事件；返回是否有卡片出现或被替换。 */
+  /** callId 那一版卡片上的 action 是否已执行。 */
+  taken(callId: string, action: string): boolean {
+    return this.#taken.has(`${callId}\0${action}`);
+  }
+
+  /** 应用一条已提交的事件；返回是否有卡片出现或被替换，或有动作被执行。 */
   onEvent(e: Event): boolean {
+    const a = cardActionOf(e);
+    if (a) {
+      const key = `${a.callId}\0${a.action}`;
+      if (this.#taken.has(key)) return false;
+      this.#taken.add(key);
+      return true;
+    }
     const c = cardOf(e);
     if (!c) return false;
     this.#byId.set(c.cardId, { card: c, seq: e.seq });
@@ -233,6 +250,21 @@ export function cardOf(e: Event): Card | undefined {
   if (e.payload.case !== "toolResult") return undefined;
   for (const b of e.payload.value.content) {
     if (b.kind.case === "card") return b.kind.value;
+  }
+  return undefined;
+}
+
+/**
+ * 返回事件记下的、已执行的卡片动作（平台核对、规范化后的，docs/design/cards.md §5）；没有时返回 undefined。
+ * 卡片动作作为输入时在 RunRequested 或 Steered 的输入中；Run 正在等 ask_user 的回答时，它成为回答，记在 ToolResult 的
+ * cardAction 中。三处都要看：否则作为回答的动作在各设备上都不显示为已选，再点却得到 duplicate。
+ */
+export function cardActionOf(e: Event): CardAction | undefined {
+  const p = e.payload;
+  if (p.case === "toolResult") return p.value.cardAction;
+  if (p.case !== "runRequested" && p.case !== "steered") return undefined;
+  for (const b of p.value.input) {
+    if (b.kind.case === "cardAction") return b.kind.value;
   }
   return undefined;
 }

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { create, type MessageInitShape } from "@bufbuild/protobuf";
 import { EventSchema } from "../src/gen/yanshi/v1/event_pb.js";
 import { LiveDeltaSchema } from "../src/gen/yanshi/v1/node_pb.js";
-import { Cards, Draft, PendingQuestions, questionOf } from "../src/view.js";
+import { Cards, Draft, PendingQuestions, cardActionOf, questionOf } from "../src/view.js";
 import { cardAction } from "../src/client.js";
 
 const delta = (d: MessageInitShape<typeof LiveDeltaSchema>) => create(LiveDeltaSchema, { sessionId: "s", runId: "r1", attempt: 1, ...d });
@@ -107,6 +107,39 @@ test("cards: show_card results appear, the same card_id replaces the earlier ver
   const v = c.get("alarm")!;
   const b = cardAction({ cardId: v.card.cardId, callId: v.card.callId, action: "ok", seq: v.seq });
   assert.equal(b.kind?.case, "cardAction");
+});
+
+test("cards: actions are taken from new runs, steers and answers to a question", () => {
+  const action = (callId: string, act: string) => ({ cardId: "alarm", callId, action: act, label: act });
+  const input = (callId: string, act: string) => [
+    { kind: { case: "text" as const, value: { text: "顺便" } } },
+    { kind: { case: "cardAction" as const, value: action(callId, act) } },
+  ];
+  const requested = ev({ seq: 1n, payload: { case: "runRequested", value: { runId: "r1", input: input("c1", "ok") } } });
+  const steered = ev({ seq: 2n, payload: { case: "steered", value: { runId: "r1", input: input("c1", "later") } } });
+  // Run 等回答时点了卡片：动作成为提问的回答，记在 ToolResult.cardAction 中，不在任何输入里。
+  const answered = ev({
+    seq: 3n,
+    payload: { case: "toolResult", value: { runId: "r1", callId: "q1", inputId: "card_x", cardAction: action("c3", "ok") } },
+  });
+  const typed = ev({ seq: 4n, payload: { case: "steered", value: { runId: "r1", input: input("c1", "ok").slice(0, 1) } } });
+  assert.equal(cardActionOf(requested)?.action, "ok");
+  assert.equal(cardActionOf(steered)?.action, "later");
+  assert.equal(cardActionOf(answered)?.callId, "c3");
+  assert.equal(cardActionOf(typed), undefined);
+  assert.equal(cardActionOf(assistant(5n)), undefined);
+
+  const c = new Cards();
+  assert.equal(c.taken("c3", "ok"), false);
+  for (const e of [requested, steered, answered, typed]) c.onEvent(e);
+  assert.equal(c.taken("c1", "ok"), true);
+  assert.equal(c.taken("c1", "later"), true);
+  assert.equal(c.taken("c3", "ok"), true);
+  // 键是卡片的那一版（call_id）与动作：另一版上的同一动作没有执行过。
+  assert.equal(c.taken("c3", "later"), false);
+  assert.equal(c.taken("c9", "ok"), false);
+  // 同一动作再出现（不应发生：平台去重）不算变化。
+  assert.equal(c.onEvent(answered), false);
 });
 
 test("draft: reasoning accumulates apart from the text and clears on commit", () => {
