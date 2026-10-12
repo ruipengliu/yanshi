@@ -260,6 +260,8 @@ func serve(args []string) error {
 	admissionResumeWait := fs.Duration("admission-resume-wait", 0, "Submit 准入的恢复阈值：等待回落到它以下才重新接受新 Run，默认为 -admission-max-wait 的一半")
 	faultsOn := fs.Bool("faults", false, "调试部署：开启服务端故障注入与 /v1/debug/* 接口（调试控制台，ADR-0033）。只用于开发与测试，不得用于生产")
 	usageRetention := fs.Duration("usage-retention", 400*24*time.Hour, "用量记录的保留期")
+	backgroundGrace := fs.Duration("background-grace", runtime.DefaultBackgroundGrace, "调用离线设备时，设备离线超过它就把调用转入后台、Run 不再等待（ADR-0035）；负数表示不转后台，Run 挂起到调用的截止时间")
+	backgroundTimeout := fs.Duration("background-timeout", runtime.DefaultBackgroundTimeout, "后台调用等待设备上线的时限，到期撤回并告诉用户没有办成（ADR-0035）")
 	modelLimits := defaultModelLimits
 	fs.DurationVar(&modelLimits.Timeout, "model-timeout", modelLimits.Timeout, "一次模型调用的时限（不含排队与重试等待）")
 	fs.DurationVar(&modelLimits.Deadline, "model-deadline", modelLimits.Deadline, "一次模型调用的总时限：在准入处排队、每次尝试与重试前的等待都计入；0 表示不限")
@@ -361,6 +363,7 @@ func serve(args []string) error {
 	opts := app.Options{
 		Clock: clk, Agents: agents, Model: gw, Blobs: blobs, NodeAuth: nodeAuth,
 		SandboxTools: *sandboxKind == "docker", DefaultTimeout: 30 * time.Minute, NodeCacheTTL: 10 * time.Second,
+		BackgroundGrace: *backgroundGrace, BackgroundTimeout: *backgroundTimeout,
 		Moderator: moderator, Injector: injector, InjectionCheck: injection, Meter: meter, Quotas: quotas,
 		// 提醒（docs/design/m3-duplex-channel.md §9）：推送通道目前是日志桩，真实通道见上线检查清单。
 		Pusher:        notify.LogPusher{Logger: logger},

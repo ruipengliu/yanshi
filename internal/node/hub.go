@@ -10,8 +10,10 @@ import (
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/clock"
 	"yanshi/internal/lifecycle"
+	"yanshi/internal/metrics"
 	"yanshi/internal/notify"
 	"yanshi/internal/session"
+	"yanshi/internal/workqueue"
 )
 
 // Hub 是网关的传输无关核心：所有方法同步执行，WebSocket 网关与模拟测试都通过它工作。
@@ -20,6 +22,12 @@ type Hub struct {
 	Inbox Inbox
 	// Store 须配置 Waking：Node 结果在写日志的同一事务中唤醒 Session。
 	Store *session.Store
+	// Results 非 nil 时由它写入 Node 结果（service.Service.NodeResult）：调用已转入后台时，结果是一条输入而不是调用的结果
+	// （ADR-0035），开启新 Run 须遵循与提交输入相同的规则。为 nil 时只写入 Run 中等待的调用的结果。
+	Results ResultWriter
+	// Queue 非 nil 时，Node 下线后唤醒 Run 中有调用在等它的 Session（ADR-0035）：Worker 据此在宽限期之后把调用转入后台，
+	// 而不是等到调用的截止时间。
+	Queue workqueue.Queue
 	Auth  Authenticator
 	Waker Waker
 	// Deletions 非 nil 时，派发后复查删除记录，撤回属于已删除 Session 的调用（ADR-0015）。
@@ -50,6 +58,12 @@ func Withdrawn(ctx context.Context, d lifecycle.Deletions, sessionID string) (bo
 		return false, nil
 	}
 	return lifecycle.Deleted(ctx, d, sessionID)
+}
+
+// ResultWriter 写入设备返回的路由调用结果，并在同一事务中唤醒 Session。结果作废（调用已不在等待）时返回
+// session.ErrInvalid，Session 已删除时返回 session.ErrGone。
+type ResultWriter interface {
+	NodeResult(ctx context.Context, sessionID, runID, callID string, content []*v1.ContentBlock, isErr bool) error
 }
 
 // Conn 是一条已认证的 Node 连接。
@@ -118,6 +132,61 @@ func (h *Hub) Connect(ctx context.Context, hello *v1.Hello) (*Conn, error) {
 func (h *Hub) Disconnect(ctx context.Context, c *Conn) {
 	_ = h.Dir.SetOffline(ctx, c.NodeID, c.gen)
 	h.log().Info("node disconnected", "node", c.NodeID)
+	if err := h.wakeWaiting(ctx, c.NodeID); err != nil {
+		h.log().Warn("wake on disconnect failed", "node", c.NodeID, "err", err)
+	}
+}
+
+// wakeWaiting 唤醒 Run 中有调用在等 nodeID 的 Session（ADR-0035）：调用在设备在线时派发，Run 挂起到调用的截止时间；设备
+// 执行中途下线时，若不唤醒，Run 要等到截止时间才发现。醒来的 Worker 看到设备离线：未满宽限期就停放到宽限期结束，满了就
+// 转入后台。已转入后台的调用不必唤醒：它的 Session 停放到后台截止时间，设备下线不改变什么。尽力而为：唤醒失败时
+// Run 仍会在截止时间醒来。
+func (h *Hub) wakeWaiting(ctx context.Context, nodeID string) error {
+	if h.Queue == nil {
+		return nil
+	}
+	pending, _, err := h.Inbox.Pending(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	for _, inv := range pending {
+		sid := inv.GetSessionId()
+		if sid == "" || seen[sid] {
+			continue
+		}
+		seen[sid] = true
+		st, err := h.Store.Load(ctx, sid)
+		if err != nil {
+			return err
+		}
+		if st.Created == nil || st.Closed != nil || !awaits(st.Active(), nodeID) {
+			continue
+		}
+		if err := h.Queue.Enqueue(ctx, sid, st.WorkClass()); err != nil {
+			return err
+		}
+		// 队列中的项属于 Session 数据：入队之后复查删除记录（ADR-0015）。
+		if _, err := lifecycle.Recheck(ctx, h.Deletions, sid, func(ctx context.Context) error { return h.Queue.Remove(ctx, sid) }); err != nil {
+			return err
+		}
+		metrics.DisconnectWakes.WithLabelValues().Inc()
+		h.log().Info("session woken on node disconnect", "node", nodeID, "session", sid)
+	}
+	return nil
+}
+
+// awaits 报告 Run 中是否有已派发、尚无结果、路由到 nodeID 的调用。
+func awaits(r *session.Run, nodeID string) bool {
+	if r == nil {
+		return false
+	}
+	for _, c := range r.Calls {
+		if c.Dispatched() && c.NodeID == nodeID {
+			return true
+		}
+	}
+	return false
 }
 
 // Dispatch 把一次路由调用放入目标 Node 的 Inbox；Node 离线时尝试唤醒。
@@ -174,20 +243,25 @@ func (h *Hub) Result(ctx context.Context, nodeID string, res *v1.InvokeResult) e
 // commitResult 写入结果，并在同一事务中唤醒 Session（CommitAndWake）：写入之后、撤下 Inbox 之前崩溃时，
 // 设备重发的结果因调用已完成而作废，Session 已经在队列中。
 func (h *Hub) commitResult(ctx context.Context, inv *v1.Invoke, res *v1.InvokeResult) error {
-	st, err := h.Store.Load(ctx, inv.GetSessionId())
-	if err != nil {
-		return err
+	var err error
+	if h.Results != nil {
+		err = h.Results.NodeResult(ctx, inv.GetSessionId(), inv.GetRunId(), inv.GetCallId(), res.GetContent(), res.GetIsError())
+	} else {
+		var st *session.State
+		if st, err = h.Store.Load(ctx, inv.GetSessionId()); err != nil {
+			return err
+		}
+		err = h.Store.Update(ctx, st, func(*session.State) (session.Decision, error) {
+			e := session.ExternalResult(inv.GetRunId(), inv.GetCallId(), res.GetContent(), res.GetIsError())
+			return session.Decision{Events: []*v1.Event{e}, Wake: true}, nil
+		})
 	}
-	err = h.Store.Update(ctx, st, func(*session.State) (session.Decision, error) {
-		e := session.ExternalResult(inv.GetRunId(), inv.GetCallId(), res.GetContent(), res.GetIsError())
-		return session.Decision{Events: []*v1.Event{e}, Wake: true}, nil
-	})
 	switch {
 	case errors.Is(err, session.ErrGone):
 		h.log().Info("node result dropped", "session", inv.GetSessionId(), "call", inv.GetCallId(), "reason", "session deleted")
 		return nil
 	case errors.Is(err, session.ErrInvalid):
-		// 校验失败：Run 已终态或调用已完成（超时、重复结果），结果作废。
+		// 校验失败：Run 已终态或调用已完成（超时、重复结果），或后台调用已了结（到期、取消），结果作废。
 		h.log().Info("node result dropped", "session", inv.GetSessionId(), "call", inv.GetCallId(), "reason", err)
 		return nil
 	}

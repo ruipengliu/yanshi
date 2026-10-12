@@ -56,7 +56,8 @@ type Directory interface {
 
 // Inbox 保存每个 Node 待投递的 Invocation。
 type Inbox interface {
-	// Put 按 call_id 幂等地加入。
+	// Put 按 call_id 幂等地加入。已有同一调用时保留原位，只在新的截止时间更晚时换成新的（Extends）：调用转入后台时
+	// 以延长的截止时间重新派发（ADR-0035），过时的派发不会把截止时间改回去。
 	Put(ctx context.Context, nodeID string, inv *v1.Invoke) error
 	Remove(ctx context.Context, nodeID, callID string) error
 	// RemoveSession 从所有 Node 的 Inbox 中撤回属于该 Session 的调用（ADR-0015）。
@@ -65,6 +66,11 @@ type Inbox interface {
 	Pending(ctx context.Context, nodeID string) ([]*v1.Invoke, uint64, error)
 	// Wait 阻塞直到版本号不再等于 version，或 ctx 结束。
 	Wait(ctx context.Context, nodeID string, version uint64) error
+}
+
+// Extends 报告 next 是否延长了 cur 的截止时间（同一调用的再次派发，见 Inbox.Put）。
+func Extends(cur, next *v1.Invoke) bool {
+	return next.GetDeadline().AsTime().After(cur.GetDeadline().AsTime())
 }
 
 // Waker 唤醒离线 Node 所在的 HostApp（移动推送等）。

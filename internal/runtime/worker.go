@@ -47,6 +47,17 @@ type Dispatcher interface {
 	Cancel(ctx context.Context, nodeID, callID string) error
 }
 
+// Devices 查询 Node 目录中设备的在线状态（node.Directory 的子集），用于判断路由调用是否转入后台（ADR-0035）。
+type Devices interface {
+	Get(ctx context.Context, nodeID string) (*node.Info, error)
+}
+
+// BackgroundSettler 了结到期的后台调用（由 service.Service 实现）：写入 reason = timeout 的后台结果输入，并入活跃 Run 或开启
+// 新 Run（与设备结果相同的规则），st 随之同步。调用已了结或尚未到期时不写入。
+type BackgroundSettler interface {
+	ExpireBackground(ctx context.Context, st *session.State, callID string) error
+}
+
 // Reporter 把委托派生的子 Session 中 Run 的终态写回父调用（delegation.Delegator，docs/design/m5-multi-agent.md）。
 type Reporter interface {
 	Report(ctx context.Context, child *session.State) error
@@ -116,12 +127,26 @@ type Config struct {
 	// Faults 非空时按规则注入 Worker 崩溃（serve -faults 的调试部署，ADR-0033）；模型、内容安全与设备目录的故障
 	// 由各自的包装注入（internal/faults）。
 	Faults *faults.Injector
+	// 后台调用（ADR-0035）：Devices 非空时，路由到设备的调用已派发、设备离线超过 BackgroundGrace（默认 20 秒，从派发与
+	// 设备下线中较晚者起算）仍无结果，就转入后台：Run 得到占位结果继续推进，调用在 Session 级等待到 BackgroundTimeout
+	// （默认 24 小时）。Background 了结到期的后台调用；Session 有未了结的后台调用时，Worker 停放到最早的截止时间。
+	Devices           Devices
+	Background        BackgroundSettler
+	BackgroundGrace   time.Duration
+	BackgroundTimeout time.Duration
 }
 
 // Notifier 处理提醒（由 notify.Notifier 实现）。它不得阻塞 Step：推送经网络，应在后台进行。
 type Notifier interface {
 	Notify(ctx context.Context, n notify.Notification)
 }
+
+// 后台调用的默认宽限期与后台时限（ADR-0035）。宽限期覆盖短暂的断网与切到后台：期间上线的设备照常在 Run 中返回结果；
+// 后台时限覆盖"一天之内总会打开一次"的移动设备。
+const (
+	DefaultBackgroundGrace   = 20 * time.Second
+	DefaultBackgroundTimeout = 24 * time.Hour
+)
 
 func (c *Config) defaults() {
 	if c.LeaseTTL == 0 {
@@ -150,6 +175,12 @@ func (c *Config) defaults() {
 	}
 	if c.QuotaRecheck == 0 {
 		c.QuotaRecheck = 10 * time.Minute
+	}
+	if c.BackgroundGrace == 0 {
+		c.BackgroundGrace = DefaultBackgroundGrace
+	}
+	if c.BackgroundTimeout == 0 {
+		c.BackgroundTimeout = DefaultBackgroundTimeout
 	}
 	if c.Live == nil {
 		c.Live = live.Discard{}
@@ -296,6 +327,10 @@ func (w *Worker) Step(ctx context.Context) (bool, error) {
 		}
 	}
 
+	// 到期的后台调用先了结（ADR-0035）：它作为一条输入并入活跃 Run 或开启新 Run，随后照常推进。
+	if b := w.dueBackground(); b != nil {
+		return true, w.expireBackground(ctx, b)
+	}
 	r := w.st.Active()
 	if r == nil {
 		// 委托派生的子 Session：先把终态写回父调用，再归还。写回之前崩溃时租约留在队列中，接手的 Worker 走到这里
@@ -304,6 +339,11 @@ func (w *Worker) Step(ctx context.Context) (bool, error) {
 			if err := w.cfg.Delegation.Report(ctx, w.st); err != nil {
 				return true, err
 			}
+		}
+		// 有未了结的后台调用时不能移出队列：没有人会在截止时间叫醒它。停放到最早的截止时间，期间设备结果、
+		// 用户输入照常唤醒。
+		if until, ok := w.st.NextBackgroundDeadline(); ok {
+			return true, w.park(ctx, until)
 		}
 		return true, w.release(ctx, true)
 	}
@@ -406,8 +446,12 @@ func (w *Worker) suspendWith(ctx context.Context, s *v1.RunSuspended, until time
 	return w.park(ctx, until)
 }
 
-// park 以 Session 当前的类别停放到 until，之后本 Worker 不再持有它。
+// park 以 Session 当前的类别停放到 until，之后本 Worker 不再持有它。有未了结的后台调用时至多停放到最早的后台截止时间
+// （ADR-0035）：活跃 Run 可能挂起很久（等审批），到期的后台调用不能跟着等。
 func (w *Worker) park(ctx context.Context, until time.Time) error {
+	if bg, ok := w.st.NextBackgroundDeadline(); ok && bg.Before(until) {
+		until = bg
+	}
 	w.lease.Class = w.st.WorkClass()
 	err := w.cfg.Queue.Park(ctx, w.lease, until)
 	w.drop()
@@ -538,7 +582,7 @@ func (w *Worker) advance(ctx context.Context, r *session.Run) error {
 const maxJudgedPerStep = 8
 
 // unjudged 返回本 Run 中来自外部、尚未判断的调用结果。外部指设备、沙箱、委托（路由调用）与 MCP 工具：它们的内容
-// 不由平台产生（工具名形如 "<来源>__<能力>"）；用户对提问的回答不算。
+// 不由平台产生（工具名形如 "<来源>__<能力>"）；用户对提问的回答不算。并入本 Run 的后台调用迟到的结果也算（ADR-0035）。
 func (w *Worker) unjudged(r *session.Run) []*v1.ToolResult {
 	external := map[string]bool{}
 	for _, c := range r.Calls {
@@ -549,6 +593,21 @@ func (w *Worker) unjudged(r *session.Run) []*v1.ToolResult {
 	var out []*v1.ToolResult
 	for _, e := range w.st.History {
 		res := e.GetToolResult()
+		if res.GetBackgrounded() != nil {
+			continue // 占位结果由平台写成
+		}
+		// 后台调用迟到的结果作为输入并入本 Run（ADR-0035）：内容同样来自设备，按调用结果判断。
+		bg := session.BackgroundInput(e.GetRunRequested().GetInput())
+		if e.GetRunRequested().GetRunId() != r.ID {
+			bg = nil
+		}
+		if b := session.BackgroundInput(e.GetSteered().GetInput()); b != nil && e.GetSteered().GetRunId() == r.ID {
+			bg = b
+		}
+		if bg.GetReason() == session.BackgroundReasonResult {
+			res = &v1.ToolResult{RunId: r.ID, CallId: bg.GetCallId(), Content: bg.GetContent(), IsError: bg.GetIsError()}
+			external[bg.GetCallId()] = true
+		}
 		if res.GetRunId() != r.ID || !external[res.GetCallId()] {
 			continue
 		}
@@ -755,15 +814,136 @@ func (w *Worker) awaitDispatched(ctx context.Context, r *session.Run, c *session
 		}
 		return w.commit(ctx, w.toolResult(r, id, model.TextBlocks(msg), true))
 	}
+	until := c.Deadline
+	if w.backgroundable(c) {
+		info, err := w.cfg.Devices.Get(ctx, c.NodeID)
+		switch {
+		case errors.Is(err, node.ErrNotFound):
+			// 不在目录中（如 EndUser 已注销）：不是可以等它上线的设备，照旧等到截止时间。
+		case err != nil:
+			return err
+		case !info.Online:
+			// 宽限期从派发与设备下线中较晚者起算：刚下线的设备可能只是断网或切到后台（ADR-0035）。
+			since := c.DispatchedAt
+			if info.LastSeen.After(since) {
+				since = info.LastSeen
+			}
+			grace := since.Add(w.cfg.BackgroundGrace)
+			if !w.now().Before(grace) {
+				return w.background(ctx, r, c, info)
+			}
+			until = minTime(until, grace)
+		}
+	}
+	_, err := w.redispatch(ctx, r, c, c.Deadline, &v1.Event{Payload: &v1.Event_RunSuspended{RunSuspended: &v1.RunSuspended{
+		RunId: r.ID, Attempt: w.attempt}}}, until)
+	return err
+}
+
+// backgroundable 报告调用能否转入后台（ADR-0035）：只有路由到设备的调用。沙箱、用户本人与委托不是设备（Node ID 是平台
+// 保留的）；委托派生的子 Session 不转后台：子 Run 结束后，迟到的结果回不到父 Run，由委托时限兜底。
+func (w *Worker) backgroundable(c *session.Call) bool {
+	return w.cfg.Devices != nil && w.cfg.BackgroundGrace > 0 && !node.Reserved(c.NodeID) && w.st.Created.GetParent() == nil
+}
+
+// background 把离线设备上的调用转入后台（ADR-0035）：先以新的截止时间重新派发（Inbox 按 call_id 只延长截止时间），再写入
+// 占位结果，Run 照常继续。先派发：派发之后、写入之前崩溃时，调用仍在 Run 中等待，Inbox 中的项本来就在；反过来，写入之后、
+// 派发之前若有人取消或了结了它，再派发就会把撤回的投递放回去。
+func (w *Worker) background(ctx context.Context, r *session.Run, c *session.Call, info *node.Info) error {
+	deadline := w.now().Add(w.cfg.BackgroundTimeout)
+	res := w.toolResult(r, c.Call.GetCallId(), model.TextBlocks(BackgroundPlaceholder(info.Label)), false)
+	res.GetToolResult().Backgrounded = &v1.Backgrounded{NodeId: c.NodeID, Deadline: timestamppb.New(deadline)}
+	if ok, err := w.redispatch(ctx, r, c, deadline, res, time.Time{}); err != nil || !ok {
+		return err
+	}
+	metrics.BackgroundCalls.WithLabelValues("backgrounded").Inc()
+	w.cfg.Logger.Info("call backgrounded", "session", w.st.SessionID, "run", r.ID, "call", c.Call.GetCallId(), "node", c.NodeID)
+	return nil
+}
+
+// redispatch 以截止时间 deadline 把调用（重新）放入目标 Node 的 Inbox，再提交 e；until 非零时随后停放到 until（e 是
+// RunSuspended）。重复投递是安全的：Node SDK 以 call_id 去重。
+//
+// 没有写入时（本 Attempt 已失效、调用已有结果或已了结、存储故障），刚才的派发可能把别人已经撤回的投递放了回去（中断、
+// 取消后台调用与本步交错，或本 Worker 的投影已过时）：同步后若调用既不在 Run 中等待、也不是未了结的后台调用，就撤回它。
+func (w *Worker) redispatch(ctx context.Context, r *session.Run, c *session.Call, deadline time.Time, e *v1.Event, until time.Time) (bool, error) {
+	id := c.Call.GetCallId()
 	_, capName, _ := strings.Cut(c.Call.GetCapability(), "__")
 	err := w.cfg.Dispatch.Dispatch(ctx, c.NodeID, &v1.Invoke{
 		SessionId: w.st.SessionID, RunId: r.ID, CallId: id, Capability: capName,
-		ArgumentsJson: c.Call.GetArgumentsJson(), Deadline: timestamppb.New(c.Deadline),
+		ArgumentsJson: c.Call.GetArgumentsJson(), Deadline: timestamppb.New(deadline),
 	}, w.st.WorkClass())
 	if err != nil {
+		return false, err
+	}
+	nodeID, st := c.NodeID, w.st
+	ok, err := w.tryCommit(ctx, e)
+	if !ok {
+		if st != nil && w.cfg.Store.Sync(ctx, st) == nil && !waiting(st, r.ID, id) {
+			if cerr := w.cfg.Dispatch.Cancel(ctx, nodeID, id); cerr != nil && err == nil {
+				err = cerr
+			}
+		}
+		return false, err
+	}
+	if !until.IsZero() {
+		return true, w.park(ctx, until)
+	}
+	return true, nil
+}
+
+// waiting 报告调用是否仍在等待设备：在 Run 中已派发、尚无结果，或是未了结的后台调用。
+func waiting(st *session.State, runID, callID string) bool {
+	if st.Background[callID] != nil && st.Closed == nil {
+		return true
+	}
+	if r := st.Run(runID); r != nil && !r.Status.Terminal() {
+		for _, c := range r.Calls {
+			if c.Call.GetCallId() == callID {
+				return c.Dispatched()
+			}
+		}
+	}
+	return false
+}
+
+// BackgroundPlaceholder 是调用转入后台时交给模型的结果（ADR-0035）：调用没有失败，只是推迟；结果稍后作为单独的消息送达。
+// 明确不要重试：重试的调用同样会排队，设备上线后执行两次。
+func BackgroundPlaceholder(device string) string {
+	return fmt.Sprintf("queued: device %q is offline, so this call has been queued and will run when the device comes back online. "+
+		"Its result will arrive later as a separate message. Do not retry this call; tell the user it is queued and continue.", device)
+}
+
+// dueBackground 返回最早一个已到截止时间的未了结后台调用，没有时返回 nil。
+func (w *Worker) dueBackground() *session.BackgroundCall {
+	if w.cfg.Background == nil {
+		return nil
+	}
+	if open := w.st.OpenBackground(); len(open) > 0 && !w.now().Before(open[0].Deadline) {
+		return open[0]
+	}
+	return nil
+}
+
+// expireBackground 了结到期的后台调用：先撤回投递，之后设备的结果不再写入（网关只接受 Inbox 中的调用的结果），
+// 再写入到期的后台结果输入。写入失败时下一步再撤回一次、再写一次，二者都幂等。
+func (w *Worker) expireBackground(ctx context.Context, b *session.BackgroundCall) error {
+	if err := w.cfg.Dispatch.Cancel(ctx, b.NodeID, b.CallID); err != nil {
 		return err
 	}
-	return w.suspend(ctx, r, c.Deadline)
+	err := w.cfg.Background.ExpireBackground(ctx, w.st, b.CallID)
+	if errors.Is(err, session.ErrGone) {
+		w.drop()
+		return nil
+	}
+	return err
+}
+
+func minTime(a, b time.Time) time.Time {
+	if b.Before(a) {
+		return b
+	}
+	return a
 }
 
 // tools 返回本 Run 可用的工具。委托派生的子 Session 只能用自身白名单与每个祖先白名单都允许的工具
