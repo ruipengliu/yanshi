@@ -60,7 +60,9 @@ HostApp 实例与网关之间只保持一条 **Connection**（WebSocket，路径
 
 ## 5. 请求
 
-`ClientRequest` 可以是创建 Session、提交输入（新 Run 或插话）、中断、审批或关闭，每个请求恰好对应一个 `ClientResponse`（以 `request_id` 关联）。
+`ClientRequest` 可以是创建 Session、提交输入（新 Run 或插话）、中断、审批、回答、取消后台调用或关闭，每个请求恰好对应一个 `ClientResponse`（以 `request_id` 关联）。
+
+取消后台调用（`CancelBackground{session_id, call_id}`，ADR-0035）与 `POST /v1/sessions/{id}/background/{call}/cancel` 走同一条路径（`service.Service.CancelBackground`）：撤回投递，写入 `BackgroundCancelled`，不开启新 Run；调用已了结时返回 `conflict`，不是后台调用时返回 `not_found`。
 
 - **与 HTTP 走同一条路径。** 请求直接调用 `service.Service`，内容安全、配额、发布配置、删除记录检查都与 HTTP 相同。错误码与 HTTP 状态码一一对应：`invalid` 400、`not_found` 404、`conflict` 409、`rejected` 422、`quota_exceeded` 429（带 `retry_at`）、`unavailable` 503、`internal` 500。
 - **不阻塞 Node 角色。** 每个请求在独立的 goroutine 中执行（内容安全检查可能较慢），每条连接最多 8 个并发请求，超出时在读循环中等待，以此对客户端施加背压。
@@ -71,9 +73,9 @@ HostApp 实例与网关之间只保持一条 **Connection**（WebSocket，路径
   - 首次因内容安全或配额被拒绝的输入没有生效，重试时照常检查；
   - 窗口有界：客户端通常在几秒内重试，超出 64 条之后的旧 ID 不再去重；
   - Go SDK 的 `Submit` 为每次提交生成 ID，`ErrDisconnected` 时重连后以同一 ID 自动重试，直到得到结果或 ctx 结束。需要跨进程重启继续重试的 HostApp，自己生成并持久保存 ID，调用 `SubmitInput`；
-  - 其余请求：中断、关闭重复执行是无操作，审批、回答重复执行返回 `conflict`，都不会产生重复效果；重试创建 Session 会再创建一个。
+  - 其余请求：中断、关闭重复执行是无操作，审批、回答、取消后台调用重复执行返回 `conflict`，都不会产生重复效果；重试创建 Session 会再创建一个。
 
-SDK（`sdk/nodesdk`）：`Executor` 为 nil 时连接只作会话客户端。主要方法有 `Subscribe(sessionID, after, handler)`、`CreateSession`、`Submit` / `SubmitText`、`Interrupt`、`Decide`、`CloseSession`。回调在接收 goroutine 中按到达顺序串行调用，不应阻塞。网页（TypeScript）与移动端（gomobile）SDK 语义相同，见[端侧 SDK](./m3-client-sdks.md)。
+SDK（`sdk/nodesdk`）：`Executor` 为 nil 时连接只作会话客户端。主要方法有 `Subscribe(sessionID, after, handler)`、`CreateSession`、`Submit` / `SubmitText`、`Interrupt`、`Decide`、`CancelBackground`、`CloseSession`。回调在接收 goroutine 中按到达顺序串行调用，不应阻塞。网页（TypeScript）与移动端（gomobile）SDK 语义相同，见[端侧 SDK](./m3-client-sdks.md)。
 
 ## 6. 在场
 

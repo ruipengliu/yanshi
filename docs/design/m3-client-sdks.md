@@ -66,6 +66,7 @@ else await client.submitText(sessionId, typed);
     - 在该调用出现 ToolResult 或 Run 结束时收起。
   - `questionOf` 从工具调用中解析问题。
   - `Cards` 跟踪展示过的卡片（同一 `card_id` 只留最新版）与已执行的动作（`taken(callId, action)`）。`cardActionOf` 从事件中读出已执行的卡片动作：输入（`RunRequested`、`Steered`）中的，或 Run 等回答时作为回答、记在 `ToolResult.card_action` 中的（[卡片](./cards.md) §5）。Go SDK 中是 `nodesdk.CardOf`、`nodesdk.CardActionOf`。
+  - `BackgroundCalls` 跟踪未了结的后台调用（ADR-0035，[M1 设计](./m1-device-nodes.md) §3.1）：带 `backgrounded` 的 `ToolResult` 使调用转入后台；输入中的 `backgroundResult`（设备结果或到期）与 `BackgroundCancelled` 了结它。界面据此列出它们，`client.cancelBackground(sessionId, callId)` 取消（已了结时为 `conflict`）。`backgroundResultOf` 从 `RunRequested` 或 `Steered` 中读出后台调用的了结：它是平台送达的说明，不要渲染成用户的气泡。Go SDK 中是 `nodesdk.BackgroundCalls`、`nodesdk.BackgroundResultOf` 与 `Client.CancelBackground`。
   - `PendingTracker` 跟踪顶层 Session 及其进行中的委托（递归）里等待用户的提问与审批（[委托](./m5-multi-agent.md) §4）。
     - 顶层 Session 的事件由应用喂给它。被跟踪的 Session 出现委托时，它经 Client 从头订阅子 Session；委托调用出现结果、或所在 Run 结束时，退订并收起其下的待处理项。
     - Worker 先提交 `ToolCallStarted`、再创建子 Session，发现委托立即订阅时子 Session 可能还不存在。子 Session 的订阅以 `not_found` 或 `error` 结束、而委托仍在进行时，退避后重订（200ms 起翻倍，至多 5 秒），从已收到的位置续传，已有的待处理项保留。以其他原因（`deleted` 等）结束时收起其下的待处理项，不再订阅。
@@ -117,7 +118,8 @@ let resp = try Yanshi_V1_ClientResponse(serializedBytes: client.submitText(sid, 
 - **线程。** 回调在 Go 的线程中调用，更新界面前切回主线程。`Request`、`UploadArtifact` 会阻塞，应在后台线程调用。
 - **账本。** 声明了 Capability 时必须给出 `LedgerDir`（应用私有目录）。账本保证 App 被杀后重启时，有副作用的调用不会重复执行。清除某 Session 的记录时，仍在执行的该 Session 的调用被取消，之后才写下的记录随即删除（`nodesdk.Executor` 在进程内记住清除标记）。
 - **取消。** 原生能力无法从 Go 中止：调用被取消时 SDK 不再等待结果，原生代码自行结束。
-- **消息类型。** 原生侧用 swift-protobuf / protobuf-javalite 从 `proto/` 生成，绑定层不附带。渲染辅助（卡片、已执行的卡片动作）同样不经绑定层，原生端按 §2 的规则从事件里读：卡片动作看输入与回答的 `ToolResult.card_action` 三处。
+- **消息类型。** 原生侧用 swift-protobuf / protobuf-javalite 从 `proto/` 生成，绑定层不附带。渲染辅助（卡片、已执行的卡片动作、后台调用）同样不经绑定层，原生端按 §2 的规则从事件里读：卡片动作看输入与回答的 `ToolResult.card_action` 三处；后台调用看带 `backgrounded` 的结果、输入中唯一的 `background_result` 块与 `BackgroundCancelled`。
+- **取消后台调用。** `CancelBackground(sessionID, callID, timeoutMillis) → ClientResponse 字节`，语义同网页与 Go SDK。
 - **委托。** 绑定层不提供 `PendingTracker`，原生端须自行跟随进行中的委托，规则同 §2 与[委托](./m5-multi-agent.md) §4：
   - 发现 `ToolCallStarted{node_id: "@agent/<子 Session>"}` 即从 seq 0 订阅子 Session；订阅以 `not_found` 或 `error` 结束而委托仍在进行时，退避后从已收到的位置重订；
   - 把其中待处理的提问与审批一并展示，回答与审批发往子 Session；提问在 `ToolCallStarted{node_id: "@user"}` 之后才算待回答；
@@ -140,6 +142,7 @@ let resp = try Yanshi_V1_ClientResponse(serializedBytes: client.submitText(sid, 
   - 回调抛出异常不影响连接；
   - 每次连接重新取令牌；
   - `Draft` 与 `PendingQuestions` 的规则，含 Run 结束时清除草稿、提问派发之后才待回答；`Cards` 与 `cardActionOf`（含作为回答的卡片动作）；
+  - `BackgroundCalls`：转入后台、设备结果、到期、取消，按截止时间排序；`cancelBackground` 发出请求、已了结时为 `conflict`；
   - 同一 Session 上应用的订阅与辅助类的订阅并存：从最小的 seq 续订、各自去重、各自取消，应用取消后撤下前台状态；
   - `PendingTracker`：
     - 发现委托即订阅子 Session，子 Session 的提问与审批带 sessionId、agent、via；
@@ -155,7 +158,7 @@ let resp = try Yanshi_V1_ClientResponse(serializedBytes: client.submitText(sid, 
   - 同一输入 ID 再次提交得到 `duplicate`；
   - 委托出去的子 Agent 提问：`PendingTracker` 看到它，`typedAnswerTarget` 选中它，以文字 `answer` 发往子 Session 后父 Run 完成，再次回答为 `conflict`；
   - 他人的 Session 为 `not_found`。
-- Go SDK（`make check`）：`nodesdk` 的单元测试覆盖与网页相同的 `PendingTracker` 规则和订阅并存，以及 `CardActionOf`；e2e `TestDelegatedQuestionAnsweredByText` 在真实网关上委托、子 Agent 提问、以文字回答、父 Run 完成。
+- Go SDK（`make check`）：`nodesdk` 的单元测试覆盖与网页相同的 `PendingTracker` 规则和订阅并存，以及 `CardActionOf`、`BackgroundCalls`；e2e `TestCancelBackgroundOverConnection` 经 Connection 取消后台调用，设备上线后不执行，再次取消为 `conflict`；e2e `TestDelegatedQuestionAnsweredByText` 在真实网关上委托、子 Agent 提问、以文字回答、父 Run 完成。
 - 移动端绑定（`make check`，`TestMobileBinding`）：
   - 以字节收发请求与事件；
   - 原生能力上传工件、返回错误；
