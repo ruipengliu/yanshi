@@ -8,7 +8,9 @@ import type { LiveDelta } from "./gen/yanshi/v1/node_pb.js";
 /**
  * Draft 维护一个 Session 正在生成、尚未提交的助手消息，规则见设计 §4：
  *   - snapshot 增量替换草稿（生成中途订阅时先收到它）；普通增量追加；
- *   - end 增量，或 seq 大于草稿 afterSeq 的 AssistantMessage 到达时，丢弃草稿：以提交的内容为准。
+ *   - end 增量，或 seq 大于草稿 afterSeq 的 AssistantMessage 到达时，丢弃草稿：以提交的内容为准；
+ *   - 草稿所属的 Run 结束（completed、failed、interrupted）时丢弃草稿，之后该 Run 迟到的增量不再建立草稿。
+ *     断线期间生成被丢弃（end 没有收到）、Run 随后结束时，重连后补发的只有终态事件，没有它草稿会一直留着。
  *
  * 把订阅收到的增量与事件依次交给 onDelta 与 onEvent，渲染 text 即可。
  */
@@ -23,6 +25,8 @@ export class Draft {
   #afterSeq = -1n;
   // 已提交的最新 AssistantMessage 的 seq：after_seq 小于它的增量属于已提交的生成，是迟到的残留。
   #committed = 0n;
+  // 最近结束的 Run：它们迟到的增量忽略。只需记住最近几个：迟到的增量在 Run 结束后很快到达。
+  readonly #ended = new Set<string>();
 
   get active(): boolean {
     return this.runId !== "";
@@ -30,7 +34,7 @@ export class Draft {
 
   /** 应用一条增量；返回草稿是否变化。 */
   onDelta(d: LiveDelta): boolean {
-    if (d.afterSeq < this.#committed) return false;
+    if (d.afterSeq < this.#committed || this.#ended.has(d.runId)) return false;
     const same = d.runId === this.runId && d.attempt === this.#attempt && d.afterSeq === this.#afterSeq;
     if (d.end) {
       if (!same) return false;
@@ -52,7 +56,15 @@ export class Draft {
 
   /** 应用一条已提交的事件；返回草稿是否变化。 */
   onEvent(e: Event): boolean {
-    if (e.payload.case !== "assistantMessage") return false;
+    const p = e.payload;
+    if (p.case === "runCompleted" || p.case === "runFailed" || p.case === "runInterrupted") {
+      this.#ended.add(p.value.runId);
+      if (this.#ended.size > 64) this.#ended.delete(this.#ended.values().next().value!);
+      if (this.runId !== p.value.runId) return false;
+      this.#clear();
+      return true;
+    }
+    if (p.case !== "assistantMessage") return false;
     if (e.seq > this.#committed) this.#committed = e.seq;
     if (!this.active || e.seq <= this.#afterSeq) return false;
     this.#clear();

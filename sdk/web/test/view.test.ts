@@ -121,3 +121,23 @@ test("draft: reasoning accumulates apart from the text and clears on commit", ()
   assert.equal(d.onEvent(assistant(3n)), true);
   assert.equal(d.reasoning, "");
 });
+
+test("draft: the end of the draft's Run clears it; late deltas of an ended Run are ignored", () => {
+  const d = new Draft();
+  d.onDelta(delta({ afterSeq: 4n, text: "说到一半" }));
+  // 其他 Run 的结束不影响草稿。
+  assert.equal(d.onEvent(ev({ seq: 5n, payload: { case: "runCompleted", value: { runId: "r0" } } })), false);
+  assert.equal(d.text, "说到一半");
+  // 断线期间生成被丢弃（没有收到 end）、Run 失败：重连后只补发终态事件。
+  assert.equal(d.onEvent(ev({ seq: 6n, payload: { case: "runFailed", value: { runId: "r1" } } })), true);
+  assert.equal(d.text, "");
+  assert.equal(d.active, false);
+  assert.equal(d.onDelta(delta({ afterSeq: 6n, text: "迟到", snapshot: true })), false);
+  assert.equal(d.active, false);
+  for (const k of ["runCompleted", "runInterrupted"] as const) {
+    const runId = `r-${k}`;
+    d.onDelta(delta({ runId, afterSeq: 7n, text: "x" }));
+    assert.equal(d.onEvent(ev({ seq: 8n, payload: { case: k, value: { runId } } })), true);
+    assert.equal(d.active, false);
+  }
+});
