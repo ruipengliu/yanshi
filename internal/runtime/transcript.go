@@ -5,6 +5,8 @@ import (
 	"math"
 	"slices"
 
+	"google.golang.org/protobuf/proto"
+
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/model"
 	"yanshi/internal/session"
@@ -76,9 +78,12 @@ func transcript(st *session.State, maxToolResult int, through uint64) []model.Me
 				deferUser(&out, &deferred, pending, recall)
 				placed = true
 			}
-			deferUser(&out, &deferred, pending, model.InputBlocks(p.RunRequested.GetInput(), p.RunRequested.GetFromCall()))
+			deferUser(&out, &deferred, pending, inputBlocks(p.RunRequested.GetInput(), p.RunRequested.GetFromCall(), maxToolResult))
 		case *v1.Event_Steered:
-			deferUser(&out, &deferred, pending, model.InputBlocks(p.Steered.GetInput(), p.Steered.GetFromCall()))
+			deferUser(&out, &deferred, pending, inputBlocks(p.Steered.GetInput(), p.Steered.GetFromCall(), maxToolResult))
+		case *v1.Event_BackgroundCancelled:
+			// 与插话一样是一条用户消息：调用进行中时推迟到结果之后（ADR-0035）。
+			deferUser(&out, &deferred, pending, model.TextBlocks(model.BackgroundCancelledText(p.BackgroundCancelled)))
 		case *v1.Event_CallTranscript:
 			// 双方的话都以用户消息呈现（文本注明说话方）：助手消息只能是模型自己的输出，且不能插在调用与结果之间。
 			deferUser(&out, &deferred, pending, model.TextBlocks(model.CallTranscriptText(p.CallTranscript)))
@@ -120,6 +125,23 @@ func transcript(st *session.State, maxToolResult int, through uint64) []model.Me
 // 以免其中一处漏掉这条规则。
 func modelVisible(m *v1.AssistantMessage) ([]*v1.ContentBlock, []*v1.ToolCall) {
 	return m.GetContent(), m.GetToolCalls()
+}
+
+// inputBlocks 是一条输入在模型上下文中的内容（model.InputBlocks）。后台调用的了结带着设备返回的内容，与调用结果一样
+// 截断到 maxToolResult（ADR-0035）。
+func inputBlocks(input []*v1.ContentBlock, fromCall string, maxToolResult int) []*v1.ContentBlock {
+	return model.InputBlocks(truncateInput(input, maxToolResult), fromCall)
+}
+
+// truncateInput 返回把其中后台调用结果的内容截断后的输入；没有后台调用结果时原样返回。
+func truncateInput(input []*v1.ContentBlock, maxToolResult int) []*v1.ContentBlock {
+	r := session.BackgroundInput(input)
+	if r == nil {
+		return input
+	}
+	cp := proto.Clone(r).(*v1.BackgroundResult)
+	cp.Content = truncateBlocks(r.GetContent(), maxToolResult)
+	return []*v1.ContentBlock{{Kind: &v1.ContentBlock_BackgroundResult{BackgroundResult: cp}}}
 }
 
 func deferUser(out, deferred *[]model.Message, pending []string, input []*v1.ContentBlock) {

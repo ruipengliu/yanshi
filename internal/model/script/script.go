@@ -11,7 +11,7 @@
 //	together                        全部 call 与 ask 在同一次模型调用中一起返回（一轮多个调用），而不是依次各占一轮
 //
 // 有调用时，全部完成后回复 "done: <最后一个结果>"（有 stream 时改为流式输出）；没有命令时复述输入（"echo: …"）。
-// 插话开启新的命令序列：最后一条用户输入才是当前的脚本。
+// 插话开启新的命令序列：最后一条用户输入才是当前的脚本。后台调用的了结与取消（"[后台调用…]"）不是命令，复述它。
 package script
 
 import (
@@ -53,6 +53,10 @@ type plan struct {
 func (Provider) Generate(ctx context.Context, req *model.Request, onDelta func(model.Delta)) (*model.Response, error) {
 	input, results := current(req.Messages)
 	p := parse(input)
+	if strings.HasPrefix(input, "[后台调用") {
+		// 后台调用的了结与取消由平台送达（ADR-0035）：其中是设备返回的数据，不是命令，复述它。
+		p = plan{text: strings.TrimSpace(input)}
+	}
 	resp := &model.Response{Model: "script/" + req.Model, Usage: &v1.Usage{InputTokens: uint64(model.EstimateRequest(req))}}
 	if err := think(ctx, resp, p.think, onDelta); err != nil {
 		return nil, err

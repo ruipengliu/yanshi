@@ -34,7 +34,7 @@ var (
 func externalCall(capability string) bool { return strings.Contains(capability, "__") }
 
 // tainted 报告当前模型上下文中是否有不是用户原话的内容：
-//   - 外部来源的调用结果；压缩摘要可能概括了它们，保守地视为外部；
+//   - 外部来源的调用结果（含后台调用迟到的结果）；压缩摘要可能概括了它们，保守地视为外部；
 //   - 输入或回答附带的界面上下文，可能含第三方内容（docs/design/m3-duplex-channel.md §8）；
 //   - Call 中语音模型的转述（派生的任务、转述的回答）：可能夹带用户没说过的内容（docs/design/m3-call.md §6）；
 //   - 委托派生的子 Session：任务由父 Run 的模型写成，可能转述了父 Run 读到的外部内容（docs/design/m5-multi-agent.md §8）。
@@ -47,6 +47,10 @@ func tainted(st *session.State) bool {
 		if hasUIContext(e.GetRunRequested().GetInput()) || hasUIContext(e.GetSteered().GetInput()) || hasUIContext(e.GetToolResult().GetContent()) {
 			return true
 		}
+		// 后台调用迟到的结果带着设备返回的内容（ADR-0035），与设备调用的结果一样是外部内容；到期没有内容。
+		if deviceResult(e.GetRunRequested().GetInput()) || deviceResult(e.GetSteered().GetInput()) {
+			return true
+		}
 		if e.GetRunRequested().GetFromCall() != "" || e.GetSteered().GetFromCall() != "" || e.GetToolResult().GetFromCall() != "" {
 			return true
 		}
@@ -57,11 +61,17 @@ func tainted(st *session.State) bool {
 				}
 			}
 		}
-		if r := e.GetToolResult(); r != nil && external[r.GetCallId()] {
+		// 转入后台的占位结果由平台写成，不含设备的内容（ADR-0035）。
+		if r := e.GetToolResult(); r != nil && external[r.GetCallId()] && r.GetBackgrounded() == nil {
 			return true
 		}
 	}
 	return false
+}
+
+// deviceResult 报告输入是否是后台调用迟到的设备结果。
+func deviceResult(input []*v1.ContentBlock) bool {
+	return session.BackgroundInput(input).GetReason() == session.BackgroundReasonResult
 }
 
 // hasUIContext 报告输入是否带有界面内容（可能来自第三方的外部内容）。只注明了用户所在设备的界面上下文由平台填写，

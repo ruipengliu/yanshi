@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/model"
 	"yanshi/internal/session"
@@ -41,6 +43,8 @@ func (b *logBuilder) add(p any) *logBuilder {
 		e.Payload = &v1.Event_CallStarted{CallStarted: p}
 	case *v1.CallTranscript:
 		e.Payload = &v1.Event_CallTranscript{CallTranscript: p}
+	case *v1.BackgroundCancelled:
+		e.Payload = &v1.Event_BackgroundCancelled{BackgroundCancelled: p}
 	}
 	b.events = append(b.events, e)
 	return b
@@ -177,5 +181,74 @@ func TestCallInTranscript(t *testing.T) {
 		" assistant[c1] tool:c1 user:[语音通话] 语音助手：我去看看……（被用户打断）"
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
+// TestBackgroundInTranscript：转入后台的调用以占位结果交还模型；迟到的结果、到期与取消以带说明的用户消息出现在各自的位置，
+// 调用进行中到达的推迟到结果之后（ADR-0035）。设备返回的内容与调用结果一样截断。
+func TestBackgroundInTranscript(t *testing.T) {
+	bg := func(call, reason string, content ...*v1.ContentBlock) []*v1.ContentBlock {
+		return []*v1.ContentBlock{{Kind: &v1.ContentBlock_BackgroundResult{BackgroundResult: &v1.BackgroundResult{
+			CallId: call, Capability: "phone__take_photo", Content: content, Reason: reason}}}}
+	}
+	backgrounded := func(run, call string) *v1.ToolResult {
+		return &v1.ToolResult{RunId: run, Attempt: 1, CallId: call, Content: model.TextBlocks("queued"),
+			Backgrounded: &v1.Backgrounded{NodeId: "phone", Deadline: timestamppb.Now()}}
+	}
+	routed := func(run, call string) *v1.ToolCallStarted {
+		return &v1.ToolCallStarted{RunId: run, Attempt: 1, CallId: call, NodeId: "phone", Deadline: timestamppb.Now()}
+	}
+	long := strings.Repeat("长", 3000)
+	photo := func(ids ...string) []*v1.ToolCall {
+		out := calls(ids...)
+		for _, c := range out {
+			c.Capability = "phone__take_photo"
+		}
+		return out
+	}
+	b := (&logBuilder{}).
+		add(&v1.SessionCreated{}).
+		add(&v1.RunRequested{RunId: "r1", Input: model.TextBlocks("a")}).
+		add(&v1.AttemptStarted{RunId: "r1", Attempt: 1}).
+		add(&v1.AssistantMessage{RunId: "r1", Attempt: 1, ToolCalls: photo("c1", "c2", "c3")}).
+		add(routed("r1", "c1")).add(backgrounded("r1", "c1")).
+		add(routed("r1", "c2")).add(backgrounded("r1", "c2")).
+		add(routed("r1", "c3")).add(backgrounded("r1", "c3")).
+		add(&v1.AssistantMessage{RunId: "r1", Attempt: 1, Content: model.TextBlocks("queued")}).
+		add(&v1.RunCompleted{RunId: "r1", Attempt: 1}).
+		add(&v1.RunRequested{RunId: "r2", Input: bg("c1", session.BackgroundReasonResult, model.TextBlocks(long)...)}).
+		add(&v1.AttemptStarted{RunId: "r2", Attempt: 1}).
+		add(&v1.AssistantMessage{RunId: "r2", Attempt: 1, ToolCalls: calls("c4")}).
+		add(&v1.BackgroundCancelled{CallId: "c2", Capability: "phone__take_photo"}).
+		add(&v1.Steered{RunId: "r2", Input: bg("c3", session.BackgroundReasonTimeout)}).
+		add(&v1.ToolResult{RunId: "r2", Attempt: 1, CallId: "c4"})
+	st, err := session.Reduce(b.events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs := Transcript(st, 100)
+	var roles []string
+	for _, m := range msgs {
+		roles = append(roles, string(m.Role))
+	}
+	got := strings.Join(roles, " ")
+	want := "user assistant tool tool tool assistant user assistant tool user user"
+	if got != want {
+		t.Fatalf("roles %s, want %s", got, want)
+	}
+	result := model.Text(msgs[6].Content)
+	if !strings.HasPrefix(result, "[后台调用结果]") || !strings.Contains(result, "phone__take_photo") || !strings.Contains(result, "c1") ||
+		!strings.Contains(result, "不是用户说的话") || !strings.Contains(result, "已截断") || strings.Count(result, "长") > 400 {
+		t.Fatalf("background result = %.300q", result)
+	}
+	if c := model.Text(msgs[9].Content); !strings.HasPrefix(c, "[后台调用已取消]") || !strings.Contains(c, "c2") {
+		t.Fatalf("cancelled = %q", c)
+	}
+	if c := model.Text(msgs[10].Content); !strings.HasPrefix(c, "[后台调用到期]") || !strings.Contains(c, "c3") {
+		t.Fatalf("timeout = %q", c)
+	}
+	// 估算与呈现一致：每个事件的估算等于它在 Transcript 中的消息。
+	if n := eventTokens(b.events[12], 100); n != model.EstimateMessage(msgs[6]) {
+		t.Fatalf("estimate %d, rendered %d", n, model.EstimateMessage(msgs[6]))
 	}
 }

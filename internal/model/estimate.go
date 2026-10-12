@@ -35,6 +35,8 @@ func EstimateTokens(blocks []*v1.ContentBlock) int {
 			n += EstimateText(UIContextText(k.UiContext))
 		case *v1.ContentBlock_CardAction:
 			n += EstimateText(CardActionText(k.CardAction))
+		case *v1.ContentBlock_BackgroundResult:
+			n += EstimateTokens(BackgroundResultBlocks(k.BackgroundResult))
 		case *v1.ContentBlock_Media:
 			if len(k.Media.GetData()) > 0 {
 				n += inlineImageTokens
