@@ -53,10 +53,12 @@ export function toolLabel(capability) {
 
 /**
  * callIndex 汇总每个调用的进展：call_id → {capability, args, runId, attempt, asked, started, startedAt, nodeId,
- * executions, done, error, result, blocks, doneAt, approval, summary}。
+ * executions, done, error, result, blocks, doneAt, approval, summary, runEnded}。runEnded 是所属 Run 的终态
+ * （run_completed、run_failed、run_interrupted），Run 尚未结束时为空。
  */
 export function callIndex(view) {
   const out = new Map();
+  const ended = new Map();
   const get = (id) => {
     if (!out.has(id)) out.set(id, { executions: 0 });
     return out.get(id);
@@ -81,12 +83,18 @@ export function callIndex(view) {
       Object.assign(get(p.call_id), { done: true, error: !!p.is_error, result: textOf(p.content), blocks: p.content, doneAt: t });
     else if (kind === "approval_requested") Object.assign(get(p.call_id), { approval: "pending", summary: p.summary, approvalAt: t });
     else if (kind === "approval_decided") Object.assign(get(p.call_id), { approval: p.approved ? "approved" : "denied", decidedAt: t });
+    else if (kind === "run_completed" || kind === "run_failed" || kind === "run_interrupted") ended.set(p.run_id, kind);
   }
+  for (const c of out.values()) c.runEnded = ended.get(c.runId) ?? "";
   return out;
 }
 
-/** 调用的状态：queued、running、approval、denied、error、done。 */
+/**
+ * 调用的状态：queued、running、approval、denied、error、done、aborted。Run 中断或失败时，还没有结果的调用不会再有结果：
+ * 显示为 aborted（已终止），而不是一直"执行中""待审批"。已有结果的调用保留原状态。
+ */
 export function callState(st = {}) {
+  if (!st.done && st.runEnded && st.approval !== "denied") return "aborted";
   if (st.approval === "pending" && !st.done) return "approval";
   if (st.approval === "denied") return "denied";
   if (st.done) return st.error ? "error" : "done";
@@ -94,7 +102,15 @@ export function callState(st = {}) {
   return "queued";
 }
 
-const STATE_TEXT = { queued: "排队", running: "执行中", approval: "待审批", denied: "已拒绝", error: "出错", done: "完成" };
+const STATE_TEXT = {
+  queued: "排队",
+  running: "执行中",
+  approval: "待审批",
+  denied: "已拒绝",
+  error: "出错",
+  done: "完成",
+  aborted: "已终止",
+};
 
 /** 模型信息行的文字：模型 · 输入（缓存）· 输出 · 思考 · 首字 · 耗时 · 结束原因。 */
 export function modelLine(m) {
@@ -518,16 +534,17 @@ export class ChatPanel {
     const states = tools.map((c) => callState(calls.get(c.call_id)));
     const live = states.filter((s) => s === "running" || s === "queued" || s === "approval").length;
     const errs = states.filter((s) => s === "error" || s === "denied").length;
+    const aborted = states.filter((s) => s === "aborted").length;
     const span = (() => {
       const xs = tools.map((c) => calls.get(c.call_id)).filter((s) => s?.doneAt);
       return xs.length ? dur(Math.max(...xs.map((s) => s.doneAt)) - Math.min(...xs.map((s) => s.askedAt))) : "";
     })();
-    const summary = live ? `${live} 个进行中` : errs ? `${errs} 个出错` : "全部完成";
+    const summary = live ? `${live} 个进行中` : errs ? `${errs} 个出错` : aborted ? `${aborted} 个已终止` : "全部完成";
     const groupOpen = this.openState.has(key) ? this.openState.get(key) : live > 0 || tools.some((c) => sel?.callId === c.call_id);
     return h(
       "details",
       {
-        class: `calls ${live ? "running" : errs ? "error" : "done"}`,
+        class: `calls ${live ? "running" : errs ? "error" : aborted ? "aborted" : "done"}`,
         open: groupOpen,
         // 程序展开的（进行中、选中）标记为 auto：插入后触发的 toggle 事件不算用户的选择。
         dataset: { key, ...(groupOpen && !this.openState.has(key) ? { auto: "1" } : {}) },

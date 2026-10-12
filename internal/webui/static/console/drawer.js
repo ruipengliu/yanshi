@@ -15,6 +15,8 @@ const STATE = {
   denied: ["已拒绝", "bad"],
   error: ["出错", "bad"],
   done: ["完成", "ok"],
+  // 所属 Run 已中断或失败，这个调用不会再有结果。
+  aborted: ["已终止", ""],
 };
 
 /**

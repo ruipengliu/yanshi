@@ -37,6 +37,9 @@ export function randomHex(n) {
   return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 }
 
+/** ask_user 调用派发时 ToolCallStarted 的 node_id：路由到用户本人（ADR-0025）。 */
+export const USER_NODE = "@user";
+
 /** 内容块中的文本。 */
 export function textOf(blocks) {
   return (blocks ?? []).map((b) => b.text?.text ?? "").join("");
@@ -906,6 +909,8 @@ export class SessionView {
     this.deltas = [];
     this.draft = { text: "", reasoning: "", runId: "", attempt: 0, afterSeq: -1n };
     this.committed = 0n;
+    // 已结束的 Run：它们迟到的增量不再建立草稿。
+    this.endedRunIds = new Set();
     this.presence = [];
     this.ended = "";
     this.listeners = new Set();
@@ -950,7 +955,7 @@ export class SessionView {
 
   onDelta(d) {
     const after = BigInt(d.after_seq ?? 0);
-    if (after < this.committed) return false;
+    if (after < this.committed || this.endedRunIds.has(d.run_id)) return false;
     const same = d.run_id === this.draft.runId && (d.attempt ?? 0) === this.draft.attempt && after === this.draft.afterSeq;
     if (d.end) {
       if (!same) return false;
@@ -967,7 +972,13 @@ export class SessionView {
   }
 
   onEvent(e) {
-    const [kind] = payloadOf(e);
+    const [kind, p] = payloadOf(e);
+    if (kind === "run_completed" || kind === "run_failed" || kind === "run_interrupted") {
+      // 断线期间生成被丢弃（没有收到 end）、Run 随后结束时，重连后补发的只有终态事件：草稿随 Run 结束清除。
+      this.endedRunIds.add(p.run_id);
+      if (this.draft.runId === p.run_id) this.clearDraft();
+      return;
+    }
     if (kind !== "assistant_message") return;
     const seq = BigInt(e.seq);
     if (seq > this.committed) this.committed = seq;
@@ -1002,14 +1013,23 @@ export class SessionView {
       .map((p) => ({ callId: p.call_id, runId: p.run_id, summary: p.summary ?? "", capability: this.callCapability(p.call_id) }));
   }
 
-  /** 待回答的 ask_user 提问：{callId, runId, question, options, multiple, fields}。 */
+  /**
+   * 待回答的 ask_user 提问：{callId, runId, question, options, multiple, fields}。提问派发给用户
+   * （ToolCallStarted{node_id: "@user"}）之后才算待回答：Worker 按顺序一次推进一个调用，模型同一轮返回"委托 + ask_user"
+   * 时，提问要等委托结束才派发，在那之前回答会被服务端拒绝。
+   */
   pendingQuestions() {
     const resulted = new Set(this.payloads("tool_result").map((p) => p.call_id));
+    const dispatched = new Set(
+      this.payloads("tool_call_started")
+        .filter((p) => p.node_id === USER_NODE)
+        .map((p) => p.call_id),
+    );
     const ended = this.endedRuns();
     const out = [];
     for (const m of this.payloads("assistant_message")) {
       for (const c of m.tool_calls ?? []) {
-        if (c.capability !== "ask_user" || resulted.has(c.call_id) || ended.has(m.run_id)) continue;
+        if (c.capability !== "ask_user" || !dispatched.has(c.call_id) || resulted.has(c.call_id) || ended.has(m.run_id)) continue;
         let a = {};
         try {
           a = JSON.parse(c.arguments_json ?? "{}");
@@ -1076,6 +1096,18 @@ export class SessionView {
       }));
   }
 
+  /** 进行中的委托：该调用还没有结果、所属 Run 也没有结束。 */
+  activeDelegations() {
+    const resulted = new Set(this.payloads("tool_result").map((p) => p.call_id));
+    const ended = this.endedRuns();
+    return this.delegations().filter((d) => !resulted.has(d.callId) && !ended.has(d.runId));
+  }
+
+  /** 已收到的最后一个事件的 seq：重新订阅时从这里续传。 */
+  lastSeq() {
+    return BigInt(this.events.at(-1)?.seq ?? 0);
+  }
+
   /**
    * 本 Session 与进行中的委托（递归）里等待用户的审批与提问：{approvals, questions}，每项另带 sessionId（审批或回答发往的
    * Session）、agent（子 Agent 名）与 via（经由本 Session 的哪个直接委托的子 Session；本 Session 的这两项为空）。子 Run 的
@@ -1091,10 +1123,7 @@ export class SessionView {
       seen.add(v.sessionId);
       for (const a of v.pendingApprovals()) approvals.push({ ...a, sessionId: v.sessionId, agent, via });
       for (const q of v.pendingQuestions()) questions.push({ ...q, sessionId: v.sessionId, agent, via });
-      const resulted = new Set(v.payloads("tool_result").map((p) => p.call_id));
-      const ended = v.endedRuns();
-      for (const d of v.delegations()) {
-        if (resulted.has(d.callId) || ended.has(d.runId)) continue;
+      for (const d of v.activeDelegations()) {
         const cv = childView?.(d.childSessionId);
         if (cv) walk(cv, d.agent, via || d.childSessionId);
       }

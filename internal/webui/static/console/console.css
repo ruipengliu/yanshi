@@ -877,6 +877,9 @@ button.copy {
 .call-row.denied .row-status {
   color: var(--bad);
 }
+.call-row.aborted .row-status {
+  color: var(--muted);
+}
 .call-row.delegate code {
   color: var(--delegate);
 }
