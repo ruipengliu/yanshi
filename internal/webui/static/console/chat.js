@@ -144,6 +144,10 @@ export class ChatPanel {
     this.uploads = new Set();
     // 上次发送失败的输入（内容与 input_id）：原样再发时沿用同一个 input_id，服务端按它去重。
     this.failed = null;
+    // 卡片字段（card_id/call_id → 值）与提问（sessionId/callId → 选项、字段、文字）的填写：同一 Run 的后续消息会重建
+    // 整段轮次与卡片，填写的值保存在这里，重建时恢复。
+    this.cardValues = new Map();
+    this.questionState = new Map();
     this.call = null;
     this.queued = false;
     this.seen = 0;
@@ -373,6 +377,7 @@ export class ChatPanel {
                   },
                   renderCard(b.card, {
                     ...this.mdCtx(),
+                    values: keep(this.cardValues, `${b.card.card_id}/${b.card.call_id}`, () => ({})),
                     taken,
                     history: (versions.get(b.card.card_id) ?? 1) - 1,
                     onAction: (action, values) => this.cardAction(b.card, action, values, e),
@@ -677,7 +682,13 @@ export class ChatPanel {
     const out = [];
     for (const a of approvals) out.push(renderApproval(a, { onDecide: (ok) => this.device.decide(a.sessionId, a.callId, ok) }));
     for (const q of questions)
-      out.push(renderQuestion(q, { ...this.mdCtx(), onAnswer: (a) => this.device.answer(q.sessionId, q.callId, a) }));
+      out.push(
+        renderQuestion(q, {
+          ...this.mdCtx(),
+          state: keep(this.questionState, `${q.sessionId}/${q.callId}`, () => ({ values: {}, selected: new Set(), text: "" })),
+          onAnswer: (a) => this.device.answer(q.sessionId, q.callId, a),
+        }),
+      );
     fill(this.pending, out);
   }
 
@@ -1105,4 +1116,10 @@ export class ChatPanel {
     c.player.close();
     this.callBar.hidden = true;
   }
+}
+
+/** keep 返回 m 中 key 的值，没有时以 make() 创建并保存。 */
+function keep(m, key, make) {
+  if (!m.has(key)) m.set(key, make());
+  return m.get(key);
 }
