@@ -31,7 +31,7 @@
 
 | 输入 | 做法 |
 |---|---|
-| 文字 | `SubmitInput`；Run 进行中时并入它，等回答时作为回答 |
+| 文字 | `SubmitInput`；Run 进行中时并入它，等回答时作为回答。进行中的委托里恰好一个子 Agent 的提问在等回答、且本 Session 自己没有时，文字以 `answer` 发往子 Session，输入框显示"回答子 Agent：<问题>"；已被别的设备回答（conflict）时保留文字并提示，不改投本 Session（`SessionView.typedAnswerTarget`，[委托](./m5-multi-agent.md) §4）。带附件或界面上下文时照旧提交 |
 | 图片、文件 | 选择、粘贴或拖入后，经 HTTP 上传为工件（`POST /v1/sessions/{id}/artifacts`），随下一条消息以 `media`（`artifact://`）提交。模型能看图（`doubao-seed-2-1-lite`） |
 | 拍照 | 文件选择加 `capture`：手机上直接打开相机 |
 | 语音消息 | 按住 🎤 录音，在浏览器中编码为 16 kHz 的 WAV（火山方舟接受 wav、mp3、m4a，不接受 webm），上传后作为 `audio/wav` 工件提交。由模型直接听，不经转写 |
@@ -152,6 +152,7 @@
 | 卡片 | 卡片多端可见；同一 `card_id` 再次展示即替换；点按钮作为输入，标签由平台填写；两台设备连点只生效一次；卡片上没有的动作被拒绝 |
 | 委托 | 调用派发到子 Session；子 Session 的输入是任务；子 Run 的回复写回父 Run |
 | 子 Agent 提问 | 子 Run 的提问在父 Session 的待处理中可见；回答发往子 Session，经子 Run 写回，父 Run 完成 |
+| 文字回答子 Agent | 唯一待回答的子 Agent 提问被输入框规则选中；文字以 `answer` 发往子 Session，父 Run 完成；再次回答为 conflict。两个待回答的提问时不选中（脚本化模型造不出两个，在视图上多放一个提问检查规则本身）；父 Session 自己有提问时不选中，文字作为它的回答 |
 | 服务端故障注入 | 需要 `-faults`，否则跳过。模型调用失败后 Worker 重试、Run 完成；Worker 崩溃后租约过期被接管（新的 Attempt）、Run 完成 |
 | 图片与工件 | 上传的图片以工件引用随输入提交；手机拍照（需审批）把照片作为工件带回 Run |
 

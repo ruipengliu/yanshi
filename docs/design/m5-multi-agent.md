@@ -44,6 +44,10 @@
 - **配额与计量**：子 Run 的用量按同一 EndUser、同一业务线计量（ADR-0019），`agent` 标签为子 AgentDef；父子共用 EndUser 的日配额。
 - **删除**：子 Session 是独立的 Session，索引中带 `parent_session`；删除父 Session 时 Janitor 级联删除所有子 Session（ADR-0015，写入入口照旧"先写、后查"）。按 EndUser 删除本来就覆盖全部。
 - **可见性**：子 Session 对 EndUser 可见、可订阅，客户端按 `parent` 字段折叠展示；子 Run 的 Approval 与提醒照常推送。
+  - **客户端须跟随进行中的委托。** 子 Run 的审批与 `ask_user` 路由到用户本人，却写在子 Session 的日志里。只看父 Session 的客户端看不到它们，父 Run 就一直等着委托，直到超时。所以客户端发现委托（`ToolCallStarted{node_id: "@agent/<子 Session>"}`）即订阅子 Session，并把其中待处理的审批与提问（递归到孙 Session）一并展示，标出子 Agent。处理结果发往子 Session。委托调用出现结果、或所在 Run 结束时，退订子 Session 并收起这些待处理项。网页与 Go SDK 的 `PendingTracker`、调试控制台的 `pendingWithDelegations` 都按这条规则实现（[端侧 SDK](./m3-client-sdks.md) §2）；移动端绑定不提供，原生端按同样的规则自行实现（同上 §3）。
+  - **输入框的文字。** 父 Session 自己没有待回答的提问、而整棵委托树里恰好一个待回答的提问、且它在子 Session 中时，客户端把输入框的文字作为该提问的回答（`answer{text}`），发往子 Session。其余情况照旧提交给父 Session：多个提问时不替用户猜；父 Session 自己的提问，服务端本来就把文字当作回答。
+    - 这条规则放在客户端，服务端不沿委托链转发父 Session 的输入。原因有两个：一次输入跨两个 Session，不能在一个事务中提交（ADR-0028）；父日志里也没有可以按 `input_id` 去重的输入。
+    - 回答按 `call_id` 去重，不跨 Session 写入。别的设备已经回答时得到 `conflict`，客户端保留文字并提示用户，不自动改投父 Session。
 
 ## 5. 与现有机制的对应
 
