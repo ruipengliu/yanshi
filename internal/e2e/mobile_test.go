@@ -184,6 +184,11 @@ func TestMobileBinding(t *testing.T) {
 	if resp.GetError().GetCode() != "not_found" {
 		t.Fatalf("decide on a missing session = %v", resp)
 	}
+	// 取消后台调用（ADR-0035）：不是后台调用时为 not_found，同样放在响应中。
+	b, err = c.CancelBackground(sid, "call_nope", 5000)
+	if cr := (&v1.ClientResponse{}); err != nil || proto.Unmarshal(b, cr) != nil || cr.GetError().GetCode() != "not_found" {
+		t.Fatalf("cancel background = %x, %v", b, err)
+	}
 	view.mu.Lock()
 	viewers := view.viewer
 	view.mu.Unlock()
