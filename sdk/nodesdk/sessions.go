@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -45,10 +46,44 @@ type RequestError struct {
 func (e *RequestError) Error() string { return e.Code + ": " + e.Message }
 
 type subscriber struct {
+	// after 是这个订阅者已收到的最后一个 seq：重新订阅与旧订阅的残留消息可能重叠，只交给它更新的事件。
 	after uint64
 	h     SessionHandler
-	// focused 是最近一次 SetActivity 报告的前台状态，重连后随订阅重发（"正在输入"是瞬时的，不重发）。
+}
+
+// subscription 是一个 Session 在本连接上的订阅。Subscribe 的订阅者至多一个（新的取代旧的）；PendingTracker 对子 Session
+// 的订阅者（observe）与它并存、各自取消，这样 HostApp 打开子 Session 时不会挤掉跟踪器的订阅，反之亦然。网关上一个 Session
+// 只有一个订阅（重复订阅以新的 after_seq 重新开始），从各订阅者中最小的 after 续传，每个订阅者各自丢弃已收到的事件。
+type subscription struct {
+	primary   *subscriber
+	observers []*subscriber
+	// focused 是 Subscribe 的订阅者最近一次 SetActivity 报告的前台状态，重连后随订阅重发（"正在输入"是瞬时的，不重发）。
 	focused bool
+}
+
+func (sub *subscription) members() []*subscriber {
+	if sub == nil {
+		return nil
+	}
+	out := make([]*subscriber, 0, 1+len(sub.observers))
+	if sub.primary != nil {
+		out = append(out, sub.primary)
+	}
+	return append(out, sub.observers...)
+}
+
+func (sub *subscription) has(n *subscriber) bool {
+	return sub != nil && (sub.primary == n || slices.Contains(sub.observers, n))
+}
+
+func (sub *subscription) minAfter() uint64 {
+	var after uint64
+	for i, n := range sub.members() {
+		if i == 0 || n.after < after {
+			after = n.after
+		}
+	}
+	return after
 }
 
 type sessions struct {
@@ -56,14 +91,14 @@ type sessions struct {
 	// send 为 nil 表示当前未连接；ready 在连接建立时关闭，断开时换新。
 	send    func(context.Context, *v1.NodeMessage) error
 	ready   chan struct{}
-	subs    map[string]*subscriber
+	subs    map[string]*subscription
 	pending map[string]chan *v1.ClientResponse
 	nextID  uint64
 }
 
 func (s *sessions) init() {
 	s.ready = make(chan struct{})
-	s.subs = map[string]*subscriber{}
+	s.subs = map[string]*subscription{}
 	s.pending = map[string]chan *v1.ClientResponse{}
 }
 
@@ -73,7 +108,7 @@ func (s *sessions) attach(send func(context.Context, *v1.NodeMessage) error) err
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for sid, sub := range s.subs {
-		if err := send(ctx, subscribeMsg(sid, sub.after)); err != nil {
+		if err := send(ctx, subscribeMsg(sid, sub.minAfter())); err != nil {
 			return err
 		}
 		if sub.focused {
@@ -111,38 +146,44 @@ func subscribeMsg(sid string, after uint64) *v1.NodeMessage {
 func (s *sessions) handle(m *v1.GatewayMessage) bool {
 	switch m := m.GetMsg().(type) {
 	case *v1.GatewayMessage_Event:
+		sid, seq := m.Event.GetSessionId(), m.Event.GetSeq()
 		s.mu.Lock()
-		sub := s.subs[m.Event.GetSessionId()]
-		// 重新订阅与旧订阅的残留消息可能重叠：只接受比已收到的更新的事件。
-		fresh := sub != nil && m.Event.GetSeq() > sub.after
-		if fresh {
-			sub.after = m.Event.GetSeq()
+		// 重新订阅与旧订阅的残留消息可能重叠：每个订阅者只接受比自己已收到的更新的事件。
+		var fresh []*subscriber
+		for _, n := range s.subs[sid].members() {
+			if seq > n.after {
+				n.after = seq
+				fresh = append(fresh, n)
+			}
 		}
 		s.mu.Unlock()
-		if fresh {
-			sub.h.OnEvent(m.Event)
+		for _, n := range fresh {
+			if s.current(sid, n) {
+				n.h.OnEvent(m.Event)
+			}
 		}
 	case *v1.GatewayMessage_Delta:
-		s.mu.Lock()
-		sub := s.subs[m.Delta.GetSessionId()]
-		s.mu.Unlock()
-		if sub != nil {
-			sub.h.OnDelta(m.Delta)
+		sid := m.Delta.GetSessionId()
+		for _, n := range s.members(sid) {
+			if s.current(sid, n) {
+				n.h.OnDelta(m.Delta)
+			}
 		}
 	case *v1.GatewayMessage_Presence:
-		s.mu.Lock()
-		sub := s.subs[m.Presence.GetSessionId()]
-		s.mu.Unlock()
-		if ph, ok := sub.handler().(PresenceHandler); ok {
-			ph.OnPresence(m.Presence)
+		sid := m.Presence.GetSessionId()
+		for _, n := range s.members(sid) {
+			if ph, ok := n.h.(PresenceHandler); ok && s.current(sid, n) {
+				ph.OnPresence(m.Presence)
+			}
 		}
 	case *v1.GatewayMessage_SubscriptionEnded:
+		sid := m.SubscriptionEnded.GetSessionId()
 		s.mu.Lock()
-		sub := s.subs[m.SubscriptionEnded.GetSessionId()]
-		delete(s.subs, m.SubscriptionEnded.GetSessionId())
+		ended := s.subs[sid].members()
+		delete(s.subs, sid)
 		s.mu.Unlock()
-		if sub != nil {
-			sub.h.OnEnded(m.SubscriptionEnded.GetReason())
+		for _, n := range ended {
+			n.h.OnEnded(m.SubscriptionEnded.GetReason())
 		}
 	case *v1.GatewayMessage_Response:
 		s.mu.Lock()
@@ -158,35 +199,86 @@ func (s *sessions) handle(m *v1.GatewayMessage) bool {
 	return true
 }
 
+func (s *sessions) members(sid string) []*subscriber {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.subs[sid].members()
+}
+
+// current 报告订阅者是否仍在订阅：前一个回调可能取消了同一 Session 的其他订阅者，已取消的不再回调。
+func (s *sessions) current(sid string, n *subscriber) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.subs[sid].has(n)
+}
+
 // Subscribe 订阅 Session 中 seq 大于 after 的事件与之后的实时增量，返回取消函数。
 // 未连接时在连接建立后自动订阅；同一 Session 重复订阅时以新的为准。
 func (c *Client) Subscribe(sessionID string, after uint64, h SessionHandler) (cancel func()) {
-	s := &c.sessions
-	sub := &subscriber{after: after, h: h}
+	return c.sessions.add(sessionID, &subscriber{after: after, h: h}, true)
+}
+
+// observe 是 PendingTracker 对子 Session 的订阅：与 Subscribe 的订阅者并存，互不取代，各自取消。
+func (c *Client) observe(sessionID string, after uint64, h SessionHandler) (cancel func()) {
+	return c.sessions.add(sessionID, &subscriber{after: after, h: h}, false)
+}
+
+func (s *sessions) add(sid string, n *subscriber, primary bool) (cancel func()) {
 	s.mu.Lock()
-	s.subs[sessionID] = sub
+	sub := s.subs[sid]
+	if sub == nil {
+		sub = &subscription{}
+		s.subs[sid] = sub
+	}
+	if primary {
+		sub.primary = n
+	} else {
+		sub.observers = append(sub.observers, n)
+	}
+	// 新的订阅者可能需要比已收到的更早的事件：网关上重新订阅，从最小的 after 续传；其他订阅者丢弃重放的事件。
 	if s.send != nil {
-		_ = s.send(context.Background(), subscribeMsg(sessionID, after))
+		_ = s.send(context.Background(), subscribeMsg(sid, sub.minAfter()))
 	}
 	s.mu.Unlock()
 	return func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		if s.subs[sessionID] != sub {
+		sub := s.subs[sid]
+		switch {
+		case sub == nil:
 			return
+		case primary:
+			if sub.primary != n {
+				return
+			}
+			sub.primary = nil
+		default:
+			i := slices.Index(sub.observers, n)
+			if i < 0 {
+				return
+			}
+			sub.observers = slices.Delete(sub.observers, i, i+1)
 		}
-		delete(s.subs, sessionID)
-		if s.send != nil {
-			_ = s.send(context.Background(), &v1.NodeMessage{Msg: &v1.NodeMessage_Unsubscribe{Unsubscribe: &v1.Unsubscribe{SessionId: sessionID}}})
-		}
+		s.release(sid, sub)
 	}
 }
 
-func (sub *subscriber) handler() SessionHandler {
-	if sub == nil {
-		return nil
+// release 在一个订阅者取消后调用（持有 mu）：没有订阅者时退订；Subscribe 的订阅者走了而跟踪器还在时撤下前台状态，
+// 否则网关以为用户仍在看这个 Session，不再推送它的提醒。
+func (s *sessions) release(sid string, sub *subscription) {
+	if sub.primary == nil && len(sub.observers) == 0 {
+		delete(s.subs, sid)
+		if s.send != nil {
+			_ = s.send(context.Background(), &v1.NodeMessage{Msg: &v1.NodeMessage_Unsubscribe{Unsubscribe: &v1.Unsubscribe{SessionId: sid}}})
+		}
+		return
 	}
-	return sub.h
+	if sub.primary == nil && sub.focused {
+		sub.focused = false
+		if s.send != nil {
+			_ = s.send(context.Background(), activityMsg(sid, false, false))
+		}
+	}
 }
 
 // SetActivity 报告本设备在一个已订阅 Session 中的状态：focused 表示该 Session 正显示在前台，
@@ -197,7 +289,7 @@ func (c *Client) SetActivity(sessionID string, focused, typing bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sub := s.subs[sessionID]
-	if sub == nil {
+	if sub == nil || sub.primary == nil {
 		return
 	}
 	sub.focused = focused
