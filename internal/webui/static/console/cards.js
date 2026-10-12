@@ -194,7 +194,7 @@ export function renderQuestion(q, ctx = {}) {
         "div",
         { class: "ycard-titles" },
         h("div", { class: "ycard-title" }, q.question),
-        h("div", { class: "ycard-sub" }, "Agent 在等你回答"),
+        h("div", { class: "ycard-sub" }, q.agent ? `子 Agent ${q.agent} 在等你回答` : "Agent 在等你回答"),
       ),
     ),
   );
@@ -258,7 +258,12 @@ export function renderApproval(a, ctx = {}) {
       "div",
       { class: "ycard-head" },
       h("span", { class: "card-icon hero" }, "🛡️"),
-      h("div", { class: "ycard-titles" }, h("div", { class: "ycard-title" }, "需要你确认"), h("div", { class: "ycard-sub" }, a.capability)),
+      h(
+        "div",
+        { class: "ycard-titles" },
+        h("div", { class: "ycard-title" }, "需要你确认"),
+        h("div", { class: "ycard-sub" }, a.agent ? `子 Agent ${a.agent} · ${a.capability}` : a.capability),
+      ),
     ),
     h("div", { class: "md" }, a.summary || a.capability),
   );

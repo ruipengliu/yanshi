@@ -152,6 +152,10 @@ export class ChatPanel {
     this.newBtn = h("button", { class: "new-messages", hidden: true, onclick: () => this.scrollBottom() }, "↓ 新消息");
     this.status = h("div", { class: "composer-status" });
     this.pending = h("div", { class: "pending" });
+    // 进行中的委托的子 Session：它们的审批与提问也在这里展示（renderPending），变化时重绘。sid → 取消订阅。
+    this.childOffs = new Map();
+    this.pendingKey = "";
+    this.waitingUser = new Set();
     // 用 fill 而不是 append：append(null) 会插入文字 "null"。
     fill(
       this.root,
@@ -178,10 +182,14 @@ export class ChatPanel {
   dispose() {
     this.off();
     this.offDev();
+    for (const off of this.childOffs.values()) off();
     this.endCall("hangup");
   }
 
-  /** schedule 在下一帧重绘：kind 为 "draft" 时只更新草稿区，其余（事件、在场、连接）重建已提交的内容。 */
+  /**
+   * schedule 在下一帧重绘：kind 为 "draft" 时只更新草稿区，"pending" 时只更新待审批与待回答（子 Session 的变化），
+   * 其余（事件、在场、连接）重建已提交的内容。
+   */
   schedule(kind = "event") {
     this.dirty.add(kind);
     if (this.queued) return;
@@ -213,7 +221,8 @@ export class ChatPanel {
     const near = this.nearBottom();
     const before = this.log.scrollHeight;
     // 在场的变化（谁在看、正在输入）只更新状态行，不重建对话：重建会打断正在进行的选择与滚动。
-    const committed = [...this.dirty].some((k) => k !== "draft" && k !== "presence");
+    const committed = [...this.dirty].some((k) => k !== "draft" && k !== "presence" && k !== "pending");
+    const pending = committed || this.dirty.has("pending");
     this.dirty.clear();
     if (committed) {
       const blocks = this.blocks();
@@ -224,8 +233,8 @@ export class ChatPanel {
           : [h("div", { class: "empty" }, this.compact ? "还没有消息" : "发一条消息开始对话。可以附图片、发语音，或者打电话。")],
       );
       if (!this.compact) this.renderHeader();
-      this.renderPending();
     }
+    if (pending) this.renderPending();
     const behind = this.renderDraft(now);
     if (near) this.log.scrollTop = this.log.scrollHeight;
     else if (committed && this.log.scrollHeight > before && this.view.events.length !== this.seen) this.newBtn.hidden = false;
@@ -625,13 +634,30 @@ export class ChatPanel {
     );
   }
 
+  /** renderPending 展示本 Session 与进行中的委托里等待用户的审批与提问；子 Session 的审批与回答发往子 Session。 */
   renderPending() {
-    const v = this.view;
+    const { approvals, questions } = this.view.pendingWithDelegations((sid) => this.childView(sid));
+    // 子 Session 在等用户时，状态行显示"等待你回复子 Agent"，而不是"等待子 Agent"。
+    this.waitingUser = new Set([...approvals, ...questions].filter((x) => x.via).map((x) => x.via));
+    // 列表不变时保留已有的卡片：重建会清掉正在填写的回答。
+    const key = [...approvals, ...questions].map((x) => `${x.sessionId}/${x.callId}`).join(",");
+    if (key === this.pendingKey) return;
+    this.pendingKey = key;
     const out = [];
-    for (const a of v.pendingApprovals()) out.push(renderApproval(a, { onDecide: (ok) => this.device.decide(v.sessionId, a.callId, ok) }));
-    for (const q of v.pendingQuestions())
-      out.push(renderQuestion(q, { ...this.mdCtx(), onAnswer: (a) => this.device.answer(v.sessionId, q.callId, a) }));
+    for (const a of approvals) out.push(renderApproval(a, { onDecide: (ok) => this.device.decide(a.sessionId, a.callId, ok) }));
+    for (const q of questions)
+      out.push(renderQuestion(q, { ...this.mdCtx(), onAnswer: (a) => this.device.answer(q.sessionId, q.callId, a) }));
     fill(this.pending, out);
+  }
+
+  /** childView 返回子 Session 的视图，第一次取到时订阅它的变化。 */
+  childView(sid) {
+    const cv = this.ctx.children?.(sid);
+    if (cv && !this.childOffs.has(sid)) {
+      const off = cv.on((kind) => kind === "event" && this.schedule("pending"));
+      this.childOffs.set(sid, off);
+    }
+    return cv;
   }
 
   renderStatus() {
@@ -644,7 +670,9 @@ export class ChatPanel {
       const waiting = new Set();
       for (const p of v.payloads("tool_call_started")) {
         if (p.run_id !== run || v.payloads("tool_result").some((r) => r.call_id === p.call_id)) continue;
-        waiting.add(p.node_id?.startsWith("@agent/") ? "子 Agent" : p.node_id === "@user" ? "你的回答" : p.node_id ? "设备" : "调用");
+        const child = p.node_id?.startsWith("@agent/") ? p.node_id.slice(7) : "";
+        if (child) waiting.add(this.waitingUser.has(child) ? "你回复子 Agent" : "子 Agent");
+        else waiting.add(p.node_id === "@user" ? "你的回答" : p.node_id ? "设备" : "调用");
       }
       const what = waiting.size
         ? `等待${[...waiting].join("、")}…`

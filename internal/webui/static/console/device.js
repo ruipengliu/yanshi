@@ -1076,6 +1076,33 @@ export class SessionView {
       }));
   }
 
+  /**
+   * 本 Session 与进行中的委托（递归）里等待用户的审批与提问：{approvals, questions}，每项另带 sessionId（审批或回答发往的
+   * Session）、agent（子 Agent 名）与 via（经由本 Session 的哪个直接委托的子 Session；本 Session 的这两项为空）。子 Run 的
+   * 审批与 ask_user 路由到用户本人，但写在子 Session 里（docs/design/m5-multi-agent.md §4），父 Session 的界面不一并展示，
+   * 父 Run 就一直等着委托。childView(sid) 返回子 Session 的视图（由调用方订阅），返回空时跳过。
+   */
+  pendingWithDelegations(childView) {
+    const approvals = [];
+    const questions = [];
+    const seen = new Set();
+    const walk = (v, agent, via) => {
+      if (seen.has(v.sessionId)) return;
+      seen.add(v.sessionId);
+      for (const a of v.pendingApprovals()) approvals.push({ ...a, sessionId: v.sessionId, agent, via });
+      for (const q of v.pendingQuestions()) questions.push({ ...q, sessionId: v.sessionId, agent, via });
+      const resulted = new Set(v.payloads("tool_result").map((p) => p.call_id));
+      const ended = v.endedRuns();
+      for (const d of v.delegations()) {
+        if (resulted.has(d.callId) || ended.has(d.runId)) continue;
+        const cv = childView?.(d.childSessionId);
+        if (cv) walk(cv, d.agent, via || d.childSessionId);
+      }
+    };
+    walk(this, "", "");
+    return { approvals, questions };
+  }
+
   /** Run 的终态事件（run_completed、run_failed、run_interrupted），尚未结束时为 undefined。 */
   runEnd(runId) {
     for (const k of ["run_completed", "run_failed", "run_interrupted"]) {

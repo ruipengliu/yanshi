@@ -4,7 +4,7 @@
 // 浏览器中由控制台的"验证"页运行；make check 中由 internal/e2e 的 TestConsoleScenarios 以 Node.js 运行
 // （internal/webui/testdata/run-scenarios.mjs）。不依赖 DOM。
 
-import { DEFAULT_FILES, DEVICE_PRESETS, RequestError, SessionView, SimDevice, newInputId, textOf } from "./device.js";
+import { DEFAULT_FILES, DEVICE_PRESETS, RequestError, SessionView, SimDevice, newInputId, textOf, waitUntil } from "./device.js";
 
 /**
  * env：
@@ -553,6 +553,44 @@ export const SCENARIOS = [
       c.check(textOf(child.input).includes("子任务"), "子 Session 的输入是委托的任务");
       await c.runEnd(cv, child.run_id);
       c.check(v.reply(r.runId).includes("子任务"), "子 Run 的回复作为调用结果写回父 Run");
+      return { sessionId: sid };
+    },
+  },
+  {
+    id: "delegation-ask",
+    title: "子 Agent 提问",
+    description:
+      "子 Run 的 ask_user 路由到用户本人，写在子 Session 里：父 Session 的界面须一并展示（pendingWithDelegations），回答发往子 Session，父 Run 随委托完成。",
+    async run(c) {
+      const web = await c.device("web", { preset: "web" });
+      const sid = await c.newSession(web);
+      const v = c.view(web, sid);
+      const views = new Map();
+      const childView = (s) => views.get(s) ?? (views.set(s, c.view(web, s)), views.get(s));
+      const helper = c.env.helper ?? "console-helper";
+      const r = await web.submit(sid, `call agent__${helper} {"task":"ask 去哪个城市？| 北京 | 上海"}`);
+      // 和对话面板一样：订阅委托出去的子 Session，它的变化才会让父 Session 的待回答列表更新。
+      const d = await v.waitFor("delegation", () => v.delegations()[0]);
+      const cv = childView(d.childSessionId);
+      const [q] = await waitUntil(
+        "child question",
+        () => {
+          const { questions } = v.pendingWithDelegations(childView);
+          return questions.length ? questions : null;
+        },
+        10_000,
+        (fn) => {
+          const offs = [v.on(fn), cv.on(fn)];
+          return () => offs.forEach((off) => off());
+        },
+      );
+      c.check(v.pendingQuestions().length === 0 && q.sessionId !== sid, "提问写在子 Session 里，父 Session 自身没有待回答的提问");
+      c.check(q.question === "去哪个城市？" && q.agent === helper && q.via === q.sessionId, "父 Session 的界面看到子 Agent 的提问");
+      await web.answer(q.sessionId, q.callId, { selected: ["2"] });
+      c.step("回答发往子 Session：上海");
+      const end = await c.runEnd(v, r.runId, 30_000);
+      c.check(end.kind === "run_completed" && v.reply(r.runId).includes("上海"), "回答经子 Run 写回，父 Run 完成");
+      c.check(v.pendingWithDelegations(childView).questions.length === 0, "提问随之收起");
       return { sessionId: sid };
     },
   },
