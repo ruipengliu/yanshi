@@ -618,6 +618,14 @@ export class Client {
     return this.submit(sessionId, [cardAction(a)], opts);
   }
 
+  /**
+   * 取消一个未了结的后台调用（ADR-0035，见 BackgroundCalls）：设备上线后不再执行它，不开启新 Run，模型之后看到它已取消。
+   * 调用已了结（已有结果、已到期或已取消）时以 RequestError("conflict") 拒绝。
+   */
+  async cancelBackground(sessionId: string, callId: string, opts?: RequestOptions): Promise<void> {
+    await this.request({ op: { case: "cancelBackground", value: { sessionId, callId } } }, opts);
+  }
+
   async closeSession(sessionId: string, reason = "", opts?: RequestOptions): Promise<void> {
     await this.request({ op: { case: "close", value: { sessionId, reason } } }, opts);
   }

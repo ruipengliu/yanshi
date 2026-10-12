@@ -348,6 +348,17 @@ func (c *Client) SubmitText(sessionID, text string, timeoutMillis int64) ([]byte
 	return c.Request(req, timeoutMillis)
 }
 
+// CancelBackground 取消一个未了结的后台调用（ADR-0035）：设备上线后不再执行它，不开启新 Run。返回序列化的
+// ClientResponse，含义同 Request；调用已了结时 error.code 为 conflict。
+func (c *Client) CancelBackground(sessionID, callID string, timeoutMillis int64) ([]byte, error) {
+	req, err := proto.Marshal(&v1.ClientRequest{Op: &v1.ClientRequest_CancelBackground{CancelBackground: &v1.CancelBackground{
+		SessionId: sessionID, CallId: callID}}})
+	if err != nil {
+		return nil, err
+	}
+	return c.Request(req, timeoutMillis)
+}
+
 // SubmitCardAction 提交用户在卡片上的动作（docs/design/cards.md §4）。valuesJSON 是字段 ID 到填写值的 JSON 对象，
 // 可为空；seq 是收到这一版卡片的事件序号。返回序列化的 ClientResponse，含义同 Request；重复点击时 duplicate 为 true。
 func (c *Client) SubmitCardAction(sessionID, cardID, callID, action, valuesJSON string, seq int64, timeoutMillis int64) ([]byte, error) {

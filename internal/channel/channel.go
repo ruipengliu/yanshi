@@ -406,6 +406,8 @@ func (h *Handler) do(ctx context.Context, id Identity, req *v1.ClientRequest, re
 			Selected: op.Answer.GetSelected(), Values: op.Answer.GetValues(), Text: op.Answer.GetText()})
 	case *v1.ClientRequest_Close:
 		return h.Service.Close(owned(ctx, id), op.Close.GetSessionId(), by, op.Close.GetReason())
+	case *v1.ClientRequest_CancelBackground:
+		return h.Service.CancelBackground(owned(ctx, id), op.CancelBackground.GetSessionId(), op.CancelBackground.GetCallId(), by)
 	}
 	return fmt.Errorf("%w: unknown request", service.ErrInvalid)
 }

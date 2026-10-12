@@ -160,6 +160,19 @@ test("other requests report an unknown outcome when the connection drops", async
   c.stop();
 });
 
+test("cancelBackground sends the request; a settled call is a conflict", async () => {
+  const net = new FakeNetwork();
+  const c = client(net);
+  const s = await net.connect(1);
+  const p = c.cancelBackground("s1", "call-9");
+  const req = await s.next("request");
+  assert.equal(req.op.case, "cancelBackground");
+  assert.deepEqual(req.op.case === "cancelBackground" ? [req.op.value.sessionId, req.op.value.callId] : [], ["s1", "call-9"]);
+  s.push({ msg: { case: "response", value: { requestId: req.requestId, error: { code: "conflict", message: "settled" } } } });
+  await assert.rejects(p, (e: unknown) => e instanceof RequestError && e.code === "conflict");
+  c.stop();
+});
+
 test("stop fails pending requests and does not reconnect", async () => {
   const net = new FakeNetwork();
   const c = client(net);

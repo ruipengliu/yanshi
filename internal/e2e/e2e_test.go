@@ -114,6 +114,8 @@ type stores struct {
 	holdFor time.Duration
 	// moderator 非 nil 时检查输入与 Call 的转写。
 	moderator moderation.Moderator
+	// backgroundTimeout 是后台调用的时限（ADR-0035），0 为 1 分钟。
+	backgroundTimeout time.Duration
 }
 
 func memStores() stores {
@@ -155,9 +157,15 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 	injector := &faults.Injector{}
 	gw := model.NewGateway()
 	gw.Register("script", faults.Model{Next: script.Provider{}, Injector: injector})
+	bgTimeout := st.backgroundTimeout
+	if bgTimeout == 0 {
+		bgTimeout = time.Minute
+	}
 	core := app.NewCore(st.Stores, app.Options{
 		Clock: clk, Agents: agents, Model: gw, Blobs: st.blobs, NodeAuth: node.TokenAuth{Verifier: verifier},
 		SandboxTools: true, MCP: st.mcp, DefaultTimeout: time.Minute,
+		// 后台调用（ADR-0035）的宽限期配小：调试控制台的场景要在几秒内看到调用转入后台。
+		BackgroundGrace: 2 * time.Second, BackgroundTimeout: bgTimeout,
 		Moderator: st.moderator, Injector: injector, InjectionCheck: decision.InjectionRules{}, Pusher: st.pusher,
 		Live: bus, LiveEndpoint: peerSrv.URL, LeaseTTL: 5 * time.Second,
 	})

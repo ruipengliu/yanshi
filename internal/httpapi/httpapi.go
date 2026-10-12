@@ -96,33 +96,34 @@ var pj = protojson.MarshalOptions{UseProtoNames: true}
 // routes 是全部需要鉴权的接口；授权矩阵测试据此检查每个接口都被覆盖。
 func (s *Server) routes() map[string]http.HandlerFunc {
 	routes := map[string]http.HandlerFunc{
-		"POST /v1/sessions":                           s.create,
-		"GET /v1/sessions":                            s.list,
-		"GET /v1/sessions/{id}":                       s.get,
-		"POST /v1/sessions/{id}/close":                s.close,
-		"DELETE /v1/sessions/{id}":                    s.delete,
-		"DELETE /v1/end_users/{id}":                   s.deleteEndUser,
-		"GET /v1/deletions/{id}":                      s.deletion,
-		"GET /v1/memories":                            s.listMemories,
-		"DELETE /v1/memories/{id}":                    s.forgetMemory,
-		"DELETE /v1/sessions/{id}/memories":           s.forgetSessionMemories,
-		"GET /v1/memories/access":                     s.memoryAccess,
-		"GET /v1/grants":                              s.listGrants,
-		"POST /v1/grants":                             s.createGrant,
-		"DELETE /v1/grants/{id}":                      s.revokeGrant,
-		"POST /v1/sessions/{id}/inputs":               s.submit,
-		"POST /v1/sessions/{id}/runs/{run}/interrupt": s.interrupt,
-		"GET /v1/sessions/{id}/events":                s.events,
-		"GET /v1/sessions/{id}/stream":                s.stream,
-		"POST /v1/sessions/{id}/approvals/{call}":     s.decide,
-		"POST /v1/sessions/{id}/answers/{call}":       s.answer,
-		"GET /v1/nodes":                               s.listNodes,
-		"GET /v1/quota":                               s.quota,
-		"GET /v1/usage":                               s.usage,
-		"POST /v1/sessions/{id}/artifacts":            s.uploadArtifact,
-		"GET /v1/sessions/{id}/artifacts":             s.listArtifacts,
-		"GET /v1/artifacts/{id}":                      s.downloadArtifact,
-		"GET /v1/artifacts/{id}/meta":                 s.artifactMeta,
+		"POST /v1/sessions":                               s.create,
+		"GET /v1/sessions":                                s.list,
+		"GET /v1/sessions/{id}":                           s.get,
+		"POST /v1/sessions/{id}/close":                    s.close,
+		"DELETE /v1/sessions/{id}":                        s.delete,
+		"DELETE /v1/end_users/{id}":                       s.deleteEndUser,
+		"GET /v1/deletions/{id}":                          s.deletion,
+		"GET /v1/memories":                                s.listMemories,
+		"DELETE /v1/memories/{id}":                        s.forgetMemory,
+		"DELETE /v1/sessions/{id}/memories":               s.forgetSessionMemories,
+		"GET /v1/memories/access":                         s.memoryAccess,
+		"GET /v1/grants":                                  s.listGrants,
+		"POST /v1/grants":                                 s.createGrant,
+		"DELETE /v1/grants/{id}":                          s.revokeGrant,
+		"POST /v1/sessions/{id}/inputs":                   s.submit,
+		"POST /v1/sessions/{id}/runs/{run}/interrupt":     s.interrupt,
+		"GET /v1/sessions/{id}/events":                    s.events,
+		"GET /v1/sessions/{id}/stream":                    s.stream,
+		"POST /v1/sessions/{id}/approvals/{call}":         s.decide,
+		"POST /v1/sessions/{id}/answers/{call}":           s.answer,
+		"POST /v1/sessions/{id}/background/{call}/cancel": s.cancelBackground,
+		"GET /v1/nodes":                                   s.listNodes,
+		"GET /v1/quota":                                   s.quota,
+		"GET /v1/usage":                                   s.usage,
+		"POST /v1/sessions/{id}/artifacts":                s.uploadArtifact,
+		"GET /v1/sessions/{id}/artifacts":                 s.listArtifacts,
+		"GET /v1/artifacts/{id}":                          s.downloadArtifact,
+		"GET /v1/artifacts/{id}/meta":                     s.artifactMeta,
 	}
 	for p, h := range s.debugRoutes() {
 		routes[p] = h
@@ -339,6 +340,19 @@ type runView struct {
 	Attempt uint32       `json:"attempt"`
 	Turns   int          `json:"turns"`
 	Waiting *waitingView `json:"waiting,omitempty"`
+	// FromBackground 非空表示 Run 由该后台调用的了结（结果或到期）开启，而不是用户的输入（ADR-0035）。
+	FromBackground string `json:"from_background,omitempty"`
+}
+
+// backgroundView 是一个未了结的后台调用（ADR-0035）：设备离线超过宽限期、Run 不再等待它；设备上线后执行，
+// 结果作为一条输入送达，到 Deadline 仍未执行则撤回。
+type backgroundView struct {
+	CallID     string    `json:"call_id"`
+	Capability string    `json:"capability"`
+	NodeID     string    `json:"node_id"`
+	NodeOnline *bool     `json:"node_online,omitempty"`
+	Deadline   time.Time `json:"deadline"`
+	RunID      string    `json:"run_id"`
 }
 
 // waitingView 说明挂起中的 Run 在等什么。
@@ -394,11 +408,21 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 	}
 	runs := []runView{}
 	for _, p := range st.Past {
-		runs = append(runs, runView{RunID: p.ID, Status: p.Status.String(), Attempt: p.Attempt, Turns: p.Turns})
+		runs = append(runs, runView{RunID: p.ID, Status: p.Status.String(), Attempt: p.Attempt, Turns: p.Turns, FromBackground: p.FromBackground})
 	}
 	for _, run := range st.Runs {
 		runs = append(runs, runView{RunID: run.ID, Status: run.Status.String(), Attempt: run.Attempt, Turns: run.Turns,
-			Waiting: s.waiting(r, run)})
+			Waiting: s.waiting(r, run), FromBackground: run.FromBackground})
+	}
+	background := []backgroundView{}
+	for _, b := range st.OpenBackground() {
+		v := backgroundView{CallID: b.CallID, Capability: b.Capability, NodeID: b.NodeID, Deadline: b.Deadline, RunID: b.RunID}
+		if s.Nodes != nil {
+			if info, err := s.Nodes.Get(r.Context(), b.NodeID); err == nil {
+				v.NodeOnline = &info.Online
+			}
+		}
+		background = append(background, v)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"session_id":    st.SessionID,
@@ -407,6 +431,7 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 		"end_user":      st.Created.GetEndUser(),
 		"agent":         map[string]string{"name": st.Agent.GetName(), "version": st.Agent.GetVersion()},
 		"runs":          runs,
+		"background":    background,
 		"parent":        parentView(st),
 	})
 }
@@ -474,6 +499,15 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Service.Answer(owned(r), r.PathValue("id"), r.PathValue("call"), &req); err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// cancelBackground 取消一个未了结的后台调用（ADR-0035）：设备上线后不再执行，不开启新 Run。已了结时 409。
+func (s *Server) cancelBackground(w http.ResponseWriter, r *http.Request) {
+	if err := s.Service.CancelBackground(owned(r), r.PathValue("id"), r.PathValue("call"), actor(principal(r))); err != nil {
 		s.fail(w, err)
 		return
 	}

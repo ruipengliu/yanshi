@@ -468,6 +468,14 @@ func (c *Client) Answer(ctx context.Context, sessionID, callID string, selected 
 	return err
 }
 
+// CancelBackground 取消一个未了结的后台调用（ADR-0035）：设备上线后不再执行它，不开启新 Run，模型之后看到它已取消。
+// 调用已了结（已有结果、已到期或已取消）时返回 conflict。未了结的后台调用见 BackgroundCalls。
+func (c *Client) CancelBackground(ctx context.Context, sessionID, callID string) error {
+	_, err := c.Request(ctx, &v1.ClientRequest{Op: &v1.ClientRequest_CancelBackground{CancelBackground: &v1.CancelBackground{
+		SessionId: sessionID, CallId: callID}}})
+	return err
+}
+
 func (c *Client) CloseSession(ctx context.Context, sessionID, reason string) error {
 	_, err := c.Request(ctx, &v1.ClientRequest{Op: &v1.ClientRequest_Close{Close: &v1.CloseSession{
 		SessionId: sessionID, Reason: reason}}})

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { create, type MessageInitShape } from "@bufbuild/protobuf";
 import { EventSchema } from "../src/gen/yanshi/v1/event_pb.js";
 import { LiveDeltaSchema } from "../src/gen/yanshi/v1/node_pb.js";
-import { Cards, Draft, PendingQuestions, cardActionOf, questionOf } from "../src/view.js";
+import { BackgroundCalls, Cards, Draft, PendingQuestions, backgroundResultOf, cardActionOf, questionOf } from "../src/view.js";
 import { cardAction } from "../src/client.js";
 
 const delta = (d: MessageInitShape<typeof LiveDeltaSchema>) => create(LiveDeltaSchema, { sessionId: "s", runId: "r1", attempt: 1, ...d });
@@ -173,4 +173,44 @@ test("draft: the end of the draft's Run clears it; late deltas of an ended Run a
     assert.equal(d.onEvent(ev({ seq: 8n, payload: { case: k, value: { runId } } })), true);
     assert.equal(d.active, false);
   }
+});
+
+test("background calls: opened by a backgrounded result, settled by a result, a timeout or a cancellation", () => {
+  const bg = (seq: bigint, callId: string, seconds: bigint) =>
+    ev({
+      seq,
+      payload: {
+        case: "toolResult",
+        value: { runId: "r1", attempt: 1, callId, backgrounded: { nodeId: "phone", deadline: { seconds, nanos: 0 } } },
+      },
+    });
+  const settle = (seq: bigint, kind: "runRequested" | "steered", callId: string, reason: string) =>
+    ev({
+      seq,
+      payload: {
+        case: kind,
+        value: { runId: "r2", input: [{ kind: { case: "backgroundResult", value: { callId, capability: "phone__x", reason } } }] },
+      },
+    });
+  const b = new BackgroundCalls();
+  const calls = ["a", "b", "c"].map((callId) => ({ callId, capability: "phone__" + callId, argumentsJson: "{}" }));
+  assert.equal(b.onEvent(assistant(1n, "r1", calls)), false);
+  assert.equal(b.onEvent(bg(2n, "a", 300n)), true);
+  assert.equal(b.onEvent(bg(3n, "b", 100n)), true);
+  assert.equal(b.onEvent(bg(4n, "c", 200n)), true);
+  assert.deepEqual(
+    b.calls.map((c) => [c.callId, c.capability, c.nodeId, c.deadline]),
+    [
+      ["b", "phone__b", "phone", 100_000],
+      ["c", "phone__c", "phone", 200_000],
+      ["a", "phone__a", "phone", 300_000],
+    ],
+  );
+  const late = settle(5n, "runRequested", "a", "result");
+  assert.equal(backgroundResultOf(late)?.callId, "a");
+  assert.equal(b.onEvent(late), true);
+  assert.equal(b.onEvent(settle(6n, "steered", "b", "timeout")), true);
+  assert.equal(b.onEvent(ev({ seq: 7n, payload: { case: "backgroundCancelled", value: { callId: "c" } } })), true);
+  assert.deepEqual(b.calls, []);
+  assert.equal(backgroundResultOf(ev({ seq: 8n, payload: { case: "steered", value: { runId: "r2" } } })), undefined);
 });

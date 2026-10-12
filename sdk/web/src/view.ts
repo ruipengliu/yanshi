@@ -1,8 +1,8 @@
 // 渲染 Session 的辅助：正在生成的草稿、ask_user 提问、卡片（docs/design/m3-duplex-channel.md §4、§7），
-// 以及进行中的委托里等待用户的提问与审批（docs/design/m5-multi-agent.md §4）。
+// 进行中的委托里等待用户的提问与审批（docs/design/m5-multi-agent.md §4），以及未了结的后台调用（ADR-0035）。
 
 import type { Client } from "./client.js";
-import type { Card, CardAction, Event, ToolCall } from "./gen/yanshi/v1/event_pb.js";
+import type { BackgroundResult, Card, CardAction, Event, ToolCall } from "./gen/yanshi/v1/event_pb.js";
 import type { LiveDelta } from "./gen/yanshi/v1/node_pb.js";
 
 /**
@@ -267,6 +267,75 @@ export function cardActionOf(e: Event): CardAction | undefined {
     if (b.kind.case === "cardAction") return b.kind.value;
   }
   return undefined;
+}
+
+/** 未了结的后台调用（ADR-0035）：设备离线超过宽限期，Run 不再等它；设备上线后执行，结果作为一条输入送达。 */
+export interface BackgroundCall {
+  callId: string;
+  /** 模型看到的工具名，如 "phone__take_photo"。 */
+  capability: string;
+  nodeId: string;
+  /** 发起调用的 Run。 */
+  runId: string;
+  /** 截止时间（毫秒）：到期仍未执行则撤回，并告诉用户没有办成。 */
+  deadline: number;
+}
+
+/**
+ * BackgroundCalls 跟踪一个 Session 中未了结的后台调用（ADR-0035），界面据此列出它们并提供取消（Client.cancelBackground）：
+ *   - 带 backgrounded 的 ToolResult：调用转入后台（它的内容是交给模型的占位说明）；
+ *   - 输入（RunRequested、Steered）中的 backgroundResult：设备结果或到期，了结（见 backgroundResultOf）；
+ *   - BackgroundCancelled：取消，了结。
+ *
+ * 和 Draft、PendingQuestions 一样，喂给它的事件要从 seq 0 开始。Go SDK 中是等价的 nodesdk.BackgroundCalls。
+ */
+export class BackgroundCalls {
+  // 尚无结果的调用的工具名，转入后台时取用；结果到达后移除，因此有界。
+  readonly #capabilities = new Map<string, string>();
+  readonly #open = new Map<string, BackgroundCall>();
+
+  /** 按截止时间排序。 */
+  get calls(): BackgroundCall[] {
+    return [...this.#open.values()].sort((a, b) => a.deadline - b.deadline || (a.callId < b.callId ? -1 : 1));
+  }
+
+  /** 应用一条已提交的事件；返回列表是否变化。 */
+  onEvent(e: Event): boolean {
+    const p = e.payload;
+    if (p.case === "assistantMessage") {
+      for (const tc of p.value.toolCalls) this.#capabilities.set(tc.callId, tc.capability);
+      return false;
+    }
+    if (p.case === "toolResult") {
+      const r = p.value;
+      const capability = this.#capabilities.get(r.callId) ?? "";
+      this.#capabilities.delete(r.callId);
+      if (!r.backgrounded) return false;
+      const d = r.backgrounded.deadline;
+      this.#open.set(r.callId, {
+        callId: r.callId,
+        capability,
+        nodeId: r.backgrounded.nodeId,
+        runId: r.runId,
+        deadline: d ? Number(d.seconds) * 1000 + Math.floor(d.nanos / 1e6) : 0,
+      });
+      return true;
+    }
+    if (p.case === "backgroundCancelled") return this.#open.delete(p.value.callId);
+    const r = backgroundResultOf(e);
+    return r ? this.#open.delete(r.callId) : false;
+  }
+}
+
+/**
+ * 返回事件中的后台调用了结（设备结果或到期，reason 为 "result" 或 "timeout"）；不是这种事件时返回 undefined。
+ * 它由平台写在 RunRequested 或 Steered 的输入中，界面应显示为"设备返回了结果"一类的说明，而不是用户的气泡。
+ */
+export function backgroundResultOf(e: Event): BackgroundResult | undefined {
+  const p = e.payload;
+  if (p.case !== "runRequested" && p.case !== "steered") return undefined;
+  const [b, ...rest] = p.value.input;
+  return rest.length === 0 && b?.kind.case === "backgroundResult" ? b.kind.value : undefined;
 }
 
 /** 委托调用的 ToolCallStarted.node_id 前缀：其后是子 Session 的 ID（docs/design/m5-multi-agent.md §4）。 */
