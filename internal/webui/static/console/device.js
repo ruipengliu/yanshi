@@ -45,6 +45,13 @@ export function textOf(blocks) {
   return (blocks ?? []).map((b) => b.text?.text ?? "").join("");
 }
 
+/** 事件记下的、已执行的卡片动作，没有时为 undefined（与网页 SDK 的 cardActionOf 同义，docs/design/cards.md §5）：
+ *  输入（RunRequested、Steered）中的 card_action，或 Run 等回答时作为回答的 ToolResult.card_action。 */
+export function cardActionOf(e) {
+  if (e.tool_result) return e.tool_result.card_action;
+  return (e.run_requested?.input ?? e.steered?.input ?? []).find((b) => b.card_action)?.card_action;
+}
+
 /** Event 的载荷种类（protojson 中 oneof 的字段名，如 "run_requested"）与载荷。 */
 export function payloadOf(e) {
   for (const k of Object.keys(e)) {
@@ -1081,13 +1088,12 @@ export class SessionView {
     return out;
   }
 
-  /** 已执行过的卡片动作："<call_id>/<action>"（任一设备提交的输入中的 card_action）。 */
+  /** 已执行过的卡片动作："<call_id>/<action>"（任一设备提交的，含作为提问回答的，见 cardActionOf）。 */
   cardActions() {
     const out = new Set();
     for (const e of this.events) {
-      for (const b of e.run_requested?.input ?? e.steered?.input ?? []) {
-        if (b.card_action) out.add(`${b.card_action.call_id}/${b.card_action.action}`);
-      }
+      const a = cardActionOf(e);
+      if (a) out.add(`${a.call_id}/${a.action}`);
     }
     return out;
   }

@@ -643,6 +643,49 @@ export const SCENARIOS = [
     },
   },
   {
+    id: "card-answer",
+    title: "等回答时点卡片",
+    description:
+      "Run 等 ask_user 的回答时在卡片上点按钮：动作作为提问的回答，不写成输入，而是记在回答的 ToolResult.card_action 中；其他设备据此把按钮显示为已选，再点得到 duplicate。",
+    async run(c) {
+      const phone = await c.device("phone", { preset: "phone" });
+      const web = await c.device("web", { preset: "web" });
+      const sid = await c.newSession(web);
+      const pv = c.view(phone, sid);
+      const wv = c.view(web, sid);
+      const card = {
+        card_id: "alarm",
+        title: "闹钟 07:00",
+        image: "icon:alarm",
+        buttons: [
+          { id: "ok", label: "好的" },
+          { id: "later", label: "改到 7:30" },
+        ],
+      };
+      const r = await web.submit(sid, `call show_card ${JSON.stringify(card)}\nask 还要设置别的吗？| 不用了 | 再加一个`);
+      const [q] = await pv.waitFor("question on the phone", () => (pv.pendingQuestions().length ? pv.pendingQuestions() : null));
+      const shown = pv.cards().get("alarm");
+      c.check(shown && !pv.cardActions().has(`${shown.card.call_id}/ok`), "先展示卡片、再提问；按钮还没有选过");
+      const action = { card_id: "alarm", call_id: shown.card.call_id, action: "ok", seq: shown.seq };
+      const a = await phone.submitCardAction(sid, action);
+      c.check(!a.duplicate && a.answered === q.callId && a.runId === r.runId, '提问等回答时在手机上点"好的"：动作作为提问的回答');
+      await c.runEnd(wv, r.runId);
+      const res = wv.payloads("tool_result").find((p) => p.call_id === q.callId);
+      c.check(
+        res?.card_action?.call_id === shown.card.call_id && res.card_action.action === "ok" && res.card_action.label === "好的",
+        "回答的 ToolResult 带规范化后的卡片动作（card_action，标签由平台填写）",
+      );
+      const inputs = [...wv.payloads("run_requested"), ...wv.payloads("steered")];
+      c.check(!inputs.some((p) => p.input?.some((b) => b.card_action)), "这个动作不在任何输入（RunRequested、Steered）中");
+      c.check(wv.cardActions().has(`${shown.card.call_id}/ok`), '网页（另一台设备）把"好的"显示为已选');
+      c.check(!wv.cardActions().has(`${shown.card.call_id}/later`), "没点过的按钮不显示为已选");
+      c.check(wv.reply(r.runId).includes("选择了「好的」"), "模型（脚本）看到的回答是卡片动作的文字");
+      const again = await web.submitCardAction(sid, action);
+      c.check(again.duplicate && again.answered === q.callId, "网页上再点一次：duplicate，回答的仍是那个提问");
+      return { sessionId: sid };
+    },
+  },
+  {
     id: "delegation",
     title: "委托",
     description:

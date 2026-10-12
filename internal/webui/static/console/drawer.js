@@ -5,7 +5,7 @@
 //   卡片      每一版（调用、时间）与已执行的动作；最新一版的 JSON。
 
 import { callIndex, callState, modelLine, toolLabel } from "./chat.js";
-import { payloadOf, textOf } from "./device.js";
+import { cardActionOf, payloadOf, textOf } from "./device.js";
 import { clock, dur, h, jsonView, num, short } from "./ui.js";
 
 const STATE = {
@@ -226,9 +226,8 @@ function cardDetail(cardId, ctx) {
   const latest = versions.at(-1).card;
   const actions = [];
   for (const e of v.events) {
-    for (const b of e.run_requested?.input ?? e.steered?.input ?? []) {
-      if (b.card_action?.card_id === cardId) actions.push({ a: b.card_action, e });
-    }
+    const a = cardActionOf(e);
+    if (a?.card_id === cardId) actions.push({ a, e });
   }
   return shell(
     "🃏 卡片",
@@ -252,7 +251,7 @@ function cardDetail(cardId, ctx) {
       actions.length
         ? steps(
             actions.map(({ a, e }) => [
-              `${a.label || a.action}${Object.keys(a.values ?? {}).length ? ` · ${JSON.stringify(a.values)}` : ""}（第 ${versions.findIndex((x) => x.card.call_id === a.call_id) + 1} 版）`,
+              `${a.label || a.action}${Object.keys(a.values ?? {}).length ? ` · ${JSON.stringify(a.values)}` : ""}（第 ${versions.findIndex((x) => x.card.call_id === a.call_id) + 1} 版）${e.tool_result ? " · 作为提问的回答" : ""}`,
               Date.parse(e.time),
             ]),
           )
