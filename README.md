@@ -1,6 +1,6 @@
 # yanshi
 
-承载多条 C 端业务线的分布式 Agent 运行时基础设施。见 [项目章程](docs/charter.md) 与 [术语表](CONTEXT.md)。
+承载多条 C 端业务线的分布式 Agent 运行时基础设施。见 [项目章程](docs/charter.md) 与 [术语表](CONTEXT.md)。 面向评审与新成员的自包含技术总览：[docs/architecture](docs/architecture/README.md)。
 
 ## 快速开始
 
