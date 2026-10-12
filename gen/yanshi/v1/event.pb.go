@@ -2577,7 +2577,11 @@ type ToolResult struct {
 	// 用户直接打字回答 ask_user 提问时，这条输入的 ID（见 RunRequested.input_id）。
 	InputId string `protobuf:"bytes,6,opt,name=input_id,json=inputId,proto3" json:"input_id,omitempty"`
 	// 非空表示这条回答由该 Call 中的语音模型转述（run_task 恰好回答了提问）：不是用户的原话（Memory 写入闸门）。
-	FromCall      string `protobuf:"bytes,7,opt,name=from_call,json=fromCall,proto3" json:"from_call,omitempty"`
+	FromCall string `protobuf:"bytes,7,opt,name=from_call,json=fromCall,proto3" json:"from_call,omitempty"`
+	// 用户等回答时在卡片上点了动作、这条回答由它而来时，是平台核对、规范化后的动作（与 RunRequested、Steered 输入中的
+	// 相同，见 docs/design/cards.md §4）。客户端据此把该动作显示为已选：这条输入没有写成 RunRequested 或 Steered，
+	// 只看输入的话各设备都看不到它已执行，再点却得到 duplicate。只由平台写入，模型看不到这个字段（它看的是 content）。
+	CardAction    *CardAction `protobuf:"bytes,8,opt,name=card_action,json=cardAction,proto3" json:"card_action,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2659,6 +2663,13 @@ func (x *ToolResult) GetFromCall() string {
 		return x.FromCall
 	}
 	return ""
+}
+
+func (x *ToolResult) GetCardAction() *CardAction {
+	if x != nil {
+		return x.CardAction
+	}
+	return nil
 }
 
 type RunCompleted struct {
@@ -3714,7 +3725,7 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x12\x17\n" +
 	"\acall_id\x18\x03 \x01(\tR\x06callId\x12\x17\n" +
 	"\anode_id\x18\x04 \x01(\tR\x06nodeId\x126\n" +
-	"\bdeadline\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bdeadline\"\xdc\x01\n" +
+	"\bdeadline\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bdeadline\"\x94\x02\n" +
 	"\n" +
 	"ToolResult\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
@@ -3723,7 +3734,9 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\acontent\x18\x04 \x03(\v2\x17.yanshi.v1.ContentBlockR\acontent\x12\x19\n" +
 	"\bis_error\x18\x05 \x01(\bR\aisError\x12\x19\n" +
 	"\binput_id\x18\x06 \x01(\tR\ainputId\x12\x1b\n" +
-	"\tfrom_call\x18\a \x01(\tR\bfromCall\"?\n" +
+	"\tfrom_call\x18\a \x01(\tR\bfromCall\x126\n" +
+	"\vcard_action\x18\b \x01(\v2\x15.yanshi.v1.CardActionR\n" +
+	"cardAction\"?\n" +
 	"\fRunCompleted\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\"T\n" +
@@ -3895,16 +3908,17 @@ var file_yanshi_v1_event_proto_depIdxs = []int32{
 	26, // 47: yanshi.v1.AssistantMessage.usage:type_name -> yanshi.v1.Usage
 	44, // 48: yanshi.v1.ToolCallStarted.deadline:type_name -> google.protobuf.Timestamp
 	2,  // 49: yanshi.v1.ToolResult.content:type_name -> yanshi.v1.ContentBlock
-	44, // 50: yanshi.v1.RunSuspended.until:type_name -> google.protobuf.Timestamp
-	44, // 51: yanshi.v1.ApprovalRequested.deadline:type_name -> google.protobuf.Timestamp
-	2,  // 52: yanshi.v1.ContextCompacted.summary:type_name -> yanshi.v1.ContentBlock
-	26, // 53: yanshi.v1.ContextCompacted.usage:type_name -> yanshi.v1.Usage
-	39, // 54: yanshi.v1.MemoryRecalled.items:type_name -> yanshi.v1.RecalledMemory
-	55, // [55:55] is the sub-list for method output_type
-	55, // [55:55] is the sub-list for method input_type
-	55, // [55:55] is the sub-list for extension type_name
-	55, // [55:55] is the sub-list for extension extendee
-	0,  // [0:55] is the sub-list for field type_name
+	13, // 50: yanshi.v1.ToolResult.card_action:type_name -> yanshi.v1.CardAction
+	44, // 51: yanshi.v1.RunSuspended.until:type_name -> google.protobuf.Timestamp
+	44, // 52: yanshi.v1.ApprovalRequested.deadline:type_name -> google.protobuf.Timestamp
+	2,  // 53: yanshi.v1.ContextCompacted.summary:type_name -> yanshi.v1.ContentBlock
+	26, // 54: yanshi.v1.ContextCompacted.usage:type_name -> yanshi.v1.Usage
+	39, // 55: yanshi.v1.MemoryRecalled.items:type_name -> yanshi.v1.RecalledMemory
+	56, // [56:56] is the sub-list for method output_type
+	56, // [56:56] is the sub-list for method input_type
+	56, // [56:56] is the sub-list for extension type_name
+	56, // [56:56] is the sub-list for extension extendee
+	0,  // [0:56] is the sub-list for field type_name
 }
 
 func init() { file_yanshi_v1_event_proto_init() }

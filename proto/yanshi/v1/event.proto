@@ -332,6 +332,10 @@ message ToolResult {
   string input_id = 6;
   // 非空表示这条回答由该 Call 中的语音模型转述（run_task 恰好回答了提问）：不是用户的原话（Memory 写入闸门）。
   string from_call = 7;
+  // 用户等回答时在卡片上点了动作、这条回答由它而来时，是平台核对、规范化后的动作（与 RunRequested、Steered 输入中的
+  // 相同，见 docs/design/cards.md §4）。客户端据此把该动作显示为已选：这条输入没有写成 RunRequested 或 Steered，
+  // 只看输入的话各设备都看不到它已执行，再点却得到 duplicate。只由平台写入，模型看不到这个字段（它看的是 content）。
+  CardAction card_action = 8;
 }
 
 message RunCompleted {

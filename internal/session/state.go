@@ -675,6 +675,11 @@ func (s *State) apply(e *v1.Event) error {
 		if hasCard(m.GetContent()) && (m.GetAttempt() == 0 || c.Call.GetCapability() != ShowCardCapability) {
 			return fmt.Errorf("card in the result of call %q (%s)", m.GetCallId(), c.Call.GetCapability())
 		}
+		// 卡片动作同样只由平台写入：它只出现在用户等回答时点卡片而得的 ask_user 回答里，这条回答必有输入 ID
+		// （由动作推导）。其他结果带上它，客户端会把没有执行过的动作显示为已选。
+		if m.GetCardAction() != nil && (m.GetAttempt() != 0 || c.NodeID != askuser.NodeID || m.GetInputId() == "") {
+			return fmt.Errorf("card action in the result of call %q (%s)", m.GetCallId(), c.Call.GetCapability())
+		}
 		if err := s.recordInput(InputRef{ID: m.GetInputId(), RunID: r.ID, Steered: true, Answered: m.GetCallId()}); err != nil {
 			return err
 		}

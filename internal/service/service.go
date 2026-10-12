@@ -438,6 +438,8 @@ func (s *Service) history(ctx context.Context, st *session.State, callID string)
 }
 
 // typedAnswer 把用户在对话中直接输入的内容作为对提问的回答：文字为回答文字，其余内容块（图片等）随附。
+// 输入中的卡片动作（已由 cardAction 核对、规范化）另记在结果的 card_action 中：这条输入不会写成 RunRequested 或
+// Steered，客户端只能从这里得知该动作已执行（docs/design/cards.md §5）。
 func typedAnswer(r *session.Run, c *session.Call, input []*v1.ContentBlock) (*v1.Event, error) {
 	q, err := askuser.Parse(c.Call.GetArgumentsJson())
 	if err != nil {
@@ -445,8 +447,13 @@ func typedAnswer(r *session.Run, c *session.Call, input []*v1.ContentBlock) (*v1
 	}
 	a := &askuser.Answer{Text: strings.TrimSpace(model.Text(input))}
 	var extra []*v1.ContentBlock
+	var action *v1.CardAction
 	for _, b := range input {
-		if ca := b.GetCardAction(); ca != nil && a.Text == "" {
+		ca := b.GetCardAction()
+		if ca != nil {
+			action = ca
+		}
+		if ca != nil && a.Text == "" {
 			// 等回答时点了卡片上的动作：动作作为回答文字。
 			a.Text = model.CardActionText(ca)
 			continue
@@ -461,7 +468,9 @@ func typedAnswer(r *session.Run, c *session.Call, input []*v1.ContentBlock) (*v1
 	if err := q.Check(a); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
-	return session.ExternalResult(r.ID, c.Call.GetCallId(), askuser.Result(q, a, extra...), false), nil
+	ev := session.ExternalResult(r.ID, c.Call.GetCallId(), askuser.Result(q, a, extra...), false)
+	ev.GetToolResult().CardAction = action
+	return ev, nil
 }
 
 // Answer 记录用户在界面上对 ask_user 提问的回答（点选、填写或文字），作为该调用的结果写入日志并唤醒
