@@ -804,6 +804,31 @@ func (w *Worker) awaitDispatched(ctx context.Context, r *session.Run, c *session
 		}
 		return w.suspend(ctx, r, c.Deadline)
 	}
+	// 设备离线时的宽限期结束时刻（ADR-0035）；设备在线、或调用不能转入后台时为零值。
+	var grace time.Time
+	var info *node.Info
+	if w.backgroundable(c) {
+		var err error
+		info, err = w.cfg.Devices.Get(ctx, c.NodeID)
+		switch {
+		case errors.Is(err, node.ErrNotFound):
+			// 不在目录中（如 EndUser 已注销）：不是可以等它上线的设备，照旧等到截止时间。
+		case err != nil:
+			return err
+		case !info.Online:
+			// 宽限期从派发与设备下线中较晚者起算：刚下线的设备可能只是断网或切到后台。
+			since := c.DispatchedAt
+			if info.LastSeen.After(since) {
+				since = info.LastSeen
+			}
+			grace = since.Add(w.cfg.BackgroundGrace)
+		}
+	}
+	// 宽限期在截止时间之前结束就转入后台，即使本步来晚了、截止时间也已过去（积压、时钟跳动）：准时醒来的 Worker 会在
+	// 宽限期结束时这样做。
+	if !grace.IsZero() && !w.now().Before(grace) && grace.Before(c.Deadline) {
+		return w.background(ctx, r, c, info)
+	}
 	if !w.now().Before(c.Deadline) {
 		if err := w.cfg.Dispatch.Cancel(ctx, c.NodeID, id); err != nil {
 			return err
@@ -815,25 +840,8 @@ func (w *Worker) awaitDispatched(ctx context.Context, r *session.Run, c *session
 		return w.commit(ctx, w.toolResult(r, id, model.TextBlocks(msg), true))
 	}
 	until := c.Deadline
-	if w.backgroundable(c) {
-		info, err := w.cfg.Devices.Get(ctx, c.NodeID)
-		switch {
-		case errors.Is(err, node.ErrNotFound):
-			// 不在目录中（如 EndUser 已注销）：不是可以等它上线的设备，照旧等到截止时间。
-		case err != nil:
-			return err
-		case !info.Online:
-			// 宽限期从派发与设备下线中较晚者起算：刚下线的设备可能只是断网或切到后台（ADR-0035）。
-			since := c.DispatchedAt
-			if info.LastSeen.After(since) {
-				since = info.LastSeen
-			}
-			grace := since.Add(w.cfg.BackgroundGrace)
-			if !w.now().Before(grace) {
-				return w.background(ctx, r, c, info)
-			}
-			until = minTime(until, grace)
-		}
+	if !grace.IsZero() {
+		until = minTime(until, grace)
 	}
 	_, err := w.redispatch(ctx, r, c, c.Deadline, &v1.Event{Payload: &v1.Event_RunSuspended{RunSuspended: &v1.RunSuspended{
 		RunId: r.ID, Attempt: w.attempt}}}, until)

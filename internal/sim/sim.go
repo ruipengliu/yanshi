@@ -128,6 +128,8 @@ type Stats struct {
 	// 工作类别（ADR-0029）：Worker 优雅停机，以及移交（以 handoff 挂起：交互 Worker 移交成为长任务的 Run，
 	// 或优雅停机时移交持有的 Run）。
 	GracefulStops, Handoffs int
+	// 后台调用（ADR-0035）：转入后台、设备结果送达、到期、用户取消的次数，以及设备下线时唤醒等它的 Session 的次数。
+	Backgrounded, BackgroundResults, BackgroundTimeouts, BackgroundCancels, DisconnectWakes int
 }
 
 // storeFault 是注入的存储故障（数据库超时、连接中断）：written 表示追加其实已经生效，调用方却只看到错误。
@@ -257,6 +259,8 @@ type simNode struct {
 	exec   *nodesdk.Executor
 	ledger *nodesdk.MemLedger
 	conn   *node.Conn
+	// awayUntil 是下线的设备再次上线的最早时刻：手机长时间离线（ADR-0035 的后台调用）。
+	awayUntil time.Time
 }
 
 type World struct {
@@ -320,6 +324,8 @@ type World struct {
 	nextCall int
 	// effects 记录非幂等 Capability（进程内与设备上）每个调用 ID 的实际执行次数。
 	effects map[string]int
+	// withdrawn 是已撤回投递的后台调用（用户取消、Session 关闭）：设备之后不得再执行它们（ADR-0035）。
+	withdrawn map[string]bool
 	// crash 在一次 Step 或设备执行期间可用：调用它模拟该进程在此刻崩溃。
 	crash func()
 	// currentCall 是设备正在执行的调用 ID。
@@ -338,11 +344,12 @@ type World struct {
 
 func New(opts Options) (*World, error) {
 	w := &World{
-		opts:    opts,
-		rng:     rand.New(rand.NewPCG(opts.Seed, opts.Seed^0x9e3779b97f4a7c15)),
-		clock:   clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
-		effects: map[string]int{},
-		faults:  opts.Faults,
+		opts:      opts,
+		rng:       rand.New(rand.NewPCG(opts.Seed, opts.Seed^0x9e3779b97f4a7c15)),
+		clock:     clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
+		effects:   map[string]int{},
+		withdrawn: map[string]bool{},
+		faults:    opts.Faults,
 	}
 	stores := app.Memory(w.clock)
 	if opts.NewStores != nil {
@@ -395,6 +402,7 @@ func New(opts Options) (*World, error) {
 		Clock: w.clock, IDs: ids.Sequential, Agents: agents, Model: gw, Blobs: artifact.NewMemBlobs(), NodeAuth: node.InsecureDevAuth{},
 		Local:        []capability.Capability{w.echoCap(), w.sendCap(), simCardCap()},
 		SandboxTools: true, DefaultTimeout: deviceTimeout, NodeCacheTTL: 5 * time.Second,
+		BackgroundGrace: bgGrace, BackgroundTimeout: bgTimeout,
 		Moderator: simModerator{w}, InjectionCheck: simDecider{w}, Meter: w.meter, Quotas: w.quotas, Pusher: simPusher{w},
 		LeaseTTL: leaseTTL,
 	})
@@ -408,6 +416,7 @@ func New(opts Options) (*World, error) {
 	w.catalog.AskTimeout = askTimeout
 	w.delegator.BeforeCreate = w.deleteChildMidDispatch
 	w.svc.Nodes = flakyCancel{Router: w.dispatch, w: w}
+	w.hub.Queue = wakeCounter{Queue: stores.Queue, w: w}
 	for range 2 {
 		w.controllers = append(w.controllers, w.newController())
 	}
@@ -482,6 +491,7 @@ func (w *World) newNode(i int) *simNode {
 		PushPlatform: "sim", PushToken: "tok-" + n.id}
 	effect := func(ctx context.Context, _ string) ([]*v1.ContentBlock, error) {
 		w.effects[n.id+"/"+w.currentCall]++
+		w.checkNotWithdrawn()
 		if w.faults && w.chance(0.2) {
 			w.crash() // App 在产生副作用后、记录结果前被杀
 			return nil, ctx.Err()
@@ -489,6 +499,7 @@ func (w *World) newNode(i int) *simNode {
 		return model.TextBlocks("done"), nil
 	}
 	read := func(ctx context.Context, _ string) ([]*v1.ContentBlock, error) {
+		w.checkNotWithdrawn()
 		if w.faults && w.chance(0.1) {
 			w.crash()
 			return nil, ctx.Err()
@@ -527,10 +538,16 @@ func (w *World) disconnect(n *simNode) {
 func (w *World) stepNode(n *simNode) error {
 	ctx := context.Background()
 	if n.conn == nil {
+		if w.faults && w.clock.Now().Before(n.awayUntil) {
+			return nil // 长时间离线：调用转入后台（ADR-0035）
+		}
 		return w.connect(n)
 	}
 	if w.faults && w.chance(0.1) {
 		w.disconnect(n)
+		if w.chance(0.7) {
+			n.awayUntil = w.clock.Now().Add(time.Duration(w.rng.IntN(300)) * time.Second)
+		}
 		return nil
 	}
 	pending, _, err := w.hub.Inbox.Pending(ctx, n.id)
@@ -709,6 +726,9 @@ func (w *World) act() error {
 		if w.chance(0.25) {
 			return w.callStep()
 		}
+		if w.chance(0.25) {
+			return w.cancelBackground()
+		}
 		return w.submit()
 	case x < 0.83:
 		return w.presenceStep()
@@ -729,6 +749,9 @@ func (w *World) act() error {
 		}
 		return w.interrupt()
 	case x < 0.94:
+		if w.faults && w.chance(0.15) {
+			return w.graceEdge() // 拨动时钟同样会使租约过期，只在注入故障时
+		}
 		// 大幅跳动时钟相当于 Worker 卡顿（GC、网络抖动）导致租约过期，属于故障。
 		maxJump := 2 * deviceTimeout
 		if !w.faults {
@@ -1007,7 +1030,7 @@ func (w *World) quiesce() error {
 		if err != nil {
 			return err
 		}
-		if !active && done && idleRounds > int(leaseTTL/time.Second) {
+		if !active && done && idleRounds > int(leaseTTL/time.Second) && w.checkBackgroundSettled() == nil {
 			if err := w.CheckInvariants(); err != nil {
 				return err
 			}
@@ -1050,6 +1073,9 @@ func (w *World) quiesce() error {
 			return err
 		}
 		w.clock.Advance(time.Second)
+	}
+	if err := w.checkBackgroundSettled(); err != nil {
+		return err
 	}
 	return fmt.Errorf("liveness: runs did not reach a terminal state after faults stopped: %s", w.stuck())
 }
@@ -1121,6 +1147,9 @@ func (w *World) CheckInvariants() error {
 			inputs[id] = e
 		}
 		if err := checkCardActions(sid, events, inputs, w.cardInputs[sid]); err != nil {
+			return err
+		}
+		if err := w.checkBackground(sid, events, st, slices.Contains(w.sessions, sid)); err != nil {
 			return err
 		}
 	}
@@ -1228,6 +1257,11 @@ func (w *World) CollectStats() {
 			w.Stats.DeletionsCompleted++
 		}
 	}
+	// 后台调用常跨越 Session 的关闭：已关闭的 Session 的日志一并统计。
+	for _, sid := range w.known() {
+		events, _ := eventlog.ReadAll(context.Background(), w.log, sid, 0)
+		w.countBackground(events)
+	}
 	for _, sid := range append(slices.Clone(w.sessions), w.children...) {
 		events, _ := eventlog.ReadAll(context.Background(), w.log, sid, 0)
 		if st, err := session.Reduce(events); err == nil {
@@ -1334,7 +1368,9 @@ func (w *World) Fingerprint() string {
 		for _, e := range entries {
 			fmt.Fprintf(h, "%s|%s|%s|%v|%d|%d;", e.ConnID, e.DeviceID, e.Label, e.Focused, e.TypingUntil.Unix(), e.Expires.Unix())
 		}
+		w.fingerprintBackground(h, sid)
 	}
+	w.fingerprintInboxes(h)
 	for i := range w.users {
 		devices, _ := w.push.List(context.Background(), "bl", fmt.Sprintf("u%d", i))
 		for _, d := range devices {
@@ -1501,8 +1537,18 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 			// 长 Run 模式下不委托：子 Run 同样要跑上百轮，层层委托使收敛远超模拟的时长。
 			tools = slices.DeleteFunc(slices.Clone(tools), func(t model.ToolSpec) bool { return strings.HasPrefix(t.Name, "agent__") })
 		}
+		// 设备上的能力只是十几个工具中的两个：偏向它们，使调用离线设备、转入后台（ADR-0035）足够常见。
+		var devices []string
+		for _, t := range tools {
+			if strings.HasPrefix(t.Name, "pc__") {
+				devices = append(devices, t.Name)
+			}
+		}
 		for i := range 1 + w.rng.IntN(2) {
 			name := tools[w.rng.IntN(len(tools))].Name
+			if len(devices) > 0 && w.chance(0.3) {
+				name = devices[w.rng.IntN(len(devices))]
+			}
 			id := fmt.Sprintf("call_%d", i) // 故意跨轮重复，检验运行时的 ID 改写
 			if w.chance(0.3) {
 				id = ""

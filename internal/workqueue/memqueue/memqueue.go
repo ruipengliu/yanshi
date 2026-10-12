@@ -203,6 +203,14 @@ func (q *Queue) Release(_ context.Context, l *workqueue.Lease, done bool) error 
 	return nil
 }
 
+// Has 报告 Session 是否在队列中（含已租出、已停放的）。供模拟测试检查活性：有未了结后台调用的 Session 不能离开队列。
+func (q *Queue) Has(sessionID string) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	_, it := q.find(sessionID)
+	return it != nil
+}
+
 func (q *Queue) Remove(_ context.Context, sessionID string) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()

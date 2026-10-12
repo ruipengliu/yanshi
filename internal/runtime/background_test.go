@@ -227,6 +227,20 @@ func TestGraceStartsWhenTheDeviceGoesOffline(t *testing.T) {
 	}
 }
 
+// Worker 来晚了（积压、时钟跳动），调用的截止时间也已过去：宽限期在截止时间之前结束，所以转入后台而不是超时——准时醒来
+// 的 Worker 会在宽限期结束时这样做。
+func TestLateWorkerStillBackgrounds(t *testing.T) {
+	b := newBgWorld(t, nil)
+	b.submit("call read_file {}")
+	b.drain()
+	b.clk.Advance(2 * time.Hour) // 超过调用的截止时间（1 小时）
+	b.drain()
+	st := b.state()
+	if len(st.OpenBackground()) != 1 || strings.Contains(b.reply(), "timed out") {
+		t.Fatalf("background %v, reply %q", st.OpenBackground(), b.reply())
+	}
+}
+
 // 到期：撤回投递，到期的后台结果开启新 Run 告诉用户没办成；Run 进行中时并入它。
 func TestBackgroundTimeout(t *testing.T) {
 	b := newBgWorld(t, func(o *app.Options) { o.BackgroundTimeout = time.Hour })
