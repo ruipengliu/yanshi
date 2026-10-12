@@ -1,0 +1,26 @@
+name: device-offline-background
+description: 设备离线超过宽限期（ADR-0035）：调用转入后台，回复说明已排队、不重试、不编造；设备一分钟后上线执行，结果作为平台的消息开启新的一轮，由模型报告。
+timeout: 6m
+setup:
+  device:
+    label: macbook
+    online_after: 60s
+    files:
+      todo.txt: |
+        本周待办：
+        1. 周三前把报价单发给北辰物流
+        2. 周四下午三点和设计团队评审首页改版
+        3. 周五提交 Q3 报销
+turns:
+  - input: 看一下我电脑上的 todo.txt，周四有什么安排？
+    expect:
+      status: completed
+      calls: ["macbook__read_file"]
+      max_calls: {"macbook__read_file": 1}
+      judge: "电脑离线，读取 todo.txt 的调用已排队、尚未返回结果。回复是否告诉用户电脑目前离线、读取已排队、等电脑上线后再给出结果，并且没有编造 todo.txt 的内容或周四的安排？"
+  - await_background: true
+    expect:
+      status: completed
+      no_calls: ["macbook__read_file"]
+      reply_contains: ["设计"]
+      judge: "电脑上线后，之前排队的读取返回了 todo.txt 的内容，作为平台消息送达。回复是否据此向用户报告了周四的安排（下午三点与设计团队评审首页改版），且没有把它说成用户刚发来的内容？"
