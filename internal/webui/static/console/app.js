@@ -106,7 +106,8 @@ function addDevice(rec) {
 }
 
 function removeDevice(entry) {
-  for (const v of entry.views.values()) v.dispose();
+  if (foreground?.entry === entry) foreground = null;
+  for (const v of entry.views.values()) (clearTimeout(v.retry.timer), v.dispose());
   entry.sim.disconnect();
   devices.delete(entry.rec.id);
   if (S.chatDevice[entry.rec.user] === entry.rec.id) delete S.chatDevice[entry.rec.user];
@@ -172,17 +173,108 @@ function chatEntry() {
 
 // —— Session ——
 
-/** 设备上 sid 的视图：首次使用时订阅（重连后 SimDevice 自动续订）。 */
+/**
+ * 设备上 sid 的视图：首次使用时订阅（重连后 SimDevice 自动续订）。订阅已被网关结束的视图不算有效订阅：可以再订阅时
+ * （resubscribable）从已收到的位置重订，按退避限制频率，免得每次重绘都订阅一次。
+ */
 function viewOf(entry, sid) {
   if (!sid) return undefined;
   let v = entry.views.get(sid);
   if (!v) {
     v = new SessionView(entry.sim, sid);
+    // 订阅被结束后重订的退避：backoff 毫秒，at 之前不重订，timer 为委托进行中时的定时重订。
+    v.retry = { backoff: 0, at: 0, timer: null };
     entry.views.set(sid, v);
     entry.sim.subscribe(sid, 0n);
     v.on((kind) => onViewChange(entry, v, kind));
+  } else if (!entry.sim.subs.has(sid) && !v.retry.timer && Date.now() >= v.retry.at && resubscribable(entry, v)) {
+    resubscribe(entry, v);
   }
   return v;
+}
+
+function resubscribe(entry, v) {
+  v.ended = "";
+  entry.sim.subscribe(v.sessionId, v.lastSeq());
+}
+
+/**
+ * 订阅结束后可以再订阅：limit（订阅数到了网关的上限，退订别的 Session 后有空位），或 not_found、error 而该 Session 是进行中的
+ * 委托派生的子 Session：Worker 先提交 ToolCallStarted、再创建子 Session，发现委托立即订阅时它可能还不存在。deleted 不再订阅。
+ */
+function resubscribable(entry, v) {
+  if (v.ended === "limit") return true;
+  return (v.ended === "not_found" || v.ended === "error") && delegated(entry, v.sessionId);
+}
+
+/** sid 是这台设备上某个视图里进行中的委托派生的子 Session。 */
+function delegated(entry, sid) {
+  for (const pv of entry.views.values()) if (pv.activeDelegations().some((d) => d.childSessionId === sid)) return true;
+  return false;
+}
+
+/** 订阅被网关结束：委托仍在进行时按退避（200ms 起翻倍，至多 5 秒）定时重订；其余可重订的原因等下次用到视图时再订。 */
+function onEnded(entry, v) {
+  const r = v.retry;
+  const first = !r.backoff;
+  r.backoff = Math.min(r.backoff ? r.backoff * 2 : 200, 5000);
+  r.at = Date.now() + r.backoff;
+  if (!r.timer && v.ended !== "limit" && resubscribable(entry, v)) {
+    r.timer = setTimeout(() => {
+      r.timer = null;
+      if (entry.views.get(v.sessionId) === v && !entry.sim.subs.has(v.sessionId) && resubscribable(entry, v)) resubscribe(entry, v);
+    }, r.backoff);
+  }
+  if (first && v.sessionId === S.sid && v.ended) toast(`订阅结束：${v.ended}`, "error");
+}
+
+/** sid 与它的委托派生的子 Session（递归，按各设备上已有的视图）。 */
+function subtree(sid) {
+  const out = new Set();
+  const walk = (s) => {
+    if (!s || out.has(s)) return;
+    out.add(s);
+    for (const d of devices.values()) for (const c of d.views.get(s)?.delegations() ?? []) walk(c.childSessionId);
+  };
+  walk(sid);
+  return out;
+}
+
+/**
+ * 退订并丢弃 sid 及其委托派生的子 Session 在所有设备上的视图，keep 中的除外（新打开的 Session 恰是其后代时保留它）。
+ * 否则每打开一个 Session 就多几个订阅，很快用完网关对一条 Connection 的订阅上限（channel.MaxSubscriptions）。
+ */
+function releaseSession(sid, keep = new Set()) {
+  for (const s of subtree(sid)) {
+    if (keep.has(s)) continue;
+    for (const entry of devices.values()) {
+      const v = entry.views.get(s);
+      if (!v) continue;
+      clearTimeout(v.retry.timer);
+      v.dispose();
+      entry.views.delete(s);
+      entry.sim.unsubscribe(s);
+    }
+  }
+}
+
+/**
+ * 报告前台状态：只有"对话"视图可见时，它所用的设备把当前 Session 报告为前台；切换 Session、更换对话设备、离开"对话"
+ * 视图或页面隐藏时，先撤下之前报告的。notify 据此判断用户是否正在看，决定是否发提醒（internal/notify）。
+ */
+let foreground = null;
+function reportForeground() {
+  const entry = S.view === "chat" && S.sid && document.visibilityState === "visible" ? devices.get(S.chatDevice[S.user]) : undefined;
+  const want = entry && entry.rec.user === S.user ? { entry, sid: S.sid } : null;
+  if (foreground && (want?.entry !== foreground.entry || want?.sid !== foreground.sid)) {
+    foreground.entry.sim.setActivity(foreground.sid, false);
+    foreground = null;
+  }
+  // 还没订阅时 setActivity 不起作用：不记下，下次再报告。
+  if (want && !foreground && want.entry.sim.subs.has(want.sid)) {
+    want.entry.sim.setActivity(want.sid, true);
+    foreground = want;
+  }
 }
 
 function ensureSubscribed(entry) {
@@ -200,7 +292,8 @@ function onViewChange(entry, v, kind) {
   if (kind === "event" && entry === devices.get(S.chatDevice[S.user])) {
     for (const d of v.delegations()) if (!entry.views.has(d.childSessionId)) viewOf(entry, d.childSessionId);
   }
-  if (kind === "ended" && v.sessionId === S.sid && v.ended) toast(`订阅结束：${v.ended}`, "error");
+  if (kind === "event") v.retry.backoff = 0;
+  if (kind === "ended") onEnded(entry, v);
   if (S.view === "console" && !inspectQueued) {
     inspectQueued = true;
     setTimeout(() => ((inspectQueued = false), inspector.schedule()), 150);
@@ -210,8 +303,10 @@ function onViewChange(entry, v, kind) {
 
 function openSession(sid) {
   selection = null;
+  const prev = S.sid;
   S.sid = sid;
   persist();
+  if (prev && prev !== sid) releaseSession(prev, subtree(sid));
   for (const d of userDevices()) ensureSubscribed(d);
   chat?.dispose();
   chat = null;
@@ -220,22 +315,30 @@ function openSession(sid) {
   renderAll();
 }
 
+/** 当前身份：EndUser、业务线与鉴权方式（含令牌）。异步请求返回时身份已变，结果属于之前的 EndUser，丢弃。 */
+const identity = () => `${S.auth}|${S.bl}|${S.user}|${tokenOf(S.user)}`;
+
 async function newSession() {
+  const who = identity();
   const e = chatEntry();
   try {
     await e.sim.ready(5000);
     const sid = await e.sim.createSession(S.agent);
+    if (identity() !== who) return;
     openSession(sid);
     toast(`已新建 Session（${S.agent}）`);
     refreshSessions();
   } catch (err) {
+    if (identity() !== who) return;
     toast(`新建失败：${err.message}`, "error");
   }
 }
 
 let sessions = [];
 async function refreshSessions() {
+  const who = identity();
   const r = await http("GET", `/v1/sessions?${idQuery()}&limit=30`).catch(() => ({ status: 0 }));
+  if (identity() !== who) return;
   sessions = r.status === 200 ? (r.json.sessions ?? []) : [];
   renderTop();
   if (S.view === "chat") scheduleSide();
@@ -326,6 +429,7 @@ function addUser() {
 }
 
 function switchUser(name) {
+  if (S.sid) releaseSession(S.sid);
   S.user = name;
   S.sid = "";
   persist();
@@ -429,9 +533,9 @@ function renderChat() {
     chat?.dispose();
     selection = null;
     chat = new ChatPanel({ device: e.sim, view, ctx: chatCtx() });
-    e.sim.setActivity(S.sid, true);
     fill($("chat-main"), chat.root);
   }
+  reportForeground();
   renderSide();
   renderDrawer();
 }
@@ -883,12 +987,10 @@ function renderAll() {
     inspector.render();
     inspector.poll();
   }
+  reportForeground();
 }
 
-document.addEventListener("visibilitychange", () => {
-  const e = devices.get(S.chatDevice[S.user]);
-  if (e && S.sid) e.sim.setActivity(S.sid, document.visibilityState === "visible" && S.view === "chat");
-});
+document.addEventListener("visibilitychange", reportForeground);
 
 // —— 启动 ——
 
