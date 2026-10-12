@@ -79,7 +79,7 @@ func (w *World) checkModeration() error {
 					return fmt.Errorf("invariant: blocked steer reached the log of %s at seq %d", sid, e.GetSeq())
 				}
 			case *v1.Event_AssistantMessage:
-				if w.blocked(runtime.ModerationText(p.AssistantMessage.GetContent(), p.AssistantMessage.GetToolCalls())) {
+				if w.blocked(runtime.ModerationText(p.AssistantMessage)) {
 					return fmt.Errorf("invariant: blocked output reached the log of %s at seq %d", sid, e.GetSeq())
 				}
 			case *v1.Event_CallTranscript:

@@ -114,10 +114,11 @@ func renderForSummary(in SummaryInput) string {
 		case *v1.Event_CallTranscript:
 			fmt.Fprintf(&b, "%s\n", model.CallTranscriptText(p.CallTranscript))
 		case *v1.Event_AssistantMessage:
-			if t := blocksText(p.AssistantMessage.GetContent()); t != "" {
+			content, calls := modelVisible(p.AssistantMessage)
+			if t := blocksText(content); t != "" {
 				fmt.Fprintf(&b, "[助手] %s\n", t)
 			}
-			for _, tc := range p.AssistantMessage.GetToolCalls() {
+			for _, tc := range calls {
 				fmt.Fprintf(&b, "[调用 %s] %s %s\n", tc.GetCallId(), tc.GetCapability(), tc.GetArgumentsJson())
 			}
 		case *v1.Event_ToolResult:

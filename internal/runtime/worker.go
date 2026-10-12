@@ -904,17 +904,14 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 	for _, tc := range resp.ToolCalls {
 		tc.CallId = "call_" + w.cfg.Store.IDs()
 	}
+	msg := newAssistantMessage(r.ID, w.attempt, resp, w.now().Sub(called), firstToken)
 	var events []*v1.Event
-	// 内容安全（ADR-0021）：违规的回复替换为拒答文本、丢弃调用，原文不写入日志。服务不可用时不放行：
+	// 内容安全（ADR-0021）：检查的正是将要写入日志的消息（回复、调用与截断后的思考过程，ADR-0034）。
+	// 违规的回复替换为拒答文本、丢弃调用与思考过程，原文不写入日志。服务不可用时不放行：
 	// 返回错误使本步重试（下一步重新调用模型），持续不可用时由 StepErrorBudget 使 Run 失败。
 	// 用单独的变量：err 被上面的 defer 用来记录模型调用的结果。
-	// 思考过程同样给人看：与回复一起检查（ADR-0034）。
-	modText := ModerationText(resp.Content, resp.ToolCalls)
-	if resp.Reasoning != "" {
-		modText += "\n" + resp.Reasoning
-	}
 	v, merr := moderation.Check(ctx, w.cfg.Moderator, moderation.Request{Stage: moderation.Output,
-		BusinessLine: w.st.Created.GetBusinessLine(), Text: modText})
+		BusinessLine: w.st.Created.GetBusinessLine(), Text: ModerationText(msg)})
 	if merr != nil {
 		return merr
 	}
@@ -922,14 +919,10 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 		w.cfg.Logger.Warn("model output blocked by moderation", "session", w.st.SessionID, "run", r.ID, "labels", v.Labels)
 		events = append(events, &v1.Event{Payload: &v1.Event_ContentModerated{ContentModerated: &v1.ContentModerated{
 			RunId: r.ID, Attempt: w.attempt, Stage: string(moderation.Output), Labels: v.Labels}}})
-		resp.Content, resp.ToolCalls, resp.Reasoning = model.TextBlocks(moderation.Refusal), nil, ""
+		refuse(msg)
 	}
-	events = append(events, &v1.Event{Payload: &v1.Event_AssistantMessage{AssistantMessage: &v1.AssistantMessage{
-		RunId: r.ID, Attempt: w.attempt, Content: resp.Content, ToolCalls: resp.ToolCalls, Model: resp.Model, Usage: resp.Usage,
-		Reasoning: truncateReasoning(resp.Reasoning), DurationMs: millis(w.now().Sub(called)), FirstTokenMs: millis(firstToken),
-		FinishReason: model.SafeCode(resp.FinishReason),
-	}}})
-	if len(resp.ToolCalls) == 0 {
+	events = append(events, &v1.Event{Payload: &v1.Event_AssistantMessage{AssistantMessage: msg}})
+	if len(msg.GetToolCalls()) == 0 {
 		events = append(events, &v1.Event{Payload: &v1.Event_RunCompleted{RunCompleted: &v1.RunCompleted{RunId: r.ID, Attempt: w.attempt}}})
 	}
 	return w.commit(ctx, events...)
@@ -1139,15 +1132,35 @@ func (w *Worker) watchSupersede(ctx context.Context, cancel context.CancelCauseF
 	}
 }
 
-// ModerationText 是送检的模型输出：回复文本加每个调用的能力名与参数。调用参数可能携带以用户名义发出的内容
-// （消息、写入的文件、保存的 Memory），同样需要检查。
-func ModerationText(content []*v1.ContentBlock, calls []*v1.ToolCall) string {
+// newAssistantMessage 是模型这一轮的回复将要写入日志的形式。内容安全检查的正是它（ModerationText），
+// 所以"检查了什么"与"记录了什么"不会分叉。
+func newAssistantMessage(runID string, attempt uint32, resp *model.Response, duration, firstToken time.Duration) *v1.AssistantMessage {
+	return &v1.AssistantMessage{
+		RunId: runID, Attempt: attempt, Content: resp.Content, ToolCalls: resp.ToolCalls, Model: resp.Model, Usage: resp.Usage,
+		Reasoning: truncateReasoning(resp.Reasoning), DurationMs: millis(duration), FirstTokenMs: millis(firstToken),
+		FinishReason: model.SafeCode(resp.FinishReason),
+	}
+}
+
+// ModerationText 是送检的模型输出：回复文本加每个调用的能力名与参数，再加思考过程。调用参数可能携带以用户名义发出的内容
+// （消息、写入的文件、保存的 Memory），同样需要检查。思考过程同样给人看（ADR-0034），以写入日志、展示给人的
+// 形式（截断后）检查；流式推送的草稿按设计不检查（docs/design/m4-moderation.md §3 流式草稿）。
+func ModerationText(m *v1.AssistantMessage) string {
 	var b strings.Builder
-	b.WriteString(model.Text(content))
-	for _, tc := range calls {
+	b.WriteString(model.Text(m.GetContent()))
+	for _, tc := range m.GetToolCalls() {
 		fmt.Fprintf(&b, "\n%s %s", tc.GetCapability(), tc.GetArgumentsJson())
 	}
+	if r := m.GetReasoning(); r != "" {
+		b.WriteString("\n" + r)
+	}
 	return b.String()
+}
+
+// refuse 把被内容安全拦截的回复改为写入日志的形式：拒答文本，丢弃全部调用与思考过程，违规原文不进入日志；
+// 模型、用量、耗时与结束原因只用于观察与计费，保留。
+func refuse(m *v1.AssistantMessage) {
+	m.Content, m.ToolCalls, m.Reasoning = model.TextBlocks(moderation.Refusal), nil, ""
 }
 
 // maxReasoning 是写入日志的思考过程上限：思考常比回复长得多，事件过大会拖慢每一次读取与推送。

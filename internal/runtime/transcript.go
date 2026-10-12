@@ -84,9 +84,9 @@ func transcript(st *session.State, maxToolResult int, through uint64) []model.Me
 			deferUser(&out, &deferred, pending, model.TextBlocks(model.CallTranscriptText(p.CallTranscript)))
 		case *v1.Event_AssistantMessage:
 			closePending()
-			m := p.AssistantMessage
-			out = append(out, model.Message{Role: model.RoleAssistant, Content: m.GetContent(), ToolCalls: m.GetToolCalls()})
-			for _, tc := range m.GetToolCalls() {
+			content, calls := modelVisible(p.AssistantMessage)
+			out = append(out, model.Message{Role: model.RoleAssistant, Content: content, ToolCalls: calls})
+			for _, tc := range calls {
 				pending = append(pending, tc.GetCallId())
 			}
 		case *v1.Event_ToolResult:
@@ -113,6 +113,13 @@ func transcript(st *session.State, maxToolResult int, through uint64) []model.Me
 		out = slices.Insert(out, at, model.Message{Role: model.RoleUser, Content: recall})
 	}
 	return out
+}
+
+// modelVisible 是 AssistantMessage 中会再给模型看的部分：回复内容与调用。思考过程既不发回给模型，
+// 也不进入压缩摘要（ADR-0034）：它不占上下文、不改变请求前缀；Transcript 与 renderForSummary 都经由这里取，
+// 以免其中一处漏掉这条规则。
+func modelVisible(m *v1.AssistantMessage) ([]*v1.ContentBlock, []*v1.ToolCall) {
+	return m.GetContent(), m.GetToolCalls()
 }
 
 func deferUser(out, deferred *[]model.Message, pending []string, input []*v1.ContentBlock) {

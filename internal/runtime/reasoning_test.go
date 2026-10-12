@@ -116,3 +116,43 @@ func TestReasoningRecorded(t *testing.T) {
 		}
 	}
 }
+
+// TestReasoningNotSummarized：压缩摘要的输入与 Transcript 一样不含思考过程（ADR-0034），回复与调用照常呈现。
+func TestReasoningNotSummarized(t *testing.T) {
+	in := SummaryInput{History: []*v1.Event{
+		{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r1", Input: model.TextBlocks("几点")}}},
+		{Payload: &v1.Event_AssistantMessage{AssistantMessage: &v1.AssistantMessage{RunId: "r1", Content: model.TextBlocks("七点"),
+			ToolCalls: []*v1.ToolCall{{CallId: "c1", Capability: "clock", ArgumentsJson: `{}`}}, Reasoning: "用户在问时间"}}},
+	}}
+	got := renderForSummary(in)
+	if strings.Contains(got, "用户在问时间") {
+		t.Fatalf("reasoning reached the summary input: %s", got)
+	}
+	if !strings.Contains(got, "[助手] 七点") || !strings.Contains(got, "[调用 c1] clock {}") {
+		t.Fatalf("summary input lost the reply or the call: %s", got)
+	}
+}
+
+// TestModerationTextIsTheRecordedMessage：送检的是写入日志的消息，含截断后的思考过程；拦截后的形式只剩拒答文本。
+func TestModerationTextIsTheRecordedMessage(t *testing.T) {
+	long := strings.Repeat("想", maxReasoning)
+	resp := &model.Response{Content: model.TextBlocks("好的"), Model: "m", FinishReason: "tool_calls", Usage: &v1.Usage{OutputTokens: 3},
+		ToolCalls: []*v1.ToolCall{{CallId: "c1", Capability: "send", ArgumentsJson: `{"text":"hi"}`}}, Reasoning: long}
+	msg := newAssistantMessage("r1", 2, resp, 1300*time.Millisecond, 300*time.Millisecond)
+	text := ModerationText(msg)
+	if len(msg.GetReasoning()) >= len(long) || text != "好的\nsend {\"text\":\"hi\"}\n"+msg.GetReasoning() {
+		t.Fatalf("moderation text does not match the recorded message: %d %d", len(text), len(msg.GetReasoning()))
+	}
+	if got := ModerationText(&v1.AssistantMessage{Content: model.TextBlocks("好的")}); got != "好的" {
+		t.Fatalf("no reasoning: %q", got)
+	}
+
+	refuse(msg)
+	if ModerationText(msg) != moderation.Refusal || msg.GetToolCalls() != nil || msg.GetReasoning() != "" {
+		t.Fatalf("refused message %v", msg)
+	}
+	if msg.GetRunId() != "r1" || msg.GetAttempt() != 2 || msg.GetModel() != "m" || msg.GetUsage().GetOutputTokens() != 3 ||
+		msg.GetDurationMs() != 1300 || msg.GetFirstTokenMs() != 300 || msg.GetFinishReason() != model.SafeCode("tool_calls") {
+		t.Fatalf("refused message lost its metadata: %v", msg)
+	}
+}
