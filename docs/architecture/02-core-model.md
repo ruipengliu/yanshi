@@ -147,9 +147,9 @@ Event 中的多模态内容统一为 **ContentBlock**，五种：
 stateDiagram-v2
     [*] --> queued : RunRequested
     queued --> running : AttemptStarted(1)
-    running --> running : AttemptStarted(n+1)<br/>崩溃或租约过期后被接管
-    running --> suspended : RunSuspended<br/>等审批 / 等设备 / 等回答 / 配额 / 移交
-    suspended --> running : AttemptStarted(n+1)<br/>被唤醒或到期
+    running --> running : AttemptStarted(n+1)，崩溃或租约过期后被接管
+    running --> suspended : RunSuspended，等审批 / 等设备 / 等回答 / 配额 / 移交
+    suspended --> running : AttemptStarted(n+1)，被唤醒或到期
     running --> completed : RunCompleted
     running --> failed : RunFailed
     running --> interrupted : RunInterrupted
