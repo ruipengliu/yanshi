@@ -34,6 +34,16 @@ message SessionSnapshot {
   repeated PastRunSnapshot past_runs = 14;
   // 委托派生的子 Session 中，委托的任务所在的 Run（session.State.Delegated）；不是子 Session 或尚未提交时为空。
   string delegated_run = 15;
+  // 未了结的后台调用（session.State.Background），按调用 ID 排序。
+  repeated BackgroundCallSnapshot background = 16;
+}
+
+message BackgroundCallSnapshot {
+  string call_id = 1;
+  string run_id = 2;
+  string node_id = 3;
+  string capability = 4;
+  google.protobuf.Timestamp deadline = 5;
 }
 
 message PastRunSnapshot {
@@ -42,6 +52,7 @@ message PastRunSnapshot {
   google.protobuf.Timestamp requested_at = 3;
   uint32 attempt = 4;
   int32 turns = 5;
+  string from_background = 6;
 }
 
 message ActiveCallSnapshot {
@@ -75,6 +86,8 @@ message RunSnapshot {
   int64 output_tokens = 15;
   bool resume = 16;
   map<string, string> decisions = 17;
+  // 由后台调用的了结开启的 Run：该后台调用的 ID。
+  string from_background = 18;
 }
 
 message CallSnapshot {
@@ -84,6 +97,8 @@ message CallSnapshot {
   google.protobuf.Timestamp deadline = 4;
   bool done = 5;
   ApprovalSnapshot approval = 6;
+  google.protobuf.Timestamp dispatched_at = 7;
+  bool background = 8;
 }
 
 message ApprovalSnapshot {

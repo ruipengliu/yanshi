@@ -67,13 +67,26 @@ func richLog() []*v1.Event {
 			e.Payload = &v1.Event_CallTranscript{CallTranscript: p}
 		case *v1.CallEnded:
 			e.Payload = &v1.Event_CallEnded{CallEnded: p}
+		case *v1.BackgroundCancelled:
+			e.Payload = &v1.Event_BackgroundCancelled{BackgroundCancelled: p}
 		}
 		return e
 	}
 	text := []*v1.ContentBlock{{Kind: &v1.ContentBlock_Text{Text: &v1.Text{Text: "x"}}}}
-	call := func(id string) []*v1.ToolCall {
-		return []*v1.ToolCall{{CallId: id, Capability: "pc__send", ArgumentsJson: "{}"}}
+	call := func(ids ...string) []*v1.ToolCall {
+		var out []*v1.ToolCall
+		for _, id := range ids {
+			out = append(out, &v1.ToolCall{CallId: id, Capability: "pc__send", ArgumentsJson: "{}"})
+		}
+		return out
 	}
+	bgDeadline := timestamppb.New(t0.Add(24 * time.Hour))
+	backgrounded := func(id string) *v1.ToolResult {
+		return &v1.ToolResult{RunId: "r3", Attempt: 1, CallId: id, Content: text,
+			Backgrounded: &v1.Backgrounded{NodeId: "n1", Deadline: bgDeadline}}
+	}
+	bgResult := &v1.ContentBlock{Kind: &v1.ContentBlock_BackgroundResult{BackgroundResult: &v1.BackgroundResult{
+		CallId: "c2", Capability: "pc__send", Content: text, Reason: session.BackgroundReasonResult}}}
 	return []*v1.Event{
 		ev(&v1.SessionCreated{BusinessLine: "bl", EndUser: "u", Agent: &v1.AgentRef{Name: "a", Version: "1"}}),
 		ev(&v1.RunRequested{RunId: "r1", Input: text}),
@@ -103,6 +116,21 @@ func richLog() []*v1.Event {
 		ev(&v1.Steered{RunId: "r2", Input: text}),
 		ev(&v1.RunInterrupted{RunId: "r2", By: "user"}),
 		ev(&v1.CallEnded{CallId: "vc1", Reason: "hangup"}),
+		// 后台调用：三个调用转入后台，一个的结果开启新 Run，一个被取消，一个到关闭时仍未了结。
+		ev(&v1.RunRequested{RunId: "r3", Input: text}),
+		ev(&v1.AttemptStarted{RunId: "r3", Attempt: 1}),
+		ev(&v1.AssistantMessage{RunId: "r3", Attempt: 1, ToolCalls: call("c2", "c3", "c4")}),
+		ev(&v1.ToolCallStarted{RunId: "r3", Attempt: 1, CallId: "c2", NodeId: "n1", Deadline: timestamppb.New(t0.Add(time.Minute))}),
+		ev(backgrounded("c2")),
+		ev(&v1.ToolCallStarted{RunId: "r3", Attempt: 1, CallId: "c3", NodeId: "n1", Deadline: timestamppb.New(t0.Add(time.Minute))}),
+		ev(backgrounded("c3")),
+		ev(&v1.ToolCallStarted{RunId: "r3", Attempt: 1, CallId: "c4", NodeId: "n1", Deadline: timestamppb.New(t0.Add(time.Minute))}),
+		ev(backgrounded("c4")),
+		ev(&v1.AssistantMessage{RunId: "r3", Attempt: 1, Content: text}),
+		ev(&v1.RunCompleted{RunId: "r3", Attempt: 1}),
+		ev(&v1.RunRequested{RunId: "r4", Input: []*v1.ContentBlock{bgResult}}),
+		ev(&v1.BackgroundCancelled{CallId: "c3", Capability: "pc__send", By: "phone"}),
+		ev(&v1.RunInterrupted{RunId: "r4", By: "user"}),
 		ev(&v1.SessionClosed{By: "user"}),
 	}
 }
@@ -172,15 +200,16 @@ func TestSnapshotIgnoredAfterLogDeleted(t *testing.T) {
 // 否则从快照恢复会悄悄丢失它——而 Equal 按快照比较，看不出差别。
 func TestSnapshotCoversEveryField(t *testing.T) {
 	covered := map[string][]string{
-		"State":      {"SessionID", "Seq", "Created", "Agent", "Closed", "Compaction", "CompactedAt", "Runs", "Past", "History", "callIDsOld", "callIDs", "Inputs", "ActiveCall", "Delegated"},
-		"RunSummary": {"ID", "Status", "RequestedAt", "Attempt", "Turns"},
-		"Run":        {"ID", "Status", "RequestedAt", "Attempt", "LiveEndpoint", "Takeovers", "StalledTakeovers", "Turns", "Recall", "Recalled", "Calls", "SuspendReason", "SuspendedUntil", "Compactions", "OutputTokens", "Resume", "Decisions"},
-		"Call":       {"Call", "StartedAttempts", "NodeID", "Deadline", "Done", "Approval"},
-		"Approval":   {"Summary", "Deadline", "Decided", "Approved"},
-		"InputRef":   {"ID", "RunID", "Steered", "Answered"},
-		"ActiveCall": {"ID", "DeviceID", "StartedAt"},
+		"State":          {"SessionID", "Seq", "Created", "Agent", "Closed", "Compaction", "CompactedAt", "Runs", "Past", "History", "callIDsOld", "callIDs", "Inputs", "ActiveCall", "Delegated", "Background"},
+		"RunSummary":     {"ID", "Status", "RequestedAt", "Attempt", "Turns", "FromBackground"},
+		"Run":            {"ID", "Status", "RequestedAt", "Attempt", "LiveEndpoint", "Takeovers", "StalledTakeovers", "Turns", "Recall", "Recalled", "Calls", "SuspendReason", "SuspendedUntil", "Compactions", "OutputTokens", "Resume", "Decisions", "FromBackground"},
+		"Call":           {"Call", "StartedAttempts", "NodeID", "Deadline", "DispatchedAt", "Done", "Background", "Approval"},
+		"BackgroundCall": {"CallID", "RunID", "NodeID", "Capability", "Deadline"},
+		"Approval":       {"Summary", "Deadline", "Decided", "Approved"},
+		"InputRef":       {"ID", "RunID", "Steered", "Answered"},
+		"ActiveCall":     {"ID", "DeviceID", "StartedAt"},
 	}
-	for _, v := range []any{session.State{}, session.RunSummary{}, session.Run{}, session.Call{}, session.Approval{}, session.InputRef{}, session.ActiveCall{}} {
+	for _, v := range []any{session.State{}, session.RunSummary{}, session.Run{}, session.Call{}, session.Approval{}, session.InputRef{}, session.ActiveCall{}, session.BackgroundCall{}} {
 		typ := reflect.TypeOf(v)
 		want := covered[typ.Name()]
 		var got []string
