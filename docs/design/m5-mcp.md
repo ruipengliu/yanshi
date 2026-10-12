@@ -74,12 +74,12 @@ tools:
 
 ## 5. 设备端桥接
 
-电脑上的 HostApp 用端侧 SDK 的 `nodesdk.MCPBridge` 连接本机的 MCP Server：
+电脑上的 HostApp 连接本机的 MCP Server，再用端侧 SDK 的 `nodesdk.MCPCapabilities` 桥接：
 
 - stdio：由 HostApp 启动的子进程，例如 `npx @modelcontextprotocol/server-filesystem ~/Documents`；
 - 本机 HTTP。
 
-桥接会把这些 Server 的工具声明为该 Node 的 Capability，名称是 `<server>_<tool>`，模型看到的工具名是 `<label>__<server>_<tool>`。风险与幂等性的映射同 §3：只读的工具无需审批，其余需要审批。
+`MCPCapabilities` 把这些 Server 的工具声明为该 Node 的 Capability，名称是 `<server>_<tool>`，模型看到的工具名是 `<label>__<server>_<tool>`。风险与幂等性的映射同 §3：只读的工具无需审批，其余需要审批。
 
 调用沿用设备节点的全部机制：Inbox 投递、离线挂起、以 `call_id` 去重、审批、超时。SDK 收到调用后转发给本机 MCP Server。
 

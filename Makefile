@@ -28,8 +28,9 @@ gen: web-deps
 	PATH=$(GOBIN):$$PATH buf generate
 
 lint: web-deps
-	test -z "$$(gofmt -l internal cmd sdk)" || (gofmt -l internal cmd sdk; exit 1)
+	test -z "$$(gofmt -l internal cmd sdk scripts)" || (gofmt -l internal cmd sdk scripts; exit 1)
 	go vet ./...
+	go run ./scripts/docrefs
 	PATH=$(GOBIN):$$PATH buf lint
 	cd sdk/web && pnpm lint
 

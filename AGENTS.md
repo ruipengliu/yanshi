@@ -30,13 +30,13 @@
 
 ## 不变量
 
-- **Event 日志是唯一事实源。** 状态只能由 `session.Reduce` 从日志投影得到；所有写入经 `session.Store.Commit`（先校验、再乐观并发追加）。投影快照只是缓存：**改动 `Apply` 或 `State` 的字段时递增 `session.ProjectionVersion`**，旧快照随之作废。
+- **Event 日志是唯一事实源。** 状态只能由 `session.Reduce` 从日志投影得到；写入方经 `session.Store.Update` 写入：看着投影决定事件，先校验、再乐观并发追加，冲突后重新决定（不要另写重试循环）。投影快照只是缓存：**改动 `Apply` 或 `State` 的字段时递增 `session.ProjectionVersion`**，旧快照随之作废。
 - **契约在 `proto/`。** 修改 `.proto` 后运行 `make gen`，生成代码（`gen/` 与 `sdk/web/src/gen/`）一并提交；只做向后兼容的修改（`buf breaking`）。
 - **Worker.Step 是确定性的单步。** 时间取自 `clock.Clock`，ID 取自 `ids.Generator`；影响结果的逻辑放在 Step 的同步路径里，以便 `internal/sim` 在任意两步之间注入故障。
 - **请求前缀保持稳定。** 提供商的前缀缓存是长 Run 成本的主要杠杆：系统指令只放 AgentDef 的指令，不放每个 Run 都变化的内容（召回放在 Run 的位置上，见 `runtime.Transcript`）；工具按名称排序；Run 内的上下文只在尾部追加。改动 Transcript 或请求组装时，用评测报告的"缓存命中"列确认没有退化。
 - **评测是效果的裁判。** 改动模型、提示词、AgentDef，或召回、压缩、Memory、MCP、审批摘要等给模型看的文本时，运行 `make eval`（需要 `ARK_API_KEY`）并与 `evals/baselines/` 比较，不得有回归；有意的效果变化用 `-update-baseline` 更新基线并随代码提交。新增给模型看的能力或文本时，同时在 `evals/` 增加覆盖它的用例（`docs/design/m4-eval.md`）。
 - **模拟测试是执行语义的裁判。** 改动 runtime / session / service / workqueue 后运行 `make sim`；失败信息里的种子可复现：`go test ./internal/sim -run <Test> -sim.seed=<N>`。新增故障类型或路径时，同时在 `internal/sim` 中注入并加入覆盖统计。
-- **新存储实现必须通过一致性套件**（`eventlogtest`、`workqueuetest`、`nodetest`、`ledgertest`、`sandboxtest`、`artifacttest`、`lifecycletest`、`memorytest`、`snapshottest`、`usagetest`、`presencetest`、`notifytest`），在装配包 `internal/app`（`app.Stores`，serve、模拟测试、评测与 e2e 共用）中构造，并接入 `internal/sim` 的差分测试。核心对象图同样只在 `app.NewCore` 装配：新增跨切面的策略（故障注入、判断、提醒、计量、准入等）接入 `app.Options` 与 `NewCore`，serve / sim / eval / e2e 不再各自布线；测试替身在 Stores 的 seam 上包装，或在返回的 `Core` 上替换字段。外部写入之后须唤醒 Session 的（输入、审批、回答、Node 结果）用 `Store.CommitAndWake`：日志与队列在同一事务中提交（`eventlogtest.RunWaking`）。数据库变更只通过新增 `internal/pg/migrations/NNNN_*.sql`，不修改已有迁移；大表上建索引用 `CREATE INDEX CONCURRENTLY`，迁移首行写 `-- yanshi:no-transaction`（只含这一条语句，且可重复执行）。新表须在 `pg.Tables` 登记分片键（Session 或 EndUser）；在线路径按键访问，一条 SQL、一个事务只涉及一个键（ADR-0028）。
+- **新存储实现必须通过一致性套件**（`eventlogtest`、`workqueuetest`、`nodetest`、`ledgertest`、`sandboxtest`、`artifacttest`、`lifecycletest`、`memorytest`、`snapshottest`、`usagetest`、`presencetest`、`notifytest`），在装配包 `internal/app`（`app.Stores`，serve、模拟测试、评测与 e2e 共用）中构造，并接入 `internal/sim` 的差分测试。核心对象图同样只在 `app.NewCore` 装配：新增跨切面的策略（故障注入、判断、提醒、计量、准入等）接入 `app.Options` 与 `NewCore`，serve / sim / eval / e2e 不再各自布线；测试替身在 Stores 的 seam 上包装，或在返回的 `Core` 上替换字段。外部写入之后须唤醒 Session 的（输入、审批、回答、Node 结果）在决策中置 `session.Decision.Wake`：日志与队列在同一事务中提交（`eventlogtest.RunWaking`）。数据库变更只通过新增 `internal/pg/migrations/NNNN_*.sql`，不修改已有迁移；大表上建索引用 `CREATE INDEX CONCURRENTLY`，迁移首行写 `-- yanshi:no-transaction`（只含这一条语句，且可重复执行）。新表须在 `pg.Tables` 登记分片键（Session 或 EndUser）；在线路径按键访问，一条 SQL、一个事务只涉及一个键（ADR-0028）。
 - **路由调用可以安全重投递，前提是 SDK 以 call_id 去重**（`sdk/nodesdk.Executor`）。修改 Executor 或 Ledger 时，保持"started 状态先落盘、再执行"的顺序。
 
 ## 风格
