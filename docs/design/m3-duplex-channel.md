@@ -122,6 +122,7 @@ Agent 需要用户在几个明确的候选中选择，或补充少量结构化�
 
 - 界面上点选或填写：`ClientRequest.answer`（`AnswerQuestion{call_id, selected, values, text}`）或 `POST /v1/sessions/{id}/answers/{call}`。`service.Answer` 先按问题校验，选项必须存在、单选只能选一个、必填字段要有值、日期和数字的格式要正确；不合法返回 `invalid`。然后对输入的文字与填写的值做内容安全检查（选项是模型给出的，已在输出时检查过），最后写入外部结果（`ToolResult`，attempt = 0）并唤醒 Run。提问已被回答、超时或随 Run 结束时返回 `conflict`。
 - 直接打字：Run 正在等回答时提交的输入就是回答，不是插话。文字成为回答的 `text`，图片等内容块随附在结果中；`SubmitResult.answered` 指出回答的是哪个提问。
+- 点卡片上的动作：同样是一条输入，等回答时就是回答（[卡片](./cards.md) §4）。没有文字时，动作的文字成为回答的 `text`。结果另在 `card_action` 中记下核对后的动作，客户端据此把按钮显示为已选：这条输入不写成 `RunRequested` 或 `Steered`，只看输入的话看不到它已执行。输入 ID 由动作推导，在另一台设备上再点得到 `duplicate`。
 - 模型看到的结果是 JSON：`{"selected":[{"id":"b","label":"采购合同（华东电子）"}],"values":{...},"text":"..."}`。选中的选项带上标签，模型不必再对照 ID。
 
 **客户端。** 从 `AssistantMessage.tool_calls` 中 `capability == "ask_user"` 的调用读出问题，渲染为卡片；该调用出现 `ToolResult` 时收起卡片（任一设备回答后，其他设备随之收起）。Session 投影中等待的类型为 `question`。
@@ -216,7 +217,7 @@ Agent 需要用户在几个明确的候选中选择，或补充少量结构化�
 - `presencetest` 一致性套件（mem、PostgreSQL）：只有显示内容变化才递增版本，过期记录不列出，删除与隔离，等待被变化唤醒，按 Session 删除。
 - 模拟测试：在场写入与删除竞争时被撤回（`PresenceWrites`、`PresenceWithdrawn`），删除不变量，差分指纹包含在场记录。
 - 模拟测试（输入去重）：一部分提交在"响应丢失"后以同一 ID 重试，其间可能有 Worker 推进了 Run；重试须返回首次的结果且不写日志（`DuplicateInputs`）。不变量：同一输入 ID 在日志中至多出现一次。
-- 模拟测试（ask_user）：模型随机提问（含不合法的提问），客户端随机点选、给出不合法的回答（须被拒绝）、或打字回答，时钟跳动触发超时；覆盖 `Questions`、`Answers`、`TypedAnswers`、`InvalidAnswers`、`QuestionTimeouts`。不变量：任何时候都没有投给 `@user` 的 Inbox 项。
+- 模拟测试（ask_user）：模型随机提问（含不合法的提问），客户端随机点选、给出不合法的回答（须被拒绝）、或打字回答，时钟跳动触发超时；覆盖 `Questions`、`Answers`、`TypedAnswers`、`InvalidAnswers`、`QuestionTimeouts`；等回答时点卡片（`CardAnswers`）。不变量：任何时候都没有投给 `@user` 的 Inbox 项；作为回答的卡片动作记在回答的 `card_action` 中。
 - e2e：手机提问、电脑点选回答，两端都看到结果，重复回答为冲突；打字回答不记为插话。
 - `notify`：只推最近使用的一台、消息只含种类与 ID；有设备聚焦该 Session 时不推，只订阅不算；推送失败退到下一台，令牌无效时撤销登记；`notifytest` 一致性套件（mem、PostgreSQL）。
 - e2e：登记了推送的手机没在看时，待审批推送给它；它把 Session 显示在前台后，不再推送。
