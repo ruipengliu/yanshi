@@ -269,10 +269,11 @@ export class Inspector {
       this.rawBody ?? "",
     );
     raw.addEventListener("input", () => (this.rawBody = raw.value));
+    // 帧页随新帧重绘：所选的发送目标记在 rawTarget 中，重绘时恢复，否则每来一帧就跳回第一台设备。
     const target = h(
       "select",
-      {},
-      devices.map((d) => h("option", { value: d.rec.id }, d.sim.label || d.rec.label)),
+      { onchange: (e) => (this.rawTarget = e.target.value) },
+      devices.map((d) => h("option", { value: d.rec.id, selected: d.rec.id === this.rawTarget }, d.sim.label || d.rec.label)),
     );
     const sid = this.ctx.sessionId() || "<session>";
     const templates = {
@@ -464,11 +465,15 @@ export class Inspector {
         ),
       );
     }
+    // 故障页每 2 秒随轮询重绘：编辑过的参数按故障类型保存在 faultParams 中，重绘时沿用，不恢复成默认值。
+    const kind = this.faultKind ?? "model_error";
+    this.faultParams ??= {};
+    this.faultParams[kind] ??= { ...(FAULTS[kind].params ?? {}) };
     const form = {
-      kind: this.faultKind ?? "model_error",
+      kind,
       count: this.faultCount ?? 1,
       global: !!this.faultGlobal,
-      params: { ...(FAULTS[this.faultKind ?? "model_error"].params ?? {}) },
+      params: this.faultParams[kind],
     };
     const paramInputs = Object.entries(form.params).map(([k, v]) =>
       h(
