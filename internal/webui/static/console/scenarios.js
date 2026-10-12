@@ -417,8 +417,10 @@ export const SCENARIOS = [
   },
   {
     id: "offline",
-    title: "设备离线：挂起与恢复",
-    description: "调用离线的电脑：Run 挂起、不占用 Worker；电脑上线后收到调用，Run 继续完成。",
+    title: "设备离线：宽限期内上线",
+    description:
+      "调用离线的电脑：Run 挂起、不占用 Worker，投影显示在等离线的设备；电脑在宽限期内上线（ADR-0035），收到调用，Run 继续完成，" +
+      "与没有后台调用时相同。",
     async run(c) {
       const mac = await c.device("mac", { preset: "desktop" });
       const phone = await c.device("phone", { preset: "phone" });
@@ -433,9 +435,84 @@ export const SCENARIOS = [
       const w = st.json?.runs?.find((x) => x.run_id === r.runId)?.waiting;
       c.check(w?.kind === "node" && w.node_id === mac.id && w.node_online === false, "投影显示在等离线的电脑");
       mac.connect();
-      c.step("电脑上线");
+      c.step("电脑在宽限期内上线");
       await c.runEnd(pv, r.runId);
       c.check(pv.reply(r.runId) === `done: ${DEFAULT_FILES["todo.txt"]}`, "电脑上线后执行，Run 完成");
+      c.check(pv.backgroundCalls().length === 0 && !pv.payloads("tool_result").some((p) => p.backgrounded), "调用没有转入后台");
+      return { sessionId: sid };
+    },
+  },
+  {
+    id: "background",
+    title: "设备离线超过宽限期：转入后台",
+    description:
+      "电脑离线超过宽限期：调用转入后台（ADR-0035），模型得到\"已排队\"的结果，Run 完成，对话不再被阻塞；期间的输入照常得到回应。" +
+      "电脑上线后执行排队的调用，结果作为平台的消息开启新的一轮，由模型报告。",
+    async run(c) {
+      const mac = await c.device("mac", { preset: "desktop" });
+      const phone = await c.device("phone", { preset: "phone" });
+      mac.disconnect();
+      c.step("电脑下线");
+      const sid = await c.newSession(phone);
+      const pv = c.view(phone, sid);
+      const r = await c.submitTool(phone, pv, `call ${mac.label}__read_file {"path":"todo.txt"}`);
+      const end = await c.runEnd(pv, r.runId, 20_000);
+      const bg = pv.payloads("tool_result").find((p) => p.run_id === r.runId && p.backgrounded);
+      c.check(end.kind === "run_completed" && bg?.backgrounded?.node_id === mac.id, "宽限期过后调用转入后台，Run 照常完成");
+      c.check(pv.reply(r.runId).includes("queued"), `模型得到"已排队"的结果（${pv.reply(r.runId).slice(0, 40)}…）`);
+      const [open] = pv.backgroundCalls();
+      c.check(open?.callId === bg.call_id && open.capability === `${mac.label}__read_file`, "会话里列出这个未了结的后台调用");
+      const st = await c.http("GET", `/v1/sessions/${sid}`);
+      const b = st.json?.background?.[0];
+      c.check(b?.call_id === bg.call_id && b.node_online === false, "投影中的后台调用：电脑离线");
+
+      const r2 = await phone.submit(sid, "还在吗");
+      await c.runEnd(pv, r2.runId);
+      c.check(!r2.steered && pv.reply(r2.runId) === "echo: 还在吗", "期间的输入开启新的一轮并得到回应");
+
+      mac.connect();
+      c.step("电脑上线");
+      const late = await pv.waitFor(
+        "background result",
+        () => pv.payloads("run_requested").find((p) => p.input?.[0]?.background_result?.call_id === bg.call_id),
+        20_000,
+      );
+      await c.runEnd(pv, late.run_id);
+      c.check(mac.ledger.get(bg.call_id)?.executions === 1, "电脑执行了排队的调用一次");
+      c.check(
+        pv.reply(late.run_id).includes("[后台调用结果]") && pv.reply(late.run_id).includes(DEFAULT_FILES["todo.txt"]),
+        "设备的结果开启新的一轮，模型（脚本）看到带说明的结果",
+      );
+      c.check(pv.backgroundCalls().length === 0, "后台调用随之了结");
+      const after = await c.http("GET", `/v1/sessions/${sid}`);
+      c.check(after.json?.runs?.find((x) => x.run_id === late.run_id)?.from_background === bg.call_id, "这一轮注明由后台调用开启");
+      return { sessionId: sid };
+    },
+  },
+  {
+    id: "background-cancel",
+    title: "取消后台调用",
+    description: "转入后台的调用可以单独取消（ADR-0035）：不开启新的一轮，投递撤回，电脑上线后不执行；再次取消返回 conflict。",
+    async run(c) {
+      const mac = await c.device("mac", { preset: "desktop" });
+      const web = await c.device("web", { preset: "web" });
+      mac.disconnect();
+      c.step("电脑下线");
+      const sid = await c.newSession(web);
+      const wv = c.view(web, sid);
+      const r = await c.submitTool(web, wv, `call ${mac.label}__read_file {"path":"notes.txt"}`);
+      await c.runEnd(wv, r.runId, 20_000);
+      const [b] = await wv.waitFor("background call", () => (wv.backgroundCalls().length ? wv.backgroundCalls() : null));
+      const runs = wv.payloads("run_requested").length;
+      await web.cancelBackground(sid, b.callId);
+      c.step("网页取消后台调用");
+      await wv.waitFor("cancelled", () => wv.payloads("background_cancelled").some((p) => p.call_id === b.callId));
+      c.check(wv.backgroundCalls().length === 0 && wv.payloads("run_requested").length === runs, "取消写入日志，不开启新的一轮");
+      await rejects(c, () => web.cancelBackground(sid, b.callId), "conflict", "再次取消返回 conflict");
+      mac.connect();
+      c.step("电脑上线");
+      await c.sleep(500);
+      c.check(!mac.ledger.has(b.callId), "电脑没有收到已取消的调用");
       return { sessionId: sid };
     },
   },

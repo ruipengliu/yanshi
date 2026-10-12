@@ -880,6 +880,68 @@ button.copy {
 .call-row.aborted .row-status {
   color: var(--muted);
 }
+/* 后台调用（ADR-0035）：Run 不再等它，设备上线后执行。 */
+.call-row.background .row-status {
+  color: var(--accent);
+}
+.call-row.expired .row-status,
+.call-row.cancelled .row-status {
+  color: var(--muted);
+}
+.bg-note {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  align-self: stretch;
+  font-size: 12px;
+  color: #4d5a70;
+  background: var(--accent-soft);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 4px 0;
+}
+.bg-note.result {
+  background: var(--ok-soft);
+  border-left-color: var(--ok);
+}
+.bg-note.error {
+  background: var(--bad-soft);
+  border-left-color: var(--bad);
+}
+.bg-note.expired,
+.bg-note.cancelled {
+  background: #f4f5f8;
+  border-left-color: var(--muted);
+}
+.bg-note small {
+  color: var(--muted);
+}
+.bg-result {
+  margin-top: 4px;
+  white-space: pre-wrap;
+  color: #2b3445;
+}
+.background-calls {
+  border: 1px solid var(--accent-soft);
+  background: #fbfcff;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.background-calls .bg-heading {
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+.background-calls .bg-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+.background-calls .bg-row button.btn {
+  margin-left: auto;
+}
 .call-row.delegate code {
   color: var(--delegate);
 }
@@ -2103,6 +2165,13 @@ code.run {
 .lg.fault,
 .tl-item.fault {
   --c: #d64545;
+}
+.lg.bg,
+.tl-item.bg {
+  --c: #2f8fd8;
+}
+.bar.call.background {
+  background: repeating-linear-gradient(45deg, #2f8fd8 0 4px, #8cc3ee 4px 8px);
 }
 .session-tl {
   display: flex;

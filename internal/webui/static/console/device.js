@@ -52,6 +52,13 @@ export function cardActionOf(e) {
   return (e.run_requested?.input ?? e.steered?.input ?? []).find((b) => b.card_action)?.card_action;
 }
 
+/** 事件中的后台调用了结（设备结果或到期，ADR-0035），没有时为 undefined（与网页 SDK 的 backgroundResultOf 同义）：
+ *  平台写在 RunRequested 或 Steered 的输入中，且是唯一的内容块。界面把它显示为平台的说明，而不是用户的气泡。 */
+export function backgroundResultOf(e) {
+  const input = e.run_requested?.input ?? e.steered?.input ?? [];
+  return input.length === 1 ? input[0].background_result : undefined;
+}
+
 /** Event 的载荷种类（protojson 中 oneof 的字段名，如 "run_requested"）与载荷。 */
 export function payloadOf(e) {
   for (const k of Object.keys(e)) {
@@ -789,6 +796,11 @@ export class SimDevice {
     return this.request({ close: { session_id: sessionId, reason } });
   }
 
+  /** 取消一个未了结的后台调用（ADR-0035）：设备上线后不再执行，不开启新 Run；已了结时为 conflict。 */
+  cancelBackground(sessionId, callId) {
+    return this.request({ cancel_background: { session_id: sessionId, call_id: callId } });
+  }
+
   // —— Node：执行调用 ——
 
   capabilityByName(name) {
@@ -1096,6 +1108,30 @@ export class SessionView {
       if (a) out.add(`${a.call_id}/${a.action}`);
     }
     return out;
+  }
+
+  /**
+   * 未了结的后台调用（ADR-0035）：{callId, runId, capability, nodeId, deadline}，按截止时间排序。带 backgrounded 的
+   * ToolResult 使调用转入后台；输入中的 background_result（设备结果或到期）与 BackgroundCancelled 了结它。规则同网页 SDK 的
+   * BackgroundCalls。
+   */
+  backgroundCalls() {
+    const open = new Map();
+    for (const e of this.events) {
+      const r = e.tool_result;
+      if (r?.backgrounded) {
+        open.set(r.call_id, {
+          callId: r.call_id,
+          runId: r.run_id,
+          capability: this.callCapability(r.call_id),
+          nodeId: r.backgrounded.node_id,
+          deadline: r.backgrounded.deadline ?? "",
+        });
+      }
+      const settled = backgroundResultOf(e)?.call_id ?? e.background_cancelled?.call_id;
+      if (settled) open.delete(settled);
+    }
+    return [...open.values()].sort((a, b) => Date.parse(a.deadline) - Date.parse(b.deadline));
   }
 
   /** 委托（docs/design/m5-multi-agent.md）：ToolCallStarted 的 node_id 为 "@agent/<子 Session>"。 */

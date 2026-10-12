@@ -165,7 +165,7 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 		Clock: clk, Agents: agents, Model: gw, Blobs: st.blobs, NodeAuth: node.TokenAuth{Verifier: verifier},
 		SandboxTools: true, MCP: st.mcp, DefaultTimeout: time.Minute,
 		// 后台调用（ADR-0035）的宽限期配小：调试控制台的场景要在几秒内看到调用转入后台。
-		BackgroundGrace: 2 * time.Second, BackgroundTimeout: bgTimeout,
+		BackgroundGrace: 3 * time.Second, BackgroundTimeout: bgTimeout,
 		Moderator: st.moderator, Injector: injector, InjectionCheck: decision.InjectionRules{}, Pusher: st.pusher,
 		Live: bus, LiveEndpoint: peerSrv.URL, LeaseTTL: 5 * time.Second,
 	})

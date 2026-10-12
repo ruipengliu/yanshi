@@ -17,6 +17,10 @@ const STATE = {
   done: ["完成", "ok"],
   // 所属 Run 已中断或失败，这个调用不会再有结果。
   aborted: ["已终止", ""],
+  // 后台调用（ADR-0035）：设备离线超过宽限期，Run 不再等它。
+  background: ["后台排队中", "warn"],
+  expired: ["已到期，未执行", ""],
+  cancelled: ["已取消", ""],
 };
 
 /**
@@ -117,6 +121,10 @@ function callDetail(callId, ctx) {
           "执行",
           st.executions > 1 ? h("span", { class: "warn" }, `${st.executions} 次（重新投递或接管后重新执行）`) : `${st.executions || 0} 次`,
         ],
+        st.background && [
+          "后台",
+          `${{ result: "设备结果已送达", timeout: "已到期，未执行", cancelled: "已取消" }[st.bgSettled] ?? "等待设备上线"} · 截止 ${clock(st.bgDeadline)}`,
+        ],
         st.approval && [
           "审批",
           `${{ pending: "等待中", approved: "已批准", denied: "已拒绝" }[st.approval]}${st.summary ? ` · ${st.summary}` : ""}`,
@@ -138,7 +146,14 @@ function callDetail(callId, ctx) {
           at("child", (e) => payloadOf(e)[1].run_id === childRun.run_id && payloadOf(e)[0] === childEnd.kind),
           t0,
         ],
-        st.doneAt && [st.error ? "结果（错误）" : "结果写回", st.doneAt, t0, st.error ? "bad" : "ok"],
+        st.background && ["转入后台（Run 继续）", st.bgAt, t0, "warn"],
+        st.background && st.bgSettled && [
+          { result: "设备结果送达", timeout: "到期", cancelled: "取消" }[st.bgSettled],
+          st.bgSettledAt,
+          t0,
+          st.bgSettled === "result" && !st.error ? "ok" : "",
+        ],
+        st.doneAt && !st.background && [st.error ? "结果（错误）" : "结果写回", st.doneAt, t0, st.error ? "bad" : "ok"],
       ]),
     ),
     section("参数", null, jsonView(st.args ?? "{}")),

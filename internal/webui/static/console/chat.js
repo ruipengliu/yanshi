@@ -7,7 +7,7 @@
 
 import { Mic, Player, Recorder } from "./audio.js";
 import { renderApproval, renderCard, renderQuestion } from "./cards.js";
-import { RequestError, newInputId, payloadOf, routeInput, textOf } from "./device.js";
+import { RequestError, backgroundResultOf, newInputId, payloadOf, routeInput, textOf } from "./device.js";
 import { render as markdown } from "./markdown.js";
 import { bytes, clock, copyButton, dur, fill, h, hue, num, reconcile, short, toast } from "./ui.js";
 
@@ -55,6 +55,9 @@ export function toolLabel(capability) {
  * callIndex 汇总每个调用的进展：call_id → {capability, args, runId, attempt, asked, started, startedAt, nodeId,
  * executions, done, error, result, blocks, doneAt, approval, summary, runEnded}。runEnded 是所属 Run 的终态
  * （run_completed、run_failed、run_interrupted），Run 尚未结束时为空。
+ *
+ * 转入后台的调用（ADR-0035）另有 background（Run 中的结果只是占位说明）、bgDeadline、bgAt（转入后台的时刻），了结后有
+ * bgSettled（result、timeout、cancelled）与 bgSettledAt；设备结果送达时 done、error、result、blocks 换成设备的结果。
  */
 export function callIndex(view) {
   const out = new Map();
@@ -79,8 +82,16 @@ export function callIndex(view) {
       const c = get(p.call_id);
       c.executions++;
       Object.assign(c, { started: true, startedAt: c.startedAt ?? t, nodeId: p.node_id ?? "", attempt: p.attempt ?? c.attempt });
-    } else if (kind === "tool_result")
+    } else if (kind === "tool_result") {
       Object.assign(get(p.call_id), { done: true, error: !!p.is_error, result: textOf(p.content), blocks: p.content, doneAt: t });
+      if (p.backgrounded) Object.assign(get(p.call_id), { background: true, bgDeadline: p.backgrounded.deadline, bgAt: t });
+    } else if (kind === "background_cancelled") Object.assign(get(p.call_id), { bgSettled: "cancelled", bgSettledAt: t });
+    else if (backgroundResultOf(e)) {
+      const r = backgroundResultOf(e);
+      const c = get(r.call_id);
+      Object.assign(c, { bgSettled: r.reason || "result", bgSettledAt: t });
+      if (r.reason !== "timeout") Object.assign(c, { error: !!r.is_error, result: textOf(r.content), blocks: r.content, doneAt: t });
+    }
     else if (kind === "approval_requested") Object.assign(get(p.call_id), { approval: "pending", summary: p.summary, approvalAt: t });
     else if (kind === "approval_decided") Object.assign(get(p.call_id), { approval: p.approved ? "approved" : "denied", decidedAt: t });
     else if (kind === "run_completed" || kind === "run_failed" || kind === "run_interrupted") ended.set(p.run_id, kind);
@@ -94,6 +105,12 @@ export function callIndex(view) {
  * 显示为 aborted（已终止），而不是一直"执行中""待审批"。已有结果的调用保留原状态。
  */
 export function callState(st = {}) {
+  // 后台调用（ADR-0035）：Run 不再等它；了结之前在后台排队，之后是设备的结果、到期或取消。
+  if (st.background) {
+    if (!st.bgSettled) return "background";
+    if (st.bgSettled === "result") return st.error ? "error" : "done";
+    return st.bgSettled === "timeout" ? "expired" : "cancelled";
+  }
   if (!st.done && st.runEnded && st.approval !== "denied") return "aborted";
   if (st.approval === "pending" && !st.done) return "approval";
   if (st.approval === "denied") return "denied";
@@ -110,7 +127,15 @@ const STATE_TEXT = {
   error: "出错",
   done: "完成",
   aborted: "已终止",
+  background: "后台排队中",
+  expired: "已到期，未执行",
+  cancelled: "已取消",
 };
+
+/** 后台调用的了结（ADR-0035）在对话中的说明：设备结果、到期与取消都是平台的消息，不是用户的气泡。 */
+function backgroundNote(icon, cls, text, extra) {
+  return h("div", { class: `bg-note ${cls}` }, h("span", { class: "bg-icon" }, icon), h("div", { class: "bg-text" }, text, extra));
+}
 
 /** 模型信息行的文字：模型 · 输入（缓存）· 输出 · 思考 · 首字 · 耗时 · 结束原因。 */
 export function modelLine(m) {
@@ -353,11 +378,26 @@ export class ChatPanel {
       const [kind, p] = payloadOf(e);
       switch (kind) {
         case "run_requested":
-        case "steered":
+        case "steered": {
+          const bg = backgroundResultOf(e);
+          if (bg) {
+            out.push(this.backgroundSettled(bg, p, e));
+            turn = null;
+            break;
+          }
           if (p.from_call) fromCall.add(p.run_id);
           out.push(this.userBubble(p, e));
           turn = null;
           break;
+        }
+        case "background_cancelled": {
+          const l = toolLabel(p.capability);
+          out.push(
+            backgroundNote("🚫", "cancelled", `已取消后台调用 ${l.name}${l.target ? ` @${l.target}` : ""}`, h("small", {}, " · ", clock(e.time))),
+          );
+          turn = null;
+          break;
+        }
         case "assistant_message":
           turnFor(p.run_id, e).append(...this.step(p, e, calls, fromCall.has(p.run_id)));
           break;
@@ -387,6 +427,18 @@ export class ChatPanel {
             } else if (b.media && !p.attempt) {
               turnFor(p.run_id, e).append(h("div", { class: "device-media" }, h("div", { class: "tag" }, "设备返回"), this.media(b.media)));
             }
+          }
+          if (p.backgrounded) {
+            // 转入后台（ADR-0035）：模型拿到的是占位说明，Run 照常继续；设备上线后执行，结果另作一条消息送达。
+            const l = toolLabel(calls.get(p.call_id)?.capability ?? "");
+            turnFor(p.run_id, e).append(
+              backgroundNote(
+                "📮",
+                "queued",
+                `设备 ${l.target || "?"} 离线，${l.name} 已转入后台：设备上线后执行，结果稍后送达`,
+                h("small", {}, " · 截止 ", clock(p.backgrounded.deadline)),
+              ),
+            );
           }
           break;
         case "call_transcript":
@@ -641,6 +693,21 @@ export class ChatPanel {
     );
   }
 
+  /** 后台调用的了结（设备结果或到期）：平台送达的说明，带设备返回的内容；不是用户说的话。 */
+  backgroundSettled(bg, p, e) {
+    const l = toolLabel(bg.capability);
+    const name = `${l.name}${l.target ? ` @${l.target}` : ""}`;
+    const tail = h("small", {}, " · ", p.run_id && e.run_requested ? "开启新的一轮 · " : "并入进行中的一轮 · ", clock(e.time));
+    if (bg.reason === "timeout") return backgroundNote("⌛", "expired", `后台调用 ${name} 到期：设备一直未上线，没有执行`, tail);
+    const media = (bg.content ?? []).filter((b) => b.media).map((b) => this.media(b.media));
+    return backgroundNote(
+      bg.is_error ? "⚠️" : "📬",
+      bg.is_error ? "error" : "result",
+      `设备返回了后台调用 ${name} 的${bg.is_error ? "错误" : "结果"}`,
+      h("div", {}, tail, textOf(bg.content) ? h("div", { class: "bg-result" }, textOf(bg.content)) : null, media),
+    );
+  }
+
   userBubble(p, e) {
     const parts = [];
     for (const b of p.input ?? []) {
@@ -675,11 +742,13 @@ export class ChatPanel {
     this.input.placeholder = target ? `回答子 Agent：${target.question}` : this.placeholder;
     // 子 Session 在等用户时，状态行显示"等待你回复子 Agent"，而不是"等待子 Agent"。
     this.waitingUser = new Set([...approvals, ...questions].filter((x) => x.via).map((x) => x.via));
+    const background = this.view.backgroundCalls();
     // 列表不变时保留已有的卡片：重建会清掉正在填写的回答。
-    const key = [...approvals, ...questions].map((x) => `${x.sessionId}/${x.callId}`).join(",");
+    const key = [...approvals, ...questions, ...background].map((x) => `${x.sessionId ?? "bg"}/${x.callId}`).join(",");
     if (key === this.pendingKey) return;
     this.pendingKey = key;
     const out = [];
+    if (background.length) out.push(this.backgroundList(background));
     for (const a of approvals) out.push(renderApproval(a, { onDecide: (ok) => this.device.decide(a.sessionId, a.callId, ok) }));
     for (const q of questions)
       out.push(
@@ -690,6 +759,38 @@ export class ChatPanel {
         }),
       );
     fill(this.pending, out);
+  }
+
+  /** backgroundList 列出未了结的后台调用（ADR-0035），每个带"取消"按钮：取消后设备上线也不执行，不开启新 Run。 */
+  backgroundList(calls) {
+    return h(
+      "div",
+      { class: "background-calls" },
+      h("div", { class: "bg-heading" }, `📮 ${calls.length} 个后台调用等待设备上线`),
+      calls.map((c) => {
+        const l = toolLabel(c.capability);
+        const cancel = h("button", { class: "btn small danger", type: "button" }, "取消");
+        cancel.onclick = () => {
+          cancel.disabled = true;
+          this.device
+            .cancelBackground(this.view.sessionId, c.callId)
+            .then(() => toast(`已取消 ${l.name}`))
+            .catch((e) => {
+              cancel.disabled = false;
+              toast(e instanceof RequestError && e.code === "conflict" ? "已经有结果或已到期" : e.message, "error");
+            });
+        };
+        return h(
+          "div",
+          { class: "bg-row" },
+          h("span", { class: "call-icon" }, l.icon),
+          h("button", { class: "link", type: "button", onclick: () => this.ctx.onSelect?.({ kind: "call", callId: c.callId }) }, l.name),
+          l.target ? h("span", { class: "muted" }, "@", l.target) : null,
+          h("span", { class: "muted" }, " · 截止 ", clock(c.deadline)),
+          cancel,
+        );
+      }),
+    );
   }
 
   /** answerTarget 返回输入框的文字应回答的子 Agent 提问；没有时文字提交给本 Session。 */
