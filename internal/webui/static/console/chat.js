@@ -7,7 +7,7 @@
 
 import { Mic, Player, Recorder } from "./audio.js";
 import { renderApproval, renderCard, renderQuestion } from "./cards.js";
-import { payloadOf, textOf } from "./device.js";
+import { RequestError, payloadOf, textOf } from "./device.js";
 import { render as markdown } from "./markdown.js";
 import { bytes, clock, copyButton, dur, fill, h, hue, num, reconcile, short, toast } from "./ui.js";
 
@@ -637,6 +637,9 @@ export class ChatPanel {
   /** renderPending 展示本 Session 与进行中的委托里等待用户的审批与提问；子 Session 的审批与回答发往子 Session。 */
   renderPending() {
     const { approvals, questions } = this.view.pendingWithDelegations((sid) => this.childView(sid));
+    // 输入框的文字会作为子 Agent 提问的回答时，在 placeholder 上说明（规则见 SessionView.typedAnswerTarget）。
+    const target = this.answerTarget();
+    this.input.placeholder = target ? `回答子 Agent：${target.question}` : this.placeholder;
     // 子 Session 在等用户时，状态行显示"等待你回复子 Agent"，而不是"等待子 Agent"。
     this.waitingUser = new Set([...approvals, ...questions].filter((x) => x.via).map((x) => x.via));
     // 列表不变时保留已有的卡片：重建会清掉正在填写的回答。
@@ -648,6 +651,11 @@ export class ChatPanel {
     for (const q of questions)
       out.push(renderQuestion(q, { ...this.mdCtx(), onAnswer: (a) => this.device.answer(q.sessionId, q.callId, a) }));
     fill(this.pending, out);
+  }
+
+  /** answerTarget 返回输入框的文字应回答的子 Agent 提问；没有时文字提交给本 Session。 */
+  answerTarget() {
+    return this.view.typedAnswerTarget((sid) => this.childView(sid));
   }
 
   /** childView 返回子 Session 的视图，第一次取到时订阅它的变化。 */
@@ -705,7 +713,8 @@ export class ChatPanel {
   // —— 输入 ——
 
   composer() {
-    this.input = h("textarea", { rows: this.compact ? 1 : 2, placeholder: this.compact ? "输入…" : "输入消息；可粘贴或拖入图片" });
+    this.placeholder = this.compact ? "输入…" : "输入消息；可粘贴或拖入图片";
+    this.input = h("textarea", { rows: this.compact ? 1 : 2, placeholder: this.placeholder });
     this.input.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
@@ -834,10 +843,14 @@ export class ChatPanel {
     const text = this.input.value.trim();
     const blocks = [...this.attachments.map((a) => a.block), ...extra];
     if (!text && !blocks.length) return;
+    const withCtx = this.ctxToggle?.checked && (this.ctxScreen.value || this.ctxContent.value);
+    // 子 Agent 的提问在等回答时，文字发往子 Session（SessionView.typedAnswerTarget）。附件与界面上下文放不进回答，照旧提交。
+    const target = text && !blocks.length && !withCtx ? this.answerTarget() : undefined;
+    if (target) return this.answerChild(target, text);
     const input = [];
     if (text) input.push({ text: { text } });
     input.push(...blocks);
-    if (this.ctxToggle?.checked && (this.ctxScreen.value || this.ctxContent.value)) {
+    if (withCtx) {
       if (!text) input.push({ text: { text: "（见界面）" } });
       input.push({ ui_context: { screen: this.ctxScreen.value, content: this.ctxContent.value } });
       this.ctxToggle.checked = false;
@@ -853,6 +866,23 @@ export class ChatPanel {
     } catch (e) {
       toast(`发送失败：${e.message}`, "error");
       if (text) this.input.value = text;
+    }
+  }
+
+  /**
+   * 把输入框的文字作为子 Agent 提问的回答发往子 Session。别的设备已经回答时（conflict）保留文字并提示，不自动改投本 Session：
+   * 用户是在回答那个提问，改投成新输入会让父 Run 收到一句没头没尾的插话。
+   */
+  async answerChild(q, text) {
+    this.input.value = "";
+    this.device.setActivity(this.view.sessionId, true, false);
+    this.scrollBottom();
+    try {
+      await this.device.answer(q.sessionId, q.callId, { text });
+    } catch (e) {
+      this.input.value = text;
+      if (e instanceof RequestError && e.code === "conflict") toast("这个提问已经回答过了（可能在别的设备上），文字留在输入框里", "error");
+      else toast(`回答失败：${e.message}`, "error");
     }
   }
 

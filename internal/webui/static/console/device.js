@@ -1103,6 +1103,18 @@ export class SessionView {
     return { approvals, questions };
   }
 
+  /**
+   * 输入框里的文字应作为哪个提问的回答（以 answer 的 text 发往它的 sessionId）：本 Session 自己没有待回答的提问、进行中的委托
+   * 里恰好一个待回答的提问时返回它，否则返回 undefined，文字照旧提交给本 Session（本 Session 自己的提问由服务端把文字当作
+   * 回答）。规则与网页 SDK 的 PendingTracker.typedAnswerTarget 相同：answer 按 call_id 去重，不跨 Session 写入，所以由
+   * 客户端选定发往哪个 Session，而不是让服务端沿委托链转发父 Session 的输入（docs/design/m5-multi-agent.md §4）。
+   */
+  typedAnswerTarget(childView) {
+    if (this.pendingQuestions().length) return undefined;
+    const { questions } = this.pendingWithDelegations(childView);
+    return questions.length === 1 ? questions[0] : undefined;
+  }
+
   /** Run 的终态事件（run_completed、run_failed、run_interrupted），尚未结束时为 undefined。 */
   runEnd(runId) {
     for (const k of ["run_completed", "run_failed", "run_interrupted"]) {

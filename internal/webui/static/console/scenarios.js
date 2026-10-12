@@ -595,6 +595,58 @@ export const SCENARIOS = [
     },
   },
   {
+    id: "delegation-typed-answer",
+    title: "文字回答子 Agent",
+    description:
+      "子 Agent 的提问是唯一待回答的提问时，输入框的文字作为它的回答发往子 Session（typedAnswerTarget），父 Run 随委托完成；" +
+      "已回答后再发为 conflict（对话中保留文字、提示，不改投父 Session）。父 Session 自己有提问时，文字照旧提交给父 Session。",
+    async run(c) {
+      const web = await c.device("web", { preset: "web" });
+      const sid = await c.newSession(web);
+      const v = c.view(web, sid);
+      const views = new Map();
+      const childView = (s) => views.get(s) ?? (views.set(s, c.view(web, s)), views.get(s));
+      const helper = c.env.helper ?? "console-helper";
+      const r = await web.submit(sid, `call agent__${helper} {"task":"ask 去哪个城市？| 北京 | 上海"}`);
+      const d = await v.waitFor("delegation", () => v.delegations()[0]);
+      const cv = childView(d.childSessionId);
+      const q = await waitUntil(
+        "typed answer target",
+        () => v.typedAnswerTarget(childView),
+        10_000,
+        (fn) => {
+          const offs = [v.on(fn), cv.on(fn)];
+          return () => offs.forEach((off) => off());
+        },
+      );
+      c.check(
+        q.question === "去哪个城市？" && q.sessionId === d.childSessionId && q.via === q.sessionId,
+        "输入框的文字选中子 Agent 的提问",
+      );
+      // 规则本身：两个待回答的提问时不选中。网关上同一时刻只有一条委托链在推进（扇出至多为 1，调用按顺序进行），
+      // 脚本化模型造不出两个，这里在子 Session 的视图上多放一个提问来检查规则。
+      const twice = (s) => {
+        const real = childView(s);
+        return Object.assign(Object.create(real), { pendingQuestions: () => [...real.pendingQuestions(), { ...q, callId: "second" }] });
+      };
+      c.check(v.typedAnswerTarget(twice) === undefined, "两个待回答的提问时不选中，文字照旧提交给父 Session");
+      await web.answer(q.sessionId, q.callId, { text: "上海" });
+      c.step("文字以 answer 发往子 Session：上海");
+      const end = await c.runEnd(v, r.runId, 30_000);
+      c.check(end.kind === "run_completed" && v.reply(r.runId).includes("上海"), "回答经子 Run 写回，父 Run 完成");
+      c.check(v.typedAnswerTarget(childView) === undefined, "提问收起后不再选中");
+      await rejects(c, () => web.answer(q.sessionId, q.callId, { text: "北京" }), "conflict", "已回答的提问再以文字回答返回 conflict");
+
+      const r2 = await web.submit(sid, "ask 还要订酒店吗？| 要 | 不要");
+      const [own] = await v.waitFor("own question", () => (v.pendingQuestions().length ? v.pendingQuestions() : null));
+      c.check(v.typedAnswerTarget(childView) === undefined, "父 Session 自己有提问时不选中");
+      const typed = await web.submit(sid, "不要");
+      c.check(typed.answered === own.callId, "文字提交给父 Session，作为它自己的提问的回答");
+      await c.runEnd(v, r2.runId);
+      return { sessionId: sid };
+    },
+  },
+  {
     id: "faults",
     title: "服务端故障注入",
     description:
