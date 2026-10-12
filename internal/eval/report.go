@@ -14,6 +14,8 @@ type Report struct {
 	Judge         string       `json:"judge"`
 	ModelOverride string       `json:"model_override,omitempty"`
 	Cases         []CaseResult `json:"cases"`
+	// LeakedSandboxes 是结束时销毁失败的沙箱 ID，需要手动清理；不写入报告文件与基线。
+	LeakedSandboxes []string `json:"-"`
 }
 
 // CaseResult 是一个用例在多次运行上的汇总。

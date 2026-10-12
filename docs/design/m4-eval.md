@@ -66,7 +66,7 @@ turns:
 
 `yanshi eval -suite evals [-model ark/…] [-case glob] [-trials N] [-judge …] [-sandbox docker] [-baseline …] [-update-baseline]`：
 
-- **进程内运行**：内存存储、真实的模型网关；虚拟设备是一个进程内的 Node，与 e2e 一样经由 Hub、Inbox 路由。沙箱可选（`-sandbox docker`），不可用时跳过 `requires: [sandbox]` 的用例。
+- **进程内运行**：内存存储、真实的模型网关；虚拟设备是一个进程内的 Node，与 e2e 一样经由 Hub、Inbox 路由。沙箱可选（`-sandbox docker`），不可用时跳过 `requires: [sandbox]` 的用例。存储在内存中，进程退出后没有 Janitor 回收沙箱，所以运行结束时停下实例、销毁本次创建过的全部沙箱（含委托的子 Session 的）；销毁失败的沙箱 ID 打印为警告。
 - **用例隔离**：每个用例的每次运行都使用新的 EndUser，互不影响。
 - **`-model`**：覆盖 AgentDef 的模型，用来在同一评测集上比较不同模型。
 

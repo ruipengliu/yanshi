@@ -88,6 +88,9 @@ type instance struct {
 	arts    *artifact.Service
 	crm     *crmServer
 	calls   *call.Manager
+
+	// controllerDone 在沙箱控制器退出（或未启动）时关闭。
+	controllerDone chan struct{}
 }
 
 // workerPool 管理 Worker，支持"杀掉"一个 Worker 并补充新的（CrashAfterCalls）。
@@ -142,7 +145,16 @@ func (c *Config) defaults() {
 // Run 运行用例集，返回报告。单个用例出错（而非断言失败）时记为失败并继续。
 func Run(ctx context.Context, cfg Config, cases []*Case) (*Report, error) {
 	cfg.defaults()
-	in, err := start(ctx, cfg, cases)
+	// 评测实例（Worker、沙箱控制器）只活到本次运行结束。存储在内存中，进程退出后没有 Janitor 回收沙箱，
+	// 所以结束时先停下实例，再销毁用过的全部沙箱（含委托的子 Session 的）。
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var used *usedSandboxes
+	if cfg.Sandbox != nil {
+		used = &usedSandboxes{Provider: cfg.Sandbox, ids: map[string]bool{}}
+		cfg.Sandbox = used
+	}
+	in, err := start(runCtx, cfg, cases)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +204,44 @@ func Run(ctx context.Context, cfg Config, cases []*Case) (*Report, error) {
 		r.finish()
 		rep.Cases = append(rep.Cases, *r)
 	}
+	cancel()
+	if used != nil {
+		<-in.controllerDone // 控制器退出后不会再创建沙箱
+		rep.LeakedSandboxes = used.destroyAll(context.WithoutCancel(ctx), cfg.Logger)
+	}
 	return rep, ctx.Err()
+}
+
+// usedSandboxes 记下本次评测创建过的沙箱，供结束时销毁。
+type usedSandboxes struct {
+	sandbox.Provider
+	mu  sync.Mutex
+	ids map[string]bool
+}
+
+func (p *usedSandboxes) Ensure(ctx context.Context, id string) error {
+	// 先记下再创建：创建到一半失败也可能留下容器或工作区。
+	p.mu.Lock()
+	p.ids[id] = true
+	p.mu.Unlock()
+	return p.Provider.Ensure(ctx, id)
+}
+
+// destroyAll 销毁记下的全部沙箱，返回销毁失败的 ID。
+func (p *usedSandboxes) destroyAll(ctx context.Context, logger *slog.Logger) []string {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	p.mu.Lock()
+	ids := slices.Sorted(maps.Keys(p.ids))
+	p.mu.Unlock()
+	var failed []string
+	for _, id := range ids {
+		if err := p.Provider.Destroy(ctx, id); err != nil {
+			logger.Warn("eval: destroy sandbox", "sandbox", id, "err", err)
+			failed = append(failed, id)
+		}
+	}
+	return failed
 }
 
 func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
@@ -220,11 +269,18 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 	for range 2 * cfg.Parallel {
 		pool.spawn()
 	}
+	controllerDone := make(chan struct{})
 	if cfg.Sandbox != nil {
-		go core.ControllerConfig("eval-sandbox", cfg.Sandbox, nil).Run(ctx)
+		go func() {
+			defer close(controllerDone)
+			core.ControllerConfig("eval-sandbox", cfg.Sandbox, nil).Run(ctx)
+		}()
+	} else {
+		close(controllerDone)
 	}
 	in := &instance{cfg: cfg, svc: core.Service, hub: core.Hub, mems: core.Memory, agents: agents, version: versions, workers: pool, arts: core.Artifacts,
 		calls: &call.Manager{Service: core.Service, Realtime: cfg.Realtime, Feed: feed.Source{Log: st.Log, Live: opts.Live}, Logger: cfg.Logger}}
+	in.controllerDone = controllerDone
 	if slices.ContainsFunc(cases, func(c *Case) bool { return c.Setup.CRM }) {
 		crm, err := startCRM(ctx, core.Artifacts, cfg.Logger)
 		if err != nil {

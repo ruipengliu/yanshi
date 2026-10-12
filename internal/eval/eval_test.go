@@ -6,12 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
 	"yanshi/internal/model"
+	"yanshi/internal/sandbox"
 )
 
 // script 是脚本化的被评测模型：输入以 "call <工具> <参数>" 开头时调用该工具，之后回复 "done"；否则复述输入。
@@ -239,5 +241,55 @@ func TestDeviceReadTruncatesWithNotice(t *testing.T) {
 	small, _ := read(context.Background(), `{"path":"small.txt"}`)
 	if model.Text(small) != "hi" {
 		t.Fatal("small file altered")
+	}
+}
+
+// 评测的存储在内存中，进程退出后没有 Janitor 回收沙箱：Run 结束时必须销毁它创建过的全部沙箱。
+func TestRunDestroysSandboxes(t *testing.T) {
+	dir := t.TempDir()
+	writeCase(t, dir, "compute", `name: compute
+trials: 2
+requires: [sandbox]
+turns:
+  - input: 'call sandbox__run_python {"code":"print(1)"}'
+    expect:
+      calls: ["sandbox__run_python"]
+`)
+	cases, err := LoadSuite(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "assistant", Version: "1", Model: "script/any",
+		Capabilities: []string{"sandbox:*"}})
+	gw := model.NewGateway()
+	gw.Register("script", script{})
+	gw.Register("judge", fixedJudge{})
+	provider := sandbox.NewFake()
+	var mu sync.Mutex
+	used := map[string]bool{}
+	provider.ExecFunc = func(_ context.Context, id string, _ sandbox.ExecRequest) (*sandbox.ExecResult, error) {
+		mu.Lock()
+		used[id] = true
+		mu.Unlock()
+		return &sandbox.ExecResult{Stdout: []byte("1")}, nil
+	}
+	rep, err := Run(context.Background(), Config{Agents: agents, Model: gw, Judge: "judge/any", Sandbox: provider,
+		TurnTimeout: 20 * time.Second, LeaseTTL: time.Second}, cases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := rep.Cases[0]; c.Passed != 2 {
+		t.Fatalf("compute: %+v", c)
+	}
+	if len(used) != 2 {
+		t.Fatalf("sandboxes used: %v", used)
+	}
+	for id := range used {
+		if provider.Exists(id) {
+			t.Errorf("sandbox %s survived Run", id)
+		}
+	}
+	if len(rep.LeakedSandboxes) != 0 {
+		t.Fatalf("leaked: %v", rep.LeakedSandboxes)
 	}
 }

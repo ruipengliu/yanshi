@@ -103,6 +103,10 @@ func evalCmd(args []string) error {
 	if err != nil {
 		return err
 	}
+	if n := len(rep.LeakedSandboxes); n > 0 {
+		fmt.Fprintf(os.Stderr, "warning: %d sandboxes could not be destroyed (docker ps --filter label=yanshi.sandbox): %s\n",
+			n, strings.Join(rep.LeakedSandboxes, " "))
+	}
 
 	if *baselinePath == "" {
 		name := "default"
