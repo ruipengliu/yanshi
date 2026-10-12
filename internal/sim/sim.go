@@ -114,8 +114,9 @@ type Stats struct {
 	Questions, Answers, TypedAnswers, InvalidAnswers, QuestionTimeouts int
 	// 附带界面上下文的输入；以同一输入 ID 重试而被去重的提交。
 	UIContextInputs, DuplicateInputs int
-	// 卡片（ADR-0032）：展示的卡片，提交的卡片动作，其中因同一版卡片上的同一动作已生效而被去重的。
-	Cards, CardActions, CardDuplicates int
+	// 卡片（ADR-0032）：展示的卡片，提交的卡片动作，其中因同一版卡片上的同一动作已生效而被去重的，以及 Run 等回答时
+	// 作为提问的回答的。
+	Cards, CardActions, CardDuplicates, CardAnswers int
 	// 提醒：推送出去的、因用户正在看而不推的、推送通道失败（含令牌无效）的次数。
 	Notifications, NotificationsWatching, PushFailures int
 	// Call：开始（其中取代旧 Call 的）、写入的转写、被拦截的转写、派生的任务，以及中转进程的写入因 Call
@@ -289,9 +290,11 @@ type World struct {
 	notifier     *notify.Notifier
 	// notified 记录已提醒过的事（Session/种类/Run/调用），检查至多提醒一次。
 	notified map[string]bool
-	usage    usage.Store
-	quotas   *usage.Quotas
-	meter    *usage.Meter
+	// cardInputs 记录生效的卡片动作：Session → 推导出的输入 ID → 动作。检查它们在日志中都能被客户端看到（CardActionOf）。
+	cardInputs map[string]map[string]*v1.CardAction
+	usage      usage.Store
+	quotas     *usage.Quotas
+	meter      *usage.Meter
 	// users 是每个 Session 位置当前的 EndUser；注销账号后换成新的 EndUser。
 	users        []string
 	deletedUsers []string
@@ -371,7 +374,7 @@ func New(opts Options) (*World, error) {
 	w.index, w.deletions, w.janitorQueue = stores.Index, stores.Deletions, stores.JanitorQueue
 	w.sandboxQueue, w.ledger, w.activity = stores.SandboxQueue, stores.Ledger, stores.Activity
 	w.presence = &presence.Service{Store: stores.Presence, Deletions: stores.Deletions, Clock: w.clock}
-	w.push, w.notified = stores.Push, map[string]bool{}
+	w.push, w.notified, w.cardInputs = stores.Push, map[string]bool{}, map[string]map[string]*v1.CardAction{}
 	w.calls = map[string]string{}
 	w.parentOf = map[string]string{}
 	// 配额读缓存的已用金额（usage.SpentCache），计量经同一个缓存写入：单进程中缓存值与实际一致，
@@ -610,6 +613,13 @@ func (w *World) answer(sid string, c *session.Call, valid bool) error {
 	if err != nil {
 		return fmt.Errorf("invariant: question %s was asked with invalid arguments: %w", c.Call.GetCallId(), err)
 	}
+	// 有时点卡片上的按钮：Run 等回答时，卡片动作就是回答（docs/design/cards.md §4）。同一动作已生效过时得到
+	// duplicate，提问仍在等。
+	if !valid && w.chance(0.7) {
+		if in := w.pickCardAction(sid); in != nil {
+			return w.submitInput(sid, in)
+		}
+	}
 	a := &askuser.Answer{Selected: []string{q.Options[w.rng.IntN(len(q.Options))].ID}}
 	if !valid && w.chance(0.2) {
 		a.Selected = []string{"no-such-option"}
@@ -799,14 +809,6 @@ func (w *World) stepWorker(i int) error {
 
 func (w *World) submit() error {
 	sid := w.sessions[w.rng.IntN(len(w.sessions))]
-	w.afterEnqueue = func() error {
-		if !w.chance(0.3) {
-			return nil
-		}
-		w.Stats.EnqueueInterleavings++
-		return w.stepWorker(w.rng.IntN(len(w.workers)))
-	}
-	defer func() { w.afterEnqueue = nil }()
 	input := model.TextBlocks(fmt.Sprintf("msg %d", w.rng.IntN(1000)))
 	if a := w.cardAction(sid); a != nil {
 		input = a
@@ -816,6 +818,19 @@ func (w *World) submit() error {
 		input = append([]*v1.ContentBlock{{Kind: &v1.ContentBlock_UiContext{UiContext: &v1.UIContext{
 			Screen: "详情", Content: strings.Repeat("c", w.rng.IntN(200))}}}}, input...)
 	}
+	return w.submitInput(sid, input)
+}
+
+// submitInput 提交一条输入（文字、带界面上下文的文字或卡片动作）：Run 等回答时它就是回答。检查去重与卡片动作的不变量。
+func (w *World) submitInput(sid string, input []*v1.ContentBlock) error {
+	w.afterEnqueue = func() error {
+		if !w.chance(0.3) {
+			return nil
+		}
+		w.Stats.EnqueueInterleavings++
+		return w.stepWorker(w.rng.IntN(len(w.workers)))
+	}
+	defer func() { w.afterEnqueue = nil }()
 	w.nextInput++
 	inputID := fmt.Sprintf("in-%d", w.nextInput)
 	res, err := w.svc.SubmitWithID(context.Background(), sid, inputID, input)
@@ -842,8 +857,17 @@ func (w *World) submit() error {
 	if err != nil {
 		return fmt.Errorf("submit: %w", err)
 	}
-	if input[0].GetCardAction() != nil {
+	if a := input[0].GetCardAction(); a != nil {
 		w.Stats.CardActions++
+		if !res.Duplicate {
+			if w.cardInputs[sid] == nil {
+				w.cardInputs[sid] = map[string]*v1.CardAction{}
+			}
+			w.cardInputs[sid][card.InputID(a)] = a
+			if res.Answered != "" {
+				w.Stats.CardAnswers++
+			}
+		}
 		if res.Duplicate {
 			w.Stats.CardDuplicates++ // 同一版卡片上的同一动作已经生效过：不写入
 		} else if w.chance(0.5) {
@@ -1088,13 +1112,16 @@ func (w *World) CheckInvariants() error {
 			return fmt.Errorf("invariant: %s: %w", sid, err)
 		}
 		// 同一输入 ID 至多生效一次。
-		inputs := map[string]bool{}
+		inputs := map[string]*v1.Event{}
 		for _, e := range events {
 			id := e.GetRunRequested().GetInputId() + e.GetSteered().GetInputId() + e.GetToolResult().GetInputId()
-			if id != "" && inputs[id] {
+			if id != "" && inputs[id] != nil {
 				return fmt.Errorf("invariant: input %s applied twice in %s", id, sid)
 			}
-			inputs[id] = true
+			inputs[id] = e
+		}
+		if err := checkCardActions(sid, events, inputs, w.cardInputs[sid]); err != nil {
+			return err
 		}
 	}
 	if w.poolViolation != nil {
@@ -1119,6 +1146,32 @@ func (w *World) CheckInvariants() error {
 		return err
 	}
 	return w.checkDeleted(false)
+}
+
+// checkCardActions 检查生效的卡片动作在日志中对客户端可见（docs/design/cards.md §5）：无论成为新 Run、插话还是
+// 提问的回答，记下它的事件都带着规范化后的动作（CardActionOf），客户端据此把它显示为已选；否则再点得到 duplicate，
+// 界面上却从没显示过它已执行。带动作的事件，其输入 ID 都由该动作推导，标签由平台填写。
+func checkCardActions(sid string, events []*v1.Event, inputs map[string]*v1.Event, submitted map[string]*v1.CardAction) error {
+	for _, e := range events {
+		a := nodesdk.CardActionOf(e)
+		if a == nil {
+			continue
+		}
+		id := e.GetRunRequested().GetInputId() + e.GetSteered().GetInputId() + e.GetToolResult().GetInputId()
+		if id != card.InputID(a) || a.GetLabel() == "" {
+			return fmt.Errorf("invariant: card action %s/%s at seq %d in %s has input id %q, label %q", a.GetCallId(), a.GetAction(), e.GetSeq(), sid, id, a.GetLabel())
+		}
+	}
+	for id, want := range submitted {
+		e := inputs[id]
+		if e == nil {
+			return fmt.Errorf("invariant: card action %s/%s (input %s) took effect but is not in the log of %s", want.GetCallId(), want.GetAction(), id, sid)
+		}
+		if a := nodesdk.CardActionOf(e); a.GetCallId() != want.GetCallId() || a.GetAction() != want.GetAction() {
+			return fmt.Errorf("invariant: input %s in %s at seq %d does not show card action %s/%s (got %v)", id, sid, e.GetSeq(), want.GetCallId(), want.GetAction(), a)
+		}
+	}
+	return nil
 }
 
 // eachRun 重放 events，对每个 Run 调用一次 fn：终态的在进入终态时（此时仍在投影中，之后可能只剩摘要），
@@ -1456,6 +1509,12 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 			}
 			resp.ToolCalls = append(resp.ToolCalls, &v1.ToolCall{CallId: id, Capability: name, ArgumentsJson: w.toolArgs(name)})
 		}
+		// 提问之前有时先展示一张卡片：用户可能在等回答时点卡片上的按钮，这个动作就是回答（docs/design/cards.md §4）。
+		// 否则同一 Session 里很少既有卡片又有待回答的提问。
+		if c := resp.ToolCalls[0]; len(resp.ToolCalls) == 1 && c.GetCapability() == askuser.Capability && w.chance(0.7) &&
+			slices.ContainsFunc(tools, func(t model.ToolSpec) bool { return t.Name == card.Capability }) {
+			resp.ToolCalls = []*v1.ToolCall{{Capability: card.Capability, ArgumentsJson: w.toolArgs(card.Capability)}, c}
+		}
 		return resp, nil
 	}
 	text := fmt.Sprintf("reply after %d messages", len(req.Messages))
@@ -1511,8 +1570,10 @@ func (w *World) toolArgs(name string) string {
 			return `{"title":""}` // 不合法：错误结果交还模型
 		}
 		w.Stats.Cards++
-		// card_id 取自很小的集合：同一 ID 再次展示即替换前一版，旧版本上的动作与新版本的互不混淆。
-		return fmt.Sprintf(`{"card_id":"c%d","title":"卡片 %s","buttons":[{"id":"ok","label":"好"},{"id":"no","label":"不"}]}`, w.rng.IntN(3), w.pad())
+		// card_id 取自很小的集合：同一 ID 再次展示即替换前一版，旧版本上的动作与新版本的互不混淆。负载放在正文里：
+		// 标题有长度上限，放在标题里时多数卡片不合法，就很少有卡片可点。
+		return fmt.Sprintf(`{"card_id":"c%d","title":"卡片","body":[{"type":"markdown","text":"%s"}],"buttons":[{"id":"ok","label":"好"},{"id":"no","label":"不"}]}`,
+			w.rng.IntN(3), "p"+w.pad())
 	case "agent__sim":
 		if w.chance(0.1) {
 			return `{}` // 没有 task：不派发，错误交还模型
@@ -1560,11 +1621,17 @@ func simCardCap() capability.Capability {
 	return capability.Func{S: spec, Fn: c.Invoke}
 }
 
-// cardAction 有时返回对 Session 最近展示过的某张卡片的动作（点按钮）：有时不带事件序号，迫使平台扫描日志。
+// cardAction 有时返回对 Session 最近展示过的某张卡片的动作（pickCardAction）。
 func (w *World) cardAction(sid string) []*v1.ContentBlock {
 	if !w.chance(0.5) {
 		return nil
 	}
+	return w.pickCardAction(sid)
+}
+
+// pickCardAction 返回对 Session 最近展示过的某张卡片的动作（点按钮），没有卡片时返回 nil：有时不带事件序号，迫使平台
+// 扫描日志。
+func (w *World) pickCardAction(sid string) []*v1.ContentBlock {
 	st, err := w.svc.Load(context.Background(), sid)
 	if err != nil {
 		return nil

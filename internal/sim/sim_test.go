@@ -85,6 +85,7 @@ func TestSimulationWithFaults(t *testing.T) {
 		"QuotaSuspensions", "QuotaRejections", "QuotaResumes", "AccountDeletions", "AgentSwitches",
 		"InputBlocks", "OutputBlocks", "ModerationErrors", "MemoryApprovals", "PresenceWrites", "PresenceWithdrawn",
 		"Questions", "Answers", "TypedAnswers", "InvalidAnswers", "QuestionTimeouts", "UIContextInputs", "DuplicateInputs",
+		"Cards", "CardActions", "CardDuplicates", "CardAnswers",
 		"Notifications", "NotificationsWatching", "PushFailures",
 		"CallsStarted", "CallsReplaced", "CallTranscripts", "CallTranscriptsBlocked", "CallTasks", "CallAnswers", "CallConflicts",
 		"StoreFaults", "WakeFaults", "UncertainRetries", "CatalogFaults", "ResumedClaims", "PastRuns", "Delegations", "DelegationResults", "ChildDeletionRaces", "CascadeFaults", "Decisions", "DecisionFallbacks", "GracefulStops", "Handoffs")
