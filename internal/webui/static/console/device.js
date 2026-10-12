@@ -670,7 +670,10 @@ export class SimDevice {
     this.send({ activity: { session_id: sessionId, focused, typing } });
   }
 
-  /** 发出一个 ClientRequest（op 为 {create_session: …} 之类），等待响应。 */
+  /**
+   * 发出一个 ClientRequest（op 为 {create_session: …} 之类），等待响应。30 秒没有响应时以超时失败，结果未知：
+   * 提交输入的调用方应以同一 input_id 重试（chat.js 保留发送失败的草稿与它的 input_id）。
+   */
   async request(op, { dropAfterSend = false } = {}) {
     await this.ready();
     const request_id = `r${++this.nextId}`;
@@ -678,7 +681,12 @@ export class SimDevice {
     this.sendNow(this.ws, { request: { request_id, ...op } });
     // 演示"请求已发出、响应没回来"：发出后立即断开，结果未知。
     if (dropAfterSend) this.drop();
-    return withTimeout(p, 30_000, `${this.cfg.label}: request ${request_id} timed out`);
+    try {
+      return await withTimeout(p, 30_000, `${this.cfg.label}: request ${request_id} timed out; outcome unknown`);
+    } finally {
+      // 超时后不再等它：迟到的响应找不到记录即丢弃，记录也不会一直留在 pending 里。
+      this.pending.delete(request_id);
+    }
   }
 
   async createSession(agent, version = "") {
@@ -1161,34 +1169,60 @@ export class SessionView {
     return m ? textOf(m.content) : "";
   }
 
-  /** 等待 pred() 为真（每次视图变化时检查）。 */
+  /** 等待 pred() 为真（每次视图变化时检查）。this.signal（AbortSignal，验证场景设置）中止时以错误结束。 */
   waitFor(what, pred, timeoutMs = 10_000) {
-    return waitUntil(what, pred, timeoutMs, (fn) => this.on(fn));
+    return waitUntil(what, pred, timeoutMs, (fn) => this.on(fn), this.signal);
   }
 }
 
-/** 等待 pred() 为真：subscribe(fn) 在状态变化时调用 fn，返回取消函数。 */
-export function waitUntil(what, pred, timeoutMs, subscribe) {
+/**
+ * routeInput 决定输入框的内容发往哪里（对话面板 chat.js 与验证场景共用，不依赖 DOM）：
+ *   {kind: "wait"}             还有上传中的附件：等它们完成再决定，否则文件留给下一条，文字也可能被当作子 Agent 提问的回答；
+ *   {kind: "empty"}            没有可发送的内容；
+ *   {kind: "answer", question} 文字作为子 Agent 提问的回答，以 answer 发往 question.sessionId（target 为
+ *                              SessionView.typedAnswerTarget 的结果）。附件与界面上下文放不进回答，带着它们时照旧提交；
+ *   {kind: "submit"}           提交给本 Session。
+ */
+export function routeInput({ text = "", attachments = 0, uploading = 0, uiContext = false }, target) {
+  if (uploading > 0) return { kind: "wait" };
+  if (!text && !attachments) return { kind: "empty" };
+  if (text && !attachments && !uiContext && target) return { kind: "answer", question: target };
+  return { kind: "submit" };
+}
+
+/** 等待 pred() 为真：subscribe(fn) 在状态变化时调用 fn，返回取消函数。signal 中止时以错误结束。 */
+export function waitUntil(what, pred, timeoutMs, subscribe, signal) {
   return new Promise((resolve, reject) => {
     let off = () => {};
+    const abort = () => {
+      off();
+      clearTimeout(t);
+      reject(new Error(`cancelled while waiting for ${what}`));
+    };
+    if (signal?.aborted) return reject(new Error(`cancelled before waiting for ${what}`));
+    signal?.addEventListener("abort", abort, { once: true });
+    const done = () => signal?.removeEventListener("abort", abort);
     const check = () => {
       let v;
       try {
         v = pred();
       } catch (e) {
         off();
+        done();
         clearTimeout(t);
         reject(e);
         return;
       }
       if (v) {
         off();
+        done();
         clearTimeout(t);
         resolve(v);
       }
     };
     const t = setTimeout(() => {
       off();
+      done();
       reject(new Error(`timed out waiting for ${what}`));
     }, timeoutMs);
     off = subscribe(check);

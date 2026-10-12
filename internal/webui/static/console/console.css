@@ -1065,6 +1065,10 @@ img.art.photo {
 .send:hover {
   background: #2d5ddd !important;
 }
+/* 附件还在上传：发送等它们完成。 */
+.send.waiting {
+  opacity: 0.6;
+}
 .composer-hint {
   text-align: center;
   font-size: 10.5px;

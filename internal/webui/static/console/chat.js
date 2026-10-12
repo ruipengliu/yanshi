@@ -7,7 +7,7 @@
 
 import { Mic, Player, Recorder } from "./audio.js";
 import { renderApproval, renderCard, renderQuestion } from "./cards.js";
-import { RequestError, payloadOf, textOf } from "./device.js";
+import { RequestError, newInputId, payloadOf, routeInput, textOf } from "./device.js";
 import { render as markdown } from "./markdown.js";
 import { bytes, clock, copyButton, dur, fill, h, hue, num, reconcile, short, toast } from "./ui.js";
 
@@ -140,6 +140,10 @@ export class ChatPanel {
     this.ctx = ctx;
     this.compact = compact;
     this.attachments = [];
+    // 上传中的附件（Promise）：发送等它们完成，否则文件留给下一条，文字也可能被当作子 Agent 提问的回答。
+    this.uploads = new Set();
+    // 上次发送失败的输入（内容与 input_id）：原样再发时沿用同一个 input_id，服务端按它去重。
+    this.failed = null;
     this.call = null;
     this.queued = false;
     this.seen = 0;
@@ -815,7 +819,7 @@ export class ChatPanel {
                 { class: "tool", type: "button", title: "语音通话（全双工，需要 VOLC_SPEECH_API_KEY）", onclick: () => this.toggleCall() },
                 "📞",
               ),
-          h("button", { class: "send", type: "button", title: "发送（Enter）", onclick: () => this.send() }, "发送"),
+          (this.sendBtn = h("button", { class: "send", type: "button", title: "发送（Enter）", onclick: () => this.send() }, "发送")),
           file,
           camera,
         ),
@@ -825,8 +829,9 @@ export class ChatPanel {
     );
   }
 
-  async addFiles(files) {
-    for (const f of files) {
+  /** 上传附件：登记为上传中，发送等它们完成（send）。 */
+  addFiles(files) {
+    const chips = files.map((f) => {
       const chip = h(
         "span",
         { class: "staged-chip uploading" },
@@ -836,53 +841,99 @@ export class ChatPanel {
         h("small", {}, bytes(f.size)),
       );
       this.staged.append(chip);
-      try {
-        const block = await this.device.uploadArtifact(this.view.sessionId, f.name, f.type, new Uint8Array(await f.arrayBuffer()));
-        const item = { block, chip };
-        this.attachments.push(item);
-        chip.classList.remove("uploading");
-        if (f.type.startsWith("image/")) chip.prepend(h("img", { src: URL.createObjectURL(f), class: "thumb" }));
-        chip.append(
-          h(
-            "button",
-            { class: "x", type: "button", onclick: () => (this.attachments.splice(this.attachments.indexOf(item), 1), chip.remove()) },
-            "×",
-          ),
-        );
-      } catch (e) {
-        chip.remove();
-        toast(`上传失败：${e.message}`, "error");
+      return [f, chip];
+    });
+    const p = (async () => {
+      for (const [f, chip] of chips) {
+        try {
+          const block = await this.device.uploadArtifact(this.view.sessionId, f.name, f.type, new Uint8Array(await f.arrayBuffer()));
+          chip.classList.remove("uploading");
+          if (f.type.startsWith("image/")) chip.prepend(h("img", { src: URL.createObjectURL(f), class: "thumb" }));
+          this.stage(block, chip);
+        } catch (e) {
+          chip.remove();
+          toast(`上传失败：${e.message}`, "error");
+        }
       }
-    }
+    })();
+    this.uploads.add(p);
+    p.then(() => this.uploads.delete(p));
+    return p;
   }
 
+  /** 把已上传的工件放进待发送的附件；chip 为空时按工件新建一个（发送失败后放回的语音消息）。 */
+  stage(block, chip) {
+    const m = block.media ?? {};
+    const mime = m.mime_type ?? "";
+    chip ??= h(
+      "span",
+      { class: "staged-chip" },
+      mime.startsWith("audio/") ? "🎤 " : mime.startsWith("image/") ? "🖼️ " : "📄 ",
+      m.name || m.uri,
+      " ",
+      h("small", {}, bytes(m.size)),
+    );
+    const item = { block, chip };
+    this.attachments.push(item);
+    chip.append(
+      h(
+        "button",
+        { class: "x", type: "button", onclick: () => (this.attachments.splice(this.attachments.indexOf(item), 1), chip.remove()) },
+        "×",
+      ),
+    );
+    this.staged.append(chip);
+  }
+
+  /**
+   * 发送输入框的内容（extra 为另外附上的内容块，如刚录好的语音消息）。去向由 routeInput 决定：子 Agent 的提问在等回答时
+   * 文字发往子 Session（SessionView.typedAnswerTarget），否则提交给本 Session。发出前清空输入框，失败时把整份草稿放回。
+   */
   async send(extra = []) {
+    if (this.uploads.size) {
+      toast("附件还在上传，上传完成后发送");
+      this.sendBtn?.classList.add("waiting");
+      while (this.uploads.size) await Promise.all([...this.uploads]);
+      this.sendBtn?.classList.remove("waiting");
+    }
     const text = this.input.value.trim();
-    const blocks = [...this.attachments.map((a) => a.block), ...extra];
-    if (!text && !blocks.length) return;
-    const withCtx = this.ctxToggle?.checked && (this.ctxScreen.value || this.ctxContent.value);
-    // 子 Agent 的提问在等回答时，文字发往子 Session（SessionView.typedAnswerTarget）。附件与界面上下文放不进回答，照旧提交。
-    const target = text && !blocks.length && !withCtx ? this.answerTarget() : undefined;
-    if (target) return this.answerChild(target, text);
+    const items = this.attachments;
+    const blocks = [...items.map((a) => a.block), ...extra];
+    const ctx =
+      this.ctxToggle?.checked && (this.ctxScreen.value || this.ctxContent.value)
+        ? { screen: this.ctxScreen.value, content: this.ctxContent.value }
+        : null;
+    const route = routeInput(
+      { text, attachments: blocks.length, uploading: this.uploads.size, uiContext: !!ctx },
+      text && !blocks.length && !ctx ? this.answerTarget() : undefined,
+    );
+    if (route.kind === "empty" || route.kind === "wait") return;
+    const draft = { text, items, extra, ctx };
+    this.input.value = "";
+    for (const a of items) a.chip.remove();
+    this.attachments = [];
+    if (ctx) this.ctxToggle.checked = false;
+    this.device.setActivity(this.view.sessionId, true, false);
+    this.scrollBottom();
+    if (route.kind === "answer") return this.answerChild(route.question, draft);
     const input = [];
     if (text) input.push({ text: { text } });
     input.push(...blocks);
-    if (withCtx) {
+    if (ctx) {
       if (!text) input.push({ text: { text: "（见界面）" } });
-      input.push({ ui_context: { screen: this.ctxScreen.value, content: this.ctxContent.value } });
-      this.ctxToggle.checked = false;
+      input.push({ ui_context: ctx });
     }
-    this.input.value = "";
-    for (const a of this.attachments) a.chip.remove();
-    this.attachments = [];
-    this.device.setActivity(this.view.sessionId, true, false);
-    this.scrollBottom();
+    // 原样重发上次失败的输入时沿用它的 input_id：超时或断线时它可能已经生效，服务端按 input_id 去重（duplicate）。
+    // 改过的内容是新的输入，用新的 ID。
+    const key = JSON.stringify(input);
+    const inputId = this.failed?.key === key ? this.failed.inputId : newInputId();
     try {
-      const r = await this.device.submitInput(this.view.sessionId, input);
+      const r = await this.device.submitInput(this.view.sessionId, input, { inputId });
+      if (this.failed?.key === key) this.failed = null;
       if (r.duplicate) toast("重复提交：按 input_id 去重，没有再次生效");
     } catch (e) {
-      toast(`发送失败：${e.message}`, "error");
-      if (text) this.input.value = text;
+      this.failed = { key, inputId };
+      this.restoreDraft(draft, `发送失败：${e.message}`, "原样再发时沿用同一个 input_id，已生效的不会重复生效");
     }
   }
 
@@ -890,17 +941,37 @@ export class ChatPanel {
    * 把输入框的文字作为子 Agent 提问的回答发往子 Session。别的设备已经回答时（conflict）保留文字并提示，不自动改投本 Session：
    * 用户是在回答那个提问，改投成新输入会让父 Run 收到一句没头没尾的插话。
    */
-  async answerChild(q, text) {
-    this.input.value = "";
-    this.device.setActivity(this.view.sessionId, true, false);
-    this.scrollBottom();
+  async answerChild(q, draft) {
     try {
-      await this.device.answer(q.sessionId, q.callId, { text });
+      await this.device.answer(q.sessionId, q.callId, { text: draft.text });
     } catch (e) {
-      this.input.value = text;
-      if (e instanceof RequestError && e.code === "conflict") toast("这个提问已经回答过了（可能在别的设备上），文字留在输入框里", "error");
-      else toast(`回答失败：${e.message}`, "error");
+      const conflict = e instanceof RequestError && e.code === "conflict";
+      this.restoreDraft(draft, conflict ? "这个提问已经回答过了（可能在别的设备上）" : `回答失败：${e.message}`);
     }
+  }
+
+  /**
+   * 发送失败时把草稿（文字、附件、界面上下文）放回输入框。失败可能在用户已经开始写下一条之后才到达：输入框不空时不覆盖，
+   * 只提示原文没有发出。
+   */
+  restoreDraft(d, msg, hint = "") {
+    const empty = !this.input.value.trim() && !this.attachments.length && !this.uploads.size;
+    if (!empty) {
+      toast(`${msg}。输入框里已有新内容，没有放回；没发出的是：${d.text || "（附件）"}`, "error");
+      return;
+    }
+    this.input.value = d.text;
+    for (const a of d.items) {
+      this.attachments.push(a);
+      this.staged.append(a.chip);
+    }
+    for (const b of d.extra) this.stage(b);
+    if (d.ctx) {
+      this.ctxToggle.checked = true;
+      this.ctxScreen.value = d.ctx.screen;
+      this.ctxContent.value = d.ctx.content;
+    }
+    toast(`${msg}。内容已放回输入框${hint ? `，${hint}` : ""}`, "error");
   }
 
   async cardAction(card, action, values, e) {
