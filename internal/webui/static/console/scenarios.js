@@ -4,7 +4,17 @@
 // 浏览器中由控制台的"验证"页运行；make check 中由 internal/e2e 的 TestConsoleScenarios 以 Node.js 运行
 // （internal/webui/testdata/run-scenarios.mjs）。不依赖 DOM。
 
-import { DEFAULT_FILES, DEVICE_PRESETS, RequestError, SessionView, SimDevice, newInputId, textOf, waitUntil } from "./device.js";
+import {
+  DEFAULT_FILES,
+  DEVICE_PRESETS,
+  RequestError,
+  SessionView,
+  SimDevice,
+  newInputId,
+  routeInput,
+  textOf,
+  waitUntil,
+} from "./device.js";
 
 /**
  * env：
@@ -22,9 +32,22 @@ export class Context {
     this.devices = [];
     this.views = [];
     this.sessions = [];
+    // 场景超时后 run 仍在后台继续：之后的等待、创建设备、Session 与故障规则一律以错误结束，不再留下资源。
+    this.abort = new AbortController();
+    this.signal = this.abort.signal;
+  }
+
+  /** 场景已超时：中止之后的步骤。 */
+  cancel() {
+    this.abort.abort();
+  }
+
+  alive() {
+    if (this.signal.aborted) throw new Error("场景已超时，停止后续步骤");
   }
 
   step(msg) {
+    this.alive();
     this.log(msg);
   }
 
@@ -38,12 +61,29 @@ export class Context {
     this.log(`✓ ${msg}`);
   }
 
-  sleep(ms) {
-    return new Promise((r) => setTimeout(r, ms));
+  async sleep(ms) {
+    this.alive();
+    await new Promise((r) => setTimeout(r, ms));
+    this.alive();
+  }
+
+  /** 等待 pred() 为真：views 中任一视图变化时检查。场景超时后以错误结束。 */
+  until(what, pred, views, timeoutMs = 10_000) {
+    return waitUntil(
+      what,
+      pred,
+      timeoutMs,
+      (fn) => {
+        const offs = views.map((v) => v.on(fn));
+        return () => offs.forEach((off) => off());
+      },
+      this.signal,
+    );
   }
 
   /** 新建并连接一台设备。name 在同一 EndUser 下决定设备 ID（重复运行时复用同一 Node，标签不变）。 */
   async device(name, { preset = "web", user = 0, capabilities, ...rest } = {}) {
+    this.alive();
     const u = this.env.users[user];
     const p = DEVICE_PRESETS[preset];
     const d = new SimDevice({
@@ -62,19 +102,47 @@ export class Context {
     this.devices.push(d);
     d.connect();
     await d.ready();
+    // 超时之后才连上的设备由 cleanup 之后的这一步断开（cleanup 已经运行过）。
+    if (this.signal.aborted) d.disconnect();
     this.step(`设备 ${d.label}（${d.cfg.kind}${d.cfg.clientOnly ? "，只作会话客户端" : ""}）已连接`);
     return d;
   }
 
   /** 订阅 Session，返回该设备上的视图。 */
   view(device, sid, after = 0n) {
+    this.alive();
     const v = new SessionView(device, sid);
+    v.signal = this.signal;
     this.views.push(v);
     device.subscribe(sid, after);
     return v;
   }
 
+  /**
+   * 子 Session 的视图（委托），按需订阅。Worker 先提交 ToolCallStarted、再创建子 Session：订阅可能以 not_found 结束，
+   * 稍后从已收到的位置重订，同对话面板（app.js 的 viewOf）。
+   */
+  children(device) {
+    const views = new Map();
+    return (sid) => {
+      let v = views.get(sid);
+      if (v) return v;
+      v = this.view(device, sid);
+      views.set(sid, v);
+      v.on((kind) => {
+        if (kind !== "ended" || (v.ended !== "not_found" && v.ended !== "error")) return;
+        setTimeout(() => {
+          if (this.signal.aborted || device.subs.has(sid)) return;
+          v.ended = "";
+          device.subscribe(sid, v.lastSeq());
+        }, 200);
+      });
+      return v;
+    };
+  }
+
   async newSession(device) {
+    this.alive();
     const sid = await device.createSession(this.env.agent);
     this.sessions.push(sid);
     this.step(`创建 Session ${sid}`);
@@ -92,6 +160,7 @@ export class Context {
    */
   async submitTool(device, view, text, timeoutMs = 15_000) {
     for (let i = 0; ; i++) {
+      this.alive();
       const r = await device.submit(view.sessionId, text);
       const started = () =>
         view.payloads("tool_call_started").some((p) => p.run_id === r.runId) ||
@@ -104,6 +173,7 @@ export class Context {
   }
 
   async http(method, path, { user = 0, body } = {}) {
+    this.alive();
     const headers = { "Content-Type": "application/json" };
     const token = this.env.users[user].token;
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -135,6 +205,21 @@ async function rejects(c, f, code, msg) {
     return;
   }
   c.check(false, `${msg}：请求没有失败`);
+}
+
+/**
+ * typed 模拟对话面板发送输入框里的文字（chat.js send）：去向由 routeInput 按 typedAnswerTarget 决定，子 Agent 的提问在等
+ * 回答时以 answer 发往子 Session，否则提交给本 Session。返回 {route, result}，请求失败时抛出。
+ */
+async function typed(device, view, childView, text) {
+  const route = routeInput({ text }, view.typedAnswerTarget(childView));
+  if (route.kind === "answer") return { route, result: await device.answer(route.question.sessionId, route.question.callId, { text }) };
+  return { route, result: await device.submit(view.sessionId, text) };
+}
+
+/** 父 Session 中的输入（RunRequested 与 Steered）数：文字改投父 Session 时会多一条。 */
+function inputs(view) {
+  return view.payloads("run_requested").length + view.payloads("steered").length;
 }
 
 function seqs(view) {
@@ -195,6 +280,19 @@ export const SCENARIOS = [
       const first = await wv.waitFor("first delta on the web", () => wv.deltas[0]);
       c.check(first.snapshot === true && (first.text ?? "").startsWith("chunk0 "), "网页的第一条增量是从头开始的 snapshot");
       await c.runEnd(wv, r.runId);
+      // snapshot 加上其后的增量，应恰好是脚本输出的全部 chunk：不漏、不重、顺序正确。
+      const want = Array.from({ length: 150 }, (_, i) => `chunk${i} `).join("");
+      const joined = (v) => {
+        let text = "";
+        for (const d of v.deltas.filter((x) => x.run_id === r.runId)) {
+          if (d.end) break;
+          text = d.snapshot ? (d.text ?? "") : text + (d.text ?? "");
+        }
+        return text;
+      };
+      const got = joined(wv);
+      c.check(got === want, `网页拼出的草稿与脚本输出的 150 段一致（${got.length}/${want.length} 字符）`);
+      c.check(joined(pv) === want, "从头订阅的手机拼出的草稿同样一致");
       c.check(contiguous(wv) && Number(wv.events[0].seq) === 1, "网页补齐了订阅之前的全部事件");
       c.check(wv.reply(r.runId) === "streamed", "网页看到提交的回复");
       return { sessionId: sid };
@@ -203,7 +301,8 @@ export const SCENARIOS = [
   {
     id: "resume",
     title: "断线续传",
-    description: "生成中途网络中断：设备自动重连，按最后收到的 seq 续订，事件不漏、不重。",
+    description:
+      "生成中途网络中断：设备自动重连，按最后收到的 seq 续订，事件不漏、不重。断线期间 Run 被中断时，重连后草稿随 Run 的终态清除。",
     async run(c) {
       const phone = await c.device("phone", { preset: "phone" });
       const web = await c.device("web", { preset: "web" });
@@ -220,6 +319,17 @@ export const SCENARIOS = [
       c.check(contiguous(pv), `手机的事件 seq 连续、无重复（${seqs(pv).join(",")}）`);
       await c.runEnd(wv, r.runId);
       c.check(pv.events.length === wv.events.length, "与未断线的网页事件数相同");
+
+      // 断线期间 Run 被中断：手机收不到 end，重连后补发的只有终态事件，草稿随 Run 结束清除。
+      const r2 = await phone.submit(sid, "stream 400");
+      await pv.waitFor("second draft", () => pv.draft.runId === r2.runId && pv.draft.text.length > 0);
+      phone.disconnect();
+      c.step("手机下线，网页中断 Run");
+      await web.interrupt(sid, r2.runId);
+      await c.runEnd(wv, r2.runId);
+      phone.connect();
+      await c.runEnd(pv, r2.runId);
+      c.check(pv.draft.runId === "" && pv.draft.text === "", "重连后补发了 Run 的终态，草稿随之清除");
       return { sessionId: sid };
     },
   },
@@ -565,24 +675,19 @@ export const SCENARIOS = [
       const web = await c.device("web", { preset: "web" });
       const sid = await c.newSession(web);
       const v = c.view(web, sid);
-      const views = new Map();
-      const childView = (s) => views.get(s) ?? (views.set(s, c.view(web, s)), views.get(s));
+      const childView = c.children(web);
       const helper = c.env.helper ?? "console-helper";
       const r = await web.submit(sid, `call agent__${helper} {"task":"ask 去哪个城市？| 北京 | 上海"}`);
       // 和对话面板一样：订阅委托出去的子 Session，它的变化才会让父 Session 的待回答列表更新。
       const d = await v.waitFor("delegation", () => v.delegations()[0]);
       const cv = childView(d.childSessionId);
-      const [q] = await waitUntil(
+      const [q] = await c.until(
         "child question",
         () => {
           const { questions } = v.pendingWithDelegations(childView);
           return questions.length ? questions : null;
         },
-        10_000,
-        (fn) => {
-          const offs = [v.on(fn), cv.on(fn)];
-          return () => offs.forEach((off) => off());
-        },
+        [v, cv],
       );
       c.check(v.pendingQuestions().length === 0 && q.sessionId !== sid, "提问写在子 Session 里，父 Session 自身没有待回答的提问");
       c.check(q.question === "去哪个城市？" && q.agent === helper && q.via === q.sessionId, "父 Session 的界面看到子 Agent 的提问");
@@ -598,31 +703,31 @@ export const SCENARIOS = [
     id: "delegation-typed-answer",
     title: "文字回答子 Agent",
     description:
-      "子 Agent 的提问是唯一待回答的提问时，输入框的文字作为它的回答发往子 Session（typedAnswerTarget），父 Run 随委托完成；" +
-      "已回答后再发为 conflict（对话中保留文字、提示，不改投父 Session）。父 Session 自己有提问时，文字照旧提交给父 Session。",
+      "子 Agent 的提问是唯一待回答的提问时，输入框的文字（去向由对话面板与场景共用的 routeInput 决定）作为它的回答发往子 Session，" +
+      "父 Run 随委托完成，父 Session 没有新增输入；另一台设备抢先回答时为 conflict，文字不改投父 Session。" +
+      "带附件、界面上下文或附件上传中时不作为回答；父 Session 自己有提问时，文字照旧提交给父 Session。",
     async run(c) {
       const web = await c.device("web", { preset: "web" });
+      const other = await c.device("web2", { preset: "web" });
       const sid = await c.newSession(web);
       const v = c.view(web, sid);
-      const views = new Map();
-      const childView = (s) => views.get(s) ?? (views.set(s, c.view(web, s)), views.get(s));
+      const childView = c.children(web);
       const helper = c.env.helper ?? "console-helper";
-      const r = await web.submit(sid, `call agent__${helper} {"task":"ask 去哪个城市？| 北京 | 上海"}`);
+      const ask = `call agent__${helper} {"task":"ask 去哪个城市？| 北京 | 上海"}`;
+      const r = await web.submit(sid, ask);
       const d = await v.waitFor("delegation", () => v.delegations()[0]);
       const cv = childView(d.childSessionId);
-      const q = await waitUntil(
-        "typed answer target",
-        () => v.typedAnswerTarget(childView),
-        10_000,
-        (fn) => {
-          const offs = [v.on(fn), cv.on(fn)];
-          return () => offs.forEach((off) => off());
-        },
-      );
+      const q = await c.until("typed answer target", () => v.typedAnswerTarget(childView), [v, cv]);
       c.check(
         q.question === "去哪个城市？" && q.sessionId === d.childSessionId && q.via === q.sessionId,
         "输入框的文字选中子 Agent 的提问",
       );
+      c.check(
+        routeInput({ text: "上海", attachments: 1 }, q).kind === "submit" &&
+          routeInput({ text: "上海", uiContext: true }, q).kind === "submit",
+        "带附件或界面上下文时不作为回答，照旧提交给父 Session",
+      );
+      c.check(routeInput({ text: "上海", uploading: 1 }, q).kind === "wait", "附件还在上传时先等它们完成，再决定去向");
       // 规则本身：两个待回答的提问时不选中。网关上同一时刻只有一条委托链在推进（扇出至多为 1，调用按顺序进行），
       // 脚本化模型造不出两个，这里在子 Session 的视图上多放一个提问来检查规则。
       const twice = (s) => {
@@ -630,19 +735,126 @@ export const SCENARIOS = [
         return Object.assign(Object.create(real), { pendingQuestions: () => [...real.pendingQuestions(), { ...q, callId: "second" }] });
       };
       c.check(v.typedAnswerTarget(twice) === undefined, "两个待回答的提问时不选中，文字照旧提交给父 Session");
-      await web.answer(q.sessionId, q.callId, { text: "上海" });
-      c.step("文字以 answer 发往子 Session：上海");
+      const before = inputs(v);
+      const sent = await typed(web, v, childView, "上海");
+      c.check(sent.route.kind === "answer" && sent.route.question.callId === q.callId, "文字以 answer 发往子 Session：上海");
       const end = await c.runEnd(v, r.runId, 30_000);
       c.check(end.kind === "run_completed" && v.reply(r.runId).includes("上海"), "回答经子 Run 写回，父 Run 完成");
+      c.check(inputs(v) === before, "父 Session 没有新增输入");
       c.check(v.typedAnswerTarget(childView) === undefined, "提问收起后不再选中");
       await rejects(c, () => web.answer(q.sessionId, q.callId, { text: "北京" }), "conflict", "已回答的提问再以文字回答返回 conflict");
 
-      const r2 = await web.submit(sid, "ask 还要订酒店吗？| 要 | 不要");
+      // 去向已经选定（子 Agent 的提问），另一台设备抢先回答：文字的回答得到 conflict，不改投父 Session。
+      const r2 = await web.submit(sid, ask);
+      const d2 = await v.waitFor("second delegation", () => v.delegations().find((x) => x.runId === r2.runId));
+      const cv2 = childView(d2.childSessionId);
+      const q2 = await c.until("second typed answer target", () => v.typedAnswerTarget(childView), [v, cv2]);
+      const route = routeInput({ text: "上海" }, q2);
+      c.check(route.kind === "answer" && route.question.sessionId === d2.childSessionId, "第二次委托：文字的去向是子 Agent 的提问");
+      await other.answer(q2.sessionId, q2.callId, { selected: ["1"] });
+      c.step("另一台设备抢先回答：北京");
+      const before2 = inputs(v);
+      await rejects(
+        c,
+        () => web.answer(route.question.sessionId, route.question.callId, { text: "上海" }),
+        "conflict",
+        "文字的回答返回 conflict（对话面板保留文字并提示）",
+      );
+      const end2 = await c.runEnd(v, r2.runId, 30_000);
+      c.check(end2.kind === "run_completed" && v.reply(r2.runId).includes("北京"), "父 Run 以另一台设备的回答完成");
+      c.check(inputs(v) === before2, "父 Session 没有新增输入（没有 RunRequested 或 Steered）");
+
+      const r3 = await web.submit(sid, "ask 还要订酒店吗？| 要 | 不要");
       const [own] = await v.waitFor("own question", () => (v.pendingQuestions().length ? v.pendingQuestions() : null));
       c.check(v.typedAnswerTarget(childView) === undefined, "父 Session 自己有提问时不选中");
-      const typed = await web.submit(sid, "不要");
-      c.check(typed.answered === own.callId, "文字提交给父 Session，作为它自己的提问的回答");
-      await c.runEnd(v, r2.runId);
+      const t = await typed(web, v, childView, "不要");
+      c.check(t.route.kind === "submit" && t.result.answered === own.callId, "文字提交给父 Session，作为它自己的提问的回答");
+      await c.runEnd(v, r3.runId);
+      return { sessionId: sid };
+    },
+  },
+  {
+    id: "delegation-together",
+    title: "同一轮的委托与提问",
+    description:
+      "模型同一轮返回委托与 ask_user（脚本命令 together）：Worker 按顺序推进，父 Session 的提问等委托结束才派发。" +
+      "在那之前它不算待回答，输入框的文字选中子 Agent 的提问；委托结束后父 Session 的提问才待回答，文字作为它的回答。",
+    async run(c) {
+      const web = await c.device("web", { preset: "web" });
+      const sid = await c.newSession(web);
+      const v = c.view(web, sid);
+      const childView = c.children(web);
+      const helper = c.env.helper ?? "console-helper";
+      const r = await web.submit(
+        sid,
+        `together\ncall agent__${helper} {"task":"ask 去哪个城市？| 北京 | 上海"}\nask 还要订酒店吗？| 要 | 不要`,
+      );
+      const d = await v.waitFor("delegation", () => v.delegations()[0]);
+      const cv = childView(d.childSessionId);
+      const q = await c.until("typed answer target", () => v.typedAnswerTarget(childView), [v, cv]);
+      const m = v.payloads("assistant_message").find((p) => p.run_id === r.runId);
+      c.check(m?.tool_calls?.length === 2 && m.tool_calls[1].capability === "ask_user", "模型同一轮返回委托与提问");
+      c.check(v.pendingQuestions().length === 0, "委托结束之前父 Session 的提问尚未派发，不算待回答");
+      c.check(q.sessionId === d.childSessionId && q.question === "去哪个城市？", "输入框的文字选中子 Agent 的提问");
+      const sent = await typed(web, v, childView, "上海");
+      c.check(sent.route.kind === "answer", "文字以 answer 发往子 Session");
+      const [own] = await v.waitFor("parent question", () => (v.pendingQuestions().length ? v.pendingQuestions() : null), 20_000);
+      c.check(
+        own.question === "还要订酒店吗？" && v.payloads("tool_result").some((p) => p.call_id === d.callId),
+        "委托结束后父 Session 的提问才派发",
+      );
+      c.check(v.typedAnswerTarget(childView) === undefined, "此时文字不再发往子 Session");
+      const t = await typed(web, v, childView, "不要");
+      c.check(t.route.kind === "submit" && t.result.answered === own.callId, "文字作为父 Session 自己的提问的回答");
+      const end = await c.runEnd(v, r.runId, 30_000);
+      c.check(end.kind === "run_completed", "父 Run 完成");
+      return { sessionId: sid };
+    },
+  },
+  {
+    id: "delegation-approval",
+    title: "子 Agent 审批",
+    description:
+      "子 Run 调用高风险能力（电脑的 write_file）：审批写在子 Session 里，父 Session 的界面一并展示（pendingWithDelegations，" +
+      "sessionId 为子 Session）；批准发往子 Session 后电脑执行，父 Run 完成。",
+    async run(c) {
+      const mac = await c.device("mac", { preset: "desktop" });
+      const web = await c.device("web", { preset: "web" });
+      const sid = await c.newSession(web);
+      const v = c.view(web, sid);
+      const childView = c.children(web);
+      const helper = c.env.helper ?? "console-helper";
+      const task = `call ${mac.label}__write_file ${JSON.stringify({ path: "child.txt", content: "子 Agent 写的" })}`;
+      let r;
+      let a;
+      // 新登记的设备至多 10 秒后才出现在工具中（Catalog.NodeCacheTTL）：子 Run 回复 no such tool 时稍后重试。
+      for (let i = 0; ; i++) {
+        r = await web.submit(sid, `call agent__${helper} ${JSON.stringify({ task })}`);
+        const d = await v.waitFor("delegation", () => v.delegations().find((x) => x.runId === r.runId));
+        const cv = childView(d.childSessionId);
+        a = await c.until(
+          "child approval",
+          () => v.pendingWithDelegations(childView).approvals[0] ?? (v.runEnd(r.runId) ? "ended" : undefined),
+          [v, cv],
+          20_000,
+        );
+        if (a !== "ended") break;
+        if (!v.reply(r.runId).includes("no such tool") || i >= 6) c.check(false, `子 Agent 没有请求审批（${v.reply(r.runId)}）`);
+        c.step("工具尚未出现在子 Agent 的目录缓存中，2 秒后重试");
+        await c.sleep(2000);
+      }
+      c.check(
+        a.sessionId !== sid && a.agent === helper && a.via === a.sessionId && a.capability === `${mac.label}__write_file`,
+        "父 Session 的界面看到子 Agent 的审批，发往子 Session",
+      );
+      c.check(v.pendingApprovals().length === 0, "审批写在子 Session 里，父 Session 自身没有待审批");
+      c.check(!mac.ledger.has(a.callId), "批准之前电脑没有收到调用");
+      await web.decide(a.sessionId, a.callId, true);
+      c.step("向子 Session 批准");
+      const end = await c.runEnd(v, r.runId, 30_000);
+      c.check(end.kind === "run_completed" && mac.files["child.txt"] === "子 Agent 写的", "电脑执行了子 Agent 的调用，父 Run 完成");
+      c.check(v.pendingWithDelegations(childView).approvals.length === 0, "审批随之收起");
+      await rejects(c, () => web.decide(a.sessionId, a.callId, true), "conflict", "再次审批同一调用返回 conflict");
       return { sessionId: sid };
     },
   },
@@ -724,7 +936,11 @@ export async function runScenario(s, env, log, timeoutMs = 60_000) {
     const out = await Promise.race([
       s.run(c),
       new Promise((_, reject) => {
-        t = setTimeout(() => reject(new Error(`场景超时（${timeoutMs / 1000} 秒）`)), timeoutMs);
+        t = setTimeout(() => {
+          // run 不会因为 race 输了而停下：置位取消，它之后的步骤一律失败，不再创建设备、Session 与故障规则。
+          c.cancel();
+          reject(new Error(`场景超时（${timeoutMs / 1000} 秒）`));
+        }, timeoutMs);
       }),
     ]);
     return { ok: true, ms: Date.now() - start, sessionId: out?.sessionId ?? c.sessions[0] ?? "" };

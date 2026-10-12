@@ -46,6 +46,19 @@ func TestCallsRunInOrderThenDone(t *testing.T) {
 	}
 }
 
+func TestTogetherReturnsTheCallsInOneTurn(t *testing.T) {
+	in := user("together\ncall read_file\nask 好吗？ | 好 | 不好")
+	resp, _ := generate(t, in)
+	if len(resp.ToolCalls) != 2 || resp.ToolCalls[0].GetCapability() != "macbook__read_file" || resp.ToolCalls[1].GetCapability() != "ask_user" ||
+		resp.FinishReason != "tool_calls" {
+		t.Fatalf("together = %v", resp.ToolCalls)
+	}
+	resp, _ = generate(t, in, assistant(), tool("a.txt"), tool("好"))
+	if len(resp.ToolCalls) != 0 || model.Text(resp.Content) != "done: 好" {
+		t.Fatalf("final = %q (%v)", model.Text(resp.Content), resp.ToolCalls)
+	}
+}
+
 func TestSteerStartsANewScript(t *testing.T) {
 	resp, _ := generate(t, user("call read_file"), assistant(), tool("x"), user("你好"))
 	if model.Text(resp.Content) != "echo: 你好" {
