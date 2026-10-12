@@ -6,3 +6,7 @@ bin/
 /bench-results/
 /eval-results/
 /build/
+
+# Claude Code：子智能体的 worktree 与个人设置不入库，项目设置（.claude/settings.json）入库。
+/.claude/worktrees/
+/.claude/settings.local.json

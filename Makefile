@@ -14,6 +14,8 @@ check: lint test
 tools:
 	go install github.com/bufbuild/buf/cmd/buf@v1.50.0
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.6
+	# 编辑 .go 文件后由 .claude/settings.json 的 hook 整理 import（与 go.mod 中的 x/tools 同版本）
+	go install golang.org/x/tools/cmd/goimports@v0.50.0
 
 # 开发依赖（PostgreSQL、S3 兼容对象存储；沙箱测试所用的基础镜像）
 deps-up:
