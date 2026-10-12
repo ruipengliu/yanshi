@@ -60,14 +60,18 @@ else await client.submitText(sessionId, typed);
 - **seq 是 `bigint`**（proto 的 uint64），持久保存续传位置时转成字符串。
 - **渲染辅助。**
   - `Draft` 按 [§4 的规则](./m3-duplex-channel.md#4-晚加入者补齐增量)维护正在生成的草稿：Snapshot 替换，增量追加；`end`，或 seq 大于草稿 `after_seq` 的 AssistantMessage 到达时清除；已提交的生成迟到的增量忽略。
-  - `PendingQuestions` 跟踪等待回答的 ask_user 提问，在该调用出现 ToolResult 或 Run 结束时收起。
+    - 草稿所属的 Run 结束（completed、failed、interrupted）时也清除，之后该 Run 迟到的增量不再建立草稿。断线期间生成被丢弃、Run 随后结束时，客户端收不到 `end`，重连后补发的只有终态事件，没有这条规则草稿会一直留着。
+  - `PendingQuestions` 跟踪等待回答的 ask_user 提问：
+    - 该调用派发给用户（`ToolCallStarted{node_id: "@user"}`）之后才算待回答，只出现在 AssistantMessage 中还不算。Worker 按顺序一次推进一个调用，模型同一轮返回"委托 + ask_user"时，提问要等委托结束才派发；在那之前服务端不接受对它的回答；
+    - 在该调用出现 ToolResult 或 Run 结束时收起。
   - `questionOf` 从工具调用中解析问题。
   - `PendingTracker` 跟踪顶层 Session 及其进行中的委托（递归）里等待用户的提问与审批（[委托](./m5-multi-agent.md) §4）。
     - 顶层 Session 的事件由应用喂给它。被跟踪的 Session 出现委托时，它经 Client 从头订阅子 Session；委托调用出现结果、或所在 Run 结束时，退订并收起其下的待处理项。
-    - 审批在 ApprovalDecided、该调用的结果或 Run 结束时收起。
+    - Worker 先提交 `ToolCallStarted`、再创建子 Session，发现委托立即订阅时子 Session 可能还不存在。子 Session 的订阅以 `not_found` 或 `error` 结束、而委托仍在进行时，退避后重订（200ms 起翻倍，至多 5 秒），从已收到的位置续传，已有的待处理项保留。以其他原因（`deleted` 等）结束时收起其下的待处理项，不再订阅。
+    - 提问与 `PendingQuestions` 一样，派发给用户之后才算待回答。审批在 ApprovalDecided、该调用的结果或 Run 结束时收起。
     - 每个待处理项带 kind（question、approval）、sessionId（回答或审批发往的 Session）、callId、runId、agent（子 Agent 名）、via（经由顶层的哪个直接子 Session），以及提问内容或审批说明与能力名。
-    - `typedAnswerTarget()` 给出输入框的文字应回答的提问：顶层自己没有待回答的提问、整棵树里恰好一个、且在子 Session 中时返回它，否则文字照旧提交给顶层 Session。
-    - `close()` 取消全部子订阅。
+    - `typedAnswerTarget()` 给出输入框的文字应回答的提问：顶层自己没有待回答的提问、整棵树里恰好一个、且在子 Session 中时返回它，否则文字照旧提交给顶层 Session。顶层尚未派发的提问不挡住子 Agent 的提问。
+    - `close()` 取消全部子订阅与等待中的重订。
     - 和 `Draft`、`PendingQuestions` 一样，喂给它的事件要从 seq 0 开始，否则看不到续传位置之前开始的委托与提问。
     - Go SDK 中是等价的 `nodesdk.PendingTracker`（`nodesdk.NewPendingTracker`、`OnEvent`、`Items`、`TypedAnswerTarget`、`Close`）。`OnEvent` 只更新状态，可在 SessionHandler 中调用；订阅子 Session 与 onChange 都在跟踪器自己的 goroutine 中串行进行，不阻塞连接的接收 goroutine。
 - **错误。**
@@ -114,8 +118,8 @@ let resp = try Yanshi_V1_ClientResponse(serializedBytes: client.submitText(sid, 
 - **取消。** 原生能力无法从 Go 中止：调用被取消时 SDK 不再等待结果，原生代码自行结束。
 - **消息类型。** 原生侧用 swift-protobuf / protobuf-javalite 从 `proto/` 生成，绑定层不附带。
 - **委托。** 绑定层不提供 `PendingTracker`，原生端须自行跟随进行中的委托，规则同 §2 与[委托](./m5-multi-agent.md) §4：
-  - 发现 `ToolCallStarted{node_id: "@agent/<子 Session>"}` 即从 seq 0 订阅子 Session；
-  - 把其中待处理的提问与审批一并展示，回答与审批发往子 Session；
+  - 发现 `ToolCallStarted{node_id: "@agent/<子 Session>"}` 即从 seq 0 订阅子 Session；订阅以 `not_found` 或 `error` 结束而委托仍在进行时，退避后从已收到的位置重订；
+  - 把其中待处理的提问与审批一并展示，回答与审批发往子 Session；提问在 `ToolCallStarted{node_id: "@user"}` 之后才算待回答；
   - 委托调用出现结果、或所在 Run 结束时退订，并收起这些待处理项；
   - 输入框的文字按同样的规则选择发往子 Session 的 `answer`，还是提交给顶层 Session。
 
@@ -134,14 +138,15 @@ let resp = try Yanshi_V1_ClientResponse(serializedBytes: client.submitText(sid, 
   - 订阅结束、取消订阅、在场；
   - 回调抛出异常不影响连接；
   - 每次连接重新取令牌；
-  - `Draft` 与 `PendingQuestions` 的规则；
+  - `Draft` 与 `PendingQuestions` 的规则，含 Run 结束时清除草稿、提问派发之后才待回答；
   - 同一 Session 上应用的订阅与辅助类的订阅并存：从最小的 seq 续订、各自去重、各自取消，应用取消后撤下前台状态；
   - `PendingTracker`：
     - 发现委托即订阅子 Session，子 Session 的提问与审批带 sessionId、agent、via；
     - 递归到孙 Session；
     - 委托调用的结果或 Run 结束时退订并收起，`close` 退订全部；
     - 审批的收起；委托成环时不重复订阅；
-    - `typedAnswerTarget` 的各分支：没有提问、恰好一个子提问、两个提问、顶层自己有提问。
+    - `typedAnswerTarget` 的各分支：没有提问、恰好一个子提问、两个提问、顶层自己有提问；同一轮的委托与提问，顶层的提问派发之前不挡住子提问；
+    - 子订阅以 `not_found`、`error` 结束时退避重订并从已收到的位置续传，`deleted`、委托结束或 `close` 之后不再重订。
 - 网页互通（`make check`，`internal/e2e` 的 `TestWebSDK` 启动网关，以 Node.js 运行 `sdk/web/test/interop.ts`）：
   - 两台网页设备，生成中途订阅的一台先收到 Snapshot，两台拼出的草稿都与全文一致，提交后草稿清除；
   - 在场；
