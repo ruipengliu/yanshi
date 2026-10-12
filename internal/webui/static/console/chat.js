@@ -187,7 +187,11 @@ export class ChatPanel {
     this.log.addEventListener("scroll", () => this.nearBottom() && (this.newBtn.hidden = true));
     this.off = view.on((kind) => this.schedule(kind));
     this.offDev = device.on((n) => {
-      if (n.type === "status") this.schedule("status");
+      if (n.type === "status") {
+        this.schedule("status");
+        // 连接断开时网关已结束通话：停止采集与播放，不再发 HANGUP。
+        if (this.call && this.device.status !== "online") this.endCall(null);
+      }
       if (n.type === "call") this.onCallEvent(n.event);
     });
     this.root.addEventListener("dragover", (e) => e.preventDefault());
@@ -204,6 +208,9 @@ export class ChatPanel {
     this.offDev();
     for (const off of this.childOffs.values()) off();
     this.endCall("hangup");
+    // 面板销毁时正在录的语音消息丢弃，并释放麦克风。
+    this.recorder?.stop();
+    this.recorder = null;
   }
 
   /**
@@ -989,13 +996,16 @@ export class ChatPanel {
 
   async startVoice() {
     if (this.recorder) return;
-    this.recorder = new Recorder();
+    const r = (this.recorder = new Recorder());
     this.micBtn.classList.add("recording");
     try {
-      await this.recorder.start((peak) => this.micBtn.style.setProperty("--level", Math.min(1, peak * 3)));
+      // 松开按钮（stopVoice）可能早于麦克风打开：Recorder 在打开后发现已停止时释放麦克风。
+      await r.start((peak) => this.micBtn.style.setProperty("--level", Math.min(1, peak * 3)));
     } catch (e) {
-      this.recorder = null;
-      this.micBtn.classList.remove("recording");
+      if (this.recorder === r) {
+        this.recorder = null;
+        this.micBtn.classList.remove("recording");
+      }
       toast(`无法打开麦克风：${e.message}`, "error");
     }
   }
@@ -1036,9 +1046,12 @@ export class ChatPanel {
       c.ready = true;
       c.model = ev.ready.model;
       c.rate = ev.ready.output_sample_rate || 24000;
+      // 打开麦克风是异步的：通话在它完成之前结束（挂断、设备断开）时，打开后立即释放。
       c.mic
         .start((pcm) => !c.muted && this.device.sendAudio(c.id, pcm))
+        .then(() => this.call !== c && c.mic.stop())
         .catch((e) => {
+          if (this.call !== c) return;
           toast(`无法打开麦克风：${e.message}`, "error");
           this.endCall("hangup");
         });
