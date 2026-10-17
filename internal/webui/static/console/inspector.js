@@ -9,7 +9,7 @@
 //   验证    验证场景（scenarios.js）。
 
 import { modelLine, splitTool } from "./chat.js";
-import { payloadOf, textOf } from "./device.js";
+import { backgroundResultOf, payloadOf, textOf } from "./device.js";
 import { SCENARIOS } from "./scenarios.js";
 import { clock, fill, h, hue, jsonView, short, toast } from "./ui.js";
 
@@ -170,6 +170,7 @@ export class Inspector {
           chip("approval", "审批 / 提问"),
           chip("delegate", "委托"),
           chip("decision", "判断"),
+          chip("bg", "后台调用"),
           chip("fault", "注入的故障"),
           chip("sys", "Attempt / 挂起 / 压缩"),
           this.focus ? h("button", { class: "btn small", onclick: () => ((this.focus = ""), this.render()) }, "展开全部 Run") : null,
@@ -269,10 +270,11 @@ export class Inspector {
       this.rawBody ?? "",
     );
     raw.addEventListener("input", () => (this.rawBody = raw.value));
+    // 帧页随新帧重绘：所选的发送目标记在 rawTarget 中，重绘时恢复，否则每来一帧就跳回第一台设备。
     const target = h(
       "select",
-      {},
-      devices.map((d) => h("option", { value: d.rec.id }, d.sim.label || d.rec.label)),
+      { onchange: (e) => (this.rawTarget = e.target.value) },
+      devices.map((d) => h("option", { value: d.rec.id, selected: d.rec.id === this.rawTarget }, d.sim.label || d.rec.label)),
     );
     const sid = this.ctx.sessionId() || "<session>";
     const templates = {
@@ -464,11 +466,15 @@ export class Inspector {
         ),
       );
     }
+    // 故障页每 2 秒随轮询重绘：编辑过的参数按故障类型保存在 faultParams 中，重绘时沿用，不恢复成默认值。
+    const kind = this.faultKind ?? "model_error";
+    this.faultParams ??= {};
+    this.faultParams[kind] ??= { ...(FAULTS[kind].params ?? {}) };
     const form = {
-      kind: this.faultKind ?? "model_error",
+      kind,
       count: this.faultCount ?? 1,
       global: !!this.faultGlobal,
-      params: { ...(FAULTS[this.faultKind ?? "model_error"].params ?? {}) },
+      params: this.faultParams[kind],
     };
     const paramInputs = Object.entries(form.params).map(([k, v]) =>
       h(
@@ -831,11 +837,21 @@ function sessionTimeline(view, opts) {
   );
 }
 
+/** bgOrigin 是后台调用（ADR-0035）的来处：call_id → 转入后台时所在的 Run。 */
+function bgOrigin(view) {
+  const out = new Map();
+  for (const p of view.payloads("tool_result")) if (p.backgrounded) out.set(p.call_id, p.run_id);
+  return out;
+}
+
 function runTimeline(view, req, opts) {
   const runId = req.run_id;
+  // 后台调用的了结与取消也列在发起它的 Run 下面：它们可能发生在 Run 结束很久之后。
+  const origin = bgOrigin(view);
   const events = view.events.filter((e) => {
     const [, p] = payloadOf(e);
-    return p.run_id === runId;
+    const bg = backgroundResultOf(e)?.call_id ?? e.background_cancelled?.call_id;
+    return p.run_id === runId || (bg && origin.get(bg) === runId);
   });
   const t0 = Date.parse(events[0]?.time ?? 0);
   const end = view.runEnd(runId);
@@ -867,7 +883,7 @@ function runTimeline(view, req, opts) {
     const right = res ? pos(res.time) : "100%";
     callBars.push(
       h("div", {
-        class: `bar call ${res?.tool_result?.is_error ? "error" : ""}`,
+        class: `bar call ${res?.tool_result?.is_error ? "error" : ""} ${res?.tool_result?.backgrounded ? "background" : ""}`,
         style: { left, width: `calc(${right} - ${left})` },
         title: view.callCapability(e.tool_call_started.call_id),
       }),
@@ -956,8 +972,27 @@ function timelineItems(view, events, opts) {
     const [kind, p] = payloadOf(e);
     switch (kind) {
       case "run_requested":
-      case "steered":
+      case "steered": {
+        const bg = backgroundResultOf(e);
+        if (bg) {
+          const where = p.run_id === (bgOrigin(view).get(bg.call_id) ?? "") ? "" : ` → ${kind === "steered" ? "并入" : "开启"} Run ${short(p.run_id)}`;
+          item(
+            e,
+            "bg",
+            0,
+            h("b", {}, bg.reason === "timeout" ? "后台调用到期 " : bg.is_error ? "后台结果（错误） " : "后台结果 "),
+            h("code", {}, bg.capability),
+            h("span", { class: "muted" }, where),
+            " ",
+            textOf(bg.content).slice(0, 120),
+          );
+          break;
+        }
         item(e, "input", 0, h("b", {}, kind === "steered" ? "插话 " : "输入 "), inputText(p.input));
+        break;
+      }
+      case "background_cancelled":
+        item(e, "bg", 0, h("b", {}, "取消后台调用 "), h("code", {}, p.capability), h("span", { class: "muted" }, ` · ${p.by ?? ""}`));
         break;
       case "attempt_started":
         item(
@@ -1006,6 +1041,17 @@ function timelineItems(view, events, opts) {
         break;
       }
       case "tool_result":
+        if (p.backgrounded) {
+          item(
+            e,
+            "bg",
+            p.attempt,
+            h("b", {}, "转入后台 "),
+            h("code", {}, view.callCapability(p.call_id)),
+            h("span", { class: "muted" }, ` · 设备 ${short(p.backgrounded.node_id)} 离线，Run 继续 · 截止 ${clock(p.backgrounded.deadline)}`),
+          );
+          break;
+        }
         item(
           e,
           p.is_error ? "call error" : "call",
@@ -1081,8 +1127,13 @@ export function summarize(kind, p) {
     case "session_created":
       return `${p.business_line}/${p.end_user} · ${p.agent?.name}@${p.agent?.version}${p.parent ? ` · 父 ${short(p.parent.session_id)}` : ""}`;
     case "run_requested":
-    case "steered":
+    case "steered": {
+      const bg = (p.input ?? []).length === 1 ? p.input[0].background_result : undefined;
+      if (bg) return `[${bg.reason === "timeout" ? "后台调用到期" : "后台结果"} ${bg.capability}] ${textOf(bg.content).slice(0, 80)}`;
       return inputText(p.input);
+    }
+    case "background_cancelled":
+      return `${p.call_id} ${p.capability}`;
     case "assistant_message":
       return (p.tool_calls ?? []).length
         ? `→ ${(p.tool_calls ?? []).map((c) => c.capability).join("、")}`
@@ -1117,7 +1168,12 @@ function stateSummary(q, json) {
       kv("Agent", `${json.agent?.name ?? ""}@${json.agent?.version ?? ""}`);
       kv("状态", json.closed ? "已关闭" : "打开");
       for (const r of json.runs ?? [])
-        kv(`Run ${short(r.run_id)}`, `${r.status}${r.waiting ? ` · 等待：${JSON.stringify(r.waiting)}` : ""}`);
+        kv(
+          `Run ${short(r.run_id)}`,
+          `${r.status}${r.waiting ? ` · 等待：${JSON.stringify(r.waiting)}` : ""}${r.from_background ? ` · 由后台调用 ${short(r.from_background)} 开启` : ""}`,
+        );
+      for (const b of json.background ?? [])
+        kv(`后台 ${short(b.call_id)}`, `${b.capability} · 设备${b.node_online ? "在线" : "离线"} · 截止 ${clock(b.deadline)}`);
       if (json.parent) kv("父 Session", short(json.parent.session_id));
       break;
     }

@@ -221,10 +221,11 @@ func (s *Store) Update(ctx context.Context, st *State, decide func(*State) (Deci
 	return fmt.Errorf("%w: session %s", ErrTooManyConflicts, st.SessionID)
 }
 
-// CallHistory 是一个调用在日志中的记录：是否经 ask_user 提问、是否请求过审批。
+// CallHistory 是一个调用在日志中的记录：是否经 ask_user 提问、是否请求过审批、是否转入过后台。
 type CallHistory struct {
 	Asked             bool
 	ApprovalRequested bool
+	Backgrounded      bool
 }
 
 // historyPage 是扫描日志时每页读取的事件数。
@@ -260,6 +261,7 @@ func (s *Store) HistoryCall(ctx context.Context, st *State, callID string, capab
 				found = true
 				h.Asked = h.Asked || c.Call.GetCapability() == capability
 				h.ApprovalRequested = h.ApprovalRequested || c.Approval != nil
+				h.Backgrounded = h.Backgrounded || c.Background
 			}
 		}
 	}
@@ -274,6 +276,9 @@ func (s *Store) HistoryCall(ctx context.Context, st *State, callID string, capab
 		}
 		if e.GetApprovalRequested().GetCallId() == callID {
 			h.ApprovalRequested = true
+		}
+		if r := e.GetToolResult(); r.GetCallId() == callID && r.GetBackgrounded() != nil {
+			h.Backgrounded = true
 		}
 		return e.GetSeq() < st.Seq
 	})

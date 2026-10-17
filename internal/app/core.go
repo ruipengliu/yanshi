@@ -52,6 +52,11 @@ type Options struct {
 	// DefaultTimeout 用于未声明超时的设备能力；NodeCacheTTL > 0 时缓存每个 EndUser 的 Node 列表（capability.Catalog）。
 	DefaultTimeout time.Duration
 	NodeCacheTTL   time.Duration
+	// BackgroundGrace 与 BackgroundTimeout 是后台调用的宽限期与后台时限（ADR-0035）：调用离线设备时，设备离线超过宽限期
+	// 就转入后台，Run 不再等它；后台调用至多等到后台时限。零值取默认（20 秒、24 小时）；BackgroundGrace < 0 时不转后台，
+	// 调用离线设备的 Run 挂起到调用的截止时间。
+	BackgroundGrace   time.Duration
+	BackgroundTimeout time.Duration
 
 	// 以下为 nil 或零值时对应功能关闭，与各包自身的约定一致。
 	Moderator moderation.Moderator
@@ -149,6 +154,9 @@ func NewCore(stores Stores, opts Options) *Core {
 	c.Service = &service.Service{Store: c.Store, Agents: opts.Agents, Nodes: c.Dispatch, Index: stores.Index,
 		Deletions: stores.Deletions, Janitor: stores.JanitorQueue, Quotas: opts.Quotas, Moderator: moderator, Artifacts: c.Artifacts}
 	c.Delegator.Service = c.Service
+	// 设备结果经 Service 写入：调用已转入后台时，结果是一条输入（ADR-0035）。
+	c.Hub.Results = c.Service
+	c.Hub.Queue = stores.Queue
 	return c
 }
 
@@ -162,6 +170,10 @@ func (c *Core) WorkerConfig(id string, pool workqueue.Pool, idle *workqueue.Idle
 		LeaseTTL: c.opts.LeaseTTL, Heartbeat: c.opts.LeaseTTL / 3, Idle: idle, Pool: pool,
 		Meter: c.opts.Meter, Quotas: c.opts.Quotas, Moderator: c.Service.Moderator,
 		DrainTimeout: c.opts.DrainTimeout, Faults: c.opts.Injector,
+		Background: c.Service, BackgroundGrace: c.opts.BackgroundGrace, BackgroundTimeout: c.opts.BackgroundTimeout,
+	}
+	if c.opts.BackgroundGrace >= 0 {
+		cfg.Devices = c.Stores.Dir
 	}
 	if c.Notifier != nil {
 		cfg.Notify = c.Notifier

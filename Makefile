@@ -36,8 +36,14 @@ lint: web-deps
 	PATH=$(GOBIN):$$PATH buf lint
 	cd sdk/web && pnpm lint
 
+# internal/sim 的全部种子不在竞争检测下跑：World 由测试确定性地逐步推进，其中的并发部分（如 Worker 操作期间的监视
+# goroutine）由所在包的单元测试与 e2e 在 -race 下覆盖；竞争检测在这里却让它慢十几倍（种子并行后仍需约 2.5 分钟，
+# 不带 -race 约 40 秒）。竞争检测在 sim 上真正能查的是并行的 World 之间是否共享了可变状态：确定性测试同时运行
+# 几个 World，留在 -race 下检查这一点（同时也查到这几个 World 内部的监视 goroutine）。
 test: deps-up web
-	go test -race ./...
+	go test -race $$(go list ./... | grep -v '^yanshi/internal/sim$$')
+	go test ./internal/sim
+	go test -race ./internal/sim -run TestSimulationIsDeterministic
 
 web-deps:
 	cd sdk/web && pnpm install --frozen-lockfile --silent
@@ -75,9 +81,10 @@ mobile: build/swift-protobuf/Package.swift
 	scripts/mobile-smoke-ios.sh
 
 # 更多种子的确定性模拟测试，含 PostgreSQL 差分测试
-# 全量种子约需 10 分钟（PostgreSQL 差分测试占大半），超过 go test 默认的 10 分钟时限。
+# 种子并行模拟：10 核上约 4 分钟（PostgreSQL 差分测试占六成，受连接数所限至多 8 个种子同时运行）。
+# 核数少时接近串行的约 10 分钟，会碰到 go test 默认的 10 分钟时限，因此放宽到 20 分钟。
 sim: deps-up
-	go test ./internal/sim -sim.seeds=2000 -sim.pgseeds=100 -timeout 40m
+	go test ./internal/sim -sim.seeds=2000 -sim.pgseeds=100 -timeout 20m
 
 # 评测（docs/design/m4-eval.md）：消耗真实 token，不在 check 中；需要 ARK_API_KEY（火山方舟）。
 # 改动模型、提示词、AgentDef 或召回、压缩、Memory、MCP 中给模型的文本时必须运行。

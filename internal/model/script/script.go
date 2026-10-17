@@ -8,9 +8,10 @@
 //	ask <问题> [| 选项 | 选项…]      经 ask_user 向用户提问（ADR-0025）
 //	stream <n>                      全部调用完成后，在约 n×20ms 内逐段流式输出 n 段
 //	think <n>                       每次模型调用先流式输出 n 段思考过程（ADR-0034），约 n×20ms
+//	together                        全部 call 与 ask 在同一次模型调用中一起返回（一轮多个调用），而不是依次各占一轮
 //
 // 有调用时，全部完成后回复 "done: <最后一个结果>"（有 stream 时改为流式输出）；没有命令时复述输入（"echo: …"）。
-// 插话开启新的命令序列：最后一条用户输入才是当前的脚本。
+// 插话开启新的命令序列：最后一条用户输入才是当前的脚本。后台调用的了结与取消（"[后台调用…]"）不是命令，复述它。
 package script
 
 import (
@@ -44,22 +45,35 @@ type plan struct {
 	stream int
 	think  int
 	text   string
+	// together：剩下的调用在同一次模型调用中一起返回。用于检查 Worker 按顺序推进同一轮的多个调用时客户端的表现
+	// （例如委托与 ask_user 同一轮：提问要等委托结束才派发）。
+	together bool
 }
 
 func (Provider) Generate(ctx context.Context, req *model.Request, onDelta func(model.Delta)) (*model.Response, error) {
 	input, results := current(req.Messages)
 	p := parse(input)
+	if strings.HasPrefix(input, "[后台调用") {
+		// 后台调用的了结与取消由平台送达（ADR-0035）：其中是设备返回的数据，不是命令，复述它。
+		p = plan{text: strings.TrimSpace(input)}
+	}
 	resp := &model.Response{Model: "script/" + req.Model, Usage: &v1.Usage{InputTokens: uint64(model.EstimateRequest(req))}}
 	if err := think(ctx, resp, p.think, onDelta); err != nil {
 		return nil, err
 	}
 	if len(results) < len(p.calls) {
-		c := p.calls[len(results)]
-		name := match(req.Tools, c.tool)
-		if name == "" {
-			return reply(ctx, resp, "no such tool: "+c.tool, 0, onDelta)
+		next := p.calls[len(results) : len(results)+1]
+		if p.together {
+			next = p.calls[len(results):]
 		}
-		resp.ToolCalls = []*v1.ToolCall{{CallId: "x", Capability: name, ArgumentsJson: c.args}}
+		for _, c := range next {
+			name := match(req.Tools, c.tool)
+			if name == "" {
+				return reply(ctx, resp, "no such tool: "+c.tool, 0, onDelta)
+			}
+			// 调用 ID 由 Worker 改写为全局唯一的 ID。
+			resp.ToolCalls = append(resp.ToolCalls, &v1.ToolCall{CallId: "x", Capability: name, ArgumentsJson: c.args})
+		}
 		resp.FinishReason = "tool_calls"
 		return resp, nil
 	}
@@ -142,6 +156,8 @@ func parse(input string) plan {
 			if n, err := strconv.Atoi(rest); err == nil && n > 0 {
 				p.think = min(n, MaxStream)
 			}
+		case "together":
+			p.together = true
 		}
 	}
 	return p

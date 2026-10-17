@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/clock"
 	"yanshi/internal/node"
@@ -170,6 +172,33 @@ func RunInbox(t *testing.T, newInbox func(t *testing.T) node.Inbox) {
 		}
 		if items[0].GetCapability() != "read_file" || items[0].GetSessionId() != "s" {
 			t.Fatalf("item = %v", items[0])
+		}
+	})
+
+	t.Run("PutExtendsDeadline", func(t *testing.T) {
+		in := newInbox(t)
+		at := func(sec int64) *v1.Invoke {
+			i := inv("a")
+			i.Deadline = timestamppb.New(time.Unix(sec, 0))
+			return i
+		}
+		_ = in.Put(ctx, "n", at(100))
+		_ = in.Put(ctx, "n", inv("b"))
+		_, v0, _ := in.Pending(ctx, "n")
+		if err := in.Put(ctx, "n", at(200)); err != nil {
+			t.Fatal(err)
+		}
+		items, v1, _ := in.Pending(ctx, "n")
+		if len(items) != 2 || items[0].GetCallId() != "a" || items[0].GetDeadline().GetSeconds() != 200 {
+			t.Fatalf("pending = %v", items)
+		}
+		if v1 == v0 {
+			t.Fatal("extending a deadline did not bump the version")
+		}
+		_ = in.Put(ctx, "n", at(150)) // 过时的派发不把截止时间改回去
+		items, v2, _ := in.Pending(ctx, "n")
+		if items[0].GetDeadline().GetSeconds() != 200 || v2 != v1 {
+			t.Fatalf("stale put changed the item: %v (version %d → %d)", items[0], v1, v2)
 		}
 	})
 

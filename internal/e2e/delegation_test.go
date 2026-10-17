@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"yanshi/internal/delegation"
 	"yanshi/internal/ids"
 	"yanshi/internal/session"
+	"yanshi/sdk/nodesdk"
 )
 
 // 委托（docs/design/m5-multi-agent.md）：父 Run 调用 agent__helper，平台派生子 Session 执行，子 Run 的回复作为结果
@@ -119,6 +121,56 @@ func TestDelegationOrphanStops(t *testing.T) {
 	if last := string(events.Events[len(events.Events)-1]); !strings.Contains(last, delegation.ParentDone) {
 		t.Fatalf("child run was not stopped for its parent: last event %s", last)
 	}
+}
+
+// 子 Agent 的提问写在子 Session 里：只订阅父 Session 的客户端经 PendingTracker 跟随委托看到它，输入框的文字按
+// TypedAnswerTarget 以回答发往子 Session，父 Run 随委托完成（docs/design/m5-multi-agent.md §4）。
+func TestDelegatedQuestionAnsweredByText(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	c := e.startClient("web", userToken, nil)
+	sid, err := c.CreateSession(ctx, "dev", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var notified atomic.Int32
+	tr := nodesdk.NewPendingTracker(c, sid, func([]nodesdk.PendingItem) { notified.Add(1) })
+	defer tr.Close()
+	h := &trackingRecorder{tracker: tr}
+	c.Subscribe(sid, 0, h)
+	if _, _, err := c.SubmitText(ctx, sid, `call agent__helper {"task":"ask 去哪个城市？| 北京 | 上海"}`); err != nil {
+		t.Fatal(err)
+	}
+	var q *nodesdk.PendingItem
+	eventually(t, "the sub-agent's question", 10*time.Second, func() bool { q = tr.TypedAnswerTarget(); return q != nil })
+	if q.Question.Question != "去哪个城市？" || q.Agent != "helper" || q.SessionID == sid || q.Via != q.SessionID {
+		t.Fatalf("question %+v", q)
+	}
+	eventually(t, "onChange", 5*time.Second, func() bool { return notified.Load() > 0 })
+	if err := c.Answer(ctx, q.SessionID, q.CallID, nil, nil, "上海"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the parent run completes", 10*time.Second, func() bool { return h.completed(1) })
+	if got := e.lastAssistantText(sid); !strings.Contains(got, "上海") {
+		t.Fatalf("parent reply %q", got)
+	}
+	eventually(t, "the question closes", 5*time.Second, func() bool { return len(tr.Items()) == 0 })
+	// 别的设备已经回答过：conflict（客户端保留文字、提示用户，不改投父 Session）。
+	err = c.Answer(ctx, q.SessionID, q.CallID, nil, nil, "北京")
+	if re, ok := err.(*nodesdk.RequestError); !ok || re.Code != "conflict" {
+		t.Fatalf("answering again: %v", err)
+	}
+}
+
+// trackingRecorder 记录父 Session 的事件，并交给 PendingTracker。
+type trackingRecorder struct {
+	recorder
+	tracker *nodesdk.PendingTracker
+}
+
+func (r *trackingRecorder) OnEvent(e *v1.Event) {
+	r.recorder.OnEvent(e)
+	r.tracker.OnEvent(e)
 }
 
 // 来自外部的调用结果以影子模式判断是否含注入（docs/design/m6-decisions.md §6）：记为 DecisionMade，不影响执行。

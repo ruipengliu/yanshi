@@ -97,7 +97,10 @@ type Turn struct {
 	// Answer 是本轮遇到 ask_user 提问时的回答方式；为空时本轮停在提问处（状态 asked），
 	// 下一轮的输入即作为回答（与用户直接打字回答一致）。
 	Answer *AnswerScript `yaml:"answer"`
-	Expect Expect        `yaml:"expect"`
+	// AwaitBackground 为 true 时本轮不提交输入，而是等待后台调用的了结（ADR-0035）：设备上线后送达的结果（或到期）
+	// 作为一条输入开启新 Run（或并入进行中的 Run），本轮检查的是那个 Run。须与 Input 二选一。
+	AwaitBackground bool   `yaml:"await_background"`
+	Expect          Expect `yaml:"expect"`
 }
 
 // CardActionScript 模拟用户在卡片上点按钮或点选列表项。Action 为空时点第一个按钮；Label 非空时点标签包含它的按钮或条目。
@@ -134,10 +137,12 @@ type MemoryMatch struct {
 type Expect struct {
 	// Status 是本轮结束时 Run 的状态，可用 "|" 列出多个可接受的值，如 "completed|asked"
 	// （asked：停在 ask_user 提问处等待回答）。默认 completed。
-	Status    string   `yaml:"status"`
-	Calls     []string `yaml:"calls"`
-	NoCalls   []string `yaml:"no_calls"`
-	Approvals *Range   `yaml:"approvals"`
+	Status  string   `yaml:"status"`
+	Calls   []string `yaml:"calls"`
+	NoCalls []string `yaml:"no_calls"`
+	// MaxCalls 限制名称匹配（glob）的调用在本轮出现的次数，如 {"macbook__read_file": 1}：调用转入后台后不应重试。
+	MaxCalls  map[string]int `yaml:"max_calls"`
+	Approvals *Range         `yaml:"approvals"`
 	// Questions 是本轮 ask_user 提问次数的范围。
 	Questions     *Range            `yaml:"questions"`
 	ReplyContains []string          `yaml:"reply_contains"`
@@ -185,6 +190,11 @@ func LoadSuite(dir string) ([]*Case, error) {
 		}
 		if len(c.Turns) == 0 {
 			return nil, fmt.Errorf("%s: no turns", f)
+		}
+		for i, t := range c.Turns {
+			if t.AwaitBackground && (t.Input != "" || t.CardAction != nil || t.NewSession || c.Call) {
+				return nil, fmt.Errorf("%s: turn %d awaits a background result and cannot also submit input", f, i+1)
+			}
 		}
 		for _, a := range c.Setup.Agents {
 			if agents[a.Name] {

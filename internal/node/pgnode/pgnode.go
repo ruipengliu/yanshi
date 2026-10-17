@@ -172,8 +172,29 @@ func (in *Inbox) Put(ctx context.Context, nodeID string, inv *v1.Invoke) error {
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO inbox (node_id, call_id, data, ord, session_id) VALUES ($1, $2, $3, nextval('inbox_seq'), $4)
 			ON CONFLICT DO NOTHING`, nodeID, inv.GetCallId(), b, inv.GetSessionId())
-		if err != nil || tag.RowsAffected() == 0 {
+		if err != nil {
 			return err
+		}
+		if tag.RowsAffected() == 0 {
+			// 已有同一调用：只在延长截止时间时替换（node.Extends），位置不变。
+			var data []byte
+			err := tx.QueryRow(ctx, `SELECT data FROM inbox WHERE node_id = $1 AND call_id = $2 FOR UPDATE`, nodeID, inv.GetCallId()).Scan(&data)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil // 与撤回并发：已被移除，不再放回
+			}
+			if err != nil {
+				return err
+			}
+			cur := &v1.Invoke{}
+			if err := proto.Unmarshal(data, cur); err != nil {
+				return err
+			}
+			if !node.Extends(cur, inv) {
+				return nil
+			}
+			if _, err := tx.Exec(ctx, `UPDATE inbox SET data = $3 WHERE node_id = $1 AND call_id = $2`, nodeID, inv.GetCallId(), b); err != nil {
+				return err
+			}
 		}
 		return in.bump(ctx, tx, nodeID)
 	})

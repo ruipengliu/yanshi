@@ -161,8 +161,8 @@ message LiveDelta {
 }
 
 // ClientRequest 是会话客户端的操作；每个请求恰有一个 ClientResponse。
-// 连接断开时结果未知：带 input_id 的提交可以原样重试（按 ID 去重）；中断、关闭重复执行是无操作，审批、回答重复执行
-// 返回 conflict，都不会产生重复效果；重试创建 Session 会再创建一个。
+// 连接断开时结果未知：带 input_id 的提交可以原样重试（按 ID 去重）；中断、关闭重复执行是无操作，审批、回答、取消后台调用
+// 重复执行返回 conflict，都不会产生重复效果；重试创建 Session 会再创建一个。
 message ClientRequest {
   // 由客户端生成，在本连接内唯一；响应原样带回。
   string request_id = 1;
@@ -173,6 +173,7 @@ message ClientRequest {
     DecideApproval decide = 5;
     CloseSession close = 6;
     AnswerQuestion answer = 7;
+    CancelBackground cancel_background = 8;
   }
 }
 
@@ -217,6 +218,13 @@ message AnswerQuestion {
   // 填写的字段，键为字段 name。
   map<string, string> values = 4;
   string text = 5;
+}
+
+// CancelBackground 取消一个未了结的后台调用（ADR-0035）：设备上线后不再执行它，已投递的尽力取消。不开启新 Run，模型在之后
+// 的上下文中看到它已取消。调用已了结（已有结果、已到期或已取消）时返回 conflict。
+message CancelBackground {
+  string session_id = 1;
+  string call_id = 2;
 }
 
 message ClientResponse {

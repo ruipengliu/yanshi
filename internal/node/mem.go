@@ -124,8 +124,12 @@ func (m *MemInbox) Put(_ context.Context, nodeID string, inv *v1.Invoke) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b := m.box(nodeID)
-	for _, it := range b.items {
+	for i, it := range b.items {
 		if it.GetCallId() == inv.GetCallId() {
+			if Extends(it, inv) {
+				b.items[i] = proto.Clone(inv).(*v1.Invoke)
+				b.bump()
+			}
 			return nil
 		}
 	}

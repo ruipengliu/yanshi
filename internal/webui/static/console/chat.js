@@ -7,7 +7,7 @@
 
 import { Mic, Player, Recorder } from "./audio.js";
 import { renderApproval, renderCard, renderQuestion } from "./cards.js";
-import { payloadOf, textOf } from "./device.js";
+import { RequestError, backgroundResultOf, newInputId, payloadOf, routeInput, textOf } from "./device.js";
 import { render as markdown } from "./markdown.js";
 import { bytes, clock, copyButton, dur, fill, h, hue, num, reconcile, short, toast } from "./ui.js";
 
@@ -53,10 +53,15 @@ export function toolLabel(capability) {
 
 /**
  * callIndex 汇总每个调用的进展：call_id → {capability, args, runId, attempt, asked, started, startedAt, nodeId,
- * executions, done, error, result, blocks, doneAt, approval, summary}。
+ * executions, done, error, result, blocks, doneAt, approval, summary, runEnded}。runEnded 是所属 Run 的终态
+ * （run_completed、run_failed、run_interrupted），Run 尚未结束时为空。
+ *
+ * 转入后台的调用（ADR-0035）另有 background（Run 中的结果只是占位说明）、bgDeadline、bgAt（转入后台的时刻），了结后有
+ * bgSettled（result、timeout、cancelled）与 bgSettledAt；设备结果送达时 done、error、result、blocks 换成设备的结果。
  */
 export function callIndex(view) {
   const out = new Map();
+  const ended = new Map();
   const get = (id) => {
     if (!out.has(id)) out.set(id, { executions: 0 });
     return out.get(id);
@@ -77,16 +82,36 @@ export function callIndex(view) {
       const c = get(p.call_id);
       c.executions++;
       Object.assign(c, { started: true, startedAt: c.startedAt ?? t, nodeId: p.node_id ?? "", attempt: p.attempt ?? c.attempt });
-    } else if (kind === "tool_result")
+    } else if (kind === "tool_result") {
       Object.assign(get(p.call_id), { done: true, error: !!p.is_error, result: textOf(p.content), blocks: p.content, doneAt: t });
+      if (p.backgrounded) Object.assign(get(p.call_id), { background: true, bgDeadline: p.backgrounded.deadline, bgAt: t });
+    } else if (kind === "background_cancelled") Object.assign(get(p.call_id), { bgSettled: "cancelled", bgSettledAt: t });
+    else if (backgroundResultOf(e)) {
+      const r = backgroundResultOf(e);
+      const c = get(r.call_id);
+      Object.assign(c, { bgSettled: r.reason || "result", bgSettledAt: t });
+      if (r.reason !== "timeout") Object.assign(c, { error: !!r.is_error, result: textOf(r.content), blocks: r.content, doneAt: t });
+    }
     else if (kind === "approval_requested") Object.assign(get(p.call_id), { approval: "pending", summary: p.summary, approvalAt: t });
     else if (kind === "approval_decided") Object.assign(get(p.call_id), { approval: p.approved ? "approved" : "denied", decidedAt: t });
+    else if (kind === "run_completed" || kind === "run_failed" || kind === "run_interrupted") ended.set(p.run_id, kind);
   }
+  for (const c of out.values()) c.runEnded = ended.get(c.runId) ?? "";
   return out;
 }
 
-/** 调用的状态：queued、running、approval、denied、error、done。 */
+/**
+ * 调用的状态：queued、running、approval、denied、error、done、aborted。Run 中断或失败时，还没有结果的调用不会再有结果：
+ * 显示为 aborted（已终止），而不是一直"执行中""待审批"。已有结果的调用保留原状态。
+ */
 export function callState(st = {}) {
+  // 后台调用（ADR-0035）：Run 不再等它；了结之前在后台排队，之后是设备的结果、到期或取消。
+  if (st.background) {
+    if (!st.bgSettled) return "background";
+    if (st.bgSettled === "result") return st.error ? "error" : "done";
+    return st.bgSettled === "timeout" ? "expired" : "cancelled";
+  }
+  if (!st.done && st.runEnded && st.approval !== "denied") return "aborted";
   if (st.approval === "pending" && !st.done) return "approval";
   if (st.approval === "denied") return "denied";
   if (st.done) return st.error ? "error" : "done";
@@ -94,7 +119,23 @@ export function callState(st = {}) {
   return "queued";
 }
 
-const STATE_TEXT = { queued: "排队", running: "执行中", approval: "待审批", denied: "已拒绝", error: "出错", done: "完成" };
+const STATE_TEXT = {
+  queued: "排队",
+  running: "执行中",
+  approval: "待审批",
+  denied: "已拒绝",
+  error: "出错",
+  done: "完成",
+  aborted: "已终止",
+  background: "后台排队中",
+  expired: "已到期，未执行",
+  cancelled: "已取消",
+};
+
+/** 后台调用的了结（ADR-0035）在对话中的说明：设备结果、到期与取消都是平台的消息，不是用户的气泡。 */
+function backgroundNote(icon, cls, text, extra) {
+  return h("div", { class: `bg-note ${cls}` }, h("span", { class: "bg-icon" }, icon), h("div", { class: "bg-text" }, text, extra));
+}
 
 /** 模型信息行的文字：模型 · 输入（缓存）· 输出 · 思考 · 首字 · 耗时 · 结束原因。 */
 export function modelLine(m) {
@@ -124,6 +165,14 @@ export class ChatPanel {
     this.ctx = ctx;
     this.compact = compact;
     this.attachments = [];
+    // 上传中的附件（Promise）：发送等它们完成，否则文件留给下一条，文字也可能被当作子 Agent 提问的回答。
+    this.uploads = new Set();
+    // 上次发送失败的输入（内容与 input_id）：原样再发时沿用同一个 input_id，服务端按它去重。
+    this.failed = null;
+    // 卡片字段（card_id/call_id → 值）与提问（sessionId/callId → 选项、字段、文字）的填写：同一 Run 的后续消息会重建
+    // 整段轮次与卡片，填写的值保存在这里，重建时恢复。
+    this.cardValues = new Map();
+    this.questionState = new Map();
     this.call = null;
     this.queued = false;
     this.seen = 0;
@@ -167,7 +216,11 @@ export class ChatPanel {
     this.log.addEventListener("scroll", () => this.nearBottom() && (this.newBtn.hidden = true));
     this.off = view.on((kind) => this.schedule(kind));
     this.offDev = device.on((n) => {
-      if (n.type === "status") this.schedule("status");
+      if (n.type === "status") {
+        this.schedule("status");
+        // 连接断开时网关已结束通话：停止采集与播放，不再发 HANGUP。
+        if (this.call && this.device.status !== "online") this.endCall(null);
+      }
       if (n.type === "call") this.onCallEvent(n.event);
     });
     this.root.addEventListener("dragover", (e) => e.preventDefault());
@@ -184,6 +237,9 @@ export class ChatPanel {
     this.offDev();
     for (const off of this.childOffs.values()) off();
     this.endCall("hangup");
+    // 面板销毁时正在录的语音消息丢弃，并释放麦克风。
+    this.recorder?.stop();
+    this.recorder = null;
   }
 
   /**
@@ -322,11 +378,26 @@ export class ChatPanel {
       const [kind, p] = payloadOf(e);
       switch (kind) {
         case "run_requested":
-        case "steered":
+        case "steered": {
+          const bg = backgroundResultOf(e);
+          if (bg) {
+            out.push(this.backgroundSettled(bg, p, e));
+            turn = null;
+            break;
+          }
           if (p.from_call) fromCall.add(p.run_id);
           out.push(this.userBubble(p, e));
           turn = null;
           break;
+        }
+        case "background_cancelled": {
+          const l = toolLabel(p.capability);
+          out.push(
+            backgroundNote("🚫", "cancelled", `已取消后台调用 ${l.name}${l.target ? ` @${l.target}` : ""}`, h("small", {}, " · ", clock(e.time))),
+          );
+          turn = null;
+          break;
+        }
         case "assistant_message":
           turnFor(p.run_id, e).append(...this.step(p, e, calls, fromCall.has(p.run_id)));
           break;
@@ -346,6 +417,7 @@ export class ChatPanel {
                   },
                   renderCard(b.card, {
                     ...this.mdCtx(),
+                    values: keep(this.cardValues, `${b.card.card_id}/${b.card.call_id}`, () => ({})),
                     taken,
                     history: (versions.get(b.card.card_id) ?? 1) - 1,
                     onAction: (action, values) => this.cardAction(b.card, action, values, e),
@@ -355,6 +427,18 @@ export class ChatPanel {
             } else if (b.media && !p.attempt) {
               turnFor(p.run_id, e).append(h("div", { class: "device-media" }, h("div", { class: "tag" }, "设备返回"), this.media(b.media)));
             }
+          }
+          if (p.backgrounded) {
+            // 转入后台（ADR-0035）：模型拿到的是占位说明，Run 照常继续；设备上线后执行，结果另作一条消息送达。
+            const l = toolLabel(calls.get(p.call_id)?.capability ?? "");
+            turnFor(p.run_id, e).append(
+              backgroundNote(
+                "📮",
+                "queued",
+                `设备 ${l.target || "?"} 离线，${l.name} 已转入后台：设备上线后执行，结果稍后送达`,
+                h("small", {}, " · 截止 ", clock(p.backgrounded.deadline)),
+              ),
+            );
           }
           break;
         case "call_transcript":
@@ -518,16 +602,17 @@ export class ChatPanel {
     const states = tools.map((c) => callState(calls.get(c.call_id)));
     const live = states.filter((s) => s === "running" || s === "queued" || s === "approval").length;
     const errs = states.filter((s) => s === "error" || s === "denied").length;
+    const aborted = states.filter((s) => s === "aborted").length;
     const span = (() => {
       const xs = tools.map((c) => calls.get(c.call_id)).filter((s) => s?.doneAt);
       return xs.length ? dur(Math.max(...xs.map((s) => s.doneAt)) - Math.min(...xs.map((s) => s.askedAt))) : "";
     })();
-    const summary = live ? `${live} 个进行中` : errs ? `${errs} 个出错` : "全部完成";
+    const summary = live ? `${live} 个进行中` : errs ? `${errs} 个出错` : aborted ? `${aborted} 个已终止` : "全部完成";
     const groupOpen = this.openState.has(key) ? this.openState.get(key) : live > 0 || tools.some((c) => sel?.callId === c.call_id);
     return h(
       "details",
       {
-        class: `calls ${live ? "running" : errs ? "error" : "done"}`,
+        class: `calls ${live ? "running" : errs ? "error" : aborted ? "aborted" : "done"}`,
         open: groupOpen,
         // 程序展开的（进行中、选中）标记为 auto：插入后触发的 toggle 事件不算用户的选择。
         dataset: { key, ...(groupOpen && !this.openState.has(key) ? { auto: "1" } : {}) },
@@ -608,6 +693,21 @@ export class ChatPanel {
     );
   }
 
+  /** 后台调用的了结（设备结果或到期）：平台送达的说明，带设备返回的内容；不是用户说的话。 */
+  backgroundSettled(bg, p, e) {
+    const l = toolLabel(bg.capability);
+    const name = `${l.name}${l.target ? ` @${l.target}` : ""}`;
+    const tail = h("small", {}, " · ", p.run_id && e.run_requested ? "开启新的一轮 · " : "并入进行中的一轮 · ", clock(e.time));
+    if (bg.reason === "timeout") return backgroundNote("⌛", "expired", `后台调用 ${name} 到期：设备一直未上线，没有执行`, tail);
+    const media = (bg.content ?? []).filter((b) => b.media).map((b) => this.media(b.media));
+    return backgroundNote(
+      bg.is_error ? "⚠️" : "📬",
+      bg.is_error ? "error" : "result",
+      `设备返回了后台调用 ${name} 的${bg.is_error ? "错误" : "结果"}`,
+      h("div", {}, tail, textOf(bg.content) ? h("div", { class: "bg-result" }, textOf(bg.content)) : null, media),
+    );
+  }
+
   userBubble(p, e) {
     const parts = [];
     for (const b of p.input ?? []) {
@@ -637,17 +737,65 @@ export class ChatPanel {
   /** renderPending 展示本 Session 与进行中的委托里等待用户的审批与提问；子 Session 的审批与回答发往子 Session。 */
   renderPending() {
     const { approvals, questions } = this.view.pendingWithDelegations((sid) => this.childView(sid));
+    // 输入框的文字会作为子 Agent 提问的回答时，在 placeholder 上说明（规则见 SessionView.typedAnswerTarget）。
+    const target = this.answerTarget();
+    this.input.placeholder = target ? `回答子 Agent：${target.question}` : this.placeholder;
     // 子 Session 在等用户时，状态行显示"等待你回复子 Agent"，而不是"等待子 Agent"。
     this.waitingUser = new Set([...approvals, ...questions].filter((x) => x.via).map((x) => x.via));
+    const background = this.view.backgroundCalls();
     // 列表不变时保留已有的卡片：重建会清掉正在填写的回答。
-    const key = [...approvals, ...questions].map((x) => `${x.sessionId}/${x.callId}`).join(",");
+    const key = [...approvals, ...questions, ...background].map((x) => `${x.sessionId ?? "bg"}/${x.callId}`).join(",");
     if (key === this.pendingKey) return;
     this.pendingKey = key;
     const out = [];
+    if (background.length) out.push(this.backgroundList(background));
     for (const a of approvals) out.push(renderApproval(a, { onDecide: (ok) => this.device.decide(a.sessionId, a.callId, ok) }));
     for (const q of questions)
-      out.push(renderQuestion(q, { ...this.mdCtx(), onAnswer: (a) => this.device.answer(q.sessionId, q.callId, a) }));
+      out.push(
+        renderQuestion(q, {
+          ...this.mdCtx(),
+          state: keep(this.questionState, `${q.sessionId}/${q.callId}`, () => ({ values: {}, selected: new Set(), text: "" })),
+          onAnswer: (a) => this.device.answer(q.sessionId, q.callId, a),
+        }),
+      );
     fill(this.pending, out);
+  }
+
+  /** backgroundList 列出未了结的后台调用（ADR-0035），每个带"取消"按钮：取消后设备上线也不执行，不开启新 Run。 */
+  backgroundList(calls) {
+    return h(
+      "div",
+      { class: "background-calls" },
+      h("div", { class: "bg-heading" }, `📮 ${calls.length} 个后台调用等待设备上线`),
+      calls.map((c) => {
+        const l = toolLabel(c.capability);
+        const cancel = h("button", { class: "btn small danger", type: "button" }, "取消");
+        cancel.onclick = () => {
+          cancel.disabled = true;
+          this.device
+            .cancelBackground(this.view.sessionId, c.callId)
+            .then(() => toast(`已取消 ${l.name}`))
+            .catch((e) => {
+              cancel.disabled = false;
+              toast(e instanceof RequestError && e.code === "conflict" ? "已经有结果或已到期" : e.message, "error");
+            });
+        };
+        return h(
+          "div",
+          { class: "bg-row" },
+          h("span", { class: "call-icon" }, l.icon),
+          h("button", { class: "link", type: "button", onclick: () => this.ctx.onSelect?.({ kind: "call", callId: c.callId }) }, l.name),
+          l.target ? h("span", { class: "muted" }, "@", l.target) : null,
+          h("span", { class: "muted" }, " · 截止 ", clock(c.deadline)),
+          cancel,
+        );
+      }),
+    );
+  }
+
+  /** answerTarget 返回输入框的文字应回答的子 Agent 提问；没有时文字提交给本 Session。 */
+  answerTarget() {
+    return this.view.typedAnswerTarget((sid) => this.childView(sid));
   }
 
   /** childView 返回子 Session 的视图，第一次取到时订阅它的变化。 */
@@ -705,7 +853,8 @@ export class ChatPanel {
   // —— 输入 ——
 
   composer() {
-    this.input = h("textarea", { rows: this.compact ? 1 : 2, placeholder: this.compact ? "输入…" : "输入消息；可粘贴或拖入图片" });
+    this.placeholder = this.compact ? "输入…" : "输入消息；可粘贴或拖入图片";
+    this.input = h("textarea", { rows: this.compact ? 1 : 2, placeholder: this.placeholder });
     this.input.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
@@ -789,7 +938,7 @@ export class ChatPanel {
                 { class: "tool", type: "button", title: "语音通话（全双工，需要 VOLC_SPEECH_API_KEY）", onclick: () => this.toggleCall() },
                 "📞",
               ),
-          h("button", { class: "send", type: "button", title: "发送（Enter）", onclick: () => this.send() }, "发送"),
+          (this.sendBtn = h("button", { class: "send", type: "button", title: "发送（Enter）", onclick: () => this.send() }, "发送")),
           file,
           camera,
         ),
@@ -799,8 +948,9 @@ export class ChatPanel {
     );
   }
 
-  async addFiles(files) {
-    for (const f of files) {
+  /** 上传附件：登记为上传中，发送等它们完成（send）。 */
+  addFiles(files) {
+    const chips = files.map((f) => {
       const chip = h(
         "span",
         { class: "staged-chip uploading" },
@@ -810,50 +960,137 @@ export class ChatPanel {
         h("small", {}, bytes(f.size)),
       );
       this.staged.append(chip);
-      try {
-        const block = await this.device.uploadArtifact(this.view.sessionId, f.name, f.type, new Uint8Array(await f.arrayBuffer()));
-        const item = { block, chip };
-        this.attachments.push(item);
-        chip.classList.remove("uploading");
-        if (f.type.startsWith("image/")) chip.prepend(h("img", { src: URL.createObjectURL(f), class: "thumb" }));
-        chip.append(
-          h(
-            "button",
-            { class: "x", type: "button", onclick: () => (this.attachments.splice(this.attachments.indexOf(item), 1), chip.remove()) },
-            "×",
-          ),
-        );
-      } catch (e) {
-        chip.remove();
-        toast(`上传失败：${e.message}`, "error");
+      return [f, chip];
+    });
+    const p = (async () => {
+      for (const [f, chip] of chips) {
+        try {
+          const block = await this.device.uploadArtifact(this.view.sessionId, f.name, f.type, new Uint8Array(await f.arrayBuffer()));
+          chip.classList.remove("uploading");
+          if (f.type.startsWith("image/")) chip.prepend(h("img", { src: URL.createObjectURL(f), class: "thumb" }));
+          this.stage(block, chip);
+        } catch (e) {
+          chip.remove();
+          toast(`上传失败：${e.message}`, "error");
+        }
       }
-    }
+    })();
+    this.uploads.add(p);
+    p.then(() => this.uploads.delete(p));
+    return p;
   }
 
+  /** 把已上传的工件放进待发送的附件；chip 为空时按工件新建一个（发送失败后放回的语音消息）。 */
+  stage(block, chip) {
+    const m = block.media ?? {};
+    const mime = m.mime_type ?? "";
+    chip ??= h(
+      "span",
+      { class: "staged-chip" },
+      mime.startsWith("audio/") ? "🎤 " : mime.startsWith("image/") ? "🖼️ " : "📄 ",
+      m.name || m.uri,
+      " ",
+      h("small", {}, bytes(m.size)),
+    );
+    const item = { block, chip };
+    this.attachments.push(item);
+    chip.append(
+      h(
+        "button",
+        { class: "x", type: "button", onclick: () => (this.attachments.splice(this.attachments.indexOf(item), 1), chip.remove()) },
+        "×",
+      ),
+    );
+    this.staged.append(chip);
+  }
+
+  /**
+   * 发送输入框的内容（extra 为另外附上的内容块，如刚录好的语音消息）。去向由 routeInput 决定：子 Agent 的提问在等回答时
+   * 文字发往子 Session（SessionView.typedAnswerTarget），否则提交给本 Session。发出前清空输入框，失败时把整份草稿放回。
+   */
   async send(extra = []) {
+    if (this.uploads.size) {
+      toast("附件还在上传，上传完成后发送");
+      this.sendBtn?.classList.add("waiting");
+      while (this.uploads.size) await Promise.all([...this.uploads]);
+      this.sendBtn?.classList.remove("waiting");
+    }
     const text = this.input.value.trim();
-    const blocks = [...this.attachments.map((a) => a.block), ...extra];
-    if (!text && !blocks.length) return;
+    const items = this.attachments;
+    const blocks = [...items.map((a) => a.block), ...extra];
+    const ctx =
+      this.ctxToggle?.checked && (this.ctxScreen.value || this.ctxContent.value)
+        ? { screen: this.ctxScreen.value, content: this.ctxContent.value }
+        : null;
+    const route = routeInput(
+      { text, attachments: blocks.length, uploading: this.uploads.size, uiContext: !!ctx },
+      text && !blocks.length && !ctx ? this.answerTarget() : undefined,
+    );
+    if (route.kind === "empty" || route.kind === "wait") return;
+    const draft = { text, items, extra, ctx };
+    this.input.value = "";
+    for (const a of items) a.chip.remove();
+    this.attachments = [];
+    if (ctx) this.ctxToggle.checked = false;
+    this.device.setActivity(this.view.sessionId, true, false);
+    this.scrollBottom();
+    if (route.kind === "answer") return this.answerChild(route.question, draft);
     const input = [];
     if (text) input.push({ text: { text } });
     input.push(...blocks);
-    if (this.ctxToggle?.checked && (this.ctxScreen.value || this.ctxContent.value)) {
+    if (ctx) {
       if (!text) input.push({ text: { text: "（见界面）" } });
-      input.push({ ui_context: { screen: this.ctxScreen.value, content: this.ctxContent.value } });
-      this.ctxToggle.checked = false;
+      input.push({ ui_context: ctx });
     }
-    this.input.value = "";
-    for (const a of this.attachments) a.chip.remove();
-    this.attachments = [];
-    this.device.setActivity(this.view.sessionId, true, false);
-    this.scrollBottom();
+    // 原样重发上次失败的输入时沿用它的 input_id：超时或断线时它可能已经生效，服务端按 input_id 去重（duplicate）。
+    // 改过的内容是新的输入，用新的 ID。
+    const key = JSON.stringify(input);
+    const inputId = this.failed?.key === key ? this.failed.inputId : newInputId();
     try {
-      const r = await this.device.submitInput(this.view.sessionId, input);
+      const r = await this.device.submitInput(this.view.sessionId, input, { inputId });
+      if (this.failed?.key === key) this.failed = null;
       if (r.duplicate) toast("重复提交：按 input_id 去重，没有再次生效");
     } catch (e) {
-      toast(`发送失败：${e.message}`, "error");
-      if (text) this.input.value = text;
+      this.failed = { key, inputId };
+      this.restoreDraft(draft, `发送失败：${e.message}`, "原样再发时沿用同一个 input_id，已生效的不会重复生效");
     }
+  }
+
+  /**
+   * 把输入框的文字作为子 Agent 提问的回答发往子 Session。别的设备已经回答时（conflict）保留文字并提示，不自动改投本 Session：
+   * 用户是在回答那个提问，改投成新输入会让父 Run 收到一句没头没尾的插话。
+   */
+  async answerChild(q, draft) {
+    try {
+      await this.device.answer(q.sessionId, q.callId, { text: draft.text });
+    } catch (e) {
+      const conflict = e instanceof RequestError && e.code === "conflict";
+      this.restoreDraft(draft, conflict ? "这个提问已经回答过了（可能在别的设备上）" : `回答失败：${e.message}`);
+    }
+  }
+
+  /**
+   * 发送失败时把草稿（文字、附件、界面上下文）放回输入框。失败可能在用户已经开始写下一条之后才到达：输入框不空时不覆盖，
+   * 只提示原文没有发出。
+   */
+  restoreDraft(d, msg, hint = "") {
+    const empty = !this.input.value.trim() && !this.attachments.length && !this.uploads.size;
+    if (!empty) {
+      toast(`${msg}。输入框里已有新内容，没有放回；没发出的是：${d.text || "（附件）"}`, "error");
+      return;
+    }
+    this.input.value = d.text;
+    for (const a of d.items) {
+      this.attachments.push(a);
+      this.staged.append(a.chip);
+    }
+    for (const b of d.extra) this.stage(b);
+    if (d.ctx) {
+      this.ctxToggle.checked = true;
+      this.ctxScreen.value = d.ctx.screen;
+      this.ctxContent.value = d.ctx.content;
+    }
+    toast(`${msg}。内容已放回输入框${hint ? `，${hint}` : ""}`, "error");
   }
 
   async cardAction(card, action, values, e) {
@@ -871,13 +1108,16 @@ export class ChatPanel {
 
   async startVoice() {
     if (this.recorder) return;
-    this.recorder = new Recorder();
+    const r = (this.recorder = new Recorder());
     this.micBtn.classList.add("recording");
     try {
-      await this.recorder.start((peak) => this.micBtn.style.setProperty("--level", Math.min(1, peak * 3)));
+      // 松开按钮（stopVoice）可能早于麦克风打开：Recorder 在打开后发现已停止时释放麦克风。
+      await r.start((peak) => this.micBtn.style.setProperty("--level", Math.min(1, peak * 3)));
     } catch (e) {
-      this.recorder = null;
-      this.micBtn.classList.remove("recording");
+      if (this.recorder === r) {
+        this.recorder = null;
+        this.micBtn.classList.remove("recording");
+      }
       toast(`无法打开麦克风：${e.message}`, "error");
     }
   }
@@ -918,9 +1158,12 @@ export class ChatPanel {
       c.ready = true;
       c.model = ev.ready.model;
       c.rate = ev.ready.output_sample_rate || 24000;
+      // 打开麦克风是异步的：通话在它完成之前结束（挂断、设备断开）时，打开后立即释放。
       c.mic
         .start((pcm) => !c.muted && this.device.sendAudio(c.id, pcm))
+        .then(() => this.call !== c && c.mic.stop())
         .catch((e) => {
+          if (this.call !== c) return;
           toast(`无法打开麦克风：${e.message}`, "error");
           this.endCall("hangup");
         });
@@ -974,4 +1217,10 @@ export class ChatPanel {
     c.player.close();
     this.callBar.hidden = true;
   }
+}
+
+/** keep 返回 m 中 key 的值，没有时以 make() 创建并保存。 */
+function keep(m, key, make) {
+  if (!m.has(key)) m.set(key, make());
+  return m.get(key);
 }

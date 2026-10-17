@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -14,7 +15,7 @@ import (
 
 // ProjectionVersion 是投影语义的版本。改动 Apply 或 State 的字段时必须递增：旧快照随之作废，
 // 加载退回完整回放，因此快照永远不会与当前代码的投影结果不一致。
-const ProjectionVersion = 10
+const ProjectionVersion = 11
 
 // Snapshots 存放每个 Session 最新的投影快照。快照只是加速加载的缓存，删除或丢失都不影响正确性。
 type Snapshots interface {
@@ -51,9 +52,11 @@ func (s *State) Snapshot() *v1.SessionSnapshot {
 			Takeovers: int32(r.Takeovers), StalledTakeovers: int32(r.StalledTakeovers), Turns: int32(r.Turns),
 			Recall: r.Recall, Recalled: r.Recalled, SuspendReason: r.SuspendReason, SuspendedUntil: ts(r.SuspendedUntil),
 			Compactions: int32(r.Compactions), OutputTokens: r.OutputTokens, Resume: r.Resume, Decisions: r.Decisions,
+			FromBackground: r.FromBackground,
 		}
 		for _, c := range r.Calls {
-			cs := &v1.CallSnapshot{Call: c.Call, StartedAttempts: c.StartedAttempts, NodeId: c.NodeID, Deadline: ts(c.Deadline), Done: c.Done}
+			cs := &v1.CallSnapshot{Call: c.Call, StartedAttempts: c.StartedAttempts, NodeId: c.NodeID, Deadline: ts(c.Deadline), Done: c.Done,
+				DispatchedAt: ts(c.DispatchedAt), Background: c.Background}
 			if a := c.Approval; a != nil {
 				cs.Approval = &v1.ApprovalSnapshot{Summary: a.Summary, Deadline: ts(a.Deadline), Decided: a.Decided, Approved: a.Approved}
 			}
@@ -63,8 +66,13 @@ func (s *State) Snapshot() *v1.SessionSnapshot {
 	}
 	for _, p := range s.Past {
 		snap.PastRuns = append(snap.PastRuns, &v1.PastRunSnapshot{Id: p.ID, Status: int32(p.Status), RequestedAt: ts(p.RequestedAt),
-			Attempt: p.Attempt, Turns: int32(p.Turns)})
+			Attempt: p.Attempt, Turns: int32(p.Turns), FromBackground: p.FromBackground})
 	}
+	for _, b := range s.Background {
+		snap.Background = append(snap.Background, &v1.BackgroundCallSnapshot{CallId: b.CallID, RunId: b.RunID, NodeId: b.NodeID,
+			Capability: b.Capability, Deadline: ts(b.Deadline)})
+	}
+	slices.SortFunc(snap.Background, func(a, b *v1.BackgroundCallSnapshot) int { return strings.Compare(a.GetCallId(), b.GetCallId()) })
 	for id := range s.callIDsOld {
 		snap.CallIds = append(snap.CallIds, id)
 	}
@@ -93,7 +101,14 @@ func FromSnapshot(snap *v1.SessionSnapshot) (*State, error) {
 	}
 	for _, p := range snap.GetPastRuns() {
 		s.Past = append(s.Past, RunSummary{ID: p.GetId(), Status: RunStatus(p.GetStatus()), RequestedAt: fromTS(p.GetRequestedAt()),
-			Attempt: p.GetAttempt(), Turns: int(p.GetTurns())})
+			Attempt: p.GetAttempt(), Turns: int(p.GetTurns()), FromBackground: p.GetFromBackground()})
+	}
+	for _, b := range snap.GetBackground() {
+		if s.Background == nil {
+			s.Background = map[string]*BackgroundCall{}
+		}
+		s.Background[b.GetCallId()] = &BackgroundCall{CallID: b.GetCallId(), RunID: b.GetRunId(), NodeID: b.GetNodeId(),
+			Capability: b.GetCapability(), Deadline: fromTS(b.GetDeadline())}
 	}
 	for _, rs := range snap.GetRuns() {
 		r := &Run{
@@ -102,10 +117,11 @@ func FromSnapshot(snap *v1.SessionSnapshot) (*State, error) {
 			Turns: int(rs.GetTurns()), Recall: rs.GetRecall(), Recalled: rs.GetRecalled(),
 			SuspendReason: rs.GetSuspendReason(), SuspendedUntil: fromTS(rs.GetSuspendedUntil()),
 			Compactions: int(rs.GetCompactions()), OutputTokens: rs.GetOutputTokens(), Resume: rs.GetResume(),
-			Decisions: rs.GetDecisions(),
+			Decisions: rs.GetDecisions(), FromBackground: rs.GetFromBackground(),
 		}
 		for _, cs := range rs.GetCalls() {
-			c := &Call{Call: cs.GetCall(), StartedAttempts: cs.GetStartedAttempts(), NodeID: cs.GetNodeId(), Deadline: fromTS(cs.GetDeadline()), Done: cs.GetDone()}
+			c := &Call{Call: cs.GetCall(), StartedAttempts: cs.GetStartedAttempts(), NodeID: cs.GetNodeId(), Deadline: fromTS(cs.GetDeadline()), Done: cs.GetDone(),
+				DispatchedAt: fromTS(cs.GetDispatchedAt()), Background: cs.GetBackground()}
 			if a := cs.GetApproval(); a != nil {
 				c.Approval = &Approval{Summary: a.GetSummary(), Deadline: fromTS(a.GetDeadline()), Decided: a.GetDecided(), Approved: a.GetApproved()}
 			}

@@ -41,6 +41,7 @@ message Event {
     CallTranscript call_transcript = 29;
     CallEnded call_ended = 30;
     DecisionMade decision_made = 31;
+    BackgroundCancelled background_cancelled = 32;
   }
 }
 
@@ -72,7 +73,23 @@ message ContentBlock {
     // card 只出现在 show_card 的结果中（由平台校验后写入），card_action 只出现在用户输入中。
     Card card = 4;
     CardAction card_action = 5;
+    // background_result 只由平台写入，是 RunRequested / Steered 中唯一的内容块（后台调用的了结，ADR-0035）。
+    BackgroundResult background_result = 6;
   }
+}
+
+// BackgroundResult 是一个后台调用的了结（docs/design/m1-device-nodes.md §3，ADR-0035）：设备上线后返回的结果，或到截止时间
+// 设备仍未返回。它作为一条输入送达：Session 有活跃 Run 时并入它（Steered），否则开启新 Run（RunRequested），由模型向用户
+// 报告。只由平台写入（网关写设备结果，Worker 写到期），用户提交的输入中带它会被拒绝；内容是设备返回的不可信数据。
+message BackgroundResult {
+  string call_id = 1;
+  // 模型看到的工具名，如 "phone__take_photo"。
+  string capability = 2;
+  // 设备返回的内容；reason 为 "timeout" 时为空。
+  repeated ContentBlock content = 3;
+  bool is_error = 4;
+  // "result"：设备返回了结果；"timeout"：到截止时间设备仍未返回，投递已撤回、调用没有执行。
+  string reason = 5;
 }
 
 // Card 是 Agent 经内置工具 show_card 展示给用户的卡片：图文混排的内容，加上可点选的按钮、列表项与可填写的字段
@@ -332,6 +349,29 @@ message ToolResult {
   string input_id = 6;
   // 非空表示这条回答由该 Call 中的语音模型转述（run_task 恰好回答了提问）：不是用户的原话（Memory 写入闸门）。
   string from_call = 7;
+  // 用户等回答时在卡片上点了动作、这条回答由它而来时，是平台核对、规范化后的动作（与 RunRequested、Steered 输入中的
+  // 相同，见 docs/design/cards.md §4）。客户端据此把该动作显示为已选：这条输入没有写成 RunRequested 或 Steered，
+  // 只看输入的话各设备都看不到它已执行，再点却得到 duplicate。只由平台写入，模型看不到这个字段（它看的是 content）。
+  CardAction card_action = 8;
+  // 非空表示调用转入后台（ADR-0035）：路由到设备的调用已派发、设备离线超过宽限期，Worker 不再等待。content 是交给模型的
+  // 占位说明，调用在 Session 级继续等待设备，结果或到期之后作为一条输入（BackgroundResult）送达。只由 Worker 写入。
+  Backgrounded backgrounded = 9;
+}
+
+message Backgrounded {
+  string node_id = 1;
+  // 后台调用的截止时间：转入后台时起算的后台时限。
+  google.protobuf.Timestamp deadline = 2;
+}
+
+// BackgroundCancelled 记录用户取消了一个未了结的后台调用（ADR-0035）：投递随之撤回，设备上线后不再执行。它不开启新 Run，
+// 在模型上下文中呈现为一条说明。
+message BackgroundCancelled {
+  string call_id = 1;
+  // 模型看到的工具名（由平台按投影填写）。
+  string capability = 2;
+  // 取消方，如设备 ID 或 "end_user:<id>"。
+  string by = 3;
 }
 
 message RunCompleted {

@@ -494,28 +494,20 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 		return nil, err
 	}
 	after := st.Seq
-	input := model.TextBlocks(turn.Input)
-	if u := turn.UIContext; u != nil {
-		input = append([]*v1.ContentBlock{{Kind: &v1.ContentBlock_UiContext{UiContext: &v1.UIContext{
-			Screen: u.Screen, Ref: u.Ref, Selection: u.Selection, Content: u.Content}}}}, input...)
-	}
-	if turn.CardAction != nil {
-		if input, err = in.cardAction(ctx, sid, turn.CardAction); err != nil {
-			return nil, err
-		}
-	}
-	if turn.FromDevice != "" {
-		input = service.WithDevice(input, turn.FromDevice, true)
-	}
-	res, err := in.svc.Submit(ctx, sid, input)
-	if err != nil {
-		return nil, err
-	}
-	approve := turn.Approve == nil || *turn.Approve
 	if timeout <= 0 {
 		timeout = in.cfg.TurnTimeout
 	}
 	deadline := time.Now().Add(timeout)
+	var runID string
+	if turn.AwaitBackground {
+		runID, err = in.awaitBackground(ctx, sid, after, deadline)
+	} else {
+		runID, err = in.submitTurn(ctx, sid, turn)
+	}
+	if err != nil {
+		return nil, err
+	}
+	approve := turn.Approve == nil || *turn.Approve
 	crashed := false
 	asked := false
 	answered := map[string]bool{}
@@ -526,7 +518,7 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 		if err != nil {
 			return nil, err
 		}
-		run = st.Run(res.RunID)
+		run = st.Run(runID)
 		if run != nil && run.Status.Terminal() {
 			compacted = st.Compaction != nil
 			break
@@ -566,7 +558,7 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 			}
 		}
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("run %s did not finish within %s", res.RunID, timeout)
+			return nil, fmt.Errorf("run %s did not finish within %s", runID, timeout)
 		}
 		select {
 		case <-ctx.Done():
@@ -578,7 +570,11 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 	if err != nil {
 		return nil, err
 	}
-	obs := &observation{input: turn.Input, status: run.Status.String(), compacted: compacted, takeovers: run.Takeovers}
+	input := turn.Input
+	if turn.AwaitBackground {
+		input = "（用户没有输入：设备上线后，之前转入后台的调用的结果由平台送达）"
+	}
+	obs := &observation{input: input, status: run.Status.String(), compacted: compacted, takeovers: run.Takeovers}
 	if asked {
 		obs.status = "asked"
 	}
@@ -603,6 +599,55 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 		}
 	}
 	return obs, nil
+}
+
+// submitTurn 提交本轮的输入（文字、界面上下文或卡片动作），返回开启或并入的 Run。
+func (in *instance) submitTurn(ctx context.Context, sid string, turn Turn) (string, error) {
+	var err error
+	input := model.TextBlocks(turn.Input)
+	if u := turn.UIContext; u != nil {
+		input = append([]*v1.ContentBlock{{Kind: &v1.ContentBlock_UiContext{UiContext: &v1.UIContext{
+			Screen: u.Screen, Ref: u.Ref, Selection: u.Selection, Content: u.Content}}}}, input...)
+	}
+	if turn.CardAction != nil {
+		if input, err = in.cardAction(ctx, sid, turn.CardAction); err != nil {
+			return "", err
+		}
+	}
+	if turn.FromDevice != "" {
+		input = service.WithDevice(input, turn.FromDevice, true)
+	}
+	res, err := in.svc.Submit(ctx, sid, input)
+	if err != nil {
+		return "", err
+	}
+	return res.RunID, nil
+}
+
+// awaitBackground 等待 seq after 之后的后台调用了结（ADR-0035），返回它开启或并入的 Run。
+func (in *instance) awaitBackground(ctx context.Context, sid string, after uint64, deadline time.Time) (string, error) {
+	for {
+		events, err := eventlog.ReadAll(ctx, in.svc.Store.Log, sid, after)
+		if err != nil {
+			return "", err
+		}
+		for _, e := range events {
+			if session.BackgroundInput(e.GetRunRequested().GetInput()) != nil {
+				return e.GetRunRequested().GetRunId(), nil
+			}
+			if session.BackgroundInput(e.GetSteered().GetInput()) != nil {
+				return e.GetSteered().GetRunId(), nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return "", errors.New("no background result arrived in time")
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
 }
 
 // attendChild 处理子 Session 中进行中 Run 的审批与提问，与父 Run 相同。
@@ -785,6 +830,15 @@ func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation)
 	add("status", slices.Contains(strings.Split(want, "|"), o.status), fmt.Sprintf("status %s, want %s", o.status, want))
 	for _, g := range e.Calls {
 		add("calls "+g, slices.ContainsFunc(o.calls, func(c string) bool { return matches([]string{g}, c) }), fmt.Sprintf("calls %v", o.calls))
+	}
+	for g, max := range e.MaxCalls {
+		n := 0
+		for _, c := range o.calls {
+			if matches([]string{g}, c) {
+				n++
+			}
+		}
+		add("max_calls "+g, n <= max, fmt.Sprintf("%d calls matching %s, at most %d", n, g, max))
 	}
 	for _, g := range e.NoCalls {
 		add("no_calls "+g, !slices.ContainsFunc(o.calls, func(c string) bool { return matches([]string{g}, c) }), fmt.Sprintf("calls %v", o.calls))

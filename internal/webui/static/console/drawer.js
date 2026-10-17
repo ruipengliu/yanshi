@@ -5,7 +5,7 @@
 //   卡片      每一版（调用、时间）与已执行的动作；最新一版的 JSON。
 
 import { callIndex, callState, modelLine, toolLabel } from "./chat.js";
-import { payloadOf, textOf } from "./device.js";
+import { cardActionOf, payloadOf, textOf } from "./device.js";
 import { clock, dur, h, jsonView, num, short } from "./ui.js";
 
 const STATE = {
@@ -15,6 +15,12 @@ const STATE = {
   denied: ["已拒绝", "bad"],
   error: ["出错", "bad"],
   done: ["完成", "ok"],
+  // 所属 Run 已中断或失败，这个调用不会再有结果。
+  aborted: ["已终止", ""],
+  // 后台调用（ADR-0035）：设备离线超过宽限期，Run 不再等它。
+  background: ["后台排队中", "warn"],
+  expired: ["已到期，未执行", ""],
+  cancelled: ["已取消", ""],
 };
 
 /**
@@ -115,6 +121,10 @@ function callDetail(callId, ctx) {
           "执行",
           st.executions > 1 ? h("span", { class: "warn" }, `${st.executions} 次（重新投递或接管后重新执行）`) : `${st.executions || 0} 次`,
         ],
+        st.background && [
+          "后台",
+          `${{ result: "设备结果已送达", timeout: "已到期，未执行", cancelled: "已取消" }[st.bgSettled] ?? "等待设备上线"} · 截止 ${clock(st.bgDeadline)}`,
+        ],
         st.approval && [
           "审批",
           `${{ pending: "等待中", approved: "已批准", denied: "已拒绝" }[st.approval]}${st.summary ? ` · ${st.summary}` : ""}`,
@@ -136,7 +146,14 @@ function callDetail(callId, ctx) {
           at("child", (e) => payloadOf(e)[1].run_id === childRun.run_id && payloadOf(e)[0] === childEnd.kind),
           t0,
         ],
-        st.doneAt && [st.error ? "结果（错误）" : "结果写回", st.doneAt, t0, st.error ? "bad" : "ok"],
+        st.background && ["转入后台（Run 继续）", st.bgAt, t0, "warn"],
+        st.background && st.bgSettled && [
+          { result: "设备结果送达", timeout: "到期", cancelled: "取消" }[st.bgSettled],
+          st.bgSettledAt,
+          t0,
+          st.bgSettled === "result" && !st.error ? "ok" : "",
+        ],
+        st.doneAt && !st.background && [st.error ? "结果（错误）" : "结果写回", st.doneAt, t0, st.error ? "bad" : "ok"],
       ]),
     ),
     section("参数", null, jsonView(st.args ?? "{}")),
@@ -224,9 +241,8 @@ function cardDetail(cardId, ctx) {
   const latest = versions.at(-1).card;
   const actions = [];
   for (const e of v.events) {
-    for (const b of e.run_requested?.input ?? e.steered?.input ?? []) {
-      if (b.card_action?.card_id === cardId) actions.push({ a: b.card_action, e });
-    }
+    const a = cardActionOf(e);
+    if (a?.card_id === cardId) actions.push({ a, e });
   }
   return shell(
     "🃏 卡片",
@@ -250,7 +266,7 @@ function cardDetail(cardId, ctx) {
       actions.length
         ? steps(
             actions.map(({ a, e }) => [
-              `${a.label || a.action}${Object.keys(a.values ?? {}).length ? ` · ${JSON.stringify(a.values)}` : ""}（第 ${versions.findIndex((x) => x.card.call_id === a.call_id) + 1} 版）`,
+              `${a.label || a.action}${Object.keys(a.values ?? {}).length ? ` · ${JSON.stringify(a.values)}` : ""}（第 ${versions.findIndex((x) => x.card.call_id === a.call_id) + 1} 版）${e.tool_result ? " · 作为提问的回答" : ""}`,
               Date.parse(e.time),
             ]),
           )

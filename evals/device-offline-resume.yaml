@@ -1,10 +1,10 @@
 name: device-offline-resume
-description: 设备离线 20 秒后才上线：调用进入 Inbox、Run 挂起，设备上线后投递并恢复，最终给出正确结果。
+description: 设备离线 8 秒后上线（在 20 秒的宽限期内，ADR-0035）：调用进入 Inbox、Run 挂起，设备上线后投递并恢复，最终给出正确结果。
 timeout: 6m
 setup:
   device:
     label: macbook
-    online_after: 20s
+    online_after: 8s
     files:
       todo.txt: |
         本周待办：

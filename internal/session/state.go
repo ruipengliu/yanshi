@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -59,7 +60,12 @@ type Call struct {
 	// NodeID 非空表示路由调用，Deadline 是其结果截止时间。
 	NodeID   string
 	Deadline time.Time
-	Done     bool
+	// DispatchedAt 是路由调用的派发时间（第一个带 node_id 的 ToolCallStarted 的事件时间）：设备离线的宽限期从它与设备
+	// 下线时间中较晚者起算（ADR-0035）。
+	DispatchedAt time.Time
+	Done         bool
+	// Background 表示调用已转入后台：Run 中的结果是占位说明，调用在 Session 级继续等待设备（State.Background）。
+	Background bool
 
 	Approval *Approval
 }
@@ -115,6 +121,8 @@ type Run struct {
 	// SuspendedUntil 为配额重置时间（docs/design/m4-quota-usage.md §3）；SuspendHandoff 表示移交给其他 Worker。
 	SuspendReason  string
 	SuspendedUntil time.Time
+	// FromBackground 非空表示 Run 由该后台调用的了结（结果或到期）开启，而不是用户的输入（ADR-0035）。
+	FromBackground string
 }
 
 // SuspendHandoff 是移交的挂起原因（ADR-0029）：Worker 正常结束 Attempt 并立即归还 Session，由其他 Worker 恢复，
@@ -198,6 +206,59 @@ type State struct {
 	// 尚未提交时为空。写回、撤回与重复派发都靠它找到委托 Run：去重窗口（Inputs）会被用户在子 Session 中的输入挤出
 	// （评审 §11 问题 3）。
 	Delegated string
+	// Background 是未了结的后台调用（ADR-0035），键为调用 ID：设备离线超过宽限期、Worker 不再在 Run 中等待的路由调用。
+	// 设备结果、到期或用户取消之后移出；Session 关闭后保留（不再有事件，关闭方据此撤回投递）。
+	Background map[string]*BackgroundCall
+}
+
+// BackgroundCall 是一个未了结的后台调用。
+type BackgroundCall struct {
+	CallID string
+	// RunID 是发起调用的 Run（转入后台时它已继续推进，多半已经结束）。
+	RunID      string
+	NodeID     string
+	Capability string
+	Deadline   time.Time
+}
+
+// 后台调用了结的原因（BackgroundResult.reason）。
+const (
+	BackgroundReasonResult  = "result"
+	BackgroundReasonTimeout = "timeout"
+)
+
+// OpenBackground 返回未了结的后台调用，按截止时间（相同时按调用 ID）排序。Session 已关闭时返回空：关闭之后不再了结。
+func (s *State) OpenBackground() []*BackgroundCall {
+	if s.Closed != nil {
+		return nil
+	}
+	out := make([]*BackgroundCall, 0, len(s.Background))
+	for _, b := range s.Background {
+		out = append(out, b)
+	}
+	slices.SortFunc(out, func(a, b *BackgroundCall) int {
+		if c := a.Deadline.Compare(b.Deadline); c != 0 {
+			return c
+		}
+		return strings.Compare(a.CallID, b.CallID)
+	})
+	return out
+}
+
+// NextBackgroundDeadline 返回最早的后台截止时间；没有未了结的后台调用时 ok 为 false。
+func (s *State) NextBackgroundDeadline() (time.Time, bool) {
+	if open := s.OpenBackground(); len(open) > 0 {
+		return open[0].Deadline, true
+	}
+	return time.Time{}, false
+}
+
+// BackgroundInput 返回输入中的后台调用了结；不是这种输入时返回 nil。这种输入只由平台写入，且只有这一个内容块。
+func BackgroundInput(input []*v1.ContentBlock) *v1.BackgroundResult {
+	if len(input) == 1 {
+		return input[0].GetBackgroundResult()
+	}
+	return nil
 }
 
 // DelegatedInputID 是委托给子 Session 的任务的输入 ID（docs/design/m5-multi-agent.md §4）。
@@ -223,10 +284,13 @@ type RunSummary struct {
 	RequestedAt time.Time
 	Attempt     uint32
 	Turns       int
+	// FromBackground 同 Run.FromBackground。
+	FromBackground string
 }
 
 func (r *Run) summary() RunSummary {
-	return RunSummary{ID: r.ID, Status: r.Status, RequestedAt: r.RequestedAt, Attempt: r.Attempt, Turns: r.Turns}
+	return RunSummary{ID: r.ID, Status: r.Status, RequestedAt: r.RequestedAt, Attempt: r.Attempt, Turns: r.Turns,
+		FromBackground: r.FromBackground}
 }
 
 // Summaries 返回全部 Run 的摘要，按请求顺序。
@@ -394,6 +458,8 @@ func (s *State) Clone() *State {
 	for id := range s.callIDs {
 		cp.callIDs[id] = true
 	}
+	// 条目不再修改（了结时整条移出），共享即可。
+	cp.Background = maps.Clone(s.Background)
 	return &cp
 }
 
@@ -514,6 +580,10 @@ func (s *State) apply(e *v1.Event) error {
 		if hasCard(p.RunRequested.GetInput()) {
 			return errors.New("card in user input")
 		}
+		bg, err := s.checkBackgroundInput(p.RunRequested.GetInput(), p.RunRequested.GetInputId(), p.RunRequested.GetFromCall())
+		if err != nil {
+			return err
+		}
 		if a := s.Active(); a != nil {
 			return fmt.Errorf("run %s requested while run %s is active", p.RunRequested.GetRunId(), a.ID)
 		}
@@ -526,7 +596,12 @@ func (s *State) apply(e *v1.Event) error {
 		if s.Delegated == "" && s.delegatedInput(p.RunRequested.GetInputId()) {
 			s.Delegated = p.RunRequested.GetRunId()
 		}
-		s.Runs = append(s.Runs, &Run{ID: p.RunRequested.GetRunId(), Status: RunQueued, RequestedAt: e.GetTime().AsTime()})
+		run := &Run{ID: p.RunRequested.GetRunId(), Status: RunQueued, RequestedAt: e.GetTime().AsTime()}
+		if bg != nil {
+			run.FromBackground = bg.GetCallId()
+			s.settleBackground(bg.GetCallId())
+		}
+		s.Runs = append(s.Runs, run)
 		s.trimRuns()
 		s.History = append(s.History, e)
 
@@ -540,8 +615,15 @@ func (s *State) apply(e *v1.Event) error {
 		if hasCard(p.Steered.GetInput()) {
 			return errors.New("card in user input")
 		}
+		bg, err := s.checkBackgroundInput(p.Steered.GetInput(), p.Steered.GetInputId(), p.Steered.GetFromCall())
+		if err != nil {
+			return err
+		}
 		if err := s.recordInput(InputRef{ID: p.Steered.GetInputId(), RunID: p.Steered.GetRunId(), Steered: true}); err != nil {
 			return err
+		}
+		if bg != nil {
+			s.settleBackground(bg.GetCallId())
 		}
 		if s.Delegated == "" && s.delegatedInput(p.Steered.GetInputId()) {
 			s.Delegated = p.Steered.GetRunId()
@@ -645,6 +727,9 @@ func (s *State) apply(e *v1.Event) error {
 		}
 		c.StartedAttempts = append(c.StartedAttempts, m.GetAttempt())
 		if m.GetNodeId() != "" {
+			if c.NodeID == "" {
+				c.DispatchedAt = e.GetTime().AsTime()
+			}
 			c.NodeID, c.Deadline = m.GetNodeId(), m.GetDeadline().AsTime()
 		}
 
@@ -674,6 +759,22 @@ func (s *State) apply(e *v1.Event) error {
 		// 卡片只能由平台校验后写入 show_card 的结果（ADR-0032）：设备、用户不能伪造卡片。
 		if hasCard(m.GetContent()) && (m.GetAttempt() == 0 || c.Call.GetCapability() != ShowCardCapability) {
 			return fmt.Errorf("card in the result of call %q (%s)", m.GetCallId(), c.Call.GetCapability())
+		}
+		// 卡片动作同样只由平台写入：它只出现在用户等回答时点卡片而得的 ask_user 回答里，这条回答必有输入 ID
+		// （由动作推导）。其他结果带上它，客户端会把没有执行过的动作显示为已选。
+		if m.GetCardAction() != nil && (m.GetAttempt() != 0 || c.NodeID != askuser.NodeID || m.GetInputId() == "") {
+			return fmt.Errorf("card action in the result of call %q (%s)", m.GetCallId(), c.Call.GetCapability())
+		}
+		if b := m.GetBackgrounded(); b != nil {
+			if err := s.checkBackgrounded(m, c); err != nil {
+				return err
+			}
+			c.Background = true
+			if s.Background == nil {
+				s.Background = map[string]*BackgroundCall{}
+			}
+			s.Background[m.GetCallId()] = &BackgroundCall{CallID: m.GetCallId(), RunID: r.ID, NodeID: b.GetNodeId(),
+				Capability: c.Call.GetCapability(), Deadline: b.GetDeadline().AsTime()}
 		}
 		if err := s.recordInput(InputRef{ID: m.GetInputId(), RunID: r.ID, Steered: true, Answered: m.GetCallId()}); err != nil {
 			return err
@@ -738,6 +839,18 @@ func (s *State) apply(e *v1.Event) error {
 			r.Decisions = map[string]string{}
 		}
 		r.Decisions[k] = m.GetChosen()
+
+	case *v1.Event_BackgroundCancelled:
+		m := p.BackgroundCancelled
+		b := s.Background[m.GetCallId()]
+		if b == nil {
+			return fmt.Errorf("call %q is not an open background call", m.GetCallId())
+		}
+		if m.GetCapability() != b.Capability {
+			return fmt.Errorf("background call %q is %s, not %s", m.GetCallId(), b.Capability, m.GetCapability())
+		}
+		s.settleBackground(m.GetCallId())
+		s.History = append(s.History, e)
 
 	case *v1.Event_RunCompleted:
 		r, err := s.fencedRun(p.RunCompleted.GetRunId(), p.RunCompleted.GetAttempt())
@@ -837,6 +950,73 @@ func (s *State) fencedRun(id string, attempt uint32) (*Run, error) {
 		return nil, fmt.Errorf("stale attempt %d for run %s (current %d, %s)", attempt, id, r.Attempt, r.Status)
 	}
 	return r, nil
+}
+
+// checkBackgrounded 校验调用转入后台（ADR-0035）：只有 Worker 能把已派发、尚无结果的设备调用转入后台。沙箱（"sbx_"）、
+// 用户本人与委托（"@" 开头）不是设备；委托派生的子 Session 不转后台：子 Run 结束后，迟到的结果回不到父 Run。
+func (s *State) checkBackgrounded(m *v1.ToolResult, c *Call) error {
+	b := m.GetBackgrounded()
+	switch {
+	case m.GetAttempt() == 0:
+		return fmt.Errorf("external result cannot background call %q", m.GetCallId())
+	case !c.Dispatched() || b.GetNodeId() != c.NodeID:
+		return fmt.Errorf("call %q is not dispatched to node %q", m.GetCallId(), b.GetNodeId())
+	case strings.HasPrefix(c.NodeID, "sbx_") || strings.HasPrefix(c.NodeID, "@"):
+		return fmt.Errorf("call %q to %s cannot run in the background", m.GetCallId(), c.NodeID)
+	case s.Created.GetParent() != nil:
+		return fmt.Errorf("call %q: a delegated session does not background calls", m.GetCallId())
+	case b.GetDeadline() == nil:
+		return fmt.Errorf("background call %q without a deadline", m.GetCallId())
+	}
+	return nil
+}
+
+// checkBackgroundInput 校验输入中的后台调用了结：只能是输入中唯一的内容块，针对未了结的后台调用，没有输入 ID、不来自 Call；
+// 其中设备返回的内容不能含平台才写入的内容块（卡片、卡片动作、界面上下文、嵌套的了结）。不含它的输入返回 nil。
+func (s *State) checkBackgroundInput(input []*v1.ContentBlock, inputID, fromCall string) (*v1.BackgroundResult, error) {
+	n := 0
+	for _, b := range input {
+		if b.GetBackgroundResult() != nil {
+			n++
+		}
+	}
+	if n == 0 {
+		return nil, nil
+	}
+	bg := BackgroundInput(input)
+	if bg == nil {
+		return nil, errors.New("a background result must be the only block of its input")
+	}
+	if inputID != "" || fromCall != "" {
+		return nil, errors.New("background result with an input id or from a call")
+	}
+	b := s.Background[bg.GetCallId()]
+	if b == nil || s.Closed != nil {
+		return nil, fmt.Errorf("call %q is not an open background call", bg.GetCallId())
+	}
+	if bg.GetCapability() != b.Capability {
+		return nil, fmt.Errorf("background call %q is %s, not %s", bg.GetCallId(), b.Capability, bg.GetCapability())
+	}
+	switch bg.GetReason() {
+	case BackgroundReasonResult:
+	case BackgroundReasonTimeout:
+		if len(bg.GetContent()) > 0 {
+			return nil, fmt.Errorf("background call %q timed out with content", bg.GetCallId())
+		}
+	default:
+		return nil, fmt.Errorf("background result reason %q", bg.GetReason())
+	}
+	for _, c := range bg.GetContent() {
+		if c.GetCard() != nil || c.GetCardAction() != nil || c.GetUiContext() != nil || c.GetBackgroundResult() != nil {
+			return nil, fmt.Errorf("background result of call %q carries a platform block", bg.GetCallId())
+		}
+	}
+	return bg, nil
+}
+
+// settleBackground 了结后台调用：每个后台调用至多了结一次（结果、到期、取消三者之一）。
+func (s *State) settleBackground(callID string) {
+	delete(s.Background, callID)
 }
 
 // ShowCardCapability 是 show_card 的工具名（card.Capability；session 不依赖 card 包）。

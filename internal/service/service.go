@@ -212,6 +212,12 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 	if len(inputID) > MaxInputIDLen {
 		return nil, fmt.Errorf("%w: input_id exceeds %d bytes", ErrInvalid, MaxInputIDLen)
 	}
+	// 后台调用的了结只由平台写入（ADR-0035）：客户端伪造的会被当作设备的结果送给模型。
+	for _, b := range input {
+		if b.GetBackgroundResult() != nil {
+			return nil, fmt.Errorf("%w: background_result is written by the platform", ErrInvalid)
+		}
+	}
 	st, err := s.Load(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -305,10 +311,8 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 	}
 	// 按 TouchEvery 分段：输入与上一个 Run 落在不同段时更新。每段的第一个输入都会写入，索引中的时间因此与
 	// 最近的输入在同一段内，滞后不到 TouchEvery；只比较间隔的话，间隔始终短于 TouchEvery 的连续对话永远不会更新。
-	if now := s.Store.Clock.Now(); s.Index != nil && (prev.IsZero() || !now.Truncate(lifecycle.TouchEvery).Equal(prev.Truncate(lifecycle.TouchEvery))) {
-		if err := s.Index.Touch(ctx, sessionID, now); err != nil {
-			return res, err
-		}
+	if err := s.touch(ctx, sessionID, prev); err != nil {
+		return res, err
 	}
 	return res, nil
 }
@@ -368,13 +372,21 @@ func wakeOnEnding(st *session.State) bool {
 	return st.Created.GetParent() != nil
 }
 
-// afterClose 是关闭之后的步骤：撤回被关闭中断的 Run 中已派发的调用、在索引中记下关闭、交给 Janitor 销毁沙箱工作区。
-// 每一步都幂等；任一步失败时返回错误，重试 Close 会把它们再做一遍。以前重试遇到"已关闭"直接返回，失败的那一步
-// 及其后的步骤就再也不会执行。
+// afterClose 是关闭之后的步骤：撤回被关闭中断的 Run 中已派发的调用与未了结的后台调用（ADR-0035）、在索引中记下关闭、
+// 交给 Janitor 销毁沙箱工作区。每一步都幂等；任一步失败时返回错误，重试 Close 会把它们再做一遍。以前重试遇到"已关闭"
+// 直接返回，失败的那一步及其后的步骤就再也不会执行。
 func (s *Service) afterClose(ctx context.Context, st *session.State) error {
 	if n := len(st.Runs); n > 0 && st.Runs[n-1].Status == session.RunInterrupted {
 		if err := s.cancelDispatched(ctx, st.Runs[n-1]); err != nil {
 			return err
+		}
+	}
+	if s.Nodes != nil {
+		// 关闭之后不再有事件，后台调用不会再了结：撤回它们的投递，设备上线后不再执行。投影保留它们，重试时再撤回一次。
+		for _, b := range st.Background {
+			if err := s.Nodes.Cancel(ctx, b.NodeID, b.CallID); err != nil {
+				return err
+			}
 		}
 	}
 	if s.Index != nil {
@@ -438,6 +450,8 @@ func (s *Service) history(ctx context.Context, st *session.State, callID string)
 }
 
 // typedAnswer 把用户在对话中直接输入的内容作为对提问的回答：文字为回答文字，其余内容块（图片等）随附。
+// 输入中的卡片动作（已由 cardAction 核对、规范化）另记在结果的 card_action 中：这条输入不会写成 RunRequested 或
+// Steered，客户端只能从这里得知该动作已执行（docs/design/cards.md §5）。
 func typedAnswer(r *session.Run, c *session.Call, input []*v1.ContentBlock) (*v1.Event, error) {
 	q, err := askuser.Parse(c.Call.GetArgumentsJson())
 	if err != nil {
@@ -445,8 +459,13 @@ func typedAnswer(r *session.Run, c *session.Call, input []*v1.ContentBlock) (*v1
 	}
 	a := &askuser.Answer{Text: strings.TrimSpace(model.Text(input))}
 	var extra []*v1.ContentBlock
+	var action *v1.CardAction
 	for _, b := range input {
-		if ca := b.GetCardAction(); ca != nil && a.Text == "" {
+		ca := b.GetCardAction()
+		if ca != nil {
+			action = ca
+		}
+		if ca != nil && a.Text == "" {
 			// 等回答时点了卡片上的动作：动作作为回答文字。
 			a.Text = model.CardActionText(ca)
 			continue
@@ -461,7 +480,9 @@ func typedAnswer(r *session.Run, c *session.Call, input []*v1.ContentBlock) (*v1
 	if err := q.Check(a); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
-	return session.ExternalResult(r.ID, c.Call.GetCallId(), askuser.Result(q, a, extra...), false), nil
+	ev := session.ExternalResult(r.ID, c.Call.GetCallId(), askuser.Result(q, a, extra...), false)
+	ev.GetToolResult().CardAction = action
+	return ev, nil
 }
 
 // Answer 记录用户在界面上对 ask_user 提问的回答（点选、填写或文字），作为该调用的结果写入日志并唤醒

@@ -88,12 +88,23 @@ func (w *World) closeAt(i int, err error) error {
 		w.tracef("close %s: %v; retrying", sid, err)
 		err = w.svc.Close(context.Background(), sid, "sim", "test")
 	}
-	if errors.As(err, &cf) {
+	gaveUp := errors.As(err, &cf)
+	if gaveUp {
 		w.tracef("close %s: %v; giving up", sid, err)
 		err = nil
 	}
 	if err != nil {
 		return fmt.Errorf("close %s: %w", sid, err)
+	}
+	if !gaveUp {
+		// 关闭之后的步骤都已完成：未了结的后台调用的投递已撤回，设备不得再执行它们（ADR-0035）。
+		st, err := w.svc.Load(context.Background(), sid)
+		if err != nil {
+			return err
+		}
+		for id := range st.Background {
+			w.withdrawn[id] = true
+		}
 	}
 	w.Stats.Closes++
 	w.closed = append(w.closed, sid)

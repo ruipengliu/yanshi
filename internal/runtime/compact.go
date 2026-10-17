@@ -108,9 +108,13 @@ func renderForSummary(in SummaryInput) string {
 	for _, e := range in.History {
 		switch p := e.GetPayload().(type) {
 		case *v1.Event_RunRequested:
-			fmt.Fprintf(&b, "%s %s\n", inputSpeaker("[用户]", p.RunRequested.GetFromCall()), blocksText(p.RunRequested.GetInput()))
+			fmt.Fprintf(&b, "%s %s\n", inputSpeaker("[用户]", p.RunRequested.GetFromCall(), p.RunRequested.GetInput()),
+				blocksText(truncateInput(p.RunRequested.GetInput(), in.MaxToolResult)))
 		case *v1.Event_Steered:
-			fmt.Fprintf(&b, "%s %s\n", inputSpeaker("[用户插话]", p.Steered.GetFromCall()), blocksText(p.Steered.GetInput()))
+			fmt.Fprintf(&b, "%s %s\n", inputSpeaker("[用户插话]", p.Steered.GetFromCall(), p.Steered.GetInput()),
+				blocksText(truncateInput(p.Steered.GetInput(), in.MaxToolResult)))
+		case *v1.Event_BackgroundCancelled:
+			fmt.Fprintf(&b, "%s\n", model.BackgroundCancelledText(p.BackgroundCancelled))
 		case *v1.Event_CallTranscript:
 			fmt.Fprintf(&b, "%s\n", model.CallTranscriptText(p.CallTranscript))
 		case *v1.Event_AssistantMessage:
@@ -133,10 +137,13 @@ func renderForSummary(in SummaryInput) string {
 	return b.String()
 }
 
-// inputSpeaker 注明 Call 派生的输入是语音助手转述的任务，而不是用户的原话。
-func inputSpeaker(label, fromCall string) string {
-	if fromCall != "" {
+// inputSpeaker 注明 Call 派生的输入是语音助手转述的任务、后台调用的了结由平台送达，而不是用户的原话。
+func inputSpeaker(label, fromCall string, input []*v1.ContentBlock) string {
+	switch {
+	case fromCall != "":
 		return "[语音助手转述的任务]"
+	case session.BackgroundInput(input) != nil:
+		return "[平台]"
 	}
 	return label
 }
@@ -150,6 +157,8 @@ func blocksText(blocks []*v1.ContentBlock) string {
 			parts = append(parts, model.UIContextText(u))
 		} else if a := c.GetCardAction(); a != nil {
 			parts = append(parts, model.CardActionText(a))
+		} else if r := c.GetBackgroundResult(); r != nil {
+			parts = append(parts, blocksText(model.BackgroundResultBlocks(r)))
 		} else {
 			parts = append(parts, c.GetText().GetText())
 		}
@@ -161,9 +170,11 @@ func blocksText(blocks []*v1.ContentBlock) string {
 func eventTokens(e *v1.Event, maxToolResult int) int {
 	switch p := e.GetPayload().(type) {
 	case *v1.Event_RunRequested:
-		return model.EstimateMessage(model.Message{Content: model.InputBlocks(p.RunRequested.GetInput(), p.RunRequested.GetFromCall())})
+		return model.EstimateMessage(model.Message{Content: inputBlocks(p.RunRequested.GetInput(), p.RunRequested.GetFromCall(), maxToolResult)})
 	case *v1.Event_Steered:
-		return model.EstimateMessage(model.Message{Content: model.InputBlocks(p.Steered.GetInput(), p.Steered.GetFromCall())})
+		return model.EstimateMessage(model.Message{Content: inputBlocks(p.Steered.GetInput(), p.Steered.GetFromCall(), maxToolResult)})
+	case *v1.Event_BackgroundCancelled:
+		return model.EstimateMessage(model.Message{Content: model.TextBlocks(model.BackgroundCancelledText(p.BackgroundCancelled))})
 	case *v1.Event_CallTranscript:
 		return model.EstimateMessage(model.Message{Content: model.TextBlocks(model.CallTranscriptText(p.CallTranscript))})
 	case *v1.Event_AssistantMessage:

@@ -23,22 +23,43 @@ class Mic extends AudioWorkletProcessor {
 }
 registerProcessor("mic", Mic);`;
 
-/** Mic 打开麦克风，每 20 ms 以 onFrame(pcm: Int16Array, peak: number) 交出一帧 16 kHz 音频。 */
+/**
+ * Mic 打开麦克风，每 20 ms 以 onFrame(pcm: Int16Array, peak: number) 交出一帧 16 kHz 音频。一个 Mic 只用一次。
+ *
+ * 打开要等授权与音频模块加载：stop 可能在 start 完成之前被调用（松开录音按钮、挂断、设备断开）。start 在每次等待之后
+ * 检查是否已停止，已停止就释放刚建立的 stream 与 AudioContext，不再开始采集。
+ */
 export class Mic {
   async start(onFrame) {
-    this.stream = await navigator.mediaDevices.getUserMedia({
+    try {
+      await this.open(onFrame);
+    } catch (e) {
+      // 打开到一半失败（未授权、音频模块加载失败）：释放已经建立的部分。
+      this.stop();
+      throw e;
+    }
+  }
+
+  async open(onFrame) {
+    const stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
     });
+    if (this.stopped) return release(stream);
+    this.stream = stream;
     let ctx;
     let src;
     try {
       ctx = new AudioContext({ sampleRate: 16000 });
-      src = ctx.createMediaStreamSource(this.stream);
+      src = ctx.createMediaStreamSource(stream);
     } catch {
+      release(null, ctx);
       ctx = new AudioContext();
-      src = ctx.createMediaStreamSource(this.stream);
+      src = ctx.createMediaStreamSource(stream);
     }
+    this.ctx = ctx;
     await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: "text/javascript" })));
+    // 等待期间已停止：stop 已释放 stream 与 ctx，不再接上采集。
+    if (this.stopped) return;
     const node = new AudioWorkletNode(ctx, "mic");
     node.port.onmessage = (e) => onFrame(e.data.pcm, e.data.peak);
     let input = src;
@@ -50,14 +71,18 @@ export class Mic {
       input = lp;
     }
     input.connect(node);
-    this.ctx = ctx;
   }
 
   stop() {
-    this.stream?.getTracks().forEach((t) => t.stop());
-    this.ctx?.close();
+    this.stopped = true;
+    release(this.stream, this.ctx);
     this.stream = this.ctx = null;
   }
+}
+
+function release(stream, ctx) {
+  stream?.getTracks().forEach((t) => t.stop());
+  if (ctx && ctx.state !== "closed") ctx.close().catch(() => {});
 }
 
 /** wav 把 16 kHz 单声道 PCM 帧编码为 WAV（模型直接听语音消息：火山方舟接受 wav、mp3、m4a，不接受 webm）。 */
@@ -89,13 +114,16 @@ export class Recorder {
   async start(onLevel) {
     this.frames = [];
     this.mic = new Mic();
+    // stop 早于 start 完成时，Mic 自己释放麦克风；之后到达的帧（不会有）也不再记录。
     await this.mic.start((pcm, peak) => {
+      if (this.stopped) return;
       this.frames.push(pcm);
       onLevel?.(peak);
     });
   }
 
   stop() {
+    this.stopped = true;
     this.mic?.stop();
     const frames = this.frames ?? [];
     this.frames = [];

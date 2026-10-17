@@ -37,9 +37,26 @@ export function randomHex(n) {
   return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 }
 
+/** ask_user 调用派发时 ToolCallStarted 的 node_id：路由到用户本人（ADR-0025）。 */
+export const USER_NODE = "@user";
+
 /** 内容块中的文本。 */
 export function textOf(blocks) {
   return (blocks ?? []).map((b) => b.text?.text ?? "").join("");
+}
+
+/** 事件记下的、已执行的卡片动作，没有时为 undefined（与网页 SDK 的 cardActionOf 同义，docs/design/cards.md §5）：
+ *  输入（RunRequested、Steered）中的 card_action，或 Run 等回答时作为回答的 ToolResult.card_action。 */
+export function cardActionOf(e) {
+  if (e.tool_result) return e.tool_result.card_action;
+  return (e.run_requested?.input ?? e.steered?.input ?? []).find((b) => b.card_action)?.card_action;
+}
+
+/** 事件中的后台调用了结（设备结果或到期，ADR-0035），没有时为 undefined（与网页 SDK 的 backgroundResultOf 同义）：
+ *  平台写在 RunRequested 或 Steered 的输入中，且是唯一的内容块。界面把它显示为平台的说明，而不是用户的气泡。 */
+export function backgroundResultOf(e) {
+  const input = e.run_requested?.input ?? e.steered?.input ?? [];
+  return input.length === 1 ? input[0].background_result : undefined;
 }
 
 /** Event 的载荷种类（protojson 中 oneof 的字段名，如 "run_requested"）与载荷。 */
@@ -667,7 +684,10 @@ export class SimDevice {
     this.send({ activity: { session_id: sessionId, focused, typing } });
   }
 
-  /** 发出一个 ClientRequest（op 为 {create_session: …} 之类），等待响应。 */
+  /**
+   * 发出一个 ClientRequest（op 为 {create_session: …} 之类），等待响应。30 秒没有响应时以超时失败，结果未知：
+   * 提交输入的调用方应以同一 input_id 重试（chat.js 保留发送失败的草稿与它的 input_id）。
+   */
   async request(op, { dropAfterSend = false } = {}) {
     await this.ready();
     const request_id = `r${++this.nextId}`;
@@ -675,7 +695,12 @@ export class SimDevice {
     this.sendNow(this.ws, { request: { request_id, ...op } });
     // 演示"请求已发出、响应没回来"：发出后立即断开，结果未知。
     if (dropAfterSend) this.drop();
-    return withTimeout(p, 30_000, `${this.cfg.label}: request ${request_id} timed out`);
+    try {
+      return await withTimeout(p, 30_000, `${this.cfg.label}: request ${request_id} timed out; outcome unknown`);
+    } finally {
+      // 超时后不再等它：迟到的响应找不到记录即丢弃，记录也不会一直留在 pending 里。
+      this.pending.delete(request_id);
+    }
   }
 
   async createSession(agent, version = "") {
@@ -769,6 +794,11 @@ export class SimDevice {
 
   closeSession(sessionId, reason = "") {
     return this.request({ close: { session_id: sessionId, reason } });
+  }
+
+  /** 取消一个未了结的后台调用（ADR-0035）：设备上线后不再执行，不开启新 Run；已了结时为 conflict。 */
+  cancelBackground(sessionId, callId) {
+    return this.request({ cancel_background: { session_id: sessionId, call_id: callId } });
   }
 
   // —— Node：执行调用 ——
@@ -906,6 +936,8 @@ export class SessionView {
     this.deltas = [];
     this.draft = { text: "", reasoning: "", runId: "", attempt: 0, afterSeq: -1n };
     this.committed = 0n;
+    // 已结束的 Run：它们迟到的增量不再建立草稿。
+    this.endedRunIds = new Set();
     this.presence = [];
     this.ended = "";
     this.listeners = new Set();
@@ -950,7 +982,7 @@ export class SessionView {
 
   onDelta(d) {
     const after = BigInt(d.after_seq ?? 0);
-    if (after < this.committed) return false;
+    if (after < this.committed || this.endedRunIds.has(d.run_id)) return false;
     const same = d.run_id === this.draft.runId && (d.attempt ?? 0) === this.draft.attempt && after === this.draft.afterSeq;
     if (d.end) {
       if (!same) return false;
@@ -967,7 +999,13 @@ export class SessionView {
   }
 
   onEvent(e) {
-    const [kind] = payloadOf(e);
+    const [kind, p] = payloadOf(e);
+    if (kind === "run_completed" || kind === "run_failed" || kind === "run_interrupted") {
+      // 断线期间生成被丢弃（没有收到 end）、Run 随后结束时，重连后补发的只有终态事件：草稿随 Run 结束清除。
+      this.endedRunIds.add(p.run_id);
+      if (this.draft.runId === p.run_id) this.clearDraft();
+      return;
+    }
     if (kind !== "assistant_message") return;
     const seq = BigInt(e.seq);
     if (seq > this.committed) this.committed = seq;
@@ -1002,14 +1040,23 @@ export class SessionView {
       .map((p) => ({ callId: p.call_id, runId: p.run_id, summary: p.summary ?? "", capability: this.callCapability(p.call_id) }));
   }
 
-  /** 待回答的 ask_user 提问：{callId, runId, question, options, multiple, fields}。 */
+  /**
+   * 待回答的 ask_user 提问：{callId, runId, question, options, multiple, fields}。提问派发给用户
+   * （ToolCallStarted{node_id: "@user"}）之后才算待回答：Worker 按顺序一次推进一个调用，模型同一轮返回"委托 + ask_user"
+   * 时，提问要等委托结束才派发，在那之前回答会被服务端拒绝。
+   */
   pendingQuestions() {
     const resulted = new Set(this.payloads("tool_result").map((p) => p.call_id));
+    const dispatched = new Set(
+      this.payloads("tool_call_started")
+        .filter((p) => p.node_id === USER_NODE)
+        .map((p) => p.call_id),
+    );
     const ended = this.endedRuns();
     const out = [];
     for (const m of this.payloads("assistant_message")) {
       for (const c of m.tool_calls ?? []) {
-        if (c.capability !== "ask_user" || resulted.has(c.call_id) || ended.has(m.run_id)) continue;
+        if (c.capability !== "ask_user" || !dispatched.has(c.call_id) || resulted.has(c.call_id) || ended.has(m.run_id)) continue;
         let a = {};
         try {
           a = JSON.parse(c.arguments_json ?? "{}");
@@ -1053,15 +1100,38 @@ export class SessionView {
     return out;
   }
 
-  /** 已执行过的卡片动作："<call_id>/<action>"（任一设备提交的输入中的 card_action）。 */
+  /** 已执行过的卡片动作："<call_id>/<action>"（任一设备提交的，含作为提问回答的，见 cardActionOf）。 */
   cardActions() {
     const out = new Set();
     for (const e of this.events) {
-      for (const b of e.run_requested?.input ?? e.steered?.input ?? []) {
-        if (b.card_action) out.add(`${b.card_action.call_id}/${b.card_action.action}`);
-      }
+      const a = cardActionOf(e);
+      if (a) out.add(`${a.call_id}/${a.action}`);
     }
     return out;
+  }
+
+  /**
+   * 未了结的后台调用（ADR-0035）：{callId, runId, capability, nodeId, deadline}，按截止时间排序。带 backgrounded 的
+   * ToolResult 使调用转入后台；输入中的 background_result（设备结果或到期）与 BackgroundCancelled 了结它。规则同网页 SDK 的
+   * BackgroundCalls。
+   */
+  backgroundCalls() {
+    const open = new Map();
+    for (const e of this.events) {
+      const r = e.tool_result;
+      if (r?.backgrounded) {
+        open.set(r.call_id, {
+          callId: r.call_id,
+          runId: r.run_id,
+          capability: this.callCapability(r.call_id),
+          nodeId: r.backgrounded.node_id,
+          deadline: r.backgrounded.deadline ?? "",
+        });
+      }
+      const settled = backgroundResultOf(e)?.call_id ?? e.background_cancelled?.call_id;
+      if (settled) open.delete(settled);
+    }
+    return [...open.values()].sort((a, b) => Date.parse(a.deadline) - Date.parse(b.deadline));
   }
 
   /** 委托（docs/design/m5-multi-agent.md）：ToolCallStarted 的 node_id 为 "@agent/<子 Session>"。 */
@@ -1074,6 +1144,18 @@ export class SessionView {
         childSessionId: p.node_id.slice("@agent/".length),
         agent: this.callCapability(p.call_id).replace(/^agent__/, ""),
       }));
+  }
+
+  /** 进行中的委托：该调用还没有结果、所属 Run 也没有结束。 */
+  activeDelegations() {
+    const resulted = new Set(this.payloads("tool_result").map((p) => p.call_id));
+    const ended = this.endedRuns();
+    return this.delegations().filter((d) => !resulted.has(d.callId) && !ended.has(d.runId));
+  }
+
+  /** 已收到的最后一个事件的 seq：重新订阅时从这里续传。 */
+  lastSeq() {
+    return BigInt(this.events.at(-1)?.seq ?? 0);
   }
 
   /**
@@ -1091,16 +1173,25 @@ export class SessionView {
       seen.add(v.sessionId);
       for (const a of v.pendingApprovals()) approvals.push({ ...a, sessionId: v.sessionId, agent, via });
       for (const q of v.pendingQuestions()) questions.push({ ...q, sessionId: v.sessionId, agent, via });
-      const resulted = new Set(v.payloads("tool_result").map((p) => p.call_id));
-      const ended = v.endedRuns();
-      for (const d of v.delegations()) {
-        if (resulted.has(d.callId) || ended.has(d.runId)) continue;
+      for (const d of v.activeDelegations()) {
         const cv = childView?.(d.childSessionId);
         if (cv) walk(cv, d.agent, via || d.childSessionId);
       }
     };
     walk(this, "", "");
     return { approvals, questions };
+  }
+
+  /**
+   * 输入框里的文字应作为哪个提问的回答（以 answer 的 text 发往它的 sessionId）：本 Session 自己没有待回答的提问、进行中的委托
+   * 里恰好一个待回答的提问时返回它，否则返回 undefined，文字照旧提交给本 Session（本 Session 自己的提问由服务端把文字当作
+   * 回答）。规则与网页 SDK 的 PendingTracker.typedAnswerTarget 相同：answer 按 call_id 去重，不跨 Session 写入，所以由
+   * 客户端选定发往哪个 Session，而不是让服务端沿委托链转发父 Session 的输入（docs/design/m5-multi-agent.md §4）。
+   */
+  typedAnswerTarget(childView) {
+    if (this.pendingQuestions().length) return undefined;
+    const { questions } = this.pendingWithDelegations(childView);
+    return questions.length === 1 ? questions[0] : undefined;
   }
 
   /** Run 的终态事件（run_completed、run_failed、run_interrupted），尚未结束时为 undefined。 */
@@ -1120,34 +1211,60 @@ export class SessionView {
     return m ? textOf(m.content) : "";
   }
 
-  /** 等待 pred() 为真（每次视图变化时检查）。 */
+  /** 等待 pred() 为真（每次视图变化时检查）。this.signal（AbortSignal，验证场景设置）中止时以错误结束。 */
   waitFor(what, pred, timeoutMs = 10_000) {
-    return waitUntil(what, pred, timeoutMs, (fn) => this.on(fn));
+    return waitUntil(what, pred, timeoutMs, (fn) => this.on(fn), this.signal);
   }
 }
 
-/** 等待 pred() 为真：subscribe(fn) 在状态变化时调用 fn，返回取消函数。 */
-export function waitUntil(what, pred, timeoutMs, subscribe) {
+/**
+ * routeInput 决定输入框的内容发往哪里（对话面板 chat.js 与验证场景共用，不依赖 DOM）：
+ *   {kind: "wait"}             还有上传中的附件：等它们完成再决定，否则文件留给下一条，文字也可能被当作子 Agent 提问的回答；
+ *   {kind: "empty"}            没有可发送的内容；
+ *   {kind: "answer", question} 文字作为子 Agent 提问的回答，以 answer 发往 question.sessionId（target 为
+ *                              SessionView.typedAnswerTarget 的结果）。附件与界面上下文放不进回答，带着它们时照旧提交；
+ *   {kind: "submit"}           提交给本 Session。
+ */
+export function routeInput({ text = "", attachments = 0, uploading = 0, uiContext = false }, target) {
+  if (uploading > 0) return { kind: "wait" };
+  if (!text && !attachments) return { kind: "empty" };
+  if (text && !attachments && !uiContext && target) return { kind: "answer", question: target };
+  return { kind: "submit" };
+}
+
+/** 等待 pred() 为真：subscribe(fn) 在状态变化时调用 fn，返回取消函数。signal 中止时以错误结束。 */
+export function waitUntil(what, pred, timeoutMs, subscribe, signal) {
   return new Promise((resolve, reject) => {
     let off = () => {};
+    const abort = () => {
+      off();
+      clearTimeout(t);
+      reject(new Error(`cancelled while waiting for ${what}`));
+    };
+    if (signal?.aborted) return reject(new Error(`cancelled before waiting for ${what}`));
+    signal?.addEventListener("abort", abort, { once: true });
+    const done = () => signal?.removeEventListener("abort", abort);
     const check = () => {
       let v;
       try {
         v = pred();
       } catch (e) {
         off();
+        done();
         clearTimeout(t);
         reject(e);
         return;
       }
       if (v) {
         off();
+        done();
         clearTimeout(t);
         resolve(v);
       }
     };
     const t = setTimeout(() => {
       off();
+      done();
       reject(new Error(`timed out waiting for ${what}`));
     }, timeoutMs);
     off = subscribe(check);

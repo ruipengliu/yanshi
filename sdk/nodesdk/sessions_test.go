@@ -69,3 +69,25 @@ func TestBlockedWriteDoesNotBlockTheClient(t *testing.T) {
 		t.Fatalf("write failure reported as %v, want ErrDisconnected", err)
 	}
 }
+
+// CardActionOf 覆盖卡片动作被记下的三处：开启新 Run、并入进行中的 Run、作为提问的回答（docs/design/cards.md §5）。
+func TestCardActionOf(t *testing.T) {
+	a := &v1.CardAction{CardId: "alarm", CallId: "call_card", Action: "ok", Label: "好的"}
+	block := []*v1.ContentBlock{{Kind: &v1.ContentBlock_Text{Text: &v1.Text{Text: "x"}}}, {Kind: &v1.ContentBlock_CardAction{CardAction: a}}}
+	for name, c := range map[string]struct {
+		e    *v1.Event
+		want *v1.CardAction
+	}{
+		"run requested": {&v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{Input: block}}}, a},
+		"steered":       {&v1.Event{Payload: &v1.Event_Steered{Steered: &v1.Steered{Input: block}}}, a},
+		"answer":        {&v1.Event{Payload: &v1.Event_ToolResult{ToolResult: &v1.ToolResult{CallId: "q1", InputId: "card_x", CardAction: a}}}, a},
+		"text input":    {&v1.Event{Payload: &v1.Event_Steered{Steered: &v1.Steered{Input: block[:1]}}}, nil},
+		// 卡片动作随文字一起回答时也留在回答的内容里（给模型看）；是否已执行只看 card_action。
+		"result content": {&v1.Event{Payload: &v1.Event_ToolResult{ToolResult: &v1.ToolResult{CallId: "q1", Content: block}}}, nil},
+		"other":          {&v1.Event{Payload: &v1.Event_RunCompleted{RunCompleted: &v1.RunCompleted{}}}, nil},
+	} {
+		if got := CardActionOf(c.e); got != c.want {
+			t.Errorf("%s: %v, want %v", name, got, c.want)
+		}
+	}
+}

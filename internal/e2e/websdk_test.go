@@ -12,7 +12,7 @@ import (
 
 // TestWebSDK：TypeScript SDK（sdk/web）与真实网关互通。网关在本进程中启动，
 // 互通脚本（sdk/web/test/interop.ts）以 Node.js 运行：两台网页设备实时增量与晚加入者 Snapshot、在场、
-// ask_user 跨设备回答、输入去重、访问他人 Session。需要 YANSHI_TEST_NODE 且已构建 sdk/web（make check 会构建）。
+// ask_user 跨设备回答、输入去重、子 Agent 的提问（PendingTracker 跟随委托，文字回答发往子 Session）、访问他人 Session。需要 YANSHI_TEST_NODE 且已构建 sdk/web（make check 会构建）。
 func TestWebSDK(t *testing.T) {
 	if os.Getenv("YANSHI_TEST_NODE") == "" {
 		t.Skip("YANSHI_TEST_NODE not set")
