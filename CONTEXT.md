@@ -15,7 +15,7 @@ _Avoid_: 用户（有歧义时）、账号、客户
 ## 节点与能力
 
 **Device（设备）**:
-EndUser 持有的物理终端，例如手机或电脑。
+EndUser 持有的物理终端，例如手机或电脑。只经某个 HostApp 接入的外设（如领夹录音器）不是 Device：yanshi 只看到那个 HostApp。
 _Avoid_: 端、终端、客户端
 
 **HostApp（宿主应用）**:
@@ -99,6 +99,14 @@ _Avoid_: 实时会话、语音模式、Live
 **Event（事件）**:
 Session 中只追加、不可修改的一条记录；Run 的全部状态都可由 Event 重建。
 _Avoid_: 消息、日志条目
+
+**Capture（旁听）**:
+HostApp 提交的一段旁听转写：EndUser 与他人的日常对话，带说话人标签（佩戴者、他人），不是对 Agent 说的话。作为 Event 进入 Session 但不触发 Run；yanshi 只接收文字，不接触音频与声纹。佩戴者的话按 EndUser 自己的输入对待，他人的话按不可信数据对待；未通过 Moderation 的片段只留不含文字的占位。一个 EndUser 在当地每天一个旁听 Session，原文随它按 Retention 删除。
+_Avoid_: 录音、输入（指它时）、CallTranscript（那是 Call 的转写）
+
+**Project（项目）**:
+围绕一个主题、跨天归集旁听摘要的长期 Session。旁听原文只短期保留，Project 中只有摘要；关于 EndUser 本人的稳定结论（偏好、沟通习惯）不进 Project，进 Memory。
+_Avoid_: 主题、文件夹、知识库
 
 **ContentBlock（内容块）**:
 Event 中承载一段多模态内容（文本、图片、音频、视频、文件引用）的单元。
@@ -187,7 +195,7 @@ _Avoid_: 确认框、授权（与 Grant 区分）
 _Avoid_: 会话（与 Session 区分）、票据、凭据（泛指时）
 
 **Retention（保留策略）**:
-BusinessLine 为其 Session 声明的保留期限：最后一次输入后多久自动关闭、关闭后多久自动删除。
+BusinessLine 为其 Session 声明的保留期限：最后一次输入后多久自动关闭、关闭后多久自动删除。可按 AgentDef 名称覆盖，使同一业务线中短期保留的 Session（如旁听 Session）与长期保留的 Session（如 Project）并存。
 _Avoid_: 过期策略、TTL（泛指时）
 
 **Usage（用量）**:
