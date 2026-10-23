@@ -112,7 +112,8 @@ func (w *World) countDelegationResults(events []*v1.Event) {
 // 清理完毕（重新派发时子 Session 已存在）。派发若不对子 Session 本身先写后查，会重建它的索引与日志，
 // 删除不变量（checkDeleted）随即报告复活。
 func (w *World) deleteChildMidDispatch(ctx context.Context, child string) {
-	if !w.faults || !w.chance(0.3) {
+	// 重新派发本身就少见，概率低时 300 个种子中只有几次完成这一交错。
+	if !w.faults || !w.chance(0.6) {
 		return
 	}
 	if st, err := w.store.Load(ctx, child); err != nil || st.Created == nil {

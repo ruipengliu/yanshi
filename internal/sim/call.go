@@ -24,13 +24,15 @@ func (w *World) callStep() error {
 	if len(w.deleted) > 0 && w.chance(0.1) {
 		sid = w.deleted[w.rng.IntN(len(w.deleted))]
 	}
-	// 偏向正在等回答的 Session：通话中的话回答提问（经语音模型转述的打字回答）少见，但须覆盖。
+	// 偏向正在等回答的 Session：通话中的话回答提问（经语音模型转述的打字回答）少见，但须覆盖。它还没有通话时先开始一个，
+	// 并在同一步中派生任务：只在"等回答"与"通话中"恰好同时发生时才偏向的话，300 个种子中只有一两次，任何改变随机序列的
+	// 改动都可能使它归零。
 	asking := false
-	if q := w.asking(); q != "" && w.calls[q] != "" && w.chance(0.5) {
+	if q := w.asking(); q != "" && w.chance(0.5) {
 		sid, asking = q, true
 	}
 	callID := w.calls[sid]
-	if !asking && (callID == "" || w.chance(0.1)) {
+	if callID == "" || !asking && w.chance(0.1) {
 		w.nextCall++
 		id := fmt.Sprintf("vc-%d", w.nextCall)
 		_, err := w.svc.StartCall(ctx, service.StartCallRequest{SessionID: sid, CallID: id, DeviceID: "phone", Model: "volc/sim", Voice: "v"})
@@ -47,7 +49,10 @@ func (w *World) callStep() error {
 		w.Stats.CallsStarted++
 		w.calls[sid] = id
 		w.tracef("call start %s %s", sid, id)
-		return nil
+		if !asking {
+			return nil
+		}
+		callID = id
 	}
 	x := w.rng.Float64()
 	if asking {

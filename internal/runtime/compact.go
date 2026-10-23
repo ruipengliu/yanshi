@@ -159,6 +159,8 @@ func blocksText(blocks []*v1.ContentBlock) string {
 			parts = append(parts, model.CardActionText(a))
 		} else if r := c.GetBackgroundResult(); r != nil {
 			parts = append(parts, blocksText(model.BackgroundResultBlocks(r)))
+		} else if g := c.GetCapture(); g != nil {
+			parts = append(parts, model.CaptureText(g))
 		} else {
 			parts = append(parts, c.GetText().GetText())
 		}

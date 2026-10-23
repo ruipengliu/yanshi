@@ -220,6 +220,36 @@ func BackgroundCancelledText(c *v1.BackgroundCancelled) string {
 	return fmt.Sprintf("[后台调用已取消] 用户取消了之前因设备离线转入后台的调用 %s（调用 ID %s），它不会再执行。", c.GetCapability(), c.GetCallId())
 }
 
+// CaptureText 把一段旁听转写呈现为给模型看的一行（docs/design/captures.md §5）：前缀注明说话人，佩戴者是用户本人。
+// 换行替换为空格，使一段话不能在文本上冒充另一行、另一个说话人（闸门与注入判断按结构化的说话人字段判断，不受影响）。
+// 不显示时间：spoken_at 是设备时钟下的绝对时间，不知道用户所在的时区，显示出来反而会误导。
+func CaptureText(g *v1.CaptureSegment) string {
+	who := "佩戴者"
+	if g.GetSpeaker() == v1.Speaker_SPEAKER_OTHER {
+		who = "他人 " + g.GetSpeakerKey()
+	}
+	if g.GetRedacted() {
+		return "[" + who + "]（这段话未通过内容安全检查，已拦截）\n"
+	}
+	return "[" + who + "] " + strings.NewReplacer("\r", " ", "\n", " ").Replace(g.GetText()) + "\n"
+}
+
+// ExpandCaptures 把内容中的旁听片段展开为文本（提供商、估算与压缩摘要因此只见到文本与媒体）；没有旁听片段时原样返回。
+func ExpandCaptures(blocks []*v1.ContentBlock) []*v1.ContentBlock {
+	if !slices.ContainsFunc(blocks, func(b *v1.ContentBlock) bool { return b.GetCapture() != nil }) {
+		return blocks
+	}
+	out := make([]*v1.ContentBlock, 0, len(blocks))
+	for _, b := range blocks {
+		if g := b.GetCapture(); g != nil {
+			out = append(out, TextBlocks(CaptureText(g))...)
+		} else {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
 // DescribeMedia 把非文本内容呈现为给模型看的一行文本，如 "[artifact art_x: chart.png, image/png, 7.6 KB]"。
 func DescribeMedia(m *v1.Media) string {
 	id, ok := strings.CutPrefix(m.GetUri(), "artifact://")

@@ -154,7 +154,8 @@ func deferUser(out, deferred *[]model.Message, pending []string, input []*v1.Con
 }
 
 func toolMessage(m *v1.ToolResult, maxTokens int) model.Message {
-	content := truncateBlocks(m.GetContent(), maxTokens)
+	// 先截断、再展开旁听片段：截断按片段估算，不会把一段话截成两半而丢掉它的说话人前缀。
+	content := model.ExpandCaptures(truncateBlocks(m.GetContent(), maxTokens))
 	if m.GetIsError() {
 		content = append(model.TextBlocks("[error] "), content...)
 	}

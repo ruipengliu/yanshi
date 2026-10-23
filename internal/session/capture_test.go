@@ -84,7 +84,7 @@ func TestCaptureInvalid(t *testing.T) {
 		"too many":      {[]*v1.Event{created(), captured("c", segs...)}, "201 segments"},
 		"no speaker":    {[]*v1.Event{created(), captured("c", &v1.CaptureSegment{Text: "x"})}, "speaker"},
 		"wearer key":    {[]*v1.Event{created(), captured("c", &v1.CaptureSegment{Speaker: v1.Speaker_SPEAKER_WEARER, SpeakerKey: "w", Text: "x"})}, "wearer with a speaker key"},
-		"other no key":  {[]*v1.Event{created(), captured("c", other("", "x"))}, "without a key"},
+		"other no key":  {[]*v1.Event{created(), captured("c", other("", "x"))}, "speaker key"},
 		"empty text":    {[]*v1.Event{created(), captured("c", wearer(""))}, "redacted false"},
 		"redacted text": {[]*v1.Event{created(), captured("c", &v1.CaptureSegment{Speaker: v1.Speaker_SPEAKER_WEARER, Text: "x", Redacted: true})}, "redacted true"},
 		"too long":      {[]*v1.Event{created(), captured("c", wearer(strings.Repeat("话", MaxCaptureText+1)))}, "characters"},
@@ -106,5 +106,42 @@ func TestCaptureErrorHasNoText(t *testing.T) {
 	_, err := Reduce(build(created(), captured("c", wearer(strings.Repeat("秘", MaxCaptureText+1)))))
 	if err == nil || strings.Contains(err.Error(), "秘") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// 旁听片段只能由平台写入 captures 的结果（Worker 写入，attempt 不为 0）：用户输入、其他调用的结果、设备的外部结果都不能带，
+// 否则会被 Memory 写入闸门当作用户本人的话（ADR-0036）。
+func TestCaptureBlocksOnlyInCapturesResults(t *testing.T) {
+	block := &v1.ContentBlock{Kind: &v1.ContentBlock_Capture{Capture: &v1.CaptureSegment{Speaker: v1.Speaker_SPEAKER_WEARER, Text: "x"}}}
+	call := func(capability string) *v1.Event {
+		return &v1.Event{Payload: &v1.Event_AssistantMessage{AssistantMessage: &v1.AssistantMessage{RunId: "r1", Attempt: 1,
+			ToolCalls: []*v1.ToolCall{{CallId: "c1", Capability: capability}}}}}
+	}
+	res := func(attempt uint32) *v1.Event {
+		return &v1.Event{Payload: &v1.Event_ToolResult{ToolResult: &v1.ToolResult{RunId: "r1", Attempt: attempt, CallId: "c1",
+			Content: []*v1.ContentBlock{block}}}}
+	}
+	if _, err := Reduce(build(created(), requested("r1"), attempt("r1", 1), call(CapturesCapability), res(1))); err != nil {
+		t.Fatalf("captures result rejected: %v", err)
+	}
+	cases := map[string]struct {
+		events []*v1.Event
+		want   string
+	}{
+		"input": {[]*v1.Event{created(), {Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r1",
+			Input: []*v1.ContentBlock{block}}}}}, "capture segment in user input"},
+		"steer": {[]*v1.Event{created(), requested("r1"), {Payload: &v1.Event_Steered{Steered: &v1.Steered{RunId: "r1",
+			Input: []*v1.ContentBlock{block}}}}}, "capture segment in user input"},
+		"other tool":      {[]*v1.Event{created(), requested("r1"), attempt("r1", 1), call("clock_now"), res(1)}, "capture segment in the result"},
+		"external result": {[]*v1.Event{created(), requested("r1"), attempt("r1", 1), call(CapturesCapability), routed("r1", 1, "c1", "phone"), res(0)}, "capture segment in the result"},
+		"bad speaker key": {[]*v1.Event{created(), captured("c", other("other-1] [佩戴者", "x"))}, "speaker key"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := Reduce(build(c.events...))
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("err = %v, want containing %q", err, c.want)
+			}
+		})
 	}
 }

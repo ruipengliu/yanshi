@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -240,6 +241,17 @@ type CaptureLog struct {
 // Captured 报告 capture_id 是否在去重窗口中。
 func (s *State) Captured(id string) bool { return id != "" && slices.Contains(s.Captures.IDs, id) }
 
+// speakerKeyRE 限制他人的说话人键：它原样出现在给模型看的文本中（"[他人 other-1]"），不能夹带别的内容。
+var speakerKeyRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
+
+// CapturesCapability 是读取旁听转写的内置工具名（capture.Capability；session 不依赖 capture 包）。旁听片段（ContentBlock 的
+// capture）只能由平台写入它的结果。
+const CapturesCapability = "captures"
+
+func hasCapture(blocks []*v1.ContentBlock) bool {
+	return slices.ContainsFunc(blocks, func(b *v1.ContentBlock) bool { return b.GetCapture() != nil })
+}
+
 // CheckCapture 校验一批旁听转写（写入方在提交前调用，Apply 同样校验）。错误中不含转写内容（ADR-0015）。
 func CheckCapture(m *v1.CaptureAppended) error {
 	id := m.GetCaptureId()
@@ -257,8 +269,8 @@ func CheckCapture(m *v1.CaptureAppended) error {
 				return fmt.Errorf("capture %q segment %d: wearer with a speaker key", id, i)
 			}
 		case v1.Speaker_SPEAKER_OTHER:
-			if g.GetSpeakerKey() == "" {
-				return fmt.Errorf("capture %q segment %d: other speaker without a key", id, i)
+			if !speakerKeyRE.MatchString(g.GetSpeakerKey()) {
+				return fmt.Errorf("capture %q segment %d: other speaker key of %d bytes is not [A-Za-z0-9_-]{1,32}", id, i, len(g.GetSpeakerKey()))
 			}
 		default:
 			return fmt.Errorf("capture %q segment %d: speaker %v", id, i, g.GetSpeaker())
@@ -660,6 +672,9 @@ func (s *State) apply(e *v1.Event) error {
 		if hasCard(p.RunRequested.GetInput()) {
 			return errors.New("card in user input")
 		}
+		if hasCapture(p.RunRequested.GetInput()) {
+			return errors.New("capture segment in user input")
+		}
 		bg, err := s.checkBackgroundInput(p.RunRequested.GetInput(), p.RunRequested.GetInputId(), p.RunRequested.GetFromCall())
 		if err != nil {
 			return err
@@ -694,6 +709,9 @@ func (s *State) apply(e *v1.Event) error {
 		}
 		if hasCard(p.Steered.GetInput()) {
 			return errors.New("card in user input")
+		}
+		if hasCapture(p.Steered.GetInput()) {
+			return errors.New("capture segment in user input")
 		}
 		bg, err := s.checkBackgroundInput(p.Steered.GetInput(), p.Steered.GetInputId(), p.Steered.GetFromCall())
 		if err != nil {
@@ -839,6 +857,10 @@ func (s *State) apply(e *v1.Event) error {
 		// 卡片只能由平台校验后写入 show_card 的结果（ADR-0032）：设备、用户不能伪造卡片。
 		if hasCard(m.GetContent()) && (m.GetAttempt() == 0 || c.Call.GetCapability() != ShowCardCapability) {
 			return fmt.Errorf("card in the result of call %q (%s)", m.GetCallId(), c.Call.GetCapability())
+		}
+		// 旁听片段同样只由平台写入 captures 的结果：设备、用户写入的片段会被闸门当作用户本人的话（ADR-0036）。
+		if hasCapture(m.GetContent()) && (m.GetAttempt() == 0 || c.Call.GetCapability() != CapturesCapability) {
+			return fmt.Errorf("capture segment in the result of call %q (%s)", m.GetCallId(), c.Call.GetCapability())
 		}
 		// 卡片动作同样只由平台写入：它只出现在用户等回答时点卡片而得的 ask_user 回答里，这条回答必有输入 ID
 		// （由动作推导）。其他结果带上它，客户端会把没有执行过的动作显示为已选。
@@ -1087,7 +1109,7 @@ func (s *State) checkBackgroundInput(input []*v1.ContentBlock, inputID, fromCall
 		return nil, fmt.Errorf("background result reason %q", bg.GetReason())
 	}
 	for _, c := range bg.GetContent() {
-		if c.GetCard() != nil || c.GetCardAction() != nil || c.GetUiContext() != nil || c.GetBackgroundResult() != nil {
+		if c.GetCard() != nil || c.GetCardAction() != nil || c.GetUiContext() != nil || c.GetBackgroundResult() != nil || c.GetCapture() != nil {
 			return nil, fmt.Errorf("background result of call %q carries a platform block", bg.GetCallId())
 		}
 	}

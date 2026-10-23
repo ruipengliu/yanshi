@@ -140,7 +140,7 @@ func TestSimulationWithFaults(t *testing.T) {
 		"CallsStarted", "CallsReplaced", "CallTranscripts", "CallTranscriptsBlocked", "CallTasks", "CallAnswers", "CallConflicts",
 		"StoreFaults", "WakeFaults", "UncertainRetries", "CatalogFaults", "ResumedClaims", "PastRuns", "Delegations", "DelegationResults", "ChildDeletionRaces", "CascadeFaults", "Decisions", "DecisionFallbacks", "GracefulStops", "Handoffs",
 		"Backgrounded", "BackgroundResults", "BackgroundTimeouts", "BackgroundCancels", "DisconnectWakes",
-		"CapturesAppended", "CaptureDuplicates", "CapturesRejected", "CapturesRedacted", "CaptureStoreFaults")
+		"CapturesAppended", "CaptureDuplicates", "CapturesRejected", "CapturesRedacted", "CaptureStoreFaults", "CaptureReads")
 }
 
 // TestLongRunsWithFaults 让 Run 持续上百轮，检验压缩在故障下保持上下文有界、调用配对完整，且长 Run 能跑完。

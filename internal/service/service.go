@@ -217,6 +217,10 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 		if b.GetBackgroundResult() != nil {
 			return nil, fmt.Errorf("%w: background_result is written by the platform", ErrInvalid)
 		}
+		// 旁听片段只出现在 captures 的结果中（ADR-0036）：写进输入的片段会被当作旁听转写给模型看。
+		if b.GetCapture() != nil {
+			return nil, fmt.Errorf("%w: capture segments are submitted as captures, not input", ErrInvalid)
+		}
 	}
 	st, err := s.Load(ctx, sessionID)
 	if err != nil {

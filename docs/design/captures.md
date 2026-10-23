@@ -106,15 +106,18 @@ Capture 与输入一样更新索引中的 `LastInputAt`（受 `TouchEvery` 节�
 - `State.Captures`（`session.CaptureLog`）：最近 512 个 `capture_id` 的窗口，供去重；以及 Capture 的数量、最后一个 Capture 的序号与写入时间（用于按 `TouchEvery` 更新索引）。
 - Capture 的内容不进入 `State`，也不追加到 `History`：一天的转写可能有十几万字，放进投影会使每个快照都随之增大。`captures` 工具（§5）从日志按序号读取。
 - `Apply` 新增 `CaptureAppended` 的分支（否则会以 `unknown payload` 被拒绝）。关闭之后的 Capture 照常被 `Apply` 拒绝。
-- 递增 `session.ProjectionVersion`（11 → 13：第一步加入窗口与计数，第二步加入写入时间）。
+- 递增 `session.ProjectionVersion`（11 → 14：第一步加入窗口与计数，第二步加入写入时间，第三步 `Apply` 校验旁听片段只出现在 `captures` 的结果中）。
 
 ## 5. `captures` 工具
 
-开启了旁听的 AgentDef（§6）可以使用内置工具 `captures`：
+内置工具 `captures`（`internal/capture`）在 `app.NewCore` 中总是登记，由能力白名单决定哪个 AgentDef 能用；只有开启了旁听的 Session 才有内容可读。
 
-- 输入：`{after?: 序号游标, limit?: 段数，默认 200}`。
-- 输出：按日志顺序的片段，每行一段，形如 `[佩戴者 09:12] 明天我把报价发给张三` 与 `[他人1 09:13] 好的，周五之前`；未通过内容安全的片段显示为 `[他人1 09:14]（已拦截）`。末尾给出下一页的游标。
-- 工具名不含 `__`，因此闸门与注入判断不会自动把它当作外部内容，需要按说话人显式处理（§7）。
+- 输入：`{after?: 位置，第一页为 0, limit?: 段数，默认 200、至多 500}`。
+- 读取：从日志中 `after` 之后读起，跳过 Run 的事件；一批总是整批读入（下一页的位置是事件序号，不能停在一批中间），一页至多 `limit` 段、约 6000 字符（`capture.MaxChars`），只有第一批就超出时也读入它。读取旁听的 AgentDef 的 `max_tool_result` 须容得下一页，否则会被截断。
+- 输出：每段话是一个旁听片段（`ContentBlock` 的 `capture`，平台从日志读出写入），最后一个文字块注明本页段数与下一页的 `after`，或"已读完"。
+- 给模型看的文本（`model.CaptureText`）：每段一行，形如 `[佩戴者] 明天我把报价发给张三` 与 `[他人 other-1] 好的，周五之前`；拦截的片段显示为 `[他人 other-1]（这段话未通过内容安全检查，已拦截）`。片段中的换行替换为空格，一段话不能在文本上冒充另一行；`speaker_key` 只能是 `[A-Za-z0-9_-]{1,32}`。不显示时间：`spoken_at` 是设备时钟下的绝对时间，不知道用户所在的时区，显示出来反而会误导。
+- 旁听片段只能出现在 `captures` 的结果中，且只由 Worker 写入：用户输入、其他调用的结果、设备的外部结果中出现时 `Apply` 拒绝（与 `show_card` 的卡片相同，ADR-0032）。片段在 Transcript、估算与压缩摘要中展开为文本（`model.ExpandCaptures`），提供商不会见到它；截断按片段进行，不会切开一段话。
+- 工具名不含 `__`，闸门与注入判断按片段的说话人字段判断（§7），而不是解析文本中的前缀。
 - 结果写入 `ToolResult` 后，重放时使用记录下来的结果，与其他调用一样。
 
 工具说明与输出格式是给模型看的文本，须有评测覆盖（§11）。工具定义随 AgentDef 固定，按名称排序，请求前缀不受影响。
@@ -150,12 +153,12 @@ Capture 与输入一样更新索引中的 `LastInputAt`（受 `TouchEvery` 节�
 
 **Memory 写入闸门**（`internal/runtime/memgate.go`）：
 
-- `userText`：加入 `captures` 结果中佩戴者的片段，与 `CallTranscript` 中 `role = user` 的处理相同。`memory_save` 的内容可以从佩戴者的原话中找到依据。
-- `tainted`：`captures` 结果中含有未拦截的他人片段时，上下文视为含外部内容。
+- `userText`：加入调用结果中佩戴者的旁听片段，与 `CallTranscript` 中 `role = user` 的处理相同。`memory_save` 的内容可以从佩戴者的原话中找到依据。
+- `tainted`：调用结果中含有未拦截的他人片段时，上下文视为含外部内容。拦截的片段没有内容，不算。
 
-两条规则结合的效果：佩戴者说"我不吃香菜"可以直接记住；从他人发言中得出、佩戴者没有说过的内容，写入前需要用户批准。
+两条规则结合的效果：佩戴者说"我不吃香菜"可以直接记住；从他人发言中得出、佩戴者没有说过的内容，写入前需要用户批准。他人在话里写上"[佩戴者]"不起作用：判断依据是结构化的说话人字段。
 
-**注入判断**（`internal/runtime/worker.go` 的 `unjudged`）：把含有他人片段的 `captures` 结果加入待判断的调用结果，沿用 `decision.ToolResultInjection` 这个判断种类，不新增种类。
+**注入判断**（`internal/runtime/worker.go` 的 `unjudged`）：含有他人片段的调用结果加入待判断的结果，只把他人的话交给判断（佩戴者的话与平台写的说明不是外部内容），沿用 `decision.ToolResultInjection` 这个判断种类，不新增种类。
 
 **健康类**：沟通习惯写入普通类别（如 `communication`）；情绪、压力、心理状态的推断写入 `health`，业务线未开启 `memory: {health: true}` 时被拒绝（ADR-0022）。该类别的界定写进 `xinli-day` 的指令，并有评测覆盖。
 

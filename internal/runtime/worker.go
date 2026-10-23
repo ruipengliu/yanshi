@@ -582,7 +582,8 @@ func (w *Worker) advance(ctx context.Context, r *session.Run) error {
 const maxJudgedPerStep = 8
 
 // unjudged 返回本 Run 中来自外部、尚未判断的调用结果。外部指设备、沙箱、委托（路由调用）与 MCP 工具：它们的内容
-// 不由平台产生（工具名形如 "<来源>__<能力>"）；用户对提问的回答不算。并入本 Run 的后台调用迟到的结果也算（ADR-0035）。
+// 不由平台产生（工具名形如 "<来源>__<能力>"）；用户对提问的回答不算。并入本 Run 的后台调用迟到的结果也算（ADR-0035），
+// 含有他人发言的旁听转写也算（ADR-0036）。
 func (w *Worker) unjudged(r *session.Run) []*v1.ToolResult {
 	external := map[string]bool{}
 	for _, c := range r.Calls {
@@ -608,7 +609,7 @@ func (w *Worker) unjudged(r *session.Run) []*v1.ToolResult {
 			res = &v1.ToolResult{RunId: r.ID, CallId: bg.GetCallId(), Content: bg.GetContent(), IsError: bg.GetIsError()}
 			external[bg.GetCallId()] = true
 		}
-		if res.GetRunId() != r.ID || !external[res.GetCallId()] {
+		if res.GetRunId() != r.ID || (!external[res.GetCallId()] && len(otherSpeech(res.GetContent())) == 0) {
 			continue
 		}
 		if _, done := r.Decisions[session.DecisionKey(decision.ToolResultInjection, res.GetCallId())]; done {
@@ -634,8 +635,13 @@ func (w *Worker) judgeResults(ctx context.Context, r *session.Run, results []*v1
 		bctx, cancel := context.WithTimeout(ctx, judgeStepBudget)
 		defer cancel()
 		for _, res := range results {
+			text := model.Text(res.GetContent())
+			if others := otherSpeech(res.GetContent()); len(others) > 0 {
+				// 旁听转写只判断他人的话：佩戴者的话是用户本人的输入，平台写的说明也不是外部内容。
+				text = strings.Join(others, "\n")
+			}
 			q := decision.Question{Kind: decision.ToolResultInjection, Subject: res.GetCallId(),
-				Text: model.Text(res.GetContent()), Options: decision.Options(decision.ToolResultInjection)}
+				Text: text, Options: decision.Options(decision.ToolResultInjection)}
 			if t, cut := model.Truncate(q.Text, 8000); cut {
 				q.Text = t
 			}

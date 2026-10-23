@@ -76,6 +76,9 @@ message ContentBlock {
     CardAction card_action = 5;
     // background_result 只由平台写入，是 RunRequested / Steered 中唯一的内容块（后台调用的了结，ADR-0035）。
     BackgroundResult background_result = 6;
+    // capture 只出现在 captures 工具的结果中（由平台从日志读出写入，docs/design/captures.md §5）：说话人是结构化字段，
+    // Memory 写入闸门与注入判断据此区分佩戴者与他人的话，不解析给模型看的文本。
+    CaptureSegment capture = 7;
   }
 }
 

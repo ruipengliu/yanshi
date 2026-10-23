@@ -37,7 +37,8 @@ func externalCall(capability string) bool { return strings.Contains(capability, 
 //   - 外部来源的调用结果（含后台调用迟到的结果）；压缩摘要可能概括了它们，保守地视为外部；
 //   - 输入或回答附带的界面上下文，可能含第三方内容（docs/design/m3-duplex-channel.md §8）；
 //   - Call 中语音模型的转述（派生的任务、转述的回答）：可能夹带用户没说过的内容（docs/design/m3-call.md §6）；
-//   - 委托派生的子 Session：任务由父 Run 的模型写成，可能转述了父 Run 读到的外部内容（docs/design/m5-multi-agent.md §8）。
+//   - 委托派生的子 Session：任务由父 Run 的模型写成，可能转述了父 Run 读到的外部内容（docs/design/m5-multi-agent.md §8）；
+//   - 旁听转写中他人的话（ADR-0036）：佩戴者的话是用户本人的输入，不算。
 func tainted(st *session.State) bool {
 	if st.Compaction != nil || st.Created.GetParent() != nil {
 		return true
@@ -54,6 +55,9 @@ func tainted(st *session.State) bool {
 		if e.GetRunRequested().GetFromCall() != "" || e.GetSteered().GetFromCall() != "" || e.GetToolResult().GetFromCall() != "" {
 			return true
 		}
+		if len(otherSpeech(e.GetToolResult().GetContent())) > 0 {
+			return true
+		}
 		if m := e.GetAssistantMessage(); m != nil {
 			for _, tc := range m.GetToolCalls() {
 				if externalCall(tc.GetCapability()) {
@@ -67,6 +71,17 @@ func tainted(st *session.State) bool {
 		}
 	}
 	return false
+}
+
+// otherSpeech 返回内容中他人（不是佩戴者）没有被拦截的旁听片段的文字：它们是外部内容（ADR-0036）。
+func otherSpeech(blocks []*v1.ContentBlock) []string {
+	var out []string
+	for _, c := range blocks {
+		if g := c.GetCapture(); g.GetSpeaker() == v1.Speaker_SPEAKER_OTHER && !g.GetRedacted() {
+			out = append(out, g.GetText())
+		}
+	}
+	return out
 }
 
 // deviceResult 报告输入是否是后台调用迟到的设备结果。
@@ -85,8 +100,8 @@ func hasUIContext(blocks []*v1.ContentBlock) bool {
 	return false
 }
 
-// userText 是上下文中 EndUser 本人的输入：新 Run、插话、对 ask_user 提问的回答（ADR-0025），以及 Call 中
-// 用户说的话（转写）。Call 派生的任务与转述的回答是语音模型的转述，不是用户的原话，不计入（docs/design/m3-call.md §6）；
+// userText 是上下文中 EndUser 本人的输入：新 Run、插话、对 ask_user 提问的回答（ADR-0025）、Call 中
+// 用户说的话（转写），以及旁听转写中佩戴者的话（ADR-0036）。Call 派生的任务与转述的回答是语音模型的转述，不是用户的原话，不计入（docs/design/m3-call.md §6）；
 // 委托给子 Session 的任务由父 Run 的模型写成，同样不计入。
 func userText(st *session.State) string {
 	var b strings.Builder
@@ -118,6 +133,13 @@ func userText(st *session.State) string {
 		case *v1.Event_ToolResult:
 			if questions[p.ToolResult.GetCallId()] && !p.ToolResult.GetIsError() && p.ToolResult.GetFromCall() == "" {
 				b.WriteString(model.Text(p.ToolResult.GetContent()))
+			}
+			// 旁听片段只能由平台写入 captures 的结果（session 校验），说话人是结构化字段而不是文本中的前缀。
+			for _, c := range p.ToolResult.GetContent() {
+				if g := c.GetCapture(); g.GetSpeaker() == v1.Speaker_SPEAKER_WEARER && !g.GetRedacted() {
+					b.WriteString(g.GetText())
+					b.WriteByte('\n')
+				}
 			}
 		}
 		b.WriteByte('\n')

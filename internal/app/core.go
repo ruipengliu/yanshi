@@ -7,6 +7,7 @@ import (
 	"yanshi/internal/agentdef"
 	"yanshi/internal/artifact"
 	"yanshi/internal/capability"
+	"yanshi/internal/capture"
 	"yanshi/internal/card"
 	"yanshi/internal/clock"
 	"yanshi/internal/decision"
@@ -135,7 +136,7 @@ func NewCore(stores Stores, opts Options) *Core {
 		dir = faults.Directory{Directory: dir, Injector: opts.Injector}
 	}
 	c.Catalog = &capability.Catalog{
-		Local:          capability.NewRegistry(append(append([]capability.Capability{}, local...), memory.Capabilities(c.Memory)...)...),
+		Local:          capability.NewRegistry(append(append([]capability.Capability{capture.New(stores.Log)}, local...), memory.Capabilities(c.Memory)...)...),
 		Nodes:          dir,
 		MCP:            opts.MCP,
 		Agents:         delegation.Directory{Registry: opts.Agents},

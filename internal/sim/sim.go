@@ -133,6 +133,8 @@ type Stats struct {
 	// 旁听转写（docs/design/captures.md）：写入的批次、重试被去重的、因内容安全不可用而拒绝的批次，拦截的段数，
 	// 以及写入时注入的存储故障。
 	CapturesAppended, CaptureDuplicates, CapturesRejected, CapturesRedacted, CaptureStoreFaults int
+	// CaptureReads 是 Run 中读取旁听转写（captures 工具）的次数。
+	CaptureReads int
 }
 
 // storeFault 是注入的存储故障（数据库超时、连接中断）：written 表示追加其实已经生效，调用方却只看到错误。
@@ -243,8 +245,8 @@ func (q poolQueue) Claim(ctx context.Context, holder string, ttl time.Duration, 
 // interactiveWorker 是只认领交互工作的 Worker 的 ID 前缀：模拟中 0 号 Worker 是交互 Worker。
 const interactiveWorker = "wi"
 
-// simContext 是模拟 AgentDef 的上下文配置：窗口很小（工具声明约占 1150，其中 ask_user 约 450、缩短的 show_card 约 30），使压缩频繁发生；须容得下工具声明、摘要、KeepRecent 与一条最大的消息（含界面上下文）。
-var simContext = agentdef.Context{Window: 2800, CompactAt: 0.75, KeepRecent: 300, MaxToolResult: 250}
+// simContext 是模拟 AgentDef 的上下文配置：窗口很小（工具声明约占 1410，其中 ask_user 约 450、captures 约 260、缩短的 show_card 约 30），使压缩频繁发生；须容得下工具声明、摘要、KeepRecent 与一条最大的消息（含界面上下文）。
+var simContext = agentdef.Context{Window: 3060, CompactAt: 0.75, KeepRecent: 300, MaxToolResult: 250}
 
 const longRunTurns = 20
 
@@ -371,7 +373,7 @@ func New(opts Options) (*World, error) {
 	for _, v := range []string{"1", "2"} {
 		defs = append(defs, &agentdef.Def{
 			Name: "sim", Version: v, Model: "sim/m",
-			Capabilities: []string{"echo", "send", "ask_user", "show_card", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*", "agent:sim"},
+			Capabilities: []string{"echo", "send", "ask_user", "show_card", "memory_save", "memory_forget", "memory_search", "captures", "device:*", "sandbox:*", "agent:sim"},
 			MaxTurns:     maxTurns, Context: simContext, Memory: agentdef.MemoryConfig{Recall: 3},
 			// 旁听转写写进同一批 Session，与输入、Run、关闭和删除交错。
 			Captures: true,
@@ -1557,6 +1559,10 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 		}
 		for i := range 1 + w.rng.IntN(2) {
 			name := tools[w.rng.IntN(len(tools))].Name
+			// captures 只读不写，少选它：否则提问、委托等工具被摊薄，其中的罕见路径（提问超时、委托中途删除）覆盖不到。
+			if name == "captures" && !w.chance(0.1) {
+				name = tools[w.rng.IntN(len(tools))].Name
+			}
 			if len(devices) > 0 && w.chance(0.3) {
 				name = devices[w.rng.IntN(len(devices))]
 			}
@@ -1614,6 +1620,10 @@ func (w *World) toolArgs(name string) string {
 		return fmt.Sprintf(`{"category":"preference","content":"偏好 %d"}`, w.rng.IntN(50))
 	case "memory_search":
 		return `{"query":"偏好"}`
+	case "captures":
+		// 旁听转写进入上下文：他人的话使 Memory 写入闸门生效、交给注入判断；页很小，常被 max_tool_result 截断。
+		w.Stats.CaptureReads++
+		return fmt.Sprintf(`{"after":%d,"limit":%d}`, w.rng.IntN(20), 1+w.rng.IntN(5))
 	case askuser.Capability:
 		if w.chance(0.1) {
 			return `{"question":"只有一个选项？","options":[{"id":"a","label":"甲"}]}` // 不合法：交还模型改正
