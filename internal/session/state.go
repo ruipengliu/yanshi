@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/protobuf/proto"
 
@@ -209,6 +210,66 @@ type State struct {
 	// Background 是未了结的后台调用（ADR-0035），键为调用 ID：设备离线超过宽限期、Worker 不再在 Run 中等待的路由调用。
 	// 设备结果、到期或用户取消之后移出；Session 关闭后保留（不再有事件，关闭方据此撤回投递）。
 	Background map[string]*BackgroundCall
+	// Captures 是旁听转写的去重窗口与计数（docs/design/captures.md §4）。
+	Captures CaptureLog
+}
+
+// MaxRecentCaptures 是旁听转写的去重窗口：HostApp 断网恢复后会补交积压的多批，窗口比输入的大；
+// 条目只是 ID，投影仍然有界。
+const MaxRecentCaptures = 512
+
+// 一批旁听转写的上限（docs/design/captures.md §3）。
+const (
+	MaxCaptureSegments = 200
+	// MaxCaptureText 是一段的字符数上限。
+	MaxCaptureText = 2000
+)
+
+// CaptureLog 是旁听转写在投影中的部分。转写内容不进投影（一天可能有十几万字，会使每个快照随之增大），
+// 留在日志中，由 captures 工具按序号读取。
+type CaptureLog struct {
+	// IDs 是最近 MaxRecentCaptures 个 capture_id，旧的在前。条目不再修改，副本间共享底层数组。
+	IDs   []string
+	Count uint64
+	// LastSeq 是最后一个 CaptureAppended 的 seq；0 表示没有。
+	LastSeq uint64
+}
+
+// Captured 报告 capture_id 是否在去重窗口中。
+func (s *State) Captured(id string) bool { return id != "" && slices.Contains(s.Captures.IDs, id) }
+
+// checkCapture 校验一批旁听转写。错误中不含转写内容（ADR-0015）。
+func checkCapture(m *v1.CaptureAppended) error {
+	id := m.GetCaptureId()
+	if id == "" {
+		return fmt.Errorf("capture without an id")
+	}
+	segs := m.GetSegments()
+	if len(segs) == 0 || len(segs) > MaxCaptureSegments {
+		return fmt.Errorf("capture %q has %d segments", id, len(segs))
+	}
+	for i, g := range segs {
+		switch g.GetSpeaker() {
+		case v1.Speaker_SPEAKER_WEARER:
+			if g.GetSpeakerKey() != "" {
+				return fmt.Errorf("capture %q segment %d: wearer with a speaker key", id, i)
+			}
+		case v1.Speaker_SPEAKER_OTHER:
+			if g.GetSpeakerKey() == "" {
+				return fmt.Errorf("capture %q segment %d: other speaker without a key", id, i)
+			}
+		default:
+			return fmt.Errorf("capture %q segment %d: speaker %v", id, i, g.GetSpeaker())
+		}
+		// 拦截的片段只留占位；没有拦截的必须有文字。
+		if g.GetRedacted() != (g.GetText() == "") {
+			return fmt.Errorf("capture %q segment %d: redacted %v with %d bytes", id, i, g.GetRedacted(), len(g.GetText()))
+		}
+		if n := utf8.RuneCountInString(g.GetText()); n > MaxCaptureText {
+			return fmt.Errorf("capture %q segment %d: %d characters", id, i, n)
+		}
+	}
+	return nil
 }
 
 // BackgroundCall 是一个未了结的后台调用。
@@ -449,6 +510,8 @@ func (s *State) Clone() *State {
 	}
 	cp.History = slices.Clip(s.History)
 	cp.Inputs = slices.Clone(s.Inputs)
+	// 条目不再修改：Clip 使副本追加时另起底层数组，无需复制窗口。
+	cp.Captures.IDs = slices.Clip(s.Captures.IDs)
 	if s.ActiveCall != nil {
 		c := *s.ActiveCall
 		cp.ActiveCall = &c
@@ -556,6 +619,21 @@ func (s *State) apply(e *v1.Event) error {
 			return err
 		}
 		s.ActiveCall = nil
+
+	case *v1.Event_CaptureAppended:
+		// 不开启 Run，也不进 History：旁听不是对 Agent 说的话（ADR-0036）。
+		m := p.CaptureAppended
+		if err := checkCapture(m); err != nil {
+			return err
+		}
+		if s.Captured(m.GetCaptureId()) {
+			return fmt.Errorf("duplicate capture id %q", m.GetCaptureId())
+		}
+		ids := append(s.Captures.IDs, m.GetCaptureId())
+		if n := len(ids); n > MaxRecentCaptures {
+			ids = slices.Clone(ids[n-MaxRecentCaptures:])
+		}
+		s.Captures = CaptureLog{IDs: ids, Count: s.Captures.Count + 1, LastSeq: e.GetSeq()}
 
 	case *v1.Event_ContentModerated:
 		// 只校验归属：拦截不改变状态，替换后的 AssistantMessage 随后照常应用。

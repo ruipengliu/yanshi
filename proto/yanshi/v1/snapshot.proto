@@ -36,6 +36,16 @@ message SessionSnapshot {
   string delegated_run = 15;
   // 未了结的后台调用（session.State.Background），按调用 ID 排序。
   repeated BackgroundCallSnapshot background = 16;
+  // 旁听转写的去重窗口与计数（session.State.Captures）。
+  CaptureSnapshot captures = 17;
+}
+
+// CaptureSnapshot 是 session.CaptureLog。
+message CaptureSnapshot {
+  // 最近的 capture_id，旧的在前（session.MaxRecentCaptures）。
+  repeated string ids = 1;
+  uint64 count = 2;
+  uint64 last_seq = 3;
 }
 
 message BackgroundCallSnapshot {

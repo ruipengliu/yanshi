@@ -74,7 +74,7 @@ enum Speaker {
 | Connection | `ClientRequest.op` 新增 `SubmitCaptures{session_id, capture_id, segments}`（`node.proto`，向后兼容） |
 | service | `Service.SubmitCaptures(ctx, sessionID, captureID string, segments []*v1.CaptureSegment) (*CaptureResult, error)` |
 
-两个入口都调用 `service.SubmitCaptures`（ADR-0024）。用户令牌与服务令牌都可提交，授权规则与输入相同，`internal/httpapi/authz_test.go` 的矩阵中加入这一行。三个 SDK 同步增加提交方法（ADR-0026）。
+两个入口都调用同一个 service 方法 SubmitCaptures（ADR-0024）。用户令牌与服务令牌都可提交，授权规则与输入相同，`internal/httpapi/authz_test.go` 的矩阵中加入这一行。三个 SDK 同步增加提交方法（ADR-0026）。
 
 ### 决策
 
@@ -233,7 +233,7 @@ retention:
 ## 13. 实施顺序
 
 1. 契约与投影：`CaptureAppended`、`State.Captures`、`ProjectionVersion`、`make gen`。
-2. 写入：`service.SubmitCaptures`、HTTP、Connection、内容安全、索引更新；模拟测试的动作、故障与覆盖。
+2. 写入：service 的 SubmitCaptures、HTTP、Connection、内容安全、索引更新；模拟测试的动作、故障与覆盖。
 3. `captures` 工具与闸门、注入判断的扩展。
 4. Retention 覆盖：配置、`lifecycle.Index`、迁移、Janitor 与删除原因；修改 m4 §7、§9。
 5. 三个 SDK 的提交方法、`make mobile`。

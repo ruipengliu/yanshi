@@ -17,7 +17,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file yanshi/v1/snapshot.proto.
  */
 export const file_yanshi_v1_snapshot: GenFile = /*@__PURE__*/
-  fileDesc("Chh5YW5zaGkvdjEvc25hcHNob3QucHJvdG8SCXlhbnNoaS52MSK6BAoPU2Vzc2lvblNuYXBzaG90Eg8KB3ZlcnNpb24YASABKA0SEgoKc2Vzc2lvbl9pZBgCIAEoCRILCgNzZXEYAyABKAQSKgoHY3JlYXRlZBgEIAEoCzIZLnlhbnNoaS52MS5TZXNzaW9uQ3JlYXRlZBIoCgZjbG9zZWQYBSABKAsyGC55YW5zaGkudjEuU2Vzc2lvbkNsb3NlZBIvCgpjb21wYWN0aW9uGAYgASgLMhsueWFuc2hpLnYxLkNvbnRleHRDb21wYWN0ZWQSFAoMY29tcGFjdGVkX2F0GAcgASgEEiQKBHJ1bnMYCCADKAsyFi55YW5zaGkudjEuUnVuU25hcHNob3QSIQoHaGlzdG9yeRgJIAMoCzIQLnlhbnNoaS52MS5FdmVudBIQCghjYWxsX2lkcxgKIAMoCRIiCgVhZ2VudBgLIAEoCzITLnlhbnNoaS52MS5BZ2VudFJlZhIoCgZpbnB1dHMYDCADKAsyGC55YW5zaGkudjEuSW5wdXRTbmFwc2hvdBIyCgthY3RpdmVfY2FsbBgNIAEoCzIdLnlhbnNoaS52MS5BY3RpdmVDYWxsU25hcHNob3QSLQoJcGFzdF9ydW5zGA4gAygLMhoueWFuc2hpLnYxLlBhc3RSdW5TbmFwc2hvdBIVCg1kZWxlZ2F0ZWRfcnVuGA8gASgJEjUKCmJhY2tncm91bmQYECADKAsyIS55YW5zaGkudjEuQmFja2dyb3VuZENhbGxTbmFwc2hvdCKMAQoWQmFja2dyb3VuZENhbGxTbmFwc2hvdBIPCgdjYWxsX2lkGAEgASgJEg4KBnJ1bl9pZBgCIAEoCRIPCgdub2RlX2lkGAMgASgJEhIKCmNhcGFiaWxpdHkYBCABKAkSLAoIZGVhZGxpbmUYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIpgBCg9QYXN0UnVuU25hcHNob3QSCgoCaWQYASABKAkSDgoGc3RhdHVzGAIgASgFEjAKDHJlcXVlc3RlZF9hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDwoHYXR0ZW1wdBgEIAEoDRINCgV0dXJucxgFIAEoBRIXCg9mcm9tX2JhY2tncm91bmQYBiABKAkiaAoSQWN0aXZlQ2FsbFNuYXBzaG90Eg8KB2NhbGxfaWQYASABKAkSEQoJZGV2aWNlX2lkGAIgASgJEi4KCnN0YXJ0ZWRfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIk4KDUlucHV0U25hcHNob3QSCgoCaWQYASABKAkSDgoGcnVuX2lkGAIgASgJEg8KB3N0ZWVyZWQYAyABKAgSEAoIYW5zd2VyZWQYBCABKAkiswQKC1J1blNuYXBzaG90EgoKAmlkGAEgASgJEg4KBnN0YXR1cxgCIAEoBRIwCgxyZXF1ZXN0ZWRfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg8KB2F0dGVtcHQYBCABKA0SFQoNbGl2ZV9lbmRwb2ludBgFIAEoCRIRCgl0YWtlb3ZlcnMYBiABKAUSGQoRc3RhbGxlZF90YWtlb3ZlcnMYByABKAUSDQoFdHVybnMYCCABKAUSKQoGcmVjYWxsGAkgAygLMhkueWFuc2hpLnYxLlJlY2FsbGVkTWVtb3J5EhAKCHJlY2FsbGVkGAogASgIEiYKBWNhbGxzGAsgAygLMhcueWFuc2hpLnYxLkNhbGxTbmFwc2hvdBIWCg5zdXNwZW5kX3JlYXNvbhgMIAEoCRIzCg9zdXNwZW5kZWRfdW50aWwYDSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhMKC2NvbXBhY3Rpb25zGA4gASgFEhUKDW91dHB1dF90b2tlbnMYDyABKAMSDgoGcmVzdW1lGBAgASgIEjgKCWRlY2lzaW9ucxgRIAMoCzIlLnlhbnNoaS52MS5SdW5TbmFwc2hvdC5EZWNpc2lvbnNFbnRyeRIXCg9mcm9tX2JhY2tncm91bmQYEiABKAkaMAoORGVjaXNpb25zRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASKOAgoMQ2FsbFNuYXBzaG90EiEKBGNhbGwYASABKAsyEy55YW5zaGkudjEuVG9vbENhbGwSGAoQc3RhcnRlZF9hdHRlbXB0cxgCIAMoDRIPCgdub2RlX2lkGAMgASgJEiwKCGRlYWRsaW5lGAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIMCgRkb25lGAUgASgIEi0KCGFwcHJvdmFsGAYgASgLMhsueWFuc2hpLnYxLkFwcHJvdmFsU25hcHNob3QSMQoNZGlzcGF0Y2hlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEgoKYmFja2dyb3VuZBgIIAEoCCJ0ChBBcHByb3ZhbFNuYXBzaG90Eg8KB3N1bW1hcnkYASABKAkSLAoIZGVhZGxpbmUYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg8KB2RlY2lkZWQYAyABKAgSEAoIYXBwcm92ZWQYBCABKAhCH1odeWFuc2hpL2dlbi95YW5zaGkvdjE7eWFuc2hpdjFiBnByb3RvMw", [file_google_protobuf_timestamp, file_yanshi_v1_event]);
+  fileDesc("Chh5YW5zaGkvdjEvc25hcHNob3QucHJvdG8SCXlhbnNoaS52MSLoBAoPU2Vzc2lvblNuYXBzaG90Eg8KB3ZlcnNpb24YASABKA0SEgoKc2Vzc2lvbl9pZBgCIAEoCRILCgNzZXEYAyABKAQSKgoHY3JlYXRlZBgEIAEoCzIZLnlhbnNoaS52MS5TZXNzaW9uQ3JlYXRlZBIoCgZjbG9zZWQYBSABKAsyGC55YW5zaGkudjEuU2Vzc2lvbkNsb3NlZBIvCgpjb21wYWN0aW9uGAYgASgLMhsueWFuc2hpLnYxLkNvbnRleHRDb21wYWN0ZWQSFAoMY29tcGFjdGVkX2F0GAcgASgEEiQKBHJ1bnMYCCADKAsyFi55YW5zaGkudjEuUnVuU25hcHNob3QSIQoHaGlzdG9yeRgJIAMoCzIQLnlhbnNoaS52MS5FdmVudBIQCghjYWxsX2lkcxgKIAMoCRIiCgVhZ2VudBgLIAEoCzITLnlhbnNoaS52MS5BZ2VudFJlZhIoCgZpbnB1dHMYDCADKAsyGC55YW5zaGkudjEuSW5wdXRTbmFwc2hvdBIyCgthY3RpdmVfY2FsbBgNIAEoCzIdLnlhbnNoaS52MS5BY3RpdmVDYWxsU25hcHNob3QSLQoJcGFzdF9ydW5zGA4gAygLMhoueWFuc2hpLnYxLlBhc3RSdW5TbmFwc2hvdBIVCg1kZWxlZ2F0ZWRfcnVuGA8gASgJEjUKCmJhY2tncm91bmQYECADKAsyIS55YW5zaGkudjEuQmFja2dyb3VuZENhbGxTbmFwc2hvdBIsCghjYXB0dXJlcxgRIAEoCzIaLnlhbnNoaS52MS5DYXB0dXJlU25hcHNob3QiPwoPQ2FwdHVyZVNuYXBzaG90EgsKA2lkcxgBIAMoCRINCgVjb3VudBgCIAEoBBIQCghsYXN0X3NlcRgDIAEoBCKMAQoWQmFja2dyb3VuZENhbGxTbmFwc2hvdBIPCgdjYWxsX2lkGAEgASgJEg4KBnJ1bl9pZBgCIAEoCRIPCgdub2RlX2lkGAMgASgJEhIKCmNhcGFiaWxpdHkYBCABKAkSLAoIZGVhZGxpbmUYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIpgBCg9QYXN0UnVuU25hcHNob3QSCgoCaWQYASABKAkSDgoGc3RhdHVzGAIgASgFEjAKDHJlcXVlc3RlZF9hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDwoHYXR0ZW1wdBgEIAEoDRINCgV0dXJucxgFIAEoBRIXCg9mcm9tX2JhY2tncm91bmQYBiABKAkiaAoSQWN0aXZlQ2FsbFNuYXBzaG90Eg8KB2NhbGxfaWQYASABKAkSEQoJZGV2aWNlX2lkGAIgASgJEi4KCnN0YXJ0ZWRfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIk4KDUlucHV0U25hcHNob3QSCgoCaWQYASABKAkSDgoGcnVuX2lkGAIgASgJEg8KB3N0ZWVyZWQYAyABKAgSEAoIYW5zd2VyZWQYBCABKAkiswQKC1J1blNuYXBzaG90EgoKAmlkGAEgASgJEg4KBnN0YXR1cxgCIAEoBRIwCgxyZXF1ZXN0ZWRfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg8KB2F0dGVtcHQYBCABKA0SFQoNbGl2ZV9lbmRwb2ludBgFIAEoCRIRCgl0YWtlb3ZlcnMYBiABKAUSGQoRc3RhbGxlZF90YWtlb3ZlcnMYByABKAUSDQoFdHVybnMYCCABKAUSKQoGcmVjYWxsGAkgAygLMhkueWFuc2hpLnYxLlJlY2FsbGVkTWVtb3J5EhAKCHJlY2FsbGVkGAogASgIEiYKBWNhbGxzGAsgAygLMhcueWFuc2hpLnYxLkNhbGxTbmFwc2hvdBIWCg5zdXNwZW5kX3JlYXNvbhgMIAEoCRIzCg9zdXNwZW5kZWRfdW50aWwYDSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhMKC2NvbXBhY3Rpb25zGA4gASgFEhUKDW91dHB1dF90b2tlbnMYDyABKAMSDgoGcmVzdW1lGBAgASgIEjgKCWRlY2lzaW9ucxgRIAMoCzIlLnlhbnNoaS52MS5SdW5TbmFwc2hvdC5EZWNpc2lvbnNFbnRyeRIXCg9mcm9tX2JhY2tncm91bmQYEiABKAkaMAoORGVjaXNpb25zRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASKOAgoMQ2FsbFNuYXBzaG90EiEKBGNhbGwYASABKAsyEy55YW5zaGkudjEuVG9vbENhbGwSGAoQc3RhcnRlZF9hdHRlbXB0cxgCIAMoDRIPCgdub2RlX2lkGAMgASgJEiwKCGRlYWRsaW5lGAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIMCgRkb25lGAUgASgIEi0KCGFwcHJvdmFsGAYgASgLMhsueWFuc2hpLnYxLkFwcHJvdmFsU25hcHNob3QSMQoNZGlzcGF0Y2hlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEgoKYmFja2dyb3VuZBgIIAEoCCJ0ChBBcHByb3ZhbFNuYXBzaG90Eg8KB3N1bW1hcnkYASABKAkSLAoIZGVhZGxpbmUYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg8KB2RlY2lkZWQYAyABKAgSEAoIYXBwcm92ZWQYBCABKAhCH1odeWFuc2hpL2dlbi95YW5zaGkvdjE7eWFuc2hpdjFiBnByb3RvMw", [file_google_protobuf_timestamp, file_yanshi_v1_event]);
 
 /**
  * @generated from message yanshi.v1.SessionSnapshot
@@ -122,6 +122,13 @@ export type SessionSnapshot = Message<"yanshi.v1.SessionSnapshot"> & {
    * @generated from field: repeated yanshi.v1.BackgroundCallSnapshot background = 16;
    */
   background: BackgroundCallSnapshot[];
+
+  /**
+   * 旁听转写的去重窗口与计数（session.State.Captures）。
+   *
+   * @generated from field: yanshi.v1.CaptureSnapshot captures = 17;
+   */
+  captures?: CaptureSnapshot | undefined;
 };
 
 /**
@@ -130,6 +137,37 @@ export type SessionSnapshot = Message<"yanshi.v1.SessionSnapshot"> & {
  */
 export const SessionSnapshotSchema: GenMessage<SessionSnapshot> = /*@__PURE__*/
   messageDesc(file_yanshi_v1_snapshot, 0);
+
+/**
+ * CaptureSnapshot 是 session.CaptureLog。
+ *
+ * @generated from message yanshi.v1.CaptureSnapshot
+ */
+export type CaptureSnapshot = Message<"yanshi.v1.CaptureSnapshot"> & {
+  /**
+   * 最近的 capture_id，旧的在前（session.MaxRecentCaptures）。
+   *
+   * @generated from field: repeated string ids = 1;
+   */
+  ids: string[];
+
+  /**
+   * @generated from field: uint64 count = 2;
+   */
+  count: bigint;
+
+  /**
+   * @generated from field: uint64 last_seq = 3;
+   */
+  lastSeq: bigint;
+};
+
+/**
+ * Describes the message yanshi.v1.CaptureSnapshot.
+ * Use `create(CaptureSnapshotSchema)` to create a new message.
+ */
+export const CaptureSnapshotSchema: GenMessage<CaptureSnapshot> = /*@__PURE__*/
+  messageDesc(file_yanshi_v1_snapshot, 1);
 
 /**
  * @generated from message yanshi.v1.BackgroundCallSnapshot
@@ -166,7 +204,7 @@ export type BackgroundCallSnapshot = Message<"yanshi.v1.BackgroundCallSnapshot">
  * Use `create(BackgroundCallSnapshotSchema)` to create a new message.
  */
 export const BackgroundCallSnapshotSchema: GenMessage<BackgroundCallSnapshot> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_snapshot, 1);
+  messageDesc(file_yanshi_v1_snapshot, 2);
 
 /**
  * @generated from message yanshi.v1.PastRunSnapshot
@@ -208,7 +246,7 @@ export type PastRunSnapshot = Message<"yanshi.v1.PastRunSnapshot"> & {
  * Use `create(PastRunSnapshotSchema)` to create a new message.
  */
 export const PastRunSnapshotSchema: GenMessage<PastRunSnapshot> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_snapshot, 2);
+  messageDesc(file_yanshi_v1_snapshot, 3);
 
 /**
  * @generated from message yanshi.v1.ActiveCallSnapshot
@@ -235,7 +273,7 @@ export type ActiveCallSnapshot = Message<"yanshi.v1.ActiveCallSnapshot"> & {
  * Use `create(ActiveCallSnapshotSchema)` to create a new message.
  */
 export const ActiveCallSnapshotSchema: GenMessage<ActiveCallSnapshot> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_snapshot, 3);
+  messageDesc(file_yanshi_v1_snapshot, 4);
 
 /**
  * @generated from message yanshi.v1.InputSnapshot
@@ -267,7 +305,7 @@ export type InputSnapshot = Message<"yanshi.v1.InputSnapshot"> & {
  * Use `create(InputSnapshotSchema)` to create a new message.
  */
 export const InputSnapshotSchema: GenMessage<InputSnapshot> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_snapshot, 4);
+  messageDesc(file_yanshi_v1_snapshot, 5);
 
 /**
  * @generated from message yanshi.v1.RunSnapshot
@@ -371,7 +409,7 @@ export type RunSnapshot = Message<"yanshi.v1.RunSnapshot"> & {
  * Use `create(RunSnapshotSchema)` to create a new message.
  */
 export const RunSnapshotSchema: GenMessage<RunSnapshot> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_snapshot, 5);
+  messageDesc(file_yanshi_v1_snapshot, 6);
 
 /**
  * @generated from message yanshi.v1.CallSnapshot
@@ -423,7 +461,7 @@ export type CallSnapshot = Message<"yanshi.v1.CallSnapshot"> & {
  * Use `create(CallSnapshotSchema)` to create a new message.
  */
 export const CallSnapshotSchema: GenMessage<CallSnapshot> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_snapshot, 6);
+  messageDesc(file_yanshi_v1_snapshot, 7);
 
 /**
  * @generated from message yanshi.v1.ApprovalSnapshot
@@ -455,5 +493,5 @@ export type ApprovalSnapshot = Message<"yanshi.v1.ApprovalSnapshot"> & {
  * Use `create(ApprovalSnapshotSchema)` to create a new message.
  */
 export const ApprovalSnapshotSchema: GenMessage<ApprovalSnapshot> = /*@__PURE__*/
-  messageDesc(file_yanshi_v1_snapshot, 7);
+  messageDesc(file_yanshi_v1_snapshot, 8);
 

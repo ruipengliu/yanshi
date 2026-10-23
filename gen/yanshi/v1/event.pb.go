@@ -26,6 +26,57 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type Speaker int32
+
+const (
+	Speaker_SPEAKER_UNSPECIFIED Speaker = 0
+	// 佩戴外设的 EndUser 本人。
+	Speaker_SPEAKER_WEARER Speaker = 1
+	// EndUser 以外的人。
+	Speaker_SPEAKER_OTHER Speaker = 2
+)
+
+// Enum value maps for Speaker.
+var (
+	Speaker_name = map[int32]string{
+		0: "SPEAKER_UNSPECIFIED",
+		1: "SPEAKER_WEARER",
+		2: "SPEAKER_OTHER",
+	}
+	Speaker_value = map[string]int32{
+		"SPEAKER_UNSPECIFIED": 0,
+		"SPEAKER_WEARER":      1,
+		"SPEAKER_OTHER":       2,
+	}
+)
+
+func (x Speaker) Enum() *Speaker {
+	p := new(Speaker)
+	*p = x
+	return p
+}
+
+func (x Speaker) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (Speaker) Descriptor() protoreflect.EnumDescriptor {
+	return file_yanshi_v1_event_proto_enumTypes[0].Descriptor()
+}
+
+func (Speaker) Type() protoreflect.EnumType {
+	return &file_yanshi_v1_event_proto_enumTypes[0]
+}
+
+func (x Speaker) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use Speaker.Descriptor instead.
+func (Speaker) EnumDescriptor() ([]byte, []int) {
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{0}
+}
+
 // Event 是 Session 日志中只追加、不可修改的一条记录。
 type Event struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -60,6 +111,7 @@ type Event struct {
 	//	*Event_CallEnded
 	//	*Event_DecisionMade
 	//	*Event_BackgroundCancelled
+	//	*Event_CaptureAppended
 	Payload       isEvent_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -337,6 +389,15 @@ func (x *Event) GetBackgroundCancelled() *BackgroundCancelled {
 	return nil
 }
 
+func (x *Event) GetCaptureAppended() *CaptureAppended {
+	if x != nil {
+		if x, ok := x.Payload.(*Event_CaptureAppended); ok {
+			return x.CaptureAppended
+		}
+	}
+	return nil
+}
+
 type isEvent_Payload interface {
 	isEvent_Payload()
 }
@@ -433,6 +494,10 @@ type Event_BackgroundCancelled struct {
 	BackgroundCancelled *BackgroundCancelled `protobuf:"bytes,32,opt,name=background_cancelled,json=backgroundCancelled,proto3,oneof"`
 }
 
+type Event_CaptureAppended struct {
+	CaptureAppended *CaptureAppended `protobuf:"bytes,33,opt,name=capture_appended,json=captureAppended,proto3,oneof"`
+}
+
 func (*Event_SessionCreated) isEvent_Payload() {}
 
 func (*Event_RunRequested) isEvent_Payload() {}
@@ -478,6 +543,8 @@ func (*Event_CallEnded) isEvent_Payload() {}
 func (*Event_DecisionMade) isEvent_Payload() {}
 
 func (*Event_BackgroundCancelled) isEvent_Payload() {}
+
+func (*Event_CaptureAppended) isEvent_Payload() {}
 
 // DecisionMade 记录一次判断（docs/design/m6-decisions.md，ADR-0030）：对"给定状态、有限选项"的问题由规则、小模型或
 // LLM 作出的选择。先写日志再据此行动，重放时读日志而不重新判断。不含被判断的原文（ADR-0015）。
@@ -3716,6 +3783,142 @@ func (x *CallTranscript) GetInterrupted() bool {
 	return false
 }
 
+// CaptureAppended 是 HostApp 提交的一批旁听转写（docs/design/captures.md，ADR-0036）：EndUser 与他人的日常对话，
+// 不是对 Agent 说的话。它不开启 Run，也不进入对话上下文：Run 经 captures 工具按序号读取。写入前逐段经过内容安全检查。
+type CaptureAppended struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// HostApp 生成，在 Session 内唯一；重试时不变，按它去重（session.MaxRecentCaptures）。
+	CaptureId     string            `protobuf:"bytes,1,opt,name=capture_id,json=captureId,proto3" json:"capture_id,omitempty"`
+	Segments      []*CaptureSegment `protobuf:"bytes,2,rep,name=segments,proto3" json:"segments,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CaptureAppended) Reset() {
+	*x = CaptureAppended{}
+	mi := &file_yanshi_v1_event_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CaptureAppended) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CaptureAppended) ProtoMessage() {}
+
+func (x *CaptureAppended) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_event_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CaptureAppended.ProtoReflect.Descriptor instead.
+func (*CaptureAppended) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{45}
+}
+
+func (x *CaptureAppended) GetCaptureId() string {
+	if x != nil {
+		return x.CaptureId
+	}
+	return ""
+}
+
+func (x *CaptureAppended) GetSegments() []*CaptureSegment {
+	if x != nil {
+		return x.Segments
+	}
+	return nil
+}
+
+// CaptureSegment 是旁听转写中的一段话。
+type CaptureSegment struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 说话人由 HostApp 的声纹区分给出，yanshi 无法验证：佩戴者的话按 EndUser 本人的输入对待，他人的话按外部内容对待。
+	Speaker Speaker `protobuf:"varint,1,opt,name=speaker,proto3,enum=yanshi.v1.Speaker" json:"speaker,omitempty"`
+	// speaker_key 区分同一批中的不同他人（如 "other-1"），只在本批内有意义；佩戴者为空。
+	SpeakerKey string `protobuf:"bytes,2,opt,name=speaker_key,json=speakerKey,proto3" json:"speaker_key,omitempty"`
+	// 未通过内容安全时为空（redacted），只留占位。
+	Text     string `protobuf:"bytes,3,opt,name=text,proto3" json:"text,omitempty"`
+	Redacted bool   `protobuf:"varint,4,opt,name=redacted,proto3" json:"redacted,omitempty"`
+	// 设备时钟下说这段话的时间，只供展示，不用于排序：顺序以日志为准。
+	SpokenAt      *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=spoken_at,json=spokenAt,proto3" json:"spoken_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CaptureSegment) Reset() {
+	*x = CaptureSegment{}
+	mi := &file_yanshi_v1_event_proto_msgTypes[46]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CaptureSegment) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CaptureSegment) ProtoMessage() {}
+
+func (x *CaptureSegment) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_event_proto_msgTypes[46]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CaptureSegment.ProtoReflect.Descriptor instead.
+func (*CaptureSegment) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{46}
+}
+
+func (x *CaptureSegment) GetSpeaker() Speaker {
+	if x != nil {
+		return x.Speaker
+	}
+	return Speaker_SPEAKER_UNSPECIFIED
+}
+
+func (x *CaptureSegment) GetSpeakerKey() string {
+	if x != nil {
+		return x.SpeakerKey
+	}
+	return ""
+}
+
+func (x *CaptureSegment) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *CaptureSegment) GetRedacted() bool {
+	if x != nil {
+		return x.Redacted
+	}
+	return false
+}
+
+func (x *CaptureSegment) GetSpokenAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.SpokenAt
+	}
+	return nil
+}
+
 // CallEnded 表示 Call 结束。
 type CallEnded struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
@@ -3729,7 +3932,7 @@ type CallEnded struct {
 
 func (x *CallEnded) Reset() {
 	*x = CallEnded{}
-	mi := &file_yanshi_v1_event_proto_msgTypes[45]
+	mi := &file_yanshi_v1_event_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3741,7 +3944,7 @@ func (x *CallEnded) String() string {
 func (*CallEnded) ProtoMessage() {}
 
 func (x *CallEnded) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_event_proto_msgTypes[45]
+	mi := &file_yanshi_v1_event_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3754,7 +3957,7 @@ func (x *CallEnded) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallEnded.ProtoReflect.Descriptor instead.
 func (*CallEnded) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{45}
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *CallEnded) GetCallId() string {
@@ -3775,7 +3978,7 @@ var File_yanshi_v1_event_proto protoreflect.FileDescriptor
 
 const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\n" +
-	"\x15yanshi/v1/event.proto\x12\tyanshi.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\x97\r\n" +
+	"\x15yanshi/v1/event.proto\x12\tyanshi.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xe0\r\n" +
 	"\x05Event\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -3808,7 +4011,8 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\n" +
 	"call_ended\x18\x1e \x01(\v2\x14.yanshi.v1.CallEndedH\x00R\tcallEnded\x12>\n" +
 	"\rdecision_made\x18\x1f \x01(\v2\x17.yanshi.v1.DecisionMadeH\x00R\fdecisionMade\x12S\n" +
-	"\x14background_cancelled\x18  \x01(\v2\x1e.yanshi.v1.BackgroundCancelledH\x00R\x13backgroundCancelledB\t\n" +
+	"\x14background_cancelled\x18  \x01(\v2\x1e.yanshi.v1.BackgroundCancelledH\x00R\x13backgroundCancelled\x12G\n" +
+	"\x10capture_appended\x18! \x01(\v2\x1a.yanshi.v1.CaptureAppendedH\x00R\x0fcaptureAppendedB\t\n" +
 	"\apayload\"\xed\x01\n" +
 	"\fDecisionMade\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
@@ -4054,10 +4258,25 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\acall_id\x18\x01 \x01(\tR\x06callId\x12\x12\n" +
 	"\x04role\x18\x02 \x01(\tR\x04role\x12\x12\n" +
 	"\x04text\x18\x03 \x01(\tR\x04text\x12 \n" +
-	"\vinterrupted\x18\x04 \x01(\bR\vinterrupted\"<\n" +
+	"\vinterrupted\x18\x04 \x01(\bR\vinterrupted\"g\n" +
+	"\x0fCaptureAppended\x12\x1d\n" +
+	"\n" +
+	"capture_id\x18\x01 \x01(\tR\tcaptureId\x125\n" +
+	"\bsegments\x18\x02 \x03(\v2\x19.yanshi.v1.CaptureSegmentR\bsegments\"\xc8\x01\n" +
+	"\x0eCaptureSegment\x12,\n" +
+	"\aspeaker\x18\x01 \x01(\x0e2\x12.yanshi.v1.SpeakerR\aspeaker\x12\x1f\n" +
+	"\vspeaker_key\x18\x02 \x01(\tR\n" +
+	"speakerKey\x12\x12\n" +
+	"\x04text\x18\x03 \x01(\tR\x04text\x12\x1a\n" +
+	"\bredacted\x18\x04 \x01(\bR\bredacted\x127\n" +
+	"\tspoken_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bspokenAt\"<\n" +
 	"\tCallEnded\x12\x17\n" +
 	"\acall_id\x18\x01 \x01(\tR\x06callId\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reasonB\x1fZ\x1dyanshi/gen/yanshi/v1;yanshiv1b\x06proto3"
+	"\x06reason\x18\x02 \x01(\tR\x06reason*I\n" +
+	"\aSpeaker\x12\x17\n" +
+	"\x13SPEAKER_UNSPECIFIED\x10\x00\x12\x12\n" +
+	"\x0eSPEAKER_WEARER\x10\x01\x12\x11\n" +
+	"\rSPEAKER_OTHER\x10\x02B\x1fZ\x1dyanshi/gen/yanshi/v1;yanshiv1b\x06proto3"
 
 var (
 	file_yanshi_v1_event_proto_rawDescOnce sync.Once
@@ -4071,124 +4290,132 @@ func file_yanshi_v1_event_proto_rawDescGZIP() []byte {
 	return file_yanshi_v1_event_proto_rawDescData
 }
 
-var file_yanshi_v1_event_proto_msgTypes = make([]protoimpl.MessageInfo, 47)
+var file_yanshi_v1_event_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_yanshi_v1_event_proto_msgTypes = make([]protoimpl.MessageInfo, 49)
 var file_yanshi_v1_event_proto_goTypes = []any{
-	(*Event)(nil),                 // 0: yanshi.v1.Event
-	(*DecisionMade)(nil),          // 1: yanshi.v1.DecisionMade
-	(*ContentBlock)(nil),          // 2: yanshi.v1.ContentBlock
-	(*BackgroundResult)(nil),      // 3: yanshi.v1.BackgroundResult
-	(*Card)(nil),                  // 4: yanshi.v1.Card
-	(*CardElement)(nil),           // 5: yanshi.v1.CardElement
-	(*CardMarkdown)(nil),          // 6: yanshi.v1.CardMarkdown
-	(*CardImage)(nil),             // 7: yanshi.v1.CardImage
-	(*CardFacts)(nil),             // 8: yanshi.v1.CardFacts
-	(*CardFact)(nil),              // 9: yanshi.v1.CardFact
-	(*CardList)(nil),              // 10: yanshi.v1.CardList
-	(*CardListItem)(nil),          // 11: yanshi.v1.CardListItem
-	(*CardField)(nil),             // 12: yanshi.v1.CardField
-	(*CardButton)(nil),            // 13: yanshi.v1.CardButton
-	(*CardAction)(nil),            // 14: yanshi.v1.CardAction
-	(*UIContext)(nil),             // 15: yanshi.v1.UIContext
-	(*Text)(nil),                  // 16: yanshi.v1.Text
-	(*Media)(nil),                 // 17: yanshi.v1.Media
-	(*AgentRef)(nil),              // 18: yanshi.v1.AgentRef
-	(*SessionCreated)(nil),        // 19: yanshi.v1.SessionCreated
-	(*ParentRef)(nil),             // 20: yanshi.v1.ParentRef
-	(*AgentSwitched)(nil),         // 21: yanshi.v1.AgentSwitched
-	(*ContentModerated)(nil),      // 22: yanshi.v1.ContentModerated
-	(*RunRequested)(nil),          // 23: yanshi.v1.RunRequested
-	(*Steered)(nil),               // 24: yanshi.v1.Steered
-	(*AttemptStarted)(nil),        // 25: yanshi.v1.AttemptStarted
-	(*ToolCall)(nil),              // 26: yanshi.v1.ToolCall
-	(*Usage)(nil),                 // 27: yanshi.v1.Usage
-	(*AssistantMessage)(nil),      // 28: yanshi.v1.AssistantMessage
-	(*ToolCallStarted)(nil),       // 29: yanshi.v1.ToolCallStarted
-	(*ToolResult)(nil),            // 30: yanshi.v1.ToolResult
-	(*Backgrounded)(nil),          // 31: yanshi.v1.Backgrounded
-	(*BackgroundCancelled)(nil),   // 32: yanshi.v1.BackgroundCancelled
-	(*RunCompleted)(nil),          // 33: yanshi.v1.RunCompleted
-	(*RunFailed)(nil),             // 34: yanshi.v1.RunFailed
-	(*RunInterrupted)(nil),        // 35: yanshi.v1.RunInterrupted
-	(*RunSuspended)(nil),          // 36: yanshi.v1.RunSuspended
-	(*ApprovalRequested)(nil),     // 37: yanshi.v1.ApprovalRequested
-	(*ApprovalDecided)(nil),       // 38: yanshi.v1.ApprovalDecided
-	(*ContextCompacted)(nil),      // 39: yanshi.v1.ContextCompacted
-	(*SessionClosed)(nil),         // 40: yanshi.v1.SessionClosed
-	(*MemoryRecalled)(nil),        // 41: yanshi.v1.MemoryRecalled
-	(*RecalledMemory)(nil),        // 42: yanshi.v1.RecalledMemory
-	(*CallStarted)(nil),           // 43: yanshi.v1.CallStarted
-	(*CallTranscript)(nil),        // 44: yanshi.v1.CallTranscript
-	(*CallEnded)(nil),             // 45: yanshi.v1.CallEnded
-	nil,                           // 46: yanshi.v1.CardAction.ValuesEntry
-	(*timestamppb.Timestamp)(nil), // 47: google.protobuf.Timestamp
+	(Speaker)(0),                  // 0: yanshi.v1.Speaker
+	(*Event)(nil),                 // 1: yanshi.v1.Event
+	(*DecisionMade)(nil),          // 2: yanshi.v1.DecisionMade
+	(*ContentBlock)(nil),          // 3: yanshi.v1.ContentBlock
+	(*BackgroundResult)(nil),      // 4: yanshi.v1.BackgroundResult
+	(*Card)(nil),                  // 5: yanshi.v1.Card
+	(*CardElement)(nil),           // 6: yanshi.v1.CardElement
+	(*CardMarkdown)(nil),          // 7: yanshi.v1.CardMarkdown
+	(*CardImage)(nil),             // 8: yanshi.v1.CardImage
+	(*CardFacts)(nil),             // 9: yanshi.v1.CardFacts
+	(*CardFact)(nil),              // 10: yanshi.v1.CardFact
+	(*CardList)(nil),              // 11: yanshi.v1.CardList
+	(*CardListItem)(nil),          // 12: yanshi.v1.CardListItem
+	(*CardField)(nil),             // 13: yanshi.v1.CardField
+	(*CardButton)(nil),            // 14: yanshi.v1.CardButton
+	(*CardAction)(nil),            // 15: yanshi.v1.CardAction
+	(*UIContext)(nil),             // 16: yanshi.v1.UIContext
+	(*Text)(nil),                  // 17: yanshi.v1.Text
+	(*Media)(nil),                 // 18: yanshi.v1.Media
+	(*AgentRef)(nil),              // 19: yanshi.v1.AgentRef
+	(*SessionCreated)(nil),        // 20: yanshi.v1.SessionCreated
+	(*ParentRef)(nil),             // 21: yanshi.v1.ParentRef
+	(*AgentSwitched)(nil),         // 22: yanshi.v1.AgentSwitched
+	(*ContentModerated)(nil),      // 23: yanshi.v1.ContentModerated
+	(*RunRequested)(nil),          // 24: yanshi.v1.RunRequested
+	(*Steered)(nil),               // 25: yanshi.v1.Steered
+	(*AttemptStarted)(nil),        // 26: yanshi.v1.AttemptStarted
+	(*ToolCall)(nil),              // 27: yanshi.v1.ToolCall
+	(*Usage)(nil),                 // 28: yanshi.v1.Usage
+	(*AssistantMessage)(nil),      // 29: yanshi.v1.AssistantMessage
+	(*ToolCallStarted)(nil),       // 30: yanshi.v1.ToolCallStarted
+	(*ToolResult)(nil),            // 31: yanshi.v1.ToolResult
+	(*Backgrounded)(nil),          // 32: yanshi.v1.Backgrounded
+	(*BackgroundCancelled)(nil),   // 33: yanshi.v1.BackgroundCancelled
+	(*RunCompleted)(nil),          // 34: yanshi.v1.RunCompleted
+	(*RunFailed)(nil),             // 35: yanshi.v1.RunFailed
+	(*RunInterrupted)(nil),        // 36: yanshi.v1.RunInterrupted
+	(*RunSuspended)(nil),          // 37: yanshi.v1.RunSuspended
+	(*ApprovalRequested)(nil),     // 38: yanshi.v1.ApprovalRequested
+	(*ApprovalDecided)(nil),       // 39: yanshi.v1.ApprovalDecided
+	(*ContextCompacted)(nil),      // 40: yanshi.v1.ContextCompacted
+	(*SessionClosed)(nil),         // 41: yanshi.v1.SessionClosed
+	(*MemoryRecalled)(nil),        // 42: yanshi.v1.MemoryRecalled
+	(*RecalledMemory)(nil),        // 43: yanshi.v1.RecalledMemory
+	(*CallStarted)(nil),           // 44: yanshi.v1.CallStarted
+	(*CallTranscript)(nil),        // 45: yanshi.v1.CallTranscript
+	(*CaptureAppended)(nil),       // 46: yanshi.v1.CaptureAppended
+	(*CaptureSegment)(nil),        // 47: yanshi.v1.CaptureSegment
+	(*CallEnded)(nil),             // 48: yanshi.v1.CallEnded
+	nil,                           // 49: yanshi.v1.CardAction.ValuesEntry
+	(*timestamppb.Timestamp)(nil), // 50: google.protobuf.Timestamp
 }
 var file_yanshi_v1_event_proto_depIdxs = []int32{
-	47, // 0: yanshi.v1.Event.time:type_name -> google.protobuf.Timestamp
-	19, // 1: yanshi.v1.Event.session_created:type_name -> yanshi.v1.SessionCreated
-	23, // 2: yanshi.v1.Event.run_requested:type_name -> yanshi.v1.RunRequested
-	24, // 3: yanshi.v1.Event.steered:type_name -> yanshi.v1.Steered
-	25, // 4: yanshi.v1.Event.attempt_started:type_name -> yanshi.v1.AttemptStarted
-	28, // 5: yanshi.v1.Event.assistant_message:type_name -> yanshi.v1.AssistantMessage
-	29, // 6: yanshi.v1.Event.tool_call_started:type_name -> yanshi.v1.ToolCallStarted
-	30, // 7: yanshi.v1.Event.tool_result:type_name -> yanshi.v1.ToolResult
-	33, // 8: yanshi.v1.Event.run_completed:type_name -> yanshi.v1.RunCompleted
-	34, // 9: yanshi.v1.Event.run_failed:type_name -> yanshi.v1.RunFailed
-	35, // 10: yanshi.v1.Event.run_interrupted:type_name -> yanshi.v1.RunInterrupted
-	36, // 11: yanshi.v1.Event.run_suspended:type_name -> yanshi.v1.RunSuspended
-	37, // 12: yanshi.v1.Event.approval_requested:type_name -> yanshi.v1.ApprovalRequested
-	38, // 13: yanshi.v1.Event.approval_decided:type_name -> yanshi.v1.ApprovalDecided
-	39, // 14: yanshi.v1.Event.context_compacted:type_name -> yanshi.v1.ContextCompacted
-	40, // 15: yanshi.v1.Event.session_closed:type_name -> yanshi.v1.SessionClosed
-	41, // 16: yanshi.v1.Event.memory_recalled:type_name -> yanshi.v1.MemoryRecalled
-	21, // 17: yanshi.v1.Event.agent_switched:type_name -> yanshi.v1.AgentSwitched
-	22, // 18: yanshi.v1.Event.content_moderated:type_name -> yanshi.v1.ContentModerated
-	43, // 19: yanshi.v1.Event.call_started:type_name -> yanshi.v1.CallStarted
-	44, // 20: yanshi.v1.Event.call_transcript:type_name -> yanshi.v1.CallTranscript
-	45, // 21: yanshi.v1.Event.call_ended:type_name -> yanshi.v1.CallEnded
-	1,  // 22: yanshi.v1.Event.decision_made:type_name -> yanshi.v1.DecisionMade
-	32, // 23: yanshi.v1.Event.background_cancelled:type_name -> yanshi.v1.BackgroundCancelled
-	16, // 24: yanshi.v1.ContentBlock.text:type_name -> yanshi.v1.Text
-	17, // 25: yanshi.v1.ContentBlock.media:type_name -> yanshi.v1.Media
-	15, // 26: yanshi.v1.ContentBlock.ui_context:type_name -> yanshi.v1.UIContext
-	4,  // 27: yanshi.v1.ContentBlock.card:type_name -> yanshi.v1.Card
-	14, // 28: yanshi.v1.ContentBlock.card_action:type_name -> yanshi.v1.CardAction
-	3,  // 29: yanshi.v1.ContentBlock.background_result:type_name -> yanshi.v1.BackgroundResult
-	2,  // 30: yanshi.v1.BackgroundResult.content:type_name -> yanshi.v1.ContentBlock
-	5,  // 31: yanshi.v1.Card.body:type_name -> yanshi.v1.CardElement
-	13, // 32: yanshi.v1.Card.buttons:type_name -> yanshi.v1.CardButton
-	6,  // 33: yanshi.v1.CardElement.markdown:type_name -> yanshi.v1.CardMarkdown
-	7,  // 34: yanshi.v1.CardElement.image:type_name -> yanshi.v1.CardImage
-	8,  // 35: yanshi.v1.CardElement.facts:type_name -> yanshi.v1.CardFacts
-	10, // 36: yanshi.v1.CardElement.list:type_name -> yanshi.v1.CardList
-	12, // 37: yanshi.v1.CardElement.field:type_name -> yanshi.v1.CardField
-	9,  // 38: yanshi.v1.CardFacts.facts:type_name -> yanshi.v1.CardFact
-	11, // 39: yanshi.v1.CardList.items:type_name -> yanshi.v1.CardListItem
-	46, // 40: yanshi.v1.CardAction.values:type_name -> yanshi.v1.CardAction.ValuesEntry
-	18, // 41: yanshi.v1.SessionCreated.agent:type_name -> yanshi.v1.AgentRef
-	20, // 42: yanshi.v1.SessionCreated.parent:type_name -> yanshi.v1.ParentRef
-	18, // 43: yanshi.v1.ParentRef.ancestors:type_name -> yanshi.v1.AgentRef
-	18, // 44: yanshi.v1.AgentSwitched.from:type_name -> yanshi.v1.AgentRef
-	18, // 45: yanshi.v1.AgentSwitched.to:type_name -> yanshi.v1.AgentRef
-	2,  // 46: yanshi.v1.RunRequested.input:type_name -> yanshi.v1.ContentBlock
-	2,  // 47: yanshi.v1.Steered.input:type_name -> yanshi.v1.ContentBlock
-	2,  // 48: yanshi.v1.AssistantMessage.content:type_name -> yanshi.v1.ContentBlock
-	26, // 49: yanshi.v1.AssistantMessage.tool_calls:type_name -> yanshi.v1.ToolCall
-	27, // 50: yanshi.v1.AssistantMessage.usage:type_name -> yanshi.v1.Usage
-	47, // 51: yanshi.v1.ToolCallStarted.deadline:type_name -> google.protobuf.Timestamp
-	2,  // 52: yanshi.v1.ToolResult.content:type_name -> yanshi.v1.ContentBlock
-	14, // 53: yanshi.v1.ToolResult.card_action:type_name -> yanshi.v1.CardAction
-	31, // 54: yanshi.v1.ToolResult.backgrounded:type_name -> yanshi.v1.Backgrounded
-	47, // 55: yanshi.v1.Backgrounded.deadline:type_name -> google.protobuf.Timestamp
-	47, // 56: yanshi.v1.RunSuspended.until:type_name -> google.protobuf.Timestamp
-	47, // 57: yanshi.v1.ApprovalRequested.deadline:type_name -> google.protobuf.Timestamp
-	2,  // 58: yanshi.v1.ContextCompacted.summary:type_name -> yanshi.v1.ContentBlock
-	27, // 59: yanshi.v1.ContextCompacted.usage:type_name -> yanshi.v1.Usage
-	42, // 60: yanshi.v1.MemoryRecalled.items:type_name -> yanshi.v1.RecalledMemory
-	61, // [61:61] is the sub-list for method output_type
-	61, // [61:61] is the sub-list for method input_type
-	61, // [61:61] is the sub-list for extension type_name
-	61, // [61:61] is the sub-list for extension extendee
-	0,  // [0:61] is the sub-list for field type_name
+	50, // 0: yanshi.v1.Event.time:type_name -> google.protobuf.Timestamp
+	20, // 1: yanshi.v1.Event.session_created:type_name -> yanshi.v1.SessionCreated
+	24, // 2: yanshi.v1.Event.run_requested:type_name -> yanshi.v1.RunRequested
+	25, // 3: yanshi.v1.Event.steered:type_name -> yanshi.v1.Steered
+	26, // 4: yanshi.v1.Event.attempt_started:type_name -> yanshi.v1.AttemptStarted
+	29, // 5: yanshi.v1.Event.assistant_message:type_name -> yanshi.v1.AssistantMessage
+	30, // 6: yanshi.v1.Event.tool_call_started:type_name -> yanshi.v1.ToolCallStarted
+	31, // 7: yanshi.v1.Event.tool_result:type_name -> yanshi.v1.ToolResult
+	34, // 8: yanshi.v1.Event.run_completed:type_name -> yanshi.v1.RunCompleted
+	35, // 9: yanshi.v1.Event.run_failed:type_name -> yanshi.v1.RunFailed
+	36, // 10: yanshi.v1.Event.run_interrupted:type_name -> yanshi.v1.RunInterrupted
+	37, // 11: yanshi.v1.Event.run_suspended:type_name -> yanshi.v1.RunSuspended
+	38, // 12: yanshi.v1.Event.approval_requested:type_name -> yanshi.v1.ApprovalRequested
+	39, // 13: yanshi.v1.Event.approval_decided:type_name -> yanshi.v1.ApprovalDecided
+	40, // 14: yanshi.v1.Event.context_compacted:type_name -> yanshi.v1.ContextCompacted
+	41, // 15: yanshi.v1.Event.session_closed:type_name -> yanshi.v1.SessionClosed
+	42, // 16: yanshi.v1.Event.memory_recalled:type_name -> yanshi.v1.MemoryRecalled
+	22, // 17: yanshi.v1.Event.agent_switched:type_name -> yanshi.v1.AgentSwitched
+	23, // 18: yanshi.v1.Event.content_moderated:type_name -> yanshi.v1.ContentModerated
+	44, // 19: yanshi.v1.Event.call_started:type_name -> yanshi.v1.CallStarted
+	45, // 20: yanshi.v1.Event.call_transcript:type_name -> yanshi.v1.CallTranscript
+	48, // 21: yanshi.v1.Event.call_ended:type_name -> yanshi.v1.CallEnded
+	2,  // 22: yanshi.v1.Event.decision_made:type_name -> yanshi.v1.DecisionMade
+	33, // 23: yanshi.v1.Event.background_cancelled:type_name -> yanshi.v1.BackgroundCancelled
+	46, // 24: yanshi.v1.Event.capture_appended:type_name -> yanshi.v1.CaptureAppended
+	17, // 25: yanshi.v1.ContentBlock.text:type_name -> yanshi.v1.Text
+	18, // 26: yanshi.v1.ContentBlock.media:type_name -> yanshi.v1.Media
+	16, // 27: yanshi.v1.ContentBlock.ui_context:type_name -> yanshi.v1.UIContext
+	5,  // 28: yanshi.v1.ContentBlock.card:type_name -> yanshi.v1.Card
+	15, // 29: yanshi.v1.ContentBlock.card_action:type_name -> yanshi.v1.CardAction
+	4,  // 30: yanshi.v1.ContentBlock.background_result:type_name -> yanshi.v1.BackgroundResult
+	3,  // 31: yanshi.v1.BackgroundResult.content:type_name -> yanshi.v1.ContentBlock
+	6,  // 32: yanshi.v1.Card.body:type_name -> yanshi.v1.CardElement
+	14, // 33: yanshi.v1.Card.buttons:type_name -> yanshi.v1.CardButton
+	7,  // 34: yanshi.v1.CardElement.markdown:type_name -> yanshi.v1.CardMarkdown
+	8,  // 35: yanshi.v1.CardElement.image:type_name -> yanshi.v1.CardImage
+	9,  // 36: yanshi.v1.CardElement.facts:type_name -> yanshi.v1.CardFacts
+	11, // 37: yanshi.v1.CardElement.list:type_name -> yanshi.v1.CardList
+	13, // 38: yanshi.v1.CardElement.field:type_name -> yanshi.v1.CardField
+	10, // 39: yanshi.v1.CardFacts.facts:type_name -> yanshi.v1.CardFact
+	12, // 40: yanshi.v1.CardList.items:type_name -> yanshi.v1.CardListItem
+	49, // 41: yanshi.v1.CardAction.values:type_name -> yanshi.v1.CardAction.ValuesEntry
+	19, // 42: yanshi.v1.SessionCreated.agent:type_name -> yanshi.v1.AgentRef
+	21, // 43: yanshi.v1.SessionCreated.parent:type_name -> yanshi.v1.ParentRef
+	19, // 44: yanshi.v1.ParentRef.ancestors:type_name -> yanshi.v1.AgentRef
+	19, // 45: yanshi.v1.AgentSwitched.from:type_name -> yanshi.v1.AgentRef
+	19, // 46: yanshi.v1.AgentSwitched.to:type_name -> yanshi.v1.AgentRef
+	3,  // 47: yanshi.v1.RunRequested.input:type_name -> yanshi.v1.ContentBlock
+	3,  // 48: yanshi.v1.Steered.input:type_name -> yanshi.v1.ContentBlock
+	3,  // 49: yanshi.v1.AssistantMessage.content:type_name -> yanshi.v1.ContentBlock
+	27, // 50: yanshi.v1.AssistantMessage.tool_calls:type_name -> yanshi.v1.ToolCall
+	28, // 51: yanshi.v1.AssistantMessage.usage:type_name -> yanshi.v1.Usage
+	50, // 52: yanshi.v1.ToolCallStarted.deadline:type_name -> google.protobuf.Timestamp
+	3,  // 53: yanshi.v1.ToolResult.content:type_name -> yanshi.v1.ContentBlock
+	15, // 54: yanshi.v1.ToolResult.card_action:type_name -> yanshi.v1.CardAction
+	32, // 55: yanshi.v1.ToolResult.backgrounded:type_name -> yanshi.v1.Backgrounded
+	50, // 56: yanshi.v1.Backgrounded.deadline:type_name -> google.protobuf.Timestamp
+	50, // 57: yanshi.v1.RunSuspended.until:type_name -> google.protobuf.Timestamp
+	50, // 58: yanshi.v1.ApprovalRequested.deadline:type_name -> google.protobuf.Timestamp
+	3,  // 59: yanshi.v1.ContextCompacted.summary:type_name -> yanshi.v1.ContentBlock
+	28, // 60: yanshi.v1.ContextCompacted.usage:type_name -> yanshi.v1.Usage
+	43, // 61: yanshi.v1.MemoryRecalled.items:type_name -> yanshi.v1.RecalledMemory
+	47, // 62: yanshi.v1.CaptureAppended.segments:type_name -> yanshi.v1.CaptureSegment
+	0,  // 63: yanshi.v1.CaptureSegment.speaker:type_name -> yanshi.v1.Speaker
+	50, // 64: yanshi.v1.CaptureSegment.spoken_at:type_name -> google.protobuf.Timestamp
+	65, // [65:65] is the sub-list for method output_type
+	65, // [65:65] is the sub-list for method input_type
+	65, // [65:65] is the sub-list for extension type_name
+	65, // [65:65] is the sub-list for extension extendee
+	0,  // [0:65] is the sub-list for field type_name
 }
 
 func init() { file_yanshi_v1_event_proto_init() }
@@ -4220,6 +4447,7 @@ func file_yanshi_v1_event_proto_init() {
 		(*Event_CallEnded)(nil),
 		(*Event_DecisionMade)(nil),
 		(*Event_BackgroundCancelled)(nil),
+		(*Event_CaptureAppended)(nil),
 	}
 	file_yanshi_v1_event_proto_msgTypes[2].OneofWrappers = []any{
 		(*ContentBlock_Text)(nil),
@@ -4241,13 +4469,14 @@ func file_yanshi_v1_event_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_yanshi_v1_event_proto_rawDesc), len(file_yanshi_v1_event_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   47,
+			NumEnums:      1,
+			NumMessages:   49,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
 		GoTypes:           file_yanshi_v1_event_proto_goTypes,
 		DependencyIndexes: file_yanshi_v1_event_proto_depIdxs,
+		EnumInfos:         file_yanshi_v1_event_proto_enumTypes,
 		MessageInfos:      file_yanshi_v1_event_proto_msgTypes,
 	}.Build()
 	File_yanshi_v1_event_proto = out.File

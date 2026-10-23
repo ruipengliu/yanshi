@@ -42,6 +42,7 @@ message Event {
     CallEnded call_ended = 30;
     DecisionMade decision_made = 31;
     BackgroundCancelled background_cancelled = 32;
+    CaptureAppended capture_appended = 33;
   }
 }
 
@@ -477,6 +478,35 @@ message CallTranscript {
   string text = 3;
   // 助手的话被用户打断：text 是打断前已生成的部分（不一定都播出了）。
   bool interrupted = 4;
+}
+
+// CaptureAppended 是 HostApp 提交的一批旁听转写（docs/design/captures.md，ADR-0036）：EndUser 与他人的日常对话，
+// 不是对 Agent 说的话。它不开启 Run，也不进入对话上下文：Run 经 captures 工具按序号读取。写入前逐段经过内容安全检查。
+message CaptureAppended {
+  // HostApp 生成，在 Session 内唯一；重试时不变，按它去重（session.MaxRecentCaptures）。
+  string capture_id = 1;
+  repeated CaptureSegment segments = 2;
+}
+
+// CaptureSegment 是旁听转写中的一段话。
+message CaptureSegment {
+  // 说话人由 HostApp 的声纹区分给出，yanshi 无法验证：佩戴者的话按 EndUser 本人的输入对待，他人的话按外部内容对待。
+  Speaker speaker = 1;
+  // speaker_key 区分同一批中的不同他人（如 "other-1"），只在本批内有意义；佩戴者为空。
+  string speaker_key = 2;
+  // 未通过内容安全时为空（redacted），只留占位。
+  string text = 3;
+  bool redacted = 4;
+  // 设备时钟下说这段话的时间，只供展示，不用于排序：顺序以日志为准。
+  google.protobuf.Timestamp spoken_at = 5;
+}
+
+enum Speaker {
+  SPEAKER_UNSPECIFIED = 0;
+  // 佩戴外设的 EndUser 本人。
+  SPEAKER_WEARER = 1;
+  // EndUser 以外的人。
+  SPEAKER_OTHER = 2;
 }
 
 // CallEnded 表示 Call 结束。
