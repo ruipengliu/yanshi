@@ -31,6 +31,7 @@ import (
 	"yanshi/internal/feed"
 	"yanshi/internal/ids"
 	"yanshi/internal/live"
+	"yanshi/internal/mcpcap"
 	"yanshi/internal/memory"
 	"yanshi/internal/model"
 	"yanshi/internal/node"
@@ -42,8 +43,11 @@ import (
 	"yanshi/internal/workqueue"
 )
 
-// BusinessLine 是评测使用的业务线。
-const BusinessLine = "eval"
+// BusinessLine 是评测使用的业务线；NoHealthBusinessLine 是未开启健康信息的业务线（setup.no_health）。
+const (
+	BusinessLine         = "eval"
+	NoHealthBusinessLine = "eval-nohealth"
+)
 
 type Config struct {
 	// Agents 是基础 AgentDef；用例的覆盖项与 ModelOverride 会派生出新版本。
@@ -87,6 +91,7 @@ type instance struct {
 	workers *workerPool
 	arts    *artifact.Service
 	crm     *crmServer
+	xinli   *xinliServer
 	calls   *call.Manager
 
 	// controllerDone 在沙箱控制器退出（或未启动）时关闭。
@@ -281,12 +286,21 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 	in := &instance{cfg: cfg, svc: core.Service, hub: core.Hub, mems: core.Memory, agents: agents, version: versions, workers: pool, arts: core.Artifacts,
 		calls: &call.Manager{Service: core.Service, Realtime: cfg.Realtime, Feed: feed.Source{Log: st.Log, Live: opts.Live}, Logger: cfg.Logger}}
 	in.controllerDone = controllerDone
+	var servers []mcpcap.Server
 	if slices.ContainsFunc(cases, func(c *Case) bool { return c.Setup.CRM }) {
-		crm, err := startCRM(ctx, core.Artifacts, cfg.Logger)
-		if err != nil {
+		if in.crm, err = startCRM(ctx); err != nil {
 			return nil, err
 		}
-		in.crm, core.Catalog.MCP = crm, crm.connector
+		servers = append(servers, in.crm.server)
+	}
+	if slices.ContainsFunc(cases, func(c *Case) bool { return c.Setup.Xinli != nil }) {
+		if in.xinli, err = startXinli(ctx, BusinessLine, NoHealthBusinessLine); err != nil {
+			return nil, err
+		}
+		servers = append(servers, in.xinli.servers...)
+	}
+	if len(servers) > 0 {
+		core.Catalog.MCP = &mcpcap.Connector{Servers: servers, Artifacts: core.Artifacts, Logger: cfg.Logger}
 	}
 	return in, nil
 }
@@ -359,6 +373,11 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 	tctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	endUser := fmt.Sprintf("eval-%s-%d-%s", c.Name, trial, ids.Random()()[:6])
+	bl := BusinessLine
+	if c.Setup.NoHealth {
+		bl = NoHealthBusinessLine
+	}
+	in.xinli.seed(endUser, c.Setup.Xinli)
 	// 预置记忆的 ID 与生产一致不可猜（由随机调用 ID 派生）：顺序 ID 会让模型按规律"猜出"未见过的 ID，
 	// 替换掉另一条记忆（memory-update-crowded 中观察到）。
 	for _, m := range c.Setup.Memories {
@@ -371,7 +390,7 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 			}
 			at = t
 		}
-		if _, err := in.mems.Save(tctx, memory.SaveRequest{BusinessLine: BusinessLine, EndUser: endUser, CallID: "setup_" + ids.Random()(),
+		if _, err := in.mems.Save(tctx, memory.SaveRequest{BusinessLine: bl, EndUser: endUser, CallID: "setup_" + ids.Random()(),
 			Category: memory.Category(m.Category), Content: m.Content, At: at}); err != nil {
 			tr.Err = "setup memory: " + err.Error()
 			return tr
@@ -395,7 +414,7 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		if i > 0 {
 			nodeID += "-" + label
 		}
-		if err := dev.run(tctx, in.hub, nodeID, BusinessLine, endUser, label, s.OnlineAfter); err != nil {
+		if err := dev.run(tctx, in.hub, nodeID, bl, endUser, label, s.OnlineAfter); err != nil {
 			tr.Err = "setup device: " + err.Error()
 			return tr
 		}
@@ -420,7 +439,7 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 				tr.Err = "call cases do not support new_session"
 				return tr
 			}
-			id, err := in.svc.Create(tctx, service.CreateRequest{BusinessLine: BusinessLine, EndUser: endUser, Agent: c.Agent, AgentVersion: in.version[c.Name]})
+			id, err := in.svc.Create(tctx, service.CreateRequest{BusinessLine: bl, EndUser: endUser, Agent: c.Agent, AgentVersion: in.version[c.Name]})
 			if err != nil {
 				tr.Err = "create session: " + err.Error()
 				return tr
@@ -433,6 +452,10 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 					return tr
 				}
 			}
+		}
+		if err := in.submitCaptures(tctx, sid, turn.Captures); err != nil {
+			tr.Err = fmt.Sprintf("turn %d: captures: %v", ti+1, err)
+			return tr
 		}
 		var obs *observation
 		var err error
@@ -455,7 +478,7 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 			obs.sent += sent
 		}
 		obs.tickets = in.crm.ticketsOf(endUser)
-		obs.memories, _ = in.mems.Store.List(tctx, endUser, []memory.Scope{{BusinessLine: BusinessLine}}, memory.DefaultMaxPerUser)
+		obs.memories, _ = in.mems.Store.List(tctx, endUser, []memory.Scope{{BusinessLine: bl}}, memory.DefaultMaxPerUser)
 		as, score := in.check(tctx, ti+1, turn, obs)
 		tr.Assertions = append(tr.Assertions, as...)
 		if score > 0 {
@@ -622,6 +645,26 @@ func (in *instance) submitTurn(ctx context.Context, sid string, turn Turn) (stri
 		return "", err
 	}
 	return res.RunID, nil
+}
+
+// submitCaptures 以 HostApp 的身份把一批旁听提交到 Session（docs/design/captures.md §3）。
+func (in *instance) submitCaptures(ctx context.Context, sid string, segs []CaptureSegment) error {
+	if len(segs) == 0 {
+		return nil
+	}
+	out := make([]*v1.CaptureSegment, 0, len(segs))
+	for _, g := range segs {
+		seg := &v1.CaptureSegment{Speaker: v1.Speaker_SPEAKER_WEARER, Text: g.Text}
+		if g.Speaker == "other" {
+			seg.Speaker, seg.SpeakerKey = v1.Speaker_SPEAKER_OTHER, g.Key
+			if seg.SpeakerKey == "" {
+				seg.SpeakerKey = "s1"
+			}
+		}
+		out = append(out, seg)
+	}
+	_, err := in.svc.SubmitCaptures(ctx, sid, "cap_"+ids.Random()(), out)
+	return err
 }
 
 // awaitBackground 等待 seq after 之后的后台调用了结（ADR-0035），返回它开启或并入的 Run。
@@ -812,7 +855,11 @@ func matches(globs []string, name string) bool {
 }
 
 func memoryMatches(m *memory.Memory, want MemoryMatch) bool {
-	return (want.Category == "" || string(m.Category) == want.Category) && strings.Contains(m.Content, want.Contains) &&
+	category := want.Category == "" || string(m.Category) == want.Category
+	if not, ok := strings.CutPrefix(want.Category, "!"); ok {
+		category = string(m.Category) != not
+	}
+	return category && strings.Contains(m.Content, want.Contains) &&
 		(want.Without == "" || !strings.Contains(m.Content, want.Without))
 }
 
@@ -886,6 +933,15 @@ func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation)
 			}
 		}
 		add("call_args "+g, ok, fmt.Sprintf("calls %v", o.calls))
+	}
+	for g, sub := range e.NoCallArgs {
+		var hit []string
+		for i, c := range o.calls {
+			if matches([]string{g}, c) && strings.Contains(o.callArgs[i], sub) {
+				hit = append(hit, clip(o.callArgs[i], 200))
+			}
+		}
+		add("no_call_args "+g, len(hit) == 0, fmt.Sprintf("arguments containing %q: %v", sub, hit))
 	}
 	for _, want := range e.Tickets {
 		add("tickets "+want, slices.ContainsFunc(o.tickets, func(t string) bool { return strings.Contains(t, want) }), fmt.Sprintf("tickets %v", o.tickets))

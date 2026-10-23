@@ -48,6 +48,11 @@ type Case struct {
 		// Agents 是本用例可委托的 Agent（docs/design/m5-multi-agent.md）：与被评测的 Agent 使用同一模型；
 		// 名称在整个评测集中唯一，被评测的 Agent 须在 capabilities 中以 "agent:<名称>" 允许委托。
 		Agents []AgentSetup `yaml:"agents"`
+		// Xinli 非 nil 时为评测业务线登记内置的 xinli MCP Server（docs/design/captures.md §6），并为本次运行的 EndUser
+		// 预置其中的项目与每日摘要。
+		Xinli *XinliSetup `yaml:"xinli"`
+		// NoHealth 为 true 时本用例在未开启健康信息的业务线中运行（ADR-0022）：health 类别的写入被拒绝。
+		NoHealth bool `yaml:"no_health"`
 	} `yaml:"setup"`
 	Turns []Turn `yaml:"turns"`
 }
@@ -58,6 +63,25 @@ type AgentSetup struct {
 	Description  string   `yaml:"description"`
 	Instructions string   `yaml:"instructions"`
 	Capabilities []string `yaml:"capabilities"`
+}
+
+// XinliSetup 是 xinli MCP Server 中预置的数据：已有的项目与按日期的摘要（file_day 交给业务线、day_summary 取回的内容）。
+type XinliSetup struct {
+	Projects []XinliProject    `yaml:"projects"`
+	Days     map[string]string `yaml:"days"`
+}
+
+type XinliProject struct {
+	ID     string `yaml:"id"`
+	Name   string `yaml:"name"`
+	Digest string `yaml:"digest"`
+}
+
+// CaptureSegment 是一段旁听转写：Speaker 为 wearer（佩戴者）或 other（他人，Key 区分不同的人）。
+type CaptureSegment struct {
+	Speaker string `yaml:"speaker"`
+	Key     string `yaml:"key"`
+	Text    string `yaml:"text"`
 }
 
 // DeviceSetup 是虚拟设备：只读的文件、需审批的写文件与发消息。
@@ -99,8 +123,11 @@ type Turn struct {
 	Answer *AnswerScript `yaml:"answer"`
 	// AwaitBackground 为 true 时本轮不提交输入，而是等待后台调用的了结（ADR-0035）：设备上线后送达的结果（或到期）
 	// 作为一条输入开启新 Run（或并入进行中的 Run），本轮检查的是那个 Run。须与 Input 二选一。
-	AwaitBackground bool   `yaml:"await_background"`
-	Expect          Expect `yaml:"expect"`
+	AwaitBackground bool `yaml:"await_background"`
+	// Captures 是本轮输入之前由 HostApp 提交到本轮 Session 的一批旁听（docs/design/captures.md §3）；
+	// 跨天的用例在 new_session 的一轮提交新一天的旁听。
+	Captures []CaptureSegment `yaml:"captures"`
+	Expect   Expect           `yaml:"expect"`
 }
 
 // CardActionScript 模拟用户在卡片上点按钮或点选列表项。Action 为空时点第一个按钮；Label 非空时点标签包含它的按钮或条目。
@@ -126,6 +153,7 @@ type Range struct {
 }
 
 type MemoryMatch struct {
+	// Category 以 "!" 开头时匹配其他类别，如 "!health"：健康信息不应被改写到其他类别。
 	Category string `yaml:"category"`
 	Contains string `yaml:"contains"`
 	// Without 非空时，包含它的记忆不算匹配。例如更正后旧地址可以作为历史出现在新记忆里，
@@ -153,6 +181,8 @@ type Expect struct {
 	DeviceSent    *int              `yaml:"device_sent"`
 	// CallArgs 要求某个名称匹配（glob）的调用的参数包含给定文本，如 {"*send_message": "lilei@example.com"}。
 	CallArgs map[string]string `yaml:"call_args"`
+	// NoCallArgs 要求名称匹配（glob）的调用的参数都不包含给定文本，如 {"mcp_xinli__set_commitments": "合同"}。
+	NoCallArgs map[string]string `yaml:"no_call_args"`
 	// Compacted 要求到本轮结束时 Session 已发生过上下文压缩（压缩类用例据此确认确实测到了压缩）。
 	Compacted bool `yaml:"compacted"`
 	// Compactions 与 Takeovers 是本轮 Run 内上下文压缩与接管次数的范围（长 Run 用例）。
@@ -194,6 +224,11 @@ func LoadSuite(dir string) ([]*Case, error) {
 		for i, t := range c.Turns {
 			if t.AwaitBackground && (t.Input != "" || t.CardAction != nil || t.NewSession || c.Call) {
 				return nil, fmt.Errorf("%s: turn %d awaits a background result and cannot also submit input", f, i+1)
+			}
+			for _, g := range t.Captures {
+				if g.Speaker != "wearer" && g.Speaker != "other" {
+					return nil, fmt.Errorf("%s: turn %d: capture speaker %q must be wearer or other", f, i+1, g.Speaker)
+				}
 			}
 		}
 		for _, a := range c.Setup.Agents {

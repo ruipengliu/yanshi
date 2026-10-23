@@ -1,0 +1,17 @@
+name: capture-health-category
+description: >-
+  情绪与身心状态是健康信息（ADR-0022）：在已取得单独同意的业务线中，只写入 health 类别，不改写到其他类别。
+agent: xinli-day
+setup:
+  xinli: {}
+turns:
+  - captures:
+      - {speaker: other, key: zhou, text: 你最近脸色不太好，怎么了？}
+      - {speaker: wearer, text: 项目压得我喘不过气，连着一周失眠，心里一直很焦虑。}
+      - {speaker: other, key: zhou, text: 要不要找个心理咨询师聊聊？}
+      - {speaker: wearer, text: 再说吧，先把这周的上线扛过去。}
+    input: 整理今天
+    expect:
+      calls: ["memory_save", "mcp_xinli__file_day"]
+      memories: [{category: health}]
+      no_memories: [{category: "!health", contains: "焦虑"}, {category: "!health", contains: "失眠"}]

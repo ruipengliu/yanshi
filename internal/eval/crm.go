@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -13,17 +12,16 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"yanshi/internal/artifact"
 	"yanshi/internal/mcpcap"
 )
 
 // crmServer 是评测内置的 CRM MCP Server（docs/design/m5-mcp.md）：search_customer 只读，
 // create_ticket 有副作用（未声明只读，需要审批）。工单按调用方的 EndUser 记录，供断言（expect.tickets）。
 type crmServer struct {
-	connector *mcpcap.Connector
-	mu        sync.Mutex
-	tickets   map[string][]string // EndUser → 工单内容
-	next      int
+	server  mcpcap.Server
+	mu      sync.Mutex
+	tickets map[string][]string // EndUser → 工单内容
+	next    int
 }
 
 // crmCustomers 是 CRM 中的客户；评测用例的正确答案依赖这些数据。
@@ -34,7 +32,7 @@ var crmCustomers = []struct{ ID, Name, Contact, Phone, Level string }{
 	{"C-1004", "青禾农场", "刘洋", "0512-6688-0001", "普通"},
 }
 
-func startCRM(ctx context.Context, arts *artifact.Service, logger *slog.Logger) (*crmServer, error) {
+func startCRM(ctx context.Context) (*crmServer, error) {
 	c := &crmServer{tickets: map[string][]string{}}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "crm", Version: "1"}, nil)
 	srv.AddTool(&mcp.Tool{Name: "search_customer", Description: "按名称关键词查询客户，返回客户编号、联系人、电话与等级。",
@@ -77,8 +75,7 @@ func startCRM(ctx context.Context, arts *artifact.Service, logger *slog.Logger) 
 	hs := &http.Server{Handler: mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil), ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = hs.Serve(ln) }()
 	go func() { <-ctx.Done(); _ = hs.Close() }()
-	c.connector = &mcpcap.Connector{Servers: []mcpcap.Server{{Name: "crm", BusinessLine: BusinessLine, URL: "http://" + ln.Addr().String(), Timeout: 30 * time.Second}},
-		Artifacts: arts, Logger: logger}
+	c.server = mcpcap.Server{Name: "crm", BusinessLine: BusinessLine, URL: "http://" + ln.Addr().String(), Timeout: 30 * time.Second}
 	return c, nil
 }
 

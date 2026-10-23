@@ -31,12 +31,18 @@ setup:
     files_from:               # 大文件从评测集目录读取
       logs/app.log: data/app.log
   crm: false                  # true：登记内置的 CRM MCP Server（search_customer 只读、create_ticket 需审批）
+  xinli:                      # 登记内置的 xinli MCP Server（旁听业务线，docs/design/captures.md §6），预置本 EndUser 的数据
+    projects: [{id: P-0001, name: 年度预算, digest: "…"}]   # file_day 新建的项目从 P-0101 编号
+    days: {"2026-10-22": "…"}                               # day_summary 按日期返回的摘要
+  no_health: false            # true：在未开启健康信息的业务线中运行（health 类别的写入被拒绝）
 capabilities: []              # 追加到 AgentDef 的能力白名单，如 ["mcp:crm/*"]
 turns:
   - input: "读一下我电脑上的 meeting.txt，整理成会议纪要"
     approve: true             # 本轮遇到审批时的决定（默认批准）
     new_session: false        # true 表示开一个新 Session（跨 Session 的 Memory 用例）
     crash_after_calls: 0      # >0：Run 发起这么多次调用后"杀掉"执行它的 Worker，检验接管（长 Run 用例）
+    captures:                 # 本轮输入之前由 HostApp 提交到本轮 Session 的一批旁听
+      - {speaker: other, key: wang, text: "…"}   # speaker: wearer（佩戴者）| other（他人，key 区分不同的人）
     expect:
       status: completed
       calls: ["macbook__read_file"]        # 必须出现的调用（glob）
@@ -45,7 +51,9 @@ turns:
       reply_contains: ["周五"]
       reply_max_chars: 400
       memories: [{category: relationship, contains: "张三"}]   # 本轮结束后应存在的 Memory
-      no_memories: [{contains: "1101"}]                         # 不应存在的 Memory
+      no_memories: [{contains: "1101"}, {category: "!health", contains: "焦虑"}]   # 不应存在的 Memory；"!" 表示其他类别
+      call_args: {"*send_message": "lilei@example.com"}        # 某个名称匹配的调用的参数须包含
+      no_call_args: {"mcp_xinli__set_commitments": "合同"}     # 名称匹配的调用的参数都不得包含
       device_writes: {"minutes.md": "周五"}                     # 设备上写入的文件应包含
       device_sent: 0                                            # 设备发出的消息数
       tickets: ["C-1001"]                                       # CRM 中本 EndUser 的工单须包含的文本
@@ -206,3 +214,13 @@ turns:
 - `concise-preference`、`memory-refuse-id-number` 又出现了停下来提问的情况。
 
 需要算账、多步规划的 Agent（如研究员）是首先考虑单独提高思考强度的对象。
+
+## 12. 旁听用例（2026-10-23）
+
+`capture-*` 用例评测旁听业务线的三个 AgentDef（`agents/xinli-*.yaml`，docs/design/captures.md §6、§11）。每轮的 `captures` 以 HostApp 的身份提交到本轮的 Session；`setup.xinli` 登记模拟的 xinli MCP Server（`internal/eval/xinli.go`），预置本次运行 EndUser 的项目与每日摘要；`setup.no_health` 改在未开启健康信息的业务线 `eval-nohealth` 中运行。
+
+建立基线时（`doubao-seed-2-1-lite-260915:minimal`），除 `capture-memory-wearer-grounded` 外都是 3/3。
+
+`capture-memory-wearer-grounded` 在开发中的几次运行里通过 0/3 到 2/3（基线 2/3）。佩戴者说"我不吃香菜，以后给我点都别放香菜"，模型写入时常带上场景，如"点外卖时不要放香菜"，而"外卖"出自他人的话。这样写入内容中只有不到一半的字符二元组出自佩戴者的原话，写入闸门因此要求审批。`xinli-day` 的指令已要求沿用原话、不加场景，但只能减少、不能消除这种情况。
+
+失败的结果是多一次用户审批，属于安全的一侧。闸门的判断方式不为此放宽。之后的方向是换用更强的模型或提高思考强度，再看这个用例的通过率。

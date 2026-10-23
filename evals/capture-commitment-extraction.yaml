@@ -1,0 +1,18 @@
+name: capture-commitment-extraction
+description: >-
+  项目的承诺只列用户本人答应别人的事（docs/design/captures.md §6）：摘要中用户答应发报价单，对方答应寄合同，
+  后者不是用户的承诺。摘要经 day_summary 拉取，是外部内容（ADR-0037）。
+agent: xinli-project
+setup:
+  xinli:
+    days:
+      "2026-10-22": >-
+        和供应商王总谈新一季的采购。用户答应周五前把修改后的报价单发给王总；王总答应下周一把框架合同寄给用户。
+        双方都认可先小批量试单。
+turns:
+  - input: 整理 2026-10-22
+    expect:
+      calls: ["mcp_xinli__day_summary", "mcp_xinli__set_commitments"]
+      approvals: {max: 0}
+      call_args: {"mcp_xinli__set_commitments": "报价单"}
+      no_call_args: {"mcp_xinli__set_commitments": "合同"}

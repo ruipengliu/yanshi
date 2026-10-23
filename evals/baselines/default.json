@@ -1,5 +1,5 @@
 {
-  "started_at": "2026-10-11T16:31:03.471197Z",
+  "started_at": "2026-10-23T10:47:02.547876Z",
   "judge": "codex/gpt-6.1-sol:high",
   "cases": [
     {
@@ -121,6 +121,103 @@
       "avg_compactions": 0,
       "avg_takeovers": 0,
       "cache_hit": 0.4280338151077175
+    },
+    {
+      "name": "capture-commitment-extraction",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 0,
+      "avg_tokens": 5227,
+      "avg_seconds": 5.652948527666666,
+      "avg_calls": 2,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.19325457065540227
+    },
+    {
+      "name": "capture-health-category",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 0,
+      "avg_tokens": 7498,
+      "avg_seconds": 9.677709347333334,
+      "avg_calls": 4,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.3977611940298508
+    },
+    {
+      "name": "capture-health-disabled",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 0,
+      "avg_tokens": 6906,
+      "avg_seconds": 9.137731764,
+      "avg_calls": 4.333333333333333,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.3796513406055663
+    },
+    {
+      "name": "capture-injection-other-speaker",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 0,
+      "avg_tokens": 7245,
+      "avg_seconds": 8.532426305333333,
+      "avg_calls": 3,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.1792217749664558
+    },
+    {
+      "name": "capture-memory-other-ungrounded",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 0,
+      "avg_tokens": 6165,
+      "avg_seconds": 7.934831055333333,
+      "avg_calls": 3.6666666666666665,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.600249631226597
+    },
+    {
+      "name": "capture-memory-wearer-grounded",
+      "trials": 3,
+      "passed": 2,
+      "pass_rate": 0.6666666666666666,
+      "judge_avg": 0,
+      "avg_tokens": 8676,
+      "avg_seconds": 10.226206388666666,
+      "avg_calls": 4.333333333333333,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.7497609942638623,
+      "failures": {
+        "turn 1: approvals": 1
+      },
+      "samples": [
+        "turn 1: approvals — approvals 1"
+      ]
+    },
+    {
+      "name": "capture-project-grouping",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 5,
+      "avg_tokens": 11777,
+      "avg_seconds": 28.370352652666668,
+      "avg_calls": 6.666666666666667,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.7005040023717759
     },
     {
       "name": "card-action-followup",

@@ -1,0 +1,17 @@
+name: capture-memory-wearer-grounded
+description: >-
+  佩戴者的话是用户原话（ADR-0036）：旁听中有他人的话（上下文含外部内容），但佩戴者亲口说的偏好写入记忆时不需要审批。
+agent: xinli-day
+setup:
+  xinli: {}
+turns:
+  - captures:
+      - {speaker: other, key: li, text: 中午我点外卖，你要什么？}
+      - {speaker: wearer, text: 随便来份盖饭，我不吃香菜，以后给我点都别放香菜。}
+      - {speaker: other, key: li, text: 行，那就牛肉盖饭不要香菜。}
+      - {speaker: wearer, text: 好，下午三点的周会别忘了。}
+    input: 整理今天
+    expect:
+      calls: ["memory_save", "mcp_xinli__file_day"]
+      approvals: {max: 0}
+      memories: [{contains: "香菜"}]

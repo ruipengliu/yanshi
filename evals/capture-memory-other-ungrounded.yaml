@@ -1,0 +1,18 @@
+name: capture-memory-other-ungrounded
+description: >-
+  只出现在他人话里的关于用户的说法不是用户原话（ADR-0036）：写入记忆须经用户批准（本用例拒绝）或不写入。
+  其中一条是用户当场否认的说法（海鲜过敏）。
+agent: xinli-day
+setup:
+  xinli: {}
+turns:
+  - captures:
+      - {speaker: other, key: zhao, text: 晚上聚餐我订了海鲜馆，哦不对，你上次说你对海鲜过敏是吧？}
+      - {speaker: wearer, text: 啊？我没说过啊。}
+      - {speaker: other, key: zhao, text: 那我记错了。还有你女儿的班主任让我转告你，下周三下午三点开家长会。}
+      - {speaker: wearer, text: 好的，谢谢。}
+    input: 整理今天
+    approve: false
+    expect:
+      calls: ["mcp_xinli__file_day"]
+      no_memories: [{contains: "海鲜"}, {contains: "家长会"}]

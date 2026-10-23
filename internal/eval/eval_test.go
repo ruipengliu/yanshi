@@ -78,7 +78,8 @@ func run(t *testing.T, suite string) *Report {
 		t.Fatal(err)
 	}
 	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "assistant", Version: "1", Model: "script/any",
-		Capabilities: []string{"device:*", "memory_save", "clock_now"}})
+		Capabilities: []string{"device:*", "memory_save", "clock_now"}},
+		&agentdef.Def{Name: "day", Version: "1", Model: "script/any", Captures: true, Capabilities: []string{"captures", "memory_save", "mcp:xinli/*"}})
 	gw := model.NewGateway()
 	gw.Register("script", script{})
 	gw.Register("judge", fixedJudge{})
@@ -156,6 +157,74 @@ turns:
 	md := rep.Markdown(nil, nil)
 	if !strings.Contains(md, "turn 2: reply_max_chars") || !strings.Contains(md, "跳过") {
 		t.Fatalf("markdown:\n%s", md)
+	}
+}
+
+// TestCapturesAndXinli：每轮的旁听提交到 Session、可由 captures 读出；xinli MCP Server 按 EndUser 预置数据、
+// file_day 新建项目；no_call_args 与未开启健康信息的业务线生效。
+func TestCapturesAndXinli(t *testing.T) {
+	dir := t.TempDir()
+	writeCase(t, dir, "day", `name: day
+agent: day
+trials: 1
+setup:
+  xinli:
+    projects: [{id: P-0001, name: 年度预算, digest: 预算已报}]
+turns:
+  - captures:
+      - {speaker: other, key: zhang, text: 中午吃什么？}
+      - {speaker: wearer, text: 我不吃香菜。}
+    input: call captures {}
+    expect:
+      calls: [captures]
+      reply_contains: ["[佩戴者] 我不吃香菜", "[他人 zhang]", "已读完"]
+  - input: 'call mcp_xinli__file_day {"groups":[{"title":"办公室装修","summary":"选了浅色地板"}]}'
+    expect:
+      approvals: {max: 0}
+      reply_contains: ["`+xinliNewProject+`"]
+      no_call_args: {"mcp_xinli__file_day": "预算"}
+  - input: call mcp_xinli__list_projects {}
+    new_session: true
+    expect:
+      reply_contains: ["P-0001 年度预算", "`+xinliNewProject+` 办公室装修"]
+`)
+	writeCase(t, dir, "no-call-args", `name: no-call-args
+agent: day
+trials: 1
+setup: {xinli: {}}
+turns:
+  - input: 'call mcp_xinli__set_commitments {"commitments":[{"content":"寄合同"}]}'
+    expect:
+      no_call_args: {"mcp_xinli__set_commitments": "合同"}
+`)
+	for _, c := range []struct{ name, noHealth string }{{"health-on", "false"}, {"health-off", "true"}} {
+		writeCase(t, dir, c.name, `name: `+c.name+`
+agent: day
+trials: 1
+setup: {no_health: `+c.noHealth+`}
+turns:
+  - input: 'call memory_save {"category":"health","content":"最近焦虑"}'
+    expect:
+      memories: [{category: health, contains: 焦虑}]
+      no_memories: [{category: "!health", contains: 焦虑}]
+`)
+	}
+	rep := run(t, dir)
+	by := map[string]CaseResult{}
+	for _, c := range rep.Cases {
+		by[c.Name] = c
+	}
+	if c := by["day"]; c.Passed != 1 {
+		t.Fatalf("day: %+v", c)
+	}
+	if c := by["no-call-args"]; c.Passed != 0 || c.Failures["turn 1: no_call_args mcp_xinli__set_commitments"] != 1 {
+		t.Fatalf("no-call-args: %+v", c)
+	}
+	if c := by["health-on"]; c.Passed != 1 {
+		t.Fatalf("health-on: %+v", c)
+	}
+	if c := by["health-off"]; c.Passed != 0 || c.Failures["turn 1: memory health \"焦虑\""] != 1 {
+		t.Fatalf("health-off: %+v", c)
 	}
 }
 
