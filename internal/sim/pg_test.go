@@ -42,7 +42,8 @@ func diffSeed(t *testing.T, s uint64) {
 	if err := mem.Run(); err != nil {
 		t.Fatalf("seed %d (memory): %v", s, err)
 	}
-	if mem.Stats.Runs == 0 {
+	// Run 也可能都由 Call 中派生的任务开启（长 Run 种子只有两个 Session，用户之后的输入都成了插话）：二者都没有才是空转。
+	if mem.Stats.Runs == 0 && mem.Stats.CallTasks == 0 {
 		t.Fatalf("seed %d: simulation did nothing", s)
 	}
 

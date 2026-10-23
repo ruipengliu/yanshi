@@ -135,6 +135,8 @@ type Stats struct {
 	CapturesAppended, CaptureDuplicates, CapturesRejected, CapturesRedacted, CaptureStoreFaults int
 	// CaptureReads 是 Run 中读取旁听转写（captures 工具）的次数。
 	CaptureReads int
+	// RetentionKeptMemories 是按保留期到期删除、写入过的 Memory 得以保留的 Session（ADR-0037）。
+	RetentionKeptMemories int
 }
 
 // storeFault 是注入的存储故障（数据库超时、连接中断）：written 表示追加其实已经生效，调用方却只看到错误。
@@ -741,6 +743,9 @@ func (w *World) act() error {
 		}
 		if w.chance(0.2) {
 			return w.captureStep()
+		}
+		if w.chance(0.1) {
+			return w.redispatchDelegation()
 		}
 		return w.submit()
 	case x < 0.83:

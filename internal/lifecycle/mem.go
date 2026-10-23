@@ -120,15 +120,15 @@ func (x *MemIndex) pick(keep func(*Session) bool, limit int) []string {
 	return ids
 }
 
-func (x *MemIndex) IdleBefore(_ context.Context, businessLine string, t time.Time, limit int) ([]string, error) {
+func (x *MemIndex) IdleBefore(_ context.Context, businessLine string, agents AgentFilter, t time.Time, limit int) ([]string, error) {
 	return x.pick(func(s *Session) bool {
-		return s.BusinessLine == businessLine && s.ClosedAt.IsZero() && s.LastInputAt.Before(t)
+		return s.BusinessLine == businessLine && agents.Match(s.Agent) && s.ClosedAt.IsZero() && s.LastInputAt.Before(t)
 	}, limit), nil
 }
 
-func (x *MemIndex) ClosedBefore(_ context.Context, businessLine string, t time.Time, limit int) ([]string, error) {
+func (x *MemIndex) ClosedBefore(_ context.Context, businessLine string, agents AgentFilter, t time.Time, limit int) ([]string, error) {
 	return x.pick(func(s *Session) bool {
-		return s.BusinessLine == businessLine && !s.ClosedAt.IsZero() && s.ClosedAt.Before(t)
+		return s.BusinessLine == businessLine && agents.Match(s.Agent) && !s.ClosedAt.IsZero() && s.ClosedAt.Before(t)
 	}, limit), nil
 }
 

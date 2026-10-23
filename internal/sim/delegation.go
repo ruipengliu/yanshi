@@ -5,12 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/decision"
 	"yanshi/internal/delegation"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/lifecycle"
+	"yanshi/internal/service"
 )
 
 // 委托的模拟（docs/design/m5-multi-agent.md §6）：sim Agent 可以委托给自己（agent__sim），子 Session 中的 Run 照常
@@ -179,4 +183,39 @@ func (d simDecider) Decide(ctx context.Context, q decision.Question) (decision.A
 		}
 	}
 	return decision.Answer{Chosen: q.Options[w.rng.IntN(len(q.Options))], Confidence: 0.8, Model: "sim/decider"}, nil
+}
+
+// redispatchDelegation 模拟父 Worker 从挂起恢复时重新派发等待中的委托（Delegator.Dispatch 幂等，父 Worker 每次恢复都会再
+// 派发一次）。重新派发本来只在父 Run 恰好被别的原因唤醒时发生，"重新派发时子 Session 被删除"（deleteChildMidDispatch）
+// 在 300 个种子中只有几次，任何改变随机序列的改动都可能使它归零；这一动作使它稳定出现。
+func (w *World) redispatchDelegation() error {
+	ctx := context.Background()
+	live := w.live()
+	off := w.rng.IntN(len(live))
+	for i := range live {
+		sid := live[(off+i)%len(live)]
+		st, err := w.store.Load(ctx, sid)
+		if err != nil || st.Created == nil {
+			continue
+		}
+		a := st.Active()
+		if a == nil {
+			continue
+		}
+		for _, c := range a.Calls {
+			if c.Done || !c.Dispatched() || !delegation.IsNode(c.NodeID) {
+				continue
+			}
+			_, agent, _ := strings.Cut(c.Call.GetCapability(), "__")
+			err := w.delegator.Dispatch(ctx, c.NodeID, &v1.Invoke{SessionId: sid, RunId: a.ID, CallId: c.Call.GetCallId(),
+				Capability: agent, ArgumentsJson: c.Call.GetArgumentsJson(), Deadline: timestamppb.New(c.Deadline)})
+			w.tracef("redispatch %s %s: %v", sid, c.Call.GetCallId(), err)
+			var sf *storeFault
+			if err == nil || errors.As(err, &sf) || w.submitModerated(err) || w.submitOverQuota(err) || errors.Is(err, service.ErrNotFound) {
+				return nil
+			}
+			return fmt.Errorf("redispatch %s: %w", c.Call.GetCallId(), err)
+		}
+	}
+	return nil
 }

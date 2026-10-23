@@ -99,14 +99,25 @@ func (x Index) IDsOf(ctx context.Context, businessLine, endUser string) ([]strin
 	return x.ids(ctx, `SELECT session_id FROM sessions WHERE business_line = $1 AND end_user = $2`, businessLine, endUser)
 }
 
-func (x Index) IdleBefore(ctx context.Context, businessLine string, t time.Time, limit int) ([]string, error) {
-	return x.ids(ctx, `SELECT session_id FROM sessions WHERE business_line = $1 AND closed_at IS NULL AND last_input_at < $2
-		ORDER BY session_id LIMIT $3`, businessLine, t, limit)
+// 按 AgentDef 筛选：只含某个名称时走 (business_line, agent, …) 的索引（迁移 0016、0017），排除若干名称时走业务线的索引。
+const agentMatch = `($3 = '' AND NOT (agent = ANY($4)) OR agent = $3)`
+
+func (x Index) IdleBefore(ctx context.Context, businessLine string, agents lifecycle.AgentFilter, t time.Time, limit int) ([]string, error) {
+	return x.ids(ctx, `SELECT session_id FROM sessions WHERE business_line = $1 AND `+agentMatch+` AND closed_at IS NULL
+		AND last_input_at < $2 ORDER BY session_id LIMIT $5`, businessLine, t, agents.Only, except(agents), limit)
 }
 
-func (x Index) ClosedBefore(ctx context.Context, businessLine string, t time.Time, limit int) ([]string, error) {
-	return x.ids(ctx, `SELECT session_id FROM sessions WHERE business_line = $1 AND closed_at < $2
-		ORDER BY session_id LIMIT $3`, businessLine, t, limit)
+func (x Index) ClosedBefore(ctx context.Context, businessLine string, agents lifecycle.AgentFilter, t time.Time, limit int) ([]string, error) {
+	return x.ids(ctx, `SELECT session_id FROM sessions WHERE business_line = $1 AND `+agentMatch+` AND closed_at < $2
+		ORDER BY session_id LIMIT $5`, businessLine, t, agents.Only, except(agents), limit)
+}
+
+// except 返回要排除的名称；不能是 nil：ANY(NULL) 为 NULL，NOT 之后仍为 NULL，会排除全部。
+func except(f lifecycle.AgentFilter) []string {
+	if f.Except == nil {
+		return []string{}
+	}
+	return f.Except
 }
 
 func (x Index) Delete(ctx context.Context, id string) error {

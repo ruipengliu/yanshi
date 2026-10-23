@@ -96,7 +96,13 @@
 retention:
   close_after_idle: 720h      # 最后一次输入后多久自动关闭；0 = 不自动关闭
   delete_after_close: 4320h   # 关闭后多久自动删除；0 = 不自动删除
+  agents:                     # 可选：按 AgentDef 名称覆盖（整条替换，不与上面的值合并）
+    xinli-day:
+      close_after_idle: 36h
+      delete_after_close: 168h
 ```
+
+按 AgentDef 覆盖使短期保留的 Session（如旁听，[旁听](./captures.md) §8）与长期保留的 Session 并存于同一业务线：Janitor 先按每个覆盖查询该 AgentDef 的 Session，再以业务线的值查询其余 AgentDef 的（`lifecycle.Retention.Rules`）。按保留期删除的原因是 `retention`，此时 Session 写入的 Memory 保留（ADR-0037，[Memory](./m4-memory-grant.md) §7）。
 
 由 Janitor 周期性地按 Session 索引扫描执行。平台不设默认值：保留多久是业务线的合规决策。
 

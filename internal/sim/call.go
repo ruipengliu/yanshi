@@ -28,7 +28,7 @@ func (w *World) callStep() error {
 	// 并在同一步中派生任务：只在"等回答"与"通话中"恰好同时发生时才偏向的话，300 个种子中只有一两次，任何改变随机序列的
 	// 改动都可能使它归零。
 	asking := false
-	if q := w.asking(); q != "" && w.chance(0.5) {
+	if q := w.asking(); q != "" && w.chance(0.8) {
 		sid, asking = q, true
 	}
 	callID := w.calls[sid]

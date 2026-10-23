@@ -115,12 +115,24 @@ func (w *World) closeAt(i int, err error) error {
 func (w *World) deleteSession() error {
 	i := w.rng.IntN(len(w.sessions))
 	sid := w.sessions[i]
-	if err := w.svc.Delete(context.Background(), sid, "end_user", ""); err != nil {
+	// 一部分删除是保留期到期（Janitor 的 Sweep 以 retention 为原因删除）：Session 写入的 Memory 保留（ADR-0037）。
+	// 写过 Memory 的 Session 很少（多数 memory_save 被闸门要求审批或参数不合法），所以先以它的名义写入一条：每次到期删除
+	// 都检验 Memory 是否保留。
+	reason := "end_user"
+	if w.chance(0.3) {
+		reason = lifecycle.ReasonRetention
+		w.nextInput++
+		if _, err := w.memories.Save(context.Background(), memory.SaveRequest{BusinessLine: "bl", EndUser: w.users[i], SessionID: sid,
+			CallID: fmt.Sprintf("retention-%d", w.nextInput), Category: "preference", Content: "偏好 到期"}); err != nil {
+			w.tracef("memory before retention %s: %v", sid, err) // 条数达到上限等：照常删除
+		}
+	}
+	if err := w.svc.Delete(context.Background(), sid, reason, ""); err != nil {
 		return fmt.Errorf("delete %s: %w", sid, err)
 	}
 	w.Stats.Deletions++
 	w.deleted = append(w.deleted, sid)
-	w.tracef("delete %s", sid)
+	w.tracef("delete %s (%s)", sid, reason)
 	return w.replace(i)
 }
 
@@ -176,8 +188,14 @@ func (w *World) checkDeleted(final bool) error {
 		if s, ok := w.store.Snapshots.(*session.MemSnapshots); ok && s.Has(sid) {
 			return fmt.Errorf("invariant: deleted session %s still has a projection snapshot", sid)
 		}
+		// 按保留期到期删除时 Memory 保留，其余删除一并清除（ADR-0037）。账号注销另行删除该用户的全部 Memory。
 		if s, ok := w.memories.Store.(*memory.MemStore); ok && s.HasSession(sid) {
-			return fmt.Errorf("invariant: deleted session %s still has memories", sid)
+			if t.Reason != lifecycle.ReasonRetention {
+				return fmt.Errorf("invariant: deleted session %s still has memories", sid)
+			}
+			if final {
+				w.Stats.RetentionKeptMemories++
+			}
 		}
 		// 零时刻作为"现在"：连已过期、尚未清理的记录也算在内。
 		if entries, _, _ := w.presence.Store.List(ctx, sid, time.Time{}); len(entries) > 0 {

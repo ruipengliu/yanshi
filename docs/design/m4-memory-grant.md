@@ -117,6 +117,7 @@ Grant { id, end_user, from_business_line, to_business_line, categories[], create
 
 - **账号注销**（`DELETE /v1/end_users/{id}`）：删除该 EndUser 在该业务线的全部 Memory，以及该业务线作为授出方或接收方的全部 Grant。
 - **删除单个 Session**：由该 Session 写入的 Memory **一并删除**（§9）。Janitor 的清理步骤中增加一步，按 `source_session` 删除。
+- **按保留期到期删除 Session**（删除原因 `retention`）：由该 Session 写入的 Memory **保留**（ADR-0037）。到期清理不是用户的删除意图；旁听 Session 只保留 7 天，每晚整理时写下的偏好与沟通习惯不应随原话一起消失（[旁听](./captures.md) §9）。Memory 的登记为 `KeepOnRetention`（`app.SessionData`），Janitor 按删除记录的原因跳过它；委托派生的子 Session 随父 Session 一起按保留期删除时同样保留。用户可以经 `GET /v1/memories` 列出与删除它们。
 - 访问记录保存在召回方的 Session 日志中，随该 Session 删除；另外有一张不含内容的访问索引（memory_id、业务线、时间），删除 Memory 时一起删除。
 
 ## 8. 测试
@@ -130,7 +131,7 @@ Grant { id, end_user, from_business_line, to_business_line, categories[], create
 
 1. **Grant 粒度**：业务线对加类别。
 2. **写入方式**：第一阶段只由 Agent 通过能力写入；后台自动提取等评测体系建立后再做。
-3. **删除对话**：由该对话写入的 Memory 一并删除，符合"删掉就是删掉"的预期。
+3. **删除对话**：由该对话写入的 Memory 一并删除，符合"删掉就是删掉"的预期。按保留期到期删除时保留（2026-10-23 修订，ADR-0037）：这条规则的本意是尊重用户的删除意图，到期清理不是。
 
 ## 10. 实施顺序
 

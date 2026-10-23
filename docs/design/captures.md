@@ -178,9 +178,9 @@ retention:
       delete_after_close: 168h   # 原话保留 7 天
 ```
 
-- `lifecycle.Retention` 增加 `Agents map[string]Retention`。覆盖按 AgentDef 名称（不按版本），索引中的 `agent` 本来就只存名称（`service.go` 中 `def.Name`）。
-- `lifecycle.Index` 的 `IdleBefore` 与 `ClosedBefore` 增加 AgentDef 过滤：Janitor 先按每个覆盖查询该业务线中这个 AgentDef 的 Session，再以业务线的 Retention 查询其余 AgentDef（排除有覆盖的名称）。
-- PostgreSQL：新增迁移，以 `CREATE INDEX CONCURRENTLY` 分别建 `(business_line, agent, last_input_at) WHERE closed_at IS NULL` 与 `(business_line, agent, closed_at)`，每个迁移首行写 `-- yanshi:no-transaction`，只含一条语句。
+- `lifecycle.Retention` 增加 `Agents map[string]Retention`。覆盖按 AgentDef 名称（不按版本），索引中的 `agent` 本来就只存名称（`service.go` 中 `def.Name`）。覆盖整条替换，不与业务线的值合并；嵌套的覆盖在加载配置时拒绝（`lifecycle.Retention.Validate`）。
+- `lifecycle.Index` 的 `IdleBefore` 与 `ClosedBefore` 增加 AgentDef 过滤（`lifecycle.AgentFilter`）：Janitor 按 `lifecycle.Retention.Rules` 先按每个覆盖查询该业务线中这个 AgentDef 的 Session，再以业务线的值查询其余 AgentDef（排除有覆盖的名称），一个 Session 恰好落在一条规则中。
+- PostgreSQL：迁移 `0016_sessions_agent_idle.sql` 与 `0017_sessions_agent_closed.sql` 以 `CREATE INDEX CONCURRENTLY` 分别建 `(business_line, agent, last_input_at) WHERE closed_at IS NULL` 与 `(business_line, agent, closed_at) WHERE closed_at IS NOT NULL`，首行写 `-- yanshi:no-transaction`，只含一条语句。排除若干 AgentDef 的查询仍走原有的业务线索引。
 - `lifecycletest` 增加覆盖与排除的用例，内存与 PostgreSQL 两种实现都要通过。
 
 ## 9. 删除（ADR-0015、ADR-0037）
@@ -193,7 +193,9 @@ retention:
 | 删除全部旁听数据 | 业务线列出该用户的全部 Session 并逐个删除 | 全部 |
 | 注销账号 | `DELETE /v1/end_users/{id}` | 全部 |
 
-到期删除保留 Memory，修改了 [Memory 设计](./m4-memory-grant.md) §9 第 3 条：`Service.Delete` 带上删除原因，Janitor 只在原因不是 `retention` 时按 `source_session` 删除 Memory。实施时同步修改 m4 §7、§9。
+到期删除保留 Memory，修改了 [Memory 设计](./m4-memory-grant.md) §7 与 §9 第 3 条：删除记录本来就带原因（`lifecycle.Tombstone`），Memory 在 `app.SessionData` 中登记为 `KeepOnRetention`，Janitor 在原因为 `lifecycle.ReasonRetention` 时跳过它。委托派生的子 Session 随父 Session 按保留期删除时，原因同样是 `retention`。
+
+Session 已在按保留期删除（对外已不可见）时，用户再删除它得到 not found，不会改为一并删除 Memory；这些 Memory 仍可经 `GET /v1/memories` 列出、删除。
 
 删除不级联到其他 Session：删除某天不影响已归集到 Project 的摘要。
 

@@ -200,7 +200,11 @@ func (j *Janitor) process(ctx context.Context, sid string) error {
 	}
 	switch {
 	case deleted:
-		return j.delete(ctx, sid, st)
+		t, err := j.Deletions.Get(ctx, sid)
+		if err != nil {
+			return err
+		}
+		return j.delete(ctx, sid, st, t.Reason)
 	case st.Closed != nil:
 		// 关闭：销毁沙箱工作区，其余数据保留至删除。
 		if err := j.stage(ctx, "close"); err != nil {
@@ -211,7 +215,9 @@ func (j *Janitor) process(ctx context.Context, sid string) error {
 	return nil
 }
 
-func (j *Janitor) delete(ctx context.Context, sid string, st *session.State) error {
+// delete 清除 Session 的全部数据。reason 是删除记录的原因：按保留期到期删除时，登记为 KeepOnRetention 的数据保留
+// （ADR-0037：到期清理不是用户的删除意图）。
+func (j *Janitor) delete(ctx context.Context, sid string, st *session.State, reason string) error {
 	// 1. 中断活跃的 Run：持有它的 Worker 因 fencing 失效而停止，不再派发新调用。
 	if err := j.stage(ctx, "interrupt"); err != nil {
 		return err
@@ -230,14 +236,14 @@ func (j *Janitor) delete(ctx context.Context, sid string, st *session.State) err
 	if err := j.stage(ctx, "children"); err != nil {
 		return err
 	}
-	if err := j.deleteChildren(ctx, sid, st); err != nil {
+	if err := j.deleteChildren(ctx, sid, st, reason); err != nil {
 		return err
 	}
 	// 3～5. 撤回待投递调用、移出队列、销毁沙箱、删除工件。
 	if err := j.stage(ctx, "withdraw"); err != nil {
 		return err
 	}
-	if err := j.sweep(ctx, sid); err != nil {
+	if err := j.sweep(ctx, sid, reason); err != nil {
 		return err
 	}
 	// 6. 删除日志与索引。
@@ -259,7 +265,7 @@ func (j *Janitor) delete(ctx context.Context, sid string, st *session.State) err
 	if err := j.stage(ctx, "sweep"); err != nil {
 		return err
 	}
-	if err := j.sweep(ctx, sid); err != nil {
+	if err := j.sweep(ctx, sid, reason); err != nil {
 		return err
 	}
 	if err := j.Deletions.Complete(ctx, sid, j.Clock.Now()); err != nil {
@@ -310,8 +316,9 @@ func (j *Janitor) forgetOnDevices(ctx context.Context, sid string, st *session.S
 	return nil
 }
 
-// deleteChildren 删除委托派生的子 Session：子 Session ID 记在父日志的 ToolCallStarted 中（委托目标）。
-func (j *Janitor) deleteChildren(ctx context.Context, sid string, st *session.State) error {
+// deleteChildren 删除委托派生的子 Session：子 Session ID 记在父日志的 ToolCallStarted 中（委托目标）。父 Session 按保留期
+// 到期删除时，子 Session 同样按保留期删除：它们写入的 Memory 与父 Session 的一样保留。
+func (j *Janitor) deleteChildren(ctx context.Context, sid string, st *session.State, reason string) error {
 	var children []string
 	err := session.ScanLog(ctx, j.Store.Log, sid, func(e *v1.Event) bool {
 		if id := e.GetToolCallStarted().GetNodeId(); delegation.IsNode(id) && !slices.Contains(children, delegation.ChildSession(id)) {
@@ -322,8 +329,12 @@ func (j *Janitor) deleteChildren(ctx context.Context, sid string, st *session.St
 	if err != nil {
 		return err
 	}
+	childReason := "parent_deleted"
+	if reason == lifecycle.ReasonRetention {
+		childReason = lifecycle.ReasonRetention
+	}
 	for _, child := range children {
-		if err := j.Service.Delete(ctx, child, "parent_deleted", ""); err != nil && !errors.Is(err, service.ErrNotFound) {
+		if err := j.Service.Delete(ctx, child, childReason, ""); err != nil && !errors.Is(err, service.ErrNotFound) {
 			return err
 		}
 	}
@@ -337,9 +348,12 @@ func ForgetInvoke(sessionID string) *v1.Invoke {
 		ArgumentsJson: fmt.Sprintf(`{"session_id":%q}`, sessionID)}
 }
 
-// sweep 按登记顺序清除除日志与索引之外的全部数据；幂等，可重复执行。
-func (j *Janitor) sweep(ctx context.Context, sid string) error {
+// sweep 按登记顺序清除除日志与索引之外的全部数据；幂等，可重复执行。按保留期到期删除时跳过 KeepOnRetention 的数据。
+func (j *Janitor) sweep(ctx context.Context, sid, reason string) error {
 	for _, h := range j.Data {
+		if h.KeepOnRetention && reason == lifecycle.ReasonRetention {
+			continue
+		}
 		if err := h.DeleteSession(ctx, sid); err != nil {
 			return fmt.Errorf("delete %s: %w", h.Name, err)
 		}
@@ -352,27 +366,30 @@ func (j *Janitor) sweep(ctx context.Context, sid string) error {
 func (j *Janitor) Sweep(ctx context.Context) error {
 	j.init()
 	now := j.Clock.Now()
-	for bl, r := range j.Retention {
-		if r.CloseAfterIdle > 0 {
-			// 索引中的最后输入时间至多滞后 TouchEvery：多等这么久，不提前关闭。
-			ids, err := j.Index.IdleBefore(ctx, bl, now.Add(-r.CloseAfterIdle-lifecycle.TouchEvery), 100)
-			if err != nil {
-				return err
-			}
-			for _, id := range ids {
-				if err := j.Service.Close(ctx, id, "retention", "idle"); err != nil && !errors.Is(err, service.ErrNotFound) {
+	for bl, retention := range j.Retention {
+		// 按 AgentDef 覆盖的规则各查各的 Session，业务线的值作用于其余 AgentDef（docs/design/captures.md §8）。
+		for _, r := range retention.Rules() {
+			if r.CloseAfterIdle > 0 {
+				// 索引中的最后输入时间至多滞后 TouchEvery：多等这么久，不提前关闭。
+				ids, err := j.Index.IdleBefore(ctx, bl, r.Agents, now.Add(-r.CloseAfterIdle-lifecycle.TouchEvery), 100)
+				if err != nil {
 					return err
 				}
+				for _, id := range ids {
+					if err := j.Service.Close(ctx, id, "retention", "idle"); err != nil && !errors.Is(err, service.ErrNotFound) {
+						return err
+					}
+				}
 			}
-		}
-		if r.DeleteAfterClose > 0 {
-			ids, err := j.Index.ClosedBefore(ctx, bl, now.Add(-r.DeleteAfterClose), 100)
-			if err != nil {
-				return err
-			}
-			for _, id := range ids {
-				if err := j.Service.Delete(ctx, id, "retention", ""); err != nil && !errors.Is(err, service.ErrNotFound) {
+			if r.DeleteAfterClose > 0 {
+				ids, err := j.Index.ClosedBefore(ctx, bl, r.Agents, now.Add(-r.DeleteAfterClose), 100)
+				if err != nil {
 					return err
+				}
+				for _, id := range ids {
+					if err := j.Service.Delete(ctx, id, lifecycle.ReasonRetention, ""); err != nil && !errors.Is(err, service.ErrNotFound) {
+						return err
+					}
 				}
 			}
 		}

@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +28,59 @@ type Retention struct {
 	CloseAfterIdle time.Duration `yaml:"close_after_idle"`
 	// DeleteAfterClose 是关闭后多久自动删除。
 	DeleteAfterClose time.Duration `yaml:"delete_after_close"`
+	// Agents 按 AgentDef 名称（不按版本）覆盖本业务线的保留策略，使短期保留的 Session（如旁听）与长期保留的 Session
+	// 并存于同一业务线（docs/design/captures.md §8，ADR-0037）。覆盖整条替换，不与业务线的值合并；覆盖中不能再有 Agents。
+	Agents map[string]Retention `yaml:"agents"`
+}
+
+// Validate 检查覆盖没有嵌套。
+func (r Retention) Validate() error {
+	for name, o := range r.Agents {
+		if name == "" {
+			return errors.New("retention override without an agent name")
+		}
+		if len(o.Agents) > 0 {
+			return fmt.Errorf("retention override for agent %s has nested agents", name)
+		}
+	}
+	return nil
+}
+
+// RetentionRule 是保留策略在一部分 Session 上的一条规则。
+type RetentionRule struct {
+	Agents AgentFilter
+	Retention
+}
+
+// Rules 返回保留策略展开后的规则：每个覆盖一条（只含该 AgentDef），业务线的值一条（排除有覆盖的 AgentDef）。
+// 一个 Session 恰好落在一条规则中。按名称排序，结果确定。
+func (r Retention) Rules() []RetentionRule {
+	names := make([]string, 0, len(r.Agents))
+	for name := range r.Agents {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	out := make([]RetentionRule, 0, len(names)+1)
+	for _, name := range names {
+		out = append(out, RetentionRule{Agents: AgentFilter{Only: name}, Retention: r.Agents[name]})
+	}
+	base := r
+	base.Agents = nil
+	return append(out, RetentionRule{Agents: AgentFilter{Except: names}, Retention: base})
+}
+
+// AgentFilter 按 AgentDef 名称筛选 Session：Only 非空时只含它，否则排除 Except 中的名称（为空时不筛选）。
+type AgentFilter struct {
+	Only   string
+	Except []string
+}
+
+// Match 报告 AgentDef 名称为 agent 的 Session 是否在筛选之内。
+func (f AgentFilter) Match(agent string) bool {
+	if f.Only != "" {
+		return agent == f.Only
+	}
+	return !slices.Contains(f.Except, agent)
 }
 
 // Session 是 Session 索引中的一行。
@@ -54,12 +108,15 @@ type Index interface {
 	List(ctx context.Context, businessLine, endUser, cursor string, limit int) (page []*Session, next string, err error)
 	// IDsOf 返回 EndUser 在业务线下的全部 Session ID。
 	IDsOf(ctx context.Context, businessLine, endUser string) ([]string, error)
-	// IdleBefore 返回业务线中未关闭、最后输入早于 t 的 Session，至多 limit 个。
-	IdleBefore(ctx context.Context, businessLine string, t time.Time, limit int) ([]string, error)
-	// ClosedBefore 返回业务线中关闭时间早于 t 的 Session，至多 limit 个。
-	ClosedBefore(ctx context.Context, businessLine string, t time.Time, limit int) ([]string, error)
+	// IdleBefore 返回业务线中 AgentDef 在 agents 之内、未关闭、最后输入早于 t 的 Session，至多 limit 个。
+	IdleBefore(ctx context.Context, businessLine string, agents AgentFilter, t time.Time, limit int) ([]string, error)
+	// ClosedBefore 返回业务线中 AgentDef 在 agents 之内、关闭时间早于 t 的 Session，至多 limit 个。
+	ClosedBefore(ctx context.Context, businessLine string, agents AgentFilter, t time.Time, limit int) ([]string, error)
 	Delete(ctx context.Context, id string) error
 }
+
+// ReasonRetention 是按保留期到期删除的原因（Tombstone.Reason）。
+const ReasonRetention = "retention"
 
 // Tombstone 是一条删除记录。不含 EndUser：删除完成后不应再留存个人标识。
 type Tombstone struct {
@@ -115,6 +172,9 @@ func Deleted(ctx context.Context, d Deletions, sessionID string) (bool, error) {
 // 各一遍（第二遍兜住"先写、后查"窗口中漏进来的写入）。登记列表由装配包统一给出（app.SessionData）。
 type Holder struct {
 	Name string
+	// KeepOnRetention 为 true 时，按保留期到期删除 Session 时保留这里的数据：到期清理不是用户的删除意图，由 Session
+	// 写入的 Memory 在原话删除之后仍应保留（ADR-0037）。用户主动删除与注销账号时照常清除。
+	KeepOnRetention bool
 	// DeleteSession 清除 Session 在这里的全部数据；幂等，可重复执行。
 	DeleteSession func(ctx context.Context, sessionID string) error
 }

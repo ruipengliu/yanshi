@@ -111,6 +111,9 @@ func LoadDir(dir string) ([]BusinessLine, error) {
 		if err := bl.Quota.Prepare(); err != nil {
 			return nil, fmt.Errorf("%s: %w", f, err)
 		}
+		if err := bl.Retention.Validate(); err != nil {
+			return nil, fmt.Errorf("%s: %w", f, err)
+		}
 		out = append(out, bl)
 	}
 	return out, nil

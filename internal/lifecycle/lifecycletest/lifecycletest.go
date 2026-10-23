@@ -76,6 +76,8 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 		}
 	})
 
+	t.Run("RetentionByAgent", func(t *testing.T) { runRetentionByAgent(t, newIndex(t)) })
+
 	t.Run("RetentionQueriesAndDelete", func(t *testing.T) {
 		x := newIndex(t)
 		put(t, x, "old", "bl", "u1", t0)
@@ -85,14 +87,15 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 		_ = x.MarkClosed(ctx, "closed", t0.Add(time.Hour))
 		_ = x.MarkClosed(ctx, "closed", t0.Add(5*time.Hour)) // 已关闭：不变
 
-		idle, _ := x.IdleBefore(ctx, "bl", t0.Add(24*time.Hour), 10)
+		all := lifecycle.AgentFilter{}
+		idle, _ := x.IdleBefore(ctx, "bl", all, t0.Add(24*time.Hour), 10)
 		if !slices.Equal(idle, []string{"old"}) {
 			t.Fatalf("idle = %v", idle)
 		}
-		if c, _ := x.ClosedBefore(ctx, "bl", t0.Add(2*time.Hour), 10); !slices.Equal(c, []string{"closed"}) {
+		if c, _ := x.ClosedBefore(ctx, "bl", all, t0.Add(2*time.Hour), 10); !slices.Equal(c, []string{"closed"}) {
 			t.Fatalf("closed before = %v", c)
 		}
-		if c, _ := x.ClosedBefore(ctx, "bl", t0.Add(30*time.Minute), 10); len(c) != 0 {
+		if c, _ := x.ClosedBefore(ctx, "bl", all, t0.Add(30*time.Minute), 10); len(c) != 0 {
 			t.Fatalf("closed before (too early) = %v", c)
 		}
 		ids, _ := x.IDsOf(ctx, "bl", "u1")
@@ -105,6 +108,45 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 			t.Fatal("deleted session still indexed")
 		}
 	})
+}
+
+// RetentionByAgent：保留策略按 AgentDef 覆盖（docs/design/captures.md §8）。只含某个 AgentDef 与排除若干 AgentDef 的查询
+// 互补，一个 Session 恰好落在一条规则中。
+func runRetentionByAgent(t *testing.T, x lifecycle.Index) {
+	ctx := context.Background()
+	for _, s := range []*lifecycle.Session{
+		{ID: "day1", Agent: "day"}, {ID: "day2", Agent: "day"}, {ID: "proj", Agent: "project"}, {ID: "chat", Agent: "assistant"},
+	} {
+		s.BusinessLine, s.EndUser, s.CreatedAt, s.LastInputAt = "bl", "u", t0, t0
+		if err := x.Put(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+		if err := x.MarkClosed(ctx, s.ID, t0.Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = x.Put(ctx, &lifecycle.Session{ID: "open", BusinessLine: "bl", EndUser: "u", Agent: "day", CreatedAt: t0, LastInputAt: t0})
+	later := t0.Add(48 * time.Hour)
+	cases := []struct {
+		f            lifecycle.AgentFilter
+		idle, closed []string
+	}{
+		{lifecycle.AgentFilter{Only: "day"}, []string{"open"}, []string{"day1", "day2"}},
+		{lifecycle.AgentFilter{Except: []string{"day"}}, nil, []string{"chat", "proj"}},
+		{lifecycle.AgentFilter{Except: []string{"day", "project"}}, nil, []string{"chat"}},
+		{lifecycle.AgentFilter{Except: []string{}}, []string{"open"}, []string{"chat", "day1", "day2", "proj"}},
+		{lifecycle.AgentFilter{Only: "missing"}, nil, nil},
+	}
+	for _, c := range cases {
+		idle, err := x.IdleBefore(ctx, "bl", c.f, later, 10)
+		if err != nil || !slices.Equal(idle, c.idle) {
+			t.Errorf("idle %+v = %v, %v; want %v", c.f, idle, err, c.idle)
+		}
+		closed, err := x.ClosedBefore(ctx, "bl", c.f, later, 10)
+		if err != nil || !slices.Equal(closed, c.closed) {
+			t.Errorf("closed %+v = %v, %v; want %v", c.f, closed, err, c.closed)
+		}
+	}
 }
 
 func RunDeletions(t *testing.T, newDeletions func(t *testing.T) lifecycle.Deletions) {
