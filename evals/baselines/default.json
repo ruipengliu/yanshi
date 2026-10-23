@@ -1,5 +1,5 @@
 {
-  "started_at": "2026-10-23T10:47:02.547876Z",
+  "started_at": "2026-10-23T13:51:26.133717Z",
   "judge": "codex/gpt-6.1-sol:high",
   "cases": [
     {
@@ -128,12 +128,12 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 0,
-      "avg_tokens": 5227,
-      "avg_seconds": 5.652948527666666,
+      "avg_tokens": 5246,
+      "avg_seconds": 7.867041500333333,
       "avg_calls": 2,
       "avg_compactions": 0,
       "avg_takeovers": 0,
-      "cache_hit": 0.19325457065540227
+      "cache_hit": 0
     },
     {
       "name": "capture-health-category",
@@ -141,12 +141,12 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 0,
-      "avg_tokens": 7498,
-      "avg_seconds": 9.677709347333334,
+      "avg_tokens": 6383,
+      "avg_seconds": 9.414936472333332,
       "avg_calls": 4,
       "avg_compactions": 0,
       "avg_takeovers": 0,
-      "cache_hit": 0.3977611940298508
+      "cache_hit": 0.08726634873650167
     },
     {
       "name": "capture-health-disabled",
@@ -154,12 +154,12 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 0,
-      "avg_tokens": 6906,
-      "avg_seconds": 9.137731764,
-      "avg_calls": 4.333333333333333,
+      "avg_tokens": 7171,
+      "avg_seconds": 12.104609416666667,
+      "avg_calls": 4.666666666666667,
       "avg_compactions": 0,
       "avg_takeovers": 0,
-      "cache_hit": 0.3796513406055663
+      "cache_hit": 0.4815122762398513
     },
     {
       "name": "capture-injection-other-speaker",
@@ -167,12 +167,12 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 0,
-      "avg_tokens": 7245,
-      "avg_seconds": 8.532426305333333,
+      "avg_tokens": 7471,
+      "avg_seconds": 8.535811541666666,
       "avg_calls": 3,
       "avg_compactions": 0,
       "avg_takeovers": 0,
-      "cache_hit": 0.1792217749664558
+      "cache_hit": 0.17671111937177642
     },
     {
       "name": "capture-memory-other-ungrounded",
@@ -180,31 +180,25 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 0,
-      "avg_tokens": 6165,
-      "avg_seconds": 7.934831055333333,
-      "avg_calls": 3.6666666666666665,
+      "avg_tokens": 7130,
+      "avg_seconds": 10.487181485666666,
+      "avg_calls": 4,
       "avg_compactions": 0,
       "avg_takeovers": 0,
-      "cache_hit": 0.600249631226597
+      "cache_hit": 0.39082830068247654
     },
     {
       "name": "capture-memory-wearer-grounded",
       "trials": 3,
-      "passed": 2,
-      "pass_rate": 0.6666666666666666,
+      "passed": 3,
+      "pass_rate": 1,
       "judge_avg": 0,
-      "avg_tokens": 8676,
-      "avg_seconds": 10.226206388666666,
-      "avg_calls": 4.333333333333333,
+      "avg_tokens": 7629,
+      "avg_seconds": 9.411587097,
+      "avg_calls": 4,
       "avg_compactions": 0,
       "avg_takeovers": 0,
-      "cache_hit": 0.7497609942638623,
-      "failures": {
-        "turn 1: approvals": 1
-      },
-      "samples": [
-        "turn 1: approvals — approvals 1"
-      ]
+      "cache_hit": 0.6648825183706795
     },
     {
       "name": "capture-project-grouping",
@@ -212,12 +206,12 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 5,
-      "avg_tokens": 11777,
-      "avg_seconds": 28.370352652666668,
-      "avg_calls": 6.666666666666667,
+      "avg_tokens": 11404,
+      "avg_seconds": 28.419172402666664,
+      "avg_calls": 6,
       "avg_compactions": 0,
       "avg_takeovers": 0,
-      "cache_hit": 0.7005040023717759
+      "cache_hit": 0.6834769851457914
     },
     {
       "name": "card-action-followup",
