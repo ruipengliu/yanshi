@@ -211,7 +211,7 @@ func TestSnapshotIgnoredAfterLogDeleted(t *testing.T) {
 func TestSnapshotCoversEveryField(t *testing.T) {
 	covered := map[string][]string{
 		"State":          {"SessionID", "Seq", "Created", "Agent", "Closed", "Compaction", "CompactedAt", "Runs", "Past", "History", "callIDsOld", "callIDs", "Inputs", "ActiveCall", "Delegated", "Background", "Captures"},
-		"CaptureLog":     {"IDs", "Count", "LastSeq"},
+		"CaptureLog":     {"IDs", "Count", "LastSeq", "LastAt"},
 		"RunSummary":     {"ID", "Status", "RequestedAt", "Attempt", "Turns", "FromBackground"},
 		"Run":            {"ID", "Status", "RequestedAt", "Attempt", "LiveEndpoint", "Takeovers", "StalledTakeovers", "Turns", "Recall", "Recalled", "Calls", "SuspendReason", "SuspendedUntil", "Compactions", "OutputTokens", "Resume", "Decisions", "FromBackground"},
 		"Call":           {"Call", "StartedAttempts", "NodeID", "Deadline", "DispatchedAt", "Done", "Background", "Approval"},

@@ -15,7 +15,7 @@ import (
 
 // ProjectionVersion 是投影语义的版本。改动 Apply 或 State 的字段时必须递增：旧快照随之作废，
 // 加载退回完整回放，因此快照永远不会与当前代码的投影结果不一致。
-const ProjectionVersion = 12
+const ProjectionVersion = 13
 
 // Snapshots 存放每个 Session 最新的投影快照。快照只是加速加载的缓存，删除或丢失都不影响正确性。
 type Snapshots interface {
@@ -87,7 +87,7 @@ func (s *State) Snapshot() *v1.SessionSnapshot {
 		snap.ActiveCall = &v1.ActiveCallSnapshot{CallId: c.ID, DeviceId: c.DeviceID, StartedAt: ts(c.StartedAt)}
 	}
 	if c := s.Captures; c.Count > 0 {
-		snap.Captures = &v1.CaptureSnapshot{Ids: c.IDs, Count: c.Count, LastSeq: c.LastSeq}
+		snap.Captures = &v1.CaptureSnapshot{Ids: c.IDs, Count: c.Count, LastSeq: c.LastSeq, LastAt: ts(c.LastAt)}
 	}
 	return snap
 }
@@ -143,7 +143,7 @@ func FromSnapshot(snap *v1.SessionSnapshot) (*State, error) {
 	}
 	if c := snap.GetCaptures(); c != nil {
 		// 复制：Apply 会向窗口追加，不能写进快照消息的底层数组。
-		s.Captures = CaptureLog{IDs: slices.Clone(c.GetIds()), Count: c.GetCount(), LastSeq: c.GetLastSeq()}
+		s.Captures = CaptureLog{IDs: slices.Clone(c.GetIds()), Count: c.GetCount(), LastSeq: c.GetLastSeq(), LastAt: fromTS(c.GetLastAt())}
 	}
 	return s, nil
 }

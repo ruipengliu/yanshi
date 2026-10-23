@@ -89,6 +89,10 @@ func (w *World) checkModeration() error {
 				if w.blocked(p.CallTranscript.GetText()) {
 					return fmt.Errorf("invariant: blocked call transcript reached the log of %s at seq %d", sid, e.GetSeq())
 				}
+			case *v1.Event_CaptureAppended:
+				if err := w.checkCapture(sid, e); err != nil {
+					return err
+				}
 			case *v1.Event_ContentModerated:
 				var next *v1.AssistantMessage
 				if i+1 < len(events) {

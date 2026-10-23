@@ -130,6 +130,9 @@ type Stats struct {
 	GracefulStops, Handoffs int
 	// 后台调用（ADR-0035）：转入后台、设备结果送达、到期、用户取消的次数，以及设备下线时唤醒等它的 Session 的次数。
 	Backgrounded, BackgroundResults, BackgroundTimeouts, BackgroundCancels, DisconnectWakes int
+	// 旁听转写（docs/design/captures.md）：写入的批次、重试被去重的、因内容安全不可用而拒绝的批次，拦截的段数，
+	// 以及写入时注入的存储故障。
+	CapturesAppended, CaptureDuplicates, CapturesRejected, CapturesRedacted, CaptureStoreFaults int
 }
 
 // storeFault 是注入的存储故障（数据库超时、连接中断）：written 表示追加其实已经生效，调用方却只看到错误。
@@ -322,6 +325,8 @@ type World struct {
 	// calls 是各 Session 上中转进程以为进行中的 Call（可能已过时）；nextCall 生成 Call ID。
 	calls    map[string]string
 	nextCall int
+	// nextCapture 生成旁听转写的 capture_id。
+	nextCapture int
 	// effects 记录非幂等 Capability（进程内与设备上）每个调用 ID 的实际执行次数。
 	effects map[string]int
 	// withdrawn 是已撤回投递的后台调用（用户取消、Session 关闭）：设备之后不得再执行它们（ADR-0035）。
@@ -368,6 +373,8 @@ func New(opts Options) (*World, error) {
 			Name: "sim", Version: v, Model: "sim/m",
 			Capabilities: []string{"echo", "send", "ask_user", "show_card", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*", "agent:sim"},
 			MaxTurns:     maxTurns, Context: simContext, Memory: agentdef.MemoryConfig{Recall: 3},
+			// 旁听转写写进同一批 Session，与输入、Run、关闭和删除交错。
+			Captures: true,
 		})
 	}
 	agents, err := agentdef.NewRegistry(defs...)
@@ -398,6 +405,7 @@ func New(opts Options) (*World, error) {
 	// 外部写入（输入、审批、回答、Node 结果）经 flakyWaking；Worker 的追加另经 flakyLog（newWorker）。
 	wrapped := stores
 	wrapped.Waking = flakyWaking{WakingLog: stores.Waking, w: w}
+	wrapped.Log = flakyCaptureLog{Log: stores.Log, w: w}
 	w.core = app.NewCore(wrapped, app.Options{
 		Clock: w.clock, IDs: ids.Sequential, Agents: agents, Model: gw, Blobs: artifact.NewMemBlobs(), NodeAuth: node.InsecureDevAuth{},
 		Local:        []capability.Capability{w.echoCap(), w.sendCap(), simCardCap()},
@@ -728,6 +736,9 @@ func (w *World) act() error {
 		}
 		if w.chance(0.25) {
 			return w.cancelBackground()
+		}
+		if w.chance(0.2) {
+			return w.captureStep()
 		}
 		return w.submit()
 	case x < 0.83:

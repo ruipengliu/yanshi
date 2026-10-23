@@ -231,15 +231,17 @@ type CaptureLog struct {
 	// IDs 是最近 MaxRecentCaptures 个 capture_id，旧的在前。条目不再修改，副本间共享底层数组。
 	IDs   []string
 	Count uint64
-	// LastSeq 是最后一个 CaptureAppended 的 seq；0 表示没有。
+	// LastSeq 与 LastAt 是最后一个 CaptureAppended 的 seq 与写入时间；没有时为零值。只有旁听、没有输入的 Session
+	// 据 LastAt 更新索引中的最后输入时间，不会被按空闲时长关闭（docs/design/captures.md §3）。
 	LastSeq uint64
+	LastAt  time.Time
 }
 
 // Captured 报告 capture_id 是否在去重窗口中。
 func (s *State) Captured(id string) bool { return id != "" && slices.Contains(s.Captures.IDs, id) }
 
-// checkCapture 校验一批旁听转写。错误中不含转写内容（ADR-0015）。
-func checkCapture(m *v1.CaptureAppended) error {
+// CheckCapture 校验一批旁听转写（写入方在提交前调用，Apply 同样校验）。错误中不含转写内容（ADR-0015）。
+func CheckCapture(m *v1.CaptureAppended) error {
 	id := m.GetCaptureId()
 	if id == "" {
 		return fmt.Errorf("capture without an id")
@@ -623,7 +625,7 @@ func (s *State) apply(e *v1.Event) error {
 	case *v1.Event_CaptureAppended:
 		// 不开启 Run，也不进 History：旁听不是对 Agent 说的话（ADR-0036）。
 		m := p.CaptureAppended
-		if err := checkCapture(m); err != nil {
+		if err := CheckCapture(m); err != nil {
 			return err
 		}
 		if s.Captured(m.GetCaptureId()) {
@@ -633,7 +635,7 @@ func (s *State) apply(e *v1.Event) error {
 		if n := len(ids); n > MaxRecentCaptures {
 			ids = slices.Clone(ids[n-MaxRecentCaptures:])
 		}
-		s.Captures = CaptureLog{IDs: ids, Count: s.Captures.Count + 1, LastSeq: e.GetSeq()}
+		s.Captures = CaptureLog{IDs: ids, Count: s.Captures.Count + 1, LastSeq: e.GetSeq(), LastAt: fromTS(e.GetTime())}
 
 	case *v1.Event_ContentModerated:
 		// 只校验归属：拦截不改变状态，替换后的 AssistantMessage 随后照常应用。

@@ -65,7 +65,7 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "echo", Version: "1", Model: "echo/any"})
+	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "echo", Version: "1", Model: "echo/any", Captures: true})
 	clk := clock.Real{}
 	mlog, mq := memlog.New(), memqueue.New(clk)
 	store := &session.Store{Log: mlog, Waking: mlog.Waking(mq), IDs: ids.Random(), Clock: clk}
@@ -196,38 +196,40 @@ func (e *authzEnv) cases() map[string]routeCase {
 	s, a := "/v1/sessions/"+e.sid, "/v1/artifacts/"+e.art
 	run := ""
 	return map[string]routeCase{
-		"POST /v1/sessions":                               {"POST", "/v1/sessions", map[string]string{"agent": "echo", "end_user": "u1"}, http.StatusCreated},
-		"GET /v1/sessions/{id}":                           {"GET", s, nil, http.StatusOK},
-		"POST /v1/sessions/{id}/inputs":                   {"POST", s + "/inputs", map[string]string{"text": "more"}, http.StatusAccepted},
+		"POST /v1/sessions":             {"POST", "/v1/sessions", map[string]string{"agent": "echo", "end_user": "u1"}, http.StatusCreated},
+		"GET /v1/sessions/{id}":         {"GET", s, nil, http.StatusOK},
+		"POST /v1/sessions/{id}/inputs": {"POST", s + "/inputs", map[string]string{"text": "more"}, http.StatusAccepted},
+		"POST /v1/sessions/{id}/captures": {"POST", s + "/captures", map[string]any{"capture_id": "cap1",
+			"segments": []map[string]string{{"speaker": "SPEAKER_WEARER", "text": "明天发报价"}}}, http.StatusAccepted},
 		"POST /v1/sessions/{id}/runs/{run}/interrupt":     {"POST", s + "/runs/" + run + "RUN/interrupt", nil, http.StatusNoContent},
 		"GET /v1/sessions/{id}/events":                    {"GET", s + "/events", nil, http.StatusOK},
 		"GET /v1/sessions/{id}/stream":                    {"GET", s + "/stream", nil, http.StatusOK},
 		"POST /v1/sessions/{id}/approvals/{call}":         {"POST", s + "/approvals/c1", map[string]bool{"approve": true}, http.StatusConflict},
 		"POST /v1/sessions/{id}/answers/{call}":           {"POST", s + "/answers/q1", map[string]string{"text": "x"}, http.StatusConflict},
 		"POST /v1/sessions/{id}/background/{call}/cancel": {"POST", s + "/background/b1/cancel", nil, http.StatusNoContent},
-		"GET /v1/nodes":                                   {"GET", "/v1/nodes?end_user=u1", nil, http.StatusOK},
-		"POST /v1/sessions/{id}/artifacts":                {"POST", s + "/artifacts?name=b.txt", "data", http.StatusCreated},
-		"GET /v1/sessions/{id}/artifacts":                 {"GET", s + "/artifacts", nil, http.StatusOK},
-		"GET /v1/artifacts/{id}":                          {"GET", a, nil, http.StatusOK},
-		"GET /v1/artifacts/{id}/meta":                     {"GET", a + "/meta", nil, http.StatusOK},
-		"GET /v1/sessions":                                {"GET", "/v1/sessions?end_user=u1", nil, http.StatusOK},
-		"POST /v1/sessions/{id}/close":                    {"POST", s + "/close", nil, http.StatusNoContent},
-		"DELETE /v1/sessions/{id}":                        {"DELETE", s, nil, http.StatusAccepted},
-		"DELETE /v1/end_users/{id}":                       {"DELETE", "/v1/end_users/u1", nil, http.StatusAccepted},
-		"GET /v1/deletions/{id}":                          {"GET", "/v1/deletions/" + e.deletion, nil, http.StatusOK},
-		"GET /v1/memories":                                {"GET", "/v1/memories?end_user=u1", nil, http.StatusOK},
-		"DELETE /v1/memories/{id}":                        {"DELETE", "/v1/memories/" + e.memory + "?end_user=u1", nil, http.StatusNoContent},
-		"GET /v1/memories/access":                         {"GET", "/v1/memories/access?end_user=u1", nil, http.StatusOK},
-		"GET /v1/grants":                                  {"GET", "/v1/grants", nil, http.StatusOK},
-		"POST /v1/grants":                                 {"POST", "/v1/grants", map[string]any{"from": "demo", "to": "other", "categories": []string{"interest"}}, http.StatusCreated},
-		"DELETE /v1/grants/{id}":                          {"DELETE", "/v1/grants/" + e.grant, nil, http.StatusNoContent},
-		"GET /v1/quota":                                   {"GET", "/v1/quota?end_user=u1", nil, http.StatusOK},
-		"DELETE /v1/sessions/{id}/memories":               {"DELETE", s + "/memories", nil, http.StatusNoContent},
-		"GET /v1/usage":                                   {"GET", "/v1/usage?end_user=u1&group_by=model", nil, http.StatusOK},
-		"GET /v1/debug/faults":                            {"GET", "/v1/debug/faults", nil, http.StatusOK},
-		"POST /v1/debug/faults":                           {"POST", "/v1/debug/faults", map[string]any{"kind": "model_error", "session_id": e.sid, "count": 1}, http.StatusCreated},
-		"DELETE /v1/debug/faults":                         {"DELETE", "/v1/debug/faults?id=" + e.fault, nil, http.StatusNoContent},
-		"GET /v1/debug/stats":                             {"GET", "/v1/debug/stats", nil, http.StatusOK},
+		"GET /v1/nodes":                     {"GET", "/v1/nodes?end_user=u1", nil, http.StatusOK},
+		"POST /v1/sessions/{id}/artifacts":  {"POST", s + "/artifacts?name=b.txt", "data", http.StatusCreated},
+		"GET /v1/sessions/{id}/artifacts":   {"GET", s + "/artifacts", nil, http.StatusOK},
+		"GET /v1/artifacts/{id}":            {"GET", a, nil, http.StatusOK},
+		"GET /v1/artifacts/{id}/meta":       {"GET", a + "/meta", nil, http.StatusOK},
+		"GET /v1/sessions":                  {"GET", "/v1/sessions?end_user=u1", nil, http.StatusOK},
+		"POST /v1/sessions/{id}/close":      {"POST", s + "/close", nil, http.StatusNoContent},
+		"DELETE /v1/sessions/{id}":          {"DELETE", s, nil, http.StatusAccepted},
+		"DELETE /v1/end_users/{id}":         {"DELETE", "/v1/end_users/u1", nil, http.StatusAccepted},
+		"GET /v1/deletions/{id}":            {"GET", "/v1/deletions/" + e.deletion, nil, http.StatusOK},
+		"GET /v1/memories":                  {"GET", "/v1/memories?end_user=u1", nil, http.StatusOK},
+		"DELETE /v1/memories/{id}":          {"DELETE", "/v1/memories/" + e.memory + "?end_user=u1", nil, http.StatusNoContent},
+		"GET /v1/memories/access":           {"GET", "/v1/memories/access?end_user=u1", nil, http.StatusOK},
+		"GET /v1/grants":                    {"GET", "/v1/grants", nil, http.StatusOK},
+		"POST /v1/grants":                   {"POST", "/v1/grants", map[string]any{"from": "demo", "to": "other", "categories": []string{"interest"}}, http.StatusCreated},
+		"DELETE /v1/grants/{id}":            {"DELETE", "/v1/grants/" + e.grant, nil, http.StatusNoContent},
+		"GET /v1/quota":                     {"GET", "/v1/quota?end_user=u1", nil, http.StatusOK},
+		"DELETE /v1/sessions/{id}/memories": {"DELETE", s + "/memories", nil, http.StatusNoContent},
+		"GET /v1/usage":                     {"GET", "/v1/usage?end_user=u1&group_by=model", nil, http.StatusOK},
+		"GET /v1/debug/faults":              {"GET", "/v1/debug/faults", nil, http.StatusOK},
+		"POST /v1/debug/faults":             {"POST", "/v1/debug/faults", map[string]any{"kind": "model_error", "session_id": e.sid, "count": 1}, http.StatusCreated},
+		"DELETE /v1/debug/faults":           {"DELETE", "/v1/debug/faults?id=" + e.fault, nil, http.StatusNoContent},
+		"GET /v1/debug/stats":               {"GET", "/v1/debug/stats", nil, http.StatusOK},
 	}
 }
 

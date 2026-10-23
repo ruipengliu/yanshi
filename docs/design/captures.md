@@ -70,11 +70,11 @@ enum Speaker {
 
 | 入口 | 形式 |
 |---|---|
-| HTTP | `POST /v1/sessions/{id}/captures`，`{capture_id, segments[]}`，返回 `{duplicate}` |
+| HTTP | `POST /v1/sessions/{id}/captures`，`{capture_id, segments[]}`，返回 `{redacted, duplicate}` |
 | Connection | `ClientRequest.op` 新增 `SubmitCaptures{session_id, capture_id, segments}`（`node.proto`，向后兼容） |
-| service | `Service.SubmitCaptures(ctx, sessionID, captureID string, segments []*v1.CaptureSegment) (*CaptureResult, error)` |
+| service | `Service.SubmitCaptures(ctx, sessionID, captureID string, segments []*v1.CaptureSegment) (*CaptureResult, error)`；`CaptureResult` 带 `Duplicate` 与拦截的段数 `Redacted` |
 
-两个入口都调用同一个 service 方法 SubmitCaptures（ADR-0024）。用户令牌与服务令牌都可提交，授权规则与输入相同，`internal/httpapi/authz_test.go` 的矩阵中加入这一行。三个 SDK 同步增加提交方法（ADR-0026）。
+两个入口都调用 `service.SubmitCaptures`（ADR-0024）。用户令牌与服务令牌都可提交，授权规则与输入相同，`internal/httpapi/authz_test.go` 的矩阵中加入这一行。三个 SDK 同步增加提交方法（ADR-0026）。
 
 ### 决策
 
@@ -91,9 +91,10 @@ enum Speaker {
 
 ### 内容安全（ADR-0021）
 
-在写日志之前逐段检查：
+在写日志之前检查，送检的单位是整批，与一条输入相同（输入也是整条送检）：
 
-- 违规的片段：`text` 置空、`redacted = true`，其余片段照常写入。时间线上可见空缺，一句话不会让整批丢失。
+- 整批不违规：整批写入，不再逐段送检。一批至多 200 段，逐段送检的代价是每批上百次调用。
+- 整批违规：逐段送检，单独违规的片段 `text` 置空、`redacted = true`，其余片段照常写入。时间线上可见空缺，一句话不会让整批丢失。没有一段单独违规（违规取决于上下文）时，整批都只留占位。
 - 提供商不可用：整批拒绝（fail closed），返回 unavailable。HostApp 保留本地缓冲，稍后以同一 `capture_id` 重试。
 
 ### Session 索引
@@ -102,10 +103,10 @@ Capture 与输入一样更新索引中的 `LastInputAt`（受 `TouchEvery` 节�
 
 ## 4. 投影
 
-- `State.Captures`：最近 512 个 `capture_id` 的窗口，供去重；以及 Capture 的数量与最后一个 Capture 的序号。
+- `State.Captures`（`session.CaptureLog`）：最近 512 个 `capture_id` 的窗口，供去重；以及 Capture 的数量、最后一个 Capture 的序号与写入时间（用于按 `TouchEvery` 更新索引）。
 - Capture 的内容不进入 `State`，也不追加到 `History`：一天的转写可能有十几万字，放进投影会使每个快照都随之增大。`captures` 工具（§5）从日志按序号读取。
 - `Apply` 新增 `CaptureAppended` 的分支（否则会以 `unknown payload` 被拒绝）。关闭之后的 Capture 照常被 `Apply` 拒绝。
-- 递增 `session.ProjectionVersion`（11 → 12）。
+- 递增 `session.ProjectionVersion`（11 → 13：第一步加入窗口与计数，第二步加入写入时间）。
 
 ## 5. `captures` 工具
 
@@ -233,7 +234,7 @@ retention:
 ## 13. 实施顺序
 
 1. 契约与投影：`CaptureAppended`、`State.Captures`、`ProjectionVersion`、`make gen`。
-2. 写入：service 的 SubmitCaptures、HTTP、Connection、内容安全、索引更新；模拟测试的动作、故障与覆盖。
+2. 写入：`service.SubmitCaptures`、HTTP、Connection、内容安全、索引更新；模拟测试的动作、故障与覆盖。
 3. `captures` 工具与闸门、注入判断的扩展。
 4. Retention 覆盖：配置、`lifecycle.Index`、迁移、Janitor 与删除原因；修改 m4 §7、§9。
 5. 三个 SDK 的提交方法、`make mobile`。

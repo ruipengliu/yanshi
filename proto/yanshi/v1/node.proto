@@ -161,7 +161,7 @@ message LiveDelta {
 }
 
 // ClientRequest 是会话客户端的操作；每个请求恰有一个 ClientResponse。
-// 连接断开时结果未知：带 input_id 的提交可以原样重试（按 ID 去重）；中断、关闭重复执行是无操作，审批、回答、取消后台调用
+// 连接断开时结果未知：带 input_id 的提交与旁听转写可以原样重试（按 ID 去重）；中断、关闭重复执行是无操作，审批、回答、取消后台调用
 // 重复执行返回 conflict，都不会产生重复效果；重试创建 Session 会再创建一个。
 message ClientRequest {
   // 由客户端生成，在本连接内唯一；响应原样带回。
@@ -174,6 +174,7 @@ message ClientRequest {
     CloseSession close = 6;
     AnswerQuestion answer = 7;
     CancelBackground cancel_background = 8;
+    SubmitCaptures submit_captures = 9;
   }
 }
 
@@ -227,6 +228,17 @@ message CancelBackground {
   string call_id = 2;
 }
 
+// SubmitCaptures 提交一批旁听转写（docs/design/captures.md §3，ADR-0036）：不开启 Run。只有开启了旁听的 AgentDef 的
+// Session 接收（否则 invalid）。片段逐一经过内容安全检查，违规的只留占位；内容安全不可用时整批拒绝（unavailable），
+// 以同一 capture_id 重试是安全的：已写入的返回 duplicate = true。
+message SubmitCaptures {
+  string session_id = 1;
+  // 客户端为这一批生成的 ID（最长 128 字符）。
+  string capture_id = 2;
+  // 不能设置 redacted：拦截由平台判断。
+  repeated CaptureSegment segments = 3;
+}
+
 message ClientResponse {
   string request_id = 1;
   // 为空表示成功。
@@ -238,8 +250,10 @@ message ClientResponse {
   bool steered = 5;
   // 非空表示输入作为对该 ask_user 提问的回答（Run 正在等用户回答，ADR-0025）。
   string answered = 6;
-  // 为 true 表示同一 input_id 的输入此前已生效，本次没有写入，结果为首次的结果。
+  // 为 true 表示同一 input_id 的输入（或同一 capture_id 的旁听转写）此前已生效，本次没有写入，结果为首次的结果。
   bool duplicate = 7;
+  // SubmitCaptures 的结果：本批中未通过内容安全、只留占位的段数。
+  uint32 redacted = 8;
 }
 
 message ClientError {

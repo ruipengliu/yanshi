@@ -61,7 +61,7 @@ func (s slowRemove) Remove(ctx context.Context, sid, conn string) error {
 }
 
 func setup(t *testing.T) (*channel.Handler, *presence.Mem, string) {
-	agents, err := agentdef.NewRegistry(&agentdef.Def{Name: "a", Version: "1", Model: "echo/any"})
+	agents, err := agentdef.NewRegistry(&agentdef.Def{Name: "a", Version: "1", Model: "echo/any", Captures: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,4 +152,27 @@ func TestSubscriptionLimit(t *testing.T) {
 	eventually(t, "limit", func() bool {
 		return out.find(func(m *v1.GatewayMessage) bool { return m.GetSubscriptionEnded().GetReason() == "limit" })
 	})
+}
+
+// 旁听转写经 Connection 与 HTTP 走同一个 service 方法：重试同一 capture_id 返回 duplicate，别人的 Session 一律不存在。
+func TestSubmitCapturesRequest(t *testing.T) {
+	h, _, sid := setup(t)
+	ctx := context.Background()
+	req := func(id channel.Identity) *v1.ClientResponse {
+		return h.Request(ctx, id, &v1.ClientRequest{RequestId: "r", Op: &v1.ClientRequest_SubmitCaptures{SubmitCaptures: &v1.SubmitCaptures{
+			SessionId: sid, CaptureId: "cap1", Segments: []*v1.CaptureSegment{
+				{Speaker: v1.Speaker_SPEAKER_WEARER, Text: "明天发报价"},
+			}}}})
+	}
+	if resp := req(me); resp.GetError() != nil || resp.GetDuplicate() {
+		t.Fatalf("first = %v", resp)
+	}
+	if resp := req(me); resp.GetError() != nil || !resp.GetDuplicate() {
+		t.Fatalf("retry = %v", resp)
+	}
+	other := me
+	other.EndUser = "someone-else"
+	if resp := req(other); resp.GetError().GetCode() != "not_found" {
+		t.Fatalf("foreign = %v", resp)
+	}
 }

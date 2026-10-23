@@ -408,6 +408,14 @@ func (h *Handler) do(ctx context.Context, id Identity, req *v1.ClientRequest, re
 		return h.Service.Close(owned(ctx, id), op.Close.GetSessionId(), by, op.Close.GetReason())
 	case *v1.ClientRequest_CancelBackground:
 		return h.Service.CancelBackground(owned(ctx, id), op.CancelBackground.GetSessionId(), op.CancelBackground.GetCallId(), by)
+	case *v1.ClientRequest_SubmitCaptures:
+		m := op.SubmitCaptures
+		res, err := h.Service.SubmitCaptures(owned(ctx, id), m.GetSessionId(), m.GetCaptureId(), m.GetSegments())
+		if err != nil {
+			return err
+		}
+		resp.Duplicate, resp.Redacted = res.Duplicate, uint32(res.Redacted)
+		return nil
 	}
 	return fmt.Errorf("%w: unknown request", service.ErrInvalid)
 }

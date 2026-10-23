@@ -212,9 +212,10 @@ func (x *SessionSnapshot) GetCaptures() *CaptureSnapshot {
 type CaptureSnapshot struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 最近的 capture_id，旧的在前（session.MaxRecentCaptures）。
-	Ids           []string `protobuf:"bytes,1,rep,name=ids,proto3" json:"ids,omitempty"`
-	Count         uint64   `protobuf:"varint,2,opt,name=count,proto3" json:"count,omitempty"`
-	LastSeq       uint64   `protobuf:"varint,3,opt,name=last_seq,json=lastSeq,proto3" json:"last_seq,omitempty"`
+	Ids           []string               `protobuf:"bytes,1,rep,name=ids,proto3" json:"ids,omitempty"`
+	Count         uint64                 `protobuf:"varint,2,opt,name=count,proto3" json:"count,omitempty"`
+	LastSeq       uint64                 `protobuf:"varint,3,opt,name=last_seq,json=lastSeq,proto3" json:"last_seq,omitempty"`
+	LastAt        *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=last_at,json=lastAt,proto3" json:"last_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -268,6 +269,13 @@ func (x *CaptureSnapshot) GetLastSeq() uint64 {
 		return x.LastSeq
 	}
 	return 0
+}
+
+func (x *CaptureSnapshot) GetLastAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastAt
+	}
+	return nil
 }
 
 type BackgroundCallSnapshot struct {
@@ -936,11 +944,12 @@ const file_yanshi_v1_snapshot_proto_rawDesc = "" +
 	"\n" +
 	"background\x18\x10 \x03(\v2!.yanshi.v1.BackgroundCallSnapshotR\n" +
 	"background\x126\n" +
-	"\bcaptures\x18\x11 \x01(\v2\x1a.yanshi.v1.CaptureSnapshotR\bcaptures\"T\n" +
+	"\bcaptures\x18\x11 \x01(\v2\x1a.yanshi.v1.CaptureSnapshotR\bcaptures\"\x89\x01\n" +
 	"\x0fCaptureSnapshot\x12\x10\n" +
 	"\x03ids\x18\x01 \x03(\tR\x03ids\x12\x14\n" +
 	"\x05count\x18\x02 \x01(\x04R\x05count\x12\x19\n" +
-	"\blast_seq\x18\x03 \x01(\x04R\alastSeq\"\xb9\x01\n" +
+	"\blast_seq\x18\x03 \x01(\x04R\alastSeq\x123\n" +
+	"\alast_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x06lastAt\"\xb9\x01\n" +
 	"\x16BackgroundCallSnapshot\x12\x17\n" +
 	"\acall_id\x18\x01 \x01(\tR\x06callId\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x17\n" +
@@ -1051,24 +1060,25 @@ var file_yanshi_v1_snapshot_proto_depIdxs = []int32{
 	3,  // 8: yanshi.v1.SessionSnapshot.past_runs:type_name -> yanshi.v1.PastRunSnapshot
 	2,  // 9: yanshi.v1.SessionSnapshot.background:type_name -> yanshi.v1.BackgroundCallSnapshot
 	1,  // 10: yanshi.v1.SessionSnapshot.captures:type_name -> yanshi.v1.CaptureSnapshot
-	15, // 11: yanshi.v1.BackgroundCallSnapshot.deadline:type_name -> google.protobuf.Timestamp
-	15, // 12: yanshi.v1.PastRunSnapshot.requested_at:type_name -> google.protobuf.Timestamp
-	15, // 13: yanshi.v1.ActiveCallSnapshot.started_at:type_name -> google.protobuf.Timestamp
-	15, // 14: yanshi.v1.RunSnapshot.requested_at:type_name -> google.protobuf.Timestamp
-	16, // 15: yanshi.v1.RunSnapshot.recall:type_name -> yanshi.v1.RecalledMemory
-	7,  // 16: yanshi.v1.RunSnapshot.calls:type_name -> yanshi.v1.CallSnapshot
-	15, // 17: yanshi.v1.RunSnapshot.suspended_until:type_name -> google.protobuf.Timestamp
-	9,  // 18: yanshi.v1.RunSnapshot.decisions:type_name -> yanshi.v1.RunSnapshot.DecisionsEntry
-	17, // 19: yanshi.v1.CallSnapshot.call:type_name -> yanshi.v1.ToolCall
-	15, // 20: yanshi.v1.CallSnapshot.deadline:type_name -> google.protobuf.Timestamp
-	8,  // 21: yanshi.v1.CallSnapshot.approval:type_name -> yanshi.v1.ApprovalSnapshot
-	15, // 22: yanshi.v1.CallSnapshot.dispatched_at:type_name -> google.protobuf.Timestamp
-	15, // 23: yanshi.v1.ApprovalSnapshot.deadline:type_name -> google.protobuf.Timestamp
-	24, // [24:24] is the sub-list for method output_type
-	24, // [24:24] is the sub-list for method input_type
-	24, // [24:24] is the sub-list for extension type_name
-	24, // [24:24] is the sub-list for extension extendee
-	0,  // [0:24] is the sub-list for field type_name
+	15, // 11: yanshi.v1.CaptureSnapshot.last_at:type_name -> google.protobuf.Timestamp
+	15, // 12: yanshi.v1.BackgroundCallSnapshot.deadline:type_name -> google.protobuf.Timestamp
+	15, // 13: yanshi.v1.PastRunSnapshot.requested_at:type_name -> google.protobuf.Timestamp
+	15, // 14: yanshi.v1.ActiveCallSnapshot.started_at:type_name -> google.protobuf.Timestamp
+	15, // 15: yanshi.v1.RunSnapshot.requested_at:type_name -> google.protobuf.Timestamp
+	16, // 16: yanshi.v1.RunSnapshot.recall:type_name -> yanshi.v1.RecalledMemory
+	7,  // 17: yanshi.v1.RunSnapshot.calls:type_name -> yanshi.v1.CallSnapshot
+	15, // 18: yanshi.v1.RunSnapshot.suspended_until:type_name -> google.protobuf.Timestamp
+	9,  // 19: yanshi.v1.RunSnapshot.decisions:type_name -> yanshi.v1.RunSnapshot.DecisionsEntry
+	17, // 20: yanshi.v1.CallSnapshot.call:type_name -> yanshi.v1.ToolCall
+	15, // 21: yanshi.v1.CallSnapshot.deadline:type_name -> google.protobuf.Timestamp
+	8,  // 22: yanshi.v1.CallSnapshot.approval:type_name -> yanshi.v1.ApprovalSnapshot
+	15, // 23: yanshi.v1.CallSnapshot.dispatched_at:type_name -> google.protobuf.Timestamp
+	15, // 24: yanshi.v1.ApprovalSnapshot.deadline:type_name -> google.protobuf.Timestamp
+	25, // [25:25] is the sub-list for method output_type
+	25, // [25:25] is the sub-list for method input_type
+	25, // [25:25] is the sub-list for extension type_name
+	25, // [25:25] is the sub-list for extension extendee
+	0,  // [0:25] is the sub-list for field type_name
 }
 
 func init() { file_yanshi_v1_snapshot_proto_init() }

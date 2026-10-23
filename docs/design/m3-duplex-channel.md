@@ -60,7 +60,9 @@ HostApp 实例与网关之间只保持一条 **Connection**（WebSocket，路径
 
 ## 5. 请求
 
-`ClientRequest` 可以是创建 Session、提交输入（新 Run 或插话）、中断、审批、回答、取消后台调用或关闭，每个请求恰好对应一个 `ClientResponse`（以 `request_id` 关联）。
+`ClientRequest` 可以是创建 Session、提交输入（新 Run 或插话）、提交旁听转写、中断、审批、回答、取消后台调用或关闭，每个请求恰好对应一个 `ClientResponse`（以 `request_id` 关联）。
+
+提交旁听转写（`SubmitCaptures{session_id, capture_id, segments}`，ADR-0036）与 `POST /v1/sessions/{id}/captures` 走同一条路径（`service.Service.SubmitCaptures`）：写入 `CaptureAppended`，不开启 Run；同一 `capture_id` 重试返回 `duplicate`，`redacted` 是内容安全拦截的段数（[旁听](./captures.md) §3）。
 
 取消后台调用（`CancelBackground{session_id, call_id}`，ADR-0035）与 `POST /v1/sessions/{id}/background/{call}/cancel` 走同一条路径（`service.Service.CancelBackground`）：撤回投递，写入 `BackgroundCancelled`，不开启新 Run；调用已了结时返回 `conflict`，不是后台调用时返回 `not_found`。
 

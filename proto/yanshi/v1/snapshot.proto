@@ -46,6 +46,7 @@ message CaptureSnapshot {
   repeated string ids = 1;
   uint64 count = 2;
   uint64 last_seq = 3;
+  google.protobuf.Timestamp last_at = 4;
 }
 
 message BackgroundCallSnapshot {

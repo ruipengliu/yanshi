@@ -40,6 +40,9 @@ type Def struct {
 	Call CallConfig `yaml:"call"`
 	// Delegation 是委托的限制（docs/design/m5-multi-agent.md §4）。
 	Delegation DelegationConfig `yaml:"delegation"`
+	// Captures 为 true 时本 Agent 的 Session 接收旁听转写（docs/design/captures.md §6）。只有整理旁听的 Agent 开启：
+	// 旁听转写的保留期短，写进长期保留的 Session 就失去了分级保留（ADR-0037）。
+	Captures bool `yaml:"captures"`
 }
 
 // DelegationConfig 限制委托。Timeout 属于被委托的 Agent（它多久应当做完）；MaxDepth 与 MaxFanout 属于委托方。
