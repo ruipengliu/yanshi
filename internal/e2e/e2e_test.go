@@ -141,7 +141,9 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 		Call:         agentdef.CallConfig{Model: "fake/voice", Voice: "v1", Instructions: "你是语音助手"}},
 		// helper 是委托的目标（docs/design/m5-multi-agent.md）。
 		&agentdef.Def{Name: "helper", Version: "1", Model: "script/any", Description: "把输入复述一遍的助手",
-			Capabilities: []string{"ask_user", "device:*"}})
+			Capabilities: []string{"ask_user", "device:*"}},
+		// capture 接收旁听转写（docs/design/captures.md）。
+		&agentdef.Def{Name: "capture", Version: "1", Model: "script/any", Capabilities: []string{"captures"}, Captures: true})
 	if err != nil {
 		t.Fatal(err)
 	}

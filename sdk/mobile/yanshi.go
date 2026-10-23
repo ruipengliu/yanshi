@@ -321,6 +321,9 @@ func (c *Client) Request(request []byte, timeoutMillis int64) ([]byte, error) {
 	var resp *v1.ClientResponse
 	if in := req.GetSubmit(); in != nil {
 		resp, err = nc.SubmitInput(ctx, in)
+	} else if in := req.GetSubmitCaptures(); in != nil {
+		// 旁听转写同样以 capture_id 去重，断线后自动重试（nodesdk.Client.SubmitCaptures）。
+		resp, err = nc.SubmitCaptures(ctx, in)
 	} else {
 		resp, err = nc.Request(ctx, req)
 	}
@@ -379,6 +382,10 @@ func (c *Client) SubmitCardAction(sessionID, cardID, callID, action, valuesJSON 
 
 // NewInputID 生成一个随机的输入 ID。需要跨 App 重启继续重试的提交，持久保存它并放进 SubmitInput.input_id。
 func NewInputID() string { return nodesdk.NewInputID() }
+
+// NewCaptureID 生成一个随机的旁听批次 ID。HostApp 随本地缓冲持久保存它，以 Request 提交 SubmitCaptures（片段是重复字段，
+// 绑定层不能直接传，由原生侧用生成的消息类型构造请求），重启后补交同一批时用原来的 ID（docs/design/captures.md §3）。
+func NewCaptureID() string { return nodesdk.NewCaptureID() }
 
 // UploadArtifact 把文件上传为 sessionID 的工件，返回序列化的 yanshi.v1.ContentBlock（Media，引用 artifact://），
 // 可放入调用结果或输入。通常在 CapabilityHandler 中调用，sessionID 取自 Invoke。

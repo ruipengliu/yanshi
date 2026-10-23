@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { create } from "@bufbuild/protobuf";
-import { Client, DisconnectedError, RequestError, StoppedError, type SessionHandler } from "../src/client.js";
-import { EventSchema, type Event } from "../src/gen/yanshi/v1/event_pb.js";
+import { Client, DisconnectedError, RequestError, StoppedError, newCaptureId, type SessionHandler } from "../src/client.js";
+import { EventSchema, Speaker, type Event } from "../src/gen/yanshi/v1/event_pb.js";
 import type { LiveDelta, Presence } from "../src/gen/yanshi/v1/node_pb.js";
 import { FakeNetwork, type FakeSocket } from "./fake.js";
 
@@ -146,6 +146,37 @@ test("a submit whose response was lost is retried with the same input ID", async
   assert.equal(in2?.inputId, in1.inputId);
   s.push({ msg: { case: "response", value: { requestId: second.requestId, runId: "r1", duplicate: true } } });
   assert.deepEqual(await p, { runId: "r1", steered: false, answered: "", duplicate: true });
+  c.stop();
+});
+
+test("submitCaptures retries with the same capture ID after the connection drops", async () => {
+  const net = new FakeNetwork();
+  const c = client(net);
+  let s = await net.connect(1);
+  const id = newCaptureId();
+  assert.ok(id.startsWith("cap_"));
+  const p = c.submitCaptures("s1", id, [
+    { speaker: Speaker.WEARER, text: "明天我把报价发给张三" },
+    { speaker: Speaker.OTHER, speakerKey: "other-1", text: "好的" },
+  ]);
+  const first = await s.next("request");
+  assert.ok(first.op.case === "submitCaptures");
+  assert.equal(first.op.value.captureId, id);
+  assert.deepEqual(
+    first.op.value.segments.map((g) => [g.speaker, g.speakerKey, g.text]),
+    [
+      [Speaker.WEARER, "", "明天我把报价发给张三"],
+      [Speaker.OTHER, "other-1", "好的"],
+    ],
+  );
+  s.drop();
+
+  s = await net.connect(2);
+  const second = await s.next("request");
+  assert.equal(second.op.case === "submitCaptures" ? second.op.value.captureId : "", id);
+  s.push({ msg: { case: "response", value: { requestId: second.requestId, duplicate: true, redacted: 0 } } });
+  assert.deepEqual(await p, { duplicate: true, redacted: 0 });
+  await assert.rejects(c.submitCaptures("s1", "", []), /captureId is required/);
   c.stop();
 });
 

@@ -189,6 +189,17 @@ func TestMobileBinding(t *testing.T) {
 	if cr := (&v1.ClientResponse{}); err != nil || proto.Unmarshal(b, cr) != nil || cr.GetError().GetCode() != "not_found" {
 		t.Fatalf("cancel background = %x, %v", b, err)
 	}
+	// 旁听转写（docs/design/captures.md §3）：原生侧构造 SubmitCaptures 请求，绑定层以 capture_id 去重重试；同一 ID 再次提交为
+	// duplicate。
+	day := request(&v1.ClientRequest{Op: &v1.ClientRequest_CreateSession{CreateSession: &v1.CreateSession{Agent: "capture"}}}).GetSessionId()
+	captures := &v1.ClientRequest{Op: &v1.ClientRequest_SubmitCaptures{SubmitCaptures: &v1.SubmitCaptures{SessionId: day,
+		CaptureId: yanshi.NewCaptureID(), Segments: []*v1.CaptureSegment{{Speaker: v1.Speaker_SPEAKER_WEARER, Text: "明天发报价"}}}}}
+	if r := request(captures); r.GetError() != nil || r.GetDuplicate() {
+		t.Fatalf("captures = %v", r)
+	}
+	if r := request(captures); r.GetError() != nil || !r.GetDuplicate() {
+		t.Fatalf("captures again = %v", r)
+	}
 	view.mu.Lock()
 	viewers := view.viewer
 	view.mu.Unlock()

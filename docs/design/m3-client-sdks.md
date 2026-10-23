@@ -15,6 +15,7 @@
 - 断线以指数退避重连（0.5 秒起，至多 30 秒，带抖动），每次连接重新取令牌。网关同时进行的握手有上限（`wsgateway.Gateway.MaxHandshakes`，默认 128）：网关滚动重启后，成批的连接会同时重连，排不上的以 503 拒绝，并给出带抖动的 Retry-After（2～10 秒）。Go SDK 按 Retry-After 等待；浏览器看不到握手失败的状态码，只按退避重试。
 - 重连后按各订阅最后收到的 seq 续订，并丢弃不比它新的事件：事件不漏、不重。
 - 提交输入时生成输入 ID。连接在响应之前断开时，重连后以同一 ID 重试，直到得到结果：输入恰好生效一次。
+- 提交旁听转写（[旁听](./captures.md) §3）时，批次 ID 由调用方给出：HostApp 随本地缓冲持久保存它，重启后补交同一批时用原来的 ID。断线时同样以同一 ID 重试，直到得到结果；没有 ID 的提交在发出之前就被拒绝。
 - 其余请求在断线时报告"结果未知"，由调用方决定是否重试，因为重复执行不会产生重复效果。创建 Session 例外，重试会再创建一个。
 - 重连后随订阅重发前台状态；"正在输入"是瞬时的，不重发。
 - 回调按到达顺序串行调用。
@@ -76,6 +77,7 @@ else await client.submitText(sessionId, typed);
     - `close()` 取消全部子订阅与等待中的重订。
     - 和 `Draft`、`PendingQuestions` 一样，喂给它的事件要从 seq 0 开始，否则看不到续传位置之前开始的委托与提问。
     - Go SDK 中是等价的 `nodesdk.PendingTracker`（`nodesdk.NewPendingTracker`、`OnEvent`、`Items`、`TypedAnswerTarget`、`Close`）。`OnEvent` 只更新状态，可在 SessionHandler 中调用；订阅子 Session 与 onChange 都在跟踪器自己的 goroutine 中串行进行，不阻塞连接的接收 goroutine。
+- **旁听转写。** `client.submitCaptures(sessionId, captureId, segments)` 提交一批带说话人的转写（ADR-0036），返回 `{duplicate, redacted}`；`newCaptureId()` 生成批次 ID。Go SDK 中是 `Client.SubmitCaptures(ctx, *v1.SubmitCaptures)` 与 `nodesdk.NewCaptureID`。
 - **错误。**
   - `RequestError.code` 与 HTTP 状态码对应，`quota_exceeded` 带 `retryAt`。
   - `DisconnectedError` 表示结果未知，`StoppedError` 表示客户端已停止。
@@ -120,6 +122,7 @@ let resp = try Yanshi_V1_ClientResponse(serializedBytes: client.submitText(sid, 
 - **取消。** 原生能力无法从 Go 中止：调用被取消时 SDK 不再等待结果，原生代码自行结束。
 - **消息类型。** 原生侧用 swift-protobuf / protobuf-javalite 从 `proto/` 生成，绑定层不附带。渲染辅助（卡片、已执行的卡片动作、后台调用）同样不经绑定层，原生端按 §2 的规则从事件里读：卡片动作看输入与回答的 `ToolResult.card_action` 三处；后台调用看带 `backgrounded` 的结果、输入中唯一的 `background_result` 块与 `BackgroundCancelled`。
 - **取消后台调用。** `CancelBackground(sessionID, callID, timeoutMillis) → ClientResponse 字节`，语义同网页与 Go SDK。
+- **旁听转写。** 片段是重复字段，绑定层不提供单独的方法：原生侧用生成的消息类型构造 `ClientRequest{submit_captures}`，经 `Request` 提交。绑定层像提交输入一样以 `capture_id` 去重、断线后自动重试。`NewCaptureID()` 生成批次 ID，HostApp 随本地缓冲持久保存它。
 - **委托。** 绑定层不提供 `PendingTracker`，原生端须自行跟随进行中的委托，规则同 §2 与[委托](./m5-multi-agent.md) §4：
   - 发现 `ToolCallStarted{node_id: "@agent/<子 Session>"}` 即从 seq 0 订阅子 Session；订阅以 `not_found` 或 `error` 结束而委托仍在进行时，退避后从已收到的位置重订；
   - 把其中待处理的提问与审批一并展示，回答与审批发往子 Session；提问在 `ToolCallStarted{node_id: "@user"}` 之后才算待回答；
@@ -143,6 +146,7 @@ let resp = try Yanshi_V1_ClientResponse(serializedBytes: client.submitText(sid, 
   - 每次连接重新取令牌；
   - `Draft` 与 `PendingQuestions` 的规则，含 Run 结束时清除草稿、提问派发之后才待回答；`Cards` 与 `cardActionOf`（含作为回答的卡片动作）；
   - `BackgroundCalls`：转入后台、设备结果、到期、取消，按截止时间排序；`cancelBackground` 发出请求、已了结时为 `conflict`；
+  - `submitCaptures` 发出给定的批次 ID 与片段，断线后以同一 ID 重试；没有批次 ID 时不发出；
   - 同一 Session 上应用的订阅与辅助类的订阅并存：从最小的 seq 续订、各自去重、各自取消，应用取消后撤下前台状态；
   - `PendingTracker`：
     - 发现委托即订阅子 Session，子 Session 的提问与审批带 sessionId、agent、via；
@@ -158,13 +162,14 @@ let resp = try Yanshi_V1_ClientResponse(serializedBytes: client.submitText(sid, 
   - 同一输入 ID 再次提交得到 `duplicate`；
   - 委托出去的子 Agent 提问：`PendingTracker` 看到它，`typedAnswerTarget` 选中它，以文字 `answer` 发往子 Session 后父 Run 完成，再次回答为 `conflict`；
   - 他人的 Session 为 `not_found`。
-- Go SDK（`make check`）：`nodesdk` 的单元测试覆盖与网页相同的 `PendingTracker` 规则和订阅并存，以及 `CardActionOf`、`BackgroundCalls`；e2e `TestCancelBackgroundOverConnection` 经 Connection 取消后台调用，设备上线后不执行，再次取消为 `conflict`；e2e `TestDelegatedQuestionAnsweredByText` 在真实网关上委托、子 Agent 提问、以文字回答、父 Run 完成。
+- Go SDK（`make check`）：`nodesdk` 的单元测试覆盖与网页相同的 `PendingTracker` 规则和订阅并存，以及 `CardActionOf`、`BackgroundCalls`；e2e `TestCancelBackgroundOverConnection` 经 Connection 取消后台调用，设备上线后不执行，再次取消为 `conflict`；e2e `TestDelegatedQuestionAnsweredByText` 在真实网关上委托、子 Agent 提问、以文字回答、父 Run 完成；e2e `TestSubmitCapturesOverConnection` 经 Connection 提交旁听转写，不开启 Run，同一批次 ID 再次提交为 `duplicate`，未开启旁听的 AgentDef 为 `invalid`，他人的 Session 为 `not_found`。
 - 移动端绑定（`make check`，`TestMobileBinding`）：
   - 以字节收发请求与事件；
   - 原生能力上传工件、返回错误；
   - 拒绝放在响应中；
   - 在场；
   - 启动后不能再声明能力；
+  - 旁听转写经 `Request` 提交，同一批次 ID 再次提交为 `duplicate`；
   - 停止后请求立即失败。
 - `make mobile`（需要 Xcode 与 JDK，不在 `make check` 中，改动 `sdk/nodesdk`、`sdk/mobile` 或 `node.proto` 后运行）：
   - gomobile 生成 iOS、iOS 模拟器与 macOS 的 `Yanshi.xcframework`；

@@ -9,7 +9,7 @@
 import { create, fromBinary, toBinary, type MessageInitShape } from "@bufbuild/protobuf";
 import { timestampDate } from "@bufbuild/protobuf/wkt";
 import type { ContentBlock, Event } from "./gen/yanshi/v1/event_pb.js";
-import { ContentBlockSchema } from "./gen/yanshi/v1/event_pb.js";
+import { CaptureSegmentSchema, ContentBlockSchema } from "./gen/yanshi/v1/event_pb.js";
 import {
   CallAction,
   GatewayMessageSchema,
@@ -126,6 +126,13 @@ export interface RequestOptions {
   signal?: AbortSignal;
 }
 
+export interface CaptureResult {
+  /** 同一 captureId 的旁听转写此前已写入，本次没有写入。 */
+  duplicate: boolean;
+  /** 本批中未通过内容安全、只留占位的段数。 */
+  redacted: number;
+}
+
 export interface SubmitResult {
   runId: string;
   /** 有活跃 Run，输入作为插话。 */
@@ -137,6 +144,7 @@ export interface SubmitResult {
 }
 
 export type ContentBlockInit = MessageInitShape<typeof ContentBlockSchema>;
+export type CaptureSegmentInit = MessageInitShape<typeof CaptureSegmentSchema>;
 export type ClientRequestInit = MessageInitShape<typeof ClientRequestSchema>;
 
 interface Subscriber {
@@ -584,6 +592,30 @@ export class Client {
     }
   }
 
+  /**
+   * 提交一批旁听转写（docs/design/captures.md §3，ADR-0036）：佩戴外设的 EndUser 与他人的对话，不开启 Run。
+   * captureId 必须由应用生成并随本地缓冲持久保存（newCaptureId）：连接在响应之前断开时，以同一 ID 自动重试；
+   * 页面刷新后补交同一批时也用原来的 ID，网关按它去重（duplicate）。内容安全不可用时以 RequestError("unavailable")
+   * 拒绝，稍后以同一 ID 重试；片段不能设置 redacted，拦截由平台判断。
+   */
+  async submitCaptures(
+    sessionId: string,
+    captureId: string,
+    segments: CaptureSegmentInit[],
+    opts?: RequestOptions,
+  ): Promise<CaptureResult> {
+    if (captureId === "") throw new Error("yanshi: captureId is required");
+    for (;;) {
+      try {
+        const r = await this.request({ op: { case: "submitCaptures", value: { sessionId, captureId, segments } } }, opts);
+        return { duplicate: r.duplicate, redacted: r.redacted };
+      } catch (e) {
+        if (e instanceof DisconnectedError) continue; // request 会等到重新连接
+        throw e;
+      }
+    }
+  }
+
   async interrupt(sessionId: string, runId: string, opts?: RequestOptions): Promise<void> {
     await this.request({ op: { case: "interrupt", value: { sessionId, runId } } }, opts);
   }
@@ -673,6 +705,11 @@ export function newInputId(): string {
   const b = new Uint8Array(16);
   globalThis.crypto.getRandomValues(b);
   return "in_" + Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+/** 生成一个随机的旁听批次 ID（见 submitCaptures）。 */
+export function newCaptureId(): string {
+  return "cap_" + newInputId().slice(3);
 }
 
 /** 内容块中的全部文本。 */

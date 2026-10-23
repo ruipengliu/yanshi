@@ -391,6 +391,31 @@ func (c *Client) SubmitInput(ctx context.Context, in *v1.SubmitInput) (*v1.Clien
 	}
 }
 
+// SubmitCaptures 提交一批旁听转写（docs/design/captures.md §3，ADR-0036）：佩戴外设的 EndUser 与他人的对话，不开启 Run。
+// 只有开启了旁听的 AgentDef 的 Session 接收（否则 invalid）。in.CaptureId 必须由 HostApp 生成并随本地缓冲持久保存
+// （NewCaptureID）：连接在响应之前断开时，以同一 ID 自动重试，直到得到结果或 ctx 结束；进程重启后补交同一批时也用原来的
+// ID，网关按它去重（duplicate 为 true）。响应的 redacted 是内容安全拦截的段数；内容安全不可用时返回 unavailable，稍后以
+// 同一 ID 重试。片段不能设置 redacted，拦截由平台判断。
+func (c *Client) SubmitCaptures(ctx context.Context, in *v1.SubmitCaptures) (*v1.ClientResponse, error) {
+	if in.GetCaptureId() == "" {
+		return nil, errors.New("nodesdk: capture id is required")
+	}
+	for {
+		resp, err := c.Request(ctx, &v1.ClientRequest{Op: &v1.ClientRequest_SubmitCaptures{SubmitCaptures: in}})
+		if errors.Is(err, ErrDisconnected) {
+			continue // Request 会等到重新连接
+		}
+		return resp, err
+	}
+}
+
+// NewCaptureID 生成一个随机的旁听批次 ID（SubmitCaptures）。
+func NewCaptureID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return "cap_" + hex.EncodeToString(b[:])
+}
+
 // NewInputID 生成一个随机的输入 ID。
 func NewInputID() string {
 	var b [16]byte
