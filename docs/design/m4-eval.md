@@ -217,7 +217,7 @@ turns:
 
 ## 12. 旁听用例（2026-10-23）
 
-`capture-*` 用例评测旁听业务线的三个 AgentDef（`agents/xinli-*.yaml`，docs/design/captures.md §6、§11）。每轮的 `captures` 以 HostApp 的身份提交到本轮的 Session；`setup.xinli` 登记模拟的 xinli MCP Server（`internal/eval/xinli.go`），预置本次运行 EndUser 的项目与每日摘要；`setup.no_health` 改在未开启健康信息的业务线 `eval-nohealth` 中运行。
+`capture-*` 用例评测旁听业务线的三个 AgentDef（`agents/xinli-*.yaml`，docs/design/captures.md §6、§11）。每轮的 `captures` 以 HostApp 的身份提交到本轮的 Session；`setup.xinli` 登记模拟的 xinli MCP Server（`internal/xinlimock`），预置本次运行 EndUser 的项目与每日摘要；`setup.no_health` 改在未开启健康信息的业务线 `eval-nohealth` 中运行。
 
 基线（`doubao-seed-2-1-lite-260915:minimal`）中全部用例都是 3/3。
 

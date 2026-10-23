@@ -41,6 +41,7 @@ import (
 	"yanshi/internal/service"
 	"yanshi/internal/session"
 	"yanshi/internal/workqueue"
+	"yanshi/internal/xinlimock"
 )
 
 // BusinessLine 是评测使用的业务线；NoHealthBusinessLine 是未开启健康信息的业务线（setup.no_health）。
@@ -91,7 +92,7 @@ type instance struct {
 	workers *workerPool
 	arts    *artifact.Service
 	crm     *crmServer
-	xinli   *xinliServer
+	xinli   *xinlimock.Server
 	calls   *call.Manager
 
 	// controllerDone 在沙箱控制器退出（或未启动）时关闭。
@@ -294,10 +295,10 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 		servers = append(servers, in.crm.server)
 	}
 	if slices.ContainsFunc(cases, func(c *Case) bool { return c.Setup.Xinli != nil }) {
-		if in.xinli, err = startXinli(ctx, BusinessLine, NoHealthBusinessLine); err != nil {
+		if in.xinli, err = xinlimock.Start(ctx, BusinessLine, NoHealthBusinessLine); err != nil {
 			return nil, err
 		}
-		servers = append(servers, in.xinli.servers...)
+		servers = append(servers, in.xinli.Servers...)
 	}
 	if len(servers) > 0 {
 		core.Catalog.MCP = &mcpcap.Connector{Servers: servers, Artifacts: core.Artifacts, Logger: cfg.Logger}
@@ -377,7 +378,9 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 	if c.Setup.NoHealth {
 		bl = NoHealthBusinessLine
 	}
-	in.xinli.seed(endUser, c.Setup.Xinli)
+	if c.Setup.Xinli != nil {
+		in.xinli.Seed(endUser, c.Setup.Xinli.Projects, c.Setup.Xinli.Days)
+	}
 	// 预置记忆的 ID 与生产一致不可猜（由随机调用 ID 派生）：顺序 ID 会让模型按规律"猜出"未见过的 ID，
 	// 替换掉另一条记忆（memory-update-crowded 中观察到）。
 	for _, m := range c.Setup.Memories {

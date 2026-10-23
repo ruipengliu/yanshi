@@ -997,6 +997,58 @@ button.copy {
 .voice-line .tag {
   margin-right: 6px;
 }
+/* 旁听：佩戴者的话（用户原话）与他人的话（外部内容）用不同颜色区分，ADR-0036。 */
+.capture-batch {
+  align-self: stretch;
+  font-size: 13px;
+  background: var(--subtle);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+}
+.capture-head {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.capture-line {
+  padding: 2px 0;
+}
+.capture-line b,
+.capture-chip b {
+  margin-right: 6px;
+  font-weight: 600;
+}
+.capture-line.wearer b,
+.capture-chip.wearer b {
+  color: var(--accent);
+}
+.capture-line.other b,
+.capture-chip.other b {
+  color: var(--warn);
+}
+.capture-panel {
+  margin-bottom: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.capture-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.capture-row input {
+  flex: 1;
+  min-width: 0;
+}
+.capture-staged {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
 .voice-msg {
   display: flex;
   align-items: center;

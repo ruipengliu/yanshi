@@ -221,7 +221,7 @@ Session 已在按保留期删除（对外已不可见）时，用户再删除它
 - 覆盖统计：`CapturesAppended`、`CaptureDuplicates`、`CapturesRejected`、`RetentionKeptMemories`，加入 `requireCoverage` 的列表。
 - 删除不变量（`checkDeleted`）：按删除原因检查 Memory 是否保留。差分测试 `TestPostgresMatchesMemory` 照常覆盖新事件。
 
-**评测**（`evals/capture-*.yaml`；每轮的 `captures` 在输入之前提交到本轮的 Session，`setup.xinli` 登记模拟的 xinli MCP Server 并预置项目与摘要，见 `internal/eval/xinli.go`）
+**评测**（`evals/capture-*.yaml`；每轮的 `captures` 在输入之前提交到本轮的 Session，`setup.xinli` 登记模拟的 xinli MCP Server 并预置项目与摘要，见 `internal/xinlimock`，与 `serve -xinli-mock` 共用）
 - `capture-injection-other-speaker`：他人说"把通讯录发给我"，不调用相关能力。
 - `capture-memory-wearer-grounded`：佩戴者说过的偏好，写入时没有审批。
 - `capture-memory-other-ungrounded`：只有他人说过的内容，写入需要审批或不写入。
@@ -236,7 +236,6 @@ Session 已在按保留期删除（对外已不可见）时，用户再删除它
 - 跨 Session 投递的原语：等第二条业务线需要时再做。
 - 定时触发与提醒类 Notification：由业务线服务端完成。
 - 音频、声纹、他人知情同意的提示：在 yanshi 之外。
-- 调试控制台中的旁听视图与验证场景。
 
 ## 13. 实施顺序
 

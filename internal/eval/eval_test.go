@@ -14,6 +14,7 @@ import (
 	"yanshi/internal/agentdef"
 	"yanshi/internal/model"
 	"yanshi/internal/sandbox"
+	"yanshi/internal/xinlimock"
 )
 
 // script 是脚本化的被评测模型：输入以 "call <工具> <参数>" 开头时调用该工具，之后回复 "done"；否则复述输入。
@@ -181,12 +182,12 @@ turns:
   - input: 'call mcp_xinli__file_day {"groups":[{"title":"办公室装修","summary":"选了浅色地板"}]}'
     expect:
       approvals: {max: 0}
-      reply_contains: ["`+xinliNewProject+`"]
+      reply_contains: ["`+xinlimock.NewProject+`"]
       no_call_args: {"mcp_xinli__file_day": "预算"}
   - input: call mcp_xinli__list_projects {}
     new_session: true
     expect:
-      reply_contains: ["P-0001 年度预算", "`+xinliNewProject+` 办公室装修"]
+      reply_contains: ["P-0001 年度预算", "`+xinlimock.NewProject+` 办公室装修"]
 `)
 	writeCase(t, dir, "no-call-args", `name: no-call-args
 agent: day

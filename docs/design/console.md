@@ -1,6 +1,6 @@
 # 调试控制台
 
-> 状态：已实现（2026-10-11 重做为三个视图） · 依赖：[多端双工通道](./m3-duplex-channel.md)、[M1 设备即节点](./m1-device-nodes.md)、[端侧 SDK](./m3-client-sdks.md)、[卡片](./cards.md)、[委托](./m5-multi-agent.md)、[Call](./m3-call.md) · 契约：[`node.proto`](../../proto/yanshi/v1/node.proto) · ADR-0032、ADR-0033
+> 状态：已实现（2026-10-11 重做为三个视图） · 依赖：[多端双工通道](./m3-duplex-channel.md)、[M1 设备即节点](./m1-device-nodes.md)、[端侧 SDK](./m3-client-sdks.md)、[卡片](./cards.md)、[委托](./m5-multi-agent.md)、[Call](./m3-call.md)、[旁听](./captures.md) · 契约：[`node.proto`](../../proto/yanshi/v1/node.proto) · ADR-0032、ADR-0033
 
 ## 1. 目的
 
@@ -37,6 +37,7 @@
 | 语音消息 | 按住 🎤 录音，在浏览器中编码为 16 kHz 的 WAV（火山方舟接受 wav、mp3、m4a，不接受 webm），上传后作为 `audio/wav` 工件提交。由模型直接听，不经转写 |
 | 界面上下文 | 可选：随下一条消息附上界面与可见内容（`UIContext`） |
 | 卡片动作 | 点卡片上的按钮或列表项（`CardAction`，[卡片](./cards.md) §4） |
+| 旁听 | 🎧：以 HostApp 的身份逐段写下转写、手选说话人（佩戴者、他人 A、他人 B），整批以 `SubmitCaptures` 提交，不开启 Run（[旁听](./captures.md) §3）。失败时保留本批与它的 `capture_id`，原样再交时服务端按 ID 去重。只有开启旁听的 Agent 接收（`console-capture`、`xinli-day`），其余为 invalid。只收文字：录音与声纹区分在 HostApp，不在控制台（ADR-0036） |
 | 通话 | 📞：经同一条 Connection 的 `CallStart` / `CallAudio`，上行 16 kHz、下行按到达顺序播放，说话时打断（[Call](./m3-call.md)）。设备断开时通话在本地结束，停止采集与播放。需要 `VOLC_SPEECH_API_KEY` |
 
 发送失败（被拒绝、超时、断线后结果未知）时：
@@ -65,6 +66,7 @@
   - 提问在派发给用户（`ToolCallStarted{node_id: "@user"}`）之后才显示：模型同一轮返回委托与提问时，提问要等委托结束才派发。
   - 单选且没有字段的提问点选即回答；有字段时点选只是选中，由"提交"一起发出。
 - **后台调用**（ADR-0035）：转入后台的调用在调用行显示"后台排队中"，所在的一轮下面注明设备离线、已排队。设备迟到的结果、到期与取消显示为平台的说明（📬、⌛、🚫），不是用户的气泡；结果带设备返回的文字与工件。未了结的后台调用列在输入框上方，各带"取消"按钮。详情抽屉显示后台状态、截止时间与转入后台、了结的时刻。
+- **旁听**：每批转写按日志顺序显示为一块，佩戴者与他人的话分色标出，依据是结构化的说话人字段；被内容安全拦截的段只显示占位。旁听不打断进行中的一轮。还没有输入的会话以第一段转写为标题。
 - **状态行**：Run 在等什么（设备、子 Agent、你的回答、模型），思考或输出中，中断按钮（Esc），在场的其他设备与"正在输入"。
 - **新消息**：不在底部时有新内容，显示"↓ 新消息"。
 - **草稿与平滑输出**：正在生成的思考与正文单独渲染，从收到的内容中按稳定节奏逐字显示：至少每秒 40 字，积压多时约 250ms 内追上。模型一阵一阵地吐字（方舟实测：多块常同时到达，再停一下）时，界面上仍然均匀。已提交的部分只在有新事件时重建，在场的变化只更新状态行；用户展开或收起的思考块、调用组在重建后保持原状。
@@ -177,6 +179,7 @@
 | 子 Agent 审批 | 子 Run 调用高风险能力：父 Session 的待处理中看到这个审批，发往子 Session；批准后设备执行，父 Run 完成；再次审批为 conflict |
 | 服务端故障注入 | 需要 `-faults`，否则跳过。模型调用失败后 Worker 重试、Run 完成；Worker 崩溃后租约过期被接管（新的 Attempt）、Run 完成 |
 | 图片与工件 | 上传的图片以工件引用随输入提交；手机拍照（需审批）把照片作为工件带回 Run |
+| 旁听 | 手机提交一批旁听，网页实时看到带结构化说话人的转写，没有开启 Run；同一 `capture_id` 再交为 duplicate；未开启旁听的 Agent 为 invalid；Run 经 `captures` 读出，佩戴者与他人的话分别注明 |
 
 `make check` 中由 `internal/e2e` 的 `TestConsoleScenarios` 以 Node.js 运行全部场景（`internal/webui/testdata/run-scenarios.mjs`，需要 `YANSHI_TEST_NODE`）。e2e 的实例始终装配故障注入，租约 5 秒，后台调用的宽限期 3 秒、后台时限 1 分钟（到期由 Go 的 e2e 测试覆盖）。新增多端语义时，同时在这里增加场景。
 
@@ -197,6 +200,8 @@ EndUser 的选取：
 | `think <n>` | 每次模型调用先流式输出 n 段思考过程（ADR-0034） |
 | `together` | 剩下的 `call` 与 `ask` 在同一次模型调用中一起返回（一轮多个调用），Worker 再按顺序推进。例如委托与提问同一轮：提问要等委托结束才派发 |
 
+`console-capture` 是开启旁听的脚本化 Agent（白名单为 `captures`、`memory_save`）：用 🎧 提交转写后发 `call captures {}` 读出。
+
 调用全部完成后回复 `done: <最后一个结果>`；没有命令时复述输入。卡片动作与真实提供商一样呈现为一行文字，脚本复述它。后台调用的了结与取消（以"[后台调用"开头的说明，ADR-0035）不是命令，脚本同样复述它。插话开启新的命令序列。e2e 测试使用同一个模型。
 
 真实模型的演示 Agent（火山方舟，`ARK_API_KEY`）：
@@ -207,6 +212,8 @@ EndUser 的选取：
 | `schedule`（日程管家） | 闹钟、计时器、日程；需要时发提醒短信 | 闹钟、日程、计时器、`send_sms` |
 | `travel`（出行助手） | 导航、空调、音乐、音量 | 车机与音乐 |
 | `research`（研究员） | 读文件、开网页、在沙箱中计算 | `device:*`、`sandbox:*` |
+
+旁听业务线的 `xinli-day`（每日整理）与 `xinli-assistant` 依赖业务线的 MCP Server（`mcp:xinli/*`，[旁听](./captures.md) §6）。开发部署以 `serve -xinli-mock <业务线>` 在进程内登记模拟的 xinli MCP Server（`internal/xinlimock`，与评测共用；数据只在内存中，重启即清空），控制台的默认业务线是 `demo`。在 `xinli-day` 的会话中用 🎧 提交一天的对话，再发"整理今天"：模型读完旁听、查已有项目、调用一次 `file_day`，佩戴者说过的偏好写入 Memory，他人的话按外部内容对待。
 
 委托不扩大权限：子 Run 的工具是自身白名单与每个祖先白名单的交集（ADR-0031）。所以经总管委托时，日程管家不能发短信，直接和日程管家对话时可以（需审批）。评测 `concierge-no-escalation` 检查这一点。
 

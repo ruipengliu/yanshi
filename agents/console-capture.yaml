@@ -1,0 +1,11 @@
+# 调试控制台（/console）用 Agent：脚本化模型，开启旁听（docs/design/captures.md）。在对话中用 🎧 提交转写，
+# 再发 call captures {} 读出：结果中的说话人取自结构化字段。无需模型密钥。
+name: console-capture
+version: "1"
+model: script/any
+instructions: ""
+captures: true
+capabilities:
+  - captures
+  - memory_save
+max_turns: 20

@@ -23,7 +23,10 @@ const AGENTS = [
   ["schedule", "日程管家（专员）"],
   ["travel", "出行助手（专员）"],
   ["research", "研究员（专员，需要沙箱）"],
+  ["xinli-day", "旁听的每日整理：🎧 提交转写后发「整理今天」（真实模型，需 serve -xinli-mock）"],
+  ["xinli-assistant", "旁听业务线的助手：查项目与最近几天（真实模型，需 serve -xinli-mock）"],
   ["console", "脚本化模型：call / ask / stream 命令，无需密钥"],
+  ["console-capture", "脚本化模型，开启旁听：🎧 提交转写后 call captures {}"],
   ["echo", "复述"],
 ];
 
@@ -571,6 +574,9 @@ const EXAMPLES = {
     "这周六下午 3 点和老王打球，帮我记到日历里",
   ],
   assistant: ["明早 7 点叫我起床", "帮我拍张照片看看桌上有什么", "看一下电脑上的 notes.txt", "记住：我对花生过敏"],
+  "xinli-day": ["整理今天"],
+  "xinli-assistant": ["我最近在忙哪些项目？", "装修那件事现在进展到哪了？"],
+  "console-capture": ["call captures {}"],
   console: [
     'think 20\ncall iphone__set_alarm {"time":"07:00","label":"晨跑"}',
     'call show_card {"title":"天气","image":"icon:weather","body":[{"type":"facts","facts":[{"label":"今天","value":"晴 25℃"}]}],"buttons":[{"id":"more","label":"看明天"}]}',
@@ -583,9 +589,11 @@ const EXAMPLES = {
 /** 会话的标题：第一条输入的文字（读一次事件，缓存在本机）。 */
 const titles = new Map(Object.entries(JSON.parse(localStorage.getItem("yanshi.console.titles") ?? "{}")));
 const titleLoading = new Set();
+const captureTitles = new Map();
 function sessionTitle(s) {
   const t = titles.get(s.session_id);
   if (t !== undefined) return t;
+  const c = captureTitles.get(s.session_id);
   if (!titleLoading.has(s.session_id)) {
     titleLoading.add(s.session_id);
     http("GET", `/v1/sessions/${s.session_id}/events?limit=20`).then((r) => {
@@ -596,6 +604,12 @@ function sessionTitle(s) {
         scheduleSide();
       }
       const ev = (r.json?.events ?? []).find((e) => e.run_requested);
+      // 旁听的 Session 往往先有转写、后有输入：还没有输入时以第一段转写为标题，不缓存（之后的输入取代它）。
+      const cap = (r.json?.events ?? []).find((e) => e.capture_appended)?.capture_appended.segments?.[0]?.text;
+      if (!ev && cap) {
+        captureTitles.set(s.session_id, `🎧 ${cap}`);
+        scheduleSide();
+      }
       if (!ev) {
         // 还没有输入（或读取失败）：稍后再读，不缓存。
         setTimeout(() => titleLoading.delete(s.session_id), 5000);
@@ -610,7 +624,7 @@ function sessionTitle(s) {
       scheduleSide();
     });
   }
-  return "";
+  return c ?? "";
 }
 
 /** 委托派生的子会话（不在列表中显示，当前打开的除外）。 */
@@ -881,7 +895,15 @@ function verifyEnv() {
           { endUser: `qa-${randomHex(3)}-b`, token: "" },
         ];
   while (users.length < 2) users.push({ endUser: "", token: "" });
-  return { wsUrl: WS_URL, httpBase: HTTP, businessLine: S.auth === "none" ? S.bl : "", agent: "console", helper: "console-helper", users };
+  return {
+    wsUrl: WS_URL,
+    httpBase: HTTP,
+    businessLine: S.auth === "none" ? S.bl : "",
+    agent: "console",
+    helper: "console-helper",
+    capture: "console-capture",
+    users,
+  };
 }
 
 // —— 设置对话框 ——

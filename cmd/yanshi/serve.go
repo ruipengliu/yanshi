@@ -59,6 +59,7 @@ import (
 	"yanshi/internal/usage"
 	"yanshi/internal/webui"
 	"yanshi/internal/workqueue"
+	"yanshi/internal/xinlimock"
 )
 
 // devPGDSN 对应 docker-compose.yml 中的开发数据库。
@@ -237,6 +238,8 @@ func serve(args []string) error {
 	sandboxImage := fs.String("sandbox-image", "yanshi-sandbox:dev", "沙箱镜像（make sandbox-image 构建）")
 	sandboxRuntime := fs.String("sandbox-runtime", "", "沙箱容器运行时，如 runsc（gVisor）")
 	mcpDir := fs.String("mcp", "mcp", "远程 MCP Server 登记目录（docs/design/m5-mcp.md）；不存在时不启用")
+	xinliMock := fs.String("xinli-mock", "", "开发部署：为这些业务线（逗号分隔）登记进程内模拟的 xinli MCP Server（docs/design/captures.md §6），"+
+		"供调试控制台试用旁听的每日整理；数据只在内存中。不得用于生产")
 	embedModel := fs.String("embedding-model", os.Getenv("YANSHI_EMBEDDING_MODEL"), "Memory 检索用的嵌入模型（provider/model，如 ark/doubao-embedding-vision-251215）；为空时按文本相似度检索")
 	controllers := fs.Int("sandbox-controllers", 2, "沙箱控制器数量")
 	blobKind := fs.String("blob", "fs", "工件内容存储：fs | s3")
@@ -376,6 +379,13 @@ func serve(args []string) error {
 	mcpServers, err := mcpcap.LoadDir(*mcpDir)
 	if err != nil {
 		return fmt.Errorf("load MCP servers: %w", err)
+	}
+	if *xinliMock != "" {
+		x, err := xinlimock.Start(ctx, strings.Split(*xinliMock, ",")...)
+		if err != nil {
+			return fmt.Errorf("start xinli mock: %w", err)
+		}
+		mcpServers = append(mcpServers, x.Servers...)
 	}
 	var mcpConn *mcpcap.Connector
 	if len(mcpServers) > 0 {

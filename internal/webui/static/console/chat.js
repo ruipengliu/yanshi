@@ -7,7 +7,7 @@
 
 import { Mic, Player, Recorder } from "./audio.js";
 import { renderApproval, renderCard, renderQuestion } from "./cards.js";
-import { RequestError, backgroundResultOf, newInputId, payloadOf, routeInput, textOf } from "./device.js";
+import { RequestError, backgroundResultOf, newCaptureId, newInputId, payloadOf, routeInput, textOf } from "./device.js";
 import { render as markdown } from "./markdown.js";
 import { bytes, clock, copyButton, dur, fill, h, hue, num, reconcile, short, toast } from "./ui.js";
 
@@ -453,6 +453,10 @@ export class ChatPanel {
           );
           turn = null;
           break;
+        case "capture_appended":
+          // 旁听不开启 Run（ADR-0037）：不打断进行中的这一轮，只在对话中按日志顺序列出。
+          out.push(this.captureBatch(p, e));
+          break;
         case "call_started":
           out.push(h("div", { class: "note" }, `📞 通话开始 · ${p.model ?? ""}`));
           break;
@@ -481,6 +485,24 @@ export class ChatPanel {
     }
     this.lastTurnRun = turn?.runId ?? "";
     return out;
+  }
+
+  /** 一批旁听转写：说话人取自结构化字段，佩戴者的话与他人的话分开显示（ADR-0036）。 */
+  captureBatch(p, e) {
+    const segs = p.segments ?? [];
+    return h(
+      "div",
+      { class: "capture-batch" },
+      h("div", { class: "capture-head" }, "🎧 旁听", h("small", {}, ` · ${clock(e.time)} · ${segs.length} 段 · 不开启 Run`)),
+      segs.map((g) =>
+        h(
+          "div",
+          { class: `capture-line ${g.speaker === "SPEAKER_WEARER" ? "wearer" : "other"}` },
+          h("b", {}, speakerName(g.speaker === "SPEAKER_WEARER" ? "wearer" : "other", g.speaker_key)),
+          g.redacted ? h("i", {}, "（未通过内容安全检查，已拦截）") : g.text,
+        ),
+      ),
+    );
   }
 
   turnShell(turn, e) {
@@ -907,11 +929,13 @@ export class ChatPanel {
       this.ctxScreen,
       this.ctxContent,
     );
+    const capturePanel = this.compact ? null : this.capturePanel();
     return h(
       "div",
       { class: "composer-wrap" },
       this.status,
       this.pending,
+      capturePanel,
       h(
         "div",
         { class: "composer" },
@@ -930,6 +954,18 @@ export class ChatPanel {
                 { class: "tool", type: "button", title: "界面上下文", onclick: () => (ctxPanel.hidden = !ctxPanel.hidden) },
                 "🪟",
               ),
+          this.compact
+            ? null
+            : h(
+                "button",
+                {
+                  class: "tool",
+                  type: "button",
+                  title: "旁听：以 HostApp 的身份提交佩戴者与他人的对话转写（需开启旁听的 Agent，如 xinli-day）",
+                  onclick: () => ((capturePanel.hidden = !capturePanel.hidden), capturePanel.hidden || this.captureInput.focus()),
+                },
+                "🎧",
+              ),
           h("span", { class: "spacer" }),
           this.compact
             ? null
@@ -946,6 +982,108 @@ export class ChatPanel {
       ),
       this.compact ? null : h("div", { class: "composer-hint" }, "Enter 发送 · Shift+Enter 换行 · Esc 中断 · ⌘K 新建会话"),
     );
+  }
+
+  // —— 旁听 ——
+
+  /**
+   * 旁听面板：模拟 HostApp 的转写，逐段加入本批（说话人由 HostApp 的声纹区分给出，这里手选），再整批提交
+   * （docs/design/captures.md §3）。提交失败时保留本批与它的 capture_id，原样再交时服务端按 ID 去重。
+   */
+  capturePanel() {
+    this.captureSegs = [];
+    this.captureFailed = null;
+    this.captureSpeaker = h(
+      "select",
+      { title: "说话人" },
+      h("option", { value: "wearer" }, "佩戴者"),
+      h("option", { value: "other:A" }, "他人 A"),
+      h("option", { value: "other:B" }, "他人 B"),
+    );
+    this.captureInput = h("input", { placeholder: "这段话的转写，Enter 加入本批" });
+    this.captureList = h("div", { class: "capture-staged" });
+    this.captureBtn = h(
+      "button",
+      { class: "btn primary", type: "button", disabled: true, onclick: () => this.submitCaptures() },
+      "提交本批",
+    );
+    const add = () => {
+      const text = this.captureInput.value.trim();
+      if (!text) return;
+      const [speaker, key = ""] = this.captureSpeaker.value.split(":");
+      this.captureSegs.push({ speaker, key, text });
+      this.captureInput.value = "";
+      // 下一段默认换一个说话人：对话通常是轮流说的。
+      this.captureSpeaker.selectedIndex = speaker === "wearer" ? 1 : 0;
+      this.renderCaptureBatch();
+    };
+    this.captureInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.isComposing) {
+        e.preventDefault();
+        if (e.metaKey || e.ctrlKey) this.submitCaptures();
+        else add();
+      }
+    });
+    return h(
+      "div",
+      { class: "capture-panel", hidden: true },
+      h(
+        "div",
+        { class: "capture-row" },
+        this.captureSpeaker,
+        this.captureInput,
+        h("button", { class: "btn", type: "button", onclick: add }, "加入"),
+        this.captureBtn,
+      ),
+      this.captureList,
+      h(
+        "div",
+        { class: "composer-hint" },
+        "以 HostApp 的身份提交，不开启 Run · Enter 加入本批 · ⌘Enter 提交 · 输入框发「整理今天」开始每日整理",
+      ),
+    );
+  }
+
+  renderCaptureBatch() {
+    fill(
+      this.captureList,
+      this.captureSegs.map((g, i) =>
+        h(
+          "span",
+          { class: `staged-chip capture-chip ${g.speaker}` },
+          h("b", {}, speakerName(g.speaker, g.key)),
+          " ",
+          g.text,
+          h(
+            "button",
+            { class: "x", type: "button", onclick: () => (this.captureSegs.splice(i, 1), this.renderCaptureBatch()) },
+            "×",
+          ),
+        ),
+      ),
+    );
+    this.captureBtn.disabled = !this.captureSegs.length;
+    this.captureBtn.textContent = this.captureSegs.length ? `提交本批（${this.captureSegs.length} 段）` : "提交本批";
+  }
+
+  async submitCaptures() {
+    const segs = this.captureSegs;
+    if (!segs.length) return;
+    const key = JSON.stringify(segs);
+    const captureId = this.captureFailed?.key === key ? this.captureFailed.captureId : newCaptureId();
+    this.captureBtn.disabled = true;
+    try {
+      const r = await this.device.submitCaptures(this.view.sessionId, segs, { captureId });
+      this.captureFailed = null;
+      if (this.captureSegs === segs) this.captureSegs = [];
+      if (r.duplicate) toast("重复提交：按 capture_id 去重，没有再次写入");
+      else if (r.redacted) toast(`${r.redacted} 段未通过内容安全检查，只留占位`);
+    } catch (e) {
+      this.captureFailed = { key, captureId };
+      toast(`旁听提交失败：${e.message}。本批已保留，原样再交时沿用同一个 capture_id`, "error");
+    } finally {
+      this.renderCaptureBatch();
+    }
   }
 
   /** 上传附件：登记为上传中，发送等它们完成（send）。 */
@@ -1220,6 +1358,10 @@ export class ChatPanel {
 }
 
 /** keep 返回 m 中 key 的值，没有时以 make() 创建并保存。 */
+function speakerName(speaker, key) {
+  return speaker === "wearer" ? "佩戴者" : `他人${key ? ` ${key}` : ""}`;
+}
+
 function keep(m, key, make) {
   if (!m.has(key)) m.set(key, make());
   return m.get(key);

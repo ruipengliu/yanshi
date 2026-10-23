@@ -23,11 +23,12 @@ import {
  *   businessLine 业务线（-auth none 时自报；jwt 时以令牌为准，可为空）
  *   agent        使用脚本化模型的 Agent，默认 console
  *   helper       委托场景的目标 Agent（脚本化模型），默认 console-helper
+ *   capture      开启旁听的 Agent（脚本化模型，白名单含 captures），默认 console-capture
  *   users        [{endUser, token}, {endUser, token}]：EndUser A 与 B（B 只用于隔离检查）
  */
 export class Context {
   constructor(env, log) {
-    this.env = { agent: "console", ...env };
+    this.env = { agent: "console", capture: "console-capture", ...env };
     this.log = log;
     this.devices = [];
     this.views = [];
@@ -141,9 +142,9 @@ export class Context {
     };
   }
 
-  async newSession(device) {
+  async newSession(device, agent = this.env.agent) {
     this.alive();
-    const sid = await device.createSession(this.env.agent);
+    const sid = await device.createSession(agent);
     this.sessions.push(sid);
     this.step(`创建 Session ${sid}`);
     return sid;
@@ -1042,6 +1043,47 @@ export const SCENARIOS = [
         res?.content?.some((b) => b.media?.uri?.startsWith("artifact://")),
         "拍照的结果带回了照片工件",
       );
+      return { sessionId: sid };
+    },
+  },
+  {
+    id: "captures",
+    title: "旁听",
+    description:
+      "手机以 HostApp 的身份提交一批旁听转写：网页实时看到带说话人的转写，不开启 Run；同一 capture_id 再交为 duplicate；" +
+      "未开启旁听的 Agent 拒绝（invalid）；Run 经 captures 工具读出，佩戴者与他人的话分别注明。",
+    async run(c) {
+      const phone = await c.device("phone", { preset: "phone" });
+      const web = await c.device("web", { preset: "web" });
+      const sid = await c.newSession(phone, c.env.capture);
+      const wv = c.view(web, sid);
+      const segs = [
+        { speaker: "wearer", text: "明天我把报价发给张三" },
+        { speaker: "other", key: "A", text: "好的，周五之前" },
+      ];
+      const r = await phone.submitCaptures(sid, segs);
+      c.check(!r.duplicate && r.redacted === 0, "手机提交了一批两段的旁听");
+      const got = await wv.waitFor("capture on the web", () => wv.payloads("capture_appended")[0]);
+      c.check(
+        got.capture_id === r.captureId &&
+          got.segments?.[0]?.speaker === "SPEAKER_WEARER" &&
+          got.segments?.[1]?.speaker === "SPEAKER_OTHER" &&
+          got.segments?.[1]?.speaker_key === "A",
+        "网页看到同一批转写，说话人是结构化字段",
+      );
+      c.check(wv.payloads("run_requested").length === 0, "旁听不开启 Run");
+      const again = await phone.submitCaptures(sid, segs, { captureId: r.captureId });
+      c.check(again.duplicate, "同一 capture_id 再交返回 duplicate");
+      const plain = await c.newSession(phone);
+      await rejects(c, () => phone.submitCaptures(plain, segs), "invalid", "未开启旁听的 Agent 拒绝旁听");
+      const t = await web.submit(sid, "call captures {}");
+      await c.runEnd(wv, t.runId);
+      const reply = wv.reply(t.runId);
+      c.check(
+        reply.includes("[佩戴者] 明天我把报价发给张三") && reply.includes("[他人 A] 好的，周五之前"),
+        "Run 经 captures 读出转写，注明说话人",
+      );
+      c.check(wv.payloads("capture_appended").length === 1, "日志中只有一批旁听");
       return { sessionId: sid };
     },
   },

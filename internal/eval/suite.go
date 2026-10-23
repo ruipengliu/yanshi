@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"yanshi/internal/xinlimock"
 )
 
 // Case 是一个评测用例（evals/*.yaml）。
@@ -71,11 +73,7 @@ type XinliSetup struct {
 	Days     map[string]string `yaml:"days"`
 }
 
-type XinliProject struct {
-	ID     string `yaml:"id"`
-	Name   string `yaml:"name"`
-	Digest string `yaml:"digest"`
-}
+type XinliProject = xinlimock.Project
 
 // CaptureSegment 是一段旁听转写：Speaker 为 wearer（佩戴者）或 other（他人，Key 区分不同的人）。
 type CaptureSegment struct {

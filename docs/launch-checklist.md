@@ -27,7 +27,7 @@
   - 沙箱控制器运行在独立节点池，使用 gVisor RuntimeClass，只有它持有容器或 K8s API 权限（ADR-0008、ADR-0010）；
   - `-model-concurrency`、`-model-rps` 按提供商的账号上限除以进程数配置（[模型调用](./design/model-calls.md)），弹性扩容时随副本数联动；
   - 所有进程的 `-notify-shards` 一致（ADR-0028）；
-  - 生产进程不带 `-faults`（服务端故障注入与 `/v1/debug/*` 只用于调试部署，ADR-0033），也不带 `-insecure-remote`（`-auth none` 监听非回环地址）；
+  - 生产进程不带 `-faults`（服务端故障注入与 `/v1/debug/*` 只用于调试部署，ADR-0033），也不带 `-insecure-remote`（`-auth none` 监听非回环地址）与 `-xinli-mock`（模拟的 xinli MCP Server，只用于调试控制台）；
   - 部署清单（Helm 或 Kustomize）进仓库，含网络策略：出网只允许模型、内容安全、推送三类外联（ADR-0001）；
   - 配置分发（AgentDef、发布配置、业务线公钥、价格表在所有进程一致）与按 `run_id` 的链路追踪；
   - 容量矩阵与准入阈值在目标环境实测后填入（评审 §8.4 第 4、6 项）。
