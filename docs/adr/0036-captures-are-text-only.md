@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # 旁听只收文字，信任按说话人区分

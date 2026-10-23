@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # 以每日旁听 Session 实现分级保留
