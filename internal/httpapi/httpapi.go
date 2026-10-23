@@ -28,7 +28,7 @@
 //	GET  /v1/artifacts/{id}/meta                   工件元数据
 //	GET  /v1/quota?end_user=                       当前周期的配额与已用（docs/design/m4-quota-usage.md §5）
 //	GET  /v1/usage?from=&to=&group_by=&end_user=   用量汇总（day | end_user | model | agent；金额单位：微元）
-//	/v1/debug/*                                    故障注入与进程指标，只在 serve -faults 时提供（debug.go）
+//	/v1/debug/*                                    故障注入与进程指标，只在 serve -faults 时提供；模拟的 xinli 业务线，只在 serve -xinli-mock 时提供（debug.go）
 //
 // 除 /healthz 外，所有请求须携带业务线签发的令牌（Authorization: Bearer），
 // 调用方只能访问自己的 Session、Node 与工件，其余一律 404（docs/design/auth.md）。
@@ -89,6 +89,8 @@ type Server struct {
 	Feeds *feed.Hub
 	// Faults 非 nil 时注册调试接口（/v1/debug/*，serve -faults，ADR-0033）。
 	Faults *faults.Injector
+	// Xinli 非 nil 时提供 GET /v1/debug/xinli（serve -xinli-mock）：模拟的 xinli 业务线中 EndUser 的数据。只用于开发部署。
+	Xinli  func(businessLine, endUser string) any
 	Logger *slog.Logger
 }
 

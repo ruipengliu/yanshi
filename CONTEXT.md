@@ -105,8 +105,12 @@ HostApp 提交的一段旁听转写：EndUser 与他人的日常对话，带说�
 _Avoid_: 录音、输入（指它时）、CallTranscript（那是 Call 的转写）
 
 **Project（项目）**:
-围绕一个主题、跨天归集旁听摘要的长期 Session。旁听原文只短期保留，Project 中只有摘要；关于 EndUser 本人的稳定结论（偏好、沟通习惯）不进 Project，进 Memory。
+围绕一个主题、跨天归集旁听摘要的长期 Session。旁听原文只短期保留，Project 中只有摘要（谈了什么、定了什么、双方各自答应的事、风险）与 EndUser 本人的承诺；EndUser 亲口说过的稳定信息（偏好、人际关系）不进 Project，进 Memory。
 _Avoid_: 主题、文件夹、知识库
+
+**Awareness（觉察）**:
+每日整理从 EndUser 本人的话里得出的、对其沟通方式的观察与建议（如"答应别人时会给出明确期限"），随当天的整理结果交给业务线，按天展示。它是推断，不是 EndUser 说过的话，所以不写入 Memory；情绪与身心状态不属于觉察，只以 health 类别写入 Memory。
+_Avoid_: 洞察、insights、画像
 
 **ContentBlock（内容块）**:
 Event 中承载一段多模态内容（文本、图片、音频、视频、文件引用）的单元。

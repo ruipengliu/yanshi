@@ -22,16 +22,31 @@ import (
 //
 // 规则对能访问其 Session 的调用方可见：用户令牌只能对自己的 Session 注入（必须指定 session_id），服务令牌对本业务线的
 // Session；不限 Session 的规则只有服务令牌与 -auth none 可以添加。
+//
+// serve -xinli-mock 时另有（与 -faults 无关）：
+//
+//	GET    /v1/debug/xinli?business_line=&end_user=   模拟的 xinli 业务线中该 EndUser 的项目与整理结果（控制台的"旁听"视图）
 func (s *Server) debugRoutes() map[string]http.HandlerFunc {
-	if s.Faults == nil {
-		return nil
+	routes := map[string]http.HandlerFunc{}
+	if s.Faults != nil {
+		routes["GET /v1/debug/faults"] = s.listFaults
+		routes["POST /v1/debug/faults"] = s.addFault
+		routes["DELETE /v1/debug/faults"] = s.deleteFaults
+		routes["GET /v1/debug/stats"] = s.stats
 	}
-	return map[string]http.HandlerFunc{
-		"GET /v1/debug/faults":    s.listFaults,
-		"POST /v1/debug/faults":   s.addFault,
-		"DELETE /v1/debug/faults": s.deleteFaults,
-		"GET /v1/debug/stats":     s.stats,
+	if s.Xinli != nil {
+		routes["GET /v1/debug/xinli"] = s.xinliState
 	}
+	return routes
+}
+
+// xinliState 返回模拟的业务线中调用方（用户令牌为本人，服务令牌与 -auth none 按参数）的数据，鉴权同 Memory 的列表。
+func (s *Server) xinliState(w http.ResponseWriter, r *http.Request) {
+	bl, eu, ok := memoryOwner(w, r, s)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, s.Xinli(bl, eu))
 }
 
 // faultVisible 报告调用方能否看到、增删这条规则：不限 Session 的规则只对服务令牌（与 -auth none）；

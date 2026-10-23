@@ -1,5 +1,5 @@
 {
-  "started_at": "2026-10-23T13:51:26.133717Z",
+  "started_at": "2026-10-23T15:41:43.060289Z",
   "judge": "codex/gpt-6.1-sol:high",
   "cases": [
     {
@@ -136,6 +136,19 @@
       "cache_hit": 0
     },
     {
+      "name": "capture-day-digest",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 5,
+      "avg_tokens": 8709,
+      "avg_seconds": 26.22820225,
+      "avg_calls": 3,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.35184809510285225
+    },
+    {
       "name": "capture-health-category",
       "trials": 3,
       "passed": 3,
@@ -206,12 +219,12 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 5,
-      "avg_tokens": 11404,
-      "avg_seconds": 28.419172402666664,
-      "avg_calls": 6,
+      "avg_tokens": 18978,
+      "avg_seconds": 40.05735494466666,
+      "avg_calls": 6.333333333333333,
       "avg_compactions": 0,
       "avg_takeovers": 0,
-      "cache_hit": 0.6834769851457914
+      "cache_hit": 0.43301995466537846
     },
     {
       "name": "card-action-followup",

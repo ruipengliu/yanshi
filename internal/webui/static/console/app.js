@@ -11,6 +11,7 @@ import { DEVICE_PRESETS, SessionView, SimDevice, payloadOf, randomHex, textOf } 
 import { DeviceTile } from "./devices.js";
 import { Inspector, summarize } from "./inspector.js";
 import { runScenario } from "./scenarios.js";
+import { XinliView } from "./xinli.js";
 import { $, Artifacts, ago, fill, h, hue, toast } from "./ui.js";
 
 const WS_URL = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/v1/connect`;
@@ -383,6 +384,7 @@ function renderTop() {
       [
         ["chat", "💬 对话"],
         ["devices", "📱 设备"],
+        ["xinli", "🎧 旁听"],
         ["console", "🛠 控制台"],
       ].map(([id, name]) => h("button", { class: S.view === id ? "selected" : "", onclick: () => setView(id) }, name)),
     ),
@@ -443,6 +445,18 @@ function switchUser(name) {
   refreshSessions();
   renderAll();
 }
+
+// 旁听视图：业务线这一侧的数据（xinli.js）。打开会话时切到"对话"视图。
+const xinli = new XinliView({
+  http: (method, path) => http(method, path),
+  idQuery: () => idQuery(),
+  identity: () => identity(),
+  openSession: (sid) => {
+    openSession(sid);
+    refreshSessions();
+    setView("chat");
+  },
+});
 
 function setView(v) {
   S.view = v;
@@ -1007,7 +1021,11 @@ function resetAll() {
 
 function renderAll() {
   renderTop();
-  for (const v of ["chat", "devices", "console"]) $(`view-${v}`).hidden = S.view !== v;
+  for (const v of ["chat", "devices", "xinli", "console"]) $(`view-${v}`).hidden = S.view !== v;
+  if (S.view === "xinli") {
+    fill($("xinli-main"), xinli.root);
+    xinli.start();
+  } else xinli.stop();
   if (S.view === "chat") renderChat();
   if (S.view === "devices") renderDevices();
   if (S.view === "console") {

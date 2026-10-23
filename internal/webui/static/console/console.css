@@ -2614,3 +2614,125 @@ dialog .row {
 .assistant-turn.draft.continued {
   margin-top: -10px;
 }
+
+/* —— 旁听视图（xinli.js）：业务线的今日、项目、觉察 —— */
+.xinli-main {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 18px;
+}
+.xinli {
+  max-width: 920px;
+  margin: 0 auto;
+}
+.xinli-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+.xinli .muted {
+  color: var(--muted);
+}
+.xinli-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+.xinli-card-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+  cursor: default;
+}
+.xinli-card-head .spacer {
+  flex: 1;
+}
+.xinli-card-head code {
+  font-size: 11px;
+  color: var(--muted);
+}
+.xinli-headline {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.xinli-group {
+  border-left: 3px solid var(--accent-soft);
+  padding: 4px 0 4px 10px;
+  margin-top: 8px;
+}
+.xinli-group-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.xinli-list {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+.xinli-list .label {
+  flex: 0 0 64px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.xinli-list ul {
+  margin: 0;
+  padding-left: 16px;
+}
+.xinli-list.mine .label,
+.xinli-list.commitments .label {
+  color: var(--accent);
+}
+.xinli-list.theirs .label {
+  color: var(--delegate);
+}
+.xinli-list.risk .label {
+  color: var(--bad);
+}
+.xinli-list.decided .label,
+.xinli-list.habit .label {
+  color: var(--ok);
+}
+.xinli-list.suggestion .label {
+  color: var(--warn);
+}
+.xinli-list .due {
+  color: var(--warn);
+}
+.xinli-timeline {
+  margin-top: 10px;
+  border-top: 1px solid var(--line-soft);
+}
+.xinli-entry-date {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.xinli-memories {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+}
+.xinli-memories li {
+  padding: 3px 0;
+}
+.xinli-memories .tag {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--subtle);
+  border: 1px solid var(--line);
+}
+.xinli-memories .tag.cat-health {
+  color: var(--bad);
+  border-color: var(--bad);
+}

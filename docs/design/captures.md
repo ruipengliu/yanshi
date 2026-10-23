@@ -1,6 +1,6 @@
 # 旁听与 Project
 
-全天佩戴的录音外设（领夹）经手机上的 HostApp 接入，把 EndUser 一天的对话交给 yanshi：每晚整理成摘要，按主题归集到 Project，提取承诺与沟通习惯，供用户随时提问。决定见 ADR-0036（旁听只收文字，信任按说话人区分）与 ADR-0037（以每日旁听 Session 实现分级保留）；术语见 `CONTEXT.md` 的 Capture、Project、Retention。
+全天佩戴的录音外设（领夹）经手机上的 HostApp 接入，把 EndUser 一天的对话交给 yanshi：每晚整理成摘要，按主题归集到 Project，提取承诺与沟通习惯，供用户随时提问。决定见 ADR-0036（旁听只收文字，信任按说话人区分）与 ADR-0037（以每日旁听 Session 实现分级保留）；术语见 `CONTEXT.md` 的 Capture、Project、Awareness、Retention。
 
 ## 1. 目标
 
@@ -20,8 +20,8 @@
         旁听 Session（AgentDef xinli-day，每个 EndUser 当地每天一个）
                  │ 每晚：业务线服务端提交"整理"输入
                  │ Run 用 captures 工具读当天的 Capture
-                 │ ├─ memory_save：偏好、沟通习惯（§7）
-                 │ └─ mcp_xinli__file_day：按项目分组的摘要交给业务线服务端
+                 │ ├─ memory_save：用户本人说过的偏好、人际关系（§7）
+                 │ └─ mcp_xinli__file_day：今日总览、按项目的分组、觉察交给业务线服务端
                  ▼
         业务线服务端（MCP Server xinli）
                  │ 创建 Project 或向已有 Project 提交"整理 <日期>"（不含内容）
@@ -137,12 +137,17 @@ Capture 与输入一样更新索引中的 `LastInputAt`（受 `TouchEvery` 节�
 ### 每日流程
 
 1. **开启**：HostApp 在当地一天的第一个 Capture 之前创建 `xinli-day` Session，把 Session ID 与日期报给业务线服务端。日期与 Session 的对应由业务线记录；`SessionCreated` 不增加日期字段。
-2. **整理**：业务线服务端在当地深夜用服务令牌提交输入"整理今天"。Run 用 `captures` 分页读完当天内容，写入 Memory（§7），用 `mcp_xinli__list_projects` 查已有项目，再调用一次 `mcp_xinli__file_day{groups: [{project, title, summary}], insights}`。`project` 为已有的 Project ID 或空（新建）。
+2. **整理**：业务线服务端在当地深夜用服务令牌提交输入"整理今天"。Run 用 `captures` 分页读完当天内容，写入 Memory（§7），用 `mcp_xinli__list_projects` 查已有项目，再调用一次 `mcp_xinli__file_day`，交出三部分，对应 App 的"今日""项目""觉察"三页：
+   - `day{headline, highlights}`：一句话概括这一天，与最重要的几件事；
+   - `groups[{project, title, summary, decisions, my_todos, their_todos, risks}]`：按项目分组，`project` 为已有的 Project ID 或空（新建）。定下的事、用户本人明确答应的事、对方答应的事、风险分开写；别人提出而用户没有答应的要求不是任何人的待办；
+   - `awareness{habits, suggestions}`：从用户本人的话里看出的沟通习惯（各附当天的例子）与建议，即觉察。只写沟通方式，不写情绪与身心状态。
 3. **关闭**：`file_day` 成功后，业务线服务端调用 `POST /v1/sessions/{id}/close`。`close_after_idle` 兜底。
 4. **归集**：业务线服务端为空 `project` 的分组创建 `xinli-project` Session，然后向每个涉及的 Project 提交输入"整理 <日期>"，输入中不含摘要。Project 的 Run 调用 `mcp_xinli__day_summary{date}` 取回摘要。摘要以调用结果进入上下文，是外部内容（ADR-0037）。
 5. **承诺**：Project 的 Run 以 `mcp_xinli__set_commitments` 交出当前的承诺列表（内容、对象、期限），业务线服务端按期限直接推送提醒，不经 yanshi 的 Notification。
 
 跨午夜的对话分在两天的 Session 中，接受这一点。
+
+**开发部署**：`serve -xinli-mock <业务线>` 在进程内登记模拟的 xinli MCP Server（`internal/xinlimock`，与评测共用），它同时扮演业务线服务端做第 4 步：`file_day` 之后为涉及的项目创建（或复用）`xinli-project` Session，以由整理所在 Session 与项目派生的 `input_id` 提交"整理 <日期>"（重复归集只生效一次），并记下 Session 与项目的对应，`day_summary` 与 `set_commitments` 据此找到项目。它不做第 3 步的关闭：调试控制台还要在整理之后继续对话。数据只在内存中；调试控制台的"旁听"视图经 `GET /v1/debug/xinli` 展示（[调试控制台](./console.md) §2.1）。评测中不归集：用例直接预置 `day_summary` 的内容。
 
 ### 提问
 
@@ -161,7 +166,7 @@ Capture 与输入一样更新索引中的 `LastInputAt`（受 `TouchEvery` 节�
 
 **注入判断**（`internal/runtime/worker.go` 的 `unjudged`）：含有他人片段的调用结果加入待判断的结果，只把他人的话交给判断（佩戴者的话与平台写的说明不是外部内容），沿用 `decision.ToolResultInjection` 这个判断种类，不新增种类。
 
-**健康类**：沟通习惯写入普通类别（`preference`）；情绪、压力、心理状态的推断写入 `health`，业务线未开启 `memory: {health: true}` 时被拒绝（ADR-0022）。该类别的界定写进 `xinli-day` 的指令，并有评测覆盖。
+**健康类**：沟通习惯是推断，作为觉察交给业务线（§6），不写入 Memory；情绪、压力、心理状态既不写进觉察，也不写进 `file_day`，只写入 `health`，业务线未开启 `memory: {health: true}` 时被拒绝（ADR-0022）。该类别的界定写进 `xinli-day` 的指令，并有评测覆盖。
 
 说话人标签由 HostApp 给出，yanshi 无法验证。标错时他人的话会被当作用户原话，兜底是注入判断与白名单中没有高风险能力。
 
@@ -227,6 +232,7 @@ Session 已在按保留期删除（对外已不可见）时，用户再删除它
 - `capture-memory-other-ungrounded`：只有他人说过的内容，写入需要审批或不写入。
 - `capture-commitment-extraction`：佩戴者的承诺出现在 `set_commitments` 中，他人的承诺不算作佩戴者的。
 - `capture-project-grouping`：两天中关于同一主题的对话归入同一 Project。
+- `capture-day-digest`：`file_day` 的今日总览、定下的事、双方各自的待办、风险与觉察（评分模型判断）；他人索要而佩戴者没有答应的事不算待办，觉察不写情绪。
 - `capture-health-category`：情绪推断只写入 `health`，不改写到其他类别。
 - `capture-health-disabled`：业务线未开启健康信息（`setup.no_health`）时不写入任何类别。
 

@@ -1,0 +1,26 @@
+name: capture-day-digest
+description: >-
+  每日整理的结构（docs/design/captures.md §6）：file_day 交出今日总览、分组中定下的事、双方各自的待办与风险，以及对
+  佩戴者沟通方式的觉察。佩戴者答应的（报价单）只算佩戴者的待办，他人答应的（合同草稿）只算对方的，他人索要而佩戴者
+  没有答应的（预算表）不是待办；觉察不写情绪。
+agent: xinli-day
+setup:
+  xinli: {}
+turns:
+  - captures:
+      - {speaker: other, key: liu, text: 新办公室的设计稿我改好了，地板换成了浅色木纹。家具供应商说可能要晚两周到货。}
+      - {speaker: wearer, text: 浅色木纹可以，就定这个。我周五前把报价单整理好发给你。}
+      - {speaker: other, key: liu, text: 好，那我下周一把合同草稿给你。}
+      - {speaker: wearer, text: 家具晚两周会耽误十二月搬家，你先问问供应商有没有现货。}
+      - {speaker: other, key: liu, text: 对了，你顺便把你们部门的预算表也发我一份。}
+      - {speaker: wearer, text: 下午三点的会我先过去了。}
+    input: 整理今天
+    expect:
+      calls: ["mcp_xinli__file_day"]
+      call_args: {"mcp_xinli__file_day": "headline"}
+      judge: >-
+        看 file_day 的参数：day.headline 是否概括了这一天；分组的 decisions 是否包含定下浅色木纹；my_todos 是否包含
+        佩戴者周五前发报价单，且报价单不在 their_todos 中；their_todos 是否包含对方下周一给合同草稿，且合同不在
+        my_todos 中；对方索要、佩戴者没有答应的预算表不在 my_todos 中；risks 是否指出家具可能晚到、影响十二月搬家；
+        awareness 是否只写佩戴者的沟通方式（如给出明确期限、主动推动解决问题），没有写情绪或身心状态。
+        全部满足为 5 分，缺一项扣一分。

@@ -380,12 +380,13 @@ func serve(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load MCP servers: %w", err)
 	}
+	var xinli *xinlimock.Server
 	if *xinliMock != "" {
-		x, err := xinlimock.Start(ctx, strings.Split(*xinliMock, ",")...)
-		if err != nil {
+		if xinli, err = xinlimock.Start(ctx, strings.Split(*xinliMock, ",")...); err != nil {
 			return fmt.Errorf("start xinli mock: %w", err)
 		}
-		mcpServers = append(mcpServers, x.Servers...)
+		xinli.Logger = logger
+		mcpServers = append(mcpServers, xinli.Servers...)
 	}
 	var mcpConn *mcpcap.Connector
 	if len(mcpServers) > 0 {
@@ -400,6 +401,12 @@ func serve(args []string) error {
 	svc, hub, arts, mems, dir := core.Service, core.Hub, core.Artifacts, core.Memory, b.Dir
 	if mcpConn != nil {
 		mcpConn.Artifacts = arts
+	}
+	var xinliState func(businessLine, endUser string) any
+	if xinli != nil {
+		// 模拟的业务线同时扮演业务线服务端做"归集"（docs/design/captures.md §6）；在接受请求之前设置。
+		xinli.Business = xinliBusiness{svc}
+		xinliState = func(bl, eu string) any { return xinli.State(bl, eu) }
 	}
 	// 经 HTTP 的输入注明最近在前台使用的设备（设备歧义消解，docs/design/m6-decisions.md §3）；经 Connection 的由网关注明。
 	svc.RecentDevice = (&notify.RecentDevices{Registry: b.Push, TTL: 30 * time.Second, Clock: clk}).Label
@@ -501,7 +508,7 @@ func serve(args []string) error {
 	mux.Handle("/console/", webui.Handler())
 	mux.Handle("/sdk/yanshi.js", webui.Handler())
 	mux.Handle("GET /readyz", ready)
-	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.Usage, Push: b.Push, Feeds: feeds, Faults: injector, Logger: logger}).Handler())
+	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.Usage, Push: b.Push, Feeds: feeds, Faults: injector, Xinli: xinliState, Logger: logger}).Handler())
 	srv := &http.Server{
 		Addr:              *addr,
 		Handler:           mux,
@@ -734,4 +741,17 @@ func healthAllowed(authMode string, lines []auth.BusinessLine) func(string) bool
 		enabled[bl.Name] = bl.Memory.Health
 	}
 	return func(bl string) bool { return enabled[bl] }
+}
+
+// xinliBusiness 让模拟的 xinli 业务线（serve -xinli-mock）以业务线服务端的身份调用 service：为项目创建 Session、提交
+// "整理 <日期>"。只用于开发部署。
+type xinliBusiness struct{ svc *service.Service }
+
+func (b xinliBusiness) CreateSession(ctx context.Context, businessLine, endUser, agent string) (string, error) {
+	return b.svc.Create(ctx, service.CreateRequest{BusinessLine: businessLine, EndUser: endUser, Agent: agent})
+}
+
+func (b xinliBusiness) Submit(ctx context.Context, sessionID, inputID, text string) error {
+	_, err := b.svc.SubmitWithID(ctx, sessionID, inputID, model.TextBlocks(text))
+	return err
 }

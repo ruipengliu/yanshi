@@ -379,7 +379,7 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		bl = NoHealthBusinessLine
 	}
 	if c.Setup.Xinli != nil {
-		in.xinli.Seed(endUser, c.Setup.Xinli.Projects, c.Setup.Xinli.Days)
+		in.xinli.Seed(bl, endUser, c.Setup.Xinli.Projects, c.Setup.Xinli.Days)
 	}
 	// 预置记忆的 ID 与生产一致不可猜（由随机调用 ID 派生）：顺序 ID 会让模型按规律"猜出"未见过的 ID，
 	// 替换掉另一条记忆（memory-update-crowded 中观察到）。
