@@ -4,6 +4,7 @@
 
 ## 先读
 
+- 本机开发与 Mac mini 环境：开始开发、构建或测试前，若本工作树或主工作树存在 `.local/macmini/README.md`，必须先读并遵循。本机主要编码与 Git 操作，优先通过本地 `dev` 入口同步当前工作区并在 Mac mini 构建、测试或启动服务，中间件使用其 OrbStack；可用命令以文档中的当前实现状态为准，不得把历史源码快照当作当前代码。该文档及辅助配置不提交 Git；文档缺失时先检查本地配置，不假定远程环境已就绪。
 - 术语：`CONTEXT.md`。代码、注释、文档只用其中的名词；出现新概念时先在那里定义。
 - 目标与原则：`docs/charter.md`。
 - 改动执行语义（Session / Run / Event / Attempt / Worker）之前：`docs/design/m0-core-primitives.md`。
