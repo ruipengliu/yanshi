@@ -296,6 +296,8 @@ export class ChatPanel {
           : [h("div", { class: "empty" }, this.compact ? "还没有消息" : "发一条消息开始对话。可以附图片、发语音，或者打电话。")],
       );
       if (!this.compact) this.renderHeader();
+      // 会话的 Agent 取自 SessionCreated：面板先于事件打开时，事件到达后再判断一次。
+      if (this.captureNote && !this.captureNote.parentElement.hidden) this.renderCaptureNote();
     }
     if (pending) this.renderPending();
     const behind = this.renderDraft(now);
@@ -969,7 +971,11 @@ export class ChatPanel {
                   class: "tool",
                   type: "button",
                   title: "旁听：以 HostApp 的身份提交佩戴者与他人的对话转写（需开启旁听的 Agent，如 xinli-day）",
-                  onclick: () => ((capturePanel.hidden = !capturePanel.hidden), capturePanel.hidden || this.captureInput.focus()),
+                  onclick: () => {
+                    capturePanel.hidden = !capturePanel.hidden;
+                    this.ctx.setCaptureOpen?.(!capturePanel.hidden);
+                    if (!capturePanel.hidden) (this.renderCaptureNote(), this.captureInput.focus());
+                  },
                 },
                 "🎧",
               ),
@@ -1045,9 +1051,13 @@ export class ChatPanel {
         else add();
       }
     });
+    this.captureNote = h("div", { class: "capture-note", hidden: true });
+    const open = !!this.ctx.captureOpen?.();
+    if (open) queueMicrotask(() => this.renderCaptureNote());
     return h(
       "div",
-      { class: "capture-panel", hidden: true },
+      { class: "capture-panel", hidden: !open },
+      this.captureNote,
       h(
         "div",
         { class: "capture-row" },
@@ -1065,6 +1075,51 @@ export class ChatPanel {
         "以 HostApp 的身份提交，不开启 Run · Enter 加入本批 · ⌘Enter 提交 · 输入框发「整理今天」开始每日整理",
       ),
     );
+  }
+
+  /** 本会话的 Agent。 */
+  sessionAgent() {
+    return this.view.payloads("session_created")[0]?.agent?.name ?? this.ctx.agentName?.() ?? "";
+  }
+
+  /**
+   * 本会话的 Agent 不接收旁听时（控制台只知道自己列出的旁听 Agent；服务端以 invalid 拒绝时也算），提示并给出新建旁听会话的按钮：
+   * 尚未提交的段随之交到新会话。
+   */
+  renderCaptureNote() {
+    const agent = this.sessionAgent();
+    const rejected = this.captureRejected || (agent && !CAPTURE_AGENTS.includes(agent));
+    this.captureNote.hidden = !rejected;
+    if (!rejected) return;
+    fill(
+      this.captureNote,
+      `当前会话的 Agent（${agent || "?"}）${this.captureRejected ? "不接收旁听" : "可能不接收旁听"}：旁听要交给开启了旁听的 Agent。`,
+      ...CAPTURE_AGENTS.map((a) =>
+        h(
+          "button",
+          { class: "btn", type: "button", onclick: () => this.moveCaptures(a) },
+          `新建 ${a} 会话${this.captureSegs.length ? "并提交本批" : ""}`,
+        ),
+      ),
+    );
+  }
+
+  /** 新建 agent 的会话，把尚未提交的段交到那里，再切换过去（旁听面板保持打开）。 */
+  async moveCaptures(agent) {
+    const listening = !!this.listener;
+    this.stopListening({ submit: false });
+    const segs = this.captureSegs.splice(0);
+    try {
+      const sid = await this.device.createSession(agent);
+      if (segs.length) await this.device.submitCaptures(sid, segs);
+      this.ctx.setCaptureOpen?.(true);
+      this.ctx.openSession?.(sid);
+      toast(`已新建 ${agent} 会话${segs.length ? `，提交了 ${segs.length} 段` : ""}${listening ? "；点 🎙 继续收音" : ""}`);
+    } catch (e) {
+      this.captureSegs.unshift(...segs);
+      this.renderCaptureBatch();
+      toast(`新建会话失败：${e.message}`, "error");
+    }
   }
 
   currentSpeaker() {
@@ -1095,6 +1150,7 @@ export class ChatPanel {
     const n = this.captureFailed ? this.captureFailed.segs.length : this.captureSegs.length;
     this.captureBtn.disabled = this.captureBusy || !n;
     this.captureBtn.textContent = !n ? "提交本批" : this.captureFailed ? `重交上一批（${n} 段）` : `提交本批（${n} 段）`;
+    if (!this.captureNote.hidden) this.renderCaptureNote();
   }
 
   async submitCaptures() {
@@ -1104,6 +1160,7 @@ export class ChatPanel {
     if (!segs.length) return;
     const captureId = retry ? retry.captureId : newCaptureId();
     this.captureBusy = true;
+    this.captureRejected = false;
     this.renderCaptureBatch();
     try {
       const r = await this.device.submitCaptures(this.view.sessionId, segs, { captureId });
@@ -1111,8 +1168,17 @@ export class ChatPanel {
       if (r.duplicate) toast("重复提交：按 capture_id 去重，没有再次写入");
       else if (r.redacted) toast(`${r.redacted} 段未通过内容安全检查，只留占位`);
     } catch (e) {
-      this.captureFailed = { segs, captureId };
-      toast(`旁听提交失败：${e.message}。这一批已保留，再交时沿用同一个 capture_id`, "error");
+      if (e instanceof RequestError && e.code === "invalid") {
+        // 请求本身不合法（如 Agent 不接收旁听）：再交也不会成功，段放回本批，停止收音，提示换到旁听会话。
+        this.captureSegs.unshift(...segs);
+        this.captureRejected = true;
+        this.stopListening({ submit: false });
+        this.renderCaptureNote();
+        toast(`旁听被拒绝：${e.message}`, "error");
+      } else {
+        this.captureFailed = { segs, captureId };
+        toast(`旁听提交失败：${e.message}。这一批已保留，再交时沿用同一个 capture_id`, "error");
+      }
     } finally {
       this.captureBusy = false;
       this.renderCaptureBatch();
@@ -1124,6 +1190,7 @@ export class ChatPanel {
    * （ADR-0036）。识别出的每句话按当前选中的说话人加入本批，每 10 秒自动提交一批。识别在静音后会自行结束，收音期间随即重启。
    */
   startListening() {
+    this.captureRejected = false;
     const rec = new SpeechRecognitionImpl();
     rec.lang = "zh-CN";
     rec.continuous = true;
@@ -1168,8 +1235,8 @@ export class ChatPanel {
     this.renderInterim("");
   }
 
-  /** 停止收音，已识别的段立即提交。 */
-  stopListening() {
+  /** 停止收音，已识别的段立即提交（submit 为 false 时留在本批）。 */
+  stopListening({ submit = true } = {}) {
     const l = this.listener;
     if (!l) return;
     this.listener = null;
@@ -1179,7 +1246,7 @@ export class ChatPanel {
     this.listenBtn.classList.remove("recording");
     this.listenBtn.textContent = "🎙 持续收音";
     this.captureInterim.hidden = true;
-    if (this.captureSegs.length) this.submitCaptures();
+    if (submit && this.captureSegs.length) this.submitCaptures();
   }
 
   renderInterim(text) {
@@ -1467,6 +1534,9 @@ export class ChatPanel {
 /** keep 返回 m 中 key 的值，没有时以 make() 创建并保存。 */
 /** 浏览器的语音识别（Safari 与 Chrome 带 webkit 前缀）；不支持时为 undefined。 */
 const SpeechRecognitionImpl = globalThis.SpeechRecognition ?? globalThis.webkitSpeechRecognition;
+
+/** 控制台列出的、开启了旁听的 Agent（agents/xinli-day.yaml、agents/console-capture.yaml）。 */
+const CAPTURE_AGENTS = ["xinli-day", "console-capture"];
 
 function speakerName(speaker, key) {
   return speaker === "wearer" ? "佩戴者" : `他人${key ? ` ${key}` : ""}`;

@@ -37,7 +37,7 @@
 | 语音消息 | 按住 🎤 录音，在浏览器中编码为 16 kHz 的 WAV（火山方舟接受 wav、mp3、m4a，不接受 webm），上传后作为 `audio/wav` 工件提交。由模型直接听，不经转写 |
 | 界面上下文 | 可选：随下一条消息附上界面与可见内容（`UIContext`） |
 | 卡片动作 | 点卡片上的按钮或列表项（`CardAction`，[卡片](./cards.md) §4） |
-| 旁听 | 🎧：以 HostApp 的身份逐段写下转写、手选说话人（佩戴者、他人 A、他人 B），整批以 `SubmitCaptures` 提交，不开启 Run（[旁听](./captures.md) §3）。**持续收音**：浏览器的语音识别（Web Speech API，`zh-CN`）在页面内把麦克风转成文字，扮演 HostApp 的转写，音频不发给 yanshi（ADR-0036）；它不区分说话人，每句话按当时选中的说话人记，可随时切换；每 10 秒自动提交一批，停止时提交余下的。识别在静音后自行结束，收音期间随即重启。Chrome 的识别服务要访问 Google，网络不通时改用 Safari（macOS 需开启听写）。提交失败的一批单独保留，再交时沿用它的 `capture_id`、服务端按 ID 去重，之后的段另起一批。只有开启旁听的 Agent 接收（`console-capture`、`xinli-day`），其余为 invalid |
+| 旁听 | 🎧：以 HostApp 的身份逐段写下转写、手选说话人（佩戴者、他人 A、他人 B），整批以 `SubmitCaptures` 提交，不开启 Run（[旁听](./captures.md) §3）。**持续收音**：浏览器的语音识别（Web Speech API，`zh-CN`）在页面内把麦克风转成文字，扮演 HostApp 的转写，音频不发给 yanshi（ADR-0036）；它不区分说话人，每句话按当时选中的说话人记，可随时切换；每 10 秒自动提交一批，停止时提交余下的。识别在静音后自行结束，收音期间随即重启。Chrome 的识别服务要访问 Google，网络不通时改用 Safari（macOS 需开启听写）。提交失败的一批单独保留，再交时沿用它的 `capture_id`、服务端按 ID 去重，之后的段另起一批。只有开启旁听的 Agent 接收（`console-capture`、`xinli-day`），其余为 invalid：面板打开时若当前会话的 Agent 不在其中、或提交被以 invalid 拒绝，停止收音、段留在本批，并提示"新建 xinli-day 会话"，点后尚未提交的段交到新会话，面板在新会话中保持打开 |
 | 通话 | 📞：经同一条 Connection 的 `CallStart` / `CallAudio`，上行 16 kHz、下行按到达顺序播放，说话时打断（[Call](./m3-call.md)）。设备断开时通话在本地结束，停止采集与播放。需要 `VOLC_SPEECH_API_KEY` |
 
 发送失败（被拒绝、超时、断线后结果未知）时：

@@ -1034,6 +1034,18 @@ button.copy {
   border-radius: var(--radius);
   background: var(--panel);
 }
+.capture-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-radius: 7px;
+}
 .capture-row {
   display: flex;
   gap: 6px;

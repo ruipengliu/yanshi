@@ -44,6 +44,7 @@ const S = {
   devices: saved.devices ?? [],
   chatDevice: saved.chatDevice ?? {},
   drawer: saved.drawer ?? true,
+  captureOpen: saved.captureOpen ?? false,
 };
 
 function persist() {
@@ -471,6 +472,10 @@ const chatCtx = () => ({
   user: S.user,
   children: childView,
   agentName: () => sessions.find((s) => s.session_id === S.sid)?.agent ?? S.agent,
+  // 旁听面板的开合在会话之间保持：换到旁听会话后接着提交。
+  captureOpen: () => !!S.captureOpen,
+  setCaptureOpen: (open) => ((S.captureOpen = open), persist()),
+  openSession: (sid) => (openSession(sid), refreshSessions()),
   selected: () => selection,
   onSelect: (sel) => {
     selection = sel;
