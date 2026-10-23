@@ -1043,6 +1043,33 @@ button.copy {
   flex: 1;
   min-width: 0;
 }
+.capture-interim {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.capture-interim .dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--bad);
+  animation: capture-pulse 1.2s ease-in-out infinite;
+}
+@keyframes capture-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+.capture-chip.failed {
+  outline: 1px solid var(--bad);
+  background: var(--bad-soft);
+}
+.capture-row .btn.recording {
+  color: var(--bad);
+  border-color: var(--bad);
+}
 .capture-staged {
   display: flex;
   flex-wrap: wrap;
