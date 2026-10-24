@@ -1,0 +1,1126 @@
+# capture-long-day 的旁听：早上一段有承诺的交谈，之后 14 段互不相关的闲聊（由模板生成，没有承诺与偏好）。
+# 交谈之间相隔 15 分钟；日期 2026-10-22（星期四）。
+- {speaker: other, key: wang, text: 王经理那边催合同了，问你什么时候能发过去。, at: "2026-10-22 08:30"}
+- {speaker: wearer, text: 合同我周三前发给王经理，条款我再过一遍。, at: "2026-10-22 08:31"}
+- {speaker: other, key: wang, text: 好，我跟他说一声。, at: "2026-10-22 08:31"}
+- {speaker: wearer, text: 行，就这样。, at: "2026-10-22 08:32"}
+- {speaker: other, key: chen, text: 昨晚的雾到现在还没散，办公室空调开得有点冷。, at: "2026-10-22 09:00"}
+- {speaker: wearer, text: 可不是嘛，这两天降温挺厉害的。, at: "2026-10-22 09:00"}
+- {speaker: other, key: chen, text: 今年秋天来得早，今年秋天来得早。, at: "2026-10-22 09:00"}
+- {speaker: wearer, text: 哈哈，这两天降温挺厉害的。, at: "2026-10-22 09:00"}
+- {speaker: other, key: chen, text: 听说周末又要下雨，这两天降温挺厉害的。, at: "2026-10-22 09:01"}
+- {speaker: wearer, text: 哈哈，今年秋天来得早。, at: "2026-10-22 09:01"}
+- {speaker: other, key: chen, text: 办公室空调开得有点冷，早上出门风特别大。, at: "2026-10-22 09:01"}
+- {speaker: wearer, text: 哈哈，听说周末又要下雨。, at: "2026-10-22 09:01"}
+- {speaker: other, key: chen, text: 早上出门风特别大，今年秋天来得早。, at: "2026-10-22 09:02"}
+- {speaker: wearer, text: 说得也是，这种天气最容易感冒。, at: "2026-10-22 09:02"}
+- {speaker: other, key: chen, text: 这两天降温挺厉害的，早上出门风特别大。, at: "2026-10-22 09:02"}
+- {speaker: wearer, text: 真的假的，听说周末又要下雨。, at: "2026-10-22 09:02"}
+- {speaker: other, key: chen, text: 昨晚的雾到现在还没散，这种天气最容易感冒。, at: "2026-10-22 09:03"}
+- {speaker: wearer, text: 是啊，这两天降温挺厉害的。, at: "2026-10-22 09:03"}
+- {speaker: other, key: chen, text: 听说周末又要下雨，听说周末又要下雨。, at: "2026-10-22 09:03"}
+- {speaker: wearer, text: 没注意，早上出门风特别大。, at: "2026-10-22 09:03"}
+- {speaker: other, key: chen, text: 早上出门风特别大，今年秋天来得早。, at: "2026-10-22 09:04"}
+- {speaker: wearer, text: 回头看看，昨晚的雾到现在还没散。, at: "2026-10-22 09:04"}
+- {speaker: other, key: chen, text: 早上出门风特别大，听说周末又要下雨。, at: "2026-10-22 09:04"}
+- {speaker: wearer, text: 那还挺好，天气预报说下周回暖。, at: "2026-10-22 09:04"}
+- {speaker: other, key: chen, text: 早上出门风特别大，天气预报说下周回暖。, at: "2026-10-22 09:05"}
+- {speaker: wearer, text: 没注意，这两天降温挺厉害的。, at: "2026-10-22 09:05"}
+- {speaker: other, key: chen, text: 听说周末又要下雨，天气预报说下周回暖。, at: "2026-10-22 09:05"}
+- {speaker: wearer, text: 回头看看，今年秋天来得早。, at: "2026-10-22 09:05"}
+- {speaker: other, key: chen, text: 这两天降温挺厉害的，早上出门风特别大。, at: "2026-10-22 09:06"}
+- {speaker: wearer, text: 真的假的，早上出门风特别大。, at: "2026-10-22 09:06"}
+- {speaker: other, key: chen, text: 办公室空调开得有点冷，今年秋天来得早。, at: "2026-10-22 09:06"}
+- {speaker: wearer, text: 是啊，早上出门风特别大。, at: "2026-10-22 09:06"}
+- {speaker: other, key: chen, text: 早上出门风特别大，天气预报说下周回暖。, at: "2026-10-22 09:07"}
+- {speaker: wearer, text: 哈哈，这种天气最容易感冒。, at: "2026-10-22 09:07"}
+- {speaker: other, key: chen, text: 这种天气最容易感冒，早上出门风特别大。, at: "2026-10-22 09:07"}
+- {speaker: wearer, text: 回头看看，这两天降温挺厉害的。, at: "2026-10-22 09:07"}
+- {speaker: other, key: chen, text: 昨晚的雾到现在还没散，这两天降温挺厉害的。, at: "2026-10-22 09:08"}
+- {speaker: wearer, text: 说得也是，天气预报说下周回暖。, at: "2026-10-22 09:08"}
+- {speaker: other, key: chen, text: 这两天降温挺厉害的，这种天气最容易感冒。, at: "2026-10-22 09:08"}
+- {speaker: wearer, text: 是啊，今年秋天来得早。, at: "2026-10-22 09:08"}
+- {speaker: other, key: chen, text: 这两天降温挺厉害的，听说周末又要下雨。, at: "2026-10-22 09:09"}
+- {speaker: wearer, text: 我也这么觉得，昨晚的雾到现在还没散。, at: "2026-10-22 09:09"}
+- {speaker: other, key: chen, text: 这两天降温挺厉害的，办公室空调开得有点冷。, at: "2026-10-22 09:09"}
+- {speaker: wearer, text: 没注意，这两天降温挺厉害的。, at: "2026-10-22 09:09"}
+- {speaker: other, key: chen, text: 早上出门风特别大，这两天降温挺厉害的。, at: "2026-10-22 09:10"}
+- {speaker: wearer, text: 我也这么觉得，这两天降温挺厉害的。, at: "2026-10-22 09:10"}
+- {speaker: other, key: chen, text: 这两天降温挺厉害的，这两天降温挺厉害的。, at: "2026-10-22 09:10"}
+- {speaker: wearer, text: 那还挺好，办公室空调开得有点冷。, at: "2026-10-22 09:10"}
+- {speaker: other, key: chen, text: 天气预报说下周回暖，这两天降温挺厉害的。, at: "2026-10-22 09:11"}
+- {speaker: wearer, text: 没注意，昨晚的雾到现在还没散。, at: "2026-10-22 09:11"}
+- {speaker: other, key: chen, text: 今年秋天来得早，昨晚的雾到现在还没散。, at: "2026-10-22 09:11"}
+- {speaker: wearer, text: 说得也是，这种天气最容易感冒。, at: "2026-10-22 09:11"}
+- {speaker: other, key: chen, text: 办公室空调开得有点冷，办公室空调开得有点冷。, at: "2026-10-22 09:12"}
+- {speaker: wearer, text: 真的假的，天气预报说下周回暖。, at: "2026-10-22 09:12"}
+- {speaker: other, key: chen, text: 昨晚的雾到现在还没散，昨晚的雾到现在还没散。, at: "2026-10-22 09:12"}
+- {speaker: wearer, text: 可不是嘛，听说周末又要下雨。, at: "2026-10-22 09:12"}
+- {speaker: other, key: chen, text: 听说周末又要下雨，这种天气最容易感冒。, at: "2026-10-22 09:13"}
+- {speaker: wearer, text: 回头看看，办公室空调开得有点冷。, at: "2026-10-22 09:13"}
+- {speaker: other, key: chen, text: 这种天气最容易感冒，听说周末又要下雨。, at: "2026-10-22 09:13"}
+- {speaker: wearer, text: 是啊，这两天降温挺厉害的。, at: "2026-10-22 09:13"}
+- {speaker: other, key: chen, text: 这种天气最容易感冒，办公室空调开得有点冷。, at: "2026-10-22 09:14"}
+- {speaker: wearer, text: 回头看看，今年秋天来得早。, at: "2026-10-22 09:14"}
+- {speaker: other, key: chen, text: 早上出门风特别大，这种天气最容易感冒。, at: "2026-10-22 09:14"}
+- {speaker: wearer, text: 那还挺好，听说周末又要下雨。, at: "2026-10-22 09:14"}
+- {speaker: other, key: chen, text: 听说周末又要下雨，这种天气最容易感冒。, at: "2026-10-22 09:15"}
+- {speaker: wearer, text: 哈哈，这两天降温挺厉害的。, at: "2026-10-22 09:15"}
+- {speaker: other, key: chen, text: 天气预报说下周回暖，昨晚的雾到现在还没散。, at: "2026-10-22 09:15"}
+- {speaker: wearer, text: 确实，听说周末又要下雨。, at: "2026-10-22 09:15"}
+- {speaker: other, key: chen, text: 天气预报说下周回暖，昨晚的雾到现在还没散。, at: "2026-10-22 09:16"}
+- {speaker: wearer, text: 是啊，昨晚的雾到现在还没散。, at: "2026-10-22 09:16"}
+- {speaker: other, key: chen, text: 早上出门风特别大，今年秋天来得早。, at: "2026-10-22 09:16"}
+- {speaker: wearer, text: 是啊，办公室空调开得有点冷。, at: "2026-10-22 09:16"}
+- {speaker: other, key: chen, text: 昨晚的雾到现在还没散，天气预报说下周回暖。, at: "2026-10-22 09:17"}
+- {speaker: wearer, text: 说得也是，这种天气最容易感冒。, at: "2026-10-22 09:17"}
+- {speaker: other, key: chen, text: 早上出门风特别大，这两天降温挺厉害的。, at: "2026-10-22 09:17"}
+- {speaker: wearer, text: 可不是嘛，今年秋天来得早。, at: "2026-10-22 09:17"}
+- {speaker: other, key: chen, text: 这种天气最容易感冒，今年秋天来得早。, at: "2026-10-22 09:18"}
+- {speaker: wearer, text: 那还挺好，早上出门风特别大。, at: "2026-10-22 09:18"}
+- {speaker: other, key: chen, text: 早上出门风特别大，今年秋天来得早。, at: "2026-10-22 09:18"}
+- {speaker: wearer, text: 没注意，今年秋天来得早。, at: "2026-10-22 09:18"}
+- {speaker: other, key: chen, text: 听说周末又要下雨，天气预报说下周回暖。, at: "2026-10-22 09:19"}
+- {speaker: wearer, text: 那还挺好，昨晚的雾到现在还没散。, at: "2026-10-22 09:19"}
+- {speaker: other, key: chen, text: 听说周末又要下雨，天气预报说下周回暖。, at: "2026-10-22 09:19"}
+- {speaker: wearer, text: 真的假的，办公室空调开得有点冷。, at: "2026-10-22 09:19"}
+- {speaker: other, key: li, text: 楼下新开了一家面馆，楼下新开了一家面馆。, at: "2026-10-22 09:35"}
+- {speaker: wearer, text: 确实，下次可以试试隔壁的饺子。, at: "2026-10-22 09:35"}
+- {speaker: other, key: li, text: 排队的人太多了，下次可以试试隔壁的饺子。, at: "2026-10-22 09:35"}
+- {speaker: wearer, text: 可不是嘛，楼下新开了一家面馆。, at: "2026-10-22 09:35"}
+- {speaker: other, key: li, text: 外卖等了快一个小时，食堂今天的红烧肉一般。, at: "2026-10-22 09:36"}
+- {speaker: wearer, text: 没注意，下次可以试试隔壁的饺子。, at: "2026-10-22 09:36"}
+- {speaker: other, key: li, text: 他们家的辣椒油是自己炒的，沙拉吃不饱。, at: "2026-10-22 09:36"}
+- {speaker: wearer, text: 那还挺好，沙拉吃不饱。, at: "2026-10-22 09:36"}
+- {speaker: other, key: li, text: 楼下新开了一家面馆，排队的人太多了。, at: "2026-10-22 09:37"}
+- {speaker: wearer, text: 回头看看，食堂今天的红烧肉一般。, at: "2026-10-22 09:37"}
+- {speaker: other, key: li, text: 排队的人太多了，他们家的辣椒油是自己炒的。, at: "2026-10-22 09:37"}
+- {speaker: wearer, text: 回头看看，下次可以试试隔壁的饺子。, at: "2026-10-22 09:37"}
+- {speaker: other, key: li, text: 那家的牛肉面分量很足，他们家的辣椒油是自己炒的。, at: "2026-10-22 09:38"}
+- {speaker: wearer, text: 回头看看，那家的牛肉面分量很足。, at: "2026-10-22 09:38"}
+- {speaker: other, key: li, text: 食堂今天的红烧肉一般，那家的牛肉面分量很足。, at: "2026-10-22 09:38"}
+- {speaker: wearer, text: 确实，下次可以试试隔壁的饺子。, at: "2026-10-22 09:38"}
+- {speaker: other, key: li, text: 楼下新开了一家面馆，排队的人太多了。, at: "2026-10-22 09:39"}
+- {speaker: wearer, text: 回头看看，外卖等了快一个小时。, at: "2026-10-22 09:39"}
+- {speaker: other, key: li, text: 食堂今天的红烧肉一般，沙拉吃不饱。, at: "2026-10-22 09:39"}
+- {speaker: wearer, text: 我也这么觉得，食堂今天的红烧肉一般。, at: "2026-10-22 09:39"}
+- {speaker: other, key: li, text: 外卖等了快一个小时，沙拉吃不饱。, at: "2026-10-22 09:40"}
+- {speaker: wearer, text: 是啊，楼下新开了一家面馆。, at: "2026-10-22 09:40"}
+- {speaker: other, key: li, text: 外卖等了快一个小时，排队的人太多了。, at: "2026-10-22 09:40"}
+- {speaker: wearer, text: 我也这么觉得，食堂今天的红烧肉一般。, at: "2026-10-22 09:40"}
+- {speaker: other, key: li, text: 外卖等了快一个小时，沙拉吃不饱。, at: "2026-10-22 09:41"}
+- {speaker: wearer, text: 真的假的，那家的牛肉面分量很足。, at: "2026-10-22 09:41"}
+- {speaker: other, key: li, text: 食堂今天的红烧肉一般，食堂今天的红烧肉一般。, at: "2026-10-22 09:41"}
+- {speaker: wearer, text: 那还挺好，食堂今天的红烧肉一般。, at: "2026-10-22 09:41"}
+- {speaker: other, key: li, text: 外卖等了快一个小时，下次可以试试隔壁的饺子。, at: "2026-10-22 09:42"}
+- {speaker: wearer, text: 真的假的，他们家的辣椒油是自己炒的。, at: "2026-10-22 09:42"}
+- {speaker: other, key: li, text: 排队的人太多了，排队的人太多了。, at: "2026-10-22 09:42"}
+- {speaker: wearer, text: 是啊，排队的人太多了。, at: "2026-10-22 09:42"}
+- {speaker: other, key: li, text: 那家的牛肉面分量很足，沙拉吃不饱。, at: "2026-10-22 09:43"}
+- {speaker: wearer, text: 那还挺好，沙拉吃不饱。, at: "2026-10-22 09:43"}
+- {speaker: other, key: li, text: 下次可以试试隔壁的饺子，沙拉吃不饱。, at: "2026-10-22 09:43"}
+- {speaker: wearer, text: 可不是嘛，沙拉吃不饱。, at: "2026-10-22 09:43"}
+- {speaker: other, key: li, text: 排队的人太多了，外卖等了快一个小时。, at: "2026-10-22 09:44"}
+- {speaker: wearer, text: 没注意，那家的牛肉面分量很足。, at: "2026-10-22 09:44"}
+- {speaker: other, key: li, text: 沙拉吃不饱，那家的牛肉面分量很足。, at: "2026-10-22 09:44"}
+- {speaker: wearer, text: 说得也是，下次可以试试隔壁的饺子。, at: "2026-10-22 09:44"}
+- {speaker: other, key: li, text: 下次可以试试隔壁的饺子，楼下新开了一家面馆。, at: "2026-10-22 09:45"}
+- {speaker: wearer, text: 我也这么觉得，外卖等了快一个小时。, at: "2026-10-22 09:45"}
+- {speaker: other, key: li, text: 那家的牛肉面分量很足，沙拉吃不饱。, at: "2026-10-22 09:45"}
+- {speaker: wearer, text: 回头看看，外卖等了快一个小时。, at: "2026-10-22 09:45"}
+- {speaker: other, key: li, text: 楼下新开了一家面馆，他们家的辣椒油是自己炒的。, at: "2026-10-22 09:46"}
+- {speaker: wearer, text: 那还挺好，外卖等了快一个小时。, at: "2026-10-22 09:46"}
+- {speaker: other, key: li, text: 楼下新开了一家面馆，外卖等了快一个小时。, at: "2026-10-22 09:46"}
+- {speaker: wearer, text: 确实，食堂今天的红烧肉一般。, at: "2026-10-22 09:46"}
+- {speaker: other, key: li, text: 食堂今天的红烧肉一般，食堂今天的红烧肉一般。, at: "2026-10-22 09:47"}
+- {speaker: wearer, text: 确实，楼下新开了一家面馆。, at: "2026-10-22 09:47"}
+- {speaker: other, key: li, text: 沙拉吃不饱，外卖等了快一个小时。, at: "2026-10-22 09:47"}
+- {speaker: wearer, text: 确实，外卖等了快一个小时。, at: "2026-10-22 09:47"}
+- {speaker: other, key: li, text: 外卖等了快一个小时，食堂今天的红烧肉一般。, at: "2026-10-22 09:48"}
+- {speaker: wearer, text: 回头看看，排队的人太多了。, at: "2026-10-22 09:48"}
+- {speaker: other, key: li, text: 他们家的辣椒油是自己炒的，楼下新开了一家面馆。, at: "2026-10-22 09:48"}
+- {speaker: wearer, text: 真的假的，那家的牛肉面分量很足。, at: "2026-10-22 09:48"}
+- {speaker: other, key: li, text: 沙拉吃不饱，楼下新开了一家面馆。, at: "2026-10-22 09:49"}
+- {speaker: wearer, text: 回头看看，下次可以试试隔壁的饺子。, at: "2026-10-22 09:49"}
+- {speaker: other, key: li, text: 外卖等了快一个小时，食堂今天的红烧肉一般。, at: "2026-10-22 09:49"}
+- {speaker: wearer, text: 真的假的，沙拉吃不饱。, at: "2026-10-22 09:49"}
+- {speaker: other, key: li, text: 沙拉吃不饱，楼下新开了一家面馆。, at: "2026-10-22 09:50"}
+- {speaker: wearer, text: 真的假的，沙拉吃不饱。, at: "2026-10-22 09:50"}
+- {speaker: other, key: li, text: 下次可以试试隔壁的饺子，楼下新开了一家面馆。, at: "2026-10-22 09:50"}
+- {speaker: wearer, text: 确实，沙拉吃不饱。, at: "2026-10-22 09:50"}
+- {speaker: other, key: li, text: 食堂今天的红烧肉一般，外卖等了快一个小时。, at: "2026-10-22 09:51"}
+- {speaker: wearer, text: 真的假的，沙拉吃不饱。, at: "2026-10-22 09:51"}
+- {speaker: other, key: li, text: 排队的人太多了，沙拉吃不饱。, at: "2026-10-22 09:51"}
+- {speaker: wearer, text: 确实，楼下新开了一家面馆。, at: "2026-10-22 09:51"}
+- {speaker: other, key: li, text: 排队的人太多了，外卖等了快一个小时。, at: "2026-10-22 09:52"}
+- {speaker: wearer, text: 哈哈，那家的牛肉面分量很足。, at: "2026-10-22 09:52"}
+- {speaker: other, key: li, text: 外卖等了快一个小时，楼下新开了一家面馆。, at: "2026-10-22 09:52"}
+- {speaker: wearer, text: 哈哈，他们家的辣椒油是自己炒的。, at: "2026-10-22 09:52"}
+- {speaker: other, key: li, text: 那家的牛肉面分量很足，楼下新开了一家面馆。, at: "2026-10-22 09:53"}
+- {speaker: wearer, text: 真的假的，食堂今天的红烧肉一般。, at: "2026-10-22 09:53"}
+- {speaker: other, key: li, text: 那家的牛肉面分量很足，楼下新开了一家面馆。, at: "2026-10-22 09:53"}
+- {speaker: wearer, text: 哈哈，下次可以试试隔壁的饺子。, at: "2026-10-22 09:53"}
+- {speaker: other, key: li, text: 他们家的辣椒油是自己炒的，楼下新开了一家面馆。, at: "2026-10-22 09:54"}
+- {speaker: wearer, text: 回头看看，楼下新开了一家面馆。, at: "2026-10-22 09:54"}
+- {speaker: other, key: li, text: 楼下新开了一家面馆，沙拉吃不饱。, at: "2026-10-22 09:54"}
+- {speaker: wearer, text: 真的假的，他们家的辣椒油是自己炒的。, at: "2026-10-22 09:54"}
+- {speaker: other, key: zhou, text: 公交改线了，换乘站的人特别多。, at: "2026-10-22 10:10"}
+- {speaker: wearer, text: 我也这么觉得，骑车过来倒是挺快。, at: "2026-10-22 10:10"}
+- {speaker: other, key: zhou, text: 那条路在修，绕了一大圈，停车场的车位越来越难找。, at: "2026-10-22 10:10"}
+- {speaker: wearer, text: 说得也是，打车比平时贵。, at: "2026-10-22 10:10"}
+- {speaker: other, key: zhou, text: 那条路在修，绕了一大圈，换乘站的人特别多。, at: "2026-10-22 10:11"}
+- {speaker: wearer, text: 那还挺好，那条路在修，绕了一大圈。, at: "2026-10-22 10:11"}
+- {speaker: other, key: zhou, text: 停车场的车位越来越难找，地铁今天又晚点了。, at: "2026-10-22 10:11"}
+- {speaker: wearer, text: 确实，地铁今天又晚点了。, at: "2026-10-22 10:11"}
+- {speaker: other, key: zhou, text: 换乘站的人特别多，早高峰挤得喘不过气。, at: "2026-10-22 10:12"}
+- {speaker: wearer, text: 真的假的，骑车过来倒是挺快。, at: "2026-10-22 10:12"}
+- {speaker: other, key: zhou, text: 早高峰挤得喘不过气，地铁今天又晚点了。, at: "2026-10-22 10:12"}
+- {speaker: wearer, text: 是啊，停车场的车位越来越难找。, at: "2026-10-22 10:12"}
+- {speaker: other, key: zhou, text: 地铁今天又晚点了，那条路在修，绕了一大圈。, at: "2026-10-22 10:13"}
+- {speaker: wearer, text: 我也这么觉得，地铁今天又晚点了。, at: "2026-10-22 10:13"}
+- {speaker: other, key: zhou, text: 骑车过来倒是挺快，公交改线了。, at: "2026-10-22 10:13"}
+- {speaker: wearer, text: 我也这么觉得，早高峰挤得喘不过气。, at: "2026-10-22 10:13"}
+- {speaker: other, key: zhou, text: 换乘站的人特别多，停车场的车位越来越难找。, at: "2026-10-22 10:14"}
+- {speaker: wearer, text: 可不是嘛，停车场的车位越来越难找。, at: "2026-10-22 10:14"}
+- {speaker: other, key: zhou, text: 换乘站的人特别多，打车比平时贵。, at: "2026-10-22 10:14"}
+- {speaker: wearer, text: 真的假的，换乘站的人特别多。, at: "2026-10-22 10:14"}
+- {speaker: other, key: zhou, text: 早高峰挤得喘不过气，换乘站的人特别多。, at: "2026-10-22 10:15"}
+- {speaker: wearer, text: 说得也是，早高峰挤得喘不过气。, at: "2026-10-22 10:15"}
+- {speaker: other, key: zhou, text: 换乘站的人特别多，骑车过来倒是挺快。, at: "2026-10-22 10:15"}
+- {speaker: wearer, text: 是啊，打车比平时贵。, at: "2026-10-22 10:15"}
+- {speaker: other, key: zhou, text: 地铁今天又晚点了，那条路在修，绕了一大圈。, at: "2026-10-22 10:16"}
+- {speaker: wearer, text: 可不是嘛，换乘站的人特别多。, at: "2026-10-22 10:16"}
+- {speaker: other, key: zhou, text: 换乘站的人特别多，地铁今天又晚点了。, at: "2026-10-22 10:16"}
+- {speaker: wearer, text: 确实，骑车过来倒是挺快。, at: "2026-10-22 10:16"}
+- {speaker: other, key: zhou, text: 公交改线了，停车场的车位越来越难找。, at: "2026-10-22 10:17"}
+- {speaker: wearer, text: 确实，地铁今天又晚点了。, at: "2026-10-22 10:17"}
+- {speaker: other, key: zhou, text: 换乘站的人特别多，骑车过来倒是挺快。, at: "2026-10-22 10:17"}
+- {speaker: wearer, text: 那还挺好，那条路在修，绕了一大圈。, at: "2026-10-22 10:17"}
+- {speaker: other, key: zhou, text: 打车比平时贵，骑车过来倒是挺快。, at: "2026-10-22 10:18"}
+- {speaker: wearer, text: 哈哈，骑车过来倒是挺快。, at: "2026-10-22 10:18"}
+- {speaker: other, key: zhou, text: 换乘站的人特别多，换乘站的人特别多。, at: "2026-10-22 10:18"}
+- {speaker: wearer, text: 我也这么觉得，地铁今天又晚点了。, at: "2026-10-22 10:18"}
+- {speaker: other, key: zhou, text: 地铁今天又晚点了，打车比平时贵。, at: "2026-10-22 10:19"}
+- {speaker: wearer, text: 我也这么觉得，换乘站的人特别多。, at: "2026-10-22 10:19"}
+- {speaker: other, key: zhou, text: 停车场的车位越来越难找，骑车过来倒是挺快。, at: "2026-10-22 10:19"}
+- {speaker: wearer, text: 真的假的，那条路在修，绕了一大圈。, at: "2026-10-22 10:19"}
+- {speaker: other, key: zhou, text: 公交改线了，换乘站的人特别多。, at: "2026-10-22 10:20"}
+- {speaker: wearer, text: 回头看看，地铁今天又晚点了。, at: "2026-10-22 10:20"}
+- {speaker: other, key: zhou, text: 早高峰挤得喘不过气，打车比平时贵。, at: "2026-10-22 10:20"}
+- {speaker: wearer, text: 我也这么觉得，骑车过来倒是挺快。, at: "2026-10-22 10:20"}
+- {speaker: other, key: zhou, text: 停车场的车位越来越难找，停车场的车位越来越难找。, at: "2026-10-22 10:21"}
+- {speaker: wearer, text: 可不是嘛，停车场的车位越来越难找。, at: "2026-10-22 10:21"}
+- {speaker: other, key: zhou, text: 换乘站的人特别多，那条路在修，绕了一大圈。, at: "2026-10-22 10:21"}
+- {speaker: wearer, text: 可不是嘛，停车场的车位越来越难找。, at: "2026-10-22 10:21"}
+- {speaker: other, key: zhou, text: 早高峰挤得喘不过气，公交改线了。, at: "2026-10-22 10:22"}
+- {speaker: wearer, text: 没注意，公交改线了。, at: "2026-10-22 10:22"}
+- {speaker: other, key: zhou, text: 打车比平时贵，公交改线了。, at: "2026-10-22 10:22"}
+- {speaker: wearer, text: 真的假的，骑车过来倒是挺快。, at: "2026-10-22 10:22"}
+- {speaker: other, key: zhou, text: 公交改线了，早高峰挤得喘不过气。, at: "2026-10-22 10:23"}
+- {speaker: wearer, text: 哈哈，骑车过来倒是挺快。, at: "2026-10-22 10:23"}
+- {speaker: other, key: zhou, text: 骑车过来倒是挺快，打车比平时贵。, at: "2026-10-22 10:23"}
+- {speaker: wearer, text: 那还挺好，地铁今天又晚点了。, at: "2026-10-22 10:23"}
+- {speaker: other, key: zhou, text: 地铁今天又晚点了，早高峰挤得喘不过气。, at: "2026-10-22 10:24"}
+- {speaker: wearer, text: 确实，打车比平时贵。, at: "2026-10-22 10:24"}
+- {speaker: other, key: zhou, text: 公交改线了，骑车过来倒是挺快。, at: "2026-10-22 10:24"}
+- {speaker: wearer, text: 我也这么觉得，早高峰挤得喘不过气。, at: "2026-10-22 10:24"}
+- {speaker: other, key: zhou, text: 骑车过来倒是挺快，早高峰挤得喘不过气。, at: "2026-10-22 10:25"}
+- {speaker: wearer, text: 可不是嘛，那条路在修，绕了一大圈。, at: "2026-10-22 10:25"}
+- {speaker: other, key: zhou, text: 地铁今天又晚点了，那条路在修，绕了一大圈。, at: "2026-10-22 10:25"}
+- {speaker: wearer, text: 我也这么觉得，换乘站的人特别多。, at: "2026-10-22 10:25"}
+- {speaker: other, key: zhou, text: 骑车过来倒是挺快，打车比平时贵。, at: "2026-10-22 10:26"}
+- {speaker: wearer, text: 我也这么觉得，打车比平时贵。, at: "2026-10-22 10:26"}
+- {speaker: other, key: zhou, text: 停车场的车位越来越难找，换乘站的人特别多。, at: "2026-10-22 10:26"}
+- {speaker: wearer, text: 是啊，换乘站的人特别多。, at: "2026-10-22 10:26"}
+- {speaker: other, key: zhou, text: 换乘站的人特别多，那条路在修，绕了一大圈。, at: "2026-10-22 10:27"}
+- {speaker: wearer, text: 回头看看，骑车过来倒是挺快。, at: "2026-10-22 10:27"}
+- {speaker: other, key: zhou, text: 那条路在修，绕了一大圈，公交改线了。, at: "2026-10-22 10:27"}
+- {speaker: wearer, text: 那还挺好，骑车过来倒是挺快。, at: "2026-10-22 10:27"}
+- {speaker: other, key: zhou, text: 地铁今天又晚点了，骑车过来倒是挺快。, at: "2026-10-22 10:28"}
+- {speaker: wearer, text: 那还挺好，停车场的车位越来越难找。, at: "2026-10-22 10:28"}
+- {speaker: other, key: zhou, text: 骑车过来倒是挺快，地铁今天又晚点了。, at: "2026-10-22 10:28"}
+- {speaker: wearer, text: 可不是嘛，那条路在修，绕了一大圈。, at: "2026-10-22 10:28"}
+- {speaker: other, key: zhou, text: 打车比平时贵，打车比平时贵。, at: "2026-10-22 10:29"}
+- {speaker: wearer, text: 说得也是，早高峰挤得喘不过气。, at: "2026-10-22 10:29"}
+- {speaker: other, key: zhou, text: 打车比平时贵，骑车过来倒是挺快。, at: "2026-10-22 10:29"}
+- {speaker: wearer, text: 回头看看，打车比平时贵。, at: "2026-10-22 10:29"}
+- {speaker: other, key: wu, text: 那个前锋状态回来了，下一轮是客场。, at: "2026-10-22 10:45"}
+- {speaker: wearer, text: 那还挺好，裁判那个判罚有争议。, at: "2026-10-22 10:45"}
+- {speaker: other, key: wu, text: 下半场换人换得太晚，下一轮是客场。, at: "2026-10-22 10:45"}
+- {speaker: wearer, text: 是啊，裁判那个判罚有争议。, at: "2026-10-22 10:45"}
+- {speaker: other, key: wu, text: 下半场换人换得太晚，转会窗口快关了。, at: "2026-10-22 10:46"}
+- {speaker: wearer, text: 确实，下一轮是客场。, at: "2026-10-22 10:46"}
+- {speaker: other, key: wu, text: 裁判那个判罚有争议，主队连着三场没赢了。, at: "2026-10-22 10:46"}
+- {speaker: wearer, text: 没注意，昨晚那场球踢得真臭。, at: "2026-10-22 10:46"}
+- {speaker: other, key: wu, text: 主队连着三场没赢了，转会窗口快关了。, at: "2026-10-22 10:47"}
+- {speaker: wearer, text: 我也这么觉得，转会窗口快关了。, at: "2026-10-22 10:47"}
+- {speaker: other, key: wu, text: 裁判那个判罚有争议，主队连着三场没赢了。, at: "2026-10-22 10:47"}
+- {speaker: wearer, text: 没注意，下一轮是客场。, at: "2026-10-22 10:47"}
+- {speaker: other, key: wu, text: 守门员扑出了一个点球，守门员扑出了一个点球。, at: "2026-10-22 10:48"}
+- {speaker: wearer, text: 那还挺好，守门员扑出了一个点球。, at: "2026-10-22 10:48"}
+- {speaker: other, key: wu, text: 主队连着三场没赢了，裁判那个判罚有争议。, at: "2026-10-22 10:48"}
+- {speaker: wearer, text: 可不是嘛，守门员扑出了一个点球。, at: "2026-10-22 10:48"}
+- {speaker: other, key: wu, text: 主队连着三场没赢了，守门员扑出了一个点球。, at: "2026-10-22 10:49"}
+- {speaker: wearer, text: 确实，主队连着三场没赢了。, at: "2026-10-22 10:49"}
+- {speaker: other, key: wu, text: 下一轮是客场，转会窗口快关了。, at: "2026-10-22 10:49"}
+- {speaker: wearer, text: 确实，下半场换人换得太晚。, at: "2026-10-22 10:49"}
+- {speaker: other, key: wu, text: 裁判那个判罚有争议，守门员扑出了一个点球。, at: "2026-10-22 10:50"}
+- {speaker: wearer, text: 那还挺好，下半场换人换得太晚。, at: "2026-10-22 10:50"}
+- {speaker: other, key: wu, text: 下半场换人换得太晚，下一轮是客场。, at: "2026-10-22 10:50"}
+- {speaker: wearer, text: 说得也是，守门员扑出了一个点球。, at: "2026-10-22 10:50"}
+- {speaker: other, key: wu, text: 主队连着三场没赢了，下半场换人换得太晚。, at: "2026-10-22 10:51"}
+- {speaker: wearer, text: 是啊，下半场换人换得太晚。, at: "2026-10-22 10:51"}
+- {speaker: other, key: wu, text: 转会窗口快关了，裁判那个判罚有争议。, at: "2026-10-22 10:51"}
+- {speaker: wearer, text: 说得也是，主队连着三场没赢了。, at: "2026-10-22 10:51"}
+- {speaker: other, key: wu, text: 裁判那个判罚有争议，裁判那个判罚有争议。, at: "2026-10-22 10:52"}
+- {speaker: wearer, text: 是啊，裁判那个判罚有争议。, at: "2026-10-22 10:52"}
+- {speaker: other, key: wu, text: 守门员扑出了一个点球，转会窗口快关了。, at: "2026-10-22 10:52"}
+- {speaker: wearer, text: 哈哈，下半场换人换得太晚。, at: "2026-10-22 10:52"}
+- {speaker: other, key: wu, text: 下半场换人换得太晚，下半场换人换得太晚。, at: "2026-10-22 10:53"}
+- {speaker: wearer, text: 我也这么觉得，主队连着三场没赢了。, at: "2026-10-22 10:53"}
+- {speaker: other, key: wu, text: 下半场换人换得太晚，裁判那个判罚有争议。, at: "2026-10-22 10:53"}
+- {speaker: wearer, text: 确实，下半场换人换得太晚。, at: "2026-10-22 10:53"}
+- {speaker: other, key: wu, text: 那个前锋状态回来了，下半场换人换得太晚。, at: "2026-10-22 10:54"}
+- {speaker: wearer, text: 我也这么觉得，下半场换人换得太晚。, at: "2026-10-22 10:54"}
+- {speaker: other, key: wu, text: 主队连着三场没赢了，昨晚那场球踢得真臭。, at: "2026-10-22 10:54"}
+- {speaker: wearer, text: 哈哈，昨晚那场球踢得真臭。, at: "2026-10-22 10:54"}
+- {speaker: other, key: wu, text: 主队连着三场没赢了，下一轮是客场。, at: "2026-10-22 10:55"}
+- {speaker: wearer, text: 是啊，昨晚那场球踢得真臭。, at: "2026-10-22 10:55"}
+- {speaker: other, key: wu, text: 下一轮是客场，守门员扑出了一个点球。, at: "2026-10-22 10:55"}
+- {speaker: wearer, text: 我也这么觉得，主队连着三场没赢了。, at: "2026-10-22 10:55"}
+- {speaker: other, key: wu, text: 下一轮是客场，下半场换人换得太晚。, at: "2026-10-22 10:56"}
+- {speaker: wearer, text: 哈哈，昨晚那场球踢得真臭。, at: "2026-10-22 10:56"}
+- {speaker: other, key: wu, text: 下一轮是客场，下一轮是客场。, at: "2026-10-22 10:56"}
+- {speaker: wearer, text: 没注意，那个前锋状态回来了。, at: "2026-10-22 10:56"}
+- {speaker: other, key: wu, text: 下半场换人换得太晚，主队连着三场没赢了。, at: "2026-10-22 10:57"}
+- {speaker: wearer, text: 我也这么觉得，那个前锋状态回来了。, at: "2026-10-22 10:57"}
+- {speaker: other, key: wu, text: 昨晚那场球踢得真臭，守门员扑出了一个点球。, at: "2026-10-22 10:57"}
+- {speaker: wearer, text: 哈哈，主队连着三场没赢了。, at: "2026-10-22 10:57"}
+- {speaker: other, key: wu, text: 下一轮是客场，主队连着三场没赢了。, at: "2026-10-22 10:58"}
+- {speaker: wearer, text: 确实，裁判那个判罚有争议。, at: "2026-10-22 10:58"}
+- {speaker: other, key: wu, text: 裁判那个判罚有争议，转会窗口快关了。, at: "2026-10-22 10:58"}
+- {speaker: wearer, text: 哈哈，守门员扑出了一个点球。, at: "2026-10-22 10:58"}
+- {speaker: other, key: wu, text: 下半场换人换得太晚，昨晚那场球踢得真臭。, at: "2026-10-22 10:59"}
+- {speaker: wearer, text: 真的假的，主队连着三场没赢了。, at: "2026-10-22 10:59"}
+- {speaker: other, key: wu, text: 那个前锋状态回来了，那个前锋状态回来了。, at: "2026-10-22 10:59"}
+- {speaker: wearer, text: 哈哈，裁判那个判罚有争议。, at: "2026-10-22 10:59"}
+- {speaker: other, key: wu, text: 昨晚那场球踢得真臭，昨晚那场球踢得真臭。, at: "2026-10-22 11:00"}
+- {speaker: wearer, text: 没注意，下一轮是客场。, at: "2026-10-22 11:00"}
+- {speaker: other, key: wu, text: 裁判那个判罚有争议，裁判那个判罚有争议。, at: "2026-10-22 11:00"}
+- {speaker: wearer, text: 说得也是，主队连着三场没赢了。, at: "2026-10-22 11:00"}
+- {speaker: other, key: wu, text: 裁判那个判罚有争议，裁判那个判罚有争议。, at: "2026-10-22 11:01"}
+- {speaker: wearer, text: 可不是嘛，裁判那个判罚有争议。, at: "2026-10-22 11:01"}
+- {speaker: other, key: wu, text: 裁判那个判罚有争议，守门员扑出了一个点球。, at: "2026-10-22 11:01"}
+- {speaker: wearer, text: 可不是嘛，守门员扑出了一个点球。, at: "2026-10-22 11:01"}
+- {speaker: other, key: wu, text: 下一轮是客场，下一轮是客场。, at: "2026-10-22 11:02"}
+- {speaker: wearer, text: 可不是嘛，昨晚那场球踢得真臭。, at: "2026-10-22 11:02"}
+- {speaker: other, key: wu, text: 那个前锋状态回来了，守门员扑出了一个点球。, at: "2026-10-22 11:02"}
+- {speaker: wearer, text: 确实，那个前锋状态回来了。, at: "2026-10-22 11:02"}
+- {speaker: other, key: wu, text: 昨晚那场球踢得真臭，转会窗口快关了。, at: "2026-10-22 11:03"}
+- {speaker: wearer, text: 哈哈，裁判那个判罚有争议。, at: "2026-10-22 11:03"}
+- {speaker: other, key: wu, text: 下一轮是客场，主队连着三场没赢了。, at: "2026-10-22 11:03"}
+- {speaker: wearer, text: 是啊，下一轮是客场。, at: "2026-10-22 11:03"}
+- {speaker: other, key: wu, text: 守门员扑出了一个点球，昨晚那场球踢得真臭。, at: "2026-10-22 11:04"}
+- {speaker: wearer, text: 确实，下一轮是客场。, at: "2026-10-22 11:04"}
+- {speaker: other, key: wu, text: 昨晚那场球踢得真臭，主队连着三场没赢了。, at: "2026-10-22 11:04"}
+- {speaker: wearer, text: 是啊，下半场换人换得太晚。, at: "2026-10-22 11:04"}
+- {speaker: other, key: zheng, text: 配乐挺好听的，结局有点草率。, at: "2026-10-22 11:20"}
+- {speaker: wearer, text: 说得也是，原著里不是这么写的。, at: "2026-10-22 11:20"}
+- {speaker: other, key: zheng, text: 男主的演技进步了，第二季据说明年拍。, at: "2026-10-22 11:20"}
+- {speaker: wearer, text: 说得也是，最近那部剧更新太慢。, at: "2026-10-22 11:20"}
+- {speaker: other, key: zheng, text: 结局有点草率，结局有点草率。, at: "2026-10-22 11:21"}
+- {speaker: wearer, text: 真的假的，男主的演技进步了。, at: "2026-10-22 11:21"}
+- {speaker: other, key: zheng, text: 最近那部剧更新太慢，最近那部剧更新太慢。, at: "2026-10-22 11:21"}
+- {speaker: wearer, text: 没注意，结局有点草率。, at: "2026-10-22 11:21"}
+- {speaker: other, key: zheng, text: 片头曲一直在脑子里转，第二季据说明年拍。, at: "2026-10-22 11:22"}
+- {speaker: wearer, text: 可不是嘛，片头曲一直在脑子里转。, at: "2026-10-22 11:22"}
+- {speaker: other, key: zheng, text: 原著里不是这么写的，最近那部剧更新太慢。, at: "2026-10-22 11:22"}
+- {speaker: wearer, text: 那还挺好，弹幕比剧还好看。, at: "2026-10-22 11:22"}
+- {speaker: other, key: zheng, text: 男主的演技进步了，男主的演技进步了。, at: "2026-10-22 11:23"}
+- {speaker: wearer, text: 说得也是，原著里不是这么写的。, at: "2026-10-22 11:23"}
+- {speaker: other, key: zheng, text: 配乐挺好听的，片头曲一直在脑子里转。, at: "2026-10-22 11:23"}
+- {speaker: wearer, text: 我也这么觉得，男主的演技进步了。, at: "2026-10-22 11:23"}
+- {speaker: other, key: zheng, text: 配乐挺好听的，原著里不是这么写的。, at: "2026-10-22 11:24"}
+- {speaker: wearer, text: 没注意，男主的演技进步了。, at: "2026-10-22 11:24"}
+- {speaker: other, key: zheng, text: 最近那部剧更新太慢，男主的演技进步了。, at: "2026-10-22 11:24"}
+- {speaker: wearer, text: 真的假的，配乐挺好听的。, at: "2026-10-22 11:24"}
+- {speaker: other, key: zheng, text: 最近那部剧更新太慢，男主的演技进步了。, at: "2026-10-22 11:25"}
+- {speaker: wearer, text: 确实，结局有点草率。, at: "2026-10-22 11:25"}
+- {speaker: other, key: zheng, text: 最近那部剧更新太慢，男主的演技进步了。, at: "2026-10-22 11:25"}
+- {speaker: wearer, text: 哈哈，第二季据说明年拍。, at: "2026-10-22 11:25"}
+- {speaker: other, key: zheng, text: 男主的演技进步了，配乐挺好听的。, at: "2026-10-22 11:26"}
+- {speaker: wearer, text: 没注意，最近那部剧更新太慢。, at: "2026-10-22 11:26"}
+- {speaker: other, key: zheng, text: 最近那部剧更新太慢，弹幕比剧还好看。, at: "2026-10-22 11:26"}
+- {speaker: wearer, text: 没注意，弹幕比剧还好看。, at: "2026-10-22 11:26"}
+- {speaker: other, key: zheng, text: 结局有点草率，配乐挺好听的。, at: "2026-10-22 11:27"}
+- {speaker: wearer, text: 我也这么觉得，男主的演技进步了。, at: "2026-10-22 11:27"}
+- {speaker: other, key: zheng, text: 男主的演技进步了，片头曲一直在脑子里转。, at: "2026-10-22 11:27"}
+- {speaker: wearer, text: 没注意，原著里不是这么写的。, at: "2026-10-22 11:27"}
+- {speaker: other, key: zheng, text: 最近那部剧更新太慢，男主的演技进步了。, at: "2026-10-22 11:28"}
+- {speaker: wearer, text: 确实，男主的演技进步了。, at: "2026-10-22 11:28"}
+- {speaker: other, key: zheng, text: 最近那部剧更新太慢，结局有点草率。, at: "2026-10-22 11:28"}
+- {speaker: wearer, text: 我也这么觉得，最近那部剧更新太慢。, at: "2026-10-22 11:28"}
+- {speaker: other, key: zheng, text: 男主的演技进步了，男主的演技进步了。, at: "2026-10-22 11:29"}
+- {speaker: wearer, text: 确实，原著里不是这么写的。, at: "2026-10-22 11:29"}
+- {speaker: other, key: zheng, text: 片头曲一直在脑子里转，结局有点草率。, at: "2026-10-22 11:29"}
+- {speaker: wearer, text: 那还挺好，配乐挺好听的。, at: "2026-10-22 11:29"}
+- {speaker: other, key: zheng, text: 最近那部剧更新太慢，第二季据说明年拍。, at: "2026-10-22 11:30"}
+- {speaker: wearer, text: 哈哈，男主的演技进步了。, at: "2026-10-22 11:30"}
+- {speaker: other, key: zheng, text: 配乐挺好听的，原著里不是这么写的。, at: "2026-10-22 11:30"}
+- {speaker: wearer, text: 回头看看，片头曲一直在脑子里转。, at: "2026-10-22 11:30"}
+- {speaker: other, key: zheng, text: 男主的演技进步了，第二季据说明年拍。, at: "2026-10-22 11:31"}
+- {speaker: wearer, text: 哈哈，男主的演技进步了。, at: "2026-10-22 11:31"}
+- {speaker: other, key: zheng, text: 男主的演技进步了，第二季据说明年拍。, at: "2026-10-22 11:31"}
+- {speaker: wearer, text: 是啊，片头曲一直在脑子里转。, at: "2026-10-22 11:31"}
+- {speaker: other, key: zheng, text: 第二季据说明年拍，结局有点草率。, at: "2026-10-22 11:32"}
+- {speaker: wearer, text: 是啊，第二季据说明年拍。, at: "2026-10-22 11:32"}
+- {speaker: other, key: zheng, text: 原著里不是这么写的，配乐挺好听的。, at: "2026-10-22 11:32"}
+- {speaker: wearer, text: 没注意，弹幕比剧还好看。, at: "2026-10-22 11:32"}
+- {speaker: other, key: zheng, text: 男主的演技进步了，男主的演技进步了。, at: "2026-10-22 11:33"}
+- {speaker: wearer, text: 是啊，结局有点草率。, at: "2026-10-22 11:33"}
+- {speaker: other, key: zheng, text: 最近那部剧更新太慢，第二季据说明年拍。, at: "2026-10-22 11:33"}
+- {speaker: wearer, text: 回头看看，第二季据说明年拍。, at: "2026-10-22 11:33"}
+- {speaker: other, key: zheng, text: 片头曲一直在脑子里转，结局有点草率。, at: "2026-10-22 11:34"}
+- {speaker: wearer, text: 真的假的，弹幕比剧还好看。, at: "2026-10-22 11:34"}
+- {speaker: other, key: zheng, text: 结局有点草率，第二季据说明年拍。, at: "2026-10-22 11:34"}
+- {speaker: wearer, text: 回头看看，男主的演技进步了。, at: "2026-10-22 11:34"}
+- {speaker: other, key: zheng, text: 最近那部剧更新太慢，第二季据说明年拍。, at: "2026-10-22 11:35"}
+- {speaker: wearer, text: 可不是嘛，结局有点草率。, at: "2026-10-22 11:35"}
+- {speaker: other, key: zheng, text: 片头曲一直在脑子里转，最近那部剧更新太慢。, at: "2026-10-22 11:35"}
+- {speaker: wearer, text: 是啊，配乐挺好听的。, at: "2026-10-22 11:35"}
+- {speaker: other, key: zheng, text: 最近那部剧更新太慢，原著里不是这么写的。, at: "2026-10-22 11:36"}
+- {speaker: wearer, text: 说得也是，第二季据说明年拍。, at: "2026-10-22 11:36"}
+- {speaker: other, key: zheng, text: 原著里不是这么写的，第二季据说明年拍。, at: "2026-10-22 11:36"}
+- {speaker: wearer, text: 可不是嘛，片头曲一直在脑子里转。, at: "2026-10-22 11:36"}
+- {speaker: other, key: zheng, text: 第二季据说明年拍，弹幕比剧还好看。, at: "2026-10-22 11:37"}
+- {speaker: wearer, text: 那还挺好，结局有点草率。, at: "2026-10-22 11:37"}
+- {speaker: other, key: zheng, text: 结局有点草率，男主的演技进步了。, at: "2026-10-22 11:37"}
+- {speaker: wearer, text: 真的假的，片头曲一直在脑子里转。, at: "2026-10-22 11:37"}
+- {speaker: other, key: zheng, text: 片头曲一直在脑子里转，结局有点草率。, at: "2026-10-22 11:38"}
+- {speaker: wearer, text: 哈哈，第二季据说明年拍。, at: "2026-10-22 11:38"}
+- {speaker: other, key: zheng, text: 弹幕比剧还好看，原著里不是这么写的。, at: "2026-10-22 11:38"}
+- {speaker: wearer, text: 那还挺好，配乐挺好听的。, at: "2026-10-22 11:38"}
+- {speaker: other, key: zheng, text: 第二季据说明年拍，男主的演技进步了。, at: "2026-10-22 11:39"}
+- {speaker: wearer, text: 没注意，结局有点草率。, at: "2026-10-22 11:39"}
+- {speaker: other, key: zheng, text: 配乐挺好听的，片头曲一直在脑子里转。, at: "2026-10-22 11:39"}
+- {speaker: wearer, text: 没注意，结局有点草率。, at: "2026-10-22 11:39"}
+- {speaker: other, key: sun, text: 超市的水果最近贵了，优惠券过期了。, at: "2026-10-22 11:55"}
+- {speaker: wearer, text: 是啊，买了个新的保温杯。, at: "2026-10-22 11:55"}
+- {speaker: other, key: sun, text: 优惠券过期了，买了个新的保温杯。, at: "2026-10-22 11:55"}
+- {speaker: wearer, text: 没注意，直播间的东西没想象的好。, at: "2026-10-22 11:55"}
+- {speaker: other, key: sun, text: 退货流程挺麻烦，双十一的满减算不明白。, at: "2026-10-22 11:56"}
+- {speaker: wearer, text: 可不是嘛，那件外套降价了。, at: "2026-10-22 11:56"}
+- {speaker: other, key: sun, text: 双十一的满减算不明白，优惠券过期了。, at: "2026-10-22 11:56"}
+- {speaker: wearer, text: 哈哈，优惠券过期了。, at: "2026-10-22 11:56"}
+- {speaker: other, key: sun, text: 退货流程挺麻烦，直播间的东西没想象的好。, at: "2026-10-22 11:57"}
+- {speaker: wearer, text: 没注意，买了个新的保温杯。, at: "2026-10-22 11:57"}
+- {speaker: other, key: sun, text: 直播间的东西没想象的好，超市的水果最近贵了。, at: "2026-10-22 11:57"}
+- {speaker: wearer, text: 说得也是，买了个新的保温杯。, at: "2026-10-22 11:57"}
+- {speaker: other, key: sun, text: 快递还在路上，超市的水果最近贵了。, at: "2026-10-22 11:58"}
+- {speaker: wearer, text: 是啊，那件外套降价了。, at: "2026-10-22 11:58"}
+- {speaker: other, key: sun, text: 直播间的东西没想象的好，超市的水果最近贵了。, at: "2026-10-22 11:58"}
+- {speaker: wearer, text: 是啊，那件外套降价了。, at: "2026-10-22 11:58"}
+- {speaker: other, key: sun, text: 退货流程挺麻烦，退货流程挺麻烦。, at: "2026-10-22 11:59"}
+- {speaker: wearer, text: 真的假的，买了个新的保温杯。, at: "2026-10-22 11:59"}
+- {speaker: other, key: sun, text: 买了个新的保温杯，直播间的东西没想象的好。, at: "2026-10-22 11:59"}
+- {speaker: wearer, text: 那还挺好，直播间的东西没想象的好。, at: "2026-10-22 11:59"}
+- {speaker: other, key: sun, text: 买了个新的保温杯，买了个新的保温杯。, at: "2026-10-22 12:00"}
+- {speaker: wearer, text: 确实，快递还在路上。, at: "2026-10-22 12:00"}
+- {speaker: other, key: sun, text: 那件外套降价了，那件外套降价了。, at: "2026-10-22 12:00"}
+- {speaker: wearer, text: 可不是嘛，买了个新的保温杯。, at: "2026-10-22 12:00"}
+- {speaker: other, key: sun, text: 快递还在路上，优惠券过期了。, at: "2026-10-22 12:01"}
+- {speaker: wearer, text: 哈哈，那件外套降价了。, at: "2026-10-22 12:01"}
+- {speaker: other, key: sun, text: 超市的水果最近贵了，超市的水果最近贵了。, at: "2026-10-22 12:01"}
+- {speaker: wearer, text: 哈哈，超市的水果最近贵了。, at: "2026-10-22 12:01"}
+- {speaker: other, key: sun, text: 直播间的东西没想象的好，双十一的满减算不明白。, at: "2026-10-22 12:02"}
+- {speaker: wearer, text: 说得也是，退货流程挺麻烦。, at: "2026-10-22 12:02"}
+- {speaker: other, key: sun, text: 快递还在路上，直播间的东西没想象的好。, at: "2026-10-22 12:02"}
+- {speaker: wearer, text: 那还挺好，快递还在路上。, at: "2026-10-22 12:02"}
+- {speaker: other, key: sun, text: 优惠券过期了，退货流程挺麻烦。, at: "2026-10-22 12:03"}
+- {speaker: wearer, text: 哈哈，买了个新的保温杯。, at: "2026-10-22 12:03"}
+- {speaker: other, key: sun, text: 直播间的东西没想象的好，快递还在路上。, at: "2026-10-22 12:03"}
+- {speaker: wearer, text: 没注意，直播间的东西没想象的好。, at: "2026-10-22 12:03"}
+- {speaker: other, key: sun, text: 快递还在路上，直播间的东西没想象的好。, at: "2026-10-22 12:04"}
+- {speaker: wearer, text: 确实，优惠券过期了。, at: "2026-10-22 12:04"}
+- {speaker: other, key: sun, text: 直播间的东西没想象的好，退货流程挺麻烦。, at: "2026-10-22 12:04"}
+- {speaker: wearer, text: 回头看看，优惠券过期了。, at: "2026-10-22 12:04"}
+- {speaker: other, key: sun, text: 双十一的满减算不明白，快递还在路上。, at: "2026-10-22 12:05"}
+- {speaker: wearer, text: 确实，超市的水果最近贵了。, at: "2026-10-22 12:05"}
+- {speaker: other, key: sun, text: 买了个新的保温杯，双十一的满减算不明白。, at: "2026-10-22 12:05"}
+- {speaker: wearer, text: 我也这么觉得，双十一的满减算不明白。, at: "2026-10-22 12:05"}
+- {speaker: other, key: sun, text: 双十一的满减算不明白，那件外套降价了。, at: "2026-10-22 12:06"}
+- {speaker: wearer, text: 确实，快递还在路上。, at: "2026-10-22 12:06"}
+- {speaker: other, key: sun, text: 双十一的满减算不明白，快递还在路上。, at: "2026-10-22 12:06"}
+- {speaker: wearer, text: 说得也是，双十一的满减算不明白。, at: "2026-10-22 12:06"}
+- {speaker: other, key: sun, text: 快递还在路上，买了个新的保温杯。, at: "2026-10-22 12:07"}
+- {speaker: wearer, text: 没注意，优惠券过期了。, at: "2026-10-22 12:07"}
+- {speaker: other, key: sun, text: 双十一的满减算不明白，退货流程挺麻烦。, at: "2026-10-22 12:07"}
+- {speaker: wearer, text: 回头看看，那件外套降价了。, at: "2026-10-22 12:07"}
+- {speaker: other, key: sun, text: 快递还在路上，优惠券过期了。, at: "2026-10-22 12:08"}
+- {speaker: wearer, text: 哈哈，那件外套降价了。, at: "2026-10-22 12:08"}
+- {speaker: other, key: sun, text: 双十一的满减算不明白，双十一的满减算不明白。, at: "2026-10-22 12:08"}
+- {speaker: wearer, text: 回头看看，快递还在路上。, at: "2026-10-22 12:08"}
+- {speaker: other, key: sun, text: 双十一的满减算不明白，快递还在路上。, at: "2026-10-22 12:09"}
+- {speaker: wearer, text: 哈哈，退货流程挺麻烦。, at: "2026-10-22 12:09"}
+- {speaker: other, key: sun, text: 直播间的东西没想象的好，直播间的东西没想象的好。, at: "2026-10-22 12:09"}
+- {speaker: wearer, text: 是啊，优惠券过期了。, at: "2026-10-22 12:09"}
+- {speaker: other, key: sun, text: 双十一的满减算不明白，买了个新的保温杯。, at: "2026-10-22 12:10"}
+- {speaker: wearer, text: 没注意，直播间的东西没想象的好。, at: "2026-10-22 12:10"}
+- {speaker: other, key: sun, text: 快递还在路上，快递还在路上。, at: "2026-10-22 12:10"}
+- {speaker: wearer, text: 是啊，优惠券过期了。, at: "2026-10-22 12:10"}
+- {speaker: other, key: sun, text: 快递还在路上，超市的水果最近贵了。, at: "2026-10-22 12:11"}
+- {speaker: wearer, text: 我也这么觉得，直播间的东西没想象的好。, at: "2026-10-22 12:11"}
+- {speaker: other, key: sun, text: 直播间的东西没想象的好，超市的水果最近贵了。, at: "2026-10-22 12:11"}
+- {speaker: wearer, text: 可不是嘛，直播间的东西没想象的好。, at: "2026-10-22 12:11"}
+- {speaker: other, key: sun, text: 优惠券过期了，退货流程挺麻烦。, at: "2026-10-22 12:12"}
+- {speaker: wearer, text: 没注意，快递还在路上。, at: "2026-10-22 12:12"}
+- {speaker: other, key: sun, text: 双十一的满减算不明白，双十一的满减算不明白。, at: "2026-10-22 12:12"}
+- {speaker: wearer, text: 我也这么觉得，直播间的东西没想象的好。, at: "2026-10-22 12:12"}
+- {speaker: other, key: sun, text: 退货流程挺麻烦，双十一的满减算不明白。, at: "2026-10-22 12:13"}
+- {speaker: wearer, text: 确实，退货流程挺麻烦。, at: "2026-10-22 12:13"}
+- {speaker: other, key: sun, text: 直播间的东西没想象的好，优惠券过期了。, at: "2026-10-22 12:13"}
+- {speaker: wearer, text: 哈哈，快递还在路上。, at: "2026-10-22 12:13"}
+- {speaker: other, key: sun, text: 双十一的满减算不明白，直播间的东西没想象的好。, at: "2026-10-22 12:14"}
+- {speaker: wearer, text: 真的假的，直播间的东西没想象的好。, at: "2026-10-22 12:14"}
+- {speaker: other, key: sun, text: 快递还在路上，那件外套降价了。, at: "2026-10-22 12:14"}
+- {speaker: wearer, text: 没注意，快递还在路上。, at: "2026-10-22 12:14"}
+- {speaker: other, key: qian, text: 它半夜总在跑酷，它半夜总在跑酷。, at: "2026-10-22 12:30"}
+- {speaker: wearer, text: 哈哈，猫砂换了个牌子。, at: "2026-10-22 12:30"}
+- {speaker: other, key: qian, text: 宠物医院排队的人多，楼下有只流浪猫胖了。, at: "2026-10-22 12:30"}
+- {speaker: wearer, text: 回头看看，买的逗猫棒没两天就坏了。, at: "2026-10-22 12:30"}
+- {speaker: other, key: qian, text: 我家猫最近老掉毛，邻居家的狗特别能叫。, at: "2026-10-22 12:31"}
+- {speaker: wearer, text: 我也这么觉得，猫砂换了个牌子。, at: "2026-10-22 12:31"}
+- {speaker: other, key: qian, text: 它半夜总在跑酷，它半夜总在跑酷。, at: "2026-10-22 12:31"}
+- {speaker: wearer, text: 哈哈，宠物医院排队的人多。, at: "2026-10-22 12:31"}
+- {speaker: other, key: qian, text: 邻居家的狗特别能叫，我家猫最近老掉毛。, at: "2026-10-22 12:32"}
+- {speaker: wearer, text: 真的假的，我家猫最近老掉毛。, at: "2026-10-22 12:32"}
+- {speaker: other, key: qian, text: 宠物医院排队的人多，买的逗猫棒没两天就坏了。, at: "2026-10-22 12:32"}
+- {speaker: wearer, text: 说得也是，楼下有只流浪猫胖了。, at: "2026-10-22 12:32"}
+- {speaker: other, key: qian, text: 买的逗猫棒没两天就坏了，猫砂换了个牌子。, at: "2026-10-22 12:33"}
+- {speaker: wearer, text: 回头看看，它半夜总在跑酷。, at: "2026-10-22 12:33"}
+- {speaker: other, key: qian, text: 买的逗猫棒没两天就坏了，楼下有只流浪猫胖了。, at: "2026-10-22 12:33"}
+- {speaker: wearer, text: 说得也是，宠物医院排队的人多。, at: "2026-10-22 12:33"}
+- {speaker: other, key: qian, text: 楼下有只流浪猫胖了，楼下有只流浪猫胖了。, at: "2026-10-22 12:34"}
+- {speaker: wearer, text: 哈哈，猫砂换了个牌子。, at: "2026-10-22 12:34"}
+- {speaker: other, key: qian, text: 买的逗猫棒没两天就坏了，猫砂换了个牌子。, at: "2026-10-22 12:34"}
+- {speaker: wearer, text: 是啊，它半夜总在跑酷。, at: "2026-10-22 12:34"}
+- {speaker: other, key: qian, text: 楼下有只流浪猫胖了，宠物医院排队的人多。, at: "2026-10-22 12:35"}
+- {speaker: wearer, text: 真的假的，狗狗打完疫苗没精神。, at: "2026-10-22 12:35"}
+- {speaker: other, key: qian, text: 楼下有只流浪猫胖了，它半夜总在跑酷。, at: "2026-10-22 12:35"}
+- {speaker: wearer, text: 确实，楼下有只流浪猫胖了。, at: "2026-10-22 12:35"}
+- {speaker: other, key: qian, text: 狗狗打完疫苗没精神，买的逗猫棒没两天就坏了。, at: "2026-10-22 12:36"}
+- {speaker: wearer, text: 没注意，买的逗猫棒没两天就坏了。, at: "2026-10-22 12:36"}
+- {speaker: other, key: qian, text: 邻居家的狗特别能叫，猫砂换了个牌子。, at: "2026-10-22 12:36"}
+- {speaker: wearer, text: 真的假的，宠物医院排队的人多。, at: "2026-10-22 12:36"}
+- {speaker: other, key: qian, text: 我家猫最近老掉毛，宠物医院排队的人多。, at: "2026-10-22 12:37"}
+- {speaker: wearer, text: 真的假的，它半夜总在跑酷。, at: "2026-10-22 12:37"}
+- {speaker: other, key: qian, text: 买的逗猫棒没两天就坏了，它半夜总在跑酷。, at: "2026-10-22 12:37"}
+- {speaker: wearer, text: 那还挺好，猫砂换了个牌子。, at: "2026-10-22 12:37"}
+- {speaker: other, key: qian, text: 它半夜总在跑酷，它半夜总在跑酷。, at: "2026-10-22 12:38"}
+- {speaker: wearer, text: 可不是嘛，宠物医院排队的人多。, at: "2026-10-22 12:38"}
+- {speaker: other, key: qian, text: 邻居家的狗特别能叫，宠物医院排队的人多。, at: "2026-10-22 12:38"}
+- {speaker: wearer, text: 可不是嘛，猫砂换了个牌子。, at: "2026-10-22 12:38"}
+- {speaker: other, key: qian, text: 邻居家的狗特别能叫，宠物医院排队的人多。, at: "2026-10-22 12:39"}
+- {speaker: wearer, text: 回头看看，邻居家的狗特别能叫。, at: "2026-10-22 12:39"}
+- {speaker: other, key: qian, text: 楼下有只流浪猫胖了，楼下有只流浪猫胖了。, at: "2026-10-22 12:39"}
+- {speaker: wearer, text: 是啊，邻居家的狗特别能叫。, at: "2026-10-22 12:39"}
+- {speaker: other, key: qian, text: 楼下有只流浪猫胖了，楼下有只流浪猫胖了。, at: "2026-10-22 12:40"}
+- {speaker: wearer, text: 那还挺好，邻居家的狗特别能叫。, at: "2026-10-22 12:40"}
+- {speaker: other, key: qian, text: 买的逗猫棒没两天就坏了，楼下有只流浪猫胖了。, at: "2026-10-22 12:40"}
+- {speaker: wearer, text: 真的假的，买的逗猫棒没两天就坏了。, at: "2026-10-22 12:40"}
+- {speaker: other, key: qian, text: 猫砂换了个牌子，宠物医院排队的人多。, at: "2026-10-22 12:41"}
+- {speaker: wearer, text: 回头看看，我家猫最近老掉毛。, at: "2026-10-22 12:41"}
+- {speaker: other, key: qian, text: 狗狗打完疫苗没精神，买的逗猫棒没两天就坏了。, at: "2026-10-22 12:41"}
+- {speaker: wearer, text: 确实，我家猫最近老掉毛。, at: "2026-10-22 12:41"}
+- {speaker: other, key: qian, text: 邻居家的狗特别能叫，买的逗猫棒没两天就坏了。, at: "2026-10-22 12:42"}
+- {speaker: wearer, text: 真的假的，楼下有只流浪猫胖了。, at: "2026-10-22 12:42"}
+- {speaker: other, key: qian, text: 宠物医院排队的人多，邻居家的狗特别能叫。, at: "2026-10-22 12:42"}
+- {speaker: wearer, text: 可不是嘛，我家猫最近老掉毛。, at: "2026-10-22 12:42"}
+- {speaker: other, key: qian, text: 猫砂换了个牌子，楼下有只流浪猫胖了。, at: "2026-10-22 12:43"}
+- {speaker: wearer, text: 是啊，买的逗猫棒没两天就坏了。, at: "2026-10-22 12:43"}
+- {speaker: other, key: qian, text: 我家猫最近老掉毛，它半夜总在跑酷。, at: "2026-10-22 12:43"}
+- {speaker: wearer, text: 可不是嘛，邻居家的狗特别能叫。, at: "2026-10-22 12:43"}
+- {speaker: other, key: qian, text: 猫砂换了个牌子，我家猫最近老掉毛。, at: "2026-10-22 12:44"}
+- {speaker: wearer, text: 是啊，猫砂换了个牌子。, at: "2026-10-22 12:44"}
+- {speaker: other, key: qian, text: 邻居家的狗特别能叫，买的逗猫棒没两天就坏了。, at: "2026-10-22 12:44"}
+- {speaker: wearer, text: 回头看看，猫砂换了个牌子。, at: "2026-10-22 12:44"}
+- {speaker: other, key: qian, text: 猫砂换了个牌子，猫砂换了个牌子。, at: "2026-10-22 12:45"}
+- {speaker: wearer, text: 真的假的，楼下有只流浪猫胖了。, at: "2026-10-22 12:45"}
+- {speaker: other, key: qian, text: 我家猫最近老掉毛，邻居家的狗特别能叫。, at: "2026-10-22 12:45"}
+- {speaker: wearer, text: 说得也是，买的逗猫棒没两天就坏了。, at: "2026-10-22 12:45"}
+- {speaker: other, key: qian, text: 猫砂换了个牌子，邻居家的狗特别能叫。, at: "2026-10-22 12:46"}
+- {speaker: wearer, text: 确实，狗狗打完疫苗没精神。, at: "2026-10-22 12:46"}
+- {speaker: other, key: qian, text: 楼下有只流浪猫胖了，邻居家的狗特别能叫。, at: "2026-10-22 12:46"}
+- {speaker: wearer, text: 那还挺好，它半夜总在跑酷。, at: "2026-10-22 12:46"}
+- {speaker: other, key: qian, text: 买的逗猫棒没两天就坏了，邻居家的狗特别能叫。, at: "2026-10-22 12:47"}
+- {speaker: wearer, text: 可不是嘛，我家猫最近老掉毛。, at: "2026-10-22 12:47"}
+- {speaker: other, key: qian, text: 邻居家的狗特别能叫，楼下有只流浪猫胖了。, at: "2026-10-22 12:47"}
+- {speaker: wearer, text: 是啊，狗狗打完疫苗没精神。, at: "2026-10-22 12:47"}
+- {speaker: other, key: qian, text: 宠物医院排队的人多，买的逗猫棒没两天就坏了。, at: "2026-10-22 12:48"}
+- {speaker: wearer, text: 回头看看，狗狗打完疫苗没精神。, at: "2026-10-22 12:48"}
+- {speaker: other, key: qian, text: 买的逗猫棒没两天就坏了，邻居家的狗特别能叫。, at: "2026-10-22 12:48"}
+- {speaker: wearer, text: 确实，买的逗猫棒没两天就坏了。, at: "2026-10-22 12:48"}
+- {speaker: other, key: qian, text: 猫砂换了个牌子，邻居家的狗特别能叫。, at: "2026-10-22 12:49"}
+- {speaker: wearer, text: 那还挺好，狗狗打完疫苗没精神。, at: "2026-10-22 12:49"}
+- {speaker: other, key: qian, text: 宠物医院排队的人多，它半夜总在跑酷。, at: "2026-10-22 12:49"}
+- {speaker: wearer, text: 确实，邻居家的狗特别能叫。, at: "2026-10-22 12:49"}
+- {speaker: other, key: feng, text: 拉伸做完舒服多了，游泳馆周一闭馆。, at: "2026-10-22 13:05"}
+- {speaker: wearer, text: 回头看看，瑜伽课的人越来越多。, at: "2026-10-22 13:05"}
+- {speaker: other, key: feng, text: 跑步机总是有人占着，跑步机总是有人占着。, at: "2026-10-22 13:05"}
+- {speaker: wearer, text: 可不是嘛，跑步机总是有人占着。, at: "2026-10-22 13:05"}
+- {speaker: other, key: feng, text: 今天练腿走路都疼，拉伸做完舒服多了。, at: "2026-10-22 13:06"}
+- {speaker: wearer, text: 可不是嘛，体脂秤好像不准。, at: "2026-10-22 13:06"}
+- {speaker: other, key: feng, text: 体脂秤好像不准，瑜伽课的人越来越多。, at: "2026-10-22 13:06"}
+- {speaker: wearer, text: 回头看看，今天练腿走路都疼。, at: "2026-10-22 13:06"}
+- {speaker: other, key: feng, text: 健身房新换了一批器材，拉伸做完舒服多了。, at: "2026-10-22 13:07"}
+- {speaker: wearer, text: 那还挺好，游泳馆周一闭馆。, at: "2026-10-22 13:07"}
+- {speaker: other, key: feng, text: 跑步机总是有人占着，瑜伽课的人越来越多。, at: "2026-10-22 13:07"}
+- {speaker: wearer, text: 可不是嘛，跑步机总是有人占着。, at: "2026-10-22 13:07"}
+- {speaker: other, key: feng, text: 拉伸做完舒服多了，跑步机总是有人占着。, at: "2026-10-22 13:08"}
+- {speaker: wearer, text: 是啊，跑步机总是有人占着。, at: "2026-10-22 13:08"}
+- {speaker: other, key: feng, text: 拉伸做完舒服多了，游泳馆周一闭馆。, at: "2026-10-22 13:08"}
+- {speaker: wearer, text: 回头看看，健身房新换了一批器材。, at: "2026-10-22 13:08"}
+- {speaker: other, key: feng, text: 瑜伽课的人越来越多，体脂秤好像不准。, at: "2026-10-22 13:09"}
+- {speaker: wearer, text: 我也这么觉得，拉伸做完舒服多了。, at: "2026-10-22 13:09"}
+- {speaker: other, key: feng, text: 瑜伽课的人越来越多，教练推荐的动作太难。, at: "2026-10-22 13:09"}
+- {speaker: wearer, text: 说得也是，跑步机总是有人占着。, at: "2026-10-22 13:09"}
+- {speaker: other, key: feng, text: 拉伸做完舒服多了，教练推荐的动作太难。, at: "2026-10-22 13:10"}
+- {speaker: wearer, text: 那还挺好，教练推荐的动作太难。, at: "2026-10-22 13:10"}
+- {speaker: other, key: feng, text: 今天练腿走路都疼，跑步机总是有人占着。, at: "2026-10-22 13:10"}
+- {speaker: wearer, text: 回头看看，瑜伽课的人越来越多。, at: "2026-10-22 13:10"}
+- {speaker: other, key: feng, text: 瑜伽课的人越来越多，游泳馆周一闭馆。, at: "2026-10-22 13:11"}
+- {speaker: wearer, text: 可不是嘛，今天练腿走路都疼。, at: "2026-10-22 13:11"}
+- {speaker: other, key: feng, text: 游泳馆周一闭馆，健身房新换了一批器材。, at: "2026-10-22 13:11"}
+- {speaker: wearer, text: 我也这么觉得，拉伸做完舒服多了。, at: "2026-10-22 13:11"}
+- {speaker: other, key: feng, text: 今天练腿走路都疼，跑步机总是有人占着。, at: "2026-10-22 13:12"}
+- {speaker: wearer, text: 说得也是，体脂秤好像不准。, at: "2026-10-22 13:12"}
+- {speaker: other, key: feng, text: 跑步机总是有人占着，健身房新换了一批器材。, at: "2026-10-22 13:12"}
+- {speaker: wearer, text: 可不是嘛，游泳馆周一闭馆。, at: "2026-10-22 13:12"}
+- {speaker: other, key: feng, text: 今天练腿走路都疼，跑步机总是有人占着。, at: "2026-10-22 13:13"}
+- {speaker: wearer, text: 真的假的，游泳馆周一闭馆。, at: "2026-10-22 13:13"}
+- {speaker: other, key: feng, text: 今天练腿走路都疼，游泳馆周一闭馆。, at: "2026-10-22 13:13"}
+- {speaker: wearer, text: 可不是嘛，今天练腿走路都疼。, at: "2026-10-22 13:13"}
+- {speaker: other, key: feng, text: 游泳馆周一闭馆，游泳馆周一闭馆。, at: "2026-10-22 13:14"}
+- {speaker: wearer, text: 说得也是，教练推荐的动作太难。, at: "2026-10-22 13:14"}
+- {speaker: other, key: feng, text: 教练推荐的动作太难，拉伸做完舒服多了。, at: "2026-10-22 13:14"}
+- {speaker: wearer, text: 可不是嘛，今天练腿走路都疼。, at: "2026-10-22 13:14"}
+- {speaker: other, key: feng, text: 体脂秤好像不准，今天练腿走路都疼。, at: "2026-10-22 13:15"}
+- {speaker: wearer, text: 是啊，健身房新换了一批器材。, at: "2026-10-22 13:15"}
+- {speaker: other, key: feng, text: 瑜伽课的人越来越多，教练推荐的动作太难。, at: "2026-10-22 13:15"}
+- {speaker: wearer, text: 没注意，今天练腿走路都疼。, at: "2026-10-22 13:15"}
+- {speaker: other, key: feng, text: 瑜伽课的人越来越多，游泳馆周一闭馆。, at: "2026-10-22 13:16"}
+- {speaker: wearer, text: 说得也是，教练推荐的动作太难。, at: "2026-10-22 13:16"}
+- {speaker: other, key: feng, text: 教练推荐的动作太难，瑜伽课的人越来越多。, at: "2026-10-22 13:16"}
+- {speaker: wearer, text: 可不是嘛，瑜伽课的人越来越多。, at: "2026-10-22 13:16"}
+- {speaker: other, key: feng, text: 今天练腿走路都疼，拉伸做完舒服多了。, at: "2026-10-22 13:17"}
+- {speaker: wearer, text: 可不是嘛，游泳馆周一闭馆。, at: "2026-10-22 13:17"}
+- {speaker: other, key: feng, text: 瑜伽课的人越来越多，瑜伽课的人越来越多。, at: "2026-10-22 13:17"}
+- {speaker: wearer, text: 确实，跑步机总是有人占着。, at: "2026-10-22 13:17"}
+- {speaker: other, key: feng, text: 健身房新换了一批器材，今天练腿走路都疼。, at: "2026-10-22 13:18"}
+- {speaker: wearer, text: 我也这么觉得，拉伸做完舒服多了。, at: "2026-10-22 13:18"}
+- {speaker: other, key: feng, text: 今天练腿走路都疼，跑步机总是有人占着。, at: "2026-10-22 13:18"}
+- {speaker: wearer, text: 回头看看，瑜伽课的人越来越多。, at: "2026-10-22 13:18"}
+- {speaker: other, key: feng, text: 健身房新换了一批器材，体脂秤好像不准。, at: "2026-10-22 13:19"}
+- {speaker: wearer, text: 真的假的，体脂秤好像不准。, at: "2026-10-22 13:19"}
+- {speaker: other, key: feng, text: 游泳馆周一闭馆，跑步机总是有人占着。, at: "2026-10-22 13:19"}
+- {speaker: wearer, text: 确实，健身房新换了一批器材。, at: "2026-10-22 13:19"}
+- {speaker: other, key: feng, text: 游泳馆周一闭馆，跑步机总是有人占着。, at: "2026-10-22 13:20"}
+- {speaker: wearer, text: 没注意，游泳馆周一闭馆。, at: "2026-10-22 13:20"}
+- {speaker: other, key: feng, text: 游泳馆周一闭馆，瑜伽课的人越来越多。, at: "2026-10-22 13:20"}
+- {speaker: wearer, text: 真的假的，体脂秤好像不准。, at: "2026-10-22 13:20"}
+- {speaker: other, key: feng, text: 瑜伽课的人越来越多，教练推荐的动作太难。, at: "2026-10-22 13:21"}
+- {speaker: wearer, text: 说得也是，今天练腿走路都疼。, at: "2026-10-22 13:21"}
+- {speaker: other, key: feng, text: 拉伸做完舒服多了，瑜伽课的人越来越多。, at: "2026-10-22 13:21"}
+- {speaker: wearer, text: 没注意，教练推荐的动作太难。, at: "2026-10-22 13:21"}
+- {speaker: other, key: feng, text: 教练推荐的动作太难，游泳馆周一闭馆。, at: "2026-10-22 13:22"}
+- {speaker: wearer, text: 确实，健身房新换了一批器材。, at: "2026-10-22 13:22"}
+- {speaker: other, key: feng, text: 瑜伽课的人越来越多，健身房新换了一批器材。, at: "2026-10-22 13:22"}
+- {speaker: wearer, text: 回头看看，游泳馆周一闭馆。, at: "2026-10-22 13:22"}
+- {speaker: other, key: feng, text: 健身房新换了一批器材，健身房新换了一批器材。, at: "2026-10-22 13:23"}
+- {speaker: wearer, text: 真的假的，游泳馆周一闭馆。, at: "2026-10-22 13:23"}
+- {speaker: other, key: feng, text: 体脂秤好像不准，教练推荐的动作太难。, at: "2026-10-22 13:23"}
+- {speaker: wearer, text: 确实，游泳馆周一闭馆。, at: "2026-10-22 13:23"}
+- {speaker: other, key: feng, text: 体脂秤好像不准，健身房新换了一批器材。, at: "2026-10-22 13:24"}
+- {speaker: wearer, text: 那还挺好，教练推荐的动作太难。, at: "2026-10-22 13:24"}
+- {speaker: other, key: feng, text: 游泳馆周一闭馆，健身房新换了一批器材。, at: "2026-10-22 13:24"}
+- {speaker: wearer, text: 是啊，跑步机总是有人占着。, at: "2026-10-22 13:24"}
+- {speaker: other, key: he, text: 今年秋天来得早，昨晚的雾到现在还没散。, at: "2026-10-22 13:40"}
+- {speaker: wearer, text: 是啊，今年秋天来得早。, at: "2026-10-22 13:40"}
+- {speaker: other, key: he, text: 听说周末又要下雨，办公室空调开得有点冷。, at: "2026-10-22 13:40"}
+- {speaker: wearer, text: 回头看看，这种天气最容易感冒。, at: "2026-10-22 13:40"}
+- {speaker: other, key: he, text: 昨晚的雾到现在还没散，这种天气最容易感冒。, at: "2026-10-22 13:41"}
+- {speaker: wearer, text: 那还挺好，天气预报说下周回暖。, at: "2026-10-22 13:41"}
+- {speaker: other, key: he, text: 听说周末又要下雨，这种天气最容易感冒。, at: "2026-10-22 13:41"}
+- {speaker: wearer, text: 回头看看，今年秋天来得早。, at: "2026-10-22 13:41"}
+- {speaker: other, key: he, text: 天气预报说下周回暖，昨晚的雾到现在还没散。, at: "2026-10-22 13:42"}
+- {speaker: wearer, text: 我也这么觉得，听说周末又要下雨。, at: "2026-10-22 13:42"}
+- {speaker: other, key: he, text: 这种天气最容易感冒，这种天气最容易感冒。, at: "2026-10-22 13:42"}
+- {speaker: wearer, text: 确实，办公室空调开得有点冷。, at: "2026-10-22 13:42"}
+- {speaker: other, key: he, text: 办公室空调开得有点冷，早上出门风特别大。, at: "2026-10-22 13:43"}
+- {speaker: wearer, text: 哈哈，昨晚的雾到现在还没散。, at: "2026-10-22 13:43"}
+- {speaker: other, key: he, text: 昨晚的雾到现在还没散，早上出门风特别大。, at: "2026-10-22 13:43"}
+- {speaker: wearer, text: 哈哈，今年秋天来得早。, at: "2026-10-22 13:43"}
+- {speaker: other, key: he, text: 这种天气最容易感冒，今年秋天来得早。, at: "2026-10-22 13:44"}
+- {speaker: wearer, text: 回头看看，天气预报说下周回暖。, at: "2026-10-22 13:44"}
+- {speaker: other, key: he, text: 早上出门风特别大，天气预报说下周回暖。, at: "2026-10-22 13:44"}
+- {speaker: wearer, text: 我也这么觉得，今年秋天来得早。, at: "2026-10-22 13:44"}
+- {speaker: other, key: he, text: 这两天降温挺厉害的，听说周末又要下雨。, at: "2026-10-22 13:45"}
+- {speaker: wearer, text: 哈哈，办公室空调开得有点冷。, at: "2026-10-22 13:45"}
+- {speaker: other, key: he, text: 天气预报说下周回暖，昨晚的雾到现在还没散。, at: "2026-10-22 13:45"}
+- {speaker: wearer, text: 是啊，天气预报说下周回暖。, at: "2026-10-22 13:45"}
+- {speaker: other, key: he, text: 办公室空调开得有点冷，这两天降温挺厉害的。, at: "2026-10-22 13:46"}
+- {speaker: wearer, text: 那还挺好，昨晚的雾到现在还没散。, at: "2026-10-22 13:46"}
+- {speaker: other, key: he, text: 这两天降温挺厉害的，天气预报说下周回暖。, at: "2026-10-22 13:46"}
+- {speaker: wearer, text: 真的假的，听说周末又要下雨。, at: "2026-10-22 13:46"}
+- {speaker: other, key: he, text: 天气预报说下周回暖，天气预报说下周回暖。, at: "2026-10-22 13:47"}
+- {speaker: wearer, text: 哈哈，天气预报说下周回暖。, at: "2026-10-22 13:47"}
+- {speaker: other, key: he, text: 办公室空调开得有点冷，早上出门风特别大。, at: "2026-10-22 13:47"}
+- {speaker: wearer, text: 说得也是，办公室空调开得有点冷。, at: "2026-10-22 13:47"}
+- {speaker: other, key: he, text: 听说周末又要下雨，天气预报说下周回暖。, at: "2026-10-22 13:48"}
+- {speaker: wearer, text: 没注意，今年秋天来得早。, at: "2026-10-22 13:48"}
+- {speaker: other, key: he, text: 天气预报说下周回暖，早上出门风特别大。, at: "2026-10-22 13:48"}
+- {speaker: wearer, text: 说得也是，天气预报说下周回暖。, at: "2026-10-22 13:48"}
+- {speaker: other, key: he, text: 早上出门风特别大，早上出门风特别大。, at: "2026-10-22 13:49"}
+- {speaker: wearer, text: 我也这么觉得，天气预报说下周回暖。, at: "2026-10-22 13:49"}
+- {speaker: other, key: he, text: 听说周末又要下雨，昨晚的雾到现在还没散。, at: "2026-10-22 13:49"}
+- {speaker: wearer, text: 那还挺好，天气预报说下周回暖。, at: "2026-10-22 13:49"}
+- {speaker: other, key: he, text: 这两天降温挺厉害的，这种天气最容易感冒。, at: "2026-10-22 13:50"}
+- {speaker: wearer, text: 那还挺好，办公室空调开得有点冷。, at: "2026-10-22 13:50"}
+- {speaker: other, key: he, text: 听说周末又要下雨，听说周末又要下雨。, at: "2026-10-22 13:50"}
+- {speaker: wearer, text: 是啊，这种天气最容易感冒。, at: "2026-10-22 13:50"}
+- {speaker: other, key: he, text: 这两天降温挺厉害的，听说周末又要下雨。, at: "2026-10-22 13:51"}
+- {speaker: wearer, text: 可不是嘛，天气预报说下周回暖。, at: "2026-10-22 13:51"}
+- {speaker: other, key: he, text: 天气预报说下周回暖，天气预报说下周回暖。, at: "2026-10-22 13:51"}
+- {speaker: wearer, text: 哈哈，天气预报说下周回暖。, at: "2026-10-22 13:51"}
+- {speaker: other, key: he, text: 这两天降温挺厉害的，天气预报说下周回暖。, at: "2026-10-22 13:52"}
+- {speaker: wearer, text: 没注意，这种天气最容易感冒。, at: "2026-10-22 13:52"}
+- {speaker: other, key: he, text: 这种天气最容易感冒，今年秋天来得早。, at: "2026-10-22 13:52"}
+- {speaker: wearer, text: 我也这么觉得，听说周末又要下雨。, at: "2026-10-22 13:52"}
+- {speaker: other, key: he, text: 今年秋天来得早，天气预报说下周回暖。, at: "2026-10-22 13:53"}
+- {speaker: wearer, text: 回头看看，办公室空调开得有点冷。, at: "2026-10-22 13:53"}
+- {speaker: other, key: he, text: 天气预报说下周回暖，昨晚的雾到现在还没散。, at: "2026-10-22 13:53"}
+- {speaker: wearer, text: 回头看看，这种天气最容易感冒。, at: "2026-10-22 13:53"}
+- {speaker: other, key: he, text: 听说周末又要下雨，昨晚的雾到现在还没散。, at: "2026-10-22 13:54"}
+- {speaker: wearer, text: 没注意，这种天气最容易感冒。, at: "2026-10-22 13:54"}
+- {speaker: other, key: he, text: 听说周末又要下雨，天气预报说下周回暖。, at: "2026-10-22 13:54"}
+- {speaker: wearer, text: 那还挺好，听说周末又要下雨。, at: "2026-10-22 13:54"}
+- {speaker: other, key: he, text: 昨晚的雾到现在还没散，昨晚的雾到现在还没散。, at: "2026-10-22 13:55"}
+- {speaker: wearer, text: 回头看看，早上出门风特别大。, at: "2026-10-22 13:55"}
+- {speaker: other, key: he, text: 今年秋天来得早，昨晚的雾到现在还没散。, at: "2026-10-22 13:55"}
+- {speaker: wearer, text: 哈哈，听说周末又要下雨。, at: "2026-10-22 13:55"}
+- {speaker: other, key: he, text: 昨晚的雾到现在还没散，这两天降温挺厉害的。, at: "2026-10-22 13:56"}
+- {speaker: wearer, text: 那还挺好，昨晚的雾到现在还没散。, at: "2026-10-22 13:56"}
+- {speaker: other, key: he, text: 早上出门风特别大，听说周末又要下雨。, at: "2026-10-22 13:56"}
+- {speaker: wearer, text: 哈哈，早上出门风特别大。, at: "2026-10-22 13:56"}
+- {speaker: other, key: he, text: 天气预报说下周回暖，早上出门风特别大。, at: "2026-10-22 13:57"}
+- {speaker: wearer, text: 那还挺好，昨晚的雾到现在还没散。, at: "2026-10-22 13:57"}
+- {speaker: other, key: he, text: 天气预报说下周回暖，听说周末又要下雨。, at: "2026-10-22 13:57"}
+- {speaker: wearer, text: 真的假的，办公室空调开得有点冷。, at: "2026-10-22 13:57"}
+- {speaker: other, key: he, text: 这种天气最容易感冒，昨晚的雾到现在还没散。, at: "2026-10-22 13:58"}
+- {speaker: wearer, text: 是啊，昨晚的雾到现在还没散。, at: "2026-10-22 13:58"}
+- {speaker: other, key: he, text: 这种天气最容易感冒，早上出门风特别大。, at: "2026-10-22 13:58"}
+- {speaker: wearer, text: 真的假的，这种天气最容易感冒。, at: "2026-10-22 13:58"}
+- {speaker: other, key: he, text: 早上出门风特别大，听说周末又要下雨。, at: "2026-10-22 13:59"}
+- {speaker: wearer, text: 可不是嘛，昨晚的雾到现在还没散。, at: "2026-10-22 13:59"}
+- {speaker: other, key: he, text: 这种天气最容易感冒，听说周末又要下雨。, at: "2026-10-22 13:59"}
+- {speaker: wearer, text: 那还挺好，昨晚的雾到现在还没散。, at: "2026-10-22 13:59"}
+- {speaker: other, key: lu, text: 下次可以试试隔壁的饺子，沙拉吃不饱。, at: "2026-10-22 14:15"}
+- {speaker: wearer, text: 回头看看，外卖等了快一个小时。, at: "2026-10-22 14:15"}
+- {speaker: other, key: lu, text: 楼下新开了一家面馆，食堂今天的红烧肉一般。, at: "2026-10-22 14:15"}
+- {speaker: wearer, text: 说得也是，排队的人太多了。, at: "2026-10-22 14:15"}
+- {speaker: other, key: lu, text: 食堂今天的红烧肉一般，楼下新开了一家面馆。, at: "2026-10-22 14:16"}
+- {speaker: wearer, text: 回头看看，沙拉吃不饱。, at: "2026-10-22 14:16"}
+- {speaker: other, key: lu, text: 食堂今天的红烧肉一般，那家的牛肉面分量很足。, at: "2026-10-22 14:16"}
+- {speaker: wearer, text: 说得也是，排队的人太多了。, at: "2026-10-22 14:16"}
+- {speaker: other, key: lu, text: 下次可以试试隔壁的饺子，外卖等了快一个小时。, at: "2026-10-22 14:17"}
+- {speaker: wearer, text: 我也这么觉得，沙拉吃不饱。, at: "2026-10-22 14:17"}
+- {speaker: other, key: lu, text: 他们家的辣椒油是自己炒的，外卖等了快一个小时。, at: "2026-10-22 14:17"}
+- {speaker: wearer, text: 那还挺好，下次可以试试隔壁的饺子。, at: "2026-10-22 14:17"}
+- {speaker: other, key: lu, text: 食堂今天的红烧肉一般，外卖等了快一个小时。, at: "2026-10-22 14:18"}
+- {speaker: wearer, text: 可不是嘛，楼下新开了一家面馆。, at: "2026-10-22 14:18"}
+- {speaker: other, key: lu, text: 那家的牛肉面分量很足，下次可以试试隔壁的饺子。, at: "2026-10-22 14:18"}
+- {speaker: wearer, text: 我也这么觉得，外卖等了快一个小时。, at: "2026-10-22 14:18"}
+- {speaker: other, key: lu, text: 他们家的辣椒油是自己炒的，下次可以试试隔壁的饺子。, at: "2026-10-22 14:19"}
+- {speaker: wearer, text: 确实，下次可以试试隔壁的饺子。, at: "2026-10-22 14:19"}
+- {speaker: other, key: lu, text: 食堂今天的红烧肉一般，那家的牛肉面分量很足。, at: "2026-10-22 14:19"}
+- {speaker: wearer, text: 确实，那家的牛肉面分量很足。, at: "2026-10-22 14:19"}
+- {speaker: other, key: lu, text: 那家的牛肉面分量很足，外卖等了快一个小时。, at: "2026-10-22 14:20"}
+- {speaker: wearer, text: 确实，他们家的辣椒油是自己炒的。, at: "2026-10-22 14:20"}
+- {speaker: other, key: lu, text: 他们家的辣椒油是自己炒的，下次可以试试隔壁的饺子。, at: "2026-10-22 14:20"}
+- {speaker: wearer, text: 说得也是，排队的人太多了。, at: "2026-10-22 14:20"}
+- {speaker: other, key: lu, text: 他们家的辣椒油是自己炒的，沙拉吃不饱。, at: "2026-10-22 14:21"}
+- {speaker: wearer, text: 没注意，排队的人太多了。, at: "2026-10-22 14:21"}
+- {speaker: other, key: lu, text: 外卖等了快一个小时，沙拉吃不饱。, at: "2026-10-22 14:21"}
+- {speaker: wearer, text: 哈哈，食堂今天的红烧肉一般。, at: "2026-10-22 14:21"}
+- {speaker: other, key: lu, text: 那家的牛肉面分量很足，楼下新开了一家面馆。, at: "2026-10-22 14:22"}
+- {speaker: wearer, text: 没注意，他们家的辣椒油是自己炒的。, at: "2026-10-22 14:22"}
+- {speaker: other, key: lu, text: 排队的人太多了，沙拉吃不饱。, at: "2026-10-22 14:22"}
+- {speaker: wearer, text: 真的假的，下次可以试试隔壁的饺子。, at: "2026-10-22 14:22"}
+- {speaker: other, key: lu, text: 下次可以试试隔壁的饺子，楼下新开了一家面馆。, at: "2026-10-22 14:23"}
+- {speaker: wearer, text: 那还挺好，他们家的辣椒油是自己炒的。, at: "2026-10-22 14:23"}
+- {speaker: other, key: lu, text: 那家的牛肉面分量很足，排队的人太多了。, at: "2026-10-22 14:23"}
+- {speaker: wearer, text: 确实，下次可以试试隔壁的饺子。, at: "2026-10-22 14:23"}
+- {speaker: other, key: lu, text: 沙拉吃不饱，楼下新开了一家面馆。, at: "2026-10-22 14:24"}
+- {speaker: wearer, text: 是啊，沙拉吃不饱。, at: "2026-10-22 14:24"}
+- {speaker: other, key: lu, text: 下次可以试试隔壁的饺子，他们家的辣椒油是自己炒的。, at: "2026-10-22 14:24"}
+- {speaker: wearer, text: 没注意，排队的人太多了。, at: "2026-10-22 14:24"}
+- {speaker: other, key: lu, text: 外卖等了快一个小时，食堂今天的红烧肉一般。, at: "2026-10-22 14:25"}
+- {speaker: wearer, text: 真的假的，下次可以试试隔壁的饺子。, at: "2026-10-22 14:25"}
+- {speaker: other, key: lu, text: 下次可以试试隔壁的饺子，食堂今天的红烧肉一般。, at: "2026-10-22 14:25"}
+- {speaker: wearer, text: 那还挺好，下次可以试试隔壁的饺子。, at: "2026-10-22 14:25"}
+- {speaker: other, key: lu, text: 那家的牛肉面分量很足，沙拉吃不饱。, at: "2026-10-22 14:26"}
+- {speaker: wearer, text: 确实，外卖等了快一个小时。, at: "2026-10-22 14:26"}
+- {speaker: other, key: lu, text: 楼下新开了一家面馆，楼下新开了一家面馆。, at: "2026-10-22 14:26"}
+- {speaker: wearer, text: 是啊，食堂今天的红烧肉一般。, at: "2026-10-22 14:26"}
+- {speaker: other, key: lu, text: 沙拉吃不饱，排队的人太多了。, at: "2026-10-22 14:27"}
+- {speaker: wearer, text: 回头看看，那家的牛肉面分量很足。, at: "2026-10-22 14:27"}
+- {speaker: other, key: lu, text: 排队的人太多了，他们家的辣椒油是自己炒的。, at: "2026-10-22 14:27"}
+- {speaker: wearer, text: 哈哈，他们家的辣椒油是自己炒的。, at: "2026-10-22 14:27"}
+- {speaker: other, key: lu, text: 外卖等了快一个小时，那家的牛肉面分量很足。, at: "2026-10-22 14:28"}
+- {speaker: wearer, text: 那还挺好，外卖等了快一个小时。, at: "2026-10-22 14:28"}
+- {speaker: other, key: lu, text: 那家的牛肉面分量很足，外卖等了快一个小时。, at: "2026-10-22 14:28"}
+- {speaker: wearer, text: 我也这么觉得，下次可以试试隔壁的饺子。, at: "2026-10-22 14:28"}
+- {speaker: other, key: lu, text: 排队的人太多了，外卖等了快一个小时。, at: "2026-10-22 14:29"}
+- {speaker: wearer, text: 确实，食堂今天的红烧肉一般。, at: "2026-10-22 14:29"}
+- {speaker: other, key: lu, text: 楼下新开了一家面馆，下次可以试试隔壁的饺子。, at: "2026-10-22 14:29"}
+- {speaker: wearer, text: 那还挺好，沙拉吃不饱。, at: "2026-10-22 14:29"}
+- {speaker: other, key: lu, text: 那家的牛肉面分量很足，楼下新开了一家面馆。, at: "2026-10-22 14:30"}
+- {speaker: wearer, text: 哈哈，排队的人太多了。, at: "2026-10-22 14:30"}
+- {speaker: other, key: lu, text: 楼下新开了一家面馆，下次可以试试隔壁的饺子。, at: "2026-10-22 14:30"}
+- {speaker: wearer, text: 回头看看，沙拉吃不饱。, at: "2026-10-22 14:30"}
+- {speaker: other, key: lu, text: 沙拉吃不饱，下次可以试试隔壁的饺子。, at: "2026-10-22 14:31"}
+- {speaker: wearer, text: 哈哈，那家的牛肉面分量很足。, at: "2026-10-22 14:31"}
+- {speaker: other, key: lu, text: 食堂今天的红烧肉一般，沙拉吃不饱。, at: "2026-10-22 14:31"}
+- {speaker: wearer, text: 没注意，排队的人太多了。, at: "2026-10-22 14:31"}
+- {speaker: other, key: lu, text: 他们家的辣椒油是自己炒的，食堂今天的红烧肉一般。, at: "2026-10-22 14:32"}
+- {speaker: wearer, text: 真的假的，他们家的辣椒油是自己炒的。, at: "2026-10-22 14:32"}
+- {speaker: other, key: lu, text: 沙拉吃不饱，外卖等了快一个小时。, at: "2026-10-22 14:32"}
+- {speaker: wearer, text: 那还挺好，那家的牛肉面分量很足。, at: "2026-10-22 14:32"}
+- {speaker: other, key: lu, text: 沙拉吃不饱，沙拉吃不饱。, at: "2026-10-22 14:33"}
+- {speaker: wearer, text: 是啊，食堂今天的红烧肉一般。, at: "2026-10-22 14:33"}
+- {speaker: other, key: lu, text: 排队的人太多了，沙拉吃不饱。, at: "2026-10-22 14:33"}
+- {speaker: wearer, text: 真的假的，外卖等了快一个小时。, at: "2026-10-22 14:33"}
+- {speaker: other, key: lu, text: 那家的牛肉面分量很足，下次可以试试隔壁的饺子。, at: "2026-10-22 14:34"}
+- {speaker: wearer, text: 可不是嘛，外卖等了快一个小时。, at: "2026-10-22 14:34"}
+- {speaker: other, key: lu, text: 楼下新开了一家面馆，外卖等了快一个小时。, at: "2026-10-22 14:34"}
+- {speaker: wearer, text: 我也这么觉得，外卖等了快一个小时。, at: "2026-10-22 14:34"}
+- {speaker: other, key: shi, text: 早高峰挤得喘不过气，早高峰挤得喘不过气。, at: "2026-10-22 14:50"}
+- {speaker: wearer, text: 那还挺好，骑车过来倒是挺快。, at: "2026-10-22 14:50"}
+- {speaker: other, key: shi, text: 公交改线了，那条路在修，绕了一大圈。, at: "2026-10-22 14:50"}
+- {speaker: wearer, text: 说得也是，早高峰挤得喘不过气。, at: "2026-10-22 14:50"}
+- {speaker: other, key: shi, text: 地铁今天又晚点了，停车场的车位越来越难找。, at: "2026-10-22 14:51"}
+- {speaker: wearer, text: 没注意，停车场的车位越来越难找。, at: "2026-10-22 14:51"}
+- {speaker: other, key: shi, text: 地铁今天又晚点了，停车场的车位越来越难找。, at: "2026-10-22 14:51"}
+- {speaker: wearer, text: 哈哈，打车比平时贵。, at: "2026-10-22 14:51"}
+- {speaker: other, key: shi, text: 打车比平时贵，打车比平时贵。, at: "2026-10-22 14:52"}
+- {speaker: wearer, text: 回头看看，早高峰挤得喘不过气。, at: "2026-10-22 14:52"}
+- {speaker: other, key: shi, text: 那条路在修，绕了一大圈，打车比平时贵。, at: "2026-10-22 14:52"}
+- {speaker: wearer, text: 那还挺好，早高峰挤得喘不过气。, at: "2026-10-22 14:52"}
+- {speaker: other, key: shi, text: 早高峰挤得喘不过气，打车比平时贵。, at: "2026-10-22 14:53"}
+- {speaker: wearer, text: 哈哈，骑车过来倒是挺快。, at: "2026-10-22 14:53"}
+- {speaker: other, key: shi, text: 那条路在修，绕了一大圈，停车场的车位越来越难找。, at: "2026-10-22 14:53"}
+- {speaker: wearer, text: 回头看看，骑车过来倒是挺快。, at: "2026-10-22 14:53"}
+- {speaker: other, key: shi, text: 公交改线了，打车比平时贵。, at: "2026-10-22 14:54"}
+- {speaker: wearer, text: 真的假的，那条路在修，绕了一大圈。, at: "2026-10-22 14:54"}
+- {speaker: other, key: shi, text: 早高峰挤得喘不过气，早高峰挤得喘不过气。, at: "2026-10-22 14:54"}
+- {speaker: wearer, text: 我也这么觉得，地铁今天又晚点了。, at: "2026-10-22 14:54"}
+- {speaker: other, key: shi, text: 早高峰挤得喘不过气，地铁今天又晚点了。, at: "2026-10-22 14:55"}
+- {speaker: wearer, text: 哈哈，骑车过来倒是挺快。, at: "2026-10-22 14:55"}
+- {speaker: other, key: shi, text: 打车比平时贵，停车场的车位越来越难找。, at: "2026-10-22 14:55"}
+- {speaker: wearer, text: 真的假的，公交改线了。, at: "2026-10-22 14:55"}
+- {speaker: other, key: shi, text: 公交改线了，早高峰挤得喘不过气。, at: "2026-10-22 14:56"}
+- {speaker: wearer, text: 真的假的，打车比平时贵。, at: "2026-10-22 14:56"}
+- {speaker: other, key: shi, text: 地铁今天又晚点了，打车比平时贵。, at: "2026-10-22 14:56"}
+- {speaker: wearer, text: 真的假的，骑车过来倒是挺快。, at: "2026-10-22 14:56"}
+- {speaker: other, key: shi, text: 那条路在修，绕了一大圈，换乘站的人特别多。, at: "2026-10-22 14:57"}
+- {speaker: wearer, text: 是啊，打车比平时贵。, at: "2026-10-22 14:57"}
+- {speaker: other, key: shi, text: 换乘站的人特别多，骑车过来倒是挺快。, at: "2026-10-22 14:57"}
+- {speaker: wearer, text: 可不是嘛，骑车过来倒是挺快。, at: "2026-10-22 14:57"}
+- {speaker: other, key: shi, text: 早高峰挤得喘不过气，换乘站的人特别多。, at: "2026-10-22 14:58"}
+- {speaker: wearer, text: 真的假的，停车场的车位越来越难找。, at: "2026-10-22 14:58"}
+- {speaker: other, key: shi, text: 打车比平时贵，早高峰挤得喘不过气。, at: "2026-10-22 14:58"}
+- {speaker: wearer, text: 确实，打车比平时贵。, at: "2026-10-22 14:58"}
+- {speaker: other, key: shi, text: 停车场的车位越来越难找，那条路在修，绕了一大圈。, at: "2026-10-22 14:59"}
+- {speaker: wearer, text: 确实，那条路在修，绕了一大圈。, at: "2026-10-22 14:59"}
+- {speaker: other, key: shi, text: 那条路在修，绕了一大圈，换乘站的人特别多。, at: "2026-10-22 14:59"}
+- {speaker: wearer, text: 确实，停车场的车位越来越难找。, at: "2026-10-22 14:59"}
+- {speaker: other, key: shi, text: 那条路在修，绕了一大圈，停车场的车位越来越难找。, at: "2026-10-22 15:00"}
+- {speaker: wearer, text: 说得也是，骑车过来倒是挺快。, at: "2026-10-22 15:00"}
+- {speaker: other, key: shi, text: 停车场的车位越来越难找，停车场的车位越来越难找。, at: "2026-10-22 15:00"}
+- {speaker: wearer, text: 说得也是，那条路在修，绕了一大圈。, at: "2026-10-22 15:00"}
+- {speaker: other, key: shi, text: 地铁今天又晚点了，早高峰挤得喘不过气。, at: "2026-10-22 15:01"}
+- {speaker: wearer, text: 那还挺好，地铁今天又晚点了。, at: "2026-10-22 15:01"}
+- {speaker: other, key: shi, text: 地铁今天又晚点了，公交改线了。, at: "2026-10-22 15:01"}
+- {speaker: wearer, text: 没注意，打车比平时贵。, at: "2026-10-22 15:01"}
+- {speaker: other, key: shi, text: 骑车过来倒是挺快，换乘站的人特别多。, at: "2026-10-22 15:02"}
+- {speaker: wearer, text: 确实，打车比平时贵。, at: "2026-10-22 15:02"}
+- {speaker: other, key: shi, text: 早高峰挤得喘不过气，地铁今天又晚点了。, at: "2026-10-22 15:02"}
+- {speaker: wearer, text: 是啊，那条路在修，绕了一大圈。, at: "2026-10-22 15:02"}
+- {speaker: other, key: shi, text: 那条路在修，绕了一大圈，打车比平时贵。, at: "2026-10-22 15:03"}
+- {speaker: wearer, text: 真的假的，停车场的车位越来越难找。, at: "2026-10-22 15:03"}
+- {speaker: other, key: shi, text: 公交改线了，骑车过来倒是挺快。, at: "2026-10-22 15:03"}
+- {speaker: wearer, text: 可不是嘛，地铁今天又晚点了。, at: "2026-10-22 15:03"}
+- {speaker: other, key: shi, text: 地铁今天又晚点了，公交改线了。, at: "2026-10-22 15:04"}
+- {speaker: wearer, text: 是啊，停车场的车位越来越难找。, at: "2026-10-22 15:04"}
+- {speaker: other, key: shi, text: 那条路在修，绕了一大圈，打车比平时贵。, at: "2026-10-22 15:04"}
+- {speaker: wearer, text: 可不是嘛，停车场的车位越来越难找。, at: "2026-10-22 15:04"}
+- {speaker: other, key: shi, text: 公交改线了，打车比平时贵。, at: "2026-10-22 15:05"}
+- {speaker: wearer, text: 确实，那条路在修，绕了一大圈。, at: "2026-10-22 15:05"}
+- {speaker: other, key: shi, text: 停车场的车位越来越难找，骑车过来倒是挺快。, at: "2026-10-22 15:05"}
+- {speaker: wearer, text: 我也这么觉得，公交改线了。, at: "2026-10-22 15:05"}
+- {speaker: other, key: shi, text: 那条路在修，绕了一大圈，早高峰挤得喘不过气。, at: "2026-10-22 15:06"}
+- {speaker: wearer, text: 哈哈，换乘站的人特别多。, at: "2026-10-22 15:06"}
+- {speaker: other, key: shi, text: 公交改线了，换乘站的人特别多。, at: "2026-10-22 15:06"}
+- {speaker: wearer, text: 真的假的，那条路在修，绕了一大圈。, at: "2026-10-22 15:06"}
+- {speaker: other, key: shi, text: 停车场的车位越来越难找，换乘站的人特别多。, at: "2026-10-22 15:07"}
+- {speaker: wearer, text: 哈哈，那条路在修，绕了一大圈。, at: "2026-10-22 15:07"}
+- {speaker: other, key: shi, text: 停车场的车位越来越难找，那条路在修，绕了一大圈。, at: "2026-10-22 15:07"}
+- {speaker: wearer, text: 确实，停车场的车位越来越难找。, at: "2026-10-22 15:07"}
+- {speaker: other, key: shi, text: 打车比平时贵，换乘站的人特别多。, at: "2026-10-22 15:08"}
+- {speaker: wearer, text: 哈哈，换乘站的人特别多。, at: "2026-10-22 15:08"}
+- {speaker: other, key: shi, text: 地铁今天又晚点了，骑车过来倒是挺快。, at: "2026-10-22 15:08"}
+- {speaker: wearer, text: 我也这么觉得，那条路在修，绕了一大圈。, at: "2026-10-22 15:08"}
+- {speaker: other, key: shi, text: 早高峰挤得喘不过气，停车场的车位越来越难找。, at: "2026-10-22 15:09"}
+- {speaker: wearer, text: 没注意，地铁今天又晚点了。, at: "2026-10-22 15:09"}
+- {speaker: other, key: shi, text: 那条路在修，绕了一大圈，公交改线了。, at: "2026-10-22 15:09"}
+- {speaker: wearer, text: 可不是嘛，地铁今天又晚点了。, at: "2026-10-22 15:09"}
+- {speaker: other, key: tang, text: 主队连着三场没赢了，昨晚那场球踢得真臭。, at: "2026-10-22 15:25"}
+- {speaker: wearer, text: 可不是嘛，守门员扑出了一个点球。, at: "2026-10-22 15:25"}
+- {speaker: other, key: tang, text: 昨晚那场球踢得真臭，转会窗口快关了。, at: "2026-10-22 15:25"}
+- {speaker: wearer, text: 是啊，主队连着三场没赢了。, at: "2026-10-22 15:25"}
+- {speaker: other, key: tang, text: 下一轮是客场，下一轮是客场。, at: "2026-10-22 15:26"}
+- {speaker: wearer, text: 回头看看，昨晚那场球踢得真臭。, at: "2026-10-22 15:26"}
+- {speaker: other, key: tang, text: 下一轮是客场，昨晚那场球踢得真臭。, at: "2026-10-22 15:26"}
+- {speaker: wearer, text: 哈哈，主队连着三场没赢了。, at: "2026-10-22 15:26"}
+- {speaker: other, key: tang, text: 下半场换人换得太晚，下半场换人换得太晚。, at: "2026-10-22 15:27"}
+- {speaker: wearer, text: 我也这么觉得，裁判那个判罚有争议。, at: "2026-10-22 15:27"}
+- {speaker: other, key: tang, text: 守门员扑出了一个点球，转会窗口快关了。, at: "2026-10-22 15:27"}
+- {speaker: wearer, text: 我也这么觉得，昨晚那场球踢得真臭。, at: "2026-10-22 15:27"}
+- {speaker: other, key: tang, text: 守门员扑出了一个点球，主队连着三场没赢了。, at: "2026-10-22 15:28"}
+- {speaker: wearer, text: 回头看看，转会窗口快关了。, at: "2026-10-22 15:28"}
+- {speaker: other, key: tang, text: 昨晚那场球踢得真臭，昨晚那场球踢得真臭。, at: "2026-10-22 15:28"}
+- {speaker: wearer, text: 没注意，下半场换人换得太晚。, at: "2026-10-22 15:28"}
+- {speaker: other, key: tang, text: 那个前锋状态回来了，守门员扑出了一个点球。, at: "2026-10-22 15:29"}
+- {speaker: wearer, text: 确实，主队连着三场没赢了。, at: "2026-10-22 15:29"}
+- {speaker: other, key: tang, text: 裁判那个判罚有争议，下半场换人换得太晚。, at: "2026-10-22 15:29"}
+- {speaker: wearer, text: 哈哈，守门员扑出了一个点球。, at: "2026-10-22 15:29"}
+- {speaker: other, key: tang, text: 裁判那个判罚有争议，主队连着三场没赢了。, at: "2026-10-22 15:30"}
+- {speaker: wearer, text: 那还挺好，守门员扑出了一个点球。, at: "2026-10-22 15:30"}
+- {speaker: other, key: tang, text: 守门员扑出了一个点球，裁判那个判罚有争议。, at: "2026-10-22 15:30"}
+- {speaker: wearer, text: 回头看看，裁判那个判罚有争议。, at: "2026-10-22 15:30"}
+- {speaker: other, key: tang, text: 守门员扑出了一个点球，守门员扑出了一个点球。, at: "2026-10-22 15:31"}
+- {speaker: wearer, text: 没注意，裁判那个判罚有争议。, at: "2026-10-22 15:31"}
+- {speaker: other, key: tang, text: 守门员扑出了一个点球，转会窗口快关了。, at: "2026-10-22 15:31"}
+- {speaker: wearer, text: 确实，下半场换人换得太晚。, at: "2026-10-22 15:31"}
+- {speaker: other, key: tang, text: 昨晚那场球踢得真臭，裁判那个判罚有争议。, at: "2026-10-22 15:32"}
+- {speaker: wearer, text: 回头看看，转会窗口快关了。, at: "2026-10-22 15:32"}
+- {speaker: other, key: tang, text: 下一轮是客场，转会窗口快关了。, at: "2026-10-22 15:32"}
+- {speaker: wearer, text: 是啊，昨晚那场球踢得真臭。, at: "2026-10-22 15:32"}
+- {speaker: other, key: tang, text: 那个前锋状态回来了，守门员扑出了一个点球。, at: "2026-10-22 15:33"}
+- {speaker: wearer, text: 是啊，转会窗口快关了。, at: "2026-10-22 15:33"}
+- {speaker: other, key: tang, text: 那个前锋状态回来了，守门员扑出了一个点球。, at: "2026-10-22 15:33"}
+- {speaker: wearer, text: 那还挺好，主队连着三场没赢了。, at: "2026-10-22 15:33"}
+- {speaker: other, key: tang, text: 转会窗口快关了，转会窗口快关了。, at: "2026-10-22 15:34"}
+- {speaker: wearer, text: 可不是嘛，那个前锋状态回来了。, at: "2026-10-22 15:34"}
+- {speaker: other, key: tang, text: 转会窗口快关了，下一轮是客场。, at: "2026-10-22 15:34"}
+- {speaker: wearer, text: 真的假的，守门员扑出了一个点球。, at: "2026-10-22 15:34"}
+- {speaker: other, key: tang, text: 那个前锋状态回来了，裁判那个判罚有争议。, at: "2026-10-22 15:35"}
+- {speaker: wearer, text: 可不是嘛，下一轮是客场。, at: "2026-10-22 15:35"}
+- {speaker: other, key: tang, text: 下一轮是客场，主队连着三场没赢了。, at: "2026-10-22 15:35"}
+- {speaker: wearer, text: 没注意，那个前锋状态回来了。, at: "2026-10-22 15:35"}
+- {speaker: other, key: tang, text: 转会窗口快关了，下一轮是客场。, at: "2026-10-22 15:36"}
+- {speaker: wearer, text: 那还挺好，转会窗口快关了。, at: "2026-10-22 15:36"}
+- {speaker: other, key: tang, text: 守门员扑出了一个点球，守门员扑出了一个点球。, at: "2026-10-22 15:36"}
+- {speaker: wearer, text: 没注意，裁判那个判罚有争议。, at: "2026-10-22 15:36"}
+- {speaker: other, key: tang, text: 下半场换人换得太晚，主队连着三场没赢了。, at: "2026-10-22 15:37"}
+- {speaker: wearer, text: 没注意，裁判那个判罚有争议。, at: "2026-10-22 15:37"}
+- {speaker: other, key: tang, text: 下一轮是客场，昨晚那场球踢得真臭。, at: "2026-10-22 15:37"}
+- {speaker: wearer, text: 真的假的，昨晚那场球踢得真臭。, at: "2026-10-22 15:37"}
+- {speaker: other, key: tang, text: 转会窗口快关了，那个前锋状态回来了。, at: "2026-10-22 15:38"}
+- {speaker: wearer, text: 可不是嘛，那个前锋状态回来了。, at: "2026-10-22 15:38"}
+- {speaker: other, key: tang, text: 下半场换人换得太晚，下一轮是客场。, at: "2026-10-22 15:38"}
+- {speaker: wearer, text: 确实，下半场换人换得太晚。, at: "2026-10-22 15:38"}
+- {speaker: other, key: tang, text: 裁判那个判罚有争议，主队连着三场没赢了。, at: "2026-10-22 15:39"}
+- {speaker: wearer, text: 回头看看，昨晚那场球踢得真臭。, at: "2026-10-22 15:39"}
+- {speaker: other, key: tang, text: 昨晚那场球踢得真臭，下一轮是客场。, at: "2026-10-22 15:39"}
+- {speaker: wearer, text: 我也这么觉得，主队连着三场没赢了。, at: "2026-10-22 15:39"}
+- {speaker: other, key: tang, text: 那个前锋状态回来了，主队连着三场没赢了。, at: "2026-10-22 15:40"}
+- {speaker: wearer, text: 哈哈，下半场换人换得太晚。, at: "2026-10-22 15:40"}
+- {speaker: other, key: tang, text: 那个前锋状态回来了，转会窗口快关了。, at: "2026-10-22 15:40"}
+- {speaker: wearer, text: 回头看看，那个前锋状态回来了。, at: "2026-10-22 15:40"}
+- {speaker: other, key: tang, text: 转会窗口快关了，下一轮是客场。, at: "2026-10-22 15:41"}
+- {speaker: wearer, text: 没注意，裁判那个判罚有争议。, at: "2026-10-22 15:41"}
+- {speaker: other, key: tang, text: 下半场换人换得太晚，那个前锋状态回来了。, at: "2026-10-22 15:41"}
+- {speaker: wearer, text: 说得也是，那个前锋状态回来了。, at: "2026-10-22 15:41"}
+- {speaker: other, key: tang, text: 主队连着三场没赢了，转会窗口快关了。, at: "2026-10-22 15:42"}
+- {speaker: wearer, text: 没注意，守门员扑出了一个点球。, at: "2026-10-22 15:42"}
+- {speaker: other, key: tang, text: 主队连着三场没赢了，那个前锋状态回来了。, at: "2026-10-22 15:42"}
+- {speaker: wearer, text: 真的假的，裁判那个判罚有争议。, at: "2026-10-22 15:42"}
+- {speaker: other, key: tang, text: 转会窗口快关了，守门员扑出了一个点球。, at: "2026-10-22 15:43"}
+- {speaker: wearer, text: 是啊，那个前锋状态回来了。, at: "2026-10-22 15:43"}
+- {speaker: other, key: tang, text: 下半场换人换得太晚，主队连着三场没赢了。, at: "2026-10-22 15:43"}
+- {speaker: wearer, text: 可不是嘛，裁判那个判罚有争议。, at: "2026-10-22 15:43"}
+- {speaker: other, key: tang, text: 裁判那个判罚有争议，下半场换人换得太晚。, at: "2026-10-22 15:44"}
+- {speaker: wearer, text: 是啊，下一轮是客场。, at: "2026-10-22 15:44"}
+- {speaker: other, key: tang, text: 昨晚那场球踢得真臭，昨晚那场球踢得真臭。, at: "2026-10-22 15:44"}
+- {speaker: wearer, text: 确实，裁判那个判罚有争议。, at: "2026-10-22 15:44"}
+- {speaker: other, key: xu, text: 片头曲一直在脑子里转，男主的演技进步了。, at: "2026-10-22 16:00"}
+- {speaker: wearer, text: 没注意，男主的演技进步了。, at: "2026-10-22 16:00"}
+- {speaker: other, key: xu, text: 最近那部剧更新太慢，配乐挺好听的。, at: "2026-10-22 16:00"}
+- {speaker: wearer, text: 可不是嘛，第二季据说明年拍。, at: "2026-10-22 16:00"}
+- {speaker: other, key: xu, text: 配乐挺好听的，配乐挺好听的。, at: "2026-10-22 16:01"}
+- {speaker: wearer, text: 真的假的，弹幕比剧还好看。, at: "2026-10-22 16:01"}
+- {speaker: other, key: xu, text: 结局有点草率，第二季据说明年拍。, at: "2026-10-22 16:01"}
+- {speaker: wearer, text: 可不是嘛，第二季据说明年拍。, at: "2026-10-22 16:01"}
+- {speaker: other, key: xu, text: 原著里不是这么写的，原著里不是这么写的。, at: "2026-10-22 16:02"}
+- {speaker: wearer, text: 我也这么觉得，结局有点草率。, at: "2026-10-22 16:02"}
+- {speaker: other, key: xu, text: 弹幕比剧还好看，原著里不是这么写的。, at: "2026-10-22 16:02"}
+- {speaker: wearer, text: 可不是嘛，最近那部剧更新太慢。, at: "2026-10-22 16:02"}
+- {speaker: other, key: xu, text: 配乐挺好听的，弹幕比剧还好看。, at: "2026-10-22 16:03"}
+- {speaker: wearer, text: 确实，结局有点草率。, at: "2026-10-22 16:03"}
+- {speaker: other, key: xu, text: 结局有点草率，第二季据说明年拍。, at: "2026-10-22 16:03"}
+- {speaker: wearer, text: 真的假的，最近那部剧更新太慢。, at: "2026-10-22 16:03"}
+- {speaker: other, key: xu, text: 第二季据说明年拍，结局有点草率。, at: "2026-10-22 16:04"}
+- {speaker: wearer, text: 确实，结局有点草率。, at: "2026-10-22 16:04"}
+- {speaker: other, key: xu, text: 结局有点草率，最近那部剧更新太慢。, at: "2026-10-22 16:04"}
+- {speaker: wearer, text: 确实，结局有点草率。, at: "2026-10-22 16:04"}
+- {speaker: other, key: xu, text: 最近那部剧更新太慢，结局有点草率。, at: "2026-10-22 16:05"}
+- {speaker: wearer, text: 确实，男主的演技进步了。, at: "2026-10-22 16:05"}
+- {speaker: other, key: xu, text: 最近那部剧更新太慢，结局有点草率。, at: "2026-10-22 16:05"}
+- {speaker: wearer, text: 是啊，第二季据说明年拍。, at: "2026-10-22 16:05"}
+- {speaker: other, key: xu, text: 弹幕比剧还好看，第二季据说明年拍。, at: "2026-10-22 16:06"}
+- {speaker: wearer, text: 可不是嘛，原著里不是这么写的。, at: "2026-10-22 16:06"}
+- {speaker: other, key: xu, text: 最近那部剧更新太慢，片头曲一直在脑子里转。, at: "2026-10-22 16:06"}
+- {speaker: wearer, text: 那还挺好，结局有点草率。, at: "2026-10-22 16:06"}
+- {speaker: other, key: xu, text: 片头曲一直在脑子里转，男主的演技进步了。, at: "2026-10-22 16:07"}
+- {speaker: wearer, text: 没注意，原著里不是这么写的。, at: "2026-10-22 16:07"}
+- {speaker: other, key: xu, text: 片头曲一直在脑子里转，结局有点草率。, at: "2026-10-22 16:07"}
+- {speaker: wearer, text: 真的假的，片头曲一直在脑子里转。, at: "2026-10-22 16:07"}
+- {speaker: other, key: xu, text: 片头曲一直在脑子里转，最近那部剧更新太慢。, at: "2026-10-22 16:08"}
+- {speaker: wearer, text: 没注意，第二季据说明年拍。, at: "2026-10-22 16:08"}
+- {speaker: other, key: xu, text: 最近那部剧更新太慢，片头曲一直在脑子里转。, at: "2026-10-22 16:08"}
+- {speaker: wearer, text: 是啊，男主的演技进步了。, at: "2026-10-22 16:08"}
+- {speaker: other, key: xu, text: 片头曲一直在脑子里转，男主的演技进步了。, at: "2026-10-22 16:09"}
+- {speaker: wearer, text: 我也这么觉得，男主的演技进步了。, at: "2026-10-22 16:09"}
+- {speaker: other, key: xu, text: 第二季据说明年拍，片头曲一直在脑子里转。, at: "2026-10-22 16:09"}
+- {speaker: wearer, text: 是啊，原著里不是这么写的。, at: "2026-10-22 16:09"}
+- {speaker: other, key: xu, text: 片头曲一直在脑子里转，最近那部剧更新太慢。, at: "2026-10-22 16:10"}
+- {speaker: wearer, text: 没注意，片头曲一直在脑子里转。, at: "2026-10-22 16:10"}
+- {speaker: other, key: xu, text: 原著里不是这么写的，男主的演技进步了。, at: "2026-10-22 16:10"}
+- {speaker: wearer, text: 没注意，片头曲一直在脑子里转。, at: "2026-10-22 16:10"}
+- {speaker: other, key: xu, text: 原著里不是这么写的，结局有点草率。, at: "2026-10-22 16:11"}
+- {speaker: wearer, text: 可不是嘛，最近那部剧更新太慢。, at: "2026-10-22 16:11"}
+- {speaker: other, key: xu, text: 男主的演技进步了，男主的演技进步了。, at: "2026-10-22 16:11"}
+- {speaker: wearer, text: 确实，配乐挺好听的。, at: "2026-10-22 16:11"}
+- {speaker: other, key: xu, text: 原著里不是这么写的，配乐挺好听的。, at: "2026-10-22 16:12"}
+- {speaker: wearer, text: 我也这么觉得，结局有点草率。, at: "2026-10-22 16:12"}
+- {speaker: other, key: xu, text: 第二季据说明年拍，弹幕比剧还好看。, at: "2026-10-22 16:12"}
+- {speaker: wearer, text: 我也这么觉得，弹幕比剧还好看。, at: "2026-10-22 16:12"}
+- {speaker: other, key: xu, text: 第二季据说明年拍，配乐挺好听的。, at: "2026-10-22 16:13"}
+- {speaker: wearer, text: 确实，第二季据说明年拍。, at: "2026-10-22 16:13"}
+- {speaker: other, key: xu, text: 弹幕比剧还好看，结局有点草率。, at: "2026-10-22 16:13"}
+- {speaker: wearer, text: 可不是嘛，片头曲一直在脑子里转。, at: "2026-10-22 16:13"}
+- {speaker: other, key: xu, text: 弹幕比剧还好看，配乐挺好听的。, at: "2026-10-22 16:14"}
+- {speaker: wearer, text: 我也这么觉得，原著里不是这么写的。, at: "2026-10-22 16:14"}
+- {speaker: other, key: xu, text: 第二季据说明年拍，男主的演技进步了。, at: "2026-10-22 16:14"}
+- {speaker: wearer, text: 确实，配乐挺好听的。, at: "2026-10-22 16:14"}
+- {speaker: other, key: xu, text: 第二季据说明年拍，结局有点草率。, at: "2026-10-22 16:15"}
+- {speaker: wearer, text: 确实，结局有点草率。, at: "2026-10-22 16:15"}
+- {speaker: other, key: xu, text: 片头曲一直在脑子里转，弹幕比剧还好看。, at: "2026-10-22 16:15"}
+- {speaker: wearer, text: 是啊，片头曲一直在脑子里转。, at: "2026-10-22 16:15"}
+- {speaker: other, key: xu, text: 配乐挺好听的，第二季据说明年拍。, at: "2026-10-22 16:16"}
+- {speaker: wearer, text: 说得也是，最近那部剧更新太慢。, at: "2026-10-22 16:16"}
+- {speaker: other, key: xu, text: 第二季据说明年拍，结局有点草率。, at: "2026-10-22 16:16"}
+- {speaker: wearer, text: 可不是嘛，结局有点草率。, at: "2026-10-22 16:16"}
+- {speaker: other, key: xu, text: 片头曲一直在脑子里转，配乐挺好听的。, at: "2026-10-22 16:17"}
+- {speaker: wearer, text: 真的假的，片头曲一直在脑子里转。, at: "2026-10-22 16:17"}
+- {speaker: other, key: xu, text: 片头曲一直在脑子里转，片头曲一直在脑子里转。, at: "2026-10-22 16:17"}
+- {speaker: wearer, text: 没注意，男主的演技进步了。, at: "2026-10-22 16:17"}
+- {speaker: other, key: xu, text: 男主的演技进步了，最近那部剧更新太慢。, at: "2026-10-22 16:18"}
+- {speaker: wearer, text: 那还挺好，原著里不是这么写的。, at: "2026-10-22 16:18"}
+- {speaker: other, key: xu, text: 弹幕比剧还好看，配乐挺好听的。, at: "2026-10-22 16:18"}
+- {speaker: wearer, text: 那还挺好，原著里不是这么写的。, at: "2026-10-22 16:18"}
+- {speaker: other, key: xu, text: 男主的演技进步了，结局有点草率。, at: "2026-10-22 16:19"}
+- {speaker: wearer, text: 那还挺好，配乐挺好听的。, at: "2026-10-22 16:19"}
+- {speaker: other, key: xu, text: 弹幕比剧还好看，配乐挺好听的。, at: "2026-10-22 16:19"}
+- {speaker: wearer, text: 确实，弹幕比剧还好看。, at: "2026-10-22 16:19"}
+- {speaker: other, key: cao, text: 快递还在路上，优惠券过期了。, at: "2026-10-22 16:35"}
+- {speaker: wearer, text: 是啊，快递还在路上。, at: "2026-10-22 16:35"}
+- {speaker: other, key: cao, text: 直播间的东西没想象的好，双十一的满减算不明白。, at: "2026-10-22 16:35"}
+- {speaker: wearer, text: 真的假的，快递还在路上。, at: "2026-10-22 16:35"}
+- {speaker: other, key: cao, text: 超市的水果最近贵了，快递还在路上。, at: "2026-10-22 16:36"}
+- {speaker: wearer, text: 没注意，优惠券过期了。, at: "2026-10-22 16:36"}
+- {speaker: other, key: cao, text: 优惠券过期了，那件外套降价了。, at: "2026-10-22 16:36"}
+- {speaker: wearer, text: 是啊，优惠券过期了。, at: "2026-10-22 16:36"}
+- {speaker: other, key: cao, text: 双十一的满减算不明白，超市的水果最近贵了。, at: "2026-10-22 16:37"}
+- {speaker: wearer, text: 是啊，直播间的东西没想象的好。, at: "2026-10-22 16:37"}
+- {speaker: other, key: cao, text: 直播间的东西没想象的好，那件外套降价了。, at: "2026-10-22 16:37"}
+- {speaker: wearer, text: 没注意，双十一的满减算不明白。, at: "2026-10-22 16:37"}
+- {speaker: other, key: cao, text: 超市的水果最近贵了，超市的水果最近贵了。, at: "2026-10-22 16:38"}
+- {speaker: wearer, text: 那还挺好，直播间的东西没想象的好。, at: "2026-10-22 16:38"}
+- {speaker: other, key: cao, text: 直播间的东西没想象的好，退货流程挺麻烦。, at: "2026-10-22 16:38"}
+- {speaker: wearer, text: 可不是嘛，退货流程挺麻烦。, at: "2026-10-22 16:38"}
+- {speaker: other, key: cao, text: 双十一的满减算不明白，那件外套降价了。, at: "2026-10-22 16:39"}
+- {speaker: wearer, text: 说得也是，买了个新的保温杯。, at: "2026-10-22 16:39"}
+- {speaker: other, key: cao, text: 那件外套降价了，那件外套降价了。, at: "2026-10-22 16:39"}
+- {speaker: wearer, text: 可不是嘛，买了个新的保温杯。, at: "2026-10-22 16:39"}
+- {speaker: other, key: cao, text: 优惠券过期了，那件外套降价了。, at: "2026-10-22 16:40"}
+- {speaker: wearer, text: 回头看看，双十一的满减算不明白。, at: "2026-10-22 16:40"}
+- {speaker: other, key: cao, text: 快递还在路上，买了个新的保温杯。, at: "2026-10-22 16:40"}
+- {speaker: wearer, text: 真的假的，双十一的满减算不明白。, at: "2026-10-22 16:40"}
+- {speaker: other, key: cao, text: 优惠券过期了，那件外套降价了。, at: "2026-10-22 16:41"}
+- {speaker: wearer, text: 可不是嘛，买了个新的保温杯。, at: "2026-10-22 16:41"}
+- {speaker: other, key: cao, text: 那件外套降价了，买了个新的保温杯。, at: "2026-10-22 16:41"}
+- {speaker: wearer, text: 可不是嘛，退货流程挺麻烦。, at: "2026-10-22 16:41"}
+- {speaker: other, key: cao, text: 优惠券过期了，那件外套降价了。, at: "2026-10-22 16:42"}
+- {speaker: wearer, text: 确实，快递还在路上。, at: "2026-10-22 16:42"}
+- {speaker: other, key: cao, text: 那件外套降价了，超市的水果最近贵了。, at: "2026-10-22 16:42"}
+- {speaker: wearer, text: 确实，退货流程挺麻烦。, at: "2026-10-22 16:42"}
+- {speaker: other, key: cao, text: 优惠券过期了，退货流程挺麻烦。, at: "2026-10-22 16:43"}
+- {speaker: wearer, text: 我也这么觉得，退货流程挺麻烦。, at: "2026-10-22 16:43"}
+- {speaker: other, key: cao, text: 优惠券过期了，买了个新的保温杯。, at: "2026-10-22 16:43"}
+- {speaker: wearer, text: 可不是嘛，直播间的东西没想象的好。, at: "2026-10-22 16:43"}
+- {speaker: other, key: cao, text: 快递还在路上，优惠券过期了。, at: "2026-10-22 16:44"}
+- {speaker: wearer, text: 确实，双十一的满减算不明白。, at: "2026-10-22 16:44"}
+- {speaker: other, key: cao, text: 快递还在路上，直播间的东西没想象的好。, at: "2026-10-22 16:44"}
+- {speaker: wearer, text: 说得也是，快递还在路上。, at: "2026-10-22 16:44"}
+- {speaker: other, key: cao, text: 直播间的东西没想象的好，快递还在路上。, at: "2026-10-22 16:45"}
+- {speaker: wearer, text: 没注意，直播间的东西没想象的好。, at: "2026-10-22 16:45"}
+- {speaker: other, key: cao, text: 买了个新的保温杯，买了个新的保温杯。, at: "2026-10-22 16:45"}
+- {speaker: wearer, text: 回头看看，那件外套降价了。, at: "2026-10-22 16:45"}
+- {speaker: other, key: cao, text: 优惠券过期了，双十一的满减算不明白。, at: "2026-10-22 16:46"}
+- {speaker: wearer, text: 回头看看，优惠券过期了。, at: "2026-10-22 16:46"}
+- {speaker: other, key: cao, text: 直播间的东西没想象的好，优惠券过期了。, at: "2026-10-22 16:46"}
+- {speaker: wearer, text: 哈哈，优惠券过期了。, at: "2026-10-22 16:46"}
+- {speaker: other, key: cao, text: 双十一的满减算不明白，买了个新的保温杯。, at: "2026-10-22 16:47"}
+- {speaker: wearer, text: 回头看看，买了个新的保温杯。, at: "2026-10-22 16:47"}
+- {speaker: other, key: cao, text: 退货流程挺麻烦，直播间的东西没想象的好。, at: "2026-10-22 16:47"}
+- {speaker: wearer, text: 可不是嘛，优惠券过期了。, at: "2026-10-22 16:47"}
+- {speaker: other, key: cao, text: 双十一的满减算不明白，退货流程挺麻烦。, at: "2026-10-22 16:48"}
+- {speaker: wearer, text: 哈哈，超市的水果最近贵了。, at: "2026-10-22 16:48"}
+- {speaker: other, key: cao, text: 直播间的东西没想象的好，直播间的东西没想象的好。, at: "2026-10-22 16:48"}
+- {speaker: wearer, text: 我也这么觉得，超市的水果最近贵了。, at: "2026-10-22 16:48"}
+- {speaker: other, key: cao, text: 退货流程挺麻烦，直播间的东西没想象的好。, at: "2026-10-22 16:49"}
+- {speaker: wearer, text: 可不是嘛，双十一的满减算不明白。, at: "2026-10-22 16:49"}
+- {speaker: other, key: cao, text: 买了个新的保温杯，快递还在路上。, at: "2026-10-22 16:49"}
+- {speaker: wearer, text: 确实，那件外套降价了。, at: "2026-10-22 16:49"}
+- {speaker: other, key: cao, text: 直播间的东西没想象的好，双十一的满减算不明白。, at: "2026-10-22 16:50"}
+- {speaker: wearer, text: 说得也是，超市的水果最近贵了。, at: "2026-10-22 16:50"}
+- {speaker: other, key: cao, text: 超市的水果最近贵了，退货流程挺麻烦。, at: "2026-10-22 16:50"}
+- {speaker: wearer, text: 哈哈，买了个新的保温杯。, at: "2026-10-22 16:50"}
+- {speaker: other, key: cao, text: 优惠券过期了，直播间的东西没想象的好。, at: "2026-10-22 16:51"}
+- {speaker: wearer, text: 那还挺好，那件外套降价了。, at: "2026-10-22 16:51"}
+- {speaker: other, key: cao, text: 买了个新的保温杯，超市的水果最近贵了。, at: "2026-10-22 16:51"}
+- {speaker: wearer, text: 我也这么觉得，那件外套降价了。, at: "2026-10-22 16:51"}
+- {speaker: other, key: cao, text: 优惠券过期了，快递还在路上。, at: "2026-10-22 16:52"}
+- {speaker: wearer, text: 是啊，买了个新的保温杯。, at: "2026-10-22 16:52"}
+- {speaker: other, key: cao, text: 直播间的东西没想象的好，双十一的满减算不明白。, at: "2026-10-22 16:52"}
+- {speaker: wearer, text: 回头看看，优惠券过期了。, at: "2026-10-22 16:52"}
+- {speaker: other, key: cao, text: 优惠券过期了，买了个新的保温杯。, at: "2026-10-22 16:53"}
+- {speaker: wearer, text: 没注意，退货流程挺麻烦。, at: "2026-10-22 16:53"}
+- {speaker: other, key: cao, text: 那件外套降价了，买了个新的保温杯。, at: "2026-10-22 16:53"}
+- {speaker: wearer, text: 没注意，那件外套降价了。, at: "2026-10-22 16:53"}
+- {speaker: other, key: cao, text: 超市的水果最近贵了，超市的水果最近贵了。, at: "2026-10-22 16:54"}
+- {speaker: wearer, text: 真的假的，那件外套降价了。, at: "2026-10-22 16:54"}
+- {speaker: other, key: cao, text: 优惠券过期了，直播间的东西没想象的好。, at: "2026-10-22 16:54"}
+- {speaker: wearer, text: 哈哈，直播间的东西没想象的好。, at: "2026-10-22 16:54"}

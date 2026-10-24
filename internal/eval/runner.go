@@ -302,7 +302,7 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 		servers = append(servers, in.xinli.Servers...)
 	}
 	if len(servers) > 0 {
-		core.Catalog.MCP = &mcpcap.Connector{Servers: servers, Artifacts: core.Artifacts, Logger: cfg.Logger}
+		core.Catalog.MCP = &mcpcap.Connector{Servers: servers, Artifacts: core.Artifacts, Log: st.Log, Logger: cfg.Logger}
 	}
 	return in, nil
 }
@@ -380,7 +380,7 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		bl = NoHealthBusinessLine
 	}
 	if c.Setup.Xinli != nil {
-		in.xinli.Seed(bl, endUser, c.Setup.Xinli.Projects, c.Setup.Xinli.Days)
+		in.xinli.Seed(bl, endUser, c.Setup.Xinli.Projects, c.Setup.Xinli.Days, c.Setup.Xinli.Commitments)
 	}
 	// 预置记忆的 ID 与生产一致不可猜（由随机调用 ID 派生）：顺序 ID 会让模型按规律"猜出"未见过的 ID，
 	// 替换掉另一条记忆（memory-update-crowded 中观察到）。
@@ -450,6 +450,9 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 			}
 			sid = id
 			sessions = append(sessions, id)
+			if x := c.Setup.Xinli; x != nil && x.ProjectSession != "" {
+				in.xinli.Bind(bl, endUser, x.ProjectSession, id)
+			}
 			if c.Call {
 				if voice, rec, err = in.startCall(tctx, sid); err != nil {
 					tr.Err = "start call: " + err.Error()
@@ -482,6 +485,10 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 			obs.sent += sent
 		}
 		obs.tickets = in.crm.ticketsOf(endUser)
+		if in.xinli != nil {
+			x := in.xinli.State(bl, endUser)
+			obs.xinli = &x
+		}
 		obs.memories, _ = in.mems.Store.List(tctx, endUser, []memory.Scope{{BusinessLine: bl}}, memory.DefaultMaxPerUser)
 		as, score := in.check(tctx, ti+1, turn, obs)
 		tr.Assertions = append(tr.Assertions, as...)
@@ -508,10 +515,11 @@ type observation struct {
 	compacted bool // 到本轮结束时 Session 是否发生过上下文压缩
 	// compactions 是本轮的上下文压缩次数，takeovers 是本轮 Run 的接管次数。
 	compactions, takeovers int
-	tickets                []string // CRM 中本 EndUser 的工单
-	inTokens, cachedTokens uint64   // 本轮模型调用的输入 token 与其中命中前缀缓存的部分
-	callArgs               []string // 与 calls 一一对应的调用参数
-	tasks                  []string // Call 中派生的任务（run_task 的 task）
+	tickets                []string         // CRM 中本 EndUser 的工单
+	xinli                  *xinlimock.State // xinli MCP Server 中本 EndUser 的数据
+	inTokens, cachedTokens uint64           // 本轮模型调用的输入 token 与其中命中前缀缓存的部分
+	callArgs               []string         // 与 calls 一一对应的调用参数
+	tasks                  []string         // Call 中派生的任务（run_task 的 task）
 }
 
 // turn 提交一轮输入，按 approve 自动作出审批决定，等待 Run 结束并收集本轮的事件。
@@ -651,6 +659,49 @@ func (in *instance) submitTurn(ctx context.Context, sid string, turn Turn) (stri
 	return res.RunID, nil
 }
 
+// checkXinli 判定对 xinli 业务线数据的断言（XinliExpect）。
+func (in *instance) checkXinli(add func(string, bool, string), e *XinliExpect, st *xinlimock.State) {
+	if st == nil {
+		add("xinli", false, "the case has no setup.xinli")
+		return
+	}
+	inRange := func(r *Range, n int) bool {
+		return r == nil || ((r.Min == nil || n >= *r.Min) && (r.Max == nil || n <= *r.Max))
+	}
+	pending := 0
+	byProject := map[string]int{}
+	for i := range st.Exchanges {
+		if st.Exchanges[i].Pending() {
+			pending++
+		}
+		byProject[st.Exchanges[i].Project]++
+	}
+	add("xinli exchanges", inRange(e.Exchanges, len(st.Exchanges)), fmt.Sprintf("%d exchanges", len(st.Exchanges)))
+	add("xinli pending", inRange(e.Pending, pending), fmt.Sprintf("%d pending", pending))
+	add("xinli projects", inRange(e.Projects, len(st.Projects)), fmt.Sprintf("%d projects", len(st.Projects)))
+	for _, id := range slices.Sorted(maps.Keys(e.InProject)) {
+		r := e.InProject[id]
+		add("xinli in_project "+id, inRange(&r, byProject[id]), fmt.Sprintf("%d exchanges in %s", byProject[id], id))
+	}
+	var all []string
+	for _, m := range st.Commitments {
+		all = append(all, fmt.Sprintf("[%s %s %s %s] %s %s", m.Kind, m.Status, m.DueDate, m.Project, m.Content, m.Unverified))
+	}
+	detail := "commitments: " + clip(strings.Join(all, "; "), 400)
+	for _, want := range e.Commitments {
+		add("xinli commitment "+want.Kind+" "+want.Contains, slices.ContainsFunc(st.Commitments, func(m xinlimock.Commitment) bool { return commitmentMatches(m, want) }), detail)
+	}
+	for _, want := range e.NoCommitments {
+		add("xinli no_commitment "+want.Kind+" "+want.Contains, !slices.ContainsFunc(st.Commitments, func(m xinlimock.Commitment) bool { return commitmentMatches(m, want) }), detail)
+	}
+}
+
+func commitmentMatches(m xinlimock.Commitment, want CommitmentMatch) bool {
+	return (want.Kind == "" || m.Kind == want.Kind) && strings.Contains(m.Content, want.Contains) &&
+		(want.DueDate == "" || m.DueDate == want.DueDate) && (want.Status == "" || m.Status == want.Status) &&
+		(want.Project == "" || m.Project == want.Project) && (want.Verified == nil || *want.Verified == (m.Unverified == ""))
+}
+
 // captureZone 是评测中 HostApp 所在的时区：用例的 at 按它解读。
 var captureZone, _ = time.LoadLocation("Asia/Shanghai")
 
@@ -677,8 +728,15 @@ func (in *instance) submitCaptures(ctx context.Context, sid string, segs []Captu
 		}
 		out = append(out, seg)
 	}
-	_, err := in.svc.SubmitCaptures(ctx, sid, "cap_"+ids.Random()(), out)
-	return err
+	// 长的一天按批提交，与 HostApp 每分钟提交一批相同；一批至多 session.MaxCaptureSegments 段。
+	for len(out) > 0 {
+		n := min(len(out), 100)
+		if _, err := in.svc.SubmitCaptures(ctx, sid, "cap_"+ids.Random()(), out[:n]); err != nil {
+			return err
+		}
+		out = out[n:]
+	}
+	return nil
 }
 
 // awaitBackground 等待 seq after 之后的后台调用了结（ADR-0035），返回它开启或并入的 Run。
@@ -962,6 +1020,9 @@ func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation)
 			}
 		}
 		add("no_call_args "+g, len(hit) == 0, fmt.Sprintf("arguments containing %q: %v", sub, hit))
+	}
+	if x := e.Xinli; x != nil {
+		in.checkXinli(add, x, o.xinli)
 	}
 	for _, want := range e.Tickets {
 		add("tickets "+want, slices.ContainsFunc(o.tickets, func(t string) bool { return strings.Contains(t, want) }), fmt.Sprintf("tickets %v", o.tickets))

@@ -1,0 +1,19 @@
+name: capture-project-unsure
+description: >-
+  拿不准的归属交给用户（captures-by-exchange.md §6）：已有项目"新办公室装修"，这段交谈谈的是佩戴者家里的厨房装修，
+  名称相近、对象不同。不归入那个项目：新建或放进待确认都可以。
+agent: xinli-day
+setup:
+  xinli:
+    projects: [{id: P-0001, name: 新办公室装修, status: 地板与墙面已定稿，等家具报价，十二月搬入。}]
+turns:
+  - captures:
+      - {speaker: other, key: zhao, text: 你家厨房装修的方案出来了，橱柜用白色还是原木色？, at: "2026-10-22 19:00"}
+      - {speaker: wearer, text: 原木色吧。台面要石英石，下周把定金转给你。, at: "2026-10-22 19:01"}
+      - {speaker: other, key: zhao, text: 好，那我按原木色出效果图。, at: "2026-10-22 19:02"}
+    input: 整理今天
+    expect:
+      calls: ["mcp_xinli__find_projects", "mcp_xinli__file_exchange"]
+      xinli:
+        exchanges: {min: 1, max: 1}
+        in_project: {P-0001: {max: 0}}

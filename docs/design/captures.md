@@ -1,5 +1,7 @@
 # 旁听与 Project
 
+> §5 的分页与 §6 的每日流程、业务线工具已由第二版取代：按交谈整理、逐段交出、承诺账本，见 [旁听按交谈整理](./captures-by-exchange.md)。本文其余部分（写入、投影、信任、保留与删除）不变。
+
 全天佩戴的录音外设（领夹）经手机上的 HostApp 接入，把 EndUser 一天的对话交给 yanshi：每晚整理成摘要，按主题归集到 Project，提取承诺与沟通习惯，供用户随时提问。决定见 ADR-0036（旁听只收文字，信任按说话人区分）与 ADR-0037（以每日旁听 Session 实现分级保留）；术语见 `CONTEXT.md` 的 Capture、Project、Awareness、Retention。
 
 ## 1. 目标
@@ -128,29 +130,26 @@ Capture 与输入一样更新索引中的 `LastInputAt`（受 `TouchEvery` 节�
 
 | AgentDef | Session | 能力白名单 |
 |---|---|---|
-| `xinli-day`（`captures: true`） | 每个 EndUser 当地每天一个 | `captures`、`memory_save`、`memory_search`、`mcp_xinli__list_projects`、`mcp_xinli__file_day` |
-| `xinli-project` | 每个项目一个，长期 | `mcp_xinli__day_summary`、`mcp_xinli__set_commitments`、`show_card` |
+| `xinli-day`（`captures: true`） | 每个 EndUser 当地每天一个 | `captures`、`memory_save`、`memory_search`、`mcp_xinli__find_projects`、`mcp_xinli__file_exchange`、`mcp_xinli__day_exchanges`、`mcp_xinli__file_day` |
+| `xinli-project` | 每个项目一个，长期 | `mcp_xinli__day_summary`、`mcp_xinli__set_status`、`mcp_xinli__update_commitments`、`show_card` |
 | `xinli-assistant`（召回 8 条 Memory） | 每个 EndUser 一个，长期 | `mcp_xinli__list_projects`、`mcp_xinli__project_digest`、`mcp_xinli__recent_days`、`memory_save`、`memory_search`、`memory_forget`、`ask_user`、`show_card` |
 
 - Memory 要能读回来：每晚整理写下的偏好与人际关系，由助手在每个 Run 开始时召回（`memory.recall`），回答时用上。`xinli-day` 不召回（它的输入总是"整理今天"，按它检索没有意义），写入之前用 `memory_search` 查已有的记忆：记过的不再记，变了的用 `replaces` 替换。平台另外合并几乎相同的表述（[Memory 设计](./m4-memory-grant.md) §3），每天提到一次的事实不会每天多一条。
-- 三个 AgentDef 的白名单都不含高风险 Capability。`xinli-day` 只能读 Capture、写 Memory、查已有项目、把结果交给业务线。它需要 `list_projects` 才能在 `file_day` 中填已有项目的 ID；项目列表同样是拉取的（ADR-0037）。
+- 三个 AgentDef 的白名单都不含高风险 Capability。`xinli-day` 只能读 Capture、写 Memory、召回候选项目、把结果交给业务线；候选项目同样是拉取的（ADR-0037）。
 - 定义在 `agents/xinli-day.yaml`、`agents/xinli-project.yaml`、`agents/xinli-assistant.yaml`。
-- `mcp_xinli__day_summary`、`list_projects`、`project_digest`、`recent_days` 在 MCP 登记中声明只读。`file_day` 与 `set_commitments` 由业务线在登记中以 `no_approval` 放宽（ADR-0017）：它们只把结果交给业务线自己。
+- 只读的工具（`find_projects`、`day_exchanges`、`day_summary`、`list_projects`、`project_digest`、`recent_days`）在 MCP 登记中声明只读。交出结果的工具（`file_exchange`、`file_day`、`set_status`、`update_commitments`）由业务线在登记中以 `no_approval` 放宽（ADR-0017）：它们只把结果交给业务线自己。登记开启 `cite_captures`，承诺的承诺人据此核对（[旁听按交谈整理](./captures-by-exchange.md) §7）。
 
 ### 每日流程
 
 1. **开启**：HostApp 在当地一天的第一个 Capture 之前创建 `xinli-day` Session，把 Session ID 与日期报给业务线服务端。日期与 Session 的对应由业务线记录；`SessionCreated` 不增加日期字段。
-2. **整理**：业务线服务端在当地深夜用服务令牌提交输入"整理今天"。Run 用 `captures` 分页读完当天内容，写入 Memory（§7），用 `mcp_xinli__list_projects` 查已有项目，再调用一次 `mcp_xinli__file_day`，交出三部分，对应 App 的"今日""项目""觉察"三页：
-   - `day{headline, highlights}`：一句话概括这一天，与最重要的几件事；
-   - `groups[{project, title, summary, decisions, my_todos, their_todos, risks}]`：按项目分组，`project` 为已有的 Project ID 或空（新建）。定下的事、用户本人明确答应的事、对方答应的事、风险分开写；别人提出而用户没有答应的要求不是任何人的待办；
-   - `awareness{habits, suggestions}`：从用户本人的话里看出的沟通习惯（各附当天的例子）与建议，即觉察。只写沟通方式，不写情绪与身心状态。
+2. **整理**：业务线服务端在当地深夜用服务令牌提交输入"整理今天"。Run 按交谈逐段读、逐段以 `mcp_xinli__file_exchange` 交出，写入 Memory（§7），最后以 `mcp_xinli__file_day` 交出当天总览与觉察（[旁听按交谈整理](./captures-by-exchange.md) §4）。觉察只写沟通方式，不写情绪与身心状态。
 3. **关闭**：`file_day` 成功后，业务线服务端调用 `POST /v1/sessions/{id}/close`。`close_after_idle` 兜底。
-4. **归集**：业务线服务端为空 `project` 的分组创建 `xinli-project` Session，然后向每个涉及的 Project 提交输入"整理 <日期>"，输入中不含摘要。Project 的 Run 调用 `mcp_xinli__day_summary{date}` 取回摘要。摘要以调用结果进入上下文，是外部内容（ADR-0037）。
-5. **承诺**：Project 的 Run 以 `mcp_xinli__set_commitments` 交出当前的承诺列表（内容、对象、期限），业务线服务端按期限直接推送提醒，不经 yanshi 的 Notification。
+4. **归集**：业务线服务端为当天涉及的项目创建（或复用）`xinli-project` Session，提交输入"整理 <日期>"，输入中不含摘要。Project 的 Run 调用 `mcp_xinli__day_summary{date}` 取回那天的交谈与未完成的承诺，以调用结果进入上下文，是外部内容（ADR-0037）。
+5. **承诺**：承诺随交谈进入业务线的承诺账本；Project 的 Run 以 `mcp_xinli__set_status` 更新现状、以 `mcp_xinli__update_commitments` 按 ID 对账。业务线服务端按期限直接推送通过核对的承诺，不经 yanshi 的 Notification。
 
 跨午夜的对话分在两天的 Session 中，接受这一点。
 
-**开发部署**：`serve -xinli-mock <业务线>` 在进程内登记模拟的 xinli MCP Server（`internal/xinlimock`，与评测共用），它同时扮演业务线服务端做第 4 步：`file_day` 之后为涉及的项目创建（或复用）`xinli-project` Session，以由整理所在 Session 与项目派生的 `input_id` 提交"整理 <日期>"（重复归集只生效一次），并记下 Session 与项目的对应，`day_summary` 与 `set_commitments` 据此找到项目。它不做第 3 步的关闭：调试控制台还要在整理之后继续对话。数据只在内存中；调试控制台的"旁听"视图经 `GET /v1/debug/xinli` 展示（[调试控制台](./console.md) §2.1）。评测中不归集：用例直接预置 `day_summary` 的内容。
+**开发部署**：`serve -xinli-mock <业务线>` 在进程内登记模拟的 xinli MCP Server（`internal/xinlimock`，与评测共用），它同时扮演业务线服务端做第 4 步：`file_day` 之后为涉及的项目创建（或复用）`xinli-project` Session，以由整理所在 Session 与项目派生的 `input_id` 提交"整理 <日期>"（重复归集只生效一次），并记下 Session 与项目的对应，`day_summary`、`set_status` 与 `update_commitments` 据此找到项目。它不做第 3 步的关闭：调试控制台还要在整理之后继续对话。数据只在内存中；调试控制台的"旁听"视图经 `GET /v1/debug/xinli` 展示，待确认的交谈经 `POST /v1/debug/xinli/resolve` 确认（[调试控制台](./console.md) §2.1）。评测中不归集：用例直接预置 `day_summary` 的内容与承诺账本。
 
 ### 提问
 

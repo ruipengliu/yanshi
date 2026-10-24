@@ -1,0 +1,24 @@
+name: capture-exchange-split
+description: >-
+  按交谈整理（captures-by-exchange.md §3、§4）：上午与供应商谈采购、下午与同事约团建，相隔几个小时，是两段交谈；
+  逐段交出两次 file_exchange，各自的承诺各归各的交谈，最后交出当天总览。
+agent: xinli-day
+setup:
+  xinli: {}
+turns:
+  - captures:
+      - {speaker: other, key: wang, text: 新一季的采购，我们先小批量试单吧。, at: "2026-10-22 09:30"}
+      - {speaker: wearer, text: 可以，试单的报价单我明天发您。, at: "2026-10-22 09:31"}
+      - {speaker: other, key: wang, text: 好，收到报价我们就下单。, at: "2026-10-22 09:32"}
+      - {speaker: other, key: li, text: 下周五部门团建，你来定地方吧？, at: "2026-10-22 14:10"}
+      - {speaker: wearer, text: 行，周三前我把两三个候选地点发群里。, at: "2026-10-22 14:11"}
+      - {speaker: other, key: li, text: 好，我来统计人数。, at: "2026-10-22 14:12"}
+    input: 整理今天
+    expect:
+      calls: ["mcp_xinli__file_exchange", "mcp_xinli__day_exchanges", "mcp_xinli__file_day"]
+      xinli:
+        exchanges: {min: 2, max: 2}
+        commitments:
+          - {kind: mine, contains: 报价, due_date: "2026-10-23", verified: true}
+          - {kind: mine, contains: 地点, due_date: "2026-10-28", verified: true}
+          - {kind: theirs, contains: 人数, verified: true}

@@ -448,7 +448,7 @@ function switchUser(name) {
 
 // 旁听视图：业务线这一侧的数据（xinli.js）。打开会话时切到"对话"视图。
 const xinli = new XinliView({
-  http: (method, path) => http(method, path),
+  http: (method, path, body) => http(method, path, body),
   idQuery: () => idQuery(),
   identity: () => identity(),
   openSession: (sid) => {

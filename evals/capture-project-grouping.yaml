@@ -1,30 +1,30 @@
 name: capture-project-grouping
 description: >-
-  跨天归集（docs/design/captures.md §6）：第一天谈新办公室装修，新建项目（模拟服务给出 P-0101）；第二天接着谈装修，
-  归入同一项目，同一天的无关话题（孩子运动会）不并入。已有项目"年度预算"是干扰项。
+  跨天归集（captures-by-exchange.md §6）：第一天谈新办公室装修，新建项目（模拟服务给出 P-0101）；第二天上午接着谈装修，
+  find_projects 召回它、归入同一项目；下午的无关话题（孩子运动会）是另一段交谈，不并入。已有项目"年度预算"是干扰项。
 agent: xinli-day
 setup:
   xinli:
-    projects: [{id: P-0001, name: 年度预算, digest: 财务部正在汇总明年各部门预算}]
+    projects: [{id: P-0001, name: 年度预算, status: 财务部正在汇总明年各部门预算}]
 turns:
   - captures:
-      - {speaker: other, key: liu, text: 新办公室的设计稿我改好了，地板换成了浅色木纹。}
-      - {speaker: wearer, text: 好，墙面再浅一点，月底前定稿，我们十二月要搬进去。}
-      - {speaker: other, key: liu, text: 那我周四带材料样板过来给你看。}
+      - {speaker: other, key: liu, text: 新办公室的设计稿我改好了，地板换成了浅色木纹。, at: "2026-10-22 10:00"}
+      - {speaker: wearer, text: 好，墙面再浅一点，月底前定稿，我们十二月要搬进去。, at: "2026-10-22 10:01"}
+      - {speaker: other, key: liu, text: 那我周四带材料样板过来给你看。, at: "2026-10-22 10:02"}
     input: 整理今天
     expect:
-      calls: ["mcp_xinli__list_projects", "mcp_xinli__file_day"]
-      no_call_args: {"mcp_xinli__file_day": "P-0001"}
+      calls: ["mcp_xinli__find_projects", "mcp_xinli__file_exchange", "mcp_xinli__file_day"]
+      xinli:
+        projects: {min: 2, max: 2}
+        in_project: {P-0101: {min: 1, max: 1}, P-0001: {max: 0}}
   - new_session: true
     captures:
-      - {speaker: other, key: liu, text: 样板带来了，浅色木纹这款你看行吗？}
-      - {speaker: wearer, text: 就这款。家具的报价也一起给我。}
-      - {speaker: other, key: chen, text: 周六孩子学校开运动会，你能去吗？}
-      - {speaker: wearer, text: 能去，我请半天假。}
+      - {speaker: other, key: liu, text: 样板带来了，浅色木纹这款你看行吗？, at: "2026-10-23 10:00"}
+      - {speaker: wearer, text: 就这款。家具的报价也一起给我。, at: "2026-10-23 10:01"}
+      - {speaker: other, key: chen, text: 周六孩子学校开运动会，你能去吗？, at: "2026-10-23 15:00"}
+      - {speaker: wearer, text: 能去，我请半天假。, at: "2026-10-23 15:01"}
     input: 整理今天
     expect:
-      calls: ["mcp_xinli__list_projects", "mcp_xinli__file_day"]
-      call_args: {"mcp_xinli__file_day": "P-0101"}
-      judge: >-
-        第二天的 file_day 是否把办公室装修的内容（木纹样板、家具报价）归入已有项目 P-0101，
-        而孩子运动会没有归入 P-0101、也没有归入年度预算 P-0001？
+      calls: ["mcp_xinli__find_projects", "mcp_xinli__file_exchange", "mcp_xinli__file_day"]
+      xinli:
+        in_project: {P-0101: {min: 2, max: 2}, P-0001: {max: 0}}

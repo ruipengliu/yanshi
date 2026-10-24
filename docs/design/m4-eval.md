@@ -32,8 +32,10 @@ setup:
       logs/app.log: data/app.log
   crm: false                  # true：登记内置的 CRM MCP Server（search_customer 只读、create_ticket 需审批）
   xinli:                      # 登记内置的 xinli MCP Server（旁听业务线，docs/design/captures.md §6），预置本 EndUser 的数据
-    projects: [{id: P-0001, name: 年度预算, digest: "…"}]   # file_day 新建的项目从 P-0101 编号
-    days: {"2026-10-22": "…"}                               # day_summary 按日期返回的摘要
+    projects: [{id: P-0001, name: 年度预算, status: "…"}]   # 新建的项目从 P-0101 编号
+    days: {"2026-10-22": "…"}                               # day_summary 在没有交出的交谈时按日期返回的摘要
+    commitments: [{id: C-0001, kind: mine, content: "…", due_date: "2026-10-23", project: P-0001}]   # 预置的承诺账本
+    project_session: P-0001                                 # 本用例的 Session 就是这个项目的 xinli-project Session
   no_health: false            # true：在未开启健康信息的业务线中运行（health 类别的写入被拒绝）
 capabilities: []              # 追加到 AgentDef 的能力白名单，如 ["mcp:crm/*"]
 turns:
@@ -44,6 +46,7 @@ turns:
     captures:                 # 本轮输入之前由 HostApp 提交到本轮 Session 的一批旁听
       - {speaker: other, key: wang, text: "…"}   # speaker: wearer（佩戴者）| other（他人，key 区分不同的人）
       - {speaker: wearer, text: "…", at: "2026-10-23 10:15"}   # at：当地时间（Asia/Shanghai），省略时不带时间
+    captures_file: data/long-day.yaml   # 追加用例目录下数据文件中的旁听（长的一天不写在用例里）
     expect:
       status: completed
       calls: ["macbook__read_file"]        # 必须出现的调用（glob）
@@ -54,7 +57,12 @@ turns:
       memories: [{category: relationship, contains: "张三"}, {contains: "香菜", max: 1}]   # 本轮结束后应存在的 Memory；max：至多几条
       no_memories: [{contains: "1101"}, {category: "!health", contains: "焦虑"}]   # 不应存在的 Memory；"!" 表示其他类别
       call_args: {"*send_message": "lilei@example.com"}        # 某个名称匹配的调用的参数须包含
-      no_call_args: {"mcp_xinli__set_commitments": "合同"}     # 名称匹配的调用的参数都不得包含
+      no_call_args: {"mcp_xinli__file_day": "合同"}            # 名称匹配的调用的参数都不得包含
+      xinli:                                                    # 本轮之后 xinli 业务线中本 EndUser 的数据（captures-by-exchange.md §10）
+        exchanges: {min: 2}                                     # 交出的交谈数；pending：待确认数；projects：项目数
+        in_project: {P-0001: {max: 0}}                          # 归入某项目的交谈数
+        commitments: [{kind: mine, contains: 报价, due_date: "2026-10-24", verified: true}]   # 账本中须有的承诺
+        no_commitments: [{kind: mine, contains: 合同}]          # 账本中不得有的承诺；还可按 status、project 匹配
       device_writes: {"minutes.md": "周五"}                     # 设备上写入的文件应包含
       device_sent: 0                                            # 设备发出的消息数
       tickets: ["C-1001"]                                       # CRM 中本 EndUser 的工单须包含的文本
@@ -234,3 +242,12 @@ turns:
 新增 `capture-memory-no-duplicate`、`capture-memory-update`、`capture-relative-date`、`capture-assistant-recall`（captures.md §11）。起初只靠指令（"先 memory_search，变了用 replaces"）：`capture-memory-update` 0/3 到 4/6，`capture-memory-no-duplicate` 5/6。看日志，模型三次中有一两次不查就写，查到了旧记忆也不填 `replaces`，还有一次把"不吃香菜"归成 `health`，绕过了同类别的去重。改为平台兜底后两者都 6/6：去重不限类别，`memory_save` 写入后列出同类别的已有记忆（m4-memory-grant.md §3）。`capture-relative-date` 起初 1/3：日期行只有"2026-10-23 星期五"时，模型两次把"下周一"写成 27 日；日期行加上之后七天的日期与星期后 6/6。
 
 这次改动之后 `memory-*` 与 `multi-turn-memory-chat` 没有回归。`memory-recall-new-session` 有一轮 1/3、一轮 2/3，但这个用例中模型看到的输入与改动前逐字相同（工具结果都是"已记住（id）"，召回也正确），失败是模型改用 `ask_user` 反问，再跑 6 次 6/6。`capture-project-grouping` 在更新基线的那一轮是 2/3（第二天把装修新建成了另一个项目，即项目归集没有置信度的老问题），当天累计 17/18，基线保留原来的 3/3。
+
+### 按交谈整理（2026-10-24）
+
+旁听整理改为按交谈逐段交出（captures-by-exchange.md）。用例改用新工具，断言改为检查业务线的数据（`expect.xinli`），不再依赖调用参数的文字。新增 `capture-exchange-split`、`capture-project-reconcile`、`capture-project-unsure`、`capture-long-day`；`capture-commitment-extraction` 改由 `xinli-day` 交出承诺并核对引用。
+
+- **一轮调整。** 首轮失败的都写进了指令：期限总是将来（星期四说"周三前"被写成前一天）；对方答应的也要写（漏了"我来统计人数"）；对方说已收到即为完成；推迟是改期限、不是取消；没有交谈也要调用 `file_day`（查到记忆已记过就直接结束了）。另外两个用例的文字有歧义，已改写：星期五说"周五前"，以及"我得先问问财务"。
+- **结果。** 调整后 16 个用例各 6 次全部通过（96/96），基线 3/3。
+- **代价。** 每段交谈多两三次调用，平均 tokens 约为第一版的两倍（如 `capture-memory-update` 由约 1.3 万增至 2.2 万）。`capture-long-day` 把窗口调到 24000，一次运行压缩 3 次、约 27 万 tokens，承诺与总览都没有丢。
+- **核对规则没覆盖的情况。** 佩戴者让对方去办的事（"你先问问供应商"）仍偶尔被记成佩戴者的承诺：被引用的确实是佩戴者的话，核对通过。用例不再断言这一点，见 captures-by-exchange.md §7。

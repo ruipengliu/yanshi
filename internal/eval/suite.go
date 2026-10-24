@@ -67,13 +67,44 @@ type AgentSetup struct {
 	Capabilities []string `yaml:"capabilities"`
 }
 
-// XinliSetup 是 xinli MCP Server 中预置的数据：已有的项目与按日期的摘要（file_day 交给业务线、day_summary 取回的内容）。
+// XinliSetup 是 xinli MCP Server 中预置的数据：已有的项目、按日期的摘要（day_summary 在没有交出的交谈时返回它）与承诺账本。
 type XinliSetup struct {
-	Projects []XinliProject    `yaml:"projects"`
-	Days     map[string]string `yaml:"days"`
+	Projects    []XinliProject    `yaml:"projects"`
+	Days        map[string]string `yaml:"days"`
+	Commitments []XinliCommitment `yaml:"commitments"`
+	// ProjectSession 是一个预置项目的 ID：本用例的 Session 就是这个项目的 xinli-project Session（如同业务线归集时创建的）。
+	ProjectSession string `yaml:"project_session"`
 }
 
-type XinliProject = xinlimock.Project
+type (
+	XinliProject    = xinlimock.Project
+	XinliCommitment = xinlimock.Commitment
+)
+
+// XinliExpect 是对 xinli 业务线数据的断言。
+type XinliExpect struct {
+	// Exchanges 是交出的交谈数的范围；Pending 是"待确认"中交谈数的范围；Projects 是项目数（含预置的）的范围。
+	Exchanges *Range `yaml:"exchanges"`
+	Pending   *Range `yaml:"pending"`
+	Projects  *Range `yaml:"projects"`
+	// InProject 是归入各项目（按 ID）的交谈数的范围，如 {P-0001: {max: 0}}。
+	InProject map[string]Range `yaml:"in_project"`
+	// Commitments 中每项须匹配账本中的某条承诺；NoCommitments 中每项都不得匹配任何一条。
+	Commitments   []CommitmentMatch `yaml:"commitments"`
+	NoCommitments []CommitmentMatch `yaml:"no_commitments"`
+}
+
+// CommitmentMatch 匹配承诺账本中的一条：未写的字段不检查。
+type CommitmentMatch struct {
+	Kind     string `yaml:"kind"` // mine | theirs
+	Contains string `yaml:"contains"`
+	// DueDate 要求期限的日期（YYYY-MM-DD）；Status 是 open、done 或 cancelled；Project 是所属项目 ID。
+	DueDate string `yaml:"due_date"`
+	Status  string `yaml:"status"`
+	Project string `yaml:"project"`
+	// Verified 非 nil 时要求核对的结果：true 为通过核对，false 为未核实。
+	Verified *bool `yaml:"verified"`
+}
 
 // CaptureSegment 是一段旁听转写：Speaker 为 wearer（佩戴者）或 other（他人，Key 区分不同的人）。
 type CaptureSegment struct {
@@ -127,7 +158,9 @@ type Turn struct {
 	// Captures 是本轮输入之前由 HostApp 提交到本轮 Session 的一批旁听（docs/design/captures.md §3）；
 	// 跨天的用例在 new_session 的一轮提交新一天的旁听。
 	Captures []CaptureSegment `yaml:"captures"`
-	Expect   Expect           `yaml:"expect"`
+	// CapturesFile 是用例目录下的数据文件（YAML 的旁听列表，格式同 captures），追加在 Captures 之后：长的一天不写在用例里。
+	CapturesFile string `yaml:"captures_file"`
+	Expect       Expect `yaml:"expect"`
 }
 
 // CardActionScript 模拟用户在卡片上点按钮或点选列表项。Action 为空时点第一个按钮；Label 非空时点标签包含它的按钮或条目。
@@ -193,6 +226,8 @@ type Expect struct {
 	// Tasks 是本轮 Call 中派生任务（run_task）次数的范围；TaskContains 要求某个任务的内容包含给定文本。
 	Tasks        *Range   `yaml:"tasks"`
 	TaskContains []string `yaml:"task_contains"`
+	// Xinli 是本轮之后 xinli MCP Server 中本 EndUser 的数据应满足的条件（docs/design/captures-by-exchange.md §10）。
+	Xinli *XinliExpect `yaml:"xinli"`
 	// Tickets 是本轮之后 CRM 中本 EndUser 的工单应包含的文本（每项须出现在某个工单中）。
 	Tickets []string `yaml:"tickets"`
 	Judge   string   `yaml:"judge"`
@@ -226,6 +261,18 @@ func LoadSuite(dir string) ([]*Case, error) {
 		for i, t := range c.Turns {
 			if t.AwaitBackground && (t.Input != "" || t.CardAction != nil || t.NewSession || c.Call) {
 				return nil, fmt.Errorf("%s: turn %d awaits a background result and cannot also submit input", f, i+1)
+			}
+			if t.CapturesFile != "" {
+				b, err := os.ReadFile(filepath.Join(dir, t.CapturesFile))
+				if err != nil {
+					return nil, fmt.Errorf("%s: turn %d: %w", f, i+1, err)
+				}
+				var more []CaptureSegment
+				if err := yaml.Unmarshal(b, &more); err != nil {
+					return nil, fmt.Errorf("%s: turn %d: %s: %w", f, i+1, t.CapturesFile, err)
+				}
+				c.Turns[i].Captures = append(c.Turns[i].Captures, more...)
+				t = c.Turns[i]
 			}
 			for _, g := range t.Captures {
 				if g.Speaker != "wearer" && g.Speaker != "other" {

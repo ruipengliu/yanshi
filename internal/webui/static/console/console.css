@@ -2621,7 +2621,7 @@ dialog .row {
   margin-top: -10px;
 }
 
-/* —— 旁听视图（xinli.js）：业务线的今日、项目、觉察 —— */
+/* —— 旁听视图（xinli.js）：业务线的今日、项目、承诺、待确认、觉察 —— */
 .xinli-main {
   flex: 1;
   min-height: 0;
@@ -2713,6 +2713,30 @@ dialog .row {
 }
 .xinli-list .due {
   color: var(--warn);
+}
+.xinli-list .risk {
+  color: var(--bad);
+}
+.xinli-list .tag,
+.xinli-group-title .tag {
+  font-size: 11px;
+  padding: 0 5px;
+  border-radius: 6px;
+  background: var(--subtle);
+  border: 1px solid var(--line);
+}
+.xinli-list .tag.mine {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.xinli-list .tag.theirs {
+  color: var(--delegate);
+  border-color: var(--delegate);
+}
+.xinli-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
 }
 .xinli-timeline {
   margin-top: 10px;

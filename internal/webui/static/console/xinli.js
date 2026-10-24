@@ -1,7 +1,9 @@
-// 旁听视图（docs/design/console.md §2.1）：旁听业务线 xinli 这一侧的数据，按 App 的三个页面展示——
-//   今日   每次每日整理的总览、要点，以及各项目分组中定下的事、双方的待办与风险
-//   项目   跨天归集的项目：近况、按天的时间线、用户本人的承诺（xinli-project 的 set_commitments）
-//   觉察   用户本人的沟通习惯与建议（按天），以及旁听写入的长期 Memory
+// 旁听视图（docs/design/console.md §2.1）：旁听业务线 xinli 这一侧的数据，按 App 的页面展示——
+//   今日     每次每日整理的总览、要点，以及当天交出的交谈（定下的事、风险、归属）
+//   项目     项目的现状、下一步与按交谈的时间线（xinli-project 的 set_status）
+//   承诺     承诺账本：双方各自答应的事，按被引用原话的说话人核对（docs/design/captures-by-exchange.md §7）
+//   待确认   归属拿不准的交谈：替用户确认归入候选项目或新建
+//   觉察     用户本人的沟通习惯与建议（按天），以及旁听写入的长期 Memory
 // 数据来自模拟的 xinli MCP Server（serve -xinli-mock，GET /v1/debug/xinli），可跳到对应的 Session。
 
 import { ago, fill, h } from "./ui.js";
@@ -9,13 +11,15 @@ import { ago, fill, h } from "./ui.js";
 const TABS = [
   ["today", "今日"],
   ["projects", "项目"],
+  ["commitments", "承诺"],
+  ["pending", "待确认"],
   ["awareness", "觉察"],
 ];
 
 export class XinliView {
   /**
    * @param {object} ctx
-   *   http(method, path)   调用 HTTP API，返回 {status, json}
+   *   http(method, path, body)   调用 HTTP API，返回 {status, json}
    *   idQuery()            -auth none 时的 business_line 与 end_user 参数
    *   openSession(sid)     在"对话"视图中打开 Session
    *   identity()           当前 EndUser 与业务线的标识：变化时丢弃在途的结果
@@ -70,11 +74,9 @@ export class XinliView {
       ? h("div", { class: "empty" }, this.error)
       : !this.state
         ? h("div", { class: "empty" }, "读取中…")
-        : this.tab === "today"
-          ? this.today()
-          : this.tab === "projects"
-            ? this.projects()
-            : this.awareness();
+        : ({ today: () => this.today(), projects: () => this.projects(), commitments: () => this.commitments(), pending: () => this.pending() }[
+            this.tab
+          ] ?? (() => this.awareness()))();
     fill(
       this.root,
       h(
@@ -84,13 +86,17 @@ export class XinliView {
           "nav",
           { class: "segmented" },
           TABS.map(([id, name]) =>
-            h("button", { class: this.tab === id ? "selected" : "", onclick: () => ((this.tab = id), this.render()) }, name),
+            h(
+              "button",
+              { class: this.tab === id ? "selected" : "", onclick: () => ((this.tab = id), this.render()) },
+              id === "pending" && this.pendingList().length ? `${name} ${this.pendingList().length}` : name,
+            ),
           ),
         ),
         h(
           "span",
           { class: "muted" },
-          "在对话中新建 xinli-day 会话，🎧 提交旁听后发「整理今天」；整理之后业务线为每个项目提交「整理 <日期>」，得出承诺",
+          "在对话中新建 xinli-day 会话，🎧 提交旁听后发「整理今天」；整理之后业务线为每个项目提交「整理 <日期>」，更新现状、对账承诺",
         ),
       ),
       h("div", { class: "xinli-body" }, body),
@@ -116,27 +122,38 @@ export class XinliView {
         ),
         h("div", { class: "xinli-headline" }, d.headline || "（没有总览）"),
         list("要点", d.highlights),
-        (d.groups ?? []).map((g) => this.group(g, true)),
+        this.exchangesOf((e) => e.session === d.session).map((e) => this.exchange(e, true)),
       ),
     );
   }
 
-  group(g, withProject) {
+  exchangesOf(pred) {
+    return (this.state.exchanges ?? []).filter(pred);
+  }
+
+  projectName(id) {
+    return (this.state.projects ?? []).find((p) => p.id === id)?.name ?? "";
+  }
+
+  /** 一段交谈；withWhere 时注明归属，可跳到项目。 */
+  exchange(e, withWhere) {
+    let where = null;
+    if (withWhere) {
+      where = e.project
+        ? h("a", { href: "#", onclick: (ev) => (ev.preventDefault(), this.showProject(e.project)) }, `${e.project} ${this.projectName(e.project)}`)
+        : e.match === "unsure"
+          ? h("span", { class: "tag" }, `待确认：可能属于 ${e.candidate}`)
+          : h("span", { class: "muted" }, "不归项目");
+    }
+    const cms = (this.state.commitments ?? []).filter((m) => m.session === e.session && m.exchange === e.id);
     return h(
       "div",
       { class: "xinli-group" },
-      h(
-        "div",
-        { class: "xinli-group-title" },
-        withProject
-          ? h("a", { href: "#", onclick: (e) => (e.preventDefault(), this.showProject(g.project)) }, `${g.project} ${g.title}`)
-          : h("b", {}, g.title),
-      ),
-      h("div", {}, g.summary),
-      list("已定", g.decisions, "decided"),
-      list("我要做", g.my_todos, "mine"),
-      list("对方要做", g.their_todos, "theirs"),
-      list("风险", g.risks, "risk"),
+      h("div", { class: "xinli-group-title" }, h("b", {}, e.title), " ", h("code", {}, e.id), where ? [" · ", where] : null),
+      h("div", {}, e.summary),
+      list("已定", e.decisions, "decided"),
+      cms.length ? commitmentList("承诺", cms) : null,
+      list("风险", e.risks, "risk"),
     );
   }
 
@@ -153,6 +170,8 @@ export class XinliView {
     if (!ps.length) return h("div", { class: "empty" }, "还没有项目。每日整理会为值得跟进的新主题建立项目。");
     return ps.map((p) => {
       const open = this.openProject === p.id;
+      const exs = this.exchangesOf((e) => e.project === p.id);
+      const cms = (this.state.commitments ?? []).filter((m) => m.project === p.id && m.status === "open");
       return h(
         "section",
         { class: `xinli-card ${open ? "open" : ""}` },
@@ -161,45 +180,74 @@ export class XinliView {
           { class: "xinli-card-head", onclick: () => ((this.openProject = open ? "" : p.id), this.render()) },
           h("b", {}, p.name),
           h("code", {}, p.id),
-          h("span", { class: "muted" }, ` · ${(p.timeline ?? []).length} 天 · ${(p.commitments ?? []).length} 条承诺`),
+          h("span", { class: "muted" }, ` · ${exs.length} 段交谈 · ${cms.length} 条未完成的承诺`),
           h("span", { class: "spacer" }),
           p.session ? this.sessionLink(p.session, "打开项目会话") : h("span", { class: "muted" }, "尚未归集"),
         ),
-        h("div", {}, p.digest),
-        (p.commitments ?? []).length
-          ? h(
-              "div",
-              { class: "xinli-list commitments" },
-              h("span", { class: "label" }, `承诺${p.commitments_at ? `（${ago(p.commitments_at)}更新）` : ""}`),
-              h(
-                "ul",
-                {},
-                p.commitments.map((m) =>
-                  h(
-                    "li",
-                    {},
-                    m.content,
-                    m.to ? h("small", {}, ` · 答应 ${m.to}`) : null,
-                    m.due ? h("small", { class: "due" }, ` · ${m.due}`) : null,
-                  ),
-                ),
-              ),
-            )
-          : null,
+        h("div", {}, p.status || h("span", { class: "muted" }, "还没有现状"), p.status_at ? h("small", { class: "muted" }, ` · ${ago(p.status_at)}更新`) : null),
+        list("下一步", p.next_steps),
+        list("待解决", p.open_questions, "risk"),
+        cms.length ? commitmentList("承诺", cms) : null,
         open
           ? h(
               "div",
               { class: "xinli-timeline" },
-              (p.timeline ?? [])
+              exs
                 .slice()
                 .reverse()
-                .map((e) =>
-                  h("div", { class: "xinli-entry" }, h("div", { class: "xinli-entry-date" }, e.date), this.group(e, false)),
-                ),
+                .map((e) => h("div", { class: "xinli-entry" }, h("div", { class: "xinli-entry-date" }, e.date), this.exchange(e, false))),
             )
           : null,
       );
     });
+  }
+
+  // —— 承诺 ——
+
+  commitments() {
+    const cms = this.state.commitments ?? [];
+    if (!cms.length) return h("div", { class: "empty" }, "还没有承诺。每日整理交出交谈时，双方各自答应的事会进入账本。");
+    const groups = [
+      ["我答应的", cms.filter((m) => m.kind === "mine" && m.status === "open")],
+      ["别人答应我的", cms.filter((m) => m.kind === "theirs" && m.status === "open")],
+      ["已完成或取消", cms.filter((m) => m.status !== "open")],
+    ];
+    return groups
+      .filter(([, list]) => list.length)
+      .map(([label, list]) => h("section", { class: "xinli-card" }, h("div", { class: "xinli-card-head" }, h("b", {}, label)), commitmentList("", list, true)));
+  }
+
+  // —— 待确认 ——
+
+  pendingList() {
+    return this.exchangesOf((e) => e.match === "unsure" && !e.project);
+  }
+
+  pending() {
+    const list = this.pendingList();
+    if (!list.length) return h("div", { class: "empty" }, "没有待确认的交谈。每日整理拿不准一段交谈属于哪个项目时，会放在这里请用户确认。");
+    return list.map((e) =>
+      h(
+        "section",
+        { class: "xinli-card" },
+        h("div", { class: "xinli-card-head" }, h("b", {}, e.date), h("span", { class: "spacer" }), this.sessionLink(e.session, "打开每日整理会话")),
+        this.exchange(e, false),
+        h(
+          "div",
+          { class: "xinli-actions" },
+          h("button", { class: "btn small", type: "button", onclick: () => this.resolve(e, e.candidate) }, `归入 ${e.candidate} ${this.projectName(e.candidate)}`),
+          h("button", { class: "btn small", type: "button", onclick: () => this.resolve(e, "") }, `新建「${e.proposed || e.title}」`),
+        ),
+      ),
+    );
+  }
+
+  async resolve(e, project) {
+    const r = await this.ctx
+      .http("POST", `/v1/debug/xinli/resolve?${this.ctx.idQuery()}`, { session: e.session, exchange: e.id, project })
+      .catch((err) => ({ status: 0, json: String(err) }));
+    if (r.status !== 204) this.error = `确认失败：${r.status} ${r.json?.error ?? r.json ?? ""}`;
+    this.refresh();
   }
 
   // —— 觉察 ——
@@ -274,6 +322,34 @@ function list(label, items, cls = "") {
       "ul",
       {},
       items.map((t) => h("li", {}, t)),
+    ),
+  );
+}
+
+/** 承诺列表：未核实的注明原因（不会按期限提醒）；withProject 时注明所属项目。 */
+function commitmentList(label, items, withProject = false) {
+  return h(
+    "div",
+    { class: "xinli-list commitments" },
+    label ? h("span", { class: "label" }, label) : null,
+    h(
+      "ul",
+      {},
+      items.map((m) =>
+        h(
+          "li",
+          { class: m.status !== "open" ? "muted" : "" },
+          h("span", { class: `tag ${m.kind}` }, m.kind === "mine" ? "我" : "对方"),
+          " ",
+          m.content,
+          m.counterpart ? h("small", {}, m.kind === "mine" ? ` · 答应 ${m.counterpart}` : ` · ${m.counterpart}`) : null,
+          m.due_date || m.due_text ? h("small", { class: "due" }, ` · ${m.due_date || ""}${m.due_text ? `（${m.due_text}）` : ""}`) : null,
+          withProject && m.project ? h("small", { class: "muted" }, ` · ${m.project}`) : null,
+          m.status !== "open" ? h("small", {}, m.status === "done" ? " · 已完成" : " · 已取消") : null,
+          m.unverified ? h("small", { class: "risk" }, ` · 未核实：${m.unverified}`) : null,
+          h("small", { class: "muted" }, ` · ${m.id}`),
+        ),
+      ),
     ),
   );
 }

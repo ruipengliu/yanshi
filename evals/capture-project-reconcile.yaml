@@ -1,0 +1,24 @@
+name: capture-project-reconcile
+description: >-
+  项目 Session 对账承诺（captures-by-exchange.md §5）：当天的交谈说报价单已经收到、合同推迟到 11 月 2 日，
+  按 ID 把报价单标为完成、改合同的期限，并更新项目现状；不重复添加承诺。交谈经 day_summary 拉取，是外部内容（ADR-0037）。
+agent: xinli-project
+setup:
+  xinli:
+    projects: [{id: P-0001, name: 新一季采购, status: 和王总谈妥先小批量试单，等报价单与框架合同。}]
+    project_session: P-0001
+    commitments:
+      - {id: C-0001, kind: mine, content: 把修改后的报价单发给王总, counterpart: 王总, due_date: "2026-10-23", project: P-0001}
+      - {id: C-0002, kind: theirs, content: 寄框架合同, counterpart: 王总, due_date: "2026-10-26", project: P-0001}
+    days:
+      "2026-10-24": >-
+        王总来电：报价单已经收到，价格没问题。框架合同法务还要再看一遍，推迟到 11 月 2 日寄出。试单数量定为 500 件。
+turns:
+  - input: 整理 2026-10-24
+    expect:
+      calls: ["mcp_xinli__day_summary", "mcp_xinli__set_status", "mcp_xinli__update_commitments"]
+      approvals: {max: 0}
+      xinli:
+        commitments:
+          - {kind: mine, contains: 报价单, status: done}
+          - {kind: theirs, contains: 合同, status: open, due_date: "2026-11-02"}

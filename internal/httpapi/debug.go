@@ -26,6 +26,7 @@ import (
 // serve -xinli-mock 时另有（与 -faults 无关）：
 //
 //	GET    /v1/debug/xinli?business_line=&end_user=   模拟的 xinli 业务线中该 EndUser 的项目与整理结果（控制台的"旁听"视图）
+//	POST   /v1/debug/xinli/resolve?business_line=&end_user=   {session, exchange, project}：确认待定交谈的归属，project 为空时新建
 func (s *Server) debugRoutes() map[string]http.HandlerFunc {
 	routes := map[string]http.HandlerFunc{}
 	if s.Faults != nil {
@@ -36,6 +37,9 @@ func (s *Server) debugRoutes() map[string]http.HandlerFunc {
 	}
 	if s.Xinli != nil {
 		routes["GET /v1/debug/xinli"] = s.xinliState
+		if s.XinliResolve != nil {
+			routes["POST /v1/debug/xinli/resolve"] = s.xinliResolve
+		}
 	}
 	return routes
 }
@@ -47,6 +51,24 @@ func (s *Server) xinliState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.Xinli(bl, eu))
+}
+
+// xinliResolve 替用户确认一段归属拿不准的交谈（docs/design/captures-by-exchange.md §6），鉴权同 xinliState。
+func (s *Server) xinliResolve(w http.ResponseWriter, r *http.Request) {
+	bl, eu, ok := memoryOwner(w, r, s)
+	if !ok {
+		return
+	}
+	var req struct{ Session, Exchange, Project string }
+	if err := decode(r, &req); err != nil {
+		s.fail(w, err)
+		return
+	}
+	if err := s.XinliResolve(bl, eu, req.Session, req.Exchange, req.Project); err != nil {
+		s.fail(w, fmt.Errorf("%w: %v", service.ErrInvalid, err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // faultVisible 报告调用方能否看到、增删这条规则：不限 Session 的规则只对服务令牌（与 -auth none）；

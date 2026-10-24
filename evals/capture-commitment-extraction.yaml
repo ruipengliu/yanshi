@@ -1,18 +1,25 @@
 name: capture-commitment-extraction
 description: >-
-  项目的承诺只列用户本人答应别人的事（docs/design/captures.md §6）：摘要中用户答应发报价单，对方答应寄合同，
-  后者不是用户的承诺。摘要经 day_summary 拉取，是外部内容（ADR-0037）。
-agent: xinli-project
+  承诺随交谈进入账本（docs/design/captures-by-exchange.md §7）：佩戴者答应发报价单是 mine，王总答应寄合同是 theirs；
+  两条都引用说出它的原话，平台给出的说话人与承诺人一致，核对通过。别人提出、佩戴者没有答应的（预算表）不是承诺。
+agent: xinli-day
 setup:
-  xinli:
-    days:
-      "2026-10-22": >-
-        和供应商王总谈新一季的采购。用户答应周五前把修改后的报价单发给王总；王总答应下周一把框架合同寄给用户。
-        双方都认可先小批量试单。
+  xinli: {}
 turns:
-  - input: 整理 2026-10-22
+  - captures:
+      - {speaker: other, key: wang, text: 新一季的采购，我们先小批量试单吧。, at: "2026-10-22 10:00"}
+      - {speaker: wearer, text: 可以。修改后的报价单我周五前发给您。, at: "2026-10-22 10:01"}
+      - {speaker: other, key: wang, text: 好，框架合同我下周一寄给你。另外把你们的年度预算表也发我看看。, at: "2026-10-22 10:02"}
+      - {speaker: wearer, text: 预算表不方便给，这个得财务说了算。, at: "2026-10-22 10:03"}
+    input: 整理今天
     expect:
-      calls: ["mcp_xinli__day_summary", "mcp_xinli__set_commitments"]
+      calls: ["mcp_xinli__file_exchange", "mcp_xinli__file_day"]
       approvals: {max: 0}
-      call_args: {"mcp_xinli__set_commitments": "报价单"}
-      no_call_args: {"mcp_xinli__set_commitments": "合同"}
+      xinli:
+        commitments:
+          - {kind: mine, contains: 报价, due_date: "2026-10-23", verified: true}
+          - {kind: theirs, contains: 合同, due_date: "2026-10-26", verified: true}
+        no_commitments:
+          - {kind: mine, contains: 合同}
+          - {kind: theirs, contains: 报价}
+          - {kind: mine, contains: 预算}

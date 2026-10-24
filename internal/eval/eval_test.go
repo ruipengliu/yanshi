@@ -162,7 +162,7 @@ turns:
 }
 
 // TestCapturesAndXinli：每轮的旁听提交到 Session、可由 captures 读出；xinli MCP Server 按 EndUser 预置数据、
-// file_day 新建项目；no_call_args 与未开启健康信息的业务线生效。
+// file_exchange 新建项目，承诺经平台附上的说话人核对；no_call_args 与未开启健康信息的业务线生效。
 func TestCapturesAndXinli(t *testing.T) {
 	dir := t.TempDir()
 	writeCase(t, dir, "day", `name: day
@@ -170,20 +170,23 @@ agent: day
 trials: 1
 setup:
   xinli:
-    projects: [{id: P-0001, name: 年度预算, digest: 预算已报}]
+    projects: [{id: P-0001, name: 年度预算, status: 预算已报}]
 turns:
   - captures:
-      - {speaker: other, key: zhang, text: 中午吃什么？}
-      - {speaker: wearer, text: 我不吃香菜。}
+      - {speaker: other, key: zhang, text: 报价单什么时候给我？}
+      - {speaker: wearer, text: 明天上午发您。}
     input: call captures {}
     expect:
       calls: [captures]
-      reply_contains: ["[佩戴者] 我不吃香菜", "[他人 zhang]", "已读完"]
-  - input: 'call mcp_xinli__file_day {"groups":[{"title":"办公室装修","summary":"选了浅色地板"}]}'
+      reply_contains: ["#2.1 [佩戴者] 明天上午发您", "[他人 zhang]", "已读完"]
+  - input: 'call mcp_xinli__file_exchange {"exchange":"x2.0","title":"办公室装修","summary":"报价单","project":{"match":"new","name":"办公室装修"},"commitments":[{"kind":"mine","content":"发报价单","refs":["#2.1"]}]}'
     expect:
       approvals: {max: 0}
-      reply_contains: ["`+xinlimock.NewProject+`"]
-      no_call_args: {"mcp_xinli__file_day": "预算"}
+      reply_contains: ["`+xinlimock.NewProject+`", "均已核实"]
+      no_call_args: {"mcp_xinli__file_exchange": "预算"}
+  - input: 'call mcp_xinli__file_exchange {"exchange":"x2.0","title":"办公室装修","summary":"报价单","project":{"match":"existing","id":"`+xinlimock.NewProject+`"},"commitments":[{"kind":"mine","content":"发报价单","refs":["#2.0"]}]}'
+    expect:
+      reply_contains: ["引用的原话里没有用户本人说的话"]
   - input: call mcp_xinli__list_projects {}
     new_session: true
     expect:
@@ -194,9 +197,9 @@ agent: day
 trials: 1
 setup: {xinli: {}}
 turns:
-  - input: 'call mcp_xinli__set_commitments {"commitments":[{"content":"寄合同"}]}'
+  - input: 'call mcp_xinli__file_day {"day":{"headline":"寄合同"}}'
     expect:
-      no_call_args: {"mcp_xinli__set_commitments": "合同"}
+      no_call_args: {"mcp_xinli__file_day": "合同"}
 `)
 	for _, c := range []struct{ name, noHealth string }{{"health-on", "false"}, {"health-off", "true"}} {
 		writeCase(t, dir, c.name, `name: `+c.name+`
@@ -218,7 +221,7 @@ turns:
 	if c := by["day"]; c.Passed != 1 {
 		t.Fatalf("day: %+v", c)
 	}
-	if c := by["no-call-args"]; c.Passed != 0 || c.Failures["turn 1: no_call_args mcp_xinli__set_commitments"] != 1 {
+	if c := by["no-call-args"]; c.Passed != 0 || c.Failures["turn 1: no_call_args mcp_xinli__file_day"] != 1 {
 		t.Fatalf("no-call-args: %+v", c)
 	}
 	if c := by["health-on"]; c.Passed != 1 {

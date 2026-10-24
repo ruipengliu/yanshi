@@ -25,6 +25,7 @@ import (
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/artifact"
 	"yanshi/internal/capability"
+	"yanshi/internal/eventlog"
 	"yanshi/sdk/nodesdk"
 )
 
@@ -41,6 +42,9 @@ type Server struct {
 		// NoApproval 是业务线确认无需审批的工具；明确声明 destructiveHint 的工具不受影响。
 		NoApproval []string `yaml:"no_approval"`
 	} `yaml:"tools"`
+	// CiteCaptures 为 true 时，调用参数中的旁听引用编号（"#57.3"）由平台按发起调用的 Session 解析，被引用片段的说话人
+	// 放在 _meta["yanshi/captures"] 中交给业务线（docs/design/captures-by-exchange.md §7）。
+	CiteCaptures bool `yaml:"cite_captures"`
 }
 
 var (
@@ -133,6 +137,8 @@ type Connector struct {
 	// HTTPClient 为 nil 时使用默认客户端。
 	HTTPClient *http.Client
 	Logger     *slog.Logger
+	// Log 是 Session 日志，用于解析旁听引用（Server.CiteCaptures）；为 nil 时不解析。
+	Log eventlog.Log
 	// CacheTTL 是工具列表的缓存时长，默认 5 分钟。
 	CacheTTL time.Duration
 
@@ -309,9 +315,17 @@ func (c *Connector) call(ctx context.Context, s Server, tool string, inv capabil
 	if len(bytes.TrimSpace(args)) == 0 {
 		args = json.RawMessage(`{}`)
 	}
-	res, err := st.session.CallTool(cctx, &mcp.CallToolParams{Name: tool, Arguments: args, Meta: mcp.Meta{
-		"yanshi/business_line": inv.BusinessLine, "yanshi/end_user": inv.EndUser, "yanshi/session": inv.SessionID,
-	}})
+	meta := mcp.Meta{"yanshi/business_line": inv.BusinessLine, "yanshi/end_user": inv.EndUser, "yanshi/session": inv.SessionID}
+	if s.CiteCaptures && c.Log != nil {
+		cites, err := Citations(ctx, c.Log, inv.SessionID, args)
+		if err != nil {
+			return nil, err
+		}
+		if len(cites) > 0 {
+			meta["yanshi/captures"] = cites
+		}
+	}
+	res, err := st.session.CallTool(cctx, &mcp.CallToolParams{Name: tool, Arguments: args, Meta: meta})
 	if err != nil {
 		if ctx.Err() == nil && cctx.Err() == nil {
 			// 连接或协议错误：下次调用前重新连接并刷新工具列表。

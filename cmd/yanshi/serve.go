@@ -413,13 +413,15 @@ func serve(args []string) error {
 	core := app.NewCore(b.Stores, opts)
 	svc, hub, arts, mems, dir := core.Service, core.Hub, core.Artifacts, core.Memory, b.Dir
 	if mcpConn != nil {
-		mcpConn.Artifacts = arts
+		mcpConn.Artifacts, mcpConn.Log = arts, b.Stores.Log
 	}
 	var xinliState func(businessLine, endUser string) any
+	var xinliResolve func(businessLine, endUser, daySession, exchange, project string) error
 	if xinli != nil {
 		// 模拟的业务线同时扮演业务线服务端做"归集"（docs/design/captures.md §6）；在接受请求之前设置。
 		xinli.Business = xinliBusiness{svc}
 		xinliState = func(bl, eu string) any { return xinli.State(bl, eu) }
+		xinliResolve = xinli.Resolve
 	}
 	// 经 HTTP 的输入注明最近在前台使用的设备（设备歧义消解，docs/design/m6-decisions.md §3）；经 Connection 的由网关注明。
 	svc.RecentDevice = (&notify.RecentDevices{Registry: b.Push, TTL: 30 * time.Second, Clock: clk}).Label
@@ -521,7 +523,7 @@ func serve(args []string) error {
 	mux.Handle("/console/", webui.Handler())
 	mux.Handle("/sdk/yanshi.js", webui.Handler())
 	mux.Handle("GET /readyz", ready)
-	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.Usage, Push: b.Push, Feeds: feeds, Faults: injector, Xinli: xinliState,
+	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.Usage, Push: b.Push, Feeds: feeds, Faults: injector, Xinli: xinliState, XinliResolve: xinliResolve,
 		Speech: speechService(svc, meter, logger), Logger: logger}).Handler())
 	srv := &http.Server{
 		Addr:              *addr,

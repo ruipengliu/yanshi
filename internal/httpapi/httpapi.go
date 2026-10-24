@@ -94,6 +94,8 @@ type Server struct {
 	Faults *faults.Injector
 	// Xinli 非 nil 时提供 GET /v1/debug/xinli（serve -xinli-mock）：模拟的 xinli 业务线中 EndUser 的数据。只用于开发部署。
 	Xinli func(businessLine, endUser string) any
+	// XinliResolve 与 Xinli 一起提供 POST /v1/debug/xinli/resolve：在"待确认"中替用户确认一段交谈的归属。
+	XinliResolve func(businessLine, endUser, daySession, exchange, project string) error
 	// Speech 为 nil 或未配置提供商时，语音识别与播报接口返回 501。
 	Speech *speech.Service
 	Logger *slog.Logger
