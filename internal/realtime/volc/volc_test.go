@@ -47,7 +47,7 @@ func TestLive(t *testing.T) {
 			}
 		}
 	}()
-	var transcript, reply string
+	var transcript, partial, reply string
 	var audio int
 	var usage realtime.Usage
 	called := false
@@ -56,6 +56,8 @@ func TestLive(t *testing.T) {
 		case realtime.UserTranscript:
 			if ev.Final {
 				transcript = ev.Text
+			} else if len(ev.Text) > len(partial) {
+				partial = ev.Text
 			}
 		case realtime.ToolCall:
 			if ev.Name != "get_weather" || !strings.Contains(ev.Arguments, "上海") {
@@ -83,6 +85,10 @@ func TestLive(t *testing.T) {
 	t.Logf("transcript %q, reply %q, audio %.1fs, usage %+v", transcript, reply, float64(audio)/(2*realtime.OutputSampleRate), usage)
 	if !strings.Contains(transcript, "天气") || !called || !strings.Contains(reply, "雨") || audio == 0 {
 		t.Fatal("incomplete round trip")
+	}
+	// 识别中的是整句而非新增的字：不应比最终的整句长出一截（累积会重叠）。
+	if len([]rune(partial)) > len([]rune(transcript))+1 {
+		t.Fatalf("partial transcript %q overlaps, final %q", partial, transcript)
 	}
 }
 

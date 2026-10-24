@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -57,7 +56,6 @@ type session struct {
 	// response 是正在进行的回复：下行音频不带 response_id，归属于它。
 	rmu      sync.Mutex
 	response string
-	text     strings.Builder
 	once     sync.Once
 }
 
@@ -220,16 +218,9 @@ func (s *session) loop() {
 		case "conversation.item.input_audio_transcription.started":
 			s.emit(realtime.Event{Kind: realtime.SpeechStarted})
 		case "conversation.item.input_audio_transcription.delta":
-			// 增量是新识别出的字：累积成识别中的整句。
-			s.rmu.Lock()
-			s.text.WriteString(w.Delta)
-			partial := s.text.String()
-			s.rmu.Unlock()
-			s.emit(realtime.Event{Kind: realtime.UserTranscript, Text: partial})
+			// 实测增量是识别中的整句（随识别修正），不是新增的字：直接取用，累积会重叠成"帮帮我帮我查……"。
+			s.emit(realtime.Event{Kind: realtime.UserTranscript, Text: w.Delta})
 		case "conversation.item.input_audio_transcription.completed":
-			s.rmu.Lock()
-			s.text.Reset()
-			s.rmu.Unlock()
 			s.emit(realtime.Event{Kind: realtime.UserTranscript, Text: w.Text, Final: true})
 		case "response.output_audio.started":
 			s.setResponse(w.ResponseID)
