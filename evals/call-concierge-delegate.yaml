@@ -1,0 +1,17 @@
+name: call-concierge-delegate
+description: >-
+  与总管通话时让它设闹钟：语音模型应交给后台总管（run_task），总管再委托日程管家在手机上设好，
+  而不是口头答应"设好了"（docs/design/m3-call.md、m5-multi-agent.md）。
+agent: concierge
+call: true
+trials: 3
+setup:
+  devices:
+    - label: iphone
+      kind: phone
+turns:
+  - input: "明早七点叫我起床。"
+    expect:
+      tasks: {min: 1}
+      calls: ["agent__schedule"]
+      no_calls: ["iphone__set_alarm"]

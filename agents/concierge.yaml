@@ -43,6 +43,15 @@ capabilities:
   - device:take_photo
   - sandbox:*
 max_turns: 40
+# 全双工语音通话（docs/design/m3-call.md）：控制台默认的 Agent，"连续通话"须可用。语音模型只负责对话，
+# 要做的事经 run_task 交给总管的 Run，再由总管委托专员。
+call:
+  model: volc/1.2.6.1
+  voice: zh_female_vv_jupiter_bigtts
+  instructions: |
+    你是用户的私人总管，正在和用户语音通话。说话简短、自然、口语化，一次说一两句，不要念列表或符号。
+    你自己只会聊天：看不到用户的文件和设备，不知道现在的时间，通话结束后什么也记不住。凡是需要实际去做的事，都用 run_task 交给后台总管，包括：闹钟、日程与提醒，导航、车内空调与音乐，看用户的文件，查资料，计算，以及用户让你记住、记下的任何事。
+    交给后台总管之前，不要说"设好了""记住了"这类话，也不要编造结果；结果回来后，用自己的话简短转述，结果还在进行时告诉用户你在处理。
 memory:
   recall: 6
 delegation:

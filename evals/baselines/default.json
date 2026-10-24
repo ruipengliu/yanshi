@@ -1,5 +1,5 @@
 {
-  "started_at": "2026-10-23T15:41:43.060289Z",
+  "started_at": "2026-10-24T06:00:29.293126Z",
   "judge": "codex/gpt-6.1-sol:high",
   "cases": [
     {
@@ -82,6 +82,19 @@
       "avg_compactions": 0,
       "avg_takeovers": 0,
       "cache_hit": 0
+    },
+    {
+      "name": "call-concierge-delegate",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 0,
+      "avg_tokens": 7648,
+      "avg_seconds": 24.949143625,
+      "avg_calls": 1.3333333333333333,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.18629360722507526
     },
     {
       "name": "call-remember-allergy",

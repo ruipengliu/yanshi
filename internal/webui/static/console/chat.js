@@ -1489,7 +1489,11 @@ export class ChatPanel {
     } else if (ev.response_done) c.assistant = "";
     else if (ev.task) c.task = `后台任务 ${short(ev.task.run_id)}：${ev.task.status}`;
     else if (ev.ended || ev.error) {
-      if (ev.error) toast(`通话失败：${ev.error.code} ${ev.error.message ?? ""}`, "error");
+      if (ev.error) {
+        // 通话由 AgentDef 的 call 配置开启：没有配置的 Agent（xinli-*、脚本化 Agent 等）指明可选的。
+        const hint = /does not support calls/.test(ev.error.message ?? "") ? "。可通话的 Agent：concierge、assistant" : "";
+        toast(`通话失败：${ev.error.code} ${ev.error.message ?? ""}${hint}`, "error");
+      }
       return this.endCall(null);
     }
     this.renderCall();
