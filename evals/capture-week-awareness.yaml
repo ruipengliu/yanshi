@@ -1,0 +1,19 @@
+name: capture-week-awareness
+description: >-
+  每周觉察只收在至少两天出现过的习惯（captures-weekly-review.md §4）："答应时给出明确期限"出现在三天，"会后主动发纪要"
+  只出现一天：只交出前者。
+agent: xinli-week
+setup:
+  xinli:
+    filed:
+      - {date: today-6, headline: 和供应商谈采购, awareness: {habits: ["答应时给出明确期限：周五前发报价单"]}}
+      - {date: today-4, headline: 新办公室定稿, awareness: {habits: ["答应时给出明确期限：月底前定稿"], suggestions: ["会议多时先确认议程"]}}
+      - {date: today-3, headline: 部门例会, awareness: {habits: ["会后主动发纪要"]}}
+      - {date: today-1, headline: 团建安排, awareness: {habits: ["给出明确的完成时间：周三前发候选地点"]}}
+turns:
+  - input: 回顾本周
+    expect:
+      calls: ["mcp_xinli__week_overview", "mcp_xinli__file_week"]
+      xinli:
+        week_habits: ["期限"]
+        no_week_habits: ["纪要"]

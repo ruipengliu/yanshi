@@ -41,6 +41,11 @@ type Case struct {
 			Content  string `yaml:"content"`
 			// Recorded 是记录日期（YYYY-MM-DD），用于预置新旧不同的记忆；默认为当前时间。
 			Recorded string `yaml:"recorded"`
+			// ValidUntil 是有效期的最后一天（须是将来）；ExpiredOn 是已经过去的有效期最后一天（预置已过期的计划）。
+			ValidUntil string `yaml:"valid_until"`
+			ExpiredOn  string `yaml:"expired_on"`
+			// ReplacesPrevious 为 true 时这条取代列表中的上一条（上一条作为历史保留，m4-memory-grant.md §11）。
+			ReplacesPrevious bool `yaml:"replaces_previous"`
 		} `yaml:"memories"`
 		Device *DeviceSetup `yaml:"device"`
 		// Devices 是另外几台设备（标签互不相同），用于检验同类能力有多台设备时的选择（docs/design/m6-decisions.md §3）。
@@ -72,6 +77,11 @@ type XinliSetup struct {
 	Projects    []XinliProject    `yaml:"projects"`
 	Days        map[string]string `yaml:"days"`
 	Commitments []XinliCommitment `yaml:"commitments"`
+	// Filed 是已经交出的每日整理（date、headline、awareness），Exchanges 是已经交出的交谈（date、title、summary、project、
+	// decisions、risks）：每周回顾与重写现状读取它们（captures-weekly-review.md §6）。日期可写成相对于运行当天的
+	// "today-N"（"本周"由运行时刻决定）。
+	Filed     []XinliDay      `yaml:"filed"`
+	Exchanges []XinliExchange `yaml:"exchanges"`
 	// ProjectSession 是一个预置项目的 ID：本用例的 Session 就是这个项目的 xinli-project Session（如同业务线归集时创建的）。
 	ProjectSession string `yaml:"project_session"`
 }
@@ -79,6 +89,8 @@ type XinliSetup struct {
 type (
 	XinliProject    = xinlimock.Project
 	XinliCommitment = xinlimock.Commitment
+	XinliDay        = xinlimock.Day
+	XinliExchange   = xinlimock.Exchange
 )
 
 // XinliExpect 是对 xinli 业务线数据的断言。
@@ -92,6 +104,46 @@ type XinliExpect struct {
 	// Commitments 中每项须匹配账本中的某条承诺；NoCommitments 中每项都不得匹配任何一条。
 	Commitments   []CommitmentMatch `yaml:"commitments"`
 	NoCommitments []CommitmentMatch `yaml:"no_commitments"`
+	// Grouping 是项目归集的碎片率与纯度（captures-weekly-review.md §6），需要旁听标上主题（CaptureSegment.Topic）。
+	Grouping *GroupingExpect `yaml:"grouping"`
+	// Covers 是摘要须覆盖的要点：评分模型逐条判断要点是否出现在交出的交谈与总览中，覆盖率至少为 Min。
+	Covers *CoversExpect `yaml:"covers"`
+	// VerifiedRate 是随交谈交出的承诺中通过核对的比例下限（引用准确率）。
+	VerifiedRate *float64 `yaml:"verified_rate"`
+	// Merges 中每对项目须有合并提议（顺序不限）；NoMerges 中每对都不得有。
+	Merges   [][2]string `yaml:"merges"`
+	NoMerges [][2]string `yaml:"no_merges"`
+	// WeekHabits 中每项须出现在某次每周回顾的习惯中；NoWeekHabits 中每项都不得出现。
+	WeekHabits   []string `yaml:"week_habits"`
+	NoWeekHabits []string `yaml:"no_week_habits"`
+	// Status 是项目现状的断言：按项目 ID，contains 中的都要出现，excludes 中的都不得出现。
+	Status map[string]TextMatch `yaml:"status"`
+}
+
+// TextMatch 要求文本包含 Contains 中的全部、不含 Excludes 中的任何一项。
+type TextMatch struct {
+	Contains []string `yaml:"contains"`
+	Excludes []string `yaml:"excludes"`
+}
+
+// GroupingExpect 是项目归集的断言。
+type GroupingExpect struct {
+	// Fragmentation 是每个主题平均分散在几个项目中（理想为 1）；Purity 是项目中占多数的主题的比例下限（理想为 1）。
+	Fragmentation *FloatRange `yaml:"fragmentation"`
+	Purity        *float64    `yaml:"purity"`
+	// Topics 是至少应交出的主题数：主题根本没有交出时碎片率与纯度都无从谈起。
+	Topics int `yaml:"topics"`
+}
+
+type FloatRange struct {
+	Min *float64 `yaml:"min"`
+	Max *float64 `yaml:"max"`
+}
+
+// CoversExpect 是摘要覆盖率的断言。
+type CoversExpect struct {
+	Points []string `yaml:"points"`
+	Min    float64  `yaml:"min"`
 }
 
 // CommitmentMatch 匹配承诺账本中的一条：未写的字段不检查。
@@ -113,6 +165,8 @@ type CaptureSegment struct {
 	Text    string `yaml:"text"`
 	// At 是说这段话的当地时间（"2026-10-23 09:42"，Asia/Shanghai）；为空时不带时间，整理时也不显示。
 	At string `yaml:"at"`
+	// Topic 是这段话的主题标签（评测用，不提交给 yanshi）：计算项目归集的纯度与碎片率。闲聊不标。
+	Topic string `yaml:"topic"`
 }
 
 // DeviceSetup 是虚拟设备：只读的文件、需审批的写文件与发消息。
@@ -194,6 +248,8 @@ type MemoryMatch struct {
 	Without string `yaml:"without"`
 	// Max 非零时（只用于 memories），匹配的记忆至多这么多条：同一事实不应一再写入。
 	Max int `yaml:"max"`
+	// HasValidUntil 为 true 时（只用于 memories）要求带有效期（m4-memory-grant.md §11）。
+	HasValidUntil bool `yaml:"has_valid_until"`
 }
 
 // Expect 是一轮的断言；未写的字段不检查。
@@ -207,8 +263,10 @@ type Expect struct {
 	MaxCalls  map[string]int `yaml:"max_calls"`
 	Approvals *Range         `yaml:"approvals"`
 	// Questions 是本轮 ask_user 提问次数的范围。
-	Questions     *Range            `yaml:"questions"`
-	ReplyContains []string          `yaml:"reply_contains"`
+	Questions     *Range   `yaml:"questions"`
+	ReplyContains []string `yaml:"reply_contains"`
+	// ReplyExcludes 中的文本都不得出现在回复中（如过期的计划不该被当成之后的安排）。
+	ReplyExcludes []string          `yaml:"reply_excludes"`
 	ReplyMaxChars int               `yaml:"reply_max_chars"`
 	Memories      []MemoryMatch     `yaml:"memories"`
 	NoMemories    []MemoryMatch     `yaml:"no_memories"`

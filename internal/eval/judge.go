@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"yanshi/internal/model"
+	"yanshi/internal/xinlimock"
 )
 
 // PassScore 是评分断言通过的最低分（1～5 分）。
@@ -45,6 +46,49 @@ func judge(ctx context.Context, gw *model.Gateway, judgeModel, rubric string, o 
 			continue
 		}
 		return out.Score, out.Reason, nil
+	}
+	return 0, "", lastErr
+}
+
+const coverageInstructions = `你是摘要的评测员。给你一组要点和一份整理结果（JSON），逐条判断要点的意思是否出现在整理结果中（措辞不同、意思相同即算出现；只出现一部分不算）。
+只输出一个 JSON 对象：{"covered": [true 或 false，与要点一一对应], "missing": "没有覆盖的要点，用顿号分隔"}。`
+
+// judgeCoverage 请评分模型逐条判断要点是否出现在 xinli 业务线的整理结果中（交出的交谈与每日总览），返回覆盖率。
+func judgeCoverage(ctx context.Context, gw *model.Gateway, judgeModel string, points []string, st *xinlimock.State) (float64, string, error) {
+	if len(points) == 0 {
+		return 1, "", nil
+	}
+	data, _ := json.Marshal(map[string]any{"exchanges": st.Exchanges, "days": st.Days, "projects": st.Projects})
+	var b strings.Builder
+	b.WriteString("要点：\n")
+	for i, p := range points {
+		fmt.Fprintf(&b, "%d. %s\n", i+1, p)
+	}
+	fmt.Fprintf(&b, "\n整理结果：\n%s\n", data)
+	req := &model.Request{Model: judgeModel, System: coverageInstructions, Messages: []model.Message{{Role: model.RoleUser, Content: model.TextBlocks(b.String())}}}
+	var lastErr error
+	for range 2 {
+		resp, err := gw.Generate(ctx, req, nil)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		var out struct {
+			Covered []bool `json:"covered"`
+			Missing string `json:"missing"`
+		}
+		raw := jsonObject.FindString(model.Text(resp.Content))
+		if err := json.Unmarshal([]byte(raw), &out); err != nil || len(out.Covered) != len(points) {
+			lastErr = fmt.Errorf("unparseable coverage %q", clip(model.Text(resp.Content), 200))
+			continue
+		}
+		n := 0
+		for _, c := range out.Covered {
+			if c {
+				n++
+			}
+		}
+		return float64(n) / float64(len(points)), "missing: " + out.Missing, nil
 	}
 	return 0, "", lastErr
 }

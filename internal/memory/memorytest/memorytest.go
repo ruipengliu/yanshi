@@ -27,6 +27,14 @@ func ids(ms []*memory.Memory) []string {
 	return out
 }
 
+func hitIDs(hits []memory.Hit) []string {
+	out := make([]string, len(hits))
+	for i, h := range hits {
+		out[i] = h.ID
+	}
+	return out
+}
+
 func RunStore(t *testing.T, newStore func(t *testing.T) memory.Store) {
 	ctx := context.Background()
 	all := []memory.Scope{{BusinessLine: "a"}, {BusinessLine: "b"}}
@@ -63,20 +71,20 @@ func RunStore(t *testing.T, newStore func(t *testing.T) memory.Store) {
 		_ = s.Put(ctx, mem("b1", "b", "u", memory.Preference, "z", "s", t0.Add(2*time.Minute)), nil)
 		_ = s.Put(ctx, mem("b2", "b", "u", memory.Relationship, "w", "s", t0.Add(3*time.Minute)), nil)
 		_ = s.Put(ctx, mem("other", "a", "v", memory.Preference, "q", "s", t0), nil)
-		got, _ := s.List(ctx, "u", all, 10)
+		got, _ := s.List(ctx, "u", all, t0, 10)
 		if !slices.Equal(ids(got), []string{"b2", "b1", "a2", "a1"}) {
 			t.Fatalf("all scopes = %v", ids(got))
 		}
 		limited := []memory.Scope{{BusinessLine: "a"}, {BusinessLine: "b", Categories: []memory.Category{memory.Preference}}}
-		got, _ = s.List(ctx, "u", limited, 10)
+		got, _ = s.List(ctx, "u", limited, t0, 10)
 		if !slices.Equal(ids(got), []string{"b1", "a2", "a1"}) {
 			t.Fatalf("category-limited scope = %v", ids(got))
 		}
-		got, _ = s.List(ctx, "u", all, 2)
+		got, _ = s.List(ctx, "u", all, t0, 2)
 		if len(got) != 2 {
 			t.Fatalf("limit: %d", len(got))
 		}
-		if n, _ := s.Count(ctx, "a", "u"); n != 2 {
+		if n, _ := s.Count(ctx, "a", "u", t0); n != 2 {
 			t.Fatalf("count = %d", n)
 		}
 	})
@@ -93,7 +101,7 @@ func RunStore(t *testing.T, newStore func(t *testing.T) memory.Store) {
 		put("mid", []float32{1, 1, 0}, "m1")
 		put("othermodel", []float32{1, 0, 0}, "m2")
 		_ = s.Put(ctx, mem("novec", "a", "u", memory.Interest, "novec", "s", t0), nil)
-		hits, err := s.Nearest(ctx, "u", all, memory.Vector{Model: "m1", Values: []float32{1, 0, 0}}, 10)
+		hits, err := s.Nearest(ctx, "u", all, t0, memory.Vector{Model: "m1", Values: []float32{1, 0, 0}}, 10)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -107,6 +115,57 @@ func RunStore(t *testing.T, newStore func(t *testing.T) memory.Store) {
 		if hits[0].Score < 0.99 || hits[2].Score > 0.01 {
 			t.Fatalf("scores = %v, %v", hits[0].Score, hits[2].Score)
 		}
+	})
+
+	// 失效（被取代）与过期的不参与计数与查询，以 Everything 查询时仍在（历史）；Purge 只删除各自超过期限的历史。
+	t.Run("SupersededAndExpired", func(t *testing.T) {
+		s := newStore(t)
+		day := 24 * time.Hour
+		vec := &memory.Vector{Model: "m1", Values: []float32{1, 0}}
+		_ = s.Put(ctx, mem("old", "a", "u", memory.Profile, "住北京", "s", t0), vec)
+		_ = s.Put(ctx, mem("new", "a", "u", memory.Profile, "住上海", "s", t0.Add(time.Minute)), vec)
+		plan := mem("plan", "a", "u", memory.Plan, "周三出差", "s", t0)
+		plan.ValidUntil = t0.Add(2 * day)
+		_ = s.Put(ctx, plan, vec)
+		if err := s.Supersede(ctx, "old", "new", t0.Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		_ = s.Supersede(ctx, "missing", "new", t0) // 不存在时不报错
+		if got, _ := s.Get(ctx, "old"); got.SupersededBy != "new" || !got.SupersededAt.Equal(t0.Add(time.Hour)) {
+			t.Fatalf("superseded = %+v", got)
+		}
+		if got, _ := s.Get(ctx, "plan"); !got.ValidUntil.Equal(t0.Add(2 * day)) {
+			t.Fatalf("valid until = %v", got.ValidUntil)
+		}
+		at := t0.Add(3 * day) // 计划已过期
+		check := func(name string, got []string, want ...string) {
+			t.Helper()
+			slices.Sort(got)
+			slices.Sort(want)
+			if !slices.Equal(got, want) {
+				t.Fatalf("%s = %v, want %v", name, got, want)
+			}
+		}
+		list, _ := s.List(ctx, "u", all, at, 10)
+		check("valid", ids(list), "new")
+		list, _ = s.List(ctx, "u", all, t0.Add(day), 10)
+		check("valid before expiry", ids(list), "new", "plan")
+		list, _ = s.List(ctx, "u", all, memory.Everything, 10)
+		check("history", ids(list), "old", "new", "plan")
+		hits, _ := s.Nearest(ctx, "u", all, at, memory.Vector{Model: "m1", Values: []float32{1, 0}}, 10)
+		check("nearest valid", hitIDs(hits), "new")
+		hits, _ = s.Nearest(ctx, "u", all, memory.Everything, memory.Vector{Model: "m1", Values: []float32{1, 0}}, 10)
+		check("nearest history", hitIDs(hits), "old", "new", "plan")
+		if n, _ := s.Count(ctx, "a", "u", at); n != 1 {
+			t.Fatalf("count = %d", n)
+		}
+		// 失效的在 t0+1h 之后、过期的在 t0+2d 之后才算超过期限。
+		_ = s.Purge(ctx, "a", "u", t0, t0.Add(day))
+		list, _ = s.List(ctx, "u", all, memory.Everything, 10)
+		check("purge before deadlines", ids(list), "old", "new", "plan")
+		_ = s.Purge(ctx, "a", "u", t0.Add(2*time.Hour), t0.Add(3*day))
+		list, _ = s.List(ctx, "u", all, memory.Everything, 10)
+		check("purge after deadlines", ids(list), "new")
 	})
 
 	t.Run("DeleteBySessionAndEndUser", func(t *testing.T) {

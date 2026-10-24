@@ -132,6 +132,7 @@ Capture 与输入一样更新索引中的 `LastInputAt`（受 `TouchEvery` 节�
 |---|---|---|
 | `xinli-day`（`captures: true`） | 每个 EndUser 当地每天一个 | `captures`、`memory_save`、`memory_search`、`mcp_xinli__find_projects`、`mcp_xinli__file_exchange`、`mcp_xinli__day_exchanges`、`mcp_xinli__file_day` |
 | `xinli-project` | 每个项目一个，长期 | `mcp_xinli__day_summary`、`mcp_xinli__set_status`、`mcp_xinli__update_commitments`、`show_card` |
+| `xinli-week` | 每个 EndUser 每周一个 | `mcp_xinli__similar_projects`、`mcp_xinli__propose_merge`、`mcp_xinli__week_overview`、`mcp_xinli__file_week`（[每周回顾](./captures-weekly-review.md)） |
 | `xinli-assistant`（召回 8 条 Memory） | 每个 EndUser 一个，长期 | `mcp_xinli__list_projects`、`mcp_xinli__project_digest`、`mcp_xinli__recent_days`、`memory_save`、`memory_search`、`memory_forget`、`ask_user`、`show_card` |
 
 - Memory 要能读回来：每晚整理写下的偏好与人际关系，由助手在每个 Run 开始时召回（`memory.recall`），回答时用上。`xinli-day` 不召回（它的输入总是"整理今天"，按它检索没有意义），写入之前用 `memory_search` 查已有的记忆：记过的不再记，变了的用 `replaces` 替换。平台另外合并几乎相同的表述（[Memory 设计](./m4-memory-grant.md) §3），每天提到一次的事实不会每天多一条。
@@ -184,6 +185,9 @@ retention:
     xinli-day:
       close_after_idle: 36h      # 整理后由服务端关闭；36h 只是兜底
       delete_after_close: 168h   # 原话保留 7 天
+    xinli-week:                  # 每周回顾只读业务线的数据，同样短期保留（captures-weekly-review.md §4）
+      close_after_idle: 36h
+      delete_after_close: 168h
 ```
 
 - `lifecycle.Retention` 增加 `Agents map[string]Retention`。覆盖按 AgentDef 名称（不按版本），索引中的 `agent` 本来就只存名称（`service.go` 中 `def.Name`）。覆盖整条替换，不与业务线的值合并；嵌套的覆盖在加载配置时拒绝（`lifecycle.Retention.Validate`）。

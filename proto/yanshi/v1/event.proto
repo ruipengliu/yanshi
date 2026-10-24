@@ -458,6 +458,8 @@ message RecalledMemory {
   string business_line = 2;
   string category = 3;
   string content = 4;
+  // 记录日期（当地，YYYY-MM-DD）：召回文本注明它，模型据此判断新旧（docs/design/m4-memory-grant.md §11）。
+  string recorded_on = 5;
 }
 
 // CallStarted 表示 Session 中开始了一次 Call（全双工语音通话，docs/design/m3-call.md）。媒体流不进日志（ADR-0005），

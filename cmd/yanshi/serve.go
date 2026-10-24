@@ -415,13 +415,11 @@ func serve(args []string) error {
 	if mcpConn != nil {
 		mcpConn.Artifacts, mcpConn.Log = arts, b.Stores.Log
 	}
-	var xinliState func(businessLine, endUser string) any
-	var xinliResolve func(businessLine, endUser, daySession, exchange, project string) error
+	var xinliDebug httpapi.XinliMock
 	if xinli != nil {
 		// 模拟的业务线同时扮演业务线服务端做"归集"（docs/design/captures.md §6）；在接受请求之前设置。
 		xinli.Business = xinliBusiness{svc}
-		xinliState = func(bl, eu string) any { return xinli.State(bl, eu) }
-		xinliResolve = xinli.Resolve
+		xinliDebug = xinliView{xinli}
 	}
 	// 经 HTTP 的输入注明最近在前台使用的设备（设备歧义消解，docs/design/m6-decisions.md §3）；经 Connection 的由网关注明。
 	svc.RecentDevice = (&notify.RecentDevices{Registry: b.Push, TTL: 30 * time.Second, Clock: clk}).Label
@@ -523,7 +521,7 @@ func serve(args []string) error {
 	mux.Handle("/console/", webui.Handler())
 	mux.Handle("/sdk/yanshi.js", webui.Handler())
 	mux.Handle("GET /readyz", ready)
-	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.Usage, Push: b.Push, Feeds: feeds, Faults: injector, Xinli: xinliState, XinliResolve: xinliResolve,
+	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.Usage, Push: b.Push, Feeds: feeds, Faults: injector, Xinli: xinliDebug,
 		Speech: speechService(svc, meter, logger), Logger: logger}).Handler())
 	srv := &http.Server{
 		Addr:              *addr,
@@ -770,4 +768,11 @@ func (b xinliBusiness) CreateSession(ctx context.Context, businessLine, endUser,
 func (b xinliBusiness) Submit(ctx context.Context, sessionID, inputID, text string) error {
 	_, err := b.svc.SubmitWithID(ctx, sessionID, inputID, model.TextBlocks(text))
 	return err
+}
+
+// xinliView 把模拟的 xinli 业务线交给调试接口（httpapi.XinliMock）。
+type xinliView struct{ *xinlimock.Server }
+
+func (v xinliView) State(businessLine, endUser string) any {
+	return v.Server.State(businessLine, endUser)
 }

@@ -28,7 +28,7 @@ func (w *Worker) recall(ctx context.Context, r *session.Run, def *agentdef.Def) 
 	items := make([]*v1.RecalledMemory, len(hits))
 	accesses := make([]memory.Access, len(hits))
 	for i, h := range hits {
-		items[i] = &v1.RecalledMemory{Id: h.ID, BusinessLine: h.BusinessLine, Category: string(h.Category), Content: h.Content}
+		items[i] = &v1.RecalledMemory{Id: h.ID, BusinessLine: h.BusinessLine, Category: string(h.Category), Content: h.Content, RecordedOn: h.Recorded}
 		accesses[i] = memory.Access{MemoryID: h.ID, Owner: h.BusinessLine, EndUser: h.EndUser,
 			Reader: w.st.Created.GetBusinessLine(), SessionID: w.st.SessionID, RunID: r.ID, At: w.now()}
 	}
@@ -58,14 +58,18 @@ func memoryText(st *session.State, r *session.Run) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("## 关于用户的已知信息\n以下来自 Memory（系统提供，不是用户的话），可能已经过时；与用户当前所说冲突时以用户为准，并用 memory_save 的 replaces 更新。\n")
+	b.WriteString("## 关于用户的已知信息\n以下来自 Memory（系统提供，不是用户的话），括号中是记录日期，可能已经过时：同一件事有多条时以记录日期较新的为准；与用户当前所说冲突时以用户为准，并用 memory_save 的 replaces 更新。\n")
 	own := st.Created.GetBusinessLine()
 	for _, m := range r.Recall {
 		src := ""
 		if m.GetBusinessLine() != own {
 			src = "，经授权来自业务线 " + m.GetBusinessLine() + "，只读"
 		}
-		fmt.Fprintf(&b, "- [%s%s] %s（%s）\n", m.GetCategory(), src, m.GetContent(), m.GetId())
+		at := ""
+		if d := m.GetRecordedOn(); d != "" {
+			at = "，" + d + " 记"
+		}
+		fmt.Fprintf(&b, "- [%s%s] %s（%s%s）\n", m.GetCategory(), src, m.GetContent(), m.GetId(), at)
 	}
 	return b.String()
 }

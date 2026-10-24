@@ -1,0 +1,45 @@
+name: capture-week-grouping
+description: >-
+  一周的项目归集（captures-weekly-review.md §6）：五天里三个主题（新办公室装修、团建、招聘前端）交替出现，同一主题换着说法
+  （"装修""新办公室""搬家的事"），夹着闲聊；每天一次整理。断言碎片率（每个主题只在一个项目中）、纯度、承诺的引用准确率，
+  以及摘要对要点的覆盖率。
+agent: xinli-day
+setup:
+  xinli: {}
+turns:
+  - captures_file: data/week/2026-10-19.yaml
+    input: 整理今天
+    expect:
+      calls: ["mcp_xinli__file_day"]
+  - captures_file: data/week/2026-10-20.yaml
+    new_session: true
+    input: 整理今天
+    expect:
+      calls: ["mcp_xinli__file_day"]
+  - captures_file: data/week/2026-10-21.yaml
+    new_session: true
+    input: 整理今天
+    expect:
+      calls: ["mcp_xinli__file_day"]
+  - captures_file: data/week/2026-10-22.yaml
+    new_session: true
+    input: 整理今天
+    expect:
+      calls: ["mcp_xinli__file_day"]
+  - captures_file: data/week/2026-10-23.yaml
+    new_session: true
+    input: 整理今天
+    expect:
+      calls: ["mcp_xinli__file_day"]
+      xinli:
+        grouping: {topics: 3, fragmentation: {max: 1.0}, purity: 0.9}
+        verified_rate: 0.8
+        covers:
+          min: 0.8
+          points:
+            - 新办公室地板定为浅色木纹
+            - 家具可能晚到两周，十二月要搬入新办公室
+            - 十二月第二周可以用货梯
+            - 团建去郊区露营，选能烧烤的营地
+            - 团建共二十三人
+            - 两位前端候选人都进入二面

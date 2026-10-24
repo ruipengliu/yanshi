@@ -39,22 +39,25 @@ func Capabilities(s *Service) []capability.Capability {
 					"类别：" + help + "。过敏、饮食禁忌、慢性病与用药等健康信息关系到安全，用户提到时用类别 health 记住" +
 					"（业务线未开启时会被拒绝，此时告诉用户无法记住）。不得保存金融账户、证件号码、精确位置等其他敏感个人信息，" +
 					"也不要保存一次性的对话内容。" +
-					"与已有信息冲突时，用 replaces 指定被替换的旧记忆 ID。",
+					"与已有信息冲突时，用 replaces 指定被替换的旧记忆 ID（旧的作为历史保留）。" +
+					"带日期的计划或临时状态（如\"下周三去杭州出差\"）用 valid_until 写明有效期的最后一天，过了那天就不再提供。",
 				InputSchema: json.RawMessage(`{"type":"object","properties":{"category":{"type":"string","enum":[` + enum + `]},` +
-					`"content":{"type":"string"},"replaces":{"type":"string","description":"被替换的旧记忆 ID（可选）"}},"required":["category","content"]}`),
+					`"content":{"type":"string"},"replaces":{"type":"string","description":"被替换的旧记忆 ID（可选）"},` +
+					`"valid_until":{"type":"string","description":"有效期的最后一天 YYYY-MM-DD（可选，用于带日期的计划）"}},"required":["category","content"]}`),
 				Idempotent: true,
 			},
 			Fn: func(ctx context.Context, inv capability.Invocation) ([]*v1.ContentBlock, error) {
 				var in struct {
-					Category Category `json:"category"`
-					Content  string   `json:"content"`
-					Replaces string   `json:"replaces"`
+					Category   Category `json:"category"`
+					Content    string   `json:"content"`
+					Replaces   string   `json:"replaces"`
+					ValidUntil string   `json:"valid_until"`
 				}
 				if err := json.Unmarshal([]byte(inv.Arguments), &in); err != nil {
 					return nil, fmt.Errorf("invalid arguments: %w", err)
 				}
 				m, err := s.Save(ctx, SaveRequest{BusinessLine: inv.BusinessLine, EndUser: inv.EndUser, SessionID: inv.SessionID,
-					CallID: inv.CallID, Category: in.Category, Content: in.Content, Replaces: in.Replaces})
+					CallID: inv.CallID, Category: in.Category, Content: in.Content, Replaces: in.Replaces, ValidUntil: in.ValidUntil})
 				if err != nil {
 					return nil, err
 				}
@@ -74,7 +77,7 @@ func Capabilities(s *Service) []capability.Capability {
 					if len(related) > 0 {
 						fmt.Fprintf(&b, "。同类别（%s）中已有：\n", m.Category)
 						for _, h := range related {
-							fmt.Fprintf(&b, "- %s（%s）\n", h.Content, h.ID)
+							fmt.Fprintf(&b, "- %s（%s，%s 记）\n", h.Content, h.ID, s.Date(h.CreatedAt))
 						}
 						b.WriteString("如果刚记住的这条取代了其中某条（例如搬了家、换了工作、改了计划），再调用一次 memory_save：content 不变，replaces 填旧的那条的 ID。")
 					}
@@ -104,19 +107,26 @@ func Capabilities(s *Service) []capability.Capability {
 		},
 		capability.Func{
 			S: capability.Spec{
-				Name:        "memory_search",
-				Description: "检索关于用户的记忆（含用户授权给本业务线读取的）。对话开始时已自动提供最相关的若干条，需要更多时再使用。",
-				InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`),
-				Idempotent:  true,
+				Name: "memory_search",
+				Description: "检索关于用户的记忆（含用户授权给本业务线读取的）。对话开始时已自动提供最相关的若干条，需要更多时再使用。" +
+					"history 为 true 时同时返回已被取代或已过期的旧记忆，用于回答\"以前\"\"上次\"一类的问题。",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"},` +
+					`"history":{"type":"boolean","description":"是否包含已被取代或已过期的旧记忆"}},"required":["query"]}`),
+				Idempotent: true,
 			},
 			Fn: func(ctx context.Context, inv capability.Invocation) ([]*v1.ContentBlock, error) {
 				var in struct {
-					Query string `json:"query"`
+					Query   string `json:"query"`
+					History bool   `json:"history"`
 				}
 				if err := json.Unmarshal([]byte(inv.Arguments), &in); err != nil {
 					return nil, fmt.Errorf("invalid arguments: %w", err)
 				}
-				hits, err := s.Search(ctx, inv.EndUser, inv.BusinessLine, in.Query, 10)
+				search := s.Search
+				if in.History {
+					search = s.SearchHistory
+				}
+				hits, err := search(ctx, inv.EndUser, inv.BusinessLine, in.Query, 10)
 				if err != nil {
 					return nil, err
 				}
@@ -129,7 +139,7 @@ func Capabilities(s *Service) []capability.Capability {
 					if h.BusinessLine != inv.BusinessLine {
 						src = "，来自业务线 " + h.BusinessLine
 					}
-					fmt.Fprintf(&b, "- [%s%s] %s（%s）\n", h.Category, src, h.Content, h.ID)
+					fmt.Fprintf(&b, "- [%s%s] %s（%s，%s 记%s）\n", h.Category, src, h.Content, h.ID, h.Recorded, s.status(h.Memory))
 				}
 				return text(b.String()), nil
 			},

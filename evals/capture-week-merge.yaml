@@ -1,0 +1,26 @@
+name: capture-week-merge
+description: >-
+  每周回顾提议合并重复的项目（captures-weekly-review.md §4）："新办公室装修"与"办公室搬迁"说的是同一次搬进新办公室，
+  提议合并；"家里厨房装修"只是主题相近、对象不同，不提议。合并只是提议，进待确认。
+agent: xinli-week
+setup:
+  xinli:
+    projects:
+      - {id: P-0001, name: 新办公室装修, status: 新办公室的地板与墙面已定稿，等家具到货，十二月搬入新办公室。}
+      - {id: P-0002, name: 办公室搬迁, status: 搬家公司已定，十二月从老楼搬进新办公室，正在排各部门的搬迁顺序。}
+      - {id: P-0003, name: 家里厨房装修, status: 橱柜定了原木色，台面石英石，下周付定金。}
+    exchanges:
+      - {date: today-5, title: 看地板样板, summary: 新办公室地板定为浅色木纹, project: P-0001}
+      - {date: today-3, title: 定搬家公司, summary: 搬进新办公室的搬家公司定了, project: P-0002}
+      - {date: today-2, title: 厨房橱柜, summary: 家里厨房的橱柜选原木色, project: P-0003}
+    filed:
+      - {date: today-5, headline: 新办公室定了地板, awareness: {habits: ["答应时给出明确期限"]}}
+      - {date: today-3, headline: 定了搬家公司, awareness: {habits: ["主动推进进度"]}}
+turns:
+  - input: 回顾本周
+    expect:
+      calls: ["mcp_xinli__similar_projects", "mcp_xinli__propose_merge", "mcp_xinli__file_week"]
+      approvals: {max: 0}
+      xinli:
+        merges: [[P-0001, P-0002]]
+        no_merges: [[P-0001, P-0003], [P-0002, P-0003]]

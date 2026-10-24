@@ -63,25 +63,32 @@ type Project struct {
 	StatusAt      time.Time `yaml:"-" json:"status_at,omitzero"`
 	// Session 是项目的 xinli-project Session（归集时创建）。
 	Session string `yaml:"-" json:"session,omitempty"`
+	// Archived 为 true 时项目已归档：不再被召回，App 中可以取消归档（captures-weekly-review.md §3）。
+	Archived bool `yaml:"-" json:"archived,omitempty"`
+	// MergedInto 非空时项目已并入另一个项目（用户确认了合并提议）。
+	MergedInto string `yaml:"-" json:"merged_into,omitempty"`
 }
+
+// Active 报告项目是否参与召回：没有归档，也没有被合并。
+func (p *Project) Active() bool { return !p.Archived && p.MergedInto == "" }
 
 // Exchange 是交出的一段交谈（file_exchange），按（旁听 Session，交谈 ID）去重。
 type Exchange struct {
 	// ID 是交谈 ID（如 "x57.0"）；Session 是它所在的旁听 Session。
-	ID      string    `json:"id"`
-	Session string    `json:"session"`
-	Date    string    `json:"date"`
-	FiledAt time.Time `json:"filed_at"`
-	Title   string    `json:"title"`
-	Summary string    `json:"summary"`
+	ID      string    `yaml:"id" json:"id"`
+	Session string    `yaml:"-" json:"session"`
+	Date    string    `yaml:"date" json:"date"`
+	FiledAt time.Time `yaml:"-" json:"filed_at"`
+	Title   string    `yaml:"title" json:"title"`
+	Summary string    `yaml:"summary" json:"summary"`
 	// Match 是归属：existing、new、unsure、none；Project 是归入的项目，unsure 时为空直到用户确认。
-	Match     string   `json:"match"`
-	Project   string   `json:"project,omitempty"`
+	Match     string   `yaml:"match" json:"match"`
+	Project   string   `yaml:"project" json:"project,omitempty"`
 	Candidate string   `json:"candidate,omitempty"` // unsure：可能属于的项目
 	Proposed  string   `json:"proposed,omitempty"`  // unsure：用户不认同候选时新建的项目名
-	Decisions []string `json:"decisions"`
-	Risks     []string `json:"risks"`
-	Awareness []string `json:"awareness"`
+	Decisions []string `yaml:"decisions" json:"decisions"`
+	Risks     []string `yaml:"risks" json:"risks"`
+	Awareness []string `yaml:"awareness" json:"awareness"`
 }
 
 // Pending 报告这段交谈是否在"待确认"中：归属拿不准，用户还没有确认。
@@ -108,18 +115,18 @@ type Commitment struct {
 
 // Day 是一次每日整理（file_day）的结果。
 type Day struct {
-	Date       string    `json:"date"`
-	Session    string    `json:"session"`
-	FiledAt    time.Time `json:"filed_at"`
-	Headline   string    `json:"headline"`
-	Highlights []string  `json:"highlights"`
-	Awareness  Awareness `json:"awareness"`
+	Date       string    `yaml:"date" json:"date"`
+	Session    string    `yaml:"-" json:"session"`
+	FiledAt    time.Time `yaml:"-" json:"filed_at"`
+	Headline   string    `yaml:"headline" json:"headline"`
+	Highlights []string  `yaml:"highlights" json:"highlights"`
+	Awareness  Awareness `yaml:"awareness" json:"awareness"`
 }
 
 // Awareness 是对用户本人沟通方式的观察（"觉察"页）：不含情绪与身心状态，它们只以 health 类别写入 Memory。
 type Awareness struct {
-	Habits      []string `json:"habits"`
-	Suggestions []string `json:"suggestions"`
+	Habits      []string `yaml:"habits" json:"habits"`
+	Suggestions []string `yaml:"suggestions" json:"suggestions"`
 }
 
 // State 是一个 EndUser 在业务线中的全部数据，供调试控制台展示（GET /v1/debug/xinli）。
@@ -128,6 +135,8 @@ type State struct {
 	Exchanges   []Exchange   `json:"exchanges"`
 	Commitments []Commitment `json:"commitments"`
 	Days        []Day        `json:"days"`
+	Weeks       []Week       `json:"weeks"`
+	Merges      []Merge      `json:"merges"`
 }
 
 type user struct {
@@ -135,6 +144,10 @@ type user struct {
 	exchanges   []Exchange
 	commitments []Commitment
 	days        []Day
+	weeks       []Week
+	merges      []Merge
+	// weekSessions 是每周回顾的 Session，按本周第一天。
+	weekSessions map[string]string
 	// seeded 是评测预置的按日期摘要（day_summary、recent_days 在没有整理结果时返回它）。
 	seeded map[string]string
 	// next 是新建项目的编号：从 101 开始，与用例预置的项目 ID 区分；nextC 是承诺的编号。
@@ -164,12 +177,14 @@ var tools = []struct {
 	{&mcp.Tool{Name: "list_projects", Description: "列出用户已有的项目（ID、名称与现状）。",
 		InputSchema: json.RawMessage(noArgs), Annotations: readOnly()},
 		func(c *call) string {
-			if len(c.u.projects) == 0 {
-				return "还没有项目"
-			}
 			var b strings.Builder
 			for i := range c.u.projects {
-				b.WriteString(c.u.projectLine(&c.u.projects[i]))
+				if c.u.projects[i].Active() {
+					b.WriteString(c.u.projectLine(&c.u.projects[i]))
+				}
+			}
+			if b.Len() == 0 {
+				return "还没有项目"
 			}
 			return b.String()
 		}},
@@ -179,15 +194,17 @@ var tools = []struct {
 		func(c *call) string {
 			var in struct{ Query string }
 			_ = json.Unmarshal(c.args, &in)
-			if len(c.u.projects) == 0 {
-				return "还没有项目"
-			}
-			// 生产中由业务线按嵌入或全文检索；模拟服务用字符二元组相似度，相同时按项目顺序。
-			idx := make([]int, len(c.u.projects))
+			// 生产中由业务线按嵌入或全文检索；模拟服务用字符二元组相似度，相同时按项目顺序。归档与已合并的不召回。
+			var idx []int
 			score := make([]float64, len(c.u.projects))
 			for i := range c.u.projects {
 				p := &c.u.projects[i]
-				idx[i], score[i] = i, memory.TextSimilarity(in.Query, p.Name+" "+p.Status)
+				if p.Active() {
+					idx, score[i] = append(idx, i), memory.TextSimilarity(in.Query, p.Name+" "+p.Status)
+				}
+			}
+			if len(idx) == 0 {
+				return "还没有项目"
 			}
 			slices.SortStableFunc(idx, func(a, b int) int {
 				switch {
@@ -204,13 +221,16 @@ var tools = []struct {
 			}
 			return b.String()
 		}},
-	{&mcp.Tool{Name: "project_digest", Description: "返回一个项目的现状、按天的时间线与未完成的承诺。",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"project":{"type":"string","description":"项目 ID"}},"required":["project"]}`),
+	{&mcp.Tool{Name: "project_digest", Description: "返回一个项目的现状、按天的时间线与未完成的承诺。在项目自己的会话中可以不填 project。",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"project":{"type":"string","description":"项目 ID；项目会话中省略即本项目"}}}`),
 		Annotations: readOnly()},
 		func(c *call) string {
 			var in struct{ Project string }
 			_ = json.Unmarshal(c.args, &in)
 			p := c.u.project(in.Project)
+			if in.Project == "" {
+				p = c.u.projectOfSession(c.session)
+			}
 			if p == nil {
 				return "没有这个项目"
 			}
@@ -620,7 +640,7 @@ func Start(ctx context.Context, businessLines ...string) (*Server, error) {
 	go func() { <-ctx.Done(); _ = hs.Close() }()
 	for _, bl := range businessLines {
 		s := mcpcap.Server{Name: "xinli", BusinessLine: bl, URL: "http://" + ln.Addr().String(), Timeout: 30 * time.Second, CiteCaptures: true}
-		s.Tools.NoApproval = []string{"file_exchange", "file_day", "set_status", "update_commitments"}
+		s.Tools.NoApproval = []string{"file_exchange", "file_day", "set_status", "update_commitments", "propose_merge", "file_week"}
 		x.Servers = append(x.Servers, s)
 	}
 	return x, nil
@@ -638,16 +658,27 @@ func citations(v any) map[string]mcpcap.Citation {
 	return out
 }
 
-// Seed 为业务线中的 endUser 预置项目、按日期的摘要（day_summary、recent_days 在没有整理结果时返回它）与承诺。
-func (x *Server) Seed(businessLine, endUser string, projects []Project, days map[string]string, commitments []Commitment) {
+// SeedData 是预置的数据（评测用例的 setup.xinli）。
+type SeedData struct {
+	Projects []Project
+	// Days 是按日期的摘要：day_summary、recent_days 在没有交出的交谈时返回它。
+	Days        map[string]string
+	Commitments []Commitment
+	// Filed 是已经交出的每日整理（日期、总览与觉察），Exchanges 是已经交出的交谈：每周回顾与重写现状读取它们。
+	Filed     []Day
+	Exchanges []Exchange
+}
+
+// Seed 为业务线中的 endUser 预置数据。
+func (x *Server) Seed(businessLine, endUser string, d SeedData) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	u := x.user(businessLine, endUser)
-	u.projects = append(u.projects, projects...)
-	for d, sum := range days {
-		u.seeded[d] = sum
+	u.projects = append(u.projects, d.Projects...)
+	for day, sum := range d.Days {
+		u.seeded[day] = sum
 	}
-	for _, m := range commitments {
+	for _, m := range d.Commitments {
 		if m.ID == "" {
 			u.nextC++
 			m.ID = fmt.Sprintf("C-%04d", u.nextC)
@@ -656,6 +687,20 @@ func (x *Server) Seed(businessLine, endUser string, projects []Project, days map
 			m.Status = "open"
 		}
 		u.commitments = append(u.commitments, m)
+	}
+	for i, day := range d.Filed {
+		day.Session = fmt.Sprintf("seed_day_%d", i)
+		u.days = append(u.days, day)
+	}
+	for i, e := range d.Exchanges {
+		if e.ID == "" {
+			e.ID = fmt.Sprintf("x%d.0", i+1)
+		}
+		e.Session = "seed_" + e.Date
+		if e.Match == "" && e.Project != "" {
+			e.Match = "existing"
+		}
+		u.exchanges = append(u.exchanges, e)
 	}
 }
 
@@ -673,7 +718,14 @@ func (x *Server) State(businessLine, endUser string) State {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	u := x.user(businessLine, endUser)
-	st := State{Projects: slices.Clone(u.projects), Exchanges: slices.Clone(u.exchanges), Commitments: slices.Clone(u.commitments), Days: u.sortedDays()}
+	st := State{Projects: slices.Clone(u.projects), Exchanges: slices.Clone(u.exchanges), Commitments: slices.Clone(u.commitments), Days: u.sortedDays(),
+		Weeks: slices.Clone(u.weeks), Merges: slices.Clone(u.merges)}
+	if st.Weeks == nil {
+		st.Weeks = []Week{}
+	}
+	if st.Merges == nil {
+		st.Merges = []Merge{}
+	}
 	slices.Reverse(st.Days)
 	if st.Projects == nil {
 		st.Projects = []Project{}
@@ -692,7 +744,7 @@ func (x *Server) user(businessLine, endUser string) *user {
 	k := businessLine + "\x00" + endUser
 	u := x.users[k]
 	if u == nil {
-		u = &user{seeded: map[string]string{}, next: 101}
+		u = &user{seeded: map[string]string{}, weekSessions: map[string]string{}, next: 101}
 		x.users[k] = u
 	}
 	return u

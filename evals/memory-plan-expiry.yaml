@@ -1,0 +1,11 @@
+name: memory-plan-expiry
+description: >-
+  过期的计划不再召回（m4-memory-grant.md §11）：10 月 20 日去广州出差的记忆已经过期，用户问最近的安排时不把它当成之后的事。
+setup:
+  memories:
+    - {category: plan, content: "用户 10 月 20 日去广州出差", recorded: "2026-10-10", expired_on: "2026-10-20"}
+    - {category: preference, content: "用户出差喜欢坐靠窗的位置", recorded: "2026-09-01"}
+turns:
+  - input: 我接下来有什么出差安排吗？
+    expect:
+      reply_excludes: ["广州"]

@@ -1,0 +1,7 @@
+name: memory-plan-valid-until
+description: >-
+  带日期的计划写明有效期（m4-memory-grant.md §11）：用户说下周三去杭州出差，记住时带上 valid_until，过了那天就不再召回。
+turns:
+  - input: 下周三我要去杭州出差，帮我记一下。
+    expect:
+      memories: [{contains: "杭州", has_valid_until: true}]

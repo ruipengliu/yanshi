@@ -57,22 +57,39 @@ func (s *MemStore) remove(id string) {
 	s.accesses = slices.DeleteFunc(s.accesses, func(a Access) bool { return a.MemoryID == id })
 }
 
-func (s *MemStore) Count(_ context.Context, businessLine, endUser string) (int, error) {
+func (s *MemStore) Count(_ context.Context, businessLine, endUser string, at time.Time) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n := 0
 	for _, m := range s.m {
-		if m.BusinessLine == businessLine && m.EndUser == endUser {
+		if m.BusinessLine == businessLine && m.EndUser == endUser && m.Valid(at) {
 			n++
 		}
 	}
 	return n, nil
 }
 
-func (s *MemStore) inScope(endUser string, scopes []Scope) []*Memory {
+func (s *MemStore) Supersede(_ context.Context, id, by string, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if m := s.m[id]; m != nil {
+		m.SupersededBy, m.SupersededAt = by, at
+	}
+	return nil
+}
+
+func (s *MemStore) Purge(_ context.Context, businessLine, endUser string, supersededBefore, expiredBefore time.Time) error {
+	s.deleteWhere(func(m *Memory) bool {
+		return m.BusinessLine != businessLine || m.EndUser != endUser ||
+			!((m.SupersededBy != "" && m.SupersededAt.Before(supersededBefore)) || (!m.ValidUntil.IsZero() && m.ValidUntil.Before(expiredBefore)))
+	})
+	return nil
+}
+
+func (s *MemStore) inScope(endUser string, scopes []Scope, at time.Time) []*Memory {
 	var out []*Memory
 	for _, m := range s.m {
-		if m.EndUser != endUser {
+		if m.EndUser != endUser || (!at.IsZero() && !m.Valid(at)) {
 			continue
 		}
 		for _, sc := range scopes {
@@ -86,9 +103,9 @@ func (s *MemStore) inScope(endUser string, scopes []Scope) []*Memory {
 	return out
 }
 
-func (s *MemStore) List(_ context.Context, endUser string, scopes []Scope, limit int) ([]*Memory, error) {
+func (s *MemStore) List(_ context.Context, endUser string, scopes []Scope, at time.Time, limit int) ([]*Memory, error) {
 	s.mu.Lock()
-	out := s.inScope(endUser, scopes)
+	out := s.inScope(endUser, scopes, at)
 	s.mu.Unlock()
 	sort.Slice(out, func(i, j int) bool {
 		if !out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
@@ -102,11 +119,11 @@ func (s *MemStore) List(_ context.Context, endUser string, scopes []Scope, limit
 	return out, nil
 }
 
-func (s *MemStore) Nearest(_ context.Context, endUser string, scopes []Scope, vec Vector, limit int) ([]Hit, error) {
+func (s *MemStore) Nearest(_ context.Context, endUser string, scopes []Scope, at time.Time, vec Vector, limit int) ([]Hit, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var hits []Hit
-	for _, m := range s.inScope(endUser, scopes) {
+	for _, m := range s.inScope(endUser, scopes, at) {
 		v, ok := s.vecs[m.ID]
 		if !ok || v.Model != vec.Model {
 			continue

@@ -39,24 +39,40 @@ func (s Store) Put(ctx context.Context, m *memory.Memory, vec *memory.Vector) er
 		emb, model = &t, &vec.Model
 	}
 	_, err := s.Pool.Exec(ctx, `
-		INSERT INTO memories (id, business_line, end_user, category, content, source_session, source_call, created_at, updated_at, embedding, embedding_model)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text::public.vector, $11)
+		INSERT INTO memories (id, business_line, end_user, category, content, source_session, source_call, created_at, updated_at, embedding, embedding_model,
+			superseded_by, superseded_at, valid_until)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text::public.vector, $11, $12, $13, $14)
 		ON CONFLICT (id) DO UPDATE SET business_line = $2, end_user = $3, category = $4, content = $5, source_session = $6,
-			source_call = $7, created_at = $8, updated_at = $9, embedding = $10::text::public.vector, embedding_model = $11`,
-		m.ID, m.BusinessLine, m.EndUser, string(m.Category), m.Content, m.SourceSession, m.SourceCall, m.CreatedAt, m.UpdatedAt, emb, model)
+			source_call = $7, created_at = $8, updated_at = $9, embedding = $10::text::public.vector, embedding_model = $11,
+			superseded_by = $12, superseded_at = $13, valid_until = $14`,
+		m.ID, m.BusinessLine, m.EndUser, string(m.Category), m.Content, m.SourceSession, m.SourceCall, m.CreatedAt, m.UpdatedAt, emb, model,
+		m.SupersededBy, nullTime(m.SupersededAt), nullTime(m.ValidUntil))
 	return err
 }
 
-const cols = `id, business_line, end_user, category, content, source_session, source_call, created_at, updated_at`
+const cols = `id, business_line, end_user, category, content, source_session, source_call, created_at, updated_at, superseded_by, superseded_at, valid_until`
+
+// scanInto 读出 cols 的各列，extra 是之后附加的列。
+func scanInto(row pgx.CollectableRow, m *memory.Memory, extra ...any) error {
+	var cat string
+	var sup, until *time.Time
+	if err := row.Scan(append([]any{&m.ID, &m.BusinessLine, &m.EndUser, &cat, &m.Content, &m.SourceSession, &m.SourceCall, &m.CreatedAt, &m.UpdatedAt,
+		&m.SupersededBy, &sup, &until}, extra...)...); err != nil {
+		return err
+	}
+	m.Category, m.CreatedAt, m.UpdatedAt = memory.Category(cat), m.CreatedAt.UTC(), m.UpdatedAt.UTC()
+	if sup != nil {
+		m.SupersededAt = sup.UTC()
+	}
+	if until != nil {
+		m.ValidUntil = until.UTC()
+	}
+	return nil
+}
 
 func scan(row pgx.CollectableRow) (*memory.Memory, error) {
 	m := &memory.Memory{}
-	var cat string
-	if err := row.Scan(&m.ID, &m.BusinessLine, &m.EndUser, &cat, &m.Content, &m.SourceSession, &m.SourceCall, &m.CreatedAt, &m.UpdatedAt); err != nil {
-		return nil, err
-	}
-	m.Category, m.CreatedAt, m.UpdatedAt = memory.Category(cat), m.CreatedAt.UTC(), m.UpdatedAt.UTC()
-	return m, nil
+	return m, scanInto(row, m)
 }
 
 func (s Store) Get(ctx context.Context, id string) (*memory.Memory, error) {
@@ -76,10 +92,29 @@ func (s Store) Delete(ctx context.Context, id string) error {
 	return err
 }
 
-func (s Store) Count(ctx context.Context, businessLine, endUser string) (int, error) {
+// validAt 是"在某时有效"的条件：$N 为 NULL 时不过滤（历史）。
+func validAt(n int) string {
+	p := "$" + strconv.Itoa(n)
+	return `(` + p + `::timestamptz IS NULL OR (superseded_by = '' AND (valid_until IS NULL OR valid_until > ` + p + `)))`
+}
+
+func (s Store) Count(ctx context.Context, businessLine, endUser string, at time.Time) (int, error) {
 	var n int
-	err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM memories WHERE business_line = $1 AND end_user = $2`, businessLine, endUser).Scan(&n)
+	err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM memories WHERE business_line = $1 AND end_user = $2 AND `+validAt(3),
+		businessLine, endUser, nullTime(at)).Scan(&n)
 	return n, err
+}
+
+func (s Store) Supersede(ctx context.Context, id, by string, at time.Time) error {
+	_, err := s.Pool.Exec(ctx, `UPDATE memories SET superseded_by = $2, superseded_at = $3 WHERE id = $1`, id, by, at)
+	return err
+}
+
+func (s Store) Purge(ctx context.Context, businessLine, endUser string, supersededBefore, expiredBefore time.Time) error {
+	_, err := s.Pool.Exec(ctx, `DELETE FROM memories WHERE business_line = $1 AND end_user = $2
+		AND ((superseded_by <> '' AND superseded_at < $3) OR (valid_until IS NOT NULL AND valid_until < $4))`,
+		businessLine, endUser, supersededBefore, expiredBefore)
+	return err
 }
 
 // scopeFilter 把可读范围编码为两个并列数组参数：业务线与逗号分隔的类别（空串表示全部类别）。
@@ -99,32 +134,30 @@ const inScope = `end_user = $1 AND EXISTS (
 	SELECT 1 FROM unnest($2::text[], $3::text[]) AS sc(line, cats)
 	WHERE sc.line = memories.business_line AND (sc.cats = '' OR memories.category = ANY (string_to_array(sc.cats, ','))))`
 
-func (s Store) List(ctx context.Context, endUser string, scopes []memory.Scope, limit int) ([]*memory.Memory, error) {
+func (s Store) List(ctx context.Context, endUser string, scopes []memory.Scope, at time.Time, limit int) ([]*memory.Memory, error) {
 	lines, cats := scopeFilter(scopes)
-	rows, err := s.Pool.Query(ctx, `SELECT `+cols+` FROM memories WHERE `+inScope+`
-		ORDER BY updated_at DESC, id LIMIT $4`, endUser, lines, cats, limit)
+	rows, err := s.Pool.Query(ctx, `SELECT `+cols+` FROM memories WHERE `+inScope+` AND `+validAt(5)+`
+		ORDER BY updated_at DESC, id LIMIT $4`, endUser, lines, cats, limit, nullTime(at))
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, scan)
 }
 
-func (s Store) Nearest(ctx context.Context, endUser string, scopes []memory.Scope, vec memory.Vector, limit int) ([]memory.Hit, error) {
+func (s Store) Nearest(ctx context.Context, endUser string, scopes []memory.Scope, at time.Time, vec memory.Vector, limit int) ([]memory.Hit, error) {
 	lines, cats := scopeFilter(scopes)
 	rows, err := s.Pool.Query(ctx, `
 		SELECT `+cols+`, 1 - (embedding OPERATOR(public.<=>) $5::text::public.vector) AS score FROM memories
-		WHERE `+inScope+` AND embedding_model = $6 AND vector_dims(embedding) = $7
+		WHERE `+inScope+` AND embedding_model = $6 AND vector_dims(embedding) = $7 AND `+validAt(8)+`
 		ORDER BY score DESC, updated_at DESC, id LIMIT $4`,
-		endUser, lines, cats, limit, vectorText(vec.Values), vec.Model, len(vec.Values))
+		endUser, lines, cats, limit, vectorText(vec.Values), vec.Model, len(vec.Values), nullTime(at))
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (memory.Hit, error) {
 		m := &memory.Memory{}
-		var cat string
 		var score float64
-		err := row.Scan(&m.ID, &m.BusinessLine, &m.EndUser, &cat, &m.Content, &m.SourceSession, &m.SourceCall, &m.CreatedAt, &m.UpdatedAt, &score)
-		m.Category, m.CreatedAt, m.UpdatedAt = memory.Category(cat), m.CreatedAt.UTC(), m.UpdatedAt.UTC()
+		err := scanInto(row, m, &score)
 		return memory.Hit{Memory: m, Score: score}, err
 	})
 }

@@ -92,10 +92,8 @@ type Server struct {
 	Feeds *feed.Hub
 	// Faults 非 nil 时注册调试接口（/v1/debug/*，serve -faults，ADR-0033）。
 	Faults *faults.Injector
-	// Xinli 非 nil 时提供 GET /v1/debug/xinli（serve -xinli-mock）：模拟的 xinli 业务线中 EndUser 的数据。只用于开发部署。
-	Xinli func(businessLine, endUser string) any
-	// XinliResolve 与 Xinli 一起提供 POST /v1/debug/xinli/resolve：在"待确认"中替用户确认一段交谈的归属。
-	XinliResolve func(businessLine, endUser, daySession, exchange, project string) error
+	// Xinli 非 nil 时提供 /v1/debug/xinli*（serve -xinli-mock）：模拟的 xinli 业务线。只用于开发部署。
+	Xinli XinliMock
 	// Speech 为 nil 或未配置提供商时，语音识别与播报接口返回 501。
 	Speech *speech.Service
 	Logger *slog.Logger
@@ -1071,6 +1069,10 @@ type memoryView struct {
 	SourceSession string    `json:"source_session"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
+	// 以下只在 ?history=true 列出的历史中出现，或有有效期时出现（m4-memory-grant.md §11）。
+	SupersededBy string    `json:"superseded_by,omitempty"`
+	SupersededAt time.Time `json:"superseded_at,omitzero"`
+	ValidUntil   time.Time `json:"valid_until,omitzero"`
 }
 
 func (s *Server) listMemories(w http.ResponseWriter, r *http.Request) {
@@ -1090,7 +1092,7 @@ func (s *Server) listMemories(w http.ResponseWriter, r *http.Request) {
 	if limit == 0 || limit > 500 {
 		limit = 100
 	}
-	hits, err := s.Memory.List(r.Context(), bl, eu, memory.Category(q.Get("category")), q.Get("q"), int(limit))
+	hits, err := s.Memory.List(r.Context(), bl, eu, memory.Category(q.Get("category")), q.Get("q"), q.Get("history") == "true", int(limit))
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -1098,7 +1100,7 @@ func (s *Server) listMemories(w http.ResponseWriter, r *http.Request) {
 	out := []memoryView{}
 	for _, h := range hits {
 		out = append(out, memoryView{ID: h.ID, Category: string(h.Category), Content: h.Content, SourceSession: h.SourceSession,
-			CreatedAt: h.CreatedAt, UpdatedAt: h.UpdatedAt})
+			CreatedAt: h.CreatedAt, UpdatedAt: h.UpdatedAt, SupersededBy: h.SupersededBy, SupersededAt: h.SupersededAt, ValidUntil: h.ValidUntil})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"memories": out})
 }

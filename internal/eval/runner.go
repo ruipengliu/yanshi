@@ -380,10 +380,19 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		bl = NoHealthBusinessLine
 	}
 	if c.Setup.Xinli != nil {
-		in.xinli.Seed(bl, endUser, c.Setup.Xinli.Projects, c.Setup.Xinli.Days, c.Setup.Xinli.Commitments)
+		x := c.Setup.Xinli
+		filed, exchanges := slices.Clone(x.Filed), slices.Clone(x.Exchanges)
+		for i := range filed {
+			filed[i].Date = relativeDate(filed[i].Date)
+		}
+		for i := range exchanges {
+			exchanges[i].Date = relativeDate(exchanges[i].Date)
+		}
+		in.xinli.Seed(bl, endUser, xinlimock.SeedData{Projects: x.Projects, Days: x.Days, Commitments: x.Commitments, Filed: filed, Exchanges: exchanges})
 	}
 	// 预置记忆的 ID 与生产一致不可猜（由随机调用 ID 派生）：顺序 ID 会让模型按规律"猜出"未见过的 ID，
 	// 替换掉另一条记忆（memory-update-crowded 中观察到）。
+	prevMemory := ""
 	for _, m := range c.Setup.Memories {
 		var at time.Time
 		if m.Recorded != "" {
@@ -394,11 +403,33 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 			}
 			at = t
 		}
-		if _, err := in.mems.Save(tctx, memory.SaveRequest{BusinessLine: bl, EndUser: endUser, CallID: "setup_" + ids.Random()(),
-			Category: memory.Category(m.Category), Content: m.Content, At: at}); err != nil {
+		req := memory.SaveRequest{BusinessLine: bl, EndUser: endUser, CallID: "setup_" + ids.Random()(),
+			Category: memory.Category(m.Category), Content: m.Content, At: at, ValidUntil: m.ValidUntil}
+		if m.ReplacesPrevious {
+			req.Replaces = prevMemory
+		}
+		if m.ExpiredOn != "" {
+			// 已过期的不能经 Save 写入（过了有效期的事实不必记住），直接写入存储。
+			d, err := time.ParseInLocation(time.DateOnly, m.ExpiredOn, captureZone)
+			if err != nil {
+				tr.Err = "setup memory: " + err.Error()
+				return tr
+			}
+			mem := &memory.Memory{ID: "mem_" + req.CallID, BusinessLine: bl, EndUser: endUser, Category: req.Category, Content: m.Content,
+				SourceCall: req.CallID, CreatedAt: at, UpdatedAt: at, ValidUntil: d.AddDate(0, 0, 1)}
+			if err := in.mems.Store.Put(tctx, mem, nil); err != nil {
+				tr.Err = "setup memory: " + err.Error()
+				return tr
+			}
+			prevMemory = mem.ID
+			continue
+		}
+		saved, err := in.mems.Save(tctx, req)
+		if err != nil {
 			tr.Err = "setup memory: " + err.Error()
 			return tr
 		}
+		prevMemory = saved.ID
 	}
 	var devs []*device
 	setups := c.Setup.Devices
@@ -426,6 +457,8 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 	}
 	var sid string
 	var sessions []string
+	// topics 是每个 Session 按提交顺序的旁听主题（CaptureSegment.Topic），用于计算项目归集的纯度与碎片率。
+	topics := map[string][]string{}
 	if in.cfg.LogDir != "" {
 		defer func() { in.dumpLogs(ctx, fmt.Sprintf("%s-%d", c.Name, trial+1), sessions) }()
 	}
@@ -460,6 +493,9 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 				}
 			}
 		}
+		for _, g := range turn.Captures {
+			topics[sid] = append(topics[sid], g.Topic)
+		}
 		if err := in.submitCaptures(tctx, sid, turn.Captures); err != nil {
 			tr.Err = fmt.Sprintf("turn %d: captures: %v", ti+1, err)
 			return tr
@@ -488,8 +524,15 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		if in.xinli != nil {
 			x := in.xinli.State(bl, endUser)
 			obs.xinli = &x
+			if turn.Expect.Xinli != nil && turn.Expect.Xinli.Grouping != nil {
+				if obs.topics, err = in.exchangeTopics(tctx, topics); err != nil {
+					tr.Err = fmt.Sprintf("turn %d: %v", ti+1, err)
+					return tr
+				}
+			}
 		}
-		obs.memories, _ = in.mems.Store.List(tctx, endUser, []memory.Scope{{BusinessLine: bl}}, memory.DefaultMaxPerUser)
+		// 断言只看有效的 Memory：被取代的作为历史保留（m4-memory-grant.md §11），不算"还记着"。
+		obs.memories, _ = in.mems.Store.List(tctx, endUser, []memory.Scope{{BusinessLine: bl}}, time.Now(), memory.DefaultMaxPerUser)
 		as, score := in.check(tctx, ti+1, turn, obs)
 		tr.Assertions = append(tr.Assertions, as...)
 		if score > 0 {
@@ -515,11 +558,12 @@ type observation struct {
 	compacted bool // 到本轮结束时 Session 是否发生过上下文压缩
 	// compactions 是本轮的上下文压缩次数，takeovers 是本轮 Run 的接管次数。
 	compactions, takeovers int
-	tickets                []string         // CRM 中本 EndUser 的工单
-	xinli                  *xinlimock.State // xinli MCP Server 中本 EndUser 的数据
-	inTokens, cachedTokens uint64           // 本轮模型调用的输入 token 与其中命中前缀缓存的部分
-	callArgs               []string         // 与 calls 一一对应的调用参数
-	tasks                  []string         // Call 中派生的任务（run_task 的 task）
+	tickets                []string          // CRM 中本 EndUser 的工单
+	xinli                  *xinlimock.State  // xinli MCP Server 中本 EndUser 的数据
+	topics                 map[string]string // 旁听 Session 与引用编号（"ses/57.3"）→ 那段旁听的主题
+	inTokens, cachedTokens uint64            // 本轮模型调用的输入 token 与其中命中前缀缓存的部分
+	callArgs               []string          // 与 calls 一一对应的调用参数
+	tasks                  []string          // Call 中派生的任务（run_task 的 task）
 }
 
 // turn 提交一轮输入，按 approve 自动作出审批决定，等待 Run 结束并收集本轮的事件。
@@ -693,6 +737,146 @@ func (in *instance) checkXinli(add func(string, bool, string), e *XinliExpect, s
 	}
 	for _, want := range e.NoCommitments {
 		add("xinli no_commitment "+want.Kind+" "+want.Contains, !slices.ContainsFunc(st.Commitments, func(m xinlimock.Commitment) bool { return commitmentMatches(m, want) }), detail)
+	}
+	proposed := func(p [2]string) bool {
+		return slices.ContainsFunc(st.Merges, func(m xinlimock.Merge) bool {
+			return (m.Into == p[0] && m.From == p[1]) || (m.Into == p[1] && m.From == p[0])
+		})
+	}
+	merges := fmt.Sprintf("merges %+v", st.Merges)
+	for _, p := range e.Merges {
+		add("xinli merge "+p[0]+" "+p[1], proposed(p), merges)
+	}
+	for _, p := range e.NoMerges {
+		add("xinli no_merge "+p[0]+" "+p[1], !proposed(p), merges)
+	}
+	var habits []string
+	for _, w := range st.Weeks {
+		for _, h := range w.Habits {
+			habits = append(habits, h.Habit)
+		}
+	}
+	hasHabit := func(sub string) bool {
+		return slices.ContainsFunc(habits, func(h string) bool { return strings.Contains(h, sub) })
+	}
+	for _, sub := range e.WeekHabits {
+		add("xinli week_habit "+sub, hasHabit(sub), fmt.Sprintf("habits %q", habits))
+	}
+	for _, sub := range e.NoWeekHabits {
+		add("xinli no_week_habit "+sub, !hasHabit(sub), fmt.Sprintf("habits %q", habits))
+	}
+	for _, id := range slices.Sorted(maps.Keys(e.Status)) {
+		want, status := e.Status[id], ""
+		for _, p := range st.Projects {
+			if p.ID == id {
+				status = p.Status + " " + strings.Join(p.NextSteps, " ") + " " + strings.Join(p.OpenQuestions, " ")
+			}
+		}
+		for _, sub := range want.Contains {
+			add("xinli status "+id+" contains "+sub, strings.Contains(status, sub), "status: "+clip(status, 300))
+		}
+		for _, sub := range want.Excludes {
+			add("xinli status "+id+" excludes "+sub, !strings.Contains(status, sub), "status: "+clip(status, 300))
+		}
+	}
+}
+
+// relativeDate 把 "today-N" 换成运行当天之前第 N 天的日期（Asia/Shanghai），其余原样返回。
+func relativeDate(s string) string {
+	rest, ok := strings.CutPrefix(s, "today")
+	if !ok {
+		return s
+	}
+	n := 0
+	if rest != "" {
+		if _, err := fmt.Sscanf(rest, "-%d", &n); err != nil {
+			return s
+		}
+	}
+	return time.Now().In(captureZone).AddDate(0, 0, -n).Format(time.DateOnly)
+}
+
+// exchangeTopics 按日志顺序把每段旁听对应到提交时给出的主题：键是"Session/事件序号.段序号"。
+func (in *instance) exchangeTopics(ctx context.Context, topics map[string][]string) (map[string]string, error) {
+	out := map[string]string{}
+	for sid, list := range topics {
+		events, err := eventlog.ReadAll(ctx, in.svc.Store.Log, sid, 0)
+		if err != nil {
+			return nil, err
+		}
+		i := 0
+		for _, e := range events {
+			for j := range e.GetCaptureAppended().GetSegments() {
+				if i < len(list) {
+					out[fmt.Sprintf("%s/%d.%d", sid, e.GetSeq(), j)] = list[i]
+				}
+				i++
+			}
+		}
+	}
+	return out, nil
+}
+
+// checkGrouping 计算项目归集的碎片率与纯度（captures-weekly-review.md §6）。每段交出的交谈取它第一段旁听的主题，没有
+// 主题的（闲聊）不计入碎片率。碎片率：每个主题的交谈分散在几个项目中（没有归入项目的每段各算一个），按主题平均；
+// 纯度：每个项目中占多数的主题所占的比例（闲聊算作杂质），按交谈数加权。
+func checkGrouping(add func(string, bool, string), want *GroupingExpect, st *xinlimock.State, topics map[string]string) {
+	byTopic := map[string]map[string]bool{}
+	byProject := map[string]map[string]int{}
+	for i := range st.Exchanges {
+		e := &st.Exchanges[i]
+		topic := topics[e.Session+"/"+strings.TrimPrefix(e.ID, "x")]
+		if topic != "" {
+			if byTopic[topic] == nil {
+				byTopic[topic] = map[string]bool{}
+			}
+			where := e.Project
+			if where == "" {
+				where = "unfiled:" + e.ID + "@" + e.Session
+			}
+			byTopic[topic][where] = true
+		}
+		if e.Project != "" {
+			if byProject[e.Project] == nil {
+				byProject[e.Project] = map[string]int{}
+			}
+			if topic == "" {
+				topic = "(闲聊)"
+			}
+			byProject[e.Project][topic]++
+		}
+	}
+	frag := 0.0
+	for _, ps := range byTopic {
+		frag += float64(len(ps))
+	}
+	if len(byTopic) > 0 {
+		frag /= float64(len(byTopic))
+	}
+	total, majority := 0, 0
+	for _, ts := range byProject {
+		best := 0
+		for t, n := range ts {
+			total += n
+			if n > best && t != "(闲聊)" {
+				best = n
+			}
+		}
+		majority += best
+	}
+	purity := 1.0
+	if total > 0 {
+		purity = float64(majority) / float64(total)
+	}
+	detail := fmt.Sprintf("fragmentation %.2f over %d topics, purity %.2f over %d exchanges in projects; topics → projects %v", frag, len(byTopic), purity, total, byTopic)
+	if r := want.Fragmentation; r != nil {
+		add("xinli fragmentation", (r.Min == nil || frag >= *r.Min) && (r.Max == nil || frag <= *r.Max), detail)
+	}
+	if want.Purity != nil {
+		add("xinli purity", purity >= *want.Purity, detail)
+	}
+	if len(byTopic) < want.Topics {
+		add("xinli topics", false, detail)
 	}
 }
 
@@ -927,6 +1111,9 @@ func matches(globs []string, name string) bool {
 }
 
 func memoryMatches(m *memory.Memory, want MemoryMatch) bool {
+	if want.HasValidUntil && m.ValidUntil.IsZero() {
+		return false
+	}
 	category := want.Category == "" || string(m.Category) == want.Category
 	if not, ok := strings.CutPrefix(want.Category, "!"); ok {
 		category = string(m.Category) != not
@@ -969,6 +1156,9 @@ func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation)
 	if r := e.Questions; r != nil {
 		ok := (r.Min == nil || o.questions >= *r.Min) && (r.Max == nil || o.questions <= *r.Max)
 		add("questions", ok, fmt.Sprintf("questions %d", o.questions))
+	}
+	for _, s := range e.ReplyExcludes {
+		add("reply_excludes "+s, !strings.Contains(o.reply, s), "reply: "+clip(o.reply, 200))
 	}
 	for _, s := range e.ReplyContains {
 		add("reply_contains "+s, strings.Contains(o.reply, s) || strings.Contains(plainNumbers(o.reply), s), "reply: "+clip(o.reply, 200))
@@ -1023,6 +1213,33 @@ func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation)
 	}
 	if x := e.Xinli; x != nil {
 		in.checkXinli(add, x, o.xinli)
+		if x.Grouping != nil && o.xinli != nil {
+			checkGrouping(add, x.Grouping, o.xinli, o.topics)
+		}
+		if x.Covers != nil && o.xinli != nil {
+			covered, detail, err := judgeCoverage(ctx, in.cfg.Model, in.cfg.Judge, x.Covers.Points, o.xinli)
+			if err != nil {
+				out = append(out, Assertion{Turn: turn, Name: "xinli covers", Detail: "judge error: " + err.Error(), Infra: true})
+			} else {
+				add("xinli covers", covered >= x.Covers.Min, fmt.Sprintf("coverage %.2f, want at least %.2f: %s", covered, x.Covers.Min, detail))
+			}
+		}
+		if x.VerifiedRate != nil && o.xinli != nil {
+			n, ok := 0, 0
+			for _, m := range o.xinli.Commitments {
+				if m.Exchange != "" {
+					n++
+					if m.Unverified == "" {
+						ok++
+					}
+				}
+			}
+			rate := 1.0
+			if n > 0 {
+				rate = float64(ok) / float64(n)
+			}
+			add("xinli verified_rate", rate >= *x.VerifiedRate, fmt.Sprintf("%d of %d commitments verified", ok, n))
+		}
 	}
 	for _, want := range e.Tickets {
 		add("tickets "+want, slices.ContainsFunc(o.tickets, func(t string) bool { return strings.Contains(t, want) }), fmt.Sprintf("tickets %v", o.tickets))

@@ -1,0 +1,21 @@
+name: capture-project-rewrite
+description: >-
+  每周依据完整时间线重写项目现状（captures-weekly-review.md §5）：之前的现状还停在"等报价单"，时间线显示报价已确认、
+  合同已签、试单已下；重写后的现状以最近的交谈为准，不再写"等报价"。
+agent: xinli-project
+setup:
+  xinli:
+    projects: [{id: P-0001, name: 新一季采购, status: 和王总谈妥先小批量试单，等报价单与框架合同。}]
+    project_session: P-0001
+    exchanges:
+      - {date: today-6, title: 谈试单, summary: 和王总谈妥先小批量试单, project: P-0001}
+      - {date: today-4, title: 报价确认, summary: 王总确认了报价单，价格没问题, project: P-0001, decisions: ["报价确认"]}
+      - {date: today-2, title: 合同签署, summary: 框架合同双方已签字盖章, project: P-0001, decisions: ["框架合同已签"]}
+      - {date: today-1, title: 试单下单, summary: 试单 500 件已经下单，预计两周后交货, project: P-0001, risks: ["交货期可能受春节前物流影响"]}
+turns:
+  - input: 重写现状
+    expect:
+      calls: ["mcp_xinli__project_digest", "mcp_xinli__set_status"]
+      no_calls: ["mcp_xinli__update_commitments"]
+      xinli:
+        status: {P-0001: {contains: ["500"], excludes: ["等报价"]}}

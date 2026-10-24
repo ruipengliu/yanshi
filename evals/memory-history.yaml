@@ -1,0 +1,13 @@
+name: memory-history
+description: >-
+  被取代的记忆作为历史保留（m4-memory-grant.md §11，ADR-0038）："常住北京"已被"搬到上海了"取代，召回只给出有效的那条；
+  用户问搬家之前住哪，要用 memory_search 的 history 查到旧记忆再回答。
+setup:
+  memories:
+    - {category: profile, content: "用户常住北京", recorded: "2026-06-01"}
+    - {category: profile, content: "用户搬到上海了", recorded: "2026-10-01", replaces_previous: true}
+turns:
+  - input: 我搬家之前住在哪个城市来着？
+    expect:
+      calls: ["memory_search"]
+      reply_contains: ["北京"]

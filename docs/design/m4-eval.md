@@ -23,6 +23,7 @@ context: {window: 6000}       # 可选：覆盖 AgentDef 的上下文配置（�
 setup:
   memories:                   # 预置的 Memory（本业务线）
     - {category: relationship, content: "张三是同事，邮箱 zs@example.com"}
+    - {category: plan, content: "…", valid_until: "2026-12-31"}   # 有效期；expired_on 预置已过期的；replaces_previous: true 取代上一条（m4-memory-grant.md §11）
   device:                     # 虚拟设备：列目录、读文件（64KB 截断，与真实 Node 一致）、上传为工件、写文件（需审批）、发消息（需审批，非幂等）
     label: macbook
     online_after: 0s          # >0：设备在运行开始后这么久才上线（检验离线挂起与恢复）
@@ -35,6 +36,7 @@ setup:
     projects: [{id: P-0001, name: 年度预算, status: "…"}]   # 新建的项目从 P-0101 编号
     days: {"2026-10-22": "…"}                               # day_summary 在没有交出的交谈时按日期返回的摘要
     commitments: [{id: C-0001, kind: mine, content: "…", due_date: "2026-10-23", project: P-0001}]   # 预置的承诺账本
+    exchanges: [{date: today-2, title: "…", summary: "…", project: P-0001}]   # 已交出的交谈；filed: 已交出的每日整理；日期可写 today-N
     project_session: P-0001                                 # 本用例的 Session 就是这个项目的 xinli-project Session
   no_health: false            # true：在未开启健康信息的业务线中运行（health 类别的写入被拒绝）
 capabilities: []              # 追加到 AgentDef 的能力白名单，如 ["mcp:crm/*"]
@@ -45,7 +47,7 @@ turns:
     crash_after_calls: 0      # >0：Run 发起这么多次调用后"杀掉"执行它的 Worker，检验接管（长 Run 用例）
     captures:                 # 本轮输入之前由 HostApp 提交到本轮 Session 的一批旁听
       - {speaker: other, key: wang, text: "…"}   # speaker: wearer（佩戴者）| other（他人，key 区分不同的人）
-      - {speaker: wearer, text: "…", at: "2026-10-23 10:15"}   # at：当地时间（Asia/Shanghai），省略时不带时间
+      - {speaker: wearer, text: "…", at: "2026-10-23 10:15", topic: reno}   # at：当地时间（Asia/Shanghai），省略时不带时间；topic：主题标签，只用于评测
     captures_file: data/long-day.yaml   # 追加用例目录下数据文件中的旁听（长的一天不写在用例里）
     expect:
       status: completed
@@ -53,8 +55,9 @@ turns:
       no_calls: ["*send_message"]          # 不得出现的调用
       approvals: {min: 1}                   # 审批次数的范围
       reply_contains: ["周五"]
+      reply_excludes: ["广州"]             # 回复中不得出现
       reply_max_chars: 400
-      memories: [{category: relationship, contains: "张三"}, {contains: "香菜", max: 1}]   # 本轮结束后应存在的 Memory；max：至多几条
+      memories: [{category: relationship, contains: "张三"}, {contains: "香菜", max: 1}]   # 本轮结束后应存在的有效 Memory；max：至多几条；has_valid_until：须带有效期
       no_memories: [{contains: "1101"}, {category: "!health", contains: "焦虑"}]   # 不应存在的 Memory；"!" 表示其他类别
       call_args: {"*send_message": "lilei@example.com"}        # 某个名称匹配的调用的参数须包含
       no_call_args: {"mcp_xinli__file_day": "合同"}            # 名称匹配的调用的参数都不得包含
@@ -63,6 +66,12 @@ turns:
         in_project: {P-0001: {max: 0}}                          # 归入某项目的交谈数
         commitments: [{kind: mine, contains: 报价, due_date: "2026-10-24", verified: true}]   # 账本中须有的承诺
         no_commitments: [{kind: mine, contains: 合同}]          # 账本中不得有的承诺；还可按 status、project 匹配
+        grouping: {topics: 3, fragmentation: {max: 1.0}, purity: 0.9}   # 项目归集的碎片率与纯度（按 topic 计算）
+        covers: {min: 0.8, points: ["…"]}                       # 评分模型判断的摘要覆盖率
+        verified_rate: 0.8                                      # 通过核对的承诺比例
+        merges: [[P-0001, P-0002]]                              # 合并提议；no_merges 不得有的
+        week_habits: ["期限"]                                   # 每周觉察的习惯；no_week_habits 不得有的
+        status: {P-0001: {contains: ["500"], excludes: ["等报价"]}}   # 项目现状
       device_writes: {"minutes.md": "周五"}                     # 设备上写入的文件应包含
       device_sent: 0                                            # 设备发出的消息数
       tickets: ["C-1001"]                                       # CRM 中本 EndUser 的工单须包含的文本
@@ -251,3 +260,11 @@ turns:
 - **结果。** 调整后 16 个用例各 6 次全部通过（96/96），基线 3/3。
 - **代价。** 每段交谈多两三次调用，平均 tokens 约为第一版的两倍（如 `capture-memory-update` 由约 1.3 万增至 2.2 万）。`capture-long-day` 把窗口调到 24000，一次运行压缩 3 次、约 27 万 tokens，承诺与总览都没有丢。
 - **核对规则没覆盖的情况。** 佩戴者让对方去办的事（"你先问问供应商"）仍偶尔被记成佩戴者的承诺：被引用的确实是佩戴者的话，核对通过。用例不再断言这一点，见 captures-by-exchange.md §7。
+
+### 记忆时效与每周回顾（2026-10-24）
+
+新增 `memory-history`、`memory-plan-expiry`、`memory-plan-valid-until`（m4-memory-grant.md §11）与 `capture-week-merge`、`capture-week-awareness`、`capture-week-grouping`、`capture-project-rewrite`（captures-weekly-review.md §6）。评测运行器新增项目归集的碎片率与纯度（`expect.xinli.grouping`，按旁听的 `topic` 计算）、由评分模型判断的摘要覆盖率（`covers`）、引用准确率（`verified_rate`），以及合并提议、每周习惯、项目现状与 `reply_excludes` 的断言；预置数据的日期可写 `today-N`。
+
+- **完整评测。** 召回文本带上记录日期后跑了完整的 `make eval`，唯一判为回归的是 `memory-conflict-recency`（3/3 → 1/3）。在 main 与本分支上各跑 12 次，都是 9/12、平均 4.25 分：这个用例本来就只有约 75% 通过（失败时模型仍推荐美式，或改用 `ask_user` 反问），原先的 3/3 是碰巧。召回说明补上"同一件事有多条时以记录日期较新的为准"，基线按实际记为 2/3。其余用例没有回归。
+- **每周觉察。** `capture-week-awareness` 有一轮把只出现一天的"会后发纪要"写成了习惯。模拟服务按设计的规则（至少两个不同日期）不收这样的习惯，指令要求交出前逐条核对日期，之后 6/6。生产中业务线应当做同样的检查。
+- **一周的归集。** `capture-week-grouping`（五天、三个主题、换着说法）6/6：碎片率不超过 1、纯度不低于 0.9、承诺的引用准确率不低于 0.8、要点覆盖率不低于 0.8。一次运行约 21 万 tokens、两分半钟。

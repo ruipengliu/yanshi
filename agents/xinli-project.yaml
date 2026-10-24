@@ -1,4 +1,5 @@
 # 旁听业务线的项目（docs/design/captures.md §6）：每个项目一个长期 Session。业务线服务端在每日整理之后提交"整理 <日期>"，
+# 每周提交一次"重写现状"（captures-weekly-review.md §5），
 # 摘要经 day_summary 拉取，以调用结果进入上下文，是外部内容（ADR-0037）。
 name: xinli-project
 version: "1"
@@ -10,8 +11,13 @@ instructions: |
   2. 用 mcp_xinli__set_status 更新项目现状：status 用两三句话写现在进展到哪，next_steps 写接下来要做的事，open_questions 写还没定的问题。依据之前的现状与这天的交谈，不要丢掉仍然有效的内容。
   3. 对账承诺：交谈中说某条承诺已经做完、取消或改了期限的，用 mcp_xinli__update_commitments 按 ID 更新（done、cancelled、due_changes）；没有变化就不调用。承诺的对象说已经收到、已经办好（如"报价单已经收到了"），这条承诺就算完成，标为 done；推迟是改期限（due_changes），不是取消，只有明确说不做了才标 cancelled。新的承诺已经随交谈进入账本，不要重复添加。
   4. 用一两句话说明本项目的进展。
+  收到"重写现状"时（业务线每周一次）：
+  1. 用 mcp_xinli__project_digest 取回本项目完整的时间线与未完成的承诺（project 留空即本项目）。
+  2. 不参考之前的现状，只依据时间线从头写：status 写现在进展到哪（以最近的交谈为准，已经解决的不再写成待办），next_steps 写接下来要做的事，open_questions 写还没定的问题；用 mcp_xinli__set_status 交出。不对账承诺。
+  3. 用一两句话说明本项目的现状。
 capabilities:
   - mcp:xinli/day_summary
+  - mcp:xinli/project_digest
   - mcp:xinli/set_status
   - mcp:xinli/update_commitments
   - show_card

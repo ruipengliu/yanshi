@@ -23,7 +23,7 @@ type fakeBusiness struct {
 func (f *fakeBusiness) CreateSession(_ context.Context, _, _, agent string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if agent != ProjectAgent {
+	if agent != ProjectAgent && agent != WeekAgent {
 		panic(agent)
 	}
 	sid := "ses_p" + string(rune('0'+len(f.sessions)))
@@ -71,7 +71,7 @@ func TestExchangesCommitmentsAndCollect(t *testing.T) {
 	biz := &fakeBusiness{inputs: map[string][]string{}, texts: map[string]string{}, done: make(chan struct{}, 8)}
 	x := &Server{ctx: context.Background(), users: map[string]*user{}, Business: biz,
 		Now: func() time.Time { return time.Date(2026, 10, 23, 22, 0, 0, 0, time.Local) }}
-	x.Seed("bl", "u", []Project{{ID: "P-0001", Name: "年度预算", Status: "财务部在汇总各部门预算"}}, nil, nil)
+	x.Seed("bl", "u", SeedData{Projects: []Project{{ID: "P-0001", Name: "年度预算", Status: "财务部在汇总各部门预算"}}})
 	wearer := mcpcap.Citation{Ref: "#2.1", Speaker: "wearer"}
 	other := mcpcap.Citation{Ref: "#2.0", Speaker: "other", SpeakerKey: "liu"}
 
@@ -157,5 +157,65 @@ func TestExchangesCommitmentsAndCollect(t *testing.T) {
 	// 另一个 EndUser 看不到。
 	if st := x.State("bl", "v"); len(st.Days) != 0 || len(st.Projects) != 0 || len(st.Commitments) != 0 {
 		t.Fatalf("other end user sees %+v", st)
+	}
+}
+
+// 每周回顾：归档 30 天没有新交谈、也没有未完成承诺的项目；合并提议由用户确认后移动交谈与承诺；file_week 记下本周觉察；
+// Week 为本周创建一次回顾的 Session，并向本周有交谈的项目提交"重写现状"。
+func TestWeeklyReview(t *testing.T) {
+	biz := &fakeBusiness{inputs: map[string][]string{}, texts: map[string]string{}, done: make(chan struct{}, 8)}
+	now := time.Date(2026, 10, 25, 22, 0, 0, 0, time.Local)
+	x := &Server{ctx: context.Background(), users: map[string]*user{}, Business: biz, Now: func() time.Time { return now }}
+	x.Seed("bl", "u", SeedData{
+		Projects: []Project{{ID: "P-0001", Name: "新办公室装修", Status: "地板定了"}, {ID: "P-0002", Name: "办公室搬迁", Status: "十二月搬"},
+			{ID: "P-0003", Name: "旧事", Status: "早就结束了"}, {ID: "P-0004", Name: "旧事但有承诺", Status: "还欠一件事"}},
+		Exchanges: []Exchange{{Date: "2026-10-24", Title: "看样板", Project: "P-0001"}, {Date: "2026-10-23", Title: "定搬家公司", Project: "P-0002"},
+			{Date: "2026-08-01", Title: "收尾", Project: "P-0003"}, {Date: "2026-08-01", Title: "收尾", Project: "P-0004"}},
+		Commitments: []Commitment{{Kind: "mine", Content: "寄发票", Project: "P-0004"}, {Kind: "theirs", Content: "报价", Project: "P-0002"}},
+		Filed: []Day{{Date: "2026-10-24", Headline: "看样板", Awareness: Awareness{Habits: []string{"答应时给出期限"}}},
+			{Date: "2026-10-10", Headline: "上上周", Awareness: Awareness{Habits: []string{"太早了"}}}},
+	})
+	x.Bind("bl", "u", "P-0001", "ses_p1")
+	if got := x.Archive("bl", "u"); len(got) != 1 || got[0] != "P-0003" {
+		t.Fatalf("archived %v", got)
+	}
+	if out := invoke(x, "", "find_projects", map[string]string{"query": "旧事"}); strings.Contains(out, "P-0003") || !strings.Contains(out, "P-0004") {
+		t.Fatalf("find_projects after archive = %q", out)
+	}
+	if out := invoke(x, "ses_w", "week_overview", map[string]any{}); !strings.Contains(out, "2026-10-24：看样板") || strings.Contains(out, "上上周") ||
+		!strings.Contains(out, "沟通习惯：答应时给出期限") {
+		t.Fatalf("week_overview = %q", out)
+	}
+	if out := invoke(x, "ses_w", "similar_projects", map[string]any{}); !strings.Contains(out, "第 1 对") || strings.Contains(out, "P-0003") {
+		t.Fatalf("similar_projects = %q", out)
+	}
+	if out := invoke(x, "ses_w", "propose_merge", map[string]string{"into": "P-0001", "from": "P-0002", "reason": "同一次搬迁"}); !strings.Contains(out, "M-0001") {
+		t.Fatalf("propose_merge = %q", out)
+	}
+	if out := invoke(x, "ses_w", "propose_merge", map[string]string{"into": "P-0002", "from": "P-0001", "reason": "重试"}); !strings.Contains(out, "已经提议过") {
+		t.Fatalf("repeated propose_merge = %q", out)
+	}
+	if err := x.ResolveMerge("bl", "u", "M-0001", true); err != nil {
+		t.Fatal(err)
+	}
+	st := x.State("bl", "u")
+	if st.Projects[1].MergedInto != "P-0001" || st.Exchanges[1].Project != "P-0001" || st.Commitments[1].Project != "P-0001" || st.Merges[0].Status != "accepted" {
+		t.Fatalf("after merge: %+v", st)
+	}
+	if out := invoke(x, "ses_w", "file_week", map[string]any{"habits": []map[string]any{{"habit": "给出期限", "days": []string{"2026-10-21", "2026-10-24"}},
+		{"habit": "发纪要", "days": []string{"2026-10-22", "2026-10-22"}}}}); !strings.Contains(out, "没有收录：发纪要") || len(x.State("bl", "u").Weeks[0].Habits) != 1 {
+		t.Fatalf("file_week = %q", out)
+	}
+
+	sid, err := x.Week(context.Background(), "bl", "u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		<-biz.done
+	}
+	again, _ := x.Week(context.Background(), "bl", "u")
+	if again != sid || biz.texts[sid] != "回顾本周" || biz.texts["ses_p1"] != "重写现状" || len(biz.inputs[sid]) != 1 {
+		t.Fatalf("week sessions %s %s, inputs %v", sid, again, biz.texts)
 	}
 }

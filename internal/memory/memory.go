@@ -69,6 +69,16 @@ type Memory struct {
 	SourceCall    string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+	// SupersededBy 与 SupersededAt 非空时，这条已被另一条取代、失效（§11，ADR-0038）。
+	SupersededBy string
+	SupersededAt time.Time
+	// ValidUntil 非零时是过期的时刻：有效期最后一天结束时。
+	ValidUntil time.Time
+}
+
+// Valid 报告 m 在 at 时是否有效：没有被取代，也没有过期。只有有效的参与召回、检索、去重与计数。
+func (m *Memory) Valid(at time.Time) bool {
+	return m.SupersededBy == "" && (m.ValidUntil.IsZero() || at.Before(m.ValidUntil))
 }
 
 // Vector 是嵌入向量及产生它的模型；只有同一模型的向量才能相互比较。
@@ -102,7 +112,12 @@ func (s Scope) allows(m *Memory) bool {
 type Hit struct {
 	*Memory
 	Score float64
+	// Recorded 是记录日期（当地，YYYY-MM-DD），由 Service 的检索填写：召回与检索的结果据此注明新旧（§11）。
+	Recorded string
 }
+
+// Everything 作为 List、Nearest 的 at 时包含失效与过期的 Memory（历史）。
+var Everything time.Time
 
 type Store interface {
 	// Put 按 ID 写入或覆盖；vec 可为 nil。
@@ -110,12 +125,17 @@ type Store interface {
 	Get(ctx context.Context, id string) (*Memory, error)
 	// Delete 删除一条；不存在时不报错。
 	Delete(ctx context.Context, id string) error
-	// Count 返回 EndUser 在业务线中的 Memory 数。
-	Count(ctx context.Context, businessLine, endUser string) (int, error)
-	// List 返回 EndUser 在 scopes 内的 Memory，按更新时间倒序（同时间按 ID），至多 limit 条。
-	List(ctx context.Context, endUser string, scopes []Scope, limit int) ([]*Memory, error)
-	// Nearest 返回 scopes 内与 vec 同模型的 Memory，按余弦相似度降序（同分按更新时间倒序、ID），至多 limit 条。
-	Nearest(ctx context.Context, endUser string, scopes []Scope, vec Vector, limit int) ([]Hit, error)
+	// Count 返回 EndUser 在业务线中 at 时有效的 Memory 数。
+	Count(ctx context.Context, businessLine, endUser string, at time.Time) (int, error)
+	// List 返回 EndUser 在 scopes 内、at 时有效的 Memory（at 为 Everything 时包含失效与过期的），按更新时间倒序
+	// （同时间按 ID），至多 limit 条。
+	List(ctx context.Context, endUser string, scopes []Scope, at time.Time, limit int) ([]*Memory, error)
+	// Nearest 返回 scopes 内、at 时有效、与 vec 同模型的 Memory，按余弦相似度降序（同分按更新时间倒序、ID），至多 limit 条。
+	Nearest(ctx context.Context, endUser string, scopes []Scope, at time.Time, vec Vector, limit int) ([]Hit, error)
+	// Supersede 把 id 标为在 at 时被 by 取代；不存在时不报错。
+	Supersede(ctx context.Context, id, by string, at time.Time) error
+	// Purge 删除 EndUser 在业务线中 supersededBefore 之前失效、或 expiredBefore 之前过期的 Memory。
+	Purge(ctx context.Context, businessLine, endUser string, supersededBefore, expiredBefore time.Time) error
 	// DeleteSession 删除由该 Session 写入的全部 Memory。
 	DeleteSession(ctx context.Context, sessionID string) error
 	// DeleteEndUser 删除 EndUser 在业务线中的全部 Memory。

@@ -3591,9 +3591,11 @@ type RecalledMemory struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	// 所属业务线：与 Session 的业务线不同时，表示经 Grant 读取。
-	BusinessLine  string `protobuf:"bytes,2,opt,name=business_line,json=businessLine,proto3" json:"business_line,omitempty"`
-	Category      string `protobuf:"bytes,3,opt,name=category,proto3" json:"category,omitempty"`
-	Content       string `protobuf:"bytes,4,opt,name=content,proto3" json:"content,omitempty"`
+	BusinessLine string `protobuf:"bytes,2,opt,name=business_line,json=businessLine,proto3" json:"business_line,omitempty"`
+	Category     string `protobuf:"bytes,3,opt,name=category,proto3" json:"category,omitempty"`
+	Content      string `protobuf:"bytes,4,opt,name=content,proto3" json:"content,omitempty"`
+	// 记录日期（当地，YYYY-MM-DD）：召回文本注明它，模型据此判断新旧（docs/design/m4-memory-grant.md §11）。
+	RecordedOn    string `protobuf:"bytes,5,opt,name=recorded_on,json=recordedOn,proto3" json:"recorded_on,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3652,6 +3654,13 @@ func (x *RecalledMemory) GetCategory() string {
 func (x *RecalledMemory) GetContent() string {
 	if x != nil {
 		return x.Content
+	}
+	return ""
+}
+
+func (x *RecalledMemory) GetRecordedOn() string {
+	if x != nil {
+		return x.RecordedOn
 	}
 	return ""
 }
@@ -4272,12 +4281,14 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\x0eMemoryRecalled\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x12/\n" +
-	"\x05items\x18\x03 \x03(\v2\x19.yanshi.v1.RecalledMemoryR\x05items\"{\n" +
+	"\x05items\x18\x03 \x03(\v2\x19.yanshi.v1.RecalledMemoryR\x05items\"\x9c\x01\n" +
 	"\x0eRecalledMemory\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12#\n" +
 	"\rbusiness_line\x18\x02 \x01(\tR\fbusinessLine\x12\x1a\n" +
 	"\bcategory\x18\x03 \x01(\tR\bcategory\x12\x18\n" +
-	"\acontent\x18\x04 \x01(\tR\acontent\"o\n" +
+	"\acontent\x18\x04 \x01(\tR\acontent\x12\x1f\n" +
+	"\vrecorded_on\x18\x05 \x01(\tR\n" +
+	"recordedOn\"o\n" +
 	"\vCallStarted\x12\x17\n" +
 	"\acall_id\x18\x01 \x01(\tR\x06callId\x12\x1b\n" +
 	"\tdevice_id\x18\x02 \x01(\tR\bdeviceId\x12\x14\n" +

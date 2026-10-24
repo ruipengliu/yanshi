@@ -1,0 +1,7 @@
+# capture-week-grouping 的 2026-10-22：每段带主题（reno：新办公室装修，offsite：团建，hiring：招聘前端；闲聊不标）。
+- {speaker: other, key: li, text: 露营的营地我问了两家，一家能烧烤，一家能看日出。, at: "2026-10-22 10:30", topic: offsite}
+- {speaker: wearer, text: 选能烧烤的那家，周五我把方案发群里，人数你那边统计好了吗？, at: "2026-10-22 10:31", topic: offsite}
+- {speaker: other, key: li, text: 统计好了，一共二十三个人。, at: "2026-10-22 10:32", topic: offsite}
+- {speaker: other, key: chen, text: 今天面的两个前端，第一个基础扎实，第二个小程序经验多。, at: "2026-10-22 14:00", topic: hiring}
+- {speaker: wearer, text: 两个都发二面吧，下周让技术总监再看看。, at: "2026-10-22 14:01", topic: hiring}
+- {speaker: other, key: chen, text: 好，我安排。, at: "2026-10-22 14:02", topic: hiring}
