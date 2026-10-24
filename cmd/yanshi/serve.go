@@ -56,6 +56,7 @@ import (
 	"yanshi/internal/sandbox"
 	sandboxdocker "yanshi/internal/sandbox/docker"
 	"yanshi/internal/service"
+	"yanshi/internal/speech"
 	"yanshi/internal/usage"
 	"yanshi/internal/webui"
 	"yanshi/internal/workqueue"
@@ -211,6 +212,18 @@ func realtimeGateway(logger *slog.Logger) *realtime.Gateway {
 		logger.Info("realtime provider configured", "provider", "volc")
 	}
 	return gw
+}
+
+// speechService 配置按住说话的语音识别与播报（docs/design/speech.md），与实时语音共用 VOLC_SPEECH_API_KEY；
+// 没有时接口返回 501。
+func speechService(svc *service.Service, meter *usage.Meter, logger *slog.Logger) *speech.Service {
+	sp := &speech.Service{Sessions: svc, Meter: meter, IDs: ids.Random(), Logger: logger,
+		ASRModel: "volc/asr-flash", TTSModel: "volc/seed-tts-2.0"}
+	if key := os.Getenv("VOLC_SPEECH_API_KEY"); key != "" {
+		sp.Provider = &volc.Speech{APIKey: key}
+		logger.Info("speech provider configured", "provider", "volc")
+	}
+	return sp
 }
 
 func envOr(key, def string) string {
@@ -508,7 +521,8 @@ func serve(args []string) error {
 	mux.Handle("/console/", webui.Handler())
 	mux.Handle("/sdk/yanshi.js", webui.Handler())
 	mux.Handle("GET /readyz", ready)
-	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.Usage, Push: b.Push, Feeds: feeds, Faults: injector, Xinli: xinliState, Logger: logger}).Handler())
+	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.Usage, Push: b.Push, Feeds: feeds, Faults: injector, Xinli: xinliState,
+		Speech: speechService(svc, meter, logger), Logger: logger}).Handler())
 	srv := &http.Server{
 		Addr:              *addr,
 		Handler:           mux,

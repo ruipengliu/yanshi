@@ -786,6 +786,33 @@ export class SimDevice {
     return { media: { mime_type: m.mime_type, uri: m.uri, name: m.name, size: String(m.size) } };
   }
 
+  /** 识别一段录音（HTTP API，docs/design/speech.md），返回文字；没有话语时为空。不写日志：文字由调用方作为输入提交。 */
+  async transcribe(sessionId, wav) {
+    const res = await this.http("POST", `/v1/sessions/${encodeURIComponent(sessionId)}/transcriptions`, wav, "audio/wav");
+    return JSON.parse(await res.text()).text ?? "";
+  }
+
+  /** 把 Run 的回复合成为语音，返回 audio/wav 的 Blob。 */
+  async speak(sessionId, runId) {
+    const res = await this.http("POST", `/v1/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/speech`);
+    return res.blob();
+  }
+
+  async http(method, path, body, mimeType) {
+    const headers = mimeType ? { "Content-Type": mimeType } : {};
+    if (this.cfg.token) headers.Authorization = `Bearer ${this.cfg.token}`;
+    const res = await fetch(`${this.cfg.httpBase}${path}`, { method, headers, body });
+    if (!res.ok) {
+      const text = await res.text();
+      let msg = text;
+      try {
+        msg = JSON.parse(text).error ?? text;
+      } catch {}
+      throw new Error(`${res.status} ${msg}`);
+    }
+    return res;
+  }
+
   // —— Call（全双工语音，docs/design/m3-call.md）：以 {type:"call"} 通知 ——
 
   /** 开始一次 Call，返回 call_id；CallReady 或 error 随后以 {type:"call"} 通知。 */

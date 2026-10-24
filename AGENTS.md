@@ -15,6 +15,7 @@
 - 改动调试控制台（`internal/webui/static/console`）或脚本化模型（`internal/model/script`）之前：`docs/design/console.md`。新增多端语义时，在控制台的验证场景（`scenarios.js`）中增加覆盖，它们在 `make check` 中运行（`TestConsoleScenarios`）。
 - 改动卡片（`internal/card`、`show_card`、`Card` / `CardAction`）之前：`docs/design/cards.md`。卡片只由平台校验后写入 `show_card` 的结果，卡片动作是一条输入、按 `call_id` 与动作去重（ADR-0032）。
 - 改动旁听（`CaptureAppended`、`State.Captures`、`service.SubmitCaptures`、`captures` 工具、`ContentBlock.capture`）、按 AgentDef 覆盖的 Retention 或 `agents/xinli-*.yaml` 之前：`docs/design/captures.md`。旁听只收文字，佩戴者的话算用户原话、他人的话算外部内容，判断依据是结构化的说话人字段（ADR-0036）；Capture 不开启 Run，摘要由 Project 经业务线的 MCP Server 拉取，按保留期删除时保留 Memory（ADR-0037）。
+- 改动按住说话的语音识别与播报（`internal/speech`、`/transcriptions`、`/speech`）之前：`docs/design/speech.md`。录音识别成文字后作为普通输入提交，音频不交给模型、不进日志或工件；播报只读 Run 已写入日志的回复。
 - 改动服务端故障注入（`internal/faults`、`/v1/debug/*`）之前：`docs/design/console.md` §7。只在 `serve -faults` 时装配，没有规则时不改变任何行为（ADR-0033）。
 - 改动 Call（`internal/call`、`internal/realtime`、控制台的通话 `internal/webui/static/console`）之前：`docs/design/m3-call.md`。音频经网关中转，语音模型只通过 `run_task` 派生 Run 做事（ADR-0027）；转写在写日志之前做内容安全检查。实测需要 `VOLC_SPEECH_API_KEY`（`YANSHI_TEST_VOLC=1 go test ./internal/realtime/volc`），`make eval` 的 `call-*` 用例同样需要它。
 - 改动模型提供商的接入、调用时限、重试或准入之前：`docs/design/model-calls.md`。已输出过增量的调用不在提供商层重试。

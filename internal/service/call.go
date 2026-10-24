@@ -64,15 +64,8 @@ func (s *Service) StartCall(ctx context.Context, req StartCallRequest) (*CallSta
 	if err != nil {
 		return nil, err
 	}
-	if bl := st.Created.GetBusinessLine(); s.Quotas.Enabled(bl) {
-		p, err := s.Quotas.Check(ctx, bl, st.Created.GetEndUser(), s.Store.Clock.Now())
-		if err != nil {
-			return nil, err
-		}
-		if p != nil {
-			metrics.QuotaRejections.WithLabelValues(p.Scope, "call").Inc()
-			return nil, &usage.ExceededError{Period: p}
-		}
+	if err := s.CheckQuota(ctx, st, "call"); err != nil {
+		return nil, err
 	}
 	// started 是最后一次决策的 CallStarted：提交时由 Store 编上 ID，作为计量的 ID。
 	var started *v1.Event
@@ -101,6 +94,24 @@ func (s *Service) StartCall(ctx context.Context, req StartCallRequest) (*CallSta
 		}
 	}
 	return &CallStart{State: st, MeterID: started.GetId()}, nil
+}
+
+// CheckQuota 在 Session 的业务线或 EndUser 配额用尽时返回 usage.ExceededError（docs/design/m4-quota-usage.md §3）。
+// what 是指标中的拒绝来源（call、speech）。新 Run 的检查在 Submit 中，只拦新 Run、不拦插话。
+func (s *Service) CheckQuota(ctx context.Context, st *session.State, what string) error {
+	bl := st.Created.GetBusinessLine()
+	if !s.Quotas.Enabled(bl) {
+		return nil
+	}
+	p, err := s.Quotas.Check(ctx, bl, st.Created.GetEndUser(), s.Store.Clock.Now())
+	if err != nil {
+		return err
+	}
+	if p != nil {
+		metrics.QuotaRejections.WithLabelValues(p.Scope, what).Inc()
+		return &usage.ExceededError{Period: p}
+	}
+	return nil
 }
 
 // AppendTranscript 写入 Call 中一句话的转写。写入前做内容安全检查（用户的话按输入、助手的话按输出，ADR-0021）：

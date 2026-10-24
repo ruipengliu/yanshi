@@ -1209,6 +1209,12 @@ img.art.photo {
   color: var(--bad);
   box-shadow: 0 0 0 calc(2px + var(--level, 0) * 8px) rgba(214, 69, 69, 0.2);
 }
+/* 正在播报语音发起的那一轮回复：点击停止。 */
+.composer-tools .tool.speaking {
+  font-size: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 .send {
   background: var(--accent);
   border-color: var(--accent);

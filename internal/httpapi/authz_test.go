@@ -29,6 +29,7 @@ import (
 	"yanshi/internal/node"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
+	"yanshi/internal/speech"
 	"yanshi/internal/usage"
 	"yanshi/internal/workqueue/memqueue"
 )
@@ -87,6 +88,7 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 	err = store.Commit(ctx, st,
 		&v1.Event{Payload: &v1.Event_AttemptStarted{AttemptStarted: &v1.AttemptStarted{RunId: res.RunID, Attempt: 1, LiveEndpoint: "http://10.0.0.1:7070"}}},
 		&v1.Event{Payload: &v1.Event_AssistantMessage{AssistantMessage: &v1.AssistantMessage{RunId: res.RunID, Attempt: 1,
+			Content: []*v1.ContentBlock{{Kind: &v1.ContentBlock_Text{Text: &v1.Text{Text: "我先看看"}}}},
 			ToolCalls: []*v1.ToolCall{{CallId: "c1", Capability: "x", ArgumentsJson: "{}"},
 				{CallId: "q1", Capability: "ask_user", ArgumentsJson: `{"question":"q"}`},
 				{CallId: "b1", Capability: "pc__read_file", ArgumentsJson: "{}"}}}}},
@@ -136,10 +138,22 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 	injector := &faults.Injector{}
 	rule, _ := injector.Add(faults.Rule{Kind: faults.ModelDelay, SessionID: e.sid})
 	e.fault = rule.ID
-	e.api = &httpapi.Server{Auth: verifier, Service: svc, Live: live.NewMemBus(), Nodes: dir, Artifacts: arts, Memory: mems, Usage: uses, Faults: injector}
+	e.api = &httpapi.Server{Auth: verifier, Service: svc, Live: live.NewMemBus(), Nodes: dir, Artifacts: arts, Memory: mems, Usage: uses, Faults: injector,
+		Speech: &speech.Service{Sessions: svc, Provider: fakeSpeech{}, IDs: ids.Random()}}
 	e.srv = httptest.NewServer(e.api.Handler())
 	t.Cleanup(e.srv.Close)
 	return e
+}
+
+// fakeSpeech 识别出固定的一句话，合成出一小段静音。
+type fakeSpeech struct{}
+
+func (fakeSpeech) Recognize(context.Context, []byte) (string, time.Duration, error) {
+	return "你好", time.Second, nil
+}
+
+func (fakeSpeech) Synthesize(context.Context, string) ([]byte, int, error) {
+	return make([]byte, 320), 16000, nil
 }
 
 // token 为 principal 签发令牌："demo/u1" 是用户令牌，"demo/" 是服务令牌，"" 表示不带令牌。
@@ -202,6 +216,8 @@ func (e *authzEnv) cases() map[string]routeCase {
 		"POST /v1/sessions/{id}/captures": {"POST", s + "/captures", map[string]any{"capture_id": "cap1",
 			"segments": []map[string]string{{"speaker": "SPEAKER_WEARER", "text": "明天发报价"}}}, http.StatusAccepted},
 		"POST /v1/sessions/{id}/runs/{run}/interrupt":     {"POST", s + "/runs/" + run + "RUN/interrupt", nil, http.StatusNoContent},
+		"POST /v1/sessions/{id}/transcriptions":           {"POST", s + "/transcriptions", "RIFF", http.StatusOK},
+		"POST /v1/sessions/{id}/runs/{run}/speech":        {"POST", s + "/runs/RUN/speech", nil, http.StatusOK},
 		"GET /v1/sessions/{id}/events":                    {"GET", s + "/events", nil, http.StatusOK},
 		"GET /v1/sessions/{id}/stream":                    {"GET", s + "/stream", nil, http.StatusOK},
 		"POST /v1/sessions/{id}/approvals/{call}":         {"POST", s + "/approvals/c1", map[string]bool{"approve": true}, http.StatusConflict},

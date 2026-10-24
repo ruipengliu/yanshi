@@ -10,6 +10,9 @@ models:                                   # 元 / 百万 token（数值等于微
   tokenhub/deepseek-v4.1-flash: {input: 1.0, cached_input: 0.25, output: 4.0}
   # 实时语音模型（Call）：文本与音频分别计价（input_audio / output_audio）。以下为火山引擎公开刊例价。
   volc/1.2.6.1: {input: 10, cached_input: 5, input_audio: 80, output: 80, output_audio: 300}
+  # 按住说话（docs/design/speech.md §4）：识别的 input 是每百万秒、合成的 output 是每百万字（示例值，上线前按合同价填写）。
+  volc/asr-flash: {input: 333, output: 0}
+  volc/seed-tts-2.0: {input: 0, output: 300}
   echo/any: {input: 0, output: 0}         # 离线复述与压测模型不产生费用
   bench/latency=200ms,turns=2,tool=clock_now: {input: 0, output: 0}
   script/any: {input: 0, output: 0}       # 脚本化模型（调试控制台）

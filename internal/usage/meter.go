@@ -52,6 +52,15 @@ func (m *Meter) Call(ctx context.Context, s Scope, id, agent, model string, t Ca
 		OutputTokens: t.OutputText + t.OutputAudio, Cost: m.Prices.CallCost(model, t), At: at})
 }
 
+// Speech 记录一次语音识别（input 为音频秒数）或播报（output 为字数）。id 由调用方生成，每次请求一个。
+func (m *Meter) Speech(ctx context.Context, s Scope, id, agent, model string, input, output uint64, at time.Time) {
+	if m == nil {
+		return
+	}
+	m.record(ctx, s, &Entry{ID: id, BusinessLine: s.BusinessLine, EndUser: s.EndUser, Kind: Speech, Model: model, Agent: agent,
+		InputTokens: input, OutputTokens: output, Cost: m.Prices.ModelCost(model, input, 0, output), At: at})
+}
+
 // Sandbox 记录一次沙箱执行。id 取自调用的 call_id：同一调用被重新投递时不重复计费。
 func (m *Meter) Sandbox(ctx context.Context, s Scope, id string, d time.Duration, at time.Time) {
 	if m == nil {

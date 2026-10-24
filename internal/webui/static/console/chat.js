@@ -237,9 +237,11 @@ export class ChatPanel {
     this.offDev();
     for (const off of this.childOffs.values()) off();
     this.endCall("hangup");
-    // 面板销毁时正在录的语音消息丢弃，并释放麦克风。
+    // 面板销毁时正在录的话丢弃，并释放麦克风；正在读的回复停止。
+    this.disposed = true;
     this.recorder?.stop();
     this.recorder = null;
+    this.stopSpeaking();
     // 切换会话时停止收音：之后识别出的话不能交到另一个 Session。
     if (this.listener) {
       clearInterval(this.listener.timer);
@@ -300,6 +302,7 @@ export class ChatPanel {
       if (this.captureNote && !this.captureNote.parentElement.hidden) this.renderCaptureNote();
     }
     if (pending) this.renderPending();
+    if (committed) this.checkSpeakRun();
     const behind = this.renderDraft(now);
     if (near) this.log.scrollTop = this.log.scrollHeight;
     else if (committed && this.log.scrollHeight > before && this.view.events.length !== this.seen) this.newBtn.hidden = false;
@@ -922,9 +925,15 @@ export class ChatPanel {
     });
     this.micBtn = h(
       "button",
-      { class: "tool voice", type: "button", title: "按住说话：松开发送语音消息（模型直接听）" },
+      { class: "tool voice", type: "button", title: "按住说话：松开后识别成文字发出，回复读给你听" },
       "🎤",
       this.compact ? null : " 按住说话",
+    );
+    this.hushBtn = h(
+      "button",
+      { class: "tool speaking", type: "button", title: "停止播报", hidden: true, onclick: () => this.stopSpeaking() },
+      "🔊",
+      this.compact ? null : " 停止播报",
     );
     this.micBtn.addEventListener("pointerdown", (e) => (e.preventDefault(), this.startVoice()));
     for (const ev of ["pointerup", "pointerleave"]) this.micBtn.addEventListener(ev, () => this.stopVoice());
@@ -956,6 +965,7 @@ export class ChatPanel {
           h("button", { class: "tool", type: "button", title: "附件（图片、音频、文件）", onclick: () => file.click() }, "📎"),
           this.compact ? null : h("button", { class: "tool", type: "button", title: "拍照", onclick: () => camera.click() }, "📷"),
           this.micBtn,
+          this.hushBtn,
           this.compact
             ? null
             : h(
@@ -1362,6 +1372,7 @@ export class ChatPanel {
       const r = await this.device.submitInput(this.view.sessionId, input, { inputId });
       if (this.failed?.key === key) this.failed = null;
       if (r.duplicate) toast("重复提交：按 input_id 去重，没有再次生效");
+      return r;
     } catch (e) {
       this.failed = { key, inputId };
       this.restoreDraft(draft, `发送失败：${e.message}`, "原样再发时沿用同一个 input_id，已生效的不会重复生效");
@@ -1416,10 +1427,13 @@ export class ChatPanel {
     if (r.duplicate) toast("这个动作已经执行过（同一版卡片上的同一动作只生效一次）");
   }
 
-  // —— 语音消息 ——
+  // —— 按住说话（docs/design/speech.md）：录音识别成文字发出，这一轮的回复读出来。模型只看到文字 ——
 
   async startVoice() {
     if (this.recorder) return;
+    // 再次开口就是打断：停止正在读的回复，也不再读还没回来的那一轮。
+    this.stopSpeaking();
+    this.speakRun = "";
     const r = (this.recorder = new Recorder());
     this.micBtn.classList.add("recording");
     try {
@@ -1441,12 +1455,62 @@ export class ChatPanel {
     this.micBtn.classList.remove("recording");
     const { bytes: wav, seconds } = r.stop();
     if (seconds < 0.5) return toast("说话时间太短");
+    const sid = this.view.sessionId;
+    let text;
     try {
-      const block = await this.device.uploadArtifact(this.view.sessionId, `voice-${Date.now()}.wav`, "audio/wav", wav);
-      await this.send([block]);
+      text = await this.device.transcribe(sid, wav);
     } catch (e) {
-      toast(`语音消息发送失败：${e.message}`, "error");
+      return toast(`语音识别失败：${e.message}`, "error");
     }
+    if (!text) return toast("没听清，请再说一次");
+    // 识别期间切换了会话：这句话不能交到另一个 Session。
+    if (this.view.sessionId !== sid || this.disposed) return;
+    const res = await this.send([{ text: { text } }]);
+    if (res?.runId) {
+      this.speakRun = res.runId;
+      this.schedule();
+    }
+  }
+
+  /** 语音发起的那一轮结束时读出回复；在 render 中检查，Run 的终态随事件到达。 */
+  checkSpeakRun() {
+    const run = this.speakRun;
+    if (!run) return;
+    const ended = ["run_completed", "run_failed", "run_interrupted"].find((k) =>
+      this.view.payloads(k).some((p) => p.run_id === run),
+    );
+    if (!ended) return;
+    this.speakRun = "";
+    if (ended === "run_completed") this.speakReply(run);
+  }
+
+  async speakReply(runId) {
+    let blob;
+    try {
+      blob = await this.device.speak(this.view.sessionId, runId);
+    } catch (e) {
+      // 409：这一轮没有文字回复（只调用了工具，或只展示了卡片），不必提示。
+      if (!e.message.startsWith("409")) toast(`播报失败：${e.message}`, "error");
+      return;
+    }
+    // 等待合成期间用户又开口了，或面板已关闭：不再播放。
+    if (this.speakRun || this.recorder || this.disposed) return;
+    this.stopSpeaking();
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    this.speaking = { audio, url };
+    audio.onended = () => this.speaking?.audio === audio && this.stopSpeaking();
+    this.hushBtn.hidden = false;
+    audio.play().catch((e) => (this.stopSpeaking(), toast(`无法播放：${e.message}`, "error")));
+  }
+
+  stopSpeaking() {
+    const s = this.speaking;
+    if (!s) return;
+    this.speaking = null;
+    s.audio.pause();
+    URL.revokeObjectURL(s.url);
+    this.hushBtn.hidden = true;
   }
 
   // —— 通话 ——

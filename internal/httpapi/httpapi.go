@@ -17,6 +17,8 @@
 //	POST /v1/sessions/{id}/inputs                  提交输入（新 Run 或 Steer；带 input_id 可安全重试；内容安全拒绝 422、不可用 503）
 //	POST /v1/sessions/{id}/captures                提交一批旁听转写（不开启 Run；按 capture_id 去重；内容安全不可用 503）
 //	POST /v1/sessions/{id}/runs/{run}/interrupt    中断 Run
+//	POST /v1/sessions/{id}/transcriptions          识别一段录音（请求体为音频）→ {"text"}；不写日志，文字由调用方作为输入提交（docs/design/speech.md）
+//	POST /v1/sessions/{id}/runs/{run}/speech       把 Run 的回复合成为语音（audio/wav）；未配置语音提供商时 501
 //	GET  /v1/sessions/{id}/events?after=N&limit=M  已提交事件（JSON）
 //	GET  /v1/sessions/{id}/stream?after=N          已提交事件 + 实时增量（SSE，支持 Last-Event-ID 续传）
 //	POST /v1/sessions/{id}/approvals/{call}        审批决定 {"approve": bool}
@@ -67,6 +69,7 @@ import (
 	"yanshi/internal/notify"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
+	"yanshi/internal/speech"
 	"yanshi/internal/usage"
 )
 
@@ -90,7 +93,9 @@ type Server struct {
 	// Faults 非 nil 时注册调试接口（/v1/debug/*，serve -faults，ADR-0033）。
 	Faults *faults.Injector
 	// Xinli 非 nil 时提供 GET /v1/debug/xinli（serve -xinli-mock）：模拟的 xinli 业务线中 EndUser 的数据。只用于开发部署。
-	Xinli  func(businessLine, endUser string) any
+	Xinli func(businessLine, endUser string) any
+	// Speech 为 nil 或未配置提供商时，语音识别与播报接口返回 501。
+	Speech *speech.Service
 	Logger *slog.Logger
 }
 
@@ -116,6 +121,8 @@ func (s *Server) routes() map[string]http.HandlerFunc {
 		"POST /v1/sessions/{id}/inputs":                   s.submit,
 		"POST /v1/sessions/{id}/captures":                 s.submitCaptures,
 		"POST /v1/sessions/{id}/runs/{run}/interrupt":     s.interrupt,
+		"POST /v1/sessions/{id}/transcriptions":           s.transcribe,
+		"POST /v1/sessions/{id}/runs/{run}/speech":        s.speak,
 		"GET /v1/sessions/{id}/events":                    s.events,
 		"GET /v1/sessions/{id}/stream":                    s.stream,
 		"POST /v1/sessions/{id}/approvals/{call}":         s.decide,
@@ -281,6 +288,10 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		code = http.StatusRequestEntityTooLarge
 	case errors.Is(err, moderation.ErrRejected):
 		code = http.StatusUnprocessableEntity
+	case errors.Is(err, speech.ErrNotConfigured):
+		code = http.StatusNotImplemented
+	case errors.Is(err, speech.ErrProvider):
+		code = http.StatusBadGateway
 	case errors.Is(err, moderation.ErrUnavailable):
 		code = http.StatusServiceUnavailable
 	case errors.Is(err, service.ErrOverloaded):
@@ -519,6 +530,39 @@ func (s *Server) submitCaptures(w http.ResponseWriter, r *http.Request) {
 		out["duplicate"] = true
 	}
 	writeJSON(w, http.StatusAccepted, out)
+}
+
+func (s *Server) transcribe(w http.ResponseWriter, r *http.Request) {
+	st, ok := s.session(w, r)
+	if !ok {
+		return
+	}
+	audio, err := io.ReadAll(http.MaxBytesReader(w, r.Body, speech.MaxAudioBytes))
+	if err != nil {
+		s.fail(w, fmt.Errorf("%w: audio larger than %d bytes", service.ErrInvalid, speech.MaxAudioBytes))
+		return
+	}
+	text, err := s.Speech.Transcribe(r.Context(), st, audio)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"text": text})
+}
+
+func (s *Server) speak(w http.ResponseWriter, r *http.Request) {
+	st, ok := s.session(w, r)
+	if !ok {
+		return
+	}
+	wav, err := s.Speech.Speak(r.Context(), st, r.PathValue("run"))
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "audio/wav")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(wav)
 }
 
 func (s *Server) interrupt(w http.ResponseWriter, r *http.Request) {

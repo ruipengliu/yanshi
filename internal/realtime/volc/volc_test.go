@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"yanshi/internal/realtime"
+	"yanshi/internal/speech"
 )
 
 // TestLive 对真实服务走一遍：识别 → 函数调用 → 回传结果 → 语音回复 → 用量。消耗少量 token，
@@ -103,6 +104,34 @@ func TestSynthesize(t *testing.T) {
 		t.Fatal(err)
 	}
 	if secs := float64(len(pcm)) / 32000; secs < 0.8 || secs > 5 {
+		t.Fatalf("synthesized %.1fs of audio", secs)
+	}
+}
+
+// TestRecognize 识别一段录音与一段静音，再以 24 kHz 合成（按住说话，docs/design/speech.md；需要 YANSHI_TEST_VOLC）。
+func TestRecognize(t *testing.T) {
+	key := os.Getenv("VOLC_SPEECH_API_KEY")
+	if os.Getenv("YANSHI_TEST_VOLC") == "" || key == "" {
+		t.Skip("YANSHI_TEST_VOLC and VOLC_SPEECH_API_KEY not set")
+	}
+	pcm, err := os.ReadFile("testdata/weather.pcm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sp := &Speech{APIKey: key}
+	ctx := context.Background()
+	text, d, err := sp.Recognize(ctx, speech.WAV(pcm, 16000))
+	if err != nil || !strings.Contains(text, "天气") || d < 2*time.Second {
+		t.Fatalf("recognize = %q (%v), %v", text, d, err)
+	}
+	if text, _, err := sp.Recognize(ctx, speech.WAV(make([]byte, 32000*2), 16000)); err != nil || text != "" {
+		t.Fatalf("recognize silence = %q, %v", text, err)
+	}
+	out, rate, err := sp.Synthesize(ctx, "好的，明早七点叫你起床。")
+	if err != nil || rate != SpeechRate {
+		t.Fatal(err)
+	}
+	if secs := float64(len(out)) / float64(2*rate); secs < 1 || secs > 6 {
 		t.Fatalf("synthesized %.1fs of audio", secs)
 	}
 }

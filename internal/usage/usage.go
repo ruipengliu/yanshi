@@ -24,6 +24,9 @@ const (
 	Sandbox Kind = "sandbox"
 	// Call 是 Call 中实时语音模型的用量（docs/design/m3-call.md §7）。
 	Call Kind = "call"
+	// Speech 是按住说话的语音识别与播报（docs/design/speech.md）：识别的输入"token"是音频秒数，播报的输出"token"
+	// 是字数，价格表按每百万秒、每百万字配置。
+	Speech Kind = "speech"
 )
 
 // Anonymous 是注销后的 EndUser：其用量仍计入业务线合计，但不再留存个人标识。

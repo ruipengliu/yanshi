@@ -88,7 +88,7 @@ var (
 	ModerationDuration  = histogram("moderation_duration_seconds", "内容安全检查耗时。", latency, "stage")
 	ModerationMock      = gauge("moderation_mock", "为 1 表示使用模拟的内容安全提供商（不得用于上线）。")
 	ReleaseReloadErrors = counter("release_reload_errors_total", "发布配置重新加载被拒绝（校验失败，保留原配置）的次数。")
-	QuotaRejections     = counter("quota_rejections_total", "因配额拒绝或挂起；scope = end_user | business_line，where = submit | run | call。", "scope", "where")
+	QuotaRejections     = counter("quota_rejections_total", "因配额拒绝或挂起；scope = end_user | business_line，where = submit | run | call | speech。", "scope", "where")
 	// Call（docs/design/m3-call.md）
 	CallsActive            = gauge("calls_active", "本进程正在中转的 Call。")
 	CallsEnded             = counter("calls_ended_total", "结束的 Call；reason 同 CallEnded.reason。", "reason")

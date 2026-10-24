@@ -14,19 +14,24 @@ import (
 // TTSURL 是豆包语音合成的 HTTP 单向流式接口。
 const TTSURL = "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
 
-// TTSVoice 是评测合成用户语音的默认音色（豆包语音合成模型 2.0）。
+// TTSVoice 是语音合成的默认音色（豆包语音合成模型 2.0）：评测合成用户语音与按住说话的播报都用它。
 const TTSVoice = "zh_female_vv_uranus_bigtts"
 
 // Synthesize 把 text 合成为 PCM 16 位、单声道、16 kHz 的语音。用于评测：以文字写用例，合成为"用户说的话"
 // 送入 Call（docs/design/m3-call.md §9）。与实时语音使用同一个 API Key。
 func Synthesize(ctx context.Context, apiKey, voice, text string) ([]byte, error) {
+	return SynthesizeRate(ctx, apiKey, voice, text, 16000)
+}
+
+// SynthesizeRate 同 Synthesize，采样率为 rate（播报回复用 24 kHz，docs/design/speech.md）。
+func SynthesizeRate(ctx context.Context, apiKey, voice, text string, rate int) ([]byte, error) {
 	if voice == "" {
 		voice = TTSVoice
 	}
 	body, _ := json.Marshal(map[string]any{
-		"user": map[string]any{"uid": "yanshi-eval"},
+		"user": map[string]any{"uid": "yanshi"},
 		"req_params": map[string]any{"text": text, "speaker": voice,
-			"audio_params": map[string]any{"format": "pcm", "sample_rate": 16000}},
+			"audio_params": map[string]any{"format": "pcm", "sample_rate": rate}},
 	})
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()

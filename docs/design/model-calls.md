@@ -42,7 +42,7 @@
 对话与嵌入默认使用火山方舟（`ark`，`ARK_API_KEY`；coding plan 的 `ARK_BASE_URL` 为 `…/api/coding/v3`）。以下行为都用真实请求确认过：
 
 - **思考强度写在模型引用的后缀上**：`ark/doubao-seed-2-1-lite-260915:minimal`。后缀取 `minimal | low | medium | high`，以 `reasoning_effort` 发送（`openaicompat.SplitEffort`）；其他带冒号的模型 ID 原样发送。方舟不接受 `thinking: auto`。默认会先思考，首字延迟明显变长。实测（2026-10-12，同一问题）：`low` 先思考约 27 秒才出正文，思考中途最长停顿 5.7 秒；`minimal` 首字约 0.7 秒。各 Agent 取 `minimal`，以响应速度为先。代价是 `doubao-seed-2-1-lite` 在 `minimal` 下不总按指令用 `show_card` 展示结果（`low` 与 `pro:minimal` 都能），留待其他手段改进。价格表按不带后缀的模型计价。
-- **图片与音频**：用户消息中的图片以 `image_url`（data URL）发送，语音消息以 `input_audio` 发送（格式 wav、mp3、m4a；不支持 webm、ogg，所以控制台录音在浏览器中编码为 16kHz WAV）。二者都由 Worker 从工件内联（单个不超过 4 MB）；语音消息的内容安全检查须覆盖音频本身（`moderation.Request.Audio`）。
+- **图片与音频**：用户消息中的图片以 `image_url`（data URL）发送，语音消息以 `input_audio` 发送（格式 wav、mp3、m4a；不支持 webm、ogg）。控制台的按住说话不用它，而是先识别成文字（[按住说话](./speech.md)）。二者都由 Worker 从工件内联（单个不超过 4 MB）；语音消息的内容安全检查须覆盖音频本身（`moderation.Request.Audio`）。
 - **多模态嵌入**（`doubao-embedding-vision-*`）只提供 `/embeddings/multimodal`：一次请求的全部输入合成一个向量，所以每段文本单独请求（并发 4）。2048 维。Memory 目前只嵌入文本。
 - 流式输出中的思考过程（`reasoning_content`）以单独的增量推送给订阅者，随回复写入 `AssistantMessage.reasoning`（ADR-0034）。它不发回给模型。思考的 token 计入输出用量，另记在 `Usage.reasoning_tokens` 中。
 
