@@ -1,0 +1,17 @@
+name: capture-memory-no-duplicate
+description: >-
+  每日整理会一再遇到用户说过的同一件事：已经记过的偏好不再写第二条（先 memory_search 查，平台也合并几乎相同的表述）。
+agent: xinli-day
+setup:
+  xinli: {}
+  memories:
+    - {category: preference, content: "用户不吃香菜", recorded: "2026-10-20"}
+turns:
+  - captures:
+      - {speaker: other, key: wang, text: 晚上团建吃火锅，要不要给你单点个蘸料？}
+      - {speaker: wearer, text: 行，蘸料里别放香菜，我不吃香菜。}
+      - {speaker: other, key: wang, text: 好嘞，记住了。}
+    input: 整理今天
+    expect:
+      calls: ["mcp_xinli__file_day"]
+      memories: [{contains: "香菜", max: 1}]

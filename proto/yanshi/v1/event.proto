@@ -502,6 +502,9 @@ message CaptureSegment {
   bool redacted = 4;
   // 设备时钟下说这段话的时间，只供展示，不用于排序：顺序以日志为准。
   google.protobuf.Timestamp spoken_at = 5;
+  // time_zone 是说这段话时手机所在的 IANA 时区（如 "Asia/Shanghai"），由 HostApp 填写。与 spoken_at 都有时，整理时显示
+  // 当地的日期与时刻，模型据此按停顿分开不同的对话、把"明天""周五"换算成日期；为空时不显示时间。
+  string time_zone = 6;
 }
 
 enum Speaker {

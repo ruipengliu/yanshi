@@ -1,0 +1,19 @@
+name: capture-relative-date
+description: >-
+  旁听带当地时间时，"明天""下周一"按说话那天的日期换算成具体日期写进待办（captures.md §5）。
+agent: xinli-day
+setup:
+  xinli: {}
+turns:
+  - captures:
+      - {speaker: other, key: zhang, text: 新办公室的装修报价什么时候能给我？, at: "2026-10-23 10:15"}
+      - {speaker: wearer, text: 张总，报价单我明天上午发您。, at: "2026-10-23 10:15"}
+      - {speaker: other, key: zhang, text: 好，下周一我们开会定施工方。, at: "2026-10-23 10:16"}
+      - {speaker: wearer, text: 行，下周一的会我参加。, at: "2026-10-23 10:16"}
+    input: 整理今天
+    expect:
+      calls: ["mcp_xinli__file_day"]
+      judge: >-
+        看 file_day 的参数（旁听发生在 2026-10-23 星期五）：my_todos 中发报价单的期限是否写成了具体日期 10 月 24 日（周六）上午，
+        而不是只写"明天"；下周一的会是否写成 10 月 26 日（在 my_todos、decisions 或 summary 中均可）；报价单是否不在 their_todos 中。
+        全部满足为 5 分；有一个日期只写了相对说法扣两分；日期换算错误（如写成 10 月 23 日或 10 月 25 日）为 1 分。

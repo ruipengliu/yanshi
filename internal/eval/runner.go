@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
@@ -650,6 +651,9 @@ func (in *instance) submitTurn(ctx context.Context, sid string, turn Turn) (stri
 	return res.RunID, nil
 }
 
+// captureZone 是评测中 HostApp 所在的时区：用例的 at 按它解读。
+var captureZone, _ = time.LoadLocation("Asia/Shanghai")
+
 // submitCaptures 以 HostApp 的身份把一批旁听提交到 Session（docs/design/captures.md §3）。
 func (in *instance) submitCaptures(ctx context.Context, sid string, segs []CaptureSegment) error {
 	if len(segs) == 0 {
@@ -658,6 +662,13 @@ func (in *instance) submitCaptures(ctx context.Context, sid string, segs []Captu
 	out := make([]*v1.CaptureSegment, 0, len(segs))
 	for _, g := range segs {
 		seg := &v1.CaptureSegment{Speaker: v1.Speaker_SPEAKER_WEARER, Text: g.Text}
+		if g.At != "" {
+			at, err := time.ParseInLocation(time.DateTime, g.At+":00", captureZone)
+			if err != nil {
+				return fmt.Errorf("capture at %q: %w", g.At, err)
+			}
+			seg.SpokenAt, seg.TimeZone = timestamppb.New(at), captureZone.String()
+		}
 		if g.Speaker == "other" {
 			seg.Speaker, seg.SpeakerKey = v1.Speaker_SPEAKER_OTHER, g.Key
 			if seg.SpeakerKey == "" {
@@ -909,8 +920,14 @@ func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation)
 		add("reply_max_chars", n <= e.ReplyMaxChars, fmt.Sprintf("reply has %d chars", n))
 	}
 	for _, m := range e.Memories {
-		ok := slices.ContainsFunc(o.memories, func(x *memory.Memory) bool { return memoryMatches(x, m) })
-		add(fmt.Sprintf("memory %s %q", m.Category, m.Contains), ok, fmt.Sprintf("%d memories", len(o.memories)))
+		n := 0
+		for _, x := range o.memories {
+			if memoryMatches(x, m) {
+				n++
+			}
+		}
+		add(fmt.Sprintf("memory %s %q", m.Category, m.Contains), n > 0 && (m.Max == 0 || n <= m.Max),
+			fmt.Sprintf("%d of %d memories match", n, len(o.memories)))
 	}
 	for _, m := range e.NoMemories {
 		ok := !slices.ContainsFunc(o.memories, func(x *memory.Memory) bool { return memoryMatches(x, m) })

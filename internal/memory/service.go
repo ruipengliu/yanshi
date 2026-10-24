@@ -110,7 +110,8 @@ type SaveRequest struct {
 	At time.Time
 }
 
-// Save 写入一条 Memory。ID 由调用 ID 派生，因此同一调用重复执行是幂等的。
+// Save 写入一条 Memory。ID 由调用 ID 派生，因此同一调用重复执行是幂等的。已有几乎相同的一条时不再写入，返回已有的那条
+// （ID 与本次调用派生的不同）；有 Replaces 时仍删除被替换的那条。
 func (s *Service) Save(ctx context.Context, r SaveRequest) (*Memory, error) {
 	content := strings.TrimSpace(r.Content)
 	switch {
@@ -143,6 +144,16 @@ func (s *Service) Save(ctx context.Context, r SaveRequest) (*Memory, error) {
 			return nil, fmt.Errorf("%w: memory %s is %s, not %s; use memory_forget and memory_save to move it", ErrRejected, r.Replaces, m.Category, r.Category)
 		}
 		old = m
+	}
+	// 已有几乎相同的一条：不再写入。替换时只删除被替换的那条（"把 X 换成已经记着的 C"就是去掉 X）。
+	if d, err := s.duplicate(ctx, r, content, old); err != nil || d != nil {
+		if err == nil && old != nil {
+			err = s.Store.Delete(ctx, old.ID)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return d, nil
 	}
 	if old == nil {
 		n, err := s.Store.Count(ctx, r.BusinessLine, r.EndUser)
@@ -187,6 +198,59 @@ func (s *Service) Save(ctx context.Context, r SaveRequest) (*Memory, error) {
 		}
 	}
 	return m, nil
+}
+
+// DuplicateSimilarity 是视为同一条事实的文本相似度下限：只合并几乎相同的表述（标点、空白、个别字的差别）。
+const DuplicateSimilarity = 0.85
+
+var literalRE = regexp.MustCompile(`[A-Za-z0-9@._%+-]+`)
+
+// literals 返回内容中的字母数字串（号码、邮箱、链接的片段），排序去重。
+func literals(s string) []string {
+	out := literalRE.FindAllString(strings.ToLower(s), -1)
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// duplicate 返回同一 EndUser 与业务线中与 content 几乎相同的已有 Memory（被替换的 old 除外）。每日整理会一再写下同一个
+// 事实（用户每次提到都写一条），重复的条目既占满上限，也让召回被同一件事挤占；写入方得到已有的那条，不再新写。
+// 不限于同一类别：同一句话归到另一个类别（"不吃香菜"写成 health）也是重复。号码、邮箱等字母数字串须完全相同：只差
+// 一位号码的是更新，不是重复。
+func (s *Service) duplicate(ctx context.Context, r SaveRequest, content string, old *Memory) (*Memory, error) {
+	var cats []Category
+	if !s.healthAllowed(r.BusinessLine) {
+		cats = withoutHealth(nil)
+	}
+	all, err := s.Store.List(ctx, r.EndUser, []Scope{{BusinessLine: r.BusinessLine, Categories: cats}}, s.max())
+	if err != nil {
+		return nil, err
+	}
+	lit := literals(content)
+	for _, m := range all {
+		if old != nil && m.ID == old.ID {
+			continue
+		}
+		if TextSimilarity(content, m.Content) >= DuplicateSimilarity && slices.Equal(literals(m.Content), lit) {
+			return m, nil
+		}
+	}
+	return nil, nil
+}
+
+// Related 返回与 m 同一 EndUser、业务线与类别的其他 Memory，按文本相似度排序，至多 limit 条。写入之后把它们交给写入方：
+// 新的事实可能取代了其中一条（搬家、换工作），写入方没有先查时，这是它看到旧记忆的唯一机会。
+func (s *Service) Related(ctx context.Context, m *Memory, limit int) ([]Hit, error) {
+	all, err := s.Store.List(ctx, m.EndUser, []Scope{{BusinessLine: m.BusinessLine, Categories: []Category{m.Category}}}, s.max())
+	if err != nil {
+		return nil, err
+	}
+	hits := make([]Hit, 0, len(all))
+	for _, x := range all {
+		if x.ID != m.ID {
+			hits = append(hits, Hit{Memory: x, Score: TextSimilarity(m.Content, x.Content)})
+		}
+	}
+	return rank(hits, limit), nil
 }
 
 // Forget 删除 EndUser 在业务线中的一条 Memory；只能删除本业务线的。

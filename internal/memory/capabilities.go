@@ -24,6 +24,9 @@ func categoryHelp() (enum, help string) {
 	return strings.Join(names, ","), strings.Join(lines, "；")
 }
 
+// relatedLimit 是 memory_save 写入后列出的同类别已有记忆的条数。
+const relatedLimit = 5
+
 // Capabilities 返回 Agent 读写 Memory 的进程内能力（docs/design/m4-memory-grant.md §3）。
 // 三者都是幂等的：memory_save 的 Memory ID 由调用 ID 派生，重复执行不会写入两条。
 func Capabilities(s *Service) []capability.Capability {
@@ -55,7 +58,28 @@ func Capabilities(s *Service) []capability.Capability {
 				if err != nil {
 					return nil, err
 				}
-				return text("已记住（" + m.ID + "）"), nil
+				if m.ID != "mem_"+inv.CallID {
+					if in.Replaces != "" {
+						return text("已删除 " + in.Replaces + "；" + m.Content + " 已经记着（" + m.ID + "）"), nil
+					}
+					return text("已有相同的记忆（" + m.ID + "）：" + m.Content + "。没有重复写入"), nil
+				}
+				var b strings.Builder
+				b.WriteString("已记住（" + m.ID + "）")
+				if in.Replaces == "" {
+					related, err := s.Related(ctx, m, relatedLimit)
+					if err != nil {
+						return nil, err
+					}
+					if len(related) > 0 {
+						fmt.Fprintf(&b, "。同类别（%s）中已有：\n", m.Category)
+						for _, h := range related {
+							fmt.Fprintf(&b, "- %s（%s）\n", h.Content, h.ID)
+						}
+						b.WriteString("如果刚记住的这条取代了其中某条（例如搬了家、换了工作、改了计划），再调用一次 memory_save：content 不变，replaces 填旧的那条的 ID。")
+					}
+				}
+				return text(b.String()), nil
 			},
 		},
 		capability.Func{

@@ -3867,7 +3867,10 @@ type CaptureSegment struct {
 	Text     string `protobuf:"bytes,3,opt,name=text,proto3" json:"text,omitempty"`
 	Redacted bool   `protobuf:"varint,4,opt,name=redacted,proto3" json:"redacted,omitempty"`
 	// 设备时钟下说这段话的时间，只供展示，不用于排序：顺序以日志为准。
-	SpokenAt      *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=spoken_at,json=spokenAt,proto3" json:"spoken_at,omitempty"`
+	SpokenAt *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=spoken_at,json=spokenAt,proto3" json:"spoken_at,omitempty"`
+	// time_zone 是说这段话时手机所在的 IANA 时区（如 "Asia/Shanghai"），由 HostApp 填写。与 spoken_at 都有时，整理时显示
+	// 当地的日期与时刻，模型据此按停顿分开不同的对话、把"明天""周五"换算成日期；为空时不显示时间。
+	TimeZone      string `protobuf:"bytes,6,opt,name=time_zone,json=timeZone,proto3" json:"time_zone,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3935,6 +3938,13 @@ func (x *CaptureSegment) GetSpokenAt() *timestamppb.Timestamp {
 		return x.SpokenAt
 	}
 	return nil
+}
+
+func (x *CaptureSegment) GetTimeZone() string {
+	if x != nil {
+		return x.TimeZone
+	}
+	return ""
 }
 
 // CallEnded 表示 Call 结束。
@@ -4281,14 +4291,15 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\x0fCaptureAppended\x12\x1d\n" +
 	"\n" +
 	"capture_id\x18\x01 \x01(\tR\tcaptureId\x125\n" +
-	"\bsegments\x18\x02 \x03(\v2\x19.yanshi.v1.CaptureSegmentR\bsegments\"\xc8\x01\n" +
+	"\bsegments\x18\x02 \x03(\v2\x19.yanshi.v1.CaptureSegmentR\bsegments\"\xe5\x01\n" +
 	"\x0eCaptureSegment\x12,\n" +
 	"\aspeaker\x18\x01 \x01(\x0e2\x12.yanshi.v1.SpeakerR\aspeaker\x12\x1f\n" +
 	"\vspeaker_key\x18\x02 \x01(\tR\n" +
 	"speakerKey\x12\x12\n" +
 	"\x04text\x18\x03 \x01(\tR\x04text\x12\x1a\n" +
 	"\bredacted\x18\x04 \x01(\bR\bredacted\x127\n" +
-	"\tspoken_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bspokenAt\"<\n" +
+	"\tspoken_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bspokenAt\x12\x1b\n" +
+	"\ttime_zone\x18\x06 \x01(\tR\btimeZone\"<\n" +
 	"\tCallEnded\x12\x17\n" +
 	"\acall_id\x18\x01 \x01(\tR\x06callId\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason*I\n" +

@@ -43,6 +43,7 @@ turns:
     crash_after_calls: 0      # >0：Run 发起这么多次调用后"杀掉"执行它的 Worker，检验接管（长 Run 用例）
     captures:                 # 本轮输入之前由 HostApp 提交到本轮 Session 的一批旁听
       - {speaker: other, key: wang, text: "…"}   # speaker: wearer（佩戴者）| other（他人，key 区分不同的人）
+      - {speaker: wearer, text: "…", at: "2026-10-23 10:15"}   # at：当地时间（Asia/Shanghai），省略时不带时间
     expect:
       status: completed
       calls: ["macbook__read_file"]        # 必须出现的调用（glob）
@@ -50,7 +51,7 @@ turns:
       approvals: {min: 1}                   # 审批次数的范围
       reply_contains: ["周五"]
       reply_max_chars: 400
-      memories: [{category: relationship, contains: "张三"}]   # 本轮结束后应存在的 Memory
+      memories: [{category: relationship, contains: "张三"}, {contains: "香菜", max: 1}]   # 本轮结束后应存在的 Memory；max：至多几条
       no_memories: [{contains: "1101"}, {category: "!health", contains: "焦虑"}]   # 不应存在的 Memory；"!" 表示其他类别
       call_args: {"*send_message": "lilei@example.com"}        # 某个名称匹配的调用的参数须包含
       no_call_args: {"mcp_xinli__set_commitments": "合同"}     # 名称匹配的调用的参数都不得包含
@@ -227,3 +228,9 @@ turns:
 闸门的判断方式没有为此放宽（ADR-0023）：失败的结果是多一次用户审批，属于安全的一侧，修正只在指令上做。
 
 `file_day` 扩成今日、项目、觉察三部分之后（新增 `capture-day-digest`，评分模型判断各部分）出现过两个问题，都已修正：模拟服务在当天没有分组（只有闲聊）时返回空文字，模型以为没交上、一再重交，`capture-memory-wearer-grounded` 一次运行因此超过轮数上限，现在总是返回确认；觉察要求"不写情绪"后，模型一度连 health 的 Memory 也不写了（`capture-health-category` 2/3），指令改为写明情绪"不写进 file_day，用 memory_save 以类别 health 记住"后 6/6。
+
+### 记忆读回与时间（2026-10-24）
+
+新增 `capture-memory-no-duplicate`、`capture-memory-update`、`capture-relative-date`、`capture-assistant-recall`（captures.md §11）。起初只靠指令（"先 memory_search，变了用 replaces"）：`capture-memory-update` 0/3 到 4/6，`capture-memory-no-duplicate` 5/6。看日志，模型三次中有一两次不查就写，查到了旧记忆也不填 `replaces`，还有一次把"不吃香菜"归成 `health`，绕过了同类别的去重。改为平台兜底后两者都 6/6：去重不限类别，`memory_save` 写入后列出同类别的已有记忆（m4-memory-grant.md §3）。`capture-relative-date` 起初 1/3：日期行只有"2026-10-23 星期五"时，模型两次把"下周一"写成 27 日；日期行加上之后七天的日期与星期后 6/6。
+
+这次改动之后 `memory-*` 与 `multi-turn-memory-chat` 没有回归。`memory-recall-new-session` 有一轮 1/3、一轮 2/3，但这个用例中模型看到的输入与改动前逐字相同（工具结果都是"已记住（id）"，召回也正确），失败是模型改用 `ask_user` 反问，再跑 6 次 6/6。`capture-project-grouping` 在更新基线的那一轮是 2/3（第二天把装修新建成了另一个项目，即项目归集没有置信度的老问题），当天累计 17/18，基线保留原来的 3/3。

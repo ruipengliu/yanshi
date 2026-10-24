@@ -80,6 +80,8 @@ type CaptureSegment struct {
 	Speaker string `yaml:"speaker"`
 	Key     string `yaml:"key"`
 	Text    string `yaml:"text"`
+	// At 是说这段话的当地时间（"2026-10-23 09:42"，Asia/Shanghai）；为空时不带时间，整理时也不显示。
+	At string `yaml:"at"`
 }
 
 // DeviceSetup 是虚拟设备：只读的文件、需审批的写文件与发消息。
@@ -157,6 +159,8 @@ type MemoryMatch struct {
 	// Without 非空时，包含它的记忆不算匹配。例如更正后旧地址可以作为历史出现在新记忆里，
 	// 但不应有只含旧地址的记忆：{contains: 旧, without: 新}。
 	Without string `yaml:"without"`
+	// Max 非零时（只用于 memories），匹配的记忆至多这么多条：同一事实不应一再写入。
+	Max int `yaml:"max"`
 }
 
 // Expect 是一轮的断言；未写的字段不检查。
@@ -226,6 +230,9 @@ func LoadSuite(dir string) ([]*Case, error) {
 			for _, g := range t.Captures {
 				if g.Speaker != "wearer" && g.Speaker != "other" {
 					return nil, fmt.Errorf("%s: turn %d: capture speaker %q must be wearer or other", f, i+1, g.Speaker)
+				}
+				if _, err := time.Parse(time.DateTime, g.At+":00"); g.At != "" && err != nil {
+					return nil, fmt.Errorf("%s: turn %d: capture at %q must be YYYY-MM-DD HH:MM", f, i+1, g.At)
 				}
 			}
 		}

@@ -9,6 +9,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/model"
 	"yanshi/internal/moderation"
 	"yanshi/internal/session"
 )
@@ -32,6 +33,12 @@ func (s *Service) SubmitCaptures(ctx context.Context, sessionID, captureID strin
 		// 拦截只由平台判断：客户端自报的占位会让一段话无从检查地消失，也会被当作内容安全的结果展示。
 		if g.GetRedacted() {
 			return nil, fmt.Errorf("%w: redacted is set by the platform", ErrInvalid)
+		}
+		// 时区写错时整理会显示错误的日期与时刻：拒绝，而不是悄悄不显示。
+		if z := g.GetTimeZone(); z != "" {
+			if _, ok := model.CaptureZone(z); !ok {
+				return nil, fmt.Errorf("%w: time_zone %q is not an IANA time zone", ErrInvalid, z)
+			}
 		}
 	}
 	m := &v1.CaptureAppended{CaptureId: captureID, Segments: segments}

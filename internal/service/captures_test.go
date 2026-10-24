@@ -104,6 +104,8 @@ func TestSubmitCapturesInvalid(t *testing.T) {
 		"no segments":       {e.sid, "c", nil, service.ErrInvalid},
 		"client redacted":   {e.sid, "c", []*v1.CaptureSegment{redacted}, service.ErrInvalid},
 		"no speaker":        {e.sid, "c", []*v1.CaptureSegment{{Text: "x"}}, service.ErrInvalid},
+		"bad time zone":     {e.sid, "c", []*v1.CaptureSegment{{Speaker: v1.Speaker_SPEAKER_WEARER, Text: "x", TimeZone: "China/Beijing"}}, service.ErrInvalid},
+		"server time zone":  {e.sid, "c", []*v1.CaptureSegment{{Speaker: v1.Speaker_SPEAKER_WEARER, Text: "x", TimeZone: "Local"}}, service.ErrInvalid},
 		"agent not capture": {e.plain, "c", []*v1.CaptureSegment{wearerSeg("x")}, service.ErrInvalid},
 		"unknown session":   {"ses_none", "c", []*v1.CaptureSegment{wearerSeg("x")}, service.ErrNotFound},
 	}

@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
+	"time"
+	_ "time/tzdata" // 旁听的时区由 HostApp 给出，不依赖服务器上的时区数据库
 	"unicode/utf8"
 
 	v1 "yanshi/gen/yanshi/v1"
@@ -220,18 +223,53 @@ func BackgroundCancelledText(c *v1.BackgroundCancelled) string {
 	return fmt.Sprintf("[后台调用已取消] 用户取消了之前因设备离线转入后台的调用 %s（调用 ID %s），它不会再执行。", c.GetCapability(), c.GetCallId())
 }
 
-// CaptureText 把一段旁听转写呈现为给模型看的一行（docs/design/captures.md §5）：前缀注明说话人，佩戴者是用户本人。
+// CaptureText 把一段旁听转写呈现为给模型看的一行（docs/design/captures.md §5）：前缀注明当地时刻与说话人，佩戴者是用户本人。
 // 换行替换为空格，使一段话不能在文本上冒充另一行、另一个说话人（闸门与注入判断按结构化的说话人字段判断，不受影响）。
-// 不显示时间：spoken_at 是设备时钟下的绝对时间，不知道用户所在的时区，显示出来反而会误导。
+// 没有时区时不显示时间：spoken_at 是设备时钟下的绝对时间，不知道用户所在的时区，显示出来反而会误导。
 func CaptureText(g *v1.CaptureSegment) string {
 	who := "佩戴者"
 	if g.GetSpeaker() == v1.Speaker_SPEAKER_OTHER {
 		who = "他人 " + g.GetSpeakerKey()
 	}
-	if g.GetRedacted() {
-		return "[" + who + "]（这段话未通过内容安全检查，已拦截）\n"
+	at := ""
+	if t, ok := CaptureLocalTime(g); ok {
+		at = t.Format("15:04") + " "
 	}
-	return "[" + who + "] " + strings.NewReplacer("\r", " ", "\n", " ").Replace(g.GetText()) + "\n"
+	if g.GetRedacted() {
+		return at + "[" + who + "]（这段话未通过内容安全检查，已拦截）\n"
+	}
+	return at + "[" + who + "] " + strings.NewReplacer("\r", " ", "\n", " ").Replace(g.GetText()) + "\n"
+}
+
+// zones 缓存已加载的时区：一页旁听有上百段，每段都解析时区数据库没有必要。
+var zones sync.Map
+
+// CaptureZone 加载 HostApp 填写的时区。空、"Local"（服务端所在的时区，与用户无关）与无法识别的名称都不算。
+func CaptureZone(name string) (*time.Location, bool) {
+	if name == "" || name == "Local" || len(name) > 64 {
+		return nil, false
+	}
+	if l, ok := zones.Load(name); ok {
+		return l.(*time.Location), true
+	}
+	l, err := time.LoadLocation(name)
+	if err != nil {
+		return nil, false
+	}
+	zones.Store(name, l)
+	return l, true
+}
+
+// CaptureLocalTime 返回一段旁听在说话人所在时区的当地时间；没有 spoken_at 或时区时 ok 为 false。
+func CaptureLocalTime(g *v1.CaptureSegment) (time.Time, bool) {
+	if g.GetSpokenAt() == nil {
+		return time.Time{}, false
+	}
+	l, ok := CaptureZone(g.GetTimeZone())
+	if !ok {
+		return time.Time{}, false
+	}
+	return g.GetSpokenAt().AsTime().In(l), true
 }
 
 // ExpandCaptures 把内容中的旁听片段展开为文本（提供商、估算与压缩摘要因此只见到文本与媒体）；没有旁听片段时原样返回。

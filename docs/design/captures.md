@@ -55,6 +55,7 @@ message CaptureSegment {
   string text = 3;                     // 未通过内容安全时为空
   bool redacted = 4;                   // 未通过内容安全，只留占位
   google.protobuf.Timestamp spoken_at = 5;  // 设备时钟，仅供展示，不用于排序
+  string time_zone = 6;                // 手机所在的 IANA 时区，如 "Asia/Shanghai"；为空时整理时不显示时间
 }
 
 enum Speaker {
@@ -87,7 +88,7 @@ enum Speaker {
 
 不做准入与配额检查：它们只约束新 Run（`service.go` 中 `st.Active() == nil` 的分支），Capture 不调用模型。
 
-上限：每批至多 200 段，每段至多 2000 字，`capture_id` 至多 128 字节（与 `MaxInputIDLen` 一致）。
+上限：每批至多 200 段，每段至多 2000 字，`capture_id` 至多 128 字节（与 `MaxInputIDLen` 一致）。`time_zone` 不是 IANA 时区名（或是 `Local`）时返回 invalid：写错的时区会让整理显示错误的日期。
 
 ### 内容安全（ADR-0021）
 
@@ -115,7 +116,8 @@ Capture 与输入一样更新索引中的 `LastInputAt`（受 `TouchEvery` 节�
 - 输入：`{after?: 位置，第一页为 0, limit?: 段数，默认 200、至多 500}`。
 - 读取：从日志中 `after` 之后读起，跳过 Run 的事件；一批总是整批读入（下一页的位置是事件序号，不能停在一批中间），一页至多 `limit` 段、约 6000 字符（`capture.MaxChars`），只有第一批就超出时也读入它。读取旁听的 AgentDef 的 `max_tool_result` 须容得下一页，否则会被截断。
 - 输出：每段话是一个旁听片段（`ContentBlock` 的 `capture`，平台从日志读出写入），最后一个文字块注明本页段数与下一页的 `after`，或"已读完"。
-- 给模型看的文本（`model.CaptureText`）：每段一行，形如 `[佩戴者] 明天我把报价发给张三` 与 `[他人 other-1] 好的，周五之前`；拦截的片段显示为 `[他人 other-1]（这段话未通过内容安全检查，已拦截）`。片段中的换行替换为空格，一段话不能在文本上冒充另一行；`speaker_key` 只能是 `[A-Za-z0-9_-]{1,32}`。不显示时间：`spoken_at` 是设备时钟下的绝对时间，不知道用户所在的时区，显示出来反而会误导。
+- 给模型看的文本（`model.CaptureText`）：每段一行，形如 `10:15 [佩戴者] 明天我把报价发给张三` 与 `10:16 [他人 other-1] 好的，周五之前`；拦截的片段显示为 `[他人 other-1]（这段话未通过内容安全检查，已拦截）`。片段中的换行替换为空格，一段话不能在文本上冒充另一行；`speaker_key` 只能是 `[A-Za-z0-9_-]{1,32}`。
+- 时间：片段有 `spoken_at` 与 `time_zone` 时，行首是当地时刻，本页第一段与当地日期变化处另起一行 `—— 2026-10-23 星期五（当地时间）——`。模型据此把相隔较久的话分成不同的对话，把"明天""下周一"换算成日期（每晚整理的输入只是"整理今天"，不带日期）。没有时区的片段不显示时间：`spoken_at` 是绝对时间，不知道时区时显示出来反而会误导。时区数据库编进二进制（`time/tzdata`），不依赖服务器。
 - 旁听片段只能出现在 `captures` 的结果中，且只由 Worker 写入：用户输入、其他调用的结果、设备的外部结果中出现时 `Apply` 拒绝（与 `show_card` 的卡片相同，ADR-0032）。片段在 Transcript、估算与压缩摘要中展开为文本（`model.ExpandCaptures`），提供商不会见到它；截断按片段进行，不会切开一段话。
 - 工具名不含 `__`，闸门与注入判断按片段的说话人字段判断（§7），而不是解析文本中的前缀。
 - 结果写入 `ToolResult` 后，重放时使用记录下来的结果，与其他调用一样。
@@ -126,10 +128,11 @@ Capture 与输入一样更新索引中的 `LastInputAt`（受 `TouchEvery` 节�
 
 | AgentDef | Session | 能力白名单 |
 |---|---|---|
-| `xinli-day`（`captures: true`） | 每个 EndUser 当地每天一个 | `captures`、`memory_save`、`mcp_xinli__list_projects`、`mcp_xinli__file_day` |
+| `xinli-day`（`captures: true`） | 每个 EndUser 当地每天一个 | `captures`、`memory_save`、`memory_search`、`mcp_xinli__list_projects`、`mcp_xinli__file_day` |
 | `xinli-project` | 每个项目一个，长期 | `mcp_xinli__day_summary`、`mcp_xinli__set_commitments`、`show_card` |
-| `xinli-assistant` | 每个 EndUser 一个，长期 | `mcp_xinli__list_projects`、`mcp_xinli__project_digest`、`mcp_xinli__recent_days`、`memory_save`、`ask_user`、`show_card` |
+| `xinli-assistant`（召回 8 条 Memory） | 每个 EndUser 一个，长期 | `mcp_xinli__list_projects`、`mcp_xinli__project_digest`、`mcp_xinli__recent_days`、`memory_save`、`memory_search`、`memory_forget`、`ask_user`、`show_card` |
 
+- Memory 要能读回来：每晚整理写下的偏好与人际关系，由助手在每个 Run 开始时召回（`memory.recall`），回答时用上。`xinli-day` 不召回（它的输入总是"整理今天"，按它检索没有意义），写入之前用 `memory_search` 查已有的记忆：记过的不再记，变了的用 `replaces` 替换。平台另外合并几乎相同的表述（[Memory 设计](./m4-memory-grant.md) §3），每天提到一次的事实不会每天多一条。
 - 三个 AgentDef 的白名单都不含高风险 Capability。`xinli-day` 只能读 Capture、写 Memory、查已有项目、把结果交给业务线。它需要 `list_projects` 才能在 `file_day` 中填已有项目的 ID；项目列表同样是拉取的（ADR-0037）。
 - 定义在 `agents/xinli-day.yaml`、`agents/xinli-project.yaml`、`agents/xinli-assistant.yaml`。
 - `mcp_xinli__day_summary`、`list_projects`、`project_digest`、`recent_days` 在 MCP 登记中声明只读。`file_day` 与 `set_commitments` 由业务线在登记中以 `no_approval` 放宽（ADR-0017）：它们只把结果交给业务线自己。
@@ -235,6 +238,10 @@ Session 已在按保留期删除（对外已不可见）时，用户再删除它
 - `capture-day-digest`：`file_day` 的今日总览、定下的事、双方各自的待办、风险与觉察（评分模型判断）；他人索要而佩戴者没有答应的事不算待办，觉察不写情绪。
 - `capture-health-category`：情绪推断只写入 `health`，不改写到其他类别。
 - `capture-health-disabled`：业务线未开启健康信息（`setup.no_health`）时不写入任何类别。
+- `capture-memory-no-duplicate`：已经记过的偏好再次被提到时不写第二条。
+- `capture-memory-update`：佩戴者说出的新事实替换旧记忆，不让新旧两条并存。
+- `capture-relative-date`：旁听带当地时间时，"明天""下周一"写成具体日期。
+- `capture-assistant-recall`：助手回答关于用户本人的问题时用上召回的 Memory。
 
 ## 12. 未做
 

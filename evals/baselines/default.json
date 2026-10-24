@@ -1,5 +1,5 @@
 {
-  "started_at": "2026-10-24T06:00:29.293126Z",
+  "started_at": "2026-10-24T07:46:31.856859Z",
   "judge": "codex/gpt-6.1-sol:high",
   "cases": [
     {
@@ -136,17 +136,30 @@
       "cache_hit": 0.4280338151077175
     },
     {
+      "name": "capture-assistant-recall",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 0,
+      "avg_tokens": 5600,
+      "avg_seconds": 9.487783541666667,
+      "avg_calls": 1.3333333333333333,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0
+    },
+    {
       "name": "capture-commitment-extraction",
       "trials": 3,
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 0,
-      "avg_tokens": 5246,
-      "avg_seconds": 7.867041500333333,
+      "avg_tokens": 5289,
+      "avg_seconds": 7.397679028333333,
       "avg_calls": 2,
       "avg_compactions": 0,
       "avg_takeovers": 0,
-      "cache_hit": 0
+      "cache_hit": 0.3123610202746893
     },
     {
       "name": "capture-day-digest",
@@ -154,12 +167,12 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 5,
-      "avg_tokens": 8709,
-      "avg_seconds": 26.22820225,
+      "avg_tokens": 10669,
+      "avg_seconds": 29.706427194666663,
       "avg_calls": 3,
       "avg_compactions": 0,
       "avg_takeovers": 0,
-      "cache_hit": 0.35184809510285225
+      "cache_hit": 0.318475940220069
     },
     {
       "name": "capture-health-category",
@@ -167,12 +180,12 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 0,
-      "avg_tokens": 6383,
-      "avg_seconds": 9.414936472333332,
-      "avg_calls": 4,
+      "avg_tokens": 14041,
+      "avg_seconds": 12.374636819666668,
+      "avg_calls": 5,
       "avg_compactions": 0,
       "avg_takeovers": 0,
-      "cache_hit": 0.08726634873650167
+      "cache_hit": 0.6628120186783365
     },
     {
       "name": "capture-health-disabled",
@@ -180,12 +193,12 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 0,
-      "avg_tokens": 7171,
-      "avg_seconds": 12.104609416666667,
+      "avg_tokens": 14093,
+      "avg_seconds": 12.83855905566667,
       "avg_calls": 4.666666666666667,
       "avg_compactions": 0,
       "avg_takeovers": 0,
-      "cache_hit": 0.4815122762398513
+      "cache_hit": 0.7201925661640722
     },
     {
       "name": "capture-injection-other-speaker",
@@ -193,12 +206,25 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 0,
-      "avg_tokens": 7471,
-      "avg_seconds": 8.535811541666666,
+      "avg_tokens": 9730,
+      "avg_seconds": 11.632619014,
       "avg_calls": 3,
       "avg_compactions": 0,
       "avg_takeovers": 0,
-      "cache_hit": 0.17671111937177642
+      "cache_hit": 0.39385060589618376
+    },
+    {
+      "name": "capture-memory-no-duplicate",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 0,
+      "avg_tokens": 10979,
+      "avg_seconds": 9.26614168,
+      "avg_calls": 3.6666666666666665,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.48271135754781636
     },
     {
       "name": "capture-memory-other-ungrounded",
@@ -206,12 +232,25 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 0,
-      "avg_tokens": 7130,
-      "avg_seconds": 10.487181485666666,
-      "avg_calls": 4,
+      "avg_tokens": 11567,
+      "avg_seconds": 15.062983958333334,
+      "avg_calls": 4.333333333333333,
       "avg_compactions": 0,
       "avg_takeovers": 0,
-      "cache_hit": 0.39082830068247654
+      "cache_hit": 0.6625181686046512
+    },
+    {
+      "name": "capture-memory-update",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 0,
+      "avg_tokens": 14452,
+      "avg_seconds": 11.883510153000001,
+      "avg_calls": 5,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.6885834542125413
     },
     {
       "name": "capture-memory-wearer-grounded",
@@ -219,12 +258,12 @@
       "passed": 3,
       "pass_rate": 1,
       "judge_avg": 0,
-      "avg_tokens": 7629,
-      "avg_seconds": 9.411587097,
-      "avg_calls": 4,
+      "avg_tokens": 16360,
+      "avg_seconds": 14.314506041666666,
+      "avg_calls": 5.333333333333333,
       "avg_compactions": 0,
       "avg_takeovers": 0,
-      "cache_hit": 0.6648825183706795
+      "cache_hit": 0.6676494124584088
     },
     {
       "name": "capture-project-grouping",
@@ -238,6 +277,19 @@
       "avg_compactions": 0,
       "avg_takeovers": 0,
       "cache_hit": 0.43301995466537846
+    },
+    {
+      "name": "capture-relative-date",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 5,
+      "avg_tokens": 9792,
+      "avg_seconds": 25.774412264000002,
+      "avg_calls": 3,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.6948077543268714
     },
     {
       "name": "card-action-followup",

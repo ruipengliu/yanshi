@@ -96,6 +96,51 @@ func TestLimitAndReplace(t *testing.T) {
 	}
 }
 
+// 几乎相同的一条（不论类别）不再写入，返回已有的那条；号码不同、意思相反的照常写入。替换为已经记着的内容时只删除被替换的。
+func TestSaveSkipsDuplicates(t *testing.T) {
+	ctx := context.Background()
+	s, st := newService(clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
+	s.MaxPerUser = 100
+	save := func(call string, cat memory.Category, content string) string {
+		t.Helper()
+		m, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "a", EndUser: "u", CallID: call, Category: cat, Content: content})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m.ID
+	}
+	save("c1", memory.Preference, "用户不吃香菜")
+	save("c2", memory.Relationship, "张三的电话是 13800138000")
+	for call, c := range map[string]struct {
+		cat     memory.Category
+		content string
+		want    string
+	}{
+		"same":     {memory.Preference, "用户不吃香菜。", "mem_c1"},
+		"other":    {memory.Plan, "用户不吃香菜", "mem_c1"},
+		"opposite": {memory.Preference, "用户吃香菜", "mem_opposite"},
+		"number":   {memory.Relationship, "张三的电话是 13800138001", "mem_number"},
+	} {
+		if got := save(call, c.cat, c.content); got != c.want {
+			t.Errorf("%s: saved as %s, want %s", call, got, c.want)
+		}
+	}
+	// 先写了新的，再"把旧的换成它"：不再写第三条，旧的删除。
+	save("old", memory.Profile, "用户常住北京")
+	save("new", memory.Profile, "用户搬到上海了")
+	related, err := s.Related(ctx, &memory.Memory{ID: "mem_new", BusinessLine: "a", EndUser: "u", Category: memory.Profile, Content: "用户搬到上海了"}, 5)
+	if err != nil || len(related) != 1 || related[0].ID != "mem_old" {
+		t.Fatalf("related = %v, %v", related, err)
+	}
+	m, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "a", EndUser: "u", CallID: "again", Category: memory.Profile, Content: "用户搬到上海了", Replaces: "mem_old"})
+	if err != nil || m.ID != "mem_new" {
+		t.Fatalf("replace with an existing fact = %v, %v", m, err)
+	}
+	if _, err := st.Get(ctx, "mem_old"); !errors.Is(err, memory.ErrNotFound) {
+		t.Fatalf("replaced memory still present: %v", err)
+	}
+}
+
 func TestSaveWithdrawsWhenSessionDeleted(t *testing.T) {
 	ctx := context.Background()
 	s, st := newService(clock.Real{})

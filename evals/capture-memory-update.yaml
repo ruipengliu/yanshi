@@ -1,0 +1,19 @@
+name: capture-memory-update
+description: >-
+  佩戴者说出的新事实取代已有的旧记忆（用 replaces 替换），而不是让"住在北京"与"住在上海"两条并存。
+agent: xinli-day
+setup:
+  xinli: {}
+  memories:
+    - {category: profile, content: "用户常住北京", recorded: "2026-06-01"}
+turns:
+  - captures:
+      - {speaker: other, key: chen, text: 你现在还每天从北京坐高铁过来？}
+      - {speaker: wearer, text: 不用了，我上个月已经搬到上海了，现在通勤二十分钟。}
+      - {speaker: other, key: chen, text: 那挺好，以后约饭方便了。}
+    input: 整理今天
+    expect:
+      calls: ["mcp_xinli__file_day"]
+      approvals: {max: 0}
+      memories: [{contains: "上海"}]
+      no_memories: [{contains: "北京", without: "上海"}]

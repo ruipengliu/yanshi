@@ -123,7 +123,7 @@ func (w *World) deleteSession() error {
 		reason = lifecycle.ReasonRetention
 		w.nextInput++
 		if _, err := w.memories.Save(context.Background(), memory.SaveRequest{BusinessLine: "bl", EndUser: w.users[i], SessionID: sid,
-			CallID: fmt.Sprintf("retention-%d", w.nextInput), Category: "preference", Content: "偏好 到期"}); err != nil {
+			CallID: fmt.Sprintf("retention-%d", w.nextInput), Category: "preference", Content: fmt.Sprintf("偏好 到期 %d", w.nextInput)}); err != nil {
 			w.tracef("memory before retention %s: %v", sid, err) // 条数达到上限等：照常删除
 		}
 	}

@@ -1,0 +1,13 @@
+name: capture-assistant-recall
+description: >-
+  助手 Session 召回每日整理记下的 Memory：回答用户关于自己的问题时用上它们，而不只查项目与近几天的摘要。
+agent: xinli-assistant
+setup:
+  xinli: {}
+  memories:
+    - {category: preference, content: "用户不吃香菜", recorded: "2026-10-20"}
+    - {category: health, content: "用户对花生过敏", recorded: "2026-10-21"}
+turns:
+  - input: 周五部门聚餐我来点菜，有什么我自己要避开的吗？
+    expect:
+      reply_contains: ["香菜", "花生"]

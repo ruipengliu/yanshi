@@ -8,6 +8,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
 	"unicode/utf8"
 
 	v1 "yanshi/gen/yanshi/v1"
@@ -62,11 +64,30 @@ func New(log eventlog.Log) capability.Capability {
 	}
 }
 
+var weekdays = [...]string{"星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"}
+
+// dayHeader 注明当地日期与星期，并列出之后七天的日期与星期：模型自己推算星期常错一天（"下周一"写成 27 日），
+// 对照着写就不必推算。
+func dayHeader(t time.Time) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "—— %s %s（当地时间）——\n（之后七天：", t.Format(time.DateOnly), weekdays[t.Weekday()])
+	for i := 1; i <= 7; i++ {
+		d := t.AddDate(0, 0, i)
+		if i > 1 {
+			b.WriteString("、")
+		}
+		fmt.Fprintf(&b, "%d月%d日%s", d.Month(), d.Day(), weekdays[d.Weekday()])
+	}
+	b.WriteString("）\n")
+	return b.String()
+}
+
 // Page 读取 after 之后的旁听转写，至多 limit 段、约 maxChars 字符。一批总是整批读入（下一页的位置是事件序号，不能停在
 // 一批中间）；超出上限之前已读入的批次留在本页，只有第一批超出时也读入它。
 func Page(ctx context.Context, log eventlog.Log, sessionID string, after uint64, limit, maxChars int) ([]*v1.ContentBlock, error) {
 	var segs []*v1.ContentBlock
-	chars, next, done := 0, after, false
+	// count 是本页的段数（segs 中还有注明日期的文字块）；day 是上一段的当地日期。
+	count, chars, next, done, day := 0, 0, after, false, ""
 read:
 	for {
 		events, err := log.Read(ctx, sessionID, next, readBatch)
@@ -83,12 +104,20 @@ read:
 			for _, g := range c.GetSegments() {
 				n += utf8.RuneCountInString(model.CaptureText(g))
 			}
-			if len(segs) > 0 && (len(segs)+len(c.GetSegments()) > limit || chars+n > maxChars) {
+			if count > 0 && (count+len(c.GetSegments()) > limit || chars+n > maxChars) {
 				break read
 			}
 			for _, g := range c.GetSegments() {
+				// 当地日期变化处（含本页第一段）注明日期与星期：每行只显示时刻，"明天""周五"要据此换算成日期。
+				if t, ok := model.CaptureLocalTime(g); ok && t.Format(time.DateOnly) != day {
+					day = t.Format(time.DateOnly)
+					h := dayHeader(t)
+					segs = append(segs, model.TextBlocks(h)...)
+					chars += utf8.RuneCountInString(h)
+				}
 				segs = append(segs, &v1.ContentBlock{Kind: &v1.ContentBlock_Capture{Capture: g}})
 			}
+			count += len(c.GetSegments())
 			chars += n
 			next = e.GetSeq()
 		}
@@ -99,9 +128,9 @@ read:
 	}
 	out := segs
 	if done {
-		out = append(out, model.TextBlocks(fmt.Sprintf("（已读完：本页 %d 段，之后没有更多旁听）", len(segs)))...)
+		out = append(out, model.TextBlocks(fmt.Sprintf("（已读完：本页 %d 段，之后没有更多旁听）", count))...)
 	} else {
-		out = append(out, model.TextBlocks(fmt.Sprintf("（本页 %d 段，未读完：下一页用 after=%d）", len(segs), next))...)
+		out = append(out, model.TextBlocks(fmt.Sprintf("（本页 %d 段，未读完：下一页用 after=%d）", count, next))...)
 	}
 	return out, nil
 }

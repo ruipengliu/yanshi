@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/capability"
@@ -93,5 +96,49 @@ func TestPageCharacterLimit(t *testing.T) {
 	empty, err := capture.Page(ctx, log, "none", 0, 100, capture.MaxChars)
 	if err != nil || segments(empty) != 0 || !strings.Contains(model.Text(empty), "已读完") {
 		t.Fatalf("empty session = %v, %v", empty, err)
+	}
+}
+
+// 有时区的片段显示当地时刻，当地日期变化处（含本页第一段）注明日期与星期；没有时区的片段不显示时间。
+func TestPageShowsLocalTime(t *testing.T) {
+	ctx := context.Background()
+	log := memlog.New()
+	at := func(s string) *timestamppb.Timestamp {
+		ts, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return timestamppb.New(ts)
+	}
+	seg := func(text, spoken, zone string) *v1.CaptureSegment {
+		return &v1.CaptureSegment{Speaker: v1.Speaker_SPEAKER_WEARER, Text: text, SpokenAt: at(spoken), TimeZone: zone}
+	}
+	events := []*v1.Event{
+		{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u"}}},
+		{Payload: &v1.Event_CaptureAppended{CaptureAppended: &v1.CaptureAppended{CaptureId: "a", Segments: []*v1.CaptureSegment{
+			seg("早", "2026-10-23T01:05:00Z", "Asia/Shanghai"),
+			seg("晚", "2026-10-23T15:59:00Z", "Asia/Shanghai"),
+			seg("过了午夜", "2026-10-23T16:01:00Z", "Asia/Shanghai"),
+			seg("不知道时区", "2026-10-23T16:02:00Z", ""),
+		}}}},
+	}
+	for i, e := range events {
+		e.SessionId, e.Seq = "s", uint64(i+1)
+	}
+	if _, err := log.Append(ctx, "s", 0, events...); err != nil {
+		t.Fatal(err)
+	}
+	out, err := capture.Page(ctx, log, "s", 0, 100, capture.MaxChars)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "—— 2026-10-23 星期五（当地时间）——\n" +
+		"（之后七天：10月24日星期六、10月25日星期日、10月26日星期一、10月27日星期二、10月28日星期三、10月29日星期四、10月30日星期五）\n" +
+		"09:05 [佩戴者] 早\n23:59 [佩戴者] 晚\n" +
+		"—— 2026-10-24 星期六（当地时间）——\n" +
+		"（之后七天：10月25日星期日、10月26日星期一、10月27日星期二、10月28日星期三、10月29日星期四、10月30日星期五、10月31日星期六）\n" +
+		"00:01 [佩戴者] 过了午夜\n[佩戴者] 不知道时区\n（已读完：本页 4 段，之后没有更多旁听）"
+	if got := model.Text(model.ExpandCaptures(out)); got != want {
+		t.Fatalf("page =\n%s\nwant\n%s", got, want)
 	}
 }
