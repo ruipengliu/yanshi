@@ -1,0 +1,25 @@
+name: capture-third-party
+description: >-
+  邻座两个同事之间的谈话与佩戴者无关（capture-workday 的 F 场景单独成例）：马说"我明天把合同给客户寄过去"，是他对
+  客户的承诺，不是对佩戴者的 theirs；同一时段里佩戴者与小周的谈话照常记下双方的承诺。
+agent: xinli-day
+setup:
+  xinli: {}
+turns:
+  - captures:
+      - {speaker: other, key: xu, text: 绿源那份合同法务改完了没？, at: "2026-10-23 09:05"}
+      - {speaker: other, key: ma, text: 改完了，就差盖章，我明天把合同给客户寄过去。, at: "2026-10-23 09:06"}
+      - {speaker: other, key: xu, text: 寄顺丰啊，上次那个圆通丢了一份。, at: "2026-10-23 09:07"}
+      - {speaker: other, key: zhou, text: 林姐，周报模板你那边有新版吗？, at: "2026-10-23 09:08"}
+      - {speaker: wearer, text: 有，我中午前发你。, at: "2026-10-23 09:08"}
+      - {speaker: other, key: zhou, text: 好，那我下午把数据填好交给你。, at: "2026-10-23 09:09"}
+    input: 整理今天
+    expect:
+      calls: ["mcp_xinli__file_changes", "mcp_xinli__file_day"]
+      xinli:
+        commitments:
+          - {kind: mine, contains: 模板, verified: true}
+          - {kind: theirs, contains: 数据, verified: true}
+        no_commitments:
+          - {contains: 寄}
+          - {contains: 合同}

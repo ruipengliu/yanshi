@@ -2680,6 +2680,14 @@ dialog .row {
   font-weight: 600;
   margin-bottom: 2px;
 }
+.xinli-revisions {
+  margin: 2px 0 4px 24px;
+  font-size: 12px;
+}
+.xinli-revisions ol {
+  margin: 2px 0;
+  padding-left: 18px;
+}
 .xinli-list {
   display: flex;
   gap: 8px;

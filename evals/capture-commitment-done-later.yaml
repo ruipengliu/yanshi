@@ -1,0 +1,22 @@
+name: capture-commitment-done-later
+description: >-
+  之前几天的承诺今天说已完成（captures-xinli-model.md §6）：账本里有前几天答应王总的"把框架合同寄给王总"，今天佩戴者
+  在电话里说合同昨天已经寄出。白天的"整理交谈"用 find_related 召回它、依据今天的原话 close 为 done，不新建承诺。
+agent: xinli-day
+setup:
+  xinli:
+    projects: [{id: P-0001, name: 新一季采购, status: 和王总谈妥先小批量试单，等框架合同。}]
+    commitments:
+      - {id: C-0001, kind: mine, content: 把框架合同寄给王总, counterpart: 王总, due_date: "2026-10-23", project: P-0001}
+turns:
+  - captures:
+      - {speaker: other, key: wang, text: 林总，框架合同什么时候寄过来？, at: "2026-10-23 11:00"}
+      - {speaker: wearer, text: 王总，合同我昨天已经寄出了，顺丰的，今天应该能到。, at: "2026-10-23 11:01"}
+      - {speaker: other, key: wang, text: 好，收到我就签。, at: "2026-10-23 11:02"}
+    input: 整理交谈
+    expect:
+      calls: ["captures", "mcp_xinli__find_related", "mcp_xinli__file_changes"]
+      xinli:
+        commitments: [{kind: mine, contains: 框架合同, status: done}]
+        commitments_count: {max: 0}
+        no_commitments: [{kind: mine, contains: 合同, status: open}]

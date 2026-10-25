@@ -6,19 +6,24 @@ import (
 	"maps"
 	"regexp"
 	"slices"
+	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/capture"
 	"yanshi/internal/eventlog"
 )
 
-// Citation 是平台对一个旁听引用的解析（docs/design/captures.md §6）：被引用片段的说话人。不含文字：他人的
-// 原话只保留在旁听 Session 中（ADR-0037），不经这条路径流到业务线长期保存。
+// Citation 是平台对一个旁听引用的解析（docs/design/captures.md §6）：被引用片段的说话人与说话时间。不含文字：他人的
+// 原话只保留在旁听 Session 中（ADR-0037），不经这条路径流到业务线长期保存。说话时间不是对话内容，业务线据此按说话
+// 那天换算"明天""下周二"这类期限（docs/design/captures-xinli-model.md §7）。
 type Citation struct {
 	Ref        string `json:"ref"`
 	Speaker    string `json:"speaker,omitempty"` // "wearer" 或 "other"
 	SpeakerKey string `json:"speaker_key,omitempty"`
 	Redacted   bool   `json:"redacted,omitempty"`
+	// SpokenAt 与 TimeZone 取自片段（HostApp 填写），没有时为空。
+	SpokenAt time.Time `json:"spoken_at,omitzero"`
+	TimeZone string    `json:"time_zone,omitempty"`
 	// Missing 表示本 Session 中没有这段旁听：编号写错，或引用了别的 Session。
 	Missing bool `json:"missing,omitempty"`
 }
@@ -68,7 +73,10 @@ func Citations(ctx context.Context, log eventlog.Log, sessionID string, args jso
 			if len(events) == 1 && events[0].GetSeq() == ref.Seq {
 				if segs := events[0].GetCaptureAppended().GetSegments(); ref.Index < len(segs) {
 					g := segs[ref.Index]
-					c = Citation{Ref: c.Ref, Speaker: "wearer", Redacted: g.GetRedacted()}
+					c = Citation{Ref: c.Ref, Speaker: "wearer", Redacted: g.GetRedacted(), TimeZone: g.GetTimeZone()}
+					if g.GetSpokenAt() != nil {
+						c.SpokenAt = g.GetSpokenAt().AsTime()
+					}
 					if g.GetSpeaker() == v1.Speaker_SPEAKER_OTHER {
 						c.Speaker, c.SpeakerKey = "other", g.GetSpeakerKey()
 					}

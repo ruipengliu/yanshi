@@ -1,6 +1,6 @@
 name: capture-day-digest
 description: >-
-  每日整理的结构（captures-xinli.md §3、§4）：file_exchange 交出交谈中定下的事、双方各自的承诺与风险，file_day
+  每日整理的结构（captures-xinli.md §3、§4）：file_changes 交出交谈中定下的事、双方各自的承诺与风险，file_day
   交出今日总览与对佩戴者沟通方式的觉察。佩戴者答应的（报价单）是 mine，他人答应的（合同草稿）是 theirs，他人索要而
   佩戴者没有答应的（预算表）不是承诺；觉察不写情绪。
 agent: xinli-day
@@ -16,7 +16,7 @@ turns:
       - {speaker: wearer, text: 下午三点的会我先过去了。, at: "2026-10-21 09:05"}
     input: 整理今天
     expect:
-      calls: ["mcp_xinli__file_exchange", "mcp_xinli__file_day"]
+      calls: ["mcp_xinli__file_changes", "mcp_xinli__file_day"]
       call_args: {"mcp_xinli__file_day": "headline"}
       xinli:
         exchanges: {min: 1, max: 1}
@@ -27,7 +27,7 @@ turns:
           - {kind: mine, contains: 预算}
           - {kind: mine, contains: 合同}
       judge: >-
-        看 file_exchange 与 file_day 的参数：day.headline 是否概括了这一天；交谈的 decisions 是否包含定下浅色木纹；
+        看 file_changes 与 file_day 的参数：day.headline 是否概括了这一天；交谈的 decisions 是否包含定下浅色木纹；
         risks 是否指出家具可能晚到、影响十二月搬家；summary 是否写明对方索要预算表而佩戴者没有答应；
         file_day 的 awareness 是否只写佩戴者的沟通方式（如给出明确期限、主动推动解决问题），没有写情绪或身心状态。
         全部满足为 5 分，缺一项扣一分。

@@ -1,0 +1,26 @@
+name: capture-two-calls
+description: >-
+  一个时段里两通电话、只录到佩戴者一侧（captures-xinli-model.md §8、F2）：先给绿源的郑总打电话约演示，挂了两分钟又接到
+  法务的电话谈代码托管协议。停顿不到时段间隔、也没有他人的话可以区分，模型按内容划成两段交谈：演示归入绿源，托管协议
+  不归入绿源。
+agent: xinli-day
+setup:
+  xinli:
+    projects: [{id: P-0001, name: 绿源超市新客户, status: 郑总有意试用排班系统，等约演示时间。}]
+turns:
+  - captures:
+      - {speaker: wearer, text: 喂，郑总您好，我是林岚。上次说的排班系统演示，下周四上午您看方便吗？, at: "2026-10-23 16:02"}
+      - {speaker: wearer, text: 好的好的，那就下周四上午十点，我带产品经理过去，演示环境我们提前准备好。, at: "2026-10-23 16:04"}
+      - {speaker: wearer, text: 行，郑总再见。, at: "2026-10-23 16:05"}
+      - {speaker: wearer, text: 喂，王律师？对，是代码托管那个协议。, at: "2026-10-23 16:07"}
+      - {speaker: wearer, text: 第三方托管的模板您周一发我是吧？好，我看完转给康宁。, at: "2026-10-23 16:09"}
+      - {speaker: wearer, text: 好，谢谢王律师。, at: "2026-10-23 16:10"}
+    input: 整理今天
+    expect:
+      calls: ["mcp_xinli__file_changes", "mcp_xinli__file_day"]
+      xinli:
+        exchanges: {min: 2, max: 2}
+        in_project: {P-0001: {min: 1, max: 1}}
+        no_commitments:
+          - {contains: 模板, project: P-0001}
+          - {contains: 托管, project: P-0001}

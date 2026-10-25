@@ -162,8 +162,9 @@ turns:
 	}
 }
 
-// TestCapturesAndXinli：每轮的旁听提交到 Session、可由 captures 读出；xinli MCP Server 按 EndUser 预置数据、
-// file_exchange 新建项目，承诺经平台附上的说话人核对；no_call_args 与未开启健康信息的业务线生效。
+// TestCapturesAndXinli：每轮的旁听提交到 Session、可由 captures 读出（每批的他人重新编号）；xinli MCP Server 按 EndUser
+// 预置数据、file_changes 新建项目，承诺经平台附上的说话人核对，重交同一个来源时整体取代；no_call_args 与未开启健康信息的
+// 业务线生效。
 func TestCapturesAndXinli(t *testing.T) {
 	dir := t.TempDir()
 	writeCase(t, dir, "day", `name: day
@@ -179,15 +180,17 @@ turns:
     input: call captures {}
     expect:
       calls: [captures]
-      reply_contains: ["#2.1 [佩戴者] 明天上午发您", "[他人 zhang]", "已读完"]
-  - input: 'call mcp_xinli__file_exchange {"exchange":"x2.0","title":"办公室装修","summary":"报价单","project":{"match":"new","name":"办公室装修"},"commitments":[{"kind":"mine","content":"发报价单","refs":["#2.1"]}]}'
+      reply_contains: ["#2.1 [佩戴者] 明天上午发您", "[他人 other-1]", "已读完"]
+  - input: 'call mcp_xinli__file_changes {"source":{"from":"#2.0","to":"#2.1"},"exchanges":{"create":[{"from":"#2.0","to":"#2.1","title":"办公室装修","summary":"报价单","projects":[{"match":"new","name":"办公室装修"}]}]},"commitments":{"create":[{"exchange":"x2.0","kind":"mine","content":"发报价单","refs":["#2.1"]}]}}'
     expect:
       approvals: {max: 0}
       reply_contains: ["`+xinlimock.NewProject+`", "均已核实"]
-      no_call_args: {"mcp_xinli__file_exchange": "预算"}
-  - input: 'call mcp_xinli__file_exchange {"exchange":"x2.0","title":"办公室装修","summary":"报价单","project":{"match":"existing","id":"`+xinlimock.NewProject+`"},"commitments":[{"kind":"mine","content":"发报价单","refs":["#2.0"]}]}'
+      no_call_args: {"mcp_xinli__file_changes": "预算"}
+      xinli: {exchanges: {min: 1, max: 1}, commitments_count: {min: 1, max: 1}}
+  - input: 'call mcp_xinli__file_changes {"source":{"from":"#2.0","to":"#2.1"},"exchanges":{"create":[{"from":"#2.0","to":"#2.1","title":"办公室装修","summary":"报价单","projects":[{"match":"existing","id":"`+xinlimock.NewProject+`"}]}]},"commitments":{"create":[{"exchange":"x2.0","kind":"mine","content":"发报价单","refs":["#2.0"]}]}}'
     expect:
       reply_contains: ["引用的原话里没有用户本人说的话"]
+      xinli: {commitments_count: {max: 1}, stale_open: {of: [{contains: 报价单, verified: true}], max: 0}}
   - input: call mcp_xinli__list_projects {}
     new_session: true
     expect:

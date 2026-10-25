@@ -40,7 +40,7 @@ func TestPieces(t *testing.T) {
 		res("a", textBlocks("文件内容"), nil),
 		res("b", textBlocks("打字回答"), nil),
 		res("c", textBlocks("转述的回答"), func(r *v1.ToolResult) { r.FromCall = "vc1" }),
-		res("d", []*v1.ContentBlock{textBlocks("【交谈】")[0], seg(v1.Speaker_SPEAKER_WEARER, "", "明天发报价", false),
+		res("d", []*v1.ContentBlock{textBlocks("【时段】")[0], seg(v1.Speaker_SPEAKER_WEARER, "", "明天发报价", false),
 			seg(v1.Speaker_SPEAKER_OTHER, "other-1", "好的", false), seg(v1.Speaker_SPEAKER_OTHER, "other-2", "", true)}, nil),
 		res("e", textBlocks("平台的检索结果"), nil),
 		res("f", textBlocks("占位"), func(r *v1.ToolResult) { r.Backgrounded = &v1.Backgrounded{NodeId: "n1"} }),

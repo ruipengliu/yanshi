@@ -51,12 +51,12 @@ type Def struct {
 type Stream struct {
 	// Name 是平台登记的流名（session.KnownStream），如 "transcript"。
 	Name string `yaml:"name"`
-	// ExchangeGap 是交谈间隔：相邻两段的说话时间相隔超过它，就是两段交谈（docs/design/captures.md §5），
+	// ExchangeGap 是时段间隔（字段名沿用）：相邻两段的说话时间相隔超过它，就是两个时段（docs/design/captures.md §5），
 	// 默认 5 分钟。一个 Session 中沿用第一次提交的读取位置中的值，改动从新的 Session 起生效。
 	ExchangeGap time.Duration `yaml:"exchange_gap"`
 }
 
-// DefaultExchangeGap 是交谈间隔的默认值。
+// DefaultExchangeGap 是时段间隔的默认值。
 const DefaultExchangeGap = 5 * time.Minute
 
 // Stream 返回对流 name 的声明；d 为 nil 时没有声明。

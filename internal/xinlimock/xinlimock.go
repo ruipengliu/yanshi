@@ -1,8 +1,9 @@
 // Package xinlimock 是旁听业务线 xinli 的模拟 MCP Server（docs/design/captures-xinli.md §4–§7、§9）：评测
 // （internal/eval）与开发部署（serve -xinli-mock，调试控制台）共用。数据只在进程内存中。
 //
-// 业务线的数据按 App 的页面组织：今日（Day：每日整理的总览、要点，与当天交出的交谈）、项目（Project：现状与按天的
-// 时间线）、承诺（Commitment：承诺账本，按引用核对承诺人）、待确认（归属拿不准的交谈）、觉察（Day.Awareness）。
+// 业务线的数据按 App 的页面组织：今日（Day：每日整理的总览、要点，与当天的交谈）、项目（Project：现状与按天的
+// 时间线）、承诺（Commitment：承诺账本，按引用核对承诺人，带修订历史）、待确认（归属拿不准的交谈）、觉察
+// （Day.Awareness）。交谈与承诺以变更集为日志、按 EndUser 叠加得出（ledger.go，docs/design/captures-xinli-model.md）。
 // 开发部署中它还扮演业务线服务端，做每日流程的"归集"（Business）。
 package xinlimock
 
@@ -11,7 +12,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"maps"
 	"net"
 	"net/http"
 	"slices"
@@ -25,11 +25,11 @@ import (
 	"yanshi/internal/memory"
 )
 
-// Server 是模拟的 xinli MCP Server：查询类工具只读；交出结果的工具（file_exchange、file_day、set_status、
-// update_commitments）只把结果交给业务线，登记中以 no_approval 放宽。数据按调用方的业务线与 EndUser 隔离，可由 Seed
+// Server 是模拟的 xinli MCP Server：查询类工具只读；交出结果的工具（file_changes、file_day、set_status、
+// update_commitments 等）只把结果交给业务线，登记中以 no_approval 放宽。数据按调用方的业务线与 EndUser 隔离，可由 Seed
 // 预置（评测用例的 setup.xinli）。
 type Server struct {
-	// Servers 是交给 mcpcap.Connector 的登记，每个业务线一条；都开启 cite_captures，承诺据此核对承诺人。
+	// Servers 是交给 mcpcap.Connector 的登记，每个业务线一条；都开启 cite_captures，承诺据此核对承诺人与换算期限。
 	Servers []mcpcap.Server
 	// Business 非 nil 时扮演业务线服务端，做每日流程的"归集"：file_day 之后为当天涉及的项目创建（或复用）xinli-project
 	// Session，提交"整理 <日期>"。评测中为 nil：用例直接预置 day_summary 的内容。
@@ -65,53 +65,12 @@ type Project struct {
 	Session string `yaml:"-" json:"session,omitempty"`
 	// Archived 为 true 时项目已归档：不再被召回，App 中可以取消归档（captures-xinli.md §7）。
 	Archived bool `yaml:"-" json:"archived,omitempty"`
-	// MergedInto 非空时项目已并入另一个项目（用户确认了合并提议）。
+	// MergedInto 非空时项目已并入另一个项目（用户确认了合并提议）：交谈与承诺叠加时换成保留的那个。
 	MergedInto string `yaml:"-" json:"merged_into,omitempty"`
 }
 
 // Active 报告项目是否参与召回：没有归档，也没有被合并。
 func (p *Project) Active() bool { return !p.Archived && p.MergedInto == "" }
-
-// Exchange 是交出的一段交谈（file_exchange），按（旁听 Session，交谈 ID）去重。
-type Exchange struct {
-	// ID 是交谈 ID（如 "x57.0"）；Session 是它所在的旁听 Session。
-	ID      string    `yaml:"id" json:"id"`
-	Session string    `yaml:"-" json:"session"`
-	Date    string    `yaml:"date" json:"date"`
-	FiledAt time.Time `yaml:"-" json:"filed_at"`
-	Title   string    `yaml:"title" json:"title"`
-	Summary string    `yaml:"summary" json:"summary"`
-	// Match 是归属：existing、new、unsure、none；Project 是归入的项目，unsure 时为空直到用户确认。
-	Match     string   `yaml:"match" json:"match"`
-	Project   string   `yaml:"project" json:"project,omitempty"`
-	Candidate string   `json:"candidate,omitempty"` // unsure：可能属于的项目
-	Proposed  string   `json:"proposed,omitempty"`  // unsure：用户不认同候选时新建的项目名
-	Decisions []string `yaml:"decisions" json:"decisions"`
-	Risks     []string `yaml:"risks" json:"risks"`
-	Awareness []string `yaml:"awareness" json:"awareness"`
-}
-
-// Pending 报告这段交谈是否在"待确认"中：归属拿不准，用户还没有确认。
-func (e *Exchange) Pending() bool { return e.Match == "unsure" && e.Project == "" }
-
-// Commitment 是承诺账本中的一条（captures-xinli.md §6）。
-type Commitment struct {
-	ID          string   `yaml:"id" json:"id"`
-	Kind        string   `yaml:"kind" json:"kind"` // mine：佩戴者答应别人；theirs：别人答应佩戴者
-	Content     string   `yaml:"content" json:"content"`
-	Counterpart string   `yaml:"counterpart" json:"counterpart,omitempty"`
-	DueDate     string   `yaml:"due_date" json:"due_date,omitempty"`
-	DueText     string   `yaml:"due_text" json:"due_text,omitempty"`
-	Project     string   `yaml:"project" json:"project,omitempty"`
-	Refs        []string `yaml:"-" json:"refs,omitempty"`
-	// Unverified 非空时是没有通过核对的原因：照常展示，但不按期限提醒。
-	Unverified string `yaml:"-" json:"unverified,omitempty"`
-	// Status 是 open、done 或 cancelled。
-	Status    string    `yaml:"-" json:"status"`
-	Exchange  string    `yaml:"-" json:"exchange,omitempty"`
-	Session   string    `yaml:"-" json:"session,omitempty"`
-	UpdatedAt time.Time `yaml:"-" json:"updated_at,omitzero"`
-}
 
 // Day 是一次每日整理（file_day）的结果。
 type Day struct {
@@ -129,33 +88,47 @@ type Awareness struct {
 	Suggestions []string `yaml:"suggestions" json:"suggestions"`
 }
 
-// State 是一个 EndUser 在业务线中的全部数据，供调试控制台展示（GET /v1/debug/xinli）。
+// State 是一个 EndUser 在业务线中的全部数据，供调试控制台展示（GET /v1/debug/xinli）与评测断言。
 type State struct {
 	Projects    []Project    `json:"projects"`
 	Exchanges   []Exchange   `json:"exchanges"`
 	Commitments []Commitment `json:"commitments"`
+	Changesets  []Changeset  `json:"changesets"`
 	Days        []Day        `json:"days"`
 	Weeks       []Week       `json:"weeks"`
 	Merges      []Merge      `json:"merges"`
 }
 
 type user struct {
-	projects    []Project
-	exchanges   []Exchange
-	commitments []Commitment
-	days        []Day
-	weeks       []Week
-	merges      []Merge
+	projects []Project
+	// changesets 是变更集的日志，ledger 是由它叠加出的交谈与承诺（每次改动之后重新叠加）。
+	changesets []Changeset
+	ledger
+	days   []Day
+	weeks  []Week
+	merges []Merge
 	// weekSessions 是每周回顾的 Session，按本周第一天。
 	weekSessions map[string]string
-	// seeded 是评测预置的按日期摘要（day_summary、recent_days 在没有整理结果时返回它）。
-	seeded map[string]string
-	// next 是新建项目的编号：从 101 开始，与用例预置的项目 ID 区分；nextC 是承诺的编号。
-	next, nextC int
+	// submitted 是业务线向每个旁听 Session 最近提交的整理输入（"整理交谈"或"整理今天"）：业务线据此只接受"整理今天"
+	// 那次 Run 的 file_day（F7）。
+	submitted map[string]string
+	// next 是新建项目的编号：从 101 开始，与用例预置的项目 ID 区分；nextC 是承诺的编号，nextCS 是变更集的编号。
+	next, nextC, nextCS int
 }
 
 // NewProject 是新建的第一个项目的 ID；评测用例据此断言之后的整理归入了同一项目。
 const NewProject = "P-0101"
+
+const (
+	// relatedWindow 是召回的范围：最后一次修订在这么久之内的未完成承诺（captures-xinli-model.md §12）。
+	relatedWindow = 30 * 24 * time.Hour
+	// maxRelated 是 find_related 一次至多返回的承诺数。
+	maxRelated = 10
+	// similarContent 是"内容相近"的阈值（字符二元组的 Dice 系数）：当天整理的重复候选。
+	similarContent = 0.3
+	// relatedTopic 是 find_related 只凭主题（对方不同）召回一条承诺的相似度下限。
+	relatedTopic = 0.15
+)
 
 // call 是一次工具调用：调用方的身份与旁听引用的解析取自 _meta（mcpcap 注入，docs/design/m5-mcp.md）。
 type call struct {
@@ -169,6 +142,57 @@ type call struct {
 func readOnly() *mcp.ToolAnnotations { return &mcp.ToolAnnotations{ReadOnlyHint: true} }
 
 const noArgs = `{"type":"object","properties":{}}`
+
+// 给模型看的参数说明（file_changes、update_commitments 共用的部分）。
+const (
+	refsSchema       = `{"type":"array","items":{"type":"string"},"description":"依据的原话编号（旁听每行开头的编号），如 [\"#57.3\"]"}`
+	revSchema        = `{"type":"integer","description":"find_related、day_ledger 或 day_summary 给出的 rev，原样照抄"}`
+	projectsSchema   = `{"type":"array","description":"这段交谈涉及的项目，可以多个","items":{"type":"object","properties":{"match":{"type":"string","enum":["existing","new","unsure","none"]},"id":{"type":"string","description":"existing 与 unsure：项目 ID"},"name":{"type":"string","description":"new 与 unsure：新项目的名称"}},"required":["match"]}}`
+	reviseItemSchema = `{"type":"object","properties":{"id":{"type":"string","description":"承诺 ID，如 C-0012"},"rev":` + revSchema + `,` +
+		`"due_date":{"type":"string","description":"新的期限 YYYY-MM-DD"},"due_text":{"type":"string","description":"原话中新的期限说法"},` +
+		`"content":{"type":"string"},"counterpart":{"type":"string"},"project":{"type":"string","description":"改正归属时写项目 ID"},`
+	closeItemSchema = `{"type":"object","properties":{"id":{"type":"string"},"rev":` + revSchema + `,"status":{"type":"string","enum":["done","cancelled"]},`
+)
+
+var fileChangesSchema = `{"type":"object","properties":{` +
+	`"source":{"type":"object","description":"这次依据的旁听范围：本次读到的第一段与最后一段的编号；\"整理今天\"的当天整理写 {\"day\": true}",` +
+	`"properties":{"from":{"type":"string","description":"如 #57.0"},"to":{"type":"string","description":"如 #80.2"},"day":{"type":"boolean"}}},` +
+	`"exchanges":{"type":"object","properties":{` +
+	`"create":{"type":"array","description":"这次划出的交谈：一段谈话一项，寒暄闲聊不交","items":{"type":"object","properties":{` +
+	`"from":{"type":"string","description":"这段交谈第一段的编号"},"to":{"type":"string","description":"最后一段的编号"},` +
+	`"title":{"type":"string"},"summary":{"type":"string","description":"谈了什么、进展到哪；别人提出而用户没有答应的要求写在这里"},` +
+	`"projects":` + projectsSchema + `,` +
+	`"decisions":{"type":"array","description":"定下的事","items":{"type":"object","properties":{"text":{"type":"string"},"project":{"type":"string","description":"交谈涉及多个项目时写这件事属于哪个（项目 ID 或新项目名）"}},"required":["text"]}},` +
+	`"risks":{"type":"array","items":{"type":"string"},"description":"可能延期、有分歧或被遗漏的地方"},` +
+	`"awareness":{"type":"array","items":{"type":"string"},"description":"用户本人沟通方式的观察，附例子；不写情绪与身心状态"}},` +
+	`"required":["from","to","title","summary","projects"]}},` +
+	`"merge":{"type":"array","description":"只在当天整理中：把被停顿切开的同一段谈话并入 into","items":{"type":"object","properties":{` +
+	`"into":{"type":"string","description":"保留的交谈 ID"},"from":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"summary":{"type":"string"},"projects":` + projectsSchema + `},"required":["into","from"]}},` +
+	`"revise":{"type":"array","description":"只在当天整理中：改正交谈的标题、摘要或归属","items":{"type":"object","properties":{` +
+	`"id":{"type":"string"},"title":{"type":"string"},"summary":{"type":"string"},"projects":` + projectsSchema + `},"required":["id"]}}}},` +
+	`"commitments":{"type":"object","properties":{` +
+	`"create":{"type":"array","description":"新的承诺","items":{"type":"object","properties":{` +
+	`"exchange":{"type":"string","description":"出处：交谈 ID，即 x 加上它的 from 编号，如 x57.0"},` +
+	`"kind":{"type":"string","enum":["mine","theirs"],"description":"mine：用户本人答应别人；theirs：别人答应用户"},` +
+	`"content":{"type":"string","description":"要做的事"},"counterpart":{"type":"string","description":"答应了谁，或谁答应的（按原话称呼）"},` +
+	`"due_date":{"type":"string","description":"能确定日期时写 YYYY-MM-DD"},"due_text":{"type":"string","description":"原话中的期限说法，如\"明天上午\""},` +
+	`"project":{"type":"string","description":"缺省随交谈；交谈涉及多个项目时必填（项目 ID 或新项目名）"},` +
+	`"refs":` + refsSchema + `},"required":["exchange","kind","content","refs"]}},` +
+	`"revise":{"type":"array","description":"改动已有的承诺（改期、改内容、换对方）：依据这次读到的原话","items":` + reviseItemSchema +
+	`"refs":` + refsSchema + `,"reason":{"type":"string"}},"required":["id","rev","refs"]}},` +
+	`"close":{"type":"array","description":"已完成（done）或不做了、改由别人做（cancelled）的承诺","items":` + closeItemSchema +
+	`"refs":` + refsSchema + `,"reason":{"type":"string"}},"required":["id","rev","status","refs"]}},` +
+	`"merge":{"type":"array","description":"只在当天整理中：重复的承诺并入 into","items":{"type":"object","properties":{` +
+	`"into":{"type":"string"},"from":{"type":"array","items":{"type":"string"}},"reason":{"type":"string"}},"required":["into","from"]}}}}},` +
+	`"required":["source"]}`
+
+var updateCommitmentsSchema = `{"type":"object","properties":{` +
+	`"date":{"type":"string","description":"对账的那一天 YYYY-MM-DD，与 day_summary 相同"},` +
+	`"revise":{"type":"array","description":"改了期限或内容的承诺","items":` + reviseItemSchema +
+	`"exchanges":{"type":"array","items":{"type":"string"},"description":"依据的交谈 ID（day_summary 给出）"},"reason":{"type":"string"}},"required":["id","rev","exchanges"]}},` +
+	`"close":{"type":"array","description":"已完成（done）或取消（cancelled）的承诺","items":` + closeItemSchema +
+	`"exchanges":{"type":"array","items":{"type":"string"},"description":"依据的交谈 ID"},"reason":{"type":"string"}},"required":["id","rev","status","exchanges"]}}},` +
+	`"required":["date"]}`
 
 var tools = []struct {
 	tool    *mcp.Tool
@@ -188,39 +212,12 @@ var tools = []struct {
 			}
 			return b.String()
 		}},
-	{&mcp.Tool{Name: "find_projects", Description: "按主题召回至多 5 个可能相关的已有项目（ID、名称、现状、未完成的承诺数），供判断一段交谈归属哪个项目。",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"交谈的主题，如\"新办公室装修 报价\""}},"required":["query"]}`),
+	{&mcp.Tool{Name: "find_related", Description: "为一段交谈召回相关的数据：至多 5 个候选项目（ID、名称、现状），以及与这段的对方或主题相关的" +
+		"未完成承诺（不限哪天，带 ID 与 rev），供判断归属，以及这段里的原话是否改动了已有的承诺。",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"交谈的主题，如\"新办公室装修 报价\""},` +
+			`"counterparts":{"type":"array","items":{"type":"string"},"description":"交谈的对方，按原话称呼，如 [\"张总\"]"}},"required":["query"]}`),
 		Annotations: readOnly()},
-		func(c *call) string {
-			var in struct{ Query string }
-			_ = json.Unmarshal(c.args, &in)
-			// 生产中由业务线按嵌入或全文检索；模拟服务用字符二元组相似度，相同时按项目顺序。归档与已合并的不召回。
-			var idx []int
-			score := make([]float64, len(c.u.projects))
-			for i := range c.u.projects {
-				p := &c.u.projects[i]
-				if p.Active() {
-					idx, score[i] = append(idx, i), memory.TextSimilarity(in.Query, p.Name+" "+p.Status)
-				}
-			}
-			if len(idx) == 0 {
-				return "还没有项目"
-			}
-			slices.SortStableFunc(idx, func(a, b int) int {
-				switch {
-				case score[a] > score[b]:
-					return -1
-				case score[a] < score[b]:
-					return 1
-				}
-				return 0
-			})
-			var b strings.Builder
-			for _, i := range idx[:min(5, len(idx))] {
-				b.WriteString(c.u.projectLine(&c.u.projects[i]))
-			}
-			return b.String()
-		}},
+		(*call).findRelated},
 	{&mcp.Tool{Name: "project_digest", Description: "返回一个项目的现状、按天的时间线与未完成的承诺。在项目自己的会话中可以不填 project。",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"project":{"type":"string","description":"项目 ID；项目会话中省略即本项目"}}}`),
 		Annotations: readOnly()},
@@ -239,8 +236,8 @@ var tools = []struct {
 			list(&b, "下一步", p.NextSteps)
 			list(&b, "待解决", p.OpenQuestions)
 			for _, e := range c.u.exchanges {
-				if e.Project == p.ID {
-					fmt.Fprintf(&b, "\n%s %s\n%s", e.Date, e.Title, exchangeText(&e))
+				if e.Live() && slices.Contains(e.InProjects(), p.ID) {
+					fmt.Fprintf(&b, "\n%s %s %s\n%s", e.Date, e.ID, e.Title, exchangeText(&e, p.ID))
 				}
 			}
 			c.u.openCommitments(&b, p.ID)
@@ -256,66 +253,34 @@ var tools = []struct {
 					fmt.Fprintf(&b, "- %s\n", h)
 				}
 				for _, e := range c.u.exchanges {
-					if e.Session == d.Session {
+					if e.Session == d.Session && e.Live() {
 						fmt.Fprintf(&b, "  [%s] %s：%s\n", c.u.where(&e), e.Title, e.Summary)
 					}
 				}
 			}
-			for _, d := range slices.Sorted(maps.Keys(c.u.seeded)) {
-				fmt.Fprintf(&b, "%s：%s\n", d, c.u.seeded[d])
+			for _, e := range c.u.exchanges {
+				if e.Session == seedDays {
+					fmt.Fprintf(&b, "%s：%s\n", e.Date, e.Summary)
+				}
 			}
 			if b.Len() == 0 {
 				return "最近没有整理过的内容"
 			}
 			return b.String()
 		}},
-	{&mcp.Tool{Name: "file_exchange", Description: "交出一段交谈的整理结果，每段值得记录的交谈调用一次；同一段交谈再次交出时取代之前的结果。" +
-		"project 是归属：existing（明确是 find_projects 召回的某个项目，填 id）、new（值得持续跟进的新主题，填 name）、" +
+	{&mcp.Tool{Name: "file_changes", Description: "交出一次整理的变更集：这次读到的旁听里划出的交谈、新的承诺，以及这些原话对已有承诺的改动" +
+		"（改期、改内容、完成、作废），一次调用交出全部。每项都用编号引用依据的原话，业务线按被引用原话的说话人核对承诺人、按说话那天核对期限；" +
+		"整体检查，有一项不通过就整体不收，结果写明原因。同一个 source 再交一次时整体取代上一次。" +
+		"projects 是归属：existing（明确是 find_related 召回的某个项目，填 id）、new（值得持续跟进的新主题，填 name）、" +
 		"unsure（可能是某个候选但拿不准：填候选的 id，再给一个新项目名 name，交给用户确认）、none（一次性的事，不归项目）。" +
-		"commitments 是双方的承诺，每条用 refs 引用说出它的原话（旁听中每行开头的编号，如 #57.3）：业务线按被引用原话的说话人核对承诺人。",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
-			`"exchange":{"type":"string","description":"交谈 ID，取自 captures 页首，如 x57.0"},` +
-			`"title":{"type":"string","description":"简短的标题"},` +
-			`"summary":{"type":"string","description":"谈了什么、进展到哪；别人提出而用户没有答应的要求写在这里"},` +
-			`"project":{"type":"object","properties":{"match":{"type":"string","enum":["existing","new","unsure","none"]},` +
-			`"id":{"type":"string","description":"existing 与 unsure：项目 ID"},"name":{"type":"string","description":"new 与 unsure：新项目的名称"}},"required":["match"]},` +
-			`"decisions":{"type":"array","items":{"type":"string"},"description":"已经定下的事"},` +
-			`"commitments":{"type":"array","items":{"type":"object","properties":{` +
-			`"kind":{"type":"string","enum":["mine","theirs"],"description":"mine：用户本人答应别人；theirs：别人答应用户"},` +
-			`"content":{"type":"string","description":"要做的事"},"counterpart":{"type":"string","description":"答应了谁，或谁答应的（按原话称呼）"},` +
-			`"due_date":{"type":"string","description":"能确定日期时写 YYYY-MM-DD"},"due_text":{"type":"string","description":"原话中的期限说法，如\"明天上午\""},` +
-			`"refs":{"type":"array","items":{"type":"string"},"description":"说出这个承诺的原话编号，如 [\"#57.3\"]"}},` +
-			`"required":["kind","content","refs"]}},` +
-			`"risks":{"type":"array","items":{"type":"string"},"description":"可能出问题的地方：延期、分歧、遗漏"},` +
-			`"awareness":{"type":"array","items":{"type":"string"},"description":"这段交谈中用户本人沟通方式的观察，附例子；不写情绪与身心状态"}},` +
-			`"required":["exchange","title","summary","project"]}`)},
-		(*call).fileExchange},
-	{&mcp.Tool{Name: "day_exchanges", Description: "返回今天已经交出的交谈：ID、标题、摘要、归属、承诺数与沟通方式的观察，供写当天总览。",
+		"白天的整理只能依据本次读到的原话改动已有的承诺；合并重复的承诺与交谈、改正交谈的归属只在当天整理（source 为 {\"day\": true}）中做。",
+		InputSchema: json.RawMessage(fileChangesSchema)},
+		(*call).fileChanges},
+	{&mcp.Tool{Name: "day_ledger", Description: "返回今天的账本，供当天整理与写当天总览：今天的交谈（ID、范围、标题、摘要、归属、沟通方式的观察）、" +
+		"今天的承诺与之前未完成而与今天相关的承诺（带 ID、rev、引用与修订），以及按规则找出的可能重复的承诺、可能被切开的交谈。",
 		InputSchema: json.RawMessage(noArgs), Annotations: readOnly()},
-		func(c *call) string {
-			var b strings.Builder
-			n := 0
-			for _, e := range c.u.exchanges {
-				if e.Session != c.session {
-					continue
-				}
-				n++
-				fmt.Fprintf(&b, "%s %s（%s）：%s\n", e.ID, e.Title, c.u.where(&e), e.Summary)
-				list(&b, "  已定", e.Decisions)
-				list(&b, "  风险", e.Risks)
-				list(&b, "  沟通方式", e.Awareness)
-				for _, m := range c.u.commitments {
-					if m.Session == e.Session && m.Exchange == e.ID {
-						fmt.Fprintf(&b, "  承诺：%s\n", commitmentText(&m))
-					}
-				}
-			}
-			if n == 0 {
-				return "今天还没有交出交谈"
-			}
-			return b.String()
-		}},
-	{&mcp.Tool{Name: "file_day", Description: "交出当天的总览与觉察，读完全部旁听、交出各段交谈之后调用一次。day 是当天的总览；" +
+		(*call).dayLedger},
+	{&mcp.Tool{Name: "file_day", Description: "交出当天的总览与觉察，在\"整理今天\"中读完全部旁听、交出变更集之后调用一次。day 是当天的总览；" +
 		"awareness 是对用户本人沟通方式的观察与建议。",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
 			`"day":{"type":"object","description":"当天的总览","properties":{` +
@@ -326,7 +291,7 @@ var tools = []struct {
 			`"suggestions":{"type":"array","items":{"type":"string"},"description":"下次可以怎么做"}}}},` +
 			`"required":["day"]}`)},
 		(*call).fileDay},
-	{&mcp.Tool{Name: "day_summary", Description: "取回某天归入本项目的交谈，以及本项目当前未完成的承诺（带 ID）。",
+	{&mcp.Tool{Name: "day_summary", Description: "取回某天归入本项目的交谈（带交谈 ID），以及本项目当前未完成的承诺（带 ID 与 rev）。",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"date":{"type":"string","description":"日期 YYYY-MM-DD"}},"required":["date"]}`),
 		Annotations: readOnly()},
 		func(c *call) string {
@@ -336,17 +301,20 @@ var tools = []struct {
 			var b strings.Builder
 			if p != nil {
 				for _, e := range c.u.exchanges {
-					if e.Project == p.ID && e.Date == in.Date {
-						fmt.Fprintf(&b, "%s\n%s", e.Title, exchangeText(&e))
+					if e.Live() && e.Date == in.Date && slices.Contains(e.InProjects(), p.ID) {
+						fmt.Fprintf(&b, "交谈 %s %s\n%s", e.ID, e.Title, exchangeText(&e, p.ID))
 					}
 				}
 			}
 			if b.Len() == 0 {
-				if s, ok := c.u.seeded[in.Date]; ok {
-					b.WriteString(s + "\n")
-				} else {
-					b.WriteString("这一天没有与本项目有关的交谈\n")
+				for _, e := range c.u.exchanges {
+					if e.Session == seedDays && e.Date == in.Date {
+						fmt.Fprintf(&b, "交谈 %s\n%s\n", e.ID, e.Summary)
+					}
 				}
+			}
+			if b.Len() == 0 {
+				b.WriteString("这一天没有与本项目有关的交谈\n")
 			}
 			if p != nil {
 				c.u.openCommitments(&b, p.ID)
@@ -370,88 +338,11 @@ var tools = []struct {
 			p.Status, p.NextSteps, p.OpenQuestions, p.StatusAt = in.Status, in.NextSteps, in.OpenQuestions, c.x.now()
 			return "已更新 " + p.ID + " 的现状"
 		}},
-	{&mcp.Tool{Name: "update_commitments", Description: "对账本项目的承诺：done 是已完成的、cancelled 是取消的承诺 ID，due_changes 是改了期限的。新的承诺不在这里添加。",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"done":{"type":"array","items":{"type":"string"}},` +
-			`"cancelled":{"type":"array","items":{"type":"string"}},` +
-			`"due_changes":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"due_date":{"type":"string"}},"required":["id","due_date"]}}}}`)},
+	{&mcp.Tool{Name: "update_commitments", Description: "依据交谈对账本项目的承诺：close 是已完成（done）或取消（cancelled）的，revise 是改了期限或内容的；" +
+		"每项带 day_summary 给出的 rev，并用 exchanges 写明依据的交谈 ID。账本在你看到之后又被改过（rev 不符）时整体不收，结果附上现在的状态。" +
+		"同一天再交一次时整体取代上一次。新的承诺不在这里添加。",
+		InputSchema: json.RawMessage(updateCommitmentsSchema)},
 		(*call).updateCommitments},
-}
-
-func (c *call) fileExchange() string {
-	var in struct {
-		Exchange, Title, Summary string
-		Project                  struct{ Match, ID, Name string }
-		Decisions, Risks         []string
-		Awareness                []string
-		Commitments              []struct {
-			Kind, Content, Counterpart string
-			DueDate                    string `json:"due_date"`
-			DueText                    string `json:"due_text"`
-			Refs                       []string
-		}
-	}
-	if err := json.Unmarshal(c.args, &in); err != nil || in.Exchange == "" {
-		return "参数无效：需要 exchange（captures 页首的交谈 ID）"
-	}
-	u, now := c.u, c.x.now()
-	e := Exchange{ID: in.Exchange, Session: c.session, Date: now.Format(time.DateOnly), FiledAt: now, Title: in.Title, Summary: in.Summary,
-		Match: in.Project.Match, Decisions: in.Decisions, Risks: in.Risks, Awareness: in.Awareness}
-	switch in.Project.Match {
-	case "existing":
-		if u.project(in.Project.ID) == nil {
-			return fmt.Sprintf("没有项目 %s：用 find_projects 召回的 ID，或改为 new、unsure", in.Project.ID)
-		}
-		e.Project = in.Project.ID
-	case "new":
-		name := in.Project.Name
-		if name == "" {
-			name = in.Title
-		}
-		// 同一段交谈重交时沿用上次新建的项目，不再新建。
-		if old := u.exchange(c.session, in.Exchange); old != nil && old.Match == "new" && old.Project != "" {
-			e.Project = old.Project
-		} else {
-			e.Project = u.newProject(name)
-		}
-	case "unsure":
-		if u.project(in.Project.ID) == nil {
-			return fmt.Sprintf("没有项目 %s：unsure 的 id 须是 find_projects 召回的候选", in.Project.ID)
-		}
-		e.Candidate, e.Proposed = in.Project.ID, in.Project.Name
-	case "none":
-	default:
-		return "参数无效：project.match 须是 existing、new、unsure 或 none"
-	}
-	// 同一段交谈重交（重试、接管）：取代之前的结果与它带来的承诺。
-	u.exchanges = slices.DeleteFunc(u.exchanges, func(x Exchange) bool { return x.Session == c.session && x.ID == in.Exchange })
-	u.commitments = slices.DeleteFunc(u.commitments, func(m Commitment) bool { return m.Session == c.session && m.Exchange == in.Exchange })
-	u.exchanges = append(u.exchanges, e)
-	var b strings.Builder
-	fmt.Fprintf(&b, "已收到交谈 %s：%s", e.ID, u.where(&e))
-	unverified := 0
-	for _, m := range in.Commitments {
-		u.nextC++
-		cm := Commitment{ID: fmt.Sprintf("C-%04d", u.nextC), Kind: m.Kind, Content: m.Content, Counterpart: m.Counterpart, DueDate: m.DueDate,
-			DueText: m.DueText, Project: e.Project, Refs: m.Refs, Status: "open", Exchange: e.ID, Session: c.session, UpdatedAt: now,
-			Unverified: c.verify(m.Kind, m.Refs)}
-		if cm.Unverified != "" {
-			unverified++
-		}
-		u.commitments = append(u.commitments, cm)
-	}
-	fmt.Fprintf(&b, "；承诺 %d 条", len(in.Commitments))
-	if len(in.Commitments) > 0 && unverified == 0 {
-		b.WriteString("，均已核实")
-	}
-	if unverified > 0 {
-		fmt.Fprintf(&b, "，其中 %d 条未核实（不会按期限提醒）：", unverified)
-		for _, m := range u.commitments {
-			if m.Session == c.session && m.Exchange == e.ID && m.Unverified != "" {
-				fmt.Fprintf(&b, "「%s」%s；", m.Content, m.Unverified)
-			}
-		}
-	}
-	return b.String()
 }
 
 // verify 按平台给出的被引用原话的说话人核对承诺人（captures-xinli.md §6）：mine 须引用佩戴者的话，theirs 须引用
@@ -477,7 +368,190 @@ func (c *call) verify(kind string, refs []string) string {
 	return "引用的原话里没有" + who + "说的话"
 }
 
+// findRelated 是 find_related：候选项目按主题召回（生产中用嵌入或全文检索，模拟服务用字符二元组相似度，相同时按
+// 项目顺序；归档与已合并的不召回），相关的承诺按对方与主题召回（captures-xinli-model.md §6、§12）。
+func (c *call) findRelated() string {
+	var in struct {
+		Query        string
+		Counterparts strs
+	}
+	_ = json.Unmarshal(c.args, &in)
+	u := c.u
+	var b strings.Builder
+	var idx []int
+	score := make([]float64, len(u.projects))
+	for i := range u.projects {
+		if p := &u.projects[i]; p.Active() {
+			idx, score[i] = append(idx, i), memory.TextSimilarity(in.Query, p.Name+" "+p.Status)
+		}
+	}
+	slices.SortStableFunc(idx, func(a, b int) int { return cmpDesc(score[a], score[b]) })
+	b.WriteString("候选项目：\n")
+	if len(idx) == 0 {
+		b.WriteString("（还没有项目）\n")
+	}
+	for _, i := range idx[:min(5, len(idx))] {
+		b.WriteString(u.projectLine(&u.projects[i]))
+	}
+	// 对方相同的都召回；只是主题相近的要相似到一定程度：字符二元组几乎总有一点重合，不设下限就会把账本整个搬进上下文。
+	related := u.related(c.x.now(), func(m *Commitment) float64 {
+		s := memory.TextSimilarity(in.Query, m.Content+" "+m.Counterpart)
+		if counterpartIn(m.Counterpart, in.Counterparts) {
+			return s + 1
+		}
+		if s < relatedTopic {
+			return 0
+		}
+		return s
+	}, maxRelated)
+	if len(related) == 0 {
+		b.WriteString("相关的未完成承诺：没有\n")
+		return b.String()
+	}
+	b.WriteString("相关的未完成承诺（这段里的原话改动了其中某条时，在 file_changes 中 revise 或 close 它，不要新建）：\n")
+	for _, m := range related {
+		fmt.Fprintf(&b, "- %s\n", u.commitmentLine(m))
+	}
+	return b.String()
+}
+
+// related 返回最后一次修订在召回范围内的未完成承诺中得分为正的，按得分从高到低，至多 n 条。
+func (u *user) related(now time.Time, score func(*Commitment) float64, n int) []*Commitment {
+	var out []*Commitment
+	scores := map[string]float64{}
+	for i := range u.commitments {
+		m := &u.commitments[i]
+		if !m.Open() || now.Sub(m.UpdatedAt) > relatedWindow {
+			continue
+		}
+		if s := score(m); s > 0 {
+			scores[m.ID] = s
+			out = append(out, m)
+		}
+	}
+	slices.SortStableFunc(out, func(a, b *Commitment) int { return cmpDesc(scores[a.ID], scores[b.ID]) })
+	return out[:min(n, len(out))]
+}
+
+func cmpDesc(a, b float64) int {
+	switch {
+	case a > b:
+		return -1
+	case a < b:
+		return 1
+	}
+	return 0
+}
+
+// counterpartIn 报告称呼 name 是否与 names 中的某一个相同或互相包含（"黄总"与"黄总监"）。
+func counterpartIn(name string, names []string) bool {
+	if name == "" {
+		return false
+	}
+	return slices.ContainsFunc(names, func(n string) bool { return n != "" && (strings.Contains(n, name) || strings.Contains(name, n)) })
+}
+
+// dayLedger 是 day_ledger：今天（本旁听 Session）的交谈与承诺，之前未完成、与今天的对方或项目相关的承诺，以及确定性的
+// 提示：同一对方、内容相近的承诺对，相邻且归属相同的交谈（captures-xinli-model.md §6）。
+func (c *call) dayLedger() string {
+	u := c.u
+	var b strings.Builder
+	var today []Exchange
+	for _, e := range u.exchanges {
+		if e.Session == c.session && e.Live() {
+			today = append(today, e)
+		}
+	}
+	slices.SortStableFunc(today, func(a, b Exchange) int {
+		switch {
+		case refBefore(a.From, b.From):
+			return -1
+		case refBefore(b.From, a.From):
+			return 1
+		}
+		return 0
+	})
+	b.WriteString("今天的交谈：\n")
+	if len(today) == 0 {
+		b.WriteString("（还没有）\n")
+	}
+	projects, counterparts := map[string]bool{}, []string{}
+	for _, e := range today {
+		fmt.Fprintf(&b, "%s（%s–%s）%s［%s］：%s\n", e.ID, e.From, e.To, e.Title, u.where(&e), e.Summary)
+		var ds []string
+		for _, d := range e.Decisions {
+			ds = append(ds, d.Text)
+		}
+		list(&b, "  已定", ds)
+		list(&b, "  风险", e.Risks)
+		list(&b, "  沟通方式", e.Awareness)
+		for _, p := range e.InProjects() {
+			projects[p] = true
+		}
+	}
+	var mine []*Commitment
+	for i := range u.commitments {
+		m := &u.commitments[i]
+		if m.Session == c.session || slices.ContainsFunc(m.Revisions, func(r Revision) bool { return u.changesetSession(r.Changeset) == c.session }) {
+			mine = append(mine, m)
+			if m.Counterpart != "" {
+				counterparts = append(counterparts, m.Counterpart)
+			}
+			if m.Project != "" {
+				projects[m.Project] = true
+			}
+		}
+	}
+	b.WriteString("今天的承诺：\n")
+	if len(mine) == 0 {
+		b.WriteString("（还没有）\n")
+	}
+	for _, m := range mine {
+		fmt.Fprintf(&b, "- %s\n", u.commitmentLine(m))
+	}
+	earlier := u.related(c.x.now(), func(m *Commitment) float64 {
+		if slices.Contains(mine, m) {
+			return 0
+		}
+		if counterpartIn(m.Counterpart, counterparts) || (m.Project != "" && projects[m.Project]) {
+			return 1
+		}
+		return 0
+	}, len(u.commitments))
+	if len(earlier) > 0 {
+		b.WriteString("之前未完成、与今天的对方或项目相关的承诺：\n")
+		for _, m := range earlier {
+			fmt.Fprintf(&b, "- %s\n", u.commitmentLine(m))
+		}
+	}
+	var hints []string
+	open := slices.DeleteFunc(append(slices.Clone(mine), earlier...), func(m *Commitment) bool { return !m.Open() })
+	for i, a := range open {
+		for _, d := range open[i+1:] {
+			if a.Kind == d.Kind && a.Counterpart != "" && a.Counterpart == d.Counterpart && memory.TextSimilarity(a.Content, d.Content) >= similarContent {
+				hints = append(hints, fmt.Sprintf("可能重复的承诺：%s 与 %s（同一对方「%s」、内容相近）", a.ID, d.ID, a.Counterpart))
+			}
+		}
+	}
+	for i := 1; i < len(today); i++ {
+		a, d := today[i-1].InProjects(), today[i].InProjects()
+		if len(a) > 0 && slices.Equal(a, d) {
+			hints = append(hints, fmt.Sprintf("相邻且归属相同的交谈：%s 与 %s（都归入 %s）", today[i-1].ID, today[i].ID, strings.Join(a, "、")))
+		}
+	}
+	if len(hints) > 0 {
+		b.WriteString("提示（按规则找出的候选，判断之后再决定；拿不准就不动作）：\n")
+		for _, h := range hints {
+			fmt.Fprintf(&b, "- %s\n", h)
+		}
+	}
+	return b.String()
+}
+
 func (c *call) fileDay() string {
+	if strings.HasPrefix(c.u.submitted[c.session], "整理交谈") {
+		return "没有收下：白天的\"整理交谈\"不交当天总览，当天总览只在\"整理今天\"中交出"
+	}
 	var in struct {
 		Day struct {
 			Headline   string
@@ -486,6 +560,9 @@ func (c *call) fileDay() string {
 		Awareness Awareness
 	}
 	_ = json.Unmarshal(c.args, &in)
+	if ws := healthIn(append(append([]string{in.Day.Headline}, in.Day.Highlights...), append(in.Awareness.Habits, in.Awareness.Suggestions...)...)...); len(ws) > 0 {
+		return fmt.Sprintf("没有收下：当天总览与觉察含健康信息（「%s」）。这里只写事务与沟通方式，删去关于身心健康的整句（包括他人的），不要换个说法，再交一次", strings.Join(ws, "」「"))
+	}
 	now := c.x.now()
 	day := Day{Date: now.Format(time.DateOnly), Session: c.session, FiledAt: now, Headline: in.Day.Headline,
 		Highlights: in.Day.Highlights, Awareness: in.Awareness}
@@ -497,10 +574,12 @@ func (c *call) fileDay() string {
 	var touched []string
 	n := 0
 	for _, e := range c.u.exchanges {
-		if e.Session == c.session {
+		if e.Session == c.session && e.Live() {
 			n++
-			if e.Project != "" && !slices.Contains(touched, e.Project) {
-				touched = append(touched, e.Project)
+			for _, p := range e.InProjects() {
+				if !slices.Contains(touched, p) {
+					touched = append(touched, p)
+				}
 			}
 		}
 	}
@@ -509,47 +588,6 @@ func (c *call) fileDay() string {
 	}
 	// 总要有确认：没有交谈（当天只有闲聊）时返回空文字，模型会以为没有交上、一再重交。
 	return fmt.Sprintf("已收到 %s 的整理（%d 段交谈）", day.Date, n)
-}
-
-func (c *call) updateCommitments() string {
-	var in struct {
-		Done, Cancelled []string
-		DueChanges      []struct {
-			ID      string
-			DueDate string `json:"due_date"`
-		} `json:"due_changes"`
-	}
-	_ = json.Unmarshal(c.args, &in)
-	p := c.u.projectOfSession(c.session)
-	if p == nil {
-		return "这个会话不对应任何项目"
-	}
-	var b strings.Builder
-	var unknown []string
-	set := func(id string, f func(*Commitment)) {
-		for i := range c.u.commitments {
-			if m := &c.u.commitments[i]; m.ID == id && m.Project == p.ID {
-				f(m)
-				m.UpdatedAt = c.x.now()
-				return
-			}
-		}
-		unknown = append(unknown, id)
-	}
-	for _, id := range in.Done {
-		set(id, func(m *Commitment) { m.Status = "done" })
-	}
-	for _, id := range in.Cancelled {
-		set(id, func(m *Commitment) { m.Status = "cancelled" })
-	}
-	for _, d := range in.DueChanges {
-		set(d.ID, func(m *Commitment) { m.DueDate = d.DueDate })
-	}
-	fmt.Fprintf(&b, "已更新 %d 条承诺", len(in.Done)+len(in.Cancelled)+len(in.DueChanges)-len(unknown))
-	if len(unknown) > 0 {
-		fmt.Fprintf(&b, "；不是本项目的承诺：%s", strings.Join(unknown, "、"))
-	}
-	return b.String()
 }
 
 // collect 扮演业务线服务端做"归集"（docs/design/captures-xinli.md §2 第 4 步）：为每个涉及的项目创建（或复用）xinli-project
@@ -586,8 +624,16 @@ func (x *Server) collect(businessLine, endUser, daySession, date string, project
 	}
 }
 
+// Submitted 记下业务线向旁听 Session 提交了哪种整理输入（"整理交谈"或"整理今天"）：业务线清楚自己提交的是什么，只接受
+// "整理今天"那次 Run 的 file_day（captures-xinli-model.md §6，F7）。没有记下时不限制（调试控制台中随手提交的输入）。
+func (x *Server) Submitted(businessLine, endUser, session, input string) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	x.user(businessLine, endUser).submitted[session] = input
+}
+
 // Resolve 是用户在 App 的"待确认"中的选择（captures-xinli.md §5）：把旁听 Session daySession 中拿不准归属的交谈
-// exchange 归入项目 project；project 为空时按交谈给出的名称新建。交谈的承诺随之归入项目。
+// exchange 归入项目 project；project 为空时按交谈给出的名称新建。交谈中还没有归属的承诺随之归入项目。它记为用户的变更集。
 func (x *Server) Resolve(businessLine, endUser, daySession, exchange, project string) error {
 	x.mu.Lock()
 	defer x.mu.Unlock()
@@ -596,8 +642,10 @@ func (x *Server) Resolve(businessLine, endUser, daySession, exchange, project st
 	if e == nil || !e.Pending() {
 		return fmt.Errorf("exchange %s of %s is not pending", exchange, daySession)
 	}
+	links := slices.Clone(e.Projects)
+	i := slices.IndexFunc(links, func(l Link) bool { return l.Match == "unsure" && l.Project == "" })
 	if project == "" {
-		name := e.Proposed
+		name := links[i].Proposed
 		if name == "" {
 			name = e.Title
 		}
@@ -605,12 +653,43 @@ func (x *Server) Resolve(businessLine, endUser, daySession, exchange, project st
 	} else if u.project(project) == nil {
 		return fmt.Errorf("no project %s", project)
 	}
-	e.Project = project
-	for i := range u.commitments {
-		if m := &u.commitments[i]; m.Session == daySession && m.Exchange == exchange {
-			m.Project = project
+	links[i].Project = project
+	cs := Changeset{Session: daySession, Key: fmt.Sprintf("user:%d", u.nextCS+1), Author: AuthorUser, RecordedAt: x.now(),
+		ReviseExchanges: []ExchangeRevise{{ID: exchange, Projects: links}}}
+	for _, m := range u.commitments {
+		if m.Session == daySession && m.Exchange == exchange && m.Project == "" {
+			cs.ReviseCommitments = append(cs.ReviseCommitments, CommitmentChange{ID: m.ID, Rev: m.Rev(), Fields: map[string]string{"project": project}})
 		}
 	}
+	u.commit(&cs, -1, nil)
+	return nil
+}
+
+// Edit 是用户在 App 中改一条承诺：status 非空时标为完成或取消，否则把期限改为 dueDate。它记为用户的变更集，改过的
+// 字段之后以用户的为准，模型不再改动（captures-xinli-model.md §5"用户优先"）。
+func (x *Server) Edit(businessLine, endUser, id, status, dueDate string) error {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	u := x.user(businessLine, endUser)
+	m := u.commitment(id)
+	if m == nil {
+		return fmt.Errorf("no commitment %s", id)
+	}
+	cs := Changeset{Key: fmt.Sprintf("user:%d", u.nextCS+1), Author: AuthorUser, RecordedAt: x.now()}
+	switch {
+	case status == "done" || status == "cancelled":
+		cs.CloseCommitments = []CommitmentChange{{ID: id, Rev: m.Rev(), Status: status}}
+	case status != "":
+		return fmt.Errorf("status must be done or cancelled")
+	case dueDate != "":
+		if _, err := time.Parse(time.DateOnly, dueDate); err != nil {
+			return fmt.Errorf("due_date must be YYYY-MM-DD")
+		}
+		cs.ReviseCommitments = []CommitmentChange{{ID: id, Rev: m.Rev(), Fields: map[string]string{"due_date": dueDate, "due_text": ""}}}
+	default:
+		return fmt.Errorf("nothing to change")
+	}
+	u.commit(&cs, -1, nil)
 	return nil
 }
 
@@ -618,7 +697,7 @@ func (x *Server) Resolve(businessLine, endUser, daySession, exchange, project st
 // 共用连接）。
 func Start(ctx context.Context, businessLines ...string) (*Server, error) {
 	x := &Server{ctx: ctx, users: map[string]*user{}}
-	srv := mcp.NewServer(&mcp.Implementation{Name: "xinli", Version: "2"}, nil)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "xinli", Version: "3"}, nil)
 	for _, t := range tools {
 		srv.AddTool(t.tool, func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			meta := func(k string) string { s, _ := req.Params.Meta["yanshi/"+k].(string); return s }
@@ -640,7 +719,7 @@ func Start(ctx context.Context, businessLines ...string) (*Server, error) {
 	go func() { <-ctx.Done(); _ = hs.Close() }()
 	for _, bl := range businessLines {
 		s := mcpcap.Server{Name: "xinli", BusinessLine: bl, URL: "http://" + ln.Addr().String(), Timeout: 30 * time.Second, CiteCaptures: true}
-		s.Tools.NoApproval = []string{"file_exchange", "file_day", "set_status", "update_commitments", "propose_merge", "file_week"}
+		s.Tools.NoApproval = []string{"file_changes", "file_day", "set_status", "update_commitments", "propose_merge", "file_week"}
 		x.Servers = append(x.Servers, s)
 	}
 	return x, nil
@@ -661,47 +740,91 @@ func citations(v any) map[string]mcpcap.Citation {
 // SeedData 是预置的数据（评测用例的 setup.xinli）。
 type SeedData struct {
 	Projects []Project
-	// Days 是按日期的摘要：day_summary、recent_days 在没有交出的交谈时返回它。
+	// Days 是按日期的摘要：day_summary、recent_days 在没有交出的交谈时返回它，它也可以作为对账的依据（交谈 ID 为
+	// "x" 加日期，如 x2026-10-24）。
 	Days        map[string]string
-	Commitments []Commitment
+	Commitments []SeedCommitment
 	// Filed 是已经交出的每日整理（日期、总览与觉察），Exchanges 是已经交出的交谈：每周回顾与重写现状读取它们。
 	Filed     []Day
-	Exchanges []Exchange
+	Exchanges []SeedExchange
 }
 
-// Seed 为业务线中的 endUser 预置数据。
+// SeedCommitment 是预置的承诺。
+type SeedCommitment struct {
+	ID          string `yaml:"id"`
+	Kind        string `yaml:"kind"`
+	Content     string `yaml:"content"`
+	Counterpart string `yaml:"counterpart"`
+	DueDate     string `yaml:"due_date"`
+	DueText     string `yaml:"due_text"`
+	Project     string `yaml:"project"`
+	// Status 缺省为 open。
+	Status string `yaml:"status"`
+}
+
+// SeedExchange 是预置的交谈（归入一个项目）。
+type SeedExchange struct {
+	ID        string   `yaml:"id"`
+	Date      string   `yaml:"date"`
+	Title     string   `yaml:"title"`
+	Summary   string   `yaml:"summary"`
+	Project   string   `yaml:"project"`
+	Decisions []string `yaml:"decisions"`
+	Risks     []string `yaml:"risks"`
+}
+
+// seedDays 是预置的按日期摘要所在的（虚构的）Session。
+const seedDays = "seed_days"
+
+// Seed 为业务线中的 endUser 预置数据：交谈与承诺记为一个预置的变更集。
 func (x *Server) Seed(businessLine, endUser string, d SeedData) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	u := x.user(businessLine, endUser)
 	u.projects = append(u.projects, d.Projects...)
-	for day, sum := range d.Days {
-		u.seeded[day] = sum
+	cs := Changeset{Key: fmt.Sprintf("seed:%d", u.nextCS+1), Author: AuthorSeed, RecordedAt: x.now()}
+	for _, date := range sortedKeys(d.Days) {
+		cs.CreateExchanges = append(cs.CreateExchanges, Exchange{ID: "x" + date, Session: seedDays, Date: date, Title: "当天摘要", Summary: d.Days[date],
+			Projects: []Link{{Match: "none"}}})
+	}
+	for i, e := range d.Exchanges {
+		if e.ID == "" {
+			e.ID = fmt.Sprintf("x%d.0", i+1)
+		}
+		link := Link{Match: "none"}
+		if e.Project != "" {
+			link = Link{Match: "existing", Project: e.Project}
+		}
+		ex := Exchange{ID: e.ID, Session: "seed_" + e.Date, Date: e.Date, Title: e.Title, Summary: e.Summary, Projects: []Link{link}, Risks: e.Risks}
+		for _, t := range e.Decisions {
+			ex.Decisions = append(ex.Decisions, Decision{Text: t})
+		}
+		cs.CreateExchanges = append(cs.CreateExchanges, ex)
 	}
 	for _, m := range d.Commitments {
 		if m.ID == "" {
 			u.nextC++
 			m.ID = fmt.Sprintf("C-%04d", u.nextC)
 		}
-		if m.Status == "" {
-			m.Status = "open"
-		}
-		u.commitments = append(u.commitments, m)
+		cs.CreateCommitments = append(cs.CreateCommitments, Commitment{ID: m.ID, Kind: m.Kind, Content: m.Content, Counterpart: m.Counterpart,
+			DueDate: m.DueDate, DueText: m.DueText, Project: m.Project, Status: m.Status})
+	}
+	if len(cs.CreateExchanges) > 0 || len(cs.CreateCommitments) > 0 {
+		u.commit(&cs, -1, nil)
 	}
 	for i, day := range d.Filed {
 		day.Session = fmt.Sprintf("seed_day_%d", i)
 		u.days = append(u.days, day)
 	}
-	for i, e := range d.Exchanges {
-		if e.ID == "" {
-			e.ID = fmt.Sprintf("x%d.0", i+1)
-		}
-		e.Session = "seed_" + e.Date
-		if e.Match == "" && e.Project != "" {
-			e.Match = "existing"
-		}
-		u.exchanges = append(u.exchanges, e)
+}
+
+func sortedKeys(m map[string]string) []string {
+	var out []string
+	for k := range m {
+		out = append(out, k)
 	}
+	slices.Sort(out)
+	return out
 }
 
 // Bind 记下项目 project 的 xinli-project Session 是 sessionID（评测中用例的 Session 扮演归集时创建的项目 Session）。
@@ -718,25 +841,20 @@ func (x *Server) State(businessLine, endUser string) State {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	u := x.user(businessLine, endUser)
-	st := State{Projects: slices.Clone(u.projects), Exchanges: slices.Clone(u.exchanges), Commitments: slices.Clone(u.commitments), Days: u.sortedDays(),
-		Weeks: slices.Clone(u.weeks), Merges: slices.Clone(u.merges)}
-	if st.Weeks == nil {
-		st.Weeks = []Week{}
-	}
-	if st.Merges == nil {
-		st.Merges = []Merge{}
-	}
+	l := fold(u.changesets, u.canon) // 重新叠加得到的是新的切片，调用方可以随意修改
+	st := State{Projects: slices.Clone(u.projects), Exchanges: l.exchanges, Commitments: l.commitments, Changesets: slices.Clone(u.changesets),
+		Days: u.sortedDays(), Weeks: slices.Clone(u.weeks), Merges: slices.Clone(u.merges)}
 	slices.Reverse(st.Days)
-	if st.Projects == nil {
-		st.Projects = []Project{}
-	}
-	if st.Exchanges == nil {
-		st.Exchanges = []Exchange{}
-	}
-	if st.Commitments == nil {
-		st.Commitments = []Commitment{}
-	}
+	st.Projects, st.Exchanges, st.Commitments, st.Changesets = orEmpty(st.Projects), orEmpty(st.Exchanges), orEmpty(st.Commitments), orEmpty(st.Changesets)
+	st.Days, st.Weeks, st.Merges = orEmpty(st.Days), orEmpty(st.Weeks), orEmpty(st.Merges)
 	return st
+}
+
+func orEmpty[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
 }
 
 // user 返回业务线中 EndUser 的数据；调用方持有 mu。
@@ -744,7 +862,7 @@ func (x *Server) user(businessLine, endUser string) *user {
 	k := businessLine + "\x00" + endUser
 	u := x.users[k]
 	if u == nil {
-		u = &user{seeded: map[string]string{}, weekSessions: map[string]string{}, next: 101}
+		u = &user{weekSessions: map[string]string{}, submitted: map[string]string{}, next: 101}
 		x.users[k] = u
 	}
 	return u
@@ -762,6 +880,37 @@ func (x *Server) logger() *slog.Logger {
 		return x.Logger
 	}
 	return slog.Default()
+}
+
+// refold 由变更集重新叠加出交谈与承诺。
+func (u *user) refold() { u.ledger = fold(u.changesets, u.canon) }
+
+// foldWithout 是去掉第 i 个变更集（将被取代的那个）之后的状态；i < 0 时就是当前状态。新的变更集据此检查：重交时它的
+// rev 是对着没有旧变更集的账本取的。
+func (u *user) foldWithout(i int) ledger {
+	if i < 0 {
+		return u.ledger
+	}
+	return fold(slices.Delete(slices.Clone(u.changesets), i, i+1), u.canon)
+}
+
+// canon 把已合并的项目换成保留的那个。
+func (u *user) canon(id string) string {
+	for range len(u.projects) {
+		p := u.project(id)
+		if p == nil || p.MergedInto == "" {
+			break
+		}
+		id = p.MergedInto
+	}
+	return id
+}
+
+func (u *user) changesetSession(id string) string {
+	if i := slices.IndexFunc(u.changesets, func(cs Changeset) bool { return cs.ID == id }); i >= 0 {
+		return u.changesets[i].Session
+	}
+	return ""
 }
 
 func (u *user) project(id string) *Project {
@@ -791,32 +940,31 @@ func (u *user) projectOfSession(sid string) *Project {
 	return nil
 }
 
-func (u *user) exchange(session, id string) *Exchange {
-	if i := slices.IndexFunc(u.exchanges, func(e Exchange) bool { return e.Session == session && e.ID == id }); i >= 0 {
-		return &u.exchanges[i]
-	}
-	return nil
-}
-
 // where 呈现一段交谈的归属。
 func (u *user) where(e *Exchange) string {
-	switch {
-	case e.Project != "":
-		name := ""
-		if p := u.project(e.Project); p != nil {
-			name = " " + p.Name
+	var parts []string
+	for _, l := range e.Projects {
+		switch {
+		case l.Project != "":
+			name := ""
+			if p := u.project(l.Project); p != nil {
+				name = " " + p.Name
+			}
+			parts = append(parts, "归入 "+l.Project+name)
+		case l.Match == "unsure":
+			parts = append(parts, "待用户确认：可能属于 "+l.Candidate)
 		}
-		return "归入 " + e.Project + name
-	case e.Pending():
-		return "待用户确认：可能属于 " + e.Candidate
 	}
-	return "不归项目"
+	if len(parts) == 0 {
+		return "不归项目"
+	}
+	return strings.Join(parts, "；")
 }
 
 func (u *user) projectLine(p *Project) string {
 	open := 0
 	for _, m := range u.commitments {
-		if m.Project == p.ID && m.Status == "open" {
+		if m.Project == p.ID && m.Open() {
 			open++
 		}
 	}
@@ -827,18 +975,60 @@ func (u *user) projectLine(p *Project) string {
 	return fmt.Sprintf("%s %s：%s（未完成的承诺 %d 条）\n", p.ID, p.Name, status, open)
 }
 
-// openCommitments 列出项目未完成的承诺，供 Project 的 Run 对账。
+// commitmentLine 呈现一条承诺给模型：ID、rev、状态、内容与期限、归属、出处、引用与之后的修订（说话时间与依据）。
+func (u *user) commitmentLine(m *Commitment) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s（rev %d", m.ID, m.Rev())
+	if m.MergedInto != "" {
+		fmt.Fprintf(&b, "，已并入 %s", m.MergedInto)
+	} else if m.Status != "open" {
+		b.WriteString("，" + m.Status)
+	}
+	b.WriteString("）" + commitmentText(m))
+	if m.Project != "" {
+		b.WriteString("；归入 " + m.Project)
+	}
+	if m.Exchange != "" {
+		b.WriteString("；出处 " + m.Exchange)
+	}
+	if len(m.Refs) > 0 {
+		b.WriteString("；引用 " + strings.Join(m.Refs, "、"))
+	}
+	for _, r := range m.Revisions[1:] {
+		at := r.RecordedAt
+		if !r.SpokenAt.IsZero() {
+			at = r.SpokenAt
+		}
+		fmt.Fprintf(&b, "；%s %s（依据%s）", at.Format("01-02 15:04"), revisionText(&r), r.Basis())
+	}
+	return b.String()
+}
+
+func revisionText(r *Revision) string {
+	switch {
+	case r.Op == "merge":
+		return "并入 " + r.Fields["merged_into"]
+	case r.Fields["status"] != "":
+		return "标为 " + r.Fields["status"]
+	case r.Fields["due_date"] != "":
+		return "期限改为 " + r.Fields["due_date"]
+	}
+	return "改了 " + strings.Join(sortedKeys(r.Fields), "、")
+}
+
+// openCommitments 列出项目未完成的承诺（带 rev），供 Project 的 Run 对账。
 func (u *user) openCommitments(b *strings.Builder, project string) {
 	first := true
-	for _, m := range u.commitments {
-		if m.Project != project || m.Status != "open" {
+	for i := range u.commitments {
+		m := &u.commitments[i]
+		if m.Project != project || !m.Open() {
 			continue
 		}
 		if first {
 			b.WriteString("\n未完成的承诺：\n")
 			first = false
 		}
-		fmt.Fprintf(b, "- %s %s\n", m.ID, commitmentText(&m))
+		fmt.Fprintf(b, "- %s（rev %d）%s\n", m.ID, m.Rev(), commitmentText(m))
 	}
 }
 
@@ -854,11 +1044,17 @@ func (u *user) sortedDays() []Day {
 	return days
 }
 
-// exchangeText 把一段交谈呈现为给 Project 的 Run 与助手看的文字。
-func exchangeText(e *Exchange) string {
+// exchangeText 把一段交谈呈现为给 Project 的 Run 与助手看的文字；project 非空时只列属于它（或没有标明项目）的决定。
+func exchangeText(e *Exchange, project string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n", e.Summary)
-	list(&b, "已定", e.Decisions)
+	var ds []string
+	for _, d := range e.Decisions {
+		if project == "" || d.Project == "" || d.Project == project {
+			ds = append(ds, d.Text)
+		}
+	}
+	list(&b, "已定", ds)
 	list(&b, "风险", e.Risks)
 	return b.String()
 }

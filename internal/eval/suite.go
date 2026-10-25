@@ -88,23 +88,28 @@ type XinliSetup struct {
 
 type (
 	XinliProject    = xinlimock.Project
-	XinliCommitment = xinlimock.Commitment
+	XinliCommitment = xinlimock.SeedCommitment
 	XinliDay        = xinlimock.Day
-	XinliExchange   = xinlimock.Exchange
+	XinliExchange   = xinlimock.SeedExchange
 )
 
 // XinliExpect 是对 xinli 业务线数据的断言。
 type XinliExpect struct {
-	// Exchanges 是交出的交谈数的范围；Pending 是"待确认"中交谈数的范围；Projects 是项目数（含预置的）的范围。
+	// Exchanges 是整理交出、仍然有效的交谈数的范围（不含预置的，被并入别处的不算）；Pending 是"待确认"中交谈数的范围；
+	// Projects 是项目数（含预置的）的范围。
 	Exchanges *Range `yaml:"exchanges"`
 	Pending   *Range `yaml:"pending"`
 	Projects  *Range `yaml:"projects"`
-	// InProject 是归入各项目（按 ID）的交谈数的范围，如 {P-0001: {max: 0}}。
+	// InProject 是关联到各项目（按 ID）的交谈数的范围，如 {P-0001: {max: 0}}；一段交谈可以关联几个项目。
 	InProject map[string]Range `yaml:"in_project"`
 	// Commitments 中每项须匹配账本中的某条承诺；NoCommitments 中每项都不得匹配任何一条。
 	Commitments   []CommitmentMatch `yaml:"commitments"`
 	NoCommitments []CommitmentMatch `yaml:"no_commitments"`
-	// Grouping 是项目归集的碎片率与纯度（captures-xinli.md §10），需要旁听标上主题（CaptureSegment.Topic）。
+	// CommitmentsCount 是整理交出的承诺数（不含预置的与被合并的）的范围：承诺过多时提醒会被淹没（F5）。
+	CommitmentsCount *Range `yaml:"commitments_count"`
+	// StaleOpen 是过时的未完成承诺：Of 中每项描述一条改期、作废或转交之前的旧版本，仍未完成且匹配其中某项的至多 Max 条（F1）。
+	StaleOpen *StaleExpect `yaml:"stale_open"`
+	// Grouping 是项目归集的碎片率与纯度（captures-xinli.md §10、m4-eval.md），需要旁听标上主题（CaptureSegment.Topic）。
 	Grouping *GroupingExpect `yaml:"grouping"`
 	// Covers 是摘要须覆盖的要点：评分模型逐条判断要点是否出现在交出的交谈与总览中，覆盖率至少为 Min。
 	Covers *CoversExpect `yaml:"covers"`
@@ -118,6 +123,12 @@ type XinliExpect struct {
 	NoWeekHabits []string `yaml:"no_week_habits"`
 	// Status 是项目现状的断言：按项目 ID，contains 中的都要出现，excludes 中的都不得出现。
 	Status map[string]TextMatch `yaml:"status"`
+}
+
+// StaleExpect 是过时的未完成承诺数的断言。
+type StaleExpect struct {
+	Of  []CommitmentMatch `yaml:"of"`
+	Max int               `yaml:"max"`
 }
 
 // TextMatch 要求文本包含 Contains 中的全部、不含 Excludes 中的任何一项。
@@ -150,12 +161,14 @@ type CoversExpect struct {
 type CommitmentMatch struct {
 	Kind     string `yaml:"kind"` // mine | theirs
 	Contains string `yaml:"contains"`
-	// DueDate 要求期限的日期（YYYY-MM-DD）；Status 是 open、done 或 cancelled；Project 是所属项目 ID。
+	// DueDate 要求期限的日期（YYYY-MM-DD）；Status 是 open（未完成且没有被合并）、done、cancelled 或 merged；Project 是所属项目 ID。
 	DueDate string `yaml:"due_date"`
 	Status  string `yaml:"status"`
 	Project string `yaml:"project"`
 	// Verified 非 nil 时要求核对的结果：true 为通过核对，false 为未核实。
 	Verified *bool `yaml:"verified"`
+	// Rev 非零时要求修订数（新建算 1）：改期应修订同一条，而不是新建。
+	Rev int `yaml:"rev"`
 }
 
 // CaptureSegment 是一段旁听转写：Speaker 为 wearer（佩戴者）或 other（他人，Key 区分不同的人）。

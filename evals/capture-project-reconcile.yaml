@@ -1,7 +1,8 @@
 name: capture-project-reconcile
 description: >-
-  项目 Session 对账承诺（captures-xinli.md §4）：当天的交谈说报价单已经收到、合同推迟到 11 月 2 日，
-  按 ID 把报价单标为完成、改合同的期限，并更新项目现状；不重复添加承诺。交谈经 day_summary 拉取，是外部内容（ADR-0037）。
+  项目 Session 对账承诺（captures-xinli-model.md §6）：当天的交谈说报价单已经收到、合同推迟到 11 月 2 日，
+  按 ID 与 rev 把报价单标为完成、改合同的期限（依据交谈，记为依据摘要的修订），并更新项目现状；不重复添加承诺。
+  交谈经 day_summary 拉取，是外部内容（ADR-0037）。
 agent: xinli-project
 setup:
   xinli:
@@ -22,3 +23,4 @@ turns:
         commitments:
           - {kind: mine, contains: 报价单, status: done}
           - {kind: theirs, contains: 合同, status: open, due_date: "2026-11-02"}
+        commitments_count: {max: 0}

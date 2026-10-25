@@ -25,6 +25,7 @@ import (
 	"yanshi/internal/artifact"
 	"yanshi/internal/askuser"
 	"yanshi/internal/call"
+	"yanshi/internal/capture"
 	"yanshi/internal/card"
 	"yanshi/internal/clock"
 	"yanshi/internal/delegation"
@@ -500,6 +501,10 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 			tr.Err = fmt.Sprintf("turn %d: captures: %v", ti+1, err)
 			return tr
 		}
+		if in.xinli != nil {
+			// 扮演业务线服务端：它清楚自己提交的是哪种整理，只接受"整理今天"那次 Run 的 file_day（F7）。
+			in.xinli.Submitted(bl, endUser, sid, turn.Input)
+		}
 		var obs *observation
 		var err error
 		if c.Call {
@@ -725,15 +730,25 @@ func (in *instance) checkXinli(add func(string, bool, string), e *XinliExpect, s
 	inRange := func(r *Range, n int) bool {
 		return r == nil || ((r.Min == nil || n >= *r.Min) && (r.Max == nil || n <= *r.Max))
 	}
-	pending := 0
+	// 只数整理交出的、仍然有效的交谈：预置的没有范围，被当天整理并入别处的不再单独算。
+	pending, filed := 0, 0
 	byProject := map[string]int{}
 	for i := range st.Exchanges {
-		if st.Exchanges[i].Pending() {
+		x := &st.Exchanges[i]
+		if !x.Live() {
+			continue
+		}
+		if x.Pending() {
 			pending++
 		}
-		byProject[st.Exchanges[i].Project]++
+		if x.From != "" {
+			filed++
+		}
+		for _, p := range x.InProjects() {
+			byProject[p]++
+		}
 	}
-	add("xinli exchanges", inRange(e.Exchanges, len(st.Exchanges)), fmt.Sprintf("%d exchanges", len(st.Exchanges)))
+	add("xinli exchanges", inRange(e.Exchanges, filed), fmt.Sprintf("%d exchanges", filed))
 	add("xinli pending", inRange(e.Pending, pending), fmt.Sprintf("%d pending", pending))
 	add("xinli projects", inRange(e.Projects, len(st.Projects)), fmt.Sprintf("%d projects", len(st.Projects)))
 	for _, id := range slices.Sorted(maps.Keys(e.InProject)) {
@@ -741,10 +756,28 @@ func (in *instance) checkXinli(add func(string, bool, string), e *XinliExpect, s
 		add("xinli in_project "+id, inRange(&r, byProject[id]), fmt.Sprintf("%d exchanges in %s", byProject[id], id))
 	}
 	var all []string
+	made := 0
 	for _, m := range st.Commitments {
-		all = append(all, fmt.Sprintf("[%s %s %s %s] %s %s", m.Kind, m.Status, m.DueDate, m.Project, m.Content, m.Unverified))
+		status := m.Status
+		if m.MergedInto != "" {
+			status = "merged"
+		}
+		all = append(all, fmt.Sprintf("[%s %s %s %s r%d] %s %s", m.Kind, status, m.DueDate, m.Project, m.Rev(), m.Content, m.Unverified))
+		if m.Session != "" && m.MergedInto == "" {
+			made++
+		}
 	}
 	detail := "commitments: " + clip(strings.Join(all, "; "), 400)
+	add("xinli commitments_count", inRange(e.CommitmentsCount, made), fmt.Sprintf("%d commitments from the day's organizing (merged ones not counted)", made))
+	if s := e.StaleOpen; s != nil {
+		var stale []string
+		for _, m := range st.Commitments {
+			if m.Open() && slices.ContainsFunc(s.Of, func(want CommitmentMatch) bool { return commitmentMatches(m, want) }) {
+				stale = append(stale, m.ID+" "+m.Content+" "+m.DueDate)
+			}
+		}
+		add("xinli stale_open", len(stale) <= s.Max, fmt.Sprintf("%d stale open commitments, want at most %d: %v", len(stale), s.Max, stale))
+	}
 	for _, want := range e.Commitments {
 		add("xinli commitment "+want.Kind+" "+want.Contains, slices.ContainsFunc(st.Commitments, func(m xinlimock.Commitment) bool { return commitmentMatches(m, want) }), detail)
 	}
@@ -830,33 +863,84 @@ func (in *instance) exchangeTopics(ctx context.Context, topics map[string][]stri
 	return out, nil
 }
 
-// checkGrouping 计算项目归集的碎片率与纯度（captures-xinli.md §10）。每段交出的交谈取它第一段旁听的主题，没有
-// 主题的（闲聊）不计入碎片率。碎片率：每个主题的交谈分散在几个项目中（没有归入项目的每段各算一个），按主题平均；
-// 纯度：每个项目中占多数的主题所占的比例（闲聊算作杂质），按交谈数加权。
+// checkGrouping 计算项目归集的碎片率与纯度（captures-xinli.md §10、m4-eval.md）。交谈由模型划定范围，每段交谈的主题是
+// 范围内标了主题的旁听中最多的那个（相同时取先出现的），全是闲聊的没有主题。一段交谈可以关联几个项目：它对每个关联的
+// 项目各算一次，算作的主题是这段交谈中出现过的、且是那个项目在只关联一个项目的交谈中占多数的主题；没有这样的主题时
+// 算作这段交谈自己的主题。碎片率：每个主题的交谈分散在几个项目中（没有归入项目的每段各算一个），按主题平均；纯度：每个
+// 项目中占多数的主题所占的比例（闲聊算作杂质），按交谈数加权。
 func checkGrouping(add func(string, bool, string), want *GroupingExpect, st *xinlimock.State, topics map[string]string) {
-	byTopic := map[string]map[string]bool{}
-	byProject := map[string]map[string]int{}
+	type item struct {
+		e      *xinlimock.Exchange
+		topic  string
+		counts map[string]int
+	}
+	var items []item
 	for i := range st.Exchanges {
 		e := &st.Exchanges[i]
-		topic := topics[e.Session+"/"+strings.TrimPrefix(e.ID, "x")]
-		if topic != "" {
-			if byTopic[topic] == nil {
-				byTopic[topic] = map[string]bool{}
-			}
-			where := e.Project
-			if where == "" {
-				where = "unfiled:" + e.ID + "@" + e.Session
-			}
-			byTopic[topic][where] = true
+		if !e.Live() || e.From == "" {
+			continue // 预置的交谈没有范围
 		}
-		if e.Project != "" {
-			if byProject[e.Project] == nil {
-				byProject[e.Project] = map[string]int{}
+		it := item{e: e, counts: map[string]int{}}
+		best := 0
+		for _, t := range rangeTopics(e, topics) {
+			it.counts[t]++
+			if it.counts[t] > best {
+				best, it.topic = it.counts[t], t
+			}
+		}
+		items = append(items, it)
+	}
+	// 只关联一个项目的交谈给出每个项目"自己的"主题，关联多个项目的交谈据此逐项算作。
+	own := map[string]map[string]int{}
+	for _, it := range items {
+		if ps := it.e.InProjects(); len(ps) == 1 && it.topic != "" {
+			if own[ps[0]] == nil {
+				own[ps[0]] = map[string]int{}
+			}
+			own[ps[0]][it.topic]++
+		}
+	}
+	majority := func(m map[string]int) string {
+		best, top := 0, ""
+		for _, t := range slices.Sorted(maps.Keys(m)) {
+			if m[t] > best {
+				best, top = m[t], t
+			}
+		}
+		return top
+	}
+	byTopic := map[string]map[string]bool{}
+	byProject := map[string]map[string]int{}
+	note := func(topic, where string) {
+		if topic == "" {
+			return
+		}
+		if byTopic[topic] == nil {
+			byTopic[topic] = map[string]bool{}
+		}
+		byTopic[topic][where] = true
+	}
+	for _, it := range items {
+		ps := it.e.InProjects()
+		if len(ps) == 0 {
+			note(it.topic, "unfiled:"+it.e.ID+"@"+it.e.Session)
+			continue
+		}
+		for _, p := range ps {
+			topic := it.topic
+			if len(ps) > 1 {
+				if t := majority(own[p]); t != "" && it.counts[t] > 0 {
+					topic = t
+				}
+			}
+			note(topic, p)
+			if byProject[p] == nil {
+				byProject[p] = map[string]int{}
 			}
 			if topic == "" {
 				topic = "(闲聊)"
 			}
-			byProject[e.Project][topic]++
+			byProject[p][topic]++
 		}
 	}
 	frag := 0.0
@@ -866,7 +950,7 @@ func checkGrouping(add func(string, bool, string), want *GroupingExpect, st *xin
 	if len(byTopic) > 0 {
 		frag /= float64(len(byTopic))
 	}
-	total, majority := 0, 0
+	total, major := 0, 0
 	for _, ts := range byProject {
 		best := 0
 		for t, n := range ts {
@@ -875,13 +959,13 @@ func checkGrouping(add func(string, bool, string), want *GroupingExpect, st *xin
 				best = n
 			}
 		}
-		majority += best
+		major += best
 	}
 	purity := 1.0
 	if total > 0 {
-		purity = float64(majority) / float64(total)
+		purity = float64(major) / float64(total)
 	}
-	detail := fmt.Sprintf("fragmentation %.2f over %d topics, purity %.2f over %d exchanges in projects; topics → projects %v", frag, len(byTopic), purity, total, byTopic)
+	detail := fmt.Sprintf("fragmentation %.2f over %d topics, purity %.2f over %d exchange links in projects; topics → projects %v", frag, len(byTopic), purity, total, byTopic)
 	if r := want.Fragmentation; r != nil {
 		add("xinli fragmentation", (r.Min == nil || frag >= *r.Min) && (r.Max == nil || frag <= *r.Max), detail)
 	}
@@ -893,20 +977,60 @@ func checkGrouping(add func(string, bool, string), want *GroupingExpect, st *xin
 	}
 }
 
+// rangeTopics 返回交谈范围 [From, To] 内各段旁听标的主题（按日志顺序，不含没标的）。topics 的键是"Session/事件序号.段序号"。
+func rangeTopics(e *xinlimock.Exchange, topics map[string]string) []string {
+	from, ok1 := capture.ParseRef(strings.TrimPrefix(e.From, "#"))
+	to, ok2 := capture.ParseRef(strings.TrimPrefix(e.To, "#"))
+	if !ok1 || !ok2 {
+		return nil
+	}
+	type pos struct {
+		ref   capture.Ref
+		topic string
+	}
+	var in []pos
+	for k, t := range topics {
+		sid, r, ok := strings.Cut(k, "/")
+		ref, ok2 := capture.ParseRef(r)
+		if !ok || !ok2 || sid != e.Session || t == "" {
+			continue
+		}
+		after := ref.Seq > from.Seq || (ref.Seq == from.Seq && ref.Index >= from.Index)
+		before := ref.Seq < to.Seq || (ref.Seq == to.Seq && ref.Index <= to.Index)
+		if after && before {
+			in = append(in, pos{ref, t})
+		}
+	}
+	slices.SortFunc(in, func(a, b pos) int {
+		if a.ref.Seq != b.ref.Seq {
+			return int(a.ref.Seq) - int(b.ref.Seq)
+		}
+		return a.ref.Index - b.ref.Index
+	})
+	out := make([]string, len(in))
+	for i, p := range in {
+		out[i] = p.topic
+	}
+	return out
+}
+
+// commitmentMatches 判定承诺是否匹配；status 为 open 时只匹配未完成且没有被合并的，merged 匹配被合并的。
 func commitmentMatches(m xinlimock.Commitment, want CommitmentMatch) bool {
+	status := m.Status
+	if m.MergedInto != "" {
+		status = "merged"
+	}
 	return (want.Kind == "" || m.Kind == want.Kind) && strings.Contains(m.Content, want.Contains) &&
-		(want.DueDate == "" || m.DueDate == want.DueDate) && (want.Status == "" || m.Status == want.Status) &&
-		(want.Project == "" || m.Project == want.Project) && (want.Verified == nil || *want.Verified == (m.Unverified == ""))
+		(want.DueDate == "" || m.DueDate == want.DueDate) && (want.Status == "" || status == want.Status) &&
+		(want.Project == "" || m.Project == want.Project) && (want.Verified == nil || *want.Verified == (m.Unverified == "")) &&
+		(want.Rev == 0 || m.Rev() == want.Rev)
 }
 
 // captureZone 是评测中 HostApp 所在的时区：用例的 at 按它解读。
 var captureZone, _ = time.LoadLocation("Asia/Shanghai")
 
-// submitCaptures 以 HostApp 的身份把一批旁听提交到 Session（docs/design/captures.md §3）。
+// submitCaptures 以 HostApp 的身份把旁听提交到 Session（docs/design/captures.md §3），按说话时间分批（captureBatches）。
 func (in *instance) submitCaptures(ctx context.Context, sid string, segs []CaptureSegment) error {
-	if len(segs) == 0 {
-		return nil
-	}
 	out := make([]*v1.CaptureSegment, 0, len(segs))
 	for _, g := range segs {
 		seg := &v1.CaptureSegment{Speaker: v1.Speaker_SPEAKER_WEARER, Text: g.Text}
@@ -925,15 +1049,49 @@ func (in *instance) submitCaptures(ctx context.Context, sid string, segs []Captu
 		}
 		out = append(out, seg)
 	}
-	// 长的一天按批提交，与 HostApp 每分钟提交一批相同；一批至多 session.MaxCaptureSegments 段。
-	for len(out) > 0 {
-		n := min(len(out), 100)
-		if _, err := in.svc.SubmitCaptures(ctx, sid, session.StreamTranscript, "cap_"+ids.Random()(), out[:n]); err != nil {
+	for _, batch := range captureBatches(out) {
+		if _, err := in.svc.SubmitCaptures(ctx, sid, session.StreamTranscript, "cap_"+ids.Random()(), batch); err != nil {
 			return err
 		}
-		out = out[n:]
 	}
 	return nil
+}
+
+// captureBatches 把旁听按说话时间分批，与真实的 HostApp 一样约每分钟一批（一批至多 maxBatch 段；没有时间的只按段数），
+// 并把每批中的他人按第一次出现的顺序重新编号为 other-1、other-2……：speaker_key 只在一批之内有意义（captures.md §3），
+// 用例中全天不变的 key 会掩盖跨批无法比较的问题（docs/review/2026-10-25-xinli-workday.md §8.1）。
+func captureBatches(segs []*v1.CaptureSegment) [][]*v1.CaptureSegment {
+	const maxBatch = 100
+	var out [][]*v1.CaptureSegment
+	var start time.Time
+	for _, g := range segs {
+		at := g.GetSpokenAt().AsTime()
+		n := len(out)
+		if n == 0 || len(out[n-1]) >= maxBatch || (g.GetSpokenAt() != nil && !start.IsZero() && at.Sub(start) >= time.Minute) {
+			out = append(out, nil)
+			n++
+			start = time.Time{}
+		}
+		if start.IsZero() && g.GetSpokenAt() != nil {
+			start = at
+		}
+		out[n-1] = append(out[n-1], g)
+	}
+	for _, batch := range out {
+		keys := map[string]string{}
+		for _, g := range batch {
+			if g.GetSpeaker() != v1.Speaker_SPEAKER_OTHER {
+				continue
+			}
+			k, ok := keys[g.GetSpeakerKey()]
+			if !ok {
+				k = fmt.Sprintf("other-%d", len(keys)+1)
+				keys[g.GetSpeakerKey()] = k
+			}
+			g.SpeakerKey = k
+		}
+	}
+	return out
 }
 
 // awaitBackground 等待 seq after 之后的后台调用了结（ADR-0035），返回它开启或并入的 Run。

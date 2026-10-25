@@ -67,7 +67,7 @@ var weekTools = []struct {
 			for _, d := range c.u.weekDays(c.x.now()) {
 				fmt.Fprintf(&b, "%s：%s\n", d.Date, d.Headline)
 				for _, e := range c.u.exchanges {
-					if e.Date == d.Date {
+					if e.Date == d.Date && e.Live() {
 						fmt.Fprintf(&b, "  [%s] %s\n", c.u.where(&e), e.Title)
 					}
 				}
@@ -118,7 +118,7 @@ var weekTools = []struct {
 					b.WriteString("  " + c.u.projectLine(x))
 					var titles []string
 					for _, e := range c.u.exchanges {
-						if e.Project == x.ID {
+						if e.Live() && slices.Contains(e.InProjects(), x.ID) {
 							titles = append(titles, e.Date+" "+e.Title)
 						}
 					}
@@ -202,7 +202,7 @@ func (u *user) weekDays(now time.Time) []Day {
 func (u *user) lastActive(id string) string {
 	last := ""
 	for _, e := range u.exchanges {
-		if e.Project == id && e.Date > last {
+		if e.Live() && slices.Contains(e.InProjects(), id) && e.Date > last {
 			last = e.Date
 		}
 	}
@@ -223,7 +223,7 @@ func (x *Server) Archive(businessLine, endUser string) []string {
 		if !p.Active() || last == "" || last >= cutoff {
 			continue
 		}
-		if slices.ContainsFunc(u.commitments, func(m Commitment) bool { return m.Project == p.ID && m.Status == "open" }) {
+		if slices.ContainsFunc(u.commitments, func(m Commitment) bool { return m.Project == p.ID && m.Open() }) {
 			continue
 		}
 		p.Archived = true
@@ -232,7 +232,7 @@ func (x *Server) Archive(businessLine, endUser string) []string {
 	return out
 }
 
-// ResolveMerge 是用户对合并提议的选择：接受时把 from 的交谈与承诺移到 into，from 标为已并入，以后的归集都交给 into。
+// ResolveMerge 是用户对合并提议的选择：接受时 from 的交谈与承诺归到 into，from 标为已并入，以后的归集都交给 into。
 // 业务线还应关闭 from 的 xinli-project Session；模拟服务不关闭，调试控制台还要查看它。
 func (x *Server) ResolveMerge(businessLine, endUser, id string, accept bool) error {
 	x.mu.Lock()
@@ -251,17 +251,9 @@ func (x *Server) ResolveMerge(businessLine, endUser, id string, accept bool) err
 	if into == nil || from == nil || !into.Active() || !from.Active() {
 		return fmt.Errorf("merge %s: a project is gone", id)
 	}
-	for j := range u.exchanges {
-		if u.exchanges[j].Project == from.ID {
-			u.exchanges[j].Project = into.ID
-		}
-	}
-	for j := range u.commitments {
-		if u.commitments[j].Project == from.ID {
-			u.commitments[j].Project = into.ID
-		}
-	}
+	// 交谈与承诺只按 ID 引用项目：叠加时把 from 换成 into（user.canon），不改写变更集。
 	from.MergedInto, m.Status = into.ID, "accepted"
+	u.refold()
 	return nil
 }
 

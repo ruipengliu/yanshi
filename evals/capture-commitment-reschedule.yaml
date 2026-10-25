@@ -1,0 +1,29 @@
+name: capture-commitment-reschedule
+description: >-
+  上午答应、下午改期（captures-xinli-model.md §6、F1）：上午答应张总"下周三前"发验收方案，下午张总来电要求提前到
+  "下周二"。下午那次"整理交谈"用 find_related 召回上午的承诺，依据新说出的原话 revise 它：账本里只有一条，期限是
+  10-27，有两条修订；不留下 10-28 的旧承诺。
+agent: xinli-day
+setup:
+  xinli: {}
+turns:
+  - captures:
+      - {speaker: other, key: zhang, text: 康宁这边的验收流程我们这周定下来了，你们得出一份验收方案。, at: "2026-10-23 10:38"}
+      - {speaker: wearer, text: 张总，验收方案我下周三前发您。, at: "2026-10-23 10:40"}
+      - {speaker: other, key: zhang, text: 好，那就等你的方案。, at: "2026-10-23 10:41"}
+    input: 整理交谈
+    expect:
+      calls: ["captures", "mcp_xinli__file_changes"]
+      xinli:
+        commitments: [{kind: mine, contains: 验收, due_date: "2026-10-28", verified: true}]
+  - captures:
+      - {speaker: other, key: zhang, text: 林总，验收方案能不能提前？我们领导下周二就要看。, at: "2026-10-23 15:02"}
+      - {speaker: wearer, text: 行，那我下周二上午前把验收方案发您。, at: "2026-10-23 15:03"}
+      - {speaker: other, key: zhang, text: 好的，辛苦。, at: "2026-10-23 15:04"}
+    input: 整理交谈
+    expect:
+      calls: ["captures", "mcp_xinli__find_related", "mcp_xinli__file_changes"]
+      xinli:
+        commitments: [{kind: mine, contains: 验收, due_date: "2026-10-27", status: open, rev: 2}]
+        stale_open: {of: [{kind: mine, contains: 验收, due_date: "2026-10-28"}], max: 0}
+        commitments_count: {min: 1, max: 1}

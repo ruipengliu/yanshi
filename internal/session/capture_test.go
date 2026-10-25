@@ -160,7 +160,7 @@ func readResult(run string, n uint32, call, after string) *v1.Event {
 		CaptureRead: &v1.CaptureRead{Stream: StreamTranscript, After: after, ExchangeGapMs: 300000}}}}
 }
 
-// 读取位置（ADR-0039）：Run 中最后一页的位置在 Run 完成时提交；失败、中断的 Run 不提交，读了还没交出的交谈下一次重新读到。
+// 读取位置（ADR-0039）：Run 中最后一页的位置在 Run 完成时提交；失败、中断的 Run 不提交，读了还没交出的时段下一次重新读到。
 func TestCaptureReadCommittedOnCompletion(t *testing.T) {
 	st, err := Reduce(build(created(),
 		requested("r1"), attempt("r1", 1), capturesCall("r1", 1, "c1"), started("r1", 1, "c1"), readResult("r1", 1, "c1", "3.0"),
@@ -175,7 +175,7 @@ func TestCaptureReadCommittedOnCompletion(t *testing.T) {
 	}
 }
 
-// 读取位置只能由平台写入 captures 的结果：伪造的位置会让之后的整理跳过没有读过的交谈。
+// 读取位置只能由平台写入 captures 的结果：伪造的位置会让之后的整理跳过没有读过的时段。
 func TestCaptureReadOnlyInCapturesResults(t *testing.T) {
 	bad := func(rd *v1.CaptureRead, capability string, n uint32) []*v1.Event {
 		call := &v1.Event{Payload: &v1.Event_AssistantMessage{AssistantMessage: &v1.AssistantMessage{RunId: "r1", Attempt: 1,

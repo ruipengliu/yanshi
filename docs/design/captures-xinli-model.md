@@ -1,6 +1,6 @@
 # xinli 的建模：实体、变更集与交谈
 
-> 状态：已确认（2026-10-25），待实现 · ADR-0042 · 来由：[评审：用一个完整工作日模拟验证 xinli](../review/2026-10-25-xinli-workday.md) §6–§8 · 依赖：[旁听业务线 xinli](./captures-xinli.md)、[旁听](./captures.md)（ADR-0036、ADR-0037）、[Memory 与 Grant](./m4-memory-grant.md)（ADR-0038）· 实现时：改写 captures-xinli.md 的 §2–§6、§12 与 captures.md §5，按 §3 改 `CONTEXT.md` 中交谈的定义
+> 状态：已实现（2026-10-25；实现见 `internal/xinlimock`，流程与工具见 [captures-xinli.md](./captures-xinli.md)） · ADR-0042 · 来由：[评审：用一个完整工作日模拟验证 xinli](../review/2026-10-25-xinli-workday.md) §6–§8 · 依赖：[旁听业务线 xinli](./captures-xinli.md)、[旁听](./captures.md)（ADR-0036、ADR-0037）、[Memory 与 Grant](./m4-memory-grant.md)（ADR-0038）· 实现时：改写 captures-xinli.md 的 §2–§6、§12 与 captures.md §5，按 §3 改 `CONTEXT.md` 中交谈的定义
 
 ## 1. 为什么改
 
@@ -75,11 +75,12 @@ Exchange {
   source: {from: "#57.0", to: "#80.2"},       // 这次依据的旁听范围；"整理今天"的当天整理为 {day: true}
   exchanges: {
     create: [{from, to, title, summary, projects, decisions: [{text, project?}], risks, awareness}],
-    merge:  [{into: "x52.0", from: ["x57.0"], title, summary}]   // 只在当天整理中
+    merge:  [{into: "x52.0", from: ["x57.0"], title, summary, projects?}],   // 只在当天整理中
+    revise: [{id, title?, summary?, projects?}]                             // 只在当天整理中：改正归属
   },
   commitments: {
     create: [{exchange: "x57.0", kind, content, counterpart, due_date?, due_text?, project?, refs}],
-    revise: [{id, rev, due_date?, due_text?, content?, counterpart?, refs, reason}],
+    revise: [{id, rev, due_date?, due_text?, content?, counterpart?, project?, refs, reason}],
     close:  [{id, rev, status: done | cancelled, refs, reason}],
     merge:  [{into, from: [id], reason}]                                             // 只在当天整理中
   }
@@ -87,6 +88,7 @@ Exchange {
 ```
 
 - 承诺的 `project` 缺省时随所在交谈；交谈关联了多个项目时必填。
+- 当天整理"改正归属"（§6）用 `exchanges.revise` 改交谈的 `projects`、用承诺的 `revise` 改 `project`（实现时补上的两个字段：原先的结构里没有改正归属的写法）。
 - `rev` 是模型看到的修订序号（`find_related` 与 `day_ledger` 给出）。账本里这条承诺之后又被改过（用户在 App 中改了，或另一次整理改了），这个操作就被拒绝，结果附上当前状态让模型重新判断：与 `session.Store.Update` 的乐观并发同理。
 - **按来源去重**：键是（旁听 Session，`source.from`），当天整理的键是（旁听 Session，day）。同一个键再交一次，业务线撤销上一次的全部效果、再应用新的。Run 被接管或重试时安全，与现在按交谈取代的保证相同，只是键从平台的切分换成了模型交出的来源。
 - **一页一次调用**：一个时段里有几段交谈、几条承诺，都在一个变更集里交出，不按事实逐条调用（Graphiti 每条事实一两次调用，成本随图增长）。

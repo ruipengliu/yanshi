@@ -1,0 +1,25 @@
+name: capture-commitment-handover
+description: >-
+  改由他人去做（captures-xinli-model.md §4、F1）：早上佩戴者答应爱人周六送孩子去钢琴课；傍晚打电话说要加班，钢琴课改由
+  爱人送。傍晚那次"整理交谈"把原来的承诺 close 为 cancelled（理由写明转交），不再留着一条佩戴者周六要送的未完成承诺。
+agent: xinli-day
+setup:
+  xinli: {}
+turns:
+  - captures:
+      - {speaker: other, key: wife, text: 周六上午朵朵的钢琴课谁送？, at: "2026-10-23 08:43"}
+      - {speaker: wearer, text: 周六上午我送她去钢琴课，你在家睡个懒觉吧。, at: "2026-10-23 08:44"}
+    input: 整理交谈
+    expect:
+      calls: ["captures", "mcp_xinli__file_changes"]
+      xinli:
+        commitments: [{kind: mine, contains: 钢琴, status: open, verified: true}]
+  - captures:
+      - {speaker: wearer, text: 喂，老婆，周六公司要加班，朵朵的钢琴课你送一下吧。, at: "2026-10-23 17:30"}
+      - {speaker: wearer, text: 嗯，好，那就你送，我晚上早点回来。, at: "2026-10-23 17:31"}
+    input: 整理交谈
+    expect:
+      calls: ["captures", "mcp_xinli__find_related", "mcp_xinli__file_changes"]
+      xinli:
+        commitments: [{kind: mine, contains: 钢琴, status: cancelled}]
+        stale_open: {of: [{kind: mine, contains: 钢琴}], max: 0}

@@ -149,6 +149,25 @@
       "cache_hit": 0
     },
     {
+      "name": "capture-commitment-done-later",
+      "trials": 3,
+      "passed": 2,
+      "pass_rate": 0.6666666666666666,
+      "judge_avg": 0,
+      "avg_tokens": 30784,
+      "avg_seconds": 12.861860763666668,
+      "avg_calls": 3.6666666666666665,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.4059188691519742,
+      "failures": {
+        "turn 1: xinli commitments_count": 1
+      },
+      "samples": [
+        "turn 1: xinli commitments_count — 1 commitments from the day's organizing (merged ones not counted)"
+      ]
+    },
+    {
       "name": "capture-commitment-extraction",
       "trials": 3,
       "passed": 3,
@@ -160,6 +179,32 @@
       "avg_compactions": 0,
       "avg_takeovers": 0,
       "cache_hit": 0.20910273081924577
+    },
+    {
+      "name": "capture-commitment-handover",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 0,
+      "avg_tokens": 70691,
+      "avg_seconds": 27.35904518066667,
+      "avg_calls": 8.666666666666666,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.7595080180002786
+    },
+    {
+      "name": "capture-commitment-reschedule",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 0,
+      "avg_tokens": 62061,
+      "avg_seconds": 25.528162416666664,
+      "avg_calls": 7.333333333333333,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.8580454075124414
     },
     {
       "name": "capture-day-digest",
@@ -253,6 +298,19 @@
       "cache_hit": 0.4752744034615473
     },
     {
+      "name": "capture-meeting-split",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 0,
+      "avg_tokens": 62965,
+      "avg_seconds": 29.19618304166666,
+      "avg_calls": 7.333333333333333,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.6551870240203375
+    },
+    {
       "name": "capture-memory-no-duplicate",
       "trials": 3,
       "passed": 3,
@@ -331,6 +389,19 @@
       "cache_hit": 0.27588618383670616
     },
     {
+      "name": "capture-project-reconcile-settled",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 0,
+      "avg_tokens": 13250,
+      "avg_seconds": 10.915552264,
+      "avg_calls": 3.3333333333333335,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.553916954293484
+    },
+    {
       "name": "capture-project-rewrite",
       "trials": 3,
       "passed": 3,
@@ -368,6 +439,38 @@
       "avg_compactions": 0,
       "avg_takeovers": 0,
       "cache_hit": 0.8195636490285345
+    },
+    {
+      "name": "capture-third-party",
+      "trials": 3,
+      "passed": 2,
+      "pass_rate": 0.6666666666666666,
+      "judge_avg": 0,
+      "avg_tokens": 41722,
+      "avg_seconds": 15.264755861,
+      "avg_calls": 5.333333333333333,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.6269771671700932,
+      "failures": {
+        "turn 1: xinli commitment theirs 数据": 1
+      },
+      "samples": [
+        "turn 1: xinli commitment theirs 数据 — commitments: [mine open 2026-10-23  r1] 把新版周报模板发给同事 "
+      ]
+    },
+    {
+      "name": "capture-two-calls",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 0,
+      "avg_tokens": 69774,
+      "avg_seconds": 44.68111858366667,
+      "avg_calls": 8.333333333333334,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.6607535493627563
     },
     {
       "name": "capture-week-awareness",

@@ -13,7 +13,7 @@ turns:
       - {speaker: other, key: zhao, text: 好，那我按原木色出效果图。, at: "2026-10-22 19:02"}
     input: 整理今天
     expect:
-      calls: ["mcp_xinli__find_projects", "mcp_xinli__file_exchange"]
+      calls: ["mcp_xinli__find_related", "mcp_xinli__file_changes"]
       xinli:
         exchanges: {min: 1, max: 1}
         in_project: {P-0001: {max: 0}}

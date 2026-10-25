@@ -28,7 +28,8 @@ import (
 //
 //	GET    /v1/debug/xinli?business_line=&end_user=   模拟的 xinli 业务线中该 EndUser 的项目与整理结果（控制台的"旁听"视图）
 //	POST   /v1/debug/xinli/resolve?business_line=&end_user=   替用户确认"待确认"：{session, exchange, project} 确认一段交谈的
-//	                                                           归属（project 为空时新建），{merge, accept} 接受或拒绝合并提议
+//	                                                           归属（project 为空时新建），{merge, accept} 接受或拒绝合并提议，
+//	                                                           {commitment, status | due_date} 替用户在 App 中改一条承诺
 //	POST   /v1/debug/xinli/week?business_line=&end_user=      扮演业务线做每周回顾：归档、回顾本周、重写现状，返回 {session}
 func (s *Server) debugRoutes() map[string]http.HandlerFunc {
 	routes := map[string]http.HandlerFunc{}
@@ -61,10 +62,12 @@ type XinliMock interface {
 	State(businessLine, endUser string) any
 	Resolve(businessLine, endUser, daySession, exchange, project string) error
 	ResolveMerge(businessLine, endUser, id string, accept bool) error
+	Edit(businessLine, endUser, id, status, dueDate string) error
 	Week(ctx context.Context, businessLine, endUser string) (string, error)
 }
 
-// xinliResolve 替用户确认一段归属拿不准的交谈（docs/design/captures-xinli.md §5），鉴权同 xinliState。
+// xinliResolve 替用户确认一段归属拿不准的交谈（docs/design/captures-xinli.md §5）、确认合并提议，或改一条承诺
+// （记为用户的变更集，docs/design/captures-xinli-model.md §5），鉴权同 xinliState。
 func (s *Server) xinliResolve(w http.ResponseWriter, r *http.Request) {
 	bl, eu, ok := memoryOwner(w, r, s)
 	if !ok {
@@ -74,15 +77,20 @@ func (s *Server) xinliResolve(w http.ResponseWriter, r *http.Request) {
 		Session, Exchange, Project string
 		Merge                      string
 		Accept                     bool
+		Commitment, Status         string
+		DueDate                    string `json:"due_date"`
 	}
 	if err := decode(r, &req); err != nil {
 		s.fail(w, err)
 		return
 	}
 	var err error
-	if req.Merge != "" {
+	switch {
+	case req.Commitment != "":
+		err = s.Xinli.Edit(bl, eu, req.Commitment, req.Status, req.DueDate)
+	case req.Merge != "":
 		err = s.Xinli.ResolveMerge(bl, eu, req.Merge, req.Accept)
-	} else {
+	default:
 		err = s.Xinli.Resolve(bl, eu, req.Session, req.Exchange, req.Project)
 	}
 	if err != nil {

@@ -1,0 +1,24 @@
+name: capture-meeting-split
+description: >-
+  被静默切开的会议（captures-xinli-model.md §6、§8）：一场视频会议中途静默七分钟（等对方调试投屏），跨了两个时段，
+  白天按时段交出两段交谈；"整理今天"的当天整理依据 day_ledger 的提示把它们合并为一段，仍只归入康宁一个项目。
+agent: xinli-day
+setup:
+  xinli:
+    projects: [{id: P-0001, name: 康宁大药房排班系统交付, status: 三家门店试点中，首批上线日期待定。}]
+turns:
+  - captures:
+      - {speaker: other, key: li, text: 林总，试点三家门店的反馈我先说一下，排班导出有跨月错位的问题。, at: "2026-10-23 10:30"}
+      - {speaker: wearer, text: 这个我们已经修了，下周一提测。还有别的问题吗？, at: "2026-10-23 10:31"}
+      - {speaker: other, key: li, text: 有，等我把投屏弄一下，给你看几张截图。, at: "2026-10-23 10:32"}
+      - {speaker: other, key: li, text: 好了，能看到吗？就是这几个门店的夜班排不进去。, at: "2026-10-23 10:39"}
+      - {speaker: wearer, text: 看到了，夜班规则我们下周三前给你一个修改方案。首批上线就定十一月十六日。, at: "2026-10-23 10:40"}
+      - {speaker: other, key: li, text: 好，十一月十六日上线，我跟领导汇报。, at: "2026-10-23 10:41"}
+    input: 整理今天
+    expect:
+      calls: ["mcp_xinli__file_changes", "mcp_xinli__day_ledger", "mcp_xinli__file_day"]
+      xinli:
+        exchanges: {min: 1, max: 1}
+        in_project: {P-0001: {min: 1, max: 1}}
+        commitments:
+          - {kind: mine, contains: 夜班, due_date: "2026-10-28", project: P-0001}

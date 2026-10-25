@@ -12,7 +12,7 @@ turns:
       - {speaker: wearer, text: 行，下周一开会前我把施工方的资质材料整理好给您。, at: "2026-10-23 10:16"}
     input: 整理今天
     expect:
-      calls: ["mcp_xinli__file_exchange", "mcp_xinli__file_day"]
+      calls: ["mcp_xinli__file_changes", "mcp_xinli__file_day"]
       xinli:
         commitments:
           - {kind: mine, contains: 报价, due_date: "2026-10-24", verified: true}

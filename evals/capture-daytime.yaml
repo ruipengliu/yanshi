@@ -1,7 +1,7 @@
 name: capture-daytime
 description: >-
-  白天逐段整理（captures-xinli.md §2）：同一个旁听 Session 三轮。第一轮"整理交谈"只交出已经结束的交谈（一小时前谈采购），
-  刚说完的那段（两分钟前约团建）可能还在继续，先不读；第二轮再"整理交谈"，没有新的已结束交谈，不重复交出；第三轮深夜
+  白天逐段整理（captures-xinli.md §2）：同一个旁听 Session 三轮。第一轮"整理交谈"只交出已经结束的时段（一小时前谈采购），
+  刚说完的那段（两分钟前约团建）可能还在继续，先不读；第二轮再"整理交谈"，没有新的已结束时段，不重复交出；第三轮深夜
   "整理今天"交出余下的那段并写当天总览。每轮只看本轮（context.scope: run）。
 agent: xinli-day
 setup:
@@ -15,7 +15,7 @@ turns:
       - {speaker: wearer, text: 行，周三前我把两三个候选地点发群里。, at: now-0m}
     input: 整理交谈
     expect:
-      calls: ["captures", "mcp_xinli__file_exchange"]
+      calls: ["captures", "mcp_xinli__file_changes"]
       no_calls: ["mcp_xinli__file_day"]
       xinli:
         exchanges: {min: 1, max: 1}
@@ -24,12 +24,12 @@ turns:
   - input: 整理交谈
     expect:
       calls: ["captures"]
-      no_calls: ["mcp_xinli__file_exchange", "mcp_xinli__file_day"]
+      no_calls: ["mcp_xinli__file_changes", "mcp_xinli__file_day"]
       xinli:
         exchanges: {min: 1, max: 1}
   - input: 整理今天
     expect:
-      calls: ["captures", "mcp_xinli__file_exchange", "mcp_xinli__day_exchanges", "mcp_xinli__file_day"]
+      calls: ["captures", "mcp_xinli__file_changes", "mcp_xinli__day_ledger", "mcp_xinli__file_day"]
       xinli:
         exchanges: {min: 2, max: 2}
         commitments:

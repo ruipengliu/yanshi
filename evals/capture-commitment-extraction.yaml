@@ -13,7 +13,7 @@ turns:
       - {speaker: wearer, text: 预算表不方便给，这个得财务说了算。, at: "2026-10-22 10:03"}
     input: 整理今天
     expect:
-      calls: ["mcp_xinli__file_exchange", "mcp_xinli__file_day"]
+      calls: ["mcp_xinli__file_changes", "mcp_xinli__file_day"]
       approvals: {max: 0}
       xinli:
         commitments:

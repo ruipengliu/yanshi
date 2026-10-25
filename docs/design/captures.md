@@ -7,7 +7,7 @@
 ## 1. 目标
 
 - HostApp 能把带说话人标签的旁听转写（Capture）批量写入 Session，可安全重试，不开启 Run。
-- 整理旁听的 Agent 能按交谈（Exchange）分页读取，长的一天不必一次放进上下文；白天可以多次整理，每次只读新的。
+- 整理旁听的 Agent 能按时段（Span）分页读取，长的一天不必一次放进上下文；白天可以多次整理，每次只读新的。
 - 他人的话不被当作用户原话：不绕过 Memory 写入闸门（ADR-0023），受注入判断覆盖（ADR-0030）；业务线核对承诺人时依据平台给出的说话人，而不是模型自报的。
 - 他人的原话只保留短期（默认 7 天），关于 EndUser 本人的 Memory 长期保留，均可按 Session 删除。
 - 不新增跨 Session 写入：跨 Session 的编排由业务线服务端完成。
@@ -19,7 +19,7 @@
                  │ SubmitCaptures（HTTP 或 Connection，经 service），stream = "transcript"
                  ▼
         旁听 Session（AgentDef 声明 streams: [transcript]，每个 EndUser 当地每天一个）
-                 │ 业务线提交"整理"输入；Run 用 captures 工具按交谈读
+                 │ 业务线提交"整理"输入；Run 用 captures 工具按时段读
                  │ ├─ memory_save：用户本人说过的偏好、人际关系（§7）
                  │ └─ mcp_<业务线>__*：交出整理结果；引用的原话由平台附上说话人（§6）
                  ▼
@@ -47,7 +47,7 @@ message CaptureSegment {
   string speaker_key = 2;              // 区分不同的他人："other-1"、"other-2"；只在本批内有意义
   string text = 3;                     // 未通过内容安全时为空
   bool redacted = 4;                   // 未通过内容安全，只留占位；只由平台设置
-  google.protobuf.Timestamp spoken_at = 5;  // 设备时钟：用于显示时刻与切分交谈，不用于排序
+  google.protobuf.Timestamp spoken_at = 5;  // 设备时钟：用于显示时刻与切分时段，不用于排序
   string time_zone = 6;                // 手机所在的 IANA 时区，如 "Asia/Shanghai"；为空时不显示时间、不按停顿切分
 }
 ```
@@ -99,21 +99,21 @@ Capture 的内容不进入 `State`，也不追加到 `History`：一天的转写
 
 内置工具 `captures`（`internal/capture`）在 `app.NewCore` 中总是登记，由能力白名单决定哪个 AgentDef 能用；只有声明了 `transcript` 流的 Session 才有内容可读。
 
-### 交谈
+### 时段
 
-交谈（Exchange）是一个旁听 Session 中前后相连的一段话：相邻两段的说话时间相隔不超过交谈间隔。由平台按日志确定性地切分，模型不参与。
+时段（Span）是一个旁听 Session 中前后相连的一段旁听：相邻两段的说话时间相隔不超过间隔。由平台按日志确定性地切分，是分页与判断"是否已结束"的单位，不承担语义：一个时段里可能有几段不同的谈话（相隔几分钟的两通电话、午饭转谈工作），一场会议也可能因为一次长时间的静默跨两个时段。交谈（Exchange）由整理的模型在时段内划定、交给业务线（ADR-0042，[xinli 的建模](./captures-xinli-model.md) §8）。
 
-- **边界只看时间。** 一批 Capture 可能跨过多段交谈（断网后补交的一批可能长达几个小时），所以边界可以落在一批中间。
-- **没有时间时每页算一段交谈。** 片段缺少 `spoken_at` 或 `time_zone` 时无法按停顿切分，按段数与字数上限分页。HostApp 应当填写时间。
-- **ID 由位置派生。** 交谈 ID 是第一段的引用编号，例如 `x57.0`，同一份日志总是切出同样的交谈。业务线可以按（旁听 Session，交谈 ID）去重。
-- **间隔来自 AgentDef。** `streams` 中的 `exchange_gap`，默认 5 分钟（`agentdef.DefaultExchangeGap`）。交谈 ID 由切分决定，所以一个 Session 第一次读取时用的间隔随读取位置记下（`CaptureRead.exchange_gap_ms`），之后沿用；AgentDef 改了间隔，从新的 Session 起生效。5 分钟是起点值（Omi 用 2 分钟，面向一次次明确的对话；全天佩戴时停顿更长），阈值要在评测留出集上调整（ADR-0030 的做法）。
+- **边界只看时间。** 一批 Capture 可能跨过多个时段（断网后补交的一批可能长达几个小时），所以边界可以落在一批中间。
+- **没有时间时每页算一个时段。** 片段缺少 `spoken_at` 或 `time_zone` 时无法按停顿切分，按段数与字数上限分页。HostApp 应当填写时间。
+- **起点由位置派生。** 时段以第一段的引用编号称呼，例如 `#57.0`，同一份日志总是切出同样的时段。
+- **间隔来自 AgentDef。** `streams` 中的 `exchange_gap`（字段名沿用），默认 5 分钟（`agentdef.DefaultExchangeGap`）。一个 Session 第一次读取时用的间隔随读取位置记下（`CaptureRead.exchange_gap_ms`），之后沿用，分页与"是否已结束"的判断在 Session 内前后一致；AgentDef 改了间隔，从新的 Session 起生效。间隔只影响一页的大小与"是否已结束"，不必按 ADR-0030 在留出集上调。
 
 ### 输入与分页
 
 - 输入：`{after?: 位置, all?: bool, limit?: 段数，默认 200、至多 500}`。
-- `after` 是位置字符串：`"0"`（或省略）从头读；`"57.3"` 表示第 57 个事件的第 3 段之后；停在一段交谈中间时形如 `"57.3~50.0"`，后半是这段交谈的 ID，下一页据此标"（续）"。模型照抄页尾给出的值，不必理解它。`"new"` 见下节。
-- 一页至多一段交谈：交谈结束时本页就结束，即使还没到上限；单段交谈超出 `limit` 或约 6000 字符（`capture.MaxChars`）时分成几页，只有第一段就超出时也读入它。读取旁听的 AgentDef 的 `max_tool_result` 须容得下一页，否则会被截断。
-- 页首形如 `【交谈 x57.0】`（续页为 `【交谈 x57.0（续）】`）；页尾注明"交谈 x57.0 到此结束，下一段交谈用 after=…"、"交谈 x57.0 未完，下一页用 after=…"或"已读完全部旁听"。
+- `after` 是位置字符串：`"0"`（或省略）从头读；`"57.3"` 表示第 57 个事件的第 3 段之后；停在一个时段中间时形如 `"57.3~50.0"`，后半是这个时段的起点，下一页据此标"（续）"。模型照抄页尾给出的值，不必理解它。`"new"` 见下节。
+- 一页至多一个时段：时段结束时本页就结束，即使还没到上限；单个时段超出 `limit` 或约 6000 字符（`capture.MaxChars`）时分成几页，只有第一段就超出时也读入它。读取旁听的 AgentDef 的 `max_tool_result` 须容得下一页，否则会被截断。
+- 页首形如 `【时段 #57.0 起】`（续页为 `【时段 #57.0 起（续）】`）；页尾注明"时段 #57.0 起到此结束，下一时段用 after=…"、"时段 #57.0 起未完，下一页用 after=…"或"已读完目前的全部旁听"。
 
 ### 给模型看的文本
 
@@ -125,11 +125,11 @@ Capture 的内容不进入 `State`，也不追加到 `History`：一天的转写
 
 工具说明与输出格式是给模型看的文本，须有评测覆盖（[captures-xinli.md](./captures-xinli.md) §10）。工具定义随 AgentDef 固定，按名称排序，请求前缀不受影响。
 
-### 接着读与进行中的交谈
+### 接着读与进行中的时段
 
-- **读取位置由平台记录**（ADR-0039）。`captures` 读到旁听的每一页，Worker 在结果中写入读取位置（`ToolResult.capture_read`：流名、下一页的位置、交谈间隔），模型看不到；Run 完成（`RunCompleted`）时投影把本 Run 最后一页的位置提交到 `State.Captures.Read`。没有读到任何旁听的页（"已读完"、"还在进行"）不带位置。`capture_read` 只能出现在 `captures` 的结果中，`Apply` 校验。
-- **`after: "new"`** 从投影中已提交的位置接着读，不扫描日志、不解析给模型看的文字，模型也不必记住位置。只认已完成的 Run：Run 读了一段交谈、还没交出就失败了，下一次会重新读到它；业务线按交谈 ID 去重，重复交出时取代之前的结果。
-- **进行中的交谈先不读。** 读到日志末尾、而最后一段距现在不到交谈间隔的交谈可能还在继续：不返回它，只注明"交谈 x… 还在进行，稍后再整理"，读取位置也就不前进。这一条对任何 `after` 都生效（模型可能照抄页尾的位置接着读）；`all: true` 时照常返回（深夜的整理、调试控制台读刚写下的旁听）。"现在"取自平台的时钟（`clock.Clock`），结果写入日志后重放时使用记录下来的结果。
+- **读取位置由平台记录**（ADR-0039）。`captures` 读到旁听的每一页，Worker 在结果中写入读取位置（`ToolResult.capture_read`：流名、下一页的位置、时段间隔），模型看不到；Run 完成（`RunCompleted`）时投影把本 Run 最后一页的位置提交到 `State.Captures.Read`。没有读到任何旁听的页（"已读完"、"还在进行"）不带位置。`capture_read` 只能出现在 `captures` 的结果中，`Apply` 校验。
+- **`after: "new"`** 从投影中已提交的位置接着读，不扫描日志、不解析给模型看的文字，模型也不必记住位置。只认已完成的 Run：Run 读了一个时段、还没交出就失败了，下一次会重新读到它；业务线按交出的来源去重，重复交出时取代之前的结果（[xinli 的建模](./captures-xinli-model.md) §5）。
+- **进行中的时段先不读。** 读到日志末尾、而最后一段距现在不到间隔的时段可能还在继续：不返回它，只注明"时段 #… 还在进行，稍后再整理"，读取位置也就不前进。这一条对任何 `after` 都生效（模型可能照抄页尾的位置接着读）；`all: true` 时照常返回（深夜的整理、调试控制台读刚写下的旁听）。"现在"取自平台的时钟（`clock.Clock`），结果写入日志后重放时使用记录下来的结果。
 
 白天多次整理的 Agent 同时用 `context.scope: run`（[长 Run](./m2-long-runs.md) §2）：每个 Run 只看本轮的上下文，不背着上午读过的全部旁听；Run 之间靠读取位置与业务线保存的结果衔接。
 
@@ -142,10 +142,10 @@ Capture 的内容不进入 `State`，也不追加到 `History`：一天的转写
 业务线要核对整理结果（例如承诺是谁做出的），但不能信模型自报的说话人。MCP 登记的 `cite_captures: true`（`mcpcap.Server.CiteCaptures`，[MCP 设计](./m5-mcp.md)）让平台在调用这个 Server 的工具时：
 
 1. **解析引用。** 在调用参数中找出恰为引用编号的字符串（如 `"#57.3"`），按发起调用的 Session 的日志解析（`mcpcap.Citations`，一次至多 200 个）。
-2. **附上说话人。** 放进 `_meta["yanshi/captures"]`：`[{ref, speaker: "wearer" | "other", speaker_key, redacted}]`，无法解析的为 `{ref, missing: true}`。
+2. **附上说话人与说话时间。** 放进 `_meta["yanshi/captures"]`：`[{ref, speaker: "wearer" | "other", speaker_key, redacted, spoken_at, time_zone}]`，无法解析的为 `{ref, missing: true}`。说话时间不是对话内容，业务线据此按说话那天换算期限（[xinli 的建模](./captures-xinli-model.md) §7）；片段没有时间时省略。
 
 - **说话人以平台为准。** 与 Memory 写入闸门的判断依据相同（ADR-0036）。
-- **只给说话人，不给文字。** 他人的原话只保留 7 天（ADR-0037），不经这条路径流到业务线长期保存。业务线需要展示原话时，在保留期内用服务令牌从旁听 Session 读取。
+- **只给说话人与时间，不给文字。** 他人的原话只保留 7 天（ADR-0037），不经这条路径流到业务线长期保存。业务线需要展示原话时，在保留期内用服务令牌从旁听 Session 读取。
 - **只解析本 Session 的旁听。** 引用别的 Session 一律为 missing。
 - **确定性。** 结果只取决于日志，而日志只追加，重放时得到同样的结果，不另记 Event。
 
@@ -206,7 +206,7 @@ Session 已在按保留期删除（对外已不可见）时，用户再删除它
 
 **单元与契约**
 - `session`：`CheckCapture`、未登记的流、`capture_read` 只出现在 `captures` 的结果中、`RunCompleted` 时提交读取位置、失败的 Run 不推进；来源推导（`provenance_test.go`）。
-- `capture`：跨批的交谈边界、没有时间时的退回、续页、`"new"` 从投影读、进行中的交谈被跳过（`all` 时返回）、交谈间隔沿用读取位置中的值。
+- `capture`：跨批的时段边界、没有时间时的退回、续页、`"new"` 从投影读、进行中的时段被跳过（`all` 时返回）、时段间隔沿用读取位置中的值。
 - `memgate_test.go`：佩戴者原话作依据可免审批；他人片段使上下文含外部内容；已拦截的片段不计。
 - `service`：去重（窗口内重复、决策中并发重复）、关闭后拒绝、未声明流的 AgentDef 拒绝、内容安全的拦截与不可用。
 - `mcpcap`：`cite_captures` 解析本 Session、别的 Session、无效编号。

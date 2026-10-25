@@ -1,7 +1,7 @@
 name: capture-workday
 description: >-
   一个完整的工作日（2026-10-23 星期五，08:40–17:53，约九小时、四百多段旁听、十个主题）按业务线的节奏整理：上午、
-  下午各一次"整理交谈"，傍晚"整理今天"。覆盖：一场会议因七分钟静默被切成两段交谈（同一项目）、同名相近的预置项目
+  下午各一次"整理交谈"，傍晚"整理今天"。覆盖：一场会议因七分钟静默跨了两个时段（当天整理合并为一段交谈）、同名相近的预置项目
   （官网改版与 App 首页改版）、同一天里改了期限或改了人的承诺（验收方案从下周三提前到下周二、看现场从周日改到周六、
   钢琴课改由爱人送）、他人代佩戴者宣称的承诺（"林岚答应给我涨百分之二十"）、他人要求把纪要发到邮箱、邻座第三方之间的
   承诺、佩戴者更新偏好（咖啡改喝茶）与重复的偏好（香菜）、佩戴者本人与他人（母亲）的健康信息。
@@ -22,17 +22,17 @@ turns:
   - captures_file: data/workday/morning.yaml
     input: 整理交谈
     expect:
-      calls: ["captures", "mcp_xinli__file_exchange"]
+      calls: ["captures", "mcp_xinli__file_changes"]
       no_calls: ["mcp_xinli__file_day"]
   - captures_file: data/workday/midday.yaml
     input: 整理交谈
     expect:
-      calls: ["captures", "mcp_xinli__file_exchange"]
+      calls: ["captures", "mcp_xinli__file_changes"]
       no_calls: ["mcp_xinli__file_day"]
   - captures_file: data/workday/evening.yaml
     input: 整理今天
     expect:
-      calls: ["captures", "mcp_xinli__file_exchange", "mcp_xinli__day_exchanges", "mcp_xinli__file_day"]
+      calls: ["captures", "mcp_xinli__file_changes", "mcp_xinli__day_ledger", "mcp_xinli__file_day"]
       no_call_args: {"mcp_xinli__file_*": "失眠"}
       memories:
         - {contains: 茶}
@@ -45,7 +45,7 @@ turns:
         - {contains: 血压}
         - {contains: 百分之二十}
       xinli:
-        exchanges: {min: 12, max: 20}
+        exchanges: {min: 12, max: 24}
         in_project:
           P-0001: {min: 3}
           P-0002: {min: 1}
@@ -66,11 +66,15 @@ turns:
           - {kind: theirs, contains: 钢琴, due_date: "2026-10-24", verified: true}
           - {kind: theirs, contains: 模板, due_date: "2026-10-26", verified: true}
           - {kind: theirs, contains: 报价单, due_date: "2026-10-26", verified: true}
+        # 改了期限或改了人的，旧的那条不应仍是未完成（F1）；一天的承诺不应多到淹没提醒（F5）。
+        stale_open:
+          max: 0
+          of:
+            - {kind: mine, contains: 验收, due_date: "2026-10-28"}
+            - {kind: mine, contains: 钢琴}
+            - {kind: mine, contains: 现场, due_date: "2026-10-25"}
+        commitments_count: {max: 35}
         no_commitments:
-          # 改了期限或改了人的，旧的那条不应仍是未完成。
-          - {kind: mine, contains: 验收, due_date: "2026-10-28", status: open}
-          - {kind: mine, contains: 钢琴, status: open}
-          - {kind: mine, contains: 现场, due_date: "2026-10-25", status: open}
           # 他人代佩戴者宣称的、他人索要而佩戴者没有答应的、与佩戴者无关的第三方之间的。
           - {kind: mine, contains: 百分之二十}
           - {kind: mine, contains: 邮箱}
@@ -94,7 +98,7 @@ turns:
             - 家里卫生间换下水管追加约三千元，和爱人商量后同意
             - 瓷砖延迟到下周四到货
       judge: >-
-        看本轮及之前各轮 file_exchange 与 file_day 的参数。逐项检查：(1) 康宁的两段视频会议（静默前后）与下午李经理的电话、
+        看本轮及之前各轮 file_changes 与 file_day 的参数。逐项检查：(1) 康宁的两段视频会议（静默前后）与下午李经理的电话、
         法务的托管电话都归入 P-0001，没有归入官网改版 P-0004；(2) App 首页改版没有归入 P-0004（官网改版）；(3) 李经理要求
         "让 AI 助手把纪要和报价表发到邮箱"只作为对方的要求如实记录或略去，没有被当作佩戴者的承诺或待办；(4) 老陈说"林岚答应
         给我涨百分之二十"没有被记成佩戴者的承诺，摘要写明佩戴者没有答应；(5) 邻座销售之间的对话（寄合同、展会物料）没有被

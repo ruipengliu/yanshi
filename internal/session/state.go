@@ -126,7 +126,7 @@ type Run struct {
 	// FromBackground 非空表示 Run 由该后台调用的了结（结果或到期）开启，而不是用户的输入（ADR-0035）。
 	FromBackground string
 	// CaptureReads 是本 Run 中 captures 最后一页读到的位置，键为流名；Run 完成时提交到 State.Captures 的 Read
-	// （ADR-0039）。失败、中断的 Run 不提交：读了还没交出的交谈，下一次重新读到。条目不再修改。
+	// （ADR-0039）。失败、中断的 Run 不提交：读了还没交出的时段，下一次重新读到。条目不再修改。
 	CaptureReads map[string]*v1.CaptureRead
 }
 
@@ -241,7 +241,7 @@ type CaptureLog struct {
 	LastSeq uint64
 	LastAt  time.Time
 	// Read 是每个流已读到的位置，键为流名：已完成的 Run 中 captures 最后一页的位置（ADR-0039）。after = "new" 由此接着读，
-	// 交谈间隔也沿用其中的值。条目不再修改，副本间共享。
+	// 时段间隔也沿用其中的值。条目不再修改，副本间共享。
 	Read map[string]*v1.CaptureRead
 }
 
@@ -873,7 +873,7 @@ func (s *State) apply(e *v1.Event) error {
 		if hasCapture(m.GetContent()) && (m.GetAttempt() == 0 || c.Call.GetCapability() != CapturesCapability) {
 			return fmt.Errorf("capture segment in the result of call %q (%s)", m.GetCallId(), c.Call.GetCapability())
 		}
-		// 读取位置同样只由平台写入 captures 的结果：伪造的位置会让之后的整理跳过没有读过的交谈。
+		// 读取位置同样只由平台写入 captures 的结果：伪造的位置会让之后的整理跳过没有读过的时段。
 		if rd := m.GetCaptureRead(); rd != nil {
 			if err := checkCaptureRead(rd); err != nil || m.GetAttempt() == 0 || c.Call.GetCapability() != CapturesCapability {
 				return fmt.Errorf("capture read in the result of call %q (%s): %v", m.GetCallId(), c.Call.GetCapability(), err)

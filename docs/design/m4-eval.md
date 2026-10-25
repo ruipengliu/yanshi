@@ -62,11 +62,13 @@ turns:
       call_args: {"*send_message": "lilei@example.com"}        # 某个名称匹配的调用的参数须包含
       no_call_args: {"mcp_xinli__file_day": "合同"}            # 名称匹配的调用的参数都不得包含
       xinli:                                                    # 本轮之后 xinli 业务线中本 EndUser 的数据（captures-xinli.md §10）
-        exchanges: {min: 2}                                     # 交出的交谈数；pending：待确认数；projects：项目数
-        in_project: {P-0001: {max: 0}}                          # 归入某项目的交谈数
-        commitments: [{kind: mine, contains: 报价, due_date: "2026-10-24", verified: true}]   # 账本中须有的承诺
-        no_commitments: [{kind: mine, contains: 合同}]          # 账本中不得有的承诺；还可按 status、project 匹配
-        grouping: {topics: 3, fragmentation: {max: 1.0}, purity: 0.9}   # 项目归集的碎片率与纯度（按 topic 计算）
+        exchanges: {min: 2}                                     # 整理交出、仍然有效的交谈数（不含预置的与被合并的）；pending：待确认数；projects：项目数
+        in_project: {P-0001: {max: 0}}                          # 关联到某项目的交谈数（一段交谈可以关联几个项目）
+        commitments: [{kind: mine, contains: 报价, due_date: "2026-10-24", verified: true}]   # 账本中须有的承诺；还可按 status（open 不含被合并的、done、cancelled、merged）、project、rev（修订数）匹配
+        no_commitments: [{kind: mine, contains: 合同}]          # 账本中不得有的承诺
+        commitments_count: {max: 35}                            # 整理交出的承诺数（不含预置的与被合并的）
+        stale_open: {of: [{contains: 验收, due_date: "2026-10-28"}], max: 0}   # 改期、作废之前的旧版本仍未完成的至多几条
+        grouping: {topics: 3, fragmentation: {max: 1.0}, purity: 0.9}   # 项目归集的碎片率与纯度（按 topic 计算，见下）
         covers: {min: 0.8, points: ["…"]}                       # 评分模型判断的摘要覆盖率
         verified_rate: 0.8                                      # 通过核对的承诺比例
         merges: [[P-0001, P-0002]]                              # 合并提议；no_merges 不得有的
@@ -87,6 +89,10 @@ turns:
 - **评分断言**（`judge`）：由评分模型（默认 `codex/gpt-6.1-sol:high`，经本机已登录的 Codex CLI 调用，ADR-0018 修订）按标准打 1～5 分，≥ 4 分为通过。评分模型与被评测模型不是同一系列，以避免偏袒自己的回答。
 
 评分模型看到的内容包括：本轮的用户输入、模型发起的调用及结果摘要、最终回复。
+
+**项目归集的碎片率与纯度**（`expect.xinli.grouping`，`internal/eval` 的 `checkGrouping`）：数据文件给每段旁听标上主题（`topic`，闲聊不标）。交谈由模型划定范围（ADR-0042），每段交谈的主题是范围内标了主题的旁听中最多的那个（相同时取先出现的），全是闲聊的没有主题；预置的与被并入别处的交谈不计。一段交谈关联几个项目时，对每个项目各算一次，算作的主题是这段交谈中出现过、且是那个项目在只关联一个项目的交谈中占多数的主题，没有这样的主题时算作交谈自己的主题：老板一次谈了 OKR、客户与团队三件事，分别归入三个项目不算杂质。碎片率是每个主题分散在几个项目中（没有归入项目的交谈每段各算一个），按主题平均；纯度是每个项目中占多数的主题所占的比例（闲聊算作杂质），按交谈与项目的关联数加权。理想值都是 1。
+
+**旁听的分批。** 评测运行器按说话时间约每分钟提交一批（一批至多 100 段），每批的他人按第一次出现的顺序重新编号为 `other-1`、`other-2`：与真实的 HostApp 一样，`speaker_key` 只在一批之内有意义，用例中全天不变的 `key` 只用来区分同一批中的人。
 
 ## 3. 运行
 
