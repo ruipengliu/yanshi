@@ -13,17 +13,18 @@ model: haiku
 
 ## 步骤
 
-1. 在指定目录内运行，输出写入 `/tmp/checker-<目标>-<时间戳>.log`，结尾追加退出码：
+1. 选执行入口：`command -v dev` 有输出时，在工作目录内经 `dev` 在 Mac mini 上运行（本机没有 Go 与 make）：`dev check` / `dev sim` / `dev eval EVAL_FLAGS="…"` / `dev test <包> <参数>`（`go test` 换成 `dev test`，它默认带 `-race`）。没有 `dev` 时直接用 `make` 与 `go test`。
+2. 输出写入 `/tmp/checker-<目标>-<时间戳>.log`，结尾追加退出码：
    `(<命令> > $LOG 2>&1; echo "exit $?" >> $LOG)`
-   - `make eval` 先加载密钥：`set -a; . ~/.config/yanshi/ark.env; set +a`（`call-*` 用例再加 `volc-speech.env`）。
-   - `make check` 与 `go test` 用前台运行、超时 600000 ms；`make sim` 与 `make eval` 可能超过 10 分钟，后台运行，再用 `until grep -q '^exit' $LOG; do sleep 15; done` 分段等待（每段超时 600000 ms），直到出现退出码。
-2. 退出码为 0：完成。
-3. 退出码非 0：从日志中摘出
+   - eval 在 `EVAL_FLAGS` 末尾加 `-logs`，以便第 4 步查看失败过程。经 `dev` 时密钥已在远程配置；直接用 `make eval` 时先加载：`set -a; . ~/.config/yanshi/ark.env; set +a`（`call-*` 用例再加 `volc-speech.env`）。
+   - check 与 test 用前台运行、超时 600000 ms；sim 与 eval 可能超过 10 分钟，后台运行，再用 `until grep -q '^exit' $LOG; do sleep 15; done` 分段等待（每段超时 600000 ms），直到出现退出码。
+3. 退出码为 0：完成。
+4. 退出码非 0：从日志中摘出
    - 每个 `--- FAIL` / `FAIL` 的包与测试名；
    - 每个失败测试的第一段失败输出（断言信息、panic 及其栈的前 15 行），不超过 40 行；
    - sim 失败信息里的种子与复现命令（`go test ./internal/sim -run <Test> -sim.seed=<N>`）；
    - lint、buf、prettier、编译错误的原文行；
-   - eval 的失败用例名，以及报告中与 `evals/baselines/` 相比退化的指标（通过率、缓存命中）。
+   - eval 的失败用例名，以及报告中与 `evals/baselines/` 相比退化的指标（通过率、缓存命中）；有 `dev` 时再对每个失败用例运行 `dev evaltrace <用例名>`，摘出失败的那几次中与失败原因相关的调用与回复（每个用例不超过 30 行）。
 
 完成标准：每个失败都已列出名称与证据，或明确报告"全绿"。
 

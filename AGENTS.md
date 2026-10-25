@@ -2,6 +2,8 @@
 
 分布式 Agent 运行时基础设施，Go 实现。`make check` 是提交前的完成标准：必须全绿（需要 Docker：它会启动 PostgreSQL、S3 兼容存储并运行沙箱测试；还需要 Node.js 与 pnpm：网页 SDK 的检查与互通测试。对应测试分别由 `YANSHI_TEST_PG`、`YANSHI_TEST_S3`、`YANSHI_TEST_DOCKER`、`YANSHI_TEST_NODE` 启用，未设置时跳过）。
 
+子代理只交回结论，原文不进主上下文：等 check、sim、eval 或 `go test` 的结果时派 `checker`；跨多个文件定位符号、调用点或文档段落时派 `locator`。
+
 ## 先读
 
 - 本机开发与 Mac mini 环境：开始开发、构建或测试前，若本工作树或主工作树存在 `.local/macmini/README.md`，必须先读并遵循。本机主要编码与 Git 操作，优先通过本地 `dev` 入口同步当前工作区并在 Mac mini 构建、测试或启动服务，中间件使用其 OrbStack；可用命令以文档中的当前实现状态为准，不得把历史源码快照当作当前代码。该文档及辅助配置不提交 Git；文档缺失时先检查本地配置，不假定远程环境已就绪。
