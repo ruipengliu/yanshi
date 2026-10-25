@@ -47,6 +47,8 @@ message CaptureSnapshot {
   uint64 count = 2;
   uint64 last_seq = 3;
   google.protobuf.Timestamp last_at = 4;
+  // 每个流已读到的位置（已完成的 Run 提交，session.CaptureLog），按流名排序。
+  repeated CaptureRead read = 5;
 }
 
 message BackgroundCallSnapshot {
@@ -99,6 +101,8 @@ message RunSnapshot {
   map<string, string> decisions = 17;
   // 由后台调用的了结开启的 Run：该后台调用的 ID。
   string from_background = 18;
+  // 本 Run 中 captures 读到的位置，Run 完成时提交（session.Run），按流名排序。
+  repeated CaptureRead capture_reads = 19;
 }
 
 message CallSnapshot {

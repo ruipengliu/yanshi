@@ -10,6 +10,7 @@ import (
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/session"
 	"yanshi/sdk/nodesdk"
 )
 
@@ -23,7 +24,7 @@ func TestSubmitCapturesOverConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := &v1.SubmitCaptures{SessionId: sid, CaptureId: nodesdk.NewCaptureID(), Segments: []*v1.CaptureSegment{
+	in := &v1.SubmitCaptures{SessionId: sid, Stream: session.StreamTranscript, CaptureId: nodesdk.NewCaptureID(), Segments: []*v1.CaptureSegment{
 		{Speaker: v1.Speaker_SPEAKER_WEARER, Text: "明天我把报价发给张三"},
 		{Speaker: v1.Speaker_SPEAKER_OTHER, SpeakerKey: "other-1", Text: "好的，周五之前"},
 	}}
@@ -54,7 +55,7 @@ func TestSubmitCapturesOverConnection(t *testing.T) {
 
 	var re *nodesdk.RequestError
 	plain := e.newSession()
-	if _, err := phone.SubmitCaptures(ctx, &v1.SubmitCaptures{SessionId: plain, CaptureId: nodesdk.NewCaptureID(),
+	if _, err := phone.SubmitCaptures(ctx, &v1.SubmitCaptures{SessionId: plain, Stream: session.StreamTranscript, CaptureId: nodesdk.NewCaptureID(),
 		Segments: in.GetSegments()}); !errors.As(err, &re) || re.Code != "invalid" {
 		t.Fatalf("capture into an agent without captures: %v", err)
 	}
@@ -62,11 +63,14 @@ func TestSubmitCapturesOverConnection(t *testing.T) {
 		return blKey.Sign("yanshi", "someone-else", time.Hour, time.Now())
 	}
 	theirs := e.startClient("theirs", other, nil)
-	if _, err := theirs.SubmitCaptures(ctx, &v1.SubmitCaptures{SessionId: sid, CaptureId: nodesdk.NewCaptureID(),
+	if _, err := theirs.SubmitCaptures(ctx, &v1.SubmitCaptures{SessionId: sid, Stream: session.StreamTranscript, CaptureId: nodesdk.NewCaptureID(),
 		Segments: in.GetSegments()}); !errors.As(err, &re) || re.Code != "not_found" {
 		t.Fatalf("capture into a foreign session: %v", err)
 	}
-	if _, err := phone.SubmitCaptures(ctx, &v1.SubmitCaptures{SessionId: sid, Segments: in.GetSegments()}); err == nil {
+	if _, err := phone.SubmitCaptures(ctx, &v1.SubmitCaptures{SessionId: sid, Stream: session.StreamTranscript, Segments: in.GetSegments()}); err == nil {
 		t.Fatal("submitted captures without an id")
+	}
+	if _, err := phone.SubmitCaptures(ctx, &v1.SubmitCaptures{SessionId: sid, CaptureId: nodesdk.NewCaptureID(), Segments: in.GetSegments()}); err == nil {
+		t.Fatal("submitted captures without a stream")
 	}
 }

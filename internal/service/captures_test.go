@@ -32,7 +32,7 @@ func newCaptureEnv(t *testing.T) *captureEnv {
 	ctx := context.Background()
 	clk := clock.NewFake(time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC))
 	agents, _ := agentdef.NewRegistry(
-		&agentdef.Def{Name: "day", Version: "1", Model: "echo/any", Captures: true},
+		&agentdef.Def{Name: "day", Version: "1", Model: "echo/any", Streams: []agentdef.Stream{{Name: session.StreamTranscript}}},
 		&agentdef.Def{Name: "project", Version: "1", Model: "echo/any"},
 	)
 	mlog, mq := memlog.New(), memqueue.New(clk)
@@ -69,7 +69,7 @@ func otherSeg(text string) *v1.CaptureSegment  { return seg(v1.Speaker_SPEAKER_O
 func TestSubmitCaptures(t *testing.T) {
 	ctx := context.Background()
 	e := newCaptureEnv(t)
-	res, err := e.svc.SubmitCaptures(ctx, e.sid, "cap1", []*v1.CaptureSegment{wearerSeg("明天我把报价发给张三"), otherSeg("好的")})
+	res, err := e.svc.SubmitCaptures(ctx, e.sid, session.StreamTranscript, "cap1", []*v1.CaptureSegment{wearerSeg("明天我把报价发给张三"), otherSeg("好的")})
 	if err != nil || res.Duplicate || res.Redacted != 0 {
 		t.Fatalf("submit = %+v, %v", res, err)
 	}
@@ -78,14 +78,14 @@ func TestSubmitCaptures(t *testing.T) {
 		t.Fatalf("captures = %d, runs = %d", st.Captures.Count, len(st.Runs))
 	}
 	seq := st.Seq
-	res, err = e.svc.SubmitCaptures(ctx, e.sid, "cap1", []*v1.CaptureSegment{wearerSeg("重试")})
+	res, err = e.svc.SubmitCaptures(ctx, e.sid, session.StreamTranscript, "cap1", []*v1.CaptureSegment{wearerSeg("重试")})
 	if err != nil || !res.Duplicate || e.state(t).Seq != seq {
 		t.Fatalf("duplicate = %+v, %v", res, err)
 	}
 	if err := e.svc.Close(ctx, e.sid, "test", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.SubmitCaptures(ctx, e.sid, "cap2", []*v1.CaptureSegment{wearerSeg("x")}); !errors.Is(err, service.ErrConflict) {
+	if _, err := e.svc.SubmitCaptures(ctx, e.sid, session.StreamTranscript, "cap2", []*v1.CaptureSegment{wearerSeg("x")}); !errors.Is(err, service.ErrConflict) {
 		t.Fatalf("after close: %v", err)
 	}
 }
@@ -111,7 +111,7 @@ func TestSubmitCapturesInvalid(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := e.svc.SubmitCaptures(ctx, c.sid, c.id, c.segs); !errors.Is(err, c.want) {
+			if _, err := e.svc.SubmitCaptures(ctx, c.sid, session.StreamTranscript, c.id, c.segs); !errors.Is(err, c.want) {
 				t.Fatalf("err = %v, want %v", err, c.want)
 			}
 		})
@@ -132,7 +132,7 @@ func (m pairModerator) Check(_ context.Context, req moderation.Request) (moderat
 func TestCaptureModeration(t *testing.T) {
 	ctx := context.Background()
 	e := newCaptureEnv(t)
-	res, err := e.svc.SubmitCaptures(ctx, e.sid, "cap1", []*v1.CaptureSegment{wearerSeg("你好"), otherSeg("【违规测试】"), otherSeg("再见")})
+	res, err := e.svc.SubmitCaptures(ctx, e.sid, session.StreamTranscript, "cap1", []*v1.CaptureSegment{wearerSeg("你好"), otherSeg("【违规测试】"), otherSeg("再见")})
 	if err != nil || res.Redacted != 1 {
 		t.Fatalf("submit = %+v, %v", res, err)
 	}
@@ -142,7 +142,7 @@ func TestCaptureModeration(t *testing.T) {
 	}
 
 	e.svc.Moderator = pairModerator{"甲", "乙"}
-	if res, err = e.svc.SubmitCaptures(ctx, e.sid, "cap2", []*v1.CaptureSegment{wearerSeg("甲"), otherSeg("乙")}); err != nil || res.Redacted != 2 {
+	if res, err = e.svc.SubmitCaptures(ctx, e.sid, session.StreamTranscript, "cap2", []*v1.CaptureSegment{wearerSeg("甲"), otherSeg("乙")}); err != nil || res.Redacted != 2 {
 		t.Fatalf("contextual = %+v, %v", res, err)
 	}
 	for _, g := range lastCapture(t, e).GetSegments() {
@@ -153,11 +153,11 @@ func TestCaptureModeration(t *testing.T) {
 
 	seq := e.state(t).Seq
 	e.svc.Moderator = failingModerator{}
-	if _, err := e.svc.SubmitCaptures(ctx, e.sid, "cap3", []*v1.CaptureSegment{wearerSeg("x")}); !errors.Is(err, moderation.ErrUnavailable) || e.state(t).Seq != seq {
+	if _, err := e.svc.SubmitCaptures(ctx, e.sid, session.StreamTranscript, "cap3", []*v1.CaptureSegment{wearerSeg("x")}); !errors.Is(err, moderation.ErrUnavailable) || e.state(t).Seq != seq {
 		t.Fatalf("passed while moderation was unavailable: %v", err)
 	}
 	// 重复提交不再检查：首次已经检查过，内容安全不可用也照常返回。
-	if res, err := e.svc.SubmitCaptures(ctx, e.sid, "cap1", []*v1.CaptureSegment{wearerSeg("x")}); err != nil || !res.Duplicate {
+	if res, err := e.svc.SubmitCaptures(ctx, e.sid, session.StreamTranscript, "cap1", []*v1.CaptureSegment{wearerSeg("x")}); err != nil || !res.Duplicate {
 		t.Fatalf("duplicate = %+v, %v", res, err)
 	}
 }
@@ -191,7 +191,7 @@ func TestCapturesTouchIndex(t *testing.T) {
 	}
 	created := lastInput()
 	e.clk.Advance(time.Hour)
-	if _, err := e.svc.SubmitCaptures(ctx, e.sid, "cap1", []*v1.CaptureSegment{wearerSeg("x")}); err != nil {
+	if _, err := e.svc.SubmitCaptures(ctx, e.sid, session.StreamTranscript, "cap1", []*v1.CaptureSegment{wearerSeg("x")}); err != nil {
 		t.Fatal(err)
 	}
 	first := lastInput()
@@ -200,14 +200,14 @@ func TestCapturesTouchIndex(t *testing.T) {
 	}
 	// 同一时段内的下一批不再写索引。
 	e.clk.Advance(lifecycle.TouchEvery / 10)
-	if _, err := e.svc.SubmitCaptures(ctx, e.sid, "cap2", []*v1.CaptureSegment{wearerSeg("x")}); err != nil {
+	if _, err := e.svc.SubmitCaptures(ctx, e.sid, session.StreamTranscript, "cap2", []*v1.CaptureSegment{wearerSeg("x")}); err != nil {
 		t.Fatal(err)
 	}
 	if !lastInput().Equal(first) {
 		t.Fatal("touched within the same TouchEvery segment")
 	}
 	e.clk.Advance(lifecycle.TouchEvery)
-	if _, err := e.svc.SubmitCaptures(ctx, e.sid, "cap3", []*v1.CaptureSegment{wearerSeg("x")}); err != nil {
+	if _, err := e.svc.SubmitCaptures(ctx, e.sid, session.StreamTranscript, "cap3", []*v1.CaptureSegment{wearerSeg("x")}); err != nil {
 		t.Fatal(err)
 	}
 	if !lastInput().After(first) {

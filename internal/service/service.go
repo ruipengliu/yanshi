@@ -212,15 +212,8 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 	if len(inputID) > MaxInputIDLen {
 		return nil, fmt.Errorf("%w: input_id exceeds %d bytes", ErrInvalid, MaxInputIDLen)
 	}
-	// 后台调用的了结只由平台写入（ADR-0035）：客户端伪造的会被当作设备的结果送给模型。
-	for _, b := range input {
-		if b.GetBackgroundResult() != nil {
-			return nil, fmt.Errorf("%w: background_result is written by the platform", ErrInvalid)
-		}
-		// 旁听片段只出现在 captures 的结果中（ADR-0036）：写进输入的片段会被当作旁听转写给模型看。
-		if b.GetCapture() != nil {
-			return nil, fmt.Errorf("%w: capture segments are submitted as captures, not input", ErrInvalid)
-		}
+	if err := rejectPlatformOnly(input); err != nil {
+		return nil, err
 	}
 	st, err := s.Load(ctx, sessionID)
 	if err != nil {
@@ -251,19 +244,9 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 		return nil, err
 	}
 	// 准入与配额只拦新 Run：插话属于进行中的 Run，后者在下一次模型调用前自行检查配额。
-	if st.Active() == nil && s.Admission != nil && !delegated {
-		if err := s.Admission.Admit(ctx, st.Created.GetBusinessLine()); err != nil {
+	if st.Active() == nil {
+		if err := s.admitRun(ctx, st, !delegated); err != nil {
 			return nil, err
-		}
-	}
-	if bl := st.Created.GetBusinessLine(); st.Active() == nil && s.Quotas.Enabled(bl) {
-		p, err := s.Quotas.Check(ctx, bl, st.Created.GetEndUser(), s.Store.Clock.Now())
-		if err != nil {
-			return nil, err
-		}
-		if p != nil {
-			metrics.QuotaRejections.WithLabelValues(p.Scope, "submit").Inc()
-			return nil, &usage.ExceededError{Period: p}
 		}
 	}
 	var res *SubmitResult
@@ -770,12 +753,5 @@ func (s *Service) normalizeMedia(ctx context.Context, sessionID string, input []
 
 // moderateInput 检查用户输入（文本、界面上下文、图片与语音消息工件）。违规返回 ErrRejected，服务不可用返回 ErrUnavailable：都不写日志。
 func (s *Service) moderateInput(ctx context.Context, st *session.State, input []*v1.ContentBlock) error {
-	v, err := moderation.Check(ctx, s.Moderator, moderation.ForInput(st.Created.GetBusinessLine(), st.SessionID, input))
-	if err != nil {
-		return err
-	}
-	if v.Block {
-		return fmt.Errorf("%w: %s", moderation.ErrRejected, strings.Join(v.Labels, ","))
-	}
-	return nil
+	return s.moderate(ctx, moderation.ForInput(st.Created.GetBusinessLine(), st.SessionID, input))
 }

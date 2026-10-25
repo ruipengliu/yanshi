@@ -1966,7 +1966,7 @@ func (x *CancelBackground) GetCallId() string {
 	return ""
 }
 
-// SubmitCaptures 提交一批旁听转写（docs/design/captures.md §3，ADR-0036）：不开启 Run。只有开启了旁听的 AgentDef 的
+// SubmitCaptures 提交一批旁听转写（docs/design/captures.md §3，ADR-0036）：不开启 Run。只有 AgentDef 声明了这个流的
 // Session 接收（否则 invalid）。片段逐一经过内容安全检查，违规的只留占位；内容安全不可用时整批拒绝（unavailable），
 // 以同一 capture_id 重试是安全的：已写入的返回 duplicate = true。
 type SubmitCaptures struct {
@@ -1975,7 +1975,9 @@ type SubmitCaptures struct {
 	// 客户端为这一批生成的 ID（最长 128 字符）。
 	CaptureId string `protobuf:"bytes,2,opt,name=capture_id,json=captureId,proto3" json:"capture_id,omitempty"`
 	// 不能设置 redacted：拦截由平台判断。
-	Segments      []*CaptureSegment `protobuf:"bytes,3,rep,name=segments,proto3" json:"segments,omitempty"`
+	Segments []*CaptureSegment `protobuf:"bytes,3,rep,name=segments,proto3" json:"segments,omitempty"`
+	// 流名，必填（ADR-0039）：旁听转写是 "transcript"。Session 的 AgentDef 须声明接收这个流（否则 invalid）。
+	Stream        string `protobuf:"bytes,4,opt,name=stream,proto3" json:"stream,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2029,6 +2031,13 @@ func (x *SubmitCaptures) GetSegments() []*CaptureSegment {
 		return x.Segments
 	}
 	return nil
+}
+
+func (x *SubmitCaptures) GetStream() string {
+	if x != nil {
+		return x.Stream
+	}
+	return ""
 }
 
 type ClientResponse struct {
@@ -3224,13 +3233,14 @@ const file_yanshi_v1_node_proto_rawDesc = "" +
 	"\x10CancelBackground\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x17\n" +
-	"\acall_id\x18\x02 \x01(\tR\x06callId\"\x85\x01\n" +
+	"\acall_id\x18\x02 \x01(\tR\x06callId\"\x9d\x01\n" +
 	"\x0eSubmitCaptures\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1d\n" +
 	"\n" +
 	"capture_id\x18\x02 \x01(\tR\tcaptureId\x125\n" +
-	"\bsegments\x18\x03 \x03(\v2\x19.yanshi.v1.CaptureSegmentR\bsegments\"\x83\x02\n" +
+	"\bsegments\x18\x03 \x03(\v2\x19.yanshi.v1.CaptureSegmentR\bsegments\x12\x16\n" +
+	"\x06stream\x18\x04 \x01(\tR\x06stream\"\x83\x02\n" +
 	"\x0eClientResponse\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12,\n" +

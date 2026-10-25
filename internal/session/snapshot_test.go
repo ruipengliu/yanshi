@@ -119,13 +119,22 @@ func richLog() []*v1.Event {
 		ev(&v1.RunInterrupted{RunId: "r2", By: "user"}),
 		ev(&v1.CallEnded{CallId: "vc1", Reason: "hangup"}),
 		// 旁听：两批，其中一段被内容安全拦截。
-		ev(&v1.CaptureAppended{CaptureId: "cap1", Segments: []*v1.CaptureSegment{
+		ev(&v1.CaptureAppended{Stream: session.StreamTranscript, CaptureId: "cap1", Segments: []*v1.CaptureSegment{
 			{Speaker: v1.Speaker_SPEAKER_WEARER, Text: "明天我把报价发给张三", SpokenAt: timestamppb.New(t0)},
 			{Speaker: v1.Speaker_SPEAKER_OTHER, SpeakerKey: "other-1", Text: "好的"},
 		}}),
-		ev(&v1.CaptureAppended{CaptureId: "cap2", Segments: []*v1.CaptureSegment{
+		ev(&v1.CaptureAppended{Stream: session.StreamTranscript, CaptureId: "cap2", Segments: []*v1.CaptureSegment{
 			{Speaker: v1.Speaker_SPEAKER_OTHER, SpeakerKey: "other-1", Redacted: true},
 		}}),
+		// 读旁听：完成的 Run 提交读取位置；中断的 Run 只在 Run 上暂存（见 r6）。
+		ev(&v1.RunRequested{RunId: "r5", Input: text}),
+		ev(&v1.AttemptStarted{RunId: "r5", Attempt: 1}),
+		ev(&v1.AssistantMessage{RunId: "r5", Attempt: 1, ToolCalls: []*v1.ToolCall{{CallId: "c5", Capability: "captures", ArgumentsJson: "{}"}}}),
+		ev(&v1.ToolCallStarted{RunId: "r5", Attempt: 1, CallId: "c5"}),
+		ev(&v1.ToolResult{RunId: "r5", Attempt: 1, CallId: "c5", Content: text,
+			CaptureRead: &v1.CaptureRead{Stream: session.StreamTranscript, After: "33.1", ExchangeGapMs: 300000}}),
+		ev(&v1.AssistantMessage{RunId: "r5", Attempt: 1, Content: text}),
+		ev(&v1.RunCompleted{RunId: "r5", Attempt: 1}),
 		// 后台调用：三个调用转入后台，一个的结果开启新 Run，一个被取消，一个到关闭时仍未了结。
 		ev(&v1.RunRequested{RunId: "r3", Input: text}),
 		ev(&v1.AttemptStarted{RunId: "r3", Attempt: 1}),
@@ -141,6 +150,13 @@ func richLog() []*v1.Event {
 		ev(&v1.RunRequested{RunId: "r4", Input: []*v1.ContentBlock{bgResult}}),
 		ev(&v1.BackgroundCancelled{CallId: "c3", Capability: "pc__send", By: "phone"}),
 		ev(&v1.RunInterrupted{RunId: "r4", By: "user"}),
+		ev(&v1.RunRequested{RunId: "r6", Input: text}),
+		ev(&v1.AttemptStarted{RunId: "r6", Attempt: 1}),
+		ev(&v1.AssistantMessage{RunId: "r6", Attempt: 1, ToolCalls: []*v1.ToolCall{{CallId: "c6", Capability: "captures", ArgumentsJson: "{}"}}}),
+		ev(&v1.ToolCallStarted{RunId: "r6", Attempt: 1, CallId: "c6"}),
+		ev(&v1.ToolResult{RunId: "r6", Attempt: 1, CallId: "c6", Content: text,
+			CaptureRead: &v1.CaptureRead{Stream: session.StreamTranscript, After: "34.0", ExchangeGapMs: 300000}}),
+		ev(&v1.RunInterrupted{RunId: "r6", By: "user"}),
 		ev(&v1.SessionClosed{By: "user"}),
 	}
 }
@@ -211,9 +227,9 @@ func TestSnapshotIgnoredAfterLogDeleted(t *testing.T) {
 func TestSnapshotCoversEveryField(t *testing.T) {
 	covered := map[string][]string{
 		"State":          {"SessionID", "Seq", "Created", "Agent", "Closed", "Compaction", "CompactedAt", "Runs", "Past", "History", "callIDsOld", "callIDs", "Inputs", "ActiveCall", "Delegated", "Background", "Captures"},
-		"CaptureLog":     {"IDs", "Count", "LastSeq", "LastAt"},
+		"CaptureLog":     {"IDs", "Count", "LastSeq", "LastAt", "Read"},
 		"RunSummary":     {"ID", "Status", "RequestedAt", "Attempt", "Turns", "FromBackground"},
-		"Run":            {"ID", "Status", "RequestedAt", "Attempt", "LiveEndpoint", "Takeovers", "StalledTakeovers", "Turns", "Recall", "Recalled", "Calls", "SuspendReason", "SuspendedUntil", "Compactions", "OutputTokens", "Resume", "Decisions", "FromBackground"},
+		"Run":            {"ID", "Status", "RequestedAt", "Attempt", "LiveEndpoint", "Takeovers", "StalledTakeovers", "Turns", "Recall", "Recalled", "Calls", "SuspendReason", "SuspendedUntil", "Compactions", "OutputTokens", "Resume", "Decisions", "FromBackground", "CaptureReads"},
 		"Call":           {"Call", "StartedAttempts", "NodeID", "Deadline", "DispatchedAt", "Done", "Background", "Approval"},
 		"BackgroundCall": {"CallID", "RunID", "NodeID", "Capability", "Deadline"},
 		"Approval":       {"Summary", "Deadline", "Decided", "Approved"},

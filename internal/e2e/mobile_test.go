@@ -14,6 +14,7 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/model"
+	"yanshi/internal/session"
 	yanshi "yanshi/sdk/mobile"
 )
 
@@ -192,7 +193,7 @@ func TestMobileBinding(t *testing.T) {
 	// 旁听转写（docs/design/captures.md §3）：原生侧构造 SubmitCaptures 请求，绑定层以 capture_id 去重重试；同一 ID 再次提交为
 	// duplicate。
 	day := request(&v1.ClientRequest{Op: &v1.ClientRequest_CreateSession{CreateSession: &v1.CreateSession{Agent: "capture"}}}).GetSessionId()
-	captures := &v1.ClientRequest{Op: &v1.ClientRequest_SubmitCaptures{SubmitCaptures: &v1.SubmitCaptures{SessionId: day,
+	captures := &v1.ClientRequest{Op: &v1.ClientRequest_SubmitCaptures{SubmitCaptures: &v1.SubmitCaptures{SessionId: day, Stream: session.StreamTranscript,
 		CaptureId: yanshi.NewCaptureID(), Segments: []*v1.CaptureSegment{{Speaker: v1.Speaker_SPEAKER_WEARER, Text: "明天发报价"}}}}}
 	if r := request(captures); r.GetError() != nil || r.GetDuplicate() {
 		t.Fatalf("captures = %v", r)

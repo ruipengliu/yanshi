@@ -155,13 +155,14 @@ test("submitCaptures retries with the same capture ID after the connection drops
   let s = await net.connect(1);
   const id = newCaptureId();
   assert.ok(id.startsWith("cap_"));
-  const p = c.submitCaptures("s1", id, [
+  const p = c.submitCaptures("s1", "transcript", id, [
     { speaker: Speaker.WEARER, text: "明天我把报价发给张三" },
     { speaker: Speaker.OTHER, speakerKey: "other-1", text: "好的" },
   ]);
   const first = await s.next("request");
   assert.ok(first.op.case === "submitCaptures");
   assert.equal(first.op.value.captureId, id);
+  assert.equal(first.op.value.stream, "transcript");
   assert.deepEqual(
     first.op.value.segments.map((g) => [g.speaker, g.speakerKey, g.text]),
     [
@@ -176,7 +177,8 @@ test("submitCaptures retries with the same capture ID after the connection drops
   assert.equal(second.op.case === "submitCaptures" ? second.op.value.captureId : "", id);
   s.push({ msg: { case: "response", value: { requestId: second.requestId, duplicate: true, redacted: 0 } } });
   assert.deepEqual(await p, { duplicate: true, redacted: 0 });
-  await assert.rejects(c.submitCaptures("s1", "", []), /captureId is required/);
+  await assert.rejects(c.submitCaptures("s1", "transcript", "", []), /captureId is required/);
+  await assert.rejects(c.submitCaptures("s1", "", id, []), /stream is required/);
   c.stop();
 });
 

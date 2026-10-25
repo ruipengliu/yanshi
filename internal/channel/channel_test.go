@@ -61,7 +61,7 @@ func (s slowRemove) Remove(ctx context.Context, sid, conn string) error {
 }
 
 func setup(t *testing.T) (*channel.Handler, *presence.Mem, string) {
-	agents, err := agentdef.NewRegistry(&agentdef.Def{Name: "a", Version: "1", Model: "echo/any", Captures: true})
+	agents, err := agentdef.NewRegistry(&agentdef.Def{Name: "a", Version: "1", Model: "echo/any", Streams: []agentdef.Stream{{Name: session.StreamTranscript}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestSubmitCapturesRequest(t *testing.T) {
 	ctx := context.Background()
 	req := func(id channel.Identity) *v1.ClientResponse {
 		return h.Request(ctx, id, &v1.ClientRequest{RequestId: "r", Op: &v1.ClientRequest_SubmitCaptures{SubmitCaptures: &v1.SubmitCaptures{
-			SessionId: sid, CaptureId: "cap1", Segments: []*v1.CaptureSegment{
+			SessionId: sid, Stream: session.StreamTranscript, CaptureId: "cap1", Segments: []*v1.CaptureSegment{
 				{Speaker: v1.Speaker_SPEAKER_WEARER, Text: "明天发报价"},
 			}}}})
 	}

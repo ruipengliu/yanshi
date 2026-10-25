@@ -97,7 +97,7 @@ func (s *Service) StartCall(ctx context.Context, req StartCallRequest) (*CallSta
 }
 
 // CheckQuota 在 Session 的业务线或 EndUser 配额用尽时返回 usage.ExceededError（docs/design/m4-quota-usage.md §3）。
-// what 是指标中的拒绝来源（call、speech）。新 Run 的检查在 Submit 中，只拦新 Run、不拦插话。
+// what 是指标中的拒绝来源（submit、call、speech）。新 Run 的检查见 admitRun，只拦新 Run、不拦插话。
 func (s *Service) CheckQuota(ctx context.Context, st *session.State, what string) error {
 	bl := st.Created.GetBusinessLine()
 	if !s.Quotas.Enabled(bl) {
@@ -128,12 +128,8 @@ func (s *Service) AppendTranscript(ctx context.Context, sessionID string, t *v1.
 	if err != nil {
 		return err
 	}
-	v, err := moderation.Check(ctx, s.Moderator, moderation.ForTranscript(st.Created.GetBusinessLine(), st.SessionID, t.GetRole(), t.GetText()))
-	if err != nil {
+	if err := s.moderate(ctx, moderation.ForTranscript(st.Created.GetBusinessLine(), st.SessionID, t.GetRole(), t.GetText())); err != nil {
 		return err
-	}
-	if v.Block {
-		return fmt.Errorf("%w: %s", moderation.ErrRejected, strings.Join(v.Labels, ","))
 	}
 	return gone(sessionID, s.Store.Update(ctx, st, func(st *session.State) (session.Decision, error) {
 		if c := st.ActiveCall; st.Closed != nil || c == nil || c.ID != t.GetCallId() {

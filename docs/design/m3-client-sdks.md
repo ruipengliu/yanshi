@@ -77,7 +77,7 @@ else await client.submitText(sessionId, typed);
     - `close()` 取消全部子订阅与等待中的重订。
     - 和 `Draft`、`PendingQuestions` 一样，喂给它的事件要从 seq 0 开始，否则看不到续传位置之前开始的委托与提问。
     - Go SDK 中是等价的 `nodesdk.PendingTracker`（`nodesdk.NewPendingTracker`、`OnEvent`、`Items`、`TypedAnswerTarget`、`Close`）。`OnEvent` 只更新状态，可在 SessionHandler 中调用；订阅子 Session 与 onChange 都在跟踪器自己的 goroutine 中串行进行，不阻塞连接的接收 goroutine。
-- **旁听转写。** `client.submitCaptures(sessionId, captureId, segments)` 提交一批带说话人的转写（ADR-0036），返回 `{duplicate, redacted}`；`newCaptureId()` 生成批次 ID。Go SDK 中是 `Client.SubmitCaptures(ctx, *v1.SubmitCaptures)` 与 `nodesdk.NewCaptureID`。
+- **旁听转写。** `client.submitCaptures(sessionId, stream, captureId, segments)` 提交一批带说话人的转写（ADR-0036）；`stream` 必填，旁听转写是 `"transcript"`（ADR-0039），返回 `{duplicate, redacted}`；`newCaptureId()` 生成批次 ID。Go SDK 中是 `Client.SubmitCaptures(ctx, *v1.SubmitCaptures)` 与 `nodesdk.NewCaptureID`。
 - **错误。**
   - `RequestError.code` 与 HTTP 状态码对应，`quota_exceeded` 带 `retryAt`。
   - `DisconnectedError` 表示结果未知，`StoppedError` 表示客户端已停止。

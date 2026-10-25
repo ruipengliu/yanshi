@@ -583,39 +583,18 @@ const maxJudgedPerStep = 8
 
 // unjudged 返回本 Run 中来自外部、尚未判断的调用结果。外部指设备、沙箱、委托（路由调用）与 MCP 工具：它们的内容
 // 不由平台产生（工具名形如 "<来源>__<能力>"）；用户对提问的回答不算。并入本 Run 的后台调用迟到的结果也算（ADR-0035），
-// 含有他人发言的旁听转写也算（ADR-0036）。
-func (w *Worker) unjudged(r *session.Run) []*v1.ToolResult {
-	external := map[string]bool{}
-	for _, c := range r.Calls {
-		if strings.Contains(c.Call.GetCapability(), "__") && c.NodeID != askuser.NodeID {
-			external[c.Call.GetCallId()] = true
-		}
-	}
-	var out []*v1.ToolResult
-	for _, e := range w.st.History {
-		res := e.GetToolResult()
-		if res.GetBackgrounded() != nil {
-			continue // 占位结果由平台写成
-		}
-		// 后台调用迟到的结果作为输入并入本 Run（ADR-0035）：内容同样来自设备，按调用结果判断。
-		bg := session.BackgroundInput(e.GetRunRequested().GetInput())
-		if e.GetRunRequested().GetRunId() != r.ID {
-			bg = nil
-		}
-		if b := session.BackgroundInput(e.GetSteered().GetInput()); b != nil && e.GetSteered().GetRunId() == r.ID {
-			bg = b
-		}
-		if bg.GetReason() == session.BackgroundReasonResult {
-			res = &v1.ToolResult{RunId: r.ID, CallId: bg.GetCallId(), Content: bg.GetContent(), IsError: bg.GetIsError()}
-			external[bg.GetCallId()] = true
-		}
-		if res.GetRunId() != r.ID || (!external[res.GetCallId()] && len(otherSpeech(res.GetContent())) == 0) {
+// 含有他人发言的旁听转写也算（ADR-0036）。来源由平台推导（session.Provenance，ADR-0039）。
+func (w *Worker) unjudged(r *session.Run) []session.Piece {
+	var out []session.Piece
+	for _, p := range w.st.Pieces() {
+		res := p.Result
+		if res == nil || res.GetRunId() != r.ID || (p.From != session.FromExternal && p.From != session.FromOther) {
 			continue
 		}
 		if _, done := r.Decisions[session.DecisionKey(decision.ToolResultInjection, res.GetCallId())]; done {
 			continue
 		}
-		if out = append(out, res); len(out) == maxJudgedPerStep {
+		if out = append(out, p); len(out) == maxJudgedPerStep {
 			break
 		}
 	}
@@ -629,19 +608,15 @@ const judgeStepBudget = 4 * time.Second
 // judgeResults 判断调用结果是否含注入，记为影子模式的 DecisionMade（只记录、不影响执行）。判断不可用时同样记录，
 // 选项为空（走默认路径），不在下一步重试。判断与模型调用一样在 during 中进行：期间续约，本 Attempt 被接管或
 // 中断时作废（评审 §11 问题 5）。
-func (w *Worker) judgeResults(ctx context.Context, r *session.Run, results []*v1.ToolResult) error {
+func (w *Worker) judgeResults(ctx context.Context, r *session.Run, results []session.Piece) error {
 	var events []*v1.Event
 	err := w.during(ctx, r, func(ctx context.Context) error {
 		bctx, cancel := context.WithTimeout(ctx, judgeStepBudget)
 		defer cancel()
-		for _, res := range results {
-			text := model.Text(res.GetContent())
-			if others := otherSpeech(res.GetContent()); len(others) > 0 {
-				// 旁听转写只判断他人的话：佩戴者的话是用户本人的输入，平台写的说明也不是外部内容。
-				text = strings.Join(others, "\n")
-			}
-			q := decision.Question{Kind: decision.ToolResultInjection, Subject: res.GetCallId(),
-				Text: text, Options: decision.Options(decision.ToolResultInjection)}
+		for _, p := range results {
+			// 旁听转写只判断他人的话（Piece.Text）：佩戴者的话是用户本人的输入，平台写的说明也不是外部内容。
+			q := decision.Question{Kind: decision.ToolResultInjection, Subject: p.Result.GetCallId(),
+				Text: p.Text, Options: decision.Options(decision.ToolResultInjection)}
 			if t, cut := model.Truncate(q.Text, 8000); cut {
 				q.Text = t
 			}
@@ -763,19 +738,25 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 	if res := w.executed[id]; res != nil {
 		return w.commitExecuted(ctx, id, res)
 	}
-	var content []*v1.ContentBlock
+	var out capability.Result
 	err = w.during(ctx, r, func(ctx context.Context) error {
-		var err error
-		content, err = cp.Invoke(ctx, capability.Invocation{
+		inv := capability.Invocation{
 			SessionID: w.st.SessionID, RunID: r.ID, CallID: id, Arguments: c.Call.GetArgumentsJson(),
-			BusinessLine: w.st.Created.GetBusinessLine(), EndUser: w.st.Created.GetEndUser(),
-		})
+			BusinessLine: w.st.Created.GetBusinessLine(), EndUser: w.st.Created.GetEndUser(), State: w.st, Agent: def,
+		}
+		var err error
+		if ri, ok := cp.(capability.ResultInvoker); ok {
+			out, err = ri.InvokeResult(ctx, inv)
+		} else {
+			out.Content, err = cp.Invoke(ctx, inv)
+		}
 		return err
 	})
 	var res *v1.Event
 	switch {
 	case err == nil:
-		res = w.toolResult(r, id, content, false)
+		res = w.toolResult(r, id, out.Content, false)
+		res.GetToolResult().CaptureRead = out.Read
 	case ctx.Err() != nil:
 		return ctx.Err()
 	case errors.Is(err, errSuperseded):

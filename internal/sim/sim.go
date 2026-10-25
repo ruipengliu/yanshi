@@ -385,7 +385,7 @@ func New(opts Options) (*World, error) {
 			Capabilities: []string{"echo", "send", "ask_user", "show_card", "memory_save", "memory_forget", "memory_search", "captures", "device:*", "sandbox:*", "agent:sim"},
 			MaxTurns:     maxTurns, Context: ctxCfg, Memory: agentdef.MemoryConfig{Recall: 3},
 			// 旁听转写写进同一批 Session，与输入、Run、关闭和删除交错。
-			Captures: true,
+			Streams: []agentdef.Stream{{Name: session.StreamTranscript}},
 		})
 	}
 	agents, err := agentdef.NewRegistry(defs...)

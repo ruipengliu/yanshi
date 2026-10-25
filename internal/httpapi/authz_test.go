@@ -66,7 +66,7 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "echo", Version: "1", Model: "echo/any", Captures: true})
+	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "echo", Version: "1", Model: "echo/any", Streams: []agentdef.Stream{{Name: session.StreamTranscript}}})
 	clk := clock.Real{}
 	mlog, mq := memlog.New(), memqueue.New(clk)
 	store := &session.Store{Log: mlog, Waking: mlog.Waking(mq), IDs: ids.Random(), Clock: clk}
@@ -213,7 +213,7 @@ func (e *authzEnv) cases() map[string]routeCase {
 		"POST /v1/sessions":             {"POST", "/v1/sessions", map[string]string{"agent": "echo", "end_user": "u1"}, http.StatusCreated},
 		"GET /v1/sessions/{id}":         {"GET", s, nil, http.StatusOK},
 		"POST /v1/sessions/{id}/inputs": {"POST", s + "/inputs", map[string]string{"text": "more"}, http.StatusAccepted},
-		"POST /v1/sessions/{id}/captures": {"POST", s + "/captures", map[string]any{"capture_id": "cap1",
+		"POST /v1/sessions/{id}/captures": {"POST", s + "/captures", map[string]any{"capture_id": "cap1", "stream": "transcript",
 			"segments": []map[string]string{{"speaker": "SPEAKER_WEARER", "text": "明天发报价"}}}, http.StatusAccepted},
 		"POST /v1/sessions/{id}/runs/{run}/interrupt":     {"POST", s + "/runs/" + run + "RUN/interrupt", nil, http.StatusNoContent},
 		"POST /v1/sessions/{id}/transcriptions":           {"POST", s + "/transcriptions", "RIFF", http.StatusOK},

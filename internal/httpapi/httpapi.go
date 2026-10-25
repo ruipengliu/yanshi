@@ -504,6 +504,8 @@ func (s *Server) submitCaptures(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		// CaptureID 是 HostApp 为这一批生成的 ID：结果未知时以同一 ID 重试是安全的。
 		CaptureID string `json:"capture_id"`
+		// Stream 是流名，必填（ADR-0039）：旁听转写是 "transcript"。
+		Stream string `json:"stream"`
 		// Segments 是 CaptureSegment 的 JSON 数组。
 		Segments []json.RawMessage `json:"segments"`
 	}
@@ -520,7 +522,7 @@ func (s *Server) submitCaptures(w http.ResponseWriter, r *http.Request) {
 		}
 		segments = append(segments, g)
 	}
-	res, err := s.Service.SubmitCaptures(owned(r), r.PathValue("id"), req.CaptureID, segments)
+	res, err := s.Service.SubmitCaptures(owned(r), r.PathValue("id"), req.Stream, req.CaptureID, segments)
 	if err != nil {
 		s.fail(w, err)
 		return

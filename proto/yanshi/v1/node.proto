@@ -228,7 +228,7 @@ message CancelBackground {
   string call_id = 2;
 }
 
-// SubmitCaptures 提交一批旁听转写（docs/design/captures.md §3，ADR-0036）：不开启 Run。只有开启了旁听的 AgentDef 的
+// SubmitCaptures 提交一批旁听转写（docs/design/captures.md §3，ADR-0036）：不开启 Run。只有 AgentDef 声明了这个流的
 // Session 接收（否则 invalid）。片段逐一经过内容安全检查，违规的只留占位；内容安全不可用时整批拒绝（unavailable），
 // 以同一 capture_id 重试是安全的：已写入的返回 duplicate = true。
 message SubmitCaptures {
@@ -237,6 +237,8 @@ message SubmitCaptures {
   string capture_id = 2;
   // 不能设置 redacted：拦截由平台判断。
   repeated CaptureSegment segments = 3;
+  // 流名，必填（ADR-0039）：旁听转写是 "transcript"。Session 的 AgentDef 须声明接收这个流（否则 invalid）。
+  string stream = 4;
 }
 
 message ClientResponse {

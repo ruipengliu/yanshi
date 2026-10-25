@@ -10,11 +10,16 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/agentdef"
 	"yanshi/internal/capability"
 	"yanshi/internal/capture"
+	"yanshi/internal/clock"
 	"yanshi/internal/eventlog/memlog"
 	"yanshi/internal/model"
+	"yanshi/internal/session"
 )
+
+const gap = agentdef.DefaultExchangeGap
 
 // appendLog 写入 SessionCreated、n 批旁听（每批 per 段），每批之后夹一条输入（旁听之间夹着 Run 的事件）。
 func appendLog(t *testing.T, n, per int) *memlog.Log {
@@ -28,7 +33,7 @@ func appendLog(t *testing.T, n, per int) *memlog.Log {
 			segs[j] = &v1.CaptureSegment{Speaker: v1.Speaker_SPEAKER_WEARER, Text: fmt.Sprintf("第 %d 批第 %d 段", i, j)}
 		}
 		events = append(events,
-			&v1.Event{Payload: &v1.Event_CaptureAppended{CaptureAppended: &v1.CaptureAppended{CaptureId: fmt.Sprint(i), Segments: segs}}},
+			&v1.Event{Payload: &v1.Event_CaptureAppended{CaptureAppended: &v1.CaptureAppended{Stream: "transcript", CaptureId: fmt.Sprint(i), Segments: segs}}},
 			&v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: fmt.Sprint("r", i), Input: model.TextBlocks("x")}}})
 	}
 	for i, e := range events {
@@ -88,8 +93,10 @@ func TestPagesCoverEveryCaptureOnce(t *testing.T) {
 	if total != 750 {
 		t.Fatalf("read %d segments, want 750", total)
 	}
-	if _, err := cp.Invoke(ctx, capability.Invocation{SessionID: "s", Arguments: `{"after":"x"}`}); err == nil {
-		t.Fatal("invalid cursor accepted")
+	for _, bad := range []string{`{"after":"x"}`, `{"after":57}`} {
+		if _, err := cp.Invoke(ctx, capability.Invocation{SessionID: "s", Arguments: bad}); err == nil {
+			t.Fatalf("invalid cursor %s accepted", bad)
+		}
 	}
 }
 
@@ -97,14 +104,14 @@ func TestPagesCoverEveryCaptureOnce(t *testing.T) {
 func TestPageCharacterLimit(t *testing.T) {
 	ctx := context.Background()
 	log := appendLog(t, 3, 2)
-	out, err := capture.Page(ctx, log, "s", capture.Cursor{}, capture.Options{Limit: 100, MaxChars: 1})
+	out, _, err := capture.Page(ctx, log, "s", capture.Cursor{}, capture.Options{Limit: 100, MaxChars: 1, Gap: gap})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n := segments(out); n != 1 || nextAfter(t, out) != "2.0" {
 		t.Fatalf("page = %d segments, %q", n, model.Text(out))
 	}
-	empty, err := capture.Page(ctx, log, "none", capture.Cursor{}, capture.Options{Limit: 100, MaxChars: capture.MaxChars})
+	empty, _, err := capture.Page(ctx, log, "none", capture.Cursor{}, capture.Options{Limit: 100, MaxChars: capture.MaxChars, Gap: gap})
 	if err != nil || segments(empty) != 0 || !strings.Contains(model.Text(empty), "已读完") {
 		t.Fatalf("empty session = %v, %v", empty, err)
 	}
@@ -130,7 +137,7 @@ func timedLog(t *testing.T, batches ...[]string) *memlog.Log {
 			segs = append(segs, seg)
 		}
 		events = append(events,
-			&v1.Event{Payload: &v1.Event_CaptureAppended{CaptureAppended: &v1.CaptureAppended{CaptureId: fmt.Sprint(i), Segments: segs}}},
+			&v1.Event{Payload: &v1.Event_CaptureAppended{CaptureAppended: &v1.CaptureAppended{Stream: "transcript", CaptureId: fmt.Sprint(i), Segments: segs}}},
 			&v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: fmt.Sprint("r", i), Input: model.TextBlocks("x")}}})
 	}
 	for i, e := range events {
@@ -181,7 +188,7 @@ func TestPageByExchange(t *testing.T) {
 func TestPageShowsLocalTime(t *testing.T) {
 	ctx := context.Background()
 	log := timedLog(t, []string{"2026-10-23T23:58 晚", "2026-10-24T00:01 过了午夜", "- 不知道时间"})
-	out, err := capture.Page(ctx, log, "s", capture.Cursor{}, capture.Options{Limit: 100, MaxChars: capture.MaxChars})
+	out, _, err := capture.Page(ctx, log, "s", capture.Cursor{}, capture.Options{Limit: 100, MaxChars: capture.MaxChars, Gap: gap})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,9 +203,9 @@ func TestPageShowsLocalTime(t *testing.T) {
 	}
 }
 
-// after="new" 从之前已完成的 Run 读到的位置接着读，失败的 Run 不推进；最后一段刚说完的交谈先不返回，all 时返回
-// （docs/design/captures-daytime.md §4）。
-func TestResumeAndOpenExchange(t *testing.T) {
+// after="new" 从投影中已提交的读取位置接着读（ADR-0039），读到旁听的页给出新的位置；最后一段刚说完的交谈先不返回、位置
+// 不前进，all 时返回（docs/design/captures-daytime.md §4）。
+func TestReadPositionAndOpenExchange(t *testing.T) {
 	ctx := context.Background()
 	log := timedLog(t,
 		[]string{"2026-10-23T09:00 甲", "2026-10-23T09:01 乙"}, // 事件 2：第一段交谈
@@ -206,68 +213,57 @@ func TestResumeAndOpenExchange(t *testing.T) {
 		[]string{"2026-10-23T11:00 丁"},                       // 事件 6：第三段交谈，刚说完
 	)
 	zone, _ := time.LoadLocation("Asia/Shanghai")
-	now := time.Date(2026, 10, 23, 11, 2, 0, 0, zone)
-	opts := capture.Options{Limit: 100, MaxChars: capture.MaxChars, Now: now}
-	page := func(at capture.Cursor) []*v1.ContentBlock {
+	tool := capture.New(log, clock.NewFake(time.Date(2026, 10, 23, 11, 2, 0, 0, zone)))
+	def := &agentdef.Def{Streams: []agentdef.Stream{{Name: capture.Stream, ExchangeGap: gap}}}
+	st := &session.State{}
+	read := func(args string) capability.Result {
 		t.Helper()
-		out, err := capture.Page(ctx, log, "s", at, opts)
+		res, err := tool.InvokeResult(ctx, capability.Invocation{SessionID: "s", Arguments: args, State: st, Agent: def})
 		if err != nil {
 			t.Fatal(err)
 		}
-		return out
+		return res
 	}
-	// 追加一个 Run 的事件：它用 captures 读了一页，之后以 status 结束。
-	seq := uint64(7)
-	run := func(id string, content []*v1.ContentBlock, completed bool) {
-		t.Helper()
-		events := []*v1.Event{
-			{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: id, Input: model.TextBlocks("整理交谈")}}},
-			{Payload: &v1.Event_AssistantMessage{AssistantMessage: &v1.AssistantMessage{RunId: id, Attempt: 1,
-				ToolCalls: []*v1.ToolCall{{CallId: "call_" + id, Capability: capture.Capability, ArgumentsJson: `{"after":"new"}`}}}}},
-			{Payload: &v1.Event_ToolResult{ToolResult: &v1.ToolResult{RunId: id, Attempt: 1, CallId: "call_" + id, Content: content}}},
-		}
-		if completed {
-			events = append(events, &v1.Event{Payload: &v1.Event_RunCompleted{RunCompleted: &v1.RunCompleted{RunId: id, Attempt: 1}}})
-		} else {
-			events = append(events, &v1.Event{Payload: &v1.Event_RunFailed{RunFailed: &v1.RunFailed{RunId: id, Attempt: 1}}})
-		}
-		for _, e := range events {
-			seq++
-			e.SessionId, e.Seq = "s", seq
-		}
-		if _, err := log.Append(ctx, "s", seq-uint64(len(events)), events...); err != nil {
-			t.Fatal(err)
-		}
+	commit := func(rd *v1.CaptureRead) { st.Captures.Read = map[string]*v1.CaptureRead{capture.Stream: rd} }
+
+	first := read(`{"after":"new"}`)
+	if !strings.Contains(model.Text(first.Content), "【交谈 x2.0】") || first.Read.GetAfter() != "2.1" || first.Read.GetExchangeGapMs() != gap.Milliseconds() {
+		t.Fatalf("first = %q, read %v", model.Text(first.Content), first.Read)
 	}
-	resume := func() capture.Cursor {
-		t.Helper()
-		c, err := capture.Resume(ctx, log, "s")
-		if err != nil {
-			t.Fatal(err)
-		}
-		return c
+	commit(first.Read)
+	second := read(`{"after":"new"}`)
+	if !strings.Contains(model.Text(second.Content), "【交谈 x4.0】") || second.Read.GetAfter() != "4.0" {
+		t.Fatalf("second = %q, read %v", model.Text(second.Content), second.Read)
 	}
-	if c := resume(); c != (capture.Cursor{}) {
-		t.Fatalf("nothing read yet: %+v", c)
+	commit(second.Read)
+	open := read(`{"after":"new"}`)
+	if segments(open.Content) != 0 || !strings.Contains(model.Text(open.Content), "交谈 x6.0 还在进行：最后一段在 11:00") || open.Read != nil {
+		t.Fatalf("open exchange = %q, read %v", model.Text(open.Content), open.Read)
 	}
-	first := page(capture.Cursor{})
-	run("r1", first, true)
-	second := page(resume())
-	if !strings.Contains(model.Text(second), "【交谈 x4.0】") {
-		t.Fatalf("resumed page = %q", model.Text(second))
+	last := read(`{"after":"new","all":true}`)
+	if segments(last.Content) != 1 || !strings.Contains(model.Text(last.Content), "已读完全部旁听") || last.Read.GetAfter() != "6.0" {
+		t.Fatalf("all = %q, read %v", model.Text(last.Content), last.Read)
 	}
-	run("r2", second, false) // 失败：位置不前进
-	if again := page(resume()); !strings.Contains(model.Text(again), "【交谈 x4.0】") {
-		t.Fatalf("after a failed run = %q", model.Text(again))
+	commit(last.Read)
+	if done := read(`{"after":"new","all":true}`); !strings.Contains(model.Text(done.Content), "已读完") || done.Read != nil {
+		t.Fatalf("after everything = %q, read %v", model.Text(done.Content), done.Read)
 	}
-	run("r3", second, true)
-	open := page(resume())
-	if segments(open) != 0 || !strings.Contains(model.Text(open), "交谈 x6.0 还在进行：最后一段在 11:00") {
-		t.Fatalf("open exchange = %q", model.Text(open))
+}
+
+// 交谈间隔沿用已提交的读取位置中的值：AgentDef 中途改了间隔，同一 Session 的交谈仍按原来的间隔切分，交谈 ID 不变。
+func TestExchangeGapSticksToSession(t *testing.T) {
+	ctx := context.Background()
+	log := timedLog(t, []string{"2026-10-23T09:00 甲", "2026-10-23T09:03 乙", "2026-10-23T09:06 丙"})
+	tool := capture.New(log, nil)
+	short := &agentdef.Def{Streams: []agentdef.Stream{{Name: capture.Stream, ExchangeGap: 2 * time.Minute}}}
+	res, err := tool.InvokeResult(ctx, capability.Invocation{SessionID: "s", Arguments: `{"after":"0"}`, State: &session.State{}, Agent: short})
+	if err != nil || segments(res.Content) != 1 || res.Read.GetExchangeGapMs() != (2*time.Minute).Milliseconds() {
+		t.Fatalf("2-minute gap: %d segments, read %v, %v", segments(res.Content), res.Read, err)
 	}
-	run("r4", open, true) // 没有读到旁听的页不推进位置
-	opts.All = true
-	if last := page(resume()); segments(last) != 1 || !strings.Contains(model.Text(last), "已读完全部旁听") {
-		t.Fatalf("all = %q", model.Text(last))
+	st := &session.State{Captures: session.CaptureLog{Read: map[string]*v1.CaptureRead{capture.Stream: res.Read}}}
+	long := &agentdef.Def{Streams: []agentdef.Stream{{Name: capture.Stream, ExchangeGap: 10 * time.Minute}}}
+	res, err = tool.InvokeResult(ctx, capability.Invocation{SessionID: "s", Arguments: `{"after":"new"}`, State: st, Agent: long})
+	if err != nil || segments(res.Content) != 1 || !strings.Contains(model.Text(res.Content), "【交谈 x2.1】") {
+		t.Fatalf("gap changed mid-session: %q, %v", model.Text(res.Content), err)
 	}
 }

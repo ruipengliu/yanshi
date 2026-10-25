@@ -24,8 +24,8 @@ type CaptureResult struct {
 
 // SubmitCaptures 写入一批旁听转写（docs/design/captures.md §3，ADR-0036）。它不开启 Run、不唤醒 Session，因此不做准入与
 // 配额检查。captureID 由 HostApp 生成：结果未知时以同一 ID 重新提交是安全的，去重窗口是最近 session.MaxRecentCaptures 批。
-// 只有开启了旁听的 AgentDef（agentdef.Def.Captures）的 Session 接收。
-func (s *Service) SubmitCaptures(ctx context.Context, sessionID, captureID string, segments []*v1.CaptureSegment) (*CaptureResult, error) {
+// stream 是流名（ADR-0039），只有 AgentDef 声明了这个流（agentdef.Def.Streams）的 Session 接收。
+func (s *Service) SubmitCaptures(ctx context.Context, sessionID, stream, captureID string, segments []*v1.CaptureSegment) (*CaptureResult, error) {
 	if len(captureID) > MaxInputIDLen {
 		return nil, fmt.Errorf("%w: capture_id exceeds %d bytes", ErrInvalid, MaxInputIDLen)
 	}
@@ -41,7 +41,7 @@ func (s *Service) SubmitCaptures(ctx context.Context, sessionID, captureID strin
 			}
 		}
 	}
-	m := &v1.CaptureAppended{CaptureId: captureID, Segments: segments}
+	m := &v1.CaptureAppended{CaptureId: captureID, Segments: segments, Stream: stream}
 	if err := session.CheckCapture(m); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
@@ -57,8 +57,8 @@ func (s *Service) SubmitCaptures(ctx context.Context, sessionID, captureID strin
 	if err != nil {
 		return nil, err
 	}
-	if !def.Captures {
-		return nil, fmt.Errorf("%w: agent %s does not accept captures", ErrInvalid, def.Name)
+	if _, ok := def.Stream(stream); !ok {
+		return nil, fmt.Errorf("%w: agent %s does not accept the %s stream", ErrInvalid, def.Name, stream)
 	}
 	res := &CaptureResult{}
 	if m.Segments, res.Redacted, err = s.moderateCaptures(ctx, st, segments); err != nil {

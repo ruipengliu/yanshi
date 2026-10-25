@@ -4,7 +4,8 @@ name: console-capture
 version: "1"
 model: script/any
 instructions: ""
-captures: true
+streams:
+  - name: transcript
 capabilities:
   - captures
   - memory_save

@@ -928,7 +928,7 @@ func (in *instance) submitCaptures(ctx context.Context, sid string, segs []Captu
 	// 长的一天按批提交，与 HostApp 每分钟提交一批相同；一批至多 session.MaxCaptureSegments 段。
 	for len(out) > 0 {
 		n := min(len(out), 100)
-		if _, err := in.svc.SubmitCaptures(ctx, sid, "cap_"+ids.Random()(), out[:n]); err != nil {
+		if _, err := in.svc.SubmitCaptures(ctx, sid, session.StreamTranscript, "cap_"+ids.Random()(), out[:n]); err != nil {
 			return err
 		}
 		out = out[n:]

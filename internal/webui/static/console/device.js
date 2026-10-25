@@ -749,7 +749,7 @@ export class SimDevice {
    * 不开启 Run。说话时间取提交时刻、时区取浏览器的时区：整理时据此显示当地的日期与时刻。连接在响应之前断开时以同一
    * captureId 重试：已写入的返回 duplicate。
    */
-  async submitCaptures(sessionId, segments, { captureId = newCaptureId() } = {}) {
+  async submitCaptures(sessionId, segments, { captureId = newCaptureId(), stream = "transcript" } = {}) {
     const spokenAt = new Date().toISOString();
     // 浏览器无法确定时区时给出 "Etc/Unknown"，它不是 IANA 时区：不填，整理时不显示时间。
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "";
@@ -763,7 +763,7 @@ export class SimDevice {
     }));
     for (;;) {
       try {
-        const r = await this.request({ submit_captures: { session_id: sessionId, capture_id: captureId, segments: segs } });
+        const r = await this.request({ submit_captures: { session_id: sessionId, stream, capture_id: captureId, segments: segs } });
         return { duplicate: !!r.duplicate, redacted: r.redacted ?? 0, captureId };
       } catch (e) {
         if (e instanceof DisconnectedError && this.wanted) continue;

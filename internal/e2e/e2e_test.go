@@ -52,6 +52,7 @@ import (
 	"yanshi/internal/runtime"
 	"yanshi/internal/sandbox"
 	sandboxdocker "yanshi/internal/sandbox/docker"
+	"yanshi/internal/session"
 	"yanshi/internal/workqueue"
 	"yanshi/sdk/nodesdk"
 )
@@ -143,7 +144,7 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 		&agentdef.Def{Name: "helper", Version: "1", Model: "script/any", Description: "把输入复述一遍的助手",
 			Capabilities: []string{"ask_user", "device:*"}},
 		// capture 接收旁听转写（docs/design/captures.md）。
-		&agentdef.Def{Name: "capture", Version: "1", Model: "script/any", Capabilities: []string{"captures"}, Captures: true})
+		&agentdef.Def{Name: "capture", Version: "1", Model: "script/any", Capabilities: []string{"captures"}, Streams: []agentdef.Stream{{Name: session.StreamTranscript}}})
 	if err != nil {
 		t.Fatal(err)
 	}

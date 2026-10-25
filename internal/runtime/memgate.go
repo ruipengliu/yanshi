@@ -4,11 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	v1 "yanshi/gen/yanshi/v1"
-	"yanshi/internal/askuser"
-	"yanshi/internal/delegation"
 	"yanshi/internal/model"
 	"yanshi/internal/session"
 )
@@ -29,120 +28,24 @@ var (
 	digitsRE = regexp.MustCompile(`\d[\d \-]{5,}\d`)
 )
 
-// externalCall 报告调用的能力是否来自外部来源：路由到设备、沙箱的能力与 MCP 工具的名称都含 "__"
-// （"<label>__<能力>"、"sandbox__<能力>"、"mcp_<server>__<工具>"），进程内能力不含。
-func externalCall(capability string) bool { return strings.Contains(capability, "__") }
-
-// tainted 报告当前模型上下文中是否有不是用户原话的内容：
-//   - 外部来源的调用结果（含后台调用迟到的结果）；压缩摘要可能概括了它们，保守地视为外部；
-//   - 输入或回答附带的界面上下文，可能含第三方内容（docs/design/m3-duplex-channel.md §8）；
-//   - Call 中语音模型的转述（派生的任务、转述的回答）：可能夹带用户没说过的内容（docs/design/m3-call.md §6）；
-//   - 委托派生的子 Session：任务由父 Run 的模型写成，可能转述了父 Run 读到的外部内容（docs/design/m5-multi-agent.md §8）；
-//   - 旁听转写中他人的话（ADR-0036）：佩戴者的话是用户本人的输入，不算。
+// tainted 报告当前模型上下文中是否有不是用户原话的内容（来源见 session.Provenance，ADR-0039）：外部内容、旁听中他人的话、
+// 别的模型的转述；压缩摘要可能概括了它们，委托的子 Session 的任务由父 Run 的模型写成，都保守地视为含外部内容。
 func tainted(st *session.State) bool {
 	if st.Compaction != nil || st.Created.GetParent() != nil {
 		return true
 	}
-	external := map[string]bool{}
-	for _, e := range st.History {
-		if hasUIContext(e.GetRunRequested().GetInput()) || hasUIContext(e.GetSteered().GetInput()) || hasUIContext(e.GetToolResult().GetContent()) {
-			return true
-		}
-		// 后台调用迟到的结果带着设备返回的内容（ADR-0035），与设备调用的结果一样是外部内容；到期没有内容。
-		if deviceResult(e.GetRunRequested().GetInput()) || deviceResult(e.GetSteered().GetInput()) {
-			return true
-		}
-		if e.GetRunRequested().GetFromCall() != "" || e.GetSteered().GetFromCall() != "" || e.GetToolResult().GetFromCall() != "" {
-			return true
-		}
-		if len(otherSpeech(e.GetToolResult().GetContent())) > 0 {
-			return true
-		}
-		if m := e.GetAssistantMessage(); m != nil {
-			for _, tc := range m.GetToolCalls() {
-				if externalCall(tc.GetCapability()) {
-					external[tc.GetCallId()] = true
-				}
-			}
-		}
-		// 转入后台的占位结果由平台写成，不含设备的内容（ADR-0035）。
-		if r := e.GetToolResult(); r != nil && external[r.GetCallId()] && r.GetBackgrounded() == nil {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(st.Pieces(), func(p session.Piece) bool { return p.From != session.FromUser })
 }
 
-// otherSpeech 返回内容中他人（不是佩戴者）没有被拦截的旁听片段的文字：它们是外部内容（ADR-0036）。
-func otherSpeech(blocks []*v1.ContentBlock) []string {
-	var out []string
-	for _, c := range blocks {
-		if g := c.GetCapture(); g.GetSpeaker() == v1.Speaker_SPEAKER_OTHER && !g.GetRedacted() {
-			out = append(out, g.GetText())
-		}
-	}
-	return out
-}
-
-// deviceResult 报告输入是否是后台调用迟到的设备结果。
-func deviceResult(input []*v1.ContentBlock) bool {
-	return session.BackgroundInput(input).GetReason() == session.BackgroundReasonResult
-}
-
-// hasUIContext 报告输入是否带有界面内容（可能来自第三方的外部内容）。只注明了用户所在设备的界面上下文由平台填写，
-// 不算外部内容。
-func hasUIContext(blocks []*v1.ContentBlock) bool {
-	for _, b := range blocks {
-		if u := b.GetUiContext(); u != nil && (u.GetScreen() != "" || u.GetRef() != "" || u.GetSelection() != "" || u.GetContent() != "") {
-			return true
-		}
-	}
-	return false
-}
-
-// userText 是上下文中 EndUser 本人的输入：新 Run、插话、对 ask_user 提问的回答（ADR-0025）、Call 中
-// 用户说的话（转写），以及旁听转写中佩戴者的话（ADR-0036）。Call 派生的任务与转述的回答是语音模型的转述，不是用户的原话，不计入（docs/design/m3-call.md §6）；
-// 委托给子 Session 的任务由父 Run 的模型写成，同样不计入。
+// userText 是上下文中 EndUser 本人的话（session.FromUser）：输入、插话、对 ask_user 提问的回答（ADR-0025）、Call 中
+// 用户说的话，以及旁听转写中佩戴者的话（ADR-0036）。
 func userText(st *session.State) string {
 	var b strings.Builder
-	questions := map[string]bool{}
-	delegated := ""
-	if p := st.Created.GetParent(); p != nil {
-		delegated = delegation.InputID(p.GetCallId())
-	}
-	for _, e := range st.History {
-		switch p := e.GetPayload().(type) {
-		case *v1.Event_RunRequested:
-			if p.RunRequested.GetFromCall() == "" && (delegated == "" || p.RunRequested.GetInputId() != delegated) {
-				b.WriteString(model.Text(p.RunRequested.GetInput()))
-			}
-		case *v1.Event_Steered:
-			if p.Steered.GetFromCall() == "" {
-				b.WriteString(model.Text(p.Steered.GetInput()))
-			}
-		case *v1.Event_CallTranscript:
-			if p.CallTranscript.GetRole() == "user" {
-				b.WriteString(p.CallTranscript.GetText())
-			}
-		case *v1.Event_AssistantMessage:
-			for _, tc := range p.AssistantMessage.GetToolCalls() {
-				if tc.GetCapability() == askuser.Capability {
-					questions[tc.GetCallId()] = true
-				}
-			}
-		case *v1.Event_ToolResult:
-			if questions[p.ToolResult.GetCallId()] && !p.ToolResult.GetIsError() && p.ToolResult.GetFromCall() == "" {
-				b.WriteString(model.Text(p.ToolResult.GetContent()))
-			}
-			// 旁听片段只能由平台写入 captures 的结果（session 校验），说话人是结构化字段而不是文本中的前缀。
-			for _, c := range p.ToolResult.GetContent() {
-				if g := c.GetCapture(); g.GetSpeaker() == v1.Speaker_SPEAKER_WEARER && !g.GetRedacted() {
-					b.WriteString(g.GetText())
-					b.WriteByte('\n')
-				}
-			}
+	for _, p := range st.Pieces() {
+		if p.From == session.FromUser {
+			b.WriteString(p.Text)
+			b.WriteByte('\n')
 		}
-		b.WriteByte('\n')
 	}
 	return b.String()
 }

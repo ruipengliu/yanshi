@@ -17,6 +17,7 @@ import (
 	"yanshi/internal/model"
 	"yanshi/internal/sandbox"
 	"yanshi/internal/service"
+	"yanshi/internal/session"
 )
 
 type env struct {
@@ -30,7 +31,7 @@ func newEnv(t *testing.T) *env {
 	t.Helper()
 	clk := clock.NewFake(time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC))
 	agents, err := agentdef.NewRegistry(
-		&agentdef.Def{Name: "day", Version: "1", Model: "echo/any", Captures: true},
+		&agentdef.Def{Name: "day", Version: "1", Model: "echo/any", Streams: []agentdef.Stream{{Name: session.StreamTranscript}}},
 		&agentdef.Def{Name: "project", Version: "1", Model: "echo/any"},
 	)
 	if err != nil {

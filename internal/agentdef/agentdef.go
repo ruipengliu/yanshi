@@ -5,6 +5,7 @@
 package agentdef
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/session"
 )
 
 type Def struct {
@@ -40,9 +42,34 @@ type Def struct {
 	Call CallConfig `yaml:"call"`
 	// Delegation 是委托的限制（docs/design/m5-multi-agent.md §4）。
 	Delegation DelegationConfig `yaml:"delegation"`
-	// Captures 为 true 时本 Agent 的 Session 接收旁听转写（docs/design/captures.md §6）。只有整理旁听的 Agent 开启：
-	// 旁听转写的保留期短，写进长期保留的 Session 就失去了分级保留（ADR-0037）。
-	Captures bool `yaml:"captures"`
+	// Streams 是本 Agent 的 Session 接收的流（ADR-0039，docs/design/m5-inputs-triggers-loops.md §5）；为空表示不接收
+	// Capture。只有整理采集的 Agent 声明：旁听转写的保留期短，写进长期保留的 Session 就失去了分级保留（ADR-0037）。
+	Streams []Stream `yaml:"streams"`
+}
+
+// Stream 是 AgentDef 对一个流的声明。
+type Stream struct {
+	// Name 是平台登记的流名（session.KnownStream），如 "transcript"。
+	Name string `yaml:"name"`
+	// ExchangeGap 是交谈间隔：相邻两段的说话时间相隔超过它，就是两段交谈（docs/design/captures-by-exchange.md §3），
+	// 默认 5 分钟。一个 Session 中沿用第一次提交的读取位置中的值，改动从新的 Session 起生效。
+	ExchangeGap time.Duration `yaml:"exchange_gap"`
+}
+
+// DefaultExchangeGap 是交谈间隔的默认值。
+const DefaultExchangeGap = 5 * time.Minute
+
+// Stream 返回对流 name 的声明；d 为 nil 时没有声明。
+func (d *Def) Stream(name string) (*Stream, bool) {
+	if d == nil {
+		return nil, false
+	}
+	for i := range d.Streams {
+		if d.Streams[i].Name == name {
+			return &d.Streams[i], true
+		}
+	}
+	return nil, false
 }
 
 // DelegationConfig 限制委托。Timeout 属于被委托的 Agent（它多久应当做完）；MaxDepth 与 MaxFanout 属于委托方。
@@ -151,6 +178,21 @@ func (d *Def) validate() error {
 	if err := d.Context.validate(); err != nil {
 		return fmt.Errorf("agent %s@%s: %w", d.Name, d.Version, err)
 	}
+	seen := map[string]bool{}
+	for i := range d.Streams {
+		st := &d.Streams[i]
+		switch {
+		case !session.KnownStream(st.Name):
+			return fmt.Errorf("agent %s@%s: unknown stream %q", d.Name, d.Version, st.Name)
+		case seen[st.Name]:
+			return fmt.Errorf("agent %s@%s: stream %q declared twice", d.Name, d.Version, st.Name)
+		case st.ExchangeGap < 0:
+			return fmt.Errorf("agent %s@%s: stream %q: negative exchange_gap", d.Name, d.Version, st.Name)
+		case st.ExchangeGap == 0:
+			st.ExchangeGap = DefaultExchangeGap
+		}
+		seen[st.Name] = true
+	}
 	return nil
 }
 
@@ -206,8 +248,11 @@ func LoadDir(dir string) (*Registry, error) {
 		if err != nil {
 			return nil, err
 		}
+		// 严格解析：未知的键（拼错的、已删除的字段，如旧的 captures: true）报错，而不是被静默忽略。
 		d := &Def{}
-		if err := yaml.Unmarshal(b, d); err != nil {
+		dec := yaml.NewDecoder(bytes.NewReader(b))
+		dec.KnownFields(true)
+		if err := dec.Decode(d); err != nil {
 			return nil, fmt.Errorf("%s: %w", f, err)
 		}
 		if err := r.add(d); err != nil {

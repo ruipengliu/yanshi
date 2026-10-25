@@ -125,6 +125,9 @@ type Run struct {
 	SuspendedUntil time.Time
 	// FromBackground 非空表示 Run 由该后台调用的了结（结果或到期）开启，而不是用户的输入（ADR-0035）。
 	FromBackground string
+	// CaptureReads 是本 Run 中 captures 最后一页读到的位置，键为流名；Run 完成时提交到 State.Captures 的 Read
+	// （ADR-0039）。失败、中断的 Run 不提交：读了还没交出的交谈，下一次重新读到。条目不再修改。
+	CaptureReads map[string]*v1.CaptureRead
 }
 
 // SuspendHandoff 是移交的挂起原因（ADR-0029）：Worker 正常结束 Attempt 并立即归还 Session，由其他 Worker 恢复，
@@ -161,6 +164,7 @@ func DecisionKey(kind, subject string) string { return kind + "/" + subject }
 func (r *Run) clone() *Run {
 	cp := *r
 	cp.Decisions = maps.Clone(r.Decisions)
+	cp.CaptureReads = maps.Clone(r.CaptureReads)
 	cp.Calls = make([]*Call, len(r.Calls))
 	for i, c := range r.Calls {
 		cc := *c
@@ -236,6 +240,9 @@ type CaptureLog struct {
 	// 据 LastAt 更新索引中的最后输入时间，不会被按空闲时长关闭（docs/design/captures.md §3）。
 	LastSeq uint64
 	LastAt  time.Time
+	// Read 是每个流已读到的位置，键为流名：已完成的 Run 中 captures 最后一页的位置（ADR-0039）。after = "new" 由此接着读，
+	// 交谈间隔也沿用其中的值。条目不再修改，副本间共享。
+	Read map[string]*v1.CaptureRead
 }
 
 // Captured 报告 capture_id 是否在去重窗口中。
@@ -257,6 +264,9 @@ func CheckCapture(m *v1.CaptureAppended) error {
 	id := m.GetCaptureId()
 	if id == "" {
 		return fmt.Errorf("capture without an id")
+	}
+	if !KnownStream(m.GetStream()) {
+		return fmt.Errorf("capture %q: unknown stream %q", id, m.GetStream())
 	}
 	segs := m.GetSegments()
 	if len(segs) == 0 || len(segs) > MaxCaptureSegments {
@@ -526,6 +536,7 @@ func (s *State) Clone() *State {
 	cp.Inputs = slices.Clone(s.Inputs)
 	// 条目不再修改：Clip 使副本追加时另起底层数组，无需复制窗口。
 	cp.Captures.IDs = slices.Clip(s.Captures.IDs)
+	cp.Captures.Read = maps.Clone(s.Captures.Read)
 	if s.ActiveCall != nil {
 		c := *s.ActiveCall
 		cp.ActiveCall = &c
@@ -647,7 +658,7 @@ func (s *State) apply(e *v1.Event) error {
 		if n := len(ids); n > MaxRecentCaptures {
 			ids = slices.Clone(ids[n-MaxRecentCaptures:])
 		}
-		s.Captures = CaptureLog{IDs: ids, Count: s.Captures.Count + 1, LastSeq: e.GetSeq(), LastAt: fromTS(e.GetTime())}
+		s.Captures = CaptureLog{IDs: ids, Count: s.Captures.Count + 1, LastSeq: e.GetSeq(), LastAt: fromTS(e.GetTime()), Read: s.Captures.Read}
 
 	case *v1.Event_ContentModerated:
 		// 只校验归属：拦截不改变状态，替换后的 AssistantMessage 随后照常应用。
@@ -862,6 +873,17 @@ func (s *State) apply(e *v1.Event) error {
 		if hasCapture(m.GetContent()) && (m.GetAttempt() == 0 || c.Call.GetCapability() != CapturesCapability) {
 			return fmt.Errorf("capture segment in the result of call %q (%s)", m.GetCallId(), c.Call.GetCapability())
 		}
+		// 读取位置同样只由平台写入 captures 的结果：伪造的位置会让之后的整理跳过没有读过的交谈。
+		if rd := m.GetCaptureRead(); rd != nil {
+			if err := checkCaptureRead(rd); err != nil || m.GetAttempt() == 0 || c.Call.GetCapability() != CapturesCapability {
+				return fmt.Errorf("capture read in the result of call %q (%s): %v", m.GetCallId(), c.Call.GetCapability(), err)
+			}
+			r.CaptureReads = maps.Clone(r.CaptureReads)
+			if r.CaptureReads == nil {
+				r.CaptureReads = map[string]*v1.CaptureRead{}
+			}
+			r.CaptureReads[rd.GetStream()] = rd
+		}
 		// 卡片动作同样只由平台写入：它只出现在用户等回答时点卡片而得的 ask_user 回答里，这条回答必有输入 ID
 		// （由动作推导）。其他结果带上它，客户端会把没有执行过的动作显示为已选。
 		if m.GetCardAction() != nil && (m.GetAttempt() != 0 || c.NodeID != askuser.NodeID || m.GetInputId() == "") {
@@ -963,6 +985,14 @@ func (s *State) apply(e *v1.Event) error {
 			return fmt.Errorf("run completed while call %s is pending", c.Call.GetCallId())
 		}
 		r.Status = RunCompleted
+		if len(r.CaptureReads) > 0 {
+			read := maps.Clone(s.Captures.Read)
+			if read == nil {
+				read = map[string]*v1.CaptureRead{}
+			}
+			maps.Copy(read, r.CaptureReads)
+			s.Captures.Read = read
+		}
 
 	case *v1.Event_RunFailed:
 		r, err := s.fencedRun(p.RunFailed.GetRunId(), p.RunFailed.GetAttempt())

@@ -594,20 +594,23 @@ export class Client {
 
   /**
    * 提交一批旁听转写（docs/design/captures.md §3，ADR-0036）：佩戴外设的 EndUser 与他人的对话，不开启 Run。
+   * stream 是流名，必填（ADR-0039）：旁听转写是 "transcript"；Session 的 AgentDef 须声明接收这个流。
    * captureId 必须由应用生成并随本地缓冲持久保存（newCaptureId）：连接在响应之前断开时，以同一 ID 自动重试；
    * 页面刷新后补交同一批时也用原来的 ID，网关按它去重（duplicate）。内容安全不可用时以 RequestError("unavailable")
    * 拒绝，稍后以同一 ID 重试；片段不能设置 redacted，拦截由平台判断。
    */
   async submitCaptures(
     sessionId: string,
+    stream: string,
     captureId: string,
     segments: CaptureSegmentInit[],
     opts?: RequestOptions,
   ): Promise<CaptureResult> {
+    if (stream === "") throw new Error("yanshi: stream is required");
     if (captureId === "") throw new Error("yanshi: captureId is required");
     for (;;) {
       try {
-        const r = await this.request({ op: { case: "submitCaptures", value: { sessionId, captureId, segments } } }, opts);
+        const r = await this.request({ op: { case: "submitCaptures", value: { sessionId, stream, captureId, segments } } }, opts);
         return { duplicate: r.duplicate, redacted: r.redacted };
       } catch (e) {
         if (e instanceof DisconnectedError) continue; // request 会等到重新连接

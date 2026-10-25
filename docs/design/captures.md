@@ -1,6 +1,6 @@
 # 旁听与 Project
 
-> §5 的分页与 §6 的每日流程、业务线工具已由第二版取代：按交谈整理、逐段交出、承诺账本，见 [旁听按交谈整理](./captures-by-exchange.md)。本文其余部分（写入、投影、信任、保留与删除）不变。
+> §5 的分页与 §6 的每日流程、业务线工具已由第二版取代：按交谈整理、逐段交出、承诺账本，见 [旁听按交谈整理](./captures-by-exchange.md)。流名（`stream`，旁听转写是 `transcript`）、AgentDef 的 `streams`、投影中的读取位置与来源推导见 [输入、触发与外部循环](./m5-inputs-triggers-loops.md)（ADR-0039）。本文其余部分（写入、投影、信任、保留与删除）不变。
 
 全天佩戴的录音外设（领夹）经手机上的 HostApp 接入，把 EndUser 一天的对话交给 yanshi：每晚整理成摘要，按主题归集到 Project，提取承诺与沟通习惯，供用户随时提问。决定见 ADR-0036（旁听只收文字，信任按说话人区分）与 ADR-0037（以每日旁听 Session 实现分级保留）；术语见 `CONTEXT.md` 的 Capture、Project、Awareness、Retention。
 
@@ -73,7 +73,7 @@ enum Speaker {
 
 | 入口 | 形式 |
 |---|---|
-| HTTP | `POST /v1/sessions/{id}/captures`，`{capture_id, segments[]}`，返回 `{redacted, duplicate}` |
+| HTTP | `POST /v1/sessions/{id}/captures`，`{stream, capture_id, segments[]}`，返回 `{redacted, duplicate}`；`stream` 必填（ADR-0039） |
 | Connection | `ClientRequest.op` 新增 `SubmitCaptures{session_id, capture_id, segments}`（`node.proto`，向后兼容） |
 | service | `Service.SubmitCaptures(ctx, sessionID, captureID string, segments []*v1.CaptureSegment) (*CaptureResult, error)`；`CaptureResult` 带 `Duplicate` 与拦截的段数 `Redacted` |
 
@@ -85,7 +85,7 @@ enum Speaker {
 
 1. Session 已关闭：返回 conflict。已删除：照常经 `s.Load` 返回 not found。
 2. `capture_id` 在最近的窗口中（`State.Captures`，见 §4）：返回 `duplicate`，不写入。决策之前与决策中各查一次，与输入去重相同（`service.duplicate`）。
-3. AgentDef 未开启旁听（`captures: true`，§6）：返回 invalid。防止 Capture 写进 Project 或助手 Session。
+3. AgentDef 没有声明这个流（`streams`，§6）：返回 invalid。防止 Capture 写进 Project 或助手 Session。
 4. 写入一个 `CaptureAppended`，`Decision{Wake: false}`：Capture 不开启 Run，不唤醒 Session。
 
 不做准入与配额检查：它们只约束新 Run（`service.go` 中 `st.Active() == nil` 的分支），Capture 不调用模型。
@@ -130,7 +130,7 @@ Capture 与输入一样更新索引中的 `LastInputAt`（受 `TouchEvery` 节�
 
 | AgentDef | Session | 能力白名单 |
 |---|---|---|
-| `xinli-day`（`captures: true`） | 每个 EndUser 当地每天一个 | `captures`、`memory_save`、`memory_search`、`mcp_xinli__find_projects`、`mcp_xinli__file_exchange`、`mcp_xinli__day_exchanges`、`mcp_xinli__file_day` |
+| `xinli-day`（`streams: [transcript]`） | 每个 EndUser 当地每天一个 | `captures`、`memory_save`、`memory_search`、`mcp_xinli__find_projects`、`mcp_xinli__file_exchange`、`mcp_xinli__day_exchanges`、`mcp_xinli__file_day` |
 | `xinli-project` | 每个项目一个，长期 | `mcp_xinli__day_summary`、`mcp_xinli__set_status`、`mcp_xinli__update_commitments`、`show_card` |
 | `xinli-week` | 每个 EndUser 每周一个 | `mcp_xinli__similar_projects`、`mcp_xinli__propose_merge`、`mcp_xinli__week_overview`、`mcp_xinli__file_week`（[每周回顾](./captures-weekly-review.md)） |
 | `xinli-assistant`（召回 8 条 Memory） | 每个 EndUser 一个，长期 | `mcp_xinli__list_projects`、`mcp_xinli__project_digest`、`mcp_xinli__recent_days`、`memory_save`、`memory_search`、`memory_forget`、`ask_user`、`show_card` |

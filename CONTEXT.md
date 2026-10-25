@@ -88,6 +88,14 @@ _Avoid_: 对话、聊天、线程
 Session 内由一次输入触发的一段执行，可被插话与中断，终态为 completed、failed 或 interrupted。一个 Session 同一时刻至多一个未终态的 Run。
 _Avoid_: 任务、Job、Turn
 
+**Trigger（触发）**（[设计](docs/design/m5-inputs-triggers-loops.md)、ADR-0040）:
+AgentDef 在 Stream 上声明的开启 Run 的条件：有未读的 Capture、且最后一次写入后静默了一段时间，平台就以声明中的固定文字开启一个 Run。同一位置只触发一次；按钟点的定时不是 Trigger，由业务线提交输入。
+_Avoid_: 定时任务、cron、事件订阅
+
+**Loop（循环）**（[设计](docs/design/m5-inputs-triggers-loops.md)、ADR-0041）:
+决定 Run 每一步做什么的部分：内置的循环调用模型，外部循环请求业务线登记的服务。Loop 只给出回复与调用请求，动作都由平台执行。
+_Avoid_: 策略（那是 Policy）、插件、编排
+
 **Attempt（尝试）**:
 某个 Worker 对一个 Run 的一次执行；故障接管即开启新的 Attempt。Attempt 号是写入日志的 fencing 令牌。
 _Avoid_: 重试、执行实例
@@ -101,8 +109,12 @@ Session 中只追加、不可修改的一条记录；Run 的全部状态都可�
 _Avoid_: 消息、日志条目
 
 **Capture（旁听）**:
-HostApp 提交的一段旁听转写：EndUser 与他人的日常对话，带说话人标签（佩戴者、他人），不是对 Agent 说的话。作为 Event 进入 Session 但不触发 Run；yanshi 只接收文字，不接触音频与声纹。佩戴者的话按 EndUser 自己的输入对待，他人的话按不可信数据对待；未通过 Moderation 的片段只留不含文字的占位。一个 EndUser 在当地每天一个旁听 Session，原文随它按 Retention 删除。
+HostApp 提交的一段旁听转写：EndUser 与他人的日常对话，带说话人标签（佩戴者、他人），不是对 Agent 说的话。每个 Capture 属于一个 Stream，旁听转写是 transcript 流。作为 Event 进入 Session 但不触发 Run；yanshi 只接收文字，不接触音频与声纹。佩戴者的话按 EndUser 自己的输入对待，他人的话按不可信数据对待；未通过 Moderation 的片段只留不含文字的占位。一个 EndUser 在当地每天一个旁听 Session，原文随它按 Retention 删除。
 _Avoid_: 录音、输入（指它时）、CallTranscript（那是 Call 的转写）
+
+**Stream（流）**（[设计](docs/design/m5-inputs-triggers-loops.md)、ADR-0039）:
+Capture 按种类分成的序列，种类由平台登记，决定校验、内容安全与 Provenance；旁听转写是 transcript 流。AgentDef 声明接收哪些流，平台记录每个流已读到的位置。
+_Avoid_: 频道、Topic、队列
 
 **Project（项目）**:
 围绕一个主题、跨天归集旁听摘要的长期 Session。旁听原文只短期保留，Project 中只有摘要（谈了什么、定了什么、双方各自答应的事、风险）与 EndUser 本人的承诺；EndUser 亲口说过的稳定信息（偏好、人际关系）不进 Project，进 Memory。
@@ -225,6 +237,10 @@ _Avoid_: 费率、定价策略
 **Moderation（内容安全）**:
 对 EndUser 输入与模型输出的合规检查，在写日志之前进行；违规输入被拒绝、违规输出被替换为拒答文本。由可替换的提供商完成。
 _Avoid_: 审核（泛指时）、过滤、风控
+
+**Provenance（来源）**（[设计](docs/design/m5-inputs-triggers-loops.md)、ADR-0039）:
+一段内容由谁产生、是否对 Agent 说：本人、他人、外部、平台或模型。由平台从 Event 推导，不由写入方填写；Memory 写入闸门与注入判断都依据它。
+_Avoid_: 出处、标签、说话人（那只是旁听中区分本人与他人的字段）
 
 **Policy（策略）**:
 约束 Run 能做什么的规则集合，涵盖 Capability 访问、Approval 要求、预算与内容安全。

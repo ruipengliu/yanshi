@@ -10,6 +10,7 @@ import (
 	"yanshi/internal/eventlog"
 	"yanshi/internal/moderation"
 	"yanshi/internal/service"
+	"yanshi/internal/session"
 )
 
 // 旁听转写的模拟（docs/design/captures.md §3、§11）：HostApp 批量提交，与输入、Run、关闭和删除交错；写入偶尔遇到存储故障，
@@ -65,7 +66,7 @@ func (w *World) captureStep() error {
 	if err != nil {
 		return err
 	}
-	res, err := w.svc.SubmitCaptures(ctx, sid, id, segs)
+	res, err := w.svc.SubmitCaptures(ctx, sid, session.StreamTranscript, id, segs)
 	var sf *storeFault
 	switch {
 	case errors.As(err, &sf):
@@ -96,7 +97,7 @@ func (w *World) captureStep() error {
 		return nil
 	}
 	// 响应丢失后重试：返回 duplicate，不写入任何事件。
-	again, err := w.svc.SubmitCaptures(ctx, sid, id, segs)
+	again, err := w.svc.SubmitCaptures(ctx, sid, session.StreamTranscript, id, segs)
 	if err != nil {
 		return fmt.Errorf("retry of capture %s: %w", id, err)
 	}
@@ -114,7 +115,7 @@ func (w *World) captureStep() error {
 // retryCapture：提交结果未知（存储故障）后以同一 capture_id 重试，已生效的必须返回 duplicate，没有生效的照常生效。
 func (w *World) retryCapture(sid, id string, segs []*v1.CaptureSegment, written bool) error {
 	w.Stats.UncertainRetries++
-	res, err := w.svc.SubmitCaptures(context.Background(), sid, id, segs)
+	res, err := w.svc.SubmitCaptures(context.Background(), sid, session.StreamTranscript, id, segs)
 	var sf *storeFault
 	if errors.As(err, &sf) || (!written && errors.Is(err, moderation.ErrUnavailable)) {
 		w.tracef("retry capture %s: %v", id, err)

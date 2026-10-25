@@ -14,6 +14,7 @@ import (
 	"yanshi/internal/agentdef"
 	"yanshi/internal/model"
 	"yanshi/internal/sandbox"
+	"yanshi/internal/session"
 	"yanshi/internal/xinlimock"
 )
 
@@ -80,7 +81,7 @@ func run(t *testing.T, suite string) *Report {
 	}
 	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "assistant", Version: "1", Model: "script/any",
 		Capabilities: []string{"device:*", "memory_save", "clock_now"}},
-		&agentdef.Def{Name: "day", Version: "1", Model: "script/any", Captures: true, Capabilities: []string{"captures", "memory_save", "mcp:xinli/*"}})
+		&agentdef.Def{Name: "day", Version: "1", Model: "script/any", Streams: []agentdef.Stream{{Name: session.StreamTranscript}}, Capabilities: []string{"captures", "memory_save", "mcp:xinli/*"}})
 	gw := model.NewGateway()
 	gw.Register("script", script{})
 	gw.Register("judge", fixedJudge{})

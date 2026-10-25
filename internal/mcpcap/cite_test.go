@@ -26,12 +26,12 @@ func TestCitations(t *testing.T) {
 	created := func() *v1.Event {
 		return &v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u"}}}
 	}
-	appendTo("s", created(), &v1.Event{Payload: &v1.Event_CaptureAppended{CaptureAppended: &v1.CaptureAppended{CaptureId: "c", Segments: []*v1.CaptureSegment{
+	appendTo("s", created(), &v1.Event{Payload: &v1.Event_CaptureAppended{CaptureAppended: &v1.CaptureAppended{Stream: "transcript", CaptureId: "c", Segments: []*v1.CaptureSegment{
 		{Speaker: v1.Speaker_SPEAKER_WEARER, Text: "报价单我明天发您"},
 		{Speaker: v1.Speaker_SPEAKER_OTHER, SpeakerKey: "zhang", Text: "好"},
 		{Speaker: v1.Speaker_SPEAKER_OTHER, SpeakerKey: "li", Redacted: true},
 	}}}})
-	appendTo("other", created(), created(), &v1.Event{Payload: &v1.Event_CaptureAppended{CaptureAppended: &v1.CaptureAppended{CaptureId: "c",
+	appendTo("other", created(), created(), &v1.Event{Payload: &v1.Event_CaptureAppended{CaptureAppended: &v1.CaptureAppended{Stream: "transcript", CaptureId: "c",
 		Segments: []*v1.CaptureSegment{{Speaker: v1.Speaker_SPEAKER_WEARER, Text: "别的 Session"}}}}})
 
 	args := `{"commitments":[{"content":"发报价单 #2.0","refs":["#2.0","#2.1"]},{"refs":["#2.0","#2.2","#2.9","#1.0","#3.0"]}]}`
