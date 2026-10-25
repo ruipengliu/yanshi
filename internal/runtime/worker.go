@@ -1054,15 +1054,16 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 	}
 	// 系统指令只含 AgentDef 的指令：召回放在 Run 的位置上（Transcript），使系统指令与工具定义构成的前缀
 	// 在整个 Session 中不变，提供商的前缀缓存得以命中（docs/research/2026-10-agent-harness-and-system1.md）。
-	req := &model.Request{Model: def.Model, System: def.Instructions, Messages: w.inlineImages(ctx, Transcript(w.st, def.Context.MaxToolResult))}
+	view := contextView(w.st, def)
+	req := &model.Request{Model: def.Model, System: def.Instructions, Messages: w.inlineImages(ctx, Transcript(view, def.Context.MaxToolResult))}
 	for _, t := range tools {
 		req.Tools = append(req.Tools, model.ToolSpec{Name: t.Spec.Name, Description: t.Spec.Description, InputSchema: t.Spec.InputSchema})
 	}
-	if through, usePrefix := planCompaction(w.st, req, def.Context, w.forceCompact); through > 0 {
+	if through, usePrefix := planCompaction(view, req, def.Context, w.forceCompact); through > 0 {
 		if !usePrefix {
 			req = nil
 		}
-		return w.compact(ctx, r, def, through, req)
+		return w.compact(ctx, r, def, view, through, req)
 	}
 
 	var resp *model.Response

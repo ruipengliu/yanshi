@@ -703,6 +703,19 @@ func (in *instance) submitTurn(ctx context.Context, sid string, turn Turn) (stri
 	return res.RunID, nil
 }
 
+// captureTime 解读旁听的 at："2026-10-23 09:42"（Asia/Shanghai），或相对于提交时刻的 "now-15m"（白天整理的用例需要
+// "刚说完"的交谈，captures-daytime.md §6）。
+func captureTime(at string) (time.Time, error) {
+	if rest, ok := strings.CutPrefix(at, "now-"); ok {
+		d, err := time.ParseDuration(rest)
+		if err != nil {
+			return time.Time{}, err
+		}
+		return time.Now().Add(-d).Truncate(time.Minute), nil
+	}
+	return time.ParseInLocation(time.DateTime, at+":00", captureZone)
+}
+
 // checkXinli 判定对 xinli 业务线数据的断言（XinliExpect）。
 func (in *instance) checkXinli(add func(string, bool, string), e *XinliExpect, st *xinlimock.State) {
 	if st == nil {
@@ -898,7 +911,7 @@ func (in *instance) submitCaptures(ctx context.Context, sid string, segs []Captu
 	for _, g := range segs {
 		seg := &v1.CaptureSegment{Speaker: v1.Speaker_SPEAKER_WEARER, Text: g.Text}
 		if g.At != "" {
-			at, err := time.ParseInLocation(time.DateTime, g.At+":00", captureZone)
+			at, err := captureTime(g.At)
 			if err != nil {
 				return fmt.Errorf("capture at %q: %w", g.At, err)
 			}

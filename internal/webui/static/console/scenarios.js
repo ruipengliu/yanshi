@@ -1076,7 +1076,8 @@ export const SCENARIOS = [
       c.check(again.duplicate, "同一 capture_id 再交返回 duplicate");
       const plain = await c.newSession(phone);
       await rejects(c, () => phone.submitCaptures(plain, segs), "invalid", "未开启旁听的 Agent 拒绝旁听");
-      const t = await web.submit(sid, "call captures {}");
+      // 刚写下的旁听属于可能还在进行的交谈：all 时才返回（docs/design/captures-daytime.md §4）。
+      const t = await web.submit(sid, 'call captures {"all":true}');
       await c.runEnd(wv, t.runId);
       const reply = wv.reply(t.runId);
       c.check(

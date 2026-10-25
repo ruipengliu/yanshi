@@ -121,3 +121,45 @@ func TestPlanCompaction(t *testing.T) {
 		t.Fatalf("kept only %d tokens of recent history, want >= %d", kept, cfg.KeepRecent)
 	}
 }
+
+// 只看本轮（context.scope: run，docs/design/captures-daytime.md §3）：之前的 Run 与它们的压缩摘要不进入上下文，当前 Run
+// 内的插话、调用与结果照旧；当前 Run 内发生的压缩照常以摘要开头。默认（session）时照旧含整个 Session。
+func TestRunScopedContext(t *testing.T) {
+	runDef := &agentdef.Def{Context: agentdef.Context{Scope: agentdef.ScopeRun}}
+	sessionDef := &agentdef.Def{Context: agentdef.Context{Scope: agentdef.ScopeSession}}
+	b := (&logBuilder{}).
+		add(&v1.SessionCreated{}).
+		add(&v1.RunRequested{RunId: "r1", Input: model.TextBlocks("早上")}).                                  // 2
+		add(&v1.AttemptStarted{RunId: "r1", Attempt: 1}).                                                   // 3
+		add(&v1.AssistantMessage{RunId: "r1", Attempt: 1, ToolCalls: calls("c1")}).                         // 4
+		add(&v1.ToolResult{RunId: "r1", Attempt: 1, CallId: "c1"}).                                         // 5
+		add(&v1.ContextCompacted{RunId: "r1", Attempt: 1, ThroughSeq: 3, Summary: model.TextBlocks("S1")}). // 6
+		add(&v1.AssistantMessage{RunId: "r1", Attempt: 1, Content: model.TextBlocks("好")}).                 // 7
+		add(&v1.RunCompleted{RunId: "r1", Attempt: 1}).                                                     // 8
+		add(&v1.RunRequested{RunId: "r2", Input: model.TextBlocks("下午")}).                                  // 9
+		add(&v1.AttemptStarted{RunId: "r2", Attempt: 1}).                                                   // 10
+		add(&v1.AssistantMessage{RunId: "r2", Attempt: 1, ToolCalls: calls("c2")}).                         // 11
+		add(&v1.Steered{RunId: "r2", Input: model.TextBlocks("插话")}).                                       // 12
+		add(&v1.ToolResult{RunId: "r2", Attempt: 1, CallId: "c2"})                                          // 13
+	st, err := session.Reduce(b.events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := shape(Transcript(contextView(st, runDef), 0)), "user:下午 assistant[c2] tool:c2 user:插话"; got != want {
+		t.Fatalf("run scope:\n got  %s\n want %s", got, want)
+	}
+	if got := shape(Transcript(contextView(st, sessionDef), 0)); !strings.HasPrefix(got, "user:"+summaryPrefix+"S1") || !strings.Contains(got, "user:下午") {
+		t.Fatalf("session scope: %s", got)
+	}
+
+	// 当前 Run 内压缩（把它的输入也收进摘要）之后，上下文以这次的摘要开头。
+	b.add(&v1.ContextCompacted{RunId: "r2", Attempt: 1, ThroughSeq: 13, Summary: model.TextBlocks("S2")}). // 14
+														add(&v1.AssistantMessage{RunId: "r2", Attempt: 1, ToolCalls: calls("c3")}) // 15
+	st, err = session.Reduce(b.events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := shape(Transcript(contextView(st, runDef), 0)), "user:"+summaryPrefix+"S2 assistant[c3] tool:c3"; got != want {
+		t.Fatalf("run scope after compaction:\n got  %s\n want %s", got, want)
+	}
+}

@@ -143,7 +143,7 @@ Capture 与输入一样更新索引中的 `LastInputAt`（受 `TouchEvery` 节�
 ### 每日流程
 
 1. **开启**：HostApp 在当地一天的第一个 Capture 之前创建 `xinli-day` Session，把 Session ID 与日期报给业务线服务端。日期与 Session 的对应由业务线记录；`SessionCreated` 不增加日期字段。
-2. **整理**：业务线服务端在当地深夜用服务令牌提交输入"整理今天"。Run 按交谈逐段读、逐段以 `mcp_xinli__file_exchange` 交出，写入 Memory（§7），最后以 `mcp_xinli__file_day` 交出当天总览与觉察（[旁听按交谈整理](./captures-by-exchange.md) §4）。觉察只写沟通方式，不写情绪与身心状态。
+2. **整理**：业务线服务端白天定时提交"整理交谈"，只整理已经结束的交谈（[旁听白天逐段整理](./captures-daytime.md)）；在当地深夜用服务令牌提交输入"整理今天"。Run 按交谈逐段读、逐段以 `mcp_xinli__file_exchange` 交出，写入 Memory（§7），最后以 `mcp_xinli__file_day` 交出当天总览与觉察（[旁听按交谈整理](./captures-by-exchange.md) §4）。觉察只写沟通方式，不写情绪与身心状态。
 3. **关闭**：`file_day` 成功后，业务线服务端调用 `POST /v1/sessions/{id}/close`。`close_after_idle` 兜底。
 4. **归集**：业务线服务端为当天涉及的项目创建（或复用）`xinli-project` Session，提交输入"整理 <日期>"，输入中不含摘要。Project 的 Run 调用 `mcp_xinli__day_summary{date}` 取回那天的交谈与未完成的承诺，以调用结果进入上下文，是外部内容（ADR-0037）。
 5. **承诺**：承诺随交谈进入业务线的承诺账本；Project 的 Run 以 `mcp_xinli__set_status` 更新现状、以 `mcp_xinli__update_commitments` 按 ID 对账。业务线服务端按期限直接推送通过核对的承诺，不经 yanshi 的 Notification。

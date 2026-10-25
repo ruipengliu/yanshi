@@ -163,7 +163,8 @@ type CaptureSegment struct {
 	Speaker string `yaml:"speaker"`
 	Key     string `yaml:"key"`
 	Text    string `yaml:"text"`
-	// At 是说这段话的当地时间（"2026-10-23 09:42"，Asia/Shanghai）；为空时不带时间，整理时也不显示。
+	// At 是说这段话的当地时间（"2026-10-23 09:42"，Asia/Shanghai），或相对于提交时刻的 "now-15m"；为空时不带时间，
+	// 整理时也不显示。
 	At string `yaml:"at"`
 	// Topic 是这段话的主题标签（评测用，不提交给 yanshi）：计算项目归集的纯度与碎片率。闲聊不标。
 	Topic string `yaml:"topic"`
@@ -336,8 +337,8 @@ func LoadSuite(dir string) ([]*Case, error) {
 				if g.Speaker != "wearer" && g.Speaker != "other" {
 					return nil, fmt.Errorf("%s: turn %d: capture speaker %q must be wearer or other", f, i+1, g.Speaker)
 				}
-				if _, err := time.Parse(time.DateTime, g.At+":00"); g.At != "" && err != nil {
-					return nil, fmt.Errorf("%s: turn %d: capture at %q must be YYYY-MM-DD HH:MM", f, i+1, g.At)
+				if _, err := captureTime(g.At); g.At != "" && err != nil {
+					return nil, fmt.Errorf("%s: turn %d: capture at %q must be YYYY-MM-DD HH:MM or now-<duration>", f, i+1, g.At)
 				}
 			}
 		}

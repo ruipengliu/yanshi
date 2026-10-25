@@ -136,7 +136,7 @@ func NewCore(stores Stores, opts Options) *Core {
 		dir = faults.Directory{Directory: dir, Injector: opts.Injector}
 	}
 	c.Catalog = &capability.Catalog{
-		Local:          capability.NewRegistry(append(append([]capability.Capability{capture.New(stores.Log)}, local...), memory.Capabilities(c.Memory)...)...),
+		Local:          capability.NewRegistry(append(append([]capability.Capability{capture.New(stores.Log, opts.Clock)}, local...), memory.Capabilities(c.Memory)...)...),
 		Nodes:          dir,
 		MCP:            opts.MCP,
 		Agents:         delegation.Directory{Registry: opts.Agents},

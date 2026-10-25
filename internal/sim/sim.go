@@ -248,7 +248,8 @@ func (q poolQueue) Claim(ctx context.Context, holder string, ttl time.Duration, 
 const interactiveWorker = "wi"
 
 // simContext 是模拟 AgentDef 的上下文配置：窗口很小（工具声明约占 1410，其中 ask_user 约 450、captures 约 260、缩短的 show_card 约 30），使压缩频繁发生；须容得下工具声明、摘要、KeepRecent 与一条最大的消息（含界面上下文）。
-var simContext = agentdef.Context{Window: 3060, CompactAt: 0.75, KeepRecent: 300, MaxToolResult: 250}
+// 窗口很小以频繁压缩，但须容得下工具定义（约 2.5k tokens）加上一步的调用与结果：调用与结果不能拆开压缩。
+var simContext = agentdef.Context{Window: 3200, CompactAt: 0.75, KeepRecent: 300, MaxToolResult: 250}
 
 const longRunTurns = 20
 
@@ -372,11 +373,17 @@ func New(opts Options) (*World, error) {
 	}
 	// 两个版本，配合随机的灰度与撤回（docs/design/m4-agent-rollout.md §7）。
 	var defs []*agentdef.Def
+	// 版本 2 只看本轮（context.scope: run，docs/design/captures-daytime.md §3）：同一批 Session 在两个版本之间切换，
+	// 两种上下文都受调用配对、确定性回放与压缩的同一组不变量检查。
 	for _, v := range []string{"1", "2"} {
+		ctxCfg := simContext
+		if v == "2" {
+			ctxCfg.Scope = agentdef.ScopeRun
+		}
 		defs = append(defs, &agentdef.Def{
 			Name: "sim", Version: v, Model: "sim/m",
 			Capabilities: []string{"echo", "send", "ask_user", "show_card", "memory_save", "memory_forget", "memory_search", "captures", "device:*", "sandbox:*", "agent:sim"},
-			MaxTurns:     maxTurns, Context: simContext, Memory: agentdef.MemoryConfig{Recall: 3},
+			MaxTurns:     maxTurns, Context: ctxCfg, Memory: agentdef.MemoryConfig{Recall: 3},
 			// 旁听转写写进同一批 Session，与输入、Run、关闭和删除交错。
 			Captures: true,
 		})

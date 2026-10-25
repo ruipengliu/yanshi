@@ -83,12 +83,27 @@ type Context struct {
 	MaxToolResult int `yaml:"max_tool_result"`
 	// SummaryModel 是生成摘要的模型引用，留空表示与 Def.Model 相同。
 	SummaryModel string `yaml:"summary_model"`
+	// Scope 是模型上下文的范围：ScopeSession（默认）含整个 Session 的历史；ScopeRun 只含当前 Run 的事件，供每次输入
+	// 彼此独立、靠外部状态衔接的 Agent（docs/design/captures-daytime.md §3）。
+	Scope string `yaml:"scope"`
 }
+
+const (
+	ScopeSession = "session"
+	ScopeRun     = "run"
+)
 
 // Threshold 是触发压缩的请求大小。
 func (c Context) Threshold() int { return int(float64(c.Window) * c.CompactAt) }
 
 func (c *Context) validate() error {
+	switch c.Scope {
+	case "":
+		c.Scope = ScopeSession
+	case ScopeSession, ScopeRun:
+	default:
+		return fmt.Errorf("context: scope must be %s or %s, not %q", ScopeSession, ScopeRun, c.Scope)
+	}
 	if c.Window == 0 {
 		c.Window = 64000
 	}

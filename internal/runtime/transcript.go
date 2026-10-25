@@ -8,6 +8,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/agentdef"
 	"yanshi/internal/model"
 	"yanshi/internal/session"
 )
@@ -118,6 +119,29 @@ func transcript(st *session.State, maxToolResult int, through uint64) []model.Me
 		out = slices.Insert(out, at, model.Message{Role: model.RoleUser, Content: recall})
 	}
 	return out
+}
+
+// contextView 返回模型上下文依据的投影。AgentDef 的 context.scope 为 run 时只含当前 Run 的事件：之前的 Run 及其压缩
+// 摘要都不进入上下文（docs/design/captures-daytime.md §3）。写入闸门与注入判断不用它，照旧按整个 Session 判断，只会更严。
+// 返回的是浅拷贝：History 是新切片，其余字段与 st 共享，调用方只读。
+func contextView(st *session.State, def *agentdef.Def) *session.State {
+	r := st.Active()
+	if def.Context.Scope != agentdef.ScopeRun || r == nil {
+		return st
+	}
+	start := uint64(0) // 当前 Run 的输入已被本 Run 的压缩收进摘要时为 0：剩下的历史都在本 Run 之内
+	for _, e := range st.History {
+		if e.GetRunRequested().GetRunId() == r.ID {
+			start = e.GetSeq()
+			break
+		}
+	}
+	v := *st
+	v.History = slices.DeleteFunc(slices.Clone(st.History), func(e *v1.Event) bool { return e.GetSeq() < start })
+	if c := st.Compaction; c != nil && start > 0 && c.GetThroughSeq() < start {
+		v.Compaction, v.CompactedAt = nil, 0
+	}
+	return &v
 }
 
 // modelVisible 是 AssistantMessage 中会再给模型看的部分：回复内容与调用。思考过程既不发回给模型，

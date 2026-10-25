@@ -267,23 +267,23 @@ func pickCut(st *session.State, sizes []int, total, budget, keep int, force bool
 	return best
 }
 
-// compact 生成摘要并提交 ContextCompacted；一次 compact 是一个完整的 Step。
-// compact 生成摘要并提交 ContextCompacted；main 非 nil 时摘要请求以它的前缀开头（见 planCompaction）。
-func (w *Worker) compact(ctx context.Context, r *session.Run, def *agentdef.Def, through uint64, main *model.Request) error {
+// compact 生成摘要并提交 ContextCompacted；一次 compact 是一个完整的 Step。main 非 nil 时摘要请求以它的前缀开头
+// （见 planCompaction）。view 是模型上下文依据的投影（contextView）：只看本轮时，之前的 Run 不进摘要。
+func (w *Worker) compact(ctx context.Context, r *session.Run, def *agentdef.Def, view *session.State, through uint64, main *model.Request) error {
 	var hist []*v1.Event
-	for _, e := range w.st.History {
+	for _, e := range view.History {
 		if e.GetSeq() > through {
 			break
 		}
 		hist = append(hist, e)
 	}
 	in := SummaryInput{
-		Model: def.Model, Previous: w.st.Compaction.GetSummary(), History: hist,
+		Model: def.Model, Previous: view.Compaction.GetSummary(), History: hist,
 		MaxToolResult: def.Context.MaxToolResult, TargetTokens: def.Context.Window / 16,
 	}
 	if main != nil {
 		in.Prefix = &model.Request{System: main.System, Tools: main.Tools,
-			Messages: w.inlineImages(ctx, transcriptThrough(w.st, def.Context.MaxToolResult, through))}
+			Messages: w.inlineImages(ctx, transcriptThrough(view, def.Context.MaxToolResult, through))}
 	}
 	if def.Context.SummaryModel != "" {
 		in.Model = def.Context.SummaryModel
