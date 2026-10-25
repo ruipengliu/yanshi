@@ -12,7 +12,7 @@ import (
 	"yanshi/internal/eventlog"
 )
 
-// Citation 是平台对一个旁听引用的解析（docs/design/captures-by-exchange.md §7）：被引用片段的说话人。不含文字：他人的
+// Citation 是平台对一个旁听引用的解析（docs/design/captures.md §6）：被引用片段的说话人。不含文字：他人的
 // 原话只保留在旁听 Session 中（ADR-0037），不经这条路径流到业务线长期保存。
 type Citation struct {
 	Ref        string `json:"ref"`

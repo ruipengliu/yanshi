@@ -373,7 +373,7 @@ func New(opts Options) (*World, error) {
 	}
 	// 两个版本，配合随机的灰度与撤回（docs/design/m4-agent-rollout.md §7）。
 	var defs []*agentdef.Def
-	// 版本 2 只看本轮（context.scope: run，docs/design/captures-daytime.md §3）：同一批 Session 在两个版本之间切换，
+	// 版本 2 只看本轮（context.scope: run，docs/design/m2-long-runs.md §2）：同一批 Session 在两个版本之间切换，
 	// 两种上下文都受调用配对、确定性回放与压缩的同一组不变量检查。
 	for _, v := range []string{"1", "2"} {
 		ctxCfg := simContext

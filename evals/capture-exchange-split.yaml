@@ -1,6 +1,6 @@
 name: capture-exchange-split
 description: >-
-  按交谈整理（captures-by-exchange.md §3、§4）：上午与供应商谈采购、下午与同事约团建，相隔几个小时，是两段交谈；
+  按交谈整理（captures.md §5、captures-xinli.md §3）：上午与供应商谈采购、下午与同事约团建，相隔几个小时，是两段交谈；
   逐段交出两次 file_exchange，各自的承诺各归各的交谈，最后交出当天总览。
 agent: xinli-day
 setup:

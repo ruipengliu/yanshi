@@ -51,7 +51,7 @@ type Def struct {
 type Stream struct {
 	// Name 是平台登记的流名（session.KnownStream），如 "transcript"。
 	Name string `yaml:"name"`
-	// ExchangeGap 是交谈间隔：相邻两段的说话时间相隔超过它，就是两段交谈（docs/design/captures-by-exchange.md §3），
+	// ExchangeGap 是交谈间隔：相邻两段的说话时间相隔超过它，就是两段交谈（docs/design/captures.md §5），
 	// 默认 5 分钟。一个 Session 中沿用第一次提交的读取位置中的值，改动从新的 Session 起生效。
 	ExchangeGap time.Duration `yaml:"exchange_gap"`
 }
@@ -111,7 +111,7 @@ type Context struct {
 	// SummaryModel 是生成摘要的模型引用，留空表示与 Def.Model 相同。
 	SummaryModel string `yaml:"summary_model"`
 	// Scope 是模型上下文的范围：ScopeSession（默认）含整个 Session 的历史；ScopeRun 只含当前 Run 的事件，供每次输入
-	// 彼此独立、靠外部状态衔接的 Agent（docs/design/captures-daytime.md §3）。
+	// 彼此独立、靠外部状态衔接的 Agent（docs/design/m2-long-runs.md §2）。
 	Scope string `yaml:"scope"`
 }
 

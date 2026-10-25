@@ -204,7 +204,7 @@ func TestPageShowsLocalTime(t *testing.T) {
 }
 
 // after="new" 从投影中已提交的读取位置接着读（ADR-0039），读到旁听的页给出新的位置；最后一段刚说完的交谈先不返回、位置
-// 不前进，all 时返回（docs/design/captures-daytime.md §4）。
+// 不前进，all 时返回（docs/design/captures.md §5）。
 func TestReadPositionAndOpenExchange(t *testing.T) {
 	ctx := context.Background()
 	log := timedLog(t,

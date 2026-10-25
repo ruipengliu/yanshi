@@ -704,7 +704,7 @@ func (in *instance) submitTurn(ctx context.Context, sid string, turn Turn) (stri
 }
 
 // captureTime 解读旁听的 at："2026-10-23 09:42"（Asia/Shanghai），或相对于提交时刻的 "now-15m"（白天整理的用例需要
-// "刚说完"的交谈，captures-daytime.md §6）。
+// "刚说完"的交谈，captures-xinli.md §10）。
 func captureTime(at string) (time.Time, error) {
 	if rest, ok := strings.CutPrefix(at, "now-"); ok {
 		d, err := time.ParseDuration(rest)
@@ -830,7 +830,7 @@ func (in *instance) exchangeTopics(ctx context.Context, topics map[string][]stri
 	return out, nil
 }
 
-// checkGrouping 计算项目归集的碎片率与纯度（captures-weekly-review.md §6）。每段交出的交谈取它第一段旁听的主题，没有
+// checkGrouping 计算项目归集的碎片率与纯度（captures-xinli.md §10）。每段交出的交谈取它第一段旁听的主题，没有
 // 主题的（闲聊）不计入碎片率。碎片率：每个主题的交谈分散在几个项目中（没有归入项目的每段各算一个），按主题平均；
 // 纯度：每个项目中占多数的主题所占的比例（闲聊算作杂质），按交谈数加权。
 func checkGrouping(add func(string, bool, string), want *GroupingExpect, st *xinlimock.State, topics map[string]string) {

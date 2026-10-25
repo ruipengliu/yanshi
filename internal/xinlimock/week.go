@@ -13,7 +13,7 @@ import (
 	"yanshi/internal/memory"
 )
 
-// 每周回顾（docs/design/captures-weekly-review.md）：归档按规则进行，不调用模型；xinli-week 的 Run 提议合并相似的项目、
+// 每周回顾（docs/design/captures-xinli.md §7）：归档按规则进行，不调用模型；xinli-week 的 Run 提议合并相似的项目、
 // 交出本周觉察；本周有新交谈的项目由各自的 xinli-project 依据完整时间线重写现状。
 
 // WeekAgent 是每周回顾的 Session 的 AgentDef。
@@ -166,7 +166,7 @@ var weekTools = []struct {
 				Suggestions []string
 			}
 			_ = json.Unmarshal(c.args, &in)
-			// 业务线按规则收下习惯：出现不到两个不同日期的不收（captures-weekly-review.md §4）。
+			// 业务线按规则收下习惯：出现不到两个不同日期的不收（captures-xinli.md §7）。
 			var kept []Habit
 			var single []string
 			for _, h := range in.Habits {
@@ -209,7 +209,7 @@ func (u *user) lastActive(id string) string {
 	return last
 }
 
-// Archive 按规则归档（captures-weekly-review.md §3）：30 天没有新交谈、也没有未完成承诺的项目。没有交谈的项目
+// Archive 按规则归档（captures-xinli.md §7）：30 天没有新交谈、也没有未完成承诺的项目。没有交谈的项目
 // （刚建立或预置的）不归档。返回归档的项目 ID。
 func (x *Server) Archive(businessLine, endUser string) []string {
 	x.mu.Lock()
@@ -265,7 +265,7 @@ func (x *Server) ResolveMerge(businessLine, endUser, id string, accept bool) err
 	return nil
 }
 
-// Week 扮演业务线服务端做每周回顾（captures-weekly-review.md §2）：归档，为本周创建 xinli-week Session 并提交"回顾本周"，
+// Week 扮演业务线服务端做每周回顾（captures-xinli.md §7）：归档，为本周创建 xinli-week Session 并提交"回顾本周"，
 // 再向本周有新交谈的项目提交"重写现状"。输入 ID 由本周的第一天派生：同一周重复触发只生效一次。返回回顾的 Session。
 func (x *Server) Week(ctx context.Context, businessLine, endUser string) (string, error) {
 	if x.Business == nil {

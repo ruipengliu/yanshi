@@ -1,6 +1,6 @@
 name: capture-daytime
 description: >-
-  白天逐段整理（captures-daytime.md）：同一个旁听 Session 三轮。第一轮"整理交谈"只交出已经结束的交谈（一小时前谈采购），
+  白天逐段整理（captures-xinli.md §2）：同一个旁听 Session 三轮。第一轮"整理交谈"只交出已经结束的交谈（一小时前谈采购），
   刚说完的那段（两分钟前约团建）可能还在继续，先不读；第二轮再"整理交谈"，没有新的已结束交谈，不重复交出；第三轮深夜
   "整理今天"交出余下的那段并写当天总览。每轮只看本轮（context.scope: run）。
 agent: xinli-day

@@ -122,7 +122,7 @@ func transcript(st *session.State, maxToolResult int, through uint64) []model.Me
 }
 
 // contextView 返回模型上下文依据的投影。AgentDef 的 context.scope 为 run 时只含当前 Run 的事件：之前的 Run 及其压缩
-// 摘要都不进入上下文（docs/design/captures-daytime.md §3）。写入闸门与注入判断不用它，照旧按整个 Session 判断，只会更严。
+// 摘要都不进入上下文（docs/design/m2-long-runs.md §2）。写入闸门与注入判断不用它，照旧按整个 Session 判断，只会更严。
 // 返回的是浅拷贝：History 是新切片，其余字段与 st 共享，调用方只读。
 func contextView(st *session.State, def *agentdef.Def) *session.State {
 	r := st.Active()

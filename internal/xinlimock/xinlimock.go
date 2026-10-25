@@ -1,5 +1,5 @@
-// Package xinlimock 是旁听业务线 xinli 的模拟 MCP Server（docs/design/captures.md §6、docs/design/captures-by-exchange.md
-// §5–§7）：评测（internal/eval）与开发部署（serve -xinli-mock，调试控制台）共用。数据只在进程内存中。
+// Package xinlimock 是旁听业务线 xinli 的模拟 MCP Server（docs/design/captures-xinli.md §4–§7、§9）：评测
+// （internal/eval）与开发部署（serve -xinli-mock，调试控制台）共用。数据只在进程内存中。
 //
 // 业务线的数据按 App 的页面组织：今日（Day：每日整理的总览、要点，与当天交出的交谈）、项目（Project：现状与按天的
 // 时间线）、承诺（Commitment：承诺账本，按引用核对承诺人）、待确认（归属拿不准的交谈）、觉察（Day.Awareness）。
@@ -63,7 +63,7 @@ type Project struct {
 	StatusAt      time.Time `yaml:"-" json:"status_at,omitzero"`
 	// Session 是项目的 xinli-project Session（归集时创建）。
 	Session string `yaml:"-" json:"session,omitempty"`
-	// Archived 为 true 时项目已归档：不再被召回，App 中可以取消归档（captures-weekly-review.md §3）。
+	// Archived 为 true 时项目已归档：不再被召回，App 中可以取消归档（captures-xinli.md §7）。
 	Archived bool `yaml:"-" json:"archived,omitempty"`
 	// MergedInto 非空时项目已并入另一个项目（用户确认了合并提议）。
 	MergedInto string `yaml:"-" json:"merged_into,omitempty"`
@@ -94,7 +94,7 @@ type Exchange struct {
 // Pending 报告这段交谈是否在"待确认"中：归属拿不准，用户还没有确认。
 func (e *Exchange) Pending() bool { return e.Match == "unsure" && e.Project == "" }
 
-// Commitment 是承诺账本中的一条（captures-by-exchange.md §7）。
+// Commitment 是承诺账本中的一条（captures-xinli.md §6）。
 type Commitment struct {
 	ID          string   `yaml:"id" json:"id"`
 	Kind        string   `yaml:"kind" json:"kind"` // mine：佩戴者答应别人；theirs：别人答应佩戴者
@@ -454,7 +454,7 @@ func (c *call) fileExchange() string {
 	return b.String()
 }
 
-// verify 按平台给出的被引用原话的说话人核对承诺人（captures-by-exchange.md §7）：mine 须引用佩戴者的话，theirs 须引用
+// verify 按平台给出的被引用原话的说话人核对承诺人（captures-xinli.md §6）：mine 须引用佩戴者的话，theirs 须引用
 // 他人的话。返回未通过的原因，通过时为空。
 func (c *call) verify(kind string, refs []string) string {
 	want, who := "wearer", "用户本人"
@@ -552,7 +552,7 @@ func (c *call) updateCommitments() string {
 	return b.String()
 }
 
-// collect 扮演业务线服务端做"归集"（docs/design/captures.md §6 第 4 步）：为每个涉及的项目创建（或复用）xinli-project
+// collect 扮演业务线服务端做"归集"（docs/design/captures-xinli.md §2 第 4 步）：为每个涉及的项目创建（或复用）xinli-project
 // Session，提交"整理 <日期>"；输入中不含摘要，由 Project 的 Run 经 day_summary 拉取（ADR-0037）。输入 ID 由整理所在的
 // Session 与项目派生：重复归集只生效一次。
 func (x *Server) collect(businessLine, endUser, daySession, date string, projects []string) {
@@ -586,7 +586,7 @@ func (x *Server) collect(businessLine, endUser, daySession, date string, project
 	}
 }
 
-// Resolve 是用户在 App 的"待确认"中的选择（captures-by-exchange.md §6）：把旁听 Session daySession 中拿不准归属的交谈
+// Resolve 是用户在 App 的"待确认"中的选择（captures-xinli.md §5）：把旁听 Session daySession 中拿不准归属的交谈
 // exchange 归入项目 project；project 为空时按交谈给出的名称新建。交谈的承诺随之归入项目。
 func (x *Server) Resolve(businessLine, endUser, daySession, exchange, project string) error {
 	x.mu.Lock()

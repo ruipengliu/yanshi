@@ -32,7 +32,7 @@ setup:
     files_from:               # 大文件从评测集目录读取
       logs/app.log: data/app.log
   crm: false                  # true：登记内置的 CRM MCP Server（search_customer 只读、create_ticket 需审批）
-  xinli:                      # 登记内置的 xinli MCP Server（旁听业务线，docs/design/captures.md §6），预置本 EndUser 的数据
+  xinli:                      # 登记内置的 xinli MCP Server（旁听业务线，docs/design/captures-xinli.md §10），预置本 EndUser 的数据
     projects: [{id: P-0001, name: 年度预算, status: "…"}]   # 新建的项目从 P-0101 编号
     days: {"2026-10-22": "…"}                               # day_summary 在没有交出的交谈时按日期返回的摘要
     commitments: [{id: C-0001, kind: mine, content: "…", due_date: "2026-10-23", project: P-0001}]   # 预置的承诺账本
@@ -61,7 +61,7 @@ turns:
       no_memories: [{contains: "1101"}, {category: "!health", contains: "焦虑"}]   # 不应存在的 Memory；"!" 表示其他类别
       call_args: {"*send_message": "lilei@example.com"}        # 某个名称匹配的调用的参数须包含
       no_call_args: {"mcp_xinli__file_day": "合同"}            # 名称匹配的调用的参数都不得包含
-      xinli:                                                    # 本轮之后 xinli 业务线中本 EndUser 的数据（captures-by-exchange.md §10）
+      xinli:                                                    # 本轮之后 xinli 业务线中本 EndUser 的数据（captures-xinli.md §10）
         exchanges: {min: 2}                                     # 交出的交谈数；pending：待确认数；projects：项目数
         in_project: {P-0001: {max: 0}}                          # 归入某项目的交谈数
         commitments: [{kind: mine, contains: 报价, due_date: "2026-10-24", verified: true}]   # 账本中须有的承诺
@@ -236,7 +236,7 @@ turns:
 
 ## 12. 旁听用例（2026-10-23）
 
-`capture-*` 用例评测旁听业务线的三个 AgentDef（`agents/xinli-*.yaml`，docs/design/captures.md §6、§11）。每轮的 `captures` 以 HostApp 的身份提交到本轮的 Session；`setup.xinli` 登记模拟的 xinli MCP Server（`internal/xinlimock`），预置本次运行 EndUser 的项目与每日摘要；`setup.no_health` 改在未开启健康信息的业务线 `eval-nohealth` 中运行。
+`capture-*` 用例评测旁听业务线的三个 AgentDef（`agents/xinli-*.yaml`，docs/design/captures-xinli.md §1、§10）。每轮的 `captures` 以 HostApp 的身份提交到本轮的 Session；`setup.xinli` 登记模拟的 xinli MCP Server（`internal/xinlimock`），预置本次运行 EndUser 的项目与每日摘要；`setup.no_health` 改在未开启健康信息的业务线 `eval-nohealth` 中运行。
 
 基线（`doubao-seed-2-1-lite-260915:minimal`）中全部用例都是 3/3。
 
@@ -248,22 +248,22 @@ turns:
 
 ### 记忆读回与时间（2026-10-24）
 
-新增 `capture-memory-no-duplicate`、`capture-memory-update`、`capture-relative-date`、`capture-assistant-recall`（captures.md §11）。起初只靠指令（"先 memory_search，变了用 replaces"）：`capture-memory-update` 0/3 到 4/6，`capture-memory-no-duplicate` 5/6。看日志，模型三次中有一两次不查就写，查到了旧记忆也不填 `replaces`，还有一次把"不吃香菜"归成 `health`，绕过了同类别的去重。改为平台兜底后两者都 6/6：去重不限类别，`memory_save` 写入后列出同类别的已有记忆（m4-memory-grant.md §3）。`capture-relative-date` 起初 1/3：日期行只有"2026-10-23 星期五"时，模型两次把"下周一"写成 27 日；日期行加上之后七天的日期与星期后 6/6。
+新增 `capture-memory-no-duplicate`、`capture-memory-update`、`capture-relative-date`、`capture-assistant-recall`（captures-xinli.md §10）。起初只靠指令（"先 memory_search，变了用 replaces"）：`capture-memory-update` 0/3 到 4/6，`capture-memory-no-duplicate` 5/6。看日志，模型三次中有一两次不查就写，查到了旧记忆也不填 `replaces`，还有一次把"不吃香菜"归成 `health`，绕过了同类别的去重。改为平台兜底后两者都 6/6：去重不限类别，`memory_save` 写入后列出同类别的已有记忆（m4-memory-grant.md §3）。`capture-relative-date` 起初 1/3：日期行只有"2026-10-23 星期五"时，模型两次把"下周一"写成 27 日；日期行加上之后七天的日期与星期后 6/6。
 
 这次改动之后 `memory-*` 与 `multi-turn-memory-chat` 没有回归。`memory-recall-new-session` 有一轮 1/3、一轮 2/3，但这个用例中模型看到的输入与改动前逐字相同（工具结果都是"已记住（id）"，召回也正确），失败是模型改用 `ask_user` 反问，再跑 6 次 6/6。`capture-project-grouping` 在更新基线的那一轮是 2/3（第二天把装修新建成了另一个项目，即项目归集没有置信度的老问题），当天累计 17/18，基线保留原来的 3/3。
 
 ### 按交谈整理（2026-10-24）
 
-旁听整理改为按交谈逐段交出（captures-by-exchange.md）。用例改用新工具，断言改为检查业务线的数据（`expect.xinli`），不再依赖调用参数的文字。新增 `capture-exchange-split`、`capture-project-reconcile`、`capture-project-unsure`、`capture-long-day`；`capture-commitment-extraction` 改由 `xinli-day` 交出承诺并核对引用。
+旁听整理改为按交谈逐段交出（captures-xinli.md §3）。用例改用新工具，断言改为检查业务线的数据（`expect.xinli`），不再依赖调用参数的文字。新增 `capture-exchange-split`、`capture-project-reconcile`、`capture-project-unsure`、`capture-long-day`；`capture-commitment-extraction` 改由 `xinli-day` 交出承诺并核对引用。
 
 - **一轮调整。** 首轮失败的都写进了指令：期限总是将来（星期四说"周三前"被写成前一天）；对方答应的也要写（漏了"我来统计人数"）；对方说已收到即为完成；推迟是改期限、不是取消；没有交谈也要调用 `file_day`（查到记忆已记过就直接结束了）。另外两个用例的文字有歧义，已改写：星期五说"周五前"，以及"我得先问问财务"。
 - **结果。** 调整后 16 个用例各 6 次全部通过（96/96），基线 3/3。
 - **代价。** 每段交谈多两三次调用，平均 tokens 约为第一版的两倍（如 `capture-memory-update` 由约 1.3 万增至 2.2 万）。`capture-long-day` 把窗口调到 24000，一次运行压缩 3 次、约 27 万 tokens，承诺与总览都没有丢。
-- **核对规则没覆盖的情况。** 佩戴者让对方去办的事（"你先问问供应商"）仍偶尔被记成佩戴者的承诺：被引用的确实是佩戴者的话，核对通过。用例不再断言这一点，见 captures-by-exchange.md §7。
+- **核对规则没覆盖的情况。** 佩戴者让对方去办的事（"你先问问供应商"）仍偶尔被记成佩戴者的承诺：被引用的确实是佩戴者的话，核对通过。用例不再断言这一点，见 captures-xinli.md §6。
 
 ### 记忆时效与每周回顾（2026-10-24）
 
-新增 `memory-history`、`memory-plan-expiry`、`memory-plan-valid-until`（m4-memory-grant.md §11）与 `capture-week-merge`、`capture-week-awareness`、`capture-week-grouping`、`capture-project-rewrite`（captures-weekly-review.md §6）。评测运行器新增项目归集的碎片率与纯度（`expect.xinli.grouping`，按旁听的 `topic` 计算）、由评分模型判断的摘要覆盖率（`covers`）、引用准确率（`verified_rate`），以及合并提议、每周习惯、项目现状与 `reply_excludes` 的断言；预置数据的日期可写 `today-N`。
+新增 `memory-history`、`memory-plan-expiry`、`memory-plan-valid-until`（m4-memory-grant.md §11）与 `capture-week-merge`、`capture-week-awareness`、`capture-week-grouping`、`capture-project-rewrite`（captures-xinli.md §10）。评测运行器新增项目归集的碎片率与纯度（`expect.xinli.grouping`，按旁听的 `topic` 计算）、由评分模型判断的摘要覆盖率（`covers`）、引用准确率（`verified_rate`），以及合并提议、每周习惯、项目现状与 `reply_excludes` 的断言；预置数据的日期可写 `today-N`。
 
 - **完整评测。** 召回文本带上记录日期后跑了完整的 `make eval`，唯一判为回归的是 `memory-conflict-recency`（3/3 → 1/3）。在 main 与本分支上各跑 12 次，都是 9/12、平均 4.25 分：这个用例本来就只有约 75% 通过（失败时模型仍推荐美式，或改用 `ask_user` 反问），原先的 3/3 是碰巧。召回说明补上"同一件事有多条时以记录日期较新的为准"，基线按实际记为 2/3。其余用例没有回归。
 - **每周觉察。** `capture-week-awareness` 有一轮把只出现一天的"会后发纪要"写成了习惯。模拟服务按设计的规则（至少两个不同日期）不收这样的习惯，指令要求交出前逐条核对日期，之后 6/6。生产中业务线应当做同样的检查。
@@ -271,7 +271,7 @@ turns:
 
 ### 白天逐段整理（2026-10-25）
 
-新增 `capture-daytime`（captures-daytime.md §6）：同一 Session 三轮，"整理交谈"只交出已结束的交谈、不重复交出、不读进行中的交谈，"整理今天"收尾。旁听时间支持相对于提交时刻的 `now-Nm`。
+新增 `capture-daytime`（captures-xinli.md §10）：同一 Session 三轮，"整理交谈"只交出已结束的交谈、不重复交出、不读进行中的交谈，"整理今天"收尾。旁听时间支持相对于提交时刻的 `now-Nm`。
 
 - **指令。** `xinli-day` 收到两种输入后，起初有混淆：收到"整理今天"却套用白天"没有新的交谈就回复"的规则，读一页就停；有一次在回复里说"已交出"而没有调用 `file_exchange`。指令改为"两种输入做同样的步骤，只差第一次读的参数与最后一步"，并写明"交出一定要调用 file_exchange"。之后 `capture-daytime` 单独跑 9/9，`capture-*` 全组各 6 次中其余用例都至少 5/6。
 - **全组运行的波动。** 并发跑全组时，有几次模型没调用工具就结束了（包括这次没有改动的 `capture-week-awareness` 与 `capture-project-reconcile`）。这些用例单独跑：`capture-week-awareness` 本分支与 main 分别为 6/6 与 5/6，`capture-project-reconcile` 5/6，`capture-commitment-extraction` 6/6，`capture-day-digest` 5/6。更新基线的那一轮里后三者偶发失败，基线保留原来的 3/3。

@@ -1,6 +1,6 @@
 name: capture-project-unsure
 description: >-
-  拿不准的归属交给用户（captures-by-exchange.md §6）：已有项目"新办公室装修"，这段交谈谈的是佩戴者家里的厨房装修，
+  拿不准的归属交给用户（captures-xinli.md §5）：已有项目"新办公室装修"，这段交谈谈的是佩戴者家里的厨房装修，
   名称相近、对象不同。不归入那个项目：新建或放进待确认都可以。
 agent: xinli-day
 setup:

@@ -76,7 +76,7 @@
 
 ### 2.1 旁听视图（`static/console/xinli.js`）
 
-旁听业务线 xinli 这一侧的数据，按心力球 App 的页面组织（[旁听按交谈整理](./captures-by-exchange.md) §5–§7）。数据来自模拟的 xinli MCP Server，经 `GET /v1/debug/xinli`（鉴权同 Memory 的列表：用户令牌只看本人）读取，视图可见时每 3 秒刷新：
+旁听业务线 xinli 这一侧的数据，按心力球 App 的页面组织（[旁听业务线 xinli](./captures-xinli.md) §4–§7）。数据来自模拟的 xinli MCP Server，经 `GET /v1/debug/xinli`（鉴权同 Memory 的列表：用户令牌只看本人）读取，视图可见时每 3 秒刷新：
 
 | 页签 | 内容 |
 |---|---|
@@ -86,7 +86,7 @@
 | 待确认 | 归属拿不准的交谈：替用户"归入"候选项目或"新建"；每周回顾的合并提议："合并"或"不合并"（`POST /v1/debug/xinli/resolve`）。页签上显示条数 |
 | 觉察 | 每周回顾归纳的习惯（带出现的日期）与"下周可以"，按天的沟通习惯与"下次可以"；下面是本 EndUser 的 Memory（含旁听写入的，health 类别标红） |
 
-视图顶部的"每周回顾"按钮扮演业务线服务端做每周回顾（`POST /v1/debug/xinli/week`，[每周回顾](./captures-weekly-review.md) §2）：归档、为本周创建 `xinli-week` 会话并提交"回顾本周"、向本周有交谈的项目提交"重写现状"。
+视图顶部的"每周回顾"按钮扮演业务线服务端做每周回顾（`POST /v1/debug/xinli/week`，[每周回顾](./captures-xinli.md) §7）：归档、为本周创建 `xinli-week` 会话并提交"回顾本周"、向本周有交谈的项目提交"重写现状"。
 
 每张卡片可以打开对应的 Session（每日整理的 `xinli-day`、项目的 `xinli-project`），在"对话"视图中查看模型读了什么、调用了什么。
 
@@ -230,7 +230,7 @@ EndUser 的选取：
 | `travel`（出行助手） | 导航、空调、音乐、音量 | 车机与音乐 |
 | `research`（研究员） | 读文件、开网页、在沙箱中计算 | `device:*`、`sandbox:*` |
 
-旁听业务线的 `xinli-day`（每日整理）与 `xinli-assistant` 依赖业务线的 MCP Server（`mcp:xinli/*`，[旁听](./captures.md) §6）。开发部署以 `serve -xinli-mock <业务线>` 在进程内登记模拟的 xinli MCP Server（`internal/xinlimock`，与评测共用；数据只在内存中，重启即清空），控制台的默认业务线是 `demo`。在 `xinli-day` 的会话中用 🎧 提交一天的对话，再发"整理今天"：模型读完旁听、查已有项目、调用一次 `file_day`，佩戴者说过的偏好写入 Memory，他人的话按外部内容对待。随后模拟的业务线为涉及的项目提交"整理 <日期>"，`xinli-project` 得出承诺；结果在"旁听"视图中查看（§2.1）。
+旁听业务线的 `xinli-day`（每日整理）与 `xinli-assistant` 依赖业务线的 MCP Server（`mcp:xinli/*`，[旁听业务线 xinli](./captures-xinli.md)）。开发部署以 `serve -xinli-mock <业务线>` 在进程内登记模拟的 xinli MCP Server（`internal/xinlimock`，与评测共用；数据只在内存中，重启即清空），控制台的默认业务线是 `demo`。在 `xinli-day` 的会话中用 🎧 提交一天的对话，再发"整理交谈"（只整理已经结束的交谈）或"整理今天"：模型按交谈逐段读，召回候选项目，逐段以 `file_exchange` 交出（承诺随之进账本），"整理今天"最后以 `file_day` 交出当天总览；佩戴者说过的偏好写入 Memory，他人的话按外部内容对待。随后模拟的业务线为涉及的项目提交"整理 <日期>"，`xinli-project` 更新现状、对账承诺；结果在"旁听"视图中查看（§2.1）。
 
 委托不扩大权限：子 Run 的工具是自身白名单与每个祖先白名单的交集（ADR-0031）。所以经总管委托时，日程管家不能发短信，直接和日程管家对话时可以（需审批）。评测 `concierge-no-escalation` 检查这一点。
 

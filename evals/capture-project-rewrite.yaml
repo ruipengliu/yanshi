@@ -1,6 +1,6 @@
 name: capture-project-rewrite
 description: >-
-  每周依据完整时间线重写项目现状（captures-weekly-review.md §5）：之前的现状还停在"等报价单"，时间线显示报价已确认、
+  每周依据完整时间线重写项目现状（captures-xinli.md §7）：之前的现状还停在"等报价单"，时间线显示报价已确认、
   合同已签、试单已下；重写后的现状以最近的交谈为准，不再写"等报价"。
 agent: xinli-project
 setup:

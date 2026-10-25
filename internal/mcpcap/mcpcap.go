@@ -43,7 +43,7 @@ type Server struct {
 		NoApproval []string `yaml:"no_approval"`
 	} `yaml:"tools"`
 	// CiteCaptures 为 true 时，调用参数中的旁听引用编号（"#57.3"）由平台按发起调用的 Session 解析，被引用片段的说话人
-	// 放在 _meta["yanshi/captures"] 中交给业务线（docs/design/captures-by-exchange.md §7）。
+	// 放在 _meta["yanshi/captures"] 中交给业务线（docs/design/captures.md §6）。
 	CiteCaptures bool `yaml:"cite_captures"`
 }
 

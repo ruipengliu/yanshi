@@ -1,4 +1,4 @@
-// Package capture 提供读取旁听转写的内置工具 captures（docs/design/captures.md §5、docs/design/captures-by-exchange.md §3，
+// Package capture 提供读取旁听转写的内置工具 captures（docs/design/captures.md §5，
 // ADR-0036）。
 //
 // 旁听转写不进对话上下文（一天可能有十几万字），整理旁听的 Agent 用这个工具从日志中按交谈分页读取：每页至多一段交谈
@@ -41,7 +41,7 @@ const (
 // Stream 是 captures 读取的流：旁听转写（ADR-0039）。
 const Stream = session.StreamTranscript
 
-// New 返回读取本 Session 旁听转写的工具。clk 是判断交谈是否还在进行的"现在"（captures-daytime.md §4）。
+// New 返回读取本 Session 旁听转写的工具。clk 是判断交谈是否还在进行的"现在"（captures.md §5）。
 func New(log eventlog.Log, clk clock.Clock) *Tool { return &Tool{log: log, clk: clk} }
 
 // Tool 是 captures 工具。它实现 capability.ResultInvoker：结果带上平台记录的读取位置（ToolResult.capture_read，ADR-0039），
@@ -129,9 +129,9 @@ func (t *Tool) InvokeResult(ctx context.Context, inv capability.Invocation) (cap
 type Options struct {
 	// Limit 与 MaxChars 是一页的段数与字符数上限（只有第一段就超出时也读入它）。
 	Limit, MaxChars int
-	// Gap 是交谈间隔：相邻两段的说话时间相隔超过它，就是两段交谈（captures-by-exchange.md §3）。
+	// Gap 是交谈间隔：相邻两段的说话时间相隔超过它，就是两段交谈（captures.md §5）。
 	Gap time.Duration
-	// Now 非零且 All 为 false 时，最后一段距 Now 不到 Gap 的交谈可能还在进行，不返回（captures-daytime.md §4）。
+	// Now 非零且 All 为 false 时，最后一段距 Now 不到 Gap 的交谈可能还在进行，不返回（captures.md §5）。
 	Now time.Time
 	All bool
 }

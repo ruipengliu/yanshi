@@ -1,4 +1,4 @@
-# 旁听业务线的助手（docs/design/captures.md §6）：每个 EndUser 一个长期 Session，App、微信、飞书中的提问都提交到这里。
+# 旁听业务线的助手（docs/design/captures-xinli.md §1）：每个 EndUser 一个长期 Session，App、微信、飞书中的提问都提交到这里。
 name: xinli-assistant
 version: "1"
 description: 助手：回答用户关于最近的对话、项目与承诺的问题。

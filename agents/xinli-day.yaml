@@ -1,5 +1,5 @@
-# 旁听业务线的每日整理（docs/design/captures.md §6、captures-by-exchange.md §4）：每个 EndUser 当地每天一个 Session，HostApp
-# 把当天的旁听转写提交到这里，业务线服务端白天定时提交"整理交谈"、深夜提交"整理今天"（captures-daytime.md §5）。按交谈
+# 旁听业务线的每日整理（docs/design/captures-xinli.md §2、§3）：每个 EndUser 当地每天一个 Session，HostApp
+# 把当天的旁听转写提交到这里，业务线服务端白天定时提交"整理交谈"、深夜提交"整理今天"。按交谈
 # 逐段交给业务线，深夜交出当天总览。只能读旁听、
 # 写 Memory、把整理结果交给业务线；白名单中没有高风险能力。
 name: xinli-day
@@ -39,9 +39,9 @@ capabilities:
   - mcp:xinli/file_exchange
   - mcp:xinli/day_exchanges
   - mcp:xinli/file_day
-# 一天几十段交谈，每段两三次调用（docs/design/captures-by-exchange.md §4）。
+# 一天几十段交谈，每段两三次调用（docs/design/captures-xinli.md §3）。
 max_turns: 240
-# 每次输入只看本轮（docs/design/captures-daytime.md §3）：白天的多次整理之间靠业务线保存的交谈与 captures 的读取位置衔接。
+# 每次输入只看本轮（docs/design/m2-long-runs.md §2）：白天的多次整理之间靠业务线保存的交谈与 captures 的读取位置衔接。
 context:
   scope: run
   window: 128000

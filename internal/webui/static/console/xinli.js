@@ -1,7 +1,7 @@
 // 旁听视图（docs/design/console.md §2.1）：旁听业务线 xinli 这一侧的数据，按 App 的页面展示——
 //   今日     每次每日整理的总览、要点，以及当天交出的交谈（定下的事、风险、归属）
 //   项目     项目的现状、下一步与按交谈的时间线（xinli-project 的 set_status）
-//   承诺     承诺账本：双方各自答应的事，按被引用原话的说话人核对（docs/design/captures-by-exchange.md §7）
+//   承诺     承诺账本：双方各自答应的事，按被引用原话的说话人核对（docs/design/captures-xinli.md §6）
 //   待确认   归属拿不准的交谈：替用户确认归入候选项目或新建
 //   觉察     用户本人的沟通习惯与建议（按天），以及旁听写入的长期 Memory
 // 数据来自模拟的 xinli MCP Server（serve -xinli-mock，GET /v1/debug/xinli），可跳到对应的 Session。

@@ -1,6 +1,6 @@
 name: capture-week-merge
 description: >-
-  每周回顾提议合并重复的项目（captures-weekly-review.md §4）："新办公室装修"与"办公室搬迁"说的是同一次搬进新办公室，
+  每周回顾提议合并重复的项目（captures-xinli.md §7）："新办公室装修"与"办公室搬迁"说的是同一次搬进新办公室，
   提议合并；"家里厨房装修"只是主题相近、对象不同，不提议。合并只是提议，进待确认。
 agent: xinli-week
 setup:

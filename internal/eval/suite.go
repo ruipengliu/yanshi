@@ -55,7 +55,7 @@ type Case struct {
 		// Agents 是本用例可委托的 Agent（docs/design/m5-multi-agent.md）：与被评测的 Agent 使用同一模型；
 		// 名称在整个评测集中唯一，被评测的 Agent 须在 capabilities 中以 "agent:<名称>" 允许委托。
 		Agents []AgentSetup `yaml:"agents"`
-		// Xinli 非 nil 时为评测业务线登记内置的 xinli MCP Server（docs/design/captures.md §6），并为本次运行的 EndUser
+		// Xinli 非 nil 时为评测业务线登记内置的 xinli MCP Server（docs/design/captures-xinli.md §1），并为本次运行的 EndUser
 		// 预置其中的项目与每日摘要。
 		Xinli *XinliSetup `yaml:"xinli"`
 		// NoHealth 为 true 时本用例在未开启健康信息的业务线中运行（ADR-0022）：health 类别的写入被拒绝。
@@ -78,7 +78,7 @@ type XinliSetup struct {
 	Days        map[string]string `yaml:"days"`
 	Commitments []XinliCommitment `yaml:"commitments"`
 	// Filed 是已经交出的每日整理（date、headline、awareness），Exchanges 是已经交出的交谈（date、title、summary、project、
-	// decisions、risks）：每周回顾与重写现状读取它们（captures-weekly-review.md §6）。日期可写成相对于运行当天的
+	// decisions、risks）：每周回顾与重写现状读取它们（captures-xinli.md §10）。日期可写成相对于运行当天的
 	// "today-N"（"本周"由运行时刻决定）。
 	Filed     []XinliDay      `yaml:"filed"`
 	Exchanges []XinliExchange `yaml:"exchanges"`
@@ -104,7 +104,7 @@ type XinliExpect struct {
 	// Commitments 中每项须匹配账本中的某条承诺；NoCommitments 中每项都不得匹配任何一条。
 	Commitments   []CommitmentMatch `yaml:"commitments"`
 	NoCommitments []CommitmentMatch `yaml:"no_commitments"`
-	// Grouping 是项目归集的碎片率与纯度（captures-weekly-review.md §6），需要旁听标上主题（CaptureSegment.Topic）。
+	// Grouping 是项目归集的碎片率与纯度（captures-xinli.md §10），需要旁听标上主题（CaptureSegment.Topic）。
 	Grouping *GroupingExpect `yaml:"grouping"`
 	// Covers 是摘要须覆盖的要点：评分模型逐条判断要点是否出现在交出的交谈与总览中，覆盖率至少为 Min。
 	Covers *CoversExpect `yaml:"covers"`
@@ -275,7 +275,7 @@ type Expect struct {
 	DeviceSent    *int              `yaml:"device_sent"`
 	// CallArgs 要求某个名称匹配（glob）的调用的参数包含给定文本，如 {"*send_message": "lilei@example.com"}。
 	CallArgs map[string]string `yaml:"call_args"`
-	// NoCallArgs 要求名称匹配（glob）的调用的参数都不包含给定文本，如 {"mcp_xinli__set_commitments": "合同"}。
+	// NoCallArgs 要求名称匹配（glob）的调用的参数都不包含给定文本，如 {"mcp_xinli__file_day": "合同"}。
 	NoCallArgs map[string]string `yaml:"no_call_args"`
 	// Compacted 要求到本轮结束时 Session 已发生过上下文压缩（压缩类用例据此确认确实测到了压缩）。
 	Compacted bool `yaml:"compacted"`
@@ -285,7 +285,7 @@ type Expect struct {
 	// Tasks 是本轮 Call 中派生任务（run_task）次数的范围；TaskContains 要求某个任务的内容包含给定文本。
 	Tasks        *Range   `yaml:"tasks"`
 	TaskContains []string `yaml:"task_contains"`
-	// Xinli 是本轮之后 xinli MCP Server 中本 EndUser 的数据应满足的条件（docs/design/captures-by-exchange.md §10）。
+	// Xinli 是本轮之后 xinli MCP Server 中本 EndUser 的数据应满足的条件（docs/design/captures-xinli.md §10）。
 	Xinli *XinliExpect `yaml:"xinli"`
 	// Tickets 是本轮之后 CRM 中本 EndUser 的工单应包含的文本（每项须出现在某个工单中）。
 	Tickets []string `yaml:"tickets"`

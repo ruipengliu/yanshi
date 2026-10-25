@@ -122,7 +122,7 @@ func TestPlanCompaction(t *testing.T) {
 	}
 }
 
-// 只看本轮（context.scope: run，docs/design/captures-daytime.md §3）：之前的 Run 与它们的压缩摘要不进入上下文，当前 Run
+// 只看本轮（context.scope: run，docs/design/m2-long-runs.md §2）：之前的 Run 与它们的压缩摘要不进入上下文，当前 Run
 // 内的插话、调用与结果照旧；当前 Run 内发生的压缩照常以摘要开头。默认（session）时照旧含整个 Session。
 func TestRunScopedContext(t *testing.T) {
 	runDef := &agentdef.Def{Context: agentdef.Context{Scope: agentdef.ScopeRun}}
