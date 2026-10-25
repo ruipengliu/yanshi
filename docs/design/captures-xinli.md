@@ -2,6 +2,8 @@
 
 > 状态：已实现，已用真实模型验证（2026-10-25，评测结果见 [m4-eval.md](./m4-eval.md) §12）· 依赖：[旁听](./captures.md)（ADR-0036、ADR-0037、ADR-0039）、[Memory 与 Grant](./m4-memory-grant.md)、[MCP 适配](./m5-mcp.md)、[长 Run](./m2-long-runs.md)（`context.scope: run`）· 术语：`CONTEXT.md` 的 Exchange、Project、Commitment、Awareness
 
+> 交谈的划分、写入接口与承诺的修订将按 [xinli 的建模](./captures-xinli-model.md)（ADR-0042）改写；实现之前本文描述的仍是现状。
+
 xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话按交谈整理成摘要，按主题归集到 Project，记下双方的承诺并按期限提醒，每周回顾沟通习惯，供用户随时提问。编排在业务线服务端（ADR-0037）；yanshi 提供旁听的写入与读取、四个 AgentDef 的运行，以及引用的说话人核对（[captures.md](./captures.md) §6）。
 
 ## 1. AgentDef 与工具
