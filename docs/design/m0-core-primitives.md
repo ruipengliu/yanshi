@@ -56,6 +56,8 @@ Worker 以 `Step()` 为单位推进，每个 Step 同步完成一件事，内部
 
 这样的拆分使确定性模拟测试可以在任意两个 Step 之间注入故障。
 
+处理调用时，先检查参数：去掉首尾空白后为空时按 `{}` 处理，其余必须是合法的 JSON 对象。不合法时不去打扰用户，也不派发、不执行：直接追加错误结果（`arguments are not a valid JSON object: …`），由模型按工具的参数说明改正后重新调用。这一检查在审批与 Memory 写入闸门之前，对本地、MCP、路由与委托的调用一律适用。
+
 ### Capability 调用的幂等
 
 一次调用经历三个事件：`AssistantMessage.tool_calls`（请求）→ `ToolCallStarted`（执行**之前**落盘）→ `ToolResult`。故障恢复时：

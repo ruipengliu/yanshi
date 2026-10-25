@@ -59,6 +59,8 @@ cite_captures: false           # 可选：解析参数中的旁听引用，附�
 
 第三方 Server 的注解只当作提示：放宽审批必须经过业务线的明确登记。
 
+参数不是合法的 JSON 对象的调用不请求审批、不发给 Server：Worker 在审批之前就把错误作为结果交还模型（[M0](./m0-core-primitives.md) §4），用户不会被要求批准一次注定失败的调用。
+
 **身份传递**：每次调用都带上 `X-Yanshi-Business-Line`、`X-Yanshi-End-User`、`X-Yanshi-Session` 请求头，以及 MCP 请求的 `_meta`（`yanshi/end_user` 等）。业务线的 Server 依靠这些信息按用户处理数据。它可以信任这些值，因为调用来自持有业务线凭证的 yanshi。
 
 ## 4. 结果映射

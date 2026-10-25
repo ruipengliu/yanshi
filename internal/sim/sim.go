@@ -137,6 +137,8 @@ type Stats struct {
 	CaptureReads int
 	// RetentionKeptMemories 是按保留期到期删除、写入过的 Memory 得以保留的 Session（ADR-0037）。
 	RetentionKeptMemories int
+	// InvalidArgs 是模型给出不合法参数的调用（args.go）。
+	InvalidArgs int
 }
 
 // storeFault 是注入的存储故障（数据库超时、连接中断）：written 表示追加其实已经生效，调用方却只看到错误。
@@ -1177,6 +1179,9 @@ func (w *World) CheckInvariants() error {
 		if err := w.checkBackground(sid, events, st, slices.Contains(w.sessions, sid)); err != nil {
 			return err
 		}
+		if err := checkInvalidArgs(sid, events); err != nil {
+			return err
+		}
 	}
 	if w.poolViolation != nil {
 		return w.poolViolation
@@ -1624,8 +1629,12 @@ func (m *simModel) summarize(ctx context.Context, req *model.Request) (*model.Re
 	return &model.Response{Model: "sim/m", Content: model.TextBlocks(text), Usage: &v1.Usage{InputTokens: uint64(model.EstimateRequest(req))}}, nil
 }
 
-// toolArgs 为工具生成参数：Memory 工具需要合法参数才能写入，其余工具用随机长度的负载使上下文增长。
+// toolArgs 为工具生成参数：偶尔不合法（invalidArgs）；Memory 工具需要合法参数才能写入，其余工具用随机长度的负载使
+// 上下文增长。
 func (w *World) toolArgs(name string) string {
+	if args, ok := w.invalidArgs(); ok {
+		return args
+	}
 	switch name {
 	case "memory_save":
 		w.Stats.MemorySaves++

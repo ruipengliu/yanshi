@@ -7,6 +7,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -675,6 +676,10 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 	if tool == nil {
 		return w.commit(ctx, w.toolResult(r, id, model.TextBlocks(fmt.Sprintf("capability %q is not available", name)), true))
 	}
+	// 参数不合法的调用不去打扰用户，也不派发、不执行：错误作为结果交还模型，由它改正。
+	if err := checkArguments(c.Call.GetArgumentsJson()); err != nil {
+		return w.commit(ctx, w.toolResult(r, id, model.TextBlocks(err.Error()), true))
+	}
 
 	// 需要审批：高风险能力；或 Memory 写入闸门判定（ADR-0023）；已经请求过审批的调用一律走完审批，
 	// 即使之后的上下文变化使闸门不再触发。闸门只在调用开始前判定：开始之后到达的插话（例如附带界面上下文）
@@ -1003,6 +1008,23 @@ func (w *Worker) delegationRefused(r *session.Run, def *agentdef.Def, c *session
 		return fmt.Sprintf("cannot delegate: %d delegated tasks are still running (limit %d)", open, def.Delegation.MaxFanout)
 	}
 	return ""
+}
+
+// checkArguments 检查模型给出的调用参数：去掉首尾空白后为空时按 {} 处理（与 openaicompat、mcpcap 一致），其余必须是
+// JSON 对象。不合法时的错误信息会作为调用结果交还模型，使其改正，而不是让 Go 的序列化报错从下游冒出来。
+func checkArguments(args string) error {
+	s := strings.TrimSpace(args)
+	if s == "" {
+		return nil
+	}
+	var v any
+	if err := json.Unmarshal([]byte(s), &v); err != nil {
+		return fmt.Errorf("arguments are not a valid JSON object: %v; call the tool again with arguments that follow its parameter schema", err)
+	}
+	if _, ok := v.(map[string]any); !ok {
+		return errors.New("arguments are not a valid JSON object: the arguments must be an object; call the tool again with arguments that follow its parameter schema")
+	}
+	return nil
 }
 
 func approvalSummary(t *capability.Tool, c *v1.ToolCall) string {
