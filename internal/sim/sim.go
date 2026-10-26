@@ -139,6 +139,8 @@ type Stats struct {
 	RetentionKeptMemories int
 	// InvalidArgs 是模型给出不合法参数的调用（args.go）。
 	InvalidArgs int
+	// MemoryPrechecked 是注入的 Memory 预检查拒绝样例中已返回错误结果的调用（memprecheck.go）。
+	MemoryPrechecked int
 }
 
 // storeFault 是注入的存储故障（数据库超时、连接中断）：written 表示追加其实已经生效，调用方却只看到错误。
@@ -1182,6 +1184,9 @@ func (w *World) CheckInvariants() error {
 		if err := checkInvalidArgs(sid, events); err != nil {
 			return err
 		}
+		if err := checkMemoryPrecheck(sid, events); err != nil {
+			return err
+		}
 	}
 	if w.poolViolation != nil {
 		return w.poolViolation
@@ -1317,6 +1322,9 @@ func (w *World) CollectStats() {
 			for _, c := range r.Calls {
 				if len(c.StartedAttempts) > 1 {
 					w.Stats.Retried++
+				}
+				if memoryPrecheckCall(c.Call) && c.Done {
+					w.Stats.MemoryPrechecked++
 				}
 			}
 		})
@@ -1629,14 +1637,17 @@ func (m *simModel) summarize(ctx context.Context, req *model.Request) (*model.Re
 	return &model.Response{Model: "sim/m", Content: model.TextBlocks(text), Usage: &v1.Usage{InputTokens: uint64(model.EstimateRequest(req))}}, nil
 }
 
-// toolArgs 为工具生成参数：偶尔不合法（invalidArgs）；Memory 工具需要合法参数才能写入，其余工具用随机长度的负载使
-// 上下文增长。
+// toolArgs 为工具生成参数：偶尔不合法（invalidArgs）；memory_save 偶尔给出注定被预检查拒绝的内容，检验它不会先请求
+// 审批。其余工具用随机长度的负载使上下文增长。
 func (w *World) toolArgs(name string) string {
 	if args, ok := w.invalidArgs(); ok {
 		return args
 	}
 	switch name {
 	case "memory_save":
+		if w.chance(0.02) {
+			return rejectedMemoryArgs
+		}
 		w.Stats.MemorySaves++
 		return fmt.Sprintf(`{"category":"preference","content":"偏好 %d"}`, w.rng.IntN(50))
 	case "memory_search":

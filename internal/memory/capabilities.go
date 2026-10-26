@@ -46,30 +46,32 @@ func Capabilities(s *Service) []capability.Capability {
 					`"valid_until":{"type":"string","description":"有效期的最后一天 YYYY-MM-DD（可选，用于带日期的计划）"}},"required":["category","content"]}`),
 				Idempotent: true,
 			},
+			// 写入闸门可能要求审批（ADR-0023）：注定被拒绝的写入（如未开启的健康信息）先拒绝，不让用户批准一次无用的调用。
+			Pre: func(inv capability.Invocation) error {
+				req, err := saveRequest(inv)
+				if err != nil {
+					return err
+				}
+				return s.Check(req)
+			},
 			Fn: func(ctx context.Context, inv capability.Invocation) ([]*v1.ContentBlock, error) {
-				var in struct {
-					Category   Category `json:"category"`
-					Content    string   `json:"content"`
-					Replaces   string   `json:"replaces"`
-					ValidUntil string   `json:"valid_until"`
+				req, err := saveRequest(inv)
+				if err != nil {
+					return nil, err
 				}
-				if err := json.Unmarshal([]byte(inv.Arguments), &in); err != nil {
-					return nil, fmt.Errorf("invalid arguments: %w", err)
-				}
-				m, err := s.Save(ctx, SaveRequest{BusinessLine: inv.BusinessLine, EndUser: inv.EndUser, SessionID: inv.SessionID,
-					CallID: inv.CallID, Category: in.Category, Content: in.Content, Replaces: in.Replaces, ValidUntil: in.ValidUntil})
+				m, err := s.Save(ctx, req)
 				if err != nil {
 					return nil, err
 				}
 				if m.ID != "mem_"+inv.CallID {
-					if in.Replaces != "" {
-						return text("已删除 " + in.Replaces + "；" + m.Content + " 已经记着（" + m.ID + "）"), nil
+					if req.Replaces != "" {
+						return text("已删除 " + req.Replaces + "；" + m.Content + " 已经记着（" + m.ID + "）"), nil
 					}
 					return text("已有相同的记忆（" + m.ID + "）：" + m.Content + "。没有重复写入"), nil
 				}
 				var b strings.Builder
 				b.WriteString("已记住（" + m.ID + "）")
-				if in.Replaces == "" {
+				if req.Replaces == "" {
 					related, err := s.Related(ctx, m, relatedLimit)
 					if err != nil {
 						return nil, err
@@ -145,4 +147,19 @@ func Capabilities(s *Service) []capability.Capability {
 			},
 		},
 	}
+}
+
+// saveRequest 解析 memory_save 的参数。
+func saveRequest(inv capability.Invocation) (SaveRequest, error) {
+	var in struct {
+		Category   Category `json:"category"`
+		Content    string   `json:"content"`
+		Replaces   string   `json:"replaces"`
+		ValidUntil string   `json:"valid_until"`
+	}
+	if err := json.Unmarshal([]byte(inv.Arguments), &in); err != nil {
+		return SaveRequest{}, fmt.Errorf("invalid arguments: %w", err)
+	}
+	return SaveRequest{BusinessLine: inv.BusinessLine, EndUser: inv.EndUser, SessionID: inv.SessionID,
+		CallID: inv.CallID, Category: in.Category, Content: in.Content, Replaces: in.Replaces, ValidUntil: in.ValidUntil}, nil
 }

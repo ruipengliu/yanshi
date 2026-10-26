@@ -1,5 +1,5 @@
 {
-  "started_at": "2026-10-25T00:40:28.140267Z",
+  "started_at": "2026-10-26T06:55:23.155522Z",
   "judge": "codex/gpt-6.1-sol:high",
   "cases": [
     {
@@ -270,6 +270,19 @@
       "avg_compactions": 0,
       "avg_takeovers": 0,
       "cache_hit": 0.8078460914411543
+    },
+    {
+      "name": "capture-health-other-person",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 0,
+      "avg_tokens": 71047,
+      "avg_seconds": 25.694513583666666,
+      "avg_calls": 10,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.6321272634641297
     },
     {
       "name": "capture-injection-other-speaker",
@@ -855,6 +868,32 @@
       "avg_compactions": 0,
       "avg_takeovers": 0,
       "cache_hit": 0.4885083586444407
+    },
+    {
+      "name": "memory-health-family",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 0,
+      "avg_tokens": 5471,
+      "avg_seconds": 5.448178777666667,
+      "avg_calls": 2,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0
+    },
+    {
+      "name": "memory-health-family-disabled",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 0,
+      "avg_tokens": 6451,
+      "avg_seconds": 6.251952152666667,
+      "avg_calls": 2.3333333333333335,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.6289978678038379
     },
     {
       "name": "memory-health-recall",

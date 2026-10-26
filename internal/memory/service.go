@@ -151,32 +151,55 @@ func (s *Service) status(m *Memory) string {
 // Date 是 t 在当地的日期（YYYY-MM-DD），召回与检索的结果据此注明记录日期。
 func (s *Service) Date(t time.Time) string { return t.In(s.location()).Format(time.DateOnly) }
 
-// Save 写入一条 Memory。ID 由调用 ID 派生，因此同一调用重复执行是幂等的。已有几乎相同的一条（有效的）时不再写入，返回
-// 已有的那条（ID 与本次调用派生的不同）；有 Replaces 时仍把被替换的那条标为失效。
-func (s *Service) Save(ctx context.Context, r SaveRequest) (*Memory, error) {
-	content := strings.TrimSpace(r.Content)
-	var until time.Time
+// Check 做写入之前不依赖存储、没有副作用的检查（类别、长度、敏感信息、健康许可、有效期），Save 的第一步就是它。
+// Worker 在审批与写入闸门之前调用它（capability.Checker）：注定被拒绝的写入不去打扰用户。
+func (s *Service) Check(r SaveRequest) error {
+	_, _, err := s.check(r)
+	return err
+}
+
+func (s *Service) check(r SaveRequest) (content string, until time.Time, err error) {
+	content = strings.TrimSpace(r.Content)
 	if r.ValidUntil != "" {
 		d, err := time.ParseInLocation(time.DateOnly, r.ValidUntil, s.location())
 		if err != nil {
-			return nil, fmt.Errorf("%w: valid_until %q must be a date YYYY-MM-DD", ErrRejected, r.ValidUntil)
+			return "", time.Time{}, fmt.Errorf("%w: valid_until %q must be a date YYYY-MM-DD", ErrRejected, r.ValidUntil)
 		}
 		until = d.AddDate(0, 0, 1)
 		if !s.Clock.Now().Before(until) {
-			return nil, fmt.Errorf("%w: valid_until %s has already passed; an expired fact need not be remembered", ErrRejected, r.ValidUntil)
+			return "", time.Time{}, fmt.Errorf("%w: valid_until %s has already passed; an expired fact need not be remembered", ErrRejected, r.ValidUntil)
 		}
 	}
+	// 类别是模型自报的：内容是健康信息（不论关于谁）时只能写入 health，否则换个类别就绕过了业务线的同意（ADR-0022）。
+	term := healthTerm(content)
 	switch {
 	case !ValidCategory(r.Category):
-		return nil, fmt.Errorf("%w: unknown category %q", ErrRejected, r.Category)
+		return "", time.Time{}, fmt.Errorf("%w: unknown category %q", ErrRejected, r.Category)
 	case content == "":
-		return nil, fmt.Errorf("%w: content is empty", ErrRejected)
+		return "", time.Time{}, fmt.Errorf("%w: content is empty", ErrRejected)
 	case utf8.RuneCountInString(content) > MaxContentRunes:
-		return nil, fmt.Errorf("%w: content longer than %d characters; store one short statement", ErrRejected, MaxContentRunes)
+		return "", time.Time{}, fmt.Errorf("%w: content longer than %d characters; store one short statement", ErrRejected, MaxContentRunes)
 	case sensitive(content):
-		return nil, fmt.Errorf("%w: sensitive personal information (ID or bank card numbers) must not be stored", ErrRejected)
-	case r.Category == Health && !s.healthAllowed(r.BusinessLine):
-		return nil, fmt.Errorf("%w: health information is not enabled for this business line (it requires the user's separate consent); tell the user it cannot be remembered", ErrRejected)
+		return "", time.Time{}, fmt.Errorf("%w: sensitive personal information (ID or bank card numbers) must not be stored", ErrRejected)
+	case (r.Category == Health || term != "") && !s.healthAllowed(r.BusinessLine):
+		what := "health information"
+		if term != "" {
+			what = fmt.Sprintf("%q is health information (about anyone, including family members), which", term)
+		}
+		return "", time.Time{}, fmt.Errorf("%w: %s is not enabled for this business line (it requires the user's separate consent); "+
+			"do not save it under another category or in other words, and tell the user it cannot be remembered", ErrRejected, what)
+	case term != "" && r.Category != Health:
+		return "", time.Time{}, fmt.Errorf("%w: %q is health information (about anyone, including family members); save it with category health", ErrRejected, term)
+	}
+	return content, until, nil
+}
+
+// Save 写入一条 Memory。ID 由调用 ID 派生，因此同一调用重复执行是幂等的。已有几乎相同的一条（有效的）时不再写入，返回
+// 已有的那条（ID 与本次调用派生的不同）；有 Replaces 时仍把被替换的那条标为失效。
+func (s *Service) Save(ctx context.Context, r SaveRequest) (*Memory, error) {
+	content, until, err := s.check(r)
+	if err != nil {
+		return nil, err
 	}
 	id := "mem_" + r.CallID
 	if r.CallID == "" {
@@ -206,8 +229,17 @@ func (s *Service) Save(ctx context.Context, r SaveRequest) (*Memory, error) {
 		return nil, err
 	}
 	// 已有几乎相同的一条：不再写入。替换时只把被替换的那条标为失效（"把 X 换成已经记着的 C"就是让 X 失效）。
-	if d, err := s.duplicate(ctx, r, content, old); err != nil || d != nil {
-		if err == nil && old != nil {
+	d, err := s.duplicate(ctx, r, content, old)
+	if err != nil {
+		return nil, err
+	}
+	if d != nil && r.Category == Health && d.Category != Health && old == nil {
+		// 同一件健康信息之前以别的类别记下（按内容认定之前，或用词表后来才收的词）：照常写入 health 的这条并让旧的失效，
+		// 旧的不再参与召回与 Grant（§11）。按重复返回旧的那条，它就仍以原来的类别可读。
+		old, d = d, nil
+	}
+	if d != nil {
+		if old != nil {
 			err = s.Store.Supersede(ctx, old.ID, d.ID, now)
 		}
 		if err != nil {

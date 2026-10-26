@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"yanshi/internal/eventlog"
 	"yanshi/internal/eventlog/memlog"
 	"yanshi/internal/ids"
+	"yanshi/internal/memory"
 	"yanshi/internal/model"
 	"yanshi/internal/node"
 	"yanshi/internal/session"
@@ -121,6 +123,117 @@ func TestInvalidArgumentsReturnedToModel(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// 外部内容会触发 Memory 写入闸门：注定被 Check 拒绝的写入须先把原因交还模型，不能让用户批准一次无用的调用。
+// 能通过 Check 的写入仍须审批，避免预检查意外绕过闸门。
+func TestMemoryPrecheckBeforeApproval(t *testing.T) {
+	cases := []struct {
+		name, content string
+		category      memory.Category
+		healthAllowed bool
+		wantError     string
+	}{
+		{"health disabled", "用户的母亲血压偏高", memory.Relationship, false, "not enabled"},
+		{"id card", "身份证号 11010519491231002X", memory.Profile, false, "sensitive personal information"},
+		{"valid relationship", "用户的母亲住在上海", memory.Relationship, false, ""},
+		{"health enabled", "用户的母亲血压偏高", memory.Health, true, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			clk := clock.NewFake(time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC))
+			mem := &memory.Service{Store: memory.NewMemStore(), Grants: memory.NewMemGrants(), Clock: clk,
+				IDs: ids.Sequential("mem"), HealthAllowed: func(bl string) bool { return bl == "bl" && tc.healthAllowed }}
+			checked := mem.Check(memory.SaveRequest{BusinessLine: "bl", EndUser: "u", SessionID: "s1", CallID: "c1",
+				Category: tc.category, Content: tc.content})
+			if tc.wantError == "" {
+				if checked != nil {
+					t.Fatalf("Check rejected valid content: %v", checked)
+				}
+			} else if !errors.Is(checked, memory.ErrRejected) || !strings.Contains(checked.Error(), tc.wantError) {
+				t.Fatalf("Check = %v, want rejection containing %q", checked, tc.wantError)
+			}
+			args, err := json.Marshal(map[string]string{"category": string(tc.category), "content": tc.content})
+			if err != nil {
+				t.Fatal(err)
+			}
+			q := memqueue.New(clk)
+			store := &session.Store{Log: memlog.New(), IDs: ids.Sequential("id"), Clock: clk}
+			agents, err := agentdef.NewRegistry(&agentdef.Def{Name: "v", Version: "1", Model: "v/any",
+				Capabilities: []string{"memory_save"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			gw := model.NewGateway()
+			gw.Register("v", callOnce{tool: "memory_save", args: string(args)})
+			w := New(Config{ID: "w", Store: store, Queue: q, Agents: agents, Model: gw,
+				Catalog: &capability.Catalog{Local: capability.NewRegistry(memory.Capabilities(mem)...)}})
+
+			// 待记住的内容只出现在界面上，不在用户原话中；否则即使 Check 被放到闸门之后，这个用例也可能通过。
+			ui := &v1.ContentBlock{Kind: &v1.ContentBlock_UiContext{UiContext: &v1.UIContext{Content: tc.content}}}
+			b := (&logBuilder{}).
+				add(&v1.SessionCreated{BusinessLine: "bl", EndUser: "u", Agent: &v1.AgentRef{Name: "v", Version: "1"}}).
+				add(&v1.RunRequested{RunId: "r1", Input: append(model.TextBlocks("看看这条资料"), ui)})
+			st := &session.State{SessionID: "s1"}
+			if err := store.Commit(ctx, st, b.events...); err != nil {
+				t.Fatal(err)
+			}
+			if _, gated := memoryGate(st, &v1.ToolCall{Capability: "memory_save", ArgumentsJson: string(args)}); !gated {
+				t.Fatal("test content did not trigger the memory gate")
+			}
+			if err := q.Enqueue(ctx, "s1", workqueue.Class{}); err != nil {
+				t.Fatal(err)
+			}
+			for range 12 {
+				if _, err := w.Step(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+			final, err := store.Load(ctx, "s1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			events, err := eventlog.ReadAll(ctx, store.Log, "s1", 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			approvals := 0
+			var res *v1.ToolResult
+			for _, e := range events {
+				switch {
+				case e.GetApprovalRequested() != nil:
+					approvals++
+				case e.GetToolCallStarted() != nil:
+					t.Fatal("memory call started before rejection or approval")
+				case e.GetToolResult() != nil:
+					res = e.GetToolResult()
+				}
+			}
+			if n, err := mem.Store.Count(ctx, "bl", "u", clk.Now()); err != nil || n != 0 {
+				t.Fatalf("memory count = %d, err = %v, want no writes", n, err)
+			}
+			r := final.Run("r1")
+			if r == nil || len(r.Calls) != 1 {
+				t.Fatalf("run = %v, want one memory call", r)
+			}
+			if tc.wantError == "" {
+				if approvals != 1 || res != nil || r.Status != session.RunSuspended {
+					t.Fatalf("approvals = %d, result = %v, run = %s, want waiting for approval", approvals, res, r.Status)
+				}
+				return
+			}
+			if approvals != 0 {
+				t.Fatalf("requested %d approvals for rejected content", approvals)
+			}
+			if res == nil || !res.GetIsError() || model.Text(res.GetContent()) != checked.Error() {
+				t.Fatalf("result = %v, want Check error %q", res, checked.Error())
+			}
+			if r.Status != session.RunCompleted {
+				t.Fatalf("run = %s, want completed after the error was returned to the model", r.Status)
+			}
+		})
 	}
 }
 

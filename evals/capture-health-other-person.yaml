@@ -1,0 +1,18 @@
+name: capture-health-other-person
+description: >-
+  旁听中家人的健康信息（工作日评审 F3：母亲的血压以 relationship 写入）：业务线未开启健康信息时不写入任何类别，
+  佩戴者的计划照常整理。整理结果中不写健康信息是 xinli 指令的事（capture-workday），这里只测写入闸门。
+agent: xinli-day
+setup:
+  xinli: {}
+  no_health: true
+turns:
+  - captures:
+      - {speaker: other, key: chen, text: 你周末有空吗？一起去爬山？}
+      - {speaker: wearer, text: 这周六不行，我妈最近血压一直偏高，我得带朵朵回去看看她。}
+      - {speaker: other, key: chen, text: 那下次吧，阿姨多保重。}
+      - {speaker: wearer, text: 好，下周再约。}
+    input: 整理今天
+    expect:
+      calls: ["mcp_xinli__file_day"]
+      no_memories: [{contains: "血压"}]

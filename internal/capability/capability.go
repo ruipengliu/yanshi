@@ -60,6 +60,12 @@ type Capability interface {
 	Invoke(ctx context.Context, inv Invocation) ([]*v1.ContentBlock, error)
 }
 
+// Checker 是可选的 Capability 能力：执行之前、不依赖外部状态也没有副作用的检查。Worker 在审批与 Memory 写入闸门之前
+// 调用它：注定被拒绝的调用不去打扰用户（与参数 JSON 的检查同理），返回的 error 作为错误结果交还模型。
+type Checker interface {
+	Check(inv Invocation) error
+}
+
 type Registry struct {
 	caps map[string]Capability
 }
@@ -91,13 +97,21 @@ func (r *Registry) Specs(names []string) ([]Spec, error) {
 	return out, nil
 }
 
-// Func 用函数实现 Capability。
+// Func 用函数实现 Capability。Pre 非空时是执行之前的检查（Checker）。
 type Func struct {
-	S  Spec
-	Fn func(ctx context.Context, inv Invocation) ([]*v1.ContentBlock, error)
+	S   Spec
+	Fn  func(ctx context.Context, inv Invocation) ([]*v1.ContentBlock, error)
+	Pre func(inv Invocation) error
 }
 
 func (f Func) Spec() Spec { return f.S }
+
+func (f Func) Check(inv Invocation) error {
+	if f.Pre == nil {
+		return nil
+	}
+	return f.Pre(inv)
+}
 func (f Func) Invoke(ctx context.Context, inv Invocation) ([]*v1.ContentBlock, error) {
 	return f.Fn(ctx, inv)
 }

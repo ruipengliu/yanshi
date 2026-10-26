@@ -1,0 +1,10 @@
+name: memory-health-family
+description: >-
+  家人的健康信息也是健康信息（ADR-0022）：在已取得单独同意的业务线中只写入 health 类别，不写成 relationship；
+  每个周末回家照常记在其他类别。
+turns:
+  - input: 我妈有高血压，一直在吃降压药。我每个周末都回家看她，记一下。
+    expect:
+      status: completed
+      memories: [{contains: "周末"}]
+      no_memories: [{category: "!health", contains: "血压"}, {category: "!health", contains: "降压"}]

@@ -680,6 +680,13 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 	if err := checkArguments(c.Call.GetArgumentsJson()); err != nil {
 		return w.commit(ctx, w.toolResult(r, id, model.TextBlocks(err.Error()), true))
 	}
+	// 注定被能力拒绝的调用同样不审批、不执行（capability.Checker，如 Memory 的健康许可）。只在第一次处理时检查：
+	// 已请求过审批或已开始的调用照常走完。
+	if ch, ok := tool.Local.(capability.Checker); ok && c.Approval == nil && !c.Started() {
+		if err := ch.Check(w.invocation(r, def, id, c)); err != nil {
+			return w.commit(ctx, w.toolResult(r, id, model.TextBlocks(err.Error()), true))
+		}
+	}
 
 	// 需要审批：高风险能力；或 Memory 写入闸门判定（ADR-0023）；已经请求过审批的调用一律走完审批，
 	// 即使之后的上下文变化使闸门不再触发。闸门只在调用开始前判定：开始之后到达的插话（例如附带界面上下文）
@@ -745,10 +752,7 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 	}
 	var out capability.Result
 	err = w.during(ctx, r, func(ctx context.Context) error {
-		inv := capability.Invocation{
-			SessionID: w.st.SessionID, RunID: r.ID, CallID: id, Arguments: c.Call.GetArgumentsJson(),
-			BusinessLine: w.st.Created.GetBusinessLine(), EndUser: w.st.Created.GetEndUser(), State: w.st, Agent: def,
-		}
+		inv := w.invocation(r, def, id, c)
 		var err error
 		if ri, ok := cp.(capability.ResultInvoker); ok {
 			out, err = ri.InvokeResult(ctx, inv)
@@ -774,6 +778,14 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 	}
 	w.executed[id] = res
 	return w.commitExecuted(ctx, id, res)
+}
+
+// invocation 是进程内调用的输入。
+func (w *Worker) invocation(r *session.Run, def *agentdef.Def, id string, c *session.Call) capability.Invocation {
+	return capability.Invocation{
+		SessionID: w.st.SessionID, RunID: r.ID, CallID: id, Arguments: c.Call.GetArgumentsJson(),
+		BusinessLine: w.st.Created.GetBusinessLine(), EndUser: w.st.Created.GetEndUser(), State: w.st, Agent: def,
+	}
 }
 
 // commitExecuted 写入已执行调用的结果；写入成功（或 Attempt 已失效、结果作废）后不再保留。

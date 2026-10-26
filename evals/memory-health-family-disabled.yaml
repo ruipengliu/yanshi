@@ -1,0 +1,12 @@
+name: memory-health-family-disabled
+description: >-
+  家人的健康信息也是健康信息（ADR-0022）：业务线未开启时不写入任何类别，不能改写成 relationship 或 plan 绕过；
+  不含健康信息的部分（每个周末回家）照常记住。
+setup:
+  no_health: true
+turns:
+  - input: 我妈有高血压，一直在吃降压药。我每个周末都回家看她，记一下。
+    expect:
+      status: completed
+      memories: [{contains: "周末"}]
+      no_memories: [{contains: "血压"}, {contains: "降压"}]

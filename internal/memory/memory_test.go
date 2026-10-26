@@ -3,6 +3,7 @@ package memory_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -341,6 +342,70 @@ func TestHealthRequiresBusinessLineConsent(t *testing.T) {
 	}
 	if got := contents("shop"); !slices.Equal(got, []string{"喜欢清淡"}) {
 		t.Fatalf("shop after clinic disabled %v", got)
+	}
+}
+
+// TestHealthByContent：类别是模型自报的，健康信息（包括他人的）写成其他类别时同样受业务线的同意约束：
+// 未开启的业务线一律拒绝，开启的业务线要求改用 health（工作日评审 F3：母亲的血压以 relationship 写入）。
+// Check 与 Save 的结论相同：Worker 据此在审批之前拒绝。
+func TestHealthByContent(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newService(clock.Real{})
+	s.MaxPerUser = 20
+	s.HealthAllowed = func(bl string) bool { return bl == "clinic" }
+	n := 0
+	save := func(bl string, c memory.Category, content string) error {
+		n++
+		req := memory.SaveRequest{BusinessLine: bl, EndUser: "u", CallID: fmt.Sprint("c", n), Category: c, Content: content}
+		checked := s.Check(req)
+		_, err := s.Save(ctx, req)
+		if (checked == nil) != (err == nil) {
+			t.Fatalf("%s: Check %v, Save %v", content, checked, err)
+		}
+		return err
+	}
+	for _, content := range []string{"用户的母亲血压偏高", "母亲长期服用降压药", "用户乳糖不耐受", "父亲需要透析", "母亲收缩压偏高"} {
+		for _, c := range []memory.Category{memory.Relationship, memory.Health} {
+			if err := save("shop", c, content); !errors.Is(err, memory.ErrRejected) || !strings.Contains(err.Error(), "not enabled") {
+				t.Fatalf("shop saved %q as %s: %v", content, c, err)
+			}
+		}
+		if err := save("clinic", memory.Relationship, content); !errors.Is(err, memory.ErrRejected) || !strings.Contains(err.Error(), "category health") {
+			t.Fatalf("clinic saved %q as relationship: %v", content, err)
+		}
+		if err := save("clinic", memory.Health, content); err != nil {
+			t.Fatalf("%s: %v", content, err)
+		}
+	}
+	// 不收只在别的意思里出现的词：职业、习语、偏好照常写入。
+	for _, content := range []string{"张三是医生", "用户对加班不感冒", "用户喜欢健康饮食", "用户负责压力测试", "用户是心理咨询师",
+		"用户从事药物研发", "用户负责复查合同", "张三是住院医师", "李四是心理医生"} {
+		if err := save("shop", memory.Profile, content); err != nil {
+			t.Fatalf("%s: %v", content, err)
+		}
+	}
+}
+
+// TestHealthSupersedesMiscategorized：同一件健康信息之前以别的类别记下（按内容认定之前写入的）时，写入 health 不被当作
+// 重复吞掉：新的照常写入，旧的失效，不再以原来的类别被召回或经 Grant 读取。
+func TestHealthSupersedesMiscategorized(t *testing.T) {
+	ctx := context.Background()
+	s, st := newService(clock.Real{})
+	s.HealthAllowed = func(string) bool { return true }
+	old := &memory.Memory{ID: "mem_old", BusinessLine: "a", EndUser: "u", Category: memory.Relationship, Content: "用户的母亲血压偏高",
+		CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := st.Put(ctx, old, nil); err != nil {
+		t.Fatal(err)
+	}
+	m, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "a", EndUser: "u", CallID: "c1", Category: memory.Health, Content: "用户的母亲血压偏高"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.ID != "mem_c1" || m.Category != memory.Health {
+		t.Fatalf("saved %+v, want a new health memory", m)
+	}
+	if got, err := st.Get(ctx, "mem_old"); err != nil || got.SupersededBy != "mem_c1" {
+		t.Fatalf("old memory %+v %v, want superseded by mem_c1", got, err)
 	}
 }
 
