@@ -1,0 +1,23 @@
+name: capture-span-runs
+description: >-
+  按完整时段拆 Run 的实验：上午答应周三交报价，下午改到周二，傍晚只对账并交总览。
+  原轮次中的两个时段各自一个 Run，按原承诺 ID 修订，金标仍在整轮结束时只记一次。
+agent: xinli-day
+xinli_span_runs: true
+gold: data/span-runs/gold.yaml
+setup: {xinli: {}}
+turns:
+  - input: 整理今天
+    captures:
+      - {speaker: other, key: li, text: 李经理问你下周三前能把办公室报价单发我吗？, at: "2026-10-23 09:00"}
+      - {speaker: wearer, text: 好，李经理，下周三前把办公室报价单发你。, at: "2026-10-23 09:01", gold: quote}
+      - {speaker: other, key: li, text: 我是李经理，办公室报价单能提前到下周二吗？, at: "2026-10-23 15:00"}
+      - {speaker: wearer, text: 可以，报价单改到下周二前给你。, at: "2026-10-23 15:01", gold: quote}
+    expect:
+      calls: [captures, mcp_xinli__file_changes, mcp_xinli__day_ledger, mcp_xinli__file_day]
+      xinli:
+        gold: {commitment_precision: 1, commitment_recall: 1, revision_accuracy: 1, revision_in_place: 1}
+        exchanges: {min: 2, max: 2}
+        commitments_count: {min: 1, max: 1}
+        commitments: [{kind: mine, contains: 报价, due_date: "2026-10-27", rev: 2, verified: true}]
+        stale_open: {of: [{contains: 报价, due_date: "2026-10-28"}], max: 0}

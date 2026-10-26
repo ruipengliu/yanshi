@@ -22,13 +22,13 @@ type Case struct {
 	Description string `yaml:"description"`
 	Agent       string `yaml:"agent"`
 	Trials      int    `yaml:"trials"`
-	// Timeout 是每一轮等待 Run 结束的上限，默认取 Config.TurnTimeout（长 Run 用例需要更长）。
+	// Timeout 是每个原轮次的等待上限，拆 Run 时共享，默认取 Config.TurnTimeout（长 Run 用例需要更长）。
 	Timeout time.Duration `yaml:"timeout"`
 	// Requires 列出所需的环境，如 "sandbox"；不满足时跳过。
 	Requires []string `yaml:"requires"`
 	// Capabilities 追加到被评测 AgentDef 的能力白名单（如 "mcp:crm/*"）。
 	Capabilities []string `yaml:"capabilities"`
-	// Context 覆盖 AgentDef 的上下文配置（零值字段不覆盖）。
+	// Context 在 Window 非零时覆盖窗口、保留量与结果上限，后两者为零时取窗口默认；其余配置继承 AgentDef。
 	Context struct {
 		Window        int `yaml:"window"`
 		KeepRecent    int `yaml:"keep_recent"`
@@ -42,7 +42,9 @@ type Case struct {
 	// 同一份数据对照，衡量识别错误的影响。
 	GoldFile string `yaml:"gold"`
 	Noise    bool   `yaml:"noise"`
-	Setup    struct {
+	// XinliSpanRuns 在评测中实验每个完整时段一个 Run，原轮次的断言与金标仍只检查一次（m4-eval.md §14）。
+	XinliSpanRuns bool `yaml:"xinli_span_runs"`
+	Setup         struct {
 		Memories []struct {
 			Category string `yaml:"category"`
 			Content  string `yaml:"content"`
@@ -366,6 +368,9 @@ func LoadSuite(dir string) ([]*Case, error) {
 		}
 		if len(c.Turns) == 0 {
 			return nil, fmt.Errorf("%s: no turns", f)
+		}
+		if c.XinliSpanRuns && (c.Agent != "xinli-day" || c.Setup.Xinli == nil || c.Call) {
+			return nil, fmt.Errorf("%s: xinli_span_runs needs agent xinli-day and setup.xinli, without call", f)
 		}
 		if c.GoldFile != "" {
 			if c.Setup.Xinli == nil {

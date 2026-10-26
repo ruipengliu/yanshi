@@ -23,11 +23,12 @@ type Report struct {
 
 // CaseResult 是一个用例在多次运行上的汇总。
 type CaseResult struct {
-	Name     string  `json:"name"`
-	Skipped  string  `json:"skipped,omitempty"`
-	Trials   int     `json:"trials"`
-	Passed   int     `json:"passed"`
-	PassRate float64 `json:"pass_rate"`
+	Name          string  `json:"name"`
+	XinliSpanRuns bool    `json:"xinli_span_runs,omitempty"`
+	Skipped       string  `json:"skipped,omitempty"`
+	Trials        int     `json:"trials"`
+	Passed        int     `json:"passed"`
+	PassRate      float64 `json:"pass_rate"`
 	// JudgeAvg 是评分均值；没有评分断言时为 0。
 	JudgeAvg   float64 `json:"judge_avg"`
 	AvgTokens  uint64  `json:"avg_tokens"`
@@ -217,6 +218,15 @@ func (r *Report) Markdown(baseline *Report, regressions []string) string {
 		fmt.Fprintf(&b, "；被评测模型：%s", r.ModelOverride)
 	}
 	b.WriteString("\n\n")
+	var spans []string
+	for _, c := range r.Cases {
+		if c.XinliSpanRuns {
+			spans = append(spans, c.Name)
+		}
+	}
+	if len(spans) > 0 {
+		fmt.Fprintf(&b, "实验：以下用例的 xinli-day 每个完整时段一个 Run，当天整理另开 Run：%s。\n\n", strings.Join(spans, "、"))
+	}
 	if len(regressions) > 0 {
 		b.WriteString("## 回归\n\n")
 		for _, x := range regressions {

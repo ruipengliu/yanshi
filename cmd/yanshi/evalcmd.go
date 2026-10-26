@@ -38,6 +38,7 @@ func evalCmd(args []string) error {
 	trials := fs.Int("trials", 0, "覆盖每个用例的运行次数")
 	agentVersion := fs.String("agent-version", "", "评测该 AgentDef 版本而不是稳定版本（灰度前的评测门槛）")
 	modelOverride := fs.String("model", "", "替换被评测 AgentDef 的模型（provider/model），用于比较模型")
+	spanRuns := fs.Bool("xinli-span-runs", false, "实验：xinli-day 每个完整时段一个 Run，当天整理另开 Run（不改用例的断言）")
 	judgeModel := fs.String("judge", envOr("YANSHI_JUDGE_MODEL", "codex/gpt-6.1-sol:high"), "评分模型（与被评测模型不同系列，ADR-0018）；codex/<模型>:<推理强度> 经本机已登录的 Codex CLI 调用")
 	embedModel := fs.String("embedding-model", os.Getenv("YANSHI_EMBEDDING_MODEL"), "Memory 检索用的嵌入模型")
 	sandboxKind := fs.String("sandbox", "none", "代码沙箱：none | docker（none 时跳过需要沙箱的用例）")
@@ -48,6 +49,9 @@ func evalCmd(args []string) error {
 	outDir := fs.String("out", "eval-results", "报告输出目录")
 	keepLogs := fs.Bool("logs", false, "同时保存每次运行的 Session 日志（<out>/<时间>/logs/），查看压缩摘要与调用过程")
 	_ = fs.Parse(args)
+	if *spanRuns && *update && *baselinePath == "" {
+		return errors.New("-xinli-span-runs with -update-baseline needs an explicit -baseline for the experiment")
+	}
 
 	agents, err := agentdef.LoadDir(*agentsDir)
 	if err != nil {
@@ -65,6 +69,9 @@ func evalCmd(args []string) error {
 	var cases []*eval.Case
 	for _, c := range all {
 		if ok, _ := path.Match(*caseGlob, c.Name); ok {
+			if *spanRuns && c.Agent == "xinli-day" && c.Setup.Xinli != nil && !c.Call {
+				c.XinliSpanRuns = true
+			}
 			cases = append(cases, c)
 		}
 	}

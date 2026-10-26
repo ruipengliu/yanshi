@@ -171,7 +171,7 @@ func Run(ctx context.Context, cfg Config, cases []*Case) (*Report, error) {
 	type job struct{ c, trial int }
 	var jobs []job
 	for i, c := range cases {
-		res := &CaseResult{Name: c.Name, Failures: map[string]int{}}
+		res := &CaseResult{Name: c.Name, XinliSpanRuns: c.XinliSpanRuns, Failures: map[string]int{}}
 		results[i] = res
 		if slices.Contains(c.Requires, "sandbox") && cfg.Sandbox == nil {
 			res.Skipped = "requires sandbox"
@@ -323,12 +323,18 @@ func derive(cfg Config, cases []*Case) (*agentdef.Registry, map[string]string, e
 		d := *base
 		d.Version = base.Version + "+eval-" + c.Name
 		d.Capabilities = append(slices.Clone(base.Capabilities), c.Capabilities...)
+		if c.XinliSpanRuns {
+			if c.Agent != "xinli-day" || c.Setup.Xinli == nil || c.Call {
+				return nil, nil, fmt.Errorf("case %s: xinli_span_runs needs agent xinli-day and setup.xinli, without call", c.Name)
+			}
+			d.Instructions += xinliSpanInstructions
+			d.Context.Scope = agentdef.ScopeRun
+		}
 		if cfg.ModelOverride != "" {
 			d.Model = cfg.ModelOverride
 		}
 		if w := c.Context.Window; w > 0 {
-			d.Context = agentdef.Context{Window: w, CompactAt: base.Context.CompactAt, KeepRecent: c.Context.KeepRecent,
-				MaxToolResult: c.Context.MaxToolResult, SummaryModel: base.Context.SummaryModel}
+			d.Context.Window, d.Context.KeepRecent, d.Context.MaxToolResult = w, c.Context.KeepRecent, c.Context.MaxToolResult
 		}
 		defs = append(defs, &d)
 		versions[c.Name] = d.Version
@@ -475,7 +481,7 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		}
 		devs = append(devs, dev)
 	}
-	var sid string
+	var sid, sessionAgent string
 	var sessions []string
 	// topics 与 labels 是每个 Session 按提交顺序的旁听主题与金标（CaptureSegment.Topic、Gold），用于计算项目归集的
 	// 纯度与碎片率、金标指标；gold 是金标随旁听与用户改动的状态。
@@ -518,7 +524,7 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 				tr.Err = "create session: " + err.Error()
 				return tr
 			}
-			sid = id
+			sid, sessionAgent = id, agent
 			sessions = append(sessions, id)
 			if x := c.Setup.Xinli; x != nil && x.ProjectSession != "" {
 				in.xinli.Bind(bl, endUser, x.ProjectSession, id)
@@ -564,16 +570,21 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		var err error
 		if c.Call {
 			obs, err = in.callTurn(tctx, voice, rec, sid, turn, c.Timeout)
+		} else if c.XinliSpanRuns && sessionAgent == "xinli-day" && (turn.Input == "整理交谈" || turn.Input == "整理今天") {
+			obs, err = in.spanTurns(tctx, sid, bl, endUser, turn, c.Timeout)
 		} else {
 			obs, err = in.turn(tctx, sid, turn, c.Timeout)
+		}
+		// 实验中途因缺少回执等原因停止时，已经消耗的用量仍计入；不能把失败的实验显示为零成本。
+		if obs != nil {
+			tr.Tokens += obs.tokens
+			tr.Calls, tr.Compactions, tr.Takeovers = tr.Calls+len(obs.calls), tr.Compactions+obs.compactions, tr.Takeovers+obs.takeovers
+			tr.InputTokens, tr.CachedInputTokens = tr.InputTokens+obs.inTokens, tr.CachedInputTokens+obs.cachedTokens
 		}
 		if err != nil {
 			tr.Err = fmt.Sprintf("turn %d: %v", ti+1, err)
 			return tr
 		}
-		tr.Tokens += obs.tokens
-		tr.Calls, tr.Compactions, tr.Takeovers = tr.Calls+len(obs.calls), tr.Compactions+obs.compactions, tr.Takeovers+obs.takeovers
-		tr.InputTokens, tr.CachedInputTokens = tr.InputTokens+obs.inTokens, tr.CachedInputTokens+obs.cachedTokens
 		obs.writes = map[string]string{}
 		for _, dev := range devs {
 			w, sent := dev.snapshot()
@@ -646,7 +657,7 @@ type observation struct {
 }
 
 // turn 提交一轮输入，按 approve 自动作出审批决定，等待 Run 结束并收集本轮的事件。
-func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout time.Duration) (*observation, error) {
+func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout time.Duration) (obs *observation, err error) {
 	st, err := in.svc.Load(ctx, sid)
 	if err != nil {
 		return nil, err
@@ -657,6 +668,25 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 	}
 	deadline := time.Now().Add(timeout)
 	var runID string
+	defer func() {
+		if err == nil || runID == "" {
+			return
+		}
+		// 等待超时不等于 Worker 停止：在归还评测并发名额前中断，否则失败的 Run 会继续消耗并干扰后续实验。
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if stopErr := in.svc.Interrupt(cleanup, sid, runID); stopErr != nil {
+			err = errors.Join(err, fmt.Errorf("interrupt failed eval run: %w", stopErr))
+		}
+		if obs == nil {
+			if events, readErr := eventlog.ReadAll(cleanup, in.svc.Store.Log, sid, after); readErr == nil {
+				obs = &observation{input: turn.Input, status: "interrupted"}
+				collect(events, obs)
+			} else {
+				err = errors.Join(err, fmt.Errorf("collect failed eval run: %w", readErr))
+			}
+		}
+	}()
 	if turn.AwaitBackground {
 		runID, err = in.awaitBackground(ctx, sid, after, deadline)
 	} else {
@@ -732,7 +762,7 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 	if turn.AwaitBackground {
 		input = "（用户没有输入：设备上线后，之前转入后台的调用的结果由平台送达）"
 	}
-	obs := &observation{input: input, status: run.Status.String(), compacted: compacted, takeovers: run.Takeovers}
+	obs = &observation{input: input, status: run.Status.String(), compacted: compacted, takeovers: run.Takeovers}
 	if asked {
 		obs.status = "asked"
 	}

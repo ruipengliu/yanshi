@@ -43,6 +43,8 @@ xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理�
 
 为什么按时段交出：一天的转写可能有十几万字，超过上下文窗口。交出之后的时段就不再依赖上下文，压缩掉的只是已经交出的原文；当天整理依据业务线返回的账本，而不是压缩摘要（评测 `capture-long-day`）。
 
+评测还提供「一个完整时段一个 Run、日终另开 Run」的可选实验（[m4-eval.md](./m4-eval.md) §14），用同一批金标比较成本与质量；实现与结果见 [按时段拆 Run 评审](../review/2026-10-26-xinli-span-runs.md)。
+
 - **重试是安全的。** 变更集按来源去重：键是（旁听 Session，`source.from`），当天整理是（旁听 Session，day）。同一个键再交一次，业务线撤销上一次的全部效果、再应用新的；`file_day` 按 Session 取代。
 - **白天只看本轮。** `context.scope: run`：每次整理从头开始，模型只看到新的时段；没有新时段时，一次整理只有一次 `captures` 调用与一次回复。
 - **调用次数。** 每个时段一两次读取、每段交谈一次 `find_related`、一次 `file_changes`；当天整理再加 `day_ledger`、`file_changes`、`file_day`。`max_turns` 为 240。
@@ -211,7 +213,9 @@ xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理�
 | `capture-daytime` | 同一 Session 三轮："整理交谈"只交出已结束的交谈；再次"整理交谈"不重复交出、不读进行中的那段；"整理今天"交出余下的并写总览。 |
 | `capture-project-reconcile` | `xinli-project` 按 ID 与 `rev` 依据交谈对账：已完成的标为完成，改了期限的改期限，并更新现状。 |
 | `capture-project-reconcile-settled` | 白天已依据原话改了期限：项目 Run 不再改动那一条（rev 不变）。 |
-| `capture-workday`、`capture-workday-oneshot` | 一个完整工作日的整体回归（[评审](../review/2026-10-25-xinli-workday.md)）：过时的未完成承诺为 0、承诺不超过 35 条、纯度、覆盖率等；耗时长，不在基线中。 |
+| `capture-workday`、`capture-workday-oneshot` | 一个完整工作日的整体回归（[评审](../review/2026-10-25-xinli-workday.md)）：过时的未完成承诺为 0、承诺不超过 35 条、纯度、覆盖率与金标分项指标等；已有基线，耗时长、按需运行。 |
+| `capture-multiday`、`capture-multiday-noisy` | 四个工作日中的改期、完成、取消、隔天重提、用户改动与助手问答；同一份金标比较转写与说话人错误的影响（[m4-eval.md](./m4-eval.md) §13）。 |
+| `capture-span-runs` | 每个完整时段一个 Run 的实验：两个时段各自保留交谈，同一承诺原位改期，日终依据账本对账；机制见 [m4-eval.md](./m4-eval.md) §14。 |
 | `capture-project-rewrite` | 预置过时的现状（仍写着"等报价"）和完整的时间线（报价已确认、合同已签）：重写后不再提"等报价"。 |
 | `capture-week-grouping` | 5 天、3 个主题、夹着闲聊，每天一轮整理（`new_session`），同一主题每天换说法：断言碎片率、纯度与覆盖率。 |
 | `capture-week-merge` | "新办公室装修"与"办公室搬迁"（同一次搬迁）、"家里厨房装修"（不同的事）：只提议合并前两个。 |

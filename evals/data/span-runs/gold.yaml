@@ -1,0 +1,6 @@
+commitments:
+  - id: quote
+    kind: mine
+    what: 给李经理发办公室报价单
+    due: "2026-10-28"
+    revisions: [{at: "2026-10-23 15:01", due: "2026-10-27"}]

@@ -333,3 +333,31 @@ commitments:
 - **噪声的影响在这个噪声水平下测不出来**：带噪声的与不带噪声的各项相差都在一个标准差之内；约一成的同音字与五处说话人错误还不够，要衡量识别错误的影响需要更高的噪声比例或更多运行。
 - **问答**：`xinli-assistant` 回答"还有哪些没办完"与"期限怎么变的"都只有 2 分（三次）：把已办完、已取消或他人负责的也当作未完成，说不清改期的先后——它只能看项目的未完成承诺与已汇总的日期，是第 5 项"助手的查询工具"要补的。
 - **成本**：多日一次约 188 万 tokens、14 分钟（带噪声的约 20 分钟）。
+
+## 14. 按完整时段拆 Run 的实验
+
+`xinli_span_runs: true` 让评测运行器扮演业务线，把原来一次「整理交谈／整理今天」拆为每个完整 Span 一个 Run；「整理今天」最后再开启一个只读 `day_ledger`、对账并交 `file_day` 的 Run。默认 AgentDef 与平台触发不变；实验规则只追加到本用例派生的 AgentDef，仍用 `scope: run`。也可用 CLI `-xinli-span-runs` 对已有的 xinli-day 用例临时启用，保留同一份数据、断言与金标作消融。
+
+内部的日终输入是「只按账本整理今天」，避免与原 AgentDef 中「整理今天」先读完全天的流程混淆；业务线仍将它当作日终整理，原轮次与评分输入不变。
+
+- **原轮次不变。** 旁听、用户改动与金标只提交一次，各 Run 的调用、回复与用量依次合并，整轮结束后只检查一次断言，指标的运行次数仍是 trials。超时是整轮共享的上限，不是每个 Span 重新获得一份。超时或等待失败后中断 Run，并计入日志中已经写下的用量，避免失败显示零成本、或继续占用模型准入。
+- **完整时段。** 调度用 `capture.Page` 返回的结构化 Cursor 预览边界；`Cursor.Span` 非零时必须在同一 Run 续页。Run 完成后的读取位置必须恰好是预期时段的末尾；不前进、停在中间或超读都使实验失败并停止。
+- **回执。** 已读不等于已交出。每个 Span 都必须在业务线留下覆盖完整范围的新 Changeset；纯闲聊也交空变更集。被拒后须在原 Run 改正重交，缺少接受记录时停止，不能继续 `after: "new"` 跳过。业务线仍把这些输入当作白天整理，拒绝 `file_day`；实验另检查 Span Run 没有调用当天整理工具，以及日终产生了新的 `file_day` 接受记录且没有重读旁听。
+- **适用范围。** 只用于有 `setup.xinli` 的 xinli-day 文字用例。切换到 xinli-assistant 等 Agent 的 Session 照原用例运行。平台触发仍是「同一位置只触发一次」（ADR-0040），这次不修改其语义。
+
+新增 `capture-span-runs` 覆盖两个时段中的答应与改期，最后对账；同时检查两段交谈都保留、同一承诺原位修订与七项金标。续页、拒收重交、无进展退出、空／进行中时段、超时清理、换 Agent 与用量聚合由 `internal/eval` 的确定性测试覆盖。
+
+```bash
+dev eval EVAL_FLAGS="-case 'capture-workday*' -trials 3 -logs -xinli-span-runs -baseline evals/baselines/default.json"
+dev eval EVAL_FLAGS="-case 'capture-multiday*' -trials 3 -logs -xinli-span-runs -baseline evals/baselines/default.json"
+python3 scripts/xinli-cost.py <原报告目录> <实验报告目录>
+```
+
+GLM 的对照基线单独写在 Mac mini 的临时目录，先评测原流程，再对同一批用例拆 Run：
+
+```bash
+dev eval EVAL_FLAGS="-case 'capture-workday*' -trials 3 -logs -model ark/glm-5-3-flash-260828 -baseline /tmp/yanshi-span-glm-control.json -update-baseline"
+dev eval EVAL_FLAGS="-case 'capture-workday*' -trials 3 -logs -model ark/glm-5-3-flash-260828 -baseline /tmp/yanshi-span-glm-control.json -xinli-span-runs"
+```
+
+报告逐用例标明是否拆 Run。CLI 临时启用实验时，`-update-baseline` 必须同时显式指定实验的 `-baseline`，避免误写默认基线；专门的 `capture-span-runs` 用例有自己的基线条目。成本脚本从日志拆出 Run、模型与工具调用、首调输入、之后的输入增长、压缩用量与拒收次数，并与报告的总用量交叉核对；不输出对话内容。「相对首调增长」包含结果与历史，不是重复历史的精确 token 归因，压缩用量已计入总用量。实验结果与是否采用见 [按时段拆 Run 评审](../review/2026-10-26-xinli-span-runs.md)。

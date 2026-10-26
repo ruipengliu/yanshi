@@ -1,5 +1,5 @@
 {
-  "started_at": "2026-10-26T08:42:17.282976Z",
+  "started_at": "2026-10-26T14:27:07.948552Z",
   "judge": "codex/gpt-6.1-sol:high",
   "cases": [
     {
@@ -855,6 +855,69 @@
       "avg_compactions": 0,
       "avg_takeovers": 0,
       "cache_hit": 0.8195636490285345
+    },
+    {
+      "name": "capture-span-runs",
+      "xinli_span_runs": true,
+      "trials": 3,
+      "passed": 0,
+      "pass_rate": 0,
+      "judge_avg": 0,
+      "avg_tokens": 96649,
+      "avg_seconds": 36.38141031966667,
+      "avg_calls": 10.666666666666666,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.7368023841533834,
+      "failures": {
+        "turn 1: xinli commitments_count": 1,
+        "turn 1: xinli exchanges": 3,
+        "turn 1: xinli gold revision_accuracy": 1,
+        "turn 1: xinli gold revision_in_place": 1
+      },
+      "samples": [
+        "turn 1: xinli commitments_count — 2 commitments from the day's organizing (merged ones not counted)",
+        "turn 1: xinli exchanges — 1 exchanges",
+        "turn 1: xinli gold revision_accuracy — revision_accuracy 0.00, want at least 1.00: precision 2/2 (unmatched []); recall 1/1 (missed []); revision 0/1 (wrong [quote(want open 2026-10-27, got open 2026-10-27, open 2026-10-27)]); due 1/1; reminders 1/2 of 1 (wrong [\"2026-10-27 把办公室报价单发给…\"])",
+        "turn 1: xinli gold revision_in_place — revision_in_place 0.00, want at least 1.00: precision 2/2 (unmatched []); recall 1/1 (missed []); revision 0/1 (wrong [quote(want open 2026-10-27, got open 2026-10-27, open 2026-10-27)]); due 1/1; reminders 1/2 of 1 (wrong [\"2026-10-27 把办公室报价单发给…\"])"
+      ],
+      "metrics": {
+        "turn 1: commitment_precision": {
+          "mean": 1,
+          "std": 0,
+          "n": 3
+        },
+        "turn 1: commitment_recall": {
+          "mean": 1,
+          "std": 0,
+          "n": 3
+        },
+        "turn 1: due_accuracy": {
+          "mean": 1,
+          "std": 0,
+          "n": 3
+        },
+        "turn 1: reminder_precision": {
+          "mean": 0.8333333333333334,
+          "std": 0.28867513459481287,
+          "n": 3
+        },
+        "turn 1: reminder_recall": {
+          "mean": 1,
+          "std": 0,
+          "n": 3
+        },
+        "turn 1: revision_accuracy": {
+          "mean": 0.6666666666666666,
+          "std": 0.5773502691896258,
+          "n": 3
+        },
+        "turn 1: revision_in_place": {
+          "mean": 1,
+          "std": 0,
+          "n": 2
+        }
+      }
     },
     {
       "name": "capture-third-party",
