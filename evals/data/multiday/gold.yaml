@@ -1,0 +1,52 @@
+# capture-multiday 的金标（m4-eval.md §13）：2026-10-12（星期一）至 10-15（星期四）旁听中的承诺。旁听里标了 gold 的段是答应、改期、完成或改由他人去做的原话，revisions 的时间是说那句话的时间；用户在 App 中的改动写在用例的 xinli_edit 中。optional 的是琐事、转述或是否算答应拿不准的：记不记都可以。他人之间的、佩戴者否认或拒绝的、有条件的说法不在这里，记下了算误报。由剧本生成。
+commitments:
+  - {id: ptm, kind: mine, what: "周三下午去乐乐的家长会", due: "2026-10-14", revisions: [{at: "2026-10-14 16:00", status: "done"}]}
+  - {id: kai-cook, kind: theirs, what: "阿凯周三早点下班做饭", optional: true}
+  - {id: kai-fee, kind: theirs, what: "阿凯今天交跆拳道的费用", due: "2026-10-12", optional: true}
+  - {id: cost-sheet, kind: mine, what: "冬季菜单成本核算表发给宋总（周四前，提前到周三，又改回周四上午）", due: "2026-10-15", revisions: [{at: "2026-10-13 13:32", due: "2026-10-14"}, {at: "2026-10-14 09:34", due: "2026-10-15"}, {at: "2026-10-15 08:55", status: "done"}]}
+  - {id: sign-expense, kind: mine, what: "今天下班前签城西店的报销单", due: "2026-10-12", revisions: [{at: "2026-10-12 16:30", status: "done"}]}
+  - {id: safety-precheck, kind: mine, what: "周五去城西店预检", due: "2026-10-16"}
+  - {id: launch, kind: mine, what: "滨江店下个月二十号试营业不变", optional: true}
+  - {id: hood, kind: theirs, what: "赵工周二上午装滨江店的油烟机", due: "2026-10-13", revisions: [{at: "2026-10-13 09:30", status: "done"}]}
+  - {id: compressor, kind: theirs, what: "赵工下周一到冷库压缩机（用户在 App 中改为下周二）", due: "2026-10-19"}
+  - {id: warranty, kind: theirs, what: "赵工向厂家申请延保两年"}
+  - {id: tell-lin, kind: mine, what: "跟小林说设备工期", optional: true}
+  - {id: roster, kind: theirs, what: "小林下周一前交滨江店的人员排班表", due: "2026-10-19"}
+  - {id: visit-binjiang, kind: mine, what: "周三下午去滨江店看进度", due: "2026-10-14", revisions: [{at: "2026-10-14 14:00", status: "done"}]}
+  - {id: dinner-booking, kind: mine, what: "周五团建聚餐订位", due: "2026-10-16", revisions: [{at: "2026-10-14 09:39", status: "cancelled"}]}
+  - {id: recipes, kind: theirs, what: "马师傅周三出六道标准菜谱（推到周四）", due: "2026-10-14", revisions: [{at: "2026-10-13 11:05", due: "2026-10-15"}, {at: "2026-10-15 09:40", status: "done"}]}
+  - {id: usage-data, kind: theirs, what: "马师傅明天中午前发用量数据", due: "2026-10-13", revisions: [{at: "2026-10-13 11:00", status: "done"}]}
+  - {id: send-checklist, kind: mine, what: "今天把整改清单发给老刘", due: "2026-10-12"}
+  - {id: boards, kind: theirs, what: "老刘周三前把砧板全换成分色的", due: "2026-10-14", revisions: [{at: "2026-10-13 15:00", status: "done"}]}
+  - {id: temp-log, kind: theirs, what: "老刘每天两次记冷库温度", optional: true}
+  - {id: post-jobs, kind: theirs, what: "阿敏这周在三个平台发服务员招聘", revisions: [{at: "2026-10-14 11:30", status: "done"}]}
+  - {id: interviews, kind: mine, what: "周四下午面试两位服务员候选人", due: "2026-10-15", revisions: [{at: "2026-10-15 14:00", status: "done"}]}
+  - {id: pick-mom, kind: mine, what: "周六去车站接婆婆", due: "2026-10-17"}
+  - {id: send-license, kind: mine, what: "明天把营业执照副本寄给小唐", due: "2026-10-14", revisions: [{at: "2026-10-14 10:30", status: "done"}]}
+  - {id: tang-online, kind: theirs, what: "小唐收到材料后三个工作日内上线", optional: true}
+  - {id: banner, kind: theirs, what: "小唐周五前给店铺头图初稿（推到下周一）", due: "2026-10-16", revisions: [{at: "2026-10-14 10:38", due: "2026-10-19"}]}
+  - {id: reception, kind: mine, what: "安排滨江店开业当天总部来人的接待（方案下周一给宋总）", revisions: [{at: "2026-10-15 09:02", due: "2026-10-19"}]}
+  - {id: attend-recheck, kind: mine, what: "下周三城西店复查到场", due: "2026-10-21"}
+  - {id: min-schedule, kind: theirs, what: "阿敏约好面试时间", optional: true}
+  - {id: inspect-sat, kind: mine, what: "周六去滨江店盯设备验收（改由小林）", due: "2026-10-17", revisions: [{at: "2026-10-15 10:30", status: "cancelled"}]}
+  - {id: field-trip-form, kind: mine, what: "下周一交秋游回执", due: "2026-10-19"}
+  - {id: cancel-booking, kind: mine, what: "把聚餐的订位退掉", due: "2026-10-14", optional: true}
+  - {id: reported-budget, kind: theirs, what: "宋总下周批预算（小夏转述）", optional: true}
+  - {id: sign-board, kind: theirs, what: "招牌周四装", due: "2026-10-15", optional: true}
+  - {id: lin-inspect, kind: theirs, what: "小林周六盯设备验收并拍照", due: "2026-10-17"}
+  - {id: chef-training, kind: theirs, what: "马师傅下周二给各店厨师长培训", due: "2026-10-20"}
+  - {id: reply-cand1, kind: mine, what: "明天之前给周婷答复", due: "2026-10-16"}
+  - {id: reply-cand2, kind: mine, what: "下周一前通知何亮", due: "2026-10-19"}
+  - {id: reissue-invoice, kind: mine, what: "让小林重开发票", optional: true}
+  - {id: bring-docs, kind: theirs, what: "小林把开业物料清单带来", optional: true}
+  - {id: sign-notify, kind: theirs, what: "招牌安装时间定了告诉佩戴者", optional: true}
+  - {id: ma-redo, kind: theirs, what: "马师傅下午再做一版红烧肉", due: "2026-10-12", optional: true}
+  - {id: kai-home, kind: theirs, what: "阿凯周六晚上早点回来", due: "2026-10-17", optional: true}
+  - {id: tang-address, kind: theirs, what: "小唐把寄件地址发微信", optional: true}
+  - {id: ma-sides, kind: mine, what: "让马师傅把酸菜鱼的配菜加一点", optional: true}
+  - {id: photos, kind: mine, what: "拍滨江店照片给宋总看", due: "2026-10-14", optional: true}
+  - {id: kai-train, kind: theirs, what: "阿凯把婆婆的车次发来", optional: true}
+  - {id: ask-warranty, kind: mine, what: "回头再问赵工延保的事", optional: true}
+  - {id: read-cv, kind: mine, what: "晚上看两位候选人的简历", due: "2026-10-13", optional: true}
+  - {id: talk-son, kind: mine, what: "回去说说乐乐上课爱说话", optional: true}
+  - {id: tile-fix, kind: theirs, what: "老刘约师傅周四补瓷砖", due: "2026-10-15", optional: true}

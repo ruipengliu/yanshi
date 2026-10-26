@@ -1,0 +1,38 @@
+# capture-multiday 的旁听，2026-10-13：佩戴者方晴是连锁餐饮禾苗食堂的区域运营经理。每段带主题（family 家事、binjiang 滨江店开业、menu 冬季新菜单、safety 城西店食安整改、delivery 滨江店外卖入驻、hiring 服务员招聘；闲聊不标），gold 是金标承诺（gold.yaml），asr、heard、heard_key 是识别有误的版本（带噪声的用例提交它们）。由剧本生成，段内的行在起止时刻之间均匀分布。
+- {speaker: "other", key: "kai", text: "跟你说个事，我妈说周末想过来住两天。", at: "2026-10-13 08:15", topic: "family"}
+- {speaker: "wearer", text: "行啊，坐高铁来吗？", at: "2026-10-13 08:16", topic: "family"}
+- {speaker: "other", key: "kai", text: "对，周六上午到。", at: "2026-10-13 08:17", topic: "family"}
+- {speaker: "wearer", text: "那我周六去车站接她吧，你周六不是要加班吗？", at: "2026-10-13 08:19", topic: "family", gold: "pick-mom"}
+- {speaker: "other", key: "kai", text: "对，那你去接，我晚上早点回来。", at: "2026-10-13 08:20", topic: "family", gold: "pick-mom kai-home"}
+- {speaker: "wearer", text: "好。", at: "2026-10-13 08:22", topic: "family"}
+- {speaker: "other", key: "lin", text: "方姐，跟你说一声，油烟机装好了，赵工刚走，我验过了，没问题。", at: "2026-10-13 09:30", topic: "binjiang", gold: "hood", asr: "方姐，跟你说一声，有烟机装好了，赵工刚走，我验过了，没问题。"}
+- {speaker: "wearer", text: "好，太好了。排风量试了吗？", at: "2026-10-13 09:32", topic: "binjiang", asr: "好太好了，排风量试了吗"}
+- {speaker: "other", key: "lin", text: "试了，开到最大，后厨一点油烟都没有。", at: "2026-10-13 09:34", topic: "binjiang"}
+- {speaker: "wearer", text: "好。压缩机还是下周一？", at: "2026-10-13 09:36", topic: "binjiang", gold: "compressor"}
+- {speaker: "other", key: "lin", text: "赵工说厂家那边还没准信，先按下周一。", at: "2026-10-13 09:39", topic: "binjiang", gold: "compressor"}
+- {speaker: "wearer", text: "行。排班表你周一给我是吧？", at: "2026-10-13 09:41", topic: "binjiang"}
+- {speaker: "other", key: "lin", text: "对，周一给你。", at: "2026-10-13 09:43", topic: "binjiang", gold: "roster"}
+- {speaker: "wearer", text: "好，有什么问题提前说。", at: "2026-10-13 09:45", topic: "binjiang"}
+- {speaker: "other", key: "lin", text: "好的方姐。", at: "2026-10-13 09:48", topic: "binjiang"}
+- {speaker: "other", key: "tang", text: "方经理您好，我是平台的小唐，跟您对一下滨江店入驻的材料。", at: "2026-10-13 10:00", topic: "delivery"}
+- {speaker: "wearer", text: "你好小唐，还缺什么？", at: "2026-10-13 10:01", topic: "delivery"}
+- {speaker: "other", key: "tang", text: "还缺营业执照副本和食品经营许可证的复印件，许可证您上次发过了，就差执照副本。", at: "2026-10-13 10:03", topic: "delivery", asr: "还缺营业直照副本和食品经营许可证的复印件，许可证您上次发过了，就差直照副本。"}
+- {speaker: "wearer", text: "执照副本我明天给你寄过去，寄到你们公司？", at: "2026-10-13 10:04", topic: "delivery", gold: "send-license"}
+- {speaker: "other", key: "tang", text: "对，寄到我们公司，地址我发您微信。", at: "2026-10-13 10:06", topic: "delivery", gold: "tang-address"}
+- {speaker: "wearer", text: "好。", at: "2026-10-13 10:07", topic: "delivery"}
+- {speaker: "other", key: "tang", text: "收到材料后三个工作日内就能上线。", at: "2026-10-13 10:09", topic: "delivery", gold: "tang-online"}
+- {speaker: "wearer", text: "那正好赶在开业前。", at: "2026-10-13 10:11", topic: "delivery"}
+- {speaker: "other", key: "tang", text: "对。另外店铺头图我们设计免费做，周五前给您初稿。", at: "2026-10-13 10:12", topic: "delivery", gold: "banner", heard: "wearer"}
+- {speaker: "wearer", text: "好啊，头图要突出我们的招牌菜，红烧肉和酸菜鱼。", at: "2026-10-13 10:14", topic: "delivery", gold: "banner"}
+- {speaker: "other", key: "tang", text: "好的，我跟设计说。", at: "2026-10-13 10:15", topic: "delivery"}
+- {speaker: "wearer", text: "外卖的满减活动怎么设？", at: "2026-10-13 10:17", topic: "delivery"}
+- {speaker: "other", key: "tang", text: "新店建议满三十减八，开业第一个月平台补贴一半。", at: "2026-10-13 10:18", topic: "delivery", asr: "新店建议满三十减八开业第一个月平台补贴一半"}
+- {speaker: "wearer", text: "可以，先这么设。", at: "2026-10-13 10:20", topic: "delivery"}
+- {speaker: "other", key: "tang", text: "好的，那我等您的执照。", at: "2026-10-13 10:22", topic: "delivery"}
+- {speaker: "other", key: "ma", text: "方经理，用量数据发你邮箱了，六道菜每道的克数都在里面。", at: "2026-10-13 11:00", topic: "menu", gold: "usage-data"}
+- {speaker: "wearer", text: "收到了，我下午看。", at: "2026-10-13 11:02", topic: "menu"}
+- {speaker: "other", key: "ma", text: "不过红烧肉那道我还想再调一下，标准菜谱可能要推到周四。", at: "2026-10-13 11:05", topic: "menu", gold: "recipes"}
+- {speaker: "wearer", text: "周四也行，但不能再晚了，下周要培训。", at: "2026-10-13 11:08", topic: "menu", gold: "recipes"}
+- {speaker: "other", key: "ma", text: "放心，周四一定出来。", at: "2026-10-13 11:10", topic: "menu", gold: "recipes"}
+- {speaker: "wearer", text: "红烧肉的用量要是变了，你再单独发我一下。", at: "2026-10-13 11:13", topic: "menu"}
+- {speaker: "other", key: "ma", text: "好的。", at: "2026-10-13 11:16", topic: "menu"}

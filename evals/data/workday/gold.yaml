@@ -1,0 +1,82 @@
+# capture-workday 的金标（m4-eval.md §13）：2026-10-23（星期五）旁听中的承诺。旁听里标了 gold 的段是答应、改期、完成或
+# 改由他人去做的原话；"下周X前"的期限是那一天。optional 的是琐事或是否算答应拿不准的：记不记都可以。邻座第三方之间的、
+# 他人代佩戴者宣称的（"林岚答应给我涨百分之二十"）、他人要求而佩戴者没有答应的（源码、发邮箱）不在这里，记下了算误报。
+commitments:
+  # 家事
+  - {id: piano-send, kind: mine, what: 周六上午送朵朵去钢琴课, due: "2026-10-24", revisions: [{at: "2026-10-23 17:34", status: cancelled}]}
+  - {id: piano-he, kind: theirs, what: 老何周六送朵朵去钢琴课（佩戴者去看现场，改由他送）, due: "2026-10-24"}
+  - {id: piano-pick, kind: theirs, what: 老何十一点接朵朵, due: "2026-10-24", optional: true}
+  - {id: dinner, kind: theirs, what: 老何先做饭, optional: true}
+  - {id: parking, kind: theirs, what: 老何中午交停车费, due: "2026-10-23", optional: true}
+  - {id: visit-mom, kind: mine, what: 下周六带朵朵回父母家吃午饭, due: "2026-10-31"}
+  - {id: photo, kind: theirs, what: 母亲把药的照片发来, optional: true}
+  - {id: cake, kind: theirs, what: 老何订朵朵的独角兽生日蛋糕}
+  - {id: party, kind: mine, what: 周末商量生日派对, optional: true}
+  - {id: home-by-7, kind: mine, what: 七点前到家, due: "2026-10-23", optional: true}
+  - {id: mi-link, kind: theirs, what: 小米把室内乐园的链接发来, optional: true}
+  - {id: ask-price, kind: mine, what: 问问包场的价格, optional: true}
+  # v3.2 发版
+  - {id: export-fix, kind: theirs, what: 小吴今天下班前修好导出跨月错位的 bug, due: "2026-10-23", revisions: [{at: "2026-10-23 17:50", status: done}]}
+  - {id: regression, kind: theirs, what: 阿杰周一下午之前跑完全量回归, due: "2026-10-26"}
+  - {id: chen-note, kind: theirs, what: 老陈给客服写夜班补贴的说明}
+  - {id: jie-ops, kind: theirs, what: 阿杰今天找运维扩测试库, due: "2026-10-23"}
+  - {id: backlog, kind: mine, what: 在需求池里改批量排班模板的状态, optional: true}
+  - {id: sso-check, kind: mine, what: 下午跟康宁对单点登录的优先级（会上已谈）, due: "2026-10-23", optional: true}
+  - {id: oncall, kind: theirs, what: 老陈和小吴发版当晚值班, optional: true}
+  # 康宁交付
+  - {id: accept-plan, kind: mine, what: 验收方案发给李经理（下周三前，下午提前到下周二）, due: "2026-10-28", revisions: [{at: "2026-10-23 15:07", due: "2026-10-27"}]}
+  - {id: store-list, kind: theirs, what: 李经理给首批门店名单（周一，下午提前到今天下班前）, due: "2026-10-26", revisions: [{at: "2026-10-23 15:04", due: "2026-10-23"}]}
+  - {id: source-reply, kind: mine, what: 源码的事确认后给张总答复}
+  - {id: boss-confirm, kind: mine, what: 今天跟老板确认源码, due: "2026-10-23", optional: true}
+  - {id: pricing-plan, kind: mine, what: 让销售给张总单独出后续门店的价格方案}
+  - {id: dingtalk-check, kind: mine, what: 让技术确认钉钉考勤机能否对接}
+  - {id: minutes, kind: mine, what: 会后整理纪要发到群里}
+  - {id: bugfix-promise, kind: mine, what: 跨月导出的 bug 下周二的版本修掉, due: "2026-10-27", optional: true}
+  - {id: launch, kind: mine, what: 首批二十家十一月十六日上线, due: "2026-11-16", optional: true}
+  - {id: training, kind: mine, what: 十一月十日下午在康宁总部集中培训, due: "2026-11-10", optional: true}
+  - {id: room, kind: theirs, what: 张总让行政留会议室, optional: true}
+  - {id: phase2-list, kind: mine, what: 出二期的完整清单, optional: true}
+  - {id: patrol, kind: mine, what: 上线头三天安排四人巡店, optional: true}
+  - {id: sso-phase2, kind: mine, what: SSO 放二期、排在一月, optional: true}
+  # 后端招聘
+  - {id: zhao-interview, kind: mine, what: 下周二下午两点二面赵磊, due: "2026-10-27"}
+  - {id: wang-resume, kind: theirs, what: 王今天发赵磊的简历和一面评价, due: "2026-10-23"}
+  - {id: read-resume, kind: mine, what: 周末看简历, optional: true}
+  - {id: delay-sun, kind: theirs, what: 先拖一拖孙婷, optional: true}
+  - {id: zhao-schedule, kind: theirs, what: 约好赵磊后跟佩戴者确认, optional: true}
+  # 测试平台
+  - {id: testtool-app, kind: theirs, what: 阿杰下周一写好测试平台的采购申请, due: "2026-10-26"}
+  - {id: boss-approve, kind: mine, what: 看完申请再找黄总批, optional: true}
+  # 老房翻新
+  - {id: site-visit, kind: mine, what: 去装修现场看下水管（周日十点，改到周六十点）, due: "2026-10-25", revisions: [{at: "2026-10-23 17:23", due: "2026-10-24"}]}
+  - {id: zhou-wait, kind: theirs, what: 老周在现场等佩戴者, optional: true}
+  - {id: quote, kind: theirs, what: 老周周一发新的报价单, due: "2026-10-26"}
+  - {id: discuss-pipe, kind: mine, what: 跟爱人商量追加三千换管子, optional: true, revisions: [{at: "2026-10-23 17:37", status: done}]}
+  - {id: wall, kind: theirs, what: 老周先不动那面墙, optional: true}
+  - {id: ceiling, kind: theirs, what: 这几天先做吊顶, optional: true}
+  - {id: tell-zhou, kind: mine, what: 周六跟老周说换管子可以, due: "2026-10-24"}
+  # App 首页改版
+  - {id: hifi, kind: theirs, what: 小米下周二出高保真, due: "2026-10-27"}
+  - {id: chen-eval, kind: theirs, what: 老陈下周三前给接口合并与缓存失效的评估, due: "2026-10-28"}
+  - {id: req-doc, kind: mine, what: 下周四之前写需求文档, due: "2026-10-29"}
+  - {id: baseline-data, kind: theirs, what: 老陈下周一把埋点基线数据给小米, due: "2026-10-26"}
+  - {id: gray-test, kind: theirs, what: 阿杰出灰度的测试方案}
+  - {id: restyle, kind: theirs, what: 小米按决定改稿子, optional: true}
+  - {id: wu-schedule, kind: theirs, what: 小吴等高保真出来再排期, optional: true}
+  - {id: test-cases, kind: theirs, what: 阿杰等需求文档定了再写测试用例, optional: true}
+  - {id: gray-switch, kind: theirs, what: 小吴加灰度开关, optional: true}
+  # OKR 与托管
+  - {id: okr-material, kind: mine, what: 周一上午把 OKR 复盘材料给黄总, due: "2026-10-26"}
+  - {id: legal-sync, kind: mine, what: 下周跟法务对托管协议（下午法务已来电）, optional: true}
+  - {id: sync-huang, kind: mine, what: 跟老陈聊完向黄总同步, optional: true}
+  - {id: template, kind: theirs, what: 法务下周一前发托管协议模板, due: "2026-10-26"}
+  - {id: forward-client, kind: mine, what: 把托管协议模板转给客户, optional: true}
+  # 绿源
+  - {id: lvyuan-demo, kind: mine, what: 下周四上午给绿源做演示, due: "2026-10-29"}
+  - {id: lvyuan-info, kind: theirs, what: 郑今晚整理绿源的门店规模与小时工比例发来, due: "2026-10-23"}
+  - {id: zheng-book, kind: theirs, what: 郑跟绿源约十点, optional: true}
+  # 老陈的发展
+  - {id: chen-reply, kind: mine, what: 跟黄总聊后下周三之前给老陈答复, due: "2026-10-28"}
+  - {id: refactor-doc, kind: theirs, what: 老陈周末写排班引擎重构的想法、周一发来, due: "2026-10-26"}
+  - {id: hold-offer, kind: theirs, what: 老陈先不回复外面的 offer, optional: true}
+  - {id: strive, kind: mine, what: 为老陈尽力争取, optional: true}

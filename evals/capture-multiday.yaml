@@ -1,0 +1,72 @@
+name: capture-multiday
+description: >-
+  四个工作日（2026-10-12 星期一至 10-15 星期四）的旁听，每天一个旁听 Session（星期二白天先"整理交谈"一次），最后在新的
+  xinli-assistant Session 中问答。佩戴者方晴是连锁餐饮禾苗食堂的区域运营经理，预置五个项目（其中两个都与滨江店有关）。
+  按金标计算分项指标（m4-eval.md §13）：跨天的改期（成本核算表周四 → 周三 → 周四上午、标准菜谱周三 → 周四、店铺头图周五 →
+  下周一）、跨天的完成（油烟机、用量数据、执照副本、砧板）、取消（团建聚餐）、改由他人去做（周六验收改由小林盯）、同一件事
+  隔天再提（排班表"周一给你"）、用户在 App 中的改动（整改清单标为完成、压缩机改期，之后的整理不应改回去）；佩戴者否认的
+  （"你答应过多配两个人"）、拒绝的（预算表）、有条件的（"录用我就下周入职"）、他人之间的（顶班、替班）与转述的承诺。
+  带噪声的同一份数据见 capture-multiday-noisy。
+agent: xinli-day
+timeout: 25m
+gold: data/multiday/gold.yaml
+setup:
+  xinli:
+    projects:
+      - {id: P-0001, name: 滨江店开业, status: 装修收尾，设备进场中，计划下个月二十号试营业。}
+      - {id: P-0002, name: 冬季新菜单, status: 研发出八道候选菜，十一月中旬全区上新。}
+      - {id: P-0003, name: 城西店食安整改, status: 上月抽检后厨两项不合格（冷库温度记录缺失、生熟砧板混用），十月二十一日复查。}
+      - {id: P-0004, name: 滨江店外卖入驻, status: 美团与饿了么的入驻材料准备中。}
+      - {id: P-0005, name: 区域服务员招聘, status: 城西、滨江共缺六名服务员。}
+turns:
+  - captures_file: data/multiday/2026-10-12.yaml
+    input: 整理今天
+    expect:
+      calls: ["mcp_xinli__file_day"]
+      xinli: {gold: {}}
+  - captures_file: data/multiday/2026-10-13-morning.yaml
+    new_session: true
+    input: 整理交谈
+    expect:
+      no_calls: ["mcp_xinli__file_day"]
+      xinli: {gold: {}}
+  - captures_file: data/multiday/2026-10-13-afternoon.yaml
+    input: 整理今天
+    expect:
+      calls: ["mcp_xinli__file_day"]
+      xinli: {gold: {}}
+  # 星期二晚上用户在 App 中把整改清单标为已发、把压缩机的到货改为下周二（供应商发消息说的）。
+  - xinli_edit:
+      - {gold: send-checklist, status: done}
+      - {gold: compressor, due: "2026-10-20"}
+    captures_file: data/multiday/2026-10-14.yaml
+    new_session: true
+    input: 整理今天
+    expect:
+      calls: ["mcp_xinli__file_day"]
+      xinli: {gold: {}}
+  - captures_file: data/multiday/2026-10-15.yaml
+    new_session: true
+    input: 整理今天
+    expect:
+      calls: ["mcp_xinli__file_day"]
+      xinli:
+        gold: {}
+        grouping: {}
+  - new_session: true
+    agent: xinli-assistant
+    input: 我答应别人的事，现在还有哪些没办完？按期限说一下。
+    expect:
+      judge: >-
+        截至 10 月 15 日的整理，佩戴者自己答应、仍未完成的是：10 月 16 日（周五）去城西店预检；10 月 16 日之前给面试的周婷答复；
+        10 月 17 日（周六）去车站接婆婆；10 月 19 日（周一）给宋总看滨江店开业的接待方案；10 月 19 日交乐乐的秋游回执；10 月 19 日
+        之前通知面试的何亮；10 月 21 日（周三）城西店复查到场。已经办完或已不是佩戴者要做的：成本核算表（已发）、团建聚餐订位
+        （聚餐取消）、周六的设备验收（改由小林盯）、城西店的整改清单（已发）、营业执照副本（已寄）、去滨江店看进度、家长会、
+        报销单、周四的两场面试。评分：列出未完成的至少五项，且没有把已办完或已不是佩戴者要做的事当作未完成，5 分；列出三到四项
+        且没有错列，4 分；列出三项以上但错列了一项，3 分；只列出一两项，或错列两项以上，2 分；没有回答或答非所问，1 分。
+  - input: 成本核算表的期限前后是怎么变的？
+    expect:
+      judge: >-
+        事实：10 月 12 日（周一）佩戴者答应宋总周四（10 月 15 日）前发成本核算表；10 月 13 日宋总要求提前，改为周三（10 月 14 日）
+        下班前；10 月 14 日因为还差两道菜的数据，改为周四上午九点前；10 月 15 日上午已发到宋总邮箱。评分：四步都说清（含已经发出）
+        5 分；漏了一步 4 分；只说出最终结果或其中一次改动 3 分；日期或先后说错 2 分；答不上来 1 分。

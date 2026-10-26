@@ -332,6 +332,23 @@ func derive(cfg Config, cases []*Case) (*agentdef.Registry, map[string]string, e
 		}
 		defs = append(defs, &d)
 		versions[c.Name] = d.Version
+		// 轮次另用的 Agent（如整理之后提问的 xinli-assistant）同样换用 ModelOverride，否则比较模型时那几轮仍是默认模型。
+		for _, t := range c.Turns {
+			if t.Agent == "" || t.Agent == c.Agent || versions[c.Name+"/"+t.Agent] != "" {
+				continue
+			}
+			other, err := cfg.Agents.Default(t.Agent)
+			if err != nil {
+				return nil, nil, fmt.Errorf("case %s: %w", c.Name, err)
+			}
+			o := *other
+			o.Version = other.Version + "+eval-" + c.Name
+			if cfg.ModelOverride != "" {
+				o.Model = cfg.ModelOverride
+			}
+			defs = append(defs, &o)
+			versions[c.Name+"/"+t.Agent] = o.Version
+		}
 		for _, a := range c.Setup.Agents {
 			defs = append(defs, &agentdef.Def{Name: a.Name, Version: "eval", Description: a.Description, Instructions: a.Instructions,
 				Model: d.Model, Capabilities: a.Capabilities, MaxTurns: base.MaxTurns, Context: base.Context})
@@ -352,7 +369,9 @@ type TrialResult struct {
 	Calls, Compactions, Takeovers int
 	// InputTokens 与 CachedInputTokens 用于计算前缀缓存命中率。
 	InputTokens, CachedInputTokens uint64
-	Err                            string
+	// Metrics 是各轮的指标（金标指标、项目归集的纯度与碎片率），键为"turn N: 名称"。
+	Metrics map[string]float64
+	Err     string
 }
 
 type Assertion struct {
@@ -458,10 +477,23 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 	}
 	var sid string
 	var sessions []string
-	// topics 是每个 Session 按提交顺序的旁听主题（CaptureSegment.Topic），用于计算项目归集的纯度与碎片率。
-	topics := map[string][]string{}
+	// topics 与 labels 是每个 Session 按提交顺序的旁听主题与金标（CaptureSegment.Topic、Gold），用于计算项目归集的
+	// 纯度与碎片率、金标指标；gold 是金标随旁听与用户改动的状态。
+	topics, labels := map[string][]string{}, map[string][]string{}
+	var gold *goldBook
+	if c.gold != nil {
+		gold = newGoldBook(c.gold)
+	}
+	// goldNotes 是各轮金标指标的诊断（误报、漏记、状态不对的），与日志一起写出。
+	var goldNotes []string
 	if in.cfg.LogDir != "" {
-		defer func() { in.dumpLogs(ctx, fmt.Sprintf("%s-%d", c.Name, trial+1), sessions) }()
+		defer func() {
+			name := fmt.Sprintf("%s-%d", c.Name, trial+1)
+			in.dumpLogs(ctx, name, sessions)
+			if len(goldNotes) > 0 {
+				_ = os.WriteFile(filepath.Join(in.cfg.LogDir, name+".gold.txt"), []byte(strings.Join(goldNotes, "\n")+"\n"), 0o644)
+			}
+		}()
 	}
 	var voice *call.Call
 	var rec *callRecorder
@@ -477,7 +509,11 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 				tr.Err = "call cases do not support new_session"
 				return tr
 			}
-			id, err := in.svc.Create(tctx, service.CreateRequest{BusinessLine: bl, EndUser: endUser, Agent: c.Agent, AgentVersion: in.version[c.Name]})
+			agent, version := c.Agent, in.version[c.Name]
+			if turn.Agent != "" && turn.Agent != c.Agent {
+				agent, version = turn.Agent, in.version[c.Name+"/"+turn.Agent]
+			}
+			id, err := in.svc.Create(tctx, service.CreateRequest{BusinessLine: bl, EndUser: endUser, Agent: agent, AgentVersion: version})
 			if err != nil {
 				tr.Err = "create session: " + err.Error()
 				return tr
@@ -494,10 +530,29 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 				}
 			}
 		}
+		if len(turn.XinliEdit) > 0 {
+			as, err := in.editCommitments(tctx, ti+1, bl, endUser, turn.XinliEdit, gold, labels)
+			if err != nil {
+				tr.Err = fmt.Sprintf("turn %d: xinli_edit: %v", ti+1, err)
+				return tr
+			}
+			tr.Assertions = append(tr.Assertions, as...)
+		}
+		segs := turn.Captures
+		if c.Noise {
+			segs = make([]CaptureSegment, len(turn.Captures))
+			for i, g := range turn.Captures {
+				segs[i] = g.heard()
+			}
+		}
 		for _, g := range turn.Captures {
 			topics[sid] = append(topics[sid], g.Topic)
+			labels[sid] = append(labels[sid], g.Gold)
 		}
-		if err := in.submitCaptures(tctx, sid, turn.Captures); err != nil {
+		if gold != nil {
+			gold.hear(turn.Captures, c.Noise)
+		}
+		if err := in.submitCaptures(tctx, sid, segs); err != nil {
 			tr.Err = fmt.Sprintf("turn %d: captures: %v", ti+1, err)
 			return tr
 		}
@@ -529,17 +584,33 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		if in.xinli != nil {
 			x := in.xinli.State(bl, endUser)
 			obs.xinli = &x
-			if turn.Expect.Xinli != nil && turn.Expect.Xinli.Grouping != nil {
-				if obs.topics, err = in.exchangeTopics(tctx, topics); err != nil {
+			if x := turn.Expect.Xinli; x != nil && x.Grouping != nil {
+				if obs.topics, err = in.bySegment(tctx, topics); err != nil {
 					tr.Err = fmt.Sprintf("turn %d: %v", ti+1, err)
 					return tr
 				}
 			}
+			if x := turn.Expect.Xinli; x != nil && x.Gold != nil {
+				if obs.labels, err = in.bySegment(tctx, labels); err != nil {
+					tr.Err = fmt.Sprintf("turn %d: %v", ti+1, err)
+					return tr
+				}
+				obs.gold = gold
+			}
 		}
 		// 断言只看有效的 Memory：被取代的作为历史保留（m4-memory-grant.md §11），不算"还记着"。
 		obs.memories, _ = in.mems.Store.List(tctx, endUser, []memory.Scope{{BusinessLine: bl}}, time.Now(), memory.DefaultMaxPerUser)
-		as, score := in.check(tctx, ti+1, turn, obs)
+		as, score, metrics := in.check(tctx, ti+1, turn, obs)
 		tr.Assertions = append(tr.Assertions, as...)
+		if obs.goldDetail != "" {
+			goldNotes = append(goldNotes, fmt.Sprintf("turn %d: %s", ti+1, obs.goldDetail))
+		}
+		for k, v := range metrics {
+			if tr.Metrics == nil {
+				tr.Metrics = map[string]float64{}
+			}
+			tr.Metrics[fmt.Sprintf("turn %d: %s", ti+1, k)] = v
+		}
 		if score > 0 {
 			tr.JudgeScore = append(tr.JudgeScore, score)
 		}
@@ -566,6 +637,9 @@ type observation struct {
 	tickets                []string          // CRM 中本 EndUser 的工单
 	xinli                  *xinlimock.State  // xinli MCP Server 中本 EndUser 的数据
 	topics                 map[string]string // 旁听 Session 与引用编号（"ses/57.3"）→ 那段旁听的主题
+	labels                 map[string]string // 同上 → 那段旁听标的金标（CaptureSegment.Gold）
+	gold                   *goldBook         // 本轮之后金标的状态
+	goldDetail             string            // 金标指标的诊断（check 填写）
 	inTokens, cachedTokens uint64            // 本轮模型调用的输入 token 与其中命中前缀缓存的部分
 	callArgs               []string          // 与 calls 一一对应的调用参数
 	tasks                  []string          // Call 中派生的任务（run_task 的 task）
@@ -842,10 +916,10 @@ func relativeDate(s string) string {
 	return time.Now().In(captureZone).AddDate(0, 0, -n).Format(time.DateOnly)
 }
 
-// exchangeTopics 按日志顺序把每段旁听对应到提交时给出的主题：键是"Session/事件序号.段序号"。
-func (in *instance) exchangeTopics(ctx context.Context, topics map[string][]string) (map[string]string, error) {
+// bySegment 按日志顺序把每段旁听对应到提交时给出的标注（主题或金标）：键是"Session/事件序号.段序号"。
+func (in *instance) bySegment(ctx context.Context, marks map[string][]string) (map[string]string, error) {
 	out := map[string]string{}
-	for sid, list := range topics {
+	for sid, list := range marks {
 		events, err := eventlog.ReadAll(ctx, in.svc.Store.Log, sid, 0)
 		if err != nil {
 			return nil, err
@@ -867,8 +941,8 @@ func (in *instance) exchangeTopics(ctx context.Context, topics map[string][]stri
 // 范围内标了主题的旁听中最多的那个（相同时取先出现的），全是闲聊的没有主题。一段交谈可以关联几个项目：它对每个关联的
 // 项目各算一次，算作的主题是这段交谈中出现过的、且是那个项目在只关联一个项目的交谈中占多数的主题；没有这样的主题时
 // 算作这段交谈自己的主题。碎片率：每个主题的交谈分散在几个项目中（没有归入项目的每段各算一个），按主题平均；纯度：每个
-// 项目中占多数的主题所占的比例（闲聊算作杂质），按交谈数加权。
-func checkGrouping(add func(string, bool, string), want *GroupingExpect, st *xinlimock.State, topics map[string]string) {
+// 项目中占多数的主题所占的比例（闲聊算作杂质），按交谈数加权。返回碎片率与纯度，记入报告的指标。
+func checkGrouping(add func(string, bool, string), want *GroupingExpect, st *xinlimock.State, topics map[string]string) (frag, purity float64) {
 	type item struct {
 		e      *xinlimock.Exchange
 		topic  string
@@ -943,7 +1017,6 @@ func checkGrouping(add func(string, bool, string), want *GroupingExpect, st *xin
 			byProject[p][topic]++
 		}
 	}
-	frag := 0.0
 	for _, ps := range byTopic {
 		frag += float64(len(ps))
 	}
@@ -961,7 +1034,7 @@ func checkGrouping(add func(string, bool, string), want *GroupingExpect, st *xin
 		}
 		major += best
 	}
-	purity := 1.0
+	purity = 1.0
 	if total > 0 {
 		purity = float64(major) / float64(total)
 	}
@@ -975,6 +1048,7 @@ func checkGrouping(add func(string, bool, string), want *GroupingExpect, st *xin
 	if len(byTopic) < want.Topics {
 		add("xinli topics", false, detail)
 	}
+	return frag, purity
 }
 
 // rangeTopics 返回交谈范围 [From, To] 内各段旁听标的主题（按日志顺序，不含没标的）。topics 的键是"Session/事件序号.段序号"。
@@ -1294,11 +1368,12 @@ func memoryMatches(m *memory.Memory, want MemoryMatch) bool {
 }
 
 // check 判定一轮的断言；有评分标准时请评分模型打分，返回分数（0 表示没有评分）。
-func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation) ([]Assertion, int) {
+func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation) ([]Assertion, int, map[string]float64) {
 	var out []Assertion
 	add := func(name string, pass bool, detail string) {
 		out = append(out, Assertion{Turn: turn, Name: name, Pass: pass, Detail: detail})
 	}
+	metrics := map[string]float64{}
 	e := t.Expect
 	want := e.Status
 	if want == "" {
@@ -1385,7 +1460,21 @@ func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation)
 	if x := e.Xinli; x != nil {
 		in.checkXinli(add, x, o.xinli)
 		if x.Grouping != nil && o.xinli != nil {
-			checkGrouping(add, x.Grouping, o.xinli, o.topics)
+			frag, purity := checkGrouping(add, x.Grouping, o.xinli, o.topics)
+			metrics["fragmentation"], metrics["purity"] = frag, purity
+		}
+		if x.Gold != nil && o.xinli != nil && o.gold != nil {
+			got, detail := o.gold.score(o.xinli, o.labels)
+			o.goldDetail = detail
+			for _, k := range goldMetrics {
+				v, ok := got[k]
+				if ok {
+					metrics[k] = v
+				}
+				if min, want := x.Gold[k]; want {
+					add("xinli gold "+k, ok && v >= min, fmt.Sprintf("%s %.2f, want at least %.2f: %s", k, v, min, detail))
+				}
+			}
 		}
 		if x.Covers != nil && o.xinli != nil {
 			covered, detail, err := judgeCoverage(ctx, in.cfg.Model, in.cfg.Judge, x.Covers.Points, o.xinli)
@@ -1434,7 +1523,37 @@ func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation)
 			add("judge", s >= PassScore, fmt.Sprintf("score %d: %s", s, reason))
 		}
 	}
-	return out, score
+	return out, score, metrics
+}
+
+// editCommitments 扮演用户在 App 中改承诺（Turn.XinliEdit）：按金标找到对应的那条未完成的承诺交给业务线改，金标随之
+// 改变。账本中没有对应的承诺时（整理没有记下），改动只记入金标，并作为一条失败的断言。
+func (in *instance) editCommitments(ctx context.Context, turn int, bl, endUser string, edits []GoldEdit, gold *goldBook, labels map[string][]string) ([]Assertion, error) {
+	segs, err := in.bySegment(ctx, labels)
+	if err != nil {
+		return nil, err
+	}
+	st := in.xinli.State(bl, endUser)
+	matched := gold.match(&st, segs)
+	var out []Assertion
+	for _, e := range edits {
+		target := ""
+		for _, m := range st.Commitments {
+			if it := matched[m.ID]; it != nil && it.ID == e.Gold && m.Open() {
+				target = m.ID
+				break
+			}
+		}
+		gold.edit(&e)
+		if target == "" {
+			out = append(out, Assertion{Turn: turn, Name: "xinli_edit " + e.Gold, Detail: "no open commitment in the ledger matches it"})
+			continue
+		}
+		if err := in.xinli.Edit(bl, endUser, target, e.Status, e.Due); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 // crashHolder 找到当前持有 run 的 Worker（最近一次 AttemptStarted）并"杀掉"它。

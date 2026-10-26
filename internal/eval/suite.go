@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -34,8 +36,13 @@ type Case struct {
 	} `yaml:"context"`
 	// Call 为 true 时用例在一次 Call 中进行（docs/design/m3-call.md §9）：每轮的 input 合成为语音说出，
 	// 由实时语音模型应答、经 run_task 派生任务。需要实时语音模型与语音合成，不满足时跳过。
-	Call  bool `yaml:"call"`
-	Setup struct {
+	Call bool `yaml:"call"`
+	// GoldFile 是用例目录下的金标文件（m4-eval.md §13）：旁听中标了的承诺应有的样子与之后的改动，expect.xinli.gold
+	// 据此计算指标。Noise 为 true 时提交旁听识别有误的版本（CaptureSegment 的 asr、heard），金标不变：与不带噪声的
+	// 同一份数据对照，衡量识别错误的影响。
+	GoldFile string `yaml:"gold"`
+	Noise    bool   `yaml:"noise"`
+	Setup    struct {
 		Memories []struct {
 			Category string `yaml:"category"`
 			Content  string `yaml:"content"`
@@ -62,6 +69,8 @@ type Case struct {
 		NoHealth bool `yaml:"no_health"`
 	} `yaml:"setup"`
 	Turns []Turn `yaml:"turns"`
+
+	gold *Gold
 }
 
 // AgentSetup 是评测用的被委托 Agent。
@@ -123,6 +132,9 @@ type XinliExpect struct {
 	NoWeekHabits []string `yaml:"no_week_habits"`
 	// Status 是项目现状的断言：按项目 ID，contains 中的都要出现，excludes 中的都不得出现。
 	Status map[string]TextMatch `yaml:"status"`
+	// Gold 非 nil 时按用例的金标计算本轮的指标（goldMetrics，m4-eval.md §13）并记入报告；其中给出的是指标的下限，
+	// 未给出的只记录、不判定。写成 {} 即只记录。
+	Gold map[string]float64 `yaml:"gold"`
 }
 
 // StaleExpect 是过时的未完成承诺数的断言。
@@ -181,6 +193,27 @@ type CaptureSegment struct {
 	At string `yaml:"at"`
 	// Topic 是这段话的主题标签（评测用，不提交给 yanshi）：计算项目归集的纯度与碎片率。闲聊不标。
 	Topic string `yaml:"topic"`
+	// Gold 是这段话所关于的金标承诺 ID（以空格分隔，评测用，不提交）：答应、改期、完成或改由他人去做的原话都标上。
+	Gold string `yaml:"gold"`
+	// ASR、Heard 与 HeardKey 是识别有误的版本（Case.Noise 时提交）：转写的文字、识别成的说话人与他人的 key；为空时
+	// 与原文相同。
+	ASR      string `yaml:"asr"`
+	Heard    string `yaml:"heard"`
+	HeardKey string `yaml:"heard_key"`
+}
+
+// heard 返回识别有误的版本。
+func (g CaptureSegment) heard() CaptureSegment {
+	if g.ASR != "" {
+		g.Text = g.ASR
+	}
+	if g.Heard != "" {
+		g.Speaker = g.Heard
+	}
+	if g.HeardKey != "" {
+		g.Key = g.HeardKey
+	}
+	return g
 }
 
 // DeviceSetup 是虚拟设备：只读的文件、需审批的写文件与发消息。
@@ -209,8 +242,10 @@ type Turn struct {
 	} `yaml:"ui_context"`
 	// Approve 是本轮遇到审批时的决定，默认批准。
 	Approve *bool `yaml:"approve"`
-	// NewSession 为 true 时本轮在新的 Session 中进行（同一 EndUser）。
-	NewSession bool `yaml:"new_session"`
+	// NewSession 为 true 时本轮在新的 Session 中进行（同一 EndUser）；Agent 非空时新 Session 使用它（默认为用例的
+	// agent），如整理几天之后向 xinli-assistant 提问。
+	NewSession bool   `yaml:"new_session"`
+	Agent      string `yaml:"agent"`
 	// CrashAfterCalls > 0 时，本轮的 Run 发起这么多次调用后，"杀掉"正在执行它的 Worker（取消其上下文，
 	// 不释放租约），由其他 Worker 在租约到期后接管：用真实模型检验接管后能否接着完成。
 	CrashAfterCalls int `yaml:"crash_after_calls"`
@@ -228,7 +263,9 @@ type Turn struct {
 	Captures []CaptureSegment `yaml:"captures"`
 	// CapturesFile 是用例目录下的数据文件（YAML 的旁听列表，格式同 captures），追加在 Captures 之后：长的一天不写在用例里。
 	CapturesFile string `yaml:"captures_file"`
-	Expect       Expect `yaml:"expect"`
+	// XinliEdit 是本轮旁听与输入之前用户在 App 中对承诺的改动（按金标 ID 找到对应的承诺）。
+	XinliEdit []GoldEdit `yaml:"xinli_edit"`
+	Expect    Expect     `yaml:"expect"`
 }
 
 // CardActionScript 模拟用户在卡片上点按钮或点选列表项。Action 为空时点第一个按钮；Label 非空时点标签包含它的按钮或条目。
@@ -330,7 +367,27 @@ func LoadSuite(dir string) ([]*Case, error) {
 		if len(c.Turns) == 0 {
 			return nil, fmt.Errorf("%s: no turns", f)
 		}
+		if c.GoldFile != "" {
+			if c.Setup.Xinli == nil {
+				return nil, fmt.Errorf("%s: a gold file needs setup.xinli", f)
+			}
+			b, err := os.ReadFile(filepath.Join(dir, c.GoldFile))
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", f, err)
+			}
+			c.gold = &Gold{}
+			if err := yaml.Unmarshal(b, c.gold); err != nil {
+				return nil, fmt.Errorf("%s: %s: %w", f, c.GoldFile, err)
+			}
+			if err := c.gold.validate(); err != nil {
+				return nil, fmt.Errorf("%s: %s: %w", f, c.GoldFile, err)
+			}
+		}
+		labelled := map[string]bool{}
 		for i, t := range c.Turns {
+			if t.Agent != "" && i > 0 && !t.NewSession {
+				return nil, fmt.Errorf("%s: turn %d sets an agent without starting a new session", f, i+1)
+			}
 			if t.AwaitBackground && (t.Input != "" || t.CardAction != nil || t.NewSession || c.Call) {
 				return nil, fmt.Errorf("%s: turn %d awaits a background result and cannot also submit input", f, i+1)
 			}
@@ -350,8 +407,42 @@ func LoadSuite(dir string) ([]*Case, error) {
 				if g.Speaker != "wearer" && g.Speaker != "other" {
 					return nil, fmt.Errorf("%s: turn %d: capture speaker %q must be wearer or other", f, i+1, g.Speaker)
 				}
+				if g.Heard != "" && g.Heard != "wearer" && g.Heard != "other" {
+					return nil, fmt.Errorf("%s: turn %d: capture heard %q must be wearer or other", f, i+1, g.Heard)
+				}
+				for _, id := range strings.Fields(g.Gold) {
+					if c.gold == nil || !slices.ContainsFunc(c.gold.Commitments, func(m GoldCommitment) bool { return m.ID == id }) {
+						return nil, fmt.Errorf("%s: turn %d: capture labelled with unknown gold commitment %q", f, i+1, id)
+					}
+					labelled[id] = true
+				}
 				if _, err := captureTime(g.At); g.At != "" && err != nil {
 					return nil, fmt.Errorf("%s: turn %d: capture at %q must be YYYY-MM-DD HH:MM or now-<duration>", f, i+1, g.At)
+				}
+			}
+			for _, e := range t.XinliEdit {
+				if c.gold == nil || !slices.ContainsFunc(c.gold.Commitments, func(m GoldCommitment) bool { return m.ID == e.Gold }) {
+					return nil, fmt.Errorf("%s: turn %d: xinli_edit of unknown gold commitment %q", f, i+1, e.Gold)
+				}
+				if err := goldDate(e.Due); err != nil || (e.Due == "") == (e.Status == "") || (e.Status != "" && e.Status != "done" && e.Status != "cancelled") {
+					return nil, fmt.Errorf("%s: turn %d: xinli_edit sets either a due date or status done/cancelled", f, i+1)
+				}
+			}
+			if x := t.Expect.Xinli; x != nil && x.Gold != nil {
+				if c.gold == nil {
+					return nil, fmt.Errorf("%s: turn %d: expect.xinli.gold needs a gold file", f, i+1)
+				}
+				for k := range x.Gold {
+					if !slices.Contains(goldMetrics, k) {
+						return nil, fmt.Errorf("%s: turn %d: unknown gold metric %q (one of %v)", f, i+1, k, goldMetrics)
+					}
+				}
+			}
+		}
+		if c.gold != nil {
+			for _, m := range c.gold.Commitments {
+				if !labelled[m.ID] {
+					return nil, fmt.Errorf("%s: gold commitment %q is not labelled on any capture", f, m.ID)
 				}
 			}
 		}

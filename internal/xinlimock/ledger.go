@@ -151,6 +151,10 @@ func (m *Commitment) Rev() int { return len(m.Revisions) }
 // Open 报告承诺是否未完成且有效（没有被合并）：提醒与召回只看这些。
 func (m *Commitment) Open() bool { return m.Status == "open" && m.MergedInto == "" }
 
+// Reminds 报告这条承诺是否会按期限提醒：未完成、有效、通过了核对、有期限。提醒的规则属于业务线，评测的提醒指标
+// 据此计算（m4-eval.md §13）。
+func (m *Commitment) Reminds() bool { return m.Open() && m.Unverified == "" && m.DueDate != "" }
+
 // Revision 是承诺的一次改动（captures-xinli-model.md §3、§7）：说话时间 SpokenAt 起成立，到下一条修订的说话时间为止；
 // RecordedAt 是交出的时刻。Basis 是依据：原话（refs）、交谈摘要（exchanges，xinli-project）或用户本人。
 type Revision struct {

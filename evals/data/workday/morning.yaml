@@ -4,14 +4,14 @@
 - {speaker: "other", key: "he", text: "朵朵刚才问我，周六钢琴课谁送她，我说问你。", at: "2026-10-23 08:41", topic: "family"}
 - {speaker: "wearer", text: "周六上午是吧，几点来着，九点半？", at: "2026-10-23 08:42", topic: "family"}
 - {speaker: "other", key: "he", text: "九点半开始，九点就得出门，那个琴行在万达三楼。", at: "2026-10-23 08:43", topic: "family"}
-- {speaker: "wearer", text: "行，周六上午我送她去钢琴课，你在家睡个懒觉吧。", at: "2026-10-23 08:44", topic: "family"}
-- {speaker: "other", key: "he", text: "那我去接，十一点下课，接完带她去吃个午饭。", at: "2026-10-23 08:44", topic: "family"}
+- {speaker: "wearer", text: "行，周六上午我送她去钢琴课，你在家睡个懒觉吧。", at: "2026-10-23 08:44", topic: "family", gold: "piano-send"}
+- {speaker: "other", key: "he", text: "那我去接，十一点下课，接完带她去吃个午饭。", at: "2026-10-23 08:44", topic: "family", gold: "piano-pick"}
 - {speaker: "wearer", text: "好，就这么定。哎你别又带她吃炸鸡啊。", at: "2026-10-23 08:45", topic: "family"}
 - {speaker: "other", key: "he", text: "哈哈知道了知道了。还有晚饭，今天你几点回来？", at: "2026-10-23 08:46", topic: "family"}
 - {speaker: "wearer", text: "不好说，今天客户那边有个会，可能七点多。", at: "2026-10-23 08:47", topic: "family"}
-- {speaker: "other", key: "he", text: "那我先做饭，你回来热一下。", at: "2026-10-23 08:48", topic: "family"}
+- {speaker: "other", key: "he", text: "那我先做饭，你回来热一下。", at: "2026-10-23 08:48", topic: "family", gold: "dinner"}
 - {speaker: "wearer", text: "嗯好。哦对了，物业那个停车费你交了没有？", at: "2026-10-23 08:48", topic: "family"}
-- {speaker: "other", key: "he", text: "还没，我中午用手机交。", at: "2026-10-23 08:49", topic: "family"}
+- {speaker: "other", key: "he", text: "还没，我中午用手机交。", at: "2026-10-23 08:49", topic: "family", gold: "parking"}
 - {speaker: "wearer", text: "别忘了，上次就逾期了。", at: "2026-10-23 08:50", topic: "family"}
 - {speaker: "other", key: "he", text: "不会不会。那你先忙，挂了啊。", at: "2026-10-23 08:51", topic: "family"}
 - {speaker: "wearer", text: "嗯拜拜。", at: "2026-10-23 08:52", topic: "family"}
@@ -38,19 +38,19 @@
 - {speaker: "wearer", text: "那这个功能我们这次先不上了，放到 3.3。大家没意见吧？", at: "2026-10-23 09:32", topic: "release"}
 - {speaker: "other", key: "wu", text: "我没意见，前端那个页面本来也还没联调完。", at: "2026-10-23 09:32", topic: "release"}
 - {speaker: "other", key: "jie", text: "我也同意，不然测试也测不完。", at: "2026-10-23 09:33", topic: "release"}
-- {speaker: "wearer", text: "好，那批量排班模板砍掉，放 3.3，我回头在需求池里改一下状态。", at: "2026-10-23 09:33", topic: "release"}
+- {speaker: "wearer", text: "好，那批量排班模板砍掉，放 3.3，我回头在需求池里改一下状态。", at: "2026-10-23 09:33", topic: "release", gold: "backlog"}
 - {speaker: "wearer", text: "小吴，你那边呢？", at: "2026-10-23 09:34", topic: "release"}
 - {speaker: "other", key: "wu", text: "我这边主要是那个排班导出的 bug，导出 Excel 的时候跨月的班次会错位。", at: "2026-10-23 09:34", topic: "release"}
 - {speaker: "wearer", text: "这个客户投诉过两次了，必须这次修掉。", at: "2026-10-23 09:35", topic: "release"}
-- {speaker: "other", key: "wu", text: "嗯，我已经定位到了，是时区转换的问题，今天下班前我把导出的 bug 修掉。", at: "2026-10-23 09:35", topic: "release"}
-- {speaker: "wearer", text: "好，修完直接提给阿杰。", at: "2026-10-23 09:36", topic: "release"}
-- {speaker: "other", key: "jie", text: "收到。那我这边回归测试的话，导出修完我再跑一遍全量。", at: "2026-10-23 09:36", topic: "release"}
+- {speaker: "other", key: "wu", text: "嗯，我已经定位到了，是时区转换的问题，今天下班前我把导出的 bug 修掉。", at: "2026-10-23 09:35", topic: "release", gold: "export-fix"}
+- {speaker: "wearer", text: "好，修完直接提给阿杰。", at: "2026-10-23 09:36", topic: "release", gold: "export-fix"}
+- {speaker: "other", key: "jie", text: "收到。那我这边回归测试的话，导出修完我再跑一遍全量。", at: "2026-10-23 09:36", topic: "release", gold: "regression"}
 - {speaker: "wearer", text: "全量回归什么时候能跑完？", at: "2026-10-23 09:37", topic: "release"}
-- {speaker: "other", key: "jie", text: "如果小吴今天能提测，周末我把自动化跑起来，周一下午之前回归测试能跑完。", at: "2026-10-23 09:37", topic: "release"}
-- {speaker: "wearer", text: "周一下午之前，可以。有问题第一时间在群里说。", at: "2026-10-23 09:38", topic: "release"}
+- {speaker: "other", key: "jie", text: "如果小吴今天能提测，周末我把自动化跑起来，周一下午之前回归测试能跑完。", at: "2026-10-23 09:37", topic: "release", gold: "regression"}
+- {speaker: "wearer", text: "周一下午之前，可以。有问题第一时间在群里说。", at: "2026-10-23 09:38", topic: "release", gold: "regression"}
 - {speaker: "other", key: "jie", text: "好的。", at: "2026-10-23 09:38", topic: "release"}
 - {speaker: "other", key: "chen", text: "还有一个事，那个康宁的单点登录，他们之前提的 SSO，要不要这版做？", at: "2026-10-23 09:39", topic: "release"}
-- {speaker: "wearer", text: "不做，那个我下午会跟康宁那边对一下优先级，看他们到底急不急。", at: "2026-10-23 09:39", topic: "release"}
+- {speaker: "wearer", text: "不做，那个我下午会跟康宁那边对一下优先级，看他们到底急不急。", at: "2026-10-23 09:39", topic: "release", gold: "sso-check"}
 - {speaker: "other", key: "chen", text: "行，那我先不排了。", at: "2026-10-23 09:40", topic: "release"}
 - {speaker: "wearer", text: "嗯。还有别的吗？没有的话——", at: "2026-10-23 09:40", topic: "release"}
 - {speaker: "other", key: "wu", text: "哦对，设计那边首页改版的稿子，小米说下午评审，我要参加吗？", at: "2026-10-23 09:41", topic: "release"}
@@ -64,17 +64,17 @@
 - {speaker: "wearer", text: "百分之六不少了，店长手机普遍旧。这个放到 3.3 里修，先记下来。", at: "2026-10-23 09:45", topic: "release"}
 - {speaker: "other", key: "wu", text: "好的。", at: "2026-10-23 09:45", topic: "release"}
 - {speaker: "other", key: "chen", text: "夜班补贴那个是规则配置的问题，客户自己配错了，不是 bug。", at: "2026-10-23 09:46", topic: "release"}
-- {speaker: "wearer", text: "那客服要跟客户解释清楚，别让人家觉得是我们系统算错了。老陈你给客服写个说明。", at: "2026-10-23 09:46", topic: "release"}
-- {speaker: "other", key: "chen", text: "行，我写一个简单的说明发客服群。", at: "2026-10-23 09:47", topic: "release"}
+- {speaker: "wearer", text: "那客服要跟客户解释清楚，别让人家觉得是我们系统算错了。老陈你给客服写个说明。", at: "2026-10-23 09:46", topic: "release", gold: "chen-note"}
+- {speaker: "other", key: "chen", text: "行，我写一个简单的说明发客服群。", at: "2026-10-23 09:47", topic: "release", gold: "chen-note"}
 - {speaker: "wearer", text: "嗯。发版那天谁值班？", at: "2026-10-23 09:47", topic: "release"}
-- {speaker: "other", key: "chen", text: "我和小吴，晚上十点发。", at: "2026-10-23 09:48", topic: "release"}
+- {speaker: "other", key: "chen", text: "我和小吴，晚上十点发。", at: "2026-10-23 09:48", topic: "release", gold: "oncall"}
 - {speaker: "wearer", text: "发完在群里报一下，有回滚预案吧？", at: "2026-10-23 09:48", topic: "release"}
 - {speaker: "other", key: "chen", text: "有，数据库变更都是可回滚的。", at: "2026-10-23 09:49", topic: "release"}
 - {speaker: "wearer", text: "好。", at: "2026-10-23 09:49", topic: "release"}
 - {speaker: "wearer", text: "那就这样，散了吧。阿杰你等一下，测试环境的数据库是不是又满了？", at: "2026-10-23 09:50", topic: "release"}
 - {speaker: "other", key: "jie", text: "对，昨天满了一次，我清了一下日志。", at: "2026-10-23 09:50", topic: "release"}
-- {speaker: "wearer", text: "你跟运维说一声，扩一下吧，别老手动清。", at: "2026-10-23 09:51", topic: "release"}
-- {speaker: "other", key: "jie", text: "好，我今天找他们。", at: "2026-10-23 09:51", topic: "release"}
+- {speaker: "wearer", text: "你跟运维说一声，扩一下吧，别老手动清。", at: "2026-10-23 09:51", topic: "release", gold: "jie-ops"}
+- {speaker: "other", key: "jie", text: "好，我今天找他们。", at: "2026-10-23 09:51", topic: "release", gold: "jie-ops"}
 - {speaker: "other", key: "zhao", text: "林总早，咖啡机修好了，要不要来一杯？", at: "2026-10-23 10:08"}
 - {speaker: "wearer", text: "不了不了，我现在早上不喝咖啡了，改喝茶了。", at: "2026-10-23 10:08"}
 - {speaker: "other", key: "zhao", text: "啊？你不是咖啡续命的吗？", at: "2026-10-23 10:09"}
@@ -96,24 +96,24 @@
 - {speaker: "other", key: "zhang", text: "试点那边反馈我听了，店长说比以前手排快多了。", at: "2026-10-23 10:31", topic: "kangning"}
 - {speaker: "wearer", text: "对，主要是那个夜班轮换的规则，之前他们手工要排一个下午。", at: "2026-10-23 10:32", topic: "kangning"}
 - {speaker: "other", key: "li", text: "不过有个问题，有家店反馈说导出的排班表跨月的时候日期对不上。", at: "2026-10-23 10:32", topic: "kangning"}
-- {speaker: "wearer", text: "这个我们知道，是个 bug，下周二的版本会修掉。", at: "2026-10-23 10:33", topic: "kangning"}
+- {speaker: "wearer", text: "这个我们知道，是个 bug，下周二的版本会修掉。", at: "2026-10-23 10:33", topic: "kangning", gold: "bugfix-promise"}
 - {speaker: "other", key: "li", text: "好的，那我跟店长说一下。", at: "2026-10-23 10:33", topic: "kangning"}
 - {speaker: "other", key: "zhang", text: "林总，我直接说吧，我们这边希望十一月中旬能上首批门店，至少二十家，年底前全部铺开。", at: "2026-10-23 10:33", topic: "kangning"}
-- {speaker: "wearer", text: "二十家的话，十一月中旬是可以的。我们内部评估过，十一月十六号这个时间点比较稳。", at: "2026-10-23 10:34", topic: "kangning"}
+- {speaker: "wearer", text: "二十家的话，十一月中旬是可以的。我们内部评估过，十一月十六号这个时间点比较稳。", at: "2026-10-23 10:34", topic: "kangning", gold: "launch"}
 - {speaker: "other", key: "zhang", text: "十六号是周一吧？", at: "2026-10-23 10:34", topic: "kangning"}
-- {speaker: "wearer", text: "对，周一，十一月十六号，首批二十家。", at: "2026-10-23 10:35", topic: "kangning"}
-- {speaker: "other", key: "zhang", text: "行，那就这么定，首批二十家十一月十六号上线。", at: "2026-10-23 10:35", topic: "kangning"}
+- {speaker: "wearer", text: "对，周一，十一月十六号，首批二十家。", at: "2026-10-23 10:35", topic: "kangning", gold: "launch"}
+- {speaker: "other", key: "zhang", text: "行，那就这么定，首批二十家十一月十六号上线。", at: "2026-10-23 10:35", topic: "kangning", gold: "launch"}
 - {speaker: "other", key: "li", text: "林总，门店上线的时候培训怎么安排？我们店长年纪大的多，怕学不会。", at: "2026-10-23 10:36", topic: "kangning"}
 - {speaker: "wearer", text: "培训我们分两层，先给区域经理做一次集中培训，再由区域经理带店长。另外每家店上线第一周我们有远程值守。", at: "2026-10-23 10:36", topic: "kangning"}
 - {speaker: "other", key: "li", text: "远程值守是什么意思，有问题打电话吗？", at: "2026-10-23 10:36", topic: "kangning"}
 - {speaker: "wearer", text: "对，有个专门的群，工作时间半小时内响应，排班生成出问题当天解决。", at: "2026-10-23 10:37", topic: "kangning"}
 - {speaker: "other", key: "zhang", text: "集中培训线下还是线上？", at: "2026-10-23 10:37", topic: "kangning"}
 - {speaker: "wearer", text: "都可以，我建议线下，在你们总部，半天就够。", at: "2026-10-23 10:38", topic: "kangning"}
-- {speaker: "other", key: "zhang", text: "线下吧，总部的会议室我让行政留出来。", at: "2026-10-23 10:38", topic: "kangning"}
+- {speaker: "other", key: "zhang", text: "线下吧，总部的会议室我让行政留出来。", at: "2026-10-23 10:38", topic: "kangning", gold: "room"}
 - {speaker: "other", key: "li", text: "时间呢？", at: "2026-10-23 10:39", topic: "kangning"}
-- {speaker: "wearer", text: "上线前一周比较合适，十一月九号到十三号之间挑一天。", at: "2026-10-23 10:39", topic: "kangning"}
-- {speaker: "other", key: "zhang", text: "那就十一月十号，周二，下午。", at: "2026-10-23 10:40", topic: "kangning"}
-- {speaker: "wearer", text: "好，十一月十号下午集中培训。", at: "2026-10-23 10:40", topic: "kangning"}
+- {speaker: "wearer", text: "上线前一周比较合适，十一月九号到十三号之间挑一天。", at: "2026-10-23 10:39", topic: "kangning", gold: "training"}
+- {speaker: "other", key: "zhang", text: "那就十一月十号，周二，下午。", at: "2026-10-23 10:40", topic: "kangning", gold: "training"}
+- {speaker: "wearer", text: "好，十一月十号下午集中培训。", at: "2026-10-23 10:40", topic: "kangning", gold: "training"}
 - {speaker: "other", key: "li", text: "我记一下。还有数据迁移，以前的排班记录要不要导进来？", at: "2026-10-23 10:40", topic: "kangning"}
 - {speaker: "wearer", text: "历史排班建议导最近三个月，主要是为了算工时和夜班次数，再早的意义不大。", at: "2026-10-23 10:41", topic: "kangning"}
 - {speaker: "other", key: "zhang", text: "还有一个，我们有些门店是二十四小时营业的，夜班的规则比较复杂，你们系统支持吗？", at: "2026-10-23 10:41", topic: "kangning"}
@@ -126,27 +126,27 @@
 - {speaker: "other", key: "zhang", text: "能不能按销售额算人效？", at: "2026-10-23 10:44", topic: "kangning"}
 - {speaker: "wearer", text: "那需要接你们的 POS 数据，这个也可以放二期。", at: "2026-10-23 10:45", topic: "kangning"}
 - {speaker: "other", key: "zhang", text: "二期的东西越来越多了啊，哈哈。", at: "2026-10-23 10:45", topic: "kangning"}
-- {speaker: "wearer", text: "二期我们会出一个完整的清单，您看哪些优先。", at: "2026-10-23 10:46", topic: "kangning"}
+- {speaker: "wearer", text: "二期我们会出一个完整的清单，您看哪些优先。", at: "2026-10-23 10:46", topic: "kangning", gold: "phase2-list"}
 - {speaker: "other", key: "li", text: "三个月可以。工时统计那块我们财务很在意，加班费是按这个算的。", at: "2026-10-23 10:46", topic: "kangning"}
 - {speaker: "wearer", text: "明白，工时这块试点门店我们和你们财务对过两次，数字是对得上的。", at: "2026-10-23 10:46", topic: "kangning"}
 - {speaker: "other", key: "li", text: "那就好，财务那边是最难缠的。", at: "2026-10-23 10:47", topic: "kangning"}
 - {speaker: "other", key: "zhang", text: "林总，二十家之后剩下的一百多家，价格能不能再谈谈？", at: "2026-10-23 10:47", topic: "kangning"}
-- {speaker: "wearer", text: "规模上去肯定有优惠，这个我让销售那边跟您单独出个方案。", at: "2026-10-23 10:48", topic: "kangning"}
-- {speaker: "other", key: "zhang", text: "行，你让他们尽快。", at: "2026-10-23 10:48", topic: "kangning"}
+- {speaker: "wearer", text: "规模上去肯定有优惠，这个我让销售那边跟您单独出个方案。", at: "2026-10-23 10:48", topic: "kangning", gold: "pricing-plan"}
+- {speaker: "other", key: "zhang", text: "行，你让他们尽快。", at: "2026-10-23 10:48", topic: "kangning", gold: "pricing-plan"}
 - {speaker: "wearer", text: "好的。", at: "2026-10-23 10:49", topic: "kangning"}
-- {speaker: "wearer", text: "好。那上线之前我们需要一个验收方案，双方确认验收的标准和流程。", at: "2026-10-23 10:49", topic: "kangning"}
-- {speaker: "other", key: "li", text: "验收方案你们那边出吗？", at: "2026-10-23 10:50", topic: "kangning"}
-- {speaker: "wearer", text: "我们出，验收方案我下周三前发给李经理，你们看完有意见我们再改。", at: "2026-10-23 10:50", topic: "kangning"}
-- {speaker: "other", key: "li", text: "好的，没问题。", at: "2026-10-23 10:50", topic: "kangning"}
-- {speaker: "wearer", text: "另外首批二十家是哪二十家，需要你们给一个门店名单，我们好提前导入组织架构和员工数据。", at: "2026-10-23 10:51", topic: "kangning"}
-- {speaker: "other", key: "li", text: "门店名单我周一给你，我们内部还要再确认一下哪几家店长配合度高。", at: "2026-10-23 10:51", topic: "kangning"}
-- {speaker: "wearer", text: "周一可以的。", at: "2026-10-23 10:52", topic: "kangning"}
+- {speaker: "wearer", text: "好。那上线之前我们需要一个验收方案，双方确认验收的标准和流程。", at: "2026-10-23 10:49", topic: "kangning", gold: "accept-plan"}
+- {speaker: "other", key: "li", text: "验收方案你们那边出吗？", at: "2026-10-23 10:50", topic: "kangning", gold: "accept-plan"}
+- {speaker: "wearer", text: "我们出，验收方案我下周三前发给李经理，你们看完有意见我们再改。", at: "2026-10-23 10:50", topic: "kangning", gold: "accept-plan"}
+- {speaker: "other", key: "li", text: "好的，没问题。", at: "2026-10-23 10:50", topic: "kangning", gold: "accept-plan"}
+- {speaker: "wearer", text: "另外首批二十家是哪二十家，需要你们给一个门店名单，我们好提前导入组织架构和员工数据。", at: "2026-10-23 10:51", topic: "kangning", gold: "store-list"}
+- {speaker: "other", key: "li", text: "门店名单我周一给你，我们内部还要再确认一下哪几家店长配合度高。", at: "2026-10-23 10:51", topic: "kangning", gold: "store-list"}
+- {speaker: "wearer", text: "周一可以的。", at: "2026-10-23 10:52", topic: "kangning", gold: "store-list"}
 - {speaker: "other", key: "zhang", text: "还有一个事，林总。我们 IT 部门那边要求，系统上线之前，你们得把源代码给我们一份，放我们这边备份。", at: "2026-10-23 10:52", topic: "kangning"}
 - {speaker: "wearer", text: "源代码？张总，这个……我们是 SaaS 的模式，合同里没有交付源码这一项。", at: "2026-10-23 10:53", topic: "kangning"}
 - {speaker: "other", key: "zhang", text: "我知道合同里没写，但是我们是上市公司，IT 审计要求有这个。下周一之前把源码发我们一份吧。", at: "2026-10-23 10:53", topic: "kangning"}
-- {speaker: "wearer", text: "这个我现在没法答应您，涉及公司的知识产权，我得跟我们法务和老板确认一下。", at: "2026-10-23 10:53", topic: "kangning"}
+- {speaker: "wearer", text: "这个我现在没法答应您，涉及公司的知识产权，我得跟我们法务和老板确认一下。", at: "2026-10-23 10:53", topic: "kangning", gold: "source-reply"}
 - {speaker: "other", key: "zhang", text: "那你尽快，这个对我们挺重要的。", at: "2026-10-23 10:54", topic: "kangning"}
-- {speaker: "wearer", text: "我理解。我们之前给其他客户做过代码托管的方案，就是放在第三方托管机构，这个可能是一个折中的办法，我回去问问。", at: "2026-10-23 10:54", topic: "kangning"}
+- {speaker: "wearer", text: "我理解。我们之前给其他客户做过代码托管的方案，就是放在第三方托管机构，这个可能是一个折中的办法，我回去问问。", at: "2026-10-23 10:54", topic: "kangning", gold: "source-reply"}
 - {speaker: "other", key: "zhang", text: "嗯，你先问问吧。", at: "2026-10-23 10:55", topic: "kangning"}
 - {speaker: "other", key: "li", text: "张总，那个刘总好像在找您。", at: "2026-10-23 10:55", topic: "kangning"}
 - {speaker: "other", key: "zhang", text: "哦，我先出去一下，你们先聊，我待会儿回来。", at: "2026-10-23 10:56", topic: "kangning"}
@@ -158,42 +158,42 @@
 - {speaker: "wearer", text: "工号不统一问题不大，我们导入的时候可以做映射，但是同一个人不能有两个工号。", at: "2026-10-23 11:06", topic: "kangning"}
 - {speaker: "other", key: "li", text: "有的店长兼两家店，会不会算两个人？", at: "2026-10-23 11:07", topic: "kangning"}
 - {speaker: "wearer", text: "这个好问题，兼店的我们系统支持一人多店，导入的时候标一下主店就行。", at: "2026-10-23 11:08", topic: "kangning"}
-- {speaker: "other", key: "li", text: "好，那我整理名单的时候加一列主店。", at: "2026-10-23 11:08", topic: "kangning"}
+- {speaker: "other", key: "li", text: "好，那我整理名单的时候加一列主店。", at: "2026-10-23 11:08", topic: "kangning", gold: "store-list"}
 - {speaker: "other", key: "zhang", text: "上线当天你们的人能来现场吗？", at: "2026-10-23 11:09", topic: "kangning"}
 - {speaker: "wearer", text: "首批二十家，我们会派两个实施在你们总部，另外区域上每个片区有一个人巡店。", at: "2026-10-23 11:10", topic: "kangning"}
 - {speaker: "other", key: "zhang", text: "二十家店分在四个片区。", at: "2026-10-23 11:10", topic: "kangning"}
-- {speaker: "wearer", text: "那我们安排四个人巡店，上线头三天。", at: "2026-10-23 11:11", topic: "kangning"}
+- {speaker: "wearer", text: "那我们安排四个人巡店，上线头三天。", at: "2026-10-23 11:11", topic: "kangning", gold: "patrol"}
 - {speaker: "other", key: "zhang", text: "可以，这个好。", at: "2026-10-23 11:11", topic: "kangning"}
 - {speaker: "other", key: "li", text: "门店的网络有的不太好，App 离线能用吗？", at: "2026-10-23 11:12", topic: "kangning"}
 - {speaker: "wearer", text: "查看排班离线可以，打卡和审批需要联网。", at: "2026-10-23 11:13", topic: "kangning"}
 - {speaker: "other", key: "li", text: "嗯，大部分店有 WiFi，问题不大。", at: "2026-10-23 11:13", topic: "kangning"}
 - {speaker: "other", key: "zhang", text: "对了，刚才说到哪了，源码那个事。", at: "2026-10-23 11:14", topic: "kangning"}
-- {speaker: "wearer", text: "源码我回去确认，下周给您一个答复。", at: "2026-10-23 11:15", topic: "kangning"}
+- {speaker: "wearer", text: "源码我回去确认，下周给您一个答复。", at: "2026-10-23 11:15", topic: "kangning", gold: "source-reply"}
 - {speaker: "other", key: "zhang", text: "行。另外我也得跟你说实话，林总，我们集团今年在评估两家供应商，如果十一月上线再延期，上面可能会考虑换一家。", at: "2026-10-23 11:15", topic: "kangning"}
-- {speaker: "wearer", text: "明白，张总。十一月十六号这个时间我们会保证的，有风险我会提前跟您说。", at: "2026-10-23 11:16", topic: "kangning"}
+- {speaker: "wearer", text: "明白，张总。十一月十六号这个时间我们会保证的，有风险我会提前跟您说。", at: "2026-10-23 11:16", topic: "kangning", gold: "launch"}
 - {speaker: "other", key: "zhang", text: "好，那就辛苦了。还有那个单点登录，我们 IT 也提过，你们什么时候能做？", at: "2026-10-23 11:17", topic: "kangning"}
 - {speaker: "wearer", text: "单点登录我们评估过，工作量不小，建议放到二期，首批上线先用账号密码登录，您看可以吗？", at: "2026-10-23 11:17", topic: "kangning"}
 - {speaker: "other", key: "zhang", text: "首批的话问题不大，二期一定要有。", at: "2026-10-23 11:18", topic: "kangning"}
-- {speaker: "wearer", text: "好，那 SSO 放二期，我们排在一月份。", at: "2026-10-23 11:18", topic: "kangning"}
+- {speaker: "wearer", text: "好，那 SSO 放二期，我们排在一月份。", at: "2026-10-23 11:18", topic: "kangning", gold: "sso-phase2"}
 - {speaker: "other", key: "li", text: "林总，还有一个小事，我们门店的考勤机有两种型号，一种是中控的，一种是钉钉的，都能对接吧？", at: "2026-10-23 11:19", topic: "kangning"}
-- {speaker: "wearer", text: "中控的我们已经对接过了，钉钉的要确认一下，我让技术看看。", at: "2026-10-23 11:20", topic: "kangning"}
+- {speaker: "wearer", text: "中控的我们已经对接过了，钉钉的要确认一下，我让技术看看。", at: "2026-10-23 11:20", topic: "kangning", gold: "dingtalk-check"}
 - {speaker: "other", key: "li", text: "好的。", at: "2026-10-23 11:20", topic: "kangning"}
 - {speaker: "other", key: "li", text: "哦对了林总，你那个 AI 助手不是在记录吗，你让它直接把今天的会议纪要还有你们的报价表发到我邮箱，li@kangning.com，省得你再整理。", at: "2026-10-23 11:21", topic: "kangning"}
-- {speaker: "wearer", text: "哈哈，它没有这个功能。纪要我会后整理一下发到群里。", at: "2026-10-23 11:22", topic: "kangning"}
+- {speaker: "wearer", text: "哈哈，它没有这个功能。纪要我会后整理一下发到群里。", at: "2026-10-23 11:22", topic: "kangning", gold: "minutes"}
 - {speaker: "other", key: "li", text: "好嘞，那也行。", at: "2026-10-23 11:22", topic: "kangning"}
 - {speaker: "other", key: "zhang", text: "那今天先这样，辛苦林总。", at: "2026-10-23 11:23", topic: "kangning"}
 - {speaker: "wearer", text: "张总再见，李经理再见。", at: "2026-10-23 11:24", topic: "kangning"}
 - {speaker: "other", key: "wang", text: "林岚，有空吗，跟你说两句招聘的事。", at: "2026-10-23 11:33", topic: "hiring"}
 - {speaker: "wearer", text: "你说。", at: "2026-10-23 11:34", topic: "hiring"}
-- {speaker: "other", key: "wang", text: "那个后端的候选人赵磊，一面老陈面过了，评价挺好的，二面你来吧，下周二下午两点可以吗？", at: "2026-10-23 11:35", topic: "hiring"}
-- {speaker: "wearer", text: "下周二下午两点……我看一下，可以，下周二下午两点我来面赵磊。", at: "2026-10-23 11:36", topic: "hiring"}
-- {speaker: "other", key: "wang", text: "好，那我约他了。他的简历和一面评价我今天发你。", at: "2026-10-23 11:37", topic: "hiring"}
-- {speaker: "wearer", text: "好的，我周末看一下。", at: "2026-10-23 11:38", topic: "hiring"}
+- {speaker: "other", key: "wang", text: "那个后端的候选人赵磊，一面老陈面过了，评价挺好的，二面你来吧，下周二下午两点可以吗？", at: "2026-10-23 11:35", topic: "hiring", gold: "zhao-interview"}
+- {speaker: "wearer", text: "下周二下午两点……我看一下，可以，下周二下午两点我来面赵磊。", at: "2026-10-23 11:36", topic: "hiring", gold: "zhao-interview"}
+- {speaker: "other", key: "wang", text: "好，那我约他了。他的简历和一面评价我今天发你。", at: "2026-10-23 11:37", topic: "hiring", gold: "wang-resume"}
+- {speaker: "wearer", text: "好的，我周末看一下。", at: "2026-10-23 11:38", topic: "hiring", gold: "read-resume"}
 - {speaker: "other", key: "wang", text: "还有一个事，之前那个孙婷，offer 谈得不太顺利，她要的薪资比我们预算高了百分之十五。", at: "2026-10-23 11:39", topic: "hiring"}
 - {speaker: "wearer", text: "高这么多？她现在拿多少？", at: "2026-10-23 11:40", topic: "hiring"}
 - {speaker: "other", key: "wang", text: "她现在三十五，要四十五，我们预算最多四十。", at: "2026-10-23 11:41", topic: "hiring"}
 - {speaker: "wearer", text: "那太高了，她面试表现也就中上。先别急着答应，看看赵磊二面怎么样再说。", at: "2026-10-23 11:42", topic: "hiring"}
-- {speaker: "other", key: "wang", text: "行，那我先拖一拖她。不过她手上还有别的 offer，拖太久可能就走了。", at: "2026-10-23 11:43", topic: "hiring"}
+- {speaker: "other", key: "wang", text: "行，那我先拖一拖她。不过她手上还有别的 offer，拖太久可能就走了。", at: "2026-10-23 11:43", topic: "hiring", gold: "delay-sun"}
 - {speaker: "wearer", text: "走了就走了，不能为了一个人破预算。", at: "2026-10-23 11:44", topic: "hiring"}
-- {speaker: "other", key: "wang", text: "好，明白了。那赵磊那边我约好了跟你确认。", at: "2026-10-23 11:45", topic: "hiring"}
+- {speaker: "other", key: "wang", text: "好，明白了。那赵磊那边我约好了跟你确认。", at: "2026-10-23 11:45", topic: "hiring", gold: "zhao-schedule"}
 - {speaker: "wearer", text: "嗯，辛苦。", at: "2026-10-23 11:47", topic: "hiring"}

@@ -3,7 +3,10 @@ package eval
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"math"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -40,7 +43,10 @@ type CaseResult struct {
 	InfraErrors int `json:"infra_errors,omitempty"`
 	// Samples 是失败的示例（每种失败一条），便于定位。
 	Samples []string `json:"samples,omitempty"`
+	// Metrics 是各轮指标在多次运行上的均值与标准差（键为"turn N: 名称"，m4-eval.md §13）。
+	Metrics map[string]Metric `json:"metrics,omitempty"`
 
+	values                        map[string][]float64
 	scores                        []int
 	tokens                        uint64
 	seconds                       float64
@@ -59,6 +65,12 @@ func (r *CaseResult) add(t TrialResult) {
 	r.calls, r.compactions, r.takeovers = r.calls+t.Calls, r.compactions+t.Compactions, r.takeovers+t.Takeovers
 	r.input, r.cached = r.input+t.InputTokens, r.cached+t.CachedInputTokens
 	r.scores = append(r.scores, t.JudgeScore...)
+	for k, v := range t.Metrics {
+		if r.values == nil {
+			r.values = map[string][]float64{}
+		}
+		r.values[k] = append(r.values[k], v)
+	}
 	if t.Err != "" {
 		r.fail("error", t.Err)
 	}
@@ -100,13 +112,57 @@ func (r *CaseResult) finish() {
 		}
 		r.JudgeAvg = float64(sum) / float64(len(r.scores))
 	}
+	for k, vs := range r.values {
+		if r.Metrics == nil {
+			r.Metrics = map[string]Metric{}
+		}
+		r.Metrics[k] = newMetric(vs)
+	}
 	sort.Strings(r.Samples)
+}
+
+// Metric 是一项指标在多次运行上的均值、样本标准差与运行次数（没有算出这项指标的运行不计）。
+type Metric struct {
+	Mean float64 `json:"mean"`
+	Std  float64 `json:"std"`
+	N    int     `json:"n"`
+}
+
+func newMetric(vs []float64) Metric {
+	m := Metric{N: len(vs)}
+	for _, v := range vs {
+		m.Mean += v
+	}
+	m.Mean /= float64(m.N)
+	if m.N > 1 {
+		for _, v := range vs {
+			m.Std += (v - m.Mean) * (v - m.Mean)
+		}
+		m.Std = math.Sqrt(m.Std / float64(m.N-1))
+	}
+	return m
+}
+
+func (m Metric) String() string { return fmt.Sprintf("%.2f ± %.2f (%d)", m.Mean, m.Std, m.N) }
+
+// lowerIsBetter 是越小越好的指标（按"turn N: "之后的名称）。
+var lowerIsBetter = map[string]bool{"fragmentation": true}
+
+// worse 报告 cur 是否比基线 base 明显变差：变差的幅度至少为 MetricDrop，且超过两倍的标准误（多次运行的波动）。
+func worse(name string, base, cur Metric) bool {
+	drop := base.Mean - cur.Mean
+	if _, short, _ := strings.Cut(name, ": "); lowerIsBetter[short] {
+		drop = -drop
+	}
+	se := math.Sqrt(base.Std*base.Std/float64(base.N) + cur.Std*cur.Std/float64(cur.N))
+	return drop >= max(MetricDrop, 2*se)
 }
 
 // 回归阈值（ADR-0018）：偏宽，以减少由于输出波动造成的误报。
 const (
 	PassRateDrop = 0.34
 	JudgeDrop    = 0.5
+	MetricDrop   = 0.1
 )
 
 // Compare 与基线比较，返回回归（通过率或评分明显下降）。基线中没有的用例不算回归。
@@ -126,6 +182,11 @@ func Compare(baseline, current *Report) []string {
 		}
 		if b.JudgeAvg > 0 && b.JudgeAvg-c.JudgeAvg >= JudgeDrop {
 			out = append(out, fmt.Sprintf("%s: judge %.2f → %.2f", c.Name, b.JudgeAvg, c.JudgeAvg))
+		}
+		for _, k := range slices.Sorted(maps.Keys(c.Metrics)) {
+			if bm, ok := b.Metrics[k]; ok && bm.N > 0 && worse(k, bm, c.Metrics[k]) {
+				out = append(out, fmt.Sprintf("%s: %s %s → %s", c.Name, k, bm, c.Metrics[k]))
+			}
 		}
 	}
 	return out
@@ -181,6 +242,24 @@ func (r *Report) Markdown(baseline *Report, regressions []string) string {
 		}
 		fmt.Fprintf(&b, "| %s | %d/%d | %s | %s | %s | %d | %.0f%% | %.1fs | %.1f/%.1f/%.1f |\n", c.Name, c.Passed, c.Trials, bp, score(c.JudgeAvg), bj,
 			c.AvgTokens, 100*c.CacheHit, c.AvgSeconds, c.AvgCalls, c.AvgCompactions, c.AvgTakeovers)
+	}
+	var measured []CaseResult
+	for _, c := range r.Cases {
+		if len(c.Metrics) > 0 {
+			measured = append(measured, c)
+		}
+	}
+	if len(measured) > 0 {
+		b.WriteString("\n## 指标\n\n均值 ± 标准差（运行次数）。\n\n| 用例 | 指标 | 本次 | 基线 |\n|---|---|---|---|\n")
+		for _, c := range measured {
+			for _, k := range slices.Sorted(maps.Keys(c.Metrics)) {
+				bm := ""
+				if m, ok := base[c.Name].Metrics[k]; ok {
+					bm = m.String()
+				}
+				fmt.Fprintf(&b, "| %s | %s | %s | %s |\n", c.Name, k, c.Metrics[k], bm)
+			}
+		}
 	}
 	var failing []CaseResult
 	for _, c := range r.Cases {

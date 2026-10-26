@@ -1,0 +1,25 @@
+# capture-multiday 的旁听，2026-10-13：佩戴者方晴是连锁餐饮禾苗食堂的区域运营经理。每段带主题（family 家事、binjiang 滨江店开业、menu 冬季新菜单、safety 城西店食安整改、delivery 滨江店外卖入驻、hiring 服务员招聘；闲聊不标），gold 是金标承诺（gold.yaml），asr、heard、heard_key 是识别有误的版本（带噪声的用例提交它们）。由剧本生成，段内的行在起止时刻之间均匀分布。
+- {speaker: "other", key: "song", text: "小方，成本表能不能周三就给我？周四我要去总部开会，想带过去。", at: "2026-10-13 13:30", topic: "menu", gold: "cost-sheet"}
+- {speaker: "wearer", text: "周三有点紧，用量数据今天才到……行，我周三下班前给您。", at: "2026-10-13 13:32", topic: "menu", gold: "cost-sheet"}
+- {speaker: "other", key: "song", text: "好，辛苦。另外滨江店开业那天总部要来人，你安排一下接待。", at: "2026-10-13 13:35", topic: "menu"}
+- {speaker: "wearer", text: "好，接待我来安排，大概来几个人？", at: "2026-10-13 13:38", topic: "menu", gold: "reception"}
+- {speaker: "other", key: "song", text: "四五个吧，董事长可能也来。", at: "2026-10-13 13:41", topic: "menu", asr: "四五个吧懂事长可能也来"}
+- {speaker: "wearer", text: "那我准备一个接待方案。", at: "2026-10-13 13:44", topic: "menu", gold: "reception"}
+- {speaker: "other", key: "song", text: "好。", at: "2026-10-13 13:47", topic: "menu"}
+- {speaker: "other", key: "c", text: "喂，妈，我在上班呢。", at: "2026-10-13 14:20"}
+- {speaker: "other", key: "c", text: "嗯，周末我回去看你，给你带点水果。", at: "2026-10-13 14:22", heard: "wearer"}
+- {speaker: "other", key: "c", text: "你别老一个人去菜市场，路上滑。", at: "2026-10-13 14:24"}
+- {speaker: "other", key: "c", text: "好了好了，我先挂了。", at: "2026-10-13 14:26"}
+- {speaker: "other", key: "liu", text: "方经理，分色砧板到了，今天下午就全换了，旧的都扔了。", at: "2026-10-13 15:00", topic: "safety", gold: "boards", asr: "方经理，分色真板到了，今天下午就全换了，旧的都扔了。"}
+- {speaker: "wearer", text: "好，动作挺快。整改清单你对了吗？", at: "2026-10-13 15:02", topic: "safety"}
+- {speaker: "other", key: "liu", text: "对了，还剩两条，墙面瓷砖的裂缝和下水道的防鼠网。", at: "2026-10-13 15:04", topic: "safety", asr: "对了，还剩两条，墙面瓷砖的裂缝和下水道的防鼠王。"}
+- {speaker: "wearer", text: "防鼠网好办，瓷砖要找人补。", at: "2026-10-13 15:06", topic: "safety", asr: "防鼠王好办，瓷砖要找人补。"}
+- {speaker: "other", key: "liu", text: "我已经约了师傅周四来补。", at: "2026-10-13 15:09", topic: "safety", gold: "tile-fix"}
+- {speaker: "wearer", text: "好。复查那天你得在，我周五先来预检，下周三复查我也到场。", at: "2026-10-13 15:11", topic: "safety", gold: "safety-precheck attend-recheck"}
+- {speaker: "other", key: "liu", text: "那太好了，有你在我心里有底。", at: "2026-10-13 15:13", topic: "safety"}
+- {speaker: "wearer", text: "预检要是发现问题，周末加个班也得改完。", at: "2026-10-13 15:15", topic: "safety"}
+- {speaker: "other", key: "liu", text: "明白。", at: "2026-10-13 15:18", topic: "safety"}
+- {speaker: "other", key: "min", text: "方姐，周四的面试我约好了，下午两点和三点，一个叫周婷，一个叫何亮。", at: "2026-10-13 16:00", topic: "hiring", gold: "interviews min-schedule"}
+- {speaker: "wearer", text: "好，我记一下，两点和三点。", at: "2026-10-13 16:02", topic: "hiring", gold: "interviews"}
+- {speaker: "other", key: "min", text: "简历我发你了。", at: "2026-10-13 16:05", topic: "hiring"}
+- {speaker: "wearer", text: "收到，我晚上看。", at: "2026-10-13 16:08", topic: "hiring", gold: "read-cv"}

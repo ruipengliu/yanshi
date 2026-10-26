@@ -1,0 +1,65 @@
+# capture-multiday 的旁听，2026-10-14：佩戴者方晴是连锁餐饮禾苗食堂的区域运营经理。每段带主题（family 家事、binjiang 滨江店开业、menu 冬季新菜单、safety 城西店食安整改、delivery 滨江店外卖入驻、hiring 服务员招聘；闲聊不标），gold 是金标承诺（gold.yaml），asr、heard、heard_key 是识别有误的版本（带噪声的用例提交它们）。由剧本生成，段内的行在起止时刻之间均匀分布。
+- {speaker: "other", key: "kai", text: "今天家长会你别忘了，下午四点。", at: "2026-10-14 08:30", topic: "family", gold: "ptm"}
+- {speaker: "wearer", text: "记着呢，我三点半从公司走。", at: "2026-10-14 08:32", topic: "family"}
+- {speaker: "other", key: "kai", text: "老师说要家长填一个表，你看着填。", at: "2026-10-14 08:34", topic: "family"}
+- {speaker: "wearer", text: "好。", at: "2026-10-14 08:36", topic: "family"}
+- {speaker: "wearer", text: "宋总，成本表的数据还差两道菜的，我明天上午给您行吗？", at: "2026-10-14 09:30", topic: "menu", gold: "cost-sheet"}
+- {speaker: "other", key: "song", text: "我明天上午十点的高铁，开会前要看到。", at: "2026-10-14 09:32", topic: "menu"}
+- {speaker: "wearer", text: "那我明天上午九点前发您邮箱。", at: "2026-10-14 09:34", topic: "menu", gold: "cost-sheet"}
+- {speaker: "other", key: "song", text: "行，明天九点前。", at: "2026-10-14 09:37", topic: "menu", gold: "cost-sheet"}
+- {speaker: "other", key: "song", text: "还有，团建聚餐取消吧，周五区域经理都要去总部开会，人凑不齐。", at: "2026-10-14 09:39", topic: "menu", gold: "dinner-booking"}
+- {speaker: "wearer", text: "好，那我把订位退了。", at: "2026-10-14 09:42", topic: "menu", gold: "cancel-booking"}
+- {speaker: "other", key: "song", text: "嗯。酸菜鱼的毛利算出来了吗？", at: "2026-10-14 09:44", topic: "menu"}
+- {speaker: "wearer", text: "算了，百分之五十八，差一点，我想把鱼片的克数减十克。", at: "2026-10-14 09:47", topic: "menu", asr: "算了百分之五十八差一点我想把鱼片的克数减十克"}
+- {speaker: "other", key: "song", text: "减可以，别让客人觉得少。", at: "2026-10-14 09:49", topic: "menu"}
+- {speaker: "wearer", text: "我让马师傅把配菜加一点。", at: "2026-10-14 09:52", topic: "menu", gold: "ma-sides"}
+- {speaker: "other", key: "d", text: "你周日能替我一下吗？我家里有事。", at: "2026-10-14 10:05"}
+- {speaker: "other", key: "e", text: "周日啊……行吧，我答应他周日替班了，你也欠我一个。", at: "2026-10-14 10:07"}
+- {speaker: "other", key: "d", text: "好好好，下次你有事找我。", at: "2026-10-14 10:09"}
+- {speaker: "other", key: "e", text: "记住啊。", at: "2026-10-14 10:12"}
+- {speaker: "other", key: "tang", text: "方经理，营业执照副本收到了，谢谢。", at: "2026-10-14 10:30", topic: "delivery", gold: "send-license"}
+- {speaker: "wearer", text: "好，那上线是三个工作日吧？", at: "2026-10-14 10:34", topic: "delivery", gold: "tang-online"}
+- {speaker: "other", key: "tang", text: "对。不过头图初稿可能要下周一了，设计那边排期满了，不好意思。", at: "2026-10-14 10:38", topic: "delivery", gold: "banner"}
+- {speaker: "wearer", text: "下周一也行，别晚于下周一，开业前要定稿。", at: "2026-10-14 10:42", topic: "delivery", gold: "banner"}
+- {speaker: "other", key: "tang", text: "好的，下周一一定给您。", at: "2026-10-14 10:46", topic: "delivery", gold: "banner"}
+- {speaker: "other", key: "min", text: "方姐，招聘信息三个平台都发了，已经收到七份简历了。", at: "2026-10-14 11:30", topic: "hiring", gold: "post-jobs"}
+- {speaker: "wearer", text: "不错，滨江的优先筛。", at: "2026-10-14 11:33", topic: "hiring"}
+- {speaker: "other", key: "min", text: "好的。", at: "2026-10-14 11:36", topic: "hiring"}
+- {speaker: "other", key: "xia", text: "方姐，听说宋总说他下周批你们区域的预算。", at: "2026-10-14 12:10", gold: "reported-budget"}
+- {speaker: "wearer", text: "谁说的？", at: "2026-10-14 12:12"}
+- {speaker: "other", key: "xia", text: "他秘书说的，下周批完就能招人了。", at: "2026-10-14 12:14"}
+- {speaker: "wearer", text: "那最好，滨江等着用人。", at: "2026-10-14 12:16"}
+- {speaker: "other", key: "xia", text: "方姐你今天怎么这么早吃饭？", at: "2026-10-14 12:18"}
+- {speaker: "wearer", text: "下午要去滨江店，然后还要去开家长会。", at: "2026-10-14 12:20", heard: "other", heard_key: "xia"}
+- {speaker: "other", key: "xia", text: "好忙啊。", at: "2026-10-14 12:22"}
+- {speaker: "wearer", text: "小林，我到了。", at: "2026-10-14 14:00", topic: "binjiang", gold: "visit-binjiang"}
+- {speaker: "other", key: "lin", text: "方姐，你看这边，后厨的设备基本都进场了。", at: "2026-10-14 14:02", topic: "binjiang"}
+- {speaker: "wearer", text: "压缩机还是下周一到？", at: "2026-10-14 14:05", topic: "binjiang", gold: "compressor"}
+- {speaker: "other", key: "lin", text: "赵工早上来电话，说压缩机改到下周二了，厂家那边又拖了一天。", at: "2026-10-14 14:07", topic: "binjiang", gold: "compressor"}
+- {speaker: "wearer", text: "下周二就下周二，冷库调试抓紧。", at: "2026-10-14 14:10", topic: "binjiang", gold: "compressor"}
+- {speaker: "other", key: "lin", text: "招牌明天装，师傅已经约好了。", at: "2026-10-14 14:13", topic: "binjiang", gold: "sign-board"}
+- {speaker: "wearer", text: "好。周六设备整体验收，我过来盯。", at: "2026-10-14 14:15", topic: "binjiang", gold: "inspect-sat"}
+- {speaker: "other", key: "lin", text: "好的，周六上午十点。", at: "2026-10-14 14:18", topic: "binjiang"}
+- {speaker: "wearer", text: "排班表做得怎么样了？", at: "2026-10-14 14:21", topic: "binjiang"}
+- {speaker: "other", key: "lin", text: "排班表周一给你，放心，就差新人的名字。", at: "2026-10-14 14:23", topic: "binjiang", gold: "roster"}
+- {speaker: "wearer", text: "新人这周在面了，周四我面两个。", at: "2026-10-14 14:26", topic: "binjiang"}
+- {speaker: "other", key: "lin", text: "那太好了。", at: "2026-10-14 14:28", topic: "binjiang"}
+- {speaker: "wearer", text: "开业的物料清单你列一下，下次我来带走。", at: "2026-10-14 14:31", topic: "binjiang"}
+- {speaker: "other", key: "lin", text: "好，我列好带给你。", at: "2026-10-14 14:34", topic: "binjiang", gold: "bring-docs"}
+- {speaker: "wearer", text: "后厨的地面防滑做了吗？", at: "2026-10-14 14:36", topic: "binjiang", asr: "后厨的地面防华做了吗"}
+- {speaker: "other", key: "lin", text: "做了，防滑垫都铺了。", at: "2026-10-14 14:39", topic: "binjiang"}
+- {speaker: "wearer", text: "好，我拍几张照片回去给宋总看。", at: "2026-10-14 14:42", topic: "binjiang", gold: "photos"}
+- {speaker: "other", key: "t", text: "乐乐妈妈您好，我是乐乐的班主任王老师。", at: "2026-10-14 16:00", topic: "family", gold: "ptm"}
+- {speaker: "wearer", text: "王老师好。", at: "2026-10-14 16:02", topic: "family"}
+- {speaker: "other", key: "t", text: "乐乐最近数学进步挺大，就是上课有点爱说话。", at: "2026-10-14 16:05", topic: "family", asr: "乐乐最近数学进步挺大就是上课有点爱说话"}
+- {speaker: "wearer", text: "我回去说说他。", at: "2026-10-14 16:08", topic: "family", gold: "talk-son"}
+- {speaker: "other", key: "t", text: "另外下周三秋游，回执要家长签字，下周三之前交给我。", at: "2026-10-14 16:10", topic: "family"}
+- {speaker: "wearer", text: "好，我下周一就交。", at: "2026-10-14 16:13", topic: "family", gold: "field-trip-form"}
+- {speaker: "other", key: "t", text: "秋游要带午饭，学校不统一订。", at: "2026-10-14 16:16", topic: "family"}
+- {speaker: "wearer", text: "明白。", at: "2026-10-14 16:18", topic: "family"}
+- {speaker: "other", key: "t", text: "还有就是乐乐的作业字有点潦草，在家多练练。", at: "2026-10-14 16:21", topic: "family"}
+- {speaker: "wearer", text: "好的，谢谢王老师。", at: "2026-10-14 16:24", topic: "family"}
+- {speaker: "wearer", text: "喂，家长会开完了，老师说乐乐数学进步了。", at: "2026-10-14 17:10", topic: "family", gold: "ptm"}
+- {speaker: "other", key: "kai", text: "是吗，那挺好。周六我妈来，你去接还是我去？", at: "2026-10-14 17:12", topic: "family"}
+- {speaker: "wearer", text: "我去接，你不是加班吗。", at: "2026-10-14 17:14", topic: "family", gold: "pick-mom"}
+- {speaker: "other", key: "kai", text: "好。车次我回头发你。", at: "2026-10-14 17:16", topic: "family", gold: "kai-train"}

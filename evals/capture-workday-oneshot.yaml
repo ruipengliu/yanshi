@@ -8,6 +8,8 @@ description: >-
   承诺、佩戴者更新偏好（咖啡改喝茶）与重复的偏好（香菜）、佩戴者本人与他人（母亲）的健康信息。
 agent: xinli-day
 timeout: 40m
+# 金标指标见 m4-eval.md §13：只记录，不判定（尚无基线）。
+gold: data/workday/gold.yaml
 context: {window: 24000, keep_recent: 6000, max_tool_result: 6000}
 setup:
   memories:
@@ -37,6 +39,7 @@ turns:
         - {contains: 血压}
         - {contains: 百分之二十}
       xinli:
+        gold: {}
         exchanges: {min: 12, max: 24}
         in_project:
           P-0001: {min: 3}

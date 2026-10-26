@@ -1,5 +1,5 @@
 {
-  "started_at": "2026-10-26T06:55:23.155522Z",
+  "started_at": "2026-10-26T08:42:17.282976Z",
   "judge": "codex/gpt-6.1-sol:high",
   "cases": [
     {
@@ -376,6 +376,409 @@
       "cache_hit": 0.6772874539157636
     },
     {
+      "name": "capture-multiday",
+      "trials": 3,
+      "passed": 0,
+      "pass_rate": 0,
+      "judge_avg": 2,
+      "avg_tokens": 1880336,
+      "avg_seconds": 817.0387067360001,
+      "avg_calls": 137.66666666666666,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.5872892829619013,
+      "failures": {
+        "turn 4: xinli_edit compressor": 3,
+        "turn 6: judge": 3,
+        "turn 7: judge": 3
+      },
+      "samples": [
+        "turn 4: xinli_edit compressor — no open commitment in the ledger matches it",
+        "turn 6: judge — score 2: 虽列出五项应办承诺，但把已完成的家长会及多项他人负责的事项列入，且漏掉秋游回执和复查到场，符合错列两项以上的2分标准。",
+        "turn 7: judge — score 2: 虽然列出了四个阶段，但将提前期限、再次延期和实际发出的日期分别错记为10月12日、10月13日和10月13日，与事实时间线不符。"
+      ],
+      "metrics": {
+        "turn 1: commitment_precision": {
+          "mean": 0.9791666666666666,
+          "std": 0.03608439182435161,
+          "n": 3
+        },
+        "turn 1: commitment_recall": {
+          "mean": 0.8541666666666666,
+          "std": 0.09547032697824667,
+          "n": 3
+        },
+        "turn 1: due_accuracy": {
+          "mean": 0.9629629629629629,
+          "std": 0.06415002990995845,
+          "n": 3
+        },
+        "turn 1: reminder_precision": {
+          "mean": 1,
+          "std": 0,
+          "n": 3
+        },
+        "turn 1: reminder_recall": {
+          "mean": 0.7948717948717948,
+          "std": 0.16012815380508713,
+          "n": 3
+        },
+        "turn 1: revision_accuracy": {
+          "mean": 1,
+          "std": 0,
+          "n": 3
+        },
+        "turn 2: commitment_precision": {
+          "mean": 0.9628482972136223,
+          "std": 0.03232293036814413,
+          "n": 3
+        },
+        "turn 2: commitment_recall": {
+          "mean": 0.8421052631578947,
+          "std": 0.05263157894736842,
+          "n": 3
+        },
+        "turn 2: due_accuracy": {
+          "mean": 0.9393939393939394,
+          "std": 0.05248638810814781,
+          "n": 3
+        },
+        "turn 2: reminder_precision": {
+          "mean": 0.8992673992673993,
+          "std": 0.11814251591846253,
+          "n": 3
+        },
+        "turn 2: reminder_recall": {
+          "mean": 0.7857142857142857,
+          "std": 0.12371791482634838,
+          "n": 3
+        },
+        "turn 2: revision_accuracy": {
+          "mean": 0.75,
+          "std": 0.4330127018922193,
+          "n": 3
+        },
+        "turn 2: revision_in_place": {
+          "mean": 1,
+          "std": 0,
+          "n": 2
+        },
+        "turn 3: commitment_precision": {
+          "mean": 0.9523809523809522,
+          "std": 0.047619047619047616,
+          "n": 3
+        },
+        "turn 3: commitment_recall": {
+          "mean": 0.8571428571428572,
+          "std": 0.047619047619047616,
+          "n": 3
+        },
+        "turn 3: due_accuracy": {
+          "mean": 0.9696969696969697,
+          "std": 0.05248638810814781,
+          "n": 3
+        },
+        "turn 3: reminder_precision": {
+          "mean": 0.9220779220779222,
+          "std": 0.0723086280887016,
+          "n": 3
+        },
+        "turn 3: reminder_recall": {
+          "mean": 0.8095238095238094,
+          "std": 0.08247860988423221,
+          "n": 3
+        },
+        "turn 3: revision_accuracy": {
+          "mean": 0.8666666666666667,
+          "std": 0.11547005383792512,
+          "n": 3
+        },
+        "turn 3: revision_in_place": {
+          "mean": 1,
+          "std": 0,
+          "n": 3
+        },
+        "turn 4: commitment_precision": {
+          "mean": 0.8988603988603989,
+          "std": 0.02108069599280453,
+          "n": 3
+        },
+        "turn 4: commitment_recall": {
+          "mean": 0.8550724637681159,
+          "std": 0.025102185616940234,
+          "n": 3
+        },
+        "turn 4: due_accuracy": {
+          "mean": 1,
+          "std": 0,
+          "n": 3
+        },
+        "turn 4: reminder_precision": {
+          "mean": 0.6672771672771672,
+          "std": 0.024730926862672854,
+          "n": 3
+        },
+        "turn 4: reminder_recall": {
+          "mean": 0.787878787878788,
+          "std": 0.05248638810814781,
+          "n": 3
+        },
+        "turn 4: revision_accuracy": {
+          "mean": 0.8906371406371406,
+          "std": 0.03870943866523104,
+          "n": 3
+        },
+        "turn 4: revision_in_place": {
+          "mean": 0.6666666666666666,
+          "std": 0.28867513459481287,
+          "n": 3
+        },
+        "turn 5: commitment_precision": {
+          "mean": 0.9159335288367546,
+          "std": 0.017183182630739913,
+          "n": 3
+        },
+        "turn 5: commitment_recall": {
+          "mean": 0.8888888888888888,
+          "std": 0,
+          "n": 3
+        },
+        "turn 5: due_accuracy": {
+          "mean": 1,
+          "std": 0,
+          "n": 3
+        },
+        "turn 5: fragmentation": {
+          "mean": 2.4444444444444446,
+          "std": 0.09622504486493755,
+          "n": 3
+        },
+        "turn 5: purity": {
+          "mean": 0.7048688131567745,
+          "std": 0.031185051454585028,
+          "n": 3
+        },
+        "turn 5: reminder_precision": {
+          "mean": 0.7564102564102564,
+          "std": 0.03740032574480244,
+          "n": 3
+        },
+        "turn 5: reminder_recall": {
+          "mean": 0.8611111111111112,
+          "std": 0.048112522432468774,
+          "n": 3
+        },
+        "turn 5: revision_accuracy": {
+          "mean": 0.8857142857142857,
+          "std": 0.041513323271815956,
+          "n": 3
+        },
+        "turn 5: revision_in_place": {
+          "mean": 0.3333333333333333,
+          "std": 0.5773502691896258,
+          "n": 3
+        }
+      }
+    },
+    {
+      "name": "capture-multiday-noisy",
+      "trials": 3,
+      "passed": 0,
+      "pass_rate": 0,
+      "judge_avg": 2.5,
+      "avg_tokens": 1964550,
+      "avg_seconds": 1204.7996732499998,
+      "avg_calls": 138.66666666666666,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.5592432221477845,
+      "failures": {
+        "turn 6: judge": 3,
+        "turn 7: judge": 2
+      },
+      "samples": [
+        "turn 6: judge — score 2: 列出了四项未完成承诺，但错列滨江店预检、取消团建后的退订等事项，并遗漏接婆婆、交秋游回执和城西店复查到场，且多处期限有误。",
+        "turn 7: judge — score 2: 虽提到周四前、周三下班前、周四早九点前及已发送，但把周三延至周四误说成再次提前，并混淆了提出要求的人物和改期原因。"
+      ],
+      "metrics": {
+        "turn 1: commitment_precision": {
+          "mean": 0.9317460317460317,
+          "std": 0.06672333192693237,
+          "n": 3
+        },
+        "turn 1: commitment_recall": {
+          "mean": 0.9111111111111111,
+          "std": 0.07698003589195009,
+          "n": 3
+        },
+        "turn 1: due_accuracy": {
+          "mean": 1,
+          "std": 0,
+          "n": 3
+        },
+        "turn 1: reminder_precision": {
+          "mean": 0.9419191919191919,
+          "std": 0.05044187968544996,
+          "n": 3
+        },
+        "turn 1: reminder_recall": {
+          "mean": 0.888888888888889,
+          "std": 0.0962250448649376,
+          "n": 3
+        },
+        "turn 1: revision_accuracy": {
+          "mean": 1,
+          "std": 0,
+          "n": 3
+        },
+        "turn 2: commitment_precision": {
+          "mean": 0.9361111111111112,
+          "std": 0.06254627916220945,
+          "n": 3
+        },
+        "turn 2: commitment_recall": {
+          "mean": 0.8627450980392156,
+          "std": 0.06792356108113246,
+          "n": 3
+        },
+        "turn 2: due_accuracy": {
+          "mean": 0.8993265993265993,
+          "std": 0.010117831111997802,
+          "n": 3
+        },
+        "turn 2: reminder_precision": {
+          "mean": 0.7350427350427351,
+          "std": 0.059215412224577046,
+          "n": 3
+        },
+        "turn 2: reminder_recall": {
+          "mean": 0.75,
+          "std": 0.08333333333333337,
+          "n": 3
+        },
+        "turn 2: revision_accuracy": {
+          "mean": 0.27777777777777773,
+          "std": 0.0481125224324688,
+          "n": 3
+        },
+        "turn 3: commitment_precision": {
+          "mean": 0.9198412698412698,
+          "std": 0.0987545266717978,
+          "n": 3
+        },
+        "turn 3: commitment_recall": {
+          "mean": 0.8947368421052632,
+          "std": 0.05263157894736842,
+          "n": 3
+        },
+        "turn 3: due_accuracy": {
+          "mean": 1,
+          "std": 0,
+          "n": 3
+        },
+        "turn 3: reminder_precision": {
+          "mean": 0.8675213675213675,
+          "std": 0.08512215507282939,
+          "n": 3
+        },
+        "turn 3: reminder_recall": {
+          "mean": 0.8611111111111112,
+          "std": 0.048112522432468774,
+          "n": 3
+        },
+        "turn 3: revision_accuracy": {
+          "mean": 0.888888888888889,
+          "std": 0.0962250448649376,
+          "n": 3
+        },
+        "turn 3: revision_in_place": {
+          "mean": 1,
+          "std": 0,
+          "n": 3
+        },
+        "turn 4: commitment_precision": {
+          "mean": 0.9358974358974358,
+          "std": 0.11102889792108186,
+          "n": 3
+        },
+        "turn 4: commitment_recall": {
+          "mean": 0.8888888888888888,
+          "std": 0.027492869961410784,
+          "n": 3
+        },
+        "turn 4: due_accuracy": {
+          "mean": 1,
+          "std": 0,
+          "n": 3
+        },
+        "turn 4: reminder_precision": {
+          "mean": 0.7231934731934732,
+          "std": 0.029061672820027244,
+          "n": 3
+        },
+        "turn 4: reminder_recall": {
+          "mean": 0.8666666666666667,
+          "std": 0.05773502691896256,
+          "n": 3
+        },
+        "turn 4: revision_accuracy": {
+          "mean": 0.8505050505050505,
+          "std": 0.043528204901848964,
+          "n": 3
+        },
+        "turn 4: revision_in_place": {
+          "mean": 1,
+          "std": 0,
+          "n": 3
+        },
+        "turn 5: commitment_precision": {
+          "mean": 0.9393939393939394,
+          "std": 0.10497277621629557,
+          "n": 3
+        },
+        "turn 5: commitment_recall": {
+          "mean": 0.9066666666666667,
+          "std": 0.02309401076758505,
+          "n": 3
+        },
+        "turn 5: due_accuracy": {
+          "mean": 0.9666666666666667,
+          "std": 0.05773502691896256,
+          "n": 3
+        },
+        "turn 5: fragmentation": {
+          "mean": 2.277777777777778,
+          "std": 0.2545875386086578,
+          "n": 3
+        },
+        "turn 5: purity": {
+          "mean": 0.7246543778801843,
+          "std": 0.05511923370463447,
+          "n": 3
+        },
+        "turn 5: reminder_precision": {
+          "mean": 0.6904761904761906,
+          "std": 0.041239304942116105,
+          "n": 3
+        },
+        "turn 5: reminder_recall": {
+          "mean": 0.8787878787878788,
+          "std": 0.05248638810814775,
+          "n": 3
+        },
+        "turn 5: revision_accuracy": {
+          "mean": 0.8791208791208791,
+          "std": 0.03806705071579956,
+          "n": 3
+        },
+        "turn 5: revision_in_place": {
+          "mean": 1,
+          "std": 0,
+          "n": 3
+        }
+      }
+    },
+    {
       "name": "capture-project-grouping",
       "trials": 3,
       "passed": 3,
@@ -523,6 +926,224 @@
       "avg_compactions": 0,
       "avg_takeovers": 0,
       "cache_hit": 0.34851138353765326
+    },
+    {
+      "name": "capture-workday",
+      "trials": 3,
+      "passed": 0,
+      "pass_rate": 0,
+      "judge_avg": 3,
+      "avg_tokens": 1541438,
+      "avg_seconds": 1002.9645362363332,
+      "avg_calls": 80,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.5121821048070927,
+      "failures": {
+        "turn 3: judge": 3,
+        "turn 3: no_call_args mcp_xinli__file_*": 3,
+        "turn 3: xinli commitments_count": 3,
+        "turn 3: xinli fragmentation": 3,
+        "turn 3: xinli in_project P-0004": 3,
+        "turn 3: xinli no_commitment theirs 寄": 1,
+        "turn 3: xinli purity": 3
+      },
+      "samples": [
+        "turn 3: judge — score 3: 首页改版所在站会被归入官网改版 P-0004，且首次 file_day 的 awareness 写入失眠等健康状态；其余项目未见违规，扣两分。",
+        "turn 3: no_call_args mcp_xinli__file_* — arguments containing \"失眠\": [{\"commitments\": {\"create\": [{\"content\": \"为绿源超市下周四上午的演示准备演示数据\", \"counterpart\": \"下属/同事\", \"due_date\": \"2026-10-29\", \"due_text\": \"下周四上午演示前\", \"… {\"awareness\": {\"habits\": [\"面对外部 offer 不急于开条件，先问“你自己怎么想的？是更看重方向还是钱？”，把诉求聊清再谈方案\", \"客户提出合同外要求（要…]",
+        "turn 3: xinli commitments_count — 40 commitments from the day's organizing (merged ones not counted)",
+        "turn 3: xinli fragmentation — fragmentation 1.80 over 10 topics, purity 0.74 over 23 exchange links in projects; topics → projects map[career:map[P-0107:true] family:map[P-0003:true P-0101:true unfiled:x2.0@ses_a30c7793fd0dfee3b3f112895fff3da5:true unfiled:x259.0@ses_a30c7793fd0dfee3b3f112895fff3da5:true] hiring:map[P-0002:true] homepage:map[P-0005:true P-0103:true] kangning:map[P-0001:true] lvyuan:map[P-0106:true] okr:map[P-0001:true P-0104:true P-0105:true] release:map[P-0001:true P-0004:true P-0005:true] renovation:map[P-0003:true] testtool:map[P-0102:true]]",
+        "turn 3: xinli in_project P-0004 — 2 exchanges in P-0004",
+        "turn 3: xinli no_commitment theirs 寄 — commitments: [mine cancelled 2026-10-24 P-0101 r2] 周六上午送朵朵去万达三楼的钢琴课（九点出门，九点半上课） ; [theirs open 2026-10-23 P-0101 r1] 中午用手机缴纳物业停车费 ; [theirs open 2026-10-24 P-0102 r1] 明天把绿源合同盖章后寄顺丰给客户 ; [mine open  P-0005 r1] 在需求池里把批量排班模板的状态改为放到 3.3 ; [theirs done 2026-10-23 P-00…",
+        "turn 3: xinli purity — fragmentation 1.80 over 10 topics, purity 0.74 over 23 exchange links in projects; topics → projects map[career:map[P-0107:true] family:map[P-0003:true P-0101:true unfiled:x2.0@ses_a30c7793fd0dfee3b3f112895fff3da5:true unfiled:x259.0@ses_a30c7793fd0dfee3b3f112895fff3da5:true] hiring:map[P-0002:true] homepage:map[P-0005:true P-0103:true] kangning:map[P-0001:true] lvyuan:map[P-0106:true] okr:map[P-0001:true P-0104:true P-0105:true] release:map[P-0001:true P-0004:true P-0005:true] renovation:map[P-0003:true] testtool:map[P-0102:true]]"
+      ],
+      "metrics": {
+        "turn 1: commitment_precision": {
+          "mean": 0.9761904761904763,
+          "std": 0.041239304942116105,
+          "n": 3
+        },
+        "turn 1: commitment_recall": {
+          "mean": 0.6923076923076924,
+          "std": 0.532938710021193,
+          "n": 3
+        },
+        "turn 1: due_accuracy": {
+          "mean": 1,
+          "std": 0,
+          "n": 3
+        },
+        "turn 1: reminder_precision": {
+          "mean": 0.9666666666666667,
+          "std": 0.05773502691896256,
+          "n": 3
+        },
+        "turn 1: reminder_recall": {
+          "mean": 0.7083333333333334,
+          "std": 0.5051814855409226,
+          "n": 3
+        },
+        "turn 2: commitment_precision": {
+          "mean": 0.9777777777777779,
+          "std": 0.03849001794597504,
+          "n": 3
+        },
+        "turn 2: commitment_recall": {
+          "mean": 0.6811594202898551,
+          "std": 0.24722785665553595,
+          "n": 3
+        },
+        "turn 2: due_accuracy": {
+          "mean": 0.8148148148148148,
+          "std": 0.1697250257391052,
+          "n": 3
+        },
+        "turn 2: reminder_precision": {
+          "mean": 0.7794612794612794,
+          "std": 0.1460577186986126,
+          "n": 3
+        },
+        "turn 2: reminder_recall": {
+          "mean": 0.5490196078431372,
+          "std": 0.4004034873855321,
+          "n": 3
+        },
+        "turn 2: revision_accuracy": {
+          "mean": 0.16666666666666666,
+          "std": 0.28867513459481287,
+          "n": 3
+        },
+        "turn 2: revision_in_place": {
+          "mean": 1,
+          "std": 0,
+          "n": 1
+        },
+        "turn 3: commitment_precision": {
+          "mean": 0.98989898989899,
+          "std": 0.017495462702715917,
+          "n": 3
+        },
+        "turn 3: commitment_recall": {
+          "mean": 0.956989247311828,
+          "std": 0.01862420223192346,
+          "n": 3
+        },
+        "turn 3: due_accuracy": {
+          "mean": 0.9523088023088023,
+          "std": 0.0022735860399118353,
+          "n": 3
+        },
+        "turn 3: fragmentation": {
+          "mean": 1.6888888888888889,
+          "std": 0.10183501544346309,
+          "n": 3
+        },
+        "turn 3: purity": {
+          "mean": 0.618785105055128,
+          "std": 0.10911151377372313,
+          "n": 3
+        },
+        "turn 3: reminder_precision": {
+          "mean": 0.9154040404040403,
+          "std": 0.03978775569845641,
+          "n": 3
+        },
+        "turn 3: reminder_recall": {
+          "mean": 0.9090909090909092,
+          "std": 0.04545454545454547,
+          "n": 3
+        },
+        "turn 3: revision_accuracy": {
+          "mean": 0.7999999999999999,
+          "std": 0.2,
+          "n": 3
+        },
+        "turn 3: revision_in_place": {
+          "mean": 0.8333333333333334,
+          "std": 0.28867513459481287,
+          "n": 3
+        }
+      }
+    },
+    {
+      "name": "capture-workday-oneshot",
+      "trials": 3,
+      "passed": 0,
+      "pass_rate": 0,
+      "judge_avg": 4,
+      "avg_tokens": 1108529,
+      "avg_seconds": 802.7450893613333,
+      "avg_calls": 69,
+      "avg_compactions": 13.333333333333334,
+      "avg_takeovers": 0,
+      "cache_hit": 0.35418137608409195,
+      "failures": {
+        "turn 1: no_call_args mcp_xinli__file_*": 1,
+        "turn 1: xinli commitment mine 赵磊": 2,
+        "turn 1: xinli commitment theirs 报价单": 1,
+        "turn 1: xinli commitments_count": 1,
+        "turn 1: xinli fragmentation": 3,
+        "turn 1: xinli in_project P-0004": 2,
+        "turn 1: xinli purity": 3,
+        "turn 1: xinli stale_open": 2
+      },
+      "samples": [
+        "turn 1: no_call_args mcp_xinli__file_* — arguments containing \"失眠\": [{\"commitments\": {\"create\": [{\"content\": \"销售今天晚上整理绿源超市的门店规模、小时工比例等信息发给用户\", \"counterpart\": \"销售\", \"due_date\": \"2026-10-23\", \"due_text\": \"… {\"awareness\": {\"habits\": [\"用户被客户催源码时当场守住边界：\\\"这个我现在没法答应您，涉及公司的知识产权，我得跟我们法务和老板确认一下\\\"\", \"用户对超…]",
+        "turn 1: xinli commitment mine 赵磊 — commitments: [mine cancelled 2026-10-24  r2] 周六上午送朵朵去万达三楼琴行上九点半的钢琴课，九点出门 ; [theirs open 2026-10-24  r1] 周六上午十一点下课后去接朵朵，接完带她吃午饭 ; [theirs open 2026-10-23  r1] 今天中午用手机交物业停车费 ; [mine open  P-0005 r1] 在需求池里把批量排班模板的状态改掉（从3.2移到3.3） ; [mine open 2026-1…",
+        "turn 1: xinli commitment theirs 报价单 — commitments: [mine cancelled 2026-10-24  r2] 周六上午送朵朵去万达三楼琴行上九点半的钢琴课，九点出门 ; [theirs open 2026-10-24  r1] 周六上午十一点下课后去接朵朵，接完带她吃午饭 ; [theirs open 2026-10-23  r1] 今天中午用手机交物业停车费 ; [mine open  P-0005 r1] 在需求池里把批量排班模板的状态改掉（从3.2移到3.3） ; [mine open 2026-1…",
+        "turn 1: xinli commitments_count — 40 commitments from the day's organizing (merged ones not counted)",
+        "turn 1: xinli fragmentation — fragmentation 1.80 over 10 topics, purity 0.65 over 20 exchange links in projects; topics → projects map[career:map[P-0001:true P-0002:true P-0103:true] family:map[P-0003:true unfiled:x187.0@ses_f4499744447075ea1d9a4f2838ce8b28:true unfiled:x2.0@ses_f4499744447075ea1d9a4f2838ce8b28:true] hiring:map[P-0002:true] homepage:map[P-0101:true] kangning:map[P-0001:true] lvyuan:map[P-0102:true] okr:map[P-0001:true P-0005:true P-0101:true] release:map[P-0001:true P-0004:true P-0005:true] renovation:map[P-0003:true] testtool:map[unfiled:x123.0@ses_f4499744447075ea1d9a4f2838ce8b28:true]]",
+        "turn 1: xinli in_project P-0004 — 1 exchanges in P-0004",
+        "turn 1: xinli purity — fragmentation 1.80 over 10 topics, purity 0.65 over 20 exchange links in projects; topics → projects map[career:map[P-0001:true P-0002:true P-0103:true] family:map[P-0003:true unfiled:x187.0@ses_f4499744447075ea1d9a4f2838ce8b28:true unfiled:x2.0@ses_f4499744447075ea1d9a4f2838ce8b28:true] hiring:map[P-0002:true] homepage:map[P-0101:true] kangning:map[P-0001:true] lvyuan:map[P-0102:true] okr:map[P-0001:true P-0005:true P-0101:true] release:map[P-0001:true P-0004:true P-0005:true] renovation:map[P-0003:true] testtool:map[unfiled:x123.0@ses_f4499744447075ea1d9a4f2838ce8b28:true]]",
+        "turn 1: xinli stale_open — 1 stale open commitments, want at most 0: [C-0018 周日上午十点去老房装修现场看卫生间拆墙后的管道情况 2026-10-25]"
+      ],
+      "metrics": {
+        "turn 1: commitment_precision": {
+          "mean": 1,
+          "std": 0,
+          "n": 3
+        },
+        "turn 1: commitment_recall": {
+          "mean": 0.8602150537634409,
+          "std": 0.13036941562346388,
+          "n": 3
+        },
+        "turn 1: due_accuracy": {
+          "mean": 0.9456327985739751,
+          "std": 0.05932776912885071,
+          "n": 3
+        },
+        "turn 1: fragmentation": {
+          "mean": 1.8,
+          "std": 0.30000000000000004,
+          "n": 3
+        },
+        "turn 1: purity": {
+          "mean": 0.6232689210950081,
+          "std": 0.0231812757422451,
+          "n": 3
+        },
+        "turn 1: reminder_precision": {
+          "mean": 0.905982905982906,
+          "std": 0.03337713536712247,
+          "n": 3
+        },
+        "turn 1: reminder_recall": {
+          "mean": 0.8030303030303031,
+          "std": 0.138865930150177,
+          "n": 3
+        },
+        "turn 1: revision_accuracy": {
+          "mean": 0.7333333333333334,
+          "std": 0.30550504633038933,
+          "n": 3
+        },
+        "turn 1: revision_in_place": {
+          "mean": 0.611111111111111,
+          "std": 0.3469443332443555,
+          "n": 3
+        }
+      }
     },
     {
       "name": "card-action-followup",

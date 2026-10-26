@@ -7,6 +7,8 @@ description: >-
   承诺、佩戴者更新偏好（咖啡改喝茶）与重复的偏好（香菜）、佩戴者本人与他人（母亲）的健康信息。
 agent: xinli-day
 timeout: 40m
+# 金标指标见 m4-eval.md §13：只记录，不判定（尚无基线）。
+gold: data/workday/gold.yaml
 setup:
   memories:
     - {category: preference, content: "用户不吃香菜", recorded: "2026-08-01"}
@@ -24,11 +26,13 @@ turns:
     expect:
       calls: ["captures", "mcp_xinli__file_changes"]
       no_calls: ["mcp_xinli__file_day"]
+      xinli: {gold: {}}
   - captures_file: data/workday/midday.yaml
     input: 整理交谈
     expect:
       calls: ["captures", "mcp_xinli__file_changes"]
       no_calls: ["mcp_xinli__file_day"]
+      xinli: {gold: {}}
   - captures_file: data/workday/evening.yaml
     input: 整理今天
     expect:
@@ -45,6 +49,7 @@ turns:
         - {contains: 血压}
         - {contains: 百分之二十}
       xinli:
+        gold: {}
         exchanges: {min: 12, max: 24}
         in_project:
           P-0001: {min: 3}
