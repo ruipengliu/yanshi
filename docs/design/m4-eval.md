@@ -315,7 +315,7 @@ commitments:
 
 **噪声。** 识别错误由数据中的平行字段给出：`asr` 是转写的文字，`heard` 与 `heard_key` 是识别成的说话人与他人的 key。用例写 `noise: true` 时提交这些版本，金标不变，与不带噪声的同一份数据对照，衡量识别错误的影响。说话人识别错了的承诺无从判断：平台以说话人字段为准（ADR-0036），这样的金标不计入任何指标。
 
-**用例。** `capture-workday` 与 `capture-workday-oneshot` 的金标见 `evals/data/workday/gold.yaml`（31 条计入、37 条可选，计入的有 5 条当天改动）。`capture-multiday` 与 `capture-multiday-noisy` 是四个工作日（另一位佩戴者、另一个行业）：每天一个旁听 Session，跨天的改期、完成、取消与改由他人去做，同一件事隔天再提，用户在 App 中的改动，最后在 xinli-assistant 中问"还有哪些没办完""期限怎么变的"（评分模型判断）；27 条计入、23 条可选。数据由剧本生成（段内的行在起止时刻之间均匀分布），金标的改动时间取自说那句话的时间。
+**用例。** `capture-workday` 与 `capture-workday-oneshot` 的金标见 `evals/data/workday/gold.yaml`（31 条计入、37 条可选，计入的有 5 条当天改动）。`capture-multiday` 与 `capture-multiday-noisy` 是四个工作日（另一位佩戴者、另一个行业）：每天一个旁听 Session，跨天的改期、完成、取消与改由他人去做，同一件事隔天再提，用户在 App 中的改动，最后在 xinli-assistant 中问"还有哪些没办完""期限怎么变的"（评分模型判断）；27 条计入、23 条可选。数据由剧本 `evals/data/multiday/script.txt` 经 `scripts/gen-multiday.py` 生成（段内的行在起止时刻之间均匀分布），金标的改动时间取自说那句话的时间；改了剧本之后重新生成，生成的 YAML 一并提交。
 
 
 **首次结果（2026-10-26，`doubao-seed-2-1-lite-260915:minimal`，各 3 次，`eval-results/20261026-164217`，已写入基线）。** 四个用例都是 0/3（断言与评分本来就不过），指标给出了差距在哪里（最后一轮，均值 ± 标准差）：

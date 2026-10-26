@@ -1,4 +1,4 @@
-# capture-multiday 的旁听，2026-10-15：佩戴者方晴是连锁餐饮禾苗食堂的区域运营经理。每段带主题（family 家事、binjiang 滨江店开业、menu 冬季新菜单、safety 城西店食安整改、delivery 滨江店外卖入驻、hiring 服务员招聘；闲聊不标），gold 是金标承诺（gold.yaml），asr、heard、heard_key 是识别有误的版本（带噪声的用例提交它们）。由剧本生成，段内的行在起止时刻之间均匀分布。
+# capture-multiday 的旁听，2026-10-15：佩戴者方晴是连锁餐饮禾苗食堂的区域运营经理。每段带主题（family 家事、binjiang 滨江店开业、menu 冬季新菜单、safety 城西店食安整改、delivery 滨江店外卖入驻、hiring 服务员招聘；闲聊不标），gold 是金标承诺（gold.yaml），asr、heard、heard_key 是识别有误的版本（带噪声的用例提交它们）。由 script.txt 经 scripts/gen-multiday.py 生成，段内的行在起止时刻之间均匀分布。
 - {speaker: "wearer", text: "宋总，成本表发您邮箱了，酸菜鱼的鱼片减了十克，毛利到百分之六十一了。", at: "2026-10-15 08:55", topic: "menu", gold: "cost-sheet"}
 - {speaker: "other", key: "song", text: "好，我在高铁上看。开业接待的方案，下周一给我看看。", at: "2026-10-15 08:58", topic: "menu", gold: "reception"}
 - {speaker: "wearer", text: "好，下周一给您。", at: "2026-10-15 09:02", topic: "menu", gold: "reception"}

@@ -1,4 +1,4 @@
-# capture-multiday 的金标（m4-eval.md §13）：2026-10-12（星期一）至 10-15（星期四）旁听中的承诺。旁听里标了 gold 的段是答应、改期、完成或改由他人去做的原话，revisions 的时间是说那句话的时间；用户在 App 中的改动写在用例的 xinli_edit 中。optional 的是琐事、转述或是否算答应拿不准的：记不记都可以。他人之间的、佩戴者否认或拒绝的、有条件的说法不在这里，记下了算误报。由剧本生成。
+# capture-multiday 的金标（m4-eval.md §13）：2026-10-12（星期一）至 10-15（星期四）旁听中的承诺。旁听里标了 gold 的段是答应、改期、完成或改由他人去做的原话，revisions 的时间是说那句话的时间；用户在 App 中的改动写在用例的 xinli_edit 中。optional 的是琐事、转述或是否算答应拿不准的：记不记都可以。他人之间的、佩戴者否认或拒绝的、有条件的说法不在这里，记下了算误报。由 script.txt 经 scripts/gen-multiday.py 生成。
 commitments:
   - {id: ptm, kind: mine, what: "周三下午去乐乐的家长会", due: "2026-10-14", revisions: [{at: "2026-10-14 16:00", status: "done"}]}
   - {id: kai-cook, kind: theirs, what: "阿凯周三早点下班做饭", optional: true}
