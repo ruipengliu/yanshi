@@ -30,7 +30,7 @@ tools:
   allow: ["search_*", "get_*", "create_ticket"]   # 可选：只开放这些工具
   no_approval: ["create_ticket"]                  # 可选：业务线确认无需审批的工具
 cite_captures: false           # 可选：解析参数中的旁听引用，附上说话人（docs/design/captures.md §6）
-acks: false                    # 可选：采信本业务线服务返回的交付回执（ADR-0049）
+acks: false                    # 可选：采信本业务线服务返回的交付回执（ADR-0049；ADR-0050 后随 Capture 路径退役）
 ```
 
 - **模型看到的工具名**是 `mcp_<server>__<tool>`，例如 `mcp_crm__search_customer`。设备标签只含 `[a-z0-9-]`、不含下划线，所以不会与 `<label>__<capability>` 冲突。超过 64 字符的名字会截断，并附加短哈希。

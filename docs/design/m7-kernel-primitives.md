@@ -1,10 +1,12 @@
 # M7 内核补充：Capture 正文存储、擦除、交付确认、定时、出站流、单次调用
 
-> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)），未实现 · ADR-0044、ADR-0045、ADR-0046、ADR-0047、ADR-0049 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
+> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）；交付确认（§11）与 EndUser 删除屏障（§12）已实现，其余未实现 · **§2–§4、§11 由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 取代**（旁听原文存放在业务线；§11 按其退役条件删除），§5 的 `window.stream`、§6 的擦除与修订信封不做 · ADR-0044（已取代）、ADR-0045、ADR-0046、ADR-0047、ADR-0049（已取代）、ADR-0050 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
 
 xinli 落地需要内核补上的原语。每一项都按[整体架构](./persona-architecture.md) §9 的判据给出理由：第二条业务线也会需要，并且业务侧做不到或做了不安全。业务语义（交谈、承诺、项目、人）一律不进内核。
 
 ## 1. 总览
+
+> ADR-0050 之后，下表中 §2、§3、§4、§11 的行不再实施（§11 已实现的部分按退役条件删除），原文、擦除与纠错由业务线负责；内核新增的可信结构化片段、写日志前审核、擦除即删除工作 Session 与绝对删除期限见 ADR-0050 与[整体架构](./persona-architecture.md) §11。
 
 | § | 原语 | 判据 | 阶段 |
 |---|---|---|---|

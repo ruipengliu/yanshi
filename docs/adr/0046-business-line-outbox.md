@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted（由 ADR-0050 修订：去掉擦除与修订信封）
 ---
 
 # 业务线经拉取式出站流获取事件

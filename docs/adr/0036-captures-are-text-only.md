@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted（存放位置由 ADR-0050 修订：原文存放在业务线）
 ---
 
 # 旁听只收文字，信任按说话人区分

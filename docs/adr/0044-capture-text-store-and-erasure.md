@@ -1,8 +1,10 @@
 ---
-status: accepted
+status: superseded by ADR-0050
 ---
 
 # Capture 正文移出事件日志，按引用擦除
+
+> 已被 [ADR-0050](./0050-capture-text-in-the-business-line.md) 取代：旁听原文存放在业务线，本文的正文存储、展开器与擦除不再实施。
 
 两个需求撞上了事件日志只追加（ADR-0004）与按 Session 删除（ADR-0015、ADR-0037）：
 

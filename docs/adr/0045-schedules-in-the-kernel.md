@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted（由 ADR-0050 修订：去掉 `window.stream`）
 ---
 
 # 定时是内核的原语，到期输入的来源是平台

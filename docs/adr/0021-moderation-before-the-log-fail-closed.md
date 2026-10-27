@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted（由 ADR-0050 修订：attested 的 MCP 结果在写日志前送检）
 ---
 
 # 内容安全在写日志之前检查，失败即拒绝

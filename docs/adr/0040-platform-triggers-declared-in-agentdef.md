@@ -1,5 +1,5 @@
 ---
-status: accepted（第 5 条由 ADR-0045 修订）
+status: accepted（第 5 条由 ADR-0045 修订；第 2 步流上的触发由 ADR-0050 取消）
 ---
 
 # 平台按 AgentDef 的声明触发 Run

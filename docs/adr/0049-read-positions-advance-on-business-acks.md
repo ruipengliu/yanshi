@@ -1,8 +1,10 @@
 ---
-status: accepted
+status: superseded by ADR-0050
 ---
 
 # 声明了交付确认的流，读取位置按业务线的回执推进
+
+> 已被 [ADR-0050](./0050-capture-text-in-the-business-line.md) 取代：旁听原文存放在业务线。交付确认已经实现（`internal/session/ack.go`），按 ADR-0050 的退役条件随内核的 Capture 路径一并删除。
 
 读取位置在 `RunCompleted` 时提交本 Run 读到的最后一页（ADR-0039）。工具调用失败只是一条错误结果，模型仍可正常结束 Run；业务线拒收变更集时，返回的也可能是成功的 MCP 响应。于是"读页成功 → 交出失败 → 模型回复稍后再试 → Run 完成"会让读取位置越过没有保存的时段，之后的 `after: "new"` 再也读不到它。读取位置的契约本身没有错，错在业务流程把"读过"当成"已保存"。
 
