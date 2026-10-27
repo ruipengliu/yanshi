@@ -150,7 +150,7 @@ turns:
 	}
 	m := by["memory-and-judge"]
 	// 第一轮全部通过（评分 5）；第二轮：回复过长且评分 3 → 失败。
-	if m.Passed != 0 || m.Failures["turn 2: reply_max_chars"] != 1 || m.Failures["turn 2: judge"] != 1 || m.Failures["turn 1: judge"] != 0 || m.JudgeAvg != 4 {
+	if m.Passed != 0 || m.Failures["turn 2: reply_max_chars"] != 1 || m.Failures["turn 2: judge"] != 1 || m.Failures["turn 1: judge"] != 0 || m.JudgeAvg == nil || *m.JudgeAvg != 4 || m.Completed == nil || *m.Completed != 1 || m.JudgeSamples == nil || *m.JudgeSamples != 2 {
 		t.Fatalf("memory-and-judge: %+v", m)
 	}
 	if by["needs-sandbox"].Skipped == "" {
@@ -237,11 +237,11 @@ turns:
 }
 
 func TestCompareFlagsRegressions(t *testing.T) {
-	base := &Report{Cases: []CaseResult{{Name: "a", Trials: 3, Passed: 3, PassRate: 1, JudgeAvg: 4.6}, {Name: "b", Trials: 3, Passed: 2, PassRate: 0.67}}}
+	base := &Report{Cases: []CaseResult{{Name: "a", Trials: 3, Passed: 3, PassRate: 1, JudgeAvg: new(4.6)}, {Name: "b", Trials: 3, Passed: 2, PassRate: 0.67}}}
 	cur := &Report{Cases: []CaseResult{
-		{Name: "a", Trials: 3, Passed: 2, PassRate: 0.67, JudgeAvg: 4.0}, // 少过 1 次：不算回归；评分降 0.6：回归
-		{Name: "b", Trials: 3, Passed: 0, PassRate: 0},                   // 少过 2 次：回归
-		{Name: "new", Trials: 3, Passed: 0},                              // 基线没有：不算
+		{Name: "a", Trials: 3, Passed: 2, PassRate: 0.67, JudgeAvg: new(4.0)}, // 少过 1 次：不算回归；评分降 0.6：回归
+		{Name: "b", Trials: 3, Passed: 0, PassRate: 0},                        // 少过 2 次：回归
+		{Name: "new", Trials: 3, Passed: 0},                                   // 基线没有：不算
 	}}
 	got := Compare(base, cur)
 	if len(got) != 2 || !strings.Contains(got[0], "a: judge") || !strings.Contains(got[1], "b: pass rate") {
