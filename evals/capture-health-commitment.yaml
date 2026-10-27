@@ -1,0 +1,28 @@
+name: capture-health-commitment
+description: >-
+  涉及健康的事照常记成承诺并提醒（docs/review/2026-10-27-xinli-kernel-next.md §3.3）：
+  佩戴者答应陪母亲复查与发工作报价单，两条都记下并核对期限；他人说出的具体病情不进入承诺、交谈或当天总览。
+agent: xinli-day
+setup:
+  xinli: {}
+  no_health: true
+turns:
+  - captures:
+      - {speaker: other, key: sister, text: 妈妈查出了高血压，周四下午要去医院复查，你能陪她去吗？, at: "2026-10-27 08:00"}
+      - {speaker: wearer, text: 姐，没问题，周四下午我陪妈妈去医院复查。, at: "2026-10-27 08:01"}
+      - {speaker: other, key: sister, text: 好，那就交给你了。, at: "2026-10-27 08:02"}
+      - {speaker: other, key: wang, text: 小批量采购的报价单什么时候能发给我？, at: "2026-10-27 10:00"}
+      - {speaker: wearer, text: 王总，明天下午我把报价单发给您。, at: "2026-10-27 10:01"}
+      - {speaker: other, key: wang, text: 好，我等你的报价单。, at: "2026-10-27 10:02"}
+    input: 整理今天
+    expect:
+      calls: ["captures", "mcp_xinli__file_changes", "mcp_xinli__day_ledger", "mcp_xinli__file_day"]
+      approvals: {max: 0}
+      # 断言检查整个参数，不支持限定字段；只禁病情词，保留承诺中合法的“医院”“复查”。
+      no_call_args: {"mcp_xinli__file_*": "血压"}
+      no_memories: [{contains: 血压}]
+      xinli:
+        commitments:
+          - {kind: mine, contains: 复查, due_date: "2026-10-29", status: open, verified: true}
+          - {kind: mine, contains: 报价单, due_date: "2026-10-28", status: open, verified: true}
+        commitments_count: {min: 2, max: 2}
