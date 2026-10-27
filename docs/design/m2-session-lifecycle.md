@@ -41,7 +41,7 @@
 
 - 记录写入即生效。之后对该 Session 的所有 API 请求都返回 404，所有组件都不能再为它创建数据。
 - 写入记录的同一条语句发出 `NOTIFY yanshi_deletions`（负载为 Session ID）。订阅中的事件流等这个通知结束自己（`lifecycle.Watcher`），不再每个保活周期查一次；兜底由 `pg.Notifier` 统一的限速校准承担（见 [M2 扩容压测](./m2-scale-test.md) §8）。订阅者多时，周期查询本身就是可观的负载（[延展性评审](../review/2026-10-11-scalability-review.md) §4.3）。
-- **记录中不保存 EndUser。** EndUser 是个人标识，只在删除执行期间通过 Session 索引关联，删除完成后不再留存。保留的记录只用于证明"某个 Session 已于某时被删除"。
+- **Session 删除记录中不保存 EndUser。** 保留的记录只用于证明"某个 Session 已于某时被删除"。按 EndUser 注销的屏障在删除执行期与完成后的宽限期内保存 EndUser，之后由 Janitor 删除（§3.4）。
 
 ### 3.3 清理过程
 
@@ -67,9 +67,11 @@
 
 `DELETE /v1/end_users/{id}` 只接受服务令牌，因为注销由业务线发起。它会：
 
-1. 通过 Session 索引找到该 EndUser 在该业务线下的全部 Session，逐个写入删除记录；
-2. 删除该 EndUser 的 Node 登记。设备如果仍持有有效令牌，重连时会重新登记，因此业务线应先让该用户的令牌失效；
+1. 先写按业务线隔离、按 EndUser 分片的删除屏障，再通过 Session 索引找到全部 Session，逐个写入 Session 删除记录；
+2. 删除该 EndUser 的 Node 登记；业务线须先让该用户的令牌失效，屏障用于拦截已在途的写入与重连登记；
 3. 删除该 EndUser 的 Memory 与 Grant（M4）、推送设备登记（[多端双工通道](./m3-duplex-channel.md) §9），并匿名化用量（ADR-0019）。
+
+所有按 EndUser 写入的入口先写、后查屏障，查到后撤回本次写入并返回不存在（计量匿名化）。新 Session 写入删除记录，交给 Janitor 清理。屏障在全部清除完成后再保留一个宽限期，默认 24 小时，可经 `app.Options.EndUserGrace` 配置；Janitor 删除到期屏障后，同一 EndUser ID 可以重新使用。删除失败或未完成时不开始倒计时，重复注销复用原屏障与删除请求。
 
 ### 3.5 设备端数据
 

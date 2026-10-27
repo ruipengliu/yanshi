@@ -48,6 +48,8 @@ type Janitor struct {
 	Queues    map[string]workqueue.Queue
 	Index     lifecycle.Index
 	Deletions lifecycle.Deletions
+	// EndUserGrace 在全部 Session 与 EndUser 数据清除完成之后起算。
+	EndUserGrace time.Duration
 	// Retention 是各业务线的保留策略，键为业务线名。
 	Retention map[string]lifecycle.Retention
 	// Usage 非 nil 时清理早于 UsageRetention 的用量（docs/design/m4-quota-usage.md §4）。
@@ -366,6 +368,9 @@ func (j *Janitor) sweep(ctx context.Context, sid, reason string) error {
 func (j *Janitor) Sweep(ctx context.Context) error {
 	j.init()
 	now := j.Clock.Now()
+	if err := j.sweepEndUsers(ctx, now); err != nil {
+		return err
+	}
 	for bl, retention := range j.Retention {
 		// 按 AgentDef 覆盖的规则各查各的 Session，业务线的值作用于其余 AgentDef（docs/design/captures.md §8）。
 		for _, r := range retention.Rules() {

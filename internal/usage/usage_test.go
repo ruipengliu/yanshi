@@ -107,6 +107,10 @@ func (d deletions) Get(context.Context, string) (*lifecycle.Tombstone, error) {
 	return d.t, nil
 }
 
+func (d deletions) GetEndUser(context.Context, string, string) (*lifecycle.EndUserTombstone, error) {
+	return nil, lifecycle.ErrNotFound
+}
+
 // TestMeterAnonymizesAfterDeletion：Session 删除后（例如注销账号与在途计量竞争）才写入的用量被匿名化。
 func TestMeterAnonymizesAfterDeletion(t *testing.T) {
 	ctx := context.Background()

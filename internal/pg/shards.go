@@ -78,6 +78,9 @@ var Tables = map[string]TableKey{
 			"end_user = '' 的业务线合计行由每个分片各自累计；业务线配额检查（Spent）汇总各分片，在线路径上须缓存"}},
 	"push_devices": {Class: ByEndUser, Column: "end_user"},
 
+	"end_user_tombstones": {Class: ByEndUser, Column: "end_user",
+		Offline: []string{"PendingEndUsers：Janitor 确认注销的 Session 清理进度", "PruneEndUsers：按宽限期扫描，逐 EndUser 删除到期屏障"}},
+
 	// 删除请求不含 EndUser（ADR-0015）；进度由 session_tombstones 汇总。
 	"deletion_requests": {Class: Global},
 }

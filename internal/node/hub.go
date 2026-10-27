@@ -47,8 +47,17 @@ func (h *Hub) registerPush(ctx context.Context, hello *v1.Hello, id Identity, la
 	if h.Clock != nil {
 		now = h.Clock.Now()
 	}
-	return h.Push.Register(ctx, &notify.Device{BusinessLine: id.BusinessLine, EndUser: id.EndUser, DeviceID: hello.GetNodeId(),
+	// 登记结果未知时也复查，避免回包丢失后留下迟到的令牌。
+	registerErr := h.Push.Register(ctx, &notify.Device{BusinessLine: id.BusinessLine, EndUser: id.EndUser, DeviceID: hello.GetNodeId(),
 		Label: label, Kind: hello.GetKind(), Platform: hello.GetPushPlatform(), Token: hello.GetPushToken()}, now)
+	withdraw := func(ctx context.Context, _ *lifecycle.EndUserTombstone) error {
+		return h.Push.Unregister(ctx, id.BusinessLine, id.EndUser, hello.GetNodeId())
+	}
+	gone, err := lifecycle.RecheckEndUser(ctx, h.Deletions, id.BusinessLine, id.EndUser, withdraw)
+	if gone {
+		return errors.Join(ErrNotFound, err)
+	}
+	return errors.Join(registerErr, err)
 }
 
 // Withdrawn 报告刚写入的、属于 sessionID 的数据是否应撤回：Session 已有删除记录。
@@ -118,8 +127,17 @@ func (h *Hub) Connect(ctx context.Context, hello *v1.Hello) (*Conn, error) {
 		NodeID: hello.GetNodeId(), Scope: Scope{BusinessLine: id.BusinessLine, EndUser: id.EndUser}, Label: hello.GetLabel(), Kind: hello.GetKind(),
 		HostApp: hello.GetHostApp(), Capabilities: hello.GetCapabilities(),
 	})
-	if err != nil {
-		return nil, err
+	registerErr := err
+	// 即使登记报错也复查：存储可能已落盘，只是确认没有到达。
+	withdraw := func(ctx context.Context, _ *lifecycle.EndUserTombstone) error {
+		return h.DeleteEndUser(ctx, id.BusinessLine, id.EndUser)
+	}
+	gone, err := lifecycle.RecheckEndUser(ctx, h.Deletions, id.BusinessLine, id.EndUser, withdraw)
+	if gone {
+		return nil, errors.Join(ErrNotFound, err)
+	}
+	if registerErr != nil || err != nil {
+		return nil, errors.Join(registerErr, err)
 	}
 	if err := h.registerPush(ctx, hello, id, label); err != nil {
 		return nil, err

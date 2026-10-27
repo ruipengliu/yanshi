@@ -58,6 +58,8 @@ type Options struct {
 	// 调用离线设备的 Run 挂起到调用的截止时间。
 	BackgroundGrace   time.Duration
 	BackgroundTimeout time.Duration
+	// EndUserGrace 是注销全部清除完成后的屏障宽限期；零值取 24 小时。
+	EndUserGrace time.Duration
 
 	// 以下为 nil 或零值时对应功能关闭，与各包自身的约定一致。
 	Moderator moderation.Moderator
@@ -106,6 +108,12 @@ type Core struct {
 
 // NewCore 装配核心对象图。
 func NewCore(stores Stores, opts Options) *Core {
+	if opts.EndUserGrace <= 0 {
+		opts.EndUserGrace = lifecycle.DefaultEndUserGrace
+	}
+	if opts.Meter != nil {
+		opts.Meter.Deletions = stores.Deletions
+	}
 	if opts.IDs == nil {
 		opts.IDs = func(string) ids.Generator { return ids.Random() }
 	}
@@ -203,5 +211,6 @@ func (c *Core) Janitor(id string, provider sandbox.Provider, retention map[strin
 		Queues: map[string]workqueue.Queue{"sessions": c.Stores.Queue, "sandboxes": c.Stores.SandboxQueue, "janitor": c.Stores.JanitorQueue},
 		Index:  c.Stores.Index, Deletions: c.Stores.Deletions, Retention: retention, Clock: c.opts.Clock, Logger: c.opts.Logger,
 		LeaseTTL: c.opts.LeaseTTL, Usage: c.Stores.Usage, UsageRetention: usageRetention, Presence: c.Stores.Presence,
+		EndUserGrace: c.opts.EndUserGrace,
 	}
 }

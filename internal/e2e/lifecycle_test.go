@@ -178,10 +178,13 @@ func TestDeleteEndUser(t *testing.T) {
 	if code := e.doAs(svcTok, http.MethodDelete, "/v1/end_users/u", nil, &del); code != http.StatusAccepted || del.RequestID == "" {
 		t.Fatalf("delete end user: %d %+v", code, del)
 	}
+	if code := e.doAs(svcTok, http.MethodPost, "/v1/sessions", map[string]string{"end_user": "u", "agent": "dev"}, nil); code != http.StatusNotFound {
+		t.Fatalf("create for deleted end user with service token: %d, want 404", code)
+	}
 	if code := e.do(http.MethodDelete, "/v1/end_users/u", nil, nil); code != http.StatusForbidden {
 		t.Fatalf("user token deleting an end user: %d, want 403", code)
 	}
-	// Node 登记随请求同步删除。设备若仍持有有效令牌，重连时会重新登记，因此业务线应先让该用户的令牌失效。
+	// Node 登记随请求同步删除，屏障阻止宽限期内的重连登记。
 	var nodes struct {
 		Nodes []any `json:"nodes"`
 	}
@@ -197,7 +200,7 @@ func TestDeleteEndUser(t *testing.T) {
 		e.doAs(svcTok, http.MethodGet, "/v1/deletions/"+del.RequestID, nil, &progress)
 		return progress.Done
 	})
-	if progress.Sessions != 2 || progress.Completed != 2 {
+	if progress.Sessions != 3 || progress.Completed != 3 {
 		t.Fatalf("progress = %+v", progress)
 	}
 	for _, sid := range []string{a, b} {

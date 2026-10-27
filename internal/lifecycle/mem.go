@@ -144,6 +144,7 @@ type MemDeletions struct {
 	mu       sync.Mutex
 	tombs    map[string]*Tombstone
 	requests map[string]*Request
+	endUsers map[[2]string]*EndUserTombstone
 	// marked 在每次新增删除记录时关闭并换新，唤醒 WaitDeleted。
 	marked chan struct{}
 }

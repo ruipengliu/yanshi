@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -196,7 +197,19 @@ func (s *Service) check(r SaveRequest) (content string, until time.Time, err err
 
 // Save 写入一条 Memory。ID 由调用 ID 派生，因此同一调用重复执行是幂等的。已有几乎相同的一条（有效的）时不再写入，返回
 // 已有的那条（ID 与本次调用派生的不同）；有 Replaces 时仍把被替换的那条标为失效。
-func (s *Service) Save(ctx context.Context, r SaveRequest) (*Memory, error) {
+func (s *Service) Save(ctx context.Context, r SaveRequest) (saved *Memory, err error) {
+	// 去重、替换也可能写入；统一在返回前复查，覆盖没有 Session 的导入与幂等重试。
+	defer func() {
+		withdraw := func(ctx context.Context, _ *lifecycle.EndUserTombstone) error {
+			return s.DeleteEndUser(ctx, r.BusinessLine, r.EndUser)
+		}
+		gone, checkErr := lifecycle.RecheckEndUser(ctx, s.Deletions, r.BusinessLine, r.EndUser, withdraw)
+		if gone {
+			saved, err = nil, errors.Join(ErrNotFound, checkErr)
+		} else if checkErr != nil {
+			saved, err = nil, errors.Join(err, checkErr)
+		}
+	}()
 	content, until, err := s.check(r)
 	if err != nil {
 		return nil, err
@@ -489,7 +502,25 @@ func (s *Service) CreateGrant(ctx context.Context, endUser, from, to string, cat
 	}
 	g := &Grant{ID: "grant_" + s.IDs(), EndUser: endUser, From: from, To: to, Categories: slices.Clone(categories),
 		CreatedAt: s.Clock.Now(), ExpiresAt: expires}
-	return g, s.Grants.Create(ctx, g)
+	// 写入报错也继续复查，覆盖存储已生效但确认丢失的情况。
+	createErr := s.Grants.Create(ctx, g)
+	// Grant 涉及两个业务线；只查发起方会让另一方注销后留下实名授权。
+	for _, businessLine := range []string{from, to} {
+		withdraw := func(ctx context.Context, _ *lifecycle.EndUserTombstone) error {
+			return s.Grants.DeleteBusinessLine(ctx, endUser, businessLine)
+		}
+		gone, err := lifecycle.RecheckEndUser(ctx, s.Deletions, businessLine, endUser, withdraw)
+		if gone {
+			return nil, errors.Join(ErrNotFound, err)
+		}
+		if err != nil {
+			return nil, errors.Join(createErr, err)
+		}
+	}
+	if createErr != nil {
+		return nil, createErr
+	}
+	return g, nil
 }
 
 // DeleteEndUser 删除 EndUser 在业务线中的全部 Memory，以及涉及该业务线的全部授权（注销账号，§7）。
