@@ -94,6 +94,9 @@ func (d *Delegator) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke)
 		Parent: &v1.ParentRef{SessionId: inv.GetSessionId(), RunId: inv.GetRunId(), CallId: inv.GetCallId(), Ancestors: ancestors},
 	})
 	if err != nil {
+		if errors.Is(err, service.ErrNotFound) {
+			return d.result(ctx, inv.GetSessionId(), inv.GetRunId(), inv.GetCallId(), "the delegated session was deleted", true)
+		}
 		if errors.Is(err, service.ErrInvalid) || errors.Is(err, service.ErrConflict) {
 			return d.result(ctx, inv.GetSessionId(), inv.GetRunId(), inv.GetCallId(), "cannot delegate: "+err.Error(), true)
 		}

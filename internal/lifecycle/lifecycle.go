@@ -141,6 +141,7 @@ type Request struct {
 }
 
 type Deletions interface {
+	EndUserDeletions
 	// Mark 写入删除记录；已存在时不变并返回 false。
 	Mark(ctx context.Context, t *Tombstone) (bool, error)
 	Get(ctx context.Context, sessionID string) (*Tombstone, error)

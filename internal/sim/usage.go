@@ -9,6 +9,7 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/eventlog"
+	"yanshi/internal/janitor"
 	"yanshi/internal/usage"
 )
 
@@ -49,7 +50,7 @@ func (s *checkedUsage) Record(ctx context.Context, e *usage.Entry) error {
 				e.BusinessLine, e.EndUser, p.Scope, p.Spent, p.Limit))
 		}
 	}
-	return s.Store.Record(ctx, e)
+	return s.w.endUserWrite(func() error { return s.Store.Record(ctx, e) })
 }
 
 // deleteAccount 注销一个 EndUser：删除其全部 Session，匿名化用量；该位置换成新的 EndUser。
@@ -61,14 +62,42 @@ func (w *World) deleteAccount() error {
 	if err != nil {
 		return err
 	}
-	if _, err := w.svc.DeleteEndUser(ctx, "bl", user, w.memories, w.usage, w.push); err != nil {
+	if err := w.deleteWithEndUserWrite(user); err != nil {
 		return fmt.Errorf("delete account %s: %w", user, err)
 	}
+	b, err := w.deletions.GetEndUser(ctx, "bl", user)
+	if err != nil {
+		return err
+	}
+	ids = append(ids, b.Sessions...)
 	if devices, err := w.push.List(ctx, "bl", user); err != nil || len(devices) > 0 {
 		return fmt.Errorf("invariant: deleted account %s still has %d push devices (err %v)", user, len(devices), err)
 	}
 	w.Stats.AccountDeletions++
 	w.deletedUsers = append(w.deletedUsers, user)
+	// 注销后业务 App 登出，清除设备本地记录；服务端不再向已删除的 Node 投递清除调用（生命周期 §3.5）。
+	for _, n := range w.nodes {
+		if n.hello.GetEndUser() != user {
+			continue
+		}
+		if n.conn != nil {
+			w.disconnect(n)
+		}
+		for _, sid := range append(w.known(), w.deleted...) {
+			if _, err := n.exec.Execute(ctx, janitor.ForgetInvoke(sid)); err != nil {
+				return err
+			}
+		}
+		pending, _, err := w.hub.Inbox.Pending(ctx, n.id)
+		if err != nil {
+			return err
+		}
+		for _, inv := range pending {
+			if err := w.hub.Inbox.Remove(ctx, n.id, inv.GetCallId()); err != nil {
+				return err
+			}
+		}
+	}
 	for _, id := range ids {
 		w.closed = slices.DeleteFunc(w.closed, func(s string) bool { return s == id })
 		if !slices.Contains(w.deleted, id) {

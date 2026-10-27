@@ -142,6 +142,9 @@ func (w *World) lifecycleDone() (bool, error) {
 	if pending, err := w.deletions.Pending(ctx, 1); err != nil || len(pending) > 0 {
 		return false, err
 	}
+	if pending, err := w.deletions.PendingEndUsers(ctx, 1); err != nil || len(pending) > 0 {
+		return false, err
+	}
 	for _, n := range w.nodes {
 		if items, _, err := w.hub.Inbox.Pending(ctx, n.id); err != nil || len(items) > 0 {
 			return false, err
@@ -153,6 +156,9 @@ func (w *World) lifecycleDone() (bool, error) {
 // checkDeleted 检查已完成删除的 Session 在所有存储中都不再有数据，并且没有"复活"。
 func (w *World) checkDeleted(final bool) error {
 	ctx := context.Background()
+	if err := w.checkEndUserDeleted(final); err != nil {
+		return err
+	}
 	for _, sid := range w.deleted {
 		t, err := w.deletions.Get(ctx, sid)
 		if err != nil {
@@ -189,7 +195,7 @@ func (w *World) checkDeleted(final bool) error {
 			return fmt.Errorf("invariant: deleted session %s still has a projection snapshot", sid)
 		}
 		// 按保留期到期删除时 Memory 保留，其余删除一并清除（ADR-0037）。账号注销另行删除该用户的全部 Memory。
-		if s, ok := w.memories.Store.(*memory.MemStore); ok && s.HasSession(sid) {
+		if s, ok := w.stores.Memories.(*memory.MemStore); ok && s.HasSession(sid) {
 			if t.Reason != lifecycle.ReasonRetention {
 				return fmt.Errorf("invariant: deleted session %s still has memories", sid)
 			}

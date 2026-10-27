@@ -18,7 +18,7 @@ import (
 type Meter struct {
 	Store  Store
 	Prices *PriceList
-	// Deletions 非 nil 时，写入后检查 Session 的删除记录（先写、后查，ADR-0015）：Session 已被删除时
+	// Deletions 非 nil 时，写入后检查 EndUser 屏障与 Session 的删除记录（先写、后查，ADR-0015）：已被删除时
 	// （不论原因）把这条用量匿名化。只看 account_deletion 不够：Session 可能先被单独删除，
 	// 之后才注销账号，删除记录仍是原来的原因，而持有它的 Worker 可能在注销之后才写入（模拟测试发现）。
 	Deletions lifecycle.Deletions
@@ -72,15 +72,15 @@ func (m *Meter) Sandbox(ctx context.Context, s Scope, id string, d time.Duration
 
 func (m *Meter) record(ctx context.Context, s Scope, e *Entry) {
 	err := m.Store.Record(ctx, e)
-	if err == nil && m.Deletions != nil && s.SessionID != "" {
-		var t *lifecycle.Tombstone
-		t, err = m.Deletions.Get(ctx, s.SessionID)
-		switch {
-		case errors.Is(err, lifecycle.ErrNotFound):
-			err = nil
-		case err == nil && t != nil:
-			err = m.Store.AnonymizeEntry(ctx, e.ID)
-		}
+	// 写入报错也复查：回包丢失不代表没有落盘。
+	withdraw := func(ctx context.Context) error { return m.Store.AnonymizeEntry(ctx, e.ID) }
+	_, sessionErr := lifecycle.Recheck(ctx, m.Deletions, s.SessionID, withdraw)
+	_, userErr := lifecycle.RecheckEndUser(ctx, m.Deletions, s.BusinessLine, s.EndUser,
+		func(ctx context.Context, _ *lifecycle.EndUserTombstone) error { return withdraw(ctx) })
+	err = errors.Join(err, sessionErr, userErr)
+	if err != nil {
+		// 计量不能向用户报错；删除状态查不清时保留费用、去掉个人标识。
+		err = errors.Join(err, withdraw(context.WithoutCancel(ctx)))
 	}
 	if err != nil {
 		metrics.UsageRecordErrors.WithLabelValues().Inc()

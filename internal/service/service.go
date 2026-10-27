@@ -82,12 +82,11 @@ type CreateRequest struct {
 	Parent    *v1.ParentRef
 }
 
-func (s *Service) Create(ctx context.Context, req CreateRequest) (string, error) {
+func (s *Service) Create(ctx context.Context, req CreateRequest) (sessionID string, err error) {
 	if req.BusinessLine == "" || req.EndUser == "" {
 		return "", fmt.Errorf("%w: business_line and end_user are required", ErrInvalid)
 	}
 	var def *agentdef.Def
-	var err error
 	// 未指定版本时按发布配置分流（docs/design/m4-agent-rollout.md §3）；撤回的版本不能指定。
 	if req.AgentVersion == "" {
 		def, err = s.Agents.Resolve(req.Agent, req.EndUser)
@@ -106,6 +105,34 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (string, error)
 	if st.SessionID == "" {
 		st.SessionID = "ses_" + s.Store.IDs()
 	}
+	// 索引与日志都可能和注销交错；所有返回路径（含指定 ID 的幂等重试）统一复查。
+	defer func() {
+		withdraw := func(ctx context.Context, b *lifecycle.EndUserTombstone) error {
+			var trackErr error
+			requestID := ""
+			if b != nil {
+				requestID = b.RequestID
+				trackErr = s.Deletions.AddEndUserSessions(ctx, b, []string{st.SessionID})
+			}
+			return errors.Join(trackErr, s.markDeletion(ctx, st.SessionID, req.BusinessLine, "account_deletion", requestID))
+		}
+		gone, checkErr := lifecycle.RecheckEndUser(ctx, s.Deletions, req.BusinessLine, req.EndUser, withdraw)
+		if checkErr != nil && !gone && (req.SessionID == "" || st.Created != nil) {
+			// 无法确认屏障时撤回本次新建；指定 ID 的幂等重试不因一次读取故障删除已有 Session。
+			checkErr = errors.Join(checkErr, withdraw(context.WithoutCancel(ctx), nil))
+		}
+		sessionGone, sessionErr := lifecycle.Recheck(ctx, s.Deletions, st.SessionID, func(ctx context.Context) error {
+			return s.withdrawCreatedSession(ctx, st.SessionID)
+		})
+		gone, checkErr = gone || sessionGone, errors.Join(checkErr, sessionErr)
+		if gone {
+			sessionID = ""
+			err = errors.Join(ErrNotFound, checkErr)
+		} else if checkErr != nil {
+			sessionID = ""
+			err = errors.Join(err, checkErr)
+		}
+	}()
 	// 先写索引、再写日志：日志写入失败只会留下一条找不到日志的索引（列表与删除都能处理），
 	// 反过来则会出现索引之外的 Session，按 EndUser 删除时会被遗漏。
 	if s.Index != nil {
@@ -130,6 +157,33 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (string, error)
 		return "", err
 	}
 	return st.SessionID, nil
+}
+
+// withdrawCreatedSession 兜住“索引已列入注销并清理、创建随后才追加日志”的窗口。
+// 已完成时当前创建只重新写了日志与索引，立即清掉；未完成时沿原删除路径再交 Janitor 清理。
+func (s *Service) withdrawCreatedSession(ctx context.Context, sessionID string) error {
+	t, err := s.Deletions.Get(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	// 先入队，直接撤回失败时仍由 Janitor 重试；已完成的删除不会再出现在 Pending 中。
+	enqueueErr := s.enqueueJanitor(ctx, sessionID, t.BusinessLine)
+	if !t.CompletedAt.IsZero() {
+		if err := s.Store.Log.Delete(ctx, sessionID); err != nil {
+			return errors.Join(enqueueErr, err)
+		}
+		if s.Store.Snapshots != nil {
+			if err := s.Store.Snapshots.Delete(ctx, sessionID); err != nil {
+				return errors.Join(enqueueErr, err)
+			}
+		}
+		if s.Index != nil {
+			if err := s.Index.Delete(ctx, sessionID); err != nil {
+				return errors.Join(enqueueErr, err)
+			}
+		}
+	}
+	return enqueueErr
 }
 
 type accessKey struct{}
@@ -610,6 +664,10 @@ func (s *Service) Delete(ctx context.Context, sessionID, reason, requestID strin
 	if businessLine == "" {
 		return fmt.Errorf("%w: session %s", ErrNotFound, sessionID)
 	}
+	return s.markDeletion(ctx, sessionID, businessLine, reason, requestID)
+}
+
+func (s *Service) markDeletion(ctx context.Context, sessionID, businessLine, reason, requestID string) error {
 	if _, err := s.Deletions.Mark(ctx, &lifecycle.Tombstone{SessionID: sessionID, BusinessLine: businessLine,
 		Reason: reason, RequestID: requestID, RequestedAt: s.Store.Clock.Now()}); err != nil {
 		return err
@@ -618,17 +676,29 @@ func (s *Service) Delete(ctx context.Context, sessionID, reason, requestID strin
 }
 
 // DeleteEndUser 删除 EndUser 在业务线下的全部 Session，并由 removers 删除其余用户数据（Node 登记、
-// Memory 与 Grant 等），返回删除请求 ID。删除请求开始后新建的 Session 不在其中：调用方应先让该用户的令牌失效。
+// Memory 与 Grant 等），返回删除请求 ID。先写 EndUser 屏障，写入方复查并撤回迟到的数据。
 func (s *Service) DeleteEndUser(ctx context.Context, businessLine, endUser string, removers ...UserDataRemover) (string, error) {
 	if s.Index == nil || s.Deletions == nil {
 		return "", fmt.Errorf("%w: deletion is not configured", ErrInvalid)
 	}
-	req := &lifecycle.Request{ID: "del_" + s.Store.IDs(), BusinessLine: businessLine, CreatedAt: s.Store.Clock.Now()}
+	b, err := s.Deletions.MarkEndUser(ctx, &lifecycle.EndUserTombstone{BusinessLine: businessLine, EndUser: endUser,
+		RequestID: "del_" + s.Store.IDs(), RequestedAt: s.Store.Clock.Now()})
+	if err != nil {
+		return "", err
+	}
+	req := &lifecycle.Request{ID: b.RequestID, BusinessLine: businessLine, CreatedAt: b.RequestedAt}
 	if err := s.Deletions.CreateRequest(ctx, req); err != nil {
 		return "", err
 	}
+	if b.Sealed {
+		return req.ID, nil
+	}
 	ids, err := s.Index.IDsOf(ctx, businessLine, endUser)
 	if err != nil {
+		return "", err
+	}
+	// 清除之前保存 ID；已单独删除过的 Session 也必须等到其 Janitor 完成。
+	if err := s.Deletions.AddEndUserSessions(ctx, b, ids); err != nil {
 		return "", err
 	}
 	for _, id := range ids {
@@ -640,6 +710,9 @@ func (s *Service) DeleteEndUser(ctx context.Context, businessLine, endUser strin
 		if err := r.DeleteEndUser(ctx, businessLine, endUser); err != nil {
 			return "", err
 		}
+	}
+	if err := s.Deletions.SealEndUser(ctx, b); err != nil {
+		return "", err
 	}
 	return req.ID, nil
 }

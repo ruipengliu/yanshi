@@ -106,6 +106,8 @@ type Stats struct {
 	PastRuns int
 	// 配额：因配额挂起的次数、提交时被拒绝的次数、挂起后恢复并结束的 Run；注销账号的次数。
 	QuotaSuspensions, QuotaRejections, QuotaResumes, AccountDeletions int
+	// EndUserBarrierWithdrawn 是注销交错中写入被屏障撤回的次数。
+	EndUserBarrierWithdrawn int
 	// 灰度：撤回版本后在下一个 Run 切换到稳定版本的次数。
 	AgentSwitches int
 	// 内容安全：被拒绝的输入、被拦截的输出、提供商错误。
@@ -370,6 +372,9 @@ type World struct {
 	faults      bool
 	// afterEnqueue 非空时，在客户端动作内部的每次入队之后调用。
 	afterEnqueue func() error
+	// endUserWriteHook 在一次存储写入前或后注销，覆盖写入与屏障的两种顺序；只执行一次，避免重入。
+	endUserWriteHook   func() error
+	endUserWriteBefore bool
 	// violations 记录脚本化模型观察到的请求级不变量违反（超出窗口、调用配对残缺）。
 	violations []string
 	// poolViolation 记录 Worker 认领到不属于其池的工作（ADR-0029）。
@@ -449,6 +454,11 @@ func New(opts Options) (*World, error) {
 	wrapped := stores
 	wrapped.Waking = flakyWaking{WakingLog: stores.Waking, w: w}
 	wrapped.Log = flakyCaptureLog{Log: stores.Log, w: w}
+	wrapped.Index = barrierIndex{Index: stores.Index, w: w}
+	wrapped.Dir = barrierDirectory{Directory: stores.Dir, w: w}
+	wrapped.Push = barrierPush{Registry: stores.Push, w: w}
+	wrapped.Memories = barrierMemory{Store: stores.Memories, w: w}
+	wrapped.Grants = barrierGrants{Grants: stores.Grants, w: w}
 	w.core = app.NewCore(wrapped, app.Options{
 		Clock: w.clock, IDs: ids.Sequential, Agents: agents, Model: gw, Blobs: artifact.NewMemBlobs(), NodeAuth: node.InsecureDevAuth{},
 		Local:        []capability.Capability{w.echoCap(), w.sendCap(), simCardCap()},
@@ -589,6 +599,9 @@ func (w *World) disconnect(n *simNode) {
 // stepNode 让一台设备上线、下线，或执行一个待投递调用并回传结果。
 func (w *World) stepNode(n *simNode) error {
 	ctx := context.Background()
+	if slices.Contains(w.deletedUsers, n.hello.GetEndUser()) {
+		return nil
+	} // 业务 App 已注销登出，旧令牌不再使用
 	if n.conn == nil {
 		if w.faults && w.clock.Now().Before(n.awayUntil) {
 			return nil // 长时间离线：调用转入后台（ADR-0035）
@@ -1444,6 +1457,7 @@ func (w *World) Fingerprint() string {
 		w.fingerprintBackground(h, sid)
 	}
 	w.fingerprintInboxes(h)
+	w.fingerprintEndUsers(h)
 	for i := range w.users {
 		devices, _ := w.push.List(context.Background(), "bl", fmt.Sprintf("u%d", i))
 		for _, d := range devices {

@@ -150,6 +150,7 @@ func runRetentionByAgent(t *testing.T, x lifecycle.Index) {
 }
 
 func RunDeletions(t *testing.T, newDeletions func(t *testing.T) lifecycle.Deletions) {
+	runEndUserDeletions(t, newDeletions)
 	ctx := context.Background()
 	t.Run("MarkOnceCompleteAndPending", func(t *testing.T) {
 		d := newDeletions(t)
