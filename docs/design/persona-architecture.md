@@ -1,6 +1,6 @@
 # xinli 与 persona agent 的整体架构
 
-> 状态：设计（2026-10-27），经逐题讨论确认（§13），再经 Codex 两轮评审修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)），未实现 · ADR-0043（三层）、ADR-0044（Capture 正文存储与擦除）、ADR-0045（定时）、ADR-0046（出站流）、ADR-0047（单次调用）、ADR-0048（三方 Agent）、ADR-0049（交付确认）· 内核的新增原语见 [M7 内核补充](./m7-kernel-primitives.md)，三方 Agent 见 [M7 Agent 生态](./m7-agent-ecosystem.md) · 承接：[旁听](./captures.md)、[旁听业务线 xinli](./captures-xinli.md)、[xinli 的建模](./captures-xinli-model.md)、[评审：xinli 与内核的下一步](../review/2026-10-27-xinli-kernel-next.md) · 待裁决：[Capture 与流该不该在内核](../review/2026-10-27-capture-boundary-review.md) · 术语以 [CONTEXT.md](../../CONTEXT.md) 为准，本文新增的 Persona 层术语见 §3.1
+> 状态：设计（2026-10-27），经逐题讨论确认（§13），再经 Codex 两轮评审修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)），未实现 · ADR-0043（三层）、ADR-0044（Capture 正文存储与擦除）、ADR-0045（定时）、ADR-0046（出站流）、ADR-0047（单次调用）、ADR-0048（三方 Agent）、ADR-0049（交付确认）· 内核的新增原语见 [M7 内核补充](./m7-kernel-primitives.md)，三方 Agent 见 [M7 Agent 生态](./m7-agent-ecosystem.md) · 承接：[旁听](./captures.md)、[旁听业务线 xinli](./captures-xinli.md)、[xinli 的建模](./captures-xinli-model.md)、[评审：xinli 与内核的下一步](../review/2026-10-27-xinli-kernel-next.md) · 待裁决：[Capture 与流该不该在内核](../review/2026-10-27-capture-boundary-review.md)、[带图示的评估页面](../review/2026-10-27-persona-plan.html) · 术语以 [CONTEXT.md](../../CONTEXT.md) 为准，本文新增的 Persona 层术语见 §3.1
 
 心力球是以录音为入口的个人助手：记录、回忆、跟进事务、反思成长。本文回答三个问题：现在的 yanshi 能不能承载它；不能承载的部分补在哪一层；以后它演进成更完整的 persona agent、接入三方 Agent 时，扩展的范式是什么。
 
