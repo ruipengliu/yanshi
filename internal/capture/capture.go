@@ -225,6 +225,39 @@ func apart(a, b *v1.CaptureSegment, gap time.Duration) bool {
 	return ok1 && ok2 && tb.Sub(ta) > gap
 }
 
+// spanTail 从 after 之后接着 prev 读下去，返回时段的最后一段，以及时段是否一直延续到日志末尾。
+func spanTail(ctx context.Context, log eventlog.Log, sessionID string, after Ref, prev *v1.CaptureSegment, gap time.Duration) (*v1.CaptureSegment, bool, error) {
+	pos := after.Seq
+	if pos > 0 {
+		pos--
+	}
+	for {
+		events, err := log.Read(ctx, sessionID, pos, readBatch)
+		if err != nil {
+			return nil, false, err
+		}
+		for _, e := range events {
+			pos = e.GetSeq()
+			c := e.GetCaptureAppended()
+			if c.GetStream() != Stream {
+				continue
+			}
+			for i, g := range c.GetSegments() {
+				if e.GetSeq() < after.Seq || e.GetSeq() == after.Seq && i <= after.Index {
+					continue
+				}
+				if apart(prev, g, gap) {
+					return prev, false, nil
+				}
+				prev = g
+			}
+		}
+		if len(events) < readBatch {
+			return prev, true, nil
+		}
+	}
+}
+
 // Page 读取 at 之后的旁听转写：至多一个时段、Limit 段、约 MaxChars 字符。时段结束时本页结束；到了上限而时段未完时，
 // 下一页的位置带上时段的起点，接着读同一个时段。没有时间的片段无从切分，每页算一个时段。next 是下一页的位置；本页没有读到
 // 任何旁听（已读完、时段还在进行）时为零值，读取位置不前进。
@@ -303,8 +336,16 @@ read:
 	if count == 0 {
 		return model.TextBlocks("（已读完：之后没有更多旁听）"), Cursor{}, nil
 	}
+	lastSeg, atEnd := prev, done
+	if !done && !ended && !cont && !o.All && !o.Now.IsZero() {
+		// 时段跨页时先看到它的末尾：一直说到日志末尾的时段第一页就不交出。否则第一页的位置随 Run 提交，
+		// 之后接着读从续页开始，第一页的原话再也读不到（captures.md §5）。续页不必再看：第一页交出时它已经结束。
+		if lastSeg, atEnd, err = spanTail(ctx, log, sessionID, last, prev, o.Gap); err != nil {
+			return nil, Cursor{}, err
+		}
+	}
 	// 读到了日志末尾，而最后一段刚说完不久：这个时段可能还在继续，先不交出，读取位置也不前进。
-	if t, ok := model.CaptureLocalTime(prev); done && ok && !o.All && !o.Now.IsZero() && o.Now.Sub(t) < o.Gap {
+	if t, ok := model.CaptureLocalTime(lastSeg); atEnd && ok && !o.All && !o.Now.IsZero() && o.Now.Sub(t) < o.Gap {
 		return model.TextBlocks(fmt.Sprintf("（时段 #%s 还在进行：最后一段在 %s，稍后再整理。之前的时段已读完）", span, t.Format("15:04"))), Cursor{}, nil
 	}
 	title := "【时段 #" + span.String() + " 起】\n"

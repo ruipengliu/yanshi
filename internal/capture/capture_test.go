@@ -250,6 +250,41 @@ func TestReadPositionAndOpenSpan(t *testing.T) {
 	}
 }
 
+// 跨页的时段一直说到日志末尾、刚说完不久时，第一页就不交出：否则第一页的位置随 Run 提交，之后接着读从续页开始，
+// 第一页的原话再也读不到（docs/design/captures.md §5）。说完已久的、或 all 时照常分页。
+func TestOpenSpanAcrossPages(t *testing.T) {
+	ctx := context.Background()
+	log := timedLog(t,
+		[]string{"2026-10-23T09:00 甲"},                       // 事件 2：第一个时段
+		[]string{"2026-10-23T11:00 乙", "2026-10-23T11:01 丙"}, // 事件 4：第二个时段，跨页
+		[]string{"2026-10-23T11:02 丁"},                       // 事件 6
+	)
+	zone, _ := time.LoadLocation("Asia/Shanghai")
+	def := &agentdef.Def{Streams: []agentdef.Stream{{Name: capture.Stream, ExchangeGap: gap}}}
+	st := &session.State{}
+	st.Captures.Read = map[string]*v1.CaptureRead{capture.Stream: {Stream: capture.Stream, After: "2.0", ExchangeGapMs: gap.Milliseconds()}}
+	read := func(now time.Time, args string) capability.Result {
+		t.Helper()
+		res, err := capture.New(log, clock.NewFake(now)).InvokeResult(ctx, capability.Invocation{SessionID: "s", Arguments: args, State: st, Agent: def})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	soon := time.Date(2026, 10, 23, 11, 3, 0, 0, zone)
+	open := read(soon, `{"after":"new","limit":2}`)
+	if segments(open.Content) != 0 || !strings.Contains(model.Text(open.Content), "时段 #4.0 还在进行：最后一段在 11:02") || open.Read != nil {
+		t.Fatalf("open span across pages = %q, read %v", model.Text(open.Content), open.Read)
+	}
+	if all := read(soon, `{"after":"new","limit":2,"all":true}`); segments(all.Content) != 2 || all.Read.GetAfter() != "4.1~4.0" {
+		t.Fatalf("all = %q, read %v", model.Text(all.Content), all.Read)
+	}
+	later := read(soon.Add(time.Hour), `{"after":"new","limit":2}`)
+	if segments(later.Content) != 2 || later.Read.GetAfter() != "4.1~4.0" {
+		t.Fatalf("ended span across pages = %q, read %v", model.Text(later.Content), later.Read)
+	}
+}
+
 // 时段间隔沿用已提交的读取位置中的值：AgentDef 中途改了间隔，同一 Session 的时段仍按原来的间隔切分，时段的起点不变。
 func TestExchangeGapSticksToSession(t *testing.T) {
 	ctx := context.Background()
