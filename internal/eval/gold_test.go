@@ -321,3 +321,24 @@ func TestGoldSemanticsCounted(t *testing.T) {
 		}
 	}
 }
+
+func TestGoldScoreReminderSelection(t *testing.T) {
+	b := newGoldBook(&Gold{Commitments: []GoldCommitment{{ID: "plan", Kind: "mine", Due: "2026-10-30"}}})
+	b.hear([]CaptureSegment{{Speaker: "wearer", Gold: "plan"}}, false)
+	b.edit(&GoldEdit{Gold: "plan", Due: "2026-10-30"})
+	old := commitment("C-0001", "mine", "2026-10-28", "open", "#1.0")
+	newer := commitment("C-0002", "mine", "2026-10-30", "open", "#2.0")
+	old.Content, newer.Content = "给张总发验收方案", "给张总发验收方案"
+	old.Counterpart, newer.Counterpart = "张总", "张总"
+	st := &xinlimock.State{Commitments: []xinlimock.Commitment{old, newer}}
+	labels := map[string]string{"s/1.0": "plan", "s/2.0": "plan"}
+	got, detail := b.score(st, labels)
+	// 只改变实际提醒的指标；重复承诺仍使修订正确率为零。
+	assertMetrics(t, got, map[string]float64{"reminder_precision": 1, "reminder_recall": 1, "revision_accuracy": 0}, detail)
+	st.Commitments[1].DueDate = "2026-10-29"
+	got, detail = b.score(st, labels)
+	assertMetrics(t, got, map[string]float64{"reminder_precision": 0, "reminder_recall": 0}, detail)
+	st.Commitments[1].Status = "done"
+	got, detail = b.score(st, labels)
+	assertMetrics(t, got, map[string]float64{"reminder_precision": 0, "reminder_recall": 0}, detail)
+}
