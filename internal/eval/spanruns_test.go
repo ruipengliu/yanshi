@@ -66,6 +66,9 @@ func (s spanScript) Generate(ctx context.Context, req *model.Request, _ func(mod
 	if s.mode == "stalled" {
 		return response("", "")
 	}
+	if s.mode == "ask" {
+		return response("ask_user", `{"question":"要整理哪一段？"}`)
+	}
 	if len(calls) == 0 {
 		return response("captures", fmt.Sprintf(`{"after":"new","all":%v}`, input == xinliSpanAllInput))
 	}
@@ -260,5 +263,49 @@ func TestFailedEvalTurnInterruptsAndCountsUsage(t *testing.T) {
 	st, err := in.svc.Load(ctx, sid)
 	if err != nil || st.Active() != nil {
 		t.Fatalf("timed out run still active: state=%+v, err=%v", st, err)
+	}
+}
+
+func TestXinliSpanRunsInterruptAskedRun(t *testing.T) {
+	gw := model.NewGateway()
+	gw.Register("script", spanScript{"ask"})
+	agents, err := agentdef.NewRegistry(&agentdef.Def{Name: "xinli-day", Version: "1", Model: "script/any",
+		Streams: []agentdef.Stream{{Name: session.StreamTranscript}}, Capabilities: []string{"captures", "ask_user", "mcp:xinli/*"},
+		Context: agentdef.Context{Scope: agentdef.ScopeRun}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &Case{Name: "ask", Agent: "xinli-day", XinliSpanRuns: true, Trials: 1}
+	c.Setup.Xinli = &XinliSetup{}
+	c.Turns = []Turn{{Input: "整理交谈"}}
+	cfg := Config{Agents: agents, Model: gw, TurnTimeout: 10 * time.Second, Parallel: 1}
+	cfg.defaults()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	in, err := start(ctx, cfg, []*Case{c})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid, err := in.svc.Create(ctx, service.CreateRequest{BusinessLine: BusinessLine, EndUser: "ask", Agent: c.Agent, AgentVersion: in.version[c.Name]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 没有回答脚本时 turn 停在提问处、不报错；拆 Run 的调度停止实验时不能留下等待回答的 Run。
+	obs, err := in.spanTurns(ctx, sid, BusinessLine, "ask", c.Turns[0], cfg.TurnTimeout)
+	if err == nil || !strings.Contains(err.Error(), "status asked") || obs == nil || obs.questions != 1 {
+		t.Fatalf("asked span run: obs=%+v, err=%v", obs, err)
+	}
+	st, err := in.svc.Load(ctx, sid)
+	if err != nil || st.Active() != nil {
+		t.Fatalf("asked span run still active: state=%+v, err=%v", st, err)
+	}
+}
+
+func TestXinliSpanRunsRejectOneShotScripts(t *testing.T) {
+	in := &instance{}
+	for _, turn := range []Turn{{Input: "整理今天", CrashAfterCalls: 1}, {Input: "整理今天", CardAction: &CardActionScript{}}} {
+		if _, err := in.spanTurns(context.Background(), "s", BusinessLine, "u", turn, time.Second); err == nil {
+			t.Fatalf("span runs accepted a one-shot script: %+v", turn)
+		}
 	}
 }

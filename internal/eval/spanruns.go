@@ -2,6 +2,7 @@ package eval
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -33,6 +34,10 @@ const xinliSpanInstructions = `
 // spanTurns 扮演业务线的串行调度：一个原轮次内拆出多个 Run，仍只提交一次旁听、检查一次断言。
 // 触发的「同一位置只触发一次」不支持连续排空，这里只用普通输入实验，不改平台触发（ADR-0040）。
 func (in *instance) spanTurns(ctx context.Context, sid, bl, endUser string, turn Turn, timeout time.Duration) (*observation, error) {
+	// 每个 Run 都复制原轮次的脚本：卡片动作、等待后台结果与杀 Worker 只该发生一次，拆开后语义就变了，不作消融。
+	if turn.CardAction != nil || turn.AwaitBackground || turn.CrashAfterCalls > 0 {
+		return nil, fmt.Errorf("span runs do not support card_action, await_background or crash_after_calls")
+	}
 	if timeout <= 0 {
 		timeout = in.cfg.TurnTimeout
 	}
@@ -59,7 +64,16 @@ func (in *instance) spanTurns(ctx context.Context, sid, bl, endUser string, turn
 			return err
 		}
 		if o.status != "completed" {
-			return fmt.Errorf("span run ended with status %s", o.status)
+			// 停在提问处时 turn 不报错、也不中断：这里要停止实验，先中断，不留下等待回答的 Run。
+			err := fmt.Errorf("span run ended with status %s", o.status)
+			if st, loadErr := in.svc.Load(ctx, sid); loadErr != nil {
+				err = errors.Join(err, loadErr)
+			} else if r := st.Active(); r != nil {
+				if stopErr := in.svc.Interrupt(context.WithoutCancel(ctx), sid, r.ID); stopErr != nil {
+					err = errors.Join(err, fmt.Errorf("interrupt span run: %w", stopErr))
+				}
+			}
+			return err
 		}
 		if businessInput == "整理交谈" && (slices.Contains(o.calls, "mcp_xinli__day_ledger") || slices.Contains(o.calls, "mcp_xinli__file_day")) {
 			return fmt.Errorf("span run called day reconciliation tools")
