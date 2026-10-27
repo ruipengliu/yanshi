@@ -56,7 +56,7 @@ func (s *Server) xinliState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.Xinli.State(bl, eu))
 }
 
-// XinliMock 是模拟的 xinli 业务线（internal/xinlimock，docs/design/captures-xinli.md §9）：调试控制台的"旁听"视图
+// XinliMock 是模拟的 xinli 业务线（internal/xinlimock，docs/design/xinli-captures.md §9）：调试控制台的"旁听"视图
 // 经它查看数据，并扮演用户与业务线服务端做确认与每周回顾。
 type XinliMock interface {
 	State(businessLine, endUser string) any
@@ -66,8 +66,8 @@ type XinliMock interface {
 	Week(ctx context.Context, businessLine, endUser string) (string, error)
 }
 
-// xinliResolve 替用户确认一段归属拿不准的交谈（docs/design/captures-xinli.md §5）、确认合并提议，或改一条承诺
-// （记为用户的变更集，docs/design/captures-xinli-model.md §5），鉴权同 xinliState。
+// xinliResolve 替用户确认一段归属拿不准的交谈（docs/design/xinli-captures.md §5）、确认合并提议，或改一条承诺
+// （记为用户的变更集，docs/design/xinli-model.md §5），鉴权同 xinliState。
 func (s *Server) xinliResolve(w http.ResponseWriter, r *http.Request) {
 	bl, eu, ok := memoryOwner(w, r, s)
 	if !ok {

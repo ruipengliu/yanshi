@@ -1,6 +1,6 @@
 name: capture-long-day
 description: >-
-  长的一天（captures-xinli.md §3）：早上第一段交谈中佩戴者答应周三前发合同，之后是十几段无关的闲聊。用例把上下文
+  长的一天（xinli-captures.md §3）：早上第一段交谈中佩戴者答应周三前发合同，之后是十几段无关的闲聊。用例把上下文
   窗口调小，使整理途中必然压缩；逐段交出之后，压缩只丢已经交出的原文，承诺仍在账本中，当天总览依据 day_ledger 写成。
 agent: xinli-day
 context: {window: 24000, keep_recent: 6000, max_tool_result: 6000}

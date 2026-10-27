@@ -1,6 +1,6 @@
 name: capture-project-reconcile-settled
 description: >-
-  白天已依据原话改期，项目 Run 不再重复改动（captures-xinli-model.md §6）：框架合同的期限白天已改为 11 月 2 日，
+  白天已依据原话改期，项目 Run 不再重复改动（xinli-model.md §6）：框架合同的期限白天已改为 11 月 2 日，
   day_summary 给出的就是改过的状态；"整理 <日期>"只把报价单标为完成，不再改合同（它的 rev 不变）。
 agent: xinli-project
 setup:

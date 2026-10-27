@@ -1,8 +1,8 @@
 # 旁听业务线 xinli
 
-> 状态：已实现，已用真实模型验证（2026-10-25，评测结果见 [m4-eval.md](./m4-eval.md) §12）；2026-10-25 按 [xinli 的建模](./captures-xinli-model.md)（ADR-0042）改为变更集 · 依赖：[旁听](./captures.md)（ADR-0036、ADR-0037、ADR-0039）、[Memory 与 Grant](./m4-memory-grant.md)、[MCP 适配](./m5-mcp.md)、[长 Run](./m2-long-runs.md)（`context.scope: run`）· 术语：`CONTEXT.md` 的 Span、Exchange、Changeset、Revision、Project、Commitment、Awareness
+> 状态：已实现，已用真实模型验证（2026-10-25，评测结果见 [m4-eval.md](./m4-eval.md) §12）；2026-10-25 按 [xinli 的建模](./xinli-model.md)（ADR-0042）改为变更集 · 依赖：[旁听](./captures.md)（ADR-0036、ADR-0037、ADR-0039）、[Memory 与 Grant](./m4-memory-grant.md)、[MCP 适配](./m5-mcp.md)、[长 Run](./m2-long-runs.md)（`context.scope: run`）· 术语：[内核术语](../../CONTEXT.md) 的 Span；[Persona 术语](../../persona/CONTEXT.md) 的 Exchange、Changeset、Revision、Project、Commitment、Awareness
 
-xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理成交谈的摘要，按主题归集到 Project，记下双方的承诺、随新说出的话修订它们并按期限提醒，每周回顾沟通习惯，供用户随时提问。编排在业务线服务端（ADR-0037）；yanshi 提供旁听的写入与读取、四个 AgentDef 的运行，以及引用的说话人与说话时间（[captures.md](./captures.md) §6）。实体、变更集与修订的模型（为什么这样建、取舍）见 [xinli 的建模](./captures-xinli-model.md)；本文写流程、工具与评测。
+xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理成交谈的摘要，按主题归集到 Project，记下双方的承诺、随新说出的话修订它们并按期限提醒，每周回顾沟通习惯，供用户随时提问。编排在业务线服务端（ADR-0037）；yanshi 提供旁听的写入与读取、四个 AgentDef 的运行，以及引用的说话人与说话时间（[captures.md](./captures.md) §6）。实体、变更集与修订的模型（为什么这样建、取舍）见 [xinli 的建模](./xinli-model.md)；本文写流程、工具与评测。
 
 ## 1. AgentDef 与工具
 
@@ -23,7 +23,7 @@ xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理�
 
 1. **开启。** HostApp 在当地一天的第一个 Capture 之前创建 `xinli-day` Session，把 Session ID 与日期报给业务线服务端。日期与 Session 的对应由业务线记录；跨午夜的对话分在两天的 Session 中，接受这一点。
 2. **白天。** 用户空闲时（旁听静默了一段时间）提交"整理交谈"。Run 用 `captures{after: "new"}` 一个个读已经结束的时段，每个时段划出交谈、交出一个变更集（§3），读到"已读完"或"还在进行"为止。有新原话为据的改动（改期、作废、完成）就在这里修订，提醒随之更正。平台触发（ADR-0040）实现之后由 `xinli-day` 的 `trigger` 声明开启（[m5](./m5-inputs-triggers-loops.md) §6）；在那之前由业务线提交：可以按 Session 的旁听数判断有没有新内容，没有就不提交。
-3. **当天整理。** 业务线按各用户的空闲用服务令牌提交"整理今天"：当地 18:00 之后旁听静默满 2 小时提交，到当地 04:00 仍未满足的，在 04:00 起的 30 分钟内随机提交（[建模](./captures-xinli-model.md) §12），负载随各人的作息分散，不集中在午夜。Run 用 `captures{after: "new", all: true}` 读完余下的时段并交出，再用 `day_ledger` 取回当天的账本、交出当天整理（合并、改正、补上漏掉的修订），最后以 `file_day` 交出当天总览与觉察。业务线只接受"整理今天"那次 Run 的 `file_day`。
+3. **当天整理。** 业务线按各用户的空闲用服务令牌提交"整理今天"：当地 18:00 之后旁听静默满 2 小时提交，到当地 04:00 仍未满足的，在 04:00 起的 30 分钟内随机提交（[建模](./xinli-model.md) §12），负载随各人的作息分散，不集中在午夜。Run 用 `captures{after: "new", all: true}` 读完余下的时段并交出，再用 `day_ledger` 取回当天的账本、交出当天整理（合并、改正、补上漏掉的修订），最后以 `file_day` 交出当天总览与觉察。业务线只接受"整理今天"那次 Run 的 `file_day`。
 4. **归集。** `file_day` 之后，业务线为当天涉及的项目创建（或复用）`xinli-project` Session，提交"整理 <日期>"，输入中不含摘要。Project 的 Run 用 `day_summary{date}` 取回那天归入本项目的交谈与未完成的承诺，以 `set_status` 更新现状、以 `update_commitments` 依据交谈对账（§6）。
 5. **关闭。** 业务线调用 `POST /v1/sessions/{id}/close`，`close_after_idle` 兜底。
 6. **提醒。** 承诺随变更集一交出就进入承诺账本（§6），业务线按当前状态推送通过核对的承诺：改期后按新期限，作废或合并后停止；白天答应的事当天就能提醒；不经 yanshi 的 Notification。
@@ -60,7 +60,7 @@ xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理�
 | `day_ledger`（只读） | `{}` | 今天的交谈（ID、范围、标题、摘要、归属、决定、风险、沟通方式的观察）、今天的承诺与之前未完成而与今天相关的承诺（带 `rev` 与修订），以及确定性的提示。 |
 | `file_day` | `{day{headline, highlights}, awareness{habits, suggestions}}` | 当天总览与觉察；只接受"整理今天"那次 Run 的。 |
 
-`file_changes` 的参数（[建模](./captures-xinli-model.md) §5）：
+`file_changes` 的参数（[建模](./xinli-model.md) §5）：
 
 ```
 {
@@ -109,7 +109,7 @@ xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理�
 
 ## 6. 承诺账本
 
-承诺由业务线保存，以变更集为日志：每条承诺有 ID、出处交谈、引用、核对结果与修订历史，当前状态（期限、内容、对方、状态）由修订依次叠加得出（[建模](./captures-xinli-model.md) §4）。改期、改内容、换对方是 `revise`，作废与完成是 `close`，重复是当天整理的 `merge`；都不删除旧值，修订带说话时间与记录时间，已经按旧期限发出的提醒仍有据可查。
+承诺由业务线保存，以变更集为日志：每条承诺有 ID、出处交谈、引用、核对结果与修订历史，当前状态（期限、内容、对方、状态）由修订依次叠加得出（[建模](./xinli-model.md) §4）。改期、改内容、换对方是 `revise`，作废与完成是 `close`，重复是当天整理的 `merge`；都不删除旧值，修订带说话时间与记录时间，已经按旧期限发出的提醒仍有据可查。
 
 **核对承诺人。** 承诺以结构化字段交出、每条引用原话，平台附上被引用片段的说话人与说话时间（[captures.md](./captures.md) §6），业务线据此核对，不依据模型自报的 `kind`：
 
@@ -249,7 +249,7 @@ xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理�
 
 | 决定 | 选择 | 没有选的 |
 |---|---|---|
-| 整理的单位 | 平台按停顿切时段，模型在时段内划交谈，每个时段交出一个变更集、当天整理合并与改正、最后汇总（ADR-0042） | 平台切出的交谈即身份（切错改不了、只能归一个项目、承诺无法跨交谈修改，[建模](./captures-xinli-model.md) §1）；一个 Run 读完全天、最后一次交出（长的一天在压缩中丢内容）；HostApp 标注交谈边界（需要契约字段） |
+| 整理的单位 | 平台按停顿切时段，模型在时段内划交谈，每个时段交出一个变更集、当天整理合并与改正、最后汇总（ADR-0042） | 平台切出的交谈即身份（切错改不了、只能归一个项目、承诺无法跨交谈修改，[建模](./xinli-model.md) §1）；一个 Run 读完全天、最后一次交出（长的一天在压缩中丢内容）；HostApp 标注交谈边界（需要契约字段） |
 | 白天的整理 | 同一个旁听 Session，`context.scope: run` 加 `after: "new"`；最后一段过去一个时段间隔才整理；有新原话为据的修订就在这里做 | 每段交谈一个 Session（删除"某天"要删很多 Session，旁听也要分开写）；立即整理、交谈继续后重交（结果被反复取代） |
 | 白天谁触发 | 现在由业务线在用户空闲时提交；ADR-0040 已决定改为平台按 AgentDef 的声明触发 | — |
 | 承诺的修订 | 变更集中的 `revise`、`close`、`merge`，带 `rev`，不删除旧值 | `file_exchange` 加 `supersedes`（仍以交谈为身份）；只在深夜对账（提醒更正不及时） |

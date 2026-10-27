@@ -1,6 +1,6 @@
 name: capture-project-grouping
 description: >-
-  跨天归集（captures-xinli.md §5）：第一天谈新办公室装修，新建项目（模拟服务给出 P-0101）；第二天上午接着谈装修，
+  跨天归集（xinli-captures.md §5）：第一天谈新办公室装修，新建项目（模拟服务给出 P-0101）；第二天上午接着谈装修，
   find_related 召回它、归入同一项目；下午的无关话题（孩子运动会）是另一段交谈，不并入。已有项目"年度预算"是干扰项。
 agent: xinli-day
 setup:

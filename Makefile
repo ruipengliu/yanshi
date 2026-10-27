@@ -7,7 +7,7 @@ export YANSHI_TEST_S3 ?= 127.0.0.1:58333
 # TypeScript SDK 与真实网关的互通测试（internal/e2e TestWebSDK）；需要 Node.js 与 pnpm。
 export YANSHI_TEST_NODE ?= 1
 
-.PHONY: check gen lint test sim build tools deps-up deps-down sandbox-image web web-deps mobile
+.PHONY: check gen lint check-deps test sim build tools deps-up deps-down sandbox-image web web-deps mobile
 
 check: lint test
 
@@ -29,18 +29,32 @@ deps-down:
 gen: web-deps
 	PATH=$(GOBIN):$$PATH buf generate
 
-lint: web-deps
-	test -z "$$(gofmt -l internal cmd sdk scripts)" || (gofmt -l internal cmd sdk scripts; exit 1)
+lint: web-deps check-deps
+	test -z "$$(gofmt -l internal cmd sdk scripts persona apps)" || (gofmt -l internal cmd sdk scripts persona apps; exit 1)
 	go vet ./...
+	cd persona && go vet ./...
+	cd apps/xinli && go vet ./...
 	go run ./scripts/docrefs
 	PATH=$(GOBIN):$$PATH buf lint
 	cd sdk/web && pnpm lint
+
+# ADR-0043：独立模块守住 internal 边界，传递依赖检查同时阻止内核反向依赖业务层。
+# 先检查 go list 的退出码，避免包加载失败被管道吞掉。
+check-deps:
+	@for dir in persona apps/xinli; do \
+		deps=$$(go -C "$$dir" list -deps ./...) || exit 1; \
+		printf '%s\n' "$$deps" | awk '/^yanshi\/internal\// { print "依赖方向违规: " $$0; bad = 1 } END { exit bad }' || exit 1; \
+	done
+	@deps=$$(go list -deps ./...) || exit 1; \
+		printf '%s\n' "$$deps" | awk '/^(persona|xinli)(\/|$$)/ { print "依赖方向违规: " $$0; bad = 1 } END { exit bad }'
 
 # internal/sim 的全部种子不在竞争检测下跑：World 由测试确定性地逐步推进，其中的并发部分（如 Worker 操作期间的监视
 # goroutine）由所在包的单元测试与 e2e 在 -race 下覆盖；竞争检测在这里却让它慢十几倍（种子并行后仍需约 2.5 分钟，
 # 不带 -race 约 40 秒）。竞争检测在 sim 上真正能查的是并行的 World 之间是否共享了可变状态：确定性测试同时运行
 # 几个 World，留在 -race 下检查这一点（同时也查到这几个 World 内部的监视 goroutine）。
 test: deps-up web
+	cd persona && go test -race ./...
+	cd apps/xinli && go test -race ./...
 	go test -race $$(go list ./... | grep -v '^yanshi/internal/sim$$')
 	go test ./internal/sim
 	go test -race ./internal/sim -run TestSimulationIsDeterministic

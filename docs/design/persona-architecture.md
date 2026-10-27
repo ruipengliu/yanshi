@@ -1,6 +1,6 @@
 # xinli 与 persona agent 的整体架构
 
-> 状态：设计（2026-10-27），经逐题讨论确认（§13），再经 Codex 两轮评审修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)），未实现 · ADR-0043（三层）、ADR-0044（Capture 正文存储与擦除）、ADR-0045（定时）、ADR-0046（出站流）、ADR-0047（单次调用）、ADR-0048（三方 Agent）、ADR-0049（交付确认）· 内核的新增原语见 [M7 内核补充](./m7-kernel-primitives.md)，三方 Agent 见 [M7 Agent 生态](./m7-agent-ecosystem.md) · 承接：[旁听](./captures.md)、[旁听业务线 xinli](./captures-xinli.md)、[xinli 的建模](./captures-xinli-model.md)、[评审：xinli 与内核的下一步](../review/2026-10-27-xinli-kernel-next.md) · 待裁决：[Capture 与流该不该在内核](../review/2026-10-27-capture-boundary-review.md)、[带图示的评估页面](../review/2026-10-27-persona-plan.html) · 术语以 [CONTEXT.md](../../CONTEXT.md) 为准，本文新增的 Persona 层术语见 §3.1
+> 状态：设计（2026-10-27），经逐题讨论确认（§13），再经 Codex 两轮评审修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)），未实现 · ADR-0043（三层）、ADR-0044（Capture 正文存储与擦除）、ADR-0045（定时）、ADR-0046（出站流）、ADR-0047（单次调用）、ADR-0048（三方 Agent）、ADR-0049（交付确认）· 内核的新增原语见 [M7 内核补充](./m7-kernel-primitives.md)，三方 Agent 见 [M7 Agent 生态](./m7-agent-ecosystem.md) · 承接：[旁听](./captures.md)、[旁听业务线 xinli](./xinli-captures.md)、[xinli 的建模](./xinli-model.md)、[评审：xinli 与内核的下一步](../review/2026-10-27-xinli-kernel-next.md) · 待裁决：[Capture 与流该不该在内核](../review/2026-10-27-capture-boundary-review.md)、[带图示的评估页面](../review/2026-10-27-persona-plan.html) · 内核术语见 [CONTEXT.md](../../CONTEXT.md)，Persona 与应用层术语分别见 [Persona 术语](../../persona/CONTEXT.md)、[xinli 术语](../../apps/xinli/CONTEXT.md)（§3.1）
 
 心力球是以录音为入口的个人助手：记录、回忆、跟进事务、反思成长。本文回答三个问题：现在的 yanshi 能不能承载它；不能承载的部分补在哪一层；以后它演进成更完整的 persona agent、接入三方 Agent 时，扩展的范式是什么。
 
@@ -89,7 +89,7 @@ Persona 按业务线分租户，数据归业务线（ADR-0003 的延伸）：第
 
 ### 3.1 术语
 
-以下术语在 P0（§11）随 `persona/CONTEXT.md` 迁出，内核的 `CONTEXT.md` 只保留内核术语。Exchange、Span 之外的 Changeset、Revision、Commitment、Project、Awareness 沿用现有定义，一并迁出（Span 是平台的分页单位，留在内核）。
+Persona 层术语见 [persona/CONTEXT.md](../../persona/CONTEXT.md)，内核的 `CONTEXT.md` 只保留内核术语。Exchange、Changeset、Revision、Commitment、Project、Awareness 沿用原有定义，已迁入 Persona 术语表；以下新增术语也在其中定义。Span 是平台的分页单位，留在内核。
 
 - **Entity（实体）**：Persona 中有稳定 ID 的一个人、组织、概念或事件，带别名。承诺的对方、交谈的参与者、项目的相关方都引用实体。
 - **Note（笔记）**：EndUser 经随口记口述的内容，是本人的话，整理后保存。
@@ -125,7 +125,7 @@ xinli 的 AgentDef 不再把他人的信息写成 Memory 的 `relationship`：�
 | MCP 工具 | 内核（Agent 的调用） | 现有的 `find_related`、`file_changes`、`day_ledger`、`file_day`、`day_summary`、`set_status`、`update_commitments`、`list_commitments`、`commitment_history` 等，加上 `save_note`、`entity`、`search`、`watch`、`goals`；只读的在登记中声明只读，交出结果的以 `no_approval` 放宽（ADR-0017），登记开启 `cite_captures` |
 | 查询与改动 API | 应用层的 BFF | App 的项目、待办、笔记、实体页面；用户的改动记为作者为用户的变更集 |
 | 对外 MCP（OAuth） | 三方 AI | 只读加提议写入，不含旁听原文（[M7 Agent 生态](./m7-agent-ecosystem.md) §3） |
-| 评测夹具契约 | `internal/eval` | HTTP 上的 Seed、State、Check；取代评测对 xinlimock 的直接调用，同一套用例可指向内存实现或生产实现 |
+| 评测夹具契约 | `internal/eval` | HTTP 上的 Seed、State 与用户、业务线的操作（确认归属、改承诺、绑定 Session 等）；取代评测对 xinlimock 的直接调用，同一套用例可指向内存实现或生产实现。评分逻辑留在 `internal/eval`，夹具不提供 Check：被测方不做自己的裁判 |
 
 领域核心（变更集检查、期限换算、核对、回执文字）只有一份，生产与评测共用，只是存储不同。回执是给模型看的文本，属于被测行为（[架构评审](../review/2026-10-26-xinli-architecture.md) §3.1）。
 
@@ -193,7 +193,7 @@ Session 内"何时做"由内核负责（触发、定时）；跨 Session 的扇�
 
 ### 6.1 一天
 
-1. 当地一天的第一个 Capture 之前，应用层创建当天的 `xinli-day` Session，并以服务令牌创建当天整理的定时：窗口当地 18:00–次日 04:30，窗口内流上静默满 2 小时即执行，否则在 04:00–04:30 之间随机执行（[建模](./captures-xinli-model.md) §12 的规则，现在由内核执行）。
+1. 当地一天的第一个 Capture 之前，应用层创建当天的 `xinli-day` Session，并以服务令牌创建当天整理的定时：窗口当地 18:00–次日 04:30，窗口内流上静默满 2 小时即执行，否则在 04:00–04:30 之间随机执行（[建模](./xinli-model.md) §12 的规则，现在由内核执行）。
 2. 采集服务持续提交 Capture。说完一段话、静默 `quiet` 后，触发开启"整理交谈"，Run 逐时段交出变更集。
 3. 定时开启"整理今天"：读完余下的时段、当天整理、`file_day`。
 4. 出站流上出现这次 Run 完成，编排器归集到各项目。
@@ -272,7 +272,8 @@ agents/xinli-*.yaml       AgentDef（随应用层发布，仍由内核加载）
 evals/                    评测用例；夹具经契约指向 Persona
 ```
 
-- `internal/xinlimock` 的领域逻辑迁入 `persona/`；`serve -xinli-mock` 与 `/v1/debug/xinli*` 改为通用的外部业务线夹具（开发时进程内起一个 Persona 的内存实现，经 MCP 登记）。
+- `internal/xinlimock` 的领域逻辑迁入 `persona/`，编排部分（归集、每周回顾的提交）迁入 `apps/xinli` 的编排器；内核不 import 二者，所以夹具是独立进程：`apps/xinli` 提供开发用的 `xinli dev`（Persona 的内存实现、MCP、夹具 HTTP、编排器，以及原先控制台的"旁听"视图），评测与本地开发服务启动它，按它给出的地址登记 MCP。`serve -xinli-mock` 与 `/v1/debug/xinli*` 删除，内核侧只剩通用的 MCP 登记与 HTTP API；控制台不再展示业务实体。
+- Persona 对线上格式（`_meta` 的身份与 `cite_captures`、`#seq.index` 引用、交付回执）各自实现一份，不 import 内核的包；一致性由端到端的 `capture-*` 评测保证。第二条业务线也要写 MCP Server 时，再考虑把它们提升为公开包。
 - `make check` 增加依赖方向检查：`persona/`、`apps/` 的 `go list -deps` 中不得出现 `yanshi/internal/`。模块路径不以 `yanshi/` 开头，否则 Go 的 internal 规则不起作用。
 - 业务侧的设计文档在 `docs/design/` 下以 `persona-`、`xinli-` 为前缀；ADR 仍用统一编号。
 
@@ -327,6 +328,18 @@ evals/                    评测用例；夹具经契约指向 Persona
 | Q20 | 术语与命名 | 内核术语留在 `CONTEXT.md`，业务术语迁出；Erasure、CaptureCorrection、Schedule、Oneshot、Outbox、Tier、Redo | — |
 | Q21 | 落地顺序 | P0–P6（§11） | 先做产品功能 |
 | Q22–Q27 | 三方 Agent | 见 [M7 Agent 生态](./m7-agent-ecosystem.md) §8 | — |
+
+P0 动工前的讨论（2026-10-27），各题的推荐均被采纳：
+
+| # | 决定 | 选择 | 没有选的 |
+|---|---|---|---|
+| Q28 | 先做什么 | 先做 P0；P1 中取决于原文放在哪里的部分（正文存储、擦除、修订、出站流的擦除信封）等[边界评审](../review/2026-10-27-capture-boundary-review.md)的 A/C 裁决 | 直接按现行 M7 做 P1 |
+| Q29 | 原文保留期能否由业务线担保 | 可以接受；P0 之后做边界评审 §5 的三步验证，再写 ADR 裁决 A 与 C | 不接受（直接定 A） |
+| Q30 | 评测怎样拿到 Persona | 子进程（`xinli dev`），按地址登记 MCP | `go.work` 让 eval import persona（违反依赖方向）；把 eval 移出内核模块 |
+| Q31 | 线上格式的小函数 | Persona 各自实现 | 提升为内核的公开 Go 包 |
+| Q32 | 编排放在哪里 | P0 就拆进 `apps/xinli` 的编排器；出站流就位前由 Persona 的进程内通知驱动 | 留在 Persona 的夹具里到 P4 |
+| Q33 | 夹具契约 | Seed、State 与操作；评分留在 eval | 夹具提供 Check |
+| Q34 | 控制台的"旁听"视图 | 搬进 `xinli dev` 自带的页面 | 内核的通用调试反向代理；去掉 |
 
 讨论后修正一处：Q11 原拟由令牌带 `tier` 声明，但触发与定时开启的 Run 没有用户令牌，准入时拿不到档位，改为由业务线以服务令牌设置、内核按 EndUser 保存（[M7](./m7-kernel-primitives.md) §8）。
 

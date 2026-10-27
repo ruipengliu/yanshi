@@ -127,7 +127,7 @@ Schedule {
 }
 ```
 
-- `window`：从每次的时刻起，流上静默满 `quiet` 即执行；到当地 `latest` 仍未满足时，在 `latest` 起的 `jitter` 内按 `schedule_id` 与日期派生的确定性偏移执行。参数都由创建方给出（xinli 的当天整理规则，[建模](./captures-xinli-model.md) §12）。
+- `window`：从每次的时刻起，流上静默满 `quiet` 即执行；到当地 `latest` 仍未满足时，在 `latest` 起的 `jitter` 内按 `schedule_id` 与日期派生的确定性偏移执行。参数都由创建方给出（xinli 的当天整理规则，[建模](./xinli-model.md) §12）。
 - **时区规则**：当地时刻不存在（夏令时跳过）时顺延到之后第一个存在的时刻；重复时取第一次。每次解析出的 UTC 时间写入事件，重放不依赖升级后的时区数据库。
 - 每个 Session 至多 50 个有效定时；`rrule` 的最小间隔为 1 小时。
 

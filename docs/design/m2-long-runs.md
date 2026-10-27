@@ -50,7 +50,7 @@ message ContextCompacted {
 
 多次压缩是滚动进行的：新的压缩以"上一份摘要 + 其后到新截断点之间的历史"为输入。
 
-**只看本轮（`context.scope: run`，2026-10-25）。** AgentDef 可以把上下文限定为当前 Run 的事件（`runtime.contextView`）：之前的 Run 及其压缩摘要都不进入，当前 Run 内的压缩照常滚动；压缩的时机与截断点也只按当前 Run 计算。默认 `session` 为上面的行为。它供每次输入彼此独立、靠外部状态衔接的 Agent 使用（[旁听业务线 xinli](./captures-xinli.md) §3 的 `xinli-day`）；写入闸门与注入判断仍按整个 Session 的历史判断，只会更严。
+**只看本轮（`context.scope: run`，2026-10-25）。** AgentDef 可以把上下文限定为当前 Run 的事件（`runtime.contextView`）：之前的 Run 及其压缩摘要都不进入，当前 Run 内的压缩照常滚动；压缩的时机与截断点也只按当前 Run 计算。默认 `session` 为上面的行为。它供每次输入彼此独立、靠外部状态衔接的 Agent 使用（[旁听业务线 xinli](./xinli-captures.md) §3 的 `xinli-day`）；写入闸门与注入判断仍按整个 Session 的历史判断，只会更严。
 
 ## 3. 何时压缩、截断在哪里
 

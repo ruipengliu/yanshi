@@ -1,6 +1,6 @@
 name: capture-day-digest
 description: >-
-  每日整理的结构（captures-xinli.md §3、§4）：file_changes 交出交谈中定下的事、双方各自的承诺与风险，file_day
+  每日整理的结构（xinli-captures.md §3、§4）：file_changes 交出交谈中定下的事、双方各自的承诺与风险，file_day
   交出今日总览与对佩戴者沟通方式的觉察。佩戴者答应的（报价单）是 mine，他人答应的（合同草稿）是 theirs，他人索要而
   佩戴者没有答应的（预算表）不是承诺；觉察不写情绪。
 agent: xinli-day

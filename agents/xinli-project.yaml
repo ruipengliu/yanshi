@@ -1,5 +1,5 @@
-# 旁听业务线的项目（docs/design/captures-xinli.md §1）：每个项目一个长期 Session。业务线服务端在每日整理之后提交"整理 <日期>"，
-# 每周提交一次"重写现状"（captures-xinli.md §7），
+# 旁听业务线的项目（docs/design/xinli-captures.md §1）：每个项目一个长期 Session。业务线服务端在每日整理之后提交"整理 <日期>"，
+# 每周提交一次"重写现状"（xinli-captures.md §7），
 # 摘要经 day_summary 拉取，以调用结果进入上下文，是外部内容（ADR-0037）。
 name: xinli-project
 version: "1"

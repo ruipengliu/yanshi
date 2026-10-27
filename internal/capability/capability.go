@@ -36,7 +36,7 @@ type Invocation struct {
 	// BusinessLine 与 EndUser 是 Session 的所属方，供按用户隔离数据的能力使用（如 Memory）。
 	BusinessLine string
 	EndUser      string
-	// State 与 Agent 是发起调用时 Worker 的投影与 AgentDef，只读；进程内的内置能力（如 captures 接着读的位置与交谈间隔）
+	// State 与 Agent 是发起调用时 Worker 的投影与 AgentDef，只读；进程内的内置能力（如 captures 接着读的位置与时段间隔）
 	// 用它们，路由调用不带。可能为 nil（测试直接调用时）。
 	State *session.State
 	Agent *agentdef.Def

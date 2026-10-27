@@ -1,8 +1,8 @@
 # 旁听
 
-> 状态：已实现（2026-10-25）· 决定：ADR-0036（只收文字，信任按说话人区分）、ADR-0037（每日旁听 Session 与分级保留）、ADR-0039（流、读取位置与来源推导）· 业务线的用法：[旁听业务线 xinli](./captures-xinli.md) · 术语：`CONTEXT.md` 的 Capture、Stream、Exchange、Retention
+> 状态：已实现（2026-10-25）· 决定：ADR-0036（只收文字，信任按说话人区分）、ADR-0037（每日旁听 Session 与分级保留）、ADR-0039（流、读取位置与来源推导）· 业务线的用法：[旁听业务线 xinli](./xinli-captures.md) · 术语：`CONTEXT.md` 的 Capture、Stream、Exchange、Retention
 
-全天佩戴的录音外设（领夹）经手机上的 HostApp 接入，把 EndUser 一天的对话以文字交给 yanshi。本文是平台这一侧：写入、投影、读取（`captures` 工具）、引用核对、信任、保留与删除。整理成摘要、归集到 Project、承诺账本与每周回顾由业务线编排，见 [captures-xinli.md](./captures-xinli.md)。流、触发与外部循环的通用设计见 [输入、触发与外部循环](./m5-inputs-triggers-loops.md)。
+全天佩戴的录音外设（领夹）经手机上的 HostApp 接入，把 EndUser 一天的对话以文字交给 yanshi。本文是平台这一侧：写入、投影、读取（`captures` 工具）、引用核对、信任、保留与删除。整理成摘要、归集到 Project、承诺账本与每周回顾由业务线编排，见 [xinli-captures.md](./xinli-captures.md)。流、触发与外部循环的通用设计见 [输入、触发与外部循环](./m5-inputs-triggers-loops.md)。
 
 ## 1. 目标
 
@@ -101,7 +101,7 @@ Capture 的内容不进入 `State`，也不追加到 `History`：一天的转写
 
 ### 时段
 
-时段（Span）是一个旁听 Session 中前后相连的一段旁听：相邻两段的说话时间相隔不超过间隔。由平台按日志确定性地切分，是分页与判断"是否已结束"的单位，不承担语义：一个时段里可能有几段不同的谈话（相隔几分钟的两通电话、午饭转谈工作），一场会议也可能因为一次长时间的静默跨两个时段。交谈（Exchange）由整理的模型在时段内划定、交给业务线（ADR-0042，[xinli 的建模](./captures-xinli-model.md) §8）。
+时段（Span）是一个旁听 Session 中前后相连的一段旁听：相邻两段的说话时间相隔不超过间隔。由平台按日志确定性地切分，是分页与判断"是否已结束"的单位，不承担语义：一个时段里可能有几段不同的谈话（相隔几分钟的两通电话、午饭转谈工作），一场会议也可能因为一次长时间的静默跨两个时段。交谈（Exchange）由整理的模型在时段内划定、交给业务线（ADR-0042，[xinli 的建模](./xinli-model.md) §8）。
 
 - **边界只看时间。** 一批 Capture 可能跨过多个时段（断网后补交的一批可能长达几个小时），所以边界可以落在一批中间。
 - **没有时间时每页算一个时段。** 片段缺少 `spoken_at` 或 `time_zone` 时无法按停顿切分，按段数与字数上限分页。HostApp 应当填写时间。
@@ -123,12 +123,12 @@ Capture 的内容不进入 `State`，也不追加到 `History`：一天的转写
 - 片段中的换行替换为空格，一段话不能在文本上冒充另一行；`speaker_key` 只能是 `[A-Za-z0-9_-]{1,32}`。
 - 有 `spoken_at` 与 `time_zone` 时行首是当地时刻；本页第一段与当地日期变化处另起一行 `—— 2026-10-23 星期五（当地时间）——`，并列出之后七天的日期与星期（模型自己推算星期常错一天）。模型据此把"明天""下周一"换算成日期。没有时区的片段不显示时间：`spoken_at` 是绝对时间，不知道时区时显示出来反而会误导。时区数据库编进二进制（`time/tzdata`）。
 
-工具说明与输出格式是给模型看的文本，须有评测覆盖（[captures-xinli.md](./captures-xinli.md) §10）。工具定义随 AgentDef 固定，按名称排序，请求前缀不受影响。
+工具说明与输出格式是给模型看的文本，须有评测覆盖（[xinli-captures.md](./xinli-captures.md) §10）。工具定义随 AgentDef 固定，按名称排序，请求前缀不受影响。
 
 ### 接着读与进行中的时段
 
 - **读取位置由平台记录**（ADR-0039、ADR-0049）。`captures` 读到旁听的每一页，Worker 在结果中写入读取位置（`ToolResult.capture_read`：流名、下一页的位置、时段间隔、实际开始游标 `start`、本页第一段 `first` 与流的 `ack` 声明），模型看不到；Run 完成（`RunCompleted`）时，未声明确认的流沿用本 Run 最后一页的位置；声明 `ack: true`（`agentdef.Stream.Ack`）的流从已提交游标起，沿本 Run 中被回执完整覆盖的页拼链，同一起点取最远的被覆盖页，只提交连续前缀的真实页尾（包括 `~` 续页位置）与该页的时段间隔。页与回执分别保存在 `session.Run.CapturePages`、`session.Run.CaptureAcks`，回执随 `ToolResult.CaptureAck` 写入；规则见 [内核补充](./m7-kernel-primitives.md) §11。投影提交到 `State.Captures.Read`。没有读到任何旁听的页（"已读完"、"还在进行"）不带位置。`capture_read` 只能出现在 `captures` 的结果中，`Apply` 校验。
-- **`after: "new"`** 从投影中已提交的位置接着读，不扫描日志、不解析给模型看的文字，模型也不必记住位置。只认已完成的 Run：Run 读了一个时段、还没交出就失败了，下一次会重新读到它；业务线按交出的来源去重，重复交出时取代之前的结果（[xinli 的建模](./captures-xinli-model.md) §5）。
+- **`after: "new"`** 从投影中已提交的位置接着读，不扫描日志、不解析给模型看的文字，模型也不必记住位置。只认已完成的 Run：Run 读了一个时段、还没交出就失败了，下一次会重新读到它；业务线按交出的来源去重，重复交出时取代之前的结果（[xinli 的建模](./xinli-model.md) §5）。
 - **进行中的时段先不读。** 读到日志末尾、而最后一段距现在不到间隔的时段可能还在继续：不返回它，只注明"时段 #… 还在进行，稍后再整理"，读取位置也就不前进。跨页的时段在第一页就先看到它的末尾：否则第一页的位置随 Run 提交，之后接着读从续页开始，第一页的原话再也读不到。这一条对任何 `after` 都生效（模型可能照抄页尾的位置接着读）；`all: true` 时照常返回（深夜的整理、调试控制台读刚写下的旁听）。"现在"取自平台的时钟（`clock.Clock`），结果写入日志后重放时使用记录下来的结果。
 
 白天多次整理的 Agent 同时用 `context.scope: run`（[长 Run](./m2-long-runs.md) §2）：每个 Run 只看本轮的上下文，不背着上午读过的全部旁听；Run 之间靠读取位置与业务线保存的结果衔接。
@@ -142,7 +142,7 @@ Capture 的内容不进入 `State`，也不追加到 `History`：一天的转写
 业务线要核对整理结果（例如承诺是谁做出的），但不能信模型自报的说话人。MCP 登记的 `cite_captures: true`（`mcpcap.Server.CiteCaptures`，[MCP 设计](./m5-mcp.md)）让平台在调用这个 Server 的工具时：
 
 1. **解析引用。** 在调用参数中找出恰为引用编号的字符串（如 `"#57.3"`），按发起调用的 Session 的日志解析（`mcpcap.Citations`，一次至多 200 个）。
-2. **附上说话人与说话时间。** 放进 `_meta["yanshi/captures"]`：`[{ref, speaker: "wearer" | "other", speaker_key, redacted, spoken_at, time_zone}]`，无法解析的为 `{ref, missing: true}`。说话时间不是对话内容，业务线据此按说话那天换算期限（[xinli 的建模](./captures-xinli-model.md) §7）；片段没有时间时省略。
+2. **附上说话人与说话时间。** 放进 `_meta["yanshi/captures"]`：`[{ref, speaker: "wearer" | "other", speaker_key, redacted, spoken_at, time_zone}]`，无法解析的为 `{ref, missing: true}`。说话时间不是对话内容，业务线据此按说话那天换算期限（[xinli 的建模](./xinli-model.md) §7）；片段没有时间时省略。
 
 - **说话人以平台为准。** 与 Memory 写入闸门的判断依据相同（ADR-0036）。
 - **只给说话人与时间，不给文字。** 他人的原话只保留 7 天（ADR-0037），不经这条路径流到业务线长期保存。业务线需要展示原话时，在保留期内用服务令牌从旁听 Session 读取。
@@ -219,7 +219,7 @@ Session 已在按保留期删除（对外已不可见）时，用户再删除它
 - 覆盖统计：`CapturesAppended`、`CaptureDuplicates`、`CapturesRejected`、`RetentionKeptMemories`。
 - 删除不变量（`checkDeleted`）按删除原因检查 Memory 是否保留；差分测试 `TestPostgresMatchesMemory` 覆盖新事件。
 
-**评测**：`evals/capture-*.yaml`，见 [captures-xinli.md](./captures-xinli.md) §10。
+**评测**：`evals/capture-*.yaml`，见 [xinli-captures.md](./xinli-captures.md) §10。
 
 ## 12. 未做
 

@@ -64,7 +64,7 @@ type Case struct {
 		// Agents 是本用例可委托的 Agent（docs/design/m5-multi-agent.md）：与被评测的 Agent 使用同一模型；
 		// 名称在整个评测集中唯一，被评测的 Agent 须在 capabilities 中以 "agent:<名称>" 允许委托。
 		Agents []AgentSetup `yaml:"agents"`
-		// Xinli 非 nil 时为评测业务线登记内置的 xinli MCP Server（docs/design/captures-xinli.md §1），并为本次运行的 EndUser
+		// Xinli 非 nil 时为评测业务线登记内置的 xinli MCP Server（docs/design/xinli-captures.md §1），并为本次运行的 EndUser
 		// 预置其中的项目与每日摘要。
 		Xinli *XinliSetup `yaml:"xinli"`
 		// NoHealth 为 true 时本用例在未开启健康信息的业务线中运行（ADR-0022）：health 类别的写入被拒绝。
@@ -89,7 +89,7 @@ type XinliSetup struct {
 	Days        map[string]string `yaml:"days"`
 	Commitments []XinliCommitment `yaml:"commitments"`
 	// Filed 是已经交出的每日整理（date、headline、awareness），Exchanges 是已经交出的交谈（date、title、summary、project、
-	// decisions、risks）：每周回顾与重写现状读取它们（captures-xinli.md §10）。日期可写成相对于运行当天的
+	// decisions、risks）：每周回顾与重写现状读取它们（xinli-captures.md §10）。日期可写成相对于运行当天的
 	// "today-N"（"本周"由运行时刻决定）。
 	Filed     []XinliDay      `yaml:"filed"`
 	Exchanges []XinliExchange `yaml:"exchanges"`
@@ -120,7 +120,7 @@ type XinliExpect struct {
 	CommitmentsCount *Range `yaml:"commitments_count"`
 	// StaleOpen 是过时的未完成承诺：Of 中每项描述一条改期、作废或转交之前的旧版本，仍未完成且匹配其中某项的至多 Max 条（F1）。
 	StaleOpen *StaleExpect `yaml:"stale_open"`
-	// Grouping 是项目归集的碎片率与纯度（captures-xinli.md §10、m4-eval.md），需要旁听标上主题（CaptureSegment.Topic）。
+	// Grouping 是项目归集的碎片率与纯度（xinli-captures.md §10、m4-eval.md），需要旁听标上主题（CaptureSegment.Topic）。
 	Grouping *GroupingExpect `yaml:"grouping"`
 	// Covers 是摘要须覆盖的要点：评分模型逐条判断要点是否出现在交出的交谈与总览中，覆盖率至少为 Min。
 	Covers *CoversExpect `yaml:"covers"`
@@ -337,7 +337,7 @@ type Expect struct {
 	// Tasks 是本轮 Call 中派生任务（run_task）次数的范围；TaskContains 要求某个任务的内容包含给定文本。
 	Tasks        *Range   `yaml:"tasks"`
 	TaskContains []string `yaml:"task_contains"`
-	// Xinli 是本轮之后 xinli MCP Server 中本 EndUser 的数据应满足的条件（docs/design/captures-xinli.md §10）。
+	// Xinli 是本轮之后 xinli MCP Server 中本 EndUser 的数据应满足的条件（docs/design/xinli-captures.md §10）。
 	Xinli *XinliExpect `yaml:"xinli"`
 	// Tickets 是本轮之后 CRM 中本 EndUser 的工单应包含的文本（每项须出现在某个工单中）。
 	Tickets []string `yaml:"tickets"`

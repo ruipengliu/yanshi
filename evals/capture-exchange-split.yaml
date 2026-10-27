@@ -1,6 +1,6 @@
 name: capture-exchange-split
 description: >-
-  模型在时段里划交谈（captures-xinli-model.md §8）：与供应商谈完采购，三分钟后同事来约团建，停顿不到时段间隔，平台把
+  模型在时段里划交谈（xinli-model.md §8）：与供应商谈完采购，三分钟后同事来约团建，停顿不到时段间隔，平台把
   它们读成一个时段；模型按内容划成两段交谈，各自的承诺各归各的交谈，一个变更集交出，最后交出当天总览。
 agent: xinli-day
 setup:
