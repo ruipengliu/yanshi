@@ -1,0 +1,29 @@
+name: capture-assistant-open-commitments
+description: 助手按责任方查询未完成承诺，包含无项目与无期限的事，排除关闭和被合并者。
+agent: xinli-assistant
+setup:
+  xinli:
+    projects:
+      - {id: P-0001, name: 装修, status: 等待报价}
+    commitments:
+      - {id: C-0001, kind: mine, content: 交成本核算表, counterpart: 张总, due_date: "2026-10-28", project: P-0001}
+      - {id: C-0002, kind: mine, content: 取快递, counterpart: 妈妈, due_date: "2026-10-27"}
+      - {id: C-0003, kind: mine, content: 归还相机, counterpart: 小李}
+      - {id: C-0004, kind: theirs, content: 寄出样品, counterpart: 王工, due_date: "2026-10-26"}
+      - {id: C-0005, kind: mine, content: 打印合同, status: done}
+      - {id: C-0006, kind: mine, content: 预订餐厅, status: cancelled}
+      - id: C-0007
+        kind: mine
+        content: 核算表旧记录
+        revisions:
+          - {op: merge, fields: {merged_into: C-0001}}
+turns:
+  - input: 我答应别人的事还有哪些没办完，按期限说。
+    expect:
+      calls: [mcp_xinli__list_commitments]
+      reply_contains: [取快递, 成本核算表, 相机]
+      reply_excludes: [寄出样品, 打印合同, 预订餐厅, 核算表旧记录]
+      judge: >-
+        5 分：只列本人未完成且未被合并的三件事：10 月 27 日星期二替妈妈取快递、10 月 28 日星期三给张总交成本核算表、归还小李相机（未定期限，排后）。顺序正确，无项目的也不遗漏。
+        4 分：三件齐全且没有混入别人的、已完成、取消或重复记录，期限正确，但遗漏星期或对方。
+        3 分：漏一件或排序错误。2 分：混入寄出样品、打印合同、预订餐厅或核算表旧记录，或只从项目摘要回答。1 分：大部分错误或编造。

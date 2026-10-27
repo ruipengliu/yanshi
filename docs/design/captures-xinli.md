@@ -93,7 +93,7 @@ xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理�
 | `set_status` | `{status, next_steps, open_questions}` | 项目现状，整体替换。`find_related` 与 `list_projects` 展示的就是它。 |
 | `update_commitments` | `{date, revise: [{id, rev, due_date?, …, exchanges}], close: [{id, rev, status, exchanges}]}` | 依据交谈对账，作为一个变更集（§6）。新增承诺只来自 `xinli-day`。 |
 
-`xinli-week` 的工具见 §7。`xinli-assistant` 用 `list_projects`、`project_digest`、`recent_days` 查询项目现状、交谈与承诺账本。
+`xinli-week` 的工具见 §7。`xinli-assistant` 用 `list_projects`、`project_digest`、`recent_days` 查询项目现状与交谈，用只读的 `list_commitments`、`commitment_history` 查询承诺账本与修订历史。
 
 ## 5. 项目归集
 
@@ -175,6 +175,11 @@ xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理�
 
 用户在 App、微信或飞书中的提问都由业务线提交到该用户的 `xinli-assistant` Session（微信、飞书由业务线服务端以服务令牌代为提交）。助手经 `mcp_xinli__*` 查询，并用召回的 Memory 回答关于用户本人的问题；业务线回答"近几天"类的查询时，用服务令牌读取对应旁听 Session 的日志。超过 7 天的问题只能依据摘要回答，产品须写明"原话保留 7 天"。
 
+助手问到承诺时用 `list_commitments`：可按 `kind`（mine/theirs）、`status`（open/done/cancelled/all，默认 open）、期限范围 `due_from`/`due_to`（YYYY-MM-DD，含边界）、对方子串 `counterpart`、主题 `query`、项目 ID `project` 筛选。主题复用 `find_related` 的内容与对方相似度及阈值，但不限制为最近 30 天；已完成、取消可显式查询，被合并者不列出。每页至多 30 条，按期限升序，无日期的排后，同期限按说话时间，再按 ID 稳定排序；每条带状态、对方、日期与星期、项目（若有）、未核对标记与修订次数。页尾给出符合条件的总数与下一页 `after`，续页照抄游标并保持条件不变。
+
+问某件事怎么变的，先用 `list_commitments` 的 `query` 与 `status: all` 找到它，再以 ID 调用 `commitment_history`。历史返回当前值，以及按说话时间排列的每次修订、记录时间、操作、改前与改后、依据和引用。初值取原始创建项，再重放修订的新值；没有说话时间的操作明确标为未记录，以记录时间排序。原话超过 7 天注明“原话已过保留期”，不补造引文。被合并者指向保留的 ID，保留者附上被合并者的历史（含链式合并）。
+
+
 ## 9. 开发部署
 
 `serve -xinli-mock <业务线>` 在进程内登记模拟的 xinli MCP Server（`internal/xinlimock`，与评测共用），它同时扮演业务线服务端：
@@ -227,6 +232,7 @@ xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理�
 | `capture-memory-update` | 佩戴者说出的新事实替换旧记忆，新旧两条不并存。 |
 | `capture-health-category` | 情绪推断只写入 `health`，不改写到其他类别。 |
 | `capture-health-disabled` | 业务线未开启健康信息时不写入任何类别。 |
+| `capture-assistant-open-commitments`、`capture-assistant-commitment-history`、`capture-assistant-theirs` | 预置正确账本，验证按责任方查询未完成承诺、两次改期与完成的历史及依据。 |
 | `capture-assistant-recall` | 助手回答关于用户本人的问题时用上召回的 Memory。 |
 
 用小窗口代替真实长度的十几万字：测的是"压缩之后已交出的不丢"，与绝对长度无关，评测费用低一个数量级。白天引用旧原话的修订被拒绝、用户改过的承诺使模型的修订因 `rev` 不符被拒绝，这两项是业务线的确定性检查，由 `internal/xinlimock` 的单元测试覆盖，不另设评测用例。
