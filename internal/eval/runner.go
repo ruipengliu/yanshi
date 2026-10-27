@@ -816,7 +816,7 @@ func (in *instance) submitTurn(ctx context.Context, sid string, turn Turn) (stri
 }
 
 // captureTime 解读旁听的 at："2026-10-23 09:42"（Asia/Shanghai），或相对于提交时刻的 "now-15m"（白天整理的用例需要
-// "刚说完"的交谈，captures-xinli.md §10）。
+// "刚说完"的交谈，xinli-captures.md §10）。
 func captureTime(at string) (time.Time, error) {
 	if rest, ok := strings.CutPrefix(at, "now-"); ok {
 		d, err := time.ParseDuration(rest)
@@ -970,7 +970,7 @@ func (in *instance) bySegment(ctx context.Context, marks map[string][]string) (m
 	return out, nil
 }
 
-// checkGrouping 计算项目归集的碎片率与纯度（captures-xinli.md §10、m4-eval.md）。交谈由模型划定范围，每段交谈的主题是
+// checkGrouping 计算项目归集的碎片率与纯度（xinli-captures.md §10、m4-eval.md）。交谈由模型划定范围，每段交谈的主题是
 // 范围内标了主题的旁听中最多的那个（相同时取先出现的），全是闲聊的没有主题。一段交谈可以关联几个项目：它对每个关联的
 // 项目各算一次，算作的主题是这段交谈中出现过的、且是那个项目在只关联一个项目的交谈中占多数的主题；没有这样的主题时
 // 算作这段交谈自己的主题。碎片率：每个主题的交谈分散在几个项目中（没有归入项目的每段各算一个），按主题平均；纯度：每个

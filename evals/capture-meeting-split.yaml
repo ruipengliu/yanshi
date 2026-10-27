@@ -1,6 +1,6 @@
 name: capture-meeting-split
 description: >-
-  被静默切开的会议（captures-xinli-model.md §6、§8）：一场视频会议中途静默七分钟（等对方调试投屏），跨了两个时段，
+  被静默切开的会议（xinli-model.md §6、§8）：一场视频会议中途静默七分钟（等对方调试投屏），跨了两个时段，
   白天按时段交出两段交谈；"整理今天"的当天整理依据 day_ledger 的提示把它们合并为一段，仍只归入康宁一个项目。
 agent: xinli-day
 setup:

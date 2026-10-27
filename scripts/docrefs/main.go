@@ -51,6 +51,7 @@ func (p *pkgDecls) anyMember(name string) bool {
 }
 
 // index 是仓库内全部 Go 包的声明，按包名合并（同名的包合在一起，宁可漏报，不误报）。
+// 嵌套模块同样按源码中的 package 名登记，不从仓库目录推导 yanshi/... 导入路径。
 type index struct {
 	pkgs map[string]*pkgDecls
 }
@@ -186,7 +187,7 @@ var (
 	// Type.Member，可带 "()"。
 	typeRef = regexp.MustCompile(`^([A-Z]\w*)\.([A-Z]\w*)(?:\(\))?$`)
 	// 仓库路径，可带 ":行号" 或 ":起-止"。
-	pathRef  = regexp.MustCompile(`^((?:internal|cmd|sdk|proto|docs|agents|evals|deploy|scripts|gen)/[\w./-]*?)/?(?::\d+(?:-\d+)?)?$`)
+	pathRef  = regexp.MustCompile(`^((?:internal|cmd|sdk|proto|docs|agents|evals|deploy|scripts|gen|persona|apps)/[\w./-]*?)/?(?::\d+(?:-\d+)?)?$`)
 	mdLink   = regexp.MustCompile(`\]\(([^)\s]+)\)`)
 	fenceTag = "```"
 )
@@ -239,7 +240,7 @@ func checkLink(mdFile, target string) string {
 }
 
 func docFiles() ([]string, error) {
-	files := []string{"AGENTS.md", "CONTEXT.md", "README.md"}
+	files := []string{"AGENTS.md", "CONTEXT.md", "README.md", "persona/CONTEXT.md", "apps/xinli/CONTEXT.md"}
 	err := filepath.WalkDir("docs", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err

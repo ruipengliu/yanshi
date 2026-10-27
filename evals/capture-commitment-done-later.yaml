@@ -1,6 +1,6 @@
 name: capture-commitment-done-later
 description: >-
-  之前几天的承诺今天说已完成（captures-xinli-model.md §6）：账本里有前几天答应王总的"把框架合同寄给王总"，今天佩戴者
+  之前几天的承诺今天说已完成（xinli-model.md §6）：账本里有前几天答应王总的"把框架合同寄给王总"，今天佩戴者
   在电话里说合同昨天已经寄出。白天的"整理交谈"用 find_related 召回它、依据今天的原话 close 为 done，不新建承诺。
 agent: xinli-day
 setup:

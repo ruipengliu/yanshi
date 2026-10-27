@@ -7,7 +7,7 @@
 ## 先读
 
 - 本机开发与 Mac mini 环境：开始开发、构建或测试前，若本工作树或主工作树存在 `.local/macmini/README.md`，必须先读并遵循。本机主要编码与 Git 操作，优先通过本地 `dev` 入口同步当前工作区并在 Mac mini 构建、测试或启动服务，中间件使用其 OrbStack；可用命令以文档中的当前实现状态为准，不得把历史源码快照当作当前代码。该文档及辅助配置不提交 Git；文档缺失时先检查本地配置，不假定远程环境已就绪。
-- 术语：`CONTEXT.md`。代码、注释、文档只用其中的名词；出现新概念时先在那里定义。
+- 术语：内核的代码、注释、文档只用 `CONTEXT.md` 的名词；`persona/`、`apps/` 另有各自的 `CONTEXT.md`。出现新概念时先在所属层的术语表中定义。
 - 目标与原则：`docs/charter.md`。
 - 改动执行语义（Session / Run / Event / Attempt / Worker）之前：`docs/design/m0-core-primitives.md`。改动上下文组装、压缩或 AgentDef 的 `context`（含 `scope: run`）之前：`docs/design/m2-long-runs.md`。
 - 改动 Node、能力路由、审批或挂起之前：`docs/design/m1-device-nodes.md`。
@@ -16,7 +16,7 @@
 - 改动端侧 SDK（`sdk/`）之前：`docs/design/m3-client-sdks.md`。三个 SDK 语义一致，消息类型一律从 `proto/` 生成（ADR-0026）；改动 `sdk/nodesdk`、`sdk/mobile` 或 `node.proto` 后运行 `make mobile`（需要 Xcode 与 JDK），在 macOS 与 iOS 模拟器上实测 gomobile 绑定。
 - 改动调试控制台（`internal/webui/static/console`）或脚本化模型（`internal/model/script`）之前：`docs/design/console.md`。新增多端语义时，在控制台的验证场景（`scenarios.js`）中增加覆盖，它们在 `make check` 中运行（`TestConsoleScenarios`）。
 - 改动卡片（`internal/card`、`show_card`、`Card` / `CardAction`）之前：`docs/design/cards.md`。卡片只由平台校验后写入 `show_card` 的结果，卡片动作是一条输入、按 `call_id` 与动作去重（ADR-0032）。
-- 改动旁听（`CaptureAppended`、`State.Captures`、`service.SubmitCaptures`、`captures` 工具、`ContentBlock.capture`）或按 AgentDef 覆盖的 Retention 之前：`docs/design/captures.md`。旁听只收文字，佩戴者的话算用户原话、他人的话算外部内容，判断依据是结构化的说话人字段（ADR-0036）；Capture 不开启 Run，摘要由 Project 经业务线的 MCP Server 拉取，按保留期删除时保留 Memory（ADR-0037）。它也是 `captures` 工具（按交谈分页、`after: "new"`、进行中的交谈）与 MCP 登记的 `cite_captures`（平台附上被引用原话的说话人）的依据。改动 `agents/xinli-*.yaml`、xinli 的工具（`internal/xinlimock`）、每日整理与每周回顾的流程、承诺账本或 `capture-*` 评测之前，另读 `docs/design/captures-xinli.md`。
+- 改动旁听（`CaptureAppended`、`State.Captures`、`service.SubmitCaptures`、`captures` 工具、`ContentBlock.capture`）或按 AgentDef 覆盖的 Retention 之前：`docs/design/captures.md`。旁听只收文字，佩戴者的话算用户原话、他人的话算外部内容，判断依据是结构化的说话人字段（ADR-0036）；Capture 不开启 Run，摘要由 Project 经业务线的 MCP Server 拉取，按保留期删除时保留 Memory（ADR-0037）。它也是 `captures` 工具（按交谈分页、`after: "new"`、进行中的交谈）与 MCP 登记的 `cite_captures`（平台附上被引用原话的说话人）的依据。改动 `agents/xinli-*.yaml`、xinli 的工具（`internal/xinlimock`）、每日整理与每周回顾的流程、承诺账本或 `capture-*` 评测之前，另读 `docs/design/xinli-captures.md`。
 - 新增产品功能、改动 Persona（`persona/`）或应用层（`apps/`），或判断一项能力该放进内核还是业务侧之前：`docs/design/persona-architecture.md`。功能默认只改 Persona 与应用层（§9 的五步清单）；内核只在"第二条业务线也需要，且业务侧做不到或做了不安全"时改，并写 ADR（ADR-0043）。`persona/`、`apps/` 不 import `internal/`，内核不认识业务实体。
 - 改动 Capture 正文存储、擦除、原文修订、交付确认、定时、出站流、单次调用、档位、重答、EndUser 删除屏障或 `speaker_ref` 之前：`docs/design/m7-kernel-primitives.md`。正文只有一份，凡要文字都经同一个展开器按日志前缀解析（ADR-0044）；声明了确认的流只按业务线回执推进读取位置（ADR-0049）；定时与触发写入的输入来源是平台（ADR-0045）。
 - 改动 A2A（新增的 `a2acap` 包、A2A 入口、`origin`）或三方 Agent 的授权之前：`docs/design/m7-agent-ecosystem.md`。三方给的一切是外部内容，三方拿到的一切经用户逐项同意，旁听原文不给任何三方，听过他人旁听的 Session 不能调用三方（ADR-0048）。

@@ -1,6 +1,8 @@
 # yanshi
 
-yanshi 是承载多条 C 端业务线的分布式 Agent 运行时基础设施。本文件是项目统一术语表：代码、文档、对话中使用同一套名词。
+yanshi 是承载多条 C 端业务线的分布式 Agent 运行时基础设施。本文件是内核术语表：内核的代码、注释、文档使用同一套名词。
+
+业务线的领域术语见 [Persona 术语](persona/CONTEXT.md) 与 [xinli 应用层术语](apps/xinli/CONTEXT.md)；内核不定义业务实体（ADR-0043）。
 
 ## 主体
 
@@ -134,39 +136,15 @@ _Avoid_: 回执（指给模型看的结果文字时）、ACK（指传输层时�
 
 **CaptureCorrection（原文修订）**（设计中，[设计](docs/design/m7-kernel-primitives.md) §4、ADR-0044）:
 EndUser 对一段 Capture 文字的纠正，记为 Event，新文字作为新版本保存；说话人不变，原文保留到擦除或删除。
-_Avoid_: 编辑、覆盖、Revision（那是承诺的修订）
+_Avoid_: 编辑、覆盖、Revision（见 [Persona 术语](persona/CONTEXT.md)）
 
 **Stream（流）**（[设计](docs/design/m5-inputs-triggers-loops.md)、ADR-0039）:
 Capture 按种类分成的序列，种类由平台登记，决定校验、内容安全与 Provenance；旁听转写是 transcript 流。AgentDef 声明接收哪些流，平台记录每个流已读到的位置。
 _Avoid_: 频道、Topic、队列
 
-**Project（项目）**:
-围绕一个主题、跨天归集旁听摘要的长期 Session（[设计](docs/design/captures-xinli.md)）。旁听原文只短期保留，Project 中只有归入它的交谈的摘要（谈了什么、定了什么、风险）、项目现状与它的承诺；EndUser 亲口说过的稳定信息（偏好、人际关系）不进 Project，进 Memory。
-_Avoid_: 主题、文件夹、知识库
-
-**Exchange（交谈）**（[设计](docs/design/captures-xinli-model.md)、ADR-0042）:
-一段谈话：由整理的模型在一个时段内划定范围 `[from, to]` 交给业务线，ID 取自 `from`（如 `x57.0`）。是摘要、时间线与"今日"页的单位，可以关联多个项目，当天整理时可以合并被停顿切开的几段；承诺不以它为身份，只以它为出处。
-_Avoid_: 对话（指 Session 时）、会话、片段（指单句时）、时段（指平台按停顿切出的分页单位时）
-
-**Span（时段）**（[设计](docs/design/captures-xinli-model.md)、ADR-0042）:
+**Span（时段）**（[设计](docs/design/xinli-model.md)、ADR-0042）:
 相邻两段说话时间相隔不超过间隔的一段连续旁听，由平台按停顿确定性地切出，是 `captures` 分页与判断"是否已结束"的单位，不承担语义。
 _Avoid_: 交谈（指它时）、窗口
-
-**Changeset（变更集）**（ADR-0042）:
-一次整理交给业务线的一组操作：新建交谈与承诺、修订或关闭承诺、合并。每个操作引用依据，按来源去重，重交时整体取代；用户在 App 中的改动也记为变更集。
-_Avoid_: 提交、批次、补丁
-
-**Revision（修订）**（ADR-0042）:
-承诺的一次改动（期限、内容、对方、状态），带依据、说话时间与记录时间；不删除旧值，当前状态由修订依次叠加得出。修订带序号 `rev`，写入方据此做乐观并发检查。
-_Avoid_: 版本（指 AgentDef 时）、编辑
-
-**Commitment（承诺）**:
-旁听中一方答应另一方要做的事：佩戴者答应别人的（mine），或别人答应佩戴者的（theirs）。随交谈交给业务线，引用原话的片段，由平台给出被引用片段的说话人供业务线核对；业务线保存在承诺账本中，按 ID 增量更新，按期限提醒。
-_Avoid_: 待办（指它时）、todo、行动项
-
-**Awareness（觉察）**:
-每日整理从 EndUser 本人的话里得出的、对其沟通方式的观察与建议（如"答应别人时会给出明确期限"），随交谈与当天的整理结果交给业务线；每周回顾归纳至少两天出现过的习惯。它是推断，不是 EndUser 说过的话，所以不写入 Memory；情绪与身心状态不属于觉察，只以 health 类别写入 Memory。
-_Avoid_: 洞察、insights、画像
 
 **ContentBlock（内容块）**:
 Event 中承载一段多模态内容（文本、图片、音频、视频、文件引用）的单元。
@@ -243,7 +221,7 @@ _Avoid_: 插队、加急
 _Avoid_: 画像、上下文、知识库
 
 **Persona（个人知识层）**（设计中，[设计](docs/design/persona-architecture.md)、ADR-0043）:
-内核之外、关于一个 EndUser 的世界的结构化知识服务：他人与组织、交谈、承诺、项目、笔记，以变更集为事实源，按业务线分租户。内核不认识它，只经 MCP 调用它的工具；它的术语在 `persona/CONTEXT.md`（迁出之前见设计 §3.1）。
+内核之外、关于一个 EndUser 的世界的结构化知识服务：他人与组织、交谈、承诺、项目、笔记，以变更集为事实源，按业务线分租户。内核不认识它，只经 MCP 调用它的工具；它的术语在 `persona/CONTEXT.md`。
 _Avoid_: Memory（那是内核中关于本人的陈述）、画像、知识库、用户模型
 
 **Recall（召回）**:
@@ -263,7 +241,7 @@ _Avoid_: 确认框、授权（与 Grant 区分）
 _Avoid_: 会话（与 Session 区分）、票据、凭据（泛指时）
 
 **Retention（保留策略）**:
-BusinessLine 为其 Session 声明的保留期限：最后一次输入后多久自动关闭、关闭后多久自动删除。可按 AgentDef 名称覆盖，使同一业务线中短期保留的 Session（如旁听 Session）与长期保留的 Session（如 Project）并存。
+BusinessLine 为其 Session 声明的保留期限：最后一次输入后多久自动关闭、关闭后多久自动删除。可按 AgentDef 名称覆盖，使同一业务线中短期保留的 Session（如旁听 Session）与长期保留的 Session（如业务线按主题长期归集摘要的 Session）并存。
 _Avoid_: 过期策略、TTL（泛指时）
 
 **Usage（用量）**:

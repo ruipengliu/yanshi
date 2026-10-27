@@ -1,6 +1,6 @@
 name: capture-commitment-extraction
 description: >-
-  承诺随交谈进入账本（docs/design/captures-xinli.md §6）：佩戴者答应发报价单是 mine，王总答应寄合同是 theirs；
+  承诺随交谈进入账本（docs/design/xinli-captures.md §6）：佩戴者答应发报价单是 mine，王总答应寄合同是 theirs；
   两条都引用说出它的原话，平台给出的说话人与承诺人一致，核对通过。别人提出、佩戴者没有答应的（预算表）不是承诺。
 agent: xinli-day
 setup:

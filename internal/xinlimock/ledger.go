@@ -9,7 +9,7 @@ import (
 	"yanshi/internal/memory"
 )
 
-// 业务线的知识按实体维护、以变更集写入（docs/design/captures-xinli-model.md，ADR-0042）：变更集是日志，交谈与承诺由它
+// 业务线的知识按实体维护、以变更集写入（docs/design/xinli-model.md，ADR-0042）：变更集是日志，交谈与承诺由它
 // 依次叠加得出（fold），不直接修改。重交同一个来源的变更集时原位取代旧的那个，再重新叠加：撤销上一次的全部效果、再应用
 // 新的。项目不在变更集里：它的现状、归档与合并由各自的工具与用户的选择直接维护，交谈与承诺只按 ID 引用它。
 
@@ -21,7 +21,7 @@ const (
 	AuthorSeed    = "seed"          // 评测预置的数据
 )
 
-// Changeset 是一次整理交给业务线的一组操作（captures-xinli-model.md §5）。操作里的值在交出时已经解析好（交谈 ID、
+// Changeset 是一次整理交给业务线的一组操作（xinli-model.md §5）。操作里的值在交出时已经解析好（交谈 ID、
 // 新建的项目、承诺 ID、核对结果、说话时间），叠加时不再依赖当时的状态。
 type Changeset struct {
 	ID string `json:"id"`
@@ -51,7 +51,7 @@ type Source struct {
 	Date string `json:"date,omitempty"`
 }
 
-// Exchange 是一段交谈（captures-xinli-model.md §4）：由整理的模型在旁听上划定范围 [From, To]，ID 取自 From。
+// Exchange 是一段交谈（xinli-model.md §4）：由整理的模型在旁听上划定范围 [From, To]，ID 取自 From。
 type Exchange struct {
 	ID        string     `json:"id"`
 	Session   string     `json:"session"`
@@ -70,7 +70,7 @@ type Exchange struct {
 	Changeset  string `json:"changeset,omitempty"`
 }
 
-// Link 是交谈与一个项目的关联，四档归属见 captures-xinli.md §5。Project 是归入的项目；unsure 时为空直到用户确认，
+// Link 是交谈与一个项目的关联，四档归属见 xinli-captures.md §5。Project 是归入的项目；unsure 时为空直到用户确认，
 // Candidate 是可能属于的项目，Proposed 是用户不认同候选时新建的项目名。
 type Link struct {
 	Match     string `json:"match"`
@@ -121,7 +121,7 @@ type ExchangeMerge struct {
 	Projects []Link   `json:"projects,omitempty"`
 }
 
-// Commitment 是承诺账本中的一条（captures-xinli-model.md §4）：当前状态由它的修订依次叠加得出。
+// Commitment 是承诺账本中的一条（xinli-model.md §4）：当前状态由它的修订依次叠加得出。
 type Commitment struct {
 	ID          string   `json:"id"`
 	Kind        string   `json:"kind"` // mine：佩戴者答应别人；theirs：别人答应佩戴者
@@ -230,7 +230,7 @@ func newerCommitment(a, b *Commitment) bool {
 	return a.ID > b.ID
 }
 
-// Revision 是承诺的一次改动（captures-xinli-model.md §3、§7）：说话时间 SpokenAt 起成立，到下一条修订的说话时间为止；
+// Revision 是承诺的一次改动（xinli-model.md §3、§7）：说话时间 SpokenAt 起成立，到下一条修订的说话时间为止；
 // RecordedAt 是交出的时刻。Basis 是依据：原话（refs）、交谈摘要（exchanges，xinli-project）或用户本人。
 type Revision struct {
 	Changeset  string            `json:"changeset"`

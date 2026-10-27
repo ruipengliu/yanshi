@@ -10,7 +10,7 @@ import (
 	"yanshi/internal/capture"
 )
 
-// file_changes 与 update_commitments 交出的变更集，及业务线对它的整体检查（captures-xinli-model.md §5）：不通过就整体
+// file_changes 与 update_commitments 交出的变更集，及业务线对它的整体检查（xinli-model.md §5）：不通过就整体
 // 拒绝、不记下任何内容，结果写明原因让模型改正后用同一个来源重交。
 
 // strs 是字符串列表，也接受单个字符串：模型偶尔把只有一项的列表写成字符串。

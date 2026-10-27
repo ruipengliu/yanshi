@@ -1,6 +1,6 @@
 name: capture-week-awareness
 description: >-
-  每周觉察只收在至少两天出现过的习惯（captures-xinli.md §7）："答应时给出明确期限"出现在三天，"会后主动发纪要"
+  每周觉察只收在至少两天出现过的习惯（xinli-captures.md §7）："答应时给出明确期限"出现在三天，"会后主动发纪要"
   只出现一天：只交出前者。
 agent: xinli-week
 setup:

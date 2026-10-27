@@ -1,6 +1,6 @@
 name: capture-commitment-reschedule
 description: >-
-  上午答应、下午改期（captures-xinli-model.md §6、F1）：上午答应张总"下周三前"发验收方案，下午张总来电要求提前到
+  上午答应、下午改期（xinli-model.md §6、F1）：上午答应张总"下周三前"发验收方案，下午张总来电要求提前到
   "下周二"。下午那次"整理交谈"用 find_related 召回上午的承诺，依据新说出的原话 revise 它：账本里只有一条，期限是
   10-27，有两条修订；不留下 10-28 的旧承诺。
 agent: xinli-day

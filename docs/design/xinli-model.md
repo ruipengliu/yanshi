@@ -1,6 +1,6 @@
 # xinli 的建模：实体、变更集与交谈
 
-> 状态：已实现（2026-10-25；实现见 `internal/xinlimock`，流程与工具见 [captures-xinli.md](./captures-xinli.md)） · ADR-0042 · 来由：[评审：用一个完整工作日模拟验证 xinli](../review/2026-10-25-xinli-workday.md) §6–§8 · 依赖：[旁听业务线 xinli](./captures-xinli.md)、[旁听](./captures.md)（ADR-0036、ADR-0037）、[Memory 与 Grant](./m4-memory-grant.md)（ADR-0038）· 实现时：改写 captures-xinli.md 的 §2–§6、§12 与 captures.md §5，按 §3 改 `CONTEXT.md` 中交谈的定义
+> 状态：已实现（2026-10-25；实现见 `internal/xinlimock`，流程与工具见 [xinli-captures.md](./xinli-captures.md)） · ADR-0042 · 来由：[评审：用一个完整工作日模拟验证 xinli](../review/2026-10-25-xinli-workday.md) §6–§8 · 依赖：[旁听业务线 xinli](./xinli-captures.md)、[旁听](./captures.md)（ADR-0036、ADR-0037）、[Memory 与 Grant](./m4-memory-grant.md)（ADR-0038）· 实现时：改写 xinli-captures.md 的 §2–§6、§12 与 captures.md §5，按 §3 改交谈的定义（现见 [Persona 术语](../../persona/CONTEXT.md)）
 
 ## 1. 为什么改
 
@@ -46,7 +46,7 @@ Commitment {
 
 - 改期、改内容、换对方都是 `revise`，ID 不变。提醒总是按当前状态：改期后按新期限，作废或合并后停止。
 - "钢琴课改由爱人送"是佩戴者的承诺被 `close: cancelled`，理由写明转交；爱人的安排不是佩戴者与他人之间的承诺，不新建。
-- 核对规则照旧（captures-xinli.md §6）：`mine` 至少引用一段佩戴者的话，`theirs` 至少一段他人的话，否则未核实、不提醒。
+- 核对规则照旧（xinli-captures.md §6）：`mine` 至少引用一段佩戴者的话，`theirs` 至少一段他人的话，否则未核实、不提醒。
 
 **交谈**：
 
@@ -55,14 +55,14 @@ Exchange {
   id: "x57.0",                         // 取自 from，由模型划定，不再由平台切分派生
   from: "#57.0", to: "#63.4",          // 同一旁听 Session 内的范围
   title, summary, decisions, risks, awareness,
-  projects: [{match, id?, name?}],     // 可以多个；四档归属照旧（captures-xinli.md §5）
+  projects: [{match, id?, name?}],     // 可以多个；四档归属照旧（xinli-captures.md §5）
   merged_into?: "x52.0"
 }
 ```
 
 **项目**不变；时间线由关联到它的交谈与逐项带 `project` 的决定、承诺组成。
 
-助手的只读查询不受整理召回的 30 天与 open 限制：`list_commitments` 按责任方、状态、期限、对方、主题与项目筛选并分页；`commitment_history` 从变更集的创建项取初值，按说话时间重放 `Revision.Fields`，展示改前与改后。新建修订的 `Fields` 为空，不能用当前值充当初值；没有说话时间的修订以记录时间排序，仍明确标为未记录。合并目标反查被合并者的历史，原话超过 7 天只保留引用与保留期说明。接口与助手流程见 [captures-xinli.md](./captures-xinli.md) §8。
+助手的只读查询不受整理召回的 30 天与 open 限制：`list_commitments` 按责任方、状态、期限、对方、主题与项目筛选并分页；`commitment_history` 从变更集的创建项取初值，按说话时间重放 `Revision.Fields`，展示改前与改后。新建修订的 `Fields` 为空，不能用当前值充当初值；没有说话时间的修订以记录时间排序，仍明确标为未记录。合并目标反查被合并者的历史，原话超过 7 天只保留引用与保留期说明。接口与助手流程见 [xinli-captures.md](./xinli-captures.md) §8。
 
 **人**这一版不建模：`counterpart` 仍是按原话的称呼。语音识别只能区分一批之内的不同的人（`speaker_key`），不能指出是谁，建了模也无从可靠地把称呼与说话人对上。当天整理判断重复时由模型结合上下文判断"黄总"与"黄总监"是否同一人；称呼对不上而漏召回、漏合并的失败案例攒够之后再定（§12）。
 

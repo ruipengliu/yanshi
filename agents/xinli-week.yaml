@@ -1,4 +1,4 @@
-# 旁听业务线的每周回顾（docs/design/captures-xinli.md §7）：每个 EndUser 每周一个 Session，业务线服务端在周日深夜
+# 旁听业务线的每周回顾（docs/design/xinli-captures.md §7）：每个 EndUser 每周一个 Session，业务线服务端在周日深夜
 # 提交"回顾本周"。只读业务线的数据（调用结果，外部内容），不读旁听原文、不写 Memory：提议合并相似的项目（由用户确认），
 # 交出本周觉察。白名单中没有高风险能力。
 name: xinli-week

@@ -1,6 +1,6 @@
 name: capture-commitment-handover
 description: >-
-  改由他人去做（captures-xinli-model.md §4、F1）：早上佩戴者答应爱人周六送孩子去钢琴课；傍晚打电话说要加班，钢琴课改由
+  改由他人去做（xinli-model.md §4、F1）：早上佩戴者答应爱人周六送孩子去钢琴课；傍晚打电话说要加班，钢琴课改由
   爱人送。傍晚那次"整理交谈"把原来的承诺 close 为 cancelled（理由写明转交），不再留着一条佩戴者周六要送的未完成承诺。
 agent: xinli-day
 setup:

@@ -1,9 +1,9 @@
-// Package xinlimock 是旁听业务线 xinli 的模拟 MCP Server（docs/design/captures-xinli.md §4–§7、§9）：评测
+// Package xinlimock 是旁听业务线 xinli 的模拟 MCP Server（docs/design/xinli-captures.md §4–§7、§9）：评测
 // （internal/eval）与开发部署（serve -xinli-mock，调试控制台）共用。数据只在进程内存中。
 //
 // 业务线的数据按 App 的页面组织：今日（Day：每日整理的总览、要点，与当天的交谈）、项目（Project：现状与按天的
 // 时间线）、承诺（Commitment：承诺账本，按引用核对承诺人，带修订历史）、待确认（归属拿不准的交谈）、觉察
-// （Day.Awareness）。交谈与承诺以变更集为日志、按 EndUser 叠加得出（ledger.go，docs/design/captures-xinli-model.md）。
+// （Day.Awareness）。交谈与承诺以变更集为日志、按 EndUser 叠加得出（ledger.go，docs/design/xinli-model.md）。
 // 开发部署中它还扮演业务线服务端，做每日流程的"归集"（Business）。
 package xinlimock
 
@@ -63,7 +63,7 @@ type Project struct {
 	StatusAt      time.Time `yaml:"-" json:"status_at,omitzero"`
 	// Session 是项目的 xinli-project Session（归集时创建）。
 	Session string `yaml:"-" json:"session,omitempty"`
-	// Archived 为 true 时项目已归档：不再被召回，App 中可以取消归档（captures-xinli.md §7）。
+	// Archived 为 true 时项目已归档：不再被召回，App 中可以取消归档（xinli-captures.md §7）。
 	Archived bool `yaml:"-" json:"archived,omitempty"`
 	// MergedInto 非空时项目已并入另一个项目（用户确认了合并提议）：交谈与承诺叠加时换成保留的那个。
 	MergedInto string `yaml:"-" json:"merged_into,omitempty"`
@@ -120,7 +120,7 @@ type user struct {
 const NewProject = "P-0101"
 
 const (
-	// relatedWindow 是召回的范围：最后一次修订在这么久之内的未完成承诺（captures-xinli-model.md §12）。
+	// relatedWindow 是召回的范围：最后一次修订在这么久之内的未完成承诺（xinli-model.md §12）。
 	relatedWindow = 30 * 24 * time.Hour
 	// maxRelated 是 find_related 一次至多返回的承诺数。
 	maxRelated = 10
@@ -350,7 +350,7 @@ var tools = []struct {
 		(*call).updateCommitments},
 }
 
-// verify 按平台给出的被引用原话的说话人核对承诺人（captures-xinli.md §6）：mine 须引用佩戴者的话，theirs 须引用
+// verify 按平台给出的被引用原话的说话人核对承诺人（xinli-captures.md §6）：mine 须引用佩戴者的话，theirs 须引用
 // 他人的话。返回未通过的原因，通过时为空。
 func (c *call) verify(kind string, refs []string) string {
 	want, who := "wearer", "用户本人"
@@ -374,7 +374,7 @@ func (c *call) verify(kind string, refs []string) string {
 }
 
 // findRelated 是 find_related：候选项目按主题召回（生产中用嵌入或全文检索，模拟服务用字符二元组相似度，相同时按
-// 项目顺序；归档与已合并的不召回），相关的承诺按对方与主题召回（captures-xinli-model.md §6、§12）。
+// 项目顺序；归档与已合并的不召回），相关的承诺按对方与主题召回（xinli-model.md §6、§12）。
 func (c *call) findRelated() string {
 	var in struct {
 		Query        string
@@ -457,7 +457,7 @@ func counterpartIn(name string, names []string) bool {
 }
 
 // dayLedger 是 day_ledger：今天（本旁听 Session）的交谈与承诺，之前未完成、与今天的对方或项目相关的承诺，以及确定性的
-// 提示：同一对方、内容相近的承诺对，相邻且归属相同的交谈（captures-xinli-model.md §6）。
+// 提示：同一对方、内容相近的承诺对，相邻且归属相同的交谈（xinli-model.md §6）。
 func (c *call) dayLedger() string {
 	u := c.u
 	var b strings.Builder
@@ -595,7 +595,7 @@ func (c *call) fileDay() string {
 	return fmt.Sprintf("已收到 %s 的整理（%d 段交谈）", day.Date, n)
 }
 
-// collect 扮演业务线服务端做"归集"（docs/design/captures-xinli.md §2 第 4 步）：为每个涉及的项目创建（或复用）xinli-project
+// collect 扮演业务线服务端做"归集"（docs/design/xinli-captures.md §2 第 4 步）：为每个涉及的项目创建（或复用）xinli-project
 // Session，提交"整理 <日期>"；输入中不含摘要，由 Project 的 Run 经 day_summary 拉取（ADR-0037）。输入 ID 由整理所在的
 // Session 与项目派生：重复归集只生效一次。
 func (x *Server) collect(businessLine, endUser, daySession, date string, projects []string) {
@@ -630,14 +630,14 @@ func (x *Server) collect(businessLine, endUser, daySession, date string, project
 }
 
 // Submitted 记下业务线向旁听 Session 提交了哪种整理输入（"整理交谈"或"整理今天"）：业务线清楚自己提交的是什么，只接受
-// "整理今天"那次 Run 的 file_day（captures-xinli-model.md §6，F7）。没有记下时不限制（调试控制台中随手提交的输入）。
+// "整理今天"那次 Run 的 file_day（xinli-model.md §6，F7）。没有记下时不限制（调试控制台中随手提交的输入）。
 func (x *Server) Submitted(businessLine, endUser, session, input string) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	x.user(businessLine, endUser).submitted[session] = input
 }
 
-// Resolve 是用户在 App 的"待确认"中的选择（captures-xinli.md §5）：把旁听 Session daySession 中拿不准归属的交谈
+// Resolve 是用户在 App 的"待确认"中的选择（xinli-captures.md §5）：把旁听 Session daySession 中拿不准归属的交谈
 // exchange 归入项目 project；project 为空时按交谈给出的名称新建。交谈中还没有归属的承诺随之归入项目。它记为用户的变更集。
 func (x *Server) Resolve(businessLine, endUser, daySession, exchange, project string) error {
 	x.mu.Lock()
@@ -671,7 +671,7 @@ func (x *Server) Resolve(businessLine, endUser, daySession, exchange, project st
 }
 
 // Edit 是用户在 App 中改一条承诺：status 非空时标为完成或取消，否则把期限改为 dueDate。它记为用户的变更集，改过的
-// 字段之后以用户的为准，模型不再改动（captures-xinli-model.md §5"用户优先"）。
+// 字段之后以用户的为准，模型不再改动（xinli-model.md §5"用户优先"）。
 func (x *Server) Edit(businessLine, endUser, id, status, dueDate string) error {
 	x.mu.Lock()
 	defer x.mu.Unlock()
