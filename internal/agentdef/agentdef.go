@@ -178,6 +178,11 @@ func (d *Def) validate() error {
 	if err := d.Context.validate(); err != nil {
 		return fmt.Errorf("agent %s@%s: %w", d.Name, d.Version, err)
 	}
+	for _, name := range d.Capabilities {
+		if name == session.CapturesCapability && d.Context.MaxToolResult < session.MinCaptureToolResult() {
+			return fmt.Errorf("agent %s@%s: captures requires context.max_tool_result >= %d to fit a complete Capture page (got %d)", d.Name, d.Version, session.MinCaptureToolResult(), d.Context.MaxToolResult)
+		}
+	}
 	seen := map[string]bool{}
 	for i := range d.Streams {
 		st := &d.Streams[i]

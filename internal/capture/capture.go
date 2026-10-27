@@ -33,7 +33,7 @@ const (
 	// DefaultLimit 与 MaxLimit 是一页的段数。
 	DefaultLimit = 200
 	MaxLimit     = 500
-	// MaxChars 是一页的字符数上限：一页须容得下 AgentDef 的 max_tool_result，否则会被截断。
+	// MaxChars 保留原有字符数分页上限；整页另按调用方的 max_tool_result 预算切分。
 	MaxChars = 6000
 	// readBatch 是每次从日志读取的事件数：旁听之间夹着 Run 的事件。
 	readBatch = 200
@@ -112,6 +112,9 @@ func (t *Tool) InvokeResult(ctx context.Context, inv capability.Invocation) (cap
 		in.Limit = DefaultLimit
 	}
 	opts := Options{Limit: min(in.Limit, MaxLimit), MaxChars: MaxChars, Gap: gap, All: in.All}
+	if inv.Agent != nil {
+		opts.MaxToolResult = inv.Agent.Context.MaxToolResult
+	}
 	if t.clk != nil {
 		opts.Now = t.clk.Now()
 	}
@@ -130,6 +133,8 @@ func (t *Tool) InvokeResult(ctx context.Context, inv capability.Invocation) (cap
 type Options struct {
 	// Limit 与 MaxChars 是一页的段数与字符数上限（只有第一段就超出时也读入它）。
 	Limit, MaxChars int
+	// MaxToolResult 为正时，整页未展开的内容块不得超过这个估算 token 数。
+	MaxToolResult int
 	// Gap 是时段间隔：相邻两段的说话时间相隔超过它，就是两个时段（captures.md §5）。
 	Gap time.Duration
 	// Now 非零且 All 为 false 时，最后一段距 Now 不到 Gap 的时段可能还在进行，不返回（captures.md §5）。
@@ -262,6 +267,12 @@ func spanTail(ctx context.Context, log eventlog.Log, sessionID string, after Ref
 // 下一页的位置带上时段的起点，接着读同一个时段。没有时间的片段无从切分，每页算一个时段。next 是下一页的位置；本页没有读到
 // 任何旁听（已读完、时段还在进行）时为零值，读取位置不前进。
 func Page(ctx context.Context, log eventlog.Log, sessionID string, at Cursor, o Options) (content []*v1.ContentBlock, next Cursor, err error) {
+	// 空页与进行中的提示也遵循预算；错误不携带读取位置。
+	defer func() {
+		if err == nil && o.MaxToolResult > 0 && model.EstimateTokens(content) > o.MaxToolResult {
+			content, next, err = nil, Cursor{}, pageBudgetError(o.MaxToolResult)
+		}
+	}()
 	limit, maxChars := o.Limit, o.MaxChars
 	// 从上一页最后一段所在的事件读起：既要跳过它之前的段，也要用它的时间判断本页第一段是否接着同一个时段。
 	from := at.Last.Seq
@@ -274,6 +285,7 @@ func Page(ctx context.Context, log eventlog.Log, sessionID string, at Cursor, o 
 		span        Ref                // 本页的时段（第一段的位置）
 		count       int
 		chars       int
+		tokens      int
 		last        = at.Last
 		day         string
 		ended, done bool // ended：时段在本页结束、之后还有旁听；done：读完了全天
@@ -314,15 +326,36 @@ read:
 						break read
 					}
 				}
-				// 当地日期变化处（含本页第一段）注明日期与星期：每行只显示时刻，"明天""周五"要据此换算成日期。
+				// 先计入日期头与所有可能的页尾，再决定是否收下完整的一段；读取位置不能越过未交出的原话。
+				var added []*v1.ContentBlock
+				newDay := day
+				headerChars := 0
 				if t, ok := model.CaptureLocalTime(g); ok && t.Format(time.DateOnly) != day {
-					day = t.Format(time.DateOnly)
+					newDay = t.Format(time.DateOnly)
 					h := dayHeader(t)
-					segs = append(segs, model.TextBlocks(h)...)
-					chars += utf8.RuneCountInString(h)
+					added = append(added, model.TextBlocks(h)...)
+					headerChars = utf8.RuneCountInString(h)
 				}
-				segs = append(segs, model.TextBlocks(line)...)
-				segs = append(segs, &v1.ContentBlock{Kind: &v1.ContentBlock_Capture{Capture: g}})
+				added = append(added, model.TextBlocks(line)...)
+				added = append(added, &v1.ContentBlock{Kind: &v1.ContentBlock_Capture{Capture: g}})
+				addedTokens := model.EstimateTokens(added)
+				if o.MaxToolResult > 0 {
+					reserved := 0
+					for _, state := range [][2]bool{{true, false}, {false, true}, {false, false}} {
+						tail, _ := pageTail(span, ref, g, count+1, state[0], state[1])
+						reserved = max(reserved, model.EstimateTokens(model.TextBlocks(tail)))
+					}
+					if model.EstimateTokens(model.TextBlocks(pageTitle(span, cont)))+tokens+addedTokens+reserved > o.MaxToolResult {
+						if count == 0 {
+							return nil, Cursor{}, pageBudgetError(o.MaxToolResult)
+						}
+						break read
+					}
+				}
+				segs = append(segs, added...)
+				tokens += addedTokens
+				chars += headerChars
+				day = newDay
 				count++
 				chars += n
 				last, prev = ref, g
@@ -348,13 +381,27 @@ read:
 	if t, ok := model.CaptureLocalTime(lastSeg); atEnd && ok && !o.All && !o.Now.IsZero() && o.Now.Sub(t) < o.Gap {
 		return model.TextBlocks(fmt.Sprintf("（时段 #%s 还在进行：最后一段在 %s，稍后再整理。之前的时段已读完）", span, t.Format("15:04"))), Cursor{}, nil
 	}
+	out := append(model.TextBlocks(pageTitle(span, cont)), segs...)
+	tail, next := pageTail(span, last, prev, count, done, ended)
+	return append(out, model.TextBlocks(tail)...), next, nil
+}
+
+func pageBudgetError(budget int) error {
+	return fmt.Errorf("captures: context.max_tool_result=%d is too small for a complete Capture page; increase the AgentDef result budget", budget)
+}
+
+func pageTitle(span Ref, cont bool) string {
 	title := "【时段 #" + span.String() + " 起】\n"
 	if cont {
 		title = "【时段 #" + span.String() + " 起（续）】\n"
 	}
-	out := append(model.TextBlocks(title), segs...)
+	return title
+}
+
+// pageTail 同时用于输出与预留，避免提示文字变长后预算漏算。
+func pageTail(span, last Ref, prev *v1.CaptureSegment, count int, done, ended bool) (string, Cursor) {
 	var tail string
-	next = Cursor{Last: last}
+	next := Cursor{Last: last}
 	switch {
 	case done:
 		tail = fmt.Sprintf("（时段 #%s 起到此结束，本页 %d 段；已读完目前的全部旁听）", span, count)
@@ -371,5 +418,5 @@ read:
 			tail = fmt.Sprintf("（时段 #%s 起到此结束，本页 %d 段；下一时段用 after=\"%s\"）", span, count, next)
 		}
 	}
-	return append(out, model.TextBlocks(tail)...), next, nil
+	return tail, next
 }
