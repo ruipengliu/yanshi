@@ -1,6 +1,6 @@
 # 输入、触发与外部循环
 
-> 状态：已确认（2026-10-25）；第 1 步已实现，第 2、3 步待做 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[旁听业务线 xinli](./xinli-captures.md)、[Memory 与 Grant](./m4-memory-grant.md)、[模型调用](./model-calls.md) · ADR-0039、ADR-0040、ADR-0041 · 术语：`CONTEXT.md` 的 Provenance、Stream、Trigger、Loop
+> 状态：已确认（2026-10-25）；第 1 步已实现，第 2 步（流上的触发）由 ADR-0050 取消，第 3 步待做 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[旁听业务线 xinli](./xinli-captures.md)、[Memory 与 Grant](./m4-memory-grant.md)、[模型调用](./model-calls.md) · ADR-0039、ADR-0040、ADR-0041 · 术语：`CONTEXT.md` 的 Provenance、Stream、Trigger、Loop
 
 目标是内核只做一次：以后加一种新的采集内容或一种新的业务玩法，不再改内核；Agent 怎么想、怎么做也不受 YAML 的限制。本文把现在为旁听写进内核的部分收成四个通用原语（来源、流、触发、循环），所有写进日志的内容都经过同一个检查点。
 

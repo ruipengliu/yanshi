@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted（由 ADR-0050 修订：结构化片段的写入方增加可信登记的 MCP 结果）
 ---
 
 # 采集按流登记，来源由平台推导

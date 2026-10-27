@@ -126,17 +126,21 @@ _Avoid_: 消息、日志条目
 HostApp 提交的一段旁听转写：EndUser 与他人的日常对话，带说话人标签（佩戴者、他人），不是对 Agent 说的话。每个 Capture 属于一个 Stream，旁听转写是 transcript 流。作为 Event 进入 Session 但不触发 Run；yanshi 只接收文字，不接触音频与声纹。佩戴者的话按 EndUser 自己的输入对待，他人的话按不可信数据对待；未通过 Moderation 的片段只留不含文字的占位。一个 EndUser 在当地每天一个旁听 Session，原文随它按 Retention 删除。
 _Avoid_: 录音、输入（指它时）、CallTranscript（那是 Call 的转写）
 
-**Erasure（擦除）**（设计中，[设计](docs/design/m7-kernel-primitives.md) §3、ADR-0044）:
-按引用范围物理删除一段 Capture 的文字：先记为 Event，再清空存储中的正文；之后的读取与模型上下文只见占位。用于 EndUser 删除一天中的部分谈话，与删除整个 Session 区分。
+**Erasure（擦除）**（设计中，ADR-0050）:
+EndUser 删除一天中的部分谈话：业务线删除原文、按依据级联派生对象，再删除当天的工作 Session，删除原因为 Erasure：保留该 Session 写入的 Memory，列出依据可能落在被删范围内的 Memory 由用户决定。内核不按范围清除日志中的文字（ADR-0044 已取代）。
 _Avoid_: 删除（指整个 Session 时）、屏蔽、隐藏
 
-**Ack（交付确认）**（[设计](docs/design/m7-kernel-primitives.md) §11、ADR-0049）:
+**Ack（交付确认）**（已实现，[设计](docs/design/m7-kernel-primitives.md) §11、ADR-0049；ADR-0050 取代，按其退役条件删除）:
 业务线保存整理结果后在 MCP 结果中附上的结构化回执：它已持久化了某个流上哪一段范围。流声明需要确认时，读取位置只按回执连续拼出的前缀推进，没保存的时段不会被跳过。
 _Avoid_: 回执（指给模型看的结果文字时）、ACK（指传输层时）、提交
 
-**CaptureCorrection（原文修订）**（设计中，[设计](docs/design/m7-kernel-primitives.md) §4、ADR-0044）:
-EndUser 对一段 Capture 文字的纠正，记为 Event，新文字作为新版本保存；说话人不变，原文保留到擦除或删除。
+**CaptureCorrection（原文修订）**（不实施，ADR-0050 取代 ADR-0044）:
+EndUser 对一段旁听文字的纠正。原文存放在业务线，纠正是业务库中原文的修订，内核没有对应的 Event；纠正前的文字在日志中仍可作为依据，要撤回只能删除工作 Session。
 _Avoid_: 编辑、覆盖、Revision（见 [Persona 术语](persona/CONTEXT.md)）
+
+**Attested result（可信结构化片段）**（设计中，ADR-0050）:
+`attests_speakers: true` 登记的同业务线 MCP Server 返回的结构化旁听页（片段的引用、说话人、时间、文字与页的元数据）。由平台用 `captures` 的渲染器渲染并在 ToolResult 上记下 attested 标记，来源推导与内置 `captures` 等价；写日志前经内容安全检查。
+_Avoid_: 业务线返回的旁听文字、可信结果（不指明结构化时）
 
 **Stream（流）**（[设计](docs/design/m5-inputs-triggers-loops.md)、ADR-0039）:
 Capture 按种类分成的序列，种类由平台登记，决定校验、内容安全与 Provenance；旁听转写是 transcript 流。AgentDef 声明接收哪些流，平台记录每个流已读到的位置。
