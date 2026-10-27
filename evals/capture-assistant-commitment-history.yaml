@@ -1,0 +1,44 @@
+name: capture-assistant-commitment-history
+description: 助手找到已完成的成本核算表，按说话时间说明两次改期和依据，区分相似承诺。
+agent: xinli-assistant
+setup:
+  xinli:
+    commitments:
+      - id: C-0001
+        kind: mine
+        content: 绿源成本核算表
+        counterpart: 张总
+        due_date: "2026-10-23"
+        spoken_at: 2026-10-19T09:00:00+08:00
+        revisions:
+          - op: revise
+            author: xinli-day
+            session: seed_day_20
+            spoken_at: 2026-10-20T10:00:00+08:00
+            recorded_at: 2026-10-20T11:00:00+08:00
+            fields: {due_date: "2026-10-26"}
+            refs: ["#2.0"]
+            reason: 张总同意等供应商数据，原话说改到周一。
+          - op: revise
+            author: xinli-project
+            spoken_at: 2026-10-21T14:00:00+08:00
+            recorded_at: 2026-10-21T18:00:00+08:00
+            fields: {due_date: "2026-10-28"}
+            exchanges: [x2026-10-21]
+            reason: 项目交谈摘要记载审核多需两天，改到周三。
+          - op: close
+            author: user
+            recorded_at: 2026-10-27T16:00:00+08:00
+            fields: {status: done}
+            reason: 用户本人确认已经交付。
+      - {id: C-0002, kind: mine, content: 康宁成本核算表, counterpart: 王工, due_date: "2026-10-30"}
+turns:
+  - input: 绿源成本核算表的期限前后怎么变的？
+    expect:
+      calls: [mcp_xinli__list_commitments, mcp_xinli__commitment_history]
+      reply_contains: ["23", "26", "28", 完成]
+      reply_excludes: ["30"]
+      judge: >-
+        5 分：明确绿源成本核算表最初期限 10 月 23 日；10 月 20 日因等供应商数据，依据原话从 23 日改到 26 日；10 月 21 日因审核多需两天，依据项目交谈摘要从 26 日改到 28 日；10 月 27 日用户本人确认完成。
+        区分说话时间和记录时间，未将康宁核算表的 30 日混入；不编造原话，引文过保留期时说明只能据修订记录回答。初始记录是预置账本，不假称有原话。
+        4 分：期限演变和完成正确，少一项时间或原因。3 分：顺序正确但依据混淆或遗漏完成。2 分：只报最终期限，漏改期或混入康宁期限。1 分：大部分错误或编造。

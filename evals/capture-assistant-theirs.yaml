@@ -1,0 +1,20 @@
+name: capture-assistant-theirs
+description: 助手查询别人答应用户但尚未交付的承诺，只列 theirs 的未完成项。
+agent: xinli-assistant
+setup:
+  xinli:
+    commitments:
+      - {id: C-0001, kind: theirs, content: 给我发装修报价, counterpart: 王工, due_date: "2026-10-28"}
+      - {id: C-0002, kind: theirs, content: 归还我的雨伞, counterpart: 小李}
+      - {id: C-0003, kind: mine, content: 交成本核算表, counterpart: 张总, due_date: "2026-10-27"}
+      - {id: C-0004, kind: theirs, content: 寄出样品, counterpart: 赵工, status: done}
+      - {id: C-0005, kind: theirs, content: 补发收据, counterpart: 物业, status: cancelled}
+turns:
+  - input: 别人答应我的还有哪些没给？
+    expect:
+      calls: [mcp_xinli__list_commitments]
+      reply_contains: [报价, 雨伞]
+      reply_excludes: [成本核算表, 寄出样品, 补发收据]
+      judge: >-
+        5 分：只列王工 10 月 28 日给装修报价、小李归还雨伞（未定期限），清楚表示是别人答应用户。
+        4 分：两件齐全且责任方正确，只遗漏日期或对方。3 分：遗漏一件。2 分：混入本人承诺、已完成或取消的事。1 分：大部分错误或编造。

@@ -199,6 +199,8 @@ var tools = []struct {
 	tool    *mcp.Tool
 	handler func(c *call) string
 }{
+	{&mcp.Tool{Name: "list_commitments", Description: "按责任方、状态、期限、对方、主题与项目查询承诺，默认未完成；每页至多 30 条，按期限升序，无期限排后。被合并的不列出。", InputSchema: json.RawMessage(listCommitmentsSchema), Annotations: readOnly()}, (*call).listCommitments},
+	{&mcp.Tool{Name: "commitment_history", Description: "查询一条承诺的当前值与修订历史（改前到改后、时间、依据、引用），以及合并关系。", InputSchema: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string","description":"承诺 ID"}},"required":["id"]}`), Annotations: readOnly()}, (*call).commitmentHistory},
 	{&mcp.Tool{Name: "list_projects", Description: "列出用户已有的项目（ID、名称与现状）。",
 		InputSchema: json.RawMessage(noArgs), Annotations: readOnly()},
 		func(c *call) string {
@@ -760,7 +762,25 @@ type SeedCommitment struct {
 	DueText     string `yaml:"due_text"`
 	Project     string `yaml:"project"`
 	// Status 缺省为 open。
-	Status string `yaml:"status"`
+	Status     string    `yaml:"status"`
+	SpokenAt   time.Time `yaml:"spoken_at"`
+	Refs       []string  `yaml:"refs"`
+	Unverified string    `yaml:"unverified"`
+	// Revisions 是新建之后的修订，按给定顺序写为变更集；初始字段仍取上面的值。
+	Revisions []SeedRevision `yaml:"revisions"`
+}
+
+// SeedRevision 让评测使用与真实写入相同的变更集重放路径，避免直接伪造当前值与历史。
+type SeedRevision struct {
+	Author     string            `yaml:"author"`
+	Session    string            `yaml:"session"`
+	Op         string            `yaml:"op"`
+	Fields     map[string]string `yaml:"fields"`
+	Refs       []string          `yaml:"refs"`
+	Exchanges  []string          `yaml:"exchanges"`
+	Reason     string            `yaml:"reason"`
+	SpokenAt   time.Time         `yaml:"spoken_at"`
+	RecordedAt time.Time         `yaml:"recorded_at"`
 }
 
 // SeedExchange 是预置的交谈（归入一个项目）。
@@ -802,16 +822,42 @@ func (x *Server) Seed(businessLine, endUser string, d SeedData) {
 		}
 		cs.CreateExchanges = append(cs.CreateExchanges, ex)
 	}
-	for _, m := range d.Commitments {
+	d.Commitments = slices.Clone(d.Commitments)
+	for i := range d.Commitments {
+		m := &d.Commitments[i]
 		if m.ID == "" {
 			u.nextC++
 			m.ID = fmt.Sprintf("C-%04d", u.nextC)
 		}
 		cs.CreateCommitments = append(cs.CreateCommitments, Commitment{ID: m.ID, Kind: m.Kind, Content: m.Content, Counterpart: m.Counterpart,
-			DueDate: m.DueDate, DueText: m.DueText, Project: m.Project, Status: m.Status})
+			DueDate: m.DueDate, DueText: m.DueText, Project: m.Project, Status: m.Status, SpokenAt: m.SpokenAt, Refs: m.Refs, Unverified: m.Unverified})
 	}
 	if len(cs.CreateExchanges) > 0 || len(cs.CreateCommitments) > 0 {
 		u.commit(&cs, -1, nil)
+	}
+	for _, m := range d.Commitments {
+		for _, r := range m.Revisions {
+			at := r.RecordedAt
+			if at.IsZero() {
+				at = x.now()
+			}
+			author := r.Author
+			if author == "" {
+				author = AuthorSeed
+			}
+			next := Changeset{Key: fmt.Sprintf("seed:%d", u.nextCS+1), Author: author, Session: r.Session, RecordedAt: at}
+			change := CommitmentChange{ID: m.ID, Fields: r.Fields, Refs: r.Refs, Exchanges: r.Exchanges, Reason: r.Reason, SpokenAt: r.SpokenAt}
+			switch r.Op {
+			case "close":
+				change.Status = r.Fields["status"]
+				next.CloseCommitments = []CommitmentChange{change}
+			case "merge":
+				next.MergeCommitments = []CommitmentMerge{{Into: r.Fields["merged_into"], From: []string{m.ID}, Reason: r.Reason}}
+			default:
+				next.ReviseCommitments = []CommitmentChange{change}
+			}
+			u.commit(&next, -1, nil)
+		}
 	}
 	for i, day := range d.Filed {
 		day.Session = fmt.Sprintf("seed_day_%d", i)
