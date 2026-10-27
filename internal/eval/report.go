@@ -29,10 +29,10 @@ type CaseResult struct {
 	Trials        int     `json:"trials"`
 	Passed        int     `json:"passed"`
 	PassRate      float64 `json:"pass_rate"`
-	// JudgeAvg 是评分均值；没有评分断言时为 0。
-	JudgeAvg   float64 `json:"judge_avg"`
-	AvgTokens  uint64  `json:"avg_tokens"`
-	AvgSeconds float64 `json:"avg_seconds"`
+	// JudgeAvg 没有有效评分样本时省略；旧报告中的 0 仍可读。
+	JudgeAvg   *float64 `json:"judge_avg,omitempty"`
+	AvgTokens  uint64   `json:"avg_tokens"`
+	AvgSeconds float64  `json:"avg_seconds"`
 	// 每次运行平均的调用、上下文压缩与接管次数（观察长 Run 的形态）。
 	AvgCalls       float64 `json:"avg_calls"`
 	AvgCompactions float64 `json:"avg_compactions"`
@@ -47,6 +47,13 @@ type CaseResult struct {
 	// Metrics 是各轮指标在多次运行上的均值与标准差（键为"turn N: 名称"，m4-eval.md §13）。
 	Metrics map[string]Metric `json:"metrics,omitempty"`
 
+	// 指针区分旧报告的未知与本次确实没有完成或评分的情况。
+	Completed                       *int       `json:"completed,omitempty"`
+	JudgeSamples                    *int       `json:"judge_samples,omitempty"`
+	CompletedCost                   *TrialCost `json:"completed_cost,omitempty"`
+	IncompleteCost                  *TrialCost `json:"incomplete_cost,omitempty"`
+	completedInput, completedCached uint64
+
 	values                        map[string][]float64
 	scores                        []int
 	tokens                        uint64
@@ -56,7 +63,36 @@ type CaseResult struct {
 	input, cached                 uint64
 }
 
+// TrialCost 在 completed_cost 中为均值，在 incomplete_cost 中为合计；缓存命中均按输入 token 加权。
+type TrialCost struct {
+	Tokens      float64 `json:"tokens"`
+	Seconds     float64 `json:"seconds"`
+	Calls       float64 `json:"calls"`
+	Compactions float64 `json:"compactions"`
+	Takeovers   float64 `json:"takeovers"`
+	CacheHit    float64 `json:"cache_hit"`
+}
+
 func (r *CaseResult) add(t TrialResult) {
+	if r.Completed == nil {
+		r.Completed = new(int)
+		r.IncompleteCost = &TrialCost{}
+	}
+	cost := r.IncompleteCost
+	if t.Completed {
+		*r.Completed++
+		if r.CompletedCost == nil {
+			r.CompletedCost = &TrialCost{}
+		}
+		cost = r.CompletedCost
+		r.completedInput += t.InputTokens
+		r.completedCached += t.CachedInputTokens
+	}
+	cost.Tokens += float64(t.Tokens)
+	cost.Seconds += t.Duration.Seconds()
+	cost.Calls += float64(t.Calls)
+	cost.Compactions += float64(t.Compactions)
+	cost.Takeovers += float64(t.Takeovers)
 	r.runs++
 	if t.Passed {
 		r.Passed++
@@ -95,6 +131,18 @@ func (r *CaseResult) fail(key, detail string) {
 }
 
 func (r *CaseResult) finish() {
+	r.JudgeSamples = new(len(r.scores))
+	if r.Completed != nil && *r.Completed > 0 {
+		c, n := r.CompletedCost, float64(*r.Completed)
+		c.Tokens, c.Seconds, c.Calls = c.Tokens/n, c.Seconds/n, c.Calls/n
+		c.Compactions, c.Takeovers = c.Compactions/n, c.Takeovers/n
+		if r.completedInput > 0 {
+			c.CacheHit = float64(r.completedCached) / float64(r.completedInput)
+		}
+	}
+	if r.IncompleteCost != nil && r.input > r.completedInput {
+		r.IncompleteCost.CacheHit = float64(r.cached-r.completedCached) / float64(r.input-r.completedInput)
+	}
 	if r.runs == 0 {
 		return
 	}
@@ -111,22 +159,25 @@ func (r *CaseResult) finish() {
 		for _, s := range r.scores {
 			sum += s
 		}
-		r.JudgeAvg = float64(sum) / float64(len(r.scores))
+		r.JudgeAvg = new(float64(sum) / float64(len(r.scores)))
 	}
 	for k, vs := range r.values {
 		if r.Metrics == nil {
 			r.Metrics = map[string]Metric{}
 		}
-		r.Metrics[k] = newMetric(vs)
+		m := newMetric(vs)
+		m.Expected = new(r.Trials)
+		r.Metrics[k] = m
 	}
 	sort.Strings(r.Samples)
 }
 
 // Metric 是一项指标在多次运行上的均值、样本标准差与运行次数（没有算出这项指标的运行不计）。
 type Metric struct {
-	Mean float64 `json:"mean"`
-	Std  float64 `json:"std"`
-	N    int     `json:"n"`
+	Mean     float64 `json:"mean"`
+	Std      float64 `json:"std"`
+	N        int     `json:"n"`
+	Expected *int    `json:"expected,omitempty"`
 }
 
 func newMetric(vs []float64) Metric {
@@ -144,7 +195,12 @@ func newMetric(vs []float64) Metric {
 	return m
 }
 
-func (m Metric) String() string { return fmt.Sprintf("%.2f ± %.2f (%d)", m.Mean, m.Std, m.N) }
+func (m Metric) String() string {
+	if m.Expected != nil {
+		return fmt.Sprintf("%.2f ± %.2f (%d/%d)", m.Mean, m.Std, m.N, *m.Expected)
+	}
+	return fmt.Sprintf("%.2f ± %.2f (%d/—)", m.Mean, m.Std, m.N)
+}
 
 // lowerIsBetter 是越小越好的指标（按"turn N: "之后的名称）。
 var lowerIsBetter = map[string]bool{"fragmentation": true}
@@ -166,7 +222,7 @@ const (
 	MetricDrop   = 0.1
 )
 
-// Compare 与基线比较，返回回归（通过率或评分明显下降）。基线中没有的用例不算回归。
+// Compare 与基线比较，返回质量下降、指标缺失与样本不足。基线中没有的用例不算回归。
 func Compare(baseline, current *Report) []string {
 	base := map[string]CaseResult{}
 	for _, c := range baseline.Cases {
@@ -181,12 +237,28 @@ func Compare(baseline, current *Report) []string {
 		if b.PassRate-c.PassRate >= PassRateDrop {
 			out = append(out, fmt.Sprintf("%s: pass rate %.2f → %.2f", c.Name, b.PassRate, c.PassRate))
 		}
-		if b.JudgeAvg > 0 && b.JudgeAvg-c.JudgeAvg >= JudgeDrop {
-			out = append(out, fmt.Sprintf("%s: judge %.2f → %.2f", c.Name, b.JudgeAvg, c.JudgeAvg))
+		if b.Completed != nil && c.Completed != nil && *c.Completed < *b.Completed {
+			out = append(out, fmt.Sprintf("%s: completed 样本不足 %d → %d", c.Name, *b.Completed, *c.Completed))
 		}
-		for _, k := range slices.Sorted(maps.Keys(c.Metrics)) {
-			if bm, ok := b.Metrics[k]; ok && bm.N > 0 && worse(k, bm, c.Metrics[k]) {
-				out = append(out, fmt.Sprintf("%s: %s %s → %s", c.Name, k, bm, c.Metrics[k]))
+		if b.JudgeSamples != nil && c.JudgeSamples != nil && *c.JudgeSamples < *b.JudgeSamples {
+			out = append(out, fmt.Sprintf("%s: judge 样本不足 %d → %d", c.Name, *b.JudgeSamples, *c.JudgeSamples))
+		}
+		if b.JudgeAvg != nil && *b.JudgeAvg > 0 {
+			if c.JudgeAvg == nil {
+				out = append(out, fmt.Sprintf("%s: judge 缺失", c.Name))
+			} else if *b.JudgeAvg-*c.JudgeAvg >= JudgeDrop {
+				out = append(out, fmt.Sprintf("%s: judge %.2f → %.2f", c.Name, *b.JudgeAvg, *c.JudgeAvg))
+			}
+		}
+		for _, k := range slices.Sorted(maps.Keys(b.Metrics)) {
+			bm := b.Metrics[k]
+			cm, ok := c.Metrics[k]
+			if !ok || cm.N == 0 && bm.N > 0 {
+				out = append(out, fmt.Sprintf("%s: %s 缺失（基线 n=%d）", c.Name, k, bm.N))
+			} else if cm.N < bm.N {
+				out = append(out, fmt.Sprintf("%s: %s 样本不足 %d → %d", c.Name, k, bm.N, cm.N))
+			} else if bm.N > 0 && worse(k, bm, cm) {
+				out = append(out, fmt.Sprintf("%s: %s %s → %s", c.Name, k, bm, cm))
 			}
 		}
 	}
@@ -240,19 +312,19 @@ func (r *Report) Markdown(baseline *Report, regressions []string) string {
 			base[c.Name] = c
 		}
 	}
-	b.WriteString("| 用例 | 通过 | 基线 | 评分 | 基线评分 | 平均 tokens | 缓存命中 | 平均耗时 | 调用/压缩/接管 |\n|---|---|---|---|---|---|---|---|---|\n")
+	b.WriteString("| 用例 | 通过/总数 | 完成/总数 | 基线通过 | 评分（样本数） | 基线评分 | 完成均值：tokens / 耗时 / 调用 / 压缩 / 接管 / 缓存命中 | 未完成合计：tokens / 耗时 / 调用 / 压缩 / 接管 / 缓存命中 |\n|---|---|---|---|---|---|---|---|\n")
 	for _, c := range r.Cases {
 		if c.Skipped != "" {
-			fmt.Fprintf(&b, "| %s | 跳过（%s） | | | | | | | |\n", c.Name, c.Skipped)
+			fmt.Fprintf(&b, "| %s | 跳过（%s） | | | | | | |\n", c.Name, c.Skipped)
 			continue
 		}
 		bp, bj := "", ""
 		if x, ok := base[c.Name]; ok {
 			bp, bj = fmt.Sprintf("%d/%d", x.Passed, x.Trials), score(x.JudgeAvg)
 		}
-		fmt.Fprintf(&b, "| %s | %d/%d | %s | %s | %s | %d | %.0f%% | %.1fs | %.1f/%.1f/%.1f |\n", c.Name, c.Passed, c.Trials, bp, score(c.JudgeAvg), bj,
-			c.AvgTokens, 100*c.CacheHit, c.AvgSeconds, c.AvgCalls, c.AvgCompactions, c.AvgTakeovers)
+		fmt.Fprintf(&b, "| %s | %d/%d | %s/%d | %s | %s（%s） | %s | %s | %s |\n", c.Name, c.Passed, c.Trials, count(c.Completed), c.Trials, bp, score(c.JudgeAvg), count(c.JudgeSamples), bj, costText(c.CompletedCost), costText(c.IncompleteCost))
 	}
+	b.WriteString("\n完成指跑完全部轮次，与断言是否通过无关；— 表示无样本或旧报告未记录。旧成本字段仍按全部运行汇总，不能用来比较完成全部轮次的成本。\n")
 	var measured []CaseResult
 	for _, c := range r.Cases {
 		if len(c.Metrics) > 0 {
@@ -260,7 +332,7 @@ func (r *Report) Markdown(baseline *Report, regressions []string) string {
 		}
 	}
 	if len(measured) > 0 {
-		b.WriteString("\n## 指标\n\n均值 ± 标准差（运行次数）。\n\n| 用例 | 指标 | 本次 | 基线 |\n|---|---|---|---|\n")
+		b.WriteString("\n## 指标\n\n均值 ± 标准差（有效样本数/预期运行次数）。\n\n| 用例 | 指标 | 本次 | 基线 |\n|---|---|---|---|\n")
 		for _, c := range measured {
 			for _, k := range slices.Sorted(maps.Keys(c.Metrics)) {
 				bm := ""
@@ -290,11 +362,11 @@ func (r *Report) Markdown(baseline *Report, regressions []string) string {
 	return b.String()
 }
 
-func score(v float64) string {
-	if v == 0 {
+func score(v *float64) string {
+	if v == nil {
 		return "—"
 	}
-	return fmt.Sprintf("%.2f", v)
+	return fmt.Sprintf("%.2f", *v)
 }
 
 // MergeBaseline 用 current 中的用例替换或补充 baseline，其余用例保留；baseline 为 nil 时视为空。
@@ -321,4 +393,18 @@ func MergeBaseline(baseline, current *Report) (merged *Report, skipped []string)
 	}
 	sort.Slice(out.Cases, func(i, j int) bool { return out.Cases[i].Name < out.Cases[j].Name })
 	return &out, skipped
+}
+
+func count(n *int) string {
+	if n == nil {
+		return "—"
+	}
+	return fmt.Sprint(*n)
+}
+
+func costText(c *TrialCost) string {
+	if c == nil {
+		return "—"
+	}
+	return fmt.Sprintf("%.1f / %.1fs / %.1f / %.1f / %.1f / %.0f%%", c.Tokens, c.Seconds, c.Calls, c.Compactions, c.Takeovers, 100*c.CacheHit)
 }

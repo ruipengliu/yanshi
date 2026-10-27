@@ -366,6 +366,8 @@ func derive(cfg Config, cases []*Case) (*agentdef.Registry, map[string]string, e
 
 // TrialResult 是一个用例的一次运行。
 type TrialResult struct {
+	// Completed 只表示全部轮次执行结束，不受断言通过与否影响。
+	Completed  bool
 	Passed     bool
 	Assertions []Assertion
 	JudgeScore []int
@@ -626,6 +628,7 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 			tr.JudgeScore = append(tr.JudgeScore, score)
 		}
 	}
+	tr.Completed = true
 	return tr
 }
 
