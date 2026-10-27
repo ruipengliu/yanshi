@@ -193,3 +193,11 @@ func TestSimulationIsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+// TestCaptureReadsWithFaults 集中读取旁听，结果侧的覆盖断言不能由仅生成参数或返回错误满足。
+func TestCaptureReadsWithFaults(t *testing.T) {
+	total := parallelSeeds(t, seedList(), func(t *testing.T, s uint64) Stats {
+		return run(t, s, Options{Faults: true, CaptureReads: true, Ticks: 1000}).Stats
+	})
+	requireCoverage(t, total, "CaptureResults", "CaptureSuccesses", "CapturePages", "CaptureMorePages", "CaptureContinuations", "CaptureNewReads", "CaptureNewResumes")
+}

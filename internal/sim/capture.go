@@ -2,12 +2,17 @@ package sim
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/eventlog"
+	"yanshi/internal/model"
 	"yanshi/internal/moderation"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
@@ -51,6 +56,9 @@ func (w *World) captureSegments() []*v1.CaptureSegment {
 		} else {
 			segs[i] = &v1.CaptureSegment{Speaker: v1.Speaker_SPEAKER_OTHER, SpeakerKey: fmt.Sprintf("other-%d", 1+w.rng.IntN(2)), Text: text}
 		}
+		// 带时间才有时段与续页；同批的片段属于同一时段，时间来自模拟时钟。
+		segs[i].SpokenAt = timestamppb.New(w.clock.Now())
+		segs[i].TimeZone = "UTC"
 	}
 	return segs
 }
@@ -150,4 +158,74 @@ func (w *World) checkCapture(sid string, e *v1.Event) error {
 		}
 	}
 	return nil
+}
+
+// countCaptureResults 只计入已写入日志的结果；生成参数、随后被打断或拒绝的调用不能冒充成功读取。
+func (w *World) countCaptureResults(events []*v1.Event) {
+	calls := map[string]*v1.ToolCall{}
+	st := &session.State{}
+	for _, e := range events {
+		if m := e.GetAssistantMessage(); m != nil {
+			for _, c := range m.GetToolCalls() {
+				calls[m.GetRunId()+"/"+c.GetCallId()] = c
+			}
+		}
+		if r := e.GetToolResult(); r != nil {
+			c := calls[r.GetRunId()+"/"+r.GetCallId()]
+			if c.GetCapability() == session.CapturesCapability {
+				w.Stats.CaptureResults++
+				if r.GetIsError() {
+					w.Stats.CaptureErrors++
+				} else {
+					w.Stats.CaptureSuccesses++
+					var args struct {
+						After string `json:"after"`
+					}
+					_ = json.Unmarshal([]byte(c.GetArgumentsJson()), &args)
+					if args.After == "new" {
+						w.Stats.CaptureNewReads++
+						if st.Captures.Read[session.StreamTranscript] != nil && r.GetCaptureRead() != nil {
+							w.Stats.CaptureNewResumes++
+						}
+					}
+					if r.GetCaptureRead() != nil {
+						w.Stats.CapturePages++
+						text := model.Text(r.GetContent())
+						if strings.Contains(text, `after="`) {
+							w.Stats.CaptureMorePages++
+						}
+						if strings.Contains(text, "起（续）") {
+							w.Stats.CaptureContinuations++
+						}
+					}
+				}
+			}
+		}
+		if err := st.Apply(e); err != nil {
+			return
+		}
+	}
+}
+
+// captureAfter 从模型看到的最近一页照抄位置，不读 Session 的隐藏状态。
+func captureAfter(messages []model.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		m := messages[i]
+		if m.Role != model.RoleTool {
+			continue
+		}
+		text := model.Text(m.Content)
+		if !strings.HasPrefix(text, "【时段 #") {
+			continue
+		}
+		_, rest, ok := strings.Cut(text, `after="`)
+		if !ok {
+			return "0"
+		}
+		after, _, ok := strings.Cut(rest, `"`)
+		if ok {
+			return after
+		}
+	}
+	return "0"
 }

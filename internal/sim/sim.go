@@ -62,6 +62,8 @@ type Options struct {
 	// LongRuns 让脚本化模型在一个 Run 内持续调用工具上百轮，并降低中断频率，
 	// 用于检验小时级 Run 的上下文压缩与恢复（docs/design/m2-long-runs.md §8）。
 	LongRuns bool
+	// CaptureReads 让模型集中读取旁听，保证分页与接读不会被大量其他能力摊薄。
+	CaptureReads bool
 }
 
 // Stats 统计模拟中被覆盖到的路径，防止模拟"空转"。
@@ -133,8 +135,11 @@ type Stats struct {
 	// 旁听转写（docs/design/captures.md）：写入的批次、重试被去重的、因内容安全不可用而拒绝的批次，拦截的段数，
 	// 以及写入时注入的存储故障。
 	CapturesAppended, CaptureDuplicates, CapturesRejected, CapturesRedacted, CaptureStoreFaults int
-	// CaptureReads 是 Run 中读取旁听转写（captures 工具）的次数。
+	// CaptureReads 是生成的 captures 调用数，不代表工具已执行成功。
 	CaptureReads int
+	// 结果侧覆盖：返回的结果、错误、成功页、含旁听的页、仍有下一页、实际续页、new 调用与从已提交位置接读。
+	CaptureResults, CaptureErrors, CaptureSuccesses, CapturePages, CaptureMorePages int
+	CaptureContinuations, CaptureNewReads, CaptureNewResumes                        int
 	// RetentionKeptMemories 是按保留期到期删除、写入过的 Memory 得以保留的 Session（ADR-0037）。
 	RetentionKeptMemories int
 	// InvalidArgs 是模型给出不合法参数的调用（args.go）。
@@ -251,9 +256,23 @@ func (q poolQueue) Claim(ctx context.Context, holder string, ttl time.Duration, 
 // interactiveWorker 是只认领交互工作的 Worker 的 ID 前缀：模拟中 0 号 Worker 是交互 Worker。
 const interactiveWorker = "wi"
 
-// simContext 是模拟 AgentDef 的上下文配置：窗口很小（工具声明约占 1410，其中 ask_user 约 450、captures 约 260、缩短的 show_card 约 30），使压缩频繁发生；须容得下工具声明、摘要、KeepRecent 与一条最大的消息（含界面上下文）。
-// 窗口很小以频繁压缩，但须容得下工具定义（约 2.5k tokens）加上一步的调用与结果：调用与结果不能拆开压缩。
-var simContext = agentdef.Context{Window: 3200, CompactAt: 0.75, KeepRecent: 300, MaxToolResult: 250}
+// simWindow 是模拟模型的实际窗口，也是主请求与摘要请求的不变量；不随 AgentDef 的加载预算扩大。
+const simWindow = 3200
+
+// simToolResultTokens 锁住生成器的短结果假设：Capture 每页至多两段；echo 的负载至多 399 字节；
+// Memory 最多十条短偏好（含到期删除场景），即使用 20 位编号也不足 400 tokens。
+// 独立检查它，避免更大的加载预算悄悄允许大结果进入原来的小窗口模拟。
+const simToolResultTokens = 400
+
+// simContext 保留 2400 token 的压缩阈值，使压缩频繁发生；结果预算须容得下完整 Capture，
+// 因而同步扩大窗口以满足 MaxToolResult 至多占窗口四分之一的加载约束。
+// runtime 的压缩时机与摘要输入预算依赖 Threshold；Window/16 只改变摘要目标文字（200→752），
+// 两者位数相同，脚本摘要也不依此生成更长内容。实际请求仍由 simWindow 校验。
+var simContext = func() agentdef.Context {
+	budget := session.MinCaptureToolResult()
+	window := 4 * budget
+	return agentdef.Context{Window: window, CompactAt: (simWindow * 0.75) / float64(window), KeepRecent: 300, MaxToolResult: budget}
+}()
 
 const longRunTurns = 20
 
@@ -372,7 +391,7 @@ func New(opts Options) (*World, error) {
 	w.stores = stores
 	w.log, w.queue = stores.Log, stores.Queue
 	maxTurns := 6
-	if opts.LongRuns {
+	if opts.LongRuns || opts.CaptureReads {
 		maxTurns = 120
 	}
 	// 两个版本，配合随机的灰度与撤回（docs/design/m4-agent-rollout.md §7）。
@@ -762,8 +781,8 @@ func (w *World) act() error {
 	case x < 0.83:
 		return w.presenceStep()
 	case x < 0.84:
-		if w.opts.LongRuns && !w.chance(0.1) {
-			return nil // 长 Run 模式下少关、少删，否则 Run 很难跑满
+		if (w.opts.LongRuns || w.opts.CaptureReads) && !w.chance(0.1) {
+			return nil // 少关、少删，让长 Run 能跑满、旁听能在完成后由下一次 Run 接读
 		}
 		switch x := w.rng.Float64(); {
 		case x < 0.5:
@@ -773,8 +792,8 @@ func (w *World) act() error {
 		}
 		return w.deleteSession()
 	case x < 0.87:
-		if w.opts.LongRuns && !w.chance(0.05) {
-			return nil // 长 Run 模式下中断要少，否则 Run 很难跑满
+		if (w.opts.LongRuns || w.opts.CaptureReads) && !w.chance(0.05) {
+			return nil // 少中断，让长 Run 能跑满、旁听读取位置能随 Run 完成提交
 		}
 		return w.interrupt()
 	case x < 0.94:
@@ -1296,6 +1315,7 @@ func (w *World) CollectStats() {
 	for _, sid := range w.known() {
 		events, _ := eventlog.ReadAll(context.Background(), w.log, sid, 0)
 		w.countBackground(events)
+		w.countCaptureResults(events)
 	}
 	for _, sid := range append(slices.Clone(w.sessions), w.children...) {
 		events, _ := eventlog.ReadAll(context.Background(), w.log, sid, 0)
@@ -1502,13 +1522,16 @@ func (e *modelError) Is(target error) bool { return e.overflow && target == mode
 
 // checkRequest 检查发给模型的请求：估算大小不超过窗口；每个调用请求之后紧跟其全部结果，且没有孤立的结果。
 func checkRequest(req *model.Request) error {
-	if n := model.EstimateRequest(req); n > simContext.Window {
-		return fmt.Errorf("model request of ~%d tokens exceeds window %d", n, simContext.Window)
+	if n := model.EstimateRequest(req); n > simWindow {
+		return fmt.Errorf("model request of ~%d tokens exceeds window %d", n, simWindow)
 	}
 	var open []string
 	for i, m := range req.Messages {
 		switch {
 		case m.Role == model.RoleTool:
+			if n := model.EstimateTokens(m.Content); n > simToolResultTokens {
+				return fmt.Errorf("generated tool result %s of ~%d tokens exceeds simulation bound %d", m.ToolCallID, n, simToolResultTokens)
+			}
 			if len(open) == 0 || open[0] != m.ToolCallID {
 				return fmt.Errorf("message %d: tool result %s without matching call", i, m.ToolCallID)
 			}
@@ -1539,6 +1562,10 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 	}
 	if err := checkRequest(req); err != nil {
 		w.violations = append(w.violations, err.Error())
+		if model.EstimateRequest(req) > simWindow {
+			w.Stats.Overflows++
+			return nil, &modelError{overflow: true}
+		}
 	}
 	if w.faults && w.chance(0.02) {
 		w.Stats.Overflows++
@@ -1569,6 +1596,13 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 	if w.opts.LongRuns {
 		more = turns < 100 && w.chance(0.97)
 	}
+	if w.opts.CaptureReads {
+		// 压缩会减少可见轮数，不能只等固定轮数才结束；须完成 Run 才能提交读取位置。
+		more = turns < 3 && w.chance(0.7)
+		if more {
+			return &model.Response{Model: "sim/m", Usage: resp.Usage, ToolCalls: []*v1.ToolCall{{Capability: "captures", ArgumentsJson: w.toolArgs("captures", req.Messages...)}}}, nil
+		}
+	}
 	if more {
 		tools := req.Tools
 		if w.opts.LongRuns {
@@ -1595,7 +1629,7 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 			if w.chance(0.3) {
 				id = ""
 			}
-			resp.ToolCalls = append(resp.ToolCalls, &v1.ToolCall{CallId: id, Capability: name, ArgumentsJson: w.toolArgs(name)})
+			resp.ToolCalls = append(resp.ToolCalls, &v1.ToolCall{CallId: id, Capability: name, ArgumentsJson: w.toolArgs(name, req.Messages...)})
 		}
 		// 提问之前有时先展示一张卡片：用户可能在等回答时点卡片上的按钮，这个动作就是回答（docs/design/cards.md §4）。
 		// 否则同一 Session 里很少既有卡片又有待回答的提问。
@@ -1616,8 +1650,10 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 // summarize 是脚本化的摘要模型：可能报错、崩溃或报告超长，否则返回简短摘要。
 func (m *simModel) summarize(ctx context.Context, req *model.Request) (*model.Response, error) {
 	w := m.w
-	if n := model.EstimateRequest(req); n > simContext.Window {
-		w.violations = append(w.violations, fmt.Sprintf("summary request of ~%d tokens exceeds window %d", n, simContext.Window))
+	if n := model.EstimateRequest(req); n > simWindow {
+		w.violations = append(w.violations, fmt.Sprintf("summary request of ~%d tokens exceeds window %d", n, simWindow))
+		w.Stats.Overflows++
+		return nil, &modelError{overflow: true}
 	}
 	if w.faults {
 		switch x := w.rng.Float64(); {
@@ -1639,7 +1675,7 @@ func (m *simModel) summarize(ctx context.Context, req *model.Request) (*model.Re
 
 // toolArgs 为工具生成参数：偶尔不合法（invalidArgs）；memory_save 偶尔给出注定被预检查拒绝的内容，检验它不会先请求
 // 审批。其余工具用随机长度的负载使上下文增长。
-func (w *World) toolArgs(name string) string {
+func (w *World) toolArgs(name string, messages ...model.Message) string {
 	if args, ok := w.invalidArgs(); ok {
 		return args
 	}
@@ -1653,9 +1689,17 @@ func (w *World) toolArgs(name string) string {
 	case "memory_search":
 		return `{"query":"偏好"}`
 	case "captures":
-		// 旁听转写进入上下文：他人的话使 Memory 写入闸门生效、交给注入判断；页很小，常被 max_tool_result 截断。
+		// 只照抄模型可见的页尾位置，或让平台从已完成 Run 的读取位置接读。
 		w.Stats.CaptureReads++
-		return fmt.Sprintf(`{"after":%d,"limit":%d}`, w.rng.IntN(20), 1+w.rng.IntN(5))
+		after := "0"
+		switch w.rng.IntN(3) {
+		case 1:
+			after = "new"
+		case 2:
+			after = captureAfter(messages)
+		}
+		// 每页至多两段（各至多 22 字节原话），为 3200 窗口中的其他工具和输入保留余量。
+		return fmt.Sprintf(`{"after":%q,"limit":%d,"all":true}`, after, 1+w.rng.IntN(2))
 	case askuser.Capability:
 		if w.chance(0.1) {
 			return `{"question":"只有一个选项？","options":[{"id":"a","label":"甲"}]}` // 不合法：交还模型改正
