@@ -89,8 +89,20 @@ Session 内由一次输入触发的一段执行，可被插话与中断，终态
 _Avoid_: 任务、Job、Turn
 
 **Trigger（触发）**（[设计](docs/design/m5-inputs-triggers-loops.md)、ADR-0040）:
-AgentDef 在 Stream 上声明的开启 Run 的条件：有未读的 Capture、且最后一次写入后静默了一段时间，平台就以声明中的固定文字开启一个 Run。同一位置只触发一次；按钟点的定时不是 Trigger，由业务线提交输入。
+AgentDef 在 Stream 上声明的开启 Run 的条件：有未读的 Capture、且最后一次写入后静默了一段时间，平台就以声明中的固定文字开启一个 Run。同一位置只触发一次；按钟点的定时不是 Trigger，是 Schedule。
 _Avoid_: 定时任务、cron、事件订阅
+
+**Schedule（定时）**（设计中，[设计](docs/design/m7-kernel-primitives.md) §5、ADR-0045）:
+属于一个 Session、按钟点开启 Run 的声明：一次性或周期，时区由创建方给出，可带"流上静默满一段时间即提前执行"的窗口。由 Agent 经 `schedule` 能力或业务线经 HTTP 创建；到期时平台写入输入，来源是平台，不是用户原话。只在本 Session 内开启 Run。
+_Avoid_: cron、定时任务、提醒（指业务线按承诺期限推送时）
+
+**Oneshot（单次调用）**（设计中，[设计](docs/design/m7-kernel-primitives.md) §7、ADR-0047）:
+没有 Session 的一次模型调用：声明式的提示词与输出结构，一次输入、一次输出，没有工具与状态；照常计量、配额与内容安全，不写日志、不存结果。也用于取嵌入向量。
+_Avoid_: 函数调用、补全接口、Task
+
+**Outbox（出站流）**（设计中，[设计](docs/design/m7-kernel-primitives.md) §6、ADR-0046）:
+业务线服务端按分片游标拉取的、本业务线所有 Session 中选定种类事件的 ID 序列；至少一次，内容按 ID 读事件。服务于跨 Session 编排与渠道转发，不是实时增量。
+_Avoid_: webhook（那只是提示）、消息队列、事件订阅
 
 **Loop（循环）**（[设计](docs/design/m5-inputs-triggers-loops.md)、ADR-0041）:
 决定 Run 每一步做什么的部分：内置的循环调用模型，外部循环请求业务线登记的服务。Loop 只给出回复与调用请求，动作都由平台执行。
@@ -111,6 +123,18 @@ _Avoid_: 消息、日志条目
 **Capture（旁听）**:
 HostApp 提交的一段旁听转写：EndUser 与他人的日常对话，带说话人标签（佩戴者、他人），不是对 Agent 说的话。每个 Capture 属于一个 Stream，旁听转写是 transcript 流。作为 Event 进入 Session 但不触发 Run；yanshi 只接收文字，不接触音频与声纹。佩戴者的话按 EndUser 自己的输入对待，他人的话按不可信数据对待；未通过 Moderation 的片段只留不含文字的占位。一个 EndUser 在当地每天一个旁听 Session，原文随它按 Retention 删除。
 _Avoid_: 录音、输入（指它时）、CallTranscript（那是 Call 的转写）
+
+**Erasure（擦除）**（设计中，[设计](docs/design/m7-kernel-primitives.md) §3、ADR-0044）:
+按引用范围物理删除一段 Capture 的文字：先记为 Event，再清空存储中的正文；之后的读取与模型上下文只见占位。用于 EndUser 删除一天中的部分谈话，与删除整个 Session 区分。
+_Avoid_: 删除（指整个 Session 时）、屏蔽、隐藏
+
+**Ack（交付确认）**（设计中，[设计](docs/design/m7-kernel-primitives.md) §11、ADR-0049）:
+业务线保存整理结果后在 MCP 结果中附上的结构化回执：它已持久化了某个流上哪一段范围。流声明需要确认时，读取位置只按回执连续拼出的前缀推进，没保存的时段不会被跳过。
+_Avoid_: 回执（指给模型看的结果文字时）、ACK（指传输层时）、提交
+
+**CaptureCorrection（原文修订）**（设计中，[设计](docs/design/m7-kernel-primitives.md) §4、ADR-0044）:
+EndUser 对一段 Capture 文字的纠正，记为 Event，新文字作为新版本保存；说话人不变，原文保留到擦除或删除。
+_Avoid_: 编辑、覆盖、Revision（那是承诺的修订）
 
 **Stream（流）**（[设计](docs/design/m5-inputs-triggers-loops.md)、ADR-0039）:
 Capture 按种类分成的序列，种类由平台登记，决定校验、内容安全与 Provenance；旁听转写是 transcript 流。AgentDef 声明接收哪些流，平台记录每个流已读到的位置。
@@ -172,6 +196,10 @@ _Avoid_: 异步任务、离线队列、延迟调用
 EndUser 在 Run 进行中追加输入，以改变其后续方向而不终止它。
 _Avoid_: 追加消息、打断
 
+**Redo（重答）**（设计中，[设计](docs/design/m7-kernel-primitives.md) §9）:
+EndUser 让 Session 中最后一个已完成、且没有执行过写入的 Run 以同一输入重新回答；之后的上下文略去被重做的 Run，日志保留全部。
+_Avoid_: 重试（那是故障后的接管）、重新生成（产品文案可用）
+
 **Worker**:
 无状态的执行进程，认领 Session 并以 Attempt 推进其中的 Run。
 _Avoid_: Node（Node 提供 Capability，Worker 执行 Run）、执行器
@@ -214,6 +242,10 @@ _Avoid_: 插队、加急
 关于某个 EndUser、跨 Session 留存的个性化信息；默认归属产生它的 BusinessLine。
 _Avoid_: 画像、上下文、知识库
 
+**Persona（个人知识层）**（设计中，[设计](docs/design/persona-architecture.md)、ADR-0043）:
+内核之外、关于一个 EndUser 的世界的结构化知识服务：他人与组织、交谈、承诺、项目、笔记，以变更集为事实源，按业务线分租户。内核不认识它，只经 MCP 调用它的工具；它的术语在 `persona/CONTEXT.md`（迁出之前见设计 §3.1）。
+_Avoid_: Memory（那是内核中关于本人的陈述）、画像、知识库、用户模型
+
 **Recall（召回）**:
 Run 开始时检索 EndUser 的 Memory（本业务线的，以及经 Grant 可读的其他业务线的）并记录为 Event，作为当前 Run 的上下文；同时也是 Memory 的访问记录。
 _Avoid_: 注入、加载（泛指时）
@@ -241,6 +273,10 @@ _Avoid_: 账单、消费记录
 **Quota（配额）**:
 在一个周期内允许的 Usage 金额上限：BusinessLine 每月一份，EndUser 每日一份。超出时拒绝新 Run、挂起进行中的 Run。
 _Avoid_: 额度（指剩余量时可用）、预算（与 Policy 中的预算区分）、限流
+
+**Tier（档位）**（设计中，[设计](docs/design/m7-kernel-primitives.md) §8）:
+BusinessLine 为 EndUser 设置的配额档次（如会员等级），决定其每日 Quota；由业务线以服务令牌设置、内核按 EndUser 保存。权益本身由业务线管理。
+_Avoid_: 会员、套餐、等级（指权益时）
 
 **PriceList（价格表）**:
 部署配置中每个模型的 token 单价与沙箱的时长单价，用于把 Usage 折算为金额。
