@@ -529,7 +529,7 @@ func (c *call) dayLedger() string {
 	open := slices.DeleteFunc(append(slices.Clone(mine), earlier...), func(m *Commitment) bool { return !m.Open() })
 	for i, a := range open {
 		for _, d := range open[i+1:] {
-			if a.Kind == d.Kind && a.Counterpart != "" && a.Counterpart == d.Counterpart && memory.TextSimilarity(a.Content, d.Content) >= similarContent {
+			if possibleDuplicate(a, d) {
 				hints = append(hints, fmt.Sprintf("可能重复的承诺：%s 与 %s（同一对方「%s」、内容相近）", a.ID, d.ID, a.Counterpart))
 			}
 		}

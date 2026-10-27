@@ -1,0 +1,32 @@
+name: capture-commitment-edit-kept
+description: >-
+  用户在 App 中把验收方案改到周五，之后旁听再次提到旧期限周三，整理后仍保留用户的期限。
+  xinli_edit 按金标引用寻找承诺，不能匹配 setup 预置项，因此先用一轮旁听建出承诺。
+agent: xinli-day
+gold: data/commitment-edit-kept-gold.yaml
+setup:
+  xinli: {}
+turns:
+  - captures:
+      - {speaker: wearer, text: 张总，验收方案我下周三发给您。, at: "2026-10-23 09:00", gold: plan}
+    input: 整理交谈
+    expect:
+      calls: ["captures", "mcp_xinli__file_changes"]
+      xinli:
+        commitments:
+          - {kind: mine, contains: 验收方案, status: open, due_date: "2026-10-28", verified: true}
+        commitments_count: {min: 1, max: 1}
+  - xinli_edit:
+      - {gold: plan, due: "2026-10-30"}
+    captures:
+      - {speaker: other, key: zhang, text: 之前说的验收方案还是下周三给我吧。, at: "2026-10-23 16:00", gold: plan}
+      - {speaker: wearer, text: 张总，您说的是那份验收方案，下周三发给您。, at: "2026-10-23 16:01", gold: plan}
+    input: 整理今天
+    expect:
+      calls: ["captures", "mcp_xinli__day_ledger"]
+      xinli:
+        commitments:
+          - {kind: mine, contains: 验收方案, status: open, due_date: "2026-10-30", verified: true}
+        commitments_count: {min: 1, max: 1}
+        stale_open: {of: [{contains: 验收方案, due_date: "2026-10-28"}], max: 0}
+        gold: {reminder_precision: 1, reminder_recall: 1, revision_accuracy: 1}

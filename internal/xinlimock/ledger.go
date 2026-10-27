@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"yanshi/internal/memory"
 )
 
 // 业务线的知识按实体维护、以变更集写入（docs/design/captures-xinli-model.md，ADR-0042）：变更集是日志，交谈与承诺由它
@@ -151,9 +153,82 @@ func (m *Commitment) Rev() int { return len(m.Revisions) }
 // Open 报告承诺是否未完成且有效（没有被合并）：提醒与召回只看这些。
 func (m *Commitment) Open() bool { return m.Status == "open" && m.MergedInto == "" }
 
-// Reminds 报告这条承诺是否会按期限提醒：未完成、有效、通过了核对、有期限。提醒的规则属于业务线，评测的提醒指标
-// 据此计算（m4-eval.md §13）。
-func (m *Commitment) Reminds() bool { return m.Open() && m.Unverified == "" && m.DueDate != "" }
+// reminderEligible 只检查单条条件；实际会提醒哪些承诺必须由 State.Reminders 进行集合级选择。
+func (m *Commitment) reminderEligible() bool {
+	return m.Open() && m.Unverified == "" && m.DueDate != ""
+}
+
+// possibleDuplicate 与当天整理的提示共用规则；称呼为空时无法确定是同一对方。
+func possibleDuplicate(a, b *Commitment) bool {
+	return a.Kind == b.Kind && a.Counterpart != "" && a.Counterpart == b.Counterpart && memory.TextSimilarity(a.Content, b.Content) >= similarContent
+}
+
+// Reminders 返回会按期限提醒的承诺，保持账本顺序，不修改账本或自动合并。
+// 可能重复的关系按成对传递分组：即使 A 与 C 不相近，只要 A–B、B–C 相近，也只保留组中最新的一条。
+func (s *State) Reminders() []Commitment {
+	seen := make([]bool, len(s.Commitments))
+	selected := make([]bool, len(s.Commitments))
+	for i := range s.Commitments {
+		if seen[i] || !s.Commitments[i].reminderEligible() {
+			continue
+		}
+		seen[i] = true
+		group := []int{i}
+		best := i
+		for n := 0; n < len(group); n++ {
+			a := group[n]
+			if newerCommitment(&s.Commitments[a], &s.Commitments[best]) {
+				best = a
+			}
+			for j := range s.Commitments {
+				if !seen[j] && s.Commitments[j].reminderEligible() && possibleDuplicate(&s.Commitments[a], &s.Commitments[j]) {
+					seen[j] = true
+					group = append(group, j)
+				}
+			}
+		}
+		selected[best] = true
+	}
+	var out []Commitment
+	for i, m := range s.Commitments {
+		if selected[i] {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// 用户改过的承诺优先，避免模型后建的重复项使提醒回到旧期限；用户修订没有说话时间，不能因此被视为最旧。
+// 同等用户优先级下，按最后修订的说话时间、记录时间、ID 比较；没有说话时间时用记录时间，
+// 让用户修改与依据摘要的修订也能按实际发生的时刻比较。没有修订历史的预置值沿用说话时间与更新时间。
+func newerCommitment(a, b *Commitment) bool {
+	userEdited := func(m *Commitment) bool {
+		return len(m.Locked) > 0 || slices.ContainsFunc(m.Revisions, func(r Revision) bool { return r.Author == AuthorUser })
+	}
+	if au, bu := userEdited(a), userEdited(b); au != bu {
+		return au
+	}
+	latest := func(m *Commitment) (time.Time, time.Time) {
+		spoken, recorded := m.SpokenAt, m.UpdatedAt
+		if len(m.Revisions) > 0 {
+			r := m.Revisions[len(m.Revisions)-1]
+			spoken, recorded = r.SpokenAt, r.RecordedAt
+		}
+		if spoken.IsZero() {
+			spoken = recorded
+		}
+		return spoken, recorded
+	}
+	as, ar := latest(a)
+	bs, br := latest(b)
+	if !as.Equal(bs) {
+		return as.After(bs)
+	}
+	if !ar.Equal(br) {
+		return ar.After(br)
+	}
+	return a.ID > b.ID
+}
 
 // Revision 是承诺的一次改动（captures-xinli-model.md §3、§7）：说话时间 SpokenAt 起成立，到下一条修订的说话时间为止；
 // RecordedAt 是交出的时刻。Basis 是依据：原话（refs）、交谈摘要（exchanges，xinli-project）或用户本人。

@@ -272,7 +272,7 @@ func (t *tally) add(ok bool) {
 //   - 原位修订率：改动后仍未完成、状态正确的金标中，那条未完成的承诺是修订得来的（修订数大于 1）而不是新建的比例：
 //     改期、换人应修订原来的那条（captures-xinli-model.md），新建再关闭旧的虽然终态正确，丢了修订的依据。
 //   - 期限正确率：已记下、未完成、有期限的金标中，有对应的未完成承诺期限相同的比例。
-//   - 提醒：会按期限提醒的承诺（Commitment.Reminds）中，对应的金标未完成、期限相同（金标没有期限时不比较，如"下周给
+//   - 提醒：会按期限提醒的承诺（State.Reminders）中，对应的金标未完成、期限相同（金标没有期限时不比较，如"下周给
 //     您答复"）的比例，同一条金标只算第一条；召回率的分母是计入的、未完成、有期限的金标。
 func (b *goldBook) score(st *xinlimock.State, labels map[string]string) (map[string]float64, string) {
 	matched := b.match(st, labels)
@@ -361,10 +361,9 @@ func (b *goldBook) score(st *xinlimock.State, labels map[string]string) (map[str
 		}
 	}
 	reminded := map[*goldItem]bool{}
-	for i := range st.Commitments {
-		m := &st.Commitments[i]
+	for _, m := range st.Reminders() {
 		it, ok := matched[m.ID]
-		if !ok || !m.Reminds() || (it != nil && !it.counted()) {
+		if !ok || (it != nil && !it.counted()) {
 			continue
 		}
 		right := it != nil && it.status == "open" && (it.due == "" || it.due == m.DueDate) && !reminded[it]

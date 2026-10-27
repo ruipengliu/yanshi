@@ -1,0 +1,2 @@
+commitments:
+  - {id: plan, kind: mine, what: 把验收方案发给张总, who: [张总], terms: [[验收方案]], due: "2026-10-28"}
