@@ -1,0 +1,46 @@
+// Package domain 保存 Persona 的知识、变更集检查与回执文字；不做 IO，不持锁，时间由调用方传入。
+package domain
+
+import (
+	"encoding/json"
+	"time"
+)
+
+// Citation 是线上引用的领域输入（docs/design/captures.md §6）。
+// SpokenAt 由入口按 TimeZone 转为当地时间，领域换算期限时不再读取时区数据库。
+type Citation struct {
+	Ref        string    `json:"ref"`
+	Speaker    string    `json:"speaker,omitempty"`
+	SpeakerKey string    `json:"speaker_key,omitempty"`
+	Redacted   bool      `json:"redacted,omitempty"`
+	SpokenAt   time.Time `json:"spoken_at,omitzero"`
+	TimeZone   string    `json:"time_zone,omitempty"`
+	Missing    bool      `json:"missing,omitempty"`
+}
+
+// Call 在一个 Book 的事务内执行一次领域操作，所有输入都由适配层显式传入。
+// 不复用 Call，以免上一次调用的交付回执或通知泄漏到下一次。
+type Call struct {
+	u       *Book
+	session string
+	args    json.RawMessage
+	cites   map[string]Citation
+	now     time.Time
+	ack     map[string]string
+	Filed   *DayFiled
+}
+
+// DayFiled 是已接受的当天整理所涉及的项目；只描述事实，不创建 Session 或提交输入。
+type DayFiled struct {
+	Session  string
+	Date     string
+	Projects []string
+}
+
+func NewCall(book *Book, session string, args json.RawMessage, cites map[string]Citation, now time.Time) *Call {
+	return &Call{u: book, session: session, args: args, cites: cites, now: now}
+}
+
+// Ack 只有范围变更集整体接受后才非空（docs/design/m7-kernel-primitives.md §11）。
+// 适配层必须等存储事务成功后才能向平台交出它。
+func (c *Call) Ack() map[string]string { return c.ack }

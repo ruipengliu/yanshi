@@ -1,0 +1,517 @@
+{
+  "version": 1,
+  "now": "2026-10-23T22:00:00+08:00",
+  "business_line": "bl",
+  "end_user": "u",
+  "steps": [
+    {
+      "op": "seed",
+      "args": {
+        "Projects": [
+          {
+            "id": "P-0001",
+            "name": "年度预算",
+            "status": "财务部在汇总各部门预算"
+          },
+          {
+            "id": "P-0002",
+            "name": "办公室搬迁",
+            "status": "十二月搬"
+          },
+          {
+            "id": "P-0003",
+            "name": "旧事",
+            "status": "早就结束了"
+          }
+        ],
+        "Commitments": [
+          {
+            "ID": "C-9000",
+            "Kind": "mine",
+            "Content": "发报价单",
+            "Project": "P-0001"
+          },
+          {
+            "ID": "C-9001",
+            "Kind": "theirs",
+            "Content": "寄框架合同",
+            "Project": "P-0001",
+            "DueDate": "2026-10-26"
+          }
+        ],
+        "Days": {
+          "2026-10-24": "王总来电：报价单收到了，合同推迟到 11 月 2 日寄出。"
+        },
+        "Exchanges": [
+          {
+            "Date": "2026-08-01",
+            "Title": "收尾",
+            "Project": "P-0003"
+          }
+        ],
+        "Filed": [
+          {
+            "date": "2026-10-22",
+            "headline": "看样板",
+            "awareness": {
+              "habits": [
+                "答应时给出期限"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "op": "state"
+    },
+    {
+      "op": "bind",
+      "args": {
+        "project": "P-0001",
+        "session": "ses_p"
+      }
+    },
+    {
+      "op": "tool",
+      "name": "list_projects",
+      "session": "ses_day",
+      "args": {}
+    },
+    {
+      "op": "tool",
+      "name": "find_related",
+      "session": "ses_day",
+      "args": {
+        "query": "预算",
+        "counterparts": [
+          "张总"
+        ]
+      }
+    },
+    {
+      "op": "tool",
+      "name": "file_changes",
+      "session": "ses_day",
+      "citations": [
+        {
+          "ref": "#2.0",
+          "speaker": "other",
+          "spoken_at": "2026-10-23T09:00:00+08:00",
+          "time_zone": "Asia/Shanghai",
+          "speaker_key": "s1"
+        },
+        {
+          "ref": "#2.1",
+          "speaker": "wearer",
+          "spoken_at": "2026-10-23T09:01:00+08:00",
+          "time_zone": "Asia/Shanghai"
+        },
+        {
+          "ref": "#2.2",
+          "speaker": "other",
+          "spoken_at": "2026-10-23T09:02:00+08:00",
+          "time_zone": "Asia/Shanghai",
+          "speaker_key": "s1"
+        },
+        {
+          "ref": "#2.5",
+          "speaker": "wearer",
+          "spoken_at": "2026-10-23T09:20:00+08:00",
+          "time_zone": "Asia/Shanghai"
+        },
+        {
+          "ref": "#2.6",
+          "speaker": "other",
+          "spoken_at": "2026-10-23T09:21:00+08:00",
+          "time_zone": "Asia/Shanghai",
+          "speaker_key": "s1"
+        }
+      ],
+      "args": {
+        "source": {
+          "from": "#2.0",
+          "to": "#2.6"
+        },
+        "exchanges": {
+          "create": [
+            {
+              "from": "#2.0",
+              "to": "#2.2",
+              "title": "办公室装修",
+              "summary": "地板定了浅色木纹",
+              "projects": [
+                {
+                  "match": "new",
+                  "name": "新办公室装修"
+                }
+              ]
+            },
+            {
+              "from": "#2.5",
+              "to": "#2.6",
+              "title": "预算",
+              "summary": "还差两个部门",
+              "projects": [
+                {
+                  "match": "unsure",
+                  "id": "P-0001",
+                  "name": "部门预算"
+                }
+              ]
+            }
+          ]
+        },
+        "commitments": {
+          "create": [
+            {
+              "exchange": "x2.0",
+              "kind": "mine",
+              "content": "发报价单",
+              "refs": [
+                "#2.1"
+              ]
+            },
+            {
+              "exchange": "x2.0",
+              "kind": "theirs",
+              "content": "带样板",
+              "refs": [
+                "#2.0"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "op": "state"
+    },
+    {
+      "op": "tool",
+      "name": "day_ledger",
+      "session": "ses_day",
+      "args": {}
+    },
+    {
+      "op": "tool",
+      "name": "file_changes",
+      "session": "ses_day",
+      "citations": [
+        {
+          "ref": "#9.0",
+          "speaker": "wearer",
+          "spoken_at": "2026-10-23T09:00:00+08:00",
+          "time_zone": "Asia/Shanghai"
+        }
+      ],
+      "args": {
+        "source": {
+          "from": "#9.0",
+          "to": "#9.0"
+        },
+        "exchanges": {
+          "create": [
+            {
+              "from": "#9.0",
+              "to": "#9.0",
+              "title": "失眠",
+              "summary": "失眠",
+              "projects": [
+                {
+                  "match": "none"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "op": "state"
+    },
+    {
+      "op": "tool",
+      "name": "file_changes",
+      "session": "ses_day",
+      "citations": [
+        {
+          "ref": "#10.0",
+          "speaker": "wearer",
+          "spoken_at": "2026-10-23T09:00:00+08:00",
+          "time_zone": "Asia/Shanghai"
+        }
+      ],
+      "args": {
+        "source": {
+          "from": "#10.0",
+          "to": "#10.0"
+        }
+      }
+    },
+    {
+      "op": "tool",
+      "name": "file_changes",
+      "session": "ses_day",
+      "args": {
+        "source": {
+          "day": true
+        }
+      }
+    },
+    {
+      "op": "submitted",
+      "args": {
+        "session": "ses_day",
+        "input": "整理交谈"
+      }
+    },
+    {
+      "op": "tool",
+      "name": "file_changes",
+      "session": "ses_day",
+      "args": []
+    },
+    {
+      "op": "tool",
+      "name": "file_day",
+      "session": "ses_day",
+      "args": {
+        "day": {
+          "headline": "装修定稿"
+        }
+      }
+    },
+    {
+      "op": "submitted",
+      "args": {
+        "session": "ses_day",
+        "input": "整理今天"
+      }
+    },
+    {
+      "op": "tool",
+      "name": "file_day",
+      "session": "ses_day",
+      "args": {
+        "day": {
+          "headline": "装修定稿"
+        }
+      }
+    },
+    {
+      "op": "state"
+    },
+    {
+      "op": "bind",
+      "args": {
+        "project": "P-0101",
+        "session": "ses_reno"
+      }
+    },
+    {
+      "op": "tool",
+      "name": "day_summary",
+      "session": "ses_reno",
+      "args": {
+        "date": "2026-10-23"
+      }
+    },
+    {
+      "op": "tool",
+      "name": "set_status",
+      "session": "ses_reno",
+      "args": {
+        "status": "设计定稿，等报价",
+        "next_steps": [
+          "发报价单"
+        ]
+      }
+    },
+    {
+      "op": "tool",
+      "name": "project_digest",
+      "session": "ses_day",
+      "args": {
+        "project": "P-0101"
+      }
+    },
+    {
+      "op": "tool",
+      "name": "recent_days",
+      "session": "ses_day",
+      "args": {}
+    },
+    {
+      "op": "tool",
+      "name": "update_commitments",
+      "session": "ses_p",
+      "args": {
+        "date": "2026-10-24",
+        "close": [
+          {
+            "id": "C-9000",
+            "rev": 1,
+            "status": "done",
+            "exchanges": [
+              "x2026-10-24"
+            ]
+          }
+        ],
+        "revise": [
+          {
+            "id": "C-9001",
+            "rev": 1,
+            "due_date": "2026-11-02",
+            "exchanges": [
+              "x2026-10-24"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "op": "tool",
+      "name": "list_commitments",
+      "session": "ses_day",
+      "args": {
+        "status": "all"
+      }
+    },
+    {
+      "op": "tool",
+      "name": "list_commitments",
+      "session": "ses_day",
+      "args": {
+        "after": "missing"
+      }
+    },
+    {
+      "op": "tool",
+      "name": "commitment_history",
+      "session": "ses_day",
+      "args": {
+        "id": "C-9001"
+      }
+    },
+    {
+      "op": "resolve",
+      "args": {
+        "session": "ses_day",
+        "exchange": "x2.5",
+        "project": ""
+      }
+    },
+    {
+      "op": "resolve",
+      "args": {
+        "session": "ses_day",
+        "exchange": "x2.5",
+        "project": ""
+      }
+    },
+    {
+      "op": "edit",
+      "args": {
+        "id": "C-0001",
+        "due_date": "2026-10-30"
+      }
+    },
+    {
+      "op": "edit",
+      "args": {
+        "id": "C-0002",
+        "status": "done"
+      }
+    },
+    {
+      "op": "edit",
+      "args": {
+        "id": "missing",
+        "status": "done"
+      }
+    },
+    {
+      "op": "state"
+    },
+    {
+      "op": "tool",
+      "name": "week_overview",
+      "session": "ses_w",
+      "args": {}
+    },
+    {
+      "op": "tool",
+      "name": "similar_projects",
+      "session": "ses_w",
+      "args": {}
+    },
+    {
+      "op": "tool",
+      "name": "propose_merge",
+      "session": "ses_w",
+      "args": {
+        "into": "P-0101",
+        "from": "P-0002",
+        "reason": "同一次搬迁"
+      }
+    },
+    {
+      "op": "resolve_merge",
+      "args": {
+        "id": "M-0001",
+        "accept": true
+      }
+    },
+    {
+      "op": "resolve_merge",
+      "args": {
+        "id": "M-0001",
+        "accept": true
+      }
+    },
+    {
+      "op": "tool",
+      "name": "file_week",
+      "session": "ses_w",
+      "args": {
+        "habits": [
+          {
+            "habit": "给出期限",
+            "days": [
+              "2026-10-21",
+              "2026-10-22"
+            ]
+          },
+          {
+            "habit": "发纪要",
+            "days": [
+              "2026-10-22",
+              "2026-10-22"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "op": "archive",
+      "args": {}
+    },
+    {
+      "op": "week"
+    },
+    {
+      "op": "bind_week",
+      "args": {
+        "from": "2026-10-17",
+        "session": "ses_w"
+      }
+    },
+    {
+      "op": "week"
+    },
+    {
+      "op": "state"
+    }
+  ]
+}
