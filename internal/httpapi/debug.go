@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"slices"
@@ -23,14 +22,6 @@ import (
 //
 // 规则对能访问其 Session 的调用方可见：用户令牌只能对自己的 Session 注入（必须指定 session_id），服务令牌对本业务线的
 // Session；不限 Session 的规则只有服务令牌与 -auth none 可以添加。
-//
-// serve -xinli-mock 时另有（与 -faults 无关）：
-//
-//	GET    /v1/debug/xinli?business_line=&end_user=   模拟的 xinli 业务线中该 EndUser 的项目与整理结果（控制台的"旁听"视图）
-//	POST   /v1/debug/xinli/resolve?business_line=&end_user=   替用户确认"待确认"：{session, exchange, project} 确认一段交谈的
-//	                                                           归属（project 为空时新建），{merge, accept} 接受或拒绝合并提议，
-//	                                                           {commitment, status | due_date} 替用户在 App 中改一条承诺
-//	POST   /v1/debug/xinli/week?business_line=&end_user=      扮演业务线做每周回顾：归档、回顾本周、重写现状，返回 {session}
 func (s *Server) debugRoutes() map[string]http.HandlerFunc {
 	routes := map[string]http.HandlerFunc{}
 	if s.Faults != nil {
@@ -39,79 +30,7 @@ func (s *Server) debugRoutes() map[string]http.HandlerFunc {
 		routes["DELETE /v1/debug/faults"] = s.deleteFaults
 		routes["GET /v1/debug/stats"] = s.stats
 	}
-	if s.Xinli != nil {
-		routes["GET /v1/debug/xinli"] = s.xinliState
-		routes["POST /v1/debug/xinli/resolve"] = s.xinliResolve
-		routes["POST /v1/debug/xinli/week"] = s.xinliWeek
-	}
 	return routes
-}
-
-// xinliState 返回模拟的业务线中调用方（用户令牌为本人，服务令牌与 -auth none 按参数）的数据，鉴权同 Memory 的列表。
-func (s *Server) xinliState(w http.ResponseWriter, r *http.Request) {
-	bl, eu, ok := memoryOwner(w, r, s)
-	if !ok {
-		return
-	}
-	writeJSON(w, http.StatusOK, s.Xinli.State(bl, eu))
-}
-
-// XinliMock 是模拟的 xinli 业务线（internal/xinlimock，docs/design/xinli-captures.md §9）：调试控制台的"旁听"视图
-// 经它查看数据，并扮演用户与业务线服务端做确认与每周回顾。
-type XinliMock interface {
-	State(businessLine, endUser string) any
-	Resolve(businessLine, endUser, daySession, exchange, project string) error
-	ResolveMerge(businessLine, endUser, id string, accept bool) error
-	Edit(businessLine, endUser, id, status, dueDate string) error
-	Week(ctx context.Context, businessLine, endUser string) (string, error)
-}
-
-// xinliResolve 替用户确认一段归属拿不准的交谈（docs/design/xinli-captures.md §5）、确认合并提议，或改一条承诺
-// （记为用户的变更集，docs/design/xinli-model.md §5），鉴权同 xinliState。
-func (s *Server) xinliResolve(w http.ResponseWriter, r *http.Request) {
-	bl, eu, ok := memoryOwner(w, r, s)
-	if !ok {
-		return
-	}
-	var req struct {
-		Session, Exchange, Project string
-		Merge                      string
-		Accept                     bool
-		Commitment, Status         string
-		DueDate                    string `json:"due_date"`
-	}
-	if err := decode(r, &req); err != nil {
-		s.fail(w, err)
-		return
-	}
-	var err error
-	switch {
-	case req.Commitment != "":
-		err = s.Xinli.Edit(bl, eu, req.Commitment, req.Status, req.DueDate)
-	case req.Merge != "":
-		err = s.Xinli.ResolveMerge(bl, eu, req.Merge, req.Accept)
-	default:
-		err = s.Xinli.Resolve(bl, eu, req.Session, req.Exchange, req.Project)
-	}
-	if err != nil {
-		s.fail(w, fmt.Errorf("%w: %v", service.ErrInvalid, err))
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// xinliWeek 扮演业务线服务端做每周回顾，鉴权同 xinliState。
-func (s *Server) xinliWeek(w http.ResponseWriter, r *http.Request) {
-	bl, eu, ok := memoryOwner(w, r, s)
-	if !ok {
-		return
-	}
-	sid, err := s.Xinli.Week(r.Context(), bl, eu)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"session": sid})
 }
 
 // faultVisible 报告调用方能否看到、增删这条规则：不限 Session 的规则只对服务令牌（与 -auth none）；

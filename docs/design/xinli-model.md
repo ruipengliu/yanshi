@@ -1,6 +1,6 @@
 # xinli 的建模：实体、变更集与交谈
 
-> 状态：已实现（2026-10-25；实现见 `internal/xinlimock`，流程与工具见 [xinli-captures.md](./xinli-captures.md)） · ADR-0042 · 来由：[评审：用一个完整工作日模拟验证 xinli](../review/2026-10-25-xinli-workday.md) §6–§8 · 依赖：[旁听业务线 xinli](./xinli-captures.md)、[旁听](./captures.md)（ADR-0036、ADR-0037）、[Memory 与 Grant](./m4-memory-grant.md)（ADR-0038）· 实现时：改写 xinli-captures.md 的 §2–§6、§12 与 captures.md §5，按 §3 改交谈的定义（现见 [Persona 术语](../../persona/CONTEXT.md)）
+> 状态：已实现（2026-10-25；实现见 `persona/domain`，流程与工具见 [xinli-captures.md](./xinli-captures.md)） · ADR-0042 · 来由：[评审：用一个完整工作日模拟验证 xinli](../review/2026-10-25-xinli-workday.md) §6–§8 · 依赖：[旁听业务线 xinli](./xinli-captures.md)、[旁听](./captures.md)（ADR-0036、ADR-0037）、[Memory 与 Grant](./m4-memory-grant.md)（ADR-0038）· 实现时：改写 xinli-captures.md 的 §2–§6、§12 与 captures.md §5，按 §3 改交谈的定义（现见 [Persona 术语](../../persona/CONTEXT.md)）
 
 ## 1. 为什么改
 
@@ -173,7 +173,7 @@ Exchange {
 | 层 | 改动 |
 |---|---|
 | 平台 | `captures` 的页首与工具说明改称时段；`mcpcap.Citation` 增加 `spoken_at`、`time_zone`；captures.md §5 与 `CONTEXT.md` 的术语。不改 proto、不改 `session`，读取位置的语义不变 |
-| 模拟业务线 `internal/xinlimock` | 以变更集为日志、按 EndUser 叠加出实体；`file_changes`、`find_related`、`day_ledger` 取代 `file_exchange`、`find_projects`、`day_exchanges`；§5 的检查；`update_commitments` 改为变更集、带 `rev` 与交谈依据；调试控制台的"旁听"视图展示修订历史 |
+| 模拟业务线 `persona/domain` | 以变更集为日志、按 EndUser 叠加出实体；`file_changes`、`find_related`、`day_ledger` 取代 `file_exchange`、`find_projects`、`day_exchanges`；§5 的检查；`update_commitments` 改为变更集、带 `rev` 与交谈依据；`xinli dev` 的业务页面展示修订历史 |
 | AgentDef | `xinli-day` 的指令（划交谈、一页一个变更集、白天的修订与当天整理，连同评审 F3、F4、F5、F8 的指令修改）；`xinli-project` 的对账指令提示 `rev` 被拒时按当前状态重新判断 |
 | 评测 | 见 §11 |
 
@@ -188,7 +188,7 @@ Exchange {
 ## 12. 定下的参数与观察项
 
 - **召回范围**：`find_related` 与 `day_ledger` 只取回最后一次修订在 30 天内的未完成承诺；`find_related` 每次至多 10 条，按对方与主题的相关度排序。更早的仍在账本里、照常提醒，由用户在 App 中处理。上限是起点值，按评测中的漏召回调整。
-- **漏改期间的提醒**：同一 `kind`、同一对方称呼、内容相近（业务线给当天整理的同一条确定性规则）的两条 open 承诺，只按较新的一条提醒，两条都照常展示。它只是提醒规则，不改账本，当天整理合并或作废之后自然失效；不自动合并（原则 4）。已实现于 `internal/xinlimock/ledger.go` 的 `State.Reminders`，与 `day_ledger` 共用重复判断，按成对传递分组，用户修改过的承诺优先，同等优先级下以最后修订的说话时间（缺失时用记录时间）、记录时间、ID 依次选择较新者。
+- **漏改期间的提醒**：同一 `kind`、同一对方称呼、内容相近（业务线给当天整理的同一条确定性规则）的两条 open 承诺，只按较新的一条提醒，两条都照常展示。它只是提醒规则，不改账本，当天整理合并或作废之后自然失效；不自动合并（原则 4）。已实现于 `persona/domain/ledger.go` 的 `State.Reminders`，与 `day_ledger` 共用重复判断，按成对传递分组，用户修改过的承诺优先，同等优先级下以最后修订的说话时间（缺失时用记录时间）、记录时间、ID 依次选择较新者。
 - **当天整理的时机**：当地 18:00 之后旁听静默满 2 小时提交；到当地 04:00 仍未满足的，在 04:00 起的 30 分钟内随机提交。由业务线做；平台触发（ADR-0040）的第 2 步实现之后，再评估是否扩展为同一个流上的第二个触发。
 - **人（观察项）**：不建模（§4）。评测与试用中记录称呼对不上导致的漏召回、漏合并；案例足够说明问题时再设计。
 

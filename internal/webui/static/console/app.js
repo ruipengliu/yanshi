@@ -11,7 +11,6 @@ import { DEVICE_PRESETS, SessionView, SimDevice, payloadOf, randomHex, textOf } 
 import { DeviceTile } from "./devices.js";
 import { Inspector, summarize } from "./inspector.js";
 import { runScenario } from "./scenarios.js";
-import { XinliView } from "./xinli.js";
 import { $, Artifacts, ago, fill, h, hue, toast } from "./ui.js";
 
 const WS_URL = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/v1/connect`;
@@ -24,8 +23,8 @@ const AGENTS = [
   ["schedule", "日程管家（专员）"],
   ["travel", "出行助手（专员）"],
   ["research", "研究员（专员，需要沙箱）"],
-  ["xinli-day", "旁听的每日整理：🎧 提交转写后发「整理今天」（真实模型，需 serve -xinli-mock）"],
-  ["xinli-assistant", "旁听业务线的助手：查项目与最近几天（真实模型，需 serve -xinli-mock）"],
+  ["xinli-day", "旁听的每日整理：🎧 提交转写后发「整理今天」（真实模型，需 xinli dev（apps/xinli）登记的 MCP）"],
+  ["xinli-assistant", "旁听业务线的助手：查项目与最近几天（真实模型，需 xinli dev（apps/xinli）登记的 MCP）"],
   ["console", "脚本化模型：call / ask / stream 命令，无需密钥"],
   ["console-capture", "脚本化模型，开启旁听：🎧 提交转写后 call captures {}"],
   ["echo", "复述"],
@@ -41,7 +40,7 @@ const S = {
   user: saved.user ?? "alice",
   agent: saved.agent ?? "concierge",
   sid: saved.sid ?? "",
-  view: saved.view ?? "chat",
+  view: ["chat", "devices", "console"].includes(saved.view) ? saved.view : "chat",
   devices: saved.devices ?? [],
   chatDevice: saved.chatDevice ?? {},
   drawer: saved.drawer ?? true,
@@ -384,7 +383,6 @@ function renderTop() {
       [
         ["chat", "💬 对话"],
         ["devices", "📱 设备"],
-        ["xinli", "🎧 旁听"],
         ["console", "🛠 控制台"],
       ].map(([id, name]) => h("button", { class: S.view === id ? "selected" : "", onclick: () => setView(id) }, name)),
     ),
@@ -445,18 +443,6 @@ function switchUser(name) {
   refreshSessions();
   renderAll();
 }
-
-// 旁听视图：业务线这一侧的数据（xinli.js）。打开会话时切到"对话"视图。
-const xinli = new XinliView({
-  http: (method, path, body) => http(method, path, body),
-  idQuery: () => idQuery(),
-  identity: () => identity(),
-  openSession: (sid) => {
-    openSession(sid);
-    refreshSessions();
-    setView("chat");
-  },
-});
 
 function setView(v) {
   S.view = v;
@@ -1021,11 +1007,7 @@ function resetAll() {
 
 function renderAll() {
   renderTop();
-  for (const v of ["chat", "devices", "xinli", "console"]) $(`view-${v}`).hidden = S.view !== v;
-  if (S.view === "xinli") {
-    fill($("xinli-main"), xinli.root);
-    xinli.start();
-  } else xinli.stop();
+  for (const v of ["chat", "devices", "console"]) $(`view-${v}`).hidden = S.view !== v;
   if (S.view === "chat") renderChat();
   if (S.view === "devices") renderDevices();
   if (S.view === "console") {

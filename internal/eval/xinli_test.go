@@ -9,7 +9,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v1 "yanshi/gen/yanshi/v1"
-	"yanshi/internal/xinlimock"
+	"yanshi/internal/eval/xinlifixture"
 )
 
 // 旁听按说话时间约每分钟一批，每批的他人按第一次出现的顺序重新编号：同一个人跨批换了编号，与真实的 HostApp 一样。
@@ -39,14 +39,14 @@ func TestCaptureBatches(t *testing.T) {
 // 碎片率与纯度按交谈的范围计算：交谈的主题是范围内最多的主题；关联几个项目的交谈对每个项目算作那个项目自己的主题。
 func TestCheckGroupingByRange(t *testing.T) {
 	topics := map[string]string{"s/2.0": "okr", "s/2.1": "okr", "s/2.2": "kangning", "s/3.0": "okr", "s/4.0": "kangning", "s/5.0": "", "s/6.0": "chen", "s/7.0": "kangning"}
-	link := func(ps ...string) []xinlimock.Link {
-		var out []xinlimock.Link
+	link := func(ps ...string) []xinlifixture.Link {
+		var out []xinlifixture.Link
 		for _, p := range ps {
-			out = append(out, xinlimock.Link{Match: "existing", Project: p})
+			out = append(out, xinlifixture.Link{Match: "existing", Project: p})
 		}
 		return out
 	}
-	st := &xinlimock.State{Exchanges: []xinlimock.Exchange{
+	st := &xinlifixture.State{Exchanges: []xinlifixture.Exchange{
 		{ID: "x2.0", Session: "s", From: "#2.0", To: "#2.2", Projects: link("P-okr", "P-kn")}, // 黄总一次谈两件事
 		{ID: "x3.0", Session: "s", From: "#3.0", To: "#3.0", Projects: link("P-okr")},
 		{ID: "x4.0", Session: "s", From: "#4.0", To: "#4.0", Projects: link("P-kn")},

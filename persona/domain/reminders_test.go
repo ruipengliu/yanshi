@@ -83,3 +83,33 @@ func TestRemindersTransitive(t *testing.T) {
 	b.Status = "done"
 	checkReminders(t, &st, []string{"C-0003", "C-0002"})
 }
+
+// 快照携带领域规则的结果，消费者不再自行推导；没有提醒时也必须输出数组。
+func TestBookStateReminderSnapshot(t *testing.T) {
+	book := NewBook()
+	now := time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)
+	check := func(want []string) {
+		t.Helper()
+		state := book.State()
+		raw, err := json.Marshal(state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var snapshot struct {
+			Reminders []string `json:"reminders"`
+		}
+		if err := json.Unmarshal(raw, &snapshot); err != nil {
+			t.Fatal(err)
+		}
+		if snapshot.Reminders == nil || !slices.Equal(snapshot.Reminders, want) {
+			t.Fatalf("snapshot reminders = %v, want %v", snapshot.Reminders, want)
+		}
+	}
+	check([]string{})
+	book.Seed(SeedData{Commitments: []SeedCommitment{{ID: "C-1", Kind: "mine", Content: "发报价", DueDate: "2026-10-24"}}}, now)
+	check([]string{"C-1"})
+	if err := book.Edit("C-1", "done", "", now); err != nil {
+		t.Fatal(err)
+	}
+	check([]string{})
+}

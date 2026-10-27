@@ -12,10 +12,10 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
+	"yanshi/internal/eval/xinlifixture"
 	"yanshi/internal/model"
 	"yanshi/internal/sandbox"
 	"yanshi/internal/session"
-	"yanshi/internal/xinlimock"
 )
 
 // script 是脚本化的被评测模型：输入以 "call <工具> <参数>" 开头时调用该工具，之后回复 "done"；否则复述输入。
@@ -184,17 +184,17 @@ turns:
   - input: 'call mcp_xinli__file_changes {"source":{"from":"#2.0","to":"#2.1"},"exchanges":{"create":[{"from":"#2.0","to":"#2.1","title":"办公室装修","summary":"报价单","projects":[{"match":"new","name":"办公室装修"}]}]},"commitments":{"create":[{"exchange":"x2.0","kind":"mine","content":"发报价单","refs":["#2.1"]}]}}'
     expect:
       approvals: {max: 0}
-      reply_contains: ["`+xinlimock.NewProject+`", "均已核实"]
+      reply_contains: ["`+xinlifixture.NewProject+`", "均已核实"]
       no_call_args: {"mcp_xinli__file_changes": "预算"}
       xinli: {exchanges: {min: 1, max: 1}, commitments_count: {min: 1, max: 1}}
-  - input: 'call mcp_xinli__file_changes {"source":{"from":"#2.0","to":"#2.1"},"exchanges":{"create":[{"from":"#2.0","to":"#2.1","title":"办公室装修","summary":"报价单","projects":[{"match":"existing","id":"`+xinlimock.NewProject+`"}]}]},"commitments":{"create":[{"exchange":"x2.0","kind":"mine","content":"发报价单","refs":["#2.0"]}]}}'
+  - input: 'call mcp_xinli__file_changes {"source":{"from":"#2.0","to":"#2.1"},"exchanges":{"create":[{"from":"#2.0","to":"#2.1","title":"办公室装修","summary":"报价单","projects":[{"match":"existing","id":"`+xinlifixture.NewProject+`"}]}]},"commitments":{"create":[{"exchange":"x2.0","kind":"mine","content":"发报价单","refs":["#2.0"]}]}}'
     expect:
       reply_contains: ["引用的原话里没有用户本人说的话"]
       xinli: {commitments_count: {max: 1}, stale_open: {of: [{contains: 报价单, verified: true}], max: 0}}
   - input: call mcp_xinli__list_projects {}
     new_session: true
     expect:
-      reply_contains: ["P-0001 年度预算", "`+xinlimock.NewProject+` 办公室装修"]
+      reply_contains: ["P-0001 年度预算", "`+xinlifixture.NewProject+` 办公室装修"]
 `)
 	writeCase(t, dir, "no-call-args", `name: no-call-args
 agent: day

@@ -247,7 +247,12 @@ turns:
 
 ## 12. 旁听用例（2026-10-23）
 
-`capture-*` 用例评测旁听业务线的三个 AgentDef（`agents/xinli-*.yaml`，docs/design/xinli-captures.md §1、§10）。每轮的 `captures` 以 HostApp 的身份提交到本轮的 Session；`setup.xinli` 登记模拟的 xinli MCP Server（`internal/xinlimock`），预置本次运行 EndUser 的项目与每日摘要；`setup.no_health` 改在未开启健康信息的业务线 `eval-nohealth` 中运行。
+`capture-*` 用例评测旁听业务线的三个 AgentDef（`agents/xinli-*.yaml`，docs/design/xinli-captures.md §1、§10）。每轮的 `captures` 以 HostApp 的身份提交到本轮的 Session；`setup.xinli` 经外部夹具预置本次运行 EndUser 的项目与每日摘要；`setup.no_health` 改在未开启健康信息的业务线 `eval-nohealth` 中运行。
+
+`make eval` 先构建 `bin/xinli`，命令的 `-xinli-bin` 可指定其他二进制。只有用例配置了 `setup.xinli` 或所用 Agent 白名单包含 `mcp:xinli/*` 时，运行器才启动 `xinli dev -exit-on-stdin-eof`（不带 `-kernel-url`，不自动归集）。运行器读第一行就绪 JSON，以 `mcpcap.ParseServer` 逐项校验 `registrations` 并登记 MCP，经 `fixture_url` 下的 HTTP 做 Seed、State、绑定与用户操作；Seed JSON 字段为 snake_case，用例 YAML 不变。结束时关闭 stdin 并等待退出，超时则终止并回收进程。
+
+`internal/eval/xinlifixture` 镜像 Persona 的数据形状与评分所需只读规则，避免内核反向 import 业务模块（ADR-0043）；类型以 `persona/domain` 为准。评分仍留在评测运行器，夹具不提供 Check。单元测试在 `TestMain` 中将应用构建一次到临时目录，各测试启动隔离的夹具进程并同步回收。
+
 
 基线（`doubao-seed-2-1-lite-260915:minimal`）中全部用例都是 3/3。
 

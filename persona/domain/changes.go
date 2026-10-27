@@ -2,7 +2,9 @@ package domain
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -834,7 +836,64 @@ func (c *Call) UpdateCommitments() string {
 	return c.receipt(&cs, k.notes)
 }
 
-// parseErrorText 保留迁移前回执中的类型标签；包的物理位置不应改变给模型看的参数错误。
+// parseErrorText 保留模型改正参数所需的类型信息，但不暴露实现的 Go 类型名。
 func parseErrorText(err error) string {
-	return strings.ReplaceAll(err.Error(), "domain.", "xinlimock.")
+	var mismatch *json.UnmarshalTypeError
+	if errors.As(err, &mismatch) {
+		path := strings.TrimPrefix(mismatch.Field, ".")
+		if path == "" {
+			path = "某个参数"
+		} else {
+			path += " "
+		}
+		return path + "应为" + expectedJSONType(mismatch.Type) + "，收到的是" + actualJSONType(mismatch.Value)
+	}
+	var syntax *json.SyntaxError
+	if errors.As(err, &syntax) {
+		return "JSON 格式不正确"
+	}
+	return "无法解析 JSON 参数"
+}
+
+func expectedJSONType(t reflect.Type) string {
+	for t != nil && t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t == nil {
+		return "另一种类型"
+	}
+	switch t.Kind() {
+	case reflect.String:
+		return "字符串"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64:
+		return "数字"
+	case reflect.Bool:
+		return "布尔值"
+	case reflect.Slice, reflect.Array:
+		return "数组"
+	case reflect.Map, reflect.Struct:
+		return "对象"
+	default:
+		return "另一种类型"
+	}
+}
+
+func actualJSONType(value string) string {
+	switch value {
+	case "object":
+		return "对象"
+	case "array":
+		return "数组"
+	case "string":
+		return "字符串"
+	case "bool":
+		return "布尔值"
+	default:
+		if strings.HasPrefix(value, "number") {
+			return "数字"
+		}
+		return "另一种类型"
+	}
 }

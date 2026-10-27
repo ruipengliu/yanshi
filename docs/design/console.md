@@ -12,12 +12,11 @@
 |---|---|
 | **对话** | 一台设备全屏展示聊天，支持文字、图片与文件、按住说话、实时通话。Agent 的卡片、审批与提问都在对话里处理 |
 | **设备** | 每个 EndUser 的手机、电脑、手表、音箱、车机与网页，各自一条 Connection。可以上线、下线、断网、崩溃，查看模拟应用的状态，切换能力的执行方式，查看调用账本。每台设备有自己的迷你对话 |
-| **旁听** | 旁听业务线这一侧：今日、项目、承诺、待确认、觉察，以及每周回顾（§2.1），需要 `serve -xinli-mock` |
 | **控制台** | 时间线、事件、帧、投影、服务端故障注入、进程指标、验证场景 |
 
 控制台只使用公开的 Connection 协议与 HTTP API，不比其他客户端多任何权限。
 
-调试专用的接口只有故障注入与进程指标（`/v1/debug/*`，只在 `serve -faults` 时存在，ADR-0033），以及模拟的 xinli 业务线（`GET /v1/debug/xinli`、`POST /v1/debug/xinli/resolve`（确认归属、合并提议，替用户改承诺）与 `POST /v1/debug/xinli/week`，只在 `serve -xinli-mock` 时存在）。
+调试专用的接口只有故障注入与进程指标（`/v1/debug/*`，只在 `serve -faults` 时存在，ADR-0033）。业务数据由独立的 `xinli dev` 页面展示（§2.1）。
 
 ## 2. 对话
 
@@ -74,21 +73,11 @@
 
 `-auth jwt` 时工件要带令牌下载，`<img src>` 带不上令牌，所以先下载成 blob 再显示（`ui.js` 的 `Artifacts`）。
 
-### 2.1 旁听视图（`static/console/xinli.js`）
+### 2.1 旁听业务页面
 
-旁听业务线 xinli 这一侧的数据，按心力球 App 的页面组织（[旁听业务线 xinli](./xinli-captures.md) §4–§7）。数据来自模拟的 xinli MCP Server，经 `GET /v1/debug/xinli`（鉴权同 Memory 的列表：用户令牌只看本人）读取，视图可见时每 3 秒刷新：
+业务实体的今日、项目、承诺、待确认与觉察已移到 `xinli dev` 自带的页面（`apps/xinli/devui`），内核控制台只展示通用的 Session、Run 与 Capture。
 
-| 页签 | 内容 |
-|---|---|
-| 今日 | 每次每日整理（`file_day`）一张卡片：日期、一句话总览、要点；当天的各段交谈（模型在 `file_changes` 中划定的范围 `#from–#to`）的摘要、定下的事、承诺、风险与归属（可以几个项目）；当天整理合并了被切开的交谈时注明。点项目名跳到"项目" |
-| 项目 | 每个项目一张卡片：现状、下一步、待解决（`xinli-project` 经 `set_status` 更新）、未完成的承诺，展开后是按天的交谈；归档与已合并的项目带标记 |
-| 承诺 | 承诺账本：我答应的、别人答应我的、已完成、取消或合并的；未核实的（引用的原话不是承诺人说的）注明原因。每条带 `rev`，有修订的可展开修订历史：记下、修订、关闭、合并，各自的依据（原话的引用编号、`xinli-project` 依据的交谈、用户）、说话时间与记录时间（[xinli 的建模](./xinli-model.md) §4、§7）。"完成""取消"替用户在 App 中改这条承诺（`POST /v1/debug/xinli/resolve` 的 `{commitment, status}`），记为用户的变更集，之后模型不再改动这一项 |
-| 待确认 | 归属拿不准的交谈：替用户"归入"候选项目或"新建"；每周回顾的合并提议："合并"或"不合并"（`POST /v1/debug/xinli/resolve`）。页签上显示条数 |
-| 觉察 | 每周回顾归纳的习惯（带出现的日期）与"下周可以"，按天的沟通习惯与"下次可以"；下面是本 EndUser 的 Memory（含旁听写入的，health 类别标红） |
-
-视图顶部的"每周回顾"按钮扮演业务线服务端做每周回顾（`POST /v1/debug/xinli/week`，[每周回顾](./xinli-captures.md) §7）：归档、为本周创建 `xinli-week` 会话并提交"回顾本周"、向本周有交谈的项目提交"重写现状"。
-
-每张卡片可以打开对应的 Session（每日整理的 `xinli-day`、项目的 `xinli-project`），在"对话"视图中查看模型读了什么、调用了什么。
+先启动 `bin/xinli dev -business-lines demo -kernel-url http://127.0.0.1:8080 -mcp-dir mcp -console-url http://127.0.0.1:8080/console`，再启动读取该目录的 `yanshi serve -mcp mcp`。开发进程的就绪行中 `page_url` 是业务页面，`registrations` 是内核 MCP 登记。页面经夹具 HTTP 读取数据、确认交谈归属与合并提议、改承诺并触发每周回顾；数据只在内存中。卡片上的 Session 链接可打开内核控制台查看日志（[旁听业务线 xinli](./xinli-captures.md) §9）。
 
 ## 3. 设备
 
@@ -230,7 +219,7 @@ EndUser 的选取：
 | `travel`（出行助手） | 导航、空调、音乐、音量 | 车机与音乐 |
 | `research`（研究员） | 读文件、开网页、在沙箱中计算 | `device:*`、`sandbox:*` |
 
-旁听业务线的 `xinli-day`（每日整理）与 `xinli-assistant` 依赖业务线的 MCP Server（`mcp:xinli/*`，[旁听业务线 xinli](./xinli-captures.md)）。开发部署以 `serve -xinli-mock <业务线>` 在进程内登记模拟的 xinli MCP Server（`internal/xinlimock`，与评测共用；数据只在内存中，重启即清空），控制台的默认业务线是 `demo`。在 `xinli-day` 的会话中用 🎧 提交一天的对话，再发"整理交谈"（只整理已经结束的时段）或"整理今天"：模型按时段逐页读，在时段里划出交谈、用 `find_related` 召回候选项目与相关的未完成承诺，每个时段以一次 `file_changes` 交出变更集（新的交谈与承诺，以及依据新原话对已有承诺的修订与关闭）；"整理今天"再用 `day_ledger` 取回当天的账本、交出当天整理（合并重复的承诺与被切开的交谈），最后以 `file_day` 交出当天总览；佩戴者说过的偏好写入 Memory，他人的话按外部内容对待。随后模拟的业务线为涉及的项目提交"整理 <日期>"，`xinli-project` 更新现状、对账承诺；结果在"旁听"视图中查看（§2.1）。
+旁听业务线的 `xinli-day`（每日整理）与 `xinli-assistant` 依赖业务线的 MCP Server（`mcp:xinli/*`，[旁听业务线 xinli](./xinli-captures.md)）。开发部署另起 `xinli dev`，通过 `-mcp-dir` 写入 MCP 登记（§2.1），控制台的默认业务线是 `demo`。在 `xinli-day` 的会话中用 🎧 提交一天的对话，再发"整理交谈"（只整理已经结束的时段）或"整理今天"：模型按时段逐页读，在时段里划出交谈、用 `find_related` 召回候选项目与相关的未完成承诺，每个时段以一次 `file_changes` 交出变更集（新的交谈与承诺，以及依据新原话对已有承诺的修订与关闭）；"整理今天"再用 `day_ledger` 取回当天的账本、交出当天整理（合并重复的承诺与被切开的交谈），最后以 `file_day` 交出当天总览；佩戴者说过的偏好写入 Memory，他人的话按外部内容对待。随后模拟的业务线为涉及的项目提交"整理 <日期>"，`xinli-project` 更新现状、对账承诺；结果在 `xinli dev` 的业务页面中查看（§2.1）。
 
 委托不扩大权限：子 Run 的工具是自身白名单与每个祖先白名单的交集（ADR-0031）。所以经总管委托时，日程管家不能发短信，直接和日程管家对话时可以（需审批）。评测 `concierge-no-escalation` 检查这一点。
 

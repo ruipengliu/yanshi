@@ -106,9 +106,10 @@ sim: deps-up
 EVAL_FLAGS ?= -sandbox docker
 YANSHI_EMBEDDING_MODEL ?= ark/doubao-embedding-vision-251215
 eval: build
-	./bin/yanshi eval -suite evals -embedding-model $(YANSHI_EMBEDDING_MODEL) $(EVAL_FLAGS)
+	./bin/yanshi eval -xinli-bin ./bin/xinli -suite evals -embedding-model $(YANSHI_EMBEDDING_MODEL) $(EVAL_FLAGS)
 
 build:
+	cd apps/xinli && go build -o ../../bin/xinli ./cmd/xinli
 	go build -o bin/yanshi ./cmd/yanshi
 
 # 代码解释器沙箱镜像（serve -sandbox docker 的默认镜像）

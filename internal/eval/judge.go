@@ -7,8 +7,8 @@ import (
 	"regexp"
 	"strings"
 
+	"yanshi/internal/eval/xinlifixture"
 	"yanshi/internal/model"
-	"yanshi/internal/xinlimock"
 )
 
 // PassScore 是评分断言通过的最低分（1～5 分）。
@@ -54,7 +54,7 @@ const coverageInstructions = `你是摘要的评测员。给你一组要点和�
 只输出一个 JSON 对象：{"covered": [true 或 false，与要点一一对应], "missing": "没有覆盖的要点，用顿号分隔"}。`
 
 // judgeCoverage 请评分模型逐条判断要点是否出现在 xinli 业务线的整理结果中（交出的交谈与每日总览），返回覆盖率。
-func judgeCoverage(ctx context.Context, gw *model.Gateway, judgeModel string, points []string, st *xinlimock.State) (float64, string, error) {
+func judgeCoverage(ctx context.Context, gw *model.Gateway, judgeModel string, points []string, st *xinlifixture.State) (float64, string, error) {
 	if len(points) == 0 {
 		return 1, "", nil
 	}

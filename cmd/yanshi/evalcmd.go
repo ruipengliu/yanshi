@@ -32,6 +32,7 @@ import (
 // evalCmd 运行评测集并与基线比较（docs/design/m4-eval.md）；出现回归时以非零状态退出。
 func evalCmd(args []string) error {
 	fs := flag.NewFlagSet("eval", flag.ExitOnError)
+	xinliBin := fs.String("xinli-bin", "bin/xinli", "xinli dev 夹具二进制（make eval 自动构建）")
 	suite := fs.String("suite", "evals", "评测用例目录")
 	agentsDir := fs.String("agents", "agents", "AgentDef 目录")
 	caseGlob := fs.String("case", "*", "只运行名称匹配的用例")
@@ -82,7 +83,7 @@ func evalCmd(args []string) error {
 	gw := gateway(logger, defaultModelLimits, nil)
 	// 评分模型经本机的 Codex CLI 调用（只用于评测，serve 不注册）。
 	gw.Register("codex", codex.Provider{})
-	cfg := eval.Config{Agents: agents, Model: gw, Judge: *judgeModel, EmbedModel: *embedModel,
+	cfg := eval.Config{XinliBin: *xinliBin, Agents: agents, Model: gw, Judge: *judgeModel, EmbedModel: *embedModel,
 		ModelOverride: *modelOverride, AgentVersion: *agentVersion, Trials: *trials, Parallel: *parallel, Logger: logger,
 		Progress: func(name string, trial int, passed bool) {
 			mark := "✓"

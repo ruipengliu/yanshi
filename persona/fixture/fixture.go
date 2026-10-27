@@ -1,7 +1,7 @@
 // Package fixture 仅在开发与评测时装配，不提供评分 Check，也不用于生产的公开入口。
 //
 // 所有路径以 /v1/fixture/{businessLine}/{endUser} 为前缀，身份取自路径：
-// GET /state 返回 domain.State；POST /seed 的整个请求体是 domain.SeedData（字段名与旧夹具一致）。
+// GET /state 返回 domain.State；POST /seed 的整个请求体是 domain.SeedData（字段名为 snake_case）。
 // POST /bind {project,session}；POST /submitted {session,input}；POST /edit {id,status,due_date}；
 // POST /resolve {session,exchange,project}；POST /resolve_merge {id,accept}；POST /archive {}。
 // GET /week 返回 domain.WeekPlan；POST /bind_week {from,session} 绑定每周回顾 Session。

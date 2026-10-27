@@ -14,7 +14,7 @@ xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理�
 | `xinli-assistant`（召回 8 条 Memory） | 每个 EndUser 一个，长期 | `mcp_xinli__list_projects`、`project_digest`、`recent_days`、`memory_save`、`memory_search`、`memory_forget`、`ask_user`、`show_card` |
 
 - 定义在 `agents/xinli-*.yaml`。白名单都不含高风险 Capability：`xinli-day` 只能读旁听、写 Memory、召回候选项目、把结果交给业务线；其余三个只读写业务线的数据。
-- 业务线的工具由 xinli MCP Server 提供（§4），开发与评测中由 `internal/xinlimock` 实现。只读的工具（`find_related`、`day_ledger`、`day_summary`、`project_digest`、`list_projects`、`recent_days`、`week_overview`、`similar_projects`）在登记中声明只读；交出结果的工具（`file_changes`、`file_day`、`set_status`、`update_commitments`、`propose_merge`、`file_week`）由业务线在登记中以 `no_approval` 放宽（ADR-0017）：它们只把结果交给业务线自己。登记开启 `cite_captures`，承诺人与期限据此核对（§6）。
+- 业务线的工具由 xinli MCP Server 提供（§4），开发与评测中由 `persona/mcpserver` 提供，`apps/xinli` 装配。只读的工具（`find_related`、`day_ledger`、`day_summary`、`project_digest`、`list_projects`、`recent_days`、`week_overview`、`similar_projects`）在登记中声明只读；交出结果的工具（`file_changes`、`file_day`、`set_status`、`update_commitments`、`propose_merge`、`file_week`）由业务线在登记中以 `no_approval` 放宽（ADR-0017）：它们只把结果交给业务线自己。登记开启 `cite_captures`，承诺人与期限据此核对（§6）。
 - 业务线返回的内容（`find_related`、`day_ledger`、`day_summary`、`project_digest`、`week_overview` 等）是调用结果，属于外部内容（ADR-0037）。项目现状由 `xinli-project` 依据它们写成，是业务线的数据，不写入 Memory。
 - **Memory 要能读回来。** `xinli-day` 写下的偏好与人际关系，由助手在每个 Run 开始时召回（`memory.recall`）。`xinli-day` 不召回（输入总是"整理交谈"或"整理今天"，按它检索没有意义），写入之前用 `memory_search` 查已有的记忆：记过的不再记，变了的用 `replaces` 替换。平台另外合并几乎相同的表述（[Memory 设计](./m4-memory-grant.md) §3）。
 - **Retention。** `xinli-day` 与 `xinli-week` 按 AgentDef 覆盖为 `close_after_idle: 36h`、`delete_after_close: 168h`（原话保留 7 天，[captures.md](./captures.md) §8）；Project 与助手 Session 长期保留。
@@ -182,13 +182,15 @@ xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理�
 
 ## 9. 开发部署
 
-`serve -xinli-mock <业务线>` 在进程内登记模拟的 xinli MCP Server（`internal/xinlimock`，与评测共用），它同时扮演业务线服务端：
+独立启动 `xinli dev`（`apps/xinli/cmd/xinli`），以 `-business-lines` 指定业务线、`-mcp-dir` 写出登记，再让内核 `serve -mcp` 读取该目录。`-kernel-url` 指向内核时，应用层编排器同时扮演业务线服务端：
 
-- **归集**（§2 第 4 步）：`file_day` 之后为涉及的项目创建（或复用）`xinli-project` Session，以由整理所在 Session 与项目派生的 `input_id` 提交"整理 <日期>"（重复归集只生效一次），并记下 Session 与项目的对应，`day_summary`、`set_status` 与 `update_commitments` 据此找到项目。
-- **每周回顾**：调试控制台"旁听"视图的"每周回顾"按钮（`POST /v1/debug/xinli/week`）做 §7 的三步；同一周重复触发复用同一个回顾 Session，输入 ID 由本周的第一天派生。
-- **待确认与用户的改动**：`unsure` 的交谈与合并提议经 `POST /v1/debug/xinli/resolve` 接受或拒绝；同一接口的 `{commitment, status}` 替用户把一条承诺标为完成或取消，记为用户的变更集（§6"用户优先"）。
-- **只收"整理今天"的 `file_day`**：模拟服务不知道 Run 的输入，评测运行器扮演业务线时以 `Server.Submitted` 告诉它每轮提交的是哪种整理；调试控制台中随手提交的输入不限制。
-- 不做关闭：调试控制台还要在整理之后继续对话。数据只在内存中，"旁听"视图经 `GET /v1/debug/xinli` 展示交谈、待确认与承诺（[调试控制台](./console.md) §2.1）。
+- **归集**（§2 第 4 步）：`file_day` 之后为涉及的项目创建（或复用）`xinli-project` Session，以由整理所在 Session 与项目派生的 `input_id` 提交"整理 <日期>"，并绑定项目 Session。
+- **每周回顾**：开发页面按钮经夹具的 `week_review` 做 §7 的三步，同一周复用回顾 Session 与输入 ID。
+- **待确认与用户改动**：开发页面经 `persona/fixture` 的 `resolve`、`resolve_merge` 与 `edit` 操作确认归属、合并或修改承诺，记为用户的变更集。
+- **只收"整理今天"的 `file_day`**：评测运行器经夹具的 `submitted` 操作记下整理输入；直接在控制台提交的输入不限制。
+- 数据只在内存中，页面地址见就绪行 `page_url`。不关闭整理后的 Session，仍可在内核控制台继续对话。
+
+评测启动相同进程但不带 `-kernel-url`，由运行器自己扮演业务线，不自动归集；Seed、State 与操作均经 HTTP（[评测框架](./m4-eval.md) §12）。
 
 ## 10. 评测
 
@@ -235,7 +237,7 @@ xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理�
 | `capture-assistant-open-commitments`、`capture-assistant-commitment-history`、`capture-assistant-theirs` | 预置正确账本，验证按责任方查询未完成承诺、两次改期与完成的历史及依据。 |
 | `capture-assistant-recall` | 助手回答关于用户本人的问题时用上召回的 Memory。 |
 
-用小窗口代替真实长度的十几万字：测的是"压缩之后已交出的不丢"，与绝对长度无关，评测费用低一个数量级。白天引用旧原话的修订被拒绝、用户改过的承诺使模型的修订因 `rev` 不符被拒绝，这两项是业务线的确定性检查，由 `internal/xinlimock` 的单元测试覆盖，不另设评测用例。
+用小窗口代替真实长度的十几万字：测的是"压缩之后已交出的不丢"，与绝对长度无关，评测费用低一个数量级。白天引用旧原话的修订被拒绝、用户改过的承诺使模型的修订因 `rev` 不符被拒绝，这两项是业务线的确定性检查，由 `persona/domain` 与 `persona/mcpserver` 的回归测试覆盖，不另设评测用例。
 
 ## 11. 不在这一版
 

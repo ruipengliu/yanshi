@@ -69,11 +69,8 @@ func LoadDir(dir string) ([]Server, error) {
 		if err != nil {
 			return nil, err
 		}
-		var s Server
-		if err := yaml.Unmarshal(b, &s); err != nil {
-			return nil, fmt.Errorf("%s: %w", f, err)
-		}
-		if err := s.validate(os.Getenv); err != nil {
+		s, err := ParseServer(b)
+		if err != nil {
 			return nil, fmt.Errorf("%s: %w", f, err)
 		}
 		if names[s.Name] {
@@ -83,6 +80,18 @@ func LoadDir(dir string) ([]Server, error) {
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+// ParseServer 与目录登记共用校验，使外部进程的就绪登记遵守同一个契约。
+func ParseServer(b []byte) (Server, error) {
+	var s Server
+	if err := yaml.Unmarshal(b, &s); err != nil {
+		return Server{}, err
+	}
+	if err := s.validate(os.Getenv); err != nil {
+		return Server{}, err
+	}
+	return s, nil
 }
 
 func (s *Server) validate(getenv func(string) string) error {

@@ -7,7 +7,7 @@
 ## 0. 结论
 
 - **yanshi 的执行内核能承载 xinli，不需要推倒。** Session、Run、Event、Capture 与流、来源推导、写入闸门、Retention、委托、评测与模拟测试，正是一个长期运行的个人 Agent 需要的底座。
-- **缺的是两块。** 一是内核的几处原语（§2.3），都是"第二条业务线也会需要、且业务侧做不到或做了不安全"的；二是更大的一块：生产的业务后端完全没有，`internal/xinlimock` 是 4100 行的内存模拟。
+- **缺的是两块。** 一是内核的几处原语（§2.3），都是"第二条业务线也会需要、且业务侧做不到或做了不安全"的；二是更大的一块：生产的业务后端完全没有，目前只有 `persona/` 的内存实现与 `apps/xinli` 的开发进程。
 - **分三层**（ADR-0043）：yanshi 内核只管 Agent 怎样可靠、安全地运行；Persona 层管关于一个人的结构化知识；xinli 应用层管产品（账号、设备、识别、渠道、推送、编排）。Persona 与应用层只经公开契约使用内核，内核不认识它们。
 - **扩展范式**：新功能默认只改 Persona 与应用层（§9）；内核只在满足判据时改，并写 ADR。
 
@@ -126,7 +126,7 @@ xinli 的 AgentDef 不再把他人的信息写成 Memory 的 `relationship`：�
 | MCP 工具 | 内核（Agent 的调用） | 现有的 `find_related`、`file_changes`、`day_ledger`、`file_day`、`day_summary`、`set_status`、`update_commitments`、`list_commitments`、`commitment_history` 等，加上 `save_note`、`entity`、`search`、`watch`、`goals`；只读的在登记中声明只读，交出结果的以 `no_approval` 放宽（ADR-0017），登记开启 `cite_captures` |
 | 查询与改动 API | 应用层的 BFF | App 的项目、待办、笔记、实体页面；用户的改动记为作者为用户的变更集 |
 | 对外 MCP（OAuth） | 三方 AI | 只读加提议写入，不含旁听原文（[M7 Agent 生态](./m7-agent-ecosystem.md) §3） |
-| 评测夹具契约 | `internal/eval` | HTTP 上的 Seed、State 与用户、业务线的操作（确认归属、改承诺、绑定 Session 等）；取代评测对 xinlimock 的直接调用，同一套用例可指向内存实现或生产实现。评分逻辑留在 `internal/eval`，夹具不提供 Check：被测方不做自己的裁判 |
+| 评测夹具契约 | `internal/eval` | HTTP 上的 Seed、State 与用户、业务线的操作（确认归属、改承诺、绑定 Session 等）；评测通过独立进程接入，同一套用例可指向内存实现或生产实现。评分逻辑留在 `internal/eval`，夹具不提供 Check：被测方不做自己的裁判 |
 
 领域核心（变更集检查、期限换算、核对、回执文字）只有一份，生产与评测共用，只是存储不同。回执是给模型看的文本，属于被测行为（[架构评审](../review/2026-10-26-xinli-architecture.md) §3.1）。
 
@@ -273,7 +273,7 @@ agents/xinli-*.yaml       AgentDef（随应用层发布，仍由内核加载）
 evals/                    评测用例；夹具经契约指向 Persona
 ```
 
-- `internal/xinlimock` 的领域逻辑迁入 `persona/`，编排部分（归集、每周回顾的提交）迁入 `apps/xinli` 的编排器；内核不 import 二者，所以夹具是独立进程：`apps/xinli` 提供开发用的 `xinli dev`（Persona 的内存实现、MCP、夹具 HTTP、编排器，以及原先控制台的"旁听"视图），评测与本地开发服务启动它，按它给出的地址登记 MCP。`serve -xinli-mock` 与 `/v1/debug/xinli*` 删除，内核侧只剩通用的 MCP 登记与 HTTP API；控制台不再展示业务实体。
+- 原模拟业务线的领域逻辑已迁入 `persona/`，编排部分（归集、每周回顾的提交）迁入 `apps/xinli` 的编排器；内核不 import 二者，所以夹具是独立进程：`apps/xinli` 提供开发用的 `xinli dev`（Persona 的内存实现、MCP、夹具 HTTP、编排器，以及原先控制台的"旁听"视图），评测与本地开发服务启动它，按它给出的地址登记 MCP。原进程内业务开关与业务调试路由已删除，内核侧只剩通用的 MCP 登记与 HTTP API；控制台不再展示业务实体。
 - Persona 对线上格式（`_meta` 的身份与 `cite_captures`、`#seq.index` 引用、交付回执）各自实现一份，不 import 内核的包；一致性由端到端的 `capture-*` 评测保证。第二条业务线也要写 MCP Server 时，再考虑把它们提升为公开包。
 - `make check` 增加依赖方向检查：`persona/`、`apps/` 的 `go list -deps` 中不得出现 `yanshi/internal/`。模块路径不以 `yanshi/` 开头，否则 Go 的 internal 规则不起作用。
 - 业务侧的设计文档在 `docs/design/` 下以 `persona-`、`xinli-` 为前缀；ADR 仍用统一编号。
@@ -284,9 +284,9 @@ evals/                    评测用例；夹具经契约指向 Persona
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| P0 边界 | xinlimock 迁成 `persona/`（内存存储）；评测夹具契约；依赖方向检查；术语拆分 | `make check` 全绿；`make eval` 的 `capture-*` 与基线一致 |
+| P0 边界（实现已完成） | 模拟业务线迁成 `persona/`（内存存储）；评测夹具契约；依赖方向检查；术语拆分 | `make check` 全绿；`make eval` 的 `capture-*` 与基线一致 |
 | P1 内核：数据、合规与可靠通知 | ADR-0050 的迁移：可信结构化片段与 Apply 校验、attested 结果写日志前审核、创建 Session 时的绝对删除期限、删除原因 Erasure（保留 Memory、列出候选）；Persona 的原文、分页与处理进度（与内核现有分页逐页差分）；删除待办与编排器的删除；xinli-day 切到 `mcp_xinli__captures`；之后按退役条件删除内核的 Capture 路径；出站流（通用部分）；EndUser 删除屏障（已实现） | `make check`、`make sim`；来源推导与写入闸门覆盖 attested 结果；删除不变量覆盖擦除与注销；擦除与在途 Run 的竞态；切换时 `make eval` 的 `capture-*` 与基线一致 |
-| P2 内核：驱动 | 触发（ADR-0040 第 2 步）；定时与到期表 | 同上，加模拟测试的触发、定时不变量；百万停放压测 |
+| P2 内核：驱动 | 定时与到期表（流上的触发由 ADR-0050 取消） | 同上，加模拟测试的定时不变量；百万停放压测 |
 | P3 内核：补充 | 单次调用；档位；重答；`speaker_ref` | 同上；单次调用的评测；子限额下问答首字延迟不退化 |
 | P4 生产服务 | Persona 的 PG 存储与检索；应用层的采集识别、账号设备、渠道、推送、编排器、BFF；内核的分片路由 | 夹具契约在内存与 PG 实现上结果一致；端到端一天；故障演练：断网补传、Persona 故障、出站流消费者落后、数据库切换 |
 | P5 Persona 新能力 | 实体与时间线、笔记、关注项、目标与心力优先、画像、词库 | 每项新增评测用例 |

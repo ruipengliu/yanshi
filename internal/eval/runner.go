@@ -29,6 +29,7 @@ import (
 	"yanshi/internal/card"
 	"yanshi/internal/clock"
 	"yanshi/internal/delegation"
+	"yanshi/internal/eval/xinlifixture"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/feed"
 	"yanshi/internal/ids"
@@ -43,7 +44,6 @@ import (
 	"yanshi/internal/service"
 	"yanshi/internal/session"
 	"yanshi/internal/workqueue"
-	"yanshi/internal/xinlimock"
 )
 
 // BusinessLine 是评测使用的业务线；NoHealthBusinessLine 是未开启健康信息的业务线（setup.no_health）。
@@ -52,7 +52,11 @@ const (
 	NoHealthBusinessLine = "eval-nohealth"
 )
 
+var defaultXinliBin = "bin/xinli"
+
 type Config struct {
+	// XinliBin 是外部开发夹具的可执行文件；只有 xinli 用例才启动。
+	XinliBin string
 	// Agents 是基础 AgentDef；用例的覆盖项与 ModelOverride 会派生出新版本。
 	Agents *agentdef.Registry
 	Model  *model.Gateway
@@ -94,8 +98,9 @@ type instance struct {
 	workers *workerPool
 	arts    *artifact.Service
 	crm     *crmServer
-	xinli   *xinlimock.Server
+	xinli   *xinlifixture.Client
 	calls   *call.Manager
+	mcp     *mcpcap.Connector
 
 	// controllerDone 在沙箱控制器退出（或未启动）时关闭。
 	controllerDone chan struct{}
@@ -136,6 +141,9 @@ func (p *workerPool) crash(id string) bool {
 }
 
 func (c *Config) defaults() {
+	if c.XinliBin == "" {
+		c.XinliBin = defaultXinliBin
+	}
 	if c.Parallel <= 0 {
 		c.Parallel = 4
 	}
@@ -166,6 +174,7 @@ func Run(ctx context.Context, cfg Config, cases []*Case) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer in.close()
 	rep := &Report{StartedAt: time.Now().UTC(), Judge: cfg.Judge, ModelOverride: cfg.ModelOverride}
 	results := make([]*CaseResult, len(cases))
 	type job struct{ c, trial int }
@@ -296,14 +305,16 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 		}
 		servers = append(servers, in.crm.server)
 	}
-	if slices.ContainsFunc(cases, func(c *Case) bool { return c.Setup.Xinli != nil }) {
-		if in.xinli, err = xinlimock.Start(ctx, BusinessLine, NoHealthBusinessLine); err != nil {
+	if needsXinli(agents, cases, versions) {
+		var registrations []mcpcap.Server
+		if in.xinli, registrations, err = xinlifixture.Start(ctx, cfg.XinliBin, BusinessLine, NoHealthBusinessLine); err != nil {
 			return nil, err
 		}
-		servers = append(servers, in.xinli.Servers...)
+		servers = append(servers, registrations...)
 	}
 	if len(servers) > 0 {
-		core.Catalog.MCP = &mcpcap.Connector{Servers: servers, Artifacts: core.Artifacts, Log: st.Log, Logger: cfg.Logger}
+		in.mcp = &mcpcap.Connector{Servers: servers, Artifacts: core.Artifacts, Log: st.Log, Logger: cfg.Logger}
+		core.Catalog.MCP = in.mcp
 	}
 	return in, nil
 }
@@ -416,7 +427,10 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		for i := range exchanges {
 			exchanges[i].Date = relativeDate(exchanges[i].Date)
 		}
-		in.xinli.Seed(bl, endUser, xinlimock.SeedData{Projects: x.Projects, Days: x.Days, Commitments: x.Commitments, Filed: filed, Exchanges: exchanges})
+		if err := in.xinli.Seed(tctx, bl, endUser, xinlifixture.SeedData{Projects: x.Projects, Days: x.Days, Commitments: x.Commitments, Filed: filed, Exchanges: exchanges}); err != nil {
+			tr.Err = err.Error()
+			return tr
+		}
 	}
 	// 预置记忆的 ID 与生产一致不可猜（由随机调用 ID 派生）：顺序 ID 会让模型按规律"猜出"未见过的 ID，
 	// 替换掉另一条记忆（memory-update-crowded 中观察到）。
@@ -529,7 +543,10 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 			sid, sessionAgent = id, agent
 			sessions = append(sessions, id)
 			if x := c.Setup.Xinli; x != nil && x.ProjectSession != "" {
-				in.xinli.Bind(bl, endUser, x.ProjectSession, id)
+				if err := in.xinli.Bind(tctx, bl, endUser, x.ProjectSession, id); err != nil {
+					tr.Err = err.Error()
+					return tr
+				}
 			}
 			if c.Call {
 				if voice, rec, err = in.startCall(tctx, sid); err != nil {
@@ -566,7 +583,10 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		}
 		if in.xinli != nil {
 			// 扮演业务线服务端：它清楚自己提交的是哪种整理，只接受"整理今天"那次 Run 的 file_day（F7）。
-			in.xinli.Submitted(bl, endUser, sid, turn.Input)
+			if err := in.xinli.Submitted(tctx, bl, endUser, sid, turn.Input); err != nil {
+				tr.Err = err.Error()
+				return tr
+			}
 		}
 		var obs *observation
 		var err error
@@ -595,7 +615,11 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		}
 		obs.tickets = in.crm.ticketsOf(endUser)
 		if in.xinli != nil {
-			x := in.xinli.State(bl, endUser)
+			x, err := in.xinli.State(tctx, bl, endUser)
+			if err != nil {
+				tr.Err = err.Error()
+				return tr
+			}
 			obs.xinli = &x
 			if x := turn.Expect.Xinli; x != nil && x.Grouping != nil {
 				if obs.topics, err = in.bySegment(tctx, topics); err != nil {
@@ -648,15 +672,15 @@ type observation struct {
 	compacted bool // 到本轮结束时 Session 是否发生过上下文压缩
 	// compactions 是本轮的上下文压缩次数，takeovers 是本轮 Run 的接管次数。
 	compactions, takeovers int
-	tickets                []string          // CRM 中本 EndUser 的工单
-	xinli                  *xinlimock.State  // xinli MCP Server 中本 EndUser 的数据
-	topics                 map[string]string // 旁听 Session 与引用编号（"ses/57.3"）→ 那段旁听的主题
-	labels                 map[string]string // 同上 → 那段旁听标的金标（CaptureSegment.Gold）
-	gold                   *goldBook         // 本轮之后金标的状态
-	goldDetail             string            // 金标指标的诊断（check 填写）
-	inTokens, cachedTokens uint64            // 本轮模型调用的输入 token 与其中命中前缀缓存的部分
-	callArgs               []string          // 与 calls 一一对应的调用参数
-	tasks                  []string          // Call 中派生的任务（run_task 的 task）
+	tickets                []string            // CRM 中本 EndUser 的工单
+	xinli                  *xinlifixture.State // xinli MCP Server 中本 EndUser 的数据
+	topics                 map[string]string   // 旁听 Session 与引用编号（"ses/57.3"）→ 那段旁听的主题
+	labels                 map[string]string   // 同上 → 那段旁听标的金标（CaptureSegment.Gold）
+	gold                   *goldBook           // 本轮之后金标的状态
+	goldDetail             string              // 金标指标的诊断（check 填写）
+	inTokens, cachedTokens uint64              // 本轮模型调用的输入 token 与其中命中前缀缓存的部分
+	callArgs               []string            // 与 calls 一一对应的调用参数
+	tasks                  []string            // Call 中派生的任务（run_task 的 task）
 }
 
 // turn 提交一轮输入，按 approve 自动作出审批决定，等待 Run 结束并收集本轮的事件。
@@ -829,7 +853,7 @@ func captureTime(at string) (time.Time, error) {
 }
 
 // checkXinli 判定对 xinli 业务线数据的断言（XinliExpect）。
-func (in *instance) checkXinli(add func(string, bool, string), e *XinliExpect, st *xinlimock.State) {
+func (in *instance) checkXinli(add func(string, bool, string), e *XinliExpect, st *xinlifixture.State) {
 	if st == nil {
 		add("xinli", false, "the case has no setup.xinli")
 		return
@@ -886,13 +910,13 @@ func (in *instance) checkXinli(add func(string, bool, string), e *XinliExpect, s
 		add("xinli stale_open", len(stale) <= s.Max, fmt.Sprintf("%d stale open commitments, want at most %d: %v", len(stale), s.Max, stale))
 	}
 	for _, want := range e.Commitments {
-		add("xinli commitment "+want.Kind+" "+want.Contains, slices.ContainsFunc(st.Commitments, func(m xinlimock.Commitment) bool { return commitmentMatches(m, want) }), detail)
+		add("xinli commitment "+want.Kind+" "+want.Contains, slices.ContainsFunc(st.Commitments, func(m xinlifixture.Commitment) bool { return commitmentMatches(m, want) }), detail)
 	}
 	for _, want := range e.NoCommitments {
-		add("xinli no_commitment "+want.Kind+" "+want.Contains, !slices.ContainsFunc(st.Commitments, func(m xinlimock.Commitment) bool { return commitmentMatches(m, want) }), detail)
+		add("xinli no_commitment "+want.Kind+" "+want.Contains, !slices.ContainsFunc(st.Commitments, func(m xinlifixture.Commitment) bool { return commitmentMatches(m, want) }), detail)
 	}
 	proposed := func(p [2]string) bool {
-		return slices.ContainsFunc(st.Merges, func(m xinlimock.Merge) bool {
+		return slices.ContainsFunc(st.Merges, func(m xinlifixture.Merge) bool {
 			return (m.Into == p[0] && m.From == p[1]) || (m.Into == p[1] && m.From == p[0])
 		})
 	}
@@ -975,9 +999,9 @@ func (in *instance) bySegment(ctx context.Context, marks map[string][]string) (m
 // 项目各算一次，算作的主题是这段交谈中出现过的、且是那个项目在只关联一个项目的交谈中占多数的主题；没有这样的主题时
 // 算作这段交谈自己的主题。碎片率：每个主题的交谈分散在几个项目中（没有归入项目的每段各算一个），按主题平均；纯度：每个
 // 项目中占多数的主题所占的比例（闲聊算作杂质），按交谈数加权。返回碎片率与纯度，记入报告的指标。
-func checkGrouping(add func(string, bool, string), want *GroupingExpect, st *xinlimock.State, topics map[string]string) (frag, purity float64) {
+func checkGrouping(add func(string, bool, string), want *GroupingExpect, st *xinlifixture.State, topics map[string]string) (frag, purity float64) {
 	type item struct {
-		e      *xinlimock.Exchange
+		e      *xinlifixture.Exchange
 		topic  string
 		counts map[string]int
 	}
@@ -1085,7 +1109,7 @@ func checkGrouping(add func(string, bool, string), want *GroupingExpect, st *xin
 }
 
 // rangeTopics 返回交谈范围 [From, To] 内各段旁听标的主题（按日志顺序，不含没标的）。topics 的键是"Session/事件序号.段序号"。
-func rangeTopics(e *xinlimock.Exchange, topics map[string]string) []string {
+func rangeTopics(e *xinlifixture.Exchange, topics map[string]string) []string {
 	from, ok1 := capture.ParseRef(strings.TrimPrefix(e.From, "#"))
 	to, ok2 := capture.ParseRef(strings.TrimPrefix(e.To, "#"))
 	if !ok1 || !ok2 {
@@ -1122,7 +1146,7 @@ func rangeTopics(e *xinlimock.Exchange, topics map[string]string) []string {
 }
 
 // commitmentMatches 判定承诺是否匹配；status 为 open 时只匹配未完成且没有被合并的，merged 匹配被合并的。
-func commitmentMatches(m xinlimock.Commitment, want CommitmentMatch) bool {
+func commitmentMatches(m xinlifixture.Commitment, want CommitmentMatch) bool {
 	status := m.Status
 	if m.MergedInto != "" {
 		status = "merged"
@@ -1566,7 +1590,10 @@ func (in *instance) editCommitments(ctx context.Context, turn int, bl, endUser s
 	if err != nil {
 		return nil, err
 	}
-	st := in.xinli.State(bl, endUser)
+	st, err := in.xinli.State(ctx, bl, endUser)
+	if err != nil {
+		return nil, err
+	}
 	matched := gold.match(&st, segs)
 	var out []Assertion
 	for _, e := range edits {
@@ -1582,7 +1609,7 @@ func (in *instance) editCommitments(ctx context.Context, turn int, bl, endUser s
 			out = append(out, Assertion{Turn: turn, Name: "xinli_edit " + e.Gold, Detail: "no open commitment in the ledger matches it"})
 			continue
 		}
-		if err := in.xinli.Edit(bl, endUser, target, e.Status, e.Due); err != nil {
+		if err := in.xinli.Edit(ctx, bl, endUser, target, e.Status, e.Due); err != nil {
 			return nil, err
 		}
 	}
@@ -1678,4 +1705,47 @@ func (in *instance) cardAction(ctx context.Context, sid string, a *CardActionScr
 	}
 	return []*v1.ContentBlock{{Kind: &v1.ContentBlock_CardAction{CardAction: &v1.CardAction{
 		CardId: found.GetCardId(), CallId: found.GetCallId(), Action: action, Values: a.Values, Seq: seq}}}}, nil
+}
+
+// close 同步回收夹具；仅取消 context 不能保证测试结束时子进程已经退出。
+func (in *instance) close() {
+	if in.mcp != nil {
+		in.mcp.Close()
+	}
+	if in.xinli != nil {
+		_ = in.xinli.Close()
+	}
+}
+
+func needsXinli(agents *agentdef.Registry, cases []*Case, versions map[string]string) bool {
+	usesXinli := func(patterns []string) bool {
+		return slices.ContainsFunc(patterns, func(p string) bool { return strings.HasPrefix(p, "mcp:xinli/") })
+	}
+	for _, c := range cases {
+		if c.Setup.Xinli != nil {
+			return true
+		}
+		names := []string{c.Agent}
+		for _, turn := range c.Turns {
+			if turn.Agent != "" {
+				names = append(names, turn.Agent)
+			}
+		}
+		for _, name := range names {
+			key := c.Name
+			if name != c.Agent {
+				key += "/" + name
+			}
+			d, err := agents.Get(&v1.AgentRef{Name: name, Version: versions[key]})
+			if err == nil && usesXinli(d.Capabilities) {
+				return true
+			}
+		}
+		for _, a := range c.Setup.Agents {
+			if usesXinli(a.Capabilities) {
+				return true
+			}
+		}
+	}
+	return false
 }

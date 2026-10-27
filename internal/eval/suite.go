@@ -13,7 +13,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"yanshi/internal/xinlimock"
+	"yanshi/internal/eval/xinlifixture"
 )
 
 // Case 是一个评测用例（evals/*.yaml）。
@@ -64,7 +64,7 @@ type Case struct {
 		// Agents 是本用例可委托的 Agent（docs/design/m5-multi-agent.md）：与被评测的 Agent 使用同一模型；
 		// 名称在整个评测集中唯一，被评测的 Agent 须在 capabilities 中以 "agent:<名称>" 允许委托。
 		Agents []AgentSetup `yaml:"agents"`
-		// Xinli 非 nil 时为评测业务线登记内置的 xinli MCP Server（docs/design/xinli-captures.md §1），并为本次运行的 EndUser
+		// Xinli 非 nil 时为评测业务线启动外部 xinli 夹具并登记 MCP Server（docs/design/xinli-captures.md §1），并为本次运行的 EndUser
 		// 预置其中的项目与每日摘要。
 		Xinli *XinliSetup `yaml:"xinli"`
 		// NoHealth 为 true 时本用例在未开启健康信息的业务线中运行（ADR-0022）：health 类别的写入被拒绝。
@@ -98,10 +98,10 @@ type XinliSetup struct {
 }
 
 type (
-	XinliProject    = xinlimock.Project
-	XinliCommitment = xinlimock.SeedCommitment
-	XinliDay        = xinlimock.Day
-	XinliExchange   = xinlimock.SeedExchange
+	XinliProject    = xinlifixture.Project
+	XinliCommitment = xinlifixture.SeedCommitment
+	XinliDay        = xinlifixture.Day
+	XinliExchange   = xinlifixture.SeedExchange
 )
 
 // XinliExpect 是对 xinli 业务线数据的断言。
