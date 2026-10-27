@@ -20,6 +20,10 @@ const simAckName = "mcp_sim__save"
 type simAckSource struct{ w *World }
 
 func (s simAckSource) Tools(_ context.Context, _ string, _ []string) ([]capability.Tool, error) {
+	if s.w.opts.Attested {
+		t := simAttestedTool{s.w}
+		return []capability.Tool{{Spec: t.Spec(), Local: t}}, nil
+	}
 	if !s.w.opts.CaptureAcks {
 		return nil, nil
 	}

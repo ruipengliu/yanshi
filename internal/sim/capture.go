@@ -148,6 +148,16 @@ func (w *World) retryCapture(sid, id string, segs []*v1.CaptureSegment, written 
 // 整批的送检文本不违规；有拦截时，保留下来的每一段单独看都不违规。与检查点用同一构造函数（service.CaptureText）。
 func (w *World) checkCapture(sid string, e *v1.Event) error {
 	segs := e.GetCaptureAppended().GetSegments()
+	if r := e.GetToolResult(); r.GetAttested() {
+		for _, b := range r.GetContent() {
+			if g := b.GetCapture(); g != nil {
+				segs = append(segs, g)
+			}
+		}
+	}
+	if len(segs) == 0 {
+		return nil
+	}
 	redacted := slices.ContainsFunc(segs, (*v1.CaptureSegment).GetRedacted)
 	if !redacted && w.blocked(service.CaptureText(segs)) {
 		return fmt.Errorf("invariant: blocked capture reached the log of %s at seq %d", sid, e.GetSeq())
@@ -171,6 +181,18 @@ func (w *World) countCaptureResults(events []*v1.Event) {
 			}
 		}
 		if r := e.GetToolResult(); r != nil {
+			if r.GetAttested() {
+				w.Stats.AttestedResults++
+				for _, b := range r.GetContent() {
+					if b.GetCapture().GetRedacted() {
+						w.Stats.AttestedRedactions++
+					}
+				}
+			}
+			if r.GetIsError() && calls[r.GetRunId()+"/"+r.GetCallId()].GetCapability() == simAttestedName {
+				w.Stats.AttestedErrors++
+			}
+
 			c := calls[r.GetRunId()+"/"+r.GetCallId()]
 			if c.GetCapability() == session.CapturesCapability {
 				w.Stats.CaptureResults++

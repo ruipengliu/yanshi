@@ -25,6 +25,7 @@ import (
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/artifact"
 	"yanshi/internal/capability"
+	"yanshi/internal/capture"
 	"yanshi/internal/eventlog"
 	"yanshi/sdk/nodesdk"
 )
@@ -47,6 +48,8 @@ type Server struct {
 	CiteCaptures bool `yaml:"cite_captures"`
 	// Acks 声明同业务线的结果可以携带交付回执（ADR-0049）；默认不采信。
 	Acks bool `yaml:"acks"`
+	// AttestsSpeakers 只为同业务线的结构化页提供说话人信任锚（ADR-0050）。
+	AttestsSpeakers bool `yaml:"attests_speakers"`
 }
 
 var (
@@ -343,8 +346,22 @@ func (c *Connector) call(ctx context.Context, s Server, tool string, inv capabil
 		args = json.RawMessage(`{}`)
 	}
 	meta := mcp.Meta{"yanshi/business_line": inv.BusinessLine, "yanshi/end_user": inv.EndUser, "yanshi/session": inv.SessionID}
+	if s.AttestsSpeakers {
+		meta["yanshi/page_options"] = capture.OptionsFor(inv)
+	}
 	if s.CiteCaptures && c.Log != nil {
-		cites, err := Citations(ctx, c.Log, inv.SessionID, args)
+		var cites []Citation
+		var err error
+		// 命名空间由登记决定，普通 Server 不为发现 attested 而扫描整段日志。
+		if s.AttestsSpeakers && s.BusinessLine == inv.BusinessLine {
+			var through uint64
+			if inv.State != nil {
+				through = inv.State.Seq
+			}
+			cites, err = AttestedCitations(ctx, c.Log, inv.SessionID, through, args)
+		} else {
+			cites, err = Citations(ctx, c.Log, inv.SessionID, args)
+		}
 		if err != nil {
 			return capability.Result{}, err
 		}
@@ -361,6 +378,19 @@ func (c *Connector) call(ctx context.Context, s Server, tool string, inv capabil
 			c.mu.Unlock()
 		}
 		return capability.Result{}, fmt.Errorf("MCP %s/%s: %w", s.Name, tool, err)
+	}
+	// 必须先丢弃业务线 content：连媒体上传与错误回显也不能绕过页审核。
+	if s.AttestsSpeakers && s.BusinessLine == inv.BusinessLine {
+		if value, ok := res.Meta["yanshi/page"]; ok {
+			if res.IsError {
+				return capability.Result{}, fmt.Errorf("业务线返回的旁听页无效：调用失败")
+			}
+			raw, err := json.Marshal(value)
+			if err != nil {
+				return capability.Result{}, fmt.Errorf("业务线返回的旁听页无效：格式")
+			}
+			return capability.Result{Page: raw}, nil
+		}
 	}
 	var upload nodesdk.Uploader
 	if c.Artifacts != nil {

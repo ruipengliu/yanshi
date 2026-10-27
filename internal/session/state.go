@@ -11,6 +11,7 @@ import (
 	"maps"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -255,6 +256,18 @@ func (s *State) Captured(id string) bool { return id != "" && slices.Contains(s.
 
 // speakerKeyRE 限制他人的说话人键：它原样出现在给模型看的文本中（"[他人 other-1]"），不能夹带别的内容。
 var speakerKeyRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
+var attestedRefRE = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
+
+// ValidSpeakerKey 与可信页共用说话人键的边界，避免标注夹带文字。
+func ValidSpeakerKey(key string) bool { return speakerKeyRE.MatchString(key) }
+
+// ValidAttestedRef 只校验业务线引用的形状，不把它解释为日志位置。
+func ValidAttestedRef(ref string) bool {
+	a, b, ok := strings.Cut(ref, ".")
+	_, e1 := strconv.ParseUint(a, 10, 64)
+	n, e2 := strconv.Atoi(b)
+	return ok && e1 == nil && e2 == nil && n >= 0 && attestedRefRE.MatchString(ref)
+}
 
 // CapturesCapability 是读取旁听转写的内置工具名（capture.Capability；session 不依赖 capture 包）。旁听片段（ContentBlock 的
 // capture）只能由平台写入它的结果。
@@ -278,6 +291,9 @@ func CheckCapture(m *v1.CaptureAppended) error {
 		return fmt.Errorf("capture %q has %d segments", id, len(segs))
 	}
 	for i, g := range segs {
+		if g.GetRef() != "" {
+			return fmt.Errorf("capture segment ref is platform-only")
+		}
 		switch g.GetSpeaker() {
 		case v1.Speaker_SPEAKER_WEARER:
 			if g.GetSpeakerKey() != "" {
@@ -874,9 +890,19 @@ func (s *State) apply(e *v1.Event) error {
 		if hasCard(m.GetContent()) && (m.GetAttempt() == 0 || c.Call.GetCapability() != ShowCardCapability) {
 			return fmt.Errorf("card in the result of call %q (%s)", m.GetCallId(), c.Call.GetCapability())
 		}
-		// 旁听片段同样只由平台写入 captures 的结果：设备、用户写入的片段会被闸门当作用户本人的话（ADR-0036）。
-		if hasCapture(m.GetContent()) && (m.GetAttempt() == 0 || c.Call.GetCapability() != CapturesCapability) {
+		// 旁听片段只由平台写入内置或 attested 结果：设备、用户不能自报可信说话人（ADR-0050）。
+		if hasCapture(m.GetContent()) && (m.GetAttempt() == 0 || (c.Call.GetCapability() != CapturesCapability && !m.GetAttested())) {
 			return fmt.Errorf("capture segment in the result of call %q (%s)", m.GetCallId(), c.Call.GetCapability())
+		}
+		if m.GetAttested() && (m.GetAttempt() == 0 || !isMCPCall(c.Call.GetCapability()) || c.NodeID != "" || m.GetIsError() || m.GetCaptureRead() != nil || m.GetFromCall() != "" || m.GetBackgrounded() != nil) {
+			return fmt.Errorf("invalid attested result")
+		}
+		for _, b := range m.GetContent() {
+			if g := b.GetCapture(); g != nil {
+				if (m.GetAttested() && !ValidAttestedRef(g.GetRef())) || (!m.GetAttested() && g.GetRef() != "") {
+					return fmt.Errorf("invalid capture result ref")
+				}
+			}
 		}
 		// 读取位置同样只由平台写入 captures 的结果：伪造的位置会让之后的整理跳过没有读过的时段。
 		if rd := m.GetCaptureRead(); rd != nil {

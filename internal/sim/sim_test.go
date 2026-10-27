@@ -209,3 +209,11 @@ func TestCaptureAcksWithFaults(t *testing.T) {
 	})
 	requireCoverage(t, total, "AcksCommitted", "AcksMissing", "AckRefusals", "AckMCPFailures")
 }
+
+// 与任意 Step 间的重启、追加前失败、追加后结果未知交错；每步 Reduce 与快照恢复比较也覆盖 attested。
+func TestAttestedPagesWithFaults(t *testing.T) {
+	total := parallelSeeds(t, seedList(), func(t *testing.T, s uint64) Stats {
+		return run(t, s, Options{Faults: true, Attested: true, Ticks: 1000}).Stats
+	})
+	requireCoverage(t, total, "AttestedResults", "AttestedRedactions", "AttestedErrors")
+}

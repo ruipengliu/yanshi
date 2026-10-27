@@ -365,6 +365,8 @@ message ToolResult {
   CaptureRead capture_read = 10;
   // 业务线的交付回执（ADR-0049）：只由 Worker 从同业务线、声明了 acks 的 MCP 结果写入，模型看不到。
   CaptureAck capture_ack = 11;
+  // 只由 Worker 写入可信 MCP 页；来源推导据此识别平台渲染的内容，模型看不到。
+  bool attested = 12;
 }
 
 // CaptureRead 是 captures 一页读到的位置（docs/design/m5-inputs-triggers-loops.md §5）。
@@ -537,6 +539,8 @@ message CaptureSegment {
   // time_zone 是说这段话时手机所在的 IANA 时区（如 "Asia/Shanghai"），由 HostApp 填写。与 spoken_at 都有时，整理时显示
   // 当地的日期与时刻，模型据此按停顿分开不同的对话、把"明天""周五"换算成日期；为空时不显示时间。
   string time_zone = 6;
+  // attested 结果中业务线命名空间内的引用；CaptureAppended 中必须为空。
+  string ref = 7;
 }
 
 enum Speaker {

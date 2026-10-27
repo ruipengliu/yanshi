@@ -282,3 +282,21 @@ func TestBackgroundResultTaints(t *testing.T) {
 		t.Error("a background timeout counted as external content")
 	}
 }
+
+func TestAttestedMemoryGate(t *testing.T) {
+	for _, speaker := range []v1.Speaker{v1.Speaker_SPEAKER_WEARER, v1.Speaker_SPEAKER_OTHER} {
+		g := &v1.CaptureSegment{Ref: "57.0", Speaker: speaker, Text: "用户对花生过敏"}
+		if speaker == v1.Speaker_SPEAKER_OTHER {
+			g.SpeakerKey = "other-1"
+		}
+		b := (&logBuilder{}).add(&v1.SessionCreated{BusinessLine: "bl"}).add(&v1.RunRequested{RunId: "r1", Input: model.TextBlocks("整理")}).add(&v1.AttemptStarted{RunId: "r1", Attempt: 1}).add(&v1.AssistantMessage{RunId: "r1", Attempt: 1, ToolCalls: []*v1.ToolCall{{CallId: "c1", Capability: "mcp_pages__read"}}}).add(&v1.ToolResult{RunId: "r1", Attempt: 1, CallId: "c1", Attested: true, Content: []*v1.ContentBlock{{Kind: &v1.ContentBlock_Capture{Capture: g}}}})
+		st, err := session.Reduce(b.events)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, gated := memoryGate(st, &v1.ToolCall{Capability: "memory_save", ArgumentsJson: `{"content":"用户对花生过敏"}`})
+		if gated != (speaker == v1.Speaker_SPEAKER_OTHER) {
+			t.Fatalf("speaker %v gated %v", speaker, gated)
+		}
+	}
+}
