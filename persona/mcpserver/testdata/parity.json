@@ -1,0 +1,3952 @@
+{
+  "version": 1,
+  "tools": [
+    {
+      "name": "commitment_history",
+      "description": "查询一条承诺的当前值与修订历史（改前到改后、时间、依据、引用），以及合并关系。",
+      "input_schema": {
+        "properties": {
+          "id": {
+            "description": "承诺 ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "day_ledger",
+      "description": "返回今天的账本，供当天整理与写当天总览：今天的交谈（ID、范围、标题、摘要、归属、沟通方式的观察）、今天的承诺与之前未完成而与今天相关的承诺（带 ID、rev、引用与修订），以及按规则找出的可能重复的承诺、可能被切开的交谈。",
+      "input_schema": {
+        "properties": {},
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "day_summary",
+      "description": "取回某天归入本项目的交谈（带交谈 ID），以及本项目当前未完成的承诺（带 ID 与 rev）。",
+      "input_schema": {
+        "properties": {
+          "date": {
+            "description": "日期 YYYY-MM-DD",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "file_changes",
+      "description": "交出一次整理的变更集：这次读到的旁听里划出的交谈、新的承诺，以及这些原话对已有承诺的改动（改期、改内容、完成、作废），一次调用交出全部。每项都用编号引用依据的原话，业务线按被引用原话的说话人核对承诺人、按说话那天核对期限；整体检查，有一项不通过就整体不收，结果写明原因。同一个 source 再交一次时整体取代上一次。projects 是归属：existing（明确是 find_related 召回的某个项目，填 id）、new（值得持续跟进的新主题，填 name）、unsure（可能是某个候选但拿不准：填候选的 id，再给一个新项目名 name，交给用户确认）、none（一次性的事，不归项目）。白天的整理只能依据本次读到的原话改动已有的承诺；合并重复的承诺与交谈、改正交谈的归属只在当天整理（source 为 {\"day\": true}）中做。",
+      "input_schema": {
+        "properties": {
+          "commitments": {
+            "properties": {
+              "close": {
+                "description": "已完成（done）或不做了、改由别人做（cancelled）的承诺",
+                "items": {
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "refs": {
+                      "description": "依据的原话编号（旁听每行开头的编号），如 [\"#57.3\"]",
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "rev": {
+                      "description": "find_related、day_ledger 或 day_summary 给出的 rev，原样照抄",
+                      "type": "integer"
+                    },
+                    "status": {
+                      "enum": [
+                        "done",
+                        "cancelled"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "rev",
+                    "status",
+                    "refs"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "create": {
+                "description": "新的承诺",
+                "items": {
+                  "properties": {
+                    "content": {
+                      "description": "要做的事",
+                      "type": "string"
+                    },
+                    "counterpart": {
+                      "description": "答应了谁，或谁答应的（按原话称呼）",
+                      "type": "string"
+                    },
+                    "due_date": {
+                      "description": "能确定日期时写 YYYY-MM-DD",
+                      "type": "string"
+                    },
+                    "due_text": {
+                      "description": "原话中的期限说法，如\"明天上午\"",
+                      "type": "string"
+                    },
+                    "exchange": {
+                      "description": "出处：交谈 ID，即 x 加上它的 from 编号，如 x57.0",
+                      "type": "string"
+                    },
+                    "id": {
+                      "description": "可省略；同一个 source 重交时，只填上次回执中的 C- 开头的 ID（C- 加数字），明确沿用；其他形式都按临时 ID 忽略",
+                      "type": "string"
+                    },
+                    "kind": {
+                      "description": "mine：用户本人答应别人；theirs：别人答应用户",
+                      "enum": [
+                        "mine",
+                        "theirs"
+                      ],
+                      "type": "string"
+                    },
+                    "project": {
+                      "description": "缺省随交谈；交谈涉及多个项目时必填（项目 ID 或新项目名）",
+                      "type": "string"
+                    },
+                    "refs": {
+                      "description": "依据的原话编号（旁听每行开头的编号），如 [\"#57.3\"]",
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "exchange",
+                    "kind",
+                    "content",
+                    "refs"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "merge": {
+                "description": "只在当天整理中：重复的承诺并入 into",
+                "items": {
+                  "properties": {
+                    "from": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "into": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "into",
+                    "from"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "revise": {
+                "description": "改动已有的承诺（改期、改内容、换对方）：依据这次读到的原话",
+                "items": {
+                  "properties": {
+                    "content": {
+                      "type": "string"
+                    },
+                    "counterpart": {
+                      "type": "string"
+                    },
+                    "due_date": {
+                      "description": "新的期限 YYYY-MM-DD",
+                      "type": "string"
+                    },
+                    "due_text": {
+                      "description": "原话中新的期限说法",
+                      "type": "string"
+                    },
+                    "id": {
+                      "description": "承诺 ID，如 C-0012",
+                      "type": "string"
+                    },
+                    "project": {
+                      "description": "改正归属时写项目 ID",
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "refs": {
+                      "description": "依据的原话编号（旁听每行开头的编号），如 [\"#57.3\"]",
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "rev": {
+                      "description": "find_related、day_ledger 或 day_summary 给出的 rev，原样照抄",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "rev",
+                    "refs"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "exchanges": {
+            "properties": {
+              "create": {
+                "description": "这次划出的交谈：一段谈话一项，寒暄闲聊不交",
+                "items": {
+                  "properties": {
+                    "awareness": {
+                      "description": "用户本人沟通方式的观察，附例子；不写情绪与身心状态",
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "decisions": {
+                      "description": "定下的事",
+                      "items": {
+                        "properties": {
+                          "project": {
+                            "description": "交谈涉及多个项目时写这件事属于哪个（项目 ID 或新项目名）",
+                            "type": "string"
+                          },
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "text"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "from": {
+                      "description": "这段交谈第一段的编号",
+                      "type": "string"
+                    },
+                    "projects": {
+                      "description": "这段交谈涉及的项目，可以多个",
+                      "items": {
+                        "properties": {
+                          "id": {
+                            "description": "existing 与 unsure：项目 ID",
+                            "type": "string"
+                          },
+                          "match": {
+                            "enum": [
+                              "existing",
+                              "new",
+                              "unsure",
+                              "none"
+                            ],
+                            "type": "string"
+                          },
+                          "name": {
+                            "description": "new 与 unsure：新项目的名称",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "match"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "risks": {
+                      "description": "可能延期、有分歧或被遗漏的地方",
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "summary": {
+                      "description": "谈了什么、进展到哪；别人提出而用户没有答应的要求写在这里",
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "to": {
+                      "description": "最后一段的编号",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "from",
+                    "to",
+                    "title",
+                    "summary",
+                    "projects"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "merge": {
+                "description": "只在当天整理中：把被停顿切开的同一段谈话并入 into",
+                "items": {
+                  "properties": {
+                    "from": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "into": {
+                      "description": "保留的交谈 ID",
+                      "type": "string"
+                    },
+                    "projects": {
+                      "description": "这段交谈涉及的项目，可以多个",
+                      "items": {
+                        "properties": {
+                          "id": {
+                            "description": "existing 与 unsure：项目 ID",
+                            "type": "string"
+                          },
+                          "match": {
+                            "enum": [
+                              "existing",
+                              "new",
+                              "unsure",
+                              "none"
+                            ],
+                            "type": "string"
+                          },
+                          "name": {
+                            "description": "new 与 unsure：新项目的名称",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "match"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "summary": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "into",
+                    "from"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "revise": {
+                "description": "只在当天整理中：改正交谈的标题、摘要或归属",
+                "items": {
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "projects": {
+                      "description": "这段交谈涉及的项目，可以多个",
+                      "items": {
+                        "properties": {
+                          "id": {
+                            "description": "existing 与 unsure：项目 ID",
+                            "type": "string"
+                          },
+                          "match": {
+                            "enum": [
+                              "existing",
+                              "new",
+                              "unsure",
+                              "none"
+                            ],
+                            "type": "string"
+                          },
+                          "name": {
+                            "description": "new 与 unsure：新项目的名称",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "match"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "summary": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "source": {
+            "description": "这次依据的旁听范围：本次读到的第一段与最后一段的编号；\"整理今天\"的当天整理写 {\"day\": true}",
+            "properties": {
+              "day": {
+                "type": "boolean"
+              },
+              "from": {
+                "description": "如 #57.0",
+                "type": "string"
+              },
+              "to": {
+                "description": "如 #80.2",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "type": "object"
+      },
+      "annotations": null
+    },
+    {
+      "name": "file_day",
+      "description": "交出当天的总览与觉察，在\"整理今天\"中读完全部旁听、交出变更集之后调用一次。day 是当天的总览；awareness 是对用户本人沟通方式的观察与建议。",
+      "input_schema": {
+        "properties": {
+          "awareness": {
+            "description": "对用户本人沟通方式的观察；不写情绪与身心状态",
+            "properties": {
+              "habits": {
+                "description": "沟通习惯，各附当天的一个例子",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "suggestions": {
+                "description": "下次可以怎么做",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "day": {
+            "description": "当天的总览",
+            "properties": {
+              "headline": {
+                "description": "一句话概括这一天",
+                "type": "string"
+              },
+              "highlights": {
+                "description": "当天最重要的几件事（3 条以内）",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "headline"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "day"
+        ],
+        "type": "object"
+      },
+      "annotations": null
+    },
+    {
+      "name": "file_week",
+      "description": "交出本周的觉察，每次回顾调用一次：habits 是本周至少在两天出现过的沟通习惯（days 写出现的日期，example 附一个例子），suggestions 是建议。只出现一天的不算习惯。",
+      "input_schema": {
+        "properties": {
+          "habits": {
+            "items": {
+              "properties": {
+                "days": {
+                  "description": "出现的日期 YYYY-MM-DD，至少两天",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "example": {
+                  "type": "string"
+                },
+                "habit": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "habit",
+                "days"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "suggestions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "habits"
+        ],
+        "type": "object"
+      },
+      "annotations": null
+    },
+    {
+      "name": "find_related",
+      "description": "为一段交谈召回相关的数据：至多 5 个候选项目（ID、名称、现状），以及与这段的对方或主题相关的未完成承诺（不限哪天，带 ID 与 rev），供判断归属，以及这段里的原话是否改动了已有的承诺。",
+      "input_schema": {
+        "properties": {
+          "counterparts": {
+            "description": "交谈的对方，按原话称呼，如 [\"张总\"]",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "query": {
+            "description": "交谈的主题，如\"新办公室装修 报价\"",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_commitments",
+      "description": "按责任方、状态、期限、对方、主题与项目查询承诺，默认未完成；每页至多 30 条，按期限升序，无期限排后。被合并的不列出。",
+      "input_schema": {
+        "properties": {
+          "after": {
+            "description": "照抄上一页末尾的 after，其他条件保持不变",
+            "type": "string"
+          },
+          "counterpart": {
+            "description": "对方称呼的子串",
+            "type": "string"
+          },
+          "due_from": {
+            "description": "期限下限 YYYY-MM-DD（含当天）",
+            "type": "string"
+          },
+          "due_to": {
+            "description": "期限上限 YYYY-MM-DD（含当天）",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "mine",
+              "theirs"
+            ],
+            "type": "string"
+          },
+          "project": {
+            "description": "项目 ID",
+            "type": "string"
+          },
+          "query": {
+            "description": "主题，按内容与对方匹配",
+            "type": "string"
+          },
+          "status": {
+            "description": "默认 open；查修订历史时用 all",
+            "enum": [
+              "open",
+              "done",
+              "cancelled",
+              "all"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_projects",
+      "description": "列出用户已有的项目（ID、名称与现状）。",
+      "input_schema": {
+        "properties": {},
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "project_digest",
+      "description": "返回一个项目的现状、按天的时间线与未完成的承诺。在项目自己的会话中可以不填 project。",
+      "input_schema": {
+        "properties": {
+          "project": {
+            "description": "项目 ID；项目会话中省略即本项目",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "propose_merge",
+      "description": "提议把项目 from 并入 into（两者指同一件事）。提议进业务线的\"待确认\"，由用户确认后才合并。",
+      "input_schema": {
+        "properties": {
+          "from": {
+            "description": "并入的项目 ID",
+            "type": "string"
+          },
+          "into": {
+            "description": "保留的项目 ID",
+            "type": "string"
+          },
+          "reason": {
+            "description": "为什么是同一件事",
+            "type": "string"
+          }
+        },
+        "required": [
+          "into",
+          "from",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "annotations": null
+    },
+    {
+      "name": "recent_days",
+      "description": "返回最近几天（按日期）的整理摘要与交谈。",
+      "input_schema": {
+        "properties": {},
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "set_status",
+      "description": "更新本项目的现状（整体替换）：现在进展到哪、下一步、待解决的问题。",
+      "input_schema": {
+        "properties": {
+          "next_steps": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "open_questions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "status": {
+            "description": "现状，两三句话",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "annotations": null
+    },
+    {
+      "name": "similar_projects",
+      "description": "找出至多 5 对可能重复的项目（相似度从高到低），附各自的现状与最近几段交谈的标题，供判断是否合并。",
+      "input_schema": {
+        "properties": {},
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "update_commitments",
+      "description": "依据交谈对账本项目的承诺：close 是已完成（done）或取消（cancelled）的，revise 是改了期限或内容的；每项带 day_summary 给出的 rev，并用 exchanges 写明依据的交谈 ID。账本在你看到之后又被改过（rev 不符）时整体不收，结果附上现在的状态。同一天再交一次时整体取代上一次。新的承诺不在这里添加。",
+      "input_schema": {
+        "properties": {
+          "close": {
+            "description": "已完成（done）或取消（cancelled）的承诺",
+            "items": {
+              "properties": {
+                "exchanges": {
+                  "description": "依据的交谈 ID",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "rev": {
+                  "description": "find_related、day_ledger 或 day_summary 给出的 rev，原样照抄",
+                  "type": "integer"
+                },
+                "status": {
+                  "enum": [
+                    "done",
+                    "cancelled"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "rev",
+                "status",
+                "exchanges"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "date": {
+            "description": "对账的那一天 YYYY-MM-DD，与 day_summary 相同",
+            "type": "string"
+          },
+          "revise": {
+            "description": "改了期限或内容的承诺",
+            "items": {
+              "properties": {
+                "content": {
+                  "type": "string"
+                },
+                "counterpart": {
+                  "type": "string"
+                },
+                "due_date": {
+                  "description": "新的期限 YYYY-MM-DD",
+                  "type": "string"
+                },
+                "due_text": {
+                  "description": "原话中新的期限说法",
+                  "type": "string"
+                },
+                "exchanges": {
+                  "description": "依据的交谈 ID（day_summary 给出）",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "id": {
+                  "description": "承诺 ID，如 C-0012",
+                  "type": "string"
+                },
+                "project": {
+                  "description": "改正归属时写项目 ID",
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "rev": {
+                  "description": "find_related、day_ledger 或 day_summary 给出的 rev，原样照抄",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "rev",
+                "exchanges"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "date"
+        ],
+        "type": "object"
+      },
+      "annotations": null
+    },
+    {
+      "name": "week_overview",
+      "description": "返回最近 7 天每天的总览、交谈的标题与归属，以及每天对用户沟通方式的觉察。",
+      "input_schema": {
+        "properties": {},
+        "type": "object"
+      },
+      "annotations": {
+        "idempotentHint": false,
+        "readOnlyHint": true
+      }
+    }
+  ],
+  "steps": [
+    {
+      "input": {
+        "op": "seed",
+        "args": {
+          "Projects": [
+            {
+              "id": "P-0001",
+              "name": "年度预算",
+              "status": "财务部在汇总各部门预算"
+            },
+            {
+              "id": "P-0002",
+              "name": "办公室搬迁",
+              "status": "十二月搬"
+            },
+            {
+              "id": "P-0003",
+              "name": "旧事",
+              "status": "早就结束了"
+            }
+          ],
+          "Commitments": [
+            {
+              "ID": "C-9000",
+              "Kind": "mine",
+              "Content": "发报价单",
+              "Project": "P-0001"
+            },
+            {
+              "ID": "C-9001",
+              "Kind": "theirs",
+              "Content": "寄框架合同",
+              "Project": "P-0001",
+              "DueDate": "2026-10-26"
+            }
+          ],
+          "Days": {
+            "2026-10-24": "王总来电：报价单收到了，合同推迟到 11 月 2 日寄出。"
+          },
+          "Exchanges": [
+            {
+              "Date": "2026-08-01",
+              "Title": "收尾",
+              "Project": "P-0003"
+            }
+          ],
+          "Filed": [
+            {
+              "date": "2026-10-22",
+              "headline": "看样板",
+              "awareness": {
+                "habits": [
+                  "答应时给出期限"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "value": {}
+    },
+    {
+      "input": {
+        "op": "state"
+      },
+      "value": {
+        "projects": [
+          {
+            "id": "P-0001",
+            "name": "年度预算",
+            "status": "财务部在汇总各部门预算",
+            "next_steps": null,
+            "open_questions": null
+          },
+          {
+            "id": "P-0002",
+            "name": "办公室搬迁",
+            "status": "十二月搬",
+            "next_steps": null,
+            "open_questions": null
+          },
+          {
+            "id": "P-0003",
+            "name": "旧事",
+            "status": "早就结束了",
+            "next_steps": null,
+            "open_questions": null
+          }
+        ],
+        "exchanges": [
+          {
+            "id": "x2026-10-24",
+            "session": "seed_days",
+            "date": "2026-10-24",
+            "filed_at": "0001-01-01T00:00:00Z",
+            "title": "当天摘要",
+            "summary": "王总来电：报价单收到了，合同推迟到 11 月 2 日寄出。",
+            "projects": [
+              {
+                "match": "none"
+              }
+            ],
+            "decisions": null,
+            "risks": null,
+            "awareness": null,
+            "changeset": "CS-0001"
+          },
+          {
+            "id": "x1.0",
+            "session": "seed_2026-08-01",
+            "date": "2026-08-01",
+            "filed_at": "0001-01-01T00:00:00Z",
+            "title": "收尾",
+            "summary": "",
+            "projects": [
+              {
+                "match": "existing",
+                "project": "P-0003"
+              }
+            ],
+            "decisions": null,
+            "risks": null,
+            "awareness": null,
+            "changeset": "CS-0001"
+          }
+        ],
+        "commitments": [
+          {
+            "id": "C-9000",
+            "kind": "mine",
+            "content": "发报价单",
+            "project": "P-0001",
+            "status": "open",
+            "updated_at": "2026-10-23T22:00:00+08:00",
+            "revisions": [
+              {
+                "changeset": "CS-0001",
+                "author": "seed",
+                "op": "create",
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              }
+            ]
+          },
+          {
+            "id": "C-9001",
+            "kind": "theirs",
+            "content": "寄框架合同",
+            "due_date": "2026-10-26",
+            "project": "P-0001",
+            "status": "open",
+            "updated_at": "2026-10-23T22:00:00+08:00",
+            "revisions": [
+              {
+                "changeset": "CS-0001",
+                "author": "seed",
+                "op": "create",
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              }
+            ]
+          }
+        ],
+        "changesets": [
+          {
+            "id": "CS-0001",
+            "key": "seed:1",
+            "author": "seed",
+            "source": {},
+            "recorded_at": "2026-10-23T22:00:00+08:00",
+            "create_exchanges": [
+              {
+                "id": "x2026-10-24",
+                "session": "seed_days",
+                "date": "2026-10-24",
+                "filed_at": "0001-01-01T00:00:00Z",
+                "title": "当天摘要",
+                "summary": "王总来电：报价单收到了，合同推迟到 11 月 2 日寄出。",
+                "projects": [
+                  {
+                    "match": "none"
+                  }
+                ],
+                "decisions": null,
+                "risks": null,
+                "awareness": null
+              },
+              {
+                "id": "x1.0",
+                "session": "seed_2026-08-01",
+                "date": "2026-08-01",
+                "filed_at": "0001-01-01T00:00:00Z",
+                "title": "收尾",
+                "summary": "",
+                "projects": [
+                  {
+                    "match": "existing",
+                    "project": "P-0003"
+                  }
+                ],
+                "decisions": null,
+                "risks": null,
+                "awareness": null
+              }
+            ],
+            "create_commitments": [
+              {
+                "id": "C-9000",
+                "kind": "mine",
+                "content": "发报价单",
+                "project": "P-0001",
+                "status": "",
+                "revisions": null
+              },
+              {
+                "id": "C-9001",
+                "kind": "theirs",
+                "content": "寄框架合同",
+                "due_date": "2026-10-26",
+                "project": "P-0001",
+                "status": "",
+                "revisions": null
+              }
+            ]
+          }
+        ],
+        "days": [
+          {
+            "date": "2026-10-22",
+            "session": "seed_day_0",
+            "filed_at": "0001-01-01T00:00:00Z",
+            "headline": "看样板",
+            "highlights": null,
+            "awareness": {
+              "habits": [
+                "答应时给出期限"
+              ],
+              "suggestions": null
+            }
+          }
+        ],
+        "weeks": [],
+        "merges": []
+      }
+    },
+    {
+      "input": {
+        "op": "bind",
+        "args": {
+          "project": "P-0001",
+          "session": "ses_p"
+        }
+      },
+      "value": {}
+    },
+    {
+      "input": {
+        "op": "tool",
+        "name": "list_projects",
+        "session": "ses_day",
+        "args": {}
+      },
+      "text": "P-0001 年度预算：财务部在汇总各部门预算（未完成的承诺 2 条）\nP-0002 办公室搬迁：十二月搬（未完成的承诺 0 条）\nP-0003 旧事：早就结束了（未完成的承诺 0 条）\n"
+    },
+    {
+      "input": {
+        "op": "tool",
+        "name": "find_related",
+        "session": "ses_day",
+        "args": {
+          "query": "预算",
+          "counterparts": [
+            "张总"
+          ]
+        }
+      },
+      "text": "候选项目：\nP-0001 年度预算：财务部在汇总各部门预算（未完成的承诺 2 条）\nP-0002 办公室搬迁：十二月搬（未完成的承诺 0 条）\nP-0003 旧事：早就结束了（未完成的承诺 0 条）\n相关的未完成承诺：没有\n"
+    },
+    {
+      "input": {
+        "op": "tool",
+        "name": "file_changes",
+        "session": "ses_day",
+        "args": {
+          "source": {
+            "from": "#2.0",
+            "to": "#2.6"
+          },
+          "exchanges": {
+            "create": [
+              {
+                "from": "#2.0",
+                "to": "#2.2",
+                "title": "办公室装修",
+                "summary": "地板定了浅色木纹",
+                "projects": [
+                  {
+                    "match": "new",
+                    "name": "新办公室装修"
+                  }
+                ]
+              },
+              {
+                "from": "#2.5",
+                "to": "#2.6",
+                "title": "预算",
+                "summary": "还差两个部门",
+                "projects": [
+                  {
+                    "match": "unsure",
+                    "id": "P-0001",
+                    "name": "部门预算"
+                  }
+                ]
+              }
+            ]
+          },
+          "commitments": {
+            "create": [
+              {
+                "exchange": "x2.0",
+                "kind": "mine",
+                "content": "发报价单",
+                "refs": [
+                  "#2.1"
+                ]
+              },
+              {
+                "exchange": "x2.0",
+                "kind": "theirs",
+                "content": "带样板",
+                "refs": [
+                  "#2.0"
+                ]
+              }
+            ]
+          }
+        },
+        "citations": [
+          {
+            "ref": "#2.0",
+            "speaker": "other",
+            "spoken_at": "2026-10-23T09:00:00+08:00",
+            "time_zone": "Asia/Shanghai",
+            "speaker_key": "s1"
+          },
+          {
+            "ref": "#2.1",
+            "speaker": "wearer",
+            "spoken_at": "2026-10-23T09:01:00+08:00",
+            "time_zone": "Asia/Shanghai"
+          },
+          {
+            "ref": "#2.2",
+            "speaker": "other",
+            "spoken_at": "2026-10-23T09:02:00+08:00",
+            "time_zone": "Asia/Shanghai",
+            "speaker_key": "s1"
+          },
+          {
+            "ref": "#2.5",
+            "speaker": "wearer",
+            "spoken_at": "2026-10-23T09:20:00+08:00",
+            "time_zone": "Asia/Shanghai"
+          },
+          {
+            "ref": "#2.6",
+            "speaker": "other",
+            "spoken_at": "2026-10-23T09:21:00+08:00",
+            "time_zone": "Asia/Shanghai",
+            "speaker_key": "s1"
+          }
+        ]
+      },
+      "text": "已收下变更集 CS-0002（来源 #2.0–#2.6）：\n- 交谈 x2.0「办公室装修」：归入 P-0101 新办公室装修\n- 交谈 x2.5「预算」：待用户确认：可能属于 P-0001\n- 承诺 C-0001（已核实）用户答应：发报价单\n- 承诺 C-0002（已核实）对方答应用户：带样板\n新建承诺 2 条，均已核实。",
+      "meta": {
+        "yanshi/ack": {
+          "from": "2.0",
+          "stream": "transcript",
+          "through": "2.6"
+        }
+      }
+    },
+    {
+      "input": {
+        "op": "state"
+      },
+      "value": {
+        "projects": [
+          {
+            "id": "P-0001",
+            "name": "年度预算",
+            "status": "财务部在汇总各部门预算",
+            "next_steps": null,
+            "open_questions": null,
+            "session": "ses_p"
+          },
+          {
+            "id": "P-0002",
+            "name": "办公室搬迁",
+            "status": "十二月搬",
+            "next_steps": null,
+            "open_questions": null
+          },
+          {
+            "id": "P-0003",
+            "name": "旧事",
+            "status": "早就结束了",
+            "next_steps": null,
+            "open_questions": null
+          },
+          {
+            "id": "P-0101",
+            "name": "新办公室装修",
+            "status": "",
+            "next_steps": null,
+            "open_questions": null
+          }
+        ],
+        "exchanges": [
+          {
+            "id": "x2026-10-24",
+            "session": "seed_days",
+            "date": "2026-10-24",
+            "filed_at": "0001-01-01T00:00:00Z",
+            "title": "当天摘要",
+            "summary": "王总来电：报价单收到了，合同推迟到 11 月 2 日寄出。",
+            "projects": [
+              {
+                "match": "none"
+              }
+            ],
+            "decisions": null,
+            "risks": null,
+            "awareness": null,
+            "changeset": "CS-0001"
+          },
+          {
+            "id": "x1.0",
+            "session": "seed_2026-08-01",
+            "date": "2026-08-01",
+            "filed_at": "0001-01-01T00:00:00Z",
+            "title": "收尾",
+            "summary": "",
+            "projects": [
+              {
+                "match": "existing",
+                "project": "P-0003"
+              }
+            ],
+            "decisions": null,
+            "risks": null,
+            "awareness": null,
+            "changeset": "CS-0001"
+          },
+          {
+            "id": "x2.0",
+            "session": "ses_day",
+            "date": "2026-10-23",
+            "from": "#2.0",
+            "to": "#2.2",
+            "filed_at": "2026-10-23T22:00:00+08:00",
+            "title": "办公室装修",
+            "summary": "地板定了浅色木纹",
+            "projects": [
+              {
+                "match": "new",
+                "project": "P-0101"
+              }
+            ],
+            "decisions": null,
+            "risks": null,
+            "awareness": null,
+            "changeset": "CS-0002"
+          },
+          {
+            "id": "x2.5",
+            "session": "ses_day",
+            "date": "2026-10-23",
+            "from": "#2.5",
+            "to": "#2.6",
+            "filed_at": "2026-10-23T22:00:00+08:00",
+            "title": "预算",
+            "summary": "还差两个部门",
+            "projects": [
+              {
+                "match": "unsure",
+                "candidate": "P-0001",
+                "proposed": "部门预算"
+              }
+            ],
+            "decisions": null,
+            "risks": null,
+            "awareness": null,
+            "changeset": "CS-0002"
+          }
+        ],
+        "commitments": [
+          {
+            "id": "C-9000",
+            "kind": "mine",
+            "content": "发报价单",
+            "project": "P-0001",
+            "status": "open",
+            "updated_at": "2026-10-23T22:00:00+08:00",
+            "revisions": [
+              {
+                "changeset": "CS-0001",
+                "author": "seed",
+                "op": "create",
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              }
+            ]
+          },
+          {
+            "id": "C-9001",
+            "kind": "theirs",
+            "content": "寄框架合同",
+            "due_date": "2026-10-26",
+            "project": "P-0001",
+            "status": "open",
+            "updated_at": "2026-10-23T22:00:00+08:00",
+            "revisions": [
+              {
+                "changeset": "CS-0001",
+                "author": "seed",
+                "op": "create",
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              }
+            ]
+          },
+          {
+            "id": "C-0001",
+            "kind": "mine",
+            "content": "发报价单",
+            "project": "P-0101",
+            "refs": [
+              "#2.1"
+            ],
+            "status": "open",
+            "exchange": "x2.0",
+            "session": "ses_day",
+            "spoken_at": "2026-10-23T09:01:00+08:00",
+            "updated_at": "2026-10-23T22:00:00+08:00",
+            "revisions": [
+              {
+                "changeset": "CS-0002",
+                "author": "xinli-day",
+                "op": "create",
+                "refs": [
+                  "#2.1"
+                ],
+                "spoken_at": "2026-10-23T09:01:00+08:00",
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              }
+            ]
+          },
+          {
+            "id": "C-0002",
+            "kind": "theirs",
+            "content": "带样板",
+            "project": "P-0101",
+            "refs": [
+              "#2.0"
+            ],
+            "status": "open",
+            "exchange": "x2.0",
+            "session": "ses_day",
+            "spoken_at": "2026-10-23T09:00:00+08:00",
+            "updated_at": "2026-10-23T22:00:00+08:00",
+            "revisions": [
+              {
+                "changeset": "CS-0002",
+                "author": "xinli-day",
+                "op": "create",
+                "refs": [
+                  "#2.0"
+                ],
+                "spoken_at": "2026-10-23T09:00:00+08:00",
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              }
+            ]
+          }
+        ],
+        "changesets": [
+          {
+            "id": "CS-0001",
+            "key": "seed:1",
+            "author": "seed",
+            "source": {},
+            "recorded_at": "2026-10-23T22:00:00+08:00",
+            "create_exchanges": [
+              {
+                "id": "x2026-10-24",
+                "session": "seed_days",
+                "date": "2026-10-24",
+                "filed_at": "0001-01-01T00:00:00Z",
+                "title": "当天摘要",
+                "summary": "王总来电：报价单收到了，合同推迟到 11 月 2 日寄出。",
+                "projects": [
+                  {
+                    "match": "none"
+                  }
+                ],
+                "decisions": null,
+                "risks": null,
+                "awareness": null
+              },
+              {
+                "id": "x1.0",
+                "session": "seed_2026-08-01",
+                "date": "2026-08-01",
+                "filed_at": "0001-01-01T00:00:00Z",
+                "title": "收尾",
+                "summary": "",
+                "projects": [
+                  {
+                    "match": "existing",
+                    "project": "P-0003"
+                  }
+                ],
+                "decisions": null,
+                "risks": null,
+                "awareness": null
+              }
+            ],
+            "create_commitments": [
+              {
+                "id": "C-9000",
+                "kind": "mine",
+                "content": "发报价单",
+                "project": "P-0001",
+                "status": "",
+                "revisions": null
+              },
+              {
+                "id": "C-9001",
+                "kind": "theirs",
+                "content": "寄框架合同",
+                "due_date": "2026-10-26",
+                "project": "P-0001",
+                "status": "",
+                "revisions": null
+              }
+            ]
+          },
+          {
+            "id": "CS-0002",
+            "session": "ses_day",
+            "key": "from:#2.0",
+            "author": "xinli-day",
+            "source": {
+              "from": "#2.0",
+              "to": "#2.6"
+            },
+            "recorded_at": "2026-10-23T22:00:00+08:00",
+            "create_exchanges": [
+              {
+                "id": "x2.0",
+                "session": "ses_day",
+                "date": "2026-10-23",
+                "from": "#2.0",
+                "to": "#2.2",
+                "filed_at": "2026-10-23T22:00:00+08:00",
+                "title": "办公室装修",
+                "summary": "地板定了浅色木纹",
+                "projects": [
+                  {
+                    "match": "new",
+                    "project": "P-0101"
+                  }
+                ],
+                "decisions": null,
+                "risks": null,
+                "awareness": null
+              },
+              {
+                "id": "x2.5",
+                "session": "ses_day",
+                "date": "2026-10-23",
+                "from": "#2.5",
+                "to": "#2.6",
+                "filed_at": "2026-10-23T22:00:00+08:00",
+                "title": "预算",
+                "summary": "还差两个部门",
+                "projects": [
+                  {
+                    "match": "unsure",
+                    "candidate": "P-0001",
+                    "proposed": "部门预算"
+                  }
+                ],
+                "decisions": null,
+                "risks": null,
+                "awareness": null
+              }
+            ],
+            "create_commitments": [
+              {
+                "id": "C-0001",
+                "kind": "mine",
+                "content": "发报价单",
+                "project": "P-0101",
+                "refs": [
+                  "#2.1"
+                ],
+                "status": "",
+                "exchange": "x2.0",
+                "session": "ses_day",
+                "spoken_at": "2026-10-23T09:01:00+08:00",
+                "revisions": null
+              },
+              {
+                "id": "C-0002",
+                "kind": "theirs",
+                "content": "带样板",
+                "project": "P-0101",
+                "refs": [
+                  "#2.0"
+                ],
+                "status": "",
+                "exchange": "x2.0",
+                "session": "ses_day",
+                "spoken_at": "2026-10-23T09:00:00+08:00",
+                "revisions": null
+              }
+            ]
+          }
+        ],
+        "days": [
+          {
+            "date": "2026-10-22",
+            "session": "seed_day_0",
+            "filed_at": "0001-01-01T00:00:00Z",
+            "headline": "看样板",
+            "highlights": null,
+            "awareness": {
+              "habits": [
+                "答应时给出期限"
+              ],
+              "suggestions": null
+            }
+          }
+        ],
+        "weeks": [],
+        "merges": []
+      }
+    },
+    {
+      "input": {
+        "op": "tool",
+        "name": "day_ledger",
+        "session": "ses_day",
+        "args": {}
+      },
+      "text": "今天的交谈：\nx2.0（#2.0–#2.2）办公室装修［归入 P-0101 新办公室装修］：地板定了浅色木纹\nx2.5（#2.5–#2.6）预算［待用户确认：可能属于 P-0001］：还差两个部门\n今天的承诺：\n- C-0001（rev 1）用户答应：发报价单；归入 P-0101；出处 x2.0；引用 #2.1\n- C-0002（rev 1）对方答应用户：带样板；归入 P-0101；出处 x2.0；引用 #2.0\n"
+    },
+    {
+      "input": {
+        "op": "tool",
+        "name": "file_changes",
+        "session": "ses_day",
+        "args": {
+          "source": {
+            "from": "#9.0",
+            "to": "#9.0"
+          },
+          "exchanges": {
+            "create": [
+              {
+                "from": "#9.0",
+                "to": "#9.0",
+                "title": "失眠",
+                "summary": "失眠",
+                "projects": [
+                  {
+                    "match": "none"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "citations": [
+          {
+            "ref": "#9.0",
+            "speaker": "wearer",
+            "spoken_at": "2026-10-23T09:00:00+08:00",
+            "time_zone": "Asia/Shanghai"
+          }
+        ]
+      },
+      "text": "变更集没有被接受，什么都没有记下：\n- 交谈 x9.0 含健康信息（「失眠」）：这些字段只写事务，删去关于身心健康的整句（包括他人的），不要换个说法\n改正后用同一个 source 重交整个变更集。"
+    },
+    {
+      "input": {
+        "op": "state"
+      },
+      "value": {
+        "projects": [
+          {
+            "id": "P-0001",
+            "name": "年度预算",
+            "status": "财务部在汇总各部门预算",
+            "next_steps": null,
+            "open_questions": null,
+            "session": "ses_p"
+          },
+          {
+            "id": "P-0002",
+            "name": "办公室搬迁",
+            "status": "十二月搬",
+            "next_steps": null,
+            "open_questions": null
+          },
+          {
+            "id": "P-0003",
+            "name": "旧事",
+            "status": "早就结束了",
+            "next_steps": null,
+            "open_questions": null
+          },
+          {
+            "id": "P-0101",
+            "name": "新办公室装修",
+            "status": "",
+            "next_steps": null,
+            "open_questions": null
+          }
+        ],
+        "exchanges": [
+          {
+            "id": "x2026-10-24",
+            "session": "seed_days",
+            "date": "2026-10-24",
+            "filed_at": "0001-01-01T00:00:00Z",
+            "title": "当天摘要",
+            "summary": "王总来电：报价单收到了，合同推迟到 11 月 2 日寄出。",
+            "projects": [
+              {
+                "match": "none"
+              }
+            ],
+            "decisions": null,
+            "risks": null,
+            "awareness": null,
+            "changeset": "CS-0001"
+          },
+          {
+            "id": "x1.0",
+            "session": "seed_2026-08-01",
+            "date": "2026-08-01",
+            "filed_at": "0001-01-01T00:00:00Z",
+            "title": "收尾",
+            "summary": "",
+            "projects": [
+              {
+                "match": "existing",
+                "project": "P-0003"
+              }
+            ],
+            "decisions": null,
+            "risks": null,
+            "awareness": null,
+            "changeset": "CS-0001"
+          },
+          {
+            "id": "x2.0",
+            "session": "ses_day",
+            "date": "2026-10-23",
+            "from": "#2.0",
+            "to": "#2.2",
+            "filed_at": "2026-10-23T22:00:00+08:00",
+            "title": "办公室装修",
+            "summary": "地板定了浅色木纹",
+            "projects": [
+              {
+                "match": "new",
+                "project": "P-0101"
+              }
+            ],
+            "decisions": null,
+            "risks": null,
+            "awareness": null,
+            "changeset": "CS-0002"
+          },
+          {
+            "id": "x2.5",
+            "session": "ses_day",
+            "date": "2026-10-23",
+            "from": "#2.5",
+            "to": "#2.6",
+            "filed_at": "2026-10-23T22:00:00+08:00",
+            "title": "预算",
+            "summary": "还差两个部门",
+            "projects": [
+              {
+                "match": "unsure",
+                "candidate": "P-0001",
+                "proposed": "部门预算"
+              }
+            ],
+            "decisions": null,
+            "risks": null,
+            "awareness": null,
+            "changeset": "CS-0002"
+          }
+        ],
+        "commitments": [
+          {
+            "id": "C-9000",
+            "kind": "mine",
+            "content": "发报价单",
+            "project": "P-0001",
+            "status": "open",
+            "updated_at": "2026-10-23T22:00:00+08:00",
+            "revisions": [
+              {
+                "changeset": "CS-0001",
+                "author": "seed",
+                "op": "create",
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              }
+            ]
+          },
+          {
+            "id": "C-9001",
+            "kind": "theirs",
+            "content": "寄框架合同",
+            "due_date": "2026-10-26",
+            "project": "P-0001",
+            "status": "open",
+            "updated_at": "2026-10-23T22:00:00+08:00",
+            "revisions": [
+              {
+                "changeset": "CS-0001",
+                "author": "seed",
+                "op": "create",
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              }
+            ]
+          },
+          {
+            "id": "C-0001",
+            "kind": "mine",
+            "content": "发报价单",
+            "project": "P-0101",
+            "refs": [
+              "#2.1"
+            ],
+            "status": "open",
+            "exchange": "x2.0",
+            "session": "ses_day",
+            "spoken_at": "2026-10-23T09:01:00+08:00",
+            "updated_at": "2026-10-23T22:00:00+08:00",
+            "revisions": [
+              {
+                "changeset": "CS-0002",
+                "author": "xinli-day",
+                "op": "create",
+                "refs": [
+                  "#2.1"
+                ],
+                "spoken_at": "2026-10-23T09:01:00+08:00",
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              }
+            ]
+          },
+          {
+            "id": "C-0002",
+            "kind": "theirs",
+            "content": "带样板",
+            "project": "P-0101",
+            "refs": [
+              "#2.0"
+            ],
+            "status": "open",
+            "exchange": "x2.0",
+            "session": "ses_day",
+            "spoken_at": "2026-10-23T09:00:00+08:00",
+            "updated_at": "2026-10-23T22:00:00+08:00",
+            "revisions": [
+              {
+                "changeset": "CS-0002",
+                "author": "xinli-day",
+                "op": "create",
+                "refs": [
+                  "#2.0"
+                ],
+                "spoken_at": "2026-10-23T09:00:00+08:00",
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              }
+            ]
+          }
+        ],
+        "changesets": [
+          {
+            "id": "CS-0001",
+            "key": "seed:1",
+            "author": "seed",
+            "source": {},
+            "recorded_at": "2026-10-23T22:00:00+08:00",
+            "create_exchanges": [
+              {
+                "id": "x2026-10-24",
+                "session": "seed_days",
+                "date": "2026-10-24",
+                "filed_at": "0001-01-01T00:00:00Z",
+                "title": "当天摘要",
+                "summary": "王总来电：报价单收到了，合同推迟到 11 月 2 日寄出。",
+                "projects": [
+                  {
+                    "match": "none"
+                  }
+                ],
+                "decisions": null,
+                "risks": null,
+                "awareness": null
+              },
+              {
+                "id": "x1.0",
+                "session": "seed_2026-08-01",
+                "date": "2026-08-01",
+                "filed_at": "0001-01-01T00:00:00Z",
+                "title": "收尾",
+                "summary": "",
+                "projects": [
+                  {
+                    "match": "existing",
+                    "project": "P-0003"
+                  }
+                ],
+                "decisions": null,
+                "risks": null,
+                "awareness": null
+              }
+            ],
+            "create_commitments": [
+              {
+                "id": "C-9000",
+                "kind": "mine",
+                "content": "发报价单",
+                "project": "P-0001",
+                "status": "",
+                "revisions": null
+              },
+              {
+                "id": "C-9001",
+                "kind": "theirs",
+                "content": "寄框架合同",
+                "due_date": "2026-10-26",
+                "project": "P-0001",
+                "status": "",
+                "revisions": null
+              }
+            ]
+          },
+          {
+            "id": "CS-0002",
+            "session": "ses_day",
+            "key": "from:#2.0",
+            "author": "xinli-day",
+            "source": {
+              "from": "#2.0",
+              "to": "#2.6"
+            },
+            "recorded_at": "2026-10-23T22:00:00+08:00",
+            "create_exchanges": [
+              {
+                "id": "x2.0",
+                "session": "ses_day",
+                "date": "2026-10-23",
+                "from": "#2.0",
+                "to": "#2.2",
+                "filed_at": "2026-10-23T22:00:00+08:00",
+                "title": "办公室装修",
+                "summary": "地板定了浅色木纹",
+                "projects": [
+                  {
+                    "match": "new",
+                    "project": "P-0101"
+                  }
+                ],
+                "decisions": null,
+                "risks": null,
+                "awareness": null
+              },
+              {
+                "id": "x2.5",
+                "session": "ses_day",
+                "date": "2026-10-23",
+                "from": "#2.5",
+                "to": "#2.6",
+                "filed_at": "2026-10-23T22:00:00+08:00",
+                "title": "预算",
+                "summary": "还差两个部门",
+                "projects": [
+                  {
+                    "match": "unsure",
+                    "candidate": "P-0001",
+                    "proposed": "部门预算"
+                  }
+                ],
+                "decisions": null,
+                "risks": null,
+                "awareness": null
+              }
+            ],
+            "create_commitments": [
+              {
+                "id": "C-0001",
+                "kind": "mine",
+                "content": "发报价单",
+                "project": "P-0101",
+                "refs": [
+                  "#2.1"
+                ],
+                "status": "",
+                "exchange": "x2.0",
+                "session": "ses_day",
+                "spoken_at": "2026-10-23T09:01:00+08:00",
+                "revisions": null
+              },
+              {
+                "id": "C-0002",
+                "kind": "theirs",
+                "content": "带样板",
+                "project": "P-0101",
+                "refs": [
+                  "#2.0"
+                ],
+                "status": "",
+                "exchange": "x2.0",
+                "session": "ses_day",
+                "spoken_at": "2026-10-23T09:00:00+08:00",
+                "revisions": null
+              }
+            ]
+          }
+        ],
+        "days": [
+          {
+            "date": "2026-10-22",
+            "session": "seed_day_0",
+            "filed_at": "0001-01-01T00:00:00Z",
+            "headline": "看样板",
+            "highlights": null,
+            "awareness": {
+              "habits": [
+                "答应时给出期限"
+              ],
+              "suggestions": null
+            }
+          }
+        ],
+        "weeks": [],
+        "merges": []
+      }
+    },
+    {
+      "input": {
+        "op": "tool",
+        "name": "file_changes",
+        "session": "ses_day",
+        "args": {
+          "source": {
+            "from": "#10.0",
+            "to": "#10.0"
+          }
+        },
+        "citations": [
+          {
+            "ref": "#10.0",
+            "speaker": "wearer",
+            "spoken_at": "2026-10-23T09:00:00+08:00",
+            "time_zone": "Asia/Shanghai"
+          }
+        ]
+      },
+      "text": "已收下变更集 CS-0003（来源 #10.0–#10.0）：\n这个变更集没有新建、修订或关闭任何承诺。交谈里用户答应了别人、或别人答应了用户要做的事时，用同一个 source 重交，交谈与承诺写在同一个变更集里。",
+      "meta": {
+        "yanshi/ack": {
+          "from": "10.0",
+          "stream": "transcript",
+          "through": "10.0"
+        }
+      }
+    },
+    {
+      "input": {
+        "op": "tool",
+        "name": "file_changes",
+        "session": "ses_day",
+        "args": {
+          "source": {
+            "day": true
+          }
+        }
+      },
+      "text": "已收下变更集 CS-0004（当天整理）：\n这个变更集没有新建、修订或关闭任何承诺。交谈里用户答应了别人、或别人答应了用户要做的事时，用同一个 source 重交，交谈与承诺写在同一个变更集里。"
+    },
+    {
+      "input": {
+        "op": "submitted",
+        "args": {
+          "session": "ses_day",
+          "input": "整理交谈"
+        }
+      },
+      "value": {}
+    },
+    {
+      "input": {
+        "op": "tool",
+        "name": "file_changes",
+        "session": "ses_day",
+        "args": []
+      },
+      "text": "参数无效：json: cannot unmarshal array into Go value of type xinlimock.changesIn"
+    },
+    {
+      "input": {
+        "op": "tool",
+        "name": "file_day",
+        "session": "ses_day",
+        "args": {
+          "day": {
+            "headline": "装修定稿"
+          }
+        }
+      },
+      "text": "没有收下：白天的\"整理交谈\"不交当天总览，当天总览只在\"整理今天\"中交出"
+    },
+    {
+      "input": {
+        "op": "submitted",
+        "args": {
+          "session": "ses_day",
+          "input": "整理今天"
+        }
+      },
+      "value": {}
+    },
+    {
+      "input": {
+        "op": "tool",
+        "name": "file_day",
+        "session": "ses_day",
+        "args": {
+          "day": {
+            "headline": "装修定稿"
+          }
+        }
+      },
+      "text": "已收到 2026-10-23 的整理（2 段交谈）"
+    },
+    {
+      "input": {
+        "op": "state"
+      },
+      "value": {
+        "projects": [
+          {
+            "id": "P-0001",
+            "name": "年度预算",
+            "status": "财务部在汇总各部门预算",
+            "next_steps": null,
+            "open_questions": null,
+            "session": "ses_p"
+          },
+          {
+            "id": "P-0002",
+            "name": "办公室搬迁",
+            "status": "十二月搬",
+            "next_steps": null,
+            "open_questions": null
+          },
+          {
+            "id": "P-0003",
+            "name": "旧事",
+            "status": "早就结束了",
+            "next_steps": null,
+            "open_questions": null
+          },
+          {
+            "id": "P-0101",
+            "name": "新办公室装修",
+            "status": "",
+            "next_steps": null,
+            "open_questions": null
+          }
+        ],
+        "exchanges": [
+          {
+            "id": "x2026-10-24",
+            "session": "seed_days",
+            "date": "2026-10-24",
+            "filed_at": "0001-01-01T00:00:00Z",
+            "title": "当天摘要",
+            "summary": "王总来电：报价单收到了，合同推迟到 11 月 2 日寄出。",
+            "projects": [
+              {
+                "match": "none"
+              }
+            ],
+            "decisions": null,
+            "risks": null,
+            "awareness": null,
+            "changeset": "CS-0001"
+          },
+          {
+            "id": "x1.0",
+            "session": "seed_2026-08-01",
+            "date": "2026-08-01",
+            "filed_at": "0001-01-01T00:00:00Z",
+            "title": "收尾",
+            "summary": "",
+            "projects": [
+              {
+                "match": "existing",
+                "project": "P-0003"
+              }
+            ],
+            "decisions": null,
+            "risks": null,
+            "awareness": null,
+            "changeset": "CS-0001"
+          },
+          {
+            "id": "x2.0",
+            "session": "ses_day",
+            "date": "2026-10-23",
+            "from": "#2.0",
+            "to": "#2.2",
+            "filed_at": "2026-10-23T22:00:00+08:00",
+            "title": "办公室装修",
+            "summary": "地板定了浅色木纹",
+            "projects": [
+              {
+                "match": "new",
+                "project": "P-0101"
+              }
+            ],
+            "decisions": null,
+            "risks": null,
+            "awareness": null,
+            "changeset": "CS-0002"
+          },
+          {
+            "id": "x2.5",
+            "session": "ses_day",
+            "date": "2026-10-23",
+            "from": "#2.5",
+            "to": "#2.6",
+            "filed_at": "2026-10-23T22:00:00+08:00",
+            "title": "预算",
+            "summary": "还差两个部门",
+            "projects": [
+              {
+                "match": "unsure",
+                "candidate": "P-0001",
+                "proposed": "部门预算"
+              }
+            ],
+            "decisions": null,
+            "risks": null,
+            "awareness": null,
+            "changeset": "CS-0002"
+          }
+        ],
+        "commitments": [
+          {
+            "id": "C-9000",
+            "kind": "mine",
+            "content": "发报价单",
+            "project": "P-0001",
+            "status": "open",
+            "updated_at": "2026-10-23T22:00:00+08:00",
+            "revisions": [
+              {
+                "changeset": "CS-0001",
+                "author": "seed",
+                "op": "create",
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              }
+            ]
+          },
+          {
+            "id": "C-9001",
+            "kind": "theirs",
+            "content": "寄框架合同",
+            "due_date": "2026-10-26",
+            "project": "P-0001",
+            "status": "open",
+            "updated_at": "2026-10-23T22:00:00+08:00",
+            "revisions": [
+              {
+                "changeset": "CS-0001",
+                "author": "seed",
+                "op": "create",
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              }
+            ]
+          },
+          {
+            "id": "C-0001",
+            "kind": "mine",
+            "content": "发报价单",
+            "project": "P-0101",
+            "refs": [
+              "#2.1"
+            ],
+            "status": "open",
+            "exchange": "x2.0",
+            "session": "ses_day",
+            "spoken_at": "2026-10-23T09:01:00+08:00",
+            "updated_at": "2026-10-23T22:00:00+08:00",
+            "revisions": [
+              {
+                "changeset": "CS-0002",
+                "author": "xinli-day",
+                "op": "create",
+                "refs": [
+                  "#2.1"
+                ],
+                "spoken_at": "2026-10-23T09:01:00+08:00",
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              }
+            ]
+          },
+          {
+            "id": "C-0002",
+            "kind": "theirs",
+            "content": "带样板",
+            "project": "P-0101",
+            "refs": [
+              "#2.0"
+            ],
+            "status": "open",
+            "exchange": "x2.0",
+            "session": "ses_day",
+            "spoken_at": "2026-10-23T09:00:00+08:00",
+            "updated_at": "2026-10-23T22:00:00+08:00",
+            "revisions": [
+              {
+                "changeset": "CS-0002",
+                "author": "xinli-day",
+                "op": "create",
+                "refs": [
+                  "#2.0"
+                ],
+                "spoken_at": "2026-10-23T09:00:00+08:00",
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              }
+            ]
+          }
+        ],
+        "changesets": [
+          {
+            "id": "CS-0001",
+            "key": "seed:1",
+            "author": "seed",
+            "source": {},
+            "recorded_at": "2026-10-23T22:00:00+08:00",
+            "create_exchanges": [
+              {
+                "id": "x2026-10-24",
+                "session": "seed_days",
+                "date": "2026-10-24",
+                "filed_at": "0001-01-01T00:00:00Z",
+                "title": "当天摘要",
+                "summary": "王总来电：报价单收到了，合同推迟到 11 月 2 日寄出。",
+                "projects": [
+                  {
+                    "match": "none"
+                  }
+                ],
+                "decisions": null,
+                "risks": null,
+                "awareness": null
+              },
+              {
+                "id": "x1.0",
+                "session": "seed_2026-08-01",
+                "date": "2026-08-01",
+                "filed_at": "0001-01-01T00:00:00Z",
+                "title": "收尾",
+                "summary": "",
+                "projects": [
+                  {
+                    "match": "existing",
+                    "project": "P-0003"
+                  }
+                ],
+                "decisions": null,
+                "risks": null,
+                "awareness": null
+              }
+            ],
+            "create_commitments": [
+              {
+                "id": "C-9000",
+                "kind": "mine",
+                "content": "发报价单",
+                "project": "P-0001",
+                "status": "",
+                "revisions": null
+              },
+              {
+                "id": "C-9001",
+                "kind": "theirs",
+                "content": "寄框架合同",
+                "due_date": "2026-10-26",
+                "project": "P-0001",
+                "status": "",
+                "revisions": null
+              }
+            ]
+          },
+          {
+            "id": "CS-0002",
+            "session": "ses_day",
+            "key": "from:#2.0",
+            "author": "xinli-day",
+            "source": {
+              "from": "#2.0",
+              "to": "#2.6"
+            },
+            "recorded_at": "2026-10-23T22:00:00+08:00",
+            "create_exchanges": [
+              {
+                "id": "x2.0",
+                "session": "ses_day",
+                "date": "2026-10-23",
+                "from": "#2.0",
+                "to": "#2.2",
+                "filed_at": "2026-10-23T22:00:00+08:00",
+                "title": "办公室装修",
+                "summary": "地板定了浅色木纹",
+                "projects": [
+                  {
+                    "match": "new",
+                    "project": "P-0101"
+                  }
+                ],
+                "decisions": null,
+                "risks": null,
+                "awareness": null
+              },
+              {
+                "id": "x2.5",
+                "session": "ses_day",
+                "date": "2026-10-23",
+                "from": "#2.5",
+                "to": "#2.6",
+                "filed_at": "2026-10-23T22:00:00+08:00",
+                "title": "预算",
+                "summary": "还差两个部门",
+                "projects": [
+                  {
+                    "match": "unsure",
+                    "candidate": "P-0001",
+                    "proposed": "部门预算"
+                  }
+                ],
+                "decisions": null,
+                "risks": null,
+                "awareness": null
+              }
+            ],
+            "create_commitments": [
+              {
+                "id": "C-0001",
+                "kind": "mine",
+                "content": "发报价单",
+                "project": "P-0101",
+                "refs": [
+                  "#2.1"
+                ],
+                "status": "",
+                "exchange": "x2.0",
+                "session": "ses_day",
+                "spoken_at": "2026-10-23T09:01:00+08:00",
+                "revisions": null
+              },
+              {
+                "id": "C-0002",
+                "kind": "theirs",
+                "content": "带样板",
+                "project": "P-0101",
+                "refs": [
+                  "#2.0"
+                ],
+                "status": "",
+                "exchange": "x2.0",
+                "session": "ses_day",
+                "spoken_at": "2026-10-23T09:00:00+08:00",
+                "revisions": null
+              }
+            ]
+          },
+          {
+            "id": "CS-0003",
+            "session": "ses_day",
+            "key": "from:#10.0",
+            "author": "xinli-day",
+            "source": {
+              "from": "#10.0",
+              "to": "#10.0"
+            },
+            "recorded_at": "2026-10-23T22:00:00+08:00"
+          },
+          {
+            "id": "CS-0004",
+            "session": "ses_day",
+            "key": "day",
+            "author": "xinli-day",
+            "source": {
+              "day": true
+            },
+            "recorded_at": "2026-10-23T22:00:00+08:00"
+          }
+        ],
+        "days": [
+          {
+            "date": "2026-10-23",
+            "session": "ses_day",
+            "filed_at": "2026-10-23T22:00:00+08:00",
+            "headline": "装修定稿",
+            "highlights": null,
+            "awareness": {
+              "habits": null,
+              "suggestions": null
+            }
+          },
+          {
+            "date": "2026-10-22",
+            "session": "seed_day_0",
+            "filed_at": "0001-01-01T00:00:00Z",
+            "headline": "看样板",
+            "highlights": null,
+            "awareness": {
+              "habits": [
+                "答应时给出期限"
+              ],
+              "suggestions": null
+            }
+          }
+        ],
+        "weeks": [],
+        "merges": []
+      }
+    },
+    {
+      "input": {
+        "op": "bind",
+        "args": {
+          "project": "P-0101",
+          "session": "ses_reno"
+        }
+      },
+      "value": {}
+    },
+    {
+      "input": {
+        "op": "tool",
+        "name": "day_summary",
+        "session": "ses_reno",
+        "args": {
+          "date": "2026-10-23"
+        }
+      },
+      "text": "交谈 x2.0 办公室装修\n地板定了浅色木纹\n\n未完成的承诺：\n- C-0001（rev 1）用户答应：发报价单\n- C-0002（rev 1）对方答应用户：带样板\n"
+    },
+    {
+      "input": {
+        "op": "tool",
+        "name": "set_status",
+        "session": "ses_reno",
+        "args": {
+          "status": "设计定稿，等报价",
+          "next_steps": [
+            "发报价单"
+          ]
+        }
+      },
+      "text": "已更新 P-0101 的现状"
+    },
+    {
+      "input": {
+        "op": "tool",
+        "name": "project_digest",
+        "session": "ses_day",
+        "args": {
+          "project": "P-0101"
+        }
+      },
+      "text": "P-0101 新办公室装修：设计定稿，等报价（未完成的承诺 2 条）\n下一步：发报价单\n\n2026-10-23 x2.0 办公室装修\n地板定了浅色木纹\n\n未完成的承诺：\n- C-0001（rev 1）用户答应：发报价单\n- C-0002（rev 1）对方答应用户：带样板\n"
+    },
+    {
+      "input": {
+        "op": "tool",
+        "name": "recent_days",
+        "session": "ses_day",
+        "args": {}
+      },
+      "text": "2026-10-22：看样板\n2026-10-23：装修定稿\n  [归入 P-0101 新办公室装修] 办公室装修：地板定了浅色木纹\n  [待用户确认：可能属于 P-0001] 预算：还差两个部门\n2026-10-24：王总来电：报价单收到了，合同推迟到 11 月 2 日寄出。\n"
+    },
+    {
+      "input": {
+        "op": "tool",
+        "name": "update_commitments",
+        "session": "ses_p",
+        "args": {
+          "date": "2026-10-24",
+          "close": [
+            {
+              "id": "C-9000",
+              "rev": 1,
+              "status": "done",
+              "exchanges": [
+                "x2026-10-24"
+              ]
+            }
+          ],
+          "revise": [
+            {
+              "id": "C-9001",
+              "rev": 1,
+              "due_date": "2026-11-02",
+              "exchanges": [
+                "x2026-10-24"
+              ]
+            }
+          ]
+        }
+      },
+      "text": "已收下变更集 CS-0005（2026-10-24 的对账）：\n- 修订 C-9001，现在 rev 2：对方答应用户：寄框架合同，期限 2026-11-02\n- 关闭 C-9000（done）"
+    },
+    {
+      "input": {
+        "op": "tool",
+        "name": "list_commitments",
+        "session": "ses_day",
+        "args": {
+          "status": "all"
+        }
+      },
+      "text": "C-9001 | theirs | open | 寄框架合同 | 对方：无 | 期限：2026-11-02（星期一） | 项目：P-0001 年度预算 | 修订 2 次\nC-9000 | mine | done | 发报价单 | 对方：无 | 期限：无 | 项目：P-0001 年度预算 | 修订 2 次\nC-0002 | theirs | open | 带样板 | 对方：无 | 期限：无 | 项目：P-0101 新办公室装修 | 修订 1 次\nC-0001 | mine | open | 发报价单 | 对方：无 | 期限：无 | 项目：P-0101 新办公室装修 | 修订 1 次\n共 4 条；下一页 after：无"
+    },
+    {
+      "input": {
+        "op": "tool",
+        "name": "list_commitments",
+        "session": "ses_day",
+        "args": {
+          "after": "missing"
+        }
+      },
+      "text": "after 无效：请从第一页重新查询"
+    },
+    {
+      "input": {
+        "op": "tool",
+        "name": "commitment_history",
+        "session": "ses_day",
+        "args": {
+          "id": "C-9001"
+        }
+      },
+      "text": "当前值：C-9001 | theirs | open | 寄框架合同 | 对方：无 | 期限：2026-11-02（星期一） | 项目：P-0001 年度预算 | 修订 2 次\n- 说话时间：未记录；记录时间：2026-10-23T22:00:00+08:00；新建；内容：无 → 寄框架合同；对方：无 → 无；期限：无 → 2026-10-26（星期一）；期限说法：无 → 无；责任方：无 → theirs；项目：无 → P-0001；状态：无 → open；依据：预置\n- 说话时间：未记录；记录时间：2026-10-23T22:00:00+08:00；改期；期限：2026-10-26（星期一） → 2026-11-02（星期一）；依据：摘要；交谈引用：ses_p x2026-10-24\n"
+    },
+    {
+      "input": {
+        "op": "resolve",
+        "args": {
+          "session": "ses_day",
+          "exchange": "x2.5",
+          "project": ""
+        }
+      },
+      "value": {}
+    },
+    {
+      "input": {
+        "op": "resolve",
+        "args": {
+          "session": "ses_day",
+          "exchange": "x2.5",
+          "project": ""
+        }
+      },
+      "error": "exchange x2.5 of ses_day is not pending"
+    },
+    {
+      "input": {
+        "op": "edit",
+        "args": {
+          "id": "C-0001",
+          "due_date": "2026-10-30"
+        }
+      },
+      "value": {}
+    },
+    {
+      "input": {
+        "op": "edit",
+        "args": {
+          "id": "C-0002",
+          "status": "done"
+        }
+      },
+      "value": {}
+    },
+    {
+      "input": {
+        "op": "edit",
+        "args": {
+          "id": "missing",
+          "status": "done"
+        }
+      },
+      "error": "no commitment missing"
+    },
+    {
+      "input": {
+        "op": "state"
+      },
+      "value": {
+        "projects": [
+          {
+            "id": "P-0001",
+            "name": "年度预算",
+            "status": "财务部在汇总各部门预算",
+            "next_steps": null,
+            "open_questions": null,
+            "session": "ses_p"
+          },
+          {
+            "id": "P-0002",
+            "name": "办公室搬迁",
+            "status": "十二月搬",
+            "next_steps": null,
+            "open_questions": null
+          },
+          {
+            "id": "P-0003",
+            "name": "旧事",
+            "status": "早就结束了",
+            "next_steps": null,
+            "open_questions": null
+          },
+          {
+            "id": "P-0101",
+            "name": "新办公室装修",
+            "status": "设计定稿，等报价",
+            "next_steps": [
+              "发报价单"
+            ],
+            "open_questions": null,
+            "status_at": "2026-10-23T22:00:00+08:00",
+            "session": "ses_reno"
+          },
+          {
+            "id": "P-0102",
+            "name": "部门预算",
+            "status": "",
+            "next_steps": null,
+            "open_questions": null
+          }
+        ],
+        "exchanges": [
+          {
+            "id": "x2026-10-24",
+            "session": "seed_days",
+            "date": "2026-10-24",
+            "filed_at": "0001-01-01T00:00:00Z",
+            "title": "当天摘要",
+            "summary": "王总来电：报价单收到了，合同推迟到 11 月 2 日寄出。",
+            "projects": [
+              {
+                "match": "none"
+              }
+            ],
+            "decisions": null,
+            "risks": null,
+            "awareness": null,
+            "changeset": "CS-0001"
+          },
+          {
+            "id": "x1.0",
+            "session": "seed_2026-08-01",
+            "date": "2026-08-01",
+            "filed_at": "0001-01-01T00:00:00Z",
+            "title": "收尾",
+            "summary": "",
+            "projects": [
+              {
+                "match": "existing",
+                "project": "P-0003"
+              }
+            ],
+            "decisions": null,
+            "risks": null,
+            "awareness": null,
+            "changeset": "CS-0001"
+          },
+          {
+            "id": "x2.0",
+            "session": "ses_day",
+            "date": "2026-10-23",
+            "from": "#2.0",
+            "to": "#2.2",
+            "filed_at": "2026-10-23T22:00:00+08:00",
+            "title": "办公室装修",
+            "summary": "地板定了浅色木纹",
+            "projects": [
+              {
+                "match": "new",
+                "project": "P-0101"
+              }
+            ],
+            "decisions": null,
+            "risks": null,
+            "awareness": null,
+            "changeset": "CS-0002"
+          },
+          {
+            "id": "x2.5",
+            "session": "ses_day",
+            "date": "2026-10-23",
+            "from": "#2.5",
+            "to": "#2.6",
+            "filed_at": "2026-10-23T22:00:00+08:00",
+            "title": "预算",
+            "summary": "还差两个部门",
+            "projects": [
+              {
+                "match": "unsure",
+                "project": "P-0102",
+                "candidate": "P-0001",
+                "proposed": "部门预算"
+              }
+            ],
+            "decisions": null,
+            "risks": null,
+            "awareness": null,
+            "changeset": "CS-0002"
+          }
+        ],
+        "commitments": [
+          {
+            "id": "C-9000",
+            "kind": "mine",
+            "content": "发报价单",
+            "project": "P-0001",
+            "status": "done",
+            "updated_at": "2026-10-23T22:00:00+08:00",
+            "revisions": [
+              {
+                "changeset": "CS-0001",
+                "author": "seed",
+                "op": "create",
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              },
+              {
+                "changeset": "CS-0005",
+                "author": "xinli-project",
+                "op": "close",
+                "fields": {
+                  "status": "done"
+                },
+                "exchanges": [
+                  "x2026-10-24"
+                ],
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              }
+            ]
+          },
+          {
+            "id": "C-9001",
+            "kind": "theirs",
+            "content": "寄框架合同",
+            "due_date": "2026-11-02",
+            "project": "P-0001",
+            "status": "open",
+            "updated_at": "2026-10-23T22:00:00+08:00",
+            "revisions": [
+              {
+                "changeset": "CS-0001",
+                "author": "seed",
+                "op": "create",
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              },
+              {
+                "changeset": "CS-0005",
+                "author": "xinli-project",
+                "op": "revise",
+                "fields": {
+                  "due_date": "2026-11-02"
+                },
+                "exchanges": [
+                  "x2026-10-24"
+                ],
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              }
+            ]
+          },
+          {
+            "id": "C-0001",
+            "kind": "mine",
+            "content": "发报价单",
+            "due_date": "2026-10-30",
+            "project": "P-0101",
+            "refs": [
+              "#2.1"
+            ],
+            "status": "open",
+            "exchange": "x2.0",
+            "session": "ses_day",
+            "spoken_at": "2026-10-23T09:01:00+08:00",
+            "updated_at": "2026-10-23T22:00:00+08:00",
+            "revisions": [
+              {
+                "changeset": "CS-0002",
+                "author": "xinli-day",
+                "op": "create",
+                "refs": [
+                  "#2.1"
+                ],
+                "spoken_at": "2026-10-23T09:01:00+08:00",
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              },
+              {
+                "changeset": "CS-0007",
+                "author": "user",
+                "op": "revise",
+                "fields": {
+                  "due_date": "2026-10-30",
+                  "due_text": ""
+                },
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              }
+            ],
+            "locked": [
+              "due"
+            ]
+          },
+          {
+            "id": "C-0002",
+            "kind": "theirs",
+            "content": "带样板",
+            "project": "P-0101",
+            "refs": [
+              "#2.0"
+            ],
+            "status": "done",
+            "exchange": "x2.0",
+            "session": "ses_day",
+            "spoken_at": "2026-10-23T09:00:00+08:00",
+            "updated_at": "2026-10-23T22:00:00+08:00",
+            "revisions": [
+              {
+                "changeset": "CS-0002",
+                "author": "xinli-day",
+                "op": "create",
+                "refs": [
+                  "#2.0"
+                ],
+                "spoken_at": "2026-10-23T09:00:00+08:00",
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              },
+              {
+                "changeset": "CS-0008",
+                "author": "user",
+                "op": "close",
+                "fields": {
+                  "status": "done"
+                },
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              }
+            ],
+            "locked": [
+              "status"
+            ]
+          }
+        ],
+        "changesets": [
+          {
+            "id": "CS-0001",
+            "key": "seed:1",
+            "author": "seed",
+            "source": {},
+            "recorded_at": "2026-10-23T22:00:00+08:00",
+            "create_exchanges": [
+              {
+                "id": "x2026-10-24",
+                "session": "seed_days",
+                "date": "2026-10-24",
+                "filed_at": "0001-01-01T00:00:00Z",
+                "title": "当天摘要",
+                "summary": "王总来电：报价单收到了，合同推迟到 11 月 2 日寄出。",
+                "projects": [
+                  {
+                    "match": "none"
+                  }
+                ],
+                "decisions": null,
+                "risks": null,
+                "awareness": null
+              },
+              {
+                "id": "x1.0",
+                "session": "seed_2026-08-01",
+                "date": "2026-08-01",
+                "filed_at": "0001-01-01T00:00:00Z",
+                "title": "收尾",
+                "summary": "",
+                "projects": [
+                  {
+                    "match": "existing",
+                    "project": "P-0003"
+                  }
+                ],
+                "decisions": null,
+                "risks": null,
+                "awareness": null
+              }
+            ],
+            "create_commitments": [
+              {
+                "id": "C-9000",
+                "kind": "mine",
+                "content": "发报价单",
+                "project": "P-0001",
+                "status": "",
+                "revisions": null
+              },
+              {
+                "id": "C-9001",
+                "kind": "theirs",
+                "content": "寄框架合同",
+                "due_date": "2026-10-26",
+                "project": "P-0001",
+                "status": "",
+                "revisions": null
+              }
+            ]
+          },
+          {
+            "id": "CS-0002",
+            "session": "ses_day",
+            "key": "from:#2.0",
+            "author": "xinli-day",
+            "source": {
+              "from": "#2.0",
+              "to": "#2.6"
+            },
+            "recorded_at": "2026-10-23T22:00:00+08:00",
+            "create_exchanges": [
+              {
+                "id": "x2.0",
+                "session": "ses_day",
+                "date": "2026-10-23",
+                "from": "#2.0",
+                "to": "#2.2",
+                "filed_at": "2026-10-23T22:00:00+08:00",
+                "title": "办公室装修",
+                "summary": "地板定了浅色木纹",
+                "projects": [
+                  {
+                    "match": "new",
+                    "project": "P-0101"
+                  }
+                ],
+                "decisions": null,
+                "risks": null,
+                "awareness": null
+              },
+              {
+                "id": "x2.5",
+                "session": "ses_day",
+                "date": "2026-10-23",
+                "from": "#2.5",
+                "to": "#2.6",
+                "filed_at": "2026-10-23T22:00:00+08:00",
+                "title": "预算",
+                "summary": "还差两个部门",
+                "projects": [
+                  {
+                    "match": "unsure",
+                    "candidate": "P-0001",
+                    "proposed": "部门预算"
+                  }
+                ],
+                "decisions": null,
+                "risks": null,
+                "awareness": null
+              }
+            ],
+            "create_commitments": [
+              {
+                "id": "C-0001",
+                "kind": "mine",
+                "content": "发报价单",
+                "project": "P-0101",
+                "refs": [
+                  "#2.1"
+                ],
+                "status": "",
+                "exchange": "x2.0",
+                "session": "ses_day",
+                "spoken_at": "2026-10-23T09:01:00+08:00",
+                "revisions": null
+              },
+              {
+                "id": "C-0002",
+                "kind": "theirs",
+                "content": "带样板",
+                "project": "P-0101",
+                "refs": [
+                  "#2.0"
+                ],
+                "status": "",
+                "exchange": "x2.0",
+                "session": "ses_day",
+                "spoken_at": "2026-10-23T09:00:00+08:00",
+                "revisions": null
+              }
+            ]
+          },
+          {
+            "id": "CS-0003",
+            "session": "ses_day",
+            "key": "from:#10.0",
+            "author": "xinli-day",
+            "source": {
+              "from": "#10.0",
+              "to": "#10.0"
+            },
+            "recorded_at": "2026-10-23T22:00:00+08:00"
+          },
+          {
+            "id": "CS-0004",
+            "session": "ses_day",
+            "key": "day",
+            "author": "xinli-day",
+            "source": {
+              "day": true
+            },
+            "recorded_at": "2026-10-23T22:00:00+08:00"
+          },
+          {
+            "id": "CS-0005",
+            "session": "ses_p",
+            "key": "project:2026-10-24",
+            "author": "xinli-project",
+            "source": {
+              "date": "2026-10-24"
+            },
+            "recorded_at": "2026-10-23T22:00:00+08:00",
+            "revise_commitments": [
+              {
+                "id": "C-9001",
+                "rev": 1,
+                "fields": {
+                  "due_date": "2026-11-02"
+                },
+                "exchanges": [
+                  "x2026-10-24"
+                ]
+              }
+            ],
+            "close_commitments": [
+              {
+                "id": "C-9000",
+                "rev": 1,
+                "status": "done",
+                "exchanges": [
+                  "x2026-10-24"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "CS-0006",
+            "session": "ses_day",
+            "key": "user:6",
+            "author": "user",
+            "source": {},
+            "recorded_at": "2026-10-23T22:00:00+08:00",
+            "revise_exchanges": [
+              {
+                "id": "x2.5",
+                "projects": [
+                  {
+                    "match": "unsure",
+                    "project": "P-0102",
+                    "candidate": "P-0001",
+                    "proposed": "部门预算"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "CS-0007",
+            "key": "user:7",
+            "author": "user",
+            "source": {},
+            "recorded_at": "2026-10-23T22:00:00+08:00",
+            "revise_commitments": [
+              {
+                "id": "C-0001",
+                "rev": 1,
+                "fields": {
+                  "due_date": "2026-10-30",
+                  "due_text": ""
+                }
+              }
+            ]
+          },
+          {
+            "id": "CS-0008",
+            "key": "user:8",
+            "author": "user",
+            "source": {},
+            "recorded_at": "2026-10-23T22:00:00+08:00",
+            "close_commitments": [
+              {
+                "id": "C-0002",
+                "rev": 1,
+                "status": "done"
+              }
+            ]
+          }
+        ],
+        "days": [
+          {
+            "date": "2026-10-23",
+            "session": "ses_day",
+            "filed_at": "2026-10-23T22:00:00+08:00",
+            "headline": "装修定稿",
+            "highlights": null,
+            "awareness": {
+              "habits": null,
+              "suggestions": null
+            }
+          },
+          {
+            "date": "2026-10-22",
+            "session": "seed_day_0",
+            "filed_at": "0001-01-01T00:00:00Z",
+            "headline": "看样板",
+            "highlights": null,
+            "awareness": {
+              "habits": [
+                "答应时给出期限"
+              ],
+              "suggestions": null
+            }
+          }
+        ],
+        "weeks": [],
+        "merges": []
+      }
+    },
+    {
+      "input": {
+        "op": "tool",
+        "name": "week_overview",
+        "session": "ses_w",
+        "args": {}
+      },
+      "text": "2026-10-22：看样板\n  沟通习惯：答应时给出期限\n2026-10-23：装修定稿\n  [归入 P-0101 新办公室装修] 办公室装修\n  [归入 P-0102 部门预算] 预算\n"
+    },
+    {
+      "input": {
+        "op": "tool",
+        "name": "similar_projects",
+        "session": "ses_w",
+        "args": {}
+      },
+      "text": "第 1 对：\n  P-0001 年度预算：财务部在汇总各部门预算（未完成的承诺 1 条）\n  P-0102 部门预算：（还没有现状）（未完成的承诺 0 条）\n    最近的交谈：2026-10-23 预算\n第 2 对：\n  P-0002 办公室搬迁：十二月搬（未完成的承诺 0 条）\n  P-0101 新办公室装修：设计定稿，等报价（未完成的承诺 1 条）\n    最近的交谈：2026-10-23 办公室装修\n第 3 对：\n  P-0001 年度预算：财务部在汇总各部门预算（未完成的承诺 1 条）\n  P-0002 办公室搬迁：十二月搬（未完成的承诺 0 条）\n第 4 对：\n  P-0001 年度预算：财务部在汇总各部门预算（未完成的承诺 1 条）\n  P-0003 旧事：早就结束了（未完成的承诺 0 条）\n    最近的交谈：2026-08-01 收尾\n第 5 对：\n  P-0001 年度预算：财务部在汇总各部门预算（未完成的承诺 1 条）\n  P-0101 新办公室装修：设计定稿，等报价（未完成的承诺 1 条）\n    最近的交谈：2026-10-23 办公室装修\n"
+    },
+    {
+      "input": {
+        "op": "tool",
+        "name": "propose_merge",
+        "session": "ses_w",
+        "args": {
+          "into": "P-0101",
+          "from": "P-0002",
+          "reason": "同一次搬迁"
+        }
+      },
+      "text": "已提议把 P-0002 办公室搬迁 并入 P-0101 新办公室装修，等用户确认（M-0001）"
+    },
+    {
+      "input": {
+        "op": "resolve_merge",
+        "args": {
+          "id": "M-0001",
+          "accept": true
+        }
+      },
+      "value": {}
+    },
+    {
+      "input": {
+        "op": "resolve_merge",
+        "args": {
+          "id": "M-0001",
+          "accept": true
+        }
+      },
+      "error": "merge M-0001 is not pending"
+    },
+    {
+      "input": {
+        "op": "tool",
+        "name": "file_week",
+        "session": "ses_w",
+        "args": {
+          "habits": [
+            {
+              "habit": "给出期限",
+              "days": [
+                "2026-10-21",
+                "2026-10-22"
+              ]
+            },
+            {
+              "habit": "发纪要",
+              "days": [
+                "2026-10-22",
+                "2026-10-22"
+              ]
+            }
+          ]
+        }
+      },
+      "text": "已收到本周的觉察（1 个习惯）；只出现一天的不算习惯，没有收录：发纪要"
+    },
+    {
+      "input": {
+        "op": "archive",
+        "args": {}
+      },
+      "value": [
+        "P-0003"
+      ]
+    },
+    {
+      "input": {
+        "op": "week"
+      },
+      "value": {
+        "from": "2026-10-17",
+        "rewrite": [
+          {
+            "id": "P-0101",
+            "name": "新办公室装修",
+            "status": "设计定稿，等报价",
+            "next_steps": [
+              "发报价单"
+            ],
+            "open_questions": null,
+            "status_at": "2026-10-23T22:00:00+08:00",
+            "session": "ses_reno"
+          }
+        ],
+        "session": ""
+      }
+    },
+    {
+      "input": {
+        "op": "bind_week",
+        "args": {
+          "from": "2026-10-17",
+          "session": "ses_w"
+        }
+      },
+      "value": {}
+    },
+    {
+      "input": {
+        "op": "week"
+      },
+      "value": {
+        "from": "2026-10-17",
+        "rewrite": [
+          {
+            "id": "P-0101",
+            "name": "新办公室装修",
+            "status": "设计定稿，等报价",
+            "next_steps": [
+              "发报价单"
+            ],
+            "open_questions": null,
+            "status_at": "2026-10-23T22:00:00+08:00",
+            "session": "ses_reno"
+          }
+        ],
+        "session": "ses_w"
+      }
+    },
+    {
+      "input": {
+        "op": "state"
+      },
+      "value": {
+        "projects": [
+          {
+            "id": "P-0001",
+            "name": "年度预算",
+            "status": "财务部在汇总各部门预算",
+            "next_steps": null,
+            "open_questions": null,
+            "session": "ses_p"
+          },
+          {
+            "id": "P-0002",
+            "name": "办公室搬迁",
+            "status": "十二月搬",
+            "next_steps": null,
+            "open_questions": null,
+            "merged_into": "P-0101"
+          },
+          {
+            "id": "P-0003",
+            "name": "旧事",
+            "status": "早就结束了",
+            "next_steps": null,
+            "open_questions": null,
+            "archived": true
+          },
+          {
+            "id": "P-0101",
+            "name": "新办公室装修",
+            "status": "设计定稿，等报价",
+            "next_steps": [
+              "发报价单"
+            ],
+            "open_questions": null,
+            "status_at": "2026-10-23T22:00:00+08:00",
+            "session": "ses_reno"
+          },
+          {
+            "id": "P-0102",
+            "name": "部门预算",
+            "status": "",
+            "next_steps": null,
+            "open_questions": null
+          }
+        ],
+        "exchanges": [
+          {
+            "id": "x2026-10-24",
+            "session": "seed_days",
+            "date": "2026-10-24",
+            "filed_at": "0001-01-01T00:00:00Z",
+            "title": "当天摘要",
+            "summary": "王总来电：报价单收到了，合同推迟到 11 月 2 日寄出。",
+            "projects": [
+              {
+                "match": "none"
+              }
+            ],
+            "decisions": null,
+            "risks": null,
+            "awareness": null,
+            "changeset": "CS-0001"
+          },
+          {
+            "id": "x1.0",
+            "session": "seed_2026-08-01",
+            "date": "2026-08-01",
+            "filed_at": "0001-01-01T00:00:00Z",
+            "title": "收尾",
+            "summary": "",
+            "projects": [
+              {
+                "match": "existing",
+                "project": "P-0003"
+              }
+            ],
+            "decisions": null,
+            "risks": null,
+            "awareness": null,
+            "changeset": "CS-0001"
+          },
+          {
+            "id": "x2.0",
+            "session": "ses_day",
+            "date": "2026-10-23",
+            "from": "#2.0",
+            "to": "#2.2",
+            "filed_at": "2026-10-23T22:00:00+08:00",
+            "title": "办公室装修",
+            "summary": "地板定了浅色木纹",
+            "projects": [
+              {
+                "match": "new",
+                "project": "P-0101"
+              }
+            ],
+            "decisions": null,
+            "risks": null,
+            "awareness": null,
+            "changeset": "CS-0002"
+          },
+          {
+            "id": "x2.5",
+            "session": "ses_day",
+            "date": "2026-10-23",
+            "from": "#2.5",
+            "to": "#2.6",
+            "filed_at": "2026-10-23T22:00:00+08:00",
+            "title": "预算",
+            "summary": "还差两个部门",
+            "projects": [
+              {
+                "match": "unsure",
+                "project": "P-0102",
+                "candidate": "P-0001",
+                "proposed": "部门预算"
+              }
+            ],
+            "decisions": null,
+            "risks": null,
+            "awareness": null,
+            "changeset": "CS-0002"
+          }
+        ],
+        "commitments": [
+          {
+            "id": "C-9000",
+            "kind": "mine",
+            "content": "发报价单",
+            "project": "P-0001",
+            "status": "done",
+            "updated_at": "2026-10-23T22:00:00+08:00",
+            "revisions": [
+              {
+                "changeset": "CS-0001",
+                "author": "seed",
+                "op": "create",
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              },
+              {
+                "changeset": "CS-0005",
+                "author": "xinli-project",
+                "op": "close",
+                "fields": {
+                  "status": "done"
+                },
+                "exchanges": [
+                  "x2026-10-24"
+                ],
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              }
+            ]
+          },
+          {
+            "id": "C-9001",
+            "kind": "theirs",
+            "content": "寄框架合同",
+            "due_date": "2026-11-02",
+            "project": "P-0001",
+            "status": "open",
+            "updated_at": "2026-10-23T22:00:00+08:00",
+            "revisions": [
+              {
+                "changeset": "CS-0001",
+                "author": "seed",
+                "op": "create",
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              },
+              {
+                "changeset": "CS-0005",
+                "author": "xinli-project",
+                "op": "revise",
+                "fields": {
+                  "due_date": "2026-11-02"
+                },
+                "exchanges": [
+                  "x2026-10-24"
+                ],
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              }
+            ]
+          },
+          {
+            "id": "C-0001",
+            "kind": "mine",
+            "content": "发报价单",
+            "due_date": "2026-10-30",
+            "project": "P-0101",
+            "refs": [
+              "#2.1"
+            ],
+            "status": "open",
+            "exchange": "x2.0",
+            "session": "ses_day",
+            "spoken_at": "2026-10-23T09:01:00+08:00",
+            "updated_at": "2026-10-23T22:00:00+08:00",
+            "revisions": [
+              {
+                "changeset": "CS-0002",
+                "author": "xinli-day",
+                "op": "create",
+                "refs": [
+                  "#2.1"
+                ],
+                "spoken_at": "2026-10-23T09:01:00+08:00",
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              },
+              {
+                "changeset": "CS-0007",
+                "author": "user",
+                "op": "revise",
+                "fields": {
+                  "due_date": "2026-10-30",
+                  "due_text": ""
+                },
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              }
+            ],
+            "locked": [
+              "due"
+            ]
+          },
+          {
+            "id": "C-0002",
+            "kind": "theirs",
+            "content": "带样板",
+            "project": "P-0101",
+            "refs": [
+              "#2.0"
+            ],
+            "status": "done",
+            "exchange": "x2.0",
+            "session": "ses_day",
+            "spoken_at": "2026-10-23T09:00:00+08:00",
+            "updated_at": "2026-10-23T22:00:00+08:00",
+            "revisions": [
+              {
+                "changeset": "CS-0002",
+                "author": "xinli-day",
+                "op": "create",
+                "refs": [
+                  "#2.0"
+                ],
+                "spoken_at": "2026-10-23T09:00:00+08:00",
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              },
+              {
+                "changeset": "CS-0008",
+                "author": "user",
+                "op": "close",
+                "fields": {
+                  "status": "done"
+                },
+                "recorded_at": "2026-10-23T22:00:00+08:00"
+              }
+            ],
+            "locked": [
+              "status"
+            ]
+          }
+        ],
+        "changesets": [
+          {
+            "id": "CS-0001",
+            "key": "seed:1",
+            "author": "seed",
+            "source": {},
+            "recorded_at": "2026-10-23T22:00:00+08:00",
+            "create_exchanges": [
+              {
+                "id": "x2026-10-24",
+                "session": "seed_days",
+                "date": "2026-10-24",
+                "filed_at": "0001-01-01T00:00:00Z",
+                "title": "当天摘要",
+                "summary": "王总来电：报价单收到了，合同推迟到 11 月 2 日寄出。",
+                "projects": [
+                  {
+                    "match": "none"
+                  }
+                ],
+                "decisions": null,
+                "risks": null,
+                "awareness": null
+              },
+              {
+                "id": "x1.0",
+                "session": "seed_2026-08-01",
+                "date": "2026-08-01",
+                "filed_at": "0001-01-01T00:00:00Z",
+                "title": "收尾",
+                "summary": "",
+                "projects": [
+                  {
+                    "match": "existing",
+                    "project": "P-0003"
+                  }
+                ],
+                "decisions": null,
+                "risks": null,
+                "awareness": null
+              }
+            ],
+            "create_commitments": [
+              {
+                "id": "C-9000",
+                "kind": "mine",
+                "content": "发报价单",
+                "project": "P-0001",
+                "status": "",
+                "revisions": null
+              },
+              {
+                "id": "C-9001",
+                "kind": "theirs",
+                "content": "寄框架合同",
+                "due_date": "2026-10-26",
+                "project": "P-0001",
+                "status": "",
+                "revisions": null
+              }
+            ]
+          },
+          {
+            "id": "CS-0002",
+            "session": "ses_day",
+            "key": "from:#2.0",
+            "author": "xinli-day",
+            "source": {
+              "from": "#2.0",
+              "to": "#2.6"
+            },
+            "recorded_at": "2026-10-23T22:00:00+08:00",
+            "create_exchanges": [
+              {
+                "id": "x2.0",
+                "session": "ses_day",
+                "date": "2026-10-23",
+                "from": "#2.0",
+                "to": "#2.2",
+                "filed_at": "2026-10-23T22:00:00+08:00",
+                "title": "办公室装修",
+                "summary": "地板定了浅色木纹",
+                "projects": [
+                  {
+                    "match": "new",
+                    "project": "P-0101"
+                  }
+                ],
+                "decisions": null,
+                "risks": null,
+                "awareness": null
+              },
+              {
+                "id": "x2.5",
+                "session": "ses_day",
+                "date": "2026-10-23",
+                "from": "#2.5",
+                "to": "#2.6",
+                "filed_at": "2026-10-23T22:00:00+08:00",
+                "title": "预算",
+                "summary": "还差两个部门",
+                "projects": [
+                  {
+                    "match": "unsure",
+                    "candidate": "P-0001",
+                    "proposed": "部门预算"
+                  }
+                ],
+                "decisions": null,
+                "risks": null,
+                "awareness": null
+              }
+            ],
+            "create_commitments": [
+              {
+                "id": "C-0001",
+                "kind": "mine",
+                "content": "发报价单",
+                "project": "P-0101",
+                "refs": [
+                  "#2.1"
+                ],
+                "status": "",
+                "exchange": "x2.0",
+                "session": "ses_day",
+                "spoken_at": "2026-10-23T09:01:00+08:00",
+                "revisions": null
+              },
+              {
+                "id": "C-0002",
+                "kind": "theirs",
+                "content": "带样板",
+                "project": "P-0101",
+                "refs": [
+                  "#2.0"
+                ],
+                "status": "",
+                "exchange": "x2.0",
+                "session": "ses_day",
+                "spoken_at": "2026-10-23T09:00:00+08:00",
+                "revisions": null
+              }
+            ]
+          },
+          {
+            "id": "CS-0003",
+            "session": "ses_day",
+            "key": "from:#10.0",
+            "author": "xinli-day",
+            "source": {
+              "from": "#10.0",
+              "to": "#10.0"
+            },
+            "recorded_at": "2026-10-23T22:00:00+08:00"
+          },
+          {
+            "id": "CS-0004",
+            "session": "ses_day",
+            "key": "day",
+            "author": "xinli-day",
+            "source": {
+              "day": true
+            },
+            "recorded_at": "2026-10-23T22:00:00+08:00"
+          },
+          {
+            "id": "CS-0005",
+            "session": "ses_p",
+            "key": "project:2026-10-24",
+            "author": "xinli-project",
+            "source": {
+              "date": "2026-10-24"
+            },
+            "recorded_at": "2026-10-23T22:00:00+08:00",
+            "revise_commitments": [
+              {
+                "id": "C-9001",
+                "rev": 1,
+                "fields": {
+                  "due_date": "2026-11-02"
+                },
+                "exchanges": [
+                  "x2026-10-24"
+                ]
+              }
+            ],
+            "close_commitments": [
+              {
+                "id": "C-9000",
+                "rev": 1,
+                "status": "done",
+                "exchanges": [
+                  "x2026-10-24"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "CS-0006",
+            "session": "ses_day",
+            "key": "user:6",
+            "author": "user",
+            "source": {},
+            "recorded_at": "2026-10-23T22:00:00+08:00",
+            "revise_exchanges": [
+              {
+                "id": "x2.5",
+                "projects": [
+                  {
+                    "match": "unsure",
+                    "project": "P-0102",
+                    "candidate": "P-0001",
+                    "proposed": "部门预算"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "CS-0007",
+            "key": "user:7",
+            "author": "user",
+            "source": {},
+            "recorded_at": "2026-10-23T22:00:00+08:00",
+            "revise_commitments": [
+              {
+                "id": "C-0001",
+                "rev": 1,
+                "fields": {
+                  "due_date": "2026-10-30",
+                  "due_text": ""
+                }
+              }
+            ]
+          },
+          {
+            "id": "CS-0008",
+            "key": "user:8",
+            "author": "user",
+            "source": {},
+            "recorded_at": "2026-10-23T22:00:00+08:00",
+            "close_commitments": [
+              {
+                "id": "C-0002",
+                "rev": 1,
+                "status": "done"
+              }
+            ]
+          }
+        ],
+        "days": [
+          {
+            "date": "2026-10-23",
+            "session": "ses_day",
+            "filed_at": "2026-10-23T22:00:00+08:00",
+            "headline": "装修定稿",
+            "highlights": null,
+            "awareness": {
+              "habits": null,
+              "suggestions": null
+            }
+          },
+          {
+            "date": "2026-10-22",
+            "session": "seed_day_0",
+            "filed_at": "0001-01-01T00:00:00Z",
+            "headline": "看样板",
+            "highlights": null,
+            "awareness": {
+              "habits": [
+                "答应时给出期限"
+              ],
+              "suggestions": null
+            }
+          }
+        ],
+        "weeks": [
+          {
+            "session": "ses_w",
+            "filed_at": "2026-10-23T22:00:00+08:00",
+            "habits": [
+              {
+                "habit": "给出期限",
+                "days": [
+                  "2026-10-21",
+                  "2026-10-22"
+                ],
+                "example": ""
+              }
+            ],
+            "suggestions": null
+          }
+        ],
+        "merges": [
+          {
+            "id": "M-0001",
+            "session": "ses_w",
+            "into": "P-0101",
+            "from": "P-0002",
+            "reason": "同一次搬迁",
+            "status": "accepted"
+          }
+        ]
+      }
+    }
+  ]
+}
