@@ -2790,7 +2790,9 @@ type ToolResult struct {
 	// Run 完成时提交为该流已读到的位置，after = "new" 由此接着读，不解析给模型看的文字。
 	CaptureRead *CaptureRead `protobuf:"bytes,10,opt,name=capture_read,json=captureRead,proto3" json:"capture_read,omitempty"`
 	// 业务线的交付回执（ADR-0049）：只由 Worker 从同业务线、声明了 acks 的 MCP 结果写入，模型看不到。
-	CaptureAck    *CaptureAck `protobuf:"bytes,11,opt,name=capture_ack,json=captureAck,proto3" json:"capture_ack,omitempty"`
+	CaptureAck *CaptureAck `protobuf:"bytes,11,opt,name=capture_ack,json=captureAck,proto3" json:"capture_ack,omitempty"`
+	// 只由 Worker 写入可信 MCP 页；来源推导据此识别平台渲染的内容，模型看不到。
+	Attested      bool `protobuf:"varint,12,opt,name=attested,proto3" json:"attested,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2900,6 +2902,13 @@ func (x *ToolResult) GetCaptureAck() *CaptureAck {
 		return x.CaptureAck
 	}
 	return nil
+}
+
+func (x *ToolResult) GetAttested() bool {
+	if x != nil {
+		return x.Attested
+	}
+	return false
 }
 
 // CaptureRead 是 captures 一页读到的位置（docs/design/m5-inputs-triggers-loops.md §5）。
@@ -4060,7 +4069,9 @@ type CaptureSegment struct {
 	SpokenAt *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=spoken_at,json=spokenAt,proto3" json:"spoken_at,omitempty"`
 	// time_zone 是说这段话时手机所在的 IANA 时区（如 "Asia/Shanghai"），由 HostApp 填写。与 spoken_at 都有时，整理时显示
 	// 当地的日期与时刻，模型据此按停顿分开不同的对话、把"明天""周五"换算成日期；为空时不显示时间。
-	TimeZone      string `protobuf:"bytes,6,opt,name=time_zone,json=timeZone,proto3" json:"time_zone,omitempty"`
+	TimeZone string `protobuf:"bytes,6,opt,name=time_zone,json=timeZone,proto3" json:"time_zone,omitempty"`
+	// attested 结果中业务线命名空间内的引用；CaptureAppended 中必须为空。
+	Ref           string `protobuf:"bytes,7,opt,name=ref,proto3" json:"ref,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4133,6 +4144,13 @@ func (x *CaptureSegment) GetSpokenAt() *timestamppb.Timestamp {
 func (x *CaptureSegment) GetTimeZone() string {
 	if x != nil {
 		return x.TimeZone
+	}
+	return ""
+}
+
+func (x *CaptureSegment) GetRef() string {
+	if x != nil {
+		return x.Ref
 	}
 	return ""
 }
@@ -4400,7 +4418,7 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x12\x17\n" +
 	"\acall_id\x18\x03 \x01(\tR\x06callId\x12\x17\n" +
 	"\anode_id\x18\x04 \x01(\tR\x06nodeId\x126\n" +
-	"\bdeadline\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bdeadline\"\xc4\x03\n" +
+	"\bdeadline\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bdeadline\"\xe0\x03\n" +
 	"\n" +
 	"ToolResult\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
@@ -4416,7 +4434,8 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\fcapture_read\x18\n" +
 	" \x01(\v2\x16.yanshi.v1.CaptureReadR\vcaptureRead\x126\n" +
 	"\vcapture_ack\x18\v \x01(\v2\x15.yanshi.v1.CaptureAckR\n" +
-	"captureAck\"\xa1\x01\n" +
+	"captureAck\x12\x1a\n" +
+	"\battested\x18\f \x01(\bR\battested\"\xa1\x01\n" +
 	"\vCaptureRead\x12\x16\n" +
 	"\x06stream\x18\x01 \x01(\tR\x06stream\x12\x14\n" +
 	"\x05after\x18\x02 \x01(\tR\x05after\x12&\n" +
@@ -4500,7 +4519,7 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\n" +
 	"capture_id\x18\x01 \x01(\tR\tcaptureId\x125\n" +
 	"\bsegments\x18\x02 \x03(\v2\x19.yanshi.v1.CaptureSegmentR\bsegments\x12\x16\n" +
-	"\x06stream\x18\x03 \x01(\tR\x06stream\"\xe5\x01\n" +
+	"\x06stream\x18\x03 \x01(\tR\x06stream\"\xf7\x01\n" +
 	"\x0eCaptureSegment\x12,\n" +
 	"\aspeaker\x18\x01 \x01(\x0e2\x12.yanshi.v1.SpeakerR\aspeaker\x12\x1f\n" +
 	"\vspeaker_key\x18\x02 \x01(\tR\n" +
@@ -4508,7 +4527,8 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\x04text\x18\x03 \x01(\tR\x04text\x12\x1a\n" +
 	"\bredacted\x18\x04 \x01(\bR\bredacted\x127\n" +
 	"\tspoken_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bspokenAt\x12\x1b\n" +
-	"\ttime_zone\x18\x06 \x01(\tR\btimeZone\"<\n" +
+	"\ttime_zone\x18\x06 \x01(\tR\btimeZone\x12\x10\n" +
+	"\x03ref\x18\a \x01(\tR\x03ref\"<\n" +
 	"\tCallEnded\x12\x17\n" +
 	"\acall_id\x18\x01 \x01(\tR\x06callId\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason*I\n" +

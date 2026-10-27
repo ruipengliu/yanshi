@@ -49,6 +49,8 @@ type Result struct {
 	Read    *v1.CaptureRead
 	// Ack 是经登记资格筛选的 MCP 回执元数据，Worker 校验后写入日志，不交给模型。
 	Ack json.RawMessage
+	// Page 是经同业务线登记筛选的结构化页，Worker 校验、审核并渲染。
+	Page json.RawMessage
 }
 
 // ResultInvoker 是可选的 Capability 能力：除内容外还给出只由平台写入 ToolResult 的字段。Worker 优先调用它。

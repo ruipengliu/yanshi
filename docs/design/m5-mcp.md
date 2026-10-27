@@ -30,6 +30,7 @@ tools:
   allow: ["search_*", "get_*", "create_ticket"]   # 可选：只开放这些工具
   no_approval: ["create_ticket"]                  # 可选：业务线确认无需审批的工具
 cite_captures: false           # 可选：解析参数中的旁听引用，附上说话人（docs/design/captures.md §6）
+attests_speakers: false         # 可选：采信同业务线结构化旁听页，由平台渲染与审核（ADR-0050）
 acks: false                    # 可选：采信本业务线服务返回的交付回执（ADR-0049；ADR-0050 后随 Capture 路径退役）
 ```
 
@@ -38,6 +39,7 @@ acks: false                    # 可选：采信本业务线服务返回的交�
 - **工具发现**：启动时调用 `tools/list`，结果缓存 5 分钟。调用时发现工具不存在，会立即刷新一次缓存。
 - **旁听引用**：开启 `cite_captures` 时，调用参数中恰为引用编号的字符串（如 `"#57.3"`）由平台按发起调用的 Session 的日志解析，`_meta["yanshi/captures"]` 带上被引用片段的说话人（`wearer` 或 `other`、`speaker_key`、是否拦截），不带文字；本 Session 中没有的编号为 `missing`。业务线据此核对承诺人，而不是相信模型自报（ADR-0036）。
 - **交付回执**：`mcpcap.Server.Acks` 默认 false。声明 `acks: true` 且与 Session 同业务线时，平台从结果的 `_meta["yanshi/ack"]` 读取 `{stream, from, through}`，端点是不带 `#` 的 Ref（如 `57.0`）。Worker 校验后写入 `ToolResult.CaptureAck`，模型看不到；未声明、跨业务线、结构错误或调用失败时丢弃，不改变给模型的结果文字。拒收与部分保存不附回执，空变更集接受后也须附回执。读取位置的提交见 [内核补充](./m7-kernel-primitives.md) §11。
+- **可信结构化旁听页**：`attests_speakers` 只对同业务线生效。请求附 `yanshi/page_options`，结果页取 `yanshi/page`；有页时丢弃业务线 content，由 Worker 校验、审核、渲染并写 attested 标记。完整线上契约见 [旁听](./captures.md) §12。`cite_captures` 的引用命名空间由被调用 Server 的登记决定：只有 `attests_speakers: true` 且同业务线时扫描调用投影之前的 attested 结果，按业务线引用查找最近一次片段，查不到为 missing、不回退；其余 Server 始终按内核日志位置逐个读取，不扫描日志。过渡期同一 Session 不应同时用内置 `captures` 的日志位置引用与 attested 引用调用同一业务线；attested Server 只按业务线命名空间解析。
 - **出网白名单**：yanshi 只连接登记过的 URL，模型无法指定任意地址。私有化部署中，这些 URL 就是需要放通的外联项（ADR-0001）。
 
 ## 3. 调用语义
@@ -76,7 +78,7 @@ acks: false                    # 可选：采信本业务线服务返回的交�
 | `structuredContent` | JSON 文本（有 `content` 时作为补充） |
 | `isError: true` | 错误结果 |
 
-单个结果中的文本超过 64KB 时截断并注明（上下文中还会再按 `max_tool_result` 截断）。工具结果一律视为**不可信数据**，不能提升权限（章程原则 6）。
+单个结果中的文本超过 64KB 时截断并注明（上下文中还会再按 `max_tool_result` 截断）。普通工具结果视为**不可信数据**，不能提升权限（章程原则 6）。可信登记的结构化旁听页由平台渲染，按片段说话人推导来源（§2）。
 
 ## 5. 设备端桥接
 

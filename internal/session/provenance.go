@@ -9,7 +9,7 @@ import (
 
 // Provenance 是一段内容的来源（ADR-0039，docs/design/m5-inputs-triggers-loops.md §3）：由谁产生、是不是对 Agent 说的。
 // 它由平台从事件推导（Pieces），不由写入方填写：存储的来源字段可以被自报，推导只认平台写入的事件。唯一推导不出的
-// 旁听说话人是结构化字段，只能由 captures 的结果写入（CheckCapture、Apply）。Memory 写入闸门与注入判断都只看它。
+// 旁听说话人是结构化字段，只能由 captures 或 attested 的结果写入（CheckCapture、Apply）。Memory 写入闸门与注入判断都只看它。
 type Provenance uint8
 
 const (
@@ -101,14 +101,14 @@ func resultPieces(m *v1.ToolResult, external, question bool) []Piece {
 	case m.GetFromCall() != "":
 		// 语音模型转述的回答（run_task 恰好回答了提问）。
 		out = append(out, Piece{From: FromRelay, Text: blockText(m.GetContent())})
-	case external:
+	case external && !m.GetAttested():
 		out = append(out, Piece{From: FromExternal, Text: blockText(m.GetContent()), Result: m})
 	case question && !m.GetIsError():
 		if t := blockText(m.GetContent()); t != "" {
 			out = append(out, Piece{From: FromUser, Text: t})
 		}
 	}
-	// 旁听片段只能由平台写入 captures 的结果（Apply 校验），说话人是结构化字段而不是文本中的前缀；拦截的片段没有内容。
+	// 旁听片段只能由平台写入 captures 或 attested 的结果（Apply 校验），说话人是结构化字段而不是文本中的前缀；拦截的片段没有内容。
 	var others []string
 	for _, c := range m.GetContent() {
 		g := c.GetCapture()

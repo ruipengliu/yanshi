@@ -18,7 +18,6 @@ import (
 	"unicode/utf8"
 
 	v1 "yanshi/gen/yanshi/v1"
-	"yanshi/internal/agentdef"
 	"yanshi/internal/capability"
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog"
@@ -86,16 +85,11 @@ func (t *Tool) InvokeResult(ctx context.Context, inv capability.Invocation) (cap
 		}
 	}
 	// 一个 Session 中沿用第一次提交的读取位置中的间隔（exchange_gap）：中途换了间隔，分页与"是否已结束"的判断就会前后不一致。
-	gap := agentdef.DefaultExchangeGap
-	if d, ok := inv.Agent.Stream(Stream); ok {
-		gap = d.ExchangeGap
-	}
+	platform := OptionsFor(inv)
+	gap := invocationGap(inv)
 	var read *v1.CaptureRead
 	if inv.State != nil {
 		read = inv.State.Captures.Read[Stream]
-	}
-	if read != nil {
-		gap = time.Duration(read.GetExchangeGapMs()) * time.Millisecond
 	}
 	var at Cursor
 	var err error
@@ -111,10 +105,7 @@ func (t *Tool) InvokeResult(ctx context.Context, inv capability.Invocation) (cap
 	if in.Limit <= 0 {
 		in.Limit = DefaultLimit
 	}
-	opts := Options{Limit: min(in.Limit, MaxLimit), MaxChars: MaxChars, Gap: gap, All: in.All}
-	if inv.Agent != nil {
-		opts.MaxToolResult = inv.Agent.Context.MaxToolResult
-	}
+	opts := Options{Limit: min(in.Limit, MaxLimit), MaxChars: platform.MaxChars, Gap: gap, All: in.All, MaxToolResult: platform.MaxToolResult}
 	if t.clk != nil {
 		opts.Now = t.clk.Now()
 	}
@@ -145,7 +136,7 @@ type Options struct {
 	All bool
 }
 
-// Ref 是一段旁听在 Session 中的位置：第 Seq 个事件（CaptureAppended）的第 Index 段。
+// Ref 是旁听引用的两个整数。内置路径解释为日志位置；attested 路径只在业务线命名空间中排序。
 type Ref struct {
 	Seq   uint64
 	Index int
@@ -159,7 +150,7 @@ func ParseRef(s string) (Ref, bool) {
 	a, b, ok := strings.Cut(s, ".")
 	seq, err1 := strconv.ParseUint(a, 10, 64)
 	idx, err2 := strconv.Atoi(b)
-	if !ok || err1 != nil || err2 != nil || idx < 0 || seq == 0 {
+	if !ok || err1 != nil || err2 != nil || idx < 0 || !session.ValidAttestedRef(s) {
 		return Ref{}, false
 	}
 	return Ref{seq, idx}, true
@@ -170,14 +161,16 @@ func ParseRef(s string) (Ref, bool) {
 type Cursor struct {
 	Last Ref
 	Span Ref
+	// 业务线允许 0.0，必须与内置游标的零值哨兵区分。
+	lastSet, spanSet bool
 }
 
 // String 是给模型照抄的 after："57.3"，或停在时段中间时的 "57.3~50.0"。
 func (c Cursor) String() string {
-	if c.Last.Seq == 0 {
+	if c.Last.Seq == 0 && !c.lastSet {
 		return "0"
 	}
-	if c.Span.Seq != 0 {
+	if c.Span.Seq != 0 || c.spanSet {
 		return c.Last.String() + "~" + c.Span.String()
 	}
 	return c.Last.String()
@@ -191,11 +184,11 @@ func parseCursor(s string) (Cursor, error) {
 	last, ex, cont := strings.Cut(s, "~")
 	c := Cursor{}
 	var ok bool
-	if c.Last, ok = ParseRef(last); !ok {
+	if c.Last, ok = ParseRef(last); !ok || c.Last.Seq == 0 {
 		return Cursor{}, fmt.Errorf("invalid arguments: after %q is not a position given by a previous page", s)
 	}
 	if cont {
-		if c.Span, ok = ParseRef(ex); !ok || c.Span.Seq > c.Last.Seq || (c.Span.Seq == c.Last.Seq && c.Span.Index > c.Last.Index) {
+		if c.Span, ok = ParseRef(ex); !ok || c.Span.Seq == 0 || c.Span.Seq > c.Last.Seq || (c.Span.Seq == c.Last.Seq && c.Span.Index > c.Last.Index) {
 			return Cursor{}, fmt.Errorf("invalid arguments: after %q is not a position given by a previous page", s)
 		}
 	}
@@ -289,7 +282,7 @@ func page(ctx context.Context, log eventlog.Log, sessionID string, at Cursor, o 
 		from--
 	}
 	var (
-		segs        []*v1.ContentBlock
+		segs        []segment
 		prev        *v1.CaptureSegment // 上一段（含上一页的最后一段）
 		span        Ref                // 本页的时段（第一段的位置）
 		count       int
@@ -336,17 +329,11 @@ read:
 					}
 				}
 				// 先计入日期头与所有可能的页尾，再决定是否收下完整的一段；读取位置不能越过未交出的原话。
-				var added []*v1.ContentBlock
-				newDay := day
+				added, newDay := renderSegment(segment{ref: ref, g: g}, day)
 				headerChars := 0
-				if t, ok := model.CaptureLocalTime(g); ok && t.Format(time.DateOnly) != day {
-					newDay = t.Format(time.DateOnly)
-					h := dayHeader(t)
-					added = append(added, model.TextBlocks(h)...)
-					headerChars = utf8.RuneCountInString(h)
+				if newDay != day {
+					headerChars = utf8.RuneCountInString(added[0].GetText().GetText())
 				}
-				added = append(added, model.TextBlocks(line)...)
-				added = append(added, &v1.ContentBlock{Kind: &v1.ContentBlock_Capture{Capture: g}})
 				addedTokens := model.EstimateTokens(added)
 				if o.MaxToolResult > 0 {
 					reserved := 0
@@ -361,7 +348,7 @@ read:
 						break read
 					}
 				}
-				segs = append(segs, added...)
+				segs = append(segs, segment{ref: ref, g: g})
 				tokens += addedTokens
 				chars += headerChars
 				day = newDay
@@ -376,7 +363,8 @@ read:
 		}
 	}
 	if count == 0 {
-		return model.TextBlocks("（已读完：之后没有更多旁听）"), Cursor{}, Ref{}, nil
+		out, next := renderPage("empty", Ref{}, false, false, false, nil, time.Time{})
+		return out, next, Ref{}, nil
 	}
 	lastSeg, atEnd := prev, done
 	if !done && !ended && !cont && !o.All && !o.Now.IsZero() {
@@ -388,11 +376,11 @@ read:
 	}
 	// 读到了日志末尾，而最后一段刚说完不久：这个时段可能还在继续，先不交出，读取位置也不前进。
 	if t, ok := model.CaptureLocalTime(lastSeg); atEnd && ok && !o.All && !o.Now.IsZero() && o.Now.Sub(t) < o.Gap {
-		return model.TextBlocks(fmt.Sprintf("（时段 #%s 还在进行：最后一段在 %s，稍后再整理。之前的时段已读完）", span, t.Format("15:04"))), Cursor{}, Ref{}, nil
+		out, next := renderPage("in_progress", span, false, false, false, nil, t)
+		return out, next, Ref{}, nil
 	}
-	out := append(model.TextBlocks(pageTitle(span, cont)), segs...)
-	tail, next := pageTail(span, last, prev, count, done, ended)
-	return append(out, model.TextBlocks(tail)...), next, first, nil
+	out, next := renderPage("page", span, cont, done, ended, segs, time.Time{})
+	return out, next, first, nil
 }
 
 func pageBudgetError(budget int) error {
@@ -410,7 +398,7 @@ func pageTitle(span Ref, cont bool) string {
 // pageTail 同时用于输出与预留，避免提示文字变长后预算漏算。
 func pageTail(span, last Ref, prev *v1.CaptureSegment, count int, done, ended bool) (string, Cursor) {
 	var tail string
-	next := Cursor{Last: last}
+	next := Cursor{Last: last, lastSet: last.Seq == 0}
 	switch {
 	case done:
 		tail = fmt.Sprintf("（时段 #%s 起到此结束，本页 %d 段；已读完目前的全部旁听）", span, count)
@@ -419,9 +407,9 @@ func pageTail(span, last Ref, prev *v1.CaptureSegment, count int, done, ended bo
 	default:
 		// 没有时间的片段每页算一个时段：下一页不接着这段。
 		if _, ok := model.CaptureLocalTime(prev); ok {
-			next.Span = span
+			next.Span, next.spanSet = span, span.Seq == 0
 		}
-		if next.Span.Seq != 0 {
+		if next.Span.Seq != 0 || next.spanSet {
 			tail = fmt.Sprintf("（时段 #%s 起未完，本页 %d 段；下一页用 after=\"%s\"）", span, count, next)
 		} else {
 			tail = fmt.Sprintf("（时段 #%s 起到此结束，本页 %d 段；下一时段用 after=\"%s\"）", span, count, next)

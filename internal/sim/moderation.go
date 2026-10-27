@@ -93,6 +93,12 @@ func (w *World) checkModeration() error {
 				if err := w.checkCapture(sid, e); err != nil {
 					return err
 				}
+			case *v1.Event_ToolResult:
+				if p.ToolResult.GetAttested() {
+					if err := w.checkCapture(sid, e); err != nil {
+						return err
+					}
+				}
 			case *v1.Event_ContentModerated:
 				var next *v1.AssistantMessage
 				if i+1 < len(events) {

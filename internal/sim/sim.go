@@ -66,6 +66,8 @@ type Options struct {
 	CaptureReads bool
 	// CaptureAcks 在集中读页时注入业务线回执、拒收与 MCP 调用失败。
 	CaptureAcks bool
+	// Attested 集中读取可信 MCP 页，沿用 Worker 故障与内容安全提供商。
+	Attested bool
 }
 
 // Stats 统计模拟中被覆盖到的路径，防止模拟"空转"。
@@ -148,6 +150,7 @@ type Stats struct {
 	RetentionKeptMemories int
 	// 回执使位置前进、缺回执而完全未前进，以及注入的业务拒收与 MCP 失败。
 	AcksCommitted, AcksMissing, AckRefusals, AckMCPFailures int
+	AttestedResults, AttestedRedactions, AttestedErrors     int
 	// InvalidArgs 是模型给出不合法参数的调用（args.go）。
 	InvalidArgs int
 	// MemoryPrechecked 是注入的 Memory 预检查拒绝样例中已返回错误结果的调用（memprecheck.go）。
@@ -423,6 +426,11 @@ func New(opts Options) (*World, error) {
 	if opts.CaptureAcks {
 		for _, def := range defs {
 			def.Capabilities = append(def.Capabilities, "mcp:sim/save")
+		}
+	}
+	if opts.Attested {
+		for _, def := range defs {
+			def.Capabilities = append(def.Capabilities, "mcp:sim/pages")
 		}
 	}
 	agents, err := agentdef.NewRegistry(defs...)
@@ -1624,6 +1632,9 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 	more := turns < 3 && w.chance(0.6)
 	if w.opts.LongRuns {
 		more = turns < 100 && w.chance(0.97)
+	}
+	if w.opts.Attested && more {
+		return &model.Response{Model: "sim/m", Usage: resp.Usage, ToolCalls: []*v1.ToolCall{{Capability: simAttestedName, ArgumentsJson: `{}`}}}, nil
 	}
 	if w.opts.CaptureReads {
 		if w.opts.CaptureAcks && len(req.Messages) > 0 && req.Messages[len(req.Messages)-1].Role == model.RoleTool {

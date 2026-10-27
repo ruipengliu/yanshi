@@ -229,3 +229,44 @@ Session 已在按保留期删除（对外已不可见）时，用户再删除它
 - **跨 Session 投递的原语**：等第二条业务线需要时再做。
 - **非文字的采集**（照片、位置）：每一种另立 ADR。
 - **音频、声纹、他人知情同意的提示**：在 yanshi 之外。
+
+## 12. 可信登记的旁听页
+
+[ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 的第一步保留内核 Capture 路径，并增加业务线存放原文的读取入口。MCP Server 登记 `attests_speakers: true`（默认 false），且登记的 `business_line` 与 Session 相同，平台才采信结果 `_meta["yanshi/page"]`。未登记或跨业务线时忽略页元数据，按普通外部 MCP 结果处理。有可信页时先丢弃业务线的全部 `content` 与 `structuredContent`，不上传其中的媒体、不回显错误文字；模型只看平台渲染的结果。MCP 自报错误时也只写固定的平台错误。
+
+开启登记后，请求 `_meta["yanshi/page_options"]` 为：
+
+```json
+{"limit":200,"max_chars":6000,"gap_ms":300000,"max_tool_result":0}
+```
+
+段数与字符上限来自 `capture.DefaultLimit`、`capture.MaxChars`；间隔与内置工具相同，先取 AgentDef 的 transcript 流声明（默认 5 分钟），已有内核读取位置时沿用其间隔；结果预算取 `context.max_tool_result`，0 表示不限。此任务不新增 AgentDef 配置，也不切换现有 AgentDef。
+
+响应页契约（`internal/capture.StructuredPage`）：
+
+```json
+{
+  "kind":"page", "span":"57.0", "cont":false, "done":false, "ended":true,
+  "segments":[
+    {"ref":"57.0", "speaker":"wearer", "speaker_key":"", "text":"原话",
+     "spoken_at":"2026-10-27T10:00:00+08:00", "time_zone":"Asia/Shanghai"}
+  ],
+  "last_at":"", "time_zone":""
+}
+```
+
+- `kind` 只能为 `page`、`empty`、`in_progress`。未知字段、类型错误、尾随 JSON 一律拒绝；业务线不能填 `redacted`、页头或下一页游标。
+- `page` 至少一段，至多 `limit` 段。每段文字非空；字符数按 Unicode rune 计，包括 `#ref `、时间与说话人标注、换行和日期头，与内置页的计数素材一致，总计不得超过 `max_chars`。内置分页历史上允许首段超限、加入新日期头前才检查字数；可信页执行严格上限，不继承这两个宽限。
+- `ref` 与 `span` 是两个非负整数组成的 `N.M`；解析后按两个整数比较，片段严格递增，`span` 不大于首段，`cont` 为真时严格小于首段。平台渲染为规范十进制形状。引用只属于业务线的命名空间，不解释为日志序号；`0.0` 也是合法引用。
+- `speaker` 只能为 `wearer` 或 `other`；佩戴者的键为空，他人的键匹配 `[A-Za-z0-9_-]{1,32}`。非空 `spoken_at` 必须为 RFC3339，非空 `time_zone` 必须为有效 IANA 时区（拒绝 `Local`）。缺少任一个时不显示该段时间。
+- `span` 是时段起点；`cont` 表示续页；`done` 表示已读完全部旁听；`ended` 表示本时段已结束但后面还有时段。页尾与下一页游标均由平台按内置 `pageTail` 生成。标题、日期头、逐段编号、正文与占位也与内置路径共用纯渲染器。
+- `empty` 与 `in_progress` 不得带片段。空页输出“（已读完：之后没有更多旁听）”。进行中页必须有有效 `span` 与 `last_at`，输出“（时段 #span 还在进行：最后一段在 HH:MM，稍后再整理。之前的时段已读完）”。因为没有末段对象，可选页级 `time_zone` 指定末段时区；省略时 `last_at` 的 RFC3339 偏移即当地时间，业务线不得用 UTC 时间代替当地偏移后期待平台猜测时区。
+- 渲染结果（含占位）必须满足 `max_tool_result`，超限使用内置工具的固定预算错误；任何格式错误只输出平台固定原因类别，不包含业务线提供的内容。
+
+**写日志前内容安全。** Worker 在执行 MCP 调用的同步路径内，先校验整页，再以 Input 阶段将全部片段文字换行相连送检。整页被拦截时逐段复核，只把违规段清空并置 `redacted`；若逐段全部通过，说明违规依赖组合，整页改为占位。提供商故障时整页写为错误“旁听页的内容安全检查暂不可用，稍后再读”。沿用 `service.SubmitCaptures` 的 Request 字段与规则，不写 `ContentModerated`。不同调用重读重审，不缓存审核结论；本次已执行结果进入 Worker 的 `executed` 缓存，追加重试不再次送检。
+
+**来源与日志校验。** 成功结果由 Worker 写 `ToolResult.attested=true`，capture 块带业务线 `ref`；模型看不到标记。Apply 拒绝非 MCP、外部 attempt、路由到 Node、错误结果或携带 `capture_read` 的 attested 标记；普通结果只允许内置 captures 带 capture 块。内置结果与 CaptureAppended 的 ref 必须为空。投影版本递增，旧快照作废。attested 页头是平台文字，不产生 FromExternal；佩戴者片段为 FromUser，他人原话合并成一个 FromOther Piece，Result 指向这次调用结果；拦截片段不产生依据。注入判断与 Memory 写入闸门因此与内置路径一致。
+
+**引用解析。** `cite_captures` 的命名空间由被调用 Server 的登记决定：仅当 `attests_speakers: true` 且登记业务线与 Session 相同时，调用 `AttestedCitations` 扫描调用投影序号以内的日志，在 attested 片段中查找同编号最近一次出现，返回说话人、键、时间与是否拦截；即使此前没有 attested 页，查不到也为 missing，不回退到内核 Capture。投影为空时序号为 0，表示不限。其余 Server 使用原有 `Citations`，按日志位置对每个唯一引用读取一个事件，不扫描日志，也不因 Session 中有 attested 结果而切换命名空间。attested 路径扫描日志而非 History，避免压缩裁剪造成引用丢失。
+
+过渡期同一 Session 不应同时用内置 `captures` 的日志位置引用与 attested 引用调用同一业务线：attested Server 只按业务线命名空间解析，不能根据引用形状或日志内容自动区分两种编号。
