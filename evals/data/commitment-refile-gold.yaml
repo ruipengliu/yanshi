@@ -1,0 +1,3 @@
+commitments:
+  - {id: quote, kind: mine, what: 明天把报价单发给张总, due: "2026-10-24"}
+  - {id: sample, kind: mine, what: 下周一把样板带给张总, due: "2026-10-26"}
