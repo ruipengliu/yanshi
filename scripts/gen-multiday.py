@@ -3,6 +3,7 @@
 #
 # 剧本格式：
 #   !gold <id> <mine|theirs> <YYYY-MM-DD|-> <说明>      金标承诺（!opt 为可选的）
+#   !gold 的说明后可接 | {"who": ["对象别名"], "terms": [["关键词", "同义词"]]}，只用于金标核对。
 #   # day YYYY-MM-DD [part]                             新的一天（或同一天的后半，文件名加 -part）
 #   @ HH:MM-HH:MM <topic|->                             一段：行在起止时刻之间均匀分布
 #   <W|key>: <文字> [| g=a b; rev=due YYYY-MM-DD|done|cancelled; asr=…; heard=wearer|other; hk=key]
@@ -43,10 +44,15 @@ for raw in open(src, encoding='utf-8'):
     if not line.strip() or line.startswith('//'):
         continue
     if line.startswith('!gold ') or line.startswith('!opt '):
-        tag, gid, kind, due, what = line.split(None, 4)
+        declaration, _, semantics = line.partition(" | ")
+        tag, gid, kind, due, what = declaration.split(None, 4)
         assert gid not in gold, gid
         gold[gid] = {'id': gid, 'kind': kind, 'what': what, 'due': None if due == '-' else due,
                      'optional': tag == '!opt', 'revisions': []}
+        if semantics:
+            fields = json.loads(semantics)
+            assert set(fields) <= {'who', 'terms'}, gid
+            gold[gid].update(fields)
         order.append(gid)
         continue
     if line.startswith('# day '):
@@ -106,6 +112,9 @@ with open(os.path.join(out, 'gold.yaml'), 'w', encoding='utf-8') as w:
     for gid in order:
         g = gold[gid]
         parts = [f"id: {g['id']}", f"kind: {g['kind']}", f"what: {q(g['what'])}"]
+        for field in ['who', 'terms']:
+            if field in g:
+                parts.append(f"{field}: {q(g[field])}")
         if g['due']:
             parts.append(f"due: {q(g['due'])}")
         if g['optional']:
