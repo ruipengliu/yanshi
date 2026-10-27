@@ -3,5 +3,5 @@
 //
 // 为使产品演进不改变执行内核，本模块依赖 Persona，只经公开契约（proto、gen、sdk、HTTP API、MCP）
 // 使用内核，不导入 yanshi/internal；内核不导入应用层（ADR-0043）。
-// 当前仅建立模块边界，设计见仓库 docs/design/persona-architecture.md。
+// xinli dev 装配独立夹具、旁听开发页面与可选编排器；设计见仓库 docs/design/persona-architecture.md。
 package xinli
