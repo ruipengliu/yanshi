@@ -186,7 +186,7 @@ func TestCaptureReadOnlyInCapturesResults(t *testing.T) {
 		}
 		return append(events, &v1.Event{Payload: &v1.Event_ToolResult{ToolResult: &v1.ToolResult{RunId: "r1", Attempt: n, CallId: "c1", CaptureRead: rd}}})
 	}
-	ok := &v1.CaptureRead{Stream: StreamTranscript, After: "3.0", ExchangeGapMs: 1}
+	ok := &v1.CaptureRead{Stream: StreamTranscript, After: "3.0", ExchangeGapMs: 1, Start: "0", First: "3.0"}
 	cases := map[string][]*v1.Event{
 		"other tool":      bad(ok, "clock_now", 1),
 		"external result": bad(ok, CapturesCapability, 0),

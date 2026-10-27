@@ -29,6 +29,15 @@ func checkCaptureRead(rd *v1.CaptureRead) error {
 	case rd.GetExchangeGapMs() <= 0:
 		return fmt.Errorf("exchange gap %dms", rd.GetExchangeGapMs())
 	}
+	// 旧的未要求确认的结果仍可只有 after；新页必须同时提供起点与首段，防止拼接伪造的断链。
+	if rd.GetAck() || rd.GetStart() != "" || rd.GetFirst() != "" {
+		start, ok1 := capturePosition(rd.GetStart())
+		first, ok2 := parseCaptureRef(rd.GetFirst())
+		last, ok3 := capturePosition(rd.GetAfter())
+		if rd.GetStart() == "" || !ok1 || !ok2 || !ok3 || !start.before(first) || last.before(first) {
+			return fmt.Errorf("invalid capture page range")
+		}
+	}
 	return nil
 }
 

@@ -118,13 +118,16 @@ func (t *Tool) InvokeResult(ctx context.Context, inv capability.Invocation) (cap
 	if t.clk != nil {
 		opts.Now = t.clk.Now()
 	}
-	content, next, err := Page(ctx, t.log, inv.SessionID, at, opts)
+	content, next, first, err := page(ctx, t.log, inv.SessionID, at, opts)
 	if err != nil {
 		return capability.Result{}, err
 	}
 	res := capability.Result{Content: content}
 	if next.Last.Seq != 0 {
-		res.Read = &v1.CaptureRead{Stream: Stream, After: next.String(), ExchangeGapMs: gap.Milliseconds()}
+		res.Read = &v1.CaptureRead{Stream: Stream, After: next.String(), ExchangeGapMs: gap.Milliseconds(), Start: at.String(), First: first.String()}
+		if stream, ok := inv.Agent.Stream(Stream); ok {
+			res.Read.Ack = stream.Ack
+		}
 	}
 	return res, nil
 }
@@ -192,7 +195,7 @@ func parseCursor(s string) (Cursor, error) {
 		return Cursor{}, fmt.Errorf("invalid arguments: after %q is not a position given by a previous page", s)
 	}
 	if cont {
-		if c.Span, ok = ParseRef(ex); !ok {
+		if c.Span, ok = ParseRef(ex); !ok || c.Span.Seq > c.Last.Seq || (c.Span.Seq == c.Last.Seq && c.Span.Index > c.Last.Index) {
 			return Cursor{}, fmt.Errorf("invalid arguments: after %q is not a position given by a previous page", s)
 		}
 	}
@@ -266,11 +269,17 @@ func spanTail(ctx context.Context, log eventlog.Log, sessionID string, after Ref
 // Page 读取 at 之后的旁听转写：至多一个时段、Limit 段、约 MaxChars 字符。时段结束时本页结束；到了上限而时段未完时，
 // 下一页的位置带上时段的起点，接着读同一个时段。没有时间的片段无从切分，每页算一个时段。next 是下一页的位置；本页没有读到
 // 任何旁听（已读完、时段还在进行）时为零值，读取位置不前进。
-func Page(ctx context.Context, log eventlog.Log, sessionID string, at Cursor, o Options) (content []*v1.ContentBlock, next Cursor, err error) {
+func Page(ctx context.Context, log eventlog.Log, sessionID string, at Cursor, o Options) ([]*v1.ContentBlock, Cursor, error) {
+	content, next, _, err := page(ctx, log, sessionID, at, o)
+	return content, next, err
+}
+
+// page 另返回首段的位置供平台拼接页链，不从给模型看的文字找回引用。
+func page(ctx context.Context, log eventlog.Log, sessionID string, at Cursor, o Options) (content []*v1.ContentBlock, next Cursor, first Ref, err error) {
 	// 空页与进行中的提示也遵循预算；错误不携带读取位置。
 	defer func() {
 		if err == nil && o.MaxToolResult > 0 && model.EstimateTokens(content) > o.MaxToolResult {
-			content, next, err = nil, Cursor{}, pageBudgetError(o.MaxToolResult)
+			content, next, first, err = nil, Cursor{}, Ref{}, pageBudgetError(o.MaxToolResult)
 		}
 	}()
 	limit, maxChars := o.Limit, o.MaxChars
@@ -296,7 +305,7 @@ read:
 	for {
 		events, err := log.Read(ctx, sessionID, pos, readBatch)
 		if err != nil {
-			return nil, Cursor{}, err
+			return nil, Cursor{}, Ref{}, err
 		}
 		for _, e := range events {
 			pos = e.GetSeq()
@@ -313,7 +322,7 @@ read:
 				line := "#" + ref.String() + " "
 				n := utf8.RuneCountInString(line + model.CaptureText(g))
 				if count == 0 {
-					span = ref
+					first, span = ref, ref
 					if at.Span.Seq != 0 && prev != nil && !apart(prev, g, o.Gap) {
 						span, cont = at.Span, true
 					}
@@ -347,7 +356,7 @@ read:
 					}
 					if model.EstimateTokens(model.TextBlocks(pageTitle(span, cont)))+tokens+addedTokens+reserved > o.MaxToolResult {
 						if count == 0 {
-							return nil, Cursor{}, pageBudgetError(o.MaxToolResult)
+							return nil, Cursor{}, Ref{}, pageBudgetError(o.MaxToolResult)
 						}
 						break read
 					}
@@ -367,23 +376,23 @@ read:
 		}
 	}
 	if count == 0 {
-		return model.TextBlocks("（已读完：之后没有更多旁听）"), Cursor{}, nil
+		return model.TextBlocks("（已读完：之后没有更多旁听）"), Cursor{}, Ref{}, nil
 	}
 	lastSeg, atEnd := prev, done
 	if !done && !ended && !cont && !o.All && !o.Now.IsZero() {
 		// 时段跨页时先看到它的末尾：一直说到日志末尾的时段第一页就不交出。否则第一页的位置随 Run 提交，
 		// 之后接着读从续页开始，第一页的原话再也读不到（captures.md §5）。续页不必再看：第一页交出时它已经结束。
 		if lastSeg, atEnd, err = spanTail(ctx, log, sessionID, last, prev, o.Gap); err != nil {
-			return nil, Cursor{}, err
+			return nil, Cursor{}, Ref{}, err
 		}
 	}
 	// 读到了日志末尾，而最后一段刚说完不久：这个时段可能还在继续，先不交出，读取位置也不前进。
 	if t, ok := model.CaptureLocalTime(lastSeg); atEnd && ok && !o.All && !o.Now.IsZero() && o.Now.Sub(t) < o.Gap {
-		return model.TextBlocks(fmt.Sprintf("（时段 #%s 还在进行：最后一段在 %s，稍后再整理。之前的时段已读完）", span, t.Format("15:04"))), Cursor{}, nil
+		return model.TextBlocks(fmt.Sprintf("（时段 #%s 还在进行：最后一段在 %s，稍后再整理。之前的时段已读完）", span, t.Format("15:04"))), Cursor{}, Ref{}, nil
 	}
 	out := append(model.TextBlocks(pageTitle(span, cont)), segs...)
 	tail, next := pageTail(span, last, prev, count, done, ended)
-	return append(out, model.TextBlocks(tail)...), next, nil
+	return append(out, model.TextBlocks(tail)...), next, first, nil
 }
 
 func pageBudgetError(budget int) error {

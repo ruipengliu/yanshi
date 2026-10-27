@@ -201,8 +201,20 @@ func (w *World) countCaptureResults(events []*v1.Event) {
 				}
 			}
 		}
+		before := st.Captures.Read[session.StreamTranscript].GetAfter()
+		var ackRun bool
+		if done := e.GetRunCompleted(); done != nil {
+			ackRun = st.Run(done.GetRunId()).CaptureReads[session.StreamTranscript].GetAck()
+		}
 		if err := st.Apply(e); err != nil {
 			return
+		}
+		if ackRun {
+			if st.Captures.Read[session.StreamTranscript].GetAfter() != before {
+				w.Stats.AcksCommitted++
+			} else {
+				w.Stats.AcksMissing++
+			}
 		}
 	}
 }

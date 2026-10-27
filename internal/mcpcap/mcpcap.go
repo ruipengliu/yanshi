@@ -45,6 +45,8 @@ type Server struct {
 	// CiteCaptures 为 true 时，调用参数中的旁听引用编号（"#57.3"）由平台按发起调用的 Session 解析，被引用片段的说话人
 	// 放在 _meta["yanshi/captures"] 中交给业务线（docs/design/captures.md §6）。
 	CiteCaptures bool `yaml:"cite_captures"`
+	// Acks 声明同业务线的结果可以携带交付回执（ADR-0049）；默认不采信。
+	Acks bool `yaml:"acks"`
 }
 
 var (
@@ -297,16 +299,32 @@ func (c *Connector) tool(s Server, t *mcp.Tool) capability.Tool {
 		schema = []byte(`{"type":"object"}`)
 	}
 	spec := capability.Spec{Name: ToolName(s.Name, t.Name), Description: t.Description, InputSchema: schema, Idempotent: idem, Risk: risk}
-	name := t.Name
-	return capability.Tool{Spec: spec, Local: capability.Func{S: spec, Fn: func(ctx context.Context, inv capability.Invocation) ([]*v1.ContentBlock, error) {
-		return c.call(ctx, s, name, inv)
-	}}}
+	return capability.Tool{Spec: spec, Local: remoteTool{spec: spec, connector: c, server: s, name: t.Name}}
 }
 
-func (c *Connector) call(ctx context.Context, s Server, tool string, inv capability.Invocation) ([]*v1.ContentBlock, error) {
+// remoteTool 沿用进程内结果接缝，把模型内容与平台元数据分别交给 Worker。
+type remoteTool struct {
+	spec      capability.Spec
+	connector *Connector
+	server    Server
+	name      string
+}
+
+func (t remoteTool) Spec() capability.Spec { return t.spec }
+
+func (t remoteTool) Invoke(ctx context.Context, inv capability.Invocation) ([]*v1.ContentBlock, error) {
+	out, err := t.InvokeResult(ctx, inv)
+	return out.Content, err
+}
+
+func (t remoteTool) InvokeResult(ctx context.Context, inv capability.Invocation) (capability.Result, error) {
+	return t.connector.call(ctx, t.server, t.name, inv)
+}
+
+func (c *Connector) call(ctx context.Context, s Server, tool string, inv capability.Invocation) (capability.Result, error) {
 	st, err := c.state(ctx, s, false)
 	if err != nil {
-		return nil, fmt.Errorf("MCP server %s unavailable: %w", s.Name, err)
+		return capability.Result{}, fmt.Errorf("MCP server %s unavailable: %w", s.Name, err)
 	}
 	ctx = context.WithValue(ctx, identityKey{}, identity{inv.BusinessLine, inv.EndUser, inv.SessionID})
 	cctx, cancel := context.WithTimeout(ctx, s.Timeout)
@@ -319,7 +337,7 @@ func (c *Connector) call(ctx context.Context, s Server, tool string, inv capabil
 	if s.CiteCaptures && c.Log != nil {
 		cites, err := Citations(ctx, c.Log, inv.SessionID, args)
 		if err != nil {
-			return nil, err
+			return capability.Result{}, err
 		}
 		if len(cites) > 0 {
 			meta["yanshi/captures"] = cites
@@ -333,7 +351,7 @@ func (c *Connector) call(ctx context.Context, s Server, tool string, inv capabil
 			delete(c.conns, s.Name)
 			c.mu.Unlock()
 		}
-		return nil, fmt.Errorf("MCP %s/%s: %w", s.Name, tool, err)
+		return capability.Result{}, fmt.Errorf("MCP %s/%s: %w", s.Name, tool, err)
 	}
 	var upload nodesdk.Uploader
 	if c.Artifacts != nil {
@@ -347,16 +365,23 @@ func (c *Connector) call(ctx context.Context, s Server, tool string, inv capabil
 	}
 	content, isErr, err := nodesdk.MCPContent(ctx, res, upload)
 	if err != nil {
-		return nil, err
+		return capability.Result{}, err
 	}
 	if isErr {
 		var b strings.Builder
 		for _, x := range content {
 			b.WriteString(x.GetText().GetText())
 		}
-		return nil, fmt.Errorf("%s", b.String())
+		return capability.Result{}, fmt.Errorf("%s", b.String())
 	}
-	return content, nil
+	out := capability.Result{Content: content}
+	// 资格来自平台登记与 Session 的身份，不能让业务线外的响应自报一个可信回执。
+	if s.Acks && s.BusinessLine == inv.BusinessLine {
+		if value, ok := res.Meta["yanshi/ack"]; ok {
+			out.Ack, _ = json.Marshal(value)
+		}
+	}
+	return out, nil
 }
 
 // Close 关闭全部连接。

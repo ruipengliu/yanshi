@@ -42,6 +42,9 @@ func (s *Service) backgroundInput(st *session.State, r *v1.BackgroundResult) (ev
 // "Worker 转入后台"与"设备结果到达"的竞争由乐观并发解决：冲突后重新决定，结果总落在其中一处，且只落一次。
 // Session 已删除时返回 session.ErrGone。
 func (s *Service) NodeResult(ctx context.Context, sessionID, runID, callID string, content []*v1.ContentBlock, isErr bool) error {
+	if err := rejectPlatformOnly(content); err != nil {
+		return err
+	}
 	st, err := s.Store.Load(ctx, sessionID)
 	if err != nil {
 		return err

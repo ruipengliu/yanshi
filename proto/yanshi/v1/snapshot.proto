@@ -103,6 +103,10 @@ message RunSnapshot {
   string from_background = 18;
   // 本 Run 中 captures 读到的位置，Run 完成时提交（session.Run），按流名排序。
   repeated CaptureRead capture_reads = 19;
+  // 需要交付确认的流在本 Run 中读过的所有页，按读取顺序。
+  repeated CaptureRead capture_pages = 20;
+  // 本 Run 收到的业务线回执，按写入顺序。
+  repeated CaptureAck capture_acks = 21;
 }
 
 message CallSnapshot {

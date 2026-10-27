@@ -64,6 +64,8 @@ type Options struct {
 	LongRuns bool
 	// CaptureReads 让模型集中读取旁听，保证分页与接读不会被大量其他能力摊薄。
 	CaptureReads bool
+	// CaptureAcks 在集中读页时注入业务线回执、拒收与 MCP 调用失败。
+	CaptureAcks bool
 }
 
 // Stats 统计模拟中被覆盖到的路径，防止模拟"空转"。
@@ -142,6 +144,8 @@ type Stats struct {
 	CaptureContinuations, CaptureNewReads, CaptureNewResumes                        int
 	// RetentionKeptMemories 是按保留期到期删除、写入过的 Memory 得以保留的 Session（ADR-0037）。
 	RetentionKeptMemories int
+	// 回执使位置前进、缺回执而完全未前进，以及注入的业务拒收与 MCP 失败。
+	AcksCommitted, AcksMissing, AckRefusals, AckMCPFailures int
 	// InvalidArgs 是模型给出不合法参数的调用（args.go）。
 	InvalidArgs int
 	// MemoryPrechecked 是注入的 Memory 预检查拒绝样例中已返回错误结果的调用（memprecheck.go）。
@@ -408,8 +412,13 @@ func New(opts Options) (*World, error) {
 			Capabilities: []string{"echo", "send", "ask_user", "show_card", "memory_save", "memory_forget", "memory_search", "captures", "device:*", "sandbox:*", "agent:sim"},
 			MaxTurns:     maxTurns, Context: ctxCfg, Memory: agentdef.MemoryConfig{Recall: 3},
 			// 旁听转写写进同一批 Session，与输入、Run、关闭和删除交错。
-			Streams: []agentdef.Stream{{Name: session.StreamTranscript}},
+			Streams: []agentdef.Stream{{Name: session.StreamTranscript, Ack: opts.CaptureAcks}},
 		})
+	}
+	if opts.CaptureAcks {
+		for _, def := range defs {
+			def.Capabilities = append(def.Capabilities, "mcp:sim/save")
+		}
 	}
 	agents, err := agentdef.NewRegistry(defs...)
 	if err != nil {
@@ -443,6 +452,7 @@ func New(opts Options) (*World, error) {
 	w.core = app.NewCore(wrapped, app.Options{
 		Clock: w.clock, IDs: ids.Sequential, Agents: agents, Model: gw, Blobs: artifact.NewMemBlobs(), NodeAuth: node.InsecureDevAuth{},
 		Local:        []capability.Capability{w.echoCap(), w.sendCap(), simCardCap()},
+		MCP:          simAckSource{w},
 		SandboxTools: true, DefaultTimeout: deviceTimeout, NodeCacheTTL: 5 * time.Second,
 		BackgroundGrace: bgGrace, BackgroundTimeout: bgTimeout,
 		Moderator: simModerator{w}, InjectionCheck: simDecider{w}, Meter: w.meter, Quotas: w.quotas, Pusher: simPusher{w},
@@ -1144,6 +1154,11 @@ func (w *World) CheckInvariants() error {
 		if len(events) == 0 {
 			continue // 尚未创建（委托还没派发）或已删除的子 Session
 		}
+		if w.opts.CaptureAcks {
+			if err := checkCaptureAcks(events); err != nil {
+				return fmt.Errorf("session %s: %w", sid, err)
+			}
+		}
 		st, err := session.Reduce(events)
 		if err != nil {
 			return fmt.Errorf("invariant: log of %s is invalid: %w", sid, err)
@@ -1597,6 +1612,15 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 		more = turns < 100 && w.chance(0.97)
 	}
 	if w.opts.CaptureReads {
+		if w.opts.CaptureAcks && len(req.Messages) > 0 && req.Messages[len(req.Messages)-1].Role == model.RoleTool {
+			last := req.Messages[len(req.Messages)-1]
+			if strings.HasPrefix(model.Text(last.Content), "【时段 #") {
+				if args := simAckArgs(req.Messages); args != "" {
+					resp.ToolCalls = []*v1.ToolCall{{Capability: simAckName, ArgumentsJson: args}}
+					return resp, nil
+				}
+			}
+		}
 		// 压缩会减少可见轮数，不能只等固定轮数才结束；须完成 Run 才能提交读取位置。
 		more = turns < 3 && w.chance(0.7)
 		if more {

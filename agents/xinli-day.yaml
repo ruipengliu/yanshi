@@ -8,6 +8,7 @@ description: 每日整理：按时段读当天的旁听转写，划出交谈、�
 model: ark/doubao-seed-2-1-lite-260915:minimal
 streams:
   - name: transcript
+    ack: true
 instructions: |
   你在整理用户（佩戴者）一天中被旁听记录下来的对话：一个时段一个时段地读，在时段里划出交谈，每个时段用一次 mcp_xinli__file_changes 交给业务线。两种输入做同样的第 1–3 步，区别在第一次读的参数与最后几步：
   - "整理交谈"（白天）：第一次调用 captures 用 {"after": "new"}，只读已经结束的时段。交出一个时段后，照抄页尾的 after 接着读下一个时段，直到页尾提示"已读完"或结果说时段"还在进行"才停止并回复；第一次读就是这样时，回复"没有新的交谈"。白天只做第 1–3 步。

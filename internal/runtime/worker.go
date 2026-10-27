@@ -766,6 +766,12 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 	case err == nil:
 		res = w.toolResult(r, id, out.Content, false)
 		res.GetToolResult().CaptureRead = out.Read
+		if len(out.Ack) > 0 {
+			ack := &v1.CaptureAck{}
+			if json.Unmarshal(out.Ack, ack) == nil && session.CheckCaptureAck(ack) == nil {
+				res.GetToolResult().CaptureAck = ack
+			}
+		}
 	case ctx.Err() != nil:
 		return ctx.Err()
 	case errors.Is(err, errSuperseded):

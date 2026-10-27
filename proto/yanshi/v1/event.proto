@@ -363,6 +363,8 @@ message ToolResult {
   // captures 读到的位置（ADR-0039）：只由 Worker 写入 captures 的结果，模型看不到；本页没有读到任何旁听时为空。
   // Run 完成时提交为该流已读到的位置，after = "new" 由此接着读，不解析给模型看的文字。
   CaptureRead capture_read = 10;
+  // 业务线的交付回执（ADR-0049）：只由 Worker 从同业务线、声明了 acks 的 MCP 结果写入，模型看不到。
+  CaptureAck capture_ack = 11;
 }
 
 // CaptureRead 是 captures 一页读到的位置（docs/design/m5-inputs-triggers-loops.md §5）。
@@ -373,6 +375,19 @@ message CaptureRead {
   string after = 2;
   // 本页切分交谈用的间隔（毫秒）：一个 Session 中沿用第一次提交的读取位置中的值，交谈 ID 因此不随 AgentDef 改变。
   int64 exchange_gap_ms = 3;
+  // 本页开始读取的游标；after = "new" 时已解析为提交位置，从头读统一为 "0"。
+  string start = 4;
+  // 本页第一段的引用编号，不带 "#"；续页也记录本页第一段，而非时段起点。
+  string first = 5;
+  // 本次读取使用的 AgentDef 流声明，随日志保存以使投影重放不依赖外部配置。
+  bool ack = 6;
+}
+
+// CaptureAck 声明业务线已保存一个流上闭区间 [from, through] 的整理结果；两个端点都是不带 "#" 的引用编号。
+message CaptureAck {
+  string stream = 1;
+  string from = 2;
+  string through = 3;
 }
 
 message Backgrounded {

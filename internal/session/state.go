@@ -125,9 +125,12 @@ type Run struct {
 	SuspendedUntil time.Time
 	// FromBackground 非空表示 Run 由该后台调用的了结（结果或到期）开启，而不是用户的输入（ADR-0035）。
 	FromBackground string
-	// CaptureReads 是本 Run 中 captures 最后一页读到的位置，键为流名；Run 完成时提交到 State.Captures 的 Read
-	// （ADR-0039）。失败、中断的 Run 不提交：读了还没交出的时段，下一次重新读到。条目不再修改。
+	// CaptureReads 是本 Run 中 captures 最后一页读到的位置，键为流名；未要求确认的流在 Run 完成时直接提交，
+	// 要求确认的流按 CapturePages 与 CaptureAcks 拼链（ADR-0039、ADR-0049）。失败、中断不提交。条目不再修改。
 	CaptureReads map[string]*v1.CaptureRead
+	// CapturePages 与 CaptureAcks 保留本 Run 的读页与回执，跨页确认不能靠最后一页或压缩后的 History 重建。
+	CapturePages []*v1.CaptureRead
+	CaptureAcks  []*v1.CaptureAck
 }
 
 // SuspendHandoff 是移交的挂起原因（ADR-0029）：Worker 正常结束 Attempt 并立即归还 Session，由其他 Worker 恢复，
@@ -165,6 +168,8 @@ func (r *Run) clone() *Run {
 	cp := *r
 	cp.Decisions = maps.Clone(r.Decisions)
 	cp.CaptureReads = maps.Clone(r.CaptureReads)
+	cp.CapturePages = slices.Clone(r.CapturePages)
+	cp.CaptureAcks = slices.Clone(r.CaptureAcks)
 	cp.Calls = make([]*Call, len(r.Calls))
 	for i, c := range r.Calls {
 		cc := *c
@@ -878,11 +883,23 @@ func (s *State) apply(e *v1.Event) error {
 			if err := checkCaptureRead(rd); err != nil || m.GetAttempt() == 0 || c.Call.GetCapability() != CapturesCapability {
 				return fmt.Errorf("capture read in the result of call %q (%s): %v", m.GetCallId(), c.Call.GetCapability(), err)
 			}
+			if previous := r.CaptureReads[rd.GetStream()]; previous != nil && previous.GetAck() != rd.GetAck() {
+				return fmt.Errorf("capture read changed ack declaration in run %s", r.ID)
+			}
 			r.CaptureReads = maps.Clone(r.CaptureReads)
 			if r.CaptureReads == nil {
 				r.CaptureReads = map[string]*v1.CaptureRead{}
 			}
 			r.CaptureReads[rd.GetStream()] = rd
+			if rd.GetAck() {
+				r.CapturePages = append(slices.Clone(r.CapturePages), rd)
+			}
+		}
+		if ack := m.GetCaptureAck(); ack != nil {
+			if m.GetAttempt() == 0 || c.NodeID != "" || !isMCPCall(c.Call.GetCapability()) || m.GetIsError() || CheckCaptureAck(ack) != nil {
+				return fmt.Errorf("capture ack in the result of call %q (%s)", m.GetCallId(), c.Call.GetCapability())
+			}
+			r.CaptureAcks = append(slices.Clone(r.CaptureAcks), ack)
 		}
 		// 卡片动作同样只由平台写入：它只出现在用户等回答时点卡片而得的 ask_user 回答里，这条回答必有输入 ID
 		// （由动作推导）。其他结果带上它，客户端会把没有执行过的动作显示为已选。
@@ -990,7 +1007,13 @@ func (s *State) apply(e *v1.Event) error {
 			if read == nil {
 				read = map[string]*v1.CaptureRead{}
 			}
-			maps.Copy(read, r.CaptureReads)
+			for stream, last := range r.CaptureReads {
+				if !last.GetAck() {
+					read[stream] = last
+				} else if confirmed := confirmedCaptureRead(read[stream], stream, r.CapturePages, r.CaptureAcks); confirmed != nil {
+					read[stream] = confirmed
+				}
+			}
 			s.Captures.Read = read
 		}
 

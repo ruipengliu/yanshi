@@ -214,7 +214,7 @@ func TestReadPositionAndOpenSpan(t *testing.T) {
 	)
 	zone, _ := time.LoadLocation("Asia/Shanghai")
 	tool := capture.New(log, clock.NewFake(time.Date(2026, 10, 23, 11, 2, 0, 0, zone)))
-	def := &agentdef.Def{Streams: []agentdef.Stream{{Name: capture.Stream, ExchangeGap: gap}}}
+	def := &agentdef.Def{Streams: []agentdef.Stream{{Name: capture.Stream, ExchangeGap: gap, Ack: true}}}
 	st := &session.State{}
 	read := func(args string) capability.Result {
 		t.Helper()
@@ -227,12 +227,12 @@ func TestReadPositionAndOpenSpan(t *testing.T) {
 	commit := func(rd *v1.CaptureRead) { st.Captures.Read = map[string]*v1.CaptureRead{capture.Stream: rd} }
 
 	first := read(`{"after":"new"}`)
-	if !strings.Contains(model.Text(first.Content), "【时段 #2.0 起】") || first.Read.GetAfter() != "2.1" || first.Read.GetExchangeGapMs() != gap.Milliseconds() {
+	if !strings.Contains(model.Text(first.Content), "【时段 #2.0 起】") || !first.Read.GetAck() || first.Read.GetStart() != "0" || first.Read.GetFirst() != "2.0" || first.Read.GetAfter() != "2.1" || first.Read.GetExchangeGapMs() != gap.Milliseconds() {
 		t.Fatalf("first = %q, read %v", model.Text(first.Content), first.Read)
 	}
 	commit(first.Read)
 	second := read(`{"after":"new"}`)
-	if !strings.Contains(model.Text(second.Content), "【时段 #4.0 起】") || second.Read.GetAfter() != "4.0" {
+	if !strings.Contains(model.Text(second.Content), "【时段 #4.0 起】") || second.Read.GetStart() != "2.1" || second.Read.GetFirst() != "4.0" || second.Read.GetAfter() != "4.0" {
 		t.Fatalf("second = %q, read %v", model.Text(second.Content), second.Read)
 	}
 	commit(second.Read)
@@ -282,6 +282,18 @@ func TestOpenSpanAcrossPages(t *testing.T) {
 	later := read(soon.Add(time.Hour), `{"after":"new","limit":2}`)
 	if segments(later.Content) != 2 || later.Read.GetAfter() != "4.1~4.0" {
 		t.Fatalf("ended span across pages = %q, read %v", model.Text(later.Content), later.Read)
+	}
+	continuation := read(soon.Add(time.Hour), `{"after":"4.1~4.0","limit":2}`)
+	if continuation.Read.GetStart() != "4.1~4.0" || continuation.Read.GetFirst() != "6.0" || continuation.Read.GetAfter() != "6.0" {
+		t.Fatalf("continuation read = %v", continuation.Read)
+	}
+}
+
+func TestInvalidContinuationCursorDoesNotProduceRead(t *testing.T) {
+	log := timedLog(t, []string{"2026-10-23T09:00 甲"}, []string{"2026-10-23T09:01 乙"})
+	res, err := capture.New(log, nil).InvokeResult(context.Background(), capability.Invocation{SessionID: "s", Arguments: `{"after":"2.0~4.0","all":true}`})
+	if err == nil || res.Read != nil {
+		t.Fatalf("invalid continuation cursor produced a page: %v, %v", res.Read, err)
 	}
 }
 
