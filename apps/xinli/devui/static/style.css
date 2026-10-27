@@ -1,0 +1,147 @@
+:root { --muted:#64748b; --panel:#fff; --line:#dce3eb; --line-soft:#e9edf2; --radius:10px; --shadow:0 2px 8px #172b4d08; --accent:#2563eb; --accent-soft:#bfdbfe; --delegate:#7c3aed; --bad:#b91c1c; --ok:#15803d; --warn:#a16207; --subtle:#f1f5f9; }
+* { box-sizing:border-box; }
+body { margin:0; background:#f6f8fb; color:#172b4d; font:14px/1.6 system-ui,sans-serif; }
+header { max-width:920px; margin:20px auto; padding:0 18px; }
+form { display:flex; flex-wrap:wrap; gap:12px; align-items:end; }
+label { display:flex; flex-direction:column; }
+input, button, .btn { font:inherit; border:1px solid var(--line); border-radius:6px; padding:5px 10px; background:white; }
+button, a { cursor:pointer; }
+a { color:var(--accent); }
+.btn { text-decoration:none; } .small { font-size:12px; }
+.segmented { display:flex; gap:4px; } .selected { background:var(--accent); color:white; }
+.empty { padding:24px; color:var(--muted); } .muted { color:var(--muted); }
+.xinli-card-head { flex-wrap:wrap; } code { overflow-wrap:anywhere; }
+/* —— 旁听视图（xinli.js）：业务线的今日、项目、承诺、待确认、觉察 —— */
+.xinli-main {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 18px;
+}
+.xinli {
+  max-width: 920px;
+  margin: 0 auto;
+}
+.xinli-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+.xinli .muted {
+  color: var(--muted);
+}
+.xinli-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+.xinli-card-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+  cursor: default;
+}
+.xinli-card-head .spacer {
+  flex: 1;
+}
+.xinli-card-head code {
+  font-size: 11px;
+  color: var(--muted);
+}
+.xinli-headline {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.xinli-group {
+  border-left: 3px solid var(--accent-soft);
+  padding: 4px 0 4px 10px;
+  margin-top: 8px;
+}
+.xinli-group-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.xinli-revisions {
+  margin: 2px 0 4px 24px;
+  font-size: 12px;
+}
+.xinli-revisions ol {
+  margin: 2px 0;
+  padding-left: 18px;
+}
+.xinli-list {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+.xinli-list .label {
+  flex: 0 0 64px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.xinli-list ul {
+  margin: 0;
+  padding-left: 16px;
+}
+.xinli-list.mine .label,
+.xinli-list.commitments .label {
+  color: var(--accent);
+}
+.xinli-list.theirs .label {
+  color: var(--delegate);
+}
+.xinli-list.risk .label {
+  color: var(--bad);
+}
+.xinli-list.decided .label,
+.xinli-list.habit .label {
+  color: var(--ok);
+}
+.xinli-list.suggestion .label {
+  color: var(--warn);
+}
+.xinli-list .due {
+  color: var(--warn);
+}
+.xinli-list .risk {
+  color: var(--bad);
+}
+.xinli-list .tag,
+.xinli-group-title .tag {
+  font-size: 11px;
+  padding: 0 5px;
+  border-radius: 6px;
+  background: var(--subtle);
+  border: 1px solid var(--line);
+}
+.xinli-list .tag.mine {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.xinli-list .tag.theirs {
+  color: var(--delegate);
+  border-color: var(--delegate);
+}
+.xinli-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.xinli-timeline {
+  margin-top: 10px;
+  border-top: 1px solid var(--line-soft);
+}
+.xinli-entry-date {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
