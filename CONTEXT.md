@@ -128,7 +128,7 @@ _Avoid_: 录音、输入（指它时）、CallTranscript（那是 Call 的转写
 按引用范围物理删除一段 Capture 的文字：先记为 Event，再清空存储中的正文；之后的读取与模型上下文只见占位。用于 EndUser 删除一天中的部分谈话，与删除整个 Session 区分。
 _Avoid_: 删除（指整个 Session 时）、屏蔽、隐藏
 
-**Ack（交付确认）**（设计中，[设计](docs/design/m7-kernel-primitives.md) §11、ADR-0049）:
+**Ack（交付确认）**（[设计](docs/design/m7-kernel-primitives.md) §11、ADR-0049）:
 业务线保存整理结果后在 MCP 结果中附上的结构化回执：它已持久化了某个流上哪一段范围。流声明需要确认时，读取位置只按回执连续拼出的前缀推进，没保存的时段不会被跳过。
 _Avoid_: 回执（指给模型看的结果文字时）、ACK（指传输层时）、提交
 

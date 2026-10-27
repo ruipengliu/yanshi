@@ -127,7 +127,7 @@ Capture 的内容不进入 `State`，也不追加到 `History`：一天的转写
 
 ### 接着读与进行中的时段
 
-- **读取位置由平台记录**（ADR-0039）。`captures` 读到旁听的每一页，Worker 在结果中写入读取位置（`ToolResult.capture_read`：流名、下一页的位置、时段间隔），模型看不到；Run 完成（`RunCompleted`）时投影把本 Run 最后一页的位置提交到 `State.Captures.Read`。没有读到任何旁听的页（"已读完"、"还在进行"）不带位置。`capture_read` 只能出现在 `captures` 的结果中，`Apply` 校验。
+- **读取位置由平台记录**（ADR-0039、ADR-0049）。`captures` 读到旁听的每一页，Worker 在结果中写入读取位置（`ToolResult.capture_read`：流名、下一页的位置、时段间隔、实际开始游标 `start`、本页第一段 `first` 与流的 `ack` 声明），模型看不到；Run 完成（`RunCompleted`）时，未声明确认的流沿用本 Run 最后一页的位置；声明 `ack: true`（`agentdef.Stream.Ack`）的流从已提交游标起，沿本 Run 中被回执完整覆盖的页拼链，同一起点取最远的被覆盖页，只提交连续前缀的真实页尾（包括 `~` 续页位置）与该页的时段间隔。页与回执分别保存在 `session.Run.CapturePages`、`session.Run.CaptureAcks`，回执随 `ToolResult.CaptureAck` 写入；规则见 [内核补充](./m7-kernel-primitives.md) §11。投影提交到 `State.Captures.Read`。没有读到任何旁听的页（"已读完"、"还在进行"）不带位置。`capture_read` 只能出现在 `captures` 的结果中，`Apply` 校验。
 - **`after: "new"`** 从投影中已提交的位置接着读，不扫描日志、不解析给模型看的文字，模型也不必记住位置。只认已完成的 Run：Run 读了一个时段、还没交出就失败了，下一次会重新读到它；业务线按交出的来源去重，重复交出时取代之前的结果（[xinli 的建模](./captures-xinli-model.md) §5）。
 - **进行中的时段先不读。** 读到日志末尾、而最后一段距现在不到间隔的时段可能还在继续：不返回它，只注明"时段 #… 还在进行，稍后再整理"，读取位置也就不前进。跨页的时段在第一页就先看到它的末尾：否则第一页的位置随 Run 提交，之后接着读从续页开始，第一页的原话再也读不到。这一条对任何 `after` 都生效（模型可能照抄页尾的位置接着读）；`all: true` 时照常返回（深夜的整理、调试控制台读刚写下的旁听）。"现在"取自平台的时钟（`clock.Clock`），结果写入日志后重放时使用记录下来的结果。
 

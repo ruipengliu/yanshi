@@ -47,6 +47,8 @@ type Invocation struct {
 type Result struct {
 	Content []*v1.ContentBlock
 	Read    *v1.CaptureRead
+	// Ack 是经登记资格筛选的 MCP 回执元数据，Worker 校验后写入日志，不交给模型。
+	Ack json.RawMessage
 }
 
 // ResultInvoker 是可选的 Capability 能力：除内容外还给出只由平台写入 ToolResult 的字段。Worker 优先调用它。

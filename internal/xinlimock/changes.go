@@ -569,6 +569,9 @@ func (c *call) fileChanges() string {
 		return rejected(k.problems)
 	}
 	u.commit(&cs, old, k.news)
+	if !k.day {
+		c.ack = map[string]string{"stream": "transcript", "from": k.from.String(), "through": k.to.String()}
+	}
 	return c.receipt(&cs, k.notes)
 }
 

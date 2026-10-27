@@ -267,8 +267,9 @@ quota:
 
 - **业务线给出结构化回执。** 业务线保存一个变更集后，在 MCP 结果中附 `_meta["yanshi/ack"] = {stream, from, through}`：它已持久化了这个流上 `[from, through]` 的范围。拒收、部分保存不附回执。回执是业务线对平台的声明，不是给模型看的文字。
 - **AgentDef 声明需要确认的流**：`streams[].ack: true`。声明后，读取位置只按回执推进：
-  - 平台在 `ToolResult` 中记下回执（平台专属字段，只采信同一业务线、登记中声明了 `acks: true` 的 MCP Server 的调用结果，`Apply` 校验）；
-  - `RunCompleted` 时，从已提交的位置起，按回执的 `[from, through]` 拼出**连续**的已确认前缀（`from` 不晚于当前前缀的末端才能接上），读取位置提交到这个前缀的末端，且不超过本 Run 实际读到的位置；
+  - 平台在 `ToolResult.CaptureAck` 中记下回执（契约见 `proto/yanshi/v1/event.proto` 的 CaptureAck）。只采信同一业务线、登记中声明了 `acks: true`（`mcpcap.Server.Acks`）的 MCP Server 的调用结果；`session.CheckCaptureAck` 与 `State.Apply` 校验。回执不进入模型上下文；
+  - `CaptureRead.Start` 记录本页实际开始读取的游标（`after: "new"` 已解析为提交位置，从头统一为 `"0"`），`first` 记录本页第一段的 Ref；`ack` 记录这次读取使用的 `agentdef.Stream.Ack` 声明。Run 保留所有需要确认的页（`session.Run.CapturePages`）与本 Run 的回执（`session.Run.CaptureAcks`），快照一并保存；
+  - `RunCompleted` 时，从已提交位置起，在本 Run 的页中找 `start` 等于当前位置、且被同一回执完整覆盖 `[first, after 的 Last]` 的页；若有多个，取页尾最远的，再从该页尾继续。找不到便停止，提交最后一页真实的完整游标及其时段间隔。以页拼链，不用 Ref 的序号相邻性推断连续：两批 Capture 之间可能夹着别的 Event。回执越过实际读取范围，也只能提交到被覆盖的已读页尾；
   - 没有新内容的时段也要交出（空变更集，xinli-day 已经每个时段一次 `file_changes`），否则前缀断开。
 - **未声明 `ack` 的流**：行为不变。
 - `xinli-day` 声明 `ack: true`；Persona 的 `file_changes` 在成功时附回执。

@@ -137,6 +137,8 @@ type call struct {
 	businessLine, endUser, session string
 	args                           json.RawMessage
 	cites                          map[string]mcpcap.Citation
+	// ack 只在范围变更集全部接受后设置，不从结果文字推断是否已交付。
+	ack map[string]string
 }
 
 func readOnly() *mcp.ToolAnnotations { return &mcp.ToolAnnotations{ReadOnlyHint: true} }
@@ -710,7 +712,11 @@ func Start(ctx context.Context, businessLines ...string) (*Server, error) {
 			c.u = x.user(c.businessLine, c.endUser)
 			out := t.handler(c)
 			x.mu.Unlock()
-			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: out}}}, nil
+			res := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: out}}}
+			if c.ack != nil {
+				res.Meta = mcp.Meta{"yanshi/ack": c.ack}
+			}
+			return res, nil
 		})
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -721,7 +727,7 @@ func Start(ctx context.Context, businessLines ...string) (*Server, error) {
 	go func() { _ = hs.Serve(ln) }()
 	go func() { <-ctx.Done(); _ = hs.Close() }()
 	for _, bl := range businessLines {
-		s := mcpcap.Server{Name: "xinli", BusinessLine: bl, URL: "http://" + ln.Addr().String(), Timeout: 30 * time.Second, CiteCaptures: true}
+		s := mcpcap.Server{Name: "xinli", BusinessLine: bl, URL: "http://" + ln.Addr().String(), Timeout: 30 * time.Second, CiteCaptures: true, Acks: true}
 		s.Tools.NoApproval = []string{"file_changes", "file_day", "set_status", "update_commitments", "propose_merge", "file_week"}
 		x.Servers = append(x.Servers, s)
 	}

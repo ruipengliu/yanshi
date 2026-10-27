@@ -201,3 +201,11 @@ func TestCaptureReadsWithFaults(t *testing.T) {
 	})
 	requireCoverage(t, total, "CaptureResults", "CaptureSuccesses", "CapturePages", "CaptureMorePages", "CaptureContinuations", "CaptureNewReads", "CaptureNewResumes")
 }
+
+// 业务拒收与 MCP 失败仍可让 Run 完成，读取位置必须留在已确认的连续页尾。
+func TestCaptureAcksWithFaults(t *testing.T) {
+	total := parallelSeeds(t, seedList(), func(t *testing.T, s uint64) Stats {
+		return run(t, s, Options{Faults: true, CaptureReads: true, CaptureAcks: true, Ticks: 1000}).Stats
+	})
+	requireCoverage(t, total, "AcksCommitted", "AcksMissing", "AckRefusals", "AckMCPFailures")
+}
