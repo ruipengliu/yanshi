@@ -1,17 +1,62 @@
-package xinlimock
+// Package xinlifixture 是评测的外部夹具客户端。
+// 内核不能 import Persona（ADR-0043），所以在此镜像 JSON 与用例 YAML 的数据形状。
+// 类型以 persona/domain 为准；领域规则由外部进程执行，评测只读取结果。
+package xinlifixture
 
 import (
-	"maps"
 	"slices"
-	"strings"
 	"time"
-
-	"yanshi/internal/memory"
 )
 
-// 业务线的知识按实体维护、以变更集写入（docs/design/xinli-model.md，ADR-0042）：变更集是日志，交谈与承诺由它
-// 依次叠加得出（fold），不直接修改。重交同一个来源的变更集时原位取代旧的那个，再重新叠加：撤销上一次的全部效果、再应用
-// 新的。项目不在变更集里：它的现状、归档与合并由各自的工具与用户的选择直接维护，交谈与承诺只按 ID 引用它。
+const NewProject = "P-0101"
+
+// Project 是业务线的一个项目。ID、Name、Status 可由评测预置；现状之后由 xinli-project 的 set_status 更新。
+type Project struct {
+	ID            string    `yaml:"id" json:"id"`
+	Name          string    `yaml:"name" json:"name"`
+	Status        string    `yaml:"status" json:"status"`
+	NextSteps     []string  `yaml:"-" json:"next_steps"`
+	OpenQuestions []string  `yaml:"-" json:"open_questions"`
+	StatusAt      time.Time `yaml:"-" json:"status_at,omitzero"`
+	// Session 是项目的 xinli-project Session（归集时创建）。
+	Session string `yaml:"-" json:"session,omitempty"`
+	// Archived 为 true 时项目已归档：不再被召回，App 中可以取消归档（xinli-captures.md §7）。
+	Archived bool `yaml:"-" json:"archived,omitempty"`
+	// MergedInto 非空时项目已并入另一个项目（用户确认了合并提议）：交谈与承诺叠加时换成保留的那个。
+	MergedInto string `yaml:"-" json:"merged_into,omitempty"`
+}
+
+// Active 报告项目是否参与召回：没有归档，也没有被合并。
+func (p *Project) Active() bool { return !p.Archived && p.MergedInto == "" }
+
+// Day 是一次每日整理（file_day）的结果。
+type Day struct {
+	Date       string    `yaml:"date" json:"date"`
+	Session    string    `yaml:"-" json:"session"`
+	FiledAt    time.Time `yaml:"-" json:"filed_at"`
+	Headline   string    `yaml:"headline" json:"headline"`
+	Highlights []string  `yaml:"highlights" json:"highlights"`
+	Awareness  Awareness `yaml:"awareness" json:"awareness"`
+}
+
+// Awareness 是对用户本人沟通方式的观察（"觉察"页）：不含情绪与身心状态，它们只以 health 类别写入 Memory。
+type Awareness struct {
+	Habits      []string `yaml:"habits" json:"habits"`
+	Suggestions []string `yaml:"suggestions" json:"suggestions"`
+}
+
+// State 是一个 EndUser 在业务线中的全部数据，供应用页面展示与评测断言。
+type State struct {
+	Projects    []Project    `json:"projects"`
+	Exchanges   []Exchange   `json:"exchanges"`
+	Commitments []Commitment `json:"commitments"`
+	Changesets  []Changeset  `json:"changesets"`
+	Days        []Day        `json:"days"`
+	Weeks       []Week       `json:"weeks"`
+	Merges      []Merge      `json:"merges"`
+	// ReminderIDs 由 Persona 判定，快照消费者只读取结果；按账本顺序排列。
+	ReminderIDs []string `json:"reminders"`
+}
 
 // 变更集的作者。
 const (
@@ -153,81 +198,15 @@ func (m *Commitment) Rev() int { return len(m.Revisions) }
 // Open 报告承诺是否未完成且有效（没有被合并）：提醒与召回只看这些。
 func (m *Commitment) Open() bool { return m.Status == "open" && m.MergedInto == "" }
 
-// reminderEligible 只检查单条条件；实际会提醒哪些承诺必须由 State.Reminders 进行集合级选择。
-func (m *Commitment) reminderEligible() bool {
-	return m.Open() && m.Unverified == "" && m.DueDate != ""
-}
-
-// possibleDuplicate 与当天整理的提示共用规则；称呼为空时无法确定是同一对方。
-func possibleDuplicate(a, b *Commitment) bool {
-	return a.Kind == b.Kind && a.Counterpart != "" && a.Counterpart == b.Counterpart && memory.TextSimilarity(a.Content, b.Content) >= similarContent
-}
-
-// Reminders 返回会按期限提醒的承诺，保持账本顺序，不修改账本或自动合并。
-// 可能重复的关系按成对传递分组：即使 A 与 C 不相近，只要 A–B、B–C 相近，也只保留组中最新的一条。
+// Reminders 按账本顺序展开 Persona 给出的提醒 ID，评测不重新判定提醒资格或去重。
 func (s *State) Reminders() []Commitment {
-	seen := make([]bool, len(s.Commitments))
-	selected := make([]bool, len(s.Commitments))
-	for i := range s.Commitments {
-		if seen[i] || !s.Commitments[i].reminderEligible() {
-			continue
-		}
-		seen[i] = true
-		group := []int{i}
-		best := i
-		for n := 0; n < len(group); n++ {
-			a := group[n]
-			if newerCommitment(&s.Commitments[a], &s.Commitments[best]) {
-				best = a
-			}
-			for j := range s.Commitments {
-				if !seen[j] && s.Commitments[j].reminderEligible() && possibleDuplicate(&s.Commitments[a], &s.Commitments[j]) {
-					seen[j] = true
-					group = append(group, j)
-				}
-			}
-		}
-		selected[best] = true
-	}
 	var out []Commitment
-	for i, m := range s.Commitments {
-		if selected[i] {
+	for _, m := range s.Commitments {
+		if slices.Contains(s.ReminderIDs, m.ID) {
 			out = append(out, m)
 		}
 	}
 	return out
-}
-
-// 用户改过的承诺优先，避免模型后建的重复项使提醒回到旧期限；用户修订没有说话时间，不能因此被视为最旧。
-// 同等用户优先级下，按最后修订的说话时间、记录时间、ID 比较；没有说话时间时用记录时间，
-// 让用户修改与依据摘要的修订也能按实际发生的时刻比较。没有修订历史的预置值沿用说话时间与更新时间。
-func newerCommitment(a, b *Commitment) bool {
-	userEdited := func(m *Commitment) bool {
-		return len(m.Locked) > 0 || slices.ContainsFunc(m.Revisions, func(r Revision) bool { return r.Author == AuthorUser })
-	}
-	if au, bu := userEdited(a), userEdited(b); au != bu {
-		return au
-	}
-	latest := func(m *Commitment) (time.Time, time.Time) {
-		spoken, recorded := m.SpokenAt, m.UpdatedAt
-		if len(m.Revisions) > 0 {
-			r := m.Revisions[len(m.Revisions)-1]
-			spoken, recorded = r.SpokenAt, r.RecordedAt
-		}
-		if spoken.IsZero() {
-			spoken = recorded
-		}
-		return spoken, recorded
-	}
-	as, ar := latest(a)
-	bs, br := latest(b)
-	if !as.Equal(bs) {
-		return as.After(bs)
-	}
-	if !ar.Equal(br) {
-		return ar.After(br)
-	}
-	return a.ID > b.ID
 }
 
 // Revision 是承诺的一次改动（xinli-model.md §3、§7）：说话时间 SpokenAt 起成立，到下一条修订的说话时间为止；
@@ -277,182 +256,82 @@ type CommitmentMerge struct {
 	Reason string   `json:"reason,omitempty"`
 }
 
-// ledger 是叠加出的实体。
-type ledger struct {
-	exchanges   []Exchange
-	commitments []Commitment
+// Week 是一次每周回顾交出的觉察（file_week）。
+type Week struct {
+	Session     string    `json:"session"`
+	FiledAt     time.Time `json:"filed_at"`
+	Habits      []Habit   `json:"habits"`
+	Suggestions []string  `json:"suggestions"`
 }
 
-// fold 依次叠加变更集，得出交谈与承诺的当前状态。引用了不存在的实体的操作跳过（被取代的变更集带走了它）；canon 把
-// 已合并的项目换成保留的那个。
-func fold(css []Changeset, canon func(string) string) ledger {
-	var l ledger
-	for i := range css {
-		l.apply(&css[i])
-	}
-	for i := range l.exchanges {
-		for j := range l.exchanges[i].Projects {
-			p := &l.exchanges[i].Projects[j]
-			p.Project, p.Candidate = canon(p.Project), canon(p.Candidate)
-		}
-		for j := range l.exchanges[i].Decisions {
-			d := &l.exchanges[i].Decisions[j]
-			d.Project = canon(d.Project)
-		}
-	}
-	for i := range l.commitments {
-		l.commitments[i].Project = canon(l.commitments[i].Project)
-	}
-	return l
+// Habit 是本周至少在两天出现过的沟通习惯。
+type Habit struct {
+	Habit   string   `json:"habit"`
+	Days    []string `json:"days"`
+	Example string   `json:"example"`
 }
 
-func (l *ledger) apply(cs *Changeset) {
-	rev := func(op string, fields map[string]string, refs, exchanges []string, reason string, spoken time.Time) Revision {
-		return Revision{Changeset: cs.ID, Author: cs.Author, Op: op, Fields: fields, Refs: refs, Exchanges: exchanges, Reason: reason,
-			SpokenAt: spoken, RecordedAt: cs.RecordedAt}
-	}
-	for _, e := range cs.CreateExchanges {
-		e.Changeset = cs.ID
-		e.Projects, e.Decisions = slices.Clone(e.Projects), slices.Clone(e.Decisions)
-		l.exchanges = append(l.exchanges, e)
-	}
-	for _, r := range cs.ReviseExchanges {
-		if e := l.exchange(cs.Session, r.ID); e != nil {
-			e.reviseWith(r.Title, r.Summary, r.Projects)
-		}
-	}
-	for _, m := range cs.MergeExchanges {
-		into := l.exchange(cs.Session, m.Into)
-		if into == nil || !into.Live() {
-			continue
-		}
-		for _, id := range m.From {
-			from := l.exchange(cs.Session, id)
-			if from == nil || !from.Live() || from == into {
-				continue
-			}
-			from.MergedInto = into.ID
-			if refBefore(from.From, into.From) {
-				into.From = from.From
-			}
-			if refBefore(into.To, from.To) {
-				into.To = from.To
-			}
-			for _, p := range from.Projects {
-				if !slices.ContainsFunc(into.Projects, func(q Link) bool { return q == p }) {
-					into.Projects = append(into.Projects, p)
-				}
-			}
-			into.Decisions = append(into.Decisions, from.Decisions...)
-			into.Risks = append(into.Risks, from.Risks...)
-			into.Awareness = append(into.Awareness, from.Awareness...)
-		}
-		into.reviseWith(m.Title, m.Summary, m.Projects)
-	}
-	for _, m := range cs.CreateCommitments {
-		m.Refs, m.Locked = slices.Clone(m.Refs), nil
-		if m.Status == "" {
-			m.Status = "open"
-		}
-		m.UpdatedAt = cs.RecordedAt
-		m.Revisions = []Revision{rev("create", nil, m.Refs, nil, "", m.SpokenAt)}
-		l.commitments = append(l.commitments, m)
-	}
-	change := func(c CommitmentChange, op string) {
-		m := l.commitment(c.ID)
-		if m == nil {
-			return
-		}
-		fields := maps.Clone(c.Fields)
-		for k, v := range c.Fields {
-			switch k {
-			case "due_date":
-				m.DueDate = v
-			case "due_text":
-				m.DueText = v
-			case "content":
-				m.Content = v
-			case "counterpart":
-				m.Counterpart = v
-			case "project":
-				m.Project = v
-			}
-		}
-		if c.Status != "" {
-			m.Status = c.Status
-			if fields == nil {
-				fields = map[string]string{}
-			}
-			fields["status"] = c.Status
-		}
-		// 用户改过的状态、期限、内容与对方之后以用户的为准；归属不锁：用户确认待定的归属之后，当天整理仍可以改正它。
-		if cs.Author == AuthorUser {
-			for _, k := range slices.Sorted(maps.Keys(fields)) {
-				switch k {
-				case "due_date", "due_text":
-					k = "due"
-				case "project":
-					continue
-				}
-				if !slices.Contains(m.Locked, k) {
-					m.Locked = append(m.Locked, k)
-				}
-			}
-		}
-		m.UpdatedAt = cs.RecordedAt
-		m.Revisions = append(m.Revisions, rev(op, fields, c.Refs, c.Exchanges, c.Reason, c.SpokenAt))
-	}
-	for _, c := range cs.ReviseCommitments {
-		change(c, "revise")
-	}
-	for _, c := range cs.CloseCommitments {
-		change(c, "close")
-	}
-	for _, mg := range cs.MergeCommitments {
-		if l.commitment(mg.Into) == nil {
-			continue
-		}
-		for _, id := range mg.From {
-			if m := l.commitment(id); m != nil && m.ID != mg.Into && m.MergedInto == "" {
-				m.MergedInto, m.UpdatedAt = mg.Into, cs.RecordedAt
-				m.Revisions = append(m.Revisions, rev("merge", map[string]string{"merged_into": mg.Into}, nil, nil, mg.Reason, time.Time{}))
-			}
-		}
-	}
+// Merge 是一条合并提议（propose_merge），进"待确认"，由用户确认（§4）。
+type Merge struct {
+	ID      string `json:"id"`
+	Session string `json:"session"`
+	Into    string `json:"into"`
+	From    string `json:"from"`
+	Reason  string `json:"reason"`
+	// Status 是 pending、accepted 或 rejected。
+	Status string `json:"status"`
 }
 
-func (e *Exchange) reviseWith(title, summary string, projects []Link) {
-	if title != "" {
-		e.Title = title
-	}
-	if summary != "" {
-		e.Summary = summary
-	}
-	if len(projects) > 0 {
-		e.Projects = slices.Clone(projects)
-	}
+// SeedData 是预置的数据（评测用例的 setup.xinli）。
+type SeedData struct {
+	Projects []Project `yaml:"projects" json:"projects"`
+	// Days 是按日期的摘要：day_summary、recent_days 在没有交出的交谈时返回它，它也可以作为对账的依据（交谈 ID 为
+	// "x" 加日期，如 x2026-10-24）。
+	Days        map[string]string `yaml:"days" json:"days"`
+	Commitments []SeedCommitment  `yaml:"commitments" json:"commitments"`
+	// Filed 是已经交出的每日整理（日期、总览与觉察），Exchanges 是已经交出的交谈：每周回顾与重写现状读取它们。
+	Filed     []Day          `yaml:"filed" json:"filed"`
+	Exchanges []SeedExchange `yaml:"exchanges" json:"exchanges"`
 }
 
-func (l *ledger) exchange(session, id string) *Exchange {
-	if i := slices.IndexFunc(l.exchanges, func(e Exchange) bool { return e.Session == session && e.ID == id }); i >= 0 {
-		return &l.exchanges[i]
-	}
-	return nil
+// SeedCommitment 是预置的承诺。
+type SeedCommitment struct {
+	ID          string `yaml:"id" json:"id"`
+	Kind        string `yaml:"kind" json:"kind"`
+	Content     string `yaml:"content" json:"content"`
+	Counterpart string `yaml:"counterpart" json:"counterpart"`
+	DueDate     string `yaml:"due_date" json:"due_date"`
+	DueText     string `yaml:"due_text" json:"due_text"`
+	Project     string `yaml:"project" json:"project"`
+	// Status 缺省为 open。
+	Status     string    `yaml:"status" json:"status"`
+	SpokenAt   time.Time `yaml:"spoken_at" json:"spoken_at"`
+	Refs       []string  `yaml:"refs" json:"refs"`
+	Unverified string    `yaml:"unverified" json:"unverified"`
+	// Revisions 是新建之后的修订，按给定顺序写为变更集；初始字段仍取上面的值。
+	Revisions []SeedRevision `yaml:"revisions" json:"revisions"`
 }
 
-func (l *ledger) commitment(id string) *Commitment {
-	if i := slices.IndexFunc(l.commitments, func(m Commitment) bool { return m.ID == id }); i >= 0 {
-		return &l.commitments[i]
-	}
-	return nil
+// SeedRevision 让评测使用与真实写入相同的变更集重放路径，避免直接伪造当前值与历史。
+type SeedRevision struct {
+	Author     string            `yaml:"author" json:"author"`
+	Session    string            `yaml:"session" json:"session"`
+	Op         string            `yaml:"op" json:"op"`
+	Fields     map[string]string `yaml:"fields" json:"fields"`
+	Refs       []string          `yaml:"refs" json:"refs"`
+	Exchanges  []string          `yaml:"exchanges" json:"exchanges"`
+	Reason     string            `yaml:"reason" json:"reason"`
+	SpokenAt   time.Time         `yaml:"spoken_at" json:"spoken_at"`
+	RecordedAt time.Time         `yaml:"recorded_at" json:"recorded_at"`
 }
 
-// refBefore 报告引用编号 a 是否在 b 之前（"#57.3" 先比事件序号、再比段序号）；解析不了的不比较。
-func refBefore(a, b string) bool {
-	x, ok1 := parseRef(a)
-	y, ok2 := parseRef(b)
-	return ok1 && ok2 && (x.Seq < y.Seq || (x.Seq == y.Seq && x.Index < y.Index))
+// SeedExchange 是预置的交谈（归入一个项目）。
+type SeedExchange struct {
+	ID        string   `yaml:"id" json:"id"`
+	Date      string   `yaml:"date" json:"date"`
+	Title     string   `yaml:"title" json:"title"`
+	Summary   string   `yaml:"summary" json:"summary"`
+	Project   string   `yaml:"project" json:"project"`
+	Decisions []string `yaml:"decisions" json:"decisions"`
+	Risks     []string `yaml:"risks" json:"risks"`
 }
-
-// exchangeID 是交谈的 ID：取自范围的起点，"#57.0" 为 "x57.0"。
-func exchangeID(from string) string { return "x" + strings.TrimPrefix(from, "#") }

@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -834,7 +835,18 @@ func (c *Call) UpdateCommitments() string {
 	return c.receipt(&cs, k.notes)
 }
 
-// parseErrorText 保留迁移前回执中的类型标签；包的物理位置不应改变给模型看的参数错误。
+// parseErrorText 只给出参数路径与错误类别，避免把实现的 Go 类型名交给模型。
 func parseErrorText(err error) string {
-	return strings.ReplaceAll(err.Error(), "domain.", "xinlimock.")
+	var mismatch *json.UnmarshalTypeError
+	if errors.As(err, &mismatch) {
+		if mismatch.Field != "" {
+			return mismatch.Field + " 的类型不对"
+		}
+		return "参数的类型不对"
+	}
+	var syntax *json.SyntaxError
+	if errors.As(err, &syntax) {
+		return "JSON 格式不正确"
+	}
+	return "无法解析 JSON 参数"
 }

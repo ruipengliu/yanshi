@@ -4,7 +4,7 @@ status: accepted
 
 # 内核、Persona 与应用分三层，内核不认识业务实体
 
-xinli 要从评测中的模拟业务线（`internal/xinlimock`，内存实现）走到生产，并演进成更完整的 persona agent。产品功能（全时记、个人记忆、问答、待办、定时、多渠道、账号权益）远超内核的范围；同时以后还会有其他 persona 类产品与三方 Agent。
+xinli 要从评测中的模拟业务线（原内核内存实现，现已迁至 `persona/`）走到生产，并演进成更完整的 persona agent。产品功能（全时记、个人记忆、问答、待办、定时、多渠道、账号权益）远超内核的范围；同时以后还会有其他 persona 类产品与三方 Agent。
 
 ## 决定
 
@@ -28,7 +28,7 @@ xinli 要从评测中的模拟业务线（`internal/xinlimock`，内存实现）
 
 ## Consequences
 
-- `internal/xinlimock` 的领域逻辑迁入 `persona/`；`serve -xinli-mock`、`/v1/debug/xinli*` 与评测中 xinli 专用的 Seed/State 改为通用的外部业务线夹具。
+- 原模拟业务线的领域逻辑已迁入 `persona/`；原进程内开关与业务调试路由已删除，评测的 Seed/State 改经外部业务线夹具 HTTP。
 - `CONTEXT.md` 只保留内核术语，业务术语迁到 `persona/CONTEXT.md` 与 `apps/xinli/CONTEXT.md`。
 - xinli 的 AgentDef 不再把他人的信息写成 Memory 的 `relationship`。
 - Persona 与内核不共用数据库，故障域分开；Persona 不可用时整理失败、下一次补上，不丢原文。

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"yanshi/internal/xinlimock"
+	"yanshi/internal/eval/xinlifixture"
 )
 
 // 金标（m4-eval.md §13）：旁听数据中每段可以标上它所关于的承诺（CaptureSegment.Gold），用例的金标文件给出这些承诺
@@ -199,7 +199,7 @@ func (it *goldItem) counted() bool { return it.heard && !it.Optional && !it.unju
 // 中的顺序。
 // 对应只看引用、不核对内容：内容与对象由 score 的独立指标核对。labels 的键是"Session/事件序号.段序号"，值是那段
 // 旁听的 Gold；修订引用的原话在交出那次修订的变更集的 Session 中。
-func (b *goldBook) match(st *xinlimock.State, labels map[string]string) map[string]*goldItem {
+func (b *goldBook) match(st *xinlifixture.State, labels map[string]string) map[string]*goldItem {
 	sessions := map[string]string{}
 	for _, cs := range st.Changesets {
 		sessions[cs.ID] = cs.Session
@@ -274,12 +274,12 @@ func (t *tally) add(ok bool) {
 //   - 期限正确率：已记下、未完成、有期限的金标中，有对应的未完成承诺期限相同的比例。
 //   - 提醒：会按期限提醒的承诺（State.Reminders）中，对应的金标未完成、期限相同（金标没有期限时不比较，如"下周给
 //     您答复"）的比例，同一条金标只算第一条；召回率的分母是计入的、未完成、有期限的金标。
-func (b *goldBook) score(st *xinlimock.State, labels map[string]string) (map[string]float64, string) {
+func (b *goldBook) score(st *xinlifixture.State, labels map[string]string) (map[string]float64, string) {
 	matched := b.match(st, labels)
 	var precision, recall, revision, revisionRecall, content, counterpart, inPlace, due, remindP, remindR tally
 	var badContent, badCounterpart []string
 	var falses, missed, wrong, badReminders []string
-	byGold := map[*goldItem][]*xinlimock.Commitment{}
+	byGold := map[*goldItem][]*xinlifixture.Commitment{}
 	for i := range st.Commitments {
 		m := &st.Commitments[i]
 		it, ok := matched[m.ID]
@@ -313,7 +313,7 @@ func (b *goldBook) score(st *xinlimock.State, labels map[string]string) (map[str
 			continue
 		}
 		if len(it.Terms) > 0 {
-			right := slices.ContainsFunc(ms, func(m *xinlimock.Commitment) bool {
+			right := slices.ContainsFunc(ms, func(m *xinlifixture.Commitment) bool {
 				for _, group := range it.Terms {
 					if !containsAlias(m.Content, group) {
 						return false
@@ -327,13 +327,13 @@ func (b *goldBook) score(st *xinlimock.State, labels map[string]string) (map[str
 			}
 		}
 		if len(it.Who) > 0 {
-			right := slices.ContainsFunc(ms, func(m *xinlimock.Commitment) bool { return containsAlias(m.Counterpart, it.Who) })
+			right := slices.ContainsFunc(ms, func(m *xinlifixture.Commitment) bool { return containsAlias(m.Counterpart, it.Who) })
 			counterpart.add(right)
 			if !right {
 				badCounterpart = append(badCounterpart, semanticDetail(it.ID, ms))
 			}
 		}
-		var open []*xinlimock.Commitment
+		var open []*xinlifixture.Commitment
 		closed := false
 		for _, m := range ms {
 			if m.Open() {
@@ -357,7 +357,7 @@ func (b *goldBook) score(st *xinlimock.State, labels map[string]string) (map[str
 			}
 		}
 		if it.status == "open" && it.due != "" {
-			due.add(slices.ContainsFunc(open, func(m *xinlimock.Commitment) bool { return m.DueDate == it.due }))
+			due.add(slices.ContainsFunc(open, func(m *xinlifixture.Commitment) bool { return m.DueDate == it.due }))
 		}
 	}
 	reminded := map[*goldItem]bool{}
@@ -393,7 +393,7 @@ func (b *goldBook) score(st *xinlimock.State, labels map[string]string) (map[str
 }
 
 // states 列出几条承诺的状态与期限，用于诊断。
-func states(ms []*xinlimock.Commitment) string {
+func states(ms []*xinlifixture.Commitment) string {
 	var out []string
 	for _, m := range ms {
 		s := m.Status
@@ -410,7 +410,7 @@ func containsAlias(text string, aliases []string) bool {
 	return slices.ContainsFunc(aliases, func(alias string) bool { return strings.Contains(text, alias) })
 }
 
-func semanticDetail(id string, ms []*xinlimock.Commitment) string {
+func semanticDetail(id string, ms []*xinlifixture.Commitment) string {
 	var actual []string
 	for _, m := range ms {
 		actual = append(actual, fmt.Sprintf("counterpart=%q content=%q", clip(m.Counterpart, 40), clip(m.Content, 40)))

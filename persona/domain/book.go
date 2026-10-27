@@ -43,7 +43,7 @@ type Awareness struct {
 	Suggestions []string `yaml:"suggestions" json:"suggestions"`
 }
 
-// State 是一个 EndUser 在业务线中的全部数据，供调试控制台展示（GET /v1/debug/xinli）与评测断言。
+// State 是一个 EndUser 在业务线中的全部数据，供应用页面展示与评测断言。
 type State struct {
 	Projects    []Project    `json:"projects"`
 	Exchanges   []Exchange   `json:"exchanges"`
@@ -52,6 +52,8 @@ type State struct {
 	Days        []Day        `json:"days"`
 	Weeks       []Week       `json:"weeks"`
 	Merges      []Merge      `json:"merges"`
+	// ReminderIDs 由 Persona 判定，快照消费者只读取结果；按账本顺序排列。
+	ReminderIDs []string `json:"reminders"`
 }
 
 // Book 是一条业务线中一个 EndUser 的全部知识；只能在所属存储事务中修改。
@@ -392,56 +394,56 @@ func (u *Book) Edit(id, status, dueDate string, now time.Time) error {
 
 // SeedData 是预置的数据（评测用例的 setup.xinli）。
 type SeedData struct {
-	Projects []Project
+	Projects []Project `yaml:"projects" json:"projects"`
 	// Days 是按日期的摘要：day_summary、recent_days 在没有交出的交谈时返回它，它也可以作为对账的依据（交谈 ID 为
 	// "x" 加日期，如 x2026-10-24）。
-	Days        map[string]string
-	Commitments []SeedCommitment
+	Days        map[string]string `yaml:"days" json:"days"`
+	Commitments []SeedCommitment  `yaml:"commitments" json:"commitments"`
 	// Filed 是已经交出的每日整理（日期、总览与觉察），Exchanges 是已经交出的交谈：每周回顾与重写现状读取它们。
-	Filed     []Day
-	Exchanges []SeedExchange
+	Filed     []Day          `yaml:"filed" json:"filed"`
+	Exchanges []SeedExchange `yaml:"exchanges" json:"exchanges"`
 }
 
 // SeedCommitment 是预置的承诺。
 type SeedCommitment struct {
-	ID          string `yaml:"id"`
-	Kind        string `yaml:"kind"`
-	Content     string `yaml:"content"`
-	Counterpart string `yaml:"counterpart"`
-	DueDate     string `yaml:"due_date"`
-	DueText     string `yaml:"due_text"`
-	Project     string `yaml:"project"`
+	ID          string `yaml:"id" json:"id"`
+	Kind        string `yaml:"kind" json:"kind"`
+	Content     string `yaml:"content" json:"content"`
+	Counterpart string `yaml:"counterpart" json:"counterpart"`
+	DueDate     string `yaml:"due_date" json:"due_date"`
+	DueText     string `yaml:"due_text" json:"due_text"`
+	Project     string `yaml:"project" json:"project"`
 	// Status 缺省为 open。
-	Status     string    `yaml:"status"`
-	SpokenAt   time.Time `yaml:"spoken_at"`
-	Refs       []string  `yaml:"refs"`
-	Unverified string    `yaml:"unverified"`
+	Status     string    `yaml:"status" json:"status"`
+	SpokenAt   time.Time `yaml:"spoken_at" json:"spoken_at"`
+	Refs       []string  `yaml:"refs" json:"refs"`
+	Unverified string    `yaml:"unverified" json:"unverified"`
 	// Revisions 是新建之后的修订，按给定顺序写为变更集；初始字段仍取上面的值。
-	Revisions []SeedRevision `yaml:"revisions"`
+	Revisions []SeedRevision `yaml:"revisions" json:"revisions"`
 }
 
 // SeedRevision 让评测使用与真实写入相同的变更集重放路径，避免直接伪造当前值与历史。
 type SeedRevision struct {
-	Author     string            `yaml:"author"`
-	Session    string            `yaml:"session"`
-	Op         string            `yaml:"op"`
-	Fields     map[string]string `yaml:"fields"`
-	Refs       []string          `yaml:"refs"`
-	Exchanges  []string          `yaml:"exchanges"`
-	Reason     string            `yaml:"reason"`
-	SpokenAt   time.Time         `yaml:"spoken_at"`
-	RecordedAt time.Time         `yaml:"recorded_at"`
+	Author     string            `yaml:"author" json:"author"`
+	Session    string            `yaml:"session" json:"session"`
+	Op         string            `yaml:"op" json:"op"`
+	Fields     map[string]string `yaml:"fields" json:"fields"`
+	Refs       []string          `yaml:"refs" json:"refs"`
+	Exchanges  []string          `yaml:"exchanges" json:"exchanges"`
+	Reason     string            `yaml:"reason" json:"reason"`
+	SpokenAt   time.Time         `yaml:"spoken_at" json:"spoken_at"`
+	RecordedAt time.Time         `yaml:"recorded_at" json:"recorded_at"`
 }
 
 // SeedExchange 是预置的交谈（归入一个项目）。
 type SeedExchange struct {
-	ID        string   `yaml:"id"`
-	Date      string   `yaml:"date"`
-	Title     string   `yaml:"title"`
-	Summary   string   `yaml:"summary"`
-	Project   string   `yaml:"project"`
-	Decisions []string `yaml:"decisions"`
-	Risks     []string `yaml:"risks"`
+	ID        string   `yaml:"id" json:"id"`
+	Date      string   `yaml:"date" json:"date"`
+	Title     string   `yaml:"title" json:"title"`
+	Summary   string   `yaml:"summary" json:"summary"`
+	Project   string   `yaml:"project" json:"project"`
+	Decisions []string `yaml:"decisions" json:"decisions"`
+	Risks     []string `yaml:"risks" json:"risks"`
 }
 
 // seedDays 是预置的按日期摘要所在的（虚构的）Session。
@@ -537,6 +539,10 @@ func (u *Book) State() State {
 	slices.Reverse(st.Days)
 	st.Projects, st.Exchanges, st.Commitments, st.Changesets = orEmpty(st.Projects), orEmpty(st.Exchanges), orEmpty(st.Commitments), orEmpty(st.Changesets)
 	st.Days, st.Weeks, st.Merges = orEmpty(st.Days), orEmpty(st.Weeks), orEmpty(st.Merges)
+	st.ReminderIDs = []string{}
+	for _, m := range st.Reminders() {
+		st.ReminderIDs = append(st.ReminderIDs, m.ID)
+	}
 	return st
 }
 

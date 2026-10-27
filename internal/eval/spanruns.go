@@ -10,8 +10,8 @@ import (
 
 	"yanshi/internal/agentdef"
 	"yanshi/internal/capture"
+	"yanshi/internal/eval/xinlifixture"
 	"yanshi/internal/session"
-	"yanshi/internal/xinlimock"
 )
 
 const (
@@ -55,7 +55,9 @@ func (in *instance) spanTurns(ctx context.Context, sid, bl, endUser string, turn
 		} else if input == xinliDayInput {
 			businessInput = "整理今天"
 		}
-		in.xinli.Submitted(bl, endUser, sid, businessInput)
+		if err := in.xinli.Submitted(ctx, bl, endUser, sid, businessInput); err != nil {
+			return err
+		}
 		o, err := in.turn(ctx, sid, t, timeout)
 		if o != nil {
 			obs.appendRun(o)
@@ -96,7 +98,10 @@ func (in *instance) spanTurns(ctx context.Context, sid, bl, endUser string, turn
 		if from == "" {
 			// 空轮次仍让模型读一次，检验「已读完／还在进行」的退出；读过时段后不再多开探测 Run。
 			if !ran {
-				old := in.xinli.State(bl, endUser).Changesets
+				old, err := in.xinli.State(ctx, bl, endUser)
+				if err != nil {
+					return obs, err
+				}
 				if err := run(input); err != nil {
 					return obs, err
 				}
@@ -107,13 +112,20 @@ func (in *instance) spanTurns(ctx context.Context, sid, bl, endUser string, turn
 				if after.Captures.Read[capture.Stream].GetAfter() != st.Captures.Read[capture.Stream].GetAfter() {
 					return obs, fmt.Errorf("empty span run advanced the capture position")
 				}
-				if len(newSessionChangesets(old, in.xinli.State(bl, endUser).Changesets, sid)) != 0 {
+				filed, err := in.xinli.State(ctx, bl, endUser)
+				if err != nil {
+					return obs, err
+				}
+				if len(newSessionChangesets(old.Changesets, filed.Changesets, sid)) != 0 {
 					return obs, fmt.Errorf("empty span run filed changes without reading a span")
 				}
 			}
 			break
 		}
-		before := in.xinli.State(bl, endUser)
+		before, err := in.xinli.State(ctx, bl, endUser)
+		if err != nil {
+			return obs, err
+		}
 		if err := run(input); err != nil {
 			return obs, err
 		}
@@ -125,7 +137,10 @@ func (in *instance) spanTurns(ctx context.Context, sid, bl, endUser string, turn
 		if got := after.Captures.Read[capture.Stream].GetAfter(); got != to {
 			return obs, fmt.Errorf("span #%s–#%s: capture position %q, want %q (no progress, partial span or overread)", from, to, got, to)
 		}
-		accepted := in.xinli.State(bl, endUser)
+		accepted, err := in.xinli.State(ctx, bl, endUser)
+		if err != nil {
+			return obs, err
+		}
 		if !spanAccepted(before.Changesets, accepted.Changesets, sid, from, to) {
 			return obs, fmt.Errorf("span #%s–#%s: no accepted changeset; stopping before after=new can skip an unfiled span", from, to)
 		}
@@ -135,7 +150,10 @@ func (in *instance) spanTurns(ctx context.Context, sid, bl, endUser string, turn
 		if err != nil {
 			return obs, err
 		}
-		old := in.xinli.State(bl, endUser)
+		old, err := in.xinli.State(ctx, bl, endUser)
+		if err != nil {
+			return obs, err
+		}
 		callStart := len(obs.calls)
 		if err := run(xinliDayInput); err != nil {
 			return obs, err
@@ -150,14 +168,17 @@ func (in *instance) spanTurns(ctx context.Context, sid, bl, endUser string, turn
 		if slices.Contains(obs.calls[callStart:], capture.Capability) {
 			return obs, fmt.Errorf("day reconciliation reread captures instead of using the ledger")
 		}
-		filed := in.xinli.State(bl, endUser)
+		filed, err := in.xinli.State(ctx, bl, endUser)
+		if err != nil {
+			return obs, err
+		}
 		for _, cs := range newSessionChangesets(old.Changesets, filed.Changesets, sid) {
-			if cs.Author != xinlimock.AuthorDay || !cs.Source.Day {
+			if cs.Author != xinlifixture.AuthorDay || !cs.Source.Day {
 				return obs, fmt.Errorf("day reconciliation filed a span changeset")
 			}
 		}
-		if !slices.ContainsFunc(filed.Days, func(d xinlimock.Day) bool {
-			return d.Session == sid && !slices.ContainsFunc(old.Days, func(old xinlimock.Day) bool {
+		if !slices.ContainsFunc(filed.Days, func(d xinlifixture.Day) bool {
+			return d.Session == sid && !slices.ContainsFunc(old.Days, func(old xinlifixture.Day) bool {
 				return old.Session == sid && old.FiledAt.Equal(d.FiledAt)
 			})
 		}) {
@@ -231,16 +252,16 @@ func (in *instance) nextSpan(ctx context.Context, sid string, st *session.State,
 	}
 }
 
-func spanAccepted(before, after []xinlimock.Changeset, sid, from, to string) bool {
+func spanAccepted(before, after []xinlifixture.Changeset, sid, from, to string) bool {
 	news := newSessionChangesets(before, after, sid)
-	return len(news) == 1 && news[0].Author == xinlimock.AuthorDay && !news[0].Source.Day &&
+	return len(news) == 1 && news[0].Author == xinlifixture.AuthorDay && !news[0].Source.Day &&
 		news[0].Source.From == "#"+from && news[0].Source.To == "#"+to
 }
 
-func newSessionChangesets(before, after []xinlimock.Changeset, sid string) []xinlimock.Changeset {
-	var news []xinlimock.Changeset
+func newSessionChangesets(before, after []xinlifixture.Changeset, sid string) []xinlifixture.Changeset {
+	var news []xinlifixture.Changeset
 	for _, c := range after {
-		if c.Session == sid && !slices.ContainsFunc(before, func(old xinlimock.Changeset) bool { return old.ID == c.ID }) {
+		if c.Session == sid && !slices.ContainsFunc(before, func(old xinlifixture.Changeset) bool { return old.ID == c.ID }) {
 			news = append(news, c)
 		}
 	}

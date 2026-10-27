@@ -88,7 +88,7 @@ func TestErrors(t *testing.T) {
 			})
 		}
 	}
-	rec := request("POST", "seed", `{"Commitments":[{"ID":"C-1","Kind":"mine","Content":"发报价"}]}`)
+	rec := request("POST", "seed", `{"commitments":[{"id":"C-1","kind":"mine","content":"发报价"}]}`)
 	if rec.Code != 200 {
 		t.Fatal(rec.Body.String())
 	}
@@ -132,7 +132,7 @@ func TestErrors(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&state); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"projects", "exchanges", "commitments", "changesets", "days", "weeks", "merges"} {
+	for _, key := range []string{"projects", "exchanges", "commitments", "changesets", "days", "weeks", "merges", "reminders"} {
 		if _, ok := state[key].([]any); !ok {
 			t.Fatalf("%s is not an array", key)
 		}
@@ -141,7 +141,7 @@ func TestErrors(t *testing.T) {
 
 func TestRejectOversize(t *testing.T) {
 	handler := fixture.Handler(memstore.New(), fixture.Options{})
-	body := `{"Projects":[]}` + strings.Repeat(" ", 4<<20) + `{}`
+	body := `{"projects":[]}` + strings.Repeat(" ", 4<<20) + `{}`
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest("POST", "/v1/fixture/bl/u/seed", strings.NewReader(body)))
 	if rec.Code != 400 {

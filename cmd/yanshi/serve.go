@@ -60,7 +60,6 @@ import (
 	"yanshi/internal/usage"
 	"yanshi/internal/webui"
 	"yanshi/internal/workqueue"
-	"yanshi/internal/xinlimock"
 )
 
 // devPGDSN 对应 docker-compose.yml 中的开发数据库。
@@ -251,8 +250,6 @@ func serve(args []string) error {
 	sandboxImage := fs.String("sandbox-image", "yanshi-sandbox:dev", "沙箱镜像（make sandbox-image 构建）")
 	sandboxRuntime := fs.String("sandbox-runtime", "", "沙箱容器运行时，如 runsc（gVisor）")
 	mcpDir := fs.String("mcp", "mcp", "远程 MCP Server 登记目录（docs/design/m5-mcp.md）；不存在时不启用")
-	xinliMock := fs.String("xinli-mock", "", "开发部署：为这些业务线（逗号分隔）登记进程内模拟的 xinli MCP Server（docs/design/xinli-captures.md §9），"+
-		"供调试控制台试用旁听的每日整理；数据只在内存中。不得用于生产")
 	embedModel := fs.String("embedding-model", os.Getenv("YANSHI_EMBEDDING_MODEL"), "Memory 检索用的嵌入模型（provider/model，如 ark/doubao-embedding-vision-251215）；为空时按文本相似度检索")
 	controllers := fs.Int("sandbox-controllers", 2, "沙箱控制器数量")
 	blobKind := fs.String("blob", "fs", "工件内容存储：fs | s3")
@@ -393,14 +390,6 @@ func serve(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load MCP servers: %w", err)
 	}
-	var xinli *xinlimock.Server
-	if *xinliMock != "" {
-		if xinli, err = xinlimock.Start(ctx, strings.Split(*xinliMock, ",")...); err != nil {
-			return fmt.Errorf("start xinli mock: %w", err)
-		}
-		xinli.Logger = logger
-		mcpServers = append(mcpServers, xinli.Servers...)
-	}
 	var mcpConn *mcpcap.Connector
 	if len(mcpServers) > 0 {
 		mcpConn = &mcpcap.Connector{Servers: mcpServers, Logger: logger}
@@ -414,12 +403,6 @@ func serve(args []string) error {
 	svc, hub, arts, mems, dir := core.Service, core.Hub, core.Artifacts, core.Memory, b.Dir
 	if mcpConn != nil {
 		mcpConn.Artifacts, mcpConn.Log = arts, b.Stores.Log
-	}
-	var xinliDebug httpapi.XinliMock
-	if xinli != nil {
-		// 模拟的业务线同时扮演业务线服务端做"归集"（docs/design/xinli-captures.md §9）；在接受请求之前设置。
-		xinli.Business = xinliBusiness{svc}
-		xinliDebug = xinliView{xinli}
 	}
 	// 经 HTTP 的输入注明最近在前台使用的设备（设备歧义消解，docs/design/m6-decisions.md §3）；经 Connection 的由网关注明。
 	svc.RecentDevice = (&notify.RecentDevices{Registry: b.Push, TTL: 30 * time.Second, Clock: clk}).Label
@@ -521,7 +504,7 @@ func serve(args []string) error {
 	mux.Handle("/console/", webui.Handler())
 	mux.Handle("/sdk/yanshi.js", webui.Handler())
 	mux.Handle("GET /readyz", ready)
-	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.Usage, Push: b.Push, Feeds: feeds, Faults: injector, Xinli: xinliDebug,
+	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.Usage, Push: b.Push, Feeds: feeds, Faults: injector,
 		Speech: speechService(svc, meter, logger), Logger: logger}).Handler())
 	srv := &http.Server{
 		Addr:              *addr,
@@ -755,24 +738,4 @@ func healthAllowed(authMode string, lines []auth.BusinessLine) func(string) bool
 		enabled[bl.Name] = bl.Memory.Health
 	}
 	return func(bl string) bool { return enabled[bl] }
-}
-
-// xinliBusiness 让模拟的 xinli 业务线（serve -xinli-mock）以业务线服务端的身份调用 service：为项目创建 Session、提交
-// "整理 <日期>"。只用于开发部署。
-type xinliBusiness struct{ svc *service.Service }
-
-func (b xinliBusiness) CreateSession(ctx context.Context, businessLine, endUser, agent string) (string, error) {
-	return b.svc.Create(ctx, service.CreateRequest{BusinessLine: businessLine, EndUser: endUser, Agent: agent})
-}
-
-func (b xinliBusiness) Submit(ctx context.Context, sessionID, inputID, text string) error {
-	_, err := b.svc.SubmitWithID(ctx, sessionID, inputID, model.TextBlocks(text))
-	return err
-}
-
-// xinliView 把模拟的 xinli 业务线交给调试接口（httpapi.XinliMock）。
-type xinliView struct{ *xinlimock.Server }
-
-func (v xinliView) State(businessLine, endUser string) any {
-	return v.Server.State(businessLine, endUser)
 }

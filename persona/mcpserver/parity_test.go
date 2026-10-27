@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -19,7 +20,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// parityScript 的格式在两侧保持一致；通过 JSON 文件共享，不形成跨模块 import。
+var updateParity = flag.Bool("update", false, "重写冻结的 Persona 回归 golden")
+
+// parityScript 经 JSON 固定操作序列，防止夹具契约与 MCP 行为在重构中漂移。
 type parityScript struct {
 	Version      int          `json:"version"`
 	Now          time.Time    `json:"now"`
@@ -119,20 +122,23 @@ func readParity(t *testing.T, path string, dst any) {
 	t.Helper()
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read %s: %v; generate golden with go test ./internal/xinlimock -run '^TestParity$' -update", path, err)
+		t.Fatalf("read %s: %v; regenerate in persona with go test ./mcpserver -run '^TestParity$' -update", path, err)
 	}
 	if err := json.Unmarshal(raw, dst); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// TestParity 只读取旧实现生成的基准；工具经 streamable HTTP，操作与 State 经夹具 HTTP。
+// TestParity 的冻结 golden 最初由现已删除的 xinlimock 生成，P0 迁移时两份实现逐字一致。
+// 有意改变行为时用 -update 重写；工具经 Streamable HTTP，操作与 State 经夹具 HTTP。
 func TestParity(t *testing.T) {
 	var script parityScript
 	readParity(t, "testdata/parity_script.json", &script)
 	var want parityGolden
-	readParity(t, "testdata/parity.json", &want)
-	if script.Version != 1 || want.Version != 1 || len(script.Steps) != len(want.Steps) {
+	if !*updateParity {
+		readParity(t, "testdata/parity.json", &want)
+	}
+	if script.Version != 1 || (!*updateParity && (want.Version != 1 || len(script.Steps) != len(want.Steps))) {
 		t.Fatal("golden version or step count changed")
 	}
 	ctx := context.Background()
@@ -149,7 +155,10 @@ func TestParity(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	parityEqual(t, "tools/list", parityTools(t, ctx, conn), want.Tools)
+	actual := parityGolden{Version: script.Version, Tools: parityTools(t, ctx, conn)}
+	if !*updateParity {
+		parityEqual(t, "tools/list", actual.Tools, want.Tools)
+	}
 	for i, step := range script.Steps {
 		var got parityOutput
 		if step.Op == "tool" {
@@ -183,6 +192,18 @@ func TestParity(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		parityEqual(t, fmt.Sprintf("step %d %s", i, step.Op), got, want.Steps[i])
+		actual.Steps = append(actual.Steps, got)
+		if !*updateParity {
+			parityEqual(t, fmt.Sprintf("step %d %s", i, step.Op), got, want.Steps[i])
+		}
+	}
+	if *updateParity {
+		raw, err := json.MarshalIndent(actual, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile("testdata/parity.json", append(raw, '\n'), 0644); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

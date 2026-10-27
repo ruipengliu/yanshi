@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"yanshi/internal/xinlimock"
+	"yanshi/internal/eval/xinlifixture"
 )
 
 // 一份小金标：上午答应周三交验收方案、下午改到周二；对方答应周一给名单；琐事可记可不记；邻座第三方的话不标。
@@ -29,15 +29,15 @@ func testHear(b *goldBook) map[string]string {
 	return map[string]string{"s/1.0": "accept", "s/1.1": "list", "s/1.2": "dinner", "s/2.0": "accept"}
 }
 
-func commitment(id, kind, due, status string, refs ...string) xinlimock.Commitment {
-	return xinlimock.Commitment{ID: id, Kind: kind, DueDate: due, Status: status, Session: "s", Refs: refs, Content: id}
+func commitment(id, kind, due, status string, refs ...string) xinlifixture.Commitment {
+	return xinlifixture.Commitment{ID: id, Kind: kind, DueDate: due, Status: status, Session: "s", Refs: refs, Content: id}
 }
 
 // 改期后旧的那条仍未完成：修订算错，旧期限的提醒也算错；做饭的琐事记下了不算误报；kind 记反的算误报与漏记。
 func TestGoldScoreStaleAndKind(t *testing.T) {
 	b := newGoldBook(testGold())
 	labels := testHear(b)
-	st := &xinlimock.State{Commitments: []xinlimock.Commitment{
+	st := &xinlifixture.State{ReminderIDs: []string{"C2", "C1", "C4"}, Commitments: []xinlifixture.Commitment{
 		commitment("C2", "mine", "2026-10-27", "open", "#2.0"),
 		commitment("C1", "mine", "2026-10-28", "open", "#1.0"),
 		commitment("C3", "mine", "", "open", "#1.2"),
@@ -66,7 +66,7 @@ func TestGoldScoreRevised(t *testing.T) {
 	old := commitment("C1", "mine", "2026-10-28", "cancelled", "#1.0")
 	theirs := commitment("C2", "theirs", "2026-10-26", "open", "#1.1")
 	theirs.Unverified = "引用的不是对方的话"
-	st := &xinlimock.State{Commitments: []xinlimock.Commitment{old, commitment("C3", "mine", "2026-10-27", "open", "#2.0"), theirs}}
+	st := &xinlifixture.State{ReminderIDs: []string{"C3"}, Commitments: []xinlifixture.Commitment{old, commitment("C3", "mine", "2026-10-27", "open", "#2.0"), theirs}}
 	got, detail := b.score(st, labels)
 	assertMetrics(t, got, map[string]float64{"commitment_precision": 1, "commitment_recall": 1, "revision_accuracy": 1, "due_accuracy": 1,
 		"reminder_precision": 1, "reminder_recall": 0.5}, detail)
@@ -78,8 +78,8 @@ func TestGoldMatchByRevisionRefs(t *testing.T) {
 	labels := testHear(b)
 	labels["day2/3.0"] = "accept"
 	m := commitment("C1", "mine", "2026-10-27", "open", "#9.9")
-	m.Revisions = []xinlimock.Revision{{Op: "create", Refs: []string{"#9.9"}}, {Op: "revise", Changeset: "cs2", Refs: []string{"#3.0"}}}
-	st := &xinlimock.State{Commitments: []xinlimock.Commitment{m}, Changesets: []xinlimock.Changeset{{ID: "cs2", Session: "day2"}}}
+	m.Revisions = []xinlifixture.Revision{{Op: "create", Refs: []string{"#9.9"}}, {Op: "revise", Changeset: "cs2", Refs: []string{"#3.0"}}}
+	st := &xinlifixture.State{Commitments: []xinlifixture.Commitment{m}, Changesets: []xinlifixture.Changeset{{ID: "cs2", Session: "day2"}}}
 	if got := b.match(st, labels)["C1"]; got == nil || got.ID != "accept" {
 		t.Fatalf("matched %v, want accept", got)
 	}
@@ -187,7 +187,7 @@ func TestGoldMatchTies(t *testing.T) {
 	b := newGoldBook(g)
 	b.hear([]CaptureSegment{{Speaker: "wearer", Gold: "chat precheck recheck", At: "2026-10-13 15:10"}}, false)
 	labels := map[string]string{"s/1.0": "chat precheck recheck"}
-	st := &xinlimock.State{Commitments: []xinlimock.Commitment{
+	st := &xinlifixture.State{Commitments: []xinlifixture.Commitment{
 		commitment("C1", "mine", "2026-10-16", "open", "#1.0"),
 		commitment("C2", "mine", "2026-10-21", "open", "#1.0"),
 	}}
@@ -204,7 +204,7 @@ func TestGoldNoisyKind(t *testing.T) {
 		{Speaker: "other", Heard: "wearer", Gold: "banner", At: "2026-10-13 10:10"},
 		{Speaker: "other", Gold: "list", At: "2026-10-13 10:11"},
 	}, true)
-	st := &xinlimock.State{Commitments: []xinlimock.Commitment{
+	st := &xinlifixture.State{ReminderIDs: []string{"C1"}, Commitments: []xinlifixture.Commitment{
 		commitment("C1", "mine", "2026-10-16", "open", "#1.0"),
 		commitment("C2", "theirs", "", "open", "#1.1"),
 	}}
@@ -217,14 +217,14 @@ func TestGoldRevisionInPlace(t *testing.T) {
 	b := newGoldBook(testGold())
 	labels := testHear(b)
 	revised := commitment("C1", "mine", "2026-10-27", "open", "#1.0")
-	revised.Revisions = []xinlimock.Revision{{Op: "create"}, {Op: "revise", Refs: []string{"#2.0"}}}
-	got, detail := b.score(&xinlimock.State{Commitments: []xinlimock.Commitment{revised}}, labels)
+	revised.Revisions = []xinlifixture.Revision{{Op: "create"}, {Op: "revise", Refs: []string{"#2.0"}}}
+	got, detail := b.score(&xinlifixture.State{ReminderIDs: []string{"C1"}, Commitments: []xinlifixture.Commitment{revised}}, labels)
 	assertMetrics(t, got, map[string]float64{"revision_accuracy": 1, "revision_in_place": 1}, detail)
 
 	old := commitment("C1", "mine", "2026-10-28", "cancelled", "#1.0")
 	fresh := commitment("C2", "mine", "2026-10-27", "open", "#2.0")
-	fresh.Revisions = []xinlimock.Revision{{Op: "create"}}
-	got, detail = b.score(&xinlimock.State{Commitments: []xinlimock.Commitment{old, fresh}}, labels)
+	fresh.Revisions = []xinlifixture.Revision{{Op: "create"}}
+	got, detail = b.score(&xinlifixture.State{ReminderIDs: []string{"C2"}, Commitments: []xinlifixture.Commitment{old, fresh}}, labels)
 	assertMetrics(t, got, map[string]float64{"revision_accuracy": 1, "revision_in_place": 0}, detail)
 }
 
@@ -245,7 +245,7 @@ func TestGoldSemantics(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			b := newGoldBook(&Gold{Commitments: []GoldCommitment{{ID: "cost", Kind: "mine", Who: []string{"宋总", "宋"}, Terms: [][]string{{"成本", "核算"}, {"菜单"}}}}})
 			b.hear([]CaptureSegment{{Gold: "cost"}}, false)
-			st := &xinlimock.State{}
+			st := &xinlifixture.State{}
 			for _, text := range tc.contents {
 				m := commitment(text, "mine", "", "open", "#1.0")
 				m.Content, m.Counterpart = text, tc.who
@@ -269,16 +269,16 @@ func TestGoldRevisionRecallMissing(t *testing.T) {
 	b.edit(&GoldEdit{Gold: "list", Status: "done"})
 	b.edit(&GoldEdit{Gold: "dinner", Status: "done"})
 	m := commitment("C1", "mine", "2026-10-27", "open", "#1.0")
-	got, detail := b.score(&xinlimock.State{Commitments: []xinlimock.Commitment{m}}, labels)
+	got, detail := b.score(&xinlifixture.State{ReminderIDs: []string{"C1"}, Commitments: []xinlifixture.Commitment{m}}, labels)
 	assertMetrics(t, got, map[string]float64{"revision_accuracy": 1, "revision_recall": 0.5}, detail)
-	got, detail = b.score(&xinlimock.State{}, labels)
+	got, detail = b.score(&xinlifixture.State{}, labels)
 	assertMetrics(t, got, map[string]float64{"revision_recall": 0}, detail)
 	if _, ok := got["revision_accuracy"]; ok {
 		t.Fatal("missing commitments must not enter revision_accuracy")
 	}
 	b.byID["list"].unjudgeable = true
 	b.byID["accept"].heard = false
-	got, detail = b.score(&xinlimock.State{}, labels)
+	got, detail = b.score(&xinlifixture.State{}, labels)
 	if _, ok := got["revision_recall"]; ok {
 		t.Fatal(detail)
 	}
@@ -288,7 +288,7 @@ func TestGoldRevisionRecallMissing(t *testing.T) {
 func TestGoldLegacyMetrics(t *testing.T) {
 	b := newGoldBook(testGold())
 	labels := testHear(b)
-	st := &xinlimock.State{Commitments: []xinlimock.Commitment{
+	st := &xinlifixture.State{ReminderIDs: []string{"C1", "C2"}, Commitments: []xinlifixture.Commitment{
 		commitment("C1", "mine", "2026-10-27", "open", "#1.0"),
 		commitment("C2", "theirs", "2026-10-26", "open", "#1.1"),
 	}}
@@ -310,7 +310,7 @@ func TestGoldSemanticsCounted(t *testing.T) {
 	b := newGoldBook(g)
 	labels := testHear(b)
 	b.byID["list"].unjudgeable = true
-	st := &xinlimock.State{Commitments: []xinlimock.Commitment{
+	st := &xinlifixture.State{Commitments: []xinlifixture.Commitment{
 		commitment("C2", "theirs", "", "open", "#1.1"),
 		commitment("C3", "mine", "", "open", "#1.2"),
 	}}
@@ -330,15 +330,16 @@ func TestGoldScoreReminderSelection(t *testing.T) {
 	newer := commitment("C-0002", "mine", "2026-10-30", "open", "#2.0")
 	old.Content, newer.Content = "给张总发验收方案", "给张总发验收方案"
 	old.Counterpart, newer.Counterpart = "张总", "张总"
-	st := &xinlimock.State{Commitments: []xinlimock.Commitment{old, newer}}
+	st := &xinlifixture.State{ReminderIDs: []string{"C-0002"}, Commitments: []xinlifixture.Commitment{old, newer}}
 	labels := map[string]string{"s/1.0": "plan", "s/2.0": "plan"}
 	got, detail := b.score(st, labels)
-	// 只改变实际提醒的指标；重复承诺仍使修订正确率为零。
+	// 提醒选择来自夹具；评分只核对选中承诺，重复承诺仍使修订正确率为零。
 	assertMetrics(t, got, map[string]float64{"reminder_precision": 1, "reminder_recall": 1, "revision_accuracy": 0}, detail)
 	st.Commitments[1].DueDate = "2026-10-29"
 	got, detail = b.score(st, labels)
 	assertMetrics(t, got, map[string]float64{"reminder_precision": 0, "reminder_recall": 0}, detail)
 	st.Commitments[1].Status = "done"
+	st.ReminderIDs = []string{"C-0001"}
 	got, detail = b.score(st, labels)
 	assertMetrics(t, got, map[string]float64{"reminder_precision": 0, "reminder_recall": 0}, detail)
 }

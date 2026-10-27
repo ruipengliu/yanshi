@@ -7,7 +7,7 @@
     {
       "op": "seed",
       "args": {
-        "Projects": [
+        "projects": [
           {
             "id": "P-0001",
             "name": "年度预算",
@@ -24,32 +24,32 @@
             "status": "早就结束了"
           }
         ],
-        "Commitments": [
+        "commitments": [
           {
-            "ID": "C-9000",
-            "Kind": "mine",
-            "Content": "发报价单",
-            "Project": "P-0001"
+            "id": "C-9000",
+            "kind": "mine",
+            "content": "发报价单",
+            "project": "P-0001"
           },
           {
-            "ID": "C-9001",
-            "Kind": "theirs",
-            "Content": "寄框架合同",
-            "Project": "P-0001",
-            "DueDate": "2026-10-26"
+            "id": "C-9001",
+            "kind": "theirs",
+            "content": "寄框架合同",
+            "project": "P-0001",
+            "due_date": "2026-10-26"
           }
         ],
-        "Days": {
+        "days": {
           "2026-10-24": "王总来电：报价单收到了，合同推迟到 11 月 2 日寄出。"
         },
-        "Exchanges": [
+        "exchanges": [
           {
-            "Date": "2026-08-01",
-            "Title": "收尾",
-            "Project": "P-0003"
+            "date": "2026-08-01",
+            "title": "收尾",
+            "project": "P-0003"
           }
         ],
-        "Filed": [
+        "filed": [
           {
             "date": "2026-10-22",
             "headline": "看样板",

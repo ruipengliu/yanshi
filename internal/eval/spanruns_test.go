@@ -11,10 +11,10 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
+	"yanshi/internal/eval/xinlifixture"
 	"yanshi/internal/model"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
-	"yanshi/internal/xinlimock"
 )
 
 // 在真实 Worker、captures 与 HTTP MCP 上走整理流程，故意制造提前结束与拒收，检验调度不会跳过未交出的原话。
@@ -141,6 +141,7 @@ func runSpanScript(t *testing.T, mode string, segments []CaptureSegment, turns [
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(in.close)
 	return in.trial(ctx, c, 0)
 }
 
@@ -211,17 +212,17 @@ func TestXinliSpanRunsEmptyAndOngoing(t *testing.T) {
 }
 
 func TestSpanReceiptMustBeNewAndMatchRange(t *testing.T) {
-	c := xinlimock.Changeset{ID: "old", Session: "s", Author: xinlimock.AuthorDay, Source: xinlimock.Source{From: "#2.0", To: "#3.1"}}
-	if spanAccepted([]xinlimock.Changeset{c}, []xinlimock.Changeset{c}, "s", "2.0", "3.1") {
+	c := xinlifixture.Changeset{ID: "old", Session: "s", Author: xinlifixture.AuthorDay, Source: xinlifixture.Source{From: "#2.0", To: "#3.1"}}
+	if spanAccepted([]xinlifixture.Changeset{c}, []xinlifixture.Changeset{c}, "s", "2.0", "3.1") {
 		t.Fatal("old receipt counted as a new accepted submission")
 	}
 	c.ID = "new"
 	other := c
-	other.ID, other.Source = "day", xinlimock.Source{Day: true}
-	if spanAccepted(nil, []xinlimock.Changeset{c, other}, "s", "2.0", "3.1") {
+	other.ID, other.Source = "day", xinlifixture.Source{Day: true}
+	if spanAccepted(nil, []xinlifixture.Changeset{c, other}, "s", "2.0", "3.1") {
 		t.Fatal("span run also accepted an unrelated changeset")
 	}
-	if spanAccepted(nil, []xinlimock.Changeset{c}, "s", "2.0", "3.0") || spanAccepted(nil, []xinlimock.Changeset{c}, "other", "2.0", "3.1") {
+	if spanAccepted(nil, []xinlifixture.Changeset{c}, "s", "2.0", "3.0") || spanAccepted(nil, []xinlifixture.Changeset{c}, "other", "2.0", "3.1") {
 		t.Fatal("receipt with wrong scope accepted")
 	}
 }
@@ -252,6 +253,7 @@ func TestFailedEvalTurnInterruptsAndCountsUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(in.close)
 	sid, err := in.svc.Create(ctx, service.CreateRequest{BusinessLine: BusinessLine, EndUser: "timeout", Agent: c.Agent, AgentVersion: in.version[c.Name]})
 	if err != nil {
 		t.Fatal(err)
@@ -286,6 +288,7 @@ func TestXinliSpanRunsInterruptAskedRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(in.close)
 	sid, err := in.svc.Create(ctx, service.CreateRequest{BusinessLine: BusinessLine, EndUser: "ask", Agent: c.Agent, AgentVersion: in.version[c.Name]})
 	if err != nil {
 		t.Fatal(err)

@@ -126,7 +126,7 @@ func TestDevReadinessFixtureMCPAndEOF(t *testing.T) {
 		return data
 	}
 	prefix := "/v1/fixture/bl/u"
-	request("POST", prefix+"/seed", `{"Projects":[{"id":"p","name":"项目"}],"Commitments":[{"ID":"c","Kind":"mine","Content":"报价","Project":"p"}]}`, 200)
+	request("POST", prefix+"/seed", `{"projects":[{"id":"p","name":"项目"}],"commitments":[{"id":"c","kind":"mine","content":"报价","project":"p"}]}`, 200)
 	var state domain.State
 	if err := json.Unmarshal(request("GET", prefix+"/state", "", 200), &state); err != nil {
 		t.Fatal(err)
