@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- 评估材料：xinli 的内核 / Persona / 应用层方案。在线版本见 https://claude.ai/artifact/4phJAXT77S9bjp4q28skKZ（私有）。 -->
+<title>Persona 分层方案</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* 版式：单栏技术评估文档，正文约 68 字宽，图与表放宽到 1040px；三层各有一种颜色，状态用实线/虚线与小标签表示 */
+:root {
+  --bg: #f3f4f1;
+  --surface: #ffffff;
+  --sunk: #e9ebe6;
+  --fg: #1c2027;
+  --muted: #5d6470;
+  --line: #d4d8d0;
+  --line-strong: #9aa19a;
+  --kernel: #3a4aa6;
+  --persona: #0d6f63;
+  --app: #9a5a12;
+  --risk: #b0263f;
+  --ok: #2f7a3a;
+  --sans: "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --serif: "Noto Serif SC", "Songti SC", "STSong", serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121418; --surface: #1a1d23; --sunk: #20242b; --fg: #e5e7ea; --muted: #9ba2ad;
+    --line: #2d323a; --line-strong: #59606b; --kernel: #9aa8f2; --persona: #5cc6b6; --app: #e3a75c;
+    --risk: #f2788d; --ok: #84c88d; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121418; --surface: #1a1d23; --sunk: #20242b; --fg: #e5e7ea; --muted: #9ba2ad;
+  --line: #2d323a; --line-strong: #59606b; --kernel: #9aa8f2; --persona: #5cc6b6; --app: #e3a75c;
+  --risk: #f2788d; --ok: #84c88d; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 15.5px; line-height: 1.75;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 64px;
+}
+.wrap { max-width: 1040px; margin: 0 auto; }
+.prose { max-width: 46em; }
+header.top { padding-block: 48px 28px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+.eyebrow { font-size: 12.5px; letter-spacing: .08em; color: var(--muted); }
+h1 { font-family: var(--serif); font-weight: 700; font-size: clamp(30px, 5vw, 44px); line-height: 1.2; margin: 8px 0 14px; text-wrap: balance; }
+h2 { font-family: var(--serif); font-weight: 700; font-size: 25px; line-height: 1.3; margin: 0 0 6px; text-wrap: balance; }
+h3 { font-size: 16.5px; font-weight: 700; margin: 28px 0 6px; }
+p { margin: 0 0 12px; }
+.lede { font-size: 16.5px; color: var(--fg); }
+.muted { color: var(--muted); }
+code, .mono { font-family: var(--mono); font-size: .86em; background: var(--sunk); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+a { color: var(--kernel); }
+section { padding-block: 40px 8px; border-bottom: 1px solid var(--line); }
+section:last-of-type { border-bottom: 0; }
+.secno { font-family: var(--mono); font-size: 13px; color: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 16px; font-size: 13.5px; color: var(--muted); align-items: center; }
+.st { display: inline-block; font-size: 12px; line-height: 1; padding: 4px 7px; border-radius: 4px; border: 1px solid currentColor; white-space: nowrap; font-weight: 500; vertical-align: 1px; }
+.st.impl { color: var(--ok); }
+.st.design { color: var(--muted); border-style: dashed; }
+.st.pend { color: var(--risk); }
+.st.calc { color: var(--app); }
+.st.hi { color: var(--risk); background: color-mix(in srgb, var(--risk) 10%, transparent); }
+.st.mid { color: var(--app); background: color-mix(in srgb, var(--app) 10%, transparent); }
+.st.lo { color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.layer { font-weight: 700; }
+.layer.k { color: var(--kernel); } .layer.p { color: var(--persona); } .layer.a { color: var(--app); }
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 18px; font-size: 14px; }
+nav.toc a { color: var(--fg); text-decoration: none; border-bottom: 1px solid var(--line-strong); }
+nav.toc a:hover, nav.toc a:focus-visible { border-color: var(--kernel); color: var(--kernel); }
+:focus-visible { outline: 2px solid var(--kernel); outline-offset: 2px; }
+.verdicts { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; margin-top: 18px; }
+.verdict { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; min-width: 0; }
+.verdict h3 { margin: 0 0 6px; font-size: 15px; display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.verdict p { margin: 0; font-size: 14.5px; line-height: 1.7; }
+.verdict .refs { font-family: var(--mono); font-size: 12px; color: var(--muted); font-weight: 400; white-space: nowrap; }
+figure { margin: 22px 0 18px; }
+.scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+figcaption { font-size: 13.5px; color: var(--muted); margin-top: 8px; max-width: 52em; }
+svg.dg { display: block; width: 100%; height: auto; color: var(--line-strong); font-family: var(--sans); }
+svg .t { fill: var(--fg); font-size: 12px; }
+svg .tb { fill: var(--fg); font-size: 12.5px; font-weight: 700; }
+svg .tm { fill: var(--muted); font-size: 11px; }
+svg .tn { fill: var(--fg); font-size: 11.5px; }
+svg .tr { fill: var(--risk); font-size: 11.5px; }
+svg .tc { fill: var(--fg); font-size: 11.5px; font-family: var(--mono); }
+svg .lb { fill: var(--fg); font-size: 12.5px; font-weight: 700; }
+svg .lb-k { fill: var(--kernel); } svg .lb-p { fill: var(--persona); } svg .lb-a { fill: var(--app); }
+svg .bx { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1.2; }
+svg .bk { stroke: var(--kernel); } svg .bp { stroke: var(--persona); } svg .ba { stroke: var(--app); }
+svg .band { fill: var(--sunk); stroke: var(--line); stroke-width: 1; }
+svg .band-k { fill: color-mix(in srgb, var(--kernel) 7%, var(--surface)); stroke: var(--kernel); }
+svg .band-p { fill: color-mix(in srgb, var(--persona) 7%, var(--surface)); stroke: var(--persona); }
+svg .band-a { fill: color-mix(in srgb, var(--app) 6%, var(--surface)); stroke: var(--app); }
+svg .ln { stroke: currentColor; stroke-width: 1.4; fill: none; }
+svg .ln-risk { stroke: var(--risk); stroke-width: 1.6; fill: none; }
+svg .mk-risk { fill: var(--risk); }
+svg .life { stroke: var(--line); stroke-width: 1; stroke-dasharray: 3 4; fill: none; }
+svg .note { fill: var(--sunk); stroke: var(--line); stroke-width: 1; }
+svg .note-risk { fill: color-mix(in srgb, var(--risk) 8%, var(--surface)); stroke: var(--risk); stroke-width: 1; }
+.tbl { overflow-x: auto; margin: 14px 0 18px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; line-height: 1.6; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+th { font-size: 12.5px; letter-spacing: .04em; color: var(--muted); font-weight: 500; background: var(--sunk); white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td .st { margin-right: 4px; }
+.yes { color: var(--risk); font-weight: 700; } .no { color: var(--ok); font-weight: 700; }
+.callout { border-left: 3px solid var(--kernel); background: var(--surface); padding: 12px 16px; margin: 16px 0; border-radius: 0 8px 8px 0; max-width: 52em; }
+.callout.risk { border-color: var(--risk); }
+ol.steps { padding-left: 1.6em; margin: 8px 0 0; max-width: 52em; }
+ol.steps li { margin-bottom: 6px; }
+.formula { font-family: var(--mono); font-size: 13px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow-x: auto; line-height: 1.9; white-space: pre; }
+.rank { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 10px; }
+.rank li { display: grid; grid-template-columns: 2.2em 4.2em 1fr; gap: 6px 10px; align-items: baseline; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; }
+.rank .n { font-family: var(--mono); color: var(--muted); }
+.rank .body { min-width: 0; }
+.rank b { display: block; }
+.stages { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin: 14px 0; }
+.stage { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; font-size: 14px; line-height: 1.65; min-width: 0; }
+.stage .id { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.stage b { display: block; margin: 2px 0 4px; }
+.qs { display: grid; gap: 10px; margin-top: 14px; }
+.q { display: grid; grid-template-columns: 3.2em 1fr; gap: 4px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; }
+.q .id { font-family: var(--mono); font-weight: 500; color: var(--kernel); }
+.q .body { min-width: 0; }
+.q b { display: block; margin-bottom: 2px; }
+.q p { margin: 0; font-size: 14.5px; }
+footer { padding-top: 28px; font-size: 13px; color: var(--muted); }
+footer ul { padding-left: 1.2em; }
+@media (max-width: 560px) {
+  body { font-size: 15px; }
+  .rank li { grid-template-columns: 2em 1fr; }
+  .rank li .sev { grid-column: 2; }
+  .rank li .body { grid-column: 1 / -1; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="top">
+  <div class="eyebrow">yanshi · xinli · 方案评估材料 · 2026-10-27</div>
+  <h1>Persona 分层方案</h1>
+  <div class="prose">
+    <p class="lede">这页把 <code>persona-architecture.md</code>、M7 内核补充、旁听设计与当天的两份评审合在一处，按六个角度展开：架构是否合理、设计复杂度、数据关系、关键流程、容量预估、扩容范式。每条结论都标了状态；带编号的待讨论问题集中在末尾，讨论时可以直接引用编号。</p>
+  </div>
+  <div class="legend">
+    <span><span class="st impl">已实现</span> 代码中可以核对</span>
+    <span><span class="st design">设计</span> 文档已定，未实现</span>
+    <span><span class="st pend">待裁决</span> 评审提出，尚未决定</span>
+    <span><span class="st calc">复算</span> 本页按评测数据重新估算</span>
+  </div>
+  <nav class="toc" aria-label="目录">
+    <a href="#summary">1 结论速览</a><a href="#arch">2 架构</a><a href="#complexity">3 设计复杂度</a><a href="#data">4 数据关系</a>
+    <a href="#calls">5 调用关系</a><a href="#flows">6 关键流程</a><a href="#capacity">7 容量预估</a><a href="#scale">8 扩容范式</a><a href="#discuss">9 待讨论</a>
+  </nav>
+</header>
+
+<section id="summary">
+  <div class="secno">§1</div>
+  <h2>结论速览</h2>
+  <div class="verdicts">
+    <div class="verdict"><h3>架构 <span class="refs">D1 D8</span></h3><p>三层方向成立。内核的接入面（AgentDef、白名单、MCP、服务令牌）是通用的，Persona 是可选的业务服务。现有耦合在启动入口、调试接口和评测里，执行路径中没有 xinli 分支。</p></div>
+    <div class="verdict"><h3>设计复杂度 <span class="refs">D2 D3 D10</span></h3><p>M7 计划给内核加的原语里，左侧 9 项及其派生都以"原文在内核"为前提。原文改放业务侧（方案 C），这些多数可以不做。这是最大的一处待裁决。</p></div>
+    <div class="verdict"><h3>数据关系 <span class="refs">D6 D7</span></h3><p>三处存储各按 Session、EndUser、(业务线, EndUser) 分片，跨层只靠 ID 关联。有两处关系没有定义：注销的跨层顺序，以及项目与 xinli-project Session 的映射归谁保存。</p></div>
+    <div class="verdict"><h3>关键流程 <span class="refs">D3</span></h3><p>一天的整理、删除一段谈话、定时执行、实况预览都已写成流程。方案 A 下删除一段谈话要经出站流跨库通知，而且日志里的派生副本不在擦除范围内。</p></div>
+    <div class="verdict"><h3>容量 <span class="refs">D4 D5 D11 D12</span></h3><p>文档只估了存储与写入，没有估模型 token。按评测复算，10 万 DAU 每天约 1.2–6 千亿 token，这是最大的瓶颈和成本项，远超存储。</p></div>
+    <div class="verdict"><h3>扩容范式 <span class="refs">D9</span></h3><p>内核按单元、分片、角色池扩，Persona 按 (业务线, EndUser) 分片。键规则已经在执行，但 PostgreSQL 分片路由还没实现，它是 100 万 DAU 的前置条件。</p></div>
+  </div>
+</section>
+
+<section id="arch">
+  <div class="secno">§2</div>
+  <h2>架构：三层与它们之间的调用</h2>
+  <figure>
+    <div class="scroll"><svg class="dg" viewBox="0 0 960 520" role="img" aria-label="三层拓扑：应用层、Persona 与内核之间的调用；实线已实现，虚线只在设计中" style="min-width:820px"><defs><marker id="ah-f1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker><marker id="as-f1" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="currentColor"/></marker><marker id="ahr-f1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="mk-risk"/></marker><marker id="asr-f1" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" class="mk-risk"/></marker></defs><rect x="20" y="60" width="150" height="50" rx="6" class="bx"/><text x="95.0" y="81.5" class="tb" text-anchor="middle"><tspan x="95.0" dy="0">手机 HostApp</tspan></text><text x="95.0" y="96.5" class="tm" text-anchor="middle"><tspan x="95.0" dy="0">领夹经蓝牙接入</tspan></text><rect x="200" y="20" width="740" height="110" rx="10" class="band band-a" stroke-dasharray="5 4"/><text x="216" y="42" class="lb lb-a" text-anchor="start"><tspan x="216" dy="0">xinli 应用层 · apps/xinli（未建）</tspan></text><rect x="215" y="60" width="130" height="50" rx="6" class="bx ba" stroke-dasharray="5 4"/><text x="280.0" y="89.0" class="tb" text-anchor="middle"><tspan x="280.0" dy="0">采集识别</tspan></text><rect x="360" y="60" width="150" height="50" rx="6" class="bx ba" stroke-dasharray="5 4"/><text x="435.0" y="89.0" class="tb" text-anchor="middle"><tspan x="435.0" dy="0">编排器</tspan></text><rect x="525" y="60" width="110" height="50" rx="6" class="bx ba" stroke-dasharray="5 4"/><text x="580.0" y="89.0" class="tb" text-anchor="middle"><tspan x="580.0" dy="0">账号·设备·权益</tspan></text><rect x="650" y="60" width="130" height="50" rx="6" class="bx ba" stroke-dasharray="5 4"/><text x="715.0" y="89.0" class="tb" text-anchor="middle"><tspan x="715.0" dy="0">渠道 · 推送</tspan></text><rect x="795" y="60" width="130" height="50" rx="6" class="bx ba" stroke-dasharray="5 4"/><text x="860.0" y="89.0" class="tb" text-anchor="middle"><tspan x="860.0" dy="0">BFF</tspan></text><rect x="560" y="180" width="380" height="140" rx="10" class="band band-p"/><text x="576" y="202" class="lb lb-p" text-anchor="start"><tspan x="576" dy="0">Persona · 现状为 internal/xinlimock（内存）</tspan></text><rect x="575" y="216" width="105" height="84" rx="6" class="bx bp"/><text x="627.5" y="247.0" class="tb" text-anchor="middle"><tspan x="627.5" dy="0">MCP 工具</tspan></text><text x="627.5" y="262.0" class="tm" text-anchor="middle"><tspan x="627.5" dy="0">find_related</tspan><tspan x="627.5" dy="15">file_changes…</tspan></text><rect x="690" y="216" width="140" height="84" rx="6" class="bx bp"/><text x="760.0" y="239.5" class="tb" text-anchor="middle"><tspan x="760.0" dy="0">变更集日志</tspan><tspan x="760.0" dy="15">物化表</tspan></text><text x="760.0" y="269.5" class="tm" text-anchor="middle"><tspan x="760.0" dy="0">检索 · Lineage</tspan><tspan x="760.0" dy="15">墓碑（设计）</tspan></text><rect x="840" y="216" width="90" height="84" rx="6" class="bx bp" stroke-dasharray="5 4"/><text x="885.0" y="254.5" class="tb" text-anchor="middle"><tspan x="885.0" dy="0">查询 API</tspan></text><text x="885.0" y="269.5" class="tm" text-anchor="middle"><tspan x="885.0" dy="0">给 BFF</tspan></text><rect x="20" y="370" width="920" height="130" rx="10" class="band band-k"/><text x="36" y="392" class="lb lb-k" text-anchor="start"><tspan x="36" dy="0">yanshi 内核 · internal/</tspan></text><rect x="35" y="410" width="420" height="56" rx="6" class="bx bk"/><text x="245.0" y="434.5" class="tb" text-anchor="middle"><tspan x="245.0" dy="0">HTTP · 连接 · SSE → service → 事件日志 · 队列</tspan></text><text x="245.0" y="449.5" class="tm" text-anchor="middle"><tspan x="245.0" dy="0">Store.Update：校验、追加、同一事务唤醒</tspan></text><rect x="470" y="410" width="80" height="56" rx="6" class="bx bk" stroke-dasharray="5 4"/><text x="510.0" y="434.5" class="tb" text-anchor="middle"><tspan x="510.0" dy="0">出站流</tspan></text><text x="510.0" y="449.5" class="tm" text-anchor="middle"><tspan x="510.0" dy="0">P1</tspan></text><rect x="565" y="410" width="130" height="56" rx="6" class="bx bk"/><text x="630.0" y="434.5" class="tb" text-anchor="middle"><tspan x="630.0" dy="0">Worker · Catalog</tspan></text><text x="630.0" y="449.5" class="tm" text-anchor="middle"><tspan x="630.0" dy="0">白名单 → 工具</tspan></text><rect x="710" y="410" width="90" height="56" rx="6" class="bx bk" stroke-dasharray="5 4"/><text x="755.0" y="434.5" class="tb" text-anchor="middle"><tspan x="755.0" dy="0">正文存储</tspan><tspan x="755.0" dy="15">擦除 · 修订</tspan></text><rect x="815" y="410" width="115" height="56" rx="6" class="bx bk" stroke-dasharray="5 4"/><text x="872.5" y="434.5" class="tb" text-anchor="middle"><tspan x="872.5" dy="0">定时 · 触发</tspan><tspan x="872.5" dy="15">单次·档位·重答</tspan></text><path d="M170,85 L213,85" class="ln" stroke-dasharray="5 4" marker-end="url(#ah-f1)"/><text x="191" y="78" class="tm" text-anchor="middle"><tspan x="191" dy="0">音频</tspan></text><path d="M95,110 L95,408" class="ln" marker-end="url(#ah-f1)"/><text x="103" y="170" class="t" text-anchor="start"><tspan x="103" dy="0">用户令牌</tspan><tspan x="103" dy="15">输入·审批·事件流</tspan></text><path d="M250,110 L250,408" class="ln" stroke-dasharray="5 4" marker-end="url(#ah-f1)"/><text x="242" y="300" class="t" text-anchor="end"><tspan x="242" dy="0">服务令牌</tspan><tspan x="242" dy="15">Capture</tspan></text><path d="M390,110 L390,408" class="ln" stroke-dasharray="5 4" marker-end="url(#ah-f1)"/><text x="382" y="230" class="t" text-anchor="end"><tspan x="382" dy="0">服务令牌</tspan><tspan x="382" dy="15">建 Session·提交</tspan></text><path d="M500,408 L500,112" class="ln" stroke-dasharray="5 4" marker-end="url(#ah-f1)"/><text x="492" y="300" class="t" text-anchor="end"><tspan x="492" dy="0">拉取</tspan><tspan x="492" dy="15">只含 ID</tspan></text><path d="M630,408 L630,302" class="ln" marker-end="url(#ah-f1)" marker-start="url(#as-f1)"/><text x="638" y="350" class="t" text-anchor="start"><tspan x="638" dy="0">MCP + 身份头</tspan><tspan x="638" dy="15">结果 · 回执</tspan></text><path d="M880,110 L880,214" class="ln" stroke-dasharray="5 4" marker-end="url(#ah-f1)"/><text x="872" y="150" class="t" text-anchor="end"><tspan x="872" dy="0">查询 · 用户改动</tspan></text></svg></div>
+    <figcaption>三层之间的每一条调用。实线已在代码中，虚线只在设计中。现状下应用层不存在；Persona 是进程内的 xinlimock，数据在内存里，但内核调用它走真实的 MCP over HTTP。编排现在由 mock 经进程内接口直接调用 service 完成，不经服务令牌。</figcaption>
+  </figure>
+
+  <div class="tbl"><table>
+    <thead><tr><th>层</th><th>管什么</th><th>不管什么</th><th>数据</th><th>现状</th></tr></thead>
+    <tbody>
+      <tr><td><span class="layer k">yanshi 内核</span></td><td>Agent 怎样可靠、安全地运行：执行语义、来源与信任、内容安全、配额、删除、能力路由、评测</td><td>任何业务实体（交谈、承诺、项目、人）；一天从哪里开始</td><td>事件日志、Memory、用量；设计中加上 Capture 正文、出站流、定时、档位</td><td><span class="st impl">已实现</span>主体</td></tr>
+      <tr><td><span class="layer p">Persona</span></td><td>关于一个人的结构化知识：实体、时间线、交谈、承诺、项目、笔记、关注项、目标、画像、词库；变更集的检查与回执</td><td>账号、设备、渠道、推送；Agent 的执行</td><td>独立 PostgreSQL，按 (业务线, EndUser) 分片；变更集日志是事实源</td><td><span class="st design">设计</span>现为 4,200 行内存 mock</td></tr>
+      <tr><td><span class="layer a">xinli 应用层</span></td><td>采集识别、账号设备声纹、权益、渠道、推送、跨 Session 编排、App 的 BFF、运营</td><td>知识的语义；Agent 的执行</td><td>账号、设备、权益、渠道映射、收藏</td><td><span class="st design">设计</span>未建</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="prose">
+    <p><b>依赖方向只有一个：</b>应用层 → Persona → 内核的公开契约（<code>proto/</code>、<code>gen/</code>、<code>sdk/</code>、HTTP API、MCP）。<code>persona/</code> 与 <code>apps/xinli/</code> 设计为独立的 Go module，模块路径不以 <code>yanshi/</code> 开头，Go 的 internal 规则因此会拒绝它们 import 内核的内部包；<code>make check</code> 另做依赖检查。这两个目录现在都还不存在。</p>
+  </div>
+
+  <h3>现有的耦合点（P0 要拆）</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>位置</th><th>耦合</th><th>P0 之后</th></tr></thead>
+    <tbody>
+      <tr><td><code>cmd/yanshi/serve.go</code></td><td>import xinlimock；<code>xinliBusiness</code> 经进程内接口直接调用 <code>service</code>，不经服务令牌</td><td>通用的外部业务线夹具</td></tr>
+      <tr><td><code>internal/httpapi/debug.go</code></td><td><code>/v1/debug/xinli*</code> 三个调试接口</td><td>同上</td></tr>
+      <tr><td><code>internal/eval/</code>（7 个文件）</td><td>直接 import xinlimock 做 Seed、State、Check</td><td>经 HTTP 的夹具契约</td></tr>
+      <tr><td><code>internal/capture/capture.go</code></td><td>给整理模型的"之后七天的日期与星期"写在内核的工具输出里，属于 xinli 的提示工程</td><td>若选方案 C，随原文迁到业务侧</td></tr>
+      <tr><td>MCP 登记</td><td>mock 的登记没有配置凭证 headers</td><td>每条业务线独立凭证（D8）</td></tr>
+    </tbody>
+  </table></div>
+  <div class="callout prose">改内核的判据（ADR-0043）：<b>第二条业务线也需要，并且业务侧做不到或做了不安全。</b>下一节按这条判据逐项检查 M7 的新增原语。</div>
+</section>
+
+<section id="complexity">
+  <div class="secno">§3</div>
+  <h2>设计复杂度：哪些原语真的需要在内核</h2>
+  <div class="prose">
+    <p>M7 列出的内核新增项，加上 ADR-0040 的触发。最后一列回答：这项原语的"只有平台能做"，是否以原文和读取位置在内核为前提。<span class="st calc">复算</span>评审记录写"静默判断需要流的写入时间，业务侧拿不到"，ADR-0049 写"只有平台能决定位置"。这两句只有在原文在内核时才成立；原文在业务侧时，业务侧自有写入时间，也能在保存变更集的同一事务里记下已处理的范围。</p>
+  </div>
+  <div class="tbl"><table>
+    <thead><tr><th>原语</th><th>新增的东西</th><th>状态</th><th>文档给的理由</th><th>依赖原文在内核</th></tr></thead>
+    <tbody>
+      <tr><td>Capture 正文存储 · 展开器</td><td>按天分区的 <code>capture_segments</code>、<code>capture.Store</code> 与 capturetest、Expander、读取 API</td><td><span class="st design">P1</span></td><td>原文要能物理擦除且只有一份</td><td class="yes">是</td></tr>
+      <tr><td>擦除</td><td><code>CaptureErased</code>、擦除 API、Janitor 重试、出站流擦除信封、Persona 墓碑</td><td><span class="st design">P1</span></td><td>业务侧碰不到日志</td><td class="yes">是</td></tr>
+      <tr><td>原文修订</td><td><code>CaptureCorrected</code>、修订 API、片段新版本</td><td><span class="st design">P1</span></td><td>日志只追加</td><td class="yes">是</td></tr>
+      <tr><td>交付确认</td><td><code>CaptureAck</code>、<code>CaptureRead.start/first</code>、<code>Run.CapturePages</code>、登记的 <code>acks</code></td><td><span class="st impl">已实现</span></td><td>只有平台能决定读取位置</td><td class="yes">是</td></tr>
+      <tr><td>流上的触发</td><td>流上的 <code>quiet</code> 声明、停放唤醒</td><td><span class="st design">P2</span></td><td>平台知道最后写入时间</td><td class="yes">是</td></tr>
+      <tr><td><code>speaker_ref</code></td><td><code>CaptureSegment</code> 字段</td><td><span class="st design">P3</span></td><td>契约字段</td><td class="yes">是</td></tr>
+      <tr><td>声明流的 AgentDef 限制</td><td>必须 <code>scope: run</code>、<code>close_after_open</code>、有限的 <code>delete_after_close</code></td><td><span class="st design">设计</span></td><td>擦除的正确性依赖它</td><td class="yes">是</td></tr>
+      <tr><td>出站流</td><td>outbox 表（xid8 水位）、拉取接口、分片列表、删除对账接口、outboxtest</td><td><span class="st design">P1</span></td><td>每个 Session 一条 SSE 撑不住；擦除要可靠通知</td><td>部分：<span class="no">通用种类否</span>，擦除与修订种类是</td></tr>
+      <tr><td>定时</td><td>4 种事件、<code>schedule</code> 能力与 HTTP、RRULE 子集、到期表</td><td><span class="st design">P2</span></td><td>服务令牌提交的输入算本人的话</td><td><span class="no">本体否</span>；<code>window.stream</code> 是</td></tr>
+      <tr><td>单次调用</td><td><code>oneshots/*.yaml</code>、接口、并发子限额</td><td><span class="st design">P3</span></td><td>业务侧直连模型会绕过计量与审核</td><td class="no">否</td></tr>
+      <tr><td>档位</td><td><code>end_user_tiers</code> 表、设置接口</td><td><span class="st design">P3</span></td><td>无用户令牌的 Run 拿不到档位</td><td class="no">否</td></tr>
+      <tr><td>重答</td><td><code>RunRequested.redo_of</code>、Transcript 规则</td><td><span class="st design">P3</span></td><td>只有平台能改 Transcript</td><td class="no">否</td></tr>
+      <tr><td>EndUser 删除屏障</td><td>EndUser 删除记录（迁移 0019），按 EndUser 写入先写后查</td><td><span class="st impl">已实现</span></td><td>注销期间的写入可能复活数据</td><td class="no">否</td></tr>
+    </tbody>
+  </table></div>
+
+  <figure>
+    <div class="scroll"><svg class="dg" viewBox="0 0 960 560" role="img" aria-label="依赖图：左侧各项都以原文在内核为前提，底部六项独立成立" style="min-width:820px"><defs><marker id="ah-f2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker><marker id="as-f2" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="currentColor"/></marker><marker id="ahr-f2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="mk-risk"/></marker><marker id="asr-f2" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" class="mk-risk"/></marker></defs><rect x="20" y="186" width="170" height="80" rx="6" class="bx bk"/><text x="105.0" y="215.0" class="tb" text-anchor="middle"><tspan x="105.0" dy="0">原文与读取位置</tspan><tspan x="105.0" dy="15">在内核</tspan></text><text x="105.0" y="245.0" class="tm" text-anchor="middle"><tspan x="105.0" dy="0">Capture 写入事件日志</tspan></text><path d="M190,226 L215,226" class="ln"/><path d="M215,36 L215,414" class="ln"/><path d="M215,36 L238,36" class="ln" marker-end="url(#ah-f2)"/><rect x="240" y="20" width="190" height="32" rx="6" class="bx bk" stroke-dasharray="5 4"/><text x="335.0" y="40.0" class="t" text-anchor="middle"><tspan x="335.0" dy="0">正文存储 · 展开器 · P1</tspan></text><path d="M215,78 L238,78" class="ln" marker-end="url(#ah-f2)"/><rect x="240" y="62" width="190" height="32" rx="6" class="bx bk" stroke-dasharray="5 4"/><text x="335.0" y="82.0" class="t" text-anchor="middle"><tspan x="335.0" dy="0">擦除 · P1</tspan></text><path d="M215,162 L238,162" class="ln" marker-end="url(#ah-f2)"/><rect x="240" y="146" width="190" height="32" rx="6" class="bx bk" stroke-dasharray="5 4"/><text x="335.0" y="166.0" class="t" text-anchor="middle"><tspan x="335.0" dy="0">原文修订 · P1</tspan></text><path d="M215,204 L238,204" class="ln" marker-end="url(#ah-f2)"/><rect x="240" y="188" width="190" height="32" rx="6" class="bx bk" stroke-dasharray="5 4"/><text x="335.0" y="208.0" class="t" text-anchor="middle"><tspan x="335.0" dy="0">读取 API · P1</tspan></text><path d="M215,246 L238,246" class="ln" marker-end="url(#ah-f2)"/><rect x="240" y="230" width="190" height="32" rx="6" class="bx bk"/><text x="335.0" y="250.0" class="t" text-anchor="middle"><tspan x="335.0" dy="0">交付确认 · 已实现</tspan></text><path d="M215,288 L238,288" class="ln" marker-end="url(#ah-f2)"/><rect x="240" y="272" width="190" height="32" rx="6" class="bx bk"/><text x="335.0" y="292.0" class="t" text-anchor="middle"><tspan x="335.0" dy="0">cite_captures · 已实现</tspan></text><path d="M215,330 L238,330" class="ln" marker-end="url(#ah-f2)"/><rect x="240" y="314" width="190" height="32" rx="6" class="bx bk" stroke-dasharray="5 4"/><text x="335.0" y="334.0" class="t" text-anchor="middle"><tspan x="335.0" dy="0">流上的触发 · P2</tspan></text><path d="M215,372 L238,372" class="ln" marker-end="url(#ah-f2)"/><rect x="240" y="356" width="190" height="32" rx="6" class="bx bk" stroke-dasharray="5 4"/><text x="335.0" y="376.0" class="t" text-anchor="middle"><tspan x="335.0" dy="0">定时的 window.stream · P2</tspan></text><path d="M215,414 L238,414" class="ln" marker-end="url(#ah-f2)"/><rect x="240" y="398" width="190" height="32" rx="6" class="bx bk" stroke-dasharray="5 4"/><text x="335.0" y="418.0" class="t" text-anchor="middle"><tspan x="335.0" dy="0">speaker_ref · P3</tspan></text><rect x="480" y="20" width="200" height="32" rx="6" class="bx bk" stroke-dasharray="5 4"/><text x="580.0" y="40.0" class="t" text-anchor="middle"><tspan x="580.0" dy="0">单次调用的旁听范围输入 · P3</tspan></text><rect x="480" y="62" width="200" height="32" rx="6" class="bx bk" stroke-dasharray="5 4"/><text x="580.0" y="82.0" class="t" text-anchor="middle"><tspan x="580.0" dy="0">出站流擦除信封 · 72h 对账</tspan></text><rect x="480" y="104" width="200" height="32" rx="6" class="bx bk" stroke-dasharray="5 4"/><text x="580.0" y="124.0" class="t" text-anchor="middle"><tspan x="580.0" dy="0">声明流须 scope: run 等</tspan></text><rect x="480" y="146" width="200" height="32" rx="6" class="bx bk" stroke-dasharray="5 4"/><text x="580.0" y="166.0" class="t" text-anchor="middle"><tspan x="580.0" dy="0">出站流 capture_corrected</tspan></text><rect x="720" y="62" width="200" height="32" rx="6" class="bx bp" stroke-dasharray="5 4"/><text x="820.0" y="82.0" class="t" text-anchor="middle"><tspan x="820.0" dy="0">Persona 墓碑 · 拒收迟到提交</tspan></text><path d="M430,36 L478,36" class="ln" marker-end="url(#ah-f2)"/><path d="M430,78 L478,78" class="ln" marker-end="url(#ah-f2)"/><path d="M455,78 L455,120 L478,120" class="ln" marker-end="url(#ah-f2)"/><path d="M430,162 L478,162" class="ln" marker-end="url(#ah-f2)"/><path d="M680,78 L718,78" class="ln-risk" marker-end="url(#ahr-f2)"/><text x="699" y="70" class="tr" text-anchor="middle"><tspan x="699" dy="0">跨库</tspan></text><rect x="20" y="456" width="920" height="88" rx="10" class="band"/><text x="36" y="478" class="lb" text-anchor="start"><tspan x="36" dy="0">独立成立，与原文放在哪里无关</tspan></text><rect x="36" y="494" width="140" height="36" rx="6" class="bx bk"/><text x="106.0" y="508.5" class="t" text-anchor="middle"><tspan x="106.0" dy="0">EndUser 删除屏障</tspan></text><text x="106.0" y="523.5" class="tm" text-anchor="middle"><tspan x="106.0" dy="0">已实现</tspan></text><rect x="186" y="494" width="140" height="36" rx="6" class="bx bk" stroke-dasharray="5 4"/><text x="256.0" y="508.5" class="t" text-anchor="middle"><tspan x="256.0" dy="0">定时本体</tspan></text><text x="256.0" y="523.5" class="tm" text-anchor="middle"><tspan x="256.0" dy="0">P2</tspan></text><rect x="336" y="494" width="140" height="36" rx="6" class="bx bk" stroke-dasharray="5 4"/><text x="406.0" y="508.5" class="t" text-anchor="middle"><tspan x="406.0" dy="0">单次调用</tspan></text><text x="406.0" y="523.5" class="tm" text-anchor="middle"><tspan x="406.0" dy="0">P3</tspan></text><rect x="486" y="494" width="140" height="36" rx="6" class="bx bk" stroke-dasharray="5 4"/><text x="556.0" y="508.5" class="t" text-anchor="middle"><tspan x="556.0" dy="0">档位</tspan></text><text x="556.0" y="523.5" class="tm" text-anchor="middle"><tspan x="556.0" dy="0">P3</tspan></text><rect x="636" y="494" width="140" height="36" rx="6" class="bx bk" stroke-dasharray="5 4"/><text x="706.0" y="508.5" class="t" text-anchor="middle"><tspan x="706.0" dy="0">重答</tspan></text><text x="706.0" y="523.5" class="tm" text-anchor="middle"><tspan x="706.0" dy="0">P3</tspan></text><rect x="786" y="494" width="140" height="36" rx="6" class="bx bk" stroke-dasharray="5 4"/><text x="856.0" y="508.5" class="t" text-anchor="middle"><tspan x="856.0" dy="0">出站流的通用种类</tspan></text><text x="856.0" y="523.5" class="tm" text-anchor="middle"><tspan x="856.0" dy="0">P1</tspan></text></svg></div>
+    <figcaption>以"原文与读取位置在内核"为根的依赖。中间一列是直接依赖，右侧是它们再派生的东西；擦除派生的出站流信封与 Persona 墓碑是唯一的跨库链路（红色）。底部六项与原文放在哪里无关，按判据独立成立。</figcaption>
+  </figure>
+
+  <h3>三个方案</h3>
+  <div class="prose"><p><b>A</b> 是现行 M7。<b>B</b> 是"最小 Capture"：保留提交、日志与 <code>captures</code> 工具，砍掉 Stream 泛化、交付确认与触发。<b>C</b> 是业务存储加 MCP，再加安全扩展：业务 MCP Server 在登记中声明可信后，结果里可以带结构化片段，平台照旧按说话人推导来源。说话人标签本来就由采集方给出，内核无法验证；服务令牌提交的输入也本来就算本人的话。所以 C 不扩大信任面。</p></div>
+  <div class="tbl"><table>
+    <thead><tr><th></th><th>A · 现行 M7</th><th>B · 最小 Capture</th><th>C · 业务存储 + MCP</th></tr></thead>
+    <tbody>
+      <tr><td>原文在哪</td><td>内核日志 → <code>capture_segments</code></td><td>内核（为了擦除仍要正文存储）</td><td>业务库，与 Persona 同库</td></tr>
+      <tr><td>内核新增</td><td>上表所有"是"</td><td>A 去掉交付确认与触发</td><td>可信结构化片段、结果写日志前审核、一种删除原因</td></tr>
+      <tr><td>跨库一致性</td><td>出站流擦除信封、72 小时对账、墓碑竞态</td><td>同 A</td><td>业务库内一个事务</td></tr>
+      <tr><td>擦除覆盖日志里的派生副本</td><td class="yes">否</td><td class="yes">否</td><td class="no">是（删除当天 Session）</td></tr>
+      <tr><td>原文保留期由谁担保</td><td>平台</td><td>平台</td><td>业务线；平台只担保自己的副本</td></tr>
+      <tr><td>写前内容审核</td><td>提交时一次</td><td>同 A</td><td>读取时每次，或由契约交给业务侧</td></tr>
+      <tr><td>说话人的信任锚</td><td>采集方给的标签</td><td>同</td><td>同（业务 MCP 登记为可信）</td></tr>
+      <tr><td>擦除粒度</td><td>片段</td><td>片段</td><td>当天工作日志整体重建</td></tr>
+    </tbody>
+  </table></div>
+
+  <figure>
+    <div class="scroll"><svg class="dg" viewBox="0 0 960 400" role="img" aria-label="删除一段谈话：方案 A 经出站流跨库通知，方案 C 在业务库内一个事务完成并删除当天 Session" style="min-width:820px"><defs><marker id="ah-f3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker><marker id="as-f3" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="currentColor"/></marker><marker id="ahr-f3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="mk-risk"/></marker><marker id="asr-f3" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" class="mk-risk"/></marker></defs><path d="M480,20 L480,380" class="life"/><text x="30" y="30" class="lb lb-k" text-anchor="start"><tspan x="30" dy="0">方案 A · 现行 M7：原文在内核</tspan></text><rect x="140" y="48" width="200" height="36" rx="6" class="bx ba"/><text x="240.0" y="70.0" class="tb" text-anchor="middle"><tspan x="240.0" dy="0">App / BFF</tspan></text><rect x="30" y="130" width="200" height="86" rx="6" class="bx bk"/><text x="130.0" y="162.0" class="tb" text-anchor="middle"><tspan x="130.0" dy="0">内核：擦除</tspan></text><text x="130.0" y="177.0" class="tm" text-anchor="middle"><tspan x="130.0" dy="0">CaptureErased + 中断 Run</tspan><tspan x="130.0" dy="15">清空片段正文</tspan></text><rect x="250" y="130" width="200" height="86" rx="6" class="bx bp"/><text x="350.0" y="162.0" class="tb" text-anchor="middle"><tspan x="350.0" dy="0">Persona</tspan></text><text x="350.0" y="177.0" class="tm" text-anchor="middle"><tspan x="350.0" dy="0">墓碑 + 按 Lineage 级联</tspan><tspan x="350.0" dy="15">拒收迟到的提交</tspan></text><path d="M200,84 L200,104 L130,104 L130,128" class="ln" marker-end="url(#ah-f3)"/><path d="M130,216 L130,262 L350,262 L350,218" class="ln-risk" marker-end="url(#ahr-f3)"/><text x="240" y="254" class="tr" text-anchor="middle"><tspan x="240" dy="0">出站流 capture_erased → 编排器</tspan></text><rect x="30" y="290" width="420" height="50" rx="6" class="note-risk"/><text x="240" y="310" class="tr" text-anchor="middle"><tspan x="240" dy="0">模型回复与 file_changes 参数里的派生内容</tspan><tspan x="240" dy="15">不在擦除范围，留到当天 Session 删除（约 7 天）</tspan></text><text x="240" y="368" class="tm" text-anchor="middle"><tspan x="240" dy="0">跨库：至少一次投递 + 72 小时对账 + 墓碑竞态</tspan></text><text x="500" y="30" class="lb lb-p" text-anchor="start"><tspan x="500" dy="0">方案 C · 待裁决：原文在业务侧</tspan></text><rect x="620" y="48" width="200" height="36" rx="6" class="bx ba"/><text x="720.0" y="70.0" class="tb" text-anchor="middle"><tspan x="720.0" dy="0">App / BFF</tspan></text><rect x="500" y="130" width="210" height="86" rx="6" class="bx bp" stroke-dasharray="5 4"/><text x="605.0" y="162.0" class="tb" text-anchor="middle"><tspan x="605.0" dy="0">业务库（原文 + Persona）</tspan></text><text x="605.0" y="177.0" class="tm" text-anchor="middle"><tspan x="605.0" dy="0">一个事务：删原文、写墓碑</tspan><tspan x="605.0" dy="15">按 Lineage 级联</tspan></text><rect x="730" y="130" width="210" height="86" rx="6" class="bx bk" stroke-dasharray="5 4"/><text x="835.0" y="162.0" class="tb" text-anchor="middle"><tspan x="835.0" dy="0">内核：删除当天 Session</tspan></text><text x="835.0" y="177.0" class="tm" text-anchor="middle"><tspan x="835.0" dy="0">新删除原因：保留 Memory</tspan><tspan x="835.0" dy="15">并列出受影响的 Memory</tspan></text><path d="M680,84 L680,104 L605,104 L605,128" class="ln" marker-end="url(#ah-f3)"/><path d="M760,84 L760,104 L835,104 L835,128" class="ln" marker-end="url(#ah-f3)"/><text x="720" y="254" class="t" text-anchor="middle"><tspan x="720" dy="0">两库之间没有通知；两次调用都按 ID 幂等重试</tspan></text><rect x="500" y="290" width="440" height="50" rx="6" class="note-risk"/><text x="720" y="310" class="tr" text-anchor="middle"><tspan x="720" dy="0">派生副本随当天 Session 一起删除（比 A 彻底）</tspan><tspan x="720" dy="15">代价：原文 7 天保留期改由业务线担保</tspan></text><text x="720" y="368" class="tm" text-anchor="middle"><tspan x="720" dy="0">擦除粒度变粗：当天工作日志整体重建</tspan></text></svg></div>
+    <figcaption>同一个"删除 10:15–10:40"在两个方案下的路径。差别在中间那条红线：A 要把擦除从内核库可靠地送到 Persona 库，C 中原文和派生对象在同一个库里，没有这条线。C 的代价写在右下：原文保留期不再由平台担保。</figcaption>
+  </figure>
+  <div class="callout prose"><span class="st pend">待裁决</span> 评审判断：C 的总复杂度更低，主要因为少了一整个跨库一致性面；B 不比 A 便宜多少，因为部分删除决定了它的成本下限。前提是 D2 的合规问题得到"可以"的回答。</div>
+</section>
+
+<section id="data">
+  <div class="secno">§4</div>
+  <h2>数据关系</h2>
+  <figure>
+    <div class="scroll"><svg class="dg" viewBox="0 0 980 530" role="img" aria-label="数据关系：三处存储只靠 ID 关联，原话引用 #seq.idx 是 Persona 指向内核的主要连线" style="min-width:840px"><defs><marker id="ah-f4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker><marker id="as-f4" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="currentColor"/></marker><marker id="ahr-f4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="mk-risk"/></marker><marker id="asr-f4" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" class="mk-risk"/></marker></defs><text x="145" y="32" class="lb lb-a" text-anchor="middle"><tspan x="145" dy="0">应用层（未建）</tspan></text><text x="490" y="32" class="lb lb-k" text-anchor="middle"><tspan x="490" dy="0">yanshi 内核</tspan></text><text x="835" y="32" class="lb lb-p" text-anchor="middle"><tspan x="835" dy="0">Persona（现状 mock，内存）</tspan></text><rect x="350" y="50" width="280" height="44" rx="6" class="bx bk"/><text x="490.0" y="68.5" class="tb" text-anchor="middle"><tspan x="490.0" dy="0">EndUser</tspan></text><text x="490.0" y="83.5" class="tm" text-anchor="middle"><tspan x="490.0" dy="0">end_user：三层共用的标识</tspan></text><rect x="350" y="108" width="280" height="44" rx="6" class="bx bk"/><text x="490.0" y="126.5" class="tb" text-anchor="middle"><tspan x="490.0" dy="0">Session</tspan></text><text x="490.0" y="141.5" class="tm" text-anchor="middle"><tspan x="490.0" dy="0">session_id · agent · end_user</tspan></text><rect x="350" y="166" width="280" height="44" rx="6" class="bx bk"/><text x="490.0" y="184.5" class="tb" text-anchor="middle"><tspan x="490.0" dy="0">事件日志</tspan></text><text x="490.0" y="199.5" class="tm" text-anchor="middle"><tspan x="490.0" dy="0">(session_id, seq) · 唯一事实源</tspan></text><rect x="350" y="224" width="280" height="44" rx="6" class="bx bk"/><text x="490.0" y="242.5" class="tb" text-anchor="middle"><tspan x="490.0" dy="0">Capture 片段</tspan></text><text x="490.0" y="257.5" class="tm" text-anchor="middle"><tspan x="490.0" dy="0">#seq.idx · speaker · speaker_ref</tspan></text><rect x="350" y="282" width="280" height="44" rx="6" class="bx bk" stroke-dasharray="5 4"/><text x="490.0" y="300.5" class="tb" text-anchor="middle"><tspan x="490.0" dy="0">capture_segments</tspan></text><text x="490.0" y="315.5" class="tm" text-anchor="middle"><tspan x="490.0" dy="0">(session_id, seq, idx, version) · P1</tspan></text><rect x="350" y="340" width="280" height="44" rx="6" class="bx bk"/><text x="490.0" y="358.5" class="tb" text-anchor="middle"><tspan x="490.0" dy="0">Memory（本人）</tspan></text><text x="490.0" y="373.5" class="tm" text-anchor="middle"><tspan x="490.0" dy="0">end_user · 随来源 Session 删除</tspan></text><rect x="350" y="398" width="280" height="44" rx="6" class="bx bk" stroke-dasharray="5 4"/><text x="490.0" y="416.5" class="tb" text-anchor="middle"><tspan x="490.0" dy="0">出站行 · 定时 · 档位</tspan></text><text x="490.0" y="431.5" class="tm" text-anchor="middle"><tspan x="490.0" dy="0">session_id / end_user · 设计</tspan></text><rect x="710" y="108" width="250" height="44" rx="6" class="bx bp"/><text x="835.0" y="126.5" class="tb" text-anchor="middle"><tspan x="835.0" dy="0">变更集</tspan></text><text x="835.0" y="141.5" class="tm" text-anchor="middle"><tspan x="835.0" dy="0">来源键 = 旁听 Session + source</tspan></text><rect x="710" y="166" width="250" height="44" rx="6" class="bx bp"/><text x="835.0" y="184.5" class="tb" text-anchor="middle"><tspan x="835.0" dy="0">交谈</tspan></text><text x="835.0" y="199.5" class="tm" text-anchor="middle"><tspan x="835.0" dy="0">from…to = #seq.idx 范围</tspan></text><rect x="710" y="224" width="250" height="44" rx="6" class="bx bp"/><text x="835.0" y="242.5" class="tb" text-anchor="middle"><tspan x="835.0" dy="0">承诺 · 修订</tspan></text><text x="835.0" y="257.5" class="tm" text-anchor="middle"><tspan x="835.0" dy="0">refs = #seq.idx · rev</tspan></text><rect x="710" y="282" width="250" height="44" rx="6" class="bx bp"/><text x="835.0" y="300.5" class="tb" text-anchor="middle"><tspan x="835.0" dy="0">项目</tspan></text><text x="835.0" y="315.5" class="tm" text-anchor="middle"><tspan x="835.0" dy="0">↔ xinli-project Session（映射归属未定）</tspan></text><rect x="710" y="340" width="250" height="44" rx="6" class="bx bp" stroke-dasharray="5 4"/><text x="835.0" y="358.5" class="tb" text-anchor="middle"><tspan x="835.0" dy="0">实体</tspan></text><text x="835.0" y="373.5" class="tm" text-anchor="middle"><tspan x="835.0" dy="0">entity_id = speaker_ref · 设计</tspan></text><rect x="710" y="398" width="250" height="44" rx="6" class="bx bp" stroke-dasharray="5 4"/><text x="835.0" y="416.5" class="tb" text-anchor="middle"><tspan x="835.0" dy="0">Lineage · 擦除墓碑</tspan></text><text x="835.0" y="431.5" class="tm" text-anchor="middle"><tspan x="835.0" dy="0">引用 → 派生对象 · 设计</tspan></text><rect x="20" y="50" width="250" height="44" rx="6" class="bx ba" stroke-dasharray="5 4"/><text x="145.0" y="68.5" class="tb" text-anchor="middle"><tspan x="145.0" dy="0">账号</tspan></text><text x="145.0" y="83.5" class="tm" text-anchor="middle"><tspan x="145.0" dy="0">account → end_user</tspan></text><rect x="20" y="108" width="250" height="44" rx="6" class="bx ba" stroke-dasharray="5 4"/><text x="145.0" y="126.5" class="tb" text-anchor="middle"><tspan x="145.0" dy="0">渠道映射</tspan></text><text x="145.0" y="141.5" class="tm" text-anchor="middle"><tspan x="145.0" dy="0">渠道账号 → end_user · 线程</tspan></text><rect x="20" y="166" width="250" height="44" rx="6" class="bx ba" stroke-dasharray="5 4"/><text x="145.0" y="184.5" class="tb" text-anchor="middle"><tspan x="145.0" dy="0">收藏</tspan></text><text x="145.0" y="199.5" class="tm" text-anchor="middle"><tspan x="145.0" dy="0">session_id · run_id</tspan></text><rect x="20" y="224" width="250" height="44" rx="6" class="bx ba" stroke-dasharray="5 4"/><text x="145.0" y="242.5" class="tb" text-anchor="middle"><tspan x="145.0" dy="0">声纹</tspan></text><text x="145.0" y="257.5" class="tm" text-anchor="middle"><tspan x="145.0" dy="0">比对出 entity_id</tspan></text><path d="M270,72 L348,72" class="ln" marker-end="url(#ah-f4)"/><text x="309" y="66" class="tm" text-anchor="middle"><tspan x="309" dy="0">映射</tspan></text><path d="M270,130 L348,130" class="ln" marker-end="url(#ah-f4)"/><text x="309" y="124" class="tm" text-anchor="middle"><tspan x="309" dy="0">线程 = Session</tspan></text><path d="M270,188 L348,188" class="ln" marker-end="url(#ah-f4)"/><text x="309" y="182" class="tm" text-anchor="middle"><tspan x="309" dy="0">引用</tspan></text><path d="M270,246 L348,246" class="ln" marker-end="url(#ah-f4)"/><text x="309" y="240" class="tm" text-anchor="middle"><tspan x="309" dy="0">填入 speaker_ref</tspan></text><path d="M490,108 L490,96" class="ln" marker-end="url(#ah-f4)"/><path d="M710,130 L632,130" class="ln" marker-end="url(#ah-f4)"/><text x="671" y="124" class="tm" text-anchor="middle"><tspan x="671" dy="0">来源键</tspan></text><path d="M710,188 L692,188 L692,234 L632,234" class="ln" marker-end="url(#ah-f4)"/><path d="M710,246 L632,246" class="ln" marker-end="url(#ah-f4)"/><text x="671" y="240" class="tm" text-anchor="middle"><tspan x="671" dy="0">refs</tspan></text><path d="M632,256 L685,256 L685,362 L708,362" class="ln" marker-end="url(#ah-f4)"/><path d="M710,420 L655,420 L655,264 L632,264" class="ln" marker-end="url(#ah-f4)"/><text x="683" y="414" class="tm" text-anchor="middle"><tspan x="683" dy="0">范围</tspan></text><text x="490" y="470" class="tr" text-anchor="middle"><tspan x="490" dy="0">当天 Session 7 天后删除：Persona 里的 #seq.idx 引用按设计悬空，</tspan><tspan x="490" dy="15">只留引用与“超过保留期”的说明</tspan></text></svg></div>
+    <figcaption>内核居中，应用层与 Persona 都以 ID 指向它。Persona 指向内核的连线，多数落在同一个地方：原话引用 <code>#seq.idx</code>。它是交谈范围、承诺依据、Lineage 与擦除墓碑共用的锚。虚线框只在设计中。</figcaption>
+  </figure>
+
+  <h3>每类数据的存放、保留与删除</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>数据</th><th>存放</th><th>分片键</th><th>保留</th><th>删除触发</th><th>状态</th></tr></thead>
+    <tbody>
+      <tr><td>Capture 原文</td><td>内核日志；设计移到 <code>capture_segments</code></td><td>Session</td><td>当天 Session 关闭后 7 天</td><td>Retention、删除某天、注销；擦除（设计）</td><td><span class="st impl">已实现</span></td></tr>
+      <tr><td><code>captures</code> 结果里的原文副本</td><td>内核日志 ToolResult</td><td>Session</td><td>同上</td><td>同上；设计改为只存引用</td><td><span class="st impl">已实现</span></td></tr>
+      <tr><td>模型回复、调用参数（含概括）</td><td>内核日志</td><td>Session</td><td>同上</td><td>同上；<span class="yes">M7 擦除不覆盖</span></td><td><span class="st impl">已实现</span></td></tr>
+      <tr><td>Memory（本人）</td><td>内核</td><td>EndUser</td><td>长期</td><td>用户删除来源 Session、注销；到期删除时保留</td><td><span class="st impl">已实现</span></td></tr>
+      <tr><td>用量</td><td>内核</td><td>EndUser</td><td>按计量表</td><td>注销；不含 Session 与内容</td><td><span class="st impl">已实现</span></td></tr>
+      <tr><td>出站行</td><td>内核</td><td>Session</td><td>72 小时</td><td>随 Session；删除信封不随 Session 删除</td><td><span class="st design">P1</span></td></tr>
+      <tr><td>定时、到期表</td><td>内核日志 + 到期表</td><td>Session</td><td>随 Session</td><td>随 Session</td><td><span class="st design">P2</span></td></tr>
+      <tr><td>档位</td><td>内核 <code>end_user_tiers</code></td><td>EndUser</td><td>长期</td><td>注销</td><td><span class="st design">P3</span></td></tr>
+      <tr><td>变更集、交谈、承诺、项目</td><td>Persona</td><td>(业务线, EndUser)</td><td>长期</td><td>擦除时按 Lineage 级联；注销（顺序未定，D6）</td><td><span class="st impl">mock</span></td></tr>
+      <tr><td>实体、笔记、关注项、目标、画像、词库、向量</td><td>Persona</td><td>(业务线, EndUser)</td><td>长期</td><td>同上</td><td><span class="st design">P5</span></td></tr>
+      <tr><td>账号、设备、声纹、渠道映射、收藏</td><td>应用层</td><td>应用层自定</td><td>应用层自定</td><td>应用层；声纹删除不影响已提交的 Capture</td><td><span class="st design">P4</span></td></tr>
+      <tr><td>音频</td><td>应用层</td><td>—</td><td>识别完成前缓存</td><td>识别完成即删</td><td><span class="st design">P4</span></td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>ID 如何把三处数据串起来</h3>
+  <div class="prose"><ul>
+    <li><code>end_user</code>：三层共用的人的标识，由业务线签发令牌时给出。账号到 EndUser 的映射在应用层。</li>
+    <li><code>session_id</code> + <code>#seq.idx</code>：原话的唯一引用。当天 Session 7 天后删除，Persona 里的这些引用按设计悬空，只保留引用与"超过保留期"的说明。</li>
+    <li>变更集来源键：(旁听 Session, <code>source.from</code>) 或 (旁听 Session, day)。按它去重、重交时整体取代，Run 重试与接管时因此幂等。</li>
+    <li><code>speaker_ref</code>：采集服务比对声纹后填入 Capture 的 Persona 实体 ID。内核不解析它，只透传到给模型的文本与 <code>cite_captures</code>。</li>
+    <li>出站行：(<code>session_id</code>, <code>seq</code>) 指向事件。消费方按它去重，需要内容时回读事件。</li>
+    <li>项目：每个项目一个 <code>xinli-project</code> Session。mock 把映射存在 Persona 侧的项目记录里；生产时归谁保存，设计没写（D7）。</li>
+  </ul></div>
+  <div class="callout prose">分片键核对：Capture 的事件与片段在同一个 Session 键里，同一事务写入；注销按 EndUser 键写屏障，跨 Session 的清除由 Janitor 离线完成；Persona 的一个变更集只涉及一个 (业务线, EndUser)。三处都满足"一个事务一个键"（ADR-0028）。</div>
+</section>
+
+<section id="calls">
+  <div class="secno">§5</div>
+  <h2>调用关系：内核怎么决定调用什么</h2>
+  <figure>
+    <div class="scroll"><svg class="dg" viewBox="0 0 960 370" role="img" aria-label="工具解析：白名单经 Catalog 按前缀分派到六类执行方，模型只在这个集合里选择" style="min-width:820px"><defs><marker id="ah-f5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker><marker id="as-f5" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="currentColor"/></marker><marker id="ahr-f5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="mk-risk"/></marker><marker id="asr-f5" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" class="mk-risk"/></marker></defs><rect x="20" y="50" width="200" height="240" rx="8" class="bx"/><text x="120" y="74" class="tb" text-anchor="middle"><tspan x="120" dy="0">AgentDef 白名单</tspan></text><text x="40" y="104" class="tc" text-anchor="start"><tspan x="40" dy="0">memory_save</tspan><tspan x="40" dy="24">captures</tspan><tspan x="40" dy="24">mcp:xinli/file_changes</tspan><tspan x="40" dy="24">agent:research-*</tspan><tspan x="40" dy="24">device:*</tspan><tspan x="40" dy="24">sandbox:*</tspan><tspan x="40" dy="24">ask_user</tspan></text><rect x="270" y="50" width="210" height="240" rx="8" class="bx bk"/><text x="375" y="74" class="tb" text-anchor="middle"><tspan x="375" dy="0">Catalog.Tools</tspan></text><text x="288" y="104" class="t" text-anchor="start"><tspan x="288" dy="0">按条目前缀分派</tspan><tspan x="288" dy="24">MCP：只留同业务线</tspan><tspan x="288" dy="24">  登记的 Server</tspan><tspan x="288" dy="24">委托：子 Run 与每个</tspan><tspan x="288" dy="24">  祖先白名单取交集</tspan><tspan x="288" dy="24">按名称排序</tspan><tspan x="288" dy="24">  （请求前缀稳定）</tspan></text><path d="M220,170 L268,170" class="ln" marker-end="url(#ah-f5)"/><path d="M480,170 L515,170" class="ln"/><path d="M515,66 L515,266" class="ln"/><path d="M515,66 L538,66" class="ln" marker-end="url(#ah-f5)"/><rect x="540" y="50" width="190" height="32" rx="6" class="bx"/><text x="635" y="70" class="tc" text-anchor="middle"><tspan x="635" dy="0">memory_save</tspan></text><text x="742" y="70" class="t" text-anchor="start"><tspan x="742" dy="0">Worker 进程内执行</tspan></text><path d="M515,106 L538,106" class="ln" marker-end="url(#ah-f5)"/><rect x="540" y="90" width="190" height="32" rx="6" class="bx"/><text x="635" y="110" class="tc" text-anchor="middle"><tspan x="635" dy="0">mcp_xinli__file_changes</tspan></text><text x="742" y="110" class="t" text-anchor="start"><tspan x="742" dy="0">HTTP 调远程 MCP（Persona 是其一）</tspan></text><path d="M515,146 L538,146" class="ln" marker-end="url(#ah-f5)"/><rect x="540" y="130" width="190" height="32" rx="6" class="bx"/><text x="635" y="150" class="tc" text-anchor="middle"><tspan x="635" dy="0">agent__research</tspan></text><text x="742" y="150" class="t" text-anchor="start"><tspan x="742" dy="0">派生子 Session（同业务线、同用户）</tspan></text><path d="M515,186 L538,186" class="ln" marker-end="url(#ah-f5)"/><rect x="540" y="170" width="190" height="32" rx="6" class="bx"/><text x="635" y="190" class="tc" text-anchor="middle"><tspan x="635" dy="0">&lt;标签&gt;__&lt;能力&gt;</tspan></text><text x="742" y="190" class="t" text-anchor="start"><tspan x="742" dy="0">经 Inbox 路由到设备</tspan></text><path d="M515,226 L538,226" class="ln" marker-end="url(#ah-f5)"/><rect x="540" y="210" width="190" height="32" rx="6" class="bx"/><text x="635" y="230" class="tc" text-anchor="middle"><tspan x="635" dy="0">sandbox__&lt;能力&gt;</tspan></text><text x="742" y="230" class="t" text-anchor="start"><tspan x="742" dy="0">沙箱控制器</tspan></text><path d="M515,266 L538,266" class="ln" marker-end="url(#ah-f5)"/><rect x="540" y="250" width="190" height="32" rx="6" class="bx"/><text x="635" y="270" class="tc" text-anchor="middle"><tspan x="635" dy="0">ask_user</tspan></text><text x="742" y="270" class="t" text-anchor="start"><tspan x="742" dy="0">路由到用户本人</tspan></text><rect x="20" y="316" width="168" height="36" rx="6" class="bx"/><text x="104.0" y="338.0" class="t" text-anchor="middle"><tspan x="104.0" dy="0">模型选一个工具</tspan></text><rect x="208" y="316" width="168" height="36" rx="6" class="bx"/><text x="292.0" y="338.0" class="t" text-anchor="middle"><tspan x="292.0" dy="0">resolve：校验在工具集中</tspan></text><path d="M188,334 L206,334" class="ln" marker-end="url(#ah-f5)"/><rect x="396" y="316" width="168" height="36" rx="6" class="bx"/><text x="480.0" y="338.0" class="t" text-anchor="middle"><tspan x="480.0" dy="0">审批 · 写入闸门</tspan></text><path d="M376,334 L394,334" class="ln" marker-end="url(#ah-f5)"/><rect x="584" y="316" width="168" height="36" rx="6" class="bx"/><text x="668.0" y="338.0" class="t" text-anchor="middle"><tspan x="668.0" dy="0">落盘后执行</tspan></text><path d="M564,334 L582,334" class="ln" marker-end="url(#ah-f5)"/><rect x="772" y="316" width="168" height="36" rx="6" class="bx"/><text x="856.0" y="338.0" class="t" text-anchor="middle"><tspan x="856.0" dy="0">ToolResult 写日志</tspan></text><path d="M752,334 L770,334" class="ln" marker-end="url(#ah-f5)"/><text x="20" y="306" class="tm" text-anchor="start"><tspan x="20" dy="0">每一步</tspan></text></svg></div>
+    <figcaption>工具集由 AgentDef 白名单静态决定，Catalog 按前缀分派到六类执行方；具体调用哪个，由模型在这个集合里根据工具说明选择。内核没有"调用 Persona 还是调用别的 Agent"的路由逻辑，只做白名单、审批与写入闸门的检查。Persona 只是远程 MCP 中的一个。</figcaption>
+  </figure>
+  <div class="prose">
+    <h3>一次 Persona 调用带了什么</h3>
+    <div class="formula">请求头   Authorization（登记中的业务线凭证）
+         X-Yanshi-Business-Line · X-Yanshi-End-User · X-Yanshi-Session
+_meta    yanshi/business_line · end_user · session
+         yanshi/captures   ← cite_captures：平台把参数中的 "#57.3" 解析为说话人与时间，不给文字
+返回     给模型看的文字   → ToolResult，来源 = 外部内容
+         _meta.yanshi/ack ← acks：平台读取后推进读取位置，模型看不到</div>
+    <p style="margin-top:12px">审批：声明 <code>readOnlyHint</code> 的工具免审批；其余默认需要审批，业务线可以在登记中用 <code>no_approval</code> 逐个放宽（<code>file_changes</code> 就是这样）。信任：Persona 返回的一切都是外部内容，之后同一上下文中的 <code>memory_save</code> 要在用户原话中找到依据，否则须用户批准。</p>
+    <h3>委托：多 Agent 与 Persona 并列</h3>
+    <p><code>agent:&lt;名称&gt;</code> 让模型把任务交给另一个 Agent：平台派生子 Session（同业务线、同 EndUser），子 Run 的工具是子 AgentDef 与每个祖先白名单的交集，结果由子 Session 的 Worker 写回父 Run。一个前台 Agent 可以同时持有 Persona 的查询工具和若干委托条目。跨业务线的协作留给 A2A（设计中）。</p>
+  </div>
+</section>
+
+<section id="flows">
+  <div class="secno">§6</div>
+  <h2>关键流程</h2>
+  <h3>6.1 一天的整理（目标形态）</h3>
+  <figure>
+    <div class="scroll"><svg class="dg" viewBox="0 0 940 666" role="img" aria-label="一天的整理：采集、白天触发整理、当天整理、归集到项目" style="min-width:820px"><defs><marker id="ah-s1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker><marker id="as-s1" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="currentColor"/></marker><marker id="ahr-s1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="mk-risk"/></marker><marker id="asr-s1" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" class="mk-risk"/></marker></defs><rect x="30.0" y="8" width="130" height="38" rx="6" class="bx ba"/><text x="95.0" y="31.0" class="tb" text-anchor="middle"><tspan x="95.0" dy="0">HostApp</tspan></text><path d="M95.0,46 L95.0,658" class="life"/><rect x="180.0" y="8" width="130" height="38" rx="6" class="bx ba"/><text x="245.0" y="31.0" class="tb" text-anchor="middle"><tspan x="245.0" dy="0">采集识别</tspan></text><path d="M245.0,46 L245.0,658" class="life"/><rect x="330.0" y="8" width="130" height="38" rx="6" class="bx bk"/><text x="395.0" y="31.0" class="tb" text-anchor="middle"><tspan x="395.0" dy="0">内核 API</tspan></text><path d="M395.0,46 L395.0,658" class="life"/><rect x="480.0" y="8" width="130" height="38" rx="6" class="bx bk"/><text x="545.0" y="31.0" class="tb" text-anchor="middle"><tspan x="545.0" dy="0">内核 Worker</tspan></text><path d="M545.0,46 L545.0,658" class="life"/><rect x="630.0" y="8" width="130" height="38" rx="6" class="bx bp"/><text x="695.0" y="31.0" class="tb" text-anchor="middle"><tspan x="695.0" dy="0">Persona</tspan></text><path d="M695.0,46 L695.0,658" class="life"/><rect x="780.0" y="8" width="130" height="38" rx="6" class="bx ba"/><text x="845.0" y="31.0" class="tb" text-anchor="middle"><tspan x="845.0" dy="0">编排器</tspan></text><path d="M845.0,46 L845.0,658" class="life"/><path d="M245.0,82 L393.0,82" class="ln" marker-end="url(#ah-s1)"/><text x="320.0" y="75" class="t" text-anchor="middle"><tspan x="320.0" dy="0">1  建当天 Session</tspan></text><path d="M245.0,116 L393.0,116" class="ln" marker-end="url(#ah-s1)"/><text x="320.0" y="109" class="t" text-anchor="middle"><tspan x="320.0" dy="0">2  建当天整理定时</tspan></text><path d="M95.0,150 L243.0,150" class="ln" marker-end="url(#ah-s1)"/><text x="170.0" y="143" class="t" text-anchor="middle"><tspan x="170.0" dy="0">3  音频分片</tspan></text><path d="M245.0,184 L393.0,184" class="ln" marker-end="url(#ah-s1)"/><text x="320.0" y="177" class="t" text-anchor="middle"><tspan x="320.0" dy="0">4  SubmitCaptures</tspan></text><path d="M395.0,208 L421.0,208 L421.0,222 L398.0,222" class="ln" marker-end="url(#ah-s1)"/><text x="427.0" y="219" class="t" text-anchor="start"><tspan x="427.0" dy="0">5  审核后写日志，不开 Run</tspan></text><path d="M395.0,252 L543.0,252" class="ln" marker-end="url(#ah-s1)"/><text x="470.0" y="245" class="t" text-anchor="middle"><tspan x="470.0" dy="0">6  触发 Run（平台）</tspan></text><path d="M545.0,276 L571.0,276 L571.0,290 L548.0,290" class="ln" marker-end="url(#ah-s1)"/><text x="577.0" y="287" class="t" text-anchor="start"><tspan x="577.0" dy="0">7  captures 读一个时段</tspan></text><path d="M545.0,320 L693.0,320" class="ln" marker-end="url(#ah-s1)"/><text x="620.0" y="313" class="t" text-anchor="middle"><tspan x="620.0" dy="0">8  find_related</tspan></text><path d="M545.0,354 L693.0,354" class="ln" marker-end="url(#ah-s1)"/><text x="620.0" y="347" class="t" text-anchor="middle"><tspan x="620.0" dy="0">9  file_changes</tspan></text><path d="M695.0,388 L547.0,388" class="ln" stroke-dasharray="5 4" marker-end="url(#ah-s1)"/><text x="620.0" y="381" class="t" text-anchor="middle"><tspan x="620.0" dy="0">10  结果 + 回执 ack</tspan></text><path d="M545.0,412 L571.0,412 L571.0,426 L548.0,426" class="ln" marker-end="url(#ah-s1)"/><text x="577.0" y="423" class="t" text-anchor="start"><tspan x="577.0" dy="0">11  Run 完成：按回执推进读取位置</tspan></text><rect x="184.0" y="438" width="572.0" height="24" rx="4" class="note"/><text x="470.0" y="454" class="tn" text-anchor="middle"><tspan x="470.0" dy="0">白天重复 3–11，每段交谈说完、静默后一次</tspan></text><path d="M395.0,490 L543.0,490" class="ln" marker-end="url(#ah-s1)"/><text x="470.0" y="483" class="t" text-anchor="middle"><tspan x="470.0" dy="0">12  定时到期：整理今天</tspan></text><path d="M545.0,524 L693.0,524" class="ln" marker-end="url(#ah-s1)"/><text x="620.0" y="517" class="t" text-anchor="middle"><tspan x="620.0" dy="0">13  当天整理与总览</tspan></text><path d="M845.0,558 L397.0,558" class="ln" marker-end="url(#ah-s1)"/><text x="620.0" y="551" class="t" text-anchor="middle"><tspan x="620.0" dy="0">14  拉取出站流：run_completed</tspan></text><path d="M845.0,592 L397.0,592" class="ln" marker-end="url(#ah-s1)"/><text x="620.0" y="585" class="t" text-anchor="middle"><tspan x="620.0" dy="0">15  为各项目提交「整理 &lt;日期&gt;」</tspan></text><rect x="184.0" y="608" width="572.0" height="24" rx="4" class="note"/><text x="470.0" y="624" class="tn" text-anchor="middle"><tspan x="470.0" dy="0">关闭当天 Session；7 天后 Janitor 删除原文，Memory 保留</tspan></text></svg></div>
+    <figcaption>白天由触发分次整理，当天整理由定时开启，结束后编排器经出站流把结果归集到项目。编号对应下面的说明。</figcaption>
+  </figure>
+  <ol class="steps">
+    <li><span class="st design">设计</span>应用层以服务令牌建当天的 <code>xinli-day</code> Session。现状由控制台或评测创建。</li>
+    <li><span class="st design">P2</span>定时：当地 18:00 到次日 04:30 的窗口，流上静默满 2 小时即执行，否则 04:00–04:30 之间随机执行。现状由业务线到点提交。</li>
+    <li><span class="st design">设计</span>HostApp 把音频分片交给采集服务；识别、说话人区分、声纹比对都在应用层，内核只收文字。</li>
+    <li><span class="st impl">已实现</span><code>SubmitCaptures</code>：一批至多 200 段，按 <code>capture_id</code> 去重。</li>
+    <li><span class="st impl">已实现</span>整批送内容安全审核，违规时逐段复核、只留占位；提供商不可用时拒绝（fail closed）。写入后不开启 Run。</li>
+    <li><span class="st design">P2</span>流上静默满 <code>quiet</code>，平台开启 Run，输入是 AgentDef 声明的固定文字，来源是平台。现状由业务线提交"整理交谈"。</li>
+    <li><span class="st impl">已实现</span><code>captures{after:"new"}</code> 从已提交的读取位置读一个时段，进行中的时段先不读。</li>
+    <li><span class="st impl">已实现</span>每段交谈召回候选项目与相关的未完成承诺。</li>
+    <li><span class="st impl">已实现</span>每个时段交出一个变更集；平台附上被引用原话的说话人，业务线据此核对承诺人。</li>
+    <li><span class="st impl">已实现</span>保存成功时附回执；拒收时不附，并在文字中写明原因让模型改正后重交。</li>
+    <li><span class="st impl">已实现</span><code>ack: true</code> 的流只把读取位置推进到回执连续覆盖的页尾。</li>
+    <li><span class="st design">P2</span>到期写入 <code>ScheduleFired</code> 与带定时标记的 <code>RunRequested</code>，同一次追加。</li>
+    <li><span class="st impl">已实现</span><code>day_ledger</code>、当天整理的变更集、<code>file_day</code>。</li>
+    <li><span class="st design">P1</span>编排器按分片拉取出站流，只拿到 ID。现状由 mock 在 <code>file_day</code> 时于进程内直接触发。</li>
+    <li><span class="st impl">mock</span>为当天涉及的项目建或复用 <code>xinli-project</code> Session，提交"整理 &lt;日期&gt;"。</li>
+  </ol>
+
+  <h3>6.2 删除一段谈话（方案 A）</h3>
+  <figure>
+    <div class="scroll"><svg class="dg" viewBox="0 0 890 428" role="img" aria-label="删除一段谈话（方案 A）：内核记擦除并清空正文，经出站流通知 Persona 级联" style="min-width:760px"><defs><marker id="ah-s2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker><marker id="as-s2" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="currentColor"/></marker><marker id="ahr-s2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="mk-risk"/></marker><marker id="asr-s2" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" class="mk-risk"/></marker></defs><rect x="30.0" y="8" width="150" height="38" rx="6" class="bx ba"/><text x="105.0" y="31.0" class="tb" text-anchor="middle"><tspan x="105.0" dy="0">App / BFF</tspan></text><path d="M105.0,46 L105.0,420" class="life"/><rect x="200.0" y="8" width="150" height="38" rx="6" class="bx bk"/><text x="275.0" y="31.0" class="tb" text-anchor="middle"><tspan x="275.0" dy="0">内核 API</tspan></text><path d="M275.0,46 L275.0,420" class="life"/><rect x="370.0" y="8" width="150" height="38" rx="6" class="bx bk"/><text x="445.0" y="31.0" class="tb" text-anchor="middle"><tspan x="445.0" dy="0">活跃的整理 Run</tspan></text><path d="M445.0,46 L445.0,420" class="life"/><rect x="540.0" y="8" width="150" height="38" rx="6" class="bx bp"/><text x="615.0" y="31.0" class="tb" text-anchor="middle"><tspan x="615.0" dy="0">Persona</tspan></text><path d="M615.0,46 L615.0,420" class="life"/><rect x="710.0" y="8" width="150" height="38" rx="6" class="bx ba"/><text x="785.0" y="31.0" class="tb" text-anchor="middle"><tspan x="785.0" dy="0">编排器</tspan></text><path d="M785.0,46 L785.0,420" class="life"/><path d="M105.0,82 L273.0,82" class="ln" marker-end="url(#ah-s2)"/><text x="190.0" y="75" class="t" text-anchor="middle"><tspan x="190.0" dy="0">1  erase {from, to}</tspan></text><path d="M275.0,106 L301.0,106 L301.0,120 L278.0,120" class="ln" marker-end="url(#ah-s2)"/><text x="307.0" y="117" class="t" text-anchor="start"><tspan x="307.0" dy="0">2  追加 CaptureErased，同一决策中断活跃 Run</tspan></text><path d="M275.0,150 L443.0,150" class="ln" marker-end="url(#ah-s2)"/><text x="360.0" y="143" class="t" text-anchor="middle"><tspan x="360.0" dy="0">3  中断</tspan></text><path d="M275.0,174 L301.0,174 L301.0,188 L278.0,188" class="ln" marker-end="url(#ah-s2)"/><text x="307.0" y="185" class="t" text-anchor="start"><tspan x="307.0" dy="0">4  清空片段正文（失败由 Janitor 重试）</tspan></text><path d="M275.0,218 L107.0,218" class="ln" stroke-dasharray="5 4" marker-end="url(#ah-s2)"/><text x="190.0" y="211" class="t" text-anchor="middle"><tspan x="190.0" dy="0">5  {erased, memories[]}</tspan></text><path d="M105.0,242 L131.0,242 L131.0,256 L108.0,256" class="ln" marker-end="url(#ah-s2)"/><text x="137.0" y="253" class="t" text-anchor="start"><tspan x="137.0" dy="0">6  隐藏派生对象；询问是否删 Memory</tspan></text><path d="M785.0,286 L277.0,286" class="ln" marker-end="url(#ah-s2)"/><text x="530.0" y="279" class="t" text-anchor="middle"><tspan x="530.0" dy="0">7  拉取：capture_erased</tspan></text><path d="M785.0,320 L617.0,320" class="ln" marker-end="url(#ah-s2)"/><text x="700.0" y="313" class="t" text-anchor="middle"><tspan x="700.0" dy="0">8  通知擦除</tspan></text><path d="M615.0,344 L641.0,344 L641.0,358 L618.0,358" class="ln" marker-end="url(#ah-s2)"/><text x="647.0" y="355" class="t" text-anchor="start"><tspan x="647.0" dy="0">9  墓碑 + 按 Lineage 级联</tspan></text><rect x="34.0" y="370" width="822.0" height="24" rx="4" class="note"/><text x="445.0" y="386" class="tn" text-anchor="middle"><tspan x="445.0" dy="0">日志中模型回复与 file_changes 参数里的派生内容不在擦除范围</tspan></text></svg></div>
+    <figcaption>内核先记擦除、中断活跃 Run、清空片段正文，再经出站流通知 Persona 级联。全流程都是 <span class="st design">P1</span> 设计。方案 C 下，第 1–4 步与第 6–8 步换成"业务库一个事务 + 删除当天 Session"，见图 3。</figcaption>
+  </figure>
+  <ol class="steps">
+    <li>引用范围在同一 Session 内，含两端；按 <code>erase_id</code> 去重。Session 已关闭也可以擦除。</li>
+    <li>擦除与中断在同一次决策中写入。依据：声明了流的 AgentDef 都是 <code>scope: run</code>，之后的 Run 看不到旧回复与压缩摘要。</li>
+    <li>被中断的 Run 已交给 Persona 的内容，由第 8 步的级联处理。</li>
+    <li>展开器按日志前缀判断：前缀里有覆盖它的擦除事件，就一律返回占位，即使存储还没清空。</li>
+    <li>返回本 Session 写入、依据可能落在范围内的 Memory，由 App 询问用户；内核不自动删除。</li>
+    <li>BFF 立即隐藏相关对象，盖住出站流的消费延迟。</li>
+    <li>擦除信封保留 72 小时，不随 Session 删除；消费者离线更久时走删除对账接口。</li>
+    <li>编排器把擦除转告 Persona。</li>
+    <li>墓碑与级联在 Persona 内同一事务完成；之后引用这段的变更集被拒收，迟到的提交不会复活内容。</li>
+  </ol>
+
+  <h3>6.3 定时周报</h3>
+  <figure>
+    <div class="scroll"><svg class="dg" viewBox="0 0 890 496" role="img" aria-label="定时周报：Agent 在本线程创建定时，到期以平台来源开启 Run，结果经出站流推送" style="min-width:760px"><defs><marker id="ah-s3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker><marker id="as-s3" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="currentColor"/></marker><marker id="ahr-s3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="mk-risk"/></marker><marker id="asr-s3" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" class="mk-risk"/></marker></defs><rect x="30.0" y="8" width="150" height="38" rx="6" class="bx ba"/><text x="105.0" y="31.0" class="tb" text-anchor="middle"><tspan x="105.0" dy="0">用户 App</tspan></text><path d="M105.0,46 L105.0,488" class="life"/><rect x="200.0" y="8" width="150" height="38" rx="6" class="bx bk"/><text x="275.0" y="31.0" class="tb" text-anchor="middle"><tspan x="275.0" dy="0">内核 API</tspan></text><path d="M275.0,46 L275.0,488" class="life"/><rect x="370.0" y="8" width="150" height="38" rx="6" class="bx bk"/><text x="445.0" y="31.0" class="tb" text-anchor="middle"><tspan x="445.0" dy="0">问答线程 Worker</tspan></text><path d="M445.0,46 L445.0,488" class="life"/><rect x="540.0" y="8" width="150" height="38" rx="6" class="bx bp"/><text x="615.0" y="31.0" class="tb" text-anchor="middle"><tspan x="615.0" dy="0">Persona</tspan></text><path d="M615.0,46 L615.0,488" class="life"/><rect x="710.0" y="8" width="150" height="38" rx="6" class="bx ba"/><text x="785.0" y="31.0" class="tb" text-anchor="middle"><tspan x="785.0" dy="0">推送服务</tspan></text><path d="M785.0,46 L785.0,488" class="life"/><path d="M105.0,82 L273.0,82" class="ln" marker-end="url(#ah-s3)"/><text x="190.0" y="75" class="t" text-anchor="middle"><tspan x="190.0" dy="0">1  「每周五五点给我周报」</tspan></text><path d="M275.0,116 L443.0,116" class="ln" marker-end="url(#ah-s3)"/><text x="360.0" y="109" class="t" text-anchor="middle"><tspan x="360.0" dy="0">2  Run</tspan></text><path d="M445.0,140 L471.0,140 L471.0,154 L448.0,154" class="ln" marker-end="url(#ah-s3)"/><text x="477.0" y="151" class="t" text-anchor="start"><tspan x="477.0" dy="0">3  schedule.create → ScheduleCreated（next_due）</tspan></text><path d="M445.0,184 L107.0,184" class="ln" stroke-dasharray="5 4" marker-end="url(#ah-s3)"/><text x="275.0" y="177" class="t" text-anchor="middle"><tspan x="275.0" dy="0">4  已创建，下次周五 17:00</tspan></text><rect x="34.0" y="200" width="822.0" height="24" rx="4" class="note"/><text x="445.0" y="216" class="tn" text-anchor="middle"><tspan x="445.0" dy="0">每周五 17:00（Asia/Shanghai）到期</tspan></text><path d="M445.0,242 L471.0,242 L471.0,256 L448.0,256" class="ln" marker-end="url(#ah-s3)"/><text x="477.0" y="253" class="t" text-anchor="start"><tspan x="477.0" dy="0">5  ScheduleFired + RunRequested（来源：平台）</tspan></text><path d="M445.0,286 L613.0,286" class="ln" marker-end="url(#ah-s3)"/><text x="530.0" y="279" class="t" text-anchor="middle"><tspan x="530.0" dy="0">6  查询本周项目与承诺</tspan></text><path d="M615.0,320 L447.0,320" class="ln" stroke-dasharray="5 4" marker-end="url(#ah-s3)"/><text x="530.0" y="313" class="t" text-anchor="middle"><tspan x="530.0" dy="0">7  外部内容</tspan></text><path d="M445.0,344 L471.0,344 L471.0,358 L448.0,358" class="ln" marker-end="url(#ah-s3)"/><text x="477.0" y="355" class="t" text-anchor="start"><tspan x="477.0" dy="0">8  回复：输出审核后写日志</tspan></text><path d="M785.0,388 L277.0,388" class="ln" marker-end="url(#ah-s3)"/><text x="530.0" y="381" class="t" text-anchor="middle"><tspan x="530.0" dy="0">9  拉取出站流：run_completed</tspan></text><path d="M785.0,422 L107.0,422" class="ln" marker-end="url(#ah-s3)"/><text x="445.0" y="415" class="t" text-anchor="middle"><tspan x="445.0" dy="0">10  推送周报</tspan></text><rect x="34.0" y="438" width="822.0" height="24" rx="4" class="note"/><text x="445.0" y="454" class="tn" text-anchor="middle"><tspan x="445.0" dy="0">用户说「取消周报」→ schedule.cancel</tspan></text></svg></div>
+    <figcaption>Agent 在问答线程里创建定时；到期时内核以平台来源开启 Run，查询 Persona 生成周报，推送服务经出站流取走结果。全流程是 <span class="st design">P2</span> 设计。来源是平台，是定时放进内核的理由：同样的文字如果由业务线到点以服务令牌提交，就会被当作用户原话。</figcaption>
+  </figure>
+
+  <h3>6.4 实况预览（单次调用）</h3>
+  <figure>
+    <div class="scroll"><svg class="dg" viewBox="0 0 800 462" role="img" aria-label="实况预览：BFF 读最近旁听，调用单次调用生成简述，不写日志" style="min-width:640px"><defs><marker id="ah-s4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker><marker id="as-s4" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="currentColor"/></marker><marker id="ahr-s4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="mk-risk"/></marker><marker id="asr-s4" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" class="mk-risk"/></marker></defs><rect x="30.0" y="8" width="170" height="38" rx="6" class="bx ba"/><text x="115.0" y="31.0" class="tb" text-anchor="middle"><tspan x="115.0" dy="0">App 前台</tspan></text><path d="M115.0,46 L115.0,454" class="life"/><rect x="220.0" y="8" width="170" height="38" rx="6" class="bx ba"/><text x="305.0" y="31.0" class="tb" text-anchor="middle"><tspan x="305.0" dy="0">BFF</tspan></text><path d="M305.0,46 L305.0,454" class="life"/><rect x="410.0" y="8" width="170" height="38" rx="6" class="bx bk"/><text x="495.0" y="31.0" class="tb" text-anchor="middle"><tspan x="495.0" dy="0">内核 API</tspan></text><path d="M495.0,46 L495.0,454" class="life"/><rect x="600.0" y="8" width="170" height="38" rx="6" class="bx bx"/><text x="685.0" y="31.0" class="tb" text-anchor="middle"><tspan x="685.0" dy="0">模型提供商</tspan></text><path d="M685.0,46 L685.0,454" class="life"/><rect x="34.0" y="64" width="732.0" height="24" rx="4" class="note"/><text x="400.0" y="80" class="tn" text-anchor="middle"><tspan x="400.0" dy="0">App 在前台时每分钟一次</tspan></text><path d="M115.0,116 L303.0,116" class="ln" marker-end="url(#ah-s4)"/><text x="210.0" y="109" class="t" text-anchor="middle"><tspan x="210.0" dy="0">1  打开实况页</tspan></text><path d="M305.0,150 L493.0,150" class="ln" marker-end="url(#ah-s4)"/><text x="400.0" y="143" class="t" text-anchor="middle"><tspan x="400.0" dy="0">2  GET /captures?after=…</tspan></text><path d="M495.0,184 L307.0,184" class="ln" stroke-dasharray="5 4" marker-end="url(#ah-s4)"/><text x="400.0" y="177" class="t" text-anchor="middle"><tspan x="400.0" dy="0">3  最近片段（经展开器）</tspan></text><path d="M305.0,218 L493.0,218" class="ln" marker-end="url(#ah-s4)"/><text x="400.0" y="211" class="t" text-anchor="middle"><tspan x="400.0" dy="0">4  POST /oneshots/xinli-live-brief</tspan></text><path d="M495.0,242 L521.0,242 L521.0,256 L498.0,256" class="ln" marker-end="url(#ah-s4)"/><text x="527.0" y="253" class="t" text-anchor="start"><tspan x="527.0" dy="0">5  计量 · 配额 · 输入审核</tspan></text><path d="M495.0,286 L683.0,286" class="ln" marker-end="url(#ah-s4)"/><text x="590.0" y="279" class="t" text-anchor="middle"><tspan x="590.0" dy="0">6  生成简述</tspan></text><path d="M685.0,320 L497.0,320" class="ln" stroke-dasharray="5 4" marker-end="url(#ah-s4)"/><text x="590.0" y="313" class="t" text-anchor="middle"><tspan x="590.0" dy="0">7  简述</tspan></text><path d="M495.0,344 L521.0,344 L521.0,358 L498.0,358" class="ln" marker-end="url(#ah-s4)"/><text x="527.0" y="355" class="t" text-anchor="start"><tspan x="527.0" dy="0">8  输出审核；不写日志、不存结果</tspan></text><path d="M495.0,388 L307.0,388" class="ln" stroke-dasharray="5 4" marker-end="url(#ah-s4)"/><text x="400.0" y="381" class="t" text-anchor="middle"><tspan x="400.0" dy="0">9  简述</tspan></text><path d="M305.0,422 L117.0,422" class="ln" stroke-dasharray="5 4" marker-end="url(#ah-s4)"/><text x="210.0" y="415" class="t" text-anchor="middle"><tspan x="210.0" dy="0">10  显示</tspan></text></svg></div>
+    <figcaption>无 Session 的模型调用：照常计量、配额、输入输出审核，但不写日志、不存结果。全流程是 <span class="st design">P3</span> 设计。方案 C 下第 2–3 步改为 BFF 直接读业务库。它的成本见 §7 与 D11。</figcaption>
+  </figure>
+</section>
+
+<section id="capacity">
+  <div class="secno">§7</div>
+  <h2>容量预估</h2>
+  <h3>7.1 文档给出的估算（persona-architecture §7）</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>项</th><th>10 万 DAU</th><th>100 万 DAU</th><th>文档的处理</th></tr></thead>
+    <tbody>
+      <tr><td>Capture 正文</td><td>约 50 GB/天，7 天约 350 GB</td><td>约 500 GB/天，约 3.5 TB</td><td>移出事件日志，按天分区</td></tr>
+      <tr><td>Capture 写入峰值</td><td>约 1,700 批/秒</td><td>约 17,000 批/秒</td><td>按 Session 分片；超过单分片容量前实现分片路由</td></tr>
+      <tr><td>内容安全</td><td colspan="2">每批一次，整批被拦时逐段复核</td><td>按峰值与复核放大采购</td></tr>
+      <tr><td>整理 Run</td><td colspan="2">每人每天几十次触发 + 1 次当天整理</td><td>后台类别；当天整理按作息分散</td></tr>
+      <tr><td>停放的定时</td><td colspan="2">每人若干个，百万级</td><td>独立的到期表；P2 压测</td></tr>
+      <tr><td>Persona 写入</td><td colspan="2">每人每天约几十个变更集</td><td>独立 PG，按 EndUser 分片</td></tr>
+    </tbody>
+  </table></div>
+  <div class="prose"><p>文档的前提是每人每天约 8 小时旁听、十几万字，结论是"成本的大头是识别与模型调用，不是存储"，但没有给出模型调用的量。</p></div>
+
+  <h3>7.2 复算：模型 token <span class="st calc">复算</span></h3>
+  <div class="prose"><p>依据评测基线 <code>capture-workday</code>：一个工作日约 9 小时、465 段、31,124 字。原流程用了 1,541,438 token、80 次工具调用，缓存命中 51%；按时段拆 Run 的实验用了 1,176,019 token，但碎片率回归，未采纳。</p></div>
+<div class="formula">每字 token      1,176,019 / 31,124 ≈ 38   ·   1,541,438 / 31,124 ≈ 50
+每人每天        3.1 万字 × 38–50 ≈ 1.2–1.5 M      （评测的旁听密度）
+               12 万字  × 38–50 ≈ 4.5–6.0 M      （文档假设的"十几万字"，按线性外推）
+10 万 DAU      1.2–6.0 × 10¹¹ token/天   ≈ 全天平均 1.4–6.9 M token/秒
+100 万 DAU     × 10
+实况预览        假设峰值 10% 用户在前台、每分钟一次、输入约 5–8k token
+               10 万 DAU：约 170 次/秒 ≈ 0.8–1.4 M token/秒（只在峰值时段）</div>
+  <div class="prose"><p style="margin-top:12px">线性外推是乐观的一侧：单个 Run 内上下文逐页累积，原流程略超线性；触发把一天切成许多短 Run 后接近线性。缓存命中的部分更便宜，但仍占提供商的吞吐配额。这一项比存储高好几个数量级，是容量和成本的主项。</p></div>
+
+  <h3>7.3 复算：存储与写入 <span class="st calc">复算</span></h3>
+  <div class="tbl"><table>
+    <thead><tr><th>项</th><th>算法</th><th class="num">10 万 DAU</th><th>备注</th></tr></thead>
+    <tbody>
+      <tr><td>Capture 原文</td><td>3.1–12 万字 × 3 字节 + 每段约 60 字节开销</td><td class="num">12–50 GB/天</td><td>现状日志里还有 <code>captures</code> 结果副本，约翻倍</td></tr>
+      <tr><td>Capture 提交</td><td>同时在线 × 每 1–5 分钟一批</td><td class="num">330–1,700 批/秒</td><td>1,700 是全部用户同时在线的上界</td></tr>
+      <tr><td>片段行</td><td>465–2,000 段/人/天</td><td class="num">0.5–2 亿行/天</td><td>按 Session 逐行删除的 WAL 未压测</td></tr>
+      <tr><td>内容安全调用</td><td>每批一次 + 逐段复核</td><td class="num">330–1,700 次/秒</td><td>外部提供商；fail closed</td></tr>
+      <tr><td>整理 Run 的事件</td><td>约 3 个/工具调用 × 80 + Run 事件</td><td class="num">约 3,000 万/天</td><td>平均约 350/秒</td></tr>
+      <tr><td>Persona 变更集</td><td>约 32 次/人/天（含 37% 拒收重交）</td><td class="num">约 320 万/天</td><td>平均约 37/秒</td></tr>
+      <tr><td>出站行</td><td>每 Run 1–2 行 × 20–40 Run/人/天</td><td class="num">200–800 万/天</td><td>只含 ID</td></tr>
+      <tr><td>停放的定时</td><td>每人 2–5 个</td><td class="num">20–50 万</td><td>100 万 DAU 时百万级</td></tr>
+      <tr><td>检索向量</td><td>每人每天 10–20 段交谈</td><td class="num">每人每年 4–7 千个</td><td>按用户过滤后是精确扫描的规模，不需要全局近邻索引（推断）</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>7.4 瓶颈排序</h3>
+  <ol class="rank">
+    <li><span class="n">1</span><span class="sev st hi">高</span><span class="body"><b>模型 token 的吞吐与费用</b>后台整理最大，其次是实况预览，再次是问答。缓解手段：按时段拆 Run（−24%，但指标回归）、把已交出的页移出上下文（建模 §9，未做）、降低 37% 的拒收重交、把 <code>find_related</code> 并进 <code>file_changes</code>、白天整理改用更小的模型。</span></li>
+    <li><span class="n">2</span><span class="sev st hi">高</span><span class="body"><b>语音识别（应用层）</b>峰值的流式识别路数，约等于同时佩戴且在说话的人数。它在内核之外，却决定采集链路的容量；文档没有量化。</span></li>
+    <li><span class="n">3</span><span class="sev st mid">中</span><span class="body"><b>内容安全提供商</b>每批一次，10 万 DAU 峰值 330–1,700 次/秒，100 万 DAU 再乘 10。失败即拒绝，提供商故障时采集停在 HostApp 的本地缓冲。</span></li>
+    <li><span class="n">4</span><span class="sev st mid">中→高</span><span class="body"><b>内核 PostgreSQL 单库</b><code>app.Postgres</code> 现在是单个连接池，分片路由未实现（M7 §13 列为 P4 前置）。片段写入与逐 Session 删除的 WAL 未压测。10 万 DAU 为中，100 万为高。</span></li>
+    <li><span class="n">5</span><span class="sev st mid">中</span><span class="body"><b>停放定时与队列认领</b><code>pgqueue.Claim</code> 先扫描、再过滤停放项，百万级的长停放会拖慢认领；设计用独立的到期表规避。</span></li>
+    <li><span class="n">6</span><span class="sev st mid">中</span><span class="body"><b>通知扇出</b>每个网关进程监听全部分片，分片归属路由未实现（deployment §8），单元内进程数受通知投递上限约束。</span></li>
+    <li><span class="n">7</span><span class="sev st lo">低</span><span class="body"><b>Persona</b>写入每秒几十次；检索总按单个用户过滤。独立库、按 EndUser 分片已经足够。</span></li>
+  </ol>
+</section>
+
+<section id="scale">
+  <div class="secno">§8</div>
+  <h2>扩容范式</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>层 · 部件</th><th>扩展单位</th><th>有状态的部分</th><th>怎么扩</th><th>现状</th></tr></thead>
+    <tbody>
+      <tr><td><span class="layer k">内核</span> · 入口</td><td>gateway 副本</td><td>连接、SSE</td><td>横向加副本；归属路由之后按分片固定</td><td><span class="st impl">角色开关</span><span class="st design">归属路由</span></td></tr>
+      <tr><td><span class="layer k">内核</span> · 执行</td><td>交互池 / 后台池的 Worker</td><td>无，状态都在日志</td><td>按队列等待与模型并发加 Worker；模型并发是全局约束</td><td><span class="st impl">已实现</span></td></tr>
+      <tr><td><span class="layer k">内核</span> · 存储</td><td>PostgreSQL 分片（键 → 哈希槽 → 分片）</td><td>日志、队列、Memory 等</td><td>加分片、迁移槽位；一个事务一个键</td><td><span class="st impl">键规则</span><span class="st design">路由</span></td></tr>
+      <tr><td><span class="layer k">内核</span> · 单元</td><td>一条业务线一个单元</td><td>整个单元</td><td>业务线之间天然隔离，不做跨单元双活</td><td><span class="st design">设计</span></td></tr>
+      <tr><td><span class="layer p">Persona</span> · 服务</td><td>无状态进程</td><td>无</td><td>横向</td><td><span class="st design">设计</span></td></tr>
+      <tr><td><span class="layer p">Persona</span> · 存储</td><td>(业务线, EndUser) 分片</td><td>变更集、物化表、向量</td><td>加分片；检索按用户过滤</td><td><span class="st design">设计</span></td></tr>
+      <tr><td><span class="layer a">应用</span> · 采集识别</td><td>无状态进程 + 识别提供商</td><td>音频只在识别完成前缓存</td><td>横向；受提供商并发约束</td><td><span class="st design">设计</span></td></tr>
+      <tr><td><span class="layer a">应用</span> · 编排器</td><td>按出站流分片的消费者</td><td>游标（保存在编排器侧）</td><td>每个分片一个消费者，并行拉取</td><td><span class="st design">设计</span></td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>扩容路径与触发信号</h3>
+  <div class="stages">
+    <div class="stage"><span class="id">S0</span><b>单进程 + 单库</b>开发、模拟测试、小规模私有化。<br><span class="st impl">已实现</span></div>
+    <div class="stage"><span class="id">S1</span><b>角色分池</b>gateway、worker、worker-bg、sandbox、janitor。信号：交互队列等待、首字延迟。<br><span class="st impl">已实现</span> 未在集群验证</div>
+    <div class="stage"><span class="id">S2</span><b>数据拆分</b>Capture 正文分区（若选 A）、Persona 独立库。信号：日志表体积、Retention 删除的 WAL。<br><span class="st design">P1 / P4</span></div>
+    <div class="stage"><span class="id">S3</span><b>PostgreSQL 分片路由</b>信号：单库写入 TPS、复制延迟、认领延迟。<br><span class="st design">P4 前置</span></div>
+    <div class="stage"><span class="id">S4</span><b>多单元</b>按业务线分单元。信号：第二条业务线上线，或有故障域要求。<br><span class="st design">设计</span></div>
+  </div>
+
+  <h3>避免瓶颈的规则</h3>
+  <div class="prose"><ul>
+    <li>在线路径按键访问，一条 SQL、一个事务只涉及一个键；新表先在 <code>pg.Tables</code> 登记分片键（ADR-0028）。</li>
+    <li>跨层消息只带 ID，按 ID 幂等：<code>capture_id</code>、输入 ID、变更集来源键、出站行的 (session, seq)。</li>
+    <li>后台工作走后台类别与准入，交互优先；当天整理按各人作息加抖动分散。</li>
+    <li>模型并发按提供商账号上限全局分配；单次调用有子限额，后台保有最低份额。</li>
+    <li>大对象不进事件日志：工件只放引用；原文进正文存储（A）或留在业务侧（C）。</li>
+    <li>每一项容量结论都要有压测支撑：P1 的片段写入与逐 Session 删除，P2 的百万停放，P3 子限额下的首字延迟。</li>
+  </ul></div>
+</section>
+
+<section id="discuss">
+  <div class="secno">§9</div>
+  <h2>待讨论</h2>
+  <div class="prose"><p class="muted">每条写了当前倾向，以及什么证据能定下来。</p></div>
+  <div class="qs">
+    <div class="q"><span class="id">D1</span><div class="body"><b>内核与业务的边界是否按 ADR-0043 的判据执行</b><p>倾向：定时、单次调用、档位、出站流的通用部分、EndUser 删除屏障通过判据；Capture 相关的多数项不通过（§3 表）。</p></div></div>
+    <div class="q"><span class="id">D2</span><div class="body"><b>原文放哪里：方案 A 还是 C</b><p>倾向 C，前提是合规回答"原文保留期能否由业务线担保"。P1 动工前先做三步验证：可信片段进入来源推导、业务侧 mock 跑 <code>capture-*</code> 对齐基线、写一页四种删除操作的语义对照。</p></div></div>
+    <div class="q"><span class="id">D3</span><div class="body"><b>擦除的完整性</b><p>方案 A 不覆盖日志里的派生副本（模型回复、调用参数），它们留到当天 Session 删除。是接受，并把隐私说明改成"约 7 天内删除"，还是补上"删除并重建当天 Session"？</p></div></div>
+    <div class="q"><span class="id">D4</span><div class="body"><b>每人每天的 token 预算</b><p>需要一个目标值，以及用哪个评测指标约束它；还要定下愿意用多少整理延迟换成本。</p></div></div>
+    <div class="q"><span class="id">D5</span><div class="body"><b>旁听密度</b><p>文档按十几万字，评测一天 3.1 万字，差约 4 倍，存储与 token 估算都随之放大。需要真实佩戴数据。</p></div></div>
+    <div class="q"><span class="id">D6</span><div class="body"><b>注销的跨层顺序</b><p>内核有 EndUser 删除屏障，但 Persona 与应用层何时删、谁先谁后、Persona 怎样得知，设计没写。出站流只有 <code>session_deleted</code>，没有 EndUser 级的信封。</p></div></div>
+    <div class="q"><span class="id">D7</span><div class="body"><b>项目与 xinli-project Session 的映射归谁</b><p>Persona（像 mock 那样）还是应用层的编排器？它决定删除某个项目时由谁删除那个 Session。</p></div></div>
+    <div class="q"><span class="id">D8</span><div class="body"><b>Persona 的租户隔离</b><p>Persona 信任内核注入的业务线与 EndUser 请求头，前提是每条业务线的 MCP 登记有独立凭证，且 Persona 校验头与凭证一致。mock 未配置凭证。</p></div></div>
+    <div class="q"><span class="id">D9</span><div class="body"><b>PostgreSQL 分片路由的时间点</b><p>10 万 DAU 是否已经需要？在压测给出单库上限之前不定。</p></div></div>
+    <div class="q"><span class="id">D10</span><div class="body"><b>是否暂停 Stream 泛化与流上的触发</b><p>倾向暂停，直到 D2 定下来。来源推导的集中化独立有价值，保留。</p></div></div>
+    <div class="q"><span class="id">D11</span><div class="body"><b>实况预览的成本</b><p>前台每分钟一次单次调用，峰值约 1 M token/秒的量级。可以考虑改为有新旁听时才调用，或者在端侧做。</p></div></div>
+    <div class="q"><span class="id">D12</span><div class="body"><b>内容安全失败即拒绝对采集的影响</b><p>提供商故障时，HostApp 需要缓冲多久、多大？需要一个数字，写进接入文档。</p></div></div>
+  </div>
+</section>
+
+<footer>
+  <p>来源：<code>docs/design/persona-architecture.md</code>、<code>docs/design/m7-kernel-primitives.md</code>、<code>docs/design/captures.md</code>、<code>docs/design/captures-xinli-model.md</code>、<code>docs/design/deployment.md</code>、ADR-0028、0036、0037、0040、0043、0045、0049，<code>docs/review/2026-10-27-capture-boundary-review.md</code>、<code>docs/review/2026-10-26-xinli-span-runs.md</code>，<code>evals/baselines/default.json</code>，以及 <code>internal/</code> 中引用的代码位置。</p>
+  <p>本页只读了代码、文档与评测基线，没有运行测试或评测。标为"复算"的数字是按公开假设推算的量级，不是压测结果。</p>
+</footer>
+</div>
+</body>
+</html>
