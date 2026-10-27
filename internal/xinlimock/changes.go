@@ -89,10 +89,10 @@ type exchangeOps struct {
 
 type commitmentOps struct {
 	Create []struct {
-		Exchange, Kind, Content, Counterpart, Project string
-		DueDate                                       string `json:"due_date"`
-		DueText                                       string `json:"due_text"`
-		Refs                                          strs
+		ID, Exchange, Kind, Content, Counterpart, Project string
+		DueDate                                           string `json:"due_date"`
+		DueText                                           string `json:"due_text"`
+		Refs                                              strs
 	}
 	Revise, Close []changeIn
 	Merge         []struct {
@@ -535,7 +535,10 @@ func (c *call) fileChanges() string {
 				cm.Project = linked[0].Project // unsure 时为空，用户确认后随交谈归入
 			}
 		}
-		cm.ID = fmt.Sprintf("#%d", i) // 检查通过后分配
+		cm.ID = m.ID
+		if !isCommitmentID(cm.ID) {
+			cm.ID = fmt.Sprintf("#%d", i)
+		} // 检查通过后分配
 		cs.CreateCommitments = append(cs.CreateCommitments, cm)
 	}
 	for _, r := range in.Commitments.Revise {
@@ -561,6 +564,7 @@ func (c *call) fileChanges() string {
 		}
 		cs.MergeCommitments = append(cs.MergeCommitments, CommitmentMerge{Into: m.Into, From: m.From, Reason: m.Reason})
 	}
+	k.matchCommitments(&cs, old)
 	if len(k.problems) > 0 {
 		return rejected(k.problems)
 	}
@@ -568,15 +572,111 @@ func (c *call) fileChanges() string {
 	return c.receipt(&cs, k.notes)
 }
 
+// isCommitmentID 识别业务线分配的 ID；模型自拟的名称只作临时 ID，不要求重交。
+func isCommitmentID(id string) bool {
+	digits, ok := strings.CutPrefix(id, "C-")
+	if !ok || digits == "" {
+		return false
+	}
+	for _, digit := range digits {
+		if digit < '0' || digit > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// matchCommitments 只沿用双向唯一的对应，避免之后按 ID 重放的修订落到另一件事上。
+func (k *review) matchCommitments(cs *Changeset, old int) {
+	var prev []Commitment
+	if old >= 0 {
+		prev = k.c.u.changesets[old].CreateCommitments
+	}
+	explicit := make([]bool, len(cs.CreateCommitments))
+	reserved := make([]bool, len(prev))
+	matched := make([]bool, len(prev))
+	// 显式旧 ID 优先，不能借创建项引用其他来源的承诺或自行分配 ID。
+	for i, m := range cs.CreateCommitments {
+		if !isCommitmentID(m.ID) {
+			continue
+		}
+		explicit[i] = true
+		j := slices.IndexFunc(prev, func(p Commitment) bool { return p.ID == m.ID })
+		if j < 0 {
+			k.fail("承诺「%s」的 id %s 不是这个 source 上次新建的承诺：新承诺省略 id，重交时只写上次的 ID", m.Content, m.ID)
+			continue
+		}
+		if reserved[j] {
+			matched[j] = false
+			k.fail("承诺 %s 的 id 被多个创建项使用：一个旧承诺只能对应一个创建项", m.ID)
+			continue
+		}
+		reserved[j], matched[j] = true, true
+	}
+	candidates := make([][]int, len(cs.CreateCommitments))
+	counts := make([]int, len(prev))
+	for i, m := range cs.CreateCommitments {
+		if explicit[i] {
+			continue
+		}
+		for j, p := range prev {
+			if !reserved[j] && m.Kind == p.Kind && slices.ContainsFunc(m.Refs, func(r string) bool { return slices.Contains(p.Refs, r) }) {
+				candidates[i] = append(candidates[i], j)
+				counts[j]++
+			}
+		}
+	}
+	for i, js := range candidates {
+		if len(js) == 1 && counts[js[0]] == 1 {
+			cs.CreateCommitments[i].ID = prev[js[0]].ID
+			matched[js[0]] = true
+		}
+	}
+	var blocked, previous []string
+	for j, p := range prev {
+		previous = append(previous, fmt.Sprintf("%s「%s」（%s，refs：%s）", p.ID, p.Content, p.Kind, strings.Join(p.Refs, "、")))
+		if !matched[j] && k.c.u.commitmentReferenced(p.ID, old) {
+			blocked = append(blocked, p.ID)
+		}
+	}
+	if len(blocked) > 0 {
+		k.fail("承诺 %s 已被其他变更集引用，本次无法唯一对应，不能撤去。上次创建项对应：%s。保留这些承诺，以相同 kind 引用同样的原话，或在创建项写明旧 id 后重交", strings.Join(blocked, "、"), strings.Join(previous, "；"))
+	}
+}
+
+// commitmentReferenced 从变更集查引用，合并的 into 不一定有修订，不能只查当前承诺的修订数。
+func (u *user) commitmentReferenced(id string, except int) bool {
+	for i, cs := range u.changesets {
+		if i == except {
+			continue
+		}
+		for _, ch := range cs.ReviseCommitments {
+			if ch.ID == id {
+				return true
+			}
+		}
+		for _, ch := range cs.CloseCommitments {
+			if ch.ID == id {
+				return true
+			}
+		}
+		for _, mg := range cs.MergeCommitments {
+			if mg.Into == id || slices.Contains(mg.From, id) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func rejected(problems []string) string {
 	return "变更集没有被接受，什么都没有记下：\n- " + strings.Join(problems, "\n- ") + "\n改正后用同一个 source 重交整个变更集。"
 }
 
 // commit 分配新建的项目与承诺的 ID，取代同一个键的旧变更集（old ≥ 0 时）或追加，再重新叠加。重交时沿用旧变更集中
-// 同名新项目与同一位置的承诺的 ID：其他变更集可能已经引用了它们。
+// 同名新项目的 ID；承诺的对应在检查时确定，其他变更集可能已经引用了它们。
 func (u *user) commit(cs *Changeset, old int, news []string) {
 	ids := map[string]string{}
-	var oldIDs []string
 	if old >= 0 {
 		prev := &u.changesets[old]
 		for _, e := range prev.CreateExchanges {
@@ -587,9 +687,6 @@ func (u *user) commit(cs *Changeset, old int, news []string) {
 					}
 				}
 			}
-		}
-		for _, m := range prev.CreateCommitments {
-			oldIDs = append(oldIDs, m.ID)
 		}
 	}
 	for _, name := range news {
@@ -626,12 +723,8 @@ func (u *user) commit(cs *Changeset, old int, news []string) {
 		m := &cs.CreateCommitments[i]
 		m.Project = resolve(m.Project)
 		if m.ID == "" || strings.HasPrefix(m.ID, "#") {
-			if i < len(oldIDs) {
-				m.ID = oldIDs[i]
-			} else {
-				u.nextC++
-				m.ID = fmt.Sprintf("C-%04d", u.nextC)
-			}
+			u.nextC++
+			m.ID = fmt.Sprintf("C-%04d", u.nextC)
 		}
 	}
 	u.nextCS++

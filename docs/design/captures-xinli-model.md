@@ -79,7 +79,7 @@ Exchange {
     revise: [{id, title?, summary?, projects?}]                             // 只在当天整理中：改正归属
   },
   commitments: {
-    create: [{exchange: "x57.0", kind, content, counterpart, due_date?, due_text?, project?, refs}],
+    create: [{id?, exchange: "x57.0", kind, content, counterpart, due_date?, due_text?, project?, refs}],
     revise: [{id, rev, due_date?, due_text?, content?, counterpart?, project?, refs, reason}],
     close:  [{id, rev, status: done | cancelled, refs, reason}],
     merge:  [{into, from: [id], reason}]                                             // 只在当天整理中
@@ -91,6 +91,8 @@ Exchange {
 - 当天整理"改正归属"（§6）用 `exchanges.revise` 改交谈的 `projects`、用承诺的 `revise` 改 `project`（实现时补上的两个字段：原先的结构里没有改正归属的写法）。
 - `rev` 是模型看到的修订序号（`find_related` 与 `day_ledger` 给出）。账本里这条承诺之后又被改过（用户在 App 中改了，或另一次整理改了），这个操作就被拒绝，结果附上当前状态让模型重新判断：与 `session.Store.Update` 的乐观并发同理。
 - **按来源去重**：键是（旁听 Session，`source.from`），当天整理的键是（旁听 Session，day）。同一个键再交一次，业务线撤销上一次的全部效果、再应用新的。Run 被接管或重试时安全，与现在按交谈取代的保证相同，只是键从平台的切分换成了模型交出的来源。
+- **重交时承诺 ID 的沿用**：创建项与旧变更集中的创建项以同一 `kind`、`refs` 至少有一个相同的原话编号（`#seq.index`）对应，只在双向唯一时沿用旧 ID，不按数组位置或内容措辞猜。创建项可用 `id` 显式指定这个 source 上次新建的承诺，优先确定对应；同一个旧 ID 不能重复使用，不能指定其他来源的 ID。只有 `C-` 加数字的 `id` 才指定旧承诺，只填上次回执中的 ID；其他形式（包括 `#` 开头、模型自拟名称）都按临时 ID 忽略。显式对应确定后，其余创建项在剩下的旧承诺中检查，一对多、多对一都不对应。
+- **对应不上的处理**：旧承诺若已被其他变更集按 ID 修订、关闭、合并（包括作为合并的目标），或被用户在 App 中修改，整个重交被拒收，不创建项目、不分配 ID。回执列出不能撤去的承诺及上次创建项的 ID、内容、kind 与原话引用，要求保留这些承诺，以同 kind 引用同样的原话或显式写明旧 ID 后重交。未被引用的旧承诺可以消失，未对应的新创建项分配新 ID。新项目仍按名称沿用 ID。
 - **一页一次调用**：一个时段里有几段交谈、几条承诺，都在一个变更集里交出，不按事实逐条调用（Graphiti 每条事实一两次调用，成本随图增长）。
 
 ### 业务线的检查

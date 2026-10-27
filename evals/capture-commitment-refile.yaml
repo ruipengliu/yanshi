@@ -1,0 +1,44 @@
+name: capture-commitment-refile
+description: >-
+  同一个 source 重交时保持承诺身份：先创建报价、样板两条承诺，用户在 App 中把报价标完成；重交时换序，
+  完成状态仍属于报价。再尝试遗漏报价，依据拒收回执保留它并显式写旧 id 重交。
+agent: xinli-day
+gold: data/commitment-refile-gold.yaml
+setup:
+  xinli: {}
+turns:
+  - captures:
+      - {speaker: wearer, text: 张总，报价单我明天发给您。, at: "2026-10-23 09:00", gold: quote}
+      - {speaker: wearer, text: 样板我下周一带给您。, at: "2026-10-23 09:01", gold: sample}
+    input: >-
+      整理今天。用 captures 读取今天的原话，只用一个 source 为 {day: true} 的 file_changes 交出交谈与两条承诺，
+      创建项先写报价单、再写样板，不要另交按范围的变更集。
+    expect:
+      calls: ["captures", "mcp_xinli__file_changes"]
+      xinli:
+        commitments:
+          - {kind: mine, contains: 报价, status: open, verified: true}
+          - {kind: mine, contains: 样板, status: open, verified: true}
+        commitments_count: {min: 2, max: 2}
+  - xinli_edit:
+      - {gold: quote, status: done}
+    input: >-
+      整理今天。读取 day_ledger 和今天的原话，把 source 为 {day: true} 的整个变更集重交一次，
+      保留原来的交谈、两条承诺及各自原话引用，创建项改为先写样板、再写报价单。报价单已在 App 中标完成，保留它的身份。
+    expect:
+      calls: ["mcp_xinli__file_changes"]
+      xinli:
+        commitments:
+          - {kind: mine, contains: 报价, status: done, rev: 2}
+          - {kind: mine, contains: 样板, status: open, rev: 1}
+        commitments_count: {min: 2, max: 2}
+  - input: >-
+      整理今天。再次用 source 为 {day: true} 重交，先尝试只保留样板与原来的交谈，省略已完成的报价单。
+      如果回执拒收，就按回执保留被引用的旧承诺，在创建项中写明旧 id 后重交整个变更集，不要修改用户完成状态。
+    expect:
+      calls: ["mcp_xinli__file_changes"]
+      xinli:
+        commitments:
+          - {kind: mine, contains: 报价, status: done, rev: 2}
+          - {kind: mine, contains: 样板, status: open, rev: 1}
+        commitments_count: {min: 2, max: 2}

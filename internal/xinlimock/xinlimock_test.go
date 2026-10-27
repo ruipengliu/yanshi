@@ -186,6 +186,204 @@ func TestChangesetsAndCollect(t *testing.T) {
 	}
 }
 
+// 重交改变创建项的位置时，之后的修订和用户锁定仍须属于原来的承诺。
+func TestRefileCommitmentIdentity(t *testing.T) {
+	for _, name := range []string{"same", "reorder", "delete_first", "insert_first"} {
+		t.Run(name, func(t *testing.T) {
+			x := newServer(nil)
+			cites := []mcpcap.Citation{said("#2.0", "wearer", "09:00"), said("#2.1", "wearer", "09:01"), said("#2.2", "wearer", "09:02")}
+			a, b, c := create("x2.0", "mine", "发报价", "#2.0"), create("x2.0", "mine", "带样板", "#2.1"), create("x2.0", "mine", "寄合同", "#2.2")
+			file := func(items []M) string {
+				return invoke(x, "ses", "file_changes", changes(span("#2.0", "#2.2"), []M{exchange("#2.0", "#2.2", "装修", "商定安排", M{"match": "none"})}, M{"create": items}), cites...)
+			}
+			contains(t, "initial", file([]M{a, b}), "已收下")
+			contains(t, "revise", invoke(x, "ses", "file_changes", changes(span("#9.0", "#9.0"), nil, M{"revise": []M{{"id": "C-0002", "rev": 1, "due_date": "2026-10-28", "refs": []string{"#9.0"}}}}), said("#9.0", "wearer", "15:00")), "已收下")
+			if err := x.Edit("bl", "u", "C-0002", "done", ""); err != nil {
+				t.Fatal(err)
+			}
+			items := []M{a, b}
+			switch name {
+			case "reorder":
+				items = []M{b, a}
+			case "delete_first":
+				items = []M{b}
+			case "insert_first":
+				items = []M{c, a, b}
+			}
+			contains(t, "refile", file(items), "已收下")
+			st := x.State("bl", "u")
+			if len(st.Commitments) != len(items) {
+				t.Fatalf("commitments = %+v", st.Commitments)
+			}
+			for _, m := range st.Commitments {
+				if m.Content == "带样板" {
+					if m.ID != "C-0002" || m.Status != "done" || m.DueDate != "2026-10-28" || m.Rev() != 3 || len(m.Locked) != 1 || m.Locked[0] != "status" {
+						t.Fatalf("identity changed: %+v", m)
+					}
+				} else if m.Status != "open" || m.Rev() != 1 {
+					t.Fatalf("references moved: %+v", m)
+				}
+			}
+		})
+	}
+}
+
+// 对应不上且已有引用时必须整体拒收；没有引用的旧承诺可以撤去。
+func TestRefileCommitmentReferences(t *testing.T) {
+	for _, reference := range []string{"user", "revise", "close", "merge_from", "merge_into", "none"} {
+		for _, replacement := range []string{"delete", "kind", "split", "combine"} {
+			t.Run(reference+"/"+replacement, func(t *testing.T) {
+				x := newServer(nil)
+				cites := []mcpcap.Citation{said("#2.0", "wearer", "09:00"), said("#2.1", "wearer", "09:01")}
+				a, b := create("x2.0", "mine", "发报价", "#2.0"), create("x2.0", "mine", "带样板", "#2.1")
+				file := func(items []M, project M) string {
+					return invoke(x, "ses", "file_changes", changes(span("#2.0", "#2.1"), []M{exchange("#2.0", "#2.1", "装修", "商定安排", project)}, M{"create": items}), cites...)
+				}
+				contains(t, "initial", file([]M{a, b}, M{"match": "none"}), "已收下")
+				ops := M{}
+				switch reference {
+				case "user":
+					if err := x.Edit("bl", "u", "C-0001", "done", ""); err != nil {
+						t.Fatal(err)
+					}
+				case "revise":
+					ops["revise"] = []M{{"id": "C-0001", "rev": 1, "due_date": "2026-10-28", "refs": []string{"#2.0"}}}
+				case "close":
+					ops["close"] = []M{{"id": "C-0001", "rev": 1, "status": "done", "refs": []string{"#2.0"}}}
+				case "merge_from":
+					ops["merge"] = []M{{"into": "C-0002", "from": []string{"C-0001"}}}
+				case "merge_into":
+					ops["merge"] = []M{{"into": "C-0001", "from": []string{"C-0002"}}}
+				}
+				if len(ops) > 0 {
+					contains(t, "reference", invoke(x, "ses", "file_changes", changes(M{"day": true}, nil, ops), cites...), "已收下")
+				}
+				before, _ := json.Marshal(x.State("bl", "u"))
+				items := []M{b}
+				switch replacement {
+				case "kind":
+					items = append(items, create("x2.0", "theirs", "发报价", "#2.0"))
+				case "split":
+					items = append(items, a, create("x2.0", "mine", "补报价", "#2.0"))
+				case "combine":
+					items = []M{create("x2.0", "mine", "发报价并带样板", "#2.0", "#2.1")}
+				}
+				out := file(items, M{"match": "new", "name": "新装修项目"})
+				if reference != "none" {
+					contains(t, "reject", out, "没有被接受", "C-0001", "发报价", "#2.0", "id", "重交")
+					after, _ := json.Marshal(x.State("bl", "u"))
+					if string(before) != string(after) {
+						t.Fatal("rejected changeset changed state")
+					}
+					contains(t, "retry", file([]M{b, a}, M{"match": "none"}), "已收下")
+				} else {
+					contains(t, "unreferenced", out, "已收下")
+					for _, m := range x.State("bl", "u").Commitments {
+						if m.ID == "C-0001" {
+							t.Fatalf("ambiguous identity reused: %+v", m)
+						}
+						if replacement == "combine" && m.ID == "C-0002" {
+							t.Fatalf("many-to-one identity reused: %+v", m)
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestCreateCommitmentTemporaryID(t *testing.T) {
+	for _, id := range []string{"c1", "quote", "1", "#local", "C-", "C-quote", "C-1x", "C-１２"} {
+		t.Run(id, func(t *testing.T) {
+			x := newServer(nil)
+			m := create("x2.0", "mine", "发报价", "#2.0")
+			m["id"] = id
+			args := changes(span("#2.0", "#2.0"), []M{exchange("#2.0", "#2.0", "报价", "商定安排", M{"match": "none"})}, M{"create": []M{m}})
+			file := func() string { return invoke(x, "ses", "file_changes", args, said("#2.0", "wearer", "09:00")) }
+			contains(t, "create", file(), "已收下", "C-0001")
+			if err := x.Edit("bl", "u", "C-0001", "done", ""); err != nil {
+				t.Fatal(err)
+			}
+			contains(t, "refile", file(), "已收下", "C-0001")
+			st := x.State("bl", "u")
+			if len(st.Commitments) != 1 || st.Commitments[0].ID != "C-0001" || st.Commitments[0].Status != "done" {
+				t.Fatalf("temporary id changed identity: %+v", st.Commitments)
+			}
+		})
+	}
+}
+
+func TestCreateCommitmentForeignID(t *testing.T) {
+	x := newServer(nil)
+	m := create("x2.0", "mine", "发报价", "#2.0")
+	args := changes(span("#2.0", "#2.0"), []M{exchange("#2.0", "#2.0", "报价", "商定安排", M{"match": "none"})}, M{"create": []M{m}})
+	contains(t, "initial", invoke(x, "ses", "file_changes", args, said("#2.0", "wearer", "09:00")), "已收下")
+	before, _ := json.Marshal(x.State("bl", "u"))
+	m = create("x9.0", "mine", "带样板", "#9.0")
+	m["id"] = "C-0001"
+	out := invoke(x, "ses", "file_changes", changes(span("#9.0", "#9.0"), []M{exchange("#9.0", "#9.0", "样板", "商定安排", M{"match": "none"})}, M{"create": []M{m}}), said("#9.0", "wearer", "15:00"))
+	contains(t, "foreign id", out, "没有被接受", "C-0001", "不是这个 source 上次新建的承诺")
+	after, _ := json.Marshal(x.State("bl", "u"))
+	if string(before) != string(after) {
+		t.Fatal("foreign id changed state")
+	}
+}
+
+func TestRefileExplicitCommitmentID(t *testing.T) {
+	for _, mode := range []string{"explicit", "priority", "duplicate", "foreign", "temporary", "intersection"} {
+		t.Run(mode, func(t *testing.T) {
+			x := newServer(nil)
+			cites := []mcpcap.Citation{said("#2.0", "wearer", "09:00"), said("#2.1", "wearer", "09:01"), said("#2.2", "wearer", "09:02")}
+			file := func(items []M) string {
+				return invoke(x, "ses", "file_changes", changes(span("#2.0", "#2.2"), []M{exchange("#2.0", "#2.2", "装修", "商定安排", M{"match": "none"})}, M{"create": items}), cites...)
+			}
+			a, b := create("x2.0", "mine", "发报价", "#2.0"), create("x2.0", "mine", "带样板", "#2.1")
+			contains(t, "initial", file([]M{a, b}), "已收下")
+			if err := x.Edit("bl", "u", "C-0001", "done", ""); err != nil {
+				t.Fatal(err)
+			}
+			a["id"] = "C-0001"
+			a["refs"] = []string{"#2.2"}
+			switch mode {
+			case "priority":
+				a["refs"] = []string{"#2.1"}
+			case "duplicate":
+				b["id"] = "C-0001"
+			case "foreign":
+				a["id"] = "C-9999"
+			case "temporary":
+				a["id"] = "#local"
+				a["refs"] = []string{"#2.0"}
+			case "intersection":
+				delete(a, "id")
+				a["refs"] = []string{"#2.2", "#2.0"}
+			}
+			before, _ := json.Marshal(x.State("bl", "u"))
+			out := file([]M{b, a})
+			if mode == "duplicate" || mode == "foreign" {
+				contains(t, "invalid id", out, "没有被接受")
+				if mode == "duplicate" {
+					contains(t, "previous identity", out, "C-0001", "发报价", "#2.0", "上次创建项对应")
+				}
+				after, _ := json.Marshal(x.State("bl", "u"))
+				if string(before) != string(after) {
+					t.Fatal("invalid id changed state")
+				}
+				return
+			}
+			contains(t, "refile", out, "已收下")
+			for _, m := range x.State("bl", "u").Commitments {
+				if m.Content == "发报价" && (m.ID != "C-0001" || m.Status != "done") {
+					t.Fatalf("explicit identity lost: %+v", m)
+				}
+				if m.Content == "带样板" && (m.ID != "C-0002" || m.Status != "open") {
+					t.Fatalf("other identity changed: %+v", m)
+				}
+			}
+		})
+	}
+}
+
 // 上午答应、下午改期：下午那次白天整理依据新说出的原话修订同一条承诺，只剩一条 open、两条修订；改由他人去做的作废。
 // 白天引用旧原话的修订、过时的 rev 被整体拒绝；用户在 App 中改过的字段，模型的修订被忽略并说明。
 func TestRevisionsAcrossChangesets(t *testing.T) {

@@ -172,6 +172,7 @@ var fileChangesSchema = `{"type":"object","properties":{` +
 	`"id":{"type":"string"},"title":{"type":"string"},"summary":{"type":"string"},"projects":` + projectsSchema + `},"required":["id"]}}}},` +
 	`"commitments":{"type":"object","properties":{` +
 	`"create":{"type":"array","description":"新的承诺","items":{"type":"object","properties":{` +
+	`"id":{"type":"string","description":"可省略；同一个 source 重交时，只填上次回执中的 C- 开头的 ID（C- 加数字），明确沿用；其他形式都按临时 ID 忽略"},` +
 	`"exchange":{"type":"string","description":"出处：交谈 ID，即 x 加上它的 from 编号，如 x57.0"},` +
 	`"kind":{"type":"string","enum":["mine","theirs"],"description":"mine：用户本人答应别人；theirs：别人答应用户"},` +
 	`"content":{"type":"string","description":"要做的事"},"counterpart":{"type":"string","description":"答应了谁，或谁答应的（按原话称呼）"},` +
