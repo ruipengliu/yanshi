@@ -1,41 +1,41 @@
 // capture-multiday 的剧本：2026-10-12（一）至 10-15（四）。周五 10-16、周六 10-17、下周一 10-19、下周二 10-20、下周三 10-21。
-!gold ptm mine 2026-10-14 周三下午去乐乐的家长会
+!gold ptm mine 2026-10-14 周三下午去乐乐的家长会 | {"who": ["阿凯", "凯", "丈夫", "老公"], "terms": [["家长会"]]}
 !opt kai-cook theirs - 阿凯周三早点下班做饭
 !opt kai-fee theirs 2026-10-12 阿凯今天交跆拳道的费用
-!gold cost-sheet mine 2026-10-15 冬季菜单成本核算表发给宋总（周四前，提前到周三，又改回周四上午）
-!gold sign-expense mine 2026-10-12 今天下班前签城西店的报销单
-!gold safety-precheck mine 2026-10-16 周五去城西店预检
+!gold cost-sheet mine 2026-10-15 冬季菜单成本核算表发给宋总（周四前，提前到周三，又改回周四上午） | {"who": ["宋总", "宋"], "terms": [["成本", "核算"]]}
+!gold sign-expense mine 2026-10-12 今天下班前签城西店的报销单 | {"who": ["陈姐", "陈"], "terms": [["报销"]]}
+!gold safety-precheck mine 2026-10-16 周五去城西店预检 | {"who": ["宋总", "宋", "老刘", "刘"], "terms": [["预检", "检查", "排查"]]}
 !opt launch mine - 滨江店下个月二十号试营业不变
-!gold hood theirs 2026-10-13 赵工周二上午装滨江店的油烟机
-!gold compressor theirs 2026-10-19 赵工下周一到冷库压缩机（用户在 App 中改为下周二）
-!gold warranty theirs - 赵工向厂家申请延保两年
+!gold hood theirs 2026-10-13 赵工周二上午装滨江店的油烟机 | {"who": ["赵工", "赵"], "terms": [["油烟机", "烟机"]]}
+!gold compressor theirs 2026-10-19 赵工下周一到冷库压缩机（用户在 App 中改为下周二） | {"who": ["赵工", "赵"], "terms": [["压缩机"]]}
+!gold warranty theirs - 赵工向厂家申请延保两年 | {"who": ["赵工", "赵"], "terms": [["延保", "保修"]]}
 !opt tell-lin mine - 跟小林说设备工期
-!gold roster theirs 2026-10-19 小林下周一前交滨江店的人员排班表
-!gold visit-binjiang mine 2026-10-14 周三下午去滨江店看进度
-!gold dinner-booking mine 2026-10-16 周五团建聚餐订位
-!gold recipes theirs 2026-10-14 马师傅周三出六道标准菜谱（推到周四）
-!gold usage-data theirs 2026-10-13 马师傅明天中午前发用量数据
-!gold send-checklist mine 2026-10-12 今天把整改清单发给老刘
-!gold boards theirs 2026-10-14 老刘周三前把砧板全换成分色的
+!gold roster theirs 2026-10-19 小林下周一前交滨江店的人员排班表 | {"who": ["小林", "林"], "terms": [["排班"]]}
+!gold visit-binjiang mine 2026-10-14 周三下午去滨江店看进度 | {"who": ["小林", "林"], "terms": [["滨江"], ["进度", "现场", "查看", "看一下"]]}
+!gold dinner-booking mine 2026-10-16 周五团建聚餐订位 | {"who": ["小夏", "夏", "小乔", "乔", "同事", "部门", "团队", "大家"], "terms": [["聚餐", "团建"], ["订", "定"]]}
+!gold recipes theirs 2026-10-14 马师傅周三出六道标准菜谱（推到周四） | {"who": ["马师傅", "马"], "terms": [["菜谱", "食谱"]]}
+!gold usage-data theirs 2026-10-13 马师傅明天中午前发用量数据 | {"who": ["马师傅", "马"], "terms": [["用量", "克数"]]}
+!gold send-checklist mine 2026-10-12 今天把整改清单发给老刘 | {"who": ["老刘", "刘"], "terms": [["整改"], ["清单"]]}
+!gold boards theirs 2026-10-14 老刘周三前把砧板全换成分色的 | {"who": ["老刘", "刘"], "terms": [["砧板", "菜板"], ["分色", "颜色"]]}
 !opt temp-log theirs - 老刘每天两次记冷库温度
-!gold post-jobs theirs - 阿敏这周在三个平台发服务员招聘
-!gold interviews mine 2026-10-15 周四下午面试两位服务员候选人
-!gold pick-mom mine 2026-10-17 周六去车站接婆婆
-!gold send-license mine 2026-10-14 明天把营业执照副本寄给小唐
+!gold post-jobs theirs - 阿敏这周在三个平台发服务员招聘 | {"who": ["阿敏", "敏"], "terms": [["招聘", "招工"]]}
+!gold interviews mine 2026-10-15 周四下午面试两位服务员候选人 | {"who": ["阿敏", "敏"], "terms": [["面试"]]}
+!gold pick-mom mine 2026-10-17 周六去车站接婆婆 | {"who": ["阿凯", "凯", "丈夫", "老公"], "terms": [["接"], ["婆婆", "母亲", "妈妈"]]}
+!gold send-license mine 2026-10-14 明天把营业执照副本寄给小唐 | {"who": ["小唐", "唐"], "terms": [["执照"]]}
 !opt tang-online theirs - 小唐收到材料后三个工作日内上线
-!gold banner theirs 2026-10-16 小唐周五前给店铺头图初稿（推到下周一）
-!gold reception mine - 安排滨江店开业当天总部来人的接待（方案下周一给宋总）
-!gold attend-recheck mine 2026-10-21 下周三城西店复查到场
+!gold banner theirs 2026-10-16 小唐周五前给店铺头图初稿（推到下周一） | {"who": ["小唐", "唐"], "terms": [["头图", "店铺图"]]}
+!gold reception mine - 安排滨江店开业当天总部来人的接待（方案下周一给宋总） | {"who": ["宋总", "宋"], "terms": [["接待"]]}
+!gold attend-recheck mine 2026-10-21 下周三城西店复查到场 | {"who": ["老刘", "刘"], "terms": [["复查"]]}
 !opt min-schedule theirs - 阿敏约好面试时间
-!gold inspect-sat mine 2026-10-17 周六去滨江店盯设备验收（改由小林）
-!gold field-trip-form mine 2026-10-19 下周一交秋游回执
+!gold inspect-sat mine 2026-10-17 周六去滨江店盯设备验收（改由小林） | {"who": ["小林", "林"], "terms": [["验收"]]}
+!gold field-trip-form mine 2026-10-19 下周一交秋游回执 | {"who": ["王老师", "王", "班主任"], "terms": [["秋游"], ["回执"]]}
 !opt cancel-booking mine 2026-10-14 把聚餐的订位退掉
 !opt reported-budget theirs - 宋总下周批预算（小夏转述）
 !opt sign-board theirs 2026-10-15 招牌周四装
-!gold lin-inspect theirs 2026-10-17 小林周六盯设备验收并拍照
-!gold chef-training theirs 2026-10-20 马师傅下周二给各店厨师长培训
-!gold reply-cand1 mine 2026-10-16 明天之前给周婷答复
-!gold reply-cand2 mine 2026-10-19 下周一前通知何亮
+!gold lin-inspect theirs 2026-10-17 小林周六盯设备验收并拍照 | {"who": ["小林", "林"], "terms": [["验收"]]}
+!gold chef-training theirs 2026-10-20 马师傅下周二给各店厨师长培训 | {"who": ["马师傅", "马"], "terms": [["培训"]]}
+!gold reply-cand1 mine 2026-10-16 明天之前给周婷答复 | {"who": ["周婷"], "terms": [["答复", "回复", "通知", "反馈"]]}
+!gold reply-cand2 mine 2026-10-19 下周一前通知何亮 | {"who": ["何亮"], "terms": [["答复", "回复", "通知", "反馈"]]}
 !opt reissue-invoice mine - 让小林重开发票
 !opt bring-docs theirs - 小林把开业物料清单带来
 

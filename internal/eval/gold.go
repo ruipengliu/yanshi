@@ -24,6 +24,9 @@ type GoldCommitment struct {
 	Kind string `yaml:"kind"` // mine | theirs
 	// What 说明是什么事，只用于诊断。
 	What string `yaml:"what"`
+	// Who 是对象或责任人的别名；Terms 每组是同义词，各组都须命中。缺省时不核对。
+	Who   []string   `yaml:"who"`
+	Terms [][]string `yaml:"terms"`
 	// Due 是期限的日期（YYYY-MM-DD），没有期限时为空。
 	Due string `yaml:"due"`
 	// Optional 为 true 时记不记都可以（琐事、是否算答应拿不准）：不计入召回，记下了也不算误报。
@@ -48,7 +51,7 @@ type GoldEdit struct {
 
 // goldMetrics 是金标指标的名称，expect.xinli.gold 中可以给出它们的下限。
 var goldMetrics = []string{"commitment_precision", "commitment_recall", "revision_accuracy", "revision_in_place", "due_accuracy",
-	"reminder_precision", "reminder_recall"}
+	"reminder_precision", "reminder_recall", "content_accuracy", "counterpart_accuracy", "revision_recall"}
 
 // validate 检查金标文件本身：ID 唯一、kind 与日期合法。
 func (g *Gold) validate() error {
@@ -60,6 +63,31 @@ func (g *Gold) validate() error {
 		seen[m.ID] = true
 		if m.Kind != "mine" && m.Kind != "theirs" {
 			return fmt.Errorf("gold %s: kind %q must be mine or theirs", m.ID, m.Kind)
+		}
+		if m.Who != nil {
+			if len(m.Who) == 0 {
+				return fmt.Errorf("gold %s: who must not be empty", m.ID)
+			}
+			for _, alias := range m.Who {
+				if strings.TrimSpace(alias) == "" {
+					return fmt.Errorf("gold %s: who must contain non-empty strings", m.ID)
+				}
+			}
+		}
+		if m.Terms != nil {
+			if len(m.Terms) == 0 {
+				return fmt.Errorf("gold %s: terms must not be empty", m.ID)
+			}
+			for _, group := range m.Terms {
+				if len(group) == 0 {
+					return fmt.Errorf("gold %s: terms group must not be empty", m.ID)
+				}
+				for _, term := range group {
+					if strings.TrimSpace(term) == "" {
+						return fmt.Errorf("gold %s: terms must contain non-empty strings", m.ID)
+					}
+				}
+			}
 		}
 		if err := goldDate(m.Due); err != nil {
 			return fmt.Errorf("gold %s: %w", m.ID, err)
@@ -169,7 +197,7 @@ func (it *goldItem) counted() bool { return it.heard && !it.Optional && !it.unju
 // （没有时取各次修订引用的）标了哪条 kind 相同的金标就是哪条；无从判断的金标不比较 kind（说话人识别错了，记反是噪声
 // 所致）。标了几条时取引用次数最多的；仍相同时（一句话里答应了两件事）先取还没有承诺对应上的，再取计入的，再按金标文件
 // 中的顺序。
-// 对应只看引用、不核对内容：记错了内容的由评分模型与其他断言检查。labels 的键是"Session/事件序号.段序号"，值是那段
+// 对应只看引用、不核对内容：内容与对象由 score 的独立指标核对。labels 的键是"Session/事件序号.段序号"，值是那段
 // 旁听的 Gold；修订引用的原话在交出那次修订的变更集的 Session 中。
 func (b *goldBook) match(st *xinlimock.State, labels map[string]string) map[string]*goldItem {
 	sessions := map[string]string{}
@@ -248,7 +276,8 @@ func (t *tally) add(ok bool) {
 //     您答复"）的比例，同一条金标只算第一条；召回率的分母是计入的、未完成、有期限的金标。
 func (b *goldBook) score(st *xinlimock.State, labels map[string]string) (map[string]float64, string) {
 	matched := b.match(st, labels)
-	var precision, recall, revision, inPlace, due, remindP, remindR tally
+	var precision, recall, revision, revisionRecall, content, counterpart, inPlace, due, remindP, remindR tally
+	var badContent, badCounterpart []string
 	var falses, missed, wrong, badReminders []string
 	byGold := map[*goldItem][]*xinlimock.Commitment{}
 	for i := range st.Commitments {
@@ -278,7 +307,31 @@ func (b *goldBook) score(st *xinlimock.State, labels map[string]string) (map[str
 		}
 		if len(ms) == 0 {
 			missed = append(missed, it.ID)
+			if it.revised {
+				revisionRecall.add(false)
+			}
 			continue
+		}
+		if len(it.Terms) > 0 {
+			right := slices.ContainsFunc(ms, func(m *xinlimock.Commitment) bool {
+				for _, group := range it.Terms {
+					if !containsAlias(m.Content, group) {
+						return false
+					}
+				}
+				return true
+			})
+			content.add(right)
+			if !right {
+				badContent = append(badContent, semanticDetail(it.ID, ms))
+			}
+		}
+		if len(it.Who) > 0 {
+			right := slices.ContainsFunc(ms, func(m *xinlimock.Commitment) bool { return containsAlias(m.Counterpart, it.Who) })
+			counterpart.add(right)
+			if !right {
+				badCounterpart = append(badCounterpart, semanticDetail(it.ID, ms))
+			}
 		}
 		var open []*xinlimock.Commitment
 		closed := false
@@ -298,6 +351,7 @@ func (b *goldBook) score(st *xinlimock.State, labels map[string]string) (map[str
 		}
 		if it.revised {
 			revision.add(right)
+			revisionRecall.add(right)
 			if !right {
 				wrong = append(wrong, fmt.Sprintf("%s(want %s %s, got %s)", it.ID, it.status, it.due, states(ms)))
 			}
@@ -326,6 +380,7 @@ func (b *goldBook) score(st *xinlimock.State, labels map[string]string) (map[str
 	}
 	metrics := map[string]float64{}
 	for name, t := range map[string]tally{"commitment_precision": precision, "commitment_recall": recall, "revision_accuracy": revision,
+		"content_accuracy": content, "counterpart_accuracy": counterpart, "revision_recall": revisionRecall,
 		"revision_in_place": inPlace, "due_accuracy": due, "reminder_precision": remindP, "reminder_recall": remindR} {
 		if t.n > 0 {
 			metrics[name] = float64(t.ok) / float64(t.n)
@@ -333,6 +388,8 @@ func (b *goldBook) score(st *xinlimock.State, labels map[string]string) (map[str
 	}
 	detail := fmt.Sprintf("precision %d/%d (unmatched %q); recall %d/%d (missed %v); revision %d/%d (wrong %v); due %d/%d; reminders %d/%d of %d (wrong %q)",
 		precision.ok, precision.n, falses, recall.ok, recall.n, missed, revision.ok, revision.n, wrong, due.ok, due.n, remindP.ok, remindP.n, remindR.n, badReminders)
+	detail += fmt.Sprintf("; revision_recall %d/%d; content %d/%d (wrong %v); counterpart %d/%d (wrong %v)",
+		revisionRecall.ok, revisionRecall.n, content.ok, content.n, badContent, counterpart.ok, counterpart.n, badCounterpart)
 	return metrics, detail
 }
 
@@ -347,4 +404,17 @@ func states(ms []*xinlimock.Commitment) string {
 		out = append(out, s+" "+m.DueDate)
 	}
 	return strings.Join(out, ", ")
+}
+
+// containsAlias 只核对确定性的子串，不引入评分模型或措辞推断。
+func containsAlias(text string, aliases []string) bool {
+	return slices.ContainsFunc(aliases, func(alias string) bool { return strings.Contains(text, alias) })
+}
+
+func semanticDetail(id string, ms []*xinlimock.Commitment) string {
+	var actual []string
+	for _, m := range ms {
+		actual = append(actual, fmt.Sprintf("counterpart=%q content=%q", clip(m.Counterpart, 40), clip(m.Content, 40)))
+	}
+	return id + "(got " + strings.Join(actual, "; ") + ")"
 }

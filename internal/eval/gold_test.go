@@ -145,6 +145,13 @@ func TestLoadSuiteGold(t *testing.T) {
 	gold := "commitments:\n  - {id: accept, kind: mine, due: \"2026-10-28\"}\n"
 	for name, tc := range map[string]struct{ gold, captures, expect, err string }{
 		"ok":            {gold, "gold: accept", "{gold: {commitment_recall: 0.8}}", ""},
+		"new metrics":   {gold, "gold: accept", "{gold: {content_accuracy: 0.8, counterpart_accuracy: 0.8, revision_recall: 0.8}}", ""},
+		"semantics":     {"commitments:\n  - {id: accept, kind: mine, who: [宋总, 宋], terms: [[成本, 核算], [菜单]]}\n", "gold: accept", "{}", ""},
+		"empty who":     {"commitments:\n  - {id: accept, kind: mine, who: []}\n", "gold: accept", "{}", "who must not be empty"},
+		"blank who":     {"commitments:\n  - {id: accept, kind: mine, who: [' ']}\n", "gold: accept", "{}", "non-empty strings"},
+		"empty terms":   {"commitments:\n  - {id: accept, kind: mine, terms: []}\n", "gold: accept", "{}", "terms must not be empty"},
+		"empty group":   {"commitments:\n  - {id: accept, kind: mine, terms: [[]]}\n", "gold: accept", "{}", "terms group must not be empty"},
+		"blank term":    {"commitments:\n  - {id: accept, kind: mine, terms: [['']]}\n", "gold: accept", "{}", "non-empty strings"},
 		"unknown label": {gold, "gold: other", "{}", "unknown gold commitment"},
 		"never heard":   {gold + "  - {id: list, kind: theirs}\n", "gold: accept", "{}", `"list" is not labelled`},
 		"bad metric":    {gold, "gold: accept", "{gold: {recall: 0.8}}", "unknown gold metric"},
@@ -219,4 +226,98 @@ func TestGoldRevisionInPlace(t *testing.T) {
 	fresh.Revisions = []xinlimock.Revision{{Op: "create"}}
 	got, detail = b.score(&xinlimock.State{Commitments: []xinlimock.Commitment{old, fresh}}, labels)
 	assertMetrics(t, got, map[string]float64{"revision_accuracy": 1, "revision_in_place": 0}, detail)
+}
+
+// 内容与对象分别核对；关键词组必须在同一条承诺中全部出现，别名只需命中一个。
+func TestGoldSemantics(t *testing.T) {
+	for name, tc := range map[string]struct {
+		contents             []string
+		who                  string
+		content, counterpart float64
+	}{
+		"correct":           {[]string{"冬季菜单成本表"}, "宋总", 1, 1},
+		"synonym and alias": {[]string{"菜单核算表"}, "宋经理", 1, 1},
+		"wrong content":     {[]string{"菜单照片"}, "宋总", 0, 1},
+		"wrong counterpart": {[]string{"菜单成本表"}, "马师傅", 1, 0},
+		"split groups":      {[]string{"菜单", "成本表"}, "宋总", 0, 1},
+		"one complete":      {[]string{"照片", "菜单成本表"}, "宋总", 1, 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			b := newGoldBook(&Gold{Commitments: []GoldCommitment{{ID: "cost", Kind: "mine", Who: []string{"宋总", "宋"}, Terms: [][]string{{"成本", "核算"}, {"菜单"}}}}})
+			b.hear([]CaptureSegment{{Gold: "cost"}}, false)
+			st := &xinlimock.State{}
+			for _, text := range tc.contents {
+				m := commitment(text, "mine", "", "open", "#1.0")
+				m.Content, m.Counterpart = text, tc.who
+				st.Commitments = append(st.Commitments, m)
+			}
+			got, detail := b.score(st, map[string]string{"s/1.0": "cost"})
+			assertMetrics(t, got, map[string]float64{"content_accuracy": tc.content, "counterpart_accuracy": tc.counterpart, "commitment_precision": 1, "commitment_recall": 1}, detail)
+			if tc.content == 0 || tc.counterpart == 0 {
+				if !strings.Contains(detail, "cost(got") || !strings.Contains(detail, tc.contents[0]) || !strings.Contains(detail, tc.who) {
+					t.Fatal(detail)
+				}
+			}
+		})
+	}
+}
+
+// 漏抽仍占修订召回率的分母；旧正确率只看已对应的金标，未听到、可选与噪声不计。
+func TestGoldRevisionRecallMissing(t *testing.T) {
+	b := newGoldBook(testGold())
+	labels := testHear(b)
+	b.edit(&GoldEdit{Gold: "list", Status: "done"})
+	b.edit(&GoldEdit{Gold: "dinner", Status: "done"})
+	m := commitment("C1", "mine", "2026-10-27", "open", "#1.0")
+	got, detail := b.score(&xinlimock.State{Commitments: []xinlimock.Commitment{m}}, labels)
+	assertMetrics(t, got, map[string]float64{"revision_accuracy": 1, "revision_recall": 0.5}, detail)
+	got, detail = b.score(&xinlimock.State{}, labels)
+	assertMetrics(t, got, map[string]float64{"revision_recall": 0}, detail)
+	if _, ok := got["revision_accuracy"]; ok {
+		t.Fatal("missing commitments must not enter revision_accuracy")
+	}
+	b.byID["list"].unjudgeable = true
+	b.byID["accept"].heard = false
+	got, detail = b.score(&xinlimock.State{}, labels)
+	if _, ok := got["revision_recall"]; ok {
+		t.Fatal(detail)
+	}
+}
+
+// 没有新字段的旧金标保持原有指标；语义指标无分母时不输出。
+func TestGoldLegacyMetrics(t *testing.T) {
+	b := newGoldBook(testGold())
+	labels := testHear(b)
+	st := &xinlimock.State{Commitments: []xinlimock.Commitment{
+		commitment("C1", "mine", "2026-10-27", "open", "#1.0"),
+		commitment("C2", "theirs", "2026-10-26", "open", "#1.1"),
+	}}
+	got, detail := b.score(st, labels)
+	assertMetrics(t, got, map[string]float64{"commitment_precision": 1, "commitment_recall": 1, "revision_accuracy": 1, "revision_in_place": 0, "due_accuracy": 1, "reminder_precision": 1, "reminder_recall": 1}, detail)
+	for _, name := range []string{"content_accuracy", "counterpart_accuracy"} {
+		if _, ok := got[name]; ok {
+			t.Fatalf("unexpected %s", name)
+		}
+	}
+}
+
+func TestGoldSemanticsCounted(t *testing.T) {
+	g := testGold()
+	for i := range g.Commitments {
+		g.Commitments[i].Who = []string{"宋"}
+		g.Commitments[i].Terms = [][]string{{"成本"}}
+	}
+	b := newGoldBook(g)
+	labels := testHear(b)
+	b.byID["list"].unjudgeable = true
+	st := &xinlimock.State{Commitments: []xinlimock.Commitment{
+		commitment("C2", "theirs", "", "open", "#1.1"),
+		commitment("C3", "mine", "", "open", "#1.2"),
+	}}
+	got, detail := b.score(st, labels)
+	for _, name := range []string{"content_accuracy", "counterpart_accuracy"} {
+		if _, ok := got[name]; ok {
+			t.Fatal(detail)
+		}
+	}
 }
