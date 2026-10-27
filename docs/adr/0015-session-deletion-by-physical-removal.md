@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted（由 ADR-0050 修订：新增删除原因 Erasure、创建时的绝对删除期限）
 ---
 
 # Session 数据以物理删除方式清除

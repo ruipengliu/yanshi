@@ -1,6 +1,6 @@
 # 评审：Capture 与流该不该在内核
 
-> 状态：评审意见（2026-10-27），不是设计，不改变任何不变量 · 术语以 [CONTEXT.md](../../CONTEXT.md) 为准 · 对象：[xinli 与 persona agent 的整体架构](../design/persona-architecture.md)、[M7 内核补充](../design/m7-kernel-primitives.md)、[旁听](../design/captures.md)，ADR-0036、ADR-0037、ADR-0039、ADR-0040、ADR-0043、ADR-0045、ADR-0049 · 承接：[persona 架构评审](./2026-10-27-persona-architecture-review.md) · 图示与容量复算：[Persona 分层方案](./2026-10-27-persona-plan.html)
+> 状态：评审意见（2026-10-27），不是设计，不改变任何不变量；**已裁决为方案 C**（[ADR-0050](../adr/0050-capture-text-in-the-business-line.md)、[裁决记录](./2026-10-27-capture-placement-decision.md)），§3.3、§3.4 中关于 C 的擦除的两处陈述已在裁决记录 §4 更正 · 术语以 [CONTEXT.md](../../CONTEXT.md) 为准 · 对象：[xinli 与 persona agent 的整体架构](../design/persona-architecture.md)、[M7 内核补充](../design/m7-kernel-primitives.md)、[旁听](../design/captures.md)，ADR-0036、ADR-0037、ADR-0039、ADR-0040、ADR-0043、ADR-0045、ADR-0049 · 承接：[persona 架构评审](./2026-10-27-persona-architecture-review.md) · 图示与容量复算：[Persona 分层方案](./2026-10-27-persona-plan.html)
 >
 > 方式：Claude 复核一份先行意见（三层方向、职责变化、当前实现、业务耦合、Capture 的必要性、更薄的替代、外置原文与删除、Stream 泛化），在代码与文档中逐条核实后给出裁决。只读代码与文档，没有运行测试或评测。下文的【事实】可在所引位置核对，【推断】由事实推出，【假设】尚未验证。
 

@@ -1,6 +1,6 @@
 # 旁听
 
-> 状态：已实现（2026-10-25）· 决定：ADR-0036（只收文字，信任按说话人区分）、ADR-0037（每日旁听 Session 与分级保留）、ADR-0039（流、读取位置与来源推导）· 业务线的用法：[旁听业务线 xinli](./xinli-captures.md) · 术语：`CONTEXT.md` 的 Capture、Stream、Exchange、Retention
+> 状态：已实现（2026-10-25）；原文的存放位置由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 改为业务线，本文的内核 Capture 路径在 xinli 切换后按其退役条件删除，`captures` 的渲染器保留给 attested 结果 · 决定：ADR-0036（只收文字，信任按说话人区分）、ADR-0037（每日旁听 Session 与分级保留）、ADR-0039（流、读取位置与来源推导）· 业务线的用法：[旁听业务线 xinli](./xinli-captures.md) · 术语：`CONTEXT.md` 的 Capture、Stream、Exchange、Retention
 
 全天佩戴的录音外设（领夹）经手机上的 HostApp 接入，把 EndUser 一天的对话以文字交给 yanshi。本文是平台这一侧：写入、投影、读取（`captures` 工具）、引用核对、信任、保留与删除。整理成摘要、归集到 Project、承诺账本与每周回顾由业务线编排，见 [xinli-captures.md](./xinli-captures.md)。流、触发与外部循环的通用设计见 [输入、触发与外部循环](./m5-inputs-triggers-loops.md)。
 

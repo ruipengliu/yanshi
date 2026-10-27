@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted（由 ADR-0050 修订：原文保留期由业务线担保，内核担保自己的副本）
 ---
 
 # 以每日旁听 Session 实现分级保留
