@@ -18,7 +18,7 @@ import (
 	"yanshi/internal/session"
 )
 
-// ReadAll 使用 limit=0；同时记录范围，防止普通引用退化为分页扫描。
+// 引用只扫描调用投影之前的可信页；记录读取范围避免退回日志位置解析。
 type citationReadLog struct {
 	eventlog.Log
 	after  []uint64
@@ -54,7 +54,7 @@ func TestCitationNamespaceFromRegistration(t *testing.T) {
 		latest   bool
 		missing  bool
 	}{
-		{name: "ordinary with attested history", line: "bl"},
+		{name: "ordinary with attested history", line: "bl", attested: true, latest: true},
 		{name: "cross business line", declared: true, line: "other"},
 		{name: "attested latest", declared: true, line: "bl", state: &session.State{Seq: 4}, attested: true, latest: true},
 		{name: "attested prefix", declared: true, line: "bl", state: &session.State{Seq: 3}, attested: true},
@@ -80,6 +80,12 @@ func TestCitationNamespaceFromRegistration(t *testing.T) {
 			if err := json.Unmarshal([]byte(model.Text(res.Content)), &got); err != nil {
 				t.Fatal(err)
 			}
+			if tc.line != "bl" {
+				if len(got) != 0 || len(reads.limits) != 0 {
+					t.Fatal("cross-business-line citations disclosed")
+				}
+				return
+			}
 			if len(got) != 3 || got[0].Missing != tc.missing || got[1].Missing != tc.attested || !got[2].Missing {
 				t.Fatalf("citations = %+v", got)
 			}
@@ -95,15 +101,6 @@ func TestCitationNamespaceFromRegistration(t *testing.T) {
 			if tc.attested {
 				if len(reads.limits) != 1 || reads.limits[0] != 0 || reads.after[0] != 0 {
 					t.Fatalf("attested reads: %v, %v", reads.after, reads.limits)
-				}
-			} else {
-				if len(reads.limits) != 3 {
-					t.Fatalf("ordinary reads: %v", reads.limits)
-				}
-				for i, after := range []uint64{1, 1, 998} {
-					if reads.limits[i] != 1 || reads.after[i] != after {
-						t.Fatalf("ordinary path scanned the log: %v, %v", reads.after, reads.limits)
-					}
 				}
 			}
 		})

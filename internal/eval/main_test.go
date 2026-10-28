@@ -45,14 +45,8 @@ func TestMain(m *testing.M) {
 			fmt.Fprintln(os.Stderr, "build xinli fixture:", err)
 			return 1
 		}
-		code := m.Run()
-		if code == 0 {
-			if err := writeCaptureGolden(); err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				return 1
-			}
-		}
-		return code
+
+		return m.Run()
 	}()
 	os.Exit(code)
 }

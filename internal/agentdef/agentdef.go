@@ -17,7 +17,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	v1 "yanshi/gen/yanshi/v1"
-	"yanshi/internal/session"
 )
 
 type Def struct {
@@ -42,36 +41,6 @@ type Def struct {
 	Call CallConfig `yaml:"call"`
 	// Delegation 是委托的限制（docs/design/m5-multi-agent.md §4）。
 	Delegation DelegationConfig `yaml:"delegation"`
-	// Streams 是本 Agent 的 Session 接收的流（ADR-0039，docs/design/m5-inputs-triggers-loops.md §5）；为空表示不接收
-	// Capture。只有整理采集的 Agent 声明：旁听转写的保留期短，写进长期保留的 Session 就失去了分级保留（ADR-0037）。
-	Streams []Stream `yaml:"streams"`
-}
-
-// Stream 是 AgentDef 对一个流的声明。
-type Stream struct {
-	// Name 是平台登记的流名（session.KnownStream），如 "transcript"。
-	Name string `yaml:"name"`
-	// Ack 为 true 时，读取位置只按业务线的交付回执提交（ADR-0049）。
-	Ack bool `yaml:"ack"`
-	// ExchangeGap 是时段间隔（字段名沿用）：相邻两段的说话时间相隔超过它，就是两个时段（docs/design/captures.md §5），
-	// 默认 5 分钟。一个 Session 中沿用第一次提交的读取位置中的值，改动从新的 Session 起生效。
-	ExchangeGap time.Duration `yaml:"exchange_gap"`
-}
-
-// DefaultExchangeGap 是时段间隔的默认值。
-const DefaultExchangeGap = 5 * time.Minute
-
-// Stream 返回对流 name 的声明；d 为 nil 时没有声明。
-func (d *Def) Stream(name string) (*Stream, bool) {
-	if d == nil {
-		return nil, false
-	}
-	for i := range d.Streams {
-		if d.Streams[i].Name == name {
-			return &d.Streams[i], true
-		}
-	}
-	return nil, false
 }
 
 // DelegationConfig 限制委托。Timeout 属于被委托的 Agent（它多久应当做完）；MaxDepth 与 MaxFanout 属于委托方。
@@ -181,24 +150,9 @@ func (d *Def) validate() error {
 		return fmt.Errorf("agent %s@%s: %w", d.Name, d.Version, err)
 	}
 	for _, name := range d.Capabilities {
-		if name == session.CapturesCapability && d.Context.MaxToolResult < session.MinCaptureToolResult() {
-			return fmt.Errorf("agent %s@%s: captures requires context.max_tool_result >= %d to fit a complete Capture page (got %d)", d.Name, d.Version, session.MinCaptureToolResult(), d.Context.MaxToolResult)
+		if name == "captures" {
+			return fmt.Errorf("agent %s@%s: captures is retired (ADR-0050); use a business-line MCP tool", d.Name, d.Version)
 		}
-	}
-	seen := map[string]bool{}
-	for i := range d.Streams {
-		st := &d.Streams[i]
-		switch {
-		case !session.KnownStream(st.Name):
-			return fmt.Errorf("agent %s@%s: unknown stream %q", d.Name, d.Version, st.Name)
-		case seen[st.Name]:
-			return fmt.Errorf("agent %s@%s: stream %q declared twice", d.Name, d.Version, st.Name)
-		case st.ExchangeGap < 0:
-			return fmt.Errorf("agent %s@%s: stream %q: negative exchange_gap", d.Name, d.Version, st.Name)
-		case st.ExchangeGap == 0:
-			st.ExchangeGap = DefaultExchangeGap
-		}
-		seen[st.Name] = true
 	}
 	return nil
 }

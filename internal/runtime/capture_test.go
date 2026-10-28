@@ -10,7 +10,7 @@ import (
 )
 
 func captureBlock(speaker v1.Speaker, key, text string, redacted bool) *v1.ContentBlock {
-	return &v1.ContentBlock{Kind: &v1.ContentBlock_Capture{Capture: &v1.CaptureSegment{Speaker: speaker, SpeakerKey: key, Text: text, Redacted: redacted}}}
+	return &v1.ContentBlock{Kind: &v1.ContentBlock_Capture{Capture: &v1.CaptureSegment{Ref: "57.0", Speaker: speaker, SpeakerKey: key, Text: text, Redacted: redacted}}}
 }
 
 // captureState：整理旁听的 Run 读了一页旁听转写，然后要写入一条 Memory。
@@ -20,8 +20,8 @@ func captureState(t *testing.T, page ...*v1.ContentBlock) *session.State {
 		add(&v1.SessionCreated{BusinessLine: "bl"}).
 		add(&v1.RunRequested{RunId: "r1", Input: model.TextBlocks("整理今天")}).
 		add(&v1.AttemptStarted{RunId: "r1", Attempt: 1}).
-		add(&v1.AssistantMessage{RunId: "r1", Attempt: 1, ToolCalls: []*v1.ToolCall{{CallId: "c1", Capability: session.CapturesCapability, ArgumentsJson: "{}"}}}).
-		add(&v1.ToolResult{RunId: "r1", Attempt: 1, CallId: "c1", Content: append(page, model.TextBlocks("（已读完）")...)}).
+		add(&v1.AssistantMessage{RunId: "r1", Attempt: 1, ToolCalls: []*v1.ToolCall{{CallId: "c1", Capability: "mcp_xinli__captures", ArgumentsJson: "{}"}}}).
+		add(&v1.ToolResult{RunId: "r1", Attempt: 1, CallId: "c1", Attested: true, Content: append(page, model.TextBlocks("（已读完）")...)}).
 		events)
 	if err != nil {
 		t.Fatal(err)

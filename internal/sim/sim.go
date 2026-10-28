@@ -11,7 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand/v2"
+	rand "math/rand/v2"
 	"slices"
 	"strings"
 	"time"
@@ -31,6 +31,7 @@ import (
 	"yanshi/internal/ids"
 	"yanshi/internal/janitor"
 	"yanshi/internal/lifecycle"
+	"yanshi/internal/mcpcap"
 	"yanshi/internal/memory"
 	"yanshi/internal/model"
 	"yanshi/internal/moderation"
@@ -62,11 +63,7 @@ type Options struct {
 	// LongRuns 让脚本化模型在一个 Run 内持续调用工具上百轮，并降低中断频率，
 	// 用于检验小时级 Run 的上下文压缩与恢复（docs/design/m2-long-runs.md §8）。
 	LongRuns bool
-	// CaptureReads 让模型集中读取旁听，保证分页与接读不会被大量其他能力摊薄。
-	CaptureReads bool
-	// CaptureAcks 在集中读页时注入业务线回执、拒收与 MCP 调用失败。
-	CaptureAcks bool
-	// Attested 集中读取可信 MCP 页，沿用 Worker 故障与内容安全提供商。
+	// Attested 在普通工具调用中穿插可信 MCP 页与读取后的 Memory 预检查，沿用 Worker 故障与内容安全提供商。
 	Attested bool
 }
 
@@ -138,21 +135,11 @@ type Stats struct {
 	GracefulStops, Handoffs int
 	// 后台调用（ADR-0035）：转入后台、设备结果送达、到期、用户取消的次数，以及设备下线时唤醒等它的 Session 的次数。
 	Backgrounded, BackgroundResults, BackgroundTimeouts, BackgroundCancels, DisconnectWakes int
-	// 旁听转写（docs/design/captures.md）：写入的批次、重试被去重的、因内容安全不可用而拒绝的批次，拦截的段数，
-	// 以及写入时注入的存储故障。
-	CapturesAppended, CaptureDuplicates, CapturesRejected, CapturesRedacted, CaptureStoreFaults int
-	// CaptureReads 是生成的 captures 调用数，不代表工具已执行成功。
-	CaptureReads int
-	// 结果侧覆盖：返回的结果、错误、成功页、含旁听的页、仍有下一页、实际续页、new 调用与从已提交位置接读。
-	CaptureResults, CaptureErrors, CaptureSuccesses, CapturePages, CaptureMorePages int
-	CaptureContinuations, CaptureNewReads, CaptureNewResumes                        int
 	// RetentionKeptMemories 是按保留期到期删除、写入过的 Memory 得以保留的 Session（ADR-0037）。
 	RetentionKeptMemories int
 	// 擦除覆盖在途 Run、既有 Memory 保留与删除记录之后的迟到写入撤回。
 	Erasures, ErasuresInFlight, ErasureLateWithdrawn, ErasureKeptMemories int
-	// 回执使位置前进、缺回执而完全未前进，以及注入的业务拒收与 MCP 失败。
-	AcksCommitted, AcksMissing, AckRefusals, AckMCPFailures int
-	AttestedResults, AttestedRedactions, AttestedErrors     int
+	AttestedResults, AttestedRedactions, AttestedErrors                   int
 	// InvalidArgs 是模型给出不合法参数的调用（args.go）。
 	InvalidArgs int
 	// MemoryPrechecked 是注入的 Memory 预检查拒绝样例中已返回错误结果的调用（memprecheck.go）。
@@ -270,20 +257,13 @@ const interactiveWorker = "wi"
 // simWindow 是模拟模型的实际窗口，也是主请求与摘要请求的不变量；不随 AgentDef 的加载预算扩大。
 const simWindow = 3200
 
-// simToolResultTokens 锁住生成器的短结果假设：Capture 每页至多两段；echo 的负载至多 399 字节；
+// simToolResultTokens 锁住生成器的短结果假设：可信页至多四段；echo 的负载至多 399 字节；
 // Memory 最多十条短偏好（含到期删除场景），即使用 20 位编号也不足 400 tokens。
 // 独立检查它，避免更大的加载预算悄悄允许大结果进入原来的小窗口模拟。
 const simToolResultTokens = 400
 
-// simContext 保留 2400 token 的压缩阈值，使压缩频繁发生；结果预算须容得下完整 Capture，
-// 因而同步扩大窗口以满足 MaxToolResult 至多占窗口四分之一的加载约束。
-// runtime 的压缩时机与摘要输入预算依赖 Threshold；Window/16 只改变摘要目标文字（200→752），
-// 两者位数相同，脚本摘要也不依此生成更长内容。实际请求仍由 simWindow 校验。
-var simContext = func() agentdef.Context {
-	budget := session.MinCaptureToolResult()
-	window := 4 * budget
-	return agentdef.Context{Window: window, CompactAt: (simWindow * 0.75) / float64(window), KeepRecent: 300, MaxToolResult: budget}
-}()
+// simContext 保留原有预算与 2400 token 压缩阈值，退役采集路径不改变其他模拟场景的窗口。
+var simContext = agentdef.Context{Window: 12040, CompactAt: (simWindow * 0.75) / 12040, KeepRecent: 300, MaxToolResult: 3010}
 
 const longRunTurns = 20
 
@@ -364,8 +344,6 @@ type World struct {
 	// calls 是各 Session 上中转进程以为进行中的 Call（可能已过时）；nextCall 生成 Call ID。
 	calls    map[string]string
 	nextCall int
-	// nextCapture 生成旁听转写的 capture_id。
-	nextCapture int
 	// effects 记录非幂等 Capability（进程内与设备上）每个调用 ID 的实际执行次数。
 	effects map[string]int
 	// withdrawn 是已撤回投递的后台调用（用户取消、Session 关闭）：设备之后不得再执行它们（ADR-0035）。
@@ -384,6 +362,7 @@ type World struct {
 	violations []string
 	// poolViolation 记录 Worker 认领到不属于其池的工作（ADR-0029）。
 	poolViolation error
+	attested      *mcpcap.Connector
 	Stats         Stats
 	// Trace 记录每一步的动作，失败时用于定位。
 	Trace []string
@@ -405,7 +384,7 @@ func New(opts Options) (*World, error) {
 	w.stores = stores
 	w.log, w.queue = stores.Log, stores.Queue
 	maxTurns := 6
-	if opts.LongRuns || opts.CaptureReads {
+	if opts.LongRuns {
 		maxTurns = 120
 	}
 	// 两个版本，配合随机的灰度与撤回（docs/design/m4-agent-rollout.md §7）。
@@ -419,18 +398,12 @@ func New(opts Options) (*World, error) {
 		}
 		defs = append(defs, &agentdef.Def{
 			Name: "sim", Version: v, Model: "sim/m",
-			Capabilities: []string{"echo", "send", "ask_user", "show_card", "memory_save", "memory_forget", "memory_search", "captures", "device:*", "sandbox:*", "agent:sim"},
+			Capabilities: []string{"echo", "send", "ask_user", "show_card", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*", "agent:sim"},
 			MaxTurns:     maxTurns, Context: ctxCfg, Memory: agentdef.MemoryConfig{Recall: 3},
-			// 旁听转写写进同一批 Session，与输入、Run、关闭和删除交错。
-			Streams: []agentdef.Stream{{Name: session.StreamTranscript, Ack: opts.CaptureAcks}},
 		})
 	}
-	if opts.CaptureAcks {
-		for _, def := range defs {
-			def.Capabilities = append(def.Capabilities, "mcp:sim/save")
-		}
-	}
 	if opts.Attested {
+		w.attested = newSimAttestedConnector(w)
 		for _, def := range defs {
 			def.Capabilities = append(def.Capabilities, "mcp:sim/pages")
 		}
@@ -463,7 +436,6 @@ func New(opts Options) (*World, error) {
 	// 外部写入（输入、审批、回答、Node 结果）经 flakyWaking；Worker 的追加另经 flakyLog（newWorker）。
 	wrapped := stores
 	wrapped.Waking = flakyWaking{WakingLog: stores.Waking, w: w}
-	wrapped.Log = flakyCaptureLog{Log: stores.Log, w: w}
 	wrapped.Index = barrierIndex{Index: stores.Index, w: w}
 	wrapped.Dir = barrierDirectory{Directory: stores.Dir, w: w}
 	wrapped.Push = barrierPush{Registry: stores.Push, w: w}
@@ -472,7 +444,7 @@ func New(opts Options) (*World, error) {
 	w.core = app.NewCore(wrapped, app.Options{
 		Clock: w.clock, IDs: ids.Sequential, Agents: agents, Model: gw, Blobs: artifact.NewMemBlobs(), NodeAuth: node.InsecureDevAuth{},
 		Local:        []capability.Capability{w.echoCap(), w.sendCap(), simCardCap()},
-		MCP:          simAckSource{w},
+		MCP:          simAttestedSource{w},
 		SandboxTools: true, DefaultTimeout: deviceTimeout, NodeCacheTTL: 5 * time.Second,
 		BackgroundGrace: bgGrace, BackgroundTimeout: bgTimeout,
 		Moderator: simModerator{w}, InjectionCheck: simDecider{w}, Meter: w.meter, Quotas: w.quotas, Pusher: simPusher{w},
@@ -753,6 +725,9 @@ func (w *World) tracef(format string, args ...any) {
 
 // Run 执行完整模拟：先在故障与客户端动作下推进 Ticks 步，再停止注入并要求所有 Run 收敛到终态。
 func (w *World) Run() error {
+	if w.attested != nil {
+		defer w.attested.Close()
+	}
 	for i := range w.opts.Ticks {
 		if err := w.tick(); err != nil {
 			return fmt.Errorf("tick %d: %w", i, err)
@@ -804,9 +779,6 @@ func (w *World) act() error {
 		if w.chance(0.25) {
 			return w.cancelBackground()
 		}
-		if w.chance(0.2) {
-			return w.captureStep()
-		}
 		if w.chance(0.1) {
 			return w.redispatchDelegation()
 		}
@@ -814,8 +786,8 @@ func (w *World) act() error {
 	case x < 0.83:
 		return w.presenceStep()
 	case x < 0.84:
-		if (w.opts.LongRuns || w.opts.CaptureReads) && !w.chance(0.1) {
-			return nil // 少关、少删，让长 Run 能跑满、旁听能在完成后由下一次 Run 接读
+		if w.opts.LongRuns && !w.chance(0.1) {
+			return nil // 少关、少删，让长 Run 能跑满
 		}
 		switch x := w.rng.Float64(); {
 		case x < 0.5:
@@ -825,8 +797,8 @@ func (w *World) act() error {
 		}
 		return w.deleteSession()
 	case x < 0.87:
-		if (w.opts.LongRuns || w.opts.CaptureReads) && !w.chance(0.05) {
-			return nil // 少中断，让长 Run 能跑满、旁听读取位置能随 Run 完成提交
+		if w.opts.LongRuns && !w.chance(0.05) {
+			return nil // 少中断，让长 Run 能跑满
 		}
 		return w.interrupt()
 	case x < 0.94:
@@ -1177,11 +1149,6 @@ func (w *World) CheckInvariants() error {
 		if len(events) == 0 {
 			continue // 尚未创建（委托还没派发）或已删除的子 Session
 		}
-		if w.opts.CaptureAcks {
-			if err := checkCaptureAcks(events); err != nil {
-				return fmt.Errorf("session %s: %w", sid, err)
-			}
-		}
 		st, err := session.Reduce(events)
 		if err != nil {
 			return fmt.Errorf("invariant: log of %s is invalid: %w", sid, err)
@@ -1353,7 +1320,7 @@ func (w *World) CollectStats() {
 	for _, sid := range w.known() {
 		events, _ := eventlog.ReadAll(context.Background(), w.log, sid, 0)
 		w.countBackground(events)
-		w.countCaptureResults(events)
+		w.countAttestedResults(events)
 	}
 	for _, sid := range append(slices.Clone(w.sessions), w.children...) {
 		events, _ := eventlog.ReadAll(context.Background(), w.log, sid, 0)
@@ -1635,24 +1602,13 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 	if w.opts.LongRuns {
 		more = turns < 100 && w.chance(0.97)
 	}
-	if w.opts.Attested && more {
-		return &model.Response{Model: "sim/m", Usage: resp.Usage, ToolCalls: []*v1.ToolCall{{Capability: simAttestedName, ArgumentsJson: `{}`}}}, nil
+	// 页中的他人原话触发外部影响路径；健康样例必须先被预检查拒绝，不能进入审批或执行。
+	if w.opts.Attested && attestedMemoryPrecheck(req.Messages) && slices.ContainsFunc(req.Tools, func(t model.ToolSpec) bool { return t.Name == "memory_save" }) {
+		resp.ToolCalls = []*v1.ToolCall{{Capability: "memory_save", ArgumentsJson: rejectedMemoryArgs}}
+		return resp, nil
 	}
-	if w.opts.CaptureReads {
-		if w.opts.CaptureAcks && len(req.Messages) > 0 && req.Messages[len(req.Messages)-1].Role == model.RoleTool {
-			last := req.Messages[len(req.Messages)-1]
-			if strings.HasPrefix(model.Text(last.Content), "【时段 #") {
-				if args := simAckArgs(req.Messages); args != "" {
-					resp.ToolCalls = []*v1.ToolCall{{Capability: simAckName, ArgumentsJson: args}}
-					return resp, nil
-				}
-			}
-		}
-		// 压缩会减少可见轮数，不能只等固定轮数才结束；须完成 Run 才能提交读取位置。
-		more = turns < 3 && w.chance(0.7)
-		if more {
-			return &model.Response{Model: "sim/m", Usage: resp.Usage, ToolCalls: []*v1.ToolCall{{Capability: "captures", ArgumentsJson: w.toolArgs("captures", req.Messages...)}}}, nil
-		}
+	if w.opts.Attested && more && w.chance(0.25) && slices.ContainsFunc(req.Tools, func(t model.ToolSpec) bool { return t.Name == simAttestedName }) {
+		return &model.Response{Model: "sim/m", Usage: resp.Usage, ToolCalls: []*v1.ToolCall{{Capability: simAttestedName, ArgumentsJson: `{}`}}}, nil
 	}
 	if more {
 		tools := req.Tools
@@ -1669,10 +1625,6 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 		}
 		for i := range 1 + w.rng.IntN(2) {
 			name := tools[w.rng.IntN(len(tools))].Name
-			// captures 只读不写，少选它：否则提问、委托等工具被摊薄，其中的罕见路径（提问超时、委托中途删除）覆盖不到。
-			if name == "captures" && !w.chance(0.1) {
-				name = tools[w.rng.IntN(len(tools))].Name
-			}
 			if len(devices) > 0 && w.chance(0.3) {
 				name = devices[w.rng.IntN(len(devices))]
 			}
@@ -1731,6 +1683,8 @@ func (w *World) toolArgs(name string, messages ...model.Message) string {
 		return args
 	}
 	switch name {
+	case simAttestedName:
+		return `{}`
 	case "memory_save":
 		if w.chance(0.02) {
 			return rejectedMemoryArgs
@@ -1739,18 +1693,6 @@ func (w *World) toolArgs(name string, messages ...model.Message) string {
 		return fmt.Sprintf(`{"category":"preference","content":"偏好 %d"}`, w.rng.IntN(50))
 	case "memory_search":
 		return `{"query":"偏好"}`
-	case "captures":
-		// 只照抄模型可见的页尾位置，或让平台从已完成 Run 的读取位置接读。
-		w.Stats.CaptureReads++
-		after := "0"
-		switch w.rng.IntN(3) {
-		case 1:
-			after = "new"
-		case 2:
-			after = captureAfter(messages)
-		}
-		// 每页至多两段（各至多 22 字节原话），为 3200 窗口中的其他工具和输入保留余量。
-		return fmt.Sprintf(`{"after":%q,"limit":%d,"all":true}`, after, 1+w.rng.IntN(2))
 	case askuser.Capability:
 		if w.chance(0.1) {
 			return `{"question":"只有一个选项？","options":[{"id":"a","label":"甲"}]}` // 不合法：交还模型改正

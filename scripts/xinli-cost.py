@@ -100,7 +100,7 @@ def main():
                 n = len(logs)
                 avg = lambda name: f"{values[name] / n:.1f}"
                 hit = values["cached"] / values["input"] if values["input"] else 0
-                tools = "/".join(avg(k) for k in ("captures", "mcp_xinli__find_related", "mcp_xinli__file_changes"))
+                tools = "/".join(avg(k) for k in ("mcp_xinli__captures", "mcp_xinli__find_related", "mcp_xinli__file_changes"))
                 print(f"| {case['name']}／{phase} | {n} | {avg('runs')} | {avg('model_calls')} | {avg('calls')} | "
                       f"{avg('input')} | {avg('output')} | {avg('first_input')} | {avg('input_growth')} | "
                       f"{avg('compact_tokens')} | {hit:.0%} | {tools} | {avg('rejected_changes')} |")

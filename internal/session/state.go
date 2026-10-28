@@ -126,12 +126,6 @@ type Run struct {
 	SuspendedUntil time.Time
 	// FromBackground 非空表示 Run 由该后台调用的了结（结果或到期）开启，而不是用户的输入（ADR-0035）。
 	FromBackground string
-	// CaptureReads 是本 Run 中 captures 最后一页读到的位置，键为流名；未要求确认的流在 Run 完成时直接提交，
-	// 要求确认的流按 CapturePages 与 CaptureAcks 拼链（ADR-0039、ADR-0049）。失败、中断不提交。条目不再修改。
-	CaptureReads map[string]*v1.CaptureRead
-	// CapturePages 与 CaptureAcks 保留本 Run 的读页与回执，跨页确认不能靠最后一页或压缩后的 History 重建。
-	CapturePages []*v1.CaptureRead
-	CaptureAcks  []*v1.CaptureAck
 }
 
 // SuspendHandoff 是移交的挂起原因（ADR-0029）：Worker 正常结束 Attempt 并立即归还 Session，由其他 Worker 恢复，
@@ -168,9 +162,6 @@ func DecisionKey(kind, subject string) string { return kind + "/" + subject }
 func (r *Run) clone() *Run {
 	cp := *r
 	cp.Decisions = maps.Clone(r.Decisions)
-	cp.CaptureReads = maps.Clone(r.CaptureReads)
-	cp.CapturePages = slices.Clone(r.CapturePages)
-	cp.CaptureAcks = slices.Clone(r.CaptureAcks)
 	cp.Calls = make([]*Call, len(r.Calls))
 	for i, c := range r.Calls {
 		cc := *c
@@ -221,38 +212,10 @@ type State struct {
 	// Background 是未了结的后台调用（ADR-0035），键为调用 ID：设备离线超过宽限期、Worker 不再在 Run 中等待的路由调用。
 	// 设备结果、到期或用户取消之后移出；Session 关闭后保留（不再有事件，关闭方据此撤回投递）。
 	Background map[string]*BackgroundCall
-	// Captures 是旁听转写的去重窗口与计数（docs/design/captures.md §4）。
-	Captures CaptureLog
 }
 
-// MaxRecentCaptures 是旁听转写的去重窗口：HostApp 断网恢复后会补交积压的多批，窗口比输入的大；
-// 条目只是 ID，投影仍然有界。
-const MaxRecentCaptures = 512
-
-// 一批旁听转写的上限（docs/design/captures.md §3）。
-const (
-	MaxCaptureSegments = 200
-	// MaxCaptureText 是一段的字符数上限。
-	MaxCaptureText = 2000
-)
-
-// CaptureLog 是旁听转写在投影中的部分。转写内容不进投影（一天可能有十几万字，会使每个快照随之增大），
-// 留在日志中，由 captures 工具按序号读取。
-type CaptureLog struct {
-	// IDs 是最近 MaxRecentCaptures 个 capture_id，旧的在前。条目不再修改，副本间共享底层数组。
-	IDs   []string
-	Count uint64
-	// LastSeq 与 LastAt 是最后一个 CaptureAppended 的 seq 与写入时间；没有时为零值。只有旁听、没有输入的 Session
-	// 据 LastAt 更新索引中的最后输入时间，不会被按空闲时长关闭（docs/design/captures.md §3）。
-	LastSeq uint64
-	LastAt  time.Time
-	// Read 是每个流已读到的位置，键为流名：已完成的 Run 中 captures 最后一页的位置（ADR-0039）。after = "new" 由此接着读，
-	// 时段间隔也沿用其中的值。条目不再修改，副本间共享。
-	Read map[string]*v1.CaptureRead
-}
-
-// Captured 报告 capture_id 是否在去重窗口中。
-func (s *State) Captured(id string) bool { return id != "" && slices.Contains(s.Captures.IDs, id) }
+// MaxCaptureText 限制可信页中每段的字符数。
+const MaxCaptureText = 2000
 
 // speakerKeyRE 限制他人的说话人键：它原样出现在给模型看的文本中（"[他人 other-1]"），不能夹带别的内容。
 var speakerKeyRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
@@ -269,52 +232,8 @@ func ValidAttestedRef(ref string) bool {
 	return ok && e1 == nil && e2 == nil && n >= 0 && attestedRefRE.MatchString(ref)
 }
 
-// CapturesCapability 是读取旁听转写的内置工具名（capture.Capability；session 不依赖 capture 包）。旁听片段（ContentBlock 的
-// capture）只能由平台写入它的结果。
-const CapturesCapability = "captures"
-
 func hasCapture(blocks []*v1.ContentBlock) bool {
 	return slices.ContainsFunc(blocks, func(b *v1.ContentBlock) bool { return b.GetCapture() != nil })
-}
-
-// CheckCapture 校验一批旁听转写（写入方在提交前调用，Apply 同样校验）。错误中不含转写内容（ADR-0015）。
-func CheckCapture(m *v1.CaptureAppended) error {
-	id := m.GetCaptureId()
-	if id == "" {
-		return fmt.Errorf("capture without an id")
-	}
-	if !KnownStream(m.GetStream()) {
-		return fmt.Errorf("capture %q: unknown stream %q", id, m.GetStream())
-	}
-	segs := m.GetSegments()
-	if len(segs) == 0 || len(segs) > MaxCaptureSegments {
-		return fmt.Errorf("capture %q has %d segments", id, len(segs))
-	}
-	for i, g := range segs {
-		if g.GetRef() != "" {
-			return fmt.Errorf("capture segment ref is platform-only")
-		}
-		switch g.GetSpeaker() {
-		case v1.Speaker_SPEAKER_WEARER:
-			if g.GetSpeakerKey() != "" {
-				return fmt.Errorf("capture %q segment %d: wearer with a speaker key", id, i)
-			}
-		case v1.Speaker_SPEAKER_OTHER:
-			if !speakerKeyRE.MatchString(g.GetSpeakerKey()) {
-				return fmt.Errorf("capture %q segment %d: other speaker key of %d bytes is not [A-Za-z0-9_-]{1,32}", id, i, len(g.GetSpeakerKey()))
-			}
-		default:
-			return fmt.Errorf("capture %q segment %d: speaker %v", id, i, g.GetSpeaker())
-		}
-		// 拦截的片段只留占位；没有拦截的必须有文字。
-		if g.GetRedacted() != (g.GetText() == "") {
-			return fmt.Errorf("capture %q segment %d: redacted %v with %d bytes", id, i, g.GetRedacted(), len(g.GetText()))
-		}
-		if n := utf8.RuneCountInString(g.GetText()); n > MaxCaptureText {
-			return fmt.Errorf("capture %q segment %d: %d characters", id, i, n)
-		}
-	}
-	return nil
 }
 
 // BackgroundCall 是一个未了结的后台调用。
@@ -555,9 +474,6 @@ func (s *State) Clone() *State {
 	}
 	cp.History = slices.Clip(s.History)
 	cp.Inputs = slices.Clone(s.Inputs)
-	// 条目不再修改：Clip 使副本追加时另起底层数组，无需复制窗口。
-	cp.Captures.IDs = slices.Clip(s.Captures.IDs)
-	cp.Captures.Read = maps.Clone(s.Captures.Read)
 	if s.ActiveCall != nil {
 		c := *s.ActiveCall
 		cp.ActiveCall = &c
@@ -667,19 +583,7 @@ func (s *State) apply(e *v1.Event) error {
 		s.ActiveCall = nil
 
 	case *v1.Event_CaptureAppended:
-		// 不开启 Run，也不进 History：旁听不是对 Agent 说的话（ADR-0036）。
-		m := p.CaptureAppended
-		if err := CheckCapture(m); err != nil {
-			return err
-		}
-		if s.Captured(m.GetCaptureId()) {
-			return fmt.Errorf("duplicate capture id %q", m.GetCaptureId())
-		}
-		ids := append(s.Captures.IDs, m.GetCaptureId())
-		if n := len(ids); n > MaxRecentCaptures {
-			ids = slices.Clone(ids[n-MaxRecentCaptures:])
-		}
-		s.Captures = CaptureLog{IDs: ids, Count: s.Captures.Count + 1, LastSeq: e.GetSeq(), LastAt: fromTS(e.GetTime()), Read: s.Captures.Read}
+		// ADR-0050：只为解码旧日志保留，不再投影或写入。
 
 	case *v1.Event_ContentModerated:
 		// 只校验归属：拦截不改变状态，替换后的 AssistantMessage 随后照常应用。
@@ -890,11 +794,12 @@ func (s *State) apply(e *v1.Event) error {
 		if hasCard(m.GetContent()) && (m.GetAttempt() == 0 || c.Call.GetCapability() != ShowCardCapability) {
 			return fmt.Errorf("card in the result of call %q (%s)", m.GetCallId(), c.Call.GetCapability())
 		}
-		// 旁听片段只由平台写入内置或 attested 结果：设备、用户不能自报可信说话人（ADR-0050）。
-		if hasCapture(m.GetContent()) && (m.GetAttempt() == 0 || (c.Call.GetCapability() != CapturesCapability && !m.GetAttested())) {
+		// captures 只为重放旧内置工具的日志保留；现行写入方无法产生它：agentdef 拒绝该能力，
+		// Worker 不再注册该工具，service 拒绝客户端提交 capture 块，因此不扩大现行信任边界（ADR-0050）。
+		if hasCapture(m.GetContent()) && (m.GetAttempt() == 0 || (c.Call.GetCapability() != "captures" && !m.GetAttested())) {
 			return fmt.Errorf("capture segment in the result of call %q (%s)", m.GetCallId(), c.Call.GetCapability())
 		}
-		if m.GetAttested() && (m.GetAttempt() == 0 || !isMCPCall(c.Call.GetCapability()) || c.NodeID != "" || m.GetIsError() || m.GetCaptureRead() != nil || m.GetFromCall() != "" || m.GetBackgrounded() != nil) {
+		if m.GetAttested() && (m.GetAttempt() == 0 || !isMCPCall(c.Call.GetCapability()) || c.NodeID != "" || m.GetIsError() || m.GetFromCall() != "" || m.GetBackgrounded() != nil) {
 			return fmt.Errorf("invalid attested result")
 		}
 		for _, b := range m.GetContent() {
@@ -902,31 +807,27 @@ func (s *State) apply(e *v1.Event) error {
 				if (m.GetAttested() && !ValidAttestedRef(g.GetRef())) || (!m.GetAttested() && g.GetRef() != "") {
 					return fmt.Errorf("invalid capture result ref")
 				}
+				if !m.GetAttested() {
+					// 旧结果复制自已校验的旁听片段；重放仍要求原有的说话人、文字和拦截占位结构。
+					switch g.GetSpeaker() {
+					case v1.Speaker_SPEAKER_WEARER:
+						if g.GetSpeakerKey() != "" {
+							return fmt.Errorf("wearer with a speaker key in capture result")
+						}
+					case v1.Speaker_SPEAKER_OTHER:
+						if !ValidSpeakerKey(g.GetSpeakerKey()) {
+							return fmt.Errorf("invalid speaker key in capture result")
+						}
+					default:
+						return fmt.Errorf("invalid speaker in capture result")
+					}
+					if g.GetRedacted() != (g.GetText() == "") || utf8.RuneCountInString(g.GetText()) > MaxCaptureText {
+						return fmt.Errorf("invalid text in capture result")
+					}
+				}
 			}
 		}
-		// 读取位置同样只由平台写入 captures 的结果：伪造的位置会让之后的整理跳过没有读过的时段。
-		if rd := m.GetCaptureRead(); rd != nil {
-			if err := checkCaptureRead(rd); err != nil || m.GetAttempt() == 0 || c.Call.GetCapability() != CapturesCapability {
-				return fmt.Errorf("capture read in the result of call %q (%s): %v", m.GetCallId(), c.Call.GetCapability(), err)
-			}
-			if previous := r.CaptureReads[rd.GetStream()]; previous != nil && previous.GetAck() != rd.GetAck() {
-				return fmt.Errorf("capture read changed ack declaration in run %s", r.ID)
-			}
-			r.CaptureReads = maps.Clone(r.CaptureReads)
-			if r.CaptureReads == nil {
-				r.CaptureReads = map[string]*v1.CaptureRead{}
-			}
-			r.CaptureReads[rd.GetStream()] = rd
-			if rd.GetAck() {
-				r.CapturePages = append(slices.Clone(r.CapturePages), rd)
-			}
-		}
-		if ack := m.GetCaptureAck(); ack != nil {
-			if m.GetAttempt() == 0 || c.NodeID != "" || !isMCPCall(c.Call.GetCapability()) || m.GetIsError() || CheckCaptureAck(ack) != nil {
-				return fmt.Errorf("capture ack in the result of call %q (%s)", m.GetCallId(), c.Call.GetCapability())
-			}
-			r.CaptureAcks = append(slices.Clone(r.CaptureAcks), ack)
-		}
+		// ADR-0050：旧日志的 capture_read 与 capture_ack 不再参与校验或投影；写入入口已移除。
 		// 卡片动作同样只由平台写入：它只出现在用户等回答时点卡片而得的 ask_user 回答里，这条回答必有输入 ID
 		// （由动作推导）。其他结果带上它，客户端会把没有执行过的动作显示为已选。
 		if m.GetCardAction() != nil && (m.GetAttempt() != 0 || c.NodeID != askuser.NodeID || m.GetInputId() == "") {
@@ -1028,20 +929,6 @@ func (s *State) apply(e *v1.Event) error {
 			return fmt.Errorf("run completed while call %s is pending", c.Call.GetCallId())
 		}
 		r.Status = RunCompleted
-		if len(r.CaptureReads) > 0 {
-			read := maps.Clone(s.Captures.Read)
-			if read == nil {
-				read = map[string]*v1.CaptureRead{}
-			}
-			for stream, last := range r.CaptureReads {
-				if !last.GetAck() {
-					read[stream] = last
-				} else if confirmed := confirmedCaptureRead(read[stream], stream, r.CapturePages, r.CaptureAcks); confirmed != nil {
-					read[stream] = confirmed
-				}
-			}
-			s.Captures.Read = read
-		}
 
 	case *v1.Event_RunFailed:
 		r, err := s.fencedRun(p.RunFailed.GetRunId(), p.RunFailed.GetAttempt())
@@ -1211,3 +1098,8 @@ func hasCard(blocks []*v1.ContentBlock) bool {
 	}
 	return false
 }
+
+// mcpCallName 匹配调用日志中的模型工具名；mcp: 是 AgentDef 白名单的写法，不写入 ToolCall。
+var mcpCallName = regexp.MustCompile(`^mcp_[a-z0-9][a-z0-9-]{0,23}__[a-zA-Z0-9_-]+$`)
+
+func isMCPCall(name string) bool { return mcpCallName.MatchString(name) }

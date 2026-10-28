@@ -36,19 +36,14 @@ message SessionSnapshot {
   string delegated_run = 15;
   // 未了结的后台调用（session.State.Background），按调用 ID 排序。
   repeated BackgroundCallSnapshot background = 16;
-  // 旁听转写的去重窗口与计数（session.State.Captures）。
-  CaptureSnapshot captures = 17;
+  reserved 17;
+  reserved "captures";
 }
 
-// CaptureSnapshot 是 session.CaptureLog。
+// 已退役：ADR-0050；快照只作缓存。
 message CaptureSnapshot {
-  // 最近的 capture_id，旧的在前（session.MaxRecentCaptures）。
-  repeated string ids = 1;
-  uint64 count = 2;
-  uint64 last_seq = 3;
-  google.protobuf.Timestamp last_at = 4;
-  // 每个流已读到的位置（已完成的 Run 提交，session.CaptureLog），按流名排序。
-  repeated CaptureRead read = 5;
+  reserved 1 to 5;
+  reserved "ids", "count", "last_seq", "last_at", "read";
 }
 
 message BackgroundCallSnapshot {
@@ -101,12 +96,8 @@ message RunSnapshot {
   map<string, string> decisions = 17;
   // 由后台调用的了结开启的 Run：该后台调用的 ID。
   string from_background = 18;
-  // 本 Run 中 captures 读到的位置，Run 完成时提交（session.Run），按流名排序。
-  repeated CaptureRead capture_reads = 19;
-  // 需要交付确认的流在本 Run 中读过的所有页，按读取顺序。
-  repeated CaptureRead capture_pages = 20;
-  // 本 Run 收到的业务线回执，按写入顺序。
-  repeated CaptureAck capture_acks = 21;
+  reserved 19, 20, 21;
+  reserved "capture_reads", "capture_pages", "capture_acks";
 }
 
 message CallSnapshot {

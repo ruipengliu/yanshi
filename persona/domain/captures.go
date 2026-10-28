@@ -99,7 +99,7 @@ func (u *Book) BindDay(date, session string, deleteAt ...time.Time) error {
 
 var captureSpeakerKey = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
 
-// AppendCaptures 与内核 CheckCapture/SubmitCaptures 使用同样的提交边界；不回显原文或非法字段。
+// AppendCaptures 校验业务日原文的提交边界；错误不回显原文或非法字段。
 // capture_id 的去重保留整个业务日，后续擦除也不能复用批次号。
 func (u *Book) AppendCaptures(date, captureID string, segments []CaptureSegment) ([]string, error) {
 	if _, err := time.Parse(time.DateOnly, date); err != nil {

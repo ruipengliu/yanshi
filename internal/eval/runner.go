@@ -1147,9 +1147,9 @@ func commitmentMatches(m xinlifixture.Commitment, want CommitmentMatch) bool {
 // captureZone 是评测中 HostApp 所在的时区：用例的 at 按它解读。
 var captureZone, _ = time.LoadLocation("Asia/Shanghai")
 
-// usesPersonaCaptures 保留内置 captures 用例的提交路径；xinli 通配白名单也包含业务线工具。
+// usesPersonaCaptures 识别业务线的旁听工具，包含 xinli 通配白名单。
 func usesPersonaCaptures(d *agentdef.Def) bool {
-	return !slices.Contains(d.Capabilities, capture.Capability) && slices.ContainsFunc(d.Capabilities, func(name string) bool {
+	return slices.ContainsFunc(d.Capabilities, func(name string) bool {
 		ok, _ := path.Match(name, "mcp:xinli/captures")
 		return ok
 	})
@@ -1170,7 +1170,7 @@ func inheritCaptureMarks(marks map[string]string, sid, day string, days map[stri
 	}
 }
 
-// submitCaptures 按相同规则分批、重编他人编号；只把仍使用内置 captures 的用例提交到内核。
+// submitCaptures 向 Persona 提交原文，按说话时间分批并重编他人编号。
 func (in *instance) submitCaptures(ctx context.Context, sid, businessDay string, turn int, segs []CaptureSegment) ([]string, error) {
 	out := make([]*v1.CaptureSegment, 0, len(segs))
 	for _, g := range segs {
@@ -1194,6 +1194,9 @@ func (in *instance) submitCaptures(ctx context.Context, sid, businessDay string,
 	if len(out) == 0 {
 		return refs, nil
 	}
+	if businessDay == "" || in.xinli == nil {
+		return nil, fmt.Errorf("capture submission requires a Persona business day")
+	}
 	st, err := in.svc.Load(ctx, sid)
 	if err != nil {
 		return nil, err
@@ -1201,48 +1204,30 @@ func (in *instance) submitCaptures(ctx context.Context, sid, businessDay string,
 	for i, batch := range captureBatches(out) {
 		// 同一轮的同一批重投递时沿用 ID，由业务日内的幂等检查拒绝内容漂移。
 		captureID := fmt.Sprintf("cap_%s_%d_%d", sid, turn, i)
-		if businessDay != "" {
-			segments := make([]xinlifixture.CaptureSegment, len(batch))
-			for i, g := range batch {
-				segments[i] = xinlifixture.CaptureSegment{Speaker: "wearer", Text: g.GetText(), SpeakerKey: g.GetSpeakerKey(), TimeZone: g.GetTimeZone()}
-				if g.GetSpeaker() == v1.Speaker_SPEAKER_OTHER {
-					segments[i].Speaker = "other"
-				}
-				if g.GetSpokenAt() != nil {
-					segments[i].SpokenAt = g.GetSpokenAt().AsTime().Format(time.RFC3339Nano)
-				}
+		segments := make([]xinlifixture.CaptureSegment, len(batch))
+		for i, g := range batch {
+			segments[i] = xinlifixture.CaptureSegment{Speaker: "wearer", Text: g.GetText(), SpeakerKey: g.GetSpeakerKey(), TimeZone: g.GetTimeZone()}
+			if g.GetSpeaker() == v1.Speaker_SPEAKER_OTHER {
+				segments[i].Speaker = "other"
 			}
-			batchRefs, err := in.xinli.AppendCaptures(ctx, st.Created.GetBusinessLine(), st.Created.GetEndUser(), businessDay, captureID, segments)
-			if err != nil {
-				return nil, err
+			if g.GetSpokenAt() != nil {
+				segments[i].SpokenAt = g.GetSpokenAt().AsTime().Format(time.RFC3339Nano)
 			}
-			if len(batchRefs) != len(batch) {
-				return nil, fmt.Errorf("capture batch returned %d references for %d segments", len(batchRefs), len(batch))
-			}
-			refs = append(refs, batchRefs...)
-			continue
 		}
-		if _, err := in.svc.SubmitCaptures(ctx, sid, session.StreamTranscript, captureID, batch); err != nil {
-			return nil, err
-		}
-		// 只有内置路径的引用来自 Event；按 capture_id 匹配，不能把其他事件的序号当作批次。
-		events, err := eventlog.ReadAll(ctx, in.svc.Store.Log, sid, 0)
+		batchRefs, err := in.xinli.AppendCaptures(ctx, st.Created.GetBusinessLine(), st.Created.GetEndUser(), businessDay, captureID, segments)
 		if err != nil {
 			return nil, err
 		}
-		for _, e := range events {
-			if e.GetCaptureAppended().GetCaptureId() == captureID {
-				for i := range batch {
-					refs = append(refs, fmt.Sprintf("%d.%d", e.GetSeq(), i))
-				}
-			}
+		if len(batchRefs) != len(batch) {
+			return nil, fmt.Errorf("capture batch returned %d references for %d segments", len(batchRefs), len(batch))
 		}
+		refs = append(refs, batchRefs...)
 	}
 	return refs, nil
 }
 
 // captureBatches 把旁听按说话时间分批，与真实的 HostApp 一样约每分钟一批（一批至多 maxBatch 段；没有时间的只按段数），
-// 并把每批中的他人按第一次出现的顺序重新编号为 other-1、other-2……：speaker_key 只在一批之内有意义（captures.md §3），
+// 并把每批中的他人按第一次出现的顺序重新编号为 other-1、other-2……：speaker_key 只在一批之内有意义，
 // 用例中全天不变的 key 会掩盖跨批无法比较的问题（docs/review/2026-10-25-xinli-workday.md §8.1）。
 func captureBatches(segs []*v1.CaptureSegment) [][]*v1.CaptureSegment {
 	const maxBatch = 100

@@ -7,7 +7,11 @@ import (
 )
 
 func attestedEvents() []*v1.Event {
-	es := ackEvents(nil, []*v1.CaptureAck{nil})
+	es := []*v1.Event{created(), requested("r1"), attempt("r1", 1),
+		{Payload: &v1.Event_AssistantMessage{AssistantMessage: &v1.AssistantMessage{RunId: "r1", Attempt: 1, ToolCalls: []*v1.ToolCall{{CallId: "page0", Capability: "mcp_xinli__captures"}}}}},
+		started("r1", 1, "page0"),
+		{Payload: &v1.Event_ToolResult{ToolResult: &v1.ToolResult{RunId: "r1", Attempt: 1, CallId: "page0"}}},
+	}
 	r := es[len(es)-1].GetToolResult()
 	r.Attested = true
 	r.Content = []*v1.ContentBlock{{Kind: &v1.ContentBlock_Capture{Capture: &v1.CaptureSegment{Ref: "57.0", Speaker: v1.Speaker_SPEAKER_WEARER, Text: "原话"}}}}
@@ -19,17 +23,16 @@ func TestAttestedApply(t *testing.T) {
 		name   string
 		change func([]*v1.Event)
 	}{
-		{"external", func(es []*v1.Event) { es[4] = routed("r1", 1, "ack0", "phone"); es[5].GetToolResult().Attempt = 0 }},
-		{"node", func(es []*v1.Event) { es[4] = routed("r1", 1, "ack0", "phone") }},
+		{"external", func(es []*v1.Event) { es[4] = routed("r1", 1, "page0", "phone"); es[5].GetToolResult().Attempt = 0 }},
+		{"node", func(es []*v1.Event) { es[4] = routed("r1", 1, "page0", "phone") }},
 		{"non MCP", func(es []*v1.Event) { es[3].GetAssistantMessage().ToolCalls[0].Capability = "echo" }},
 		{"malformed MCP", func(es []*v1.Event) { es[3].GetAssistantMessage().ToolCalls[0].Capability = "mcp_xinli" }},
 		{"error", func(es []*v1.Event) { es[5].GetToolResult().IsError = true }},
-		{"read", func(es []*v1.Event) { es[5].GetToolResult().CaptureRead = ackPage("0", "57.0", "57.1") }},
 		{"missing marker", func(es []*v1.Event) { es[5].GetToolResult().Attested = false }},
 		{"bad ref", func(es []*v1.Event) { es[5].GetToolResult().Content[0].GetCapture().Ref = "#57.0" }},
 		{"missing ref", func(es []*v1.Event) { es[5].GetToolResult().Content[0].GetCapture().Ref = "" }},
 		{"builtin ref", func(es []*v1.Event) {
-			es[3].GetAssistantMessage().ToolCalls[0].Capability = CapturesCapability
+			es[3].GetAssistantMessage().ToolCalls[0].Capability = "captures"
 			es[5].GetToolResult().Attested = false
 		}},
 	} {
@@ -44,10 +47,7 @@ func TestAttestedApply(t *testing.T) {
 	if _, err := Reduce(build(attestedEvents()...)); err != nil {
 		t.Fatal(err)
 	}
-	if err := CheckCapture(&v1.CaptureAppended{CaptureId: "c", Stream: StreamTranscript, Segments: []*v1.CaptureSegment{{Speaker: v1.Speaker_SPEAKER_WEARER, Text: "原话", Ref: "57.0"}}}); err == nil {
-		t.Fatal("appended ref accepted")
-	}
-	if ProjectionVersion <= 16 {
+	if ProjectionVersion <= 18 {
 		t.Fatal("old snapshots remain valid")
 	}
 }
@@ -71,5 +71,20 @@ func TestAttestedPieces(t *testing.T) {
 		if other && (pieces[1].From != FromOther || pieces[1].Text != "他人一句\n他人二句" || pieces[1].Result != r) {
 			t.Fatal("other speech not merged")
 		}
+	}
+}
+
+func TestRetiredCaptureEventsIgnored(t *testing.T) {
+	es := attestedEvents()
+	result := es[5].GetToolResult()
+	result.CaptureRead = &v1.CaptureRead{Stream: "retired", After: "invalid"}
+	result.CaptureAck = &v1.CaptureAck{Stream: "retired"}
+	es = append(es, &v1.Event{Payload: &v1.Event_CaptureAppended{CaptureAppended: &v1.CaptureAppended{}}})
+	st, err := Reduce(build(es...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Pieces()) != 1 {
+		t.Fatal("retired event changed content provenance")
 	}
 }

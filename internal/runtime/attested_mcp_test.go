@@ -53,7 +53,7 @@ func TestMCPPageWrittenByWorker(t *testing.T) {
 				t.Fatal(err)
 			}
 			gw := model.NewGateway()
-			gw.Register("test", ackCallOnce{tool: "mcp_ack__save", args: `{}`})
+			gw.Register("test", toolCallOnce{tool: "mcp_ack__save", args: `{}`})
 			core := app.NewCore(app.Memory(clk), app.Options{Clock: clk, IDs: ids.Sequential, Agents: agents, Model: gw, MCP: connector})
 			st := &session.State{SessionID: "s"}
 			if err := core.Store.Commit(ctx, st,
@@ -105,4 +105,16 @@ func TestMCPPageWrittenByWorker(t *testing.T) {
 			}
 		})
 	}
+}
+
+// toolCallOnce 先调用一次工具，看到工具结果后结束 Run。
+type toolCallOnce struct{ tool, args string }
+
+func (m toolCallOnce) Generate(_ context.Context, req *model.Request, _ func(model.Delta)) (*model.Response, error) {
+	for _, msg := range req.Messages {
+		if msg.Role == model.RoleTool {
+			return &model.Response{Content: model.TextBlocks("好")}, nil
+		}
+	}
+	return &model.Response{ToolCalls: []*v1.ToolCall{{CallId: "c", Capability: m.tool, ArgumentsJson: m.args}}}, nil
 }

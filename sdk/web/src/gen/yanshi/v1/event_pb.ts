@@ -191,6 +191,8 @@ export type Event = Message<"yanshi.v1.Event"> & {
     case: "backgroundCancelled";
   } | {
     /**
+     * 已退役：ADR-0050；只为解码旧日志保留，不再写入。
+     *
      * @generated from field: yanshi.v1.CaptureAppended capture_appended = 33;
      */
     value: CaptureAppended;
@@ -326,7 +328,7 @@ export type ContentBlock = Message<"yanshi.v1.ContentBlock"> & {
     case: "backgroundResult";
   } | {
     /**
-     * capture 只出现在 captures 工具的结果中（由平台从日志读出写入，docs/design/captures.md §5）：说话人是结构化字段，
+     * capture 只出现在 attested 结果中（由平台渲染写入，docs/design/captures.md §12）：说话人是结构化字段，
      * Memory 写入闸门与注入判断据此区分佩戴者与他人的话，不解析给模型看的文本。
      *
      * @generated from field: yanshi.v1.CaptureSegment capture = 7;
@@ -1399,15 +1401,14 @@ export type ToolResult = Message<"yanshi.v1.ToolResult"> & {
   backgrounded?: Backgrounded | undefined;
 
   /**
-   * captures 读到的位置（ADR-0039）：只由 Worker 写入 captures 的结果，模型看不到；本页没有读到任何旁听时为空。
-   * Run 完成时提交为该流已读到的位置，after = "new" 由此接着读，不解析给模型看的文字。
+   * 已退役：ADR-0050；只为解码旧日志保留，不再写入。
    *
    * @generated from field: yanshi.v1.CaptureRead capture_read = 10;
    */
   captureRead?: CaptureRead | undefined;
 
   /**
-   * 业务线的交付回执（ADR-0049）：只由 Worker 从同业务线、声明了 acks 的 MCP 结果写入，模型看不到。
+   * 已退役：ADR-0050；只为解码旧日志保留，不再写入。
    *
    * @generated from field: yanshi.v1.CaptureAck capture_ack = 11;
    */
@@ -1429,7 +1430,7 @@ export const ToolResultSchema: GenMessage<ToolResult> = /*@__PURE__*/
   messageDesc(file_yanshi_v1_event, 30);
 
 /**
- * CaptureRead 是 captures 一页读到的位置（docs/design/m5-inputs-triggers-loops.md §5）。
+ * 已退役：ADR-0050；只为解码旧日志保留，不再写入。
  *
  * @generated from message yanshi.v1.CaptureRead
  */
@@ -1485,7 +1486,7 @@ export const CaptureReadSchema: GenMessage<CaptureRead> = /*@__PURE__*/
   messageDesc(file_yanshi_v1_event, 31);
 
 /**
- * CaptureAck 声明业务线已保存一个流上闭区间 [from, through] 的整理结果；两个端点都是不带 "#" 的引用编号。
+ * 已退役：ADR-0050；只为解码旧日志保留，不再写入。
  *
  * @generated from message yanshi.v1.CaptureAck
  */
@@ -1983,14 +1984,13 @@ export const CallTranscriptSchema: GenMessage<CallTranscript> = /*@__PURE__*/
   messageDesc(file_yanshi_v1_event, 46);
 
 /**
- * CaptureAppended 是 HostApp 提交的一批旁听转写（docs/design/captures.md，ADR-0036）：EndUser 与他人的日常对话，
- * 不是对 Agent 说的话。它不开启 Run，也不进入对话上下文：Run 经 captures 工具按序号读取。写入前逐段经过内容安全检查。
+ * 已退役：ADR-0050；只为解码旧日志保留，不再写入。
  *
  * @generated from message yanshi.v1.CaptureAppended
  */
 export type CaptureAppended = Message<"yanshi.v1.CaptureAppended"> & {
   /**
-   * HostApp 生成，在 Session 内唯一；重试时不变，按它去重（session.MaxRecentCaptures）。
+   * HostApp 生成，在 Session 内唯一；重试时不变，按它去重。
    *
    * @generated from field: string capture_id = 1;
    */
@@ -2002,7 +2002,7 @@ export type CaptureAppended = Message<"yanshi.v1.CaptureAppended"> & {
   segments: CaptureSegment[];
 
   /**
-   * 流名（ADR-0039），必填：流的种类由平台登记（session.KnownStream），AgentDef 声明接收哪些流。旁听转写是 "transcript"。
+   * 已退役的流名，只为解码旧日志保留。
    *
    * @generated from field: string stream = 3;
    */
@@ -2064,7 +2064,7 @@ export type CaptureSegment = Message<"yanshi.v1.CaptureSegment"> & {
   timeZone: string;
 
   /**
-   * attested 结果中业务线命名空间内的引用；CaptureAppended 中必须为空。
+   * attested 结果中业务线命名空间内的引用。
    *
    * @generated from field: string ref = 7;
    */

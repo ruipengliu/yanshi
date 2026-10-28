@@ -12,7 +12,6 @@ import (
 	"yanshi/internal/eventlog"
 	"yanshi/internal/model"
 	"yanshi/internal/service"
-	"yanshi/internal/session"
 )
 
 func TestCaptureBusinessDay(t *testing.T) {
@@ -37,7 +36,6 @@ func TestCaptureSubmissionPathsAndReferences(t *testing.T) {
 	defer cancel()
 	agents, err := agentdef.NewRegistry(
 		&agentdef.Def{Name: "xinli-day", Version: "2", Model: "script/any", Capabilities: []string{"mcp:xinli/captures", "mcp:xinli/file_changes"}},
-		&agentdef.Def{Name: "builtin", Version: "1", Model: "script/any", Capabilities: []string{"captures"}, Streams: []agentdef.Stream{{Name: session.StreamTranscript}}},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -129,18 +127,6 @@ func TestCaptureSubmissionPathsAndReferences(t *testing.T) {
 	got = rangeTopics(&xinlifixture.Exchange{Session: nextSID, From: "#" + refs[0], To: "#" + refs[1]}, topics)
 	if !reflect.DeepEqual(got, []string{"one", "two"}) {
 		t.Fatalf("rebound topic mapping = %v", got)
-	}
-	builtin, err := in.svc.Create(ctx, service.CreateRequest{BusinessLine: BusinessLine, EndUser: "builtin", Agent: "builtin"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	kernelRefs, err := in.submitCaptures(ctx, builtin, "", 1, segs)
-	if err != nil || !reflect.DeepEqual(kernelRefs, []string{"2.0", "3.0"}) {
-		t.Fatalf("builtin references = %v, %v", kernelRefs, err)
-	}
-	kernelRetry, err := in.submitCaptures(ctx, builtin, "", 1, segs)
-	if err != nil || !reflect.DeepEqual(kernelRetry, kernelRefs) {
-		t.Fatalf("builtin retry references = %v, %v", kernelRetry, err)
 	}
 	// 编排预览已经走完第一时段，但只有模型的真实 MCP 读页才能授权推进处理进度。
 	from, to, err = in.nextSpan(ctx, nextSID, true)

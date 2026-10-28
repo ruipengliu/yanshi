@@ -36,19 +36,14 @@ type Invocation struct {
 	// BusinessLine 与 EndUser 是 Session 的所属方，供按用户隔离数据的能力使用（如 Memory）。
 	BusinessLine string
 	EndUser      string
-	// State 与 Agent 是发起调用时 Worker 的投影与 AgentDef，只读；进程内的内置能力（如 captures 接着读的位置与时段间隔）
-	// 用它们，路由调用不带。可能为 nil（测试直接调用时）。
+	// State 与 Agent 是调用时的只读投影与 AgentDef，供可信页预算和引用上界使用；测试可为空。
 	State *session.State
 	Agent *agentdef.Def
 }
 
-// Result 是一次进程内调用的完整结果：Content 交给模型；Read 是平台记录的 captures 读取位置（ToolResult.capture_read，
-// ADR-0039），模型看不到。
+// Result 是一次进程内调用的完整结果，可信页由平台审核和渲染。
 type Result struct {
 	Content []*v1.ContentBlock
-	Read    *v1.CaptureRead
-	// Ack 是经登记资格筛选的 MCP 回执元数据，Worker 校验后写入日志，不交给模型。
-	Ack json.RawMessage
 	// Page 是经同业务线登记筛选的结构化页，Worker 校验、审核并渲染。
 	Page json.RawMessage
 }

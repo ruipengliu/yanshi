@@ -72,7 +72,7 @@ func TestAttestedWorker(t *testing.T) {
 				t.Fatal(err)
 			}
 			gw := model.NewGateway()
-			gw.Register("test", ackCallOnce{tool: "mcp_pages__read", args: `{}`})
+			gw.Register("test", toolCallOnce{tool: "mcp_pages__read", args: `{}`})
 			core := app.NewCore(app.Memory(clk), app.Options{Clock: clk, IDs: ids.Sequential, Agents: defs, Model: gw, MCP: attestedSource{}, Moderator: mod})
 			st := &session.State{SessionID: "s"}
 			if err := core.Store.Commit(ctx, st, &v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u", Agent: &v1.AgentRef{Name: "test", Version: "1"}}}}, &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r", Input: model.TextBlocks("整理")}}}); err != nil {

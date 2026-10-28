@@ -15,7 +15,7 @@ import (
 
 // ProjectionVersion 是投影语义的版本。改动 Apply 或 State 的字段时必须递增：旧快照随之作废，
 // 加载退回完整回放，因此快照永远不会与当前代码的投影结果不一致。
-const ProjectionVersion = 17
+const ProjectionVersion = 19
 
 // Snapshots 存放每个 Session 最新的投影快照。快照只是加速加载的缓存，删除或丢失都不影响正确性。
 type Snapshots interface {
@@ -52,8 +52,7 @@ func (s *State) Snapshot() *v1.SessionSnapshot {
 			Takeovers: int32(r.Takeovers), StalledTakeovers: int32(r.StalledTakeovers), Turns: int32(r.Turns),
 			Recall: r.Recall, Recalled: r.Recalled, SuspendReason: r.SuspendReason, SuspendedUntil: ts(r.SuspendedUntil),
 			Compactions: int32(r.Compactions), OutputTokens: r.OutputTokens, Resume: r.Resume, Decisions: r.Decisions,
-			FromBackground: r.FromBackground, CaptureReads: sortedReads(r.CaptureReads),
-			CapturePages: r.CapturePages, CaptureAcks: r.CaptureAcks,
+			FromBackground: r.FromBackground,
 		}
 		for _, c := range r.Calls {
 			cs := &v1.CallSnapshot{Call: c.Call, StartedAttempts: c.StartedAttempts, NodeId: c.NodeID, Deadline: ts(c.Deadline), Done: c.Done,
@@ -87,9 +86,6 @@ func (s *State) Snapshot() *v1.SessionSnapshot {
 	if c := s.ActiveCall; c != nil {
 		snap.ActiveCall = &v1.ActiveCallSnapshot{CallId: c.ID, DeviceId: c.DeviceID, StartedAt: ts(c.StartedAt)}
 	}
-	if c := s.Captures; c.Count > 0 || len(c.Read) > 0 {
-		snap.Captures = &v1.CaptureSnapshot{Ids: c.IDs, Count: c.Count, LastSeq: c.LastSeq, LastAt: ts(c.LastAt), Read: sortedReads(c.Read)}
-	}
 	return snap
 }
 
@@ -121,8 +117,7 @@ func FromSnapshot(snap *v1.SessionSnapshot) (*State, error) {
 			Turns: int(rs.GetTurns()), Recall: rs.GetRecall(), Recalled: rs.GetRecalled(),
 			SuspendReason: rs.GetSuspendReason(), SuspendedUntil: fromTS(rs.GetSuspendedUntil()),
 			Compactions: int(rs.GetCompactions()), OutputTokens: rs.GetOutputTokens(), Resume: rs.GetResume(),
-			Decisions: rs.GetDecisions(), FromBackground: rs.GetFromBackground(), CaptureReads: readMap(rs.GetCaptureReads()),
-			CapturePages: slices.Clone(rs.GetCapturePages()), CaptureAcks: slices.Clone(rs.GetCaptureAcks()),
+			Decisions: rs.GetDecisions(), FromBackground: rs.GetFromBackground(),
 		}
 		for _, cs := range rs.GetCalls() {
 			c := &Call{Call: cs.GetCall(), StartedAttempts: cs.GetStartedAttempts(), NodeID: cs.GetNodeId(), Deadline: fromTS(cs.GetDeadline()), Done: cs.GetDone(),
@@ -142,11 +137,6 @@ func FromSnapshot(snap *v1.SessionSnapshot) (*State, error) {
 	}
 	if c := snap.GetActiveCall(); c != nil {
 		s.ActiveCall = &ActiveCall{ID: c.GetCallId(), DeviceID: c.GetDeviceId(), StartedAt: fromTS(c.GetStartedAt())}
-	}
-	if c := snap.GetCaptures(); c != nil {
-		// 复制：Apply 会向窗口追加，不能写进快照消息的底层数组。
-		s.Captures = CaptureLog{IDs: slices.Clone(c.GetIds()), Count: c.GetCount(), LastSeq: c.GetLastSeq(), LastAt: fromTS(c.GetLastAt()),
-			Read: readMap(c.GetRead())}
 	}
 	return s, nil
 }

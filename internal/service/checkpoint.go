@@ -15,14 +15,14 @@ import (
 // 新的入口复用它们，而不是再写一遍。
 
 // rejectPlatformOnly 拒绝客户端提交中只能由平台写入的内容块：后台调用的了结（ADR-0035）会被当作设备的结果送给模型；
-// 旁听片段（ADR-0036）只出现在 captures 的结果中，写进输入会被当作旁听转写、按说话人决定信任。
+// 旁听片段（ADR-0036）只出现在 attested 的结果中，写进输入会被当作旁听转写、按说话人决定信任。
 func rejectPlatformOnly(input []*v1.ContentBlock) error {
 	for _, b := range input {
 		if b.GetBackgroundResult() != nil {
 			return fmt.Errorf("%w: background_result is written by the platform", ErrInvalid)
 		}
 		if b.GetCapture() != nil {
-			return fmt.Errorf("%w: capture segments are submitted as captures, not input", ErrInvalid)
+			return fmt.Errorf("%w: capture segments are platform-only attested results", ErrInvalid)
 		}
 	}
 	return nil

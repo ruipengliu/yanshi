@@ -1,17 +1,12 @@
-// 冻结内核分页、说明与 schema：
-// go test ./internal/eval -run 'TestPersonaCapture' -update-capture-golden
-// 第 5 步删除内核路径时，一并删除更新标志与标注的生成专用函数，保留 golden。
-// 引用位数边界原本就不相等：冻结 Persona 页，并另存内核页作为差异依据。
+// 与 P1-⑤a 冻结的分页、说明和 schema 比较；golden 不再由内核生成。
 package eval
 
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"reflect"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -20,21 +15,11 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v1 "yanshi/gen/yanshi/v1"
-	"yanshi/internal/agentdef"
-	"yanshi/internal/capability"
 	"yanshi/internal/capture"
-	"yanshi/internal/clock"
 	"yanshi/internal/eval/xinlifixture"
-	"yanshi/internal/eventlog"
-	"yanshi/internal/eventlog/memlog"
-	"yanshi/internal/ids"
-	"yanshi/internal/lifecycle"
 	"yanshi/internal/mcpcap"
 	"yanshi/internal/model"
-	"yanshi/internal/moderation"
-	"yanshi/internal/service"
 	"yanshi/internal/session"
-	"yanshi/internal/workqueue/memqueue"
 )
 
 type captureParityEnv struct {
@@ -43,12 +28,7 @@ type captureParityEnv struct {
 	server  mcpcap.Server
 	fixture *xinlifixture.Client
 	conn    *mcp.ClientSession
-	svc     *service.Service
-	log     *memlog.Log
-	clk     *clock.Fake
-	agent   *agentdef.Def
 	sid     string
-	refs    map[string]string
 	batches int
 }
 
@@ -61,7 +41,7 @@ func newCaptureParityEnv(t *testing.T) *captureParityEnv {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = f.Close() })
-	if !servers[0].AttestsSpeakers || !servers[0].CiteCaptures || servers[0].Acks {
+	if !servers[0].AttestsSpeakers || !servers[0].CiteCaptures {
 		t.Fatal("xinli registration lost trust flags")
 	}
 	conn, err := mcp.NewClient(&mcp.Implementation{Name: "capture-parity", Version: "1"}, nil).Connect(ctx, &mcp.StreamableClientTransport{Endpoint: servers[0].URL}, nil)
@@ -69,34 +49,11 @@ func newCaptureParityEnv(t *testing.T) *captureParityEnv {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	e := &captureParityEnv{golden: golden, now: time.Now(), server: servers[0], fixture: f, conn: conn, sid: "capture-parity-session", refs: map[string]string{}}
-	if *updateCaptureGolden {
-		e.initKernel(t)
-	}
+	e := &captureParityEnv{golden: golden, now: time.Now(), server: servers[0], fixture: f, conn: conn, sid: "capture-parity-session"}
 	if err := f.BindDay(ctx, BusinessLine, "u", "2026-10-27", e.sid); err != nil {
 		t.Fatal(err)
 	}
 	return e
-}
-
-// 仅生成时装配内核；第 5 步连同更新标志删除。
-func (e *captureParityEnv) initKernel(t *testing.T) {
-	t.Helper()
-	ctx := context.Background()
-	e.clk = clock.NewFake(e.now)
-	def := &agentdef.Def{Name: "day", Version: "1", Model: "echo/any", Streams: []agentdef.Stream{{Name: session.StreamTranscript, ExchangeGap: 5 * time.Minute}}}
-	agents, err := agentdef.NewRegistry(def)
-	if err != nil {
-		t.Fatal(err)
-	}
-	log, q := memlog.New(), memqueue.New(e.clk)
-	st := &session.Store{Log: log, Waking: log.Waking(q), IDs: ids.Sequential("capture-parity"), Clock: e.clk}
-	svc := &service.Service{Store: st, Agents: agents, Index: lifecycle.NewMemIndex(), Moderator: moderation.Mock{}}
-	sid, err := svc.Create(ctx, service.CreateRequest{BusinessLine: BusinessLine, EndUser: "u", Agent: "day"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	e.svc, e.log, e.agent, e.sid = svc, log, def, sid
 }
 
 func (e *captureParityEnv) append(t *testing.T, segments []xinlifixture.CaptureSegment) {
@@ -104,50 +61,10 @@ func (e *captureParityEnv) append(t *testing.T, segments []xinlifixture.CaptureS
 	ctx := context.Background()
 	e.batches++
 	id := fmt.Sprintf("batch-%d", e.batches)
-	refs, err := e.fixture.AppendCaptures(ctx, BusinessLine, "u", "2026-10-27", id, segments)
+	_, err := e.fixture.AppendCaptures(ctx, BusinessLine, "u", "2026-10-27", id, segments)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if *updateCaptureGolden {
-		e.appendKernel(t, id, segments, refs)
-	}
-}
-
-// 仅生成时写入内核日志并建立引用映射；第 5 步连同更新标志删除。
-func (e *captureParityEnv) appendKernel(t *testing.T, id string, segments []xinlifixture.CaptureSegment, refs []string) {
-	t.Helper()
-	ctx := context.Background()
-	var gs []*v1.CaptureSegment
-	for _, s := range segments {
-		g := &v1.CaptureSegment{Speaker: v1.Speaker_SPEAKER_WEARER, SpeakerKey: s.SpeakerKey, Text: s.Text, TimeZone: s.TimeZone}
-		if s.Speaker == "other" {
-			g.Speaker = v1.Speaker_SPEAKER_OTHER
-		}
-		if s.SpokenAt != "" {
-			at, err := time.Parse(time.RFC3339Nano, s.SpokenAt)
-			if err != nil {
-				t.Fatal(err)
-			}
-			g.SpokenAt = timestamppb.New(at)
-		}
-		gs = append(gs, g)
-	}
-	if _, err := e.svc.SubmitCaptures(ctx, e.sid, session.StreamTranscript, id, gs); err != nil {
-		t.Fatal(err)
-	}
-	events, err := eventlog.ReadAll(ctx, e.log, e.sid, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, event := range events {
-		if event.GetCaptureAppended().GetCaptureId() == id {
-			for i, r := range refs {
-				e.refs[fmt.Sprintf("%d.%d", event.GetSeq(), i)] = r
-			}
-			return
-		}
-	}
-	t.Fatal("submitted batch absent from log")
 }
 
 func (e *captureParityEnv) page(t *testing.T, after string, all bool, limit int, o capture.PageOptions) (capture.StructuredPage, json.RawMessage) {
@@ -178,18 +95,6 @@ func (e *captureParityEnv) page(t *testing.T, after string, all bool, limit int,
 	return p, raw
 }
 
-var captureParityRef = regexp.MustCompile(`[0-9]+\.[0-9]+`)
-
-// 仅生成时在合成文本中映射编号，正文不含 N.M；第 5 步连同 captureParityRef 删除。
-// 普通用例两边编号位数相同，引用位数边界单独验证允许的差异。
-func (e *captureParityEnv) mapRefs(s string) string {
-	return captureParityRef.ReplaceAllStringFunc(s, func(r string) string {
-		if mapped, ok := e.refs[r]; ok {
-			return mapped
-		}
-		return r
-	})
-}
 func captureParityText(blocks []*v1.ContentBlock) string {
 	return model.Text(model.ExpandCaptures(blocks))
 }
@@ -243,9 +148,6 @@ func TestPersonaCapturePageParity(t *testing.T) {
 func TestPersonaCapturesSpecParity(t *testing.T) {
 	e := newCaptureParityEnv(t)
 	want := e.golden.Spec
-	if *updateCaptureGolden {
-		want = e.kernelSpec()
-	}
 	for tool, err := range e.conn.Tools(context.Background(), nil) {
 		if err != nil {
 			t.Fatal(err)
@@ -268,7 +170,6 @@ func TestPersonaCapturesSpecParity(t *testing.T) {
 		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint || !tool.Annotations.IdempotentHint {
 			t.Fatal("captures annotations differ")
 		}
-		e.golden.Spec = want
 		return
 	}
 	t.Fatal("captures missing")
@@ -358,49 +259,14 @@ func TestPersonaCaptureReferenceWidthBoundary(t *testing.T) {
 	if got.Count != 2 {
 		t.Fatalf("reference width page: %d", got.Count)
 	}
-	if *updateCaptureGolden {
-		e.golden.WidthKernel = e.kernelWidthPage(t, opts, got)
+	if got.Text == e.golden.WidthKernel.Text {
+		t.Fatal("reference-width difference disappeared")
 	}
 	e.golden.checkPages(t, []captureGoldenPage{got})
 }
 
-// 引用位数边界本就不同；仅生成时验证并冻结内核一段、Persona 两段的差异。
-// 第 5 步连同更新标志删除。
-func (e *captureParityEnv) kernelWidthPage(t *testing.T, opts capture.PageOptions, got captureGoldenPage) captureGoldenPage {
-	t.Helper()
-	var last capture.Ref
-	for kernel, persona := range e.refs {
-		if persona == "8.0" {
-			var ok bool
-			last, ok = capture.ParseRef(kernel)
-			if !ok {
-				t.Fatal("bad kernel ref")
-			}
-		}
-	}
-	if last.Seq != 9 {
-		t.Fatalf("fixture sequence changed: %v", last)
-	}
-	kernel, next, err := capture.Page(context.Background(), e.log, e.sid, capture.Cursor{Last: last}, capture.Options{Limit: 200, MaxChars: opts.MaxChars, Gap: 5 * time.Minute, All: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	n := 0
-	for _, b := range kernel {
-		if b.GetCapture() != nil {
-			n++
-		}
-	}
-	if n != 1 || got.Text == e.mapRefs(captureParityText(kernel)) {
-		t.Fatal("expected width-dependent page boundary")
-	}
-	return captureGoldenPage{Text: e.mapRefs(captureParityText(kernel)), Next: e.mapRefs(next.String()), Kind: "page", Count: n}
-}
-
-var updateCaptureGolden = flag.Bool("update-capture-golden", false, "从当前内核生成旁听分页 golden；第 5 步删除此标志")
-
 const captureGoldenPath = "testdata/capture_pages.golden.json"
-const captureGoldenCommand = "go test ./internal/eval -run 'TestPersonaCapture' -update-capture-golden"
+const captureGoldenCommand = "从 P1-⑤a 的已核对版本恢复 testdata/capture_pages.golden.json"
 
 type captureGoldenPage struct {
 	Text  string `json:"text"`
@@ -422,7 +288,7 @@ type captureGolden struct {
 	WidthKernel captureGoldenPage              `json:"width_kernel"`
 }
 
-// 测试不并行；整个进程成功后才写文件，避免中途失败留下半份基准。
+// 测试不并行；只读取冻结基准，不提供更新入口。
 var loadedCaptureGolden *captureGolden
 
 func loadCaptureGolden(t *testing.T) *captureGolden {
@@ -432,14 +298,14 @@ func loadCaptureGolden(t *testing.T) *captureGolden {
 	}
 	data, err := os.ReadFile(captureGoldenPath)
 	if err != nil {
-		t.Fatalf("read capture golden: %v; 运行 %s", err, captureGoldenCommand)
+		t.Fatalf("read capture golden: %v; %s", err, captureGoldenCommand)
 	}
 	var g captureGolden
 	if err := json.Unmarshal(data, &g); err != nil {
 		t.Fatal(err)
 	}
-	if !*updateCaptureGolden && (g.Version != 1 || len(g.Pages) != 15 || g.WidthKernel.Count != 1 || g.Spec.Description == "" || len(g.Spec.Schema) == 0) {
-		t.Fatalf("capture golden 尚未生成或不完整；运行 %s", captureGoldenCommand)
+	if g.Version != 1 || len(g.Pages) != 15 || g.WidthKernel.Count != 1 || g.Spec.Description == "" || len(g.Spec.Schema) == 0 {
+		t.Fatalf("capture golden 尚未生成或不完整；%s", captureGoldenCommand)
 	}
 	if g.Pages == nil {
 		g.Pages = map[string][]captureGoldenPage{}
@@ -449,32 +315,11 @@ func loadCaptureGolden(t *testing.T) *captureGolden {
 	return &g
 }
 
-// 仅生成时写文件；第 5 步连同更新标志及 TestMain 中的调用删除。
-func writeCaptureGolden() error {
-	if !*updateCaptureGolden || loadedCaptureGolden == nil {
-		return nil
-	}
-	g := loadedCaptureGolden
-	// 完整命令应生成 12 个参数组合与三个边界；拒绝从占位生成不完整的基准。
-	if len(g.Pages) != 15 || g.Spec.Description == "" || len(g.Spec.Schema) == 0 || g.WidthKernel.Count != 1 {
-		return fmt.Errorf("capture golden 不完整；运行 %s", captureGoldenCommand)
-	}
-	data, err := json.MarshalIndent(g, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(captureGoldenPath, append(data, '\n'), 0644)
-}
-
 func (g *captureGolden) checkPages(t *testing.T, got []captureGoldenPage) {
 	t.Helper()
-	if *updateCaptureGolden {
-		g.Pages[t.Name()] = got
-		return
-	}
 	want, ok := g.Pages[t.Name()]
 	if !ok {
-		t.Fatalf("capture golden 缺少 %s；运行 %s", t.Name(), captureGoldenCommand)
+		t.Fatalf("capture golden 缺少 %s；%s", t.Name(), captureGoldenCommand)
 	}
 	if len(got) != len(want) {
 		t.Fatalf("page count: got %d, want %d", len(got), len(want))
@@ -492,7 +337,7 @@ func captureGoldenOptions(budget int) capture.PageOptions {
 
 func (e *captureParityEnv) collectPages(t *testing.T, all bool, limit int, opts capture.PageOptions, maxPages int) []captureGoldenPage {
 	t.Helper()
-	kernelAfter, personaAfter := "0", "0"
+	personaAfter := "0"
 	var pages []captureGoldenPage
 	for i := 0; i < maxPages; i++ {
 		wire, raw := e.page(t, personaAfter, all, limit, opts)
@@ -505,9 +350,6 @@ func (e *captureParityEnv) collectPages(t *testing.T, all bool, limit int, opts 
 			t.Fatal(err)
 		}
 		page := captureGoldenPage{Text: captureParityText(blocks), Next: next.String(), Kind: wire.Kind, Count: len(wire.Segments), Done: wire.Done}
-		if *updateCaptureGolden {
-			page.Text, page.Next, kernelAfter = e.compareKernelPage(t, kernelAfter, all, limit, opts, page)
-		}
 		pages = append(pages, page)
 		if wire.Kind != "page" || wire.Done {
 			return pages
@@ -519,43 +361,6 @@ func (e *captureParityEnv) collectPages(t *testing.T, all bool, limit int, opts 
 	}
 	t.Fatal("pages did not terminate")
 	return nil
-}
-
-// 仅生成时读取内核并逐字比较；返回映射后的内核文字与游标作为 golden 真值。
-// 第 5 步连同更新标志删除。
-func (e *captureParityEnv) compareKernelPage(t *testing.T, after string, all bool, limit int, opts capture.PageOptions, got captureGoldenPage) (string, string, string) {
-	t.Helper()
-	agent := *e.agent
-	agent.Context.MaxToolResult = opts.MaxToolResult
-	args, err := json.Marshal(map[string]any{"after": after, "all": all, "limit": limit})
-	if err != nil {
-		t.Fatal(err)
-	}
-	inv := capability.Invocation{SessionID: e.sid, Agent: &agent, Arguments: string(args)}
-	if capture.OptionsFor(inv) != opts {
-		t.Fatal("kernel page options differ")
-	}
-	result, err := capture.New(e.log, e.clk).InvokeResult(context.Background(), inv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	next := "0"
-	if result.Read != nil {
-		next = result.Read.GetAfter()
-	} else if got.Kind == "page" {
-		t.Fatal("missing kernel cursor")
-	}
-	text, mapped := e.mapRefs(captureParityText(result.Content)), e.mapRefs(next)
-	if got.Text != text || got.Next != mapped {
-		t.Fatalf("kernel page differs\ngot %s (%s)\nwant %s (%s)", got.Text, got.Next, text, mapped)
-	}
-	return text, mapped, next
-}
-
-// 仅生成时读取内置说明与 schema；第 5 步连同更新标志删除。
-func (e *captureParityEnv) kernelSpec() captureGoldenSpec {
-	spec := capture.New(e.log, e.clk).Spec()
-	return captureGoldenSpec{Description: spec.Description, Schema: spec.InputSchema}
 }
 
 // 相对当前时间的数据不写 golden，避免日期头、当地时刻与星期跨日期变化。
