@@ -125,7 +125,7 @@ Schedule {
   input: [ContentBlock],             // 到期时的输入文字；只允许 Text
   time_zone?: "Asia/Shanghai",       // IANA；省略时取 Session 的时区，Session 没有时区则必填
   at?: "2026-10-30T17:00",           // 一次性：当地时间
-  rrule?: "FREQ=WEEKLY;BYDAY=FR;BYHOUR=17;BYMINUTE=0",   // 周期：RRULE 子集（DAILY、WEEKLY、MONTHLY，BYDAY、BYHOUR、BYMINUTE、COUNT、UNTIL）
+  rrule?: "FREQ=WEEKLY;BYDAY=FR;BYHOUR=17;BYMINUTE=0",   // 周期：RRULE 子集（FREQ=DAILY|WEEKLY|MONTHLY，INTERVAL=1–52，BYDAY=MO…SU〔MONTHLY 可带 1–4 或 -1 序数〕，BYMONTHDAY=1–31 或 -1〔仅 MONTHLY〕，BYHOUR、BYMINUTE、COUNT、UNTIL）
   until?: 时间戳
 }
 ```
