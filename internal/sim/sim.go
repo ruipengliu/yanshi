@@ -154,6 +154,7 @@ type Stats struct {
 	// 擦除覆盖在途 Run、既有 Memory 保留与删除记录之后的迟到写入撤回。
 	Erasures, ErasuresInFlight, ErasureLateWithdrawn, ErasureKeptMemories int
 	AttestedResults, AttestedRedactions, AttestedErrors                   int
+	AttestedSpeakerRefs, AttestedSpeakerRefErrors                         int
 	// InvalidArgs 是模型给出不合法参数的调用（args.go）。
 	InvalidArgs int
 	// MemoryPrechecked 是注入的 Memory 预检查拒绝样例中已返回错误结果的调用（memprecheck.go）。

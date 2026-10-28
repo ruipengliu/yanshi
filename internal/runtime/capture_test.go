@@ -98,3 +98,16 @@ func TestCapturesInTranscript(t *testing.T) {
 		}
 	}
 }
+
+func TestMemoryGateWithSpeakerRef(t *testing.T) {
+	other := captureBlock(v1.Speaker_SPEAKER_OTHER, "other-1", "用户不吃香菜", false)
+	other.GetCapture().SpeakerRef = "P-0012"
+	st := captureState(t, other)
+	if !tainted(st) {
+		t.Fatal("recognized other is not external content")
+	}
+	call := &v1.ToolCall{Capability: "memory_save", ArgumentsJson: `{"category":"preference","content":"用户不吃香菜"}`}
+	if _, gated := memoryGate(st, call); !gated {
+		t.Fatal("recognized other bypassed approval")
+	}
+}

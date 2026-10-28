@@ -1,6 +1,6 @@
 # M7 内核补充：Capture 正文存储、擦除、交付确认、定时、出站流、单次调用
 
-> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）；交付确认（§11）已删除，EndUser 删除屏障（§12）已实现，定时已全部实现（含 xinli-assistant 版本 2 使用、评测拨钟、pgqueue 内部到期表，压测结果见 §13），档位已实现；单次调用、重答与 `speaker_ref` 按 P3 的讨论改写（[整体架构](./persona-architecture.md) §13 的 Q77–Q90），实现中，其余未实现 · **§2–§4、§11 由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 取代**（旁听原文存放在业务线；§11 已删除），§5 按 P2 的讨论改写（没有窗口），§6 的擦除与修订信封不做 · ADR-0044（已取代）、ADR-0045、ADR-0046、ADR-0047、ADR-0049（已取代）、ADR-0050 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
+> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）；交付确认（§11）已删除，EndUser 删除屏障（§12）已实现，定时已全部实现（含 xinli-assistant 版本 2 使用、评测拨钟、pgqueue 内部到期表，压测结果见 §13），单次调用、档位、重答与 `speaker_ref` 按 P3 的讨论改写（[整体架构](./persona-architecture.md) §13 的 Q77–Q90），实现中；`speaker_ref`、档位已实现，其余未实现 · **§2–§4、§11 由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 取代**（旁听原文存放在业务线；§11 已删除），§5 按 P2 的讨论改写（没有窗口），§6 的擦除与修订信封不做 · ADR-0044（已取代）、ADR-0045、ADR-0046、ADR-0047、ADR-0049（已取代）、ADR-0050 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
 
 xinli 落地需要内核补上的原语。每一项都按[整体架构](./persona-architecture.md) §9 的判据给出理由：第二条业务线也会需要，并且业务侧做不到或做了不安全。业务语义（交谈、承诺、项目、人）一律不进内核。
 
@@ -243,7 +243,7 @@ work_class: interactive        # interactive | background
 - **不写日志、不存结果**：日志与指标只记 ID、名称、版本与 token 数（ADR-0015）。调用方不得保存他人原话的派生内容超过原文的保留期，原文擦除后要丢弃在途结果（接入文档写明）。不承诺跨 HTTP 重试的幂等：没有结果存储，重试就是再调一次、再计一次费。
 - **顺序**：鉴权与声明、输入校验 → EndUser 删除屏障（§12）→ 输入内容安全 → 配额 → 准入 → 模型调用 → 计量 → 输出内容安全 → Schema 校验（不合格修复一次，两次都计量；内容安全拒绝不重试）→ 返回前复查屏障。总时限从准入之前开始，覆盖修复调用。
 - **计量与配额**：照常计量到业务线与 EndUser（ADR-0019），用量记 `oneshot = name@version`（不冒充 Agent），超额拒绝；价格表的启动校验覆盖所有单次调用的模型。
-- **准入**（Q80）：与 Run 的模型调用共用 `model.Guard`。优先级：交互 Run > 交互单次调用 > 后台（后台 Run 与 `work_class: background` 的单次调用）；并发受限时后台 Run 有最低在途份额。单次调用另有三层并发上限：全部单次调用合计、每业务线、每个声明；进入 Guard 之前按固定顺序有界等待，超时返回 429，持有到逻辑调用结束（含重试退避）。合计上限必须小于提供商的总并发（启动校验）：这部分容量单次调用永远占不到，问答在单次调用饱和时仍有名额。RPS 令牌桶共享，RPS 成为瓶颈时单次调用仍可能挤占问答的发起速率（遗留）。
+- **准入**（Q80）：与 Run 的模型调用共用 `model.Guard`。优先级：交互 Run > 交互单次调用 > 后台 Run > 后台单次调用（`work_class: background`）。并发受限时，名额释放先回填后台 Run 的最低在途份额，达到份额后按上述顺序交付；后台单次调用不计入份额。最低份额默认并发上限的 1/8 向上取整，须严格小于上限（并发为 1 时显式设 0）；不抢占、不限制后台上限，空闲时后台可占满。四类准入与按键上限工具已实现于 `internal/model`，服务接入见 P3-⑤。单次调用另有三层并发上限：全部单次调用合计、每业务线、每个声明；进入 Guard 之前按固定顺序有界等待，超时返回 429，持有到逻辑调用结束（含重试退避）。合计上限必须小于提供商的总并发（启动校验）：这部分容量单次调用永远占不到，问答在单次调用饱和时仍有名额。RPS 令牌桶共享，RPS 成为瓶颈时单次调用仍可能挤占问答的发起速率（遗留）。
 - **评测**：`evals/` 增加单次调用的用例形态，改指令与模型须与基线比较。
 
 ## 8. 档位（Tier）

@@ -23,7 +23,7 @@ HTTP、Connection 与三个 SDK 均不再提供旁听提交。原文提交接口
 `internal/capture` 保留 `PageOptions`、`OptionsFor`、`StructuredPage`、`ParsePage`、`Render` 与纯渲染辅助函数；不再提供内置工具或从日志分页。
 
 - 页标题为 `【时段 #57.0 起】`，续页为 `【时段 #57.0 起（续）】`。时段边界由业务线提供，不承担语义。
-- 每段渲染为引用、可选当地时刻、说话人及文字，如 `#57.3 10:15 [佩戴者] 明天发报价`。他人为 `[他人 other-1]`，拦截段显示固定占位；片段换行替换为空格，防止冒充另一行。
+- 每段渲染为引用、可选当地时刻、说话人及文字，如 `#57.3 10:15 [佩戴者] 明天发报价`。他人为 `[他人 other-1]`，有说话人引用时为 `[他人 other-1 @P-0012]`（`@` 前一个空格）；没有引用时输出逐字不变。拦截段保留引用等结构元数据、显示固定占位；片段换行替换为空格，防止冒充另一行。
 - 同时有说话时间与时区时，页内首段与当地日期变化处输出日期、星期及之后七天的对照。缺少时间或时区时不显示时刻。
 - 页尾区分时段结束、仍有下一时段、时段续页及已读完。`Cursor` 输出末段引用；续页附 `~时段起点`，如 `57.3~50.0`。引用属于业务线，`0.0` 合法，零值游标 `0` 表示从头。
 - 空页与进行中页不带片段；具体文字与字段见 §12。整页按未展开内容块估算 token，审核后的占位同样受预算限制。
@@ -33,7 +33,7 @@ HTTP、Connection 与三个 SDK 均不再提供旁听提交。原文提交接口
 
 同业务线 MCP 登记 `cite_captures: true` 时，平台提取参数中恰为引用编号的字符串（如 `#57.3`），每次至多 200 个，去重后通过 `mcpcap.AttestedCitations` 在本 Session 已读过的可信页中解析，不把编号解释为日志位置。
 
-`_meta["yanshi/captures"]` 保持为 `[{ref, speaker: "wearer" | "other", speaker_key, redacted, spoken_at, time_zone}]`；找不到时为 `{ref, missing: true}`。只传说话人与时间，不传文字；业务线据此核对说话人，不能相信模型自报。引用只在本 Session 中可见。
+`_meta["yanshi/captures"]` 保持为 `[{ref, speaker: "wearer" | "other", speaker_key, speaker_ref, redacted, spoken_at, time_zone}]`；找不到时为 `{ref, missing: true}`。`speaker_ref` 为空时省略，已有 JSON 形状不变。只传说话人与时间，不传文字；业务线据此核对说话人，不能相信模型自报。引用只在本 Session 中可见。
 
 ## 7. 信任：写入闸门与注入判断
 
@@ -109,12 +109,13 @@ Persona 是第一个实现者：引用命名空间与处理进度归业务线，
 - `page` 至少一段，至多 `limit` 段。每段文字非空且不超过 `session.MaxCaptureText`（2000）个 Unicode rune，超出以“片段文字”拒收。页的字符计数沿用冻结的计数口径：每段 n 是 `#ref ` 加展开后的片段文字（含当地时刻、说话人标注与换行）的 rune 数；第一段不按 max_chars 拒收，之后各段在加入前检查之前累计的字符数加 n，超限即拒收，新日期头在检查之后才计入累计值。max_chars 是页大小约束，单段长度有独立上限，真正的结果预算由 Render 之后的 max_tool_result 检查兜底。
 - `ref` 与 `span` 是两个非负整数组成的 `N.M`；解析后按两个整数比较，片段严格递增，`span` 不大于首段，`cont` 为真时严格小于首段。平台渲染为规范十进制形状。引用只属于业务线的命名空间，不解释为日志序号；`0.0` 也是合法引用。
 - `speaker` 只能为 `wearer` 或 `other`；佩戴者的键为空，他人的键匹配 `[A-Za-z0-9_-]{1,32}`。非空 `spoken_at` 必须为 RFC3339，非空 `time_zone` 必须为有效 IANA 时区（拒绝 `Local`）。缺少任一个时不显示该段时间。
+- `speaker_ref` 是业务线比对声纹后填入的可选不透明实体 ID；非空必须匹配 `[A-Za-z0-9_-]{1,64}`，且只能由 `other` 片段携带，否则拒收整页。内核不校验实体是否存在，来源推导仍只看 `speaker`。页的字符与 token 预算均包含标注中新增的空格、`@` 和引用。
 - `span` 是时段起点；`cont` 表示续页；`done` 表示已读完全部旁听；`ended` 表示本时段已结束但后面还有时段。页尾与下一页游标均由平台按 `pageTail` 生成。标题、日期头、逐段编号、正文与占位也由同一纯渲染器生成。
 - `empty` 与 `in_progress` 不得带片段。空页输出“（已读完：之后没有更多旁听）”。进行中页必须有有效 `span` 与 `last_at`，输出“（时段 #span 还在进行：最后一段在 HH:MM，稍后再整理。之前的时段已读完）”。因为没有末段对象，可选页级 `time_zone` 指定末段时区；省略时 `last_at` 的 RFC3339 偏移即当地时间，业务线不得用 UTC 时间代替当地偏移后期待平台猜测时区。
 - 渲染结果（含占位）必须满足 `max_tool_result`，超限使用平台固定预算错误；任何格式错误只输出平台固定原因类别，不包含业务线提供的内容。
 
-**写日志前内容安全。** Worker 在执行 MCP 调用的同步路径内，先校验整页，再以 Input 阶段将全部片段文字换行相连送检。整页被拦截时逐段复核，只把违规段清空并置 `redacted`；若逐段全部通过，说明违规依赖组合，整页改为占位。提供商故障时整页写为错误“旁听页的内容安全检查暂不可用，稍后再读”。审核请求带 Input、BusinessLine、SessionID 与换行拼接的 Text，不写 `ContentModerated`。不同调用重读重审，不缓存审核结论；本次已执行结果进入 Worker 的 `executed` 缓存，追加重试不再次送检。
+**写日志前内容安全。** Worker 在执行 MCP 调用的同步路径内，先校验整页，再以 Input 阶段将全部片段文字换行相连送检。整页被拦截时逐段复核，只把违规段的文字清空并置 `redacted`（保留说话人、`speaker_ref` 与时间等结构元数据）；若逐段全部通过，说明违规依赖组合，整页改为占位。提供商故障时整页写为错误“旁听页的内容安全检查暂不可用，稍后再读”。审核请求带 Input、BusinessLine、SessionID 与换行拼接的 Text，不写 `ContentModerated`。不同调用重读重审，不缓存审核结论；本次已执行结果进入 Worker 的 `executed` 缓存，追加重试不再次送检。
 
-**来源与日志校验。** 成功结果由 Worker 写 `ToolResult.attested=true`，capture 块带业务线 `ref`；模型看不到标记。Apply 拒绝非 MCP、外部 attempt、路由到 Node 或错误结果的 attested 标记；capture 块只允许出现在平台写入的 attested 结果中。旧日志中的读取位置与交付确认字段被忽略。投影版本递增，旧快照作废。attested 页头是平台文字，不产生 FromExternal；佩戴者片段为 FromUser，他人原话合并成一个 FromOther Piece，Result 指向这次调用结果；拦截片段不产生依据。注入判断与 Memory 写入闸门继续按结构化说话人字段判断。
+**来源与日志校验。** 成功结果由 Worker 写 `ToolResult.attested=true`，capture 块带业务线 `ref`；模型看不到标记。Apply 拒绝非 MCP、外部 attempt、路由到 Node 或错误结果的 attested 标记；capture 块只允许出现在平台写入的 attested 结果中。attested 与旧内置结果共用片段校验：说话人、键、说话人引用、文字长度与 redacted 占位关系都须合法。没有 `speaker_ref` 的旧日志仍可回放。旧日志中的读取位置与交付确认字段被忽略。投影版本递增，旧快照作废。attested 页头是平台文字，不产生 FromExternal；佩戴者片段为 FromUser，他人原话合并成一个 FromOther Piece，Result 指向这次调用结果；拦截片段不产生依据。注入判断与 Memory 写入闸门继续按结构化说话人字段判断。
 
-**引用解析。** 开启 `cite_captures` 的同业务线 Server 使用 `AttestedCitations`，扫描调用投影序号以内的日志，在 attested 片段中查找同编号最近一次出现。返回说话人、键、时间与是否拦截，查不到为 missing，不回退到旧 Capture 事件。投影为空时序号为 0，表示不限。扫描日志而非 History，避免压缩裁剪造成引用丢失。线上元数据见 §6。
+**引用解析。** 开启 `cite_captures` 的同业务线 Server 使用 `AttestedCitations`，扫描调用投影序号以内的日志，在 attested 片段中查找同编号最近一次出现。返回说话人、键、可选说话人引用、时间与是否拦截，查不到为 missing，不回退到旧 Capture 事件。投影为空时序号为 0，表示不限。扫描日志而非 History，避免压缩裁剪造成引用丢失。线上元数据见 §6。

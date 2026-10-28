@@ -160,9 +160,24 @@ func migrateCmd(args []string) error {
 
 // defaultModelLimits 是调用真实模型提供商的默认约束（model.Limits）：每次调用 10 分钟时限，含排队与重试的总时限
 // 15 分钟，暂时性失败重试 2 次；不限并发与速率。提供商有账号级的并发或速率上限时，用 serve -model-concurrency /
-// -model-rps 配置。
+// -model-rps 配置。后台 Run 最低份额默认 ceil(MaxConcurrency/8)，不限并发时为 0；
+// 只在释放时回填，不抢占、不限制后台上限。并发为 1 时须显式 -model-min-background=0。
 var defaultModelLimits = model.Limits{Timeout: 10 * time.Minute, Deadline: 15 * time.Minute, Retries: 2, Backoff: time.Second,
 	MaxBackoff: 30 * time.Second}
+
+// configureModelLimits 区分未设置与显式 0，让部署可以关闭最低份额而保留默认推导。
+func configureModelLimits(l model.Limits, minBackgroundSet bool) (model.Limits, error) {
+	if !minBackgroundSet {
+		l.MinBackground = 0
+		if l.MaxConcurrency > 0 {
+			l.MinBackground = l.MaxConcurrency / 8
+			if l.MaxConcurrency%8 != 0 {
+				l.MinBackground++
+			}
+		}
+	}
+	return l, l.Validate()
+}
 
 // gateway 按环境变量配置模型供应商；真实提供商经 model.Guard 施加 limits（每个提供商各自计数）：
 //
@@ -187,7 +202,7 @@ func gateway(logger *slog.Logger, limits model.Limits, injector *faults.Injector
 	register := func(name, base, key string) {
 		gw.Register(name, &model.Guard{Name: name, Provider: wrap(&openaicompat.Provider{BaseURL: base, APIKey: key}), Limits: limits})
 		logger.Info("model provider configured", "provider", name, "base_url", base,
-			"max_concurrency", limits.MaxConcurrency, "rps", limits.RPS, "timeout", limits.Timeout)
+			"max_concurrency", limits.MaxConcurrency, "min_background", limits.MinBackground, "rps", limits.RPS, "timeout", limits.Timeout)
 	}
 	if key := os.Getenv("ARK_API_KEY"); key != "" {
 		register("ark", envOr("ARK_BASE_URL", openaicompat.ArkBaseURL), key)
@@ -280,8 +295,20 @@ func serve(args []string) error {
 	fs.DurationVar(&modelLimits.Deadline, "model-deadline", modelLimits.Deadline, "一次模型调用的总时限：在准入处排队、每次尝试与重试前的等待都计入；0 表示不限")
 	fs.IntVar(&modelLimits.Retries, "model-retries", modelLimits.Retries, "模型调用暂时性失败（限流、服务端错误、连接中断）的重试次数；已输出内容后不重试")
 	fs.IntVar(&modelLimits.MaxConcurrency, "model-concurrency", 0, "本进程对每个模型提供商的并发调用上限，0 表示不限；排队时交互调用优先（ADR-0029）")
+	fs.IntVar(&modelLimits.MinBackground, "model-min-background", 0, "后台 Run 的最低在途份额，默认 ceil(model-concurrency/8)，不限并发时为 0；须小于总并发，只在释放时回填")
 	fs.Float64Var(&modelLimits.RPS, "model-rps", 0, "本进程对每个模型提供商每秒发起调用的上限，0 表示不限")
 	_ = fs.Parse(args)
+	minBackgroundSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "model-min-background" {
+			minBackgroundSet = true
+		}
+	})
+	var err error
+	modelLimits, err = configureModelLimits(modelLimits, minBackgroundSet)
+	if err != nil {
+		return err
+	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	roles, err := parseRoles(*rolesFlag)

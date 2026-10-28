@@ -189,9 +189,10 @@ type CommitmentMatch struct {
 
 // CaptureSegment 是一段旁听转写：Speaker 为 wearer（佩戴者）或 other（他人，Key 区分不同的人）。
 type CaptureSegment struct {
-	Speaker string `yaml:"speaker"`
-	Key     string `yaml:"key"`
-	Text    string `yaml:"text"`
+	Speaker    string `yaml:"speaker"`
+	Key        string `yaml:"key"`
+	SpeakerRef string `yaml:"speaker_ref"`
+	Text       string `yaml:"text"`
 	// At 是说这段话的当地时间（"2026-10-23 09:42"，Asia/Shanghai），或相对于提交时刻的 "now-15m"；为空时不带时间，
 	// 整理时也不显示。
 	At string `yaml:"at"`

@@ -42,6 +42,7 @@ type PageSegment struct {
 	Ref        string `json:"ref"`
 	Speaker    string `json:"speaker"`
 	SpeakerKey string `json:"speaker_key,omitempty"`
+	SpeakerRef string `json:"speaker_ref,omitempty"`
 	Text       string `json:"text"`
 	SpokenAt   string `json:"spoken_at,omitempty"`
 	TimeZone   string `json:"time_zone,omitempty"`
@@ -169,6 +170,9 @@ func captureText(g CaptureSegment) string {
 	who := "佩戴者"
 	if g.Speaker == "other" {
 		who = "他人 " + g.SpeakerKey
+		if g.SpeakerRef != "" {
+			who += " @" + g.SpeakerRef
+		}
 	}
 	at := ""
 	if t, ok := captureLocalTime(g); ok {
@@ -312,7 +316,7 @@ func capturePage(segs []captureSegment, at captureCursor, o PageOptions, now tim
 				break
 			}
 		}
-		out.Segments = append(out.Segments, PageSegment{Ref: s.ref.String(), Speaker: s.g.Speaker, SpeakerKey: s.g.SpeakerKey, Text: s.g.Text, SpokenAt: s.g.SpokenAt, TimeZone: s.g.TimeZone})
+		out.Segments = append(out.Segments, PageSegment{Ref: s.ref.String(), Speaker: s.g.Speaker, SpeakerKey: s.g.SpeakerKey, SpeakerRef: s.g.SpeakerRef, Text: s.g.Text, SpokenAt: s.g.SpokenAt, TimeZone: s.g.TimeZone})
 		tokens += addedTokens
 		chars += headerChars + n
 		day = newDay
@@ -356,7 +360,7 @@ func capturePageTokens(p StructuredPage) int {
 	var last captureSegment
 	for _, g := range p.Segments {
 		ref, _ := parseCaptureRef(g.Ref)
-		last = captureSegment{ref: ref, g: CaptureSegment{Speaker: g.Speaker, SpeakerKey: g.SpeakerKey, Text: g.Text, SpokenAt: g.SpokenAt, TimeZone: g.TimeZone}}
+		last = captureSegment{ref: ref, g: CaptureSegment{Speaker: g.Speaker, SpeakerKey: g.SpeakerKey, SpeakerRef: g.SpeakerRef, Text: g.Text, SpokenAt: g.SpokenAt, TimeZone: g.TimeZone}}
 		blocks, nextDay := captureSegmentBlocks(last, day)
 		n += estimateCaptureBlocks(blocks...)
 		day = nextDay

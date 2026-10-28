@@ -130,7 +130,7 @@ turns:
 
 新增 `evals/schedule-weekly-report.yaml` 覆盖助手创建周期定时、下次当地时间的确认、拨钟后查询 Persona 与产出周报；`evals/schedule-cancel.yaml` 覆盖先列出再取消、取消后有效数为零。它们与已有 `schedule-reminder`、`schedule-memory-gate` 一起覆盖能力说明、助手新增指令与平台到点标记；不新增 Persona 周报工具。版本 2 尚须按 ADR-0020 与基线及当天 main 对照，确认后更新基线，不能将用例已编写视为评测已通过。
 
-**旁听的分批。** 评测运行器按说话时间约每分钟提交一批（一批至多 100 段），每批的他人按第一次出现的顺序重新编号为 `other-1`、`other-2`：与真实的 HostApp 一样，`speaker_key` 只在一批之内有意义，用例中全天不变的 `key` 只用来区分同一批中的人。
+**旁听的分批。** 评测运行器按说话时间约每分钟提交一批（一批至多 100 段），每批的他人按第一次出现的顺序重新编号为 `other-1`、`other-2`：与真实的 HostApp 一样，`speaker_key` 只在一批之内有意义，用例中全天不变的 `key` 只用来区分同一批中的人。片段可另填 `speaker_ref`，经夹具原样交给 Persona，不随批内编号重编；`evals/capture-speaker-ref.yaml` 用同一引用跨批换键及另一位不同引用的人，检验回答合并与排除。
 
 ## 3. 运行
 
