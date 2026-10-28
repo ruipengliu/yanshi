@@ -1,6 +1,6 @@
 # M7 内核补充：Capture 正文存储、擦除、交付确认、定时、出站流、单次调用
 
-> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）；交付确认（§11）已删除，EndUser 删除屏障（§12）已实现，其余未实现 · **§2–§4、§11 由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 取代**（旁听原文存放在业务线；§11 已删除），§5 按 P2 的讨论改写（没有窗口），§6 的擦除与修订信封不做 · ADR-0044（已取代）、ADR-0045、ADR-0046、ADR-0047、ADR-0049（已取代）、ADR-0050 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
+> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）；交付确认（§11）已删除，EndUser 删除屏障（§12）已实现，定时的事件、HTTP 与到点执行已实现（到期表、能力与空闲关闭豁免未实现），其余未实现 · **§2–§4、§11 由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 取代**（旁听原文存放在业务线；§11 已删除），§5 按 P2 的讨论改写（没有窗口），§6 的擦除与修订信封不做 · ADR-0044（已取代）、ADR-0045、ADR-0046、ADR-0047、ADR-0049（已取代）、ADR-0050 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
 
 xinli 落地需要内核补上的原语。每一项都按[整体架构](./persona-architecture.md) §9 的判据给出理由：第二条业务线也会需要，并且业务侧做不到或做了不安全。业务语义（交谈、承诺、项目、人）一律不进内核。
 
@@ -109,6 +109,8 @@ CREATE TABLE capture_segments (
 
 ## 5. 定时（Schedule）
 
+> 实现状态：事件、投影、Session 时区、HTTP 与到点执行已实现；远近到期一律用 Park。到期表、内置能力、clock_now 默认时区与空闲关闭豁免尚未实现。
+
 > P2 动工前按[整体架构](./persona-architecture.md) §13 的 Q55–Q76 改写：没有窗口、Session 的时区、超额不跳过、有定时的 Session 不按空闲关闭。
 
 ### 5.1 为什么在内核
@@ -145,15 +147,18 @@ Schedule {
 
 ### 5.4 语义
 
-- **事件**：`ScheduleCreated{..., next_due}`、`ScheduleCancelled`、`ScheduleFired{schedule_id, due_at, next_due}`、`ScheduleSkipped{schedule_id, due_at, reason, next_due}`。`next_due` 是解析好的 UTC。投影中的定时（拟名 `Schedules`）只从事件读取下次到期，递增 `ProjectionVersion`。
-- **执行是原子的**：`ScheduleFired` 与带定时标记（`RunRequested.schedule {schedule_id, due_at}`）的 `RunRequested` 在同一次追加中写入；输入 ID 由 `schedule_id` 与 `due_at` 派生，两个 Worker 同时判断也只生效一次。时间取自 `clock.Clock`，判断在 `Worker.Step` 的同步路径中。
-- **有活跃 Run 或排队的输入时**：等它们结束再执行，不插话。
+- **事件**：`ScheduleCreated{schedule_id, input, time_zone, at, rrule, until, start, next_due, by}`、`ScheduleCancelled`、`ScheduleFired{schedule_id, due_at, next_due, run_id}`、`ScheduleSkipped{schedule_id, first_due, last_due, count, reason, next_due}`。`next_due` 是解析好的 UTC。投影中的定时（`State.Schedules`）只从事件读取下次到期，递增 `ProjectionVersion`。Apply 只校验 ID、字段形状、UTC 顺序、有效状态与输入配对，不重新解析规则或加载时区；规则校验与到期计算仅在 service 写入决策中进行。
+- **执行是原子的**：`ScheduleFired` 与带定时标记（`RunRequested.schedule {schedule_id, due_at}`）的 `RunRequested` 在同一次追加中写入；输入 ID 由 `schedule_id` 与 `due_at` 的 SHA-256 派生，保留 `schedule_` 前缀，普通输入不能占用它，两个 Worker 同时判断也只生效一次。时间取自 `clock.Clock`，判断在 `Worker.Step` 的同步路径中。
+- **有活跃 Run 或排队的输入时**：等它们结束再执行，不插话。`State.Active()` 包含排队状态；多个定时按下次到期、再按 ID 排序，每步只处理一个。
 - **来源是平台定时**（Q57）：对写入闸门不是用户原话（只凭它写 Memory 须审批），对注入判断不是外部内容；客户端提交的输入不能带定时标记（统一检查点拒绝，`Apply` 再校验）。模型看到的输入前有平台渲染的一行"【定时 <ID> 到点：10月30日星期五 17:00】"（Q67），在 Run 的位置上，不进系统指令。
-- **错过**：晚于 `due_at` 的，晚多少执行多少；周期定时只执行最近一次到期，跳过的写 `ScheduleSkipped`。
+- **已保存的到期**：Fire 以投影的 NextDue 为第一点，当前规则仅推算它之后的到期；一次性直接消费已保存的 UTC。tzdata 更新只能影响尚未写入日志的将来到期，不能改写已定的时刻。
+- **错过**：一次性晚到照常执行；周期只执行最近一次到期，更早的合并为一条 `ScheduleSkipped`（first_due、last_due 两端均包含，count 不含本次执行）。关闭后到点的全部未处理到期合并为 reason=closed，并清空 next_due，后续不再执行。
 - **超额不跳过**（Q69）：到点总是写入 `RunRequested`，配额与准入由 Run 自己处理（挂起或排队）；`ScheduleSkipped` 只用于错过的周期与到点时已关闭的 Session。
 - **失效**：一次性的执行后失效；`until` 或 `COUNT` 用尽后失效；Session 关闭后失效。有有效定时的 Session 不按空闲关闭（Q68），`delete_at` 与用户删除照常。
-- **停放**（Q61）：下次到期在 1 小时之内的，沿用 `workqueue.Park`；更远的写入独立的到期表（按 Session 分片，按到期时间索引），工作项结束；Janitor 每次 Sweep 把一小时内到期的移回工作队列并停放到确切时刻。唤醒、取消、Session 删除与迁移在同一事务中处理，`workqueuetest` 覆盖这些交错。原因：现在的认领按优先级扫描、再过滤停放项（`pgqueue.Claim`），百万级的长停放会拖慢认领。
-- **删除**：定时在日志中，随 Session 删除；到期表在 `app.SessionData` 登记。
+- **当前停放**：所有未来定时均由 `workqueue.Park` 保留工作项，取后台截止时间与定时到期的较小者。Run 挂起时已到期的定时等待 Run 结束，不用过去的时刻反复唤醒；未来到期仍参与上限。创建、取消与结束 Run 时以 `Decision.Wake` 原子唤醒。
+- **后续到期表**（Q61，P2-③，未实现）：下次到期在 1 小时之内的，沿用 `workqueue.Park`；更远的写入独立的到期表（按 Session 分片，按到期时间索引），工作项结束；Janitor 每次 Sweep 把一小时内到期的移回工作队列并停放到确切时刻。唤醒、取消、Session 删除与迁移在同一事务中处理，`workqueuetest` 覆盖这些交错。原因：现在的认领按优先级扫描、再过滤停放项（`pgqueue.Claim`），百万级的长停放会拖慢认领。
+- **删除**：当前定时只在日志与投影中，随 Session 删除，没有新存储。后续到期表须在 `app.SessionData` 登记。
+- **重试与有效数**：同 ID、相同规范化声明幂等返回原记录，不重新锚定；不同声明返回 409。失效声明保留以防 ID 复用，限额只数 next_due 非空的记录。HTTP 列表只含有效记录；关闭后待记录 closed 的定时仍由 Worker 停放到点处理。
 - **投递**：到点 Run 的回复留在日志中，经现有事件流看到；推送在 P4（Q74）。
 
 ## 6. 出站流（Outbox）

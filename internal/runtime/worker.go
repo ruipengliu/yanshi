@@ -53,6 +53,11 @@ type Devices interface {
 	Get(ctx context.Context, nodeID string) (*node.Info, error)
 }
 
+// ScheduleFirer 在到点后原子记录进度与输入，Worker 仅在没有既有 Run 时调用。
+type ScheduleFirer interface {
+	FireSchedule(ctx context.Context, st *session.State, scheduleID string) error
+}
+
 // BackgroundSettler 了结到期的后台调用（由 service.Service 实现）：写入 reason = timeout 的后台结果输入，并入活跃 Run 或开启
 // 新 Run（与设备结果相同的规则），st 随之同步。调用已了结或尚未到期时不写入。
 type BackgroundSettler interface {
@@ -133,6 +138,7 @@ type Config struct {
 	// （默认 24 小时）。Background 了结到期的后台调用；Session 有未了结的后台调用时，Worker 停放到最早的截止时间。
 	Devices           Devices
 	Background        BackgroundSettler
+	Schedules         ScheduleFirer
 	BackgroundGrace   time.Duration
 	BackgroundTimeout time.Duration
 }
@@ -334,6 +340,15 @@ func (w *Worker) Step(ctx context.Context) (bool, error) {
 	}
 	r := w.st.Active()
 	if r == nil {
+		// Active 包含排队输入；只在所有既有 Run 终态后处理一个定时。
+		if open := w.st.OpenSchedules(); w.cfg.Schedules != nil && len(open) > 0 && !open[0].NextDue.After(w.now()) {
+			err := w.cfg.Schedules.FireSchedule(ctx, w.st, open[0].Created.GetScheduleId())
+			if errors.Is(err, session.ErrGone) {
+				w.drop()
+				return true, nil
+			}
+			return true, err
+		}
 		// 委托派生的子 Session：先把终态写回父调用，再归还。写回之前崩溃时租约留在队列中，接手的 Worker 走到这里
 		// 再写一次；写回幂等（父调用已有结果时作废）。
 		if w.st.Created.GetParent() != nil && w.cfg.Delegation != nil {
@@ -344,6 +359,9 @@ func (w *Worker) Step(ctx context.Context) (bool, error) {
 		// 有未了结的后台调用时不能移出队列：没有人会在截止时间叫醒它。停放到最早的截止时间，期间设备结果、
 		// 用户输入照常唤醒。
 		if until, ok := w.st.NextBackgroundDeadline(); ok {
+			return true, w.park(ctx, until)
+		}
+		if until, ok := w.st.NextScheduleDue(); ok {
 			return true, w.park(ctx, until)
 		}
 		return true, w.release(ctx, true)
@@ -452,6 +470,10 @@ func (w *Worker) suspendWith(ctx context.Context, s *v1.RunSuspended, until time
 func (w *Worker) park(ctx context.Context, until time.Time) error {
 	if bg, ok := w.st.NextBackgroundDeadline(); ok && bg.Before(until) {
 		until = bg
+	}
+	// 已到期的定时等当前 Run 结束，不能让挂起的 Run 在过去时刻反复被认领。
+	if due, ok := w.st.NextScheduleDue(); ok && due.Before(until) && (w.st.Active() == nil || due.After(w.now())) {
+		until = due
 	}
 	w.lease.Class = w.st.WorkClass()
 	err := w.cfg.Queue.Park(ctx, w.lease, until)
@@ -584,7 +606,7 @@ const maxJudgedPerStep = 8
 
 // unjudged 返回本 Run 中来自外部、尚未判断的调用结果。外部指设备、沙箱、委托（路由调用）与 MCP 工具：它们的内容
 // 不由平台产生（工具名形如 "<来源>__<能力>"）；用户对提问的回答不算。并入本 Run 的后台调用迟到的结果也算（ADR-0035），
-// 含有他人发言的旁听转写也算（ADR-0036）。来源由平台推导（session.Provenance，ADR-0039）。
+// 含有他人发言的旁听转写也算（ADR-0036）；平台定时不属于外部内容，不进入此判断。来源由平台推导（session.Provenance，ADR-0039）。
 func (w *Worker) unjudged(r *session.Run) []session.Piece {
 	var out []session.Piece
 	for _, p := range w.st.Pieces() {

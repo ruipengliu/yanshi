@@ -36,6 +36,7 @@ message SessionSnapshot {
   string delegated_run = 15;
   // 未了结的后台调用（session.State.Background），按调用 ID 排序。
   repeated BackgroundCallSnapshot background = 16;
+  repeated ScheduleSnapshot schedules = 18;
   reserved 17;
   reserved "captures";
 }
@@ -116,4 +117,10 @@ message ApprovalSnapshot {
   google.protobuf.Timestamp deadline = 2;
   bool decided = 3;
   bool approved = 4;
+}
+
+message ScheduleSnapshot {
+  ScheduleCreated created = 1;
+  google.protobuf.Timestamp last = 2;
+  google.protobuf.Timestamp next_due = 3;
 }

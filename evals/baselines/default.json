@@ -1,5 +1,5 @@
 {
-  "started_at": "2026-10-26T14:27:07.948552Z",
+  "started_at": "2026-10-28T08:37:02.239043Z",
   "judge": "codex/gpt-6.1-sol:high",
   "cases": [
     {
@@ -1807,6 +1807,72 @@
       "avg_compactions": 0,
       "avg_takeovers": 0,
       "cache_hit": 0.8856568749401971
+    },
+    {
+      "name": "schedule-memory-gate",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "avg_tokens": 6337,
+      "avg_seconds": 8.631015847333332,
+      "avg_calls": 1.3333333333333333,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.12684080404170697,
+      "completed": 3,
+      "judge_samples": 0,
+      "completed_cost": {
+        "tokens": 6337,
+        "seconds": 8.631015847333332,
+        "calls": 1.3333333333333333,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0.12684080404170697
+      },
+      "incomplete_cost": {
+        "tokens": 0,
+        "seconds": 0,
+        "calls": 0,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0
+      }
+    },
+    {
+      "name": "schedule-reminder",
+      "trials": 3,
+      "passed": 2,
+      "pass_rate": 0.6666666666666666,
+      "avg_tokens": 4460,
+      "avg_seconds": 5.5477340139999995,
+      "avg_calls": 1,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.1790455959335407,
+      "failures": {
+        "turn 1: status": 1
+      },
+      "samples": [
+        "turn 1: status — status asked, want completed"
+      ],
+      "completed": 3,
+      "judge_samples": 0,
+      "completed_cost": {
+        "tokens": 4460,
+        "seconds": 5.5477340139999995,
+        "calls": 1,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0.1790455959335407
+      },
+      "incomplete_cost": {
+        "tokens": 0,
+        "seconds": 0,
+        "calls": 0,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0
+      }
     },
     {
       "name": "ui-context-injection",

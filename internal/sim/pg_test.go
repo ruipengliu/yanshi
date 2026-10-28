@@ -31,7 +31,7 @@ func TestPostgresMatchesMemory(t *testing.T) {
 }
 
 func diffSeed(t *testing.T, s uint64) {
-	opts := Options{Seed: s, Workers: 3, Sessions: 3, Ticks: 300, Faults: true}
+	opts := Options{Schedules: s%3 == 0, Seed: s, Workers: 3, Sessions: 3, Ticks: 300, Faults: true}
 	if s%3 == 0 { // 部分种子跑长 Run，覆盖压缩事件在 PostgreSQL 上的往返
 		opts.LongRuns, opts.Sessions, opts.Ticks = true, 2, 800
 	}

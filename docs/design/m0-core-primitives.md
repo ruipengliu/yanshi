@@ -90,3 +90,7 @@ Worker 以 `Step()` 为单位推进，每个 Step 同步完成一件事，内部
 ## 7. M0 不包含
 
 Device Node 与能力路由、Run 挂起等待（均见 [M1 设计](./m1-device-nodes.md)）、持久化日志存储（ADR-0007）、鉴权、上下文压缩（见 [长任务设计](./m2-long-runs.md)）、Call。
+
+## 定时事件（P2）
+
+Session 的定时声明与进度由 `ScheduleCreated`、`ScheduleCancelled`、`ScheduleFired`、`ScheduleSkipped` 投影。Fired 与带标记的 `RunRequested` 同批追加；排队 Run 也是非终态 Run，到点输入必须等它结束。关闭后唯一新增的例外是 reason=closed 的 ScheduleSkipped，它只终止定时，不开启 Run。详见 [M7 §5](./m7-kernel-primitives.md)。

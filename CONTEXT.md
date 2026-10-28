@@ -94,8 +94,8 @@ _Avoid_: 任务、Job、Turn
 原先设计为内核按流静默开启 Run；现由业务线判断旁听静默并提交固定整理输入。按钟点的定时见 Schedule。
 _Avoid_: 定时任务、cron、事件订阅
 
-**Schedule（定时）**（设计中，[设计](docs/design/m7-kernel-primitives.md) §5、ADR-0045）:
-属于一个 Session、按钟点开启 Run 的声明：一次性或周期，时区由创建方给出（默认取 Session 的时区），没有静默窗口。由 Agent 经 `schedule` 能力或业务线经 HTTP 创建；到期时平台写入输入，来源是平台，不是用户原话。只在本 Session 内开启 Run。
+**Schedule（定时）**（事件、HTTP 与到点执行已实现，到期表与能力未实现，[设计](docs/design/m7-kernel-primitives.md) §5、ADR-0045）:
+属于一个 Session、按钟点开启 Run 的声明：一次性或周期，时区由创建方给出（默认取 Session 的时区），没有静默窗口。当前经 HTTP 创建，Agent 的 `schedule` 能力待实现；到期时平台写入输入，来源是平台，不是用户原话。只在本 Session 内开启 Run。
 _Avoid_: cron、定时任务、提醒（指业务线按承诺期限推送时）
 
 **Oneshot（单次调用）**（设计中，[设计](docs/design/m7-kernel-primitives.md) §7、ADR-0047）:
@@ -269,7 +269,7 @@ _Avoid_: 费率、定价策略
 _Avoid_: 审核（泛指时）、过滤、风控
 
 **Provenance（来源）**（[设计](docs/design/m5-inputs-triggers-loops.md)、ADR-0039）:
-一段内容由谁产生、是否对 Agent 说：本人、他人、外部、平台或模型。由平台从 Event 推导，不由写入方填写；Memory 写入闸门与注入判断都依据它。
+一段内容由谁产生、是否对 Agent 说：本人、他人、外部、平台（含平台定时）或模型。平台定时不是用户原话，也不是外部内容。由平台从 Event 推导，不由写入方填写；Memory 写入闸门与注入判断都依据它。
 _Avoid_: 出处、标签、说话人（那只是旁听中区分本人与他人的字段）
 
 **Policy（策略）**:

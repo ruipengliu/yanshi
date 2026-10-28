@@ -67,14 +67,14 @@ func setup(t *testing.T) (*httptest.Server, *blocking) {
 	gw.Register("echo", echo.Provider{})
 	gw.Register("block", blk)
 
+	svc := &service.Service{Store: store, Agents: agents}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	for _, id := range []string{"w1", "w2"} {
-		w := runtime.New(runtime.Config{ID: id, Store: store, Queue: queue, Agents: agents, Model: gw,
+		w := runtime.New(runtime.Config{ID: id, Schedules: svc, Store: store, Queue: queue, Agents: agents, Model: gw,
 			Catalog: &capability.Catalog{Local: capability.NewRegistry()}, Live: bus, IdleWait: 5 * time.Millisecond})
 		go w.Run(ctx)
 	}
-	svc := &service.Service{Store: store, Agents: agents}
 	arts := &artifact.Service{Meta: artifact.NewMemMeta(), Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk, MaxSize: 1 << 20}
 	srv := httptest.NewServer((&httpapi.Server{Service: svc, Live: bus, Artifacts: arts}).Handler())
 	t.Cleanup(srv.Close)

@@ -206,21 +206,25 @@ func TestSnapshotIgnoredAfterLogDeleted(t *testing.T) {
 // 否则从快照恢复会悄悄丢失它——而 Equal 按快照比较，看不出差别。
 func TestSnapshotCoversEveryField(t *testing.T) {
 	covered := map[string][]string{
-		"State":          {"SessionID", "Seq", "Created", "Agent", "Closed", "Compaction", "CompactedAt", "Runs", "Past", "History", "callIDsOld", "callIDs", "Inputs", "ActiveCall", "Delegated", "Background"},
+		"State":          {"SessionID", "Seq", "Created", "Agent", "Closed", "Compaction", "CompactedAt", "Runs", "Past", "History", "callIDsOld", "callIDs", "Inputs", "ActiveCall", "Delegated", "Background", "Schedules"},
 		"RunSummary":     {"ID", "Status", "RequestedAt", "Attempt", "Turns", "FromBackground"},
 		"Run":            {"ID", "Status", "RequestedAt", "Attempt", "LiveEndpoint", "Takeovers", "StalledTakeovers", "Turns", "Recall", "Recalled", "Calls", "SuspendReason", "SuspendedUntil", "Compactions", "OutputTokens", "Resume", "Decisions", "FromBackground"},
 		"Call":           {"Call", "StartedAttempts", "NodeID", "Deadline", "DispatchedAt", "Done", "Background", "Approval"},
+		"Schedule":       {"Created", "Last", "NextDue"},
 		"BackgroundCall": {"CallID", "RunID", "NodeID", "Capability", "Deadline"},
 		"Approval":       {"Summary", "Deadline", "Decided", "Approved"},
 		"InputRef":       {"ID", "RunID", "Steered", "Answered"},
 		"ActiveCall":     {"ID", "DeviceID", "StartedAt"},
 	}
-	for _, v := range []any{session.State{}, session.RunSummary{}, session.Run{}, session.Call{}, session.Approval{}, session.InputRef{}, session.ActiveCall{}, session.BackgroundCall{}} {
+	for _, v := range []any{session.State{}, session.RunSummary{}, session.Run{}, session.Call{}, session.Approval{}, session.InputRef{}, session.ActiveCall{}, session.BackgroundCall{}, session.Schedule{}} {
 		typ := reflect.TypeOf(v)
 		want := covered[typ.Name()]
 		var got []string
 		for i := range typ.NumField() {
-			got = append(got, typ.Field(i).Name)
+			// pendingSchedule 仅为同批配对的暂态，不允许生成快照。
+			if typ.Field(i).Name != "pendingSchedule" {
+				got = append(got, typ.Field(i).Name)
+			}
 		}
 		slices.Sort(got)
 		slices.Sort(want)

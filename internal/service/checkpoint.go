@@ -49,3 +49,11 @@ func (s *Service) admitRun(ctx context.Context, st *session.State, admission boo
 	}
 	return s.CheckQuota(ctx, st, "submit")
 }
+
+// CheckClientInput 在传输层解码事件级字段后拒绝定时标记；普通 Submit API 不接收这个字段。
+func CheckClientInput(input []*v1.ContentBlock, mark *v1.ScheduleMark) error {
+	if mark != nil {
+		return fmt.Errorf("%w: schedule mark is written by the platform", ErrInvalid)
+	}
+	return rejectPlatformOnly(input)
+}

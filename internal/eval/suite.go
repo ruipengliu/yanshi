@@ -232,7 +232,9 @@ type DeviceSetup struct {
 }
 
 type Turn struct {
-	Input string `yaml:"input"`
+	// Scheduled 通过真实定时入口提交本轮文字，验证来源与到点标记。
+	Scheduled bool   `yaml:"scheduled"`
+	Input     string `yaml:"input"`
 	// FromDevice 是用户发这条输入时所在的设备标签，与网关为经 Connection 的输入注明的一致。
 	FromDevice string `yaml:"from_device"`
 	// UIContext 随输入一并提交的界面上下文（docs/design/m3-duplex-channel.md §8）。
@@ -392,6 +394,9 @@ func LoadSuite(dir string) ([]*Case, error) {
 		for i, t := range c.Turns {
 			if t.Agent != "" && i > 0 && !t.NewSession {
 				return nil, fmt.Errorf("%s: turn %d sets an agent without starting a new session", f, i+1)
+			}
+			if t.Scheduled && (t.Input == "" || t.AwaitBackground || t.CardAction != nil || t.UIContext != nil || t.FromDevice != "" || c.Call) {
+				return nil, fmt.Errorf("%s: turn %d scheduled input must be plain text", f, i+1)
 			}
 			if t.AwaitBackground && (t.Input != "" || t.CardAction != nil || t.NewSession || c.Call) {
 				return nil, fmt.Errorf("%s: turn %d awaits a background result and cannot also submit input", f, i+1)
