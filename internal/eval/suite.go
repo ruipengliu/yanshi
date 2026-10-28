@@ -22,6 +22,8 @@ type Case struct {
 	Description string `yaml:"description"`
 	Agent       string `yaml:"agent"`
 	Trials      int    `yaml:"trials"`
+	// TimeZone 覆盖 Session 时区；xinli 用例默认上海，其他用例保留无时区。
+	TimeZone string `yaml:"time_zone"`
 	// Timeout 是每个原轮次的等待上限，拆 Run 时共享，默认取 Config.TurnTimeout（长 Run 用例需要更长）。
 	Timeout time.Duration `yaml:"timeout"`
 	// Requires 列出所需的环境，如 "sandbox"；不满足时跳过。
@@ -232,6 +234,8 @@ type DeviceSetup struct {
 }
 
 type Turn struct {
+	// AdvanceToNextSchedule 不提交输入，让已有定时经 Worker 到点开启 Run。
+	AdvanceToNextSchedule bool `yaml:"advance_to_next_schedule"`
 	// Scheduled 通过真实定时入口提交本轮文字，验证来源与到点标记。
 	Scheduled bool   `yaml:"scheduled"`
 	Input     string `yaml:"input"`
@@ -307,8 +311,24 @@ type MemoryMatch struct {
 	HasValidUntil bool `yaml:"has_valid_until"`
 }
 
+// CallMatch 匹配调用名称与参数中的文字；顺序断言将参数压紧为 JSON，避免空白差异。
+type CallMatch struct {
+	Capability string   `yaml:"capability"`
+	Contains   []string `yaml:"contains"`
+}
+
+// ScheduleExpect 只检查投影中仍有 NextDue 的定时。
+type ScheduleExpect struct {
+	Active        *Range   `yaml:"active"`
+	RRuleContains []string `yaml:"rrule_contains"`
+	TimeZone      string   `yaml:"time_zone"`
+}
+
 // Expect 是一轮的断言；未写的字段不检查。
 type Expect struct {
+	// CallSequence 按顺序匹配不同调用，允许其间有其他调用。
+	CallSequence []CallMatch     `yaml:"call_sequence"`
+	Schedules    *ScheduleExpect `yaml:"schedules"`
 	// Status 是本轮结束时 Run 的状态，可用 "|" 列出多个可接受的值，如 "completed|asked"
 	// （asked：停在 ask_user 提问处等待回答）。默认 completed。
 	Status  string   `yaml:"status"`
@@ -368,6 +388,11 @@ func LoadSuite(dir string) ([]*Case, error) {
 		if !caseNameRE.MatchString(c.Name) || seen[c.Name] {
 			return nil, fmt.Errorf("%s: case name %q missing, invalid or duplicated", f, c.Name)
 		}
+		if c.TimeZone != "" {
+			if _, err := time.LoadLocation(c.TimeZone); err != nil || c.TimeZone == "Local" {
+				return nil, fmt.Errorf("%s: invalid time_zone %q", f, c.TimeZone)
+			}
+		}
 		if len(c.Turns) == 0 {
 			return nil, fmt.Errorf("%s: no turns", f)
 		}
@@ -394,6 +419,9 @@ func LoadSuite(dir string) ([]*Case, error) {
 		for i, t := range c.Turns {
 			if t.Agent != "" && i > 0 && !t.NewSession {
 				return nil, fmt.Errorf("%s: turn %d sets an agent without starting a new session", f, i+1)
+			}
+			if t.AdvanceToNextSchedule && (t.Input != "" || t.Scheduled || t.AwaitBackground || t.CardAction != nil || t.UIContext != nil || t.FromDevice != "" || t.NewSession || len(t.Captures) > 0 || t.CapturesFile != "" || len(t.XinliEdit) > 0 || c.Call) {
+				return nil, fmt.Errorf("%s: turn %d advance_to_next_schedule cannot also submit input or start a session", f, i+1)
 			}
 			if t.Scheduled && (t.Input == "" || t.AwaitBackground || t.CardAction != nil || t.UIContext != nil || t.FromDevice != "" || c.Call) {
 				return nil, fmt.Errorf("%s: turn %d scheduled input must be plain text", f, i+1)

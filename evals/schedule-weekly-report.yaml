@@ -1,0 +1,39 @@
+name: schedule-weekly-report
+description: 助手创建上海时区每周五 17 点的周报定时，到点查询 Persona 并按项目现状与承诺回答。
+agent: xinli-assistant
+setup:
+  xinli:
+    projects:
+      - {id: P-0001, name: 北辰上线, status: 灰度验证已完成，等待安全验收，风险是回滚演练尚未完成。}
+      - {id: P-0002, name: 门店改造, status: 设计方案已确认，等待消防材料，风险是材料到货时间未定。}
+    commitments:
+      - {id: C-0001, kind: mine, content: 补齐回滚演练记录, counterpart: 王工, project: P-0001}
+      - {id: C-0002, kind: theirs, content: 提交安全验收清单, counterpart: 王工, project: P-0001}
+      - {id: C-0003, kind: mine, content: 核对消防材料清单, counterpart: 李经理, project: P-0002}
+turns:
+  - input: 每周五下午五点给我一份本周项目周报。
+    expect:
+      calls: [schedule]
+      call_args: {schedule: create}
+      call_sequence:
+        - {capability: schedule, contains: ['"action":"create"', FREQ=WEEKLY, BYDAY=FR, BYHOUR=17, BYMINUTE=0]}
+      schedules:
+        active: {min: 1, max: 1}
+        rrule_contains: [FREQ=WEEKLY, BYDAY=FR, BYHOUR=17, BYMINUTE=0]
+        time_zone: Asia/Shanghai
+      judge: >-
+        5 分：确实创建每周五当地 17:00 的周报定时，回复确认每周五下午五点，并准确复述工具返回的下次执行日期、星期与时间。
+        4 分：创建正确且确认了工具返回的下次日期和时间，仅省略星期或时区名称。
+        3 分：只说已安排或只说每周五，未确认下次日期和时间。2 分：创建失败却声称成功，或下次时间不符。1 分：未创建或答非所问。
+  - advance_to_next_schedule: true
+    expect:
+      calls: ["mcp_xinli__*project*"]
+      reply_contains: [北辰, 门店]
+      schedules:
+        active: {min: 1, max: 1}
+      judge: >-
+        5 分：识别平台定时并直接给周报，查询 Persona 后按北辰上线、门店改造列出现状、风险与下一步；北辰灰度验证已完成、等待安全验收、回滚演练尚未完成，本人补齐回滚演练记录、王工提交安全验收清单；门店设计已确认、消防材料到货未定、本人核对材料清单。责任方正确，不虚构进展或期限。
+        4 分：两个项目的现状、主要风险与下一步正确，最多遗漏一条承诺或一位对方，无编造。
+        3 分：只查了一个项目、漏了主要风险，或没有形成周报。2 分：只确认定时、再次要求用户说明，或混淆主要进展与责任方。1 分：未查询就编造周报或拒绝执行。
+        预置内容是项目当前状态和无期限承诺，不要求按拨钟后的日期筛选“本周”；不因没有本周新增交谈而扣分，但仍应汇报查询到的项目现状。
+        周报可以写在卡片里，回复正文只做概括（卡片内容同样算作周报）。依据查到的风险给出的建议（例如"先补齐回滚演练记录，它挡着安全验收"）不算编造；周报标题中的日期是定时到点的那天，也不算编造。编造指写出查询结果中没有的进展、日期、期限或责任方。

@@ -1,0 +1,22 @@
+name: schedule-cancel
+description: 创建周报定时后取消它：用对 ID（上下文中已有就直接用，没有就先 list），投影中不再有有效定时。
+agent: xinli-assistant
+turns:
+  - input: 每周五下午五点给我一份本周项目周报。
+    expect:
+      calls: [schedule]
+      call_args: {schedule: create}
+      call_sequence:
+        - {capability: schedule, contains: ['"action":"create"', FREQ=WEEKLY, BYDAY=FR, BYHOUR=17, BYMINUTE=0]}
+      schedules:
+        active: {min: 1, max: 1}
+        rrule_contains: [FREQ=WEEKLY, BYDAY=FR, BYHOUR=17, BYMINUTE=0]
+        time_zone: Asia/Shanghai
+  - input: 取消周报。
+    expect:
+      calls: [schedule]
+      call_sequence:
+        - {capability: schedule, contains: ['"action":"cancel"']}
+      schedules:
+        active: {min: 0, max: 0}
+      reply_contains: [取消]

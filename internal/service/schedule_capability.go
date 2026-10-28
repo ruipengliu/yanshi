@@ -44,8 +44,11 @@ func (c scheduleCapability) Spec() capability.Spec {
 	}
 }
 
+// scheduleCallID 由 call_id 派生，重试同一调用得到同一 ID。取哈希的前 8 字节：同一 Session 内足够唯一，
+// 又短到模型能照抄（模型要在 cancel 中原样写回它）。
 func scheduleCallID(callID string) string {
-	return fmt.Sprintf("sch_%x", sha256.Sum256([]byte(callID)))
+	sum := sha256.Sum256([]byte(callID))
+	return fmt.Sprintf("sch_%x", sum[:8])
 }
 
 func (c scheduleCapability) parse(inv capability.Invocation) (scheduleArguments, CreateScheduleRequest, error) {
@@ -137,13 +140,14 @@ func (c scheduleCapability) ApprovalSummary(inv capability.Invocation) string {
 	return ""
 }
 
-func scheduleLocal(item *session.Schedule, ref time.Time) string {
+// scheduleLocal 给模型看的下次到期总带年份：模型对"今年是哪一年"的印象不可靠，省略年份时它会自己补错（评测发现）。
+func scheduleLocal(item *session.Schedule) string {
 	loc, err := time.LoadLocation(item.Created.GetTimeZone())
 	if err != nil {
 		// 历史时区可能退出目录，仍可用已保存的 UTC 告诉用户何时到期。
 		return item.NextDue.UTC().Format(time.RFC3339)
 	}
-	return schedule.FormatLocal(item.NextDue, loc, ref) + "（" + item.Created.GetTimeZone() + "）"
+	return schedule.FormatLocal(item.NextDue, loc, time.Time{}) + "（" + item.Created.GetTimeZone() + "）"
 }
 
 func (c scheduleCapability) Invoke(ctx context.Context, inv capability.Invocation) ([]*v1.ContentBlock, error) {
@@ -160,7 +164,7 @@ func (c scheduleCapability) Invoke(ctx context.Context, inv capability.Invocatio
 			if item.NextDue.IsZero() {
 				result = "定时 " + item.Created.GetScheduleId() + " 已创建过，现已失效，没有重复创建"
 			} else {
-				result = "已创建定时 " + item.Created.GetScheduleId() + "：下次在 " + scheduleLocal(item, c.service.Store.Clock.Now())
+				result = "已创建定时 " + item.Created.GetScheduleId() + "：下次在 " + scheduleLocal(item)
 			}
 		}
 	case "list":
@@ -174,7 +178,7 @@ func (c scheduleCapability) Invoke(ctx context.Context, inv capability.Invocatio
 				if item.Created.GetRrule() != "" {
 					rule = item.Created.GetRrule()
 				}
-				fmt.Fprintf(&b, "- %s「%s」：%s，下次在 %s\n", item.Created.GetScheduleId(), model.Text(item.Created.GetInput()), rule, scheduleLocal(item, c.service.Store.Clock.Now()))
+				fmt.Fprintf(&b, "- %s「%s」：%s，下次在 %s\n", item.Created.GetScheduleId(), model.Text(item.Created.GetInput()), rule, scheduleLocal(item))
 			}
 			result = strings.TrimSuffix(b.String(), "\n")
 		}
