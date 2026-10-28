@@ -159,6 +159,8 @@ type Stats struct {
 	InvalidArgs int
 	// MemoryPrechecked 是注入的 Memory 预检查拒绝样例中已返回错误结果的调用（memprecheck.go）。
 	MemoryPrechecked int
+	// ReadOnlyDowngrades 是 Started 后声明降级、未执行且写入固定错误结果的次数。
+	ReadOnlyDowngrades int
 }
 
 // storeFault 是注入的存储故障（数据库超时、连接中断）：written 表示追加其实已经生效，调用方却只看到错误。
@@ -180,13 +182,13 @@ type flakyLog struct {
 
 func (l flakyLog) Append(ctx context.Context, sid string, expected uint64, events ...*v1.Event) (uint64, error) {
 	if !l.w.faults || !l.w.chance(0.03) {
-		return l.Log.Append(ctx, sid, expected, events...)
+		return l.appendRecorded(ctx, sid, expected, events...)
 	}
 	l.w.Stats.StoreFaults++
 	if l.w.chance(0.5) {
 		return 0, &storeFault{}
 	}
-	if _, err := l.Log.Append(ctx, sid, expected, events...); err != nil {
+	if _, err := l.appendRecorded(ctx, sid, expected, events...); err != nil {
 		return 0, err
 	}
 	return 0, &storeFault{written: true}
@@ -316,6 +318,12 @@ type World struct {
 	nodes   []*simNode
 	// tierRNG 不从 rng 抽种子，启用或推进档位场景都不会直接消耗旧随机流。
 	tierRNG *rand.Rand
+	// 只读声明故障单独抽样；每个 Worker 只保留最近一次 Started，执行计数排除已执行待提交的调用。
+	readOnlyRNG    *rand.Rand
+	readOnlyWorker string
+	readOnlyStarts map[string]readOnlyStart
+	echo           *capability.Func
+	echoInvoked    map[string]int
 
 	sandboxQueue workqueue.Queue
 	provider     *sandbox.Fake
@@ -398,6 +406,9 @@ func New(opts Options) (*World, error) {
 		withdrawn: map[string]bool{},
 		faults:    opts.Faults,
 	}
+	w.readOnlyRNG = rand.New(rand.NewPCG(opts.Seed^0x726561646f6e6c79, opts.Seed^0x94d049bb133111eb))
+	w.readOnlyStarts = map[string]readOnlyStart{}
+	w.echoInvoked = map[string]int{}
 	stores := app.Memory(w.clock)
 	if opts.NewStores != nil {
 		stores = opts.NewStores(w.clock)
@@ -906,7 +917,18 @@ func (w *World) stepWorker(i int) error {
 	defer func() { w.crash = nil; cancel() }()
 
 	wk := w.workers[i]
+	finishDowngrade, err := w.beginReadOnlyDowngrade(wk.ID())
+	if err != nil {
+		return err
+	}
+	w.readOnlyWorker = wk.ID()
 	did, err := wk.Step(ctx)
+	w.readOnlyWorker = ""
+	if finishDowngrade != nil {
+		if checkErr := finishDowngrade(); checkErr != nil {
+			return checkErr
+		}
+	}
 	if did {
 		w.tracef("step %s", wk.ID())
 	}
@@ -1548,9 +1570,10 @@ func (w *World) presenceStep() error {
 }
 
 func (w *World) echoCap() capability.Capability {
-	return capability.Func{
-		S: capability.Spec{Name: "echo", Idempotent: true, InputSchema: json.RawMessage(`{"type":"object"}`)},
+	w.echo = &capability.Func{
+		S: capability.Spec{Name: "echo", Idempotent: true, ReadOnly: true, InputSchema: json.RawMessage(`{"type":"object"}`)},
 		Fn: func(ctx context.Context, inv capability.Invocation) ([]*v1.ContentBlock, error) {
+			w.echoInvoked[inv.SessionID+"/"+inv.CallID]++
 			if w.faults && w.chance(0.1) {
 				w.crash()
 				return nil, ctx.Err()
@@ -1558,6 +1581,7 @@ func (w *World) echoCap() capability.Capability {
 			return model.TextBlocks(inv.Arguments), nil
 		},
 	}
+	return w.echo
 }
 
 // sendCap 模拟有副作用的调用：先产生效果，再可能在返回结果前崩溃。

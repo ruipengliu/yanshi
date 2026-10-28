@@ -274,7 +274,7 @@ quota:
 
 - **接口**：`POST /v1/sessions/{id}/inputs`，`{redo: true, input_id, expected_run_id}`，不带内容；`expected_run_id` 必填，不是本 Session 最后一个 Run 时 conflict（多端旧页面不会重答错对象）。重复的 `input_id` 返回第一次的结果。不加 Connection 操作与 SDK 方法：App 在 P4 经 BFF。
 - **可重答**（否则 conflict）：最后一个 Run 是 completed；它的调用全部有只读证据（`ToolCallStarted.read_only`，见下）或是 `show_card`；没有审批请求、`ask_user`、插话、委托、后台结果；它的输入是普通输入（不含 CardAction，不来自定时、Call 或委托）；它的输入之后没有发生上下文压缩（按事件序号，含 `scope: run`）；Session 不是委托子 Session，也不是三方入站的（[Agent 生态](./m7-agent-ecosystem.md) §3.2）。
-- **只读证据**：`capability.Spec` 新增只读标记（ReadOnly）；内置只有 `clock_now`、`memory_search`；MCP 只从 `readOnlyHint` 映射，不从风险、幂等或 `no_approval` 推导；Node 与沙箱一律视为未知。平台在执行前把判定写入 `ToolCallStarted.read_only`，跨 Attempt 取与；实际执行前若已记只读而当前声明不再只读，拒绝执行并返回固定错误。
+- **只读证据**（前置已实现，重答接口未接入）：`capability.Spec.ReadOnly` 表示不改变业务或平台状态，读取的元数据更新不算写，false 表示写入或未知。内置只有 `clock_now`、`memory_search` 为 true；MCP 只从 `readOnlyHint` 映射，不从风险、幂等或 `no_approval` 推导；Node 与沙箱一律视为未知，`show_card` 也不标只读。Worker 在两处 Started 写入点把当时解析的判定写入 `ToolCallStarted.read_only`，旧日志缺字段为 false。投影与快照保留各 Attempt 的判定；`session.Run.CallsReadOnly` 对每个调用的所有 Started 取与，没有 Started（如参数错误、能力不可用）的调用没有证据，无调用时为 true；该方法不包含 `show_card` 的重答豁免或其他资格条件。实际执行前若本 Attempt 已记只读而当前声明不再只读，拒绝执行、不写新 Started，返回固定错误“能力的声明在调用开始后发生了变化，没有执行；请重新发起调用”；已记 false、当前 true 则照常执行且证据不变。已执行但结果提交失败时，保留真实结果并重试提交。
 - **写入**：`RunRequested{redo_of: <run_id>}`，输入内容块由平台从被重做的 Run 复制，来源字段不复制（特殊来源已被排除）。`redo_of` 只能由平台写入（统一检查点拒绝客户端提交，`Apply` 再校验目标、输入一致与资格）。接受即替代：新 Run 失败或被中断也不回退。新 Run 按普通权限执行；它若写入，它自己就不可再重答。
 - **Transcript**：被替代的 Run 的输入、召回、回复与调用不进入之后的上下文，连续重答只保留最后一次。投影保存被替代的 Run 集合（不依赖 Run 明细的保留数）；Transcript、压缩选段、token 估算（不拿被替代回答的用量校准）与摘要渲染共用同一过滤，先由完整投影确定替代关系再取前缀。日志保留全部，App 可以展示"第 2/3 个回答"。
 - **安全判断不过滤**：来源推导、写入闸门与注入判断仍看完整历史；模型没看到旧的工具结果，不代表 Session 没接触过外部内容。

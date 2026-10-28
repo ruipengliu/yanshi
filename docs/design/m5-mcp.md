@@ -50,14 +50,16 @@ attests_speakers: false         # 可选：采信同业务线结构化旁听页�
 
 如果 Worker 在执行中途崩溃，接管者按幂等性处理：幂等的工具重新执行，否则返回"结果未知"，不会重复执行有副作用的调用。
 
-**工具注解如何映射为风险与幂等性**：
+**工具注解如何映射为风险、幂等性与只读证据**：
 
 | MCP 注解 | yanshi |
 |---|---|
-| `readOnlyHint: true` | 低风险，无需审批；幂等 |
+| `readOnlyHint: true` | 低风险，无需审批；幂等；`capability.Spec.ReadOnly` 为 true |
 | `idempotentHint: true` | 幂等（崩溃后可以重新执行） |
 | 未声明只读 | **需要审批**（安全默认）；业务线可在登记中用 `no_approval` 逐个放宽 |
 | 明确声明 `destructiveHint: true` | 需要审批，不能用 `no_approval` 放宽（规范中未声明时默认也是 true，但那种情况允许业务线放宽，否则没有注解的工具永远无法免审批） |
+
+只读证据只取 `readOnlyHint`，未声明或为 false 时 `capability.Spec.ReadOnly` 为 false；不从风险、`idempotentHint`、`no_approval` 或 `destructiveHint` 推导。`no_approval` 放宽后的写工具仍不只读。平台在每次执行前把该判定写入 `ToolCallStarted.read_only`，跨 Attempt 取与，供后续重答资格使用；执行前声明降级则拒绝执行（[M0 §4](./m0-core-primitives.md#4-agent-循环一步--一次-step)、[M7 §9](./m7-kernel-primitives.md#9-重答redo)）。
 
 第三方 Server 的注解只当作提示：放宽审批必须经过业务线的明确登记。
 
@@ -85,7 +87,7 @@ attests_speakers: false         # 可选：采信同业务线结构化旁听页�
 - stdio：由 HostApp 启动的子进程，例如 `npx @modelcontextprotocol/server-filesystem ~/Documents`；
 - 本机 HTTP。
 
-`MCPCapabilities` 把这些 Server 的工具声明为该 Node 的 Capability，名称是 `<server>_<tool>`，模型看到的工具名是 `<label>__<server>_<tool>`。风险与幂等性的映射同 §3：只读的工具无需审批，其余需要审批。
+`MCPCapabilities` 把这些 Server 的工具声明为该 Node 的 Capability，名称是 `<server>_<tool>`，模型看到的工具名是 `<label>__<server>_<tool>`。风险与幂等性的映射同 §3：只读的工具无需审批，其余需要审批。设备协议不携带只读证据，平台仍把所有 Node 工具视为未知，不据设备端注解授予重答资格。
 
 调用沿用设备节点的全部机制：Inbox 投递、离线挂起、以 `call_id` 去重、审批、超时。SDK 收到调用后转发给本机 MCP Server。
 

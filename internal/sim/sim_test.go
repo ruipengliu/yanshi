@@ -140,7 +140,7 @@ func TestSimulationWithFaults(t *testing.T) {
 		"CallsStarted", "CallsReplaced", "CallTranscripts", "CallTranscriptsBlocked", "CallTasks", "CallAnswers", "CallConflicts",
 		"StoreFaults", "WakeFaults", "UncertainRetries", "CatalogFaults", "ResumedClaims", "PastRuns", "Delegations", "DelegationResults", "ChildDeletionRaces", "CascadeFaults", "Decisions", "DecisionFallbacks", "GracefulStops", "Handoffs",
 		"Backgrounded", "BackgroundResults", "BackgroundTimeouts", "BackgroundCancels", "DisconnectWakes",
-		"RetentionKeptMemories", "Erasures", "ErasuresInFlight", "ErasureLateWithdrawn", "ErasureKeptMemories", "InvalidArgs", "MemoryPrechecked", "AttestedResults", "AttestedRedactions", "AttestedErrors")
+		"RetentionKeptMemories", "Erasures", "ErasuresInFlight", "ErasureLateWithdrawn", "ErasureKeptMemories", "InvalidArgs", "MemoryPrechecked", "ReadOnlyDowngrades", "AttestedResults", "AttestedRedactions", "AttestedErrors")
 }
 
 // TestLongRunsWithFaults 让 Run 持续上百轮，检验压缩在故障下保持上下文有界、调用配对完整，且长 Run 能跑完。
@@ -161,7 +161,7 @@ func TestLongRunsWithFaults(t *testing.T) {
 func TestSimulationWithoutFaultsNeverFails(t *testing.T) {
 	total := parallelSeeds(t, seedList(), func(t *testing.T, s uint64) Stats {
 		st := run(t, s, Options{}).Stats
-		if st.Failed != 0 || st.Takeovers != 0 || st.OutcomeUnknown != 0 {
+		if st.Failed != 0 || st.Takeovers != 0 || st.OutcomeUnknown != 0 || st.ReadOnlyDowngrades != 0 {
 			t.Fatalf("seed %d: fault-free run had failures/takeovers: %+v", s, st)
 		}
 		return st

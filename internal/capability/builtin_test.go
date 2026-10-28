@@ -36,3 +36,12 @@ func TestClockNowDefaultZone(t *testing.T) {
 		})
 	}
 }
+
+func TestClockNowReadOnly(t *testing.T) {
+	if !capability.ClockNow(clock.NewFake(time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC))).Spec().ReadOnly {
+		t.Fatal("clock_now must provide read-only evidence")
+	}
+	if (capability.Spec{Idempotent: true, Risk: v1.Risk_RISK_LOW}).ReadOnly {
+		t.Fatal("low risk and idempotence do not prove read-only")
+	}
+}

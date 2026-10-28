@@ -2787,7 +2787,9 @@ type ToolCallStarted struct {
 	CallId  string                 `protobuf:"bytes,3,opt,name=call_id,json=callId,proto3" json:"call_id,omitempty"`
 	NodeId  string                 `protobuf:"bytes,4,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	// 路由调用的结果截止时间。
-	Deadline      *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=deadline,proto3" json:"deadline,omitempty"`
+	Deadline *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=deadline,proto3" json:"deadline,omitempty"`
+	// 平台在执行前根据当时的能力声明写入，客户端不能提交；旧日志为 false，即未知。
+	ReadOnly      bool `protobuf:"varint,6,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2855,6 +2857,13 @@ func (x *ToolCallStarted) GetDeadline() *timestamppb.Timestamp {
 		return x.Deadline
 	}
 	return nil
+}
+
+func (x *ToolCallStarted) GetReadOnly() bool {
+	if x != nil {
+		return x.ReadOnly
+	}
+	return false
 }
 
 type ToolResult struct {
@@ -4882,13 +4891,14 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"durationMs\x12$\n" +
 	"\x0efirst_token_ms\x18\t \x01(\rR\ffirstTokenMs\x12#\n" +
 	"\rfinish_reason\x18\n" +
-	" \x01(\tR\ffinishReason\"\xac\x01\n" +
+	" \x01(\tR\ffinishReason\"\xc9\x01\n" +
 	"\x0fToolCallStarted\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x12\x17\n" +
 	"\acall_id\x18\x03 \x01(\tR\x06callId\x12\x17\n" +
 	"\anode_id\x18\x04 \x01(\tR\x06nodeId\x126\n" +
-	"\bdeadline\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bdeadline\"\xe0\x03\n" +
+	"\bdeadline\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bdeadline\x12\x1b\n" +
+	"\tread_only\x18\x06 \x01(\bR\breadOnly\"\xe0\x03\n" +
 	"\n" +
 	"ToolResult\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +

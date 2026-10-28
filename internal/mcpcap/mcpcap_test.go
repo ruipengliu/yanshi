@@ -117,19 +117,19 @@ func TestDiscoveryScopingAndRisk(t *testing.T) {
 		t.Fatal("another business line's MCP server is visible")
 	}
 	cases := map[string]struct {
-		approval, idempotent bool
+		approval, idempotent, readOnly bool
 	}{
-		"mcp_crm__search_customer": {false, true}, // 只读
-		"mcp_crm__create_ticket":   {false, true}, // 业务线放宽
-		"mcp_crm__delete_all":      {true, false}, // 明确的破坏性工具不能放宽
+		"mcp_crm__search_customer": {false, true, true},  // 只读
+		"mcp_crm__create_ticket":   {false, true, false}, // 业务线放宽
+		"mcp_crm__delete_all":      {true, false, false}, // 明确的破坏性工具不能放宽
 	}
 	for name, want := range cases {
 		x, ok := all[name]
 		if !ok {
 			t.Fatalf("%s missing (have %v)", name, all)
 		}
-		if x.RequiresApproval() != want.approval || x.Spec.Idempotent != want.idempotent {
-			t.Errorf("%s: approval %v idempotent %v, want %+v", name, x.RequiresApproval(), x.Spec.Idempotent, want)
+		if x.RequiresApproval() != want.approval || x.Spec.Idempotent != want.idempotent || x.Spec.ReadOnly != want.readOnly || x.Local.Spec().ReadOnly != want.readOnly {
+			t.Errorf("%s: approval %v spec %+v local %+v, want %+v", name, x.RequiresApproval(), x.Spec, x.Local.Spec(), want)
 		}
 	}
 	if only := tools(t, cat, "mcp:crm/search_*"); len(only) != 1 {

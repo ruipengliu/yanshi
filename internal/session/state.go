@@ -60,6 +60,8 @@ type Call struct {
 	Call *v1.ToolCall
 	// StartedAttempts 记录哪些 Attempt 追加过 ToolCallStarted；长度 > 1 表示被重新执行过。
 	StartedAttempts []uint32
+	// StartedReadOnly 与 StartedAttempts 一一对应，执行检查读本 Attempt，重答证据对全部 Attempt 取与。
+	StartedReadOnly []bool
 	// NodeID 非空表示路由调用，Deadline 是其结果截止时间。
 	NodeID   string
 	Deadline time.Time
@@ -166,6 +168,7 @@ func (r *Run) clone() *Run {
 	for i, c := range r.Calls {
 		cc := *c
 		cc.StartedAttempts = slices.Clone(c.StartedAttempts)
+		cc.StartedReadOnly = slices.Clone(c.StartedReadOnly)
 		if c.Approval != nil {
 			a := *c.Approval
 			cc.Approval = &a
@@ -818,6 +821,7 @@ func (s *State) apply(e *v1.Event) error {
 			return fmt.Errorf("call %q re-routed from node %s", m.GetCallId(), c.NodeID)
 		}
 		c.StartedAttempts = append(c.StartedAttempts, m.GetAttempt())
+		c.StartedReadOnly = append(c.StartedReadOnly, m.GetReadOnly())
 		if m.GetNodeId() != "" {
 			if c.NodeID == "" {
 				c.DispatchedAt = e.GetTime().AsTime()

@@ -350,6 +350,8 @@ message ToolCallStarted {
   string node_id = 4;
   // 路由调用的结果截止时间。
   google.protobuf.Timestamp deadline = 5;
+  // 平台在执行前根据当时的能力声明写入，客户端不能提交；旧日志为 false，即未知。
+  bool read_only = 6;
 }
 
 message ToolResult {
