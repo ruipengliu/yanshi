@@ -32,7 +32,7 @@ func TestStructuredPageValidation(t *testing.T) {
 				p.Segments = append(p.Segments, p.Segments[0])
 			}
 		}},
-		{"chars", func(p *capture.StructuredPage) { p.Segments[0].Text = strings.Repeat("字", capture.MaxChars) }},
+		{"long text", func(p *capture.StructuredPage) { p.Segments[0].Text = strings.Repeat("字", session.MaxCaptureText+1) }},
 		{"ref", func(p *capture.StructuredPage) { p.Segments[0].Ref = "#57.0" }},
 		{"negative ref", func(p *capture.StructuredPage) { p.Segments[0].Ref = "57.-1" }},
 		{"overflow ref", func(p *capture.StructuredPage) { p.Segments[0].Ref = "18446744073709551616.0" }},
@@ -189,11 +189,67 @@ func TestStructuredEndedPage(t *testing.T) {
 func TestPageOptionsFollowBuiltinParameters(t *testing.T) {
 	inv := capability.Invocation{Agent: &agentdef.Def{Streams: []agentdef.Stream{{Name: capture.Stream, ExchangeGap: 9 * time.Minute}}, Context: agentdef.Context{MaxToolResult: 1234}}}
 	o := capture.OptionsFor(inv)
-	if o.Limit != capture.DefaultLimit || o.MaxChars != capture.MaxChars || o.GapMS != (9*time.Minute).Milliseconds() || o.MaxToolResult != 1234 {
+	if o.Limit != capture.MaxLimit || o.MaxChars != capture.MaxChars || o.GapMS != (9*time.Minute).Milliseconds() || o.MaxToolResult != 1234 {
 		t.Fatalf("options = %+v", o)
 	}
 	inv.State = &session.State{Captures: session.CaptureLog{Read: map[string]*v1.CaptureRead{capture.Stream: {ExchangeGapMs: 60000}}}}
 	if capture.OptionsFor(inv).GapMS != 60000 {
 		t.Fatal("committed gap changed")
+	}
+}
+
+// max_chars 只决定页大小，不能以它代替单段长度和渲染后的 token 预算。
+func TestStructuredPageCharacterLimits(t *testing.T) {
+	p := capture.StructuredPage{Kind: "page", Span: "57.0", Done: true, Segments: []capture.PageSegment{{Ref: "57.0", Speaker: "wearer", Text: strings.Repeat("字", session.MaxCaptureText)}}}
+	opts := capture.PageOptions{Limit: capture.MaxLimit, MaxChars: 1}
+	raw, _ := json.Marshal(p)
+	parsed, err := capture.ParsePage(raw, opts)
+	if err != nil {
+		t.Fatalf("first segment must be accepted: %v", err)
+	}
+	if _, _, err := capture.Render(parsed, 1); err == nil {
+		t.Fatal("first segment escaped token budget")
+	}
+	if _, _, err := capture.Render(parsed, 8000); err != nil {
+		t.Fatal(err)
+	}
+	p.Segments[0].Text += "字"
+	raw, _ = json.Marshal(p)
+	if _, err := capture.ParsePage(raw, opts); err == nil || err.Error() != "业务线返回的旁听页无效：片段文字" {
+		t.Fatalf("segment text limit: %v", err)
+	}
+
+	p.Segments = []capture.PageSegment{{Ref: "57.0", Speaker: "wearer", Text: "甲"}, {Ref: "57.1", Speaker: "wearer", Text: "乙"}}
+	raw, _ = json.Marshal(p)
+	n := len([]rune("#57.0 " + model.CaptureText(&v1.CaptureSegment{Speaker: v1.Speaker_SPEAKER_WEARER, Text: "甲"})))
+	opts.MaxChars = 2*n - 1
+	if _, err := capture.ParsePage(raw, opts); err == nil || err.Error() != "业务线返回的旁听页无效：字符上限" {
+		t.Fatalf("second segment must respect chars: %v", err)
+	}
+	opts.MaxChars++
+	if _, err := capture.ParsePage(raw, opts); err != nil {
+		t.Fatalf("exact character boundary: %v", err)
+	}
+}
+
+// PageOptions.Limit 是可接受上限，改它不改变内置工具的默认 200 段或模型参数。
+func TestPageOptionsDoNotChangeBuiltinLimit(t *testing.T) {
+	log := appendLog(t, 2, 101)
+	tool := capture.New(log, nil)
+	for _, tc := range []struct {
+		args string
+		want int
+	}{
+		{`{"all":true}`, capture.DefaultLimit},
+		{`{"all":true,"limit":201}`, 201},
+		{`{"all":true,"limit":500}`, 202},
+	} {
+		blocks, err := tool.Invoke(context.Background(), capability.Invocation{SessionID: "s", Arguments: tc.args})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := segments(blocks); got != tc.want {
+			t.Fatalf("%s: %d segments, want %d", tc.args, got, tc.want)
+		}
 	}
 }

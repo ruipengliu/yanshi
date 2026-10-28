@@ -5,7 +5,9 @@
 // POST /bind {project,session}；POST /submitted {session,input}；POST /edit {id,status,due_date}；
 // POST /resolve {session,exchange,project}；POST /resolve_merge {id,accept}；POST /archive {}。
 // GET /week 返回 domain.WeekPlan；POST /bind_week {from,session} 绑定每周回顾 Session。
-// archive 返回项目 ID 数组；其余成功的 POST 返回 {}。错误返回 4xx 与简短英文 error。
+// POST /captures {date,capture_id,segments:[{speaker,speaker_key,text,spoken_at,time_zone}]} 返回 {refs}。
+// POST /bind_day {date,session} 绑定业务日当前工作 Session。
+// archive 返回项目 ID 数组；除 captures 外其余成功的 POST 返回 {}。错误返回 4xx 与简短英文 error。
 // 应用层编排器也可以直接在 store.Update/View 中使用 Book 的同名方法。
 package fixture
 
@@ -58,6 +60,30 @@ func Handler(s store.Store, opts Options) http.Handler {
 		}
 		b.Seed(seed, now())
 		return struct{}{}, nil
+	})
+	register("POST", "/captures", false, func(b *domain.Book, r *http.Request) (any, error) {
+		var in struct {
+			Date      string                  `json:"date"`
+			CaptureID string                  `json:"capture_id"`
+			Segments  []domain.CaptureSegment `json:"segments"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		refs, err := b.AppendCaptures(in.Date, in.CaptureID, in.Segments)
+		return struct {
+			Refs []string `json:"refs"`
+		}{refs}, err
+	})
+	register("POST", "/bind_day", false, func(b *domain.Book, r *http.Request) (any, error) {
+		var in struct {
+			Date    string `json:"date"`
+			Session string `json:"session"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		return struct{}{}, b.BindDay(in.Date, in.Session)
 	})
 	for _, op := range []string{"bind", "submitted", "edit", "resolve", "resolve_merge", "archive", "bind_week"} {
 		register("POST", "/"+op, false, func(b *domain.Book, r *http.Request) (any, error) {

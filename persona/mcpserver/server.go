@@ -17,16 +17,17 @@ import (
 
 // Registration 是 xinli 的登记内容。应用层据此生成内核登记，避免多处维护工具白名单。
 type Registration struct {
-	Name         string        `json:"name"`
-	NoApproval   []string      `json:"no_approval"`
-	CiteCaptures bool          `json:"cite_captures"`
-	Acks         bool          `json:"acks"`
-	Timeout      time.Duration `json:"timeout"`
+	Name            string        `json:"name"`
+	NoApproval      []string      `json:"no_approval"`
+	CiteCaptures    bool          `json:"cite_captures"`
+	AttestsSpeakers bool          `json:"attests_speakers"`
+	Acks            bool          `json:"acks"`
+	Timeout         time.Duration `json:"timeout"`
 }
 
 func XinliRegistration() Registration {
 	return Registration{Name: "xinli", NoApproval: []string{"file_changes", "file_day", "set_status", "update_commitments", "propose_merge", "file_week"},
-		CiteCaptures: true, Acks: true, Timeout: 30 * time.Second}
+		CiteCaptures: true, Acks: true, AttestsSpeakers: false, Timeout: 30 * time.Second}
 }
 
 // Notifier 是出站流（ADR-0046，docs/design/m7-kernel-primitives.md §6）就位前的进程内替身。
@@ -57,6 +58,7 @@ func newRuntime(s store.Store, opts Options) *server {
 func Handler(s store.Store, opts Options) http.Handler {
 	x := newRuntime(s, opts)
 	srv := mcp.NewServer(&mcp.Implementation{Name: XinliRegistration().Name, Version: "3"}, nil)
+	srv.AddTool(capturesTool, x.captures)
 	for _, t := range tools {
 		srv.AddTool(t.tool, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return x.call(ctx, req.Params.Meta, req.Params.Arguments, t.handler, t.tool.Annotations != nil && t.tool.Annotations.ReadOnlyHint)

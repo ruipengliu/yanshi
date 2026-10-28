@@ -28,7 +28,7 @@ func TestAttestedRegistrationAndBusinessLine(t *testing.T) {
 				seenOptions.Add(1)
 				var fields map[string]any
 				_ = json.Unmarshal(raw, &fields)
-				if fields["limit"] != float64(200) || fields["max_chars"] != float64(6000) || fields["gap_ms"] != float64(300000) {
+				if fields["limit"] != float64(500) || fields["max_chars"] != float64(6000) || fields["gap_ms"] != float64(300000) {
 					t.Error("invalid page options")
 				}
 			}

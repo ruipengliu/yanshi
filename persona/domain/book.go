@@ -43,7 +43,7 @@ type Awareness struct {
 	Suggestions []string `yaml:"suggestions" json:"suggestions"`
 }
 
-// State 是一个 EndUser 在业务线中的全部数据，供应用页面展示与评测断言。
+// State 是一个 EndUser 在业务线中的整理数据投影，供应用页面展示与评测断言；旁听原文不进入它。
 type State struct {
 	Projects    []Project    `json:"projects"`
 	Exchanges   []Exchange   `json:"exchanges"`
@@ -58,7 +58,8 @@ type State struct {
 
 // Book 是一条业务线中一个 EndUser 的全部知识；只能在所属存储事务中修改。
 type Book struct {
-	projects []Project
+	captureDays map[string]*captureDay
+	projects    []Project
 	// changesets 是变更集的日志，ledger 是由它叠加出的交谈与承诺（每次改动之后重新叠加）。
 	changesets []Changeset
 	ledger
