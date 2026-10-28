@@ -6,10 +6,12 @@ import (
 	"testing"
 	"time"
 
+	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
 	"yanshi/internal/app"
 	"yanshi/internal/artifact"
 	"yanshi/internal/clock"
+	"yanshi/internal/delegation"
 	"yanshi/internal/ids"
 	"yanshi/internal/janitor"
 	"yanshi/internal/lifecycle"
@@ -153,5 +155,138 @@ func TestRetentionRules(t *testing.T) {
 	}
 	if err := r.Validate(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAbsoluteDeadlineWithoutRetention(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	deadline := e.clk.Now().Add(time.Hour)
+	sid, err := e.core.Service.Create(ctx, service.CreateRequest{BusinessLine: "bl", EndUser: "u", Agent: "day", DeleteAt: deadline})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.remember(t, sid)
+	j := e.core.Janitor("deadline", sandbox.NewFake(), nil, 0)
+	if err := j.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if gone, _ := lifecycle.Deleted(ctx, e.stors.Deletions, sid); gone {
+		t.Fatal("deleted before deadline")
+	}
+	e.clk.Advance(2 * time.Hour)
+	if err := j.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	drain(t, j)
+	tomb, err := e.stors.Deletions.Get(ctx, sid)
+	if err != nil || tomb.Reason != lifecycle.ReasonRetention || tomb.CompletedAt.IsZero() {
+		t.Fatalf("deadline tombstone: %+v, %v", tomb, err)
+	}
+	if !e.mem.HasSession(sid) {
+		t.Fatal("deadline removed memory")
+	}
+}
+
+func TestErasureAndDeadlineCascade(t *testing.T) {
+	for _, reason := range []string{lifecycle.ReasonRetention, lifecycle.ReasonErasure} {
+		t.Run(reason, func(t *testing.T) {
+			e := newEnv(t)
+			ctx := context.Background()
+			deadline := e.clk.Now().Add(time.Hour)
+			sid, err := e.core.Service.Create(ctx, service.CreateRequest{BusinessLine: "bl", EndUser: "u", Agent: "day", DeleteAt: deadline})
+			if err != nil {
+				t.Fatal(err)
+			}
+			run, err := e.core.Service.Submit(ctx, sid, model.TextBlocks("任务"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			st, err := e.core.Service.Load(ctx, sid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			child := delegation.ChildSessionID(sid, "delegate")
+			err = e.core.Service.Store.Commit(ctx, st,
+				&v1.Event{Payload: &v1.Event_AttemptStarted{AttemptStarted: &v1.AttemptStarted{RunId: run.RunID, Attempt: 1}}},
+				&v1.Event{Payload: &v1.Event_AssistantMessage{AssistantMessage: &v1.AssistantMessage{RunId: run.RunID, Attempt: 1, ToolCalls: []*v1.ToolCall{{CallId: "delegate", Capability: "agent__project", ArgumentsJson: `{"task":"任务"}`}}}}},
+				&v1.Event{Payload: &v1.Event_ToolCallStarted{ToolCallStarted: &v1.ToolCallStarted{RunId: run.RunID, Attempt: 1, CallId: "delegate", NodeId: delegation.NodeID(child)}}},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			d := &delegation.Delegator{Service: e.core.Service}
+			if err := d.Dispatch(ctx, delegation.NodeID(child), &v1.Invoke{SessionId: sid, RunId: run.RunID, CallId: "delegate", Capability: "project", ArgumentsJson: `{"task":"任务"}`}); err != nil {
+				t.Fatal(err)
+			}
+			cs, err := e.core.Service.Load(ctx, child)
+			if err != nil || !cs.Created.GetDeleteAt().AsTime().Equal(deadline) {
+				t.Fatalf("child deadline: %+v, %v", cs, err)
+			}
+			e.remember(t, child)
+			if err := e.core.Service.Delete(ctx, sid, reason, ""); err != nil {
+				t.Fatal(err)
+			}
+			drain(t, e.core.Janitor("cascade", sandbox.NewFake(), nil, 0))
+			for _, id := range []string{sid, child} {
+				tomb, err := e.stors.Deletions.Get(ctx, id)
+				if err != nil || tomb.Reason != reason || tomb.CompletedAt.IsZero() {
+					t.Fatalf("cascade: %+v, %v", tomb, err)
+				}
+			}
+			if !e.mem.HasSession(child) {
+				t.Fatal("child memory removed")
+			}
+			got, err := e.mem.ListBySource(ctx, "bl", "u", []string{sid, child}, e.clk.Now())
+			if err != nil || len(got) != 1 || got[0].SourceSession != child {
+				t.Fatalf("candidates after cleanup: %+v, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestRetentionCanPrecedeDeadline(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	sid, err := e.core.Service.Create(ctx, service.CreateRequest{BusinessLine: "bl", EndUser: "u", Agent: "day", DeleteAt: e.clk.Now().Add(24 * time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.core.Service.Close(ctx, sid, "service", "done"); err != nil {
+		t.Fatal(err)
+	}
+	e.clk.Advance(2 * time.Hour)
+	j := e.core.Janitor("earlier", sandbox.NewFake(), map[string]lifecycle.Retention{"bl": {DeleteAfterClose: time.Hour}}, 0)
+	if err := j.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	drain(t, j)
+	tomb, err := e.stors.Deletions.Get(ctx, sid)
+	if err != nil || tomb.Reason != lifecycle.ReasonRetention || tomb.CompletedAt.IsZero() {
+		t.Fatalf("retention: %+v, %v", tomb, err)
+	}
+}
+
+func TestParentDeletionDuringDelegationKeepsReason(t *testing.T) {
+	for _, reason := range []string{lifecycle.ReasonRetention, lifecycle.ReasonErasure} {
+		t.Run(reason, func(t *testing.T) {
+			e := newEnv(t)
+			ctx := context.Background()
+			sid := e.session(t, "day")
+			child := delegation.ChildSessionID(sid, "racing")
+			d := &delegation.Delegator{Service: e.core.Service, BeforeCreate: func(ctx context.Context, _ string) {
+				if err := e.core.Service.Delete(ctx, sid, reason, ""); err != nil {
+					t.Fatal(err)
+				}
+			}}
+			if err := d.Dispatch(ctx, delegation.NodeID(child), &v1.Invoke{SessionId: sid, CallId: "racing", Capability: "project", ArgumentsJson: `{"task":"任务"}`}); err != nil {
+				t.Fatal(err)
+			}
+			drain(t, e.core.Janitor("race", sandbox.NewFake(), nil, 0))
+			tomb, err := e.stors.Deletions.Get(ctx, child)
+			if err != nil || tomb.Reason != reason || tomb.CompletedAt.IsZero() {
+				t.Fatalf("child race: %+v, %v", tomb, err)
+			}
+		})
 	}
 }

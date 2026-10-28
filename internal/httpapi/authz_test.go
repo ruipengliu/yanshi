@@ -76,6 +76,9 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 	dir := node.NewMemDirectory(clk)
 	ctx := context.Background()
 
+	if _, err := svc.Deletions.Mark(ctx, &lifecycle.Tombstone{SessionID: "deleted-session", BusinessLine: "demo", Reason: lifecycle.ReasonErasure, RequestedAt: clk.Now()}); err != nil {
+		t.Fatal(err)
+	}
 	e.sid, err = svc.Create(ctx, service.CreateRequest{BusinessLine: "demo", EndUser: "u1", Agent: "echo"})
 	if err != nil {
 		t.Fatal(err)
@@ -232,6 +235,7 @@ func (e *authzEnv) cases() map[string]routeCase {
 		"POST /v1/sessions/{id}/close":      {"POST", s + "/close", nil, http.StatusNoContent},
 		"DELETE /v1/sessions/{id}":          {"DELETE", s, nil, http.StatusAccepted},
 		"DELETE /v1/end_users/{id}":         {"DELETE", "/v1/end_users/u1", nil, http.StatusAccepted},
+		"GET /v1/sessions/{id}/deletion":    {"GET", "/v1/sessions/deleted-session/deletion", nil, http.StatusOK},
 		"GET /v1/deletions/{id}":            {"GET", "/v1/deletions/" + e.deletion, nil, http.StatusOK},
 		"GET /v1/memories":                  {"GET", "/v1/memories?end_user=u1", nil, http.StatusOK},
 		"DELETE /v1/memories/{id}":          {"DELETE", "/v1/memories/" + e.memory + "?end_user=u1", nil, http.StatusNoContent},
@@ -309,7 +313,7 @@ func TestAuthorizationMatrix(t *testing.T) {
 					if deleted := err != nil; deleted != (principal == "demo/") {
 						t.Fatalf("owner's session deleted = %v", deleted)
 					}
-				case route == "GET /v1/deletions/{id}":
+				case route == "GET /v1/deletions/{id}" || route == "GET /v1/sessions/{id}/deletion":
 					want := map[string]int{"demo/u1": 403, "demo/u2": 403, "other/u1": 403, "demo/": 200, "other/": 404}[principal]
 					if code != want {
 						t.Fatalf("got %d (%s), want %d", code, body, want)

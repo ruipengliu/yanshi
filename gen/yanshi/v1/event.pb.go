@@ -1955,7 +1955,9 @@ type SessionCreated struct {
 	EndUser      string                 `protobuf:"bytes,2,opt,name=end_user,json=endUser,proto3" json:"end_user,omitempty"`
 	Agent        *AgentRef              `protobuf:"bytes,3,opt,name=agent,proto3" json:"agent,omitempty"`
 	// 非空表示这是委托派生的子 Session（docs/design/m5-multi-agent.md）：子 Run 的终态作为父调用的结果。
-	Parent        *ParentRef `protobuf:"bytes,4,opt,name=parent,proto3" json:"parent,omitempty"`
+	Parent *ParentRef `protobuf:"bytes,4,opt,name=parent,proto3" json:"parent,omitempty"`
+	// 原文副本的绝对删除期限；委托派生的子 Session 同寿（ADR-0050）。
+	DeleteAt      *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=delete_at,json=deleteAt,proto3" json:"delete_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2014,6 +2016,13 @@ func (x *SessionCreated) GetAgent() *AgentRef {
 func (x *SessionCreated) GetParent() *ParentRef {
 	if x != nil {
 		return x.Parent
+	}
+	return nil
+}
+
+func (x *SessionCreated) GetDeleteAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.DeleteAt
 	}
 	return nil
 }
@@ -4352,12 +4361,13 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\x04size\x18\x05 \x01(\x04R\x04size\"8\n" +
 	"\bAgentRef\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
-	"\aversion\x18\x02 \x01(\tR\aversion\"\xa9\x01\n" +
+	"\aversion\x18\x02 \x01(\tR\aversion\"\xe2\x01\n" +
 	"\x0eSessionCreated\x12#\n" +
 	"\rbusiness_line\x18\x01 \x01(\tR\fbusinessLine\x12\x19\n" +
 	"\bend_user\x18\x02 \x01(\tR\aendUser\x12)\n" +
 	"\x05agent\x18\x03 \x01(\v2\x13.yanshi.v1.AgentRefR\x05agent\x12,\n" +
-	"\x06parent\x18\x04 \x01(\v2\x14.yanshi.v1.ParentRefR\x06parent\"\x8d\x01\n" +
+	"\x06parent\x18\x04 \x01(\v2\x14.yanshi.v1.ParentRefR\x06parent\x127\n" +
+	"\tdelete_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bdeleteAt\"\x8d\x01\n" +
 	"\tParentRef\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x15\n" +
@@ -4652,34 +4662,35 @@ var file_yanshi_v1_event_proto_depIdxs = []int32{
 	51, // 42: yanshi.v1.CardAction.values:type_name -> yanshi.v1.CardAction.ValuesEntry
 	19, // 43: yanshi.v1.SessionCreated.agent:type_name -> yanshi.v1.AgentRef
 	21, // 44: yanshi.v1.SessionCreated.parent:type_name -> yanshi.v1.ParentRef
-	19, // 45: yanshi.v1.ParentRef.ancestors:type_name -> yanshi.v1.AgentRef
-	19, // 46: yanshi.v1.AgentSwitched.from:type_name -> yanshi.v1.AgentRef
-	19, // 47: yanshi.v1.AgentSwitched.to:type_name -> yanshi.v1.AgentRef
-	3,  // 48: yanshi.v1.RunRequested.input:type_name -> yanshi.v1.ContentBlock
-	3,  // 49: yanshi.v1.Steered.input:type_name -> yanshi.v1.ContentBlock
-	3,  // 50: yanshi.v1.AssistantMessage.content:type_name -> yanshi.v1.ContentBlock
-	27, // 51: yanshi.v1.AssistantMessage.tool_calls:type_name -> yanshi.v1.ToolCall
-	28, // 52: yanshi.v1.AssistantMessage.usage:type_name -> yanshi.v1.Usage
-	52, // 53: yanshi.v1.ToolCallStarted.deadline:type_name -> google.protobuf.Timestamp
-	3,  // 54: yanshi.v1.ToolResult.content:type_name -> yanshi.v1.ContentBlock
-	15, // 55: yanshi.v1.ToolResult.card_action:type_name -> yanshi.v1.CardAction
-	34, // 56: yanshi.v1.ToolResult.backgrounded:type_name -> yanshi.v1.Backgrounded
-	32, // 57: yanshi.v1.ToolResult.capture_read:type_name -> yanshi.v1.CaptureRead
-	33, // 58: yanshi.v1.ToolResult.capture_ack:type_name -> yanshi.v1.CaptureAck
-	52, // 59: yanshi.v1.Backgrounded.deadline:type_name -> google.protobuf.Timestamp
-	52, // 60: yanshi.v1.RunSuspended.until:type_name -> google.protobuf.Timestamp
-	52, // 61: yanshi.v1.ApprovalRequested.deadline:type_name -> google.protobuf.Timestamp
-	3,  // 62: yanshi.v1.ContextCompacted.summary:type_name -> yanshi.v1.ContentBlock
-	28, // 63: yanshi.v1.ContextCompacted.usage:type_name -> yanshi.v1.Usage
-	45, // 64: yanshi.v1.MemoryRecalled.items:type_name -> yanshi.v1.RecalledMemory
-	49, // 65: yanshi.v1.CaptureAppended.segments:type_name -> yanshi.v1.CaptureSegment
-	0,  // 66: yanshi.v1.CaptureSegment.speaker:type_name -> yanshi.v1.Speaker
-	52, // 67: yanshi.v1.CaptureSegment.spoken_at:type_name -> google.protobuf.Timestamp
-	68, // [68:68] is the sub-list for method output_type
-	68, // [68:68] is the sub-list for method input_type
-	68, // [68:68] is the sub-list for extension type_name
-	68, // [68:68] is the sub-list for extension extendee
-	0,  // [0:68] is the sub-list for field type_name
+	52, // 45: yanshi.v1.SessionCreated.delete_at:type_name -> google.protobuf.Timestamp
+	19, // 46: yanshi.v1.ParentRef.ancestors:type_name -> yanshi.v1.AgentRef
+	19, // 47: yanshi.v1.AgentSwitched.from:type_name -> yanshi.v1.AgentRef
+	19, // 48: yanshi.v1.AgentSwitched.to:type_name -> yanshi.v1.AgentRef
+	3,  // 49: yanshi.v1.RunRequested.input:type_name -> yanshi.v1.ContentBlock
+	3,  // 50: yanshi.v1.Steered.input:type_name -> yanshi.v1.ContentBlock
+	3,  // 51: yanshi.v1.AssistantMessage.content:type_name -> yanshi.v1.ContentBlock
+	27, // 52: yanshi.v1.AssistantMessage.tool_calls:type_name -> yanshi.v1.ToolCall
+	28, // 53: yanshi.v1.AssistantMessage.usage:type_name -> yanshi.v1.Usage
+	52, // 54: yanshi.v1.ToolCallStarted.deadline:type_name -> google.protobuf.Timestamp
+	3,  // 55: yanshi.v1.ToolResult.content:type_name -> yanshi.v1.ContentBlock
+	15, // 56: yanshi.v1.ToolResult.card_action:type_name -> yanshi.v1.CardAction
+	34, // 57: yanshi.v1.ToolResult.backgrounded:type_name -> yanshi.v1.Backgrounded
+	32, // 58: yanshi.v1.ToolResult.capture_read:type_name -> yanshi.v1.CaptureRead
+	33, // 59: yanshi.v1.ToolResult.capture_ack:type_name -> yanshi.v1.CaptureAck
+	52, // 60: yanshi.v1.Backgrounded.deadline:type_name -> google.protobuf.Timestamp
+	52, // 61: yanshi.v1.RunSuspended.until:type_name -> google.protobuf.Timestamp
+	52, // 62: yanshi.v1.ApprovalRequested.deadline:type_name -> google.protobuf.Timestamp
+	3,  // 63: yanshi.v1.ContextCompacted.summary:type_name -> yanshi.v1.ContentBlock
+	28, // 64: yanshi.v1.ContextCompacted.usage:type_name -> yanshi.v1.Usage
+	45, // 65: yanshi.v1.MemoryRecalled.items:type_name -> yanshi.v1.RecalledMemory
+	49, // 66: yanshi.v1.CaptureAppended.segments:type_name -> yanshi.v1.CaptureSegment
+	0,  // 67: yanshi.v1.CaptureSegment.speaker:type_name -> yanshi.v1.Speaker
+	52, // 68: yanshi.v1.CaptureSegment.spoken_at:type_name -> google.protobuf.Timestamp
+	69, // [69:69] is the sub-list for method output_type
+	69, // [69:69] is the sub-list for method input_type
+	69, // [69:69] is the sub-list for extension type_name
+	69, // [69:69] is the sub-list for extension extendee
+	0,  // [0:69] is the sub-list for field type_name
 }
 
 func init() { file_yanshi_v1_event_proto_init() }

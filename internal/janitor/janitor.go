@@ -217,8 +217,7 @@ func (j *Janitor) process(ctx context.Context, sid string) error {
 	return nil
 }
 
-// delete 清除 Session 的全部数据。reason 是删除记录的原因：按保留期到期删除时，登记为 KeepOnRetention 的数据保留
-// （ADR-0037：到期清理不是用户的删除意图）。
+// delete 清除 Session 的数据；retention 与 erasure 保留登记为 KeepOnRetention 的既有 Memory（ADR-0050）。
 func (j *Janitor) delete(ctx context.Context, sid string, st *session.State, reason string) error {
 	// 1. 中断活跃的 Run：持有它的 Worker 因 fencing 失效而停止，不再派发新调用。
 	if err := j.stage(ctx, "interrupt"); err != nil {
@@ -319,7 +318,7 @@ func (j *Janitor) forgetOnDevices(ctx context.Context, sid string, st *session.S
 }
 
 // deleteChildren 删除委托派生的子 Session：子 Session ID 记在父日志的 ToolCallStarted 中（委托目标）。父 Session 按保留期
-// 到期删除时，子 Session 同样按保留期删除：它们写入的 Memory 与父 Session 的一样保留。
+// 到期或擦除时，子 Session 同因删除：它们写入的 Memory 与父 Session 的一样保留。
 func (j *Janitor) deleteChildren(ctx context.Context, sid string, st *session.State, reason string) error {
 	var children []string
 	err := session.ScanLog(ctx, j.Store.Log, sid, func(e *v1.Event) bool {
@@ -332,8 +331,8 @@ func (j *Janitor) deleteChildren(ctx context.Context, sid string, st *session.St
 		return err
 	}
 	childReason := "parent_deleted"
-	if reason == lifecycle.ReasonRetention {
-		childReason = lifecycle.ReasonRetention
+	if lifecycle.KeepsMemory(reason) {
+		childReason = reason
 	}
 	for _, child := range children {
 		if err := j.Service.Delete(ctx, child, childReason, ""); err != nil && !errors.Is(err, service.ErrNotFound) {
@@ -350,10 +349,10 @@ func ForgetInvoke(sessionID string) *v1.Invoke {
 		ArgumentsJson: fmt.Sprintf(`{"session_id":%q}`, sessionID)}
 }
 
-// sweep 按登记顺序清除除日志与索引之外的全部数据；幂等，可重复执行。按保留期到期删除时跳过 KeepOnRetention 的数据。
+// sweep 按登记顺序清除除日志与索引之外的全部数据；幂等，可重复执行。retention 与 erasure 都跳过 KeepOnRetention 的数据。
 func (j *Janitor) sweep(ctx context.Context, sid, reason string) error {
 	for _, h := range j.Data {
-		if h.KeepOnRetention && reason == lifecycle.ReasonRetention {
+		if h.KeepOnRetention && lifecycle.KeepsMemory(reason) {
 			continue
 		}
 		if err := h.DeleteSession(ctx, sid); err != nil {
@@ -370,6 +369,16 @@ func (j *Janitor) Sweep(ctx context.Context) error {
 	now := j.Clock.Now()
 	if err := j.sweepEndUsers(ctx, now); err != nil {
 		return err
+	}
+	// 绝对期限独立于 Retention 配置：未配置保留策略的业务线也必须清理。
+	due, err := j.Index.DueBefore(ctx, "", now, 100)
+	if err != nil {
+		return err
+	}
+	for _, id := range due {
+		if err := j.Service.Delete(ctx, id, lifecycle.ReasonRetention, ""); err != nil && !errors.Is(err, service.ErrNotFound) {
+			return err
+		}
 	}
 	for bl, retention := range j.Retention {
 		// 按 AgentDef 覆盖的规则各查各的 Session，业务线的值作用于其余 AgentDef（docs/design/captures.md §8）。

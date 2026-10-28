@@ -93,6 +93,8 @@ type Session struct {
 	LastInputAt  time.Time
 	// ClosedAt 为零值表示未关闭。
 	ClosedAt time.Time
+	// DeleteAt 为零表示没有绝对删除期限。
+	DeleteAt time.Time
 }
 
 type Index interface {
@@ -112,11 +114,21 @@ type Index interface {
 	IdleBefore(ctx context.Context, businessLine string, agents AgentFilter, t time.Time, limit int) ([]string, error)
 	// ClosedBefore 返回业务线中 AgentDef 在 agents 之内、关闭时间早于 t 的 Session，至多 limit 个。
 	ClosedBefore(ctx context.Context, businessLine string, agents AgentFilter, t time.Time, limit int) ([]string, error)
+	// DueBefore 返回期限早于 t 的 Session；businessLine 为空时扫描全部业务线，供 Janitor 兜底。
+	DueBefore(ctx context.Context, businessLine string, t time.Time, limit int) ([]string, error)
 	Delete(ctx context.Context, id string) error
 }
 
 // ReasonRetention 是按保留期到期删除的原因（Tombstone.Reason）。
 const ReasonRetention = "retention"
+
+// ReasonErasure 删除原文副本所在的 Session，保留既有 Memory 供用户决定（ADR-0050）。
+const ReasonErasure = "erasure"
+
+// KeepsMemory 报告该删除原因是否保留删除记录之前写入的 Memory。
+func KeepsMemory(reason string) bool {
+	return reason == ReasonRetention || reason == ReasonErasure
+}
 
 // Tombstone 是一条删除记录。不含 EndUser：删除完成后不应再留存个人标识。
 type Tombstone struct {
@@ -173,8 +185,8 @@ func Deleted(ctx context.Context, d Deletions, sessionID string) (bool, error) {
 // 各一遍（第二遍兜住"先写、后查"窗口中漏进来的写入）。登记列表由装配包统一给出（app.SessionData）。
 type Holder struct {
 	Name string
-	// KeepOnRetention 为 true 时，按保留期到期删除 Session 时保留这里的数据：到期清理不是用户的删除意图，由 Session
-	// 写入的 Memory 在原话删除之后仍应保留（ADR-0037）。用户主动删除与注销账号时照常清除。
+	// KeepOnRetention 为 true 时，retention 与 erasure 都保留这里的既有 Memory（ADR-0037、ADR-0050）。
+	// 保留字段名以兼容登记；不豁免写入方的 Recheck，迟到写入仍撤回。
 	KeepOnRetention bool
 	// DeleteSession 清除 Session 在这里的全部数据；幂等，可重复执行。
 	DeleteSession func(ctx context.Context, sessionID string) error

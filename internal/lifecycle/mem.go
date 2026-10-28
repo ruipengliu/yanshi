@@ -253,3 +253,9 @@ func (d *MemDeletions) Request(_ context.Context, id string) (*Request, error) {
 	}
 	return &cp, nil
 }
+
+func (x *MemIndex) DueBefore(_ context.Context, businessLine string, t time.Time, limit int) ([]string, error) {
+	return x.pick(func(s *Session) bool {
+		return (businessLine == "" || s.BusinessLine == businessLine) && !s.DeleteAt.IsZero() && s.DeleteAt.Before(t)
+	}, limit), nil
+}

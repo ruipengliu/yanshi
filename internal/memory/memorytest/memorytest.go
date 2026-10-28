@@ -39,6 +39,47 @@ func RunStore(t *testing.T, newStore func(t *testing.T) memory.Store) {
 	ctx := context.Background()
 	all := []memory.Scope{{BusinessLine: "a"}, {BusinessLine: "b"}}
 
+	t.Run("ListBySource", func(t *testing.T) {
+		s := newStore(t)
+		for _, m := range []*memory.Memory{
+			mem("a", "a", "u", memory.Preference, "a", "s1", t0),
+			mem("b", "a", "u", memory.Preference, "b", "s2", t0),
+			mem("c", "b", "u", memory.Preference, "c", "s1", t0),
+			mem("d", "a", "v", memory.Preference, "d", "s1", t0),
+			mem("e", "a", "u", memory.Preference, "e", "s3", t0),
+			mem("f", "a", "u", memory.Preference, "f", "s1", t0),
+		} {
+			if err := s.Put(ctx, m, nil); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := s.Supersede(ctx, "f", "a", t0); err != nil {
+			t.Fatal(err)
+		}
+		expired := mem("g", "a", "u", memory.Plan, "g", "s1", t0)
+		expired.ValidUntil = t0
+		if err := s.Put(ctx, expired, nil); err != nil {
+			t.Fatal(err)
+		}
+		for _, tc := range []struct {
+			sources []string
+			want    []string
+		}{
+			{nil, nil}, {[]string{"missing"}, nil}, {[]string{"s1", "s2", "s1"}, []string{"a", "b"}},
+		} {
+			got, err := s.ListBySource(ctx, "a", "u", tc.sources, t0)
+			if err != nil || !slices.Equal(ids(got), tc.want) {
+				t.Fatalf("sources = %v, %v", ids(got), err)
+			}
+		}
+		if err := s.Delete(ctx, "a"); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.ListBySource(ctx, "a", "u", []string{"s1", "s2"}, t0)
+		if err != nil || !slices.Equal(ids(got), []string{"b"}) {
+			t.Fatalf("after deletion = %v, %v", ids(got), err)
+		}
+	})
 	t.Run("PutGetOverwriteDelete", func(t *testing.T) {
 		s := newStore(t)
 		m := mem("m1", "a", "u", memory.Preference, "偏好简洁的回答", "s1", t0)
