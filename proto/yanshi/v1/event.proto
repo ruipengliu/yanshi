@@ -549,6 +549,8 @@ message CaptureSegment {
   string time_zone = 6;
   // attested 结果中业务线命名空间内的引用。
   string ref = 7;
+  // 业务线比对声纹后填入的不透明实体 ID；只有他人可带，内核只校验语法，来源推导不看它。
+  string speaker_ref = 8;
 }
 
 enum Speaker {

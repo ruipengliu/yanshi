@@ -14,6 +14,7 @@ import (
 type CaptureSegment struct {
 	Speaker    string `json:"speaker"`
 	SpeakerKey string `json:"speaker_key,omitempty"`
+	SpeakerRef string `json:"speaker_ref,omitempty"`
 	Text       string `json:"text"`
 	SpokenAt   string `json:"spoken_at,omitempty"`
 	TimeZone   string `json:"time_zone,omitempty"`
@@ -98,6 +99,7 @@ func (u *Book) BindDay(date, session string, deleteAt ...time.Time) error {
 }
 
 var captureSpeakerKey = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
+var captureSpeakerRef = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // AppendCaptures 校验业务日原文的提交边界；错误不回显原文或非法字段。
 // capture_id 的去重保留整个业务日，后续擦除也不能复用批次号。
@@ -120,6 +122,9 @@ func (u *Book) AppendCaptures(date, captureID string, segments []CaptureSegment)
 		}
 		if g.Speaker == "wearer" && g.SpeakerKey != "" || g.Speaker == "other" && !captureSpeakerKey.MatchString(g.SpeakerKey) {
 			return nil, fmt.Errorf("invalid capture speaker_key")
+		}
+		if g.SpeakerRef != "" && (g.Speaker != "other" || !captureSpeakerRef.MatchString(g.SpeakerRef)) {
+			return nil, fmt.Errorf("invalid capture speaker_ref")
 		}
 		if g.Text == "" || utf8.RuneCountInString(g.Text) > 2000 {
 			return nil, fmt.Errorf("capture text must contain 1 to 2000 characters")
@@ -299,7 +304,7 @@ func (u *Book) DayCaptures(date string) []PageSegment {
 	if d := u.captureDays[date]; d != nil {
 		for _, s := range d.segments() {
 			g := s.g
-			out = append(out, PageSegment{Ref: s.ref.String(), Speaker: g.Speaker, SpeakerKey: g.SpeakerKey, Text: g.Text, SpokenAt: g.SpokenAt, TimeZone: g.TimeZone})
+			out = append(out, PageSegment{Ref: s.ref.String(), Speaker: g.Speaker, SpeakerKey: g.SpeakerKey, SpeakerRef: g.SpeakerRef, Text: g.Text, SpokenAt: g.SpokenAt, TimeZone: g.TimeZone})
 		}
 	}
 	return out

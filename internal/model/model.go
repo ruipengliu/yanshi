@@ -230,6 +230,9 @@ func CaptureText(g *v1.CaptureSegment) string {
 	who := "佩戴者"
 	if g.GetSpeaker() == v1.Speaker_SPEAKER_OTHER {
 		who = "他人 " + g.GetSpeakerKey()
+		if g.GetSpeakerRef() != "" {
+			who += " @" + g.GetSpeakerRef()
+		}
 	}
 	at := ""
 	if t, ok := CaptureLocalTime(g); ok {

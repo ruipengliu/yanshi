@@ -389,3 +389,97 @@ func assertCaptureInProgress(t *testing.T) {
 		}
 	}
 }
+
+// 使用真实 Persona MCP 与内核渲染检验新字段的两种预算，不改变冻结的无引用 golden。
+func TestPersonaCaptureSpeakerRefBudgets(t *testing.T) {
+	for _, ref := range []string{"", "P-0012", strings.Repeat("P", 64)} {
+		t.Run(fmt.Sprintf("ref%d", len(ref)), func(t *testing.T) {
+			e := newCaptureParityEnv(t)
+			at := time.Date(2020, 1, 1, 23, 59, 0, 0, time.UTC)
+			var segments []xinlifixture.CaptureSegment
+			preview := capture.RenderPage{Kind: "page", Span: capture.Ref{Seq: 1}, Done: true}
+			for i := range 3 {
+				when := at.Add(time.Duration(i) * time.Minute)
+				segments = append(segments, xinlifixture.CaptureSegment{Speaker: "other", SpeakerKey: "other-1", SpeakerRef: ref, Text: "原话\r\n下一句", SpokenAt: when.Format(time.RFC3339), TimeZone: "UTC"})
+				preview.Segments = append(preview.Segments, &v1.CaptureSegment{Ref: fmt.Sprintf("1.%d", i), Speaker: v1.Speaker_SPEAKER_OTHER, SpeakerKey: "other-1", SpeakerRef: ref, Text: "原话\r\n下一句", SpokenAt: timestamppb.New(when), TimeZone: "UTC"})
+			}
+			e.append(t, segments)
+			// 第二段跨日：接纳之前只算首段日期头与两段正文，第二个日期头随后才计入。
+			first := preview
+			first.Segments = preview.Segments[:1]
+			blocks, _, err := capture.Render(first, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			chars := 0
+			for _, b := range blocks {
+				if g := b.GetCapture(); g != nil {
+					chars += len([]rune(model.CaptureText(g)))
+				} else if text := b.GetText().GetText(); strings.HasPrefix(text, "——") || strings.HasPrefix(text, "#") {
+					chars += len([]rune(text))
+				}
+			}
+			boundary := chars + len([]rune("#1.1 "+model.CaptureText(preview.Segments[1])))
+			for _, delta := range []int{-1, 0} {
+				o := captureGoldenOptions(8000)
+				o.MaxChars = boundary + delta
+				pages := e.collectPages(t, true, 200, o, 10)
+				want := 2
+				if delta < 0 {
+					want = 1
+				}
+				if pages[0].Count != want {
+					t.Fatalf("chars delta %d: first count %d, want %d", delta, pages[0].Count, want)
+				}
+				read := 0
+				for _, page := range pages {
+					read += page.Count
+				}
+				if read != 3 {
+					t.Fatal("character pagination lost segments")
+				}
+			}
+			// 枚举每个 token 预算，Persona 接受的每一页都须通过平台的最终预算；同时走到续页切点。
+			blocks, _, err = capture.Render(preview, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fullBudget := model.EstimateTokens(blocks)
+			cut := false
+			for budget := fullBudget; budget >= 1; budget-- {
+				o := captureGoldenOptions(budget)
+				res, err := e.conn.CallTool(context.Background(), &mcp.CallToolParams{Name: "captures", Arguments: map[string]any{"after": "0", "all": true}, Meta: mcp.Meta{
+					"yanshi/business_line": BusinessLine, "yanshi/end_user": "u", "yanshi/session": e.sid, "yanshi/page_options": o,
+				}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if res.IsError {
+					break
+				}
+				raw, err := json.Marshal(res.Meta["yanshi/page"])
+				if err != nil {
+					t.Fatal(err)
+				}
+				p, err := capture.ParsePage(raw, o)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, g := range p.Segments {
+					if g.GetSpeakerRef() != ref {
+						t.Fatal("MCP lost speaker ref")
+					}
+				}
+				if _, _, err := capture.Render(p, budget); err != nil {
+					t.Fatalf("Persona accepted budget %d: %v", budget, err)
+				}
+				if len(p.Segments) < 3 {
+					cut = true
+				}
+			}
+			if !cut {
+				t.Fatal("token boundary not exercised")
+			}
+		})
+	}
+}

@@ -207,5 +207,5 @@ func TestAttestedPagesWithFaults(t *testing.T) {
 	total := parallelSeeds(t, seedList(), func(t *testing.T, s uint64) Stats {
 		return run(t, s, Options{Faults: true, Attested: true, Ticks: 1000}).Stats
 	})
-	requireCoverage(t, total, "AttestedResults", "AttestedRedactions", "AttestedErrors", "MemoryPrechecked")
+	requireCoverage(t, total, "AttestedResults", "AttestedRedactions", "AttestedErrors", "AttestedSpeakerRefs", "AttestedSpeakerRefErrors", "MemoryPrechecked")
 }

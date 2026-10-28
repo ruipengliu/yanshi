@@ -8,7 +8,7 @@ export class CaptureView {
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     this.date = h("input", { type: "date", value: today, onchange: () => this.reset() });
-    this.lines = h("textarea", { rows: 5, placeholder: "佩戴者|我明天给你报价\n他人 colleague|好的" });
+    this.lines = h("textarea", { rows: 5, placeholder: "佩戴者|我明天给你报价\n他人 colleague @P-0012|好的" });
     this.from = h("input", { placeholder: "起始引用，如 #1.0" });
     this.to = h("input", { placeholder: "结束引用，如 #1.1" });
     this.notice = h("p", { role: "status" });
@@ -22,7 +22,7 @@ export class CaptureView {
     };
     this.root = h("section", { class: "xinli-card capture-entry" },
       h("div", { class: "xinli-card-head" }, h("b", {}, "提交旁听、原文与删除"), h("label", {}, "业务日 ", this.date)),
-      h("p", { class: "muted" }, "逐行输入「佩戴者|文字」或「他人 key|文字」，他人未填 key 时使用 other。"),
+      h("p", { class: "muted" }, "逐行输入「佩戴者|文字」或「他人 key|文字」，他人未填 key 时使用 other；可在 key 后加 @说话人引用，如「他人 colleague @P-0012|文字」。"),
       this.lines,
       h("div", { class: "xinli-actions" },
         button("提交旁听", () => this.append()),
@@ -61,7 +61,7 @@ export class CaptureView {
       fill(this.results,
         h("h3", {}, data.day.deleted ? "原文（这一天已删除）" : "原文"),
         (data.segments ?? []).length ? data.segments.map((s) => h("div", { class: "xinli-group capture-text" },
-          h("code", {}, `#${s.ref}`), " · ", s.speaker === "wearer" ? "佩戴者" : `他人 ${s.speaker_key}`,
+          h("code", {}, `#${s.ref}`), " · ", s.speaker === "wearer" ? "佩戴者" : `他人 ${s.speaker_key}${s.speaker_ref ? ` @${s.speaker_ref}` : ""}`,
           " · ", s.spoken_at || "未记时刻", h("div", {}, s.text))) : h("p", { class: "muted" }, "没有旁听原文。"),
         h("h3", {}, "删除待办"),
         (data.tasks ?? []).length ? data.tasks.map((task) => h("div", { class: "xinli-group" },
@@ -107,8 +107,10 @@ export class CaptureView {
       if (sep < 0) throw new Error("invalid line");
       const who = line.slice(0, sep).trim();
       const text = line.slice(sep + 1).trim();
-      if (!text || (who !== "佩戴者" && !/^他人(?:\s+[A-Za-z0-9_-]{1,32})?$/.test(who))) throw new Error("invalid speaker");
-      return { speaker: who === "佩戴者" ? "wearer" : "other", speaker_key: who === "佩戴者" ? "" : who.split(/\s+/)[1] || "other",
+      const other = /^他人(?:\s+([A-Za-z0-9_-]{1,32}))?(?:\s+@([A-Za-z0-9_-]{1,64}))?$/.exec(who);
+      if (!text || (who !== "佩戴者" && !other)) throw new Error("invalid speaker");
+      return { speaker: other ? "other" : "wearer", speaker_key: other ? other[1] || "other" : "",
+        ...(other?.[2] ? { speaker_ref: other[2] } : {}),
         text, spoken_at: spoken.toISOString(), time_zone: zone };
     });
     if (await this.send("captures", { segments })) this.lines.value = "";

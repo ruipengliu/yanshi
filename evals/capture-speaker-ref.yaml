@@ -1,0 +1,26 @@
+name: capture-speaker-ref
+description: >-
+  同一说话人引用跨批保持稳定，批内编号变化也应合并回答；同批的另一个引用不能混入。
+  使用能读取原文的 xinli-day，xinli-assistant 没有 captures 能力；不修改 AgentDef。
+agent: xinli-day
+setup:
+  xinli: {}
+turns:
+  - captures:
+      - {speaker: other, key: recognized, speaker_ref: P-0012, text: 展厅方案定了，入口墙采用浅灰色。, at: "2026-10-22 10:00"}
+      - {speaker: wearer, text: 好，入口墙就用浅灰色。, at: "2026-10-22 10:00"}
+      # 第二批先出现另一位，使 P-0012 从 other-1 变为 other-2。
+      - {speaker: other, key: different, speaker_ref: P-0099, text: 咖啡豆采购改成深烘焙，我们按这个口味选。, at: "2026-10-22 10:02"}
+      - {speaker: other, key: recognized, speaker_ref: P-0012, text: 展厅的第二件事也定了，灯光采用暖白色。, at: "2026-10-22 10:02"}
+      - {speaker: wearer, text: 收到，展厅灯光用暖白色。, at: "2026-10-22 10:02"}
+    input: 今天跟 P-0012 那位聊了些什么？请读今天的旁听，把那位在不同批次说的事合在一起告诉我。
+    expect:
+      calls: [mcp_xinli__captures]
+      reply_contains: [浅灰色, 暖白色]
+      reply_excludes: [咖啡豆, 深烘焙]
+      judge: >-
+        5 分：明确合并 P-0012 在两批中的发言，说明展厅入口墙定为浅灰色、灯光定为暖白色；正确识别 other-1 与 other-2 的引用相同，完全没有混入 P-0099 的咖啡豆采购。
+        4 分：两件事和颜色均正确，未混入其他人的内容，但未明确解释跨批编号变化。
+        3 分：只答出 P-0012 的一件事，另一件遗漏或含糊，但没有混入另一个人。
+        2 分：把咖啡豆或深烘焙归给 P-0012，或因 other-1/other-2 不同而把同一人拆开拒绝合并。
+        1 分：没有依据旁听回答、大部分内容错误或编造。

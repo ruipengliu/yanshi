@@ -95,11 +95,15 @@ func (w *World) attestedPageResult() map[string]any {
 		if g.GetSpeaker() == v1.Speaker_SPEAKER_OTHER {
 			who = "other"
 		}
-		p.Segments = append(p.Segments, capture.PageSegment{Ref: fmt.Sprintf("57.%d", i), Speaker: who, SpeakerKey: g.GetSpeakerKey(), Text: g.GetText(), SpokenAt: g.GetSpokenAt().AsTime().Format(time.RFC3339), TimeZone: g.GetTimeZone()})
+		p.Segments = append(p.Segments, capture.PageSegment{Ref: fmt.Sprintf("57.%d", i), Speaker: who, SpeakerKey: g.GetSpeakerKey(), SpeakerRef: g.GetSpeakerRef(), Text: g.GetText(), SpokenAt: g.GetSpokenAt().AsTime().Format(time.RFC3339), TimeZone: g.GetTimeZone()})
 	}
 	failed := w.faults && w.chance(0.1)
 	if w.faults && w.chance(0.05) {
-		p.Kind = "invalid"
+		if w.chance(0.5) {
+			p.Kind = "invalid"
+		} else {
+			p.Segments[1].SpeakerRef = "invalid ref"
+		}
 	}
 	return map[string]any{"content": []any{}, "isError": failed, "_meta": map[string]any{"yanshi/page": p}}
 }
@@ -128,7 +132,7 @@ func attestedMemoryPrecheck(messages []model.Message) bool {
 	// 这里只驱动脚本化模型，真正的来源与闸门仍由日志中的结构化说话人决定。
 	text := model.Text(last.Content)
 	for _, key := range []string{"other-1", "other-2"} {
-		if strings.Contains(text, "[他人 "+key+"] ") {
+		if strings.Contains(text, "[他人 "+key+"] ") || strings.Contains(text, "[他人 "+key+" @P-0012] ") {
 			return true
 		}
 	}
@@ -145,7 +149,7 @@ func (w *World) captureSegments() []*v1.CaptureSegment {
 		if i == 0 || (i > 1 && w.chance(0.5)) {
 			segs[i] = &v1.CaptureSegment{Speaker: v1.Speaker_SPEAKER_WEARER, Text: text}
 		} else {
-			segs[i] = &v1.CaptureSegment{Speaker: v1.Speaker_SPEAKER_OTHER, SpeakerKey: fmt.Sprintf("other-%d", 1+w.rng.IntN(2)), Text: text}
+			segs[i] = &v1.CaptureSegment{Speaker: v1.Speaker_SPEAKER_OTHER, SpeakerKey: fmt.Sprintf("other-%d", 1+w.rng.IntN(2)), SpeakerRef: "P-0012", Text: text}
 		}
 		// 带时间才有时段与续页；同批的片段属于同一时段，时间来自模拟时钟。
 		segs[i].SpokenAt = timestamppb.New(w.clock.Now())
@@ -197,6 +201,9 @@ func (w *World) countAttestedResults(events []*v1.Event) {
 			if r.GetAttested() {
 				w.Stats.AttestedResults++
 				for _, b := range r.GetContent() {
+					if b.GetCapture().GetSpeakerRef() != "" {
+						w.Stats.AttestedSpeakerRefs++
+					}
 					if b.GetCapture().GetRedacted() {
 						w.Stats.AttestedRedactions++
 					}
@@ -204,6 +211,9 @@ func (w *World) countAttestedResults(events []*v1.Event) {
 			}
 			if r.GetIsError() && calls[r.GetRunId()+"/"+r.GetCallId()].GetCapability() == simAttestedName {
 				w.Stats.AttestedErrors++
+				if model.Text(r.GetContent()) == "业务线返回的旁听页无效：说话人引用" {
+					w.Stats.AttestedSpeakerRefErrors++
+				}
 			}
 
 		}

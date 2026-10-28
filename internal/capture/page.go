@@ -52,6 +52,7 @@ type PageSegment struct {
 	Ref        string `json:"ref"`
 	Speaker    string `json:"speaker"`
 	SpeakerKey string `json:"speaker_key,omitempty"`
+	SpeakerRef string `json:"speaker_ref,omitempty"`
 	Text       string `json:"text"`
 	SpokenAt   string `json:"spoken_at,omitempty"`
 	TimeZone   string `json:"time_zone,omitempty"`
@@ -135,7 +136,7 @@ func ParsePage(raw json.RawMessage, o PageOptions) (RenderPage, error) {
 			return p, invalidPage("时段引用")
 		}
 		prev = ref
-		g := &v1.CaptureSegment{Ref: ref.String(), Text: s.Text, SpeakerKey: s.SpeakerKey, TimeZone: s.TimeZone}
+		g := &v1.CaptureSegment{Ref: ref.String(), Text: s.Text, SpeakerKey: s.SpeakerKey, SpeakerRef: s.SpeakerRef, TimeZone: s.TimeZone}
 		switch s.Speaker {
 		case "wearer":
 			g.Speaker = v1.Speaker_SPEAKER_WEARER
@@ -149,6 +150,9 @@ func ParsePage(raw json.RawMessage, o PageOptions) (RenderPage, error) {
 			}
 		default:
 			return p, invalidPage("说话人")
+		}
+		if !session.ValidSpeakerRef(g.GetSpeaker(), g.GetSpeakerRef()) {
+			return p, invalidPage("说话人引用")
 		}
 		if s.Text == "" || utf8.RuneCountInString(s.Text) > session.MaxCaptureText {
 			return p, invalidPage("片段文字")

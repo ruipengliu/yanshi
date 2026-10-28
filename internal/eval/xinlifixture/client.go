@@ -205,6 +205,7 @@ func (c *Client) Edit(ctx context.Context, bl, eu, id, status, due string) error
 type CaptureSegment struct {
 	Speaker    string `json:"speaker"`
 	SpeakerKey string `json:"speaker_key,omitempty"`
+	SpeakerRef string `json:"speaker_ref,omitempty"`
 	Text       string `json:"text"`
 	SpokenAt   string `json:"spoken_at,omitempty"`
 	TimeZone   string `json:"time_zone,omitempty"`

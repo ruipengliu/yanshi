@@ -98,6 +98,20 @@ func TestCitationNamespaceFromRegistration(t *testing.T) {
 					t.Fatalf("wrong namespace or prefix: %+v", got[0])
 				}
 			}
+			var wire []map[string]any
+			if err := json.Unmarshal([]byte(model.Text(res.Content)), &wire); err != nil {
+				t.Fatal(err)
+			}
+			if tc.latest {
+				if wire[0]["speaker_ref"] != "P-0012" || got[0].SpeakerRef != "P-0012" {
+					t.Fatal("speaker ref lost in MCP metadata")
+				}
+			} else if _, ok := wire[0]["speaker_ref"]; ok {
+				t.Fatal("empty speaker ref was serialized")
+			}
+			if _, ok := wire[1]["speaker_ref"]; ok {
+				t.Fatal("missing citation acquired a speaker ref")
+			}
 			if tc.attested {
 				if len(reads.limits) != 1 || reads.limits[0] != 0 || reads.after[0] != 0 {
 					t.Fatalf("attested reads: %v, %v", reads.after, reads.limits)

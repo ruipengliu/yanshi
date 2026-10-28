@@ -19,6 +19,7 @@ type Citation struct {
 	Ref        string `json:"ref"`
 	Speaker    string `json:"speaker,omitempty"` // "wearer" 或 "other"
 	SpeakerKey string `json:"speaker_key,omitempty"`
+	SpeakerRef string `json:"speaker_ref,omitempty"`
 	Redacted   bool   `json:"redacted,omitempty"`
 	// SpokenAt 与 TimeZone 取自片段（HostApp 填写），没有时为空。
 	SpokenAt time.Time `json:"spoken_at,omitzero"`
@@ -102,7 +103,7 @@ func AttestedCitations(ctx context.Context, log eventlog.Log, sessionID string, 
 }
 
 func citation(ref string, g *v1.CaptureSegment) Citation {
-	c := Citation{Ref: ref, Speaker: "wearer", Redacted: g.GetRedacted(), TimeZone: g.GetTimeZone()}
+	c := Citation{Ref: ref, Speaker: "wearer", SpeakerRef: g.GetSpeakerRef(), Redacted: g.GetRedacted(), TimeZone: g.GetTimeZone()}
 	if g.GetSpokenAt() != nil {
 		c.SpokenAt = g.GetSpokenAt().AsTime()
 	}

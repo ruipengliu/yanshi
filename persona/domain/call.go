@@ -12,6 +12,7 @@ type Citation struct {
 	Ref        string    `json:"ref"`
 	Speaker    string    `json:"speaker,omitempty"`
 	SpeakerKey string    `json:"speaker_key,omitempty"`
+	SpeakerRef string    `json:"speaker_ref,omitempty"`
 	Redacted   bool      `json:"redacted,omitempty"`
 	SpokenAt   time.Time `json:"spoken_at,omitzero"`
 	TimeZone   string    `json:"time_zone,omitempty"`
