@@ -98,7 +98,7 @@ _Avoid_: 定时任务、cron、事件订阅
 属于一个 Session、按钟点开启 Run 的声明：一次性或周期，时区由创建方给出（默认取 Session 的时区），没有静默窗口。经 HTTP 或 Agent 的 `schedule` 能力创建；到期时平台写入输入，来源是平台，不是用户原话。只在本 Session 内开启 Run。
 _Avoid_: cron、定时任务、提醒（指业务线按承诺期限推送时）
 
-**Oneshot（单次调用）**（设计中，[设计](docs/design/m7-kernel-primitives.md) §7、ADR-0047）:
+**Oneshot（单次调用）**（已实现，[设计](docs/design/m7-kernel-primitives.md) §7、ADR-0047）:
 没有 Session 的一次模型调用：声明式的提示词与输出结构，一次输入、一次输出，没有工具与状态；照常计量、配额与内容安全，不写日志、不存结果。输入只收文字；取嵌入向量的种类推迟到 Persona 的向量检索。
 _Avoid_: 函数调用、补全接口、Task
 

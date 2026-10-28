@@ -146,6 +146,12 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 	e.fault = rule.ID
 	e.api = &httpapi.Server{Auth: verifier, Service: svc, Live: live.NewMemBus(), Nodes: dir, Artifacts: arts, Memory: mems, Usage: uses, Faults: injector,
 		Speech: &speech.Service{Sessions: svc, Provider: fakeSpeech{}, IDs: ids.Random()}}
+	shots := newOneshotCore(t)
+	e.api.Oneshots = shots.Oneshots
+	e.api.Oneshots.Deletions = svc.Deletions
+	e.api.Oneshots.Quotas = svc.Quotas
+	e.api.Oneshots.Meter.Deletions = svc.Deletions
+	e.api.Oneshots.Meter.Store = uses
 	e.srv = httptest.NewServer(e.api.Handler())
 	t.Cleanup(e.srv.Close)
 	return e
@@ -216,6 +222,7 @@ func (e *authzEnv) cases() map[string]routeCase {
 	s, a := "/v1/sessions/"+e.sid, "/v1/artifacts/"+e.art
 	run := ""
 	return map[string]routeCase{
+		"POST /v1/oneshots/{name}":                         {"POST", "/v1/oneshots/brief", map[string]string{"end_user": "u1", "input": "原文"}, http.StatusOK},
 		"POST /v1/sessions":                                {"POST", "/v1/sessions", map[string]string{"agent": "echo", "end_user": "u1", "time_zone": "Asia/Shanghai"}, http.StatusCreated},
 		"GET /v1/sessions/{id}":                            {"GET", s, nil, http.StatusOK},
 		"POST /v1/sessions/{id}/inputs":                    {"POST", s + "/inputs", map[string]string{"text": "more"}, http.StatusAccepted},
@@ -292,10 +299,10 @@ func TestAuthorizationMatrix(t *testing.T) {
 					if code != http.StatusUnauthorized {
 						t.Fatalf("anonymous got %d, want 401", code)
 					}
-				case route == "POST /v1/sessions":
+				case route == "POST /v1/sessions" || route == "POST /v1/oneshots/{name}":
 					// 创建不针对既有资源：身份取自令牌，body 中的 end_user=u1 只是自报值。
 					// demo/u2 自报 u1 与令牌不符；other/u1 创建的是自己（other 业务线下的 u1）的 Session。
-					want := map[string]int{"demo/u1": 201, "demo/": 201, "demo/u2": 403, "other/u1": 201, "other/": 201}[principal]
+					want := map[string]int{"demo/u1": c.ok, "demo/": c.ok, "demo/u2": 403, "other/u1": c.ok, "other/": c.ok}[principal]
 					if code != want {
 						t.Fatalf("got %d (%s), want %d", code, body, want)
 					}

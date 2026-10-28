@@ -182,6 +182,42 @@ func Run(t *testing.T, newStore func(t *testing.T) usage.Store) {
 		}
 	})
 
+	t.Run("OneshotAttribution", func(t *testing.T) {
+		s := newStore(t)
+		for i, label := range []string{"brief@1", "brief@1", "brief@2", ""} {
+			e := entry(fmt.Sprintf("oneshot-%d", i), "a", "x", 10, t0)
+			if label != "" {
+				e.Agent, e.Oneshot = "", label
+			}
+			if err := s.Record(ctx, e); err != nil {
+				t.Fatal(err)
+			}
+		}
+		q := usage.Query{BusinessLine: "a", From: t0, To: t0.Add(time.Hour), GroupBy: usage.ByOneshot}
+		rows, err := s.Report(ctx, q)
+		if err != nil || len(rows) != 3 || rows[0].Key != "" || rows[1].Key != "brief@1" || rows[1].Calls != 2 || rows[1].CachedInputTokens != 12 || rows[2].Key != "brief@2" {
+			t.Fatalf("oneshot report: %+v, %v", rows, err)
+		}
+		q.GroupBy = usage.ByAgent
+		rows, err = s.Report(ctx, q)
+		if err != nil || len(rows) != 2 || rows[0].Key != "" || rows[0].Calls != 3 || rows[1].Key != "a@x" {
+			t.Fatalf("agent report: %+v, %v", rows, err)
+		}
+		e := entry("invalid-attribution", "a", "x", 10, t0)
+		e.Oneshot = "brief@1"
+		if err := s.Record(ctx, e); err == nil {
+			t.Fatal("accepted both Agent and Oneshot")
+		}
+		if err := s.DeleteEndUser(ctx, "a", "x"); err != nil {
+			t.Fatal(err)
+		}
+		q.GroupBy = usage.ByOneshot
+		rows, err = s.Report(ctx, q)
+		if err != nil || len(rows) != 3 || rows[1].Key != "brief@1" || rows[1].Calls != 2 {
+			t.Fatalf("anonymization lost attribution: %+v %v", rows, err)
+		}
+	})
+
 	t.Run("Prune", func(t *testing.T) {
 		s := newStore(t)
 		_ = s.Record(ctx, entry("old", "a", "x", 1, t0))

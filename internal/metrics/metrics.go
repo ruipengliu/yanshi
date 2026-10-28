@@ -52,6 +52,7 @@ var (
 
 var (
 	ModelCallDuration = histogram("model_call_duration_seconds", "模型调用耗时；kind = turn | summary。", latency, "kind", "outcome")
+	OneshotCalls      = counter("oneshot_calls_total", "单次调用的结果；只记声明名称、版本与固定结果类别。", "name", "version", "outcome")
 	ModelTokens       = counter("model_tokens_total", "模型 token 数；direction = input | output | cached_input（input 中命中前缀缓存的部分）。", "direction")
 	ModelRetries      = counter("model_retries_total", "模型调用因暂时性失败（限流、服务端错误、连接中断）重试的次数。", "provider")
 	// FaultsInjected 只在 serve -faults 的调试部署中出现（ADR-0033）。

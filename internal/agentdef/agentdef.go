@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -17,6 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/release"
 )
 
 type Def struct {
@@ -128,10 +128,8 @@ func (c *Context) validate() error {
 
 func (d *Def) Ref() *v1.AgentRef { return &v1.AgentRef{Name: d.Name, Version: d.Version} }
 
-var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
-
 func (d *Def) validate() error {
-	if !nameRE.MatchString(d.Name) || d.Version == "" || d.Model == "" {
+	if !release.ValidIdentity(d.Name, d.Version) || d.Model == "" {
 		return fmt.Errorf("agent %q@%q: name, version and model are required", d.Name, d.Version)
 	}
 	if d.MaxTurns <= 0 {

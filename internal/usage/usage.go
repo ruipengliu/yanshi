@@ -41,7 +41,9 @@ type Entry struct {
 	// Model 是模型引用（provider/model）；沙箱执行为 "sandbox"。
 	Model string
 	// Agent 是发起调用的 AgentDef 版本（name@version），用于比较灰度版本的成本；沙箱执行为空。
-	Agent       string
+	Agent string
+	// Oneshot 是单次调用声明的版本（name@version）；与 Agent 互斥。
+	Oneshot     string
 	InputTokens uint64
 	// CachedInputTokens 是 InputTokens 中命中前缀缓存的部分。
 	CachedInputTokens uint64
@@ -52,7 +54,7 @@ type Entry struct {
 }
 
 func (e *Entry) Validate() error {
-	if e.ID == "" || e.BusinessLine == "" || e.EndUser == "" || e.EndUser == Anonymous || e.Kind == "" || e.Cost < 0 {
+	if e.ID == "" || e.BusinessLine == "" || e.EndUser == "" || e.EndUser == Anonymous || e.Kind == "" || e.Cost < 0 || (e.Agent != "" && e.Oneshot != "") {
 		return fmt.Errorf("usage: invalid entry %q", e.ID)
 	}
 	return nil
@@ -65,6 +67,7 @@ const (
 	ByEndUser GroupBy = "end_user"
 	ByModel   GroupBy = "model"
 	ByAgent   GroupBy = "agent"
+	ByOneshot GroupBy = "oneshot"
 )
 
 // Query 汇总 [From, To) 内的用量；EndUser 为空表示整个业务线。按日汇总时日期取 Location 中的日期，

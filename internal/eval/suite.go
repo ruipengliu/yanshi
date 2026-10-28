@@ -21,6 +21,7 @@ type Case struct {
 	Name        string `yaml:"name"`
 	Description string `yaml:"description"`
 	Agent       string `yaml:"agent"`
+	Oneshot     string `yaml:"oneshot"`
 	Trials      int    `yaml:"trials"`
 	// TimeZone 覆盖 Session 时区；xinli 用例默认上海，其他用例保留无时区。
 	TimeZone string `yaml:"time_zone"`
@@ -327,6 +328,7 @@ type ScheduleExpect struct {
 
 // Expect 是一轮的断言；未写的字段不检查。
 type Expect struct {
+	OutputSchemaValid *bool `yaml:"output_schema_valid"`
 	// CallSequence 按顺序匹配不同调用，允许其间有其他调用。
 	CallSequence []CallMatch     `yaml:"call_sequence"`
 	Schedules    *ScheduleExpect `yaml:"schedules"`
@@ -384,6 +386,9 @@ func LoadSuite(dir string) ([]*Case, error) {
 		}
 		c := &Case{}
 		if err := yaml.Unmarshal(b, c); err != nil {
+			return nil, fmt.Errorf("%s: %w", f, err)
+		}
+		if err := validateOneshotCase(c); err != nil {
 			return nil, fmt.Errorf("%s: %w", f, err)
 		}
 		if !caseNameRE.MatchString(c.Name) || seen[c.Name] {
@@ -494,7 +499,7 @@ func LoadSuite(dir string) ([]*Case, error) {
 		if c.Trials <= 0 {
 			c.Trials = 3
 		}
-		if c.Agent == "" {
+		if c.Agent == "" && c.Oneshot == "" {
 			c.Agent = "assistant"
 		}
 		if d := c.Setup.Device; d != nil {

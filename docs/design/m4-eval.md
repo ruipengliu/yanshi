@@ -132,6 +132,16 @@ turns:
 
 **旁听的分批。** 评测运行器按说话时间约每分钟提交一批（一批至多 100 段），每批的他人按第一次出现的顺序重新编号为 `other-1`、`other-2`：与真实的 HostApp 一样，`speaker_key` 只在一批之内有意义，用例中全天不变的 `key` 只用来区分同一批中的人。片段可另填 `speaker_ref`，经夹具原样交给 Persona，不随批内编号重编；`evals/capture-speaker-ref.yaml` 用同一引用跨批换键及另一位不同引用的人，检验回答合并与排除。
 
+### 单次调用用例
+
+`oneshot: xinli-live-brief` 与 agent 互斥；只支持 name、description、trials、timeout、oneshot 与 turns。每轮只接受 input 与 expect，不建 Session，不接受设备、旁听夹具、Memory、Call 或定时操作。示例见 `evals/oneshot-live-brief.yaml`：三个独立输入每次 trial 都运行，trials 为 3，共九次逻辑调用。
+
+每轮 input 直接交给 `oneshot.Service.Call`，服务由 `app.NewCore` 装配；与 HTTP 共用审核、配额检查、并发、计量入口、修复及屏障路径。评测与既有 Run 用例一致，不配置真实业务线配额与账单计量；使用服务返回的汇总 Usage 统计实际消耗，包括被拒绝输出、Schema 修复失败及其第二次调用。成功与未完成的成本分别进入原报告列，工具调用、压缩、接管、缓存命中列为 0，不产生 Session 日志。
+
+expect 复用 reply_contains、reply_excludes、reply_max_chars、status 与 judge；JSON 输出按**整个 JSON 文本**断言与评分，不拼接 brief 等业务字段。新增 output_schema_valid：有 Schema 时默认检查，true 要求有声明且输出合法，false 只关闭额外的评测断言，不能绕过 Service 的强制校验。judge 的 1–5 分规则与通过线不变。
+
+`eval -oneshots oneshots -oneshot-version 2` 指定待发布的单次调用版本；默认选稳定版本，不按评测 EndUser 进入线上灰度。`-agent-version` 只影响 AgentDef，`-model` 同时覆盖两种声明的模型。报告 JSON 增加可选 oneshot 与 oneshot_version，旧基线兼容。此形态的失败也记消耗；`-logs` 不会为它保存输入、输出或伪造 Event 日志。新增用例的基线由真实模型评测生成，不手写。
+
 ## 3. 运行
 
 `yanshi eval -suite evals [-model ark/…] [-case glob] [-trials N] [-judge …] [-sandbox docker] [-baseline …] [-update-baseline]`：

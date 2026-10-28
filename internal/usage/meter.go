@@ -42,6 +42,16 @@ func (m *Meter) Model(ctx context.Context, s Scope, id, agent, model string, u *
 		Cost: m.Prices.ModelCost(model, u.GetInputTokens(), u.GetCachedInputTokens(), u.GetOutputTokens()), At: at})
 }
 
+// Oneshot 与 Model 使用同一删除复查路径，但归属声明而非 AgentDef。
+func (m *Meter) Oneshot(ctx context.Context, s Scope, id, name, model string, u *v1.Usage, at time.Time) {
+	if m == nil || u == nil {
+		return
+	}
+	m.record(ctx, s, &Entry{ID: id, BusinessLine: s.BusinessLine, EndUser: s.EndUser, Kind: Model, Model: model, Oneshot: name,
+		InputTokens: u.GetInputTokens(), CachedInputTokens: u.GetCachedInputTokens(), OutputTokens: u.GetOutputTokens(),
+		Cost: m.Prices.ModelCost(model, u.GetInputTokens(), u.GetCachedInputTokens(), u.GetOutputTokens()), At: at})
+}
+
 // Call 记录 Call 中实时语音模型的一轮交互。id 是该轮的唯一 ID（Call ID 加轮次），agent 是 name@version。
 func (m *Meter) Call(ctx context.Context, s Scope, id, agent, model string, t CallTokens, at time.Time) {
 	if m == nil {

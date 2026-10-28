@@ -72,6 +72,8 @@ func (m *Mem) Report(_ context.Context, q Query) ([]Row, error) {
 			key = e.Model
 		case ByAgent:
 			key = e.Agent
+		case ByOneshot:
+			key = e.Oneshot
 		default:
 			return nil, errors.New("usage: unknown group_by")
 		}
