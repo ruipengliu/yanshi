@@ -70,7 +70,9 @@ type Janitor struct {
 	// BeforeStage 是测试钩子：每个清理阶段开始前调用，模拟测试在此注入崩溃。
 	BeforeStage func(ctx context.Context, stage string)
 
-	lease *workqueue.Lease
+	// 按 ID 前进，长期有效的定时不能把后面的陈旧索引永久挡住。
+	scheduleCursors map[string]string
+	lease           *workqueue.Lease
 }
 
 func (j *Janitor) init() {
@@ -381,6 +383,9 @@ func (j *Janitor) Sweep(ctx context.Context) error {
 		}
 	}
 	for bl, retention := range j.Retention {
+		if err := j.reconcileSchedules(ctx, bl); err != nil {
+			return err
+		}
 		// 按 AgentDef 覆盖的规则各查各的 Session，业务线的值作用于其余 AgentDef（docs/design/captures.md §8）。
 		for _, r := range retention.Rules() {
 			if r.CloseAfterIdle > 0 {
@@ -390,6 +395,19 @@ func (j *Janitor) Sweep(ctx context.Context) error {
 					return err
 				}
 				for _, id := range ids {
+					st, err := j.Service.Load(ctx, id)
+					if errors.Is(err, service.ErrNotFound) {
+						continue
+					}
+					if err != nil {
+						return err
+					}
+					if err := j.Service.SyncScheduleIndex(ctx, st); err != nil {
+						return err
+					}
+					if _, active := st.NextScheduleDue(); active {
+						continue
+					}
 					if err := j.Service.Close(ctx, id, "retention", "idle"); err != nil && !errors.Is(err, service.ErrNotFound) {
 						return err
 					}
@@ -428,4 +446,34 @@ func (j *Janitor) Sweep(ctx context.Context) error {
 		}
 	}
 	return j.Ledger.Prune(now.Add(-nodesdk.DefaultLedgerRetention))
+}
+
+// reconcileSchedules 修复取消或耗尽写日志后、更新索引前崩溃留下的非零值。
+// 每轮至多一页；游标走到底后回到开头，进程重启也可安全从头重扫。
+func (j *Janitor) reconcileSchedules(ctx context.Context, businessLine string) error {
+	if j.scheduleCursors == nil {
+		j.scheduleCursors = map[string]string{}
+	}
+	ids, err := j.Index.ScheduledAfter(ctx, businessLine, j.scheduleCursors[businessLine], 100)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		st, err := j.Service.Load(ctx, id)
+		if errors.Is(err, service.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if err := j.Service.SyncScheduleIndex(ctx, st); err != nil {
+			return err
+		}
+	}
+	if len(ids) == 100 {
+		j.scheduleCursors[businessLine] = ids[len(ids)-1]
+	} else {
+		j.scheduleCursors[businessLine] = ""
+	}
+	return nil
 }

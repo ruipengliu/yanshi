@@ -22,10 +22,14 @@ func (x Index) Put(ctx context.Context, s *lifecycle.Session) error {
 	if !s.DeleteAt.IsZero() {
 		deadline = &s.DeleteAt
 	}
+	var nextDue *time.Time
+	if !s.NextDue.IsZero() {
+		nextDue = &s.NextDue
+	}
 	_, err := x.Pool.Exec(ctx, `
-		INSERT INTO sessions (session_id, business_line, end_user, agent, created_at, last_input_at, delete_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (session_id) DO NOTHING`,
-		s.ID, s.BusinessLine, s.EndUser, s.Agent, s.CreatedAt, s.LastInputAt, deadline)
+		INSERT INTO sessions (session_id, business_line, end_user, agent, created_at, last_input_at, delete_at, next_due)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (session_id) DO NOTHING`,
+		s.ID, s.BusinessLine, s.EndUser, s.Agent, s.CreatedAt, s.LastInputAt, deadline, nextDue)
 	return err
 }
 
@@ -34,17 +38,31 @@ func (x Index) Touch(ctx context.Context, id string, at time.Time) error {
 	return err
 }
 
+func (x Index) SetNextDue(ctx context.Context, id string, at time.Time) error {
+	var due *time.Time
+	if !at.IsZero() {
+		due = &at
+	}
+	_, err := x.Pool.Exec(ctx, `UPDATE sessions SET next_due = $2 WHERE session_id = $1`, id, due)
+	return err
+}
+
+func (x Index) ScheduledAfter(ctx context.Context, businessLine, afterID string, limit int) ([]string, error) {
+	return x.ids(ctx, `SELECT session_id FROM sessions WHERE business_line = $1 AND session_id > $2
+		AND closed_at IS NULL AND next_due IS NOT NULL ORDER BY session_id LIMIT $3`, businessLine, afterID, limit)
+}
+
 func (x Index) MarkClosed(ctx context.Context, id string, at time.Time) error {
 	_, err := x.Pool.Exec(ctx, `UPDATE sessions SET closed_at = $2 WHERE session_id = $1 AND closed_at IS NULL`, id, at)
 	return err
 }
 
-const columns = `session_id, business_line, end_user, agent, created_at, last_input_at, closed_at, delete_at`
+const columns = `session_id, business_line, end_user, agent, created_at, last_input_at, closed_at, delete_at, next_due`
 
 func scan(row pgx.CollectableRow) (*lifecycle.Session, error) {
 	s := &lifecycle.Session{}
-	var closed, deadline *time.Time
-	if err := row.Scan(&s.ID, &s.BusinessLine, &s.EndUser, &s.Agent, &s.CreatedAt, &s.LastInputAt, &closed, &deadline); err != nil {
+	var closed, deadline, nextDue *time.Time
+	if err := row.Scan(&s.ID, &s.BusinessLine, &s.EndUser, &s.Agent, &s.CreatedAt, &s.LastInputAt, &closed, &deadline, &nextDue); err != nil {
 		return nil, err
 	}
 	s.CreatedAt, s.LastInputAt = s.CreatedAt.UTC(), s.LastInputAt.UTC()
@@ -53,6 +71,9 @@ func scan(row pgx.CollectableRow) (*lifecycle.Session, error) {
 	}
 	if deadline != nil {
 		s.DeleteAt = deadline.UTC()
+	}
+	if nextDue != nil {
+		s.NextDue = nextDue.UTC()
 	}
 	return s, nil
 }
@@ -110,7 +131,7 @@ func (x Index) IDsOf(ctx context.Context, businessLine, endUser string) ([]strin
 const agentMatch = `($3 = '' AND NOT (agent = ANY($4)) OR agent = $3)`
 
 func (x Index) IdleBefore(ctx context.Context, businessLine string, agents lifecycle.AgentFilter, t time.Time, limit int) ([]string, error) {
-	return x.ids(ctx, `SELECT session_id FROM sessions WHERE business_line = $1 AND `+agentMatch+` AND closed_at IS NULL
+	return x.ids(ctx, `SELECT session_id FROM sessions WHERE business_line = $1 AND `+agentMatch+` AND closed_at IS NULL AND next_due IS NULL
 		AND last_input_at < $2 ORDER BY session_id LIMIT $5`, businessLine, t, agents.Only, except(agents), limit)
 }
 

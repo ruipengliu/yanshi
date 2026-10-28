@@ -717,6 +717,12 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 	gateSummary, gated := "", false
 	if !c.Started() {
 		gateSummary, gated = memoryGate(w.st, c.Call)
+		// 实现了 ApprovalSummarizer 的本地写入能力（目前是 schedule）与 memory_save 受同一来源判断约束：
+		// 上下文中有不是用户原话的内容时，写入须用户批准（M7 §5.3）。空摘要是只读动作，不审批。
+		if summarizer, ok := tool.Local.(capability.ApprovalSummarizer); ok && tainted(w.st) {
+			gateSummary = summarizer.ApprovalSummary(w.invocation(r, def, id, c))
+			gated = gateSummary != ""
+		}
 	}
 	if gated {
 		summary = gateSummary

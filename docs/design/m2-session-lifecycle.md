@@ -27,6 +27,8 @@
 - 关闭时如果有活跃的 Run，先中断它。
 - `SessionClosed{by, reason}` 是一个新的 Event，属于 Session 的终态事件：之后不能再有任何 Run 事件（由 `Reduce` 校验）。
 
+有有效定时的 Session 不按空闲关闭（[M7 §5.4](./m7-kernel-primitives.md#54-语义)）。索引以 `lifecycle.Session.NextDue` 记录最早到期，`IdleBefore` 排除非零值；定时事件写日志后更新，不受 TouchEvery 节流。Janitor 关闭前读投影修正遗漏，service 在关闭的乐观并发决策中再次检查。反向残留由 `Index.ScheduledAfter` 按 Session ID 分页校准（每业务线每轮至多 100 行，游标跨轮前进并回绕），避免固定前一批有效定时挡住后续 Session。delete_at、主动关闭与用户删除照常生效。
+
 ## 3. 删除
 
 ### 3.1 物理删除

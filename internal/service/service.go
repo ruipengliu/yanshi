@@ -636,6 +636,12 @@ func (s *Service) Close(ctx context.Context, sessionID, by, reason string) error
 		if st.Closed != nil {
 			return session.Decision{}, nil // 已关闭（如重试的 Close）：仍做一遍关闭之后的步骤
 		}
+		// 必须在乐观并发决策中复查，避免 Janitor 读取后新建定时被误关。
+		if by == "retention" && reason == "idle" {
+			if _, active := st.NextScheduleDue(); active {
+				return session.Decision{}, nil
+			}
+		}
 		var events []*v1.Event
 		a := st.Active()
 		if a != nil {
@@ -651,6 +657,9 @@ func (s *Service) Close(ctx context.Context, sessionID, by, reason string) error
 	})
 	if err != nil {
 		return gone(sessionID, err)
+	}
+	if st.Closed == nil {
+		return s.SyncScheduleIndex(ctx, st)
 	}
 	if interrupted {
 		metrics.RunsFinished.WithLabelValues("interrupted", agentdef.Label(st.Agent)).Inc()

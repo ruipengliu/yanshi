@@ -89,7 +89,7 @@ func (s *Service) CreateSchedule(ctx context.Context, sessionID string, req Crea
 			if old != nil {
 				return session.Decision{}, fmt.Errorf("%w: schedule_id already has another declaration", ErrConflict)
 			}
-			return session.Decision{}, fmt.Errorf("%w: %v", ErrInvalid, err)
+			return session.Decision{}, fmt.Errorf("%w: %w", ErrInvalid, err)
 		}
 		spec := p.Spec()
 		next, _ := p.Next(start)
@@ -109,6 +109,9 @@ func (s *Service) CreateSchedule(ctx context.Context, sessionID string, req Crea
 	})
 	if err != nil {
 		return nil, gone(sessionID, err)
+	}
+	if err := s.SyncScheduleIndex(ctx, st); err != nil {
+		return nil, err
 	}
 	return st.Schedules[req.ScheduleID], nil
 }
@@ -136,7 +139,10 @@ func (s *Service) CancelSchedule(ctx context.Context, sessionID, scheduleID, by 
 		}
 		return session.Decision{Events: []*v1.Event{{Payload: &v1.Event_ScheduleCancelled{ScheduleCancelled: &v1.ScheduleCancelled{ScheduleId: scheduleID, By: by}}}}, Wake: true}, nil
 	})
-	return gone(sessionID, err)
+	if err != nil {
+		return gone(sessionID, err)
+	}
+	return s.SyncScheduleIndex(ctx, st)
 }
 
 // FireSchedule 只在无活跃（含排队）Run 时推进一次。冲突后重新计算，配额不参与到期决策。
@@ -180,8 +186,14 @@ func (s *Service) FireSchedule(ctx context.Context, st *session.State, scheduleI
 		fired, prev = true, lastRunAt(st)
 		return session.Decision{Events: events}, nil
 	})
-	if err != nil || !fired {
+	if err != nil {
 		return err
+	}
+	if err := s.SyncScheduleIndex(ctx, st); err != nil {
+		return err
+	}
+	if !fired {
+		return nil
 	}
 	return s.touch(ctx, st.SessionID, prev)
 }
@@ -208,4 +220,13 @@ func scheduleCatchup(item *session.Schedule, now time.Time) (schedule.Catchup, e
 	c.Skipped.First = item.NextDue
 	c.Skipped.Count++
 	return c, nil
+}
+
+// SyncScheduleIndex 在日志之后维护可重建索引；乱序写入与崩溃遗漏由 Janitor 按投影校准。
+func (s *Service) SyncScheduleIndex(ctx context.Context, st *session.State) error {
+	if s.Index == nil {
+		return nil
+	}
+	next, _ := st.NextScheduleDue()
+	return s.Index.SetNextDue(ctx, st.SessionID, next)
 }

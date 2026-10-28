@@ -44,7 +44,7 @@ type Options struct {
 	// NodeAuth 验证 Node 连接的身份；没有默认值，开发环境须显式给出 node.InsecureDevAuth{}。
 	NodeAuth node.Authenticator
 
-	// Local 是进程内 Capability；nil 时为 clock_now 与 show_card。Memory 的能力总是追加。
+	// Local 是进程内 Capability；nil 时为 clock_now 与 show_card。Memory 与 schedule 的能力总是追加。
 	Local []capability.Capability
 	// SandboxTools 为 true 时登记沙箱工具；是否有控制器执行它们由调用方按进程角色决定（ControllerConfig）。
 	SandboxTools bool
@@ -143,7 +143,7 @@ func NewCore(stores Stores, opts Options) *Core {
 		dir = faults.Directory{Directory: dir, Injector: opts.Injector}
 	}
 	c.Catalog = &capability.Catalog{
-		Local:          capability.NewRegistry(append(local, memory.Capabilities(c.Memory)...)...),
+		Local:          capability.NewRegistry(),
 		Nodes:          dir,
 		MCP:            opts.MCP,
 		Agents:         delegation.Directory{Registry: opts.Agents},
@@ -161,6 +161,8 @@ func NewCore(stores Stores, opts Options) *Core {
 	}
 	c.Service = &service.Service{Store: c.Store, Agents: opts.Agents, Nodes: c.Dispatch, Index: stores.Index,
 		Deletions: stores.Deletions, Janitor: stores.JanitorQueue, Quotas: opts.Quotas, Moderator: moderator, Artifacts: c.Artifacts}
+	local = append(append([]capability.Capability{}, local...), memory.Capabilities(c.Memory)...)
+	c.Catalog.Local = capability.NewRegistry(append(local, c.Service.ScheduleCapability())...)
 	c.Delegator.Service = c.Service
 	// 设备结果经 Service 写入：调用已转入后台时，结果是一条输入（ADR-0035）。
 	c.Hub.Results = c.Service

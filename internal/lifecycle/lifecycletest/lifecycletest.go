@@ -23,6 +23,70 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 		}
 	}
 
+	t.Run("ScheduleIdleExemption", func(t *testing.T) {
+		x := newIndex(t)
+		for _, id := range []string{"a", "b", "c"} {
+			put(t, x, id, "bl", "u", t0)
+		}
+		put(t, x, "other", "other", "u", t0)
+		for _, id := range []string{"a", "b", "other"} {
+			if err := x.SetNextDue(ctx, id, t0.Add(time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		row, err := x.Get(ctx, "a")
+		if err != nil || !row.NextDue.Equal(t0.Add(time.Hour)) {
+			t.Fatalf("next due %v %v", row, err)
+		}
+		page, next, err := x.List(ctx, "bl", "", "", 10)
+		if err != nil || next != "" || len(page) != 3 {
+			t.Fatalf("list %v %q %v", page, next, err)
+		}
+		for _, row := range page {
+			if row.ID != "c" && row.NextDue.IsZero() {
+				t.Fatal("list lost next due")
+			}
+		}
+		idle, err := x.IdleBefore(ctx, "bl", lifecycle.AgentFilter{}, t0.Add(2*time.Hour), 10)
+		if err != nil || !slices.Equal(idle, []string{"c"}) {
+			t.Fatalf("idle %v %v", idle, err)
+		}
+		first, err := x.ScheduledAfter(ctx, "bl", "", 1)
+		if err != nil || !slices.Equal(first, []string{"a"}) {
+			t.Fatalf("first %v %v", first, err)
+		}
+		second, err := x.ScheduledAfter(ctx, "bl", first[0], 1)
+		if err != nil || !slices.Equal(second, []string{"b"}) {
+			t.Fatalf("second %v %v", second, err)
+		}
+		if err := x.SetNextDue(ctx, "a", time.Time{}); err != nil {
+			t.Fatal(err)
+		}
+		if err := x.MarkClosed(ctx, "b", t0); err != nil {
+			t.Fatal(err)
+		}
+		remaining, err := x.ScheduledAfter(ctx, "bl", "", 10)
+		if err != nil || len(remaining) != 0 {
+			t.Fatalf("remaining %v %v", remaining, err)
+		}
+		idle, err = x.IdleBefore(ctx, "bl", lifecycle.AgentFilter{}, t0.Add(2*time.Hour), 10)
+		if err != nil || !slices.Equal(idle, []string{"a", "c"}) {
+			t.Fatalf("idle after clear %v %v", idle, err)
+		}
+		if err := x.SetNextDue(ctx, "missing", t0); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := x.Get(ctx, "missing"); !errors.Is(err, lifecycle.ErrNotFound) {
+			t.Fatalf("resurrected row: %v", err)
+		}
+		if err := x.Put(ctx, &lifecycle.Session{ID: "put-due", BusinessLine: "bl", EndUser: "u", CreatedAt: t0, LastInputAt: t0, NextDue: t0.Add(time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+		row, err = x.Get(ctx, "put-due")
+		if err != nil || !row.NextDue.Equal(t0.Add(time.Hour)) {
+			t.Fatalf("put next due %v %v", row, err)
+		}
+	})
 	t.Run("AbsoluteDeadline", func(t *testing.T) {
 		x := newIndex(t)
 		for _, row := range []*lifecycle.Session{

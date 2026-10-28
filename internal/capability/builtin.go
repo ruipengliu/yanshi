@@ -32,6 +32,9 @@ func ClockNow(c clock.Clock) Capability {
 					return nil, fmt.Errorf("invalid arguments: %w", err)
 				}
 			}
+			if in.TZ == "" && inv.State != nil {
+				in.TZ = inv.State.Created.GetTimeZone()
+			}
 			loc := time.Local
 			if in.TZ != "" {
 				l, err := time.LoadLocation(in.TZ)
