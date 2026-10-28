@@ -1,6 +1,6 @@
 // Package httpapi 以 HTTP/JSON + SSE 暴露 Session 操作。
 //
-//	POST /v1/sessions                              创建 Session（delete_at 为 RFC3339，仅服务令牌）
+//	POST /v1/sessions                              创建 Session（可设 IANA time_zone；delete_at 为 RFC3339，仅服务令牌）
 //	GET  /v1/sessions?end_user=&cursor=&limit=     列出 Session（按最近输入倒序）
 //	GET  /v1/sessions/{id}                         Session 投影
 //	POST /v1/sessions/{id}/close                   关闭 Session（不可逆）
@@ -15,6 +15,9 @@
 //	GET  /v1/grants                                EndUser 涉及本业务线的授权（仅用户令牌）
 //	POST /v1/grants                                创建授权 {"from","to","categories","expires_at"}（仅用户令牌）
 //	DELETE /v1/grants/{id}                         撤销授权（仅用户令牌）
+//	POST /v1/sessions/{id}/schedules                 创建定时
+//	GET /v1/sessions/{id}/schedules                  列出有效定时
+//	DELETE /v1/sessions/{id}/schedules/{schedule_id}  取消定时
 //	POST /v1/sessions/{id}/inputs                  提交输入（新 Run 或 Steer；带 input_id 可安全重试；内容安全拒绝 422、不可用 503）
 //	POST /v1/sessions/{id}/runs/{run}/interrupt    中断 Run
 //	POST /v1/sessions/{id}/transcriptions          识别一段录音（请求体为音频）→ {"text"}；不写日志，文字由调用方作为输入提交（docs/design/speech.md）
@@ -103,37 +106,40 @@ var pj = protojson.MarshalOptions{UseProtoNames: true}
 // routes 是全部需要鉴权的接口；授权矩阵测试据此检查每个接口都被覆盖。
 func (s *Server) routes() map[string]http.HandlerFunc {
 	routes := map[string]http.HandlerFunc{
-		"POST /v1/sessions":                               s.create,
-		"GET /v1/sessions":                                s.list,
-		"GET /v1/sessions/{id}":                           s.get,
-		"POST /v1/sessions/{id}/close":                    s.close,
-		"DELETE /v1/sessions/{id}":                        s.delete,
-		"DELETE /v1/end_users/{id}":                       s.deleteEndUser,
-		"GET /v1/sessions/{id}/deletion":                  s.sessionDeletion,
-		"GET /v1/deletions/{id}":                          s.deletion,
-		"GET /v1/memories":                                s.listMemories,
-		"DELETE /v1/memories/{id}":                        s.forgetMemory,
-		"DELETE /v1/sessions/{id}/memories":               s.forgetSessionMemories,
-		"GET /v1/memories/access":                         s.memoryAccess,
-		"GET /v1/grants":                                  s.listGrants,
-		"POST /v1/grants":                                 s.createGrant,
-		"DELETE /v1/grants/{id}":                          s.revokeGrant,
-		"POST /v1/sessions/{id}/inputs":                   s.submit,
-		"POST /v1/sessions/{id}/runs/{run}/interrupt":     s.interrupt,
-		"POST /v1/sessions/{id}/transcriptions":           s.transcribe,
-		"POST /v1/sessions/{id}/runs/{run}/speech":        s.speak,
-		"GET /v1/sessions/{id}/events":                    s.events,
-		"GET /v1/sessions/{id}/stream":                    s.stream,
-		"POST /v1/sessions/{id}/approvals/{call}":         s.decide,
-		"POST /v1/sessions/{id}/answers/{call}":           s.answer,
-		"POST /v1/sessions/{id}/background/{call}/cancel": s.cancelBackground,
-		"GET /v1/nodes":                                   s.listNodes,
-		"GET /v1/quota":                                   s.quota,
-		"GET /v1/usage":                                   s.usage,
-		"POST /v1/sessions/{id}/artifacts":                s.uploadArtifact,
-		"GET /v1/sessions/{id}/artifacts":                 s.listArtifacts,
-		"GET /v1/artifacts/{id}":                          s.downloadArtifact,
-		"GET /v1/artifacts/{id}/meta":                     s.artifactMeta,
+		"POST /v1/sessions":                                s.create,
+		"GET /v1/sessions":                                 s.list,
+		"GET /v1/sessions/{id}":                            s.get,
+		"POST /v1/sessions/{id}/close":                     s.close,
+		"DELETE /v1/sessions/{id}":                         s.delete,
+		"DELETE /v1/end_users/{id}":                        s.deleteEndUser,
+		"GET /v1/sessions/{id}/deletion":                   s.sessionDeletion,
+		"GET /v1/deletions/{id}":                           s.deletion,
+		"GET /v1/memories":                                 s.listMemories,
+		"DELETE /v1/memories/{id}":                         s.forgetMemory,
+		"DELETE /v1/sessions/{id}/memories":                s.forgetSessionMemories,
+		"GET /v1/memories/access":                          s.memoryAccess,
+		"GET /v1/grants":                                   s.listGrants,
+		"POST /v1/grants":                                  s.createGrant,
+		"DELETE /v1/grants/{id}":                           s.revokeGrant,
+		"POST /v1/sessions/{id}/inputs":                    s.submit,
+		"POST /v1/sessions/{id}/runs/{run}/interrupt":      s.interrupt,
+		"POST /v1/sessions/{id}/transcriptions":            s.transcribe,
+		"POST /v1/sessions/{id}/runs/{run}/speech":         s.speak,
+		"GET /v1/sessions/{id}/events":                     s.events,
+		"GET /v1/sessions/{id}/stream":                     s.stream,
+		"POST /v1/sessions/{id}/approvals/{call}":          s.decide,
+		"POST /v1/sessions/{id}/answers/{call}":            s.answer,
+		"POST /v1/sessions/{id}/background/{call}/cancel":  s.cancelBackground,
+		"POST /v1/sessions/{id}/schedules":                 s.createSchedule,
+		"GET /v1/sessions/{id}/schedules":                  s.listSchedules,
+		"DELETE /v1/sessions/{id}/schedules/{schedule_id}": s.cancelSchedule,
+		"GET /v1/nodes":                                    s.listNodes,
+		"GET /v1/quota":                                    s.quota,
+		"GET /v1/usage":                                    s.usage,
+		"POST /v1/sessions/{id}/artifacts":                 s.uploadArtifact,
+		"GET /v1/sessions/{id}/artifacts":                  s.listArtifacts,
+		"GET /v1/artifacts/{id}":                           s.downloadArtifact,
+		"GET /v1/artifacts/{id}/meta":                      s.artifactMeta,
 	}
 	for p, h := range s.debugRoutes() {
 		routes[p] = h
@@ -329,6 +335,7 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		Agent        string          `json:"agent"`
 		AgentVersion string          `json:"agent_version"`
 		DeleteAt     json.RawMessage `json:"delete_at"`
+		TimeZone     string          `json:"time_zone"`
 	}
 	if err := decode(r, &req); err != nil {
 		s.fail(w, err)
@@ -351,7 +358,7 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, err := s.Service.Create(r.Context(), service.CreateRequest{
-		BusinessLine: bl, EndUser: eu, Agent: req.Agent, AgentVersion: req.AgentVersion, DeleteAt: deleteAt,
+		BusinessLine: bl, EndUser: eu, Agent: req.Agent, AgentVersion: req.AgentVersion, DeleteAt: deleteAt, TimeZone: req.TimeZone,
 	})
 	if err != nil {
 		s.fail(w, err)
@@ -458,6 +465,7 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 		"agent":         map[string]string{"name": st.Agent.GetName(), "version": st.Agent.GetVersion()},
 		"runs":          runs,
 		"background":    background,
+		"time_zone":     st.Created.GetTimeZone(),
 		"parent":        parentView(st),
 	})
 }
@@ -473,7 +481,8 @@ func parentView(st *session.State) map[string]string {
 
 func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Text string `json:"text"`
+		Text     string          `json:"text"`
+		Schedule json.RawMessage `json:"schedule"`
 		// Content 是 ContentBlock 的 JSON 数组；与 Text 同时给出时 Text 在前。
 		Content []json.RawMessage `json:"content"`
 		// InputID 是客户端生成的输入 ID：超时等结果未知时以同一 ID 重试是安全的（docs/design/m3-duplex-channel.md §5）。
@@ -481,6 +490,10 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decode(r, &req); err != nil {
 		s.fail(w, err)
+		return
+	}
+	if len(req.Schedule) > 0 {
+		s.fail(w, service.CheckClientInput(nil, &v1.ScheduleMark{}))
 		return
 	}
 	var input []*v1.ContentBlock

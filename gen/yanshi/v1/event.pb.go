@@ -11,13 +11,12 @@
 package yanshiv1
 
 import (
-	reflect "reflect"
-	sync "sync"
-	unsafe "unsafe"
-
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
+	reflect "reflect"
+	sync "sync"
+	unsafe "unsafe"
 )
 
 const (
@@ -113,6 +112,10 @@ type Event struct {
 	//	*Event_DecisionMade
 	//	*Event_BackgroundCancelled
 	//	*Event_CaptureAppended
+	//	*Event_ScheduleCreated
+	//	*Event_ScheduleCancelled
+	//	*Event_ScheduleFired
+	//	*Event_ScheduleSkipped
 	Payload       isEvent_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -399,6 +402,42 @@ func (x *Event) GetCaptureAppended() *CaptureAppended {
 	return nil
 }
 
+func (x *Event) GetScheduleCreated() *ScheduleCreated {
+	if x != nil {
+		if x, ok := x.Payload.(*Event_ScheduleCreated); ok {
+			return x.ScheduleCreated
+		}
+	}
+	return nil
+}
+
+func (x *Event) GetScheduleCancelled() *ScheduleCancelled {
+	if x != nil {
+		if x, ok := x.Payload.(*Event_ScheduleCancelled); ok {
+			return x.ScheduleCancelled
+		}
+	}
+	return nil
+}
+
+func (x *Event) GetScheduleFired() *ScheduleFired {
+	if x != nil {
+		if x, ok := x.Payload.(*Event_ScheduleFired); ok {
+			return x.ScheduleFired
+		}
+	}
+	return nil
+}
+
+func (x *Event) GetScheduleSkipped() *ScheduleSkipped {
+	if x != nil {
+		if x, ok := x.Payload.(*Event_ScheduleSkipped); ok {
+			return x.ScheduleSkipped
+		}
+	}
+	return nil
+}
+
 type isEvent_Payload interface {
 	isEvent_Payload()
 }
@@ -500,6 +539,22 @@ type Event_CaptureAppended struct {
 	CaptureAppended *CaptureAppended `protobuf:"bytes,33,opt,name=capture_appended,json=captureAppended,proto3,oneof"`
 }
 
+type Event_ScheduleCreated struct {
+	ScheduleCreated *ScheduleCreated `protobuf:"bytes,34,opt,name=schedule_created,json=scheduleCreated,proto3,oneof"`
+}
+
+type Event_ScheduleCancelled struct {
+	ScheduleCancelled *ScheduleCancelled `protobuf:"bytes,35,opt,name=schedule_cancelled,json=scheduleCancelled,proto3,oneof"`
+}
+
+type Event_ScheduleFired struct {
+	ScheduleFired *ScheduleFired `protobuf:"bytes,36,opt,name=schedule_fired,json=scheduleFired,proto3,oneof"`
+}
+
+type Event_ScheduleSkipped struct {
+	ScheduleSkipped *ScheduleSkipped `protobuf:"bytes,37,opt,name=schedule_skipped,json=scheduleSkipped,proto3,oneof"`
+}
+
 func (*Event_SessionCreated) isEvent_Payload() {}
 
 func (*Event_RunRequested) isEvent_Payload() {}
@@ -547,6 +602,14 @@ func (*Event_DecisionMade) isEvent_Payload() {}
 func (*Event_BackgroundCancelled) isEvent_Payload() {}
 
 func (*Event_CaptureAppended) isEvent_Payload() {}
+
+func (*Event_ScheduleCreated) isEvent_Payload() {}
+
+func (*Event_ScheduleCancelled) isEvent_Payload() {}
+
+func (*Event_ScheduleFired) isEvent_Payload() {}
+
+func (*Event_ScheduleSkipped) isEvent_Payload() {}
 
 // DecisionMade 记录一次判断（docs/design/m6-decisions.md，ADR-0030）：对"给定状态、有限选项"的问题由规则、小模型或
 // LLM 作出的选择。先写日志再据此行动，重放时读日志而不重新判断。不含被判断的原文（ADR-0015）。
@@ -1959,6 +2022,7 @@ type SessionCreated struct {
 	Parent *ParentRef `protobuf:"bytes,4,opt,name=parent,proto3" json:"parent,omitempty"`
 	// 原文副本的绝对删除期限；委托派生的子 Session 同寿（ADR-0050）。
 	DeleteAt      *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=delete_at,json=deleteAt,proto3" json:"delete_at,omitempty"`
+	TimeZone      string                 `protobuf:"bytes,6,opt,name=time_zone,json=timeZone,proto3" json:"time_zone,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2026,6 +2090,13 @@ func (x *SessionCreated) GetDeleteAt() *timestamppb.Timestamp {
 		return x.DeleteAt
 	}
 	return nil
+}
+
+func (x *SessionCreated) GetTimeZone() string {
+	if x != nil {
+		return x.TimeZone
+	}
+	return ""
 }
 
 // ParentRef 是子 Session 的来处：父 Session 中的哪个 Run、哪次调用派生了它。
@@ -2232,7 +2303,7 @@ func (x *ContentModerated) GetLabels() []string {
 	return nil
 }
 
-// RunRequested 在 Session 无活跃 Run 时由用户输入触发。
+// RunRequested 在 Session 无活跃 Run 时由输入触发；定时输入带平台标记。
 type RunRequested struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	RunId string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
@@ -2240,7 +2311,9 @@ type RunRequested struct {
 	// 客户端为这条输入生成的 ID（可为空）：同一 ID 的重复提交返回首次的结果而不再写入（docs/design/m3-duplex-channel.md §5）。
 	InputId string `protobuf:"bytes,3,opt,name=input_id,json=inputId,proto3" json:"input_id,omitempty"`
 	// 非空表示输入由该 Call 中的语音模型派生（run_task，docs/design/m3-call.md §5）：结果会被朗读。
-	FromCall      string `protobuf:"bytes,4,opt,name=from_call,json=fromCall,proto3" json:"from_call,omitempty"`
+	FromCall string `protobuf:"bytes,4,opt,name=from_call,json=fromCall,proto3" json:"from_call,omitempty"`
+	// 仅由平台在同批 ScheduleFired 后写入。
+	Schedule      *ScheduleMark `protobuf:"bytes,5,opt,name=schedule,proto3" json:"schedule,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2301,6 +2374,13 @@ func (x *RunRequested) GetFromCall() string {
 		return x.FromCall
 	}
 	return ""
+}
+
+func (x *RunRequested) GetSchedule() *ScheduleMark {
+	if x != nil {
+		return x.Schedule
+	}
+	return nil
 }
 
 // Steered 是活跃 Run 进行中的追加输入，不改变 Run 状态。
@@ -3661,7 +3741,7 @@ func (x *ContextCompacted) GetUsage() *Usage {
 }
 
 // SessionClosed 是 Session 的终态：之后不再接收任何输入与 Run 事件（docs/design/m2-session-lifecycle.md §2）。
-// 关闭不可逆；对话与工件仍可查看，沙箱工作区随之销毁。
+// 关闭不可逆；对话与工件仍可查看，沙箱工作区随之销毁。定时到点后只允许追加 reason=closed 的 ScheduleSkipped。
 type SessionClosed struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 关闭方，如 "end_user:u1"、"service:demo"、"retention"。
@@ -4218,11 +4298,377 @@ func (x *CallEnded) GetReason() string {
 	return ""
 }
 
+// 定时声明保存原锚点，重放不能以当前时间重新编译。
+type ScheduleCreated struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ScheduleId    string                 `protobuf:"bytes,1,opt,name=schedule_id,json=scheduleId,proto3" json:"schedule_id,omitempty"`
+	Input         []*ContentBlock        `protobuf:"bytes,2,rep,name=input,proto3" json:"input,omitempty"`
+	TimeZone      string                 `protobuf:"bytes,3,opt,name=time_zone,json=timeZone,proto3" json:"time_zone,omitempty"`
+	At            string                 `protobuf:"bytes,4,opt,name=at,proto3" json:"at,omitempty"`
+	Rrule         string                 `protobuf:"bytes,5,opt,name=rrule,proto3" json:"rrule,omitempty"`
+	Until         *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=until,proto3" json:"until,omitempty"`
+	Start         *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=start,proto3" json:"start,omitempty"`
+	NextDue       *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=next_due,json=nextDue,proto3" json:"next_due,omitempty"`
+	By            string                 `protobuf:"bytes,9,opt,name=by,proto3" json:"by,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ScheduleCreated) Reset() {
+	*x = ScheduleCreated{}
+	mi := &file_yanshi_v1_event_proto_msgTypes[50]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ScheduleCreated) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ScheduleCreated) ProtoMessage() {}
+
+func (x *ScheduleCreated) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_event_proto_msgTypes[50]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ScheduleCreated.ProtoReflect.Descriptor instead.
+func (*ScheduleCreated) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{50}
+}
+
+func (x *ScheduleCreated) GetScheduleId() string {
+	if x != nil {
+		return x.ScheduleId
+	}
+	return ""
+}
+
+func (x *ScheduleCreated) GetInput() []*ContentBlock {
+	if x != nil {
+		return x.Input
+	}
+	return nil
+}
+
+func (x *ScheduleCreated) GetTimeZone() string {
+	if x != nil {
+		return x.TimeZone
+	}
+	return ""
+}
+
+func (x *ScheduleCreated) GetAt() string {
+	if x != nil {
+		return x.At
+	}
+	return ""
+}
+
+func (x *ScheduleCreated) GetRrule() string {
+	if x != nil {
+		return x.Rrule
+	}
+	return ""
+}
+
+func (x *ScheduleCreated) GetUntil() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Until
+	}
+	return nil
+}
+
+func (x *ScheduleCreated) GetStart() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Start
+	}
+	return nil
+}
+
+func (x *ScheduleCreated) GetNextDue() *timestamppb.Timestamp {
+	if x != nil {
+		return x.NextDue
+	}
+	return nil
+}
+
+func (x *ScheduleCreated) GetBy() string {
+	if x != nil {
+		return x.By
+	}
+	return ""
+}
+
+type ScheduleCancelled struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ScheduleId    string                 `protobuf:"bytes,1,opt,name=schedule_id,json=scheduleId,proto3" json:"schedule_id,omitempty"`
+	By            string                 `protobuf:"bytes,2,opt,name=by,proto3" json:"by,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ScheduleCancelled) Reset() {
+	*x = ScheduleCancelled{}
+	mi := &file_yanshi_v1_event_proto_msgTypes[51]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ScheduleCancelled) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ScheduleCancelled) ProtoMessage() {}
+
+func (x *ScheduleCancelled) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_event_proto_msgTypes[51]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ScheduleCancelled.ProtoReflect.Descriptor instead.
+func (*ScheduleCancelled) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{51}
+}
+
+func (x *ScheduleCancelled) GetScheduleId() string {
+	if x != nil {
+		return x.ScheduleId
+	}
+	return ""
+}
+
+func (x *ScheduleCancelled) GetBy() string {
+	if x != nil {
+		return x.By
+	}
+	return ""
+}
+
+type ScheduleFired struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ScheduleId    string                 `protobuf:"bytes,1,opt,name=schedule_id,json=scheduleId,proto3" json:"schedule_id,omitempty"`
+	DueAt         *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=due_at,json=dueAt,proto3" json:"due_at,omitempty"`
+	NextDue       *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=next_due,json=nextDue,proto3" json:"next_due,omitempty"`
+	RunId         string                 `protobuf:"bytes,4,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ScheduleFired) Reset() {
+	*x = ScheduleFired{}
+	mi := &file_yanshi_v1_event_proto_msgTypes[52]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ScheduleFired) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ScheduleFired) ProtoMessage() {}
+
+func (x *ScheduleFired) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_event_proto_msgTypes[52]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ScheduleFired.ProtoReflect.Descriptor instead.
+func (*ScheduleFired) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{52}
+}
+
+func (x *ScheduleFired) GetScheduleId() string {
+	if x != nil {
+		return x.ScheduleId
+	}
+	return ""
+}
+
+func (x *ScheduleFired) GetDueAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.DueAt
+	}
+	return nil
+}
+
+func (x *ScheduleFired) GetNextDue() *timestamppb.Timestamp {
+	if x != nil {
+		return x.NextDue
+	}
+	return nil
+}
+
+func (x *ScheduleFired) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+type ScheduleSkipped struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	ScheduleId string                 `protobuf:"bytes,1,opt,name=schedule_id,json=scheduleId,proto3" json:"schedule_id,omitempty"`
+	FirstDue   *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=first_due,json=firstDue,proto3" json:"first_due,omitempty"`
+	LastDue    *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=last_due,json=lastDue,proto3" json:"last_due,omitempty"`
+	Count      uint32                 `protobuf:"varint,4,opt,name=count,proto3" json:"count,omitempty"`
+	// missed 合并较早的到期；closed 使整个定时失效。
+	Reason        string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`
+	NextDue       *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=next_due,json=nextDue,proto3" json:"next_due,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ScheduleSkipped) Reset() {
+	*x = ScheduleSkipped{}
+	mi := &file_yanshi_v1_event_proto_msgTypes[53]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ScheduleSkipped) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ScheduleSkipped) ProtoMessage() {}
+
+func (x *ScheduleSkipped) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_event_proto_msgTypes[53]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ScheduleSkipped.ProtoReflect.Descriptor instead.
+func (*ScheduleSkipped) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{53}
+}
+
+func (x *ScheduleSkipped) GetScheduleId() string {
+	if x != nil {
+		return x.ScheduleId
+	}
+	return ""
+}
+
+func (x *ScheduleSkipped) GetFirstDue() *timestamppb.Timestamp {
+	if x != nil {
+		return x.FirstDue
+	}
+	return nil
+}
+
+func (x *ScheduleSkipped) GetLastDue() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastDue
+	}
+	return nil
+}
+
+func (x *ScheduleSkipped) GetCount() uint32 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+func (x *ScheduleSkipped) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *ScheduleSkipped) GetNextDue() *timestamppb.Timestamp {
+	if x != nil {
+		return x.NextDue
+	}
+	return nil
+}
+
+type ScheduleMark struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ScheduleId    string                 `protobuf:"bytes,1,opt,name=schedule_id,json=scheduleId,proto3" json:"schedule_id,omitempty"`
+	DueAt         *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=due_at,json=dueAt,proto3" json:"due_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ScheduleMark) Reset() {
+	*x = ScheduleMark{}
+	mi := &file_yanshi_v1_event_proto_msgTypes[54]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ScheduleMark) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ScheduleMark) ProtoMessage() {}
+
+func (x *ScheduleMark) ProtoReflect() protoreflect.Message {
+	mi := &file_yanshi_v1_event_proto_msgTypes[54]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ScheduleMark.ProtoReflect.Descriptor instead.
+func (*ScheduleMark) Descriptor() ([]byte, []int) {
+	return file_yanshi_v1_event_proto_rawDescGZIP(), []int{54}
+}
+
+func (x *ScheduleMark) GetScheduleId() string {
+	if x != nil {
+		return x.ScheduleId
+	}
+	return ""
+}
+
+func (x *ScheduleMark) GetDueAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.DueAt
+	}
+	return nil
+}
+
 var File_yanshi_v1_event_proto protoreflect.FileDescriptor
 
 const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\n" +
-	"\x15yanshi/v1/event.proto\x12\tyanshi.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xe0\r\n" +
+	"\x15yanshi/v1/event.proto\x12\tyanshi.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\x84\x10\n" +
 	"\x05Event\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -4256,7 +4702,11 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"call_ended\x18\x1e \x01(\v2\x14.yanshi.v1.CallEndedH\x00R\tcallEnded\x12>\n" +
 	"\rdecision_made\x18\x1f \x01(\v2\x17.yanshi.v1.DecisionMadeH\x00R\fdecisionMade\x12S\n" +
 	"\x14background_cancelled\x18  \x01(\v2\x1e.yanshi.v1.BackgroundCancelledH\x00R\x13backgroundCancelled\x12G\n" +
-	"\x10capture_appended\x18! \x01(\v2\x1a.yanshi.v1.CaptureAppendedH\x00R\x0fcaptureAppendedB\t\n" +
+	"\x10capture_appended\x18! \x01(\v2\x1a.yanshi.v1.CaptureAppendedH\x00R\x0fcaptureAppended\x12G\n" +
+	"\x10schedule_created\x18\" \x01(\v2\x1a.yanshi.v1.ScheduleCreatedH\x00R\x0fscheduleCreated\x12M\n" +
+	"\x12schedule_cancelled\x18# \x01(\v2\x1c.yanshi.v1.ScheduleCancelledH\x00R\x11scheduleCancelled\x12A\n" +
+	"\x0eschedule_fired\x18$ \x01(\v2\x18.yanshi.v1.ScheduleFiredH\x00R\rscheduleFired\x12G\n" +
+	"\x10schedule_skipped\x18% \x01(\v2\x1a.yanshi.v1.ScheduleSkippedH\x00R\x0fscheduleSkippedB\t\n" +
 	"\apayload\"\xed\x01\n" +
 	"\fDecisionMade\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
@@ -4360,13 +4810,14 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\x04size\x18\x05 \x01(\x04R\x04size\"8\n" +
 	"\bAgentRef\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
-	"\aversion\x18\x02 \x01(\tR\aversion\"\xe2\x01\n" +
+	"\aversion\x18\x02 \x01(\tR\aversion\"\xff\x01\n" +
 	"\x0eSessionCreated\x12#\n" +
 	"\rbusiness_line\x18\x01 \x01(\tR\fbusinessLine\x12\x19\n" +
 	"\bend_user\x18\x02 \x01(\tR\aendUser\x12)\n" +
 	"\x05agent\x18\x03 \x01(\v2\x13.yanshi.v1.AgentRefR\x05agent\x12,\n" +
 	"\x06parent\x18\x04 \x01(\v2\x14.yanshi.v1.ParentRefR\x06parent\x127\n" +
-	"\tdelete_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bdeleteAt\"\x8d\x01\n" +
+	"\tdelete_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bdeleteAt\x12\x1b\n" +
+	"\ttime_zone\x18\x06 \x01(\tR\btimeZone\"\x8d\x01\n" +
 	"\tParentRef\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x15\n" +
@@ -4381,12 +4832,13 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x12\x14\n" +
 	"\x05stage\x18\x03 \x01(\tR\x05stage\x12\x16\n" +
-	"\x06labels\x18\x04 \x03(\tR\x06labels\"\x8c\x01\n" +
+	"\x06labels\x18\x04 \x03(\tR\x06labels\"\xc1\x01\n" +
 	"\fRunRequested\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12-\n" +
 	"\x05input\x18\x02 \x03(\v2\x17.yanshi.v1.ContentBlockR\x05input\x12\x19\n" +
 	"\binput_id\x18\x03 \x01(\tR\ainputId\x12\x1b\n" +
-	"\tfrom_call\x18\x04 \x01(\tR\bfromCall\"\x87\x01\n" +
+	"\tfrom_call\x18\x04 \x01(\tR\bfromCall\x123\n" +
+	"\bschedule\x18\x05 \x01(\v2\x17.yanshi.v1.ScheduleMarkR\bschedule\"\x87\x01\n" +
 	"\aSteered\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12-\n" +
 	"\x05input\x18\x02 \x03(\v2\x17.yanshi.v1.ContentBlockR\x05input\x12\x19\n" +
@@ -4540,7 +4992,40 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\x03ref\x18\a \x01(\tR\x03ref\"<\n" +
 	"\tCallEnded\x12\x17\n" +
 	"\acall_id\x18\x01 \x01(\tR\x06callId\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason*I\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xcf\x02\n" +
+	"\x0fScheduleCreated\x12\x1f\n" +
+	"\vschedule_id\x18\x01 \x01(\tR\n" +
+	"scheduleId\x12-\n" +
+	"\x05input\x18\x02 \x03(\v2\x17.yanshi.v1.ContentBlockR\x05input\x12\x1b\n" +
+	"\ttime_zone\x18\x03 \x01(\tR\btimeZone\x12\x0e\n" +
+	"\x02at\x18\x04 \x01(\tR\x02at\x12\x14\n" +
+	"\x05rrule\x18\x05 \x01(\tR\x05rrule\x120\n" +
+	"\x05until\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\x05until\x120\n" +
+	"\x05start\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\x05start\x125\n" +
+	"\bnext_due\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\anextDue\x12\x0e\n" +
+	"\x02by\x18\t \x01(\tR\x02by\"D\n" +
+	"\x11ScheduleCancelled\x12\x1f\n" +
+	"\vschedule_id\x18\x01 \x01(\tR\n" +
+	"scheduleId\x12\x0e\n" +
+	"\x02by\x18\x02 \x01(\tR\x02by\"\xb1\x01\n" +
+	"\rScheduleFired\x12\x1f\n" +
+	"\vschedule_id\x18\x01 \x01(\tR\n" +
+	"scheduleId\x121\n" +
+	"\x06due_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05dueAt\x125\n" +
+	"\bnext_due\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\anextDue\x12\x15\n" +
+	"\x06run_id\x18\x04 \x01(\tR\x05runId\"\x87\x02\n" +
+	"\x0fScheduleSkipped\x12\x1f\n" +
+	"\vschedule_id\x18\x01 \x01(\tR\n" +
+	"scheduleId\x127\n" +
+	"\tfirst_due\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\bfirstDue\x125\n" +
+	"\blast_due\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\alastDue\x12\x14\n" +
+	"\x05count\x18\x04 \x01(\rR\x05count\x12\x16\n" +
+	"\x06reason\x18\x05 \x01(\tR\x06reason\x125\n" +
+	"\bnext_due\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\anextDue\"b\n" +
+	"\fScheduleMark\x12\x1f\n" +
+	"\vschedule_id\x18\x01 \x01(\tR\n" +
+	"scheduleId\x121\n" +
+	"\x06due_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05dueAt*I\n" +
 	"\aSpeaker\x12\x17\n" +
 	"\x13SPEAKER_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eSPEAKER_WEARER\x10\x01\x12\x11\n" +
@@ -4559,7 +5044,7 @@ func file_yanshi_v1_event_proto_rawDescGZIP() []byte {
 }
 
 var file_yanshi_v1_event_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_yanshi_v1_event_proto_msgTypes = make([]protoimpl.MessageInfo, 51)
+var file_yanshi_v1_event_proto_msgTypes = make([]protoimpl.MessageInfo, 56)
 var file_yanshi_v1_event_proto_goTypes = []any{
 	(Speaker)(0),                  // 0: yanshi.v1.Speaker
 	(*Event)(nil),                 // 1: yanshi.v1.Event
@@ -4612,11 +5097,16 @@ var file_yanshi_v1_event_proto_goTypes = []any{
 	(*CaptureAppended)(nil),       // 48: yanshi.v1.CaptureAppended
 	(*CaptureSegment)(nil),        // 49: yanshi.v1.CaptureSegment
 	(*CallEnded)(nil),             // 50: yanshi.v1.CallEnded
-	nil,                           // 51: yanshi.v1.CardAction.ValuesEntry
-	(*timestamppb.Timestamp)(nil), // 52: google.protobuf.Timestamp
+	(*ScheduleCreated)(nil),       // 51: yanshi.v1.ScheduleCreated
+	(*ScheduleCancelled)(nil),     // 52: yanshi.v1.ScheduleCancelled
+	(*ScheduleFired)(nil),         // 53: yanshi.v1.ScheduleFired
+	(*ScheduleSkipped)(nil),       // 54: yanshi.v1.ScheduleSkipped
+	(*ScheduleMark)(nil),          // 55: yanshi.v1.ScheduleMark
+	nil,                           // 56: yanshi.v1.CardAction.ValuesEntry
+	(*timestamppb.Timestamp)(nil), // 57: google.protobuf.Timestamp
 }
 var file_yanshi_v1_event_proto_depIdxs = []int32{
-	52, // 0: yanshi.v1.Event.time:type_name -> google.protobuf.Timestamp
+	57, // 0: yanshi.v1.Event.time:type_name -> google.protobuf.Timestamp
 	20, // 1: yanshi.v1.Event.session_created:type_name -> yanshi.v1.SessionCreated
 	24, // 2: yanshi.v1.Event.run_requested:type_name -> yanshi.v1.RunRequested
 	25, // 3: yanshi.v1.Event.steered:type_name -> yanshi.v1.Steered
@@ -4641,55 +5131,70 @@ var file_yanshi_v1_event_proto_depIdxs = []int32{
 	2,  // 22: yanshi.v1.Event.decision_made:type_name -> yanshi.v1.DecisionMade
 	35, // 23: yanshi.v1.Event.background_cancelled:type_name -> yanshi.v1.BackgroundCancelled
 	48, // 24: yanshi.v1.Event.capture_appended:type_name -> yanshi.v1.CaptureAppended
-	17, // 25: yanshi.v1.ContentBlock.text:type_name -> yanshi.v1.Text
-	18, // 26: yanshi.v1.ContentBlock.media:type_name -> yanshi.v1.Media
-	16, // 27: yanshi.v1.ContentBlock.ui_context:type_name -> yanshi.v1.UIContext
-	5,  // 28: yanshi.v1.ContentBlock.card:type_name -> yanshi.v1.Card
-	15, // 29: yanshi.v1.ContentBlock.card_action:type_name -> yanshi.v1.CardAction
-	4,  // 30: yanshi.v1.ContentBlock.background_result:type_name -> yanshi.v1.BackgroundResult
-	49, // 31: yanshi.v1.ContentBlock.capture:type_name -> yanshi.v1.CaptureSegment
-	3,  // 32: yanshi.v1.BackgroundResult.content:type_name -> yanshi.v1.ContentBlock
-	6,  // 33: yanshi.v1.Card.body:type_name -> yanshi.v1.CardElement
-	14, // 34: yanshi.v1.Card.buttons:type_name -> yanshi.v1.CardButton
-	7,  // 35: yanshi.v1.CardElement.markdown:type_name -> yanshi.v1.CardMarkdown
-	8,  // 36: yanshi.v1.CardElement.image:type_name -> yanshi.v1.CardImage
-	9,  // 37: yanshi.v1.CardElement.facts:type_name -> yanshi.v1.CardFacts
-	11, // 38: yanshi.v1.CardElement.list:type_name -> yanshi.v1.CardList
-	13, // 39: yanshi.v1.CardElement.field:type_name -> yanshi.v1.CardField
-	10, // 40: yanshi.v1.CardFacts.facts:type_name -> yanshi.v1.CardFact
-	12, // 41: yanshi.v1.CardList.items:type_name -> yanshi.v1.CardListItem
-	51, // 42: yanshi.v1.CardAction.values:type_name -> yanshi.v1.CardAction.ValuesEntry
-	19, // 43: yanshi.v1.SessionCreated.agent:type_name -> yanshi.v1.AgentRef
-	21, // 44: yanshi.v1.SessionCreated.parent:type_name -> yanshi.v1.ParentRef
-	52, // 45: yanshi.v1.SessionCreated.delete_at:type_name -> google.protobuf.Timestamp
-	19, // 46: yanshi.v1.ParentRef.ancestors:type_name -> yanshi.v1.AgentRef
-	19, // 47: yanshi.v1.AgentSwitched.from:type_name -> yanshi.v1.AgentRef
-	19, // 48: yanshi.v1.AgentSwitched.to:type_name -> yanshi.v1.AgentRef
-	3,  // 49: yanshi.v1.RunRequested.input:type_name -> yanshi.v1.ContentBlock
-	3,  // 50: yanshi.v1.Steered.input:type_name -> yanshi.v1.ContentBlock
-	3,  // 51: yanshi.v1.AssistantMessage.content:type_name -> yanshi.v1.ContentBlock
-	27, // 52: yanshi.v1.AssistantMessage.tool_calls:type_name -> yanshi.v1.ToolCall
-	28, // 53: yanshi.v1.AssistantMessage.usage:type_name -> yanshi.v1.Usage
-	52, // 54: yanshi.v1.ToolCallStarted.deadline:type_name -> google.protobuf.Timestamp
-	3,  // 55: yanshi.v1.ToolResult.content:type_name -> yanshi.v1.ContentBlock
-	15, // 56: yanshi.v1.ToolResult.card_action:type_name -> yanshi.v1.CardAction
-	34, // 57: yanshi.v1.ToolResult.backgrounded:type_name -> yanshi.v1.Backgrounded
-	32, // 58: yanshi.v1.ToolResult.capture_read:type_name -> yanshi.v1.CaptureRead
-	33, // 59: yanshi.v1.ToolResult.capture_ack:type_name -> yanshi.v1.CaptureAck
-	52, // 60: yanshi.v1.Backgrounded.deadline:type_name -> google.protobuf.Timestamp
-	52, // 61: yanshi.v1.RunSuspended.until:type_name -> google.protobuf.Timestamp
-	52, // 62: yanshi.v1.ApprovalRequested.deadline:type_name -> google.protobuf.Timestamp
-	3,  // 63: yanshi.v1.ContextCompacted.summary:type_name -> yanshi.v1.ContentBlock
-	28, // 64: yanshi.v1.ContextCompacted.usage:type_name -> yanshi.v1.Usage
-	45, // 65: yanshi.v1.MemoryRecalled.items:type_name -> yanshi.v1.RecalledMemory
-	49, // 66: yanshi.v1.CaptureAppended.segments:type_name -> yanshi.v1.CaptureSegment
-	0,  // 67: yanshi.v1.CaptureSegment.speaker:type_name -> yanshi.v1.Speaker
-	52, // 68: yanshi.v1.CaptureSegment.spoken_at:type_name -> google.protobuf.Timestamp
-	69, // [69:69] is the sub-list for method output_type
-	69, // [69:69] is the sub-list for method input_type
-	69, // [69:69] is the sub-list for extension type_name
-	69, // [69:69] is the sub-list for extension extendee
-	0,  // [0:69] is the sub-list for field type_name
+	51, // 25: yanshi.v1.Event.schedule_created:type_name -> yanshi.v1.ScheduleCreated
+	52, // 26: yanshi.v1.Event.schedule_cancelled:type_name -> yanshi.v1.ScheduleCancelled
+	53, // 27: yanshi.v1.Event.schedule_fired:type_name -> yanshi.v1.ScheduleFired
+	54, // 28: yanshi.v1.Event.schedule_skipped:type_name -> yanshi.v1.ScheduleSkipped
+	17, // 29: yanshi.v1.ContentBlock.text:type_name -> yanshi.v1.Text
+	18, // 30: yanshi.v1.ContentBlock.media:type_name -> yanshi.v1.Media
+	16, // 31: yanshi.v1.ContentBlock.ui_context:type_name -> yanshi.v1.UIContext
+	5,  // 32: yanshi.v1.ContentBlock.card:type_name -> yanshi.v1.Card
+	15, // 33: yanshi.v1.ContentBlock.card_action:type_name -> yanshi.v1.CardAction
+	4,  // 34: yanshi.v1.ContentBlock.background_result:type_name -> yanshi.v1.BackgroundResult
+	49, // 35: yanshi.v1.ContentBlock.capture:type_name -> yanshi.v1.CaptureSegment
+	3,  // 36: yanshi.v1.BackgroundResult.content:type_name -> yanshi.v1.ContentBlock
+	6,  // 37: yanshi.v1.Card.body:type_name -> yanshi.v1.CardElement
+	14, // 38: yanshi.v1.Card.buttons:type_name -> yanshi.v1.CardButton
+	7,  // 39: yanshi.v1.CardElement.markdown:type_name -> yanshi.v1.CardMarkdown
+	8,  // 40: yanshi.v1.CardElement.image:type_name -> yanshi.v1.CardImage
+	9,  // 41: yanshi.v1.CardElement.facts:type_name -> yanshi.v1.CardFacts
+	11, // 42: yanshi.v1.CardElement.list:type_name -> yanshi.v1.CardList
+	13, // 43: yanshi.v1.CardElement.field:type_name -> yanshi.v1.CardField
+	10, // 44: yanshi.v1.CardFacts.facts:type_name -> yanshi.v1.CardFact
+	12, // 45: yanshi.v1.CardList.items:type_name -> yanshi.v1.CardListItem
+	56, // 46: yanshi.v1.CardAction.values:type_name -> yanshi.v1.CardAction.ValuesEntry
+	19, // 47: yanshi.v1.SessionCreated.agent:type_name -> yanshi.v1.AgentRef
+	21, // 48: yanshi.v1.SessionCreated.parent:type_name -> yanshi.v1.ParentRef
+	57, // 49: yanshi.v1.SessionCreated.delete_at:type_name -> google.protobuf.Timestamp
+	19, // 50: yanshi.v1.ParentRef.ancestors:type_name -> yanshi.v1.AgentRef
+	19, // 51: yanshi.v1.AgentSwitched.from:type_name -> yanshi.v1.AgentRef
+	19, // 52: yanshi.v1.AgentSwitched.to:type_name -> yanshi.v1.AgentRef
+	3,  // 53: yanshi.v1.RunRequested.input:type_name -> yanshi.v1.ContentBlock
+	55, // 54: yanshi.v1.RunRequested.schedule:type_name -> yanshi.v1.ScheduleMark
+	3,  // 55: yanshi.v1.Steered.input:type_name -> yanshi.v1.ContentBlock
+	3,  // 56: yanshi.v1.AssistantMessage.content:type_name -> yanshi.v1.ContentBlock
+	27, // 57: yanshi.v1.AssistantMessage.tool_calls:type_name -> yanshi.v1.ToolCall
+	28, // 58: yanshi.v1.AssistantMessage.usage:type_name -> yanshi.v1.Usage
+	57, // 59: yanshi.v1.ToolCallStarted.deadline:type_name -> google.protobuf.Timestamp
+	3,  // 60: yanshi.v1.ToolResult.content:type_name -> yanshi.v1.ContentBlock
+	15, // 61: yanshi.v1.ToolResult.card_action:type_name -> yanshi.v1.CardAction
+	34, // 62: yanshi.v1.ToolResult.backgrounded:type_name -> yanshi.v1.Backgrounded
+	32, // 63: yanshi.v1.ToolResult.capture_read:type_name -> yanshi.v1.CaptureRead
+	33, // 64: yanshi.v1.ToolResult.capture_ack:type_name -> yanshi.v1.CaptureAck
+	57, // 65: yanshi.v1.Backgrounded.deadline:type_name -> google.protobuf.Timestamp
+	57, // 66: yanshi.v1.RunSuspended.until:type_name -> google.protobuf.Timestamp
+	57, // 67: yanshi.v1.ApprovalRequested.deadline:type_name -> google.protobuf.Timestamp
+	3,  // 68: yanshi.v1.ContextCompacted.summary:type_name -> yanshi.v1.ContentBlock
+	28, // 69: yanshi.v1.ContextCompacted.usage:type_name -> yanshi.v1.Usage
+	45, // 70: yanshi.v1.MemoryRecalled.items:type_name -> yanshi.v1.RecalledMemory
+	49, // 71: yanshi.v1.CaptureAppended.segments:type_name -> yanshi.v1.CaptureSegment
+	0,  // 72: yanshi.v1.CaptureSegment.speaker:type_name -> yanshi.v1.Speaker
+	57, // 73: yanshi.v1.CaptureSegment.spoken_at:type_name -> google.protobuf.Timestamp
+	3,  // 74: yanshi.v1.ScheduleCreated.input:type_name -> yanshi.v1.ContentBlock
+	57, // 75: yanshi.v1.ScheduleCreated.until:type_name -> google.protobuf.Timestamp
+	57, // 76: yanshi.v1.ScheduleCreated.start:type_name -> google.protobuf.Timestamp
+	57, // 77: yanshi.v1.ScheduleCreated.next_due:type_name -> google.protobuf.Timestamp
+	57, // 78: yanshi.v1.ScheduleFired.due_at:type_name -> google.protobuf.Timestamp
+	57, // 79: yanshi.v1.ScheduleFired.next_due:type_name -> google.protobuf.Timestamp
+	57, // 80: yanshi.v1.ScheduleSkipped.first_due:type_name -> google.protobuf.Timestamp
+	57, // 81: yanshi.v1.ScheduleSkipped.last_due:type_name -> google.protobuf.Timestamp
+	57, // 82: yanshi.v1.ScheduleSkipped.next_due:type_name -> google.protobuf.Timestamp
+	57, // 83: yanshi.v1.ScheduleMark.due_at:type_name -> google.protobuf.Timestamp
+	84, // [84:84] is the sub-list for method output_type
+	84, // [84:84] is the sub-list for method input_type
+	84, // [84:84] is the sub-list for extension type_name
+	84, // [84:84] is the sub-list for extension extendee
+	0,  // [0:84] is the sub-list for field type_name
 }
 
 func init() { file_yanshi_v1_event_proto_init() }
@@ -4722,6 +5227,10 @@ func file_yanshi_v1_event_proto_init() {
 		(*Event_DecisionMade)(nil),
 		(*Event_BackgroundCancelled)(nil),
 		(*Event_CaptureAppended)(nil),
+		(*Event_ScheduleCreated)(nil),
+		(*Event_ScheduleCancelled)(nil),
+		(*Event_ScheduleFired)(nil),
+		(*Event_ScheduleSkipped)(nil),
 	}
 	file_yanshi_v1_event_proto_msgTypes[2].OneofWrappers = []any{
 		(*ContentBlock_Text)(nil),
@@ -4745,7 +5254,7 @@ func file_yanshi_v1_event_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_yanshi_v1_event_proto_rawDesc), len(file_yanshi_v1_event_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   51,
+			NumMessages:   56,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

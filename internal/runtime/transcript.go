@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
 	"yanshi/internal/model"
+	"yanshi/internal/schedule"
 	"yanshi/internal/session"
 )
 
@@ -79,7 +81,7 @@ func transcript(st *session.State, maxToolResult int, through uint64) []model.Me
 				deferUser(&out, &deferred, pending, recall)
 				placed = true
 			}
-			deferUser(&out, &deferred, pending, inputBlocks(p.RunRequested.GetInput(), p.RunRequested.GetFromCall(), maxToolResult))
+			deferUser(&out, &deferred, pending, scheduledInputBlocks(st, e, maxToolResult))
 		case *v1.Event_Steered:
 			deferUser(&out, &deferred, pending, inputBlocks(p.Steered.GetInput(), p.Steered.GetFromCall(), maxToolResult))
 		case *v1.Event_BackgroundCancelled:
@@ -208,4 +210,21 @@ func truncateBlocks(blocks []*v1.ContentBlock, maxTokens int) []*v1.ContentBlock
 		break
 	}
 	return append(out, model.TextBlocks(fmt.Sprintf("\n[已截断：原始约 %d tokens]", total))...)
+}
+
+// scheduledInputBlocks 用事件时间作显示参照，避免跨年后改变旧 Run 的请求前缀。
+func scheduledInputBlocks(st *session.State, e *v1.Event, maxToolResult int) []*v1.ContentBlock {
+	m := e.GetRunRequested()
+	blocks := inputBlocks(m.GetInput(), m.GetFromCall(), maxToolResult)
+	if mark := m.GetSchedule(); mark != nil {
+		var loc *time.Location
+		if st != nil {
+			if item := st.Schedules[mark.GetScheduleId()]; item != nil {
+				loc, _ = time.LoadLocation(item.Created.GetTimeZone())
+			}
+		}
+		line := fmt.Sprintf("【定时 %s 到点：%s】\n", mark.GetScheduleId(), schedule.FormatLocal(mark.GetDueAt().AsTime(), loc, e.GetTime().AsTime()))
+		blocks = append(model.TextBlocks(line), blocks...)
+	}
+	return blocks
 }

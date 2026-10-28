@@ -65,6 +65,8 @@ type Options struct {
 	LongRuns bool
 	// Attested 在普通工具调用中穿插可信 MCP 页与读取后的 Memory 预检查，沿用 Worker 故障与内容安全提供商。
 	Attested bool
+	// Schedules 单独开启定时动作与跨周期跳跃，避免消耗既有场景的随机序列。
+	Schedules bool
 }
 
 // Stats 统计模拟中被覆盖到的路径，防止模拟"空转"。
@@ -135,6 +137,7 @@ type Stats struct {
 	GracefulStops, Handoffs int
 	// 后台调用（ADR-0035）：转入后台、设备结果送达、到期、用户取消的次数，以及设备下线时唤醒等它的 Session 的次数。
 	Backgrounded, BackgroundResults, BackgroundTimeouts, BackgroundCancels, DisconnectWakes int
+	SchedulesFired, SchedulesSkipped, SchedulesCancelled, SchedulesChildRejected            int
 	// RetentionKeptMemories 是按保留期到期删除、写入过的 Memory 得以保留的 Session（ADR-0037）。
 	RetentionKeptMemories int
 	// 擦除覆盖在途 Run、既有 Memory 保留与删除记录之后的迟到写入撤回。
@@ -711,6 +714,9 @@ func (w *World) newWorker(slot int) *runtime.Worker {
 	store := *w.store
 	store.Log = flakyLog{Log: w.log, w: w}
 	cfg.Store, cfg.Queue = &store, poolQueue{Queue: w.queue, w: w}
+	scheduleService := *w.svc
+	scheduleService.Store = &store
+	cfg.Schedules = &scheduleService
 	cfg.Heartbeat = 0 // 续约按真实时间，模拟中关闭
 	cfg.MaxTakeovers, cfg.MaxModelErrors, cfg.ApprovalTimeout, cfg.QuotaRecheck = 4, 3, approvalTimeout, time.Minute
 	cfg.Notify, cfg.NotifyRunsAfter = simNotifier{w}, 30*time.Second
@@ -773,6 +779,9 @@ func (w *World) act() error {
 	case x < 0.76:
 		return w.decide(false)
 	case x < 0.82:
+		if w.opts.Schedules && w.chance(0.3) {
+			return w.scheduleStep()
+		}
 		if w.chance(0.25) {
 			return w.callStep()
 		}
@@ -807,6 +816,9 @@ func (w *World) act() error {
 		}
 		// 大幅跳动时钟相当于 Worker 卡顿（GC、网络抖动）导致租约过期，属于故障。
 		maxJump := 2 * deviceTimeout
+		if w.opts.Schedules && w.faults && w.chance(0.1) {
+			maxJump = 8 * time.Hour
+		}
 		if !w.faults {
 			maxJump = 2 * time.Second
 		}
@@ -1083,7 +1095,7 @@ func (w *World) quiesce() error {
 		if err != nil {
 			return err
 		}
-		if !active && done && idleRounds > int(leaseTTL/time.Second) && w.checkBackgroundSettled() == nil {
+		if !active && done && idleRounds > int(leaseTTL/time.Second) && w.checkBackgroundSettled() == nil && w.checkSchedulesSettled() == nil {
 			if err := w.CheckInvariants(); err != nil {
 				return err
 			}
@@ -1126,6 +1138,9 @@ func (w *World) quiesce() error {
 			return err
 		}
 		w.clock.Advance(time.Second)
+	}
+	if err := w.checkSchedulesSettled(); err != nil {
+		return err
 	}
 	if err := w.checkBackgroundSettled(); err != nil {
 		return err
@@ -1203,6 +1218,9 @@ func (w *World) CheckInvariants() error {
 			return err
 		}
 		if err := w.checkBackground(sid, events, st, slices.Contains(w.sessions, sid)); err != nil {
+			return err
+		}
+		if err := w.checkSchedules(sid, events, st); err != nil {
 			return err
 		}
 		if err := checkInvalidArgs(sid, events); err != nil {
@@ -1320,6 +1338,7 @@ func (w *World) CollectStats() {
 	for _, sid := range w.known() {
 		events, _ := eventlog.ReadAll(context.Background(), w.log, sid, 0)
 		w.countBackground(events)
+		w.countSchedules(events)
 		w.countAttestedResults(events)
 	}
 	for _, sid := range append(slices.Clone(w.sessions), w.children...) {
@@ -1432,6 +1451,7 @@ func (w *World) Fingerprint() string {
 			fmt.Fprintf(h, "%s|%s|%s|%v|%d|%d;", e.ConnID, e.DeviceID, e.Label, e.Focused, e.TypingUntil.Unix(), e.Expires.Unix())
 		}
 		w.fingerprintBackground(h, sid)
+		w.fingerprintSchedules(h, sid)
 	}
 	w.fingerprintInboxes(h)
 	w.fingerprintEndUsers(h)
@@ -1598,12 +1618,25 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 		}
 	}
 	resp := &model.Response{Model: "sim/m", Usage: &v1.Usage{InputTokens: uint64(model.EstimateRequest(req)), OutputTokens: 20}}
+	scheduleComplete := false
 	more := turns < 3 && w.chance(0.6)
 	if w.opts.LongRuns {
 		more = turns < 100 && w.chance(0.97)
 	}
+	if w.opts.Schedules && w.opts.LongRuns {
+		count, scheduled, err := w.scheduleRunTurns(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if scheduled {
+			// 定时模拟的是短任务；不能让每个待到期项再复制一份百轮负载。
+			// 从日志计数，摘要、回答与后台插话不能重置这个上限。
+			scheduleComplete = count >= 3
+			more = !scheduleComplete && more
+		}
+	}
 	// 页中的他人原话触发外部影响路径；健康样例必须先被预检查拒绝，不能进入审批或执行。
-	if w.opts.Attested && attestedMemoryPrecheck(req.Messages) && slices.ContainsFunc(req.Tools, func(t model.ToolSpec) bool { return t.Name == "memory_save" }) {
+	if w.opts.Attested && !scheduleComplete && attestedMemoryPrecheck(req.Messages) && slices.ContainsFunc(req.Tools, func(t model.ToolSpec) bool { return t.Name == "memory_save" }) {
 		resp.ToolCalls = []*v1.ToolCall{{Capability: "memory_save", ArgumentsJson: rejectedMemoryArgs}}
 		return resp, nil
 	}

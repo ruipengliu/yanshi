@@ -300,3 +300,23 @@ func TestAttestedMemoryGate(t *testing.T) {
 		}
 	}
 }
+
+func TestScheduleIsNeitherUserEvidenceNorExternalResult(t *testing.T) {
+	st := &session.State{History: []*v1.Event{{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r", Input: model.TextBlocks("用户对花生过敏"), Schedule: &v1.ScheduleMark{ScheduleId: "one"}}}}}}
+	call := &v1.ToolCall{Capability: "memory_save", ArgumentsJson: `{"content":"用户对花生过敏"}`}
+	if _, gated := memoryGate(st, call); !gated {
+		t.Fatal("schedule became user evidence")
+	}
+	if userText(st) != "" {
+		t.Fatal("schedule in user text")
+	}
+	w := &Worker{st: st}
+	if got := w.unjudged(&session.Run{ID: "r"}); len(got) != 0 {
+		t.Fatal("schedule treated as external injection")
+	}
+	for _, p := range st.Pieces() {
+		if p.From != session.FromSchedule || p.Result != nil {
+			t.Fatalf("piece %+v", p)
+		}
+	}
+}

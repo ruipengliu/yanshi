@@ -42,6 +42,7 @@ setup:
 capabilities: []              # 追加到 AgentDef 的能力白名单，如 ["mcp:crm/*"]
 turns:
   - input: "读一下我电脑上的 meeting.txt，整理成会议纪要"
+    scheduled: false         # true：经 service 创建一次性定时，等 Worker 到点开启 Run（只收文字）
     approve: true             # 本轮遇到审批时的决定（默认批准）
     new_session: false        # true 表示开一个新 Session（跨 Session 的 Memory 用例）
     crash_after_calls: 0      # >0：Run 发起这么多次调用后"杀掉"执行它的 Worker，检验接管（长 Run 用例）

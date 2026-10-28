@@ -73,6 +73,10 @@ func (w *World) checkModeration() error {
 			switch p := e.GetPayload().(type) {
 			case *v1.Event_SessionCreated:
 				bl = p.SessionCreated.GetBusinessLine()
+			case *v1.Event_ScheduleCreated:
+				if w.blocked(moderation.ForInput(bl, sid, p.ScheduleCreated.GetInput()).Text) {
+					return fmt.Errorf("invariant: blocked schedule reached log of %s at seq %d", sid, e.GetSeq())
+				}
 			case *v1.Event_RunRequested:
 				if w.blocked(moderation.ForInput(bl, sid, p.RunRequested.GetInput()).Text) {
 					return fmt.Errorf("invariant: blocked input reached the log of %s at seq %d", sid, e.GetSeq())

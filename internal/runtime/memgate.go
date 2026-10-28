@@ -29,7 +29,7 @@ var (
 )
 
 // tainted 报告当前模型上下文中是否有不是用户原话的内容（来源见 session.Provenance，ADR-0039）：外部内容、旁听中他人的话、
-// 别的模型的转述；压缩摘要可能概括了它们，委托的子 Session 的任务由父 Run 的模型写成，都保守地视为含外部内容。
+// 别的模型的转述、平台定时；压缩摘要可能概括了它们，委托的子 Session 的任务由父 Run 的模型写成，都不能单独提供用户原话的依据。
 func tainted(st *session.State) bool {
 	if st.Compaction != nil || st.Created.GetParent() != nil {
 		return true
@@ -107,9 +107,12 @@ func memoryGate(st *session.State, call *v1.ToolCall) (string, bool) {
 	if json.Unmarshal([]byte(call.GetArgumentsJson()), &in) != nil || strings.TrimSpace(in.Content) == "" {
 		return "", false // 参数无效时由 memory_save 自己拒绝
 	}
-	if grounded(in.Content, userText(st)) {
+	if user := userText(st); strings.TrimSpace(user) != "" && grounded(in.Content, user) {
 		return "", false
 	}
 	summary, _ := model.Truncate(in.Content, 200)
+	if slices.ContainsFunc(st.Pieces(), func(p session.Piece) bool { return p.From == session.FromSchedule }) {
+		return fmt.Sprintf("助手想记住：%s（这条信息没有你直接说过的依据，需要你确认）", summary), true
+	}
 	return fmt.Sprintf("助手想记住：%s（这条信息来自本次对话中读取的外部内容，不是你直接说的）", summary), true
 }

@@ -96,6 +96,7 @@ func (d *Delegator) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke)
 	}
 	_, err = svc.Create(ctx, service.CreateRequest{
 		DeleteAt:  deleteAt,
+		TimeZone:  parent.Created.GetTimeZone(),
 		SessionID: child, BusinessLine: parent.Created.GetBusinessLine(), EndUser: parent.Created.GetEndUser(), Agent: inv.GetCapability(),
 		Parent: &v1.ParentRef{SessionId: inv.GetSessionId(), RunId: inv.GetRunId(), CallId: inv.GetCallId(), Ancestors: ancestors},
 	})

@@ -15,7 +15,7 @@ import (
 
 // ProjectionVersion 是投影语义的版本。改动 Apply 或 State 的字段时必须递增：旧快照随之作废，
 // 加载退回完整回放，因此快照永远不会与当前代码的投影结果不一致。
-const ProjectionVersion = 19
+const ProjectionVersion = 21
 
 // Snapshots 存放每个 Session 最新的投影快照。快照只是加速加载的缓存，删除或丢失都不影响正确性。
 type Snapshots interface {
@@ -41,11 +41,21 @@ func fromTS(t *timestamppb.Timestamp) time.Time {
 }
 
 // Snapshot 返回投影的快照。事件与消息是共享的不可变对象，快照写入前会被序列化，因此无需复制。
+// 非提交边界返回 nil，Store 将其作为错误传播，绝不落盘。
 func (s *State) Snapshot() *v1.SessionSnapshot {
+	if s.pendingSchedule != nil {
+		return nil
+	}
 	snap := &v1.SessionSnapshot{
 		Version: ProjectionVersion, SessionId: s.SessionID, Seq: s.Seq, Created: s.Created, Agent: s.Agent, Closed: s.Closed,
 		Compaction: s.Compaction, CompactedAt: s.CompactedAt, History: s.History, DelegatedRun: s.Delegated,
 	}
+	for _, item := range s.Schedules {
+		snap.Schedules = append(snap.Schedules, &v1.ScheduleSnapshot{Created: item.Created, Last: ts(item.Last), NextDue: ts(item.NextDue)})
+	}
+	slices.SortFunc(snap.Schedules, func(a, b *v1.ScheduleSnapshot) int {
+		return strings.Compare(a.GetCreated().GetScheduleId(), b.GetCreated().GetScheduleId())
+	})
 	for _, r := range s.Runs {
 		rs := &v1.RunSnapshot{
 			Id: r.ID, Status: int32(r.Status), RequestedAt: ts(r.RequestedAt), Attempt: r.Attempt, LiveEndpoint: r.LiveEndpoint,
@@ -99,6 +109,12 @@ func FromSnapshot(snap *v1.SessionSnapshot) (*State, error) {
 		Compaction: snap.GetCompaction(), CompactedAt: snap.GetCompactedAt(), History: snap.GetHistory(),
 		Delegated: snap.GetDelegatedRun(), callIDsOld: map[string]bool{},
 	}
+	for _, item := range snap.GetSchedules() {
+		if s.Schedules == nil {
+			s.Schedules = map[string]*Schedule{}
+		}
+		s.Schedules[item.GetCreated().GetScheduleId()] = &Schedule{Created: item.GetCreated(), Last: fromTS(item.GetLast()), NextDue: fromTS(item.GetNextDue())}
+	}
 	for _, p := range snap.GetPastRuns() {
 		s.Past = append(s.Past, RunSummary{ID: p.GetId(), Status: RunStatus(p.GetStatus()), RequestedAt: fromTS(p.GetRequestedAt()),
 			Attempt: p.GetAttempt(), Turns: int(p.GetTurns()), FromBackground: p.GetFromBackground()})
@@ -144,7 +160,11 @@ func FromSnapshot(snap *v1.SessionSnapshot) (*State, error) {
 // Equal 报告两个投影是否相同（按快照的确定性序列化比较），用于测试与模拟检查快照的正确性。
 func Equal(a, b *State) bool {
 	opts := proto.MarshalOptions{Deterministic: true}
-	x, err1 := opts.Marshal(a.Snapshot())
-	y, err2 := opts.Marshal(b.Snapshot())
+	xs, ys := a.Snapshot(), b.Snapshot()
+	if xs == nil || ys == nil {
+		return false
+	}
+	x, err1 := opts.Marshal(xs)
+	y, err2 := opts.Marshal(ys)
 	return err1 == nil && err2 == nil && string(x) == string(y)
 }

@@ -44,6 +44,10 @@ message Event {
     BackgroundCancelled background_cancelled = 32;
     // 已退役：ADR-0050；只为解码旧日志保留，不再写入。
     CaptureAppended capture_appended = 33;
+    ScheduleCreated schedule_created = 34;
+    ScheduleCancelled schedule_cancelled = 35;
+    ScheduleFired schedule_fired = 36;
+    ScheduleSkipped schedule_skipped = 37;
   }
 }
 
@@ -239,6 +243,7 @@ message SessionCreated {
   ParentRef parent = 4;
   // 原文副本的绝对删除期限；委托派生的子 Session 同寿（ADR-0050）。
   google.protobuf.Timestamp delete_at = 5;
+  string time_zone = 6;
 }
 
 // ParentRef 是子 Session 的来处：父 Session 中的哪个 Run、哪次调用派生了它。
@@ -269,7 +274,7 @@ message ContentModerated {
   repeated string labels = 4;
 }
 
-// RunRequested 在 Session 无活跃 Run 时由用户输入触发。
+// RunRequested 在 Session 无活跃 Run 时由输入触发；定时输入带平台标记。
 message RunRequested {
   string run_id = 1;
   repeated ContentBlock input = 2;
@@ -277,6 +282,8 @@ message RunRequested {
   string input_id = 3;
   // 非空表示输入由该 Call 中的语音模型派生（run_task，docs/design/m3-call.md §5）：结果会被朗读。
   string from_call = 4;
+  // 仅由平台在同批 ScheduleFired 后写入。
+  ScheduleMark schedule = 5;
 }
 
 // Steered 是活跃 Run 进行中的追加输入，不改变 Run 状态。
@@ -469,7 +476,7 @@ message ContextCompacted {
 }
 
 // SessionClosed 是 Session 的终态：之后不再接收任何输入与 Run 事件（docs/design/m2-session-lifecycle.md §2）。
-// 关闭不可逆；对话与工件仍可查看，沙箱工作区随之销毁。
+// 关闭不可逆；对话与工件仍可查看，沙箱工作区随之销毁。定时到点后只允许追加 reason=closed 的 ScheduleSkipped。
 message SessionClosed {
   // 关闭方，如 "end_user:u1"、"service:demo"、"retention"。
   string by = 1;
@@ -558,4 +565,44 @@ message CallEnded {
   // "hangup"（用户挂断）、"disconnected"（连接断开）、"provider"（实时模型结束或出错）、
   // "replaced"（同一 Session 开始了新的 Call）、"session_closed"、"quota"、"error"。
   string reason = 2;
+}
+
+// 定时声明保存原锚点，重放不能以当前时间重新编译。
+message ScheduleCreated {
+  string schedule_id = 1;
+  repeated ContentBlock input = 2;
+  string time_zone = 3;
+  string at = 4;
+  string rrule = 5;
+  google.protobuf.Timestamp until = 6;
+  google.protobuf.Timestamp start = 7;
+  google.protobuf.Timestamp next_due = 8;
+  string by = 9;
+}
+
+message ScheduleCancelled {
+  string schedule_id = 1;
+  string by = 2;
+}
+
+message ScheduleFired {
+  string schedule_id = 1;
+  google.protobuf.Timestamp due_at = 2;
+  google.protobuf.Timestamp next_due = 3;
+  string run_id = 4;
+}
+
+message ScheduleSkipped {
+  string schedule_id = 1;
+  google.protobuf.Timestamp first_due = 2;
+  google.protobuf.Timestamp last_due = 3;
+  uint32 count = 4;
+  // missed 合并较早的到期；closed 使整个定时失效。
+  string reason = 5;
+  google.protobuf.Timestamp next_due = 6;
+}
+
+message ScheduleMark {
+  string schedule_id = 1;
+  google.protobuf.Timestamp due_at = 2;
 }

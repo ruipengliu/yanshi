@@ -108,7 +108,11 @@ func renderForSummary(in SummaryInput) string {
 	for _, e := range in.History {
 		switch p := e.GetPayload().(type) {
 		case *v1.Event_RunRequested:
-			fmt.Fprintf(&b, "%s %s\n", inputSpeaker("[用户]", p.RunRequested.GetFromCall(), p.RunRequested.GetInput()),
+			speaker := "[用户]"
+			if p.RunRequested.GetSchedule() != nil {
+				speaker = "[平台定时]"
+			}
+			fmt.Fprintf(&b, "%s %s\n", inputSpeaker(speaker, p.RunRequested.GetFromCall(), p.RunRequested.GetInput()),
 				blocksText(truncateInput(p.RunRequested.GetInput(), in.MaxToolResult)))
 		case *v1.Event_Steered:
 			fmt.Fprintf(&b, "%s %s\n", inputSpeaker("[用户插话]", p.Steered.GetFromCall(), p.Steered.GetInput()),
@@ -169,10 +173,14 @@ func blocksText(blocks []*v1.ContentBlock) string {
 }
 
 // eventTokens 估算一个历史事件在模型上下文中占用的 token 数，与 Transcript 的呈现一致。
-func eventTokens(e *v1.Event, maxToolResult int) int {
+func eventTokens(e *v1.Event, maxToolResult int, states ...*session.State) int {
+	var st *session.State
+	if len(states) > 0 {
+		st = states[0]
+	}
 	switch p := e.GetPayload().(type) {
 	case *v1.Event_RunRequested:
-		return model.EstimateMessage(model.Message{Content: inputBlocks(p.RunRequested.GetInput(), p.RunRequested.GetFromCall(), maxToolResult)})
+		return model.EstimateMessage(model.Message{Content: scheduledInputBlocks(st, e, maxToolResult)})
 	case *v1.Event_Steered:
 		return model.EstimateMessage(model.Message{Content: inputBlocks(p.Steered.GetInput(), p.Steered.GetFromCall(), maxToolResult)})
 	case *v1.Event_BackgroundCancelled:
@@ -203,7 +211,7 @@ func estimate(st *session.State, req *model.Request, maxToolResult int) int {
 		}
 		cal := int(m.GetUsage().GetInputTokens() + m.GetUsage().GetOutputTokens())
 		for _, after := range st.History[i+1:] {
-			cal += eventTokens(after, maxToolResult)
+			cal += eventTokens(after, maxToolResult, st)
 		}
 		return max(n, cal)
 	}
@@ -229,7 +237,7 @@ func planCompaction(st *session.State, req *model.Request, cfg agentdef.Context,
 	sizes := make([]int, len(h))
 	total := 0
 	for i, e := range h {
-		sizes[i] = eventTokens(e, cfg.MaxToolResult)
+		sizes[i] = eventTokens(e, cfg.MaxToolResult, st)
 		total += sizes[i]
 	}
 	text := cfg.Threshold() - model.EstimateTokens(st.Compaction.GetSummary()) - model.EstimateText(summaryInstructions)

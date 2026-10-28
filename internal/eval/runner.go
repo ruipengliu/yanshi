@@ -725,7 +725,9 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 	if turn.AwaitBackground {
 		runID, err = in.awaitBackground(ctx, sid, after, deadline)
 	} else {
-		runID, err = in.submitTurn(ctx, sid, turn)
+		submitCtx, cancel := context.WithDeadline(ctx, deadline)
+		runID, err = in.submitTurn(submitCtx, sid, turn)
+		cancel()
 	}
 	if err != nil {
 		return nil, err
@@ -826,6 +828,9 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 
 // submitTurn 提交本轮的输入（文字、界面上下文或卡片动作），返回开启或并入的 Run。
 func (in *instance) submitTurn(ctx context.Context, sid string, turn Turn) (string, error) {
+	if turn.Scheduled {
+		return in.submitScheduledTurn(ctx, sid, turn.Input)
+	}
 	var err error
 	input := model.TextBlocks(turn.Input)
 	if u := turn.UIContext; u != nil {
@@ -1782,4 +1787,32 @@ func needsXinli(agents *agentdef.Registry, cases []*Case, versions map[string]st
 		}
 	}
 	return false
+}
+
+// submitScheduledTurn 等待 Worker 按真实时钟到点，不把定时文字经普通输入入口洗成用户原话。
+func (in *instance) submitScheduledTurn(ctx context.Context, sid, input string) (string, error) {
+	due := in.svc.Store.Clock.Now().Add(2 * time.Second).UTC().Truncate(time.Second)
+	item, err := in.svc.CreateSchedule(ctx, sid, service.CreateScheduleRequest{Input: model.TextBlocks(input), At: due.Format("2006-01-02T15:04:05"), TimeZone: "UTC", By: "service"})
+	if err != nil {
+		return "", err
+	}
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		st, err := in.svc.Load(ctx, sid)
+		if err != nil {
+			return "", err
+		}
+		for _, e := range st.History {
+			r := e.GetRunRequested()
+			if r.GetSchedule().GetScheduleId() == item.Created.GetScheduleId() {
+				return r.GetRunId(), nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-tick.C:
+		}
+	}
 }

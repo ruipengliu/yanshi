@@ -72,6 +72,7 @@ type ArtifactStat interface {
 var ErrConflict = errors.New("conflict")
 
 type CreateRequest struct {
+	TimeZone string
 	// DeleteAt 限制原文副本的寿命；零值不设置绝对期限。
 	DeleteAt     time.Time
 	BusinessLine string
@@ -91,6 +92,11 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (sessionID stri
 	}
 	if !req.DeleteAt.IsZero() && (!req.DeleteAt.After(s.Store.Clock.Now()) || timestamppb.New(req.DeleteAt).CheckValid() != nil) {
 		return "", fmt.Errorf("%w: delete_at must be a future timestamp", ErrInvalid)
+	}
+	if req.TimeZone != "" {
+		if _, err := time.LoadLocation(req.TimeZone); err != nil || req.TimeZone == "Local" {
+			return "", fmt.Errorf("%w: invalid IANA time_zone", ErrInvalid)
+		}
 	}
 	var deadline *timestamppb.Timestamp
 	if !req.DeleteAt.IsZero() {
@@ -153,7 +159,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (sessionID stri
 		}
 	}
 	err = s.Store.Commit(ctx, st, &v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{
-		BusinessLine: req.BusinessLine, EndUser: req.EndUser, Agent: def.Ref(), Parent: req.Parent, DeleteAt: deadline,
+		BusinessLine: req.BusinessLine, EndUser: req.EndUser, Agent: def.Ref(), Parent: req.Parent, DeleteAt: deadline, TimeZone: req.TimeZone,
 	}}})
 	if errors.Is(err, eventlog.ErrConflict) && req.SessionID != "" {
 		// 指定 ID 的 Session 已存在：是同一次委托的重复创建时返回它。
@@ -272,6 +278,9 @@ func (s *Service) SubmitFromCall(ctx context.Context, sessionID, callID, inputID
 func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall string, input []*v1.ContentBlock, delegated bool) (*SubmitResult, error) {
 	if len(input) == 0 {
 		return nil, fmt.Errorf("%w: empty input", ErrInvalid)
+	}
+	if strings.HasPrefix(inputID, "schedule_") {
+		return nil, fmt.Errorf("%w: schedule input_id is reserved for the platform", ErrInvalid)
 	}
 	if len(inputID) > MaxInputIDLen {
 		return nil, fmt.Errorf("%w: input_id exceeds %d bytes", ErrInvalid, MaxInputIDLen)
@@ -418,9 +427,9 @@ func (s *Service) InterruptBy(ctx context.Context, sessionID, runID, by string) 
 }
 
 // wakeOnEnding 报告结束 Run 的写入是否同时唤醒 Session：委托派生的子 Session 需要它的 Worker 把终态写回父调用
-// （docs/design/m5-multi-agent.md §4）。
+// （docs/design/m5-multi-agent.md §4）；有定时则要重新计算停放，关闭后也需到点记录 closed。
 func wakeOnEnding(st *session.State) bool {
-	return st.Created.GetParent() != nil
+	return st.Created.GetParent() != nil || len(st.OpenSchedules()) > 0
 }
 
 // afterClose 是关闭之后的步骤：撤回被关闭中断的 Run 中已派发的调用与未了结的后台调用（ADR-0035）、在索引中记下关闭、
@@ -433,7 +442,7 @@ func (s *Service) afterClose(ctx context.Context, st *session.State) error {
 		}
 	}
 	if s.Nodes != nil {
-		// 关闭之后不再有事件，后台调用不会再了结：撤回它们的投递，设备上线后不再执行。投影保留它们，重试时再撤回一次。
+		// 关闭之后后台调用不会再了结（定时仍会记录 closed 跳过）：撤回它们的投递，设备上线后不再执行。投影保留它们，重试时再撤回一次。
 		for _, b := range st.Background {
 			if err := s.Nodes.Cancel(ctx, b.NodeID, b.CallID); err != nil {
 				return err

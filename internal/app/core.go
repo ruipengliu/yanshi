@@ -178,7 +178,7 @@ func (c *Core) WorkerConfig(id string, pool workqueue.Pool, idle *workqueue.Idle
 		LeaseTTL: c.opts.LeaseTTL, Heartbeat: c.opts.LeaseTTL / 3, Idle: idle, Pool: pool,
 		Meter: c.opts.Meter, Quotas: c.opts.Quotas, Moderator: c.Service.Moderator,
 		DrainTimeout: c.opts.DrainTimeout, Faults: c.opts.Injector,
-		Background: c.Service, BackgroundGrace: c.opts.BackgroundGrace, BackgroundTimeout: c.opts.BackgroundTimeout,
+		Schedules: c.Service, Background: c.Service, BackgroundGrace: c.opts.BackgroundGrace, BackgroundTimeout: c.opts.BackgroundTimeout,
 	}
 	if c.opts.BackgroundGrace >= 0 {
 		cfg.Devices = c.Stores.Dir

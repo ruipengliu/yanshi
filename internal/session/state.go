@@ -212,6 +212,10 @@ type State struct {
 	// Background 是未了结的后台调用（ADR-0035），键为调用 ID：设备离线超过宽限期、Worker 不再在 Run 中等待的路由调用。
 	// 设备结果、到期或用户取消之后移出；Session 关闭后保留（不再有事件，关闭方据此撤回投递）。
 	Background map[string]*BackgroundCall
+	// 失效声明仍保留，以保证 ID 不复用及创建重试幂等。
+	Schedules map[string]*Schedule
+	// 只在同批 Fired 与紧随的 RunRequested 之间存在。
+	pendingSchedule *v1.Event
 }
 
 // MaxCaptureText 限制可信页中每段的字符数。
@@ -409,6 +413,9 @@ func (s *State) Input(id string) *InputRef {
 
 // recordInput 记下带 ID 的输入；窗口内重复的 ID 不合法（写入方应先去重）。
 func (s *State) recordInput(ref InputRef) error {
+	if strings.HasPrefix(ref.ID, "schedule_") && s.pendingSchedule == nil {
+		return fmt.Errorf("reserved schedule input_id")
+	}
 	if ref.ID == "" {
 		return nil
 	}
@@ -429,6 +436,9 @@ func Reduce(events []*v1.Event) (*State, error) {
 		if err := s.Apply(e); err != nil {
 			return nil, err
 		}
+	}
+	if s.pendingSchedule != nil {
+		return nil, fmt.Errorf("unpaired ScheduleFired")
 	}
 	return s, nil
 }
@@ -485,6 +495,7 @@ func (s *State) Clone() *State {
 	}
 	// 条目不再修改（了结时整条移出），共享即可。
 	cp.Background = maps.Clone(s.Background)
+	cp.Schedules = maps.Clone(s.Schedules)
 	return &cp
 }
 
@@ -496,6 +507,9 @@ func (s *State) Check(events ...*v1.Event) error {
 
 // after 返回应用 events 之后的状态（副本），s 不变。
 func (s *State) after(events ...*v1.Event) (*State, error) {
+	if s.pendingSchedule != nil {
+		return nil, fmt.Errorf("cannot append after an unpaired ScheduleFired")
+	}
 	cp := s.Clone()
 	for i, e := range events {
 		if e.GetSeq() == 0 {
@@ -504,6 +518,9 @@ func (s *State) after(events ...*v1.Event) (*State, error) {
 		if err := cp.Apply(e); err != nil {
 			return nil, err
 		}
+	}
+	if cp.pendingSchedule != nil {
+		return nil, fmt.Errorf("ScheduleFired requires RunRequested in the same append")
 	}
 	return cp, nil
 }
@@ -531,17 +548,25 @@ func (s *State) apply(e *v1.Event) error {
 		if c == nil {
 			return fmt.Errorf("first event must be SessionCreated, got %T", e.GetPayload())
 		}
+
 		s.SessionID, s.Created, s.Agent, s.Seq = e.GetSessionId(), c, c.GetAgent(), e.GetSeq()
 		return nil
 	}
 	if e.GetSessionId() != s.SessionID {
 		return fmt.Errorf("event belongs to session %q", e.GetSessionId())
 	}
-	if s.Closed != nil {
+	if s.Closed != nil && e.GetScheduleSkipped() == nil {
 		return fmt.Errorf("session is closed")
 	}
 
+	if s.pendingSchedule != nil && e.GetRunRequested() == nil {
+		return fmt.Errorf("ScheduleFired must be followed by RunRequested")
+	}
 	switch p := e.GetPayload().(type) {
+	case *v1.Event_ScheduleCreated, *v1.Event_ScheduleCancelled, *v1.Event_ScheduleFired, *v1.Event_ScheduleSkipped:
+		if err := s.applySchedule(e); err != nil {
+			return err
+		}
 	case *v1.Event_SessionCreated:
 		return fmt.Errorf("duplicate SessionCreated")
 
@@ -602,6 +627,9 @@ func (s *State) apply(e *v1.Event) error {
 		s.Agent = m.GetTo()
 
 	case *v1.Event_RunRequested:
+		if err := s.checkScheduleInput(e); err != nil {
+			return err
+		}
 		if err := s.checkFromCall(p.RunRequested.GetFromCall()); err != nil {
 			return err
 		}
@@ -632,6 +660,7 @@ func (s *State) apply(e *v1.Event) error {
 			run.FromBackground = bg.GetCallId()
 			s.settleBackground(bg.GetCallId())
 		}
+		s.pendingSchedule = nil
 		s.Runs = append(s.Runs, run)
 		s.trimRuns()
 		s.History = append(s.History, e)

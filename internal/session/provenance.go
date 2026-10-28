@@ -22,9 +22,12 @@ const (
 	// FromRelay 是别的模型写成、作为输入进入的内容：通话中语音模型的转述（docs/design/m3-call.md §6）、委托的任务
 	// （docs/design/m5-multi-agent.md §8）。不是用户的原话，可能转述了外部内容。
 	FromRelay
+	// FromSchedule 是平台定时：不是用户依据，也不是供注入判断的外部内容。
+	FromSchedule
 )
 
-// Piece 是上下文中一段带来源的内容。平台写的说明与 Agent 自己的输出不在其中：它们既不是依据，也不需要判断。
+// Piece 是上下文中一段带来源的内容。平台写的说明与 Agent 自己的输出不在其中；定时输入保留来源，
+// 使写入闸门不会把创建方的文字当作用户在到点时亲口说的。
 type Piece struct {
 	From Provenance
 	// Text 是这段内容的文字：依据比对（FromUser）与注入判断（调用结果）用它。旁听结果中他人的话合成一段。
@@ -33,7 +36,7 @@ type Piece struct {
 	Result *v1.ToolResult
 }
 
-// Pieces 按 History 的顺序给出上下文中带来源的内容。
+// Pieces 按 History 的顺序给出上下文中带来源的内容，定时输入由事件标记推导为平台定时。
 func (s *State) Pieces() []Piece {
 	external, questions := map[string]bool{}, map[string]bool{}
 	mark := func(tc *v1.ToolCall) {
@@ -74,7 +77,11 @@ func (s *State) Pieces() []Piece {
 		switch p := e.GetPayload().(type) {
 		case *v1.Event_RunRequested:
 			m := p.RunRequested
-			input(m.GetRunId(), m.GetInput(), m.GetFromCall() != "" || (delegated != "" && m.GetInputId() == delegated))
+			if m.GetSchedule() != nil {
+				out = append(out, Piece{From: FromSchedule, Text: blockText(m.GetInput())})
+			} else {
+				input(m.GetRunId(), m.GetInput(), m.GetFromCall() != "" || (delegated != "" && m.GetInputId() == delegated))
+			}
 		case *v1.Event_Steered:
 			m := p.Steered
 			input(m.GetRunId(), m.GetInput(), m.GetFromCall() != "")

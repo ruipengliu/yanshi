@@ -80,7 +80,11 @@ func (s *Store) fromSnapshot(ctx context.Context, sessionID string) (*State, err
 }
 
 func (s *Store) putSnapshot(ctx context.Context, st *State) error {
-	if err := s.Snapshots.Put(ctx, st.Snapshot()); err != nil {
+	snap := st.Snapshot()
+	if snap == nil {
+		return fmt.Errorf("cannot snapshot unpaired ScheduleFired")
+	}
+	if err := s.Snapshots.Put(ctx, snap); err != nil {
 		return err
 	}
 	_, err := lifecycle.Recheck(ctx, s.Deletions, st.SessionID, func(ctx context.Context) error {
@@ -99,6 +103,9 @@ func (s *Store) Sync(ctx context.Context, st *State) error {
 		if err := st.Apply(e); err != nil {
 			return err
 		}
+	}
+	if st.pendingSchedule != nil {
+		return fmt.Errorf("unpaired ScheduleFired")
 	}
 	return nil
 }
