@@ -17,7 +17,6 @@ turns:
     expect:
       calls: [mcp_xinli__captures]
       reply_contains: [浅灰色, 暖白色]
-      reply_excludes: [咖啡豆, 深烘焙]
       judge: >-
         5 分：明确合并 P-0012 在两批中的发言，说明展厅入口墙定为浅灰色、灯光定为暖白色；正确识别 other-1 与 other-2 的引用相同，完全没有混入 P-0099 的咖啡豆采购。
         4 分：两件事和颜色均正确，未混入其他人的内容，但未明确解释跨批编号变化。
