@@ -256,7 +256,7 @@ _Avoid_: 账单、消费记录
 在一个周期内允许的 Usage 金额上限：BusinessLine 每月一份，EndUser 每日一份。超出时拒绝新 Run、挂起进行中的 Run。
 _Avoid_: 额度（指剩余量时可用）、预算（与 Policy 中的预算区分）、限流
 
-**Tier（档位）**（设计中，[设计](docs/design/m7-kernel-primitives.md) §8）:
+**Tier（档位）**（已实现，[设计](docs/design/m7-kernel-primitives.md) §8）:
 BusinessLine 为 EndUser 设置的配额档次（如会员等级），决定其每日 Quota；由业务线以服务令牌设置、内核按 EndUser 保存。权益本身由业务线管理。
 _Avoid_: 会员、套餐、等级（指权益时）
 

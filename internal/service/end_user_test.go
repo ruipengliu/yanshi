@@ -98,7 +98,7 @@ func TestEndUserBarrierWithdrawsSessionAndAllowsReuseAfterGrace(t *testing.T) {
 	if err := d.CompleteEndUser(ctx, barrier, now, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.PruneEndUsers(ctx, now.Add(time.Hour), 10); err != nil {
+	if err := d.PruneEndUsers(ctx, now.Add(time.Hour), 10, nil); err != nil {
 		t.Fatal(err)
 	}
 	if sid, err := create(); err != nil || sid == "" {

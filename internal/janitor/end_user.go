@@ -3,6 +3,7 @@ package janitor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"yanshi/internal/lifecycle"
@@ -59,5 +60,24 @@ func (j *Janitor) sweepEndUsers(ctx context.Context, now time.Time) error {
 			}
 		}
 	}
-	return j.Deletions.PruneEndUsers(ctx, now, 100)
+	var cleaned [][2]string
+	defer func() {
+		// PG 回调中的删除尚未提交，普通读取可能回填旧值；提交或回滚后再失效一次。
+		for _, key := range cleaned {
+			for _, h := range j.EndUserData {
+				if h.Invalidate != nil {
+					h.Invalidate(key[0], key[1])
+				}
+			}
+		}
+	}()
+	return j.Deletions.PruneEndUsers(ctx, now, 100, func(ctx context.Context, bl, eu string) error {
+		cleaned = append(cleaned, [2]string{bl, eu})
+		for _, h := range j.EndUserData {
+			if err := h.Delete(ctx, bl, eu); err != nil {
+				return fmt.Errorf("delete %s: %w", h.Name, err)
+			}
+		}
+		return nil
+	})
 }

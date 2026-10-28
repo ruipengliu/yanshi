@@ -85,21 +85,66 @@ func (s barrierGrants) Create(ctx context.Context, g *memory.Grant) error {
 	return s.w.endUserWrite(func() error { return s.Grants.Create(ctx, g) })
 }
 
+type barrierTiers struct {
+	usage.TierStore
+	w *World
+}
+
+func (s barrierTiers) Put(ctx context.Context, bl, eu, tier string, at time.Time) error {
+	err := s.w.endUserWrite(func() error { return s.TierStore.Put(ctx, bl, eu, tier, at) })
+	if err == nil && s.w.skipTierRecheck {
+		panic(tierWriterCrash{})
+	}
+	return err
+}
+
+type tierWriterCrash struct{}
+
+// crashTierWriter 在存储提交后直接中断调用栈，不执行 Service 的写后复查。
+func (w *World) crashTierWriter(ctx context.Context, user string) (err error) {
+	w.skipTierRecheck = true
+	defer func() {
+		w.skipTierRecheck = false
+		if v := recover(); v != nil {
+			if _, ok := v.(tierWriterCrash); !ok {
+				panic(v)
+			}
+			if w.crashedTierUsers == nil {
+				w.crashedTierUsers = map[string]bool{}
+			}
+			w.crashedTierUsers[user] = true
+			w.Stats.TierWriterCrashes++
+			err = nil
+		}
+	}()
+	_, err = w.svc.PutTier(ctx, "bl", user, "pro")
+	return fmt.Errorf("invariant: tier writer did not crash: %v", err)
+}
+
 func (w *World) deleteWithEndUserWrite(user string) error {
 	ctx := context.Background()
 	remove := func() error {
 		_, err := w.svc.DeleteEndUser(ctx, "bl", user, w.hub, w.memories, w.usage, w.push)
 		return err
 	}
-	// 注销发生在存储落盘之前或之后；第三种顺序覆盖注销返回后新到达的请求。
-	switch w.rng.IntN(3) {
-	case 0:
+	actions := 7
+	if w.faults {
+		actions++
+	}
+	action := w.rng.IntN(actions)
+	// 崩溃路径固定先注销再落盘，保证首次清理漏过这一行；其他路径覆盖三种写入顺序。
+	if action == 7 {
 		w.endUserWriteHook, w.endUserWriteBefore = remove, true
-	case 1:
-		w.endUserWriteHook, w.endUserWriteBefore = remove, false
-	default:
-		if err := remove(); err != nil {
-			return err
+	} else {
+		switch w.rng.IntN(3) {
+		case 0:
+			w.endUserWriteHook, w.endUserWriteBefore = remove, true
+		case 1:
+			w.endUserWriteHook, w.endUserWriteBefore = remove, false
+		default:
+			if err := remove(); err != nil {
+				return err
+			}
 		}
 	}
 	defer func() { w.endUserWriteHook = nil }()
@@ -107,7 +152,7 @@ func (w *World) deleteWithEndUserWrite(user string) error {
 	id := fmt.Sprintf("barrier-%d", w.nextInput)
 	var err error
 	var want error
-	switch w.rng.IntN(6) {
+	switch action {
 	case 0:
 		_, err = w.svc.Create(ctx, service.CreateRequest{BusinessLine: "bl", EndUser: user, Agent: "sim"})
 		want = service.ErrNotFound
@@ -133,6 +178,20 @@ func (w *World) deleteWithEndUserWrite(user string) error {
 		}
 		_, err = w.memories.CreateGrant(ctx, user, from, to, []memory.Category{"preference"}, time.Time{})
 		want = memory.ErrNotFound
+	case 6:
+		interleaved := w.endUserWriteHook != nil
+		_, err = w.svc.PutTier(ctx, "bl", user, "pro")
+		want = service.ErrNotFound
+		if interleaved && errors.Is(err, want) {
+			w.Stats.TiersWithdrawn++
+		}
+	case 7:
+		if err := w.crashTierWriter(ctx, user); err != nil {
+			return err
+		}
+		if tier, err := w.stores.Tiers.Get(ctx, "bl", user); err != nil || tier != "pro" {
+			return fmt.Errorf("invariant: skipped recheck left no late tier: %q, %v", tier, err)
+		}
 	}
 	if want != nil && !errors.Is(err, want) {
 		return fmt.Errorf("invariant: write during account deletion returned %v, want %v", err, want)
@@ -140,7 +199,9 @@ func (w *World) deleteWithEndUserWrite(user string) error {
 	if w.endUserWriteHook != nil {
 		return errors.New("invariant: account deletion did not interleave with the write")
 	}
-	w.Stats.EndUserBarrierWithdrawn++
+	if action != 7 {
+		w.Stats.EndUserBarrierWithdrawn++
+	}
 	return nil
 }
 
@@ -149,7 +210,11 @@ func (w *World) checkEndUserDeleted(final bool) error {
 	for _, user := range w.deletedUsers {
 		b, err := w.deletions.GetEndUser(ctx, "bl", user)
 		if errors.Is(err, lifecycle.ErrNotFound) {
-			continue // 宽限期结束后允许重新使用 ID
+			// 模拟注销后换新 ID；原 ID 的屏障移除后不能留下崩溃写入。
+			if tier, err := w.stores.Tiers.Get(ctx, "bl", user); err != nil || tier != "" {
+				return errors.New("invariant: tier survived removal of account deletion barrier")
+			}
+			continue
 		}
 		if err != nil {
 			return err
@@ -159,6 +224,11 @@ func (w *World) checkEndUserDeleted(final bool) error {
 		}
 		if b.CompletedAt.IsZero() {
 			continue
+		}
+		if !w.crashedTierUsers[user] {
+			if tier, err := w.stores.Tiers.Get(ctx, "bl", user); err != nil || tier != "" {
+				return errors.New("invariant: deleted account still has a tier")
+			}
 		}
 		if ids, err := w.index.IDsOf(ctx, "bl", user); err != nil || len(ids) != 0 {
 			return errors.New("invariant: deleted account still has indexed sessions")
@@ -180,6 +250,10 @@ func (w *World) checkEndUserDeleted(final bool) error {
 }
 
 func (w *World) fingerprintEndUsers(h io.Writer) {
+	for _, user := range append(slices.Clone(w.users), w.deletedUsers...) {
+		tier, err := w.stores.Tiers.Get(context.Background(), "bl", user)
+		fmt.Fprintf(h, "tier:%s|%s|%v;", user, tier, err)
+	}
 	for _, user := range w.deletedUsers {
 		b, err := w.deletions.GetEndUser(context.Background(), "bl", user)
 		if err != nil {
@@ -191,4 +265,41 @@ func (w *World) fingerprintEndUsers(h io.Writer) {
 			fmt.Fprint(h, sid, ";")
 		}
 	}
+}
+
+// expireEndUserBarriers 保证普通种子也走过宽限期，不依赖随机拨钟恰好超过一天。
+func (w *World) expireEndUserBarriers() error {
+	ctx := context.Background()
+	until := w.clock.Now()
+	for _, user := range w.deletedUsers {
+		b, err := w.deletions.GetEndUser(ctx, "bl", user)
+		if errors.Is(err, lifecycle.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if b.CompletedAt.IsZero() {
+			return errors.New("invariant: account deletion never completed before grace expiry")
+		}
+		if b.ExpiresAt.After(until) {
+			until = b.ExpiresAt
+		}
+	}
+	w.clock.Advance(until.Sub(w.clock.Now()))
+	// PruneEndUsers 每轮最多 100 条，逐批清理到所有已完成的注销都越过屏障。
+	for round := 0; round <= len(w.deletedUsers)/100; round++ {
+		if err := w.janitors[0].Sweep(ctx); err != nil {
+			return err
+		}
+	}
+	for _, user := range w.deletedUsers {
+		if _, err := w.deletions.GetEndUser(ctx, "bl", user); !errors.Is(err, lifecycle.ErrNotFound) {
+			return fmt.Errorf("invariant: expired account deletion barrier remains: %v", err)
+		}
+		if w.crashedTierUsers[user] {
+			w.Stats.TierCrashRecoveries++
+		}
+	}
+	return w.checkEndUserDeleted(true)
 }

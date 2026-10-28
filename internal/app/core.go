@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"log/slog"
 	"time"
 
@@ -99,6 +100,8 @@ type Core struct {
 	// Dispatch 是 Worker 的派发链：委托 → 沙箱 → 设备（node.Hub）。
 	Dispatch *delegation.Router
 	Service  *service.Service
+	// EndUserData 与首次注销共用清理入口，宽限期结束前由 Janitor 再清一遍。
+	EndUserData []lifecycle.EndUserHolder
 	// Notifier 为 nil 表示没有配置推送通道。
 	Notifier *notify.Notifier
 
@@ -115,6 +118,14 @@ func NewCore(stores Stores, opts Options) *Core {
 	}
 	if opts.IDs == nil {
 		opts.IDs = func(string) ids.Generator { return ids.Random() }
+	}
+	// 配额、管理接口与注销必须共用缓存，才能使本进程写后立即生效。
+	var tiers usage.TierStore
+	if stores.Tiers != nil {
+		tiers = usage.NewTierCache(stores.Tiers, opts.Clock)
+	}
+	if opts.Quotas != nil {
+		opts.Quotas.Tiers = tiers
 	}
 	c := &Core{Stores: stores, opts: opts}
 	c.Store = &session.Store{Log: stores.Log, Waking: stores.Waking, IDs: opts.IDs("id"), Clock: opts.Clock,
@@ -160,7 +171,19 @@ func NewCore(stores Stores, opts Options) *Core {
 		moderator = faults.Moderator{Next: moderator, Injector: opts.Injector}
 	}
 	c.Service = &service.Service{Store: c.Store, Agents: opts.Agents, Nodes: c.Dispatch, Index: stores.Index,
-		Deletions: stores.Deletions, Janitor: stores.JanitorQueue, Quotas: opts.Quotas, Moderator: moderator, Artifacts: c.Artifacts}
+		Deletions: stores.Deletions, Janitor: stores.JanitorQueue, Quotas: opts.Quotas, Tiers: tiers, Moderator: moderator, Artifacts: c.Artifacts}
+	if tiers != nil {
+		c.EndUserData = []lifecycle.EndUserHolder{{Name: "tiers", Delete: func(ctx context.Context, bl, eu string) error {
+			if c.Service.Tiers == nil {
+				return nil
+			}
+			return c.Service.Tiers.Delete(ctx, bl, eu)
+		}, Invalidate: func(bl, eu string) {
+			if cache, ok := c.Service.Tiers.(interface{ Invalidate(string, string) }); ok {
+				cache.Invalidate(bl, eu)
+			}
+		}}}
+	}
 	local = append(append([]capability.Capability{}, local...), memory.Capabilities(c.Memory)...)
 	c.Catalog.Local = capability.NewRegistry(append(local, c.Service.ScheduleCapability())...)
 	c.Delegator.Service = c.Service
@@ -212,6 +235,6 @@ func (c *Core) Janitor(id string, provider sandbox.Provider, retention map[strin
 		Queues: map[string]workqueue.Queue{"sessions": c.Stores.Queue, "sandboxes": c.Stores.SandboxQueue, "janitor": c.Stores.JanitorQueue},
 		Index:  c.Stores.Index, Deletions: c.Stores.Deletions, Retention: retention, Clock: c.opts.Clock, Logger: c.opts.Logger,
 		LeaseTTL: c.opts.LeaseTTL, Usage: c.Stores.Usage, UsageRetention: usageRetention, Presence: c.Stores.Presence,
-		EndUserGrace: c.opts.EndUserGrace,
+		EndUserGrace: c.opts.EndUserGrace, EndUserData: c.EndUserData,
 	}
 }

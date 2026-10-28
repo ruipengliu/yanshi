@@ -114,6 +114,10 @@ type Stats struct {
 	QuotaSuspensions, QuotaRejections, QuotaResumes, AccountDeletions int
 	// EndUserBarrierWithdrawn 是注销交错中写入被屏障撤回的次数。
 	EndUserBarrierWithdrawn int
+	TiersSet                int
+	TiersWithdrawn          int
+	TierWriterCrashes       int
+	TierCrashRecoveries     int
 	// 灰度：撤回版本后在下一个 Run 切换到稳定版本的次数。
 	AgentSwitches int
 	// 内容安全：被拒绝的输入、被拦截的输出、提供商错误。
@@ -366,6 +370,9 @@ type World struct {
 	// endUserWriteHook 在一次存储写入前或后注销，覆盖写入与屏障的两种顺序；只执行一次，避免重入。
 	endUserWriteHook   func() error
 	endUserWriteBefore bool
+	// 跳过写后复查的崩溃，只能靠宽限期结束前的二次清理恢复。
+	skipTierRecheck  bool
+	crashedTierUsers map[string]bool
 	// violations 记录脚本化模型观察到的请求级不变量违反（超出窗口、调用配对残缺）。
 	violations []string
 	// poolViolation 记录 Worker 认领到不属于其池的工作（ADR-0029）。
@@ -449,6 +456,7 @@ func New(opts Options) (*World, error) {
 	wrapped.Push = barrierPush{Registry: stores.Push, w: w}
 	wrapped.Memories = barrierMemory{Store: stores.Memories, w: w}
 	wrapped.Grants = barrierGrants{Grants: stores.Grants, w: w}
+	wrapped.Tiers = barrierTiers{TierStore: stores.Tiers, w: w}
 	w.core = app.NewCore(wrapped, app.Options{
 		Clock: w.clock, IDs: ids.Sequential, Agents: agents, Model: gw, Blobs: artifact.NewMemBlobs(), NodeAuth: node.InsecureDevAuth{},
 		Local:        []capability.Capability{w.echoCap(), w.sendCap(), simCardCap()},
@@ -485,6 +493,12 @@ func New(opts Options) (*World, error) {
 		})
 		if err != nil {
 			return nil, err
+		}
+		if i%2 == 0 {
+			if _, err := w.svc.PutTier(context.Background(), "bl", w.users[i], "pro"); err != nil {
+				return nil, err
+			}
+			w.Stats.TiersSet++
 		}
 		w.sessions = append(w.sessions, id)
 		n := w.newNode(i)
@@ -1089,6 +1103,7 @@ func (w *World) quiesce() error {
 	// idleRounds 是所有 Janitor 连续无事可做的轮数。须超过一个租约 TTL（每轮 1 秒）才算清理队列已空：
 	// 崩溃的 Janitor 持有的租约到期前，其他 Janitor 认领不到它的任务。
 	idleRounds := 0
+	endUsersExpired := len(w.deletedUsers) == 0
 	for round := range 2000 {
 		active := false
 		if err := w.discoverChildren(); err != nil {
@@ -1108,6 +1123,14 @@ func (w *World) quiesce() error {
 			return err
 		}
 		if !active && done && idleRounds > int(leaseTTL/time.Second) && w.checkBackgroundSettled() == nil && w.checkSchedulesSettled() == nil {
+			if !endUsersExpired {
+				if err := w.expireEndUserBarriers(); err != nil {
+					return err
+				}
+				endUsersExpired = true
+				idleRounds = 0
+				continue // 拨钟可能让未来定时到期，回到原循环重新收敛。
+			}
 			if err := w.CheckInvariants(); err != nil {
 				return err
 			}

@@ -11,6 +11,7 @@ import (
 	"yanshi/internal/clock"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/service"
+	"yanshi/internal/usage"
 )
 
 type failedEndUserRemoval struct{}
@@ -145,5 +146,80 @@ func TestEndUserJanitorRepairsFailedSessionMark(t *testing.T) {
 	}
 	if ids, err := stores.Index.IDsOf(ctx, "bl", "u"); err != nil || len(ids) != 0 {
 		t.Fatalf("personal data after recovery = %v, %v", ids, err)
+	}
+}
+
+type failingExpiryTiers struct {
+	usage.TierStore
+	fail bool
+}
+
+func (s *failingExpiryTiers) Delete(ctx context.Context, bl, eu string) error {
+	if s.fail {
+		return errors.New("tier cleanup unavailable")
+	}
+	return s.TierStore.Delete(ctx, bl, eu)
+}
+
+func TestExpiredEndUserBarrierClearsTierAfterWriterCrash(t *testing.T) {
+	ctx := context.Background()
+	clk := clock.NewFake(time.Date(2026, 10, 28, 0, 0, 0, 0, time.UTC))
+	stores := app.Memory(clk)
+	raw := stores.Tiers
+	tiers := &failingExpiryTiers{TierStore: raw}
+	stores.Tiers = tiers
+	// 已撤掉配额配置也必须清除历史分配。
+	core := app.NewCore(stores, app.Options{Clock: clk, EndUserGrace: time.Hour})
+	if _, err := core.Service.DeleteEndUser(ctx, "bl", "u"); err != nil {
+		t.Fatal(err)
+	}
+	j := core.Janitor("j", nil, nil, 0)
+	if err := j.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	b, err := stores.Deletions.GetEndUser(ctx, "bl", "u")
+	if err != nil || b.CompletedAt.IsZero() {
+		t.Fatalf("completed barrier: %+v, %v", b, err)
+	}
+	// 首次清理完成后在途写入才落盘，写入进程崩溃，没有执行复查。
+	if err := raw.Put(ctx, "bl", "u", "pro", clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if tier, err := core.Service.Tiers.Get(ctx, "bl", "u"); err != nil || tier != "pro" {
+		t.Fatalf("late assignment: %q, %v", tier, err)
+	}
+	clk.Advance(time.Hour - time.Nanosecond)
+	if err := j.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if tier, err := raw.Get(ctx, "bl", "u"); err != nil || tier != "pro" {
+		t.Fatalf("cleanup ran before grace ended: %q, %v", tier, err)
+	}
+	clk.Advance(time.Nanosecond)
+	tiers.fail = true
+	if err := j.Sweep(ctx); err == nil {
+		t.Fatal("cleanup failure was ignored")
+	}
+	if saved, err := stores.Deletions.GetEndUser(ctx, "bl", "u"); err != nil || saved.RequestID != b.RequestID || !saved.ExpiresAt.Equal(b.ExpiresAt) {
+		t.Fatalf("cleanup failure removed or changed barrier: %+v, %v", saved, err)
+	}
+	if tier, err := raw.Get(ctx, "bl", "u"); err != nil || tier != "pro" {
+		t.Fatalf("failed cleanup unexpectedly changed assignment: %q, %v", tier, err)
+	}
+	// 在失效前再填缓存，成功重试必须使它立即失效。
+	if _, err := core.Service.Tiers.Get(ctx, "bl", "u"); err != nil {
+		t.Fatal(err)
+	}
+	tiers.fail = false
+	if err := j.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stores.Deletions.GetEndUser(ctx, "bl", "u"); !errors.Is(err, lifecycle.ErrNotFound) {
+		t.Fatalf("retry retained barrier: %v", err)
+	}
+	for _, s := range []usage.TierStore{raw, core.Service.Tiers} {
+		if tier, err := s.Get(ctx, "bl", "u"); err != nil || tier != "" {
+			t.Fatalf("writer crash left tier after barrier removal: %q, %v", tier, err)
+		}
 	}
 }
