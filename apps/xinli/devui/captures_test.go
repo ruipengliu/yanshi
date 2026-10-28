@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"xinli/kernel"
+
 	"persona/domain"
 	"persona/store/memstore"
 )
@@ -151,4 +153,8 @@ func TestCaptureRoutesWithoutKernel(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func (d *devActions) OneshotForBusinessLine(context.Context, string, string, string, string) (kernel.OneshotResult, error) {
+	return kernel.OneshotResult{Output: json.RawMessage(`{"brief":"简述"}`)}, nil
 }
