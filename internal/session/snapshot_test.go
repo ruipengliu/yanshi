@@ -209,7 +209,7 @@ func TestSnapshotCoversEveryField(t *testing.T) {
 		"State":          {"SessionID", "Seq", "Created", "Agent", "Closed", "Compaction", "CompactedAt", "Runs", "Past", "History", "callIDsOld", "callIDs", "Inputs", "ActiveCall", "Delegated", "Background", "Schedules"},
 		"RunSummary":     {"ID", "Status", "RequestedAt", "Attempt", "Turns", "FromBackground"},
 		"Run":            {"ID", "Status", "RequestedAt", "Attempt", "LiveEndpoint", "Takeovers", "StalledTakeovers", "Turns", "Recall", "Recalled", "Calls", "SuspendReason", "SuspendedUntil", "Compactions", "OutputTokens", "Resume", "Decisions", "FromBackground"},
-		"Call":           {"Call", "StartedAttempts", "NodeID", "Deadline", "DispatchedAt", "Done", "Background", "Approval"},
+		"Call":           {"Call", "StartedAttempts", "StartedReadOnly", "NodeID", "Deadline", "DispatchedAt", "Done", "Background", "Approval"},
 		"Schedule":       {"Created", "Last", "NextDue"},
 		"BackgroundCall": {"CallID", "RunID", "NodeID", "Capability", "Deadline"},
 		"Approval":       {"Summary", "Deadline", "Decided", "Approved"},

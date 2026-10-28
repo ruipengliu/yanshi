@@ -723,6 +723,8 @@ type CallSnapshot struct {
 	Approval        *ApprovalSnapshot      `protobuf:"bytes,6,opt,name=approval,proto3" json:"approval,omitempty"`
 	DispatchedAt    *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=dispatched_at,json=dispatchedAt,proto3" json:"dispatched_at,omitempty"`
 	Background      bool                   `protobuf:"varint,8,opt,name=background,proto3" json:"background,omitempty"`
+	// 与 started_attempts 一一对应，保留接管前的证据，不能用后来的声明覆盖。
+	StartedReadOnly []bool `protobuf:"varint,9,rep,packed,name=started_read_only,json=startedReadOnly,proto3" json:"started_read_only,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -811,6 +813,13 @@ func (x *CallSnapshot) GetBackground() bool {
 		return x.Background
 	}
 	return false
+}
+
+func (x *CallSnapshot) GetStartedReadOnly() []bool {
+	if x != nil {
+		return x.StartedReadOnly
+	}
+	return nil
 }
 
 type ApprovalSnapshot struct {
@@ -1019,7 +1028,7 @@ const file_yanshi_v1_snapshot_proto_rawDesc = "" +
 	"\x0ffrom_background\x18\x12 \x01(\tR\x0efromBackground\x1a<\n" +
 	"\x0eDecisionsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x13\x10\x14J\x04\b\x14\x10\x15J\x04\b\x15\x10\x16R\rcapture_readsR\rcapture_pagesR\fcapture_acks\"\xe1\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x13\x10\x14J\x04\b\x14\x10\x15J\x04\b\x15\x10\x16R\rcapture_readsR\rcapture_pagesR\fcapture_acks\"\x8d\x03\n" +
 	"\fCallSnapshot\x12'\n" +
 	"\x04call\x18\x01 \x01(\v2\x13.yanshi.v1.ToolCallR\x04call\x12)\n" +
 	"\x10started_attempts\x18\x02 \x03(\rR\x0fstartedAttempts\x12\x17\n" +
@@ -1030,7 +1039,8 @@ const file_yanshi_v1_snapshot_proto_rawDesc = "" +
 	"\rdispatched_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\fdispatchedAt\x12\x1e\n" +
 	"\n" +
 	"background\x18\b \x01(\bR\n" +
-	"background\"\x9a\x01\n" +
+	"background\x12*\n" +
+	"\x11started_read_only\x18\t \x03(\bR\x0fstartedReadOnly\"\x9a\x01\n" +
 	"\x10ApprovalSnapshot\x12\x18\n" +
 	"\asummary\x18\x01 \x01(\tR\asummary\x126\n" +
 	"\bdeadline\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\bdeadline\x12\x18\n" +

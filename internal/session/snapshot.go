@@ -15,7 +15,7 @@ import (
 
 // ProjectionVersion 是投影语义的版本。改动 Apply 或 State 的字段时必须递增：旧快照随之作废，
 // 加载退回完整回放，因此快照永远不会与当前代码的投影结果不一致。
-const ProjectionVersion = 22
+const ProjectionVersion = 23
 
 // Snapshots 存放每个 Session 最新的投影快照。快照只是加速加载的缓存，删除或丢失都不影响正确性。
 type Snapshots interface {
@@ -66,7 +66,7 @@ func (s *State) Snapshot() *v1.SessionSnapshot {
 		}
 		for _, c := range r.Calls {
 			cs := &v1.CallSnapshot{Call: c.Call, StartedAttempts: c.StartedAttempts, NodeId: c.NodeID, Deadline: ts(c.Deadline), Done: c.Done,
-				DispatchedAt: ts(c.DispatchedAt), Background: c.Background}
+				DispatchedAt: ts(c.DispatchedAt), Background: c.Background, StartedReadOnly: c.StartedReadOnly}
 			if a := c.Approval; a != nil {
 				cs.Approval = &v1.ApprovalSnapshot{Summary: a.Summary, Deadline: ts(a.Deadline), Decided: a.Decided, Approved: a.Approved}
 			}
@@ -137,7 +137,7 @@ func FromSnapshot(snap *v1.SessionSnapshot) (*State, error) {
 		}
 		for _, cs := range rs.GetCalls() {
 			c := &Call{Call: cs.GetCall(), StartedAttempts: cs.GetStartedAttempts(), NodeID: cs.GetNodeId(), Deadline: fromTS(cs.GetDeadline()), Done: cs.GetDone(),
-				DispatchedAt: fromTS(cs.GetDispatchedAt()), Background: cs.GetBackground()}
+				DispatchedAt: fromTS(cs.GetDispatchedAt()), Background: cs.GetBackground(), StartedReadOnly: cs.GetStartedReadOnly()}
 			if a := cs.GetApproval(); a != nil {
 				c.Approval = &Approval{Summary: a.GetSummary(), Deadline: fromTS(a.GetDeadline()), Decided: a.GetDecided(), Approved: a.GetApproved()}
 			}
