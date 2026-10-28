@@ -64,6 +64,9 @@ type Janitor struct {
 	IdleWait time.Duration
 	// SweepEvery 是保留策略与兜底扫描的间隔。
 	SweepEvery time.Duration
+	// PromoteBudget 是一次 Sweep 迁移全部队列的时间预算，默认 SweepEvery / 2。
+	// 在批次边界检查，给保留策略留出时间；已开始的一批允许完成。
+	PromoteBudget time.Duration
 	// StatsEvery 是统计各队列积压（yanshi_queue_ready、yanshi_queue_oldest_wait_seconds）的间隔，默认 15 秒。
 	// 统计可能扫描整个队列，因此只由 Janitor 所在的少数进程做。
 	StatsEvery time.Duration
@@ -84,6 +87,9 @@ func (j *Janitor) init() {
 	}
 	if j.SweepEvery == 0 {
 		j.SweepEvery = time.Minute
+	}
+	if j.PromoteBudget <= 0 {
+		j.PromoteBudget = j.SweepEvery / 2
 	}
 	if j.StatsEvery == 0 {
 		j.StatsEvery = 15 * time.Second
@@ -368,6 +374,26 @@ func (j *Janitor) sweep(ctx context.Context, sid, reason string) error {
 // 并按保留期清理沙箱账本。
 func (j *Janitor) Sweep(ctx context.Context) error {
 	j.init()
+	deadline := j.Clock.Now().Add(j.PromoteBudget)
+	// 默认 Horizon 一小时覆盖多轮一分钟的 Sweep；停摆超过它会晚到，不能提前执行。
+	for _, q := range j.Queues {
+		if d, ok := q.(workqueue.Deferrer); ok {
+			for {
+				now := j.Clock.Now()
+				if !now.Before(deadline) {
+					break
+				}
+				n, err := d.Promote(ctx, now.Add(d.Horizon()), 1000)
+				metrics.QueuePromoted.WithLabelValues().Add(float64(n))
+				if err != nil {
+					return err
+				}
+				if n < 1000 {
+					break
+				}
+			}
+		}
+	}
 	now := j.Clock.Now()
 	if err := j.sweepEndUsers(ctx, now); err != nil {
 		return err

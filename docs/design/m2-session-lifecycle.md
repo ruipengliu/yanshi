@@ -50,7 +50,7 @@
 清理由后台 Janitor 完成。它沿用工作队列（`workqueue.Queue`，新增一张 `janitor_items` 表）的租约语义：任何进程都可以执行，崩溃后由其他进程接管。每一步都是幂等的：
 
 1. 中断活跃的 Run，撤回各 Node Inbox 中属于该 Session 的调用；
-2. 从工作队列中移除该 Session，沙箱队列中移除它的沙箱；
+2. 从工作队列中移除该 Session（PostgreSQL 的 work_items 与远期停放表 work_dues 由 Remove 在同一事务中清除，登记在 `app.SessionData` 的 work_queue），沙箱队列中移除它的沙箱；
 3. 销毁沙箱（容器与工作区卷），删除去重账本和活跃记录；
 4. 删除工件（先删内容，再删元数据）、由该 Session 写入的 Memory 与在场记录（[多端双工通道](./m3-duplex-channel.md) §6）；
 5. 删除事件日志与 Session 索引；

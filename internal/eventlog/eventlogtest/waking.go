@@ -90,8 +90,13 @@ func RunWaking(t *testing.T, newStores func(t *testing.T, c clock.Clock) WakingS
 			t.Fatal(err)
 		}
 		l := claim(t, s.Queue)
-		if err := s.Queue.Park(ctx, l, c.Now().Add(time.Hour)); err != nil {
+		if err := s.Queue.Park(ctx, l, c.Now().Add(24*time.Hour)); err != nil {
 			t.Fatal(err)
+		}
+		empty(t, s.Queue)
+		// 冲突不能把到期表恢复成可认领项，且恢复本身必须回滚。
+		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 0, class, ev("conflict")); !errors.Is(err, eventlog.ErrConflict) {
+			t.Fatalf("parked conflict = %v", err)
 		}
 		empty(t, s.Queue)
 		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 1, class, ev("b")); err != nil {
@@ -110,7 +115,7 @@ func RunWaking(t *testing.T, newStores func(t *testing.T, c clock.Clock) WakingS
 		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 1, class, ev("b")); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.Queue.Park(ctx, l, c.Now().Add(time.Hour)); err != nil {
+		if err := s.Queue.Park(ctx, l, c.Now().Add(24*time.Hour)); err != nil {
 			t.Fatal(err)
 		}
 		l = claim(t, s.Queue)

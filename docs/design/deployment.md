@@ -45,7 +45,7 @@ worker        worker-bg     sandbox-ctl        janitor
 | worker（交互池） | 只认领 Interactive 工作（ADR-0029） | 交互队列的等待时长 | 实例小而多，保证首字延迟；长任务在两步之间移交给后台池 |
 | worker-bg（后台池） | 认领任意工作，承接长任务 | 后台队列深度、模型并发余量 | Worker 数可以很大（goroutine 便宜），实际受 `-model-concurrency` 与提供商账号上限约束；`-drain-timeout` 内完成当前步后以 handoff 移交 |
 | sandbox-ctl | 沙箱控制器 | 沙箱队列深度 | 单独节点池 + gVisor RuntimeClass（ADR-0010）；只有这个角色持有容器或 K8s API 权限（ADR-0008：受信控制器与不可信沙箱不同 Pod，网关与 Worker 不碰沙箱） |
-| janitor | 关闭、删除、保留策略、清理 | 固定 1～2 个 | 靠租约互斥；小规模部署可并入 worker-bg |
+| janitor | 关闭、删除、保留策略、清理、远期停放迁移 | 固定 1～2 个 | 靠租约互斥；小规模部署可并入 worker-bg |
 | Call 中转 | 音频中转、转写、run_task | 并发通话数（每路网关收发约 160KB/s） | 初期留在 gateway；带宽或 CPU 挤占 SSE 时拆成同镜像的独立角色，客户端由 CallStart 的应答指向它 |
 | migrate | 应用迁移 | 一次性 Job | 发布流水线中先于滚动更新；含 `CREATE INDEX CONCURRENTLY` 的迁移以 `-- yanshi:no-transaction` 单独执行 |
 
@@ -87,6 +87,18 @@ worker        worker-bg     sandbox-ctl        janitor
 - 扩缩信号：模型准入等待（`yanshi_model_admission_wait_seconds`）、连接数（`yanshi_nodes_connected`、`yanshi_live_peer_streams`）、握手拒绝（`yanshi_handshakes_rejected_total`）、认领结果（`yanshi_queue_claims_total`）。队列等待与积压：`yanshi_queue_wait_seconds{queue, priority}`（认领时观察，工作变为可认领到被认领的时长），`yanshi_queue_ready{queue, business_line, priority}` 与 `yanshi_queue_oldest_wait_seconds`（Janitor 所在进程每 15 秒统计）。它们也是 Submit 准入阈值的依据（`-admission-max-wait`，评审 §8.4 第 5 项）。
 - 单元容量上限由 PostgreSQL 分片数与通知投递次数决定（评审 §8.3）；容量矩阵与准入阈值由评审 §8.4 第 4 项的压测给出，在目标环境实测后填入部署清单。
 - 模型并发是全局约束：`-model-concurrency`、`-model-rps` 按账号上限除以持有该提供商的进程数配置（[模型调用](./model-calls.md) §4）；弹性扩容时须随副本数联动，或实现共享令牌服务。
+
+Janitor 的 Sweep 同时把 Horizon 内的远期停放移回工作队列（[M7 §5.4](./m7-kernel-primitives.md#54-语义)）。默认 Horizon 一小时、Sweep 每分钟；每批 1000 项，每批重新取当前时间，直到不足一批或时间预算用尽。一次 Sweep 的全部队列迁移共用 `Janitor.PromoteBudget`，默认 SweepEvery 的一半（30 秒），可通过字段设置；在批次边界检查预算，允许已开始的一批完成。Horizon 须覆盖多轮扫描与重试。Janitor 停摆超过 Horizon，或积压长期超过预算内的迁移能力，会导致定时晚到；恢复后继续迁移，不会提前执行。
+
+### 到期表的首次升级与回滚
+
+当前没有真实用户，这次升级采用一次性替换，作为前述通用滚动发布流程的例外，不加兼容开关。旧版本不认识 work_dues，也不使用新版本的事务锁，不能与已启用到期表的新写入者混跑。
+
+1. 先执行 schema 迁移（包含 work_dues 及其并发索引），旧版本此时尚不写到期表。
+2. 停止流量和提交任务的入口，停止并排空全部队列写入者，包括 gateway、两类 Worker、Janitor，以及任何直接写队列的进程；确认没有旧写入者仍在运行。
+3. 一次性替换为新版本后恢复全部角色与流量，确保 Janitor 同时运行。
+
+回滚前同样停止流量与全部队列写入者，再用新版本的一次性维护进程构造 Session 队列，反复调用 `Queue.Promote`，before 设为覆盖 work_dues 全部 due_at 的远未来（例如全部期限早于 9999 年末时使用该时刻），limit 可用 1000，直到到期表为空；每批检查错误，失败则重试维护，不能启动旧版本。该维护直接调用 Promote，不受 Janitor 的 Sweep 时间预算限制；候选扫描仍只读，每个 Session 独立事务。它会保留类别、ord、ready_at 和精确 parked_until，不能用 Enqueue 代替，否则会提前唤醒。确认 `SELECT count(*) FROM work_dues` 为零后再启动全部旧版本进程；保留新增表和迁移记录，不回退 schema。远期项回到 work_items 后，旧版本仍按 parked_until 执行，但会重新承担百万停放的认领扫描代价。
 
 ## 8. 未做
 

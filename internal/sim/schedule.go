@@ -17,7 +17,7 @@ import (
 	"yanshi/internal/schedule"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
-	"yanshi/internal/workqueue/memqueue"
+	"yanshi/internal/workqueue"
 )
 
 func (w *World) scheduleStep() error {
@@ -138,8 +138,14 @@ func (w *World) checkSchedules(sid string, events []*v1.Event, st *session.State
 	if err != nil {
 		return err
 	}
-	if q, ok := w.queue.(*memqueue.Queue); ok && !deleted && st.Active() == nil && len(st.OpenSchedules()) > 0 && !q.Has(sid) {
-		return fmt.Errorf("invariant: schedule %s left queue", sid)
+	if q, ok := w.queue.(workqueue.Inspector); ok && !deleted && st.Active() == nil && len(st.OpenSchedules()) > 0 {
+		has, err := q.Contains(context.Background(), sid)
+		if err != nil {
+			return err
+		}
+		if !has {
+			return fmt.Errorf("invariant: schedule %s left queue", sid)
+		}
 	}
 	return nil
 }
@@ -163,8 +169,12 @@ func (w *World) checkSchedulesSettled() error {
 					active = fmt.Sprintf("%s status=%s turns=%d", r.ID, r.Status, r.Turns)
 				}
 				queued := "unknown"
-				if q, ok := w.queue.(*memqueue.Queue); ok {
-					queued = fmt.Sprint(q.Has(sid))
+				if q, ok := w.queue.(workqueue.Inspector); ok {
+					has, err := q.Contains(context.Background(), sid)
+					if err != nil {
+						return err
+					}
+					queued = fmt.Sprint(has)
 				}
 				return fmt.Errorf("liveness: schedule %s/%s still due: now=%s next=%s last=%s open=%d closed=%t queued=%s seq=%d active=%s; runs: %s",
 					sid, item.Created.GetScheduleId(), w.clock.Now().Format(time.RFC3339), due.Format(time.RFC3339), item.Last.Format(time.RFC3339), len(st.OpenSchedules()), st.Closed != nil, queued, st.Seq, active, w.stuck())

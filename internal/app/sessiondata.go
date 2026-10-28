@@ -15,6 +15,7 @@ import (
 func SessionData(s Stores, workspaces sandbox.Workspaces, artifacts *artifact.Service) []lifecycle.Holder {
 	return []lifecycle.Holder{
 		{Name: "inbox", DeleteSession: s.Inbox.RemoveSession},
+		// 包括 PostgreSQL 的 work_dues；Remove 在同一事务中清除两张表。
 		{Name: "work_queue", DeleteSession: s.Queue.Remove},
 		{Name: "sandbox", DeleteSession: workspaces.DeleteSession},
 		{Name: "sandbox_ledger", DeleteSession: func(_ context.Context, sid string) error { return s.Ledger.Forget(sid) }},

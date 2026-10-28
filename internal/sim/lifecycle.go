@@ -13,6 +13,7 @@ import (
 	"yanshi/internal/sandbox"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
+	"yanshi/internal/workqueue"
 	"yanshi/sdk/nodesdk"
 )
 
@@ -194,6 +195,15 @@ func (w *World) checkDeleted(final bool) error {
 		}
 		if t.CompletedAt.IsZero() {
 			continue
+		}
+		if q, ok := w.queue.(workqueue.Inspector); ok {
+			has, err := q.Contains(ctx, sid)
+			if err != nil {
+				return err
+			}
+			if has {
+				return fmt.Errorf("invariant: deleted session %s still in work queue or dues", sid)
+			}
 		}
 		if events, _ := eventlog.ReadAll(ctx, w.log, sid, 0); len(events) > 0 {
 			return fmt.Errorf("invariant: deleted session %s has %d events", sid, len(events))

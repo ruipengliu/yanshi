@@ -21,6 +21,14 @@ var (
 // 分片的实现按键路由时，以同一分片的键运行本套件（契约是分片内有序，延展性评审 §8.2）。
 func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queue) {
 	ctx := context.Background()
+	advance := func(t *testing.T, c *clock.Fake, q workqueue.Queue, d time.Duration) {
+		c.Advance(d)
+		if def, ok := q.(workqueue.Deferrer); ok {
+			if _, err := def.Promote(ctx, c.Now().Add(def.Horizon()), 1000); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	setup := func(t *testing.T) (*clock.Fake, workqueue.Queue) {
 		c := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 		return c, newQueue(t, c)
@@ -36,7 +44,7 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 		if _, err := q.Claim(ctx, "w2", time.Second, anyWork); !errors.Is(err, workqueue.ErrEmpty) {
 			t.Fatalf("second claim err = %v", err)
 		}
-		c.Advance(time.Second)
+		advance(t, c, q, time.Second)
 		l2, err := q.Claim(ctx, "w2", time.Second, anyWork)
 		if err != nil || l2.Holder != "w2" {
 			t.Fatalf("claim after expiry = %+v, %v", l2, err)
@@ -56,11 +64,11 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 		c, q := setup(t)
 		_ = q.Enqueue(ctx, "s", interactive)
 		l, _ := q.Claim(ctx, "w1", 2*time.Second, anyWork)
-		c.Advance(time.Second)
+		advance(t, c, q, time.Second)
 		if err := q.Renew(ctx, l, 2*time.Second); err != nil {
 			t.Fatal(err)
 		}
-		c.Advance(time.Second + 500*time.Millisecond)
+		advance(t, c, q, time.Second+500*time.Millisecond)
 		if _, err := q.Claim(ctx, "w2", time.Second, anyWork); !errors.Is(err, workqueue.ErrEmpty) {
 			t.Fatalf("renewed lease was claimable: %v", err)
 		}
@@ -150,7 +158,7 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 		if _, err := q.Claim(ctx, "w", time.Second, anyWork); !errors.Is(err, workqueue.ErrEmpty) {
 			t.Fatalf("parked session claimable: %v", err)
 		}
-		c.Advance(time.Minute)
+		advance(t, c, q, time.Minute)
 		l, err := q.Claim(ctx, "w", time.Second, anyWork)
 		if err != nil {
 			t.Fatalf("not claimable after deadline: %v", err)
@@ -285,9 +293,9 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 	t.Run("ClaimReportsWait", func(t *testing.T) {
 		c, q := setup(t)
 		_ = q.Enqueue(ctx, "s", interactive)
-		c.Advance(3 * time.Second)
+		advance(t, c, q, 3*time.Second)
 		_ = q.Enqueue(ctx, "s", interactive) // 已在等的项再次入队不重新计时
-		c.Advance(time.Second)
+		advance(t, c, q, time.Second)
 		l, err := q.Claim(ctx, "w", time.Minute, anyWork)
 		if err != nil || l.Waited != 4*time.Second {
 			t.Fatalf("after enqueue: %+v, %v", l, err)
@@ -295,27 +303,27 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 		if err := q.Park(ctx, l, c.Now().Add(10*time.Second)); err != nil {
 			t.Fatal(err)
 		}
-		c.Advance(12 * time.Second)
+		advance(t, c, q, 12*time.Second)
 		if l, err = q.Claim(ctx, "w", time.Minute, anyWork); err != nil || l.Waited != 2*time.Second {
 			t.Fatalf("after park deadline: %+v, %v", l, err)
 		}
 		if err := q.Park(ctx, l, c.Now().Add(time.Hour)); err != nil {
 			t.Fatal(err)
 		}
-		c.Advance(time.Minute)
+		advance(t, c, q, time.Minute)
 		_ = q.Enqueue(ctx, "s", interactive) // 唤醒：从现在算起
-		c.Advance(time.Second)
+		advance(t, c, q, time.Second)
 		if l, err = q.Claim(ctx, "w", time.Second, anyWork); err != nil || l.Waited != time.Second {
 			t.Fatalf("after wake: %+v, %v", l, err)
 		}
-		c.Advance(5 * time.Second) // 租约 1 秒前过期
+		advance(t, c, q, 5*time.Second) // 租约 1 秒前过期
 		if l, err = q.Claim(ctx, "w2", time.Minute, anyWork); err != nil || l.Waited != 4*time.Second {
 			t.Fatalf("after lease expiry: %+v, %v", l, err)
 		}
 		if err := q.Release(ctx, l, false); err != nil {
 			t.Fatal(err)
 		}
-		c.Advance(2 * time.Second)
+		advance(t, c, q, 2*time.Second)
 		if l, err = q.Claim(ctx, "w", time.Minute, anyWork); err != nil || l.Waited != 2*time.Second {
 			t.Fatalf("after release: %+v, %v", l, err)
 		}
@@ -328,13 +336,13 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 			t.Skip("queue does not implement workqueue.Stats")
 		}
 		_ = q.Enqueue(ctx, "a", interactive)
-		c.Advance(5 * time.Second)
+		advance(t, c, q, 5*time.Second)
 		_ = q.Enqueue(ctx, "b", interactive)
 		_ = q.Enqueue(ctx, "c", background)
 		_ = q.Enqueue(ctx, "d", interactive)
 		l, _ := q.Claim(ctx, "w", time.Minute, anyWork) // a：已租出，不算
 		_ = q.Enqueue(ctx, "e", background)
-		c.Advance(time.Second)
+		advance(t, c, q, time.Second)
 		if l.SessionID != "a" {
 			t.Fatalf("claimed %s", l.SessionID)
 		}
@@ -355,6 +363,144 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 		}
 		if d := got[background]; d.Ready != 2 || d.OldestWait != time.Second {
 			t.Fatalf("background depth %+v (all %+v)", d, depths)
+		}
+	})
+	t.Run("FarParkLifecycleAndOrder", func(t *testing.T) {
+		c, q := setup(t)
+		d, ok := q.(workqueue.Deferrer)
+		if !ok {
+			t.Skip("no deferrer")
+		}
+		due := c.Now().Add(24 * time.Hour)
+		must := func(err error) {
+			t.Helper()
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		claim := func() *workqueue.Lease {
+			t.Helper()
+			l, err := q.Claim(ctx, "w", time.Minute, anyWork)
+			must(err)
+			return l
+		}
+		empty := func() {
+			t.Helper()
+			if _, err := q.Claim(ctx, "w", time.Minute, anyWork); !errors.Is(err, workqueue.ErrEmpty) {
+				t.Fatalf("claim = %v", err)
+			}
+		}
+		for _, id := range []string{"removed", "wake", "again", "a", "b", "low"} {
+			must(q.Enqueue(ctx, id, interactive))
+			l := claim()
+			if id == "low" {
+				l.Class = background
+			}
+			must(q.Park(ctx, l, due))
+		}
+		empty()
+		must(q.Remove(ctx, "removed"))
+		must(q.Enqueue(ctx, "wake", interactive))
+		l := claim()
+		if l.SessionID != "wake" {
+			t.Fatalf("wake = %s", l.SessionID)
+		}
+		must(q.Release(ctx, l, true))
+		must(q.Enqueue(ctx, "again", interactive))
+		l = claim()
+		must(q.Park(ctx, l, due.Add(time.Hour)))
+		_, err := d.Promote(ctx, due, 100)
+		must(err)
+		empty() // 搬回工作表仍须等到精确时刻
+		c.Advance(24 * time.Hour)
+		for _, id := range []string{"a", "b", "low"} {
+			l = claim()
+			if l.SessionID != id {
+				t.Fatalf("order = %s, want %s", l.SessionID, id)
+			}
+			want := interactive
+			if id == "low" {
+				want = background
+			}
+			if l.Class != want {
+				t.Fatalf("class = %+v", l.Class)
+			}
+			must(q.Release(ctx, l, true))
+		}
+		empty()
+		_, err = d.Promote(ctx, due.Add(time.Hour), 100)
+		must(err)
+		must(q.Remove(ctx, "again")) // 搬移之后删除也不复活
+		c.Advance(time.Hour)
+		_, err = d.Promote(ctx, c.Now(), 100)
+		must(err)
+		empty()
+	})
+
+	t.Run("FarParkConcurrentMaintenance", func(t *testing.T) {
+		for _, action := range []string{"wake", "remove", "repark"} {
+			t.Run(action, func(t *testing.T) {
+				c, q := setup(t)
+				d, ok := q.(workqueue.Deferrer)
+				if !ok {
+					t.Skip("no deferrer")
+				}
+				must := func(err error) {
+					t.Helper()
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				must(q.Enqueue(ctx, "s", interactive))
+				l, err := q.Claim(ctx, "w", time.Minute, anyWork)
+				must(err)
+				until := c.Now().Add(24 * time.Hour)
+				must(q.Park(ctx, l, until))
+				start := make(chan struct{})
+				results := make(chan error, 2)
+				go func() {
+					<-start
+					_, err := d.Promote(ctx, until, 100)
+					results <- err
+				}()
+				go func() {
+					<-start
+					if action == "remove" {
+						results <- q.Remove(ctx, "s")
+						return
+					}
+					err := q.Enqueue(ctx, "s", interactive)
+					if err == nil && action == "repark" {
+						var l *workqueue.Lease
+						l, err = q.Claim(ctx, "w", time.Minute, anyWork)
+						if err == nil {
+							err = q.Park(ctx, l, until.Add(time.Hour))
+						}
+					}
+					results <- err
+				}()
+				close(start)
+				must(<-results)
+				must(<-results)
+				if action == "wake" {
+					l, err := q.Claim(ctx, "w", time.Minute, anyWork)
+					must(err)
+					must(q.Release(ctx, l, true))
+				}
+				c.Advance(24 * time.Hour)
+				_, err = d.Promote(ctx, c.Now(), 100)
+				must(err)
+				if _, err := q.Claim(ctx, "w", time.Minute, anyWork); !errors.Is(err, workqueue.ErrEmpty) {
+					t.Fatalf("resurrected or early: %v", err)
+				}
+				if action == "repark" {
+					c.Advance(time.Hour)
+					_, err = d.Promote(ctx, c.Now(), 100)
+					must(err)
+					_, err = q.Claim(ctx, "w", time.Minute, anyWork)
+					must(err)
+				}
+			})
 		}
 	})
 }

@@ -36,6 +36,8 @@ var Tables = map[string]TableKey{
 	"session_snapshots": {Class: BySession, Column: "session_id"},
 	"work_items": {Class: BySession, Column: "session_id",
 		Offline: []string{"Claim 在队列中选取任意可认领的项：分片后每个分片一个队列，认领方轮流认领"}},
+	"work_dues": {Class: BySession, Column: "session_id",
+		Offline: []string{"Promote：只读到期候选，再逐 Session 事务移回工作队列"}},
 	"janitor_items": {Class: BySession, Column: "session_id",
 		Offline: []string{"Claim（同 work_items）"}},
 	"sandbox_items": {Class: BySession, Column: "session_id", Derived: "沙箱 Node ID sbx_<Session ID>",
