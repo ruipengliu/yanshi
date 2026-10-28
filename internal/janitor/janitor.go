@@ -50,6 +50,8 @@ type Janitor struct {
 	Deletions lifecycle.Deletions
 	// EndUserGrace 在全部 Session 与 EndUser 数据清除完成之后起算。
 	EndUserGrace time.Duration
+	// EndUserData 在到期屏障移除前再清理，失败保留屏障，下一轮重试。
+	EndUserData []lifecycle.EndUserHolder
 	// Retention 是各业务线的保留策略，键为业务线名。
 	Retention map[string]lifecycle.Retention
 	// Usage 非 nil 时清理早于 UsageRetention 的用量（docs/design/m4-quota-usage.md §4）。

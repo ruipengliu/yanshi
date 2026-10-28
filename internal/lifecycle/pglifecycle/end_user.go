@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"yanshi/internal/lifecycle"
+	"yanshi/internal/pg"
 )
 
 const endUserColumns = `business_line, end_user, request_id, requested_at, sealed, session_ids, revision, completed_at, expires_at`
@@ -88,8 +89,8 @@ func (d Deletions) CompleteEndUser(ctx context.Context, b *lifecycle.EndUserTomb
 	return err
 }
 
-func (d Deletions) PruneEndUsers(ctx context.Context, now time.Time, limit int) error {
-	// 离线扫描只列键；删除逐键执行，并复查到期时间，避免扫到后又有迟到写入撤回。
+func (d Deletions) PruneEndUsers(ctx context.Context, now time.Time, limit int, cleanup func(context.Context, string, string) error) error {
+	// 离线扫描只列键；逐键事务锁住并复核候选后清理，避免旧候选误删复用 ID 的档位。
 	rows, err := d.Pool.Query(ctx, `SELECT business_line, end_user, request_id FROM end_user_tombstones
 		WHERE completed_at IS NOT NULL AND expires_at <= $1 ORDER BY expires_at, business_line, end_user LIMIT $2`, now, limit)
 	if err != nil {
@@ -109,12 +110,31 @@ func (d Deletions) PruneEndUsers(ctx context.Context, now time.Time, limit int) 
 	if err != nil {
 		return err
 	}
+	var errs error
 	for _, b := range expired {
-		if _, err := d.Pool.Exec(ctx, `DELETE FROM end_user_tombstones
-			WHERE business_line = $1 AND end_user = $2 AND request_id = $3
-			AND completed_at IS NOT NULL AND expires_at <= $4`, b.BusinessLine, b.EndUser, b.RequestID, now); err != nil {
+		err := pgx.BeginFunc(ctx, d.Pool, func(tx pgx.Tx) error {
+			var requestID string
+			err := tx.QueryRow(ctx, `SELECT request_id FROM end_user_tombstones
+				WHERE business_line = $1 AND end_user = $2 AND request_id = $3
+				AND completed_at IS NOT NULL AND expires_at <= $4 FOR UPDATE`,
+				b.BusinessLine, b.EndUser, b.RequestID, now).Scan(&requestID)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if cleanup != nil {
+				if err := cleanup(pg.WithTx(ctx, d.Pool, tx), b.BusinessLine, b.EndUser); err != nil {
+					return err
+				}
+			}
+			_, err = tx.Exec(ctx, `DELETE FROM end_user_tombstones
+				WHERE business_line = $1 AND end_user = $2 AND request_id = $3`,
+				b.BusinessLine, b.EndUser, b.RequestID)
 			return err
-		}
+		})
+		errs = errors.Join(errs, err)
 	}
-	return nil
+	return errs
 }

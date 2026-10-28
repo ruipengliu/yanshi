@@ -136,11 +136,12 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 	// demo 配置了配额；demo/u1 用过一个可辨认的模型，供用量接口检查可见性。
 	uses := usage.NewMem()
 	_ = uses.Record(ctx, &usage.Entry{ID: "use1", BusinessLine: "demo", EndUser: "u1", Kind: usage.Model, Model: "p/u1-model", Cost: 5, At: time.Now()})
-	limits := usage.Limits{Monthly: 10, EndUserDaily: 1}
+	limits := usage.Limits{Monthly: 10, EndUserDaily: 1, Tiers: map[string]usage.TierLimits{"pro": {EndUserDaily: 3}}}
 	if err := limits.Prepare(); err != nil {
 		t.Fatal(err)
 	}
-	svc.Quotas = &usage.Quotas{Store: uses, Limits: map[string]usage.Limits{"demo": limits}}
+	svc.Tiers = usage.NewTierCache(usage.NewMemTiers(), clk)
+	svc.Quotas = &usage.Quotas{Store: uses, Tiers: svc.Tiers, Limits: map[string]usage.Limits{"demo": limits}}
 	injector := &faults.Injector{}
 	rule, _ := injector.Add(faults.Rule{Kind: faults.ModelDelay, SessionID: e.sid})
 	e.fault = rule.ID
@@ -239,6 +240,8 @@ func (e *authzEnv) cases() map[string]routeCase {
 		"POST /v1/sessions/{id}/close":                     {"POST", s + "/close", nil, http.StatusNoContent},
 		"DELETE /v1/sessions/{id}":                         {"DELETE", s, nil, http.StatusAccepted},
 		"DELETE /v1/end_users/{id}":                        {"DELETE", "/v1/end_users/u1", nil, http.StatusAccepted},
+		"PUT /v1/end_users/{id}/tier":                      {"PUT", "/v1/end_users/u1/tier", map[string]string{"tier": "pro"}, http.StatusOK},
+		"DELETE /v1/end_users/{id}/tier":                   {"DELETE", "/v1/end_users/u1/tier", nil, http.StatusOK},
 		"GET /v1/sessions/{id}/deletion":                   {"GET", "/v1/sessions/deleted-session/deletion", nil, http.StatusOK},
 		"GET /v1/deletions/{id}":                           {"GET", "/v1/deletions/" + e.deletion, nil, http.StatusOK},
 		"GET /v1/memories":                                 {"GET", "/v1/memories?end_user=u1", nil, http.StatusOK},
@@ -306,6 +309,11 @@ func TestAuthorizationMatrix(t *testing.T) {
 					}
 					if sees := strings.Contains(body, e.sid); sees != allowed {
 						t.Fatalf("sees owner's session = %v, want %v (%s)", sees, allowed, body)
+					}
+				case route == "PUT /v1/end_users/{id}/tier" || route == "DELETE /v1/end_users/{id}/tier":
+					want := map[string]int{"demo/u1": 403, "demo/u2": 403, "other/u1": 403, "demo/": 200, "other/": 400}[principal]
+					if code != want {
+						t.Fatalf("got %d (%s), want %d", code, body, want)
 					}
 				case route == "DELETE /v1/end_users/{id}":
 					// 只接受服务令牌；其他业务线的服务令牌删除的是它自己业务线下的 u1，与 demo 无关。

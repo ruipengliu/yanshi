@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sort"
 	"strings"
@@ -92,7 +93,7 @@ func (d *MemDeletions) CompleteEndUser(_ context.Context, b *EndUserTombstone, a
 	return nil
 }
 
-func (d *MemDeletions) PruneEndUsers(_ context.Context, now time.Time, limit int) error {
+func (d *MemDeletions) PruneEndUsers(ctx context.Context, now time.Time, limit int, cleanup func(context.Context, string, string) error) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	var expired []*EndUserTombstone
@@ -110,11 +111,25 @@ func (d *MemDeletions) PruneEndUsers(_ context.Context, now time.Time, limit int
 		}
 		return strings.Compare(a.EndUser, b.EndUser)
 	})
+	var errs error
 	for i, b := range expired {
 		if i >= limit {
 			break
 		}
+		if err := ctx.Err(); err != nil {
+			return errors.Join(errs, err)
+		}
+		// 与屏障移除串行，其他清理者不能拿着旧候选删除复用 ID 的数据。
+		if cleanup != nil {
+			if err := cleanup(ctx, b.BusinessLine, b.EndUser); err != nil {
+				errs = errors.Join(errs, err)
+				continue
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			return errors.Join(errs, err)
+		}
 		delete(d.endUsers, [2]string{b.BusinessLine, b.EndUser})
 	}
-	return nil
+	return errs
 }

@@ -1,6 +1,6 @@
 # M7 内核补充：Capture 正文存储、擦除、交付确认、定时、出站流、单次调用
 
-> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）；交付确认（§11）已删除，EndUser 删除屏障（§12）已实现，定时已全部实现（含 xinli-assistant 版本 2 使用、评测拨钟、pgqueue 内部到期表，压测结果见 §13），单次调用、档位、重答与 `speaker_ref` 按 P3 的讨论改写（[整体架构](./persona-architecture.md) §13 的 Q77–Q90），实现中；`speaker_ref` 已实现，其余未实现 · **§2–§4、§11 由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 取代**（旁听原文存放在业务线；§11 已删除），§5 按 P2 的讨论改写（没有窗口），§6 的擦除与修订信封不做 · ADR-0044（已取代）、ADR-0045、ADR-0046、ADR-0047、ADR-0049（已取代）、ADR-0050 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
+> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）；交付确认（§11）已删除，EndUser 删除屏障（§12）已实现，定时已全部实现（含 xinli-assistant 版本 2 使用、评测拨钟、pgqueue 内部到期表，压测结果见 §13），单次调用、档位、重答与 `speaker_ref` 按 P3 的讨论改写（[整体架构](./persona-architecture.md) §13 的 Q77–Q90），实现中；`speaker_ref`、档位已实现，其余未实现 · **§2–§4、§11 由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 取代**（旁听原文存放在业务线；§11 已删除），§5 按 P2 的讨论改写（没有窗口），§6 的擦除与修订信封不做 · ADR-0044（已取代）、ADR-0045、ADR-0046、ADR-0047、ADR-0049（已取代）、ADR-0050 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
 
 xinli 落地需要内核补上的原语。每一项都按[整体架构](./persona-architecture.md) §9 的判据给出理由：第二条业务线也会需要，并且业务侧做不到或做了不安全。业务语义（交谈、承诺、项目、人）一律不进内核。
 
@@ -18,7 +18,7 @@ xinli 落地需要内核补上的原语。每一项都按[整体架构](./person
 | 6 | 出站流（Outbox） | 每个 Session 一条 SSE 撑不住；擦除要可靠地通知 Persona | P1 |
 | 5 | 定时（Schedule） | 业务侧提交的输入在投影中是用户原话 | P2 |
 | 7 | 单次调用（Oneshot） | 业务侧直连模型会绕过计量、内容安全与评测 | P3 |
-| 8 | 档位（Tier） | 触发与定时的 Run 没有用户令牌，配额只能在内核执行 | P3 |
+| 8 | 档位（Tier） | 触发与定时的 Run 没有用户令牌，配额只能在内核执行 | P3，已实现 |
 | 9 | 重答（Redo） | 只有平台能让 Transcript 略去被重做的 Run | P3 |
 | 10 | 说话人引用（`speaker_ref`） | 契约字段 | P3 |
 
@@ -248,7 +248,7 @@ work_class: interactive        # interactive | background
 
 ## 8. 档位（Tier）
 
-> 按 P3 的讨论改写（Q83）。
+> 档位已实现（Q83）；新增测试待远端验证，契约与实现见[配额与用量](./m4-quota-usage.md) §3–§6。
 
 - 业务线配置：
 
@@ -262,10 +262,10 @@ quota:
 ```
 
 - 档位只替换 EndUser 日限额，不改变业务线月限额、周期与已用金额。升级不清零、降级不追溯。
-- `PUT /v1/end_users/{id}/tier` `{tier}` 与 `DELETE`（恢复默认），只允许服务令牌；未知档位 400。`/v1/quota` 返回有效档位与限额。
-- 新表 `end_user_tiers(business_line, end_user, tier, updated_at)`，分片键为 EndUser（`pg.Tables` 登记），注销账号时删除；写入"先查、后复查"删除屏障（§12）。
+- `PUT /v1/end_users/{id}/tier` `{business_line?, tier}` 与 `DELETE`（恢复默认），只允许服务令牌，用户令牌 403；未知档位或业务线未开启配额时 400。业务线取自令牌；开发模式 Put 可用 JSON 或查询参数，Delete 用查询参数。成功返回有效 `tier` 与 `limit_micros`；默认档位为空字符串。`/v1/quota` 的 EndUser 层有有效分配时返回 `tier`。
+- 新表 `end_user_tiers(business_line, end_user, tier, updated_at)`，分片键为 EndUser（`pg.Tables` 登记），注销账号时删除；`app.Stores` 构造，`app.NewCore` 装配共享缓存，`Service.DeleteEndUser` 固定清理路径在封口前删除档位。写入"先查、后复查"删除屏障（§12），回包丢失或请求取消也复查，发现屏障撤回写入，沿用屏障错误码 404。
 - `Quotas.Status` 统一按档位解析日限额，Submit、模型调用、压缩、Call、语音与单次调用都经它。档位读缓存 5 秒，本进程写后立即失效，按世代防止失效前发起的读取回填旧值；跨进程最多 5 秒生效（软上限）。已挂起的 Run 照旧按现有周期复查配额。
-- 已存的档位在配置中被删除时回落到默认 `end_user_daily`（为 0 即不限）并计数：删档位配置之前先迁移已分配的用户。
+- 已存的档位在配置中被删除时回落到默认 `end_user_daily`（为 0 即不限）并以无标签指标 `yanshi_quota_unknown_tier_total` 计数：删档位配置之前先迁移已分配的用户。
 - 不用令牌声明：触发、定时、委托开启的 Run 没有用户令牌，准入时拿不到档位。
 
 ## 9. 重答（Redo）
@@ -297,12 +297,14 @@ ADR-0050 的退役条件已满足。内核不再登记回执或在 Run 完成时
 
 ## 12. EndUser 删除屏障
 
-注销账号（`DELETE /v1/end_users/{id}`）期间，按 EndUser 写入的地方可能让数据复活：新建 Session、单次调用的用量（计量现在只在有 Session 时复查删除，`usage.Meter`）、档位。
+注销账号（`DELETE /v1/end_users/{id}`）期间，按 EndUser 写入的地方可能让数据复活：新建 Session、不带 Session 的用量（`usage.Meter` 已复查 EndUser 屏障）、档位（`end_user_tiers`）。
 
 - 注销先写 EndUser 删除记录（按业务线隔离，分片键为 EndUser），再清除；所有按 EndUser 的写入入口"先写、后查"这条记录（与 `lifecycle.Recheck` 同一写法）：新建 Session、计量、档位、单次调用。
 - 屏障在删除执行期保存，全部清除完成之后再保留宽限期（默认 24 小时，经 `app.Options.EndUserGrace` 配置），由 Janitor 删除到期记录；之后同一 EndUser ID 可以重新使用。失败或尚未完成的注销不开始倒计时，重复注销复用原屏障。业务线须先使用户令牌失效，宽限期用于拦截注销前已在途、注销后才落盘的请求。Session 删除记录仍不保存 EndUser，屏障只在执行期与宽限期内保存它。
-- 在 `internal/sim` 的删除不变量中检查：注销与这些写入任意交错，结束后不留实名数据。
-- 随 P1 落地：它也覆盖新建 Session 这个现有入口，不等到 P3 的档位与单次调用。
+- 宽限期结束时，Janitor 在删除每条到期屏障之前，再清一次该 EndUser 的档位；通过 `app.NewCore` 登记的 `Core.EndUserData` / `lifecycle.EndUserHolder` 扩展到其他按 EndUser 保存的数据。`PruneEndUsers` 先逐条复核到期条件，再执行幂等清理回调；清除失败保留该条屏障并在下一轮重试，其他候选继续处理。因此宽限期内 Put 落盘后、复查前进程崩溃留下的档位，在屏障消失前仍会被清除。
+- PG 的回调与屏障删除在同一 EndUser 事务中完成：锁住并复核候选，档位删除经 `pg.Exec` 沿用事务，每个 EndUser 一条档位 DELETE，失败回滚。内存实现同样串行化清理与屏障移除，防止并发清理者拿着旧候选误删复用 ID 的数据。事务结束后再次失效共享缓存，阻止提交前的读回填旧档位。
+- 在 `internal/sim` 的删除不变量中检查：注销与这些写入任意交错，包含 Put 后跳过复查的进程崩溃。收敛时显式推进到宽限期结束，确认屏障已经移除且没有残留档位。
+- 屏障已随 P1 落地；档位在 P3 接入，注销清理不依赖 HTTP 或 sim 调用方补传 remover，档位清理失败不能封口。删除后本进程缓存失效，在途读取按世代重读，宽限期后同一 EndUser ID 从默认档位开始。
 
 ## 13. 容量
 
