@@ -13,7 +13,7 @@ func textBlocks(s string) []*v1.ContentBlock {
 // 来源由平台从事件推导（ADR-0039）：每种事件与内容块各得到哪种来源，闸门与判断据此判断。
 func TestPieces(t *testing.T) {
 	seg := func(sp v1.Speaker, key, text string, redacted bool) *v1.ContentBlock {
-		return &v1.ContentBlock{Kind: &v1.ContentBlock_Capture{Capture: &v1.CaptureSegment{Speaker: sp, SpeakerKey: key, Text: text, Redacted: redacted}}}
+		return &v1.ContentBlock{Kind: &v1.ContentBlock_Capture{Capture: &v1.CaptureSegment{Ref: "57.0", Speaker: sp, SpeakerKey: key, Text: text, Redacted: redacted}}}
 	}
 	ui := &v1.ContentBlock{Kind: &v1.ContentBlock_UiContext{UiContext: &v1.UIContext{Screen: "网页", Content: "第三方"}}}
 	deviceOnly := &v1.ContentBlock{Kind: &v1.ContentBlock_UiContext{UiContext: &v1.UIContext{Device: "phone"}}}
@@ -36,12 +36,12 @@ func TestPieces(t *testing.T) {
 		{Payload: &v1.Event_Steered{Steered: &v1.Steered{RunId: "r1", Input: textBlocks("转述的任务"), FromCall: "vc1"}}},
 		{Payload: &v1.Event_CallTranscript{CallTranscript: &v1.CallTranscript{Role: "user", Text: "通话里说的"}}},
 		{Payload: &v1.Event_CallTranscript{CallTranscript: &v1.CallTranscript{Role: "assistant", Text: "助手说的"}}},
-		calls(1, "pc__read", "ask_user", "ask_user", "captures", "memory_search", "pc__send"),
+		calls(1, "pc__read", "ask_user", "ask_user", "mcp_xinli__captures", "memory_search", "pc__send"),
 		res("a", textBlocks("文件内容"), nil),
 		res("b", textBlocks("打字回答"), nil),
 		res("c", textBlocks("转述的回答"), func(r *v1.ToolResult) { r.FromCall = "vc1" }),
 		res("d", []*v1.ContentBlock{textBlocks("【时段】")[0], seg(v1.Speaker_SPEAKER_WEARER, "", "明天发报价", false),
-			seg(v1.Speaker_SPEAKER_OTHER, "other-1", "好的", false), seg(v1.Speaker_SPEAKER_OTHER, "other-2", "", true)}, nil),
+			seg(v1.Speaker_SPEAKER_OTHER, "other-1", "好的", false), seg(v1.Speaker_SPEAKER_OTHER, "other-2", "", true)}, func(r *v1.ToolResult) { r.Attested = true }),
 		res("e", textBlocks("平台的检索结果"), nil),
 		res("f", textBlocks("占位"), func(r *v1.ToolResult) { r.Backgrounded = &v1.Backgrounded{NodeId: "n1"} }),
 		{Payload: &v1.Event_Steered{Steered: &v1.Steered{RunId: "r1", Input: []*v1.ContentBlock{{Kind: &v1.ContentBlock_BackgroundResult{

@@ -45,6 +45,7 @@ func TestMain(m *testing.M) {
 			fmt.Fprintln(os.Stderr, "build xinli fixture:", err)
 			return 1
 		}
+
 		return m.Run()
 	}()
 	os.Exit(code)

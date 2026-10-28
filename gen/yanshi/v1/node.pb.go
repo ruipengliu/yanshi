@@ -13,12 +13,13 @@
 package yanshiv1
 
 import (
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -1363,7 +1364,7 @@ func (x *LiveDelta) GetReasoning() string {
 }
 
 // ClientRequest 是会话客户端的操作；每个请求恰有一个 ClientResponse。
-// 连接断开时结果未知：带 input_id 的提交与旁听转写可以原样重试（按 ID 去重）；中断、关闭重复执行是无操作，审批、回答、取消后台调用
+// 连接断开时结果未知：带 input_id 的提交可以原样重试（按 ID 去重）；中断、关闭重复执行是无操作，审批、回答、取消后台调用
 // 重复执行返回 conflict，都不会产生重复效果；重试创建 Session 会再创建一个。
 type ClientRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -1378,7 +1379,6 @@ type ClientRequest struct {
 	//	*ClientRequest_Close
 	//	*ClientRequest_Answer
 	//	*ClientRequest_CancelBackground
-	//	*ClientRequest_SubmitCaptures
 	Op            isClientRequest_Op `protobuf_oneof:"op"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1491,15 +1491,6 @@ func (x *ClientRequest) GetCancelBackground() *CancelBackground {
 	return nil
 }
 
-func (x *ClientRequest) GetSubmitCaptures() *SubmitCaptures {
-	if x != nil {
-		if x, ok := x.Op.(*ClientRequest_SubmitCaptures); ok {
-			return x.SubmitCaptures
-		}
-	}
-	return nil
-}
-
 type isClientRequest_Op interface {
 	isClientRequest_Op()
 }
@@ -1532,10 +1523,6 @@ type ClientRequest_CancelBackground struct {
 	CancelBackground *CancelBackground `protobuf:"bytes,8,opt,name=cancel_background,json=cancelBackground,proto3,oneof"`
 }
 
-type ClientRequest_SubmitCaptures struct {
-	SubmitCaptures *SubmitCaptures `protobuf:"bytes,9,opt,name=submit_captures,json=submitCaptures,proto3,oneof"`
-}
-
 func (*ClientRequest_CreateSession) isClientRequest_Op() {}
 
 func (*ClientRequest_Submit) isClientRequest_Op() {}
@@ -1549,8 +1536,6 @@ func (*ClientRequest_Close) isClientRequest_Op() {}
 func (*ClientRequest_Answer) isClientRequest_Op() {}
 
 func (*ClientRequest_CancelBackground) isClientRequest_Op() {}
-
-func (*ClientRequest_SubmitCaptures) isClientRequest_Op() {}
 
 type CreateSession struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -1966,80 +1951,6 @@ func (x *CancelBackground) GetCallId() string {
 	return ""
 }
 
-// SubmitCaptures 提交一批旁听转写（docs/design/captures.md §3，ADR-0036）：不开启 Run。只有 AgentDef 声明了这个流的
-// Session 接收（否则 invalid）。片段逐一经过内容安全检查，违规的只留占位；内容安全不可用时整批拒绝（unavailable），
-// 以同一 capture_id 重试是安全的：已写入的返回 duplicate = true。
-type SubmitCaptures struct {
-	state     protoimpl.MessageState `protogen:"open.v1"`
-	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	// 客户端为这一批生成的 ID（最长 128 字符）。
-	CaptureId string `protobuf:"bytes,2,opt,name=capture_id,json=captureId,proto3" json:"capture_id,omitempty"`
-	// 不能设置 redacted：拦截由平台判断。
-	Segments []*CaptureSegment `protobuf:"bytes,3,rep,name=segments,proto3" json:"segments,omitempty"`
-	// 流名，必填（ADR-0039）：旁听转写是 "transcript"。Session 的 AgentDef 须声明接收这个流（否则 invalid）。
-	Stream        string `protobuf:"bytes,4,opt,name=stream,proto3" json:"stream,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *SubmitCaptures) Reset() {
-	*x = SubmitCaptures{}
-	mi := &file_yanshi_v1_node_proto_msgTypes[22]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *SubmitCaptures) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*SubmitCaptures) ProtoMessage() {}
-
-func (x *SubmitCaptures) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_node_proto_msgTypes[22]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use SubmitCaptures.ProtoReflect.Descriptor instead.
-func (*SubmitCaptures) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{22}
-}
-
-func (x *SubmitCaptures) GetSessionId() string {
-	if x != nil {
-		return x.SessionId
-	}
-	return ""
-}
-
-func (x *SubmitCaptures) GetCaptureId() string {
-	if x != nil {
-		return x.CaptureId
-	}
-	return ""
-}
-
-func (x *SubmitCaptures) GetSegments() []*CaptureSegment {
-	if x != nil {
-		return x.Segments
-	}
-	return nil
-}
-
-func (x *SubmitCaptures) GetStream() string {
-	if x != nil {
-		return x.Stream
-	}
-	return ""
-}
-
 type ClientResponse struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	RequestId string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
@@ -2052,17 +1963,15 @@ type ClientResponse struct {
 	Steered bool   `protobuf:"varint,5,opt,name=steered,proto3" json:"steered,omitempty"`
 	// 非空表示输入作为对该 ask_user 提问的回答（Run 正在等用户回答，ADR-0025）。
 	Answered string `protobuf:"bytes,6,opt,name=answered,proto3" json:"answered,omitempty"`
-	// 为 true 表示同一 input_id 的输入（或同一 capture_id 的旁听转写）此前已生效，本次没有写入，结果为首次的结果。
-	Duplicate bool `protobuf:"varint,7,opt,name=duplicate,proto3" json:"duplicate,omitempty"`
-	// SubmitCaptures 的结果：本批中未通过内容安全、只留占位的段数。
-	Redacted      uint32 `protobuf:"varint,8,opt,name=redacted,proto3" json:"redacted,omitempty"`
+	// 为 true 表示同一 input_id 的输入此前已生效，本次没有写入，结果为首次的结果。
+	Duplicate     bool `protobuf:"varint,7,opt,name=duplicate,proto3" json:"duplicate,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ClientResponse) Reset() {
 	*x = ClientResponse{}
-	mi := &file_yanshi_v1_node_proto_msgTypes[23]
+	mi := &file_yanshi_v1_node_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2074,7 +1983,7 @@ func (x *ClientResponse) String() string {
 func (*ClientResponse) ProtoMessage() {}
 
 func (x *ClientResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_node_proto_msgTypes[23]
+	mi := &file_yanshi_v1_node_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2087,7 +1996,7 @@ func (x *ClientResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClientResponse.ProtoReflect.Descriptor instead.
 func (*ClientResponse) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{23}
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ClientResponse) GetRequestId() string {
@@ -2139,13 +2048,6 @@ func (x *ClientResponse) GetDuplicate() bool {
 	return false
 }
 
-func (x *ClientResponse) GetRedacted() uint32 {
-	if x != nil {
-		return x.Redacted
-	}
-	return 0
-}
-
 type ClientError struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 与 HTTP API 的状态码对应："invalid"、"not_found"、"conflict"、"rejected"（内容安全）、
@@ -2160,7 +2062,7 @@ type ClientError struct {
 
 func (x *ClientError) Reset() {
 	*x = ClientError{}
-	mi := &file_yanshi_v1_node_proto_msgTypes[24]
+	mi := &file_yanshi_v1_node_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2172,7 +2074,7 @@ func (x *ClientError) String() string {
 func (*ClientError) ProtoMessage() {}
 
 func (x *ClientError) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_node_proto_msgTypes[24]
+	mi := &file_yanshi_v1_node_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2185,7 +2087,7 @@ func (x *ClientError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClientError.ProtoReflect.Descriptor instead.
 func (*ClientError) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{24}
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *ClientError) GetCode() string {
@@ -2224,7 +2126,7 @@ type Activity struct {
 
 func (x *Activity) Reset() {
 	*x = Activity{}
-	mi := &file_yanshi_v1_node_proto_msgTypes[25]
+	mi := &file_yanshi_v1_node_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2236,7 +2138,7 @@ func (x *Activity) String() string {
 func (*Activity) ProtoMessage() {}
 
 func (x *Activity) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_node_proto_msgTypes[25]
+	mi := &file_yanshi_v1_node_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2249,7 +2151,7 @@ func (x *Activity) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Activity.ProtoReflect.Descriptor instead.
 func (*Activity) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{25}
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *Activity) GetSessionId() string {
@@ -2285,7 +2187,7 @@ type Presence struct {
 
 func (x *Presence) Reset() {
 	*x = Presence{}
-	mi := &file_yanshi_v1_node_proto_msgTypes[26]
+	mi := &file_yanshi_v1_node_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2297,7 +2199,7 @@ func (x *Presence) String() string {
 func (*Presence) ProtoMessage() {}
 
 func (x *Presence) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_node_proto_msgTypes[26]
+	mi := &file_yanshi_v1_node_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2310,7 +2212,7 @@ func (x *Presence) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Presence.ProtoReflect.Descriptor instead.
 func (*Presence) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{26}
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *Presence) GetSessionId() string {
@@ -2341,7 +2243,7 @@ type Viewer struct {
 
 func (x *Viewer) Reset() {
 	*x = Viewer{}
-	mi := &file_yanshi_v1_node_proto_msgTypes[27]
+	mi := &file_yanshi_v1_node_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2353,7 +2255,7 @@ func (x *Viewer) String() string {
 func (*Viewer) ProtoMessage() {}
 
 func (x *Viewer) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_node_proto_msgTypes[27]
+	mi := &file_yanshi_v1_node_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2366,7 +2268,7 @@ func (x *Viewer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Viewer.ProtoReflect.Descriptor instead.
 func (*Viewer) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{27}
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *Viewer) GetDeviceId() string {
@@ -2417,7 +2319,7 @@ type CallStart struct {
 
 func (x *CallStart) Reset() {
 	*x = CallStart{}
-	mi := &file_yanshi_v1_node_proto_msgTypes[28]
+	mi := &file_yanshi_v1_node_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2429,7 +2331,7 @@ func (x *CallStart) String() string {
 func (*CallStart) ProtoMessage() {}
 
 func (x *CallStart) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_node_proto_msgTypes[28]
+	mi := &file_yanshi_v1_node_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2442,7 +2344,7 @@ func (x *CallStart) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallStart.ProtoReflect.Descriptor instead.
 func (*CallStart) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{28}
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *CallStart) GetCallId() string {
@@ -2471,7 +2373,7 @@ type CallAudio struct {
 
 func (x *CallAudio) Reset() {
 	*x = CallAudio{}
-	mi := &file_yanshi_v1_node_proto_msgTypes[29]
+	mi := &file_yanshi_v1_node_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2483,7 +2385,7 @@ func (x *CallAudio) String() string {
 func (*CallAudio) ProtoMessage() {}
 
 func (x *CallAudio) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_node_proto_msgTypes[29]
+	mi := &file_yanshi_v1_node_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2496,7 +2398,7 @@ func (x *CallAudio) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallAudio.ProtoReflect.Descriptor instead.
 func (*CallAudio) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{29}
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *CallAudio) GetCallId() string {
@@ -2523,7 +2425,7 @@ type CallControl struct {
 
 func (x *CallControl) Reset() {
 	*x = CallControl{}
-	mi := &file_yanshi_v1_node_proto_msgTypes[30]
+	mi := &file_yanshi_v1_node_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2535,7 +2437,7 @@ func (x *CallControl) String() string {
 func (*CallControl) ProtoMessage() {}
 
 func (x *CallControl) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_node_proto_msgTypes[30]
+	mi := &file_yanshi_v1_node_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2548,7 +2450,7 @@ func (x *CallControl) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallControl.ProtoReflect.Descriptor instead.
 func (*CallControl) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{30}
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *CallControl) GetCallId() string {
@@ -2586,7 +2488,7 @@ type CallEvent struct {
 
 func (x *CallEvent) Reset() {
 	*x = CallEvent{}
-	mi := &file_yanshi_v1_node_proto_msgTypes[31]
+	mi := &file_yanshi_v1_node_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2598,7 +2500,7 @@ func (x *CallEvent) String() string {
 func (*CallEvent) ProtoMessage() {}
 
 func (x *CallEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_node_proto_msgTypes[31]
+	mi := &file_yanshi_v1_node_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2611,7 +2513,7 @@ func (x *CallEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallEvent.ProtoReflect.Descriptor instead.
 func (*CallEvent) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{31}
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *CallEvent) GetCallId() string {
@@ -2768,7 +2670,7 @@ type CallReady struct {
 
 func (x *CallReady) Reset() {
 	*x = CallReady{}
-	mi := &file_yanshi_v1_node_proto_msgTypes[32]
+	mi := &file_yanshi_v1_node_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2780,7 +2682,7 @@ func (x *CallReady) String() string {
 func (*CallReady) ProtoMessage() {}
 
 func (x *CallReady) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_node_proto_msgTypes[32]
+	mi := &file_yanshi_v1_node_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2793,7 +2695,7 @@ func (x *CallReady) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallReady.ProtoReflect.Descriptor instead.
 func (*CallReady) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{32}
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *CallReady) GetModel() string {
@@ -2836,7 +2738,7 @@ type CallOutputAudio struct {
 
 func (x *CallOutputAudio) Reset() {
 	*x = CallOutputAudio{}
-	mi := &file_yanshi_v1_node_proto_msgTypes[33]
+	mi := &file_yanshi_v1_node_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2848,7 +2750,7 @@ func (x *CallOutputAudio) String() string {
 func (*CallOutputAudio) ProtoMessage() {}
 
 func (x *CallOutputAudio) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_node_proto_msgTypes[33]
+	mi := &file_yanshi_v1_node_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2861,7 +2763,7 @@ func (x *CallOutputAudio) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallOutputAudio.ProtoReflect.Descriptor instead.
 func (*CallOutputAudio) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{33}
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *CallOutputAudio) GetPcm() []byte {
@@ -2886,7 +2788,7 @@ type CallSpeech struct {
 
 func (x *CallSpeech) Reset() {
 	*x = CallSpeech{}
-	mi := &file_yanshi_v1_node_proto_msgTypes[34]
+	mi := &file_yanshi_v1_node_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2898,7 +2800,7 @@ func (x *CallSpeech) String() string {
 func (*CallSpeech) ProtoMessage() {}
 
 func (x *CallSpeech) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_node_proto_msgTypes[34]
+	mi := &file_yanshi_v1_node_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2911,7 +2813,7 @@ func (x *CallSpeech) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallSpeech.ProtoReflect.Descriptor instead.
 func (*CallSpeech) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{34}
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{33}
 }
 
 // CallText 是转写：用户的话（识别中的与整句）与助手的话（增量与整句）。整句同时以 CallTranscript 写入日志。
@@ -2929,7 +2831,7 @@ type CallText struct {
 
 func (x *CallText) Reset() {
 	*x = CallText{}
-	mi := &file_yanshi_v1_node_proto_msgTypes[35]
+	mi := &file_yanshi_v1_node_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2941,7 +2843,7 @@ func (x *CallText) String() string {
 func (*CallText) ProtoMessage() {}
 
 func (x *CallText) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_node_proto_msgTypes[35]
+	mi := &file_yanshi_v1_node_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2954,7 +2856,7 @@ func (x *CallText) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallText.ProtoReflect.Descriptor instead.
 func (*CallText) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{35}
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *CallText) GetRole() string {
@@ -2994,7 +2896,7 @@ type CallResponseDone struct {
 
 func (x *CallResponseDone) Reset() {
 	*x = CallResponseDone{}
-	mi := &file_yanshi_v1_node_proto_msgTypes[36]
+	mi := &file_yanshi_v1_node_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3006,7 +2908,7 @@ func (x *CallResponseDone) String() string {
 func (*CallResponseDone) ProtoMessage() {}
 
 func (x *CallResponseDone) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_node_proto_msgTypes[36]
+	mi := &file_yanshi_v1_node_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3019,7 +2921,7 @@ func (x *CallResponseDone) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallResponseDone.ProtoReflect.Descriptor instead.
 func (*CallResponseDone) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{36}
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *CallResponseDone) GetResponseId() string {
@@ -3042,7 +2944,7 @@ type CallTask struct {
 
 func (x *CallTask) Reset() {
 	*x = CallTask{}
-	mi := &file_yanshi_v1_node_proto_msgTypes[37]
+	mi := &file_yanshi_v1_node_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3054,7 +2956,7 @@ func (x *CallTask) String() string {
 func (*CallTask) ProtoMessage() {}
 
 func (x *CallTask) ProtoReflect() protoreflect.Message {
-	mi := &file_yanshi_v1_node_proto_msgTypes[37]
+	mi := &file_yanshi_v1_node_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3067,7 +2969,7 @@ func (x *CallTask) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallTask.ProtoReflect.Descriptor instead.
 func (*CallTask) Descriptor() ([]byte, []int) {
-	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{37}
+	return file_yanshi_v1_node_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *CallTask) GetRunId() string {
@@ -3186,7 +3088,7 @@ const file_yanshi_v1_node_proto_rawDesc = "" +
 	"\x04text\x18\x05 \x01(\tR\x04text\x12\x1a\n" +
 	"\bsnapshot\x18\x06 \x01(\bR\bsnapshot\x12\x10\n" +
 	"\x03end\x18\a \x01(\bR\x03end\x12\x1c\n" +
-	"\treasoning\x18\b \x01(\tR\treasoning\"\x8f\x04\n" +
+	"\treasoning\x18\b \x01(\tR\treasoning\"\xe0\x03\n" +
 	"\rClientRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12A\n" +
@@ -3196,9 +3098,9 @@ const file_yanshi_v1_node_proto_rawDesc = "" +
 	"\x06decide\x18\x05 \x01(\v2\x19.yanshi.v1.DecideApprovalH\x00R\x06decide\x12/\n" +
 	"\x05close\x18\x06 \x01(\v2\x17.yanshi.v1.CloseSessionH\x00R\x05close\x123\n" +
 	"\x06answer\x18\a \x01(\v2\x19.yanshi.v1.AnswerQuestionH\x00R\x06answer\x12J\n" +
-	"\x11cancel_background\x18\b \x01(\v2\x1b.yanshi.v1.CancelBackgroundH\x00R\x10cancelBackground\x12D\n" +
-	"\x0fsubmit_captures\x18\t \x01(\v2\x19.yanshi.v1.SubmitCapturesH\x00R\x0esubmitCapturesB\x04\n" +
-	"\x02op\"J\n" +
+	"\x11cancel_background\x18\b \x01(\v2\x1b.yanshi.v1.CancelBackgroundH\x00R\x10cancelBackgroundB\x04\n" +
+	"\x02opJ\x04\b\t\x10\n" +
+	"R\x0fsubmit_captures\"J\n" +
 	"\rCreateSession\x12\x14\n" +
 	"\x05agent\x18\x01 \x01(\tR\x05agent\x12#\n" +
 	"\ragent_version\x18\x02 \x01(\tR\fagentVersion\"v\n" +
@@ -3233,14 +3135,7 @@ const file_yanshi_v1_node_proto_rawDesc = "" +
 	"\x10CancelBackground\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x17\n" +
-	"\acall_id\x18\x02 \x01(\tR\x06callId\"\x9d\x01\n" +
-	"\x0eSubmitCaptures\x12\x1d\n" +
-	"\n" +
-	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1d\n" +
-	"\n" +
-	"capture_id\x18\x02 \x01(\tR\tcaptureId\x125\n" +
-	"\bsegments\x18\x03 \x03(\v2\x19.yanshi.v1.CaptureSegmentR\bsegments\x12\x16\n" +
-	"\x06stream\x18\x04 \x01(\tR\x06stream\"\x83\x02\n" +
+	"\acall_id\x18\x02 \x01(\tR\x06callId\"\xf7\x01\n" +
 	"\x0eClientResponse\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12,\n" +
@@ -3250,8 +3145,7 @@ const file_yanshi_v1_node_proto_rawDesc = "" +
 	"\x06run_id\x18\x04 \x01(\tR\x05runId\x12\x18\n" +
 	"\asteered\x18\x05 \x01(\bR\asteered\x12\x1a\n" +
 	"\banswered\x18\x06 \x01(\tR\banswered\x12\x1c\n" +
-	"\tduplicate\x18\a \x01(\bR\tduplicate\x12\x1a\n" +
-	"\bredacted\x18\b \x01(\rR\bredacted\"r\n" +
+	"\tduplicate\x18\a \x01(\bR\tduplicateJ\x04\b\b\x10\tR\bredacted\"r\n" +
 	"\vClientError\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x125\n" +
@@ -3340,7 +3234,7 @@ func file_yanshi_v1_node_proto_rawDescGZIP() []byte {
 }
 
 var file_yanshi_v1_node_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_yanshi_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 39)
+var file_yanshi_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 38)
 var file_yanshi_v1_node_proto_goTypes = []any{
 	(Risk)(0),                     // 0: yanshi.v1.Risk
 	(CallAction)(0),               // 1: yanshi.v1.CallAction
@@ -3366,28 +3260,26 @@ var file_yanshi_v1_node_proto_goTypes = []any{
 	(*CloseSession)(nil),          // 21: yanshi.v1.CloseSession
 	(*AnswerQuestion)(nil),        // 22: yanshi.v1.AnswerQuestion
 	(*CancelBackground)(nil),      // 23: yanshi.v1.CancelBackground
-	(*SubmitCaptures)(nil),        // 24: yanshi.v1.SubmitCaptures
-	(*ClientResponse)(nil),        // 25: yanshi.v1.ClientResponse
-	(*ClientError)(nil),           // 26: yanshi.v1.ClientError
-	(*Activity)(nil),              // 27: yanshi.v1.Activity
-	(*Presence)(nil),              // 28: yanshi.v1.Presence
-	(*Viewer)(nil),                // 29: yanshi.v1.Viewer
-	(*CallStart)(nil),             // 30: yanshi.v1.CallStart
-	(*CallAudio)(nil),             // 31: yanshi.v1.CallAudio
-	(*CallControl)(nil),           // 32: yanshi.v1.CallControl
-	(*CallEvent)(nil),             // 33: yanshi.v1.CallEvent
-	(*CallReady)(nil),             // 34: yanshi.v1.CallReady
-	(*CallOutputAudio)(nil),       // 35: yanshi.v1.CallOutputAudio
-	(*CallSpeech)(nil),            // 36: yanshi.v1.CallSpeech
-	(*CallText)(nil),              // 37: yanshi.v1.CallText
-	(*CallResponseDone)(nil),      // 38: yanshi.v1.CallResponseDone
-	(*CallTask)(nil),              // 39: yanshi.v1.CallTask
-	nil,                           // 40: yanshi.v1.AnswerQuestion.ValuesEntry
-	(*Event)(nil),                 // 41: yanshi.v1.Event
-	(*timestamppb.Timestamp)(nil), // 42: google.protobuf.Timestamp
-	(*ContentBlock)(nil),          // 43: yanshi.v1.ContentBlock
-	(*CaptureSegment)(nil),        // 44: yanshi.v1.CaptureSegment
-	(*CallEnded)(nil),             // 45: yanshi.v1.CallEnded
+	(*ClientResponse)(nil),        // 24: yanshi.v1.ClientResponse
+	(*ClientError)(nil),           // 25: yanshi.v1.ClientError
+	(*Activity)(nil),              // 26: yanshi.v1.Activity
+	(*Presence)(nil),              // 27: yanshi.v1.Presence
+	(*Viewer)(nil),                // 28: yanshi.v1.Viewer
+	(*CallStart)(nil),             // 29: yanshi.v1.CallStart
+	(*CallAudio)(nil),             // 30: yanshi.v1.CallAudio
+	(*CallControl)(nil),           // 31: yanshi.v1.CallControl
+	(*CallEvent)(nil),             // 32: yanshi.v1.CallEvent
+	(*CallReady)(nil),             // 33: yanshi.v1.CallReady
+	(*CallOutputAudio)(nil),       // 34: yanshi.v1.CallOutputAudio
+	(*CallSpeech)(nil),            // 35: yanshi.v1.CallSpeech
+	(*CallText)(nil),              // 36: yanshi.v1.CallText
+	(*CallResponseDone)(nil),      // 37: yanshi.v1.CallResponseDone
+	(*CallTask)(nil),              // 38: yanshi.v1.CallTask
+	nil,                           // 39: yanshi.v1.AnswerQuestion.ValuesEntry
+	(*Event)(nil),                 // 40: yanshi.v1.Event
+	(*timestamppb.Timestamp)(nil), // 41: google.protobuf.Timestamp
+	(*ContentBlock)(nil),          // 42: yanshi.v1.ContentBlock
+	(*CallEnded)(nil),             // 43: yanshi.v1.CallEnded
 }
 var file_yanshi_v1_node_proto_depIdxs = []int32{
 	0,  // 0: yanshi.v1.CapabilitySpec.risk:type_name -> yanshi.v1.Risk
@@ -3396,23 +3288,23 @@ var file_yanshi_v1_node_proto_depIdxs = []int32{
 	12, // 3: yanshi.v1.NodeMessage.subscribe:type_name -> yanshi.v1.Subscribe
 	13, // 4: yanshi.v1.NodeMessage.unsubscribe:type_name -> yanshi.v1.Unsubscribe
 	16, // 5: yanshi.v1.NodeMessage.request:type_name -> yanshi.v1.ClientRequest
-	27, // 6: yanshi.v1.NodeMessage.activity:type_name -> yanshi.v1.Activity
-	30, // 7: yanshi.v1.NodeMessage.call_start:type_name -> yanshi.v1.CallStart
-	31, // 8: yanshi.v1.NodeMessage.call_audio:type_name -> yanshi.v1.CallAudio
-	32, // 9: yanshi.v1.NodeMessage.call_control:type_name -> yanshi.v1.CallControl
+	26, // 6: yanshi.v1.NodeMessage.activity:type_name -> yanshi.v1.Activity
+	29, // 7: yanshi.v1.NodeMessage.call_start:type_name -> yanshi.v1.CallStart
+	30, // 8: yanshi.v1.NodeMessage.call_audio:type_name -> yanshi.v1.CallAudio
+	31, // 9: yanshi.v1.NodeMessage.call_control:type_name -> yanshi.v1.CallControl
 	6,  // 10: yanshi.v1.GatewayMessage.welcome:type_name -> yanshi.v1.Welcome
 	7,  // 11: yanshi.v1.GatewayMessage.invoke:type_name -> yanshi.v1.Invoke
 	8,  // 12: yanshi.v1.GatewayMessage.cancel:type_name -> yanshi.v1.Cancel
 	10, // 13: yanshi.v1.GatewayMessage.result_ack:type_name -> yanshi.v1.ResultAck
-	41, // 14: yanshi.v1.GatewayMessage.event:type_name -> yanshi.v1.Event
+	40, // 14: yanshi.v1.GatewayMessage.event:type_name -> yanshi.v1.Event
 	15, // 15: yanshi.v1.GatewayMessage.delta:type_name -> yanshi.v1.LiveDelta
-	25, // 16: yanshi.v1.GatewayMessage.response:type_name -> yanshi.v1.ClientResponse
+	24, // 16: yanshi.v1.GatewayMessage.response:type_name -> yanshi.v1.ClientResponse
 	14, // 17: yanshi.v1.GatewayMessage.subscription_ended:type_name -> yanshi.v1.SubscriptionEnded
-	28, // 18: yanshi.v1.GatewayMessage.presence:type_name -> yanshi.v1.Presence
-	33, // 19: yanshi.v1.GatewayMessage.call_event:type_name -> yanshi.v1.CallEvent
+	27, // 18: yanshi.v1.GatewayMessage.presence:type_name -> yanshi.v1.Presence
+	32, // 19: yanshi.v1.GatewayMessage.call_event:type_name -> yanshi.v1.CallEvent
 	2,  // 20: yanshi.v1.Hello.capabilities:type_name -> yanshi.v1.CapabilitySpec
-	42, // 21: yanshi.v1.Invoke.deadline:type_name -> google.protobuf.Timestamp
-	43, // 22: yanshi.v1.InvokeResult.content:type_name -> yanshi.v1.ContentBlock
+	41, // 21: yanshi.v1.Invoke.deadline:type_name -> google.protobuf.Timestamp
+	42, // 22: yanshi.v1.InvokeResult.content:type_name -> yanshi.v1.ContentBlock
 	2,  // 23: yanshi.v1.CapabilitySet.capabilities:type_name -> yanshi.v1.CapabilitySpec
 	17, // 24: yanshi.v1.ClientRequest.create_session:type_name -> yanshi.v1.CreateSession
 	18, // 25: yanshi.v1.ClientRequest.submit:type_name -> yanshi.v1.SubmitInput
@@ -3421,27 +3313,25 @@ var file_yanshi_v1_node_proto_depIdxs = []int32{
 	21, // 28: yanshi.v1.ClientRequest.close:type_name -> yanshi.v1.CloseSession
 	22, // 29: yanshi.v1.ClientRequest.answer:type_name -> yanshi.v1.AnswerQuestion
 	23, // 30: yanshi.v1.ClientRequest.cancel_background:type_name -> yanshi.v1.CancelBackground
-	24, // 31: yanshi.v1.ClientRequest.submit_captures:type_name -> yanshi.v1.SubmitCaptures
-	43, // 32: yanshi.v1.SubmitInput.input:type_name -> yanshi.v1.ContentBlock
-	40, // 33: yanshi.v1.AnswerQuestion.values:type_name -> yanshi.v1.AnswerQuestion.ValuesEntry
-	44, // 34: yanshi.v1.SubmitCaptures.segments:type_name -> yanshi.v1.CaptureSegment
-	26, // 35: yanshi.v1.ClientResponse.error:type_name -> yanshi.v1.ClientError
-	42, // 36: yanshi.v1.ClientError.retry_at:type_name -> google.protobuf.Timestamp
-	29, // 37: yanshi.v1.Presence.viewers:type_name -> yanshi.v1.Viewer
-	1,  // 38: yanshi.v1.CallControl.action:type_name -> yanshi.v1.CallAction
-	34, // 39: yanshi.v1.CallEvent.ready:type_name -> yanshi.v1.CallReady
-	35, // 40: yanshi.v1.CallEvent.audio:type_name -> yanshi.v1.CallOutputAudio
-	36, // 41: yanshi.v1.CallEvent.speech:type_name -> yanshi.v1.CallSpeech
-	37, // 42: yanshi.v1.CallEvent.text:type_name -> yanshi.v1.CallText
-	38, // 43: yanshi.v1.CallEvent.response_done:type_name -> yanshi.v1.CallResponseDone
-	39, // 44: yanshi.v1.CallEvent.task:type_name -> yanshi.v1.CallTask
-	45, // 45: yanshi.v1.CallEvent.ended:type_name -> yanshi.v1.CallEnded
-	26, // 46: yanshi.v1.CallEvent.error:type_name -> yanshi.v1.ClientError
-	47, // [47:47] is the sub-list for method output_type
-	47, // [47:47] is the sub-list for method input_type
-	47, // [47:47] is the sub-list for extension type_name
-	47, // [47:47] is the sub-list for extension extendee
-	0,  // [0:47] is the sub-list for field type_name
+	42, // 31: yanshi.v1.SubmitInput.input:type_name -> yanshi.v1.ContentBlock
+	39, // 32: yanshi.v1.AnswerQuestion.values:type_name -> yanshi.v1.AnswerQuestion.ValuesEntry
+	25, // 33: yanshi.v1.ClientResponse.error:type_name -> yanshi.v1.ClientError
+	41, // 34: yanshi.v1.ClientError.retry_at:type_name -> google.protobuf.Timestamp
+	28, // 35: yanshi.v1.Presence.viewers:type_name -> yanshi.v1.Viewer
+	1,  // 36: yanshi.v1.CallControl.action:type_name -> yanshi.v1.CallAction
+	33, // 37: yanshi.v1.CallEvent.ready:type_name -> yanshi.v1.CallReady
+	34, // 38: yanshi.v1.CallEvent.audio:type_name -> yanshi.v1.CallOutputAudio
+	35, // 39: yanshi.v1.CallEvent.speech:type_name -> yanshi.v1.CallSpeech
+	36, // 40: yanshi.v1.CallEvent.text:type_name -> yanshi.v1.CallText
+	37, // 41: yanshi.v1.CallEvent.response_done:type_name -> yanshi.v1.CallResponseDone
+	38, // 42: yanshi.v1.CallEvent.task:type_name -> yanshi.v1.CallTask
+	43, // 43: yanshi.v1.CallEvent.ended:type_name -> yanshi.v1.CallEnded
+	25, // 44: yanshi.v1.CallEvent.error:type_name -> yanshi.v1.ClientError
+	45, // [45:45] is the sub-list for method output_type
+	45, // [45:45] is the sub-list for method input_type
+	45, // [45:45] is the sub-list for extension type_name
+	45, // [45:45] is the sub-list for extension extendee
+	0,  // [0:45] is the sub-list for field type_name
 }
 
 func init() { file_yanshi_v1_node_proto_init() }
@@ -3481,9 +3371,8 @@ func file_yanshi_v1_node_proto_init() {
 		(*ClientRequest_Close)(nil),
 		(*ClientRequest_Answer)(nil),
 		(*ClientRequest_CancelBackground)(nil),
-		(*ClientRequest_SubmitCaptures)(nil),
 	}
-	file_yanshi_v1_node_proto_msgTypes[31].OneofWrappers = []any{
+	file_yanshi_v1_node_proto_msgTypes[30].OneofWrappers = []any{
 		(*CallEvent_Ready)(nil),
 		(*CallEvent_Audio)(nil),
 		(*CallEvent_Speech)(nil),
@@ -3499,7 +3388,7 @@ func file_yanshi_v1_node_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_yanshi_v1_node_proto_rawDesc), len(file_yanshi_v1_node_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   39,
+			NumMessages:   38,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

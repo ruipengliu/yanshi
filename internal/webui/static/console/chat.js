@@ -7,7 +7,7 @@
 
 import { Mic, Player, Recorder } from "./audio.js";
 import { renderApproval, renderCard, renderQuestion } from "./cards.js";
-import { RequestError, backgroundResultOf, newCaptureId, newInputId, payloadOf, routeInput, textOf } from "./device.js";
+import { RequestError, backgroundResultOf, newInputId, payloadOf, routeInput, textOf } from "./device.js";
 import { render as markdown } from "./markdown.js";
 import { bytes, clock, copyButton, dur, fill, h, hue, num, reconcile, short, toast } from "./ui.js";
 
@@ -243,12 +243,6 @@ export class ChatPanel {
     this.recorder = null;
     this.stopSpeaking();
     // 切换会话时停止收音：之后识别出的话不能交到另一个 Session。
-    if (this.listener) {
-      clearInterval(this.listener.timer);
-      this.listener.rec.onend = null;
-      this.listener.rec.abort();
-      this.listener = null;
-    }
   }
 
   /**
@@ -298,8 +292,6 @@ export class ChatPanel {
           : [h("div", { class: "empty" }, this.compact ? "还没有消息" : "发一条消息开始对话。可以附图片、发语音，或者打电话。")],
       );
       if (!this.compact) this.renderHeader();
-      // 会话的 Agent 取自 SessionCreated：面板先于事件打开时，事件到达后再判断一次。
-      if (this.captureNote && !this.captureNote.parentElement.hidden) this.renderCaptureNote();
     }
     if (pending) this.renderPending();
     if (committed) this.checkSpeakRun();
@@ -465,10 +457,6 @@ export class ChatPanel {
           );
           turn = null;
           break;
-        case "capture_appended":
-          // 旁听不开启 Run（ADR-0037）：不打断进行中的这一轮，只在对话中按日志顺序列出。
-          out.push(this.captureBatch(p, e));
-          break;
         case "call_started":
           out.push(h("div", { class: "note" }, `📞 通话开始 · ${p.model ?? ""}`));
           break;
@@ -499,23 +487,6 @@ export class ChatPanel {
     return out;
   }
 
-  /** 一批旁听转写：说话人取自结构化字段，佩戴者的话与他人的话分开显示（ADR-0036）。 */
-  captureBatch(p, e) {
-    const segs = p.segments ?? [];
-    return h(
-      "div",
-      { class: "capture-batch" },
-      h("div", { class: "capture-head" }, "🎧 旁听", h("small", {}, ` · ${clock(e.time)} · ${segs.length} 段 · 不开启 Run`)),
-      segs.map((g) =>
-        h(
-          "div",
-          { class: `capture-line ${g.speaker === "SPEAKER_WEARER" ? "wearer" : "other"}` },
-          h("b", {}, speakerName(g.speaker === "SPEAKER_WEARER" ? "wearer" : "other", g.speaker_key)),
-          g.redacted ? h("i", {}, "（未通过内容安全检查，已拦截）") : g.text,
-        ),
-      ),
-    );
-  }
 
   turnShell(turn, e) {
     const agent = this.ctx.agentName?.() ?? "助手";
@@ -947,13 +918,11 @@ export class ChatPanel {
       this.ctxScreen,
       this.ctxContent,
     );
-    const capturePanel = this.compact ? null : this.capturePanel();
     return h(
       "div",
       { class: "composer-wrap" },
       this.status,
       this.pending,
-      capturePanel,
       h(
         "div",
         { class: "composer" },
@@ -973,22 +942,6 @@ export class ChatPanel {
                 { class: "tool", type: "button", title: "界面上下文", onclick: () => (ctxPanel.hidden = !ctxPanel.hidden) },
                 "🪟",
               ),
-          this.compact
-            ? null
-            : h(
-                "button",
-                {
-                  class: "tool",
-                  type: "button",
-                  title: "旁听：以 HostApp 的身份提交佩戴者与他人的对话转写（仅 console-capture）",
-                  onclick: () => {
-                    capturePanel.hidden = !capturePanel.hidden;
-                    this.ctx.setCaptureOpen?.(!capturePanel.hidden);
-                    if (!capturePanel.hidden) (this.renderCaptureNote(), this.captureInput.focus());
-                  },
-                },
-                "🎧",
-              ),
           h("span", { class: "spacer" }),
           this.compact
             ? null
@@ -1004,273 +957,6 @@ export class ChatPanel {
         this.compact ? null : ctxPanel,
       ),
       this.compact ? null : h("div", { class: "composer-hint" }, "Enter 发送 · Shift+Enter 换行 · Esc 中断 · ⌘K 新建会话"),
-    );
-  }
-
-  // —— 旁听 ——
-
-  /**
-   * 旁听面板：模拟 HostApp，逐段写下转写或持续收音，再整批提交（docs/design/captures.md §3）。说话人由 HostApp 的声纹
-   * 区分给出，这里手选。提交失败的一批原样保留、单独显示，再交时沿用它的 capture_id（服务端按 ID 去重），之后的段另起一批。
-   */
-  capturePanel() {
-    this.captureSegs = [];
-    this.captureFailed = null;
-    this.captureBusy = false;
-    this.captureSpeaker = h(
-      "select",
-      { title: "说话人：持续收音时按当前选中的说话人记，可随时切换" },
-      h("option", { value: "wearer" }, "佩戴者"),
-      h("option", { value: "other:A" }, "他人 A"),
-      h("option", { value: "other:B" }, "他人 B"),
-    );
-    this.captureInput = h("input", { placeholder: "这段话的转写，Enter 加入本批" });
-    this.captureList = h("div", { class: "capture-staged" });
-    this.captureInterim = h("div", { class: "capture-interim", hidden: true });
-    this.captureBtn = h(
-      "button",
-      { class: "btn primary", type: "button", disabled: true, onclick: () => this.submitCaptures() },
-      "提交本批",
-    );
-    this.listenBtn = h(
-      "button",
-      {
-        class: "btn",
-        type: "button",
-        disabled: !SpeechRecognitionImpl,
-        title: SpeechRecognitionImpl
-          ? "持续收音：浏览器的语音识别把麦克风转成文字（音频不发给 yanshi），每 10 秒自动提交一批"
-          : "这个浏览器不支持语音识别（Web Speech API），请用 Safari 或 Chrome",
-        onclick: () => (this.listener ? this.stopListening() : this.startListening()),
-      },
-      "🎙 持续收音",
-    );
-    const add = () => {
-      const text = this.captureInput.value.trim();
-      if (!text) return;
-      this.captureSegs.push({ ...this.currentSpeaker(), text });
-      this.captureInput.value = "";
-      // 手写时下一段默认换一个说话人：对话通常是轮流说的。持续收音时不换，由人切换。
-      if (!this.listener) this.captureSpeaker.selectedIndex = this.captureSpeaker.selectedIndex === 0 ? 1 : 0;
-      this.renderCaptureBatch();
-    };
-    this.captureInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.isComposing) {
-        e.preventDefault();
-        if (e.metaKey || e.ctrlKey) this.submitCaptures();
-        else add();
-      }
-    });
-    this.captureNote = h("div", { class: "capture-note", hidden: true });
-    const open = !!this.ctx.captureOpen?.();
-    if (open) queueMicrotask(() => this.renderCaptureNote());
-    return h(
-      "div",
-      { class: "capture-panel", hidden: !open },
-      this.captureNote,
-      h(
-        "div",
-        { class: "capture-row" },
-        this.captureSpeaker,
-        this.captureInput,
-        h("button", { class: "btn", type: "button", onclick: add }, "加入"),
-        this.listenBtn,
-        this.captureBtn,
-      ),
-      this.captureInterim,
-      this.captureList,
-      h(
-        "div",
-        { class: "composer-hint" },
-        "以 HostApp 的身份提交，不开启 Run · Enter 加入本批 · ⌘Enter 提交 · 输入框发 call captures {\"all\":true} 读取（console-capture）；xinli 原文经 Persona 提交",
-      ),
-    );
-  }
-
-  /** 本会话的 Agent。 */
-  sessionAgent() {
-    return this.view.payloads("session_created")[0]?.agent?.name ?? this.ctx.agentName?.() ?? "";
-  }
-
-  /**
-   * 本会话的 Agent 不接收旁听时（控制台只知道自己列出的旁听 Agent；服务端以 invalid 拒绝时也算），提示并给出新建旁听会话的按钮：
-   * 尚未提交的段随之交到新会话。
-   */
-  renderCaptureNote() {
-    const agent = this.sessionAgent();
-    const rejected = this.captureRejected || (agent && !CAPTURE_AGENTS.includes(agent));
-    this.captureNote.hidden = !rejected;
-    if (!rejected) return;
-    if (agent === "xinli-day") {
-      fill(this.captureNote, "xinli 的旁听原文已由 Persona 保存，请经业务线提交并绑定业务日；此面板只用于 console-capture 调试。");
-      return;
-    }
-    fill(
-      this.captureNote,
-      `当前会话的 Agent（${agent || "?"}）${this.captureRejected ? "不接收旁听" : "可能不接收旁听"}：旁听要交给开启了旁听的 Agent。`,
-      ...CAPTURE_AGENTS.map((a) =>
-        h(
-          "button",
-          { class: "btn", type: "button", onclick: () => this.moveCaptures(a) },
-          `新建 ${a} 会话${this.captureSegs.length ? "并提交本批" : ""}`,
-        ),
-      ),
-    );
-  }
-
-  /** 新建 agent 的会话，把尚未提交的段交到那里，再切换过去（旁听面板保持打开）。 */
-  async moveCaptures(agent) {
-    const listening = !!this.listener;
-    this.stopListening({ submit: false });
-    const segs = this.captureSegs.splice(0);
-    try {
-      const sid = await this.device.createSession(agent);
-      if (segs.length) await this.device.submitCaptures(sid, segs);
-      this.ctx.setCaptureOpen?.(true);
-      this.ctx.openSession?.(sid);
-      toast(`已新建 ${agent} 会话${segs.length ? `，提交了 ${segs.length} 段` : ""}${listening ? "；点 🎙 继续收音" : ""}`);
-    } catch (e) {
-      this.captureSegs.unshift(...segs);
-      this.renderCaptureBatch();
-      toast(`新建会话失败：${e.message}`, "error");
-    }
-  }
-
-  currentSpeaker() {
-    const [speaker, key = ""] = this.captureSpeaker.value.split(":");
-    return { speaker, key };
-  }
-
-  renderCaptureBatch() {
-    const chip = (g, i, failed) =>
-      h(
-        "span",
-        { class: `staged-chip capture-chip ${g.speaker} ${failed ? "failed" : ""}`, title: failed ? "提交失败，等待重交" : "" },
-        h("b", {}, speakerName(g.speaker, g.key)),
-        " ",
-        g.text,
-        failed
-          ? null
-          : h(
-              "button",
-              { class: "x", type: "button", onclick: () => (this.captureSegs.splice(i, 1), this.renderCaptureBatch()) },
-              "×",
-            ),
-      );
-    fill(this.captureList, [
-      ...(this.captureFailed?.segs ?? []).map((g, i) => chip(g, i, true)),
-      ...this.captureSegs.map((g, i) => chip(g, i, false)),
-    ]);
-    const n = this.captureFailed ? this.captureFailed.segs.length : this.captureSegs.length;
-    this.captureBtn.disabled = this.captureBusy || !n;
-    this.captureBtn.textContent = !n ? "提交本批" : this.captureFailed ? `重交上一批（${n} 段）` : `提交本批（${n} 段）`;
-    if (!this.captureNote.hidden) this.renderCaptureNote();
-  }
-
-  async submitCaptures() {
-    if (this.captureBusy) return;
-    const retry = this.captureFailed;
-    const segs = retry ? retry.segs : this.captureSegs.splice(0);
-    if (!segs.length) return;
-    const captureId = retry ? retry.captureId : newCaptureId();
-    this.captureBusy = true;
-    this.captureRejected = false;
-    this.renderCaptureBatch();
-    try {
-      const r = await this.device.submitCaptures(this.view.sessionId, segs, { captureId });
-      this.captureFailed = null;
-      if (r.duplicate) toast("重复提交：按 capture_id 去重，没有再次写入");
-      else if (r.redacted) toast(`${r.redacted} 段未通过内容安全检查，只留占位`);
-    } catch (e) {
-      if (e instanceof RequestError && e.code === "invalid") {
-        // 请求本身不合法（如 Agent 不接收旁听）：再交也不会成功，段放回本批，停止收音，提示换到旁听会话。
-        this.captureSegs.unshift(...segs);
-        this.captureRejected = true;
-        this.stopListening({ submit: false });
-        this.renderCaptureNote();
-        toast(`旁听被拒绝：${e.message}`, "error");
-      } else {
-        this.captureFailed = { segs, captureId };
-        toast(`旁听提交失败：${e.message}。这一批已保留，再交时沿用同一个 capture_id`, "error");
-      }
-    } finally {
-      this.captureBusy = false;
-      this.renderCaptureBatch();
-    }
-  }
-
-  /**
-   * 持续收音：浏览器的语音识别（Web Speech API）在页面内把麦克风转成文字，相当于 HostApp 的转写，音频不发给 yanshi
-   * （ADR-0036）。识别出的每句话按当前选中的说话人加入本批，每 10 秒自动提交一批。识别在静音后会自行结束，收音期间随即重启。
-   */
-  startListening() {
-    this.captureRejected = false;
-    const rec = new SpeechRecognitionImpl();
-    rec.lang = "zh-CN";
-    rec.continuous = true;
-    rec.interimResults = true;
-    const l = (this.listener = { rec, timer: setInterval(() => this.captureSegs.length && this.submitCaptures(), 10_000) });
-    rec.onresult = (ev) => {
-      let interim = "";
-      for (let i = ev.resultIndex; i < ev.results.length; i++) {
-        const r = ev.results[i];
-        const text = r[0].transcript.trim();
-        if (r.isFinal) {
-          if (text) this.captureSegs.push({ ...this.currentSpeaker(), text });
-        } else interim += text;
-      }
-      this.renderInterim(interim);
-      this.renderCaptureBatch();
-    };
-    rec.onerror = (ev) => {
-      // no-speech 只是一段时间没人说话；其余（没有麦克风权限、识别服务不可用）停止收音。
-      if (ev.error === "no-speech" || ev.error === "aborted") return;
-      const hint = ev.error === "network" ? "（Chrome 的识别服务需要访问 Google，可改用 Safari）" : "";
-      toast(`语音识别出错：${ev.error}${hint}`, "error");
-      this.stopListening();
-    };
-    rec.onend = () => {
-      if (this.listener !== l) return;
-      try {
-        rec.start();
-      } catch {
-        this.stopListening();
-      }
-    };
-    try {
-      rec.start();
-    } catch (e) {
-      toast(`无法开始收音：${e.message}`, "error");
-      this.stopListening();
-      return;
-    }
-    this.listenBtn.classList.add("recording");
-    this.listenBtn.textContent = "⏹ 停止收音";
-    this.renderInterim("");
-  }
-
-  /** 停止收音，已识别的段立即提交（submit 为 false 时留在本批）。 */
-  stopListening({ submit = true } = {}) {
-    const l = this.listener;
-    if (!l) return;
-    this.listener = null;
-    clearInterval(l.timer);
-    l.rec.onend = null;
-    l.rec.stop();
-    this.listenBtn.classList.remove("recording");
-    this.listenBtn.textContent = "🎙 持续收音";
-    this.captureInterim.hidden = true;
-    if (submit && this.captureSegs.length) this.submitCaptures();
-  }
-
-  renderInterim(text) {
-    this.captureInterim.hidden = false;
-    fill(
-      this.captureInterim,
-      h("span", { class: "dot" }),
-      h("b", {}, speakerName(this.currentSpeaker().speaker, this.currentSpeaker().key)),
-      " ",
-      text || h("i", {}, "正在听…"),
     );
   }
 
@@ -1604,16 +1290,6 @@ export class ChatPanel {
 }
 
 /** keep 返回 m 中 key 的值，没有时以 make() 创建并保存。 */
-/** 浏览器的语音识别（Safari 与 Chrome 带 webkit 前缀）；不支持时为 undefined。 */
-const SpeechRecognitionImpl = globalThis.SpeechRecognition ?? globalThis.webkitSpeechRecognition;
-
-/** xinli 的原文已迁到 Persona；这里只保留内核旁听的调试 Agent。 */
-const CAPTURE_AGENTS = ["console-capture"];
-
-function speakerName(speaker, key) {
-  return speaker === "wearer" ? "佩戴者" : `他人${key ? ` ${key}` : ""}`;
-}
-
 function keep(m, key, make) {
   if (!m.has(key)) m.set(key, make());
   return m.get(key);

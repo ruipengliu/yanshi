@@ -14,7 +14,7 @@ xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理�
 | `xinli-assistant`（召回 8 条 Memory） | 每个 EndUser 一个，长期 | `mcp_xinli__list_projects`、`project_digest`、`recent_days`、`memory_save`、`memory_search`、`memory_forget`、`ask_user`、`show_card` |
 
 - 定义在 `agents/xinli-*.yaml`。白名单都不含高风险 Capability：`xinli-day` 只能读旁听、写 Memory、召回候选项目、把结果交给业务线；其余三个只读写业务线的数据。
-- 业务线的工具由 xinli MCP Server 提供（§4），开发与评测中由 `persona/mcpserver` 提供，`apps/xinli` 装配。只读的工具（`captures`、`find_related`、`day_ledger`、`day_summary`、`project_digest`、`list_projects`、`recent_days`、`week_overview`、`similar_projects`）在登记中声明只读；交出结果的工具（`file_changes`、`file_day`、`set_status`、`update_commitments`、`propose_merge`、`file_week`）由业务线在登记中以 `no_approval` 放宽（ADR-0017）：它们只把结果交给业务线自己。登记开启 `attests_speakers` 与 `cite_captures`，关闭 `acks`，承诺人与期限据此核对（§6）。
+- 业务线的工具由 xinli MCP Server 提供（§4），开发与评测中由 `persona/mcpserver` 提供，`apps/xinli` 装配。只读的工具（`captures`、`find_related`、`day_ledger`、`day_summary`、`project_digest`、`list_projects`、`recent_days`、`week_overview`、`similar_projects`）在登记中声明只读；交出结果的工具（`file_changes`、`file_day`、`set_status`、`update_commitments`、`propose_merge`、`file_week`）由业务线在登记中以 `no_approval` 放宽（ADR-0017）：它们只把结果交给业务线自己。登记开启 `attests_speakers` 与 `cite_captures`，承诺人与期限据此核对（§6）。
 - 业务线返回的内容（`find_related`、`day_ledger`、`day_summary`、`project_digest`、`week_overview` 等）是调用结果，属于外部内容（ADR-0037）。项目现状由 `xinli-project` 依据它们写成，是业务线的数据，不写入 Memory。
 - **Memory 要能读回来。** `xinli-day` 写下的偏好与人际关系，由助手在每个 Run 开始时召回（`memory.recall`）。`xinli-day` 不召回（输入总是"整理交谈"或"整理今天"，按它检索没有意义），写入之前用 `memory_search` 查已有的记忆：记过的不再记，变了的用 `replaces` 替换。平台另外合并几乎相同的表述（[Memory 设计](./m4-memory-grant.md) §3）。
 - **Retention。** `xinli-day` 与 `xinli-week` 按 AgentDef 覆盖为 `close_after_idle: 36h`、`delete_after_close: 168h`（原话保留 7 天，[captures.md](./captures.md) §8）；Project 与助手 Session 长期保留。
@@ -180,7 +180,6 @@ xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理�
 
 问某件事怎么变的，先用 `list_commitments` 的 `query` 与 `status: all` 找到它，再以 ID 调用 `commitment_history`。历史返回当前值，以及按说话时间排列的每次修订、记录时间、操作、改前与改后、依据和引用。初值取原始创建项，再重放修订的新值；没有说话时间的操作明确标为未记录，以记录时间排序。原话超过 7 天注明“原话已过保留期”，不补造引文。被合并者指向保留的 ID，保留者附上被合并者的历史（含链式合并）。
 
-
 ## 9. 开发部署
 
 独立启动 `xinli dev`（`apps/xinli/cmd/xinli`），以 `-business-lines` 指定业务线、`-mcp-dir` 写出登记，再让内核 `serve -mcp` 读取该目录。`-kernel-url` 指向内核时，应用层编排器同时扮演业务线服务端：
@@ -263,26 +262,25 @@ xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理�
 | 合并项目 | 模型提议，由用户确认 | 判断把握大时自动合并 |
 | 替换旧记忆 | 标记失效、保留历史 180 天（[m4](./m4-memory-grant.md) §11，ADR-0038）；计划可写 `valid_until`，过期不召回 | 删除；靠模型自己判断时效 |
 
-
 ## 13. Persona 中的旁听原文
 
-ADR-0050 的 P1 第 2 步已切换：xinli-day 版本 2 使用 `mcp_xinli__captures`，不再声明 `streams`。xinli 登记已开启 `attests_speakers`、关闭 `acks`，Persona 不再输出交付回执；处理进度与接受范围变更集同事务推进。评测经夹具绑定业务日并向 Persona 提交旁听，内置 Capture 路径与 console-capture 保留到第 5 步。P1-④a 已补充 Persona 的擦除、删除待办与删除期限保存（见本节末）；④b 已接入内核删除与重建执行（见本节末），测试与效果仍由远端验收。
+ADR-0050 的 P1 第 2 步已切换：xinli-day 版本 2 使用 `mcp_xinli__captures`，不再声明 `streams`。xinli 登记已开启 `attests_speakers`，Persona 不再输出交付回执；处理进度与接受范围变更集同事务推进。评测经夹具绑定业务日并向 Persona 提交旁听；内核 Capture 路径已退役。P1-④a 已补充 Persona 的擦除、删除待办与删除期限保存（见本节末）；④b 已接入内核删除与重建执行（见本节末），测试与效果仍由远端验收。
 
 原文按（BusinessLine、EndUser、业务日）隔离。业务日是提交方按用户当地日期给出的 YYYY-MM-DD，不从服务器时钟或片段时间反推。每个业务日记录当前工作 Session，绑定可幂等重试、可换绑；旧 Session 随即不能再读原文，一个 Session 不能同时绑定两个业务日。它不复用每日整理总览，已有 State 的字段形状保持不变。
 
-夹具先提交业务日、提交 ID 和结构化片段，再绑定工作 Session。每个业务日的批次从 1 开始，段号从 0 开始，引用是“批次.段号”；每次新的提交分配下一批次，编号不复用。同一提交 ID 与同一内容重交返回原引用，不同内容拒绝。每批 1–200 段，每段 1–2000 字，佩戴者无说话人键，他人的键、时间和时区与内核提交边界一致。Persona 保存原文，不替平台做内容安全审核。
+夹具先提交业务日、提交 ID 和结构化片段，再绑定工作 Session。每个业务日的批次从 1 开始，段号从 0 开始，引用是“批次.段号”；每次新的提交分配下一批次，编号不复用。同一提交 ID 与同一内容重交返回原引用，不同内容拒绝。每批 1–200 段，每段 1–2000 字，佩戴者无说话人键，他人的键、时间和时区遵循可信页的字段契约（captures.md §12）。Persona 保存原文，不替平台做内容安全审核。
 
-MCP 的 captures 工具沿用内置工具的说明与 schema，声明只读、幂等；只有当前工作 Session 且请求带平台分页参数时才能读取。原文只在结构化页元数据中返回，普通 content 只有固定提示。首读在业务日记下时段间隔，之后沿用；当前时刻由 Persona 的时钟提供。每次成功交出 kind 为 page 的页，在同一个 Update 中把末段引用记为当前工作 Session 的已读位置，取历史最大值；empty、in_progress 与失败页不记。BindDay 换绑到新 Session 时清零已读位置，同一 Session 的幂等绑定不清零；业务日的原文、时段间隔与处理进度保留。分页移植内核的停顿切分、续页、进行中判断、字符计数和逐块 token 预算，预留所有可能页尾；没有时间的片段按页分时段。平台负责渲染与写日志前审核。
+MCP 的 captures 工具与冻结 golden 中的说明及 schema 一致，声明只读、幂等；只有当前工作 Session 且请求带平台分页参数时才能读取。原文只在结构化页元数据中返回，普通 content 只有固定提示。首读在业务日记下时段间隔，之后沿用；当前时刻由 Persona 的时钟提供。每次成功交出 kind 为 page 的页，在同一个 Update 中把末段引用记为当前工作 Session 的已读位置，取历史最大值；empty、in_progress 与失败页不记。BindDay 换绑到新 Session 时清零已读位置，同一 Session 的幂等绑定不清零；业务日的原文、时段间隔与处理进度保留。分页保留已冻结的停顿切分、续页、进行中判断、字符计数和逐块 token 预算，预留所有可能页尾；没有时间的片段按页分时段。平台负责渲染与写日志前审核。
 
 处理进度初始为 0，after 为 new 时从它继续。范围变更集整体接受且来自当前工作 Session 时，在保存变更集的同一事务中，从进度后的第一段开始，按既定间隔检查已保存的连续时段：本变更集的来源范围完整覆盖时段第一段到接受时已有的最后一段，且该末段不超过当前工作 Session 的已读位置，才推进到该时段末尾；随后检查下一时段，遇到首个未完整覆盖的时段即停。拒收、只交跨页时段的一页、不同变更集各交一部分，或时段尚未读完，都不推进；空变更集可以确认完整时段。尚未首次读取、间隔还未固定时不推进。没有足够时间信息的连续片段不能按停顿证明更小的完整时段，推进时保守地整体检查。未绑定 Session 不碰业务日进度，也不再输出交付回执；xinli-day 读取原文前必须绑定。绑定后交谈、当天总览与归集通知的日期取业务日，即使整理在次日 04:00 执行也不改变；未绑定时仍取调用时钟的日期。
 
 已绑定业务日的范围变更集还须检查 source.from 与 source.to 都是该业务日中存在的引用；任一端点不存在时，以“变更集没有被接受”的原因提示改正，不保存变更集、不推进进度。此检查与交谈端点的存在性检查共用业务日引用查找，供第 4 步接入擦除墓碑后复用；未绑定 Session 保持原有行为。
 
-已读位置限制对应内核交付确认的“只沿已读页”保证（[内核补充](./m7-kernel-primitives.md) §11.2）：source 即使覆盖后续完整时段，也不能推进到尚未读完的时段。这里按当前工作 Session 已交出页的最大末段判断，不把编排器预览算成模型读取。评测的 span 预览通过夹具只读 capture_preview 在隔离快照上复用分页，不写回时段间隔、已读位置或处理进度；真实 MCP captures 仍在 Update 中登记读页。
+已读位置限制当前工作 Session 实际读过的范围：source 即使覆盖后续完整时段，也不能推进到尚未读完的时段。这里按当前工作 Session 已交出页的最大末段判断，不把编排器预览算成模型读取。评测的 span 预览通过夹具只读 capture_preview 在隔离快照上复用分页，不写回时段间隔、已读位置或处理进度；真实 MCP captures 仍在 Update 中登记读页。
 
-逐页差分通过夹具向 Persona 和内核提交同一组数据，映射引用后逐字比较平台渲染结果，覆盖多批、跨当地日期、跨页时段、无时间、预算和进行中判断；说明与 schema 另与内置工具核对。可信页的字符计数与内置逐条一致，包含跨日新增日期头的计入顺序；每段文字独立限制为 2000 字，渲染后仍检查 token 预算。平台接受至多 500 段，模型未给 limit 时仍取 200，实际页段数同时受模型参数和平台上限约束。跨日字符边界与显式 limit=201 都用真实参数校验并逐页逐字比较。
+分页回归通过夹具向 Persona 提交固定数据，逐字比较平台渲染结果与 P1-⑤a 冻结 golden，覆盖多批、跨当地日期、跨页时段、无时间、预算和进行中判断；说明与 schema 另与冻结 golden 核对。可信页的字符计数沿用冻结的计数口径，包含跨日新增日期头的计入顺序；每段文字独立限制为 2000 字，渲染后仍检查 token 预算。平台接受至多 500 段，模型未给 limit 时仍取 200，实际页段数同时受模型参数和平台上限约束。跨日字符边界与显式 limit=201 都用真实参数校验并逐页逐字比较。
 
-引用位数参与字符与 token 计数，内核日志位置与业务批次位数不同会影响切页。这是已知且可接受的差异：模型看到的引用本来就不同。常规差分使用位数一致的编号，另有边界测试保留不同位数造成的切页差异。
+引用位数参与字符与 token 计数，内核日志位置与业务批次位数不同会影响切页。这是已知且可接受的差异：模型看到的引用本来就不同。冻结常规基准时使用位数一致的编号，另有边界测试保留不同位数造成的切页差异。
 
 ### 擦除与删除一天（P1-④a）
 

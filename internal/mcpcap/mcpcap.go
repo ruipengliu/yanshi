@@ -46,8 +46,6 @@ type Server struct {
 	// CiteCaptures 为 true 时，调用参数中的旁听引用编号（"#57.3"）由平台按发起调用的 Session 解析，被引用片段的说话人
 	// 放在 _meta["yanshi/captures"] 中交给业务线（docs/design/captures.md §6）。
 	CiteCaptures bool `yaml:"cite_captures"`
-	// Acks 声明同业务线的结果可以携带交付回执（ADR-0049）；默认不采信。
-	Acks bool `yaml:"acks"`
 	// AttestsSpeakers 只为同业务线的结构化页提供说话人信任锚（ADR-0050）。
 	AttestsSpeakers bool `yaml:"attests_speakers"`
 }
@@ -349,19 +347,12 @@ func (c *Connector) call(ctx context.Context, s Server, tool string, inv capabil
 	if s.AttestsSpeakers {
 		meta["yanshi/page_options"] = capture.OptionsFor(inv)
 	}
-	if s.CiteCaptures && c.Log != nil {
-		var cites []Citation
-		var err error
-		// 命名空间由登记决定，普通 Server 不为发现 attested 而扫描整段日志。
-		if s.AttestsSpeakers && s.BusinessLine == inv.BusinessLine {
-			var through uint64
-			if inv.State != nil {
-				through = inv.State.Seq
-			}
-			cites, err = AttestedCitations(ctx, c.Log, inv.SessionID, through, args)
-		} else {
-			cites, err = Citations(ctx, c.Log, inv.SessionID, args)
+	if s.CiteCaptures && s.BusinessLine == inv.BusinessLine && c.Log != nil {
+		var through uint64
+		if inv.State != nil {
+			through = inv.State.Seq
 		}
+		cites, err := AttestedCitations(ctx, c.Log, inv.SessionID, through, args)
 		if err != nil {
 			return capability.Result{}, err
 		}
@@ -414,12 +405,6 @@ func (c *Connector) call(ctx context.Context, s Server, tool string, inv capabil
 		return capability.Result{}, fmt.Errorf("%s", b.String())
 	}
 	out := capability.Result{Content: content}
-	// 资格来自平台登记与 Session 的身份，不能让业务线外的响应自报一个可信回执。
-	if s.Acks && s.BusinessLine == inv.BusinessLine {
-		if value, ok := res.Meta["yanshi/ack"]; ok {
-			out.Ack, _ = json.Marshal(value)
-		}
-	}
 	return out, nil
 }
 

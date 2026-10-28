@@ -26,7 +26,7 @@ func TestConsoleScenarios(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "node", "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON", script)
-	cmd.Env = append(os.Environ(), "YANSHI_URL="+e.connURL(), "YANSHI_HTTP="+e.srv.URL, "YANSHI_AGENT=dev", "YANSHI_HELPER=helper", "YANSHI_CAPTURE=capture",
+	cmd.Env = append(os.Environ(), "YANSHI_URL="+e.connURL(), "YANSHI_HTTP="+e.srv.URL, "YANSHI_AGENT=dev", "YANSHI_HELPER=helper",
 		"YANSHI_USER_A=ca", "YANSHI_TOKEN_A="+mustSign("ca"), "YANSHI_USER_B=cb", "YANSHI_TOKEN_B="+mustSign("cb"))
 	out, err := cmd.CombinedOutput()
 	if err != nil || !strings.HasSuffix(strings.TrimSpace(string(out)), "ok") {

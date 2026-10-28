@@ -1,20 +1,14 @@
 package capture_test
 
 import (
-	"context"
 	"encoding/json"
 	"strings"
 	"testing"
-	"time"
-
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
 	"yanshi/internal/capability"
 	"yanshi/internal/capture"
-	"yanshi/internal/eventlog/memlog"
 	"yanshi/internal/model"
 	"yanshi/internal/session"
 )
@@ -93,111 +87,6 @@ func TestStructuredPageValidation(t *testing.T) {
 	}
 }
 
-// 保留现有 capture 测试原文，用同一批日志另验证结构化路径的每一个内容块（只有平台 ref 字段不同）。
-func TestStructuredPageRenderingMatchesBuiltin(t *testing.T) {
-	ctx := context.Background()
-	log := memlog.New()
-	at := time.Date(2026, 10, 27, 15, 59, 0, 0, time.UTC)
-	gs := []*v1.CaptureSegment{
-		{Speaker: v1.Speaker_SPEAKER_WEARER, Text: "原话", SpokenAt: timestamppb.New(at), TimeZone: "Asia/Shanghai"},
-		{Speaker: v1.Speaker_SPEAKER_OTHER, SpeakerKey: "other-1", Text: "回答", SpokenAt: timestamppb.New(at.Add(2 * time.Minute)), TimeZone: "Asia/Shanghai"},
-	}
-	e := &v1.Event{SessionId: "s", Seq: 1, Payload: &v1.Event_CaptureAppended{CaptureAppended: &v1.CaptureAppended{Stream: "transcript", CaptureId: "c", Segments: gs}}}
-	if _, err := log.Append(ctx, "s", 0, e); err != nil {
-		t.Fatal(err)
-	}
-	for _, tc := range []struct {
-		name   string
-		cursor capture.Cursor
-		limit  int
-		now    time.Time
-		wire   capture.StructuredPage
-	}{
-		{"dates", capture.Cursor{}, 200, time.Time{}, capture.StructuredPage{Kind: "page", Span: "1.0", Done: true}},
-		{"first page", capture.Cursor{}, 1, time.Time{}, capture.StructuredPage{Kind: "page", Span: "1.0"}},
-		{"continuation", capture.Cursor{Last: capture.Ref{Seq: 1, Index: 0}, Span: capture.Ref{Seq: 1, Index: 0}}, 200, time.Time{}, capture.StructuredPage{Kind: "page", Span: "1.0", Cont: true, Done: true}},
-		{"empty", capture.Cursor{Last: capture.Ref{Seq: 1, Index: 1}}, 200, time.Time{}, capture.StructuredPage{Kind: "empty"}},
-		{"in progress", capture.Cursor{}, 200, at.Add(3 * time.Minute), capture.StructuredPage{Kind: "in_progress", Span: "1.0", LastAt: at.Add(2 * time.Minute).Format(time.RFC3339), TimeZone: "Asia/Shanghai"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			want, wn, err := capture.Page(ctx, log, "s", tc.cursor, capture.Options{Limit: tc.limit, MaxChars: capture.MaxChars, Gap: 5 * time.Minute, Now: tc.now})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if tc.wire.Kind == "page" {
-				start, end := 0, len(gs)
-				if tc.name == "first page" {
-					end = 1
-				}
-				if tc.name == "continuation" {
-					start = 1
-				}
-				for i := start; i < end; i++ {
-					g := gs[i]
-					who := "wearer"
-					if g.GetSpeaker() == v1.Speaker_SPEAKER_OTHER {
-						who = "other"
-					}
-					tc.wire.Segments = append(tc.wire.Segments, capture.PageSegment{Ref: (capture.Ref{Seq: 1, Index: i}).String(), Speaker: who, SpeakerKey: g.GetSpeakerKey(), Text: g.GetText(), SpokenAt: g.GetSpokenAt().AsTime().Format(time.RFC3339), TimeZone: g.GetTimeZone()})
-				}
-			}
-			raw, _ := json.Marshal(tc.wire)
-			p, err := capture.ParsePage(raw, capture.PageOptions{Limit: 200, MaxChars: 6000})
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, gn, err := capture.Render(p, 0)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if model.Text(model.ExpandCaptures(got)) != model.Text(model.ExpandCaptures(want)) || gn.String() != wn.String() || len(got) != len(want) {
-				t.Fatal("rendering changed")
-			}
-			for i, b := range got {
-				copy := proto.Clone(b).(*v1.ContentBlock)
-				if g := copy.GetCapture(); g != nil {
-					g.Ref = ""
-				}
-				if !proto.Equal(copy, want[i]) {
-					t.Fatalf("block %d differs", i)
-				}
-			}
-		})
-	}
-}
-
-func TestStructuredEndedPage(t *testing.T) {
-	log := timedLog(t, []string{"2026-10-23T10:00 原话", "2026-10-23T11:00 下一时段"})
-	want, wn, err := capture.Page(context.Background(), log, "s", capture.Cursor{}, capture.Options{Limit: 200, MaxChars: 6000, Gap: gap})
-	if err != nil {
-		t.Fatal(err)
-	}
-	p := capture.RenderPage{Kind: "page", Span: capture.Ref{Seq: 2}, Ended: true}
-	for _, b := range want {
-		if g := b.GetCapture(); g != nil {
-			g = proto.Clone(g).(*v1.CaptureSegment)
-			g.Ref = "2.0"
-			p.Segments = append(p.Segments, g)
-		}
-	}
-	got, gn, err := capture.Render(p, 0)
-	if err != nil || wn.String() != gn.String() || model.Text(model.ExpandCaptures(want)) != model.Text(model.ExpandCaptures(got)) {
-		t.Fatal("ended rendering differs")
-	}
-}
-
-func TestPageOptionsFollowBuiltinParameters(t *testing.T) {
-	inv := capability.Invocation{Agent: &agentdef.Def{Streams: []agentdef.Stream{{Name: capture.Stream, ExchangeGap: 9 * time.Minute}}, Context: agentdef.Context{MaxToolResult: 1234}}}
-	o := capture.OptionsFor(inv)
-	if o.Limit != capture.MaxLimit || o.MaxChars != capture.MaxChars || o.GapMS != (9*time.Minute).Milliseconds() || o.MaxToolResult != 1234 {
-		t.Fatalf("options = %+v", o)
-	}
-	inv.State = &session.State{Captures: session.CaptureLog{Read: map[string]*v1.CaptureRead{capture.Stream: {ExchangeGapMs: 60000}}}}
-	if capture.OptionsFor(inv).GapMS != 60000 {
-		t.Fatal("committed gap changed")
-	}
-}
-
 // max_chars 只决定页大小，不能以它代替单段长度和渲染后的 token 预算。
 func TestStructuredPageCharacterLimits(t *testing.T) {
 	p := capture.StructuredPage{Kind: "page", Span: "57.0", Done: true, Segments: []capture.PageSegment{{Ref: "57.0", Speaker: "wearer", Text: strings.Repeat("字", session.MaxCaptureText)}}}
@@ -232,24 +121,10 @@ func TestStructuredPageCharacterLimits(t *testing.T) {
 	}
 }
 
-// PageOptions.Limit 是可接受上限，改它不改变内置工具的默认 200 段或模型参数。
-func TestPageOptionsDoNotChangeBuiltinLimit(t *testing.T) {
-	log := appendLog(t, 2, 101)
-	tool := capture.New(log, nil)
-	for _, tc := range []struct {
-		args string
-		want int
-	}{
-		{`{"all":true}`, capture.DefaultLimit},
-		{`{"all":true,"limit":201}`, 201},
-		{`{"all":true,"limit":500}`, 202},
-	} {
-		blocks, err := tool.Invoke(context.Background(), capability.Invocation{SessionID: "s", Arguments: tc.args})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := segments(blocks); got != tc.want {
-			t.Fatalf("%s: %d segments, want %d", tc.args, got, tc.want)
-		}
+func TestPageOptions(t *testing.T) {
+	inv := capability.Invocation{Agent: &agentdef.Def{Context: agentdef.Context{MaxToolResult: 1234}}}
+	o := capture.OptionsFor(inv)
+	if o.Limit != capture.MaxLimit || o.MaxChars != capture.MaxChars || o.GapMS != 300000 || o.MaxToolResult != 1234 {
+		t.Fatalf("options = %+v", o)
 	}
 }

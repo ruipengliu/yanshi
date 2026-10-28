@@ -43,7 +43,7 @@ type Verdict struct {
 - **普通调用结果暂不单独检查**：设备、沙箱、未带可信结构化页的 MCP 的结果进入模型上下文，但由其衍生、展示给用户的内容都经过输出检查。上线前评估是否需要对外部来源（MCP、网页）的结果单独检查。
 - **上下文压缩的摘要不检查**：它不展示给用户，内容来自已检查过的输入与输出。
 
-attested 页沿用 `SubmitCaptures` 的 `moderation.Request{Stage: Input, BusinessLine, SessionID, Text}`，Text 为片段文字换行拼接；不使用模型输出的 For 构造。不同读取不缓存审核结果，本次执行完成后的追加重试复用 Worker 的 executed 结果。格式及错误回显边界见 [旁听](./captures.md) §12。
+attested 页使用 `moderation.Request{Stage: Input, BusinessLine, SessionID, Text}`，Text 为片段文字换行拼接；不使用模型输出的 For 构造。不同读取不缓存审核结果，本次执行完成后的追加重试复用 Worker 的 executed 结果。格式及错误回显边界见 [旁听](./captures.md) §12。
 
 ### `ContentModerated` 事件
 

@@ -3,8 +3,6 @@
 package e2e
 
 import (
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"bufio"
 	"bytes"
 	"context"
@@ -20,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	v1 "yanshi/gen/yanshi/v1"
@@ -52,7 +51,6 @@ import (
 	"yanshi/internal/runtime"
 	"yanshi/internal/sandbox"
 	sandboxdocker "yanshi/internal/sandbox/docker"
-	"yanshi/internal/session"
 	"yanshi/internal/workqueue"
 	"yanshi/sdk/nodesdk"
 )
@@ -142,9 +140,7 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 		Call:         agentdef.CallConfig{Model: "fake/voice", Voice: "v1", Instructions: "你是语音助手"}},
 		// helper 是委托的目标（docs/design/m5-multi-agent.md）。
 		&agentdef.Def{Name: "helper", Version: "1", Model: "script/any", Description: "把输入复述一遍的助手",
-			Capabilities: []string{"ask_user", "device:*"}},
-		// capture 接收旁听转写（docs/design/captures.md）。
-		&agentdef.Def{Name: "capture", Version: "1", Model: "script/any", Capabilities: []string{"captures"}, Streams: []agentdef.Stream{{Name: session.StreamTranscript}}})
+			Capabilities: []string{"ask_user", "device:*"}})
 	if err != nil {
 		t.Fatal(err)
 	}

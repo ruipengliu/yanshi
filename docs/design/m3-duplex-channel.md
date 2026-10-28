@@ -60,9 +60,7 @@ HostApp 实例与网关之间只保持一条 **Connection**（WebSocket，路径
 
 ## 5. 请求
 
-`ClientRequest` 可以是创建 Session、提交输入（新 Run 或插话）、提交旁听转写、中断、审批、回答、取消后台调用或关闭，每个请求恰好对应一个 `ClientResponse`（以 `request_id` 关联）。
-
-提交旁听转写（`SubmitCaptures{session_id, stream, capture_id, segments}`，ADR-0036、ADR-0039）与 `POST /v1/sessions/{id}/captures` 走同一条路径（`service.Service.SubmitCaptures`）：写入 `CaptureAppended`，不开启 Run；同一 `capture_id` 重试返回 `duplicate`，`redacted` 是内容安全拦截的段数（[旁听](./captures.md) §3）。
+`ClientRequest` 可以是创建 Session、提交输入（新 Run 或插话）、中断、审批、回答、取消后台调用或关闭，每个请求恰好对应一个 `ClientResponse`（以 `request_id` 关联）。
 
 取消后台调用（`CancelBackground{session_id, call_id}`，ADR-0035）与 `POST /v1/sessions/{id}/background/{call}/cancel` 走同一条路径（`service.Service.CancelBackground`）：撤回投递，写入 `BackgroundCancelled`，不开启新 Run；调用已了结时返回 `conflict`，不是后台调用时返回 `not_found`。
 
@@ -77,7 +75,7 @@ HostApp 实例与网关之间只保持一条 **Connection**（WebSocket，路径
   - Go SDK 的 `Submit` 为每次提交生成 ID，`ErrDisconnected` 时重连后以同一 ID 自动重试，直到得到结果或 ctx 结束。需要跨进程重启继续重试的 HostApp，自己生成并持久保存 ID，调用 `SubmitInput`；
   - 其余请求：中断、关闭重复执行是无操作，审批、回答、取消后台调用重复执行返回 `conflict`，都不会产生重复效果；重试创建 Session 会再创建一个。
 
-SDK（`sdk/nodesdk`）：`Executor` 为 nil 时连接只作会话客户端。主要方法有 `Subscribe(sessionID, after, handler)`、`CreateSession`、`Submit` / `SubmitText`、`SubmitCaptures`、`Interrupt`、`Decide`、`CancelBackground`、`CloseSession`。回调在接收 goroutine 中按到达顺序串行调用，不应阻塞。网页（TypeScript）与移动端（gomobile）SDK 语义相同，见[端侧 SDK](./m3-client-sdks.md)。
+SDK（`sdk/nodesdk`）：`Executor` 为 nil 时连接只作会话客户端。主要方法有 `Subscribe(sessionID, after, handler)`、`CreateSession`、`Submit` / `SubmitText`、`Interrupt`、`Decide`、`CancelBackground`、`CloseSession`。回调在接收 goroutine 中按到达顺序串行调用，不应阻塞。网页（TypeScript）与移动端（gomobile）SDK 语义相同，见[端侧 SDK](./m3-client-sdks.md)。
 
 ## 6. 在场
 

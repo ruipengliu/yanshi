@@ -12,7 +12,7 @@ import (
 	"yanshi/internal/moderation"
 )
 
-// attestedPage 与 SubmitCaptures 使用相同的整批、逐段、组合违规兜底规则；不把提供商错误带进日志。
+// attestedPage 先整页审核，违规时逐段复核，组合违规时整页占位；不把提供商错误带进日志。
 func (w *Worker) attestedPage(ctx context.Context, inv capability.Invocation, raw json.RawMessage) ([]*v1.ContentBlock, error) {
 	opts := capture.OptionsFor(inv)
 	page, err := capture.ParsePage(raw, opts)

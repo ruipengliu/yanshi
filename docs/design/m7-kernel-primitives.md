@@ -1,6 +1,6 @@
 # M7 内核补充：Capture 正文存储、擦除、交付确认、定时、出站流、单次调用
 
-> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）；交付确认（§11）与 EndUser 删除屏障（§12）已实现，其余未实现 · **§2–§4、§11 由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 取代**（旁听原文存放在业务线；§11 按其退役条件删除），§5 的 `window.stream`、§6 的擦除与修订信封不做 · ADR-0044（已取代）、ADR-0045、ADR-0046、ADR-0047、ADR-0049（已取代）、ADR-0050 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
+> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）；交付确认（§11）已删除，EndUser 删除屏障（§12）已实现，其余未实现 · **§2–§4、§11 由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 取代**（旁听原文存放在业务线；§11 已删除），§5 的 `window.stream`、§6 的擦除与修订信封不做 · ADR-0044（已取代）、ADR-0045、ADR-0046、ADR-0047、ADR-0049（已取代）、ADR-0050 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
 
 xinli 落地需要内核补上的原语。每一项都按[整体架构](./persona-architecture.md) §9 的判据给出理由：第二条业务线也会需要，并且业务侧做不到或做了不安全。业务语义（交谈、承诺、项目、人）一律不进内核。
 
@@ -48,7 +48,7 @@ CREATE TABLE capture_segments (
 ```
 
 - 契约：`CaptureSegment.text` 在日志中不再填写（字段编号保留，`buf breaking` 通过；旧日志不再读取，见 §15）；提交接口的 `text` 不变，由 service 拆出写入存储。`CaptureAppended` 只含说话人、`speaker_key`、`speaker_ref`、时间、`redacted`。
-- **写入**：`service.SubmitCaptures` 的决策中，事件与片段在同一事务中写入（同一 Session 键、同一分片），经 `lifecycle.Recheck` 先写、后查删除记录。
+- **写入**：旧设计的内核采集决策中，事件与片段在同一事务中写入（同一 Session 键、同一分片），经 `lifecycle.Recheck` 先写、后查删除记录。
 - **读取**：capture 包中新的 `Store` 接口，内存与 PostgreSQL 两种实现，通过新的一致性套件 `capturetest`；在 `app.Stores` 中构造、在 `app.SessionData` 登记，接入 `internal/sim` 的差分测试与删除不变量。
 
 ### 2.3 删除与分区
@@ -259,30 +259,9 @@ quota:
 - 给模型看的文本：`#57.4 10:16 [他人 other-1 @P-0012]`；`cite_captures` 的 `_meta` 附上它。
 - 只有佩戴者以外的片段可以带。
 
-## 11. 交付确认（Ack）
+## 11. 交付确认（已删除）
 
-> xinli 已在 P1 第 2 步退役交付确认：xinli-day 版本 2 不声明流，Persona 关闭 `acks`、不再输出回执，改在接受范围变更集的同一事务中推进业务日处理进度（ADR-0050、Q39）。以下保留内核旧路径的说明，等 P1 第 5 步删除。
-
-### 11.1 问题
-
-读取位置在 `RunCompleted` 时提交本 Run 读到的最后一页（[旁听](./captures.md) §5）。工具调用失败只记为一条错误结果（`Worker` 的调用执行），模型仍可正常结束 Run；业务线拒收时，模拟服务甚至返回成功的 MCP 响应、只在文字中写明拒绝。于是"读页成功 → 交出失败 → 模型回复'稍后再试' → Run 完成"会让读取位置越过没有保存的时段，之后的 `after: "new"` 再也读不到它。读取位置的契约本身没有错，错在把"读过"当成"业务已保存"。
-
-### 11.2 设计
-
-- **业务线给出结构化回执。** 业务线保存一个变更集后，在 MCP 结果中附 `_meta["yanshi/ack"] = {stream, from, through}`：它已持久化了这个流上 `[from, through]` 的范围。拒收、部分保存不附回执。回执是业务线对平台的声明，不是给模型看的文字。
-- **AgentDef 声明需要确认的流**：`streams[].ack: true`。声明后，读取位置只按回执推进：
-  - 平台在 `ToolResult.CaptureAck` 中记下回执（契约见 `proto/yanshi/v1/event.proto` 的 CaptureAck）。只采信同一业务线、登记中声明了 `acks: true`（`mcpcap.Server.Acks`）的 MCP Server 的调用结果；`session.CheckCaptureAck` 与 `State.Apply` 校验。回执不进入模型上下文；
-  - `CaptureRead.Start` 记录本页实际开始读取的游标（`after: "new"` 已解析为提交位置，从头统一为 `"0"`），`first` 记录本页第一段的 Ref；`ack` 记录这次读取使用的 `agentdef.Stream.Ack` 声明。Run 保留所有需要确认的页（`session.Run.CapturePages`）与本 Run 的回执（`session.Run.CaptureAcks`），快照一并保存；
-  - `RunCompleted` 时，从已提交位置起，在本 Run 的页中找 `start` 等于当前位置、且被同一回执完整覆盖 `[first, after 的 Last]` 的页；若有多个，取页尾最远的，再从该页尾继续。找不到便停止，提交最后一页真实的完整游标及其时段间隔。以页拼链，不用 Ref 的序号相邻性推断连续：两批 Capture 之间可能夹着别的 Event。回执越过实际读取范围，也只能提交到被覆盖的已读页尾；
-  - 没有新内容的时段也要交出（空变更集，xinli-day 已经每个时段一次 `file_changes`），否则前缀断开。
-- **未声明 `ack` 的流**：行为不变。
-- 切换前的 `xinli-day` 版本 1 声明 `ack: true`；此用法现已退役。
-
-### 11.3 语义核对
-
-- 平台不判断业务线是否真的保存了：回执是业务线的责任；平台保证的是"没有回执的范围不会被跳过"。
-- 确定性：回执随 `ToolResult` 写入日志，投影只从日志计算前缀。
-- 与触发的关系：读取位置没有前进时，触发的"同一位置只触发一次"仍按最后一个 Capture 的序号判断；未确认的时段由下一次触发（有新的 Capture 时）或当天整理补上。
+ADR-0050 的退役条件已满足。内核不再登记回执或在 Run 完成时推进旁听读取位置；业务线在保存整理结果的同一事务中推进处理进度。旧协议消息只为解码日志保留。
 
 ## 12. EndUser 删除屏障
 
@@ -319,13 +298,13 @@ quota:
 
 ## 15. 测试、实施与兼容
 
-- **单元与契约**：`session`（擦除与修订的校验、平台专属字段、回执拼前缀、定时的投影与 UTC、`redo_of` 的拒绝情形、流与 `scope: run` 的加载校验）；`capture`（展开以日志前缀为准、擦除先于清空时的占位）；RRULE 子集与时区（含夏令时跳过与重复）；`authz_test.go` 的新接口。
+- **单元与契约**：`session`（擦除与修订的校验、平台专属字段、定时的投影与 UTC、`redo_of` 的拒绝情形、流与 `scope: run` 的加载校验）；`capture`（展开以日志前缀为准、擦除先于清空时的占位）；RRULE 子集与时区（含夏令时跳过与重复）；`authz_test.go` 的新接口。
 - **一致性套件**：`capturetest`、`outboxtest`，内存与 PostgreSQL 两种实现；`workqueuetest` 覆盖到期表迁移与唤醒、取消、删除的交错。
-- **模拟测试**（`internal/sim`）：擦除与 Capture 提交、活跃 Run、删除交错，清空失败后由 Janitor 重试；业务线拒收与 MCP 故障下读取位置不越过未确认的时段；定时在写入前后崩溃不重复、不遗漏，跳过落事件；出站流乱序提交不漏、删除后只剩信封；注销与按 EndUser 的写入交错。覆盖统计：`CapturesErased`、`CapturesCorrected`、`AcksCommitted`、`SchedulesFired`、`SchedulesSkipped`、`OutboxRows`、`EndUserBarrierWithdrawn`。
+- **模拟测试**（`internal/sim`）：擦除与 Capture 提交、活跃 Run、删除交错，清空失败后由 Janitor 重试；定时在写入前后崩溃不重复、不遗漏，跳过落事件；出站流乱序提交不漏、删除后只剩信封；注销与按 EndUser 的写入交错。覆盖统计：`CapturesErased`、`CapturesCorrected`、`SchedulesFired`、`SchedulesSkipped`、`OutboxRows`、`EndUserBarrierWithdrawn`。
 - **评测**：`capture-*` 与基线一致（展开后模型看到的文本不变）；新增 `schedule-weekly-report`、`redo-different-answer`、`oneshot-live-brief`、`capture-erase-midrun`（整理中擦除，之后的整理与 Persona 中都没有被擦除的内容）。
 - **e2e**：擦除、修订、回执、定时、出站流、单次调用各走一次真实 HTTP。
 - **阶段**：按[整体架构](./persona-architecture.md) §11。P1 验收另含"擦除跨库竞态"与"出站流消费者离线超过 72 小时后对账"。
-- **不保留对旧日志的兼容**（与 [m5](./m5-inputs-triggers-loops.md) §11 相同）：带 `text` 的 `CaptureAppended` 在 P1 之后不再读取，Mac mini 的开发数据库在部署 P1 之前清空（届时先确认）。
+- **旧日志兼容**：CaptureAppended、CaptureRead 与 CaptureAck 的协议定义保留，退役事件和位置字段在 Apply 中忽略；投影版本升级后旧快照作废。
 
 ## 16. 不在这一版
 

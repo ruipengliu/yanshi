@@ -31,11 +31,6 @@ export function newInputId() {
   return "in_" + randomHex(16);
 }
 
-/** 旁听批次的 ID（与网页 SDK 的 newCaptureId 同形）。 */
-export function newCaptureId() {
-  return "cap_" + randomHex(16);
-}
-
 export function randomHex(n) {
   const b = new Uint8Array(n);
   globalThis.crypto.getRandomValues(b);
@@ -739,34 +734,6 @@ export class SimDevice {
       } catch (e) {
         drop = false;
         if (e instanceof DisconnectedError && inputId !== "" && this.wanted) continue;
-        throw e;
-      }
-    }
-  }
-
-  /**
-   * 以 HostApp 的身份提交一批旁听转写（docs/design/captures.md §3）：segments 为 [{speaker: "wearer" | "other", key, text}]，
-   * 不开启 Run。说话时间取提交时刻、时区取浏览器的时区：整理时据此显示当地的日期与时刻。连接在响应之前断开时以同一
-   * captureId 重试：已写入的返回 duplicate。
-   */
-  async submitCaptures(sessionId, segments, { captureId = newCaptureId(), stream = "transcript" } = {}) {
-    const spokenAt = new Date().toISOString();
-    // 浏览器无法确定时区时给出 "Etc/Unknown"，它不是 IANA 时区：不填，整理时不显示时间。
-    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "";
-    const timeZone = zone === "Etc/Unknown" ? "" : zone;
-    const segs = segments.map((s) => ({
-      speaker: s.speaker === "wearer" ? "SPEAKER_WEARER" : "SPEAKER_OTHER",
-      speaker_key: s.speaker === "wearer" ? "" : (s.key ?? ""),
-      text: s.text,
-      spoken_at: spokenAt,
-      time_zone: timeZone,
-    }));
-    for (;;) {
-      try {
-        const r = await this.request({ submit_captures: { session_id: sessionId, stream, capture_id: captureId, segments: segs } });
-        return { duplicate: !!r.duplicate, redacted: r.redacted ?? 0, captureId };
-      } catch (e) {
-        if (e instanceof DisconnectedError && this.wanted) continue;
         throw e;
       }
     }

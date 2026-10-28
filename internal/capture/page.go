@@ -11,11 +11,13 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v1 "yanshi/gen/yanshi/v1"
-	"yanshi/internal/agentdef"
 	"yanshi/internal/capability"
 	"yanshi/internal/model"
 	"yanshi/internal/session"
 )
+
+// DefaultExchangeGap 固定为五分钟；业务线分页与平台参数保持一致，不再由 AgentDef 配置。
+const DefaultExchangeGap = 5 * time.Minute
 
 // PageOptions 由平台交给业务线，避免两边的分页与结果预算不一致。
 type PageOptions struct {
@@ -26,26 +28,12 @@ type PageOptions struct {
 }
 
 func OptionsFor(inv capability.Invocation) PageOptions {
-	gap := invocationGap(inv)
+	gap := DefaultExchangeGap
 	o := PageOptions{Limit: MaxLimit, MaxChars: MaxChars, GapMS: gap.Milliseconds()}
 	if inv.Agent != nil {
 		o.MaxToolResult = inv.Agent.Context.MaxToolResult
 	}
 	return o
-}
-
-// invocationGap 保留内置首次读取的 duration 精度，线上参数另转换为毫秒。
-func invocationGap(inv capability.Invocation) time.Duration {
-	gap := agentdef.DefaultExchangeGap
-	if d, ok := inv.Agent.Stream(Stream); ok {
-		gap = d.ExchangeGap
-	}
-	if inv.State != nil {
-		if r := inv.State.Captures.Read[Stream]; r != nil {
-			gap = time.Duration(r.GetExchangeGapMs()) * time.Millisecond
-		}
-	}
-	return gap
 }
 
 // StructuredPage 是可信 MCP 页的线上契约；不给业务线提供填写页头或游标的入口。
@@ -180,7 +168,7 @@ func ParsePage(raw json.RawMessage, o PageOptions) (RenderPage, error) {
 				return p, invalidPage("时区")
 			}
 		}
-		// max_chars 约束切页，逐条复现 page 的检查顺序；真正的结果预算由 Render 兜底。
+		// max_chars 约束切页，沿用冻结的分页检查顺序；真正的结果预算由 Render 兜底。
 		n := utf8.RuneCountInString("#" + ref.String() + " " + model.CaptureText(g))
 		if i > 0 && chars+n > o.MaxChars {
 			return p, invalidPage("字符上限")
@@ -196,7 +184,7 @@ func ParsePage(raw json.RawMessage, o PageOptions) (RenderPage, error) {
 	return p, nil
 }
 
-// Render 与日志读取共用同一纯渲染器，预算检查在审核之后也执行，防止占位比原话长。
+// Render 使用平台的纯渲染器，预算检查在审核之后也执行，防止占位比原话长。
 func Render(p RenderPage, maxToolResult int) ([]*v1.ContentBlock, Cursor, error) {
 	segs := make([]segment, len(p.Segments))
 	for i, g := range p.Segments {

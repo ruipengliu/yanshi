@@ -127,7 +127,7 @@ func requireCoverage(t *testing.T, total Stats, names ...string) {
 
 func TestSimulationWithFaults(t *testing.T) {
 	total := parallelSeeds(t, seedList(), func(t *testing.T, s uint64) Stats {
-		return run(t, s, Options{Faults: true}).Stats
+		return run(t, s, Options{Faults: true, Attested: true}).Stats
 	})
 	requireCoverage(t, total, "Runs", "Steers", "Interrupts", "Crashes", "Takeovers", "OutcomeUnknown", "Retried",
 		"NodeCrashes", "Redeliveries", "Approvals", "Denials", "Suspensions", "DeviceResults", "Timeouts",
@@ -140,7 +140,7 @@ func TestSimulationWithFaults(t *testing.T) {
 		"CallsStarted", "CallsReplaced", "CallTranscripts", "CallTranscriptsBlocked", "CallTasks", "CallAnswers", "CallConflicts",
 		"StoreFaults", "WakeFaults", "UncertainRetries", "CatalogFaults", "ResumedClaims", "PastRuns", "Delegations", "DelegationResults", "ChildDeletionRaces", "CascadeFaults", "Decisions", "DecisionFallbacks", "GracefulStops", "Handoffs",
 		"Backgrounded", "BackgroundResults", "BackgroundTimeouts", "BackgroundCancels", "DisconnectWakes",
-		"CapturesAppended", "CaptureDuplicates", "CapturesRejected", "CapturesRedacted", "CaptureStoreFaults", "CaptureReads", "RetentionKeptMemories", "Erasures", "ErasuresInFlight", "ErasureLateWithdrawn", "ErasureKeptMemories", "InvalidArgs", "MemoryPrechecked")
+		"RetentionKeptMemories", "Erasures", "ErasuresInFlight", "ErasureLateWithdrawn", "ErasureKeptMemories", "InvalidArgs", "MemoryPrechecked", "AttestedResults", "AttestedRedactions", "AttestedErrors")
 }
 
 // TestLongRunsWithFaults 让 Run 持续上百轮，检验压缩在故障下保持上下文有界、调用配对完整，且长 Run 能跑完。
@@ -179,7 +179,7 @@ func TestSimulationIsDeterministic(t *testing.T) {
 			for j := range prints[i] {
 				t.Run(fmt.Sprintf("seed%d-%d", s, j), func(t *testing.T) {
 					t.Parallel()
-					prints[i][j] = run(t, s, Options{Faults: true, LongRuns: s == 7}).Fingerprint()
+					prints[i][j] = run(t, s, Options{Faults: true, Attested: true, LongRuns: s == 7}).Fingerprint()
 				})
 			}
 		}
@@ -194,26 +194,10 @@ func TestSimulationIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestCaptureReadsWithFaults 集中读取旁听，结果侧的覆盖断言不能由仅生成参数或返回错误满足。
-func TestCaptureReadsWithFaults(t *testing.T) {
-	total := parallelSeeds(t, seedList(), func(t *testing.T, s uint64) Stats {
-		return run(t, s, Options{Faults: true, CaptureReads: true, Ticks: 1000}).Stats
-	})
-	requireCoverage(t, total, "CaptureResults", "CaptureSuccesses", "CapturePages", "CaptureMorePages", "CaptureContinuations", "CaptureNewReads", "CaptureNewResumes")
-}
-
-// 业务拒收与 MCP 失败仍可让 Run 完成，读取位置必须留在已确认的连续页尾。
-func TestCaptureAcksWithFaults(t *testing.T) {
-	total := parallelSeeds(t, seedList(), func(t *testing.T, s uint64) Stats {
-		return run(t, s, Options{Faults: true, CaptureReads: true, CaptureAcks: true, Ticks: 1000}).Stats
-	})
-	requireCoverage(t, total, "AcksCommitted", "AcksMissing", "AckRefusals", "AckMCPFailures")
-}
-
 // 与任意 Step 间的重启、追加前失败、追加后结果未知交错；每步 Reduce 与快照恢复比较也覆盖 attested。
 func TestAttestedPagesWithFaults(t *testing.T) {
 	total := parallelSeeds(t, seedList(), func(t *testing.T, s uint64) Stats {
 		return run(t, s, Options{Faults: true, Attested: true, Ticks: 1000}).Stats
 	})
-	requireCoverage(t, total, "AttestedResults", "AttestedRedactions", "AttestedErrors")
+	requireCoverage(t, total, "AttestedResults", "AttestedRedactions", "AttestedErrors", "MemoryPrechecked")
 }

@@ -260,7 +260,7 @@ type Turn struct {
 	// AwaitBackground 为 true 时本轮不提交输入，而是等待后台调用的了结（ADR-0035）：设备上线后送达的结果（或到期）
 	// 作为一条输入开启新 Run（或并入进行中的 Run），本轮检查的是那个 Run。须与 Input 二选一。
 	AwaitBackground bool `yaml:"await_background"`
-	// Captures 是本轮输入之前提交的一批旁听：xinli 交给 Persona 的业务日，内置 captures 仍交给 Session；
+	// Captures 是本轮输入之前提交的一批旁听：交给已绑定的 Persona 业务日；
 	// 跨天的用例在 new_session 的一轮提交新一天的旁听；历史 at 保留，业务日仍共用本次运行当天。
 	Captures []CaptureSegment `yaml:"captures"`
 	// CapturesFile 是用例目录下的数据文件（YAML 的旁听列表，格式同 captures），追加在 Captures 之后：长的一天不写在用例里。

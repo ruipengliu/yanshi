@@ -496,6 +496,7 @@ type Event_BackgroundCancelled struct {
 }
 
 type Event_CaptureAppended struct {
+	// 已退役：ADR-0050；只为解码旧日志保留，不再写入。
 	CaptureAppended *CaptureAppended `protobuf:"bytes,33,opt,name=capture_appended,json=captureAppended,proto3,oneof"`
 }
 
@@ -810,7 +811,7 @@ type ContentBlock_BackgroundResult struct {
 }
 
 type ContentBlock_Capture struct {
-	// capture 只出现在 captures 工具的结果中（由平台从日志读出写入，docs/design/captures.md §5）：说话人是结构化字段，
+	// capture 只出现在 attested 结果中（由平台渲染写入，docs/design/captures.md §12）：说话人是结构化字段，
 	// Memory 写入闸门与注入判断据此区分佩戴者与他人的话，不解析给模型看的文本。
 	Capture *CaptureSegment `protobuf:"bytes,7,opt,name=capture,proto3,oneof"`
 }
@@ -2795,10 +2796,9 @@ type ToolResult struct {
 	// 非空表示调用转入后台（ADR-0035）：路由到设备的调用已派发、设备离线超过宽限期，Worker 不再等待。content 是交给模型的
 	// 占位说明，调用在 Session 级继续等待设备，结果或到期之后作为一条输入（BackgroundResult）送达。只由 Worker 写入。
 	Backgrounded *Backgrounded `protobuf:"bytes,9,opt,name=backgrounded,proto3" json:"backgrounded,omitempty"`
-	// captures 读到的位置（ADR-0039）：只由 Worker 写入 captures 的结果，模型看不到；本页没有读到任何旁听时为空。
-	// Run 完成时提交为该流已读到的位置，after = "new" 由此接着读，不解析给模型看的文字。
+	// 已退役：ADR-0050；只为解码旧日志保留，不再写入。
 	CaptureRead *CaptureRead `protobuf:"bytes,10,opt,name=capture_read,json=captureRead,proto3" json:"capture_read,omitempty"`
-	// 业务线的交付回执（ADR-0049）：只由 Worker 从同业务线、声明了 acks 的 MCP 结果写入，模型看不到。
+	// 已退役：ADR-0050；只为解码旧日志保留，不再写入。
 	CaptureAck *CaptureAck `protobuf:"bytes,11,opt,name=capture_ack,json=captureAck,proto3" json:"capture_ack,omitempty"`
 	// 只由 Worker 写入可信 MCP 页；来源推导据此识别平台渲染的内容，模型看不到。
 	Attested      bool `protobuf:"varint,12,opt,name=attested,proto3" json:"attested,omitempty"`
@@ -2920,7 +2920,7 @@ func (x *ToolResult) GetAttested() bool {
 	return false
 }
 
-// CaptureRead 是 captures 一页读到的位置（docs/design/m5-inputs-triggers-loops.md §5）。
+// 已退役：ADR-0050；只为解码旧日志保留，不再写入。
 type CaptureRead struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 流名，如 "transcript"。
@@ -3011,7 +3011,7 @@ func (x *CaptureRead) GetAck() bool {
 	return false
 }
 
-// CaptureAck 声明业务线已保存一个流上闭区间 [from, through] 的整理结果；两个端点都是不带 "#" 的引用编号。
+// 已退役：ADR-0050；只为解码旧日志保留，不再写入。
 type CaptureAck struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Stream        string                 `protobuf:"bytes,1,opt,name=stream,proto3" json:"stream,omitempty"`
@@ -4000,14 +4000,13 @@ func (x *CallTranscript) GetInterrupted() bool {
 	return false
 }
 
-// CaptureAppended 是 HostApp 提交的一批旁听转写（docs/design/captures.md，ADR-0036）：EndUser 与他人的日常对话，
-// 不是对 Agent 说的话。它不开启 Run，也不进入对话上下文：Run 经 captures 工具按序号读取。写入前逐段经过内容安全检查。
+// 已退役：ADR-0050；只为解码旧日志保留，不再写入。
 type CaptureAppended struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// HostApp 生成，在 Session 内唯一；重试时不变，按它去重（session.MaxRecentCaptures）。
+	// HostApp 生成，在 Session 内唯一；重试时不变，按它去重。
 	CaptureId string            `protobuf:"bytes,1,opt,name=capture_id,json=captureId,proto3" json:"capture_id,omitempty"`
 	Segments  []*CaptureSegment `protobuf:"bytes,2,rep,name=segments,proto3" json:"segments,omitempty"`
-	// 流名（ADR-0039），必填：流的种类由平台登记（session.KnownStream），AgentDef 声明接收哪些流。旁听转写是 "transcript"。
+	// 已退役的流名，只为解码旧日志保留。
 	Stream        string `protobuf:"bytes,3,opt,name=stream,proto3" json:"stream,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -4079,7 +4078,7 @@ type CaptureSegment struct {
 	// time_zone 是说这段话时手机所在的 IANA 时区（如 "Asia/Shanghai"），由 HostApp 填写。与 spoken_at 都有时，整理时显示
 	// 当地的日期与时刻，模型据此按停顿分开不同的对话、把"明天""周五"换算成日期；为空时不显示时间。
 	TimeZone string `protobuf:"bytes,6,opt,name=time_zone,json=timeZone,proto3" json:"time_zone,omitempty"`
-	// attested 结果中业务线命名空间内的引用；CaptureAppended 中必须为空。
+	// attested 结果中业务线命名空间内的引用。
 	Ref           string `protobuf:"bytes,7,opt,name=ref,proto3" json:"ref,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

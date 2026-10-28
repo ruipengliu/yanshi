@@ -45,7 +45,7 @@ turns:
     approve: true             # 本轮遇到审批时的决定（默认批准）
     new_session: false        # true 表示开一个新 Session（跨 Session 的 Memory 用例）
     crash_after_calls: 0      # >0：Run 发起这么多次调用后"杀掉"执行它的 Worker，检验接管（长 Run 用例）
-    captures:                 # 本轮输入之前提交旁听；xinli-day 经夹具写 Persona，内置 captures Agent 仍写 Session
+    captures:                 # 本轮输入之前提交旁听；经夹具写入已绑定的 Persona 业务日
       - {speaker: other, key: wang, text: "…"}   # speaker: wearer（佩戴者）| other（他人，key 区分不同的人）
       - {speaker: wearer, text: "…", at: "2026-10-23 10:15", topic: reno}   # at：当地时间（Asia/Shanghai），省略时不带时间；topic：主题标签，只用于评测
     captures_file: data/long-day.yaml   # 追加用例目录下数据文件中的旁听（长的一天不写在用例里）
@@ -92,7 +92,7 @@ turns:
 
 **项目归集的碎片率与纯度**（`expect.xinli.grouping`，`internal/eval` 的 `checkGrouping`）：数据文件给每段旁听标上主题（`topic`，闲聊不标）。交谈由模型划定范围（ADR-0042），每段交谈的主题是范围内标了主题的旁听中最多的那个（相同时取先出现的），全是闲聊的没有主题；预置的与被并入别处的交谈不计。一段交谈关联几个项目时，对每个项目各算一次，算作的主题是这段交谈中出现过、且是那个项目在只关联一个项目的交谈中占多数的主题，没有这样的主题时算作交谈自己的主题：老板一次谈了 OKR、客户与团队三件事，分别归入三个项目不算杂质。碎片率是每个主题分散在几个项目中（没有归入项目的交谈每段各算一个），按主题平均；纯度是每个项目中占多数的主题所占的比例（闲聊算作杂质），按交谈与项目的关联数加权。理想值都是 1。
 
-**xinli 的提交与业务日（ADR-0050）。** xinli-day 版本 2 不再向内核提交原文。运行器创建工作 Session 后，以业务线身份经夹具 `bind_day` 绑定业务日，再经 `AppendCaptures` 提交原文；返回的引用用于主题归集与金标对应，不再把引用的批次解释成日志位置。业务日取本次 trial 开始时 `time.Now()` 在 `captureZone`（Asia/Shanghai）的运行当天，不取旁听 `at` 的历史日期，以保持切换前交谈与总览按运行当天归集的评测口径。同一 trial 的 xinli-day Session 依次换绑这一个业务日，共享原文、引用与处理进度，已用完的旧 Session 不再读取旁听；片段自己的说话时间仍用于“明天”等期限计算。具有内置 `captures` 能力的 Agent（如 console-capture）仍走原内核路径，差分测试也保留两套提交。
+**xinli 的提交与业务日（ADR-0050）。** xinli-day 版本 2 不再向内核提交原文。运行器创建工作 Session 后，以业务线身份经夹具 `bind_day` 绑定业务日，再经 `AppendCaptures` 提交原文；返回的引用用于主题归集与金标对应，不再把引用的批次解释成日志位置。业务日取本次 trial 开始时 `time.Now()` 在 `captureZone`（Asia/Shanghai）的运行当天，不取旁听 `at` 的历史日期，以保持切换前交谈与总览按运行当天归集的评测口径。同一 trial 的 xinli-day Session 依次换绑这一个业务日，共享原文、引用与处理进度，已用完的旧 Session 不再读取旁听；片段自己的说话时间仍用于“明天”等期限计算。声明已退役 captures 能力的 AgentDef 在加载时拒绝；分页测试只与冻结 golden 比较。
 
 调用断言与输入中提到的旁听工具名直接改为 `mcp_xinli__captures`，匹配器不提供旧名称别名；其余断言与用例内容不变。
 
@@ -251,12 +251,11 @@ turns:
 
 ## 12. 旁听用例（2026-10-23）
 
-`capture-*` 用例评测旁听业务线的三个 AgentDef（`agents/xinli-*.yaml`，docs/design/xinli-captures.md §1、§10）。每轮的 `captures` 以 HostApp 的身份提交到本轮的 Session；`setup.xinli` 经外部夹具预置本次运行 EndUser 的项目与每日摘要；`setup.no_health` 改在未开启健康信息的业务线 `eval-nohealth` 中运行。
+`capture-*` 用例评测旁听业务线的三个 AgentDef（`agents/xinli-*.yaml`，docs/design/xinli-captures.md §1、§10）。每轮的 `captures` 经夹具提交到本轮 Session 绑定的 Persona 业务日；`setup.xinli` 经外部夹具预置本次运行 EndUser 的项目与每日摘要；`setup.no_health` 改在未开启健康信息的业务线 `eval-nohealth` 中运行。
 
 `make eval` 先构建 `bin/xinli`，命令的 `-xinli-bin` 可指定其他二进制。只有用例配置了 `setup.xinli` 或所用 Agent 白名单包含 `mcp:xinli/*` 时，运行器才启动 `xinli dev -exit-on-stdin-eof`（不带 `-kernel-url`，不自动归集）。运行器读第一行就绪 JSON，以 `mcpcap.ParseServer` 逐项校验 `registrations` 并登记 MCP，经 `fixture_url` 下的 HTTP 做 Seed、State、绑定与用户操作；Seed JSON 字段为 snake_case，用例 YAML 不变。结束时关闭 stdin 并等待退出，超时则终止并回收进程。
 
 `internal/eval/xinlifixture` 镜像 Persona 的数据形状与评分所需只读规则，避免内核反向 import 业务模块（ADR-0043）；类型以 `persona/domain` 为准。评分仍留在评测运行器，夹具不提供 Check。单元测试在 `TestMain` 中将应用构建一次到临时目录，各测试启动隔离的夹具进程并同步回收。
-
 
 基线（`doubao-seed-2-1-lite-260915:minimal`）中全部用例都是 3/3。
 
@@ -332,7 +331,6 @@ commitments:
 **噪声。** 识别错误由数据中的平行字段给出：`asr` 是转写的文字，`heard` 与 `heard_key` 是识别成的说话人与他人的 key。用例写 `noise: true` 时提交这些版本，金标不变，与不带噪声的同一份数据对照，衡量识别错误的影响。说话人识别错了的承诺无从判断：平台以说话人字段为准（ADR-0036），这样的金标不计入任何指标。
 
 **用例。** `capture-workday` 与 `capture-workday-oneshot` 的金标见 `evals/data/workday/gold.yaml`（31 条计入、37 条可选，计入的有 5 条当天改动）。`capture-multiday` 与 `capture-multiday-noisy` 是四个工作日（另一位佩戴者、另一个行业）：每天一个旁听 Session，跨天的改期、完成、取消与改由他人去做，同一件事隔天再提，用户在 App 中的改动，最后在 xinli-assistant 中问"还有哪些没办完""期限怎么变的"（评分模型判断）；27 条计入、23 条可选。数据由剧本 `evals/data/multiday/script.txt` 经 `scripts/gen-multiday.py` 生成（段内的行在起止时刻之间均匀分布），金标的改动时间取自说那句话的时间；改了剧本之后重新生成，生成的 YAML 一并提交。
-
 
 **首次结果（2026-10-26，`doubao-seed-2-1-lite-260915:minimal`，各 3 次，`eval-results/20261026-164217`，已写入基线）。** 四个用例都是 0/3（断言与评分本来就不过），指标给出了差距在哪里（最后一轮，均值 ± 标准差）：
 

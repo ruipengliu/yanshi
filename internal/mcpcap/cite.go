@@ -13,9 +13,8 @@ import (
 	"yanshi/internal/eventlog"
 )
 
-// Citation 是平台对一个旁听引用的解析（docs/design/captures.md §6）：被引用片段的说话人与说话时间。不含文字：他人的
-// 原话只保留在旁听 Session 中（ADR-0037），不经这条路径流到业务线长期保存。说话时间不是对话内容，业务线据此按说话
-// 那天换算"明天""下周二"这类期限（docs/design/xinli-model.md §7）。
+// Citation 是平台对旁听引用的说话人与时间证明（docs/design/captures.md §6）。
+// 原文由业务线保存；此元数据不附文字，避免引用核对额外复制原文。业务线据时间换算相对期限。
 type Citation struct {
 	Ref        string `json:"ref"`
 	Speaker    string `json:"speaker,omitempty"` // "wearer" 或 "other"
@@ -61,33 +60,6 @@ func citationRefs(args json.RawMessage) []string {
 	}
 	walk(v)
 	return refs
-}
-
-// Citations 按日志位置逐个读取内置 captures 引用，不因 Session 中有 attested 结果而切换命名空间。
-func Citations(ctx context.Context, log eventlog.Log, sessionID string, args json.RawMessage) ([]Citation, error) {
-	refs := citationRefs(args)
-	if refs == nil {
-		return nil, nil
-	}
-	out := make([]Citation, 0, len(refs))
-	for _, r := range refs {
-		c := Citation{Ref: "#" + r, Missing: true}
-		ref, ok := capture.ParseRef(r)
-		if ok && ref.Seq > 0 {
-			events, err := log.Read(ctx, sessionID, ref.Seq-1, 1)
-			if err != nil {
-				return nil, err
-			}
-			if len(events) == 1 && events[0].GetSeq() == ref.Seq {
-				if segs := events[0].GetCaptureAppended().GetSegments(); ref.Index < len(segs) {
-					g := segs[ref.Index]
-					c = citation(c.Ref, g)
-				}
-			}
-		}
-		out = append(out, c)
-	}
-	return out, nil
 }
 
 // AttestedCitations 只解析业务线引用，查不到不回退到日志位置。through 为调用投影的序号，0 表示不限；

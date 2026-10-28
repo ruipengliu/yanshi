@@ -9,7 +9,7 @@ import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
-import type { AgentRef, CaptureAck, CaptureRead, ContextCompacted, Event, RecalledMemory, SessionClosed, SessionCreated, ToolCall } from "./event_pb.js";
+import type { AgentRef, ContextCompacted, Event, RecalledMemory, SessionClosed, SessionCreated, ToolCall } from "./event_pb.js";
 import { file_yanshi_v1_event } from "./event_pb.js";
 import type { Message } from "@bufbuild/protobuf";
 
@@ -17,7 +17,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file yanshi/v1/snapshot.proto.
  */
 export const file_yanshi_v1_snapshot: GenFile = /*@__PURE__*/
-  fileDesc("Chh5YW5zaGkvdjEvc25hcHNob3QucHJvdG8SCXlhbnNoaS52MSLoBAoPU2Vzc2lvblNuYXBzaG90Eg8KB3ZlcnNpb24YASABKA0SEgoKc2Vzc2lvbl9pZBgCIAEoCRILCgNzZXEYAyABKAQSKgoHY3JlYXRlZBgEIAEoCzIZLnlhbnNoaS52MS5TZXNzaW9uQ3JlYXRlZBIoCgZjbG9zZWQYBSABKAsyGC55YW5zaGkudjEuU2Vzc2lvbkNsb3NlZBIvCgpjb21wYWN0aW9uGAYgASgLMhsueWFuc2hpLnYxLkNvbnRleHRDb21wYWN0ZWQSFAoMY29tcGFjdGVkX2F0GAcgASgEEiQKBHJ1bnMYCCADKAsyFi55YW5zaGkudjEuUnVuU25hcHNob3QSIQoHaGlzdG9yeRgJIAMoCzIQLnlhbnNoaS52MS5FdmVudBIQCghjYWxsX2lkcxgKIAMoCRIiCgVhZ2VudBgLIAEoCzITLnlhbnNoaS52MS5BZ2VudFJlZhIoCgZpbnB1dHMYDCADKAsyGC55YW5zaGkudjEuSW5wdXRTbmFwc2hvdBIyCgthY3RpdmVfY2FsbBgNIAEoCzIdLnlhbnNoaS52MS5BY3RpdmVDYWxsU25hcHNob3QSLQoJcGFzdF9ydW5zGA4gAygLMhoueWFuc2hpLnYxLlBhc3RSdW5TbmFwc2hvdBIVCg1kZWxlZ2F0ZWRfcnVuGA8gASgJEjUKCmJhY2tncm91bmQYECADKAsyIS55YW5zaGkudjEuQmFja2dyb3VuZENhbGxTbmFwc2hvdBIsCghjYXB0dXJlcxgRIAEoCzIaLnlhbnNoaS52MS5DYXB0dXJlU25hcHNob3QikgEKD0NhcHR1cmVTbmFwc2hvdBILCgNpZHMYASADKAkSDQoFY291bnQYAiABKAQSEAoIbGFzdF9zZXEYAyABKAQSKwoHbGFzdF9hdBgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASJAoEcmVhZBgFIAMoCzIWLnlhbnNoaS52MS5DYXB0dXJlUmVhZCKMAQoWQmFja2dyb3VuZENhbGxTbmFwc2hvdBIPCgdjYWxsX2lkGAEgASgJEg4KBnJ1bl9pZBgCIAEoCRIPCgdub2RlX2lkGAMgASgJEhIKCmNhcGFiaWxpdHkYBCABKAkSLAoIZGVhZGxpbmUYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIpgBCg9QYXN0UnVuU25hcHNob3QSCgoCaWQYASABKAkSDgoGc3RhdHVzGAIgASgFEjAKDHJlcXVlc3RlZF9hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDwoHYXR0ZW1wdBgEIAEoDRINCgV0dXJucxgFIAEoBRIXCg9mcm9tX2JhY2tncm91bmQYBiABKAkiaAoSQWN0aXZlQ2FsbFNuYXBzaG90Eg8KB2NhbGxfaWQYASABKAkSEQoJZGV2aWNlX2lkGAIgASgJEi4KCnN0YXJ0ZWRfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIk4KDUlucHV0U25hcHNob3QSCgoCaWQYASABKAkSDgoGcnVuX2lkGAIgASgJEg8KB3N0ZWVyZWQYAyABKAgSEAoIYW5zd2VyZWQYBCABKAkivgUKC1J1blNuYXBzaG90EgoKAmlkGAEgASgJEg4KBnN0YXR1cxgCIAEoBRIwCgxyZXF1ZXN0ZWRfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg8KB2F0dGVtcHQYBCABKA0SFQoNbGl2ZV9lbmRwb2ludBgFIAEoCRIRCgl0YWtlb3ZlcnMYBiABKAUSGQoRc3RhbGxlZF90YWtlb3ZlcnMYByABKAUSDQoFdHVybnMYCCABKAUSKQoGcmVjYWxsGAkgAygLMhkueWFuc2hpLnYxLlJlY2FsbGVkTWVtb3J5EhAKCHJlY2FsbGVkGAogASgIEiYKBWNhbGxzGAsgAygLMhcueWFuc2hpLnYxLkNhbGxTbmFwc2hvdBIWCg5zdXNwZW5kX3JlYXNvbhgMIAEoCRIzCg9zdXNwZW5kZWRfdW50aWwYDSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhMKC2NvbXBhY3Rpb25zGA4gASgFEhUKDW91dHB1dF90b2tlbnMYDyABKAMSDgoGcmVzdW1lGBAgASgIEjgKCWRlY2lzaW9ucxgRIAMoCzIlLnlhbnNoaS52MS5SdW5TbmFwc2hvdC5EZWNpc2lvbnNFbnRyeRIXCg9mcm9tX2JhY2tncm91bmQYEiABKAkSLQoNY2FwdHVyZV9yZWFkcxgTIAMoCzIWLnlhbnNoaS52MS5DYXB0dXJlUmVhZBItCg1jYXB0dXJlX3BhZ2VzGBQgAygLMhYueWFuc2hpLnYxLkNhcHR1cmVSZWFkEisKDGNhcHR1cmVfYWNrcxgVIAMoCzIVLnlhbnNoaS52MS5DYXB0dXJlQWNrGjAKDkRlY2lzaW9uc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEijgIKDENhbGxTbmFwc2hvdBIhCgRjYWxsGAEgASgLMhMueWFuc2hpLnYxLlRvb2xDYWxsEhgKEHN0YXJ0ZWRfYXR0ZW1wdHMYAiADKA0SDwoHbm9kZV9pZBgDIAEoCRIsCghkZWFkbGluZRgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZG9uZRgFIAEoCBItCghhcHByb3ZhbBgGIAEoCzIbLnlhbnNoaS52MS5BcHByb3ZhbFNuYXBzaG90EjEKDWRpc3BhdGNoZWRfYXQYByABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhIKCmJhY2tncm91bmQYCCABKAgidAoQQXBwcm92YWxTbmFwc2hvdBIPCgdzdW1tYXJ5GAEgASgJEiwKCGRlYWRsaW5lGAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIPCgdkZWNpZGVkGAMgASgIEhAKCGFwcHJvdmVkGAQgASgIQh9aHXlhbnNoaS9nZW4veWFuc2hpL3YxO3lhbnNoaXYxYgZwcm90bzM", [file_google_protobuf_timestamp, file_yanshi_v1_event]);
+  fileDesc("Chh5YW5zaGkvdjEvc25hcHNob3QucHJvdG8SCXlhbnNoaS52MSLKBAoPU2Vzc2lvblNuYXBzaG90Eg8KB3ZlcnNpb24YASABKA0SEgoKc2Vzc2lvbl9pZBgCIAEoCRILCgNzZXEYAyABKAQSKgoHY3JlYXRlZBgEIAEoCzIZLnlhbnNoaS52MS5TZXNzaW9uQ3JlYXRlZBIoCgZjbG9zZWQYBSABKAsyGC55YW5zaGkudjEuU2Vzc2lvbkNsb3NlZBIvCgpjb21wYWN0aW9uGAYgASgLMhsueWFuc2hpLnYxLkNvbnRleHRDb21wYWN0ZWQSFAoMY29tcGFjdGVkX2F0GAcgASgEEiQKBHJ1bnMYCCADKAsyFi55YW5zaGkudjEuUnVuU25hcHNob3QSIQoHaGlzdG9yeRgJIAMoCzIQLnlhbnNoaS52MS5FdmVudBIQCghjYWxsX2lkcxgKIAMoCRIiCgVhZ2VudBgLIAEoCzITLnlhbnNoaS52MS5BZ2VudFJlZhIoCgZpbnB1dHMYDCADKAsyGC55YW5zaGkudjEuSW5wdXRTbmFwc2hvdBIyCgthY3RpdmVfY2FsbBgNIAEoCzIdLnlhbnNoaS52MS5BY3RpdmVDYWxsU25hcHNob3QSLQoJcGFzdF9ydW5zGA4gAygLMhoueWFuc2hpLnYxLlBhc3RSdW5TbmFwc2hvdBIVCg1kZWxlZ2F0ZWRfcnVuGA8gASgJEjUKCmJhY2tncm91bmQYECADKAsyIS55YW5zaGkudjEuQmFja2dyb3VuZENhbGxTbmFwc2hvdEoECBEQElIIY2FwdHVyZXMiPAoPQ2FwdHVyZVNuYXBzaG90SgQIARAGUgNpZHNSBWNvdW50UghsYXN0X3NlcVIHbGFzdF9hdFIEcmVhZCKMAQoWQmFja2dyb3VuZENhbGxTbmFwc2hvdBIPCgdjYWxsX2lkGAEgASgJEg4KBnJ1bl9pZBgCIAEoCRIPCgdub2RlX2lkGAMgASgJEhIKCmNhcGFiaWxpdHkYBCABKAkSLAoIZGVhZGxpbmUYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIpgBCg9QYXN0UnVuU25hcHNob3QSCgoCaWQYASABKAkSDgoGc3RhdHVzGAIgASgFEjAKDHJlcXVlc3RlZF9hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDwoHYXR0ZW1wdBgEIAEoDRINCgV0dXJucxgFIAEoBRIXCg9mcm9tX2JhY2tncm91bmQYBiABKAkiaAoSQWN0aXZlQ2FsbFNuYXBzaG90Eg8KB2NhbGxfaWQYASABKAkSEQoJZGV2aWNlX2lkGAIgASgJEi4KCnN0YXJ0ZWRfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIk4KDUlucHV0U25hcHNob3QSCgoCaWQYASABKAkSDgoGcnVuX2lkGAIgASgJEg8KB3N0ZWVyZWQYAyABKAgSEAoIYW5zd2VyZWQYBCABKAki8QQKC1J1blNuYXBzaG90EgoKAmlkGAEgASgJEg4KBnN0YXR1cxgCIAEoBRIwCgxyZXF1ZXN0ZWRfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg8KB2F0dGVtcHQYBCABKA0SFQoNbGl2ZV9lbmRwb2ludBgFIAEoCRIRCgl0YWtlb3ZlcnMYBiABKAUSGQoRc3RhbGxlZF90YWtlb3ZlcnMYByABKAUSDQoFdHVybnMYCCABKAUSKQoGcmVjYWxsGAkgAygLMhkueWFuc2hpLnYxLlJlY2FsbGVkTWVtb3J5EhAKCHJlY2FsbGVkGAogASgIEiYKBWNhbGxzGAsgAygLMhcueWFuc2hpLnYxLkNhbGxTbmFwc2hvdBIWCg5zdXNwZW5kX3JlYXNvbhgMIAEoCRIzCg9zdXNwZW5kZWRfdW50aWwYDSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhMKC2NvbXBhY3Rpb25zGA4gASgFEhUKDW91dHB1dF90b2tlbnMYDyABKAMSDgoGcmVzdW1lGBAgASgIEjgKCWRlY2lzaW9ucxgRIAMoCzIlLnlhbnNoaS52MS5SdW5TbmFwc2hvdC5EZWNpc2lvbnNFbnRyeRIXCg9mcm9tX2JhY2tncm91bmQYEiABKAkaMAoORGVjaXNpb25zRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUoECBMQFEoECBQQFUoECBUQFlINY2FwdHVyZV9yZWFkc1INY2FwdHVyZV9wYWdlc1IMY2FwdHVyZV9hY2tzIo4CCgxDYWxsU25hcHNob3QSIQoEY2FsbBgBIAEoCzITLnlhbnNoaS52MS5Ub29sQ2FsbBIYChBzdGFydGVkX2F0dGVtcHRzGAIgAygNEg8KB25vZGVfaWQYAyABKAkSLAoIZGVhZGxpbmUYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEgwKBGRvbmUYBSABKAgSLQoIYXBwcm92YWwYBiABKAsyGy55YW5zaGkudjEuQXBwcm92YWxTbmFwc2hvdBIxCg1kaXNwYXRjaGVkX2F0GAcgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBISCgpiYWNrZ3JvdW5kGAggASgIInQKEEFwcHJvdmFsU25hcHNob3QSDwoHc3VtbWFyeRgBIAEoCRIsCghkZWFkbGluZRgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDwoHZGVjaWRlZBgDIAEoCBIQCghhcHByb3ZlZBgEIAEoCEIfWh15YW5zaGkvZ2VuL3lhbnNoaS92MTt5YW5zaGl2MWIGcHJvdG8z", [file_google_protobuf_timestamp, file_yanshi_v1_event]);
 
 /**
  * @generated from message yanshi.v1.SessionSnapshot
@@ -122,13 +122,6 @@ export type SessionSnapshot = Message<"yanshi.v1.SessionSnapshot"> & {
    * @generated from field: repeated yanshi.v1.BackgroundCallSnapshot background = 16;
    */
   background: BackgroundCallSnapshot[];
-
-  /**
-   * 旁听转写的去重窗口与计数（session.State.Captures）。
-   *
-   * @generated from field: yanshi.v1.CaptureSnapshot captures = 17;
-   */
-  captures?: CaptureSnapshot | undefined;
 };
 
 /**
@@ -139,39 +132,11 @@ export const SessionSnapshotSchema: GenMessage<SessionSnapshot> = /*@__PURE__*/
   messageDesc(file_yanshi_v1_snapshot, 0);
 
 /**
- * CaptureSnapshot 是 session.CaptureLog。
+ * 已退役：ADR-0050；快照只作缓存。
  *
  * @generated from message yanshi.v1.CaptureSnapshot
  */
 export type CaptureSnapshot = Message<"yanshi.v1.CaptureSnapshot"> & {
-  /**
-   * 最近的 capture_id，旧的在前（session.MaxRecentCaptures）。
-   *
-   * @generated from field: repeated string ids = 1;
-   */
-  ids: string[];
-
-  /**
-   * @generated from field: uint64 count = 2;
-   */
-  count: bigint;
-
-  /**
-   * @generated from field: uint64 last_seq = 3;
-   */
-  lastSeq: bigint;
-
-  /**
-   * @generated from field: google.protobuf.Timestamp last_at = 4;
-   */
-  lastAt?: Timestamp | undefined;
-
-  /**
-   * 每个流已读到的位置（已完成的 Run 提交，session.CaptureLog），按流名排序。
-   *
-   * @generated from field: repeated yanshi.v1.CaptureRead read = 5;
-   */
-  read: CaptureRead[];
 };
 
 /**
@@ -414,27 +379,6 @@ export type RunSnapshot = Message<"yanshi.v1.RunSnapshot"> & {
    * @generated from field: string from_background = 18;
    */
   fromBackground: string;
-
-  /**
-   * 本 Run 中 captures 读到的位置，Run 完成时提交（session.Run），按流名排序。
-   *
-   * @generated from field: repeated yanshi.v1.CaptureRead capture_reads = 19;
-   */
-  captureReads: CaptureRead[];
-
-  /**
-   * 需要交付确认的流在本 Run 中读过的所有页，按读取顺序。
-   *
-   * @generated from field: repeated yanshi.v1.CaptureRead capture_pages = 20;
-   */
-  capturePages: CaptureRead[];
-
-  /**
-   * 本 Run 收到的业务线回执，按写入顺序。
-   *
-   * @generated from field: repeated yanshi.v1.CaptureAck capture_acks = 21;
-   */
-  captureAcks: CaptureAck[];
 };
 
 /**

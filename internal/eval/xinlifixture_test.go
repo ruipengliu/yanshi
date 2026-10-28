@@ -22,7 +22,7 @@ func TestXinliFixtureOperations(t *testing.T) {
 		t.Fatalf("registrations: %+v", servers)
 	}
 	for _, server := range servers {
-		if !server.CiteCaptures || server.Acks || !server.AttestsSpeakers {
+		if !server.CiteCaptures || !server.AttestsSpeakers {
 			t.Fatalf("registration trust flags: %+v", server)
 		}
 	}

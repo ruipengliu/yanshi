@@ -16,7 +16,6 @@
 //	POST /v1/grants                                创建授权 {"from","to","categories","expires_at"}（仅用户令牌）
 //	DELETE /v1/grants/{id}                         撤销授权（仅用户令牌）
 //	POST /v1/sessions/{id}/inputs                  提交输入（新 Run 或 Steer；带 input_id 可安全重试；内容安全拒绝 422、不可用 503）
-//	POST /v1/sessions/{id}/captures                提交一批旁听转写（不开启 Run；按 capture_id 去重；内容安全不可用 503）
 //	POST /v1/sessions/{id}/runs/{run}/interrupt    中断 Run
 //	POST /v1/sessions/{id}/transcriptions          识别一段录音（请求体为音频）→ {"text"}；不写日志，文字由调用方作为输入提交（docs/design/speech.md）
 //	POST /v1/sessions/{id}/runs/{run}/speech       把 Run 的回复合成为语音（audio/wav）；未配置语音提供商时 501
@@ -120,7 +119,6 @@ func (s *Server) routes() map[string]http.HandlerFunc {
 		"POST /v1/grants":                                 s.createGrant,
 		"DELETE /v1/grants/{id}":                          s.revokeGrant,
 		"POST /v1/sessions/{id}/inputs":                   s.submit,
-		"POST /v1/sessions/{id}/captures":                 s.submitCaptures,
 		"POST /v1/sessions/{id}/runs/{run}/interrupt":     s.interrupt,
 		"POST /v1/sessions/{id}/transcriptions":           s.transcribe,
 		"POST /v1/sessions/{id}/runs/{run}/speech":        s.speak,
@@ -506,41 +504,6 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	if res.Answered != "" {
 		out["answered"] = res.Answered
 	}
-	if res.Duplicate {
-		out["duplicate"] = true
-	}
-	writeJSON(w, http.StatusAccepted, out)
-}
-
-// submitCaptures 写入一批旁听转写（docs/design/captures.md §3）。
-func (s *Server) submitCaptures(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		// CaptureID 是 HostApp 为这一批生成的 ID：结果未知时以同一 ID 重试是安全的。
-		CaptureID string `json:"capture_id"`
-		// Stream 是流名，必填（ADR-0039）：旁听转写是 "transcript"。
-		Stream string `json:"stream"`
-		// Segments 是 CaptureSegment 的 JSON 数组。
-		Segments []json.RawMessage `json:"segments"`
-	}
-	if err := decode(r, &req); err != nil {
-		s.fail(w, err)
-		return
-	}
-	segments := make([]*v1.CaptureSegment, 0, len(req.Segments))
-	for _, raw := range req.Segments {
-		g := &v1.CaptureSegment{}
-		if err := protojson.Unmarshal(raw, g); err != nil {
-			s.fail(w, fmt.Errorf("%w: segments: %v", service.ErrInvalid, err))
-			return
-		}
-		segments = append(segments, g)
-	}
-	res, err := s.Service.SubmitCaptures(owned(r), r.PathValue("id"), req.Stream, req.CaptureID, segments)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	out := map[string]any{"redacted": res.Redacted}
 	if res.Duplicate {
 		out["duplicate"] = true
 	}
