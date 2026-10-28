@@ -289,7 +289,7 @@ evals/                    评测用例；夹具经契约指向 Persona
 | P0 边界（实现已完成） | 模拟业务线迁成 `persona/`（内存存储）；评测夹具契约；依赖方向检查；术语拆分 | `make check` 全绿；`make eval` 的 `capture-*` 与基线一致 |
 | P1 内核：数据与合规（实现已完成） | ADR-0050 的迁移（Q36）：可信结构化片段与 Apply 校验、attested 结果写日志前审核（已完成）；① Persona 的原文、分页与处理进度（与内核现有分页逐页差分）；② xinli-day 切到 `mcp_xinli__captures`；③ 创建 Session 时的绝对删除期限、删除原因 Erasure 与 Memory 的候选查询；④ Persona 的擦除、删除待办与编排器的删除；⑤ 按退役条件删除内核的 Capture 路径（含三个 SDK）；EndUser 删除屏障（已实现） | `make check`、`make sim`；来源推导与写入闸门覆盖 attested 结果；删除不变量覆盖擦除与注销；擦除与在途 Run 的竞态；切换时 `make eval` 的 `capture-*` 与基线一致 |
 | P2 内核：驱动（实现已完成） | 定时与到期表（流上的触发由 ADR-0050 取消；顺序与范围见 §13 的 Q55–Q76） | 同上，加模拟测试的定时不变量；百万停放压测 |
-| P3 内核：补充 | 单次调用；档位；重答；`speaker_ref` | 同上；单次调用的评测；子限额下问答首字延迟不退化 |
+| P3 内核：补充 | 单次调用（只做 generate）；档位；重答；`speaker_ref`（范围与顺序见 §13 的 Q77–Q90） | 同上；单次调用的评测；子限额下问答首字延迟不退化 |
 | P4 生产服务 | Persona 的 PG 存储与检索；应用层的采集识别、账号设备、渠道、推送、编排器、BFF；内核的分片路由；出站流（通用部分，Q36：ADR-0050 后它的第一个消费者是 BFF） | 夹具契约在内存与 PG 实现上结果一致；端到端一天；故障演练：断网补传、Persona 故障、出站流消费者落后、数据库切换 |
 | P5 Persona 新能力 | 实体与时间线、笔记、关注项、目标与心力优先、画像、词库 | 每项新增评测用例 |
 | P6 生态 | 先做授权上下文与出境规则，再接协议：A2A 出站能力 → A2A 入站与提议写入 → 托管（注册中心里程碑） | [M7 Agent 生态](./m7-agent-ecosystem.md) §7 |
@@ -404,3 +404,22 @@ P2 动工前的讨论（2026-10-28），各题的推荐均被采纳：
 | Q74 | 投递 | 到点 Run 的回复留在日志中，经现有事件流看到；推送与出站流在 P4 | — |
 | Q75 | 修改 Session 的时区 | P2 不提供；已建的定时保留各自的时区 | — |
 | Q76 | 文档 | 决定记在本节；ADR-0045 与 [M7](./m7-kernel-primitives.md) §5 按上面改写，不另开 ADR | 新开 ADR |
+
+P3 动工前的讨论（2026-10-28），由 Claude 与 Codex 两轮讨论后决定（用户授权）：
+
+| # | 决定 | 选择 | 没有选的 |
+|---|---|---|---|
+| Q77 | 单次调用的种类 | 只做 `kind: generate`；`embedding` 推迟到 Persona 的向量检索（现在没有消费者，Persona 检索仍按字符二元组；多文本嵌入的准入与计量按实际请求数修正也一并推迟） | 两种一起做 |
+| Q78 | 单次调用的输入 | 只收文字 `input`（按 Unicode 字符计上限）；删除 `captures` 范围输入（ADR-0050 后内核没有原文）；说话人由业务线自己格式化，内核不把其中的标注当作可信来源——单次调用没有工具、Memory 与日志，不需要来源 | 业务线提交结构化页由平台渲染 |
+| Q79 | 单次调用的范围与输出 | 声明是全局的（`oneshots/*.yaml`、`oneshots/releases.yaml`，与 AgentDef 一致，不设业务线白名单）；服务令牌带 `end_user`，用户令牌只能用本人；必须有 EndUser；可选输出 JSON Schema（`google/jsonschema-go`，禁止外部引用），不合格修复一次，两次调用都计量、共用一个总时限；内容安全拒绝不重试；不承诺跨 HTTP 重试的幂等；用量新增 `oneshot` 归属（`name@version`），不冒充 Agent | 业务线白名单；结果缓存以便幂等 |
+| Q80 | 单次调用的准入 | 在 `model.Guard` 内：优先级为交互 Run > 交互单次调用 > 后台（Run 与 `work_class: background` 的单次调用）；后台 Run 有最低在途份额（并发受限时释放的名额先给它）；单次调用另有三层并发上限——合计、每业务线、每个声明（同名各版本共享），在进入 Guard 前有界等待、超时 429，持有到逻辑调用结束（含退避）；合计上限须小于总并发（启动校验），这部分容量单次调用永远占不到；RPS 令牌桶共享，验收结论只覆盖 RPS 有余量的负载 | 另起统一调度器；交互硬保留 |
+| Q81 | 首字延迟验收 | 扩展 `yanshi bench`：假模型包 `Guard`、首字取第一个非空正文增量、失败与拒绝计入、问答按固定计划开放式到达；场景为仅问答、问答 + 饱和单次调用（有子限额）、对照（无子限额，须测出退化才算实验有效）；门槛 `mixed_p99 − baseline_p99 ≤ max(10% × baseline_p99, 20ms)` 且问答成功率不降；不进 `make check`，结果写入 [M7](./m7-kernel-primitives.md) §13 | 真实模型压测 |
+| Q82 | 单次调用的第一个消费者 | xinli 开发页的手动"实况简述"（`xinli-live-brief`），由应用读 Persona 当天原文后调用，结果不保存；擦除或切换业务日时丢弃在途结果；评测新增单次调用的用例形态与 `oneshot-live-brief` | 自动刷新；纯内核夹具 |
+| Q83 | 档位 | 配置在业务线 `quota.tiers`（每档的 `end_user_daily` 显式 > 0），只替换 EndUser 日限额；`PUT/DELETE /v1/end_users/{id}/tier` 只允许服务令牌，未知档位 400；`end_user_tiers` 按 EndUser 分片，注销时删除，写入先查、后复查删除屏障；`Quotas.Status` 统一解析（所有入口自然生效）；读缓存 5 秒、本进程写后立即失效、按世代防回填；已存的档位在配置中被删除时回落到默认额度并计数（软上限，文档写明先迁移再删配置）；`/v1/quota` 返回有效档位；P3 不做应用层消费者（账号权益在 P4） | 令牌声明档位；配置缺失时拒绝调用 |
+| Q84 | 重答的接口 | 只经 HTTP：`POST /v1/sessions/{id}/inputs` 的 `{redo: true, input_id, expected_run_id}`（`expected_run_id` 必填，比较并替换）；`Service.Redo` 在 `Store.Update` 的每次决策中重新验证；不加 Connection 操作与 SDK 方法（App 在 P4 经 BFF），控制台只通用显示 `redo_of` | 三个 SDK 一起加 |
+| Q85 | 只读证据 | `capability.Spec.ReadOnly`；内置只有 `clock_now`、`memory_search` 为只读，MCP 只从 `ReadOnlyHint` 映射（不从风险、幂等或 `no_approval` 推导），Node 与沙箱一律未知；平台在 `ToolCallStarted.read_only` 记下执行前的判定，跨 Attempt 取与；实际执行前若已记只读而当前声明不再只读，拒绝执行并返回固定错误 | 从风险等级推导 |
+| Q86 | 可重答的 Run | 只有本 Session 最后一个 Run，且它 completed；它的调用全部为只读或 `show_card`；没有审批请求、`ask_user`、插话、委托、后台结果；输入是普通输入（不含 CardAction，不来自定时、Call 或委托）；目标输入之后没有上下文压缩（按事件序号，含 `scope: run`）；不是子 Session | 全部类型 |
+| Q87 | 重答的语义 | 接受即替代、新 Run 失败不回退；新 Run 普通权限（写入后它自己不可再重答）；只复制输入内容块，不复制来源字段；投影保存被替代的 Run 集合与其中卡片的 `call_id`（不依赖 Run 明细的保留数）；Transcript、压缩选段、token 估算与摘要渲染共用同一过滤，且先由完整投影确定替代关系再取前缀；来源推导与写入闸门看完整历史、不过滤；召回在新 Run 中照常重做；被替代 Run 中卡片的动作在 service（`Store.Update` 的重算内、去重之后）拒绝，`Apply` 对 `RunRequested`、`Steered` 与回答中的 CardAction 再校验 | 新 Run 完成后才替代 |
+| Q88 | `speaker_ref` | `CaptureSegment.speaker_ref = 8`（7 已是 `ref`），在结构化页上由业务线填写；内核校验语法 `[A-Za-z0-9_-]{1,64}` 且只有他人的片段可以带，不校验实体是否存在；渲染为 `[他人 other-1 @P-0012]`，没有时文本逐字不变；`cite_captures` 的 `_meta` 附上；来源推导仍只看 `speaker`；Persona 的原文、分页与字符预算同步；`Apply` 对 attested 片段补齐与非 attested 一致的校验 | 恢复内核的 Capture 提交 |
+| Q89 | P3 的顺序 | ① 文档 → ② `speaker_ref` → ③ 档位 → ④ Guard 准入（确定性并发测试：后台保底、取消恰逢获槽、三层额度释放、跨版本共限）→ ⑤ 单次调用服务、评测形态与 `oneshot-live-brief` → ⑥ xinli 开发页消费者与首字延迟压测 → ⑦ 只读证据 → ⑧ 重答（含卡片失效、快照、sim、`redo-different-answer`）；每步验证后提交推送 | — |
+| Q90 | 文档 | 决定记在本节；ADR-0047 与 [M7](./m7-kernel-primitives.md) §7–§10 按上面改写，不另开 ADR | 新开 ADR |

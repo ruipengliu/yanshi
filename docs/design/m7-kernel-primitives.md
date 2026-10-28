@@ -1,6 +1,6 @@
 # M7 内核补充：Capture 正文存储、擦除、交付确认、定时、出站流、单次调用
 
-> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）；交付确认（§11）已删除，EndUser 删除屏障（§12）已实现，定时已全部实现（含 xinli-assistant 版本 2 使用、评测拨钟、pgqueue 内部到期表，压测结果见 §13；助手新评测待远端验证），其余未实现 · **§2–§4、§11 由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 取代**（旁听原文存放在业务线；§11 已删除），§5 按 P2 的讨论改写（没有窗口），§6 的擦除与修订信封不做 · ADR-0044（已取代）、ADR-0045、ADR-0046、ADR-0047、ADR-0049（已取代）、ADR-0050 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
+> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）；交付确认（§11）已删除，EndUser 删除屏障（§12）已实现，定时已全部实现（含 xinli-assistant 版本 2 使用、评测拨钟、pgqueue 内部到期表，压测结果见 §13），单次调用、档位、重答与 `speaker_ref` 按 P3 的讨论改写（[整体架构](./persona-architecture.md) §13 的 Q77–Q90），实现中，其余未实现 · **§2–§4、§11 由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 取代**（旁听原文存放在业务线；§11 已删除），§5 按 P2 的讨论改写（没有窗口），§6 的擦除与修订信封不做 · ADR-0044（已取代）、ADR-0045、ADR-0046、ADR-0047、ADR-0049（已取代）、ADR-0050 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
 
 xinli 落地需要内核补上的原语。每一项都按[整体架构](./persona-architecture.md) §9 的判据给出理由：第二条业务线也会需要，并且业务侧做不到或做了不安全。业务语义（交谈、承诺、项目、人）一律不进内核。
 
@@ -208,42 +208,47 @@ App 内的实时体验仍走 Connection 与 SSE。出站流服务于服务端的
 
 ## 7. 单次调用（Oneshot）
 
+> 按 P3 的讨论改写（[整体架构](./persona-architecture.md) §13 的 Q77–Q82）：只做 `generate`，输入只收文字。
+
 ### 7.1 为什么
 
-实况预览的简述、标题、纠错建议、Persona 的嵌入都是"模型函数"：一次输入、一次输出、没有工具与状态。用 Run 做，每次都要建 Session、写十几条事件；业务侧直连提供商，又绕过了计量、配额、内容安全与换模型的评测（章程 G9、原则 10）。
+实况预览的简述、标题、纠错建议都是"模型函数"：一次输入、一次输出、没有工具与状态。用 Run 做，每次都要建 Session、写十几条事件；业务侧直连提供商，又绕过了计量、配额、内容安全与换模型的评测（章程 G9、原则 10）。
 
 ### 7.2 声明
 
-`oneshots/*.yaml`，与 AgentDef 同样版本化、经发布配置灰度（ADR-0020）：
+`oneshots/*.yaml`，与 AgentDef 同样版本化、经 `oneshots/releases.yaml` 灰度（ADR-0020）。声明是全局的，任何业务线都可调用，费用记在调用方（与 AgentDef 一致）：
 
 ```yaml
 name: xinli-live-brief
 version: "1"
-kind: generate                 # generate | embedding
 model: ark/doubao-seed-2-1-lite-260915:minimal
 instructions: |
   用两三句话概括这段旁听正在谈什么……
-input: {max_chars: 8000}
-output:                        # 可选：JSON Schema，平台校验，不合格时重试一次后失败
+input: {max_chars: 8000}       # 按 Unicode 字符计
+output:                        # 可选：JSON Schema，平台校验（不解析外部引用），不合格时修复一次后失败
   type: object
   properties: {brief: {type: string}}
 max_output_tokens: 300
+concurrency: 8                 # 本声明（各版本共享）的并发上限
 work_class: interactive        # interactive | background
 ```
 
+`kind: embedding` 推迟到 Persona 的向量检索（Q77）。
+
 ### 7.3 接口与语义
 
-`POST /v1/oneshots/{name}`，`{end_user, input: [ContentBlock] | captures: {session, from, to}}`，服务令牌或用户令牌：
+`POST /v1/oneshots/{name}`，`{end_user, input}`。服务令牌须带 `end_user`；用户令牌只能是本人。返回实际版本、模型与输出（文字，或声明了 `output` 时的 JSON）。
 
-- **输入**：文字，或一段旁听的引用范围；后者经展开器读出并按说话人标注（调用方须有该 Session 的权限）。
-- **不写日志、不存结果**：日志与指标只记 ID、名称、版本与 token 数（ADR-0015）。结果交给调用方后，调用方不得保存他人原话的派生内容超过原文的保留期（接入文档写明）。
-- **计量与配额**：照常计量到业务线与 EndUser（ADR-0019），超额拒绝；写入受 EndUser 删除屏障约束（§12）。
-- **内容安全**：输入与输出都在返回之前检查，失败即拒绝（ADR-0021）。
-- **准入**：与 Run 的模型调用共用提供商的并发与限流（[模型调用](./model-calls.md)）。为了不挤占问答：每个单次调用声明各自的并发子限额，业务线的单次调用合计不超过提供商预算的配置比例；后台工作保有最低份额。
-- **嵌入**：`kind: embedding` 返回向量与模型名，复用 `Embedder`。
+- **输入只收文字**（Q78）：ADR-0050 后原文在业务线，业务线自己读出并按说话人格式化。单次调用没有工具、Memory 与日志，不涉及来源推导，其中的说话人标注不会被当作可信来源。
+- **不写日志、不存结果**：日志与指标只记 ID、名称、版本与 token 数（ADR-0015）。调用方不得保存他人原话的派生内容超过原文的保留期，原文擦除后要丢弃在途结果（接入文档写明）。不承诺跨 HTTP 重试的幂等：没有结果存储，重试就是再调一次、再计一次费。
+- **顺序**：鉴权与声明、输入校验 → EndUser 删除屏障（§12）→ 输入内容安全 → 配额 → 准入 → 模型调用 → 计量 → 输出内容安全 → Schema 校验（不合格修复一次，两次都计量；内容安全拒绝不重试）→ 返回前复查屏障。总时限从准入之前开始，覆盖修复调用。
+- **计量与配额**：照常计量到业务线与 EndUser（ADR-0019），用量记 `oneshot = name@version`（不冒充 Agent），超额拒绝；价格表的启动校验覆盖所有单次调用的模型。
+- **准入**（Q80）：与 Run 的模型调用共用 `model.Guard`。优先级：交互 Run > 交互单次调用 > 后台（后台 Run 与 `work_class: background` 的单次调用）；并发受限时后台 Run 有最低在途份额。单次调用另有三层并发上限：全部单次调用合计、每业务线、每个声明；进入 Guard 之前按固定顺序有界等待，超时返回 429，持有到逻辑调用结束（含重试退避）。合计上限必须小于提供商的总并发（启动校验）：这部分容量单次调用永远占不到，问答在单次调用饱和时仍有名额。RPS 令牌桶共享，RPS 成为瓶颈时单次调用仍可能挤占问答的发起速率（遗留）。
 - **评测**：`evals/` 增加单次调用的用例形态，改指令与模型须与基线比较。
 
 ## 8. 档位（Tier）
+
+> 按 P3 的讨论改写（Q83）。
 
 - 业务线配置：
 
@@ -251,30 +256,40 @@ work_class: interactive        # interactive | background
 quota:
   monthly: 50000
   end_user_daily: 2        # 未设档位的 EndUser
-  tiers:
+  tiers:                   # 每档的额度必须显式 > 0
     free: {end_user_daily: 2}
     pro:  {end_user_daily: 10}
 ```
 
-- 档位按 EndUser 保存在内核：`PUT /v1/end_users/{id}/tier`，`{tier}`，只允许服务令牌。新表 `end_user_tiers(business_line, end_user, tier, updated_at)`，分片键为 EndUser（`pg.Tables` 登记），注销账号时删除，写入受 §12 的屏障约束。
-- 准入时按 EndUser 的档位取日配额，档位读缓存（与配额缓存同一节奏）。
+- 档位只替换 EndUser 日限额，不改变业务线月限额、周期与已用金额。升级不清零、降级不追溯。
+- `PUT /v1/end_users/{id}/tier` `{tier}` 与 `DELETE`（恢复默认），只允许服务令牌；未知档位 400。`/v1/quota` 返回有效档位与限额。
+- 新表 `end_user_tiers(business_line, end_user, tier, updated_at)`，分片键为 EndUser（`pg.Tables` 登记），注销账号时删除；写入"先查、后复查"删除屏障（§12）。
+- `Quotas.Status` 统一按档位解析日限额，Submit、模型调用、压缩、Call、语音与单次调用都经它。档位读缓存 5 秒，本进程写后立即失效，按世代防止失效前发起的读取回填旧值；跨进程最多 5 秒生效（软上限）。已挂起的 Run 照旧按现有周期复查配额。
+- 已存的档位在配置中被删除时回落到默认 `end_user_daily`（为 0 即不限）并计数：删档位配置之前先迁移已分配的用户。
 - 不用令牌声明：触发、定时、委托开启的 Run 没有用户令牌，准入时拿不到档位。
 
 ## 9. 重答（Redo）
 
-- 输入：`POST /v1/sessions/{id}/inputs`，`{redo: true}`，不带内容。只针对本 Session 中最后一个已完成的 Run。
-- 拒绝（conflict）的情形：最后一个 Run 不是 completed；它执行过非只读的调用（需要审批、未声明只读的能力，以及 `memory_save`、`schedule` 等内置写入）；它开始之后发生过上下文压缩（摘要中有旧回答，不做摘要重建）；Session 是三方入站的（[Agent 生态](./m7-agent-ecosystem.md) §3.2）。
-- 写入：`RunRequested{redo_of: <run_id>}`，输入与来源字段（`from_call` 等）由平台从被重做的 Run 复制。`redo_of` 只能由平台写入（统一检查点拒绝客户端提交，`Apply` 再校验）。
-- Transcript：被重做的 Run 的回复与调用不进入之后的上下文；连续重答时只保留最后一次。日志保留全部，App 可以展示"第 2/3 个回答"。
-- 召回照常重新做一次（记为 Event）。
+> 按 P3 的讨论改写（Q84–Q87）。
+
+- **接口**：`POST /v1/sessions/{id}/inputs`，`{redo: true, input_id, expected_run_id}`，不带内容；`expected_run_id` 必填，不是本 Session 最后一个 Run 时 conflict（多端旧页面不会重答错对象）。重复的 `input_id` 返回第一次的结果。不加 Connection 操作与 SDK 方法：App 在 P4 经 BFF。
+- **可重答**（否则 conflict）：最后一个 Run 是 completed；它的调用全部有只读证据（`ToolCallStarted.read_only`，见下）或是 `show_card`；没有审批请求、`ask_user`、插话、委托、后台结果；它的输入是普通输入（不含 CardAction，不来自定时、Call 或委托）；它的输入之后没有发生上下文压缩（按事件序号，含 `scope: run`）；Session 不是委托子 Session，也不是三方入站的（[Agent 生态](./m7-agent-ecosystem.md) §3.2）。
+- **只读证据**：`capability.Spec.ReadOnly`；内置只有 `clock_now`、`memory_search`；MCP 只从 `readOnlyHint` 映射，不从风险、幂等或 `no_approval` 推导；Node 与沙箱一律视为未知。平台在执行前把判定写入 `ToolCallStarted.read_only`，跨 Attempt 取与；实际执行前若已记只读而当前声明不再只读，拒绝执行并返回固定错误。
+- **写入**：`RunRequested{redo_of: <run_id>}`，输入内容块由平台从被重做的 Run 复制，来源字段不复制（特殊来源已被排除）。`redo_of` 只能由平台写入（统一检查点拒绝客户端提交，`Apply` 再校验目标、输入一致与资格）。接受即替代：新 Run 失败或被中断也不回退。新 Run 按普通权限执行；它若写入，它自己就不可再重答。
+- **Transcript**：被替代的 Run 的输入、召回、回复与调用不进入之后的上下文，连续重答只保留最后一次。投影保存被替代的 Run 集合（不依赖 Run 明细的保留数）；Transcript、压缩选段、token 估算（不拿被替代回答的用量校准）与摘要渲染共用同一过滤，先由完整投影确定替代关系再取前缀。日志保留全部，App 可以展示"第 2/3 个回答"。
+- **安全判断不过滤**：来源推导、写入闸门与注入判断仍看完整历史；模型没看到旧的工具结果，不代表 Session 没接触过外部内容。
+- **卡片**：被替代 Run 中卡片的动作按 `call_id` 失效（新回答可能复用同一个 `card_id`）。service 在去重之后、`Store.Update` 的每次决策中拒绝它们；`Apply` 对 `RunRequested`、`Steered` 与回答中的 CardAction 再校验。
+- 召回在新 Run 中照常重新做一次（记为 Event）。
 
 ## 10. 说话人引用（`speaker_ref`）
 
-`CaptureSegment` 新增 `string speaker_ref = 7`：采集服务比对声纹后填入的不透明 ID（业务线的实体 ID），`[A-Za-z0-9_-]{1,64}`。
+> 按 ADR-0050 与 P3 的讨论改写（Q88）。
 
-- 内核不验证、不解析它。来源推导只看 `speaker`，被认出的他人仍是他人（ADR-0039 不变）。
-- 给模型看的文本：`#57.4 10:16 [他人 other-1 @P-0012]`；`cite_captures` 的 `_meta` 附上它。
-- 只有佩戴者以外的片段可以带。
+`CaptureSegment` 新增 `string speaker_ref = 8`（7 已是 attested 结果中的 `ref`）：业务线比对声纹后在结构化页上填入的不透明 ID（业务线的实体 ID）。
+
+- 内核校验语法 `[A-Za-z0-9_-]{1,64}`，且只有佩戴者以外的片段可以带（标签本身也是给模型看的文字，不校验就能夹带指令）；不校验实体是否存在、身份是否准确。来源推导只看 `speaker`，被认出的他人仍是他人（ADR-0039 不变）。`Apply` 对 attested 片段的校验与非 attested 一致。
+- 给模型看的文本：`#57.4 10:16 [他人 other-1 @P-0012]`；没有 `speaker_ref` 时文本逐字不变。`cite_captures` 的 `_meta` 附上它。
+- Persona 的原文、分页与字符预算同步。
 
 ## 11. 交付确认（已删除）
 
