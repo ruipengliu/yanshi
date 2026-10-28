@@ -32,6 +32,7 @@ type TableKey struct {
 
 // Tables 是全部表的分片键。
 var Tables = map[string]TableKey{
+	"end_user_tiers":    {Class: ByEndUser, Column: "end_user"},
 	"events":            {Class: BySession, Column: "session_id"},
 	"session_snapshots": {Class: BySession, Column: "session_id"},
 	"work_items": {Class: BySession, Column: "session_id",
@@ -81,7 +82,7 @@ var Tables = map[string]TableKey{
 	"push_devices": {Class: ByEndUser, Column: "end_user"},
 
 	"end_user_tombstones": {Class: ByEndUser, Column: "end_user",
-		Offline: []string{"PendingEndUsers：Janitor 确认注销的 Session 清理进度", "PruneEndUsers：按宽限期扫描，逐 EndUser 删除到期屏障"}},
+		Offline: []string{"PendingEndUsers：Janitor 确认注销的 Session 清理进度", "PruneEndUsers：按宽限期扫描，逐 EndUser 事务清理迟到数据后删除到期屏障"}},
 
 	// 删除请求不含 EndUser（ADR-0015）；进度由 session_tombstones 汇总。
 	"deletion_requests": {Class: Global},

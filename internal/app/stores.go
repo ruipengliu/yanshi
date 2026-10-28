@@ -56,6 +56,7 @@ type Stores struct {
 	// 投影快照
 	Snapshots session.Snapshots
 	Usage     usage.Store
+	Tiers     usage.TierStore
 	Presence  presence.Store
 	Push      notify.Registry
 }
@@ -68,7 +69,7 @@ func Memory(clk clock.Clock) Stores {
 		SandboxQueue: memqueue.New(clk), Ledger: nodesdk.NewMemLedger(), Activity: sandbox.NewMemActivity(),
 		ArtifactMeta: artifact.NewMemMeta(), Index: lifecycle.NewMemIndex(), Deletions: lifecycle.NewMemDeletions(),
 		JanitorQueue: memqueue.New(clk), Memories: memory.NewMemStore(), Grants: memory.NewMemGrants(),
-		Snapshots: session.NewMemSnapshots(), Usage: usage.NewMem(), Presence: presence.NewMem(), Push: notify.NewMemRegistry(),
+		Snapshots: session.NewMemSnapshots(), Usage: usage.NewMem(), Tiers: usage.NewMemTiers(), Presence: presence.NewMem(), Push: notify.NewMemRegistry(),
 	}
 }
 
@@ -82,6 +83,6 @@ func Postgres(pool *pgxpool.Pool, n *pg.Notifier, clk clock.Clock) Stores {
 		Index: pglifecycle.Index{Pool: pool}, Deletions: pglifecycle.Deletions{Pool: pool, Notifier: n},
 		JanitorQueue: pgqueue.New(pool, clk, pgqueue.Janitor), Memories: pgmemory.Store{Pool: pool}, Grants: pgmemory.Grants{Pool: pool},
 		Snapshots: pgsnapshot.Store{Pool: pool}, Usage: pgusage.Store{Pool: pool}, Presence: pgpresence.Store{Pool: pool, Notifier: n},
-		Push: pgnotify.Registry{Pool: pool},
+		Push: pgnotify.Registry{Pool: pool}, Tiers: pgusage.Tiers{Pool: pool},
 	}
 }

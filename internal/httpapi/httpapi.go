@@ -32,6 +32,8 @@
 //	GET  /v1/sessions/{id}/artifacts               Session 的工件列表
 //	GET  /v1/artifacts/{id}                        下载工件
 //	GET  /v1/artifacts/{id}/meta                   工件元数据
+//	PUT  /v1/end_users/{id}/tier                   设置档位（仅服务令牌）
+//	DELETE /v1/end_users/{id}/tier                 恢复默认档位（仅服务令牌）
 //	GET  /v1/quota?end_user=                       当前周期的配额与已用（docs/design/m4-quota-usage.md §5）
 //	GET  /v1/usage?from=&to=&group_by=&end_user=   用量汇总（day | end_user | model | agent | oneshot；金额单位：微元）
 //	/v1/debug/*                                    故障注入与进程指标，只在 serve -faults 时提供（debug.go）
@@ -116,6 +118,8 @@ func (s *Server) routes() map[string]http.HandlerFunc {
 		"POST /v1/sessions/{id}/close":                     s.close,
 		"DELETE /v1/sessions/{id}":                         s.delete,
 		"DELETE /v1/end_users/{id}":                        s.deleteEndUser,
+		"PUT /v1/end_users/{id}/tier":                      s.putTier,
+		"DELETE /v1/end_users/{id}/tier":                   s.deleteTier,
 		"GET /v1/sessions/{id}/deletion":                   s.sessionDeletion,
 		"GET /v1/deletions/{id}":                           s.deletion,
 		"GET /v1/memories":                                 s.listMemories,

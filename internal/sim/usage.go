@@ -22,10 +22,13 @@ var simPrices = &usage.PriceList{Models: map[string]usage.Price{"sim/m": {Input:
 
 func init() { simPrices.Sandbox.PerHour = 3.6 }
 
-func simLimits(long bool) map[string]usage.Limits {
+func simLimits(long, tiers bool) map[string]usage.Limits {
 	l := usage.Limits{Monthly: 0.015, EndUserDaily: 0.006}
 	if long {
 		l = usage.Limits{Monthly: 1, EndUserDaily: 0.4}
+	}
+	if tiers {
+		l.Tiers = map[string]usage.TierLimits{"pro": {EndUserDaily: l.EndUserDaily * 2}}
 	}
 	if err := l.Prepare(); err != nil {
 		panic(err)
@@ -44,7 +47,7 @@ type checkedUsage struct {
 
 func (s *checkedUsage) Record(ctx context.Context, e *usage.Entry) error {
 	if e.Kind == usage.Model {
-		truth := &usage.Quotas{Store: s.truth, Limits: s.w.quotas.Limits}
+		truth := &usage.Quotas{Store: s.truth, Limits: s.w.quotas.Limits, Tiers: s.w.stores.Tiers}
 		if p, err := truth.Check(ctx, e.BusinessLine, e.EndUser, e.At); err == nil && p != nil {
 			s.w.violations = append(s.w.violations, fmt.Sprintf("model call for %s/%s recorded while the %s quota was exceeded (%d ≥ %d)",
 				e.BusinessLine, e.EndUser, p.Scope, p.Spent, p.Limit))

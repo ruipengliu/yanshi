@@ -85,7 +85,53 @@ func (s barrierGrants) Create(ctx context.Context, g *memory.Grant) error {
 	return s.w.endUserWrite(func() error { return s.Grants.Create(ctx, g) })
 }
 
+type barrierTiers struct {
+	usage.TierStore
+	w *World
+}
+
+func (s barrierTiers) Put(ctx context.Context, bl, eu, tier string, at time.Time) error {
+	err := s.w.endUserWrite(func() error { return s.TierStore.Put(ctx, bl, eu, tier, at) })
+	if err == nil && s.w.skipTierRecheck {
+		panic(tierWriterCrash{})
+	}
+	return err
+}
+
+type tierWriterCrash struct{}
+
+// crashTierWriter 在存储提交后直接中断调用栈，不执行 Service 的写后复查。
+func (w *World) crashTierWriter(ctx context.Context, user string) (err error) {
+	w.skipTierRecheck = true
+	defer func() {
+		w.skipTierRecheck = false
+		if v := recover(); v != nil {
+			if _, ok := v.(tierWriterCrash); !ok {
+				panic(v)
+			}
+			if w.crashedTierUsers == nil {
+				w.crashedTierUsers = map[string]bool{}
+			}
+			w.crashedTierUsers[user] = true
+			w.Stats.TierWriterCrashes++
+			err = nil
+		}
+	}()
+	_, err = w.svc.PutTier(ctx, "bl", user, "pro")
+	return fmt.Errorf("invariant: tier writer did not crash: %v", err)
+}
+
 func (w *World) deleteWithEndUserWrite(user string) error {
+	// 新增场景只用独立随机流；原六种写入完整保留原抽样顺序及分支内部的抽样。
+	if w.opts.Tiers {
+		actions := 2
+		if w.faults {
+			actions++
+		}
+		if action := w.tierRNG.IntN(actions); action != 0 {
+			return w.deleteWithTierWrite(user, action == 2)
+		}
+	}
 	ctx := context.Background()
 	remove := func() error {
 		_, err := w.svc.DeleteEndUser(ctx, "bl", user, w.hub, w.memories, w.usage, w.push)
@@ -144,12 +190,61 @@ func (w *World) deleteWithEndUserWrite(user string) error {
 	return nil
 }
 
+func (w *World) deleteWithTierWrite(user string, crash bool) error {
+	ctx := context.Background()
+	remove := func() error {
+		_, err := w.svc.DeleteEndUser(ctx, "bl", user, w.hub, w.memories, w.usage, w.push)
+		return err
+	}
+	// 崩溃固定发生在首次清理之后落盘，其他写入顺序独立于旧场景抽样。
+	if crash {
+		w.endUserWriteHook, w.endUserWriteBefore = remove, true
+	} else {
+		switch w.tierRNG.IntN(3) {
+		case 0:
+			w.endUserWriteHook, w.endUserWriteBefore = remove, true
+		case 1:
+			w.endUserWriteHook, w.endUserWriteBefore = remove, false
+		default:
+			if err := remove(); err != nil {
+				return err
+			}
+		}
+	}
+	defer func() { w.endUserWriteHook = nil }()
+	if crash {
+		if err := w.crashTierWriter(ctx, user); err != nil {
+			return err
+		}
+		if tier, err := w.stores.Tiers.Get(ctx, "bl", user); err != nil || tier != "pro" {
+			return fmt.Errorf("invariant: skipped recheck left no late tier: %q, %v", tier, err)
+		}
+	} else {
+		interleaved := w.endUserWriteHook != nil
+		if _, err := w.svc.PutTier(ctx, "bl", user, "pro"); !errors.Is(err, service.ErrNotFound) {
+			return fmt.Errorf("invariant: tier write during deletion returned %v", err)
+		}
+		if interleaved {
+			w.Stats.TiersWithdrawn++
+		}
+		w.Stats.EndUserBarrierWithdrawn++
+	}
+	if w.endUserWriteHook != nil {
+		return errors.New("invariant: account deletion did not interleave with tier write")
+	}
+	return nil
+}
+
 func (w *World) checkEndUserDeleted(final bool) error {
 	ctx := context.Background()
 	for _, user := range w.deletedUsers {
 		b, err := w.deletions.GetEndUser(ctx, "bl", user)
 		if errors.Is(err, lifecycle.ErrNotFound) {
-			continue // 宽限期结束后允许重新使用 ID
+			// 模拟注销后换新 ID；原 ID 的屏障移除后不能留下崩溃写入。
+			if tier, err := w.stores.Tiers.Get(ctx, "bl", user); err != nil || tier != "" {
+				return errors.New("invariant: tier survived removal of account deletion barrier")
+			}
+			continue
 		}
 		if err != nil {
 			return err
@@ -159,6 +254,11 @@ func (w *World) checkEndUserDeleted(final bool) error {
 		}
 		if b.CompletedAt.IsZero() {
 			continue
+		}
+		if !w.crashedTierUsers[user] {
+			if tier, err := w.stores.Tiers.Get(ctx, "bl", user); err != nil || tier != "" {
+				return errors.New("invariant: deleted account still has a tier")
+			}
 		}
 		if ids, err := w.index.IDsOf(ctx, "bl", user); err != nil || len(ids) != 0 {
 			return errors.New("invariant: deleted account still has indexed sessions")
@@ -180,6 +280,12 @@ func (w *World) checkEndUserDeleted(final bool) error {
 }
 
 func (w *World) fingerprintEndUsers(h io.Writer) {
+	if w.opts.Tiers {
+		for _, user := range append(slices.Clone(w.users), w.deletedUsers...) {
+			tier, err := w.stores.Tiers.Get(context.Background(), "bl", user)
+			fmt.Fprintf(h, "tier:%s|%s|%v;", user, tier, err)
+		}
+	}
 	for _, user := range w.deletedUsers {
 		b, err := w.deletions.GetEndUser(context.Background(), "bl", user)
 		if err != nil {
@@ -191,4 +297,41 @@ func (w *World) fingerprintEndUsers(h io.Writer) {
 			fmt.Fprint(h, sid, ";")
 		}
 	}
+}
+
+// expireEndUserBarriers 保证普通种子也走过宽限期，不依赖随机拨钟恰好超过一天。
+func (w *World) expireEndUserBarriers() error {
+	ctx := context.Background()
+	until := w.clock.Now()
+	for _, user := range w.deletedUsers {
+		b, err := w.deletions.GetEndUser(ctx, "bl", user)
+		if errors.Is(err, lifecycle.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if b.CompletedAt.IsZero() {
+			return errors.New("invariant: account deletion never completed before grace expiry")
+		}
+		if b.ExpiresAt.After(until) {
+			until = b.ExpiresAt
+		}
+	}
+	w.clock.Advance(until.Sub(w.clock.Now()))
+	// PruneEndUsers 每轮最多 100 条，逐批清理到所有已完成的注销都越过屏障。
+	for round := 0; round <= len(w.deletedUsers)/100; round++ {
+		if err := w.janitors[0].Sweep(ctx); err != nil {
+			return err
+		}
+	}
+	for _, user := range w.deletedUsers {
+		if _, err := w.deletions.GetEndUser(ctx, "bl", user); !errors.Is(err, lifecycle.ErrNotFound) {
+			return fmt.Errorf("invariant: expired account deletion barrier remains: %v", err)
+		}
+		if w.crashedTierUsers[user] {
+			w.Stats.TierCrashRecoveries++
+		}
+	}
+	return w.checkEndUserDeleted(true)
 }

@@ -52,6 +52,8 @@ type Service struct {
 	Janitor   workqueue.Queue
 	// Quotas 非空时，配额用尽的业务线或 EndUser 不能开始新 Run（docs/design/m4-quota-usage.md §3）。
 	Quotas *usage.Quotas
+	// Tiers 与配额共用缓存，注销的固定清理路径不依赖传输层传入 remover。
+	Tiers usage.TierStore
 	// Admission 非空时，交互工作积压过高的业务线暂不接受新 Run（ErrOverloaded）。
 	Admission Admission
 	// RecentDevice 非空时，没有注明来源设备的输入注明 EndUser 最近在前台使用的设备（设备歧义消解，
@@ -731,6 +733,11 @@ func (s *Service) DeleteEndUser(ctx context.Context, businessLine, endUser strin
 	}
 	for _, id := range ids {
 		if err := s.Delete(ctx, id, "account_deletion", req.ID); err != nil && !errors.Is(err, ErrNotFound) {
+			return "", err
+		}
+	}
+	if s.Tiers != nil {
+		if err := s.Tiers.Delete(ctx, businessLine, endUser); err != nil {
 			return "", err
 		}
 	}

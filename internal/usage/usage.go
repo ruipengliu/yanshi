@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -216,22 +217,38 @@ func (p *PriceList) SandboxCost(d time.Duration) int64 {
 	return int64(math.Round(p.Sandbox.PerHour * 1e6 * d.Hours()))
 }
 
-// Limits 是业务线配置中的配额（元）；零值表示该层不限制。
-type Limits struct {
-	Monthly      float64 `yaml:"monthly"`
+// TierLimits 只替换 EndUser 日限额，不改变周期与历史用量。
+type TierLimits struct {
 	EndUserDaily float64 `yaml:"end_user_daily"`
+}
+
+var tierName = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
+
+// Limits 是业务线配置中的配额（元）；默认额度为零时该层不限制。
+type Limits struct {
+	Tiers        map[string]TierLimits `yaml:"tiers"`
+	Monthly      float64               `yaml:"monthly"`
+	EndUserDaily float64               `yaml:"end_user_daily"`
 	// Timezone 决定日、月的边界，默认 Asia/Shanghai；偏移须为整小时（聚合按小时进行）。
 	Timezone string `yaml:"timezone"`
 
 	loc *time.Location
 }
 
-func (l Limits) Enabled() bool { return l.Monthly > 0 || l.EndUserDaily > 0 }
+func (l Limits) Enabled() bool { return l.Monthly > 0 || l.EndUserDaily > 0 || len(l.Tiers) > 0 }
 
 // Prepare 校验并加载时区；业务线配置加载时调用。
 func (l *Limits) Prepare() error {
 	if l.Monthly < 0 || l.EndUserDaily < 0 {
 		return errors.New("quota: limits must not be negative")
+	}
+	for name, tier := range l.Tiers {
+		if !tierName.MatchString(name) {
+			return fmt.Errorf("quota: invalid tier name %q", name)
+		}
+		if !(tier.EndUserDaily > 0) || math.IsInf(tier.EndUserDaily, 0) || math.Round(tier.EndUserDaily*1e6) >= 1<<63 || Yuan(tier.EndUserDaily) <= 0 {
+			return fmt.Errorf("quota: tier %s end_user_daily must be positive and representable in micro yuan", name)
+		}
 	}
 	tz := l.Timezone
 	if tz == "" {
@@ -267,6 +284,7 @@ func Yuan(v float64) int64 { return int64(math.Round(v * 1e6)) }
 
 // Period 是一层配额的当前周期。
 type Period struct {
+	Tier         string    `json:"tier,omitempty"`
 	Scope        string    `json:"scope"` // "end_user" | "business_line"
 	Limit        int64     `json:"limit_micros"`
 	Spent        int64     `json:"spent_micros"`
@@ -294,6 +312,7 @@ func monthOf(t time.Time, loc *time.Location) (time.Time, time.Time) {
 
 // Quotas 按业务线配置检查配额。检查与扣减不原子：这是软上限（ADR-0019）。
 type Quotas struct {
+	Tiers  TierStore
 	Store  Store
 	Limits map[string]Limits
 }
@@ -323,9 +342,13 @@ func (q *Quotas) Status(ctx context.Context, businessLine, endUser string, now t
 		p := &Period{Scope: "business_line", Limit: Yuan(l.Monthly), Start: from, ResetAt: to, BusinessLine: businessLine}
 		out = append(out, p)
 	}
-	if l.EndUserDaily > 0 && endUser != "" {
+	tier, daily, err := q.EffectiveTier(ctx, businessLine, endUser)
+	if err != nil {
+		return nil, err
+	}
+	if daily > 0 && endUser != "" {
 		from, to := dayOf(now, l.Location())
-		p := &Period{Scope: "end_user", Limit: Yuan(l.EndUserDaily), Start: from, ResetAt: to, BusinessLine: businessLine, EndUser: endUser}
+		p := &Period{Scope: "end_user", Tier: tier, Limit: Yuan(daily), Start: from, ResetAt: to, BusinessLine: businessLine, EndUser: endUser}
 		out = append(out, p)
 	}
 	for _, p := range out {

@@ -50,9 +50,20 @@ quota:
   monthly: 5000          # 元，业务线每个自然月
   end_user_daily: 2      # 元，每个 EndUser 每个自然日
   timezone: Asia/Shanghai  # 日、月的边界，默认 Asia/Shanghai
+  tiers:
+    free: {end_user_daily: 2}
+    pro:  {end_user_daily: 10}
 ```
 
 未配置的一层不限制。周期的边界必须与整点对齐（时区偏移为整小时），因为聚合按小时进行。
+
+### 档位（Tier）
+
+`usage.Limits.Tiers` 以档位名映射到 `usage.TierLimits`；名称须匹配 `^[a-z0-9_-]{1,32}$`，每档的 `end_user_daily` 必须显式大于 0、有限且能换算为正的微元整数。`Limits.Prepare` 在业务线加载时校验。只配置档位也算开启配额（`Limits.Enabled`），仍须为模型配置价格。
+
+`Quotas.Status` 统一解析 EndUser 的档位，提交、模型调用、压缩、Call 与语音沿用这一入口。已分配且配置存在时只替换 EndUser 日限额；未分配时使用默认日限额。业务线月限额、周期与已用金额保持不变，升级不清零，降级不追溯。已存档位在配置中不存在时回落默认日限额（默认为 0 即不限），每次解析增加无标签指标 `yanshi_quota_unknown_tier_total`；删除档位配置前应先迁移已分配的用户。该指标不带业务线、EndUser 或档位名。
+
+`usage.TierCache` 缓存分配结果（包括未分配），有效期为 5 秒，与 serve 的用量缓存一致。本进程 Put、Delete 和注销清理完成后立即失效，写入报错也失效，因为报错可能只是回包丢失。缓存用全局世代号保护：读取前保存世代，回填前在同一互斥锁下比较；期间发生写入就丢弃结果并重读。世代不按 EndUser 永久保存，注销不会留下个人标识的世代记录。其他进程的变更最多 5 秒后参与新检查，已在途检查仍可能沿用旧值，遵循 ADR-0019 的软上限；已挂起 Run 按既有周期复查，不因档位变化主动唤醒。
 
 ### 检查点
 
@@ -88,9 +99,24 @@ PostgreSQL 实现（迁移 `0007_usage.sql`）：
 
 明细与聚合按保留期清理（`serve -usage-retention`，默认 400 天，覆盖年度对账），由 Janitor 执行。
 
+### 档位存储与删除
+
+`usage.TierStore` 提供 Get、Put、Delete；未分配时 Get 返回空字符串，Delete 幂等。内存实现 `usage.MemTiers` 与 PostgreSQL 实现 `pgusage.Tiers` 经 `app.Stores` 构造，`app.NewCore` 将同一个档位缓存交给配额与 `service.Service`。档位属于配额配置的按用户分配，放在 `internal/usage`，不引入权益领域或 Session 数据。
+
+迁移 `internal/pg/migrations/0025_end_user_tiers.sql` 创建 `end_user_tiers(business_line, end_user, tier, updated_at)`，主键为 `(business_line, end_user)`；在 `pg.Tables` 登记 EndUser 分片键。每次查询或写入只访问一个 EndUser，过滤业务线，不跨键事务。
+
+`Service.PutTier` 先直接检查 EndUser 删除屏障，写入后总是经 `lifecycle.RecheckEndUser` 复查，包括写入返回错误但可能已提交的情况。复查与撤回使用不随请求取消的上下文；发现屏障就删除刚写的档位，不能确认屏障时也保守撤回。屏障读取不经档位缓存。`Service.DeleteEndUser` 在固定清理路径中删除档位，失败则不封口，所有调用方均生效，无须各自传入 remover。宽限期内的写入即使在落盘后、复查前进程崩溃，也由到期清理兜底：`app.NewCore` 将共享档位缓存登记到 `Core.EndUserData`，Janitor 调用 `PruneEndUsers`，逐条复核到期屏障，先经 `EndUserHolder.Delete` 清理档位，再移除屏障。清理幂等，每个 EndUser 一条档位 DELETE；某条失败就保留该屏障、下一轮重试，并继续其他候选。
+
+PG 在单个 EndUser 的事务中锁住并复核屏障，清理回调经 `pg.Exec` 沿用同一连接池的事务，再删除屏障；失败回滚，不将多个 EndUser 放入同一事务。内存实现用同一把屏障锁串行化清理与删除，回调不重入 Deletions。这样其他 Janitor 的旧候选不会清除已经复用 ID 的新档位。清理回调中的缓存失效可能早于 PG 提交，Janitor 在事务结束后再经 `EndUserHolder.Invalidate` 失效一次，仍按世代防止提交前读回填旧值。
+
+屏障只有在到期清理成功后才会消失；之后允许复用同一 EndUser ID，从默认档位开始。
+
 ## 5. 接口
 
-- `GET /v1/quota[?end_user=]`：当前周期的限额、已用与重置时间（业务线与 EndUser 两层）。EndUser 令牌只能看自己。
+- `GET /v1/quota[?end_user=]`：当前周期的限额、已用与重置时间（业务线与 EndUser 两层）。EndUser 令牌只能看自己。EndUser 层的 `tier` 只在有效分配时返回，默认或未知档位回落时省略。
+- `PUT /v1/end_users/{id}/tier`：JSON `{business_line?, tier}`；成功返回 `{"tier":"pro","limit_micros":10000000}`。`limit_micros` 为有效 EndUser 日限额。只允许服务令牌，用户令牌返回 403；业务线取自令牌，自报不符返回 403。开发模式须在 JSON 或查询参数中指定业务线，两处冲突返回 400。
+- `DELETE /v1/end_users/{id}/tier`：恢复默认，成功返回 `{"tier":"","limit_micros":2000000}`；默认限额 0 表示不限。只允许服务令牌，开发模式经查询参数指定业务线，与注销接口相同。
+- 设置未知档位返回 400；业务线未开启配额时两个档位写接口均返回 400（档位不会产生效果）。Put 遇到 EndUser 删除屏障返回既有屏障错误码 404；配置或存储故障照现有错误路径处理。接口沿用配额与注销的普通 JSON，不新增 proto 消息。
 - `GET /v1/usage?from=2026-10-01&to=2026-11-01&group_by=day|end_user|model|agent|oneshot[&end_user=]`：按业务线时区的日期汇总。EndUser 令牌只能看自己，且不能按 EndUser 分组。
 - 指标：`yanshi_usage_cost_micros_total{business_line,kind}`、`yanshi_quota_rejections_total{scope,where}`、`yanshi_usage_record_errors_total`。业务线名不是个人数据，可作为标签。
 
@@ -102,7 +128,13 @@ PostgreSQL 实现（迁移 `0007_usage.sql`）：
   - 每层的已用金额不超过"限额 + Worker 数 × 单次调用费用上限"；
   - 因配额挂起的 Run 在额度恢复后都能结束；
   - 注销的 EndUser 不在用量记录中出现。
-- 授权矩阵：两个接口加入 `authz` 测试。
+- 档位一致性套件 `tiertest`：覆盖幂等覆盖、删除、复用与业务线/EndUser 隔离；内存与 PG 实现共用，PG 由 `YANSHI_TEST_PG` 启用。
+- 档位缓存测试：5 秒边界、本进程写后立即可见、Put/Delete（含已提交但报错）与在途读取交错不回填旧值。
+- 到期清理一致性测试：未到期不调用、分页、清理失败保留屏障、其他候选继续、重试成功；两种 lifecycle 实现共用。PG 回归覆盖单连接池沿用同键事务、失败回滚，以及提交前回填旧缓存后再次失效。
+- 档位删除测试：注销在写前、写后、回包丢失与请求取消时交错；清理失败不封口，宽限期后复用 ID 不继承旧档位。sim 覆盖 `TiersSet`、`TiersWithdrawn`，删除不变量直接查底层存储，档位加入 PG 差分指纹。新增 `TierWriterCrashes`、`TierCrashRecoveries`，覆盖 Put 落盘后跳过复查；收敛时显式拨钟到全部宽限期结束，屏障移除后检查没有残留档位，再回到原循环处理拨钟后新到期的定时。崩溃只在故障模式注入。档位模拟由 `Options.Tiers` 独立开启，档位选择使用直接从种子派生的独立随机流；未开启时保持原有额度、六种注销写入及其抽样顺序，也不增加到期拨钟。`TestTiersWithFaults` 单独要求全部档位覆盖，原综合场景仍保留包括 `CardAnswers` 的全部既有覆盖；PG 差分显式开启档位。
+- 授权矩阵覆盖用量与档位接口；真实 HTTP 测试覆盖设置、查询、超默认但未超档位额度时配额检查放行、恢复默认、用户令牌拒绝与注销清理。
+
+本次档位相关测试已补齐，待远端执行 `make check`（含 PG）与 `make sim`；下节是此前计量与配额的验证结果。
 
 ## 7. 验证结果
 

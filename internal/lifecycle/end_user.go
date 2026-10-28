@@ -36,8 +36,9 @@ type EndUserDeletions interface {
 	PendingEndUsers(ctx context.Context, limit int) ([]*EndUserTombstone, error)
 	// CompleteEndUser 仅在已 Seal、Revision 未变且尚未完成时记录完成时间与宽限期终点。
 	CompleteEndUser(ctx context.Context, b *EndUserTombstone, at, expires time.Time) error
-	// PruneEndUsers 扫描到期屏障并逐 EndUser 删除，不把多个键放进同一事务。
-	PruneEndUsers(ctx context.Context, now time.Time, limit int) error
+	// PruneEndUsers 逐 EndUser 复核到期条件，再清理、再删除屏障；清理失败保留该屏障并继续其他候选。
+	// cleanup 不得重入 Deletions；PG 清理须经 pg.Exec 沿用同键事务。nil 只用于没有附属数据的存储测试。
+	PruneEndUsers(ctx context.Context, now time.Time, limit int, cleanup func(context.Context, string, string) error) error
 }
 
 // EndUserDeleted 报告该业务线的 EndUser 屏障是否仍在（执行期或宽限期）。
@@ -66,4 +67,13 @@ func RecheckEndUser(ctx context.Context, d EndUserDeletions, businessLine, endUs
 		return false, err
 	}
 	return true, withdraw(context.WithoutCancel(ctx), b)
+}
+
+// EndUserHolder 是注销时需要清理的一处按 EndUser 保存的数据；到期屏障删除前再清一遍，
+// 兜住写入已提交、复查之前进程崩溃的窗口。登记由 app.NewCore 的对象图提供。
+type EndUserHolder struct {
+	Name   string
+	Delete func(ctx context.Context, businessLine, endUser string) error
+	// Invalidate 在清理事务结束后失效缓存；可为 nil。
+	Invalidate func(businessLine, endUser string)
 }
