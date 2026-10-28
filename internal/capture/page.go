@@ -27,7 +27,7 @@ type PageOptions struct {
 
 func OptionsFor(inv capability.Invocation) PageOptions {
 	gap := invocationGap(inv)
-	o := PageOptions{Limit: DefaultLimit, MaxChars: MaxChars, GapMS: gap.Milliseconds()}
+	o := PageOptions{Limit: MaxLimit, MaxChars: MaxChars, GapMS: gap.Milliseconds()}
 	if inv.Agent != nil {
 		o.MaxToolResult = inv.Agent.Context.MaxToolResult
 	}
@@ -162,7 +162,7 @@ func ParsePage(raw json.RawMessage, o PageOptions) (RenderPage, error) {
 		default:
 			return p, invalidPage("说话人")
 		}
-		if s.Text == "" {
+		if s.Text == "" || utf8.RuneCountInString(s.Text) > session.MaxCaptureText {
 			return p, invalidPage("片段文字")
 		}
 		if s.SpokenAt != "" {
@@ -180,18 +180,17 @@ func ParsePage(raw json.RawMessage, o PageOptions) (RenderPage, error) {
 				return p, invalidPage("时区")
 			}
 		}
-		blocks, nextDay := renderSegment(segment{ref: ref, g: g}, day)
-		day = nextDay
-		for _, b := range blocks {
-			if b.GetCapture() != nil {
-				chars += utf8.RuneCountInString(model.CaptureText(g))
-			} else {
-				chars += utf8.RuneCountInString(b.GetText().GetText())
-			}
-		}
-		if chars > o.MaxChars {
+		// max_chars 约束切页，逐条复现 page 的检查顺序；真正的结果预算由 Render 兜底。
+		n := utf8.RuneCountInString("#" + ref.String() + " " + model.CaptureText(g))
+		if i > 0 && chars+n > o.MaxChars {
 			return p, invalidPage("字符上限")
 		}
+		blocks, nextDay := renderSegment(segment{ref: ref, g: g}, day)
+		if nextDay != day {
+			chars += utf8.RuneCountInString(blocks[0].GetText().GetText())
+		}
+		day = nextDay
+		chars += n
 		p.Segments = append(p.Segments, g)
 	}
 	return p, nil

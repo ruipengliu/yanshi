@@ -234,13 +234,15 @@ Session 已在按保留期删除（对外已不可见）时，用户再删除它
 
 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 的第一步保留内核 Capture 路径，并增加业务线存放原文的读取入口。MCP Server 登记 `attests_speakers: true`（默认 false），且登记的 `business_line` 与 Session 相同，平台才采信结果 `_meta["yanshi/page"]`。未登记或跨业务线时忽略页元数据，按普通外部 MCP 结果处理。有可信页时先丢弃业务线的全部 `content` 与 `structuredContent`，不上传其中的媒体、不回显错误文字；模型只看平台渲染的结果。MCP 自报错误时也只写固定的平台错误。
 
+Persona 是第一个实现者：引用的命名空间与处理进度归业务线，按业务日保存。本步 xinli 的登记仍显式为 `attests_speakers: false`，第 2 步随 xinli-day 版本 2 一起打开；差分测试单独开启登记。见 [xinli 的旁听原文](./xinli-captures.md#13-persona-中的旁听原文)。
+
 开启登记后，请求 `_meta["yanshi/page_options"]` 为：
 
 ```json
-{"limit":200,"max_chars":6000,"gap_ms":300000,"max_tool_result":0}
+{"limit":500,"max_chars":6000,"gap_ms":300000,"max_tool_result":0}
 ```
 
-段数与字符上限来自 `capture.DefaultLimit`、`capture.MaxChars`；间隔与内置工具相同，先取 AgentDef 的 transcript 流声明（默认 5 分钟），已有内核读取位置时沿用其间隔；结果预算取 `context.max_tool_result`，0 表示不限。此任务不新增 AgentDef 配置，也不切换现有 AgentDef。
+段数与字符上限来自 `capture.MaxLimit`、`capture.MaxChars`。这里的 limit 是平台接受的上限（500），实际页段数取模型参数（未给时 `capture.DefaultLimit`，即 200）、500 与平台上限的最小值；间隔与内置工具相同，先取 AgentDef 的 transcript 流声明（默认 5 分钟），已有内核读取位置时沿用其间隔；结果预算取 `context.max_tool_result`，0 表示不限。此任务不新增 AgentDef 配置，也不切换现有 AgentDef。
 
 响应页契约（`internal/capture.StructuredPage`）：
 
@@ -256,7 +258,7 @@ Session 已在按保留期删除（对外已不可见）时，用户再删除它
 ```
 
 - `kind` 只能为 `page`、`empty`、`in_progress`。未知字段、类型错误、尾随 JSON 一律拒绝；业务线不能填 `redacted`、页头或下一页游标。
-- `page` 至少一段，至多 `limit` 段。每段文字非空；字符数按 Unicode rune 计，包括 `#ref `、时间与说话人标注、换行和日期头，与内置页的计数素材一致，总计不得超过 `max_chars`。内置分页历史上允许首段超限、加入新日期头前才检查字数；可信页执行严格上限，不继承这两个宽限。
+- `page` 至少一段，至多 `limit` 段。每段文字非空且不超过 `session.MaxCaptureText`（2000）个 Unicode rune，超出以“片段文字”拒收。页的字符计数与内置的计数口径逐条一致：每段 n 是 `#ref ` 加展开后的片段文字（含当地时刻、说话人标注与换行）的 rune 数；第一段不按 max_chars 拒收，之后各段在加入前检查之前累计的字符数加 n，超限即拒收，新日期头在检查之后才计入累计值。max_chars 是页大小约束，单段长度有独立上限，真正的结果预算由 Render 之后的 max_tool_result 检查兜底。
 - `ref` 与 `span` 是两个非负整数组成的 `N.M`；解析后按两个整数比较，片段严格递增，`span` 不大于首段，`cont` 为真时严格小于首段。平台渲染为规范十进制形状。引用只属于业务线的命名空间，不解释为日志序号；`0.0` 也是合法引用。
 - `speaker` 只能为 `wearer` 或 `other`；佩戴者的键为空，他人的键匹配 `[A-Za-z0-9_-]{1,32}`。非空 `spoken_at` 必须为 RFC3339，非空 `time_zone` 必须为有效 IANA 时区（拒绝 `Local`）。缺少任一个时不显示该段时间。
 - `span` 是时段起点；`cont` 表示续页；`done` 表示已读完全部旁听；`ended` 表示本时段已结束但后面还有时段。页尾与下一页游标均由平台按内置 `pageTail` 生成。标题、日期头、逐段编号、正文与占位也与内置路径共用纯渲染器。

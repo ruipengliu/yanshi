@@ -80,12 +80,12 @@ func TestDevReadinessFixtureMCPAndEOF(t *testing.T) {
 	for i, bl := range []string{"bl", "other"} {
 		r := regs[i]
 		// 对照 internal/mcpcap/mcpcap.go Server 的 yaml 标签；不要直接序列化 Persona Registration。
-		for _, key := range []string{"name", "business_line", "url", "timeout", "tools", "cite_captures", "acks"} {
+		for _, key := range []string{"name", "business_line", "url", "timeout", "tools", "cite_captures", "acks", "attests_speakers"} {
 			if _, ok := r[key]; !ok {
 				t.Errorf("missing key: %s", key)
 			}
 		}
-		if len(r) != 7 || r["name"] != source.Name || r["business_line"] != bl || r["url"] != info.MCPURL || r["timeout"] != "30s" || r["cite_captures"] != true || r["acks"] != true {
+		if len(r) != 8 || r["name"] != source.Name || r["business_line"] != bl || r["url"] != info.MCPURL || r["timeout"] != "30s" || r["cite_captures"] != true || r["acks"] != true || r["attests_speakers"] != false {
 			t.Fatalf("registration: %+v", r)
 		}
 		if !reflect.DeepEqual(info.Registrations[i].Tools.NoApproval, source.NoApproval) {

@@ -36,8 +36,9 @@ type registration struct {
 	Tools        struct {
 		NoApproval []string `json:"no_approval"`
 	} `json:"tools"`
-	CiteCaptures bool `json:"cite_captures"`
-	Acks         bool `json:"acks"`
+	CiteCaptures    bool `json:"cite_captures"`
+	AttestsSpeakers bool `json:"attests_speakers"`
+	Acks            bool `json:"acks"`
 }
 
 type ready struct {
@@ -51,7 +52,7 @@ func registrations(lines []string, endpoint string) []registration {
 	source := mcpserver.XinliRegistration()
 	out := make([]registration, 0, len(lines))
 	for _, bl := range lines {
-		r := registration{Name: source.Name, BusinessLine: bl, URL: endpoint, Timeout: source.Timeout.String(), CiteCaptures: source.CiteCaptures, Acks: source.Acks}
+		r := registration{Name: source.Name, BusinessLine: bl, URL: endpoint, Timeout: source.Timeout.String(), CiteCaptures: source.CiteCaptures, Acks: source.Acks, AttestsSpeakers: source.AttestsSpeakers}
 		r.Tools.NoApproval = append([]string(nil), source.NoApproval...)
 		out = append(out, r)
 	}

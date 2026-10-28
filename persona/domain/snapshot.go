@@ -5,6 +5,7 @@ import "encoding/json"
 // bookData 只序列化事实与分配位置；投影从变更集重建，避免两份当前值漂移。
 // 它是存储格式，与对外 State 的 JSON 形状分开。
 type bookData struct {
+	CaptureDays         map[string]*captureDay
 	Projects            []Project
 	Changesets          []Changeset
 	Days                []Day
@@ -20,7 +21,7 @@ func NewBook() *Book {
 }
 
 func (u *Book) MarshalJSON() ([]byte, error) {
-	return json.Marshal(bookData{u.projects, u.changesets, u.days, u.weeks, u.merges,
+	return json.Marshal(bookData{u.captureDays, u.projects, u.changesets, u.days, u.weeks, u.merges,
 		u.weekSessions, u.submitted, u.next, u.nextC, u.nextCS})
 }
 
@@ -30,6 +31,7 @@ func (u *Book) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	next := NewBook()
+	next.captureDays = d.CaptureDays
 	next.projects, next.changesets, next.days, next.weeks, next.merges = d.Projects, d.Changesets, d.Days, d.Weeks, d.Merges
 	if d.WeekSessions != nil {
 		next.weekSessions = d.WeekSessions

@@ -199,3 +199,29 @@ func (c *Client) Submitted(ctx context.Context, bl, eu, session, input string) e
 func (c *Client) Edit(ctx context.Context, bl, eu, id, status, due string) error {
 	return c.request(ctx, bl, eu, "edit", map[string]string{"id": id, "status": status, "due_date": due}, nil)
 }
+
+// CaptureSegment 是夹具的线上输入，不依赖 Persona 的 Go 模块。
+type CaptureSegment struct {
+	Speaker    string `json:"speaker"`
+	SpeakerKey string `json:"speaker_key,omitempty"`
+	Text       string `json:"text"`
+	SpokenAt   string `json:"spoken_at,omitempty"`
+	TimeZone   string `json:"time_zone,omitempty"`
+}
+
+func (c *Client) AppendCaptures(ctx context.Context, bl, eu, date, captureID string, segments []CaptureSegment) ([]string, error) {
+	in := struct {
+		Date      string           `json:"date"`
+		CaptureID string           `json:"capture_id"`
+		Segments  []CaptureSegment `json:"segments"`
+	}{date, captureID, segments}
+	var out struct {
+		Refs []string `json:"refs"`
+	}
+	err := c.request(ctx, bl, eu, "captures", in, &out)
+	return out.Refs, err
+}
+
+func (c *Client) BindDay(ctx context.Context, bl, eu, date, session string) error {
+	return c.request(ctx, bl, eu, "bind_day", map[string]string{"date": date, "session": session}, nil)
+}

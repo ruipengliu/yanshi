@@ -420,6 +420,10 @@ func (c *Call) FileChanges() string {
 	old := slices.IndexFunc(u.changesets, func(cs Changeset) bool { return cs.Session == c.session && cs.Key == key && cs.Author == AuthorDay })
 	k.base = u.foldWithout(old)
 	now := c.now
+	date := now.Format(time.DateOnly)
+	if bound, _ := u.boundDay(c.session); bound != "" {
+		date = bound
+	}
 	cs := Changeset{Session: c.session, Key: key, Author: AuthorDay, Source: src, RecordedAt: now}
 
 	if !k.day && (len(in.Exchanges.Merge) > 0 || len(in.Exchanges.Revise) > 0 || len(in.Commitments.Merge) > 0) {
@@ -453,7 +457,7 @@ func (c *Call) FileChanges() string {
 		}
 		taken = append(taken, span{f, t})
 		k.health(what, append([]string{e.Title, e.Summary}, append(e.Risks, e.Awareness...)...)...)
-		x := Exchange{ID: id, Session: c.session, Date: now.Format(time.DateOnly), From: e.From, To: e.To, FiledAt: now, Title: e.Title,
+		x := Exchange{ID: id, Session: c.session, Date: date, From: e.From, To: e.To, FiledAt: now, Title: e.Title,
 			Summary: e.Summary, Risks: e.Risks, Awareness: e.Awareness}
 		x.Projects = k.links(what, e.Projects, e.Title)
 		for _, d := range e.Decisions {
@@ -567,6 +571,7 @@ func (c *Call) FileChanges() string {
 	}
 	u.commit(&cs, old, k.news)
 	if !k.day {
+		c.advanceCaptures(k.from, k.to)
 		c.ack = map[string]string{"stream": "transcript", "from": k.from.String(), "through": k.to.String()}
 	}
 	return c.receipt(&cs, k.notes)

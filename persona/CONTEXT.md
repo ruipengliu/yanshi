@@ -42,4 +42,20 @@ EndUser 明确说过的重要目标，心力优先据此对照近期投入。
 EndUser 的专有词汇（人名、项目名、术语），供识别热词与整理使用。
 
 **Lineage（依据）**:
-派生对象所依据的引用（`#seq.index`、交谈 ID、笔记 ID）。
+派生对象所依据的引用（`#批次.段号`、交谈 ID、笔记 ID）。
+
+**Business day（业务日）**（ADR-0050）:
+EndUser 当地的一天（`YYYY-MM-DD`），是 Persona 保存旁听原文、编排引用与推进处理进度的单位。每个业务日记下当前的工作 Session（一个 `xinli-day` Session）；擦除后工作 Session 会重建、ID 会变，业务日不变。
+_Avoid_: 当天 Session（指业务日时）、日期（泛指时）
+
+**Processing position（处理进度）**（ADR-0050）:
+业务日中已整理完的位置：`captures` 的 `after: "new"` 从这里读起。只在接受范围变更集的同一事务中推进，并且只越过被完整覆盖的时段；擦除时退回到最早受影响的时段之前。
+_Avoid_: 读取位置（内核的 `capture_read`）、回执、ack
+
+**Deletion task（删除待办）**（ADR-0050）:
+擦除或删除一天时，与删除原文在同一事务中记下的待办：要删除的工作 Session 与当天用过的全部工作 Session。由编排器幂等执行（中断、删除、等清理完成、查出受影响的 Memory），完成之前 App 只显示"删除中"。
+_Avoid_: 删除任务队列、job
+
+**Erasure tombstone（擦除墓碑）**（ADR-0050）:
+被擦除的引用编号：不再复用，之后引用它们的承诺、修订与交谈端点一律拒收。
+_Avoid_: 删除记录（指内核的 Tombstone 时）
