@@ -1,5 +1,5 @@
 ---
-status: accepted（由 ADR-0050 修订：去掉 `window.stream`）
+status: accepted（由 ADR-0050 修订：去掉 `window.stream`；再由 P2 的讨论修订：去掉窗口、Session 的时区、超额不跳过、有定时不按空闲关闭，见 persona-architecture §13 的 Q55–Q76）
 ---
 
 # 定时是内核的原语，到期输入的来源是平台
@@ -11,9 +11,9 @@ status: accepted（由 ADR-0050 修订：去掉 `window.stream`）
 （设计见 `docs/design/m7-kernel-primitives.md` §5）
 
 - 定时属于一个 Session：由 Agent 经内置能力 `schedule` 创建，或由业务线经 HTTP 创建；一次性（`at`）或周期（RRULE 子集），时区由创建方显式给出。
-- 可选的窗口：从时刻起，流上静默满一段时间即执行，否则到最晚时刻在抖动范围内执行（xinli 当天整理的规则）。
+- 没有窗口：静默判断依据原文，原文在业务线（ADR-0050），当天整理由业务线提交固定指令。时区默认取创建 Session 时给出的 `time_zone`。
 - 记为 Event（`ScheduleCreated`、`ScheduleCancelled`、`ScheduleFired`），投影记下下次到期时间；唤醒复用后台调用与触发的停放（ADR-0035、ADR-0040），到期时 Worker 写入带定时标记的 `RunRequested`，**来源为平台**，客户端不能伪造该标记。
-- 有活跃 Run 时等它结束；超额时跳过这一次；Session 关闭后失效。
+- 有活跃 Run 时等它结束；超额时照常开启 Run，由配额与准入挂起或排队；Session 关闭后失效，有有效定时的 Session 不按空闲关闭。
 
 这修改了 ADR-0040 第 5 条：那里担心的时区与一天的边界由创建方给出；定时只在本 Session 内开启 Run，不跨 Session 创建。
 

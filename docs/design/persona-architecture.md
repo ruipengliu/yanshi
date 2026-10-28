@@ -171,12 +171,12 @@ Session 内"何时做"由内核负责（触发、定时）；跨 Session 的扇�
 
 | 功能 | AgentDef 与 Session | 怎么开启 | 用到的 |
 |---|---|---|---|
-| 全时记 | `xinli-day`，每人每天一个 | 白天：触发；当天整理：定时，带静默条件（[M7](./m7-kernel-primitives.md) §5） | `captures`、Persona 的 `file_changes`、`day_ledger`、`file_day`；关注项随 `find_related` 召回 |
+| 全时记 | `xinli-day`，每人每天一个 | 业务线提交固定的整理指令：白天说完一段话后"整理交谈"，傍晚静默后或凌晨"整理今天"（ADR-0050） | `captures`、Persona 的 `file_changes`、`day_ledger`、`file_day`；关注项随 `find_related` 召回 |
 | 用户标记重点 | 同上 | App 经 BFF 把标记（当地时刻、可选的一句话）写入 Persona | `find_related`、`day_ledger` 返回落在时段内的标记，整理时作为重点写入交谈；不新增流种类（不满足 §9 的判据） |
 | 实况预览 | 无 Session | App 打开时，BFF 每分钟读最近的旁听，调用单次调用 `xinli-live-brief` | 单次调用、`GET /v1/sessions/{id}/captures` |
 | 随口记 | `xinli-note`，每人一个、长期 | 用户输入 | Persona 的 `save_note`；话中有请求时同一 Run 处理（如创建定时） |
 | 内容纠错 | 无 | App 中修改原文 → 原文修订；修改摘要或知识 → Persona 中用户的变更集；新词进词库 | 原文修订、Persona |
-| 个人记忆 | `xinli-day` 整理时消解实体；`xinli-week` 合并重复实体（提议，用户确认） | 触发、定时 | Persona 的 `entity`、`find_related` |
+| 个人记忆 | `xinli-day` 整理时消解实体；`xinli-week` 合并重复实体（提议，用户确认） | 业务线的整理指令、定时 | Persona 的 `entity`、`find_related` |
 | 智能问答 | `xinli-assistant`，**每个话题线程一个 Session** | 用户输入 | Persona 的查询工具、Memory 召回、重答、`show_card`；收藏在应用层 |
 | 项目跟踪 | `xinli-project`，每个项目一个 | 编排器 | 现有设计 |
 | 待办 | 承诺加用户手动添加的待办，都在 Persona 的账本中 | — | 现有设计；用户添加的记为作者为用户的变更集 |
@@ -196,7 +196,7 @@ Session 内"何时做"由内核负责（触发、定时）；跨 Session 的扇�
 
 1. 采集服务把当天的旁听提交给 Persona（按业务日保存，ADR-0050）。需要整理时，编排器为业务日创建或复用当天的 `xinli-day` Session（带当天的绝对删除期限）并绑定。
 2. 说完一段话、静默一段时间后，业务线提交"整理交谈"；Run 经 `mcp_xinli__captures` 读平台渲染、审核过的页，逐时段交出变更集，Persona 在同一事务中推进处理进度。
-3. 傍晚之后业务线判断静默满 2 小时、或到 04:00–04:30 时，提交"整理今天"（定时由内核执行，ADR-0045 不含 `window.stream`）：读完余下的时段、当天整理、`file_day`。
+3. 傍晚之后业务线判断静默满 2 小时、或到 04:00–04:30 时，提交"整理今天"（固定指令，由业务线判断时机，ADR-0050；不用内核定时，Q55）：读完余下的时段、当天整理、`file_day`。
 4. 出站流上出现这次 Run 完成，编排器归集到各项目。
 5. 应用层关闭当天的 Session；到删除期限时内核删除工作 Session（日志中的原文副本），业务线按自己的保留期删除原文；交谈、承诺与 Memory 保留。
 
@@ -288,7 +288,7 @@ evals/                    评测用例；夹具经契约指向 Persona
 |---|---|---|
 | P0 边界（实现已完成） | 模拟业务线迁成 `persona/`（内存存储）；评测夹具契约；依赖方向检查；术语拆分 | `make check` 全绿；`make eval` 的 `capture-*` 与基线一致 |
 | P1 内核：数据与合规 | ADR-0050 的迁移（Q36）：可信结构化片段与 Apply 校验、attested 结果写日志前审核（已完成）；① Persona 的原文、分页与处理进度（与内核现有分页逐页差分）；② xinli-day 切到 `mcp_xinli__captures`；③ 创建 Session 时的绝对删除期限、删除原因 Erasure 与 Memory 的候选查询；④ Persona 的擦除、删除待办与编排器的删除；⑤ 按退役条件删除内核的 Capture 路径（含三个 SDK）；EndUser 删除屏障（已实现） | `make check`、`make sim`；来源推导与写入闸门覆盖 attested 结果；删除不变量覆盖擦除与注销；擦除与在途 Run 的竞态；切换时 `make eval` 的 `capture-*` 与基线一致 |
-| P2 内核：驱动 | 定时与到期表（流上的触发由 ADR-0050 取消） | 同上，加模拟测试的定时不变量；百万停放压测 |
+| P2 内核：驱动 | 定时与到期表（流上的触发由 ADR-0050 取消；顺序与范围见 §13 的 Q55–Q76） | 同上，加模拟测试的定时不变量；百万停放压测 |
 | P3 内核：补充 | 单次调用；档位；重答；`speaker_ref` | 同上；单次调用的评测；子限额下问答首字延迟不退化 |
 | P4 生产服务 | Persona 的 PG 存储与检索；应用层的采集识别、账号设备、渠道、推送、编排器、BFF；内核的分片路由；出站流（通用部分，Q36：ADR-0050 后它的第一个消费者是 BFF） | 夹具契约在内存与 PG 实现上结果一致；端到端一天；故障演练：断网补传、Persona 故障、出站流消费者落后、数据库切换 |
 | P5 Persona 新能力 | 实体与时间线、笔记、关注项、目标与心力优先、画像、词库 | 每项新增评测用例 |
@@ -377,3 +377,30 @@ P1 动工前的讨论（2026-10-28），各题的推荐均被采纳：
 | Q52 | 墓碑拦什么 | 被擦除的编号不复用；承诺与修订的 `refs`、交谈的端点引用它们时拒收；`source` 跨过空号允许；旧 Session 的调用由当前 Session 的校验拦下 | 拦 `source` 相交（会拒掉合法的重新整理） |
 | Q53 | 擦除过去的日子 | 删除待办完成后，删除期限未到时编排器重建工作 Session 并提交一次"整理今天" | 留下空缺，由用户手动重新整理 |
 | Q54 | 文档与执行 | 决定记在本节；五步各一个 Codex 任务、串行；每步 `dev check`，涉及执行语义的加 `make sim`，②⑤ 加 `capture-*` 评测并以当天 main 对照判断回归 | — |
+
+P2 动工前的讨论（2026-10-28），各题的推荐均被采纳：
+
+| # | 决定 | 选择 | 没有选的 |
+|---|---|---|---|
+| Q55 | P2 的范围与第一个使用方 | 内核的定时原语（事件、投影、HTTP、内置能力 `schedule`、到点开启 Run、到期表、模拟不变量、停放压测）；业务侧先由 `xinli-assistant` 使用（"每周五给我周报"、"明早提醒我"）；当天整理与每周回顾仍由编排器提交固定指令 | 每周回顾也改为内核定时（要先有本周的 Session，牵涉 P4 的生产调度） |
+| Q56 | 窗口 | 删除 `window`（没有流就判断不了静默，`latest`、`jitter` 只服务当天整理，而它已归业务线）；定时只有 `input`、`time_zone`、`at` 或 `rrule`、`until` | 保留 `latest` 与 `jitter` |
+| Q57 | 到点输入的来源 | 新增来源"平台定时"：对写入闸门不是用户原话（只凭它写 Memory 须审批），对注入判断不是外部内容（照常执行）；标记在 `RunRequested.schedule {schedule_id, due_at}`，客户端不能带，service 拒绝、`Apply` 再校验 | 算用户原话（来源洗白） |
+| Q58 | Agent 创建与取消 | 当前 Run 受外部内容影响时（写入闸门的判断），`schedule` 的 create 与 cancel 须用户批准，否则直接生效；list 不审批；文字在创建时经内容安全检查；HTTP 创建不审批 | 一律审批；一律不审批 |
+| Q59 | 周期规则 | 自己实现 RRULE 子集（DAILY、WEEKLY、MONTHLY，BYDAY、BYHOUR、BYMINUTE、COUNT、UNTIL），最小间隔 1 小时，每个 Session 至多 50 个有效定时；夏令时跳过顺延到之后第一个存在的时刻、重复取第一次；每次解析出的 UTC 写入事件 | 第三方库（升级会改变结果） |
+| Q60 | 错过与冲突 | 有活跃 Run 时等它结束；晚到的照常执行；周期定时只执行最近一次到期，更早的写 `ScheduleSkipped`；到点时 Session 已关闭写 `ScheduleSkipped`；一次性执行后、`until` 或 `COUNT` 用尽后失效；排在已排队的用户输入之后；随 Session 删除 | — |
+| Q61 | 到期表 | 下次到期在 1 小时以内的用 `workqueue.Park`；更远的写入按 Session 分片的到期表，工作项结束；Janitor 每次 Sweep 把一小时内到期的移回工作队列并停放到确切时刻；创建、取消、Session 删除与迁移在同一事务中，`workqueuetest` 覆盖交错 | 只给 `parked_until` 加索引（认领按优先级扫描再过滤，百万长停放仍拖慢认领） |
+| Q62 | 停放压测 | Mac mini 的 PG，环境变量开启、不进 `make check`：100 万个远期定时加 1 万个活跃工作项，认领 p99 不超过空表基线的 2 倍，Janitor 迁移 1 万个到期项不超过 1 秒；结果写入 [M7](./m7-kernel-primitives.md) §13 | — |
+| Q63 | SDK 与控制台 | 三个 SDK 不加定时方法（App 在 P4 经 BFF）；控制台按通用方式显示新事件，不加面板与场景 | — |
+| Q64 | P2 的顺序 | ① RRULE 与时区 → ② 事件、投影、HTTP、`schedule`、Worker 到点开启 Run（只用 `Park`）与模拟不变量（写入前后崩溃不重复、不遗漏，跳过落事件；`SchedulesFired`、`SchedulesSkipped`）→ ③ 到期表与 Janitor 迁移 → ④ 压测 → ⑤ `xinli-assistant` 使用与评测；每步验证后提交推送 | — |
+| Q65 | 时区 | 创建 Session 时可带 `time_zone`（IANA，记入 `SessionCreated`，用户令牌与服务令牌都可设）；定时的时区默认取它，Session 没有时区时必须显式给出；`clock_now` 省略时区时也取它 | 每次由模型推断；AgentDef 上的默认时区 |
+| Q66 | `schedule` 工具 | `{action: create \| list \| cancel}`；create `{input, at \| rrule, time_zone?, until?}`，时刻为当地时间，`schedule_id` 由 call_id 派生；结果写明下次的当地时间与星期；参数错误给出可照着重试的说明 | 三个工具 |
+| Q67 | 到点时模型看到的 | 平台在输入前渲染一行"【定时 <ID> 到点：10月30日星期五 17:00】"，再接创建时的文字；都在 Run 的位置上，不进系统指令 | 原样作为输入（像用户此刻说的） |
+| Q68 | 空闲关闭 | 有有效定时的 Session 不按空闲关闭（索引记下次到期，空闲扫描跳过）；`delete_at` 与用户删除照常 | 定时因空闲关闭而失效 |
+| Q69 | 超额 | 到点总是写入 `RunRequested`，配额与准入由 Run 自己处理（挂起或排队）；`ScheduleSkipped` 只用于错过的周期与已关闭的 Session（修订 [M7](./m7-kernel-primitives.md) §5.4） | 超额时跳过（一时拥塞就丢掉用户要的周报） |
+| Q70 | 委托子 Session | 不能创建定时（能力与 HTTP 都拒绝）：子 Session 做完就结束，父 Session 的用户看不到也取消不了 | — |
+| Q71 | 评测中的到点 | 评测时钟为真实时间加偏移；用例新增回合 `advance_to_next_schedule: true`，运行器拨到下一次到期、唤醒 Session、等到点的 Run 完成再断言；新增 `schedule-weekly-report` | 只评测创建 |
+| Q72 | HTTP | `POST/GET /v1/sessions/{id}/schedules`、`DELETE …/{schedule_id}`；用户令牌只能操作本人的 Session，服务令牌操作本业务线的；创建时审核；限额与 `at` 晚于现在，超出为 400；列出包含文字（本人数据） | — |
+| Q73 | `xinli-assistant` | 版本升为 `"2"`：授予 `schedule` 与 `clock_now`，指令加一条"用户要求按时做某事或提醒时用 `schedule`，取消前先列出"，其余不改；按 ADR-0020 与基线比较；周报只用现有的 Persona 查询 | 新增 Persona 的周报工具 |
+| Q74 | 投递 | 到点 Run 的回复留在日志中，经现有事件流看到；推送与出站流在 P4 | — |
+| Q75 | 修改 Session 的时区 | P2 不提供；已建的定时保留各自的时区 | — |
+| Q76 | 文档 | 决定记在本节；ADR-0045 与 [M7](./m7-kernel-primitives.md) §5 按上面改写，不另开 ADR | 新开 ADR |

@@ -95,7 +95,7 @@ _Avoid_: 任务、Job、Turn
 _Avoid_: 定时任务、cron、事件订阅
 
 **Schedule（定时）**（设计中，[设计](docs/design/m7-kernel-primitives.md) §5、ADR-0045）:
-属于一个 Session、按钟点开启 Run 的声明：一次性或周期，时区由创建方给出，不包含流上静默窗口。由 Agent 经 `schedule` 能力或业务线经 HTTP 创建；到期时平台写入输入，来源是平台，不是用户原话。只在本 Session 内开启 Run。
+属于一个 Session、按钟点开启 Run 的声明：一次性或周期，时区由创建方给出（默认取 Session 的时区），没有静默窗口。由 Agent 经 `schedule` 能力或业务线经 HTTP 创建；到期时平台写入输入，来源是平台，不是用户原话。只在本 Session 内开启 Run。
 _Avoid_: cron、定时任务、提醒（指业务线按承诺期限推送时）
 
 **Oneshot（单次调用）**（设计中，[设计](docs/design/m7-kernel-primitives.md) §7、ADR-0047）:
