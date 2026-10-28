@@ -51,7 +51,7 @@ func (c *Call) RecentDays() string {
 			fmt.Fprintf(&b, "- %s\n", h)
 		}
 		for _, e := range c.u.exchanges {
-			if e.Session == d.Session && e.Live() {
+			if c.u.sameDay(e.Session, d.Session) && e.Live() {
 				fmt.Fprintf(&b, "  [%s] %s：%s\n", c.u.where(&e), e.Title, e.Summary)
 			}
 		}

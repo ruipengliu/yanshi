@@ -72,7 +72,9 @@ type Changeset struct {
 	ID string `json:"id"`
 	// Session 是交出它的 Session：旁听 Session（xinli-day、用户对交谈的确认）或项目 Session（xinli-project）。
 	Session string `json:"session,omitempty"`
-	// Key 是去重键：同一 Session 中同一个键再交一次，整体取代上一次。
+	// Day 是绑定的业务日；旧的未绑定 Session 为空。
+	Day string `json:"day,omitempty"`
+	// Key 是去重键：同一业务日（未绑定时同一 Session）重交时整体取代。
 	Key        string    `json:"key"`
 	Author     string    `json:"author"`
 	Source     Source    `json:"source"`

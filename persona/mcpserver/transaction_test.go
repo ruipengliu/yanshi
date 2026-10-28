@@ -107,3 +107,29 @@ func TestRegistration(t *testing.T) {
 		t.Fatal("registration shares mutable data")
 	}
 }
+
+// 已停用的工作 Session 不能借未绑定兼容路径提交，拒收也不能通知归集。
+func TestInactiveDaySessionCannotFile(t *testing.T) {
+	x := newServer(nil)
+	notifier := &recordFiled{}
+	x.notifier = notifier
+	if err := x.store.Update(context.Background(), "bl", "u", func(b *domain.Book) error {
+		if err := b.BindDay("2026-10-23", "old"); err != nil {
+			return err
+		}
+		_, err := b.EraseDay("2026-10-23", x.now())
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"file_changes", "file_day"} {
+		got := invoke(x, "old", name, M{"source": M{"day": true}, "day": M{"headline": "迟到的总览"}})
+		if got != domain.ErrInactiveSession.Error() {
+			t.Fatal(name, got)
+		}
+	}
+	st := x.State("bl", "u")
+	if len(st.Changesets) != 0 || len(st.Days) != 0 || len(notifier.days) != 0 {
+		t.Fatal("inactive session mutated knowledge or notified")
+	}
+}

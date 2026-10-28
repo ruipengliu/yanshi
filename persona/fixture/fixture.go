@@ -6,15 +6,17 @@
 // POST /resolve {session,exchange,project}；POST /resolve_merge {id,accept}；POST /archive {}。
 // GET /week 返回 domain.WeekPlan；POST /bind_week {from,session} 绑定每周回顾 Session。
 // POST /captures {date,capture_id,segments:[{speaker,speaker_key,text,spoken_at,time_zone}]} 返回 {refs}。
-// POST /bind_day {date,session} 绑定业务日当前工作 Session。
+// POST /bind_day {date,session,delete_at?} 绑定业务日当前工作 Session。
 // POST /capture_position {session} 只读当前工作 Session 的处理进度，返回 {after}。
 // POST /capture_preview {session,after,all,page_options} 返回结构化页，只供评测编排预览。
-// archive 返回项目 ID 数组；除 captures、capture_position、capture_preview 外其余成功的 POST 返回 {}。错误返回 4xx 与简短英文 error。
+// POST /erase {date,from,to}、POST /erase_day {date} 返回 {task}；GET /deletion_tasks 返回 {tasks}。
+// archive 返回项目 ID 数组；除 captures、capture_position、capture_preview、erase、erase_day 外其余成功的 POST 返回 {}。错误返回 4xx 与简短 error。
 // 应用层编排器也可以直接在 store.Update/View 中使用 Book 的同名方法。
 package fixture
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"math"
@@ -25,7 +27,17 @@ import (
 	"persona/store"
 )
 
-type Options struct{ Now func() time.Time }
+type Options struct {
+	Now func() time.Time
+	// 与 mcpserver.DeletionNotifier 结构相同，夹具不依赖 MCP 装配包。
+	Notifier interface {
+		DeletionPending(context.Context, string, string, string)
+	}
+}
+
+type deletionResult struct {
+	Task domain.DeletionTask `json:"task"`
+}
 
 func Handler(s store.Store, opts Options) http.Handler {
 	now := opts.Now
@@ -50,6 +62,9 @@ func Handler(s store.Store, opts Options) http.Handler {
 			if err := transact(r.Context(), r.PathValue("businessLine"), r.PathValue("endUser"), apply); err != nil {
 				write(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
+			}
+			if result, ok := out.(deletionResult); ok && opts.Notifier != nil {
+				opts.Notifier.DeletionPending(r.Context(), r.PathValue("businessLine"), r.PathValue("endUser"), result.Task.ID)
 			}
 			write(w, http.StatusOK, out)
 		})
@@ -80,13 +95,35 @@ func Handler(s store.Store, opts Options) http.Handler {
 	})
 	register("POST", "/bind_day", false, func(b *domain.Book, r *http.Request) (any, error) {
 		var in struct {
-			Date    string `json:"date"`
-			Session string `json:"session"`
+			Date     string    `json:"date"`
+			Session  string    `json:"session"`
+			DeleteAt time.Time `json:"delete_at"`
 		}
 		if err := decode(r, &in); err != nil {
 			return nil, err
 		}
-		return struct{}{}, b.BindDay(in.Date, in.Session)
+		return struct{}{}, b.BindDay(in.Date, in.Session, in.DeleteAt)
+	})
+	register("GET", "/deletion_tasks", true, func(b *domain.Book, _ *http.Request) (any, error) {
+		return struct {
+			Tasks []domain.DeletionTask `json:"tasks"`
+		}{b.DeletionTasks()}, nil
+	})
+	register("POST", "/erase", false, func(b *domain.Book, r *http.Request) (any, error) {
+		var in struct{ Date, From, To string }
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		task, err := b.Erase(in.Date, in.From, in.To, now())
+		return deletionResult{Task: task}, err
+	})
+	register("POST", "/erase_day", false, func(b *domain.Book, r *http.Request) (any, error) {
+		var in struct{ Date string }
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		task, err := b.EraseDay(in.Date, now())
+		return deletionResult{Task: task}, err
 	})
 	register("POST", "/capture_preview", true, func(b *domain.Book, r *http.Request) (any, error) {
 		var in struct {
