@@ -64,6 +64,7 @@ var (
 	CommitConflicts     = counter("commit_conflicts_total", "追加事件时的乐观并发冲突。")
 	SessionLoadEvents   = histogram("session_load_events", "加载 Session 时回放的事件数（最新快照之后的部分）。", prometheus.ExponentialBuckets(1, 2, 16))
 	SessionLoad         = histogram("session_load_seconds", "认领 Session 时读取并投影日志的耗时。", latency)
+	QueuePromoted       = counter("queue_promoted_total", "从到期表移回工作队列的项数。")
 	QueueClaims         = counter("queue_claims_total", "Worker 认领工作队列的结果；result = ok | empty | error。", "result")
 	QueueWait           = histogram("queue_wait_seconds", "工作在被认领之前已可认领多久（排队等待）；priority = interactive | resumed | background。", runDuration, "queue", "priority")
 	Decisions           = counter("decisions_total", "判断（docs/design/m6-decisions.md）；outcome 为选中的选项，或 error（判断不可用，走默认路径）。", "kind", "outcome")

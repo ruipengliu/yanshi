@@ -67,10 +67,15 @@ type Options struct {
 	Attested bool
 	// Schedules 单独开启定时动作与跨周期跳跃，避免消耗既有场景的随机序列。
 	Schedules bool
+	// MaintainDues 在差分中保证短 Horizon 的维护不受随机 Sweep 稀疏性影响。
+	MaintainDues bool
 }
 
 // Stats 统计模拟中被覆盖到的路径，防止模拟"空转"。
 type Stats struct {
+	// FarParks 与 DuePromotions 只在 PostgreSQL 差分种子中要求覆盖。
+	FarParks, DuePromotions int
+
 	Runs, Steers, Interrupts, Crashes, ModelErrors int
 	Takeovers, OutcomeUnknown, Retried, Failed     int
 	NodeCrashes, Redeliveries, Approvals, Denials  int
@@ -863,6 +868,13 @@ func (w *World) stopWorker(i int) {
 }
 
 func (w *World) stepWorker(i int) error {
+	if w.opts.MaintainDues {
+		if d, ok := w.queue.(workqueue.Deferrer); ok {
+			if _, err := d.Promote(context.Background(), w.clock.Now().Add(d.Horizon()), 1000); err != nil {
+				return err
+			}
+		}
+	}
 	// 插入 Worker 步骤的钩子只针对客户端自己的写入：Worker 步骤中的写入（如委托时向子 Session 提交任务、
 	// 把结果写回父 Session）不再插入步骤，否则会重入正在执行的 Worker。
 	hook := w.afterEnqueue

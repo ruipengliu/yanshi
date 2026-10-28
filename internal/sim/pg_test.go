@@ -1,13 +1,20 @@
 package sim
 
 import (
+	"context"
 	"flag"
 	"fmt"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"yanshi/internal/app"
 	"yanshi/internal/clock"
 	"yanshi/internal/pg/pgtest"
+	"yanshi/internal/workqueue"
+	"yanshi/internal/workqueue/pgqueue"
 )
 
 var pgSeeds = flag.Int("sim.pgseeds", 15, "number of seeds to simulate on PostgreSQL")
@@ -21,17 +28,27 @@ var pgSlots = make(chan struct{}, 8)
 // 从而证明两套存储实现语义等价，内存模拟的全部结论同样适用于 PostgreSQL。
 func TestPostgresMatchesMemory(t *testing.T) {
 	pgtest.DSN(t)
+	var parked, promoted, completed atomic.Int64
+	t.Cleanup(func() {
+		t.Logf("far parks=%d promotions=%d", parked.Load(), promoted.Load())
+		if *pgSeeds >= 3 && completed.Load() == int64(*pgSeeds) && (parked.Load() == 0 || promoted.Load() == 0) {
+			t.Error("postgres simulation did not cover far parking and promotion")
+		}
+	})
 	for s := uint64(1); s <= uint64(*pgSeeds); s++ {
 		// 每个种子一个并行的子测试，使其数据库 schema 与连接池在子测试结束时即释放。
 		t.Run(fmt.Sprintf("seed%d", s), func(t *testing.T) {
 			t.Parallel()
-			diffSeed(t, s)
+			p, m := diffSeed(t, s)
+			parked.Add(int64(p))
+			promoted.Add(int64(m))
+			completed.Add(1)
 		})
 	}
 }
 
-func diffSeed(t *testing.T, s uint64) {
-	opts := Options{Schedules: s%3 == 0, Seed: s, Workers: 3, Sessions: 3, Ticks: 300, Faults: true}
+func diffSeed(t *testing.T, s uint64) (int, int) {
+	opts := Options{MaintainDues: true, Schedules: s%3 == 0, Seed: s, Workers: 3, Sessions: 3, Ticks: 300, Faults: true}
 	if s%3 == 0 { // 部分种子跑长 Run，覆盖压缩事件在 PostgreSQL 上的往返
 		opts.LongRuns, opts.Sessions, opts.Ticks = true, 2, 800
 	}
@@ -51,7 +68,13 @@ func diffSeed(t *testing.T, s uint64) {
 	pgSlots <- struct{}{}
 	t.Cleanup(func() { <-pgSlots })
 	pool, notifier := pgtest.Fresh(t)
-	opts.NewStores = func(c clock.Clock) Stores { return app.Postgres(pool, notifier, c) }
+	var dues *countedDues
+	opts.NewStores = func(c clock.Clock) Stores {
+		s := app.Postgres(pool, notifier, c)
+		dues = &countedDues{Queue: s.Queue.(*pgqueue.Queue).WithHorizon(time.Second), pool: pool}
+		s.Queue = dues
+		return s
+	}
 	onPG, err := New(opts)
 	if err != nil {
 		t.Fatal(err)
@@ -62,4 +85,34 @@ func diffSeed(t *testing.T, s uint64) {
 	if mem.Fingerprint() != onPG.Fingerprint() {
 		t.Fatalf("seed %d: postgres and memory runs diverged\nreproduce: go test ./internal/sim -run 'TestPostgresMatchesMemory/seed%d$' -sim.pgseeds=%d", s, s, s)
 	}
+	onPG.Stats.FarParks, onPG.Stats.DuePromotions = dues.parked, dues.promoted
+	return dues.parked, dues.promoted
+}
+
+// 计数包装只用于 PG 种子；普通内存覆盖检查不能要求不存在的搬移路径。
+type countedDues struct {
+	*pgqueue.Queue
+	pool             *pgxpool.Pool
+	parked, promoted int
+}
+
+func (q *countedDues) Park(ctx context.Context, l *workqueue.Lease, until time.Time) error {
+	err := q.Queue.Park(ctx, l, until)
+	if err == nil && until.After(q.Now().Add(q.Horizon())) {
+		// dirty 的项会立即可认领，不能算作远期停放。
+		var has bool
+		if e := q.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM work_dues WHERE session_id = $1)`, l.SessionID).Scan(&has); e != nil {
+			return e
+		}
+		if has {
+			q.parked++
+		}
+	}
+	return err
+}
+
+func (q *countedDues) Promote(ctx context.Context, before time.Time, limit int) (int, error) {
+	n, err := q.Queue.Promote(ctx, before, limit)
+	q.promoted += n
+	return n, err
 }

@@ -162,3 +162,18 @@ type Stats interface {
 type Signaler interface {
 	Ready() <-chan struct{}
 }
+
+// DefaultHorizon 使默认一分钟一次的 Sweep 有多轮重试余量。
+const DefaultHorizon = time.Hour
+
+// Deferrer 是远期停放的可选维护接口；Promote 只搬移，不提前唤醒。
+// 返回实际搬移数，最多 limit 个；before 是包含端点的到期上限。
+type Deferrer interface {
+	Promote(ctx context.Context, before time.Time, limit int) (int, error)
+	Horizon() time.Duration
+}
+
+// Inspector 供模拟测试检查队列成员；远期停放也算在队列中。
+type Inspector interface {
+	Contains(ctx context.Context, sessionID string) (bool, error)
+}

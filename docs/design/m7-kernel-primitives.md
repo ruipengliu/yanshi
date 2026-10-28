@@ -1,6 +1,6 @@
 # M7 内核补充：Capture 正文存储、擦除、交付确认、定时、出站流、单次调用
 
-> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）；交付确认（§11）已删除，EndUser 删除屏障（§12）已实现，定时的事件、HTTP、到点执行、能力与空闲关闭豁免已实现（到期表未实现），其余未实现 · **§2–§4、§11 由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 取代**（旁听原文存放在业务线；§11 已删除），§5 按 P2 的讨论改写（没有窗口），§6 的擦除与修订信封不做 · ADR-0044（已取代）、ADR-0045、ADR-0046、ADR-0047、ADR-0049（已取代）、ADR-0050 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
+> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）；交付确认（§11）已删除，EndUser 删除屏障（§12）已实现，定时的事件、HTTP、到点执行、能力与空闲关闭豁免已实现（含 pgqueue 内部到期表，压测结果见 §13），其余未实现 · **§2–§4、§11 由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 取代**（旁听原文存放在业务线；§11 已删除），§5 按 P2 的讨论改写（没有窗口），§6 的擦除与修订信封不做 · ADR-0044（已取代）、ADR-0045、ADR-0046、ADR-0047、ADR-0049（已取代）、ADR-0050 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
 
 xinli 落地需要内核补上的原语。每一项都按[整体架构](./persona-architecture.md) §9 的判据给出理由：第二条业务线也会需要，并且业务侧做不到或做了不安全。业务语义（交谈、承诺、项目、人）一律不进内核。
 
@@ -109,7 +109,7 @@ CREATE TABLE capture_segments (
 
 ## 5. 定时（Schedule）
 
-> 实现状态：事件、投影、Session 时区、HTTP、到点执行、内置能力、clock_now 默认时区与空闲关闭豁免已实现；远近到期一律用 Park，到期表尚未实现。
+> 实现状态：事件、投影、Session 时区、HTTP、到点执行、内置能力、clock_now 默认时区与空闲关闭豁免已实现；远期停放的内部到期表与百万停放压测已实现，Mac mini 实测结果见 §13。
 
 > P2 动工前按[整体架构](./persona-architecture.md) §13 的 Q55–Q76 改写：没有窗口、Session 的时区、超额不跳过、有定时的 Session 不按空闲关闭。
 
@@ -160,9 +160,11 @@ Schedule {
 - **超额不跳过**（Q69）：到点总是写入 `RunRequested`，配额与准入由 Run 自己处理（挂起或排队）；`ScheduleSkipped` 只用于错过的周期与到点时已关闭的 Session。
 - **失效**：一次性的执行后失效；`until` 或 `COUNT` 用尽后失效；Session 关闭后失效。有有效定时的 Session 不按空闲关闭（Q68），`delete_at` 与用户删除照常。
 - **空闲关闭索引**：`lifecycle.Session.NextDue` 缓存投影中最早到期，零表示没有有效定时。service 在 Created、Cancelled、Fired、Skipped 写日志后调用 `SyncScheduleIndex`，不受 TouchEvery 节流。`IdleBefore` 跳过非零值；Janitor 关闭前读投影并修正索引，有有效定时则跳过，`Service.Close` 的空闲关闭决策也复查，防止并发创建被误关。反向校准用 `Index.ScheduledAfter` 按 Session ID 分页，每业务线每次 Sweep 至多 100 行，游标跨轮推进、到尾回绕，清除取消或耗尽后残留的非零值。日志与索引之间崩溃或并发乱序只造成暂时滞后：漏记的豁免由关闭前检查兜住，多记的豁免由分页校准清除；索引并非到期表，不负责唤醒。
-- **当前停放**：所有未来定时均由 `workqueue.Park` 保留工作项，取后台截止时间与定时到期的较小者。Run 挂起时已到期的定时等待 Run 结束，不用过去的时刻反复唤醒；未来到期仍参与上限。创建、取消与结束 Run 时以 `Decision.Wake` 原子唤醒。
-- **后续到期表**（Q61，P2-③，未实现）：下次到期在 1 小时之内的，沿用 `workqueue.Park`；更远的写入独立的到期表（按 Session 分片，按到期时间索引），工作项结束；Janitor 每次 Sweep 把一小时内到期的移回工作队列并停放到确切时刻。唤醒、取消、Session 删除与迁移在同一事务中处理，`workqueuetest` 覆盖这些交错。原因：现在的认领按优先级扫描、再过滤停放项（`pgqueue.Claim`），百万级的长停放会拖慢认领。
-- **删除**：当前定时只在日志与投影中，随 Session 删除，没有新存储。后续到期表须在 `app.SessionData` 登记。
+- **停放契约**：所有未来定时均由 `workqueue.Park` 保留工作项，取后台截止时间与定时到期的较小者。Run 挂起时已到期的定时等待 Run 结束，不用过去的时刻反复唤醒；未来到期仍参与上限。创建、取消与结束 Run 时以 `Decision.Wake` 原子唤醒。
+- **内部到期表**（Q61，P2-③）：调用方始终调用 `Queue.Park`，Worker 不区分远近。仅 Session 的 PostgreSQL 队列将晚于 now + Horizon（默认 1 小时，装配时可设）且未被唤醒的停放移到 work_dues；按 Session 分片，到期索引独立并发创建。类别、Park 后的顺序与到期时刻一并保存；租约期间的入队仍使归还后立即可认领。内存队列无需搬移。
+- **迁移与并发**：Janitor 每次 Sweep 调用可选接口 `workqueue.Deferrer`，将 Horizon 内的候选逐 Session 事务移回工作表，保留精确 parked_until 与 ord；每批 1000 项，每批重新读取当前时间并以 now + Horizon 为上界，直到不足一批或耗尽时间预算。一次 Sweep 的迁移共用 `Janitor.PromoteBudget`，默认 `SweepEvery / 2`（默认周期一分钟，对应预算 30 秒），可在 Janitor 字段中配置；预算在批次边界检查，已开始的一批允许完成，余下工作下轮继续。搬移和独立入队、日志事务内入队、Remove、Park 使用同一 Session 的事务锁；旧候选按 ord 再校验，不能搬走后来的停放。Claim SQL 不变，远期项不参与认领扫描，也不计入可认领积压；队列成员检查包含两张表。指标 yanshi_queue_promoted_total 只记迁移数量。
+- **故障**：Horizon 应大于 Sweep 周期的若干倍（默认 1 小时对 1 分钟）；Janitor 停摆超过 Horizon，或到期积压长期超过时间预算内的迁移能力，会晚到但不会提前执行。部署必须运行 Janitor，恢复后按原来的错过规则处理。远期项仍以日志为事实源，到期表只负责活性。
+- **删除**：`app.SessionData` 的工作队列登记包含 work_dues，由 Remove 同事务清除两表。搬移只转移已有行，和删除互斥，不产生删除后的新写入；原有外部入队入口仍按生命周期协议复查删除记录。模拟测试的删除不变量检查两表没有残留。
 - **重试与有效数**：同 ID、相同规范化声明幂等返回原记录，不重新锚定；不同声明返回 409。失效声明保留以防 ID 复用，限额只数 next_due 非空的记录。HTTP 列表只含有效记录；关闭后待记录 closed 的定时仍由 Worker 停放到点处理。
 - **投递**：到点 Run 的回复留在日志中，经现有事件流看到；推送在 P4（Q74）。
 
@@ -294,6 +296,35 @@ ADR-0050 的退役条件已满足。内核不再登记回执或在 Run 完成时
 - **Capture 写入**：旁听集中在约 8 小时，按每分钟一批，峰值约 1700（10 万 DAU）/ 17000（100 万）批每秒；每批一次事件加至多 200 行片段。整批被内容安全拦下时逐段复核，调用数放大到段数。
 - **单分片容量**：`app.Postgres` 现在是单个连接池，ADR-0028 只定了分片键。超过单分片容量之前，分片路由是前置条件（P4 验收），包括故障切换。
 - **压测项**：P1 的片段写入与逐 Session 删除（含 WAL 与索引）；P2 的百万停放与到期表迁移；单次调用的子限额下问答的首字延迟。
+
+### 百万停放压测（Q62）
+
+在 Mac mini 的 PostgreSQL 单独执行（不进 make check，测试用独立 schema，结束自动清理）：
+
+```bash
+YANSHI_BENCH_PARK=1 YANSHI_TEST_PG='<DSN>' go test ./internal/workqueue/pgqueue -run '^TestMillionPark$' -count=1 -timeout=20m -v
+```
+
+测试先以真实 Park 生成远期停放模板，再通过 generate_series 批量插入同形数据（每项独立 ord），省去百万次客户端准备往返。1 万可认领项，预热 100 次后采样 1000 次 Claim + Release(done=false) 的端到端 p50/p99。三个场景分别是空表基线、加百万到期表停放、百万工作表停放对照；停放项先于活跃项排列，避免对照被顺序掩盖。另测 1 万项 Promote，最多 16 路并发，每 Session 独立事务，计时包含候选查询及全部提交。
+
+第五场景在 1 万活跃项、无远期与有百万到期表停放两种情况下，对同一个已存在且未停放的项调用 Enqueue；各预热 100 次，再测 1000 次的端到端 p50/p99，量化包含事务咨询锁与到期表查找的入队路径开销，只报告、不设门槛。该比较反映远期数据规模的影响，不单独分离锁、查询或提交的耗时。
+
+验收：到期表场景 p99 ≤ 基线 2 倍；迁移吞吐 ≥ 5000 项/秒（1 万项 ≤ 2 秒）。保持逐 Session 事务，计时包含提交，不改成跨键事务。
+
+口径修订依据（Q62）：Mac mini 实测 1 万项迁移 1.56 秒，约 6400 项/秒；逐 Session 提交受落盘及连接池大小（约等于 CPU 数）限制。原先每分钟固定 10 批 × 1000 项，将实际调度吞吐压到约 167 项/秒。100 万 DAU 若大量定时集中在 08:00，要在一小时 Horizon 内移回 100 万项，至少需要 1000000 / 3600 ≈ 278 项/秒（约 280），固定批数反而成为瓶颈。因此将单次迁移验收从 1 秒改为吞吐至少 5000 项/秒，同时改用每轮时间预算；默认占半个 Sweep 周期，按该吞吐估算有约 2500 项/秒的持续迁移能力。该估算不是负载下的保证，仍需留出数据库竞争与故障恢复余量。
+
+Mac mini 实测（2026-10-28，返工后复测；前四行的 p50/p99 是 Claim + Release，后两行是 Enqueue）：
+
+| 场景 | p50 | p99 | 迁移总耗时 | 吞吐（项/秒） |
+|---|---|---|---|---|
+| 1 万活跃基线 | 1.15ms | 4.83ms | — | — |
+| 加百万到期表停放 | 1.08ms | 1.74ms | — | — |
+| 百万工作表停放对照 | 65.7ms | 71.0ms | — | — |
+| 迁移 1 万项 | — | — | 1.59s | 约 6300 |
+| Enqueue：1 万活跃、无远期 | 0.79ms | 4.42ms | — | — |
+| Enqueue：1 万活跃、百万远期 | 0.94ms | 1.27ms | — | — |
+
+认领与迁移按修订后的口径达标；百万远期停放对入队路径没有可见的影响（基线 p99 的波动来自单机噪声）。没有到期表时，百万停放使认领慢约 50 倍，到期表是必要的。
 
 ## 14. 不变量核对
 

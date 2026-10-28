@@ -11,7 +11,6 @@ import (
 	"yanshi/internal/service"
 	"yanshi/internal/session"
 	"yanshi/internal/workqueue"
-	"yanshi/internal/workqueue/memqueue"
 	"yanshi/sdk/nodesdk"
 )
 
@@ -171,8 +170,14 @@ func (w *World) checkBackground(sid string, events []*v1.Event, st *session.Stat
 		}
 		settled[id] = true
 	}
-	if q, ok := w.queue.(*memqueue.Queue); ok && current && st.Closed == nil && st.Active() == nil && len(st.OpenBackground()) > 0 && !q.Has(sid) {
-		return fmt.Errorf("invariant: %s has %d open background calls but left the work queue", sid, len(st.OpenBackground()))
+	if q, ok := w.queue.(workqueue.Inspector); ok && current && st.Closed == nil && st.Active() == nil && len(st.OpenBackground()) > 0 {
+		has, err := q.Contains(context.Background(), sid)
+		if err != nil {
+			return err
+		}
+		if !has {
+			return fmt.Errorf("invariant: %s has %d open background calls but left the work queue", sid, len(st.OpenBackground()))
+		}
 	}
 	return nil
 }

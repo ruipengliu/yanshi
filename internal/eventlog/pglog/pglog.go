@@ -88,7 +88,7 @@ func (l *Log) appended(sessionID string, expectedSeq uint64, events []*v1.Event,
 	return expectedSeq + uint64(len(events)), nil
 }
 
-// Waking 返回日志与 q 的原子组合（eventlog.WakingLog）：追加、入队与两条通知在同一条语句中提交。
+// Waking 返回日志与 q 的原子组合（eventlog.WakingLog）：到期表恢复、追加、入队与通知在同一事务中提交。
 // q 必须与日志使用同一个数据库。
 func (l *Log) Waking(q *pgqueue.Queue) eventlog.WakingLog { return waking{l: l, q: q} }
 
@@ -105,9 +105,14 @@ func (w waking) AppendAndEnqueue(ctx context.Context, sessionID string, expected
 	if err != nil {
 		return 0, err
 	}
+	tx, err := w.q.BeginEnqueue(ctx, sessionID)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
 	// 入队只在插入了事件时发生（up 读 ins 的行数）；主键冲突使整条语句失败，入队随之回滚。
 	workCh, workPayload := w.q.NotifyArgs(sessionID)
-	err = w.l.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		WITH ins AS (`+insertSQL+`),
 		n AS (SELECT count(*) AS c FROM ins),
 		up AS (`+w.q.UpsertSQL(`SELECT $1::text, $8::text, $9::smallint, $10::timestamptz FROM n WHERE n.c > 0`)+`)
@@ -116,6 +121,9 @@ func (w waking) AppendAndEnqueue(ctx context.Context, sessionID string, expected
 		fmt.Sprintf("%s:%d", sessionID, expectedSeq+uint64(len(events))), workCh, workPayload,
 		class.BusinessLine, int16(class.Priority), w.q.Now(),
 	).Scan(new(int64), nil, nil)
+	if err == nil {
+		err = tx.Commit(ctx)
+	}
 	return w.l.appended(sessionID, expectedSeq, events, err)
 }
 

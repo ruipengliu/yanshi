@@ -389,7 +389,7 @@ P2 动工前的讨论（2026-10-28），各题的推荐均被采纳：
 | Q59 | 周期规则 | 自己实现 RRULE 子集（DAILY、WEEKLY、MONTHLY，BYDAY、BYHOUR、BYMINUTE、COUNT、UNTIL），最小间隔 1 小时，每个 Session 至多 50 个有效定时；夏令时跳过顺延到之后第一个存在的时刻、重复取第一次；每次解析出的 UTC 写入事件 | 第三方库（升级会改变结果） |
 | Q60 | 错过与冲突 | 有活跃 Run 时等它结束；晚到的照常执行；周期定时只执行最近一次到期，更早的写 `ScheduleSkipped`；到点时 Session 已关闭写 `ScheduleSkipped`；一次性执行后、`until` 或 `COUNT` 用尽后失效；排在已排队的用户输入之后；随 Session 删除 | — |
 | Q61 | 到期表 | 下次到期在 1 小时以内的用 `workqueue.Park`；更远的写入按 Session 分片的到期表，工作项结束；Janitor 每次 Sweep 把一小时内到期的移回工作队列并停放到确切时刻；创建、取消、Session 删除与迁移在同一事务中，`workqueuetest` 覆盖交错 | 只给 `parked_until` 加索引（认领按优先级扫描再过滤，百万长停放仍拖慢认领） |
-| Q62 | 停放压测 | Mac mini 的 PG，环境变量开启、不进 `make check`：100 万个远期定时加 1 万个活跃工作项，认领 p99 不超过空表基线的 2 倍，Janitor 迁移 1 万个到期项不超过 1 秒；结果写入 [M7](./m7-kernel-primitives.md) §13 | — |
+| Q62 | 停放压测 | Mac mini 的 PG，环境变量开启、不进 `make check`：100 万个远期定时加 1 万个活跃工作项，认领 p99 不超过空表基线的 2 倍，Janitor 迁移 1 万个到期项不超过 1 秒；结果写入 [M7](./m7-kernel-primitives.md) §13。压测后修订：迁移改按吞吐验收（≥ 5000 项/秒），Janitor 按时间预算迁移、不再固定每轮上限——瓶颈是每轮上限而不是单项耗时，同一时刻集中到期的百万定时须在 Horizon 内移回 | — |
 | Q63 | SDK 与控制台 | 三个 SDK 不加定时方法（App 在 P4 经 BFF）；控制台按通用方式显示新事件，不加面板与场景 | — |
 | Q64 | P2 的顺序 | ① RRULE 与时区 → ② 事件、投影、HTTP、`schedule`、Worker 到点开启 Run（只用 `Park`）与模拟不变量（写入前后崩溃不重复、不遗漏，跳过落事件；`SchedulesFired`、`SchedulesSkipped`）→ ③ 到期表与 Janitor 迁移 → ④ 压测 → ⑤ `xinli-assistant` 使用与评测；每步验证后提交推送 | — |
 | Q65 | 时区 | 创建 Session 时可带 `time_zone`（IANA，记入 `SessionCreated`，用户令牌与服务令牌都可设）；定时的时区默认取它，Session 没有时区时必须显式给出；`clock_now` 省略时区时也取它 | 每次由模型推断；AgentDef 上的默认时区 |

@@ -219,3 +219,10 @@ func (q *Queue) Remove(_ context.Context, sessionID string) error {
 	}
 	return nil
 }
+
+// 内存队列不扫描数据库，无需把停放项搬到另一张表。
+func (q *Queue) Promote(context.Context, time.Time, int) (int, error) { return 0, nil }
+func (q *Queue) Horizon() time.Duration                               { return workqueue.DefaultHorizon }
+func (q *Queue) Contains(_ context.Context, sessionID string) (bool, error) {
+	return q.Has(sessionID), nil
+}

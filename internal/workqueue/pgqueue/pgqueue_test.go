@@ -2,6 +2,7 @@ package pgqueue_test
 
 import (
 	"testing"
+	"time"
 
 	"yanshi/internal/clock"
 	"yanshi/internal/pg/pgtest"
@@ -15,7 +16,7 @@ func TestConformance(t *testing.T) {
 		t.Run(table, func(t *testing.T) {
 			workqueuetest.Run(t, func(t *testing.T, c clock.Clock) workqueue.Queue {
 				pool, _ := pgtest.Fresh(t)
-				return pgqueue.New(pool, c, table)
+				return pgqueue.New(pool, c, table).WithHorizon(time.Second)
 			})
 		})
 	}

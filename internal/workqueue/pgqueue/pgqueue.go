@@ -27,9 +27,10 @@ const (
 )
 
 type Queue struct {
-	pool  *pgxpool.Pool
-	clock clock.Clock
-	table string
+	pool    *pgxpool.Pool
+	clock   clock.Clock
+	table   string
+	horizon time.Duration
 
 	notifier  *pg.Notifier
 	readyOnce sync.Once
@@ -51,12 +52,12 @@ func (q *Queue) Ready() <-chan struct{} {
 	return q.ready
 }
 
-// New 返回基于 table（Sessions 或 Sandboxes）的队列。
+// New 返回基于 table 的队列；只有 Sessions 将远期停放移到到期表。
 func New(pool *pgxpool.Pool, c clock.Clock, table string) *Queue {
 	if table != Sessions && table != Sandboxes && table != Janitor {
 		panic("pgqueue: unknown table " + table)
 	}
-	return &Queue{pool: pool, clock: c, table: table}
+	return &Queue{pool: pool, clock: c, table: table, horizon: workqueue.DefaultHorizon}
 }
 
 // q 把 SQL 中的 work_items 替换为本队列的表名。
@@ -69,17 +70,26 @@ var (
 )
 
 func (q *Queue) Enqueue(ctx context.Context, sessionID string, class workqueue.Class) error {
-	// 同一语句内入队并通知，不增加往返；通知在提交后送达。
-	_, err := q.pool.Exec(ctx, `WITH up AS (`+q.UpsertSQL("SELECT $1, $4::text, $5::smallint, $6::timestamptz")+`)
+	tx, err := q.BeginEnqueue(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	// 通知与入队一起提交，到期表的撤回也属于同一事务。
+	_, err = tx.Exec(ctx, `WITH up AS (`+q.UpsertSQL("SELECT $1, $4::text, $5::smallint, $6::timestamptz")+`)
 		SELECT pg_notify($2, $3) FROM up`, sessionID, q.notifier.Channel(pg.TopicWork, q.table), q.table,
 		class.BusinessLine, int16(class.Priority), q.clock.Now())
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // Now 是队列的当前时间（入队时刻，UpsertSQL 的 ready_at）。
 func (q *Queue) Now() time.Time { return q.clock.Now() }
 
 // UpsertSQL 是入队的数据修改语句（RETURNING 1），供其他写入在同一语句中入队（pglog 的 eventlog.WakingLog）。
+// 调用前须在同一事务中调用 BeginEnqueue，串行化两张表之间的搬移。
 // rows 是产生 (session_id, business_line, priority, 当前时刻) 的查询：它没有行时不入队。
 // 已租出的项在归还时才变为可认领，挂起中的项被唤醒时从现在起算等待，已可认领的项保持原来的时刻。
 func (q *Queue) UpsertSQL(rows string) string {
@@ -155,19 +165,40 @@ func (q *Queue) Renew(ctx context.Context, l *workqueue.Lease, ttl time.Duration
 }
 
 func (q *Queue) Park(ctx context.Context, l *workqueue.Lease, until time.Time) error {
-	tag, err := q.pool.Exec(ctx, q.q(`
+	tx, err := q.begin(ctx, l.SessionID)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	now := q.clock.Now()
+	if q.table == Sessions && until.After(now.Add(q.horizon)) {
+		tag, err := tx.Exec(ctx, `WITH moved AS (
+			DELETE FROM work_items WHERE `+held+` AND NOT dirty RETURNING session_id)
+			INSERT INTO work_dues (session_id, business_line, priority, ord, due_at)
+			SELECT session_id, $5, $6, nextval('work_seq'), $4 FROM moved
+			ON CONFLICT (session_id) DO UPDATE SET business_line = EXCLUDED.business_line,
+			priority = EXCLUDED.priority, ord = EXCLUDED.ord, due_at = EXCLUDED.due_at`,
+			l.SessionID, int64(l.Token), now, until, l.Class.BusinessLine, int16(l.Class.Priority))
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 1 {
+			return tx.Commit(ctx)
+		}
+	}
+	tag, err := tx.Exec(ctx, q.q(`
 		UPDATE work_items SET leased = false, ord = nextval('work_seq'),
 			parked_until = CASE WHEN dirty THEN NULL ELSE $4::timestamptz END,
 			ready_at = CASE WHEN dirty THEN $3 ELSE $4::timestamptz END, dirty = false,
 			business_line = $5, priority = `+returnedPriority("$5", "$6")+`
-		WHERE `+held), l.SessionID, int64(l.Token), q.clock.Now(), until, l.Class.BusinessLine, int16(l.Class.Priority))
+		WHERE `+held), l.SessionID, int64(l.Token), now, until, l.Class.BusinessLine, int16(l.Class.Priority))
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return workqueue.ErrLeaseLost
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (q *Queue) Release(ctx context.Context, l *workqueue.Lease, done bool) error {
@@ -215,6 +246,18 @@ func (q *Queue) Depths(ctx context.Context) ([]workqueue.Depth, error) {
 }
 
 func (q *Queue) Remove(ctx context.Context, sessionID string) error {
-	_, err := q.pool.Exec(ctx, q.q(`DELETE FROM work_items WHERE session_id = $1`), sessionID)
-	return err
+	tx, err := q.begin(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, q.q(`DELETE FROM work_items WHERE session_id = $1`), sessionID); err != nil {
+		return err
+	}
+	if q.table == Sessions {
+		if _, err := tx.Exec(ctx, `DELETE FROM work_dues WHERE session_id = $1`, sessionID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
