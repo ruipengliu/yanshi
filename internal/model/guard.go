@@ -34,12 +34,26 @@ type Limits struct {
 	Deadline time.Duration
 	// MaxConcurrency 是同时进行的调用上限。
 	MaxConcurrency int
+	// MinBackground 只在并发受限时生效：释放时先补足后台 Run 的份额，不抢占，也不是后台上限。
+	// 必须非负，且在 MaxConcurrency > 0 时小于 MaxConcurrency。
+	MinBackground int
 	// RPS 是每秒发起调用的上限（令牌桶，突发量为一秒的量）。
 	RPS float64
 	// Retries 是可重试失败的重试次数；Backoff 是首次重试前的等待，之后翻倍，不超过 MaxBackoff。
 	// 提供商给出 Retry-After 时取较大者，且不受 MaxBackoff 截断：提前重试只会再被限流一次，白白消耗一次调用。
 	Retries             int
 	Backoff, MaxBackoff time.Duration
+}
+
+// Validate 拒绝会把全部并发份额留给后台 Run 的配置。
+func (l Limits) Validate() error {
+	if l.MinBackground < 0 {
+		return errors.New("model min background must be non-negative")
+	}
+	if l.MaxConcurrency > 0 && l.MinBackground >= l.MaxConcurrency {
+		return errors.New("model min background must be less than model concurrency; for concurrency 1, set -model-min-background=0")
+	}
+	return nil
 }
 
 // Guard 以 Limits 包装一个提供商。
@@ -62,7 +76,7 @@ var (
 func (g *Guard) init() {
 	g.once.Do(func() {
 		if g.Limits.MaxConcurrency > 0 {
-			g.gate = &admission{limit: g.Limits.MaxConcurrency}
+			g.gate = &admission{limit: g.Limits.MaxConcurrency, minBackground: g.Limits.MinBackground}
 		}
 		if g.Limits.RPS > 0 {
 			g.rate = &tokenBucket{rate: g.Limits.RPS, burst: max(g.Limits.RPS, 1)}
@@ -75,12 +89,47 @@ func (g *Guard) init() {
 
 type backgroundKey struct{}
 
-// WithBackground 标记 ctx 中的模型调用来自长任务（ADR-0029）：准入排队时让交互调用先行。
+// WithBackground 标记后台模型调用（ADR-0029）：后台 Run 参与最低份额回填，后台单次调用不参与。
 func WithBackground(ctx context.Context) context.Context {
 	return context.WithValue(ctx, backgroundKey{}, true)
 }
 
 func background(ctx context.Context) bool { b, _ := ctx.Value(backgroundKey{}).(bool); return b }
+
+type oneshotKey struct{}
+
+// WithOneshot 区分单次调用与 Run；可与 WithBackground 组合，避免后台单次调用占用后台 Run 的最低份额。
+func WithOneshot(ctx context.Context) context.Context {
+	return context.WithValue(ctx, oneshotKey{}, true)
+}
+
+type admissionClass int
+
+const (
+	interactive admissionClass = iota
+	oneshot
+	backgroundRun
+	backgroundOneshot
+	admissionClasses
+)
+
+func classOf(ctx context.Context) admissionClass {
+	os, _ := ctx.Value(oneshotKey{}).(bool)
+	if background(ctx) {
+		if os {
+			return backgroundOneshot
+		}
+		return backgroundRun
+	}
+	if os {
+		return oneshot
+	}
+	return interactive
+}
+
+func (c admissionClass) String() string {
+	return [...]string{"interactive", "oneshot", "background", "background_oneshot"}[c]
+}
 
 func (g *Guard) Generate(ctx context.Context, req *Request, onDelta func(Delta)) (*Response, error) {
 	var resp *Response
@@ -117,6 +166,9 @@ var errDeadline = errors.New("model call deadline")
 
 // do 执行 call，按需排队、限时与重试。call 返回这次失败是否可以安全重试（例如尚未输出任何内容）。
 func (g *Guard) do(ctx context.Context, modelID string, call func(context.Context) (bool, error)) error {
+	if err := g.Limits.Validate(); err != nil {
+		return err
+	}
 	g.init()
 	parent := ctx
 	if g.Limits.Deadline > 0 {
@@ -156,13 +208,15 @@ func (g *Guard) attempt(ctx context.Context, modelID string, call func(context.C
 			return false, err
 		}
 	}
+	class := classOf(ctx)
 	if g.gate != nil {
-		if err := g.gate.acquire(ctx, background(ctx)); err != nil {
+		release, err := g.gate.acquire(ctx, class)
+		if err != nil {
 			return false, err
 		}
-		defer g.gate.release()
+		defer release()
 	}
-	metrics.ModelAdmissionWait.WithLabelValues(g.Name).Observe(metrics.Since(start))
+	metrics.ModelAdmissionWait.WithLabelValues(g.Name, class.String()).Observe(metrics.Since(start))
 	actx := ctx
 	if g.Limits.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -227,58 +281,88 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// admission 是带优先级的计数信号量：名额释放时先交给等待中的交互调用，再交给长任务的调用，各自先来先得。
+// admission 在释放时回填后台 Run 的最低份额，其余名额按四类优先级、类内先来先得交付。
 type admission struct {
-	mu       sync.Mutex
-	limit    int
-	inflight int
-	waiting  [2][]chan struct{} // 0：交互，1：长任务
+	mu            sync.Mutex
+	limit         int
+	minBackground int
+	inflight      int
+	active        [admissionClasses]int
+	waiting       [admissionClasses][]chan struct{}
 }
 
-func (a *admission) acquire(ctx context.Context, bg bool) error {
-	q := 0
-	if bg {
-		q = 1
-	}
+func (a *admission) acquire(ctx context.Context, class admissionClass) (func(), error) {
 	a.mu.Lock()
-	if a.inflight < a.limit && len(a.waiting[0])+len(a.waiting[1]) == 0 {
-		a.inflight++
+	if err := ctx.Err(); err != nil {
 		a.mu.Unlock()
-		return nil
+		return nil, err
+	}
+	if a.inflight < a.limit && a.queued() == 0 {
+		a.inflight++
+		a.active[class]++
+		a.mu.Unlock()
+		return sync.OnceFunc(func() { a.release(class) }), nil
 	}
 	ch := make(chan struct{})
-	a.waiting[q] = append(a.waiting[q], ch)
+	a.waiting[class] = append(a.waiting[class], ch)
 	a.mu.Unlock()
 	select {
 	case <-ch:
-		return nil
 	case <-ctx.Done():
+	}
+	// 两个分支都复查取消：已经交付的名额也不能留给放弃等待的调用。
+	if err := ctx.Err(); err != nil {
 		a.mu.Lock()
-		i := slices.Index(a.waiting[q], ch)
+		i := slices.Index(a.waiting[class], ch)
 		if i >= 0 {
-			a.waiting[q] = slices.Delete(a.waiting[q], i, i+1)
+			a.waiting[class] = slices.Delete(a.waiting[class], i, i+1)
+		} else {
+			a.releaseLocked(class)
 		}
 		a.mu.Unlock()
-		if i < 0 {
-			a.release() // 放弃等待的同时被分到了名额：交还它
-		}
-		return ctx.Err()
+		return nil, err
 	}
+	return sync.OnceFunc(func() { a.release(class) }), nil
 }
 
-// release 交还名额：有人等待时直接转交（在途数不变），否则在途数减一。
-func (a *admission) release() {
+// queued 在持锁时读取，防止快速路径越过已有等待者。
+func (a *admission) queued() int {
+	n := 0
+	for _, q := range a.waiting {
+		n += len(q)
+	}
+	return n
+}
+
+func (a *admission) release(class admissionClass) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.releaseLocked(class)
+}
+
+func (a *admission) releaseLocked(class admissionClass) {
+	// 先扣除离开的调用，再判断是否需要回填；后台 Run 自己离开也会产生份额缺口。
+	a.inflight--
+	a.active[class]--
+	if a.active[backgroundRun] < a.minBackground && len(a.waiting[backgroundRun]) > 0 {
+		a.grant(backgroundRun)
+		return
+	}
 	for q := range a.waiting {
 		if len(a.waiting[q]) > 0 {
-			ch := a.waiting[q][0]
-			a.waiting[q] = a.waiting[q][1:]
-			close(ch)
+			a.grant(admissionClass(q))
 			return
 		}
 	}
-	a.inflight--
+}
+
+func (a *admission) grant(class admissionClass) {
+	ch := a.waiting[class][0]
+	a.waiting[class][0] = nil
+	a.waiting[class] = a.waiting[class][1:]
+	a.inflight++
+	a.active[class]++
+	close(ch)
 }
 
 // tokenBucket 限制发起调用的速率。
