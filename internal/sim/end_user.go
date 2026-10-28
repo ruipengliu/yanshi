@@ -122,29 +122,30 @@ func (w *World) crashTierWriter(ctx context.Context, user string) (err error) {
 }
 
 func (w *World) deleteWithEndUserWrite(user string) error {
+	// 新增场景只用独立随机流；原六种写入完整保留原抽样顺序及分支内部的抽样。
+	if w.opts.Tiers {
+		actions := 2
+		if w.faults {
+			actions++
+		}
+		if action := w.tierRNG.IntN(actions); action != 0 {
+			return w.deleteWithTierWrite(user, action == 2)
+		}
+	}
 	ctx := context.Background()
 	remove := func() error {
 		_, err := w.svc.DeleteEndUser(ctx, "bl", user, w.hub, w.memories, w.usage, w.push)
 		return err
 	}
-	actions := 7
-	if w.faults {
-		actions++
-	}
-	action := w.rng.IntN(actions)
-	// 崩溃路径固定先注销再落盘，保证首次清理漏过这一行；其他路径覆盖三种写入顺序。
-	if action == 7 {
+	// 注销发生在存储落盘之前或之后；第三种顺序覆盖注销返回后新到达的请求。
+	switch w.rng.IntN(3) {
+	case 0:
 		w.endUserWriteHook, w.endUserWriteBefore = remove, true
-	} else {
-		switch w.rng.IntN(3) {
-		case 0:
-			w.endUserWriteHook, w.endUserWriteBefore = remove, true
-		case 1:
-			w.endUserWriteHook, w.endUserWriteBefore = remove, false
-		default:
-			if err := remove(); err != nil {
-				return err
-			}
+	case 1:
+		w.endUserWriteHook, w.endUserWriteBefore = remove, false
+	default:
+		if err := remove(); err != nil {
+			return err
 		}
 	}
 	defer func() { w.endUserWriteHook = nil }()
@@ -152,7 +153,7 @@ func (w *World) deleteWithEndUserWrite(user string) error {
 	id := fmt.Sprintf("barrier-%d", w.nextInput)
 	var err error
 	var want error
-	switch action {
+	switch w.rng.IntN(6) {
 	case 0:
 		_, err = w.svc.Create(ctx, service.CreateRequest{BusinessLine: "bl", EndUser: user, Agent: "sim"})
 		want = service.ErrNotFound
@@ -178,20 +179,6 @@ func (w *World) deleteWithEndUserWrite(user string) error {
 		}
 		_, err = w.memories.CreateGrant(ctx, user, from, to, []memory.Category{"preference"}, time.Time{})
 		want = memory.ErrNotFound
-	case 6:
-		interleaved := w.endUserWriteHook != nil
-		_, err = w.svc.PutTier(ctx, "bl", user, "pro")
-		want = service.ErrNotFound
-		if interleaved && errors.Is(err, want) {
-			w.Stats.TiersWithdrawn++
-		}
-	case 7:
-		if err := w.crashTierWriter(ctx, user); err != nil {
-			return err
-		}
-		if tier, err := w.stores.Tiers.Get(ctx, "bl", user); err != nil || tier != "pro" {
-			return fmt.Errorf("invariant: skipped recheck left no late tier: %q, %v", tier, err)
-		}
 	}
 	if want != nil && !errors.Is(err, want) {
 		return fmt.Errorf("invariant: write during account deletion returned %v, want %v", err, want)
@@ -199,8 +186,51 @@ func (w *World) deleteWithEndUserWrite(user string) error {
 	if w.endUserWriteHook != nil {
 		return errors.New("invariant: account deletion did not interleave with the write")
 	}
-	if action != 7 {
+	w.Stats.EndUserBarrierWithdrawn++
+	return nil
+}
+
+func (w *World) deleteWithTierWrite(user string, crash bool) error {
+	ctx := context.Background()
+	remove := func() error {
+		_, err := w.svc.DeleteEndUser(ctx, "bl", user, w.hub, w.memories, w.usage, w.push)
+		return err
+	}
+	// 崩溃固定发生在首次清理之后落盘，其他写入顺序独立于旧场景抽样。
+	if crash {
+		w.endUserWriteHook, w.endUserWriteBefore = remove, true
+	} else {
+		switch w.tierRNG.IntN(3) {
+		case 0:
+			w.endUserWriteHook, w.endUserWriteBefore = remove, true
+		case 1:
+			w.endUserWriteHook, w.endUserWriteBefore = remove, false
+		default:
+			if err := remove(); err != nil {
+				return err
+			}
+		}
+	}
+	defer func() { w.endUserWriteHook = nil }()
+	if crash {
+		if err := w.crashTierWriter(ctx, user); err != nil {
+			return err
+		}
+		if tier, err := w.stores.Tiers.Get(ctx, "bl", user); err != nil || tier != "pro" {
+			return fmt.Errorf("invariant: skipped recheck left no late tier: %q, %v", tier, err)
+		}
+	} else {
+		interleaved := w.endUserWriteHook != nil
+		if _, err := w.svc.PutTier(ctx, "bl", user, "pro"); !errors.Is(err, service.ErrNotFound) {
+			return fmt.Errorf("invariant: tier write during deletion returned %v", err)
+		}
+		if interleaved {
+			w.Stats.TiersWithdrawn++
+		}
 		w.Stats.EndUserBarrierWithdrawn++
+	}
+	if w.endUserWriteHook != nil {
+		return errors.New("invariant: account deletion did not interleave with tier write")
 	}
 	return nil
 }
@@ -250,9 +280,11 @@ func (w *World) checkEndUserDeleted(final bool) error {
 }
 
 func (w *World) fingerprintEndUsers(h io.Writer) {
-	for _, user := range append(slices.Clone(w.users), w.deletedUsers...) {
-		tier, err := w.stores.Tiers.Get(context.Background(), "bl", user)
-		fmt.Fprintf(h, "tier:%s|%s|%v;", user, tier, err)
+	if w.opts.Tiers {
+		for _, user := range append(slices.Clone(w.users), w.deletedUsers...) {
+			tier, err := w.stores.Tiers.Get(context.Background(), "bl", user)
+			fmt.Fprintf(h, "tier:%s|%s|%v;", user, tier, err)
+		}
 	}
 	for _, user := range w.deletedUsers {
 		b, err := w.deletions.GetEndUser(context.Background(), "bl", user)

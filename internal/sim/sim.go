@@ -1,6 +1,6 @@
 // Package sim 是确定性模拟测试框架（docs/design/m0-core-primitives.md §6）。
 //
-// 一个 World 内的全部组件共享一个种子化随机源与虚拟时钟，并在单个 goroutine 中
+// 一个 World 内的组件共享虚拟时钟，新增独立场景使用从种子派生的随机流，并在单个 goroutine 中
 // 按随机交错推进 Worker 与客户端，同时注入故障。同一种子必然产生同一条执行轨迹。
 package sim
 
@@ -67,6 +67,8 @@ type Options struct {
 	Attested bool
 	// Schedules 单独开启定时动作与跨周期跳跃，避免消耗既有场景的随机序列。
 	Schedules bool
+	// Tiers 单独开启档位分配与注销故障，避免额度变化或新增抽样改写既有覆盖轨迹。
+	Tiers bool
 	// MaintainDues 在差分中保证短 Horizon 的维护不受随机 Sweep 稀疏性影响。
 	MaintainDues bool
 }
@@ -311,6 +313,8 @@ type World struct {
 	catalog *capability.Catalog
 	hub     *node.Hub
 	nodes   []*simNode
+	// tierRNG 不从 rng 抽种子，启用或推进档位场景都不会直接消耗旧随机流。
+	tierRNG *rand.Rand
 
 	sandboxQueue workqueue.Queue
 	provider     *sandbox.Fake
@@ -387,6 +391,7 @@ func New(opts Options) (*World, error) {
 	w := &World{
 		opts:      opts,
 		rng:       rand.New(rand.NewPCG(opts.Seed, opts.Seed^0x9e3779b97f4a7c15)),
+		tierRNG:   rand.New(rand.NewPCG(opts.Seed^0x7469657273, opts.Seed^0xd1b54a32d192ed03)),
 		clock:     clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
 		effects:   map[string]int{},
 		withdrawn: map[string]bool{},
@@ -441,7 +446,7 @@ func New(opts Options) (*World, error) {
 	// checkedUsage 的不变量照常成立。
 	spent := usage.NewSpentCache(stores.Usage, 30*time.Second, w.clock)
 	w.usage = &checkedUsage{Store: spent, truth: stores.Usage, w: w}
-	w.quotas = &usage.Quotas{Store: spent, Limits: simLimits(opts.LongRuns)}
+	w.quotas = &usage.Quotas{Store: spent, Limits: simLimits(opts.LongRuns, opts.Tiers)}
 	w.meter = &usage.Meter{Store: w.usage, Prices: simPrices, Deletions: w.deletions}
 	w.provider = sandbox.NewFake()
 	w.provider.ExecFunc = w.sandboxExec
@@ -494,7 +499,7 @@ func New(opts Options) (*World, error) {
 		if err != nil {
 			return nil, err
 		}
-		if i%2 == 0 {
+		if opts.Tiers && i%2 == 0 {
 			if _, err := w.svc.PutTier(context.Background(), "bl", w.users[i], "pro"); err != nil {
 				return nil, err
 			}
@@ -1103,7 +1108,7 @@ func (w *World) quiesce() error {
 	// idleRounds 是所有 Janitor 连续无事可做的轮数。须超过一个租约 TTL（每轮 1 秒）才算清理队列已空：
 	// 崩溃的 Janitor 持有的租约到期前，其他 Janitor 认领不到它的任务。
 	idleRounds := 0
-	endUsersExpired := len(w.deletedUsers) == 0
+	endUsersExpired := !w.opts.Tiers || len(w.deletedUsers) == 0
 	for round := range 2000 {
 		active := false
 		if err := w.discoverChildren(); err != nil {

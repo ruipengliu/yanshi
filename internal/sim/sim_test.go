@@ -132,7 +132,7 @@ func TestSimulationWithFaults(t *testing.T) {
 	requireCoverage(t, total, "Runs", "Steers", "Interrupts", "Crashes", "Takeovers", "OutcomeUnknown", "Retried",
 		"NodeCrashes", "Redeliveries", "Approvals", "Denials", "Suspensions", "DeviceResults", "Timeouts",
 		"ControllerCrashes", "SandboxExecs", "Reaps", "EnqueueInterleavings", "Closes", "Deletions", "JanitorCrashes", "DeletionsCompleted", "Recalls", "MemorySaves", "Compactions", "SummaryFaults", "Overflows", "AttemptsAfterCompaction",
-		"QuotaSuspensions", "QuotaRejections", "QuotaResumes", "AccountDeletions", "EndUserBarrierWithdrawn", "TiersSet", "TiersWithdrawn", "TierWriterCrashes", "TierCrashRecoveries", "AgentSwitches",
+		"QuotaSuspensions", "QuotaRejections", "QuotaResumes", "AccountDeletions", "EndUserBarrierWithdrawn", "AgentSwitches",
 		"InputBlocks", "OutputBlocks", "ModerationErrors", "MemoryApprovals", "PresenceWrites", "PresenceWithdrawn",
 		"Questions", "Answers", "TypedAnswers", "InvalidAnswers", "QuestionTimeouts", "UIContextInputs", "DuplicateInputs",
 		"Cards", "CardActions", "CardDuplicates", "CardAnswers",

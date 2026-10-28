@@ -22,12 +22,14 @@ var simPrices = &usage.PriceList{Models: map[string]usage.Price{"sim/m": {Input:
 
 func init() { simPrices.Sandbox.PerHour = 3.6 }
 
-func simLimits(long bool) map[string]usage.Limits {
+func simLimits(long, tiers bool) map[string]usage.Limits {
 	l := usage.Limits{Monthly: 0.015, EndUserDaily: 0.006}
 	if long {
 		l = usage.Limits{Monthly: 1, EndUserDaily: 0.4}
 	}
-	l.Tiers = map[string]usage.TierLimits{"pro": {EndUserDaily: l.EndUserDaily * 2}}
+	if tiers {
+		l.Tiers = map[string]usage.TierLimits{"pro": {EndUserDaily: l.EndUserDaily * 2}}
+	}
 	if err := l.Prepare(); err != nil {
 		panic(err)
 	}
