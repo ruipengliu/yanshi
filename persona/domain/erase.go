@@ -16,18 +16,20 @@ type MemoryCandidate struct {
 
 // DeletionTask 与原文擦除同事务持久化；通知只是唤醒，启动恢复仍须查询 pending。
 type DeletionTask struct {
-	ID          string            `json:"id"`
-	Kind        string            `json:"kind"`
-	Date        string            `json:"date"`
-	Session     string            `json:"session"`
-	Sessions    []string          `json:"sessions"`
-	DeleteAt    time.Time         `json:"delete_at,omitzero"`
-	Status      string            `json:"status"`
-	CreatedAt   time.Time         `json:"created_at"`
-	Candidates  []MemoryCandidate `json:"candidates"`
-	CompletedAt time.Time         `json:"completed_at,omitzero"`
-	Error       string            `json:"error,omitempty"`
-	FailedAt    time.Time         `json:"failed_at,omitzero"`
+	ID             string            `json:"id"`
+	TimeZone       string            `json:"time_zone,omitempty"`
+	RebuildPending bool              `json:"rebuild_pending,omitempty"`
+	Kind           string            `json:"kind"`
+	Date           string            `json:"date"`
+	Session        string            `json:"session"`
+	Sessions       []string          `json:"sessions"`
+	DeleteAt       time.Time         `json:"delete_at,omitzero"`
+	Status         string            `json:"status"`
+	CreatedAt      time.Time         `json:"created_at"`
+	Candidates     []MemoryCandidate `json:"candidates"`
+	CompletedAt    time.Time         `json:"completed_at,omitzero"`
+	Error          string            `json:"error,omitempty"`
+	FailedAt       time.Time         `json:"failed_at,omitzero"`
 }
 
 // Erase 在所属 Book 事务内删除闭区间；参数接受页中的编号以及带 # 的引用。
@@ -94,6 +96,7 @@ func captureRanges(segs []captureSegment, gap time.Duration) []captureRange {
 
 func (u *Book) erase(date string, from, to Ref, whole bool, now time.Time) DeletionTask {
 	day := u.captureDays[date]
+	zone := u.BusinessDay(date).TimeZone
 	erased := captureRange{from, to}
 	gap := time.Duration(day.GapMS) * time.Millisecond
 	var affected []captureRange
@@ -147,7 +150,7 @@ func (u *Book) erase(date string, from, to Ref, whole bool, now time.Time) Delet
 	}
 	task := DeletionTask{ID: fmt.Sprintf("del_%s_%d", date, sequence), Kind: kind, Date: date,
 		Session: day.Session, Sessions: orEmpty(slices.Clone(day.Sessions)), DeleteAt: day.DeleteAt,
-		Status: "pending", CreatedAt: now, Candidates: []MemoryCandidate{}}
+		TimeZone: zone, Status: "pending", CreatedAt: now, Candidates: []MemoryCandidate{}}
 	day.Session = ""
 	u.deletionTasks = append(u.deletionTasks, task)
 	u.refold()
@@ -297,8 +300,9 @@ func (u *Book) DeletionTasks() []DeletionTask {
 	return out
 }
 
+// PendingDeletionTasks 包含清理已完成、但重新整理尚未确认的待办，供启动恢复发现。
 func (u *Book) PendingDeletionTasks() []DeletionTask {
-	return slices.DeleteFunc(u.DeletionTasks(), func(task DeletionTask) bool { return task.Status != "pending" })
+	return slices.DeleteFunc(u.DeletionTasks(), func(task DeletionTask) bool { return task.Status != "pending" && !task.RebuildPending })
 }
 
 func (u *Book) CompleteDeletionTask(id string, candidates []MemoryCandidate, now time.Time) error {
@@ -326,9 +330,38 @@ func (u *Book) FailDeletionTask(id, errorClass string, now time.Time) error {
 	for i := range u.deletionTasks {
 		task := &u.deletionTasks[i]
 		if task.ID == id {
-			if task.Status == "pending" {
+			if task.Status == "pending" || task.RebuildPending {
 				task.Error, task.FailedAt = errorClass, now
 			}
+			return nil
+		}
+	}
+	return fmt.Errorf("deletion task does not exist")
+}
+
+// CompleteDeletionWithRebuild 把清理完成与后续整理意图同事务记录，避免两者之间崩溃漏掉整理。
+func (u *Book) CompleteDeletionWithRebuild(id string, candidates []MemoryCandidate, rebuild bool, now time.Time) error {
+	for i := range u.deletionTasks {
+		task := &u.deletionTasks[i]
+		if task.ID == id && task.Status == "pending" {
+			if rebuild && task.Kind != "erase" {
+				return fmt.Errorf("only erasure can rebuild")
+			}
+			task.RebuildPending = rebuild
+		}
+	}
+	return u.CompleteDeletionTask(id, candidates, now)
+}
+
+func (u *Book) CompleteDeletionRebuild(id string) error {
+	for i := range u.deletionTasks {
+		task := &u.deletionTasks[i]
+		if task.ID == id {
+			if task.Status != "completed" {
+				return fmt.Errorf("deletion is not completed")
+			}
+			task.RebuildPending = false
+			task.Error, task.FailedAt = "", time.Time{}
 			return nil
 		}
 	}

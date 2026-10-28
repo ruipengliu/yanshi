@@ -10,7 +10,7 @@
 //	GET  /v1/deletions/{id}                        删除请求的进度（仅服务令牌）
 //	GET  /v1/memories?category=&q=&end_user=       本业务线的 Memory（重复 source_session 查询有效候选，仅服务令牌，最多 32 个）
 //	DELETE /v1/memories/{id}                       删除一条 Memory
-//	DELETE /v1/sessions/{id}/memories              删除该 Session 写入的全部 Memory（仅服务令牌；按来源撤销投毒）
+//	DELETE /v1/sessions/{id}/memories              删除该 Session 写入的全部 Memory（仅服务令牌；Session 已删时按删除记录授权）
 //	GET  /v1/memories/access?since=&end_user=      本业务线 Memory 的读取记录
 //	GET  /v1/grants                                EndUser 涉及本业务线的授权（仅用户令牌）
 //	POST /v1/grants                                创建授权 {"from","to","categories","expires_at"}（仅用户令牌）
@@ -1199,18 +1199,39 @@ func (s *Server) forgetMemory(w http.ResponseWriter, r *http.Request) {
 
 // forgetSessionMemories 按来源 Session 撤销 Memory（ADR-0023）：运维发现投毒后，删除由该 Session 写入的全部记忆。
 // 只接受服务令牌：这是业务线的运维操作，不是 EndUser 的日常操作（EndUser 用 DELETE /v1/memories/{id}）。
+// Session 已删除时按同业务线的删除记录授权，使擦除保留的 Memory 仍可按来源删除。
 func (s *Server) forgetSessionMemories(w http.ResponseWriter, r *http.Request) {
 	if !s.memoryEnabled(w) {
 		return
 	}
-	if _, ok := s.session(w, r); !ok {
+	id := r.PathValue("id")
+	p := principal(r)
+	// 与 session 使用相同的归属检查，但暂不写出 404：擦除后仍可能有保留的 Memory。
+	st, err := s.Service.Load(r.Context(), id)
+	if err == nil && !p.Allows(st.Created.GetBusinessLine(), st.Created.GetEndUser()) {
+		err = fmt.Errorf("%w: session %s", service.ErrNotFound, id)
+	}
+	if errors.Is(err, service.ErrNotFound) && (p.Service() || p.Unrestricted) && s.Service.Deletions != nil {
+		bl, ok := businessLineOf(w, r, s)
+		if !ok {
+			return
+		}
+		tomb, lookupErr := s.Service.Deletions.Get(r.Context(), id)
+		if errors.Is(lookupErr, lifecycle.ErrNotFound) || lookupErr == nil && tomb.BusinessLine != bl {
+			err = service.ErrNotFound
+		} else {
+			err = lookupErr
+		}
+	}
+	if err != nil {
+		s.fail(w, err)
 		return
 	}
-	if p := principal(r); !p.Service() && !p.Unrestricted {
+	if !p.Service() && !p.Unrestricted {
 		s.fail(w, fmt.Errorf("%w: a service token is required", errForbidden))
 		return
 	}
-	if err := s.Memory.ForgetSession(r.Context(), r.PathValue("id")); err != nil {
+	if err := s.Memory.ForgetSession(r.Context(), id); err != nil {
 		s.fail(w, err)
 		return
 	}

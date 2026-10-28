@@ -98,7 +98,7 @@ export class XinliView {
         h(
           "span",
           { class: "muted" },
-          "旁听原文由采集服务提交到 Persona。开发时通过夹具 POST /v1/fixture/{businessLine}/{endUser}/captures 提交，并用同一路径下的 bind_day 绑定 xinli-day 工作会话，再发「整理今天」；本页展示整理结果",
+          "上方提交旁听或发起整理，下方查看整理结果。",
         ),
         h(
           "button",

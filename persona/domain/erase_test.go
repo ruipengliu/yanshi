@@ -550,3 +550,65 @@ func TestEraseSummaryRevisionKeepsOriginalCommitments(t *testing.T) {
 		t.Fatal("dependent revisions survived refold")
 	}
 }
+
+func TestDeletionRebuildSurvivesClone(t *testing.T) {
+	b := NewBook()
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	if _, err := b.AppendCaptures(eraseDate, "capture", []CaptureSegment{{Speaker: "wearer", Text: "原文", TimeZone: "America/New_York"}}); err != nil {
+		t.Fatal(err)
+	}
+	task, err := b.Erase(eraseDate, "1.0", "1.0", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.TimeZone != "America/New_York" || len(b.DayCaptures(eraseDate)) != 0 {
+		t.Fatal("lost original timezone or retained text")
+	}
+	candidates := []MemoryCandidate{{ID: "m", Summary: "候选"}}
+	if err := b.CompleteDeletionWithRebuild(task.ID, candidates, true, now); err != nil {
+		t.Fatal(err)
+	}
+	b, err = b.Clone()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := b.PendingDeletionTasks(); len(got) != 1 || !got[0].RebuildPending || got[0].Status != "completed" {
+		t.Fatalf("pending: %+v", got)
+	}
+	if err := b.FailDeletionTask(task.ID, "submit", now); err != nil {
+		t.Fatal(err)
+	}
+	if b.DeletionTasks()[0].Error != "submit" {
+		t.Fatal("lost rebuild failure")
+	}
+	if err := b.CompleteDeletionRebuild(task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.CompleteDeletionWithRebuild(task.ID, nil, true, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.PendingDeletionTasks()) != 0 || !reflect.DeepEqual(b.DeletionTasks()[0].Candidates, candidates) || b.DeletionTasks()[0].Error != "" {
+		t.Fatal("repeated completion changed result")
+	}
+}
+
+func TestDayCapturesReadOnlyCopy(t *testing.T) {
+	b := NewBook()
+	if _, err := b.AppendCaptures(eraseDate, "c", []CaptureSegment{{Speaker: "wearer", Text: "原文", TimeZone: "Asia/Shanghai"}}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := b.MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := b.DayCaptures(eraseDate)
+	got[0].Text = "changed"
+	day := b.BusinessDay(eraseDate)
+	if day.TimeZone != "Asia/Shanghai" || day.Deleted {
+		t.Fatalf("day: %+v", day)
+	}
+	after, err := b.MarshalJSON()
+	if err != nil || string(before) != string(after) || b.DayCaptures(eraseDate)[0].Text != "原文" {
+		t.Fatal("read mutated book")
+	}
+}

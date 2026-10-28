@@ -124,13 +124,22 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	defer cancelLife()
 	var orch *orchestrator.Orchestrator
 	opts := mcpserver.Options{}
+	fixtureOpts := fixture.Options{}
+	uiOpts := devui.Options{Store: books}
 	if *kernelURL != "" {
-		orch = orchestrator.New(life, books, &kernel.Client{BaseURL: *kernelURL, Token: token}, orchestrator.Options{Logger: logger})
+		client := &kernel.Client{BaseURL: *kernelURL, Token: token}
+		orch = orchestrator.New(life, books, client, orchestrator.Options{Logger: logger})
+		fixtureOpts.Notifier = orch
+		uiOpts.DaySessions, uiOpts.Kernel, uiOpts.Notifier = orch, client, orch
 		opts.Notifier = orch
+		defer func() {
+			cancelLife()
+			_ = orch.Shutdown(context.Background())
+		}()
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", mcpserver.Handler(books, opts))
-	mux.Handle("/v1/fixture/", fixture.Handler(books, fixture.Options{}))
+	mux.Handle("/v1/fixture/", fixture.Handler(books, fixtureOpts))
 	mux.HandleFunc("POST /v1/fixture/{businessLine}/{endUser}/week_review", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if orch == nil {
@@ -146,7 +155,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		}
 		_ = json.NewEncoder(w).Encode(map[string]string{"session_id": sid})
 	})
-	mux.Handle("/", devui.Handler(devui.Config{BusinessLines: lines, ConsoleURL: *consoleURL}))
+	mux.Handle("/", devui.Handler(devui.Config{BusinessLines: lines, ConsoleURL: *consoleURL}, uiOpts))
 	listener, err := net.Listen("tcp", *addr)
 	if err != nil {
 		return errors.New("xinli dev: listen failed")
@@ -175,6 +184,9 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 				return errors.New("xinli dev: cannot write registration")
 			}
 		}
+	}
+	if orch != nil {
+		orch.StartDeletions()
 	}
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError)}
 	serveErr := make(chan error, 1)
