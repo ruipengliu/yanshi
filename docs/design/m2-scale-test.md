@@ -148,3 +148,31 @@ P=4、W=32、无负载时的数据库查询：**优化前每秒 1218 次，优�
 - **历史访问改读日志**：对已移出投影的 Run 中调用的重复审批或回答，经 `Store.HistoryCall` 分页扫描日志，照旧返回 conflict；Janitor 请求设备清除本地记录时扫描日志中的 `ToolCallStarted`。这些路径罕见或在后台。中断已移出投影的 Run 照旧是无操作，Session 的 Run 列表（`GET /v1/sessions/{id}`）由摘要与保留的 Run 组成，与原来一致。
 - **等价性**：裁剪是 `Apply` 的一部分，全量重放与"快照 + 尾部"给出同一投影（模拟测试每步检查）；外部行为由服务的单元测试与模拟测试覆盖（`PastRuns` 计入覆盖统计；不变量：保留的 Run 至多 `KeepRuns+1` 个，摘要与 Run 合起来覆盖日志中的每个 Run）。
 - **验收**：历史扩大十倍时每次提交校验分配的字节数不随之增长（`TestCheckCostIndependentOfHistory`）。加载时解码快照仍与 Run 摘要和调用 ID 的数量成正比，但它们只是 ID，不再含调用参数。
+
+
+## 10. 开放式问答与单次调用混合压测（Q81）
+
+```bash
+# 已有服务：默认闭环，每个 Session 完成后再提交下一次。
+./bin/yanshi bench -sessions 50 -duration 60s -out closed.json
+# 固定计划，每秒 16 次问答，同时以 64 个循环客户端持续施压单次调用。
+./bin/yanshi bench -rate 16 -warmup 20s -duration 60s \
+  -oneshot bench-brief -oneshot-concurrency 64 -run-timeout 30s -out mixed.json
+# 同机三配置比较；先在运行机器构建二进制。
+make build
+YANSHI_BENCH_TTFT=1 scripts/bench-ttft.sh
+```
+
+`-rate=0` 是闭环默认；`-rate>0` 按 `start + i/rate` 的固定计划发起，不等前一条完成。开放式每次到达预建一个独立 Session 并等 SSE 订阅就绪，避免 Session 自身的串行执行或新建/握手耗时污染准入测量；`-sessions` 此时不决定到达量。预建数量为 `ceil(rate × (warmup + duration))`，最多 10 万，内存及文件描述符随计划长度增长，长时间大流量应分批实验。预建失败也为对应到达记入 `setup_*` 失败，不能静默删样本。程序退出后数据仍在服务端，脚本通过重启内存后端隔离每组。
+
+`-warmup` 默认 0，使用相同负载预热，按计划提交时刻排除预热问答；循环单次调用按实际发起时刻排除。采样结束停止新到达，已计划问答仍发起并全部等到完成或超时；`-run-timeout` 覆盖提交 HTTP 请求及等终态。开放式若客户端落后，追赶原计划并记录 `ArrivalLagMs`，不重新从“现在”排下一条。三组脚本要求到达延误 p99 ≤ 20ms，否则视为实验无效。
+
+首字为 SSE 的第一个非空 `text`（包括重连后首次观察到的正文快照），`reasoning`、空正文与结束标记不计；从实际提交前开始计时，到观察到正文为止。stdout 与 `-out` 是同一 JSON：
+
+- `TTFTMs`、`LatencyMs`：成功问答首字与终态端到端 p50/p95/p99，保留 p90/max 兼容既有脚本；只含成功样本，须结合成功率判断。
+- `Runs`：completed/failed/interrupted/timeout/429/503 及 setup_* 分类；`SuccessRate` 的分母包括全部采样到达。`TTFTSamples` 与 `MissingTTFT` 显式报告成功问答中收到或缺失正文增量的数量。
+- `Oneshots`：独立的 Outcomes、Requests、SuccessPerSecond、RequestsPerSecond 与 Rejected429Ratio；429 比例的分母为全部单次调用请求，不混入问答。`-oneshot-concurrency` 是客户端循环数，与 serve 同名参数的服务端合计上限不同。失败后至少等 10ms，避免立即拒绝导致客户端忙循环。
+- `Seconds` 为采样窗口，吞吐按该窗口提交并最终成功的数量除以窗口秒数（含窗口结束后的收尾结果）；Timeline 按实际完成时刻，含收尾秒。`Errors`/`ErrorSamples` 是流连接故障诊断，只含类别；不把断线重复计算成问答失败。
+- `Parameters` 记录客户端参数，不保存私钥、令牌或请求内容。服务端参数由调用方另存。
+
+假模型新增 `ttft`：`bench/latency=1s,ttft=50ms,turns=0`，首个正文在 50ms，总调用约 1s；没有 `ttft` 时保持 `latency/8`。须满足 `0 ≤ ttft ≤ latency`。它与真实模型一样经过 Guard；三配置脚本和验收口径见 [M7 §13](./m7-kernel-primitives.md#单次调用子限额下的首字延迟q81)。结论只覆盖并发瓶颈、RPS 不受限的负载。

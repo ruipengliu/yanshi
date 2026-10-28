@@ -36,6 +36,15 @@ func TestHTTPContract(t *testing.T) {
 				}
 				// 字段名固定对照 internal/httpapi/httpapi.go 的 create 与 submit；不导入内核以免依赖倒置。
 				switch r.URL.Path {
+				case "/v1/oneshots/xinli-live-brief":
+					want := map[string]string{"end_user": "u", "input": "旁听原文"}
+					if calls == 4 {
+						want["business_line"] = "bl"
+					}
+					if !reflect.DeepEqual(body, want) {
+						t.Errorf("oneshot fields: %v", body)
+					}
+					_, _ = fmt.Fprint(w, `{"version":"1","model":"bench/any","output":{"brief":"简述"}}`)
 				case "/v1/sessions":
 					if !reflect.DeepEqual(body, map[string]string{"business_line": "bl", "end_user": "u", "agent": "xinli-project"}) {
 						t.Errorf("create fields: %v", body)
@@ -61,7 +70,14 @@ func TestHTTPContract(t *testing.T) {
 			if err := c.Submit(context.Background(), sid, "input_1", "整理 2026-10-23"); err != nil {
 				t.Fatal(err)
 			}
-			if calls != 2 {
+			shot, err := c.Oneshot(context.Background(), "u", "xinli-live-brief", "旁听原文")
+			if err != nil || shot.Version != "1" || shot.Model != "bench/any" || string(shot.Output) != `{"brief":"简述"}` {
+				t.Fatalf("oneshot: %+v %v", shot, err)
+			}
+			if _, err := c.OneshotForBusinessLine(context.Background(), "bl", "u", "xinli-live-brief", "旁听原文"); err != nil {
+				t.Fatal(err)
+			}
+			if calls != 4 {
 				t.Fatalf("calls: %d", calls)
 			}
 		})
@@ -79,7 +95,8 @@ func TestErrorsDoNotExposeContent(t *testing.T) {
 			c := &Client{BaseURL: server.URL}
 			_, createErr := c.CreateSession(context.Background(), "bl", "private-input", "agent")
 			submitErr := c.Submit(context.Background(), "ses", "in", "private-input")
-			for _, err := range []error{createErr, submitErr} {
+			_, shotErr := c.Oneshot(context.Background(), "u", "xinli-live-brief", "private-input")
+			for _, err := range []error{createErr, submitErr, shotErr} {
 				if err == nil || !strings.Contains(err.Error(), fmt.Sprint(status)) || strings.Contains(err.Error(), "private-input") {
 					t.Fatalf("unsafe error: %v", err)
 				}

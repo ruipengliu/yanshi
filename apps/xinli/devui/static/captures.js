@@ -5,6 +5,9 @@ export class CaptureView {
   constructor(ctx) {
     this.ctx = ctx;
     this.version = 0;
+    this.briefGeneration = 0;
+    this.briefResult = h("p", { class: "capture-text", role: "status" });
+    this.briefButton = h("button", { class: "btn small", type: "button", onclick: () => this.brief() }, "实况简述");
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     this.date = h("input", { type: "date", value: today, onchange: () => this.reset() });
@@ -31,13 +34,15 @@ export class CaptureView {
       h("div", { class: "xinli-actions" }, this.from, this.to,
         button("擦除", () => this.send("erase", { from: this.from.value, to: this.to.value })),
         button("删除这一天", () => this.send("erase_day", {}))),
-      this.notice, this.results);
+      ctx.orchestration ? h("div", { class: "xinli-actions" }, this.briefButton) : null,
+      this.briefResult, this.notice, this.results);
   }
 
   path() { return `${this.ctx.devPath()}/captures?${new URLSearchParams({ date: this.date.value })}`; }
   identity() { return `${this.ctx.identity()}/${this.date.value}`; }
   reset() {
     this.version++;
+    this.invalidateBrief();
     this.lines.value = "";
     this.from.value = this.to.value = "";
     this.notice.textContent = "";
@@ -48,7 +53,7 @@ export class CaptureView {
     this.refresh();
     this.timer = setInterval(() => document.visibilityState === "visible" && this.refresh(), 3000);
   }
-  stop() { clearInterval(this.timer); this.version++; }
+  stop() { clearInterval(this.timer); this.version++; this.invalidateBrief(); }
 
   async refresh() {
     const who = this.identity();
@@ -87,14 +92,40 @@ export class CaptureView {
   }
 
   async send(action, body) {
+    if (["erase", "erase_day", "captures"].includes(action)) this.invalidateBrief();
     const who = this.identity();
     const r = await this.ctx.http("POST", `${this.ctx.devPath()}/${action}`, { date: this.date.value, ...body });
     if (who !== this.identity()) return null;
     if (r.status !== 200) { this.notice.textContent = `操作失败：${r.json?.error || r.status}`; return null; }
+    if (["erase", "erase_day", "captures"].includes(action)) this.invalidateBrief();
     this.notice.textContent = r.json.refs ? `已提交：${r.json.refs.map((ref) => `#${ref}`).join("、")}`
       : r.json.session_id ? `已提交整理：${r.json.session_id}` : "删除请求已记录。";
     await this.refresh();
     return who === this.identity() ? r.json : null;
+  }
+
+  invalidateBrief() {
+    this.briefGeneration++;
+    this.briefResult.textContent = "";
+    this.briefButton.disabled = false;
+  }
+
+  async brief() {
+    const generation = ++this.briefGeneration;
+    const who = this.identity();
+    this.briefButton.disabled = true;
+    this.briefResult.textContent = "正在生成…";
+    try {
+      const r = await this.ctx.http("POST", `${this.ctx.devPath()}/brief`, { date: this.date.value });
+      if (generation !== this.briefGeneration || who !== this.identity()) return;
+      this.briefResult.textContent = r.status === 200 ? r.json.brief
+        : r.status === 409 ? (r.json.error === "no_captures" ? "没有可供简述的原文。" : "原文已变化，请重新生成")
+        : r.status === 429 ? "当前调用较多，请稍后重试。" : "简述生成失败，请稍后重试。";
+    } catch {
+      if (generation === this.briefGeneration && who === this.identity()) this.briefResult.textContent = "简述生成失败，请稍后重试。";
+    } finally {
+      if (generation === this.briefGeneration) this.briefButton.disabled = false;
+    }
   }
 
   async append() {

@@ -180,7 +180,7 @@ func configureModelLimits(l model.Limits, minBackgroundSet bool) (model.Limits, 
 	return l, l.Validate()
 }
 
-// gateway 按环境变量配置模型供应商；真实提供商经 model.Guard 施加 limits（每个提供商各自计数）：
+// gateway 按环境变量配置模型供应商；真实提供商与 bench 经 model.Guard 施加 limits（每个提供商各自计数）：
 //
 //	echo   始终可用
 //	script 始终可用：按输入中的命令调用工具（调试控制台与测试，internal/model/script）
@@ -198,7 +198,7 @@ func gateway(logger *slog.Logger, limits model.Limits, injector *faults.Injector
 	}
 	gw := model.NewGateway()
 	gw.Register("echo", wrap(echo.Provider{}))
-	gw.Register("bench", wrap(bench.Provider{}))
+	gw.Register("bench", &model.Guard{Name: "bench", Provider: wrap(bench.Provider{}), Limits: limits})
 	gw.Register("script", wrap(script.Provider{}))
 	register := func(name, base, key string) {
 		gw.Register(name, &model.Guard{Name: name, Provider: wrap(&openaicompat.Provider{BaseURL: base, APIKey: key}), Limits: limits})
@@ -254,6 +254,7 @@ func serve(args []string) error {
 	rolesFlag := fs.String("roles", strings.Join(allRoles, ","), "本进程承担的角色（docs/design/deployment.md §3）：gateway（HTTP API、Connection、Call）、worker、sandbox（沙箱控制器）、janitor；全部角色等价于单进程部署")
 	agentsDir := fs.String("agents", "agents", "AgentDef 目录")
 	oneshotsDir := fs.String("oneshots", "oneshots", "单次调用声明目录；不存在时不提供接口")
+	benchUnreserved := fs.Bool("bench-oneshot-unreserved", false, "仅压测：允许 bench 单次调用占满模型并发；需 YANSHI_BENCH_TTFT=1、memory 存储")
 	oneshotMax := fs.Int("oneshot-concurrency", oneshot.DefaultMax, "单次调用合计并发上限，须小于受限的模型并发上限")
 	oneshotWait := fs.Duration("oneshot-wait", oneshot.DefaultWait, "单次调用每层并发名额的最长等待")
 	oneshotDeadline := fs.Duration("oneshot-deadline", oneshot.DefaultDeadline, "单次调用总时限，含排队、审核与修复调用")
@@ -334,6 +335,9 @@ func serve(args []string) error {
 		return fmt.Errorf("load releases: %w", err)
 	}
 	agents.SetReleases(rel)
+	if *benchUnreserved && (os.Getenv("YANSHI_BENCH_TTFT") != "1" || *storageKind != "memory") {
+		return fmt.Errorf("bench-oneshot-unreserved requires YANSHI_BENCH_TTFT=1 and memory storage")
+	}
 	var shots *oneshot.Registry
 	var shotsLoaded []byte
 	shotsPath := filepath.Join(*oneshotsDir, oneshot.ReleasesFile)
@@ -349,7 +353,17 @@ func serve(args []string) error {
 			shots = nil
 		} else {
 			// 没有声明时不装配单次调用，也不让未使用的限额阻止 Run 服务启动。
-			if err := oneshot.ValidateLimits(*oneshotMax, modelLimits.MaxConcurrency, *oneshotWait, *oneshotDeadline); err != nil {
+			providerMax := modelLimits.MaxConcurrency
+			if *benchUnreserved {
+				// 对照只放开启动处的保留量校验；Service 的三层上限与 Guard 优先级照常执行。
+				for _, def := range shots.All() {
+					if !strings.HasPrefix(def.Model, "bench/") {
+						return fmt.Errorf("bench-oneshot-unreserved only accepts bench models")
+					}
+				}
+				providerMax = 0
+			}
+			if err := oneshot.ValidateLimits(*oneshotMax, providerMax, *oneshotWait, *oneshotDeadline); err != nil {
 				return err
 			}
 			releases, loaded, loadErr := shots.LoadReleases(shotsPath)

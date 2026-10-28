@@ -349,6 +349,45 @@ Mac mini 实测（2026-10-28，返工后复测；前四行的 p50/p99 是 Claim 
 
 认领与迁移按修订后的口径达标；百万远期停放对入队路径没有可见的影响（基线 p99 的波动来自单机噪声）。没有到期表时，百万停放使认领慢约 50 倍，到期表是必要的。
 
+### 单次调用子限额下的首字延迟（Q81）
+
+独立运行，不进 `make check`，不需要 PostgreSQL、Docker 或真实模型：
+
+```bash
+make build
+YANSHI_BENCH_TTFT=1 scripts/bench-ttft.sh
+# 可调整机器负载与采样时长：
+YANSHI_BENCH_TTFT=1 C=32 O=8 B=4 CLIENTS=64 WORKERS=64 \
+  RATE=16 TTFT=50ms LATENCY=1s WARMUP=20s DURATION=60s \
+  OUT=bench-results/ttft-local scripts/bench-ttft.sh
+```
+
+脚本依次启动全新的内存服务，用同一开放式问答计划（预热 20s、采样 60s、16 次/秒，每个 Run 一轮模型、无工具）运行以下配置。模型总耗时 1s、首字 50ms，平均约 16 条问答在途，小于 C−O=24。每组预先建立所有 Session/SSE，采样时不建连；进程文件描述符软限制尝试升到 8192。使用已有 `serve -oneshots` 指向临时目录，由脚本生成 `bench-brief` 声明，不进入全局声明目录；声明不带输出 Schema，避免假模型纯文本触发修复。
+
+| 配置 | model-concurrency | model-min-background | serve oneshot-concurrency / 声明 concurrency | 单次调用循环客户端 | 特殊参数 |
+|---|---:|---:|---:|---:|---|
+| baseline | 32 | 4 | 8 / 8 | 0 | 无 |
+| mixed | 32 | 4 | 8 / 8 | 64 | 无 |
+| control | 32 | 4 | 64 / 64 | 64 | -bench-oneshot-unreserved |
+
+各组均 `model-rps=0`、`oneshot-wait=200ms`、64 个通用 Worker；客户端与单次调用总时限默认 30s。可用 C/O/B/CLIENTS/WORKERS/RATE/TTFT/LATENCY/WARMUP/DURATION/RUN_TIMEOUT/PORT/BIN/OUT 环境变量调整，调整后须仍让问答在 C−O 的容量内且单次调用饱和。参数命令行、AgentDef、单次调用声明、JSON 与比较表保存在 OUT。
+
+control 只放开 serve 启动处“合计上限必须严格小于模型总并发”的校验；需 `YANSHI_BENCH_TTFT=1`、memory 存储且全部加载的单次调用声明使用 `bench/`。仍验证正限额、等待与时限。Service 的三层上限、`WithOneshot` 标记、Guard 优先级均不改；control 的合计与声明上限设为客户端数，不再阻止单次调用占满模型名额。Guard 不抢占，因此问答会等待已经开始的假模型释放槽位。这是检验子限额作用所需的最小对照，不给真实提供商增加绕过路径。
+
+判定：`mixed_p99 − baseline_p99 ≤ max(0.10 × baseline_p99, 20ms)` 且问答成功率不降。基线必须全成功；三组问答数相同、没有成功问答丢首字、客户端到达延误 p99 ≤ 20ms；mixed/control 必须有成功的单次调用，单次调用仅允许成功与 429。control 的 p99 必须比 baseline 高出同一容差，才算“明显退化”；没有退化表示实验未触发瓶颈。脚本打印表格，任一条件失败退出非零。
+
+**结论范围**：只覆盖同进程的并发瓶颈、RPS 不受限的负载；不代表真实模型或共享 RPS 被耗尽时的保证，不验证后台 Run 保底份额或多进程的全局上限。首字从实际提交计时，计划延误另外检验，避免客户端调度落后掩盖首字尾延迟。
+
+结果（2026-10-28，Mac mini，`scripts/bench-ttft.sh` 默认配置：C=32、O=8、B=4、64 个 Worker、假模型首字 50ms / 总耗时 1s、问答 16 次/秒开放式到达、预热 20s、采样 60s，每组 960 条问答）：
+
+| 配置 | 问答首字 p50/p95/p99（ms） | 端到端 p50/p95/p99（ms） | 问答成功率 | 单次调用成功/s | 单次调用 429 比例 |
+|---|---|---|---|---|---|
+| baseline | 52.41 / 52.91 / 53.19 | 1001.00 / 1002.04 / 1002.77 | 100% | — | — |
+| mixed | 51.95 / 52.78 / 53.08 | 1000.99 / 1001.94 / 1002.69 | 100% | 8.00 | 96.98% |
+| control | 550.77 / 992.16 / 1043.16 | 1500.41 / 1942.25 / 1991.47 | 100% | 15.98 | 0% |
+
+判定通过：`mixed_p99 − baseline_p99 = −0.10ms`，容差 20ms；问答成功率不降。对照组（单次调用不受合计上限约束）p99 高出 989.98ms，说明实验确实触发了并发瓶颈。单次调用在 mixed 中以合计上限（8 个名额 × 1s）的吞吐运行，其余请求在 200ms 有界等待后得到 429。
+
 ## 14. 不变量核对
 
 | 不变量 | 本设计中 |

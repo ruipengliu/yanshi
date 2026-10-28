@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"time"
 
+	"xinli/kernel"
+
 	"persona/domain"
 	"persona/store"
 )
@@ -21,6 +23,7 @@ type Options struct {
 	}
 	Kernel interface {
 		Submit(context.Context, string, string, string) error
+		OneshotForBusinessLine(context.Context, string, string, string, string) (kernel.OneshotResult, error)
 	}
 	Notifier interface {
 		DeletionPending(context.Context, string, string, string)
@@ -139,6 +142,77 @@ func registerRoutes(mux *http.ServeMux, opts Options) {
 			write(w, 200, map[string]any{"task": task})
 		})
 	}
+	mux.HandleFunc("POST "+prefix+"/brief", func(w http.ResponseWriter, r *http.Request) {
+		if opts.Kernel == nil {
+			fail(w, 503, "kernel_disabled")
+			return
+		}
+		var in struct {
+			Date string `json:"date"`
+		}
+		if !decode(w, r, &in) {
+			return
+		}
+		if !validDate(in.Date) {
+			fail(w, 400, "invalid_date")
+			return
+		}
+		bl, eu := r.PathValue("businessLine"), r.PathValue("endUser")
+		var before briefRevision
+		var input string
+		err := opts.Store.View(r.Context(), bl, eu, func(b *domain.Book) error {
+			segments := b.DayCaptures(in.Date)
+			before = captureRevision(b, in.Date, segments)
+			input = briefInput(segments)
+			return nil
+		})
+		if err != nil {
+			fail(w, 500, "read_failed")
+			return
+		}
+		if before.deleted || input == "" {
+			fail(w, 409, "no_captures")
+			return
+		}
+		result, callErr := opts.Kernel.OneshotForBusinessLine(r.Context(), bl, eu, "xinli-live-brief", input)
+		var after briefRevision
+		err = opts.Store.View(r.Context(), bl, eu, func(b *domain.Book) error {
+			after = captureRevision(b, in.Date, b.DayCaptures(in.Date))
+			return nil
+		})
+		if err != nil {
+			fail(w, 500, "read_failed")
+			return
+		}
+		if before != after {
+			fail(w, 409, "原文已变化，请重新生成")
+			return
+		}
+		if callErr != nil {
+			status := http.StatusBadGateway
+			var remote *kernel.HTTPError
+			if errors.As(callErr, &remote) {
+				switch remote.StatusCode {
+				case 429, 503, 504:
+					status = remote.StatusCode
+				case 422:
+					status = http.StatusUnprocessableEntity
+				}
+			} else if errors.Is(callErr, context.DeadlineExceeded) {
+				status = http.StatusGatewayTimeout
+			}
+			fail(w, status, "brief_failed")
+			return
+		}
+		var output struct {
+			Brief *string `json:"brief"`
+		}
+		if json.Unmarshal(result.Output, &output) != nil || output.Brief == nil {
+			fail(w, 502, "invalid_brief")
+			return
+		}
+		write(w, 200, map[string]string{"brief": *output.Brief})
+	})
 	mux.HandleFunc("POST "+prefix+"/organize", func(w http.ResponseWriter, r *http.Request) {
 		if opts.DaySessions == nil || opts.Kernel == nil {
 			fail(w, 503, "orchestrator_disabled")
