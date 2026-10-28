@@ -112,15 +112,21 @@ Grant { id, end_user, from_business_line, to_business_line, categories[], create
 | 接口 | 权限 | 说明 |
 |---|---|---|
 | `GET /v1/memories?category=&q=` | 用户：本业务线的自己的 Memory；服务令牌：本业务线（需指定 `end_user`） | 列表与搜索 |
+| `GET /v1/memories?end_user=&source_session=…&source_session=…` | 仅服务令牌，本业务线与指定 EndUser | 完整列出这些 Session 写入的有效 Memory；最多 32 个来源参数 |
 | `DELETE /v1/memories/{id}` | 同上 | 删除一条 |
 | `GET /v1/grants`、`POST /v1/grants`、`DELETE /v1/grants/{id}` | 仅用户令牌（本人） | 查看、创建、撤销授权 |
 | `GET /v1/memories/access?since=` | 用户：自己的 | 访问记录：哪个业务线在什么时候召回了哪些 Memory |
+
+来源候选查询不要求 Session 仍存在：erasure 后 `SourceSession` 保持原值，业务线等删除完成后可以合并当天用过的所有工作 Session 查候选。重复来源不会重复返回结果，未知来源返回空集合。查询只含未被取代、未过期、未删除的 Memory，返回字段与普通列表相同，包含健康类别以便用户决定；它不通过 Grant 跨业务线读取。
+
+为避免普通列表默认 100 条的截断漏掉候选，此查询返回所有匹配项，不接受 `limit`、非空 `q`、非空 `category` 或 `history=true`，组合使用返回 400；空来源或超过 32 个参数同样返回 400。使用 `memory.Store.ListBySource`，内存与 PostgreSQL 语义一致，数据库按 EndUser 与 BusinessLine 过滤，复用 `memories_owner` 索引。
 
 ## 7. 与删除的关系（ADR-0015）
 
 - **账号注销**（`DELETE /v1/end_users/{id}`）：删除该 EndUser 在该业务线的全部 Memory，以及该业务线作为授出方或接收方的全部 Grant。
 - **删除单个 Session**：由该 Session 写入的 Memory **一并删除**（§9）。Janitor 的清理步骤中增加一步，按 `source_session` 删除。
-- **按保留期到期删除 Session**（删除原因 `retention`）：由该 Session 写入的 Memory **保留**（ADR-0037）。到期清理不是用户的删除意图；旁听 Session 只保留 7 天，每晚整理时写下的偏好与沟通习惯不应随原话一起消失（[旁听](./captures.md) §9）。Memory 的登记为 `KeepOnRetention`（`app.SessionData`），Janitor 按删除记录的原因跳过它；委托派生的子 Session 随父 Session 一起按保留期删除时同样保留。用户可以经 `GET /v1/memories` 列出与删除它们。
+- **按保留期到期删除 Session**（删除原因 `retention`）：由该 Session 写入的 Memory **保留**（ADR-0037）。到期清理不是用户的删除意图；旁听 Session 只保留 7 天，每晚整理时写下的偏好与沟通习惯不应随原话一起消失（[旁听](./captures.md) §9）。Memory 的登记为 `KeepOnRetention`（`app.SessionData`），该字段亦用于擦除原因；Janitor 按删除记录的原因跳过它；委托派生的子 Session 随父 Session 一起按保留期删除时同样保留。用户可以经 `GET /v1/memories` 列出与删除它们。
+- **擦除工作 Session**（`erasure`，ADR-0050）：同样保留既有 Memory，子 Session 同因删除；绝对期限 `delete_at` 到期则按 `retention` 删除。两种原因都不豁免迟到的新写入：`lifecycle.Recheck` 按新 Memory ID 撤回，不删除该 Session 的其他既有 Memory。
 - 访问记录保存在召回方的 Session 日志中，随该 Session 删除；另外有一张不含内容的访问索引（memory_id、业务线、时间），删除 Memory 时一起删除。
 
 ## 8. 测试

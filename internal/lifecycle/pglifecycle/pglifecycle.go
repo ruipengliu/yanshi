@@ -18,10 +18,14 @@ type Index struct{ Pool *pgxpool.Pool }
 var _ lifecycle.Index = Index{}
 
 func (x Index) Put(ctx context.Context, s *lifecycle.Session) error {
+	var deadline *time.Time
+	if !s.DeleteAt.IsZero() {
+		deadline = &s.DeleteAt
+	}
 	_, err := x.Pool.Exec(ctx, `
-		INSERT INTO sessions (session_id, business_line, end_user, agent, created_at, last_input_at)
-		VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (session_id) DO NOTHING`,
-		s.ID, s.BusinessLine, s.EndUser, s.Agent, s.CreatedAt, s.LastInputAt)
+		INSERT INTO sessions (session_id, business_line, end_user, agent, created_at, last_input_at, delete_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (session_id) DO NOTHING`,
+		s.ID, s.BusinessLine, s.EndUser, s.Agent, s.CreatedAt, s.LastInputAt, deadline)
 	return err
 }
 
@@ -35,17 +39,20 @@ func (x Index) MarkClosed(ctx context.Context, id string, at time.Time) error {
 	return err
 }
 
-const columns = `session_id, business_line, end_user, agent, created_at, last_input_at, closed_at`
+const columns = `session_id, business_line, end_user, agent, created_at, last_input_at, closed_at, delete_at`
 
 func scan(row pgx.CollectableRow) (*lifecycle.Session, error) {
 	s := &lifecycle.Session{}
-	var closed *time.Time
-	if err := row.Scan(&s.ID, &s.BusinessLine, &s.EndUser, &s.Agent, &s.CreatedAt, &s.LastInputAt, &closed); err != nil {
+	var closed, deadline *time.Time
+	if err := row.Scan(&s.ID, &s.BusinessLine, &s.EndUser, &s.Agent, &s.CreatedAt, &s.LastInputAt, &closed, &deadline); err != nil {
 		return nil, err
 	}
 	s.CreatedAt, s.LastInputAt = s.CreatedAt.UTC(), s.LastInputAt.UTC()
 	if closed != nil {
 		s.ClosedAt = closed.UTC()
+	}
+	if deadline != nil {
+		s.DeleteAt = deadline.UTC()
 	}
 	return s, nil
 }
@@ -229,4 +236,8 @@ func (d Deletions) Request(ctx context.Context, id string) (*lifecycle.Request, 
 	}
 	r.CreatedAt = r.CreatedAt.UTC()
 	return r, err
+}
+
+func (x Index) DueBefore(ctx context.Context, businessLine string, t time.Time, limit int) ([]string, error) {
+	return x.ids(ctx, `SELECT session_id FROM sessions WHERE ($1 = '' OR business_line = $1) AND delete_at < $2 ORDER BY session_id LIMIT $3`, businessLine, t, limit)
 }

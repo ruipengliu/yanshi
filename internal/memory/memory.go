@@ -64,7 +64,7 @@ type Memory struct {
 	EndUser      string
 	Category     Category
 	Content      string
-	// SourceSession 与 SourceCall 记录由哪个 Session 的哪次调用写入；删除该 Session 时一并删除（§7）。
+	// SourceSession 与 SourceCall 记录由哪个 Session 的哪次调用写入；普通删除该 Session 时一并删除，retention 与 erasure 保留（§7）。
 	SourceSession string
 	SourceCall    string
 	CreatedAt     time.Time
@@ -130,6 +130,8 @@ type Store interface {
 	// List 返回 EndUser 在 scopes 内、at 时有效的 Memory（at 为 Everything 时包含失效与过期的），按更新时间倒序
 	// （同时间按 ID），至多 limit 条。
 	List(ctx context.Context, endUser string, scopes []Scope, at time.Time, limit int) ([]*Memory, error)
+	// ListBySource 只列出本业务线、本 EndUser 在 at 时有效且来自给定 Session 的 Memory；不依赖 Session 是否仍存在。
+	ListBySource(ctx context.Context, businessLine, endUser string, sessions []string, at time.Time) ([]*Memory, error)
 	// Nearest 返回 scopes 内、at 时有效、与 vec 同模型的 Memory，按余弦相似度降序（同分按更新时间倒序、ID），至多 limit 条。
 	Nearest(ctx context.Context, endUser string, scopes []Scope, at time.Time, vec Vector, limit int) ([]Hit, error)
 	// Supersede 把 id 标为在 at 时被 by 取代；不存在时不报错。

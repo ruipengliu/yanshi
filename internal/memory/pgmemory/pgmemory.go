@@ -277,3 +277,14 @@ func (g Grants) DeleteBusinessLine(ctx context.Context, endUser, businessLine st
 	_, err := g.Pool.Exec(ctx, `DELETE FROM memory_grants WHERE end_user = $1 AND (from_line = $2 OR to_line = $2)`, endUser, businessLine)
 	return err
 }
+
+func (s Store) ListBySource(ctx context.Context, businessLine, endUser string, sessions []string, at time.Time) ([]*memory.Memory, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT `+cols+` FROM memories
+		WHERE end_user = $1 AND business_line = $2 AND source_session = ANY($3::text[])
+		AND superseded_by = '' AND (valid_until IS NULL OR valid_until > $4)
+		ORDER BY updated_at DESC, id`, endUser, businessLine, sessions, at)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, scan)
+}

@@ -119,16 +119,44 @@ func (w *World) deleteSession() error {
 	// 写过 Memory 的 Session 很少（多数 memory_save 被闸门要求审批或参数不合法），所以先以它的名义写入一条：每次到期删除
 	// 都检验 Memory 是否保留。
 	reason := "end_user"
-	if w.chance(0.3) {
+	if w.chance(0.6) {
 		reason = lifecycle.ReasonRetention
+		if w.chance(0.5) {
+			reason = lifecycle.ReasonErasure
+		}
 		w.nextInput++
 		if _, err := w.memories.Save(context.Background(), memory.SaveRequest{BusinessLine: "bl", EndUser: w.users[i], SessionID: sid,
 			CallID: fmt.Sprintf("retention-%d", w.nextInput), Category: "preference", Content: fmt.Sprintf("偏好 到期 %d", w.nextInput)}); err != nil {
 			w.tracef("memory before retention %s: %v", sid, err) // 条数达到上限等：照常删除
 		}
 	}
+	if reason == lifecycle.ReasonErasure {
+		st, err := w.svc.Load(context.Background(), sid)
+		if err != nil {
+			return err
+		}
+		w.Stats.Erasures++
+		if st.Active() != nil {
+			w.Stats.ErasuresInFlight++
+		}
+	}
 	if err := w.svc.Delete(context.Background(), sid, reason, ""); err != nil {
 		return fmt.Errorf("delete %s: %w", sid, err)
+	}
+	if lifecycle.KeepsMemory(reason) {
+		w.nextInput++
+		callID := fmt.Sprintf("late-%d", w.nextInput)
+		_, err := w.memories.Save(context.Background(), memory.SaveRequest{BusinessLine: "bl", EndUser: w.users[i], SessionID: sid,
+			CallID: callID, Category: "preference", Content: fmt.Sprintf("迟到写入 %d", w.nextInput)})
+		if !errors.Is(err, memory.ErrNotFound) && !errors.Is(err, memory.ErrLimit) {
+			return fmt.Errorf("late memory: %w", err)
+		}
+		if _, err := w.stores.Memories.Get(context.Background(), "mem_"+callID); !errors.Is(err, memory.ErrNotFound) {
+			return fmt.Errorf("invariant: late memory survived deletion of %s", sid)
+		}
+		if reason == lifecycle.ReasonErasure && errors.Is(err, memory.ErrNotFound) {
+			w.Stats.ErasureLateWithdrawn++
+		}
 	}
 	w.Stats.Deletions++
 	w.deleted = append(w.deleted, sid)
@@ -196,11 +224,15 @@ func (w *World) checkDeleted(final bool) error {
 		}
 		// 按保留期到期删除时 Memory 保留，其余删除一并清除（ADR-0037）。账号注销另行删除该用户的全部 Memory。
 		if s, ok := w.stores.Memories.(*memory.MemStore); ok && s.HasSession(sid) {
-			if t.Reason != lifecycle.ReasonRetention {
+			if !lifecycle.KeepsMemory(t.Reason) {
 				return fmt.Errorf("invariant: deleted session %s still has memories", sid)
 			}
 			if final {
-				w.Stats.RetentionKeptMemories++
+				if t.Reason == lifecycle.ReasonErasure {
+					w.Stats.ErasureKeptMemories++
+				} else {
+					w.Stats.RetentionKeptMemories++
+				}
 			}
 		}
 		// 零时刻作为"现在"：连已过期、尚未清理的记录也算在内。

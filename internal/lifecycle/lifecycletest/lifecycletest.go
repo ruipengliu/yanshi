@@ -23,6 +23,50 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 		}
 	}
 
+	t.Run("AbsoluteDeadline", func(t *testing.T) {
+		x := newIndex(t)
+		for _, row := range []*lifecycle.Session{
+			{ID: "a", BusinessLine: "bl", EndUser: "u", CreatedAt: t0, LastInputAt: t0, DeleteAt: t0.Add(time.Hour)},
+			{ID: "b", BusinessLine: "bl", EndUser: "u", CreatedAt: t0, LastInputAt: t0},
+			{ID: "c", BusinessLine: "other", EndUser: "u", CreatedAt: t0, LastInputAt: t0, DeleteAt: t0.Add(time.Hour)},
+		} {
+			if err := x.Put(ctx, row); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := x.MarkClosed(ctx, "c", t0); err != nil {
+			t.Fatal(err)
+		}
+		if err := x.Put(ctx, &lifecycle.Session{ID: "a", DeleteAt: t0.Add(9 * time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+		row, err := x.Get(ctx, "a")
+		if err != nil || !row.DeleteAt.Equal(t0.Add(time.Hour)) {
+			t.Fatalf("deadline = %+v, %v", row, err)
+		}
+		for _, tc := range []struct {
+			bl    string
+			at    time.Time
+			limit int
+			want  []string
+		}{
+			{"bl", t0.Add(time.Hour), 10, nil},
+			{"bl", t0.Add(2 * time.Hour), 10, []string{"a"}},
+			{"", t0.Add(2 * time.Hour), 10, []string{"a", "c"}},
+			{"", t0.Add(2 * time.Hour), 1, []string{"a"}},
+		} {
+			got, err := x.DueBefore(ctx, tc.bl, tc.at, tc.limit)
+			if err != nil || !slices.Equal(got, tc.want) {
+				t.Fatalf("due = %v, %v\nwant %v", got, err, tc.want)
+			}
+		}
+		if err := x.Delete(ctx, "a"); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := x.DueBefore(ctx, "bl", t0.Add(2*time.Hour), 10); err != nil || len(got) != 0 {
+			t.Fatalf("deleted = %v, %v", got, err)
+		}
+	})
 	t.Run("PutIsIdempotentAndTouchMonotonic", func(t *testing.T) {
 		x := newIndex(t)
 		put(t, x, "s1", "bl", "u1", t0)

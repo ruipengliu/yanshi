@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
@@ -71,6 +72,8 @@ type ArtifactStat interface {
 var ErrConflict = errors.New("conflict")
 
 type CreateRequest struct {
+	// DeleteAt 限制原文副本的寿命；零值不设置绝对期限。
+	DeleteAt     time.Time
 	BusinessLine string
 	EndUser      string
 	// Agent 是 AgentDef 名称；AgentVersion 为空时取默认版本。
@@ -85,6 +88,13 @@ type CreateRequest struct {
 func (s *Service) Create(ctx context.Context, req CreateRequest) (sessionID string, err error) {
 	if req.BusinessLine == "" || req.EndUser == "" {
 		return "", fmt.Errorf("%w: business_line and end_user are required", ErrInvalid)
+	}
+	if !req.DeleteAt.IsZero() && (!req.DeleteAt.After(s.Store.Clock.Now()) || timestamppb.New(req.DeleteAt).CheckValid() != nil) {
+		return "", fmt.Errorf("%w: delete_at must be a future timestamp", ErrInvalid)
+	}
+	var deadline *timestamppb.Timestamp
+	if !req.DeleteAt.IsZero() {
+		deadline = timestamppb.New(req.DeleteAt)
 	}
 	var def *agentdef.Def
 	// 未指定版本时按发布配置分流（docs/design/m4-agent-rollout.md §3）；撤回的版本不能指定。
@@ -138,12 +148,12 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (sessionID stri
 	if s.Index != nil {
 		now := s.Store.Clock.Now()
 		if err := s.Index.Put(ctx, &lifecycle.Session{ID: st.SessionID, BusinessLine: req.BusinessLine, EndUser: req.EndUser,
-			Agent: def.Name, CreatedAt: now, LastInputAt: now}); err != nil {
+			Agent: def.Name, CreatedAt: now, LastInputAt: now, DeleteAt: req.DeleteAt}); err != nil {
 			return "", err
 		}
 	}
 	err = s.Store.Commit(ctx, st, &v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{
-		BusinessLine: req.BusinessLine, EndUser: req.EndUser, Agent: def.Ref(), Parent: req.Parent,
+		BusinessLine: req.BusinessLine, EndUser: req.EndUser, Agent: def.Ref(), Parent: req.Parent, DeleteAt: deadline,
 	}}})
 	if errors.Is(err, eventlog.ErrConflict) && req.SessionID != "" {
 		// 指定 ID 的 Session 已存在：是同一次委托的重复创建时返回它。

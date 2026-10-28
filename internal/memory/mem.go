@@ -279,3 +279,22 @@ func (s *MemStore) Accesses(_ context.Context, endUser, owner string, since time
 	}
 	return out, nil
 }
+
+func (s *MemStore) ListBySource(_ context.Context, businessLine, endUser string, sessions []string, at time.Time) ([]*Memory, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []*Memory
+	for _, m := range s.m {
+		if m.BusinessLine == businessLine && m.EndUser == endUser && slices.Contains(sessions, m.SourceSession) && m.Valid(at) {
+			cp := *m
+			out = append(out, &cp)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
+			return out[i].UpdatedAt.After(out[j].UpdatedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
+}
