@@ -14,14 +14,13 @@ import (
 	"yanshi/internal/eval/xinlifixture"
 	"yanshi/internal/model"
 	"yanshi/internal/service"
-	"yanshi/internal/session"
 )
 
 // 在真实 Worker、captures 与 HTTP MCP 上走整理流程，故意制造提前结束与拒收，检验调度不会跳过未交出的原话。
 type spanScript struct{ mode string }
 
 func (s spanScript) Generate(ctx context.Context, req *model.Request, _ func(model.Delta)) (*model.Response, error) {
-	var input, text string
+	var input, text, lastResult string
 	var calls []*v1.ToolCall
 	users := 0
 	for _, m := range req.Messages {
@@ -31,7 +30,8 @@ func (s spanScript) Generate(ctx context.Context, req *model.Request, _ func(mod
 		}
 		calls = append(calls, m.ToolCalls...)
 		if m.Role == model.RoleTool {
-			text += model.Text(m.Content) + "\n"
+			lastResult = model.Text(m.Content)
+			text += lastResult + "\n"
 		}
 	}
 	if users != 1 {
@@ -70,14 +70,14 @@ func (s spanScript) Generate(ctx context.Context, req *model.Request, _ func(mod
 		return response("ask_user", `{"question":"要整理哪一段？"}`)
 	}
 	if len(calls) == 0 {
-		return response("captures", fmt.Sprintf(`{"after":"new","all":%v}`, input == xinliSpanAllInput))
+		return response("mcp_xinli__captures", fmt.Sprintf(`{"after":"new","all":%v}`, input == xinliSpanAllInput))
 	}
 	refs := regexp.MustCompile(`#([0-9]+\.[0-9]+) [0-9]{2}:`).FindAllStringSubmatch(text, -1)
 	if len(refs) == 0 {
 		return response("", "")
 	}
 	last := calls[len(calls)-1]
-	if last.GetCapability() == "captures" {
+	if last.GetCapability() == "mcp_xinli__captures" {
 		positions := regexp.MustCompile(`after="([^"]+)"`).FindAllStringSubmatch(text, -1)
 		if len(positions) > 0 {
 			pos := positions[len(positions)-1][1]
@@ -85,10 +85,10 @@ func (s spanScript) Generate(ctx context.Context, req *model.Request, _ func(mod
 				if s.mode == "partial" {
 					return response("", "")
 				}
-				return response("captures", fmt.Sprintf(`{"after":%q,"all":true}`, pos))
+				return response("mcp_xinli__captures", fmt.Sprintf(`{"after":%q,"all":true}`, pos))
 			}
 			if s.mode == "overread" && len(calls) == 1 {
-				return response("captures", fmt.Sprintf(`{"after":%q,"all":true}`, pos))
+				return response("mcp_xinli__captures", fmt.Sprintf(`{"after":%q,"all":true}`, pos))
 			}
 		}
 		if s.mode == "missing-receipt" {
@@ -102,12 +102,18 @@ func (s spanScript) Generate(ctx context.Context, req *model.Request, _ func(mod
 		}
 	}
 	if files == 0 || s.mode == "retry" && files == 1 {
-		to := refs[len(refs)-1][1]
-		if s.mode == "retry" && files == 0 {
-			to = "999999.0"
+		commitments := map[string]any{}
+		if s.mode == "retry" {
+			if files == 0 {
+				// 使用真实读完的 source，单独验证业务操作拒收后的重交，不混入 R6 的端点校验。
+				// 引用不存在的承诺必然拒收，重交时只移除错误操作，保持同一个 source。
+				commitments["revise"] = []map[string]any{{"id": "C-999999", "rev": 1}}
+			} else if !strings.Contains(lastResult, "变更集没有被接受") {
+				return nil, fmt.Errorf("retry fixture expected a rejected changeset")
+			}
 		}
-		args, _ := json.Marshal(map[string]any{"source": map[string]string{"from": "#" + refs[0][1], "to": "#" + to},
-			"exchanges": map[string]any{}, "commitments": map[string]any{}})
+		args, _ := json.Marshal(map[string]any{"source": map[string]string{"from": "#" + refs[0][1], "to": "#" + refs[len(refs)-1][1]},
+			"exchanges": map[string]any{}, "commitments": commitments})
 		return response("mcp_xinli__file_changes", string(args))
 	}
 	return response("", "")
@@ -118,8 +124,8 @@ func runSpanScript(t *testing.T, mode string, segments []CaptureSegment, turns [
 	gw := model.NewGateway()
 	gw.Register("script", spanScript{mode})
 	agents, err := agentdef.NewRegistry(&agentdef.Def{Name: "xinli-day", Version: "1", Model: "script/any",
-		Streams: []agentdef.Stream{{Name: session.StreamTranscript}}, Capabilities: []string{"captures", "mcp:xinli/*"},
-		Context: agentdef.Context{Scope: agentdef.ScopeRun}},
+		Capabilities: []string{"mcp:xinli/*"},
+		Context:      agentdef.Context{Scope: agentdef.ScopeRun}},
 		&agentdef.Def{Name: "xinli-assistant", Version: "1", Model: "script/any"})
 	if err != nil {
 		t.Fatal(err)
@@ -168,7 +174,8 @@ func TestXinliSpanRunsContinueAndRetry(t *testing.T) {
 		{Speaker: "wearer", Text: strings.Repeat("闲聊。", 500), At: "2026-10-23 08:59"},
 		{Speaker: "wearer", Text: strings.Repeat("闲聊。", 500), At: "2026-10-23 08:59"}}, segs...)
 	got := runSpanScript(t, "retry", segs, nil)
-	// 两次拒收在原 Run 内改正，长时段多读一页：比普通情况多 3 次调用、3 次模型响应。
+	// Q39 只在变更集接受后推进：每个时段先因不存在的承诺被拒，再以同一 source 交空变更集。
+	// 两次拒收在各自 Run 内改正，长时段多读一页：比普通情况多 3 次调用、3 次模型响应。
 	if !got.Passed || got.Calls != 9 || got.Tokens != 144 {
 		t.Fatalf("continuation and retry: %+v", got)
 	}
@@ -239,7 +246,7 @@ func TestFailedEvalTurnInterruptsAndCountsUsage(t *testing.T) {
 	gw := model.NewGateway()
 	gw.Register("script", spanScript{"timeout"})
 	agents, err := agentdef.NewRegistry(&agentdef.Def{Name: "xinli-day", Version: "1", Model: "script/any",
-		Streams: []agentdef.Stream{{Name: session.StreamTranscript}}, Capabilities: []string{"captures"},
+		Capabilities: []string{"mcp:xinli/captures"},
 		Instructions: xinliSpanInstructions, Context: agentdef.Context{Scope: agentdef.ScopeRun}})
 	if err != nil {
 		t.Fatal(err)
@@ -258,6 +265,9 @@ func TestFailedEvalTurnInterruptsAndCountsUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := in.xinli.BindDay(ctx, BusinessLine, "timeout", "2026-10-23", sid); err != nil {
+		t.Fatal(err)
+	}
 	obs, err := in.turn(ctx, sid, Turn{Input: xinliSpanInput}, cfg.TurnTimeout)
 	if err == nil || obs == nil || obs.tokens != 12 || len(obs.calls) != 1 {
 		t.Fatalf("partial usage on timeout: obs=%+v, err=%v", obs, err)
@@ -272,8 +282,8 @@ func TestXinliSpanRunsInterruptAskedRun(t *testing.T) {
 	gw := model.NewGateway()
 	gw.Register("script", spanScript{"ask"})
 	agents, err := agentdef.NewRegistry(&agentdef.Def{Name: "xinli-day", Version: "1", Model: "script/any",
-		Streams: []agentdef.Stream{{Name: session.StreamTranscript}}, Capabilities: []string{"captures", "ask_user", "mcp:xinli/*"},
-		Context: agentdef.Context{Scope: agentdef.ScopeRun}})
+		Capabilities: []string{"ask_user", "mcp:xinli/*"},
+		Context:      agentdef.Context{Scope: agentdef.ScopeRun}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,6 +301,9 @@ func TestXinliSpanRunsInterruptAskedRun(t *testing.T) {
 	t.Cleanup(in.close)
 	sid, err := in.svc.Create(ctx, service.CreateRequest{BusinessLine: BusinessLine, EndUser: "ask", Agent: c.Agent, AgentVersion: in.version[c.Name]})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := in.xinli.BindDay(ctx, BusinessLine, "ask", "2026-10-23", sid); err != nil {
 		t.Fatal(err)
 	}
 	// 没有回答脚本时 turn 停在提问处、不报错；拆 Run 的调度停止实验时不能留下等待回答的 Run。

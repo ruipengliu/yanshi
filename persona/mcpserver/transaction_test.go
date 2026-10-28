@@ -60,7 +60,7 @@ func (s failingStore) Update(ctx context.Context, bl, eu string, fn func(*domain
 		return s.err
 	})
 }
-func TestCommitFailureHasNoAckOrNotification(t *testing.T) {
+func TestCommitFailureHasNoResultOrNotification(t *testing.T) {
 	x := newServer(nil)
 	failure := errors.New("commit failed")
 	notifier := &recordFiled{}
@@ -85,7 +85,7 @@ func TestCommitFailureHasNoAckOrNotification(t *testing.T) {
 
 func TestRegistration(t *testing.T) {
 	reg := XinliRegistration()
-	if reg.Name != "xinli" || !reg.CiteCaptures || !reg.Acks {
+	if reg.Name != "xinli" || !reg.CiteCaptures || reg.Acks || !reg.AttestsSpeakers {
 		t.Fatalf("registration = %+v", reg)
 	}
 	for _, name := range reg.NoApproval {

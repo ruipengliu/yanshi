@@ -119,7 +119,7 @@ func TestCapturesMCP(t *testing.T) {
 		t.Fatal("new session cannot read")
 	}
 	r := XinliRegistration()
-	if r.AttestsSpeakers || !r.CiteCaptures || !r.Acks {
+	if !r.AttestsSpeakers || !r.CiteCaptures || r.Acks {
 		t.Fatal("registration flags")
 	}
 }

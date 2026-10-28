@@ -52,11 +52,9 @@ func newCaptureParityEnv(t *testing.T) *captureParityEnv {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = f.Close() })
-	if servers[0].AttestsSpeakers || !servers[0].CiteCaptures || !servers[0].Acks {
+	if !servers[0].AttestsSpeakers || !servers[0].CiteCaptures || servers[0].Acks {
 		t.Fatal("xinli registration lost trust flags")
 	}
-	// 只在测试中预演第 2 步的登记，生产登记仍读内核引用。
-	servers[0].AttestsSpeakers = true
 	conn, err := mcp.NewClient(&mcp.Implementation{Name: "capture-parity", Version: "1"}, nil).Connect(ctx, &mcp.StreamableClientTransport{Endpoint: servers[0].URL}, nil)
 	if err != nil {
 		t.Fatal(err)

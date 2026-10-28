@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"yanshi/internal/capture"
 	"yanshi/internal/mcpcap"
 )
 
@@ -224,4 +225,26 @@ func (c *Client) AppendCaptures(ctx context.Context, bl, eu, date, captureID str
 
 func (c *Client) BindDay(ctx context.Context, bl, eu, date, session string) error {
 	return c.request(ctx, bl, eu, "bind_day", map[string]string{"date": date, "session": session}, nil)
+}
+
+// CapturePosition 只读处理进度；不会把原文放进 State 或内核日志。
+func (c *Client) CapturePosition(ctx context.Context, bl, eu, session string) (string, error) {
+	var out struct {
+		After string `json:"after"`
+	}
+	err := c.request(ctx, bl, eu, "capture_position", map[string]string{"session": session}, &out)
+	return out.After, err
+}
+
+// CapturePreview 只在隔离快照上分页，编排器预览不能计入模型已经读过的位置。
+func (c *Client) CapturePreview(ctx context.Context, bl, eu, session, after string, all bool, options capture.PageOptions) (json.RawMessage, error) {
+	in := struct {
+		Session     string              `json:"session"`
+		After       string              `json:"after"`
+		All         bool                `json:"all"`
+		PageOptions capture.PageOptions `json:"page_options"`
+	}{session, after, all, options}
+	var out json.RawMessage
+	err := c.request(ctx, bl, eu, "capture_preview", in, &out)
+	return out, err
 }

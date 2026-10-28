@@ -37,7 +37,7 @@
 | 按住说话 | 按住 🎤 录音，在浏览器中编码为 16 kHz 的 WAV，松开后经服务端识别成文字、作为文字输入发出；这一轮完成时把回复合成语音播放，🔊 停止，再次按住说话时打断（[按住说话](./speech.md)）。模型只看到文字。需要 `VOLC_SPEECH_API_KEY` |
 | 界面上下文 | 可选：随下一条消息附上界面与可见内容（`UIContext`） |
 | 卡片动作 | 点卡片上的按钮或列表项（`CardAction`，[卡片](./cards.md) §4） |
-| 旁听 | 🎧：以 HostApp 的身份逐段写下转写、手选说话人（佩戴者、他人 A、他人 B），整批以 `SubmitCaptures` 提交，不开启 Run（[旁听](./captures.md) §3）。**持续收音**：浏览器的语音识别（Web Speech API，`zh-CN`）在页面内把麦克风转成文字，扮演 HostApp 的转写，音频不发给 yanshi（ADR-0036）；它不区分说话人，每句话按当时选中的说话人记，可随时切换；每 10 秒自动提交一批，停止时提交余下的。识别在静音后自行结束，收音期间随即重启。Chrome 的识别服务要访问 Google，网络不通时改用 Safari（macOS 需开启听写）。提交失败的一批单独保留，再交时沿用它的 `capture_id`、服务端按 ID 去重，之后的段另起一批。只有开启旁听的 Agent 接收（`console-capture`、`xinli-day`），其余为 invalid：面板打开时若当前会话的 Agent 不在其中、或提交被以 invalid 拒绝，停止收音、段留在本批，并提示"新建 xinli-day 会话"，点后尚未提交的段交到新会话，面板在新会话中保持打开 |
+| 旁听 | 🎧：以 HostApp 的身份逐段写下转写、手选说话人（佩戴者、他人 A、他人 B），整批以 `SubmitCaptures` 提交，不开启 Run（[旁听](./captures.md) §3）。**持续收音**：浏览器的语音识别（Web Speech API，`zh-CN`）在页面内把麦克风转成文字，扮演 HostApp 的转写，音频不发给 yanshi（ADR-0036）；它不区分说话人，每句话按当时选中的说话人记，可随时切换；每 10 秒自动提交一批，停止时提交余下的。识别在静音后自行结束，收音期间随即重启。Chrome 的识别服务要访问 Google，网络不通时改用 Safari（macOS 需开启听写）。提交失败的一批单独保留，再交时沿用它的 `capture_id`、服务端按 ID 去重，之后的段另起一批。只有开启旁听的 Agent 接收（`console-capture`），其余为 invalid：面板打开时若当前会话的 Agent 不在其中、或提交被以 invalid 拒绝，停止收音、段留在本批，并提示"新建 console-capture 会话"，点后尚未提交的段交到新会话，面板在新会话中保持打开 |
 | 通话 | 📞：经同一条 Connection 的 `CallStart` / `CallAudio`，上行 16 kHz、下行按到达顺序播放，说话时打断（[Call](./m3-call.md)）。设备断开时通话在本地结束，停止采集与播放。需要 `VOLC_SPEECH_API_KEY`，且 AgentDef 配置了 `call`（`concierge`、`assistant`）；其余 Agent 被拒绝时提示可通话的 Agent |
 
 发送失败（被拒绝、超时、断线后结果未知）时：
@@ -219,7 +219,7 @@ EndUser 的选取：
 | `travel`（出行助手） | 导航、空调、音乐、音量 | 车机与音乐 |
 | `research`（研究员） | 读文件、开网页、在沙箱中计算 | `device:*`、`sandbox:*` |
 
-旁听业务线的 `xinli-day`（每日整理）与 `xinli-assistant` 依赖业务线的 MCP Server（`mcp:xinli/*`，[旁听业务线 xinli](./xinli-captures.md)）。开发部署另起 `xinli dev`，通过 `-mcp-dir` 写入 MCP 登记（§2.1），控制台的默认业务线是 `demo`。在 `xinli-day` 的会话中用 🎧 提交一天的对话，再发"整理交谈"（只整理已经结束的时段）或"整理今天"：模型按时段逐页读，在时段里划出交谈、用 `find_related` 召回候选项目与相关的未完成承诺，每个时段以一次 `file_changes` 交出变更集（新的交谈与承诺，以及依据新原话对已有承诺的修订与关闭）；"整理今天"再用 `day_ledger` 取回当天的账本、交出当天整理（合并重复的承诺与被切开的交谈），最后以 `file_day` 交出当天总览；佩戴者说过的偏好写入 Memory，他人的话按外部内容对待。随后模拟的业务线为涉及的项目提交"整理 <日期>"，`xinli-project` 更新现状、对账承诺；结果在 `xinli dev` 的业务页面中查看（§2.1）。
+旁听业务线的 `xinli-day`（每日整理）与 `xinli-assistant` 依赖业务线的 MCP Server（`mcp:xinli/*`，[旁听业务线 xinli](./xinli-captures.md)）。开发部署另起 `xinli dev`，通过 `-mcp-dir` 写入 MCP 登记（§2.1），控制台的默认业务线是 `demo`。xinli 的转写经 Persona 夹具 `POST /v1/fixture/{businessLine}/{endUser}/captures` 提交，并以 `bind_day` 绑定工作 Session（生产中由采集服务提交）；控制台的 🎧 只用于 `console-capture`。完成绑定后，在 `xinli-day` 的会话中发"整理交谈"（只整理已经结束的时段）或"整理今天"：模型按时段逐页读，在时段里划出交谈、用 `find_related` 召回候选项目与相关的未完成承诺，每个时段以一次 `file_changes` 交出变更集（新的交谈与承诺，以及依据新原话对已有承诺的修订与关闭）；"整理今天"再用 `day_ledger` 取回当天的账本、交出当天整理（合并重复的承诺与被切开的交谈），最后以 `file_day` 交出当天总览；佩戴者说过的偏好写入 Memory，他人的话按外部内容对待。随后模拟的业务线为涉及的项目提交"整理 <日期>"，`xinli-project` 更新现状、对账承诺；结果在 `xinli dev` 的业务页面中查看（§2.1）。
 
 委托不扩大权限：子 Run 的工具是自身白名单与每个祖先白名单的交集（ADR-0031）。所以经总管委托时，日程管家不能发短信，直接和日程管家对话时可以（需审批）。评测 `concierge-no-escalation` 检查这一点。
 

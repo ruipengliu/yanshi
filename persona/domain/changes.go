@@ -149,12 +149,32 @@ func parseRef(s string) (Ref, bool) {
 
 func refLE(a, b Ref) bool { return a.Seq < b.Seq || (a.Seq == b.Seq && a.Index <= b.Index) }
 
+// existingRefs 在绑定业务日内检查引用本身，不检查范围内部是否有空号；source 与交谈、承诺共用。
+func (k *review) existingRefs(what string, refs []string) bool {
+	_, day := k.c.u.boundDay(k.c.session)
+	if day == nil {
+		return true
+	}
+	valid := true
+	for _, r := range refs {
+		ref, ok := parseRef(r)
+		if !ok || !day.containsRef(ref) {
+			k.fail("%s引用的 %s 不存在：用旁听每行开头的编号", what, r)
+			valid = false
+		}
+	}
+	return valid
+}
+
 // refs 检查引用：都要存在于本 Session 的旁听中；白天的变更集只能引用本次读到的范围（作用域，§5）。
 func (k *review) refs(what string, refs []string, need bool) {
 	if need && len(refs) == 0 {
 		k.fail("%s须用 refs 引用依据的原话", what)
 	}
 	for _, r := range refs {
+		if !k.existingRefs(what, []string{r}) {
+			continue
+		}
 		ct, ok := k.c.cites[r]
 		if !ok || ct.Missing {
 			k.fail("%s引用的 %s 不存在：用旁听每行开头的编号", what, r)
@@ -416,6 +436,9 @@ func (c *Call) FileChanges() string {
 			return "参数无效：source 须是本次读到的旁听范围 {from, to}（如 {\"from\":\"#57.0\",\"to\":\"#80.2\"}），当天整理为 {\"day\": true}"
 		}
 		key, src = "from:"+in.Source.From, Source{From: in.Source.From, To: in.Source.To}
+		if !k.existingRefs("source 的端点", []string{in.Source.From, in.Source.To}) {
+			return rejected(k.problems)
+		}
 	}
 	old := slices.IndexFunc(u.changesets, func(cs Changeset) bool { return cs.Session == c.session && cs.Key == key && cs.Author == AuthorDay })
 	k.base = u.foldWithout(old)
@@ -572,7 +595,6 @@ func (c *Call) FileChanges() string {
 	u.commit(&cs, old, k.news)
 	if !k.day {
 		c.advanceCaptures(k.from, k.to)
-		c.ack = map[string]string{"stream": "transcript", "from": k.from.String(), "through": k.to.String()}
 	}
 	return c.receipt(&cs, k.notes)
 }

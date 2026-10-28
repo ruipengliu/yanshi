@@ -13,7 +13,7 @@ turns:
       - {speaker: other, key: zhang, text: 好，那就等你的方案。, at: "2026-10-23 10:41"}
     input: 整理交谈
     expect:
-      calls: ["captures", "mcp_xinli__file_changes"]
+      calls: ["mcp_xinli__captures", "mcp_xinli__file_changes"]
       xinli:
         commitments: [{kind: mine, contains: 验收, due_date: "2026-10-28", verified: true}]
   - captures:
@@ -22,7 +22,7 @@ turns:
       - {speaker: other, key: zhang, text: 好的，辛苦。, at: "2026-10-23 15:04"}
     input: 整理交谈
     expect:
-      calls: ["captures", "mcp_xinli__find_related", "mcp_xinli__file_changes"]
+      calls: ["mcp_xinli__captures", "mcp_xinli__find_related", "mcp_xinli__file_changes"]
       xinli:
         commitments: [{kind: mine, contains: 验收, due_date: "2026-10-27", status: open, rev: 2}]
         stale_open: {of: [{kind: mine, contains: 验收, due_date: "2026-10-28"}], max: 0}

@@ -98,7 +98,7 @@ export class XinliView {
         h(
           "span",
           { class: "muted" },
-          "在对话中新建 xinli-day 会话，🎧 提交旁听后发「整理今天」；整理之后业务线为每个项目提交「整理 <日期>」，更新现状、对账承诺",
+          "旁听原文由采集服务提交到 Persona。开发时通过夹具 POST /v1/fixture/{businessLine}/{endUser}/captures 提交，并用同一路径下的 bind_day 绑定 xinli-day 工作会话，再发「整理今天」；本页展示整理结果",
         ),
         h(
           "button",

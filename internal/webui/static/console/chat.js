@@ -980,7 +980,7 @@ export class ChatPanel {
                 {
                   class: "tool",
                   type: "button",
-                  title: "旁听：以 HostApp 的身份提交佩戴者与他人的对话转写（需开启旁听的 Agent，如 xinli-day）",
+                  title: "旁听：以 HostApp 的身份提交佩戴者与他人的对话转写（仅 console-capture）",
                   onclick: () => {
                     capturePanel.hidden = !capturePanel.hidden;
                     this.ctx.setCaptureOpen?.(!capturePanel.hidden);
@@ -1082,7 +1082,7 @@ export class ChatPanel {
       h(
         "div",
         { class: "composer-hint" },
-        "以 HostApp 的身份提交，不开启 Run · Enter 加入本批 · ⌘Enter 提交 · 输入框发「整理今天」开始每日整理",
+        "以 HostApp 的身份提交，不开启 Run · Enter 加入本批 · ⌘Enter 提交 · 输入框发 call captures {\"all\":true} 读取（console-capture）；xinli 原文经 Persona 提交",
       ),
     );
   }
@@ -1101,6 +1101,10 @@ export class ChatPanel {
     const rejected = this.captureRejected || (agent && !CAPTURE_AGENTS.includes(agent));
     this.captureNote.hidden = !rejected;
     if (!rejected) return;
+    if (agent === "xinli-day") {
+      fill(this.captureNote, "xinli 的旁听原文已由 Persona 保存，请经业务线提交并绑定业务日；此面板只用于 console-capture 调试。");
+      return;
+    }
     fill(
       this.captureNote,
       `当前会话的 Agent（${agent || "?"}）${this.captureRejected ? "不接收旁听" : "可能不接收旁听"}：旁听要交给开启了旁听的 Agent。`,
@@ -1603,8 +1607,8 @@ export class ChatPanel {
 /** 浏览器的语音识别（Safari 与 Chrome 带 webkit 前缀）；不支持时为 undefined。 */
 const SpeechRecognitionImpl = globalThis.SpeechRecognition ?? globalThis.webkitSpeechRecognition;
 
-/** 控制台列出的、开启了旁听的 Agent（agents/xinli-day.yaml、agents/console-capture.yaml）。 */
-const CAPTURE_AGENTS = ["xinli-day", "console-capture"];
+/** xinli 的原文已迁到 Persona；这里只保留内核旁听的调试 Agent。 */
+const CAPTURE_AGENTS = ["console-capture"];
 
 function speakerName(speaker, key) {
   return speaker === "wearer" ? "佩戴者" : `他人${key ? ` ${key}` : ""}`;

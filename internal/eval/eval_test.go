@@ -15,7 +15,6 @@ import (
 	"yanshi/internal/eval/xinlifixture"
 	"yanshi/internal/model"
 	"yanshi/internal/sandbox"
-	"yanshi/internal/session"
 )
 
 // script 是脚本化的被评测模型：输入以 "call <工具> <参数>" 开头时调用该工具，之后回复 "done"；否则复述输入。
@@ -81,7 +80,7 @@ func run(t *testing.T, suite string) *Report {
 	}
 	agents, _ := agentdef.NewRegistry(&agentdef.Def{Name: "assistant", Version: "1", Model: "script/any",
 		Capabilities: []string{"device:*", "memory_save", "clock_now"}},
-		&agentdef.Def{Name: "day", Version: "1", Model: "script/any", Streams: []agentdef.Stream{{Name: session.StreamTranscript}}, Capabilities: []string{"captures", "memory_save", "mcp:xinli/*"}})
+		&agentdef.Def{Name: "day", Version: "1", Model: "script/any", Capabilities: []string{"memory_save", "mcp:xinli/*"}})
 	gw := model.NewGateway()
 	gw.Register("script", script{})
 	gw.Register("judge", fixedJudge{})
@@ -162,7 +161,7 @@ turns:
 	}
 }
 
-// TestCapturesAndXinli：每轮的旁听提交到 Session、可由 captures 读出（每批的他人重新编号）；xinli MCP Server 按 EndUser
+// TestCapturesAndXinli：每轮的旁听提交到绑定业务日、可由 mcp_xinli__captures 读出（每批的他人重新编号）；xinli MCP Server 按 EndUser
 // 预置数据、file_changes 新建项目，承诺经平台附上的说话人核对，重交同一个来源时整体取代；no_call_args 与未开启健康信息的
 // 业务线生效。
 func TestCapturesAndXinli(t *testing.T) {
@@ -177,17 +176,17 @@ turns:
   - captures:
       - {speaker: other, key: zhang, text: 报价单什么时候给我？}
       - {speaker: wearer, text: 明天上午发您。}
-    input: call captures {}
+    input: call mcp_xinli__captures {}
     expect:
-      calls: [captures]
-      reply_contains: ["#2.1 [佩戴者] 明天上午发您", "[他人 other-1]", "已读完"]
-  - input: 'call mcp_xinli__file_changes {"source":{"from":"#2.0","to":"#2.1"},"exchanges":{"create":[{"from":"#2.0","to":"#2.1","title":"办公室装修","summary":"报价单","projects":[{"match":"new","name":"办公室装修"}]}]},"commitments":{"create":[{"exchange":"x2.0","kind":"mine","content":"发报价单","refs":["#2.1"]}]}}'
+      calls: [mcp_xinli__captures]
+      reply_contains: ["#1.1 [佩戴者] 明天上午发您", "[他人 other-1]", "已读完"]
+  - input: 'call mcp_xinli__file_changes {"source":{"from":"#1.0","to":"#1.1"},"exchanges":{"create":[{"from":"#1.0","to":"#1.1","title":"办公室装修","summary":"报价单","projects":[{"match":"new","name":"办公室装修"}]}]},"commitments":{"create":[{"exchange":"x1.0","kind":"mine","content":"发报价单","refs":["#1.1"]}]}}'
     expect:
       approvals: {max: 0}
       reply_contains: ["`+xinlifixture.NewProject+`", "均已核实"]
       no_call_args: {"mcp_xinli__file_changes": "预算"}
       xinli: {exchanges: {min: 1, max: 1}, commitments_count: {min: 1, max: 1}}
-  - input: 'call mcp_xinli__file_changes {"source":{"from":"#2.0","to":"#2.1"},"exchanges":{"create":[{"from":"#2.0","to":"#2.1","title":"办公室装修","summary":"报价单","projects":[{"match":"existing","id":"`+xinlifixture.NewProject+`"}]}]},"commitments":{"create":[{"exchange":"x2.0","kind":"mine","content":"发报价单","refs":["#2.0"]}]}}'
+  - input: 'call mcp_xinli__file_changes {"source":{"from":"#1.0","to":"#1.1"},"exchanges":{"create":[{"from":"#1.0","to":"#1.1","title":"办公室装修","summary":"报价单","projects":[{"match":"existing","id":"`+xinlifixture.NewProject+`"}]}]},"commitments":{"create":[{"exchange":"x1.0","kind":"mine","content":"发报价单","refs":["#1.0"]}]}}'
     expect:
       reply_contains: ["引用的原话里没有用户本人说的话"]
       xinli: {commitments_count: {max: 1}, stale_open: {of: [{contains: 报价单, verified: true}], max: 0}}

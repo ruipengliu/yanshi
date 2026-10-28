@@ -2,7 +2,7 @@
 
 > 状态：已实现（2026-10-25）；原文的存放位置由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 改为业务线，本文的内核 Capture 路径在 xinli 切换后按其退役条件删除，`captures` 的渲染器保留给 attested 结果 · 决定：ADR-0036（只收文字，信任按说话人区分）、ADR-0037（每日旁听 Session 与分级保留）、ADR-0039（流、读取位置与来源推导）· 业务线的用法：[旁听业务线 xinli](./xinli-captures.md) · 术语：`CONTEXT.md` 的 Capture、Stream、Exchange、Retention
 
-全天佩戴的录音外设（领夹）经手机上的 HostApp 接入，把 EndUser 一天的对话以文字交给 yanshi。本文是平台这一侧：写入、投影、读取（`captures` 工具）、引用核对、信任、保留与删除。整理成摘要、归集到 Project、承诺账本与每周回顾由业务线编排，见 [xinli-captures.md](./xinli-captures.md)。流、触发与外部循环的通用设计见 [输入、触发与外部循环](./m5-inputs-triggers-loops.md)。
+全天佩戴的录音外设（领夹）经手机上的 HostApp 接入，把 EndUser 一天的对话以文字交给 yanshi。本文保留待退役的内核路径说明：写入、投影、读取（`captures` 工具）、引用核对、信任、保留与删除。xinli 已切到 Persona 的原文与处理进度，不再使用内置路径或交付确认；可信页见 §12。整理成摘要、归集到 Project、承诺账本与每周回顾由业务线编排，见 [xinli-captures.md](./xinli-captures.md)。流、触发与外部循环的通用设计见 [输入、触发与外部循环](./m5-inputs-triggers-loops.md)。
 
 ## 1. 目标
 
@@ -139,6 +139,8 @@ Capture 的内容不进入 `State`，也不追加到 `History`：一天的转写
 
 ## 6. 引用与说话人核对（`cite_captures`）
 
+xinli 已使用 §12 的 `AttestedCitations`：只解析本 Session 日志中读过的可信页，引用属于 Persona 的业务日批次；下面的日志位置解析仅适用于保留的内核 Capture 路径。
+
 业务线要核对整理结果（例如承诺是谁做出的），但不能信模型自报的说话人。MCP 登记的 `cite_captures: true`（`mcpcap.Server.CiteCaptures`，[MCP 设计](./m5-mcp.md)）让平台在调用这个 Server 的工具时：
 
 1. **解析引用。** 在调用参数中找出恰为引用编号的字符串（如 `"#57.3"`），按发起调用的 Session 的日志解析（`mcpcap.Citations`，一次至多 200 个）。
@@ -234,7 +236,7 @@ Session 已在按保留期删除（对外已不可见）时，用户再删除它
 
 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 的第一步保留内核 Capture 路径，并增加业务线存放原文的读取入口。MCP Server 登记 `attests_speakers: true`（默认 false），且登记的 `business_line` 与 Session 相同，平台才采信结果 `_meta["yanshi/page"]`。未登记或跨业务线时忽略页元数据，按普通外部 MCP 结果处理。有可信页时先丢弃业务线的全部 `content` 与 `structuredContent`，不上传其中的媒体、不回显错误文字；模型只看平台渲染的结果。MCP 自报错误时也只写固定的平台错误。
 
-Persona 是第一个实现者：引用的命名空间与处理进度归业务线，按业务日保存。本步 xinli 的登记仍显式为 `attests_speakers: false`，第 2 步随 xinli-day 版本 2 一起打开；差分测试单独开启登记。见 [xinli 的旁听原文](./xinli-captures.md#13-persona-中的旁听原文)。
+Persona 是第一个实现者：引用的命名空间与处理进度归业务线，按业务日保存。P1 第 2 步已随 xinli-day 版本 2 打开 `attests_speakers: true`，并关闭 `acks`；xinli 不再使用内置 `captures`、`transcript` 流或交付确认。内核旧路径保留到第 5 步。见 [xinli 的旁听原文](./xinli-captures.md#13-persona-中的旁听原文)。
 
 开启登记后，请求 `_meta["yanshi/page_options"]` 为：
 
@@ -242,7 +244,7 @@ Persona 是第一个实现者：引用的命名空间与处理进度归业务线
 {"limit":500,"max_chars":6000,"gap_ms":300000,"max_tool_result":0}
 ```
 
-段数与字符上限来自 `capture.MaxLimit`、`capture.MaxChars`。这里的 limit 是平台接受的上限（500），实际页段数取模型参数（未给时 `capture.DefaultLimit`，即 200）、500 与平台上限的最小值；间隔与内置工具相同，先取 AgentDef 的 transcript 流声明（默认 5 分钟），已有内核读取位置时沿用其间隔；结果预算取 `context.max_tool_result`，0 表示不限。此任务不新增 AgentDef 配置，也不切换现有 AgentDef。
+段数与字符上限来自 `capture.MaxLimit`、`capture.MaxChars`。这里的 limit 是平台接受的上限（500），实际页段数取模型参数（未给时 `capture.DefaultLimit`，即 200）、500 与平台上限的最小值；间隔与内置工具相同，先取 AgentDef 的 transcript 流声明（默认 5 分钟），已有内核读取位置时沿用其间隔；结果预算取 `context.max_tool_result`，0 表示不限。xinli-day 版本 2 不声明流，使用默认间隔；Persona 在业务日首次读取时固定该间隔。
 
 响应页契约（`internal/capture.StructuredPage`）：
 

@@ -78,7 +78,7 @@ func TestErrors(t *testing.T) {
 		handler.ServeHTTP(rec, httptest.NewRequest(method, "/v1/fixture/bl/u/"+path, strings.NewReader(body)))
 		return rec
 	}
-	for _, op := range []string{"seed", "bind", "submitted", "edit", "resolve", "resolve_merge", "archive", "bind_week"} {
+	for _, op := range []string{"seed", "bind", "submitted", "edit", "resolve", "resolve_merge", "archive", "bind_week", "captures", "bind_day", "capture_position", "capture_preview"} {
 		for _, body := range []string{"{", `{} {}`, `{"unexpected":true}`} {
 			t.Run(op+"/"+body, func(t *testing.T) {
 				rec := request("POST", op, body)
@@ -147,5 +147,108 @@ func TestRejectOversize(t *testing.T) {
 	if rec.Code != 400 {
 		raw, _ := io.ReadAll(rec.Body)
 		t.Fatalf("oversize: %d %s", rec.Code, raw)
+	}
+}
+
+// 评测只取业务线处理进度；读取不推进进度，换绑后旧 Session 立即失效。
+func TestCapturePosition(t *testing.T) {
+	s := memstore.New()
+	handler := fixture.Handler(s, fixture.Options{})
+	request := func(path, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest("POST", "/v1/fixture/bl/u/"+path, strings.NewReader(body)))
+		return rec
+	}
+	if rec := request("capture_position", `{"session":"s"}`); rec.Code != 400 {
+		t.Fatal("unbound session accepted", rec.Code)
+	}
+	for _, tc := range []struct{ op, body string }{
+		{"captures", `{"date":"2026-10-27","capture_id":"a","segments":[{"speaker":"wearer","text":"交付"}]}`},
+		{"bind_day", `{"date":"2026-10-27","session":"s"}`},
+	} {
+		if rec := request(tc.op, tc.body); rec.Code != 200 {
+			t.Fatal(rec.Code, rec.Body.String())
+		}
+	}
+	check := func(session, after string) {
+		t.Helper()
+		rec := request("capture_position", `{"session":"`+session+`"}`)
+		var got map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || rec.Code != 200 || len(got) != 1 || got["after"] != after {
+			t.Fatal(rec.Code, rec.Body.String(), err)
+		}
+	}
+	check("s", "0")
+	if err := s.Update(context.Background(), "bl", "u", func(b *domain.Book) error {
+		c := domain.NewCall(b, "s", nil, nil, time.Now())
+		if _, err := c.Captures(domain.PageOptions{Limit: 200, MaxChars: 6000, GapMS: 300000, MaxToolResult: 8000}); err != nil {
+			return err
+		}
+		c = domain.NewCall(b, "s", json.RawMessage(`{"source":{"from":"#1.0","to":"#1.0"}}`), nil, time.Now())
+		c.FileChanges()
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	check("s", "1.0")
+	check("s", "1.0")
+	if rec := request("bind_day", `{"date":"2026-10-27","session":"new"}`); rec.Code != 200 {
+		t.Fatal(rec.Code)
+	}
+	if rec := request("capture_position", `{"session":"s"}`); rec.Code != 400 {
+		t.Fatal("old session accepted", rec.Code)
+	}
+	check("new", "1.0")
+}
+
+func TestCapturePreviewDoesNotChangeBook(t *testing.T) {
+	s := memstore.New()
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	if err := s.Update(context.Background(), "bl", "u", func(b *domain.Book) error {
+		if err := b.BindDay("2026-10-27", "s"); err != nil {
+			return err
+		}
+		_, err := b.AppendCaptures("2026-10-27", "a", []domain.CaptureSegment{{Speaker: "wearer", Text: "交付"}})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := func() []byte {
+		t.Helper()
+		var raw []byte
+		if err := s.View(context.Background(), "bl", "u", func(b *domain.Book) error {
+			var err error
+			raw, err = json.Marshal(b)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	before := snapshot()
+	handler := fixture.Handler(s, fixture.Options{Now: func() time.Time { return now }})
+	for _, body := range []string{
+		`{"session":"unbound","page_options":{"limit":200,"max_chars":6000,"gap_ms":300000,"max_tool_result":8000}}`,
+		`{"session":"s","page_options":{"limit":0,"max_chars":6000,"gap_ms":300000,"max_tool_result":8000}}`,
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest("POST", "/v1/fixture/bl/u/capture_preview", strings.NewReader(body)))
+		if rec.Code != 400 || !bytes.Equal(before, snapshot()) {
+			t.Fatal("invalid preview accepted or changed book", rec.Code)
+		}
+	}
+	for _, body := range []string{
+		`{"session":"s","after":"new","page_options":{"limit":200,"max_chars":6000,"gap_ms":300000,"max_tool_result":8000}}`,
+		`{"session":"s","all":true,"page_options":{"limit":200,"max_chars":6000,"gap_ms":600000,"max_tool_result":8000}}`,
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest("POST", "/v1/fixture/bl/u/capture_preview", strings.NewReader(body)))
+		var page domain.StructuredPage
+		if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil || rec.Code != 200 || page.Kind != "page" || len(page.Segments) != 1 || page.Segments[0].Ref != "1.0" {
+			t.Fatal(rec.Code, rec.Body.String(), err)
+		}
+		if !bytes.Equal(before, snapshot()) {
+			t.Fatal("preview changed gap, read tail or processing position")
+		}
 	}
 }

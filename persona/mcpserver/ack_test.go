@@ -2,7 +2,6 @@ package mcpserver
 
 import (
 	"context"
-	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -10,15 +9,15 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// 回执随 MCP 结果交给平台，拒收与当天整理不能冒充一个时段已交付。
-func TestFileChangesAck(t *testing.T) {
+// 处理进度由业务线事务推进，任何 file_changes 结果都不再向内核发送交付回执。
+func TestFileChangesWithoutAck(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	x := newServer(nil)
 	hs := httptest.NewServer(Handler(x.store, Options{Now: x.now}))
 	defer hs.Close()
-	if !XinliRegistration().Acks {
-		t.Fatal("xinli registration does not declare acks")
+	if XinliRegistration().Acks {
+		t.Fatal("xinli registration still declares acks")
 	}
 	x.Seed("bl", "u", SeedData{Commitments: []SeedCommitment{{ID: "C-9000", Kind: "mine", Content: "发报价"}}})
 	if err := x.Edit("bl", "u", "C-9000", "done", ""); err != nil {
@@ -31,9 +30,9 @@ func TestFileChangesAck(t *testing.T) {
 	}
 	defer conn.Close()
 	for _, tc := range []struct {
-		name string
-		args M
-		ack  bool
+		name     string
+		args     M
+		accepted bool
 	}{
 		{"accepted", changes(span("#2.0", "#2.1"), []M{exchange("#2.0", "#2.1", "报价", "约好发报价", M{"match": "none"})}, M{}), true},
 		{"rejected", changes(span("#2.0", "#2.1"), []M{exchange("#2.0", "#2.1", "失眠", "失眠", M{"match": "none"})}, M{}), false},
@@ -55,16 +54,10 @@ func TestFileChangesAck(t *testing.T) {
 					t.Fatalf("user priority result = %s", text)
 				}
 			}
-			value, ok := res.Meta["yanshi/ack"]
-			if ok != tc.ack {
-				t.Fatalf("ack present = %v, want %v", ok, tc.ack)
+			if _, ok := res.Meta["yanshi/ack"]; ok {
+				t.Fatal("retired ack returned")
 			}
-			if tc.ack {
-				raw, _ := json.Marshal(value)
-				var ack struct{ Stream, From, Through string }
-				if err := json.Unmarshal(raw, &ack); err != nil || ack.Stream != "transcript" || ack.From != "2.0" || ack.Through != "2.1" {
-					t.Fatalf("ack = %s, %v", raw, err)
-				}
+			if tc.accepted {
 				if res.IsError || strings.Contains(res.Content[0].(*mcp.TextContent).Text, "没有被接受") {
 					t.Fatal("accepted changeset reported as rejected")
 				}

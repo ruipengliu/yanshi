@@ -8,10 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"yanshi/internal/agentdef"
+	"yanshi/internal/capability"
 	"yanshi/internal/capture"
 	"yanshi/internal/eval/xinlifixture"
-	"yanshi/internal/session"
 )
 
 const (
@@ -24,11 +23,11 @@ const (
 const xinliSpanInstructions = `
 
 本次采用「每个完整时段一个 Run」的实验流程。以下规则替代前面关于输入、继续读取下一时段与当天收尾的规则，其余交谈、承诺、记忆与健康信息的要求都照旧：
-- 输入「整理一个时段」：只做第 1–3 步，第一次 captures 用 {"after":"new"}。
-- 输入「整理一个时段（包括未结束的时段）」：也只做第 1–3 步，第一次 captures 用 {"after":"new","all":true}，续页同样带 all:true。
+- 输入「整理一个时段」：只做第 1–3 步，第一次 mcp_xinli__captures 用 {"after":"new"}。
+- 输入「整理一个时段（包括未结束的时段）」：也只做第 1–3 步，第一次 mcp_xinli__captures 用 {"after":"new","all":true}，续页同样带 all:true。
 - 只处理这一次读到的第一个完整时段。页尾写「未完」且 after 带 ~ 时，照抄 after 继续读取同一个时段，读完所有续页再用一次 file_changes 交出完整时段。页尾写「到此结束」后不要再读下一时段。
 - file_changes 的 source.from/to 必须覆盖本时段从第一段到最后一段的完整范围；即使全是闲聊、没有交谈或承诺，也要以这个 source 交出空变更集（exchanges:{}, commitments:{}），作为已经整理的回执。被拒绝时在本次 Run 内改正后重交整个变更集；业务线接受后用一两句话回复并结束，不做当天整理、不调用 file_day。没有新旁听、或时段还在进行时直接回复。
-- 输入「只按账本整理今天」：所有时段已经在之前的 Run 中交出，本次只做第 4–6 步。直接用 day_ledger 取回账本，按需交 source:{day:true} 的当天整理，再调用 file_day。不要调用 captures，不重新按时段交出。
+- 输入「只按账本整理今天」：所有时段已经在之前的 Run 中交出，本次只做第 4–6 步。直接用 day_ledger 取回账本，按需交 source:{day:true} 的当天整理，再调用 file_day。不要调用 mcp_xinli__captures，不重新按时段交出。
 `
 
 // spanTurns 扮演业务线的串行调度：一个原轮次内拆出多个 Run，仍只提交一次旁听、检查一次断言。
@@ -83,11 +82,11 @@ func (in *instance) spanTurns(ctx context.Context, sid, bl, endUser string, turn
 		return nil
 	}
 	for {
-		st, err := in.svc.Load(ctx, sid)
+		position, err := in.xinli.CapturePosition(ctx, bl, endUser, sid)
 		if err != nil {
 			return obs, err
 		}
-		from, to, err := in.nextSpan(ctx, sid, st, all)
+		from, to, err := in.nextSpan(ctx, sid, all)
 		if err != nil {
 			return obs, err
 		}
@@ -105,11 +104,11 @@ func (in *instance) spanTurns(ctx context.Context, sid, bl, endUser string, turn
 				if err := run(input); err != nil {
 					return obs, err
 				}
-				after, err := in.svc.Load(ctx, sid)
+				after, err := in.xinli.CapturePosition(ctx, bl, endUser, sid)
 				if err != nil {
 					return obs, err
 				}
-				if after.Captures.Read[capture.Stream].GetAfter() != st.Captures.Read[capture.Stream].GetAfter() {
+				if after != position {
 					return obs, fmt.Errorf("empty span run advanced the capture position")
 				}
 				filed, err := in.xinli.State(ctx, bl, endUser)
@@ -130,12 +129,9 @@ func (in *instance) spanTurns(ctx context.Context, sid, bl, endUser string, turn
 			return obs, err
 		}
 		ran = true
-		after, err := in.svc.Load(ctx, sid)
+		after, err := in.xinli.CapturePosition(ctx, bl, endUser, sid)
 		if err != nil {
 			return obs, err
-		}
-		if got := after.Captures.Read[capture.Stream].GetAfter(); got != to {
-			return obs, fmt.Errorf("span #%s–#%s: capture position %q, want %q (no progress, partial span or overread)", from, to, got, to)
 		}
 		accepted, err := in.xinli.State(ctx, bl, endUser)
 		if err != nil {
@@ -144,9 +140,12 @@ func (in *instance) spanTurns(ctx context.Context, sid, bl, endUser string, turn
 		if !spanAccepted(before.Changesets, accepted.Changesets, sid, from, to) {
 			return obs, fmt.Errorf("span #%s–#%s: no accepted changeset; stopping before after=new can skip an unfiled span", from, to)
 		}
+		if got := after; got != to {
+			return obs, fmt.Errorf("span #%s–#%s: capture position %q, want %q (no progress, partial span or overread)", from, to, got, to)
+		}
 	}
 	if all {
-		before, err := in.svc.Load(ctx, sid)
+		before, err := in.xinli.CapturePosition(ctx, bl, endUser, sid)
 		if err != nil {
 			return obs, err
 		}
@@ -158,14 +157,14 @@ func (in *instance) spanTurns(ctx context.Context, sid, bl, endUser string, turn
 		if err := run(xinliDayInput); err != nil {
 			return obs, err
 		}
-		after, err := in.svc.Load(ctx, sid)
+		after, err := in.xinli.CapturePosition(ctx, bl, endUser, sid)
 		if err != nil {
 			return obs, err
 		}
-		if before.Captures.Read[capture.Stream].GetAfter() != after.Captures.Read[capture.Stream].GetAfter() {
+		if before != after {
 			return obs, fmt.Errorf("day reconciliation advanced the capture position")
 		}
-		if slices.Contains(obs.calls[callStart:], capture.Capability) {
+		if slices.Contains(obs.calls[callStart:], "mcp_xinli__captures") {
 			return obs, fmt.Errorf("day reconciliation reread captures instead of using the ledger")
 		}
 		filed, err := in.xinli.State(ctx, bl, endUser)
@@ -188,67 +187,46 @@ func (in *instance) spanTurns(ctx context.Context, sid, bl, endUser string, turn
 	return obs, nil
 }
 
-// nextSpan 用工具自身的分页规则预览下一完整时段的边界。续页不拆 Run，也不解析给模型看的中文提示。
-func (in *instance) nextSpan(ctx context.Context, sid string, st *session.State, all bool) (from, to string, err error) {
-	read := st.Captures.Read[capture.Stream]
-	at := capture.Cursor{}
-	gap := agentdef.DefaultExchangeGap
-	if read != nil {
-		gap = time.Duration(read.GetExchangeGapMs()) * time.Millisecond
-		if s := read.GetAfter(); s != "" && s != "0" {
-			var ok bool
-			if at.Last, ok = capture.ParseRef(s); !ok {
-				return "", "", fmt.Errorf("span run must start at a complete span boundary, got %q", s)
-			}
-		}
-	} else {
-		d, err := in.agents.Get(st.Agent)
+// nextSpan 经夹具的隔离快照复用分页规则预览边界，不推进模型已读位置、不写入内核日志。
+// 只复用页的结构与游标，不解析给模型看的中文，也不把业务日批次当成 Event 序号。
+func (in *instance) nextSpan(ctx context.Context, sid string, all bool) (from, to string, err error) {
+	st, err := in.svc.Load(ctx, sid)
+	if err != nil {
+		return "", "", err
+	}
+	d, err := in.agents.Get(st.Agent)
+	if err != nil {
+		return "", "", err
+	}
+	bl, eu := st.Created.GetBusinessLine(), st.Created.GetEndUser()
+	opts := capture.OptionsFor(capability.Invocation{Agent: d, State: st})
+	after := "new"
+	for {
+		raw, err := in.xinli.CapturePreview(ctx, bl, eu, sid, after, all, opts)
 		if err != nil {
 			return "", "", err
 		}
-		if s, ok := d.Stream(capture.Stream); ok {
-			gap = s.ExchangeGap
+		page, err := capture.ParsePage(raw, opts)
+		if err != nil {
+			return "", "", err
 		}
-	}
-	start := at.Last
-	opts := capture.Options{Limit: capture.DefaultLimit, MaxChars: capture.MaxChars, Gap: gap, Now: time.Now(), All: all}
-	for {
-		_, next, err := capture.Page(ctx, in.svc.Store.Log, sid, at, opts)
-		if err != nil || next.Last.Seq == 0 {
+		if page.Kind != "page" {
+			return "", "", nil
+		}
+		if from == "" {
+			from = page.Segments[0].GetRef()
+		}
+		_, next, err := capture.Render(page, opts.MaxToolResult)
+		if err != nil {
 			return "", "", err
 		}
 		if next.Span.Seq == 0 {
-			to = next.String()
-			break
+			return from, next.String(), nil
 		}
-		at = next
-	}
-	// Capture 的位置没有包含在内容块中，从日志取边界后的第一段即可；不读取或复制原话到业务线。
-	pos := start.Seq
-	if pos > 0 {
-		pos--
-	}
-	for {
-		events, err := in.svc.Store.Log.Read(ctx, sid, pos, 200)
-		if err != nil {
-			return "", "", err
+		if next.String() == after {
+			return "", "", fmt.Errorf("xinli capture preview made no progress")
 		}
-		for _, e := range events {
-			pos = e.GetSeq()
-			c := e.GetCaptureAppended()
-			if c.GetStream() != capture.Stream {
-				continue
-			}
-			for i := range c.GetSegments() {
-				r := capture.Ref{Seq: e.GetSeq(), Index: i}
-				if r.Seq > start.Seq || r.Seq == start.Seq && r.Index > start.Index {
-					return r.String(), to, nil
-				}
-			}
-		}
-		if len(events) < 200 {
-			return "", "", fmt.Errorf("span start not found after %s", start)
-		}
+		after = next.String()
 	}
 }
 

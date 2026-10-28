@@ -27,7 +27,7 @@ type Registration struct {
 
 func XinliRegistration() Registration {
 	return Registration{Name: "xinli", NoApproval: []string{"file_changes", "file_day", "set_status", "update_commitments", "propose_merge", "file_week"},
-		CiteCaptures: true, Acks: true, AttestsSpeakers: false, Timeout: 30 * time.Second}
+		CiteCaptures: true, Acks: false, AttestsSpeakers: true, Timeout: 30 * time.Second}
 }
 
 // Notifier 是出站流（ADR-0046，docs/design/m7-kernel-primitives.md §6）就位前的进程内替身。
@@ -92,10 +92,6 @@ func (x *server) call(ctx context.Context, metadata mcp.Meta, args json.RawMessa
 		x.notifier.DayFiled(ctx, bl, eu, day.Session, day.Date, day.Projects)
 	}
 	result := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}
-	// 只在持久化成功之后附回执，不能从自然语言推测是否已接受（M7 §11）。
-	if ack := call.Ack(); ack != nil {
-		result.Meta = mcp.Meta{"yanshi/ack": ack}
-	}
 	return result, nil
 }
 

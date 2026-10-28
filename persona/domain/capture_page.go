@@ -206,7 +206,8 @@ func captureSegmentBlocks(s captureSegment, day string) ([]string, string) {
 	return append(blocks, "#"+s.ref.String()+" ", captureText(s.g)), day
 }
 
-// Captures 必须在 Update 内调用：只读工具的首次读取固定时段间隔，后续不受配置变化影响。
+// Captures 的正式读取必须在 Update 内调用：固定时段间隔，并记下当前工作 Session 实际返回过的页尾。
+// 夹具预览只在 View 的隔离快照上调用，不提交这些变化。
 func (c *Call) Captures(o PageOptions) (StructuredPage, error) {
 	_, day := c.u.boundDay(c.session)
 	if day == nil {
@@ -238,7 +239,14 @@ func (c *Call) Captures(o PageOptions) (StructuredPage, error) {
 		day.GapMS, day.GapSet = o.GapMS, true
 	}
 	o.GapMS = day.GapMS
-	return capturePage(day.segments(), at, o, c.now, in.All)
+	page, err := capturePage(day.segments(), at, o, c.now, in.All)
+	if err == nil && page.Kind == "page" && len(page.Segments) > 0 {
+		last, _ := parseCaptureRef(page.Segments[len(page.Segments)-1].Ref)
+		if refLE(day.ReadThrough, last) {
+			day.ReadThrough = last
+		}
+	}
+	return page, err
 }
 
 // capturePage 与内核 page、ParsePage 的字符计数顺序一致：先检查下一段，再加入新日期头。

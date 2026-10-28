@@ -197,7 +197,7 @@ func (it *goldItem) counted() bool { return it.heard && !it.Optional && !it.unju
 // （没有时取各次修订引用的）标了哪条 kind 相同的金标就是哪条；无从判断的金标不比较 kind（说话人识别错了，记反是噪声
 // 所致）。标了几条时取引用次数最多的；仍相同时（一句话里答应了两件事）先取还没有承诺对应上的，再取计入的，再按金标文件
 // 中的顺序。
-// 对应只看引用、不核对内容：内容与对象由 score 的独立指标核对。labels 的键是"Session/事件序号.段序号"，值是那段
+// 对应只看引用、不核对内容：内容与对象由 score 的独立指标核对。labels 的键是"Session/业务日批次.段号"，值是那段
 // 旁听的 Gold；修订引用的原话在交出那次修订的变更集的 Session 中。
 func (b *goldBook) match(st *xinlifixture.State, labels map[string]string) map[string]*goldItem {
 	sessions := map[string]string{}

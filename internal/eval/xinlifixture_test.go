@@ -18,8 +18,13 @@ func TestXinliFixtureOperations(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
-	if len(servers) != 2 || servers[0].BusinessLine != BusinessLine || servers[1].BusinessLine != NoHealthBusinessLine || !servers[0].CiteCaptures || !servers[0].Acks {
+	if len(servers) != 2 || servers[0].BusinessLine != BusinessLine || servers[1].BusinessLine != NoHealthBusinessLine {
 		t.Fatalf("registrations: %+v", servers)
+	}
+	for _, server := range servers {
+		if !server.CiteCaptures || server.Acks || !server.AttestsSpeakers {
+			t.Fatalf("registration trust flags: %+v", server)
+		}
 	}
 	at := time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)
 	seed := xinlifixture.SeedData{
