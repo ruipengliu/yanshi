@@ -36,6 +36,13 @@ func XinliRegistration() Registration {
 type Notifier interface {
 	DayFiled(ctx context.Context, businessLine, endUser, daySession, date string, projects []string)
 }
+
+// DeletionNotifier 与 DayFiled 分开，现有编排器可以在④b 接入删除待办。
+// 只在事务提交、锁释放后通知待办 ID；执行与重试不属于 Persona。
+type DeletionNotifier interface {
+	DeletionPending(ctx context.Context, businessLine, endUser, taskID string)
+}
+
 type Options struct {
 	Now      func() time.Time
 	Notifier Notifier

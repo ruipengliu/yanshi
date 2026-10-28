@@ -193,7 +193,7 @@ func TestCapturePages(t *testing.T) {
 	if err := b.BindDay("2026-10-27", "replacement"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewCall(b, "s", nil, nil, captureTestNow).Captures(o); err == nil || err.Error() != "这个 Session 没有绑定业务日" {
+	if _, err := NewCall(b, "s", nil, nil, captureTestNow).Captures(o); err == nil || err != ErrInactiveSession {
 		t.Fatal(err)
 	}
 	if err := b.BindDay("2026-10-28", "replacement"); err == nil {
@@ -313,7 +313,9 @@ func TestCaptureProgress(t *testing.T) {
 	if err := b.BindDay("2026-10-27", "replacement"); err != nil {
 		t.Fatal(err)
 	}
-	submit("s", "#1.4", "#1.4", "")
+	if got := NewCall(b, "s", json.RawMessage(`{"source":{"from":"#1.4","to":"#1.4"}}`), nil, captureTestNow).FileChanges(); got != ErrInactiveSession.Error() {
+		t.Fatal("old session accepted", got)
+	}
 	if b.CaptureProgress("2026-10-27") != "1.3" {
 		t.Fatal("old session advanced")
 	}

@@ -223,8 +223,12 @@ func (c *Client) AppendCaptures(ctx context.Context, bl, eu, date, captureID str
 	return out.Refs, err
 }
 
-func (c *Client) BindDay(ctx context.Context, bl, eu, date, session string) error {
-	return c.request(ctx, bl, eu, "bind_day", map[string]string{"date": date, "session": session}, nil)
+func (c *Client) BindDay(ctx context.Context, bl, eu, date, session string, deleteAt ...time.Time) error {
+	in := map[string]string{"date": date, "session": session}
+	if len(deleteAt) > 0 && !deleteAt[0].IsZero() {
+		in["delete_at"] = deleteAt[0].Format(time.RFC3339Nano)
+	}
+	return c.request(ctx, bl, eu, "bind_day", in, nil)
 }
 
 // CapturePosition 只读处理进度；不会把原文放进 State 或内核日志。
@@ -247,4 +251,49 @@ func (c *Client) CapturePreview(ctx context.Context, bl, eu, session, after stri
 	var out json.RawMessage
 	err := c.request(ctx, bl, eu, "capture_preview", in, &out)
 	return out, err
+}
+
+// DeletionTask 是删除待办的线上镜像，独立于已有 State 契约。
+type DeletionTask struct {
+	ID          string            `json:"id"`
+	Kind        string            `json:"kind"`
+	Date        string            `json:"date"`
+	Session     string            `json:"session"`
+	Sessions    []string          `json:"sessions"`
+	DeleteAt    time.Time         `json:"delete_at"`
+	Status      string            `json:"status"`
+	CreatedAt   time.Time         `json:"created_at"`
+	Candidates  []MemoryCandidate `json:"candidates"`
+	CompletedAt time.Time         `json:"completed_at"`
+	Error       string            `json:"error"`
+	FailedAt    time.Time         `json:"failed_at"`
+}
+
+type MemoryCandidate struct {
+	ID      string `json:"id"`
+	Summary string `json:"summary"`
+}
+
+func (c *Client) Erase(ctx context.Context, bl, eu, date, from, to string) (DeletionTask, error) {
+	var out struct {
+		Task DeletionTask `json:"task"`
+	}
+	err := c.request(ctx, bl, eu, "erase", map[string]string{"date": date, "from": from, "to": to}, &out)
+	return out.Task, err
+}
+
+func (c *Client) EraseDay(ctx context.Context, bl, eu, date string) (DeletionTask, error) {
+	var out struct {
+		Task DeletionTask `json:"task"`
+	}
+	err := c.request(ctx, bl, eu, "erase_day", map[string]string{"date": date}, &out)
+	return out.Task, err
+}
+
+func (c *Client) DeletionTasks(ctx context.Context, bl, eu string) ([]DeletionTask, error) {
+	var out struct {
+		Tasks []DeletionTask `json:"tasks"`
+	}
+	err := c.request(ctx, bl, eu, "deletion_tasks", nil, &out)
+	return out.Tasks, err
 }

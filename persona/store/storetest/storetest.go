@@ -15,6 +15,7 @@ import (
 
 func Run(t *testing.T, factory func() store.Store) {
 	t.Helper()
+	t.Run("deletions", func(t *testing.T) { deletions(t, factory) })
 	ctx := context.Background()
 	at := time.Date(2026, 10, 23, 22, 0, 0, 0, time.UTC)
 	state := func(t *testing.T, s store.Store, bl, eu string) domain.State {

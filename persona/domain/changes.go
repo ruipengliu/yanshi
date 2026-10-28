@@ -123,7 +123,8 @@ func (o *commitmentOps) UnmarshalJSON(b []byte) error {
 type review struct {
 	c        *Call
 	author   string
-	day      bool // 当天整理："整理今天"中 source 为 {day: true} 的那次
+	date     string // 项目对账的依据业务日，防止不同日的同号交谈混用。
+	day      bool   // 当天整理："整理今天"中 source 为 {day: true} 的那次
 	from, to Ref
 	base     ledger
 	problems []string
@@ -152,6 +153,10 @@ func refLE(a, b Ref) bool { return a.Seq < b.Seq || (a.Seq == b.Seq && a.Index <
 // existingRefs 在绑定业务日内检查引用本身，不检查范围内部是否有空号；source 与交谈、承诺共用。
 func (k *review) existingRefs(what string, refs []string) bool {
 	_, day := k.c.u.boundDay(k.c.session)
+	return k.existingDayRefs(day, what, refs)
+}
+
+func (k *review) existingDayRefs(day *captureDay, what string, refs []string) bool {
 	if day == nil {
 		return true
 	}
@@ -328,11 +333,13 @@ func (k *review) change(in changeIn, closing bool, inProject string) (Commitment
 	}
 	out := CommitmentChange{ID: in.ID, Rev: in.Rev, Refs: in.Refs, Exchanges: in.Exchanges, Reason: in.Reason, SpokenAt: k.spoken(in.Refs)}
 	if k.author == AuthorProject {
+		// 项目只应依据摘要；若请求仍带 refs，也不能绕过该业务日的墓碑。
+		k.existingDayRefs(k.c.u.captureDays[k.date], what, in.Refs)
 		if len(in.Exchanges) == 0 {
 			k.fail("%s须用 exchanges 写明依据的交谈 ID", what)
 		}
 		for _, id := range in.Exchanges {
-			if !slices.ContainsFunc(k.base.exchanges, func(e Exchange) bool { return e.ID == id }) {
+			if !slices.ContainsFunc(k.base.exchanges, func(e Exchange) bool { return e.ID == id && (k.c.u.captureDays[k.date] == nil || e.Date == k.date) }) {
 				k.fail("%s依据的交谈 %s 不存在：用 day_summary 给出的交谈 ID", what, id)
 			}
 		}
@@ -413,6 +420,11 @@ var fieldNames = map[string]string{"status": "状态", "due": "期限", "content
 
 // fileChanges 是 file_changes：xinli-day 交出一个变更集。
 func (c *Call) FileChanges() string {
+	if c.u != nil {
+		if err := c.u.checkWorkingSession(c.session); err != nil {
+			return err.Error()
+		}
+	}
 	var in changesIn
 	if err := json.Unmarshal(c.args, &in); err != nil {
 		return "参数无效：" + parseErrorText(err)
@@ -440,7 +452,9 @@ func (c *Call) FileChanges() string {
 			return rejected(k.problems)
 		}
 	}
-	old := slices.IndexFunc(u.changesets, func(cs Changeset) bool { return cs.Session == c.session && cs.Key == key && cs.Author == AuthorDay })
+	old := slices.IndexFunc(u.changesets, func(cs Changeset) bool {
+		return u.sameDay(cs.Session, c.session) && cs.Key == key && cs.Author == AuthorDay
+	})
 	k.base = u.foldWithout(old)
 	now := c.now
 	date := now.Format(time.DateOnly)
@@ -458,7 +472,7 @@ func (c *Call) FileChanges() string {
 	for _, e := range k.base.exchanges {
 		f, ok1 := parseRef(e.From)
 		t, ok2 := parseRef(e.To)
-		if e.Session == c.session && e.Live() && ok1 && ok2 {
+		if u.sameDay(e.Session, c.session) && e.Live() && ok1 && ok2 {
 			taken = append(taken, span{f, t})
 		}
 	}
@@ -703,6 +717,7 @@ func rejected(problems []string) string {
 // commit 分配新建的项目与承诺的 ID，取代同一个键的旧变更集（old ≥ 0 时）或追加，再重新叠加。重交时沿用旧变更集中
 // 同名新项目的 ID；承诺的对应在检查时确定，其他变更集可能已经引用了它们。
 func (u *Book) commit(cs *Changeset, old int, news []string) {
+	cs.Day, _ = u.sessionDay(cs.Session)
 	ids := map[string]string{}
 	if old >= 0 {
 		prev := &u.changesets[old]
@@ -844,7 +859,7 @@ func (c *Call) UpdateCommitments() string {
 	u := c.u
 	key := "project:" + in.Date
 	old := slices.IndexFunc(u.changesets, func(cs Changeset) bool { return cs.Session == c.session && cs.Key == key })
-	k := &review{c: c, author: AuthorProject, day: true, base: u.foldWithout(old)}
+	k := &review{c: c, author: AuthorProject, day: true, date: in.Date, base: u.foldWithout(old)}
 	cs := Changeset{Session: c.session, Key: key, Author: AuthorProject, Source: Source{Date: in.Date}, RecordedAt: c.now}
 	for _, r := range in.Revise {
 		if ch, ok := k.change(r, false, p.ID); ok {

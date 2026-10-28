@@ -58,8 +58,9 @@ type State struct {
 
 // Book 是一条业务线中一个 EndUser 的全部知识；只能在所属存储事务中修改。
 type Book struct {
-	captureDays map[string]*captureDay
-	projects    []Project
+	captureDays   map[string]*captureDay
+	deletionTasks []DeletionTask
+	projects      []Project
 	// changesets 是变更集的日志，ledger 是由它叠加出的交谈与承诺（每次改动之后重新叠加）。
 	changesets []Changeset
 	ledger
@@ -202,7 +203,7 @@ func (c *Call) DayLedger() string {
 	var b strings.Builder
 	var today []Exchange
 	for _, e := range u.exchanges {
-		if e.Session == c.session && e.Live() {
+		if u.sameDay(e.Session, c.session) && e.Live() {
 			today = append(today, e)
 		}
 	}
@@ -236,7 +237,7 @@ func (c *Call) DayLedger() string {
 	var mine []*Commitment
 	for i := range u.commitments {
 		m := &u.commitments[i]
-		if m.Session == c.session || slices.ContainsFunc(m.Revisions, func(r Revision) bool { return u.changesetSession(r.Changeset) == c.session }) {
+		if u.sameDay(m.Session, c.session) || slices.ContainsFunc(m.Revisions, func(r Revision) bool { return u.sameDay(u.changesetSession(r.Changeset), c.session) }) {
 			mine = append(mine, m)
 			if m.Counterpart != "" {
 				counterparts = append(counterparts, m.Counterpart)
@@ -293,6 +294,9 @@ func (c *Call) DayLedger() string {
 }
 
 func (c *Call) FileDay() string {
+	if err := c.u.checkWorkingSession(c.session); err != nil {
+		return err.Error()
+	}
 	if strings.HasPrefix(c.u.submitted[c.session], "整理交谈") {
 		return "没有收下：白天的\"整理交谈\"不交当天总览，当天总览只在\"整理今天\"中交出"
 	}
@@ -315,15 +319,15 @@ func (c *Call) FileDay() string {
 	}
 	day := Day{Date: date, Session: c.session, FiledAt: now, Headline: in.Day.Headline,
 		Highlights: in.Day.Highlights, Awareness: in.Awareness}
-	// 同一 Session 再次整理（重试）时取代之前的结果。
+	// 重建工作 Session 后仍取代同一业务日的总览，未绑定时沿用 Session。
 	if c.session != "" {
-		c.u.days = slices.DeleteFunc(c.u.days, func(d Day) bool { return d.Session == c.session })
+		c.u.days = slices.DeleteFunc(c.u.days, func(d Day) bool { return c.u.sameDay(d.Session, c.session) })
 	}
 	c.u.days = append(c.u.days, day)
 	var touched []string
 	n := 0
 	for _, e := range c.u.exchanges {
-		if e.Session == c.session && e.Live() {
+		if c.u.sameDay(e.Session, c.session) && e.Live() {
 			n++
 			for _, p := range e.InProjects() {
 				if !slices.Contains(touched, p) {
@@ -365,7 +369,7 @@ func (u *Book) Resolve(daySession, exchange, project string, now time.Time) erro
 	cs := Changeset{Session: daySession, Key: fmt.Sprintf("user:%d", u.nextCS+1), Author: AuthorUser, RecordedAt: now,
 		ReviseExchanges: []ExchangeRevise{{ID: exchange, Projects: links}}}
 	for _, m := range u.commitments {
-		if m.Session == daySession && m.Exchange == exchange && m.Project == "" {
+		if u.sameDay(m.Session, daySession) && m.Exchange == exchange && m.Project == "" {
 			cs.ReviseCommitments = append(cs.ReviseCommitments, CommitmentChange{ID: m.ID, Rev: m.Rev(), Fields: map[string]string{"project": project}})
 		}
 	}
@@ -539,7 +543,7 @@ func (u *Book) Bind(project, sessionID string) {
 // State 返回供夹具和应用展示的投影，整理结果按日期从新到旧。
 // 嵌套字段仍属于本 Book；存储的 View 提供隔离快照，离开事务后不得用它修改存储。
 func (u *Book) State() State {
-	l := fold(u.changesets, u.canon) // 重新叠加得到的是新的切片，调用方可以随意修改
+	l := fold(u.changesets, u.canon, u.sessionDays()) // 重新叠加得到的是新的切片，调用方可以随意修改
 	st := State{Projects: slices.Clone(u.projects), Exchanges: l.exchanges, Commitments: l.commitments, Changesets: slices.Clone(u.changesets),
 		Days: u.sortedDays(), Weeks: slices.Clone(u.weeks), Merges: slices.Clone(u.merges)}
 	slices.Reverse(st.Days)
@@ -560,7 +564,7 @@ func orEmpty[T any](s []T) []T {
 }
 
 // refold 由变更集重新叠加出交谈与承诺。
-func (u *Book) refold() { u.ledger = fold(u.changesets, u.canon) }
+func (u *Book) refold() { u.ledger = fold(u.changesets, u.canon, u.sessionDays()) }
 
 // foldWithout 是去掉第 i 个变更集（将被取代的那个）之后的状态；i < 0 时就是当前状态。新的变更集据此检查：重交时它的
 // rev 是对着没有旧变更集的账本取的。
@@ -568,7 +572,7 @@ func (u *Book) foldWithout(i int) ledger {
 	if i < 0 {
 		return u.ledger
 	}
-	return fold(slices.Delete(slices.Clone(u.changesets), i, i+1), u.canon)
+	return fold(slices.Delete(slices.Clone(u.changesets), i, i+1), u.canon, u.sessionDays())
 }
 
 // canon 把已合并的项目换成保留的那个。

@@ -209,6 +209,9 @@ func captureSegmentBlocks(s captureSegment, day string) ([]string, string) {
 // Captures 的正式读取必须在 Update 内调用：固定时段间隔，并记下当前工作 Session 实际返回过的页尾。
 // 夹具预览只在 View 的隔离快照上调用，不提交这些变化。
 func (c *Call) Captures(o PageOptions) (StructuredPage, error) {
+	if err := c.u.checkWorkingSession(c.session); err != nil {
+		return StructuredPage{}, err
+	}
 	_, day := c.u.boundDay(c.session)
 	if day == nil {
 		return StructuredPage{}, fmt.Errorf("这个 Session 没有绑定业务日")

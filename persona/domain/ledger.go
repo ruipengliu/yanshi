@@ -25,7 +25,9 @@ type Changeset struct {
 	ID string `json:"id"`
 	// Session 是交出它的 Session：旁听 Session（xinli-day、用户对交谈的确认）或项目 Session（xinli-project）。
 	Session string `json:"session,omitempty"`
-	// Key 是去重键：同一 Session 中同一个键再交一次，整体取代上一次。
+	// Day 是绑定的业务日；空值沿用按 Session 的旧身份。
+	Day string `json:"day,omitempty"`
+	// Key 是去重键：同一业务日（未绑定时同一 Session）重交，整体取代上一次。
 	Key        string    `json:"key"`
 	Author     string    `json:"author"`
 	Source     Source    `json:"source"`
@@ -63,7 +65,7 @@ type Exchange struct {
 	Decisions []Decision `json:"decisions"`
 	Risks     []string   `json:"risks"`
 	Awareness []string   `json:"awareness"`
-	// MergedInto 非空时这段交谈已被当天整理并入另一段（同一 Session 中的交谈 ID）。
+	// MergedInto 非空时这段交谈已被当天整理并入另一段（同一业务日、未绑定时同一 Session 中的交谈 ID）。
 	MergedInto string `json:"merged_into,omitempty"`
 	Changeset  string `json:"changeset,omitempty"`
 }
@@ -277,14 +279,15 @@ type CommitmentMerge struct {
 
 // ledger 是叠加出的实体。
 type ledger struct {
+	sessionDays map[string]string
 	exchanges   []Exchange
 	commitments []Commitment
 }
 
 // fold 依次叠加变更集，得出交谈与承诺的当前状态。引用了不存在的实体的操作跳过（被取代的变更集带走了它）；canon 把
 // 已合并的项目换成保留的那个。
-func fold(css []Changeset, canon func(string) string) ledger {
-	var l ledger
+func fold(css []Changeset, canon func(string) string, sessionDays map[string]string) ledger {
+	l := ledger{sessionDays: sessionDays}
 	for i := range css {
 		l.apply(&css[i])
 	}
@@ -432,7 +435,7 @@ func (e *Exchange) reviseWith(title, summary string, projects []Link) {
 }
 
 func (l *ledger) exchange(session, id string) *Exchange {
-	if i := slices.IndexFunc(l.exchanges, func(e Exchange) bool { return e.Session == session && e.ID == id }); i >= 0 {
+	if i := slices.IndexFunc(l.exchanges, func(e Exchange) bool { return l.sameDay(e.Session, session) && e.ID == id }); i >= 0 {
 		return &l.exchanges[i]
 	}
 	return nil
@@ -454,3 +457,11 @@ func refBefore(a, b string) bool {
 
 // exchangeID 是交谈的 ID：取自范围的起点，"#57.0" 为 "x57.0"。
 func exchangeID(from string) string { return "x" + strings.TrimPrefix(from, "#") }
+
+// sameDay 只合并实际绑定过的 Session，未绑定的旧夹具保持原有身份。
+func (l *ledger) sameDay(a, b string) bool {
+	if day := l.sessionDays[a]; day != "" {
+		return day == l.sessionDays[b]
+	}
+	return a == b
+}

@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
@@ -27,6 +28,10 @@ type captureBatch struct {
 // captureDay 独立于 file_day 的总览，换绑工作 Session 不改变引用与处理进度。
 type captureDay struct {
 	Session     string
+	Sessions    []string
+	DeleteAt    time.Time
+	Deleted     bool
+	Tombstones  []Source
 	Batches     []captureBatch
 	Next        uint64
 	Progress    string
@@ -57,22 +62,38 @@ func (u *Book) boundDay(session string) (string, *captureDay) {
 }
 
 // BindDay 在存储事务中绑定当天工作 Session；一个 Session 不能同时代表两个业务日。
-func (u *Book) BindDay(date, session string) error {
+func (u *Book) BindDay(date, session string, deleteAt ...time.Time) error {
 	if _, err := time.Parse(time.DateOnly, date); err != nil {
 		return fmt.Errorf("date must be YYYY-MM-DD")
 	}
 	if session == "" {
 		return fmt.Errorf("session must not be empty")
 	}
-	if bound, _ := u.boundDay(session); bound != "" && bound != date {
+	if bound, _ := u.sessionDay(session); bound != "" && bound != date {
 		return fmt.Errorf("session is bound to another business day")
 	}
+	if day := u.captureDays[date]; day != nil && day.Deleted {
+		return ErrDayDeleted
+	}
 	day := u.captureDay(date)
+	if !slices.Contains(day.Sessions, session) {
+		day.Sessions = append(day.Sessions, session)
+	}
+	if day.DeleteAt.IsZero() && len(deleteAt) > 0 && !deleteAt[0].IsZero() {
+		day.DeleteAt = deleteAt[0]
+	}
 	if day.Session != session {
 		// 换绑后的模型没有见过旧 Session 的页，不能继承它的已读范围。
 		day.ReadThrough = Ref{}
 		day.Session = session
 	}
+	// 兼容先写后绑定的夹具；不能等下次快照读取才改变变更集身份。
+	for i := range u.changesets {
+		if u.changesets[i].Session == session && u.changesets[i].Day == "" {
+			u.changesets[i].Day = date
+		}
+	}
+	u.refold()
 	return nil
 }
 
@@ -83,6 +104,9 @@ var captureSpeakerKey = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
 func (u *Book) AppendCaptures(date, captureID string, segments []CaptureSegment) ([]string, error) {
 	if _, err := time.Parse(time.DateOnly, date); err != nil {
 		return nil, fmt.Errorf("date must be YYYY-MM-DD")
+	}
+	if day := u.captureDays[date]; day != nil && day.Deleted {
+		return nil, ErrDayDeleted
 	}
 	if captureID == "" || len(captureID) > 128 {
 		return nil, fmt.Errorf("capture_id must contain 1 to 128 bytes")
@@ -116,6 +140,9 @@ func (u *Book) AppendCaptures(date, captureID string, segments []CaptureSegment)
 	if day != nil {
 		for _, b := range day.Batches {
 			if b.ID == captureID {
+				if slices.ContainsFunc(b.Segments, func(g CaptureSegment) bool { return g.Text == "" }) {
+					return nil, fmt.Errorf("capture_id contains erased segments")
+				}
 				if !slices.Equal(b.Segments, segments) {
 					return nil, fmt.Errorf("capture_id already has different content")
 				}
@@ -145,6 +172,9 @@ func (d *captureDay) segments() []captureSegment {
 	var out []captureSegment
 	for _, b := range d.Batches {
 		for i, g := range b.Segments {
+			if g.Text == "" {
+				continue
+			}
 			out = append(out, captureSegment{ref: Ref{Seq: b.Number, Index: i}, g: g})
 		}
 	}
@@ -155,7 +185,7 @@ func (d *captureDay) segments() []captureSegment {
 func (d *captureDay) containsRef(ref Ref) bool {
 	for _, batch := range d.Batches {
 		if batch.Number == ref.Seq {
-			return ref.Index >= 0 && ref.Index < len(batch.Segments)
+			return ref.Index >= 0 && ref.Index < len(batch.Segments) && batch.Segments[ref.Index].Text != ""
 		}
 	}
 	return false
@@ -203,4 +233,42 @@ func (c *Call) advanceCaptures(from, to Ref) {
 		day.Progress = segs[end].ref.String()
 		start = end + 1
 	}
+}
+
+// 固定错误不附带调用参数，迟到的工作 Session 不能再写入或读取原文。
+var (
+	ErrInactiveSession = errors.New("这个 Session 已不是当天的工作 Session")
+	ErrDayDeleted      = errors.New("这个业务日已删除")
+)
+
+// sessionDay 包含历史绑定，避免停用后的 Session 退回未绑定的兼容路径。
+func (u *Book) sessionDay(session string) (string, *captureDay) {
+	if session != "" {
+		for date, day := range u.captureDays {
+			if day.Session == session || slices.Contains(day.Sessions, session) {
+				return date, day
+			}
+		}
+	}
+	return "", nil
+}
+
+func (u *Book) checkWorkingSession(session string) error {
+	if _, day := u.sessionDay(session); day != nil && (day.Deleted || day.Session != session) {
+		return ErrInactiveSession
+	}
+	return nil
+}
+
+func (u *Book) sessionDays() map[string]string {
+	out := map[string]string{}
+	for date, day := range u.captureDays {
+		for _, session := range day.Sessions {
+			out[session] = date
+		}
+		if day.Session != "" {
+			out[day.Session] = date
+		}
+	}
+	return out
 }
