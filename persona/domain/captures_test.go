@@ -271,14 +271,16 @@ func TestCaptureProgress(t *testing.T) {
 		c.FileChanges()
 		return c
 	}
-	if c := submit("s", "#1.0", "#1.4", `,"exchanges":{"merge":[{"into":"missing","from":["x"]}]}`); c.Ack() != nil {
-		t.Fatal("rejected ack")
+	submit("s", "#1.0", "#1.4", `,"exchanges":{"merge":[{"into":"missing","from":["x"]}]}`)
+	if len(b.State().Changesets) != 0 {
+		t.Fatal("rejected changeset saved")
 	}
 	if b.CaptureProgress("2026-10-27") != "0" {
 		t.Fatal("rejected advanced")
 	}
-	if c := submit("s", "#1.0", "#1.0", ""); c.Ack() == nil {
-		t.Fatal("legacy ack lost")
+	submit("s", "#1.0", "#1.0", "")
+	if len(b.State().Changesets) != 1 {
+		t.Fatal("accepted changeset missing")
 	}
 	if b.CaptureProgress("2026-10-27") != "0" {
 		t.Fatal("partial span advanced")
@@ -291,6 +293,8 @@ func TestCaptureProgress(t *testing.T) {
 	if b.CaptureProgress("2026-10-27") != "0" {
 		t.Fatal("unbound advanced")
 	}
+	captureTestRead(t, b, `{"after":"1.0~1.0"}`, o)
+	captureTestRead(t, b, `{"after":"1.1"}`, o)
 	submit("s", "#1.0", "#1.3", "")
 	if b.CaptureProgress("2026-10-27") != "1.3" {
 		t.Fatal("two spans not advanced")
@@ -321,7 +325,7 @@ func TestCaptureExchangeBusinessDate(t *testing.T) {
 	cites := map[string]Citation{"#1.0": {Ref: "#1.0", Speaker: "wearer"}}
 	for _, sid := range []string{"s", "unbound"} {
 		c := NewCall(b, sid, args, cites, captureTestNow)
-		if text := c.FileChanges(); c.Ack() == nil {
+		if text := c.FileChanges(); strings.Contains(text, "没有被接受") {
 			t.Fatal(text)
 		}
 	}
@@ -382,11 +386,151 @@ func TestCaptureProgressUsesAcceptedTail(t *testing.T) {
 	}
 	c = NewCall(b, "s", json.RawMessage(`{"source":{"from":"#1.0","to":"#2.0"}}`), nil, captureTestNow)
 	c.FileChanges()
+	if b.CaptureProgress("2026-10-27") != "0" {
+		t.Fatal("unread tail advanced")
+	}
+	captureTestRead(t, b, `{"after":"1.0~1.0"}`, captureTestOptions())
+	c.FileChanges()
 	if b.CaptureProgress("2026-10-27") != "2.0" {
 		t.Fatal("complete tail not advanced")
 	}
 	p := captureTestRead(t, b, `{"after":"new"}`, captureTestOptions())
 	if p.Kind != "empty" {
 		t.Fatal("new should be empty")
+	}
+}
+
+func TestFileDayBusinessDateAfterMidnight(t *testing.T) {
+	zone := time.FixedZone("UTC+08", 8*60*60)
+	first := time.Date(2026, 10, 27, 23, 0, 0, 0, zone)
+	next := time.Date(2026, 10, 28, 4, 0, 0, 0, zone)
+	for _, tc := range []struct {
+		name  string
+		bound bool
+		want  string
+	}{
+		{"bound", true, "2026-10-27"},
+		{"unbound", false, "2026-10-28"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := NewBook()
+			if tc.bound {
+				if err := b.BindDay("2026-10-27", "s"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			args := json.RawMessage(`{"day":{"headline":"交付进展"}}`)
+			NewCall(b, "s", args, nil, first).FileDay()
+			c := NewCall(b, "s", args, nil, next)
+			text := c.FileDay()
+			days := b.State().Days
+			if len(days) != 1 || days[0].Session != "s" || days[0].Date != tc.want || !days[0].FiledAt.Equal(next) {
+				t.Fatalf("daily summary = %+v", days)
+			}
+			if c.Filed == nil || c.Filed.Session != "s" || c.Filed.Date != tc.want {
+				t.Fatalf("notification = %+v", c.Filed)
+			}
+			if text != "已收到 "+tc.want+" 的整理（0 段交谈）" {
+				t.Fatal(text)
+			}
+		})
+	}
+}
+
+func TestCaptureProgressStopsAtReadTail(t *testing.T) {
+	old := captureTestNow.Add(-time.Hour)
+	b := captureTestBook(t, []CaptureSegment{captureTestSegment(old), captureTestSegment(old.Add(20 * time.Minute))})
+	captureTestRead(t, b, `{}`, captureTestOptions())
+	args := json.RawMessage(`{"source":{"from":"#1.0","to":"#1.1"}}`)
+	c := NewCall(b, "s", args, nil, captureTestNow)
+	c.FileChanges()
+	if b.CaptureProgress("2026-10-27") != "1.0" {
+		t.Fatal("unread later span advanced")
+	}
+	captureTestRead(t, b, `{"after":"new"}`, captureTestOptions())
+	c.FileChanges()
+	if b.CaptureProgress("2026-10-27") != "1.1" {
+		t.Fatal("read later span not advanced")
+	}
+}
+
+func TestCaptureSourceEndpointsExist(t *testing.T) {
+	for _, source := range []string{
+		`{"from":"#1.0","to":"#1.99"}`,
+		`{"from":"#1.0","to":"#2.0"}`,
+		`{"from":"#1.1","to":"#1.2"}`,
+	} {
+		b := captureTestBook(t, []CaptureSegment{captureTestSegment(captureTestNow.Add(-time.Hour))})
+		captureTestRead(t, b, `{}`, captureTestOptions())
+		text := NewCall(b, "s", json.RawMessage(`{"source":`+source+`}`), nil, captureTestNow).FileChanges()
+		if !strings.Contains(text, "没有被接受") || len(b.State().Changesets) != 0 || b.CaptureProgress("2026-10-27") != "0" {
+			t.Fatal("missing source endpoint accepted", source, text)
+		}
+		text = NewCall(b, "unbound", json.RawMessage(`{"source":`+source+`}`), nil, captureTestNow).FileChanges()
+		if strings.Contains(text, "没有被接受") || len(b.State().Changesets) != 1 {
+			t.Fatal("unbound behavior changed", text)
+		}
+	}
+}
+
+func TestCaptureReadTail(t *testing.T) {
+	b := captureTestBook(t, []CaptureSegment{captureTestSegment(captureTestNow), captureTestSegment(captureTestNow.Add(time.Minute))})
+	o := captureTestOptions()
+	day := b.captureDays["2026-10-27"]
+	if p := captureTestRead(t, b, `{}`, o); p.Kind != "in_progress" || day.ReadThrough != (Ref{}) {
+		t.Fatal("in-progress page marked read")
+	}
+	captureTestRead(t, b, `{"all":true,"limit":1}`, o)
+	if day.ReadThrough != (Ref{Seq: 1, Index: 0}) {
+		t.Fatal("first page not marked read")
+	}
+	captureTestRead(t, b, `{"all":true,"after":"1.0~1.0","limit":1}`, o)
+	if day.ReadThrough != (Ref{Seq: 1, Index: 1}) {
+		t.Fatal("continuation not marked read")
+	}
+	captureTestRead(t, b, `{"all":true,"limit":1}`, o)
+	if day.ReadThrough != (Ref{Seq: 1, Index: 1}) {
+		t.Fatal("rereading earlier page moved read tail back")
+	}
+	if err := b.BindDay("2026-10-27", "s"); err != nil {
+		t.Fatal(err)
+	}
+	if day.ReadThrough != (Ref{Seq: 1, Index: 1}) {
+		t.Fatal("idempotent binding reset read tail")
+	}
+	clone, err := b.Clone()
+	if err != nil || clone.captureDays["2026-10-27"].ReadThrough != day.ReadThrough {
+		t.Fatal("read tail not persisted", err)
+	}
+	if err := b.BindDay("2026-10-27", "new"); err != nil {
+		t.Fatal(err)
+	}
+	if day.ReadThrough != (Ref{}) {
+		t.Fatal("new session inherited read tail")
+	}
+	p, err := NewCall(b, "new", json.RawMessage(`{"after":"1.1"}`), nil, captureTestNow).Captures(o)
+	if err != nil || p.Kind != "empty" || day.ReadThrough != (Ref{}) {
+		t.Fatal("empty page marked read", err)
+	}
+	NewCall(b, "new", json.RawMessage(`{"source":{"from":"#1.0","to":"#1.1"}}`), nil, captureTestNow).FileChanges()
+	if b.CaptureProgress("2026-10-27") != "0" {
+		t.Fatal("replacement advanced without reading")
+	}
+}
+
+func TestCaptureExchangeEndpointExistsInBusinessDay(t *testing.T) {
+	b := captureTestBook(t, []CaptureSegment{captureTestSegment(captureTestNow.Add(-time.Hour))})
+	args := json.RawMessage(`{"source":{"day":true},"exchanges":{"create":[{"from":"#1.0","to":"#1.99","title":"交付","summary":"周五交付","projects":[{"match":"none"}]}]}}`)
+	cites := map[string]Citation{
+		"#1.0":  {Ref: "#1.0", Speaker: "wearer"},
+		"#1.99": {Ref: "#1.99", Speaker: "wearer"},
+	}
+	text := NewCall(b, "s", args, cites, captureTestNow).FileChanges()
+	if !strings.Contains(text, "没有被接受") || len(b.State().Changesets) != 0 {
+		t.Fatal("missing exchange endpoint accepted", text)
+	}
+	text = NewCall(b, "unbound", args, cites, captureTestNow).FileChanges()
+	if strings.Contains(text, "没有被接受") || len(b.State().Exchanges) != 1 {
+		t.Fatal("unbound behavior changed", text)
 	}
 }

@@ -24,19 +24,19 @@ turns:
   - captures_file: data/workday/morning.yaml
     input: 整理交谈
     expect:
-      calls: ["captures", "mcp_xinli__file_changes"]
+      calls: ["mcp_xinli__captures", "mcp_xinli__file_changes"]
       no_calls: ["mcp_xinli__file_day"]
       xinli: {gold: {}}
   - captures_file: data/workday/midday.yaml
     input: 整理交谈
     expect:
-      calls: ["captures", "mcp_xinli__file_changes"]
+      calls: ["mcp_xinli__captures", "mcp_xinli__file_changes"]
       no_calls: ["mcp_xinli__file_day"]
       xinli: {gold: {}}
   - captures_file: data/workday/evening.yaml
     input: 整理今天
     expect:
-      calls: ["captures", "mcp_xinli__file_changes", "mcp_xinli__day_ledger", "mcp_xinli__file_day"]
+      calls: ["mcp_xinli__captures", "mcp_xinli__file_changes", "mcp_xinli__day_ledger", "mcp_xinli__file_day"]
       no_call_args: {"mcp_xinli__file_*": "失眠"}
       memories:
         - {contains: 茶}

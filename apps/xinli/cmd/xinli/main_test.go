@@ -85,7 +85,7 @@ func TestDevReadinessFixtureMCPAndEOF(t *testing.T) {
 				t.Errorf("missing key: %s", key)
 			}
 		}
-		if len(r) != 8 || r["name"] != source.Name || r["business_line"] != bl || r["url"] != info.MCPURL || r["timeout"] != "30s" || r["cite_captures"] != true || r["acks"] != true || r["attests_speakers"] != false {
+		if len(r) != 8 || r["name"] != source.Name || r["business_line"] != bl || r["url"] != info.MCPURL || r["timeout"] != "30s" || r["cite_captures"] != true || r["acks"] != false || r["attests_speakers"] != true {
 			t.Fatalf("registration: %+v", r)
 		}
 		if !reflect.DeepEqual(info.Registrations[i].Tools.NoApproval, source.NoApproval) {

@@ -308,7 +308,12 @@ func (c *Call) FileDay() string {
 		return fmt.Sprintf("没有收下：当天总览与觉察含健康信息（「%s」）。这里只写事务与沟通方式，删去关于身心健康的整句（包括他人的），不要换个说法，再交一次", strings.Join(ws, "」「"))
 	}
 	now := c.now
-	day := Day{Date: now.Format(time.DateOnly), Session: c.session, FiledAt: now, Headline: in.Day.Headline,
+	date := now.Format(time.DateOnly)
+	// 整理可能拖到次日，业务日由工作 Session 的绑定决定，不随提交时钟漂移。
+	if bound, _ := c.u.boundDay(c.session); bound != "" {
+		date = bound
+	}
+	day := Day{Date: date, Session: c.session, FiledAt: now, Headline: in.Day.Headline,
 		Highlights: in.Day.Highlights, Awareness: in.Awareness}
 	// 同一 Session 再次整理（重试）时取代之前的结果。
 	if c.session != "" {

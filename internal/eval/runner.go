@@ -497,11 +497,14 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		}
 		devs = append(devs, dev)
 	}
-	var sid, sessionAgent string
+	var sid, sessionAgent, businessDay string
+	// 一次 trial 共用运行当天；长用例跨午夜也不因新建 Session 换业务日。
+	runDay := captureBusinessDay(start)
+	captureDays := map[string]string{}
 	var sessions []string
-	// topics 与 labels 是每个 Session 按提交顺序的旁听主题与金标（CaptureSegment.Topic、Gold），用于计算项目归集的
+	// topics 与 labels 按 Session 与提交返回的引用保存主题与金标，用于计算项目归集的
 	// 纯度与碎片率、金标指标；gold 是金标随旁听与用户改动的状态。
-	topics, labels := map[string][]string{}, map[string][]string{}
+	topics, labels := map[string]string{}, map[string]string{}
 	var gold *goldBook
 	if c.gold != nil {
 		gold = newGoldBook(c.gold)
@@ -542,6 +545,23 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 			}
 			sid, sessionAgent = id, agent
 			sessions = append(sessions, id)
+			def, err := in.agents.Get(&v1.AgentRef{Name: agent, Version: version})
+			if err != nil {
+				tr.Err = err.Error()
+				return tr
+			}
+			businessDay = ""
+			if usesPersonaCaptures(def) {
+				businessDay = runDay
+				if err := in.xinli.BindDay(tctx, bl, endUser, businessDay, sid); err != nil {
+					tr.Err = "bind business day: " + err.Error()
+					return tr
+				}
+				// 同日换绑后可能重读旧批次，标注必须能由新 Session 的引用找到。
+				inheritCaptureMarks(topics, sid, businessDay, captureDays)
+				inheritCaptureMarks(labels, sid, businessDay, captureDays)
+				captureDays[sid] = businessDay
+			}
 			if x := c.Setup.Xinli; x != nil && x.ProjectSession != "" {
 				if err := in.xinli.Bind(tctx, bl, endUser, x.ProjectSession, id); err != nil {
 					tr.Err = err.Error()
@@ -570,16 +590,17 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 				segs[i] = g.heard()
 			}
 		}
-		for _, g := range turn.Captures {
-			topics[sid] = append(topics[sid], g.Topic)
-			labels[sid] = append(labels[sid], g.Gold)
-		}
 		if gold != nil {
 			gold.hear(turn.Captures, c.Noise)
 		}
-		if err := in.submitCaptures(tctx, sid, segs); err != nil {
+		refs, err := in.submitCaptures(tctx, sid, businessDay, ti+1, segs)
+		if err != nil {
 			tr.Err = fmt.Sprintf("turn %d: captures: %v", ti+1, err)
 			return tr
+		}
+		for i, ref := range refs {
+			topics[sid+"/"+ref] = turn.Captures[i].Topic
+			labels[sid+"/"+ref] = turn.Captures[i].Gold
 		}
 		if in.xinli != nil {
 			// 扮演业务线服务端：它清楚自己提交的是哪种整理，只接受"整理今天"那次 Run 的 file_day（F7）。
@@ -589,7 +610,6 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 			}
 		}
 		var obs *observation
-		var err error
 		if c.Call {
 			obs, err = in.callTurn(tctx, voice, rec, sid, turn, c.Timeout)
 		} else if c.XinliSpanRuns && sessionAgent == "xinli-day" && (turn.Input == "整理交谈" || turn.Input == "整理今天") {
@@ -621,19 +641,7 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 				return tr
 			}
 			obs.xinli = &x
-			if x := turn.Expect.Xinli; x != nil && x.Grouping != nil {
-				if obs.topics, err = in.bySegment(tctx, topics); err != nil {
-					tr.Err = fmt.Sprintf("turn %d: %v", ti+1, err)
-					return tr
-				}
-			}
-			if x := turn.Expect.Xinli; x != nil && x.Gold != nil {
-				if obs.labels, err = in.bySegment(tctx, labels); err != nil {
-					tr.Err = fmt.Sprintf("turn %d: %v", ti+1, err)
-					return tr
-				}
-				obs.gold = gold
-			}
+			obs.topics, obs.labels, obs.gold = topics, labels, gold
 		}
 		// 断言只看有效的 Memory：被取代的作为历史保留（m4-memory-grant.md §11），不算"还记着"。
 		obs.memories, _ = in.mems.Store.List(tctx, endUser, []memory.Scope{{BusinessLine: bl}}, time.Now(), memory.DefaultMaxPerUser)
@@ -674,7 +682,7 @@ type observation struct {
 	compactions, takeovers int
 	tickets                []string            // CRM 中本 EndUser 的工单
 	xinli                  *xinlifixture.State // xinli MCP Server 中本 EndUser 的数据
-	topics                 map[string]string   // 旁听 Session 与引用编号（"ses/57.3"）→ 那段旁听的主题
+	topics                 map[string]string   // 旁听 Session 与业务日中的引用编号（"ses/57.3"）→ 那段旁听的主题
 	labels                 map[string]string   // 同上 → 那段旁听标的金标（CaptureSegment.Gold）
 	gold                   *goldBook           // 本轮之后金标的状态
 	goldDetail             string              // 金标指标的诊断（check 填写）
@@ -973,27 +981,6 @@ func relativeDate(s string) string {
 	return time.Now().In(captureZone).AddDate(0, 0, -n).Format(time.DateOnly)
 }
 
-// bySegment 按日志顺序把每段旁听对应到提交时给出的标注（主题或金标）：键是"Session/事件序号.段序号"。
-func (in *instance) bySegment(ctx context.Context, marks map[string][]string) (map[string]string, error) {
-	out := map[string]string{}
-	for sid, list := range marks {
-		events, err := eventlog.ReadAll(ctx, in.svc.Store.Log, sid, 0)
-		if err != nil {
-			return nil, err
-		}
-		i := 0
-		for _, e := range events {
-			for j := range e.GetCaptureAppended().GetSegments() {
-				if i < len(list) {
-					out[fmt.Sprintf("%s/%d.%d", sid, e.GetSeq(), j)] = list[i]
-				}
-				i++
-			}
-		}
-	}
-	return out, nil
-}
-
 // checkGrouping 计算项目归集的碎片率与纯度（xinli-captures.md §10、m4-eval.md）。交谈由模型划定范围，每段交谈的主题是
 // 范围内标了主题的旁听中最多的那个（相同时取先出现的），全是闲聊的没有主题。一段交谈可以关联几个项目：它对每个关联的
 // 项目各算一次，算作的主题是这段交谈中出现过的、且是那个项目在只关联一个项目的交谈中占多数的主题；没有这样的主题时
@@ -1108,7 +1095,7 @@ func checkGrouping(add func(string, bool, string), want *GroupingExpect, st *xin
 	return frag, purity
 }
 
-// rangeTopics 返回交谈范围 [From, To] 内各段旁听标的主题（按日志顺序，不含没标的）。topics 的键是"Session/事件序号.段序号"。
+// rangeTopics 返回交谈范围 [From, To] 内各段旁听标的主题（按引用顺序，不含没标的）。topics 的键是"Session/批次.段号"。
 func rangeTopics(e *xinlifixture.Exchange, topics map[string]string) []string {
 	from, ok1 := capture.ParseRef(strings.TrimPrefix(e.From, "#"))
 	to, ok2 := capture.ParseRef(strings.TrimPrefix(e.To, "#"))
@@ -1160,15 +1147,38 @@ func commitmentMatches(m xinlifixture.Commitment, want CommitmentMatch) bool {
 // captureZone 是评测中 HostApp 所在的时区：用例的 at 按它解读。
 var captureZone, _ = time.LoadLocation("Asia/Shanghai")
 
-// submitCaptures 以 HostApp 的身份把旁听提交到 Session（docs/design/captures.md §3），按说话时间分批（captureBatches）。
-func (in *instance) submitCaptures(ctx context.Context, sid string, segs []CaptureSegment) error {
+// usesPersonaCaptures 保留内置 captures 用例的提交路径；xinli 通配白名单也包含业务线工具。
+func usesPersonaCaptures(d *agentdef.Def) bool {
+	return !slices.Contains(d.Capabilities, capture.Capability) && slices.ContainsFunc(d.Capabilities, func(name string) bool {
+		ok, _ := path.Match(name, "mcp:xinli/captures")
+		return ok
+	})
+}
+
+// captureBusinessDay 只取本次运行时钟；历史片段的说话时间不改变业务日。
+func captureBusinessDay(now time.Time) string {
+	return now.In(captureZone).Format(time.DateOnly)
+}
+
+// inheritCaptureMarks 保留旧 Session 的历史标注，并让换绑后的 Session 能给重读的引用评分。
+func inheritCaptureMarks(marks map[string]string, sid, day string, days map[string]string) {
+	for key, mark := range marks {
+		old, ref, ok := strings.Cut(key, "/")
+		if ok && days[old] == day {
+			marks[sid+"/"+ref] = mark
+		}
+	}
+}
+
+// submitCaptures 按相同规则分批、重编他人编号；只把仍使用内置 captures 的用例提交到内核。
+func (in *instance) submitCaptures(ctx context.Context, sid, businessDay string, turn int, segs []CaptureSegment) ([]string, error) {
 	out := make([]*v1.CaptureSegment, 0, len(segs))
 	for _, g := range segs {
 		seg := &v1.CaptureSegment{Speaker: v1.Speaker_SPEAKER_WEARER, Text: g.Text}
 		if g.At != "" {
 			at, err := captureTime(g.At)
 			if err != nil {
-				return fmt.Errorf("capture at %q: %w", g.At, err)
+				return nil, fmt.Errorf("capture at %q: %w", g.At, err)
 			}
 			seg.SpokenAt, seg.TimeZone = timestamppb.New(at), captureZone.String()
 		}
@@ -1180,12 +1190,55 @@ func (in *instance) submitCaptures(ctx context.Context, sid string, segs []Captu
 		}
 		out = append(out, seg)
 	}
-	for _, batch := range captureBatches(out) {
-		if _, err := in.svc.SubmitCaptures(ctx, sid, session.StreamTranscript, "cap_"+ids.Random()(), batch); err != nil {
-			return err
+	var refs []string
+	if len(out) == 0 {
+		return refs, nil
+	}
+	st, err := in.svc.Load(ctx, sid)
+	if err != nil {
+		return nil, err
+	}
+	for i, batch := range captureBatches(out) {
+		// 同一轮的同一批重投递时沿用 ID，由业务日内的幂等检查拒绝内容漂移。
+		captureID := fmt.Sprintf("cap_%s_%d_%d", sid, turn, i)
+		if businessDay != "" {
+			segments := make([]xinlifixture.CaptureSegment, len(batch))
+			for i, g := range batch {
+				segments[i] = xinlifixture.CaptureSegment{Speaker: "wearer", Text: g.GetText(), SpeakerKey: g.GetSpeakerKey(), TimeZone: g.GetTimeZone()}
+				if g.GetSpeaker() == v1.Speaker_SPEAKER_OTHER {
+					segments[i].Speaker = "other"
+				}
+				if g.GetSpokenAt() != nil {
+					segments[i].SpokenAt = g.GetSpokenAt().AsTime().Format(time.RFC3339Nano)
+				}
+			}
+			batchRefs, err := in.xinli.AppendCaptures(ctx, st.Created.GetBusinessLine(), st.Created.GetEndUser(), businessDay, captureID, segments)
+			if err != nil {
+				return nil, err
+			}
+			if len(batchRefs) != len(batch) {
+				return nil, fmt.Errorf("capture batch returned %d references for %d segments", len(batchRefs), len(batch))
+			}
+			refs = append(refs, batchRefs...)
+			continue
+		}
+		if _, err := in.svc.SubmitCaptures(ctx, sid, session.StreamTranscript, captureID, batch); err != nil {
+			return nil, err
+		}
+		// 只有内置路径的引用来自 Event；按 capture_id 匹配，不能把其他事件的序号当作批次。
+		events, err := eventlog.ReadAll(ctx, in.svc.Store.Log, sid, 0)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range events {
+			if e.GetCaptureAppended().GetCaptureId() == captureID {
+				for i := range batch {
+					refs = append(refs, fmt.Sprintf("%d.%d", e.GetSeq(), i))
+				}
+			}
 		}
 	}
-	return nil
+	return refs, nil
 }
 
 // captureBatches 把旁听按说话时间分批，与真实的 HostApp 一样约每分钟一批（一批至多 maxBatch 段；没有时间的只按段数），
@@ -1585,16 +1638,12 @@ func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation)
 
 // editCommitments 扮演用户在 App 中改承诺（Turn.XinliEdit）：按金标找到对应的那条未完成的承诺交给业务线改，金标随之
 // 改变。账本中没有对应的承诺时（整理没有记下），改动只记入金标，并作为一条失败的断言。
-func (in *instance) editCommitments(ctx context.Context, turn int, bl, endUser string, edits []GoldEdit, gold *goldBook, labels map[string][]string) ([]Assertion, error) {
-	segs, err := in.bySegment(ctx, labels)
-	if err != nil {
-		return nil, err
-	}
+func (in *instance) editCommitments(ctx context.Context, turn int, bl, endUser string, edits []GoldEdit, gold *goldBook, labels map[string]string) ([]Assertion, error) {
 	st, err := in.xinli.State(ctx, bl, endUser)
 	if err != nil {
 		return nil, err
 	}
-	matched := gold.match(&st, segs)
+	matched := gold.match(&st, labels)
 	var out []Assertion
 	for _, e := range edits {
 		target := ""
@@ -1737,7 +1786,7 @@ func needsXinli(agents *agentdef.Registry, cases []*Case, versions map[string]st
 				key += "/" + name
 			}
 			d, err := agents.Get(&v1.AgentRef{Name: name, Version: versions[key]})
-			if err == nil && usesXinli(d.Capabilities) {
+			if err == nil && (usesXinli(d.Capabilities) || usesPersonaCaptures(d)) {
 				return true
 			}
 		}

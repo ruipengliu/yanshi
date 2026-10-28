@@ -26,12 +26,13 @@ type captureBatch struct {
 
 // captureDay 独立于 file_day 的总览，换绑工作 Session 不改变引用与处理进度。
 type captureDay struct {
-	Session  string
-	Batches  []captureBatch
-	Next     uint64
-	Progress string
-	GapMS    int64
-	GapSet   bool
+	Session     string
+	Batches     []captureBatch
+	Next        uint64
+	Progress    string
+	ReadThrough Ref
+	GapMS       int64
+	GapSet      bool
 }
 
 func (u *Book) captureDay(date string) *captureDay {
@@ -66,7 +67,12 @@ func (u *Book) BindDay(date, session string) error {
 	if bound, _ := u.boundDay(session); bound != "" && bound != date {
 		return fmt.Errorf("session is bound to another business day")
 	}
-	u.captureDay(date).Session = session
+	day := u.captureDay(date)
+	if day.Session != session {
+		// 换绑后的模型没有见过旧 Session 的页，不能继承它的已读范围。
+		day.ReadThrough = Ref{}
+		day.Session = session
+	}
 	return nil
 }
 
@@ -145,6 +151,25 @@ func (d *captureDay) segments() []captureSegment {
 	return out
 }
 
+// containsRef 只检查端点是否存在，不要求范围中的批次连续；擦除后的空号也不能靠范围补回。
+func (d *captureDay) containsRef(ref Ref) bool {
+	for _, batch := range d.Batches {
+		if batch.Number == ref.Seq {
+			return ref.Index >= 0 && ref.Index < len(batch.Segments)
+		}
+	}
+	return false
+}
+
+// CapturePosition 由当前工作 Session 查处理进度，避免换绑后旧 Session 继续参与评测编排。
+func (u *Book) CapturePosition(session string) (string, error) {
+	date, day := u.boundDay(session)
+	if day == nil {
+		return "", fmt.Errorf("session is not bound to a business day")
+	}
+	return u.CaptureProgress(date), nil
+}
+
 // CaptureProgress 只暴露处理位置，不把原文塞进评测镜像 State。
 func (u *Book) CaptureProgress(date string) string {
 	if day := u.captureDays[date]; day != nil {
@@ -154,7 +179,7 @@ func (u *Book) CaptureProgress(date string) string {
 }
 
 // advanceCaptures 与变更集 commit 同处 Book 事务，只提交当前范围完整覆盖的连续时段。
-// 不拼接不同变更集的部分范围，不依赖 Run 完成或内核回执页链。
+// 不拼接不同变更集的部分范围，且时段末尾不能超过当前工作 Session 实际返回过的页尾。
 func (c *Call) advanceCaptures(from, to Ref) {
 	_, day := c.u.boundDay(c.session)
 	if day == nil || !day.GapSet {
@@ -172,7 +197,7 @@ func (c *Call) advanceCaptures(from, to Ref) {
 		for end+1 < len(segs) && !captureApart(segs[end].g, segs[end+1].g, gap) {
 			end++
 		}
-		if !refLE(from, segs[start].ref) || !refLE(segs[end].ref, to) {
+		if !refLE(from, segs[start].ref) || !refLE(segs[end].ref, to) || !refLE(segs[end].ref, day.ReadThrough) {
 			return
 		}
 		day.Progress = segs[end].ref.String()

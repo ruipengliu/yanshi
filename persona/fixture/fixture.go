@@ -7,7 +7,9 @@
 // GET /week 返回 domain.WeekPlan；POST /bind_week {from,session} 绑定每周回顾 Session。
 // POST /captures {date,capture_id,segments:[{speaker,speaker_key,text,spoken_at,time_zone}]} 返回 {refs}。
 // POST /bind_day {date,session} 绑定业务日当前工作 Session。
-// archive 返回项目 ID 数组；除 captures 外其余成功的 POST 返回 {}。错误返回 4xx 与简短英文 error。
+// POST /capture_position {session} 只读当前工作 Session 的处理进度，返回 {after}。
+// POST /capture_preview {session,after,all,page_options} 返回结构化页，只供评测编排预览。
+// archive 返回项目 ID 数组；除 captures、capture_position、capture_preview 外其余成功的 POST 返回 {}。错误返回 4xx 与简短英文 error。
 // 应用层编排器也可以直接在 store.Update/View 中使用 Book 的同名方法。
 package fixture
 
@@ -15,6 +17,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"time"
 
@@ -84,6 +87,42 @@ func Handler(s store.Store, opts Options) http.Handler {
 			return nil, err
 		}
 		return struct{}{}, b.BindDay(in.Date, in.Session)
+	})
+	register("POST", "/capture_preview", true, func(b *domain.Book, r *http.Request) (any, error) {
+		var in struct {
+			Session     string             `json:"session"`
+			After       string             `json:"after"`
+			All         bool               `json:"all"`
+			PageOptions domain.PageOptions `json:"page_options"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		o := in.PageOptions
+		if o.Limit <= 0 || o.MaxChars <= 0 || o.GapMS <= 0 || o.GapMS > math.MaxInt64/int64(1000000) || o.MaxToolResult < 0 {
+			return nil, errPageOptions
+		}
+		args, err := json.Marshal(struct {
+			After string `json:"after"`
+			All   bool   `json:"all"`
+		}{in.After, in.All})
+		if err != nil {
+			return nil, err
+		}
+		// View 的隔离快照不提交：预览不能替模型记下已读页尾，也不能固定真实的时段间隔。
+		return domain.NewCall(b, in.Session, args, nil, now()).Captures(o)
+	})
+	register("POST", "/capture_position", true, func(b *domain.Book, r *http.Request) (any, error) {
+		var in struct {
+			Session string `json:"session"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		after, err := b.CapturePosition(in.Session)
+		return struct {
+			After string `json:"after"`
+		}{after}, err
 	})
 	for _, op := range []string{"bind", "submitted", "edit", "resolve", "resolve_merge", "archive", "bind_week"} {
 		register("POST", "/"+op, false, func(b *domain.Book, r *http.Request) (any, error) {

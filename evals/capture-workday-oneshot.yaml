@@ -26,7 +26,7 @@ turns:
   - captures_file: data/workday/all.yaml
     input: 整理今天
     expect:
-      calls: ["captures", "mcp_xinli__file_changes", "mcp_xinli__day_ledger", "mcp_xinli__file_day"]
+      calls: ["mcp_xinli__captures", "mcp_xinli__file_changes", "mcp_xinli__day_ledger", "mcp_xinli__file_day"]
       no_call_args: {"mcp_xinli__file_*": "失眠"}
       memories:
         - {contains: 茶}

@@ -11,10 +11,10 @@ turns:
       - {speaker: wearer, text: 张总，报价单我明天发给您。, at: "2026-10-23 09:00", gold: quote}
       - {speaker: wearer, text: 样板我下周一带给您。, at: "2026-10-23 09:01", gold: sample}
     input: >-
-      整理今天。用 captures 读取今天的原话，只用一个 source 为 {day: true} 的 file_changes 交出交谈与两条承诺，
+      整理今天。用 mcp_xinli__captures 读取今天的原话，只用一个 source 为 {day: true} 的 file_changes 交出交谈与两条承诺，
       创建项先写报价单、再写样板，不要另交按范围的变更集。
     expect:
-      calls: ["captures", "mcp_xinli__file_changes"]
+      calls: ["mcp_xinli__captures", "mcp_xinli__file_changes"]
       xinli:
         commitments:
           - {kind: mine, contains: 报价, status: open, verified: true}

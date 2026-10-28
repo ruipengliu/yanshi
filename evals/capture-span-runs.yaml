@@ -14,7 +14,7 @@ turns:
       - {speaker: other, key: li, text: 我是李经理，办公室报价单能提前到下周二吗？, at: "2026-10-23 15:00"}
       - {speaker: wearer, text: 可以，报价单改到下周二前给你。, at: "2026-10-23 15:01", gold: quote}
     expect:
-      calls: [captures, mcp_xinli__file_changes, mcp_xinli__day_ledger, mcp_xinli__file_day]
+      calls: [mcp_xinli__captures, mcp_xinli__file_changes, mcp_xinli__day_ledger, mcp_xinli__file_day]
       xinli:
         gold: {commitment_precision: 1, commitment_recall: 1, revision_accuracy: 1, revision_in_place: 1}
         exchanges: {min: 2, max: 2}

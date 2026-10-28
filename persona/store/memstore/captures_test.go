@@ -33,7 +33,7 @@ func TestCaptureProgressTransaction(t *testing.T) {
 	accept := func(b *domain.Book) error {
 		c := domain.NewCall(b, "s", json.RawMessage(`{"source":{"from":"#1.0","to":"#1.0"}}`), nil, now)
 		c.FileChanges()
-		if c.Ack() == nil || b.CaptureProgress("2026-10-27") != "1.0" {
+		if len(b.State().Changesets) != 1 || b.CaptureProgress("2026-10-27") != "1.0" {
 			t.Fatal("range not accepted")
 		}
 		return nil
@@ -75,4 +75,56 @@ func TestCaptureProgressTransaction(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+// 读页事务失败后，接受空变更集也不能凭失败事务里看到的页推进处理进度。
+func TestCaptureReadTailTransaction(t *testing.T) {
+	ctx := context.Background()
+	s := memstore.New()
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	opts := domain.PageOptions{Limit: 200, MaxChars: 6000, GapMS: 300000, MaxToolResult: 8000}
+	if err := s.Update(ctx, "bl", "u", func(b *domain.Book) error {
+		if err := b.BindDay("2026-10-27", "s"); err != nil {
+			return err
+		}
+		// 先固定间隔，失败读页之后仅凭已读页尾就能判断有没有泄漏。
+		if _, err := domain.NewCall(b, "s", nil, nil, now).Captures(opts); err != nil {
+			return err
+		}
+		_, err := b.AppendCaptures("2026-10-27", "a", []domain.CaptureSegment{{Speaker: "wearer", Text: "交付"}})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	read := func(b *domain.Book) error {
+		_, err := domain.NewCall(b, "s", nil, nil, now).Captures(opts)
+		return err
+	}
+	failure := errors.New("commit failed")
+	if err := s.Update(ctx, "bl", "u", func(b *domain.Book) error {
+		if err := read(b); err != nil {
+			return err
+		}
+		return failure
+	}); !errors.Is(err, failure) {
+		t.Fatal(err)
+	}
+	accept := func(want string) {
+		t.Helper()
+		if err := s.Update(ctx, "bl", "u", func(b *domain.Book) error {
+			c := domain.NewCall(b, "s", json.RawMessage(`{"source":{"from":"#1.0","to":"#1.0"}}`), nil, now)
+			c.FileChanges()
+			if b.CaptureProgress("2026-10-27") != want {
+				t.Fatal("processing position differs", b.CaptureProgress("2026-10-27"), want)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	accept("0")
+	if err := s.Update(ctx, "bl", "u", read); err != nil {
+		t.Fatal(err)
+	}
+	accept("1.0")
 }

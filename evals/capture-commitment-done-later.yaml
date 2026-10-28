@@ -15,7 +15,7 @@ turns:
       - {speaker: other, key: wang, text: 好，收到我就签。, at: "2026-10-23 11:02"}
     input: 整理交谈
     expect:
-      calls: ["captures", "mcp_xinli__find_related", "mcp_xinli__file_changes"]
+      calls: ["mcp_xinli__captures", "mcp_xinli__find_related", "mcp_xinli__file_changes"]
       xinli:
         commitments: [{kind: mine, contains: 框架合同, status: done}]
         commitments_count: {max: 0}

@@ -23,7 +23,7 @@ const AGENTS = [
   ["schedule", "日程管家（专员）"],
   ["travel", "出行助手（专员）"],
   ["research", "研究员（专员，需要沙箱）"],
-  ["xinli-day", "旁听的每日整理：🎧 提交转写后发「整理今天」（真实模型，需 xinli dev（apps/xinli）登记的 MCP）"],
+  ["xinli-day", "旁听的每日整理：先向 Persona 提交转写并绑定业务日，再发「整理今天」（真实模型，需 xinli dev 登记的 MCP）"],
   ["xinli-assistant", "旁听业务线的助手：查项目与最近几天（真实模型，需 xinli dev（apps/xinli）登记的 MCP）"],
   ["console", "脚本化模型：call / ask / stream 命令，无需密钥"],
   ["console-capture", "脚本化模型，开启旁听：🎧 提交转写后 call captures {}"],

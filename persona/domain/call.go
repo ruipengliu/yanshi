@@ -19,14 +19,13 @@ type Citation struct {
 }
 
 // Call 在一个 Book 的事务内执行一次领域操作，所有输入都由适配层显式传入。
-// 不复用 Call，以免上一次调用的交付回执或通知泄漏到下一次。
+// 不复用 Call，以免上一次调用的通知泄漏到下一次。
 type Call struct {
 	u       *Book
 	session string
 	args    json.RawMessage
 	cites   map[string]Citation
 	now     time.Time
-	ack     map[string]string
 	Filed   *DayFiled
 }
 
@@ -40,7 +39,3 @@ type DayFiled struct {
 func NewCall(book *Book, session string, args json.RawMessage, cites map[string]Citation, now time.Time) *Call {
 	return &Call{u: book, session: session, args: args, cites: cites, now: now}
 }
-
-// Ack 只有范围变更集整体接受后才非空（docs/design/m7-kernel-primitives.md §11）。
-// 适配层必须等存储事务成功后才能向平台交出它。
-func (c *Call) Ack() map[string]string { return c.ack }

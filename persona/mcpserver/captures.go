@@ -43,7 +43,7 @@ func (x *server) captures(ctx context.Context, req *mcp.CallToolRequest) (*mcp.C
 	var page domain.StructuredPage
 	var pageErr error
 	now := x.now()
-	// 首读固定 gap 是业务日的内部读取设置，因此仍用 Update；不推进处理进度。
+	// gap 与已返回的页尾同事务保存；读取本身不推进处理进度。
 	err = x.store.Update(ctx, meta("business_line"), meta("end_user"), func(book *domain.Book) error {
 		call := domain.NewCall(book, meta("session"), req.Params.Arguments, nil, now)
 		page, pageErr = call.Captures(opts)
