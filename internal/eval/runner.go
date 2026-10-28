@@ -37,6 +37,7 @@ import (
 	"yanshi/internal/memory"
 	"yanshi/internal/model"
 	"yanshi/internal/node"
+	"yanshi/internal/oneshot"
 	"yanshi/internal/realtime"
 	"yanshi/internal/runtime"
 	"yanshi/internal/sandbox"
@@ -57,8 +58,10 @@ type Config struct {
 	// XinliBin 是外部开发夹具的可执行文件；只有 xinli 用例才启动。
 	XinliBin string
 	// Agents 是基础 AgentDef；用例的覆盖项与 ModelOverride 会派生出新版本。
-	Agents *agentdef.Registry
-	Model  *model.Gateway
+	Agents         *agentdef.Registry
+	Oneshots       *oneshot.Registry
+	OneshotVersion string
+	Model          *model.Gateway
 	// Judge 是评分模型（"provider/model"）。
 	Judge string
 	// EmbedModel 非空时 Memory 按向量检索。
@@ -88,20 +91,21 @@ type Config struct {
 }
 
 type instance struct {
-	clock   *offsetClock
-	queue   workqueue.Queue
-	cfg     Config
-	svc     *service.Service
-	hub     *node.Hub
-	mems    *memory.Service
-	agents  *agentdef.Registry
-	version map[string]string // 用例名 → 派生的 AgentDef 版本
-	workers *workerPool
-	arts    *artifact.Service
-	crm     *crmServer
-	xinli   *xinlifixture.Client
-	calls   *call.Manager
-	mcp     *mcpcap.Connector
+	clock    *offsetClock
+	queue    workqueue.Queue
+	cfg      Config
+	svc      *service.Service
+	oneshots *oneshot.Service
+	hub      *node.Hub
+	mems     *memory.Service
+	agents   *agentdef.Registry
+	version  map[string]string // 用例名 → 派生的 AgentDef 版本
+	workers  *workerPool
+	arts     *artifact.Service
+	crm      *crmServer
+	xinli    *xinlifixture.Client
+	calls    *call.Manager
+	mcp      *mcpcap.Connector
 
 	// controllerDone 在沙箱控制器退出（或未启动）时关闭。
 	controllerDone chan struct{}
@@ -188,6 +192,13 @@ func Run(ctx context.Context, cfg Config, cases []*Case) (*Report, error) {
 	var jobs []job
 	for i, c := range cases {
 		res := &CaseResult{Name: c.Name, XinliSpanRuns: c.XinliSpanRuns, Failures: map[string]int{}}
+		if c.Oneshot != "" {
+			d, err := in.oneshots.Registry.Default(c.Oneshot)
+			if err != nil {
+				return nil, err
+			}
+			res.Oneshot, res.OneshotVersion = d.Name, d.Version
+		}
 		results[i] = res
 		if slices.Contains(c.Requires, "sandbox") && cfg.Sandbox == nil {
 			res.Skipped = "requires sandbox"
@@ -282,8 +293,12 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 	if err != nil {
 		return nil, err
 	}
+	shots, err := deriveOneshots(cfg, cases)
+	if err != nil {
+		return nil, err
+	}
 	opts := app.Options{
-		Clock: clk, Agents: agents, Model: cfg.Model, Blobs: artifact.NewMemBlobs(), NodeAuth: node.InsecureDevAuth{},
+		Clock: clk, Agents: agents, Oneshots: shots, Model: cfg.Model, Blobs: artifact.NewMemBlobs(), NodeAuth: node.InsecureDevAuth{},
 		SandboxTools: cfg.Sandbox != nil, DefaultTimeout: 10 * time.Minute,
 		// 评测业务线视为已取得健康信息的单独同意，以评测模型对健康信息的处理（ADR-0022）。
 		HealthAllowed: func(bl string) bool { return bl == BusinessLine },
@@ -298,7 +313,7 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 		return core.WorkerConfig(id, workqueue.Pool{}, idle)
 	}}
 	controllerDone := make(chan struct{})
-	in := &instance{clock: clk, queue: st.Queue, cfg: cfg, svc: core.Service, hub: core.Hub, mems: core.Memory, agents: agents, version: versions, workers: pool, arts: core.Artifacts,
+	in := &instance{clock: clk, queue: st.Queue, cfg: cfg, svc: core.Service, oneshots: core.Oneshots, hub: core.Hub, mems: core.Memory, agents: agents, version: versions, workers: pool, arts: core.Artifacts,
 		calls: &call.Manager{Service: core.Service, Realtime: cfg.Realtime, Feed: feed.Source{Log: st.Log, Live: opts.Live}, Logger: cfg.Logger}}
 	in.controllerDone = controllerDone
 	var servers []mcpcap.Server
@@ -335,9 +350,15 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 
 // derive 为每个用例派生 AgentDef：应用用例的上下文覆盖与 ModelOverride，版本号带上用例名以免冲突。
 func derive(cfg Config, cases []*Case) (*agentdef.Registry, map[string]string, error) {
-	defs := cfg.Agents.All()
+	var defs []*agentdef.Def
+	if cfg.Agents != nil {
+		defs = cfg.Agents.All()
+	}
 	versions := map[string]string{}
 	for _, c := range cases {
+		if c.Oneshot != "" {
+			continue
+		}
 		base, err := cfg.Agents.Default(c.Agent)
 		if cfg.AgentVersion != "" {
 			base, err = cfg.Agents.Get(&v1.AgentRef{Name: c.Agent, Version: cfg.AgentVersion})
@@ -431,6 +452,9 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 	bl := BusinessLine
 	if c.Setup.NoHealth {
 		bl = NoHealthBusinessLine
+	}
+	if c.Oneshot != "" {
+		return in.oneshotTrial(tctx, c, bl, endUser)
 	}
 	if c.Setup.Xinli != nil {
 		x := c.Setup.Xinli
@@ -1797,6 +1821,9 @@ func needsXinli(agents *agentdef.Registry, cases []*Case, versions map[string]st
 		return slices.ContainsFunc(patterns, func(p string) bool { return strings.HasPrefix(p, "mcp:xinli/") })
 	}
 	for _, c := range cases {
+		if c.Oneshot != "" {
+			continue
+		}
 		if c.Setup.Xinli != nil {
 			return true
 		}

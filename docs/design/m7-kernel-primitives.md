@@ -1,6 +1,6 @@
 # M7 内核补充：Capture 正文存储、擦除、交付确认、定时、出站流、单次调用
 
-> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）；交付确认（§11）已删除，EndUser 删除屏障（§12）已实现，定时已全部实现（含 xinli-assistant 版本 2 使用、评测拨钟、pgqueue 内部到期表，压测结果见 §13），单次调用、档位、重答与 `speaker_ref` 按 P3 的讨论改写（[整体架构](./persona-architecture.md) §13 的 Q77–Q90），实现中；`speaker_ref`、档位已实现，其余未实现 · **§2–§4、§11 由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 取代**（旁听原文存放在业务线；§11 已删除），§5 按 P2 的讨论改写（没有窗口），§6 的擦除与修订信封不做 · ADR-0044（已取代）、ADR-0045、ADR-0046、ADR-0047、ADR-0049（已取代）、ADR-0050 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
+> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）；交付确认（§11）已删除，EndUser 删除屏障（§12）已实现，定时已全部实现（含 xinli-assistant 版本 2 使用、评测拨钟、pgqueue 内部到期表，压测结果见 §13），单次调用、档位、重答与 `speaker_ref` 按 P3 的讨论改写（[整体架构](./persona-architecture.md) §13 的 Q77–Q90），实现中；`speaker_ref`、档位与单次调用已实现，重答未实现 · **§2–§4、§11 由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 取代**（旁听原文存放在业务线；§11 已删除），§5 按 P2 的讨论改写（没有窗口），§6 的擦除与修订信封不做 · ADR-0044（已取代）、ADR-0045、ADR-0046、ADR-0047、ADR-0049（已取代）、ADR-0050 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
 
 xinli 落地需要内核补上的原语。每一项都按[整体架构](./persona-architecture.md) §9 的判据给出理由：第二条业务线也会需要，并且业务侧做不到或做了不安全。业务语义（交谈、承诺、项目、人）一律不进内核。
 
@@ -208,7 +208,7 @@ App 内的实时体验仍走 Connection 与 SSE。出站流服务于服务端的
 
 ## 7. 单次调用（Oneshot）
 
-> 按 P3 的讨论改写（[整体架构](./persona-architecture.md) §13 的 Q77–Q82）：只做 `generate`，输入只收文字。
+> 单次调用已实现（P3-⑤，2026-10-28）；按 [整体架构](./persona-architecture.md) §13 的 Q77–Q82，只做 `generate`，输入只收文字。编译、检查与真实模型评测待远端执行。
 
 ### 7.1 为什么
 
@@ -228,23 +228,29 @@ input: {max_chars: 8000}       # 按 Unicode 字符计
 output:                        # 可选：JSON Schema，平台校验（不解析外部引用），不合格时修复一次后失败
   type: object
   properties: {brief: {type: string}}
+  required: [brief]
+  additionalProperties: false
 max_output_tokens: 300
 concurrency: 8                 # 本声明（各版本共享）的并发上限
 work_class: interactive        # interactive | background
 ```
 
-`kind: embedding` 推迟到 Persona 的向量检索（Q77）。
+声明不需要 `kind`；显式写 `kind: generate` 兼容接受，其他值拒绝。`kind: embedding` 推迟到 Persona 的向量检索（Q77）。名字与版本沿用 AgentDef 格式；输入、输出 token 与声明并发上限必须为正；模型引用须为 provider/model。缺省 work_class 为 interactive。同名所有版本的 concurrency 必须一致。Schema 在加载时由 google/jsonschema-go 编译，内部引用可用，禁止外部引用与加载器。
 
 ### 7.3 接口与语义
 
-`POST /v1/oneshots/{name}`，`{end_user, input}`。服务令牌须带 `end_user`；用户令牌只能是本人。返回实际版本、模型与输出（文字，或声明了 `output` 时的 JSON）。
+`POST /v1/oneshots/{name}`，`{end_user, input}`。服务令牌须带 `end_user`；用户令牌只能是本人。返回 `{name, version, model, output}`，output 为字符串，声明了 Schema 时为 JSON 值。开发模式沿用创建 Session 的方式在请求体给出 business_line。目录不存在或没有声明时接口返回 404，不装配单次调用服务，也不校验单次调用限额。
 
 - **输入只收文字**（Q78）：ADR-0050 后原文在业务线，业务线自己读出并按说话人格式化。单次调用没有工具、Memory 与日志，不涉及来源推导，其中的说话人标注不会被当作可信来源。
 - **不写日志、不存结果**：日志与指标只记 ID、名称、版本与 token 数（ADR-0015）。调用方不得保存他人原话的派生内容超过原文的保留期，原文擦除后要丢弃在途结果（接入文档写明）。不承诺跨 HTTP 重试的幂等：没有结果存储，重试就是再调一次、再计一次费。
-- **顺序**：鉴权与声明、输入校验 → EndUser 删除屏障（§12）→ 输入内容安全 → 配额 → 准入 → 模型调用 → 计量 → 输出内容安全 → Schema 校验（不合格修复一次，两次都计量；内容安全拒绝不重试）→ 返回前复查屏障。总时限从准入之前开始，覆盖修复调用。
+- **顺序**：鉴权与声明、输入校验 → EndUser 删除屏障（§12）→ 输入内容安全 → 配额 → 准入 → 模型调用 → 计量 → 输出内容安全 → Schema 校验（不合格修复一次，两次都计量；内容安全拒绝不重试）→ 返回前复查屏障。总时限从声明与输入校验之前开始，默认 60 秒，覆盖审核、排队和两次调用。一次请求只选一次版本；修复仍用同一声明、原始输入及固定错误类别 invalid_json 或 schema_mismatch，不回送失败输出或校验库原文。客户端取消不撤销已消耗 token 的计量，但计量仍受原总时限约束；存储失败或时限已到时沿用 ADR-0019 的尽力计量。
 - **计量与配额**：照常计量到业务线与 EndUser（ADR-0019），用量记 `oneshot = name@version`（不冒充 Agent），超额拒绝；价格表的启动校验覆盖所有单次调用的模型。
-- **准入**（Q80）：与 Run 的模型调用共用 `model.Guard`。优先级：交互 Run > 交互单次调用 > 后台 Run > 后台单次调用（`work_class: background`）。并发受限时，名额释放先回填后台 Run 的最低在途份额，达到份额后按上述顺序交付；后台单次调用不计入份额。最低份额默认并发上限的 1/8 向上取整，须严格小于上限（并发为 1 时显式设 0）；不抢占、不限制后台上限，空闲时后台可占满。四类准入与按键上限工具已实现于 `internal/model`，服务接入见 P3-⑤。单次调用另有三层并发上限：全部单次调用合计、每业务线、每个声明；进入 Guard 之前按固定顺序有界等待，超时返回 429，持有到逻辑调用结束（含重试退避）。合计上限必须小于提供商的总并发（启动校验）：这部分容量单次调用永远占不到，问答在单次调用饱和时仍有名额。RPS 令牌桶共享，RPS 成为瓶颈时单次调用仍可能挤占问答的发起速率（遗留）。
-- **评测**：`evals/` 增加单次调用的用例形态，改指令与模型须与基线比较。
+- **准入**（Q80）：与 Run 的模型调用共用 `model.Guard`。优先级：交互 Run > 交互单次调用 > 后台 Run > 后台单次调用（`work_class: background`）。并发受限时，名额释放先回填后台 Run 的最低在途份额，达到份额后按上述顺序交付；后台单次调用不计入份额。最低份额默认并发上限的 1/8 向上取整，须严格小于上限（并发为 1 时显式设 0）；不抢占、不限制后台上限，空闲时后台可占满。四类准入与按键上限工具位于 `internal/model`，`oneshot.Service` 经 `app.NewCore` 装配并接入。单次调用另有三层并发上限：全部单次调用合计、每业务线、每个声明；进入 Guard 之前按固定顺序有界等待，超时返回 429，持有到逻辑调用结束（含重试退避）。合计上限必须小于提供商的总并发（启动校验）：这部分容量单次调用永远占不到，问答在单次调用饱和时仍有名额。RPS 令牌桶共享，RPS 成为瓶颈时单次调用仍可能挤占问答的发起速率（遗留）。
+- **三层配置**：合计用 `app.Options.OneshotMax`（默认 8），业务线用配置 oneshots.max_concurrency（默认 0，只受其他层约束），声明用 concurrency。按合计、业务线、声明名依次获取；声明键不含版本或业务线。`app.Options.OneshotWait` 为每层最长等待（默认 2 秒），失败时逆序释放已获取的名额；成功时持有到函数返回。`app.Options.OneshotDeadline` 为整个请求的时限。
+- **错误**：未知声明或删除屏障 404；空输入、缺 EndUser、Unicode 字符超限 400；冒充其他用户 403；内容安全拒绝 422、不可用 503；配额 429（携带 quota 与 Retry-After）；并发等待超时 429；总时限或模型超时 504；两次 Schema 都不合格或模型失败 502。错误不携带输入输出。
+- **指标**：`yanshi_oneshot_calls_total{name, version, outcome}` 每个逻辑调用一次；未知名称使用空标签，防止用户任意名称成为指标维度。outcome 仅使用固定结果类别；模型 token 同时计入既有 token 指标。
+- **评测**：用例写 oneshot 而非 agent，每轮直接经同一个 Service 调用。`evals/oneshot-live-brief.yaml` 的三个独立输入每个 trial 都运行，三次 trial 检查波动；JSON 按完整 JSON 文本做 reply 与 judge 断言，声明有 Schema 默认检查 output_schema_valid。`-oneshot-version` 指定发布前版本，`-agent-version` 不影响它；改指令与模型须与基线比较。
+- **删除交错验证**：`internal/oneshot/service_test.go` 覆盖模型返回、计量写入、输出审核时注销，复用无 Session 的 Meter 屏障复查，最终不返回内容且用量匿名化；没有为单次调用新增 Session 或 sim 步进状态。
 
 ## 8. 档位（Tier）
 
@@ -297,7 +303,7 @@ ADR-0050 的退役条件已满足。内核不再登记回执或在 Run 完成时
 
 ## 12. EndUser 删除屏障
 
-注销账号（`DELETE /v1/end_users/{id}`）期间，按 EndUser 写入的地方可能让数据复活：新建 Session、不带 Session 的用量（`usage.Meter` 已复查 EndUser 屏障）、档位（`end_user_tiers`）。
+注销账号（`DELETE /v1/end_users/{id}`）期间，按 EndUser 写入的地方可能让数据复活：新建 Session、单次调用等不带 Session 的用量（`usage.Meter` 已复查 EndUser 屏障）、档位（`end_user_tiers`）。
 
 - 注销先写 EndUser 删除记录（按业务线隔离，分片键为 EndUser），再清除；所有按 EndUser 的写入入口"先写、后查"这条记录（与 `lifecycle.Recheck` 同一写法）：新建 Session、计量、档位、单次调用。
 - 屏障在删除执行期保存，全部清除完成之后再保留宽限期（默认 24 小时，经 `app.Options.EndUserGrace` 配置），由 Janitor 删除到期记录；之后同一 EndUser ID 可以重新使用。失败或尚未完成的注销不开始倒计时，重复注销复用原屏障。业务线须先使用户令牌失效，宽限期用于拦截注销前已在途、注销后才落盘的请求。Session 删除记录仍不保存 EndUser，屏障只在执行期与宽限期内保存它。

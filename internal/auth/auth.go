@@ -82,7 +82,13 @@ type BusinessLine struct {
 	// Quota 是该业务线的配额（docs/design/m4-quota-usage.md §3）。
 	Quota usage.Limits `yaml:"quota,omitempty"`
 	// Memory 是该业务线的 Memory 设置（docs/design/m4-memory-grant.md §3）。
-	Memory MemorySettings `yaml:"memory,omitempty"`
+	Memory   MemorySettings  `yaml:"memory,omitempty"`
+	Oneshots OneshotSettings `yaml:"oneshots,omitempty"`
+}
+
+// OneshotSettings 在合计上限内限制本业务线；零值不再施加额外上限。
+type OneshotSettings struct {
+	MaxConcurrency int `yaml:"max_concurrency"`
 }
 
 // MemorySettings 是业务线的 Memory 设置。
@@ -107,6 +113,9 @@ func LoadDir(dir string) ([]BusinessLine, error) {
 		var bl BusinessLine
 		if err := yaml.Unmarshal(b, &bl); err != nil {
 			return nil, fmt.Errorf("%s: %w", f, err)
+		}
+		if bl.Oneshots.MaxConcurrency < 0 {
+			return nil, fmt.Errorf("%s: oneshots.max_concurrency must be nonnegative", f)
 		}
 		if err := bl.Quota.Prepare(); err != nil {
 			return nil, fmt.Errorf("%s: %w", f, err)

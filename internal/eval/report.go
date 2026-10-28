@@ -23,12 +23,14 @@ type Report struct {
 
 // CaseResult 是一个用例在多次运行上的汇总。
 type CaseResult struct {
-	Name          string  `json:"name"`
-	XinliSpanRuns bool    `json:"xinli_span_runs,omitempty"`
-	Skipped       string  `json:"skipped,omitempty"`
-	Trials        int     `json:"trials"`
-	Passed        int     `json:"passed"`
-	PassRate      float64 `json:"pass_rate"`
+	Name           string  `json:"name"`
+	Oneshot        string  `json:"oneshot,omitempty"`
+	OneshotVersion string  `json:"oneshot_version,omitempty"`
+	XinliSpanRuns  bool    `json:"xinli_span_runs,omitempty"`
+	Skipped        string  `json:"skipped,omitempty"`
+	Trials         int     `json:"trials"`
+	Passed         int     `json:"passed"`
+	PassRate       float64 `json:"pass_rate"`
 	// JudgeAvg 没有有效评分样本时省略；旧报告中的 0 仍可读。
 	JudgeAvg   *float64 `json:"judge_avg,omitempty"`
 	AvgTokens  uint64   `json:"avg_tokens"`

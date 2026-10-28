@@ -1,5 +1,6 @@
 // Package httpapi 以 HTTP/JSON + SSE 暴露 Session 操作。
 //
+//	POST /v1/oneshots/{name}                       无 Session 的单次调用（含 end_user 与 input）
 //	POST /v1/sessions                              创建 Session（可设 IANA time_zone；delete_at 为 RFC3339，仅服务令牌）
 //	GET  /v1/sessions?end_user=&cursor=&limit=     列出 Session（按最近输入倒序）
 //	GET  /v1/sessions/{id}                         Session 投影
@@ -34,7 +35,7 @@
 //	PUT  /v1/end_users/{id}/tier                   设置档位（仅服务令牌）
 //	DELETE /v1/end_users/{id}/tier                 恢复默认档位（仅服务令牌）
 //	GET  /v1/quota?end_user=                       当前周期的配额与已用（docs/design/m4-quota-usage.md §5）
-//	GET  /v1/usage?from=&to=&group_by=&end_user=   用量汇总（day | end_user | model | agent；金额单位：微元）
+//	GET  /v1/usage?from=&to=&group_by=&end_user=   用量汇总（day | end_user | model | agent | oneshot；金额单位：微元）
 //	/v1/debug/*                                    故障注入与进程指标，只在 serve -faults 时提供（debug.go）
 //
 // 除 /healthz 外，所有请求须携带业务线签发的令牌（Authorization: Bearer），
@@ -73,6 +74,7 @@ import (
 	"yanshi/internal/moderation"
 	"yanshi/internal/node"
 	"yanshi/internal/notify"
+	"yanshi/internal/oneshot"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
 	"yanshi/internal/speech"
@@ -81,9 +83,10 @@ import (
 
 type Server struct {
 	// Auth 校验令牌；nil 时等同 auth.Insecure（信任自报身份，仅限回环地址开发）。
-	Auth    auth.Verifier
-	Service *service.Service
-	Live    live.Bus
+	Auth     auth.Verifier
+	Service  *service.Service
+	Oneshots *oneshot.Service
+	Live     live.Bus
 	// Nodes 为 nil 时不提供 Node 相关信息。
 	Nodes node.Directory
 	// Artifacts 为 nil 时不提供工件接口。
@@ -108,6 +111,7 @@ var pj = protojson.MarshalOptions{UseProtoNames: true}
 // routes 是全部需要鉴权的接口；授权矩阵测试据此检查每个接口都被覆盖。
 func (s *Server) routes() map[string]http.HandlerFunc {
 	routes := map[string]http.HandlerFunc{
+		"POST /v1/oneshots/{name}":                         s.oneshot,
 		"POST /v1/sessions":                                s.create,
 		"GET /v1/sessions":                                 s.list,
 		"GET /v1/sessions/{id}":                            s.get,
@@ -277,11 +281,11 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 func (s *Server) fail(w http.ResponseWriter, err error) {
 	code := http.StatusInternalServerError
 	switch {
-	case errors.Is(err, service.ErrNotFound):
+	case errors.Is(err, service.ErrNotFound), errors.Is(err, oneshot.ErrNotFound):
 		code = http.StatusNotFound
 	case errors.Is(err, errForbidden):
 		code = http.StatusForbidden
-	case errors.Is(err, service.ErrInvalid):
+	case errors.Is(err, service.ErrInvalid), errors.Is(err, oneshot.ErrInvalid):
 		code = http.StatusBadRequest
 	case errors.Is(err, service.ErrConflict):
 		code = http.StatusConflict
@@ -302,6 +306,14 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 	case errors.Is(err, speech.ErrProvider):
 		code = http.StatusBadGateway
 	case errors.Is(err, moderation.ErrUnavailable):
+		code = http.StatusServiceUnavailable
+	case errors.Is(err, model.ErrBusy):
+		code = http.StatusTooManyRequests
+	case errors.Is(err, context.DeadlineExceeded):
+		code = http.StatusGatewayTimeout
+	case errors.Is(err, oneshot.ErrProvider), errors.Is(err, oneshot.ErrSchema):
+		code = http.StatusBadGateway
+	case errors.Is(err, oneshot.ErrInternal):
 		code = http.StatusServiceUnavailable
 	case errors.Is(err, service.ErrOverloaded):
 		code = http.StatusServiceUnavailable

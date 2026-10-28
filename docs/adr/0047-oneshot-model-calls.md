@@ -12,7 +12,7 @@ status: accepted
 
 （设计见 `docs/design/m7-kernel-primitives.md` §7）
 
-- `oneshots/*.yaml` 声明提示词、模型、可选的输出 JSON Schema 与工作类别，与 AgentDef 一样版本化、经发布配置灰度；种类为 `generate` 或 `embedding`。
+- `oneshots/*.yaml` 声明提示词、模型、可选的输出 JSON Schema 与工作类别，与 AgentDef 一样版本化、经发布配置灰度；本版只有生成一种（取嵌入向量的种类推迟，见上方修订）。
 - `POST /v1/oneshots/{name}`：输入为文字，业务线自己按说话人格式化（修订前还可以是一段旁听的引用范围）。
 - **不写日志、不存结果**，因此没有需要删除的数据；日志与指标只记 ID 与 token 数。
 - 照常计量与配额、输入输出都过内容安全、与 Run 共用提供商的准入；改动须经评测。
