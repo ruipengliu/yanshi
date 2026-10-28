@@ -62,7 +62,7 @@ var Tables = map[string]TableKey{
 	"inbox_versions": {Class: ByEndUser, Column: "node_id", Derived: "Node 所属的 EndUser",
 		Gaps: []string{"同 inbox"}},
 	"sessions": {Class: ByEndUser, Column: "end_user",
-		Offline: []string{"List 不指定 EndUser：业务线服务端列出 Session", "IdleBefore / ClosedBefore：Janitor 执行保留策略"},
+		Offline: []string{"List 不指定 EndUser：业务线服务端列出 Session", "IdleBefore / ClosedBefore / DueBefore：Janitor 执行保留策略与绝对期限"},
 		Gaps:    []string{"Get / Touch / MarkClosed / Delete 只凭 Session ID"}},
 	"memories": {Class: ByEndUser, Column: "end_user",
 		Offline: []string{"DeleteSession：Janitor 按来源 Session 删除"},

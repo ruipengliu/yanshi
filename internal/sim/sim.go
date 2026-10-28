@@ -148,6 +148,8 @@ type Stats struct {
 	CaptureContinuations, CaptureNewReads, CaptureNewResumes                        int
 	// RetentionKeptMemories 是按保留期到期删除、写入过的 Memory 得以保留的 Session（ADR-0037）。
 	RetentionKeptMemories int
+	// 擦除覆盖在途 Run、既有 Memory 保留与删除记录之后的迟到写入撤回。
+	Erasures, ErasuresInFlight, ErasureLateWithdrawn, ErasureKeptMemories int
 	// 回执使位置前进、缺回执而完全未前进，以及注入的业务拒收与 MCP 失败。
 	AcksCommitted, AcksMissing, AckRefusals, AckMCPFailures int
 	AttestedResults, AttestedRedactions, AttestedErrors     int

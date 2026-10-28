@@ -39,7 +39,7 @@
 
 `session_tombstones(session_id, business_line, requested_at, completed_at, reason)`：
 
-- 记录写入即生效。之后对该 Session 的所有 API 请求都返回 404，所有组件都不能再为它创建数据。
+- 记录写入即生效。之后对该 Session 的普通 API 请求都返回 404（仅服务令牌可读删除进度），所有组件都不能再为它创建数据。
 - 写入记录的同一条语句发出 `NOTIFY yanshi_deletions`（负载为 Session ID）。订阅中的事件流等这个通知结束自己（`lifecycle.Watcher`），不再每个保活周期查一次；兜底由 `pg.Notifier` 统一的限速校准承担（见 [M2 扩容压测](./m2-scale-test.md) §8）。订阅者多时，周期查询本身就是可观的负载（[延展性评审](../review/2026-10-11-scalability-review.md) §4.3）。
 - **Session 删除记录中不保存 EndUser。** 保留的记录只用于证明"某个 Session 已于某时被删除"。按 EndUser 注销的屏障在删除执行期与完成后的宽限期内保存 EndUser，之后由 Janitor 删除（§3.4）。
 
@@ -84,7 +84,7 @@
 
 ## 4. Session 索引
 
-`sessions(session_id, business_line, end_user, agent, created_at, last_input_at, closed_at)`：
+`sessions(session_id, business_line, end_user, agent, created_at, last_input_at, closed_at, delete_at)`：
 
 - 这是日志的**投影**，可以由日志重建，不是事实源（ADR-0004）。
 - 在创建、提交输入、关闭时写入。距上一个 Run 不到一分钟（`lifecycle.TouchEvery`）的输入不更新最后输入时间，连续对话因此不必每个 Run 都写一次索引。代价是最后输入时间至多滞后一分钟：列表排序可能差这么多，按空闲时长关闭的保留策略多等一分钟。
@@ -108,13 +108,28 @@ retention:
 
 由 Janitor 周期性地按 Session 索引扫描执行。平台不设默认值：保留多久是业务线的合规决策。
 
+### 5.1 绝对删除期限（ADR-0050）
+
+`POST /v1/sessions` 可带 RFC3339 格式的 `delete_at`，只有服务令牌可以设置；用户令牌带此字段返回 403。非空期限必须晚于 `service.Service` 使用的时钟当前时间，否则返回 400。未设置时没有绝对期限。内核不推算业务日，擦除后重建时由业务线传回原来的期限。
+
+期限同时记入 `SessionCreated.delete_at` 与 Session 索引，投影通过 `State.Created` 读取。委托派生的子 Session 从父日志继承期限，不延长原文副本的寿命。Janitor 在保留策略扫描中通过 `lifecycle.Index.DueBefore` 扫描期限早于当前时间的 Session；即使业务线没有配置 Retention，也会扫描。到期以 `retention` 删除，保留既有 Memory。与保留策略取较早者，期限不要求 Session 已关闭；实际清理由周期扫描与清理队列推进。
+
+### 5.2 Erasure 与删除进度（ADR-0050）
+
+`DELETE /v1/sessions/{id}?reason=erasure` 只接受服务令牌，用户令牌返回 403，其他显式 reason 值（含空值、多值）返回 400。不带 reason 时保持用户 `end_user`、服务 `service` 的删除行为。
+
+`lifecycle.ReasonErasure` 删除 Session 日志与各处副本，保留删除记录之前写入的 Memory；委托派生的子 Session 同因删除，包含创建子 Session 与父删除交错的路径。登记字段 `Holder.KeepOnRetention` 保留原名，语义扩展为 retention 与 erasure 都跳过既有 Memory；普通删除与注销账号仍清除 Memory。`lifecycle.Recheck` 不按原因豁免：新 Memory 写入后查到任何删除记录，都按本次 ID 撤回，不能因保留既有 Memory 而让迟到写入留下。
+
+`GET /v1/sessions/{id}/deletion` 只读 `Tombstone`，只接受服务令牌，并按删除记录的 BusinessLine 授权。返回 `reason`、`requested_at`，完成后另有 `completed_at`（RFC3339）；未完成时省略后者。没有删除记录或属于其他业务线时返回 404。该接口不加载 Session，因此日志清除后仍可读；开发模式须显式给出 `business_line`。完成标记沿用单个 Session 的清理语义，子 Session 各有自己的删除记录。
+
 ## 6. API
 
 | 接口 | 权限 | 说明 |
 |---|---|---|
 | `GET /v1/sessions?cursor=&limit=` | 用户：自己的；服务：本业务线（可按 `end_user` 过滤） | 按最近输入时间倒序 |
 | `POST /v1/sessions/{id}/close` | 拥有该 Session 的调用方 | 幂等 |
-| `DELETE /v1/sessions/{id}` | 同上 | 202，异步删除；之后访问返回 404 |
+| `DELETE /v1/sessions/{id}` | 同上；`reason=erasure` 仅服务令牌 | 202，异步删除；之后普通访问返回 404 |
+| `GET /v1/sessions/{id}/deletion` | 仅服务令牌，本业务线 | 单个 Session 的原因、请求时间与完成时间 |
 | `DELETE /v1/end_users/{id}` | 仅服务令牌 | 202，返回删除请求 ID |
 | `GET /v1/deletions/{id}` | 仅服务令牌 | 删除进度（Session 数与已完成数），供业务线向用户证明已删除 |
 
@@ -122,7 +137,7 @@ retention:
 
 - 一致性套件：Session 索引与删除记录（`lifecycletest`）的内存与 PG 实现。
 - **模拟测试**新增"删除"动作，随机发生在 Run 进行中、设备执行中、沙箱执行中，以及 Janitor 崩溃时。新增不变量：
-  - 删除完成后，所有存储中都不再有该 Session 的任何数据；
+  - 删除完成后，日志与各 Holder 不再有该 Session 的数据；retention 与 erasure 保留既有 Memory，迟到的新 Memory 撤回；
   - 删除记录写入后，不会再出现该 Session 的新事件、工件或沙箱。
 - e2e：注销一个同时有设备 Node、沙箱工作区和工件的用户，验证数据全部删除，Docker 卷也已移除。
 

@@ -126,8 +126,8 @@ _Avoid_: 消息、日志条目
 HostApp 提交的一段旁听转写：EndUser 与他人的日常对话，带说话人标签（佩戴者、他人），不是对 Agent 说的话。每个 Capture 属于一个 Stream，旁听转写是 transcript 流。作为 Event 进入 Session 但不触发 Run；yanshi 只接收文字，不接触音频与声纹。佩戴者的话按 EndUser 自己的输入对待，他人的话按不可信数据对待；未通过 Moderation 的片段只留不含文字的占位。一个 EndUser 在当地每天一个旁听 Session，原文随它按 Retention 删除。
 _Avoid_: 录音、输入（指它时）、CallTranscript（那是 Call 的转写）
 
-**Erasure（擦除）**（设计中，ADR-0050）:
-EndUser 删除一天中的部分谈话：业务线删除原文、按依据级联派生对象，再删除当天的工作 Session，删除原因为 Erasure：保留该 Session 写入的 Memory，列出依据可能落在被删范围内的 Memory 由用户决定。内核不按范围清除日志中的文字（ADR-0044 已取代）。
+**Erasure（擦除）**（内核原语已实现，业务侧流程另行实施，ADR-0050）:
+EndUser 删除一天中的部分谈话：业务线删除原文、按依据级联派生对象，再删除当天的工作 Session，删除原因为 Erasure（`erasure`）：保留该 Session 的既有 Memory，撤回迟到的新写入，清理后列出依据可能落在被删范围内的有效 Memory 由用户决定。内核不按范围清除日志中的文字（ADR-0044 已取代）。
 _Avoid_: 删除（指整个 Session 时）、屏蔽、隐藏
 
 **Ack（交付确认）**（已实现，[设计](docs/design/m7-kernel-primitives.md) §11、ADR-0049；ADR-0050 取代，按其退役条件删除）:

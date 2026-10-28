@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
@@ -89,7 +90,12 @@ func (d *Delegator) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke)
 	if d.BeforeCreate != nil {
 		d.BeforeCreate(ctx, child)
 	}
+	var deleteAt time.Time
+	if at := parent.Created.GetDeleteAt(); at != nil {
+		deleteAt = at.AsTime()
+	}
 	_, err = svc.Create(ctx, service.CreateRequest{
+		DeleteAt:  deleteAt,
 		SessionID: child, BusinessLine: parent.Created.GetBusinessLine(), EndUser: parent.Created.GetEndUser(), Agent: inv.GetCapability(),
 		Parent: &v1.ParentRef{SessionId: inv.GetSessionId(), RunId: inv.GetRunId(), CallId: inv.GetCallId(), Ancestors: ancestors},
 	})
@@ -114,7 +120,15 @@ func (d *Delegator) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke)
 	}
 	// 同样对父 Session：创建子 Session 的同时父 Session 被删除时，删除子 Session，不提交任务。
 	if gone, err := lifecycle.Recheck(ctx, svc.Deletions, inv.GetSessionId(), func(ctx context.Context) error {
-		return svc.Delete(ctx, child, "parent_deleted", "")
+		t, err := svc.Deletions.Get(ctx, inv.GetSessionId())
+		if err != nil {
+			return err
+		}
+		reason := "parent_deleted"
+		if lifecycle.KeepsMemory(t.Reason) {
+			reason = t.Reason
+		}
+		return svc.Delete(ctx, child, reason, "")
 	}); err != nil || gone {
 		return err
 	}

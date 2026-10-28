@@ -1,13 +1,14 @@
 // Package httpapi 以 HTTP/JSON + SSE 暴露 Session 操作。
 //
-//	POST /v1/sessions                              创建 Session
+//	POST /v1/sessions                              创建 Session（delete_at 为 RFC3339，仅服务令牌）
 //	GET  /v1/sessions?end_user=&cursor=&limit=     列出 Session（按最近输入倒序）
 //	GET  /v1/sessions/{id}                         Session 投影
 //	POST /v1/sessions/{id}/close                   关闭 Session（不可逆）
-//	DELETE /v1/sessions/{id}                       删除 Session（异步，202）
+//	DELETE /v1/sessions/{id}                       删除 Session（异步，202；reason=erasure 仅服务令牌）
 //	DELETE /v1/end_users/{id}                      删除 EndUser 的全部数据（仅服务令牌，异步，202）
+//	GET  /v1/sessions/{id}/deletion                单个 Session 的删除进度（仅服务令牌，按删除记录授权）
 //	GET  /v1/deletions/{id}                        删除请求的进度（仅服务令牌）
-//	GET  /v1/memories?category=&q=&end_user=       本业务线的 Memory（docs/design/m4-memory-grant.md §6）
+//	GET  /v1/memories?category=&q=&end_user=       本业务线的 Memory（重复 source_session 查询有效候选，仅服务令牌，最多 32 个）
 //	DELETE /v1/memories/{id}                       删除一条 Memory
 //	DELETE /v1/sessions/{id}/memories              删除该 Session 写入的全部 Memory（仅服务令牌；按来源撤销投毒）
 //	GET  /v1/memories/access?since=&end_user=      本业务线 Memory 的读取记录
@@ -47,6 +48,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"time"
 
@@ -108,6 +110,7 @@ func (s *Server) routes() map[string]http.HandlerFunc {
 		"POST /v1/sessions/{id}/close":                    s.close,
 		"DELETE /v1/sessions/{id}":                        s.delete,
 		"DELETE /v1/end_users/{id}":                       s.deleteEndUser,
+		"GET /v1/sessions/{id}/deletion":                  s.sessionDeletion,
 		"GET /v1/deletions/{id}":                          s.deletion,
 		"GET /v1/memories":                                s.listMemories,
 		"DELETE /v1/memories/{id}":                        s.forgetMemory,
@@ -323,14 +326,26 @@ func decode(r *http.Request, v any) error {
 
 func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		BusinessLine string `json:"business_line"`
-		EndUser      string `json:"end_user"`
-		Agent        string `json:"agent"`
-		AgentVersion string `json:"agent_version"`
+		BusinessLine string          `json:"business_line"`
+		EndUser      string          `json:"end_user"`
+		Agent        string          `json:"agent"`
+		AgentVersion string          `json:"agent_version"`
+		DeleteAt     json.RawMessage `json:"delete_at"`
 	}
 	if err := decode(r, &req); err != nil {
 		s.fail(w, err)
 		return
+	}
+	var deleteAt time.Time
+	if len(req.DeleteAt) > 0 {
+		if p := principal(r); !p.Service() && !p.Unrestricted {
+			s.fail(w, fmt.Errorf("%w: delete_at requires a service token", errForbidden))
+			return
+		}
+		if err := json.Unmarshal(req.DeleteAt, &deleteAt); err != nil || deleteAt.IsZero() {
+			s.fail(w, fmt.Errorf("%w: delete_at must be an RFC3339 timestamp", service.ErrInvalid))
+			return
+		}
 	}
 	bl, eu, err := claim(principal(r), req.BusinessLine, req.EndUser)
 	if err != nil {
@@ -338,7 +353,7 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, err := s.Service.Create(r.Context(), service.CreateRequest{
-		BusinessLine: bl, EndUser: eu, Agent: req.Agent, AgentVersion: req.AgentVersion,
+		BusinessLine: bl, EndUser: eu, Agent: req.Agent, AgentVersion: req.AgentVersion, DeleteAt: deleteAt,
 	})
 	if err != nil {
 		s.fail(w, err)
@@ -941,7 +956,20 @@ func (s *Server) close(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// delete 的 reason 仅允许显式指定 erasure，且只有服务令牌可以请求（ADR-0050）。
 func (s *Server) delete(w http.ResponseWriter, r *http.Request) {
+	reasons, explicit := r.URL.Query()["reason"]
+	if explicit {
+		if len(reasons) != 1 || reasons[0] != lifecycle.ReasonErasure {
+			s.fail(w, fmt.Errorf("%w: unsupported deletion reason", service.ErrInvalid))
+			return
+		}
+		if p := principal(r); !p.Service() && !p.Unrestricted {
+			s.fail(w, fmt.Errorf("%w: erasure requires a service token", errForbidden))
+			return
+		}
+	}
+
 	st, ok := s.session(w, r)
 	if !ok {
 		return
@@ -949,6 +977,9 @@ func (s *Server) delete(w http.ResponseWriter, r *http.Request) {
 	reason := "end_user"
 	if principal(r).Service() {
 		reason = "service"
+	}
+	if explicit {
+		reason = lifecycle.ReasonErasure
 	}
 	if err := s.Service.Delete(r.Context(), st.SessionID, reason, ""); err != nil {
 		s.fail(w, err)
@@ -1006,6 +1037,34 @@ func (s *Server) deleteEndUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"request_id": id})
+}
+
+// sessionDeletion 只读 Tombstone：Session 日志已清除时仍可按业务线查进度。
+func (s *Server) sessionDeletion(w http.ResponseWriter, r *http.Request) {
+	bl, ok := businessLineOf(w, r, s)
+	if !ok {
+		return
+	}
+	if s.Service.Deletions == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "deletion is not configured"})
+		return
+	}
+	tomb, err := s.Service.Deletions.Get(r.Context(), r.PathValue("id"))
+	if err == nil && tomb.BusinessLine != bl {
+		err = lifecycle.ErrNotFound
+	}
+	if errors.Is(err, lifecycle.ErrNotFound) {
+		err = service.ErrNotFound
+	}
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	out := map[string]any{"reason": tomb.Reason, "requested_at": tomb.RequestedAt}
+	if !tomb.CompletedAt.IsZero() {
+		out["completed_at"] = tomb.CompletedAt
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) deletion(w http.ResponseWriter, r *http.Request) {
@@ -1092,7 +1151,25 @@ func (s *Server) listMemories(w http.ResponseWriter, r *http.Request) {
 	if limit == 0 || limit > 500 {
 		limit = 100
 	}
-	hits, err := s.Memory.List(r.Context(), bl, eu, memory.Category(q.Get("category")), q.Get("q"), q.Get("history") == "true", int(limit))
+	var hits []memory.Hit
+	if sources, filtered := q["source_session"]; filtered {
+		if p := principal(r); !p.Service() && !p.Unrestricted {
+			s.fail(w, fmt.Errorf("%w: source_session requires a service token", errForbidden))
+			return
+		}
+		if len(sources) == 0 || len(sources) > 32 || slices.Contains(sources, "") || q.Get("history") == "true" || q.Get("q") != "" || q.Get("category") != "" || q.Has("limit") {
+			s.fail(w, fmt.Errorf("%w: provide 1 to 32 source_session values without history, q, category or limit", service.ErrInvalid))
+			return
+		}
+		// 候选必须完整返回，不能沿用普通列表默认的 100 条截断；有效 Memory 已受每用户上限约束。
+		var items []*memory.Memory
+		items, err = s.Memory.Store.ListBySource(r.Context(), bl, eu, sources, s.Memory.Clock.Now())
+		for _, m := range items {
+			hits = append(hits, memory.Hit{Memory: m})
+		}
+	} else {
+		hits, err = s.Memory.List(r.Context(), bl, eu, memory.Category(q.Get("category")), q.Get("q"), q.Get("history") == "true", int(limit))
+	}
 	if err != nil {
 		s.fail(w, err)
 		return
