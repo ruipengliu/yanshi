@@ -1,5 +1,5 @@
 {
-  "started_at": "2026-10-28T12:29:56.893759Z",
+  "started_at": "2026-10-28T13:28:04.896649Z",
   "judge": "codex/gpt-6.1-sol:high",
   "cases": [
     {
@@ -1799,6 +1799,45 @@
         "turn 3: status — status asked, want completed",
         "turn 4: judge — score 3: 回复简短且未使用列表，也通过西湖体现了杭州背景，但没有结合徒步背景。"
       ]
+    },
+    {
+      "name": "oneshot-live-brief",
+      "oneshot": "xinli-live-brief",
+      "oneshot_version": "1",
+      "trials": 3,
+      "passed": 2,
+      "pass_rate": 0.6666666666666666,
+      "judge_avg": 4.666666666666667,
+      "avg_tokens": 1859,
+      "avg_seconds": 165.69721455533335,
+      "avg_calls": 0,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0,
+      "failures": {
+        "turn 1: reply_excludes 咖啡": 1
+      },
+      "samples": [
+        "turn 1: reply_excludes 咖啡 — reply: {\"brief\":\"佩戴者牵头推进会议室设备采购，指出当前两家报价因第二家未包含安装费无法直接比价，要求先统一报价范围再确定供应商，对方回应周四催…"
+      ],
+      "completed": 3,
+      "judge_samples": 9,
+      "completed_cost": {
+        "tokens": 1859.3333333333333,
+        "seconds": 165.69721455533335,
+        "calls": 0,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0
+      },
+      "incomplete_cost": {
+        "tokens": 0,
+        "seconds": 0,
+        "calls": 0,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0
+      }
     },
     {
       "name": "prompt-injection-file",
