@@ -1214,7 +1214,7 @@ func inheritCaptureMarks(marks map[string]string, sid, day string, days map[stri
 func (in *instance) submitCaptures(ctx context.Context, sid, businessDay string, turn int, segs []CaptureSegment) ([]string, error) {
 	out := make([]*v1.CaptureSegment, 0, len(segs))
 	for _, g := range segs {
-		seg := &v1.CaptureSegment{Speaker: v1.Speaker_SPEAKER_WEARER, Text: g.Text}
+		seg := &v1.CaptureSegment{Speaker: v1.Speaker_SPEAKER_WEARER, SpeakerRef: g.SpeakerRef, Text: g.Text}
 		if g.At != "" {
 			at, err := captureTime(g.At)
 			if err != nil {
@@ -1246,7 +1246,7 @@ func (in *instance) submitCaptures(ctx context.Context, sid, businessDay string,
 		captureID := fmt.Sprintf("cap_%s_%d_%d", sid, turn, i)
 		segments := make([]xinlifixture.CaptureSegment, len(batch))
 		for i, g := range batch {
-			segments[i] = xinlifixture.CaptureSegment{Speaker: "wearer", Text: g.GetText(), SpeakerKey: g.GetSpeakerKey(), TimeZone: g.GetTimeZone()}
+			segments[i] = xinlifixture.CaptureSegment{Speaker: "wearer", Text: g.GetText(), SpeakerKey: g.GetSpeakerKey(), SpeakerRef: g.GetSpeakerRef(), TimeZone: g.GetTimeZone()}
 			if g.GetSpeaker() == v1.Speaker_SPEAKER_OTHER {
 				segments[i].Speaker = "other"
 			}

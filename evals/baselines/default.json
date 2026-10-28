@@ -1,5 +1,5 @@
 {
-  "started_at": "2026-10-28T10:08:07.445001Z",
+  "started_at": "2026-10-28T12:29:56.893759Z",
   "judge": "codex/gpt-6.1-sol:high",
   "cases": [
     {
@@ -917,6 +917,37 @@
           "std": 0,
           "n": 2
         }
+      }
+    },
+    {
+      "name": "capture-speaker-ref",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 4,
+      "avg_tokens": 30433,
+      "avg_seconds": 30.573107833333335,
+      "avg_calls": 3.3333333333333335,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.5857911828818008,
+      "completed": 3,
+      "judge_samples": 3,
+      "completed_cost": {
+        "tokens": 30433.666666666668,
+        "seconds": 30.573107833333335,
+        "calls": 3.3333333333333335,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0.5857911828818008
+      },
+      "incomplete_cost": {
+        "tokens": 0,
+        "seconds": 0,
+        "calls": 0,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0
       }
     },
     {

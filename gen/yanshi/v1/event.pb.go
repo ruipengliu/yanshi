@@ -4159,7 +4159,9 @@ type CaptureSegment struct {
 	// 当地的日期与时刻，模型据此按停顿分开不同的对话、把"明天""周五"换算成日期；为空时不显示时间。
 	TimeZone string `protobuf:"bytes,6,opt,name=time_zone,json=timeZone,proto3" json:"time_zone,omitempty"`
 	// attested 结果中业务线命名空间内的引用。
-	Ref           string `protobuf:"bytes,7,opt,name=ref,proto3" json:"ref,omitempty"`
+	Ref string `protobuf:"bytes,7,opt,name=ref,proto3" json:"ref,omitempty"`
+	// 业务线比对声纹后填入的不透明实体 ID；只有他人可带，内核只校验语法，来源推导不看它。
+	SpeakerRef    string `protobuf:"bytes,8,opt,name=speaker_ref,json=speakerRef,proto3" json:"speaker_ref,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4239,6 +4241,13 @@ func (x *CaptureSegment) GetTimeZone() string {
 func (x *CaptureSegment) GetRef() string {
 	if x != nil {
 		return x.Ref
+	}
+	return ""
+}
+
+func (x *CaptureSegment) GetSpeakerRef() string {
+	if x != nil {
+		return x.SpeakerRef
 	}
 	return ""
 }
@@ -4980,7 +4989,7 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\n" +
 	"capture_id\x18\x01 \x01(\tR\tcaptureId\x125\n" +
 	"\bsegments\x18\x02 \x03(\v2\x19.yanshi.v1.CaptureSegmentR\bsegments\x12\x16\n" +
-	"\x06stream\x18\x03 \x01(\tR\x06stream\"\xf7\x01\n" +
+	"\x06stream\x18\x03 \x01(\tR\x06stream\"\x98\x02\n" +
 	"\x0eCaptureSegment\x12,\n" +
 	"\aspeaker\x18\x01 \x01(\x0e2\x12.yanshi.v1.SpeakerR\aspeaker\x12\x1f\n" +
 	"\vspeaker_key\x18\x02 \x01(\tR\n" +
@@ -4989,7 +4998,9 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\bredacted\x18\x04 \x01(\bR\bredacted\x127\n" +
 	"\tspoken_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bspokenAt\x12\x1b\n" +
 	"\ttime_zone\x18\x06 \x01(\tR\btimeZone\x12\x10\n" +
-	"\x03ref\x18\a \x01(\tR\x03ref\"<\n" +
+	"\x03ref\x18\a \x01(\tR\x03ref\x12\x1f\n" +
+	"\vspeaker_ref\x18\b \x01(\tR\n" +
+	"speakerRef\"<\n" +
 	"\tCallEnded\x12\x17\n" +
 	"\acall_id\x18\x01 \x01(\tR\x06callId\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xcf\x02\n" +

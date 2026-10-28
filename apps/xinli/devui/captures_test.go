@@ -48,13 +48,15 @@ func TestCaptureRoutes(t *testing.T) {
 		return w.Body.Bytes()
 	}
 	prefix := "/v1/dev/bl/u"
-	body := request("POST", prefix+"/captures", `{"date":"2026-10-28","segments":[{"speaker":"wearer","text":"本人原话"},{"speaker":"other","speaker_key":"a","text":"他人原话"}]}`, 200)
+	body := request("POST", prefix+"/captures", `{"date":"2026-10-28","segments":[{"speaker":"wearer","text":"本人原话"},{"speaker":"other","speaker_key":"a","speaker_ref":"P-0012","text":"他人原话"}]}`, 200)
 	var result struct {
 		Refs []string `json:"refs"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil || len(result.Refs) != 2 || result.Refs[0] != "1.0" {
 		t.Fatalf("refs: %s %v", body, err)
 	}
+	request("POST", prefix+"/captures", `{"date":"2026-10-28","segments":[{"speaker":"wearer","speaker_ref":"P-0012","text":"非法片段"}]}`, 400)
+	request("POST", prefix+"/captures", `{"date":"2026-10-28","segments":[{"speaker":"other","speaker_key":"a","speaker_ref":"bad ref","text":"非法片段"}]}`, 400)
 	request("POST", prefix+"/captures", `{"date":"2026-10-28","segments":[{"speaker":"wearer","text":"新的批次"}]}`, 200)
 	var page struct {
 		Day      domain.BusinessDay    `json:"day"`
@@ -62,7 +64,7 @@ func TestCaptureRoutes(t *testing.T) {
 		Tasks    []domain.DeletionTask `json:"tasks"`
 	}
 	body = request("GET", prefix+"/captures?date=2026-10-28", "", 200)
-	if err := json.Unmarshal(body, &page); err != nil || len(page.Segments) != 3 || page.Segments[2].Ref != "2.0" {
+	if err := json.Unmarshal(body, &page); err != nil || len(page.Segments) != 3 || page.Segments[2].Ref != "2.0" || page.Segments[1].SpeakerRef != "P-0012" {
 		t.Fatalf("page: %s %v", body, err)
 	}
 	// 读原文不能冒充模型已经读页。

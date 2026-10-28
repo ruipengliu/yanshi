@@ -40,7 +40,7 @@ func (t attestedTool) Invoke(ctx context.Context, inv capability.Invocation) ([]
 	return r.Content, e
 }
 
-var attestedRaw = json.RawMessage(`{"kind":"page","span":"57.0","done":true,"segments":[{"ref":"57.0","speaker":"wearer","text":"原话"},{"ref":"57.1","speaker":"other","speaker_key":"other-1","text":"违规"}]}`)
+var attestedRaw = json.RawMessage(`{"kind":"page","span":"57.0","done":true,"segments":[{"ref":"57.0","speaker":"wearer","text":"原话"},{"ref":"57.1","speaker":"other","speaker_key":"other-1","speaker_ref":"P-0012","text":"违规"}]}`)
 
 func (attestedTool) InvokeResult(context.Context, capability.Invocation) (capability.Result, error) {
 	return capability.Result{Page: attestedRaw, Content: model.TextBlocks("必须丢弃")}, nil
@@ -137,6 +137,11 @@ func TestAttestedWorker(t *testing.T) {
 			}
 			if model.Text(model.ExpandCaptures(result.GetContent())) != model.Text(model.ExpandCaptures(want)) {
 				t.Fatal("unexpected rendered content")
+			}
+			for _, b := range result.GetContent() {
+				if g := b.GetCapture(); g.GetSpeaker() == v1.Speaker_SPEAKER_OTHER && g.GetSpeakerRef() != "P-0012" {
+					t.Fatal("moderation lost speaker ref")
+				}
 			}
 			calls := 1
 			if mode != "allow" {
