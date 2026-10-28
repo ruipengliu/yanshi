@@ -115,6 +115,7 @@ func Capabilities(s *Service) []capability.Capability {
 				InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"},` +
 					`"history":{"type":"boolean","description":"是否包含已被取代或已过期的旧记忆"}},"required":["query"]}`),
 				Idempotent: true,
+				ReadOnly:   true,
 			},
 			Fn: func(ctx context.Context, inv capability.Invocation) ([]*v1.ContentBlock, error) {
 				var in struct {

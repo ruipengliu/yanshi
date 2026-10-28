@@ -67,6 +67,14 @@ Worker 以 `Step()` 为单位推进，每个 Step 同步完成一件事，内部
   - Capability 声明为幂等 → 重新执行；
   - 否则 → 追加错误结果 `outcome unknown`，交由模型决定后续，**绝不重复执行有副作用的调用**。
 
+### 调用的只读证据
+
+`ToolCallStarted.read_only` 由 Worker 在执行前按本次解析得到的 `capability.Spec.ReadOnly` 写入；HTTP 与 Connection 没有提交 Started 的入口，客户端不能提供这一判定。false 表示写入或未知，旧日志缺字段时也是 false。只读指不改变业务或平台状态，读取的元数据更新（如分页读取位置）不算写；它不等于低风险或幂等。
+
+Started 与进程内执行分属两个 Step。实际执行前，若本 Attempt 的 Started 已记只读，而重新解析的声明不再只读，Worker 不审批、不执行、不追加新的 Started，直接给出固定错误结果：“能力的声明在调用开始后发生了变化，没有执行；请重新发起调用”。原证据为 false、当前声明为 true 时照常执行，原证据不改。已执行但结果尚未提交的调用只重试提交真实结果，不重新判定为“没有执行”。
+
+接管后，允许重执行的调用先写新 Attempt 的 Started。`session.Call.StartedReadOnly` 与 StartedAttempts 一一对应，快照保留全部判定；`session.Run.CallsReadOnly` 对每个调用的所有 Started 取与，没有 Started 的调用没有证据，没有调用的 Run 返回 true。这个方法只判断证据，不包含重答资格的其他条件，也不豁免 `show_card`（[M7 §9](./m7-kernel-primitives.md#9-重答redo)）。
+
 ## 5. 流式输出
 
 模型的 token 增量**不进入日志**，只经由 Session 级的 LiveBus 实时扇出，并标注 `run_id` 与 `attempt`。日志只记录完整的 `AssistantMessage`。
@@ -79,6 +87,7 @@ Worker 以 `Step()` 为单位推进，每个 Step 同步完成一件事，内部
 
 - 随机交错各 Worker 的 Step 与客户端动作（输入、插话、中断）；
 - 随机注入故障：Worker 崩溃（丢弃其内存状态）、租约过期、模型报错；
+- 在只读调用 Started 之后、执行之前把声明改为非只读，检查执行次数不变、结果为固定错误；只有结果已落盘才计入 ReadOnlyDowngrades 覆盖；
 - 在客户端写入并入队之后、返回之前插入 Worker 步骤；外部写入随机失败或"已生效但报告失败"，客户端以同一输入 ID 重试须得到 duplicate，停止注入后 Run 无须新输入即可推进（丢失唤醒）；
 - 每步后检查不变量：终态后无事件、Attempt 单调、每个调用至多一个结果、非幂等调用不重复执行、至多一个活跃 Run；
 - 停止注入故障后，所有 Run 必须在有限步内进入终态。

@@ -22,6 +22,9 @@ type Spec struct {
 	InputSchema json.RawMessage
 	// Idempotent 为 true 时，执行结果未知的调用可在故障恢复后重新执行。
 	Idempotent bool
+	// ReadOnly 表示调用不改变任何业务或平台状态；读取的元数据更新（如分页读取位置）不算写。
+	// false 表示写入或未知，不能从风险或幂等性推导只读证据。
+	ReadOnly bool
 	// Risk 为 RISK_HIGH 时，执行前需 EndUser 审批。
 	Risk v1.Risk
 }

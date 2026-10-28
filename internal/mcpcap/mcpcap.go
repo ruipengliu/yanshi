@@ -308,7 +308,11 @@ func (c *Connector) tool(s Server, t *mcp.Tool) capability.Tool {
 	if err != nil || string(schema) == "null" {
 		schema = []byte(`{"type":"object"}`)
 	}
-	spec := capability.Spec{Name: ToolName(s.Name, t.Name), Description: t.Description, InputSchema: schema, Idempotent: idem, Risk: risk}
+	spec := capability.Spec{
+		Name: ToolName(s.Name, t.Name), Description: t.Description, InputSchema: schema, Idempotent: idem, Risk: risk,
+		// no_approval 只放宽审批，不把写入变成只读。
+		ReadOnly: t.Annotations != nil && t.Annotations.ReadOnlyHint,
+	}
 	return capability.Tool{Spec: spec, Local: remoteTool{spec: spec, connector: c, server: s, name: t.Name}}
 }
 

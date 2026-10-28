@@ -684,6 +684,8 @@ func (w *Worker) target() capability.Target {
 	}
 }
 
+const readOnlyChanged = "能力的声明在调用开始后发生了变化，没有执行；请重新发起调用"
+
 // advanceCall 推进一次 Capability 调用的一个阶段：
 // 审批（m1 设计 §4）→ 进程内执行（m0 设计 §4）或路由派发（m1 设计 §3）。
 func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.Def, c *session.Call) error {
@@ -691,12 +693,21 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 	if c.Dispatched() {
 		return w.awaitDispatched(ctx, r, c)
 	}
+	// 已执行但尚未提交的结果优先重试落盘；声明变化不能把实际执行过的调用报告成未执行。
+	if res := w.executed[id]; res != nil {
+		return w.commitExecuted(ctx, id, res)
+	}
 	tool, err := w.resolve(ctx, def, name)
 	if err != nil {
 		return err
 	}
 	if tool == nil {
 		return w.commit(ctx, w.toolResult(r, id, model.TextBlocks(fmt.Sprintf("capability %q is not available", name)), true))
+	}
+	startedByMe := c.Started() && c.StartedAttempts[len(c.StartedAttempts)-1] == w.attempt
+	// 必须在审批与重新写 Started 之前检查：声明降级也可能提高风险，但已开始的调用不能再请求审批。
+	if startedByMe && c.ReadOnlyInAttempt(w.attempt) && !tool.Spec.ReadOnly {
+		return w.commit(ctx, w.toolResult(r, id, model.TextBlocks(readOnlyChanged), true))
 	}
 	// 参数不合法的调用不去打扰用户，也不派发、不执行：错误作为结果交还模型，由它改正。
 	if err := checkArguments(c.Call.GetArgumentsJson()); err != nil {
@@ -759,25 +770,21 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 		}
 		deadline := w.now().Add(tool.Timeout)
 		return w.commit(ctx, &v1.Event{Payload: &v1.Event_ToolCallStarted{ToolCallStarted: &v1.ToolCallStarted{
-			RunId: r.ID, Attempt: w.attempt, CallId: id, NodeId: nodeID, Deadline: timestamppb.New(deadline),
+			RunId: r.ID, Attempt: w.attempt, CallId: id, NodeId: nodeID, Deadline: timestamppb.New(deadline), ReadOnly: tool.Spec.ReadOnly,
 		}}})
 	}
 
 	cp := tool.Local
-	startedByMe := c.Started() && c.StartedAttempts[len(c.StartedAttempts)-1] == w.attempt
 	if !startedByMe {
-		if c.Started() && !cp.Spec().Idempotent {
+		if c.Started() && !tool.Spec.Idempotent {
 			return w.commit(ctx, w.toolResult(r, id, model.TextBlocks(
 				"outcome unknown: the call was interrupted by a failure and may or may not have taken effect; it was not retried"), true))
 		}
 		return w.commit(ctx, &v1.Event{Payload: &v1.Event_ToolCallStarted{ToolCallStarted: &v1.ToolCallStarted{
-			RunId: r.ID, Attempt: w.attempt, CallId: id,
+			RunId: r.ID, Attempt: w.attempt, CallId: id, ReadOnly: tool.Spec.ReadOnly,
 		}}})
 	}
 
-	if res := w.executed[id]; res != nil {
-		return w.commitExecuted(ctx, id, res)
-	}
 	var out capability.Result
 	err = w.during(ctx, r, func(ctx context.Context) error {
 		inv := w.invocation(r, def, id, c)

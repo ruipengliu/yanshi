@@ -110,6 +110,8 @@ message CallSnapshot {
   ApprovalSnapshot approval = 6;
   google.protobuf.Timestamp dispatched_at = 7;
   bool background = 8;
+  // 与 started_attempts 一一对应，保留接管前的证据，不能用后来的声明覆盖。
+  repeated bool started_read_only = 9;
 }
 
 message ApprovalSnapshot {

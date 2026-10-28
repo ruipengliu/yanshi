@@ -22,6 +22,7 @@ func ClockNow(c clock.Clock) Capability {
 			Description: "Returns the current date and time. Optional IANA time zone, e.g. Asia/Shanghai.",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"tz":{"type":"string"}}}`),
 			Idempotent:  true,
+			ReadOnly:    true,
 		},
 		Fn: func(_ context.Context, inv Invocation) ([]*v1.ContentBlock, error) {
 			var in struct {
