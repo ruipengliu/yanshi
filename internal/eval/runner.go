@@ -27,7 +27,6 @@ import (
 	"yanshi/internal/call"
 	"yanshi/internal/capture"
 	"yanshi/internal/card"
-	"yanshi/internal/clock"
 	"yanshi/internal/delegation"
 	"yanshi/internal/eval/xinlifixture"
 	"yanshi/internal/eventlog"
@@ -89,6 +88,8 @@ type Config struct {
 }
 
 type instance struct {
+	clock   *offsetClock
+	queue   workqueue.Queue
 	cfg     Config
 	svc     *service.Service
 	hub     *node.Hub
@@ -170,11 +171,17 @@ func Run(ctx context.Context, cfg Config, cases []*Case) (*Report, error) {
 		used = &usedSandboxes{Provider: cfg.Sandbox, ids: map[string]bool{}}
 		cfg.Sandbox = used
 	}
-	in, err := start(runCtx, cfg, cases)
-	if err != nil {
-		return nil, err
+	// 拨钟会影响租约与停放，不能让并行 trial 共用偏移。
+	shared := slices.DeleteFunc(slices.Clone(cases), advancesSchedule)
+	var in *instance
+	if len(shared) > 0 {
+		var err error
+		in, err = start(runCtx, cfg, shared)
+		if err != nil {
+			return nil, err
+		}
+		defer in.close()
 	}
-	defer in.close()
 	rep := &Report{StartedAt: time.Now().UTC(), Judge: cfg.Judge, ModelOverride: cfg.ModelOverride}
 	results := make([]*CaseResult, len(cases))
 	type job struct{ c, trial int }
@@ -207,7 +214,12 @@ func Run(ctx context.Context, cfg Config, cases []*Case) (*Report, error) {
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			tr := in.trial(ctx, cases[j.c], j.trial)
+			var tr TrialResult
+			if advancesSchedule(cases[j.c]) {
+				tr = isolatedTrial(runCtx, cfg, cases[j.c], j.trial)
+			} else {
+				tr = in.trial(ctx, cases[j.c], j.trial)
+			}
 			mu.Lock()
 			results[j.c].add(tr)
 			mu.Unlock()
@@ -223,7 +235,9 @@ func Run(ctx context.Context, cfg Config, cases []*Case) (*Report, error) {
 	}
 	cancel()
 	if used != nil {
-		<-in.controllerDone // 控制器退出后不会再创建沙箱
+		if in != nil {
+			<-in.controllerDone // 控制器退出后不会再创建沙箱
+		}
 		rep.LeakedSandboxes = used.destroyAll(context.WithoutCancel(ctx), cfg.Logger)
 	}
 	return rep, ctx.Err()
@@ -262,7 +276,7 @@ func (p *usedSandboxes) destroyAll(ctx context.Context, logger *slog.Logger) []s
 }
 
 func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
-	clk := clock.Real{}
+	clk := &offsetClock{}
 	st := app.Memory(clk)
 	agents, versions, err := derive(cfg, cases)
 	if err != nil {
@@ -283,19 +297,8 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 	pool := &workerPool{ctx: ctx, workers: map[string]*runtime.Worker{}, newCfg: func(id string) runtime.Config {
 		return core.WorkerConfig(id, workqueue.Pool{}, idle)
 	}}
-	for range 2 * cfg.Parallel {
-		pool.spawn()
-	}
 	controllerDone := make(chan struct{})
-	if cfg.Sandbox != nil {
-		go func() {
-			defer close(controllerDone)
-			core.ControllerConfig("eval-sandbox", cfg.Sandbox, nil).Run(ctx)
-		}()
-	} else {
-		close(controllerDone)
-	}
-	in := &instance{cfg: cfg, svc: core.Service, hub: core.Hub, mems: core.Memory, agents: agents, version: versions, workers: pool, arts: core.Artifacts,
+	in := &instance{clock: clk, queue: st.Queue, cfg: cfg, svc: core.Service, hub: core.Hub, mems: core.Memory, agents: agents, version: versions, workers: pool, arts: core.Artifacts,
 		calls: &call.Manager{Service: core.Service, Realtime: cfg.Realtime, Feed: feed.Source{Log: st.Log, Live: opts.Live}, Logger: cfg.Logger}}
 	in.controllerDone = controllerDone
 	var servers []mcpcap.Server
@@ -315,6 +318,17 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 	if len(servers) > 0 {
 		in.mcp = &mcpcap.Connector{Servers: servers, Artifacts: core.Artifacts, Log: st.Log, Logger: cfg.Logger}
 		core.Catalog.MCP = in.mcp
+	}
+	for range 2 * cfg.Parallel {
+		pool.spawn()
+	}
+	if cfg.Sandbox != nil {
+		go func() {
+			defer close(controllerDone)
+			core.ControllerConfig("eval-sandbox", cfg.Sandbox, nil).Run(ctx)
+		}()
+	} else {
+		close(controllerDone)
 	}
 	return in, nil
 }
@@ -538,7 +552,7 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 			if turn.Agent != "" && turn.Agent != c.Agent {
 				agent, version = turn.Agent, in.version[c.Name+"/"+turn.Agent]
 			}
-			id, err := in.svc.Create(tctx, service.CreateRequest{BusinessLine: bl, EndUser: endUser, Agent: agent, AgentVersion: version})
+			id, err := in.svc.Create(tctx, service.CreateRequest{BusinessLine: bl, EndUser: endUser, Agent: agent, AgentVersion: version, TimeZone: caseTimeZone(c, agent)})
 			if err != nil {
 				tr.Err = "create session: " + err.Error()
 				return tr
@@ -644,7 +658,7 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 			obs.topics, obs.labels, obs.gold = topics, labels, gold
 		}
 		// 断言只看有效的 Memory：被取代的作为历史保留（m4-memory-grant.md §11），不算"还记着"。
-		obs.memories, _ = in.mems.Store.List(tctx, endUser, []memory.Scope{{BusinessLine: bl}}, time.Now(), memory.DefaultMaxPerUser)
+		obs.memories, _ = in.mems.Store.List(tctx, endUser, []memory.Scope{{BusinessLine: bl}}, in.clock.Now(), memory.DefaultMaxPerUser)
 		as, score, metrics := in.check(tctx, ti+1, turn, obs)
 		tr.Assertions = append(tr.Assertions, as...)
 		if obs.goldDetail != "" {
@@ -666,6 +680,7 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 
 // observation 是一轮中观察到的事实，断言据此判定。
 type observation struct {
+	schedules []*session.Schedule
 	input     string
 	status    string
 	calls     []string
@@ -716,6 +731,9 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 		if obs == nil {
 			if events, readErr := eventlog.ReadAll(cleanup, in.svc.Store.Log, sid, after); readErr == nil {
 				obs = &observation{input: turn.Input, status: "interrupted"}
+				if turn.AdvanceToNextSchedule {
+					events = scheduledRunEvents(events, runID)
+				}
 				collect(events, obs)
 			} else {
 				err = errors.Join(err, fmt.Errorf("collect failed eval run: %w", readErr))
@@ -738,6 +756,7 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 	answered := map[string]bool{}
 	var run *session.Run
 	var compacted bool
+	var schedules []*session.Schedule
 	for {
 		st, err := in.svc.Load(ctx, sid)
 		if err != nil {
@@ -746,12 +765,14 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 		run = st.Run(runID)
 		if run != nil && run.Status.Terminal() {
 			compacted = st.Compaction != nil
+			schedules = st.OpenSchedules()
 			break
 		}
 		if run != nil {
 			// ask_user 提问：按脚本回答；没有脚本时本轮停在提问处。
 			if c := pendingQuestion(run, answered); c != nil {
 				if turn.Answer == nil {
+					schedules = st.OpenSchedules()
 					compacted, asked = st.Compaction != nil, true
 					break
 				}
@@ -795,11 +816,22 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 	if err != nil {
 		return nil, err
 	}
+	if turn.AdvanceToNextSchedule {
+		events = scheduledRunEvents(events, runID)
+	}
 	input := turn.Input
 	if turn.AwaitBackground {
 		input = "（用户没有输入：设备上线后，之前转入后台的调用的结果由平台送达）"
 	}
-	obs = &observation{input: input, status: run.Status.String(), compacted: compacted, takeovers: run.Takeovers}
+	if turn.AdvanceToNextSchedule {
+		for _, e := range events {
+			if r := e.GetRunRequested(); r.GetRunId() == runID && r.GetSchedule() != nil {
+				input = "（平台定时到点）" + model.Text(r.GetInput())
+				break
+			}
+		}
+	}
+	obs = &observation{schedules: schedules, input: input, status: run.Status.String(), compacted: compacted, takeovers: run.Takeovers}
 	if asked {
 		obs.status = "asked"
 	}
@@ -828,6 +860,9 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 
 // submitTurn 提交本轮的输入（文字、界面上下文或卡片动作），返回开启或并入的 Run。
 func (in *instance) submitTurn(ctx context.Context, sid string, turn Turn) (string, error) {
+	if turn.AdvanceToNextSchedule {
+		return in.advanceToNextSchedule(ctx, sid)
+	}
 	if turn.Scheduled {
 		return in.submitScheduledTurn(ctx, sid, turn.Input)
 	}
@@ -1475,6 +1510,7 @@ func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation)
 	}
 	metrics := map[string]float64{}
 	e := t.Expect
+	checkSchedules(add, e, o)
 	want := e.Status
 	if want == "" {
 		want = "completed"

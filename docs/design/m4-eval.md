@@ -17,6 +17,7 @@ name: scenario-a-minutes
 description: 读电脑上的会议记录整理纪要，写回电脑前需要审批
 agent: assistant              # 使用的 AgentDef（可被 -agent 覆盖）
 trials: 3                     # 同一用例运行次数，衡量模型输出的波动
+time_zone: Asia/Shanghai      # 可选：Session 时区；xinli 默认上海，其他用例不设置
 requires: []                  # 如 [sandbox]：环境不满足时跳过
 timeout: 4m                   # 每轮等待 Run 结束的上限（长 Run 用例调大）
 context: {window: 6000}       # 可选：覆盖 AgentDef 的上下文配置（压缩类用例）
@@ -96,6 +97,38 @@ turns:
 **xinli 的提交与业务日（ADR-0050）。** xinli-day 版本 2 不再向内核提交原文。运行器创建工作 Session 后，以业务线身份经夹具 `bind_day` 绑定业务日，再经 `AppendCaptures` 提交原文；返回的引用用于主题归集与金标对应，不再把引用的批次解释成日志位置。业务日取本次 trial 开始时 `time.Now()` 在 `captureZone`（Asia/Shanghai）的运行当天，不取旁听 `at` 的历史日期，以保持切换前交谈与总览按运行当天归集的评测口径。同一 trial 的 xinli-day Session 依次换绑这一个业务日，共享原文、引用与处理进度，已用完的旧 Session 不再读取旁听；片段自己的说话时间仍用于“明天”等期限计算。声明已退役 captures 能力的 AgentDef 在加载时拒绝；分页测试只与冻结 golden 比较。
 
 调用断言与输入中提到的旁听工具名直接改为 `mcp_xinli__captures`，匹配器不提供旧名称别名；其余断言与用例内容不变。
+
+**定时与评测时钟（P2）。** `internal/eval/schedule.go` 的时钟为真实时间加偏移，只能前拨，并发读写由互斥锁保护；内存存储、队列、Worker 与核心对象图共用同一个时钟，Memory 断言也按它判断有效期。等待超时与报告耗时仍取真实时间，不能因前拨一周而立即超时。评测没有启动 Janitor；核心装配保留同一时钟，未来启动时也应使用它。
+
+用例的 `time_zone` 传给每个新建的 Session；未写时，有 `setup.xinli` 或当前 Agent 名以 `xinli-` 开头的 Session 默认 `Asia/Shanghai`，其他用例保留无时区，避免改变无关评测。业务日仍取 trial 开始时真实的上海日期。Persona（`xinli dev` 子进程）的时钟独立，查询“最近几天”仍按真实日期计算；拨钟周报用预置项目现状与无期限承诺，不依赖拨钟之后的“今天”。
+
+```yaml
+turns:
+  - input: 每周五下午五点给我一份本周项目周报。
+    expect:
+      call_args: {schedule: create}       # 沿用参数子串断言
+      schedules:
+        active: {min: 1, max: 1}          # 有效定时数，NextDue 非零
+        rrule_contains: [FREQ=WEEKLY, BYDAY=FR, BYHOUR=17, BYMINUTE=0]
+        time_zone: Asia/Shanghai          # 同一条有效定时须同时满足规则与时区
+  - advance_to_next_schedule: true
+    expect:
+      calls: ["mcp_xinli__*project*"]
+  - input: 取消周报。
+    expect:
+      call_sequence:                     # 按顺序匹配不同调用，允许中间有其他调用
+        - {capability: schedule, contains: ['"action":"list"']}
+        - {capability: schedule, contains: ['"action":"cancel"']}
+      schedules: {active: {max: 0}}
+```
+
+`advance_to_next_schedule` 与 `input`、`scheduled`、后台等待、卡片动作、界面上下文、设备来源、新建 Session、旁听及业务编辑互斥，不用于 Call。运行器读本 Session 最早的有效 `NextDue`（同刻按 ID 排序），没有有效定时或仍有活跃 Run 时报用例错误；拨到该时刻，已过则不拨，再经队列 `Enqueue` 唤醒。只匹配本次唤醒之后、该定时的 `RunRequested.schedule`，等待它的 Run，复用普通轮次的审批、回答、超时与断言；评分输入注明平台定时并带上原定时文字。`scheduled: true` 仍创建一次性定时并等待真实时间到点，不受影响。
+
+含拨钟回合的每个 trial 单独创建实例、存储、时钟与 Persona 夹具；其余 trial 沿用共享实例。独立实例结束时取消控制器并回收夹具，所有控制器停止后统一销毁使用过的沙箱。不能在共享实例中重置偏移，否则会扰动并行 trial 的租约与定时。
+
+`call_args` 保持原有语法与含义；新增 `call_sequence` 的 `capability` 支持 glob，`contains` 中的全部子串须出现在同一次调用的压紧 JSON 参数中（仅移除 JSON 空白，不改变字符串内容），下一项必须匹配之后的另一次调用。`schedules.active` 检查有效数；`rrule_contains` 与 `time_zone` 要求同一条有效声明满足，不检查取消后保留的历史声明。
+
+新增 `evals/schedule-weekly-report.yaml` 覆盖助手创建周期定时、下次当地时间的确认、拨钟后查询 Persona 与产出周报；`evals/schedule-cancel.yaml` 覆盖先列出再取消、取消后有效数为零。它们与已有 `schedule-reminder`、`schedule-memory-gate` 一起覆盖能力说明、助手新增指令与平台到点标记；不新增 Persona 周报工具。版本 2 尚须按 ADR-0020 与基线及当天 main 对照，确认后更新基线，不能将用例已编写视为评测已通过。
 
 **旁听的分批。** 评测运行器按说话时间约每分钟提交一批（一批至多 100 段），每批的他人按第一次出现的顺序重新编号为 `other-1`、`other-2`：与真实的 HostApp 一样，`speaker_key` 只在一批之内有意义，用例中全天不变的 `key` 只用来区分同一批中的人。
 

@@ -1,6 +1,6 @@
 # 旁听业务线的助手（docs/design/xinli-captures.md §1）：每个 EndUser 一个长期 Session，App、微信、飞书中的提问都提交到这里。
 name: xinli-assistant
-version: "1"
+version: "2"
 description: 助手：回答用户关于最近的对话、项目与承诺的问题。
 model: ark/doubao-seed-2-1-lite-260915:minimal
 instructions: |
@@ -12,6 +12,7 @@ instructions: |
   - 用户本人在对话中说的、对以后有用的信息（偏好、人际关系、长期事项），用 memory_save 记住：已有同样的不再记，变了的用 replaces 替换旧的那条。用户要求忘记时用 memory_forget，之后不再提起它的内容。
   - 要查的项目有多个候选而用户没有指明时，用 ask_user 让用户选择；其余情况按合理假设直接回答。
   - 给出几个项目或承诺的对比时，用 show_card 展示。
+  - 用户要求按时做某事或提醒时，用 schedule 创建定时，时间用用户的当地时间，需要知道现在几点时用 clock_now；取消前先 list 再 cancel。收到以“【定时”开头的输入时照它做，回答依据查到的内容。
 capabilities:
   - mcp:xinli/list_projects
   - mcp:xinli/project_digest
@@ -23,6 +24,8 @@ capabilities:
   - memory_forget
   - ask_user
   - show_card
+  - schedule
+  - clock_now
 max_turns: 30
 memory:
   recall: 8

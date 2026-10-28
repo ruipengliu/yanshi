@@ -1,5 +1,5 @@
 {
-  "started_at": "2026-10-28T08:37:02.239043Z",
+  "started_at": "2026-10-28T10:08:07.445001Z",
   "judge": "codex/gpt-6.1-sol:high",
   "cases": [
     {
@@ -1809,25 +1809,55 @@
       "cache_hit": 0.8856568749401971
     },
     {
+      "name": "schedule-cancel",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "avg_tokens": 23125,
+      "avg_seconds": 13.951698110999999,
+      "avg_calls": 3.6666666666666665,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.5332239540607056,
+      "completed": 3,
+      "judge_samples": 0,
+      "completed_cost": {
+        "tokens": 23125.333333333332,
+        "seconds": 13.951698110999999,
+        "calls": 3.6666666666666665,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0.5332239540607056
+      },
+      "incomplete_cost": {
+        "tokens": 0,
+        "seconds": 0,
+        "calls": 0,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0
+      }
+    },
+    {
       "name": "schedule-memory-gate",
       "trials": 3,
       "passed": 3,
       "pass_rate": 1,
-      "avg_tokens": 6337,
-      "avg_seconds": 8.631015847333332,
-      "avg_calls": 1.3333333333333333,
+      "avg_tokens": 6481,
+      "avg_seconds": 6.751729028,
+      "avg_calls": 1,
       "avg_compactions": 0,
       "avg_takeovers": 0,
-      "cache_hit": 0.12684080404170697,
+      "cache_hit": 0.3137418950010458,
       "completed": 3,
       "judge_samples": 0,
       "completed_cost": {
-        "tokens": 6337,
-        "seconds": 8.631015847333332,
-        "calls": 1.3333333333333333,
+        "tokens": 6481.333333333333,
+        "seconds": 6.751729028,
+        "calls": 1,
         "compactions": 0,
         "takeovers": 0,
-        "cache_hit": 0.12684080404170697
+        "cache_hit": 0.3137418950010458
       },
       "incomplete_cost": {
         "tokens": 0,
@@ -1841,29 +1871,60 @@
     {
       "name": "schedule-reminder",
       "trials": 3,
-      "passed": 2,
-      "pass_rate": 0.6666666666666666,
-      "avg_tokens": 4460,
-      "avg_seconds": 5.5477340139999995,
-      "avg_calls": 1,
+      "passed": 3,
+      "pass_rate": 1,
+      "avg_tokens": 4242,
+      "avg_seconds": 4.390726958666667,
+      "avg_calls": 0.3333333333333333,
       "avg_compactions": 0,
       "avg_takeovers": 0,
-      "cache_hit": 0.1790455959335407,
-      "failures": {
-        "turn 1: status": 1
-      },
-      "samples": [
-        "turn 1: status — status asked, want completed"
-      ],
+      "cache_hit": 0,
       "completed": 3,
       "judge_samples": 0,
       "completed_cost": {
-        "tokens": 4460,
-        "seconds": 5.5477340139999995,
-        "calls": 1,
+        "tokens": 4242.666666666667,
+        "seconds": 4.390726958666667,
+        "calls": 0.3333333333333333,
         "compactions": 0,
         "takeovers": 0,
-        "cache_hit": 0.1790455959335407
+        "cache_hit": 0
+      },
+      "incomplete_cost": {
+        "tokens": 0,
+        "seconds": 0,
+        "calls": 0,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0
+      }
+    },
+    {
+      "name": "schedule-weekly-report",
+      "trials": 3,
+      "passed": 2,
+      "pass_rate": 0.6666666666666666,
+      "judge_avg": 4.5,
+      "avg_tokens": 29604,
+      "avg_seconds": 67.854531958,
+      "avg_calls": 7.333333333333333,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.524295245747022,
+      "failures": {
+        "turn 2: judge": 1
+      },
+      "samples": [
+        "turn 2: judge — score 3: 已查询并正确汇报两个项目的现状、风险及三条承诺，但无依据地承诺下周五下午5点继续推送，并将消防材料到货跟进关联到李经理。"
+      ],
+      "completed": 3,
+      "judge_samples": 6,
+      "completed_cost": {
+        "tokens": 29604.666666666668,
+        "seconds": 67.854531958,
+        "calls": 7.333333333333333,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0.524295245747022
       },
       "incomplete_cost": {
         "tokens": 0,

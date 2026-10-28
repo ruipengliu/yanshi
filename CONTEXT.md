@@ -94,7 +94,7 @@ _Avoid_: 任务、Job、Turn
 原先设计为内核按流静默开启 Run；现由业务线判断旁听静默并提交固定整理输入。按钟点的定时见 Schedule。
 _Avoid_: 定时任务、cron、事件订阅
 
-**Schedule（定时）**（事件、HTTP、能力与到点执行已实现，到期表未实现，[设计](docs/design/m7-kernel-primitives.md) §5、ADR-0045）:
+**Schedule（定时）**（已实现，[设计](docs/design/m7-kernel-primitives.md) §5、ADR-0045）:
 属于一个 Session、按钟点开启 Run 的声明：一次性或周期，时区由创建方给出（默认取 Session 的时区），没有静默窗口。经 HTTP 或 Agent 的 `schedule` 能力创建；到期时平台写入输入，来源是平台，不是用户原话。只在本 Session 内开启 Run。
 _Avoid_: cron、定时任务、提醒（指业务线按承诺期限推送时）
 
