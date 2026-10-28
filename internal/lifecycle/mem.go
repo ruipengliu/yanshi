@@ -36,6 +36,21 @@ func (x *MemIndex) Touch(_ context.Context, id string, at time.Time) error {
 	return nil
 }
 
+func (x *MemIndex) SetNextDue(_ context.Context, id string, at time.Time) error {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	if s := x.m[id]; s != nil {
+		s.NextDue = at
+	}
+	return nil
+}
+
+func (x *MemIndex) ScheduledAfter(_ context.Context, businessLine, afterID string, limit int) ([]string, error) {
+	return x.pick(func(s *Session) bool {
+		return s.BusinessLine == businessLine && s.ID > afterID && s.ClosedAt.IsZero() && !s.NextDue.IsZero()
+	}, limit), nil
+}
+
 func (x *MemIndex) MarkClosed(_ context.Context, id string, at time.Time) error {
 	x.mu.Lock()
 	defer x.mu.Unlock()
@@ -122,7 +137,7 @@ func (x *MemIndex) pick(keep func(*Session) bool, limit int) []string {
 
 func (x *MemIndex) IdleBefore(_ context.Context, businessLine string, agents AgentFilter, t time.Time, limit int) ([]string, error) {
 	return x.pick(func(s *Session) bool {
-		return s.BusinessLine == businessLine && agents.Match(s.Agent) && s.ClosedAt.IsZero() && s.LastInputAt.Before(t)
+		return s.BusinessLine == businessLine && agents.Match(s.Agent) && s.ClosedAt.IsZero() && s.NextDue.IsZero() && s.LastInputAt.Before(t)
 	}, limit), nil
 }
 

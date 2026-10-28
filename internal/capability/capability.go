@@ -65,6 +65,12 @@ type Checker interface {
 	Check(inv Invocation) error
 }
 
+// ApprovalSummarizer 为受写入闸门约束的本地能力提供用户可读的动作摘要。
+// 空摘要表示只读动作；是否需要审批仍由 Worker 判断。
+type ApprovalSummarizer interface {
+	ApprovalSummary(inv Invocation) string
+}
+
 type Registry struct {
 	caps map[string]Capability
 }

@@ -95,6 +95,8 @@ type Session struct {
 	ClosedAt time.Time
 	// DeleteAt 为零表示没有绝对删除期限。
 	DeleteAt time.Time
+	// NextDue 为零表示没有有效定时，仅用于空闲关闭豁免。
+	NextDue time.Time
 }
 
 type Index interface {
@@ -102,6 +104,10 @@ type Index interface {
 	Put(ctx context.Context, s *Session) error
 	// Touch 把最后输入时间推进到 at（只增不减）。
 	Touch(ctx context.Context, id string, at time.Time) error
+	// SetNextDue 更新最早到期；零值清除豁免，不创建缺失的索引行。
+	SetNextDue(ctx context.Context, id string, at time.Time) error
+	// ScheduledAfter 按 ID 升序返回有定时索引、未关闭的 Session，供校准；afterID 不包含在结果中。
+	ScheduledAfter(ctx context.Context, businessLine, afterID string, limit int) ([]string, error)
 	// MarkClosed 记录关闭时间；已关闭时不变。
 	MarkClosed(ctx context.Context, id string, at time.Time) error
 	Get(ctx context.Context, id string) (*Session, error)
@@ -110,7 +116,7 @@ type Index interface {
 	List(ctx context.Context, businessLine, endUser, cursor string, limit int) (page []*Session, next string, err error)
 	// IDsOf 返回 EndUser 在业务线下的全部 Session ID。
 	IDsOf(ctx context.Context, businessLine, endUser string) ([]string, error)
-	// IdleBefore 返回业务线中 AgentDef 在 agents 之内、未关闭、最后输入早于 t 的 Session，至多 limit 个。
+	// IdleBefore 返回业务线中 AgentDef 在 agents 之内、未关闭、没有有效定时、最后输入早于 t 的 Session，至多 limit 个。
 	IdleBefore(ctx context.Context, businessLine string, agents AgentFilter, t time.Time, limit int) ([]string, error)
 	// ClosedBefore 返回业务线中 AgentDef 在 agents 之内、关闭时间早于 t 的 Session，至多 limit 个。
 	ClosedBefore(ctx context.Context, businessLine string, agents AgentFilter, t time.Time, limit int) ([]string, error)

@@ -1,6 +1,6 @@
 # M7 内核补充：Capture 正文存储、擦除、交付确认、定时、出站流、单次调用
 
-> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）；交付确认（§11）已删除，EndUser 删除屏障（§12）已实现，定时的事件、HTTP 与到点执行已实现（到期表、能力与空闲关闭豁免未实现），其余未实现 · **§2–§4、§11 由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 取代**（旁听原文存放在业务线；§11 已删除），§5 按 P2 的讨论改写（没有窗口），§6 的擦除与修订信封不做 · ADR-0044（已取代）、ADR-0045、ADR-0046、ADR-0047、ADR-0049（已取代）、ADR-0050 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
+> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）；交付确认（§11）已删除，EndUser 删除屏障（§12）已实现，定时的事件、HTTP、到点执行、能力与空闲关闭豁免已实现（到期表未实现），其余未实现 · **§2–§4、§11 由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 取代**（旁听原文存放在业务线；§11 已删除），§5 按 P2 的讨论改写（没有窗口），§6 的擦除与修订信封不做 · ADR-0044（已取代）、ADR-0045、ADR-0046、ADR-0047、ADR-0049（已取代）、ADR-0050 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
 
 xinli 落地需要内核补上的原语。每一项都按[整体架构](./persona-architecture.md) §9 的判据给出理由：第二条业务线也会需要，并且业务侧做不到或做了不安全。业务语义（交谈、承诺、项目、人）一律不进内核。
 
@@ -109,7 +109,7 @@ CREATE TABLE capture_segments (
 
 ## 5. 定时（Schedule）
 
-> 实现状态：事件、投影、Session 时区、HTTP 与到点执行已实现；远近到期一律用 Park。到期表、内置能力、clock_now 默认时区与空闲关闭豁免尚未实现。
+> 实现状态：事件、投影、Session 时区、HTTP、到点执行、内置能力、clock_now 默认时区与空闲关闭豁免已实现；远近到期一律用 Park，到期表尚未实现。
 
 > P2 动工前按[整体架构](./persona-architecture.md) §13 的 Q55–Q76 改写：没有窗口、Session 的时区、超额不跳过、有定时的 Session 不按空闲关闭。
 
@@ -143,7 +143,11 @@ Schedule {
 | 内置能力 `schedule` | `{action: create \| list \| cancel, ...}`，由能力白名单授予；create 的结果写明下次执行的当地时间与星期；当前 Run 受外部内容影响时（写入闸门的判断），create 与 cancel 须用户批准（Q58） |
 | HTTP | `POST /v1/sessions/{id}/schedules`、`GET`、`DELETE /v1/sessions/{id}/schedules/{schedule_id}`：用户令牌（本人的 Session）与服务令牌（本业务线）；不审批 |
 
-定时的文字在创建时经内容安全检查，到期时不再检查。三个 SDK 不提供定时方法（App 在 P4 经 BFF，Q63）。
+内置能力由 `service.ScheduleCapability` 提供，在 `app.NewCore` 中与 Memory 能力一起追加；仍须 AgentDef 白名单授予，工具目录按名称排序。create 以 call_id 的 SHA-256 派生 sch_ 前缀的 ID，by 为 agent；同一调用重试复用声明。list 按下次到期与 ID 排序，列出文字、规则、带星期的当地到期时间；cancel 前先 list，重复取消不再写事件。一次性与 RRULE 的钟点均为当地时间，RRULE 必须带 BYHOUR 与 BYMINUTE；until 参数为带偏移的时间戳。
+
+审批复用 `runtime.tainted`：当前上下文有不是用户原话的内容（包括平台定时）时，create 与 cancel 都须批准，不采用 Memory 的用户文字依据豁免；list 不审批。能力的 Checker 先解析参数、Compile 规则并检查子 Session 与有效数上限，失败直接返回可重试的错误说明，不请求审批。摘要注明创建或取消、定时文字（至多 200 token），创建摘要显示规则、下次当地时间与时区；批准、拒绝及超时沿用 Worker 的审批流程。执行时 service 再校验当前状态并进行内容安全检查；等待审批期间一次性时刻已过期的，返回错误而不创建。
+
+定时的文字在创建时经内容安全检查，到期时不再检查。三个 SDK 不提供定时方法（App 在 P4 经 BFF，Q63）；控制台已有通用事件列表，显示新事件的种类、时刻与可展开的完整 JSON，不新增面板或场景。
 
 ### 5.4 语义
 
@@ -155,6 +159,7 @@ Schedule {
 - **错过**：一次性晚到照常执行；周期只执行最近一次到期，更早的合并为一条 `ScheduleSkipped`（first_due、last_due 两端均包含，count 不含本次执行）。关闭后到点的全部未处理到期合并为 reason=closed，并清空 next_due，后续不再执行。
 - **超额不跳过**（Q69）：到点总是写入 `RunRequested`，配额与准入由 Run 自己处理（挂起或排队）；`ScheduleSkipped` 只用于错过的周期与到点时已关闭的 Session。
 - **失效**：一次性的执行后失效；`until` 或 `COUNT` 用尽后失效；Session 关闭后失效。有有效定时的 Session 不按空闲关闭（Q68），`delete_at` 与用户删除照常。
+- **空闲关闭索引**：`lifecycle.Session.NextDue` 缓存投影中最早到期，零表示没有有效定时。service 在 Created、Cancelled、Fired、Skipped 写日志后调用 `SyncScheduleIndex`，不受 TouchEvery 节流。`IdleBefore` 跳过非零值；Janitor 关闭前读投影并修正索引，有有效定时则跳过，`Service.Close` 的空闲关闭决策也复查，防止并发创建被误关。反向校准用 `Index.ScheduledAfter` 按 Session ID 分页，每业务线每次 Sweep 至多 100 行，游标跨轮推进、到尾回绕，清除取消或耗尽后残留的非零值。日志与索引之间崩溃或并发乱序只造成暂时滞后：漏记的豁免由关闭前检查兜住，多记的豁免由分页校准清除；索引并非到期表，不负责唤醒。
 - **当前停放**：所有未来定时均由 `workqueue.Park` 保留工作项，取后台截止时间与定时到期的较小者。Run 挂起时已到期的定时等待 Run 结束，不用过去的时刻反复唤醒；未来到期仍参与上限。创建、取消与结束 Run 时以 `Decision.Wake` 原子唤醒。
 - **后续到期表**（Q61，P2-③，未实现）：下次到期在 1 小时之内的，沿用 `workqueue.Park`；更远的写入独立的到期表（按 Session 分片，按到期时间索引），工作项结束；Janitor 每次 Sweep 把一小时内到期的移回工作队列并停放到确切时刻。唤醒、取消、Session 删除与迁移在同一事务中处理，`workqueuetest` 覆盖这些交错。原因：现在的认领按优先级扫描、再过滤停放项（`pgqueue.Claim`），百万级的长停放会拖慢认领。
 - **删除**：当前定时只在日志与投影中，随 Session 删除，没有新存储。后续到期表须在 `app.SessionData` 登记。
