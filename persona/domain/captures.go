@@ -272,3 +272,35 @@ func (u *Book) sessionDays() map[string]string {
 	}
 	return out
 }
+
+// BusinessDay 只读出编排绑定所需的元数据，不改变已读位置与处理进度。
+type BusinessDay struct {
+	Session  string    `json:"session"`
+	DeleteAt time.Time `json:"delete_at,omitzero"`
+	Deleted  bool      `json:"deleted"`
+	TimeZone string    `json:"time_zone,omitempty"`
+}
+
+func (u *Book) BusinessDay(date string) BusinessDay {
+	var out BusinessDay
+	if d := u.captureDays[date]; d != nil {
+		out.Session, out.DeleteAt, out.Deleted = d.Session, d.DeleteAt, d.Deleted
+		segs := d.segments()
+		if len(segs) > 0 {
+			out.TimeZone = segs[len(segs)-1].g.TimeZone
+		}
+	}
+	return out
+}
+
+// DayCaptures 供本人开发页面读取；返回副本，不登记模型读页或固定时段间隔。
+func (u *Book) DayCaptures(date string) []PageSegment {
+	out := []PageSegment{}
+	if d := u.captureDays[date]; d != nil {
+		for _, s := range d.segments() {
+			g := s.g
+			out = append(out, PageSegment{Ref: s.ref.String(), Speaker: g.Speaker, SpeakerKey: g.SpeakerKey, Text: g.Text, SpokenAt: g.SpokenAt, TimeZone: g.TimeZone})
+		}
+	}
+	return out
+}

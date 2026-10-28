@@ -349,7 +349,8 @@ func TestAuthorizationMatrix(t *testing.T) {
 						}
 					}
 				case route == "DELETE /v1/sessions/{id}/memories":
-					// 只有本业务线的服务令牌可以按来源撤销；Session 的主人（用户令牌）403，其他业务线 404。
+					// 仍存在的 Session：本业务线服务令牌可撤销，主人用户令牌 403，其他调用方 404。
+					// 已删除 Session 的授权矩阵见 TestDeletedSessionMemoryAuthorization，用户令牌仍为 404。
 					want := map[string]int{"demo/": 204, "demo/u1": 403, "demo/u2": 404, "other/u1": 404, "other/": 404}[principal]
 					if code != want {
 						t.Fatalf("got %d (%s), want %d", code, body, want)

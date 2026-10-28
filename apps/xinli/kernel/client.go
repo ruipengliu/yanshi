@@ -21,11 +21,23 @@ type Client struct {
 }
 
 func (c *Client) CreateSession(ctx context.Context, businessLine, endUser, agent string) (string, error) {
+	return c.CreateSessionWithOptions(ctx, businessLine, endUser, agent, SessionOptions{})
+}
+
+type SessionOptions struct {
+	DeleteAt time.Time
+}
+
+func (c *Client) CreateSessionWithOptions(ctx context.Context, businessLine, endUser, agent string, opts SessionOptions) (string, error) {
 	in := struct {
-		BusinessLine string `json:"business_line"`
-		EndUser      string `json:"end_user"`
-		Agent        string `json:"agent"`
-	}{businessLine, endUser, agent}
+		BusinessLine string     `json:"business_line"`
+		EndUser      string     `json:"end_user"`
+		Agent        string     `json:"agent"`
+		DeleteAt     *time.Time `json:"delete_at,omitempty"`
+	}{BusinessLine: businessLine, EndUser: endUser, Agent: agent}
+	if !opts.DeleteAt.IsZero() {
+		in.DeleteAt = &opts.DeleteAt
+	}
 	var out struct {
 		SessionID string `json:"session_id"`
 	}
@@ -47,11 +59,19 @@ func (c *Client) Submit(ctx context.Context, sessionID, inputID, text string) er
 }
 
 func (c *Client) post(ctx context.Context, path string, in, out any) error {
-	body, err := json.Marshal(in)
+	return c.request(ctx, http.MethodPost, path, in, out)
+}
+
+func (c *Client) request(ctx context.Context, method, path string, in, out any) error {
+	var body []byte
+	var err error
+	if in != nil {
+		body, err = json.Marshal(in)
+	}
 	if err != nil {
 		return errors.New("kernel: encode request")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.BaseURL, "/")+path, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(c.BaseURL, "/")+path, bytes.NewReader(body))
 	if err != nil {
 		return errors.New("kernel: invalid request URL")
 	}
@@ -76,7 +96,7 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("kernel: HTTP status %d", resp.StatusCode)
+		return &HTTPError{StatusCode: resp.StatusCode}
 	}
 	if out != nil {
 		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out); err != nil {
@@ -84,4 +104,89 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 		}
 	}
 	return nil
+}
+
+// HTTPError 只保留状态码，调用方可分类重试而不会记录响应正文。
+type HTTPError struct{ StatusCode int }
+
+func (e *HTTPError) Error() string { return fmt.Sprintf("kernel: HTTP status %d", e.StatusCode) }
+func (e *HTTPError) Is(target error) bool {
+	return target == ErrNotFound && e.StatusCode == http.StatusNotFound
+}
+
+var ErrNotFound = errors.New("kernel: not found")
+
+type Session struct {
+	Runs []Run `json:"runs"`
+}
+type Run struct {
+	ID     string `json:"run_id"`
+	Status string `json:"status"`
+}
+
+func (s Session) ActiveRun() string {
+	for _, run := range s.Runs {
+		if run.Status == "queued" || run.Status == "running" || run.Status == "suspended" {
+			return run.ID
+		}
+	}
+	return ""
+}
+
+type Deletion struct {
+	Reason      string    `json:"reason"`
+	RequestedAt time.Time `json:"requested_at"`
+	CompletedAt time.Time `json:"completed_at"`
+}
+type Memory struct {
+	ID      string `json:"id"`
+	Content string `json:"content"`
+}
+
+func sessionPath(id string) string { return "/v1/sessions/" + url.PathEscape(id) }
+func (c *Client) Session(ctx context.Context, id string) (Session, error) {
+	var out Session
+	err := c.request(ctx, http.MethodGet, sessionPath(id), nil, &out)
+	return out, err
+}
+func (c *Client) Interrupt(ctx context.Context, sessionID, runID string) error {
+	return c.request(ctx, http.MethodPost, sessionPath(sessionID)+"/runs/"+url.PathEscape(runID)+"/interrupt", nil, nil)
+}
+func (c *Client) DeleteSession(ctx context.Context, id, reason string) error {
+	path := sessionPath(id)
+	if reason != "" {
+		path += "?" + url.Values{"reason": {reason}}.Encode()
+	}
+	return c.request(ctx, http.MethodDelete, path, nil, nil)
+}
+func (c *Client) Deletion(ctx context.Context, businessLine, id string) (Deletion, error) {
+	var out Deletion
+	err := c.request(ctx, http.MethodGet, sessionPath(id)+"/deletion?"+url.Values{"business_line": {businessLine}}.Encode(), nil, &out)
+	return out, err
+}
+func (c *Client) DeleteSessionMemories(ctx context.Context, businessLine, id string) error {
+	return c.request(ctx, http.MethodDelete, sessionPath(id)+"/memories?"+url.Values{"business_line": {businessLine}}.Encode(), nil, nil)
+}
+func (c *Client) MemoriesBySource(ctx context.Context, businessLine, endUser string, sessions []string) ([]Memory, error) {
+	out := []Memory{}
+	seen := map[string]bool{}
+	for start := 0; start < len(sessions); start += 32 {
+		query := url.Values{"business_line": {businessLine}, "end_user": {endUser}}
+		for _, id := range sessions[start:min(start+32, len(sessions))] {
+			query.Add("source_session", id)
+		}
+		var batch struct {
+			Memories []Memory `json:"memories"`
+		}
+		if err := c.request(ctx, http.MethodGet, "/v1/memories?"+query.Encode(), nil, &batch); err != nil {
+			return nil, err
+		}
+		for _, m := range batch.Memories {
+			if !seen[m.ID] {
+				seen[m.ID] = true
+				out = append(out, m)
+			}
+		}
+	}
+	return out, nil
 }

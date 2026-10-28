@@ -127,6 +127,7 @@ Grant { id, end_user, from_business_line, to_business_line, categories[], create
 - **删除单个 Session**：由该 Session 写入的 Memory **一并删除**（§9）。Janitor 的清理步骤中增加一步，按 `source_session` 删除。
 - **按保留期到期删除 Session**（删除原因 `retention`）：由该 Session 写入的 Memory **保留**（ADR-0037）。到期清理不是用户的删除意图；旁听 Session 只保留 7 天，每晚整理时写下的偏好与沟通习惯不应随原话一起消失（[旁听](./captures.md) §9）。Memory 的登记为 `KeepOnRetention`（`app.SessionData`），该字段亦用于擦除原因；Janitor 按删除记录的原因跳过它；委托派生的子 Session 随父 Session 一起按保留期删除时同样保留。用户可以经 `GET /v1/memories` 列出与删除它们。
 - **擦除工作 Session**（`erasure`，ADR-0050）：同样保留既有 Memory，子 Session 同因删除；绝对期限 `delete_at` 到期则按 `retention` 删除。两种原因都不豁免迟到的新写入：`lifecycle.Recheck` 按新 Memory ID 撤回，不删除该 Session 的其他既有 Memory。
+- **删除已清理 Session 的来源 Memory**：`DELETE /v1/sessions/{id}/memories` 在 Session 已不存在时，允许同业务线的服务令牌按删除记录授权并幂等删除；用户令牌、没有删除记录或业务线不符仍返回 404。unrestricted 开发模式须带 `business_line`；仍存在的 Session 保持原有权限。删除按 `source_session` 访问 Memory，不依赖 Session 投影或 EndUser。
 - 访问记录保存在召回方的 Session 日志中，随该 Session 删除；另外有一张不含内容的访问索引（memory_id、业务线、时间），删除 Memory 时一起删除。
 
 ## 8. 测试

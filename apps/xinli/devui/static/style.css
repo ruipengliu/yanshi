@@ -145,3 +145,8 @@ a { color:var(--accent); }
   color: var(--muted);
   font-size: 12px;
 }
+
+.capture-entry textarea{box-sizing:border-box;width:100%;font:inherit;padding:10px;border:1px solid #ddd;border-radius:6px;resize:vertical}
+.capture-entry .xinli-actions{flex-wrap:wrap;margin-top:12px}
+.capture-entry input{max-width:100%;padding:6px}
+.capture-text{white-space:pre-wrap;overflow-wrap:anywhere}

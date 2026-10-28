@@ -266,7 +266,7 @@ xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理�
 
 ## 13. Persona 中的旁听原文
 
-ADR-0050 的 P1 第 2 步已切换：xinli-day 版本 2 使用 `mcp_xinli__captures`，不再声明 `streams`。xinli 登记已开启 `attests_speakers`、关闭 `acks`，Persona 不再输出交付回执；处理进度与接受范围变更集同事务推进。评测经夹具绑定业务日并向 Persona 提交旁听，内置 Capture 路径与 console-capture 保留到第 5 步。P1-④a 已补充 Persona 的擦除、删除待办与删除期限保存（见本节末）；内核删除和重建执行留给④b，测试与效果由远端验收。
+ADR-0050 的 P1 第 2 步已切换：xinli-day 版本 2 使用 `mcp_xinli__captures`，不再声明 `streams`。xinli 登记已开启 `attests_speakers`、关闭 `acks`，Persona 不再输出交付回执；处理进度与接受范围变更集同事务推进。评测经夹具绑定业务日并向 Persona 提交旁听，内置 Capture 路径与 console-capture 保留到第 5 步。P1-④a 已补充 Persona 的擦除、删除待办与删除期限保存（见本节末）；④b 已接入内核删除与重建执行（见本节末），测试与效果仍由远端验收。
 
 原文按（BusinessLine、EndUser、业务日）隔离。业务日是提交方按用户当地日期给出的 YYYY-MM-DD，不从服务器时钟或片段时间反推。每个业务日记录当前工作 Session，绑定可幂等重试、可换绑；旧 Session 随即不能再读原文，一个 Session 不能同时绑定两个业务日。它不复用每日整理总览，已有 State 的字段形状保持不变。
 
@@ -318,3 +318,27 @@ MCP 的 captures 工具沿用内置工具的说明与 schema，声明只读、�
 `CompleteDeletionTask` 写候选并完成；`FailDeletionTask` 只接受 1–64 字符的小写字母、数字、下划线类别（首字符为字母），完成后的失败不改状态。`PendingDeletionTasks` 与 `DeletionTasks` 返回独立副本。Store 的 `PendingDeletions(ctx)` 发现有 pending 待办的（BusinessLine，EndUser）；P4 的 PG 实现应使用待办表索引，不扫描所有 Book，执行仍逐键进行。
 
 夹具新增 `POST /erase`、`POST /erase_day` 和 `GET /deletion_tasks`，前两者返回 `{task}`，查询返回 `{tasks}`；`bind_day` 接受 RFC3339 的 `delete_at`。State 的既有字段形状不变，待办从独立接口读取。事务提交且锁释放后，以 `DeletionPending(ctx, businessLine, endUser, taskID)` 通知；通知没有持久投递保证，启动时查询待办作为恢复入口。中断与删除内核 Session、等待清理、查候选 Memory、失败重试和重建均属于④b，本步不执行。
+
+### 删除待办的执行（P1-④b）
+
+`apps/xinli/orchestrator` 实现 `DeletionNotifier`。通知只唤醒执行，不承担持久交付；`StartDeletions` 启动时立即查询 `Store.PendingDeletions`，随后默认每 30 秒扫描一次。`ScanDeletions` 可手动驱动一轮。`xinli dev -kernel-url` 将同一编排器装配到 MCP、夹具和开发页面，停机关闭扫描并等待已接收的工作；不带内核地址时保留 pending，不执行内核操作。开发命令目前使用 memstore，进程重启不保存任何 Book；这里的崩溃恢复保证以复用同一 Store（将来的持久实现）为前提，测试用同一 memstore 重建编排器验证协议。
+
+执行与项目归集、每周回顾、工作 Session 创建共用同一 EndUser 的互斥入口，网络调用不占 Persona 事务锁。待办按保存顺序执行；前项清理未完成、失败或处于退避期时，本所有者本轮到此结束，不让后项抢先读取 Memory。每项按以下顺序推进：
+
+1. 非空 `session`：读取投影，有非终态 Run 则中断；Session / Run 不存在可跳过中断。
+2. 删除工作 Session。擦除使用 `erasure`，删一天不传 reason（服务令牌下为 `service`）。404 或可读的既有删除记录表示无需重复申请。
+3. 查询删除进度。`completed_at` 尚无值即结束本轮，不在协程中长轮询。只有 Session、删除申请、删除记录都返回 404 时，视为该 Session 已不存在；其他查询失败保持待办。空 Session 跳过前三步。
+4. 擦除按 `sessions` 查询有效 Memory，每批至多 32 个来源，并去重为 `{id, summary}` 候选；只交 App 展示，不自动删除。删一天逐个调用这些来源 Session 的 Memory 删除接口，不把 404 当作 Memory 已删成功。
+5. 同事务保存候选、清理完成时间和是否还需重新整理。任何失败都保存固定的步骤错误类别，停止后续步骤；网络响应正文不入日志或待办。错误按扫描间隔开始指数退避，默认上限 10 分钟，`RetryInterval` / `RetryMax` 可配置。退避计时只在编排器内存，重启后立即尝试，持久的待办不会丢失。
+
+擦除完成时，使用擦除前最后一段旁听的时区判断是否为过去的业务日；最后一段没有时区则用 `Options.DefaultTimeZone`，默认 `Asia/Shanghai`。期限为零或仍晚于当前时间才重建，今天留给下次整理按需创建，已过期及删一天均不重建。时区在擦除前记入待办，不能因擦掉最后一段而改变“今天”的判断。
+
+为了覆盖“清理完成后、重新整理前”崩溃，删除待办额外保存 `time_zone` 和 `rebuild_pending`。`CompleteDeletionWithRebuild` 把清理完成与重新整理意图同事务保存；`PendingDeletionTasks` / `Store.PendingDeletions` 同时返回 `status=pending` 或 `rebuild_pending=true` 的工作。重新整理失败时状态仍为 completed（删除确已完成），保留重建标记与最近错误。P4 的索引查询须覆盖这两种条件。原 `CompleteDeletionTask` 的调用语义不变，不主动登记重建。
+
+重建调用 `EnsureDaySession(ctx, bl, eu, date)`，随后以 `xinli_rebuild_<待办ID>` 为输入 ID 提交“整理今天”；内核按 Session 与输入 ID 去重，成功后 `CompleteDeletionRebuild` 清掉标记。若提交已被内核接受、但本地标记提交失败，恢复时复用绑定和同一输入 ID，只有一次有效输入。更晚的擦除或删一天已接管该日时，旧待办清掉重建意图，不再提交；期限在等待中到期也跳过。
+
+`EnsureDaySession` 在用户互斥入口内先读 Persona 的当前绑定，已有则复用；没有时创建 `xinli-day`，创建和 `BindDay` 使用业务日同一个 `delete_at`，零期限不传。已删除的业务日拒绝重建，未完成删除的业务日等待清理，过期的业务日不新建。绑定事务重读删除状态、删除待办代数和期限，防止创建网络调用期间发生的擦除被旧读取覆盖。创建与绑定之间崩溃允许留下未绑定的空 Session，它没有读过原文；绑定成功后的重复调用不会再创建。
+
+**来源 Memory 删除与开发模式**：`DELETE /v1/sessions/{id}/memories` 在 Session 已不存在时，允许同业务线的服务令牌按删除记录授权，幂等清理擦除后保留的 Memory；用户令牌、无删除记录或跨业务线仍返回 404。编排器仍不把此接口的 404 当作成功。客户端的 `Deletion(ctx, businessLine, id)` 和 `DeleteSessionMemories(ctx, businessLine, id)` 均携带 `business_line` 查询参数，`MemoriesBySource` 同样携带业务线与 EndUser；因此 `xinli dev -kernel-url` 不带令牌连接 unrestricted 内核时也能执行完整流程。前两个接口在服务令牌模式下以令牌业务线为准。
+
+开发页面新增 `/v1/dev/{businessLine}/{endUser}` 下的 JSON 入口：`GET /captures?date=...` 只读列出片段、绑定元数据与当天待办；`POST /captures` 接收日期与结构化片段，生成随机 capture_id；`POST /erase`、`POST /erase_day` 复用领域事务并通知；`POST /organize` 接收日期、`kind=exchange/day` 及可选 input_id，经 EnsureDaySession 提交固定整理指令。只有带内核编排时显示整理按钮。原文查询不改变模型读页或处理进度，开发页面不承担生产鉴权入口。

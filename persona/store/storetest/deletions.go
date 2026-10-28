@@ -100,3 +100,33 @@ func deletions(t *testing.T, factory func() store.Store) {
 		t.Fatal(err)
 	}
 }
+
+// 恢复扫描不能在清理完成后丢掉尚未提交的整理；同一个存储接缝覆盖两段工作。
+func deletionRebuild(t *testing.T, factory func() store.Store) {
+	ctx := context.Background()
+	s := factory()
+	now := time.Now()
+	var task domain.DeletionTask
+	if err := s.Update(ctx, "bl", "eu", func(b *domain.Book) error {
+		if _, err := b.AppendCaptures("2026-10-27", "c", []domain.CaptureSegment{{Speaker: "wearer", Text: "原文"}}); err != nil {
+			return err
+		}
+		var err error
+		task, err = b.Erase("2026-10-27", "1.0", "1.0", now)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Update(ctx, "bl", "eu", func(b *domain.Book) error { return b.CompleteDeletionWithRebuild(task.ID, nil, true, now) }); err != nil {
+		t.Fatal(err)
+	}
+	if owners, err := s.PendingDeletions(ctx); err != nil || len(owners) != 1 {
+		t.Fatalf("lost rebuild: %v %v", owners, err)
+	}
+	if err := s.Update(ctx, "bl", "eu", func(b *domain.Book) error { return b.CompleteDeletionRebuild(task.ID) }); err != nil {
+		t.Fatal(err)
+	}
+	if owners, err := s.PendingDeletions(ctx); err != nil || len(owners) != 0 {
+		t.Fatalf("completed rebuild: %v %v", owners, err)
+	}
+}

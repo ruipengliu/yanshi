@@ -22,21 +22,30 @@ type Kernel interface {
 }
 
 type Options struct {
-	Now    func() time.Time
-	Logger *slog.Logger
+	Now             func() time.Time
+	Logger          *slog.Logger
+	RetryInterval   time.Duration
+	RetryMax        time.Duration
+	DefaultTimeZone string
 }
 
 type owner struct{ businessLine, endUser string }
 type Orchestrator struct {
-	store   store.Store
-	kernel  Kernel
-	ctx     context.Context
-	now     func() time.Time
-	logger  *slog.Logger
-	mu      sync.Mutex
-	closed  bool
-	pending sync.WaitGroup
-	locks   map[owner]chan struct{}
+	store          store.Store
+	kernel         Kernel
+	ctx            context.Context
+	now            func() time.Time
+	logger         *slog.Logger
+	mu             sync.Mutex
+	closed         bool
+	pending        sync.WaitGroup
+	locks          map[owner]chan struct{}
+	retryInterval  time.Duration
+	retryMax       time.Duration
+	defaultZone    *time.Location
+	stopRetries    chan struct{}
+	startedRetries bool
+	retries        map[retryKey]retryState
 }
 
 var _ mcpserver.Notifier = (*Orchestrator)(nil)
@@ -49,7 +58,21 @@ func New(ctx context.Context, s store.Store, k Kernel, opts Options) *Orchestrat
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
-	return &Orchestrator{store: s, kernel: k, ctx: ctx, now: opts.Now, logger: opts.Logger, locks: make(map[owner]chan struct{})}
+	if opts.RetryInterval <= 0 {
+		opts.RetryInterval = 30 * time.Second
+	}
+	if opts.RetryMax < opts.RetryInterval {
+		opts.RetryMax = max(opts.RetryInterval, 10*time.Minute)
+	}
+	if opts.DefaultTimeZone == "" {
+		opts.DefaultTimeZone = "Asia/Shanghai"
+	}
+	zone, err := time.LoadLocation(opts.DefaultTimeZone)
+	if err != nil {
+		zone = time.FixedZone("Asia/Shanghai", 8*60*60)
+	}
+	return &Orchestrator{retryInterval: opts.RetryInterval, retryMax: opts.RetryMax, defaultZone: zone,
+		stopRetries: make(chan struct{}), retries: make(map[retryKey]retryState), store: s, kernel: k, ctx: ctx, now: opts.Now, logger: opts.Logger, locks: make(map[owner]chan struct{})}
 }
 
 func (o *Orchestrator) begin() bool {
@@ -65,7 +88,10 @@ func (o *Orchestrator) begin() bool {
 // Shutdown 先停止接收通知，再等待已接收的任务；调用方超时后可取消生命周期 context。
 func (o *Orchestrator) Shutdown(ctx context.Context) error {
 	o.mu.Lock()
-	o.closed = true
+	if !o.closed {
+		o.closed = true
+		close(o.stopRetries)
+	}
 	o.mu.Unlock()
 	done := make(chan struct{})
 	go func() { o.pending.Wait(); close(done) }()

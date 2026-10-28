@@ -13,7 +13,7 @@ import (
 type Store interface {
 	Update(ctx context.Context, businessLine, endUser string, fn func(*domain.Book) error) error
 	View(ctx context.Context, businessLine, endUser string, fn func(*domain.Book) error) error
-	// PendingDeletions 只发现有删除待办的所有者；P4 的 PG 实现按待办表索引查询，不扫描 Book。
+	// PendingDeletions 只发现有删除待办或完成后仍需重新整理的所有者；P4 的 PG 实现按待办表索引查询，不扫描 Book。
 	PendingDeletions(ctx context.Context) ([]Owner, error)
 }
 
