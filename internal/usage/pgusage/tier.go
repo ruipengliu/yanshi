@@ -26,7 +26,8 @@ func (s Tiers) Get(ctx context.Context, bl, eu string) (string, error) {
 }
 
 func (s Tiers) Put(ctx context.Context, bl, eu, tier string, at time.Time) error {
-	_, err := s.Pool.Exec(ctx, `INSERT INTO end_user_tiers (business_line, end_user, tier, updated_at)
+	// 同键事务中的写入须沿用调用方连接，否则会逃出回滚，并在单连接池中等待自己。
+	_, err := pg.Exec(ctx, s.Pool, `INSERT INTO end_user_tiers (business_line, end_user, tier, updated_at)
 		VALUES ($1, $2, $3, $4) ON CONFLICT (business_line, end_user)
 		DO UPDATE SET tier = EXCLUDED.tier, updated_at = EXCLUDED.updated_at`, bl, eu, tier, at)
 	return err

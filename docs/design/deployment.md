@@ -94,26 +94,60 @@ Janitor 的 Sweep 同时把 Horizon 内的远期停放移回工作队列（[M7 �
 
 [ADR-0051](../adr/0051-shard-slots-and-id-location.md) 固定 1024 槽：SHA-256 的前八字节按大端解释后 `% 1024`，再由部署静态表映射到稳定分片号；不能 `% 当前库数`。Session 数据读 Session ID 的自身槽位，ByEndUser 的 Session 索引读其第二个槽位；工件与调用随 Session，Memory、Grant、用量、Tier 等随 EndUser。槽位只决定查哪个库，授权仍核对真实归属。
 
-当前 `internal/shard` 已提供纯函数 Locator、槽位表与只读兼容映射解析；`internal/ids` 保留生成 API。部署 JSON 将 `table` 与 `compatibility` 放在同一制品，兼容部分含 `version`、`legacy_data_in_shard0`、按 Kind / Key 登记的 `entries`；完整示例见 ADR-0051 §5。解析拒绝未知 / 重复字段、重复目标与未登记分片。`Locator.Identity()` 的版本与 SHA-256 摘要覆盖完整路由配置，所有进程必须一致；C5 装配调用 `ValidateActivation` 并将摘要纳入就绪检查。
+`internal/app.Sharded` 在装配层把每库一整套 `Stores` 组合起来；每库由 `PostgresShard` 构造自己的 Log、三类 Queue、Waking、Snapshots、Outbox 与其他存储。在线方法以参数中的真实键经 `Locator` 选唯一分片，不逐库探测。PG 工件与索引的 `Select` 只断言目标就是本库，不再另选连接。内存分片沿用同一包装，serve、sim、eval、e2e 仍经 `app.Stores` / `app.NewCore` 装配。
 
-单库默认全部槽到 0、空映射、允许旧数据回退 0；若有旧数据却没有映射，启用前提要求全部槽仍到 0。EndUser 条目优先于 Hash；legacy ID 先查兼容映射，未覆盖且明确声明仍在 0 才回退；损坏 / 未知版本不回退，只有预检确认的 `historical: true` 碰撞例外。映射不证明授权，读后仍核对真实归属。`pg.Tables.Gaps` 已清空，Locate 记录工件 Lookup 与索引 LookupSession；PG 存储向 `pg.PoolSelector` 提交明确 Target，`app.Postgres` 的 SinglePoolSelector 当前只允许库 0。没有多库装配，不能仅加载一个多库槽位表就运行分片部署。
+**P4 只支持新建单元，或全部槽位留在库 0 的既有单元。把旧数据迁离库 0 不在 P4 支持范围。** 静态映射无法覆盖旧 Session 之后生成的旧式工件与派生 ID；支持这种迁移需要另行设计在线目录。多库新单元必须关闭旧数据回退且兼容条目为空；既有单元允许使用兼容清单，但全部槽与条目必须仍指向库 0。不能添加一条无关映射绕过启用前提。历史预检与兼容条目的语义仍见 [ADR-0051](../adr/0051-shard-slots-and-id-location.md) §5。
 
-分片只支持新建单元或停写迁移。**仍能生成旧工件 / 派生子 Session 的 legacy Session 不能迁出库 0 后直接恢复写入**：当前生成语义不变，静态清单无法覆盖未来随机旧 ID；须先另行决定可恢复的生成 / 定位方案。同样不能在这些写入仍存在时关闭回退；EndUser 映射必须与新对象 / Session 索引的 Hash 槽位置一致。C5 必须验证这些条件及清单完整性，不能靠在线逐库试探补漏。
+#### 配置与迁移（C5a）
 
-停写迁移清单：
+不传 `-shards` 且未设置 `YANSHI_SHARDS` 时，保持原单库入口：`-pg-dsn`、可选的 `-pg-listen-dsn`，全部槽位到库 0。内存开发入口同样保持原行为。
 
-1. 盘点并备份；准备明确历史范围的快照，schema 满足当前版本。对每个历史源库运行 `yanshi id-preflight -pg-dsn "$HISTORICAL_PG_DSN" -historical-snapshot > id-preflight.jsonl`。预检是只读可重复读事务，扫描 ID 列及 Event / 快照 / Invoke / InvokeResult 的结构化 ID，不输出正文；有碰撞或不可解析项时非零退出。混合新旧库先提取历史范围，不把合法新 v1 当成历史对象。
-2. 核实所有发现，历史命名空间碰撞按原 ID、目标类别登记 `historical: true`；不得自动接受所有损坏 ID。构造真实 EndUser、旧 Session 数据与索引、裸对象、独立派生幂等键的权威清单，明确未覆盖旧数据是否全部留在 0。无法证明则不得启用回退。
-3. 停入口与全部写入者，包括 Worker、控制器、Janitor；执行 ADR-0051 §8 的主键 / 幂等键迁移注意事项。核实不存在将继续产生不可定位 legacy ID 的迁出 Session。
-4. 搬迁并核验数量、真实归属、同键新写入位置、原幂等键、删除屏障、Session 删除恢复与出站水位。匿名用量留原库，不按 `~` 重哈希；各分片不得产生重复原幂等身份。
-5. 原子部署同一槽位表与兼容版本，所有进程核对完整摘要、通过启用校验及 C5 的每库就绪检查后恢复。没有 C5 时只允许运行单库。回滚同样停全部写入者并同步恢复数据与映射，不能滚动混跑旧定位代码。
-6. 映射、预检报告和备份包含 ID / 真实 EndUser，按受控迁移制品管理；用户数据删除后的残留随部署保留政策退役，不能永久留作在线目录。明确备份保留期与物理删除生效上限（ADR-0015）。
+多库使用受控 JSON 文件；`serve -storage postgres -shards <file>` 与 `yanshi migrate -shards <file>` 读取同一文件，也可用 `YANSHI_SHARDS` 指定文件路径。SQL 和直连 DSN 都必须显式填写，不从数组位置推断分片号：
 
-不做在线迁槽、自动再平衡或网关通知归属。
+```json
+{
+  "table": {
+    "shards": [0, 1],
+    "ranges": [
+      {"first": 0, "last": 511, "shard": 0},
+      {"first": 512, "last": 1023, "shard": 1}
+    ]
+  },
+  "compatibility": {
+    "version": "new-cell-v1",
+    "legacy_data_in_shard0": false,
+    "entries": []
+  },
+  "databases": [
+    {"id": 0, "sql_dsn": "postgres://sql-proxy/kernel0", "direct_dsn": "postgres://pg0/kernel0"},
+    {"id": 1, "sql_dsn": "postgres://sql-proxy/kernel1", "direct_dsn": "postgres://pg1/kernel1"}
+  ]
+}
+```
 
-C5 每库独立维护 SQL / 直连 DSN、Notifier、迁移和出站游标；队列逐库公平认领，租约回原库。Janitor、时间清理与低频服务端查询按分片有界遍历；删除请求在库 0，进度从各库的 Session 删除记录汇总，不能跨库 JOIN。业务线用量按分片部分和形成完整缓存，映射变更使缓存失效；失联时只可使用仍有效的完整缓存，否则依赖该汇总的请求有界失败，不能把缺失部分当零。
+文件包含凭据时按 Secret 管理；DSN 和兼容清单不写日志。解析拒绝未知字段、重复字段、重复或缺失分片、遗漏 DSN，并调用 `ValidateActivation`。启动逐库校验系统标识与 database OID：同一分片的 SQL/直连必须是同一物理数据库和 schema，不同分片不能以两个 schema 或两个地址重复装配同一个数据库。连接角色需要 `pg_control_system()` 的 EXECUTE 权限（或 `pg_monitor`），用于这个身份检查；数据库名相同不能证明身份相同。
 
-多库就绪须报告每库状态并允许部分可服务，替换 §6 中单库探针的直接套用：不对全部分片做简单 AND。健康分片独立读写、认领与出站消费继续；需要失联分片的请求或无有效完整缓存的汇总有界失败。故障库不能让健康库的独立操作一起停摆。
+生产先运行 `yanshi migrate -shards <file>`，再让各角色以 `-migrate=false` 启动；开发可用 `-migrate=true` 逐库迁移。每库使用自己的 SQL 池、直连池与 Notifier；迁移锁只走直连，启动同时检查 SQL 入口可见全部迁移、Notifier 已建立连接。所有角色使用相同配置，全部角色合在一个进程仍可运行。`notify-shards` 只控制每库内部的通知频道数，与数据库分片数无关。
+
+`/readyz` 的 `X-Yanshi-Routing` 返回 `Locator.Identity()` 的摘要（不含 DSN）；发布时核对所有角色实例的摘要相同，不能只比兼容版本标签。C5a 启动和就绪暂时要求全部登记分片可用，**尚未实现 §7 / ADR-0051 §7 的部分就绪**；按分片报告、接流量策略属于 C5b。路由本身不会在访问健康键时查询其他库。
+
+#### 队列、离线操作与验证边界
+
+三类队列公平轮转，各库一次 Claim 尝试默认最多一秒；空库或失败库之后继续尝试，全部为空才返回空队列。租约携带来源分片，Renew / Park / Release 回到原库并复核 Session 定位与来源一致。各库的入队通知合并给等待方，转发随进程上下文取消。Waking 在选定分片内原子写日志、队列与信封；`pg.WithTx` 遇到另一 pool 的路由或 `pg.Exec` 报错，不能静默跨库独立提交。
+
+C5a 的 Offline 路径按分片顺序遍历：Index 时间扫描、删除待办、Inbox 归属恢复、Memory 按来源 Session 删除、Usage 报表与清理、Presence / Ledger / Outbox 清理、到期提升、EndUser 屏障清理。`Promote` 的 limit 是每库批量，返回合计；有界总预算与公平续扫留 C5b。沙箱 ClaimIdle 已有删除候选的副作用，因此每次交回一个分片的一批并轮转，不能在后库失败时丢掉前库已认领的工作。
+
+未指定 EndUser 的 Session 列表按 `(last_input_at, session_id)` 全局倒序合并；现有游标也是每库下一轮的边界，不漏掉未消费的行。Usage 的相同分组数字列求和；匿名 `~` 行留原库并跨库汇总。删除请求只存库 0，读取请求后逐库按 request_id 统计 tombstone，不再 JOIN 请求表。上述完整结果任一库失败即返回错误，不能把缺失部分当零。可重复清理尝试其余分片后仍返回聚合错误。
+
+多库 `Outbox.List/Maintain/Stats` 已遍历；多库流的 `Read/Head` 暂时返回 `outbox_unknown_shard`，不将库 0 的流当作完整流。多分片游标、HTTP 与 xinli 消费者由 C5b 完成。
+
+新增 `TestShardedConsistency` 在内存与两个真实 database 上跑适用存储套件（旧夹具全部留库 0，跨片键另测）；`TestShardedRouting`、队列/故障/事务与启动配置测试覆盖两库边界。`pgtest.Database` 创建随机、可清理 database，测试角色需要 CREATEDB；既有 Docker PostgreSQL 测试角色满足该前提，schema 只用于每库内部的用例隔离。
+
+分片差分采用方案 (a)：模拟队列只读各库头部候选，按优先级、全局逻辑入队/归还顺序选择，并涵盖 Waking 内部入队。生产仍公平轮转。`CompareShards` 仅在新差分种子启用：保留全部 Session 日志、状态指纹，出站列表按 Session/seq/信封 ID 规范化，忽略跨库不存在的全局插入顺序；C5a 直接核对各库全部信封，不测试 C5b 的流游标。普通单库种子不启用该选项、不改变原指纹定义。新增单库内存/双库内存/双库 PG 三方比较，逐库删除不变量，以及 Session 分布、跨片父子与同用户跨片 Session 计数；短 Horizon 另外要求远期停放和提升覆盖。
+
+`make check` 默认包含 3 个双库种子，`make sim` 以 `-sim.shardseeds=100` 增加同量级双库种子。以上改动尚待远端 `dev fmt`、`make check`、`make sim` 验证；没有将静态检查记为测试通过。
+
+C5b 继续完成 fan-out 并发上限、每库与总预算、续扫、完整用量汇总缓存、删除进度的有界失败、按分片就绪与部分可服务、多分片出站及 xinli 消费者、长期故障隔离。P4 仍不做在线迁槽、自动再平衡、旧数据迁出库 0 或网关通知归属。
 
 ### 到期表的首次升级与回滚
 

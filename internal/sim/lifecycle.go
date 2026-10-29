@@ -12,7 +12,6 @@ import (
 	"yanshi/internal/memory"
 	"yanshi/internal/sandbox"
 	"yanshi/internal/service"
-	"yanshi/internal/session"
 	"yanshi/internal/workqueue"
 )
 
@@ -202,6 +201,13 @@ func (w *World) checkDeleted(final bool) error {
 		if t.CompletedAt.IsZero() {
 			continue
 		}
+		if w.opts.CompareShards {
+			for _, part := range w.stores.Shards() {
+				if err := w.checkDeletedShard(ctx, part, sid, lifecycle.KeepsMemory(t.Reason)); err != nil {
+					return err
+				}
+			}
+		}
 		if q, ok := w.queue.(workqueue.Inspector); ok {
 			has, err := q.Contains(ctx, sid)
 			if err != nil {
@@ -240,7 +246,9 @@ func (w *World) checkDeleted(final bool) error {
 				}
 			}
 		}
-		if s, ok := w.store.Snapshots.(*session.MemSnapshots); ok && s.Has(sid) {
+		if snap, err := w.store.Snapshots.Get(ctx, sid); err != nil {
+			return err
+		} else if snap != nil {
 			return fmt.Errorf("invariant: deleted session %s still has a projection snapshot", sid)
 		}
 		// 按保留期到期删除时 Memory 保留，其余删除一并清除（ADR-0037）。账号注销另行删除该用户的全部 Memory。

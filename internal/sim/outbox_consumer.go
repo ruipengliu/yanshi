@@ -26,6 +26,24 @@ func (w *World) consumeOutbox(ctx context.Context, faults bool) (int, error) {
 		c.effects = map[string]int{}
 		c.publishedAt = map[string]time.Time{}
 	}
+	if w.opts.CompareShards {
+		// C5a 检查事务写出的全部信封；不伪造多分片流的消费游标。
+		rows, err := w.stores.Outbox.List(ctx, "bl")
+		if err != nil {
+			return 0, err
+		}
+		var unseen []outbox.Envelope
+		for _, e := range rows {
+			if old, ok := c.received[e.EnvelopeID]; ok {
+				if old != e {
+					return 0, fmt.Errorf("invariant: retained envelope %s changed", e.EnvelopeID)
+				}
+			} else {
+				unseen = append(unseen, e)
+			}
+		}
+		return 0, w.receiveOutbox(outbox.Page{Events: unseen})
+	}
 	c.steps++
 	req := outbox.Request{BusinessLine: "bl", After: c.cursor, Limit: 3}
 	page, err := w.stores.Outbox.Read(ctx, req)

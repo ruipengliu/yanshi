@@ -307,3 +307,9 @@ func (s Store) ListBySource(ctx context.Context, businessLine, endUser string, s
 	}
 	return pgx.CollectRows(rows, scan)
 }
+
+func (s Store) HasSourceSession(ctx context.Context, sessionID string) (bool, error) {
+	var has bool
+	err := s.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM memories WHERE source_session = $1)`, sessionID).Scan(&has)
+	return has, err
+}

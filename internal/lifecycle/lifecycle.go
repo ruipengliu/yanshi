@@ -100,7 +100,7 @@ type Session struct {
 }
 
 type Index interface {
-	// Put 写入新 Session；已存在时不变（幂等）。
+	// Put 写入新 Session；已存在时不变（幂等）。重试也必须携带原始 EndUser，供按真实键路由。
 	Put(ctx context.Context, s *Session) error
 	// Touch 把最后输入时间推进到 at（只增不减）。
 	Touch(ctx context.Context, endUser, id string, at time.Time) error
@@ -266,4 +266,10 @@ func (g Guard) Ended(ctx context.Context, endUser, sessionID string) (bool, erro
 		return false, err
 	}
 	return !s.ClosedAt.IsZero(), nil
+}
+
+// RequestProgress 把控制库中的请求与每库删除计数分开，避免跨库 JOIN。
+type RequestProgress interface {
+	RequestInfo(ctx context.Context, id string) (*Request, error)
+	CountRequest(ctx context.Context, id string) (sessions, completed int, err error)
 }

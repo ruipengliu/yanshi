@@ -12,8 +12,10 @@ import (
 
 // MemMeta 是 MetaStore 的进程内实现。
 type MemMeta struct {
-	mu sync.Mutex
-	m  map[string]*Meta
+	// Locator 只校验唯一目标，装配层已选定本存储。
+	Locator *shard.Locator
+	mu      sync.Mutex
+	m       map[string]*Meta
 }
 
 func NewMemMeta() *MemMeta { return &MemMeta{m: map[string]*Meta{}} }
@@ -102,7 +104,11 @@ func (s *MemMeta) Delete(_ context.Context, sessionID, id string) error {
 }
 
 func (s *MemMeta) Lookup(_ context.Context, id string) (*Meta, error) {
-	if _, err := shard.DefaultLocator().Locate(shard.Target{Kind: shard.Object, Key: id}); err != nil {
+	locator := shard.DefaultLocator()
+	if s.Locator != nil {
+		locator = *s.Locator
+	}
+	if _, err := locator.Locate(shard.Target{Kind: shard.Object, Key: id}); err != nil {
 		return nil, err
 	}
 	s.mu.Lock()

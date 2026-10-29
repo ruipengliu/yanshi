@@ -190,3 +190,6 @@ func rejectDuplicateFields(data []byte) error {
 	}
 	return nil
 }
+
+// DecodeConfig 让装配配置复用严格 JSON 校验，新增连接字段仍拒绝重复字段与尾随数据。
+func DecodeConfig(data []byte, dest any) error { return strictJSON(data, dest) }

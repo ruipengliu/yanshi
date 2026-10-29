@@ -170,3 +170,11 @@ func (f *Fake) Exists(id string) bool {
 	defer f.mu.Unlock()
 	return f.files[id] != nil
 }
+
+// Contains 供删除不变量检查尚未回收的活跃记录。
+func (a *MemActivity) Contains(_ context.Context, id string) (bool, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	_, ok := a.last[id]
+	return ok, nil
+}

@@ -1123,10 +1123,7 @@ func (s *Server) deletion(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "deletion is not configured"})
 		return
 	}
-	req, err := s.Service.Deletions.Request(r.Context(), r.PathValue("id"))
-	if err == nil && req.BusinessLine != bl {
-		err = lifecycle.ErrNotFound
-	}
+	req, err := s.Service.DeletionRequest(r.Context(), bl, r.PathValue("id"))
 	if errors.Is(err, lifecycle.ErrNotFound) {
 		err = fmt.Errorf("%w: deletion %s", service.ErrNotFound, r.PathValue("id"))
 	}

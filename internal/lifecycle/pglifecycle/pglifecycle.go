@@ -302,16 +302,28 @@ func (d Deletions) CreateRequest(ctx context.Context, r *lifecycle.Request) erro
 }
 
 func (d Deletions) Request(ctx context.Context, id string) (*lifecycle.Request, error) {
+	r, err := d.RequestInfo(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	r.Sessions, r.Completed, err = d.CountRequest(ctx, id)
+	return r, err
+}
+
+func (d Deletions) RequestInfo(ctx context.Context, id string) (*lifecycle.Request, error) {
 	r := &lifecycle.Request{ID: id}
-	err := d.Pool.QueryRow(ctx, `
-		SELECT r.business_line, r.created_at, count(t.session_id), count(t.completed_at)
-		FROM deletion_requests r LEFT JOIN session_tombstones t ON t.request_id = r.request_id
-		WHERE r.request_id = $1 GROUP BY r.business_line, r.created_at`, id).Scan(&r.BusinessLine, &r.CreatedAt, &r.Sessions, &r.Completed)
+	err := d.Pool.QueryRow(ctx, `SELECT business_line, created_at FROM deletion_requests WHERE request_id = $1`, id).Scan(&r.BusinessLine, &r.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, lifecycle.ErrNotFound
 	}
 	r.CreatedAt = r.CreatedAt.UTC()
 	return r, err
+}
+
+func (d Deletions) CountRequest(ctx context.Context, id string) (int, int, error) {
+	var total, completed int
+	err := d.Pool.QueryRow(ctx, `SELECT count(*), count(completed_at) FROM session_tombstones WHERE request_id = $1`, id).Scan(&total, &completed)
+	return total, completed, err
 }
 
 func (x Index) DueBefore(ctx context.Context, businessLine string, t time.Time, limit int) ([]string, error) {

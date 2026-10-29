@@ -29,9 +29,10 @@ func pgTierCleanupCore(t *testing.T, maxConns int32) (*app.Core, *clock.Fake) {
 }
 
 func TestExpiredEndUserBarrierPGCleanupSharesTransaction(t *testing.T) {
+	// 迁移与装配受并行测试负载影响，不应占用被测操作的期限；单连接自锁仍须在十秒内失败。
+	core, clk := pgTierCleanupCore(t, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	core, clk := pgTierCleanupCore(t, 1)
 	if _, err := core.Service.DeleteEndUser(ctx, "bl", "u"); err != nil {
 		t.Fatal(err)
 	}
@@ -79,9 +80,9 @@ func TestExpiredEndUserBarrierPGCleanupSharesTransaction(t *testing.T) {
 }
 
 func TestExpiredEndUserBarrierPGInvalidatesCacheAfterCommit(t *testing.T) {
+	core, clk := pgTierCleanupCore(t, 2)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	core, clk := pgTierCleanupCore(t, 2)
 	if _, err := core.Service.DeleteEndUser(ctx, "bl", "u"); err != nil {
 		t.Fatal(err)
 	}

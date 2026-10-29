@@ -87,6 +87,8 @@ func Classify(businessLine string, w Work) Class {
 
 // Pool 选择认领哪些类别的工作；零值认领任意工作。
 type Pool struct {
+	// SessionID 仅供确定性模拟精确认领已选出的候选；生产留空。
+	SessionID string
 	// BusinessLines 非空时只认领这些业务线的工作。
 	BusinessLines []string
 	// MinPriority 是认领的最低优先级。
@@ -99,6 +101,9 @@ func (p Pool) Admits(c Class) bool {
 }
 
 type Lease struct {
+	// Shard 是认领来源，Sharded 区分单库零值；归还不得重新猜测来源。
+	Shard     int
+	Sharded   bool
 	SessionID string
 	// Class 是认领时工作的类别。持有者可以改写它：Park 与 Release 以它更新类别。
 	Class  Class
@@ -176,4 +181,9 @@ type Deferrer interface {
 // Inspector 供模拟测试检查队列成员；远期停放也算在队列中。
 type Inspector interface {
 	Contains(ctx context.Context, sessionID string) (bool, error)
+}
+
+// Peeker 只读当前头部候选，供单线程差分模拟合并各库顺序；生产认领不依赖它。
+type Peeker interface {
+	Peek(ctx context.Context, pool Pool) (*Lease, error)
 }

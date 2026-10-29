@@ -103,7 +103,8 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 		if err := x.MarkClosed(ctx, "u", "c", t0); err != nil {
 			t.Fatal(err)
 		}
-		if err := x.Put(ctx, &lifecycle.Session{ID: "a", DeleteAt: t0.Add(9 * time.Hour)}); err != nil {
+		// 幂等重试也须携带真实 EndUser，不能让单库的冲突路径掩盖分片键缺失。
+		if err := x.Put(ctx, &lifecycle.Session{ID: "a", EndUser: "u", DeleteAt: t0.Add(9 * time.Hour)}); err != nil {
 			t.Fatal(err)
 		}
 		row, err := x.Get(ctx, "u", "a")

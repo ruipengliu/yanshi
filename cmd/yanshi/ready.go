@@ -21,6 +21,9 @@ type readiness struct {
 }
 
 func (r *readiness) check(ctx context.Context) error {
+	if len(r.st.shardConnections) > 0 {
+		return r.checkShards(ctx)
+	}
 	if r.st.pool == nil {
 		return nil // 进程内存储：没有外部依赖
 	}
@@ -49,9 +52,31 @@ func (r *readiness) check(ctx context.Context) error {
 }
 
 func (r *readiness) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if r.st.routingDigest != "" {
+		w.Header().Set("X-Yanshi-Routing", r.st.routingDigest)
+	}
 	if err := r.check(req.Context()); err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// C5a 启动时要求全部登记库可用；按分片的部分就绪策略留 C5b。
+func (r *readiness) checkShards(ctx context.Context) error {
+	for _, part := range r.st.shardConnections {
+		probe, cancel := context.WithTimeout(ctx, 2*time.Second)
+		err := part.pool.Ping(probe)
+		if err == nil && !part.notifier.Ready() {
+			err = fmt.Errorf("notification listener not connected")
+		}
+		if err == nil {
+			err = migrateOrCheck(probe, part.pool, false)
+		}
+		cancel()
+		if err != nil {
+			return fmt.Errorf("shard %d: %w", part.id, err)
+		}
+	}
+	return nil
 }

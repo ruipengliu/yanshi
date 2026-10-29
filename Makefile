@@ -98,9 +98,9 @@ mobile: build/swift-protobuf/Package.swift
 
 # 更多种子的确定性模拟测试，含 PostgreSQL 差分测试
 # 种子并行模拟：10 核上约 4 分钟（PostgreSQL 差分测试占六成，受连接数所限至多 8 个种子同时运行）。
-# 核数少时接近串行的约 10 分钟，会碰到 go test 默认的 10 分钟时限，因此放宽到 20 分钟。
+# 核数少时接近串行的约 10 分钟，会碰到 go test 默认的 10 分钟时限，加入双库差分后放宽到 30 分钟；双库种子至多四对并行。
 sim: deps-up
-	go test ./internal/sim -sim.seeds=2000 -sim.pgseeds=100 -timeout 20m
+	go test ./internal/sim -sim.seeds=2000 -sim.pgseeds=100 -sim.shardseeds=100 -timeout 30m
 
 # 评测（docs/design/m4-eval.md）：消耗真实 token，不在 check 中；需要 ARK_API_KEY（火山方舟）。
 # 改动模型、提示词、AgentDef 或召回、压缩、Memory、MCP 中给模型的文本时必须运行。

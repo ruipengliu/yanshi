@@ -2,6 +2,7 @@ package shard
 
 import (
 	"fmt"
+	"sort"
 )
 
 // Kind 区分同一字符串的不同访问目的，Session 数据与索引不能混用。
@@ -116,3 +117,13 @@ func ValidateActivation(table Table, compat Compatibility) error {
 
 // Identity 供 C5 就绪检查比较同一份槽位表、兼容清单与回退声明。
 func (l Locator) Identity() (version, digest string) { return l.compat.version, l.digest() }
+
+// Shards 返回登记分片的有序副本；稳定编号不是数组下标。
+func (l Locator) Shards() []int {
+	var out []int
+	for id := range l.table.known {
+		out = append(out, id)
+	}
+	sort.Ints(out)
+	return out
+}

@@ -39,6 +39,8 @@ import (
 
 // Stores 是一套存储实现。同一套中的各存储必须落在同一个存储系统上：Waking 是 Log 与 Queue 的原子组合。
 type Stores struct {
+	pgPool *pgxpool.Pool
+	shards *storeRouter
 	Outbox outbox.Store
 	Log    eventlog.Log
 	Queue  workqueue.Queue
@@ -80,16 +82,29 @@ func Memory(clk clock.Clock) Stores {
 
 // Postgres 返回 PostgreSQL 上的存储；n 是该库的通知监听（须在运行）。多个进程共享同一套即构成分布式部署。
 func Postgres(pool *pgxpool.Pool, n *pg.Notifier, clk clock.Clock) Stores {
-	selectPool := SinglePoolSelector(pool, shard.DefaultLocator())
+	return PostgresShard(pool, n, clk, shard.DefaultLocator(), 0)
+}
+
+// PostgresShard 的选择器只断言本库归属，真正的路由由 Sharded 完成。
+func PostgresShard(pool *pgxpool.Pool, n *pg.Notifier, clk clock.Clock, locator shard.Locator, id int) Stores {
+	selectPool := ShardPoolSelector(pool, locator, id)
 	o := pgoutbox.Store{Pool: pool, Notifier: n}
 	l, q := pglog.New(pool, n), pgqueue.New(pool, clk, pgqueue.Sessions).WithNotifier(n)
 	return Stores{
-		Outbox: o, Log: l, Queue: q, Waking: l.Waking(q), Dir: pgnode.NewDirectory(pool, clk), Inbox: pgnode.NewInbox(pool, n),
+		pgPool: pool, Outbox: o, Log: l, Queue: q, Waking: l.Waking(q), Dir: pgnode.NewDirectory(pool, clk), Inbox: pgnode.NewInbox(pool, n),
 		SandboxQueue: pgqueue.New(pool, clk, pgqueue.Sandboxes).WithNotifier(n), Ledger: pgsandbox.Ledger{Pool: pool},
 		Activity: pgsandbox.Activity{Pool: pool}, ArtifactMeta: pgartifact.Meta{Pool: pool, Select: selectPool},
 		Index: pglifecycle.Index{Pool: pool, Select: selectPool}, Deletions: pglifecycle.Deletions{Pool: pool, Notifier: n},
-		JanitorQueue: pgqueue.New(pool, clk, pgqueue.Janitor), Memories: pgmemory.Store{Pool: pool}, Grants: pgmemory.Grants{Pool: pool},
+		JanitorQueue: pgqueue.New(pool, clk, pgqueue.Janitor).WithNotifier(n), Memories: pgmemory.Store{Pool: pool}, Grants: pgmemory.Grants{Pool: pool},
 		Snapshots: pgsnapshot.Store{Pool: pool}, Usage: pgusage.Store{Pool: pool}, Presence: pgpresence.Store{Pool: pool, Notifier: n},
 		Push: pgnotify.Registry{Pool: pool}, Tiers: pgusage.Tiers{Pool: pool},
 	}
+}
+
+// MemoryShard 与 PostgresShard 使用同一定位配置，兼容碰撞不能被内存默认定位器二次拒绝。
+func MemoryShard(clk clock.Clock, locator shard.Locator) Stores {
+	s := Memory(clk)
+	s.ArtifactMeta.(*artifact.MemMeta).Locator = &locator
+	s.Index.(*lifecycle.MemIndex).Locator = &locator
+	return s
 }

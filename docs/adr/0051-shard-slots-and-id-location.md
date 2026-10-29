@@ -4,7 +4,7 @@ status: accepted
 
 # 固定槽位、裸 ID 定位与停写迁移
 
-[ADR-0028](0028-shard-keys.md) 已确定 Session / EndUser 两类键。[Persona 架构](../design/persona-architecture.md) §13 Q109、Q110、Q118 与 §11 Q124 的 C1 要求真实多库之前先固定裸 ID 定位与兼容规则。本 ADR 确定格式、定位与迁移规则。当前已具备带真实键的接口、定位器、只读兼容映射与历史预检；多库连接池、离线 fan-out 和部分就绪仍由 C5 装配，当前不能作为分片部署运行。
+[ADR-0028](0028-shard-keys.md) 已确定 Session / EndUser 两类键。[Persona 架构](../design/persona-architecture.md) §13 Q109、Q110、Q118 与 §11 Q124 的 C1 要求真实多库之前先固定裸 ID 定位与兼容规则。本 ADR 确定格式、定位与迁移规则。C1–C4 已具备带真实键的接口、定位器、只读兼容映射与历史预检；C5a 加入每库独立连接/通知/迁移、装配层路由、逐分片队列与顺序 Offline 遍历，尚待远端验收。C5b 继续完成有界 fan-out、汇总缓存、部分就绪与多分片出站消费。
 
 ## 1. 固定槽位与部署配置
 
@@ -13,7 +13,7 @@ status: accepted
 - 槽位到分片是静态部署表。分片号是非负稳定编号，不是 DSN 数组下标；必须登记兼容库 `0`。每个槽位恰好赋值一次，拒绝遗漏、重叠、越界与未登记的分片；没有配置的零值表不能用于定位。
 - 不能用 `hash % 库数`：库数变化会重映射大量没有搬迁的键。同样不能使用 Go 进程随机种子的哈希。扩容迁移的是槽位，完成停写搬迁后才切换表，键到槽位不变。
 
-`shard.ParseTable` 解析下列 JSON（区间首尾均包含），拒绝未知字段、非法值与尾随 JSON；`NewTable` 复制为不可变的表。配置解析不接 serve 参数、不打开数据库，C5 将它纳入 `app` 的部署配置校验，确认每个登记分片都有 SQL DSN、直连 DSN、迁移和 Notifier。
+`shard.ParseTable` 解析下列 JSON（区间首尾均包含），拒绝未知字段、非法值与尾随 JSON；`NewTable` 复制为不可变的表。纯定位配置不打开数据库；C5a 由 `app.ParseShardConfig` 在同一制品中补 `databases`（id、sql_dsn、direct_dsn），serve/migrate 校验每库物理身份、迁移与 Notifier，格式见 deployment.md。
 
 ```json
 {
@@ -77,6 +77,9 @@ status: accepted
 在线裸工件、Memory、Grant、用量 ID 只能选一个明确目标；禁止逐库试探。读出后仍核对元数据的 Session、EndUser、BusinessLine 或 Grant 条件。伪造、篡改、碰撞的槽位最多改变查询地点，不能改变授权；不存在与不属于请求方走既有拒绝路径。工件输入仍由 `service.normalizeMedia` 比较真实 `Meta.SessionID`，HTTP 下载仍按真实 Session 鉴权。
 
 ## 5. 定位器、兼容映射与停写迁移
+
+**P4 交付限制：只支持新建单元，或全部槽位留在库 0 的既有单元。把旧数据迁离库 0 不在 P4 支持范围。** 静态映射无法覆盖旧 Session 之后生成的旧式 ID，恢复这类 Session 的写入需要在线目录；本 ADR 下文的迁移清单是未来迁移的约束，不是 P4 已支持迁出的声明。部署配置拒绝迁出的兼容条目；槽位分到其他库的新单元必须关闭 legacy 回退、使用空兼容清单。
+
 
 ### 5.1 唯一目标
 
@@ -153,7 +156,7 @@ yanshi id-preflight -pg-dsn "$HISTORICAL_PG_DSN" -historical-snapshot > id-prefl
 
 ## 6. `pg.Tables.Offline` 的逐项安排
 
-所有 fan-out 有并发上限、每库超时、总预算和续扫位置；分片失败不能阻止健康分片做独立清理，但依赖全部结果的操作必须显式失败，不把部分结果报成完整结果。扫描先取得键，随后每条事务只处理一个真实键。下表对应 C1 时 `pg.Tables` 的每一项 Offline；实现留 C5。
+所有 fan-out 有并发上限、每库超时、总预算和续扫位置；分片失败不能阻止健康分片做独立清理，但依赖全部结果的操作必须显式失败，不把部分结果报成完整结果。扫描先取得键，随后每条事务只处理一个真实键。下表对应 C1 时 `pg.Tables` 的每一项 Offline。C5a 先做正确的顺序遍历与完整结果失败语义；并发、预算、续扫和汇总缓存留 C5b，多分片 Read/Head 也留 C5b。
 
 | 表与 Offline 路径 | 分片后的执行 |
 |---|---|
@@ -187,6 +190,8 @@ yanshi id-preflight -pg-dsn "$HISTORICAL_PG_DSN" -historical-snapshot > id-prefl
 
 ## 7. 部分可服务
 
+本节由 C5b 实施；C5a 的路由与 Claim 已隔离独立在线操作，但启动与就绪仍要求全部登记分片可用，不代表本节完成。
+
 按 Q118，健康分片的读取、写入、认领和出站消费继续。仅依赖失联分片的请求有界失败；汇总不得把部分成功当作完整成功。就绪检查报告每个分片的 SQL、迁移与 LISTEN 状态，结合进程角色和可服务分片决定是否接受流量，不能简单对所有分片取 AND；请求处理仍按其实际依赖拒绝不可用目标。控制库 0 失联可阻塞删除请求查询等依赖它的操作，但不能因此关闭不依赖它的健康 Session。
 
 ## 8. 当前状态与迁移约束
@@ -205,8 +210,8 @@ Session、工件、Memory、Grant、用量等原本全局唯一的 ID 保持原�
 | 工件 | Get / Delete、Service.Stat / Open 带真实 Session，读内容前核对 Meta.SessionID。调用点为 normalizeMedia、runtime.readArtifact、sandbox import_file、card.New、HTTP 鉴权后下载、Put 撤回与 DeleteSession。唯一在线裸查为 HTTP 下载 / meta 共用的 artifact()：Lookup 经 Object 定位，再加载真实 Session 按业务线 / EndUser 鉴权。Janitor 仍先删 Blob 再删元数据，两遍清扫与写后复查不变 |
 | Memory / Grant | 全部在线 Get / Delete / Supersede / RecordAccess / Revoke 已带真实 EndUser，业务线 / Grant 条件仍检查，无剩余裸 ID 入口。Memory 派生 token 是 EndUser、BusinessLine、SourceSession、完整 CallID 的逐字段 `十进制字节长度:原字节` 串的 SHA-256；旧 mem_call → 新派生 → 相似度流程，只有 ErrNotFound 继续，任何幂等命中均核对完整归属；capabilities 同时识别两种 ID，不改原 Put 覆盖契约、相似度、历史失效、审批或召回规则。RecordAccess 同时核对 EndUser / Owner，保留单次召回批写；Grant 撤销要求调用业务线属于 From / To，创建时删除屏障检查两方业务线 |
 | 用量、其他 EndUser 数据 | Meter 统一将完整原键 SHA-256 后 WithEndUser(use)，不截断含斜杠的键、不继承 Session 槽、不额外消费 IDs。Record 对 ID 或原幂等键冲突不插入，仅新行更新小时聚合；匿名化不恢复归属，写后复查按原 EndUser / 原键撤回。Tier、删除屏障、推送设备已有真实 EndUser；无新增在线裸查 |
-| 定位与装配 | pg.Tables.Gaps 全空，Locate 仅登记 artifacts.Lookup、sessions.LookupSession。PG 存储提交 Target 给 pg.PoolSelector；app.Postgres 注入 SinglePoolSelector（默认 Locator，只有库 0），直接构造 PG 存储的默认路径也经 Locator；内存裸查同样执行默认定位。C5 替换选库闭包并扩展其他带键存储包装，保持 app.Stores / app.NewCore 唯一装配；当前没有多库连接池、fan-out、完整汇总缓存或部分就绪 |
-| 预检 / 验证 | Locator 覆盖新旧目标、映射、回退、损坏 ID、配置拒绝与启用校验；artifacttest 覆盖错误 Session 读删拒绝；HTTP 用两份 PG schema 验证槽位 / 映射只决定地点及不逐库试探；PG 历史预检覆盖碰撞、正常、结构化派生引用与损坏载荷。完整 make check / make sim 仍是验收标准，真实多库差分与故障注入属 C5 |
+| 定位与装配 | pg.Tables.Gaps 全空，Locate 仅登记 artifacts.Lookup、sessions.LookupSession。PG 存储提交 Target 给 pg.PoolSelector；app.Postgres 注入 SinglePoolSelector（默认 Locator，只有库 0），直接构造 PG 存储的默认路径也经 Locator；内存裸查同样执行默认定位。C5a 在 app 层包装全部带键接口，每库 PostgresShard 的 Select 只断言本分片；app.Stores / app.NewCore 仍是唯一装配。已增加多库连接与顺序遍历，完整汇总缓存、部分就绪和多分片消费留 C5b |
+| 预检 / 验证 | Locator 覆盖新旧目标、映射、回退、损坏 ID、配置拒绝与启用校验；artifacttest 覆盖错误 Session 读删拒绝；HTTP 用两份 PG schema 验证槽位 / 映射只决定地点及不逐库试探；PG 历史预检覆盖碰撞、正常、结构化派生引用与损坏载荷。完整 make check / make sim 仍是验收标准；C5a 新增真实双 database 一致性与确定性差分种子、逐库删除不变量，尚待远端运行；长期故障隔离属 C5b |
 
 必要迁移注意事项：
 

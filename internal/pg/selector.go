@@ -8,7 +8,7 @@ import (
 	"yanshi/internal/shard"
 )
 
-// PoolSelector 接受访问目的而非猜测字符串；C5 在装配层按唯一分片选择连接池。
+// PoolSelector 接受访问目的而非猜测字符串；装配层选库后，分片内只断言本库归属。
 type PoolSelector func(shard.Target) (*pgxpool.Pool, error)
 
 // SelectPool 保留直接构造单库存储的测试入口，但也必须经过定位器。

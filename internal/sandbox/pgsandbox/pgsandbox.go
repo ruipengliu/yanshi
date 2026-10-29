@@ -135,3 +135,9 @@ func (a Activity) Delete(ctx context.Context, id string) error {
 	_, err := a.Pool.Exec(ctx, `DELETE FROM sandbox_activity WHERE sandbox_id = $1`, id)
 	return err
 }
+
+func (a Activity) Contains(ctx context.Context, id string) (bool, error) {
+	var has bool
+	err := a.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM sandbox_activity WHERE sandbox_id = $1)`, id).Scan(&has)
+	return has, err
+}

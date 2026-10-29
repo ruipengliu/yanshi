@@ -16,8 +16,10 @@ import (
 
 // MemIndex 是 Index 的进程内实现。
 type MemIndex struct {
-	mu sync.Mutex
-	m  map[string]*Session
+	// Locator 只校验唯一目标，装配层已选定本存储。
+	Locator *shard.Locator
+	mu      sync.Mutex
+	m       map[string]*Session
 }
 
 func NewMemIndex() *MemIndex { return &MemIndex{m: map[string]*Session{}} }
@@ -184,7 +186,11 @@ func (x *MemIndex) Delete(_ context.Context, endUser, id string) error {
 }
 
 func (x *MemIndex) LookupSession(_ context.Context, id string) (*Session, error) {
-	if _, err := shard.DefaultLocator().Locate(shard.Target{Kind: shard.SessionIndex, Key: id}); err != nil {
+	locator := shard.DefaultLocator()
+	if x.Locator != nil {
+		locator = *x.Locator
+	}
+	if _, err := locator.Locate(shard.Target{Kind: shard.SessionIndex, Key: id}); err != nil {
 		return nil, err
 	}
 	x.mu.Lock()
@@ -328,4 +334,31 @@ func (x *MemIndex) DueBefore(_ context.Context, businessLine string, t time.Time
 	return x.pick(func(s *Session) bool {
 		return (businessLine == "" || s.BusinessLine == businessLine) && !s.DeleteAt.IsZero() && s.DeleteAt.Before(t)
 	}, limit), nil
+}
+
+func (d *MemDeletions) RequestInfo(_ context.Context, id string) (*Request, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	r := d.requests[id]
+	if r == nil {
+		return nil, ErrNotFound
+	}
+	cp := *r
+	cp.Sessions, cp.Completed = 0, 0
+	return &cp, nil
+}
+
+func (d *MemDeletions) CountRequest(_ context.Context, id string) (int, int, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var total, completed int
+	for _, t := range d.tombs {
+		if t.RequestID == id {
+			total++
+			if !t.CompletedAt.IsZero() {
+				completed++
+			}
+		}
+	}
+	return total, completed, nil
 }

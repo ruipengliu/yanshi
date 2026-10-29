@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 
 	"yanshi/internal/eventlog"
 	"yanshi/internal/lifecycle"
@@ -121,6 +122,17 @@ func (w *World) fingerprintOutbox(dst io.Writer) {
 	if err != nil {
 		fmt.Fprintf(dst, "outbox error: %v", err)
 		return
+	}
+	if w.opts.CompareShards {
+		sort.Slice(rows, func(i, j int) bool {
+			if rows[i].SessionID != rows[j].SessionID {
+				return rows[i].SessionID < rows[j].SessionID
+			}
+			if rows[i].Seq != rows[j].Seq {
+				return rows[i].Seq < rows[j].Seq
+			}
+			return rows[i].EnvelopeID < rows[j].EnvelopeID
+		})
 	}
 	if rows == nil {
 		rows = []outbox.Envelope{}

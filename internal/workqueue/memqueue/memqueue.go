@@ -134,7 +134,7 @@ func (q *Queue) Claim(_ context.Context, holder string, ttl time.Duration, pool 
 		if !it.claimable(now) {
 			continue
 		}
-		if pool.Admits(it.class) && (best == nil || it.class.Priority > best.class.Priority) {
+		if (pool.SessionID == "" || pool.SessionID == it.sessionID) && pool.Admits(it.class) && (best == nil || it.class.Priority > best.class.Priority) {
 			best = it
 		}
 	}
@@ -225,4 +225,19 @@ func (q *Queue) Promote(context.Context, time.Time, int) (int, error) { return 0
 func (q *Queue) Horizon() time.Duration                               { return workqueue.DefaultHorizon }
 func (q *Queue) Contains(_ context.Context, sessionID string) (bool, error) {
 	return q.Has(sessionID), nil
+}
+
+func (q *Queue) Peek(_ context.Context, pool workqueue.Pool) (*workqueue.Lease, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	var best *item
+	for _, it := range q.items {
+		if it.claimable(q.clock.Now()) && pool.Admits(it.class) && (pool.SessionID == "" || pool.SessionID == it.sessionID) && (best == nil || it.class.Priority > best.class.Priority) {
+			best = it
+		}
+	}
+	if best == nil {
+		return nil, workqueue.ErrEmpty
+	}
+	return &workqueue.Lease{SessionID: best.sessionID, Class: best.class}, nil
 }

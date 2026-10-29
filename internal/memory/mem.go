@@ -305,3 +305,8 @@ func (s *MemStore) ListBySource(_ context.Context, businessLine, endUser string,
 	})
 	return out, nil
 }
+
+// HasSourceSession 包括过期与失效的 Memory，供各分片的删除不变量检查。
+func (s *MemStore) HasSourceSession(_ context.Context, sessionID string) (bool, error) {
+	return s.HasSession(sessionID), nil
+}

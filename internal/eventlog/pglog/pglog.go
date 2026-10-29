@@ -113,6 +113,9 @@ type waking struct {
 }
 
 func (w waking) AppendAndEnqueue(ctx context.Context, sessionID string, expectedSeq uint64, class workqueue.Class, envelopes []outbox.Envelope, events ...*v1.Event) (uint64, error) {
+	if !w.q.UsesPool(w.l.pool) {
+		return 0, fmt.Errorf("pglog: waking queue belongs to another pool")
+	}
 	if err := outbox.ValidateAppend(sessionID, expectedSeq, len(events), envelopes); err != nil {
 		return 0, err
 	}

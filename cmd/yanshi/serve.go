@@ -68,6 +68,8 @@ const devPGDSN = "postgres://yanshi:yanshi@127.0.0.1:54329/yanshi?sslmode=disabl
 
 // storage 是 serve 打开的存储及其运行状态（就绪检查用）。
 type storage struct {
+	shardConnections []*shardConnection
+	routingDigest    string
 	app.Stores
 	// pool 与 notifier 只在 PostgreSQL 存储时非 nil。
 	pool     *pgxpool.Pool
@@ -138,11 +140,15 @@ func migrateOrCheck(ctx context.Context, pool *pgxpool.Pool, migrate bool) error
 // 使大表上的迁移（如 CREATE INDEX CONCURRENTLY，pg.NoTransaction）不必在每个 serve 进程启动时执行。
 func migrateCmd(args []string) error {
 	fs := flag.NewFlagSet("migrate", flag.ExitOnError)
+	shards := fs.String("shards", os.Getenv("YANSHI_SHARDS"), "分片部署配置 JSON")
 	// 迁移持会话级 advisory lock，须直连：优先取直连地址（YANSHI_PG_LISTEN_DSN），而不是可能经事务池的 YANSHI_PG_DSN。
 	dsn := fs.String("pg-dsn", envOr("YANSHI_PG_LISTEN_DSN", envOr("YANSHI_PG_DSN", devPGDSN)), "直连 PostgreSQL 的地址（不能经 PgBouncer 事务池）")
 	_ = fs.Parse(args)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if *shards != "" {
+		return migrateShards(ctx, *shards)
+	}
 	pool, err := pg.Open(ctx, *dsn, "")
 	if err != nil {
 		return fmt.Errorf("connect postgres: %w", err)
@@ -250,6 +256,7 @@ func envOr(key, def string) string {
 
 func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	shards := fs.String("shards", os.Getenv("YANSHI_SHARDS"), "所有角色共用的分片部署配置 JSON（要求 storage=postgres）")
 	addr := fs.String("addr", "127.0.0.1:8080", "HTTP 监听地址")
 	rolesFlag := fs.String("roles", strings.Join(allRoles, ","), "本进程承担的角色（docs/design/deployment.md §3）：gateway（HTTP API、Connection、Call）、worker、sandbox（沙箱控制器）、janitor；全部角色等价于单进程部署")
 	agentsDir := fs.String("agents", "agents", "AgentDef 目录")
@@ -388,7 +395,16 @@ func serve(args []string) error {
 	if *authMode == "none" && !loopback(*addr) {
 		logger.Warn("-auth none on a non-loopback address (-insecure-remote): anyone on this network can act as any user; debugging only", "addr", *addr)
 	}
-	b, closeStorage, err := openStorage(ctx, *storageKind, *dsn, *listenDSN, *notifyShards, *migrate, clk, logger)
+	var b *storage
+	var closeStorage func()
+	if *shards != "" {
+		if *storageKind != "postgres" {
+			return fmt.Errorf("-shards requires -storage postgres")
+		}
+		b, closeStorage, err = openShards(ctx, *shards, *notifyShards, *migrate, clk, logger)
+	} else {
+		b, closeStorage, err = openStorage(ctx, *storageKind, *dsn, *listenDSN, *notifyShards, *migrate, clk, logger)
+	}
 	if err != nil {
 		return err
 	}

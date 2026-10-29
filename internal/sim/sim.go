@@ -53,6 +53,8 @@ import (
 type Stores = app.Stores
 
 type Options struct {
+	// CompareShards 只规范化出站行的跨库顺序；流游标消费留 C5b，仍逐行核对原子信封。
+	CompareShards bool
 	// NewStores 为 nil 时使用内存实现；传入的时钟是模拟的虚拟时钟。
 	NewStores func(c clock.Clock) Stores
 	Seed      uint64
@@ -79,6 +81,7 @@ type Options struct {
 
 // Stats 统计模拟中被覆盖到的路径，防止模拟"空转"。
 type Stats struct {
+	ShardsWithSessions, CrossShardDelegations, CrossShardUserSessions int
 	// EndUser 对象在真实写入路径中检查槽位，不增加随机抽样或生成器消费。
 	EndUserUsageIDs, EndUserMemoryIDs, EndUserGrantIDs                                   int
 	OutboxReads, OutboxConsumerCrashes, OutboxRedeliveries, OutboxConsumed, OutboxPruned int

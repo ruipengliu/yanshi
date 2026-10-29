@@ -121,6 +121,7 @@ func (q *Queue) Claim(ctx context.Context, holder string, ttl time.Duration, p w
 			WHERE ((leased AND lease_expires <= $2)
 			    OR (NOT leased AND (parked_until IS NULL OR parked_until <= $2)))
 			  AND priority >= $4
+			  AND ($6::text = '' OR session_id = $6)
 			  AND (coalesce(array_length($5::text[], 1), 0) = 0 OR business_line = ANY ($5::text[]))
 			ORDER BY priority DESC, ord LIMIT 1
 			FOR UPDATE SKIP LOCKED)
@@ -128,7 +129,7 @@ func (q *Queue) Claim(ctx context.Context, holder string, ttl time.Duration, p w
 			lease_expires = $3, dirty = false
 		FROM pick WHERE w.session_id = pick.session_id
 		RETURNING w.session_id, w.token, w.lease_expires, w.business_line, w.priority, pick.since`),
-		holder, now, now.Add(ttl), int16(p.MinPriority), p.BusinessLines).Scan(&l.SessionID, &l.Token, &l.Expires, &l.Class.BusinessLine, &prio, &since)
+		holder, now, now.Add(ttl), int16(p.MinPriority), p.BusinessLines, p.SessionID).Scan(&l.SessionID, &l.Token, &l.Expires, &l.Class.BusinessLine, &prio, &since)
 	l.Waited = max(now.Sub(since), 0)
 	l.Class.Priority = workqueue.Priority(prio)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -261,3 +262,19 @@ func (q *Queue) Remove(ctx context.Context, sessionID string) error {
 	}
 	return tx.Commit(ctx)
 }
+
+func (q *Queue) Peek(ctx context.Context, p workqueue.Pool) (*workqueue.Lease, error) {
+	l := &workqueue.Lease{}
+	err := q.pool.QueryRow(ctx, q.q(`SELECT session_id, business_line, priority FROM work_items
+		WHERE ((leased AND lease_expires <= $1) OR (NOT leased AND (parked_until IS NULL OR parked_until <= $1)))
+		AND priority >= $2 AND (coalesce(array_length($3::text[], 1), 0) = 0 OR business_line = ANY ($3::text[]))
+		AND ($4::text = '' OR session_id = $4) ORDER BY priority DESC, ord LIMIT 1`),
+		q.clock.Now(), int16(p.MinPriority), p.BusinessLines, p.SessionID).Scan(&l.SessionID, &l.Class.BusinessLine, &l.Class.Priority)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, workqueue.ErrEmpty
+	}
+	return l, err
+}
+
+// UsesPool 让原子日志装配拒绝跨库队列，防止误用队列的事务写另一库日志。
+func (q *Queue) UsesPool(pool *pgxpool.Pool) bool { return q.pool == pool }
