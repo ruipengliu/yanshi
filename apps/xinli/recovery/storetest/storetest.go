@@ -26,6 +26,68 @@ type Store interface {
 }
 
 func Run(t *testing.T, factory func(*testing.T) (Store, func() Store)) {
+	t.Run("ShardStorage", func(t *testing.T) { RunShardStorage(t, factory) })
+	t.Run("RecoveryMergesConcurrentShardCursor", func(t *testing.T) {
+		s, reopen := factory(t)
+		register(t, s, "u", account.Active)
+		ctx := recovery.WithShard(context.Background(), 0)
+		start := recovery.Progress{BusinessLine: "bl", Phase: recovery.Owners, Round: 1, Version: 1,
+			Positions: []recovery.Position{{Shard: 0, H: "H", After: "H"}}}
+		if err := s.Commit(ctx, 0, start, recovery.Batch{}); err != nil {
+			t.Fatal(err)
+		}
+		f := newKernel()
+		f.sessions["u"], f.owners["a"], f.logs["a"] = []string{"a"}, "u", history("a", "u")
+		interleaved := &cursorConsumer{Consumer: s}
+		r := recovery.Recoverer{Accounts: s, Kernel: f, Consumer: interleaved}
+		follow := false
+		for range 50 {
+			// 每个恢复步骤提交前，确定性地让真实收页事务抢先推进一次同片游标。
+			interleaved.inject = true
+			p, err := r.Step(ctx, "bl")
+			if err != nil {
+				t.Fatalf("live cursor starved recovery: %v", err)
+			}
+			if p.Positions[0].After != interleaved.after {
+				t.Fatalf("live cursor regressed: %+v", p)
+			}
+			if p.Phase == recovery.Follow {
+				follow = true
+				break
+			}
+		}
+		if !follow {
+			t.Fatal("recovery did not reach follow")
+		}
+		// 重新打开会关闭原连接池（PG），之后只经新实例读取，以确认已落盘。
+		reopened := reopen()
+		p, err := reopened.Load(ctx, "bl")
+		if err != nil || p.Phase != recovery.Follow || p.Revision == 0 {
+			t.Fatalf("recovery not durable: %+v %v", p, err)
+		}
+		cp, err := reopened.Session(ctx, "bl", "a")
+		if err != nil || cp.Seq != 7 {
+			t.Fatalf("checkpoint was not committed with recovery: %+v %v", cp, err)
+		}
+	})
+	t.Run("ShardResetRejectsLateRecovery", func(t *testing.T) {
+		s, _ := factory(t)
+		ctx := recovery.WithShard(context.Background(), 0)
+		p := recovery.Progress{BusinessLine: "bl", Phase: recovery.Confirm, Version: 1,
+			Positions: []recovery.Position{{Shard: 0, H: "old", After: "old"}}}
+		if err := s.Commit(ctx, 0, p, recovery.Batch{}); err != nil {
+			t.Fatal(err)
+		}
+		interleaved := &cursorConsumer{Consumer: s, inject: true, reset: true}
+		r := recovery.Recoverer{Accounts: s, Kernel: newKernel(), Consumer: interleaved}
+		if _, err := r.Step(ctx, "bl"); !errors.Is(err, recovery.ErrConflict) {
+			t.Fatalf("late recovery overwrote reset: %v", err)
+		}
+		p, err := s.Load(ctx, "bl")
+		if err != nil || p.Phase != recovery.Heads || len(p.Positions) != 0 {
+			t.Fatalf("reset lost: %+v %v", p, err)
+		}
+	})
 	t.Run("FailedBatchDoesNotAdvanceAndScopesAreIsolated", func(t *testing.T) {
 		s, _ := factory(t)
 		ctx := context.Background()
@@ -361,6 +423,35 @@ func Run(t *testing.T, factory func(*testing.T) (Store, func() Store)) {
 	})
 }
 
+type cursorConsumer struct {
+	recovery.Consumer
+	inject, reset bool
+	after         string
+}
+
+func (c *cursorConsumer) Commit(ctx context.Context, expected uint64, p recovery.Progress, b recovery.Batch) error {
+	if c.inject {
+		c.inject = false
+		current, err := c.Consumer.Load(ctx, p.BusinessLine)
+		if err != nil {
+			return err
+		}
+		before := current.Version
+		current.Version++
+		if c.reset {
+			current.Revision++
+			current.Phase, current.Positions = recovery.Heads, nil
+		} else {
+			c.after = fmt.Sprintf("live-%d", current.Version)
+			current.Positions[0].After = c.after
+		}
+		if err := c.Consumer.Commit(ctx, before, current, recovery.Batch{}); err != nil {
+			return err
+		}
+	}
+	return c.Consumer.Commit(ctx, expected, p, b)
+}
+
 func register(t *testing.T, s Store, user string, status account.Status) {
 	t.Helper()
 	if _, err := s.Register(context.Background(), "identity/"+user, account.Account{Owner: task.Owner{BusinessLine: "bl", EndUser: user}, Status: status}); err != nil {
@@ -499,4 +590,28 @@ func history(id, user string) []json.RawMessage {
 		out = append(out, json.RawMessage(fmt.Sprintf(`{"session_id":%q,"seq":"%d",%s}`, id, i+1, payload)))
 	}
 	return out
+}
+
+// RunShardStorage 验证各片 CAS 与重启；共享收件记录仍使用原业务线去重和删除边界。
+func RunShardStorage(t *testing.T, factory func(*testing.T) (Store, func() Store)) {
+	s, reopen := factory(t)
+	for id := range 2 {
+		ctx := recovery.WithShard(context.Background(), id)
+		p := recovery.Progress{BusinessLine: "bl", Version: 1, Round: 1, Phase: recovery.Follow, Positions: []recovery.Position{{Shard: id, H: fmt.Sprintf("H%d", id), After: fmt.Sprintf("A%d", id)}}}
+		if err := s.Commit(ctx, 0, p, recovery.Batch{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s = reopen()
+	for id := range 2 {
+		ctx := recovery.WithShard(context.Background(), id)
+		p, err := s.Load(ctx, "bl")
+		if err != nil || p.Version != 1 || len(p.Positions) != 1 || p.Positions[0].Shard != id {
+			t.Fatalf("shard progress lost: %+v %v", p, err)
+		}
+		p.Version++
+		if err := s.Commit(ctx, 0, p, recovery.Batch{}); !errors.Is(err, recovery.ErrConflict) {
+			t.Fatal("stale shard writer accepted")
+		}
+	}
 }

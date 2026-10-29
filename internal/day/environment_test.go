@@ -40,9 +40,11 @@ import (
 	"yanshi/internal/mcpcap"
 	"yanshi/internal/model"
 	"yanshi/internal/model/openaicompat"
+	"yanshi/internal/model/script"
 	"yanshi/internal/node"
 	"yanshi/internal/pg/pgtest"
 	"yanshi/internal/runtime"
+	"yanshi/internal/shard"
 	"yanshi/internal/workqueue"
 )
 
@@ -70,6 +72,8 @@ type environment struct {
 	token, refreshToken, endUser, serviceToken, senderPath string
 	accessExpires                                          time.Time
 	ark                                                    bool
+	locator                                                shard.Locator
+	shardProxies                                           map[int]*tcpProxy
 }
 
 type process struct {
@@ -101,7 +105,9 @@ func randomID(t *testing.T) string {
 	return hex.EncodeToString(data[:])
 }
 
-func newEnvironment(t *testing.T, ark bool) *environment {
+func newEnvironment(t *testing.T, ark bool) *environment { return newEnvironmentShards(t, ark, false) }
+
+func newEnvironmentShards(t *testing.T, ark, multiple bool) *environment {
 	t.Helper()
 	bin := os.Getenv("YANSHI_DAY_BIN")
 	if bin == "" {
@@ -167,11 +173,18 @@ func newEnvironment(t *testing.T, ark bool) *environment {
 		}
 		defs = append(defs, &def)
 	}
+	if multiple {
+		defs = append(defs, &agentdef.Def{Name: "shard-parent", Version: "1", Model: "shardtest/any", Capabilities: []string{"agent:shard-helper"}},
+			&agentdef.Def{Name: "shard-helper", Version: "1", Model: "shardtest/any", Description: "分片委托测试"})
+	}
 	agents, err := agentdef.NewRegistry(defs...)
 	must(t, err)
 	gateway := model.NewGateway()
 	e.script = &scriptTrace{}
 	gateway.Register("day", dayModel{trace: e.script})
+	if multiple {
+		gateway.Register("shardtest", script.Provider{})
+	}
 	if ark {
 		if os.Getenv("ARK_API_KEY") == "" {
 			t.Fatal("ARK_API_KEY required")
@@ -185,6 +198,21 @@ func newEnvironment(t *testing.T, ark bool) *environment {
 	registration := mcpcap.Server{Name: "xinli", BusinessLine: businessLine, URL: e.persona.server.URL + "/mcp", Headers: map[string]string{"Authorization": "Bearer " + mcpToken}, Timeout: 15 * time.Second, CiteCaptures: true, AttestsSpeakers: true}
 	registration.Tools.NoApproval = []string{"file_changes", "file_day", "set_status", "update_commitments", "propose_merge", "file_week"}
 	stores := app.Postgres(pool, notifier, e.control)
+	if multiple {
+		e.locator, err = shard.ParseDeployment([]byte(`{"table":{"shards":[0,1],"ranges":[{"first":0,"last":511,"shard":0},{"first":512,"last":1023,"shard":1}]},"compatibility":{"version":"day-dual"}}`))
+		must(t, err)
+		firstProxy, firstDSN := newTCPProxy(t, pgtest.Database(t))
+		secondProxy, secondDSN := newTCPProxy(t, pgtest.Database(t))
+		e.shardProxies = map[int]*tcpProxy{0: firstProxy, 1: secondProxy}
+		first, firstNotifier := pgtest.FreshAt(t, firstDSN)
+		second, secondNotifier := pgtest.FreshAt(t, secondDSN)
+		e.kernelPool = first
+		stores, err = app.Sharded(ctx, e.locator, map[int]app.Stores{
+			0: app.PostgresShard(first, firstNotifier, e.control, e.locator, 0),
+			1: app.PostgresShard(second, secondNotifier, e.control, e.locator, 1),
+		}, app.ShardOptions{Now: e.control.Now})
+		must(t, err)
+	}
 	connector := &mcpcap.Connector{Servers: []mcpcap.Server{registration}, Log: stores.Log, CacheTTL: 200 * time.Millisecond}
 	local := []capability.Capability{capability.ClockNow(e.control), card.New(stores.ArtifactMeta), capability.Func{
 		S: capability.Spec{Name: "approval_probe", Risk: v1.Risk_RISK_HIGH, Idempotent: true, InputSchema: json.RawMessage(`{"type":"object","properties":{}}`)},

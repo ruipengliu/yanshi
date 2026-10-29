@@ -4,7 +4,7 @@ status: accepted
 
 # 固定槽位、裸 ID 定位与停写迁移
 
-[ADR-0028](0028-shard-keys.md) 已确定 Session / EndUser 两类键。[Persona 架构](../design/persona-architecture.md) §13 Q109、Q110、Q118 与 §11 Q124 的 C1 要求真实多库之前先固定裸 ID 定位与兼容规则。本 ADR 确定格式、定位与迁移规则。C1–C4 已具备带真实键的接口、定位器、只读兼容映射与历史预检；C5a 加入每库独立连接/通知/迁移、装配层路由、逐分片队列与顺序 Offline 遍历，尚待远端验收。C5b 继续完成有界 fan-out、汇总缓存、部分就绪与多分片出站消费。
+[ADR-0028](0028-shard-keys.md) 已确定 Session / EndUser 两类键。[Persona 架构](../design/persona-architecture.md) §13 Q109、Q110、Q118 与 §11 Q124 的 C1 要求真实多库之前先固定裸 ID 定位与兼容规则。本 ADR 确定格式、定位与迁移规则。C1–C4 已具备带真实键的接口、定位器、只读兼容映射与历史预检；装配层现已提供每库连接/通知/迁移、按键路由、有界 Offline fan-out、完整用量缓存、部分就绪与多分片出站消费；验收仍以远端 `make check`、`make sim` 为准。
 
 ## 1. 固定槽位与部署配置
 
@@ -156,43 +156,48 @@ yanshi id-preflight -pg-dsn "$HISTORICAL_PG_DSN" -historical-snapshot > id-prefl
 
 ## 6. `pg.Tables.Offline` 的逐项安排
 
-所有 fan-out 有并发上限、每库超时、总预算和续扫位置；分片失败不能阻止健康分片做独立清理，但依赖全部结果的操作必须显式失败，不把部分结果报成完整结果。扫描先取得键，随后每条事务只处理一个真实键。下表对应 C1 时 `pg.Tables` 的每一项 Offline。C5a 先做正确的顺序遍历与完整结果失败语义；并发、预算、续扫和汇总缓存留 C5b，多分片 Read/Head 也留 C5b。
+所有 fan-out 有并发上限、每库超时、总预算和续扫位置；分片失败不能阻止健康分片做独立清理，但依赖全部结果的操作必须显式失败，不把部分结果报成完整结果。扫描先取得键，随后每条事务只处理一个真实键。下表对应 C1 时 `pg.Tables` 的每一项 Offline。`app.fanout` 统一限制为默认并发 4、每片 1 秒、整轮 4 秒，分片号按配置顺序合并，轮次起点公平轮转。`ShardOptions.Fanout` 可覆盖这些值；模拟的 `DeterministicQueues` 使用原顺序、不启动 goroutine、不以墙钟截止。
 
-| 表与 Offline 路径 | 分片后的执行 |
-|---|---|
-| outbox.List / Read / Head | 按显式分片读各自信封与安全起点，游标绑定分片 / epoch；List 的完整分片枚举有界汇总，失败不隐藏分片 |
-| outbox.Maintain | 每库扫描候选、逐 Session 分批清理；删除信封按该库地板处理 |
-| outbox.Stats | 各库统计后汇总；缺一库不报告完整空间用量 |
-| work_items.Claim | 公平轮转逐分片认领，租约与后续操作回原分片；坏库超时后让其他库继续 |
-| work_dues.Promote | 逐库读到期候选，逐 Session 事务移回本库队列；共享总预算并公平推进 |
-| janitor_items.Claim | 与工作队列一样逐分片认领、续租、完成 |
-| sandbox_items.Claim | 与工作队列一样逐分片认领；由沙箱 Node ID 还原 Session |
-| sandbox_activity.ClaimIdle | 每库按时间认领空闲候选，在所属 Session 的分片完成回收 |
-| sandbox_ledger.Prune | 逐库有界扫描更新时间，按 Session 分批清理 |
-| presence.Prune | 逐库扫描过期项，逐 Session 清理并更新本库版本 |
-| session_tombstones.Pending | 各库独立列出未完成删除并入本库 Janitor 队列，可重复执行 |
-| session_tombstones.Request | 先在库 0 读取并授权删除请求，再到每库按 request_id 统计，累计 Sessions / Completed；去掉与 deletion_requests 的跨库 JOIN，缺库时报不可用，不报告完成 |
-| inbox.RemoveSession | C3a 已支持已知 EndUser 时只清该用户；归属索引已删时离线扫描恢复 EndUser、逐键事务删除，全部成功才完成清理。C5 再装配逐库有界扫描 |
-| sessions.List（未指定 EndUser） | 低频业务线服务端查询，各库取有界分页，以稳定排序键合并；分页位置保留各库进度，缺库不返回完整列表 |
-| sessions.IdleBefore / ClosedBefore / DueBefore / ScheduledAfter | 每库扫描保留策略或绝对期限候选；按真实 EndUser 更新索引，按 Session 槽执行关闭 / 删除 / 定时，多步可重复 |
-| memories.DeleteSession | 逐 EndUser 分片查来源 Session，再按真实 EndUser 删除；所有分片完成后才确认该清理步骤 |
-| usage_entries.Report | 各库按业务线 / 时间返回部分统计或分页，完整合并后返回；缺库不补零 |
-| usage_entries.Prune | 逐库按时间扫描、按真实键有界清理；匿名行留原分片 |
-| usage_entries 匿名化后的 `~` | 不搬库；按原 EndUser 在原库匿名化，随后按 ID 定位或逐库离线清理；不能再用匿名值求槽 |
-| usage_hourly.Prune | 各库有界清理历史聚合行 |
-| usage_hourly 的 `end_user = ''` 合计 / Spent | 每库保留业务线部分和，汇总完整部分和后缓存供在线配额判断；不把全部业务线写入一个热点库 |
-| end_user_tombstones.PendingEndUsers | 各 EndUser 分片认领注销确认工作；其关联 Session 删除状态按 Session 分片检查，缺库就保持未完成 |
-| end_user_tombstones.PruneEndUsers | 各库扫描宽限期候选，在 EndUser 所属库事务清除迟到数据并删屏障；需要的跨库 Session 清理未确认时不删屏障 |
+只有连接故障、分片不可用和截止时限耗尽归为 `shard_unavailable`。存储约束、事务归属与清理回调的业务错误保留错误链，调用方仍可用 `errors.Is/As` 判断；独立清理即使取得健康片结果也必须返回这些业务错误，不能把它们当成可忽略的断片。调用方主动取消保留取消错误。
 
-业务线配额是软限制（ADR-0019）：缓存项包含完整分片集合 / 配置版本及截至时间，设置有限有效期；映射切换后失效。只发布所有相关分片成功的部分和。分片失联时可用仍在有效期内的完整缓存；没有有效完整缓存则有界失败，不能用缺失用量当零放行。EndUser 配额在其所属库读取，不为查询本用户用量扫描其他库。
+| 表与 Offline 路径 | 类别 | 分片后的执行 |
+|---|---|---|
+| outbox.List / Read / Head | List 完整；Read/Head 单片 | 按显式分片读各自信封与安全起点，游标绑定分片 / epoch；List 的完整分片枚举有界汇总，失败不隐藏分片 |
+| outbox.Maintain | 独立清理 | 每库扫描候选、逐 Session 分批清理；删除信封按该库地板处理 |
+| Queue.Depths | 需要全部结果 | 各库队列深度按工作类别汇总，缺片不报告完整积压 |
+| outbox.Stats | 需要全部结果 | 各库统计后汇总；缺一库不报告完整空间用量 |
+| work_items.Claim | 独立清理 | 公平轮转逐分片认领，租约与后续操作回原分片；坏库超时后让其他库继续 |
+| work_dues.Promote | 独立清理 | 逐库读到期候选，逐 Session 事务移回本库队列；共享总预算并公平推进 |
+| janitor_items.Claim | 独立清理 | 与工作队列一样逐分片认领、续租、完成 |
+| sandbox_items.Claim | 独立清理 | 与工作队列一样逐分片认领；由沙箱 Node ID 还原 Session |
+| sandbox_activity.ClaimIdle | 独立清理 | 每库按时间认领空闲候选，在所属 Session 的分片完成回收 |
+| sandbox_ledger.Prune | 独立清理 | 逐库有界扫描更新时间，按 Session 分批清理 |
+| presence.Prune | 独立清理 | 逐库扫描过期项，逐 Session 清理并更新本库版本 |
+| session_tombstones.Pending | 独立清理 | 各库独立列出未完成删除并入本库 Janitor 队列，可重复执行 |
+| session_tombstones.Request | 需要全部结果 | 先在库 0 读取并授权删除请求，再到每库按 request_id 统计，累计 Sessions / Completed；去掉与 deletion_requests 的跨库 JOIN，缺库时报不可用，不报告完成 |
+| inbox.RemoveSession | 需要全部结果 | C3a 已支持已知 EndUser 时只清该用户；归属索引已删时离线扫描恢复 EndUser、逐键事务删除，全部成功才完成清理。C5 再装配逐库有界扫描 |
+| sessions.List（未指定 EndUser） | 需要全部结果 | 低频业务线服务端查询，各库取有界分页，以稳定排序键合并；分页位置保留各库进度，缺库不返回完整列表 |
+| sessions.IdleBefore / ClosedBefore / DueBefore / ScheduledAfter | 独立清理 | 每库扫描保留策略或绝对期限候选；按真实 EndUser 更新索引，按 Session 槽执行关闭 / 删除 / 定时，多步可重复 |
+| memories.DeleteSession | 需要全部结果 | 逐 EndUser 分片查来源 Session，再按真实 EndUser 删除；所有分片完成后才确认该清理步骤 |
+| usage_entries.Report | 需要全部结果 | 各库按业务线 / 时间返回部分统计或分页，完整合并后返回；缺库不补零 |
+| usage_entries.Prune | 独立清理 | 逐库按时间扫描、按真实键有界清理；匿名行留原分片 |
+| usage_entries 匿名化后的 `~` | 独立清理 | 不搬库；按原 EndUser 在原库匿名化，随后按 ID 定位或逐库离线清理；不能再用匿名值求槽 |
+| usage_hourly.Prune | 独立清理 | 各库有界清理历史聚合行 |
+| usage_hourly 的 `end_user = ''` 合计 / Spent | 需要全部结果 | 每库保留业务线部分和，汇总完整部分和后缓存供在线配额判断；不把全部业务线写入一个热点库 |
+| end_user_tombstones.PendingEndUsers | 独立清理 | 各 EndUser 分片认领注销确认工作；其关联 Session 删除状态按 Session 分片检查，缺库就保持未完成 |
+| end_user_tombstones.PruneEndUsers | 独立清理 | 各库扫描宽限期候选，在 EndUser 所属库事务清除迟到数据并删屏障；需要的跨库 Session 清理未确认时不删屏障 |
+
+业务线配额是软限制（ADR-0019）：缓存键包含业务线、用户类别、整点统计窗口与 `Identity()` 的版本和摘要；项保存完整分片集合、扫描开始时间及到期时间。默认有效期 15 秒，从扫描开始计时，最多 1024 项；映射切换或重装 router 后失效。有效期内直接复用完整和，不随新计量延长有效期；这增加了至多一个有效期内新增费用的软上限超出窗口。只发布所有相关分片成功的部分和。分片失联时可用仍在有效期内的完整缓存；没有有效完整缓存则有界失败，不能用缺失用量当零放行。EndUser 配额在其所属库读取，不为查询本用户用量扫描其他库。
 
 `pg.WithTx` 依 pool 身份复用事务，不是跨库事务管理器。Log / Queue / Waking 必须选同一 Session 的同一库；EndUser 屏障与该键的迟到数据清理仍须同库。跨键与跨库的多步操作保留幂等和恢复进度。
 
 ## 7. 部分可服务
 
-本节由 C5b 实施；C5a 的路由与 Claim 已隔离独立在线操作，但启动与就绪仍要求全部登记分片可用，不代表本节完成。
+SQL 池先构造、再有界探测，`-migrate=false` 允许断片时冷启动；可达库的身份或迁移配置错误仍拒绝启动，暂时不可达的库在恢复时先校验身份与迁移再开放访问。`-migrate=true` 与独立 migrate 任务要求全部迁移成功。
 
-按 Q118，健康分片的读取、写入、认领和出站消费继续。仅依赖失联分片的请求有界失败；汇总不得把部分成功当作完整成功。就绪检查报告每个分片的 SQL、迁移与 LISTEN 状态，结合进程角色和可服务分片决定是否接受流量，不能简单对所有分片取 AND；请求处理仍按其实际依赖拒绝不可用目标。控制库 0 失联可阻塞删除请求查询等依赖它的操作，但不能因此关闭不依赖它的健康 Session。
+按 Q118，健康分片的读取、写入、认领和出站消费继续。仅依赖失联分片的请求有界失败；汇总不得把部分成功当作完整成功。就绪检查报告每个分片的 SQL、迁移与 LISTEN 状态，结合进程角色和可服务分片决定是否接受流量，不能简单对所有分片取 AND；请求处理仍按其实际依赖拒绝不可用目标。控制库 0 失联可阻塞删除请求查询等依赖它的操作，但不能因此关闭不依赖它的健康 Session。gateway 要求至少一片 SQL、身份、迁移和 LISTEN 均正常；worker、sandbox、janitor 要求至少一片 SQL、身份和迁移正常，通知断开时由轮询兜底。组合角色采用其中最严格的 gateway 规则。探针与短操作各有预算；目标不可用返回 503 和 Retry-After。
+
+索引保留策略、定时索引与待删除候选使用每路径/每片的循环游标，扫描到底回到开头；失败片保留原位置。每库返回的整页全部交给调用者，不在合并后截掉已推进游标的候选。游标只缓存位置，重启从头重扫；完成清理、提升以及出站地板保存在原库。队列认领每次只取一片，持有来源租约；ClaimIdle 已取走的各片候选全部交回。完整性查询与独立工作分开：后者可使用健康片候选，多片 Janitor 在阶段或单项失败后仍处理其他工作，最后返回累计错误。Inbox/Memory 的跨库清理只有全部成功才确认该删除步骤。
 
 ## 8. 当前状态与迁移约束
 
@@ -210,8 +215,8 @@ Session、工件、Memory、Grant、用量等原本全局唯一的 ID 保持原�
 | 工件 | Get / Delete、Service.Stat / Open 带真实 Session，读内容前核对 Meta.SessionID。调用点为 normalizeMedia、runtime.readArtifact、sandbox import_file、card.New、HTTP 鉴权后下载、Put 撤回与 DeleteSession。唯一在线裸查为 HTTP 下载 / meta 共用的 artifact()：Lookup 经 Object 定位，再加载真实 Session 按业务线 / EndUser 鉴权。Janitor 仍先删 Blob 再删元数据，两遍清扫与写后复查不变 |
 | Memory / Grant | 全部在线 Get / Delete / Supersede / RecordAccess / Revoke 已带真实 EndUser，业务线 / Grant 条件仍检查，无剩余裸 ID 入口。Memory 派生 token 是 EndUser、BusinessLine、SourceSession、完整 CallID 的逐字段 `十进制字节长度:原字节` 串的 SHA-256；旧 mem_call → 新派生 → 相似度流程，只有 ErrNotFound 继续，任何幂等命中均核对完整归属；capabilities 同时识别两种 ID，不改原 Put 覆盖契约、相似度、历史失效、审批或召回规则。RecordAccess 同时核对 EndUser / Owner，保留单次召回批写；Grant 撤销要求调用业务线属于 From / To，创建时删除屏障检查两方业务线 |
 | 用量、其他 EndUser 数据 | Meter 统一将完整原键 SHA-256 后 WithEndUser(use)，不截断含斜杠的键、不继承 Session 槽、不额外消费 IDs。Record 对 ID 或原幂等键冲突不插入，仅新行更新小时聚合；匿名化不恢复归属，写后复查按原 EndUser / 原键撤回。Tier、删除屏障、推送设备已有真实 EndUser；无新增在线裸查 |
-| 定位与装配 | pg.Tables.Gaps 全空，Locate 仅登记 artifacts.Lookup、sessions.LookupSession。PG 存储提交 Target 给 pg.PoolSelector；app.Postgres 注入 SinglePoolSelector（默认 Locator，只有库 0），直接构造 PG 存储的默认路径也经 Locator；内存裸查同样执行默认定位。C5a 在 app 层包装全部带键接口，每库 PostgresShard 的 Select 只断言本分片；app.Stores / app.NewCore 仍是唯一装配。已增加多库连接与顺序遍历，完整汇总缓存、部分就绪和多分片消费留 C5b |
-| 预检 / 验证 | Locator 覆盖新旧目标、映射、回退、损坏 ID、配置拒绝与启用校验；artifacttest 覆盖错误 Session 读删拒绝；HTTP 用两份 PG schema 验证槽位 / 映射只决定地点及不逐库试探；PG 历史预检覆盖碰撞、正常、结构化派生引用与损坏载荷。完整 make check / make sim 仍是验收标准；C5a 新增真实双 database 一致性与确定性差分种子、逐库删除不变量，尚待远端运行；长期故障隔离属 C5b |
+| 定位与装配 | pg.Tables.Gaps 全空，Locate 仅登记 artifacts.Lookup、sessions.LookupSession。PG 存储提交 Target 给 pg.PoolSelector；app.Postgres 注入 SinglePoolSelector（默认 Locator，只有库 0），直接构造 PG 存储的默认路径也经 Locator；内存裸查同样执行默认定位。C5a 在 app 层包装全部带键接口，每库 PostgresShard 的 Select 只断言本分片；app.Stores / app.NewCore 仍是唯一装配。多库连接、有界遍历、完整汇总缓存、部分就绪与多分片消费均在 app 装配；普通单库入口不启用这些策略 |
+| 预检 / 验证 | Locator 覆盖新旧目标、映射、回退、损坏 ID、配置拒绝与启用校验；artifacttest 覆盖错误 Session 读删拒绝；HTTP 用两份 PG schema 验证槽位 / 映射只决定地点及不逐库试探；PG 历史预检覆盖碰撞、正常、结构化派生引用与损坏载荷。完整 make check / make sim 仍是验收标准；C5a 新增真实双 database 一致性与确定性差分种子、逐库删除不变量，尚待远端运行；断片隔离与恢复由 C5b 测试覆盖，运行结果待远端验收 |
 
 必要迁移注意事项：
 

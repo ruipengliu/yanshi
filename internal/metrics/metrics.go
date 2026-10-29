@@ -17,7 +17,7 @@ import (
 var Registry = prometheus.NewRegistry()
 
 func init() {
-	Registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	Registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}), pools)
 }
 
 func counter(name, help string, labels ...string) *prometheus.CounterVec {
@@ -106,25 +106,6 @@ var (
 
 // PoolStats 是数据库连接池的统计来源（由 pgxpool.Pool.Stat 适配）。
 type PoolStats func() (acquired, total, max int32, acquireCount, waitedCount int64, acquireTime time.Duration)
-
-// RegisterPool 暴露连接池指标：连接数、获取次数与总耗时，以及因池满而等待的次数。
-func RegisterPool(stats PoolStats) {
-	get := func(f func(a, t, m int32, ac, wc int64, w time.Duration) float64) func() float64 {
-		return func() float64 { return f(stats()) }
-	}
-	Registry.MustRegister(
-		prometheus.NewGaugeFunc(prometheus.GaugeOpts{Namespace: "yanshi", Name: "db_pool_acquired_conns", Help: "正在使用的连接。"},
-			get(func(a, _, _ int32, _, _ int64, _ time.Duration) float64 { return float64(a) })),
-		prometheus.NewGaugeFunc(prometheus.GaugeOpts{Namespace: "yanshi", Name: "db_pool_max_conns", Help: "连接池上限。"},
-			get(func(_, _, m int32, _, _ int64, _ time.Duration) float64 { return float64(m) })),
-		prometheus.NewCounterFunc(prometheus.CounterOpts{Namespace: "yanshi", Name: "db_pool_acquires_total", Help: "获取连接的次数。"},
-			get(func(_, _, _ int32, ac, _ int64, _ time.Duration) float64 { return float64(ac) })),
-		prometheus.NewCounterFunc(prometheus.CounterOpts{Namespace: "yanshi", Name: "db_pool_waited_acquires_total", Help: "因池满而等待的获取次数。"},
-			get(func(_, _, _ int32, _, wc int64, _ time.Duration) float64 { return float64(wc) })),
-		prometheus.NewCounterFunc(prometheus.CounterOpts{Namespace: "yanshi", Name: "db_pool_acquire_seconds_total", Help: "获取连接的总耗时（含因池满而等待）。"},
-			get(func(_, _, _ int32, _, _ int64, w time.Duration) float64 { return w.Seconds() })),
-	)
-}
 
 // Since 返回自 t 以来的秒数。
 func Since(t time.Time) float64 { return time.Since(t).Seconds() }

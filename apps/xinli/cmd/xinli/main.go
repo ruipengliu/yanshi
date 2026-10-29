@@ -135,7 +135,10 @@ func serve(ctx context.Context, cfg config, stdin io.Reader, stdout, stderr io.W
 				consumer.Store = cfg.test.Delivery(consumer.Store)
 				worker.Push = cfg.test.Push(worker.Push)
 			}
-			stopDelivery := delivery.Start(life, cfg.lines, consumer, worker, func() { logger.Warn("application delivery retry") })
+			stopDelivery := delivery.Start(life, cfg.lines, consumer, worker, func(f delivery.Failure) {
+				logger.Warn("application delivery retry", "stage", f.Stage, "shard", f.Shard, "error_class", f.Category,
+					"business_line", f.BusinessLine, "phase", f.Phase, "session_id", f.SessionID, "run_id", f.RunID, "call_id", f.CallID, "envelope_id", f.EnvelopeID)
+			})
 			defer stopDelivery()
 		}
 		defer func() {

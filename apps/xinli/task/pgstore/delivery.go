@@ -81,7 +81,7 @@ func (s *Store) Process(ctx context.Context, e kernel.Envelope, now time.Time) e
 	defer pg.Rollback(tx)
 	// 与接收及删除使用同一业务线锁序，防止读取旧接收行后复活已删 Session。
 	var version int64
-	if err = tx.QueryRow(ctx, `SELECT version FROM outbox_recovery WHERE business_line=$1 FOR UPDATE`, e.BusinessLine).Scan(&version); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT version FROM outbox_recovery WHERE business_line=$1 AND shard=-1 FOR UPDATE`, e.BusinessLine).Scan(&version); err != nil {
 		return err
 	}
 	var data []byte
@@ -142,7 +142,7 @@ func (s *Store) UpdateDelivery(ctx context.Context, owner task.Owner, fn func(*d
 		return err
 	}
 	var version int64
-	if err = tx.QueryRow(ctx, `SELECT version FROM outbox_recovery WHERE business_line=$1 FOR UPDATE`, owner.BusinessLine).Scan(&version); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT version FROM outbox_recovery WHERE business_line=$1 AND shard=-1 FOR UPDATE`, owner.BusinessLine).Scan(&version); err != nil {
 		return err
 	}
 	if err = activeDelivery(ctx, tx, owner); err != nil {

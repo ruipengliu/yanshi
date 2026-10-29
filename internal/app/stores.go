@@ -88,7 +88,7 @@ func Postgres(pool *pgxpool.Pool, n *pg.Notifier, clk clock.Clock) Stores {
 // PostgresShard 的选择器只断言本库归属，真正的路由由 Sharded 完成。
 func PostgresShard(pool *pgxpool.Pool, n *pg.Notifier, clk clock.Clock, locator shard.Locator, id int) Stores {
 	selectPool := ShardPoolSelector(pool, locator, id)
-	o := pgoutbox.Store{Pool: pool, Notifier: n}
+	o := pgoutbox.Store{Pool: pool, Notifier: n, Shard: id}
 	l, q := pglog.New(pool, n), pgqueue.New(pool, clk, pgqueue.Sessions).WithNotifier(n)
 	return Stores{
 		pgPool: pool, Outbox: o, Log: l, Queue: q, Waking: l.Waking(q), Dir: pgnode.NewDirectory(pool, clk), Inbox: pgnode.NewInbox(pool, n),

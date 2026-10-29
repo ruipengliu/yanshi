@@ -12,6 +12,7 @@ import (
 
 	"yanshi/internal/app"
 	"yanshi/internal/clock"
+	"yanshi/internal/metrics"
 	"yanshi/internal/pg/pgtest"
 	"yanshi/internal/shard"
 )
@@ -73,5 +74,99 @@ func TestOpenShardsMigrationsAndIdentity(t *testing.T) {
 	if _, close, err := openShards(ctx, path, 1, false, clock.Real{}, logger); err == nil {
 		close()
 		t.Fatal("same physical database assembled twice")
+	}
+}
+
+// 逐角色的可服务规则不把两片简单 AND；控制库断开也不关闭无依赖的健康流量。
+func TestPartialShardReadiness(t *testing.T) {
+	first, second := pgtest.Database(t), pgtest.Database(t)
+	path := writeShardConfig(t, first, second)
+	ctx := context.Background()
+	if err := migrateShards(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	st, closeAll, err := openShards(ctx, path, 1, false, clock.Real{}, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeAll()
+	st.shardConnections[0].pool.Close()
+	for _, role := range []string{"gateway", "worker", "sandbox", "janitor"} {
+		r := &readiness{st: st, roles: map[string]bool{role: true}}
+		rows, ready := r.shardReport(ctx)
+		if !ready || len(rows) != 2 || rows[0].SQL || !rows[1].SQL {
+			t.Fatalf("role %s lost healthy shard: %+v", role, rows)
+		}
+	}
+}
+
+func TestShardIdentityRejectsSwappedDSNs(t *testing.T) {
+	first, second := pgtest.Database(t), pgtest.Database(t)
+	ctx := context.Background()
+	if err := migrateShards(ctx, writeShardConfig(t, first, second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, closeAll, err := openShards(ctx, writeShardConfig(t, second, first), 1, false, clock.Real{}, slog.New(slog.DiscardHandler)); err == nil {
+		closeAll()
+		t.Fatal("swapped shard identities accepted")
+	}
+	if err := migrateShards(ctx, writeShardConfig(t, second, first)); err == nil {
+		t.Fatal("migration rebound an existing identity")
+	}
+}
+
+func TestShardColdStartWithUnavailablePeer(t *testing.T) {
+	first, second := pgtest.Database(t), pgtest.Database(t)
+	ctx := context.Background()
+	if err := migrateShards(ctx, writeShardConfig(t, first, second)); err != nil {
+		t.Fatal(err)
+	}
+	path := writeShardConfig(t, first, "postgres://unused@127.0.0.1:1/unavailable?sslmode=disable&connect_timeout=1")
+	st, closeAll, err := openShards(ctx, path, 1, false, clock.Real{}, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeAll()
+	rows, ready := (&readiness{st: st, roles: map[string]bool{"gateway": true}}).shardReport(ctx)
+	if !ready || len(rows) != 2 || rows[1].SQL {
+		t.Fatalf("cold start lost healthy shard: %+v", rows)
+	}
+}
+
+func TestShardPoolMetricsReassembly(t *testing.T) {
+	path := writeShardConfig(t, pgtest.Database(t), pgtest.Database(t))
+	ctx := context.Background()
+	if err := migrateShards(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		func() {
+			st, closeAll, err := openShards(ctx, path, 1, false, clock.Real{}, slog.New(slog.DiscardHandler))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer closeAll()
+			var want int32
+			for _, part := range st.shardConnections {
+				want += part.pool.Stat().MaxConns()
+			}
+			families, err := metrics.Registry.Gather()
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, family := range families {
+				if family.GetName() != "yanshi_db_pool_max_conns" {
+					continue
+				}
+				found = true
+				if len(family.Metric) != 1 || len(family.Metric[0].Label) != 0 || family.Metric[0].GetGauge().GetValue() != float64(want) {
+					t.Fatalf("shard pools not aggregated once: %v", family)
+				}
+			}
+			if !found {
+				t.Fatal("missing shard pool metrics")
+			}
+		}()
 	}
 }

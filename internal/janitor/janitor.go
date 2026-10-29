@@ -31,9 +31,11 @@ import (
 )
 
 type Janitor struct {
-	Outbox outbox.Maintainer
-	ID     string
-	Queue  workqueue.Queue // 清理队列（pgqueue.Janitor）
+	// ContinueIndependent 只由多分片装配启用；跨片删除步骤仍须全部确认。
+	ContinueIndependent bool
+	Outbox              outbox.Maintainer
+	ID                  string
+	Queue               workqueue.Queue // 清理队列（pgqueue.Janitor）
 	// Service 用于保留策略触发的关闭与删除。
 	Service *service.Service
 	Store   *session.Store
@@ -410,14 +412,20 @@ func (j *Janitor) sweep(ctx context.Context, sid, reason, endUser string) error 
 
 // Sweep 执行保留策略（自动关闭与删除），重新入队未完成的删除（写入删除记录后、入队前崩溃的情况），
 // 并按保留期清理沙箱账本。
-func (j *Janitor) Sweep(ctx context.Context) error {
+func (j *Janitor) Sweep(ctx context.Context) (result error) {
 	j.init()
 	if j.Outbox != nil {
 		if err := j.stage(ctx, "outbox"); err != nil {
-			return err
+			if !j.ContinueIndependent {
+				return err
+			}
+			result = errors.Join(result, err)
 		}
 		if err := j.Outbox.Maintain(ctx, j.Clock, 1000); err != nil {
-			return err
+			if !j.ContinueIndependent {
+				return err
+			}
+			result = errors.Join(result, err)
 		}
 	}
 	deadline := j.Clock.Now().Add(j.PromoteBudget)
@@ -432,7 +440,11 @@ func (j *Janitor) Sweep(ctx context.Context) error {
 				n, err := d.Promote(ctx, now.Add(d.Horizon()), 1000)
 				metrics.QueuePromoted.WithLabelValues().Add(float64(n))
 				if err != nil {
-					return err
+					if !j.ContinueIndependent {
+						return err
+					}
+					result = errors.Join(result, err)
+					break
 				}
 				if n < 1000 {
 					break
@@ -442,21 +454,33 @@ func (j *Janitor) Sweep(ctx context.Context) error {
 	}
 	now := j.Clock.Now()
 	if err := j.sweepEndUsers(ctx, now); err != nil {
-		return err
+		if !j.ContinueIndependent {
+			return err
+		}
+		result = errors.Join(result, err)
 	}
 	// 绝对期限独立于 Retention 配置：未配置保留策略的业务线也必须清理。
 	due, err := j.Index.DueBefore(ctx, "", now, 100)
 	if err != nil {
-		return err
+		if !j.ContinueIndependent {
+			return err
+		}
+		result = errors.Join(result, err)
 	}
 	for _, id := range due {
 		if err := j.Service.Delete(ctx, id, lifecycle.ReasonRetention, ""); err != nil && !errors.Is(err, service.ErrNotFound) {
-			return err
+			if !j.ContinueIndependent {
+				return err
+			}
+			result = errors.Join(result, err)
 		}
 	}
 	for bl, retention := range j.Retention {
 		if err := j.reconcileSchedules(ctx, bl); err != nil {
-			return err
+			if !j.ContinueIndependent {
+				return err
+			}
+			result = errors.Join(result, err)
 		}
 		// 按 AgentDef 覆盖的规则各查各的 Session，业务线的值作用于其余 AgentDef（docs/design/captures.md §8）。
 		for _, r := range retention.Rules() {
@@ -464,7 +488,10 @@ func (j *Janitor) Sweep(ctx context.Context) error {
 				// 索引中的最后输入时间至多滞后 TouchEvery：多等这么久，不提前关闭。
 				ids, err := j.Index.IdleBefore(ctx, bl, r.Agents, now.Add(-r.CloseAfterIdle-lifecycle.TouchEvery), 100)
 				if err != nil {
-					return err
+					if !j.ContinueIndependent {
+						return err
+					}
+					result = errors.Join(result, err)
 				}
 				for _, id := range ids {
 					st, err := j.Service.Load(ctx, id)
@@ -472,27 +499,44 @@ func (j *Janitor) Sweep(ctx context.Context) error {
 						continue
 					}
 					if err != nil {
-						return err
+						if !j.ContinueIndependent {
+							return err
+						}
+						result = errors.Join(result, err)
+						continue
 					}
 					if err := j.Service.SyncScheduleIndex(ctx, st); err != nil {
-						return err
+						if !j.ContinueIndependent {
+							return err
+						}
+						result = errors.Join(result, err)
+						continue
 					}
 					if _, active := st.NextScheduleDue(); active {
 						continue
 					}
 					if err := j.Service.Close(ctx, id, "retention", "idle"); err != nil && !errors.Is(err, service.ErrNotFound) {
-						return err
+						if !j.ContinueIndependent {
+							return err
+						}
+						result = errors.Join(result, err)
 					}
 				}
 			}
 			if r.DeleteAfterClose > 0 {
 				ids, err := j.Index.ClosedBefore(ctx, bl, r.Agents, now.Add(-r.DeleteAfterClose), 100)
 				if err != nil {
-					return err
+					if !j.ContinueIndependent {
+						return err
+					}
+					result = errors.Join(result, err)
 				}
 				for _, id := range ids {
 					if err := j.Service.Delete(ctx, id, lifecycle.ReasonRetention, ""); err != nil && !errors.Is(err, service.ErrNotFound) {
-						return err
+						if !j.ContinueIndependent {
+							return err
+						}
+						result = errors.Join(result, err)
 					}
 				}
 			}
@@ -500,24 +544,40 @@ func (j *Janitor) Sweep(ctx context.Context) error {
 	}
 	pending, err := j.Deletions.Pending(ctx, 100)
 	if err != nil {
-		return err
+		if !j.ContinueIndependent {
+			return err
+		}
+		result = errors.Join(result, err)
 	}
 	for _, id := range pending {
 		if err := j.Queue.Enqueue(ctx, id, workqueue.Class{Priority: workqueue.Background}); err != nil {
-			return err
+			if !j.ContinueIndependent {
+				return err
+			}
+			result = errors.Join(result, err)
 		}
 	}
 	if j.Presence != nil {
 		if err := j.Presence.Prune(ctx, now); err != nil {
-			return err
+			if !j.ContinueIndependent {
+				return err
+			}
+			result = errors.Join(result, err)
 		}
 	}
 	if j.Usage != nil && j.UsageRetention > 0 {
 		if err := j.Usage.Prune(ctx, now.Add(-j.UsageRetention)); err != nil {
-			return err
+			if !j.ContinueIndependent {
+				return err
+			}
+			result = errors.Join(result, err)
 		}
 	}
-	return j.Ledger.Prune(now.Add(-nodesdk.DefaultLedgerRetention))
+	err = j.Ledger.Prune(now.Add(-nodesdk.DefaultLedgerRetention))
+	if !j.ContinueIndependent {
+		return err
+	}
+	return errors.Join(result, err)
 }
 
 // reconcileSchedules 修复取消或耗尽写日志后、更新索引前崩溃留下的非零值。
@@ -536,9 +596,15 @@ func (j *Janitor) reconcileSchedules(ctx context.Context, businessLine string) e
 			continue
 		}
 		if err != nil {
+			if j.ContinueIndependent {
+				continue
+			}
 			return err
 		}
 		if err := j.Service.SyncScheduleIndex(ctx, st); err != nil {
+			if j.ContinueIndependent {
+				continue
+			}
 			return err
 		}
 	}

@@ -81,7 +81,7 @@ func (r Request) Normalize() (Request, error) {
 	if r.BusinessLine == "" || r.Limit < 0 || r.Limit > 1000 {
 		return r, ErrInvalid
 	}
-	if r.Shard != 0 {
+	if r.Shard < 0 {
 		return r, ErrShard
 	}
 	if r.Limit == 0 {
@@ -132,6 +132,9 @@ func (s StreamState) Start(r Request) (Position, error) {
 	if json.Unmarshal(b, &c) != nil || c.Version != 1 {
 		return Position{}, ErrCursor
 	}
+	if c.Shard != r.Shard {
+		return Position{}, ErrScope
+	}
 	if c.Epoch != s.Epoch {
 		return Position{}, ErrEpoch
 	}
@@ -179,4 +182,12 @@ type Stats struct {
 	OldestTransaction time.Duration
 	Rows              int64
 	Bytes             int64
+}
+
+// Shards 是配置枚举，即使某片不可用也不从列表移除；Head 的失败只改变该片状态。
+type Shards interface {
+	ShardIDs() []int
+	Slots(int) []int
+	Identity() (string, string)
+	SubscribeShard(int, string) (<-chan struct{}, func())
 }

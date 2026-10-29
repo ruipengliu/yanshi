@@ -63,12 +63,12 @@ func (d *MemDeletions) SealEndUser(_ context.Context, b *EndUserTombstone) error
 	return nil
 }
 
-func (d *MemDeletions) PendingEndUsers(_ context.Context, limit int) ([]*EndUserTombstone, error) {
+func (d *MemDeletions) PendingEndUsers(ctx context.Context, limit int) ([]*EndUserTombstone, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	var out []*EndUserTombstone
 	for _, b := range d.endUsers {
-		if b.Sealed && b.CompletedAt.IsZero() {
+		if b.Sealed && b.CompletedAt.IsZero() && b.BusinessLine+"\x00"+b.EndUser > ScanAfter(ctx) {
 			out = append(out, cloneEndUser(b))
 		}
 	}

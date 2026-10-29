@@ -3,6 +3,7 @@ package pglifecycle
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -65,8 +66,9 @@ func (d Deletions) SealEndUser(ctx context.Context, b *lifecycle.EndUserTombston
 }
 
 func (d Deletions) PendingEndUsers(ctx context.Context, limit int) ([]*lifecycle.EndUserTombstone, error) {
+	line, user, _ := strings.Cut(lifecycle.ScanAfter(ctx), "\x00")
 	rows, err := d.Pool.Query(ctx, `SELECT `+endUserColumns+` FROM end_user_tombstones
-		WHERE sealed AND completed_at IS NULL ORDER BY business_line, end_user LIMIT $1`, limit)
+		WHERE sealed AND completed_at IS NULL AND (business_line,end_user) > ($2,$3) ORDER BY business_line, end_user LIMIT $1`, limit, line, user)
 	if err != nil {
 		return nil, err
 	}

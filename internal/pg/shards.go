@@ -34,6 +34,8 @@ type TableKey struct {
 
 // Tables 是全部表的分片键。
 var Tables = map[string]TableKey{
+	// 每个数据库独立一行，不是集中在库 0 的单元控制数据。
+	"shard_identity":     {Class: Global},
 	"outbox_stream":      {Class: Global},
 	"outbox_checkpoints": {Class: Global},
 	"outbox": {Class: BySession, Column: "session_id",

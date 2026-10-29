@@ -127,3 +127,14 @@ func (l Locator) Shards() []int {
 	sort.Ints(out)
 	return out
 }
+
+// Slots 公开固定槽位的归属，不包含兼容清单或用户 ID。
+func (l Locator) Slots(id int) []int {
+	var slots []int
+	for slot, owner := range l.table.slots {
+		if owner == id {
+			slots = append(slots, slot)
+		}
+	}
+	return slots
+}

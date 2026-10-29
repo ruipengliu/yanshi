@@ -164,15 +164,15 @@ func (x *MemIndex) pick(keep func(*Session) bool, limit int) []string {
 	return ids
 }
 
-func (x *MemIndex) IdleBefore(_ context.Context, businessLine string, agents AgentFilter, t time.Time, limit int) ([]string, error) {
+func (x *MemIndex) IdleBefore(ctx context.Context, businessLine string, agents AgentFilter, t time.Time, limit int) ([]string, error) {
 	return x.pick(func(s *Session) bool {
-		return s.BusinessLine == businessLine && agents.Match(s.Agent) && s.ClosedAt.IsZero() && s.NextDue.IsZero() && s.LastInputAt.Before(t)
+		return s.ID > ScanAfter(ctx) && s.BusinessLine == businessLine && agents.Match(s.Agent) && s.ClosedAt.IsZero() && s.NextDue.IsZero() && s.LastInputAt.Before(t)
 	}, limit), nil
 }
 
-func (x *MemIndex) ClosedBefore(_ context.Context, businessLine string, agents AgentFilter, t time.Time, limit int) ([]string, error) {
+func (x *MemIndex) ClosedBefore(ctx context.Context, businessLine string, agents AgentFilter, t time.Time, limit int) ([]string, error) {
 	return x.pick(func(s *Session) bool {
-		return s.BusinessLine == businessLine && agents.Match(s.Agent) && !s.ClosedAt.IsZero() && s.ClosedAt.Before(t)
+		return s.ID > ScanAfter(ctx) && s.BusinessLine == businessLine && agents.Match(s.Agent) && !s.ClosedAt.IsZero() && s.ClosedAt.Before(t)
 	}, limit), nil
 }
 
@@ -284,12 +284,12 @@ func (d *MemDeletions) Complete(_ context.Context, id string, at time.Time) erro
 	return nil
 }
 
-func (d *MemDeletions) Pending(_ context.Context, limit int) ([]string, error) {
+func (d *MemDeletions) Pending(ctx context.Context, limit int) ([]string, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	var ids []string
 	for id, t := range d.tombs {
-		if t.CompletedAt.IsZero() {
+		if t.SessionID > ScanAfter(ctx) && t.CompletedAt.IsZero() {
 			ids = append(ids, id)
 		}
 	}
@@ -330,9 +330,9 @@ func (d *MemDeletions) Request(_ context.Context, id string) (*Request, error) {
 	return &cp, nil
 }
 
-func (x *MemIndex) DueBefore(_ context.Context, businessLine string, t time.Time, limit int) ([]string, error) {
+func (x *MemIndex) DueBefore(ctx context.Context, businessLine string, t time.Time, limit int) ([]string, error) {
 	return x.pick(func(s *Session) bool {
-		return (businessLine == "" || s.BusinessLine == businessLine) && !s.DeleteAt.IsZero() && s.DeleteAt.Before(t)
+		return s.ID > ScanAfter(ctx) && (businessLine == "" || s.BusinessLine == businessLine) && !s.DeleteAt.IsZero() && s.DeleteAt.Before(t)
 	}, limit), nil
 }
 

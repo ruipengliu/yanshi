@@ -102,6 +102,8 @@ func (q *routedQueue) forget(key string) {
 }
 
 func (q *routedQueue) Enqueue(ctx context.Context, key string, class workqueue.Class) error {
+	ctx, cancel := q.r.attempt(ctx)
+	defer cancel()
 	part, _, err := q.pick(ctx, key)
 	if err != nil {
 		return err
@@ -114,6 +116,8 @@ func (q *routedQueue) Enqueue(ctx context.Context, key string, class workqueue.C
 }
 
 func (q *routedQueue) Remove(ctx context.Context, key string) error {
+	ctx, cancel := q.r.attempt(ctx)
+	defer cancel()
 	part, _, err := q.pick(ctx, key)
 	if err != nil {
 		return err
@@ -130,6 +134,8 @@ func (q *routedQueue) Claim(ctx context.Context, holder string, ttl time.Duratio
 	if q.ordered {
 		return q.claimOrdered(ctx, holder, ttl, pool)
 	}
+	ctx, cancel := context.WithTimeout(ctx, q.r.fanout.Budget)
+	defer cancel()
 	q.mu.Lock()
 	start := q.next
 	q.next = (q.next + 1) % len(q.r.ids)
@@ -137,16 +143,25 @@ func (q *routedQueue) Claim(ctx context.Context, holder string, ttl time.Duratio
 	var errs []error
 	for offset := range q.r.ids {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, errors.Join(append(errs, shardFailure(q.r.ids[(start+offset)%len(q.r.ids)], err))...)
 		}
 		pos := (start + offset) % len(q.r.ids)
 		id := q.r.ids[pos]
-		s, err := q.r.at(ctx, id)
-		if err != nil {
-			return nil, err
-		}
 		attempt, cancel := context.WithTimeout(ctx, q.timeout)
+		s, err := q.r.at(attempt, id)
+		if err != nil {
+			cancel()
+			err = shardFailure(id, err)
+			if !onlyUnavailable(err) {
+				return nil, err
+			}
+			errs = append(errs, err)
+			continue
+		}
 		lease, err := q.get(s).Claim(attempt, holder, ttl, pool)
+		if err != nil && !errors.Is(err, workqueue.ErrEmpty) {
+			err = shardFailure(id, err)
+		}
 		cancel()
 		if err == nil {
 			owner, locateErr := q.target(lease.SessionID)
@@ -160,7 +175,10 @@ func (q *routedQueue) Claim(ctx context.Context, holder string, ttl time.Duratio
 			return lease, nil
 		}
 		if !errors.Is(err, workqueue.ErrEmpty) {
-			errs = append(errs, fmt.Errorf("shard %d: %w", id, err))
+			if !onlyUnavailable(err) {
+				return nil, err
+			}
+			errs = append(errs, err)
 		}
 	}
 	if len(errs) > 0 {
@@ -188,6 +206,8 @@ func (q *routedQueue) origin(ctx context.Context, l *workqueue.Lease) (workqueue
 }
 
 func (q *routedQueue) Renew(ctx context.Context, l *workqueue.Lease, ttl time.Duration) error {
+	ctx, cancel := q.r.attempt(ctx)
+	defer cancel()
 	part, err := q.origin(ctx, l)
 	if err != nil {
 		return err
@@ -196,6 +216,8 @@ func (q *routedQueue) Renew(ctx context.Context, l *workqueue.Lease, ttl time.Du
 }
 
 func (q *routedQueue) Park(ctx context.Context, l *workqueue.Lease, until time.Time) error {
+	ctx, cancel := q.r.attempt(ctx)
+	defer cancel()
 	part, err := q.origin(ctx, l)
 	if err != nil {
 		return err
@@ -208,6 +230,8 @@ func (q *routedQueue) Park(ctx context.Context, l *workqueue.Lease, until time.T
 }
 
 func (q *routedQueue) Release(ctx context.Context, l *workqueue.Lease, done bool) error {
+	ctx, cancel := q.r.attempt(ctx)
+	defer cancel()
 	part, err := q.origin(ctx, l)
 	if err != nil {
 		return err
@@ -234,6 +258,8 @@ func (q *routedQueue) Horizon() time.Duration {
 	return q.get(q.r.stores[q.r.ids[0]]).(workqueue.Deferrer).Horizon()
 }
 func (q *routedQueue) Contains(ctx context.Context, key string) (bool, error) {
+	ctx, cancel := q.r.attempt(ctx)
+	defer cancel()
 	part, _, err := q.pick(ctx, key)
 	if err != nil {
 		return false, err
@@ -241,31 +267,30 @@ func (q *routedQueue) Contains(ctx context.Context, key string) (bool, error) {
 	return part.(workqueue.Inspector).Contains(ctx, key)
 }
 func (q *routedQueue) Promote(ctx context.Context, before time.Time, limit int) (int, error) {
-	// limit 为每库批量；返回合计使 Janitor 的既有循环继续处理剩余候选。
-	count := 0
-	err := q.r.each(ctx, func(s Stores) error {
-		n, err := q.get(s).(workqueue.Deferrer).Promote(ctx, before, limit)
-		count += n
-		return err
+	parts, err := collect(ctx, q.r, "Queue.Promote", false, func(ctx context.Context, s Stores) (int, error) {
+		return q.get(s).(workqueue.Deferrer).Promote(ctx, before, limit)
 	})
+	var count int
+	for _, n := range parts {
+		count += n
+	}
 	return count, err
 }
+
 func (q *routedQueue) Depths(ctx context.Context) ([]workqueue.Depth, error) {
+	parts, err := collect(ctx, q.r, "Queue.Depths", true, func(ctx context.Context, s Stores) ([]workqueue.Depth, error) {
+		return q.get(s).(workqueue.Stats).Depths(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
 	byClass := map[workqueue.Class]workqueue.Depth{}
-	err := q.r.each(ctx, func(s Stores) error {
-		rows, err := q.get(s).(workqueue.Stats).Depths(ctx)
-		if err != nil {
-			return err
-		}
+	for _, rows := range parts {
 		for _, row := range rows {
 			d := byClass[row.Class]
 			d.Class, d.Ready, d.OldestWait = row.Class, d.Ready+row.Ready, max(d.OldestWait, row.OldestWait)
 			byClass[row.Class] = d
 		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
 	}
 	var rows []workqueue.Depth
 	for _, d := range byClass {
@@ -324,6 +349,8 @@ type routedWakingWithQueue struct {
 var _ eventlog.WakingLog = routedWakingWithQueue{}
 
 func (x routedWakingWithQueue) AppendAndEnqueue(ctx context.Context, sessionID string, expectedSeq uint64, class workqueue.Class, envelopes []outbox.Envelope, events ...*v1.Event) (uint64, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.SessionData, sessionID)
 	if err != nil {
 		return 0, err

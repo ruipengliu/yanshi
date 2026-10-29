@@ -28,6 +28,8 @@ type routedLog struct{ r *storeRouter }
 var _ eventlog.Log = routedLog{}
 
 func (x routedLog) Append(ctx context.Context, sessionID string, expectedSeq uint64, envelopes []outbox.Envelope, events ...*v1.Event) (uint64, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.SessionData, sessionID)
 	if err != nil {
 		return 0, err
@@ -36,6 +38,8 @@ func (x routedLog) Append(ctx context.Context, sessionID string, expectedSeq uin
 }
 
 func (x routedLog) Read(ctx context.Context, sessionID string, after uint64, limit int) ([]*v1.Event, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.SessionData, sessionID)
 	if err != nil {
 		return nil, err
@@ -52,6 +56,8 @@ func (x routedLog) Wait(ctx context.Context, sessionID string, after uint64) (ui
 }
 
 func (x routedLog) Delete(ctx context.Context, sessionID string) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.SessionData, sessionID)
 	if err != nil {
 		return err
@@ -64,6 +70,8 @@ type routedDir struct{ r *storeRouter }
 var _ node.Directory = routedDir{}
 
 func (x routedDir) SetOffline(ctx context.Context, endUser, nodeID string, gen uint64) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return err
@@ -72,6 +80,8 @@ func (x routedDir) SetOffline(ctx context.Context, endUser, nodeID string, gen u
 }
 
 func (x routedDir) Get(ctx context.Context, endUser, nodeID string) (*node.Info, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return nil, err
@@ -80,6 +90,8 @@ func (x routedDir) Get(ctx context.Context, endUser, nodeID string) (*node.Info,
 }
 
 func (x routedDir) List(ctx context.Context, scope node.Scope) ([]*node.Info, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, scope.EndUser)
 	if err != nil {
 		return nil, err
@@ -88,6 +100,8 @@ func (x routedDir) List(ctx context.Context, scope node.Scope) ([]*node.Info, er
 }
 
 func (x routedDir) DeleteScope(ctx context.Context, scope node.Scope) ([]string, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, scope.EndUser)
 	if err != nil {
 		return nil, err
@@ -96,6 +110,8 @@ func (x routedDir) DeleteScope(ctx context.Context, scope node.Scope) ([]string,
 }
 
 func (x routedDir) Register(ctx context.Context, info node.Info) (string, uint64, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, info.Scope.EndUser)
 	if err != nil {
 		return "", 0, err
@@ -108,6 +124,8 @@ type routedInbox struct{ r *storeRouter }
 var _ node.Inbox = routedInbox{}
 
 func (x routedInbox) Put(ctx context.Context, endUser, nodeID string, inv *v1.Invoke) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return err
@@ -116,6 +134,8 @@ func (x routedInbox) Put(ctx context.Context, endUser, nodeID string, inv *v1.In
 }
 
 func (x routedInbox) Remove(ctx context.Context, endUser, nodeID, callID string) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return err
@@ -124,6 +144,8 @@ func (x routedInbox) Remove(ctx context.Context, endUser, nodeID, callID string)
 }
 
 func (x routedInbox) Pending(ctx context.Context, endUser, nodeID string) ([]*v1.Invoke, uint64, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return nil, 0, err
@@ -180,6 +202,8 @@ type routedActivity struct{ r *storeRouter }
 var _ sandbox.Activity = routedActivity{}
 
 func (x routedActivity) Touch(ctx context.Context, sessionID string, at time.Time) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.SessionData, strings.TrimPrefix(sessionID, sandbox.NodePrefix))
 	if err != nil {
 		return err
@@ -188,6 +212,8 @@ func (x routedActivity) Touch(ctx context.Context, sessionID string, at time.Tim
 }
 
 func (x routedActivity) Delete(ctx context.Context, sessionID string) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.SessionData, strings.TrimPrefix(sessionID, sandbox.NodePrefix))
 	if err != nil {
 		return err
@@ -200,6 +226,8 @@ type routedArtifactMeta struct{ r *storeRouter }
 var _ artifact.MetaStore = routedArtifactMeta{}
 
 func (x routedArtifactMeta) Get(ctx context.Context, sessionID, id string) (*artifact.Meta, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.SessionData, sessionID)
 	if err != nil {
 		return nil, err
@@ -208,6 +236,8 @@ func (x routedArtifactMeta) Get(ctx context.Context, sessionID, id string) (*art
 }
 
 func (x routedArtifactMeta) List(ctx context.Context, sessionID string) ([]*artifact.Meta, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.SessionData, sessionID)
 	if err != nil {
 		return nil, err
@@ -216,6 +246,8 @@ func (x routedArtifactMeta) List(ctx context.Context, sessionID string) ([]*arti
 }
 
 func (x routedArtifactMeta) Delete(ctx context.Context, sessionID, id string) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.SessionData, sessionID)
 	if err != nil {
 		return err
@@ -224,6 +256,8 @@ func (x routedArtifactMeta) Delete(ctx context.Context, sessionID, id string) er
 }
 
 func (x routedArtifactMeta) Create(ctx context.Context, m *artifact.Meta) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.SessionData, m.SessionID)
 	if err != nil {
 		return err
@@ -232,6 +266,8 @@ func (x routedArtifactMeta) Create(ctx context.Context, m *artifact.Meta) error 
 }
 
 func (x routedArtifactMeta) Lookup(ctx context.Context, id string) (*artifact.Meta, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.Object, id)
 	if err != nil {
 		return nil, err
@@ -244,6 +280,8 @@ type routedIndex struct{ r *storeRouter }
 var _ lifecycle.Index = routedIndex{}
 
 func (x routedIndex) Put(ctx context.Context, entry *lifecycle.Session) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, entry.EndUser)
 	if err != nil {
 		return err
@@ -252,6 +290,8 @@ func (x routedIndex) Put(ctx context.Context, entry *lifecycle.Session) error {
 }
 
 func (x routedIndex) LookupSession(ctx context.Context, id string) (*lifecycle.Session, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.SessionIndex, id)
 	if err != nil {
 		return nil, err
@@ -260,6 +300,8 @@ func (x routedIndex) LookupSession(ctx context.Context, id string) (*lifecycle.S
 }
 
 func (x routedIndex) Get(ctx context.Context, endUser, id string) (*lifecycle.Session, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return nil, err
@@ -268,6 +310,8 @@ func (x routedIndex) Get(ctx context.Context, endUser, id string) (*lifecycle.Se
 }
 
 func (x routedIndex) Delete(ctx context.Context, endUser, id string) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return err
@@ -276,6 +320,8 @@ func (x routedIndex) Delete(ctx context.Context, endUser, id string) error {
 }
 
 func (x routedIndex) ListStable(ctx context.Context, businessLine, endUser, cursor string, limit int) ([]*lifecycle.Session, string, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return nil, "", err
@@ -284,6 +330,8 @@ func (x routedIndex) ListStable(ctx context.Context, businessLine, endUser, curs
 }
 
 func (x routedIndex) IDsOf(ctx context.Context, businessLine, endUser string) ([]string, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return nil, err
@@ -292,6 +340,8 @@ func (x routedIndex) IDsOf(ctx context.Context, businessLine, endUser string) ([
 }
 
 func (x routedIndex) Touch(ctx context.Context, endUser, id string, at time.Time) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return err
@@ -300,6 +350,8 @@ func (x routedIndex) Touch(ctx context.Context, endUser, id string, at time.Time
 }
 
 func (x routedIndex) SetNextDue(ctx context.Context, endUser, id string, at time.Time) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return err
@@ -308,6 +360,8 @@ func (x routedIndex) SetNextDue(ctx context.Context, endUser, id string, at time
 }
 
 func (x routedIndex) MarkClosed(ctx context.Context, endUser, id string, at time.Time) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return err
@@ -320,6 +374,8 @@ type routedDeletions struct{ r *storeRouter }
 var _ lifecycle.Deletions = routedDeletions{}
 
 func (x routedDeletions) Get(ctx context.Context, sessionID string) (*lifecycle.Tombstone, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	// 空 ID 不可能有合法删除记录；保留不存在的读语义，不把无效键送去任一分片。
 	if sessionID == "" {
 		return nil, lifecycle.ErrNotFound
@@ -332,6 +388,8 @@ func (x routedDeletions) Get(ctx context.Context, sessionID string) (*lifecycle.
 }
 
 func (x routedDeletions) Complete(ctx context.Context, sessionID string, at time.Time) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.SessionData, sessionID)
 	if err != nil {
 		return err
@@ -340,6 +398,8 @@ func (x routedDeletions) Complete(ctx context.Context, sessionID string, at time
 }
 
 func (x routedDeletions) Mark(ctx context.Context, t *lifecycle.Tombstone) (bool, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.SessionData, t.SessionID)
 	if err != nil {
 		return false, err
@@ -348,6 +408,8 @@ func (x routedDeletions) Mark(ctx context.Context, t *lifecycle.Tombstone) (bool
 }
 
 func (x routedDeletions) GetEndUser(ctx context.Context, businessLine, endUser string) (*lifecycle.EndUserTombstone, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return nil, err
@@ -356,6 +418,8 @@ func (x routedDeletions) GetEndUser(ctx context.Context, businessLine, endUser s
 }
 
 func (x routedDeletions) MarkEndUser(ctx context.Context, b *lifecycle.EndUserTombstone) (*lifecycle.EndUserTombstone, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, b.EndUser)
 	if err != nil {
 		return nil, err
@@ -364,6 +428,8 @@ func (x routedDeletions) MarkEndUser(ctx context.Context, b *lifecycle.EndUserTo
 }
 
 func (x routedDeletions) SealEndUser(ctx context.Context, b *lifecycle.EndUserTombstone) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, b.EndUser)
 	if err != nil {
 		return err
@@ -372,6 +438,8 @@ func (x routedDeletions) SealEndUser(ctx context.Context, b *lifecycle.EndUserTo
 }
 
 func (x routedDeletions) AddEndUserSessions(ctx context.Context, b *lifecycle.EndUserTombstone, ids []string) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, b.EndUser)
 	if err != nil {
 		return err
@@ -380,6 +448,8 @@ func (x routedDeletions) AddEndUserSessions(ctx context.Context, b *lifecycle.En
 }
 
 func (x routedDeletions) CompleteEndUser(ctx context.Context, b *lifecycle.EndUserTombstone, at, expires time.Time) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, b.EndUser)
 	if err != nil {
 		return err
@@ -392,6 +462,8 @@ type routedMemories struct{ r *storeRouter }
 var _ memory.Store = routedMemories{}
 
 func (x routedMemories) Get(ctx context.Context, endUser, id string) (*memory.Memory, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return nil, err
@@ -400,6 +472,8 @@ func (x routedMemories) Get(ctx context.Context, endUser, id string) (*memory.Me
 }
 
 func (x routedMemories) Delete(ctx context.Context, endUser, id string) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return err
@@ -408,6 +482,8 @@ func (x routedMemories) Delete(ctx context.Context, endUser, id string) error {
 }
 
 func (x routedMemories) Count(ctx context.Context, businessLine, endUser string, at time.Time) (int, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return 0, err
@@ -416,6 +492,8 @@ func (x routedMemories) Count(ctx context.Context, businessLine, endUser string,
 }
 
 func (x routedMemories) List(ctx context.Context, endUser string, scopes []memory.Scope, at time.Time, limit int) ([]*memory.Memory, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return nil, err
@@ -424,6 +502,8 @@ func (x routedMemories) List(ctx context.Context, endUser string, scopes []memor
 }
 
 func (x routedMemories) ListBySource(ctx context.Context, businessLine, endUser string, sessions []string, at time.Time) ([]*memory.Memory, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return nil, err
@@ -432,6 +512,8 @@ func (x routedMemories) ListBySource(ctx context.Context, businessLine, endUser 
 }
 
 func (x routedMemories) Nearest(ctx context.Context, endUser string, scopes []memory.Scope, at time.Time, vec memory.Vector, limit int) ([]memory.Hit, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return nil, err
@@ -440,6 +522,8 @@ func (x routedMemories) Nearest(ctx context.Context, endUser string, scopes []me
 }
 
 func (x routedMemories) Supersede(ctx context.Context, endUser, id, by string, at time.Time) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return err
@@ -448,6 +532,8 @@ func (x routedMemories) Supersede(ctx context.Context, endUser, id, by string, a
 }
 
 func (x routedMemories) Purge(ctx context.Context, businessLine, endUser string, supersededBefore, expiredBefore time.Time) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return err
@@ -456,6 +542,8 @@ func (x routedMemories) Purge(ctx context.Context, businessLine, endUser string,
 }
 
 func (x routedMemories) DeleteSessionForEndUser(ctx context.Context, endUser, sessionID string) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return err
@@ -464,6 +552,8 @@ func (x routedMemories) DeleteSessionForEndUser(ctx context.Context, endUser, se
 }
 
 func (x routedMemories) DeleteEndUser(ctx context.Context, businessLine, endUser string) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return err
@@ -472,6 +562,8 @@ func (x routedMemories) DeleteEndUser(ctx context.Context, businessLine, endUser
 }
 
 func (x routedMemories) Accesses(ctx context.Context, endUser, owner string, since time.Time, limit int) ([]memory.Access, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return nil, err
@@ -480,6 +572,8 @@ func (x routedMemories) Accesses(ctx context.Context, endUser, owner string, sin
 }
 
 func (x routedMemories) Put(ctx context.Context, m *memory.Memory, vec *memory.Vector) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, m.EndUser)
 	if err != nil {
 		return err
@@ -492,6 +586,8 @@ type routedGrants struct{ r *storeRouter }
 var _ memory.Grants = routedGrants{}
 
 func (x routedGrants) Get(ctx context.Context, endUser, id string) (*memory.Grant, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return nil, err
@@ -500,6 +596,8 @@ func (x routedGrants) Get(ctx context.Context, endUser, id string) (*memory.Gran
 }
 
 func (x routedGrants) Revoke(ctx context.Context, endUser, id string, at time.Time) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return err
@@ -508,6 +606,8 @@ func (x routedGrants) Revoke(ctx context.Context, endUser, id string, at time.Ti
 }
 
 func (x routedGrants) List(ctx context.Context, endUser, businessLine string) ([]*memory.Grant, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return nil, err
@@ -516,6 +616,8 @@ func (x routedGrants) List(ctx context.Context, endUser, businessLine string) ([
 }
 
 func (x routedGrants) ToReader(ctx context.Context, endUser, to string) ([]*memory.Grant, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return nil, err
@@ -524,6 +626,8 @@ func (x routedGrants) ToReader(ctx context.Context, endUser, to string) ([]*memo
 }
 
 func (x routedGrants) DeleteBusinessLine(ctx context.Context, endUser, businessLine string) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return err
@@ -532,6 +636,8 @@ func (x routedGrants) DeleteBusinessLine(ctx context.Context, endUser, businessL
 }
 
 func (x routedGrants) Create(ctx context.Context, g *memory.Grant) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, g.EndUser)
 	if err != nil {
 		return err
@@ -544,6 +650,8 @@ type routedSnapshots struct{ r *storeRouter }
 var _ session.Snapshots = routedSnapshots{}
 
 func (x routedSnapshots) Get(ctx context.Context, sessionID string) (*v1.SessionSnapshot, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.SessionData, sessionID)
 	if err != nil {
 		return nil, err
@@ -552,6 +660,8 @@ func (x routedSnapshots) Get(ctx context.Context, sessionID string) (*v1.Session
 }
 
 func (x routedSnapshots) Delete(ctx context.Context, sessionID string) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.SessionData, sessionID)
 	if err != nil {
 		return err
@@ -560,6 +670,8 @@ func (x routedSnapshots) Delete(ctx context.Context, sessionID string) error {
 }
 
 func (x routedSnapshots) Put(ctx context.Context, snap *v1.SessionSnapshot) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.SessionData, snap.GetSessionId())
 	if err != nil {
 		return err
@@ -572,6 +684,8 @@ type routedUsage struct{ r *storeRouter }
 var _ usage.Store = routedUsage{}
 
 func (x routedUsage) Record(ctx context.Context, e *usage.Entry) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, e.EndUser)
 	if err != nil {
 		return err
@@ -580,6 +694,8 @@ func (x routedUsage) Record(ctx context.Context, e *usage.Entry) error {
 }
 
 func (x routedUsage) DeleteEndUser(ctx context.Context, businessLine, endUser string) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return err
@@ -588,6 +704,8 @@ func (x routedUsage) DeleteEndUser(ctx context.Context, businessLine, endUser st
 }
 
 func (x routedUsage) AnonymizeEntry(ctx context.Context, endUser, id string) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return err
@@ -600,6 +718,8 @@ type routedTiers struct{ r *storeRouter }
 var _ usage.TierStore = routedTiers{}
 
 func (x routedTiers) Get(ctx context.Context, businessLine, endUser string) (string, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return "", err
@@ -608,6 +728,8 @@ func (x routedTiers) Get(ctx context.Context, businessLine, endUser string) (str
 }
 
 func (x routedTiers) Put(ctx context.Context, businessLine, endUser, tier string, at time.Time) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return err
@@ -616,6 +738,8 @@ func (x routedTiers) Put(ctx context.Context, businessLine, endUser, tier string
 }
 
 func (x routedTiers) Delete(ctx context.Context, businessLine, endUser string) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return err
@@ -628,6 +752,8 @@ type routedPresence struct{ r *storeRouter }
 var _ presence.Store = routedPresence{}
 
 func (x routedPresence) Touch(ctx context.Context, sessionID, connID string, expires time.Time) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.SessionData, sessionID)
 	if err != nil {
 		return err
@@ -636,6 +762,8 @@ func (x routedPresence) Touch(ctx context.Context, sessionID, connID string, exp
 }
 
 func (x routedPresence) Remove(ctx context.Context, sessionID, connID string) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.SessionData, sessionID)
 	if err != nil {
 		return err
@@ -644,6 +772,8 @@ func (x routedPresence) Remove(ctx context.Context, sessionID, connID string) er
 }
 
 func (x routedPresence) List(ctx context.Context, sessionID string, now time.Time) ([]*presence.Entry, uint64, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.SessionData, sessionID)
 	if err != nil {
 		return nil, 0, err
@@ -660,6 +790,8 @@ func (x routedPresence) Wait(ctx context.Context, sessionID string, version uint
 }
 
 func (x routedPresence) DeleteSession(ctx context.Context, sessionID string) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.SessionData, sessionID)
 	if err != nil {
 		return err
@@ -668,6 +800,8 @@ func (x routedPresence) DeleteSession(ctx context.Context, sessionID string) err
 }
 
 func (x routedPresence) Put(ctx context.Context, e *presence.Entry) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.SessionData, e.SessionID)
 	if err != nil {
 		return err
@@ -680,6 +814,8 @@ type routedPush struct{ r *storeRouter }
 var _ notify.Registry = routedPush{}
 
 func (x routedPush) Touch(ctx context.Context, businessLine, endUser, deviceID string, at time.Time) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return err
@@ -688,6 +824,8 @@ func (x routedPush) Touch(ctx context.Context, businessLine, endUser, deviceID s
 }
 
 func (x routedPush) List(ctx context.Context, businessLine, endUser string) ([]*notify.Device, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return nil, err
@@ -696,6 +834,8 @@ func (x routedPush) List(ctx context.Context, businessLine, endUser string) ([]*
 }
 
 func (x routedPush) Unregister(ctx context.Context, businessLine, endUser, deviceID string) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return err
@@ -704,6 +844,8 @@ func (x routedPush) Unregister(ctx context.Context, businessLine, endUser, devic
 }
 
 func (x routedPush) DeleteEndUser(ctx context.Context, businessLine, endUser string) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, endUser)
 	if err != nil {
 		return err
@@ -712,6 +854,8 @@ func (x routedPush) DeleteEndUser(ctx context.Context, businessLine, endUser str
 }
 
 func (x routedPush) Register(ctx context.Context, d *notify.Device, at time.Time) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.EndUser, d.EndUser)
 	if err != nil {
 		return err
@@ -724,6 +868,8 @@ type routedOutbox struct{ r *storeRouter }
 var _ outbox.Store = routedOutbox{}
 
 func (x routedOutbox) DeleteSession(ctx context.Context, sessionID string) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
 	s, err := x.r.pick(ctx, shard.SessionData, sessionID)
 	if err != nil {
 		return err

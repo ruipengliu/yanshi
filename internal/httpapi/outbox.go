@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"yanshi/internal/outbox"
@@ -71,6 +72,9 @@ func (s *Server) outboxError(w http.ResponseWriter, err error) {
 	case errors.Is(err, outbox.ErrEpoch), errors.Is(err, outbox.ErrExpired):
 		code, message = http.StatusGone, err.Error()
 	}
+	if code == http.StatusServiceUnavailable {
+		w.Header().Set("Retry-After", "1")
+	}
 	// 数据库错误不回传 SQL 或参数，消费者只需知道本分片不可用。
 	writeJSON(w, code, map[string]string{"error": message})
 }
@@ -95,6 +99,10 @@ func (s *Server) readOutbox(w http.ResponseWriter, r *http.Request) {
 		defer expireCancel()
 	}
 	ch, unsubscribe := s.Outbox.Subscribe(req.BusinessLine)
+	if shards, ok := s.Outbox.(outbox.Shards); ok {
+		unsubscribe()
+		ch, unsubscribe = shards.SubscribeShard(req.Shard, req.BusinessLine)
+	}
 	defer unsubscribe()
 	ticker := time.NewTicker(recheck)
 	defer ticker.Stop()
@@ -149,10 +157,45 @@ func (s *Server) outboxShards(w http.ResponseWriter, r *http.Request) {
 		s.outboxError(w, outbox.ErrInvalid)
 		return
 	}
-	next, err := s.Outbox.Head(r.Context(), req)
-	if err != nil {
-		s.outboxError(w, err)
+	ids := []int{0}
+	version, digest := "", ""
+	if shards, ok := s.Outbox.(outbox.Shards); ok {
+		ids = shards.ShardIDs()
+		version, digest = shards.Identity()
+	} else {
+		next, err := s.Outbox.Head(r.Context(), req)
+		if err != nil {
+			s.outboxError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"shards": []map[string]any{{"shard": 0, "status": "ready", "next": next}}})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"shards": []map[string]any{{"shard": 0, "status": "ready", "next": next}}})
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	defer cancel()
+	rows := make([]map[string]any, len(ids))
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	for range min(4, len(ids)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				part := req
+				part.Shard = ids[i]
+				next, err := s.Outbox.Head(ctx, part)
+				status := "ready"
+				if err != nil {
+					status, next = "unavailable", ""
+				}
+				rows[i] = map[string]any{"shard": ids[i], "status": status, "next": next, "slots": s.Outbox.(outbox.Shards).Slots(ids[i])}
+			}
+		}()
+	}
+	for i := range ids {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+	writeJSON(w, http.StatusOK, map[string]any{"shards": rows, "version": version, "identity": digest})
 }

@@ -141,6 +141,26 @@ func (tokens) Token(_ context.Context, line string) (string, error) {
 	return "service-token", nil
 }
 
+func TestMultiShardServiceOutboxHeads(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/outbox/shards" || r.Header.Get("Authorization") != "Bearer service-token" {
+			t.Error("unexpected shard discovery request")
+			w.WriteHeader(403)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"version": "dual", "identity": "digest", "shards": []kernel.OutboxShard{
+			{Shard: 0, Slots: []int{0, 1}, Status: "ready", Next: "H0"},
+			{Shard: 1, Slots: []int{512, 513}, Status: "unavailable"},
+		}})
+	}))
+	defer server.Close()
+	source := delivery.Source{Client: &kernel.Client{BaseURL: server.URL, Tokens: tokens{}}}
+	heads, err := source.OutboxHeads(context.Background(), "bl")
+	if err != nil || len(heads) != 2 || heads[0].Shard != 0 || heads[0].Next != "H0" || len(heads[0].Slots) != 2 || heads[1].Shard != 1 || heads[1].Status != "unavailable" || len(heads[1].Slots) != 2 {
+		t.Fatalf("configured shard list was lost: %+v %v", heads, err)
+	}
+}
+
 type failedProgress struct{ recovery.Consumer }
 
 func (f failedProgress) Commit(context.Context, uint64, recovery.Progress, recovery.Batch) error {

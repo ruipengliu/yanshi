@@ -202,7 +202,7 @@ func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server
 		Presence: &presence.Service{Store: st.Presence, Deletions: st.Deletions, Clock: clk}, Push: st.Push, Calls: calls}}
 	mux.Handle("/v1/connect", gwy)
 	mux.Handle("/v1/nodes/connect", gwy)
-	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: st.Dir, Artifacts: core.Artifacts, Memory: core.Memory, Feeds: feeds, Faults: injector}).Handler())
+	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Outbox: st.Outbox, Live: bus, Nodes: st.Dir, Artifacts: core.Artifacts, Memory: core.Memory, Feeds: feeds, Faults: injector}).Handler())
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv

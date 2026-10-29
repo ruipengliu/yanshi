@@ -35,7 +35,7 @@ func (s *Store) Load(ctx context.Context, line string) (recovery.Progress, error
 	if err := ctx.Err(); err != nil {
 		return recovery.Progress{}, err
 	}
-	p := copyRecovery(s.recoveryProgress[line])
+	p := copyRecovery(s.recoveryProgress[recovery.ProgressKey(ctx, line)])
 	p.BusinessLine = line
 	return p, nil
 }
@@ -80,7 +80,7 @@ func (s *Store) Known(ctx context.Context, line string, round uint64, after stri
 	out := []recovery.Checkpoint{}
 	for _, cp := range known {
 		owner := task.Owner{BusinessLine: line, EndUser: cp.EndUser}
-		if cp.SessionID > after && !cp.Gone && cp.SeenRound != round && s.accounts[owner].Account.Status != account.Deleted {
+		if cp.SessionID > after && !cp.Gone && (recovery.Shard(ctx) >= 0 || cp.SeenRound != round) && s.accounts[owner].Account.Status != account.Deleted {
 			out = append(out, copyRecovery(cp))
 		}
 	}
@@ -95,7 +95,7 @@ func (s *Store) Commit(ctx context.Context, expected uint64, p recovery.Progress
 		return err
 	}
 	s.initRecovery()
-	if s.recoveryProgress[p.BusinessLine].Version != expected || p.Version != expected+1 {
+	if s.recoveryProgress[recovery.ProgressKey(ctx, p.BusinessLine)].Version != expected || p.Version != expected+1 {
 		return recovery.ErrConflict
 	}
 	if err := recovery.ValidateBatch(p.BusinessLine, batch); err != nil {
@@ -141,7 +141,7 @@ func (s *Store) Commit(ctx context.Context, expected uint64, p recovery.Progress
 	if batch.Inaccessible != "" {
 		s.forgetRecovery(p.BusinessLine, batch.Inaccessible)
 	}
-	s.recoveryProgress[p.BusinessLine] = copyRecovery(p)
+	s.recoveryProgress[recovery.ProgressKey(ctx, p.BusinessLine)] = copyRecovery(p)
 	return nil
 }
 

@@ -92,7 +92,20 @@ func (l Ledger) HasSession(sessionID string) (bool, error) {
 func (l Ledger) Prune(before time.Time) error {
 	ctx, cancel := context.WithTimeout(context.Background(), ledgerTimeout)
 	defer cancel()
-	rows, err := l.Pool.Query(ctx, `SELECT DISTINCT session_id FROM sandbox_ledger WHERE updated_at < $1 ORDER BY session_id`, before)
+	return l.prune(ctx, before, false)
+}
+
+// PruneContext 让分片维护沿用外层预算；删除成功本身就是下一批的持久续扫位置。
+func (l Ledger) PruneContext(ctx context.Context, before time.Time) error {
+	return l.prune(ctx, before, true)
+}
+
+func (l Ledger) prune(ctx context.Context, before time.Time, bounded bool) error {
+	query := `SELECT DISTINCT session_id FROM sandbox_ledger WHERE updated_at < $1 ORDER BY session_id`
+	if bounded {
+		query += " LIMIT 1000"
+	}
+	rows, err := l.Pool.Query(ctx, query, before)
 	if err != nil {
 		return err
 	}

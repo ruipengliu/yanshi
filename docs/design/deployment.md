@@ -56,7 +56,7 @@ worker        worker-bg     sandbox-ctl        janitor
 - **PostgreSQL。** 每个分片一个主库加同步备库；已确认的 Event 不能因故障切换丢失或 seq 倒退，所以同步复制是硬要求，旧主须被隔离（fencing）后才允许新主接受写入。连接分两类：SQL 经 PgBouncer 事务模式复用；`LISTEN` 与迁移锁必须直连（事务池不保留会话状态），因此 serve 需要两个 DSN（§6）。故障切换后 `pg.Notifier` 重连、清空缓存并唤醒全部等待者，日志末尾对账补上期间的事件。
 - **对象存储。** 任何 S3 兼容实现（ADR-0011）；私有化环境用 SeaweedFS、MinIO 或 Ceph RGW。
 - **入口。** 支持 WebSocket 升级与小时级空闲连接；SSE 与 WebSocket 不经过会缓冲响应的中间层。握手限速与带抖动的 `Retry-After` 由网关自身处理。
-- **可观测性。** 指标在 peer-addr 的 `/metrics`，只记录 ID（ADR-0015）。链路追踪按 `run_id`、`attempt`、`call_id` 关联，列入上线检查清单。
+- **可观测性。** 指标在 peer-addr 的 `/metrics`，只记录 ID（ADR-0015）。`yanshi_db_pool_*` 由一个进程级收集器汇总活动分片的 SQL 池，沿用单库的无标签指标，不含独立直连池；来源随存储关闭注销，详见 [M2 扩容压测](./m2-scale-test.md) §3。链路追踪按 `run_id`、`attempt`、`call_id` 关联，列入上线检查清单。
 - **配置分发。** AgentDef、发布配置、业务线公钥、价格表、MCP 登记以挂载卷（ConfigMap/Secret）分发，所有进程同一版本；发布配置的热加载（10 秒）保持不变。
 - **外联。** 模型提供商、内容安全提供商、推送通道是仅有的出网依赖，按 ADR-0001 在部署清单中显式列出、可关闭或替换；网络策略默认禁止其他出网。
 
@@ -98,7 +98,7 @@ Janitor 的 Sweep 同时把 Horizon 内的远期停放移回工作队列（[M7 �
 
 **P4 只支持新建单元，或全部槽位留在库 0 的既有单元。把旧数据迁离库 0 不在 P4 支持范围。** 静态映射无法覆盖旧 Session 之后生成的旧式工件与派生 ID；支持这种迁移需要另行设计在线目录。多库新单元必须关闭旧数据回退且兼容条目为空；既有单元允许使用兼容清单，但全部槽与条目必须仍指向库 0。不能添加一条无关映射绕过启用前提。历史预检与兼容条目的语义仍见 [ADR-0051](../adr/0051-shard-slots-and-id-location.md) §5。
 
-#### 配置与迁移（C5a）
+#### 配置与迁移
 
 不传 `-shards` 且未设置 `YANSHI_SHARDS` 时，保持原单库入口：`-pg-dsn`、可选的 `-pg-listen-dsn`，全部槽位到库 0。内存开发入口同样保持原行为。
 
@@ -125,21 +125,36 @@ Janitor 的 Sweep 同时把 Horizon 内的远期停放移回工作队列（[M7 �
 }
 ```
 
-文件包含凭据时按 Secret 管理；DSN 和兼容清单不写日志。解析拒绝未知字段、重复字段、重复或缺失分片、遗漏 DSN，并调用 `ValidateActivation`。启动逐库校验系统标识与 database OID：同一分片的 SQL/直连必须是同一物理数据库和 schema，不同分片不能以两个 schema 或两个地址重复装配同一个数据库。连接角色需要 `pg_control_system()` 的 EXECUTE 权限（或 `pg_monitor`），用于这个身份检查；数据库名相同不能证明身份相同。
+文件包含凭据时按 Secret 管理；DSN 和兼容清单不写日志。解析拒绝未知字段、重复字段、重复或缺失分片、遗漏 DSN，并调用 `ValidateActivation`。迁移 0041 建立固定 `public.shard_identity`（Global，每库各一行），含随机 `instance_id` 与配置中的 `shard_id`。分片迁移先应用 schema，再用 INSERT ON CONFLICT 初始化空身份，随后只读核对，绝不改绑已有分片号。固定 public 防止两个 schema 把同一个 database 伪装成两个分片。SQL/直连必须读取同一身份和业务 schema；实例 ID 不得跨片重复，DSN 互换或重复都拒绝。运行角色只需 SELECT 身份表，不再依赖 `pg_control_system()`。主备复制保留该行，切换协议与旧主隔离留 C6。
 
-生产先运行 `yanshi migrate -shards <file>`，再让各角色以 `-migrate=false` 启动；开发可用 `-migrate=true` 逐库迁移。每库使用自己的 SQL 池、直连池与 Notifier；迁移锁只走直连，启动同时检查 SQL 入口可见全部迁移、Notifier 已建立连接。所有角色使用相同配置，全部角色合在一个进程仍可运行。`notify-shards` 只控制每库内部的通知频道数，与数据库分片数无关。
+生产先运行 `yanshi migrate -shards <file>`，再让各角色以 `-migrate=false` 启动；开发可用 `-migrate=true` 逐库迁移。每库使用自己的 SQL 池、直连池与 Notifier；迁移锁只走直连，启动检查可达 SQL 入口的迁移与身份，并启动每库独立重连的 Notifier。`-migrate=false` 时暂时不可达的库保留池、等待恢复，不阻止健康片冷启动；可达库身份/迁移错误仍阻止启动。恢复目标必须再次通过身份、schema 与迁移校验。所有角色使用相同配置，全部角色合在一个进程仍可运行。`notify-shards` 只控制每库内部的通知频道数，与数据库分片数无关。
 
-`/readyz` 的 `X-Yanshi-Routing` 返回 `Locator.Identity()` 的摘要（不含 DSN）；发布时核对所有角色实例的摘要相同，不能只比兼容版本标签。C5a 启动和就绪暂时要求全部登记分片可用，**尚未实现 §7 / ADR-0051 §7 的部分就绪**；按分片报告、接流量策略属于 C5b。路由本身不会在访问健康键时查询其他库。
+`/readyz` 的 `X-Yanshi-Routing` 返回 `Locator.Identity()` 的摘要（不含 DSN）；发布时核对所有角色实例的摘要相同，不能只比兼容版本标签。就绪探针返回每片 `sql`、`migrations`、`migration_version`、`listen`、`identity`，即使失联也保留该片。探测并发 4、每片 1 秒、整轮 4 秒，结果缓存至多 1 秒。
+
+| 角色 | 就绪规则 | 理由 |
+|---|---|---|
+| gateway | 至少一片 SQL、迁移、身份与 LISTEN 正常 | 可以承接健康目标的请求及订阅；不要求控制库 0 正常 |
+| worker / worker-bg | 至少一片 SQL、迁移与身份正常 | 认领轮转避开坏片，通知断开由轮询兜底 |
+| sandbox | 同 worker | 健康 Session 的沙箱工作可独立执行 |
+| janitor | 同 worker | 独立清理不能因另一片失联停摆 |
+| 组合角色 | 含 gateway 时采用 gateway 规则，否则采用 worker 规则 | 每个已启用角色至少能处理一片工作 |
+| migrate | 全部登记库完成迁移与身份核验才成功 | 发布不能把缺片报告为完成 |
+
+目标依赖仍逐项检查：Session 日志片、EndUser 索引/屏障片、用量片分别路由，碰到不可用依赖返回固定 503 与 `Retry-After: 1`，不返回 SQL/DSN。库 0 只限制删除请求等实际依赖其控制数据的操作；无关健康 Session 继续。每个短存储操作默认 1 秒；订阅 Wait 的生命周期仍由调用者取消。汇总最多 4 秒，健康 Run 触及业务线配额时只能使用有效完整缓存或成功的完整汇总。
 
 #### 队列、离线操作与验证边界
 
 三类队列公平轮转，各库一次 Claim 尝试默认最多一秒；空库或失败库之后继续尝试，全部为空才返回空队列。租约携带来源分片，Renew / Park / Release 回到原库并复核 Session 定位与来源一致。各库的入队通知合并给等待方，转发随进程上下文取消。Waking 在选定分片内原子写日志、队列与信封；`pg.WithTx` 遇到另一 pool 的路由或 `pg.Exec` 报错，不能静默跨库独立提交。
 
-C5a 的 Offline 路径按分片顺序遍历：Index 时间扫描、删除待办、Inbox 归属恢复、Memory 按来源 Session 删除、Usage 报表与清理、Presence / Ledger / Outbox 清理、到期提升、EndUser 屏障清理。`Promote` 的 limit 是每库批量，返回合计；有界总预算与公平续扫留 C5b。沙箱 ClaimIdle 已有删除候选的副作用，因此每次交回一个分片的一批并轮转，不能在后库失败时丢掉前库已认领的工作。
+Offline 统一经 `app.fanout`：并发默认 4、每片 1 秒、每轮 4 秒，起点轮转。分类完整见 [ADR-0051](../adr/0051-shard-slots-and-id-location.md) §6：清理与保留候选允许健康片继续；List、Stats、Report、CountRequest、跨库 Inbox/Memory 清理必须全片成功。候选扫描保存每路径/每片的环扫位置，失败不推进，重启重扫；删除、队列提升和出站地板本身是持久进度。单批至多每片 limit，不丢弃已推进位置对应的行。多片 Janitor 累计错误后继续独立阶段与其他候选；某一删除步骤或注销屏障仍须所有依赖完成后才确认。
 
-未指定 EndUser 的 Session 列表按 `(last_input_at, session_id)` 全局倒序合并；现有游标也是每库下一轮的边界，不漏掉未消费的行。Usage 的相同分组数字列求和；匿名 `~` 行留原库并跨库汇总。删除请求只存库 0，读取请求后逐库按 request_id 统计 tombstone，不再 JOIN 请求表。上述完整结果任一库失败即返回错误，不能把缺失部分当零。可重复清理尝试其余分片后仍返回聚合错误。
+业务线 Spent 缓存完整部分和，键含 `Identity()` 的版本和摘要、统计窗口及业务线，值含全部分片、截至时间和到期时间。默认有效期 15 秒，从扫描开始计算，最多 1024 项；只有全片成功才发布。有效完整缓存可跨短暂失联使用，到期且缺片返回不可用，不补零。EndUser 直接读取其所属片。Report 不用配额缓存。静态映射重新装配会丢弃旧缓存。软配额的超出窗口包含缓存期内新增费用；它不是额度预留。
 
-多库 `Outbox.List/Maintain/Stats` 已遍历；多库流的 `Read/Head` 暂时返回 `outbox_unknown_shard`，不将库 0 的流当作完整流。多分片游标、HTTP 与 xinli 消费者由 C5b 完成。
+未指定 EndUser 的列表仍以 `(last_input_at,session_id)` 稳定归并，外部游标是各片共同的安全边界；不完整时不返回列表。删除进度先从库 0 读请求并授权，再有界统计所有片，缺片返回 503，不返回 done。
+
+`GET /v1/outbox?shard=N` 读指定片，游标同时绑定分片和 epoch；跨片使用返回 403。`/v1/outbox/shards` 返回配置中全部分片及 `version`/`identity`，每项含状态、安全起点 H 和该片槽位列表，失联项保留且没有 H。每片独立订阅和周期复查。
+
+xinli 多片消费从该枚举启动每片独立的长轮询、退避和恢复。应用迁移 0009 将 `outbox_recovery` 主键扩为 `(business_line,shard)`；-1 保留单片旧进度和短事务互斥行，多片各自从新 H 对账，不重用旧游标。恢复仅重放本片 Session；已取得 H 的片在账号/索引对账等待期间仍接收出站，只有完整对账与追赶后才进入 follow。进度中的恢复 Revision 区分收页与恢复的并发写入，CAS 冲突有界合并最新游标，不按断网退避；重置会使旧恢复步骤失效。每片事务保留业务线锁与账号终态检查，避免删除后迟到页复活通知。重试日志包含阶段、分片、固定错误类别与相关 ID。应用不依赖内核包。
 
 新增 `TestShardedConsistency` 在内存与两个真实 database 上跑适用存储套件（旧夹具全部留库 0，跨片键另测）；`TestShardedRouting`、队列/故障/事务与启动配置测试覆盖两库边界。`pgtest.Database` 创建随机、可清理 database，测试角色需要 CREATEDB；既有 Docker PostgreSQL 测试角色满足该前提，schema 只用于每库内部的用例隔离。
 
@@ -147,7 +162,7 @@ C5a 的 Offline 路径按分片顺序遍历：Index 时间扫描、删除待办�
 
 `make check` 默认包含 3 个双库种子，`make sim` 以 `-sim.shardseeds=100` 增加同量级双库种子。以上改动尚待远端 `dev fmt`、`make check`、`make sim` 验证；没有将静态检查记为测试通过。
 
-C5b 继续完成 fan-out 并发上限、每库与总预算、续扫、完整用量汇总缓存、删除进度的有界失败、按分片就绪与部分可服务、多分片出站及 xinli 消费者、长期故障隔离。P4 仍不做在线迁槽、自动再平衡、旧数据迁出库 0 或网关通知归属。
+`TestDayShards` 使用两个真实内核 database 与独立 xinli 进程，覆盖两片创建、输入、Run、跨片委托、级联删除、EndUser 注销及两片出站消费，并用 TCP 代理切断一片的实际 SQL/LISTEN 连接、验证健康输入/Run/创建/消费继续及恢复后续传；`make check` 和 `make day-short` 都包含它。使用脚本模型、最多 32 次寻找跨片父子，测试打印总耗时并断言小于 60 秒；正常预期约 10–20 秒，当前并发恢复修复的实测耗时仍待远端运行确认。冷启动要求两片持久进度均完成 follow，并校验版本、分片与非空游标；失败诊断只读取恢复阶段、版本与 ID，不输出游标。`TestShardOutageHealthySessionContinues` 覆盖可用性接缝上的故障与恢复，真实 TCP 断片恢复由双库 day 场景覆盖，角色探针与冷启动另由装配测试覆盖。P4 仍不做在线迁槽、自动再平衡、旧数据迁出库 0 或网关通知归属。
 
 ### 到期表的首次升级与回滚
 

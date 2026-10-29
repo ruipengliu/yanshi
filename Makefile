@@ -56,8 +56,8 @@ test: deps-up web day-bin
 	cd persona && go test -race ./...
 	cd apps/xinli && go test -race ./...
 	go test -race $$(go list ./... | grep -v '^yanshi/internal/sim$$')
-	# 跨进程的缩短版一天约 2 秒，放进 check 守住三库、角色与真实 HTTP 的装配；完整版与故障演练在 make day。
-	YANSHI_DAY_BIN=$(CURDIR)/bin/xinli-day go test -race ./internal/day -run '^TestDayShort$$' -count=1
+	# 缩短版一天与双分片断连恢复一起守住跨进程装配；双分片用例记录实际耗时，完整版在 make day。
+	YANSHI_DAY_BIN=$(CURDIR)/bin/xinli-day go test -race ./internal/day -run '^TestDay(Short|Shards)$$' -count=1
 	go test ./internal/sim
 	go test -race ./internal/sim -run TestSimulationIsDeterministic
 
@@ -131,7 +131,7 @@ day: deps-up day-bin
 	YANSHI_DAY_BIN=$(CURDIR)/bin/xinli-day go test -race ./internal/day -run '$(DAY_RUN)' -count=1 -timeout 20m -v
 
 day-short: deps-up day-bin
-	YANSHI_DAY_BIN=$(CURDIR)/bin/xinli-day go test -race ./internal/day -run '^TestDayShort$$' -count=1 -timeout 5m -v
+	YANSHI_DAY_BIN=$(CURDIR)/bin/xinli-day go test -race ./internal/day -run '^TestDay(Short|Shards)$$' -count=1 -timeout 5m -v
 
 # 与前次真实模型报告比较；首轮不冒充已有基线，报告只含状态、计数与差异。
 day-ark: deps-up day-bin

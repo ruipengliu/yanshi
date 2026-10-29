@@ -12,6 +12,7 @@ import (
 )
 
 type Store struct {
+	Shard    int
 	Pool     *pgxpool.Pool
 	Notifier *pg.Notifier
 }

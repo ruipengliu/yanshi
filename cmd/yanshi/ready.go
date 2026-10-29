@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
@@ -13,7 +14,8 @@ import (
 // readiness 是就绪检查（docs/design/deployment.md §6）：数据库可达、本进程的 LISTEN 连接已建立、迁移已全部应用。
 // 滚动发布时流量不会打到尚未监听通知的进程。/healthz 只表示进程活着（存活检查），不查依赖。
 type readiness struct {
-	st *storage
+	st    *storage
+	roles map[string]bool
 
 	mu sync.Mutex
 	// migrated 是最近一次确认迁移已全部应用的时刻：迁移只在发布时变化，每分钟复查一次即可。
@@ -55,6 +57,15 @@ func (r *readiness) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if r.st.routingDigest != "" {
 		w.Header().Set("X-Yanshi-Routing", r.st.routingDigest)
 	}
+	if len(r.st.shardConnections) > 0 {
+		rows, ready := r.shardReport(req.Context())
+		w.Header().Set("Content-Type", "application/json")
+		if !ready {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ready": ready, "shards": rows})
+		return
+	}
 	if err := r.check(req.Context()); err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
@@ -62,21 +73,43 @@ func (r *readiness) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// C5a 启动时要求全部登记库可用；按分片的部分就绪策略留 C5b。
+// 各角色可以处理健康分片的独立工作；库 0 只限制实际依赖控制数据的请求。
+func (r *readiness) shardReport(ctx context.Context) ([]shardStatus, bool) {
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	parts := r.st.shardConnections
+	rows := make([]shardStatus, len(parts))
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	for range min(4, len(parts)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				rows[i] = parts[i].probe(ctx)
+			}
+		}()
+	}
+	for i := range parts {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+	ready := false
+	for _, status := range rows {
+		usable := status.SQL && status.Migrations && status.Identity
+		if r.roles["gateway"] || len(r.roles) == 0 {
+			usable = usable && status.Listen
+		}
+		ready = ready || usable
+	}
+	return rows, ready
+}
+
 func (r *readiness) checkShards(ctx context.Context) error {
-	for _, part := range r.st.shardConnections {
-		probe, cancel := context.WithTimeout(ctx, 2*time.Second)
-		err := part.pool.Ping(probe)
-		if err == nil && !part.notifier.Ready() {
-			err = fmt.Errorf("notification listener not connected")
-		}
-		if err == nil {
-			err = migrateOrCheck(probe, part.pool, false)
-		}
-		cancel()
-		if err != nil {
-			return fmt.Errorf("shard %d: %w", part.id, err)
-		}
+	_, ready := r.shardReport(ctx)
+	if !ready {
+		return fmt.Errorf("no serviceable shard")
 	}
 	return nil
 }

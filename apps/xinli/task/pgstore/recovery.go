@@ -16,7 +16,7 @@ import (
 func (s *Store) Load(ctx context.Context, line string) (recovery.Progress, error) {
 	var payload []byte
 	p := recovery.Progress{BusinessLine: line}
-	err := pg.Executor(ctx, s.pool).QueryRow(ctx, `SELECT payload FROM outbox_recovery WHERE business_line=$1`, line).Scan(&payload)
+	err := pg.Executor(ctx, s.pool).QueryRow(ctx, `SELECT payload FROM outbox_recovery WHERE business_line=$1 AND shard=$2`, line, recovery.Shard(ctx)).Scan(&payload)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return p, nil
 	}
@@ -52,8 +52,8 @@ func (s *Store) Known(ctx context.Context, line string, round uint64, after stri
 	) SELECT k.session_id,k.end_user,c.payload FROM known k
 		LEFT JOIN outbox_sessions c ON c.business_line=$1 AND c.session_id=k.session_id
 		LEFT JOIN accounts a ON a.business_line=$1 AND a.end_user=k.end_user
-		WHERE k.session_id>$2 AND NOT COALESCE(c.gone,false) AND (c.session_id IS NULL OR c.seen_round<>$3)
-		AND (a.status IS NULL OR a.status<>'deleted') ORDER BY k.session_id LIMIT $4`, line, after, int64(round), limit)
+		WHERE k.session_id>$2 AND NOT COALESCE(c.gone,false) AND ($5 OR c.session_id IS NULL OR c.seen_round<>$3)
+		AND (a.status IS NULL OR a.status<>'deleted') ORDER BY k.session_id LIMIT $4`, line, after, int64(round), limit, recovery.Shard(ctx) >= 0)
 	if err != nil {
 		return nil, err
 	}
@@ -91,8 +91,16 @@ func (s *Store) Commit(ctx context.Context, expected uint64, p recovery.Progress
 		return err
 	}
 	var version int64
-	if err = tx.QueryRow(ctx, `SELECT version FROM outbox_recovery WHERE business_line=$1 FOR UPDATE`, p.BusinessLine).Scan(&version); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT version FROM outbox_recovery WHERE business_line=$1 AND shard=-1 FOR UPDATE`, p.BusinessLine).Scan(&version); err != nil {
 		return err
+	}
+	if id := recovery.Shard(ctx); id >= 0 {
+		if _, err = tx.Exec(ctx, `INSERT INTO outbox_recovery(business_line,shard,version,payload) VALUES($1,$2,0,'{}') ON CONFLICT DO NOTHING`, p.BusinessLine, id); err != nil {
+			return err
+		}
+		if err = tx.QueryRow(ctx, `SELECT version FROM outbox_recovery WHERE business_line=$1 AND shard=$2 FOR UPDATE`, p.BusinessLine, id).Scan(&version); err != nil {
+			return err
+		}
 	}
 	if uint64(version) != expected {
 		return recovery.ErrConflict
@@ -176,7 +184,7 @@ func (s *Store) Commit(ctx context.Context, expected uint64, p recovery.Progress
 	if err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE outbox_recovery SET version=$2,payload=$3 WHERE business_line=$1`, p.BusinessLine, int64(p.Version), payload); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE outbox_recovery SET version=$2,payload=$3 WHERE business_line=$1 AND shard=$4`, p.BusinessLine, int64(p.Version), payload, recovery.Shard(ctx)); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

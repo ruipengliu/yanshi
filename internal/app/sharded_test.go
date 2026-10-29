@@ -228,8 +228,12 @@ func TestShardedRouting(t *testing.T) {
 			if len(page2) != 1 || page[0].ID == page2[0].ID {
 				t.Fatal("global pagination lost or repeated row")
 			}
-			if _, err := s.Outbox.Read(ctx, outbox.Request{BusinessLine: "bl"}); !errors.Is(err, outbox.ErrShard) {
-				t.Fatal("C5a must not return a partial stream")
+			for id := range 2 {
+				page, err := s.Outbox.Read(ctx, outbox.Request{BusinessLine: "bl", Shard: id})
+				must(err)
+				if page.Next == "" {
+					t.Fatal("missing shard cursor")
+				}
 			}
 		})
 	}
@@ -479,8 +483,8 @@ func TestPostgresShardUnavailable(t *testing.T) {
 	if _, err := s.Log.Append(ctx, bad, 0, nil, &v1.Event{}); err == nil {
 		t.Fatal("unavailable shard request succeeded")
 	}
-	if _, err := s.Usage.Spent(ctx, "bl", "", time.Time{}, time.Time{}); err == nil {
-		t.Fatal("unavailable shard omitted from total")
+	if _, err := s.Usage.Spent(ctx, "bl", "", time.Time{}, time.Time{}); !errors.Is(err, shard.ErrUnavailable) {
+		t.Fatalf("unavailable shard omitted or misclassified: %v", err)
 	}
 	good := keysIn(t, l, 1, "owner")
 	if _, err := s.Waking.AppendAndEnqueue(ctx, good, 0, workqueue.Class{}, nil, &v1.Event{}); err != nil {

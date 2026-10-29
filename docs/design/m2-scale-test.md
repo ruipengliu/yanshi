@@ -47,6 +47,11 @@ Prometheus 格式，暴露在内部监听地址（`-peer-addr`）的 `/metrics` 
 | `yanshi_compactions_total` | 上下文压缩 |
 | `yanshi_http_requests_total{route,code}`、`yanshi_http_request_duration_seconds{route}` | 对外 API |
 | `yanshi_nodes_connected`、`yanshi_live_peer_streams` | 长连接数 |
+| `yanshi_db_pool_acquired_conns`、`yanshi_db_pool_max_conns` | 本进程活动 SQL 连接池正在使用的连接数与容量合计 |
+| `yanshi_db_pool_acquires_total`、`yanshi_db_pool_waited_acquires_total` | 活动 SQL 池获取连接次数与因池满而等待的次数合计 |
+| `yanshi_db_pool_acquire_seconds_total` | 活动 SQL 池获取连接的总耗时合计（秒，含等待） |
+
+连接池指标由一个进程级 collector 汇总所有分片的 SQL 池，直连 LISTEN / 迁移池不计入；单库沿用相同指标名、类型与无标签形式。统计来源随存储装配登记、关闭时注销，重复装配不会重复注册同名 collector，也不会保留已关闭池的统计。计数器是当前活动池自创建以来的累计值，进程内替换池时可能重置；等待比例按 `rate(yanshi_db_pool_waited_acquires_total) / rate(yanshi_db_pool_acquires_total)` 观察。
 
 指标只是观测手段，不影响执行结果；模拟测试中照常累加，无需关注。
 

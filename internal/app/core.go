@@ -254,7 +254,8 @@ func (c *Core) ControllerConfig(id string, provider sandbox.Provider, idle *work
 func (c *Core) Janitor(id string, provider sandbox.Provider, retention map[string]lifecycle.Retention, usageRetention time.Duration) *janitor.Janitor {
 	workspaces := sandbox.Workspaces{Queue: c.Stores.SandboxQueue, Provider: provider, Activity: c.Stores.Activity}
 	return &janitor.Janitor{
-		ID: id, Queue: c.Stores.JanitorQueue, Outbox: c.Stores.Outbox, Service: c.Service, Store: c.Store, Data: SessionData(c.Stores, workspaces, c.Artifacts),
+		ContinueIndependent: c.Stores.shards != nil && !c.Stores.shards.deterministic,
+		ID:                  id, Queue: c.Stores.JanitorQueue, Outbox: c.Stores.Outbox, Service: c.Service, Store: c.Store, Data: SessionData(c.Stores, workspaces, c.Artifacts),
 		Workspaces: workspaces, Inbox: c.Stores.Inbox, Nodes: c.Stores.Dir, Ledger: c.Stores.Ledger,
 		Queues: map[string]workqueue.Queue{"sessions": c.Stores.Queue, "sandboxes": c.Stores.SandboxQueue, "janitor": c.Stores.JanitorQueue},
 		Index:  c.Stores.Index, Deletions: c.Stores.Deletions, Retention: retention, Clock: c.opts.Clock, Logger: c.opts.Logger,

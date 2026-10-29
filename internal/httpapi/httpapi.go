@@ -80,6 +80,7 @@ import (
 	"yanshi/internal/outbox"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
+	"yanshi/internal/shard"
 	"yanshi/internal/speech"
 	"yanshi/internal/usage"
 )
@@ -290,6 +291,10 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 func (s *Server) fail(w http.ResponseWriter, err error) {
 	code := http.StatusInternalServerError
 	switch {
+	case errors.Is(err, shard.ErrUnavailable):
+		w.Header().Set("Retry-After", "1")
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "shard_unavailable"})
+		return
 	case errors.Is(err, service.ErrNotFound), errors.Is(err, oneshot.ErrNotFound):
 		code = http.StatusNotFound
 	case errors.Is(err, errForbidden):
@@ -339,6 +344,11 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 			writeJSON(w, code, map[string]any{"error": err.Error(), "quota": ex.Period})
 			return
 		}
+	}
+	if _, sharded := s.Outbox.(outbox.Shards); sharded && (code == http.StatusInternalServerError || code == http.StatusGatewayTimeout) {
+		w.Header().Set("Retry-After", "1")
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "shard_unavailable"})
+		return
 	}
 	if code == http.StatusInternalServerError && s.Logger != nil {
 		s.Logger.Error("request failed", "err", err)

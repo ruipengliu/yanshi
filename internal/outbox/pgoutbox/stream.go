@@ -40,6 +40,9 @@ func xid(n uint64) string { return strconv.FormatUint(n, 10) }
 
 func (s Store) Read(ctx context.Context, req outbox.Request) (outbox.Page, error) {
 	r, err := req.Normalize()
+	if req.Shard != s.Shard {
+		err = outbox.ErrShard
+	}
 	if err != nil {
 		return outbox.Page{}, err
 	}
@@ -100,12 +103,15 @@ func (s Store) Read(ctx context.Context, req outbox.Request) (outbox.Page, error
 		return outbox.Page{}, err
 	}
 	page.Next = state.Encode(r, next)
-	metrics.OutboxConsumerLag.WithLabelValues("0", r.BusinessLine).Set(float64(xmin - next.XID))
+	metrics.OutboxConsumerLag.WithLabelValues(strconv.Itoa(s.Shard), r.BusinessLine).Set(float64(xmin - next.XID))
 	return page, nil
 }
 
 func (s Store) Head(ctx context.Context, req outbox.Request) (string, error) {
 	r, err := req.Normalize()
+	if req.Shard != s.Shard {
+		err = outbox.ErrShard
+	}
 	if err != nil {
 		return "", err
 	}

@@ -28,11 +28,14 @@ type Position struct {
 	Done  bool
 }
 
-// Progress 只含位置和 ID；每个业务线一份，CAS 拒绝崩溃前的迟到执行者。
+// Progress 只含位置和 ID；每个业务线/分片一份，CAS 拒绝崩溃前的迟到执行者。
 // H 固定到本轮结束，After 是追赶位置，两者不能在枚举期间用新 head 覆盖。
 type Progress struct {
 	BusinessLine string
+	Slots        []int
 	Version      uint64
+	// Revision 只由恢复步骤和重置推进，区分并发收页与另一位恢复执行者。
+	Revision     uint64
 	Round        uint64
 	Phase        string
 	Positions    []Position
@@ -112,6 +115,7 @@ func (r *Recoverer) Step(ctx context.Context, line string) (Progress, error) {
 		return p, err
 	}
 	version := p.Version
+	observed := p
 	batch := Batch{}
 	limit := r.PageSize
 	if limit <= 0 || limit > 200 {
@@ -129,11 +133,18 @@ func (r *Recoverer) Step(ctx context.Context, line string) (Progress, error) {
 		next := Progress{BusinessLine: line, Round: p.Round + 1, Phase: Owners}
 		seen := map[int]bool{}
 		for _, h := range heads {
+			if id := Shard(ctx); id >= 0 && h.Shard != id {
+				continue
+			}
+			next.Slots = append(next.Slots, h.Slots...)
 			if h.Status != "ready" || h.Next == "" || h.Shard < 0 || seen[h.Shard] {
 				return p, errors.New("recovery: unavailable shard")
 			}
 			seen[h.Shard] = true
 			next.Positions = append(next.Positions, Position{Shard: h.Shard, H: h.Next, After: h.Next})
+		}
+		if len(next.Positions) == 0 {
+			return p, errors.New("recovery: missing shard")
 		}
 		p = next
 	case Owners:
@@ -173,6 +184,10 @@ func (r *Recoverer) Step(ctx context.Context, line string) (Progress, error) {
 			p.Session, p.Owner, p.ReturnPhase, p.Phase = known[0].SessionID, known[0].EndUser, Confirm, Events
 		}
 	case Events:
+		if !ownsSession(p.Session, Shard(ctx), p.Slots) {
+			finishSession(&p)
+			break
+		}
 		cp, err := r.Consumer.Session(ctx, line, p.Session)
 		if err != nil {
 			return p, err
@@ -252,10 +267,41 @@ func (r *Recoverer) Step(ctx context.Context, line string) (Progress, error) {
 		return p, errors.New("recovery: unknown phase")
 	}
 	p.BusinessLine, p.Version = line, version+1
-	if err := r.Consumer.Commit(ctx, version, p, batch); err != nil {
+	if Shard(ctx) >= 0 {
+		p.Revision = observed.Revision + 1
+	}
+	if err := r.commit(ctx, observed, &p, batch); err != nil {
 		return Progress{}, err
 	}
 	return p, nil
+}
+
+// 网络读取之后收页可以先提交；只合并游标写入，不覆盖其他恢复步骤或新世代的重置。
+func (r *Recoverer) commit(ctx context.Context, observed Progress, next *Progress, batch Batch) error {
+	expected := observed.Version
+	for attempt := 0; attempt < 8; attempt++ {
+		err := r.Consumer.Commit(ctx, expected, *next, batch)
+		if !errors.Is(err, ErrConflict) || Shard(ctx) < 0 {
+			return err
+		}
+		current, err := r.Consumer.Load(ctx, observed.BusinessLine)
+		if err != nil {
+			return err
+		}
+		if current.Revision != observed.Revision || current.Phase != observed.Phase || current.Round != observed.Round {
+			return ErrConflict
+		}
+		// 收页只会改 After 与 Version；它接收的信封已经和当前位置原子落盘。
+		for i := range next.Positions {
+			for _, pos := range current.Positions {
+				if next.Positions[i].Shard == pos.Shard && next.Positions[i].H == pos.H {
+					next.Positions[i].After = pos.After
+				}
+			}
+		}
+		expected, next.Version = current.Version, current.Version+1
+	}
+	return ErrConflict
 }
 
 func finishSession(p *Progress) {

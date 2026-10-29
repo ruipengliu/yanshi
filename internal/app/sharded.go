@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -14,19 +13,30 @@ import (
 	"yanshi/internal/workqueue"
 )
 
-// ShardOptions 的时限只约束一次认领尝试；离线续扫与总预算由 C5b 补充。
+// ShardOptions 统一约束分片调用；零值使用生产默认预算。
 // DeterministicQueues 只用于单线程模拟，按全局入队/归还顺序选择各库候选。
 type ShardOptions struct {
-	ClaimTimeout        time.Duration
+	ClaimTimeout time.Duration
+	Fanout       FanoutOptions
+	// UsageCacheTTL 小于零只供一致性套件核对精确存储语义。
+	UsageCacheTTL time.Duration
+	Now           func() time.Time
+	// Available 的健康门禁失败显式返回 shard.ErrUnavailable；其他错误保留原错误链。
+	Available           func(context.Context, int) error
 	DeterministicQueues bool
 }
 
 type storeRouter struct {
-	scanMu       sync.Mutex
-	activityNext int
-	locator      shard.Locator
-	ids          []int
-	stores       map[int]Stores
+	scanMu        sync.Mutex
+	positions     map[string]*scanPosition
+	fanout        FanoutOptions
+	deterministic bool
+	available     func(context.Context, int) error
+	usageCache    *spentCache
+	activityNext  int
+	locator       shard.Locator
+	ids           []int
+	stores        map[int]Stores
 }
 
 // Sharded 组合完整的单库存储，不拆开单库内的事务对象图。
@@ -36,7 +46,9 @@ func Sharded(ctx context.Context, locator shard.Locator, parts map[int]Stores, o
 	if len(ids) == 0 || len(ids) != len(parts) {
 		return Stores{}, fmt.Errorf("app: shard stores do not match locator")
 	}
-	r := &storeRouter{locator: locator, ids: ids, stores: make(map[int]Stores, len(parts))}
+	r := &storeRouter{locator: locator, ids: ids, stores: make(map[int]Stores, len(parts)),
+		positions: map[string]*scanPosition{}, fanout: opts.Fanout.defaults(), deterministic: opts.DeterministicQueues,
+		available: opts.Available, usageCache: newSpentCache(opts)}
 	for _, id := range ids {
 		s, ok := parts[id]
 		if !ok || s.Log == nil || s.Queue == nil || s.Waking == nil || s.Outbox == nil || s.Deletions == nil {
@@ -68,6 +80,9 @@ func Sharded(ctx context.Context, locator shard.Locator, parts map[int]Stores, o
 					return Stores{}, fmt.Errorf("app: shard %d lacks simulation peek", id)
 				}
 			}
+		}
+		if binder, ok := s.Outbox.(interface{ BindShard(int) }); ok {
+			binder.BindShard(id)
 		}
 		r.stores[id] = s
 	}
@@ -103,22 +118,12 @@ func (r *storeRouter) at(ctx context.Context, id int) (Stores, error) {
 	if err := pg.CheckPool(ctx, s.pgPool); err != nil {
 		return Stores{}, err
 	}
-	return s, nil
-}
-
-// each 用于可重复的独立维护；一库失败仍尝试其他库，但不会报告完整成功。
-func (r *storeRouter) each(ctx context.Context, fn func(Stores) error) error {
-	var errs []error
-	for _, id := range r.ids {
-		s, err := r.at(ctx, id)
-		if err == nil {
-			err = fn(s)
-		}
-		if err != nil {
-			errs = append(errs, fmt.Errorf("shard %d: %w", id, err))
+	if r.available != nil {
+		if err := r.available(ctx, id); err != nil {
+			return Stores{}, shardFailure(id, err)
 		}
 	}
-	return errors.Join(errs...)
+	return s, nil
 }
 
 // Shards 供删除不变量逐个检查实际存储，避免只检查路由命中的正确副本而漏掉错库残留。

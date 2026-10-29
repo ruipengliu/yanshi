@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	createTableRE = regexp.MustCompile(`(?is)CREATE TABLE (\w+)\s*\((.*?)\);`)
+	createTableRE = regexp.MustCompile(`(?is)CREATE TABLE (?:IF NOT EXISTS )?(?:public\.)?(\w+)\s*\((.*?)\);`)
 	addColumnRE   = regexp.MustCompile(`(?i)ALTER TABLE (\w+) ADD COLUMN (\w+)`)
 	likeRE        = regexp.MustCompile(`(?i)^\s*LIKE (\w+)`)
 )

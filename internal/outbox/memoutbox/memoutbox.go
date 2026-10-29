@@ -17,6 +17,7 @@ type row struct {
 }
 
 type Store struct {
+	Shard       int
 	mu          sync.Mutex
 	rows        []row
 	ids         map[string]bool
@@ -119,3 +120,6 @@ func envelopeLines(envelopes []outbox.Envelope) map[string]bool {
 	}
 	return lines
 }
+
+// BindShard 仅在装配发布存储之前调用，不改变流的 epoch 或写入对象。
+func (s *Store) BindShard(id int) { s.Shard = id }

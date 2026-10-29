@@ -9,11 +9,14 @@ import (
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type offsetClock struct{ offset atomic.Int64 }
@@ -195,12 +198,15 @@ type tcpProxy struct {
 }
 
 func newTCPProxy(t *testing.T, dsn string) (*tcpProxy, string) {
-	u, err := url.Parse(dsn)
+	cfg, err := pgx.ParseConfig(dsn)
 	must(t, err)
+	if strings.HasPrefix(cfg.Host, "/") {
+		t.Fatal("TCP proxy requires a TCP PostgreSQL address")
+	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	must(t, err)
 	p := &tcpProxy{listener: listener, connections: map[net.Conn]bool{}}
-	target := u.Host
+	target := net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
 	go func() {
 		for {
 			in, err := listener.Accept()
@@ -231,8 +237,19 @@ func newTCPProxy(t *testing.T, dsn string) (*tcpProxy, string) {
 		}
 	}()
 	t.Cleanup(func() { _ = listener.Close(); p.cut(true) })
-	u.Host = listener.Addr().String()
-	return p, u.String()
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		u, err := url.Parse(dsn)
+		must(t, err)
+		u.Host = listener.Addr().String()
+		q := u.Query()
+		q.Del("host")
+		q.Del("port")
+		u.RawQuery = q.Encode()
+		return p, u.String()
+	}
+	host, port, err := net.SplitHostPort(listener.Addr().String())
+	must(t, err)
+	return p, dsn + " host=" + host + " port=" + port
 }
 func (p *tcpProxy) cut(offline bool) {
 	p.mu.Lock()

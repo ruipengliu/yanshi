@@ -66,7 +66,7 @@ func TestShardedConsistency(t *testing.T) {
 				}
 				ctx, cancel := context.WithCancel(context.Background())
 				t.Cleanup(cancel)
-				stores, err := app.Sharded(ctx, locator, parts, app.ShardOptions{})
+				stores, err := app.Sharded(ctx, locator, parts, app.ShardOptions{UsageCacheTTL: -1})
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -160,12 +160,12 @@ const agentMatch = `($3 = '' AND NOT (agent = ANY($4)) OR agent = $3)`
 
 func (x Index) IdleBefore(ctx context.Context, businessLine string, agents lifecycle.AgentFilter, t time.Time, limit int) ([]string, error) {
 	return x.ids(ctx, `SELECT session_id FROM sessions WHERE business_line = $1 AND `+agentMatch+` AND closed_at IS NULL AND next_due IS NULL
-		AND last_input_at < $2 ORDER BY session_id LIMIT $5`, businessLine, t, agents.Only, except(agents), limit)
+		AND last_input_at < $2 AND session_id > $6 ORDER BY session_id LIMIT $5`, businessLine, t, agents.Only, except(agents), limit, lifecycle.ScanAfter(ctx))
 }
 
 func (x Index) ClosedBefore(ctx context.Context, businessLine string, agents lifecycle.AgentFilter, t time.Time, limit int) ([]string, error) {
-	return x.ids(ctx, `SELECT session_id FROM sessions WHERE business_line = $1 AND `+agentMatch+` AND closed_at < $2
-		ORDER BY session_id LIMIT $5`, businessLine, t, agents.Only, except(agents), limit)
+	return x.ids(ctx, `SELECT session_id FROM sessions WHERE business_line = $1 AND `+agentMatch+` AND closed_at < $2 AND session_id > $6
+		ORDER BY session_id LIMIT $5`, businessLine, t, agents.Only, except(agents), limit, lifecycle.ScanAfter(ctx))
 }
 
 // except 返回要排除的名称；不能是 nil：ANY(NULL) 为 NULL，NOT 之后仍为 NULL，会排除全部。
@@ -288,7 +288,7 @@ func (d Deletions) Complete(ctx context.Context, id string, at time.Time) error 
 }
 
 func (d Deletions) Pending(ctx context.Context, limit int) ([]string, error) {
-	rows, err := d.Pool.Query(ctx, `SELECT session_id FROM session_tombstones WHERE completed_at IS NULL ORDER BY session_id LIMIT $1`, limit)
+	rows, err := d.Pool.Query(ctx, `SELECT session_id FROM session_tombstones WHERE completed_at IS NULL AND session_id > $2 ORDER BY session_id LIMIT $1`, limit, lifecycle.ScanAfter(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -327,5 +327,5 @@ func (d Deletions) CountRequest(ctx context.Context, id string) (int, int, error
 }
 
 func (x Index) DueBefore(ctx context.Context, businessLine string, t time.Time, limit int) ([]string, error) {
-	return x.ids(ctx, `SELECT session_id FROM sessions WHERE ($1 = '' OR business_line = $1) AND delete_at < $2 ORDER BY session_id LIMIT $3`, businessLine, t, limit)
+	return x.ids(ctx, `SELECT session_id FROM sessions WHERE ($1 = '' OR business_line = $1) AND delete_at < $2 AND session_id > $4 ORDER BY session_id LIMIT $3`, businessLine, t, limit, lifecycle.ScanAfter(ctx))
 }

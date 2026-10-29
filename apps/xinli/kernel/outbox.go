@@ -27,6 +27,7 @@ type Envelope struct {
 
 type OutboxShard struct {
 	Shard  int    `json:"shard"`
+	Slots  []int  `json:"slots,omitempty"`
 	Status string `json:"status"`
 	Next   string `json:"next"`
 }
@@ -62,7 +63,7 @@ func (c *Client) OutboxHeadsKinds(ctx context.Context, line string, kinds []stri
 		return nil, errors.New("kernel: missing outbox shards")
 	}
 	for _, s := range out.Shards {
-		if s.Shard < 0 || seen[s.Shard] || s.Status != "ready" || s.Next == "" {
+		if s.Shard < 0 || seen[s.Shard] || (s.Status != "ready" && s.Status != "unavailable") || (s.Status == "ready" && s.Next == "") {
 			return nil, errors.New("kernel: unavailable outbox shard")
 		}
 		seen[s.Shard] = true

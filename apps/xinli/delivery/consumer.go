@@ -50,11 +50,21 @@ func (c *Consumer) Poll(ctx context.Context, line string) error {
 		r := recovery.Recoverer{Accounts: c.Accounts, Kernel: c.Kernel, Consumer: c.Progress}
 		_, err := r.Step(ctx, line)
 		if filterChanged(err) {
-			next := recovery.Progress{BusinessLine: line, Round: p.Round, Phase: recovery.Heads, Version: p.Version + 1}
+			next := recovery.Progress{BusinessLine: line, Round: p.Round, Phase: recovery.Heads, Version: p.Version + 1, Revision: p.Revision}
+			if recovery.Shard(ctx) >= 0 {
+				next.Revision++
+			}
 			return c.Progress.Commit(ctx, p.Version, next, recovery.Batch{})
+		}
+		if err != nil {
+			return retryDetail{cause: err, phase: p.Phase, session: p.Session}
 		}
 		return err
 	}
+	return c.pollPages(ctx, line, p)
+}
+
+func (c *Consumer) pollPages(ctx context.Context, line string, p recovery.Progress) error {
 	// 每个分片独立请求、独立提交；坏分片不能使健康分片已收到的页等待整轮成功。
 	var wg sync.WaitGroup
 	errs := make(chan error, len(p.Positions))
@@ -80,7 +90,7 @@ func (c *Consumer) Poll(ctx context.Context, line string) error {
 					errs <- err
 					return
 				}
-				if current.Phase != recovery.Follow || current.Round != p.Round {
+				if current.Phase != p.Phase || current.Round != p.Round {
 					return
 				}
 				index := -1
@@ -95,7 +105,11 @@ func (c *Consumer) Poll(ctx context.Context, line string) error {
 				version := current.Version
 				batch := recovery.Batch{Envelopes: page.Events}
 				if reset {
-					current = recovery.Progress{BusinessLine: line, Round: current.Round, Phase: recovery.Heads}
+					revision := current.Revision
+					if recovery.Shard(call) >= 0 {
+						revision++
+					}
+					current = recovery.Progress{BusinessLine: line, Round: current.Round, Phase: recovery.Heads, Revision: revision}
 					batch = recovery.Batch{}
 				} else {
 					current.Positions[index].After = page.Next
@@ -130,6 +144,9 @@ func (c *Consumer) Process(ctx context.Context, line string) error {
 	terminal := false
 	for _, e := range pending {
 		err := c.Store.Process(ctx, e, c.now())
+		if err != nil {
+			err = retryDetail{cause: err, session: e.SessionID, run: e.RunID, call: e.CallID, envelope: e.EnvelopeID}
+		}
 		result = errors.Join(result, err)
 		terminal = terminal || err == nil && (e.Kind == "run_completed" || e.Kind == "run_failed")
 	}
@@ -140,11 +157,11 @@ func (c *Consumer) Process(ctx context.Context, line string) error {
 }
 
 // Start 不把处理/发送放在长轮询后；空闲分片不会拖住已接收任务。
-// 错误只交给调用方的无正文计数回调，具体凭据与供应商错误不写日志。
-func Start(ctx context.Context, lines []string, consumer *Consumer, worker *Worker, failed func()) func() {
+// 错误只交给调用方的固定类别与 ID 回调，具体凭据与供应商错误不写日志。
+func Start(ctx context.Context, lines []string, consumer *Consumer, worker *Worker, failed func(Failure)) func() {
 	life, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
-	loop := func(fn func(context.Context) error, delay time.Duration) {
+	loop := func(stage, line string, shard int, fn func(context.Context) error, delay time.Duration) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -152,10 +169,16 @@ func Start(ctx context.Context, lines []string, consumer *Consumer, worker *Work
 			for life.Err() == nil {
 				pause := delay
 				if err := fn(life); err != nil {
-					attempt++
-					pause = task.Backoff("delivery", attempt, time.Second, time.Minute)
+					if errors.Is(err, recovery.ErrConflict) {
+						attempt = 0
+					} else {
+						attempt++
+						pause = task.Backoff("delivery", attempt, time.Second, time.Minute)
+					}
 					if failed != nil && life.Err() == nil {
-						failed()
+						for _, info := range failureInfos(stage, line, shard, err) {
+							failed(info)
+						}
 					}
 				} else {
 					attempt = 0
@@ -171,11 +194,50 @@ func Start(ctx context.Context, lines []string, consumer *Consumer, worker *Work
 		}()
 	}
 	for _, line := range lines {
-		loop(func(ctx context.Context) error { return consumer.Poll(ctx, line) }, 10*time.Millisecond)
-		loop(func(ctx context.Context) error { return consumer.Process(ctx, line) }, time.Second)
+		// 发现循环只负责登记；每个分片有自己的长轮询与退避，不等待整轮。
+		started := map[int]bool{}
+		loop("discovery", line, -1, func(ctx context.Context) error {
+			heads, err := consumer.Kernel.OutboxHeads(ctx, line)
+			if err != nil {
+				return err
+			}
+			if len(heads) == 1 && heads[0].Shard == 0 {
+				if !started[-1] {
+					started[-1] = true
+					loop("consume", line, 0, func(ctx context.Context) error { return consumer.Poll(ctx, line) }, 10*time.Millisecond)
+				}
+				return nil
+			}
+			for _, head := range heads {
+				id := head.Shard
+				if started[id] {
+					continue
+				}
+				started[id] = true
+				// 恢复枚举可能等待另一个 EndUser 分片；已取得 H 的本片仍独立接收出站。
+				loop("recovery", line, id, func(ctx context.Context) error {
+					ctx = recovery.WithShard(ctx, id)
+					p, err := consumer.Progress.Load(ctx, line)
+					if err != nil || p.Phase == recovery.Follow {
+						return err
+					}
+					return consumer.Poll(ctx, line)
+				}, 100*time.Millisecond)
+				loop("outbox", line, id, func(ctx context.Context) error {
+					ctx = recovery.WithShard(ctx, id)
+					p, err := consumer.Progress.Load(ctx, line)
+					if err != nil || len(p.Positions) == 0 {
+						return err
+					}
+					return consumer.pollPages(ctx, line, p)
+				}, 10*time.Millisecond)
+			}
+			return nil
+		}, time.Second)
+		loop("process", line, -1, func(ctx context.Context) error { return consumer.Process(ctx, line) }, time.Second)
 		// 稳定枚举每轮只取一页，持久任务重启后可再次发现；不依赖进程内定时回调去重。
 		after := ""
-		loop(func(ctx context.Context) error {
+		loop("owner_scan", line, -1, func(ctx context.Context) error {
 			owners, err := consumer.Accounts.AccountOwners(ctx, line, after, 20)
 			if err != nil {
 				return err

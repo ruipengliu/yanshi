@@ -106,14 +106,14 @@ func openStorage(ctx context.Context, kind, dsn, listenDSN string, notifyShards 
 			closeAll()
 			return nil, nil, err
 		}
-		metrics.RegisterPool(func() (int32, int32, int32, int64, int64, time.Duration) {
+		unregisterPool := metrics.RegisterPool(func() (int32, int32, int32, int64, int64, time.Duration) {
 			s := pool.Stat()
 			return s.AcquiredConns(), s.TotalConns(), s.MaxConns(), s.AcquireCount(), s.EmptyAcquireCount(), s.AcquireDuration()
 		})
 		n := pg.NewNotifier(direct, logger).WithShards(notifyShards)
 		nctx, cancel := context.WithCancel(ctx)
 		go n.Run(nctx)
-		return &storage{Stores: app.Postgres(pool, n, clk), pool: pool, notifier: n}, func() { cancel(); closeAll() }, nil
+		return &storage{Stores: app.Postgres(pool, n, clk), pool: pool, notifier: n}, func() { cancel(); unregisterPool(); closeAll() }, nil
 	}
 	return nil, nil, fmt.Errorf("unknown storage %q (memory | postgres)", kind)
 }
@@ -409,7 +409,7 @@ func serve(args []string) error {
 		return err
 	}
 	defer closeStorage()
-	ready := &readiness{st: b}
+	ready := &readiness{st: b, roles: roles}
 	var blobs artifact.BlobStore
 	switch *blobKind {
 	case "fs":
