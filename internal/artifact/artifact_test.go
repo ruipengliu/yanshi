@@ -104,3 +104,48 @@ func TestServiceRejectsOversize(t *testing.T) {
 		t.Fatalf("exactly-at-limit err = %v", err)
 	}
 }
+
+func TestServiceArtifactSlot(t *testing.T) {
+	ctx := context.Background()
+	sid, err := ids.Sequential("session").Session("u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sessionID := range []string{sid, "ses_legacy"} {
+		s := service(t, 0)
+		want, legacy, err := ids.SessionSlotOf(sessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for range 2 {
+			m, err := s.Put(ctx, sessionID, "note.txt", "text/plain", strings.NewReader("data"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			slot, old, err := ids.SlotOf(m.ID)
+			if err != nil || old != legacy || slot != want || m.SessionID != sessionID {
+				t.Fatalf("artifact %s: %d, %v, %v; want %d, %v", m.ID, slot, old, err, want, legacy)
+			}
+			id, ok := artifact.ParseURI(artifact.URI(m.ID))
+			if !ok || id != m.ID {
+				t.Fatalf("URI round trip: %s", m.ID)
+			}
+			_, rc, err := s.Open(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := io.ReadAll(rc)
+			rc.Close()
+			if err != nil || string(data) != "data" {
+				t.Fatalf("blob round trip: %q, %v", data, err)
+			}
+		}
+	}
+	s := service(t, 0)
+	if _, err := s.Put(ctx, "ses_v1_100_000_x", "note.txt", "text/plain", strings.NewReader("data")); err == nil {
+		t.Fatal("malformed Session accepted")
+	}
+	if rows, err := s.List(ctx, "ses_v1_100_000_x"); err != nil || len(rows) != 0 {
+		t.Fatalf("malformed Session left metadata: %v, %v", rows, err)
+	}
+}

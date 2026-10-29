@@ -141,7 +141,11 @@ func (s *Service) Put(ctx context.Context, sessionID, name, mimeType string, r i
 	if max == 0 {
 		max = DefaultMaxSize
 	}
-	m := &Meta{ID: "art_" + s.IDs(), SessionID: sessionID, Name: name, MimeType: mimeType, CreatedAt: s.Clock.Now()}
+	id, err := s.IDs.ForSession("art", sessionID)
+	if err != nil {
+		return nil, err
+	}
+	m := &Meta{ID: id, SessionID: sessionID, Name: name, MimeType: mimeType, CreatedAt: s.Clock.Now()}
 	h := sha256.New()
 	counter := &countWriter{}
 	body := io.TeeReader(&limitReader{r: br, left: max}, io.MultiWriter(h, counter))

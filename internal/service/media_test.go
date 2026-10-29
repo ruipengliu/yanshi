@@ -15,6 +15,7 @@ import (
 	"yanshi/internal/model"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
+	"yanshi/internal/shard"
 	"yanshi/internal/workqueue/memqueue"
 )
 
@@ -37,6 +38,27 @@ func TestMediaMustBeOwnArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 伪造的槽位提示会定位到另一库，不能代替读出元数据后的真实归属校验。
+	// C1 只验证定位纯函数与既有授权路径，实际多库适配留给 C4/C5。
+	forged := "art_v1_000_forged"
+	table, err := shard.NewTable(shard.Config{Shards: []int{0, 1}, Ranges: []shard.Range{{First: 0, Last: 1023, Shard: 1}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slot, legacy, err := ids.SlotOf(forged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target, err := table.Shard(slot, legacy); err != nil || target != 1 {
+		t.Fatalf("forged hint = %d, %v", target, err)
+	}
+	if err := arts.Meta.Create(ctx, &artifact.Meta{ID: forged, SessionID: other, MimeType: "image/png"}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := svc.Load(ctx, mine)
+	if err != nil {
+		t.Fatal(err)
+	}
 	media := func(m *v1.Media) []*v1.ContentBlock {
 		return append(model.TextBlocks("看看这张图"), &v1.ContentBlock{Kind: &v1.ContentBlock_Media{Media: m}})
 	}
@@ -45,9 +67,14 @@ func TestMediaMustBeOwnArtifact(t *testing.T) {
 		"external link":          {MimeType: "image/png", Uri: "https://example.com/x.png"},
 		"another session's file": {MimeType: "image/png", Uri: artifact.URI(theirs.ID)},
 		"unknown artifact":       {MimeType: "image/png", Uri: artifact.URI("art_missing")},
+		"forged slot":            {MimeType: "image/png", Uri: artifact.URI(forged)},
 	} {
 		if _, err := svc.Submit(ctx, mine, media(m)); !errors.Is(err, service.ErrInvalid) {
 			t.Errorf("%s: %v, want invalid", name, err)
+		}
+		after, err := svc.Load(ctx, mine)
+		if err != nil || after.Seq != before.Seq {
+			t.Fatalf("%s changed the log: %v", name, err)
 		}
 	}
 	// 自报的类型与大小被元数据取代。
