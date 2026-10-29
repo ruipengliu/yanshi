@@ -13,17 +13,9 @@ import (
 // cardAction 核对输入中的卡片动作（docs/design/cards.md §4）：动作须属于本 Session 日志中的那一版卡片。返回规范化后的
 // 输入与推导出的输入 ID；输入中没有卡片动作时原样返回、ID 为空。用户输入中不能带卡片本身（卡片只由 show_card 写入）。
 func (s *Service) cardAction(ctx context.Context, st *session.State, input []*v1.ContentBlock) (string, []*v1.ContentBlock, error) {
-	idx := -1
-	for i, b := range input {
-		if b.GetCard() != nil {
-			return "", nil, fmt.Errorf("%w: cards are written by show_card, not submitted", ErrInvalid)
-		}
-		if b.GetCardAction() != nil {
-			if idx >= 0 {
-				return "", nil, fmt.Errorf("%w: at most one card_action per input", ErrInvalid)
-			}
-			idx = i
-		}
+	_, idx, err := cardActionID(input)
+	if err != nil {
+		return "", nil, err
 	}
 	if idx < 0 {
 		return "", input, nil
@@ -42,11 +34,34 @@ func (s *Service) cardAction(ctx context.Context, st *session.State, input []*v1
 	return card.InputID(checked), out, nil
 }
 
+// cardActionID 只解析动作键，先去重再核验卡片：已经接受过的重试不能因卡片后来失效而改变结果。
+func cardActionID(input []*v1.ContentBlock) (string, int, error) {
+	idx := -1
+	for i, b := range input {
+		if b.GetCard() != nil {
+			return "", -1, fmt.Errorf("%w: cards are written by show_card, not submitted", ErrInvalid)
+		}
+		if b.GetCardAction() != nil {
+			if idx >= 0 {
+				return "", -1, fmt.Errorf("%w: at most one card_action per input", ErrInvalid)
+			}
+			idx = i
+		}
+	}
+	if idx < 0 {
+		return "", -1, nil
+	}
+	return card.InputID(input[idx].GetCardAction()), idx, nil
+}
+
 // errCardFound 结束日志扫描。
 var errCardFound = errors.New("card found")
 
 // findCard 读取动作所指的那一版卡片：客户端给出了收到卡片的事件序号时直接读那一条，否则扫描日志（罕见：旧客户端）。
 func (s *Service) findCard(ctx context.Context, st *session.State, a *v1.CardAction) (*v1.Card, error) {
+	if st.SupersededCardCalls[a.GetCallId()] {
+		return nil, fmt.Errorf("%w: card action: superseded_call", ErrConflict)
+	}
 	match := func(e *v1.Event) *v1.Card {
 		r := e.GetToolResult()
 		if r == nil || r.GetCallId() != a.GetCallId() || r.GetAttempt() == 0 {

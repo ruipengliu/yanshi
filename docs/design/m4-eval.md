@@ -98,6 +98,18 @@ turns:
 
 调用断言与输入中提到的旁听工具名直接改为 `mcp_xinli__captures`，匹配器不提供旧名称别名；其余断言与用例内容不变。
 
+**重答回合（P3）。** `redo: true` 不带 input（显式空值也互斥），必须有上一轮；与定时、后台等待、卡片动作、界面上下文、设备来源、新建 Session、旁听及业务编辑互斥，不用于 Call。运行器以上一轮实际 Run ID 调用 `Service.Redo`，等待新 Run 完成后使用同一套断言，评分输入仍为复制的原问题。例：
+
+```yaml
+turns:
+  - input: 帮我想三个周末带孩子在家的室内活动。
+  - redo: true
+    expect:
+      no_calls: [memory_save, memory_forget, ask_user]
+```
+
+`evals/redo-different-answer.yaml` 对第二次答案是否满足原请求评分，不要求与第一次文字不同。当前报告不保存模型请求，旧回复排除由 runtime 的 Transcript、压缩与两种摘要路径单元测试，以及 sim 的实际请求不变量检查覆盖。
+
 **定时与评测时钟（P2）。** `internal/eval/schedule.go` 的时钟为真实时间加偏移，只能前拨，并发读写由互斥锁保护；内存存储、队列、Worker 与核心对象图共用同一个时钟，Memory 断言也按它判断有效期。等待超时与报告耗时仍取真实时间，不能因前拨一周而立即超时。评测没有启动 Janitor；核心装配保留同一时钟，未来启动时也应使用它。
 
 用例的 `time_zone` 传给每个新建的 Session；未写时，有 `setup.xinli` 或当前 Agent 名以 `xinli-` 开头的 Session 默认 `Asia/Shanghai`，其他用例保留无时区，避免改变无关评测。业务日仍取 trial 开始时真实的上海日期。Persona（`xinli dev` 子进程）的时钟独立，查询“最近几天”仍按真实日期计算；拨钟周报用预置项目现状与无期限承诺，不依赖拨钟之后的“今天”。

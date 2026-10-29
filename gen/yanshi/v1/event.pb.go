@@ -2313,7 +2313,9 @@ type RunRequested struct {
 	// 非空表示输入由该 Call 中的语音模型派生（run_task，docs/design/m3-call.md §5）：结果会被朗读。
 	FromCall string `protobuf:"bytes,4,opt,name=from_call,json=fromCall,proto3" json:"from_call,omitempty"`
 	// 仅由平台在同批 ScheduleFired 后写入。
-	Schedule      *ScheduleMark `protobuf:"bytes,5,opt,name=schedule,proto3" json:"schedule,omitempty"`
+	Schedule *ScheduleMark `protobuf:"bytes,5,opt,name=schedule,proto3" json:"schedule,omitempty"`
+	// 仅由平台复制最后一个合格 Run 的输入，接受即替代它的模型视图。
+	RedoOf        string `protobuf:"bytes,6,opt,name=redo_of,json=redoOf,proto3" json:"redo_of,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2381,6 +2383,13 @@ func (x *RunRequested) GetSchedule() *ScheduleMark {
 		return x.Schedule
 	}
 	return nil
+}
+
+func (x *RunRequested) GetRedoOf() string {
+	if x != nil {
+		return x.RedoOf
+	}
+	return ""
 }
 
 // Steered 是活跃 Run 进行中的追加输入，不改变 Run 状态。
@@ -4850,13 +4859,14 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x12\x14\n" +
 	"\x05stage\x18\x03 \x01(\tR\x05stage\x12\x16\n" +
-	"\x06labels\x18\x04 \x03(\tR\x06labels\"\xc1\x01\n" +
+	"\x06labels\x18\x04 \x03(\tR\x06labels\"\xda\x01\n" +
 	"\fRunRequested\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12-\n" +
 	"\x05input\x18\x02 \x03(\v2\x17.yanshi.v1.ContentBlockR\x05input\x12\x19\n" +
 	"\binput_id\x18\x03 \x01(\tR\ainputId\x12\x1b\n" +
 	"\tfrom_call\x18\x04 \x01(\tR\bfromCall\x123\n" +
-	"\bschedule\x18\x05 \x01(\v2\x17.yanshi.v1.ScheduleMarkR\bschedule\"\x87\x01\n" +
+	"\bschedule\x18\x05 \x01(\v2\x17.yanshi.v1.ScheduleMarkR\bschedule\x12\x17\n" +
+	"\aredo_of\x18\x06 \x01(\tR\x06redoOf\"\x87\x01\n" +
 	"\aSteered\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12-\n" +
 	"\x05input\x18\x02 \x03(\v2\x17.yanshi.v1.ContentBlockR\x05input\x12\x19\n" +

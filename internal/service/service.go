@@ -281,11 +281,8 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 	if len(input) == 0 {
 		return nil, fmt.Errorf("%w: empty input", ErrInvalid)
 	}
-	if strings.HasPrefix(inputID, "schedule_") {
-		return nil, fmt.Errorf("%w: schedule input_id is reserved for the platform", ErrInvalid)
-	}
-	if len(inputID) > MaxInputIDLen {
-		return nil, fmt.Errorf("%w: input_id exceeds %d bytes", ErrInvalid, MaxInputIDLen)
+	if err := checkInputID(inputID); err != nil {
+		return nil, err
 	}
 	if err := rejectPlatformOnly(input); err != nil {
 		return nil, err
@@ -295,14 +292,19 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 		return nil, err
 	}
 	// 卡片动作的输入 ID 由平台推导：同一版卡片上的同一动作只生效一次，与客户端是否带 ID 无关。
-	if id, in, err := s.cardAction(ctx, st, input); err != nil {
+	if id, _, err := cardActionID(input); err != nil {
 		return nil, err
 	} else if id != "" {
-		inputID, input = id, in
+		inputID = id
 	}
 	// 重复提交在任何检查之前返回：首次已经通过了内容安全与配额，结果也已确定。
 	if res := duplicate(st, inputID); res != nil {
 		return res, nil
+	}
+	// 先按不可变的卡片事件补齐显示文字供审核；决策中仍须重验，因为失效集合可能改变。
+	_, input, err = s.cardAction(ctx, st, input)
+	if err != nil {
+		return nil, err
 	}
 	if err := checkUIContext(input); err != nil {
 		return nil, err
@@ -315,14 +317,8 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 			input = WithDevice(input, d, false)
 		}
 	}
-	if err := s.moderateInput(ctx, st, input); err != nil {
+	if err := s.checkSubmitInput(ctx, st, input, !delegated); err != nil {
 		return nil, err
-	}
-	// 准入与配额只拦新 Run：插话属于进行中的 Run，后者在下一次模型调用前自行检查配额。
-	if st.Active() == nil {
-		if err := s.admitRun(ctx, st, !delegated); err != nil {
-			return nil, err
-		}
 	}
 	var res *SubmitResult
 	var prev time.Time
@@ -337,12 +333,17 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 		if fromCall != "" && (st.ActiveCall == nil || st.ActiveCall.ID != fromCall) {
 			return session.Decision{}, fmt.Errorf("%w: call %s is not active", ErrConflict, fromCall)
 		}
+		// 核验必须位于去重之后、每次决策之内：重答可能刚在另一个请求中使卡片失效。
+		_, checkedInput, err := s.cardAction(ctx, st, input)
+		if err != nil {
+			return session.Decision{}, err
+		}
 		var events []*v1.Event
 		res = &SubmitResult{}
 		if a := st.Active(); a != nil {
 			res.RunID, res.Steered = a.ID, true
 			if c := pendingQuestion(a, ""); c != nil {
-				ev, err := typedAnswer(a, c, input)
+				ev, err := typedAnswer(a, c, checkedInput)
 				if err != nil {
 					return session.Decision{}, err
 				}
@@ -350,21 +351,22 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 				res.Answered = c.Call.GetCallId()
 				events = append(events, ev)
 			} else {
-				events = append(events, &v1.Event{Payload: &v1.Event_Steered{Steered: &v1.Steered{RunId: a.ID, Input: input, InputId: inputID, FromCall: fromCall}}})
+				events = append(events, &v1.Event{Payload: &v1.Event_Steered{Steered: &v1.Steered{RunId: a.ID, Input: checkedInput, InputId: inputID, FromCall: fromCall}}})
 			}
 		} else {
-			// 当前版本已撤回：新 Run 从稳定版本开始，切换与 RunRequested 同批提交（ADR-0020）。
-			if to, ok := s.Agents.Withdrawn(st.Agent); ok {
-				events = append(events, &v1.Event{Payload: &v1.Event_AgentSwitched{AgentSwitched: &v1.AgentSwitched{
-					From: st.Agent, To: to.Ref(), Reason: "withdrawn"}}})
-			}
-			res.RunID = "run_" + s.Store.IDs()
-			events = append(events, &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: res.RunID, Input: input, InputId: inputID, FromCall: fromCall}}})
+			request := &v1.RunRequested{Input: checkedInput, InputId: inputID, FromCall: fromCall}
+			events = s.newRunEvents(st, request)
+			res.RunID = request.GetRunId()
 		}
 		prev = lastRunAt(st)
 		// 写日志与入队在同一事务中（CommitAndWake）：二者之间没有可以崩溃的窗口，Run 不会停在 queued。
 		return session.Decision{Events: events, Wake: true}, nil
 	})
+	return s.finishSubmit(ctx, sessionID, prev, res, err)
+}
+
+// finishSubmit 共用写入后的 touch；丢响应重试只返回首次结果，不重复更新索引。
+func (s *Service) finishSubmit(ctx context.Context, sessionID string, prev time.Time, res *SubmitResult, err error) (*SubmitResult, error) {
 	if err != nil {
 		return nil, gone(sessionID, err)
 	}

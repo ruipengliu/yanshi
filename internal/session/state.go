@@ -96,6 +96,11 @@ type Run struct {
 	Status RunStatus
 	// RequestedAt 是 RunRequested 的事件时间。
 	RequestedAt time.Time
+	// Request 与 RequestedSeq 保留原输入及其位置，压缩后也能判断重答资格。
+	Request      *v1.RunRequested
+	RequestedSeq uint64
+	// Steered 记下发生过插话，不能因历史压缩而丢失这个事实。
+	Steered bool
 	// Attempt 是当前 Attempt 号；0 表示尚未有 Worker 认领。
 	Attempt uint32
 	// LiveEndpoint 是当前 Attempt 的执行进程地址，实时增量从这里拉取（ADR-0013）。
@@ -192,8 +197,11 @@ type State struct {
 	Runs []*Run
 	// Past 是更早的终态 Run 的摘要，按请求顺序。条目不再修改，在副本间共享。
 	Past []RunSummary
+	// 替代关系不随 Run 明细淘汰；只在接受重答时以新 map 替换，副本之间只读共享。
+	SupersededRuns      map[string]bool
+	SupersededCardCalls map[string]bool
 	// History 是构成对话上下文的事件（用户输入、模型输出、调用结果），按日志顺序；
-	// 只含最近一次 Compaction 之后的事件，因此随上下文窗口有界，而不随日志增长。
+	// 压缩时裁剪。重答只过滤模型视图，仍保留旧事件供安全判断，连续重答可能延后下一次压缩。
 	History []*v1.Event
 	// Closed 非 nil 表示 Session 已关闭（终态）。
 	Closed *v1.SessionClosed
@@ -659,6 +667,12 @@ func (s *State) apply(e *v1.Event) error {
 		s.Agent = m.GetTo()
 
 	case *v1.Event_RunRequested:
+		if err := s.checkRedo(p.RunRequested); err != nil {
+			return err
+		}
+		if err := s.checkCardActions(p.RunRequested.GetInput()); err != nil {
+			return err
+		}
 		if err := s.checkScheduleInput(e); err != nil {
 			return err
 		}
@@ -687,7 +701,9 @@ func (s *State) apply(e *v1.Event) error {
 		if s.Delegated == "" && s.delegatedInput(p.RunRequested.GetInputId()) {
 			s.Delegated = p.RunRequested.GetRunId()
 		}
-		run := &Run{ID: p.RunRequested.GetRunId(), Status: RunQueued, RequestedAt: e.GetTime().AsTime()}
+		s.supersede(p.RunRequested.GetRedoOf())
+		run := &Run{ID: p.RunRequested.GetRunId(), Status: RunQueued, RequestedAt: e.GetTime().AsTime(),
+			Request: p.RunRequested, RequestedSeq: e.GetSeq()}
 		if bg != nil {
 			run.FromBackground = bg.GetCallId()
 			s.settleBackground(bg.GetCallId())
@@ -698,6 +714,9 @@ func (s *State) apply(e *v1.Event) error {
 		s.History = append(s.History, e)
 
 	case *v1.Event_Steered:
+		if err := s.checkCardActions(p.Steered.GetInput()); err != nil {
+			return err
+		}
 		if _, err := s.activeRun(p.Steered.GetRunId()); err != nil {
 			return err
 		}
@@ -723,6 +742,7 @@ func (s *State) apply(e *v1.Event) error {
 		if s.Delegated == "" && s.delegatedInput(p.Steered.GetInputId()) {
 			s.Delegated = p.Steered.GetRunId()
 		}
+		s.Run(p.Steered.GetRunId()).Steered = true
 		s.History = append(s.History, e)
 
 	case *v1.Event_AttemptStarted:
@@ -877,8 +897,14 @@ func (s *State) apply(e *v1.Event) error {
 		// ADR-0050：旧日志的 capture_read 与 capture_ack 不再参与校验或投影；写入入口已移除。
 		// 卡片动作同样只由平台写入：它只出现在用户等回答时点卡片而得的 ask_user 回答里，这条回答必有输入 ID
 		// （由动作推导）。其他结果带上它，客户端会把没有执行过的动作显示为已选。
-		if m.GetCardAction() != nil && (m.GetAttempt() != 0 || c.NodeID != askuser.NodeID || m.GetInputId() == "") {
+		if (m.GetCardAction() != nil || hasCardAction(m.GetContent())) && (m.GetAttempt() != 0 || c.NodeID != askuser.NodeID || m.GetInputId() == "") {
 			return fmt.Errorf("card action in the result of call %q (%s)", m.GetCallId(), c.Call.GetCapability())
+		}
+		if err := s.checkCardAction(m.GetCardAction()); err != nil {
+			return err
+		}
+		if err := s.checkCardActions(m.GetContent()); err != nil {
+			return err
 		}
 		if b := m.GetBackgrounded(); b != nil {
 			if err := s.checkBackgrounded(m, c); err != nil {

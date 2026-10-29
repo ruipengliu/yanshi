@@ -69,15 +69,19 @@ type Options struct {
 	Schedules bool
 	// Tiers 单独开启档位分配与注销故障，避免额度变化或新增抽样改写既有覆盖轨迹。
 	Tiers bool
+	// Redo 使用独立随机流穿插重答，不改变关闭时的既有轨迹。
+	Redo bool
 	// MaintainDues 在差分中保证短 Horizon 的维护不受随机 Sweep 稀疏性影响。
 	MaintainDues bool
 }
 
 // Stats 统计模拟中被覆盖到的路径，防止模拟"空转"。
 type Stats struct {
+	Redos, RedoConflicts, RedoDuplicates, RedoCardRejects int
 	// FarParks 与 DuePromotions 只在 PostgreSQL 差分种子中要求覆盖。
 	FarParks, DuePromotions int
 
+	// Runs 累计日志中已观察到的 RunRequested，包含丢响应和平台开启的 Run，删除后仍保留覆盖。
 	Runs, Steers, Interrupts, Crashes, ModelErrors int
 	Takeovers, OutcomeUnknown, Retried, Failed     int
 	NodeCrashes, Redeliveries, Approvals, Denials  int
@@ -317,7 +321,10 @@ type World struct {
 	hub     *node.Hub
 	nodes   []*simNode
 	// tierRNG 不从 rng 抽种子，启用或推进档位场景都不会直接消耗旧随机流。
-	tierRNG *rand.Rand
+	tierRNG     *rand.Rand
+	redoRNG     *rand.Rand
+	redoRetries map[string]redoRetry
+	nextRedo    int
 	// 只读声明故障单独抽样；每个 Worker 只保留最近一次 Started，执行计数排除已执行待提交的调用。
 	readOnlyRNG    *rand.Rand
 	readOnlyWorker string
@@ -359,6 +366,8 @@ type World struct {
 	nextW   int
 
 	sessions []string
+	// observedRuns 保留各 Session 已见的请求数，避免重复检查或删除日志改变累计覆盖。
+	observedRuns map[string]int
 	// children 是发现的委托子 Session（discoverChildren），parentOf 是它们的父 Session。
 	children  []string
 	parentOf  map[string]string
@@ -406,6 +415,8 @@ func New(opts Options) (*World, error) {
 		withdrawn: map[string]bool{},
 		faults:    opts.Faults,
 	}
+	w.redoRNG = rand.New(rand.NewPCG(opts.Seed^0x7265646f, opts.Seed^0xa0761d6478bd642f))
+	w.redoRetries = map[string]redoRetry{}
 	w.readOnlyRNG = rand.New(rand.NewPCG(opts.Seed^0x726561646f6e6c79, opts.Seed^0x94d049bb133111eb))
 	w.readOnlyStarts = map[string]readOnlyStart{}
 	w.echoInvoked = map[string]int{}
@@ -782,7 +793,13 @@ func (w *World) Run() error {
 }
 
 func (w *World) tick() error {
-	err := w.act()
+	if err := w.actionResult(w.act()); err != nil {
+		return err
+	}
+	return w.actionResult(w.maybeRedo())
+}
+
+func (w *World) actionResult(err error) error {
 	// 外部写入的存储故障（flakyWaking）：客户端只看到错误，写入可能已经生效。设备与沙箱控制器不确认结果、
 	// 稍后重发；审批与回答由用户重试（decide 会再次选到它）。
 	var sf *storeFault
@@ -989,6 +1006,10 @@ func (w *World) submitInput(sid string, input []*v1.ContentBlock) error {
 		return nil
 	}
 	if errors.Is(err, service.ErrConflict) {
+		if w.opts.Redo && w.rejectedRedoCard(sid, input) {
+			w.Stats.RedoCardRejects++
+			return nil
+		}
 		// 关闭的结果未知、重试也没有成功时（closeAt），模拟仍把 Session 当作打开的：提交得到 conflict 是对的。
 		// 客户端由此得知它已关闭，再次关闭以补上关闭之后的步骤。
 		if st, lerr := w.svc.Load(context.Background(), sid); lerr == nil && st.Closed != nil {
@@ -1031,7 +1052,6 @@ func (w *World) submitInput(sid string, input []*v1.ContentBlock) error {
 	} else if res.Steered {
 		w.Stats.Steers++
 	} else {
-		w.Stats.Runs++
 		if err := w.checkNewRunVersion(sid); err != nil {
 			return err
 		}
@@ -1252,8 +1272,16 @@ func (w *World) CheckInvariants() error {
 		if len(st.Runs) > session.KeepRuns+1 {
 			return fmt.Errorf("invariant: %s keeps %d runs in full, limit %d", sid, len(st.Runs), session.KeepRuns+1)
 		}
-		if requested := countPayload[*v1.Event_RunRequested](events); len(st.Summaries()) != requested {
+		requested := countPayload[*v1.Event_RunRequested](events)
+		if len(st.Summaries()) != requested {
 			return fmt.Errorf("invariant: %s summarizes %d runs, log has %d", sid, len(st.Summaries()), requested)
+		}
+		if previous := w.observedRuns[sid]; requested > previous {
+			if w.observedRuns == nil {
+				w.observedRuns = map[string]int{}
+			}
+			w.Stats.Runs += requested - previous
+			w.observedRuns[sid] = requested
 		}
 		for _, e := range events {
 			// 判断目前只有影子模式：只记录，不影响执行（ADR-0030）。
@@ -1263,6 +1291,11 @@ func (w *World) CheckInvariants() error {
 			// 暂时性的目录故障只能经 StepErrorBudget（持续出错）使 Run 失败，不能一次就失败。
 			if e.GetRunFailed().GetReason() == errDirectoryDown.Error() {
 				return fmt.Errorf("invariant: run %s failed on a transient directory error", e.GetRunFailed().GetRunId())
+			}
+		}
+		if w.opts.Redo {
+			if err := checkRedos(events); err != nil {
+				return fmt.Errorf("invariant: %s: %w", sid, err)
 			}
 		}
 		if err := checkInteractiveWorkers(events); err != nil {
@@ -1646,8 +1679,22 @@ func (w *World) pad() string { return strings.Repeat("p", w.rng.IntN(400)) }
 // simModel 是由 World 随机源驱动的脚本化模型。
 type simModel struct{ w *World }
 
-func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta func(model.Delta)) (*model.Response, error) {
+func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta func(model.Delta)) (response *model.Response, generateErr error) {
 	w := m.w
+	if w.opts.Redo {
+		st, err := w.redoModelState(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		if st != nil && st.Active() != nil && !runtime.IsSummaryRequest(req) {
+			runID := st.Active().ID
+			defer func() {
+				if response != nil && generateErr == nil {
+					response.Content = append(response.Content, model.TextBlocks(redoReplyMarker(runID))...)
+				}
+			}()
+		}
+	}
 	if runtime.IsSummaryRequest(req) {
 		return m.summarize(ctx, req)
 	}
@@ -1670,6 +1717,11 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 		case w.chance(0.03):
 			w.crash()
 			return nil, ctx.Err()
+		}
+	}
+	if w.opts.Redo {
+		if resp, err := w.redoProbeResponse(ctx, req); err != nil || resp != nil {
+			return resp, err
 		}
 	}
 	// 自最后一条用户消息以来的助手轮数，用于让对话收敛。

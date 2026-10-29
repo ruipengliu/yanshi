@@ -1,6 +1,6 @@
 # M7 内核补充：Capture 正文存储、擦除、交付确认、定时、出站流、单次调用
 
-> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）；交付确认（§11）已删除，EndUser 删除屏障（§12）已实现，定时已全部实现（含 xinli-assistant 版本 2 使用、评测拨钟、pgqueue 内部到期表，压测结果见 §13），单次调用、档位、重答与 `speaker_ref` 按 P3 的讨论改写（[整体架构](./persona-architecture.md) §13 的 Q77–Q90），实现中；`speaker_ref`、档位与单次调用已实现，重答未实现 · **§2–§4、§11 由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 取代**（旁听原文存放在业务线；§11 已删除），§5 按 P2 的讨论改写（没有窗口），§6 的擦除与修订信封不做 · ADR-0044（已取代）、ADR-0045、ADR-0046、ADR-0047、ADR-0049（已取代）、ADR-0050 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
+> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）；交付确认（§11）已删除，EndUser 删除屏障（§12）已实现，定时已全部实现（含 xinli-assistant 版本 2 使用、评测拨钟、pgqueue 内部到期表，压测结果见 §13），P3 已全部实现并验证（单次调用、档位、重答与 `speaker_ref`；[整体架构](./persona-architecture.md) §13 的 Q77–Q90；首字延迟压测见 §13）；出站流仍待 P4 · **§2–§4、§11 由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 取代**（旁听原文存放在业务线；§11 已删除），§5 按 P2 的讨论改写（没有窗口），§6 的擦除与修订信封不做 · ADR-0044（已取代）、ADR-0045、ADR-0046、ADR-0047、ADR-0049（已取代）、ADR-0050 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
 
 xinli 落地需要内核补上的原语。每一项都按[整体架构](./persona-architecture.md) §9 的判据给出理由：第二条业务线也会需要，并且业务侧做不到或做了不安全。业务语义（交谈、承诺、项目、人）一律不进内核。
 
@@ -254,7 +254,7 @@ work_class: interactive        # interactive | background
 
 ## 8. 档位（Tier）
 
-> 档位已实现（Q83）；新增测试待远端验证，契约与实现见[配额与用量](./m4-quota-usage.md) §3–§6。
+> 档位已实现（Q83），契约与实现见[配额与用量](./m4-quota-usage.md) §3–§6。
 
 - 业务线配置：
 
@@ -276,16 +276,33 @@ quota:
 
 ## 9. 重答（Redo）
 
-> 按 P3 的讨论改写（Q84–Q87）。
+> 重答已实现（Q84、Q86、Q87；2026-10-28）。
 
 - **接口**：`POST /v1/sessions/{id}/inputs`，`{redo: true, input_id, expected_run_id}`，不带内容；`expected_run_id` 必填，不是本 Session 最后一个 Run 时 conflict（多端旧页面不会重答错对象）。重复的 `input_id` 返回第一次的结果。不加 Connection 操作与 SDK 方法：App 在 P4 经 BFF。
 - **可重答**（否则 conflict）：最后一个 Run 是 completed；它的调用全部有只读证据（`ToolCallStarted.read_only`，见下）或是 `show_card`；没有审批请求、`ask_user`、插话、委托、后台结果；它的输入是普通输入（不含 CardAction，不来自定时、Call 或委托）；它的输入之后没有发生上下文压缩（按事件序号，含 `scope: run`）；Session 不是委托子 Session，也不是三方入站的（[Agent 生态](./m7-agent-ecosystem.md) §3.2）。
-- **只读证据**（前置已实现，重答接口未接入）：`capability.Spec.ReadOnly` 表示不改变业务或平台状态，读取的元数据更新不算写，false 表示写入或未知。内置只有 `clock_now`、`memory_search` 为 true；MCP 只从 `readOnlyHint` 映射，不从风险、幂等或 `no_approval` 推导；Node 与沙箱一律视为未知，`show_card` 也不标只读。Worker 在两处 Started 写入点把当时解析的判定写入 `ToolCallStarted.read_only`，旧日志缺字段为 false。投影与快照保留各 Attempt 的判定；`session.Run.CallsReadOnly` 对每个调用的所有 Started 取与，没有 Started（如参数错误、能力不可用）的调用没有证据，无调用时为 true；该方法不包含 `show_card` 的重答豁免或其他资格条件。实际执行前若本 Attempt 已记只读而当前声明不再只读，拒绝执行、不写新 Started，返回固定错误“能力的声明在调用开始后发生了变化，没有执行；请重新发起调用”；已记 false、当前 true 则照常执行且证据不变。已执行但结果提交失败时，保留真实结果并重试提交。
+- **只读证据**（已接入资格判断）：`capability.Spec.ReadOnly` 表示不改变业务或平台状态，读取的元数据更新不算写，false 表示写入或未知。内置只有 `clock_now`、`memory_search` 为 true；MCP 只从 `readOnlyHint` 映射，不从风险、幂等或 `no_approval` 推导；Node 与沙箱一律视为未知，`show_card` 也不标只读。Worker 在两处 Started 写入点把当时解析的判定写入 `ToolCallStarted.read_only`，旧日志缺字段为 false。投影与快照保留各 Attempt 的判定；`session.Run.CallsReadOnly` 对每个调用的所有 Started 取与，没有 Started（如参数错误、能力不可用）的调用没有证据，无调用时为 true；该方法不包含 `show_card` 的重答豁免或其他资格条件。实际执行前若本 Attempt 已记只读而当前声明不再只读，拒绝执行、不写新 Started，返回固定错误“能力的声明在调用开始后发生了变化，没有执行；请重新发起调用”；已记 false、当前 true 则照常执行且证据不变。已执行但结果提交失败时，保留真实结果并重试提交。
 - **写入**：`RunRequested{redo_of: <run_id>}`，输入内容块由平台从被重做的 Run 复制，来源字段不复制（特殊来源已被排除）。`redo_of` 只能由平台写入（统一检查点拒绝客户端提交，`Apply` 再校验目标、输入一致与资格）。接受即替代：新 Run 失败或被中断也不回退。新 Run 按普通权限执行；它若写入，它自己就不可再重答。
 - **Transcript**：被替代的 Run 的输入、召回、回复与调用不进入之后的上下文，连续重答只保留最后一次。投影保存被替代的 Run 集合（不依赖 Run 明细的保留数）；Transcript、压缩选段、token 估算（不拿被替代回答的用量校准）与摘要渲染共用同一过滤，先由完整投影确定替代关系再取前缀。日志保留全部，App 可以展示"第 2/3 个回答"。
 - **安全判断不过滤**：来源推导、写入闸门与注入判断仍看完整历史；模型没看到旧的工具结果，不代表 Session 没接触过外部内容。
 - **卡片**：被替代 Run 中卡片的动作按 `call_id` 失效（新回答可能复用同一个 `card_id`）。service 在去重之后、`Store.Update` 的每次决策中拒绝它们；`Apply` 对 `RunRequested`、`Steered` 与回答中的 CardAction 再校验。
 - 召回在新 Run 中照常重新做一次（记为 Event）。
+
+### 9.1 实现与并发
+
+- `session.State.RedoBlocker` 是纯资格函数，返回不含内容的原因类别。当前平台来源为 `RunRequested.from_call`、`RunRequested.schedule`、后台结果内容块，以及 `SessionCreated.parent` 对应的委托输入；普通界面上下文不因此被禁止，其外部来源仍参与安全判断。三方入站 Session 尚无入口，接入时须按结构化来源补上拒绝（代码有 TODO）。
+- `service.Service.Redo` 在每次 `Store.Update` 决策中先按输入 ID 去重，再检查关闭、末 Run 与全部资格；复制原内容块，不重写设备或媒体。输入 ID 沿用普通输入的长度、保留前缀与最近 64 条去重窗口；空 ID 仍表示不去重，客户端应生成稳定 ID。`expected_run_id` 必填。
+- 新 Run 共用 `checkSubmitInput` 的审核、准入与配额，`newRunEvents` 的撤回版本切换，以及 `finishSubmit` 的 touch。普通输入保留原检查时机，重答在每次决策中检查。审核实际在 service 中，不在 Apply；重答再次调用输入审核，多一次审核不改变复制的内容。事件与 `Decision.Wake` 同事务提交。
+- 两个设备竞争同一目标：同 ID 返回第一次结果；不同 ID 只有一个接受，另一个重算发现目标不是最后 Run 后返回 409。普通输入先提交时重答冲突；重答先提交时普通输入照原规则并入新 Run。定时先开启 Run 时重答冲突；重答先开启 Run 时到点处理等待它结束。关闭先提交时新重答冲突；重试已接受的 ID 仍返回 duplicate。
+- `RunRequested.redo_of = 6`；快照新增被替代 Run 与卡片调用集合，以及 Run 的原请求、输入序号、插话事实，投影版本为 24。集合以写时复制维护，不因 Run 明细淘汰消失，也不会污染 `Check` 的原投影。审批历史、提问、委托与后台标记沿用 Call 明细。
+- `internal/runtime/redo.go` 的 `filterModelHistory` 共用于 Transcript、前缀截取、压缩选段、估算和文本摘要。先取完整替代集合，再截取摘要前缀；被替代回答的 Usage 不用于校准。原 Run 在尾部，重答相当于从它之前继续，更早的系统指令、工具定义和对话前缀保持稳定；评测的缓存命中（17%）与同等长度的短用例相当。
+- 卡片的两条查找路径共用失效检查，并在每次决策中、去重之后核验。Apply 对新 Run 输入、插话、回答的独立动作字段与内容块中的动作一并拒绝。新卡片复用同一 card_id 不影响旧 call_id 的失效。
+
+### 9.2 验证
+
+单元测试覆盖资格、非法事件、连续重答与快照、丢响应与并发重算、卡片三种载体、HTTP 校验与授权、模型视图及安全来源。`TestRedoWithFaults` 在每步原动作完成后，以独立随机流抽样追加重答，不占用普通输入的动作槽；附加动作中的提交、审核、存储故障与 Worker 交错也使用该流。覆盖普通输入、旧卡片、定时、删除、崩溃与接管；Run 计数从已验证日志的 RunRequested 累计，不依赖客户端成功响应，删除后仍保留已见覆盖。要求 `Redos`、`RedoConflicts`、`RedoDuplicates`、`RedoCardRejects` 均有覆盖。脚本模型在每次实际请求（含摘要）检查被替代回复、调用与结果，日志前缀复核资格和卡片失效；快照与全回放继续逐字节比较，部分 PG 差分种子开启重答。
+
+`evals/redo-different-answer.yaml` 用普通助手回答亲子室内活动建议，再以 redo 回合独立评分，不以文字不同为条件。评测当前不记录完整模型请求，旧答排除由 runtime 单元测试和 sim 请求检查覆盖；Mac mini 实测 3/3 通过、评分 4.67（2026-10-29），已写入基线。
+
 
 ## 10. 说话人引用（`speaker_ref`）
 

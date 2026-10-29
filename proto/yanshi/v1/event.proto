@@ -284,6 +284,8 @@ message RunRequested {
   string from_call = 4;
   // 仅由平台在同批 ScheduleFired 后写入。
   ScheduleMark schedule = 5;
+  // 仅由平台复制最后一个合格 Run 的输入，接受即替代它的模型视图。
+  string redo_of = 6;
 }
 
 // Steered 是活跃 Run 进行中的追加输入，不改变 Run 状态。
