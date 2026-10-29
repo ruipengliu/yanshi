@@ -84,6 +84,9 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	if handled, err := testCommand(ctx, args, stdin, stdout); handled {
+		return err
+	}
 	cfg, err := parseConfig(args, stderr)
 	if err != nil {
 		return err
@@ -99,11 +102,14 @@ func serve(ctx context.Context, cfg config, stdin io.Reader, stdout, stderr io.W
 	logger := slog.New(slog.NewTextHandler(stderr, nil))
 	life, cancelLife := context.WithCancel(context.Background())
 	defer cancelLife()
-	books, closeBooks, personaReady, err := openStore(ctx, cfg.store, cfg.personaDSN, cfg.mode == "dev")
+	books, closeBooks, personaReady, err := openStore(ctx, cfg.store, cfg.personaDSN, cfg.mode == "dev", cfg.now)
 	if err != nil {
 		return err
 	}
 	defer closeBooks()
+	if cfg.test != nil {
+		books = cfg.test.Books(books)
+	}
 	checks := []func(context.Context) error{personaReady}
 	var orch *orchestrator.Orchestrator
 	var client *kernel.Client
@@ -119,11 +125,16 @@ func serve(ctx context.Context, cfg config, stdin io.Reader, stdout, stderr io.W
 		accounts = &account.Service{Store: tasks.(account.Store), Provider: cfg.identityProvider, AllowUnregistered: cfg.mode == "dev"}
 		if cfg.roles.orchestrator {
 			accountWorker := &account.Worker{Accounts: accounts, Tasks: tasks, Persona: books, Kernel: client}
-			orch = orchestrator.New(life, books, client, orchestrator.Options{Logger: logger, Tasks: tasks, Accounts: accounts, AccountWorker: accountWorker})
+			orch = orchestrator.New(life, books, client, orchestrator.Options{Logger: logger, Tasks: tasks, Accounts: accounts, AccountWorker: accountWorker, Now: cfg.now, RetryInterval: cfg.retryInterval()})
 			// 应用独占推送登记；不向内核 Connection 注册推送设备。P4 只有确定性 fake。
 			sink := &delivery.Fake{}
-			consumer := &delivery.Consumer{Progress: tasks.(recovery.Consumer), Store: tasks.(delivery.Store), Kernel: delivery.Source{Client: client}, Accounts: tasks.(account.Enumerator), Terminal: orch.ScanTasks}
-			worker := &delivery.Worker{Store: tasks.(delivery.Store), Accounts: accounts.Store, Persona: &query.Service{Store: books}, Kernel: client, Push: sink, Channel: sink}
+			consumer := &delivery.Consumer{Progress: tasks.(recovery.Consumer), Store: tasks.(delivery.Store), Kernel: delivery.Source{Client: client}, Accounts: tasks.(account.Enumerator), Terminal: orch.ScanTasks, Now: cfg.now}
+			worker := &delivery.Worker{Store: tasks.(delivery.Store), Accounts: accounts.Store, Persona: &query.Service{Store: books, Now: cfg.now}, Kernel: client, Push: sink, Channel: sink, Now: cfg.now}
+			if cfg.test != nil {
+				consumer.Progress = cfg.test.Consumer(consumer.Progress)
+				consumer.Store = cfg.test.Delivery(consumer.Store)
+				worker.Push = cfg.test.Push(worker.Push)
+			}
 			stopDelivery := delivery.Start(life, cfg.lines, consumer, worker, func() { logger.Warn("application delivery retry") })
 			defer stopDelivery()
 		}
@@ -136,6 +147,9 @@ func serve(ctx context.Context, cfg config, stdin io.Reader, stdout, stderr io.W
 	}
 	mux := routes(cfg, books, orch, client, accounts)
 	probes := http.NewServeMux()
+	if cfg.test != nil {
+		probes.Handle("/debug/day", cfg.test.Diagnostics())
+	}
 	probes.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -222,12 +236,12 @@ func serve(ctx context.Context, cfg config, stdin io.Reader, stdout, stderr io.W
 	}
 	if orch != nil {
 		orch.StartDeletions()
-		orch.StartTasks(nil)
-		orch.StartExpirations(nil)
+		orch.StartTasks(cfg.ticks(life))
+		orch.StartExpirations(cfg.ticks(life))
 		if cfg.autoSchedule {
-			orch.StartSchedules(nil)
+			orch.StartSchedules(cfg.ticks(life))
 		}
-		stopPurge := startPurger(life, store.Purger{Store: books}, logger)
+		stopPurge := startPurger(life, store.Purger{Store: books, Now: cfg.now}, logger)
 		defer stopPurge()
 	}
 	// stdout 是父进程的机器协议；开发登记包含本次进程的短期随机凭据。
@@ -272,14 +286,17 @@ func routes(cfg config, books store.Store, orch *orchestrator.Orchestrator, clie
 	}
 	mux := http.NewServeMux()
 	if cfg.roles.persona {
-		opts := mcpserver.Options{Credentials: cfg.credentials, InsecureDev: cfg.insecureMCP, AllowUnmanaged: cfg.mode == "dev" && orch == nil}
+		opts := mcpserver.Options{Credentials: cfg.credentials, InsecureDev: cfg.insecureMCP, AllowUnmanaged: cfg.mode == "dev" && orch == nil, Now: cfg.now, AuthNow: time.Now}
 		// typed nil 不能放进接口，否则 Persona 独立进程会在接受事实后调用 nil 编排器。
 		if orch != nil {
 			opts.Notifier = orch
 		}
+		if cfg.test != nil {
+			opts.Notifier = cfg.test.Notifier(opts.Notifier)
+		}
 		mux.Handle("/mcp", mcpserver.Handler(books, opts))
-		mux.Handle("/v1/query/", query.Handler(&query.Service{Store: books}, cfg.credentials, nil))
-		mux.Handle("/v1/commands/", command.Handler(&command.Service{Store: books}, cfg.credentials, nil))
+		mux.Handle("/v1/query/", query.Handler(&query.Service{Store: books, Now: cfg.now}, cfg.credentials, nil))
+		mux.Handle("/v1/commands/", command.Handler(&command.Service{Store: books, Now: cfg.now}, cfg.credentials, nil))
 	}
 	if cfg.roles.bff {
 		mountBFF(mux, cfg, books, client, accounts)
@@ -322,8 +339,8 @@ func routes(cfg config, books store.Store, orch *orchestrator.Orchestrator, clie
 
 // 同进程与远程 Persona 共用查询与命令契约；产品请求始终先经过应用登录态。
 func mountBFF(mux *http.ServeMux, cfg config, books store.Store, client *kernel.Client, accounts *account.Service) {
-	var reader query.Reader = &query.Service{Store: books}
-	var writer command.Writer = &command.Service{Store: books}
+	var reader query.Reader = &query.Service{Store: books, Now: cfg.now}
+	var writer command.Writer = &command.Service{Store: books, Now: cfg.now}
 	if cfg.personaURL != "" {
 		token := func(ctx context.Context, line string) (string, error) {
 			for i := len(cfg.credentials) - 1; i >= 0; i-- {
@@ -343,7 +360,7 @@ func mountBFF(mux *http.ServeMux, cfg config, books store.Store, client *kernel.
 		tasks, _ = accounts.Store.(task.Reader)
 		inbox, _ = accounts.Store.(delivery.Store)
 	}
-	mux.Handle("/v1/", bff.Handler(bff.Options{Accounts: accounts, Persona: reader, Commands: writer, Kernel: client, Tasks: tasks, Inbox: inbox}))
+	mux.Handle("/v1/", bff.Handler(bff.Options{Accounts: accounts, Persona: reader, Commands: writer, Kernel: client, Tasks: tasks, Inbox: inbox, Now: cfg.now}))
 }
 
 func startPurger(ctx context.Context, purger store.Purger, logger *slog.Logger) func() {
@@ -371,10 +388,10 @@ func startPurger(ctx context.Context, purger store.Purger, logger *slog.Logger) 
 }
 
 // dev 可自动迁移；serve 只验证迁移已完成，不要求运行角色持有 DDL 权限。
-func openStore(ctx context.Context, kind, dsn string, migrate bool) (store.Store, func(), func(context.Context) error, error) {
+func openStore(ctx context.Context, kind, dsn string, migrate bool, now ...func() time.Time) (store.Store, func(), func(context.Context) error, error) {
 	switch kind {
 	case "memory":
-		return memstore.New(), func() {}, func(context.Context) error {
+		return memstore.New(now...), func() {}, func(context.Context) error {
 			return nil
 		}, nil
 	case "pg":
@@ -396,7 +413,7 @@ func openStore(ctx context.Context, kind, dsn string, migrate bool) (store.Store
 			pool.Close()
 			return nil, nil, nil, errors.New("xinli: Persona migration failed")
 		}
-		s := pgstore.New(pool)
+		s := pgstore.New(pool, now...)
 		return s, s.Close, func(ctx context.Context) error {
 			return pg.Ready(ctx, pool)
 		}, nil

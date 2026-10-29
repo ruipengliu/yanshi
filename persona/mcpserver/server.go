@@ -54,7 +54,9 @@ type Options struct {
 	// AllowUnmanaged 只供旧夹具与评测；生产必须登记工作命令。
 	AllowUnmanaged bool
 	Now            func() time.Time
-	Notifier       Notifier
+	// AuthNow 允许隔离验收前拨业务日期而不改变服务凭据有效期；省略时沿用 Now。
+	AuthNow  func() time.Time
+	Notifier Notifier
 }
 type server struct {
 	businessLine   string
@@ -90,7 +92,10 @@ func Handler(s store.Store, opts Options) http.Handler {
 			handlers[c.BusinessLine] = toolHandler(x)
 		}
 	}
-	now := opts.Now
+	now := opts.AuthNow
+	if now == nil {
+		now = opts.Now
+	}
 	if now == nil {
 		now = time.Now
 	}
@@ -162,7 +167,8 @@ func (x *server) call(ctx context.Context, metadata mcp.Meta, args json.RawMessa
 			notifier.WeekFiled(ctx, bl, eu)
 		}
 	}
-	result := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}
+	// 六个写工具在 handler 内再校验命令类型；前置绑定检查与命令拒收都必须进入工具错误通道。
+	result := &mcp.CallToolResult{IsError: call.WorkError() != nil, Content: []mcp.Content{&mcp.TextContent{Text: text}}}
 	return result, nil
 }
 

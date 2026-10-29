@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "stages": {
+    "assistant-scheduled-inbox": {
+      "processed": false,
+      "filed": true,
+      "exchanges": 3,
+      "commitments": 2,
+      "capture_revision": 4,
+      "live_captures": 5,
+      "completed_runs": 17,
+      "failed_runs": 0,
+      "inbox": 3,
+      "sent": 2
+    },
+    "daytime-review": {
+      "processed": true,
+      "filed": true,
+      "exchanges": 2,
+      "commitments": 2,
+      "capture_revision": 2,
+      "live_captures": 2,
+      "completed_runs": 0,
+      "failed_runs": 0,
+      "inbox": 0,
+      "sent": 0
+    },
+    "erasure": {
+      "processed": false,
+      "filed": false,
+      "exchanges": 2,
+      "commitments": 1,
+      "capture_revision": 5,
+      "live_captures": 4,
+      "completed_runs": 17,
+      "failed_runs": 0,
+      "inbox": 3,
+      "sent": 2
+    },
+    "midnight-final": {
+      "processed": false,
+      "filed": true,
+      "exchanges": 3,
+      "commitments": 2,
+      "capture_revision": 4,
+      "live_captures": 5,
+      "completed_runs": 14,
+      "failed_runs": 0,
+      "inbox": 0,
+      "sent": 0
+    },
+    "morning-upload": {
+      "processed": false,
+      "filed": false,
+      "exchanges": 0,
+      "commitments": 0,
+      "capture_revision": 2,
+      "live_captures": 2,
+      "completed_runs": 0,
+      "failed_runs": 0,
+      "inbox": 0,
+      "sent": 0
+    },
+    "natural-expiry": {
+      "processed": false,
+      "filed": false,
+      "exchanges": 2,
+      "commitments": 1,
+      "capture_revision": 6,
+      "live_captures": 0,
+      "completed_runs": 3,
+      "failed_runs": 0,
+      "inbox": 3,
+      "sent": 2
+    },
+    "roles-restarted": {
+      "processed": false,
+      "filed": true,
+      "exchanges": 3,
+      "commitments": 2,
+      "capture_revision": 4,
+      "live_captures": 5,
+      "completed_runs": 21,
+      "failed_runs": 0,
+      "inbox": 3,
+      "sent": 2
+    },
+    "user-edit": {
+      "processed": true,
+      "filed": true,
+      "exchanges": 3,
+      "commitments": 2,
+      "capture_revision": 3,
+      "live_captures": 3,
+      "completed_runs": 5,
+      "failed_runs": 0,
+      "inbox": 0,
+      "sent": 0
+    }
+  },
+  "outcomes": {
+    "afternoon_review": true,
+    "assistant_terminal": true,
+    "daytime_review": true,
+    "erased_upload_rejected": true,
+    "erasure_complete": true,
+    "erasure_reprocessed": false,
+    "final_review": false,
+    "ledger_retained": false,
+    "model_rescheduled": true,
+    "redo_eligible": true,
+    "redo_terminal": true,
+    "scheduled_push": true,
+    "settled_before_restart": false,
+    "text_expired": true,
+    "user_edit": true
+  },
+  "baseline": "not_recorded",
+  "differences": []
+}

@@ -217,6 +217,8 @@ Persona 的领域变化驱动业务后续；内核出站只承担运行事件（
 4. Persona 接受 `file_day` 时同事务记录领域变化，编排器据其事实版本归集到各项目；Run 完成只用于执行跟踪（Q99）。
 5. 应用层关闭当天的 Session；到删除期限时内核删除工作 Session（日志中的原文副本），Persona 按固定的业务日 UTC 期限自然到期并清理原文（Q95、Q96）；交谈、承诺与 Memory 保留。
 
+B7 的跨进程驱动位于 `internal/day`，运行入口为 `make day`、`make day-short` 与 `make day-ark`；三库、共用业务时钟、生产保护、逐阶段断言、前三类故障与待填写的 Mac mini 验收记录见 [单库完整一天验收](./day-acceptance.md)。完整场景默认不进入 `make check`，数据库切换演练留在 C6。
+
 ### 6.2 删除一段谈话
 
 （ADR-0050；§13 Q46–Q53）

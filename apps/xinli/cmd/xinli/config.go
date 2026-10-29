@@ -44,6 +44,7 @@ func (r roles) names() []string {
 }
 
 type config struct {
+	test             testHooks
 	mode             string
 	addr             string
 	healthAddr       string
@@ -91,6 +92,7 @@ func parseConfig(args []string, stderr io.Writer) (config, error) {
 		}
 		return cfg, validateDatabases(cfg.personaDSN, cfg.appDSN)
 	}
+	validateTest := testFlags(flags, &cfg)
 	addr, kind := ":8081", "pg"
 	if cfg.mode == "dev" {
 		addr, kind = "127.0.0.1:0", "memory"
@@ -137,6 +139,9 @@ func parseConfig(args []string, stderr io.Writer) (config, error) {
 	}
 	if flags.NArg() != 0 {
 		return cfg, errors.New("xinli: unexpected arguments")
+	}
+	if err := validateTest(); err != nil {
+		return cfg, err
 	}
 	validLine := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 	seen := map[string]bool{}

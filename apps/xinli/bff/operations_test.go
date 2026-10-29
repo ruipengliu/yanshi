@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -145,7 +146,7 @@ func TestOperationIsolation(t *testing.T) {
 				{"POST", "/approvals/a-1", `{"approve":true}`},
 				{"POST", "/approvals/a-1", `{"approve":false}`},
 				{"POST", "/card-actions", `{"call_id":"card-call","card_id":"card","action":"ok"}`},
-				{"POST", "/schedules", `{"schedule_id":"timer","input":"hi","at":"2026-11-01T12:00:00Z","time_zone":"UTC"}`},
+				{"POST", "/schedules", `{"schedule_id":"timer","input":"hi","at":"2026-11-01T12:00:00","time_zone":"UTC"}`},
 				{"GET", "/schedules", ""},
 				{"DELETE", "/schedules/timer", ""},
 				{"GET", "/questions", ""},
@@ -204,7 +205,7 @@ func TestThreadOperations(t *testing.T) {
 			t.Fatal("resolved item still pending")
 		}
 	}
-	h.request(token, "POST", "/v1/threads/s-1/schedules", `{"schedule_id":"timer","input":"hello","rrule":"FREQ=DAILY","time_zone":"UTC"}`, 201)
+	h.request(token, "POST", "/v1/threads/s-1/schedules", `{"schedule_id":"timer","input":"hello","rrule":"FREQ=DAILY;BYHOUR=9;BYMINUTE=0","time_zone":"UTC"}`, 201)
 	h.request(token, "GET", "/v1/threads/s-1/schedules", "", 200)
 	h.request(token, "DELETE", "/v1/threads/s-1/schedules/timer", "", 204)
 	h.request(token, "DELETE", "/v1/threads/s-1?reason=erasure", "", 400)
@@ -219,6 +220,43 @@ func TestThreadOperations(t *testing.T) {
 	}
 	if json.Unmarshal(h.calls[2].Body["content"], &content) != nil || len(content) != 1 || string(content[0].Action["call_id"]) != `"card-call"` || string(content[0].Action["seq"]) != `"12"` {
 		t.Fatal("card action changed")
+	}
+}
+
+func TestScheduleForwarding(t *testing.T) {
+	// 这里只验证传输不改写声明；真实内核对当地时间和 RRULE 的校验由 TestDayScheduleHTTP 覆盖。
+	for _, body := range []string{
+		`{"schedule_id":"timer","input":"hello","at":"2035-01-09T09:00:00","time_zone":"Asia/Shanghai"}`,
+		`{"schedule_id":"timer","input":"hello","rrule":"FREQ=DAILY;BYHOUR=9;BYMINUTE=0","time_zone":"Asia/Shanghai","until":"2035-01-10T01:00:00Z"}`,
+	} {
+		h := operationsFixture(t, "memory")
+		h.request(h.a.AccessToken, "POST", "/v1/threads/s-1/schedules", body, 201)
+		h.lock.Lock()
+		calls := append([]operationRequest(nil), h.calls...)
+		h.lock.Unlock()
+		if len(calls) != 1 || calls[0].Method != "POST" || calls[0].Path != "/v1/sessions/s-1/schedules" || calls[0].Query != "" {
+			t.Fatal("schedule did not reach the fixed kernel route")
+		}
+		var expected map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(body), &expected); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(calls[0].Body, expected) {
+			t.Fatalf("schedule fields changed: %v", calls[0].Body)
+		}
+	}
+	h := operationsFixture(t, "memory")
+	for _, body := range []string{
+		`{"input":[{"text":"hello"}],"at":"2035-01-09T09:00","time_zone":"Asia/Shanghai"}`,
+		`{"input":"hello","at":"2035-01-09T09:00","timezone":"Asia/Shanghai"}`,
+		`{"input":"hello","rrule":"FREQ=DAILY;BYHOUR=9;BYMINUTE=0","until":"2035-01-10T09:00"}`,
+	} {
+		h.request(h.a.AccessToken, "POST", "/v1/threads/s-1/schedules", body, 400)
+	}
+	h.lock.Lock()
+	defer h.lock.Unlock()
+	if len(h.calls) != 0 {
+		t.Fatal("malformed schedule reached kernel")
 	}
 }
 

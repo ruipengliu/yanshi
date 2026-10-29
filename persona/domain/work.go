@@ -238,10 +238,15 @@ func (u *Book) FenceOrphan(session string) bool {
 }
 
 func (u *Book) CheckWorkSession(session string) error {
-	if old, ok := u.workSessions[session]; ok {
-		if old.Retired {
-			return ErrWorkRetired
-		}
+	old, managed := u.workSessions[session]
+	if managed && old.Retired {
+		return ErrWorkRetired
+	}
+	// 擦除已清空当前绑定；删除待办的 busy 状态不能遮住旧 Session 永久失去资格的原因。
+	if err := u.checkWorkingSession(session); err != nil {
+		return err
+	}
+	if managed {
 		current, err := u.WorkTarget(old.Target)
 		if err != nil {
 			return err
@@ -250,7 +255,7 @@ func (u *Book) CheckWorkSession(session string) error {
 			return ErrWorkRetired
 		}
 	}
-	return u.checkWorkingSession(session)
+	return nil
 }
 
 func (u *Book) RegisterWorkCommand(target, session, id, command string, lease WorkLease, now time.Time) error {
@@ -309,7 +314,8 @@ func (u *Book) FinishWorkCommand(session, id string) error {
 }
 
 // CheckWorkTool 也供 MCP 在事务内守住所有只读工具；夹具的宽松路径必须显式开启。
-func (c *Call) CheckWorkTool(write bool, commands ...string) error {
+func (c *Call) CheckWorkTool(write bool, commands ...string) (err error) {
+	defer func() { c.workErr = err }()
 	if c.u == nil {
 		if c.RequireWork {
 			return ErrWorkCommand

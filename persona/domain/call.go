@@ -24,6 +24,7 @@ type Citation struct {
 type Call struct {
 	RequireWork bool
 	err         error
+	workErr     error
 	u           *Book
 	session     string
 	args        json.RawMessage
@@ -51,3 +52,7 @@ func NewCall(book *Book, session string, args json.RawMessage, cites map[string]
 func (c *Call) Err() error {
 	return c.err
 }
+
+// WorkError 保留资格拒收的结构化原因；MCP 不能把它当作一次成功的工具调用。
+// 它不属于存储故障，不能与必须交回事务回滚的 Err 混用。
+func (c *Call) WorkError() error { return c.workErr }

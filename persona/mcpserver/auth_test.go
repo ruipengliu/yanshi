@@ -148,3 +148,32 @@ func credentialHTTPClient(token string) *http.Client {
 	current.Store(token)
 	return &http.Client{Transport: bearerTransport{&current}}
 }
+
+// 拨业务日不能绕过或提前触发凭据到期；认证仍按独立时钟检查每次请求。
+func TestAuthClockIndependentFromBusinessClock(t *testing.T) {
+	now := time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)
+	var authUnix atomic.Int64
+	authUnix.Store(now.Unix())
+	hs := httptest.NewServer(Handler(memstore.New(), Options{
+		AllowUnmanaged: true,
+		Credentials:    []Credential{{BusinessLine: "bl", Token: "key", ExpiresAt: now.Add(time.Hour)}},
+		Now:            func() time.Time { return now.AddDate(10, 0, 0) },
+		AuthNow:        func() time.Time { return time.Unix(authUnix.Load(), 0) },
+	}))
+	defer hs.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil).Connect(ctx,
+		&mcp.StreamableClientTransport{Endpoint: hs.URL, HTTPClient: credentialHTTPClient("key"), DisableStandaloneSSE: true, MaxRetries: -1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := conn.Ping(ctx, nil); err != nil {
+		t.Fatal("business clock expired valid credential", err)
+	}
+	authUnix.Store(now.Add(2 * time.Hour).Unix())
+	if err := conn.Ping(ctx, nil); err == nil {
+		t.Fatal("auth clock expiration was ignored")
+	}
+}

@@ -52,10 +52,12 @@ check-deps:
 # goroutine）由所在包的单元测试与 e2e 在 -race 下覆盖；竞争检测在这里却让它慢十几倍（种子并行后仍需约 2.5 分钟，
 # 不带 -race 约 40 秒）。竞争检测在 sim 上真正能查的是并行的 World 之间是否共享了可变状态：确定性测试同时运行
 # 几个 World，留在 -race 下检查这一点（同时也查到这几个 World 内部的监视 goroutine）。
-test: deps-up web
+test: deps-up web day-bin
 	cd persona && go test -race ./...
 	cd apps/xinli && go test -race ./...
 	go test -race $$(go list ./... | grep -v '^yanshi/internal/sim$$')
+	# 跨进程的缩短版一天约 2 秒，放进 check 守住三库、角色与真实 HTTP 的装配；完整版与故障演练在 make day。
+	YANSHI_DAY_BIN=$(CURDIR)/bin/xinli-day go test -race ./internal/day -run '^TestDayShort$$' -count=1
 	go test ./internal/sim
 	go test -race ./internal/sim -run TestSimulationIsDeterministic
 
@@ -115,3 +117,22 @@ build:
 # 代码解释器沙箱镜像（serve -sandbox docker 的默认镜像）
 sandbox-image:
 	docker build -t yanshi-sandbox:dev deploy/sandbox
+
+# Q122 / P4-B7：专用制品才包含父进程时钟与崩溃边界；不覆盖生产 bin/xinli。
+# 默认 check 不构建或运行整日驱动，三个数据库与子进程的成本单独验收。
+DAY_RUN ?= ^TestDay$$|^TestDayScheduleHTTP$$|^TestDayLongTransaction$$
+.PHONY: day-bin day day-short day-ark
+
+day-bin:
+	cd apps/xinli && go build -tags daytest -o ../../bin/xinli-day ./cmd/xinli
+	cd apps/xinli && go test -race -tags daytest ./cmd/xinli -run '^TestDay' -count=1
+
+day: deps-up day-bin
+	YANSHI_DAY_BIN=$(CURDIR)/bin/xinli-day go test -race ./internal/day -run '$(DAY_RUN)' -count=1 -timeout 20m -v
+
+day-short: deps-up day-bin
+	YANSHI_DAY_BIN=$(CURDIR)/bin/xinli-day go test -race ./internal/day -run '^TestDayShort$$' -count=1 -timeout 5m -v
+
+# 与前次真实模型报告比较；首轮不冒充已有基线，报告只含状态、计数与差异。
+day-ark: deps-up day-bin
+	YANSHI_DAY_BIN=$(CURDIR)/bin/xinli-day YANSHI_DAY_ARK=1 go test ./internal/day -run '^TestDayArk$$' -count=1 -timeout 45m -v
