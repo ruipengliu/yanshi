@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"persona/command"
 	"persona/domain"
 	"persona/mcpserver"
 	personaTest "persona/pg/pgtest"
@@ -51,6 +52,8 @@ type harness struct {
 	clock              atomic.Int64
 	mu                 sync.Mutex
 	books              store.Store
+	reader             query.Reader
+	writer             command.Writer
 	tasks              appStore
 	accounts           *account.Service
 	a, b, other        account.Credentials
@@ -111,15 +114,21 @@ func newHarness(t *testing.T, kind string) *harness {
 			t.Fatal(err)
 		}
 	}
-	h.threads = []thread{{"s-3", h.a.Owner.EndUser, "xinli-assistant"}, {"work-day", h.a.Owner.EndUser, "xinli-day"}, {"s-1", h.a.Owner.EndUser, "xinli-assistant"}, {"work-project", h.a.Owner.EndUser, "xinli-project"}, {"work-week", h.a.Owner.EndUser, "xinli-week"}, {"work-new", h.a.Owner.EndUser, "future-internal"}, {"b-thread", h.b.Owner.EndUser, "xinli-assistant"}}
+	h.threads = []thread{{"s-3", h.a.Owner.EndUser, "xinli-assistant"}, {"work-day", h.a.Owner.EndUser, "xinli-day"}, {"s-1", h.a.Owner.EndUser, "xinli-assistant"}, {"work-project", h.a.Owner.EndUser, "xinli-project"}, {"work-week", h.a.Owner.EndUser, "xinli-week"}, {"work-brief", h.a.Owner.EndUser, "xinli-brief"}, {"work-new", h.a.Owner.EndUser, "future-internal"}, {"b-thread", h.b.Owner.EndUser, "xinli-assistant"}}
 	backend := httptest.NewServer(http.HandlerFunc(h.kernelHTTP))
 	t.Cleanup(backend.Close)
 	service := &query.Service{Store: h.books, Now: clock}
-	persona := httptest.NewServer(query.Handler(service, []mcpserver.Credential{{BusinessLine: "bl", Token: "persona-bl", ExpiresAt: h.now.AddDate(1, 0, 0)}, {BusinessLine: "other", Token: "persona-other", ExpiresAt: h.now.AddDate(1, 0, 0)}}, clock))
+	credentials := []mcpserver.Credential{{BusinessLine: "bl", Token: "persona-bl", ExpiresAt: h.now.AddDate(1, 0, 0)}, {BusinessLine: "other", Token: "persona-other", ExpiresAt: h.now.AddDate(1, 0, 0)}}
+	personaMux := http.NewServeMux()
+	personaMux.Handle("/v1/query/", query.Handler(service, credentials, clock))
+	personaMux.Handle("/v1/commands/", command.Handler(&command.Service{Store: h.books, Now: clock}, credentials, clock))
+	persona := httptest.NewServer(personaMux)
 	t.Cleanup(persona.Close)
 	reader := &query.Client{BaseURL: persona.URL, Token: func(ctx context.Context, line string) (string, error) { return "persona-" + line, nil }}
+	h.reader = reader
+	h.writer = &command.Client{BaseURL: persona.URL, Token: reader.Token}
 	client := &kernel.Client{BaseURL: backend.URL, Tokens: tokenSource(func(ctx context.Context, line string) (string, error) { return "kernel-" + line, nil })}
-	h.api = httptest.NewServer(bff.Handler(bff.Options{Accounts: h.accounts, Persona: reader, Kernel: client, Tasks: h.tasks, Now: clock}))
+	h.api = httptest.NewServer(bff.Handler(bff.Options{Accounts: h.accounts, Persona: reader, Commands: h.writer, Kernel: client, Tasks: h.tasks, Now: clock}))
 	t.Cleanup(h.api.Close)
 	return h
 }

@@ -9,7 +9,7 @@ import (
 
 // 业务线的知识按实体维护、以变更集写入（docs/design/xinli-model.md，ADR-0042）：变更集是日志，交谈与承诺由它
 // 依次叠加得出（fold），不直接修改。重交同一个来源的变更集时原位取代旧的那个，再重新叠加：撤销上一次的全部效果、再应用
-// 新的。项目不在变更集里：它的现状、归档与合并由各自的工具与用户的选择直接维护，交谈与承诺只按 ID 引用它。
+// 新的。项目的现状、归档与合并仍由直接事实维护；用户现状修改另记变更集出处，不由 fold 恢复项目，交谈与承诺只按 ID 引用它。
 
 // 变更集的作者。
 const (
@@ -22,7 +22,8 @@ const (
 // Changeset 是一次整理交给业务线的一组操作（xinli-model.md §5）。操作里的值在交出时已经解析好（交谈 ID、
 // 新建的项目、承诺 ID、核对结果、说话时间），叠加时不再依赖当时的状态。
 type Changeset struct {
-	ID string `json:"id"`
+	ProjectStatus *ProjectStatusChange `json:"project_status,omitempty"`
+	ID            string               `json:"id"`
 	// Session 是交出它的 Session：旁听 Session（xinli-day、用户对交谈的确认）或项目 Session（xinli-project）。
 	Session string `json:"session,omitempty"`
 	// Day 是绑定的业务日；空值沿用按 Session 的旧身份。

@@ -25,17 +25,19 @@ func (c *Client) CreateSession(ctx context.Context, businessLine, endUser, agent
 }
 
 type SessionOptions struct {
+	TimeZone string
 	DeleteAt time.Time
 }
 
 func (c *Client) CreateSessionWithOptions(ctx context.Context, businessLine, endUser, agent string, opts SessionOptions) (string, error) {
 	ctx = WithBusinessLine(ctx, businessLine)
 	in := struct {
+		TimeZone     string     `json:"time_zone,omitempty"`
 		BusinessLine string     `json:"business_line"`
 		EndUser      string     `json:"end_user"`
 		Agent        string     `json:"agent"`
 		DeleteAt     *time.Time `json:"delete_at,omitempty"`
-	}{BusinessLine: businessLine, EndUser: endUser, Agent: agent}
+	}{BusinessLine: businessLine, EndUser: endUser, Agent: agent, TimeZone: opts.TimeZone}
 	if !opts.DeleteAt.IsZero() {
 		in.DeleteAt = &opts.DeleteAt
 	}
@@ -109,7 +111,7 @@ func (c *Client) requestJSON(ctx context.Context, method, path string, in, out a
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &HTTPError{StatusCode: resp.StatusCode}
+		return responseError(resp)
 	}
 	if out != nil {
 		var body io.Reader = resp.Body
@@ -123,8 +125,11 @@ func (c *Client) requestJSON(ctx context.Context, method, path string, in, out a
 	return nil
 }
 
-// HTTPError 只保留状态码，调用方可分类重试而不会记录响应正文。
-type HTTPError struct{ StatusCode int }
+// HTTPError 只保留状态码与白名单分类，不保存响应正文。
+type HTTPError struct {
+	StatusCode int
+	Reason     string
+}
 
 func (e *HTTPError) Error() string { return fmt.Sprintf("kernel: HTTP status %d", e.StatusCode) }
 func (e *HTTPError) Is(target error) bool {

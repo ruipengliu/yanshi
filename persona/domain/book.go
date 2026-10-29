@@ -8,8 +8,9 @@ import (
 	"time"
 )
 
-// Project 是业务线的一个项目。ID、Name、Status 可由评测预置；现状之后由 xinli-project 的 set_status 更新。
+// Project 是业务线的一个项目。ID、Name、Status 可由评测预置；现状由 xinli-project 的 set_status 或用户的版本化命令更新。
 type Project struct {
+	UserChangeset string    `yaml:"-" json:"user_changeset,omitempty"`
 	ID            string    `yaml:"id" json:"id"`
 	Name          string    `yaml:"name" json:"name"`
 	Status        string    `yaml:"status" json:"status"`

@@ -48,20 +48,26 @@ func ExchangeQueryKey(e Exchange) string { return e.Date + "\x00" + e.Session + 
 
 // DayQuery 在没有 file_day 时也能表示尚在处理的业务日；到期只限制原文，长期总览仍可读。
 type DayQuery struct {
-	Date            string    `json:"date"`
-	Summary         *Day      `json:"summary"`
-	Progress        string    `json:"processing_position"`
-	Processed       bool      `json:"processed"`
-	CaptureRevision uint64    `json:"capture_revision"`
-	Expired         bool      `json:"expired"`
-	ExpiresAt       time.Time `json:"expires_at,omitzero"`
+	Exchanges       []ExchangeQuery `json:"exchanges"`
+	Date            string          `json:"date"`
+	Summary         *Day            `json:"summary"`
+	Progress        string          `json:"processing_position"`
+	Processed       bool            `json:"processed"`
+	CaptureRevision uint64          `json:"capture_revision"`
+	Expired         bool            `json:"expired"`
+	ExpiresAt       time.Time       `json:"expires_at,omitzero"`
 }
 
 func (u *Book) QueryDay(date string) (DayQuery, error) {
 	if err := u.CheckCaptures(date); err == ErrDayDeleted {
 		return DayQuery{}, err
 	}
-	out := DayQuery{Date: date, Progress: u.CaptureProgress(date)}
+	out := DayQuery{Date: date, Progress: u.CaptureProgress(date), Exchanges: []ExchangeQuery{}}
+	for _, e := range u.exchanges {
+		if e.Date == date && e.Live() {
+			out.Exchanges = append(out.Exchanges, ExchangeForUser(e))
+		}
+	}
 	day := u.captureDays[date]
 	if day != nil {
 		out.CaptureRevision, out.ExpiresAt = day.CaptureRevision, day.ExpiresAt

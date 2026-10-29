@@ -11,10 +11,25 @@ import (
 )
 
 // SessionView 只读公开投影；服务令牌没有 EndUser 约束，调用方必须核验这里的 owner。
+type Waiting struct {
+	Kind       string    `json:"kind"`
+	CallID     string    `json:"call_id"`
+	Capability string    `json:"capability"`
+	Summary    string    `json:"summary"`
+	Deadline   time.Time `json:"deadline"`
+}
+
+type ThreadRun struct {
+	ID      string   `json:"run_id"`
+	Status  string   `json:"status"`
+	Waiting *Waiting `json:"waiting"`
+}
+
 type SessionView struct {
-	ID           string `json:"session_id"`
-	BusinessLine string `json:"business_line"`
-	EndUser      string `json:"end_user"`
+	Runs         []ThreadRun `json:"runs"`
+	ID           string      `json:"session_id"`
+	BusinessLine string      `json:"business_line"`
+	EndUser      string      `json:"end_user"`
 	Agent        struct {
 		Name string `json:"name"`
 	} `json:"agent"`

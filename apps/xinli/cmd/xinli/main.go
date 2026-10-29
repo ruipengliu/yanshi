@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"persona/command"
 	"persona/fixture"
 	"persona/mcpserver"
 	"persona/pg"
@@ -270,6 +271,7 @@ func routes(cfg config, books store.Store, orch *orchestrator.Orchestrator, clie
 		}
 		mux.Handle("/mcp", mcpserver.Handler(books, opts))
 		mux.Handle("/v1/query/", query.Handler(&query.Service{Store: books}, cfg.credentials, nil))
+		mux.Handle("/v1/commands/", command.Handler(&command.Service{Store: books}, cfg.credentials, nil))
 	}
 	if cfg.roles.bff {
 		mountBFF(mux, cfg, books, client, accounts)
@@ -310,11 +312,12 @@ func routes(cfg config, books store.Store, orch *orchestrator.Orchestrator, clie
 	return mux
 }
 
-// 同进程与远程 Persona 共用只读契约；产品请求始终先经过应用登录态。
+// 同进程与远程 Persona 共用查询与命令契约；产品请求始终先经过应用登录态。
 func mountBFF(mux *http.ServeMux, cfg config, books store.Store, client *kernel.Client, accounts *account.Service) {
 	var reader query.Reader = &query.Service{Store: books}
+	var writer command.Writer = &command.Service{Store: books}
 	if cfg.personaURL != "" {
-		reader = &query.Client{BaseURL: cfg.personaURL, Token: func(ctx context.Context, line string) (string, error) {
+		token := func(ctx context.Context, line string) (string, error) {
 			for i := len(cfg.credentials) - 1; i >= 0; i-- {
 				credential := cfg.credentials[i]
 				if credential.BusinessLine == line && time.Now().Before(credential.ExpiresAt) {
@@ -322,13 +325,15 @@ func mountBFF(mux *http.ServeMux, cfg config, books store.Store, client *kernel.
 				}
 			}
 			return "", errors.New("xinli: Persona credential unavailable")
-		}}
+		}
+		reader = &query.Client{BaseURL: cfg.personaURL, Token: token}
+		writer = &command.Client{BaseURL: cfg.personaURL, Token: token}
 	}
 	var tasks task.Reader
 	if accounts != nil {
 		tasks, _ = accounts.Store.(task.Reader)
 	}
-	mux.Handle("/v1/", bff.Handler(bff.Options{Accounts: accounts, Persona: reader, Kernel: client, Tasks: tasks}))
+	mux.Handle("/v1/", bff.Handler(bff.Options{Accounts: accounts, Persona: reader, Commands: writer, Kernel: client, Tasks: tasks}))
 }
 
 func startPurger(ctx context.Context, purger store.Purger, logger *slog.Logger) func() {

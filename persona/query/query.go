@@ -139,22 +139,35 @@ func readBook(book *domain.Book, q Request, after, scope string) (any, error) {
 	case "access":
 		return struct{}{}, nil
 	case "projects":
-		return paging.Slice(book.QueryProjects(), q.Limit, after, scope, func(p domain.Project) string { return p.ID }), nil
+		items := []domain.ProjectQuery{}
+		for _, p := range book.QueryProjects() {
+			items = append(items, domain.ProjectForUser(p))
+		}
+		return paging.Slice(items, q.Limit, after, scope, func(p domain.ProjectQuery) string { return p.ID }), nil
 	case "project":
-		return book.QueryProject(q.ID)
+		p, err := book.QueryProject(q.ID)
+		return domain.ProjectForUser(p), err
 	case "exchanges":
 		items, err := book.QueryProjectExchanges(q.ID)
 		if err != nil {
 			return nil, err
 		}
-		return paging.Slice(items, q.Limit, after, scope, domain.ExchangeQueryKey), nil
+		out := []domain.ExchangeQuery{}
+		for _, e := range items {
+			out = append(out, domain.ExchangeForUser(e))
+		}
+		return paging.Slice(out, q.Limit, after, scope, func(e domain.ExchangeQuery) string { return domain.ExchangeQueryKey(e.Exchange) }), nil
 	case "commitments":
 		items, err := book.QueryCommitments(q.Filter)
 		if err != nil {
 			return nil, ErrInvalid
 		}
 		// 键与领域排序一致：无期限排最后，说话时间按 UTC 固定宽度编码。
-		return paging.Slice(items, q.Limit, after, scope, commitmentKey), nil
+		out := []CommitmentView{}
+		for _, m := range items {
+			out = append(out, CommitmentView{Commitment: *m, Rev: m.Rev()})
+		}
+		return paging.Slice(out, q.Limit, after, scope, func(m CommitmentView) string { return commitmentKey(&m.Commitment) }), nil
 	case "history":
 		m, err := book.QueryCommitment(q.ID)
 		if err != nil {
@@ -228,4 +241,10 @@ func commitmentKey(m *domain.Commitment) string {
 		due = "9999-99-99"
 	}
 	return due + "\x00" + m.SpokenAt.UTC().Format("2006-01-02T15:04:05.000000000Z") + "\x00" + m.ID
+}
+
+// CommitmentView 把既有修订序号交给 App，用于下一次用户修改的条件。
+type CommitmentView struct {
+	domain.Commitment
+	Rev int `json:"rev"`
 }

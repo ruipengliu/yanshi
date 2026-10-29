@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"persona/command"
 	"persona/domain"
 	"persona/mcpserver"
 	"persona/query"
@@ -33,7 +36,10 @@ func TestBFFRoleQueries(t *testing.T) {
 		t.Fatal(err)
 	}
 	serviceCredentials := []mcpserver.Credential{{BusinessLine: "bl", Token: "service", ExpiresAt: time.Now().Add(time.Hour)}}
-	persona := httptest.NewServer(query.Handler(&query.Service{Store: books}, serviceCredentials, nil))
+	personaMux := http.NewServeMux()
+	personaMux.Handle("/v1/query/", query.Handler(&query.Service{Store: books}, serviceCredentials, nil))
+	personaMux.Handle("/v1/commands/", command.Handler(&command.Service{Store: books}, serviceCredentials, nil))
+	persona := httptest.NewServer(personaMux)
 	defer persona.Close()
 	for _, remote := range []string{"", persona.URL} {
 		cfg := config{mode: "serve", roles: roles{bff: true}, personaURL: remote, credentials: serviceCredentials}
@@ -42,9 +48,16 @@ func TestBFFRoleQueries(t *testing.T) {
 		r.Header.Set("Authorization", "Bearer "+credentials.AccessToken)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
-		var project domain.Project
+		var project domain.ProjectQuery
 		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &project) != nil || project.ID != "p" {
 			t.Fatalf("BFF mount: %d", w.Code)
+		}
+		r = httptest.NewRequest(http.MethodPut, "/v1/projects/p/status", strings.NewReader(fmt.Sprintf(`{"rev":%q,"status":"user edit"}`, project.Rev)))
+		r.Header.Set("Authorization", "Bearer "+credentials.AccessToken)
+		w = httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &project) != nil || project.Status != "user edit" {
+			t.Fatalf("BFF command mount: %d", w.Code)
 		}
 		w = httptest.NewRecorder()
 		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/projects", nil))
@@ -56,12 +69,22 @@ func TestBFFRoleQueries(t *testing.T) {
 		if w.Code != 404 {
 			t.Fatal("BFF role exposed Persona query endpoint")
 		}
+		w = httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/v1/commands/u/commitment", strings.NewReader(`{}`)))
+		if w.Code != 404 {
+			t.Fatal("BFF role exposed Persona command endpoint")
+		}
 	}
 	cfg := config{mode: "serve", roles: roles{persona: true}, credentials: serviceCredentials}
 	w := httptest.NewRecorder()
 	routes(cfg, books, nil, nil).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/query/u/projects", nil))
 	if w.Code != 401 {
 		t.Fatal("Persona query mount missing service authentication")
+	}
+	w = httptest.NewRecorder()
+	routes(cfg, books, nil, nil).ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/v1/commands/u/commitment", strings.NewReader(`{}`)))
+	if w.Code != 401 {
+		t.Fatal("Persona command mount missing service authentication")
 	}
 }
 

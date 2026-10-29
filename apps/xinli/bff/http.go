@@ -1,4 +1,4 @@
-// Package bff 提供 xinli 的只读产品查询；owner 只来自可撤销应用登录态。
+// Package bff 提供 xinli 的产品查询与操作；owner 只来自可撤销应用登录态。
 package bff
 
 import (
@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"persona/command"
 	"persona/domain"
 	"persona/paging"
 	"persona/query"
@@ -29,11 +30,13 @@ type Kernel interface {
 }
 
 type Options struct {
-	Accounts *account.Service
-	Persona  query.Reader
-	Kernel   Kernel
-	Tasks    task.Reader
-	Now      func() time.Time
+	Accounts            *account.Service
+	Persona             query.Reader
+	Commands            command.Writer
+	Kernel              Kernel
+	Tasks               task.Reader
+	Now                 func() time.Time
+	StreamCheckInterval time.Duration
 }
 
 func Handler(opts Options) http.Handler {
@@ -77,6 +80,9 @@ func Handler(opts Options) http.Handler {
 	mux.HandleFunc("GET /v1/tasks", opts.tasks)
 	mux.HandleFunc("GET /v1/tasks/{id}", opts.task)
 	mux.HandleFunc("GET /v1/entitlements", opts.entitlements)
+	opts.operationRoutes(mux)
+	opts.personaRoutes(mux)
+	opts.accountRoutes(mux)
 	if opts.Accounts == nil {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fail(w, errors.New("accounts unavailable")) })
 	}
@@ -85,6 +91,11 @@ func Handler(opts Options) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		// 未挂载的开发或未来路由保持 404，不因 BFF 的统一鉴权变成已存在接口。
 		if _, pattern := mux.Handler(r); pattern == "" {
+			mux.ServeHTTP(w, r)
+			return
+		}
+		// 长流自行做有界鉴权；注销进度使用撤销后仍有效的专用凭据。
+		if _, pattern := mux.Handler(r); pattern == "GET /v1/threads/{id}/stream" || pattern == "GET /v1/account/deletion" {
 			mux.ServeHTTP(w, r)
 			return
 		}
@@ -164,7 +175,7 @@ func (o Options) threads(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// 正向允许问答用途；新 Agent、day/project/week/brief 都不会意外变成线程。
-		if item.Agent == "xinli-assistant" && !seen[item.ID] {
+		if userThread(owner, item.ID, owner.BusinessLine, item.EndUser, item.Agent) && !seen[item.ID] {
 			out = append(out, item)
 			seen[item.ID] = true
 		}
@@ -179,19 +190,8 @@ func (o Options) threads(w http.ResponseWriter, r *http.Request) {
 }
 
 func (o Options) thread(r *http.Request) error {
-	owner := ownerOf(r)
-	view, err := o.Kernel.SessionView(r.Context(), owner.BusinessLine, r.PathValue("id"))
-	if err != nil {
-		var remote *kernel.HTTPError
-		if errors.As(err, &remote) && (remote.StatusCode == 403 || remote.StatusCode == 404 || remote.StatusCode == 410) {
-			return domain.ErrQueryNotFound
-		}
-		return err
-	}
-	if view.ID != r.PathValue("id") || view.BusinessLine != owner.BusinessLine || view.EndUser != owner.EndUser || view.Agent.Name != "xinli-assistant" {
-		return domain.ErrQueryNotFound
-	}
-	return nil
+	_, err := o.threadView(r.Context(), ownerOf(r), r.PathValue("id"))
+	return err
 }
 
 func (o Options) events(w http.ResponseWriter, r *http.Request) {
@@ -345,6 +345,19 @@ func (o Options) entitlements(w http.ResponseWriter, r *http.Request) {
 }
 
 func fail(w http.ResponseWriter, err error) {
+	var remote *kernel.HTTPError
+	if errors.As(err, &remote) {
+		code := map[int]string{400: "invalid_request", 401: "upstream_unauthorized", 403: "forbidden", 404: "not_found", 409: "conflict", 410: "gone", 413: "too_large", 422: "rejected", 429: "quota_exceeded"}[remote.StatusCode]
+		if code != "" {
+			body := map[string]string{"error": code}
+			if remote.Reason != "" {
+				body["reason"] = remote.Reason
+			}
+			query.WriteJSON(w, remote.StatusCode, body)
+			return
+		}
+	}
+
 	if errors.Is(err, task.ErrNotFound) || errors.Is(err, kernel.ErrNotFound) {
 		err = domain.ErrQueryNotFound
 	}
