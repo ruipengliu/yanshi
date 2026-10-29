@@ -70,7 +70,7 @@ func testErasureRoutes(t *testing.T, s store.Store) {
 	if err := json.Unmarshal(request("POST", "erase", `{"date":"2026-10-27","from":"1.0","to":"1.0"}`, 200), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Task.ID != "del_2026-10-27_1" || result.Task.Session != "s" || result.Task.Status != "pending" || result.Task.DeleteAt.Format(time.RFC3339) != "2026-11-03T12:00:00Z" || len(notices) != 1 {
+	if result.Task.ID != "del_2026-10-27_1" || result.Task.Session != "s" || result.Task.Status != "pending" || result.Task.DeleteAt.Format(time.RFC3339) != "2026-11-03T16:00:00Z" || len(notices) != 1 {
 		t.Fatal(result)
 	}
 	request("POST", "capture_preview", `{"session":"s","page_options":{"limit":200,"max_chars":6000,"gap_ms":300000}}`, 400)
@@ -119,7 +119,7 @@ func (s rollbackDeletionStore) Update(ctx context.Context, bl, eu string, fn fun
 }
 
 func TestErasureNotificationRollback(t *testing.T) {
-	s := memstore.New()
+	s := memstore.New(captureClock)
 	if err := s.Update(context.Background(), "bl", "u", func(b *domain.Book) error {
 		return b.BindDay("2026-10-27", "s")
 	}); err != nil {

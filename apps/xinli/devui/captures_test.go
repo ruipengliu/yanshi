@@ -37,7 +37,7 @@ func (d *devActions) DeletionPending(_ context.Context, bl, eu, task string) {
 }
 
 func TestCaptureRoutes(t *testing.T) {
-	books := memstore.New()
+	books := memstore.New(captureClock)
 	actions := &devActions{}
 	h := Handler(Config{}, Options{Store: books, DaySessions: actions, Kernel: actions, Notifier: actions, Now: func() time.Time { return time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC) }})
 	request := func(method, path, body string, status int) []byte {
@@ -115,7 +115,7 @@ func TestCaptureRoutes(t *testing.T) {
 }
 
 func TestCaptureRoutesWithoutKernel(t *testing.T) {
-	books := memstore.New()
+	books := memstore.New(captureClock)
 	h := Handler(Config{}, Options{Store: books})
 	for _, tc := range []struct {
 		method, path, body string

@@ -14,25 +14,14 @@ const briefMaxChars = 8000
 const briefMaxSegments = 200
 
 type briefRevision struct {
-	date      string
-	lastRef   string
-	deletions int
-	deleted   bool
+	date     string
+	revision uint64
+	deleted  bool
 }
 
-func captureRevision(b *domain.Book, date string, segments []domain.PageSegment) briefRevision {
-	r := briefRevision{date: date, deleted: b.BusinessDay(date).Deleted}
-	if len(segments) > 0 {
-		r.lastRef = segments[len(segments)-1].Ref
-	}
-	// 批次引用永不复用，删除待办也不随完成而移除：组合可识别追加和任意范围擦除，
-	// 不把工作 Session 换绑或整理进度变化误当作原文变化。
-	for _, task := range b.DeletionTasks() {
-		if task.Date == date {
-			r.deletions++
-		}
-	}
-	return r
+func captureRevision(b *domain.Book, date string) briefRevision {
+	day := b.BusinessDay(date)
+	return briefRevision{date: date, revision: day.CaptureRevision, deleted: day.Deleted}
 }
 
 func briefInput(segments []domain.PageSegment) string {

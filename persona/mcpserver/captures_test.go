@@ -18,11 +18,11 @@ import (
 
 func TestCapturesMCP(t *testing.T) {
 	ctx := context.Background()
-	books := memstore.New()
+	books := memstore.New(captureClock)
 	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", Handler(books, Options{Now: func() time.Time { return now }}))
-	mux.Handle("/v1/fixture/", fixture.Handler(books, fixture.Options{}))
+	mux.Handle("/v1/fixture/", fixture.Handler(books, fixture.Options{Now: func() time.Time { return now }}))
 	hs := httptest.NewServer(mux)
 	defer hs.Close()
 	conn, err := mcp.NewClient(&mcp.Implementation{Name: "captures-test", Version: "1"}, nil).Connect(ctx, &mcp.StreamableClientTransport{Endpoint: hs.URL + "/mcp"}, nil)
@@ -118,6 +118,19 @@ func TestCapturesMCP(t *testing.T) {
 	if res := call("new", opts); res.IsError {
 		t.Fatal("new session cannot read")
 	}
+	now, _ = domain.CaptureExpiresAt("2026-10-27", "UTC")
+	if res := call("new", opts); !res.IsError || res.Meta["yanshi/page"] != nil || res.Content[0].(*mcp.TextContent).Text != domain.ErrCapturesExpired.Error() {
+		t.Fatal("expired MCP page was not rejected")
+	}
+	for _, name := range []string{"file_day", "file_changes"} {
+		res, err := conn.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: map[string]any{}, Meta: mcp.Meta{
+			"yanshi/business_line": "bl", "yanshi/end_user": "u", "yanshi/session": "new",
+		}})
+		if err != nil || len(res.Content) != 1 || res.Content[0].(*mcp.TextContent).Text != domain.ErrCapturesExpired.Error() {
+			t.Fatal(name, res, err)
+		}
+	}
+
 	r := XinliRegistration()
 	if !r.AttestsSpeakers || !r.CiteCaptures || r.Acks {
 		t.Fatal("registration flags")

@@ -153,7 +153,7 @@ func TestParity(t *testing.T) {
 		t.Fatal("golden version or step count changed")
 	}
 	ctx := context.Background()
-	endpoint := newParityEndpoint(t, memstore.New(), script.Now)
+	endpoint := newParityEndpoint(t, memstore.New(captureClock), script.Now)
 	defer endpoint.close()
 	conn := endpoint.conn
 	actual := parityGolden{Version: script.Version, Tools: parityTools(t, ctx, conn)}

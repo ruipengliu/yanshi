@@ -1,6 +1,6 @@
 # 旁听业务线 xinli
 
-> 状态：原有功能已实现；本文标注 P4 的生产补充尚未实现，以[整体架构](./persona-architecture.md) §13 Q91–Q124 为准。原有功能已用真实模型验证（2026-10-25，评测结果见 [m4-eval.md](./m4-eval.md) §12）；2026-10-25 按 [xinli 的建模](./xinli-model.md)（ADR-0042）改为变更集 · 依赖：[旁听](./captures.md)（ADR-0036、ADR-0037、ADR-0039）、[Memory 与 Grant](./m4-memory-grant.md)、[MCP 适配](./m5-mcp.md)、[长 Run](./m2-long-runs.md)（`context.scope: run`）· 术语：[内核术语](../../CONTEXT.md) 的 Span；[Persona 术语](../../persona/CONTEXT.md) 的 Exchange、Changeset、Revision、Project、Commitment、Awareness
+> 状态：原有功能已实现；P4-A5 的固定期限、原文版本与自然到期已实现，其他标注 P4 的生产补充按后续步骤接入，以[整体架构](./persona-architecture.md) §13 Q91–Q124 为准。原有功能已用真实模型验证（2026-10-25，评测结果见 [m4-eval.md](./m4-eval.md) §12）；2026-10-25 按 [xinli 的建模](./xinli-model.md)（ADR-0042）改为变更集 · 依赖：[旁听](./captures.md)（ADR-0036、ADR-0037、ADR-0039）、[Memory 与 Grant](./m4-memory-grant.md)、[MCP 适配](./m5-mcp.md)、[长 Run](./m2-long-runs.md)（`context.scope: run`）· 术语：[内核术语](../../CONTEXT.md) 的 Span；[Persona 术语](../../persona/CONTEXT.md) 的 Exchange、Changeset、Revision、Project、Commitment、Awareness
 
 xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理成交谈的摘要，按主题归集到 Project，记下双方的承诺、随新说出的话修订它们并按期限提醒，每周回顾沟通习惯，供用户随时提问。编排在业务线服务端（ADR-0037）；Persona 保存与分页读取旁听原文，yanshi 提供四个 AgentDef 的运行、可信页的渲染与审核，以及引用的说话人与说话时间（[captures.md](./captures.md) §6）。实体、变更集与修订的模型（为什么这样建、取舍）见 [xinli 的建模](./xinli-model.md)；本文写流程、工具与评测。
 
@@ -268,7 +268,7 @@ P4 自动调度以固定业务日时区、原文与处理进度为依据，抖�
 
 ADR-0050 的 P1 第 2 步已切换：xinli-day 版本 2 使用 `mcp_xinli__captures`，不再声明 `streams`。xinli 登记已开启 `attests_speakers`，Persona 不再输出交付回执；处理进度与接受范围变更集同事务推进。评测经夹具绑定业务日并向 Persona 提交旁听；内核 Capture 路径已退役。P1-④a 已补充 Persona 的擦除、删除待办与删除期限保存（见本节末）；④b 已接入内核删除与重建执行（见本节末），测试与效果仍由远端验收。
 
-P4 将引入 capture_revision，并按[整体架构](./persona-architecture.md) §13 Q97、Q98、Q114 为有序采集补齐序号、缺口暂存与采集世代：擦除或删一天推进世代并清旧缓冲，拒绝旧请求；到期与注销清全部缓冲正文，不允许把旧请求自动改成新世代。以下是现有领域契约，生产接入须同时满足这些约束。
+P4-A5 已引入 capture_revision；后续按[整体架构](./persona-architecture.md) §13 Q97、Q98、Q114 为有序采集补齐序号、缺口暂存与采集世代：擦除或删一天推进世代并清旧缓冲，拒绝旧请求；到期与注销清全部缓冲正文，不允许把旧请求自动改成新世代。以下是现有领域契约，生产接入须同时满足这些约束。
 
 原文按（BusinessLine、EndUser、业务日）隔离。业务日是提交方按用户当地日期给出的 YYYY-MM-DD，不从服务器时钟或片段时间反推。每个业务日记录当前工作 Session，绑定可幂等重试、可换绑；旧 Session 随即不能再读原文，一个 Session 不能同时绑定两个业务日。它不复用每日整理总览，已有 State 的字段形状保持不变。
 
@@ -285,6 +285,18 @@ MCP 的 captures 工具与冻结 golden 中的说明及 schema 一致，声明�
 分页回归通过夹具向 Persona 提交固定数据，逐字比较平台渲染结果与 P1-⑤a 冻结 golden，覆盖多批、跨当地日期、跨页时段、无时间、预算和进行中判断；说明与 schema 另与冻结 golden 核对。可信页的字符计数沿用冻结的计数口径，包含跨日新增日期头的计入顺序；每段文字独立限制为 2000 字，渲染后仍检查 token 预算。平台接受至多 500 段，模型未给 limit 时仍取 200，实际页段数同时受模型参数和平台上限约束。跨日字符边界与显式 limit=201 都用真实参数校验并逐页逐字比较。
 
 引用位数参与字符与 token 计数，内核日志位置与业务批次位数不同会影响切页。这是已知且可接受的差异：模型看到的引用本来就不同。冻结常规基准时使用位数一致的编号，另有边界测试保留不同位数造成的切页差异。
+
+### 固定期限与自然到期（P4-A5）
+
+首次接收原文时固定业务日的 `TimeZone`、UTC `ExpiresAt`，`DeleteAt` 保持为同一时刻。当前采集接缝以首批最后一段的时区决定该日时区；未提供时区沿用 `Asia/Shanghai`。以次日当地零点加七个当地日历日计算，跨 DST 不使用固定小时数。之后追加、擦除与重建均不改变这些值；空业务日尚未接收原文时，编排器不创建没有期限的工作 Session。
+
+A2 已将旧的“最后尚存片段时区”推导结果保存在业务日元数据中。装载缺少 `ExpiresAt` 的旧日时，以这个值一次性计算，空值用上海默认时区，不重新扫描原文。View 只升级隔离快照，下一次 Update 持久化；PG 到期扫描也发现索引期限为 NULL 的旧 owner，使从未再被访问的数据完成升级与清理。仅绑定但没有原文的日不进入后续扫描。
+
+`now >= ExpiresAt` 时，领域读取守卫拒绝所有 `CaptureAccess` 读取（包括迭代器恢复后的下一段）、追加以及历史/当前工作 Session 的 `captures`、`file_changes`、`file_day`。首次收到已过期的历史日也拒收。入口注入可信时钟，未注入时用真实时间；时钟不进入快照。长期账本查询与用户修改不经过原文闸门。
+
+`Book.ExpireCaptures(date, now)` 幂等删除整日原文片段，清空 `ReadThrough`、分页间隔等读页状态，设置独立 `Expired` 状态并递增原文版本；保留处理进度结论、长期账本、历史 Session 绑定、提交 ID 与批次编号。它不调用 `EraseDay`，也不产生擦除的级联或删除待办。A13 的缺口正文须接入这个事务清理点。
+
+`Store.ExpiringCaptures(ctx, now)` 发现 owner，`ScanExpirations` 逐 owner Update 重查并清理；`StartExpirations` 启动立即扫描，随后按周期运行，可注入时钟与 tick。失败事务不丢失发现条件，下一轮或重启可恢复。A11 再接生产启动入口。本步没有改变注销或领域变化协议。
 
 ### 擦除与删除一天（P1-④a）
 
@@ -335,13 +347,13 @@ MCP 的 captures 工具与冻结 golden 中的说明及 schema 一致，声明�
 4. 擦除按 `sessions` 查询有效 Memory，每批至多 32 个来源，并去重为 `{id, summary}` 候选；只交 App 展示，不自动删除。删一天逐个调用这些来源 Session 的 Memory 删除接口，不把 404 当作 Memory 已删成功。
 5. 同事务保存候选、清理完成时间和是否还需重新整理。任何失败都保存固定的步骤错误类别，停止后续步骤；网络响应正文不入日志或待办。错误按扫描间隔开始指数退避，默认上限 10 分钟，`RetryInterval` / `RetryMax` 可配置。退避计时只在编排器内存，重启后立即尝试，持久的待办不会丢失。
 
-擦除完成时，使用擦除前最后一段旁听的时区判断是否为过去的业务日；最后一段没有时区则用 `Options.DefaultTimeZone`，默认 `Asia/Shanghai`。期限为零或仍晚于当前时间才重建，今天留给下次整理按需创建，已过期及删一天均不重建。时区在擦除前记入待办，不能因擦掉最后一段而改变“今天”的判断。
+擦除完成时，使用固定业务日时区判断是否为过去的业务日。待办保存同一个时区与期限；P4-A5 的重建及复用绑定均先校验原文期限，今天留给下次整理按需创建，已过期及删一天均不重建。
 
 为了覆盖“清理完成后、重新整理前”崩溃，删除待办额外保存 `time_zone` 和 `rebuild_pending`。`CompleteDeletionWithRebuild` 把清理完成与重新整理意图同事务保存；`PendingDeletionTasks` / `Store.PendingDeletions` 同时返回 `status=pending` 或 `rebuild_pending=true` 的工作。重新整理失败时状态仍为 completed（删除确已完成），保留重建标记与最近错误。P4 的索引查询须覆盖这两种条件。原 `CompleteDeletionTask` 的调用语义不变，不主动登记重建。
 
 重建调用 `EnsureDaySession(ctx, bl, eu, date)`，随后以 `xinli_rebuild_<待办ID>` 为输入 ID 提交“整理今天”；内核按 Session 与输入 ID 去重，成功后 `CompleteDeletionRebuild` 清掉标记。若提交已被内核接受、但本地标记提交失败，当前恢复复用绑定与同一输入 ID；内核只保证最近 64 条输入去重，P4 必须按 Q100 完整补读日志确认，不能无界盲重发。更晚的擦除或删一天已接管该日时，旧待办清掉重建意图，不再提交；期限在等待中到期也跳过。
 
-`EnsureDaySession` 在用户互斥入口内先读 Persona 的当前绑定，已有则复用；没有时创建 `xinli-day`，创建和 `BindDay` 使用业务日同一个 `delete_at`，零期限不传。已删除的业务日拒绝重建，未完成删除的业务日等待清理，过期的业务日不新建。绑定事务重读删除状态、删除待办代数和期限，防止创建网络调用期间发生的擦除被旧读取覆盖。创建与绑定之间崩溃允许留下未绑定的空 Session，它没有读过原文；绑定成功后的重复调用不会再创建。
+`EnsureDaySession` 在用户互斥入口内先读 Persona 的当前绑定，已有则复用；没有时创建 `xinli-day`，创建和 `BindDay` 使用业务日同一个 `expires_at` 作为 `delete_at`，缺少期限时拒绝创建。已删除的业务日拒绝重建，未完成删除的业务日等待清理，过期的业务日不新建。绑定事务重读删除状态、删除待办代数和期限，防止创建网络调用期间发生的擦除被旧读取覆盖。创建与绑定之间崩溃允许留下未绑定的空 Session，它没有读过原文；绑定成功后的重复调用不会再创建。
 
 **来源 Memory 删除与开发模式**：`DELETE /v1/sessions/{id}/memories` 在 Session 已不存在时，允许同业务线的服务令牌按删除记录授权，幂等清理擦除后保留的 Memory；用户令牌、无删除记录或跨业务线仍返回 404。编排器仍不把此接口的 404 当作成功。客户端的 `Deletion(ctx, businessLine, id)` 和 `DeleteSessionMemories(ctx, businessLine, id)` 均携带 `business_line` 查询参数，`MemoriesBySource` 同样携带业务线与 EndUser；因此 `xinli dev -kernel-url` 不带令牌连接 unrestricted 内核时也能执行完整流程。前两个接口在服务令牌模式下以令牌业务线为准。
 
@@ -353,7 +365,7 @@ xinli 开发页的“实况简述”按钮按页面当前业务日调用 `POST /
 
 取当天最近 200 段，按原顺序渲染成每行一段：`[佩戴者] 文字`、`[他人 other-1 @P-0012] 文字`，没有 `speaker_ref` 时省略 `@...`。段内空白统一成空格，避免内嵌换行冒充新段。按声明的 `input.max_chars: 8000` 计算 Unicode 字符，标签与换行都计入预算；从尾部保留，边界段只保留正文尾部并保留完整说话人标签。应用常量与声明保持一致，声明收紧预算时也须修改应用常量；当前没有读取声明元数据的公开 API。
 
-Persona 当前没有公开的原文版本号。请求前后各在一个只读事务中取得 `(业务日, Deleted, 最后一段引用, 当日删除待办数量)`：批次号永不复用，每次擦除都追加且不移除删除待办，因此任意追加、部分擦除、删一天都会改变组合；整理进度与工作 Session 换绑不会误使简述失效。模型调用不占 Persona 事务锁，返回前重读，不一致时丢弃结果并返回 409、“原文已变化，请重新生成”。P4 按[整体架构](./persona-architecture.md) §13 Q98 改用 capture_revision（原文版本）作为变化键，追加、擦除与自然到期均改变版本；即使不做原位修订也要替换当前组合，并在读取时校验期限（Q96）。
+Persona 的业务日查询公开 `capture_revision`（原文版本）。请求前后各在只读事务中核对 `(业务日, capture_revision, Deleted)`，两次都检查原文期限。追加、擦除（含删一天）与自然到期清理各递增一次；幂等重交、重复清理、整理进度与 Session 换绑不改变版本。模型调用不占 Persona 事务锁，返回前版本不一致时丢弃结果并返回 409、“原文已变化，请重新生成”；即使扫描尚未运行，跨过期限也返回 409 的固定到期错误，不交出简述（Q96、Q98）。
 
 前端用独立请求代次（不复用轮询原文的刷新序号）。切换业务日或身份、离开页面、提交新原文、发起擦除/删一天时立即清空显示并作废旧代次；因此切走又切回也不会显示旧请求结果。简述生成期间仍可擦除。服务器只能核对请求指定的业务日，浏览器当前选择由前端代次保证；返回前最后一次读取之后发生的并发变化，无法靠两个独立 HTTP 请求作原子显示保证，开发页自身的擦除仍由代次拦截。
 

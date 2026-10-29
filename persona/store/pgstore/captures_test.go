@@ -8,12 +8,16 @@ import (
 	"time"
 
 	"persona/domain"
+	"persona/pg"
 	"persona/pg/pgtest"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestViewOverlay(t *testing.T) {
 	pool := pgtest.New(t)
-	s := New(pool)
+	s := New(pool, captureClock)
 	ctx := context.Background()
 	const date = "2026-10-27"
 	if err := s.Update(ctx, "bl", "u", func(b *domain.Book) error {
@@ -21,8 +25,7 @@ func TestViewOverlay(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.View(ctx, "bl", "u", func(b *domain.Book) error {
-		a := b.CaptureAccess().(*captureTx)
+	if err := viewCaptureTx(ctx, pool, func(a *captureTx) error {
 		var readOnly, isolation string
 		if err := a.tx.QueryRow(ctx, `SHOW transaction_read_only`).Scan(&readOnly); err != nil {
 			return err
@@ -104,12 +107,10 @@ func TestViewOverlay(t *testing.T) {
 
 func TestDatabaseCaptureErrors(t *testing.T) {
 	pool := pgtest.New(t)
-	s := New(pool)
 	ctx := context.Background()
 	for _, operation := range []string{"lookup", "adjacent", "batch", "scan"} {
 		t.Run(operation, func(t *testing.T) {
-			err := s.View(ctx, "bl", "u", func(b *domain.Book) error {
-				a := b.CaptureAccess().(*captureTx)
+			err := viewCaptureTx(ctx, pool, func(a *captureTx) error {
 				// 真正使 PG 事务失败，验证驱动错误没有被当作引用不存在。
 				if _, err := a.tx.Exec(ctx, `SELECT 1/0`); err == nil {
 					return errors.New("fault did not abort transaction")
@@ -138,7 +139,7 @@ func TestDatabaseCaptureErrors(t *testing.T) {
 }
 
 func TestScanCancellation(t *testing.T) {
-	s := New(pgtest.New(t))
+	s := New(pgtest.New(t), captureClock)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	err := s.Update(ctx, "bl", "u", func(b *domain.Book) error {
@@ -165,7 +166,7 @@ func TestScanCancellation(t *testing.T) {
 }
 
 func TestJSONBNulParity(t *testing.T) {
-	s := New(pgtest.New(t))
+	s := New(pgtest.New(t), captureClock)
 	ctx := context.Background()
 	const text = "前\x00后\\u0000"
 	if err := s.Update(ctx, "bl", "u", func(b *domain.Book) error {
@@ -195,5 +196,84 @@ func TestJSONBNulParity(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// 存储故障注入直接验证底层接缝，领域公开读取器不会暴露绕过到期闸门的连接。
+func viewCaptureTx(ctx context.Context, pool *pgxpool.Pool, fn func(*captureTx) error) error {
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return err
+	}
+	defer pg.Rollback(tx)
+	a := newCaptureTx(ctx, tx, []byte("bl"), []byte("u"), true)
+	defer a.close()
+	return fn(a)
+}
+
+func TestExpirationPhysicalCleanupAndLegacyLoad(t *testing.T) {
+	pool := pgtest.New(t)
+	s := New(pool, captureClock)
+	ctx := context.Background()
+	const date = "2026-10-27"
+	if err := s.Update(ctx, "bl", "u", func(b *domain.Book) error {
+		_, err := b.AppendCaptures(date, "a", []domain.CaptureSegment{{Speaker: "wearer", Text: "原文", TimeZone: "America/New_York"}})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// 模拟 0001 的元数据形状；扫描必须发现无人再访问的旧 owner。
+	if _, err := pool.Exec(ctx, `UPDATE business_days SET payload=payload-'ExpiresAt'-'Expired'-'CaptureRevision',expires_at=NULL,capture_cleanup_done=false`); err != nil {
+		t.Fatal(err)
+	}
+	expires, _ := domain.CaptureExpiresAt(date, "America/New_York")
+	if owners, err := s.ExpiringCaptures(ctx, expires); err != nil || len(owners) != 1 {
+		t.Fatal(owners, err)
+	}
+	if err := s.Update(ctx, "bl", "u", func(b *domain.Book) error {
+		day := b.BusinessDay(date)
+		if day.TimeZone != "America/New_York" || !day.ExpiresAt.Equal(expires) {
+			t.Fatal(day)
+		}
+		return b.ExpireCaptures(date, expires)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM capture_segments`).Scan(&count); err != nil || count != 0 {
+		t.Fatal("raw rows remain", count, err)
+	}
+	if owners, err := s.ExpiringCaptures(ctx, expires); err != nil || len(owners) != 0 {
+		t.Fatal(owners, err)
+	}
+	var saved time.Time
+	if err := pool.QueryRow(ctx, `SELECT expires_at FROM business_days`).Scan(&saved); err != nil || !saved.Equal(expires) {
+		t.Fatal(saved, err)
+	}
+}
+
+func TestLegacyEmptyDayLeavesExpirationScan(t *testing.T) {
+	pool := pgtest.New(t)
+	s := New(pool, captureClock)
+	ctx := context.Background()
+	if err := s.Update(ctx, "bl", "u", func(b *domain.Book) error { return b.BindDay("2026-10-27", "empty") }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE business_days SET capture_cleanup_done=false`); err != nil {
+		t.Fatal(err)
+	}
+	if owners, err := s.ExpiringCaptures(ctx, captureClock()); err != nil || len(owners) != 1 {
+		t.Fatal(owners, err)
+	}
+	if err := s.Update(ctx, "bl", "u", func(b *domain.Book) error {
+		if len(b.ExpiringCaptureDays(captureClock())) != 0 {
+			t.Fatal("empty day has raw text to expire")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if owners, err := s.ExpiringCaptures(ctx, captureClock()); err != nil || len(owners) != 0 {
+		t.Fatal("empty day repeatedly discovered", owners, err)
 	}
 }

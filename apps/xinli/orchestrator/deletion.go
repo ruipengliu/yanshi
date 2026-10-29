@@ -207,7 +207,8 @@ func (o *Orchestrator) executeDeletion(ctx context.Context, k DeletionKernel, bl
 		// 更新的擦除或删一天已接管该日；旧待办不能在它们之后重新提交整理。
 		skip := !o.rebuildDue(task)
 		if err := o.store.View(ctx, bl, eu, func(b *domain.Book) error {
-			skip = skip || b.BusinessDay(task.Date).Deleted
+			b.SetCaptureClock(o.now)
+			skip = skip || b.CheckCaptures(task.Date) != nil
 			seen := false
 			for _, other := range b.DeletionTasks() {
 				if other.ID == task.ID {
@@ -273,6 +274,10 @@ func (o *Orchestrator) ensureDaySession(ctx context.Context, k DeletionKernel, b
 	var day domain.BusinessDay
 	var generation int
 	read := func(b *domain.Book) error {
+		b.SetCaptureClock(o.now)
+		if err := b.CheckCaptures(date); err != nil {
+			return err
+		}
 		day = b.BusinessDay(date)
 		if day.Deleted {
 			return domain.ErrDayDeleted
@@ -291,34 +296,37 @@ func (o *Orchestrator) ensureDaySession(ctx context.Context, k DeletionKernel, b
 	if err := o.store.View(ctx, bl, eu, read); err != nil {
 		return "", err
 	}
+	if day.ExpiresAt.IsZero() {
+		return "", errors.New("orchestrator: business day has no capture deadline")
+	}
 	if day.Session != "" {
 		return day.Session, nil
 	}
-	if !day.DeleteAt.IsZero() && !day.DeleteAt.After(o.now()) {
-		return "", errors.New("orchestrator: business day expired")
+	if !day.ExpiresAt.IsZero() && !day.ExpiresAt.After(o.now()) {
+		return "", domain.ErrCapturesExpired
 	}
-	sid, err := k.CreateSessionWithOptions(ctx, bl, eu, DayAgent, kernel.SessionOptions{DeleteAt: day.DeleteAt})
+	sid, err := k.CreateSessionWithOptions(ctx, bl, eu, DayAgent, kernel.SessionOptions{DeleteAt: day.ExpiresAt})
 	if err != nil {
 		return "", err
 	}
 	before := generation
-	createdDeleteAt := day.DeleteAt
+	createdDeleteAt := day.ExpiresAt
 	// 创建和绑定之间崩溃可能留下空 Session；它没有原文。绑定成功后重试总是复用 Persona 的当前绑定。
 	err = o.store.Update(ctx, bl, eu, func(b *domain.Book) error {
 		if err := read(b); err != nil {
 			return err
 		}
-		if generation != before || !day.DeleteAt.Equal(createdDeleteAt) {
+		if generation != before || !day.ExpiresAt.Equal(createdDeleteAt) {
 			return errors.New("orchestrator: business day changed")
 		}
 		if day.Session != "" {
 			sid = day.Session
 			return nil
 		}
-		if !day.DeleteAt.IsZero() && !day.DeleteAt.After(o.now()) {
+		if !day.ExpiresAt.IsZero() && !day.ExpiresAt.After(o.now()) {
 			return errors.New("orchestrator: business day expired")
 		}
-		return b.BindDay(date, sid, day.DeleteAt)
+		return b.BindDay(date, sid, day.ExpiresAt)
 	})
 	if err != nil {
 		return "", fmt.Errorf("orchestrator: bind day: %w", err)

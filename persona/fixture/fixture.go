@@ -55,7 +55,12 @@ func Handler(s store.Store, opts Options) http.Handler {
 	register := func(method, path string, readOnly bool, action func(*domain.Book, *http.Request) (any, error)) {
 		mux.HandleFunc(method+" "+prefix+path, func(w http.ResponseWriter, r *http.Request) {
 			var out any
-			apply := func(book *domain.Book) error { var err error; out, err = action(book, r); return err }
+			apply := func(book *domain.Book) error {
+				book.SetCaptureClock(now)
+				var err error
+				out, err = action(book, r)
+				return err
+			}
 			transact := s.Update
 			if readOnly {
 				transact = s.View

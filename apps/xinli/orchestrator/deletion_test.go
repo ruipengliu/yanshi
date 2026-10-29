@@ -136,9 +136,9 @@ func eraseFixture(t *testing.T, books store.Store, date, kind string, deadline t
 		}
 		var err error
 		if kind == "day" {
-			task, err = b.EraseDay(date, time.Now())
+			task, err = b.EraseDay(date, captureClock())
 		} else {
-			task, err = b.Erase(date, "1.0", "1.0", time.Now())
+			task, err = b.Erase(date, "1.0", "1.0", captureClock())
 		}
 		return err
 	})
@@ -164,8 +164,8 @@ func scan(t *testing.T, o *Orchestrator) {
 
 func TestEraseExecutionAndRebuild(t *testing.T) {
 	c := newDeletionClock()
-	books := memstore.New()
-	deadline := c.now().Add(48 * time.Hour)
+	books := memstore.New(captureClock)
+	deadline, _ := domain.CaptureExpiresAt("2026-10-27", "Asia/Shanghai")
 	task := eraseFixture(t, books, "2026-10-27", "erase", deadline)
 	k := &deletionKernel{active: true}
 	o := New(context.Background(), books, k, Options{Now: c.now})
@@ -194,7 +194,7 @@ func TestDeletionMissingAndCleaning(t *testing.T) {
 	for _, mode := range []string{"deleted", "absent", "cleaning"} {
 		t.Run(mode, func(t *testing.T) {
 			c := newDeletionClock()
-			books := memstore.New()
+			books := memstore.New(captureClock)
 			eraseFixture(t, books, "2026-10-28", "erase", time.Time{})
 			k := &deletionKernel{missing: true, noRecord: mode == "absent", cleaning: mode == "cleaning"}
 			o := New(context.Background(), books, k, Options{Now: c.now})
@@ -225,7 +225,7 @@ func TestDeletionFailureRetry(t *testing.T) {
 	for step, class := range map[string]string{"session": "session", "interrupt": "interrupt", "delete:erasure": "delete_session", "deletion": "deletion", "memories": "memories", "create": "rebuild", "submit": "submit"} {
 		t.Run(step, func(t *testing.T) {
 			c := newDeletionClock()
-			books := memstore.New()
+			books := memstore.New(captureClock)
 			eraseFixture(t, books, "2026-10-27", "erase", time.Time{})
 			k := &deletionKernel{active: true, fail: step}
 			o := New(context.Background(), books, k, Options{Now: c.now})
@@ -258,7 +258,7 @@ func TestDeletionDayAndNoRebuild(t *testing.T) {
 	for _, mode := range []string{"day", "today", "expired", "timezone"} {
 		t.Run(mode, func(t *testing.T) {
 			c := newDeletionClock()
-			books := memstore.New()
+			books := memstore.New(captureClock)
 			kind, date := "erase", "2026-10-27"
 			deadline := time.Time{}
 			if mode == "day" {
@@ -268,7 +268,7 @@ func TestDeletionDayAndNoRebuild(t *testing.T) {
 				date = "2026-10-28"
 			}
 			if mode == "expired" {
-				deadline = c.now().Add(-time.Hour)
+				c.at, _ = domain.CaptureExpiresAt(date, "Asia/Shanghai")
 			}
 			if mode == "timezone" {
 				c.at = time.Date(2026, 10, 27, 16, 30, 0, 0, time.UTC)
@@ -297,9 +297,9 @@ func TestDeletionDayAndNoRebuild(t *testing.T) {
 
 func TestEnsureDaySession(t *testing.T) {
 	c := newDeletionClock()
-	books := memstore.New()
+	books := memstore.New(captureClock)
 	k := &deletionKernel{}
-	deadline := c.now().Add(24 * time.Hour)
+	deadline, _ := domain.CaptureExpiresAt("2026-10-28", "Asia/Shanghai")
 	// 擦除释放绑定但保留期限；无内核 Session 的待办也可完成。
 	task := eraseFixture(t, books, "2026-10-28", "erase", deadline)
 	if err := books.Update(context.Background(), "bl", "u", func(b *domain.Book) error { return b.CompleteDeletionTask(task.ID, nil, c.now()) }); err != nil {
@@ -332,7 +332,7 @@ func TestEnsureDaySession(t *testing.T) {
 
 func TestStartupRecoversRebuildWithoutDuplicateSession(t *testing.T) {
 	c := newDeletionClock()
-	books := memstore.New()
+	books := memstore.New(captureClock)
 	eraseFixture(t, books, "2026-10-27", "erase", time.Time{})
 	k := &deletionKernel{fail: "submit"}
 	first := New(context.Background(), books, k, Options{Now: c.now})
@@ -369,7 +369,7 @@ func TestStartupRecoversRebuildWithoutDuplicateSession(t *testing.T) {
 
 func TestStartupPendingAndNotificationShutdown(t *testing.T) {
 	c := newDeletionClock()
-	books := memstore.New()
+	books := memstore.New(captureClock)
 	eraseFixture(t, books, "2026-10-28", "erase", time.Time{})
 	k := &deletionKernel{cleaning: true}
 	first := New(context.Background(), books, k, Options{Now: c.now})
@@ -421,7 +421,7 @@ func (s *rebuildCommitFailure) Update(ctx context.Context, bl, eu string, fn fun
 }
 func TestRebuildCommitCrashDeduplicatesAcceptedInput(t *testing.T) {
 	c := newDeletionClock()
-	books := &rebuildCommitFailure{Store: memstore.New(), fail: true}
+	books := &rebuildCommitFailure{Store: memstore.New(captureClock), fail: true}
 	eraseFixture(t, books, "2026-10-27", "erase", time.Time{})
 	k := &deletionKernel{}
 	first := New(context.Background(), books, k, Options{Now: c.now})
@@ -442,7 +442,7 @@ func TestRebuildCommitCrashDeduplicatesAcceptedInput(t *testing.T) {
 
 func TestDayMemoryFailureMustNotComplete(t *testing.T) {
 	c := newDeletionClock()
-	books := memstore.New()
+	books := memstore.New(captureClock)
 	eraseFixture(t, books, "2026-10-27", "day", time.Time{})
 	k := &deletionKernel{fail: "delete_memories:old"}
 	o := New(context.Background(), books, k, Options{Now: c.now})
@@ -467,7 +467,7 @@ func TestDayMemoryFailureMustNotComplete(t *testing.T) {
 func TestSessionlessDeletionAndDefaultTimezone(t *testing.T) {
 	c := newDeletionClock()
 	c.at = time.Date(2026, 10, 27, 16, 30, 0, 0, time.UTC)
-	books := memstore.New()
+	books := memstore.New(captureClock)
 	if err := books.Update(context.Background(), "bl", "u", func(b *domain.Book) error {
 		if _, err := b.AppendCaptures("2026-10-28", "c", []domain.CaptureSegment{{Speaker: "wearer", Text: "原文"}}); err != nil {
 			return err
@@ -488,7 +488,7 @@ func TestSessionlessDeletionAndDefaultTimezone(t *testing.T) {
 
 func TestPeriodicRetryAndOrderedTasks(t *testing.T) {
 	c := newDeletionClock()
-	books := memstore.New()
+	books := memstore.New(captureClock)
 	eraseFixture(t, books, "2026-10-28", "erase", time.Time{})
 	k := &deletionKernel{cleaning: true}
 	o := New(context.Background(), books, k, Options{Now: c.now, RetryInterval: time.Millisecond, RetryMax: time.Second})
@@ -531,7 +531,7 @@ func TestPeriodicRetryAndOrderedTasks(t *testing.T) {
 
 func TestLaterDayDeletionCancelsRebuildIntent(t *testing.T) {
 	c := newDeletionClock()
-	books := memstore.New()
+	books := memstore.New(captureClock)
 	eraseFixture(t, books, "2026-10-27", "erase", time.Time{})
 	k := &deletionKernel{fail: "submit"}
 	o := New(context.Background(), books, k, Options{Now: c.now})

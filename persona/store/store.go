@@ -3,6 +3,7 @@ package store
 
 import (
 	"context"
+	"time"
 
 	"persona/domain"
 )
@@ -18,6 +19,8 @@ type Store interface {
 	// PendingDeletions 按 BusinessLine、EndUser 的 Go 字节顺序返回去重的所有者；
 	// 只发现有删除待办或完成后仍需重新整理的所有者；P4 的 PG 实现按待办表索引查询，不扫描 Book。
 	PendingDeletions(ctx context.Context) ([]Owner, error)
+	// ExpiringCaptures 只发现到期或待升级的所有者，执行仍在逐键 Update 中重查。
+	ExpiringCaptures(ctx context.Context, now time.Time) ([]Owner, error)
 }
 
 // Owner 是存储的隔离键，待办执行仍通过各键的 Update/View。

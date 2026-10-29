@@ -14,7 +14,7 @@ import (
 // 原文、绑定、处理进度与变更集共享同一个提交点，失败事务不能只留下进度。
 func TestCaptureProgressTransaction(t *testing.T) {
 	ctx := context.Background()
-	s := memstore.New()
+	s := memstore.New(captureClock)
 	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
 	opts := domain.PageOptions{Limit: 200, MaxChars: 6000, GapMS: 300000, MaxToolResult: 8000}
 	if err := s.Update(ctx, "bl", "u", func(b *domain.Book) error {
@@ -80,7 +80,7 @@ func TestCaptureProgressTransaction(t *testing.T) {
 // 读页事务失败后，接受空变更集也不能凭失败事务里看到的页推进处理进度。
 func TestCaptureReadTailTransaction(t *testing.T) {
 	ctx := context.Background()
-	s := memstore.New()
+	s := memstore.New(captureClock)
 	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
 	opts := domain.PageOptions{Limit: 200, MaxChars: 6000, GapMS: 300000, MaxToolResult: 8000}
 	if err := s.Update(ctx, "bl", "u", func(b *domain.Book) error {

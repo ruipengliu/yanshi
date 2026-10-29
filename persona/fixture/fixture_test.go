@@ -78,7 +78,7 @@ func TestErrors(t *testing.T) {
 }
 
 func testErrors(t *testing.T, s store.Store) {
-	handler := fixture.Handler(s, fixture.Options{})
+	handler := fixture.Handler(s, fixture.Options{Now: captureClock})
 	request := func(method, path, body string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, httptest.NewRequest(method, "/v1/fixture/bl/u/"+path, strings.NewReader(body)))
@@ -150,7 +150,7 @@ func TestRejectOversize(t *testing.T) {
 }
 
 func testRejectOversize(t *testing.T, s store.Store) {
-	handler := fixture.Handler(s, fixture.Options{})
+	handler := fixture.Handler(s, fixture.Options{Now: captureClock})
 	body := `{"projects":[]}` + strings.Repeat(" ", 4<<20) + `{}`
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest("POST", "/v1/fixture/bl/u/seed", strings.NewReader(body)))
@@ -166,7 +166,7 @@ func TestCapturePosition(t *testing.T) {
 }
 
 func testCapturePosition(t *testing.T, s store.Store) {
-	handler := fixture.Handler(s, fixture.Options{})
+	handler := fixture.Handler(s, fixture.Options{Now: captureClock})
 	request := func(path, body string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, httptest.NewRequest("POST", "/v1/fixture/bl/u/"+path, strings.NewReader(body)))
@@ -193,11 +193,11 @@ func testCapturePosition(t *testing.T, s store.Store) {
 	}
 	check("s", "0")
 	if err := s.Update(context.Background(), "bl", "u", func(b *domain.Book) error {
-		c := domain.NewCall(b, "s", nil, nil, time.Now())
+		c := domain.NewCall(b, "s", nil, nil, captureClock())
 		if _, err := c.Captures(domain.PageOptions{Limit: 200, MaxChars: 6000, GapMS: 300000, MaxToolResult: 8000}); err != nil {
 			return err
 		}
-		c = domain.NewCall(b, "s", json.RawMessage(`{"source":{"from":"#1.0","to":"#1.0"}}`), nil, time.Now())
+		c = domain.NewCall(b, "s", json.RawMessage(`{"source":{"from":"#1.0","to":"#1.0"}}`), nil, captureClock())
 		c.FileChanges()
 		return nil
 	}); err != nil {

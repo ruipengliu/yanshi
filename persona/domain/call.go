@@ -39,6 +39,9 @@ type DayFiled struct {
 }
 
 func NewCall(book *Book, session string, args json.RawMessage, cites map[string]Citation, now time.Time) *Call {
+	if book != nil {
+		book.SetCaptureClock(func() time.Time { return now })
+	}
 	return &Call{u: book, session: session, args: args, cites: cites, now: now}
 }
 

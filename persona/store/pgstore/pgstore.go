@@ -5,6 +5,7 @@ import (
 	"context"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -16,6 +17,7 @@ import (
 
 type Store struct {
 	pool *pgxpool.Pool
+	now  func() time.Time
 }
 
 var _ store.Store = (*Store)(nil)
@@ -30,7 +32,13 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 }
 
 // New 接管专属连接池，调用方不得在 Close 后继续复用它。
-func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
+func New(pool *pgxpool.Pool, now ...func() time.Time) *Store {
+	s := &Store{pool: pool}
+	if len(now) > 0 {
+		s.now = now[0]
+	}
+	return s
+}
 
 func (s *Store) Close() { s.pool.Close() }
 
@@ -64,6 +72,7 @@ func (s *Store) Update(ctx context.Context, businessLine, endUser string, fn fun
 	access := newCaptureTx(ctx, tx, bl, eu, false)
 	defer access.close()
 	book.SetCaptureAccess(access)
+	book.SetCaptureClock(s.now)
 	err = fn(book)
 	// 在写回账本之前关闭接缝，逃逸的迭代器也不能在提交阶段继续访问。
 	access.close()
@@ -103,6 +112,7 @@ func (s *Store) View(ctx context.Context, businessLine, endUser string, fn func(
 	access := newCaptureTx(ctx, tx, bl, eu, true)
 	defer access.close()
 	book.SetCaptureAccess(access)
+	book.SetCaptureClock(s.now)
 	if err := fn(book); err != nil {
 		return err
 	}
@@ -114,6 +124,36 @@ func (s *Store) PendingDeletions(ctx context.Context) ([]store.Owner, error) {
 		return nil, err
 	}
 	rows, err := s.pool.Query(ctx, `SELECT DISTINCT business_line,end_user FROM deletion_tasks WHERE status='pending' OR rebuild_pending`)
+	if err != nil {
+		return nil, contextError(ctx, err)
+	}
+	defer rows.Close()
+	out := []store.Owner{}
+	for rows.Next() {
+		var bl, eu []byte
+		if err := rows.Scan(&bl, &eu); err != nil {
+			return nil, err
+		}
+		out = append(out, store.Owner{BusinessLine: string(bl), EndUser: string(eu)})
+	}
+	if err := contextError(ctx, rows.Err()); err != nil {
+		return nil, err
+	}
+	// Go 的字节顺序与内存实现一致，不依赖数据库的 locale。
+	slices.SortFunc(out, func(a, b store.Owner) int {
+		if n := strings.Compare(a.BusinessLine, b.BusinessLine); n != 0 {
+			return n
+		}
+		return strings.Compare(a.EndUser, b.EndUser)
+	})
+	return out, nil
+}
+
+func (s *Store) ExpiringCaptures(ctx context.Context, now time.Time) ([]store.Owner, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT business_line,end_user FROM business_days WHERE NOT capture_cleanup_done AND (expires_at <= $1 OR expires_at IS NULL)`, now)
 	if err != nil {
 		return nil, contextError(ctx, err)
 	}

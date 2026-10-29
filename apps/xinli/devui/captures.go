@@ -71,6 +71,7 @@ func registerRoutes(mux *http.ServeMux, opts Options) {
 			Tasks    []domain.DeletionTask `json:"tasks"`
 		}
 		err := opts.Store.View(r.Context(), r.PathValue("businessLine"), r.PathValue("endUser"), func(b *domain.Book) error {
+			b.SetCaptureClock(opts.Now)
 			out.Day = b.BusinessDay(date)
 			var err error
 			out.Segments, err = b.DayCaptures(date)
@@ -86,7 +87,11 @@ func registerRoutes(mux *http.ServeMux, opts Options) {
 			return nil
 		})
 		if err != nil {
-			fail(w, 500, "read_failed")
+			if errors.Is(err, domain.ErrCapturesExpired) {
+				write(w, 409, map[string]any{"error": err.Error(), "day": out.Day})
+			} else {
+				fail(w, 500, "read_failed")
+			}
 			return
 		}
 		write(w, 200, out)
@@ -106,12 +111,17 @@ func registerRoutes(mux *http.ServeMux, opts Options) {
 		}
 		var refs []string
 		err = opts.Store.Update(r.Context(), r.PathValue("businessLine"), r.PathValue("endUser"), func(b *domain.Book) error {
+			b.SetCaptureClock(opts.Now)
 			var err error
 			refs, err = b.AppendCaptures(in.Date, id, in.Segments)
 			return err
 		})
 		if err != nil {
-			fail(w, 400, "capture_rejected")
+			if errors.Is(err, domain.ErrCapturesExpired) {
+				fail(w, 409, err.Error())
+			} else {
+				fail(w, 400, "capture_rejected")
+			}
 			return
 		}
 		write(w, 200, map[string]any{"refs": refs})
@@ -129,6 +139,7 @@ func registerRoutes(mux *http.ServeMux, opts Options) {
 			var task domain.DeletionTask
 			bl, eu := r.PathValue("businessLine"), r.PathValue("endUser")
 			err := opts.Store.Update(r.Context(), bl, eu, func(b *domain.Book) error {
+				b.SetCaptureClock(opts.Now)
 				var err error
 				if action == "erase" {
 					task, err = b.Erase(in.Date, in.From, in.To, opts.Now())
@@ -166,16 +177,21 @@ func registerRoutes(mux *http.ServeMux, opts Options) {
 		var before briefRevision
 		var input string
 		err := opts.Store.View(r.Context(), bl, eu, func(b *domain.Book) error {
+			b.SetCaptureClock(opts.Now)
 			segments, err := b.DayCaptures(in.Date)
 			if err != nil {
 				return err
 			}
-			before = captureRevision(b, in.Date, segments)
+			before = captureRevision(b, in.Date)
 			input = briefInput(segments)
 			return nil
 		})
 		if err != nil {
-			fail(w, 500, "read_failed")
+			if errors.Is(err, domain.ErrCapturesExpired) {
+				fail(w, 409, err.Error())
+			} else {
+				fail(w, 500, "read_failed")
+			}
 			return
 		}
 		if before.deleted || input == "" {
@@ -185,15 +201,19 @@ func registerRoutes(mux *http.ServeMux, opts Options) {
 		result, callErr := opts.Kernel.OneshotForBusinessLine(r.Context(), bl, eu, "xinli-live-brief", input)
 		var after briefRevision
 		err = opts.Store.View(r.Context(), bl, eu, func(b *domain.Book) error {
-			segments, err := b.DayCaptures(in.Date)
-			if err != nil {
+			b.SetCaptureClock(opts.Now)
+			if err := b.CheckCaptures(in.Date); errors.Is(err, domain.ErrCapturesExpired) {
 				return err
 			}
-			after = captureRevision(b, in.Date, segments)
+			after = captureRevision(b, in.Date)
 			return nil
 		})
 		if err != nil {
-			fail(w, 500, "read_failed")
+			if errors.Is(err, domain.ErrCapturesExpired) {
+				fail(w, 409, err.Error())
+			} else {
+				fail(w, 500, "read_failed")
+			}
 			return
 		}
 		if before != after {
@@ -256,7 +276,9 @@ func registerRoutes(mux *http.ServeMux, opts Options) {
 		}
 		sid, err := opts.DaySessions.EnsureDaySession(r.Context(), r.PathValue("businessLine"), r.PathValue("endUser"), in.Date)
 		if err != nil {
-			if errors.Is(err, domain.ErrDayDeleted) {
+			if errors.Is(err, domain.ErrCapturesExpired) {
+				fail(w, 409, err.Error())
+			} else if errors.Is(err, domain.ErrDayDeleted) {
 				fail(w, 409, "day_deleted")
 			} else {
 				fail(w, 502, "ensure_day_failed")

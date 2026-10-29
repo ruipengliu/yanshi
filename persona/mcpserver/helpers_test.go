@@ -45,7 +45,7 @@ type testServer struct {
 }
 
 func newServer(notifier Notifier) *testServer {
-	return &testServer{store: memstore.New(), notifier: notifier, Now: func() time.Time { return time.Date(2026, 10, 23, 22, 0, 0, 0, shanghai) }}
+	return &testServer{store: memstore.New(captureClock), notifier: notifier, Now: func() time.Time { return time.Date(2026, 10, 23, 22, 0, 0, 0, shanghai) }}
 }
 func (x *testServer) now() time.Time { return x.Now() }
 func (x *testServer) request(method, bl, eu, op string, input, output any) error {

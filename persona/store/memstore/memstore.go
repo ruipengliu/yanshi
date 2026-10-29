@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"persona/domain"
 	"persona/store"
@@ -20,11 +21,18 @@ type entry struct {
 type Store struct {
 	mu    sync.Mutex
 	books map[key]*entry
+	now   func() time.Time
 }
 
 var _ store.Store = (*Store)(nil)
 
-func New() *Store { return &Store{books: map[key]*entry{}} }
+func New(now ...func() time.Time) *Store {
+	s := &Store{books: map[key]*entry{}}
+	if len(now) > 0 {
+		s.now = now[0]
+	}
+	return s
+}
 func (s *Store) entry(bl, eu string) *entry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -57,6 +65,7 @@ func (s *Store) Update(ctx context.Context, bl, eu string, fn func(*domain.Book)
 	captures := newCaptureTx(ctx, e.captures)
 	defer captures.close()
 	working.SetCaptureAccess(captures)
+	working.SetCaptureClock(s.now)
 	if err := fn(working); err != nil {
 		return err
 	}
@@ -89,6 +98,7 @@ func (s *Store) View(ctx context.Context, bl, eu string, fn func(*domain.Book) e
 		return err
 	}
 	snapshot.SetCaptureAccess(captures)
+	snapshot.SetCaptureClock(s.now)
 	if err := fn(snapshot); err != nil {
 		return err
 	}
@@ -141,4 +151,35 @@ func (s *Store) ResetOwner(ctx context.Context, bl, eu string) error {
 	}
 	e.book, e.captures = domain.NewBook(), nil
 	return nil
+}
+
+func (s *Store) ExpiringCaptures(ctx context.Context, now time.Time) ([]store.Owner, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	entries := make(map[key]*entry, len(s.books))
+	for k, e := range s.books {
+		entries[k] = e
+	}
+	s.mu.Unlock()
+	out := []store.Owner{}
+	for k, e := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		e.mu.Lock()
+		pending := len(e.book.ExpiringCaptureDays(now)) > 0
+		e.mu.Unlock()
+		if pending {
+			out = append(out, store.Owner{BusinessLine: k.businessLine, EndUser: k.endUser})
+		}
+	}
+	slices.SortFunc(out, func(a, b store.Owner) int {
+		if n := strings.Compare(a.BusinessLine, b.BusinessLine); n != 0 {
+			return n
+		}
+		return strings.Compare(a.EndUser, b.EndUser)
+	})
+	return out, ctx.Err()
 }

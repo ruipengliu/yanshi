@@ -11,6 +11,6 @@ import (
 
 func fixtureStores(t *testing.T, test func(*testing.T, store.Store)) {
 	t.Helper()
-	t.Run("memory", func(t *testing.T) { test(t, memstore.New()) })
-	t.Run("pg", func(t *testing.T) { test(t, pgstore.New(pgtest.New(t))) })
+	t.Run("memory", func(t *testing.T) { test(t, memstore.New(captureClock)) })
+	t.Run("pg", func(t *testing.T) { test(t, pgstore.New(pgtest.New(t), captureClock)) })
 }

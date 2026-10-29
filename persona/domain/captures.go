@@ -22,18 +22,21 @@ type CaptureSegment struct {
 
 // captureDay 独立于 file_day 的总览，换绑工作 Session 不改变引用与处理进度。
 type captureDay struct {
-	Session     string
-	Sessions    []string
-	DeleteAt    time.Time
-	Deleted     bool
-	Tombstones  []Source
-	BatchIDs    map[string]uint64
-	TimeZone    string
-	Next        uint64
-	Progress    string
-	ReadThrough Ref
-	GapMS       int64
-	GapSet      bool
+	Session         string
+	Sessions        []string
+	DeleteAt        time.Time
+	Deleted         bool
+	Tombstones      []Source
+	BatchIDs        map[string]uint64
+	TimeZone        string
+	ExpiresAt       time.Time
+	Expired         bool
+	CaptureRevision uint64
+	Next            uint64
+	Progress        string
+	ReadThrough     Ref
+	GapMS           int64
+	GapSet          bool
 }
 
 func (u *Book) captureDay(date string) *captureDay {
@@ -68,12 +71,15 @@ func (u *Book) BindDay(date, session string, deleteAt ...time.Time) error {
 	if bound, _ := u.sessionDay(session); bound != "" && bound != date {
 		return fmt.Errorf("session is bound to another business day")
 	}
-	if day := u.captureDays[date]; day != nil && day.Deleted {
-		return ErrDayDeleted
+	if err := u.CheckCaptures(date); err != nil {
+		return err
 	}
 	day := u.captureDay(date)
 	if !slices.Contains(day.Sessions, session) {
 		day.Sessions = append(day.Sessions, session)
+	}
+	if !day.ExpiresAt.IsZero() {
+		day.DeleteAt = day.ExpiresAt
 	}
 	if day.DeleteAt.IsZero() && len(deleteAt) > 0 && !deleteAt[0].IsZero() {
 		day.DeleteAt = deleteAt[0]
@@ -102,8 +108,8 @@ func (u *Book) AppendCaptures(date, captureID string, segments []CaptureSegment)
 	if _, err := time.Parse(time.DateOnly, date); err != nil {
 		return nil, fmt.Errorf("date must be YYYY-MM-DD")
 	}
-	if day := u.captureDays[date]; day != nil && day.Deleted {
-		return nil, ErrDayDeleted
+	if err := u.CheckCaptures(date); err != nil {
+		return nil, err
 	}
 	if captureID == "" || len(captureID) > 128 {
 		return nil, fmt.Errorf("capture_id must contain 1 to 128 bytes")
@@ -136,6 +142,24 @@ func (u *Book) AppendCaptures(date, captureID string, segments []CaptureSegment)
 			}
 		}
 	}
+	// 首批只决定一次时区；无时区的旧采集入口沿用上海默认值。
+	zone := segments[len(segments)-1].TimeZone
+	if zone == "" {
+		zone = DefaultCaptureTimeZone
+	}
+	var expiresAt time.Time
+	if day := u.captureDays[date]; day != nil && !day.ExpiresAt.IsZero() {
+		zone, expiresAt = day.TimeZone, day.ExpiresAt
+	} else {
+		var err error
+		expiresAt, err = CaptureExpiresAt(date, zone)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !u.captureNow().Before(expiresAt) {
+		return nil, ErrCapturesExpired
+	}
 	access, err := u.captureAccess()
 	if err != nil {
 		return nil, err
@@ -157,6 +181,9 @@ func (u *Book) AppendCaptures(date, captureID string, segments []CaptureSegment)
 			}
 			return batchRefs(number, len(segments)), nil
 		}
+		if err := day.checkCaptureRevision(); err != nil {
+			return nil, err
+		}
 		if day.Next == math.MaxUint64 {
 			return nil, fmt.Errorf("capture batch numbers exhausted")
 		}
@@ -173,8 +200,8 @@ func (u *Book) AppendCaptures(date, captureID string, segments []CaptureSegment)
 		day.BatchIDs = map[string]uint64{}
 	}
 	day.BatchIDs[captureID], day.Next = number, number
-	// A2 保留最后尚存片段的旧时区语义；固定业务日时区由 A5 接入。
-	day.TimeZone = segments[len(segments)-1].TimeZone
+	day.TimeZone, day.ExpiresAt, day.DeleteAt = zone, expiresAt, expiresAt
+	day.CaptureRevision++
 	return batchRefs(number, len(segments)), nil
 }
 
@@ -244,6 +271,7 @@ func (c *Call) advanceCaptures(from, to Ref) error {
 var (
 	ErrInactiveSession = errors.New("这个 Session 已不是当天的工作 Session")
 	ErrDayDeleted      = errors.New("这个业务日已删除")
+	ErrCapturesExpired = errors.New("这个业务日的原文已到期，不能读取、补传或提交整理结果")
 )
 
 // sessionDay 包含历史绑定，避免停用后的 Session 退回未绑定的兼容路径。
@@ -259,8 +287,13 @@ func (u *Book) sessionDay(session string) (string, *captureDay) {
 }
 
 func (u *Book) checkWorkingSession(session string) error {
-	if _, day := u.sessionDay(session); day != nil && (day.Deleted || day.Session != session) {
-		return ErrInactiveSession
+	if date, day := u.sessionDay(session); day != nil {
+		if err := u.CheckCaptures(date); err == ErrCapturesExpired {
+			return err
+		}
+		if day.Deleted || day.Session != session {
+			return ErrInactiveSession
+		}
 	}
 	return nil
 }
@@ -280,10 +313,13 @@ func (u *Book) sessionDays() map[string]string {
 
 // BusinessDay 只读出编排绑定所需的元数据，不改变已读位置与处理进度。
 type BusinessDay struct {
-	Session  string    `json:"session"`
-	DeleteAt time.Time `json:"delete_at,omitzero"`
-	Deleted  bool      `json:"deleted"`
-	TimeZone string    `json:"time_zone,omitempty"`
+	Session         string    `json:"session"`
+	DeleteAt        time.Time `json:"delete_at,omitzero"`
+	Deleted         bool      `json:"deleted"`
+	TimeZone        string    `json:"time_zone,omitempty"`
+	ExpiresAt       time.Time `json:"expires_at,omitzero"`
+	Expired         bool      `json:"expired"`
+	CaptureRevision uint64    `json:"capture_revision"`
 }
 
 func (u *Book) BusinessDay(date string) BusinessDay {
@@ -291,6 +327,7 @@ func (u *Book) BusinessDay(date string) BusinessDay {
 	if d := u.captureDays[date]; d != nil {
 		out.Session, out.DeleteAt, out.Deleted = d.Session, d.DeleteAt, d.Deleted
 		out.TimeZone = d.TimeZone
+		out.ExpiresAt, out.Expired, out.CaptureRevision = d.ExpiresAt, d.Expired, d.CaptureRevision
 	}
 	return out
 }

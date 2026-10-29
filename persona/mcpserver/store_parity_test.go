@@ -25,9 +25,9 @@ func TestStoreParity(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/restart_%t", path, restart), func(t *testing.T) {
 				pool := pgtest.New(t)
 				config := pool.Config()
-				persistent := pgstore.New(pool)
+				persistent := pgstore.New(pool, captureClock)
 				defer func() { persistent.Close() }()
-				memory := memstore.New()
+				memory := memstore.New(captureClock)
 				left := newParityEndpoint(t, memory, script.Now)
 				defer left.close()
 				right := newParityEndpoint(t, persistent, script.Now)
@@ -90,7 +90,7 @@ func TestStoreParity(t *testing.T) {
 						if err != nil {
 							t.Fatal(err)
 						}
-						persistent = pgstore.New(pool)
+						persistent = pgstore.New(pool, captureClock)
 						right = newParityEndpoint(t, persistent, script.Now)
 						parityEqual(t, "restart tools/list", parityTools(t, ctx, right.conn), parityTools(t, ctx, left.conn))
 						compare()
@@ -105,7 +105,7 @@ func TestStoreParity(t *testing.T) {
 func TestCaptureParitySequence(t *testing.T) {
 	var script parityScript
 	readParity(t, "testdata/capture_parity_script.json", &script)
-	endpoint := newParityEndpoint(t, memstore.New(), script.Now)
+	endpoint := newParityEndpoint(t, memstore.New(captureClock), script.Now)
 	defer endpoint.close()
 	positions := []string{"0", "1.2"}
 	for _, step := range script.Steps {

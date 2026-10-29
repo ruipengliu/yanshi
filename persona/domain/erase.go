@@ -35,6 +35,7 @@ type DeletionTask struct {
 
 // Erase 在所属 Book 事务内删除闭区间；参数接受页中的编号以及带 # 的引用。
 func (u *Book) Erase(date, from, to string, now time.Time) (DeletionTask, error) {
+	u.SetCaptureClock(func() time.Time { return now })
 	day := u.captureDays[date]
 	if day == nil {
 		return DeletionTask{}, fmt.Errorf("business day does not exist")
@@ -61,6 +62,7 @@ func (u *Book) Erase(date, from, to string, now time.Time) (DeletionTask, error)
 
 // EraseDay 也接受尚无片段的业务日；重复请求返回同一待办，不重新开放当天。
 func (u *Book) EraseDay(date string, now time.Time) (DeletionTask, error) {
+	u.SetCaptureClock(func() time.Time { return now })
 	day := u.captureDays[date]
 	if day == nil {
 		return DeletionTask{}, fmt.Errorf("business day does not exist")
@@ -76,6 +78,9 @@ func (u *Book) EraseDay(date string, now time.Time) (DeletionTask, error) {
 	access, err := u.captureAccess()
 	if err != nil {
 		return DeletionTask{}, err
+	}
+	if u.CheckCaptures(date) == ErrCapturesExpired {
+		return u.erase(date, Ref{}, Ref{}, true, now)
 	}
 	first, _, err := access.Adjacent(date, Ref{}, false)
 	if err != nil {
@@ -119,13 +124,20 @@ func captureRanges(segs iter.Seq2[captureSegment, error], gap time.Duration) ([]
 
 func (u *Book) erase(date string, from, to Ref, whole bool, now time.Time) (DeletionTask, error) {
 	day := u.captureDays[date]
+	if err := day.checkCaptureRevision(); err != nil {
+		return DeletionTask{}, err
+	}
 	zone := u.BusinessDay(date).TimeZone
 	erased := captureRange{from, to}
 	gap := time.Duration(day.GapMS) * time.Millisecond
 	var affected []captureRange
-	spans, err := captureRanges(u.captureSegments(date, Ref{}, Ref{}), gap)
-	if err != nil {
-		return DeletionTask{}, err
+	var spans []captureRange
+	if !whole {
+		var err error
+		spans, err = captureRanges(u.captureSegments(date, Ref{}, Ref{}), gap)
+		if err != nil {
+			return DeletionTask{}, err
+		}
 	}
 	for _, span := range spans {
 		if span.intersects(erased) {
@@ -152,11 +164,6 @@ func (u *Book) erase(date string, from, to Ref, whole bool, now time.Time) (Dele
 	if err := access.Erase(date, from, to); err != nil {
 		return DeletionTask{}, err
 	}
-	last, _, err := access.Adjacent(date, Ref{}, true)
-	if err != nil {
-		return DeletionTask{}, err
-	}
-	day.TimeZone = last.Segment.TimeZone
 	if !whole {
 		if err := u.rewindCaptures(date, affected, gap); err != nil {
 			return DeletionTask{}, err
@@ -170,6 +177,7 @@ func (u *Book) erase(date string, from, to Ref, whole bool, now time.Time) (Dele
 	if whole {
 		day.Progress, day.Deleted = "0", true
 	}
+	day.CaptureRevision++
 	day.ReadThrough = Ref{}
 	sequence := 1
 	for _, task := range u.deletionTasks {

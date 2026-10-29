@@ -27,20 +27,20 @@ func TestStore(t *testing.T) {
 	if os.Getenv("YANSHI_TEST_PG") == "" {
 		t.Skip("YANSHI_TEST_PG is not set")
 	}
-	storetest.Run(t, func() store.Store { return pgstore.New(pgtest.New(t)) })
+	storetest.Run(t, func() store.Store { return pgstore.New(pgtest.New(t), captureClock) })
 }
 
 func TestOwnerLocks(t *testing.T) {
 	for _, existing := range []bool{false, true} {
 		t.Run(fmt.Sprintf("existing_%t", existing), func(t *testing.T) {
 			pool := pgtest.New(t)
-			s1 := pgstore.New(pool)
+			s1 := pgstore.New(pool, captureClock)
 			other, err := pgxpool.NewWithConfig(context.Background(), pool.Config())
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(other.Close)
-			s2 := pgstore.New(other)
+			s2 := pgstore.New(other, captureClock)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			if existing {
@@ -108,7 +108,7 @@ func TestOwnerLocks(t *testing.T) {
 func TestRollbackAndLifetime(t *testing.T) {
 	for _, mode := range []string{"error", "panic", "cancel"} {
 		t.Run(mode, func(t *testing.T) {
-			s := pgstore.New(pgtest.New(t))
+			s := pgstore.New(pgtest.New(t), captureClock)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			failure := errors.New("rollback")
@@ -175,7 +175,7 @@ func TestRollbackAndLifetime(t *testing.T) {
 
 func TestCaptureUint64AndScanPages(t *testing.T) {
 	pool := pgtest.New(t)
-	s := pgstore.New(pool)
+	s := pgstore.New(pool, captureClock)
 	ctx := context.Background()
 	if err := s.Update(ctx, "bl", "u", func(b *domain.Book) error {
 		segments := make([]domain.CaptureSegment, 260)
@@ -233,7 +233,7 @@ func TestCaptureUint64AndScanPages(t *testing.T) {
 }
 
 func TestChangesetReplacementKeepsPosition(t *testing.T) {
-	s := pgstore.New(pgtest.New(t))
+	s := pgstore.New(pgtest.New(t), captureClock)
 	ctx := context.Background()
 	for _, seq := range []int{1, 2, 1} {
 		if err := s.Update(ctx, "bl", "u", func(b *domain.Book) error {

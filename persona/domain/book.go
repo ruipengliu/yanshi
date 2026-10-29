@@ -59,6 +59,7 @@ type State struct {
 // Book 保存一个 owner 的非原文账本；原文只经所属事务绑定的接缝访问。
 type Book struct {
 	captures      CaptureAccess
+	captureClock  func() time.Time
 	captureDays   map[string]*captureDay
 	deletionTasks []DeletionTask
 	projects      []Project

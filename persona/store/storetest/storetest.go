@@ -15,6 +15,7 @@ import (
 
 func Run(t *testing.T, factory func() store.Store) {
 	t.Helper()
+	t.Run("expiration", func(t *testing.T) { expiration(t, factory) })
 	t.Run("captures", func(t *testing.T) {
 		captures(t, factory)
 	})

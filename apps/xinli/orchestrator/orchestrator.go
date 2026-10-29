@@ -31,21 +31,22 @@ type Options struct {
 
 type owner struct{ businessLine, endUser string }
 type Orchestrator struct {
-	store          store.Store
-	kernel         Kernel
-	ctx            context.Context
-	now            func() time.Time
-	logger         *slog.Logger
-	mu             sync.Mutex
-	closed         bool
-	pending        sync.WaitGroup
-	locks          map[owner]chan struct{}
-	retryInterval  time.Duration
-	retryMax       time.Duration
-	defaultZone    *time.Location
-	stopRetries    chan struct{}
-	startedRetries bool
-	retries        map[retryKey]retryState
+	store              store.Store
+	kernel             Kernel
+	ctx                context.Context
+	now                func() time.Time
+	logger             *slog.Logger
+	mu                 sync.Mutex
+	closed             bool
+	pending            sync.WaitGroup
+	locks              map[owner]chan struct{}
+	retryInterval      time.Duration
+	retryMax           time.Duration
+	defaultZone        *time.Location
+	stopRetries        chan struct{}
+	startedRetries     bool
+	startedExpirations bool
+	retries            map[retryKey]retryState
 }
 
 var _ mcpserver.Notifier = (*Orchestrator)(nil)

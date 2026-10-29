@@ -58,7 +58,7 @@ func TestCaptureSubmissionPathsAndReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	day := "2026-10-23"
+	day := captureBusinessDay(time.Now())
 	if err := in.xinli.BindDay(ctx, BusinessLine, "submission", day, sid); err != nil {
 		t.Fatal(err)
 	}

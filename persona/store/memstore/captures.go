@@ -45,7 +45,7 @@ func (t *captureTx) close() {
 
 func (t *captureTx) batch(k batchKey) ([]domain.CaptureSegment, bool) {
 	if v, ok := t.writes[k]; ok {
-		return v, true
+		return v, v != nil
 	}
 	v, ok := t.base[k]
 	return v, ok
@@ -198,6 +198,24 @@ func (t *captureTx) commit() captureData {
 	if next == nil {
 		next = captureData{}
 	}
-	maps.Copy(next, t.writes)
+	for key, value := range t.writes {
+		if value == nil {
+			delete(next, key)
+		} else {
+			next[key] = value
+		}
+	}
 	return next
 }
+
+func (t *captureTx) DeleteDay(date string) error {
+	if err := t.check(); err != nil {
+		return err
+	}
+	for _, number := range t.numbers(date, domain.Ref{}, domain.Ref{}) {
+		t.writes[batchKey{date, number}] = nil
+	}
+	return nil
+}
+
+func (t *captureTx) Check() error { return t.check() }

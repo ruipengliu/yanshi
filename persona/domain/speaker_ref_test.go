@@ -68,7 +68,7 @@ func TestCaptureSpeakerRefPersistence(t *testing.T) {
 			t.Fatal("view aliases stored segment")
 		}
 	}
-	clone.CaptureAccess().(testCaptures)["2026-10-27"][1][0].SpeakerRef = "P-clone"
+	clone.captures.(testCaptures)["2026-10-27"][1][0].SpeakerRef = "P-clone"
 	if dayCapturesTest(t, b, "2026-10-27")[0].SpeakerRef != "P-0012" {
 		t.Fatal("clone aliases stored segment")
 	}
@@ -88,7 +88,7 @@ func TestCaptureSpeakerRefPersistence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if book.CaptureAccess().(testCaptures)["2026-10-27"][1][0] != (CaptureSegment{}) {
+		if book.captures.(testCaptures)["2026-10-27"][1][0] != (CaptureSegment{}) {
 			t.Fatal("erasure left segment metadata")
 		}
 		raw, err := json.Marshal(book)

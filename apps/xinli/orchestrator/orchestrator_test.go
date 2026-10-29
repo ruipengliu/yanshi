@@ -79,7 +79,7 @@ func TestChangesetsAndCollect(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
-	books := memstore.New()
+	books := memstore.New(captureClock)
 	unblock := make(chan struct{})
 	var once sync.Once
 	defer once.Do(func() { close(unblock) })
@@ -151,7 +151,7 @@ func TestChangesetsAndCollect(t *testing.T) {
 func TestCollectionIgnoresRequestCancellation(t *testing.T) {
 	life, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	books := memstore.New()
+	books := memstore.New(captureClock)
 	if err := books.Update(life, "bl", "u", func(b *domain.Book) error {
 		b.Seed(domain.SeedData{Projects: []domain.Project{{ID: "p"}}}, time.Now())
 		return nil
@@ -177,7 +177,7 @@ func TestCollectionIgnoresRequestCancellation(t *testing.T) {
 func TestWeeklyReview(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
-	books := memstore.New()
+	books := memstore.New(captureClock)
 	if err := books.Update(ctx, "bl", "u", func(b *domain.Book) error {
 		b.Seed(domain.SeedData{Projects: []domain.Project{{ID: "P-0001"}, {ID: "old"}}, Exchanges: []domain.SeedExchange{{Date: "2026-10-24", Project: "P-0001"}, {Date: "2026-08-01", Project: "old"}}}, now)
 		b.Bind("P-0001", "ses_p1")
@@ -227,7 +227,7 @@ func TestWeeklyReview(t *testing.T) {
 func TestWeekSubmitFailureKeepsBinding(t *testing.T) {
 	ctx := context.Background()
 	k := &fakeKernel{failText: "回顾本周"}
-	o := New(ctx, memstore.New(), k, Options{})
+	o := New(ctx, memstore.New(captureClock), k, Options{})
 	if _, err := o.Week(ctx, "bl", "u"); err == nil {
 		t.Fatal("missing error")
 	}
@@ -244,7 +244,7 @@ func TestWeekSubmitFailureKeepsBinding(t *testing.T) {
 func TestRewriteFailureDoesNotFailReview(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
-	books := memstore.New()
+	books := memstore.New(captureClock)
 	if err := books.Update(ctx, "bl", "u", func(b *domain.Book) error {
 		b.Seed(domain.SeedData{Projects: []domain.Project{{ID: "p"}}, Exchanges: []domain.SeedExchange{{Date: "2026-10-24", Project: "p"}}}, now)
 		b.Bind("p", "project-session")
@@ -267,7 +267,7 @@ func TestRewriteFailureDoesNotFailReview(t *testing.T) {
 func TestShutdownWaitsForCollection(t *testing.T) {
 	life, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	books := memstore.New()
+	books := memstore.New(captureClock)
 	if err := books.Update(life, "bl", "u", func(b *domain.Book) error {
 		b.Seed(domain.SeedData{Projects: []domain.Project{{ID: "p"}}}, time.Now())
 		return nil

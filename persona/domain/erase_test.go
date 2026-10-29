@@ -263,7 +263,7 @@ func TestEraseProgress(t *testing.T) {
 
 func TestEraseValidationTasksAndSnapshot(t *testing.T) {
 	b := eraseBook(t)
-	deadline := captureTestNow.Add(24 * time.Hour)
+	deadline := b.BusinessDay(eraseDate).ExpiresAt
 	if err := b.BindDay(eraseDate, "s", deadline); err != nil {
 		t.Fatal(err)
 	}

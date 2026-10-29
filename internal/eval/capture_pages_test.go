@@ -50,7 +50,7 @@ func newCaptureParityEnv(t *testing.T) *captureParityEnv {
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 	e := &captureParityEnv{golden: golden, now: time.Now(), server: servers[0], fixture: f, conn: conn, sid: "capture-parity-session"}
-	if err := f.BindDay(ctx, BusinessLine, "u", "2026-10-27", e.sid); err != nil {
+	if err := f.BindDay(ctx, BusinessLine, "u", captureBusinessDay(e.now), e.sid); err != nil {
 		t.Fatal(err)
 	}
 	return e
@@ -61,7 +61,7 @@ func (e *captureParityEnv) append(t *testing.T, segments []xinlifixture.CaptureS
 	ctx := context.Background()
 	e.batches++
 	id := fmt.Sprintf("batch-%d", e.batches)
-	_, err := e.fixture.AppendCaptures(ctx, BusinessLine, "u", "2026-10-27", id, segments)
+	_, err := e.fixture.AppendCaptures(ctx, BusinessLine, "u", captureBusinessDay(e.now), id, segments)
 	if err != nil {
 		t.Fatal(err)
 	}

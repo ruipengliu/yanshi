@@ -71,7 +71,7 @@ func TestBookParts(t *testing.T) {
 // 比较所有类别的每一行，项目绑定只允许一个实体的 xmin 改变。
 func TestOnlyChangedEntityWritten(t *testing.T) {
 	pool := pgtest.New(t)
-	s := New(pool)
+	s := New(pool, captureClock)
 	ctx := context.Background()
 	if err := s.Update(ctx, "bl", "u", func(b *domain.Book) error {
 		b.Seed(domain.SeedData{Projects: []domain.Project{{ID: "P-1"}, {ID: "P-2"}}}, time.Time{})
@@ -139,7 +139,7 @@ func TestOnlyChangedEntityWritten(t *testing.T) {
 }
 
 func TestOwnerBinaryKeys(t *testing.T) {
-	s := New(pgtest.New(t))
+	s := New(pgtest.New(t), captureClock)
 	ctx := context.Background()
 	owners := [][2]string{{"bl\x00u", ""}, {"bl", "u\x00"}, {"", "bl\x00u"}}
 	for i, owner := range owners {

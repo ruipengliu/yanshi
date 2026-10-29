@@ -72,7 +72,7 @@ func projectVersions(t *testing.T, pool *pgxpool.Pool) map[string]entityVersion 
 
 func TestDeleteEntityLeavesOtherRowsUntouched(t *testing.T) {
 	pool := pgtest.New(t)
-	s := New(pool)
+	s := New(pool, captureClock)
 	ctx := context.Background()
 	if err := s.Update(ctx, "bl", "u", func(b *domain.Book) error {
 		b.Seed(domain.SeedData{Projects: []domain.Project{{ID: "P-1"}, {ID: "P-2"}, {ID: "P-3"}}}, time.Time{})
@@ -123,7 +123,7 @@ func TestDeleteEntityLeavesOtherRowsUntouched(t *testing.T) {
 
 func TestSourceReplacementUpdatesOriginalRow(t *testing.T) {
 	pool := pgtest.New(t)
-	s := New(pool)
+	s := New(pool, captureClock)
 	ctx := context.Background()
 	file := func(seq int) {
 		t.Helper()
@@ -211,7 +211,7 @@ func TestSourceReplacementUpdatesOriginalRow(t *testing.T) {
 }
 
 func TestPendingOwnersWithMultipleTasks(t *testing.T) {
-	s := New(pgtest.New(t))
+	s := New(pgtest.New(t), captureClock)
 	ctx := context.Background()
 	var tasks []domain.DeletionTask
 	if err := s.Update(ctx, "bl", "u", func(b *domain.Book) error {
@@ -266,7 +266,7 @@ func TestPendingOwnersWithMultipleTasks(t *testing.T) {
 
 func TestMapEntriesWrittenIndependently(t *testing.T) {
 	pool := pgtest.New(t)
-	s := New(pool)
+	s := New(pool, captureClock)
 	ctx := context.Background()
 	if err := s.Update(ctx, "bl", "u", func(b *domain.Book) error {
 		for _, session := range []string{"s1", "s2"} {
@@ -316,7 +316,7 @@ func TestMapEntriesWrittenIndependently(t *testing.T) {
 }
 
 func TestLoadUsesNumericOrdinal(t *testing.T) {
-	s := New(pgtest.New(t))
+	s := New(pgtest.New(t), captureClock)
 	ctx := context.Background()
 	projects := make([]domain.Project, 12)
 	for i := range projects {

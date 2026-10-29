@@ -33,12 +33,13 @@ type captureTx struct {
 	// View 允许演练领域命令，但数据库事务保持只读；仅保存本次追加及擦除范围。
 	appended map[batchKey][]domain.CaptureSegment
 	erased   []erasedRange
+	purged   map[string]bool
 }
 
 var _ domain.CaptureAccess = (*captureTx)(nil)
 
 func newCaptureTx(ctx context.Context, tx pgx.Tx, bl, eu []byte, readOnly bool) *captureTx {
-	return &captureTx{ctx: ctx, tx: tx, bl: bl, eu: eu, readOnly: readOnly, appended: map[batchKey][]domain.CaptureSegment{}}
+	return &captureTx{ctx: ctx, tx: tx, bl: bl, eu: eu, readOnly: readOnly, appended: map[batchKey][]domain.CaptureSegment{}, purged: map[string]bool{}}
 }
 
 func (t *captureTx) check() error {
@@ -50,7 +51,7 @@ func (t *captureTx) check() error {
 
 func (t *captureTx) close() {
 	t.closed = true
-	t.tx, t.ctx, t.appended, t.erased = nil, nil, nil, nil
+	t.tx, t.ctx, t.appended, t.erased, t.purged = nil, nil, nil, nil, nil
 }
 
 func refLess(a, b domain.Ref) bool {
@@ -62,6 +63,9 @@ func inRange(ref, from, to domain.Ref) bool {
 }
 
 func (t *captureTx) isErased(date string, ref domain.Ref) bool {
+	if t.purged[date] {
+		return true
+	}
 	for _, r := range t.erased {
 		if r.date == date && inRange(ref, r.from, r.to) {
 			return true
@@ -109,6 +113,9 @@ func (t *captureTx) Batch(date string, seq uint64) ([]domain.CaptureSegment, err
 	}
 	if v, ok := t.appended[batchKey{date, seq}]; ok {
 		return slices.Clone(v), nil
+	}
+	if t.purged[date] {
+		return nil, fmt.Errorf("capture batch does not exist")
 	}
 	rows, err := t.tx.Query(t.ctx, `SELECT payload FROM capture_segments
 		WHERE business_line=$1 AND end_user=$2 AND business_day=$3 AND batch_number=$4::text::numeric
@@ -165,6 +172,9 @@ func rangeSQL(args *[]any, from, to domain.Ref, exclusive bool) string {
 func (t *captureTx) records(date string, from, to domain.Ref, exclusive, reverse bool, limit int) ([]domain.CaptureRecord, error) {
 	if err := t.check(); err != nil {
 		return nil, err
+	}
+	if t.purged[date] {
+		return nil, nil
 	}
 	args := []any{t.bl, t.eu, date}
 	// 输出仅为传输转成十进制文字；ORDER BY 必须限定底层 numeric 列。
@@ -373,3 +383,22 @@ func (t *captureTx) Erase(date string, from, to domain.Ref) error {
 	_, err := t.tx.Exec(t.ctx, query, args...)
 	return contextError(t.ctx, err)
 }
+
+func (t *captureTx) DeleteDay(date string) error {
+	if err := t.check(); err != nil {
+		return err
+	}
+	if t.readOnly {
+		t.purged[date] = true
+		for key := range t.appended {
+			if key.date == date {
+				delete(t.appended, key)
+			}
+		}
+		return nil
+	}
+	_, err := t.tx.Exec(t.ctx, `DELETE FROM capture_segments WHERE business_line=$1 AND end_user=$2 AND business_day=$3`, t.bl, t.eu, date)
+	return contextError(t.ctx, err)
+}
+
+func (t *captureTx) Check() error { return t.check() }

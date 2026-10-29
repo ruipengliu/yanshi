@@ -7,4 +7,6 @@ import (
 	"testing"
 )
 
-func TestStore(t *testing.T) { storetest.Run(t, func() store.Store { return memstore.New() }) }
+func TestStore(t *testing.T) {
+	storetest.Run(t, func() store.Store { return memstore.New(captureClock) })
+}

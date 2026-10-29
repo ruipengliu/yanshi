@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -49,13 +50,15 @@ var categories = []category{
 }
 
 type bookRow struct {
-	key            string
-	ordinal        string
-	payload        json.RawMessage
-	previousKey    string
-	replaces       bool
-	status         string
-	rebuildPending bool
+	key                string
+	ordinal            string
+	payload            json.RawMessage
+	previousKey        string
+	replaces           bool
+	status             string
+	rebuildPending     bool
+	expiresAt          *time.Time
+	captureCleanupDone bool
 }
 
 type bookSnapshot map[string][]bookRow
@@ -220,7 +223,21 @@ func snapshotRows(book *domain.Book, before bookSnapshot) (bookSnapshot, error) 
 				if err != nil {
 					return nil, err
 				}
-				rows = append(rows, bookRow{key: key, payload: payload})
+				row := bookRow{key: key, payload: payload}
+				if c.field == "CaptureDays" {
+					var day struct {
+						ExpiresAt        time.Time
+						Expired, Deleted bool
+					}
+					if err := json.Unmarshal(value, &day); err != nil {
+						return nil, err
+					}
+					if !day.ExpiresAt.IsZero() {
+						row.expiresAt = &day.ExpiresAt
+					}
+					row.captureCleanupDone = day.Expired || day.Deleted || day.ExpiresAt.IsZero()
+				}
+				rows = append(rows, row)
 			}
 			slices.SortFunc(rows, func(a, b bookRow) int { return strings.Compare(a.key, b.key) })
 		case tombstone:
@@ -481,7 +498,11 @@ func loadRows(ctx context.Context, tx pgx.Tx, bl, eu []byte, c category) ([]book
 	if c.field == "DeletionTasks" {
 		status, rebuild = "status", "rebuild_pending"
 	}
-	query := "SELECT " + key + "," + ordinal + ",payload," + status + "," + rebuild + " FROM " + c.table + " WHERE business_line=$1 AND end_user=$2"
+	expires, expired := "NULL::timestamptz", "false"
+	if c.field == "CaptureDays" {
+		expires, expired = "expires_at", "capture_cleanup_done"
+	}
+	query := "SELECT " + key + "," + ordinal + ",payload," + status + "," + rebuild + "," + expires + "," + expired + " FROM " + c.table + " WHERE business_line=$1 AND end_user=$2"
 	if c.kind == sequence || c.kind == tombstone {
 		// 限定底层列，避免 SELECT ordinal::text 的输出名让 ORDER BY 按文字排序。
 		query += " ORDER BY " + c.table + ".ordinal," + c.table + "." + c.key
@@ -497,7 +518,7 @@ func loadRows(ctx context.Context, tx pgx.Tx, bl, eu []byte, c category) ([]book
 	for rows.Next() {
 		var key, payload []byte
 		var row bookRow
-		if err := rows.Scan(&key, &row.ordinal, &payload, &row.status, &row.rebuildPending); err != nil {
+		if err := rows.Scan(&key, &row.ordinal, &payload, &row.status, &row.rebuildPending, &row.expiresAt, &row.captureCleanupDone); err != nil {
 			return nil, err
 		}
 		decoded, err := decodePayload(payload)
@@ -515,7 +536,8 @@ func loadRows(ctx context.Context, tx pgx.Tx, bl, eu []byte, c category) ([]book
 }
 
 func equalRow(a, b bookRow) bool {
-	return a.key == b.key && a.ordinal == b.ordinal && bytes.Equal(a.payload, b.payload) && a.status == b.status && a.rebuildPending == b.rebuildPending
+	sameExpiry := a.expiresAt == nil && b.expiresAt == nil || a.expiresAt != nil && b.expiresAt != nil && a.expiresAt.Equal(*b.expiresAt)
+	return sameExpiry && a.captureCleanupDone == b.captureCleanupDone && a.key == b.key && a.ordinal == b.ordinal && bytes.Equal(a.payload, b.payload) && a.status == b.status && a.rebuildPending == b.rebuildPending
 }
 
 func saveBook(ctx context.Context, tx pgx.Tx, bl, eu []byte, before, after bookSnapshot) error {
@@ -571,6 +593,12 @@ func writeRow(ctx context.Context, tx pgx.Tx, bl, eu []byte, c category, row boo
 		values += ",$5::text::numeric"
 		updates += ",ordinal=EXCLUDED.ordinal"
 		args = append(args, row.ordinal)
+	}
+	if c.field == "CaptureDays" {
+		columns += ",expires_at,capture_cleanup_done"
+		values += ",$5,$6"
+		updates += ",expires_at=EXCLUDED.expires_at,capture_cleanup_done=EXCLUDED.capture_cleanup_done"
+		args = append(args, row.expiresAt, row.captureCleanupDone)
 	}
 	if c.field == "DeletionTasks" {
 		columns += ",status,rebuild_pending"

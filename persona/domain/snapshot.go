@@ -57,7 +57,19 @@ func (u *Book) UnmarshalJSON(data []byte) error {
 	next.captureDays = d.CaptureDays
 	next.deletionTasks = d.DeletionTasks
 	// 旧快照只有当前 Session，至少补齐这个已知绑定；无法推断更早的换绑历史。
-	for _, day := range next.captureDays {
+	for date, day := range next.captureDays {
+		// A2 已保存旧推导的最后时区；装载时一次性升级，之后不再随片段改变。
+		if day.ExpiresAt.IsZero() && (day.Next > 0 || day.TimeZone != "") {
+			if day.TimeZone == "" {
+				day.TimeZone = DefaultCaptureTimeZone
+			}
+			var err error
+			day.ExpiresAt, err = CaptureExpiresAt(date, day.TimeZone)
+			if err != nil {
+				return err
+			}
+			day.DeleteAt = day.ExpiresAt
+		}
 		if day.Session != "" && !slices.Contains(day.Sessions, day.Session) {
 			day.Sessions = append(day.Sessions, day.Session)
 		}

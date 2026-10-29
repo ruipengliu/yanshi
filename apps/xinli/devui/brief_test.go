@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 	"unicode/utf8"
 
 	"xinli/kernel"
@@ -28,7 +27,7 @@ func (a *briefActions) OneshotForBusinessLine(ctx context.Context, bl, eu, name,
 func TestBriefRoutes(t *testing.T) {
 	for _, change := range []string{"none", "erase", "erase_day", "append"} {
 		t.Run(change, func(t *testing.T) {
-			books := memstore.New()
+			books := memstore.New(captureClock)
 			update := func(fn func(*domain.Book) error) {
 				t.Helper()
 				if err := books.Update(context.Background(), "bl", "u", fn); err != nil {
@@ -50,10 +49,10 @@ func TestBriefRoutes(t *testing.T) {
 				update(func(b *domain.Book) error {
 					switch change {
 					case "erase":
-						_, err := b.Erase("2026-10-28", "1.0", "1.0", time.Now())
+						_, err := b.Erase("2026-10-28", "1.0", "1.0", captureClock())
 						return err
 					case "erase_day":
-						_, err := b.EraseDay("2026-10-28", time.Now())
+						_, err := b.EraseDay("2026-10-28", captureClock())
 						return err
 					case "append":
 						_, err := b.AppendCaptures("2026-10-28", "next", []domain.CaptureSegment{{Speaker: "wearer", Text: "新增"}})
@@ -63,7 +62,7 @@ func TestBriefRoutes(t *testing.T) {
 				})
 				return kernel.OneshotResult{Output: json.RawMessage(`{"brief":"私密简述"}`)}, nil
 			}}
-			h := Handler(Config{}, Options{Store: books, Kernel: a})
+			h := Handler(Config{}, Options{Store: books, Kernel: a, Now: captureClock})
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, httptest.NewRequest("POST", "/v1/dev/bl/u/brief", strings.NewReader(`{"date":"2026-10-28"}`)))
 			if change == "none" {
@@ -91,7 +90,7 @@ func TestBriefErrors(t *testing.T) {
 		{context.DeadlineExceeded, "", 504},
 		{nil, `{"unexpected":"private-content"}`, 502},
 	} {
-		books := memstore.New()
+		books := memstore.New(captureClock)
 		if err := books.Update(context.Background(), "bl", "u", func(b *domain.Book) error {
 			_, err := b.AppendCaptures("2026-10-28", "c", []domain.CaptureSegment{{Speaker: "wearer", Text: "原文"}})
 			return err
@@ -102,7 +101,7 @@ func TestBriefErrors(t *testing.T) {
 			return kernel.OneshotResult{Output: json.RawMessage(tc.output)}, tc.err
 		}}
 		w := httptest.NewRecorder()
-		Handler(Config{}, Options{Store: books, Kernel: a}).ServeHTTP(w, httptest.NewRequest("POST", "/v1/dev/bl/u/brief", strings.NewReader(`{"date":"2026-10-28"}`)))
+		Handler(Config{}, Options{Store: books, Kernel: a, Now: captureClock}).ServeHTTP(w, httptest.NewRequest("POST", "/v1/dev/bl/u/brief", strings.NewReader(`{"date":"2026-10-28"}`)))
 		if w.Code != tc.status || strings.Contains(w.Body.String(), "private-content") {
 			t.Fatal(w.Code, w.Body.String())
 		}
@@ -143,13 +142,13 @@ func TestBriefEmptyAndInvalidDay(t *testing.T) {
 			return kernel.OneshotResult{}, nil
 		}}
 		w := httptest.NewRecorder()
-		Handler(Config{}, Options{Store: memstore.New(), Kernel: a}).ServeHTTP(w, httptest.NewRequest("POST", "/v1/dev/bl/u/brief", strings.NewReader(tc.body)))
+		Handler(Config{}, Options{Store: memstore.New(captureClock), Kernel: a}).ServeHTTP(w, httptest.NewRequest("POST", "/v1/dev/bl/u/brief", strings.NewReader(tc.body)))
 		if w.Code != tc.status {
 			t.Fatal(w.Code, w.Body.String())
 		}
 	}
 	w := httptest.NewRecorder()
-	Handler(Config{}, Options{Store: memstore.New()}).ServeHTTP(w, httptest.NewRequest("POST", "/v1/dev/bl/u/brief", strings.NewReader(`{"date":"2026-10-28"}`)))
+	Handler(Config{}, Options{Store: memstore.New(captureClock)}).ServeHTTP(w, httptest.NewRequest("POST", "/v1/dev/bl/u/brief", strings.NewReader(`{"date":"2026-10-28"}`)))
 	if w.Code != 503 {
 		t.Fatal(w.Code)
 	}

@@ -82,8 +82,8 @@ func TestAppendCaptures(t *testing.T) {
 	if p.Segments[0].Text == "mutated" || p.Segments[0].Ref != "1.0" {
 		t.Fatal("aliased capture")
 	}
-	clone.CaptureAccess().(testCaptures)["2026-10-27"][1][0].Text = "clone"
-	if b.CaptureAccess().(testCaptures)["2026-10-27"][1][0].Text == "clone" {
+	clone.captures.(testCaptures)["2026-10-27"][1][0].Text = "clone"
+	if b.captures.(testCaptures)["2026-10-27"][1][0].Text == "clone" {
 		t.Fatal("aliased clone")
 	}
 }

@@ -84,6 +84,7 @@ func (x *server) call(ctx context.Context, metadata mcp.Meta, args json.RawMessa
 	now := x.now()
 	apply := func(book *domain.Book) error {
 		call = domain.NewCall(book, session, args, cites, now)
+		book.SetCaptureClock(x.now)
 		text = handler(call)
 		return call.Err()
 	}

@@ -6,6 +6,7 @@ import (
 	"maps"
 	"slices"
 	"testing"
+	"time"
 )
 
 // 领域测试显式提供原文，不能让 NewBook/Clone 暗中携带一个内存存储。
@@ -14,6 +15,7 @@ type testCaptures map[string]map[uint64][]CaptureSegment
 
 func newCaptureTestBook() *Book {
 	b := NewBook()
+	b.SetCaptureClock(func() time.Time { return captureTestNow })
 	b.SetCaptureAccess(testCaptures{})
 	return b
 }
@@ -24,13 +26,14 @@ func cloneCaptureTestBook(b *Book) (*Book, error) {
 		return nil, err
 	}
 	data := testCaptures{}
-	for date, batches := range b.CaptureAccess().(testCaptures) {
+	for date, batches := range b.captures.(testCaptures) {
 		data[date] = map[uint64][]CaptureSegment{}
 		for n, segments := range batches {
 			data[date][n] = slices.Clone(segments)
 		}
 	}
 	out.SetCaptureAccess(data)
+	out.SetCaptureClock(b.captureClock)
 	return out, nil
 }
 
@@ -121,3 +124,7 @@ func (m testCaptures) Erase(date string, from, to Ref) error {
 	}
 	return nil
 }
+
+func (m testCaptures) DeleteDay(date string) error { delete(m, date); return nil }
+
+func (m testCaptures) Check() error { return nil }
