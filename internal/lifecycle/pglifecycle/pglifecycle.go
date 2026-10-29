@@ -146,7 +146,9 @@ func (x Index) ids(ctx context.Context, q string, args ...any) ([]string, error)
 }
 
 func (x Index) IDsOf(ctx context.Context, businessLine, endUser string) ([]string, error) {
-	return x.ids(ctx, `SELECT session_id FROM sessions WHERE business_line = $1 AND end_user = $2`, businessLine, endUser)
+	// 与内存实现同序：调用方按此顺序逐个删除，顺序不定会让同一输入产生不同的日志（模拟测试的差分）。
+	return x.ids(ctx, `SELECT session_id FROM sessions WHERE business_line = $1 AND end_user = $2
+		ORDER BY last_input_at DESC, session_id DESC`, businessLine, endUser)
 }
 
 // 按 AgentDef 筛选：只含某个名称时走 (business_line, agent, …) 的索引（迁移 0016、0017），排除若干名称时走业务线的索引。

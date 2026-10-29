@@ -117,7 +117,7 @@ type Index interface {
 	// ListStable 供恢复按不可变 ID 升序扫描一个 EndUser，包含 closed 和尚未清索引的逻辑删除项。
 	// cursor 是上一页最后一个 ID（不含），没有更多时 next 为空；不是并发创建/删除的快照。
 	ListStable(ctx context.Context, businessLine, endUser, cursor string, limit int) (page []*Session, next string, err error)
-	// IDsOf 返回 EndUser 在业务线下的全部 Session ID。
+	// IDsOf 返回 EndUser 在业务线下的全部 Session ID，与 List 同序（最后输入时间倒序，同时间按 ID 倒序）。
 	IDsOf(ctx context.Context, businessLine, endUser string) ([]string, error)
 	// IdleBefore 返回业务线中 AgentDef 在 agents 之内、未关闭、没有有效定时、最后输入早于 t 的 Session，至多 limit 个。
 	IdleBefore(ctx context.Context, businessLine string, agents AgentFilter, t time.Time, limit int) ([]string, error)

@@ -207,8 +207,8 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 		if c, _ := x.ClosedBefore(ctx, "bl", all, t0.Add(30*time.Minute), 10); len(c) != 0 {
 			t.Fatalf("closed before (too early) = %v", c)
 		}
+		// 顺序也是契约：调用方按它逐个删除，内存与 PG 不同序会让模拟测试的差分分叉。
 		ids, _ := x.IDsOf(ctx, "bl", "u1")
-		slices.Sort(ids)
 		if !slices.Equal(ids, []string{"new", "old"}) {
 			t.Fatalf("ids of u1 = %v", ids)
 		}
