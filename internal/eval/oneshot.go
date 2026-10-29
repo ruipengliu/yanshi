@@ -34,7 +34,8 @@ func validateOneshotCase(c *Case) error {
 			return fmt.Errorf("oneshot turn %d requires input", i+1)
 		}
 		rest := t
-		rest.Input, rest.Expect = "", Expect{}
+		// inputPresent 只记录 YAML 中写过 input，供重答回合拒绝显式输入。
+		rest.Input, rest.Expect, rest.inputPresent = "", Expect{}, false
 		if !reflect.ValueOf(rest).IsZero() {
 			return fmt.Errorf("oneshot turn %d only accepts input and expect", i+1)
 		}
