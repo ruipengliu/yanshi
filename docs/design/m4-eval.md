@@ -311,6 +311,24 @@ expect 复用 reply_contains、reply_excludes、reply_max_chars、status 与 jud
 
 `make eval` 先构建 `bin/xinli`，命令的 `-xinli-bin` 可指定其他二进制。只有用例配置了 `setup.xinli` 或所用 Agent 白名单包含 `mcp:xinli/*` 时，运行器才启动 `xinli dev -exit-on-stdin-eof`（不带 `-kernel-url`，不自动归集）。运行器读第一行就绪 JSON，以 `mcpcap.ParseServer` 逐项校验 `registrations` 并登记 MCP，经 `fixture_url` 下的 HTTP 做 Seed、State、绑定与用户操作；Seed JSON 字段为 snake_case，用例 YAML 不变。结束时关闭 stdin 并等待退出，超时则终止并回收进程。
 
+**PG 夹具（P4 A4）。** `-xinli-store memory|pg` 默认 `memory`，不改变默认 `make eval`。`-xinli-persona-dsn` 默认读 `YANSHI_PERSONA_PG_DSN`，未设置时为空；选 `pg` 必填，不读取 `YANSHI_PG_DSN` 或 `YANSHI_TEST_PG`。运行器通过子进程环境传 DSN，启动 `xinli dev -store pg`；开发入口也支持 `-persona-dsn`，显式参数优先于环境。启动时执行 Persona 迁移，成功后才输出就绪行。DSN 必须直连一个预先创建的、**独立于内核的 database**（例如 `persona_eval`）；不同 schema 不能替代 database 隔离，启动角色须有该库的 DDL 权限。程序不自动建库。
+
+每个 case 的每个 trial 仍使用新的 `eval-<case>-<trial>-<随机后缀>` EndUser，`Seed` 保持追加预置语义，不需要在 trial 间重置。PG 数据在夹具退出后保留，便于复查；关闭夹具不会删除 database。回收某个 owner 使用 `POST /v1/fixture/{businessLine}/{endUser}/reset {}`（`xinlifixture.Client.Reset`）。reset 是开发/评测专用接口，**须先停下该 owner 的工作**；trial 返回并不保证所有在途 MCP 请求已经排空，因此运行器不在 trial 末尾自动 reset。PG 删除 `owners` 的单键行，由外键级联删除全部账本、原文、绑定、进度、墓碑和删除待办；内存实现清空同键内容。重复 reset 幂等，不影响其他 owner。一次评测整体回收可在相关进程停止后重建该次专用 database，不能对共享内核库执行清理。
+
+在有 PostgreSQL 客户端、模型凭据与沙箱的远端，从仓库根目录运行（示例连接与仓库 Compose 一致）：
+
+```bash
+# 仅首次创建；已存在时跳过此命令。不要把库名换成内核的 yanshi。
+PGPASSWORD=yanshi createdb -h 127.0.0.1 -p 54329 -U yanshi persona_eval
+export YANSHI_PERSONA_PG_DSN='postgres://yanshi:yanshi@127.0.0.1:54329/persona_eval?sslmode=disable'
+make eval EVAL_FLAGS="-sandbox docker -case 'capture-*' -xinli-store memory -logs -out eval-results/a4-memory"
+make eval EVAL_FLAGS="-sandbox docker -case 'capture-*' -xinli-store pg -logs -out eval-results/a4-pg"
+```
+
+两次运行使用相同用例、模型、次数与现有 `evals/baselines/`，比较通过率、金标指标和缓存命中；真实模型不要求逐字一致，不以更新基线掩盖存储回归。
+
+确定性契约由 `persona/mcpserver` 的 `TestStoreParity` 对冻结账本脚本与旁听脚本逐步比较 MCP 文字、结构化页、错误、HTTP State、处理进度与删除待办；`restart_true` 在序列中点关闭 Store/连接池并重建 HTTP/MCP 会话，复用同一 database/schema。旁听中点已有 pending 待办及剩余原文。`TestParity` 继续检查冻结 golden；`TestCaptureParitySequence` 在无 PG 时也检查脚本确实推进进度。夹具的 Seed/工具/State、错误、预览不写入、处理进度与擦除通知测试均跑 memory/pg 两种存储。PG 测试由 `YANSHI_TEST_PG` 启用，复用 `persona/pg/pgtest`：该变量仅作建库入口，连接到独立的 `persona_test` database，每测试随机 schema，结束删除 schema；测试角色需要 CREATEDB。第一层 `storetest` 另覆盖 pending owner 排序/去重与完整重置。`apps/xinli/cmd/xinli` 的 `TestDevReadinessFixtureMCPAndEOF` 还以独立子进程分别验证 memory/pg 的就绪、Seed、MCP 与 stdin EOF 退出；运行器侧测试验证参数/环境透传和无效配置。这些测试不调用真实模型，评分仍属于运行器。
+
 `internal/eval/xinlifixture` 镜像 Persona 的数据形状与评分所需只读规则，避免内核反向 import 业务模块（ADR-0043）；类型以 `persona/domain` 为准。评分仍留在评测运行器，夹具不提供 Check。单元测试在 `TestMain` 中将应用构建一次到临时目录，各测试启动隔离的夹具进程并同步回收。
 
 基线（`doubao-seed-2-1-lite-260915:minimal`）中全部用例都是 3/3。

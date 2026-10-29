@@ -2,6 +2,7 @@
 //
 // 所有路径以 /v1/fixture/{businessLine}/{endUser} 为前缀，身份取自路径：
 // GET /state 返回 domain.State；POST /seed 的整个请求体是 domain.SeedData（字段名为 snake_case）。
+// POST /reset {} 清空 owner 的全部夹具数据（须先停下该 owner 的工作）；Seed 仍为追加预置。
 // POST /bind {project,session}；POST /submitted {session,input}；POST /edit {id,status,due_date}；
 // POST /resolve {session,exchange,project}；POST /resolve_merge {id,accept}；POST /archive {}。
 // GET /week 返回 domain.WeekPlan；POST /bind_week {from,session} 绑定每周回顾 Session。
@@ -69,6 +70,23 @@ func Handler(s store.Store, opts Options) http.Handler {
 			write(w, http.StatusOK, out)
 		})
 	}
+	mux.HandleFunc("POST "+prefix+"/reset", func(w http.ResponseWriter, r *http.Request) {
+		var in struct{}
+		if err := decode(r, &in); err != nil {
+			write(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		resetter, ok := s.(store.Resetter)
+		if !ok {
+			write(w, http.StatusNotImplemented, map[string]string{"error": "owner reset is not supported"})
+			return
+		}
+		if err := resetter.ResetOwner(r.Context(), r.PathValue("businessLine"), r.PathValue("endUser")); err != nil {
+			write(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		write(w, http.StatusOK, struct{}{})
+	})
 	register("GET", "/state", true, func(b *domain.Book, _ *http.Request) (any, error) { return b.State(), nil })
 	register("GET", "/week", true, func(b *domain.Book, _ *http.Request) (any, error) { return b.ReviewWeek(now()), nil })
 	register("POST", "/seed", false, func(b *domain.Book, r *http.Request) (any, error) {

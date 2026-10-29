@@ -21,7 +21,10 @@ func (f deletionNotice) DeletionPending(ctx context.Context, bl, eu, id string) 
 
 // 通知内读取存储，证明已提交且锁已释放；失败事务不应触发通知。
 func TestErasureRoutes(t *testing.T) {
-	s := memstore.New()
+	fixtureStores(t, testErasureRoutes)
+}
+
+func testErasureRoutes(t *testing.T, s store.Store) {
 	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
 	var notices []string
 	notifier := deletionNotice(func(ctx context.Context, bl, eu, id string) {

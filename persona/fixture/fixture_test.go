@@ -14,14 +14,17 @@ import (
 	"persona/domain"
 	"persona/fixture"
 	"persona/mcpserver"
-	"persona/store/memstore"
+	"persona/store"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestSeedToolState(t *testing.T) {
+	fixtureStores(t, testSeedToolState)
+}
+
+func testSeedToolState(t *testing.T, s store.Store) {
 	ctx := context.Background()
-	s := memstore.New()
 	now := func() time.Time { return time.Date(2026, 10, 23, 22, 0, 0, 0, time.UTC) }
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", mcpserver.Handler(s, mcpserver.Options{Now: now}))
@@ -71,14 +74,17 @@ func TestSeedToolState(t *testing.T) {
 }
 
 func TestErrors(t *testing.T) {
-	s := memstore.New()
+	fixtureStores(t, testErrors)
+}
+
+func testErrors(t *testing.T, s store.Store) {
 	handler := fixture.Handler(s, fixture.Options{})
 	request := func(method, path, body string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, httptest.NewRequest(method, "/v1/fixture/bl/u/"+path, strings.NewReader(body)))
 		return rec
 	}
-	for _, op := range []string{"seed", "bind", "submitted", "edit", "resolve", "resolve_merge", "archive", "bind_week", "captures", "bind_day", "capture_position", "capture_preview"} {
+	for _, op := range []string{"seed", "bind", "submitted", "edit", "resolve", "resolve_merge", "archive", "bind_week", "captures", "bind_day", "capture_position", "capture_preview", "reset", "erase", "erase_day"} {
 		for _, body := range []string{"{", `{} {}`, `{"unexpected":true}`} {
 			t.Run(op+"/"+body, func(t *testing.T) {
 				rec := request("POST", op, body)
@@ -140,7 +146,11 @@ func TestErrors(t *testing.T) {
 }
 
 func TestRejectOversize(t *testing.T) {
-	handler := fixture.Handler(memstore.New(), fixture.Options{})
+	fixtureStores(t, testRejectOversize)
+}
+
+func testRejectOversize(t *testing.T, s store.Store) {
+	handler := fixture.Handler(s, fixture.Options{})
 	body := `{"projects":[]}` + strings.Repeat(" ", 4<<20) + `{}`
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest("POST", "/v1/fixture/bl/u/seed", strings.NewReader(body)))
@@ -152,7 +162,10 @@ func TestRejectOversize(t *testing.T) {
 
 // 评测只取业务线处理进度；读取不推进进度，换绑后旧 Session 立即失效。
 func TestCapturePosition(t *testing.T) {
-	s := memstore.New()
+	fixtureStores(t, testCapturePosition)
+}
+
+func testCapturePosition(t *testing.T, s store.Store) {
 	handler := fixture.Handler(s, fixture.Options{})
 	request := func(path, body string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
@@ -202,7 +215,10 @@ func TestCapturePosition(t *testing.T) {
 }
 
 func TestCapturePreviewDoesNotChangeBook(t *testing.T) {
-	s := memstore.New()
+	fixtureStores(t, testCapturePreviewDoesNotChangeBook)
+}
+
+func testCapturePreviewDoesNotChangeBook(t *testing.T, s store.Store) {
 	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
 	if err := s.Update(context.Background(), "bl", "u", func(b *domain.Book) error {
 		if err := b.BindDay("2026-10-27", "s"); err != nil {

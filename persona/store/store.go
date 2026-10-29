@@ -15,7 +15,8 @@ import (
 type Store interface {
 	Update(ctx context.Context, businessLine, endUser string, fn func(*domain.Book) error) error
 	View(ctx context.Context, businessLine, endUser string, fn func(*domain.Book) error) error
-	// PendingDeletions 只发现有删除待办或完成后仍需重新整理的所有者；P4 的 PG 实现按待办表索引查询，不扫描 Book。
+	// PendingDeletions 按 BusinessLine、EndUser 的 Go 字节顺序返回去重的所有者；
+	// 只发现有删除待办或完成后仍需重新整理的所有者；P4 的 PG 实现按待办表索引查询，不扫描 Book。
 	PendingDeletions(ctx context.Context) ([]Owner, error)
 }
 
@@ -23,4 +24,11 @@ type Store interface {
 type Owner struct {
 	BusinessLine string `json:"business_line"`
 	EndUser      string `json:"end_user"`
+}
+
+// Resetter 仅供开发与评测回收 owner，不是生产的 EndUser 删除协议。
+// 调用方须先停下该 owner 的工作；清空账本、原文、绑定、进度与删除待办，可重复调用。
+// 与 Store 分开，避免生产调用方依赖评测专用的删除入口。
+type Resetter interface {
+	ResetOwner(ctx context.Context, businessLine, endUser string) error
 }

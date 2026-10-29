@@ -190,9 +190,9 @@ P4 自动调度以固定业务日时区、原文与处理进度为依据，抖�
 - **每周回顾**：开发页面按钮经夹具的 `week_review` 做 §7 的三步，同一周复用回顾 Session 与输入 ID。
 - **待确认与用户改动**：开发页面经 `persona/fixture` 的 `resolve`、`resolve_merge` 与 `edit` 操作确认归属、合并或修改承诺，记为用户的变更集。
 - **只收“整理今天”的 `file_day`**：当前评测运行器经夹具的 `submitted` 操作记下整理输入；开发入口的宽松行为不能作为生产资格。P4 统一采用 Q102、Q113 的单写入方、命令登记与当前绑定校验。
-- 数据只在内存中，页面地址见就绪行 `page_url`。不关闭整理后的 Session，仍可在内核控制台继续对话。
+- 默认 `-store memory`，也可用 `-store pg -persona-dsn <dsn>`（DSN 默认读 `YANSHI_PERSONA_PG_DSN`，为空时 PG 启动失败）。PG 指向预先创建的独立 database，不能与内核共库；启动完成 Persona 迁移后才输出就绪行。页面地址见就绪行 `page_url`。不关闭整理后的 Session，仍可在内核控制台继续对话。
 
-评测启动相同进程但不带 `-kernel-url`，由运行器自己扮演业务线，不自动归集；Seed、State 与操作均经 HTTP（[评测框架](./m4-eval.md) §12）。
+评测启动相同进程但不带 `-kernel-url`，由运行器自己扮演业务线，不自动归集；Seed、State 与操作均经 HTTP（[评测框架](./m4-eval.md) §12）。评测的 `-xinli-store pg` 与 `-xinli-persona-dsn` 选择 PG 夹具，默认仍为 memory；DSN 默认读取 `YANSHI_PERSONA_PG_DSN`，没有内核 DSN 回退。每 trial 新 owner，Seed 仍为追加预置；PG 数据退出后保留。停止该 owner 的工作后，可用夹具 `POST /reset {}` 清空账本、原文、进度、绑定及删除待办，PG 通过 owners 外键级联清理。trial 返回时仍可能有在途 MCP 请求，运行器不自动 reset；整次回收可在相关进程停止后重建专用评测库。完整建库与内存/PG 对照命令见 [m4-eval.md §12](./m4-eval.md)。
 
 ## 10. 评测
 
@@ -325,7 +325,7 @@ MCP 的 captures 工具与冻结 golden 中的说明及 schema 一致，声明�
 
 以下记录 P1 的实现。P4 由[整体架构](./persona-architecture.md) §13 Q100–Q102、Q113 替换其进程内互斥、内存退避与有限去重保证：任务、租约代数、receipt 和退避持久化，未知提交须完整日志对账；创建意图与 CAS 绑定可恢复，异常旧工作 Session 须退役。Q95、Q96 同时要求固定业务日时区与非零 UTC 期限，生产不再从最后一段原文推导时区，也不接受零期限；以下旧夹具兼容行为不是 P4 的生产契约。
 
-`apps/xinli/orchestrator` 实现 `DeletionNotifier`。通知只唤醒执行，不承担持久交付；`StartDeletions` 启动时立即查询 `Store.PendingDeletions`，随后默认每 30 秒扫描一次。`ScanDeletions` 可手动驱动一轮。`xinli dev -kernel-url` 将同一编排器装配到 MCP、夹具和开发页面，停机关闭扫描并等待已接收的工作；不带内核地址时保留 pending，不执行内核操作。开发命令目前使用 memstore，进程重启不保存任何 Book；这里的崩溃恢复保证以复用同一 Store（将来的持久实现）为前提，测试用同一 memstore 重建编排器验证协议。
+`apps/xinli/orchestrator` 实现 `DeletionNotifier`。通知只唤醒执行，不承担持久交付；`StartDeletions` 启动时立即查询 `Store.PendingDeletions`，随后默认每 30 秒扫描一次。`ScanDeletions` 可手动驱动一轮。`xinli dev -kernel-url` 将同一编排器装配到 MCP、夹具和开发页面，停机关闭扫描并等待已接收的工作；不带内核地址时保留 pending，不执行内核操作。开发命令默认使用 memstore，进程重启不保存 Book；A4 可选择 pgstore，重启后继续读取同一独立 database 的事实。A4 的确定性 HTTP/MCP 契约测试包含关闭 Store 后重开的变体，并逐步检查工具结果、State、处理进度及删除待办；这不等于后续 P4 编排任务、租约与出站流协议已经完成。
 
 执行与项目归集、每周回顾、工作 Session 创建共用同一 EndUser 的互斥入口，网络调用不占 Persona 事务锁。待办按保存顺序执行；前项清理未完成、失败或处于退避期时，本所有者本轮到此结束，不让后项抢先读取 Memory。每项按以下顺序推进：
 

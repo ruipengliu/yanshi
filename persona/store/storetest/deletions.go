@@ -130,3 +130,46 @@ func deletionRebuild(t *testing.T, factory func() store.Store) {
 		t.Fatalf("completed rebuild: %v %v", owners, err)
 	}
 }
+
+// 多个待办只发现一次 owner，顺序不能随 PG locale 或内存 map 遍历变化。
+func deletionOwners(t *testing.T, factory func() store.Store) {
+	s := factory()
+	ctx := context.Background()
+	owners := []store.Owner{{BusinessLine: "中", EndUser: "u"}, {BusinessLine: "a", EndUser: "z"}, {BusinessLine: "a", EndUser: "a\x00"}, {BusinessLine: "b", EndUser: "u"}}
+	for _, owner := range owners {
+		if err := s.Update(ctx, owner.BusinessLine, owner.EndUser, func(b *domain.Book) error {
+			for _, date := range []string{"2026-10-27", "2026-10-28"} {
+				if _, err := b.AppendCaptures(date, "one", []domain.CaptureSegment{{Speaker: "wearer", Text: "原文"}}); err != nil {
+					return err
+				}
+				if _, err := b.EraseDay(date, captureNow); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := []store.Owner{owners[2], owners[1], owners[3], owners[0]}
+	check := func() {
+		t.Helper()
+		if got, err := s.PendingDeletions(ctx); err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("pending owners: %v, %v; want %v", got, err, want)
+		}
+	}
+	check()
+	owner := want[1]
+	if err := s.Update(ctx, owner.BusinessLine, owner.EndUser, func(b *domain.Book) error {
+		for _, task := range b.PendingDeletionTasks() {
+			if err := b.CompleteDeletionTask(task.ID, nil, captureNow); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want = []store.Owner{owners[2], owners[3], owners[0]}
+	check()
+}

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -17,12 +18,44 @@ import (
 
 	"persona/domain"
 	"persona/mcpserver"
+	"persona/pg/pgtest"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"gopkg.in/yaml.v3"
 )
 
+// 用当前测试二进制启动真实 dev 入口，跨进程验证存储选择与就绪/EOF 协议。
+func TestMain(m *testing.M) {
+	if os.Getenv("XINLI_DEV_TEST_PROCESS") == "1" {
+		if err := run(context.Background(), os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+func runDevProcess(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	bin, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Env = append(os.Environ(), "XINLI_DEV_TEST_PROCESS=1")
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
+	return cmd.Run()
+}
+
 func TestDevReadinessFixtureMCPAndEOF(t *testing.T) {
+	t.Run("memory", func(t *testing.T) { testDevReadinessFixtureMCPAndEOF(t, nil) })
+	t.Run("pg", func(t *testing.T) {
+		pool := pgtest.New(t)
+		t.Setenv("YANSHI_PERSONA_PG_DSN", pool.Config().ConnConfig.ConnString())
+		testDevReadinessFixtureMCPAndEOF(t, []string{"-store", "pg"})
+	})
+}
+
+func testDevReadinessFixtureMCPAndEOF(t *testing.T, storageArgs []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	stdin, input := io.Pipe()
@@ -35,7 +68,7 @@ func TestDevReadinessFixtureMCPAndEOF(t *testing.T) {
 	dir := t.TempDir()
 	done := make(chan error, 1)
 	go func() {
-		done <- run(ctx, []string{"dev", "-business-lines", "bl,other", "-mcp-dir", dir, "-exit-on-stdin-eof"}, stdin, stdout, &logs)
+		done <- runDevProcess(ctx, append([]string{"dev", "-business-lines", "bl,other", "-mcp-dir", dir, "-exit-on-stdin-eof"}, storageArgs...), stdin, stdout, &logs)
 		_ = stdout.Close()
 	}()
 	type received struct {
@@ -171,7 +204,9 @@ func TestDevReadinessFixtureMCPAndEOF(t *testing.T) {
 }
 
 func TestDevRejectsInvalidArguments(t *testing.T) {
-	for _, args := range [][]string{{"dev"}, {"dev", "-business-lines", "../bad"}, {"dev", "-business-lines", "ok,"}, {"dev", "-business-lines", "ok", "-console-url", "javascript:alert(1)"}} {
+	t.Setenv("YANSHI_PERSONA_PG_DSN", "")
+	t.Setenv("YANSHI_PG_DSN", "postgres://kernel-only/yanshi")
+	for _, args := range [][]string{{"dev", "-business-lines", "bl", "-store", "invalid"}, {"dev", "-business-lines", "bl", "-store", "pg"}, {"dev"}, {"dev", "-business-lines", "../bad"}, {"dev", "-business-lines", "ok,"}, {"dev", "-business-lines", "ok", "-console-url", "javascript:alert(1)"}} {
 		if err := run(context.Background(), args, strings.NewReader(""), io.Discard, io.Discard); err == nil {
 			t.Fatalf("accepted %v", args)
 		}

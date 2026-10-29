@@ -17,6 +17,21 @@ func TestMain(m *testing.M) {
 	if mode == "" {
 		os.Exit(m.Run())
 	}
+	if mode == "storage" {
+		kind := ""
+		for i, arg := range os.Args {
+			if arg == "-persona-dsn" {
+				os.Exit(3)
+			}
+			if arg == "-store" && i+1 < len(os.Args) {
+				kind = os.Args[i+1]
+			}
+		}
+		if kind+"|"+os.Getenv("YANSHI_PERSONA_PG_DSN") != os.Getenv("YANSHI_FIXTURE_EXPECT_STORAGE") {
+			os.Exit(4)
+		}
+		mode = "ready"
+	}
 	switch mode {
 	case "bad-json":
 		fmt.Println("not JSON")
@@ -105,5 +120,38 @@ func TestCloseKillsUnresponsiveProcess(t *testing.T) {
 	case <-client.done:
 	default:
 		t.Fatal("Close returned without waiting")
+	}
+}
+
+func TestStorageOptions(t *testing.T) {
+	for _, tc := range []struct {
+		name, store, dsn, inherited, want string
+	}{
+		{name: "default", want: "memory|"},
+		{name: "pg_env", store: "pg", inherited: "postgres://fixture-only/env", want: "pg|postgres://fixture-only/env"},
+		{name: "pg_override", store: "pg", dsn: "postgres://fixture-only/explicit", inherited: "postgres://fixture-only/env", want: "pg|postgres://fixture-only/explicit"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("YANSHI_PERSONA_PG_DSN", tc.inherited)
+			t.Setenv("YANSHI_FIXTURE_EXPECT_STORAGE", tc.want)
+			client, _, err := StartWithOptions(context.Background(), helperBinary(t, "storage"), Options{Store: tc.store, PersonaDSN: tc.dsn}, "eval")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := client.Close(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestInvalidStorageOptions(t *testing.T) {
+	t.Setenv("YANSHI_PERSONA_PG_DSN", "")
+	t.Setenv("YANSHI_PG_DSN", "postgres://kernel-only/yanshi")
+	for _, opts := range []Options{{Store: "invalid"}, {Store: "pg"}} {
+		client, _, err := StartWithOptions(context.Background(), "unused", opts, "eval")
+		if client != nil || err == nil || !strings.Contains(err.Error(), "xinli fixture:") {
+			t.Fatalf("invalid options: %v %v", client, err)
+		}
 	}
 }

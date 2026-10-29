@@ -31,8 +31,32 @@ type Client struct {
 	closeErr error
 }
 
+// Options 只影响独立夹具进程，不改变用例或内核存储。
+type Options struct {
+	Store      string
+	PersonaDSN string
+}
+
 func Start(ctx context.Context, bin string, businessLines ...string) (*Client, []mcpcap.Server, error) {
-	cmd := exec.Command(bin, "dev", "-business-lines", strings.Join(businessLines, ","), "-exit-on-stdin-eof")
+	return StartWithOptions(ctx, bin, Options{}, businessLines...)
+}
+
+func StartWithOptions(ctx context.Context, bin string, opts Options, businessLines ...string) (*Client, []mcpcap.Server, error) {
+	if opts.Store == "" {
+		opts.Store = "memory"
+	}
+	if opts.Store != "memory" && opts.Store != "pg" {
+		return nil, nil, fmt.Errorf("xinli fixture: store must be memory or pg")
+	}
+	if opts.PersonaDSN == "" {
+		opts.PersonaDSN = os.Getenv("YANSHI_PERSONA_PG_DSN")
+	}
+	if opts.Store == "pg" && strings.TrimSpace(opts.PersonaDSN) == "" {
+		return nil, nil, fmt.Errorf("xinli fixture: pg requires -xinli-persona-dsn or YANSHI_PERSONA_PG_DSN (a separate database)")
+	}
+	cmd := exec.Command(bin, "dev", "-business-lines", strings.Join(businessLines, ","), "-store", opts.Store, "-exit-on-stdin-eof")
+	// DSN 通过子进程环境传递，避免把凭据放进进程参数与启动错误。
+	cmd.Env = append(os.Environ(), "YANSHI_PERSONA_PG_DSN="+opts.PersonaDSN)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, nil, err
@@ -83,7 +107,12 @@ func Start(ctx context.Context, bin string, businessLines ...string) (*Client, [
 		// stdout 只承载就绪协议；继续排空，避免意外输出堵住子进程。
 		_, _ = io.Copy(io.Discard, stdout)
 	}()
-	timeout := time.NewTimer(15 * time.Second)
+	// PG 入口给连接与迁移 30 秒，父进程须留出启动和就绪传输的余量。
+	readinessTimeout := 15 * time.Second
+	if opts.Store == "pg" {
+		readinessTimeout = 45 * time.Second
+	}
+	timeout := time.NewTimer(readinessTimeout)
 	defer timeout.Stop()
 	var result readyResult
 	select {
@@ -177,6 +206,10 @@ func (c *Client) request(ctx context.Context, bl, eu, op string, input, output a
 	}
 	_, err = io.Copy(io.Discard, resp.Body)
 	return err
+}
+
+func (c *Client) Reset(ctx context.Context, bl, eu string) error {
+	return c.request(ctx, bl, eu, "reset", struct{}{}, nil)
 }
 
 func (c *Client) Seed(ctx context.Context, bl, eu string, seed SeedData) error {

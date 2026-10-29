@@ -1,0 +1,361 @@
+{
+  "version": 1,
+  "now": "2026-10-28T12:00:00Z",
+  "business_line": "bl",
+  "end_user": "u",
+  "steps": [
+    {
+      "op": "seed",
+      "args": {
+        "projects": [
+          {
+            "id": "P-1",
+            "name": "项目"
+          }
+        ],
+        "commitments": [
+          {
+            "kind": "mine",
+            "content": "发报价",
+            "project": "P-1"
+          }
+        ]
+      }
+    },
+    {
+      "op": "captures",
+      "args": {
+        "date": "2026-10-28",
+        "capture_id": "batch",
+        "segments": [
+          {
+            "speaker": "wearer",
+            "text": "我会发报价",
+            "spoken_at": "2026-10-28T11:00:00Z",
+            "time_zone": "Asia/Shanghai"
+          },
+          {
+            "speaker": "other",
+            "speaker_key": "other-1",
+            "text": "请明天给我",
+            "spoken_at": "2026-10-28T11:01:00Z",
+            "time_zone": "Asia/Shanghai"
+          },
+          {
+            "speaker": "wearer",
+            "text": "好的",
+            "spoken_at": "2026-10-28T11:02:00Z",
+            "time_zone": "Asia/Shanghai"
+          }
+        ]
+      }
+    },
+    {
+      "op": "captures",
+      "args": {
+        "date": "2026-10-28",
+        "capture_id": "batch",
+        "segments": [
+          {
+            "speaker": "wearer",
+            "text": "我会发报价",
+            "spoken_at": "2026-10-28T11:00:00Z",
+            "time_zone": "Asia/Shanghai"
+          },
+          {
+            "speaker": "other",
+            "speaker_key": "other-1",
+            "text": "请明天给我",
+            "spoken_at": "2026-10-28T11:01:00Z",
+            "time_zone": "Asia/Shanghai"
+          },
+          {
+            "speaker": "wearer",
+            "text": "好的",
+            "spoken_at": "2026-10-28T11:02:00Z",
+            "time_zone": "Asia/Shanghai"
+          }
+        ]
+      }
+    },
+    {
+      "op": "bind_day",
+      "args": {
+        "date": "2026-10-28",
+        "session": "day",
+        "delete_at": "2026-11-04T12:00:00Z"
+      }
+    },
+    {
+      "op": "tool",
+      "name": "captures",
+      "session": "day",
+      "args": {}
+    },
+    {
+      "op": "tool",
+      "name": "captures",
+      "session": "day",
+      "args": {
+        "after": "bad"
+      },
+      "page_options": {
+        "limit": 2,
+        "max_chars": 6000,
+        "gap_ms": 300000,
+        "max_tool_result": 8000
+      }
+    },
+    {
+      "op": "tool",
+      "name": "captures",
+      "session": "day",
+      "args": {
+        "after": "0",
+        "limit": 1
+      },
+      "page_options": {
+        "limit": 2,
+        "max_chars": 6000,
+        "gap_ms": 300000,
+        "max_tool_result": 8000
+      }
+    },
+    {
+      "op": "tool",
+      "name": "captures",
+      "session": "day",
+      "args": {
+        "after": "1.0",
+        "limit": 1
+      },
+      "page_options": {
+        "limit": 2,
+        "max_chars": 6000,
+        "gap_ms": 300000,
+        "max_tool_result": 8000
+      }
+    },
+    {
+      "op": "tool",
+      "name": "file_changes",
+      "session": "day",
+      "args": {
+        "source": {
+          "from": "#1.0",
+          "to": "#1.1"
+        }
+      }
+    },
+    {
+      "op": "capture_position",
+      "args": {
+        "session": "day"
+      }
+    },
+    {
+      "op": "tool",
+      "name": "captures",
+      "session": "day",
+      "args": {
+        "after": "1.1"
+      },
+      "page_options": {
+        "limit": 2,
+        "max_chars": 6000,
+        "gap_ms": 300000,
+        "max_tool_result": 8000
+      }
+    },
+    {
+      "op": "tool",
+      "name": "file_changes",
+      "session": "day",
+      "args": {
+        "source": {
+          "from": "#1.0",
+          "to": "#1.2"
+        }
+      }
+    },
+    {
+      "op": "capture_position",
+      "args": {
+        "session": "day"
+      }
+    },
+    {
+      "op": "erase",
+      "args": {
+        "date": "2026-10-28",
+        "from": "1.0",
+        "to": "9.0"
+      }
+    },
+    {
+      "op": "erase",
+      "args": {
+        "date": "2026-10-28",
+        "from": "1.0",
+        "to": "1.0"
+      }
+    },
+    {
+      "op": "deletion_tasks"
+    },
+    {
+      "op": "bind_day",
+      "args": {
+        "date": "2026-10-28",
+        "session": "replacement"
+      }
+    },
+    {
+      "op": "tool",
+      "name": "captures",
+      "session": "day",
+      "args": {
+        "after": "new"
+      },
+      "page_options": {
+        "limit": 2,
+        "max_chars": 6000,
+        "gap_ms": 300000,
+        "max_tool_result": 8000
+      }
+    },
+    {
+      "op": "tool",
+      "name": "captures",
+      "session": "replacement",
+      "args": {
+        "after": "new"
+      },
+      "page_options": {
+        "limit": 2,
+        "max_chars": 6000,
+        "gap_ms": 300000,
+        "max_tool_result": 8000
+      }
+    },
+    {
+      "op": "erase_day",
+      "args": {
+        "date": "2026-10-28"
+      }
+    },
+    {
+      "op": "captures",
+      "args": {
+        "date": "2026-10-28",
+        "capture_id": "batch",
+        "segments": [
+          {
+            "speaker": "wearer",
+            "text": "我会发报价",
+            "spoken_at": "2026-10-28T11:00:00Z",
+            "time_zone": "Asia/Shanghai"
+          },
+          {
+            "speaker": "other",
+            "speaker_key": "other-1",
+            "text": "请明天给我",
+            "spoken_at": "2026-10-28T11:01:00Z",
+            "time_zone": "Asia/Shanghai"
+          },
+          {
+            "speaker": "wearer",
+            "text": "好的",
+            "spoken_at": "2026-10-28T11:02:00Z",
+            "time_zone": "Asia/Shanghai"
+          }
+        ]
+      }
+    },
+    {
+      "op": "bind_day",
+      "args": {
+        "date": "2026-10-28",
+        "session": "forbidden"
+      }
+    },
+    {
+      "op": "reset",
+      "args": {}
+    },
+    {
+      "op": "reset",
+      "args": {}
+    },
+    {
+      "op": "seed",
+      "args": {
+        "projects": [
+          {
+            "id": "P-1",
+            "name": "项目"
+          }
+        ],
+        "commitments": [
+          {
+            "kind": "mine",
+            "content": "发报价",
+            "project": "P-1"
+          }
+        ]
+      }
+    },
+    {
+      "op": "captures",
+      "args": {
+        "date": "2026-10-28",
+        "capture_id": "batch",
+        "segments": [
+          {
+            "speaker": "wearer",
+            "text": "我会发报价",
+            "spoken_at": "2026-10-28T11:00:00Z",
+            "time_zone": "Asia/Shanghai"
+          },
+          {
+            "speaker": "other",
+            "speaker_key": "other-1",
+            "text": "请明天给我",
+            "spoken_at": "2026-10-28T11:01:00Z",
+            "time_zone": "Asia/Shanghai"
+          },
+          {
+            "speaker": "wearer",
+            "text": "好的",
+            "spoken_at": "2026-10-28T11:02:00Z",
+            "time_zone": "Asia/Shanghai"
+          }
+        ]
+      }
+    },
+    {
+      "op": "bind_day",
+      "args": {
+        "date": "2026-10-28",
+        "session": "fresh"
+      }
+    },
+    {
+      "op": "tool",
+      "name": "captures",
+      "session": "fresh",
+      "args": {
+        "after": "0"
+      },
+      "page_options": {
+        "limit": 2,
+        "max_chars": 6000,
+        "gap_ms": 300000,
+        "max_tool_result": 8000
+      }
+    },
+    {
+      "op": "state"
+    }
+  ]
+}

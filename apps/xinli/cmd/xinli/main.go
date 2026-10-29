@@ -22,7 +22,10 @@ import (
 
 	"persona/fixture"
 	"persona/mcpserver"
+	"persona/pg"
+	"persona/store"
 	"persona/store/memstore"
+	"persona/store/pgstore"
 	"xinli/devui"
 	"xinli/kernel"
 	"xinli/orchestrator"
@@ -80,6 +83,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	tokenEnv := flags.String("kernel-token-env", "", "服务令牌所在的环境变量名")
 	consoleURL := flags.String("console-url", "", "内核控制台地址")
 	mcpDir := flags.String("mcp-dir", "", "写入 MCP 登记的目录")
+	storeKind := flags.String("store", "memory", "Persona 存储：memory | pg")
+	personaDSN := flags.String("persona-dsn", os.Getenv("YANSHI_PERSONA_PG_DSN"), "Persona 独立数据库 DSN（YANSHI_PERSONA_PG_DSN；pg 必填）")
 	exitOnEOF := flags.Bool("exit-on-stdin-eof", false, "stdin 关闭时退出")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
@@ -118,7 +123,11 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		}
 	}
 	logger := slog.New(slog.NewTextHandler(stderr, nil))
-	books := memstore.New()
+	books, closeStore, err := openStore(ctx, *storeKind, *personaDSN)
+	if err != nil {
+		return err
+	}
+	defer closeStore()
 	// 停机信号先关闭 HTTP 并排空归集，超时才取消归集 context。
 	life, cancelLife := context.WithCancel(context.Background())
 	defer cancelLife()
@@ -222,4 +231,31 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		}
 	}
 	return result
+}
+
+// 开发与夹具共用入口；迁移完成后才宣布就绪，DSN 不从内核配置回退。
+func openStore(ctx context.Context, kind, dsn string) (store.Store, func(), error) {
+	switch kind {
+	case "memory":
+		return memstore.New(), func() {}, nil
+	case "pg":
+		if strings.TrimSpace(dsn) == "" {
+			return nil, nil, errors.New("xinli dev: pg requires -persona-dsn or YANSHI_PERSONA_PG_DSN (a separate database)")
+		}
+		startup, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		pool, err := pg.Open(startup, dsn, "")
+		if err != nil {
+			// 驱动错误可能包含连接信息，不能把 DSN 写入启动日志。
+			return nil, nil, errors.New("xinli dev: cannot open Persona database")
+		}
+		if err := pg.Migrate(startup, pool); err != nil {
+			pool.Close()
+			return nil, nil, errors.New("xinli dev: Persona migration failed")
+		}
+		s := pgstore.New(pool)
+		return s, s.Close, nil
+	default:
+		return nil, nil, errors.New("xinli dev: store must be memory or pg")
+	}
 }

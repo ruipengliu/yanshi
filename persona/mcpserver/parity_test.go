@@ -9,8 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"persona/fixture"
-	"persona/store/memstore"
 	"reflect"
 	"slices"
 	"strings"
@@ -18,6 +16,10 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"persona/fixture"
+	"persona/store"
+	"persona/store/memstore"
 )
 
 var updateParity = flag.Bool("update", false, "重写冻结的 Persona 回归 golden")
@@ -31,11 +33,12 @@ type parityScript struct {
 	Steps        []parityStep `json:"steps"`
 }
 type parityStep struct {
-	Op        string          `json:"op"`
-	Name      string          `json:"name,omitempty"`
-	Session   string          `json:"session,omitempty"`
-	Args      json.RawMessage `json:"args,omitempty"`
-	Citations json.RawMessage `json:"citations,omitempty"`
+	Op          string          `json:"op"`
+	Name        string          `json:"name,omitempty"`
+	Session     string          `json:"session,omitempty"`
+	Args        json.RawMessage `json:"args,omitempty"`
+	Citations   json.RawMessage `json:"citations,omitempty"`
+	PageOptions json.RawMessage `json:"page_options,omitempty"`
 }
 type parityOutput struct {
 	Input   parityStep `json:"input"`
@@ -82,9 +85,17 @@ func parityCall(t *testing.T, ctx context.Context, conn *mcp.ClientSession, scri
 			t.Fatal(err)
 		}
 	}
-	res, err := conn.CallTool(ctx, &mcp.CallToolParams{Name: step.Name, Arguments: args, Meta: mcp.Meta{
+	metadata := mcp.Meta{
 		"yanshi/business_line": script.BusinessLine, "yanshi/end_user": script.EndUser, "yanshi/session": step.Session, "yanshi/captures": cites,
-	}})
+	}
+	if len(step.PageOptions) > 0 {
+		var options any
+		if err := json.Unmarshal(step.PageOptions, &options); err != nil {
+			t.Fatal(err)
+		}
+		metadata["yanshi/page_options"] = options
+	}
+	res, err := conn.CallTool(ctx, &mcp.CallToolParams{Name: step.Name, Arguments: args, Meta: metadata})
 	if err != nil {
 		out.Error = err.Error()
 		return out
@@ -142,56 +153,15 @@ func TestParity(t *testing.T) {
 		t.Fatal("golden version or step count changed")
 	}
 	ctx := context.Background()
-	s := memstore.New()
-	now := func() time.Time { return script.Now }
-	mux := http.NewServeMux()
-	mux.Handle("/mcp", Handler(s, Options{Now: now}))
-	mux.Handle("/v1/fixture/", fixture.Handler(s, fixture.Options{Now: now}))
-	hs := httptest.NewServer(mux)
-	defer hs.Close()
-	client := mcp.NewClient(&mcp.Implementation{Name: "parity", Version: "1"}, nil)
-	conn, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: hs.URL + "/mcp"}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
+	endpoint := newParityEndpoint(t, memstore.New(), script.Now)
+	defer endpoint.close()
+	conn := endpoint.conn
 	actual := parityGolden{Version: script.Version, Tools: parityTools(t, ctx, conn)}
 	if !*updateParity {
 		parityEqual(t, "tools/list", actual.Tools, want.Tools)
 	}
 	for i, step := range script.Steps {
-		var got parityOutput
-		if step.Op == "tool" {
-			got = parityCall(t, ctx, conn, script, step)
-		} else {
-			got = parityOutput{Input: step}
-			method := "POST"
-			if step.Op == "state" || step.Op == "week" {
-				method = "GET"
-			}
-			request, err := http.NewRequestWithContext(ctx, method, hs.URL+"/v1/fixture/"+script.BusinessLine+"/"+script.EndUser+"/"+step.Op, bytes.NewReader(step.Args))
-			if err != nil {
-				t.Fatal(err)
-			}
-			response, err := hs.Client().Do(request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if response.StatusCode == http.StatusOK {
-				err = json.NewDecoder(response.Body).Decode(&got.Value)
-			} else {
-				if response.StatusCode != http.StatusBadRequest {
-					t.Fatalf("step %d: HTTP %d", i, response.StatusCode)
-				}
-				var value struct{ Error string }
-				err = json.NewDecoder(response.Body).Decode(&value)
-				got.Error = value.Error
-			}
-			response.Body.Close()
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
+		got := endpoint.step(t, script, step)
 		actual.Steps = append(actual.Steps, got)
 		if !*updateParity {
 			parityEqual(t, fmt.Sprintf("step %d %s", i, step.Op), got, want.Steps[i])
@@ -206,4 +176,67 @@ func TestParity(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+// MCP 与夹具必须使用同一个 Store；重启时同时重建 HTTP 服务与客户端会话。
+type parityEndpoint struct {
+	hs   *httptest.Server
+	conn *mcp.ClientSession
+}
+
+func newParityEndpoint(t *testing.T, s store.Store, at time.Time) *parityEndpoint {
+	t.Helper()
+	now := func() time.Time { return at }
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", Handler(s, Options{Now: now}))
+	mux.Handle("/v1/fixture/", fixture.Handler(s, fixture.Options{Now: now}))
+	hs := httptest.NewServer(mux)
+	client := mcp.NewClient(&mcp.Implementation{Name: "parity", Version: "1"}, nil)
+	conn, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: hs.URL + "/mcp"}, nil)
+	if err != nil {
+		hs.Close()
+		t.Fatal(err)
+	}
+	return &parityEndpoint{hs: hs, conn: conn}
+}
+
+func (e *parityEndpoint) close() {
+	_ = e.conn.Close()
+	e.hs.Close()
+}
+
+func (e *parityEndpoint) step(t *testing.T, script parityScript, step parityStep) parityOutput {
+	t.Helper()
+	ctx := context.Background()
+	if step.Op == "tool" {
+		return parityCall(t, ctx, e.conn, script, step)
+	}
+	got := parityOutput{Input: step}
+	method := "POST"
+	if step.Op == "state" || step.Op == "week" || step.Op == "deletion_tasks" {
+		method = "GET"
+	}
+	request, err := http.NewRequestWithContext(ctx, method, e.hs.URL+"/v1/fixture/"+script.BusinessLine+"/"+script.EndUser+"/"+step.Op, bytes.NewReader(step.Args))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := e.hs.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusOK {
+		err = json.NewDecoder(response.Body).Decode(&got.Value)
+	} else {
+		if response.StatusCode != http.StatusBadRequest {
+			t.Fatalf("%s: HTTP %d", step.Op, response.StatusCode)
+		}
+		var value struct{ Error string }
+		err = json.NewDecoder(response.Body).Decode(&value)
+		got.Error = value.Error
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
 }

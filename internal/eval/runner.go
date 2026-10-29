@@ -57,6 +57,8 @@ var defaultXinliBin = "bin/xinli"
 type Config struct {
 	// XinliBin 是外部开发夹具的可执行文件；只有 xinli 用例才启动。
 	XinliBin string
+	// XinliFixture 默认使用内存；PG 只用于独立 Persona 夹具。
+	XinliFixture xinlifixture.Options
 	// Agents 是基础 AgentDef；用例的覆盖项与 ModelOverride 会派生出新版本。
 	Agents         *agentdef.Registry
 	Oneshots       *oneshot.Registry
@@ -325,7 +327,7 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 	}
 	if needsXinli(agents, cases, versions) {
 		var registrations []mcpcap.Server
-		if in.xinli, registrations, err = xinlifixture.Start(ctx, cfg.XinliBin, BusinessLine, NoHealthBusinessLine); err != nil {
+		if in.xinli, registrations, err = xinlifixture.StartWithOptions(ctx, cfg.XinliBin, cfg.XinliFixture, BusinessLine, NoHealthBusinessLine); err != nil {
 			return nil, err
 		}
 		servers = append(servers, registrations...)

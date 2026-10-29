@@ -127,3 +127,18 @@ func (s *Store) PendingDeletions(ctx context.Context) ([]store.Owner, error) {
 	})
 	return out, ctx.Err()
 }
+
+// 保留同键 entry，防止已经取得 entry 的调用与重置后的调用使用两把锁。
+func (s *Store) ResetOwner(ctx context.Context, bl, eu string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	e := s.entry(bl, eu)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	e.book, e.captures = domain.NewBook(), nil
+	return nil
+}

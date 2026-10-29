@@ -145,3 +145,12 @@ func contextError(ctx context.Context, err error) error {
 	}
 	return err
 }
+
+// 外键级联覆盖原文和账本，避免只清 State 后遗留引用、墓碑或删除待办。
+func (s *Store) ResetOwner(ctx context.Context, businessLine, endUser string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := s.pool.Exec(ctx, `DELETE FROM owners WHERE business_line=$1 AND end_user=$2`, []byte(businessLine), []byte(endUser))
+	return contextError(ctx, err)
+}

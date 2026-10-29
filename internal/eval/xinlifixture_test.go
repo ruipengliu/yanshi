@@ -69,6 +69,15 @@ func TestXinliFixtureOperations(t *testing.T) {
 	if err := client.Edit(ctx, BusinessLine, "u", "missing", "done", ""); err == nil || !strings.Contains(err.Error(), "HTTP 400: no commitment missing") {
 		t.Fatalf("fixture error: %v", err)
 	}
+	for range 2 {
+		if err := client.Reset(ctx, BusinessLine, "u"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state, err = client.State(ctx, BusinessLine, "u")
+	if err != nil || len(state.Projects) != 0 || len(state.Commitments) != 0 || len(state.Changesets) != 0 {
+		t.Fatalf("reset state: %+v, %v", state, err)
+	}
 	if err := client.Close(); err != nil {
 		t.Fatal(err)
 	}

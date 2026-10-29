@@ -23,6 +23,7 @@ import (
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
 	"yanshi/internal/eval"
+	"yanshi/internal/eval/xinlifixture"
 	"yanshi/internal/model"
 	"yanshi/internal/model/codex"
 	"yanshi/internal/oneshot"
@@ -34,6 +35,8 @@ import (
 func evalCmd(args []string) error {
 	fs := flag.NewFlagSet("eval", flag.ExitOnError)
 	xinliBin := fs.String("xinli-bin", "bin/xinli", "xinli dev 夹具二进制（make eval 自动构建）")
+	xinliStore := fs.String("xinli-store", "memory", "Persona 夹具存储：memory | pg")
+	xinliPersonaDSN := fs.String("xinli-persona-dsn", os.Getenv("YANSHI_PERSONA_PG_DSN"), "Persona 独立数据库 DSN（YANSHI_PERSONA_PG_DSN；pg 必填）")
 	suite := fs.String("suite", "evals", "评测用例目录")
 	agentsDir := fs.String("agents", "agents", "AgentDef 目录")
 	oneshotsDir := fs.String("oneshots", "oneshots", "单次调用声明目录")
@@ -95,7 +98,7 @@ func evalCmd(args []string) error {
 	gw := gateway(logger, defaultModelLimits, nil)
 	// 评分模型经本机的 Codex CLI 调用（只用于评测，serve 不注册）。
 	gw.Register("codex", codex.Provider{})
-	cfg := eval.Config{XinliBin: *xinliBin, Agents: agents, Oneshots: shots, OneshotVersion: *oneshotVersion, Model: gw, Judge: *judgeModel, EmbedModel: *embedModel,
+	cfg := eval.Config{XinliBin: *xinliBin, XinliFixture: xinlifixture.Options{Store: *xinliStore, PersonaDSN: *xinliPersonaDSN}, Agents: agents, Oneshots: shots, OneshotVersion: *oneshotVersion, Model: gw, Judge: *judgeModel, EmbedModel: *embedModel,
 		ModelOverride: *modelOverride, AgentVersion: *agentVersion, Trials: *trials, Parallel: *parallel, Logger: logger,
 		Progress: func(name string, trial int, passed bool) {
 			mark := "✓"
