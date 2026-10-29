@@ -129,6 +129,7 @@ retention:
 | 接口 | 权限 | 说明 |
 |---|---|---|
 | `GET /v1/sessions?cursor=&limit=` | 用户：自己的；服务：本业务线（可按 `end_user` 过滤） | 按最近输入时间倒序 |
+| `GET /v1/sessions?order=session_id&end_user=&cursor=&limit=` | 沿用列表授权；必须确定一个 EndUser | 恢复用，按不可变 Session ID 升序，包含已关闭项 |
 | `POST /v1/sessions/{id}/close` | 拥有该 Session 的调用方 | 幂等 |
 | `DELETE /v1/sessions/{id}` | 同上；`reason=erasure` 仅服务令牌 | 202，异步删除；之后普通访问返回 404 |
 | `GET /v1/sessions/{id}/deletion` | 仅服务令牌，本业务线 | 单个 Session 的原因、请求时间与完成时间 |
@@ -136,6 +137,10 @@ retention:
 | `GET /v1/deletions/{id}` | 仅服务令牌 | 删除进度（Session 数与已完成数），供业务线向用户证明已删除 |
 
 ## 7. 测试
+
+恢复分页（Q117）由 `lifecycle.Index.ListStable` 提供。`cursor` 是上一页最后一个 Session ID（不含），响应仍为 `sessions` 与 `next_cursor`，没有更多时后者为空。省略 `order` 或使用 `order=recent` 保持产品排序，未知值返回 400；limit 沿用默认 50、上限 200。PG 的比较与索引使用 `COLLATE "C"`，与内存的字符串顺序一致；索引由独立并发迁移 `0031_sessions_stable_order.sql` 创建。
+
+Touch 和关闭不会改变扫描位置。逻辑删除之后、Janitor 清索引之前仍可能列出，创建失败也可能留下空索引，读者须逐 ID 读取确认可访问性。分页不是并发快照：新建 ID 落在游标之前、或项在后页读取前已清除时，单轮列表不会包含它；应用通过先取 H、后追出站和已知项逐 ID 确认收敛，不能把未列出直接当删除（[M7](./m7-kernel-primitives.md) §6.5）。
 
 - 一致性套件：Session 索引与删除记录（`lifecycletest`）的内存与 PG 实现。
 - **模拟测试**新增"删除"动作，随机发生在 Run 进行中、设备执行中、沙箱执行中，以及 Janitor 崩溃时。新增不变量：

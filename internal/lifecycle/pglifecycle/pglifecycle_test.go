@@ -22,3 +22,8 @@ func TestDeletions(t *testing.T) {
 		return pglifecycle.Deletions{Pool: pool, Notifier: n}
 	})
 }
+
+func TestStableDeletion(t *testing.T) {
+	pool, _ := pgtest.Fresh(t)
+	lifecycletest.RunStableDeletion(t, pglifecycle.Index{Pool: pool}, pglifecycle.Deletions{Pool: pool})
+}

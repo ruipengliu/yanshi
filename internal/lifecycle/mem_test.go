@@ -14,3 +14,7 @@ func TestMemIndex(t *testing.T) {
 func TestMemDeletions(t *testing.T) {
 	lifecycletest.RunDeletions(t, func(*testing.T) lifecycle.Deletions { return lifecycle.NewMemDeletions() })
 }
+
+func TestMemStableDeletion(t *testing.T) {
+	lifecycletest.RunStableDeletion(t, lifecycle.NewMemIndex(), lifecycle.NewMemDeletions())
+}

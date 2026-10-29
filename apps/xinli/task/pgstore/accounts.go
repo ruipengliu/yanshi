@@ -140,6 +140,13 @@ func (s *Store) UpdateAccount(ctx context.Context, owner task.Owner, fn func(*ac
 			return account.ErrInvalid
 		}
 		if next.Cleanup {
+			if _, err = tx.Exec(ctx, `DELETE FROM outbox_receipts WHERE business_line=$1 AND end_user=$2`, owner.BusinessLine, owner.EndUser); err != nil {
+				return err
+			}
+			if _, err = tx.Exec(ctx, `UPDATE outbox_sessions SET end_user='',gone=true,seen_round=0,
+				payload=jsonb_build_object('SessionID',session_id,'Gone',true) WHERE business_line=$1 AND end_user=$2`, owner.BusinessLine, owner.EndUser); err != nil {
+				return err
+			}
 			for _, table := range []string{"session_creations", "task_sessions", "orchestration_tasks", "task_sources", "account_identities"} {
 				if _, err = tx.Exec(ctx, `DELETE FROM `+table+` WHERE business_line=$1 AND end_user=$2`, owner.BusinessLine, owner.EndUser); err != nil {
 					return err
@@ -212,3 +219,26 @@ func (s *Store) DeletionOwner(ctx context.Context, hash string) (task.Owner, err
 	}
 	return out, err
 }
+
+func (s *Store) AccountOwners(ctx context.Context, line, after string, limit int) ([]task.Owner, error) {
+	if line == "" || limit < 1 || limit > 200 {
+		return nil, account.ErrInvalid
+	}
+	rows, err := pg.Executor(ctx, s.pool).Query(ctx, `SELECT end_user FROM accounts
+		WHERE business_line=$1 AND end_user COLLATE "C">$2 ORDER BY end_user COLLATE "C" LIMIT $3`, line, after, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []task.Owner{}
+	for rows.Next() {
+		owner := task.Owner{BusinessLine: line}
+		if err := rows.Scan(&owner.EndUser); err != nil {
+			return nil, err
+		}
+		out = append(out, owner)
+	}
+	return out, rows.Err()
+}
+
+var _ account.Enumerator = (*Store)(nil)

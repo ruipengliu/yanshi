@@ -63,16 +63,22 @@ func (c *Client) Stream(ctx context.Context, line, id string, after uint64) (io.
 	return resp.Body, nil
 }
 
-// 内核目前把重答原因放在 error 文字中；只匹配完整的固定分类，不暴露任何其他下游文字。
+// 只提取重答与出站恢复的固定分类，不让任意下游正文进入错误或日志。
 func responseError(resp *http.Response) error {
 	err := &HTTPError{StatusCode: resp.StatusCode}
-	if resp.StatusCode != http.StatusConflict {
+	if resp.StatusCode != http.StatusConflict && resp.StatusCode != http.StatusGone {
 		return err
 	}
 	var body struct {
 		Error string `json:"error"`
 	}
 	if json.NewDecoder(io.LimitReader(resp.Body, 2048)).Decode(&body) != nil {
+		return err
+	}
+	if resp.StatusCode == http.StatusGone {
+		if body.Error == "outbox_cursor_expired" || body.Error == "outbox_epoch_changed" {
+			err.Reason = body.Error
+		}
 		return err
 	}
 	for _, reason := range []string{"session_closed", "not_last_run", "not_completed", "delegated_session", "platform_input", "card_action_input", "compacted", "steered", "approval_requested", "ask_user", "delegation", "background_call", "not_read_only"} {

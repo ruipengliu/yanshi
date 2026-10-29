@@ -15,6 +15,7 @@ import (
 var t0 = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
+	t.Run("StableRecovery", func(t *testing.T) { runStableIndex(t, newIndex(t)) })
 	ctx := context.Background()
 	put := func(t *testing.T, x lifecycle.Index, id, bl, eu string, at time.Time) {
 		t.Helper()

@@ -956,7 +956,16 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	if limit == 0 || limit > 200 {
 		limit = 50
 	}
-	page, next, err := s.Service.Index.List(r.Context(), bl, eu, q.Get("cursor"), int(limit))
+	list := s.Service.Index.List
+	switch q.Get("order") {
+	case "", "recent":
+	case "session_id":
+		list = s.Service.Index.ListStable
+	default:
+		s.fail(w, fmt.Errorf("%w: unknown session order", service.ErrInvalid))
+		return
+	}
+	page, next, err := list(r.Context(), bl, eu, q.Get("cursor"), int(limit))
 	if err != nil {
 		s.fail(w, fmt.Errorf("%w: %v", service.ErrInvalid, err))
 		return

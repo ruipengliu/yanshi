@@ -106,6 +106,11 @@ type Guard interface {
 	WithActive(context.Context, task.Owner, func(context.Context) error) error
 }
 
+// Enumerator 按不可变 EndUser ID 翻页，包含禁用、注销中和注销终态，恢复不能只扫描可登录账号。
+type Enumerator interface {
+	AccountOwners(context.Context, string, string, int) ([]task.Owner, error)
+}
+
 func ValidChange(old, next Record) bool {
 	if old.Account.Owner != next.Account.Owner || next.Account.SyncedVersion > next.Account.EntitlementVersion {
 		return false

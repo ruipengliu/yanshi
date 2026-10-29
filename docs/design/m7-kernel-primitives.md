@@ -170,7 +170,7 @@ Schedule {
 
 ## 6. 出站流（Outbox）
 
-> B3 的原子信封与 B4 的消费、保留协议已实现；B5 恢复分页、B6 应用消费者待实现。依据[整体架构](./persona-architecture.md) §13 Q105–Q106、Q117、Q118；范围与验收见该文 §11 的 B3–B6。
+> B3 的原子信封与 B4 的消费、保留协议已实现；B5 已加入稳定分页与记录型恢复器，B6 应用消费者待实现。依据[整体架构](./persona-architecture.md) §13 Q105–Q106、Q117、Q118；范围与验收见该文 §11 的 B3–B6。
 
 ### 6.1 用途与信封
 
@@ -277,6 +277,18 @@ Janitor 默认每分钟调用维护，每轮至多删除 1000 行：取得元数
 6. 从 H 追赶出站流并去重；若 H 已过期，重新开始恢复。
 
 新账号、Session 的创建继续由 BFF/编排持久流程记录。恢复只保证选定运行事件与当前可访问状态收敛，不承诺补发所有历史通知，也不是全部历史输入的完整变更流。读取内容得到 404 时取消相关发送，不无限重试；已过时的提醒与审批不再推送。
+
+#### B5 的应用实现与 B6 接入点
+
+`apps/xinli/recovery.Recoverer.Step(ctx, businessLine)` 每步做有界读取，以 `heads → owners → sessions → events → confirm → catchup → follow` 推进；首次启动也先对账。`heads` 使用 B4 的 `/v1/outbox/shards`，整轮固定 H；`catchup` 与 `follow` 按分片轮换、独立保存 after。明确的 `outbox_cursor_expired` 或 `outbox_epoch_changed` 才重回 heads，其他错误保留位置、交调用方退避。H 在扫描期间过期，会在追赶时检测到并重新枚举。
+
+应用 `account.Enumerator.AccountOwners` 按业务线、不可变 EndUser ID 翻页，包含 active、disabled、deleting、deleted。Session 列表使用 `order=session_id`；逐 ID 的投影与事件请求均可确认 404。未列出的已知 Session 由 `Consumer.Known` 按 ID 枚举，合并接收检查点、已有编排任务（含终态）和创建意图中的 Session，不以列表差集判删。HTTP 错误、账号归属不符、日志不连续均不推进进度。
+
+`recovery.Consumer` 是 B6 的事务接入点：`Load`、`Session`、`Known` 读取进度与检查点；`Commit(expectedVersion, progress, batch)` 原子校验版本、去重接收、保存检查点和进度。`Batch` 含信封等价物、可选完整页检查点、或由 404 确认的不可访问 ID；404 不伪造删除信封。当前 `task/memstore.Store` 与 `task/pgstore.Store` 提供记录型实现和 `Recorded` 查询。普通接收记录按 `(session_id,seq)` 去重，真实信封另有唯一 envelope_id；恢复等价物没有 envelope_id，追赶遇到真实信封时合并。接收稀疏信封登记已知 Session，但不推进完整日志 seq。
+
+应用迁移 `0005_outbox_recovery.sql` 增加恢复进度、Session 检查点和记录型接收表；`0006_accounts_stable_order.sql` 独立并发创建账号稳定枚举索引。进度保存轮次、当前 owner/Session、两个扫描位置、确认位置及各分片 H/after。检查点只存 ID、Agent 版本、首次提问派发及未了结后台调用元数据，不存正文；页提交前崩溃重读，提交后回包丢失则从持久位置继续。删除清普通接收记录和元数据，保留无 owner 的不可访问标记，阻止重读复活；账号 Cleanup 同事务清理并以账号终态挡住迟到页。
+
+B5 不启动生产消费循环、不创建收件箱或通知任务。B6 复用上述事务边界，把接收与后续任务原子保存，接入启动/周期调度、退避以及产品侧新增的已知 Session 来源；发送前仍须读取当前可访问状态并过滤过时事项。记录型实现只验证恢复和去重，不代表通知交付。
 
 ### 6.6 验收与实时事件流
 

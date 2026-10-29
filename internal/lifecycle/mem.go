@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"sync"
 	"time"
@@ -110,6 +111,26 @@ func (x *MemIndex) List(_ context.Context, businessLine, endUser, cursor string,
 		return all, "", nil
 	}
 	return all[:limit], EncodeCursor(all[limit-1]), nil
+}
+
+func (x *MemIndex) ListStable(_ context.Context, businessLine, endUser, cursor string, limit int) ([]*Session, string, error) {
+	if businessLine == "" || endUser == "" || limit < 1 || limit > 200 {
+		return nil, "", errors.New("lifecycle: invalid stable list scope or limit")
+	}
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	page := []*Session{}
+	for _, s := range x.m {
+		if s.BusinessLine == businessLine && s.EndUser == endUser && s.ID > cursor {
+			cp := *s
+			page = append(page, &cp)
+		}
+	}
+	sort.Slice(page, func(i, j int) bool { return page[i].ID < page[j].ID })
+	if len(page) <= limit {
+		return page, "", nil
+	}
+	return page[:limit], page[limit-1].ID, nil
 }
 
 func (x *MemIndex) IDsOf(_ context.Context, businessLine, endUser string) ([]string, error) {

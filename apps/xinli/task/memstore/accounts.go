@@ -2,6 +2,7 @@ package memstore
 
 import (
 	"context"
+	"sort"
 
 	"xinli/account"
 	"xinli/task"
@@ -100,6 +101,11 @@ func (s *Store) UpdateAccount(ctx context.Context, owner task.Owner, fn func(*ac
 		ctx = context.WithoutCancel(ctx)
 		// 先验证全部再修改；失败回调不泄露半份账号或任务。
 		if next.Cleanup {
+			for key, cp := range s.recoverySessions {
+				if key[0] == owner.BusinessLine && cp.EndUser == owner.EndUser {
+					s.forgetRecovery(owner.BusinessLine, cp.SessionID)
+				}
+			}
 			for id, c := range s.creations {
 				if c.Owner == owner {
 					delete(s.creations, id)
@@ -161,3 +167,24 @@ func (s *Store) DeletionOwner(ctx context.Context, hash string) (task.Owner, err
 	}
 	return task.Owner{}, account.ErrNotFound
 }
+
+func (s *Store) AccountOwners(ctx context.Context, line, after string, limit int) ([]task.Owner, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if line == "" || limit < 1 || limit > 200 {
+		return nil, account.ErrInvalid
+	}
+	out := []task.Owner{}
+	for owner := range s.accounts {
+		if owner.BusinessLine == line && owner.EndUser > after {
+			out = append(out, owner)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].EndUser < out[j].EndUser })
+	return out[:min(limit, len(out))], nil
+}
+
+var _ account.Enumerator = (*Store)(nil)

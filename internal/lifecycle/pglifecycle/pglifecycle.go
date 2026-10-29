@@ -117,6 +117,26 @@ func (x Index) List(ctx context.Context, businessLine, endUser, cursor string, l
 	return page[:limit], lifecycle.EncodeCursor(page[limit-1]), nil
 }
 
+func (x Index) ListStable(ctx context.Context, businessLine, endUser, cursor string, limit int) ([]*lifecycle.Session, string, error) {
+	if businessLine == "" || endUser == "" || limit < 1 || limit > 200 {
+		return nil, "", errors.New("lifecycle: invalid stable list scope or limit")
+	}
+	rows, err := x.Pool.Query(ctx, `SELECT `+columns+` FROM sessions
+		WHERE business_line=$1 AND end_user=$2 AND session_id COLLATE "C">$3
+		ORDER BY session_id COLLATE "C" LIMIT $4`, businessLine, endUser, cursor, limit+1)
+	if err != nil {
+		return nil, "", err
+	}
+	page, err := pgx.CollectRows(rows, scan)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(page) <= limit {
+		return page, "", nil
+	}
+	return page[:limit], page[limit-1].ID, nil
+}
+
 func (x Index) ids(ctx context.Context, q string, args ...any) ([]string, error) {
 	rows, err := x.Pool.Query(ctx, q, args...)
 	if err != nil {
