@@ -91,12 +91,12 @@ func (w *World) deleteAccount() error {
 				return err
 			}
 		}
-		pending, _, err := w.hub.Inbox.Pending(ctx, n.id)
+		pending, _, err := w.hub.Inbox.Pending(ctx, n.hello.GetEndUser(), n.id)
 		if err != nil {
 			return err
 		}
 		for _, inv := range pending {
-			if err := w.hub.Inbox.Remove(ctx, n.id, inv.GetCallId()); err != nil {
+			if err := w.hub.Inbox.Remove(ctx, n.hello.GetEndUser(), n.id, inv.GetCallId()); err != nil {
 				return err
 			}
 		}

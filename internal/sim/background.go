@@ -85,7 +85,7 @@ func (w *World) graceEdge() error {
 		if c == nil || !c.Dispatched() {
 			continue
 		}
-		n := w.nodeByID(c.NodeID)
+		n := w.nodeByID(st.Created.GetEndUser(), c.NodeID)
 		if n == nil {
 			continue
 		}
@@ -95,7 +95,7 @@ func (w *World) graceEdge() error {
 			}
 			return nil
 		}
-		info, err := w.stores.Dir.Get(ctx, n.id)
+		info, err := w.stores.Dir.Get(ctx, n.hello.GetEndUser(), n.id)
 		if err != nil {
 			return err
 		}
@@ -124,9 +124,9 @@ func (w *World) checkNotWithdrawn() {
 	}
 }
 
-func (w *World) nodeByID(id string) *simNode {
+func (w *World) nodeByID(endUser, id string) *simNode {
 	for _, n := range w.nodes {
-		if n.id == id {
+		if n.id == id && n.hello.GetEndUser() == endUser {
 			return n
 		}
 	}
@@ -223,9 +223,9 @@ func (w *World) fingerprintBackground(h hash.Hash, sid string) {
 
 func (w *World) fingerprintInboxes(h hash.Hash) {
 	for _, n := range w.nodes {
-		items, _, _ := w.hub.Inbox.Pending(context.Background(), n.id)
+		items, _, _ := w.hub.Inbox.Pending(context.Background(), n.hello.GetEndUser(), n.id)
 		for _, it := range items {
-			fmt.Fprintf(h, "inbox|%s|%s|%d;", n.id, it.GetCallId(), it.GetDeadline().GetSeconds())
+			fmt.Fprintf(h, "inbox|%s|%s|%s|%d;", n.hello.GetEndUser(), n.id, it.GetCallId(), it.GetDeadline().GetSeconds())
 		}
 	}
 }

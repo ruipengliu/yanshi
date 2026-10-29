@@ -59,13 +59,11 @@ var Tables = map[string]TableKey{
 	"session_tombstones": {Class: BySession, Column: "session_id",
 		Offline: []string{"Pending：Janitor 列出未完成的删除", "Request：按 request_id 汇总删除请求的进度（业务线服务端查询）"}},
 
-	"nodes": {Class: ByEndUser, Column: "end_user",
-		Gaps: []string{"Get / SetOffline 与注册时的归属检查只凭 node_id；node_id 现由主键保证全局唯一，分片后改为在 EndUser 内唯一"}},
-	"inbox": {Class: ByEndUser, Column: "node_id", Derived: "Node 所属的 EndUser",
-		Offline: []string{"RemoveSession：Janitor 按 Session 清除"},
-		Gaps:    []string{"Put / Remove / Pending / Wait 只凭 node_id（网关与 Worker 都知道所属 EndUser）"}},
-	"inbox_versions": {Class: ByEndUser, Column: "node_id", Derived: "Node 所属的 EndUser",
-		Gaps: []string{"同 inbox"}},
+	// Node ID 只在 EndUser 内唯一；业务线属于 Scope 授权条件，不参与键。
+	"nodes": {Class: ByEndUser, Column: "end_user"},
+	"inbox": {Class: ByEndUser, Column: "end_user",
+		Offline: []string{"RemoveSession：已知 EndUser 时逐键撤回；索引删除后扫描恢复 EndUser，再逐键事务清除"}},
+	"inbox_versions": {Class: ByEndUser, Column: "end_user"},
 	"sessions": {Class: ByEndUser, Column: "end_user",
 		Offline: []string{"List 不指定 EndUser：业务线服务端列出 Session", "IdleBefore / ClosedBefore / DueBefore / ScheduledAfter：Janitor 执行保留策略与绝对期限"},
 		Gaps:    []string{"Get / Touch / SetNextDue / MarkClosed / Delete 只凭 Session ID"}},

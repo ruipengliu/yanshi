@@ -35,13 +35,63 @@ func RunDirectory(t *testing.T, newDir func(t *testing.T, c clock.Clock) node.Di
 		if err != nil || label != "my-macbook" {
 			t.Fatalf("register = %q, %v", label, err)
 		}
-		n, err := d.Get(ctx, "n1")
+		n, err := d.Get(ctx, "u", "n1")
 		if err != nil || !n.Online || n.Label != "my-macbook" || n.Kind != "desktop" ||
 			len(n.Capabilities) != 1 || n.Capabilities[0].GetName() != "read_file" || !n.Capabilities[0].GetIdempotent() {
 			t.Fatalf("get = %+v, %v", n, err)
 		}
-		if _, err := d.Get(ctx, "missing"); !errors.Is(err, node.ErrNotFound) {
+		if _, err := d.Get(ctx, "u", "missing"); !errors.Is(err, node.ErrNotFound) {
 			t.Fatalf("missing err = %v", err)
+		}
+	})
+
+	t.Run("SameNodeIDAcrossEndUsers", func(t *testing.T) {
+		d := setup(t)
+		users := []string{"alice", "bob"}
+		gens := make([]uint64, len(users))
+		errs := make([]error, len(users))
+		var wg sync.WaitGroup
+		for i, user := range users {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, gens[i], errs[i] = d.Register(ctx, info("same", user, user))
+			}()
+		}
+		wg.Wait()
+		for i, user := range users {
+			if errs[i] != nil || gens[i] != 1 {
+				t.Fatalf("register %s: generation %d, %v", user, gens[i], errs[i])
+			}
+			n, err := d.Get(ctx, user, "same")
+			if err != nil || n.Scope.EndUser != user || n.Label != user || !n.Online {
+				t.Fatalf("get %s: %+v, %v", user, n, err)
+			}
+		}
+		_, gen, err := d.Register(ctx, info("same", "alice", "new-label"))
+		if err != nil || gen != 2 {
+			t.Fatalf("reconnect: generation %d, %v", gen, err)
+		}
+		if err := d.SetOffline(ctx, "alice", "same", gens[0]); err != nil {
+			t.Fatal(err)
+		}
+		if n, err := d.Get(ctx, "alice", "same"); err != nil || !n.Online {
+			t.Fatalf("old connection affected reconnect: %+v, %v", n, err)
+		}
+		if err := d.SetOffline(ctx, "alice", "same", gen); err != nil {
+			t.Fatal(err)
+		}
+		if n, err := d.Get(ctx, "bob", "same"); err != nil || !n.Online || n.Label != "bob" {
+			t.Fatalf("other user affected: %+v, %v", n, err)
+		}
+		if _, err := d.DeleteScope(ctx, node.Scope{BusinessLine: "bl", EndUser: "alice"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.Get(ctx, "alice", "same"); !errors.Is(err, node.ErrNotFound) {
+			t.Fatalf("deleted node: %v", err)
+		}
+		if _, err := d.Get(ctx, "bob", "same"); err != nil {
+			t.Fatal(err)
 		}
 	})
 
@@ -62,38 +112,45 @@ func RunDirectory(t *testing.T, newDir func(t *testing.T, c clock.Clock) node.Di
 	t.Run("NodeCannotChangeScope", func(t *testing.T) {
 		d := setup(t)
 		_, _, _ = d.Register(ctx, info("n1", "u", "pc"))
-		if _, _, err := d.Register(ctx, info("n1", "intruder", "pc")); err == nil {
-			t.Fatal("node moved to another user")
+		other := info("n1", "u", "pc")
+		other.Scope.BusinessLine = "other"
+		if _, _, err := d.Register(ctx, other); err == nil {
+			t.Fatal("node moved to another business line")
 		}
 	})
 
-	// 两个 EndUser 并发首次注册同一个 ID：至多一方成功，登记的归属就是成功的一方。
+	// 同一 EndUser 的两个业务线并发首次注册同一个 ID：至多一方成功。
 	// 前置的归属检查锁不住尚不存在的记录，归属必须在写入本身中判定。
 	t.Run("ConcurrentFirstRegistrationHasOneOwner", func(t *testing.T) {
 		d := setup(t)
 		for i := range 20 {
 			id := fmt.Sprintf("race%d", i)
-			users := []string{"alice", "mallory"}
-			errs := make([]error, len(users))
+			lines := []string{"bl", "other"}
+			errs := make([]error, len(lines))
 			start := make(chan struct{})
 			var wg sync.WaitGroup
-			for j, u := range users {
+			for j, bl := range lines {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
 					<-start
-					_, _, errs[j] = d.Register(ctx, info(id, u, "pc"))
+					candidate := info(id, "u", "pc")
+					candidate.Scope.BusinessLine = bl
+					_, _, errs[j] = d.Register(ctx, candidate)
 				}()
 			}
 			close(start)
 			wg.Wait()
-			n, err := d.Get(ctx, id)
+			n, err := d.Get(ctx, "u", id)
 			if err != nil {
 				t.Fatal(err)
 			}
-			for j, u := range users {
-				if errs[j] == nil && n.Scope.EndUser != u {
-					t.Fatalf("%s: %s registered but the node belongs to %s", id, u, n.Scope.EndUser)
+			if (errs[0] == nil) == (errs[1] == nil) {
+				t.Fatalf("expected one scope to register: %v", errs)
+			}
+			for j, bl := range lines {
+				if errs[j] == nil && n.Scope.BusinessLine != bl {
+					t.Fatalf("%s: %s registered but the node belongs to %s", id, bl, n.Scope.BusinessLine)
 				}
 			}
 		}
@@ -103,14 +160,14 @@ func RunDirectory(t *testing.T, newDir func(t *testing.T, c clock.Clock) node.Di
 		d := setup(t)
 		_, g1, _ := d.Register(ctx, info("n1", "u", "pc"))
 		_, g2, _ := d.Register(ctx, info("n1", "u", "pc"))
-		if err := d.SetOffline(ctx, "n1", g1); err != nil {
+		if err := d.SetOffline(ctx, "u", "n1", g1); err != nil {
 			t.Fatal(err)
 		}
-		if n, _ := d.Get(ctx, "n1"); !n.Online {
+		if n, _ := d.Get(ctx, "u", "n1"); !n.Online {
 			t.Fatal("stale connection marked node offline")
 		}
-		_ = d.SetOffline(ctx, "n1", g2)
-		if n, _ := d.Get(ctx, "n1"); n.Online {
+		_ = d.SetOffline(ctx, "u", "n1", g2)
+		if n, _ := d.Get(ctx, "u", "n1"); n.Online {
 			t.Fatal("current connection did not mark offline")
 		}
 	})
@@ -124,10 +181,10 @@ func RunDirectory(t *testing.T, newDir func(t *testing.T, c clock.Clock) node.Di
 		if err != nil || len(ids) != 2 || ids[0] != "n1" || ids[1] != "n2" {
 			t.Fatalf("deleted = %v, %v", ids, err)
 		}
-		if _, err := d.Get(ctx, "n1"); !errors.Is(err, node.ErrNotFound) {
+		if _, err := d.Get(ctx, "u", "n1"); !errors.Is(err, node.ErrNotFound) {
 			t.Fatal("deleted node still registered")
 		}
-		if _, err := d.Get(ctx, "n3"); err != nil {
+		if _, err := d.Get(ctx, "v", "n3"); err != nil {
 			t.Fatal("delete touched another user")
 		}
 	})
@@ -157,13 +214,100 @@ func RunInbox(t *testing.T, newInbox func(t *testing.T) node.Inbox) {
 		return out
 	}
 
+	t.Run("SameNodeAndCallIDsAcrossEndUsers", func(t *testing.T) {
+		in := newInbox(t)
+		for _, user := range []string{"alice", "bob"} {
+			i := inv("same-call")
+			i.SessionId = user + "-session"
+			if err := in.Put(ctx, user, "same-node", i); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_, bobVersion, err := in.Pending(ctx, "bob", "same-node")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := in.Remove(ctx, "alice", "same-node", "same-call"); err != nil {
+			t.Fatal(err)
+		}
+		if items, _, err := in.Pending(ctx, "alice", "same-node"); err != nil || len(items) != 0 {
+			t.Fatalf("alice: %v, %v", items, err)
+		}
+		items, version, err := in.Pending(ctx, "bob", "same-node")
+		if err != nil || len(items) != 1 || items[0].GetSessionId() != "bob-session" || version != bobVersion {
+			t.Fatalf("bob: %v, version %d/%d, %v", items, version, bobVersion, err)
+		}
+		// 已知 EndUser 时仅处理该用户，即使别的用户的副本也写了同一 Session。
+		if err := in.RemoveSession(ctx, "alice", "bob-session"); err != nil {
+			t.Fatal(err)
+		}
+		if items, _, err := in.Pending(ctx, "bob", "same-node"); err != nil || len(items) != 1 {
+			t.Fatalf("scoped sweep crossed users: %v, %v", items, err)
+		}
+		if err := in.RemoveSession(ctx, "bob", "bob-session"); err != nil {
+			t.Fatal(err)
+		}
+		if items, _, err := in.Pending(ctx, "bob", "same-node"); err != nil || len(items) != 0 {
+			t.Fatalf("scoped sweep left calls: %v, %v", items, err)
+		}
+	})
+
+	t.Run("RemoveSessionRecoversEndUsers", func(t *testing.T) {
+		in := newInbox(t)
+		for _, user := range []string{"alice", "bob"} {
+			if err := in.Put(ctx, user, "n", inv("a")); err != nil {
+				t.Fatal(err)
+			}
+			if err := in.Put(ctx, user, "n", &v1.Invoke{SessionId: "keep", CallId: "b"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := in.RemoveSession(ctx, "", "s"); err != nil {
+			t.Fatal(err)
+		}
+		for _, user := range []string{"alice", "bob"} {
+			items, version, err := in.Pending(ctx, user, "n")
+			if err != nil || len(items) != 1 || items[0].GetSessionId() != "keep" || version != 3 {
+				t.Fatalf("sweep %s: %v, version %d, %v", user, items, version, err)
+			}
+		}
+	})
+
+	t.Run("WaitIsolatedByEndUser", func(t *testing.T) {
+		in := newInbox(t)
+		// 包含分隔符与数字结尾，防止复合通知键被歧义拆分或被误当作版本。
+		user, other, id := "a:b", "a", "node:12"
+		_, version, err := in.Pending(ctx, user, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- in.Wait(c, user, id, version) }()
+		if err := in.Put(ctx, other, id, inv("a")); err != nil {
+			t.Fatal(err)
+		}
+		if err := <-done; !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("another end user woke Wait: %v", err)
+		}
+		if err := in.Put(ctx, user, id, inv("a")); err != nil {
+			t.Fatal(err)
+		}
+		c2, cancel2 := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel2()
+		if err := in.Wait(c2, user, id, version); err != nil {
+			t.Fatal(err)
+		}
+	})
+
 	t.Run("PutIsIdempotentAndOrdered", func(t *testing.T) {
 		in := newInbox(t)
-		_ = in.Put(ctx, "n", inv("a"))
-		_ = in.Put(ctx, "n", inv("b"))
-		_, v1, _ := in.Pending(ctx, "n")
-		_ = in.Put(ctx, "n", inv("a"))
-		items, v2, err := in.Pending(ctx, "n")
+		_ = in.Put(ctx, "u", "n", inv("a"))
+		_ = in.Put(ctx, "u", "n", inv("b"))
+		_, v1, _ := in.Pending(ctx, "u", "n")
+		_ = in.Put(ctx, "u", "n", inv("a"))
+		items, v2, err := in.Pending(ctx, "u", "n")
 		if err != nil || len(items) != 2 || items[0].GetCallId() != "a" || items[1].GetCallId() != "b" {
 			t.Fatalf("pending = %v, %v", ids(items), err)
 		}
@@ -182,21 +326,21 @@ func RunInbox(t *testing.T, newInbox func(t *testing.T) node.Inbox) {
 			i.Deadline = timestamppb.New(time.Unix(sec, 0))
 			return i
 		}
-		_ = in.Put(ctx, "n", at(100))
-		_ = in.Put(ctx, "n", inv("b"))
-		_, v0, _ := in.Pending(ctx, "n")
-		if err := in.Put(ctx, "n", at(200)); err != nil {
+		_ = in.Put(ctx, "u", "n", at(100))
+		_ = in.Put(ctx, "u", "n", inv("b"))
+		_, v0, _ := in.Pending(ctx, "u", "n")
+		if err := in.Put(ctx, "u", "n", at(200)); err != nil {
 			t.Fatal(err)
 		}
-		items, v1, _ := in.Pending(ctx, "n")
+		items, v1, _ := in.Pending(ctx, "u", "n")
 		if len(items) != 2 || items[0].GetCallId() != "a" || items[0].GetDeadline().GetSeconds() != 200 {
 			t.Fatalf("pending = %v", items)
 		}
 		if v1 == v0 {
 			t.Fatal("extending a deadline did not bump the version")
 		}
-		_ = in.Put(ctx, "n", at(150)) // 过时的派发不把截止时间改回去
-		items, v2, _ := in.Pending(ctx, "n")
+		_ = in.Put(ctx, "u", "n", at(150)) // 过时的派发不把截止时间改回去
+		items, v2, _ := in.Pending(ctx, "u", "n")
 		if items[0].GetDeadline().GetSeconds() != 200 || v2 != v1 {
 			t.Fatalf("stale put changed the item: %v (version %d → %d)", items[0], v1, v2)
 		}
@@ -204,30 +348,30 @@ func RunInbox(t *testing.T, newInbox func(t *testing.T) node.Inbox) {
 
 	t.Run("RemoveAndNodesIndependent", func(t *testing.T) {
 		in := newInbox(t)
-		_ = in.Put(ctx, "n1", inv("a"))
-		_ = in.Put(ctx, "n2", inv("b"))
-		_ = in.Remove(ctx, "n1", "a")
-		_ = in.Remove(ctx, "n1", "missing")
-		if items, _, _ := in.Pending(ctx, "n1"); len(items) != 0 {
+		_ = in.Put(ctx, "u", "n1", inv("a"))
+		_ = in.Put(ctx, "u", "n2", inv("b"))
+		_ = in.Remove(ctx, "u", "n1", "a")
+		_ = in.Remove(ctx, "u", "n1", "missing")
+		if items, _, _ := in.Pending(ctx, "u", "n1"); len(items) != 0 {
 			t.Fatalf("n1 = %v", ids(items))
 		}
-		if items, _, _ := in.Pending(ctx, "n2"); len(items) != 1 {
+		if items, _, _ := in.Pending(ctx, "u", "n2"); len(items) != 1 {
 			t.Fatalf("n2 = %v", ids(items))
 		}
 	})
 
 	t.Run("RemoveSessionAcrossNodes", func(t *testing.T) {
 		b := newInbox(t)
-		put := func(nodeID, sid, call string) { _ = b.Put(ctx, nodeID, &v1.Invoke{SessionId: sid, CallId: call}) }
+		put := func(nodeID, sid, call string) { _ = b.Put(ctx, "u", nodeID, &v1.Invoke{SessionId: sid, CallId: call}) }
 		put("n1", "s1", "c1")
 		put("n1", "s2", "c2")
 		put("n2", "s1", "c3")
-		_, v1Before, _ := b.Pending(ctx, "n1")
-		if err := b.RemoveSession(ctx, "s1"); err != nil {
+		_, v1Before, _ := b.Pending(ctx, "u", "n1")
+		if err := b.RemoveSession(ctx, "u", "s1"); err != nil {
 			t.Fatal(err)
 		}
-		p1, v1After, _ := b.Pending(ctx, "n1")
-		p2, _, _ := b.Pending(ctx, "n2")
+		p1, v1After, _ := b.Pending(ctx, "u", "n1")
+		p2, _, _ := b.Pending(ctx, "u", "n2")
 		if len(p1) != 1 || p1[0].GetCallId() != "c2" || len(p2) != 0 {
 			t.Fatalf("pending n1 = %v, n2 = %v", p1, p2)
 		}
@@ -238,7 +382,7 @@ func RunInbox(t *testing.T, newInbox func(t *testing.T) node.Inbox) {
 
 	t.Run("WaitWakesOnChange", func(t *testing.T) {
 		in := newInbox(t)
-		_, v, _ := in.Pending(ctx, "n")
+		_, v, _ := in.Pending(ctx, "u", "n")
 		var wg sync.WaitGroup
 		var werr error
 		wg.Add(1)
@@ -246,21 +390,21 @@ func RunInbox(t *testing.T, newInbox func(t *testing.T) node.Inbox) {
 			defer wg.Done()
 			c, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
-			werr = in.Wait(c, "n", v)
+			werr = in.Wait(c, "u", "n", v)
 		}()
 		time.Sleep(20 * time.Millisecond)
-		_ = in.Put(ctx, "n", inv("a"))
+		_ = in.Put(ctx, "u", "n", inv("a"))
 		wg.Wait()
 		if werr != nil {
 			t.Fatalf("wait = %v", werr)
 		}
-		if err := in.Wait(ctx, "n", v); err != nil {
+		if err := in.Wait(ctx, "u", "n", v); err != nil {
 			t.Fatalf("wait on stale version should return at once: %v", err)
 		}
 		c, cancel := context.WithTimeout(ctx, 30*time.Millisecond)
 		defer cancel()
-		_, cur, _ := in.Pending(ctx, "n")
-		if err := in.Wait(c, "n", cur); !errors.Is(err, context.DeadlineExceeded) {
+		_, cur, _ := in.Pending(ctx, "u", "n")
+		if err := in.Wait(c, "u", "n", cur); !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("wait without change = %v", err)
 		}
 	})

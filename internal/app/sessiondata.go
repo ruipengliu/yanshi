@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 
 	"yanshi/internal/artifact"
 	"yanshi/internal/lifecycle"
@@ -14,7 +15,17 @@ import (
 // 快照在日志删除前后由 Janitor 另行删除，这里同样登记，使第二遍清扫兜住删除期间写入的快照。
 func SessionData(s Stores, workspaces sandbox.Workspaces, artifacts *artifact.Service) []lifecycle.Holder {
 	return []lifecycle.Holder{
-		{Name: "inbox", DeleteSession: s.Inbox.RemoveSession},
+		{Name: "inbox", DeleteSessionForEndUser: s.Inbox.RemoveSession, DeleteSession: func(ctx context.Context, sid string) error {
+			// 索引在两遍清扫后才删除；删除后重试则从 Inbox 离线恢复归属，不能靠槽位猜 EndUser。
+			entry, err := s.Index.Get(ctx, sid)
+			if errors.Is(err, lifecycle.ErrNotFound) {
+				return s.Inbox.RemoveSession(ctx, "", sid)
+			}
+			if err != nil {
+				return err
+			}
+			return s.Inbox.RemoveSession(ctx, entry.EndUser, sid)
+		}},
 		// 包括 PostgreSQL 的 work_dues；Remove 在同一事务中清除两张表。
 		{Name: "work_queue", DeleteSession: s.Queue.Remove},
 		{Name: "sandbox", DeleteSession: workspaces.DeleteSession},

@@ -114,7 +114,7 @@ func (s *Service) CancelBackground(ctx context.Context, sessionID, callID, by st
 		return err
 	}
 	if bg := st.Background[callID]; bg != nil && s.Nodes != nil {
-		if err := s.Nodes.Cancel(ctx, bg.NodeID, callID); err != nil {
+		if err := s.Nodes.Cancel(ctx, st.Created.GetEndUser(), bg.NodeID, callID); err != nil {
 			return err
 		}
 	}

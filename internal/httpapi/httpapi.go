@@ -428,7 +428,7 @@ type waitingView struct {
 	Deadline   time.Time `json:"deadline"`
 }
 
-func (s *Server) waiting(r *http.Request, run *session.Run) *waitingView {
+func (s *Server) waiting(r *http.Request, endUser string, run *session.Run) *waitingView {
 	c := run.PendingCall()
 	if run.QuotaSuspended() {
 		return &waitingView{Kind: "quota", Reason: run.SuspendReason, Deadline: run.SuspendedUntil}
@@ -450,7 +450,7 @@ func (s *Server) waiting(r *http.Request, run *session.Run) *waitingView {
 		v := &waitingView{Kind: "node", CallID: c.Call.GetCallId(), Capability: c.Call.GetCapability(),
 			NodeID: c.NodeID, Deadline: c.Deadline}
 		if s.Nodes != nil {
-			if info, err := s.Nodes.Get(r.Context(), c.NodeID); err == nil {
+			if info, err := s.Nodes.Get(r.Context(), endUser, c.NodeID); err == nil {
 				v.NodeOnline = &info.Online
 			}
 		}
@@ -470,13 +470,13 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, run := range st.Runs {
 		runs = append(runs, runView{RunID: run.ID, Status: run.Status.String(), Attempt: run.Attempt, Turns: run.Turns,
-			Waiting: s.waiting(r, run), FromBackground: run.FromBackground})
+			Waiting: s.waiting(r, st.Created.GetEndUser(), run), FromBackground: run.FromBackground})
 	}
 	background := []backgroundView{}
 	for _, b := range st.OpenBackground() {
 		v := backgroundView{CallID: b.CallID, Capability: b.Capability, NodeID: b.NodeID, Deadline: b.Deadline, RunID: b.RunID}
 		if s.Nodes != nil {
-			if info, err := s.Nodes.Get(r.Context(), b.NodeID); err == nil {
+			if info, err := s.Nodes.Get(r.Context(), st.Created.GetEndUser(), b.NodeID); err == nil {
 				v.NodeOnline = &info.Online
 			}
 		}

@@ -589,7 +589,8 @@ func (w *World) sandboxExec(ctx context.Context, id string, _ sandbox.ExecReques
 }
 
 func (w *World) newNode(i int) *simNode {
-	n := &simNode{id: fmt.Sprintf("node%d", i)}
+	// 不同 EndUser 故意使用相同 Node ID，让随机交错与 PG 差分持续检验隔离。
+	n := &simNode{id: "node"}
 	n.hello = &v1.Hello{NodeId: n.id, BusinessLine: "bl", EndUser: fmt.Sprintf("u%d", i), Label: "pc", Kind: "desktop",
 		PushPlatform: "sim", PushToken: "tok-" + n.id}
 	effect := func(ctx context.Context, _ string) ([]*v1.ContentBlock, error) {
@@ -656,11 +657,20 @@ func (w *World) stepNode(n *simNode) error {
 		}
 		return nil
 	}
-	pending, _, err := w.hub.Inbox.Pending(ctx, n.id)
+	pending, _, err := w.hub.Inbox.Pending(ctx, n.hello.GetEndUser(), n.id)
 	if err != nil || len(pending) == 0 {
 		return err
 	}
 	inv := pending[w.rng.IntN(len(pending))]
+	if inv.GetSessionId() != "" {
+		st, err := w.store.Load(ctx, inv.GetSessionId())
+		if err != nil {
+			return err
+		}
+		if st.Created != nil && st.Created.GetEndUser() != n.hello.GetEndUser() {
+			return fmt.Errorf("invariant: node %s received another end user's call %s", n.id, inv.GetCallId())
+		}
+	}
 	repeat := 1
 	if w.faults && w.chance(0.2) {
 		repeat = 2 // 重复投递
@@ -677,7 +687,7 @@ func (w *World) stepNode(n *simNode) error {
 			w.disconnect(n)
 			return nil
 		}
-		if err := w.hub.Result(ctx, n.id, res); err != nil {
+		if err := w.hub.Result(ctx, n.hello.GetEndUser(), n.id, res); err != nil {
 			return err
 		}
 		w.tracef("node %s result %s", n.id, inv.GetCallId())
@@ -1348,8 +1358,10 @@ func (w *World) CheckInvariants() error {
 		return w.poolViolation
 	}
 	// 提问不经 Inbox（ADR-0025）：任何时候都不应有投给用户本人的待投递项。
-	if items, _, err := w.hub.Inbox.Pending(context.Background(), askuser.NodeID); err != nil || len(items) > 0 {
-		return fmt.Errorf("invariant: %d invocations queued for %s (err %v)", len(items), askuser.NodeID, err)
+	for _, user := range w.inboxUsers() {
+		if items, _, err := w.hub.Inbox.Pending(context.Background(), user, askuser.NodeID); err != nil || len(items) > 0 {
+			return fmt.Errorf("invariant: %d invocations queued for %s (err %v)", len(items), askuser.NodeID, err)
+		}
 	}
 	for id, n := range w.effects {
 		if n > 1 {

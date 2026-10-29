@@ -37,7 +37,7 @@ var (
 
 // Canceler 撤回已派发到 Node 的调用（由 node.Hub 实现）。
 type Canceler interface {
-	Cancel(ctx context.Context, nodeID, callID string) error
+	Cancel(ctx context.Context, endUser, nodeID, callID string) error
 }
 
 type Service struct {
@@ -434,7 +434,7 @@ func (s *Service) InterruptBy(ctx context.Context, sessionID, runID, by string) 
 		metrics.RunsFinished.WithLabelValues("interrupted", agentdef.Label(st.Agent)).Inc()
 	}
 	if cancel != nil {
-		return s.cancelDispatched(ctx, cancel)
+		return s.cancelDispatched(ctx, st.Created.GetEndUser(), cancel)
 	}
 	return nil
 }
@@ -450,14 +450,14 @@ func wakeOnEnding(st *session.State) bool {
 // 直接返回，失败的那一步及其后的步骤就再也不会执行。
 func (s *Service) afterClose(ctx context.Context, st *session.State) error {
 	if n := len(st.Runs); n > 0 && st.Runs[n-1].Status == session.RunInterrupted {
-		if err := s.cancelDispatched(ctx, st.Runs[n-1]); err != nil {
+		if err := s.cancelDispatched(ctx, st.Created.GetEndUser(), st.Runs[n-1]); err != nil {
 			return err
 		}
 	}
 	if s.Nodes != nil {
 		// 关闭之后后台调用不会再了结（定时仍会记录 closed 跳过）：撤回它们的投递，设备上线后不再执行。投影保留它们，重试时再撤回一次。
 		for _, b := range st.Background {
-			if err := s.Nodes.Cancel(ctx, b.NodeID, b.CallID); err != nil {
+			if err := s.Nodes.Cancel(ctx, st.Created.GetEndUser(), b.NodeID, b.CallID); err != nil {
 				return err
 			}
 		}
@@ -471,13 +471,13 @@ func (s *Service) afterClose(ctx context.Context, st *session.State) error {
 }
 
 // cancelDispatched 尽力撤回 Run 中已派发、未完成的路由调用。提问不经 Inbox，无需撤回（ADR-0025）。
-func (s *Service) cancelDispatched(ctx context.Context, r *session.Run) error {
+func (s *Service) cancelDispatched(ctx context.Context, endUser string, r *session.Run) error {
 	if s.Nodes == nil {
 		return nil
 	}
 	for _, c := range r.Calls {
 		if c.Dispatched() && c.NodeID != askuser.NodeID {
-			if err := s.Nodes.Cancel(ctx, c.NodeID, c.Call.GetCallId()); err != nil {
+			if err := s.Nodes.Cancel(ctx, endUser, c.NodeID, c.Call.GetCallId()); err != nil {
 				return err
 			}
 		}

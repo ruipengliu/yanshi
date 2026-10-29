@@ -36,7 +36,7 @@ func TestConnectRejectsReservedNodeIDs(t *testing.T) {
 			}
 		}
 	}
-	if _, err := h.Dir.Get(context.Background(), sandbox.NodeID("s_victim")); err != node.ErrNotFound {
+	if _, err := h.Dir.Get(context.Background(), "mallory", sandbox.NodeID("s_victim")); err != node.ErrNotFound {
 		t.Fatalf("reserved id registered: %v", err)
 	}
 }

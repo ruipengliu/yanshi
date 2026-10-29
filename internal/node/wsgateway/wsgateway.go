@@ -186,7 +186,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 	if !nc.ClientOnly {
-		go func() { errc <- g.deliver(ctx, c, nc.NodeID) }()
+		go func() { errc <- g.deliver(ctx, c, nc.EndUser, nc.NodeID) }()
 	}
 	go func() { errc <- g.receive(ctx, c, nc, cc) }()
 	go func() { errc <- g.keepalive(ctx, ws) }()
@@ -197,10 +197,10 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // deliver 把 Inbox 与已投递集合对齐：新增项发送 Invoke，被撤回的已投递项发送 Cancel。
-func (g *Gateway) deliver(ctx context.Context, c *conn, nodeID string) error {
+func (g *Gateway) deliver(ctx context.Context, c *conn, endUser, nodeID string) error {
 	sent := map[string]bool{}
 	for {
-		pending, version, err := g.Hub.Inbox.Pending(ctx, nodeID)
+		pending, version, err := g.Hub.Inbox.Pending(ctx, endUser, nodeID)
 		if err != nil {
 			return err
 		}
@@ -223,7 +223,7 @@ func (g *Gateway) deliver(ctx context.Context, c *conn, nodeID string) error {
 				}
 			}
 		}
-		if err := g.Hub.Inbox.Wait(ctx, nodeID, version); err != nil {
+		if err := g.Hub.Inbox.Wait(ctx, endUser, nodeID, version); err != nil {
 			return err
 		}
 	}
@@ -243,7 +243,7 @@ func (g *Gateway) receive(ctx context.Context, c *conn, nc *node.Conn, cc *chann
 			continue
 		}
 		nodeID := nc.NodeID
-		if err := g.Hub.Result(ctx, nodeID, res); err != nil {
+		if err := g.Hub.Result(ctx, nc.EndUser, nodeID, res); err != nil {
 			// 未确认的结果会在重连后因重新投递而再次返回。
 			return err
 		}

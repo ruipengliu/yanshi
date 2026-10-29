@@ -187,7 +187,7 @@ func (d *device) connect(ctx context.Context, hub *node.Hub, nodeID, businessLin
 	go func() {
 		defer hub.Disconnect(context.WithoutCancel(ctx), conn)
 		for ctx.Err() == nil {
-			pending, version, err := hub.Inbox.Pending(ctx, nodeID)
+			pending, version, err := hub.Inbox.Pending(ctx, conn.EndUser, nodeID)
 			if err != nil {
 				return
 			}
@@ -196,10 +196,10 @@ func (d *device) connect(ctx context.Context, hub *node.Hub, nodeID, businessLin
 				if err != nil || res == nil {
 					continue
 				}
-				_ = hub.Result(ctx, nodeID, res)
+				_ = hub.Result(ctx, conn.EndUser, nodeID, res)
 			}
 			if len(pending) == 0 {
-				_ = hub.Inbox.Wait(ctx, nodeID, version)
+				_ = hub.Inbox.Wait(ctx, conn.EndUser, nodeID, version)
 			}
 		}
 	}()

@@ -165,12 +165,12 @@ type flakyCancel struct {
 	w *World
 }
 
-func (f flakyCancel) Cancel(ctx context.Context, nodeID, callID string) error {
+func (f flakyCancel) Cancel(ctx context.Context, endUser, nodeID, callID string) error {
 	if delegation.IsNode(nodeID) && f.w.faults && f.w.chance(0.3) {
 		f.w.Stats.CascadeFaults++
 		return cancelFault{}
 	}
-	return f.Router.Cancel(ctx, nodeID, callID)
+	return f.Router.Cancel(ctx, endUser, nodeID, callID)
 }
 
 // simMaxDepth 是 sim Agent 的委托链深度上限（AgentDef 默认值）。

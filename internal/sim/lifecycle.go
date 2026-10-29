@@ -174,7 +174,7 @@ func (w *World) lifecycleDone() (bool, error) {
 		return false, err
 	}
 	for _, n := range w.nodes {
-		if items, _, err := w.hub.Inbox.Pending(ctx, n.id); err != nil || len(items) > 0 {
+		if items, _, err := w.hub.Inbox.Pending(ctx, n.hello.GetEndUser(), n.id); err != nil || len(items) > 0 {
 			return false, err
 		}
 	}
@@ -223,11 +223,16 @@ func (w *World) checkDeleted(final bool) error {
 		for _, n := range w.nodes {
 			boxes = append(boxes, n.id)
 		}
-		for _, b := range boxes {
-			items, _, _ := w.hub.Inbox.Pending(ctx, b)
-			for _, it := range items {
-				if it.GetSessionId() == sid {
-					return fmt.Errorf("invariant: deleted session %s has call %s pending on %s", sid, it.GetCallId(), b)
+		for _, user := range w.inboxUsers() {
+			for _, b := range boxes {
+				items, _, err := w.hub.Inbox.Pending(ctx, user, b)
+				if err != nil {
+					return err
+				}
+				for _, it := range items {
+					if it.GetSessionId() == sid {
+						return fmt.Errorf("invariant: deleted session %s has call %s pending on %s", sid, it.GetCallId(), b)
+					}
 				}
 			}
 		}
@@ -273,4 +278,14 @@ func (w *World) checkDeleted(final bool) error {
 		}
 	}
 	return nil
+}
+
+// inboxUsers 包含注销前保留的设备归属与替换 Session 的用户；日志删后仍能检查所有 Inbox。
+func (w *World) inboxUsers() []string {
+	users := append([]string(nil), w.users...)
+	users = append(users, w.deletedUsers...)
+	for _, n := range w.nodes {
+		users = append(users, n.hello.GetEndUser())
+	}
+	return users
 }

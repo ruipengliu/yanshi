@@ -104,7 +104,7 @@ func (b *bgWorld) state() *session.State {
 }
 
 func (b *bgWorld) inbox() []*v1.Invoke {
-	items, _, err := b.core.Stores.Inbox.Pending(b.ctx, "dev1")
+	items, _, err := b.core.Stores.Inbox.Pending(b.ctx, "u", "dev1")
 	if err != nil {
 		b.t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestBackgroundAfterGraceAndLateResult(t *testing.T) {
 
 	// 设备上线，返回结果：开启新 Run，由模型报告。
 	b.connect()
-	if err := b.core.Hub.Result(b.ctx, "dev1", &v1.InvokeResult{CallId: items[0].GetCallId(), Content: model.TextBlocks("合同在第三页")}); err != nil {
+	if err := b.core.Hub.Result(b.ctx, "u", "dev1", &v1.InvokeResult{CallId: items[0].GetCallId(), Content: model.TextBlocks("合同在第三页")}); err != nil {
 		t.Fatal(err)
 	}
 	if len(b.inbox()) != 0 {
@@ -181,7 +181,7 @@ func TestBackgroundAfterGraceAndLateResult(t *testing.T) {
 		t.Fatalf("reply = %q", got)
 	}
 	// 迟到的重复结果作废。
-	if err := b.core.Hub.Result(b.ctx, "dev1", &v1.InvokeResult{CallId: items[0].GetCallId(), Content: model.TextBlocks("again")}); err != nil {
+	if err := b.core.Hub.Result(b.ctx, "u", "dev1", &v1.InvokeResult{CallId: items[0].GetCallId(), Content: model.TextBlocks("again")}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -194,7 +194,7 @@ func TestDeviceBackWithinGrace(t *testing.T) {
 	b.clk.Advance(10 * time.Second)
 	b.connect()
 	items := b.inbox()
-	if err := b.core.Hub.Result(b.ctx, "dev1", &v1.InvokeResult{CallId: items[0].GetCallId(), Content: model.TextBlocks("ok")}); err != nil {
+	if err := b.core.Hub.Result(b.ctx, "u", "dev1", &v1.InvokeResult{CallId: items[0].GetCallId(), Content: model.TextBlocks("ok")}); err != nil {
 		t.Fatal(err)
 	}
 	b.clk.Advance(time.Minute)

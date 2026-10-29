@@ -53,13 +53,13 @@
 2. 从工作队列中移除该 Session（PostgreSQL 的 work_items 与远期停放表 work_dues 由 Remove 在同一事务中清除，登记在 `app.SessionData` 的 work_queue），沙箱队列中移除它的沙箱；
 3. 销毁沙箱（容器与工作区卷），删除去重账本和活跃记录；
 4. 删除工件（先删内容，再删元数据）、由该 Session 写入的 Memory 与在场记录（[多端双工通道](./m3-duplex-channel.md) §6）；
-5. 删除事件日志与 Session 索引；
+5. 删除事件日志与快照，再扫一遍第 1～4 步，最后删除 Session 索引（保留 EndUser 供两遍 Inbox 清扫，ADR-0051）；
 6. 写入 `completed_at`。
 
 **防止复活**：删除期间可能还有正在进行的写入，例如 Worker 正在追加事件、网关正在写回设备结果、工件正在上传、沙箱控制器正在执行。这些写入的入口都要检查删除记录：
 
 - `Service`、`Hub.Result`、工件上传、沙箱 `Ensure` 在写入前检查删除记录；`presence.Service.Put` 在写入后复查；
-- Janitor 在第 5 步完成后**再扫一遍**第 1～4 步，清理检查与删除之间漏进来的写入。
+- Janitor 在删除日志后、删除索引前**再扫一遍**第 1～4 步，清理检查与删除之间漏进来的写入。索引已删后的重试，由 Inbox 离线扫描恢复 EndUser、逐用户撤回；删除记录不保存 EndUser。
 - 写入方的顺序是"先写、后查"：写入后查到删除记录，就撤回自己刚写的数据；Janitor 的顺序是"先记、后清"。两者无论如何交错，总有一方能看到另一方。写入方一律经 `lifecycle.Recheck(ctx, deletions, sessionID, withdraw)` 复查与撤回，写法一致、可以 grep。
 - **登记制**（[延展性评审](../review/2026-10-11-scalability-review.md) §9.1）：第 1～4 步清除的各处数据登记在 `app.SessionData` 中（`lifecycle.Holder`：名称与按 Session 删除的函数），Janitor 按登记顺序逐一清除，不再逐个依赖各存储。新增一处存放 Session 数据的地方时：在 `app.SessionData` 登记、写入入口经 `lifecycle.Recheck` 复查、在 `internal/sim` 的删除不变量中检查。
 - **关闭也受同样的保护**：沙箱控制器创建（或恢复）沙箱之后，会复查 Session 是否已关闭或删除，是则销毁（`lifecycle.Guard`）。关闭方先在索引中记下关闭，再让 Janitor 入队，因此工作区不会残留。这一条是模拟测试发现的：关闭时控制器可能已经读到了待执行的调用。

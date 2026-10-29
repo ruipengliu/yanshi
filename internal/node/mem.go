@@ -13,23 +13,30 @@ import (
 	"yanshi/internal/clock"
 )
 
+// nodeKey 不含业务线：存储按 EndUser 寻址，Scope 另行约束授权。
+type nodeKey struct {
+	endUser string
+	nodeID  string
+}
+
 // MemDirectory 是 Directory 的进程内实现。
 type MemDirectory struct {
 	Clock clock.Clock
 	mu    sync.Mutex
-	nodes map[string]*Info
-	gens  map[string]uint64
+	nodes map[nodeKey]*Info
+	gens  map[nodeKey]uint64
 }
 
 func NewMemDirectory(c clock.Clock) *MemDirectory {
-	return &MemDirectory{Clock: c, nodes: map[string]*Info{}, gens: map[string]uint64{}}
+	return &MemDirectory{Clock: c, nodes: map[nodeKey]*Info{}, gens: map[nodeKey]uint64{}}
 }
 
 func (d *MemDirectory) Register(_ context.Context, info Info) (string, uint64, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if old := d.nodes[info.NodeID]; old != nil && old.Scope != info.Scope {
-		return "", 0, fmt.Errorf("node %s belongs to another end user", info.NodeID)
+	key := nodeKey{info.Scope.EndUser, info.NodeID}
+	if old := d.nodes[key]; old != nil && old.Scope != info.Scope {
+		return "", 0, fmt.Errorf("node %s belongs to another scope", info.NodeID)
 	}
 	base := SanitizeLabel(info.Label)
 	label := base
@@ -39,37 +46,37 @@ func (d *MemDirectory) Register(_ context.Context, info Info) (string, uint64, e
 	cp := info
 	cp.Label, cp.Online, cp.LastSeen = label, true, d.Clock.Now()
 	cp.Capabilities = slices.Clone(info.Capabilities)
-	d.nodes[info.NodeID] = &cp
-	d.gens[info.NodeID]++
-	return label, d.gens[info.NodeID], nil
+	d.nodes[key] = &cp
+	d.gens[key]++
+	return label, d.gens[key], nil
 }
 
 func (d *MemDirectory) labelTaken(scope Scope, label, self string) bool {
 	for id, n := range d.nodes {
-		if id != self && n.Scope == scope && n.Label == label {
+		if id.nodeID != self && n.Scope == scope && n.Label == label {
 			return true
 		}
 	}
 	return false
 }
 
-func (d *MemDirectory) SetOffline(_ context.Context, nodeID string, gen uint64) error {
+func (d *MemDirectory) SetOffline(_ context.Context, endUser, nodeID string, gen uint64) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	n := d.nodes[nodeID]
+	n := d.nodes[nodeKey{endUser, nodeID}]
 	if n == nil {
 		return ErrNotFound
 	}
-	if d.gens[nodeID] == gen {
+	if d.gens[nodeKey{endUser, nodeID}] == gen {
 		n.Online, n.LastSeen = false, d.Clock.Now()
 	}
 	return nil
 }
 
-func (d *MemDirectory) Get(_ context.Context, nodeID string) (*Info, error) {
+func (d *MemDirectory) Get(_ context.Context, endUser, nodeID string) (*Info, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	n := d.nodes[nodeID]
+	n := d.nodes[nodeKey{endUser, nodeID}]
 	if n == nil {
 		return nil, ErrNotFound
 	}
@@ -94,7 +101,7 @@ func (d *MemDirectory) List(_ context.Context, scope Scope) ([]*Info, error) {
 // MemInbox 是 Inbox 的进程内实现。
 type MemInbox struct {
 	mu    sync.Mutex
-	boxes map[string]*box
+	boxes map[nodeKey]*box
 }
 
 type box struct {
@@ -103,9 +110,9 @@ type box struct {
 	changed chan struct{}
 }
 
-func NewMemInbox() *MemInbox { return &MemInbox{boxes: map[string]*box{}} }
+func NewMemInbox() *MemInbox { return &MemInbox{boxes: map[nodeKey]*box{}} }
 
-func (m *MemInbox) box(id string) *box {
+func (m *MemInbox) box(id nodeKey) *box {
 	b := m.boxes[id]
 	if b == nil {
 		b = &box{changed: make(chan struct{})}
@@ -120,10 +127,10 @@ func (b *box) bump() {
 	b.changed = make(chan struct{})
 }
 
-func (m *MemInbox) Put(_ context.Context, nodeID string, inv *v1.Invoke) error {
+func (m *MemInbox) Put(_ context.Context, endUser, nodeID string, inv *v1.Invoke) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	b := m.box(nodeID)
+	b := m.box(nodeKey{endUser, nodeID})
 	for i, it := range b.items {
 		if it.GetCallId() == inv.GetCallId() {
 			if Extends(it, inv) {
@@ -138,10 +145,10 @@ func (m *MemInbox) Put(_ context.Context, nodeID string, inv *v1.Invoke) error {
 	return nil
 }
 
-func (m *MemInbox) Remove(_ context.Context, nodeID, callID string) error {
+func (m *MemInbox) Remove(_ context.Context, endUser, nodeID, callID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	b := m.box(nodeID)
+	b := m.box(nodeKey{endUser, nodeID})
 	for i, it := range b.items {
 		if it.GetCallId() == callID {
 			b.items = append(b.items[:i], b.items[i+1:]...)
@@ -152,16 +159,16 @@ func (m *MemInbox) Remove(_ context.Context, nodeID, callID string) error {
 	return nil
 }
 
-func (m *MemInbox) Pending(_ context.Context, nodeID string) ([]*v1.Invoke, uint64, error) {
+func (m *MemInbox) Pending(_ context.Context, endUser, nodeID string) ([]*v1.Invoke, uint64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	b := m.box(nodeID)
+	b := m.box(nodeKey{endUser, nodeID})
 	return slices.Clone(b.items), b.version, nil
 }
 
-func (m *MemInbox) Wait(ctx context.Context, nodeID string, version uint64) error {
+func (m *MemInbox) Wait(ctx context.Context, endUser, nodeID string, version uint64) error {
 	m.mu.Lock()
-	b := m.box(nodeID)
+	b := m.box(nodeKey{endUser, nodeID})
 	if b.version != version {
 		m.mu.Unlock()
 		return nil
@@ -176,10 +183,13 @@ func (m *MemInbox) Wait(ctx context.Context, nodeID string, version uint64) erro
 	}
 }
 
-func (m *MemInbox) RemoveSession(_ context.Context, sessionID string) error {
+func (m *MemInbox) RemoveSession(_ context.Context, endUser, sessionID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, b := range m.boxes {
+	for key, b := range m.boxes {
+		if endUser != "" && key.endUser != endUser {
+			continue
+		}
 		kept := b.items[:0:0]
 		for _, it := range b.items {
 			if it.GetSessionId() != sessionID {
@@ -200,7 +210,7 @@ func (d *MemDirectory) DeleteScope(_ context.Context, scope Scope) ([]string, er
 	var ids []string
 	for id, n := range d.nodes {
 		if n.Scope == scope {
-			ids = append(ids, id)
+			ids = append(ids, id.nodeID)
 			delete(d.nodes, id)
 		}
 	}

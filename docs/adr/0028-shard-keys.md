@@ -25,7 +25,7 @@ status: accepted
 1. 在线路径按键访问表：查询条件中包含键的等值条件。
 2. 不按键的访问（按其他列查询、按时间扫描、队列认领）分片后要遍历所有分片，只允许出现在三类路径中：Janitor 的删除与保留策略、按时间的清理、低频的业务线服务端查询。每张表的这类路径登记在 `Offline` 中。
 3. 一条 SQL、一个事务只涉及一个键。跨键的效果靠可重复的多步写入完成，例如先写日志再写 Inbox（ADR-0004）；目前已经如此。
-4. 新的存储接口在参数中带上键。目前在线路径中只凭对象自身 ID 访问的地方登记在 `Gaps` 中，分片层投入使用之前须补上键参数：工件、Memory、Grant 按 ID 读取；Inbox、Node 按 Node ID 读取；Session 索引按 Session ID 更新；Presence 按连接续期。
+4. 新的存储接口在参数中带上键。目前在线路径中只凭对象自身 ID 访问的地方登记在 `Gaps` 中，分片层投入使用之前须补上键参数：工件、Memory、Grant 按 ID 读取；Session 索引按 Session ID 更新。Presence 的缺口已在 ADR-0051 C2 补齐，Node / Inbox 已在 C3a 补齐。
 5. 通知频道按分片命名（`pg.Notifier.Channel`）：频道名由主题与键的哈希分片决定，进程只 LISTEN 有订阅者的频道，每条通知只送到关心它的进程。分片数（`serve -notify-shards`）为 1 时频道名就是主题名。
 
 ## Considered Options
@@ -39,5 +39,5 @@ status: accepted
 - 现在不分片，这里只约束表结构与访问方式。实现分片层时，`eventlog.Log`、`workqueue.Queue` 等接口不变，按键路由到各分片，并通过一致性套件与差分模拟测试。
 - 队列认领在每个分片内进行：分片后每个分片有自己的队列，认领方轮流认领。
 - 业务线级的汇总变成各分片的部分和：用量的业务线合计行由每个分片各自累计，业务线配额检查汇总各分片，在线路径上须缓存（配额是软限制，ADR-0019）。
-- `node_id` 目前由主键保证全局唯一；分片后改为在 EndUser 内唯一，Inbox 与路由按 `(EndUser, Node ID)` 寻址。
+- `node_id` 在 EndUser 内唯一，Inbox 与路由按 `(EndUser, Node ID)` 寻址（ADR-0051 C3a 已实现）；业务线仍是 Scope 的授权条件。
 - 新增表时，先在 `pg.Tables` 登记键与离线路径；需要跨键查询时说明属于哪一类离线路径。

@@ -17,7 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Topic 是通知的主题。通知的负载为键（Session ID 或 Node ID），或 "键:值"——值是单调递增的数字
+// Topic 是通知的主题。通知的负载为键（Session ID 或 EndUser 内的 Node 键），或 "键:值"——值是单调递增的数字
 // （如日志末尾 seq），等待者可以直接用它判断条件，而不必再查询（WaitAbove）。
 type Topic string
 

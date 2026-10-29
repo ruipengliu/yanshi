@@ -43,29 +43,30 @@ func (i *Info) Capability(name string) *v1.CapabilitySpec {
 
 type Directory interface {
 	// Register 记录 Node 及其能力声明并标记在线，返回最终标签与连接代数。
-	// 同一 NodeID 不能改换 Scope。
+	// 键为 (EndUser, NodeID)，不含业务线；同一键不能改换 Scope（业务线仍是授权边界）。
 	Register(ctx context.Context, info Info) (label string, gen uint64, err error)
 	// SetOffline 仅当 gen 仍是该 Node 最新连接代数时标记离线，避免旧连接的断开覆盖新连接。
-	SetOffline(ctx context.Context, nodeID string, gen uint64) error
-	Get(ctx context.Context, nodeID string) (*Info, error)
+	SetOffline(ctx context.Context, endUser, nodeID string, gen uint64) error
+	Get(ctx context.Context, endUser, nodeID string) (*Info, error)
 	// List 返回 Scope 内全部 Node（含离线），按标签排序。
 	List(ctx context.Context, scope Scope) ([]*Info, error)
 	// DeleteScope 删除 Scope 内全部 Node 的登记（EndUser 注销），返回被删除的 Node ID。
 	DeleteScope(ctx context.Context, scope Scope) ([]string, error)
 }
 
-// Inbox 保存每个 Node 待投递的 Invocation。
+// Inbox 按 (EndUser, Node ID) 保存待投递的 Invocation 与版本；EndUser 来自认证连接或 Session 投影。
 type Inbox interface {
 	// Put 按 call_id 幂等地加入。已有同一调用时保留原位，只在新的截止时间更晚时换成新的（Extends）：调用转入后台时
 	// 以延长的截止时间重新派发（ADR-0035），过时的派发不会把截止时间改回去。
-	Put(ctx context.Context, nodeID string, inv *v1.Invoke) error
-	Remove(ctx context.Context, nodeID, callID string) error
-	// RemoveSession 从所有 Node 的 Inbox 中撤回属于该 Session 的调用（ADR-0015）。
-	RemoveSession(ctx context.Context, sessionID string) error
+	Put(ctx context.Context, endUser, nodeID string, inv *v1.Invoke) error
+	Remove(ctx context.Context, endUser, nodeID, callID string) error
+	// RemoveSession 撤回该 EndUser 下属于 Session 的调用；endUser 为空仅用于 Janitor 的离线恢复：
+	// 扫描恢复 EndUser 后逐键删除，不能把跨用户删除放进同一事务（ADR-0051）。
+	RemoveSession(ctx context.Context, endUser, sessionID string) error
 	// Pending 返回当前全部待投递项（按加入顺序）与版本号。
-	Pending(ctx context.Context, nodeID string) ([]*v1.Invoke, uint64, error)
+	Pending(ctx context.Context, endUser, nodeID string) ([]*v1.Invoke, uint64, error)
 	// Wait 阻塞直到版本号不再等于 version，或 ctx 结束。
-	Wait(ctx context.Context, nodeID string, version uint64) error
+	Wait(ctx context.Context, endUser, nodeID string, version uint64) error
 }
 
 // Extends 报告 next 是否延长了 cur 的截止时间（同一调用的再次派发，见 Inbox.Put）。

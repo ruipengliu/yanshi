@@ -80,8 +80,8 @@ sequenceDiagram
 
 ## 5. Node 目录与能力路由
 
-- **Node 目录**按 `(BusinessLine, EndUser)` 记录该用户的 Node：标签、类型、能力、在线状态。离线的 Node 仍然保留在目录中。ADR-0002 的业务线边界在这里落实：Session 只能看到同一业务线的 Node。
-  - 一个 Node ID 只属于一个 EndUser，归属在注册的写入本身中判定（并发的首次注册至多一方成功）。
+- **Node 目录**以 `(EndUser, Node ID)` 存储、按 `(BusinessLine, EndUser)` 列出该用户的 Node：标签、类型、能力、在线状态。离线的 Node 仍然保留在目录中。ADR-0002 的业务线边界在这里落实：Session 只能看到同一业务线的 Node。
+  - Node ID 在 EndUser 内唯一（ADR-0051）：不同 EndUser 可以使用同一 ID；同一 `(EndUser, Node ID)` 不能换 BusinessLine，完整 Scope 在注册写入中核对，同一用户的不同业务线并发首次注册至多一方成功。
   - 平台保留的 Node ID 不能用于接入（`node.Reserved`）：沙箱的虚拟 Node `sbx_<Session ID>` 与用户本人 `@user`。否则设备可以冒名收到他人沙箱的调用、回写伪造的结果，或让自己声明的能力被当作沙箱调用、读到他人的工作区。沙箱控制器只执行属于本 Session 的调用。
   - 标签 `sandbox` 保留给沙箱工具（`sandbox__<能力>`），设备以它注册时改为 `sandbox-device`。
 - **面向模型的工具名**是 `<node 标签>__<capability>`，例如 `macbook__read_file`。标签由 HostApp 提供，在同一用户下自动去重。工具描述附上设备类型，不附在线状态：工具定义是请求前缀的一部分，手机等设备频繁上下线会使同一 Run 之后每次请求的前缀缓存失效。调用离线设备时 Run 先挂起，设备在宽限期内上线就继续；否则调用转入后台（§3.1），对话不再等它。

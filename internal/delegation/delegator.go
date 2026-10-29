@@ -21,8 +21,8 @@ import (
 
 // Dispatcher 派发与撤回路由调用（runtime.Dispatcher、service.Canceler）。
 type Dispatcher interface {
-	Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke, class workqueue.Class) error
-	Cancel(ctx context.Context, nodeID, callID string) error
+	Dispatch(ctx context.Context, endUser, nodeID string, inv *v1.Invoke, class workqueue.Class) error
+	Cancel(ctx context.Context, endUser, nodeID, callID string) error
 }
 
 // Router 把委托目标交给 Delegator，其余交给 Next（设备与沙箱）。
@@ -31,18 +31,18 @@ type Router struct {
 	Delegator *Delegator
 }
 
-func (r *Router) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke, class workqueue.Class) error {
+func (r *Router) Dispatch(ctx context.Context, endUser, nodeID string, inv *v1.Invoke, class workqueue.Class) error {
 	if IsNode(nodeID) {
 		return r.Delegator.Dispatch(ctx, nodeID, inv)
 	}
-	return r.Next.Dispatch(ctx, nodeID, inv, class)
+	return r.Next.Dispatch(ctx, endUser, nodeID, inv, class)
 }
 
-func (r *Router) Cancel(ctx context.Context, nodeID, callID string) error {
+func (r *Router) Cancel(ctx context.Context, endUser, nodeID, callID string) error {
 	if IsNode(nodeID) {
 		return r.Delegator.Cancel(ctx, nodeID, callID)
 	}
-	return r.Next.Cancel(ctx, nodeID, callID)
+	return r.Next.Cancel(ctx, endUser, nodeID, callID)
 }
 
 // Delegator 派生子 Session、撤回委托，并把子 Run 的终态写回父调用。

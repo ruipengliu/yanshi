@@ -55,21 +55,28 @@ func TestResultNotAcknowledgedUntilStored(t *testing.T) {
 		t.Fatal(err)
 	}
 	inv := &v1.Invoke{SessionId: "s1", RunId: "r1", CallId: "c1", Capability: "read_file"}
-	if err := h.Inbox.Put(ctx, "n1", inv); err != nil {
+	if err := h.Inbox.Put(ctx, "u", "n1", inv); err != nil {
 		t.Fatal(err)
 	}
 	res := &v1.InvokeResult{CallId: "c1", Content: model.TextBlocks("内容")}
 
+	// 同名 Node 的另一个已认证用户不能取走或确认这条调用。
+	if err := h.Result(ctx, "other", "n1", res); err != nil {
+		t.Fatal(err)
+	}
+	if items, _, _ := h.Inbox.Pending(ctx, "u", "n1"); len(items) != 1 {
+		t.Fatal("another end user acknowledged the call")
+	}
 	log.down = true
-	if err := h.Result(ctx, "n1", res); err == nil {
+	if err := h.Result(ctx, "u", "n1", res); err == nil {
 		t.Fatal("result reported as accepted while the log was down")
 	}
-	if items, _, _ := h.Inbox.Pending(ctx, "n1"); len(items) != 1 {
+	if items, _, _ := h.Inbox.Pending(ctx, "u", "n1"); len(items) != 1 {
 		t.Fatal("call withdrawn from the inbox although its result was not stored")
 	}
 
 	log.down = false
-	if err := h.Result(ctx, "n1", res); err != nil {
+	if err := h.Result(ctx, "u", "n1", res); err != nil {
 		t.Fatal(err)
 	}
 	final, _ := store.Load(ctx, "s1")
@@ -81,13 +88,13 @@ func TestResultNotAcknowledgedUntilStored(t *testing.T) {
 		t.Fatalf("session not enqueued with the result: %+v, %v", l, err)
 	}
 	// 重复的结果（调用已有结果）作废：确认并撤下。
-	if err := h.Inbox.Put(ctx, "n1", inv); err != nil {
+	if err := h.Inbox.Put(ctx, "u", "n1", inv); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.Result(ctx, "n1", res); err != nil {
+	if err := h.Result(ctx, "u", "n1", res); err != nil {
 		t.Fatalf("duplicate result: %v", err)
 	}
-	if items, _, _ := h.Inbox.Pending(ctx, "n1"); len(items) != 0 {
+	if items, _, _ := h.Inbox.Pending(ctx, "u", "n1"); len(items) != 0 {
 		t.Fatal("duplicate result left the call in the inbox")
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
@@ -134,7 +135,21 @@ func (c *Controller) Step(ctx context.Context) (bool, error) {
 	}
 
 	id := c.lease.SessionID
-	pending, _, err := c.Hub.Inbox.Pending(ctx, id)
+	st, err := c.Hub.Store.Load(ctx, strings.TrimPrefix(id, NodePrefix))
+	if err != nil {
+		return false, err
+	}
+	if st.Created == nil {
+		// 日志已清除时不能猜 EndUser；Janitor 负责清除投递副本，控制器只释放陈旧工作项。
+		err := c.Queue.Release(ctx, c.lease, true)
+		c.lease = nil
+		if errors.Is(err, workqueue.ErrLeaseLost) {
+			err = nil
+		}
+		return true, err
+	}
+	endUser := st.Created.GetEndUser()
+	pending, _, err := c.Hub.Inbox.Pending(ctx, endUser, id)
 	if err != nil {
 		return false, err
 	}
@@ -150,7 +165,7 @@ func (c *Controller) Step(ctx context.Context) (bool, error) {
 	if id != NodeID(inv.GetSessionId()) {
 		// 沙箱只执行本 Session 的调用：工作区按 Node ID 打开，调用方的 Session 必须与之一致（Router 已拒绝，这里防御）。
 		c.Logger.Warn("sandbox call for another session dropped", "sandbox", id, "session", inv.GetSessionId(), "call", inv.GetCallId())
-		return true, c.Hub.Inbox.Remove(ctx, id, inv.GetCallId())
+		return true, c.Hub.Inbox.Remove(ctx, endUser, id, inv.GetCallId())
 	}
 
 	if err := c.Activity.Touch(ctx, id, c.Clock.Now()); err != nil {
@@ -164,14 +179,14 @@ func (c *Controller) Step(ctx context.Context) (bool, error) {
 	if gone, err := c.ended(ctx, inv.GetSessionId()); err != nil || gone {
 		if gone {
 			err = c.destroy(ctx, id)
-			_ = c.Hub.Inbox.Remove(ctx, id, inv.GetCallId())
+			_ = c.Hub.Inbox.Remove(ctx, endUser, id, inv.GetCallId())
 		}
 		return false, err
 	}
 	start := c.Clock.Now()
 	// 已核对沙箱 Node 与调用的 Session；每次执行绑定账本，共享持久记录承担接管去重。
 	exec := nodesdk.NewExecutor(BindLedger(c.Ledger, inv.GetSessionId()), Capabilities(c.Provider, c.Artifacts)...)
-	res, err := c.during(ctx, id, inv.GetCallId(), func(ctx context.Context) (*v1.InvokeResult, error) {
+	res, err := c.during(ctx, endUser, id, inv.GetCallId(), func(ctx context.Context) (*v1.InvokeResult, error) {
 		return exec.Execute(WithSandbox(ctx, id, inv.GetCallId()), inv)
 	})
 	if err == nil && res != nil {
@@ -195,18 +210,18 @@ func (c *Controller) Step(ctx context.Context) (bool, error) {
 	if res == nil {
 		return true, nil // 同一调用正在本进程内执行
 	}
-	return true, c.Hub.Result(ctx, id, res)
+	return true, c.Hub.Result(ctx, endUser, id, res)
 }
 
 var errWithdrawn = errors.New("call withdrawn")
 
 // during 执行 fn；期间调用被撤回（中断）时取消 fn，配置了 Heartbeat 时持续续约。
-func (c *Controller) during(ctx context.Context, id, callID string, fn func(context.Context) (*v1.InvokeResult, error)) (*v1.InvokeResult, error) {
+func (c *Controller) during(ctx context.Context, endUser, id, callID string, fn func(context.Context) (*v1.InvokeResult, error)) (*v1.InvokeResult, error) {
 	opCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	go func() {
 		for {
-			items, version, err := c.Hub.Inbox.Pending(opCtx, id)
+			items, version, err := c.Hub.Inbox.Pending(opCtx, endUser, id)
 			if err != nil {
 				return
 			}
@@ -218,7 +233,7 @@ func (c *Controller) during(ctx context.Context, id, callID string, fn func(cont
 				cancel(errWithdrawn)
 				return
 			}
-			if c.Hub.Inbox.Wait(opCtx, id, version) != nil {
+			if c.Hub.Inbox.Wait(opCtx, endUser, id, version) != nil {
 				return
 			}
 		}
@@ -271,26 +286,26 @@ type Router struct {
 }
 
 // Dispatch 派发调用；class 是调用所属 Session 的工作类别，沙箱队列沿用它（ADR-0029）。
-func (r *Router) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke, class workqueue.Class) error {
+func (r *Router) Dispatch(ctx context.Context, endUser, nodeID string, inv *v1.Invoke, class workqueue.Class) error {
 	if !IsNode(nodeID) {
-		return r.Hub.Dispatch(ctx, nodeID, inv)
+		return r.Hub.Dispatch(ctx, endUser, nodeID, inv)
 	}
 	if nodeID != NodeID(inv.GetSessionId()) {
 		return fmt.Errorf("sandbox %s does not belong to session %s", nodeID, inv.GetSessionId())
 	}
-	if err := r.Hub.Inbox.Put(ctx, nodeID, inv); err != nil {
+	if err := r.Hub.Inbox.Put(ctx, endUser, nodeID, inv); err != nil {
 		return err
 	}
 	if gone, err := lifecycle.Recheck(ctx, r.Hub.Deletions, inv.GetSessionId(), func(ctx context.Context) error {
-		return r.Hub.Inbox.Remove(ctx, nodeID, inv.GetCallId())
+		return r.Hub.Inbox.Remove(ctx, endUser, nodeID, inv.GetCallId())
 	}); err != nil || gone {
 		return err
 	}
 	return r.Queue.Enqueue(ctx, nodeID, class)
 }
 
-func (r *Router) Cancel(ctx context.Context, nodeID, callID string) error {
-	return r.Hub.Cancel(ctx, nodeID, callID)
+func (r *Router) Cancel(ctx context.Context, endUser, nodeID, callID string) error {
+	return r.Hub.Cancel(ctx, endUser, nodeID, callID)
 }
 
 func (c *Controller) destroy(ctx context.Context, id string) error {

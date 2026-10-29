@@ -241,6 +241,7 @@ func (j *Janitor) process(ctx context.Context, sid string) error {
 
 // delete 清除 Session 的数据；retention 与 erasure 保留登记为 KeepOnRetention 的既有 Memory（ADR-0050）。
 func (j *Janitor) delete(ctx context.Context, sid string, st *session.State, reason string) error {
+	endUser := st.Created.GetEndUser()
 	// 1. 中断活跃的 Run：持有它的 Worker 因 fencing 失效而停止，不再派发新调用。
 	if err := j.stage(ctx, "interrupt"); err != nil {
 		return err
@@ -266,10 +267,10 @@ func (j *Janitor) delete(ctx context.Context, sid string, st *session.State, rea
 	if err := j.stage(ctx, "withdraw"); err != nil {
 		return err
 	}
-	if err := j.sweep(ctx, sid, reason); err != nil {
+	if err := j.sweep(ctx, sid, reason, endUser); err != nil {
 		return err
 	}
-	// 6. 删除日志与索引。
+	// 6. 删除日志与快照；索引保留到第二遍清扫结束，供 Inbox 取得真实 EndUser。
 	if err := j.stage(ctx, "log"); err != nil {
 		return err
 	}
@@ -281,14 +282,15 @@ func (j *Janitor) delete(ctx context.Context, sid string, st *session.State, rea
 			return err
 		}
 	}
-	if err := j.Index.Delete(ctx, sid); err != nil {
-		return err
-	}
 	// 7. 再扫一遍：清除"先写、后查"窗口中漏进来的写入。
 	if err := j.stage(ctx, "sweep"); err != nil {
 		return err
 	}
-	if err := j.sweep(ctx, sid, reason); err != nil {
+	if err := j.sweep(ctx, sid, reason, endUser); err != nil {
+		return err
+	}
+	// 保留归属到两遍清扫结束；此后崩溃重试由 Inbox 的离线逐 EndUser 路径恢复。
+	if err := j.Index.Delete(ctx, sid); err != nil {
 		return err
 	}
 	if err := j.Deletions.Complete(ctx, sid, j.Clock.Now()); err != nil {
@@ -317,7 +319,7 @@ func (j *Janitor) forgetOnDevices(ctx context.Context, sid string, st *session.S
 	seen := map[string]bool{}
 	var nodes []string
 	err := session.ScanLog(ctx, j.Store.Log, sid, func(e *v1.Event) bool {
-		if id := e.GetToolCallStarted().GetNodeId(); id != "" && !sandbox.IsNode(id) && id != askuser.NodeID && !seen[id] {
+		if id := e.GetToolCallStarted().GetNodeId(); id != "" && !sandbox.IsNode(id) && !delegation.IsNode(id) && id != askuser.NodeID && !seen[id] {
 			seen[id] = true
 			nodes = append(nodes, id)
 		}
@@ -327,12 +329,16 @@ func (j *Janitor) forgetOnDevices(ctx context.Context, sid string, st *session.S
 		return err
 	}
 	for _, id := range nodes {
-		if _, err := j.Nodes.Get(ctx, id); errors.Is(err, node.ErrNotFound) {
+		info, err := j.Nodes.Get(ctx, st.Created.GetEndUser(), id)
+		if errors.Is(err, node.ErrNotFound) {
 			continue // Node 已随 EndUser 注销而删除
 		} else if err != nil {
 			return err
 		}
-		if err := j.Inbox.Put(ctx, id, ForgetInvoke(sid)); err != nil {
+		if info.Scope.BusinessLine != st.Created.GetBusinessLine() {
+			continue // 删除后同名 Node 已在另一业务线登记，不向新 Scope 投递旧调用。
+		}
+		if err := j.Inbox.Put(ctx, st.Created.GetEndUser(), id, ForgetInvoke(sid)); err != nil {
 			return err
 		}
 	}
@@ -372,12 +378,18 @@ func ForgetInvoke(sessionID string) *v1.Invoke {
 }
 
 // sweep 按登记顺序清除除日志与索引之外的全部数据；幂等，可重复执行。retention 与 erasure 都跳过 KeepOnRetention 的数据。
-func (j *Janitor) sweep(ctx context.Context, sid, reason string) error {
+func (j *Janitor) sweep(ctx context.Context, sid, reason, endUser string) error {
 	for _, h := range j.Data {
 		if h.KeepOnRetention && lifecycle.KeepsMemory(reason) {
 			continue
 		}
-		if err := h.DeleteSession(ctx, sid); err != nil {
+		var err error
+		if endUser != "" && h.DeleteSessionForEndUser != nil {
+			err = h.DeleteSessionForEndUser(ctx, endUser, sid)
+		} else {
+			err = h.DeleteSession(ctx, sid)
+		}
+		if err != nil {
 			return fmt.Errorf("delete %s: %w", h.Name, err)
 		}
 	}

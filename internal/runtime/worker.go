@@ -44,13 +44,13 @@ import (
 // Dispatcher 把路由调用投递到 Node 的 Inbox（由 sandbox.Router 实现）。class 是 Session 的工作类别：
 // 执行调用的队列（如沙箱队列）沿用它（ADR-0029）。
 type Dispatcher interface {
-	Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke, class workqueue.Class) error
-	Cancel(ctx context.Context, nodeID, callID string) error
+	Dispatch(ctx context.Context, endUser, nodeID string, inv *v1.Invoke, class workqueue.Class) error
+	Cancel(ctx context.Context, endUser, nodeID, callID string) error
 }
 
 // Devices 查询 Node 目录中设备的在线状态（node.Directory 的子集），用于判断路由调用是否转入后台（ADR-0035）。
 type Devices interface {
-	Get(ctx context.Context, nodeID string) (*node.Info, error)
+	Get(ctx context.Context, endUser, nodeID string) (*node.Info, error)
 }
 
 // ScheduleFirer 在到点后原子记录进度与输入，Worker 仅在没有既有 Run 时调用。
@@ -860,7 +860,7 @@ func (w *Worker) awaitDispatched(ctx context.Context, r *session.Run, c *session
 	var info *node.Info
 	if w.backgroundable(c) {
 		var err error
-		info, err = w.cfg.Devices.Get(ctx, c.NodeID)
+		info, err = w.cfg.Devices.Get(ctx, w.st.Created.GetEndUser(), c.NodeID)
 		switch {
 		case errors.Is(err, node.ErrNotFound):
 			// 不在目录中（如 EndUser 已注销）：不是可以等它上线的设备，照旧等到截止时间。
@@ -881,7 +881,7 @@ func (w *Worker) awaitDispatched(ctx context.Context, r *session.Run, c *session
 		return w.background(ctx, r, c, info)
 	}
 	if !w.now().Before(c.Deadline) {
-		if err := w.cfg.Dispatch.Cancel(ctx, c.NodeID, id); err != nil {
+		if err := w.cfg.Dispatch.Cancel(ctx, w.st.Created.GetEndUser(), c.NodeID, id); err != nil {
 			return err
 		}
 		msg := "timed out: the device did not return a result in time"
@@ -928,7 +928,7 @@ func (w *Worker) background(ctx context.Context, r *session.Run, c *session.Call
 func (w *Worker) redispatch(ctx context.Context, r *session.Run, c *session.Call, deadline time.Time, e *v1.Event, until time.Time) (bool, error) {
 	id := c.Call.GetCallId()
 	_, capName, _ := strings.Cut(c.Call.GetCapability(), "__")
-	err := w.cfg.Dispatch.Dispatch(ctx, c.NodeID, &v1.Invoke{
+	err := w.cfg.Dispatch.Dispatch(ctx, w.st.Created.GetEndUser(), c.NodeID, &v1.Invoke{
 		SessionId: w.st.SessionID, RunId: r.ID, CallId: id, Capability: capName,
 		ArgumentsJson: c.Call.GetArgumentsJson(), Deadline: timestamppb.New(deadline),
 	}, w.st.WorkClass())
@@ -939,7 +939,7 @@ func (w *Worker) redispatch(ctx context.Context, r *session.Run, c *session.Call
 	ok, err := w.tryCommit(ctx, e)
 	if !ok {
 		if st != nil && w.cfg.Store.Sync(ctx, st) == nil && !waiting(st, r.ID, id) {
-			if cerr := w.cfg.Dispatch.Cancel(ctx, nodeID, id); cerr != nil && err == nil {
+			if cerr := w.cfg.Dispatch.Cancel(ctx, st.Created.GetEndUser(), nodeID, id); cerr != nil && err == nil {
 				err = cerr
 			}
 		}
@@ -987,7 +987,7 @@ func (w *Worker) dueBackground() *session.BackgroundCall {
 // expireBackground 了结到期的后台调用：先撤回投递，之后设备的结果不再写入（网关只接受 Inbox 中的调用的结果），
 // 再写入到期的后台结果输入。写入失败时下一步再撤回一次、再写一次，二者都幂等。
 func (w *Worker) expireBackground(ctx context.Context, b *session.BackgroundCall) error {
-	if err := w.cfg.Dispatch.Cancel(ctx, b.NodeID, b.CallID); err != nil {
+	if err := w.cfg.Dispatch.Cancel(ctx, w.st.Created.GetEndUser(), b.NodeID, b.CallID); err != nil {
 		return err
 	}
 	err := w.cfg.Background.ExpireBackground(ctx, w.st, b.CallID)

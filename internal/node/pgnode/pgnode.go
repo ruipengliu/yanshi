@@ -40,13 +40,13 @@ func (d *Directory) Register(ctx context.Context, info node.Info) (string, uint6
 		var gen int64
 		err := pgx.BeginFunc(ctx, d.pool, func(tx pgx.Tx) error {
 			var bl, user string
-			err := tx.QueryRow(ctx, `SELECT business_line, end_user FROM nodes WHERE node_id = $1 FOR UPDATE`, info.NodeID).Scan(&bl, &user)
+			err := tx.QueryRow(ctx, `SELECT business_line, end_user FROM nodes WHERE end_user = $1 AND node_id = $2 FOR UPDATE`, info.Scope.EndUser, info.NodeID).Scan(&bl, &user)
 			switch {
 			case errors.Is(err, pgx.ErrNoRows):
 			case err != nil:
 				return err
 			case bl != info.Scope.BusinessLine || user != info.Scope.EndUser:
-				return fmt.Errorf("node %s belongs to another end user", info.NodeID)
+				return fmt.Errorf("node %s belongs to another scope", info.NodeID)
 			}
 			rows, err := tx.Query(ctx, `SELECT label FROM nodes WHERE business_line = $1 AND end_user = $2 AND node_id <> $3`,
 				info.Scope.BusinessLine, info.Scope.EndUser, info.NodeID)
@@ -65,19 +65,19 @@ func (d *Directory) Register(ctx context.Context, info node.Info) (string, uint6
 			for n := 2; used[label]; n++ {
 				label = fmt.Sprintf("%s-%d", base, n)
 			}
-			// 归属在 UPSERT 中再判一次：上面的 FOR UPDATE 锁不住尚不存在的行，两个 EndUser 并发首次注册同一 ID 时
+			// 归属在 UPSERT 中再判一次：上面的 FOR UPDATE 锁不住尚不存在的行，同一 EndUser 的两个业务线并发首次注册同一 ID 时
 			// 都能通过前置检查，后到的一方在冲突后走 DO UPDATE；条件不满足时不更新、不返回行，注册失败。
 			err = tx.QueryRow(ctx, `
 				INSERT INTO nodes (node_id, business_line, end_user, label, kind, host_app, capabilities, online, last_seen, gen)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, 1)
-				ON CONFLICT (node_id) DO UPDATE SET label = $4, kind = $5, host_app = $6, capabilities = $7,
+				ON CONFLICT (end_user, node_id) DO UPDATE SET label = $4, kind = $5, host_app = $6, capabilities = $7,
 					online = true, last_seen = $8, gen = nodes.gen + 1
 				WHERE nodes.business_line = EXCLUDED.business_line AND nodes.end_user = EXCLUDED.end_user
 				RETURNING gen`,
 				info.NodeID, info.Scope.BusinessLine, info.Scope.EndUser, label, info.Kind, info.HostApp, caps, d.clock.Now(),
 			).Scan(&gen)
 			if errors.Is(err, pgx.ErrNoRows) {
-				return fmt.Errorf("node %s belongs to another end user", info.NodeID)
+				return fmt.Errorf("node %s belongs to another scope", info.NodeID)
 			}
 			return err
 		})
@@ -92,11 +92,11 @@ func (d *Directory) Register(ctx context.Context, info node.Info) (string, uint6
 	return "", 0, fmt.Errorf("register node %s: label contention", info.NodeID)
 }
 
-func (d *Directory) SetOffline(ctx context.Context, nodeID string, gen uint64) error {
+func (d *Directory) SetOffline(ctx context.Context, endUser, nodeID string, gen uint64) error {
 	var exists bool
 	err := d.pool.QueryRow(ctx, `
-		WITH upd AS (UPDATE nodes SET online = false, last_seen = $3 WHERE node_id = $1 AND gen = $2 RETURNING 1)
-		SELECT EXISTS (SELECT 1 FROM nodes WHERE node_id = $1)`, nodeID, int64(gen), d.clock.Now()).Scan(&exists)
+		WITH upd AS (UPDATE nodes SET online = false, last_seen = $4 WHERE end_user = $1 AND node_id = $2 AND gen = $3 RETURNING 1)
+		SELECT EXISTS (SELECT 1 FROM nodes WHERE end_user = $1 AND node_id = $2)`, endUser, nodeID, int64(gen), d.clock.Now()).Scan(&exists)
 	if err != nil {
 		return err
 	}
@@ -122,8 +122,8 @@ func scanNode(r pgx.CollectableRow) (*node.Info, error) {
 	return n, nil
 }
 
-func (d *Directory) Get(ctx context.Context, nodeID string) (*node.Info, error) {
-	rows, err := d.pool.Query(ctx, `SELECT `+nodeCols+` FROM nodes WHERE node_id = $1`, nodeID)
+func (d *Directory) Get(ctx context.Context, endUser, nodeID string) (*node.Info, error) {
+	rows, err := d.pool.Query(ctx, `SELECT `+nodeCols+` FROM nodes WHERE end_user = $1 AND node_id = $2`, endUser, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -153,32 +153,33 @@ func NewInbox(pool *pgxpool.Pool, n *pg.Notifier) *Inbox { return &Inbox{pool: p
 var _ node.Inbox = (*Inbox)(nil)
 
 // bump 在同一事务内递增版本并发出通知。
-func (in *Inbox) bump(ctx context.Context, tx pgx.Tx, nodeID string) error {
+func (in *Inbox) bump(ctx context.Context, tx pgx.Tx, endUser, nodeID string) error {
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO inbox_versions (node_id, version) VALUES ($1, 1)
-		ON CONFLICT (node_id) DO UPDATE SET version = inbox_versions.version + 1`, nodeID); err != nil {
+		INSERT INTO inbox_versions (node_id, end_user, version) VALUES ($1, $2, 1)
+		ON CONFLICT (end_user, node_id) DO UPDATE SET version = inbox_versions.version + 1`, nodeID, endUser); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `SELECT pg_notify($1, $2)`, in.notifier.Channel(pg.TopicInbox, nodeID), nodeID)
+	key := inboxKey(endUser, nodeID)
+	_, err := tx.Exec(ctx, `SELECT pg_notify($1, $2)`, in.notifier.Channel(pg.TopicInbox, key), key)
 	return err
 }
 
-func (in *Inbox) Put(ctx context.Context, nodeID string, inv *v1.Invoke) error {
+func (in *Inbox) Put(ctx context.Context, endUser, nodeID string, inv *v1.Invoke) error {
 	b, err := proto.Marshal(inv)
 	if err != nil {
 		return err
 	}
 	return pgx.BeginFunc(ctx, in.pool, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
-			INSERT INTO inbox (node_id, call_id, data, ord, session_id) VALUES ($1, $2, $3, nextval('inbox_seq'), $4)
-			ON CONFLICT DO NOTHING`, nodeID, inv.GetCallId(), b, inv.GetSessionId())
+			INSERT INTO inbox (node_id, call_id, data, ord, session_id, end_user) VALUES ($1, $2, $3, nextval('inbox_seq'), $4, $5)
+			ON CONFLICT DO NOTHING`, nodeID, inv.GetCallId(), b, inv.GetSessionId(), endUser)
 		if err != nil {
 			return err
 		}
 		if tag.RowsAffected() == 0 {
 			// 已有同一调用：只在延长截止时间时替换（node.Extends），位置不变。
 			var data []byte
-			err := tx.QueryRow(ctx, `SELECT data FROM inbox WHERE node_id = $1 AND call_id = $2 FOR UPDATE`, nodeID, inv.GetCallId()).Scan(&data)
+			err := tx.QueryRow(ctx, `SELECT data FROM inbox WHERE node_id = $1 AND call_id = $2 AND end_user = $3 FOR UPDATE`, nodeID, inv.GetCallId(), endUser).Scan(&data)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil // 与撤回并发：已被移除，不再放回
 			}
@@ -192,43 +193,43 @@ func (in *Inbox) Put(ctx context.Context, nodeID string, inv *v1.Invoke) error {
 			if !node.Extends(cur, inv) {
 				return nil
 			}
-			if _, err := tx.Exec(ctx, `UPDATE inbox SET data = $3 WHERE node_id = $1 AND call_id = $2`, nodeID, inv.GetCallId(), b); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE inbox SET data = $3 WHERE node_id = $1 AND call_id = $2 AND end_user = $4`, nodeID, inv.GetCallId(), b, endUser); err != nil {
 				return err
 			}
 		}
-		return in.bump(ctx, tx, nodeID)
+		return in.bump(ctx, tx, endUser, nodeID)
 	})
 }
 
-func (in *Inbox) Remove(ctx context.Context, nodeID, callID string) error {
+func (in *Inbox) Remove(ctx context.Context, endUser, nodeID, callID string) error {
 	return pgx.BeginFunc(ctx, in.pool, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `DELETE FROM inbox WHERE node_id = $1 AND call_id = $2`, nodeID, callID)
+		tag, err := tx.Exec(ctx, `DELETE FROM inbox WHERE node_id = $1 AND call_id = $2 AND end_user = $3`, nodeID, callID, endUser)
 		if err != nil || tag.RowsAffected() == 0 {
 			return err
 		}
-		return in.bump(ctx, tx, nodeID)
+		return in.bump(ctx, tx, endUser, nodeID)
 	})
 }
 
 func (in *Inbox) version(ctx context.Context, q interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
-}, nodeID string) (uint64, error) {
+}, endUser, nodeID string) (uint64, error) {
 	var v int64
-	err := q.QueryRow(ctx, `SELECT coalesce((SELECT version FROM inbox_versions WHERE node_id = $1), 0)`, nodeID).Scan(&v)
+	err := q.QueryRow(ctx, `SELECT coalesce((SELECT version FROM inbox_versions WHERE node_id = $1 AND end_user = $2), 0)`, nodeID, endUser).Scan(&v)
 	return uint64(v), err
 }
 
-func (in *Inbox) Pending(ctx context.Context, nodeID string) ([]*v1.Invoke, uint64, error) {
+func (in *Inbox) Pending(ctx context.Context, endUser, nodeID string) ([]*v1.Invoke, uint64, error) {
 	var items []*v1.Invoke
 	var version uint64
 	// 可重复读事务保证条目与版本号来自同一快照。
 	err := pgx.BeginTxFunc(ctx, in.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
-		v, err := in.version(ctx, tx, nodeID)
+		v, err := in.version(ctx, tx, endUser, nodeID)
 		if err != nil {
 			return err
 		}
 		version = v
-		rows, err := tx.Query(ctx, `SELECT data FROM inbox WHERE node_id = $1 ORDER BY ord`, nodeID)
+		rows, err := tx.Query(ctx, `SELECT data FROM inbox WHERE node_id = $1 AND end_user = $2 ORDER BY ord`, nodeID, endUser)
 		if err != nil {
 			return err
 		}
@@ -245,16 +246,38 @@ func (in *Inbox) Pending(ctx context.Context, nodeID string) ([]*v1.Invoke, uint
 	return items, version, err
 }
 
-func (in *Inbox) Wait(ctx context.Context, nodeID string, version uint64) error {
-	return in.notifier.WaitFor(ctx, pg.TopicInbox, nodeID, func(ctx context.Context) (bool, error) {
-		v, err := in.version(ctx, in.pool, nodeID)
+func (in *Inbox) Wait(ctx context.Context, endUser, nodeID string, version uint64) error {
+	return in.notifier.WaitFor(ctx, pg.TopicInbox, inboxKey(endUser, nodeID), func(ctx context.Context) (bool, error) {
+		v, err := in.version(ctx, in.pool, endUser, nodeID)
 		return v != version, err
 	})
 }
 
-func (in *Inbox) RemoveSession(ctx context.Context, sessionID string) error {
+// inboxKey 用长度前缀消除分隔符歧义；尾部分隔符避免 Notifier 把数字结尾的 Node ID 当成版本。
+func inboxKey(endUser, nodeID string) string {
+	return fmt.Sprintf("%d:%s%s:", len(endUser), endUser, nodeID)
+}
+
+func (in *Inbox) RemoveSession(ctx context.Context, endUser, sessionID string) error {
+	if endUser == "" {
+		// 索引与日志已删后的重试只能从投递副本恢复归属；扫描不持事务，删除逐 EndUser 执行。
+		rows, err := in.pool.Query(ctx, `SELECT DISTINCT end_user FROM inbox WHERE session_id = $1 ORDER BY end_user`, sessionID)
+		if err != nil {
+			return err
+		}
+		users, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return err
+		}
+		for _, user := range users {
+			if err := in.RemoveSession(ctx, user, sessionID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	return pgx.BeginFunc(ctx, in.pool, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `DELETE FROM inbox WHERE session_id = $1 RETURNING node_id`, sessionID)
+		rows, err := tx.Query(ctx, `DELETE FROM inbox WHERE session_id = $1 AND end_user = $2 RETURNING node_id`, sessionID, endUser)
 		if err != nil {
 			return err
 		}
@@ -264,7 +287,7 @@ func (in *Inbox) RemoveSession(ctx context.Context, sessionID string) error {
 		}
 		slices.Sort(nodes)
 		for _, n := range slices.Compact(nodes) {
-			if err := in.bump(ctx, tx, n); err != nil {
+			if err := in.bump(ctx, tx, endUser, n); err != nil {
 				return err
 			}
 		}

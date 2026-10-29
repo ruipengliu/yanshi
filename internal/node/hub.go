@@ -148,9 +148,9 @@ func (h *Hub) Connect(ctx context.Context, hello *v1.Hello) (*Conn, error) {
 }
 
 func (h *Hub) Disconnect(ctx context.Context, c *Conn) {
-	_ = h.Dir.SetOffline(ctx, c.NodeID, c.gen)
+	_ = h.Dir.SetOffline(ctx, c.EndUser, c.NodeID, c.gen)
 	h.log().Info("node disconnected", "node", c.NodeID)
-	if err := h.wakeWaiting(ctx, c.NodeID); err != nil {
+	if err := h.wakeWaiting(ctx, c.EndUser, c.NodeID); err != nil {
 		h.log().Warn("wake on disconnect failed", "node", c.NodeID, "err", err)
 	}
 }
@@ -159,11 +159,11 @@ func (h *Hub) Disconnect(ctx context.Context, c *Conn) {
 // 执行中途下线时，若不唤醒，Run 要等到截止时间才发现。醒来的 Worker 看到设备离线：未满宽限期就停放到宽限期结束，满了就
 // 转入后台。已转入后台的调用不必唤醒：它的 Session 停放到后台截止时间，设备下线不改变什么。尽力而为：唤醒失败时
 // Run 仍会在截止时间醒来。
-func (h *Hub) wakeWaiting(ctx context.Context, nodeID string) error {
+func (h *Hub) wakeWaiting(ctx context.Context, endUser, nodeID string) error {
 	if h.Queue == nil {
 		return nil
 	}
-	pending, _, err := h.Inbox.Pending(ctx, nodeID)
+	pending, _, err := h.Inbox.Pending(ctx, endUser, nodeID)
 	if err != nil {
 		return err
 	}
@@ -178,7 +178,7 @@ func (h *Hub) wakeWaiting(ctx context.Context, nodeID string) error {
 		if err != nil {
 			return err
 		}
-		if st.Created == nil || st.Closed != nil || !awaits(st.Active(), nodeID) {
+		if st.Created == nil || st.Created.GetEndUser() != endUser || st.Closed != nil || !awaits(st.Active(), nodeID) {
 			continue
 		}
 		if err := h.Queue.Enqueue(ctx, sid, st.WorkClass()); err != nil {
@@ -208,16 +208,16 @@ func awaits(r *session.Run, nodeID string) bool {
 }
 
 // Dispatch 把一次路由调用放入目标 Node 的 Inbox；Node 离线时尝试唤醒。
-func (h *Hub) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke) error {
-	if err := h.Inbox.Put(ctx, nodeID, inv); err != nil {
+func (h *Hub) Dispatch(ctx context.Context, endUser, nodeID string, inv *v1.Invoke) error {
+	if err := h.Inbox.Put(ctx, endUser, nodeID, inv); err != nil {
 		return err
 	}
 	if gone, err := lifecycle.Recheck(ctx, h.Deletions, inv.GetSessionId(), func(ctx context.Context) error {
-		return h.Inbox.Remove(ctx, nodeID, inv.GetCallId())
+		return h.Inbox.Remove(ctx, endUser, nodeID, inv.GetCallId())
 	}); err != nil || gone {
 		return err
 	}
-	info, err := h.Dir.Get(ctx, nodeID)
+	info, err := h.Dir.Get(ctx, endUser, nodeID)
 	if err != nil {
 		return err
 	}
@@ -228,14 +228,14 @@ func (h *Hub) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke) error
 }
 
 // Cancel 撤回尚未完成的路由调用；已投递的由网关通知 Node 取消。
-func (h *Hub) Cancel(ctx context.Context, nodeID, callID string) error {
-	return h.Inbox.Remove(ctx, nodeID, callID)
+func (h *Hub) Cancel(ctx context.Context, endUser, nodeID, callID string) error {
+	return h.Inbox.Remove(ctx, endUser, nodeID, callID)
 }
 
 // Result 把 Node 返回的结果写入日志并唤醒 Session。
 // 对已完成、已取消或不属于该 Node 的调用静默忽略：调用方应总是向 Node 确认（ResultAck）。
-func (h *Hub) Result(ctx context.Context, nodeID string, res *v1.InvokeResult) error {
-	pending, _, err := h.Inbox.Pending(ctx, nodeID)
+func (h *Hub) Result(ctx context.Context, endUser, nodeID string, res *v1.InvokeResult) error {
+	pending, _, err := h.Inbox.Pending(ctx, endUser, nodeID)
 	if err != nil {
 		return err
 	}
@@ -250,12 +250,12 @@ func (h *Hub) Result(ctx context.Context, nodeID string, res *v1.InvokeResult) e
 	}
 	if inv.GetSessionId() == "" {
 		// 不属于任何 Session 的平台调用（如清除本地记录），没有结果要写入日志。
-		return h.Inbox.Remove(ctx, nodeID, inv.GetCallId())
+		return h.Inbox.Remove(ctx, endUser, nodeID, inv.GetCallId())
 	}
 	if err := h.commitResult(ctx, inv, res); err != nil {
 		return err
 	}
-	return h.Inbox.Remove(ctx, nodeID, inv.GetCallId())
+	return h.Inbox.Remove(ctx, endUser, nodeID, inv.GetCallId())
 }
 
 // commitResult 写入结果，并在同一事务中唤醒 Session（CommitAndWake）：写入之后、撤下 Inbox 之前崩溃时，

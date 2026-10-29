@@ -199,6 +199,9 @@ type Holder struct {
 	KeepOnRetention bool
 	// DeleteSession 清除 Session 在这里的全部数据；幂等，可重复执行。
 	DeleteSession func(ctx context.Context, sessionID string) error
+	// DeleteSessionForEndUser 非 nil 且 Janitor 已知真实 EndUser 时优先使用，避免跨用户扫描。
+	// 不知归属（日志与索引已删的重试）仍由 DeleteSession 离线恢复。
+	DeleteSessionForEndUser func(ctx context.Context, endUser, sessionID string) error
 }
 
 // Recheck 是"先写、后查"的后半步（ADR-0015）：写入属于 sessionID 的数据之后复查删除记录，Session 已有删除记录时
