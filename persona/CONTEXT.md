@@ -75,3 +75,11 @@ _Avoid_: Event（那是内核日志）、编排任务、Run 终态
 **Owner deletion barrier（owner 注销屏障）**（P4，Q104）:
 按 (BusinessLine, EndUser) 永久保存的注销记录。建立后拒绝该 owner 的业务读写，逐批清除 Persona 数据；完成状态只指 Persona 清理完成。重新注册使用新 EndUser ID，旧屏障仅保存键、状态与时间，不能由夹具重置。应用负责封禁登录、内核及逐库注销。
 _Avoid_: 删除待办（那是擦除后的工作 Session 清理）、内核 EndUser 宽限期
+
+**Work Session binding（工作 Session 绑定）**:
+业务日、项目或周回顾与其当前内部工作 Session 的对应关系。生产绑定按期望旧值、目标世代与编排任务世代比较后更新；只有当前绑定可以执行已登记的整理命令。
+_Avoid_: 内核 Session 的所有权、Persona 领域事实
+
+**Work Session retirement（工作 Session 退役）**:
+无法排除旧远端写入时，停止一个工作 Session 在 Persona 的读写资格，并把它保留为历史绑定。后续命令使用新绑定；重建继承原删除期限，历史绑定仍参与审计、擦除和注销。
+_Avoid_: Run 中断、Session 物理删除

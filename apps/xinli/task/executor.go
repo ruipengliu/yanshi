@@ -31,18 +31,22 @@ func IsConfiguration(err error) bool {
 		status.StatusCode != http.StatusTooManyRequests && status.StatusCode != http.StatusConflict
 }
 
-// Prepare 在事务外读取当前绑定；A9 的 CAS 创建可直接接在这里。
+// Prepare 在事务外准备 CAS 绑定；命令登记必须晚于应用槽位占用。
 // 返回的文字只允许由 Spec 渲染固定命令，不把正文存进任务或错误字段。
 type Prepare func(context.Context, Task) (sessionID, text string, err error)
 
 type Executor struct {
-	Store     Store
-	Kernel    Kernel
-	Prepare   Prepare
-	Now       func() time.Time
-	Lease     time.Duration
-	RetryBase time.Duration
-	RetryMax  time.Duration
+	Register       func(context.Context, Task) error
+	Finish         func(context.Context, Task) error
+	Retire         func(context.Context, Task) error
+	CommandTimeout time.Duration
+	Store          Store
+	Kernel         Kernel
+	Prepare        Prepare
+	Now            func() time.Time
+	Lease          time.Duration
+	RetryBase      time.Duration
+	RetryMax       time.Duration
 }
 
 func (w *Executor) now() time.Time {
@@ -76,12 +80,18 @@ func Backoff(id string, attempt int, base, ceiling time.Duration) time.Duration 
 
 func (w *Executor) deferTask(ctx context.Context, t Task, class string, cause error) (Task, error) {
 	t.LastErrorClass = class
-	t.RetryAt = w.now().Add(Backoff(t.TaskID, t.Attempt, w.RetryBase, w.RetryMax))
+	attempt := t.Attempt
+	if t.State == Accepted && class == "" && cause == nil {
+		// 正常终态轮询不是失败；退役重建和轮询增加的认领次数不能推迟下一次确认。
+		attempt = 1
+	}
+	t.RetryAt = w.now().Add(Backoff(t.TaskID, attempt, w.RetryBase, w.RetryMax))
 	err := w.Store.Save(ctx, t, w.now(), true)
 	return t, errors.Join(cause, err)
 }
 
 func (w *Executor) failure(ctx context.Context, t Task, cause error) (Task, error) {
+	before := t.State
 	class := "retryable"
 	switch {
 	case errors.Is(cause, kernel.ErrNotFound), errors.Is(cause, ErrObsolete):
@@ -90,6 +100,12 @@ func (w *Executor) failure(ctx context.Context, t Task, cause error) (Task, erro
 	case IsConfiguration(cause):
 		t.State = Failed
 		class = "configuration"
+	}
+	if t.Terminal() && t.Session != "" && w.Retire != nil {
+		if err := w.Retire(ctx, t); err != nil {
+			t.State = before
+			return w.deferTask(ctx, t, "retire", err)
+		}
 	}
 	return w.deferTask(ctx, t, class, cause)
 }
@@ -101,10 +117,18 @@ func (w *Executor) accepted(ctx context.Context, t Task, receipt kernel.InputRec
 	if t.Receipt.RunID != "" && t.Receipt.RunID != receipt.RunID {
 		return w.deferTask(ctx, t, "receipt_invalid", errors.New("task: conflicting receipt"))
 	}
+	if w.Retire != nil && (receipt.Unsafe || receipt.Steered || receipt.Terminal == "failed" || receipt.Terminal == "interrupted") {
+		return w.retire(ctx, t, false)
+	}
 	t.Receipt = receipt
 	t.State = Accepted
 	class := ""
 	if receipt.Terminal == "completed" {
+		if w.Finish != nil {
+			if err := w.Finish(ctx, t); err != nil {
+				return w.deferTask(ctx, t, "finish", err)
+			}
+		}
 		t.State = Succeeded
 	}
 	if receipt.Terminal == "failed" || receipt.Terminal == "interrupted" {
@@ -134,7 +158,26 @@ func (w *Executor) Run(ctx context.Context, id string) (Task, error) {
 	callCtx, cancel := context.WithTimeout(ctx, max(time.Nanosecond, t.LeaseUntil.Sub(w.now())))
 	defer cancel()
 	if t.State == Unknown || t.State == Accepted {
-		receipt, found, readErr := w.Kernel.FindInput(callCtx, t.Session, t.InputID)
+		timeout := w.CommandTimeout
+		if timeout <= 0 {
+			timeout = 30 * time.Minute
+		}
+		if w.Retire != nil && !t.CommandStartedAt.IsZero() && !w.now().Before(t.CommandStartedAt.Add(timeout)) {
+			return w.retire(ctx, t, true)
+		}
+		// 对账不能耗尽全部租约，否则每次读超时都无法提交退役，恢复会永久循环。
+		reconcileCtx := callCtx
+		stopReconcile := func() {}
+		if w.Retire != nil {
+			reconcileCtx, stopReconcile = context.WithTimeout(callCtx, max(time.Nanosecond, t.LeaseUntil.Sub(w.now())/2))
+		}
+		receipt, found, readErr := w.Kernel.FindInput(reconcileCtx, t.Session, t.InputID)
+		stopReconcile()
+		if w.Retire != nil {
+			if readErr != nil || !found || receipt.Terminal == "" && (t.State == Unknown || !t.CommandStartedAt.IsZero() && !w.now().Before(t.CommandStartedAt.Add(timeout))) {
+				return w.retire(ctx, t, true)
+			}
+		}
 		if errors.Is(readErr, kernel.ErrNotFound) {
 			return w.failure(ctx, t, readErr)
 		}
@@ -159,11 +202,19 @@ func (w *Executor) Run(ctx context.Context, id string) (Task, error) {
 	before := t
 	t.Session = sid
 	t.State = Unknown
+	if t.CommandStartedAt.IsZero() {
+		t.CommandStartedAt = w.now().Truncate(time.Microsecond)
+	}
 	if err := w.Store.Save(ctx, t, w.now(), false); err != nil {
 		if errors.Is(err, ErrTargetBusy) {
 			return w.deferTask(ctx, before, "target_busy", nil)
 		}
 		return t, err
+	}
+	if w.Register != nil {
+		if err := w.Register(callCtx, t); err != nil {
+			return w.failure(ctx, t, err)
+		}
 	}
 	receipt, err := w.Kernel.SubmitInput(callCtx, sid, t.InputID, text)
 	if err != nil {
@@ -184,4 +235,23 @@ func (w *Executor) Scan(ctx context.Context, limit int) error {
 		result = errors.Join(result, err)
 	}
 	return result
+}
+
+// 先提交 Persona 的退役屏障，再清应用槽位；中间崩溃只会重复退役，不会复用旧 Session。
+func (w *Executor) retire(ctx context.Context, t Task, retryNow bool) (Task, error) {
+	if err := w.Retire(ctx, t); err != nil {
+		return w.deferTask(ctx, t, "retire", err)
+	}
+	t.Session, t.State, t.Receipt = "", Pending, kernel.InputReceipt{}
+	t.CommandStartedAt = time.Time{}
+	t.Retirements++
+	if retryNow {
+		t.LastErrorClass, t.RetryAt = "retired", w.now()
+		if err := w.Store.Save(ctx, t, w.now(), true); err != nil {
+			return t, err
+		}
+		// 新认领从 pending 开始，至多提交一次；该次再失败则按持久退避恢复。
+		return w.Run(ctx, t.TaskID)
+	}
+	return w.deferTask(ctx, t, "retired", nil)
 }

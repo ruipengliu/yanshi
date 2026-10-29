@@ -21,11 +21,16 @@ type devActions struct {
 	fail                        bool
 }
 
-func (d *devActions) EnsureDaySession(_ context.Context, _, _, date string) (string, error) {
+func (d *devActions) DayInput(_ context.Context, _, _, date, kind, _ string) (string, error) {
 	d.dates = append(d.dates, date)
 	if d.fail {
 		return "", errors.New("private-content")
 	}
+	text := "整理今天"
+	if kind == "exchange" {
+		text = "整理交谈"
+	}
+	d.texts = append(d.texts, text)
 	return "session", nil
 }
 func (d *devActions) Submit(_ context.Context, _, _, text string) error {

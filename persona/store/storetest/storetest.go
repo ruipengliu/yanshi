@@ -15,6 +15,9 @@ import (
 
 func Run(t *testing.T, factory func() store.Store) {
 	t.Helper()
+	t.Run("work_sessions", func(t *testing.T) { workSessions(t, factory) })
+	t.Run("work_fact_recovery", func(t *testing.T) { workFactRecovery(t, factory) })
+	t.Run("work_project_recovery", func(t *testing.T) { workProjectRecovery(t, factory) })
 	t.Run("domain_changes", func(t *testing.T) { domainChanges(t, factory) })
 	t.Run("deletion_discovery", func(t *testing.T) { deletionDiscovery(t, factory) })
 	t.Run("owner_deletion", func(t *testing.T) { ownerDeletion(t, factory) })

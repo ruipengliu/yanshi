@@ -80,7 +80,7 @@ func TestDomainChangesSurviveExitBeforeNotification(t *testing.T) {
 				args := []byte(`{"day":{"headline":"当天事务"},"habits":[]}`)
 				exit := errors.New("process exited after commit")
 				notified := false
-				x := newRuntime(exitAfterCommit{s, exit}, Options{Now: func() time.Time { return now }, Notifier: notifierFunc(func(context.Context, string, string, string, string, []string) {
+				x := newRuntime(exitAfterCommit{s, exit}, Options{AllowUnmanaged: true, Now: func() time.Time { return now }, Notifier: notifierFunc(func(context.Context, string, string, string, string, []string) {
 					notified = true
 				})})
 				func() {
@@ -113,7 +113,7 @@ func TestDomainChangesSurviveExitBeforeNotification(t *testing.T) {
 					t.Fatal(err)
 				}
 				// 返回丢失后再次交付，重开的入口不得分配新版本。
-				x = newRuntime(s, Options{Now: func() time.Time { return now.Add(24 * time.Hour) }})
+				x = newRuntime(s, Options{AllowUnmanaged: true, Now: func() time.Time { return now.Add(24 * time.Hour) }})
 				if result, err := x.call(ctx, meta, args, handler, false); err != nil || result == nil {
 					t.Fatal(result, err)
 				}

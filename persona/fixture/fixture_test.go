@@ -27,7 +27,7 @@ func testSeedToolState(t *testing.T, s store.Store) {
 	ctx := context.Background()
 	now := func() time.Time { return time.Date(2026, 10, 23, 22, 0, 0, 0, time.UTC) }
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", mcpserver.Handler(s, mcpserver.Options{Now: now}))
+	mux.Handle("/mcp", mcpserver.Handler(s, mcpserver.Options{AllowUnmanaged: true, Now: now}))
 	mux.Handle("/v1/fixture/", fixture.Handler(s, fixture.Options{Now: now}))
 	hs := httptest.NewServer(mux)
 	defer hs.Close()

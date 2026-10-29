@@ -33,13 +33,24 @@ func TestPurgeRestartAndBound(t *testing.T) {
 			if err := call.Err(); err != nil {
 				return err
 			}
+			lease := domain.WorkLease{Task: "task", Sequence: 1, Generation: 1, Until: now.Add(time.Minute)}
+			expected, err := b.ReserveWork("week/2026-10-22", lease, now)
+			if err != nil {
+				return err
+			}
+			if err := b.BindWork("week/2026-10-22", expected, lease, "managed-week", now); err != nil {
+				return err
+			}
+			if err := b.RetireWork("week/2026-10-22", "managed-week", now); err != nil {
+				return err
+			}
 			close(entered)
 			select {
 			case <-release:
 			case <-ctx.Done():
 				return ctx.Err()
 			}
-			_, err := b.AppendCaptures("2026-10-27", "batch", []domain.CaptureSegment{{Speaker: "wearer", Text: "甲"}, {Speaker: "wearer", Text: "乙"}, {Speaker: "wearer", Text: "丙"}})
+			_, err = b.AppendCaptures("2026-10-27", "batch", []domain.CaptureSegment{{Speaker: "wearer", Text: "甲"}, {Speaker: "wearer", Text: "乙"}, {Speaker: "wearer", Text: "丙"}})
 			return err
 		})
 	}()

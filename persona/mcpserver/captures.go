@@ -39,7 +39,10 @@ func (x *server) captures(ctx context.Context, req *mcp.CallToolRequest) (*mcp.C
 	if err != nil || json.Unmarshal(raw, &opts) != nil || opts.Limit <= 0 || opts.MaxChars <= 0 || opts.GapMS <= 0 || opts.GapMS > math.MaxInt64/int64(1000000) || opts.MaxToolResult < 0 {
 		return failure("平台旁听分页参数无效")
 	}
-	meta := func(key string) string { v, _ := req.Params.Meta["yanshi/"+key].(string); return v }
+	meta := func(key string) string {
+		v, _ := req.Params.Meta["yanshi/"+key].(string)
+		return v
+	}
 	var page domain.StructuredPage
 	var pageErr error
 	now := x.now()
@@ -47,6 +50,10 @@ func (x *server) captures(ctx context.Context, req *mcp.CallToolRequest) (*mcp.C
 	err = x.store.Update(ctx, meta("business_line"), meta("end_user"), func(book *domain.Book) error {
 		call := domain.NewCall(book, meta("session"), req.Params.Arguments, nil, now)
 		book.SetCaptureClock(x.now)
+		if err := book.CheckWorkSession(meta("session")); err != nil {
+			pageErr = err
+			return err
+		}
 		page, pageErr = call.Captures(opts)
 		return pageErr
 	})

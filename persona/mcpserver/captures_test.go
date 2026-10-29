@@ -21,7 +21,7 @@ func TestCapturesMCP(t *testing.T) {
 	books := memstore.New(captureClock)
 	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", Handler(books, Options{Now: func() time.Time { return now }}))
+	mux.Handle("/mcp", Handler(books, Options{AllowUnmanaged: true, Now: func() time.Time { return now }}))
 	mux.Handle("/v1/fixture/", fixture.Handler(books, fixture.Options{Now: func() time.Time { return now }}))
 	hs := httptest.NewServer(mux)
 	defer hs.Close()

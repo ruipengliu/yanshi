@@ -96,6 +96,9 @@ func (c *Call) DaySummary() string {
 }
 
 func (c *Call) SetStatus() string {
+	if err := c.CheckWorkTool(true, "collect", "rewrite"); err != nil {
+		return err.Error()
+	}
 	var in struct {
 		Status        string
 		NextSteps     []string `json:"next_steps"`

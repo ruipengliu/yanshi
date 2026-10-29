@@ -45,17 +45,19 @@ const (
 type Task struct {
 	Source
 	Spec
-	TaskID          string
-	InputID         string
-	Sequence        int64
-	State           State
-	Session         string
-	LeaseGeneration int64
-	LeaseUntil      time.Time
-	RetryAt         time.Time
-	Attempt         int
-	Receipt         kernel.InputReceipt
-	LastErrorClass  string
+	TaskID           string
+	InputID          string
+	Sequence         int64
+	State            State
+	Session          string
+	LeaseGeneration  int64
+	LeaseUntil       time.Time
+	RetryAt          time.Time
+	Attempt          int
+	CommandStartedAt time.Time
+	Retirements      int
+	Receipt          kernel.InputReceipt
+	LastErrorClass   string
 }
 
 func (t Task) Terminal() bool {
@@ -83,8 +85,10 @@ var (
 
 // Store 的 Receive 同事务冻结整个来源的映射（包括空映射）；成功后调用方才能 ack。
 // Claim 是短事务；Save 同时校验租约代数和期限，release=false 用于调用前持久化未知意图。
-// Session 槽位跨退避及租约过期保留，只有命令明确完成才能让下一条输入进入。
+// Session 槽位跨退避及租约过期保留；命令明确完成或旧 Session 已退役，才允许释放。
 type Store interface {
+	CreationStore
+	SessionTask(context.Context, Owner, string) (Task, bool, error)
 	Receive(context.Context, Source, []Spec, time.Time) error
 	Get(context.Context, string) (Task, error)
 	Due(context.Context, time.Time, int) ([]string, error)
@@ -124,16 +128,23 @@ func ValidSave(old, next Task, now time.Time) error {
 	if old.Source != next.Source || old.Spec != next.Spec || old.InputID != next.InputID || old.Sequence != next.Sequence || old.Attempt != next.Attempt || old.LeaseUntil != next.LeaseUntil {
 		return ErrInvalid
 	}
-	if old.Session != "" && next.Session != old.Session {
+	reset := next.Retirements == old.Retirements+1 && old.Session != "" && next.Session == "" && next.State == Pending && next.Receipt == (kernel.InputReceipt{}) && next.CommandStartedAt.IsZero()
+	if next.Retirements != old.Retirements && !reset {
+		return ErrInvalid
+	}
+	if !reset && !old.CommandStartedAt.IsZero() && !old.CommandStartedAt.Equal(next.CommandStartedAt) {
+		return ErrInvalid
+	}
+	if old.Session != "" && next.Session != old.Session && !reset {
 		return ErrInvalid
 	}
 	if next.State != Pending && next.State != Unknown && next.State != Accepted && !next.Terminal() {
 		return ErrInvalid
 	}
-	if old.State == Unknown && next.State == Pending {
+	if old.State == Unknown && next.State == Pending && !reset {
 		return ErrInvalid
 	}
-	if old.State == Accepted && next.State != Accepted && !next.Terminal() {
+	if old.State == Accepted && next.State != Accepted && !next.Terminal() && !reset {
 		return ErrInvalid
 	}
 	if (next.State == Unknown || next.State == Accepted) && next.Session == "" {

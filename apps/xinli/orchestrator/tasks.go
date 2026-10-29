@@ -58,7 +58,7 @@ func (o *Orchestrator) ScanTasks(ctx context.Context) error {
 	for _, owner := range owners {
 		result = errors.Join(result, o.receiveChanges(ctx, owner.BusinessLine, owner.EndUser))
 	}
-	return errors.Join(result, o.scanInputs(ctx))
+	return errors.Join(result, o.scanInputs(ctx), o.ScanOrphans(ctx))
 }
 
 func (o *Orchestrator) scanInputs(ctx context.Context) error {
@@ -76,6 +76,14 @@ func (o *Orchestrator) scanInputs(ctx context.Context) error {
 		// 删除步骤仍由 Persona 的扫描顺序驱动；输入任务由同一 receipt 执行器处理。
 		if t.Operation == "delete" {
 			result = errors.Join(result, o.resumeDeletion(ctx, t))
+			continue
+		}
+		if t.Operation == "ensure" {
+			job, claimed, claimErr := o.tasks.Claim(ctx, id, o.now(), 2*time.Minute)
+			if claimed {
+				_, claimErr = o.runEnsure(ctx, job)
+			}
+			result = errors.Join(result, claimErr)
 			continue
 		}
 		_, err = o.worker.Run(ctx, id)
@@ -145,8 +153,8 @@ func (o *Orchestrator) dayTasks(ctx context.Context, change store.DomainChange) 
 
 func (o *Orchestrator) prepareTask(ctx context.Context, t task.Task) (sessionID, command string, err error) {
 	defer func() {
-		if errors.Is(err, store.ErrOwnerDeleting) {
-			err = task.ErrObsolete
+		if errors.Is(err, store.ErrOwnerDeleting) || errors.Is(err, domain.ErrDayDeleted) || errors.Is(err, domain.ErrCapturesExpired) || errors.Is(err, domain.ErrWorkTargetGone) {
+			err = errors.Join(task.ErrObsolete, err)
 		}
 	}()
 	switch t.Operation {
@@ -154,32 +162,19 @@ func (o *Orchestrator) prepareTask(ctx context.Context, t task.Task) (sessionID,
 		return o.prepareCollect(ctx, t)
 	case "rebuild":
 		return o.prepareRebuild(ctx, t)
-	case "week":
-		from, err := time.Parse(time.DateOnly, t.Date)
-		if err != nil {
-			return "", "", task.ErrConfiguration
+	case "day", "exchange":
+		sid, err := o.ensureWork(ctx, t, DayAgent)
+		text := "整理今天"
+		if t.Operation == "exchange" {
+			text = "整理交谈"
 		}
-		var sid string
-		err = o.store.View(ctx, t.BusinessLine, t.EndUser, func(b *domain.Book) error { sid = b.ReviewWeek(from.AddDate(0, 0, 6)).Session; return nil })
+		return sid, text, err
+	case "week":
+		sid, err := o.ensureWork(ctx, t, WeekAgent)
 		return sid, "回顾本周", err
 	case "rewrite":
-		var sid string
-		err := o.store.View(ctx, t.BusinessLine, t.EndUser, func(b *domain.Book) error {
-			for _, p := range b.State().Projects {
-				if "project/"+p.ID == t.Target {
-					sid = p.Session
-					break
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			return "", "", err
-		}
-		if sid == "" {
-			return "", "", task.ErrObsolete
-		}
-		return sid, "重写现状", nil
+		sid, err := o.ensureWork(ctx, t, ProjectAgent)
+		return sid, "重写现状", err
 	default:
 		return "", "", task.ErrConfiguration
 	}
@@ -219,24 +214,14 @@ func (o *Orchestrator) prepareCollect(ctx context.Context, t task.Task) (string,
 	if !found {
 		return "", "", task.ErrObsolete
 	}
-	if sid == "" {
-		sid, err = o.kernel.CreateSession(ctx, t.BusinessLine, t.EndUser, ProjectAgent)
-		if err != nil {
-			return "", "", err
-		}
-		// A9 将这里升级为持久创建意图、CAS 绑定及空孤儿清理。
-		if err = o.store.Update(ctx, t.BusinessLine, t.EndUser, func(b *domain.Book) error { b.Bind(id, sid); return nil }); err != nil {
-			return "", "", err
-		}
+	sid, err = o.ensureWork(ctx, t, ProjectAgent)
+	if err != nil {
+		return "", "", err
 	}
 	return sid, "整理 " + t.Date, nil
 }
 
 func (o *Orchestrator) prepareRebuild(ctx context.Context, t task.Task) (string, string, error) {
-	k, ok := o.kernel.(DeletionKernel)
-	if !ok {
-		return "", "", task.ErrConfiguration
-	}
 	var deletion domain.DeletionTask
 	err := o.store.View(ctx, t.BusinessLine, t.EndUser, func(b *domain.Book) error {
 		for _, d := range b.DeletionTasks() {
@@ -260,7 +245,7 @@ func (o *Orchestrator) prepareRebuild(ctx context.Context, t task.Task) (string,
 	if skip {
 		return "", "", task.ErrObsolete
 	}
-	sid, err := o.ensureDaySession(ctx, k, t.BusinessLine, t.EndUser, t.Date)
+	sid, err := o.ensureWork(ctx, t, DayAgent)
 	if err != nil {
 		return "", "", errors.Join(errRebuildPreparation, err)
 	}

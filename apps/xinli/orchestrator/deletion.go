@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"persona/domain"
@@ -158,35 +157,20 @@ func (o *Orchestrator) processDeletions(ctx context.Context, bl, eu string) erro
 
 func (o *Orchestrator) executeDeletion(ctx context.Context, k DeletionKernel, bl, eu string, deletionTask domain.DeletionTask) (bool, string, error) {
 	if deletionTask.Status == "pending" {
-		if deletionTask.Session != "" {
-			state, err := k.Session(ctx, deletionTask.Session)
-			if err != nil && !errors.Is(err, kernel.ErrNotFound) {
-				return false, "session", err
-			}
-			if err == nil && state.ActiveRun() != "" {
-				if err := k.Interrupt(ctx, deletionTask.Session, state.ActiveRun()); err != nil && !errors.Is(err, kernel.ErrNotFound) {
-					return false, "interrupt", err
-				}
-			}
-			missing := errors.Is(err, kernel.ErrNotFound)
-			reason := ""
-			if deletionTask.Kind == "erase" {
-				reason = "erasure"
-			}
-			deleteErr := k.DeleteSession(ctx, deletionTask.Session, reason)
-			if err := deleteErr; err != nil && !errors.Is(err, kernel.ErrNotFound) {
-				// 某些入口对重复删除返回冲突；只有已有记录才能证明删除已被接受。
-				if _, probeErr := k.Deletion(ctx, bl, deletionTask.Session); probeErr != nil {
-					return false, "delete_session", err
-				}
-			}
-			deletion, err := k.Deletion(ctx, bl, deletionTask.Session)
-			absent := missing && errors.Is(deleteErr, kernel.ErrNotFound) && errors.Is(err, kernel.ErrNotFound)
-			if err != nil && !absent {
-				return false, "deletion", err
-			}
-			if !absent && deletion.CompletedAt.IsZero() {
-				return false, "", nil
+		var sessions []string
+		if err := o.store.View(ctx, bl, eu, func(b *domain.Book) error {
+			sessions = b.DeletionSessionIDs(deletionTask)
+			return nil
+		}); err != nil {
+			return false, "sessions", err
+		}
+		reason := ""
+		if deletionTask.Kind == "erase" {
+			reason = "erasure"
+		}
+		for _, sid := range sessions {
+			if ready, class, err := deleteWorkSession(ctx, k, bl, sid, reason); err != nil || !ready {
+				return ready, class, err
 			}
 		}
 		candidates := []domain.MemoryCandidate{}
@@ -234,7 +218,9 @@ func (o *Orchestrator) executeDeletion(ctx context.Context, k DeletionKernel, bl
 				return false, "", nil
 			}
 		}
-		if err := o.store.Update(ctx, bl, eu, func(b *domain.Book) error { return b.CompleteDeletionRebuild(deletionTask.ID) }); err != nil {
+		if err := o.store.Update(ctx, bl, eu, func(b *domain.Book) error {
+			return b.CompleteDeletionRebuild(deletionTask.ID)
+		}); err != nil {
 			return false, "rebuild_complete", err
 		}
 	}
@@ -283,76 +269,34 @@ func (o *Orchestrator) EnsureDaySession(ctx context.Context, bl, eu, date string
 		return "", err
 	}
 	defer release()
-	k, ok := o.kernel.(DeletionKernel)
-	if !ok {
-		return "", errors.New("orchestrator: deletion kernel unavailable")
-	}
-	return o.ensureDaySession(ctx, k, bl, eu, date)
+	return o.ensureDay(ctx, bl, eu, date)
 }
 
-func (o *Orchestrator) ensureDaySession(ctx context.Context, k DeletionKernel, bl, eu, date string) (string, error) {
-	if _, err := time.Parse(time.DateOnly, date); err != nil {
-		return "", errors.New("orchestrator: invalid date")
+func deleteWorkSession(ctx context.Context, k DeletionKernel, bl, sid, reason string) (bool, string, error) {
+	state, err := k.Session(ctx, sid)
+	if err != nil && !errors.Is(err, kernel.ErrNotFound) {
+		return false, "session", err
 	}
-	var day domain.BusinessDay
-	var generation int
-	read := func(b *domain.Book) error {
-		b.SetCaptureClock(o.now)
-		if err := b.CheckCaptures(date); err != nil {
-			return err
+	if err == nil && state.ActiveRun() != "" {
+		if err := k.Interrupt(ctx, sid, state.ActiveRun()); err != nil && !errors.Is(err, kernel.ErrNotFound) {
+			return false, "interrupt", err
 		}
-		day = b.BusinessDay(date)
-		if day.Deleted {
-			return domain.ErrDayDeleted
+	}
+	missing := errors.Is(err, kernel.ErrNotFound)
+	deleteErr := k.DeleteSession(ctx, sid, reason)
+	if err := deleteErr; err != nil && !errors.Is(err, kernel.ErrNotFound) {
+		// 某些入口对重复删除返回冲突；只有已有记录才能证明删除已被接受。
+		if _, probeErr := k.Deletion(ctx, bl, sid); probeErr != nil {
+			return false, "delete_session", err
 		}
-		generation = 0
-		for _, task := range b.DeletionTasks() {
-			if task.Date == date {
-				generation++
-				if task.Status == "pending" {
-					return errors.New("orchestrator: deletion pending")
-				}
-			}
-		}
-		return nil
 	}
-	if err := o.store.View(ctx, bl, eu, read); err != nil {
-		return "", err
+	deletion, err := k.Deletion(ctx, bl, sid)
+	absent := missing && errors.Is(deleteErr, kernel.ErrNotFound) && errors.Is(err, kernel.ErrNotFound)
+	if err != nil && !absent {
+		return false, "deletion", err
 	}
-	if day.ExpiresAt.IsZero() {
-		return "", errors.New("orchestrator: business day has no capture deadline")
+	if !absent && deletion.CompletedAt.IsZero() {
+		return false, "", nil
 	}
-	if day.Session != "" {
-		return day.Session, nil
-	}
-	if !day.ExpiresAt.IsZero() && !day.ExpiresAt.After(o.now()) {
-		return "", domain.ErrCapturesExpired
-	}
-	sid, err := k.CreateSessionWithOptions(ctx, bl, eu, DayAgent, kernel.SessionOptions{DeleteAt: day.ExpiresAt})
-	if err != nil {
-		return "", err
-	}
-	before := generation
-	createdDeleteAt := day.ExpiresAt
-	// 创建和绑定之间崩溃可能留下空 Session；它没有原文。绑定成功后重试总是复用 Persona 的当前绑定。
-	err = o.store.Update(ctx, bl, eu, func(b *domain.Book) error {
-		if err := read(b); err != nil {
-			return err
-		}
-		if generation != before || !day.ExpiresAt.Equal(createdDeleteAt) {
-			return errors.New("orchestrator: business day changed")
-		}
-		if day.Session != "" {
-			sid = day.Session
-			return nil
-		}
-		if !day.ExpiresAt.IsZero() && !day.ExpiresAt.After(o.now()) {
-			return errors.New("orchestrator: business day expired")
-		}
-		return b.BindDay(date, sid, day.ExpiresAt)
-	})
-	if err != nil {
-		return "", fmt.Errorf("orchestrator: bind day: %w", err)
-	}
-	return sid, nil
+	return true, "", nil
 }

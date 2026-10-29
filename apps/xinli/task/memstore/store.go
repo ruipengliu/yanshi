@@ -15,14 +15,15 @@ type sourceKey struct {
 	Version uint64
 }
 type Store struct {
-	mu       sync.Mutex
-	sources  map[sourceKey]bool
-	tasks    map[string]task.Task
-	sequence int64
+	mu        sync.Mutex
+	sources   map[sourceKey]bool
+	tasks     map[string]task.Task
+	creations map[string]task.Creation
+	sequence  int64
 }
 
 func New() *Store {
-	return &Store{sources: make(map[sourceKey]bool), tasks: make(map[string]task.Task)}
+	return &Store{creations: make(map[string]task.Creation), sources: make(map[sourceKey]bool), tasks: make(map[string]task.Task)}
 }
 
 func (s *Store) Receive(ctx context.Context, source task.Source, specs []task.Spec, now time.Time) error {

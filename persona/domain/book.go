@@ -58,6 +58,8 @@ type State struct {
 
 // Book 保存一个 owner 的非原文账本；原文只经所属事务绑定的接缝访问。
 type Book struct {
+	workBindings  map[string]workBinding
+	workSessions  map[string]workSession
 	captures      CaptureAccess
 	captureClock  func() time.Time
 	captureDays   map[string]*captureDay
@@ -298,10 +300,13 @@ func (c *Call) DayLedger() string {
 }
 
 func (c *Call) FileDay() string {
+	if err := c.CheckWorkTool(true, "day"); err != nil {
+		return err.Error()
+	}
 	if err := c.u.checkWorkingSession(c.session); err != nil {
 		return err.Error()
 	}
-	if strings.HasPrefix(c.u.submitted[c.session], "整理交谈") {
+	if _, managed := c.u.workSessions[c.session]; !managed && strings.HasPrefix(c.u.submitted[c.session], "整理交谈") {
 		return "没有收下：白天的\"整理交谈\"不交当天总览，当天总览只在\"整理今天\"中交出"
 	}
 	var in struct {

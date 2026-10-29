@@ -12,6 +12,7 @@ import (
 // InputReceipt 只存输入身份和接受位置，不复制事件正文。
 // Terminal 为空表示尚未确认 Run 终态，不能据接受回执切换下一条后台命令。
 type InputReceipt struct {
+	Unsafe   bool   `json:"unsafe,omitempty"`
 	InputID  string `json:"input_id"`
 	RunID    string `json:"run_id"`
 	EventID  string `json:"event_id,omitempty"`
@@ -41,15 +42,27 @@ type inputEvent struct {
 	InputID string `json:"input_id"`
 }
 
+type controlEvent struct {
+	RunID    string `json:"run_id"`
+	Attempt  uint32 `json:"attempt"`
+	CallID   string `json:"call_id"`
+	ReadOnly bool   `json:"read_only"`
+	IsError  bool   `json:"is_error"`
+}
+
 type event struct {
-	ID          string      `json:"id"`
-	SessionID   string      `json:"session_id"`
-	Seq         json.Number `json:"seq"`
-	Requested   *inputEvent `json:"run_requested"`
-	Steered     *inputEvent `json:"steered"`
-	Completed   *inputEvent `json:"run_completed"`
-	Failed      *inputEvent `json:"run_failed"`
-	Interrupted *inputEvent `json:"run_interrupted"`
+	Attempt     *controlEvent `json:"attempt_started"`
+	Suspended   *inputEvent   `json:"run_suspended"`
+	Call        *controlEvent `json:"tool_call_started"`
+	Result      *controlEvent `json:"tool_result"`
+	ID          string        `json:"id"`
+	SessionID   string        `json:"session_id"`
+	Seq         json.Number   `json:"seq"`
+	Requested   *inputEvent   `json:"run_requested"`
+	Steered     *inputEvent   `json:"steered"`
+	Completed   *inputEvent   `json:"run_completed"`
+	Failed      *inputEvent   `json:"run_failed"`
+	Interrupted *inputEvent   `json:"run_interrupted"`
 }
 
 // FindInput 从头读到空页；短页不是结束标记，最近 64 个输入也不是永久去重证据。
@@ -57,6 +70,8 @@ type event struct {
 func (c *Client) FindInput(ctx context.Context, sessionID, inputID string) (InputReceipt, bool, error) {
 	var after uint64
 	var receipt InputReceipt
+	writes := map[string]bool{}
+	suspended := false
 	for {
 		var page struct {
 			Events *[]event `json:"events"`
@@ -70,6 +85,9 @@ func (c *Client) FindInput(ctx context.Context, sessionID, inputID string) (Inpu
 			return InputReceipt{}, false, errors.New("kernel: missing events")
 		}
 		if len(*page.Events) == 0 {
+			if receipt.Terminal != "" && len(writes) > 0 {
+				receipt.Unsafe = true
+			}
 			return receipt, receipt.RunID != "", nil
 		}
 		for _, e := range *page.Events {
@@ -93,6 +111,26 @@ func (c *Client) FindInput(ctx context.Context, sessionID, inputID string) (Inpu
 			}
 			if receipt.RunID == "" {
 				continue
+			}
+			// 错误正文可能含内容，只读控制字段；接管与不明确的写结果保守隔离。
+			if e.Suspended != nil && e.Suspended.RunID == receipt.RunID {
+				suspended = true
+			}
+			if e.Attempt != nil && e.Attempt.RunID == receipt.RunID {
+				// 正常移交、审批或配额恢复也增加 Attempt；只有未安全挂起的接管才隔离。
+				if e.Attempt.Attempt > 1 && (!suspended || len(writes) > 0) {
+					receipt.Unsafe = true
+				}
+				suspended = false
+			}
+			if e.Call != nil && e.Call.RunID == receipt.RunID && !e.Call.ReadOnly {
+				writes[e.Call.CallID] = true
+			}
+			if e.Result != nil && e.Result.RunID == receipt.RunID && writes[e.Result.CallID] {
+				if e.Result.IsError {
+					receipt.Unsafe = true
+				}
+				delete(writes, e.Result.CallID)
 			}
 			if e.Completed != nil && e.Completed.RunID == receipt.RunID {
 				receipt.Terminal = "completed"

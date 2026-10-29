@@ -289,4 +289,49 @@ func workerTests(t *testing.T, factory Factory) {
 			t.Fatal("second command not released", b.posts)
 		}
 	})
+	t.Run("successful_receipt_polls_do_not_backoff", func(t *testing.T) {
+		s, reopen := factory(t)
+		first := enqueue(t, s, source(1), task.Spec{Operation: "collect", Target: "p"})
+		second := enqueue(t, s, source(2), task.Spec{Operation: "collect", Target: "p"})
+		b := &backend{}
+		server := httptest.NewServer(b)
+		defer server.Close()
+		now := epoch
+		w := &task.Executor{Store: s, Kernel: &kernel.Client{BaseURL: server.URL}, Now: func() time.Time { return now }, RetryBase: time.Second, RetryMax: time.Minute,
+			Prepare: func(context.Context, task.Task) (string, string, error) { return "session", "整理今天", nil }}
+		if _, err := w.Run(ctx, first); err != nil {
+			t.Fatal(err)
+		}
+		// 正常运行中的多次认领不是失败，不能逐步推迟终态确认和下一条命令。
+		for range 3 {
+			now = now.Add(time.Second)
+			if err := w.Scan(ctx, 10); err != nil {
+				t.Fatal(err)
+			}
+		}
+		b.mu.Lock()
+		posts := b.posts
+		b.append("run_completed", "", "run-1")
+		b.mu.Unlock()
+		if posts != 1 {
+			t.Fatal("second command entered before terminal", posts)
+		}
+		s = reopen()
+		w.Store = s
+		now = now.Add(time.Second)
+		if err := w.Scan(ctx, 10); err != nil {
+			t.Fatal(err)
+		}
+		if v := get(t, s, first); v.State != task.Succeeded {
+			t.Fatal("normal polling delayed terminal reconciliation", v.State)
+		}
+		if v, err := w.Run(ctx, second); err != nil || v.State != task.Accepted {
+			t.Fatal("second command still blocked after terminal", v.State, err)
+		}
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		if b.posts != 2 {
+			t.Fatal("second command not released", b.posts)
+		}
+	})
 }

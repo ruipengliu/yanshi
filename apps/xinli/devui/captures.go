@@ -19,7 +19,7 @@ import (
 type Options struct {
 	Store       store.Store
 	DaySessions interface {
-		EnsureDaySession(context.Context, string, string, string) (string, error)
+		DayInput(context.Context, string, string, string, string, string) (string, error)
 	}
 	Kernel interface {
 		Submit(context.Context, string, string, string) error
@@ -246,7 +246,7 @@ func registerRoutes(mux *http.ServeMux, opts Options) {
 		write(w, 200, map[string]string{"brief": *output.Brief})
 	})
 	mux.HandleFunc("POST "+prefix+"/organize", func(w http.ResponseWriter, r *http.Request) {
-		if opts.DaySessions == nil || opts.Kernel == nil {
+		if opts.DaySessions == nil {
 			fail(w, 503, "orchestrator_disabled")
 			return
 		}
@@ -262,10 +262,6 @@ func registerRoutes(mux *http.ServeMux, opts Options) {
 			fail(w, 400, "invalid_request")
 			return
 		}
-		text := "整理今天"
-		if in.Kind == "exchange" {
-			text = "整理交谈"
-		}
 		if in.InputID == "" {
 			var err error
 			in.InputID, err = randomID()
@@ -274,19 +270,17 @@ func registerRoutes(mux *http.ServeMux, opts Options) {
 				return
 			}
 		}
-		sid, err := opts.DaySessions.EnsureDaySession(r.Context(), r.PathValue("businessLine"), r.PathValue("endUser"), in.Date)
+		sid, err := opts.DaySessions.DayInput(r.Context(), r.PathValue("businessLine"), r.PathValue("endUser"), in.Date, in.Kind, in.InputID)
 		if err != nil {
 			if errors.Is(err, domain.ErrCapturesExpired) {
 				fail(w, 409, err.Error())
+			} else if errors.Is(err, domain.ErrWorkBusy) {
+				fail(w, 409, "command_pending")
 			} else if errors.Is(err, domain.ErrDayDeleted) {
 				fail(w, 409, "day_deleted")
 			} else {
 				fail(w, 502, "ensure_day_failed")
 			}
-			return
-		}
-		if err := opts.Kernel.Submit(r.Context(), sid, in.InputID, text); err != nil {
-			fail(w, 502, "submit_failed")
 			return
 		}
 		write(w, 200, map[string]string{"session_id": sid, "input_id": in.InputID})

@@ -113,7 +113,7 @@ func invoke(x *testServer, session, name string, args any, cites ...Citation) st
 	must(err)
 	for _, tool := range tools {
 		if tool.tool.Name == name {
-			res, err := newRuntime(x.store, Options{Now: x.now, Notifier: x.notifier}).call(context.Background(),
+			res, err := newRuntime(x.store, Options{AllowUnmanaged: true, Now: x.now, Notifier: x.notifier}).call(context.Background(),
 				mcp.Meta{
 					"yanshi/business_line": "bl", "yanshi/end_user": "u", "yanshi/session": session, "yanshi/captures": cites,
 				}, raw, tool.handler, tool.tool.Annotations != nil && tool.tool.Annotations.ReadOnlyHint)

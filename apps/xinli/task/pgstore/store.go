@@ -48,20 +48,24 @@ func (s *Store) Receive(ctx context.Context, source task.Source, specs []task.Sp
 }
 
 const columns = `task_id,sequence,business_line,end_user,source_id,source_version,source_kind,operation,target,business_date,
-	input_id,state,session_id,lease_generation,lease_until,retry_at,attempt,receipt,last_error_class`
+	input_id,state,session_id,lease_generation,lease_until,retry_at,attempt,receipt,last_error_class,retirements,command_started_at`
 
 func scan(row pgx.Row) (task.Task, error) {
 	var t task.Task
 	var version int64
 	var until *time.Time
+	var started *time.Time
 	var receipt []byte
 	err := row.Scan(&t.TaskID, &t.Sequence, &t.BusinessLine, &t.EndUser, &t.ID, &version, &t.Kind, &t.Operation, &t.Target, &t.Date,
-		&t.InputID, &t.State, &t.Session, &t.LeaseGeneration, &until, &t.RetryAt, &t.Attempt, &receipt, &t.LastErrorClass)
+		&t.InputID, &t.State, &t.Session, &t.LeaseGeneration, &until, &t.RetryAt, &t.Attempt, &receipt, &t.LastErrorClass, &t.Retirements, &started)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return t, task.ErrNotFound
 	}
 	if err != nil {
 		return t, err
+	}
+	if started != nil {
+		t.CommandStartedAt = *started
 	}
 	t.Version = uint64(version)
 	if until != nil {
@@ -142,7 +146,7 @@ func (s *Store) Save(ctx context.Context, next task.Task, now time.Time, release
 			return task.ErrTargetBusy
 		}
 	} else {
-		if _, err := tx.Exec(ctx, `DELETE FROM task_sessions WHERE business_line=$1 AND end_user=$2 AND session_id=$3 AND task_id=$4`, next.BusinessLine, next.EndUser, next.Session, next.TaskID); err != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM task_sessions WHERE business_line=$1 AND end_user=$2 AND session_id=$3 AND task_id=$4`, next.BusinessLine, next.EndUser, old.Session, next.TaskID); err != nil {
 			return err
 		}
 	}
@@ -150,12 +154,16 @@ func (s *Store) Save(ctx context.Context, next task.Task, now time.Time, release
 	if !release {
 		until = &next.LeaseUntil
 	}
+	var started *time.Time
+	if !next.CommandStartedAt.IsZero() {
+		started = &next.CommandStartedAt
+	}
 	receipt, err := json.Marshal(next.Receipt)
 	if err != nil {
 		return err
 	}
-	result, err := tx.Exec(ctx, `UPDATE orchestration_tasks SET state=$3,session_id=$4,lease_until=$5,retry_at=$6,receipt=$7,last_error_class=$8
-		WHERE task_id=$1 AND lease_generation=$2 AND lease_until>$9`, next.TaskID, next.LeaseGeneration, next.State, next.Session, until, next.RetryAt, receipt, next.LastErrorClass, now)
+	result, err := tx.Exec(ctx, `UPDATE orchestration_tasks SET state=$3,session_id=$4,lease_until=$5,retry_at=$6,receipt=$7,last_error_class=$8,retirements=$10,command_started_at=$11
+		WHERE task_id=$1 AND lease_generation=$2 AND lease_until>$9`, next.TaskID, next.LeaseGeneration, next.State, next.Session, until, next.RetryAt, receipt, next.LastErrorClass, now, next.Retirements, started)
 	if err != nil {
 		return err
 	}

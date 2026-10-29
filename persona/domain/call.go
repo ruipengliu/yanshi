@@ -22,13 +22,14 @@ type Citation struct {
 // Call 在一个 Book 的事务内执行一次领域操作，所有输入都由适配层显式传入。
 // 不复用 Call，以免上一次调用的通知泄漏到下一次。
 type Call struct {
-	err     error
-	u       *Book
-	session string
-	args    json.RawMessage
-	cites   map[string]Citation
-	now     time.Time
-	Filed   *DayFiled
+	RequireWork bool
+	err         error
+	u           *Book
+	session     string
+	args        json.RawMessage
+	cites       map[string]Citation
+	now         time.Time
+	Filed       *DayFiled
 }
 
 // DayFiled 是已接受的当天整理所涉及的项目；只描述事实，不创建 Session 或提交输入。

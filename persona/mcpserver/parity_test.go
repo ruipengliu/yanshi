@@ -188,7 +188,7 @@ func newParityEndpoint(t *testing.T, s store.Store, at time.Time) *parityEndpoin
 	t.Helper()
 	now := func() time.Time { return at }
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", Handler(s, Options{Now: now}))
+	mux.Handle("/mcp", Handler(s, Options{AllowUnmanaged: true, Now: now}))
 	mux.Handle("/v1/fixture/", fixture.Handler(s, fixture.Options{Now: now}))
 	hs := httptest.NewServer(mux)
 	client := mcp.NewClient(&mcp.Implementation{Name: "parity", Version: "1"}, nil)

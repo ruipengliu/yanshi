@@ -44,13 +44,16 @@ type DeletionNotifier interface {
 }
 
 type Options struct {
-	Now      func() time.Time
-	Notifier Notifier
+	// AllowUnmanaged 只供旧夹具与评测；生产必须登记工作命令。
+	AllowUnmanaged bool
+	Now            func() time.Time
+	Notifier       Notifier
 }
 type server struct {
-	store    store.Store
-	now      func() time.Time
-	notifier Notifier
+	allowUnmanaged bool
+	store          store.Store
+	now            func() time.Time
+	notifier       Notifier
 }
 
 func newRuntime(s store.Store, opts Options) *server {
@@ -58,7 +61,7 @@ func newRuntime(s store.Store, opts Options) *server {
 	if now == nil {
 		now = time.Now
 	}
-	return &server{store: s, now: now, notifier: opts.Notifier}
+	return &server{allowUnmanaged: opts.AllowUnmanaged, store: s, now: now, notifier: opts.Notifier}
 }
 
 // Handler 不监听端口或拥有进程生命周期，调用方可与夹具或业务 API 装配在同一 HTTP 服务中。
@@ -76,7 +79,10 @@ func Handler(s store.Store, opts Options) http.Handler {
 
 func (x *server) call(ctx context.Context, metadata mcp.Meta, args json.RawMessage, handler func(*domain.Call) string, readOnly bool) (*mcp.CallToolResult, error) {
 	// 线上字段名见 docs/design/captures.md §6，不依赖内核 Go 类型。
-	meta := func(k string) string { value, _ := metadata["yanshi/"+k].(string); return value }
+	meta := func(k string) string {
+		value, _ := metadata["yanshi/"+k].(string)
+		return value
+	}
 	bl, eu, session := meta("business_line"), meta("end_user"), meta("session")
 	cites := citations(metadata["yanshi/captures"])
 	var call *domain.Call
@@ -85,6 +91,11 @@ func (x *server) call(ctx context.Context, metadata mcp.Meta, args json.RawMessa
 	apply := func(book *domain.Book) error {
 		call = domain.NewCall(book, session, args, cites, now)
 		book.SetCaptureClock(x.now)
+		call.RequireWork = !x.allowUnmanaged
+		if err := call.CheckWorkTool(false); err != nil {
+			text = err.Error()
+			return nil
+		}
 		text = handler(call)
 		return call.Err()
 	}

@@ -68,7 +68,7 @@ func TestCommitFailureHasNoResultOrNotification(t *testing.T) {
 	x := newServer(nil)
 	failure := errors.New("commit failed")
 	notifier := &recordFiled{}
-	runtime := newRuntime(failingStore{x.store, failure}, Options{Now: x.now, Notifier: notifier})
+	runtime := newRuntime(failingStore{x.store, failure}, Options{AllowUnmanaged: true, Now: x.now, Notifier: notifier})
 	for _, name := range []string{"file_changes", "file_day", "file_week"} {
 		for _, tool := range tools {
 			if tool.tool.Name != name {
@@ -175,7 +175,7 @@ func TestCaptureReadFailureHasNoReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	failure := errors.New("capture read failed")
-	runtime := newRuntime(brokenCaptureStore{x.store, failure}, Options{Now: x.now})
+	runtime := newRuntime(brokenCaptureStore{x.store, failure}, Options{AllowUnmanaged: true, Now: x.now})
 	result, err := runtime.call(ctx, mcp.Meta{"yanshi/business_line": "bl", "yanshi/end_user": "u", "yanshi/session": "day"},
 		[]byte(`{"source":{"from":"#1.0","to":"#1.0"}}`), (*domain.Call).FileChanges, false)
 	if result != nil || !errors.Is(err, failure) {
@@ -205,7 +205,7 @@ func TestProjectCaptureReadFailureHasNoReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	failure := errors.New("capture read failed")
-	runtime := newRuntime(brokenCaptureStore{x.store, failure}, Options{Now: x.now})
+	runtime := newRuntime(brokenCaptureStore{x.store, failure}, Options{AllowUnmanaged: true, Now: x.now})
 	args, err := json.Marshal(M{"date": "2026-10-23", "close": []M{{"id": "C-0001", "rev": revision, "status": "done", "refs": []string{"#1.0"}, "exchanges": []string{"x1.0"}}}})
 	if err != nil {
 		t.Fatal(err)

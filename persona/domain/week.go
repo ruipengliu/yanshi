@@ -178,6 +178,9 @@ func (c *Call) SimilarProjects() string {
 }
 
 func (c *Call) ProposeMerge() string {
+	if err := c.CheckWorkTool(true, "week"); err != nil {
+		return err.Error()
+	}
 	var in struct{ Into, From, Reason string }
 	_ = json.Unmarshal(c.args, &in)
 	a, b := c.u.project(in.Into), c.u.project(in.From)
@@ -201,6 +204,9 @@ func (c *Call) ProposeMerge() string {
 }
 
 func (c *Call) FileWeek() string {
+	if err := c.CheckWorkTool(true, "week"); err != nil {
+		return err.Error()
+	}
 	var in struct {
 		Habits      []Habit
 		Suggestions []string

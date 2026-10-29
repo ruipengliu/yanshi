@@ -22,7 +22,7 @@ func TestOwnerBarrierAllTools(t *testing.T) {
 			}
 			ctx := context.Background()
 			notified := 0
-			x := newRuntime(s, Options{Now: captureClock, Notifier: notifierFunc(func(context.Context, string, string, string, string, []string) { notified++ })})
+			x := newRuntime(s, Options{AllowUnmanaged: true, Now: captureClock, Notifier: notifierFunc(func(context.Context, string, string, string, string, []string) { notified++ })})
 			if _, err := s.BeginOwnerDeletion(ctx, "bl", "u", captureClock()); err != nil {
 				t.Fatal(err)
 			}

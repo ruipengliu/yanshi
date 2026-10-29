@@ -34,6 +34,8 @@ type category struct {
 
 // SQL 中的表名和键列只来自静态描述；只有固定大小的编号与集合形状是单例。
 var categories = []category{
+	{"WorkBindings", "work_bindings", "target", mapping},
+	{"WorkSessions", "work_sessions", "session_id", mapping},
 	{"Meta", "book_meta", "", singleton},
 	{"Changesets", "changesets", "changeset_key", sequence},
 	{"Exchanges", "exchanges", "exchange_key", sequence},

@@ -28,6 +28,8 @@ type Options struct {
 	Tasks           task.Store
 	Now             func() time.Time
 	Logger          *slog.Logger
+	CommandTimeout  time.Duration
+	OrphanGrace     time.Duration
 	RetryInterval   time.Duration
 	RetryMax        time.Duration
 	DefaultTimeZone string
@@ -53,6 +55,7 @@ type Orchestrator struct {
 	tasks              task.Store
 	worker             *task.Executor
 	startedTasks       bool
+	orphanGrace        time.Duration
 }
 
 var _ mcpserver.Notifier = (*Orchestrator)(nil)
@@ -84,7 +87,11 @@ func New(ctx context.Context, s store.Store, k Kernel, opts Options) *Orchestrat
 	o := &Orchestrator{retryInterval: opts.RetryInterval, retryMax: opts.RetryMax, defaultZone: zone,
 		stopRetries: make(chan struct{}), tasks: opts.Tasks, store: s, kernel: k, ctx: ctx, now: opts.Now, logger: opts.Logger, locks: make(map[owner]chan struct{})}
 	taskKernel, _ := k.(task.Kernel)
-	o.worker = &task.Executor{Store: o.tasks, Kernel: taskKernel, Prepare: o.prepareTask, Now: o.now, RetryBase: o.retryInterval, RetryMax: o.retryMax}
+	o.orphanGrace = opts.OrphanGrace
+	if o.orphanGrace <= 0 {
+		o.orphanGrace = 10 * time.Minute
+	}
+	o.worker = &task.Executor{Register: o.registerCommand, Finish: o.finishCommand, Retire: o.retireCommand, CommandTimeout: opts.CommandTimeout, Store: o.tasks, Kernel: taskKernel, Prepare: o.prepareTask, Now: o.now, RetryBase: o.retryInterval, RetryMax: o.retryMax}
 	return o
 }
 
@@ -162,18 +169,13 @@ func (o *Orchestrator) Week(ctx context.Context, bl, eu string) (string, error) 
 	defer release()
 	var plan domain.WeekPlan
 	now := o.now()
-	err = o.store.Update(ctx, bl, eu, func(b *domain.Book) error { b.Archive(now); plan = b.ReviewWeek(now); return nil })
+	err = o.store.Update(ctx, bl, eu, func(b *domain.Book) error {
+		b.Archive(now)
+		plan = b.ReviewWeek(now)
+		return nil
+	})
 	if err != nil {
 		return "", err
-	}
-	if plan.Session == "" {
-		plan.Session, err = o.kernel.CreateSession(ctx, bl, eu, WeekAgent)
-		if err != nil {
-			return "", err
-		}
-		if err = o.store.Update(ctx, bl, eu, func(b *domain.Book) error { b.BindWeek(plan.From, plan.Session); return nil }); err != nil {
-			return "", err
-		}
 	}
 	job, err := o.weekInput(ctx, bl, eu, plan.From, "week", "week/"+plan.From)
 	if err != nil {
@@ -182,10 +184,13 @@ func (o *Orchestrator) Week(ctx context.Context, bl, eu string) (string, error) 
 	if job.State != task.Accepted && job.State != task.Succeeded {
 		return "", errors.New("orchestrator: week submission pending or failed")
 	}
-	sid := plan.Session
+	sid := job.Session
 	// TODO(P4-A10)：把重写迁至 file_week 接受变化的持久消费；空回顾也触发，按事实版本去重。
 	// 本步保留原行为与既有开发入口，尚未接入消费者时不能取消项目重写。
-	if err = o.store.View(ctx, bl, eu, func(b *domain.Book) error { plan = b.ReviewWeek(now); return nil }); err != nil {
+	if err = o.store.View(ctx, bl, eu, func(b *domain.Book) error {
+		plan = b.ReviewWeek(now)
+		return nil
+	}); err != nil {
 		return "", err
 	}
 	for _, p := range plan.Rewrite {

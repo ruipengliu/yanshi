@@ -139,7 +139,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	life, cancelLife := context.WithCancel(context.Background())
 	defer cancelLife()
 	var orch *orchestrator.Orchestrator
-	opts := mcpserver.Options{}
+	opts := mcpserver.Options{AllowUnmanaged: *kernelURL == ""}
 	fixtureOpts := fixture.Options{}
 	uiOpts := devui.Options{Store: books}
 	if *kernelURL != "" {

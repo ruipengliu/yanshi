@@ -102,7 +102,6 @@ type commitmentOps struct {
 	}
 }
 
-// UnmarshalJSON 也接受只有新建的列表：模型偶尔把 {"create": [...]} 直接写成 [...]。
 func (o *exchangeOps) UnmarshalJSON(b []byte) error {
 	type plain exchangeOps
 	if len(b) > 0 && b[0] == '[' {
@@ -429,6 +428,9 @@ var fieldNames = map[string]string{"status": "状态", "due": "期限", "content
 
 // fileChanges 是 file_changes：xinli-day 交出一个变更集。
 func (c *Call) FileChanges() string {
+	if err := c.CheckWorkTool(true, "exchange", "day"); err != nil {
+		return err.Error()
+	}
 	if c.u != nil {
 		if err := c.u.checkWorkingSession(c.session); err != nil {
 			return err.Error()
@@ -858,8 +860,11 @@ func (c *Call) receipt(cs *Changeset, notes []string) string {
 }
 
 // updateCommitments 是 update_commitments：xinli-project 依据交谈摘要对账本项目的承诺，作为一个变更集，键是（项目
-// Session，日期），重交时整体取代；受同样的 rev 检查，所以不会用过时的视图覆盖白天依据原话做的修订（§6）。
+// 绑定（含历史 Session），日期），重交时整体取代；受同样的 rev 检查，所以不会用过时的视图覆盖白天依据原话做的修订（§6）。
 func (c *Call) UpdateCommitments() string {
+	if err := c.CheckWorkTool(true, "collect"); err != nil {
+		return err.Error()
+	}
 	var in struct {
 		Date          string
 		Revise, Close []changeIn
@@ -876,7 +881,7 @@ func (c *Call) UpdateCommitments() string {
 	}
 	u := c.u
 	key := "project:" + in.Date
-	old := slices.IndexFunc(u.changesets, func(cs Changeset) bool { return cs.Session == c.session && cs.Key == key })
+	old := slices.IndexFunc(u.changesets, func(cs Changeset) bool { return u.sameProjectSession(cs.Session, c.session) && cs.Key == key })
 	k := &review{c: c, author: AuthorProject, day: true, date: in.Date, base: u.foldWithout(old)}
 	cs := Changeset{Session: c.session, Key: key, Author: AuthorProject, Source: Source{Date: in.Date}, RecordedAt: c.now}
 	for _, r := range in.Revise {

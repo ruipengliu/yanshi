@@ -102,7 +102,7 @@ func TestChangesetsAndCollect(t *testing.T) {
 	defer once.Do(func() { close(unblock) })
 	k := &fakeKernel{block: unblock, started: make(chan struct{}, 1)}
 	o := New(ctx, books, k, Options{Now: func() time.Time { return now }})
-	server := httptest.NewServer(mcpserver.Handler(books, mcpserver.Options{Now: func() time.Time { return now }, Notifier: o}))
+	server := httptest.NewServer(mcpserver.Handler(books, mcpserver.Options{AllowUnmanaged: true, Now: func() time.Time { return now }, Notifier: o}))
 	defer server.Close()
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 	conn, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: server.URL}, nil)
@@ -246,7 +246,7 @@ func TestWeeklyReview(t *testing.T) {
 	}
 }
 
-func TestWeekSubmitFailureKeepsBinding(t *testing.T) {
+func TestWeekSubmitFailureRetiresBinding(t *testing.T) {
 	ctx := context.Background()
 	k := &fakeKernel{failText: "回顾本周"}
 	clock := newDeletionClock()
@@ -260,8 +260,8 @@ func TestWeekSubmitFailureKeepsBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	finish(t, o)
-	if len(k.sessions) != 1 {
-		t.Fatal("retry created a second session")
+	if len(k.sessions) != 2 {
+		t.Fatal("unknown submission reused old session")
 	}
 }
 

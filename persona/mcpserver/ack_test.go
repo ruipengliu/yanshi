@@ -14,7 +14,7 @@ func TestFileChangesWithoutAck(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	x := newServer(nil)
-	hs := httptest.NewServer(Handler(x.store, Options{Now: x.now}))
+	hs := httptest.NewServer(Handler(x.store, Options{AllowUnmanaged: true, Now: x.now}))
 	defer hs.Close()
 	if XinliRegistration().Acks {
 		t.Fatal("xinli registration still declares acks")

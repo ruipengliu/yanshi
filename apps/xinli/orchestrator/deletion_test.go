@@ -256,8 +256,12 @@ func TestDeletionFailureRetry(t *testing.T) {
 			if task := readTask(t, books); task.Status != "completed" || task.RebuildPending || task.Error != "" {
 				t.Fatalf("task: %+v", task)
 			}
-			if len(k.sessions) != 1 || len(k.inputs) != 1 {
-				t.Fatal("duplicate rebuild")
+			wantSessions := 1
+			if step == "submit" {
+				wantSessions = 2
+			}
+			if len(k.sessions) != wantSessions || len(k.inputs) != 1 {
+				t.Fatal("rebuild did not isolate unknown submission")
 			}
 		})
 	}
@@ -339,7 +343,7 @@ func TestEnsureDaySession(t *testing.T) {
 	finish(t, o)
 }
 
-func TestStartupRecoversRebuildWithoutDuplicateSession(t *testing.T) {
+func TestStartupRecoversRebuildWithRetirement(t *testing.T) {
 	c := newDeletionClock()
 	books := memstore.New(captureClock)
 	eraseFixture(t, books, "2026-10-27", "erase", time.Time{})
@@ -366,13 +370,13 @@ func TestStartupRecoversRebuildWithoutDuplicateSession(t *testing.T) {
 		}
 	}
 	finish(t, second)
-	if len(k.sessions) != 1 || len(k.inputs) != 1 {
-		t.Fatal("startup duplicated session/input")
+	if len(k.sessions) != 2 || len(k.inputs) != 1 {
+		t.Fatal("startup did not isolate unknown input")
 	}
 	third := New(context.Background(), books, k, Options{Now: c.now, Tasks: first.tasks})
 	scan(t, third)
 	finish(t, third)
-	if len(k.sessions) != 1 || len(k.inputs) != 1 {
+	if len(k.sessions) != 2 || len(k.inputs) != 1 {
 		t.Fatal("completed work repeated")
 	}
 }

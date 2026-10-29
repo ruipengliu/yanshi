@@ -45,6 +45,7 @@ func claim(t *testing.T, s task.Store, id string, now time.Time) task.Task {
 }
 
 func Run(t *testing.T, factory Factory) {
+	t.Run("creations", func(t *testing.T) { creationTests(t, factory) })
 	ctx := context.Background()
 	t.Run("receive_identity_and_frozen_mapping", func(t *testing.T) {
 		s, _ := factory(t)

@@ -38,6 +38,7 @@ type DomainChange struct {
 type acceptedFact struct {
 	Fact
 	Session     string
+	CommandID   string
 	Fingerprint string
 	Active      bool
 }
@@ -94,7 +95,12 @@ func (c *Call) acceptFact(kind, id, date string, input any) bool {
 	sum := sha256.Sum256(data)
 	fingerprint := hex.EncodeToString(sum[:])
 	old := c.u.acceptedFacts[id]
-	if old.Active && old.Session == c.session && old.Fingerprint == fingerprint {
+	commandID := c.u.workSessions[c.session].CommandID
+	sameCommand := old.Session == c.session
+	if commandID != "" {
+		sameCommand = old.CommandID == commandID
+	}
+	if old.Active && sameCommand && old.Fingerprint == fingerprint {
 		return false
 	}
 	if old.Version == ^uint64(0) {
@@ -105,7 +111,7 @@ func (c *Call) acceptFact(kind, id, date string, input any) bool {
 	if c.u.acceptedFacts == nil {
 		c.u.acceptedFacts = map[string]acceptedFact{}
 	}
-	c.u.acceptedFacts[id] = acceptedFact{Fact: fact, Session: c.session, Fingerprint: fingerprint, Active: true}
+	c.u.acceptedFacts[id] = acceptedFact{Fact: fact, Session: c.session, CommandID: commandID, Fingerprint: fingerprint, Active: true}
 	c.u.domainChanges = append(c.u.domainChanges, DomainChange{Fact: fact})
 	c.u.PruneDomainChanges(c.now)
 	return true
@@ -114,7 +120,7 @@ func (c *Call) acceptFact(kind, id, date string, input any) bool {
 func (u *Book) invalidateDayFact(date string) {
 	id := factID(FactDay, date)
 	if f, ok := u.acceptedFacts[id]; ok {
-		f.Active, f.Session, f.Fingerprint = false, "", ""
+		f.Active, f.Session, f.CommandID, f.Fingerprint = false, "", "", ""
 		u.acceptedFacts[id] = f
 	}
 }

@@ -20,6 +20,8 @@ func (u *Book) PurgeBatch(limit int) int {
 	purgeMap(u.captureDays, &left)
 	purgeMap(u.weekSessions, &left)
 	purgeMap(u.submitted, &left)
+	purgeMap(u.workBindings, &left)
+	purgeMap(u.workSessions, &left)
 	if left > 0 {
 		*u = *NewBook()
 	}
