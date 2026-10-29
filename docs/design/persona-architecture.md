@@ -295,6 +295,7 @@ evals/                    评测用例；夹具经契约指向 Persona
 - Persona 对线上格式（`_meta` 的身份与 `cite_captures`、业务日内引用、可信页元数据）各自实现一份，不 import 内核的包；一致性由端到端的 `capture-*` 评测保证。第二条业务线也要写 MCP Server 时，再考虑把它们提升为公开包。
 - `make check` 增加依赖方向检查：`persona/`、`apps/` 的 `go list -deps` 中不得出现 `yanshi/internal/`。模块路径不以 `yanshi/` 开头，否则 Go 的 internal 规则不起作用。
 - 业务侧的设计文档在 `docs/design/` 下以 `persona-`、`xinli-` 为前缀；ADR 仍用统一编号。
+- A11 的生产入口、角色、两库迁移、MCP 凭据轮换与内核 TokenSource 配置见 [xinli 部署](./xinli-deployment.md)；账号与产品 BFF 仍按 A12/B1 接入。
 
 ## 11. 落地顺序
 

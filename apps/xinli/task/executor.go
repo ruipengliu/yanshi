@@ -180,6 +180,7 @@ func (w *Executor) Run(ctx context.Context, id string) (Task, error) {
 	if !claimed {
 		return w.Store.Get(ctx, id)
 	}
+	ctx = kernel.WithBusinessLine(ctx, t.BusinessLine)
 	if w.Check != nil {
 		if err := w.Check(ctx, t); err != nil {
 			return w.failure(ctx, t, err)

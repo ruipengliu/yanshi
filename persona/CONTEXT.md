@@ -83,3 +83,7 @@ _Avoid_: 内核 Session 的所有权、Persona 领域事实
 **Work Session retirement（工作 Session 退役）**:
 无法排除旧远端写入时，停止一个工作 Session 在 Persona 的读写资格，并把它保留为历史绑定。后续命令使用新绑定；重建继承原删除期限，历史绑定仍参与审计、擦除和注销。
 _Avoid_: Run 中断、Session 物理删除
+
+**Persona MCP service credential（Persona MCP 服务凭据）**:
+可信内核调用 Persona MCP 时携带的秘密，绑定唯一业务线与到期时间。Persona 每请求校验，工具访问存储前要求平台 _meta 的业务线一致；同业务线可同时登记多把用于轮换。它授权可信平台声明 EndUser，不是用户登录态。
+_Avoid_: 内核服务 JWT、应用登录态、三方 OAuth

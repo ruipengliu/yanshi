@@ -63,6 +63,7 @@ func (o *Orchestrator) cleanCreation(ctx context.Context, k orphanKernel, intent
 }
 
 func (o *Orchestrator) cleanOrphan(ctx context.Context, k orphanKernel, intent task.Creation, sid string) (bool, error) {
+	ctx = kernel.WithBusinessLine(ctx, intent.BusinessLine)
 	fenced := false
 	err := o.store.Update(ctx, intent.BusinessLine, intent.EndUser, func(b *domain.Book) error {
 		fenced = b.FenceOrphan(sid)

@@ -113,12 +113,12 @@ func testDevReadinessFixtureMCPAndEOF(t *testing.T, storageArgs []string) {
 	for i, bl := range []string{"bl", "other"} {
 		r := regs[i]
 		// 对照 internal/mcpcap/mcpcap.go Server 的 yaml 标签；不要直接序列化 Persona Registration。
-		for _, key := range []string{"name", "business_line", "url", "timeout", "tools", "cite_captures", "acks", "attests_speakers"} {
+		for _, key := range []string{"name", "business_line", "url", "timeout", "tools", "cite_captures", "acks", "attests_speakers", "headers"} {
 			if _, ok := r[key]; !ok {
 				t.Errorf("missing key: %s", key)
 			}
 		}
-		if len(r) != 8 || r["name"] != source.Name || r["business_line"] != bl || r["url"] != info.MCPURL || r["timeout"] != "30s" || r["cite_captures"] != true || r["acks"] != false || r["attests_speakers"] != true {
+		if len(r) != 9 || r["name"] != source.Name || r["business_line"] != bl || r["url"] != info.MCPURL || r["timeout"] != "30s" || r["cite_captures"] != true || r["acks"] != false || r["attests_speakers"] != true {
 			t.Fatalf("registration: %+v", r)
 		}
 		if !reflect.DeepEqual(info.Registrations[i].Tools.NoApproval, source.NoApproval) {
@@ -175,7 +175,7 @@ func testDevReadinessFixtureMCPAndEOF(t *testing.T, storageArgs []string) {
 		request("GET", path, "", 200)
 	}
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
-	conn, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: info.MCPURL}, nil)
+	conn, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: info.MCPURL, HTTPClient: &http.Client{Transport: headerTransport(info.Registrations[0].Headers)}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,10 +222,11 @@ func (w readyWriter) Write(p []byte) (int, error) {
 }
 
 func TestDevWeekReviewWithKernel(t *testing.T) {
+	token := serviceTestToken(t, "bl")
 	var mu sync.Mutex
 	var calls []string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer test-token" {
+		if r.Header.Get("Authorization") != "Bearer "+token {
 			t.Error("missing service token")
 		}
 		var body map[string]string
@@ -252,7 +253,7 @@ func TestDevWeekReviewWithKernel(t *testing.T) {
 		}
 	}))
 	defer backend.Close()
-	t.Setenv("XINLI_TEST_TOKEN", "test-token")
+	t.Setenv("XINLI_TEST_TOKEN", token)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	writer := readyWriter{make(chan []byte, 1)}
@@ -300,4 +301,14 @@ func TestDevWeekReviewWithKernel(t *testing.T) {
 	if !reflect.DeepEqual(calls, []string{"/v1/sessions", "/v1/sessions/week-session/inputs"}) {
 		t.Fatalf("kernel calls: %v", calls)
 	}
+}
+
+type headerTransport map[string]string
+
+func (h headerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	for key, value := range h {
+		r.Header.Set(key, value)
+	}
+	return http.DefaultTransport.RoundTrip(r)
 }

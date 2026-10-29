@@ -1,6 +1,5 @@
 // Package mcpserver 把 Persona 的领域操作装配成 streamable HTTP MCP。
-// 调用身份与引用来自可信调用方的 _meta（docs/design/m5-mcp.md、captures.md §6）；
-// 此 Handler 本身不鉴权，生产部署须由应用入口认证平台，不能向不可信客户端直接开放。
+// 服务凭据绑定业务线，工具访问存储前再核对平台传入的 _meta 身份。
 package mcpserver
 
 import (
@@ -49,12 +48,16 @@ type DeletionNotifier interface {
 }
 
 type Options struct {
+	Credentials []Credential
+	// InsecureDev 只供隔离的测试夹具，生产入口不得设置。
+	InsecureDev bool
 	// AllowUnmanaged 只供旧夹具与评测；生产必须登记工作命令。
 	AllowUnmanaged bool
 	Now            func() time.Time
 	Notifier       Notifier
 }
 type server struct {
+	businessLine   string
 	allowUnmanaged bool
 	store          store.Store
 	now            func() time.Time
@@ -71,7 +74,42 @@ func newRuntime(s store.Store, opts Options) *server {
 
 // Handler 不监听端口或拥有进程生命周期，调用方可与夹具或业务 API 装配在同一 HTTP 服务中。
 func Handler(s store.Store, opts Options) http.Handler {
-	x := newRuntime(s, opts)
+	if opts.InsecureDev && len(opts.Credentials) == 0 {
+		return toolHandler(newRuntime(s, opts))
+	}
+	if ValidateCredentials(opts.Credentials) != nil {
+		return http.HandlerFunc(unauthorized)
+	}
+	// 按业务线分开 MCP 状态，且每个 HTTP 请求重新认证，旧连接不能绕过到期。
+	credentials := append([]Credential(nil), opts.Credentials...)
+	handlers := map[string]http.Handler{}
+	for _, c := range credentials {
+		if handlers[c.BusinessLine] == nil {
+			x := newRuntime(s, opts)
+			x.businessLine = c.BusinessLine
+			handlers[c.BusinessLine] = toolHandler(x)
+		}
+	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		line := authenticate(r, credentials, now())
+		if handler := handlers[line]; handler != nil {
+			handler.ServeHTTP(w, r)
+			return
+		}
+		unauthorized(w, r)
+	})
+}
+
+func unauthorized(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("WWW-Authenticate", "Bearer")
+	http.Error(w, "unauthorized", http.StatusUnauthorized)
+}
+
+func toolHandler(x *server) http.Handler {
 	srv := mcp.NewServer(&mcp.Implementation{Name: XinliRegistration().Name, Version: "3"}, nil)
 	srv.AddTool(capturesTool, x.captures)
 	for _, t := range tools {
@@ -79,10 +117,14 @@ func Handler(s store.Store, opts Options) http.Handler {
 			return x.call(ctx, req.Params.Meta, req.Params.Arguments, t.handler, t.tool.Annotations != nil && t.tool.Annotations.ReadOnlyHint)
 		})
 	}
+	// 沿用已有的有状态传输与协议协商；凭据认证不应改变工具结果的元数据。
 	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
 }
 
 func (x *server) call(ctx context.Context, metadata mcp.Meta, args json.RawMessage, handler func(*domain.Call) string, readOnly bool) (*mcp.CallToolResult, error) {
+	if err := x.authorize(metadata); err != nil {
+		return nil, err
+	}
 	// 线上字段名见 docs/design/captures.md §6，不依赖内核 Go 类型。
 	meta := func(k string) string {
 		value, _ := metadata["yanshi/"+k].(string)

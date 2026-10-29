@@ -27,6 +27,9 @@ var capturesTool = &mcp.Tool{
 }
 
 func (x *server) captures(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if err := x.authorize(req.Params.Meta); err != nil {
+		return nil, err
+	}
 	failure := func(message string) (*mcp.CallToolResult, error) {
 		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: message}}}, nil
 	}

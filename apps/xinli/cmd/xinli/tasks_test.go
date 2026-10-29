@@ -12,7 +12,7 @@ import (
 func TestTaskDatabaseMustBeIndependent(t *testing.T) {
 	t.Setenv("YANSHI_PG_DSN", "postgres://localhost/kernel")
 	for _, dsn := range []string{"", "postgres://localhost/persona", "postgres://localhost/kernel"} {
-		if _, _, err := openTasks(context.Background(), "pg", dsn, "postgres://localhost/persona"); err == nil {
+		if _, _, _, err := openTasks(context.Background(), "pg", dsn, "postgres://localhost/persona", true); err == nil {
 			t.Fatal("accepted shared or missing application database")
 		}
 	}
@@ -22,7 +22,7 @@ func TestTaskDatabaseReopens(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("YANSHI_PG_DSN", "postgres://localhost/kernel")
 	_, dsn := pgtest.NewWithDSN(t)
-	s, closeStore, err := openTasks(ctx, "pg", dsn, "postgres://localhost/persona")
+	s, closeStore, _, err := openTasks(ctx, "pg", dsn, "postgres://localhost/persona", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestTaskDatabaseReopens(t *testing.T) {
 		t.Fatal(err)
 	}
 	closeStore()
-	next, closeNext, err := openTasks(ctx, "pg", dsn, "postgres://localhost/persona")
+	next, closeNext, _, err := openTasks(ctx, "pg", dsn, "postgres://localhost/persona", true)
 	if err != nil {
 		t.Fatal(err)
 	}

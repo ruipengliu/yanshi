@@ -14,7 +14,7 @@ import (
 )
 
 func TestDeletionHTTPContract(t *testing.T) {
-	ctx := context.Background()
+	ctx := WithBusinessLine(context.Background(), "bl")
 	deadline := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
 	cases := []struct {
 		name, method, path, response string
@@ -76,7 +76,7 @@ func TestDeletionHTTPContract(t *testing.T) {
 						_, _ = fmt.Fprint(w, "private-content")
 					}
 				}))
-				err := tc.call(&Client{BaseURL: server.URL, Token: "service-token"})
+				err := tc.call(&Client{BaseURL: server.URL, Tokens: fixedToken("service-token")})
 				server.Close()
 				if status == 200 {
 					if err != nil {

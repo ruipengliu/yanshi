@@ -27,7 +27,7 @@ func testSeedToolState(t *testing.T, s store.Store) {
 	ctx := context.Background()
 	now := func() time.Time { return time.Date(2026, 10, 23, 22, 0, 0, 0, time.UTC) }
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", mcpserver.Handler(s, mcpserver.Options{AllowUnmanaged: true, Now: now}))
+	mux.Handle("/mcp", mcpserver.Handler(s, mcpserver.Options{Credentials: []mcpserver.Credential{{BusinessLine: "bl", Token: "fixture-test", ExpiresAt: now().Add(time.Hour)}}, AllowUnmanaged: true, Now: now}))
 	mux.Handle("/v1/fixture/", fixture.Handler(s, fixture.Options{Now: now}))
 	hs := httptest.NewServer(mux)
 	defer hs.Close()
@@ -45,7 +45,7 @@ func testSeedToolState(t *testing.T, s store.Store) {
 		t.Fatal(response.Status)
 	}
 	client := mcp.NewClient(&mcp.Implementation{Name: "fixture-test", Version: "1"}, nil)
-	conn, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: hs.URL + "/mcp"}, nil)
+	conn, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: hs.URL + "/mcp", HTTPClient: &http.Client{Transport: fixtureBearer("fixture-test")}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,4 +267,13 @@ func testCapturePreviewDoesNotChangeBook(t *testing.T, s store.Store) {
 			t.Fatal("preview changed gap, read tail or processing position")
 		}
 	}
+}
+
+// 夹具与领域测试仍走生产 MCP 认证入口，避免测试无意间依赖默认放行。
+type fixtureBearer string
+
+func (token fixtureBearer) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Header.Set("Authorization", "Bearer "+string(token))
+	return http.DefaultTransport.RoundTrip(r)
 }

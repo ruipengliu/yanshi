@@ -273,6 +273,7 @@ func (o *Orchestrator) EnsureDaySession(ctx context.Context, bl, eu, date string
 }
 
 func deleteWorkSession(ctx context.Context, k DeletionKernel, bl, sid, reason string) (bool, string, error) {
+	ctx = kernel.WithBusinessLine(ctx, bl)
 	state, err := k.Session(ctx, sid)
 	if err != nil && !errors.Is(err, kernel.ErrNotFound) {
 		return false, "session", err

@@ -107,7 +107,7 @@ type instance struct {
 	crm      *crmServer
 	xinli    *xinlifixture.Client
 	calls    *call.Manager
-	mcp      *mcpcap.Connector
+	mcp      evalMCP
 
 	// controllerDone 在沙箱控制器退出（或未启动）时关闭。
 	controllerDone chan struct{}
@@ -333,7 +333,7 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 		servers = append(servers, registrations...)
 	}
 	if len(servers) > 0 {
-		in.mcp = &mcpcap.Connector{Servers: servers, Artifacts: core.Artifacts, Log: st.Log, Logger: cfg.Logger}
+		in.mcp = newEvalMCP(servers, core.Artifacts, st.Log, cfg.Logger)
 		core.Catalog.MCP = in.mcp
 	}
 	for range 2 * cfg.Parallel {

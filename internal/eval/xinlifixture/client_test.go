@@ -45,7 +45,7 @@ func TestMain(m *testing.M) {
 		os.Exit(2)
 	case "silent":
 	case "ready", "ignore-eof":
-		fmt.Println(`{"fixture_url":"http://127.0.0.1:1","registrations":[{"name":"xinli","business_line":"eval","url":"http://127.0.0.1:1/mcp"}]}`)
+		fmt.Println(`{"fixture_url":"http://127.0.0.1:1","registrations":[{"name":"xinli","business_line":"eval","url":"http://127.0.0.1:1/mcp","headers":{"Authorization":"Bearer fixture-helper-token"}}]}`)
 	}
 	if mode == "ignore-eof" {
 		time.Sleep(time.Minute)
@@ -153,5 +153,16 @@ func TestInvalidStorageOptions(t *testing.T) {
 		if client != nil || err == nil || !strings.Contains(err.Error(), "xinli fixture:") {
 			t.Fatalf("invalid options: %v %v", client, err)
 		}
+	}
+}
+
+func TestReadinessPreservesMCPHeaders(t *testing.T) {
+	client, servers, err := Start(context.Background(), helperBinary(t, "ready"), "eval")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if len(servers) != 1 || servers[0].Headers["Authorization"] != "Bearer fixture-helper-token" {
+		t.Fatal("readiness discarded MCP credentials")
 	}
 }

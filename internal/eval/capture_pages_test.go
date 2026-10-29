@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"reflect"
 	"strings"
@@ -44,7 +45,7 @@ func newCaptureParityEnv(t *testing.T) *captureParityEnv {
 	if !servers[0].AttestsSpeakers || !servers[0].CiteCaptures {
 		t.Fatal("xinli registration lost trust flags")
 	}
-	conn, err := mcp.NewClient(&mcp.Implementation{Name: "capture-parity", Version: "1"}, nil).Connect(ctx, &mcp.StreamableClientTransport{Endpoint: servers[0].URL}, nil)
+	conn, err := mcp.NewClient(&mcp.Implementation{Name: "capture-parity", Version: "1"}, nil).Connect(ctx, &mcp.StreamableClientTransport{Endpoint: servers[0].URL, HTTPClient: &http.Client{Transport: captureFixtureTransport(servers[0].Headers)}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -482,4 +483,15 @@ func TestPersonaCaptureSpeakerRefBudgets(t *testing.T) {
 			}
 		})
 	}
+}
+
+// 此夹具直接使用 SDK，仍须携带 dev 就绪登记里的凭据，与 Connector 的请求一致。
+type captureFixtureTransport map[string]string
+
+func (h captureFixtureTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	for key, value := range h {
+		r.Header.Set(key, value)
+	}
+	return http.DefaultTransport.RoundTrip(r)
 }

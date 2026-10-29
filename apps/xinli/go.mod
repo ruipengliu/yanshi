@@ -3,6 +3,7 @@ module xinli
 go 1.27.1
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jackc/pgx/v5 v5.7.2
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	gopkg.in/yaml.v3 v3.0.1

@@ -18,6 +18,7 @@ type SessionInfo struct {
 
 // Sessions 完整翻页；列表按最近输入排序，不能用创建时间提前截断。
 func (c *Client) Sessions(ctx context.Context, bl, eu string) ([]SessionInfo, error) {
+	ctx = WithBusinessLine(ctx, bl)
 	var out []SessionInfo
 	cursor := ""
 	seen := map[string]bool{}

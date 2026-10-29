@@ -138,6 +138,7 @@ func StartWithOptions(ctx context.Context, bin string, opts Options, businessLin
 		return fail(fmt.Errorf("no MCP registrations"))
 	}
 	var servers []mcpcap.Server
+	// dev 的临时凭据直接在登记 headers 中返回；原样解析，不能只复制 URL 与工具白名单。
 	for _, raw := range result.ready.Registrations {
 		server, err := mcpcap.ParseServer(raw)
 		if err != nil {

@@ -62,15 +62,15 @@ func TestHTTPContract(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			c := &Client{BaseURL: server.URL + "/", Token: token, HTTP: server.Client()}
+			c := &Client{BaseURL: server.URL + "/", Tokens: testTokens(token), HTTP: server.Client()}
 			sid, err := c.CreateSession(context.Background(), "bl", "u", "xinli-project")
 			if err != nil || sid != "ses_1" {
 				t.Fatalf("create: %q %v", sid, err)
 			}
-			if err := c.Submit(context.Background(), sid, "input_1", "整理 2026-10-23"); err != nil {
+			if err := c.Submit(WithBusinessLine(context.Background(), "bl"), sid, "input_1", "整理 2026-10-23"); err != nil {
 				t.Fatal(err)
 			}
-			shot, err := c.Oneshot(context.Background(), "u", "xinli-live-brief", "旁听原文")
+			shot, err := c.Oneshot(WithBusinessLine(context.Background(), "bl"), "u", "xinli-live-brief", "旁听原文")
 			if err != nil || shot.Version != "1" || shot.Model != "bench/any" || string(shot.Output) != `{"brief":"简述"}` {
 				t.Fatalf("oneshot: %+v %v", shot, err)
 			}
@@ -94,8 +94,8 @@ func TestErrorsDoNotExposeContent(t *testing.T) {
 			defer server.Close()
 			c := &Client{BaseURL: server.URL}
 			_, createErr := c.CreateSession(context.Background(), "bl", "private-input", "agent")
-			submitErr := c.Submit(context.Background(), "ses", "in", "private-input")
-			_, shotErr := c.Oneshot(context.Background(), "u", "xinli-live-brief", "private-input")
+			submitErr := c.Submit(WithBusinessLine(context.Background(), "bl"), "ses", "in", "private-input")
+			_, shotErr := c.Oneshot(WithBusinessLine(context.Background(), "bl"), "u", "xinli-live-brief", "private-input")
 			for _, err := range []error{createErr, submitErr, shotErr} {
 				if err == nil || !strings.Contains(err.Error(), fmt.Sprint(status)) || strings.Contains(err.Error(), "private-input") {
 					t.Fatalf("unsafe error: %v", err)
@@ -114,4 +114,14 @@ func TestInvalidCreateResponse(t *testing.T) {
 			t.Fatal("accepted invalid response")
 		}
 	}
+}
+
+type fixedToken string
+
+func (t fixedToken) Token(context.Context, string) (string, error) { return string(t), nil }
+func testTokens(value string) TokenSource {
+	if value == "" {
+		return nil
+	}
+	return fixedToken(value)
 }

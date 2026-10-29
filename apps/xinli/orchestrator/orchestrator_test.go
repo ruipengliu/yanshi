@@ -102,7 +102,7 @@ func TestChangesetsAndCollect(t *testing.T) {
 	defer once.Do(func() { close(unblock) })
 	k := &fakeKernel{block: unblock, started: make(chan struct{}, 1)}
 	o := New(ctx, books, k, Options{Now: func() time.Time { return now }})
-	server := httptest.NewServer(mcpserver.Handler(books, mcpserver.Options{AllowUnmanaged: true, Now: func() time.Time { return now }, Notifier: o}))
+	server := httptest.NewServer(mcpserver.Handler(books, mcpserver.Options{InsecureDev: true, AllowUnmanaged: true, Now: func() time.Time { return now }, Notifier: o}))
 	defer server.Close()
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 	conn, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: server.URL}, nil)

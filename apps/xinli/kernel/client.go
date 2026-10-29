@@ -16,7 +16,7 @@ import (
 
 type Client struct {
 	BaseURL string
-	Token   string
+	Tokens  TokenSource
 	HTTP    *http.Client
 }
 
@@ -29,6 +29,7 @@ type SessionOptions struct {
 }
 
 func (c *Client) CreateSessionWithOptions(ctx context.Context, businessLine, endUser, agent string, opts SessionOptions) (string, error) {
+	ctx = WithBusinessLine(ctx, businessLine)
 	in := struct {
 		BusinessLine string     `json:"business_line"`
 		EndUser      string     `json:"end_user"`
@@ -80,8 +81,16 @@ func (c *Client) requestJSON(ctx context.Context, method, path string, in, out a
 		return errors.New("kernel: invalid request URL")
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
+	if c.Tokens != nil {
+		line, _ := ctx.Value(businessLineKey{}).(string)
+		if line == "" {
+			return errToken
+		}
+		token, err := c.Tokens.Token(ctx, line)
+		if err != nil || token == "" {
+			return errToken
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	client := c.HTTP
 	if client == nil {
@@ -168,14 +177,17 @@ func (c *Client) DeleteSession(ctx context.Context, id, reason string) error {
 	return c.request(ctx, http.MethodDelete, path, nil, nil)
 }
 func (c *Client) Deletion(ctx context.Context, businessLine, id string) (Deletion, error) {
+	ctx = WithBusinessLine(ctx, businessLine)
 	var out Deletion
 	err := c.request(ctx, http.MethodGet, sessionPath(id)+"/deletion?"+url.Values{"business_line": {businessLine}}.Encode(), nil, &out)
 	return out, err
 }
 func (c *Client) DeleteSessionMemories(ctx context.Context, businessLine, id string) error {
+	ctx = WithBusinessLine(ctx, businessLine)
 	return c.request(ctx, http.MethodDelete, sessionPath(id)+"/memories?"+url.Values{"business_line": {businessLine}}.Encode(), nil, nil)
 }
 func (c *Client) MemoriesBySource(ctx context.Context, businessLine, endUser string, sessions []string) ([]Memory, error) {
+	ctx = WithBusinessLine(ctx, businessLine)
 	out := []Memory{}
 	seen := map[string]bool{}
 	for start := 0; start < len(sessions); start += 32 {
@@ -212,6 +224,9 @@ func (c *Client) Oneshot(ctx context.Context, endUser, name, input string) (Ones
 
 // OneshotForBusinessLine 让未开启鉴权的开发入口也能显式指定业务线；服务令牌仍由内核核验。
 func (c *Client) OneshotForBusinessLine(ctx context.Context, businessLine, endUser, name, input string) (OneshotResult, error) {
+	if businessLine != "" {
+		ctx = WithBusinessLine(ctx, businessLine)
+	}
 	in := struct {
 		BusinessLine string `json:"business_line,omitempty"`
 		EndUser      string `json:"end_user"`

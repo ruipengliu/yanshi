@@ -111,3 +111,27 @@ func migrateOne(ctx context.Context, conn *pgxpool.Conn, version int, sql string
 	}
 	return tx.Commit(ctx)
 }
+
+// Ready 只读迁移账本；生产角色不执行 DDL，就绪探针也能发现数据库断连。
+func Ready(ctx context.Context, pool *pgxpool.Pool) error {
+	names, err := fs.Glob(migrations, "migrations/*.sql")
+	if err != nil {
+		return err
+	}
+	var versions []int
+	for _, name := range names {
+		version, err := strconv.Atoi(strings.SplitN(strings.TrimPrefix(name, "migrations/"), "_", 2)[0])
+		if err != nil {
+			return err
+		}
+		versions = append(versions, version)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM persona_schema_migrations WHERE version = ANY($1::integer[])`, versions).Scan(&count); err != nil {
+		return err
+	}
+	if count != len(versions) {
+		return fmt.Errorf("pending migrations")
+	}
+	return nil
+}
