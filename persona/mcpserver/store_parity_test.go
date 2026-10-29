@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"persona/domain"
 	"persona/pg/pgtest"
 	"persona/store"
 	"persona/store/memstore"
@@ -17,7 +18,7 @@ import (
 // Q122 第二层：每个操作后比较全部可观察结果，不能只比较最后一份 State。
 // 冻结脚本覆盖账本工具，旁听脚本覆盖分页、进度、擦除、重置与重新预置。
 func TestStoreParity(t *testing.T) {
-	for _, path := range []string{"testdata/parity_script.json", "testdata/capture_parity_script.json"} {
+	for _, path := range []string{"testdata/parity_script.json", "testdata/capture_parity_script.json", "testdata/multi_batch_parity_script.json"} {
 		var script parityScript
 		readParity(t, path, &script)
 		for _, restart := range []bool{false, true} {
@@ -39,6 +40,9 @@ func TestStoreParity(t *testing.T) {
 					want := left.step(t, script, step)
 					got := right.step(t, script, step)
 					parityEqual(t, label, got, want)
+					if path == "testdata/multi_batch_parity_script.json" {
+						checkMultiBatchOutput(t, got)
+					}
 					if step.Session != "" {
 						sessions[step.Session] = true
 					}
@@ -132,5 +136,58 @@ func TestCaptureParitySequence(t *testing.T) {
 	}
 	if len(positions) != 0 {
 		t.Fatal("script lost processing position probes")
+	}
+}
+
+// 没有 PG 时也检查预期引用，避免两份实现同样跳批而对照通过。
+func TestMultiBatchParitySequence(t *testing.T) {
+	var script parityScript
+	readParity(t, "testdata/multi_batch_parity_script.json", &script)
+	endpoint := newParityEndpoint(t, memstore.New(), script.Now)
+	defer endpoint.close()
+	for _, step := range script.Steps {
+		checkMultiBatchOutput(t, endpoint.step(t, script, step))
+	}
+}
+
+func checkMultiBatchOutput(t *testing.T, got parityOutput) {
+	t.Helper()
+	if got.Error != "" || got.IsError {
+		t.Fatalf("multi-batch step failed: %+v", got)
+	}
+	if got.Input.Op == "capture_position" {
+		parityEqual(t, "multi-batch processing position", got.Value, map[string]string{"after": "12.0"})
+	}
+	if got.Input.Op != "tool" || got.Input.Name != "captures" {
+		return
+	}
+	var args struct {
+		After string
+		Limit int
+	}
+	if err := json.Unmarshal(got.Input.Args, &args); err != nil {
+		t.Fatal(err)
+	}
+	first, ok := map[string]int{"0": 1, "9.0": 10, "8.0": 9, "10.0": 11}[args.After]
+	if !ok {
+		t.Fatal("unexpected multi-batch cursor", args.After)
+	}
+	var meta struct {
+		Page domain.StructuredPage `json:"yanshi/page"`
+	}
+	raw, err := json.Marshal(got.Meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		t.Fatal(err)
+	}
+	if meta.Page.Kind != "page" || len(meta.Page.Segments) != args.Limit {
+		t.Fatalf("unexpected multi-batch page: %+v", meta.Page)
+	}
+	for i, segment := range meta.Page.Segments {
+		if want := fmt.Sprintf("%d.0", first+i); segment.Ref != want {
+			t.Fatalf("after %s: segment %d is %s, want %s", args.After, i, segment.Ref, want)
+		}
 	}
 }

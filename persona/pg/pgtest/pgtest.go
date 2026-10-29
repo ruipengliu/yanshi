@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -20,6 +21,14 @@ const Database = "persona_test"
 // New 仅把 YANSHI_TEST_PG 当作建库入口；Persona 表绝不写进内核的 database。
 // 测试角色须有 CREATEDB 权限；各进程可共享测试库，schema 随测试清理。
 func New(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	pool, _ := NewWithDSN(t)
+	return pool
+}
+
+// NewWithDSN 另给出指向同一测试 database 与 schema 的连接串，供子进程使用。
+// pgxpool 的 ConnString 只回放原始 DSN，不含这里改写的库名与 search_path，交给子进程会写进内核的库。
+func NewWithDSN(t *testing.T) (*pgxpool.Pool, string) {
 	t.Helper()
 	dsn := os.Getenv("YANSHI_TEST_PG")
 	if dsn == "" {
@@ -76,7 +85,15 @@ func New(t *testing.T) *pgxpool.Pool {
 	if err := pg.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	return pool
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.Path = "/" + Database
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	return pool, u.String()
 }
 
 func createDatabase(t *testing.T, ctx context.Context, cfg *pgx.ConnConfig) {

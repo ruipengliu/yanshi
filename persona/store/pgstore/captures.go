@@ -167,7 +167,9 @@ func (t *captureTx) records(date string, from, to domain.Ref, exclusive, reverse
 		return nil, err
 	}
 	args := []any{t.bl, t.eu, date}
-	query := `SELECT batch_number::text,segment_number,payload FROM capture_segments
+	// 输出仅为传输转成十进制文字；ORDER BY 必须限定底层 numeric 列。
+	// 否则同名输出列会遮蔽 batch_number，把 1、10、100 排到 2 前面。
+	query := `SELECT batch_number::text AS batch_number_text,segment_number,payload FROM capture_segments
 		WHERE business_line=$1 AND end_user=$2 AND business_day=$3
 		AND live AND ` + rangeSQL(&args, from, to, exclusive)
 	for _, r := range t.erased {
@@ -176,9 +178,9 @@ func (t *captureTx) records(date string, from, to domain.Ref, exclusive, reverse
 		}
 	}
 	if reverse {
-		query += " ORDER BY batch_number DESC,segment_number DESC"
+		query += " ORDER BY capture_segments.batch_number DESC,capture_segments.segment_number DESC"
 	} else {
-		query += " ORDER BY batch_number,segment_number"
+		query += " ORDER BY capture_segments.batch_number,capture_segments.segment_number"
 	}
 	args = append(args, limit)
 	query += fmt.Sprintf(" LIMIT $%d", len(args))

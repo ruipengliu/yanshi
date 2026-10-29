@@ -18,6 +18,7 @@ func Run(t *testing.T, factory func() store.Store) {
 	t.Run("captures", func(t *testing.T) {
 		captures(t, factory)
 	})
+	t.Run("capture_numeric_order", func(t *testing.T) { captureNumericOrder(t, factory) })
 	t.Run("deletions", func(t *testing.T) { deletions(t, factory) })
 	t.Run("deletion_rebuild", func(t *testing.T) { deletionRebuild(t, factory) })
 	t.Run("deletion_owners", func(t *testing.T) { deletionOwners(t, factory) })

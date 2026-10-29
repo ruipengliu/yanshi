@@ -49,8 +49,8 @@ func runDevProcess(ctx context.Context, args []string, stdin io.Reader, stdout, 
 func TestDevReadinessFixtureMCPAndEOF(t *testing.T) {
 	t.Run("memory", func(t *testing.T) { testDevReadinessFixtureMCPAndEOF(t, nil) })
 	t.Run("pg", func(t *testing.T) {
-		pool := pgtest.New(t)
-		t.Setenv("YANSHI_PERSONA_PG_DSN", pool.Config().ConnConfig.ConnString())
+		_, dsn := pgtest.NewWithDSN(t)
+		t.Setenv("YANSHI_PERSONA_PG_DSN", dsn)
 		testDevReadinessFixtureMCPAndEOF(t, []string{"-store", "pg"})
 	})
 }
