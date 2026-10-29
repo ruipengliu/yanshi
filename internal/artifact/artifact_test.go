@@ -77,7 +77,7 @@ func TestServicePutOpen(t *testing.T) {
 	if m.Name != "notes.txt" || m.MimeType != "text/plain; charset=utf-8" || m.Size != int64(len(data)) || m.SHA256 != hex.EncodeToString(sum[:]) {
 		t.Fatalf("meta = %+v", m)
 	}
-	got, rc, err := s.Open(context.Background(), m.ID)
+	got, rc, err := s.Open(context.Background(), m.SessionID, m.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestServiceArtifactSlot(t *testing.T) {
 			if !ok || id != m.ID {
 				t.Fatalf("URI round trip: %s", m.ID)
 			}
-			_, rc, err := s.Open(ctx, id)
+			_, rc, err := s.Open(ctx, sessionID, id)
 			if err != nil {
 				t.Fatal(err)
 			}

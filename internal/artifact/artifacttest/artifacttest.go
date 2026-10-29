@@ -78,27 +78,40 @@ func RunMeta(t *testing.T, newStore func(t *testing.T) artifact.MetaStore) {
 				t.Fatal(err)
 			}
 		}
-		m, err := s.Get(ctx, "a")
+		m, err := s.Get(ctx, "s1", "a")
 		if err != nil || m.Name != "a.txt" || m.Size != 1 || m.SHA256 != "ha" || !m.CreatedAt.Equal(t0.Add(time.Second)) {
 			t.Fatalf("get = %+v, %v", m, err)
+		}
+		// 路由到同一库仍不构成归属：错误 Session 既读不到，也不能删除元数据。
+		if _, err := s.Get(ctx, "s2", "a"); !errors.Is(err, artifact.ErrNotFound) {
+			t.Fatalf("foreign get: %v", err)
+		}
+		if err := s.Delete(ctx, "s2", "a"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Get(ctx, "s1", "a"); err != nil {
+			t.Fatalf("foreign delete removed owner data: %v", err)
+		}
+		if row, err := s.Lookup(ctx, "a"); err != nil || row.SessionID != "s1" {
+			t.Fatalf("lookup: %+v, %v", row, err)
 		}
 		list, err := s.List(ctx, "s1")
 		if err != nil || len(list) != 2 || list[0].ID != "b" || list[1].ID != "a" {
 			t.Fatalf("list = %+v, %v", list, err)
 		}
-		if _, err := s.Get(ctx, "zz"); !errors.Is(err, artifact.ErrNotFound) {
+		if _, err := s.Get(ctx, "s1", "zz"); !errors.Is(err, artifact.ErrNotFound) {
 			t.Fatalf("missing err = %v", err)
 		}
-		if err := s.Delete(ctx, "a"); err != nil {
+		if err := s.Delete(ctx, "s1", "a"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.Get(ctx, "a"); !errors.Is(err, artifact.ErrNotFound) {
+		if _, err := s.Get(ctx, "s1", "a"); !errors.Is(err, artifact.ErrNotFound) {
 			t.Fatal("deleted meta still present")
 		}
 		if list, _ := s.List(ctx, "s1"); len(list) != 1 {
 			t.Fatalf("list after delete = %d", len(list))
 		}
-		if err := s.Delete(ctx, "a"); err != nil {
+		if err := s.Delete(ctx, "s1", "a"); err != nil {
 			t.Fatalf("delete is not idempotent: %v", err)
 		}
 	})

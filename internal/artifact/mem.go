@@ -6,6 +6,8 @@ import (
 	"io"
 	"sort"
 	"sync"
+
+	"yanshi/internal/shard"
 )
 
 // MemMeta 是 MetaStore 的进程内实现。
@@ -24,11 +26,11 @@ func (s *MemMeta) Create(_ context.Context, m *Meta) error {
 	return nil
 }
 
-func (s *MemMeta) Get(_ context.Context, id string) (*Meta, error) {
+func (s *MemMeta) Get(_ context.Context, sessionID, id string) (*Meta, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m, ok := s.m[id]
-	if !ok {
+	if !ok || m.SessionID != sessionID {
 		return nil, ErrNotFound
 	}
 	cp := *m
@@ -90,9 +92,25 @@ func (s *MemBlobs) Delete(_ context.Context, key string) error {
 	return nil
 }
 
-func (s *MemMeta) Delete(_ context.Context, id string) error {
+func (s *MemMeta) Delete(_ context.Context, sessionID, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.m, id)
+	if m := s.m[id]; m != nil && m.SessionID == sessionID {
+		delete(s.m, id)
+	}
 	return nil
+}
+
+func (s *MemMeta) Lookup(_ context.Context, id string) (*Meta, error) {
+	if _, err := shard.DefaultLocator().Locate(shard.Target{Kind: shard.Object, Key: id}); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, ok := s.m[id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	cp := *m
+	return &cp, nil
 }

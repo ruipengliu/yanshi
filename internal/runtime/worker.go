@@ -1229,7 +1229,7 @@ func (w *Worker) inlineImages(ctx context.Context, msgs []model.Message) []model
 }
 
 func (w *Worker) readArtifact(ctx context.Context, id string) ([]byte, error) {
-	m, rc, err := w.cfg.Artifacts.Open(ctx, id)
+	m, rc, err := w.cfg.Artifacts.Open(ctx, w.st.SessionID, id)
 	if err != nil {
 		return nil, err
 	}

@@ -13,9 +13,13 @@ import (
 	"yanshi/internal/outbox"
 	"yanshi/internal/outbox/pgoutbox"
 	"yanshi/internal/pg"
+	"yanshi/internal/shard"
 )
 
-type Index struct{ Pool *pgxpool.Pool }
+type Index struct {
+	Pool   *pgxpool.Pool
+	Select pg.PoolSelector
+}
 
 var _ lifecycle.Index = Index{}
 
@@ -178,7 +182,11 @@ func (x Index) Delete(ctx context.Context, endUser, id string) error {
 }
 
 func (x Index) LookupSession(ctx context.Context, id string) (*lifecycle.Session, error) {
-	rows, err := x.Pool.Query(ctx, `SELECT `+columns+` FROM sessions WHERE session_id = $1`, id)
+	pool, err := pg.SelectPool(x.Select, x.Pool, shard.Target{Kind: shard.SessionIndex, Key: id})
+	if err != nil {
+		return nil, err
+	}
+	rows, err := pool.Query(ctx, `SELECT `+columns+` FROM sessions WHERE session_id = $1`, id)
 	if err != nil {
 		return nil, err
 	}

@@ -202,7 +202,7 @@ func Capabilities(p Provider, arts *artifact.Service) []nodesdk.Capability {
 			if id == "" {
 				id = in.Artifact
 			}
-			m, rc, err := arts.Open(ctx, id)
+			m, rc, err := arts.Open(ctx, SessionOf(sandboxID(ctx)), id)
 			if err != nil {
 				return nil, fmt.Errorf("artifact %s: %w", id, err)
 			}

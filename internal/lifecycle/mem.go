@@ -5,7 +5,10 @@ import (
 	"errors"
 	"sort"
 	"sync"
+
 	"time"
+
+	"yanshi/internal/shard"
 
 	"yanshi/internal/outbox"
 	"yanshi/internal/outbox/memoutbox"
@@ -181,6 +184,9 @@ func (x *MemIndex) Delete(_ context.Context, endUser, id string) error {
 }
 
 func (x *MemIndex) LookupSession(_ context.Context, id string) (*Session, error) {
+	if _, err := shard.DefaultLocator().Locate(shard.Target{Kind: shard.SessionIndex, Key: id}); err != nil {
+		return nil, err
+	}
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	s := x.m[id]

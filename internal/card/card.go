@@ -426,7 +426,7 @@ func New(artifacts artifact.MetaStore) capability.Capability {
 			var check ImageCheck
 			if artifacts != nil {
 				check = func(ctx context.Context, id string) error {
-					m, err := artifacts.Get(ctx, id)
+					m, err := artifacts.Get(ctx, inv.SessionID, id)
 					if err != nil {
 						return err
 					}

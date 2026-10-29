@@ -67,9 +67,9 @@ type Service struct {
 	Artifacts ArtifactStat
 }
 
-// ArtifactStat 查询工件元数据（artifact.Service）。
+// ArtifactStat 查询工件元数据（artifact.Service）；带上所属 Session，分片后按 Session 选库（ADR-0051）。
 type ArtifactStat interface {
-	Stat(ctx context.Context, id string) (*artifact.Meta, error)
+	Stat(ctx context.Context, sessionID, id string) (*artifact.Meta, error)
 }
 
 // ErrConflict 表示请求与 Session 当前状态冲突（如审批已决定）。
@@ -854,7 +854,7 @@ func (s *Service) normalizeMedia(ctx context.Context, sessionID string, input []
 		if s.Artifacts == nil {
 			continue
 		}
-		meta, err := s.Artifacts.Stat(ctx, id)
+		meta, err := s.Artifacts.Stat(ctx, sessionID, id)
 		if errors.Is(err, artifact.ErrNotFound) || (err == nil && meta.SessionID != sessionID) {
 			// 别的 Session 的工件与不存在的同样回答，不透露它是否存在。
 			return nil, fmt.Errorf("%w: artifact %s not found in this session", ErrInvalid, id)

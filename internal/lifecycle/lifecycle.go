@@ -112,7 +112,7 @@ type Index interface {
 	MarkClosed(ctx context.Context, endUser, id string, at time.Time) error
 	Get(ctx context.Context, endUser, id string) (*Session, error)
 	// LookupSession 仅供尚不知道 EndUser 的裸 Session ID 路径读取真实索引行。
-	// C4/C5 用 ids.EndUserSlotOfSession 定位唯一库，旧 ID 经兼容定位；槽位不是归属或权限。
+	// 用 shard.SessionIndex 定位唯一库，旧 ID 经兼容定位；槽位不是归属或权限。
 	// 读出后必须继续使用真实 EndUser，不能逐库试探。
 	LookupSession(ctx context.Context, id string) (*Session, error)
 	// List 返回业务线中 endUser（为空表示全部）的 Session，按最后输入时间倒序；

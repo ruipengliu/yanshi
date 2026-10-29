@@ -64,6 +64,9 @@ func TestEveryTableHasShardKey(t *testing.T) {
 			t.Errorf("table %s has no shard key: register it in pg.Tables (ADR-0028)", name)
 			continue
 		}
+		if len(k.Gaps) != 0 {
+			t.Errorf("table %s still has online shard key gaps: %v", name, k.Gaps)
+		}
 		switch k.Class {
 		case BySession, ByEndUser:
 			if !c[k.Column] {

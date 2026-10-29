@@ -29,6 +29,7 @@ import (
 	"yanshi/internal/sandbox/pgsandbox"
 	"yanshi/internal/session"
 	"yanshi/internal/session/pgsnapshot"
+	"yanshi/internal/shard"
 	"yanshi/internal/usage"
 	"yanshi/internal/usage/pgusage"
 	"yanshi/internal/workqueue"
@@ -79,13 +80,14 @@ func Memory(clk clock.Clock) Stores {
 
 // Postgres 返回 PostgreSQL 上的存储；n 是该库的通知监听（须在运行）。多个进程共享同一套即构成分布式部署。
 func Postgres(pool *pgxpool.Pool, n *pg.Notifier, clk clock.Clock) Stores {
+	selectPool := SinglePoolSelector(pool, shard.DefaultLocator())
 	o := pgoutbox.Store{Pool: pool, Notifier: n}
 	l, q := pglog.New(pool, n), pgqueue.New(pool, clk, pgqueue.Sessions).WithNotifier(n)
 	return Stores{
 		Outbox: o, Log: l, Queue: q, Waking: l.Waking(q), Dir: pgnode.NewDirectory(pool, clk), Inbox: pgnode.NewInbox(pool, n),
 		SandboxQueue: pgqueue.New(pool, clk, pgqueue.Sandboxes).WithNotifier(n), Ledger: pgsandbox.Ledger{Pool: pool},
-		Activity: pgsandbox.Activity{Pool: pool}, ArtifactMeta: pgartifact.Meta{Pool: pool},
-		Index: pglifecycle.Index{Pool: pool}, Deletions: pglifecycle.Deletions{Pool: pool, Notifier: n},
+		Activity: pgsandbox.Activity{Pool: pool}, ArtifactMeta: pgartifact.Meta{Pool: pool, Select: selectPool},
+		Index: pglifecycle.Index{Pool: pool, Select: selectPool}, Deletions: pglifecycle.Deletions{Pool: pool, Notifier: n},
 		JanitorQueue: pgqueue.New(pool, clk, pgqueue.Janitor), Memories: pgmemory.Store{Pool: pool}, Grants: pgmemory.Grants{Pool: pool},
 		Snapshots: pgsnapshot.Store{Pool: pool}, Usage: pgusage.Store{Pool: pool}, Presence: pgpresence.Store{Pool: pool, Notifier: n},
 		Push: pgnotify.Registry{Pool: pool}, Tiers: pgusage.Tiers{Pool: pool},

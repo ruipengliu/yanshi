@@ -36,6 +36,7 @@ type Config struct {
 type Table struct {
 	slots [SlotCount]int
 	valid bool
+	known map[int]bool
 }
 
 func NewTable(c Config) (Table, error) {
@@ -68,11 +69,15 @@ func NewTable(c Config) (Table, error) {
 		}
 	}
 	table.valid = true
+	table.known = known
 	return table, nil
 }
 
 // ParseTable 不接受未知字段或尾随 JSON，配置拼写错误不能变成默认路由。
 func ParseTable(data []byte) (Table, error) {
+	if err := rejectDuplicateFields(data); err != nil {
+		return Table{}, err
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var c Config

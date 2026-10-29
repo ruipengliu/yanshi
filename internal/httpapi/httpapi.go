@@ -246,7 +246,7 @@ func (s *Server) artifact(w http.ResponseWriter, r *http.Request) (*artifact.Met
 		return nil, false
 	}
 	id := r.PathValue("id")
-	m, err := s.Artifacts.Stat(r.Context(), id)
+	m, err := s.Artifacts.Lookup(r.Context(), id)
 	if err == nil {
 		st, lerr := s.Service.Load(r.Context(), m.SessionID)
 		if lerr != nil || !principal(r).Allows(st.Created.GetBusinessLine(), st.Created.GetEndUser()) {
@@ -780,10 +780,11 @@ func (s *Server) artifactMeta(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) downloadArtifact(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.artifact(w, r); !ok {
+	authorized, ok := s.artifact(w, r)
+	if !ok {
 		return
 	}
-	m, rc, err := s.Artifacts.Open(r.Context(), r.PathValue("id"))
+	m, rc, err := s.Artifacts.Open(r.Context(), authorized.SessionID, r.PathValue("id"))
 	if err != nil {
 		s.fail(w, err)
 		return

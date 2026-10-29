@@ -71,11 +71,13 @@ func HumanSize(n int64) string {
 
 type MetaStore interface {
 	Create(ctx context.Context, m *Meta) error
-	Get(ctx context.Context, id string) (*Meta, error)
+	Get(ctx context.Context, sessionID, id string) (*Meta, error)
+	// Lookup 只用于尚不知道 Session 的入口；读取后仍须按真实 Session 鉴权。
+	Lookup(ctx context.Context, id string) (*Meta, error)
 	// List 返回 Session 的全部工件，按创建时间排序。
 	List(ctx context.Context, sessionID string) ([]*Meta, error)
 	// Delete 删除元数据；不存在时不报错。
-	Delete(ctx context.Context, id string) error
+	Delete(ctx context.Context, sessionID, id string) error
 }
 
 type BlobStore interface {
@@ -162,9 +164,9 @@ func (s *Service) Put(ctx context.Context, sessionID, name, mimeType string, r i
 		return nil, err
 	}
 	// 先写、后查：上传期间 Session 被删除时撤回（ADR-0015）。
-	gone, err := lifecycle.Recheck(ctx, s.Deletions, sessionID, func(ctx context.Context) error { return s.delete(ctx, m.ID) })
+	gone, err := lifecycle.Recheck(ctx, s.Deletions, sessionID, func(ctx context.Context) error { return s.delete(ctx, sessionID, m.ID) })
 	if err != nil && !gone {
-		_ = s.delete(context.WithoutCancel(ctx), m.ID) // 无法确认时同样撤回：上传失败，客户端重试
+		_ = s.delete(context.WithoutCancel(ctx), sessionID, m.ID) // 无法确认时同样撤回：上传失败，客户端重试
 	}
 	if gone {
 		return nil, fmt.Errorf("%w: session %s", ErrNotFound, sessionID)
@@ -182,28 +184,39 @@ func (s *Service) DeleteSession(ctx context.Context, sessionID string) error {
 		return err
 	}
 	for _, m := range list {
-		if err := s.delete(ctx, m.ID); err != nil {
+		if err := s.delete(ctx, sessionID, m.ID); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Service) delete(ctx context.Context, id string) error {
+func (s *Service) delete(ctx context.Context, sessionID, id string) error {
 	if err := s.Blobs.Delete(ctx, id); err != nil {
 		return err
 	}
-	return s.Meta.Delete(ctx, id)
+	return s.Meta.Delete(ctx, sessionID, id)
 }
 
 type countWriter struct{ n int64 }
 
 func (c *countWriter) Write(p []byte) (int, error) { c.n += int64(len(p)); return len(p), nil }
 
-func (s *Service) Stat(ctx context.Context, id string) (*Meta, error) { return s.Meta.Get(ctx, id) }
+// Lookup 不打开内容；HTTP 必须先核对 Meta.SessionID 对应的真实 Session。
+func (s *Service) Lookup(ctx context.Context, id string) (*Meta, error) {
+	return s.Meta.Lookup(ctx, id)
+}
 
-func (s *Service) Open(ctx context.Context, id string) (*Meta, io.ReadCloser, error) {
-	m, err := s.Meta.Get(ctx, id)
+func (s *Service) Stat(ctx context.Context, sessionID, id string) (*Meta, error) {
+	m, err := s.Meta.Get(ctx, sessionID, id)
+	if err == nil && m.SessionID != sessionID {
+		return nil, ErrNotFound
+	}
+	return m, err
+}
+
+func (s *Service) Open(ctx context.Context, sessionID, id string) (*Meta, io.ReadCloser, error) {
+	m, err := s.Stat(ctx, sessionID, id)
 	if err != nil {
 		return nil, nil, err
 	}
