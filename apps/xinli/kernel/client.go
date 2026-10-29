@@ -63,6 +63,10 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 }
 
 func (c *Client) request(ctx context.Context, method, path string, in, out any) error {
+	return c.requestJSON(ctx, method, path, in, out, 1<<20)
+}
+
+func (c *Client) requestJSON(ctx context.Context, method, path string, in, out any, maxBytes int64) error {
 	var body []byte
 	var err error
 	if in != nil {
@@ -99,7 +103,11 @@ func (c *Client) request(ctx context.Context, method, path string, in, out any) 
 		return &HTTPError{StatusCode: resp.StatusCode}
 	}
 	if out != nil {
-		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out); err != nil {
+		var body io.Reader = resp.Body
+		if maxBytes > 0 {
+			body = io.LimitReader(body, maxBytes)
+		}
+		if err := json.NewDecoder(body).Decode(out); err != nil {
 			return errors.New("kernel: invalid JSON response")
 		}
 	}

@@ -110,6 +110,13 @@ func (k *deletionKernel) Submit(ctx context.Context, sid, id, text string) error
 	return k.fakeKernel.Submit(ctx, sid, id, text)
 }
 
+func (k *deletionKernel) SubmitInput(ctx context.Context, sid, id, text string) (kernel.InputReceipt, error) {
+	if err := k.Submit(ctx, sid, id, text); err != nil {
+		return kernel.InputReceipt{}, err
+	}
+	return kernel.InputReceipt{InputID: id, RunID: "run/" + id, Terminal: "completed"}, nil
+}
+
 type deletionClock struct {
 	mu sync.Mutex
 	at time.Time
@@ -166,7 +173,7 @@ func TestEraseExecutionAndRebuild(t *testing.T) {
 	c := newDeletionClock()
 	books := memstore.New(captureClock)
 	deadline, _ := domain.CaptureExpiresAt("2026-10-27", "Asia/Shanghai")
-	task := eraseFixture(t, books, "2026-10-27", "erase", deadline)
+	eraseFixture(t, books, "2026-10-27", "erase", deadline)
 	k := &deletionKernel{active: true}
 	o := New(context.Background(), books, k, Options{Now: c.now})
 	scan(t, o)
@@ -185,8 +192,10 @@ func TestEraseExecutionAndRebuild(t *testing.T) {
 	if len(k.sessions) != 1 || k.sessions[0].agent != DayAgent || len(k.inputs) != 1 {
 		t.Fatalf("created: %+v inputs: %+v", k.sessions, k.inputs)
 	}
-	if got := k.inputs["ses_1/xinli_rebuild_"+task.ID]; got.text != "整理今天" {
-		t.Fatalf("input: %+v", got)
+	for _, got := range k.inputs {
+		if got.text != "整理今天" {
+			t.Fatalf("input: %+v", got)
+		}
 	}
 }
 
@@ -344,7 +353,8 @@ func TestStartupRecoversRebuildWithoutDuplicateSession(t *testing.T) {
 		t.Fatalf("task: %+v", task)
 	}
 	k.fail = ""
-	second := New(context.Background(), books, k, Options{Now: c.now, RetryInterval: time.Millisecond})
+	c.advance()
+	second := New(context.Background(), books, k, Options{Now: c.now, RetryInterval: time.Millisecond, Tasks: first.tasks})
 	defer finish(t, second)
 	second.StartDeletions()
 	deadline := time.After(5 * time.Second)
@@ -359,7 +369,7 @@ func TestStartupRecoversRebuildWithoutDuplicateSession(t *testing.T) {
 	if len(k.sessions) != 1 || len(k.inputs) != 1 {
 		t.Fatal("startup duplicated session/input")
 	}
-	third := New(context.Background(), books, k, Options{Now: c.now})
+	third := New(context.Background(), books, k, Options{Now: c.now, Tasks: first.tasks})
 	scan(t, third)
 	finish(t, third)
 	if len(k.sessions) != 1 || len(k.inputs) != 1 {
@@ -376,7 +386,8 @@ func TestStartupPendingAndNotificationShutdown(t *testing.T) {
 	scan(t, first)
 	finish(t, first)
 	k.cleaning = false
-	second := New(context.Background(), books, k, Options{Now: c.now, RetryInterval: time.Millisecond})
+	c.advance()
+	second := New(context.Background(), books, k, Options{Now: c.now, RetryInterval: time.Millisecond, Tasks: first.tasks})
 	request, cancel := context.WithCancel(context.Background())
 	cancel()
 	second.DeletionPending(request, "bl", "u", "ignored")
@@ -429,10 +440,11 @@ func TestRebuildCommitCrashDeduplicatesAcceptedInput(t *testing.T) {
 		t.Fatal("missing commit failure")
 	}
 	finish(t, first)
-	second := New(context.Background(), books, k, Options{Now: c.now})
+	c.advance()
+	second := New(context.Background(), books, k, Options{Now: c.now, Tasks: first.tasks})
 	scan(t, second)
 	finish(t, second)
-	if len(k.sessions) != 1 || len(k.attempts) != 2 || len(k.inputs) != 1 {
+	if len(k.sessions) != 1 || len(k.attempts) != 1 || len(k.inputs) != 1 {
 		t.Fatalf("sessions=%d attempts=%d inputs=%d", len(k.sessions), len(k.attempts), len(k.inputs))
 	}
 	if task := readTask(t, books); task.RebuildPending || task.Error != "" {

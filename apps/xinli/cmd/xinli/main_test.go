@@ -242,10 +242,11 @@ func TestDevWeekReviewWithKernel(t *testing.T) {
 			}
 			_, _ = io.WriteString(w, `{"session_id":"week-session"}`)
 		case "/v1/sessions/week-session/inputs":
-			if body["text"] != "回顾本周" || !strings.HasPrefix(body["input_id"], "xinli_week_") {
+			if body["text"] != "回顾本周" || !strings.HasPrefix(body["input_id"], "xinli_") {
 				t.Errorf("input: %v", body)
 			}
 			w.WriteHeader(202)
+			_, _ = io.WriteString(w, `{"run_id":"week-run"}`)
 		default:
 			w.WriteHeader(404)
 		}
@@ -295,7 +296,8 @@ func TestDevWeekReviewWithKernel(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if !reflect.DeepEqual(calls, []string{"/v1/sessions", "/v1/sessions/week-session/inputs", "/v1/sessions/week-session/inputs"}) {
+	// 同一周的第二次请求落在同一个编排任务上；首个命令未到终态前不再提交（单在途，Q102）。
+	if !reflect.DeepEqual(calls, []string{"/v1/sessions", "/v1/sessions/week-session/inputs"}) {
 		t.Fatalf("kernel calls: %v", calls)
 	}
 }

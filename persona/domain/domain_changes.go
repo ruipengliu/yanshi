@@ -60,6 +60,29 @@ func (u *Book) AcceptedFactByID(id string) (Fact, bool) {
 	return f.Fact, f.Active
 }
 
+// DayProjects 让消费者复用业务日归属语义，不必解码事实 ID 或依赖私有绑定快照。
+// 变化不保存历史项目列表；这里返回当前仍有效的交谈归属，应用首次接收后须冻结映射。
+func (u *Book) DayProjects(id string) []string {
+	f := u.acceptedFacts[id]
+	if !f.Active || f.Kind != FactDay {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, e := range u.exchanges {
+		if u.sameDay(e.Session, f.Session) && e.Live() {
+			for _, project := range e.InProjects() {
+				seen[project] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for project := range seen {
+		out = append(out, project)
+	}
+	slices.Sort(out)
+	return out
+}
+
 // acceptFact 与正文写入同在 Book 事务内。入口尚无稳定命令 ID，按 Session 与规范化输入识别重试；
 // 只与当前接受比较，A→B→A 是合法重交，不能按历史内容哈希永久去重。
 func (c *Call) acceptFact(kind, id, date string, input any) bool {

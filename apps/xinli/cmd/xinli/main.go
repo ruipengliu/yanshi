@@ -29,6 +29,12 @@ import (
 	"xinli/devui"
 	"xinli/kernel"
 	"xinli/orchestrator"
+	appPG "xinli/pg"
+	"xinli/task"
+	taskmem "xinli/task/memstore"
+	taskpg "xinli/task/pgstore"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type registration struct {
@@ -85,6 +91,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	mcpDir := flags.String("mcp-dir", "", "写入 MCP 登记的目录")
 	storeKind := flags.String("store", "memory", "Persona 存储：memory | pg")
 	personaDSN := flags.String("persona-dsn", os.Getenv("YANSHI_PERSONA_PG_DSN"), "Persona 独立数据库 DSN（YANSHI_PERSONA_PG_DSN；pg 必填）")
+	appDSN := flags.String("app-dsn", os.Getenv("YANSHI_XINLI_PG_DSN"), "应用独立数据库 DSN（YANSHI_XINLI_PG_DSN；pg 编排必填）")
 	exitOnEOF := flags.Bool("exit-on-stdin-eof", false, "stdin 关闭时退出")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
@@ -136,8 +143,13 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	fixtureOpts := fixture.Options{}
 	uiOpts := devui.Options{Store: books}
 	if *kernelURL != "" {
+		tasks, closeTasks, err := openTasks(life, *storeKind, *appDSN, *personaDSN)
+		if err != nil {
+			return err
+		}
+		defer closeTasks()
 		client := &kernel.Client{BaseURL: *kernelURL, Token: token}
-		orch = orchestrator.New(life, books, client, orchestrator.Options{Logger: logger})
+		orch = orchestrator.New(life, books, client, orchestrator.Options{Logger: logger, Tasks: tasks})
 		fixtureOpts.Notifier = orch
 		uiOpts.DaySessions, uiOpts.Kernel, uiOpts.Notifier = orch, client, orch
 		opts.Notifier = orch
@@ -196,6 +208,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 	if orch != nil {
 		orch.StartDeletions()
+		orch.StartTasks(nil)
 	}
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError)}
 	serveErr := make(chan error, 1)
@@ -258,4 +271,45 @@ func openStore(ctx context.Context, kind, dsn string) (store.Store, func(), erro
 	default:
 		return nil, nil, errors.New("xinli dev: store must be memory or pg")
 	}
+}
+
+// PG 编排不能确认到内存任务库；显式配置应用 DSN，避免重启后事实已确认而任务丢失。
+func openTasks(ctx context.Context, kind, dsn, personaDSN string) (task.Store, func(), error) {
+	if kind == "memory" {
+		return taskmem.New(), func() {}, nil
+	}
+	if kind != "pg" {
+		return nil, nil, errors.New("xinli dev: invalid task storage")
+	}
+	if dsn == "" {
+		return nil, nil, errors.New("xinli dev: pg orchestration requires -app-dsn")
+	}
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		return nil, nil, errors.New("xinli dev: invalid application DSN")
+	}
+	// 开发入口要求库名也不同；只换 schema 不能构成三层数据库隔离。
+	for _, other := range []string{personaDSN, os.Getenv("YANSHI_PG_DSN")} {
+		if other == "" {
+			continue
+		}
+		otherCfg, err := pgx.ParseConfig(other)
+		if err != nil {
+			return nil, nil, errors.New("xinli dev: invalid database configuration")
+		}
+		if cfg.Database == otherCfg.Database {
+			return nil, nil, errors.New("xinli dev: application database must differ from Persona and kernel")
+		}
+	}
+	startup, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	pool, err := appPG.Open(startup, dsn, "")
+	if err != nil {
+		return nil, nil, errors.New("xinli dev: cannot open application database")
+	}
+	if err := appPG.Migrate(startup, pool); err != nil {
+		pool.Close()
+		return nil, nil, errors.New("xinli dev: application migration failed")
+	}
+	return taskpg.New(pool), pool.Close, nil
 }

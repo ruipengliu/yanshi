@@ -12,6 +12,7 @@ import (
 	"persona/domain"
 	"persona/mcpserver"
 	"persona/store/memstore"
+	"xinli/kernel"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -64,6 +65,22 @@ func (k *fakeKernel) Submit(ctx context.Context, sid, id, text string) error {
 	}
 	k.inputs[sid+"/"+id] = submission{sid, id, text}
 	return nil
+}
+
+func (k *fakeKernel) SubmitInput(ctx context.Context, sid, id, text string) (kernel.InputReceipt, error) {
+	if err := k.Submit(ctx, sid, id, text); err != nil {
+		return kernel.InputReceipt{}, err
+	}
+	return kernel.InputReceipt{InputID: id, RunID: "run/" + id, Terminal: "completed"}, nil
+}
+func (k *fakeKernel) FindInput(_ context.Context, sid, id string) (kernel.InputReceipt, bool, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	_, ok := k.inputs[sid+"/"+id]
+	if !ok {
+		return kernel.InputReceipt{}, false, nil
+	}
+	return kernel.InputReceipt{InputID: id, RunID: "run/" + id, Terminal: "completed"}, true, nil
 }
 
 func finish(t *testing.T, o *Orchestrator) {
@@ -128,10 +145,10 @@ func TestChangesetsAndCollect(t *testing.T) {
 	if len(k.sessions) != 1 || k.sessions[0].agent != ProjectAgent || k.sessions[0].bl != "bl" || k.sessions[0].eu != "u" {
 		t.Fatalf("sessions: %+v", k.sessions)
 	}
-	if len(k.attempts) != 9 || len(k.inputs) != 1 {
+	if len(k.attempts) != 1 || len(k.inputs) != 1 {
 		t.Fatalf("attempts=%d unique=%d", len(k.attempts), len(k.inputs))
 	}
-	want := submission{k.sessions[0].sid, "xinli_day_" + domain.NewProject, "整理 2026-10-23"}
+	want := submission{k.sessions[0].sid, k.attempts[0].id, "整理 2026-10-23"}
 	for _, got := range k.attempts {
 		if got != want {
 			t.Fatalf("submit: %+v", got)
@@ -153,8 +170,7 @@ func TestCollectionIgnoresRequestCancellation(t *testing.T) {
 	defer cancel()
 	books := memstore.New(captureClock)
 	if err := books.Update(life, "bl", "u", func(b *domain.Book) error {
-		b.Seed(domain.SeedData{Projects: []domain.Project{{ID: "p"}}}, time.Now())
-		return nil
+		return collectionFixture(b, "day", "p", captureClock())
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -203,9 +219,15 @@ func TestWeeklyReview(t *testing.T) {
 	if len(k.sessions) != 1 || k.sessions[0].agent != WeekAgent {
 		t.Fatalf("sessions: %+v", k.sessions)
 	}
-	for _, want := range []submission{{"ses_1", "xinli_week_2026-10-19", "回顾本周"}, {"ses_p1", "xinli_rewrite_2026-10-19_P-0001", "重写现状"}} {
-		if got := k.inputs[want.sid+"/"+want.id]; got != want {
-			t.Fatalf("got=%+v want=%+v", got, want)
+	for _, want := range []struct{ sid, text string }{{"ses_1", "回顾本周"}, {"ses_p1", "重写现状"}} {
+		found := false
+		for _, got := range k.inputs {
+			if got.sid == want.sid && got.text == want.text {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("missing input: %+v", want)
 		}
 	}
 	if len(k.inputs) != 2 {
@@ -227,11 +249,13 @@ func TestWeeklyReview(t *testing.T) {
 func TestWeekSubmitFailureKeepsBinding(t *testing.T) {
 	ctx := context.Background()
 	k := &fakeKernel{failText: "回顾本周"}
-	o := New(ctx, memstore.New(captureClock), k, Options{})
+	clock := newDeletionClock()
+	o := New(ctx, memstore.New(captureClock), k, Options{Now: clock.now})
 	if _, err := o.Week(ctx, "bl", "u"); err == nil {
 		t.Fatal("missing error")
 	}
 	k.failText = ""
+	clock.advance()
 	if _, err := o.Week(ctx, "bl", "u"); err != nil {
 		t.Fatal(err)
 	}
@@ -269,8 +293,7 @@ func TestShutdownWaitsForCollection(t *testing.T) {
 	defer cancel()
 	books := memstore.New(captureClock)
 	if err := books.Update(life, "bl", "u", func(b *domain.Book) error {
-		b.Seed(domain.SeedData{Projects: []domain.Project{{ID: "p"}}}, time.Now())
-		return nil
+		return collectionFixture(b, "day", "p", captureClock())
 	}); err != nil {
 		t.Fatal(err)
 	}

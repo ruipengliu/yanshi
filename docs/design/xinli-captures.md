@@ -387,6 +387,22 @@ A2 已将旧的“最后尚存片段时区”推导结果保存在业务日元�
 
 开发页面新增 `/v1/dev/{businessLine}/{endUser}` 下的 JSON 入口：`GET /captures?date=...` 只读列出片段、绑定元数据与当天待办；`POST /captures` 接收日期与结构化片段，生成随机 capture_id；`POST /erase`、`POST /erase_day` 复用领域事务并通知；`POST /organize` 接收日期、`kind=exchange/day` 及可选 input_id，经 EnsureDaySession 提交固定整理指令。只有带内核编排时显示整理按钮。原文查询不改变模型读页或处理进度，开发页面不承担生产鉴权入口。
 
+### 持久编排任务与提交对账（P4-A8）
+
+应用任务库在 `apps/xinli/task`，提供内存与 PG 实现及同一套 `storetest`。`apps/xinli/pg` 独立维护连接和迁移，不引用内核或 Persona 的 PG 包。PG 开发编排使用 `-store pg -persona-dsn <Persona库> -app-dsn <应用库> -kernel-url <内核地址>`；应用 DSN 也可由 `YANSHI_XINLI_PG_DSN` 提供，绝不回退到内核或 Persona DSN。只启动 Persona 夹具而未启用编排时不需要应用库。测试以 `YANSHI_TEST_PG` 为建库入口，在独立 `xinli_test` database 的随机 schema 中运行；子进程连接串显式包含库名和 search_path。
+
+应用库包含三张业务表：`task_sources` 冻结每个 owner 的事实版本与已接收状态（包括空任务集合）；`orchestration_tasks` 保存来源、操作、逻辑目标、业务日、确定性 input_id、状态、租约代数与期限、retry_at、attempt、receipt 和固定错误类别；`task_sessions` 保存实际 Session 的命令占用。任务唯一键是 `(business_line, end_user, source_id, source_version, operation, target)`，不能以当天工作 Session 代替事实版本。记录只含控制元数据，不保存原文、摘要、命令正文或远端错误正文。
+
+`Receive` 在一个事务中保存来源记录和全部目标任务，成功后才确认 Persona。重复接收不重新解释映射；合法重交或擦除后重新接受的版本生成不同任务和 input_id。日总览的项目集合经只读 `Book.DayProjects` 复用领域的 sameDay/Live/InProjects 语义，包含旧绑定的交谈且隔离同展示日期的未绑定 Session。A7 的变化不含历史项目集合，因此尚未接收的旧版本按消费时的当前账本映射；首次接收后冻结。周回顾接受变化暂不确认，留给 A10 接入。
+
+认领用短事务的 `FOR UPDATE SKIP LOCKED` 与 `lease_generation+1`，只认领到期且无有效租约的任务；同一逻辑目标按接收顺序执行。所有回写同时校验代数和租约期限。调用前持久保存 Session 与 unknown 意图、取得命令占用，再到事务外提交输入。失败的指数退避及按任务 ID 稳定派生的抖动保存到 retry_at；配置错误进入 failed、可按 owner 统计，目标 404 进入 terminated。启动及周期扫描不依赖内存通知。
+
+超时、断连或 5xx 后，执行器先从事件日志开头分页读到空页，按 `run_requested`/`steered` 的 input_id 查找；短页不是结束标记，游标必须严格递增。找到后持久记录 receipt，全部读完仍不存在才允许重发；读取失败继续保持 unknown 并退避，不能当成未提交。明确接受的 receipt 永远不能因后续查不到而被推翻。accepted 继续查询 Run 终态，completed 才释放命令占用；失败或中断的 Run 保留占用，等 A9 处理潜在旧远端写入后退役。租约过期也不释放占用。
+
+删除待办保留 Persona 原有分阶段事实和清理扫描，在应用库另有 delete 任务持久认领、退避和记录步骤结果；重建输入经独立 rebuild 任务共用 receipt 与对账。Persona 的本地完成提交失败后复用已接受输入；Persona 已完成而应用回写前崩溃，也由应用扫描补齐。旧 Week 开发入口的回顾和重写输入同时接入任务与命令占用，触发重写的旧时机仍留待 A10 迁移到周回顾接受变化。
+
+A8 不实现创建意图、CAS 绑定、空孤儿清理、旧工作 Session 退役或业务对象世代 fencing（A9）；不实现业务调度（A10）。应用任务与接收记录的账号级清理和注销屏障需在 A12 接入，不能仅凭 Persona 已清理就声称账号已完成注销。
+
 ### 实况简述（P3-⑥，Q82）
 
 xinli 开发页的“实况简述”按钮按页面当前业务日调用 `POST /v1/dev/{businessLine}/{endUser}/brief`，请求为 `{date}`，响应为 `{brief}`。应用从 Persona 读取原文，再经内核 HTTP 客户端调用 `xinli-live-brief`；不创建 Session、不推进已读位置或整理进度，结果只在当前页面显示，不存 Persona、不写应用日志，响应带 `Cache-Control: no-store`。错误仅返回固定类别，不带内核响应正文。

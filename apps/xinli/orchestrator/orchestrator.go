@@ -1,4 +1,4 @@
-// Package orchestrator 在应用层驱动跨 Session 归集；现有通知路径暂留到持久消费接入。
+// Package orchestrator 在应用层持久接收领域变化，驱动跨 Session 编排。
 package orchestrator
 
 import (
@@ -11,6 +11,8 @@ import (
 	"persona/domain"
 	"persona/mcpserver"
 	"persona/store"
+	"xinli/task"
+	taskmem "xinli/task/memstore"
 )
 
 const ProjectAgent = "xinli-project"
@@ -22,6 +24,8 @@ type Kernel interface {
 }
 
 type Options struct {
+	// Tasks 由装配方注入应用独立数据库；省略仅适用于内存开发模式。
+	Tasks           task.Store
 	Now             func() time.Time
 	Logger          *slog.Logger
 	RetryInterval   time.Duration
@@ -46,7 +50,9 @@ type Orchestrator struct {
 	stopRetries        chan struct{}
 	startedRetries     bool
 	startedExpirations bool
-	retries            map[retryKey]retryState
+	tasks              task.Store
+	worker             *task.Executor
+	startedTasks       bool
 }
 
 var _ mcpserver.Notifier = (*Orchestrator)(nil)
@@ -72,8 +78,14 @@ func New(ctx context.Context, s store.Store, k Kernel, opts Options) *Orchestrat
 	if err != nil {
 		zone = time.FixedZone("Asia/Shanghai", 8*60*60)
 	}
-	return &Orchestrator{retryInterval: opts.RetryInterval, retryMax: opts.RetryMax, defaultZone: zone,
-		stopRetries: make(chan struct{}), retries: make(map[retryKey]retryState), store: s, kernel: k, ctx: ctx, now: opts.Now, logger: opts.Logger, locks: make(map[owner]chan struct{})}
+	if opts.Tasks == nil {
+		opts.Tasks = taskmem.New()
+	}
+	o := &Orchestrator{retryInterval: opts.RetryInterval, retryMax: opts.RetryMax, defaultZone: zone,
+		stopRetries: make(chan struct{}), tasks: opts.Tasks, store: s, kernel: k, ctx: ctx, now: opts.Now, logger: opts.Logger, locks: make(map[owner]chan struct{})}
+	taskKernel, _ := k.(task.Kernel)
+	o.worker = &task.Executor{Store: o.tasks, Kernel: taskKernel, Prepare: o.prepareTask, Now: o.now, RetryBase: o.retryInterval, RetryMax: o.retryMax}
+	return o
 }
 
 func (o *Orchestrator) begin() bool {
@@ -122,55 +134,20 @@ func (o *Orchestrator) acquire(ctx context.Context, bl, eu string) (func(), erro
 	}
 }
 
-// TODO(P4-A8/A10)：从 Persona 领域变化持久接收归集任务后再确认，DayFiled 仅作唤醒提示。
-// 接入前保留现有归集行为，不能提前确认变化而让崩溃后丢失后续工作。
-func (o *Orchestrator) DayFiled(_ context.Context, bl, eu, daySession, date string, projects []string) {
+// DayFiled 仅唤醒持久消费者；通知的参数不是新的领域事实，不能用它们另建任务。
+func (o *Orchestrator) DayFiled(_ context.Context, bl, eu, _, _ string, _ []string) {
 	if !o.begin() {
 		return
 	}
-	projects = append([]string(nil), projects...)
 	go func() {
 		defer o.pending.Done()
-		release, err := o.acquire(o.ctx, bl, eu)
-		if err != nil {
-			o.failed("collect", bl, daySession, "", err)
-			return
+		if err := o.receiveChanges(o.ctx, bl, eu); err != nil {
+			o.failed("receive", bl, "", "", err)
 		}
-		defer release()
-		for _, id := range projects {
-			if err := o.collect(bl, eu, daySession, date, id); err != nil {
-				o.failed("collect", bl, daySession, id, err)
-			}
+		if err := o.scanInputs(o.ctx); err != nil {
+			o.failed("collect", bl, "", "", err)
 		}
 	}()
-}
-
-func (o *Orchestrator) collect(bl, eu, daySession, date, id string) error {
-	var found bool
-	var sid string
-	err := o.store.View(o.ctx, bl, eu, func(b *domain.Book) error {
-		for _, p := range b.State().Projects {
-			if p.ID == id {
-				found = true
-				sid = p.Session
-				break
-			}
-		}
-		return nil
-	})
-	if err != nil || !found {
-		return err
-	}
-	if sid == "" {
-		sid, err = o.kernel.CreateSession(o.ctx, bl, eu, ProjectAgent)
-		if err != nil {
-			return err
-		}
-		if err = o.store.Update(o.ctx, bl, eu, func(b *domain.Book) error { b.Bind(id, sid); return nil }); err != nil {
-			return err
-		}
-	}
-	return o.kernel.Submit(o.ctx, sid, "xinli_"+daySession+"_"+id, "整理 "+date)
 }
 
 func (o *Orchestrator) Week(ctx context.Context, bl, eu string) (string, error) {
@@ -198,17 +175,21 @@ func (o *Orchestrator) Week(ctx context.Context, bl, eu string) (string, error) 
 			return "", err
 		}
 	}
-	if err = o.kernel.Submit(ctx, plan.Session, "xinli_week_"+plan.From, "回顾本周"); err != nil {
+	job, err := o.weekInput(ctx, bl, eu, plan.From, "week", "week/"+plan.From)
+	if err != nil {
 		return "", err
 	}
+	if job.State != task.Accepted && job.State != task.Succeeded {
+		return "", errors.New("orchestrator: week submission pending or failed")
+	}
 	sid := plan.Session
-	// TODO(P4-A8/A10)：把重写迁至 file_week 接受变化的持久消费；空回顾也触发，按事实版本去重。
+	// TODO(P4-A10)：把重写迁至 file_week 接受变化的持久消费；空回顾也触发，按事实版本去重。
 	// 本步保留原行为与既有开发入口，尚未接入消费者时不能取消项目重写。
 	if err = o.store.View(ctx, bl, eu, func(b *domain.Book) error { plan = b.ReviewWeek(now); return nil }); err != nil {
 		return "", err
 	}
 	for _, p := range plan.Rewrite {
-		if err := o.kernel.Submit(ctx, p.Session, "xinli_rewrite_"+plan.From+"_"+p.ID, "重写现状"); err != nil {
+		if _, err := o.weekInput(ctx, bl, eu, plan.From, "rewrite", "project/"+p.ID); err != nil {
 			o.failed("rewrite", bl, p.Session, p.ID, err)
 		}
 	}

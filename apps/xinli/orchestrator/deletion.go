@@ -9,6 +9,7 @@ import (
 	"persona/domain"
 	"persona/mcpserver"
 	"xinli/kernel"
+	"xinli/task"
 )
 
 const DayAgent = "xinli-day"
@@ -25,15 +26,6 @@ type DeletionKernel interface {
 }
 
 var _ mcpserver.DeletionNotifier = (*Orchestrator)(nil)
-
-type retryKey struct {
-	owner
-	task string
-}
-type retryState struct {
-	next  time.Time
-	delay time.Duration
-}
 
 // StartDeletions 的首次扫描不依赖通知，覆盖提交擦除后、发送通知前的崩溃。
 func (o *Orchestrator) StartDeletions() {
@@ -101,75 +93,94 @@ func (o *Orchestrator) processDeletions(ctx context.Context, bl, eu string) erro
 		return err
 	}
 	defer release()
-	k, ok := o.kernel.(DeletionKernel)
-	if !ok {
-		return errors.New("orchestrator: deletion kernel unavailable")
-	}
+	k, _ := o.kernel.(DeletionKernel)
 	var tasks []domain.DeletionTask
-	if err := o.store.View(ctx, bl, eu, func(b *domain.Book) error { tasks = b.PendingDeletionTasks(); return nil }); err != nil {
+	if err := o.store.View(ctx, bl, eu, func(b *domain.Book) error { tasks = b.DeletionTasks(); return nil }); err != nil {
 		return err
 	}
-	for _, task := range tasks {
-		key := retryKey{owner{bl, eu}, task.ID}
-		o.mu.Lock()
-		retry := o.retries[key]
-		o.mu.Unlock()
-		if o.now().Before(retry.next) {
+	for _, deletion := range tasks {
+		source := deletionSource(bl, eu, deletion.ID, "delete")
+		spec := task.Spec{Operation: "delete", Target: "deletions", Date: deletion.Date}
+		if err := o.tasks.Receive(ctx, source, []task.Spec{spec}, o.now()); err != nil {
+			return err
+		}
+		job, claimed, err := o.tasks.Claim(ctx, task.Identity(source, spec), o.now(), 2*time.Minute)
+		if err != nil {
+			return err
+		}
+		if !claimed {
+			current, err := o.tasks.Get(ctx, task.Identity(source, spec))
+			if err != nil {
+				return err
+			}
+			if current.State == task.Succeeded {
+				continue
+			}
 			return nil
 		}
-		ready, class, err := o.executeDeletion(ctx, k, bl, eu, task)
-		if err != nil {
-			// 错误类别只描述失败步骤；下游文字永远不进入 Persona 或日志。
-			saveErr := o.store.Update(ctx, bl, eu, func(b *domain.Book) error { return b.FailDeletionTask(task.ID, class, o.now()) })
-			o.failed("deletion_"+class, bl, task.Session, task.ID, err)
-			if saveErr != nil {
-				return saveErr
+		callCtx, cancel := context.WithTimeout(ctx, max(time.Nanosecond, job.LeaseUntil.Sub(o.now())))
+		ready := true
+		class := ""
+		var callErr error
+		if deletion.Status == "pending" || deletion.RebuildPending {
+			if k == nil {
+				ready, class, callErr = false, "configuration", task.ErrConfiguration
+			} else {
+				ready, class, callErr = o.executeDeletion(callCtx, k, bl, eu, deletion)
 			}
 		}
-		o.mu.Lock()
-		if ready && err == nil {
-			delete(o.retries, key)
-		} else {
-			delay := o.retryInterval
-			if err != nil && retry.delay > 0 {
-				delay = min(retry.delay*2, o.retryMax)
-			}
-			o.retries[key] = retryState{next: o.now().Add(delay), delay: delay}
+		cancel()
+		if callErr != nil {
+			// 只保存步骤类别，下游错误正文不进入领域存储或日志。
+			saveErr := o.store.Update(ctx, bl, eu, func(b *domain.Book) error { return b.FailDeletionTask(deletion.ID, class, o.now()) })
+			callErr = errors.Join(callErr, saveErr)
+			o.failed("deletion_"+class, bl, deletion.Session, deletion.ID, callErr)
 		}
-		o.mu.Unlock()
-		// 同一业务日的后续删除必须等待前面的清理，避免旧 Run 迟到写入 Memory。
-		if !ready || err != nil {
-			return err
+		job.LastErrorClass = class
+		job.RetryAt = o.now().Add(task.Backoff(job.TaskID, job.Attempt, o.retryInterval, o.retryMax))
+		if ready && callErr == nil {
+			job.State = task.Succeeded
+		}
+		if task.IsConfiguration(callErr) {
+			job.State = task.Failed
+			job.LastErrorClass = "configuration"
+		}
+		if err := o.tasks.Save(ctx, job, o.now(), true); err != nil {
+			return errors.Join(callErr, err)
+		}
+		// 同一 owner 的后续删除必须等前项清理，不提前读取可能还有迟到写入的 Memory。
+		if !ready || callErr != nil {
+			return callErr
 		}
 	}
 	return nil
 }
 
-func (o *Orchestrator) executeDeletion(ctx context.Context, k DeletionKernel, bl, eu string, task domain.DeletionTask) (bool, string, error) {
-	if task.Status == "pending" {
-		if task.Session != "" {
-			state, err := k.Session(ctx, task.Session)
+func (o *Orchestrator) executeDeletion(ctx context.Context, k DeletionKernel, bl, eu string, deletionTask domain.DeletionTask) (bool, string, error) {
+	if deletionTask.Status == "pending" {
+		if deletionTask.Session != "" {
+			state, err := k.Session(ctx, deletionTask.Session)
 			if err != nil && !errors.Is(err, kernel.ErrNotFound) {
 				return false, "session", err
 			}
 			if err == nil && state.ActiveRun() != "" {
-				if err := k.Interrupt(ctx, task.Session, state.ActiveRun()); err != nil && !errors.Is(err, kernel.ErrNotFound) {
+				if err := k.Interrupt(ctx, deletionTask.Session, state.ActiveRun()); err != nil && !errors.Is(err, kernel.ErrNotFound) {
 					return false, "interrupt", err
 				}
 			}
 			missing := errors.Is(err, kernel.ErrNotFound)
 			reason := ""
-			if task.Kind == "erase" {
+			if deletionTask.Kind == "erase" {
 				reason = "erasure"
 			}
-			deleteErr := k.DeleteSession(ctx, task.Session, reason)
+			deleteErr := k.DeleteSession(ctx, deletionTask.Session, reason)
 			if err := deleteErr; err != nil && !errors.Is(err, kernel.ErrNotFound) {
 				// 某些入口对重复删除返回冲突；只有已有记录才能证明删除已被接受。
-				if _, probeErr := k.Deletion(ctx, bl, task.Session); probeErr != nil {
+				if _, probeErr := k.Deletion(ctx, bl, deletionTask.Session); probeErr != nil {
 					return false, "delete_session", err
 				}
 			}
-			deletion, err := k.Deletion(ctx, bl, task.Session)
+			deletion, err := k.Deletion(ctx, bl, deletionTask.Session)
 			absent := missing && errors.Is(deleteErr, kernel.ErrNotFound) && errors.Is(err, kernel.ErrNotFound)
 			if err != nil && !absent {
 				return false, "deletion", err
@@ -179,8 +190,8 @@ func (o *Orchestrator) executeDeletion(ctx context.Context, k DeletionKernel, bl
 			}
 		}
 		candidates := []domain.MemoryCandidate{}
-		if task.Kind == "erase" {
-			memories, err := k.MemoriesBySource(ctx, bl, eu, task.Sessions)
+		if deletionTask.Kind == "erase" {
+			memories, err := k.MemoriesBySource(ctx, bl, eu, deletionTask.Sessions)
 			if err != nil {
 				return false, "memories", err
 			}
@@ -188,55 +199,67 @@ func (o *Orchestrator) executeDeletion(ctx context.Context, k DeletionKernel, bl
 				candidates = append(candidates, domain.MemoryCandidate{ID: m.ID, Summary: m.Content})
 			}
 		} else {
-			for _, sid := range task.Sessions {
+			for _, sid := range deletionTask.Sessions {
 				// 404 不证明 Memory 已删除：擦除原因会保留 Memory，必须得到成功响应。
 				if err := k.DeleteSessionMemories(ctx, bl, sid); err != nil {
 					return false, "delete_memories", err
 				}
 			}
 		}
-		rebuild := task.Kind == "erase" && o.rebuildDue(task)
+		rebuild := deletionTask.Kind == "erase" && o.rebuildDue(deletionTask)
 		if err := o.store.Update(ctx, bl, eu, func(b *domain.Book) error {
-			return b.CompleteDeletionWithRebuild(task.ID, candidates, rebuild, o.now())
+			return b.CompleteDeletionWithRebuild(deletionTask.ID, candidates, rebuild, o.now())
 		}); err != nil {
 			return false, "complete", err
 		}
-		task.RebuildPending = rebuild
+		deletionTask.RebuildPending = rebuild
 	}
-	if task.RebuildPending {
-		// 更新的擦除或删一天已接管该日；旧待办不能在它们之后重新提交整理。
-		skip := !o.rebuildDue(task)
-		if err := o.store.View(ctx, bl, eu, func(b *domain.Book) error {
-			b.SetCaptureClock(o.now)
-			skip = skip || b.CheckCaptures(task.Date) != nil
-			seen := false
-			for _, other := range b.DeletionTasks() {
-				if other.ID == task.ID {
-					seen = true
-					continue
-				}
-				if seen && other.Date == task.Date {
-					skip = true
-				}
-			}
-			return nil
-		}); err != nil {
+	if deletionTask.RebuildPending {
+		skip, err := o.skipRebuild(ctx, bl, eu, deletionTask)
+		if err != nil {
 			return false, "rebuild_read", err
 		}
 		if !skip {
-			sid, err := o.ensureDaySession(ctx, k, bl, eu, task.Date)
+			job, err := o.rebuildTask(ctx, bl, eu, deletionTask)
 			if err != nil {
-				return false, "rebuild", err
-			}
-			if err := o.kernel.Submit(ctx, sid, "xinli_rebuild_"+task.ID, "整理今天"); err != nil {
+				if errors.Is(err, errRebuildPreparation) {
+					return false, "rebuild", err
+				}
 				return false, "submit", err
 			}
+			if job.State == task.Failed {
+				return false, "submit", task.ErrConfiguration
+			}
+			if job.State != task.Accepted && job.State != task.Succeeded && job.State != task.Terminated {
+				return false, "", nil
+			}
 		}
-		if err := o.store.Update(ctx, bl, eu, func(b *domain.Book) error { return b.CompleteDeletionRebuild(task.ID) }); err != nil {
+		if err := o.store.Update(ctx, bl, eu, func(b *domain.Book) error { return b.CompleteDeletionRebuild(deletionTask.ID) }); err != nil {
 			return false, "rebuild_complete", err
 		}
 	}
 	return true, "", nil
+}
+
+// 更新的擦除、删一天或自然到期已接管该日；旧待办不能重新提交整理。
+func (o *Orchestrator) skipRebuild(ctx context.Context, bl, eu string, deletion domain.DeletionTask) (bool, error) {
+	skip := !o.rebuildDue(deletion)
+	err := o.store.View(ctx, bl, eu, func(b *domain.Book) error {
+		b.SetCaptureClock(o.now)
+		skip = skip || b.CheckCaptures(deletion.Date) != nil
+		seen := false
+		for _, other := range b.DeletionTasks() {
+			if other.ID == deletion.ID {
+				seen = true
+				continue
+			}
+			if seen && other.Date == deletion.Date {
+				skip = true
+			}
+		}
+		return nil
+	})
+	return skip, err
 }
 
 func (o *Orchestrator) rebuildDue(task domain.DeletionTask) bool {
