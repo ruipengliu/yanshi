@@ -20,12 +20,6 @@ type CaptureSegment struct {
 	TimeZone   string `json:"time_zone,omitempty"`
 }
 
-type captureBatch struct {
-	ID       string
-	Number   uint64
-	Segments []CaptureSegment
-}
-
 // captureDay 独立于 file_day 的总览，换绑工作 Session 不改变引用与处理进度。
 type captureDay struct {
 	Session     string
@@ -33,7 +27,8 @@ type captureDay struct {
 	DeleteAt    time.Time
 	Deleted     bool
 	Tombstones  []Source
-	Batches     []captureBatch
+	BatchIDs    map[string]uint64
+	TimeZone    string
 	Next        uint64
 	Progress    string
 	ReadThrough Ref
@@ -141,59 +136,54 @@ func (u *Book) AppendCaptures(date, captureID string, segments []CaptureSegment)
 			}
 		}
 	}
+	access, err := u.captureAccess()
+	if err != nil {
+		return nil, err
+	}
 	day := u.captureDays[date]
 	if day != nil {
-		for _, b := range day.Batches {
-			if b.ID == captureID {
-				if slices.ContainsFunc(b.Segments, func(g CaptureSegment) bool { return g.Text == "" }) {
-					return nil, fmt.Errorf("capture_id contains erased segments")
-				}
-				if !slices.Equal(b.Segments, segments) {
-					return nil, fmt.Errorf("capture_id already has different content")
-				}
-				return batchRefs(b), nil
+		if number, ok := day.BatchIDs[captureID]; ok {
+			segmentsBefore, err := access.Batch(date, number)
+			if err != nil {
+				return nil, err
 			}
+			if slices.ContainsFunc(segmentsBefore, func(g CaptureSegment) bool {
+				return g.Text == ""
+			}) {
+				return nil, fmt.Errorf("capture_id contains erased segments")
+			}
+			if !slices.Equal(segmentsBefore, segments) {
+				return nil, fmt.Errorf("capture_id already has different content")
+			}
+			return batchRefs(number, len(segments)), nil
 		}
 		if day.Next == math.MaxUint64 {
 			return nil, fmt.Errorf("capture batch numbers exhausted")
 		}
 	}
+	number := uint64(1)
+	if day != nil {
+		number = day.Next + 1
+	}
+	if err := access.Append(date, number, segments); err != nil {
+		return nil, err
+	}
 	day = u.captureDay(date)
-	day.Next++
-	batch := captureBatch{ID: captureID, Number: day.Next, Segments: slices.Clone(segments)}
-	day.Batches = append(day.Batches, batch)
-	return batchRefs(batch), nil
+	if day.BatchIDs == nil {
+		day.BatchIDs = map[string]uint64{}
+	}
+	day.BatchIDs[captureID], day.Next = number, number
+	// A2 保留最后尚存片段的旧时区语义；固定业务日时区由 A5 接入。
+	day.TimeZone = segments[len(segments)-1].TimeZone
+	return batchRefs(number, len(segments)), nil
 }
 
-func batchRefs(b captureBatch) []string {
-	refs := make([]string, len(b.Segments))
+func batchRefs(number uint64, count int) []string {
+	refs := make([]string, count)
 	for i := range refs {
-		refs[i] = (Ref{Seq: b.Number, Index: i}).String()
+		refs[i] = (Ref{Seq: number, Index: i}).String()
 	}
 	return refs
-}
-
-func (d *captureDay) segments() []captureSegment {
-	var out []captureSegment
-	for _, b := range d.Batches {
-		for i, g := range b.Segments {
-			if g.Text == "" {
-				continue
-			}
-			out = append(out, captureSegment{ref: Ref{Seq: b.Number, Index: i}, g: g})
-		}
-	}
-	return out
-}
-
-// containsRef 只检查端点是否存在，不要求范围中的批次连续；擦除后的空号也不能靠范围补回。
-func (d *captureDay) containsRef(ref Ref) bool {
-	for _, batch := range d.Batches {
-		if batch.Number == ref.Seq {
-			return ref.Index >= 0 && ref.Index < len(batch.Segments) && batch.Segments[ref.Index].Text != ""
-		}
-	}
-	return false
 }
 
 // CapturePosition 由当前工作 Session 查处理进度，避免换绑后旧 Session 继续参与评测编排。
@@ -215,29 +205,39 @@ func (u *Book) CaptureProgress(date string) string {
 
 // advanceCaptures 与变更集 commit 同处 Book 事务，只提交当前范围完整覆盖的连续时段。
 // 不拼接不同变更集的部分范围，且时段末尾不能超过当前工作 Session 实际返回过的页尾。
-func (c *Call) advanceCaptures(from, to Ref) {
-	_, day := c.u.boundDay(c.session)
+func (c *Call) advanceCaptures(from, to Ref) error {
+	date, day := c.u.boundDay(c.session)
 	if day == nil || !day.GapSet {
-		return
+		return nil
 	}
 	at, _ := parseCaptureCursor(day.Progress)
-	segs := day.segments()
-	start := 0
-	for start < len(segs) && refLE(segs[start].ref, at.Last) {
-		start++
-	}
 	gap := time.Duration(day.GapMS) * time.Millisecond
-	for start < len(segs) {
-		end := start
-		for end+1 < len(segs) && !captureApart(segs[end].g, segs[end+1].g, gap) {
-			end++
+	// 只保留时段边界，整日检查不把正文装进账本或临时切片。
+	segs := func(yield func(captureSegment, error) bool) {
+		for s, err := range c.u.captureSegments(date, at.Last, Ref{}) {
+			if err != nil {
+				yield(captureSegment{}, err)
+				return
+			}
+			if refLE(s.ref, at.Last) {
+				continue
+			}
+			if !yield(s, nil) {
+				return
+			}
 		}
-		if !refLE(from, segs[start].ref) || !refLE(segs[end].ref, to) || !refLE(segs[end].ref, day.ReadThrough) {
-			return
-		}
-		day.Progress = segs[end].ref.String()
-		start = end + 1
 	}
+	spans, err := captureRanges(segs, gap)
+	if err != nil {
+		return err
+	}
+	for _, span := range spans {
+		if !refLE(from, span.from) || !refLE(span.to, to) || !refLE(span.to, day.ReadThrough) {
+			break
+		}
+		day.Progress = span.to.String()
+	}
+	return nil
 }
 
 // 固定错误不附带调用参数，迟到的工作 Session 不能再写入或读取原文。
@@ -290,22 +290,20 @@ func (u *Book) BusinessDay(date string) BusinessDay {
 	var out BusinessDay
 	if d := u.captureDays[date]; d != nil {
 		out.Session, out.DeleteAt, out.Deleted = d.Session, d.DeleteAt, d.Deleted
-		segs := d.segments()
-		if len(segs) > 0 {
-			out.TimeZone = segs[len(segs)-1].g.TimeZone
-		}
+		out.TimeZone = d.TimeZone
 	}
 	return out
 }
 
 // DayCaptures 供本人开发页面读取；返回副本，不登记模型读页或固定时段间隔。
-func (u *Book) DayCaptures(date string) []PageSegment {
+func (u *Book) DayCaptures(date string) ([]PageSegment, error) {
 	out := []PageSegment{}
-	if d := u.captureDays[date]; d != nil {
-		for _, s := range d.segments() {
-			g := s.g
-			out = append(out, PageSegment{Ref: s.ref.String(), Speaker: g.Speaker, SpeakerKey: g.SpeakerKey, SpeakerRef: g.SpeakerRef, Text: g.Text, SpokenAt: g.SpokenAt, TimeZone: g.TimeZone})
+	for s, err := range u.captureSegments(date, Ref{}, Ref{}) {
+		if err != nil {
+			return nil, err
 		}
+		g := s.g
+		out = append(out, PageSegment{Ref: s.ref.String(), Speaker: g.Speaker, SpeakerKey: g.SpeakerKey, SpeakerRef: g.SpeakerRef, Text: g.Text, SpokenAt: g.SpokenAt, TimeZone: g.TimeZone})
 	}
-	return out
+	return out, nil
 }

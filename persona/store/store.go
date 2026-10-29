@@ -9,7 +9,9 @@ import (
 
 // Store 的读写事务只涉及一个键；PendingDeletions 只发现键，不跨键写入。Update 在隔离的 Book 上执行回调，成功才原子提交；
 // 同键并发更新串行化。View 给出隔离的快照，回调的修改不会提交。
-// 回调不得重入同键的存储操作；离开回调后继续修改持有的引用也不得影响存储。
+// 回调中的 Book 已绑定 domain.CaptureAccess，原文与账本使用同一快照/提交点。
+// 回调不得重入同键操作；退出（含失败或 panic）即关闭原文接缝及迭代器，不能带到事务外使用。
+// 账本引用离开回调后的修改不得影响存储；Call 的文字回执须同时检查 Call.Err 并作为回调错误返回。
 type Store interface {
 	Update(ctx context.Context, businessLine, endUser string, fn func(*domain.Book) error) error
 	View(ctx context.Context, businessLine, endUser string, fn func(*domain.Book) error) error

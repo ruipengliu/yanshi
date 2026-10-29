@@ -13,8 +13,9 @@ import (
 
 type key struct{ businessLine, endUser string }
 type entry struct {
-	mu   sync.Mutex
-	book *domain.Book
+	mu       sync.Mutex
+	book     *domain.Book
+	captures captureData
 }
 type Store struct {
 	mu    sync.Mutex
@@ -53,6 +54,9 @@ func (s *Store) Update(ctx context.Context, bl, eu string, fn func(*domain.Book)
 	if err != nil {
 		return err
 	}
+	captures := newCaptureTx(ctx, e.captures)
+	defer captures.close()
+	working.SetCaptureAccess(captures)
 	if err := fn(working); err != nil {
 		return err
 	}
@@ -64,7 +68,7 @@ func (s *Store) Update(ctx context.Context, bl, eu string, fn func(*domain.Book)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	e.book = committed
+	e.book, e.captures = committed, captures.commit()
 	return nil
 }
 
@@ -75,14 +79,20 @@ func (s *Store) View(ctx context.Context, bl, eu string, fn func(*domain.Book) e
 	e := s.entry(bl, eu)
 	e.mu.Lock()
 	snapshot, err := e.book.Clone()
+	captures := newCaptureTx(ctx, e.captures)
 	e.mu.Unlock()
+	defer captures.close()
 	if err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return fn(snapshot)
+	snapshot.SetCaptureAccess(captures)
+	if err := fn(snapshot); err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 // PendingDeletions 先复制键再逐键查看，避免全局锁与 Book 锁嵌套。

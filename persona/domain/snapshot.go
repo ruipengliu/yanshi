@@ -2,11 +2,12 @@ package domain
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 )
 
 // bookData 只序列化事实与分配位置；投影从变更集重建，避免两份当前值漂移。
-// 它是存储格式，与对外 State 的 JSON 形状分开。
+// 它是存储格式，与对外 State 的 JSON 形状分开；CaptureDays 只含元数据，不含原文或事务接缝。
 type bookData struct {
 	CaptureDays         map[string]*captureDay
 	DeletionTasks       []DeletionTask
@@ -34,6 +35,20 @@ func (u *Book) MarshalJSON() ([]byte, error) {
 }
 
 func (u *Book) UnmarshalJSON(data []byte) error {
+	// 旧内存快照没有独立原文库，不能静默丢掉正文后伪装成成功恢复。
+	var legacy struct {
+		CaptureDays map[string]struct {
+			Batches json.RawMessage
+		}
+	}
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return err
+	}
+	for _, day := range legacy.CaptureDays {
+		if len(day.Batches) > 0 && string(day.Batches) != "null" && string(day.Batches) != "[]" {
+			return fmt.Errorf("legacy capture payload requires separate import")
+		}
+	}
 	var d bookData
 	if err := json.Unmarshal(data, &d); err != nil {
 		return err
@@ -68,7 +83,7 @@ func (u *Book) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Clone 连同嵌套字段和编号一起复制；回调持有的引用不能绕过存储事务修改事实。
+// Clone 只复制账本与编号；存储须另行绑定同一事务的原文接缝，快照本身不能读原文。
 func (u *Book) Clone() (*Book, error) {
 	data, err := json.Marshal(u)
 	if err != nil {

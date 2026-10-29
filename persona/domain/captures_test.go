@@ -19,7 +19,7 @@ func captureTestOptions() PageOptions {
 }
 func captureTestBook(t *testing.T, segs []CaptureSegment) *Book {
 	t.Helper()
-	b := NewBook()
+	b := newCaptureTestBook()
 	if err := b.BindDay("2026-10-27", "s"); err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func captureTestAfter(p StructuredPage) string {
 }
 
 func TestAppendCaptures(t *testing.T) {
-	b := NewBook()
+	b := newCaptureTestBook()
 	segs := []CaptureSegment{captureTestSegment(captureTestNow), {Speaker: "other", SpeakerKey: "other-1", Text: "好的"}}
 	first, err := b.AppendCaptures("2026-10-27", "a", segs)
 	if err != nil || !reflect.DeepEqual(first, []string{"1.0", "1.1"}) {
@@ -71,7 +71,7 @@ func TestAppendCaptures(t *testing.T) {
 	// 输入、返回引用和存储快照均不能变成事务外写入的后门。
 	segs[0].Text = "mutated"
 	first[0] = "999.0"
-	clone, err := b.Clone()
+	clone, err := cloneCaptureTestBook(b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,8 +82,8 @@ func TestAppendCaptures(t *testing.T) {
 	if p.Segments[0].Text == "mutated" || p.Segments[0].Ref != "1.0" {
 		t.Fatal("aliased capture")
 	}
-	clone.captureDays["2026-10-27"].Batches[0].Segments[0].Text = "clone"
-	if b.captureDays["2026-10-27"].Batches[0].Segments[0].Text == "clone" {
+	clone.CaptureAccess().(testCaptures)["2026-10-27"][1][0].Text = "clone"
+	if b.CaptureAccess().(testCaptures)["2026-10-27"][1][0].Text == "clone" {
 		t.Fatal("aliased clone")
 	}
 }
@@ -106,7 +106,7 @@ func TestCaptureValidation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			g := valid
 			change(&g)
-			b := NewBook()
+			b := newCaptureTestBook()
 			if _, err := b.AppendCaptures("2026-10-27", "a", []CaptureSegment{g}); err == nil {
 				t.Fatal("accepted")
 			}
@@ -115,7 +115,7 @@ func TestCaptureValidation(t *testing.T) {
 			}
 		})
 	}
-	b := NewBook()
+	b := newCaptureTestBook()
 	for _, id := range []string{"", strings.Repeat("i", 129)} {
 		if _, err := b.AppendCaptures("2026-10-27", id, []CaptureSegment{valid}); err == nil {
 			t.Fatal("invalid id")
@@ -180,7 +180,7 @@ func TestCapturePages(t *testing.T) {
 		t.Fatalf("empty %+v", p)
 	}
 	// 首读固定间隔，克隆模拟跨事务；修改后续平台参数不能合并原来的两个时段。
-	clone, err := b.Clone()
+	clone, err := cloneCaptureTestBook(b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func TestCaptureLimitsAndBudget(t *testing.T) {
 	if _, err := NewCall(b, "s", nil, nil, captureTestNow).Captures(o); err == nil || !strings.Contains(err.Error(), "context.max_tool_result=1") {
 		t.Fatal(err)
 	}
-	empty := NewBook()
+	empty := newCaptureTestBook()
 	if err := empty.BindDay("2026-10-27", "s"); err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func TestCaptureProgress(t *testing.T) {
 	if p.Span != "1.4" || p.Cont || len(p.Segments) != 1 {
 		t.Fatalf("new %+v", p)
 	}
-	clone, err := b.Clone()
+	clone, err := cloneCaptureTestBook(b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,7 +341,7 @@ func TestCaptureExchangeBusinessDate(t *testing.T) {
 }
 
 func TestCaptureLimitCap(t *testing.T) {
-	b := NewBook()
+	b := newCaptureTestBook()
 	if err := b.BindDay("2026-10-27", "s"); err != nil {
 		t.Fatal(err)
 	}
@@ -415,7 +415,7 @@ func TestFileDayBusinessDateAfterMidnight(t *testing.T) {
 		{"unbound", false, "2026-10-28"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			b := NewBook()
+			b := newCaptureTestBook()
 			if tc.bound {
 				if err := b.BindDay("2026-10-27", "s"); err != nil {
 					t.Fatal(err)
@@ -500,7 +500,7 @@ func TestCaptureReadTail(t *testing.T) {
 	if day.ReadThrough != (Ref{Seq: 1, Index: 1}) {
 		t.Fatal("idempotent binding reset read tail")
 	}
-	clone, err := b.Clone()
+	clone, err := cloneCaptureTestBook(b)
 	if err != nil || clone.captureDays["2026-10-27"].ReadThrough != day.ReadThrough {
 		t.Fatal("read tail not persisted", err)
 	}

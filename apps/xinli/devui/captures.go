@@ -71,7 +71,12 @@ func registerRoutes(mux *http.ServeMux, opts Options) {
 			Tasks    []domain.DeletionTask `json:"tasks"`
 		}
 		err := opts.Store.View(r.Context(), r.PathValue("businessLine"), r.PathValue("endUser"), func(b *domain.Book) error {
-			out.Day, out.Segments = b.BusinessDay(date), b.DayCaptures(date)
+			out.Day = b.BusinessDay(date)
+			var err error
+			out.Segments, err = b.DayCaptures(date)
+			if err != nil {
+				return err
+			}
 			out.Tasks = []domain.DeletionTask{}
 			for _, task := range b.DeletionTasks() {
 				if task.Date == date {
@@ -161,7 +166,10 @@ func registerRoutes(mux *http.ServeMux, opts Options) {
 		var before briefRevision
 		var input string
 		err := opts.Store.View(r.Context(), bl, eu, func(b *domain.Book) error {
-			segments := b.DayCaptures(in.Date)
+			segments, err := b.DayCaptures(in.Date)
+			if err != nil {
+				return err
+			}
 			before = captureRevision(b, in.Date, segments)
 			input = briefInput(segments)
 			return nil
@@ -177,7 +185,11 @@ func registerRoutes(mux *http.ServeMux, opts Options) {
 		result, callErr := opts.Kernel.OneshotForBusinessLine(r.Context(), bl, eu, "xinli-live-brief", input)
 		var after briefRevision
 		err = opts.Store.View(r.Context(), bl, eu, func(b *domain.Book) error {
-			after = captureRevision(b, in.Date, b.DayCaptures(in.Date))
+			segments, err := b.DayCaptures(in.Date)
+			if err != nil {
+				return err
+			}
+			after = captureRevision(b, in.Date, segments)
 			return nil
 		})
 		if err != nil {

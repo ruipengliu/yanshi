@@ -291,7 +291,7 @@ func TestEraseValidationTasksAndSnapshot(t *testing.T) {
 		t.Fatal(task)
 	}
 	raw, _ := json.Marshal(b)
-	if strings.Contains(string(raw), "原文1.2") || b.captureDays[eraseDate].containsRef(Ref{Seq: 1, Index: 2}) {
+	if strings.Contains(string(raw), "原文1.2") || containsRefTest(t, b, eraseDate, Ref{Seq: 1, Index: 2}) {
 		t.Fatal("erased text survived")
 	}
 	if _, err := b.Erase(eraseDate, "1.2", "1.2", captureTestNow); err == nil {
@@ -368,7 +368,7 @@ func TestEraseDay(t *testing.T) {
 	if err != nil || task.Kind != "day" {
 		t.Fatal(task, err)
 	}
-	if len(b.changesets) != 0 || len(b.captureDays[eraseDate].segments()) != 0 || b.CaptureProgress(eraseDate) != "0" {
+	if len(b.changesets) != 0 || len(dayCapturesTest(t, b, eraseDate)) != 0 || b.CaptureProgress(eraseDate) != "0" {
 		t.Fatal("day survived")
 	}
 	if err := b.BindDay(eraseDate, "rebuilt"); err != ErrDayDeleted {
@@ -382,7 +382,7 @@ func TestEraseDay(t *testing.T) {
 		t.Fatal("day retry changed task")
 	}
 	// 从未绑定的原文与空业务日也能删除，待办仍可持久化。
-	unbound := NewBook()
+	unbound := newCaptureTestBook()
 	if _, err := unbound.AppendCaptures(eraseDate, "one", []CaptureSegment{{Speaker: "wearer", Text: "待擦"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +392,7 @@ func TestEraseDay(t *testing.T) {
 	if task, err := unbound.EraseDay(eraseDate, captureTestNow); err != nil || task.ID != "del_2026-10-27_2" {
 		t.Fatal(task, err)
 	}
-	empty := NewBook()
+	empty := newCaptureTestBook()
 	if err := empty.BindDay(eraseDate, "empty"); err != nil {
 		t.Fatal(err)
 	}
@@ -489,7 +489,7 @@ func TestUnboundIdentityAndUnaffectedFold(t *testing.T) {
 }
 
 func TestBindExistingChangesetsSnapshot(t *testing.T) {
-	b := NewBook()
+	b := newCaptureTestBook()
 	eraseChanges(t, b, "legacy", `{"source":{"from":"#1.0","to":"#1.0"}}`)
 	if b.changesets[0].Day != "" {
 		t.Fatal("unbound changeset got a day")
@@ -552,7 +552,7 @@ func TestEraseSummaryRevisionKeepsOriginalCommitments(t *testing.T) {
 }
 
 func TestDeletionRebuildSurvivesClone(t *testing.T) {
-	b := NewBook()
+	b := newCaptureTestBook()
 	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
 	if _, err := b.AppendCaptures(eraseDate, "capture", []CaptureSegment{{Speaker: "wearer", Text: "原文", TimeZone: "America/New_York"}}); err != nil {
 		t.Fatal(err)
@@ -561,7 +561,7 @@ func TestDeletionRebuildSurvivesClone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if task.TimeZone != "America/New_York" || len(b.DayCaptures(eraseDate)) != 0 {
+	if task.TimeZone != "America/New_York" || len(dayCapturesTest(t, b, eraseDate)) != 0 {
 		t.Fatal("lost original timezone or retained text")
 	}
 	candidates := []MemoryCandidate{{ID: "m", Summary: "候选"}}
@@ -593,7 +593,7 @@ func TestDeletionRebuildSurvivesClone(t *testing.T) {
 }
 
 func TestDayCapturesReadOnlyCopy(t *testing.T) {
-	b := NewBook()
+	b := newCaptureTestBook()
 	if _, err := b.AppendCaptures(eraseDate, "c", []CaptureSegment{{Speaker: "wearer", Text: "原文", TimeZone: "Asia/Shanghai"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -601,14 +601,14 @@ func TestDayCapturesReadOnlyCopy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := b.DayCaptures(eraseDate)
+	got := dayCapturesTest(t, b, eraseDate)
 	got[0].Text = "changed"
 	day := b.BusinessDay(eraseDate)
 	if day.TimeZone != "Asia/Shanghai" || day.Deleted {
 		t.Fatalf("day: %+v", day)
 	}
 	after, err := b.MarshalJSON()
-	if err != nil || string(before) != string(after) || b.DayCaptures(eraseDate)[0].Text != "原文" {
+	if err != nil || string(before) != string(after) || dayCapturesTest(t, b, eraseDate)[0].Text != "原文" {
 		t.Fatal("read mutated book")
 	}
 }

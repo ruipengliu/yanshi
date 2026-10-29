@@ -152,18 +152,27 @@ func refLE(a, b Ref) bool { return a.Seq < b.Seq || (a.Seq == b.Seq && a.Index <
 
 // existingRefs 在绑定业务日内检查引用本身，不检查范围内部是否有空号；source 与交谈、承诺共用。
 func (k *review) existingRefs(what string, refs []string) bool {
-	_, day := k.c.u.boundDay(k.c.session)
-	return k.existingDayRefs(day, what, refs)
+	date, _ := k.c.u.boundDay(k.c.session)
+	return k.existingDayRefs(date, what, refs)
 }
 
-func (k *review) existingDayRefs(day *captureDay, what string, refs []string) bool {
-	if day == nil {
+func (k *review) existingDayRefs(date string, what string, refs []string) bool {
+	if k.c.u.captureDays[date] == nil {
 		return true
 	}
 	valid := true
 	for _, r := range refs {
 		ref, ok := parseRef(r)
-		if !ok || !day.containsRef(ref) {
+		found := false
+		if ok {
+			var err error
+			found, err = k.c.u.containsRef(date, ref)
+			if err != nil {
+				k.c.err = err
+				return false
+			}
+		}
+		if !ok || !found {
 			k.fail("%s引用的 %s 不存在：用旁听每行开头的编号", what, r)
 			valid = false
 		}
@@ -334,7 +343,7 @@ func (k *review) change(in changeIn, closing bool, inProject string) (Commitment
 	out := CommitmentChange{ID: in.ID, Rev: in.Rev, Refs: in.Refs, Exchanges: in.Exchanges, Reason: in.Reason, SpokenAt: k.spoken(in.Refs)}
 	if k.author == AuthorProject {
 		// 项目只应依据摘要；若请求仍带 refs，也不能绕过该业务日的墓碑。
-		k.existingDayRefs(k.c.u.captureDays[k.date], what, in.Refs)
+		k.existingDayRefs(k.date, what, in.Refs)
 		if len(in.Exchanges) == 0 {
 			k.fail("%s须用 exchanges 写明依据的交谈 ID", what)
 		}
@@ -449,6 +458,9 @@ func (c *Call) FileChanges() string {
 		}
 		key, src = "from:"+in.Source.From, Source{From: in.Source.From, To: in.Source.To}
 		if !k.existingRefs("source 的端点", []string{in.Source.From, in.Source.To}) {
+			if c.err != nil {
+				return ""
+			}
 			return rejected(k.problems)
 		}
 	}
@@ -603,13 +615,19 @@ func (c *Call) FileChanges() string {
 		cs.MergeCommitments = append(cs.MergeCommitments, CommitmentMerge{Into: m.Into, From: m.From, Reason: m.Reason})
 	}
 	k.matchCommitments(&cs, old)
+	if c.err != nil {
+		return ""
+	}
 	if len(k.problems) > 0 {
 		return rejected(k.problems)
 	}
-	u.commit(&cs, old, k.news)
 	if !k.day {
-		c.advanceCaptures(k.from, k.to)
+		if err := c.advanceCaptures(k.from, k.to); err != nil {
+			c.err = err
+			return ""
+		}
 	}
+	u.commit(&cs, old, k.news)
 	return c.receipt(&cs, k.notes)
 }
 
@@ -870,6 +888,9 @@ func (c *Call) UpdateCommitments() string {
 		if ch, ok := k.change(r, true, p.ID); ok {
 			cs.CloseCommitments = append(cs.CloseCommitments, ch)
 		}
+	}
+	if c.err != nil {
+		return ""
 	}
 	if len(k.problems) > 0 {
 		return rejected(k.problems)

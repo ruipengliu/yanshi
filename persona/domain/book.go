@@ -56,8 +56,9 @@ type State struct {
 	ReminderIDs []string `json:"reminders"`
 }
 
-// Book 是一条业务线中一个 EndUser 的全部知识；只能在所属存储事务中修改。
+// Book 保存一个 owner 的非原文账本；原文只经所属事务绑定的接缝访问。
 type Book struct {
+	captures      CaptureAccess
 	captureDays   map[string]*captureDay
 	deletionTasks []DeletionTask
 	projects      []Project

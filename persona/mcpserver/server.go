@@ -85,7 +85,7 @@ func (x *server) call(ctx context.Context, metadata mcp.Meta, args json.RawMessa
 	apply := func(book *domain.Book) error {
 		call = domain.NewCall(book, session, args, cites, now)
 		text = handler(call)
-		return nil
+		return call.Err()
 	}
 	transact := x.store.Update
 	if readOnly {

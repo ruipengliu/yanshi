@@ -1,4 +1,4 @@
-// Package domain 保存 Persona 的知识、变更集检查与回执文字；不做 IO，不持锁，时间由调用方传入。
+// Package domain 保存 Persona 的知识、变更集检查与回执文字；仅经事务接缝访问原文，不持锁，时间由调用方传入。
 package domain
 
 import (
@@ -22,6 +22,7 @@ type Citation struct {
 // Call 在一个 Book 的事务内执行一次领域操作，所有输入都由适配层显式传入。
 // 不复用 Call，以免上一次调用的通知泄漏到下一次。
 type Call struct {
+	err     error
 	u       *Book
 	session string
 	args    json.RawMessage
@@ -39,4 +40,9 @@ type DayFiled struct {
 
 func NewCall(book *Book, session string, args json.RawMessage, cites map[string]Citation, now time.Time) *Call {
 	return &Call{u: book, session: session, args: args, cites: cites, now: now}
+}
+
+// Err 与文字回执分开，存储故障不能变成可提交的领域拒收。适配层必须将它交回事务。
+func (c *Call) Err() error {
+	return c.err
 }

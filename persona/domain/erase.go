@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"iter"
 	"regexp"
 	"slices"
 	"strings"
@@ -43,10 +44,19 @@ func (u *Book) Erase(date, from, to string, now time.Time) (DeletionTask, error)
 	}
 	f, ok1 := parseCaptureRef(strings.TrimPrefix(from, "#"))
 	t, ok2 := parseCaptureRef(strings.TrimPrefix(to, "#"))
-	if !ok1 || !ok2 || !refLE(f, t) || !day.containsRef(f) || !day.containsRef(t) {
+	if !ok1 || !ok2 || !refLE(f, t) {
 		return DeletionTask{}, fmt.Errorf("invalid erasure range")
 	}
-	return u.erase(date, f, t, false, now), nil
+	for _, ref := range []Ref{f, t} {
+		found, err := u.containsRef(date, ref)
+		if err != nil {
+			return DeletionTask{}, err
+		}
+		if !found {
+			return DeletionTask{}, fmt.Errorf("invalid erasure range")
+		}
+	}
+	return u.erase(date, f, t, false, now)
 }
 
 // EraseDay 也接受尚无片段的业务日；重复请求返回同一待办，不重新开放当天。
@@ -63,11 +73,19 @@ func (u *Book) EraseDay(date string, now time.Time) (DeletionTask, error) {
 		}
 		return DeletionTask{}, ErrDayDeleted
 	}
-	var from, to Ref
-	if segs := day.segments(); len(segs) > 0 {
-		from, to = segs[0].ref, segs[len(segs)-1].ref
+	access, err := u.captureAccess()
+	if err != nil {
+		return DeletionTask{}, err
 	}
-	return u.erase(date, from, to, true, now), nil
+	first, _, err := access.Adjacent(date, Ref{}, false)
+	if err != nil {
+		return DeletionTask{}, err
+	}
+	last, _, err := access.Adjacent(date, Ref{}, true)
+	if err != nil {
+		return DeletionTask{}, err
+	}
+	return u.erase(date, first.Ref, last.Ref, true, now)
 }
 
 type captureRange struct{ from, to Ref }
@@ -83,24 +101,33 @@ func sourceRange(from, to string) (captureRange, bool) {
 }
 
 // captureRanges 与处理进度采用相同间隔；没有时间的片段保守地留在同一时段。
-func captureRanges(segs []captureSegment, gap time.Duration) []captureRange {
+func captureRanges(segs iter.Seq2[captureSegment, error], gap time.Duration) ([]captureRange, error) {
 	var out []captureRange
-	for i, s := range segs {
-		if i == 0 || captureApart(segs[i-1].g, s.g, gap) {
+	var prev CaptureSegment
+	for s, err := range segs {
+		if err != nil {
+			return nil, err
+		}
+		if len(out) == 0 || captureApart(prev, s.g, gap) {
 			out = append(out, captureRange{from: s.ref})
 		}
 		out[len(out)-1].to = s.ref
+		prev = s.g
 	}
-	return out
+	return out, nil
 }
 
-func (u *Book) erase(date string, from, to Ref, whole bool, now time.Time) DeletionTask {
+func (u *Book) erase(date string, from, to Ref, whole bool, now time.Time) (DeletionTask, error) {
 	day := u.captureDays[date]
 	zone := u.BusinessDay(date).TimeZone
 	erased := captureRange{from, to}
 	gap := time.Duration(day.GapMS) * time.Millisecond
 	var affected []captureRange
-	for _, span := range captureRanges(day.segments(), gap) {
+	spans, err := captureRanges(u.captureSegments(date, Ref{}, Ref{}), gap)
+	if err != nil {
+		return DeletionTask{}, err
+	}
+	for _, span := range spans {
 		if span.intersects(erased) {
 			affected = append(affected, span)
 		}
@@ -118,13 +145,21 @@ func (u *Book) erase(date string, from, to Ref, whole bool, now time.Time) Delet
 			}
 		}
 	}
-	// 保留批次与段的空号，清掉整段结构，连说话人和时间也不留下。
-	for bi := range day.Batches {
-		batch := &day.Batches[bi]
-		for i := range batch.Segments {
-			if whole || erased.contains(Ref{Seq: batch.Number, Index: i}) {
-				batch.Segments[i] = CaptureSegment{}
-			}
+	access, err := u.captureAccess()
+	if err != nil {
+		return DeletionTask{}, err
+	}
+	if err := access.Erase(date, from, to); err != nil {
+		return DeletionTask{}, err
+	}
+	last, _, err := access.Adjacent(date, Ref{}, true)
+	if err != nil {
+		return DeletionTask{}, err
+	}
+	day.TimeZone = last.Segment.TimeZone
+	if !whole {
+		if err := u.rewindCaptures(date, affected, gap); err != nil {
+			return DeletionTask{}, err
 		}
 	}
 	if from.Seq != 0 {
@@ -134,8 +169,6 @@ func (u *Book) erase(date string, from, to Ref, whole bool, now time.Time) Delet
 	u.days = slices.DeleteFunc(u.days, func(d Day) bool { return d.Date == date })
 	if whole {
 		day.Progress, day.Deleted = "0", true
-	} else {
-		day.rewind(affected, gap)
 	}
 	day.ReadThrough = Ref{}
 	sequence := 1
@@ -154,12 +187,13 @@ func (u *Book) erase(date string, from, to Ref, whole bool, now time.Time) Delet
 	day.Session = ""
 	u.deletionTasks = append(u.deletionTasks, task)
 	u.refold()
-	return cloneDeletionTask(task)
+	return cloneDeletionTask(task), nil
 }
 
-func (d *captureDay) rewind(affected []captureRange, gap time.Duration) {
+func (u *Book) rewindCaptures(date string, affected []captureRange, gap time.Duration) error {
+	d := u.captureDays[date]
 	if len(affected) == 0 {
-		return
+		return nil
 	}
 	// 整个旧时段消失时仍以旧起点回退；剩余片段合并成更早开始的时段时继续向前找。
 	first := affected[0].from
@@ -168,23 +202,28 @@ func (d *captureDay) rewind(affected []captureRange, gap time.Duration) {
 			first = r.from
 		}
 	}
-	segs := d.segments()
-	for _, span := range captureRanges(segs, gap) {
+	spans, err := captureRanges(u.captureSegments(date, Ref{}, Ref{}), gap)
+	if err != nil {
+		return err
+	}
+	for _, span := range spans {
 		if slices.ContainsFunc(affected, span.intersects) && refLE(span.from, first) {
 			first = span.from
 		}
 	}
-	previous := Ref{}
-	for _, s := range segs {
-		if s.ref == first || !refLE(s.ref, first) {
-			break
-		}
-		previous = s.ref
+	access, err := u.captureAccess()
+	if err != nil {
+		return err
+	}
+	previous, _, err := access.Adjacent(date, first, true)
+	if err != nil {
+		return err
 	}
 	at, _ := parseCaptureCursor(d.Progress)
-	if refLE(previous, at.Last) {
-		d.Progress = (captureCursor{Last: previous}).String()
+	if refLE(previous.Ref, at.Last) {
+		d.Progress = (captureCursor{Last: previous.Ref}).String()
 	}
+	return nil
 }
 
 func (u *Book) changesetDay(cs Changeset) string {

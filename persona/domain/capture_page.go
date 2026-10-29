@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	"fmt"
+	"iter"
 	"strings"
 	"time"
 	_ "time/tzdata"
@@ -216,7 +217,7 @@ func (c *Call) Captures(o PageOptions) (StructuredPage, error) {
 	if err := c.u.checkWorkingSession(c.session); err != nil {
 		return StructuredPage{}, err
 	}
-	_, day := c.u.boundDay(c.session)
+	date, day := c.u.boundDay(c.session)
 	if day == nil {
 		return StructuredPage{}, fmt.Errorf("这个 Session 没有绑定业务日")
 	}
@@ -246,7 +247,9 @@ func (c *Call) Captures(o PageOptions) (StructuredPage, error) {
 		day.GapMS, day.GapSet = o.GapMS, true
 	}
 	o.GapMS = day.GapMS
-	page, err := capturePage(day.segments(), at, o, c.now, in.All)
+	page, err := capturePage(func(from Ref) iter.Seq2[captureSegment, error] {
+		return c.u.captureSegments(date, from, Ref{})
+	}, at, o, c.now, in.All)
 	if err == nil && page.Kind == "page" && len(page.Segments) > 0 {
 		last, _ := parseCaptureRef(page.Segments[len(page.Segments)-1].Ref)
 		if refLE(day.ReadThrough, last) {
@@ -257,7 +260,7 @@ func (c *Call) Captures(o PageOptions) (StructuredPage, error) {
 }
 
 // capturePage 与内核 page、ParsePage 的字符计数顺序一致：先检查下一段，再加入新日期头。
-func capturePage(segs []captureSegment, at captureCursor, o PageOptions, now time.Time, all bool) (out StructuredPage, err error) {
+func capturePage(scan func(Ref) iter.Seq2[captureSegment, error], at captureCursor, o PageOptions, now time.Time, all bool) (out StructuredPage, err error) {
 	defer func() {
 		if err == nil && o.MaxToolResult > 0 && capturePageTokens(out) > o.MaxToolResult {
 			out, err = StructuredPage{}, pageBudgetError(o.MaxToolResult)
@@ -270,8 +273,11 @@ func capturePage(segs []captureSegment, at captureCursor, o PageOptions, now tim
 	count, chars, tokens := 0, 0, 0
 	day := ""
 	ended, done, cont := false, true, false
-	nextIndex := len(segs)
-	for i, s := range segs {
+	nextRef := Ref{}
+	for s, readErr := range scan(Ref{Seq: at.Last.Seq}) {
+		if readErr != nil {
+			return StructuredPage{}, readErr
+		}
 		// 内核从上一批起读，前一批的末段不参与续页判断。
 		if s.ref.Seq < at.Last.Seq {
 			continue
@@ -288,11 +294,11 @@ func capturePage(segs []captureSegment, at captureCursor, o PageOptions, now tim
 			}
 		} else {
 			if captureApart(prev, s.g, gap) {
-				ended, done, nextIndex = true, false, i
+				ended, done, nextRef = true, false, s.ref
 				break
 			}
 			if count+1 > o.Limit || chars+n > o.MaxChars {
-				done, nextIndex = false, i
+				done, nextRef = false, s.ref
 				break
 			}
 		}
@@ -312,7 +318,7 @@ func capturePage(segs []captureSegment, at captureCursor, o PageOptions, now tim
 				if count == 0 {
 					return StructuredPage{}, pageBudgetError(o.MaxToolResult)
 				}
-				done, nextIndex = false, i
+				done, nextRef = false, s.ref
 				break
 			}
 		}
@@ -328,7 +334,11 @@ func capturePage(segs []captureSegment, at captureCursor, o PageOptions, now tim
 	}
 	lastSeg, atEnd := prev, done
 	if !done && !ended && !cont && !all && !now.IsZero() {
-		lastSeg, atEnd = captureSpanTail(segs[nextIndex:], prev, gap)
+		// 首轮迭代已关闭，再从未返回的片段检查时段尾，PG 不必嵌套占用游标。
+		lastSeg, atEnd, err = captureSpanTail(scan(nextRef), prev, gap)
+		if err != nil {
+			return StructuredPage{}, err
+		}
 	}
 	if t, ok := captureLocalTime(lastSeg); atEnd && ok && !all && !now.IsZero() && now.Sub(t) < gap {
 		return StructuredPage{Kind: "in_progress", Span: span.String(), LastAt: t.Format(time.RFC3339Nano), TimeZone: lastSeg.TimeZone}, nil
@@ -337,14 +347,17 @@ func capturePage(segs []captureSegment, at captureCursor, o PageOptions, now tim
 	return out, nil
 }
 
-func captureSpanTail(segs []captureSegment, prev CaptureSegment, gap time.Duration) (CaptureSegment, bool) {
-	for _, s := range segs {
+func captureSpanTail(segs iter.Seq2[captureSegment, error], prev CaptureSegment, gap time.Duration) (CaptureSegment, bool, error) {
+	for s, err := range segs {
+		if err != nil {
+			return CaptureSegment{}, false, err
+		}
 		if captureApart(prev, s.g, gap) {
-			return prev, false
+			return prev, false, nil
 		}
 		prev = s.g
 	}
-	return prev, true
+	return prev, true, nil
 }
 
 func capturePageTokens(p StructuredPage) int {

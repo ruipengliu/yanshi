@@ -23,7 +23,7 @@ func TestCaptureSpeakerRefValidation(t *testing.T) {
 		{name: "wearer", ref: "P-0012", wearer: true, invalid: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			b := NewBook()
+			b := newCaptureTestBook()
 			g := CaptureSegment{Speaker: "other", SpeakerKey: "other-1", SpeakerRef: tc.ref, Text: "原话"}
 			if tc.wearer {
 				g.Speaker, g.SpeakerKey = "wearer", ""
@@ -38,7 +38,7 @@ func TestCaptureSpeakerRefValidation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := b.DayCaptures("2026-10-27")[1].SpeakerRef; got != tc.ref {
+			if got := dayCapturesTest(t, b, "2026-10-27")[1].SpeakerRef; got != tc.ref {
 				t.Fatalf("speaker ref = %q", got)
 			}
 		})
@@ -49,7 +49,7 @@ func TestCaptureSpeakerRefPersistence(t *testing.T) {
 	segs := []CaptureSegment{{Speaker: "other", SpeakerKey: "other-1", SpeakerRef: "P-0012", Text: "原话"}}
 	b := captureTestBook(t, segs)
 	segs[0].SpeakerRef = "P-mutated"
-	clone, err := b.Clone()
+	clone, err := cloneCaptureTestBook(b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,24 +59,24 @@ func TestCaptureSpeakerRefPersistence(t *testing.T) {
 			t.Fatal("page lost speaker ref")
 		}
 		p.Segments[0].SpeakerRef = "P-page"
-		view := book.DayCaptures("2026-10-27")
+		view := dayCapturesTest(t, book, "2026-10-27")
 		if view[0].SpeakerRef != "P-0012" {
 			t.Fatal("page aliases stored segment")
 		}
 		view[0].SpeakerRef = "P-view"
-		if book.DayCaptures("2026-10-27")[0].SpeakerRef != "P-0012" {
+		if dayCapturesTest(t, book, "2026-10-27")[0].SpeakerRef != "P-0012" {
 			t.Fatal("view aliases stored segment")
 		}
 	}
-	clone.captureDays["2026-10-27"].Batches[0].Segments[0].SpeakerRef = "P-clone"
-	if b.DayCaptures("2026-10-27")[0].SpeakerRef != "P-0012" {
+	clone.CaptureAccess().(testCaptures)["2026-10-27"][1][0].SpeakerRef = "P-clone"
+	if dayCapturesTest(t, b, "2026-10-27")[0].SpeakerRef != "P-0012" {
 		t.Fatal("clone aliases stored segment")
 	}
 	if _, err := b.AppendCaptures("2026-10-27", "one", segs); err == nil {
 		t.Fatal("changed ref accepted as duplicate")
 	}
 	for _, whole := range []bool{false, true} {
-		book, err := b.Clone()
+		book, err := cloneCaptureTestBook(b)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -88,7 +88,7 @@ func TestCaptureSpeakerRefPersistence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if book.captureDays["2026-10-27"].Batches[0].Segments[0] != (CaptureSegment{}) {
+		if book.CaptureAccess().(testCaptures)["2026-10-27"][1][0] != (CaptureSegment{}) {
 			t.Fatal("erasure left segment metadata")
 		}
 		raw, err := json.Marshal(book)
@@ -102,23 +102,29 @@ func TestCaptureSpeakerRefPersistence(t *testing.T) {
 }
 
 func TestCaptureSpeakerRefOldSnapshot(t *testing.T) {
-	// 固定旧存储形状，不能先用新类型生成数据而把兼容性问题隐藏起来。
+	// 原文不再属于 Book 的 JSON；旧内存格式必须显式迁移，不能静默丢失。
 	const old = `{"CaptureDays":{"2026-10-27":{"Session":"s","Batches":[{"ID":"one","Number":1,"Segments":[{"speaker":"other","speaker_key":"other-1","text":"旧原话"}]}],"Next":1,"Progress":"0"}}}`
 	var b Book
-	if err := json.Unmarshal([]byte(old), &b); err != nil {
+	if err := json.Unmarshal([]byte(old), &b); err == nil {
+		t.Fatal("legacy payload silently discarded")
+	}
+	// 无 speaker_ref 的片段和线上页仍省略该字段。
+	var segment CaptureSegment
+	if err := json.Unmarshal([]byte(`{"speaker":"other","speaker_key":"other-1","text":"旧原话"}`), &segment); err != nil {
 		t.Fatal(err)
 	}
-	p := captureTestRead(t, &b, `{"all":true}`, captureTestOptions())
+	book := captureTestBook(t, []CaptureSegment{segment})
+	p := captureTestRead(t, book, `{"all":true}`, captureTestOptions())
 	if p.Segments[0].SpeakerRef != "" || p.Segments[0].Text != "旧原话" {
-		t.Fatal("old snapshot changed")
+		t.Fatal("old segment changed")
 	}
-	for _, value := range []any{&b, p, Citation{Ref: "#1.0", Speaker: "other", SpeakerKey: "other-1"}} {
+	for _, value := range []any{book, p, Citation{Ref: "#1.0", Speaker: "other", SpeakerKey: "other-1"}} {
 		raw, err := json.Marshal(value)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if strings.Contains(string(raw), "speaker_ref") {
-			t.Fatal("empty ref changed old JSON")
+			t.Fatal("empty ref changed JSON")
 		}
 	}
 }

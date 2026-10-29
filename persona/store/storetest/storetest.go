@@ -15,6 +15,9 @@ import (
 
 func Run(t *testing.T, factory func() store.Store) {
 	t.Helper()
+	t.Run("captures", func(t *testing.T) {
+		captures(t, factory)
+	})
 	t.Run("deletions", func(t *testing.T) { deletions(t, factory) })
 	t.Run("deletion_rebuild", func(t *testing.T) { deletionRebuild(t, factory) })
 	ctx := context.Background()
