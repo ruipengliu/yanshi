@@ -190,3 +190,26 @@ func (c *Client) MemoriesBySource(ctx context.Context, businessLine, endUser str
 	}
 	return out, nil
 }
+
+// OneshotResult 保留 output 的 JSON 形状，声明可返回字符串或结构化值。
+type OneshotResult struct {
+	Version string          `json:"version"`
+	Model   string          `json:"model"`
+	Output  json.RawMessage `json:"output"`
+}
+
+func (c *Client) Oneshot(ctx context.Context, endUser, name, input string) (OneshotResult, error) {
+	return c.OneshotForBusinessLine(ctx, "", endUser, name, input)
+}
+
+// OneshotForBusinessLine 让未开启鉴权的开发入口也能显式指定业务线；服务令牌仍由内核核验。
+func (c *Client) OneshotForBusinessLine(ctx context.Context, businessLine, endUser, name, input string) (OneshotResult, error) {
+	in := struct {
+		BusinessLine string `json:"business_line,omitempty"`
+		EndUser      string `json:"end_user"`
+		Input        string `json:"input"`
+	}{businessLine, endUser, input}
+	var out OneshotResult
+	err := c.post(ctx, "/v1/oneshots/"+url.PathEscape(name), in, &out)
+	return out, err
+}

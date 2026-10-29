@@ -25,6 +25,7 @@ import (
 	"yanshi/internal/eval"
 	"yanshi/internal/model"
 	"yanshi/internal/model/codex"
+	"yanshi/internal/oneshot"
 	"yanshi/internal/realtime/volc"
 	sandboxdocker "yanshi/internal/sandbox/docker"
 )
@@ -35,10 +36,12 @@ func evalCmd(args []string) error {
 	xinliBin := fs.String("xinli-bin", "bin/xinli", "xinli dev 夹具二进制（make eval 自动构建）")
 	suite := fs.String("suite", "evals", "评测用例目录")
 	agentsDir := fs.String("agents", "agents", "AgentDef 目录")
+	oneshotsDir := fs.String("oneshots", "oneshots", "单次调用声明目录")
+	oneshotVersion := fs.String("oneshot-version", "", "评测该单次调用版本而不是稳定版本")
 	caseGlob := fs.String("case", "*", "只运行名称匹配的用例")
 	trials := fs.Int("trials", 0, "覆盖每个用例的运行次数")
 	agentVersion := fs.String("agent-version", "", "评测该 AgentDef 版本而不是稳定版本（灰度前的评测门槛）")
-	modelOverride := fs.String("model", "", "替换被评测 AgentDef 的模型（provider/model），用于比较模型")
+	modelOverride := fs.String("model", "", "替换被评测 AgentDef 与单次调用的模型（provider/model），用于比较模型")
 	spanRuns := fs.Bool("xinli-span-runs", false, "实验：xinli-day 每个完整时段一个 Run，当天整理另开 Run（不改用例的断言）")
 	judgeModel := fs.String("judge", envOr("YANSHI_JUDGE_MODEL", "codex/gpt-6.1-sol:high"), "评分模型（与被评测模型不同系列，ADR-0018）；codex/<模型>:<推理强度> 经本机已登录的 Codex CLI 调用")
 	embedModel := fs.String("embedding-model", os.Getenv("YANSHI_EMBEDDING_MODEL"), "Memory 检索用的嵌入模型")
@@ -63,6 +66,15 @@ func evalCmd(args []string) error {
 		return err
 	}
 	agents.SetReleases(rel)
+	shots, err := oneshot.LoadDir(*oneshotsDir)
+	if err != nil {
+		return err
+	}
+	shotReleases, _, err := shots.LoadReleases(filepath.Join(*oneshotsDir, oneshot.ReleasesFile))
+	if err != nil {
+		return err
+	}
+	shots.SetReleases(shotReleases)
 	all, err := eval.LoadSuite(*suite)
 	if err != nil {
 		return err
@@ -83,7 +95,7 @@ func evalCmd(args []string) error {
 	gw := gateway(logger, defaultModelLimits, nil)
 	// 评分模型经本机的 Codex CLI 调用（只用于评测，serve 不注册）。
 	gw.Register("codex", codex.Provider{})
-	cfg := eval.Config{XinliBin: *xinliBin, Agents: agents, Model: gw, Judge: *judgeModel, EmbedModel: *embedModel,
+	cfg := eval.Config{XinliBin: *xinliBin, Agents: agents, Oneshots: shots, OneshotVersion: *oneshotVersion, Model: gw, Judge: *judgeModel, EmbedModel: *embedModel,
 		ModelOverride: *modelOverride, AgentVersion: *agentVersion, Trials: *trials, Parallel: *parallel, Logger: logger,
 		Progress: func(name string, trial int, passed bool) {
 			mark := "✓"

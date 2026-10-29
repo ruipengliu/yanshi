@@ -208,7 +208,7 @@ App 内的实时体验仍走 Connection 与 SSE。出站流服务于服务端的
 
 ## 7. 单次调用（Oneshot）
 
-> 按 P3 的讨论改写（[整体架构](./persona-architecture.md) §13 的 Q77–Q82）：只做 `generate`，输入只收文字。
+> 单次调用已实现（P3-⑤，2026-10-28）；按 [整体架构](./persona-architecture.md) §13 的 Q77–Q82，只做 `generate`，输入只收文字。编译、检查与真实模型评测待远端执行。
 
 ### 7.1 为什么
 
@@ -228,23 +228,29 @@ input: {max_chars: 8000}       # 按 Unicode 字符计
 output:                        # 可选：JSON Schema，平台校验（不解析外部引用），不合格时修复一次后失败
   type: object
   properties: {brief: {type: string}}
+  required: [brief]
+  additionalProperties: false
 max_output_tokens: 300
 concurrency: 8                 # 本声明（各版本共享）的并发上限
 work_class: interactive        # interactive | background
 ```
 
-`kind: embedding` 推迟到 Persona 的向量检索（Q77）。
+声明不需要 `kind`；显式写 `kind: generate` 兼容接受，其他值拒绝。`kind: embedding` 推迟到 Persona 的向量检索（Q77）。名字与版本沿用 AgentDef 格式；输入、输出 token 与声明并发上限必须为正；模型引用须为 provider/model。缺省 work_class 为 interactive。同名所有版本的 concurrency 必须一致。Schema 在加载时由 google/jsonschema-go 编译，内部引用可用，禁止外部引用与加载器。
 
 ### 7.3 接口与语义
 
-`POST /v1/oneshots/{name}`，`{end_user, input}`。服务令牌须带 `end_user`；用户令牌只能是本人。返回实际版本、模型与输出（文字，或声明了 `output` 时的 JSON）。
+`POST /v1/oneshots/{name}`，`{end_user, input}`。服务令牌须带 `end_user`；用户令牌只能是本人。返回 `{name, version, model, output}`，output 为字符串，声明了 Schema 时为 JSON 值。开发模式沿用创建 Session 的方式在请求体给出 business_line。目录不存在或没有声明时接口返回 404，不装配单次调用服务，也不校验单次调用限额。
 
 - **输入只收文字**（Q78）：ADR-0050 后原文在业务线，业务线自己读出并按说话人格式化。单次调用没有工具、Memory 与日志，不涉及来源推导，其中的说话人标注不会被当作可信来源。
 - **不写日志、不存结果**：日志与指标只记 ID、名称、版本与 token 数（ADR-0015）。调用方不得保存他人原话的派生内容超过原文的保留期，原文擦除后要丢弃在途结果（接入文档写明）。不承诺跨 HTTP 重试的幂等：没有结果存储，重试就是再调一次、再计一次费。
-- **顺序**：鉴权与声明、输入校验 → EndUser 删除屏障（§12）→ 输入内容安全 → 配额 → 准入 → 模型调用 → 计量 → 输出内容安全 → Schema 校验（不合格修复一次，两次都计量；内容安全拒绝不重试）→ 返回前复查屏障。总时限从准入之前开始，覆盖修复调用。
+- **顺序**：鉴权与声明、输入校验 → EndUser 删除屏障（§12）→ 输入内容安全 → 配额 → 准入 → 模型调用 → 计量 → 输出内容安全 → Schema 校验（不合格修复一次，两次都计量；内容安全拒绝不重试）→ 返回前复查屏障。总时限从声明与输入校验之前开始，默认 60 秒，覆盖审核、排队和两次调用。一次请求只选一次版本；修复仍用同一声明、原始输入及固定错误类别 invalid_json 或 schema_mismatch，不回送失败输出或校验库原文。客户端取消不撤销已消耗 token 的计量，但计量仍受原总时限约束；存储失败或时限已到时沿用 ADR-0019 的尽力计量。
 - **计量与配额**：照常计量到业务线与 EndUser（ADR-0019），用量记 `oneshot = name@version`（不冒充 Agent），超额拒绝；价格表的启动校验覆盖所有单次调用的模型。
-- **准入**（Q80）：与 Run 的模型调用共用 `model.Guard`。优先级：交互 Run > 交互单次调用 > 后台 Run > 后台单次调用（`work_class: background`）。并发受限时，名额释放先回填后台 Run 的最低在途份额，达到份额后按上述顺序交付；后台单次调用不计入份额。最低份额默认并发上限的 1/8 向上取整，须严格小于上限（并发为 1 时显式设 0）；不抢占、不限制后台上限，空闲时后台可占满。四类准入与按键上限工具已实现于 `internal/model`，服务接入见 P3-⑤。单次调用另有三层并发上限：全部单次调用合计、每业务线、每个声明；进入 Guard 之前按固定顺序有界等待，超时返回 429，持有到逻辑调用结束（含重试退避）。合计上限必须小于提供商的总并发（启动校验）：这部分容量单次调用永远占不到，问答在单次调用饱和时仍有名额。RPS 令牌桶共享，RPS 成为瓶颈时单次调用仍可能挤占问答的发起速率（遗留）。
-- **评测**：`evals/` 增加单次调用的用例形态，改指令与模型须与基线比较。
+- **准入**（Q80）：与 Run 的模型调用共用 `model.Guard`。优先级：交互 Run > 交互单次调用 > 后台 Run > 后台单次调用（`work_class: background`）。并发受限时，名额释放先回填后台 Run 的最低在途份额，达到份额后按上述顺序交付；后台单次调用不计入份额。最低份额默认并发上限的 1/8 向上取整，须严格小于上限（并发为 1 时显式设 0）；不抢占、不限制后台上限，空闲时后台可占满。四类准入与按键上限工具位于 `internal/model`，`oneshot.Service` 经 `app.NewCore` 装配并接入。单次调用另有三层并发上限：全部单次调用合计、每业务线、每个声明；进入 Guard 之前按固定顺序有界等待，超时返回 429，持有到逻辑调用结束（含重试退避）。合计上限必须小于提供商的总并发（启动校验）：这部分容量单次调用永远占不到，问答在单次调用饱和时仍有名额。RPS 令牌桶共享，RPS 成为瓶颈时单次调用仍可能挤占问答的发起速率（遗留）。
+- **三层配置**：合计用 `app.Options.OneshotMax`（默认 8），业务线用配置 oneshots.max_concurrency（默认 0，只受其他层约束），声明用 concurrency。按合计、业务线、声明名依次获取；声明键不含版本或业务线。`app.Options.OneshotWait` 为每层最长等待（默认 2 秒），失败时逆序释放已获取的名额；成功时持有到函数返回。`app.Options.OneshotDeadline` 为整个请求的时限。
+- **错误**：未知声明或删除屏障 404；空输入、缺 EndUser、Unicode 字符超限 400；冒充其他用户 403；内容安全拒绝 422、不可用 503；配额 429（携带 quota 与 Retry-After）；并发等待超时 429；总时限或模型超时 504；两次 Schema 都不合格或模型失败 502。错误不携带输入输出。
+- **指标**：`yanshi_oneshot_calls_total{name, version, outcome}` 每个逻辑调用一次；未知名称使用空标签，防止用户任意名称成为指标维度。outcome 仅使用固定结果类别；模型 token 同时计入既有 token 指标。
+- **评测**：用例写 oneshot 而非 agent，每轮直接经同一个 Service 调用。`evals/oneshot-live-brief.yaml` 的三个独立输入每个 trial 都运行，三次 trial 检查波动；JSON 按完整 JSON 文本做 reply 与 judge 断言，声明有 Schema 默认检查 output_schema_valid。`-oneshot-version` 指定发布前版本，`-agent-version` 不影响它；改指令与模型须与基线比较。
+- **删除交错验证**：`internal/oneshot/service_test.go` 覆盖模型返回、计量写入、输出审核时注销，复用无 Session 的 Meter 屏障复查，最终不返回内容且用量匿名化；没有为单次调用新增 Session 或 sim 步进状态。
 
 ## 8. 档位（Tier）
 
@@ -314,7 +320,7 @@ ADR-0050 的退役条件已满足。内核不再登记回执或在 Run 完成时
 
 ## 12. EndUser 删除屏障
 
-注销账号（`DELETE /v1/end_users/{id}`）期间，按 EndUser 写入的地方可能让数据复活：新建 Session、不带 Session 的用量（`usage.Meter` 已复查 EndUser 屏障）、档位（`end_user_tiers`）。
+注销账号（`DELETE /v1/end_users/{id}`）期间，按 EndUser 写入的地方可能让数据复活：新建 Session、单次调用等不带 Session 的用量（`usage.Meter` 已复查 EndUser 屏障）、档位（`end_user_tiers`）。
 
 - 注销先写 EndUser 删除记录（按业务线隔离，分片键为 EndUser），再清除；所有按 EndUser 的写入入口"先写、后查"这条记录（与 `lifecycle.Recheck` 同一写法）：新建 Session、计量、档位、单次调用。
 - 屏障在删除执行期保存，全部清除完成之后再保留宽限期（默认 24 小时，经 `app.Options.EndUserGrace` 配置），由 Janitor 删除到期记录；之后同一 EndUser ID 可以重新使用。失败或尚未完成的注销不开始倒计时，重复注销复用原屏障。业务线须先使用户令牌失效，宽限期用于拦截注销前已在途、注销后才落盘的请求。Session 删除记录仍不保存 EndUser，屏障只在执行期与宽限期内保存它。
@@ -359,6 +365,45 @@ Mac mini 实测（2026-10-28，返工后复测；前四行的 p50/p99 是 Claim 
 | Enqueue：1 万活跃、百万远期 | 0.94ms | 1.27ms | — | — |
 
 认领与迁移按修订后的口径达标；百万远期停放对入队路径没有可见的影响（基线 p99 的波动来自单机噪声）。没有到期表时，百万停放使认领慢约 50 倍，到期表是必要的。
+
+### 单次调用子限额下的首字延迟（Q81）
+
+独立运行，不进 `make check`，不需要 PostgreSQL、Docker 或真实模型：
+
+```bash
+make build
+YANSHI_BENCH_TTFT=1 scripts/bench-ttft.sh
+# 可调整机器负载与采样时长：
+YANSHI_BENCH_TTFT=1 C=32 O=8 B=4 CLIENTS=64 WORKERS=64 \
+  RATE=16 TTFT=50ms LATENCY=1s WARMUP=20s DURATION=60s \
+  OUT=bench-results/ttft-local scripts/bench-ttft.sh
+```
+
+脚本依次启动全新的内存服务，用同一开放式问答计划（预热 20s、采样 60s、16 次/秒，每个 Run 一轮模型、无工具）运行以下配置。模型总耗时 1s、首字 50ms，平均约 16 条问答在途，小于 C−O=24。每组预先建立所有 Session/SSE，采样时不建连；进程文件描述符软限制尝试升到 8192。使用已有 `serve -oneshots` 指向临时目录，由脚本生成 `bench-brief` 声明，不进入全局声明目录；声明不带输出 Schema，避免假模型纯文本触发修复。
+
+| 配置 | model-concurrency | model-min-background | serve oneshot-concurrency / 声明 concurrency | 单次调用循环客户端 | 特殊参数 |
+|---|---:|---:|---:|---:|---|
+| baseline | 32 | 4 | 8 / 8 | 0 | 无 |
+| mixed | 32 | 4 | 8 / 8 | 64 | 无 |
+| control | 32 | 4 | 64 / 64 | 64 | -bench-oneshot-unreserved |
+
+各组均 `model-rps=0`、`oneshot-wait=200ms`、64 个通用 Worker；客户端与单次调用总时限默认 30s。可用 C/O/B/CLIENTS/WORKERS/RATE/TTFT/LATENCY/WARMUP/DURATION/RUN_TIMEOUT/PORT/BIN/OUT 环境变量调整，调整后须仍让问答在 C−O 的容量内且单次调用饱和。参数命令行、AgentDef、单次调用声明、JSON 与比较表保存在 OUT。
+
+control 只放开 serve 启动处“合计上限必须严格小于模型总并发”的校验；需 `YANSHI_BENCH_TTFT=1`、memory 存储且全部加载的单次调用声明使用 `bench/`。仍验证正限额、等待与时限。Service 的三层上限、`WithOneshot` 标记、Guard 优先级均不改；control 的合计与声明上限设为客户端数，不再阻止单次调用占满模型名额。Guard 不抢占，因此问答会等待已经开始的假模型释放槽位。这是检验子限额作用所需的最小对照，不给真实提供商增加绕过路径。
+
+判定：`mixed_p99 − baseline_p99 ≤ max(0.10 × baseline_p99, 20ms)` 且问答成功率不降。基线必须全成功；三组问答数相同、没有成功问答丢首字、客户端到达延误 p99 ≤ 20ms；mixed/control 必须有成功的单次调用，单次调用仅允许成功与 429。control 的 p99 必须比 baseline 高出同一容差，才算“明显退化”；没有退化表示实验未触发瓶颈。脚本打印表格，任一条件失败退出非零。
+
+**结论范围**：只覆盖同进程的并发瓶颈、RPS 不受限的负载；不代表真实模型或共享 RPS 被耗尽时的保证，不验证后台 Run 保底份额或多进程的全局上限。首字从实际提交计时，计划延误另外检验，避免客户端调度落后掩盖首字尾延迟。
+
+结果（2026-10-28，Mac mini，`scripts/bench-ttft.sh` 默认配置：C=32、O=8、B=4、64 个 Worker、假模型首字 50ms / 总耗时 1s、问答 16 次/秒开放式到达、预热 20s、采样 60s，每组 960 条问答）：
+
+| 配置 | 问答首字 p50/p95/p99（ms） | 端到端 p50/p95/p99（ms） | 问答成功率 | 单次调用成功/s | 单次调用 429 比例 |
+|---|---|---|---|---|---|
+| baseline | 52.41 / 52.91 / 53.19 | 1001.00 / 1002.04 / 1002.77 | 100% | — | — |
+| mixed | 51.95 / 52.78 / 53.08 | 1000.99 / 1001.94 / 1002.69 | 100% | 8.00 | 96.98% |
+| control | 550.77 / 992.16 / 1043.16 | 1500.41 / 1942.25 / 1991.47 | 100% | 15.98 | 0% |
+
+判定通过：`mixed_p99 − baseline_p99 = −0.10ms`，容差 20ms；问答成功率不降。对照组（单次调用不受合计上限约束）p99 高出 989.98ms，说明实验确实触发了并发瓶颈。单次调用在 mixed 中以合计上限（8 个名额 × 1s）的吞吐运行，其余请求在 200ms 有界等待后得到 429。
 
 ## 14. 不变量核对
 

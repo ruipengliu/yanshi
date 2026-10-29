@@ -13,6 +13,7 @@
 **Usage（用量）** 是一条记录：业务线、EndUser、类别（`model` / `sandbox`）、模型、输入与输出 token、沙箱执行毫秒数、折算金额、时间。
 
 - **模型调用**：Run 的每次模型调用（含上下文压缩）在拿到回复后、写日志前记录。顺序如此是因为 token 在调用返回时已经消耗：之后写日志失败（Attempt 被接管、Session 被删除）也应计费。调用失败（无回复）不计费。
+- **单次调用**：`oneshot.Service` 每次模型返回后立即记录，Schema 修复的一次额外调用也计量；输入审核后、准入前检查相同的业务线与 EndUser 配额。`usage.Entry.Oneshot` 为声明的 name@version，Agent 留空，两者互斥；不存输入输出与 Session。返回前复查 EndUser 屏障，计量本身先写后查、必要时匿名化。客户端取消不取消计量，但不能延长单次调用的原总时限。
 - **沙箱执行**：沙箱控制器每执行完一次调用，按执行时长记录；以 call_id 作为幂等键，同一调用被重新投递不重复计费。沙箱空闲保活的时间不计入（属于平台的预热成本）。
 - **Call**：实时语音模型每轮交互的用量（文本与音频的输入、缓存、输出）在收到时记录（kind = `call`，[Call](./m3-call.md) §7）。价格表的条目可另配 `input_audio`、`output_audio` 单价，未配置时按文本单价计。开始 Call 时检查配额，通话中每轮之后复查，用尽时挂断。
 - **按住说话**：每次语音识别与播报记一条（kind = `speech`，[按住说话](./speech.md) §4）。识别的输入记为音频秒数，播报的输出记为字数，价格表按每百万秒、每百万字配置。请求前检查配额。
@@ -38,7 +39,7 @@ sandbox:
 
 `cached_input` 是命中提供商前缀缓存的输入单价（`Usage.cached_input_tokens`，TokenHub 在 `prompt_tokens_details.cached_tokens` 中报告）；不写时按 `input` 计，不假设折扣。用量记录与 `GET /v1/usage` 同时给出缓存命中的 token 数，指标 `yanshi_model_tokens_total{direction="cached_input"}`。
 
-金额按记录时的价格计算，之后调价不影响已有记录。任一业务线配置了配额时，所有 AgentDef 引用的模型都必须有价格，否则启动失败：没有价格的模型等于不受配额约束。
+金额按记录时的价格计算，之后调价不影响已有记录。任一业务线配置了配额时，所有 AgentDef 与单次调用声明引用的模型都必须有价格，否则启动失败：没有价格的模型等于不受配额约束。
 
 ## 3. 配额
 
@@ -116,7 +117,7 @@ PG 在单个 EndUser 的事务中锁住并复核屏障，清理回调经 `pg.Exe
 - `PUT /v1/end_users/{id}/tier`：JSON `{business_line?, tier}`；成功返回 `{"tier":"pro","limit_micros":10000000}`。`limit_micros` 为有效 EndUser 日限额。只允许服务令牌，用户令牌返回 403；业务线取自令牌，自报不符返回 403。开发模式须在 JSON 或查询参数中指定业务线，两处冲突返回 400。
 - `DELETE /v1/end_users/{id}/tier`：恢复默认，成功返回 `{"tier":"","limit_micros":2000000}`；默认限额 0 表示不限。只允许服务令牌，开发模式经查询参数指定业务线，与注销接口相同。
 - 设置未知档位返回 400；业务线未开启配额时两个档位写接口均返回 400（档位不会产生效果）。Put 遇到 EndUser 删除屏障返回既有屏障错误码 404；配置或存储故障照现有错误路径处理。接口沿用配额与注销的普通 JSON，不新增 proto 消息。
-- `GET /v1/usage?from=2026-10-01&to=2026-11-01&group_by=day|end_user|model[&end_user=]`：按业务线时区的日期汇总。EndUser 令牌只能看自己，且不能按 EndUser 分组。
+- `GET /v1/usage?from=2026-10-01&to=2026-11-01&group_by=day|end_user|model|agent|oneshot[&end_user=]`：按业务线时区的日期汇总。EndUser 令牌只能看自己，且不能按 EndUser 分组。
 - 指标：`yanshi_usage_cost_micros_total{business_line,kind}`、`yanshi_quota_rejections_total{scope,where}`、`yanshi_usage_record_errors_total`。业务线名不是个人数据，可作为标签。
 
 ## 6. 验证
@@ -144,3 +145,5 @@ PG 在单个 EndUser 的事务中锁住并复核屏障，清理回调经 `pg.Exe
 - **开销**（`scripts/bench.sh`，P=4、W=32、S=256、POOL=20，压测模型每个 Run 2 次模型调用）：只计量约 180 Run/s，计量加配额检查（`QUOTA=1`，配额不触发）约 177 Run/s；此前不计量的结果为 188.8 Run/s（m2-scale-test），即每次模型调用多一次写入与两次聚合读取，吞吐下降约 5%。业务线合计行尚未成为瓶颈。
 
 `pricing.yaml` 中 tokenhub 的价格是占位值，上线前按合同价填写。
+
+单次调用归属由迁移 `0026_usage_oneshot.sql` 给 usage_entries 增加 oneshot 列（text、非空、默认空字符串），已有记录不改。`usage.ByOneshot` 与 agent 分组并列；修复的两次调用分别计数，匿名化保留声明归属和费用，业务线合计不变。内存与 PostgreSQL 共用的 usagetest 覆盖写入、分组、互斥与匿名化。

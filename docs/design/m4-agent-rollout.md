@@ -69,3 +69,9 @@ assistant:
 - 单元测试：2 万个 EndUser 在 10% 灰度中分到约 10%（1800～2200 之间），同一用户结果不变，比例调到 30% 时原灰度用户全部仍在灰度中；白名单、配置校验、撤回、重新加载失败时保留原配置。
 - 模拟测试：两个版本，随机在"灰度 50%""撤回灰度版本""全量后撤回旧版本"之间切换。300 个种子中发生 110 次切换，全部不变量成立；PostgreSQL 差分测试一致。变异检验：去掉 Submit 中的切换，被"新 Run 在撤回的版本上开始"不变量发现。
 - 端到端（`serve`，修改文件不重启）：白名单用户分到灰度版本 2、其他用户为 1；把 2 加入 `withdrawn` 后 10 秒内重新加载，白名单用户的下一个 Run 切到 1 并记录 `AgentSwitched{from: 2, to: 1, reason: withdrawn}`；写入非法配置时被拒绝并保留原配置。
+
+## 9. 单次调用的发布
+
+`oneshots/*.yaml` 与 `oneshots/releases.yaml` 沿用同一结构，stable、canary（version、percent、end_users）与 withdrawn 的校验、散列分流、文件热加载共用 `internal/release`。按声明名与 EndUser 稳定分流，未配置发布时使用按文件名排序最后加载的版本。声明的全部版本只在启动时加载；每 10 秒热加载发布选择，错误配置保留原值，使用既有发布错误指标。
+
+单次调用没有 Session：每次请求独立选择一次版本，修复调用保留本次选择。撤回只影响后续请求，不中断在途调用。同名各版本 concurrency 须一致，因为它们共享声明并发名额。发布前用 `make eval EVAL_FLAGS="-case oneshot-live-brief -oneshot-version <版本>"` 与基线比较，无回归后才能进入灰度或 stable；`-agent-version` 不影响单次调用。用量按 oneshot 的 name@version 汇总，和 AgentDef 归属分开。

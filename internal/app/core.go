@@ -22,6 +22,7 @@ import (
 	"yanshi/internal/moderation"
 	"yanshi/internal/node"
 	"yanshi/internal/notify"
+	"yanshi/internal/oneshot"
 	"yanshi/internal/runtime"
 	"yanshi/internal/sandbox"
 	"yanshi/internal/service"
@@ -36,12 +37,19 @@ import (
 type Options struct {
 	// 必填：Clock、IDs、Agents、Model、Blobs、NodeAuth。
 	Clock clock.Clock
-	// IDs 按用途返回 ID 生成器；prefix 是 "id"（Session、Run 与调用）、"mem"（Memory）或 "art"（工件），
+	// IDs 按用途返回 ID 生成器；prefix 是 "id"（Session、Run 与调用）、"mem"（Memory）、"art"（工件）或 "use"（单次调用计量），
 	// 随机生成器忽略它，模拟测试用它得到可读的顺序 ID。
 	IDs    func(prefix string) ids.Generator
 	Agents *agentdef.Registry
-	Model  model.Provider
-	Blobs  artifact.BlobStore
+	// Oneshots 非 nil 时提供单次调用；并发与总时限零值取默认。
+	// 同时省略并发与等待时，等待取默认；显式并发配零等待表示只尝试立即获取。
+	Oneshots               *oneshot.Registry
+	OneshotMax             int
+	OneshotWait            time.Duration
+	OneshotDeadline        time.Duration
+	OneshotBusinessLineMax map[string]int
+	Model                  model.Provider
+	Blobs                  artifact.BlobStore
 	// NodeAuth 验证 Node 连接的身份；没有默认值，开发环境须显式给出 node.InsecureDevAuth{}。
 	NodeAuth node.Authenticator
 
@@ -100,6 +108,7 @@ type Core struct {
 	// Dispatch 是 Worker 的派发链：委托 → 沙箱 → 设备（node.Hub）。
 	Dispatch *delegation.Router
 	Service  *service.Service
+	Oneshots *oneshot.Service
 	// EndUserData 与首次注销共用清理入口，宽限期结束前由 Janitor 再清一遍。
 	EndUserData []lifecycle.EndUserHolder
 	// Notifier 为 nil 表示没有配置推送通道。
@@ -183,6 +192,21 @@ func NewCore(stores Stores, opts Options) *Core {
 				cache.Invalidate(bl, eu)
 			}
 		}}}
+	}
+	if opts.Oneshots != nil {
+		maxCalls, wait, deadline := opts.OneshotMax, opts.OneshotWait, opts.OneshotDeadline
+		if maxCalls == 0 {
+			maxCalls = oneshot.DefaultMax
+		}
+		if opts.OneshotMax == 0 && wait == 0 {
+			wait = oneshot.DefaultWait
+		}
+		if deadline == 0 {
+			deadline = oneshot.DefaultDeadline
+		}
+		c.Oneshots = &oneshot.Service{Registry: opts.Oneshots, Model: opts.Model, Moderator: moderator,
+			Quotas: opts.Quotas, Meter: opts.Meter, Deletions: stores.Deletions, Clock: opts.Clock, IDs: opts.IDs("use"),
+			Max: maxCalls, BusinessLineMax: opts.OneshotBusinessLineMax, Wait: wait, Deadline: deadline}
 	}
 	local = append(append([]capability.Capability{}, local...), memory.Capabilities(c.Memory)...)
 	c.Catalog.Local = capability.NewRegistry(append(local, c.Service.ScheduleCapability())...)

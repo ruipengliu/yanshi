@@ -340,3 +340,15 @@ MCP 的 captures 工具与冻结 golden 中的说明及 schema 一致，声明�
 **来源 Memory 删除与开发模式**：`DELETE /v1/sessions/{id}/memories` 在 Session 已不存在时，允许同业务线的服务令牌按删除记录授权，幂等清理擦除后保留的 Memory；用户令牌、无删除记录或跨业务线仍返回 404。编排器仍不把此接口的 404 当作成功。客户端的 `Deletion(ctx, businessLine, id)` 和 `DeleteSessionMemories(ctx, businessLine, id)` 均携带 `business_line` 查询参数，`MemoriesBySource` 同样携带业务线与 EndUser；因此 `xinli dev -kernel-url` 不带令牌连接 unrestricted 内核时也能执行完整流程。前两个接口在服务令牌模式下以令牌业务线为准。
 
 开发页面新增 `/v1/dev/{businessLine}/{endUser}` 下的 JSON 入口：`GET /captures?date=...` 只读列出片段、绑定元数据与当天待办；`POST /captures` 接收日期与结构化片段，生成随机 capture_id；`POST /erase`、`POST /erase_day` 复用领域事务并通知；`POST /organize` 接收日期、`kind=exchange/day` 及可选 input_id，经 EnsureDaySession 提交固定整理指令。只有带内核编排时显示整理按钮。原文查询不改变模型读页或处理进度，开发页面不承担生产鉴权入口。
+
+### 实况简述（P3-⑥，Q82）
+
+xinli 开发页的“实况简述”按钮按页面当前业务日调用 `POST /v1/dev/{businessLine}/{endUser}/brief`，请求为 `{date}`，响应为 `{brief}`。应用从 Persona 读取原文，再经内核 HTTP 客户端调用 `xinli-live-brief`；不创建 Session、不推进已读位置或整理进度，结果只在当前页面显示，不存 Persona、不写应用日志，响应带 `Cache-Control: no-store`。错误仅返回固定类别，不带内核响应正文。
+
+取当天最近 200 段，按原顺序渲染成每行一段：`[佩戴者] 文字`、`[他人 other-1 @P-0012] 文字`，没有 `speaker_ref` 时省略 `@...`。段内空白统一成空格，避免内嵌换行冒充新段。按声明的 `input.max_chars: 8000` 计算 Unicode 字符，标签与换行都计入预算；从尾部保留，边界段只保留正文尾部并保留完整说话人标签。应用常量与声明保持一致，声明收紧预算时也须修改应用常量；当前没有读取声明元数据的公开 API。
+
+Persona 当前没有公开的原文版本号。请求前后各在一个只读事务中取得 `(业务日, Deleted, 最后一段引用, 当日删除待办数量)`：批次号永不复用，每次擦除都追加且不移除删除待办，因此任意追加、部分擦除、删一天都会改变组合；整理进度与工作 Session 换绑不会误使简述失效。模型调用不占 Persona 事务锁，返回前重读，不一致时丢弃结果并返回 409、“原文已变化，请重新生成”。将来若增加原位原文修订，必须改用覆盖修订的版本号；本组合依赖当前只追加与擦除的契约。
+
+前端用独立请求代次（不复用轮询原文的刷新序号）。切换业务日或身份、离开页面、提交新原文、发起擦除/删一天时立即清空显示并作废旧代次；因此切走又切回也不会显示旧请求结果。简述生成期间仍可擦除。服务器只能核对请求指定的业务日，浏览器当前选择由前端代次保证；返回前最后一次读取之后发生的并发变化，无法靠两个独立 HTTP 请求作原子显示保证，开发页自身的擦除仍由代次拦截。
+
+`kernel.Client.Oneshot(ctx, endUser, name, input)` 返回 version、model 与 `json.RawMessage` output；开发模式另用 `OneshotForBusinessLine` 明确传 business_line，兼容无鉴权内核和多业务线页面，不修改共享 Client 的身份字段。429、422、503、504 保持对应状态，其他下游错误映射 502；没有原文或业务日已删除返回 409。

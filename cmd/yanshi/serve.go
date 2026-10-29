@@ -48,6 +48,7 @@ import (
 	"yanshi/internal/node"
 	"yanshi/internal/node/wsgateway"
 	"yanshi/internal/notify"
+	"yanshi/internal/oneshot"
 	"yanshi/internal/pg"
 	"yanshi/internal/presence"
 	"yanshi/internal/realtime"
@@ -179,7 +180,7 @@ func configureModelLimits(l model.Limits, minBackgroundSet bool) (model.Limits, 
 	return l, l.Validate()
 }
 
-// gateway 按环境变量配置模型供应商；真实提供商经 model.Guard 施加 limits（每个提供商各自计数）：
+// gateway 按环境变量配置模型供应商；真实提供商与 bench 经 model.Guard 施加 limits（每个提供商各自计数）：
 //
 //	echo   始终可用
 //	script 始终可用：按输入中的命令调用工具（调试控制台与测试，internal/model/script）
@@ -197,7 +198,7 @@ func gateway(logger *slog.Logger, limits model.Limits, injector *faults.Injector
 	}
 	gw := model.NewGateway()
 	gw.Register("echo", wrap(echo.Provider{}))
-	gw.Register("bench", wrap(bench.Provider{}))
+	gw.Register("bench", &model.Guard{Name: "bench", Provider: wrap(bench.Provider{}), Limits: limits})
 	gw.Register("script", wrap(script.Provider{}))
 	register := func(name, base, key string) {
 		gw.Register(name, &model.Guard{Name: name, Provider: wrap(&openaicompat.Provider{BaseURL: base, APIKey: key}), Limits: limits})
@@ -252,6 +253,11 @@ func serve(args []string) error {
 	addr := fs.String("addr", "127.0.0.1:8080", "HTTP 监听地址")
 	rolesFlag := fs.String("roles", strings.Join(allRoles, ","), "本进程承担的角色（docs/design/deployment.md §3）：gateway（HTTP API、Connection、Call）、worker、sandbox（沙箱控制器）、janitor；全部角色等价于单进程部署")
 	agentsDir := fs.String("agents", "agents", "AgentDef 目录")
+	oneshotsDir := fs.String("oneshots", "oneshots", "单次调用声明目录；不存在时不提供接口")
+	benchUnreserved := fs.Bool("bench-oneshot-unreserved", false, "仅压测：允许 bench 单次调用占满模型并发；需 YANSHI_BENCH_TTFT=1、memory 存储")
+	oneshotMax := fs.Int("oneshot-concurrency", oneshot.DefaultMax, "单次调用合计并发上限，须小于受限的模型并发上限")
+	oneshotWait := fs.Duration("oneshot-wait", oneshot.DefaultWait, "单次调用每层并发名额的最长等待")
+	oneshotDeadline := fs.Duration("oneshot-deadline", oneshot.DefaultDeadline, "单次调用总时限，含排队、审核与修复调用")
 	workers := fs.Int("workers", 4, "Worker 数量")
 	interactiveWorkers := fs.Int("interactive-workers", -1, "其中只认领交互工作的 Worker 数（ADR-0029）：长任务占满其余 Worker 时问答仍有 Worker 可用；默认为 Worker 数的四分之一")
 	workerPool := fs.String("worker-pool", "mixed", "本进程 Worker 的池（ADR-0029）：mixed（按 -interactive-workers 划分）| interactive（全部只认领交互工作，长任务移交给其他进程）| any（全部认领任意工作）")
@@ -329,6 +335,47 @@ func serve(args []string) error {
 		return fmt.Errorf("load releases: %w", err)
 	}
 	agents.SetReleases(rel)
+	if *benchUnreserved && (os.Getenv("YANSHI_BENCH_TTFT") != "1" || *storageKind != "memory") {
+		return fmt.Errorf("bench-oneshot-unreserved requires YANSHI_BENCH_TTFT=1 and memory storage")
+	}
+	var shots *oneshot.Registry
+	var shotsLoaded []byte
+	shotsPath := filepath.Join(*oneshotsDir, oneshot.ReleasesFile)
+	if info, statErr := os.Stat(*oneshotsDir); statErr == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("oneshots path must be a directory")
+		}
+		shots, err = oneshot.LoadDir(*oneshotsDir)
+		if err != nil {
+			return fmt.Errorf("load oneshots: %w", err)
+		}
+		if len(shots.All()) == 0 {
+			shots = nil
+		} else {
+			// 没有声明时不装配单次调用，也不让未使用的限额阻止 Run 服务启动。
+			providerMax := modelLimits.MaxConcurrency
+			if *benchUnreserved {
+				// 对照只放开启动处的保留量校验；Service 的三层上限与 Guard 优先级照常执行。
+				for _, def := range shots.All() {
+					if !strings.HasPrefix(def.Model, "bench/") {
+						return fmt.Errorf("bench-oneshot-unreserved only accepts bench models")
+					}
+				}
+				providerMax = 0
+			}
+			if err := oneshot.ValidateLimits(*oneshotMax, providerMax, *oneshotWait, *oneshotDeadline); err != nil {
+				return err
+			}
+			releases, loaded, loadErr := shots.LoadReleases(shotsPath)
+			if loadErr != nil {
+				return fmt.Errorf("load oneshot releases: %w", loadErr)
+			}
+			shots.SetReleases(releases)
+			shotsLoaded = loaded
+		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return statErr
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -388,7 +435,7 @@ func serve(args []string) error {
 		logger.Warn("fault injection enabled (-faults): debug deployments only")
 	}
 	gw := gateway(logger, modelLimits, injector)
-	meter, quotas, err := metering(*pricing, lines, agents, b, logger)
+	meter, quotas, err := metering(*pricing, lines, agents, b, logger, shots)
 	if err != nil {
 		return err
 	}
@@ -400,9 +447,15 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	oneshotBusinessLineMax := map[string]int{}
+	for _, bl := range lines {
+		oneshotBusinessLineMax[bl.Name] = bl.Oneshots.MaxConcurrency
+	}
 	opts := app.Options{
 		Clock: clk, Agents: agents, Model: gw, Blobs: blobs, NodeAuth: nodeAuth,
-		SandboxTools: *sandboxKind == "docker", DefaultTimeout: 30 * time.Minute, NodeCacheTTL: 10 * time.Second,
+		Oneshots: shots, OneshotMax: *oneshotMax, OneshotWait: *oneshotWait, OneshotDeadline: *oneshotDeadline,
+		OneshotBusinessLineMax: oneshotBusinessLineMax,
+		SandboxTools:           *sandboxKind == "docker", DefaultTimeout: 30 * time.Minute, NodeCacheTTL: 10 * time.Second,
 		BackgroundGrace: *backgroundGrace, BackgroundTimeout: *backgroundTimeout,
 		Moderator: moderator, Injector: injector, InjectionCheck: injection, Meter: meter, Quotas: quotas,
 		// 提醒（docs/design/m3-duplex-channel.md §9）：推送通道目前是日志桩，真实通道见上线检查清单。
@@ -446,6 +499,10 @@ func serve(args []string) error {
 	}
 
 	var wg sync.WaitGroup
+	if shots != nil {
+		wg.Add(1)
+		go func() { defer wg.Done(); shots.WatchReleases(ctx, shotsPath, shotsLoaded, 10*time.Second, logger) }()
+	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -531,7 +588,7 @@ func serve(args []string) error {
 	mux.Handle("/console/", webui.Handler())
 	mux.Handle("/sdk/yanshi.js", webui.Handler())
 	mux.Handle("GET /readyz", ready)
-	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.Usage, Push: b.Push, Feeds: feeds, Faults: injector,
+	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Oneshots: core.Oneshots, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.Usage, Push: b.Push, Feeds: feeds, Faults: injector,
 		Speech: speechService(svc, meter, logger), Logger: logger}).Handler())
 	srv := &http.Server{
 		Addr:              *addr,
@@ -652,8 +709,8 @@ func loopback(addr string) bool {
 }
 
 // metering 加载价格表并汇总各业务线的配额（docs/design/m4-quota-usage.md）。任一业务线配置了配额时，
-// 所有 AgentDef 引用的模型都必须有价格：没有价格的模型等于不受配额约束。
-func metering(path string, lines []auth.BusinessLine, agents *agentdef.Registry, b *storage, logger *slog.Logger) (*usage.Meter, *usage.Quotas, error) {
+// 所有 AgentDef 与单次调用声明引用的模型都必须有价格：没有价格的模型等于不受配额约束。
+func metering(path string, lines []auth.BusinessLine, agents *agentdef.Registry, b *storage, logger *slog.Logger, registries ...*oneshot.Registry) (*usage.Meter, *usage.Quotas, error) {
 	prices, err := usage.LoadPriceList(path)
 	if errors.Is(err, os.ErrNotExist) {
 		prices, err = nil, nil
@@ -672,6 +729,13 @@ func metering(path string, lines []auth.BusinessLine, agents *agentdef.Registry,
 		for _, m := range []string{d.Model, d.Context.SummaryModel, d.Call.Model} {
 			if m != "" && !prices.Has(m) && !slices.Contains(missing, m) {
 				missing = append(missing, m)
+			}
+		}
+	}
+	for _, registry := range registries {
+		for _, d := range registry.All() {
+			if !prices.Has(d.Model) && !slices.Contains(missing, d.Model) {
+				missing = append(missing, d.Model)
 			}
 		}
 	}
