@@ -79,6 +79,8 @@ type Options struct {
 
 // Stats 统计模拟中被覆盖到的路径，防止模拟"空转"。
 type Stats struct {
+	// EndUser 对象在真实写入路径中检查槽位，不增加随机抽样或生成器消费。
+	EndUserUsageIDs, EndUserMemoryIDs, EndUserGrantIDs                                   int
 	OutboxReads, OutboxConsumerCrashes, OutboxRedeliveries, OutboxConsumed, OutboxPruned int
 	OutboxRunCompleted, OutboxRunFailed, OutboxQuestions, OutboxApprovals                int
 	OutboxBackgroundSettled, OutboxSessionClosed, OutboxSessionDeleted                   int

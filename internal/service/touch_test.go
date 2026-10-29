@@ -33,7 +33,7 @@ func TestIndexTouchedAtMostEveryMinute(t *testing.T) {
 	}
 	lastInput := func() time.Time {
 		t.Helper()
-		x, err := index.Get(ctx, sid)
+		x, err := index.Get(ctx, "u", sid)
 		if err != nil {
 			t.Fatal(err)
 		}

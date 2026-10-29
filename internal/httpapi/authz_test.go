@@ -385,7 +385,7 @@ func TestAuthorizationMatrix(t *testing.T) {
 					if code != want {
 						t.Fatalf("got %d (%s), want %d", code, body, want)
 					}
-					_, err := e.api.Memory.Store.Get(context.Background(), e.memory)
+					_, err := e.api.Memory.Store.Get(context.Background(), "u1", e.memory)
 					if gone := err != nil; gone != (principal == "demo/") {
 						t.Fatalf("memory written by the session deleted = %v", gone)
 					}

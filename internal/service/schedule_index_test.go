@@ -37,7 +37,7 @@ func TestScheduleFireUpdatesIndex(t *testing.T) {
 			if err := s.FireSchedule(ctx, st, "s"); err != nil {
 				t.Fatal(err)
 			}
-			row, err := s.Index.Get(ctx, sid)
+			row, err := s.Index.Get(ctx, "u", sid)
 			if err != nil || !row.NextDue.IsZero() {
 				t.Fatalf("index %v %v", row, err)
 			}

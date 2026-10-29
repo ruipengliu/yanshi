@@ -103,14 +103,18 @@ type Index interface {
 	// Put 写入新 Session；已存在时不变（幂等）。
 	Put(ctx context.Context, s *Session) error
 	// Touch 把最后输入时间推进到 at（只增不减）。
-	Touch(ctx context.Context, id string, at time.Time) error
+	Touch(ctx context.Context, endUser, id string, at time.Time) error
 	// SetNextDue 更新最早到期；零值清除豁免，不创建缺失的索引行。
-	SetNextDue(ctx context.Context, id string, at time.Time) error
+	SetNextDue(ctx context.Context, endUser, id string, at time.Time) error
 	// ScheduledAfter 按 ID 升序返回有定时索引、未关闭的 Session，供校准；afterID 不包含在结果中。
 	ScheduledAfter(ctx context.Context, businessLine, afterID string, limit int) ([]string, error)
 	// MarkClosed 记录关闭时间；已关闭时不变。
-	MarkClosed(ctx context.Context, id string, at time.Time) error
-	Get(ctx context.Context, id string) (*Session, error)
+	MarkClosed(ctx context.Context, endUser, id string, at time.Time) error
+	Get(ctx context.Context, endUser, id string) (*Session, error)
+	// LookupSession 仅供尚不知道 EndUser 的裸 Session ID 路径读取真实索引行。
+	// C4/C5 用 ids.EndUserSlotOfSession 定位唯一库，旧 ID 经兼容定位；槽位不是归属或权限。
+	// 读出后必须继续使用真实 EndUser，不能逐库试探。
+	LookupSession(ctx context.Context, id string) (*Session, error)
 	// List 返回业务线中 endUser（为空表示全部）的 Session，按最后输入时间倒序；
 	// cursor 为上一页返回的 next，空串表示第一页；没有更多时 next 为空。
 	List(ctx context.Context, businessLine, endUser, cursor string, limit int) (page []*Session, next string, err error)
@@ -125,7 +129,7 @@ type Index interface {
 	ClosedBefore(ctx context.Context, businessLine string, agents AgentFilter, t time.Time, limit int) ([]string, error)
 	// DueBefore 返回期限早于 t 的 Session；businessLine 为空时扫描全部业务线，供 Janitor 兜底。
 	DueBefore(ctx context.Context, businessLine string, t time.Time, limit int) ([]string, error)
-	Delete(ctx context.Context, id string) error
+	Delete(ctx context.Context, endUser, id string) error
 }
 
 // ReasonRetention 是按保留期到期删除的原因（Tombstone.Reason）。
@@ -245,7 +249,7 @@ type Guard struct {
 }
 
 // Ended 报告 Session 是否已关闭或已删除。索引中没有该 Session 时只看删除记录。
-func (g Guard) Ended(ctx context.Context, sessionID string) (bool, error) {
+func (g Guard) Ended(ctx context.Context, endUser, sessionID string) (bool, error) {
 	if g.Deletions != nil {
 		if gone, err := Deleted(ctx, g.Deletions, sessionID); err != nil || gone {
 			return gone, err
@@ -254,7 +258,7 @@ func (g Guard) Ended(ctx context.Context, sessionID string) (bool, error) {
 	if g.Index == nil {
 		return false, nil
 	}
-	s, err := g.Index.Get(ctx, sessionID)
+	s, err := g.Index.Get(ctx, endUser, sessionID)
 	if errors.Is(err, ErrNotFound) {
 		return false, nil
 	}

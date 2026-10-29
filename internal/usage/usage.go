@@ -35,7 +35,9 @@ const Anonymous = "~"
 
 // Entry 是一条用量记录。金额单位是微元（10⁻⁶ 元）。
 type Entry struct {
-	ID           string
+	ID string
+	// LegacyID 保留升级前的幂等键；不含 Session 或用户内容，匿名化后仍用于防止重复计量。
+	LegacyID     string
 	BusinessLine string
 	EndUser      string
 	Kind         Kind
@@ -52,6 +54,14 @@ type Entry struct {
 	SandboxMillis     uint64
 	Cost              int64
 	At                time.Time
+}
+
+// DedupKey 保持历史全局幂等身份；ID 的新槽位格式不另算一次费用。
+func (e *Entry) DedupKey() string {
+	if e.LegacyID != "" {
+		return e.LegacyID
+	}
+	return e.ID
 }
 
 func (e *Entry) Validate() error {
@@ -101,8 +111,9 @@ type Store interface {
 	Report(ctx context.Context, q Query) ([]Row, error)
 	// DeleteEndUser 把 EndUser 的用量匿名化为 Anonymous；业务线合计不变。
 	DeleteEndUser(ctx context.Context, businessLine, endUser string) error
-	// AnonymizeEntry 把一条用量匿名化；不存在或已匿名时无操作。
-	AnonymizeEntry(ctx context.Context, id string) error
+	// AnonymizeEntry 接受对象 ID 或历史幂等键；只匿名化原 EndUser 的行，不存在或已匿名时无操作。
+	// endUser 取写入时 Scope，匿名化后行留原分片，不能按 Anonymous 重新定位。
+	AnonymizeEntry(ctx context.Context, endUser, id string) error
 	// Prune 删除 before（向下取整到整点）之前的用量。
 	Prune(ctx context.Context, before time.Time) error
 }

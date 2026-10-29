@@ -31,19 +31,19 @@ func (x *MemIndex) Put(_ context.Context, s *Session) error {
 	return nil
 }
 
-func (x *MemIndex) Touch(_ context.Context, id string, at time.Time) error {
+func (x *MemIndex) Touch(_ context.Context, endUser, id string, at time.Time) error {
 	x.mu.Lock()
 	defer x.mu.Unlock()
-	if s := x.m[id]; s != nil && at.After(s.LastInputAt) {
+	if s := x.m[id]; s != nil && s.EndUser == endUser && at.After(s.LastInputAt) {
 		s.LastInputAt = at
 	}
 	return nil
 }
 
-func (x *MemIndex) SetNextDue(_ context.Context, id string, at time.Time) error {
+func (x *MemIndex) SetNextDue(_ context.Context, endUser, id string, at time.Time) error {
 	x.mu.Lock()
 	defer x.mu.Unlock()
-	if s := x.m[id]; s != nil {
+	if s := x.m[id]; s != nil && s.EndUser == endUser {
 		s.NextDue = at
 	}
 	return nil
@@ -55,20 +55,20 @@ func (x *MemIndex) ScheduledAfter(_ context.Context, businessLine, afterID strin
 	}, limit), nil
 }
 
-func (x *MemIndex) MarkClosed(_ context.Context, id string, at time.Time) error {
+func (x *MemIndex) MarkClosed(_ context.Context, endUser, id string, at time.Time) error {
 	x.mu.Lock()
 	defer x.mu.Unlock()
-	if s := x.m[id]; s != nil && s.ClosedAt.IsZero() {
+	if s := x.m[id]; s != nil && s.EndUser == endUser && s.ClosedAt.IsZero() {
 		s.ClosedAt = at
 	}
 	return nil
 }
 
-func (x *MemIndex) Get(_ context.Context, id string) (*Session, error) {
+func (x *MemIndex) Get(_ context.Context, endUser, id string) (*Session, error) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	s := x.m[id]
-	if s == nil {
+	if s == nil || s.EndUser != endUser {
 		return nil, ErrNotFound
 	}
 	cp := *s
@@ -171,11 +171,24 @@ func (x *MemIndex) ClosedBefore(_ context.Context, businessLine string, agents A
 	}, limit), nil
 }
 
-func (x *MemIndex) Delete(_ context.Context, id string) error {
+func (x *MemIndex) Delete(_ context.Context, endUser, id string) error {
 	x.mu.Lock()
 	defer x.mu.Unlock()
-	delete(x.m, id)
+	if s := x.m[id]; s != nil && s.EndUser == endUser {
+		delete(x.m, id)
+	}
 	return nil
+}
+
+func (x *MemIndex) LookupSession(_ context.Context, id string) (*Session, error) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	s := x.m[id]
+	if s == nil {
+		return nil, ErrNotFound
+	}
+	cp := *s
+	return &cp, nil
 }
 
 // MemDeletions 是 Deletions 的进程内实现。

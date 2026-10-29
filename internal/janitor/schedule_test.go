@@ -21,7 +21,7 @@ func TestScheduledSessionsSurviveIdle(t *testing.T) {
 		if _, err := e.core.Service.CreateSchedule(ctx, sid, service.CreateScheduleRequest{ScheduleID: "s", Input: model.TextBlocks("提醒"), At: due.Format("2006-01-02T15:04"), TimeZone: "UTC", By: "service"}); err != nil {
 			t.Fatal(err)
 		}
-		row, err := e.stors.Index.Get(ctx, sid)
+		row, err := e.stors.Index.Get(ctx, "u", sid)
 		if err != nil || !row.NextDue.Equal(due) {
 			t.Fatalf("create index %v %v", row, err)
 		}
@@ -29,15 +29,15 @@ func TestScheduledSessionsSurviveIdle(t *testing.T) {
 	if err := e.core.Service.CancelSchedule(ctx, stale, "s", "end_user"); err != nil {
 		t.Fatal(err)
 	}
-	row, err := e.stors.Index.Get(ctx, stale)
+	row, err := e.stors.Index.Get(ctx, "u", stale)
 	if err != nil || !row.NextDue.IsZero() {
 		t.Fatalf("cancel index %v %v", row, err)
 	}
 	// 分别模拟创建和取消的日志已提交、索引未更新。
-	if err := e.stors.Index.SetNextDue(ctx, active, time.Time{}); err != nil {
+	if err := e.stors.Index.SetNextDue(ctx, "u", active, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.stors.Index.SetNextDue(ctx, stale, due); err != nil {
+	if err := e.stors.Index.SetNextDue(ctx, "u", stale, due); err != nil {
 		t.Fatal(err)
 	}
 	e.clk.Advance(2 * time.Hour)
@@ -85,7 +85,7 @@ func TestScheduleReconciliationPages(t *testing.T) {
 			if _, err := e.core.Service.CreateSchedule(ctx, sid, service.CreateScheduleRequest{ScheduleID: "s", Input: model.TextBlocks("提醒"), At: due.Format("2006-01-02T15:04"), TimeZone: "UTC", By: "service"}); err != nil {
 				t.Fatal(err)
 			}
-		} else if err := e.stors.Index.SetNextDue(ctx, sid, due); err != nil {
+		} else if err := e.stors.Index.SetNextDue(ctx, "u", sid, due); err != nil {
 			t.Fatal(err)
 		}
 	}

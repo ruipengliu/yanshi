@@ -121,7 +121,7 @@ func (d *Delegator) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke)
 	// 先写、后查（ADR-0015），对子 Session 本身：子 Session ID 由调用推导，开头的检查之后、创建之前它可能被删除
 	// 并清理完毕，创建会重建它的索引与日志。撤回之后告诉父调用它没了。
 	if gone, err := lifecycle.Recheck(ctx, svc.Deletions, child, func(ctx context.Context) error {
-		return d.withdrawChild(ctx, child)
+		return d.withdrawChild(ctx, parent.Created.GetEndUser(), child)
 	}); err != nil || gone {
 		if gone {
 			return d.result(ctx, inv.GetSessionId(), inv.GetRunId(), inv.GetCallId(), "the delegated session was deleted", true)
@@ -159,7 +159,7 @@ func (d *Delegator) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke)
 // withdrawChild 撤回对已有删除记录的子 Session 的创建。清理已完成时，创建只写了索引与 SessionCreated，原样删除即可；
 // 清理尚未完成时再交给 Janitor 清除一遍（已有删除记录的 Session 每次都会被完整清理）：它若已删过日志，重建的日志
 // 由这一遍兜住。
-func (d *Delegator) withdrawChild(ctx context.Context, child string) error {
+func (d *Delegator) withdrawChild(ctx context.Context, endUser, child string) error {
 	svc := d.Service
 	t, err := svc.Deletions.Get(ctx, child)
 	if err != nil {
@@ -175,7 +175,7 @@ func (d *Delegator) withdrawChild(ctx context.Context, child string) error {
 			}
 		}
 		if svc.Index != nil {
-			if err := svc.Index.Delete(ctx, child); err != nil {
+			if err := svc.Index.Delete(ctx, endUser, child); err != nil {
 				return err
 			}
 		}

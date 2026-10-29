@@ -70,7 +70,7 @@ func TestEndUserBarrierWithdrawsSessionAndAllowsReuseAfterGrace(t *testing.T) {
 	if err := log.Delete(ctx, sid); err != nil {
 		t.Fatal(err)
 	}
-	if err := x.Delete(ctx, sid); err != nil {
+	if err := x.Delete(ctx, "u", sid); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.Complete(ctx, sid, now); err != nil {
@@ -90,7 +90,7 @@ func TestEndUserBarrierWithdrawsSessionAndAllowsReuseAfterGrace(t *testing.T) {
 		if err := log.Delete(ctx, sid); err != nil {
 			t.Fatal(err)
 		}
-		if err := x.Delete(ctx, sid); err != nil {
+		if err := x.Delete(ctx, "u", sid); err != nil {
 			t.Fatal(err)
 		}
 		if err := d.Complete(ctx, sid, now); err != nil {
@@ -154,7 +154,7 @@ func TestEndUserDeletionCompletesBeforeInFlightSessionAppend(t *testing.T) {
 	if events, err := eventlog.ReadAll(ctx, stores.Log, b.Sessions[0], 0); err != nil || len(events) != 0 {
 		t.Fatalf("resurrected log = %v, %v", events, err)
 	}
-	if _, err := stores.Index.Get(ctx, b.Sessions[0]); !errors.Is(err, lifecycle.ErrNotFound) {
+	if _, err := stores.Index.Get(ctx, "u", b.Sessions[0]); !errors.Is(err, lifecycle.ErrNotFound) {
 		t.Fatalf("resurrected index = %v", err)
 	}
 }

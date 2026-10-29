@@ -15,6 +15,7 @@ import (
 var t0 = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
+	t.Run("EndUserKeys", func(t *testing.T) { indexEndUserKeys(t, newIndex(t)) })
 	t.Run("StableRecovery", func(t *testing.T) { runStableIndex(t, newIndex(t)) })
 	ctx := context.Background()
 	put := func(t *testing.T, x lifecycle.Index, id, bl, eu string, at time.Time) {
@@ -31,11 +32,11 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 		}
 		put(t, x, "other", "other", "u", t0)
 		for _, id := range []string{"a", "b", "other"} {
-			if err := x.SetNextDue(ctx, id, t0.Add(time.Hour)); err != nil {
+			if err := x.SetNextDue(ctx, "u", id, t0.Add(time.Hour)); err != nil {
 				t.Fatal(err)
 			}
 		}
-		row, err := x.Get(ctx, "a")
+		row, err := x.Get(ctx, "u", "a")
 		if err != nil || !row.NextDue.Equal(t0.Add(time.Hour)) {
 			t.Fatalf("next due %v %v", row, err)
 		}
@@ -60,10 +61,10 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 		if err != nil || !slices.Equal(second, []string{"b"}) {
 			t.Fatalf("second %v %v", second, err)
 		}
-		if err := x.SetNextDue(ctx, "a", time.Time{}); err != nil {
+		if err := x.SetNextDue(ctx, "u", "a", time.Time{}); err != nil {
 			t.Fatal(err)
 		}
-		if err := x.MarkClosed(ctx, "b", t0); err != nil {
+		if err := x.MarkClosed(ctx, "u", "b", t0); err != nil {
 			t.Fatal(err)
 		}
 		remaining, err := x.ScheduledAfter(ctx, "bl", "", 10)
@@ -74,16 +75,16 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 		if err != nil || !slices.Equal(idle, []string{"a", "c"}) {
 			t.Fatalf("idle after clear %v %v", idle, err)
 		}
-		if err := x.SetNextDue(ctx, "missing", t0); err != nil {
+		if err := x.SetNextDue(ctx, "u", "missing", t0); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := x.Get(ctx, "missing"); !errors.Is(err, lifecycle.ErrNotFound) {
+		if _, err := x.Get(ctx, "u", "missing"); !errors.Is(err, lifecycle.ErrNotFound) {
 			t.Fatalf("resurrected row: %v", err)
 		}
 		if err := x.Put(ctx, &lifecycle.Session{ID: "put-due", BusinessLine: "bl", EndUser: "u", CreatedAt: t0, LastInputAt: t0, NextDue: t0.Add(time.Hour)}); err != nil {
 			t.Fatal(err)
 		}
-		row, err = x.Get(ctx, "put-due")
+		row, err = x.Get(ctx, "u", "put-due")
 		if err != nil || !row.NextDue.Equal(t0.Add(time.Hour)) {
 			t.Fatalf("put next due %v %v", row, err)
 		}
@@ -99,13 +100,13 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 				t.Fatal(err)
 			}
 		}
-		if err := x.MarkClosed(ctx, "c", t0); err != nil {
+		if err := x.MarkClosed(ctx, "u", "c", t0); err != nil {
 			t.Fatal(err)
 		}
 		if err := x.Put(ctx, &lifecycle.Session{ID: "a", DeleteAt: t0.Add(9 * time.Hour)}); err != nil {
 			t.Fatal(err)
 		}
-		row, err := x.Get(ctx, "a")
+		row, err := x.Get(ctx, "u", "a")
 		if err != nil || !row.DeleteAt.Equal(t0.Add(time.Hour)) {
 			t.Fatalf("deadline = %+v, %v", row, err)
 		}
@@ -125,7 +126,7 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 				t.Fatalf("due = %v, %v\nwant %v", got, err, tc.want)
 			}
 		}
-		if err := x.Delete(ctx, "a"); err != nil {
+		if err := x.Delete(ctx, "u", "a"); err != nil {
 			t.Fatal(err)
 		}
 		if got, err := x.DueBefore(ctx, "bl", t0.Add(2*time.Hour), 10); err != nil || len(got) != 0 {
@@ -136,13 +137,13 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 		x := newIndex(t)
 		put(t, x, "s1", "bl", "u1", t0)
 		put(t, x, "s1", "bl", "other", t0.Add(time.Hour)) // 已存在：不变
-		_ = x.Touch(ctx, "s1", t0.Add(2*time.Hour))
-		_ = x.Touch(ctx, "s1", t0.Add(time.Hour)) // 回退：忽略
-		s, err := x.Get(ctx, "s1")
+		_ = x.Touch(ctx, "u1", "s1", t0.Add(2*time.Hour))
+		_ = x.Touch(ctx, "u1", "s1", t0.Add(time.Hour)) // 回退：忽略
+		s, err := x.Get(ctx, "u1", "s1")
 		if err != nil || s.EndUser != "u1" || !s.LastInputAt.Equal(t0.Add(2*time.Hour)) || !s.CreatedAt.Equal(t0) || !s.ClosedAt.IsZero() {
 			t.Fatalf("get = %+v, %v", s, err)
 		}
-		if _, err := x.Get(ctx, "nope"); !errors.Is(err, lifecycle.ErrNotFound) {
+		if _, err := x.Get(ctx, "u1", "nope"); !errors.Is(err, lifecycle.ErrNotFound) {
 			t.Fatalf("missing: %v", err)
 		}
 	})
@@ -193,8 +194,8 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 		put(t, x, "new", "bl", "u1", t0.Add(48*time.Hour))
 		put(t, x, "closed", "bl", "u2", t0)
 		put(t, x, "elsewhere", "other", "u1", t0)
-		_ = x.MarkClosed(ctx, "closed", t0.Add(time.Hour))
-		_ = x.MarkClosed(ctx, "closed", t0.Add(5*time.Hour)) // 已关闭：不变
+		_ = x.MarkClosed(ctx, "u2", "closed", t0.Add(time.Hour))
+		_ = x.MarkClosed(ctx, "u2", "closed", t0.Add(5*time.Hour)) // 已关闭：不变
 
 		all := lifecycle.AgentFilter{}
 		idle, _ := x.IdleBefore(ctx, "bl", all, t0.Add(24*time.Hour), 10)
@@ -212,8 +213,8 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 		if !slices.Equal(ids, []string{"new", "old"}) {
 			t.Fatalf("ids of u1 = %v", ids)
 		}
-		_ = x.Delete(ctx, "old")
-		if _, err := x.Get(ctx, "old"); !errors.Is(err, lifecycle.ErrNotFound) {
+		_ = x.Delete(ctx, "u1", "old")
+		if _, err := x.Get(ctx, "u1", "old"); !errors.Is(err, lifecycle.ErrNotFound) {
 			t.Fatal("deleted session still indexed")
 		}
 	})
@@ -230,7 +231,7 @@ func runRetentionByAgent(t *testing.T, x lifecycle.Index) {
 		if err := x.Put(ctx, s); err != nil {
 			t.Fatal(err)
 		}
-		if err := x.MarkClosed(ctx, s.ID, t0.Add(time.Hour)); err != nil {
+		if err := x.MarkClosed(ctx, s.EndUser, s.ID, t0.Add(time.Hour)); err != nil {
 			t.Fatal(err)
 		}
 	}

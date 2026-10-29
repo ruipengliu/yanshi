@@ -51,7 +51,7 @@ func TestSaveValidatesAndIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	m2, _ := s.Save(ctx, req) // 同一调用重复执行
-	if m1.ID != "mem_c1" || m2.ID != m1.ID {
+	if m1.ID != scopedMemoryID("a", "u", "s1", "c1") || m2.ID != m1.ID {
 		t.Fatalf("ids = %s, %s", m1.ID, m2.ID)
 	}
 	if n, _ := st.Count(ctx, "a", "u", time.Now()); n != 1 {
@@ -89,16 +89,16 @@ func TestLimitAndReplace(t *testing.T) {
 	if err := save("d", "四", ""); !errors.Is(err, memory.ErrLimit) {
 		t.Fatalf("over limit: %v", err)
 	}
-	if err := save("e", "搬家到北京", "mem_a"); err != nil {
+	if err := save("e", "搬家到北京", memoryID("a")); err != nil {
 		t.Fatalf("replace at limit: %v", err)
 	}
-	if m, err := st.Get(ctx, "mem_a"); err != nil || m.SupersededBy != "mem_e" {
+	if m, err := st.Get(ctx, "u", memoryID("a")); err != nil || m.SupersededBy != memoryID("e") {
 		t.Fatalf("replaced memory = %+v, %v; want it kept as history", m, err)
 	}
-	if err := save("f", "x", "mem_missing"); !errors.Is(err, memory.ErrNotFound) {
+	if err := save("f", "x", memoryID("missing")); !errors.Is(err, memory.ErrNotFound) {
 		t.Fatalf("replace unknown: %v", err)
 	}
-	if err := save("g", "搬家到上海", "mem_a"); !errors.Is(err, memory.ErrNotFound) {
+	if err := save("g", "搬家到上海", memoryID("a")); !errors.Is(err, memory.ErrNotFound) {
 		t.Fatalf("replace a superseded memory: %v", err)
 	}
 }
@@ -124,8 +124,8 @@ func TestValidityAndHistory(t *testing.T) {
 		t.Fatalf("trip = %+v, %v", trip, err)
 	}
 	_, _ = save("bj", memory.Profile, "用户常住北京", "", "")
-	_, _ = save("sh", memory.Profile, "用户搬到上海了", "mem_bj", "")
-	_, _ = save("hz", memory.Profile, "用户搬到杭州了", "mem_sh", "")
+	_, _ = save("sh", memory.Profile, "用户搬到上海了", memoryID("bj"), "")
+	_, _ = save("hz", memory.Profile, "用户搬到杭州了", memoryID("sh"), "")
 	contents := func(hits []memory.Hit) []string {
 		var out []string
 		for _, h := range hits {
@@ -148,22 +148,22 @@ func TestValidityAndHistory(t *testing.T) {
 		t.Fatalf("history = %v", got)
 	}
 	out, err := memory.Capabilities(s)[2].Invoke(ctx, capability.Invocation{BusinessLine: "a", EndUser: "u", Arguments: `{"query":"住","history":true}`})
-	if text := model.Text(out); err != nil || !strings.Contains(text, "用户常住北京（mem_bj，2026-10-20 记，2026-10-20 被 mem_sh 取代）") ||
-		!strings.Contains(text, "用户周三去杭州出差（mem_trip，2026-10-20 记，2026-10-21 后已过期）") {
+	if text := model.Text(out); err != nil || !strings.Contains(text, fmt.Sprintf("用户常住北京（%s，2026-10-20 记，2026-10-20 被 %s 取代）", memoryID("bj"), memoryID("sh"))) ||
+		!strings.Contains(text, fmt.Sprintf("用户周三去杭州出差（%s，2026-10-20 记，2026-10-21 后已过期）", memoryID("trip"))) {
 		t.Fatalf("memory_search history = %q, %v", text, err)
 	}
 
-	if err := s.Forget(ctx, "a", "u", "mem_hz"); err != nil {
+	if err := s.Forget(ctx, "a", "u", memoryID("hz")); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"mem_hz", "mem_sh", "mem_bj"} {
-		if _, err := st.Get(ctx, id); !errors.Is(err, memory.ErrNotFound) {
+	for _, id := range []string{memoryID("hz"), memoryID("sh"), memoryID("bj")} {
+		if _, err := st.Get(ctx, "u", id); !errors.Is(err, memory.ErrNotFound) {
 			t.Fatalf("%s survived forgetting the chain", id)
 		}
 	}
 	clk.Advance(31 * 24 * time.Hour)
 	_, _ = save("next", memory.Interest, "用户喜欢爬山", "", "")
-	if _, err := st.Get(ctx, "mem_trip"); !errors.Is(err, memory.ErrNotFound) {
+	if _, err := st.Get(ctx, "u", memoryID("trip")); !errors.Is(err, memory.ErrNotFound) {
 		t.Fatal("expired memory not purged after 30 days")
 	}
 }
@@ -188,10 +188,10 @@ func TestSaveSkipsDuplicates(t *testing.T) {
 		content string
 		want    string
 	}{
-		"same":     {memory.Preference, "用户不吃香菜。", "mem_c1"},
-		"other":    {memory.Plan, "用户不吃香菜", "mem_c1"},
-		"opposite": {memory.Preference, "用户吃香菜", "mem_opposite"},
-		"number":   {memory.Relationship, "张三的电话是 13800138001", "mem_number"},
+		"same":     {memory.Preference, "用户不吃香菜。", memoryID("c1")},
+		"other":    {memory.Plan, "用户不吃香菜", memoryID("c1")},
+		"opposite": {memory.Preference, "用户吃香菜", memoryID("opposite")},
+		"number":   {memory.Relationship, "张三的电话是 13800138001", memoryID("number")},
 	} {
 		if got := save(call, c.cat, c.content); got != c.want {
 			t.Errorf("%s: saved as %s, want %s", call, got, c.want)
@@ -200,15 +200,15 @@ func TestSaveSkipsDuplicates(t *testing.T) {
 	// 先写了新的，再"把旧的换成它"：不再写第三条，旧的删除。
 	save("old", memory.Profile, "用户常住北京")
 	save("new", memory.Profile, "用户搬到上海了")
-	related, err := s.Related(ctx, &memory.Memory{ID: "mem_new", BusinessLine: "a", EndUser: "u", Category: memory.Profile, Content: "用户搬到上海了"}, 5)
-	if err != nil || len(related) != 1 || related[0].ID != "mem_old" {
+	related, err := s.Related(ctx, &memory.Memory{ID: memoryID("new"), BusinessLine: "a", EndUser: "u", Category: memory.Profile, Content: "用户搬到上海了"}, 5)
+	if err != nil || len(related) != 1 || related[0].ID != memoryID("old") {
 		t.Fatalf("related = %v, %v", related, err)
 	}
-	m, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "a", EndUser: "u", CallID: "again", Category: memory.Profile, Content: "用户搬到上海了", Replaces: "mem_old"})
-	if err != nil || m.ID != "mem_new" {
+	m, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "a", EndUser: "u", CallID: "again", Category: memory.Profile, Content: "用户搬到上海了", Replaces: memoryID("old")})
+	if err != nil || m.ID != memoryID("new") {
 		t.Fatalf("replace with an existing fact = %v, %v", m, err)
 	}
-	if m, err := st.Get(ctx, "mem_old"); err != nil || m.SupersededBy != "mem_new" {
+	if m, err := st.Get(ctx, "u", memoryID("old")); err != nil || m.SupersededBy != memoryID("new") {
 		t.Fatalf("replaced memory = %+v, %v; want it superseded by the existing fact", m, err)
 	}
 }
@@ -255,7 +255,7 @@ func TestGrantsControlCrossLineRecall(t *testing.T) {
 		}
 		out := map[string]bool{}
 		for _, h := range hits {
-			out[h.ID] = true
+			out[h.SourceCall] = true
 		}
 		return out
 	}
@@ -264,21 +264,21 @@ func TestGrantsControlCrossLineRecall(t *testing.T) {
 		grant func(s *memory.Service)
 		want  map[string]bool
 	}{
-		"no grant": {func(*memory.Service) {}, map[string]bool{"mem_own": true}},
+		"no grant": {func(*memory.Service) {}, map[string]bool{"own": true}},
 		"active preference grant": {func(s *memory.Service) { _, _ = s.CreateGrant(ctx, "u", "a", "b", prefs, time.Time{}) },
-			map[string]bool{"mem_own": true, "mem_pref": true}},
+			map[string]bool{"own": true, "pref": true}},
 		"grant to another reader": {func(s *memory.Service) { _, _ = s.CreateGrant(ctx, "u", "a", "c", prefs, time.Time{}) },
-			map[string]bool{"mem_own": true}},
+			map[string]bool{"own": true}},
 		"expired": {func(s *memory.Service) { _, _ = s.CreateGrant(ctx, "u", "a", "b", prefs, t0) },
-			map[string]bool{"mem_own": true}},
+			map[string]bool{"own": true}},
 		"revoked": {func(s *memory.Service) {
 			g, _ := s.CreateGrant(ctx, "u", "a", "b", prefs, time.Time{})
-			_ = s.Grants.Revoke(ctx, g.ID, t0)
-		}, map[string]bool{"mem_own": true}},
+			_ = s.Grants.Revoke(ctx, "u", g.ID, t0)
+		}, map[string]bool{"own": true}},
 		"two grants union categories": {func(s *memory.Service) {
 			_, _ = s.CreateGrant(ctx, "u", "a", "b", prefs, time.Time{})
 			_, _ = s.CreateGrant(ctx, "u", "a", "b", []memory.Category{memory.Relationship}, time.Time{})
-		}, map[string]bool{"mem_own": true, "mem_pref": true, "mem_rel": true}},
+		}, map[string]bool{"own": true, "pref": true, "rel": true}},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -401,10 +401,10 @@ func TestHealthSupersedesMiscategorized(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.ID != "mem_c1" || m.Category != memory.Health {
+	if m.ID != memoryID("c1") || m.Category != memory.Health {
 		t.Fatalf("saved %+v, want a new health memory", m)
 	}
-	if got, err := st.Get(ctx, "mem_old"); err != nil || got.SupersededBy != "mem_c1" {
+	if got, err := st.Get(ctx, "u", "mem_old"); err != nil || got.SupersededBy != memoryID("c1") {
 		t.Fatalf("old memory %+v %v, want superseded by mem_c1", got, err)
 	}
 }
@@ -417,10 +417,21 @@ func TestReplaceRequiresSameCategory(t *testing.T) {
 	if _, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "a", EndUser: "u", CallID: "c2", Category: memory.Preference, Content: "喜欢清淡", Replaces: old.ID}); !errors.Is(err, memory.ErrRejected) {
 		t.Fatalf("cross-category replace: %v", err)
 	}
-	if _, err := st.Get(ctx, old.ID); err != nil {
+	if _, err := st.Get(ctx, "u", old.ID); err != nil {
 		t.Fatal("old memory deleted by a rejected replace")
 	}
 	if _, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "a", EndUser: "u", CallID: "c3", Category: memory.Relationship, Content: "张三的邮箱是 zhangsan@example.com", Replaces: old.ID}); err != nil {
 		t.Fatal(err)
 	}
 }
+
+// 测试用实际调用身份引用新对象；旧格式兼容在专用用例中直接预置旧行。
+func scopedMemoryID(line, endUser, sessionID, callID string) string {
+	id, err := memory.CallMemoryID(memory.SaveRequest{BusinessLine: line, EndUser: endUser, SessionID: sessionID, CallID: callID})
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
+func memoryID(callID string) string { return scopedMemoryID("a", "u", "", callID) }

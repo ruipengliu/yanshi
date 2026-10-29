@@ -9,11 +9,13 @@ import (
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/ids"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/memory"
 	"yanshi/internal/node"
 	"yanshi/internal/notify"
 	"yanshi/internal/service"
+	"yanshi/internal/shard"
 	"yanshi/internal/usage"
 )
 
@@ -73,6 +75,10 @@ type barrierMemory struct {
 }
 
 func (s barrierMemory) Put(ctx context.Context, m *memory.Memory, v *memory.Vector) error {
+	if slot, legacy, err := ids.SlotOf(m.ID); err != nil || legacy || slot != shard.Hash(m.EndUser) {
+		s.w.violations = append(s.w.violations, "memory ID lost real EndUser slot")
+	}
+	s.w.Stats.EndUserMemoryIDs++
 	return s.w.endUserWrite(func() error { return s.Store.Put(ctx, m, v) })
 }
 
@@ -82,6 +88,10 @@ type barrierGrants struct {
 }
 
 func (s barrierGrants) Create(ctx context.Context, g *memory.Grant) error {
+	if slot, legacy, err := ids.SlotOf(g.ID); err != nil || legacy || slot != shard.Hash(g.EndUser) {
+		s.w.violations = append(s.w.violations, "grant ID lost real EndUser slot")
+	}
+	s.w.Stats.EndUserGrantIDs++
 	return s.w.endUserWrite(func() error { return s.Grants.Create(ctx, g) })
 }
 
@@ -280,6 +290,34 @@ func (w *World) checkEndUserDeleted(final bool) error {
 }
 
 func (w *World) fingerprintEndUsers(h io.Writer) {
+	// 真实键、对象 ID 和当前归属参与差分；只比较日志会漏掉索引与匿名用量的变化。
+	ctx := context.Background()
+	for _, user := range append(slices.Clone(w.users), w.deletedUsers...) {
+		cursor := ""
+		for {
+			rows, next, err := w.index.ListStable(ctx, "bl", user, cursor, 200)
+			for _, row := range rows {
+				fmt.Fprintf(h, "index:%s|%s|%s;", row.ID, row.EndUser, row.BusinessLine)
+			}
+			fmt.Fprintf(h, "index-error:%v;", err)
+			if err != nil || next == "" {
+				break
+			}
+			cursor = next
+		}
+		memories, err := w.stores.Memories.List(ctx, user, []memory.Scope{{BusinessLine: "bl"}}, memory.Everything, 1<<20)
+		for _, m := range memories {
+			fmt.Fprintf(h, "memory:%s|%s|%s|%s|%s;", m.ID, m.EndUser, m.BusinessLine, m.SourceCall, m.SupersededBy)
+		}
+		fmt.Fprintf(h, "memory-error:%v;", err)
+		grants, err := w.stores.Grants.List(ctx, user, "bl")
+		for _, g := range grants {
+			fmt.Fprintf(h, "grant:%s|%s|%s|%s|%v;", g.ID, g.EndUser, g.From, g.To, g.RevokedAt)
+		}
+		fmt.Fprintf(h, "grant-error:%v;", err)
+	}
+	rows, err := w.stores.Usage.Report(ctx, usage.Query{BusinessLine: "bl", To: time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC), GroupBy: usage.ByEndUser})
+	fmt.Fprintf(h, "usage:%v|%v;", rows, err)
 	if w.opts.Tiers {
 		for _, user := range append(slices.Clone(w.users), w.deletedUsers...) {
 			tier, err := w.stores.Tiers.Get(context.Background(), "bl", user)

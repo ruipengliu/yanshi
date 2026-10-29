@@ -65,7 +65,7 @@ func TestNodeInboxMigrationPreservesOwners(t *testing.T) {
 				t.Fatal(err)
 			}
 			if mode == "missing_owner" {
-				if err := index.Delete(ctx, "s"); err != nil {
+				if err := index.Delete(ctx, "u", "s"); err != nil {
 					t.Fatal(err)
 				}
 			}

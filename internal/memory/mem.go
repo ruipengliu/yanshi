@@ -32,21 +32,23 @@ func (s *MemStore) Put(_ context.Context, m *Memory, vec *Vector) error {
 	return nil
 }
 
-func (s *MemStore) Get(_ context.Context, id string) (*Memory, error) {
+func (s *MemStore) Get(_ context.Context, endUser, id string) (*Memory, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m := s.m[id]
-	if m == nil {
+	if m == nil || m.EndUser != endUser {
 		return nil, ErrNotFound
 	}
 	cp := *m
 	return &cp, nil
 }
 
-func (s *MemStore) Delete(_ context.Context, id string) error {
+func (s *MemStore) Delete(_ context.Context, endUser, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.remove(id)
+	if m := s.m[id]; m != nil && m.EndUser == endUser {
+		s.remove(id)
+	}
 	return nil
 }
 
@@ -69,10 +71,10 @@ func (s *MemStore) Count(_ context.Context, businessLine, endUser string, at tim
 	return n, nil
 }
 
-func (s *MemStore) Supersede(_ context.Context, id, by string, at time.Time) error {
+func (s *MemStore) Supersede(_ context.Context, endUser, id, by string, at time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if m := s.m[id]; m != nil {
+	if m := s.m[id]; m != nil && m.EndUser == endUser {
 		m.SupersededBy, m.SupersededAt = by, at
 	}
 	return nil
@@ -148,6 +150,11 @@ func (s *MemStore) DeleteSession(_ context.Context, sessionID string) error {
 	return nil
 }
 
+func (s *MemStore) DeleteSessionForEndUser(_ context.Context, endUser, sessionID string) error {
+	s.deleteWhere(func(m *Memory) bool { return m.EndUser != endUser || m.SourceSession != sessionID })
+	return nil
+}
+
 func (s *MemStore) DeleteEndUser(_ context.Context, businessLine, endUser string) error {
 	s.deleteWhere(func(m *Memory) bool { return m.BusinessLine != businessLine || m.EndUser != endUser })
 	return nil
@@ -190,20 +197,20 @@ func (s *MemGrants) Create(_ context.Context, g *Grant) error {
 	return nil
 }
 
-func (s *MemGrants) Get(_ context.Context, id string) (*Grant, error) {
+func (s *MemGrants) Get(_ context.Context, endUser, id string) (*Grant, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	g := s.m[id]
-	if g == nil {
+	if g == nil || g.EndUser != endUser {
 		return nil, ErrNotFound
 	}
 	return cloneGrant(g), nil
 }
 
-func (s *MemGrants) Revoke(_ context.Context, id string, at time.Time) error {
+func (s *MemGrants) Revoke(_ context.Context, endUser, id string, at time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if g := s.m[id]; g != nil && g.RevokedAt.IsZero() {
+	if g := s.m[id]; g != nil && g.EndUser == endUser && g.RevokedAt.IsZero() {
 		g.RevokedAt = at
 	}
 	return nil
@@ -252,7 +259,7 @@ func (s *MemStore) RecordAccess(_ context.Context, accesses []Access) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, a := range accesses {
-		if _, ok := s.m[a.MemoryID]; ok {
+		if m := s.m[a.MemoryID]; m != nil && m.EndUser == a.EndUser && m.BusinessLine == a.Owner {
 			s.accesses = append(s.accesses, a)
 		}
 	}

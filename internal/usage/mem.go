@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -12,9 +13,10 @@ import (
 type Mem struct {
 	mu      sync.Mutex
 	entries map[string]*Entry
+	byKey   map[string]string
 }
 
-func NewMem() *Mem { return &Mem{entries: map[string]*Entry{}} }
+func NewMem() *Mem { return &Mem{entries: map[string]*Entry{}, byKey: map[string]string{}} }
 
 var _ Store = (*Mem)(nil)
 
@@ -24,11 +26,16 @@ func (m *Mem) Record(_ context.Context, e *Entry) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.entries[e.ID]; !ok {
-		cp := *e
-		cp.At = cp.At.UTC()
-		m.entries[e.ID] = &cp
+	if _, ok := m.entries[e.ID]; ok {
+		return nil
 	}
+	if _, ok := m.byKey[e.DedupKey()]; ok {
+		return nil
+	}
+	cp := *e
+	cp.At = cp.At.UTC()
+	m.entries[e.ID] = &cp
+	m.byKey[e.DedupKey()] = e.ID
 	return nil
 }
 
@@ -119,11 +126,16 @@ func (m *Mem) DeleteEndUser(_ context.Context, businessLine, endUser string) err
 	return nil
 }
 
-func (m *Mem) AnonymizeEntry(_ context.Context, id string) error {
+func (m *Mem) AnonymizeEntry(_ context.Context, endUser, id string) error {
+	if endUser == "" || endUser == Anonymous {
+		return errors.New("usage: invalid end user")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if e, ok := m.entries[id]; ok {
-		e.EndUser = Anonymous
+	for _, e := range m.entries {
+		if e.EndUser == endUser && (e.ID == id || e.DedupKey() == id) {
+			e.EndUser = Anonymous
+		}
 	}
 	return nil
 }
@@ -135,6 +147,7 @@ func (m *Mem) Prune(_ context.Context, before time.Time) error {
 	for id, e := range m.entries {
 		if e.At.Truncate(time.Hour).Before(before) {
 			delete(m.entries, id)
+			delete(m.byKey, e.DedupKey())
 		}
 	}
 	return nil
@@ -148,5 +161,17 @@ func (m *Mem) EndUsers() map[[2]string]bool {
 	for _, e := range m.entries {
 		out[[2]string{e.BusinessLine, e.EndUser}] = true
 	}
+	return out
+}
+
+// Entries 返回副本供模拟差分检查持久的对象 ID、幂等键与匿名化结果。
+func (m *Mem) Entries() []Entry {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Entry, 0, len(m.entries))
+	for _, e := range m.entries {
+		out = append(out, *e)
+	}
+	slices.SortFunc(out, func(a, b Entry) int { return strings.Compare(a.ID, b.ID) })
 	return out
 }

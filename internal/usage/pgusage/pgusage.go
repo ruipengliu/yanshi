@@ -34,9 +34,9 @@ func (s Store) Record(ctx context.Context, e *usage.Entry) error {
 	}
 	_, err := s.Pool.Exec(ctx, `
 		WITH ins AS (
-			INSERT INTO usage_entries (id, business_line, end_user, kind, model, input_tokens, output_tokens, sandbox_millis, cost, at, agent, cached_input_tokens, oneshot)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $13, $14)
-			ON CONFLICT (id) DO NOTHING
+			INSERT INTO usage_entries (id, business_line, end_user, kind, model, input_tokens, output_tokens, sandbox_millis, cost, at, agent, cached_input_tokens, oneshot, idempotency_key)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $13, $14, $15)
+			ON CONFLICT DO NOTHING
 			RETURNING business_line, end_user, date_trunc('hour', at, 'UTC') AS hour, cost, input_tokens, output_tokens, sandbox_millis
 		)
 		INSERT INTO usage_hourly AS h (business_line, end_user, hour, shard, cost, input_tokens, output_tokens, sandbox_millis)
@@ -45,7 +45,7 @@ func (s Store) Record(ctx context.Context, e *usage.Entry) error {
 		ON CONFLICT (business_line, end_user, hour, shard) DO UPDATE SET
 			cost = h.cost + EXCLUDED.cost, input_tokens = h.input_tokens + EXCLUDED.input_tokens,
 			output_tokens = h.output_tokens + EXCLUDED.output_tokens, sandbox_millis = h.sandbox_millis + EXCLUDED.sandbox_millis`,
-		e.ID, e.BusinessLine, e.EndUser, string(e.Kind), e.Model, int64(e.InputTokens), int64(e.OutputTokens), int64(e.SandboxMillis), e.Cost, e.At, e.Agent, shardOf(e.ID), int64(e.CachedInputTokens), e.Oneshot)
+		e.ID, e.BusinessLine, e.EndUser, string(e.Kind), e.Model, int64(e.InputTokens), int64(e.OutputTokens), int64(e.SandboxMillis), e.Cost, e.At, e.Agent, shardOf(e.ID), int64(e.CachedInputTokens), e.Oneshot, e.DedupKey())
 	return err
 }
 
@@ -126,11 +126,14 @@ func (s Store) DeleteEndUser(ctx context.Context, businessLine, endUser string) 
 
 // AnonymizeEntry 在一条语句中改写明细，并把其数量从原 EndUser 的聚合行移到匿名行。
 // 并发执行时，后到者在行锁释放后读到已匿名的明细，不再移动。
-func (s Store) AnonymizeEntry(ctx context.Context, id string) error {
+func (s Store) AnonymizeEntry(ctx context.Context, endUser, id string) error {
+	if endUser == "" || endUser == usage.Anonymous {
+		return errors.New("usage: invalid end user")
+	}
 	_, err := s.Pool.Exec(ctx, `
-		WITH old AS (SELECT id, end_user FROM usage_entries WHERE id = $1 AND end_user <> $2 FOR UPDATE),
+		WITH old AS (SELECT id, end_user FROM usage_entries WHERE end_user = $3 AND (id = $1 OR idempotency_key = $1) FOR UPDATE),
 		upd AS (
-			UPDATE usage_entries e SET end_user = $2 FROM old WHERE e.id = old.id
+			UPDATE usage_entries e SET end_user = $2 FROM old WHERE e.end_user = $3 AND e.id = old.id
 			RETURNING e.business_line, old.end_user AS prev, date_trunc('hour', e.at, 'UTC') AS hour,
 				e.cost, e.input_tokens, e.output_tokens, e.sandbox_millis
 		),
@@ -145,7 +148,7 @@ func (s Store) AnonymizeEntry(ctx context.Context, id string) error {
 		ON CONFLICT (business_line, end_user, hour, shard) DO UPDATE SET
 			cost = h.cost + EXCLUDED.cost, input_tokens = h.input_tokens + EXCLUDED.input_tokens,
 			output_tokens = h.output_tokens + EXCLUDED.output_tokens, sandbox_millis = h.sandbox_millis + EXCLUDED.sandbox_millis`,
-		id, usage.Anonymous)
+		id, usage.Anonymous, endUser)
 	return err
 }
 

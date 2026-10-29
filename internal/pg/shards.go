@@ -28,6 +28,8 @@ type TableKey struct {
 	Offline []string
 	// Gaps 是在线路径中只凭对象自身 ID 访问、接口尚未带上键的地方。分片层投入使用之前须补上键参数。
 	Gaps []string
+	// Locate 是接口已明确保留的单库定位路径；C4 接定位适配，C5 接库，不逐库试探。
+	Locate []string
 }
 
 // Tables 是全部表的分片键。
@@ -66,16 +68,13 @@ var Tables = map[string]TableKey{
 	"inbox_versions": {Class: ByEndUser, Column: "end_user"},
 	"sessions": {Class: ByEndUser, Column: "end_user",
 		Offline: []string{"List 不指定 EndUser：业务线服务端列出 Session", "IdleBefore / ClosedBefore / DueBefore / ScheduledAfter：Janitor 执行保留策略与绝对期限"},
-		Gaps:    []string{"Get / Touch / SetNextDue / MarkClosed / Delete 只凭 Session ID"}},
+		Locate:  []string{"LookupSession：用 ids.EndUserSlotOfSession 定位唯一库并取真实索引行，归属仍由 EndUser / BusinessLine 校验；C4 接兼容定位"}},
 	"memories": {Class: ByEndUser, Column: "end_user",
-		Offline: []string{"DeleteSession：Janitor 按来源 Session 删除"},
-		Gaps:    []string{"Get / Delete 只凭 Memory ID"}},
-	"memory_grants": {Class: ByEndUser, Column: "end_user",
-		Gaps: []string{"Get / Revoke 只凭 Grant ID"}},
+		Offline: []string{"DeleteSession：扫描来源 Session 的真实 EndUser，再逐键删除；Janitor 已知归属时用 DeleteSessionForEndUser"}},
+	"memory_grants": {Class: ByEndUser, Column: "end_user"},
 	"memory_access": {Class: ByEndUser, Column: "end_user"},
 	"usage_entries": {Class: ByEndUser, Column: "end_user",
-		Offline: []string{"Report：业务线服务端的用量报表", "Prune：按时间清理", "注销 EndUser 后键改为匿名值 '~'，行留在原分片"},
-		Gaps:    []string{"AnonymizeEntry 只凭用量记录 ID"}},
+		Offline: []string{"Report：业务线服务端的用量报表", "Prune：按时间清理", "注销 EndUser 后键改为匿名值 '~'，行和幂等键留在原分片，AnonymizeEntry 用调用方原 EndUser 定位"}},
 	"usage_hourly": {Class: ByEndUser, Column: "end_user",
 		Offline: []string{"Prune：按时间清理",
 			"end_user = '' 的业务线合计行由每个分片各自累计；业务线配额检查（Spent）汇总各分片，在线路径上须缓存"}},

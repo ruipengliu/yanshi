@@ -35,17 +35,17 @@ func (x Index) Put(ctx context.Context, s *lifecycle.Session) error {
 	return err
 }
 
-func (x Index) Touch(ctx context.Context, id string, at time.Time) error {
-	_, err := x.Pool.Exec(ctx, `UPDATE sessions SET last_input_at = $2 WHERE session_id = $1 AND last_input_at < $2`, id, at)
+func (x Index) Touch(ctx context.Context, endUser, id string, at time.Time) error {
+	_, err := x.Pool.Exec(ctx, `UPDATE sessions SET last_input_at = $2 WHERE end_user = $3 AND session_id = $1 AND last_input_at < $2`, id, at, endUser)
 	return err
 }
 
-func (x Index) SetNextDue(ctx context.Context, id string, at time.Time) error {
+func (x Index) SetNextDue(ctx context.Context, endUser, id string, at time.Time) error {
 	var due *time.Time
 	if !at.IsZero() {
 		due = &at
 	}
-	_, err := x.Pool.Exec(ctx, `UPDATE sessions SET next_due = $2 WHERE session_id = $1`, id, due)
+	_, err := x.Pool.Exec(ctx, `UPDATE sessions SET next_due = $2 WHERE end_user = $3 AND session_id = $1`, id, due, endUser)
 	return err
 }
 
@@ -54,8 +54,8 @@ func (x Index) ScheduledAfter(ctx context.Context, businessLine, afterID string,
 		AND closed_at IS NULL AND next_due IS NOT NULL ORDER BY session_id LIMIT $3`, businessLine, afterID, limit)
 }
 
-func (x Index) MarkClosed(ctx context.Context, id string, at time.Time) error {
-	_, err := x.Pool.Exec(ctx, `UPDATE sessions SET closed_at = $2 WHERE session_id = $1 AND closed_at IS NULL`, id, at)
+func (x Index) MarkClosed(ctx context.Context, endUser, id string, at time.Time) error {
+	_, err := x.Pool.Exec(ctx, `UPDATE sessions SET closed_at = $2 WHERE end_user = $3 AND session_id = $1 AND closed_at IS NULL`, id, at, endUser)
 	return err
 }
 
@@ -80,8 +80,8 @@ func scan(row pgx.CollectableRow) (*lifecycle.Session, error) {
 	return s, nil
 }
 
-func (x Index) Get(ctx context.Context, id string) (*lifecycle.Session, error) {
-	rows, err := x.Pool.Query(ctx, `SELECT `+columns+` FROM sessions WHERE session_id = $1`, id)
+func (x Index) Get(ctx context.Context, endUser, id string) (*lifecycle.Session, error) {
+	rows, err := x.Pool.Query(ctx, `SELECT `+columns+` FROM sessions WHERE end_user = $2 AND session_id = $1`, id, endUser)
 	if err != nil {
 		return nil, err
 	}
@@ -172,9 +172,21 @@ func except(f lifecycle.AgentFilter) []string {
 	return f.Except
 }
 
-func (x Index) Delete(ctx context.Context, id string) error {
-	_, err := x.Pool.Exec(ctx, `DELETE FROM sessions WHERE session_id = $1`, id)
+func (x Index) Delete(ctx context.Context, endUser, id string) error {
+	_, err := x.Pool.Exec(ctx, `DELETE FROM sessions WHERE end_user = $2 AND session_id = $1`, id, endUser)
 	return err
+}
+
+func (x Index) LookupSession(ctx context.Context, id string) (*lifecycle.Session, error) {
+	rows, err := x.Pool.Query(ctx, `SELECT `+columns+` FROM sessions WHERE session_id = $1`, id)
+	if err != nil {
+		return nil, err
+	}
+	s, err := pgx.CollectExactlyOneRow(rows, scan)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, lifecycle.ErrNotFound
+	}
+	return s, err
 }
 
 type Deletions struct {

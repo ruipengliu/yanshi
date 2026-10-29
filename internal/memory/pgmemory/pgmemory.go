@@ -75,8 +75,8 @@ func scan(row pgx.CollectableRow) (*memory.Memory, error) {
 	return m, scanInto(row, m)
 }
 
-func (s Store) Get(ctx context.Context, id string) (*memory.Memory, error) {
-	rows, err := s.Pool.Query(ctx, `SELECT `+cols+` FROM memories WHERE id = $1`, id)
+func (s Store) Get(ctx context.Context, endUser, id string) (*memory.Memory, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT `+cols+` FROM memories WHERE end_user = $2 AND id = $1`, id, endUser)
 	if err != nil {
 		return nil, err
 	}
@@ -87,8 +87,8 @@ func (s Store) Get(ctx context.Context, id string) (*memory.Memory, error) {
 	return m, err
 }
 
-func (s Store) Delete(ctx context.Context, id string) error {
-	_, err := s.Pool.Exec(ctx, `DELETE FROM memories WHERE id = $1`, id)
+func (s Store) Delete(ctx context.Context, endUser, id string) error {
+	_, err := s.Pool.Exec(ctx, `DELETE FROM memories WHERE end_user = $2 AND id = $1`, id, endUser)
 	return err
 }
 
@@ -105,8 +105,8 @@ func (s Store) Count(ctx context.Context, businessLine, endUser string, at time.
 	return n, err
 }
 
-func (s Store) Supersede(ctx context.Context, id, by string, at time.Time) error {
-	_, err := s.Pool.Exec(ctx, `UPDATE memories SET superseded_by = $2, superseded_at = $3 WHERE id = $1`, id, by, at)
+func (s Store) Supersede(ctx context.Context, endUser, id, by string, at time.Time) error {
+	_, err := s.Pool.Exec(ctx, `UPDATE memories SET superseded_by = $2, superseded_at = $3 WHERE end_user = $4 AND id = $1`, id, by, at, endUser)
 	return err
 }
 
@@ -163,7 +163,25 @@ func (s Store) Nearest(ctx context.Context, endUser string, scopes []memory.Scop
 }
 
 func (s Store) DeleteSession(ctx context.Context, sessionID string) error {
-	_, err := s.Pool.Exec(ctx, `DELETE FROM memories WHERE source_session = $1`, sessionID)
+	// 日志和索引都可能已删除，不能从 Session 槽猜测用户；这是登记过的离线恢复路径。
+	rows, err := s.Pool.Query(ctx, `SELECT DISTINCT end_user COLLATE "C" FROM memories WHERE source_session = $1 ORDER BY end_user COLLATE "C"`, sessionID)
+	if err != nil {
+		return err
+	}
+	endUsers, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return err
+	}
+	for _, endUser := range endUsers {
+		if err := s.DeleteSessionForEndUser(ctx, endUser, sessionID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s Store) DeleteSessionForEndUser(ctx context.Context, endUser, sessionID string) error {
+	_, err := s.Pool.Exec(ctx, `DELETE FROM memories WHERE end_user = $1 AND source_session = $2`, endUser, sessionID)
 	return err
 }
 
@@ -173,10 +191,11 @@ func (s Store) DeleteEndUser(ctx context.Context, businessLine, endUser string) 
 }
 
 func (s Store) RecordAccess(ctx context.Context, accesses []memory.Access) error {
+	// 一批来自同一 EndUser 的一次召回；保留原有批写原子性，存在性检查仍核对真实归属。
 	batch := &pgx.Batch{}
 	for _, a := range accesses {
 		batch.Queue(`INSERT INTO memory_access (memory_id, owner_line, end_user, reader_line, session_id, run_id, at)
-			SELECT $1, $2, $3, $4, $5, $6, $7 WHERE EXISTS (SELECT 1 FROM memories WHERE id = $1)`,
+			SELECT $1, $2, $3, $4, $5, $6, $7 WHERE EXISTS (SELECT 1 FROM memories WHERE end_user = $3 AND business_line = $2 AND id = $1)`,
 			a.MemoryID, a.Owner, a.EndUser, a.Reader, a.SessionID, a.RunID, a.At)
 	}
 	return s.Pool.SendBatch(ctx, batch).Close()
@@ -240,8 +259,8 @@ func scanGrant(row pgx.CollectableRow) (*memory.Grant, error) {
 	return gr, nil
 }
 
-func (g Grants) Get(ctx context.Context, id string) (*memory.Grant, error) {
-	rows, err := g.Pool.Query(ctx, `SELECT `+grantCols+` FROM memory_grants WHERE id = $1`, id)
+func (g Grants) Get(ctx context.Context, endUser, id string) (*memory.Grant, error) {
+	rows, err := g.Pool.Query(ctx, `SELECT `+grantCols+` FROM memory_grants WHERE end_user = $2 AND id = $1`, id, endUser)
 	if err != nil {
 		return nil, err
 	}
@@ -252,8 +271,8 @@ func (g Grants) Get(ctx context.Context, id string) (*memory.Grant, error) {
 	return gr, err
 }
 
-func (g Grants) Revoke(ctx context.Context, id string, at time.Time) error {
-	_, err := g.Pool.Exec(ctx, `UPDATE memory_grants SET revoked_at = $2 WHERE id = $1 AND revoked_at IS NULL`, id, at)
+func (g Grants) Revoke(ctx context.Context, endUser, id string, at time.Time) error {
+	_, err := g.Pool.Exec(ctx, `UPDATE memory_grants SET revoked_at = $2 WHERE end_user = $3 AND id = $1 AND revoked_at IS NULL`, id, at, endUser)
 	return err
 }
 

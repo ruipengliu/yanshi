@@ -195,7 +195,7 @@ func (s *Service) FireSchedule(ctx context.Context, st *session.State, scheduleI
 	if !fired {
 		return nil
 	}
-	return s.touch(ctx, st.SessionID, prev)
+	return s.touch(ctx, st.Created.GetEndUser(), st.SessionID, prev)
 }
 
 // scheduleCatchup 以已写入日志的 NextDue 为第一点，当前规则仅计算它之后的将来到期。
@@ -228,5 +228,5 @@ func (s *Service) SyncScheduleIndex(ctx context.Context, st *session.State) erro
 		return nil
 	}
 	next, _ := st.NextScheduleDue()
-	return s.Index.SetNextDue(ctx, st.SessionID, next)
+	return s.Index.SetNextDue(ctx, st.Created.GetEndUser(), st.SessionID, next)
 }

@@ -37,7 +37,7 @@ func TestCreateDeleteAt(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		indexed, err := svc.Index.Get(ctx, sid)
+		indexed, err := svc.Index.Get(ctx, "u", sid)
 		if err != nil || !indexed.DeleteAt.Equal(at) {
 			t.Fatalf("index: %+v, %v", indexed, err)
 		}

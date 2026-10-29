@@ -176,7 +176,7 @@ func (c *Controller) Step(ctx context.Context) (bool, error) {
 	}
 	// 先创建、后复查：Session 已关闭或删除时销毁刚创建（或恢复）的沙箱，不执行调用（ADR-0015）。
 	// 关闭方先记关闭、再让 Janitor 销毁沙箱，因此二者无论如何交错，工作区都不会残留。
-	if gone, err := c.ended(ctx, inv.GetSessionId()); err != nil || gone {
+	if gone, err := c.ended(ctx, endUser, inv.GetSessionId()); err != nil || gone {
 		if gone {
 			err = c.destroy(ctx, id)
 			_ = c.Hub.Inbox.Remove(ctx, endUser, id, inv.GetCallId())
@@ -190,7 +190,7 @@ func (c *Controller) Step(ctx context.Context) (bool, error) {
 		return exec.Execute(WithSandbox(ctx, id, inv.GetCallId()), inv)
 	})
 	if err == nil && res != nil {
-		c.meter(ctx, inv, c.Clock.Now().Sub(start))
+		c.meter(ctx, endUser, inv, c.Clock.Now().Sub(start))
 	}
 	if errors.Is(err, errWithdrawn) {
 		return true, nil
@@ -316,20 +316,20 @@ func (c *Controller) destroy(ctx context.Context, id string) error {
 }
 
 // meter 记录一次执行的用量。以 call_id 为幂等键：调用被重新投递、由账本返回已有结果时不重复计费。
-func (c *Controller) meter(ctx context.Context, inv *v1.Invoke, d time.Duration) {
+func (c *Controller) meter(ctx context.Context, endUser string, inv *v1.Invoke, d time.Duration) {
 	if c.Meter == nil || c.Lifecycle == nil || c.Lifecycle.Index == nil {
 		return
 	}
-	s, err := c.Lifecycle.Index.Get(ctx, inv.GetSessionId())
+	s, err := c.Lifecycle.Index.Get(ctx, endUser, inv.GetSessionId())
 	if err != nil {
 		return // Session 已删除：执行结果也会被撤回，不计费
 	}
 	c.Meter.Sandbox(ctx, usage.Scope{SessionID: s.ID, BusinessLine: s.BusinessLine, EndUser: s.EndUser}, "sbx_"+inv.GetCallId(), d, c.Clock.Now())
 }
 
-func (c *Controller) ended(ctx context.Context, sessionID string) (bool, error) {
+func (c *Controller) ended(ctx context.Context, endUser, sessionID string) (bool, error) {
 	if c.Lifecycle != nil {
-		return c.Lifecycle.Ended(ctx, sessionID)
+		return c.Lifecycle.Ended(ctx, endUser, sessionID)
 	}
 	return node.Withdrawn(ctx, c.Hub.Deletions, sessionID)
 }

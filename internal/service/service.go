@@ -148,7 +148,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (sessionID stri
 			checkErr = errors.Join(checkErr, withdraw(context.WithoutCancel(ctx), nil))
 		}
 		sessionGone, sessionErr := lifecycle.Recheck(ctx, s.Deletions, st.SessionID, func(ctx context.Context) error {
-			return s.withdrawCreatedSession(ctx, st.SessionID)
+			return s.withdrawCreatedSession(ctx, req.EndUser, st.SessionID)
 		})
 		gone, checkErr = gone || sessionGone, errors.Join(checkErr, sessionErr)
 		if gone {
@@ -188,7 +188,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (sessionID stri
 
 // withdrawCreatedSession 兜住“索引已列入注销并清理、创建随后才追加日志”的窗口。
 // 已完成时当前创建只重新写了日志与索引，立即清掉；未完成时沿原删除路径再交 Janitor 清理。
-func (s *Service) withdrawCreatedSession(ctx context.Context, sessionID string) error {
+func (s *Service) withdrawCreatedSession(ctx context.Context, endUser, sessionID string) error {
 	t, err := s.Deletions.Get(ctx, sessionID)
 	if err != nil {
 		return err
@@ -205,7 +205,7 @@ func (s *Service) withdrawCreatedSession(ctx context.Context, sessionID string) 
 			}
 		}
 		if s.Index != nil {
-			if err := s.Index.Delete(ctx, sessionID); err != nil {
+			if err := s.Index.Delete(ctx, endUser, sessionID); err != nil {
 				return errors.Join(enqueueErr, err)
 			}
 		}
@@ -371,11 +371,11 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 		// 写日志与入队在同一事务中（CommitAndWake）：二者之间没有可以崩溃的窗口，Run 不会停在 queued。
 		return session.Decision{Events: events, Wake: true}, nil
 	})
-	return s.finishSubmit(ctx, sessionID, prev, res, err)
+	return s.finishSubmit(ctx, st.Created.GetEndUser(), sessionID, prev, res, err)
 }
 
 // finishSubmit 共用写入后的 touch；丢响应重试只返回首次结果，不重复更新索引。
-func (s *Service) finishSubmit(ctx context.Context, sessionID string, prev time.Time, res *SubmitResult, err error) (*SubmitResult, error) {
+func (s *Service) finishSubmit(ctx context.Context, endUser, sessionID string, prev time.Time, res *SubmitResult, err error) (*SubmitResult, error) {
 	if err != nil {
 		return nil, gone(sessionID, err)
 	}
@@ -384,7 +384,7 @@ func (s *Service) finishSubmit(ctx context.Context, sessionID string, prev time.
 	}
 	// 按 TouchEvery 分段：输入与上一个 Run 落在不同段时更新。每段的第一个输入都会写入，索引中的时间因此与
 	// 最近的输入在同一段内，滞后不到 TouchEvery；只比较间隔的话，间隔始终短于 TouchEvery 的连续对话永远不会更新。
-	if err := s.touch(ctx, sessionID, prev); err != nil {
+	if err := s.touch(ctx, endUser, sessionID, prev); err != nil {
 		return res, err
 	}
 	return res, nil
@@ -463,7 +463,7 @@ func (s *Service) afterClose(ctx context.Context, st *session.State) error {
 		}
 	}
 	if s.Index != nil {
-		if err := s.Index.MarkClosed(ctx, st.SessionID, s.Store.Clock.Now()); err != nil {
+		if err := s.Index.MarkClosed(ctx, st.Created.GetEndUser(), st.SessionID, s.Store.Clock.Now()); err != nil {
 			return err
 		}
 	}
@@ -698,7 +698,7 @@ func (s *Service) Delete(ctx context.Context, sessionID, reason, requestID strin
 	if st, err := s.Store.Load(ctx, sessionID); err == nil && st.Created != nil {
 		businessLine = st.Created.GetBusinessLine()
 	} else if s.Index != nil {
-		if x, err := s.Index.Get(ctx, sessionID); err == nil {
+		if x, err := s.Index.LookupSession(ctx, sessionID); err == nil {
 			businessLine = x.BusinessLine
 		}
 	}

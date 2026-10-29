@@ -27,6 +27,14 @@ func spent(t *testing.T, s usage.Store, bl, eu string, from, to time.Time) int64
 }
 
 func Run(t *testing.T, newStore func(t *testing.T) usage.Store) {
+	t.Run("EndUserKeys", func(t *testing.T) { endUserKeys(t, newStore(t)) })
+	for _, newFirst := range []bool{false, true} {
+		for _, anonymousFirst := range []bool{false, true} {
+			t.Run(fmt.Sprintf("LegacyKeys/newFirst=%v/anonymousFirst=%v", newFirst, anonymousFirst), func(t *testing.T) {
+				legacyKeys(t, newStore(t), newFirst, anonymousFirst)
+			})
+		}
+	}
 	ctx := context.Background()
 
 	t.Run("RecordIsIdempotent", func(t *testing.T) {
@@ -165,11 +173,11 @@ func Run(t *testing.T, newStore func(t *testing.T) usage.Store) {
 		_ = s.Record(ctx, entry("e1", "a", "x", 1, t0))
 		_ = s.Record(ctx, entry("e2", "a", "x", 2, t0))
 		for range 2 { // 幂等
-			if err := s.AnonymizeEntry(ctx, "e2"); err != nil {
+			if err := s.AnonymizeEntry(ctx, "x", "e2"); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if err := s.AnonymizeEntry(ctx, "missing"); err != nil {
+		if err := s.AnonymizeEntry(ctx, "x", "missing"); err != nil {
 			t.Fatal(err)
 		}
 		end := t0.Add(time.Hour)

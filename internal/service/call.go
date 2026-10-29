@@ -89,7 +89,7 @@ func (s *Service) StartCall(ctx context.Context, req StartCallRequest) (*CallSta
 		return nil, gone(req.SessionID, err)
 	}
 	if s.Index != nil {
-		if err := s.Index.Touch(ctx, req.SessionID, s.Store.Clock.Now()); err != nil {
+		if err := s.Index.Touch(ctx, st.Created.GetEndUser(), req.SessionID, s.Store.Clock.Now()); err != nil {
 			return nil, err
 		}
 	}

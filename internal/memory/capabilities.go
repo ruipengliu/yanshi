@@ -63,7 +63,11 @@ func Capabilities(s *Service) []capability.Capability {
 				if err != nil {
 					return nil, err
 				}
-				if m.ID != "mem_"+inv.CallID {
+				expected, err := CallMemoryID(req)
+				if err != nil {
+					return nil, err
+				}
+				if m.ID != expected && m.ID != "mem_"+inv.CallID {
 					if req.Replaces != "" {
 						return text("已删除 " + req.Replaces + "；" + m.Content + " 已经记着（" + m.ID + "）"), nil
 					}

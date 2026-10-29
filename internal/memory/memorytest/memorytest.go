@@ -36,6 +36,9 @@ func hitIDs(hits []memory.Hit) []string {
 }
 
 func RunStore(t *testing.T, newStore func(t *testing.T) memory.Store) {
+	t.Run("EndUserKeys", func(t *testing.T) { storeEndUserKeys(t, newStore(t)) })
+	t.Run("SaveEndUserIDs", func(t *testing.T) { saveEndUserIDs(t, newStore(t)) })
+	t.Run("SaveLegacyRetry", func(t *testing.T) { saveLegacyRetry(t, newStore(t)) })
 	ctx := context.Background()
 	all := []memory.Scope{{BusinessLine: "a"}, {BusinessLine: "b"}}
 
@@ -53,7 +56,7 @@ func RunStore(t *testing.T, newStore func(t *testing.T) memory.Store) {
 				t.Fatal(err)
 			}
 		}
-		if err := s.Supersede(ctx, "f", "a", t0); err != nil {
+		if err := s.Supersede(ctx, "u", "f", "a", t0); err != nil {
 			t.Fatal(err)
 		}
 		expired := mem("g", "a", "u", memory.Plan, "g", "s1", t0)
@@ -72,7 +75,7 @@ func RunStore(t *testing.T, newStore func(t *testing.T) memory.Store) {
 				t.Fatalf("sources = %v, %v", ids(got), err)
 			}
 		}
-		if err := s.Delete(ctx, "a"); err != nil {
+		if err := s.Delete(ctx, "u", "a"); err != nil {
 			t.Fatal(err)
 		}
 		got, err := s.ListBySource(ctx, "a", "u", []string{"s1", "s2"}, t0)
@@ -86,21 +89,21 @@ func RunStore(t *testing.T, newStore func(t *testing.T) memory.Store) {
 		if err := s.Put(ctx, m, nil); err != nil {
 			t.Fatal(err)
 		}
-		got, err := s.Get(ctx, "m1")
+		got, err := s.Get(ctx, "u", "m1")
 		if err != nil || got.Content != m.Content || got.Category != memory.Preference || got.SourceSession != "s1" ||
 			got.SourceCall != "call_m1" || !got.CreatedAt.Equal(t0) {
 			t.Fatalf("get = %+v, %v", got, err)
 		}
 		m.Content = "偏好详细的回答"
 		_ = s.Put(ctx, m, nil)
-		if got, _ := s.Get(ctx, "m1"); got.Content != "偏好详细的回答" {
+		if got, _ := s.Get(ctx, "u", "m1"); got.Content != "偏好详细的回答" {
 			t.Fatalf("overwrite: %q", got.Content)
 		}
-		_ = s.Delete(ctx, "m1")
-		if _, err := s.Get(ctx, "m1"); !errors.Is(err, memory.ErrNotFound) {
+		_ = s.Delete(ctx, "u", "m1")
+		if _, err := s.Get(ctx, "u", "m1"); !errors.Is(err, memory.ErrNotFound) {
 			t.Fatalf("after delete: %v", err)
 		}
-		if err := s.Delete(ctx, "m1"); err != nil {
+		if err := s.Delete(ctx, "u", "m1"); err != nil {
 			t.Fatalf("delete is not idempotent: %v", err)
 		}
 	})
@@ -168,14 +171,14 @@ func RunStore(t *testing.T, newStore func(t *testing.T) memory.Store) {
 		plan := mem("plan", "a", "u", memory.Plan, "周三出差", "s", t0)
 		plan.ValidUntil = t0.Add(2 * day)
 		_ = s.Put(ctx, plan, vec)
-		if err := s.Supersede(ctx, "old", "new", t0.Add(time.Hour)); err != nil {
+		if err := s.Supersede(ctx, "u", "old", "new", t0.Add(time.Hour)); err != nil {
 			t.Fatal(err)
 		}
-		_ = s.Supersede(ctx, "missing", "new", t0) // 不存在时不报错
-		if got, _ := s.Get(ctx, "old"); got.SupersededBy != "new" || !got.SupersededAt.Equal(t0.Add(time.Hour)) {
+		_ = s.Supersede(ctx, "u", "missing", "new", t0) // 不存在时不报错
+		if got, _ := s.Get(ctx, "u", "old"); got.SupersededBy != "new" || !got.SupersededAt.Equal(t0.Add(time.Hour)) {
 			t.Fatalf("superseded = %+v", got)
 		}
-		if got, _ := s.Get(ctx, "plan"); !got.ValidUntil.Equal(t0.Add(2 * day)) {
+		if got, _ := s.Get(ctx, "u", "plan"); !got.ValidUntil.Equal(t0.Add(2 * day)) {
 			t.Fatalf("valid until = %v", got.ValidUntil)
 		}
 		at := t0.Add(3 * day) // 计划已过期
@@ -216,12 +219,16 @@ func RunStore(t *testing.T, newStore func(t *testing.T) memory.Store) {
 		_ = s.Put(ctx, mem("x3", "b", "u", memory.Plan, "p", "s3", t0), nil)
 		_ = s.Put(ctx, mem("x4", "a", "v", memory.Plan, "p", "s4", t0), nil)
 		_ = s.DeleteSession(ctx, "s1")
-		if _, err := s.Get(ctx, "x1"); !errors.Is(err, memory.ErrNotFound) {
+		if _, err := s.Get(ctx, "u", "x1"); !errors.Is(err, memory.ErrNotFound) {
 			t.Fatal("memory of deleted session remains")
 		}
 		_ = s.DeleteEndUser(ctx, "a", "u")
 		for id, want := range map[string]bool{"x2": false, "x3": true, "x4": true} {
-			_, err := s.Get(ctx, id)
+			endUser := "u"
+			if id == "x4" {
+				endUser = "v"
+			}
+			_, err := s.Get(ctx, endUser, id)
 			if (err == nil) != want {
 				t.Errorf("%s present = %v, want %v", id, err == nil, want)
 			}
@@ -247,7 +254,7 @@ func RunAccess(t *testing.T, newStore func(t *testing.T) memory.Store) {
 		if len(got) != 2 || got[0].MemoryID != "m2" || got[1].Reader != "b" || !got[0].At.Equal(t0.Add(2*time.Minute)) {
 			t.Fatalf("accesses = %+v", got)
 		}
-		_ = s.Delete(ctx, "m1")
+		_ = s.Delete(ctx, "u", "m1")
 		if got, _ := s.Accesses(ctx, "u", "a", t0, 10); len(got) != 1 || got[0].MemoryID != "m2" {
 			t.Fatalf("after deleting m1: %+v", got)
 		}
@@ -259,6 +266,7 @@ func RunAccess(t *testing.T, newStore func(t *testing.T) memory.Store) {
 }
 
 func RunGrants(t *testing.T, newGrants func(t *testing.T) memory.Grants) {
+	t.Run("EndUserKeys", func(t *testing.T) { grantEndUserKeys(t, newGrants(t)) })
 	ctx := context.Background()
 	t.Run("CreateRevokeList", func(t *testing.T) {
 		g := newGrants(t)
@@ -270,14 +278,14 @@ func RunGrants(t *testing.T, newGrants func(t *testing.T) memory.Grants) {
 			}
 		}
 		_ = g.Create(ctx, &memory.Grant{ID: "other", EndUser: "v", From: "a", To: "b", Categories: []memory.Category{memory.Plan}, CreatedAt: t0})
-		got, err := g.Get(ctx, "g0")
+		got, err := g.Get(ctx, "u", "g0")
 		if err != nil || got.To != "b" || !slices.Equal(got.Categories, []memory.Category{memory.Preference, memory.Interest}) ||
 			!got.ExpiresAt.Equal(t0.Add(time.Hour)) || !got.RevokedAt.IsZero() {
 			t.Fatalf("get = %+v, %v", got, err)
 		}
-		_ = g.Revoke(ctx, "g0", t0.Add(10*time.Minute))
-		_ = g.Revoke(ctx, "g0", t0.Add(20*time.Minute)) // 已撤销：不变
-		if got, _ := g.Get(ctx, "g0"); !got.RevokedAt.Equal(t0.Add(10*time.Minute)) || got.ActiveAt(t0.Add(11*time.Minute)) {
+		_ = g.Revoke(ctx, "u", "g0", t0.Add(10*time.Minute))
+		_ = g.Revoke(ctx, "u", "g0", t0.Add(20*time.Minute)) // 已撤销：不变
+		if got, _ := g.Get(ctx, "u", "g0"); !got.RevokedAt.Equal(t0.Add(10*time.Minute)) || got.ActiveAt(t0.Add(11*time.Minute)) {
 			t.Fatalf("revoked = %+v", got)
 		}
 		list, _ := g.List(ctx, "u", "a")
@@ -287,7 +295,7 @@ func RunGrants(t *testing.T, newGrants func(t *testing.T) memory.Grants) {
 		if r, _ := g.ToReader(ctx, "u", "b"); len(r) != 1 || r[0].ID != "g0" {
 			t.Fatalf("to reader = %v", r)
 		}
-		if _, err := g.Get(ctx, "nope"); !errors.Is(err, memory.ErrNotFound) {
+		if _, err := g.Get(ctx, "u", "nope"); !errors.Is(err, memory.ErrNotFound) {
 			t.Fatalf("missing: %v", err)
 		}
 	})
@@ -299,7 +307,7 @@ func RunGrants(t *testing.T, newGrants func(t *testing.T) memory.Grants) {
 		_ = g.Create(ctx, &memory.Grant{ID: "bc", EndUser: "u", From: "b", To: "c", Categories: []memory.Category{memory.Plan}, CreatedAt: t0})
 		_ = g.DeleteBusinessLine(ctx, "u", "a")
 		for id, want := range map[string]bool{"ab": false, "ca": false, "bc": true} {
-			_, err := g.Get(ctx, id)
+			_, err := g.Get(ctx, "u", id)
 			if (err == nil) != want {
 				t.Errorf("%s present = %v, want %v", id, err == nil, want)
 			}

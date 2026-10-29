@@ -69,7 +69,7 @@ func TestInboxDeletionWithAndWithoutSessionIndex(t *testing.T) {
 						}
 					}
 					if mode != "log_deleted" {
-						if err := stores.Index.Delete(ctx, sid); err != nil {
+						if err := stores.Index.Delete(ctx, "u", sid); err != nil {
 							t.Fatal(err)
 						}
 					}

@@ -2,11 +2,14 @@ package usage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/ids"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/metrics"
 )
@@ -81,9 +84,17 @@ func (m *Meter) Sandbox(ctx context.Context, s Scope, id string, d time.Duration
 }
 
 func (m *Meter) record(ctx context.Context, s Scope, e *Entry) {
-	err := m.Store.Record(ctx, e)
+	// 各入口仍只消费原来的一次生成器（沙箱与 Call 不消费）；在归属齐全处统一嵌 EndUser 槽。
+	// 原键完整保留为幂等键，摘要仅编码新 ID 的 token，不把 Session 槽继承到用量中。
+	e.LegacyID = e.ID
+	sum := sha256.Sum256([]byte(e.LegacyID))
+	id, err := ids.WithEndUser("use", hex.EncodeToString(sum[:]), s.EndUser)
+	if err == nil {
+		e.ID = id
+		err = m.Store.Record(ctx, e)
+	}
 	// 写入报错也复查：回包丢失不代表没有落盘。
-	withdraw := func(ctx context.Context) error { return m.Store.AnonymizeEntry(ctx, e.ID) }
+	withdraw := func(ctx context.Context) error { return m.Store.AnonymizeEntry(ctx, s.EndUser, e.DedupKey()) }
 	_, sessionErr := lifecycle.Recheck(ctx, m.Deletions, s.SessionID, withdraw)
 	_, userErr := lifecycle.RecheckEndUser(ctx, m.Deletions, s.BusinessLine, s.EndUser,
 		func(ctx context.Context, _ *lifecycle.EndUserTombstone) error { return withdraw(ctx) })

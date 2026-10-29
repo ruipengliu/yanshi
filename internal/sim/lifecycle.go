@@ -151,7 +151,11 @@ func (w *World) deleteSession() error {
 		if !errors.Is(err, memory.ErrNotFound) && !errors.Is(err, memory.ErrLimit) {
 			return fmt.Errorf("late memory: %w", err)
 		}
-		if _, err := w.stores.Memories.Get(context.Background(), "mem_"+callID); !errors.Is(err, memory.ErrNotFound) {
+		memoryID, idErr := memory.CallMemoryID(memory.SaveRequest{BusinessLine: "bl", EndUser: w.users[i], SessionID: sid, CallID: callID})
+		if idErr != nil {
+			return idErr
+		}
+		if _, err := w.stores.Memories.Get(context.Background(), w.users[i], memoryID); !errors.Is(err, memory.ErrNotFound) {
 			return fmt.Errorf("invariant: late memory survived deletion of %s", sid)
 		}
 		if reason == lifecycle.ReasonErasure && errors.Is(err, memory.ErrNotFound) {
@@ -210,7 +214,7 @@ func (w *World) checkDeleted(final bool) error {
 		if events, _ := eventlog.ReadAll(ctx, w.log, sid, 0); len(events) > 0 {
 			return fmt.Errorf("invariant: deleted session %s has %d events", sid, len(events))
 		}
-		if _, err := w.index.Get(ctx, sid); !errors.Is(err, lifecycle.ErrNotFound) {
+		if _, err := w.index.LookupSession(ctx, sid); !errors.Is(err, lifecycle.ErrNotFound) {
 			return fmt.Errorf("invariant: deleted session %s is still indexed", sid)
 		}
 		if list, _ := w.artifacts.List(ctx, sid); len(list) > 0 {

@@ -48,7 +48,7 @@ func TestTotalsAreShardedAndSum(t *testing.T) {
 		t.Fatalf("business line spent %d, want %d", got, want)
 	}
 	_ = s.DeleteEndUser(ctx, "a", "u1")
-	_ = s.AnonymizeEntry(ctx, "e0")
+	_ = s.AnonymizeEntry(ctx, "u0", "e0")
 	if got, _ := s.Spent(ctx, "a", "", hour, hour.Add(time.Hour)); got != want {
 		t.Fatalf("total changed by anonymization: %d, want %d", got, want)
 	}

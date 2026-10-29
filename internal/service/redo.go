@@ -50,5 +50,5 @@ func (s *Service) Redo(ctx context.Context, sessionID, inputID, expectedRunID st
 		prev = lastRunAt(st)
 		return session.Decision{Events: events, Wake: true}, nil
 	})
-	return s.finishSubmit(ctx, sessionID, prev, res, err)
+	return s.finishSubmit(ctx, st.Created.GetEndUser(), sessionID, prev, res, err)
 }

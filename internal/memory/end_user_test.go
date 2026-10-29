@@ -60,7 +60,7 @@ func TestDeletionWithdrawsLateMemory(t *testing.T) {
 				if _, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "bl", EndUser: "u", SessionID: "s", CallID: "late", Category: memory.Preference, Content: "不吃香菜"}); !errors.Is(err, memory.ErrNotFound) {
 					t.Fatalf("late save = %v", err)
 				}
-				if _, err := s.Store.Get(ctx, "mem_late"); !errors.Is(err, memory.ErrNotFound) {
+				if _, err := s.Store.Get(ctx, "u", scopedMemoryID("bl", "u", "s", "late")); !errors.Is(err, memory.ErrNotFound) {
 					t.Fatalf("late memory survived: %v", err)
 				}
 				got, err := s.Store.ListBySource(ctx, "bl", "u", []string{"s"}, c.Now())

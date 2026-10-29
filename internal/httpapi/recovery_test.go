@@ -26,7 +26,7 @@ func TestStableSessionList(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := index.MarkClosed(ctx, "b", time.Now()); err != nil {
+	if err := index.MarkClosed(ctx, "u2", "b", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.api.Service.Deletions.Mark(ctx, &lifecycle.Tombstone{SessionID: "c", BusinessLine: "demo", RequestedAt: time.Now()}); err != nil {
@@ -54,7 +54,7 @@ func TestStableSessionList(t *testing.T) {
 		if want != "c" && cursor != want || want == "c" && cursor != "" {
 			t.Fatalf("cursor: %q", cursor)
 		}
-		if err := index.Touch(ctx, "b", time.Now().Add(time.Hour)); err != nil {
+		if err := index.Touch(ctx, "u2", "b", time.Now().Add(time.Hour)); err != nil {
 			t.Fatal(err)
 		}
 	}

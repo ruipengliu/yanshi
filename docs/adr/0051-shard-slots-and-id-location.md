@@ -125,28 +125,28 @@ status: accepted
 
 按 Q118，健康分片的读取、写入、认领和出站消费继续。仅依赖失联分片的请求有界失败；汇总不得把部分成功当作完整成功。就绪检查报告每个分片的 SQL、迁移与 LISTEN 状态，结合进程角色和可服务分片决定是否接受流量，不能简单对所有分片取 AND；请求处理仍按其实际依赖拒绝不可用目标。控制库 0 失联可阻塞删除请求查询等依赖它的操作，但不能因此关闭不依赖它的健康 Session。
 
-## 8. C1 / C2 / C3a 交付边界与后续生成点
+## 8. C1 / C2 / C3a / C3b 交付边界与后续生成点
 
 C1 只接 `artifact.Service.Put`：有槽 Session 生成同槽工件，旧 Session 的 ID 与生成器调用次数完全沿用。新增包没有存储、事务、网络、时间或新的随机源；不改 `app.Postgres`、`pg.Tables.Gaps`、投影或协议。C1 阶段生产 Session 仍是旧格式；C2 接通下面的 Session 生成点后，正常新建 Session 与其工件开始使用新格式。
 
-| 构造点 | C2 后的状态 / 后续安排 |
+| 构造点 | C3b 后的状态 / 后续安排 |
 |---|---|
 | service.Create | C2 已接 `Generator.Session(EndUser)`，仍只消费一个原始 ID；写入前校验新格式的真实 EndUser 槽，legacy 接受 |
 | delegation.ChildSessionID：父 Session / call_id 的 SHA-256 派生 | C2 已补真实 EndUser：旧父保留 `ses_<hex>`，新父接 `SessionID`；子自身槽来自原 token，EndUser 来自父投影；派发重推导并核对目标 |
 | artifact.Service.Put | C1 已接 ForSession；C4 才接裸 ID 定位 |
-| memory.Service.Save：`mem_ + CallID` 或 IDs；capabilities 的重复判断 | C3/C4 接 WithEndUser / ForEndUser，并同步修改重复判断、旧幂等定位与真实归属检查 |
-| memory.Service.CreateGrant | C3/C4 接 ForEndUser，读 / 撤销仍核对真实 EndUser 与业务线 |
-| runtime.Worker 的模型 / 决策计量、runtime.compact | C3 接真实 EndUser 的用量 ID，不继承 Session 槽 |
-| oneshot.Service、speech.Service 的用量生成 | C3 接 ForEndUser；保持调用次数与匿名化重查的定位 |
-| sandbox.Controller 的 `sbx_ + call_id` 用量、call.Call 的 `call_<meterID>/<轮次>` 用量 | C3 把确定性去重 token 编码为安全字符并嵌 EndUser 槽；保留历史幂等键兼容 |
+| memory.Service.Save：`mem_ + CallID` 或 IDs；capabilities 的重复判断 | C3b 已接 WithEndUser / ForEndUser；派生 token 是真实 EndUser、业务线、来源 Session、call_id 的长度前缀字节串的 SHA-256；旧派生先查并校验归属，capabilities 同步认可两种 ID；跨库兼容定位仍留 C4 |
+| memory.Service.CreateGrant | C3b 已接 ForEndUser，Get / Revoke 带真实 EndUser，service 仍核对业务线 |
+| runtime.Worker 的模型 / 决策计量、runtime.compact | C3b 已由 Meter.record 统一 WithEndUser("use", SHA256(原键), EndUser)；原入口仍只消费一次 IDs，不继承 Session 槽 |
+| oneshot.Service、speech.Service 的用量生成 | C3b 已经 Meter.record 嵌 EndUser 槽；原 use_ / speech_ 键完整保留，生成器调用次数不变，匿名化传原 Scope.EndUser |
+| sandbox.Controller 的 `sbx_ + call_id` 用量、call.Call 的 `call_<meterID>/<轮次>` 用量 | C3b 已经 Meter.record 用 SHA-256 编码完整原键（含 /）并嵌 EndUser 槽，usage_entries.idempotency_key 保留原键；旧 / 新 ID 与匿名化后的重复计量仍去重，不消费生成器 |
 | runtime.Worker 改写模型给的 call_id | C2 已接 `ForSession("call", SessionID)`：模型给的 ID 可能为空或跨轮、跨 Run 重复，仍一律改写为平台 ID（每个调用消费一次生成器，与原来相同），新 ID 继承 Session 槽位 |
 | service.checkpoint / background 的 Run、schedule 的 Schedule / Run、schedule_capability 派生 ID；session.Store 的 Event | 已随 Session 传递，无独立裸 ID 查库需求，可保持旧局部格式；以后若独立定位，必须用 WithSession / ForSession |
 | service 的删除请求 ID | 控制数据固定库 0，不根据请求 ID 随机分片 |
 | channel 的 Connection ID、serve 的进程 ID | 非持久对象定位键，继续原生成器；Presence 从订阅集合取得真实 Session |
 
-C2 已清 Session 接口（Presence、Ledger）并接普通 / 委托 Session；C3a 已清 Node / Inbox 的 EndUser 接口；C3b 继续清索引 / Memory / Grant / 用量 / Tier / 删除屏障；C4 接裸 ID 与显式兼容定位；C5 只在这些阻断项关闭后装配多库、fan-out、完整缓存与部分就绪。存储接口已有真实键就直接传，不拿新增 ID API 代替缺口清理。
+C2 已清 Session 接口（Presence、Ledger）并接普通 / 委托 Session；C3a 已清 Node / Inbox 的 EndUser 接口；C3b 已清索引 / Memory / Grant / 用量接口，并确认 Tier / 删除屏障 / 推送设备原本已带真实 EndUser；C4 接裸 ID 与显式兼容定位；C5 只在这些阻断项关闭后装配多库、fan-out、完整缓存与部分就绪。存储接口已有真实键就直接传，不拿新增 ID API 代替缺口清理。
 
-已发现的后续缺口：Memory.Save 当前命中 `Store.Get(mem_ + CallID)` 后直接返回，未核对 EndUser / BusinessLine；C3/C4 必须补归属校验，并覆盖跨用户相同外部 call_id 与同槽碰撞。旧用量 token 含 `/`、旧派生幂等 ID、历史 EndUser 槽固定在 0 的约束，均是多库启用前的阻断项，不能仅靠格式单测宣称已解决。
+已发现的后续缺口（C3b 后）：Memory.Save 命中归属检查、同槽用户的派生命名空间、含 `/` 的用量 token 与新旧幂等键兼容已补齐。`Index.LookupSession` 的单库定位、历史 `_v数字_` 名称碰撞预检、裸对象 ID 与旧派生的权威兼容映射仍留 C4；历史 EndUser 槽留 0 或完整停写搬迁、多库装配与离线有界扫描仍留 C5。匿名用量留原库，不能按 `~` 重哈希。未完成这些阻断项前不能启用多库。
 
 proto 的 ID 均为 string；SDK 没有 Session 固定长度解析。新随机工件 43 字符满足 ask_user 的 64 字符上限与 fsblob 的 128 字符上限；字符集兼容 nodesdk Ledger。C1 不修改 proto、SDK 或 mobile，不需要 `make gen` / `make mobile`。C2 仅增加内部 `sandbox.Ledger` 的 Session 键与绑定适配器，未改 `sdk/nodesdk.Ledger`、Executor 或节点协议，不需要 `make gen` / `make mobile`。
 
@@ -172,7 +172,7 @@ proto 的 ID 均为 string；SDK 没有 Session 固定长度解析。新随机�
 
 C2 新增 / 更新的验证：`TestCreateSessionIDs`、`TestChildSessionIDFollowsParentFormat`、`TestDispatchUsesParentEndUserAndRetriesSameChild`、`TestWorkerRewritesCallIDs`、`sandboxtest.RunLedger`（内存 / PG：跨 Session 同 call_id、状态结果、Forget / Prune、started 先落盘、接管重试与写入失败）、`TestLedgerMigrationPreservesStartedAndRequiresSession`、`presencetest` 的 Touch 隔离与迟到心跳、`TestHeartbeatTouchesOnlyJoinedSubscriptions`；已有委托 e2e / Janitor 调用点同步更新。远端须执行 `make check`、`make sim`，包含 `TestEveryTableHasShardKey`、`TestSimulationIsDeterministic` 与 `TestPostgresMatchesMemory`；本机未运行 Go 测试，不据静态检查宣称已通过。
 
-仍有范围外缺口：设备 SDK 的账本、Memory 派生（`mem_ + call_id`）与沙箱用量去重以 call_id 为键，跨 Session 的唯一性依赖平台改写出的全局唯一 ID；其中内核存储在分片前仍须补真实键（C3b / C4）；设备本地账本沿用平台 call_id 去重。FileLedger 限制 ID 的字符集和长度，平台 ID 满足。本步不扩展三端 SDK，没有修改投影或 `ProjectionVersion`。
+C2 当时留下的生成点已由 C3b 补齐：Memory 派生使用完整真实归属和调用身份，沙箱用量嵌 EndUser 槽并保留原全局幂等键。设备 SDK 的账本与沙箱历史用量仍沿用平台 call_id 的全局唯一性，不把相同原始计量键放宽为多个用户的独立费用；裸 ID / 兼容定位仍留 C4。FileLedger 限制 ID 的字符集和长度，平台 ID 满足。本步不扩展三端 SDK，没有修改投影或 `ProjectionVersion`。
 
 
 ### C3a：Node 目录与 Inbox 的真实 EndUser
@@ -187,3 +187,47 @@ C2 新增 / 更新的验证：`TestCreateSessionIDs`、`TestChildSessionIDFollow
 - **范围**：`pg.Tables` 的 nodes / inbox / inbox_versions 均直接登记 `end_user`，清掉这三个 Gaps 与间接 Derived；其余 Gaps 保留。没有改 Apply / State，不递增 ProjectionVersion；没有改提示词或 AgentDef。Session 索引等 EndUser 接口仍留 C3b；裸 ID / 历史映射留 C4，多库与有界 fan-out 留 C5。
 
 新增 / 更新验证：nodetest（内存与 PG 共用）的 `SameNodeIDAcrossEndUsers`、`NodeCannotChangeScope`、`ConcurrentFirstRegistrationHasOneOwner`、`StaleDisconnectDoesNotMarkOffline`、`SameNodeAndCallIDsAcrossEndUsers`、`RemoveSessionRecoversEndUsers`、`WaitIsolatedByEndUser`；`TestMemInboxWaiterKeyIncludesEndUser`、`TestInboxNotificationKeyIncludesEndUser`；`TestNodeInboxMigrationPreservesOwners`（正常、缺归属、归属冲突）；`TestInboxDeletionWithAndWithoutSessionIndex`（内存 / PG，两遍清扫、索引缺失时沿用投影归属、日志与索引均删后的恢复）；Hub 结果隔离与沙箱归属测试。sim 的不同 EndUser 设备始终使用同名 Node，不新增随机源；按真实用户找设备，差分指纹包含 EndUser，删除不变量覆盖当前与历代已注销用户的 Inbox，设备执行前检查 Session 归属。远端须执行 `dev fmt`、`make check`、`make sim`，包括 `TestEveryTableHasShardKey`、`TestSimulationIsDeterministic` 与 `TestPostgresMatchesMemory`；本机无 Go 工具链，本步没有运行这些检查，不宣称通过。
+
+
+### C3b：索引、Memory、Grant 与用量的真实 EndUser
+
+接口与生产调用点逐项选择如下。对象 ID 的全局唯一性保持原契约，不改成 `(EndUser, ID)` 可重复存两行；真实键用于等值访问，不能由槽位代替。业务线的授权仍在 service / memory.Service，HTTP 契约未改。
+
+| 接口 / 调用点 | 真实键来源与选择 |
+|---|---|
+| Index.Get / Touch / SetNextDue / MarkClosed / Delete | 均显式接 `(endUser, sessionID)`；内存检查归属，PG WHERE 同时等值匹配两列；现有主键足以定位，无需新索引 |
+| service.submit / Redo → finishSubmit → touch | 从本次加载的 `st.Created.EndUser` 传入；TouchEvery 与幂等重试不变 |
+| service.NodeResult / ExpireBackground / FireSchedule → touch | 从加载或 Worker 持有的投影传入；后台与定时的输入语义不变 |
+| service.SyncScheduleIndex | 从投影传入，覆盖 Worker 与 Janitor 的定时校准 |
+| service.StartCall / afterClose | 从投影传入 Touch / MarkClosed |
+| service.withdrawCreatedSession | 从 CreateRequest.EndUser 传入 Delete，删除复查不另读索引 |
+| delegation.withdrawChild | 从父投影 EndUser 传入子索引 Delete |
+| sandbox.Controller.ended / meter、lifecycle.Guard.Ended | Step 已从投影取得 EndUser，继续传入 Index.Get；仍保留索引消失就不计沙箱费用的原行为 |
+| janitor.delete | 优先用投影 EndUser；投影已删则先 LookupSession 恢复真实行，再在两遍清扫后带 EndUser 删除索引；行也不存在则无需再删索引。普通 Tombstone 不存 EndUser |
+| **裸 ID：service.Delete 的日志缺失回退** | LookupSession 读取真实业务线；删除流程仍沿原授权路径，不添加 HTTP 鉴权前查询 |
+| **裸 ID：janitor.delete 的日志已删恢复** | LookupSession 取得 EndUser，后续单项写入用真实键 |
+| **裸 ID：app.SessionData 的 Inbox 清理回退** | LookupSession 取得 EndUser；索引亦已删时沿原 Inbox 离线恢复路径 |
+| **裸 ID：sim.checkDeleted** | 只有已删除 Session ID 的检查，LookupSession 确认任何索引行都已清除；不是在线授权路径 |
+| Memory.Get / Delete / Supersede | Save 的幂等检查、replaces、失效写入及删除复查使用 SaveRequest.EndUser；Forget 的读取与整链删除使用已授权 endUser |
+| Memory.RecordAccess | Access 本身已有 EndUser / Owner，内存与 PG 的存在性检查现在同时核对它们；仍保留单次召回批写语义 |
+| Memory.DeleteSessionForEndUser | app.SessionData 注册到 Holder；Janitor 已知归属优先逐键删除。DeleteSession 保留已登记的离线入口：PG 先扫真实 EndUser，再逐键删除，服务令牌在来源 Session 已删除后的清理也沿用它 |
+| Grants.Get / Revoke | RevokeGrant 使用请求的真实 EndUser，仍检查 From / To 包含调用方业务线；CreateGrant 用 ForEndUser，删除屏障仍检查两方业务线 |
+| usage.AnonymizeEntry | 唯一生产调用在 Meter.record；使用原 Scope.EndUser 和原幂等键（也接受对象 ID），EndUser 不从匿名行反推；错误用户无操作，匿名行留原分片 |
+
+`LookupSession` 在接口注释和 `pg.Tables.Locate` 单独登记：C4/C5 必须用 `ids.EndUserSlotOfSession`（旧 ID 经兼容定位）到唯一库读取真实行，再校验真实归属。它不把槽位当权限，也不逐库试探。当前 HTTP 经 `service.Load/WithAccess` 读取日志鉴权，没有直接 Index.Get。
+
+**Memory ID 与重试顺序：** 无 CallID 时 `ForEndUser("mem", EndUser)`，每次消费一个原始 ID；有 CallID 时依次把真实 EndUser、BusinessLine、SourceSession、完整 CallID 编为 `十进制字节长度:原字节`，串联后取 SHA-256 的 64 位小写十六进制，交 `WithEndUser("mem", token, EndUser)`，不消费生成器。字段分界无歧义，外部斜杠、Unicode 及任意字节不截断；同槽用户不共享派生身份。读取顺序固定为旧 `mem_<call_id>` → 新派生 ID → 原内容相似度去重 / 写入流程；只有 ErrNotFound 才继续，读取失败不创建第二份。任一幂等命中都核对 EndUser、业务线、来源 Session 和 SourceCall，不一致以 ErrRejected 拒绝。另一个用户的旧行经带键 Get 不可见，新请求创建自己命名空间的对象。capabilities 同时认可旧 / 新派生 ID，不把新格式误报成“已有相同记忆”。内容相似度、历史失效、审批和召回规则不改。Store.Put 的原按 ID 覆盖契约不放宽或重写。
+
+**用量 ID 与历史去重：** 模型 / 决策 / compact（`runtime/worker.go`、`compact.go`）、oneshot、speech、sandbox 和 call 的入口继续产生原始键，在 Meter.record 使用真实 Scope.EndUser 统一变成 `use_v1_<uuu>_<SHA256(完整原键)>`。模型 / 决策 / 压缩 / oneshot 每次仍消耗一次 IDs；speech 仍一次；沙箱原键 `sbx_<call_id>` 与 Call 原键 `call_<CallStarted Event ID>/<轮次>` 不额外消费生成器。新格式不会继承 Session 槽，`/` 等字符被确定性摘要编码。
+
+`Entry.LegacyID` / `DedupKey()` 与 `usage_entries.idempotency_key` 保存原完整键，旧行回填为自身 ID；没有 LegacyID 的底层 Record 仍以 ID 为键。Record 对对象 ID 或原键的唯一冲突均不插入，只有新插入明细才增加小时聚合。因而旧行已存在时，新 ID 的计量不会另增费用；新行已存在时，旧键重放也不插入；匿名化后原键不变，重放不会恢复 EndUser。Meter 的写后复查用原键撤回，能匿名化新 ID 重试实际命中的旧行。原键本来就是全局幂等身份，重复键跨用户仍保持原来的全局去重，不把错误重用一个平台键放宽为第二笔费用。迁移和 C4 的停写映射须把原键及匿名行一并保留在原库。
+
+**迁移：** 仅新增 0039、0040。0039 添加 idempotency_key、以原 id 回填并设非空，不重写历史 ID、金额、聚合或匿名归属；0040 是首行 `-- yanshi:no-transaction` 的单语句、可重复 `CREATE UNIQUE INDEX CONCURRENTLY`。回填与切换须停全部写入者并留足大表窗口；索引完成后才能恢复新写入者，旧写入者缺少非空列不能混跑。其他三张表不改主键，Memory 访问记录的原 FK 不改。
+
+**其余表与边界：** end_user_tiers 的 Get / Put / Delete、end_user_tombstones 的单项读写、push_devices 的登记 / 活跃 / 查询 / 删除均已有真实 EndUser（另带业务线或设备 ID）；Pending / Prune 是已登记的离线路径，没有新增在线裸键缺口。pg.Tables 清 sessions、memories、memory_grants、usage_entries 的 Gaps，只将 LookupSession 留在 Locate；artifacts 的 C4 Gap 保留。未实现 C4 定位适配 / 兼容映射，也未实现 C5 多库、fan-out 或迁槽。未改 Apply / State，无需 ProjectionVersion 变化。
+
+**验证：** lifecycletest 新增 EndUserKeys（跨用户同 ID 的 Put 不改归属、错误键的读写拒绝、裸读后按真实键继续）；memorytest 新增 EndUserKeys、SaveEndUserIDs、SaveLegacyRetry（同槽同 call_id、完整身份、外部非法 token 字符、旧优先、真实键访问、访问记录、Grant 撤销与生成器消费）；usagetest 新增 EndUserKeys 和 LegacyKeys 的四种新旧 / 匿名顺序组合。三套均由内存和 PG 调用。另有 TestSaveChecksOwnershipEvenOnIdempotentHit、TestMeterIDsFollowRealEndUserAndPreserveLegacyKeys、TestUsageMigrationPreservesLegacyAndAnonymousKeys。测试替身、HTTP、e2e、eval 过期 Memory fixture 同步接口和 ID。
+
+sim 的迟到 Memory 删除不变量检查新派生 ID；删除索引不变量显式用 LookupSession。写入包装检查 Memory / Grant / 用量的真实 EndUser 槽，新增 EndUserMemoryIDs / EndUserGrantIDs / EndUserUsageIDs 覆盖，不增加随机源、ID 消费或故障调度。差分指纹增加索引真实行、Memory / Grant 身份与用量汇总；PG 差分另逐行比较持久用量 ID、原幂等键、业务线、EndUser 与费用（含匿名行）。原 sim 的随机 memory_forget 会猜不存在的旧 ID，这一既有行为本步未顺手改成新的成功删除动作；实际 Memory 删除仍由生命周期与一致性套件覆盖。
+
+本机无 Go 工具链，按任务要求未格式化、未运行 Go / make。远端须 `dev fmt`、`make check`、`make sim`，尤其 TestSimulationIsDeterministic 与 TestPostgresMatchesMemory。Memory 工具结果、召回与历史中的 ID 文本改变，须运行 `make eval` 并与 evals/baselines 比较；现有 memory-* 用例覆盖按不透明 ID 替换 / 忘记，未改提示词、AgentDef 或其他模型文本。proto、SDK 未改，不需要 gen / mobile。不能据静态检查宣称测试通过。

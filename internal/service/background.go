@@ -72,7 +72,7 @@ func (s *Service) NodeResult(ctx context.Context, sessionID, runID, callID strin
 	if !newRun {
 		return nil
 	}
-	return s.touch(ctx, sessionID, prev)
+	return s.touch(ctx, st.Created.GetEndUser(), sessionID, prev)
 }
 
 // ExpireBackground 了结到截止时间仍无结果的后台调用（Worker）：写入 reason = timeout 的后台结果输入，由模型告诉用户没有办成。
@@ -100,7 +100,7 @@ func (s *Service) ExpireBackground(ctx context.Context, st *session.State, callI
 	if !newRun {
 		return nil
 	}
-	return s.touch(ctx, st.SessionID, prev)
+	return s.touch(ctx, st.Created.GetEndUser(), st.SessionID, prev)
 }
 
 // CancelBackground 取消一个未了结的后台调用（用户经 HTTP 或 Connection）：先撤回投递，再写入 BackgroundCancelled。
@@ -141,12 +141,12 @@ func (s *Service) CancelBackground(ctx context.Context, sessionID, callID, by st
 }
 
 // touch 在开启新 Run 之后按 TouchEvery 分段更新索引中的最近输入时间（见 submit）；prev 是此前最近一个 Run 的请求时间。
-func (s *Service) touch(ctx context.Context, sessionID string, prev time.Time) error {
+func (s *Service) touch(ctx context.Context, endUser, sessionID string, prev time.Time) error {
 	now := s.Store.Clock.Now()
 	if s.Index == nil || (!prev.IsZero() && now.Truncate(lifecycle.TouchEvery).Equal(prev.Truncate(lifecycle.TouchEvery))) {
 		return nil
 	}
-	return s.Index.Touch(ctx, sessionID, now)
+	return s.Index.Touch(ctx, endUser, sessionID, now)
 }
 
 // IsDropped 报告 NodeResult 的错误是否表示结果作废（调用已不在等待、Session 已删除），而不是存储故障。

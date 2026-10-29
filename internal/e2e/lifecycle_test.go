@@ -119,7 +119,7 @@ func TestDeleteSessionRemovesEverything(t *testing.T) {
 	if events, _ := eventlog.ReadAll(ctx, st.Log, sid, 0); len(events) != 0 {
 		t.Errorf("log still has %d events", len(events))
 	}
-	if _, err := st.Index.Get(ctx, sid); !errors.Is(err, lifecycle.ErrNotFound) {
+	if _, err := st.Index.Get(ctx, "u", sid); !errors.Is(err, lifecycle.ErrNotFound) {
 		t.Errorf("session still indexed: %v", err)
 	}
 	if list, _ := st.artifacts.List(ctx, sid); len(list) != 0 {
@@ -255,7 +255,7 @@ func TestMemoryAcrossSessions(t *testing.T) {
 		t.Fatalf("delete: %d", code)
 	}
 	eventually(t, "the memory written by the deleted session to be removed", 30*time.Second, func() bool {
-		_, err := st.Memories.Get(context.Background(), id)
+		_, err := st.Memories.Get(context.Background(), "u", id)
 		return err != nil
 	})
 	e.do(http.MethodGet, "/v1/memories", nil, &mems)

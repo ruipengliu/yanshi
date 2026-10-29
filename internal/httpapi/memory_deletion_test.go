@@ -44,7 +44,7 @@ func TestDeletedSessionMemoryAuthorization(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if _, err := e.api.Memory.Store.Get(ctx, e.memory); err != nil {
+				if _, err := e.api.Memory.Store.Get(ctx, "u1", e.memory); err != nil {
 					t.Fatalf("erasure lost memory: %v", err)
 				}
 				path := "/v1/sessions/" + e.sid + "/memories" + tc.query
@@ -52,7 +52,7 @@ func TestDeletedSessionMemoryAuthorization(t *testing.T) {
 				if code != tc.want {
 					t.Fatalf("delete: %d %s, want %d", code, body, tc.want)
 				}
-				_, err := e.api.Memory.Store.Get(ctx, e.memory)
+				_, err := e.api.Memory.Store.Get(ctx, "u1", e.memory)
 				if tc.want == http.StatusNoContent {
 					if !errors.Is(err, memory.ErrNotFound) || body != "" {
 						t.Fatalf("memory remains or response already written: %v %q", err, body)
@@ -79,7 +79,7 @@ func TestForgetSessionMemoriesWithoutDeletionRecord(t *testing.T) {
 	if code != http.StatusNotFound {
 		t.Fatalf("no tombstone: %d %s", code, body)
 	}
-	if _, err := e.api.Memory.Store.Get(ctx, e.memory); err != nil {
+	if _, err := e.api.Memory.Store.Get(ctx, "u1", e.memory); err != nil {
 		t.Fatalf("memory changed: %v", err)
 	}
 }
@@ -114,7 +114,7 @@ func TestDeletedSessionMemoriesUnrestricted(t *testing.T) {
 			if w.Code != tc.want {
 				t.Fatalf("unrestricted: %d %s", w.Code, w.Body.String())
 			}
-			_, err := e.api.Memory.Store.Get(ctx, e.memory)
+			_, err := e.api.Memory.Store.Get(ctx, "u1", e.memory)
 			if tc.want == http.StatusNoContent {
 				if !errors.Is(err, memory.ErrNotFound) {
 					t.Fatalf("memory remains: %v", err)

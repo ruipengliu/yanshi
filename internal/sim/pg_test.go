@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"yanshi/internal/app"
 	"yanshi/internal/clock"
 	"yanshi/internal/pg/pgtest"
+	"yanshi/internal/usage"
 	"yanshi/internal/workqueue"
 	"yanshi/internal/workqueue/pgqueue"
 )
@@ -84,6 +86,33 @@ func diffSeed(t *testing.T, s uint64) (int, int) {
 	}
 	if mem.Fingerprint() != onPG.Fingerprint() {
 		t.Fatalf("seed %d: postgres and memory runs diverged\nreproduce: go test ./internal/sim -run 'TestPostgresMatchesMemory/seed%d$' -sim.pgseeds=%d", s, s, s)
+	}
+	// 用量不在 Event 日志中；直接比持久身份，覆盖匿名行仍保留历史幂等键的情况。
+	type usageIdentity struct {
+		ID, Key, BusinessLine, EndUser string
+		Cost                           int64
+	}
+	var expected, actual []usageIdentity
+	for _, e := range mem.stores.Usage.(*usage.Mem).Entries() {
+		expected = append(expected, usageIdentity{e.ID, e.DedupKey(), e.BusinessLine, e.EndUser, e.Cost})
+	}
+	rows, err := pool.Query(context.Background(), `SELECT id, idempotency_key, business_line, end_user, cost FROM usage_entries ORDER BY id COLLATE "C"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var e usageIdentity
+		if err := rows.Scan(&e.ID, &e.Key, &e.BusinessLine, &e.EndUser, &e.Cost); err != nil {
+			t.Fatal(err)
+		}
+		actual = append(actual, e)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(expected, actual) {
+		t.Fatalf("seed %d: persisted usage identities differ", s)
 	}
 	onPG.Stats.FarParks, onPG.Stats.DuePromotions = dues.parked, dues.promoted
 	return dues.parked, dues.promoted

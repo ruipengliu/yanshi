@@ -9,7 +9,9 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/eventlog"
+	"yanshi/internal/ids"
 	"yanshi/internal/janitor"
+	"yanshi/internal/shard"
 	"yanshi/internal/usage"
 )
 
@@ -46,6 +48,10 @@ type checkedUsage struct {
 }
 
 func (s *checkedUsage) Record(ctx context.Context, e *usage.Entry) error {
+	if slot, legacy, err := ids.SlotOf(e.ID); err != nil || legacy || slot != shard.Hash(e.EndUser) || e.LegacyID == "" {
+		s.w.violations = append(s.w.violations, "usage ID lost real EndUser slot or legacy identity")
+	}
+	s.w.Stats.EndUserUsageIDs++
 	if e.Kind == usage.Model {
 		truth := &usage.Quotas{Store: s.truth, Limits: s.w.quotas.Limits, Tiers: s.w.stores.Tiers}
 		if p, err := truth.Check(ctx, e.BusinessLine, e.EndUser, e.At); err == nil && p != nil {

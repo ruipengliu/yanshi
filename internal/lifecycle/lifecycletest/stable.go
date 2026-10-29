@@ -22,7 +22,7 @@ func runStableIndex(t *testing.T, x lifecycle.Index) {
 	}
 	put("other-owner", "bl", "v")
 	put("other-line", "other", "u")
-	if err := x.MarkClosed(ctx, "e", t0); err != nil {
+	if err := x.MarkClosed(ctx, "u", "e", t0); err != nil {
 		t.Fatal(err)
 	}
 	page, next, err := x.ListStable(ctx, "bl", "u", "", 2)
@@ -30,14 +30,14 @@ func runStableIndex(t *testing.T, x lifecycle.Index) {
 		t.Fatalf("first page: %+v %q %v", page, next, err)
 	}
 	// 把未扫描项移到产品列表前方，稳定列表仍须找到它。
-	if err := x.Touch(ctx, "e", t0.Add(time.Hour)); err != nil {
+	if err := x.Touch(ctx, "u", "e", t0.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	// 两页之间创建与删除，删除游标行不能使后页退回或跳过仍可见项。
 	put("b", "bl", "u")
 	put("0-new", "bl", "u") // 落在已扫区间的新项由 H 后追赶兜底，不宣称快照。
 	for _, id := range []string{"a", "g"} {
-		if err := x.Delete(ctx, id); err != nil {
+		if err := x.Delete(ctx, "u", id); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -89,7 +89,7 @@ func RunStableDeletion(t *testing.T, x lifecycle.Index, d lifecycle.Deletions) {
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("before janitor: %+v %v", rows, err)
 	}
-	if err := x.Delete(ctx, "deleted"); err != nil {
+	if err := x.Delete(ctx, "u", "deleted"); err != nil {
 		t.Fatal(err)
 	}
 	rows, next, err := x.ListStable(ctx, "bl", "u", "", 10)

@@ -242,6 +242,16 @@ func (j *Janitor) process(ctx context.Context, sid string) error {
 // delete 清除 Session 的数据；retention 与 erasure 保留登记为 KeepOnRetention 的既有 Memory（ADR-0050）。
 func (j *Janitor) delete(ctx context.Context, sid string, st *session.State, reason string) error {
 	endUser := st.Created.GetEndUser()
+	// 日志可能已在上次清扫中删除；删除记录不保留 EndUser，只能从尚存的真实索引行恢复。
+	if endUser == "" {
+		entry, err := j.Index.LookupSession(ctx, sid)
+		if err != nil && !errors.Is(err, lifecycle.ErrNotFound) {
+			return err
+		}
+		if err == nil {
+			endUser = entry.EndUser
+		}
+	}
 	// 1. 中断活跃的 Run：持有它的 Worker 因 fencing 失效而停止，不再派发新调用。
 	if err := j.stage(ctx, "interrupt"); err != nil {
 		return err
@@ -290,8 +300,10 @@ func (j *Janitor) delete(ctx context.Context, sid string, st *session.State, rea
 		return err
 	}
 	// 保留归属到两遍清扫结束；此后崩溃重试由 Inbox 的离线逐 EndUser 路径恢复。
-	if err := j.Index.Delete(ctx, sid); err != nil {
-		return err
+	if endUser != "" {
+		if err := j.Index.Delete(ctx, endUser, sid); err != nil {
+			return err
+		}
 	}
 	if err := j.Deletions.Complete(ctx, sid, j.Clock.Now()); err != nil {
 		return err

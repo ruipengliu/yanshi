@@ -85,14 +85,14 @@ type Store interface {
     Spent(ctx, businessLine, endUser string, from, to time.Time) (int64, error) // endUser 为空表示整个业务线
     Report(ctx, Query) ([]Row, error)                 // 按日 / EndUser / 模型汇总
     DeleteEndUser(ctx, businessLine, endUser string) error // 匿名化
-    AnonymizeEntry(ctx, id string) error              // Session 删除后才写入的一条用量
+    AnonymizeEntry(ctx, endUser, id string) error              // Session 删除后才写入的一条用量
     Prune(ctx, before time.Time) error
 }
 ```
 
 PostgreSQL 实现（迁移 `0007_usage.sql`）：
 
-- `usage_entries`：明细，主键为 ID；用于幂等与报表。
+- `usage_entries`：明细，主键为 ID；`idempotency_key` 保存原幂等键，新 ID 嵌真实 EndUser 槽位后仍以原键去重（ADR-0051 C3b，迁移 0039–0040）。匿名行留原分片，原键保留；按条匿名化使用调用方原 Scope.EndUser，不按 `~` 求槽。
 - `usage_hourly(business_line, end_user, hour, shard)`：按小时的金额与 token 聚合；`end_user = ''` 的行是业务线合计。一次记录在同一语句中插入明细，插入成功时累加两行聚合。配额检查只读聚合：EndUser 一天至多 24 行，业务线一个月至多 744 × 16 行。
 
 业务线合计行是热点：同一业务线的每次模型调用都要更新它，并发记录在这一行的行锁上排队。合计行因此按用量 ID 的散列分成 16 片（迁移 `0009_usage_shards.sql`），读取时求和；EndUser 行与匿名行只用第 0 片（同一 EndUser 的并发很低）。压测对比（P=4、W=32、S=256、开启配额检查，每次 30 秒约 1.65 万次记录）：记录语句平均耗时 0.275 → 0.09 ms，配额检查 0.055 → 0.082 ms（多读分片行），两者合计的数据库时间减少约 26%；吞吐不变（约 176 → 178 Run/s，数据库不是瓶颈）。

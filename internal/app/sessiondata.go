@@ -17,7 +17,7 @@ func SessionData(s Stores, workspaces sandbox.Workspaces, artifacts *artifact.Se
 	return []lifecycle.Holder{
 		{Name: "inbox", DeleteSessionForEndUser: s.Inbox.RemoveSession, DeleteSession: func(ctx context.Context, sid string) error {
 			// 索引在两遍清扫后才删除；删除后重试则从 Inbox 离线恢复归属，不能靠槽位猜 EndUser。
-			entry, err := s.Index.Get(ctx, sid)
+			entry, err := s.Index.LookupSession(ctx, sid)
 			if errors.Is(err, lifecycle.ErrNotFound) {
 				return s.Inbox.RemoveSession(ctx, "", sid)
 			}
@@ -33,7 +33,7 @@ func SessionData(s Stores, workspaces sandbox.Workspaces, artifacts *artifact.Se
 		{Name: "snapshots", DeleteSession: s.Snapshots.Delete},
 		{Name: "outbox", DeleteSession: s.Outbox.DeleteSession},
 		// retention 与 erasure 保留既有 Memory；迟到写入仍由 Recheck 撤回（ADR-0050，docs/design/m4-memory-grant.md §7）。
-		{Name: "memories", DeleteSession: s.Memories.DeleteSession, KeepOnRetention: true},
+		{Name: "memories", DeleteSession: s.Memories.DeleteSession, DeleteSessionForEndUser: s.Memories.DeleteSessionForEndUser, KeepOnRetention: true},
 		{Name: "presence", DeleteSession: s.Presence.DeleteSession},
 		{Name: "artifacts", DeleteSession: artifacts.DeleteSession},
 	}

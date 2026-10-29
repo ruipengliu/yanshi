@@ -92,6 +92,8 @@
 - 在创建、提交输入、关闭时写入。距上一个 Run 不到一分钟（`lifecycle.TouchEvery`）的输入不更新最后输入时间，连续对话因此不必每个 Run 都写一次索引。代价是最后输入时间至多滞后一分钟：列表排序可能差这么多，按空闲时长关闭的保留策略多等一分钟。
 - 用途：`GET /v1/sessions` 列出调用方自己的 Session（分页）、按 EndUser 删除、按保留策略查找过期的 Session。
 
+Index 的 Get / Touch / SetNextDue / MarkClosed / Delete 显式带真实 EndUser，PG 按 `(end_user, session_id)` 等值访问。仅未知归属的删除恢复路径使用 LookupSession 读真实索引行；C4/C5 按 Session ID 的 EndUser 槽位定位唯一库，槽位不作授权。调用点与兼容约束见 [ADR-0051 §8](../adr/0051-shard-slots-and-id-location.md#8-c1--c2--c3a--c3b-交付边界与后续生成点)。
+
 ## 5. 保留策略
 
 在业务线配置（`businesslines/*.yaml`）中声明：

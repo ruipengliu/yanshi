@@ -214,16 +214,37 @@ func (s *Service) Save(ctx context.Context, r SaveRequest) (saved *Memory, err e
 	if err != nil {
 		return nil, err
 	}
-	id := "mem_" + r.CallID
+	var id string
 	if r.CallID == "" {
-		id = "mem_" + s.IDs()
+		id, err = s.IDs.ForEndUser("mem", r.EndUser)
+	} else {
+		id, err = CallMemoryID(r)
 	}
-	if m, err := s.Store.Get(ctx, id); err == nil {
-		return m, nil // 同一调用的重复执行
+	if err != nil {
+		return nil, err
+	}
+	// 旧派生优先：升级前已落盘的调用必须继续返回原对象；读失败不能当作不存在而另建一份。
+	candidates := []string{id}
+	if r.CallID != "" {
+		candidates = append([]string{"mem_" + r.CallID}, candidates...)
+	}
+	for _, candidate := range candidates {
+		m, err := s.Store.Get(ctx, r.EndUser, candidate)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		// 分片键与槽位不能代替归属检查，旧派生尤其可能来自另一个业务线或 Session。
+		if m.EndUser != r.EndUser || m.BusinessLine != r.BusinessLine || m.SourceSession != r.SessionID || m.SourceCall != r.CallID {
+			return nil, fmt.Errorf("%w: memory %s belongs to another invocation", ErrRejected, candidate)
+		}
+		return m, nil
 	}
 	var old *Memory
 	if r.Replaces != "" {
-		m, err := s.Store.Get(ctx, r.Replaces)
+		m, err := s.Store.Get(ctx, r.EndUser, r.Replaces)
 		if err != nil || m.BusinessLine != r.BusinessLine || m.EndUser != r.EndUser {
 			return nil, fmt.Errorf("%w: memory %s", ErrNotFound, r.Replaces)
 		}
@@ -253,7 +274,7 @@ func (s *Service) Save(ctx context.Context, r SaveRequest) (saved *Memory, err e
 	}
 	if d != nil {
 		if old != nil {
-			err = s.Store.Supersede(ctx, old.ID, d.ID, now)
+			err = s.Store.Supersede(ctx, r.EndUser, old.ID, d.ID, now)
 		}
 		if err != nil {
 			return nil, err
@@ -287,9 +308,9 @@ func (s *Service) Save(ctx context.Context, r SaveRequest) (saved *Memory, err e
 		return nil, err
 	}
 	// 先写、后查：所属 Session 已删除时撤回（ADR-0015）。
-	gone, err := lifecycle.Recheck(ctx, s.Deletions, r.SessionID, func(ctx context.Context) error { return s.Store.Delete(ctx, id) })
+	gone, err := lifecycle.Recheck(ctx, s.Deletions, r.SessionID, func(ctx context.Context) error { return s.Store.Delete(ctx, r.EndUser, id) })
 	if err != nil && !gone {
-		_ = s.Store.Delete(context.WithoutCancel(ctx), id) // 无法确认时同样撤回：写入失败，调用方重试
+		_ = s.Store.Delete(context.WithoutCancel(ctx), r.EndUser, id) // 无法确认时同样撤回：写入失败，调用方重试
 	}
 	if gone {
 		return nil, fmt.Errorf("%w: session %s", ErrNotFound, r.SessionID)
@@ -298,7 +319,7 @@ func (s *Service) Save(ctx context.Context, r SaveRequest) (saved *Memory, err e
 		return nil, err
 	}
 	if old != nil {
-		if err := s.Store.Supersede(ctx, old.ID, m.ID, now); err != nil {
+		if err := s.Store.Supersede(ctx, r.EndUser, old.ID, m.ID, now); err != nil {
 			return nil, err
 		}
 	}
@@ -361,7 +382,7 @@ func (s *Service) Related(ctx context.Context, m *Memory, limit int) ([]Hit, err
 // Forget 删除 EndUser 在业务线中的一条 Memory，以及被它取代的整条链：用户说"忘掉"时，它的历史也一并忘掉（§11）。
 // 只能删除本业务线的。
 func (s *Service) Forget(ctx context.Context, businessLine, endUser, id string) error {
-	m, err := s.Store.Get(ctx, id)
+	m, err := s.Store.Get(ctx, endUser, id)
 	if err != nil || m.BusinessLine != businessLine || m.EndUser != endUser {
 		return fmt.Errorf("%w: memory %s", ErrNotFound, id)
 	}
@@ -378,7 +399,7 @@ func (s *Service) Forget(ctx context.Context, businessLine, endUser, id string) 
 		}
 	}
 	for _, x := range chain {
-		if err := s.Store.Delete(ctx, x); err != nil {
+		if err := s.Store.Delete(ctx, endUser, x); err != nil {
 			return err
 		}
 	}
@@ -500,7 +521,11 @@ func (s *Service) CreateGrant(ctx context.Context, endUser, from, to string, cat
 			return nil, fmt.Errorf("%w: unknown category %q", ErrRejected, c)
 		}
 	}
-	g := &Grant{ID: "grant_" + s.IDs(), EndUser: endUser, From: from, To: to, Categories: slices.Clone(categories),
+	id, err := s.IDs.ForEndUser("grant", endUser)
+	if err != nil {
+		return nil, err
+	}
+	g := &Grant{ID: id, EndUser: endUser, From: from, To: to, Categories: slices.Clone(categories),
 		CreatedAt: s.Clock.Now(), ExpiresAt: expires}
 	// 写入报错也继续复查，覆盖存储已生效但确认丢失的情况。
 	createErr := s.Grants.Create(ctx, g)
@@ -588,9 +613,9 @@ func (s *Service) ListGrants(ctx context.Context, endUser, businessLine string) 
 
 // RevokeGrant 撤销 EndUser 的一条授权；调用方所在的业务线须是授权的一方。撤销立即生效（ADR-0016）。
 func (s *Service) RevokeGrant(ctx context.Context, endUser, businessLine, id string) error {
-	g, err := s.Grants.Get(ctx, id)
+	g, err := s.Grants.Get(ctx, endUser, id)
 	if err != nil || g.EndUser != endUser || (g.From != businessLine && g.To != businessLine) {
 		return fmt.Errorf("%w: grant %s", ErrNotFound, id)
 	}
-	return s.Grants.Revoke(ctx, id, s.Clock.Now())
+	return s.Grants.Revoke(ctx, endUser, id, s.Clock.Now())
 }

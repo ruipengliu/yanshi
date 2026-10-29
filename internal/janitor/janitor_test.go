@@ -118,7 +118,7 @@ func TestRetentionByAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	closed := func(sid string) bool {
-		x, err := e.stors.Index.Get(ctx, sid)
+		x, err := e.stors.Index.Get(ctx, "u", sid)
 		return err == nil && !x.ClosedAt.IsZero()
 	}
 	if !closed(day) || closed(project) {

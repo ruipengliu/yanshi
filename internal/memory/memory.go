@@ -122,9 +122,9 @@ var Everything time.Time
 type Store interface {
 	// Put 按 ID 写入或覆盖；vec 可为 nil。
 	Put(ctx context.Context, m *Memory, vec *Vector) error
-	Get(ctx context.Context, id string) (*Memory, error)
+	Get(ctx context.Context, endUser, id string) (*Memory, error)
 	// Delete 删除一条；不存在时不报错。
-	Delete(ctx context.Context, id string) error
+	Delete(ctx context.Context, endUser, id string) error
 	// Count 返回 EndUser 在业务线中 at 时有效的 Memory 数。
 	Count(ctx context.Context, businessLine, endUser string, at time.Time) (int, error)
 	// List 返回 EndUser 在 scopes 内、at 时有效的 Memory（at 为 Everything 时包含失效与过期的），按更新时间倒序
@@ -135,11 +135,12 @@ type Store interface {
 	// Nearest 返回 scopes 内、at 时有效、与 vec 同模型的 Memory，按余弦相似度降序（同分按更新时间倒序、ID），至多 limit 条。
 	Nearest(ctx context.Context, endUser string, scopes []Scope, at time.Time, vec Vector, limit int) ([]Hit, error)
 	// Supersede 把 id 标为在 at 时被 by 取代；不存在时不报错。
-	Supersede(ctx context.Context, id, by string, at time.Time) error
+	Supersede(ctx context.Context, endUser, id, by string, at time.Time) error
 	// Purge 删除 EndUser 在业务线中 supersededBefore 之前失效、或 expiredBefore 之前过期的 Memory。
 	Purge(ctx context.Context, businessLine, endUser string, supersededBefore, expiredBefore time.Time) error
-	// DeleteSession 删除由该 Session 写入的全部 Memory。
+	// DeleteSession 离线扫描恢复真实 EndUser，再逐用户删除来源 Session 的 Memory。
 	DeleteSession(ctx context.Context, sessionID string) error
+	DeleteSessionForEndUser(ctx context.Context, endUser, sessionID string) error
 	// DeleteEndUser 删除 EndUser 在业务线中的全部 Memory。
 	DeleteEndUser(ctx context.Context, businessLine, endUser string) error
 
@@ -179,9 +180,9 @@ func (g *Grant) ActiveAt(t time.Time) bool {
 
 type Grants interface {
 	Create(ctx context.Context, g *Grant) error
-	Get(ctx context.Context, id string) (*Grant, error)
+	Get(ctx context.Context, endUser, id string) (*Grant, error)
 	// Revoke 记录撤销时间；已撤销时不变。
-	Revoke(ctx context.Context, id string, at time.Time) error
+	Revoke(ctx context.Context, endUser, id string, at time.Time) error
 	// List 返回 EndUser 涉及业务线 businessLine（作为 From 或 To）的全部授权（含已撤销），按创建时间倒序。
 	List(ctx context.Context, endUser, businessLine string) ([]*Grant, error)
 	// ToReader 返回 EndUser 授予业务线 to 的全部授权（含已撤销与过期，由调用方按时间判断）。

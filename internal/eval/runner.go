@@ -497,7 +497,12 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 				tr.Err = "setup memory: " + err.Error()
 				return tr
 			}
-			mem := &memory.Memory{ID: "mem_" + req.CallID, BusinessLine: bl, EndUser: endUser, Category: req.Category, Content: m.Content,
+			memoryID, err := memory.CallMemoryID(req)
+			if err != nil {
+				tr.Err = "setup memory: " + err.Error()
+				return tr
+			}
+			mem := &memory.Memory{ID: memoryID, BusinessLine: bl, EndUser: endUser, Category: req.Category, Content: m.Content,
 				SourceCall: req.CallID, CreatedAt: at, UpdatedAt: at, ValidUntil: d.AddDate(0, 0, 1)}
 			if err := in.mems.Store.Put(tctx, mem, nil); err != nil {
 				tr.Err = "setup memory: " + err.Error()
