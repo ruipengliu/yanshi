@@ -1,6 +1,6 @@
 # M7 内核补充：Capture 正文存储、擦除、交付确认、定时、出站流、单次调用
 
-> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）；交付确认（§11）已删除，EndUser 删除屏障（§12）已实现，定时已全部实现（含 xinli-assistant 版本 2 使用、评测拨钟、pgqueue 内部到期表，压测结果见 §13），P3 已全部实现并验证（单次调用、档位、重答与 `speaker_ref`；[整体架构](./persona-architecture.md) §13 的 Q77–Q90；首字延迟压测见 §13）；出站流仍待 P4 · **§2–§4、§11 由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 取代**（旁听原文存放在业务线；§11 已删除），§5 按 P2 的讨论改写（没有窗口），§6 的擦除与修订信封不做 · ADR-0044（已取代）、ADR-0045、ADR-0046、ADR-0047、ADR-0049（已取代）、ADR-0050 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
+> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）；交付确认（§11）已删除，EndUser 删除屏障（§12）已实现，定时已全部实现（含 xinli-assistant 版本 2 使用、评测拨钟、pgqueue 内部到期表，压测结果见 §13），P3 已全部实现并验证（单次调用、档位、重答与 `speaker_ref`；[整体架构](./persona-architecture.md) §13 的 Q77–Q90；首字延迟压测见 §13）；P4 的出站流按 Q105–Q106 改写，未实现 · **§2–§4、§11 由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 取代**（旁听原文存放在业务线；§11 已删除），§5 按 P2 的讨论改写（没有窗口），§6 按 P4 的 Q105、Q106、Q117、Q118 改写 · ADR-0044（已取代）、ADR-0045、ADR-0046、ADR-0047、ADR-0049（已取代）、ADR-0050 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
 
 xinli 落地需要内核补上的原语。每一项都按[整体架构](./persona-architecture.md) §9 的判据给出理由：第二条业务线也会需要，并且业务侧做不到或做了不安全。业务语义（交谈、承诺、项目、人）一律不进内核。
 
@@ -15,7 +15,7 @@ xinli 落地需要内核补上的原语。每一项都按[整体架构](./person
 | 4 | 原文修订（CaptureCorrection） | 日志只追加，业务侧改不了原文 | P1 |
 | 11 | 交付确认（Ack） | 读取位置现在随 Run 完成提交，"读过"不等于"业务已保存"；只有平台能决定位置 | P1 |
 | 12 | EndUser 删除屏障 | 注销期间按 EndUser 的写入（新 Session、用量、档位）可能复活数据 | P1 |
-| 6 | 出站流（Outbox） | 每个 Session 一条 SSE 撑不住；擦除要可靠地通知 Persona | P1 |
+| 6 | 出站流（Outbox） | 无在线客户端时可靠发现运行事件；业务侧无法与内核日志原子提交 | P4b，未实现 |
 | 5 | 定时（Schedule） | 业务侧提交的输入在投影中是用户原话 | P2 |
 | 7 | 单次调用（Oneshot） | 业务侧直连模型会绕过计量、内容安全与评测 | P3 |
 | 8 | 档位（Tier） | 触发与定时的 Run 没有用户令牌，配额只能在内核执行 | P3，已实现 |
@@ -170,41 +170,68 @@ Schedule {
 
 ## 6. 出站流（Outbox）
 
-### 6.1 形态
+> P4 的出站流按[整体架构](./persona-architecture.md) §13 Q105–Q106、Q117、Q118 改写，未实现；范围与验收见该文 §11 的 B3–B6。
 
-业务线服务端用一个游标拉取本业务线所有 Session 的选定事件，替代每个 Session 一条 SSE：
+### 6.1 用途与信封
 
-`GET /v1/outbox?shard=<n>&after=<游标>&kinds=run_completed,question&limit=500`，服务令牌，长轮询（无新事件时最多挂起 25 秒）。
+出站流让业务线在没有在线客户端时可靠发现回复、提问与审批，维护跨 Session 收件箱、转发渠道消息，并在服务端停机后继续消费。业务侧无法把接收记录与内核日志原子提交，因此由内核提供通用运行事件的发现机制。Persona 是否接受领域事实另由业务线记录，不从 Run 完成推导（Q99）。
 
+计划中的 HTTP 接口为 GET /v1/outbox，接受分片、after 游标、kinds 与 limit；只允许服务令牌访问本业务线，长轮询最多 25 秒。GET /v1/outbox/shards 返回分片及状态；每个 PostgreSQL 分片独立消费、独立保存游标。响应包含信封列表与下一游标；以下是待实现的信封字段形状：
+
+```text
+普通信封：{envelope_id, business_line, end_user, session_id, seq, kind, run_id?, call_id?, agent?}
+删除信封：{envelope_id, business_line, session_id, kind: session_deleted, reason, deletion_request_id?}
 ```
-{events: [{cursor, session_id, end_user, agent, seq, kind, run_id?, call_id?, range?}], next: <游标>}
-```
 
-- **只含 ID 与范围**：不含回复文字与调用参数。需要内容时按 `session_id` 与 `seq` 读事件。
-- **种类**：`run_completed`、`run_failed`、`question`、`approval_requested`、`background_settled`、`capture_erased`（带范围）、`capture_corrected`、`schedule_fired`、`session_closed`、`session_deleted`（带原因）。由平台登记，不暴露内部事件。
-- **分片**：每个 PostgreSQL 分片一条流（ADR-0028），业务线按分片并行拉取；`GET /v1/outbox/shards` 列出分片。
-- **至少一次**：消费方按 (`session_id`, `seq`) 去重；游标由消费方保存。
-- **提示**：可登记 webhook，有新事件时收到不含内容的"分片 n 有新数据"。
+- 仅七种：run_completed、run_failed、question、approval_requested、background_settled、session_closed、session_deleted。不含正文或调用参数，内容按 Session 与 seq 读取；删除信封没有 Event seq。
+- 信封由平台选择器产生，身份及 Agent 来自合法投影，不跨库查询 EndUser 的 Session 索引。它是 ID 与运行元数据，不是新的内容存储；普通信封仍受 Session 删除约束。
+- 至少一次投递，消费方按稳定信封 ID 去重，游标与接收记录同事务保存。后续执行由消费方持久任务恢复。
 
-### 6.2 不漏：按事务可见性水位发布
+### 6.2 原子写入与删除
 
-`bigserial` 的顺序不是提交顺序：事务 A 取得 101 未提交、B 的 102 先提交，消费者推进到 102 后，A 的 101 就被跳过。所以：
+普通信封在 `session.Store.commit` 完成事件校验后统一派生，经存储提交契约与事件一起提交；覆盖 `internal/eventlog/pglog` 的 Append 与 AppendAndEnqueue 两条路径。不能在 Update 返回后补写，不能由 Worker 分支各自拼装。信封按 Session 分片，以事件和种类的唯一约束防重复；乐观并发冲突或回滚均不留下信封。
 
-- 每行记写入事务的 `pg_current_xact_id()`（xid8），按 (xid8, id) 排序，游标是 (xid8, id)。
-- 读取只返回 `xid8 < pg_snapshot_xmin(pg_current_snapshot())` 的行：水位之下的事务都已结束，之后提交的行的 xid 必然不低于水位，游标因此单调、不漏（[PostgreSQL 快照函数](https://www.postgresql.org/docs/16/functions-info.html#FUNCTIONS-TXID-SNAPSHOT)）。
-- 代价是长事务会拖住水位，延迟随之增加；内核事务都短，另设"水位滞后"的指标与告警。
-- 出站记录在追加事件的同一事务中写入（`session.Store.Update` 的决策产生登记的种类时附带一行）。
+session_deleted 不是已有 Event。它在 `pglifecycle.Deletions.Mark` 写删除记录的同一事务产生，表示“已逻辑删除”，不表示物理清理完成。只含业务线、Session、原因、可选删除请求 ID 与稳定独立信封 ID，不含 EndUser，不伪造 Event seq；重复 Mark 不重复产生逻辑删除信封。删除完成进度仍查询现有接口。
 
-### 6.3 保留、删除与对账
+普通信封在 `app.SessionData` 登记，迟到写入遵守 `lifecycle.Recheck`；删除信封不随 Session 普通数据清除，仅按出站保留规则淘汰。两种实现均接入 `app.Stores` 与 `app.NewCore`，内核模拟不依赖 Persona 或应用模块。
 
-- 一般的出站行在水位之下停留满 72 小时后删除；Session 删除时随之删除（在 `app.SessionData` 登记）。
-- **删除信封不随 Session 删除**：`session_deleted` 与 `capture_erased` 的出站行只含 ID 与范围，照常保留 72 小时。Janitor 删除日志与索引之后（`internal/janitor`），它们是消费方得知删除的唯一途径。
-- **游标过期**（消费方离线超过 72 小时）：返回明确的错误。对账：删除记录本来就持久保存（ADR-0015），新增 `GET /v1/deletions?since=` 按业务线列出；仍存在的 Session 由 `GET /v1/sessions?updated_since=` 列出后重读事件。擦除对仍存在的 Session 可从其日志中的 `CaptureErased` 重新得到；对已删除的 Session，删除本身就覆盖了擦除。
-- 一致性套件 `outboxtest`；`internal/sim` 检查：日志中每个登记种类的事件恰有一行出站记录；乱序提交不漏；删除后只剩删除信封。
+### 6.3 事务水位与游标
 
-### 6.4 SSE 仍保留
+自增行号不代表提交顺序：事务 A 先取得 101，事务 B 的 102 先提交，直接越过 102 会漏掉晚提交的 101。
 
-App 内的实时体验仍走 Connection 与 SSE。出站流服务于服务端的编排与渠道转发，是"每个事件至少一次"，不是实时增量。
+- 每行显式保存写入事务的 xid8（pg_current_xact_id()）及唯一行号 id。读取在同一快照内计算 xmin，只返回 xid8 < xmin 的行，按 (xid8, id) 排序；bigserial 只作同 xid 内排序，不能独自充当提交顺序。
+- 小于该快照 xmin 的事务已经提交可见或回滚，尚未结束的事务都在水位及以上，因此晚提交不会被游标越过。语义依据见 [PostgreSQL 快照函数](https://www.postgresql.org/docs/16/functions-info.html#FUNCTIONS-TXID-SNAPSHOT)。
+- 游标版本化且不透明，逻辑字段为 {business_line, shard, stream_epoch, filter_version, xid8, id}；校验业务线、分片、流世代与过滤版本。改变过滤条件须重新建立消费位置，不能沿用旧过滤器的进度。换世代或低于保留地板须明确返回错误。
+- 空结果也返回安全扫描进度，包括没有本业务线匹配行的情况；分页不能越过尚未返回的匹配行。接口提供各分片当前安全起点，供 §6.5 取得 H。
+- 长轮询以 NOTIFY 提示加周期复查实现。阻塞水位的事务结束时可能没有本业务线的新通知，不能只等 NOTIFY。
+- 监控水位滞后、最老事务、消费者延迟与保留空间，配置事务超时约束；长事务拖住发布时不能跳过水位。
+
+### 6.4 保留与分片故障
+
+保留至少 72 小时从记录可以安全发布后计算，不用插入时刻加 72 小时：长事务可能让旧记录长期不可读。
+
+持久保存“安全水位及首次观察时间”的检查点；只有被至少 72 小时前的安全水位覆盖的记录才可淘汰。另存明确的保留地板；清理按 Session 分批执行，全部完成后才推进地板。不能用当前最小出站行推断游标是否过期，空流或 Session 删除都可能使该推断错误。普通信封仍可随 Session 删除提前清除；删除信封保留到对应地板允许淘汰为止。
+
+每分片独立水位、检查点、地板、世代与消费进度。健康分片的独立读写、队列认领和出站消费继续；依赖失联分片的全局汇总有界失败并明确返回不可用，不能将缺失用量当零或把部分结果当完整结果。就绪与入口支持部分可服务，不把全部分片健康简单做 AND；健康分片上的 Run 若触及全局配额也遵守此规则（Q118）。
+
+### 6.5 游标过期恢复
+
+不新增内核目录或删除记录枚举接口。应用拥有账号清单，恢复复用按 EndUser 列 Session 的现有接口，但须增加按不可变 session_id 的稳定分页模式，memory 与 PG 契约一致；默认产品排序仍按最近输入。必要时在现有索引表增加 (business_line, end_user, session_id) 索引。用可变 LastInputAt 翻页会使未扫描项因 Touch 移到游标前，不能用于完整对账（Q117）。
+
+1. 取得各分片当前安全起点组成的 H。
+2. 从应用账号表稳定分页枚举 owner，包括必要的注销中恢复状态。
+3. 每个 owner 用稳定 Session ID 顺序列出 Session（包括已关闭的），从各自保存的 seq 补读事件。
+4. 列出后读取 404 的项按已不可访问处理；它可能已逻辑删除，也可能是创建失败留下的空索引。
+5. 已知 Session 未出现在本轮列表中只能视为待确认，必须以删除信封或逐 ID 读取的 404 确认，不能直接判删。
+6. 从 H 追赶出站流并去重；若 H 已过期，重新开始恢复。
+
+新账号、Session 的创建继续由 BFF/编排持久流程记录。恢复只保证选定运行事件与当前可访问状态收敛，不承诺补发所有历史通知，也不是全部历史输入的完整变更流。读取内容得到 404 时取消相关发送，不无限重试；已过时的提醒与审批不再推送。
+
+### 6.6 验收与实时事件流
+
+出站流的一致性套件同时覆盖内存与 PG；PG 另测乱序提交、回滚、同 xid 多行、长事务卡水位、空流、过滤变更、保留地板与明确过期错误。`internal/sim` 检查登记事件与普通信封对应、失败提交无信封、删除收敛后只剩允许保留的删除信封，以及消费者崩溃、重读与过期对账的效果。以不使用 Persona 的第二条业务线契约测试验证通用性。
+
+当前线程的实时体验继续由 `feed.Source.Stream` 提供日志续传与实时草稿；P4 产品经 BFF 代理 SSE。出站流不转发 token 增量，也不进入聊天首字路径。
 
 ## 7. 单次调用（Oneshot）
 
@@ -331,11 +358,11 @@ ADR-0050 的退役条件已满足。内核不再登记回执或在 Run 完成时
 
 ## 13. 容量
 
-在[整体架构](./persona-architecture.md) §7 的基础上，内核的验收按峰值而不是全天平均：
+P4 容量按[整体架构](./persona-architecture.md) §13 Q111、Q123 固定负载实测，不承诺用户规模。下面早期原文批次估算已过时；P2、P3 已完成的独立压测结果保留。
 
-- **Capture 写入**：旁听集中在约 8 小时，按每分钟一批，峰值约 1700（10 万 DAU）/ 17000（100 万）批每秒；每批一次事件加至多 200 行片段。整批被内容安全拦下时逐段复核，调用数放大到段数。
+- **原文批次写入（旧内核负载估算已过时）**：早期按 10 万/100 万 DAU 估算 1700/17000 批每秒、一批事件加至多 200 行片段；ADR-0050 后原文写入属于 Persona 的 owner 事务，不再算内核负载。内核保存已读可信页副本，读页时整页审核，被拦下再逐段复核。
 - **单分片容量**：`app.Postgres` 现在是单个连接池，ADR-0028 只定了分片键。超过单分片容量之前，分片路由是前置条件（P4 验收），包括故障切换。
-- **压测项**：P1 的片段写入与逐 Session 删除（含 WAL 与索引）；P2 的百万停放与到期表迁移；单次调用的子限额下问答的首字延迟。
+- **P4 压测项**：Persona 原文追加、分页、重交、擦除与 WAL；内核可信页副本、逐 Session 删除及出站查询；真实双库分摊。固定一年账本与八天原文数据配方，记录 p50/p99、装载量、SQL 数与峰值内存，不设性能硬阈值；正确性及普通事务不全量装载原文仍是硬断言。
 
 ### 百万停放压测（Q62）
 
@@ -407,6 +434,8 @@ control 只放开 serve 启动处“合计上限必须严格小于模型总并�
 
 ## 14. 不变量核对
 
+本节与 §15 中涉及旧 Capture 正文存储、展开器、擦除/修订事件及交付确认的条目仅为历史设计，随 §2–§4、§11 由 ADR-0050 取代；P4 出站流以 §6 为准。
+
 | 不变量 | 本设计中 |
 |---|---|
 | Event 日志是唯一事实源 | 片段、版本、擦除、回执、定时的到期都由日志决定；存储只保存文字，展开以日志前缀为准（§2.4） |
@@ -416,19 +445,19 @@ control 只放开 serve 启动处“合计上限必须严格小于模型总并�
 | 请求前缀稳定 | 定时、重答、确认不改系统指令与工具；擦除与修订是显式例外（§2.4） |
 | 内容安全在写日志之前 | 修订、单次调用的输入与输出都检查；定时的输入在创建时已检查 |
 | 写入闸门只收紧 | 闸门经展开器取文字，擦除后的片段不再作为依据 |
-| 新存储通过一致性套件、登记删除 | `capturetest`、`outboxtest`；`capture_segments`、`outbox`、到期表、`end_user_tiers`、EndUser 删除记录都登记，接入删除不变量与差分测试 |
-| 新表登记分片键，一个事务一个键 | `capture_segments`、`outbox`、到期表按 Session；`end_user_tiers`、EndUser 删除记录按 EndUser |
+| 新存储通过一致性套件、登记删除 | 到期表、`end_user_tiers`、EndUser 删除记录按所属生命周期清理；计划中的出站流通过一致性套件，普通信封登记 Session 删除，删除信封仅按保留地板淘汰；接入删除不变量与差分测试 |
+| 新表登记分片键，一个事务一个键 | 出站信封、到期表按 Session；`end_user_tiers`、EndUser 删除记录按 EndUser |
 | 外部写入后唤醒用 `Decision.Wake` | 定时的创建置 Wake，使 Worker 重新计算停放时间 |
-| 日志与指标只记 ID | 出站流只含 ID 与范围；单次调用只记 ID 与 token 数 |
+| 日志与指标只记 ID | 出站流只含 ID 与运行元数据；单次调用只记 ID 与 token 数 |
 
 ## 15. 测试、实施与兼容
 
 - **单元与契约**：`session`（擦除与修订的校验、平台专属字段、定时的投影与 UTC、`redo_of` 的拒绝情形、流与 `scope: run` 的加载校验）；`capture`（展开以日志前缀为准、擦除先于清空时的占位）；RRULE 子集与时区（含夏令时跳过与重复）；`authz_test.go` 的新接口。
-- **一致性套件**：`capturetest`、`outboxtest`，内存与 PostgreSQL 两种实现；`workqueuetest` 覆盖到期表迁移与唤醒、取消、删除的交错。
+- **一致性套件**：旧 Capture 一致性套件（随 ADR-0050 取消）、计划中的出站流一致性套件，内存与 PostgreSQL 两种实现；`workqueuetest` 覆盖到期表迁移与唤醒、取消、删除的交错。
 - **模拟测试**（`internal/sim`）：擦除与 Capture 提交、活跃 Run、删除交错，清空失败后由 Janitor 重试；定时在写入前后崩溃不重复、不遗漏，跳过落事件；出站流乱序提交不漏、删除后只剩信封；注销与按 EndUser 的写入交错。覆盖统计：`CapturesErased`、`CapturesCorrected`、`SchedulesFired`、`SchedulesSkipped`、`OutboxRows`、`EndUserBarrierWithdrawn`。
 - **评测**：`capture-*` 与基线一致（展开后模型看到的文本不变）；新增 `schedule-weekly-report`、`redo-different-answer`、`oneshot-live-brief`、`capture-erase-midrun`（整理中擦除，之后的整理与 Persona 中都没有被擦除的内容）。
 - **e2e**：擦除、修订、回执、定时、出站流、单次调用各走一次真实 HTTP。
-- **阶段**：按[整体架构](./persona-architecture.md) §11。P1 验收另含"擦除跨库竞态"与"出站流消费者离线超过 72 小时后对账"。
+- **阶段**：按[整体架构](./persona-architecture.md) §11。P1 验收覆盖擦除跨库竞态；出站流消费者离线超过 72 小时后的对账在 P4b 验收（Q106、Q122）。
 - **旧日志兼容**：CaptureAppended、CaptureRead 与 CaptureAck 的协议定义保留，退役事件和位置字段在 Apply 中忽略；投影版本升级后旧快照作废。
 
 ## 16. 不在这一版

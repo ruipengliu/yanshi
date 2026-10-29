@@ -1,6 +1,6 @@
 # 旁听业务线 xinli
 
-> 状态：已实现，已用真实模型验证（2026-10-25，评测结果见 [m4-eval.md](./m4-eval.md) §12）；2026-10-25 按 [xinli 的建模](./xinli-model.md)（ADR-0042）改为变更集 · 依赖：[旁听](./captures.md)（ADR-0036、ADR-0037、ADR-0039）、[Memory 与 Grant](./m4-memory-grant.md)、[MCP 适配](./m5-mcp.md)、[长 Run](./m2-long-runs.md)（`context.scope: run`）· 术语：[内核术语](../../CONTEXT.md) 的 Span；[Persona 术语](../../persona/CONTEXT.md) 的 Exchange、Changeset、Revision、Project、Commitment、Awareness
+> 状态：原有功能已实现；本文标注 P4 的生产补充尚未实现，以[整体架构](./persona-architecture.md) §13 Q91–Q124 为准。原有功能已用真实模型验证（2026-10-25，评测结果见 [m4-eval.md](./m4-eval.md) §12）；2026-10-25 按 [xinli 的建模](./xinli-model.md)（ADR-0042）改为变更集 · 依赖：[旁听](./captures.md)（ADR-0036、ADR-0037、ADR-0039）、[Memory 与 Grant](./m4-memory-grant.md)、[MCP 适配](./m5-mcp.md)、[长 Run](./m2-long-runs.md)（`context.scope: run`）· 术语：[内核术语](../../CONTEXT.md) 的 Span；[Persona 术语](../../persona/CONTEXT.md) 的 Exchange、Changeset、Revision、Project、Commitment、Awareness
 
 xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理成交谈的摘要，按主题归集到 Project，记下双方的承诺、随新说出的话修订它们并按期限提醒，每周回顾沟通习惯，供用户随时提问。编排在业务线服务端（ADR-0037）；Persona 保存与分页读取旁听原文，yanshi 提供四个 AgentDef 的运行、可信页的渲染与审核，以及引用的说话人与说话时间（[captures.md](./captures.md) §6）。实体、变更集与修订的模型（为什么这样建、取舍）见 [xinli 的建模](./xinli-model.md)；本文写流程、工具与评测。
 
@@ -17,16 +17,18 @@ xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理�
 - 业务线的工具由 xinli MCP Server 提供（§4），开发与评测中由 `persona/mcpserver` 提供，`apps/xinli` 装配。只读的工具（`captures`、`find_related`、`day_ledger`、`day_summary`、`project_digest`、`list_projects`、`recent_days`、`week_overview`、`similar_projects`）在登记中声明只读；交出结果的工具（`file_changes`、`file_day`、`set_status`、`update_commitments`、`propose_merge`、`file_week`）由业务线在登记中以 `no_approval` 放宽（ADR-0017）：它们只把结果交给业务线自己。登记开启 `attests_speakers` 与 `cite_captures`，承诺人与期限据此核对（§6）。
 - 业务线返回的内容（`find_related`、`day_ledger`、`day_summary`、`project_digest`、`week_overview` 等）是调用结果，属于外部内容（ADR-0037）。项目现状由 `xinli-project` 依据它们写成，是业务线的数据，不写入 Memory。
 - **Memory 要能读回来。** `xinli-day` 写下的偏好与人际关系，由助手在每个 Run 开始时召回（`memory.recall`）。`xinli-day` 不召回（输入总是"整理交谈"或"整理今天"，按它检索没有意义），写入之前用 `memory_search` 查已有的记忆：记过的不再记，变了的用 `replaces` 替换。平台另外合并几乎相同的表述（[Memory 设计](./m4-memory-grant.md) §3）。
-- **Retention。** `xinli-day` 与 `xinli-week` 按 AgentDef 覆盖为 `close_after_idle: 36h`、`delete_after_close: 168h`（原话保留 7 天，[captures.md](./captures.md) §8）；Project 与助手 Session 长期保留。
+- **Retention。** `xinli-day` 与 `xinli-week` 按 AgentDef 覆盖为 `close_after_idle: 36h`、`delete_after_close: 168h`，作为 Session 兜底；Project 与助手 Session 长期保留。P4 原文期限按[整体架构](./persona-architecture.md) §13 Q95、Q96：首次接收固定业务日时区，次日当地 00:00 加七个当地日历日，保存 UTC，工作 Session 用同一 `delete_at`。补传、改时区、重建不延长；首次上传已到期的历史日也拒收。自然到期立即拒绝原文访问、补传与旧工作 Session 整理写入，后台清原文及读页状态，保留长期账本、历史绑定与不可复用标记，不复用主动删一天。
 
 ## 2. 每日流程
 
 1. **开启。** HostApp 把旁听转写交给 Persona，按 EndUser 的当地日期保存到业务日。业务线创建 `xinli-day` 工作 Session 后，以 `bind_day` 绑定业务日与 Session；整理前必须完成绑定。跨午夜新建业务日与工作 Session，已绑定的 Session 不按后续片段的日期重新拆分。
 2. **白天。** 用户空闲时（旁听静默了一段时间）提交"整理交谈"。Run 用 `mcp_xinli__captures{after: "new"}` 一个个读已经结束的时段，每个时段划出交谈、交出一个变更集（§3），读到"已读完"或"还在进行"为止。有新原话为据的改动（改期、作废、完成）就在这里修订，提醒随之更正。静默与是否有待整理内容由业务线依据原文与处理进度判断，不再声明内核的流上触发（ADR-0050）。
-3. **当天整理。** 业务线按各用户的空闲用服务令牌提交"整理今天"：当地 18:00 之后旁听静默满 2 小时提交，到当地 04:00 仍未满足的，在 04:00 起的 30 分钟内随机提交（[建模](./xinli-model.md) §12），负载随各人的作息分散，不集中在午夜。Run 用 `mcp_xinli__captures{after: "new", all: true}` 读完余下的时段并交出，再用 `day_ledger` 取回当天的账本、交出当天整理（合并、改正、补上漏掉的修订），最后以 `file_day` 交出当天总览与觉察。业务线只接受"整理今天"那次 Run 的 `file_day`。
+3. **当天整理。** 业务线按各用户的空闲用服务令牌提交"整理今天"：当地 18:00 之后旁听静默满 2 小时提交，到次日当地 04:00 仍未满足的，在 04:00 起的 30 分钟内按 owner/date 稳定抖动提交（[建模](./xinli-model.md) §12），负载随各人的作息分散，不集中在午夜。Run 用 `mcp_xinli__captures{after: "new", all: true}` 读完余下的时段并交出，再用 `day_ledger` 取回当天的账本、交出当天整理（合并、改正、补上漏掉的修订），最后以 `file_day` 交出当天总览与觉察。业务线只接受“整理今天”命令的 `file_day`。P4 按[整体架构](./persona-architecture.md) §13 Q102、Q113 由编排器独占内部工作 Session，提交前登记类型、确认终态前不切换，工具事务内校验当前绑定；无法排除迟到写入时先退役并换绑旧 Session。
 4. **归集。** `file_day` 之后，业务线为当天涉及的项目创建（或复用）`xinli-project` Session，提交"整理 <日期>"，输入中不含摘要。Project 的 Run 用 `day_summary{date}` 取回那天归入本项目的交谈与未完成的承诺，以 `set_status` 更新现状、以 `update_commitments` 依据交谈对账（§6）。
 5. **关闭。** 业务线调用 `POST /v1/sessions/{id}/close`，`close_after_idle` 兜底。
 6. **提醒。** 承诺随变更集一交出就进入承诺账本（§6），业务线按当前状态推送通过核对的承诺：改期后按新期限，作废或合并后停止；白天答应的事当天就能提醒；不经 yanshi 的 Notification。
+
+P4 自动调度以固定业务日时区、原文与处理进度为依据，抖动持久化或由 owner/date 重算；进度未前进退避，以接受事实与进度判断业务完成，不用 Run 终态代替（[整体架构](./persona-architecture.md) §13 Q116）。
 
 超出配额时 Run 由 Worker 挂起，业务线次日重试；旁听 Session 删除前仍未整理的，提醒用户"这几天的内容没能整理"。
 
@@ -98,7 +100,7 @@ xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理�
 
 ## 5. 项目归集
 
-- **先召回候选。** 项目多了以后，全量列表放不下，也让模型难以比较。`find_related{query}` 由业务线按主题检索：生产中用嵌入或全文检索，模拟服务用字符二元组相似度。范围是该 EndUser 未归档的项目（§7），按相似度排序，至多 5 个。
+- **先召回候选。** 项目多了以后，全量列表放不下，也让模型难以比较。`find_related{query}` 由业务线按主题检索：P4 生产与内存实现共用字符二元组相似度，在已装载账本上运行；倒排、中文分词与向量检索后置（[整体架构](./persona-architecture.md) §13 Q94）。范围是该 EndUser 未归档的项目（§7），按相似度排序，至多 5 个。
 - **四档归属。**
   - `existing`：明确是候选中的某个项目，说的是同一件事（同一个交付、同一次招聘、同一套房子）。同一家公司、同一批人谈的另一件事是另一个项目（评审 F4：首页改版因"同一批人"被归进了康宁）。
   - `new`：值得持续跟进的新主题（有定下的事、有承诺或明确的后续），且没有合适的候选。
@@ -158,7 +160,7 @@ xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理�
 | 工具 | 说明 |
 |---|---|
 | `week_overview`（只读） | 本周每天的总览、每段交谈的标题与归属、每天的觉察。 |
-| `similar_projects`（只读） | 按相似度（生产用嵌入，模拟服务用字符二元组）找出的至多 5 对可能重复的项目，附各自的现状与最近几段交谈的标题。 |
+| `similar_projects`（只读） | 按相似度（P4 共用字符二元组，Q94）找出的至多 5 对可能重复的项目，附各自的现状与最近几段交谈的标题。 |
 | `propose_merge` | `{into, from, reason}`：提议把 `from` 并入 `into`，进业务线的"待确认"。 |
 | `file_week` | `{habits: [{habit, days, example}], suggestions}`：本周的觉察。`days` 是这个习惯出现的日期，至少两天。 |
 
@@ -170,15 +172,15 @@ xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理�
 
 ### 重写现状
 
-日常的"整理 <日期>"在前一天的现状上增量修改，容易累积错误。每周业务线向本周有新交谈的每个项目提交"重写现状"：`xinli-project` 用 `project_digest` 取回完整的时间线与未完成的承诺，不参考之前的现状、整体重写，用 `set_status` 交出，不对账承诺。
+日常的"整理 <日期>"在前一天的现状上增量修改，容易累积错误。P4 在 `file_week` 接受事实持久化后，业务线才向本周有新交谈的每个项目提交“重写现状”（[整体架构](./persona-architecture.md) §13 Q99、Q115；空结果也触发，同命令去重，合法重交产生新事实版本）：`xinli-project` 用 `project_digest` 取回完整的时间线与未完成的承诺，不参考之前的现状、整体重写，用 `set_status` 交出，不对账承诺。
 
 ## 8. 提问（`xinli-assistant`）
 
-用户在 App、微信或飞书中的提问都由业务线提交到该用户的 `xinli-assistant` Session（微信、飞书由业务线服务端以服务令牌代为提交）。助手经 `mcp_xinli__*` 查询，并用召回的 Memory 回答关于用户本人的问题；业务线回答"近几天"类的查询时，从 Persona 读取保留期内的原文。超过 7 天的问题只能依据摘要回答，产品须写明"原话保留 7 天"。
+用户在 App、微信或飞书中的提问都由业务线提交到该用户的 `xinli-assistant` Session（微信、飞书由业务线服务端以服务令牌代为提交）。助手经 `mcp_xinli__*` 查询，并用召回的 Memory 回答关于用户本人的问题；业务线回答"近几天"类的查询时，从 Persona 读取保留期内的原文。到业务日固定期限后的问题只能依据摘要回答，产品须写明“原话保留至业务日结束后七个当地日历日”（Q95），不按提问或上传时刻滚动延长。
 
 助手问到承诺时用 `list_commitments`：可按 `kind`（mine/theirs）、`status`（open/done/cancelled/all，默认 open）、期限范围 `due_from`/`due_to`（YYYY-MM-DD，含边界）、对方子串 `counterpart`、主题 `query`、项目 ID `project` 筛选。主题复用 `find_related` 的内容与对方相似度及阈值，但不限制为最近 30 天；已完成、取消可显式查询，被合并者不列出。每页至多 30 条，按期限升序，无日期的排后，同期限按说话时间，再按 ID 稳定排序；每条带状态、对方、日期与星期、项目（若有）、未核对标记与修订次数。页尾给出符合条件的总数与下一页 `after`，续页照抄游标并保持条件不变。
 
-问某件事怎么变的，先用 `list_commitments` 的 `query` 与 `status: all` 找到它，再以 ID 调用 `commitment_history`。历史返回当前值，以及按说话时间排列的每次修订、记录时间、操作、改前与改后、依据和引用。初值取原始创建项，再重放修订的新值；没有说话时间的操作明确标为未记录，以记录时间排序。原话超过 7 天注明“原话已过保留期”，不补造引文。被合并者指向保留的 ID，保留者附上被合并者的历史（含链式合并）。
+问某件事怎么变的，先用 `list_commitments` 的 `query` 与 `status: all` 找到它，再以 ID 调用 `commitment_history`。历史返回当前值，以及按说话时间排列的每次修订、记录时间、操作、改前与改后、依据和引用。初值取原始创建项，再重放修订的新值；没有说话时间的操作明确标为未记录，以记录时间排序。原话达到固定期限后注明“原话已过保留期”，不补造引文。被合并者指向保留的 ID，保留者附上被合并者的历史（含链式合并）。
 
 ## 9. 开发部署
 
@@ -187,7 +189,7 @@ xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理�
 - **归集**（§2 第 4 步）：`file_day` 之后为涉及的项目创建（或复用）`xinli-project` Session，以由整理所在 Session 与项目派生的 `input_id` 提交"整理 <日期>"，并绑定项目 Session。
 - **每周回顾**：开发页面按钮经夹具的 `week_review` 做 §7 的三步，同一周复用回顾 Session 与输入 ID。
 - **待确认与用户改动**：开发页面经 `persona/fixture` 的 `resolve`、`resolve_merge` 与 `edit` 操作确认归属、合并或修改承诺，记为用户的变更集。
-- **只收"整理今天"的 `file_day`**：评测运行器经夹具的 `submitted` 操作记下整理输入；直接在控制台提交的输入不限制。
+- **只收“整理今天”的 `file_day`**：当前评测运行器经夹具的 `submitted` 操作记下整理输入；开发入口的宽松行为不能作为生产资格。P4 统一采用 Q102、Q113 的单写入方、命令登记与当前绑定校验。
 - 数据只在内存中，页面地址见就绪行 `page_url`。不关闭整理后的 Session，仍可在内核控制台继续对话。
 
 评测启动相同进程但不带 `-kernel-url`，由运行器自己扮演业务线，不自动归集；Seed、State 与操作均经 HTTP（[评测框架](./m4-eval.md) §12）。
@@ -266,6 +268,8 @@ xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理�
 
 ADR-0050 的 P1 第 2 步已切换：xinli-day 版本 2 使用 `mcp_xinli__captures`，不再声明 `streams`。xinli 登记已开启 `attests_speakers`，Persona 不再输出交付回执；处理进度与接受范围变更集同事务推进。评测经夹具绑定业务日并向 Persona 提交旁听；内核 Capture 路径已退役。P1-④a 已补充 Persona 的擦除、删除待办与删除期限保存（见本节末）；④b 已接入内核删除与重建执行（见本节末），测试与效果仍由远端验收。
 
+P4 将引入 capture_revision，并按[整体架构](./persona-architecture.md) §13 Q97、Q98、Q114 为有序采集补齐序号、缺口暂存与采集世代：擦除或删一天推进世代并清旧缓冲，拒绝旧请求；到期与注销清全部缓冲正文，不允许把旧请求自动改成新世代。以下是现有领域契约，生产接入须同时满足这些约束。
+
 原文按（BusinessLine、EndUser、业务日）隔离。业务日是提交方按用户当地日期给出的 YYYY-MM-DD，不从服务器时钟或片段时间反推。每个业务日记录当前工作 Session，绑定可幂等重试、可换绑；旧 Session 随即不能再读原文，一个 Session 不能同时绑定两个业务日。它不复用每日整理总览，已有 State 的字段形状保持不变。
 
 夹具先提交业务日、提交 ID 和结构化片段，再绑定工作 Session。每个业务日的批次从 1 开始，段号从 0 开始，引用是“批次.段号”；每次新的提交分配下一批次，编号不复用。同一提交 ID 与同一内容重交返回原引用，不同内容拒绝。每批 1–200 段，每段 1–2000 字，佩戴者无说话人键，可选的 `speaker_ref` 是业务线比对声纹后给出的不透明实体 ID，只有他人可带且须匹配 `[A-Za-z0-9_-]{1,64}`，为空时省略 JSON 字段、兼容旧快照；他人的键、时间和时区遵循可信页的字段契约（captures.md §12）。Persona 保存原文，不替平台做内容安全审核。
@@ -319,6 +323,8 @@ MCP 的 captures 工具与冻结 golden 中的说明及 schema 一致，声明�
 
 ### 删除待办的执行（P1-④b）
 
+以下记录 P1 的实现。P4 由[整体架构](./persona-architecture.md) §13 Q100–Q102、Q113 替换其进程内互斥、内存退避与有限去重保证：任务、租约代数、receipt 和退避持久化，未知提交须完整日志对账；创建意图与 CAS 绑定可恢复，异常旧工作 Session 须退役。Q95、Q96 同时要求固定业务日时区与非零 UTC 期限，生产不再从最后一段原文推导时区，也不接受零期限；以下旧夹具兼容行为不是 P4 的生产契约。
+
 `apps/xinli/orchestrator` 实现 `DeletionNotifier`。通知只唤醒执行，不承担持久交付；`StartDeletions` 启动时立即查询 `Store.PendingDeletions`，随后默认每 30 秒扫描一次。`ScanDeletions` 可手动驱动一轮。`xinli dev -kernel-url` 将同一编排器装配到 MCP、夹具和开发页面，停机关闭扫描并等待已接收的工作；不带内核地址时保留 pending，不执行内核操作。开发命令目前使用 memstore，进程重启不保存任何 Book；这里的崩溃恢复保证以复用同一 Store（将来的持久实现）为前提，测试用同一 memstore 重建编排器验证协议。
 
 执行与项目归集、每周回顾、工作 Session 创建共用同一 EndUser 的互斥入口，网络调用不占 Persona 事务锁。待办按保存顺序执行；前项清理未完成、失败或处于退避期时，本所有者本轮到此结束，不让后项抢先读取 Memory。每项按以下顺序推进：
@@ -333,7 +339,7 @@ MCP 的 captures 工具与冻结 golden 中的说明及 schema 一致，声明�
 
 为了覆盖“清理完成后、重新整理前”崩溃，删除待办额外保存 `time_zone` 和 `rebuild_pending`。`CompleteDeletionWithRebuild` 把清理完成与重新整理意图同事务保存；`PendingDeletionTasks` / `Store.PendingDeletions` 同时返回 `status=pending` 或 `rebuild_pending=true` 的工作。重新整理失败时状态仍为 completed（删除确已完成），保留重建标记与最近错误。P4 的索引查询须覆盖这两种条件。原 `CompleteDeletionTask` 的调用语义不变，不主动登记重建。
 
-重建调用 `EnsureDaySession(ctx, bl, eu, date)`，随后以 `xinli_rebuild_<待办ID>` 为输入 ID 提交“整理今天”；内核按 Session 与输入 ID 去重，成功后 `CompleteDeletionRebuild` 清掉标记。若提交已被内核接受、但本地标记提交失败，恢复时复用绑定和同一输入 ID，只有一次有效输入。更晚的擦除或删一天已接管该日时，旧待办清掉重建意图，不再提交；期限在等待中到期也跳过。
+重建调用 `EnsureDaySession(ctx, bl, eu, date)`，随后以 `xinli_rebuild_<待办ID>` 为输入 ID 提交“整理今天”；内核按 Session 与输入 ID 去重，成功后 `CompleteDeletionRebuild` 清掉标记。若提交已被内核接受、但本地标记提交失败，当前恢复复用绑定与同一输入 ID；内核只保证最近 64 条输入去重，P4 必须按 Q100 完整补读日志确认，不能无界盲重发。更晚的擦除或删一天已接管该日时，旧待办清掉重建意图，不再提交；期限在等待中到期也跳过。
 
 `EnsureDaySession` 在用户互斥入口内先读 Persona 的当前绑定，已有则复用；没有时创建 `xinli-day`，创建和 `BindDay` 使用业务日同一个 `delete_at`，零期限不传。已删除的业务日拒绝重建，未完成删除的业务日等待清理，过期的业务日不新建。绑定事务重读删除状态、删除待办代数和期限，防止创建网络调用期间发生的擦除被旧读取覆盖。创建与绑定之间崩溃允许留下未绑定的空 Session，它没有读过原文；绑定成功后的重复调用不会再创建。
 
@@ -347,7 +353,7 @@ xinli 开发页的“实况简述”按钮按页面当前业务日调用 `POST /
 
 取当天最近 200 段，按原顺序渲染成每行一段：`[佩戴者] 文字`、`[他人 other-1 @P-0012] 文字`，没有 `speaker_ref` 时省略 `@...`。段内空白统一成空格，避免内嵌换行冒充新段。按声明的 `input.max_chars: 8000` 计算 Unicode 字符，标签与换行都计入预算；从尾部保留，边界段只保留正文尾部并保留完整说话人标签。应用常量与声明保持一致，声明收紧预算时也须修改应用常量；当前没有读取声明元数据的公开 API。
 
-Persona 当前没有公开的原文版本号。请求前后各在一个只读事务中取得 `(业务日, Deleted, 最后一段引用, 当日删除待办数量)`：批次号永不复用，每次擦除都追加且不移除删除待办，因此任意追加、部分擦除、删一天都会改变组合；整理进度与工作 Session 换绑不会误使简述失效。模型调用不占 Persona 事务锁，返回前重读，不一致时丢弃结果并返回 409、“原文已变化，请重新生成”。将来若增加原位原文修订，必须改用覆盖修订的版本号；本组合依赖当前只追加与擦除的契约。
+Persona 当前没有公开的原文版本号。请求前后各在一个只读事务中取得 `(业务日, Deleted, 最后一段引用, 当日删除待办数量)`：批次号永不复用，每次擦除都追加且不移除删除待办，因此任意追加、部分擦除、删一天都会改变组合；整理进度与工作 Session 换绑不会误使简述失效。模型调用不占 Persona 事务锁，返回前重读，不一致时丢弃结果并返回 409、“原文已变化，请重新生成”。P4 按[整体架构](./persona-architecture.md) §13 Q98 改用 capture_revision（原文版本）作为变化键，追加、擦除与自然到期均改变版本；即使不做原位修订也要替换当前组合，并在读取时校验期限（Q96）。
 
 前端用独立请求代次（不复用轮询原文的刷新序号）。切换业务日或身份、离开页面、提交新原文、发起擦除/删一天时立即清空显示并作废旧代次；因此切走又切回也不会显示旧请求结果。简述生成期间仍可擦除。服务器只能核对请求指定的业务日，浏览器当前选择由前端代次保证；返回前最后一次读取之后发生的并发变化，无法靠两个独立 HTTP 请求作原子显示保证，开发页自身的擦除仍由代次拦截。
 
