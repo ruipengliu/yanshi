@@ -64,7 +64,7 @@ func (s *Store) Update(ctx context.Context, bl, eu string, fn func(*domain.Book)
 	if e.deletion.Status != "" {
 		return store.ErrOwnerDeleting
 	}
-	working, err := e.book.Clone()
+	working, err := cloneForTransaction(ctx, e.book)
 	if err != nil {
 		return err
 	}
@@ -98,7 +98,7 @@ func (s *Store) View(ctx context.Context, bl, eu string, fn func(*domain.Book) e
 		e.mu.Unlock()
 		return store.ErrOwnerDeleting
 	}
-	snapshot, err := e.book.Clone()
+	snapshot, err := cloneForTransaction(ctx, e.book)
 	// 注销清理会逐项收回目录；只复制目录以保持在途 View 的片段快照不可变。
 	captures := newCaptureTx(ctx, maps.Clone(e.captures), maps.Clone(e.pending))
 	e.mu.Unlock()

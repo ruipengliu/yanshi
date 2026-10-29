@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"persona/domain"
+	"persona/store"
 )
 
 type rowKind uint8
@@ -545,6 +546,7 @@ func loadRows(ctx context.Context, tx pgx.Tx, bl, eu []byte, c category) ([]book
 		if err := rows.Scan(&key, &row.ordinal, &payload, &row.status, &row.rebuildPending, &row.expiresAt, &row.captureCleanupDone); err != nil {
 			return nil, err
 		}
+		store.RecordLoad(ctx, len(payload), 0)
 		decoded, err := decodePayload(payload)
 		if err != nil {
 			return nil, err

@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"persona/domain"
+	"persona/store"
 )
 
 type batchKey struct {
@@ -103,6 +104,7 @@ func (t *captureTx) Lookup(date string, ref domain.Ref) (domain.CaptureSegment, 
 		}
 		return domain.CaptureSegment{}, false, err
 	}
+	store.RecordLoad(t.ctx, 0, 1)
 	var segment domain.CaptureSegment
 	if err := unmarshalPayload(data, &segment); err != nil {
 		return domain.CaptureSegment{}, false, err
@@ -133,6 +135,7 @@ func (t *captureTx) Batch(date string, seq uint64) ([]domain.CaptureSegment, err
 		if err := rows.Scan(&data); err != nil {
 			return nil, contextError(t.ctx, err)
 		}
+		store.RecordLoad(t.ctx, 0, 1)
 		var segment domain.CaptureSegment
 		if data != nil && !t.isErased(date, domain.Ref{Seq: seq, Index: len(result)}) {
 			if err := unmarshalPayload(data, &segment); err != nil {
@@ -210,6 +213,7 @@ func (t *captureTx) records(date string, from, to domain.Ref, exclusive, reverse
 		if err := rows.Scan(&seq, &index, &data); err != nil {
 			return nil, contextError(t.ctx, err)
 		}
+		store.RecordLoad(t.ctx, 0, 1)
 		n, err := strconv.ParseUint(seq, 10, 64)
 		if err != nil {
 			return nil, err

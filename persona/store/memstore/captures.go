@@ -8,6 +8,7 @@ import (
 	"slices"
 
 	"persona/domain"
+	"persona/store"
 )
 
 type batchKey struct {
@@ -65,6 +66,7 @@ func (t *captureTx) Batch(date string, number uint64) ([]domain.CaptureSegment, 
 	if !ok {
 		return nil, fmt.Errorf("capture batch does not exist")
 	}
+	store.RecordLoad(t.ctx, 0, len(v))
 	return slices.Clone(v), nil
 }
 
@@ -76,6 +78,7 @@ func (t *captureTx) Lookup(date string, ref domain.Ref) (domain.CaptureSegment, 
 	if ref.Index < 0 || ref.Index >= len(v) || v[ref.Index].Text == "" {
 		return domain.CaptureSegment{}, false, nil
 	}
+	store.RecordLoad(t.ctx, 0, 1)
 	return v[ref.Index], true, nil
 }
 
@@ -112,6 +115,7 @@ func (t *captureTx) Scan(date string, from, to domain.Ref) iter.Seq2[domain.Capt
 				if g.Text == "" || from.Seq != 0 && refLess(r, from) || to.Seq != 0 && refLess(to, r) {
 					continue
 				}
+				store.RecordLoad(t.ctx, 0, 1)
 				if !yield(domain.CaptureRecord{Ref: r, Segment: g}, nil) {
 					return
 				}
@@ -150,6 +154,7 @@ func (t *captureTx) Adjacent(date string, ref domain.Ref, before bool) (domain.C
 			if v[i].Text == "" || ref.Seq != 0 && (before && !refLess(r, ref) || !before && !refLess(ref, r)) {
 				continue
 			}
+			store.RecordLoad(t.ctx, 0, 1)
 			return domain.CaptureRecord{Ref: r, Segment: v[i]}, true, nil
 		}
 	}
