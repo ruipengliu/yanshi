@@ -51,10 +51,15 @@ var (
 )
 
 var (
-	ModelCallDuration = histogram("model_call_duration_seconds", "模型调用耗时；kind = turn | summary。", latency, "kind", "outcome")
-	OneshotCalls      = counter("oneshot_calls_total", "单次调用的结果；只记声明名称、版本与固定结果类别。", "name", "version", "outcome")
-	ModelTokens       = counter("model_tokens_total", "模型 token 数；direction = input | output | cached_input（input 中命中前缀缓存的部分）。", "direction")
-	ModelRetries      = counter("model_retries_total", "模型调用因暂时性失败（限流、服务端错误、连接中断）重试的次数。", "provider")
+	OutboxWatermarkLag      = gaugeVec("outbox_watermark_lag_transactions", "当前事务上界与安全水位的距离。", "shard")
+	OutboxOldestTransaction = gaugeVec("outbox_oldest_transaction_seconds", "最老活跃事务的年龄。", "shard")
+	OutboxConsumerLag       = gaugeVec("outbox_consumer_lag_transactions", "最近读取返回位置距安全水位的事务数；不代表业务处理确认。", "shard", "business_line")
+	OutboxRows              = gaugeVec("outbox_retained_rows", "出站保留行数。", "shard")
+	OutboxBytes             = gaugeVec("outbox_retained_bytes", "出站存储字节数，PG 含索引与待回收空间，内存为信封 JSON 大小。", "shard")
+	ModelCallDuration       = histogram("model_call_duration_seconds", "模型调用耗时；kind = turn | summary。", latency, "kind", "outcome")
+	OneshotCalls            = counter("oneshot_calls_total", "单次调用的结果；只记声明名称、版本与固定结果类别。", "name", "version", "outcome")
+	ModelTokens             = counter("model_tokens_total", "模型 token 数；direction = input | output | cached_input（input 中命中前缀缓存的部分）。", "direction")
+	ModelRetries            = counter("model_retries_total", "模型调用因暂时性失败（限流、服务端错误、连接中断）重试的次数。", "provider")
 	// FaultsInjected 只在 serve -faults 的调试部署中出现（ADR-0033）。
 	FaultsInjected      = counter("faults_injected_total", "注入的故障次数（调试部署）。", "kind")
 	ModelDeadlines      = counter("model_deadlines_total", "模型调用在总时限（含排队与重试等待）内没有结果的次数。", "provider")

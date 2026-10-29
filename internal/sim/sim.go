@@ -79,9 +79,10 @@ type Options struct {
 
 // Stats 统计模拟中被覆盖到的路径，防止模拟"空转"。
 type Stats struct {
-	OutboxRunCompleted, OutboxRunFailed, OutboxQuestions, OutboxApprovals int
-	OutboxBackgroundSettled, OutboxSessionClosed, OutboxSessionDeleted    int
-	Redos, RedoConflicts, RedoDuplicates, RedoCardRejects                 int
+	OutboxReads, OutboxConsumerCrashes, OutboxRedeliveries, OutboxConsumed, OutboxPruned int
+	OutboxRunCompleted, OutboxRunFailed, OutboxQuestions, OutboxApprovals                int
+	OutboxBackgroundSettled, OutboxSessionClosed, OutboxSessionDeleted                   int
+	Redos, RedoConflicts, RedoDuplicates, RedoCardRejects                                int
 	// FarParks 与 DuePromotions 只在 PostgreSQL 差分种子中要求覆盖。
 	FarParks, DuePromotions int
 
@@ -373,6 +374,8 @@ type World struct {
 	// observedRuns 保留各 Session 已见的请求数，避免重复检查或删除日志改变累计覆盖。
 	observedRuns      map[string]int
 	observedEnvelopes map[string]bool
+	outboxConsumer    outboxConsumer
+	prunedEnvelopes   map[string]bool
 	// children 是发现的委托子 Session（discoverChildren），parentOf 是它们的父 Session。
 	children  []string
 	parentOf  map[string]string
@@ -483,6 +486,7 @@ func New(opts Options) (*World, error) {
 	// 对象图与 serve 相同（app.NewCore）；存储故障在 Stores 的 seam 上注入，其余替身在构造之后替换对应字段。
 	// 外部写入（输入、审批、回答、Node 结果）经 flakyWaking；Worker 的追加另经 flakyLog（newWorker）。
 	wrapped := stores
+	wrapped.Outbox = simOutbox{Store: stores.Outbox, w: w}
 	wrapped.Waking = flakyWaking{WakingLog: stores.Waking, w: w}
 	wrapped.Index = barrierIndex{Index: stores.Index, w: w}
 	wrapped.Dir = barrierDirectory{Directory: stores.Dir, w: w}
@@ -789,6 +793,9 @@ func (w *World) Run() error {
 	for i := range w.opts.Ticks {
 		if err := w.tick(); err != nil {
 			return fmt.Errorf("tick %d: %w", i, err)
+		}
+		if _, err := w.consumeOutbox(context.Background(), w.faults); err != nil {
+			return fmt.Errorf("tick %d outbox: %w", i, err)
 		}
 		if err := w.CheckInvariants(); err != nil {
 			return fmt.Errorf("tick %d: %w", i, err)
@@ -1188,6 +1195,9 @@ func (w *World) quiesce() error {
 				return err
 			}
 			if err := w.checkDelegation(true); err != nil {
+				return err
+			}
+			if err := w.drainOutbox(context.Background()); err != nil {
 				return err
 			}
 			return w.checkDeleted(true)

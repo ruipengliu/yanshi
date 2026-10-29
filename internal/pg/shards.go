@@ -32,8 +32,10 @@ type TableKey struct {
 
 // Tables 是全部表的分片键。
 var Tables = map[string]TableKey{
+	"outbox_stream":      {Class: Global},
+	"outbox_checkpoints": {Class: Global},
 	"outbox": {Class: BySession, Column: "session_id",
-		Offline: []string{"List：业务线服务端按分片读取信封；B4 使用独立水位与游标"}},
+		Offline: []string{"List / Read / Head：业务线服务端按分片读取信封与安全起点", "Maintain：扫描候选后逐 Session 分批清理", "Stats：Janitor 统计保留空间"}},
 	"end_user_tiers":    {Class: ByEndUser, Column: "end_user"},
 	"events":            {Class: BySession, Column: "session_id"},
 	"session_snapshots": {Class: BySession, Column: "session_id"},

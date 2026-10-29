@@ -25,18 +25,18 @@ const (
 // Envelope 不含内容；删除信封的 Seq 为零、EndUser 与 Agent 为空。
 // Agent 与 AgentVersion 分开保存，避免拼接名称与版本产生歧义。
 type Envelope struct {
-	EnvelopeID        string
-	BusinessLine      string
-	EndUser           string
-	SessionID         string
-	Seq               uint64
-	Kind              Kind
-	RunID             string
-	CallID            string
-	Agent             string
-	AgentVersion      string
-	Reason            string
-	DeletionRequestID string
+	EnvelopeID        string `json:"envelope_id"`
+	BusinessLine      string `json:"business_line"`
+	EndUser           string `json:"end_user,omitempty"`
+	SessionID         string `json:"session_id"`
+	Seq               uint64 `json:"seq,omitempty"`
+	Kind              Kind   `json:"kind"`
+	RunID             string `json:"run_id,omitempty"`
+	CallID            string `json:"call_id,omitempty"`
+	Agent             string `json:"agent,omitempty"`
+	AgentVersion      string `json:"agent_version,omitempty"`
+	Reason            string `json:"reason,omitempty"`
+	DeletionRequestID string `json:"deletion_request_id,omitempty"`
 }
 
 // ID 不消耗执行路径的 ID 生成器，故新增出站存储不改变模拟种子的轨迹。
@@ -53,8 +53,10 @@ func Deleted(businessLine, sessionID, reason, requestID string) Envelope {
 
 // Store 的写入仅由日志与删除记录的事务实现提供；不能在 Update 返回后补写。
 type Store interface {
+	Reader
+	Maintainer
 	// List 按插入行号列出本存储中指定业务线的可见行。它不提供消费游标或安全水位，
-	// 并发事务可能乱序提交；B4 的消费接口不能用这里的行号推进游标。
+	// 仅用于诊断与不变量检查；消费方必须使用 Read 的安全水位游标。
 	List(ctx context.Context, businessLine string) ([]Envelope, error)
 	// DeleteSession 只清除普通信封，删除信封独立保留。
 	DeleteSession(ctx context.Context, sessionID string) error

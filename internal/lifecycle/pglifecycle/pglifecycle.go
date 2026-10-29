@@ -188,7 +188,7 @@ func (d Deletions) Mark(ctx context.Context, t *lifecycle.Tombstone) (bool, erro
 		return false, nil
 	}
 	if err == nil {
-		err = pgoutbox.Insert(ctx, tx, []outbox.Envelope{outbox.Deleted(t.BusinessLine, t.SessionID, t.Reason, t.RequestID)})
+		err = pgoutbox.Insert(ctx, tx, []outbox.Envelope{outbox.Deleted(t.BusinessLine, t.SessionID, t.Reason, t.RequestID)}, d.Notifier)
 	}
 	if err == nil {
 		err = tx.Commit(ctx)

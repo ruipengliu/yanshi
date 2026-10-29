@@ -170,13 +170,13 @@ Schedule {
 
 ## 6. 出站流（Outbox）
 
-> P4 的出站流按[整体架构](./persona-architecture.md) §13 Q105–Q106、Q117、Q118 改写，未实现；范围与验收见该文 §11 的 B3–B6。
+> B3 的原子信封与 B4 的消费、保留协议已实现；B5 恢复分页、B6 应用消费者待实现。依据[整体架构](./persona-architecture.md) §13 Q105–Q106、Q117、Q118；范围与验收见该文 §11 的 B3–B6。
 
 ### 6.1 用途与信封
 
 出站流让业务线在没有在线客户端时可靠发现回复、提问与审批，维护跨 Session 收件箱、转发渠道消息，并在服务端停机后继续消费。业务侧无法把接收记录与内核日志原子提交，因此由内核提供通用运行事件的发现机制。Persona 是否接受领域事实另由业务线记录，不从 Run 完成推导（Q99）。
 
-计划中的 HTTP 接口为 GET /v1/outbox，接受分片、after 游标、kinds 与 limit；只允许服务令牌访问本业务线，长轮询最多 25 秒。GET /v1/outbox/shards 返回分片及状态；每个 PostgreSQL 分片独立消费、独立保存游标。响应包含信封列表与下一游标；以下是待实现的信封字段形状：
+HTTP 接口为 GET /v1/outbox，接受分片、after 游标、kinds 与 limit；只允许服务令牌访问本业务线，长轮询最多 25 秒。GET /v1/outbox/shards 返回分片及状态；每个 PostgreSQL 分片独立消费、独立保存游标。响应包含信封列表与下一游标；以下是信封字段形状：
 
 ```text
 普通信封：{envelope_id, business_line, end_user, session_id, seq, kind, run_id?, call_id?, agent?}
@@ -214,6 +214,57 @@ session_deleted 不是已有 Event。它在 `pglifecycle.Deletions.Mark` 写删�
 
 每分片独立水位、检查点、地板、世代与消费进度。健康分片的独立读写、队列认领和出站消费继续；依赖失联分片的全局汇总有界失败并明确返回不可用，不能将缺失用量当零或把部分结果当完整结果。就绪与入口支持部分可服务，不把全部分片健康简单做 AND；健康分片上的 Run 若触及全局配额也遵守此规则（Q118）。
 
+### B4 的 HTTP 与存储契约
+
+`GET /v1/outbox?shard=0&after=<cursor>&kinds=question,run_completed&limit=100`：
+
+- 只允许服务令牌，业务线从令牌取得。显式提供其他 `business_line` 返回 403；开发用 `-auth none` 必须提供该查询参数。用户令牌返回 403，缺失或失效的令牌返回 401。
+- 单库分片为 0，省略 `shard` 等同 0；其他分片返回 404。`limit` 默认 100，显式指定时为 1–1000。省略 `kinds` 表示全部七种；逗号分隔或重复参数均可，集合排序、去重后生成过滤版本，显式空种类或未知种类返回 400。
+- 响应是 `{"events":[...],"next":"..."}`，空列表始终是 `[]`。信封使用 snake_case；普通信封另有可选的 `agent_version`，删除信封省略 `seq` 与 `end_user`。`after` 为空从当前可保留位置开始，并不承诺完整历史。
+- 默认最多等待 25 秒，每 1 秒复查；嵌入方可用 `httpapi.Server.OutboxWait`、`OutboxRecheck` 配置。等待中不持有数据库事务或连接，客户端取消立即结束，令牌在等待中到期返回 401。NOTIFY 按业务线提示，订阅尚未生效、通知丢失、其他事务结束均由周期复查兜底。每次空读更新下一位置，超时返回最近的安全扫描进度。
+- `GET /v1/outbox/shards?kinds=...` 不挂起，返回 `{"shards":[{"shard":0,"status":"ready","next":"<H>"}]}`。H 是当前水位边界，绑定同一过滤集合，可直接作为追赶的 `after`；该接口拒绝 `after`。分片不可读时返回 503，不将失败伪装成空流。
+
+游标为 `base64url(JSON).base64url(HMAC-SHA256)`，JSON 含 `v=1`、`business_line`、`shard`、`stream_epoch`、`filter_version`、`xid8`、`id`。调用方必须将它作为不透明字符串保存，不能自行构造。过滤版本是版本前缀 `1:` 与排序去重后的种类集合的 SHA-256；密钥与 epoch 存在分片元数据中，普通进程重启保持不变。内存存储重建生成新世代。
+
+| HTTP 状态 | error | 处理 |
+|---|---|---|
+| 400 | outbox_invalid_request / outbox_invalid_cursor | 修正参数或损坏的游标 |
+| 403 | outbox_cursor_scope_mismatch | 游标不属于令牌业务线或请求分片 |
+| 404 | outbox_unknown_shard | 修正分片 |
+| 409 | outbox_filter_changed | 使用新过滤集合重新建立消费位置 |
+| 410 | outbox_epoch_changed / outbox_cursor_expired | 按 §6.5 重建位置；B5 实现应用恢复 |
+| 503 | outbox_unavailable | 保留已有进度，稍后重试 |
+
+PG 每次读取使用一个短的 `REPEATABLE READ READ ONLY` 事务，先在该快照读 `outbox_stream` 及 `pg_snapshot_xmin(pg_current_snapshot())`，随后执行：
+
+```sql
+SELECT ... FROM outbox
+WHERE business_line = $1
+  AND xid < $2::xid8
+  AND (xid,id) > ($3::xid8,$4::bigint)
+  AND kind = ANY($5::text[])
+ORDER BY outbox.xid,outbox.id
+LIMIT $6;
+```
+
+`$2` 是同一快照的 xmin。显式限定排序列，避免投影中的 `xid::text` 被当作字符串排序。满页位置为末行 `(xid,id)`；不足一页（包括空页）为 `(xmin,0)`。真实行号从 1 起，边界 `(xmin,0)` 不会越过当前仍活跃的事务。
+
+保留元数据由新增迁移 0028–0030 创建，每个物理分片一份，在 `pg.Tables` 登记为 Global：
+
+- `outbox_stream(singleton, stream_epoch, cursor_key, floor xid8, prune_target xid8)`：地板与清理目标均表示 `(xid8,0)`。
+- `outbox_checkpoints(safe_xmin xid8 PRIMARY KEY, observed_at timestamptz)`：水位首次观察时间，相同水位 `ON CONFLICT DO NOTHING`；列名避开 PostgreSQL 系统列 `xmin`。
+- `outbox(business_line,xid,id)` 与 `outbox(xid,id) INCLUDE(session_id)` 索引均以独立的 `CREATE INDEX CONCURRENTLY` 迁移增加。
+
+Janitor 默认每分钟调用维护，每轮至多删除 1000 行：取得元数据行锁，采样安全水位，**在水位取得后**读取 `clock.Clock` 并持久记录检查点（等待连接或锁的时间不能算成可发布时间）；选取至少 72 小时前观察到的最大水位作为 `prune_target` 并提交。随后扫描有限候选，逐 Session 小事务删除 `xid < prune_target` 的行；删除信封同样适用。目标以下没有尚未结束的写入事务，不会再有迟到插入。确认全部候选清空后，另一个短事务将 `floor` 推到目标、清零目标、移除已覆盖的检查点。
+
+清理中途读者使用 `max(floor,prune_target)` 作为有效下界；因此崩溃或部分批次完成时，旧游标明确返回 410，不会成功读到残缺历史。完成前正式地板不推进；重试清理幂等，多 Janitor 用元数据锁串行选择/完成目标。读者的同一快照保证它要么看到清理前的元数据与旧行，要么看到清理后的有效下界。Session 删除不推进出站地板；表为空也照常保存地板。停机只延长保留。
+
+恢复数据库或重建流、无法保证连续性时，运维须在重新开放入口前调用 `pgoutbox.Store.RotateEpoch`（或在同一事务内更新 `stream_epoch`、`cursor_key`，清零 `floor/prune_target` 并删除检查点）。普通服务启动不自动换世代；PITR 是否发生不能仅从出站表可靠推断。方法与清理共享元数据锁，旧世代的清理者不能继续删除新流。
+
+指标均只含业务线/分片 ID 与数值：`yanshi_outbox_watermark_lag_transactions`（快照 xmax−xmin）、`yanshi_outbox_oldest_transaction_seconds`（本库最老活跃事务年龄）、`yanshi_outbox_consumer_lag_transactions`（本进程最近返回位置距水位的事务数，按业务线；不是业务处理确认）、`yanshi_outbox_retained_rows`、`yanshi_outbox_retained_bytes`。Janitor 默认每 15 秒采样；PG 字节数含索引与待回收空间，内存为信封 JSON 大小。没有消费者确认协议，不宣称能量出应用处理延迟。
+
+长事务（包括其他业务线、只读长快照及准备事务）会拖住数据库级水位；不能绕过它发布。内核事务内不得等待模型、外部 I/O 或长轮询。生产建议为在线角色设置 `statement_timeout=5s`、`idle_in_transaction_session_timeout=5s`，并以应用 context 限制整个事务时长（例如 10s）；PG 16 的语句超时不能限制多语句事务总时长。迁移、备份、报表使用独立角色和超时，监控其水位影响；不使用两阶段提交时保持 `max_prepared_transactions=0`。这些是部署约束建议，本改动不重写全库参数。
+
 ### 6.5 游标过期恢复
 
 不新增内核目录或删除记录枚举接口。应用拥有账号清单，恢复复用按 EndUser 列 Session 的现有接口，但须增加按不可变 session_id 的稳定分页模式，memory 与 PG 契约一致；默认产品排序仍按最近输入。必要时在现有索引表增加 (business_line, end_user, session_id) 索引。用可变 LastInputAt 翻页会使未扫描项因 Touch 移到游标前，不能用于完整对账（Q117）。
@@ -229,7 +280,7 @@ session_deleted 不是已有 Event。它在 `pglifecycle.Deletions.Mark` 写删�
 
 ### 6.6 验收与实时事件流
 
-出站流的一致性套件同时覆盖内存与 PG；PG 另测乱序提交、回滚、同 xid 多行、长事务卡水位、空流、过滤变更、保留地板与明确过期错误。`internal/sim` 检查登记事件与普通信封对应、失败提交无信封、删除收敛后只剩允许保留的删除信封，以及消费者崩溃、重读与过期对账的效果。以不使用 Persona 的第二条业务线契约测试验证通用性。
+出站流的一致性套件同时覆盖内存与 PG；PG 另测乱序提交、回滚、同 xid 多行、长事务卡水位、空流、过滤变更、保留地板与明确过期错误。`internal/sim` 检查登记事件与普通信封对应、失败提交无信封、删除收敛后只剩允许保留的删除信封，以及消费者崩溃、重读与按 envelope_id 去重后恰好一次；过期对账由 B5 覆盖。以不使用 Persona 的第二条业务线契约测试验证通用性。
 
 当前线程的实时体验继续由 `feed.Source.Stream` 提供日志续传与实时草稿；P4 产品经 BFF 代理 SSE。出站流不转发 token 增量，也不进入聊天首字路径。
 

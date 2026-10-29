@@ -27,6 +27,7 @@ import (
 	"yanshi/internal/live"
 	"yanshi/internal/memory"
 	"yanshi/internal/node"
+	"yanshi/internal/outbox/memoutbox"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
 	"yanshi/internal/speech"
@@ -145,7 +146,7 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 	injector := &faults.Injector{}
 	rule, _ := injector.Add(faults.Rule{Kind: faults.ModelDelay, SessionID: e.sid})
 	e.fault = rule.ID
-	e.api = &httpapi.Server{Auth: verifier, Service: svc, Live: live.NewMemBus(), Nodes: dir, Artifacts: arts, Memory: mems, Usage: uses, Faults: injector,
+	e.api = &httpapi.Server{Outbox: memoutbox.New(), OutboxWait: 30 * time.Millisecond, Auth: verifier, Service: svc, Live: live.NewMemBus(), Nodes: dir, Artifacts: arts, Memory: mems, Usage: uses, Faults: injector,
 		Speech: &speech.Service{Sessions: svc, Provider: fakeSpeech{}, IDs: ids.Random()}}
 	shots := newOneshotCore(t)
 	e.api.Oneshots = shots.Oneshots
@@ -223,6 +224,8 @@ func (e *authzEnv) cases() map[string]routeCase {
 	s, a := "/v1/sessions/"+e.sid, "/v1/artifacts/"+e.art
 	run := ""
 	return map[string]routeCase{
+		"GET /v1/outbox":                                   {"GET", "/v1/outbox", nil, http.StatusOK},
+		"GET /v1/outbox/shards":                            {"GET", "/v1/outbox/shards", nil, http.StatusOK},
 		"POST /v1/oneshots/{name}":                         {"POST", "/v1/oneshots/brief", map[string]string{"end_user": "u1", "input": "原文"}, http.StatusOK},
 		"POST /v1/sessions":                                {"POST", "/v1/sessions", map[string]string{"agent": "echo", "end_user": "u1", "time_zone": "Asia/Shanghai"}, http.StatusCreated},
 		"GET /v1/sessions/{id}":                            {"GET", s, nil, http.StatusOK},
@@ -301,6 +304,14 @@ func TestAuthorizationMatrix(t *testing.T) {
 				case principal == "":
 					if code != http.StatusUnauthorized {
 						t.Fatalf("anonymous got %d, want 401", code)
+					}
+				case route == "GET /v1/outbox" || route == "GET /v1/outbox/shards":
+					want := http.StatusForbidden
+					if principal == "demo/" || principal == "other/" {
+						want = c.ok
+					}
+					if code != want {
+						t.Fatalf("got %d (%s), want %d", code, body, want)
 					}
 				case route == "POST /v1/sessions" || route == "POST /v1/oneshots/{name}":
 					// 创建不针对既有资源：身份取自令牌，body 中的 end_user=u1 只是自报值。

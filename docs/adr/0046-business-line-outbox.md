@@ -10,7 +10,7 @@ status: accepted（由 ADR-0050 及 P4 的 Q105、Q106 修订）
 
 （设计见 [M7 内核补充](../design/m7-kernel-primitives.md) §6）
 
-- 计划中的 GET /v1/outbox 使用服务令牌，按业务线、按 PostgreSQL 分片的游标长轮询，只返回平台登记的七种信封：run_completed、run_failed、question、approval_requested、background_settled、session_closed、session_deleted。
+- GET /v1/outbox 使用服务令牌，按业务线、按 PostgreSQL 分片的游标长轮询，只返回平台登记的七种信封：run_completed、run_failed、question、approval_requested、background_settled、session_closed、session_deleted。
 - **只含 ID 与运行元数据**，不含正文或调用参数；内容按 Session 与事件序号读取。出站流不成为新的内容存储。
 - 普通信封在 `session.Store.commit` 统一派生，覆盖 pglog 的 Append 与 AppendAndEnqueue 两条路径，与事件同事务提交。删除信封在 `pglifecycle.Deletions.Mark` 写删除记录的同一事务产生，表示逻辑删除；没有 EndUser 与 Event seq，使用稳定独立信封 ID。
 - 每行显式保存 xid8，读取在同一快照中只返回低于 xmin 的行，按 (xid8, id) 排序。版本化不透明游标含业务线、分片、流世代、过滤版本与位置；空结果返回安全进度。长轮询周期复查，不只依赖 NOTIFY。

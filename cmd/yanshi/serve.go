@@ -588,7 +588,7 @@ func serve(args []string) error {
 	mux.Handle("/console/", webui.Handler())
 	mux.Handle("/sdk/yanshi.js", webui.Handler())
 	mux.Handle("GET /readyz", ready)
-	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Oneshots: core.Oneshots, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.Usage, Push: b.Push, Feeds: feeds, Faults: injector,
+	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Outbox: core.Stores.Outbox, Oneshots: core.Oneshots, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.Usage, Push: b.Push, Feeds: feeds, Faults: injector,
 		Speech: speechService(svc, meter, logger), Logger: logger}).Handler())
 	srv := &http.Server{
 		Addr:              *addr,

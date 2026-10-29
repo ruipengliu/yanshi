@@ -43,3 +43,14 @@ func TestSessionDataRegistersOutbox(t *testing.T) {
 	}
 	t.Fatal("outbox missing from SessionData")
 }
+
+func TestMemoryStreamConformance(t *testing.T) {
+	outboxtest.RunStream(t, func(t *testing.T) outboxtest.Stores { return stores(app.Memory(clock.Real{})) })
+}
+
+func TestPostgresStreamConformance(t *testing.T) {
+	outboxtest.RunStream(t, func(t *testing.T) outboxtest.Stores {
+		pool, notifier := pgtest.Fresh(t)
+		return stores(app.Postgres(pool, notifier, clock.Real{}))
+	})
+}

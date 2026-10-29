@@ -24,6 +24,8 @@ type Topic string
 const (
 	TopicEvents Topic = "yanshi_events"
 	TopicInbox  Topic = "yanshi_inbox"
+	// TopicOutbox 只提示本业务线重查；不能用通知的到达推导安全水位。
+	TopicOutbox Topic = "yanshi_outbox"
 	// TopicWork 的负载是队列表名：有新工作入队（workqueue.Signaler）。
 	TopicWork Topic = "yanshi_work"
 	// TopicPresence 的负载是 Session ID：其在场内容有变化。

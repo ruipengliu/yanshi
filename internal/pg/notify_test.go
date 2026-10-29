@@ -230,3 +230,16 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(time.Millisecond)
 	}
 }
+
+func TestOutboxNotificationPreservesNumericBusinessLineSuffix(t *testing.T) {
+	n := NewNotifier(nil, nil).WithShards(4)
+	bl := "tenant:123"
+	ch, cancel := n.Subscribe(TopicOutbox, bl)
+	defer cancel()
+	n.signal(n.Channel(TopicOutbox, bl), bl+":0")
+	select {
+	case <-ch:
+	default:
+		t.Fatal("business line suffix was interpreted as the notification value")
+	}
+}

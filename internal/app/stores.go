@@ -80,7 +80,7 @@ func Memory(clk clock.Clock) Stores {
 
 // Postgres 返回 PostgreSQL 上的存储；n 是该库的通知监听（须在运行）。多个进程共享同一套即构成分布式部署。
 func Postgres(pool *pgxpool.Pool, n *pg.Notifier, clk clock.Clock) Stores {
-	o := pgoutbox.Store{Pool: pool}
+	o := pgoutbox.Store{Pool: pool, Notifier: n}
 	l, q := pglog.New(pool, n), pgqueue.New(pool, clk, pgqueue.Sessions).WithNotifier(n)
 	return Stores{
 		Outbox: o, Log: l, Queue: q, Waking: l.Waking(q), Dir: pgnode.NewDirectory(pool, clk), Inbox: pgnode.NewInbox(pool, n),

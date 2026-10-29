@@ -74,8 +74,13 @@ func (w *World) checkOutbox() error {
 			}
 			delete(expected, e.EnvelopeID)
 		}
-		if deleted && deletions != 1 {
+		if deleted && deletions != 1 && !(deletions == 0 && w.prunedEnvelopes[outbox.ID(sid, 0, outbox.SessionDeleted)]) {
 			return fmt.Errorf("invariant: session %s has %d deletion envelopes", sid, deletions)
+		}
+		for id := range expected {
+			if w.prunedEnvelopes[id] {
+				delete(expected, id)
+			}
 		}
 		if !deleted && len(expected) != 0 {
 			return fmt.Errorf("invariant: session %s lacks %d envelopes", sid, len(expected))

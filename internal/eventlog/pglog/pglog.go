@@ -56,7 +56,7 @@ func (l *Log) Append(ctx context.Context, sessionID string, expectedSeq uint64, 
 		fmt.Sprintf("%s:%d", sessionID, expectedSeq+uint64(len(events))),
 	).Scan(new(int), nil)
 	if err == nil {
-		err = pgoutbox.Insert(ctx, tx, envelopes)
+		err = pgoutbox.Insert(ctx, tx, envelopes, l.notifier)
 	}
 	if err == nil {
 		err = tx.Commit(ctx)
@@ -140,7 +140,7 @@ func (w waking) AppendAndEnqueue(ctx context.Context, sessionID string, expected
 		class.BusinessLine, int16(class.Priority), w.q.Now(),
 	).Scan(new(int64), nil, nil)
 	if err == nil {
-		err = pgoutbox.Insert(ctx, tx, envelopes)
+		err = pgoutbox.Insert(ctx, tx, envelopes, w.l.notifier)
 	}
 	if err == nil {
 		err = tx.Commit(ctx)

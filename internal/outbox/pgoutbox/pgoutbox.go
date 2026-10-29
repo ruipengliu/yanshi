@@ -8,13 +8,17 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"yanshi/internal/outbox"
+	"yanshi/internal/pg"
 )
 
-type Store struct{ Pool *pgxpool.Pool }
+type Store struct {
+	Pool     *pgxpool.Pool
+	Notifier *pg.Notifier
+}
 
 var _ outbox.Store = Store{}
 
-func Insert(ctx context.Context, tx pgx.Tx, envelopes []outbox.Envelope) error {
+func Insert(ctx context.Context, tx pgx.Tx, envelopes []outbox.Envelope, notifiers ...*pg.Notifier) error {
 	for _, e := range envelopes {
 		if err := outbox.Validate(e); err != nil {
 			return err
@@ -32,6 +36,21 @@ func Insert(ctx context.Context, tx pgx.Tx, envelopes []outbox.Envelope) error {
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
 			e.EnvelopeID, e.BusinessLine, e.SessionID, seq, string(e.Kind), endUser, runID, callID, agent, version, reason, request)
 		if err != nil {
+			return err
+		}
+	}
+	var n *pg.Notifier
+	if len(notifiers) > 0 {
+		n = notifiers[0]
+	}
+	seen := map[string]bool{}
+	for _, e := range envelopes {
+		if seen[e.BusinessLine] {
+			continue
+		}
+		seen[e.BusinessLine] = true
+		// 固定附加版本值，防止业务线名称末尾的冒号数字被 Notifier 当作版本。
+		if _, err := tx.Exec(ctx, `SELECT pg_notify($1,$2)`, n.Channel(pg.TopicOutbox, e.BusinessLine), e.BusinessLine+":0"); err != nil {
 			return err
 		}
 	}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"yanshi/internal/outbox"
 )
@@ -16,14 +17,19 @@ type row struct {
 }
 
 type Store struct {
-	mu      sync.Mutex
-	rows    []row
-	ids     map[string]bool
-	nextID  uint64
-	nextXID uint64
+	mu          sync.Mutex
+	rows        []row
+	ids         map[string]bool
+	nextID      uint64
+	nextXID     uint64
+	state       outbox.StreamState
+	checkpoints []checkpoint
+	subs        map[string]map[chan struct{}]bool
 }
 
-func New() *Store { return &Store{ids: map[string]bool{}} }
+func New() *Store {
+	return &Store{ids: map[string]bool{}, state: outbox.NewStreamState(), subs: map[string]map[chan struct{}]bool{}}
+}
 
 var _ outbox.Store = (*Store)(nil)
 
@@ -56,6 +62,14 @@ func (s *Store) Commit(ctx context.Context, envelopes []outbox.Envelope, apply f
 		s.ids[e.EnvelopeID] = true
 		s.nextID++
 		s.rows = append(s.rows, row{Envelope: e, id: s.nextID, xid: s.nextXID})
+	}
+	for bl := range envelopeLines(envelopes) {
+		for ch := range s.subs[bl] {
+			select {
+			case ch <- struct{}{}:
+			default:
+			}
+		}
 	}
 	return nil
 }
@@ -91,4 +105,17 @@ func (s *Store) DeleteSession(ctx context.Context, sessionID string) error {
 	}
 	s.rows = kept
 	return nil
+}
+
+type checkpoint struct {
+	xmin uint64
+	at   time.Time
+}
+
+func envelopeLines(envelopes []outbox.Envelope) map[string]bool {
+	lines := map[string]bool{}
+	for _, e := range envelopes {
+		lines[e.BusinessLine] = true
+	}
+	return lines
 }

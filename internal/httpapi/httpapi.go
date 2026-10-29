@@ -1,5 +1,7 @@
 // Package httpapi 以 HTTP/JSON + SSE 暴露 Session 操作。
 //
+//	GET /v1/outbox?shard=0&after=&kinds=&limit=        本业务线的出站流（仅服务令牌，长轮询）
+//	GET /v1/outbox/shards                            分片与安全起点 H（仅服务令牌）
 //	POST /v1/oneshots/{name}                       无 Session 的单次调用（含 end_user 与 input）
 //	POST /v1/sessions                              创建 Session（可设 IANA time_zone；delete_at 为 RFC3339，仅服务令牌）
 //	GET  /v1/sessions?end_user=&cursor=&limit=     列出 Session（按最近输入倒序）
@@ -75,6 +77,7 @@ import (
 	"yanshi/internal/node"
 	"yanshi/internal/notify"
 	"yanshi/internal/oneshot"
+	"yanshi/internal/outbox"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
 	"yanshi/internal/speech"
@@ -82,6 +85,10 @@ import (
 )
 
 type Server struct {
+	Outbox outbox.Reader
+	// OutboxWait 默认 25 秒；OutboxRecheck 默认 1 秒，独立于通知以保证水位推进后的活性。
+	OutboxWait    time.Duration
+	OutboxRecheck time.Duration
 	// Auth 校验令牌；nil 时等同 auth.Insecure（信任自报身份，仅限回环地址开发）。
 	Auth     auth.Verifier
 	Service  *service.Service
@@ -111,6 +118,8 @@ var pj = protojson.MarshalOptions{UseProtoNames: true}
 // routes 是全部需要鉴权的接口；授权矩阵测试据此检查每个接口都被覆盖。
 func (s *Server) routes() map[string]http.HandlerFunc {
 	routes := map[string]http.HandlerFunc{
+		"GET /v1/outbox":                                   s.readOutbox,
+		"GET /v1/outbox/shards":                            s.outboxShards,
 		"POST /v1/oneshots/{name}":                         s.oneshot,
 		"POST /v1/sessions":                                s.create,
 		"GET /v1/sessions":                                 s.list,

@@ -20,6 +20,7 @@ import (
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/metrics"
 	"yanshi/internal/node"
+	"yanshi/internal/outbox"
 	"yanshi/internal/presence"
 	"yanshi/internal/sandbox"
 	"yanshi/internal/service"
@@ -30,8 +31,9 @@ import (
 )
 
 type Janitor struct {
-	ID    string
-	Queue workqueue.Queue // 清理队列（pgqueue.Janitor）
+	Outbox outbox.Maintainer
+	ID     string
+	Queue  workqueue.Queue // 清理队列（pgqueue.Janitor）
 	// Service 用于保留策略触发的关闭与删除。
 	Service *service.Service
 	Store   *session.Store
@@ -132,6 +134,16 @@ func (j *Janitor) Run(ctx context.Context) {
 
 // sampleDepths 统计 Session、沙箱与清理队列的积压，写入指标。
 func (j *Janitor) sampleDepths(ctx context.Context) {
+	if j.Outbox != nil {
+		if st, err := j.Outbox.Stats(ctx); err == nil {
+			metrics.OutboxWatermarkLag.WithLabelValues("0").Set(float64(st.WatermarkLag))
+			metrics.OutboxOldestTransaction.WithLabelValues("0").Set(st.OldestTransaction.Seconds())
+			metrics.OutboxRows.WithLabelValues("0").Set(float64(st.Rows))
+			metrics.OutboxBytes.WithLabelValues("0").Set(float64(st.Bytes))
+		} else {
+			j.Logger.Warn("outbox stats unavailable")
+		}
+	}
 	metrics.QueueReady.Reset()
 	metrics.QueueOldestWait.Reset()
 	for name, q := range j.Queues {
@@ -376,6 +388,14 @@ func (j *Janitor) sweep(ctx context.Context, sid, reason string) error {
 // 并按保留期清理沙箱账本。
 func (j *Janitor) Sweep(ctx context.Context) error {
 	j.init()
+	if j.Outbox != nil {
+		if err := j.stage(ctx, "outbox"); err != nil {
+			return err
+		}
+		if err := j.Outbox.Maintain(ctx, j.Clock, 1000); err != nil {
+			return err
+		}
+	}
 	deadline := j.Clock.Now().Add(j.PromoteBudget)
 	// 默认 Horizon 一小时覆盖多轮一分钟的 Sweep；停摆超过它会晚到，不能提前执行。
 	for _, q := range j.Queues {

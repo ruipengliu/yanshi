@@ -102,11 +102,11 @@ _Avoid_: cron、定时任务、提醒（指业务线按承诺期限推送时）
 没有 Session 的一次模型调用：声明式的提示词与输出结构，一次输入、一次输出，没有工具与状态；照常计量、配额与内容安全，不写日志、不存结果。输入只收文字；取嵌入向量的种类推迟到 Persona 的向量检索。
 _Avoid_: 函数调用、补全接口、Task
 
-**Outbox（出站流）**（设计中，[设计](docs/design/m7-kernel-primitives.md) §6、ADR-0046）:
+**Outbox（出站流）**（B3/B4 已实现，[设计](docs/design/m7-kernel-primitives.md) §6、ADR-0046）:
 业务线服务端按分片游标拉取的选定运行事件信封序列；至少一次，内容按 ID 读事件。用于没有在线客户端时可靠发现回复、提问与审批、维护跨 Session 收件箱、渠道转发及停机后续消费。普通信封与事件原子提交，删除信封与删除记录原子提交；不承担业务事实接受或实时增量。P4 的范围与恢复协议见设计 §6。
 _Avoid_: webhook、消息队列、事件订阅
 
-**Outbox envelope（出站流信封）**（P4 设计，ADR-0046）:
+**Outbox envelope（出站流信封）**（已实现，ADR-0046）:
 出站流的一条稳定 ID 记录，只含 ID 与运行元数据；普通信封随 Session 删除。session_deleted 表示逻辑删除，不含 EndUser 或 Event seq，不随 Session 删除，按出站保留地板淘汰；消费方按信封 ID 去重。
 _Avoid_: Event（删除信封不是事件）、通知正文
 
