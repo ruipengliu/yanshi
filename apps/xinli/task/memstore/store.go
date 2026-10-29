@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"xinli/account"
+	"xinli/delivery"
 	"xinli/kernel"
 	"xinli/recovery"
 	"xinli/task"
@@ -18,18 +19,20 @@ type sourceKey struct {
 	Version uint64
 }
 type Store struct {
-	mu               sync.Mutex
-	gatesMu          sync.Mutex
-	gates            map[task.Owner]*ownerGate
-	accounts         map[task.Owner]account.Record
-	identities       map[string]task.Owner
-	sources          map[sourceKey]bool
-	tasks            map[string]task.Task
-	creations        map[string]task.Creation
-	sequence         int64
-	recoveryProgress map[string]recovery.Progress
-	recoverySessions map[[2]string]recovery.Checkpoint
-	recoveryReceipts map[[3]string]kernel.Envelope
+	mu                sync.Mutex
+	gatesMu           sync.Mutex
+	gates             map[task.Owner]*ownerGate
+	accounts          map[task.Owner]account.Record
+	identities        map[string]task.Owner
+	sources           map[sourceKey]bool
+	tasks             map[string]task.Task
+	creations         map[string]task.Creation
+	sequence          int64
+	deliveries        map[task.Owner]delivery.State
+	deliveryProcessed map[[3]string]bool
+	recoveryProgress  map[string]recovery.Progress
+	recoverySessions  map[[2]string]recovery.Checkpoint
+	recoveryReceipts  map[[3]string]kernel.Envelope
 }
 
 func New() *Store {

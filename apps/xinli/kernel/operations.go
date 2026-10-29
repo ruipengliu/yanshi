@@ -81,6 +81,10 @@ func responseError(resp *http.Response) error {
 		}
 		return err
 	}
+	if body.Error == "outbox_filter_changed" {
+		err.Reason = body.Error
+		return err
+	}
 	for _, reason := range []string{"session_closed", "not_last_run", "not_completed", "delegated_session", "platform_input", "card_action_input", "compacted", "steered", "approval_requested", "ask_user", "delegation", "background_call", "not_read_only"} {
 		if body.Error == "conflict: redo: "+reason {
 			err.Reason = reason

@@ -146,10 +146,17 @@ func (s *Store) Commit(ctx context.Context, expected uint64, p recovery.Progress
 }
 
 func (s *Store) forgetRecovery(line, id string) {
+	for owner, state := range s.deliveries {
+		if owner.BusinessLine == line {
+			state.Forget(id)
+			s.deliveries[owner] = state
+		}
+	}
 	s.recoverySessions[[2]string{line, id}] = recovery.Checkpoint{SessionID: id, Gone: true}
 	for key, e := range s.recoveryReceipts {
 		if key[0] == line && e.SessionID == id && e.Kind != "session_deleted" {
 			delete(s.recoveryReceipts, key)
+			delete(s.deliveryProcessed, key)
 		}
 	}
 }

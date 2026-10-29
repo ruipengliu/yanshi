@@ -183,6 +183,9 @@ func (s *Store) Commit(ctx context.Context, expected uint64, p recovery.Progress
 }
 
 func forgetRecovery(ctx context.Context, tx pgx.Tx, line, id string) error {
+	if err := forgetDelivery(ctx, tx, line, id); err != nil {
+		return err
+	}
 	payload, err := json.Marshal(recovery.Checkpoint{SessionID: id, Gone: true})
 	if err != nil {
 		return err

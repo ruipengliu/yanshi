@@ -89,3 +89,19 @@ _Avoid_: 全量快照、全部历史通知补发
 **Recovery checkpoint（恢复检查点）**:
 应用已经完整补读到的 Session 事件位置及重建信封所需的运行元数据。它与选定事件的接收记录一起确认；稀疏出站信封的 seq 不能替代完整补读位置。
 _Avoid_: 内核投影快照、出站游标、Persona 处理进度
+
+**Outbox receipt（出站接收记录）**:
+应用与出站游标同事务保存的无正文信封，按 envelope_id 与 Session/seq 去重；恢复等价物与真实信封合并。未处理记录是持久待办，处理标记、收件箱和通知任务一起提交，进程退出后继续处理。
+_Avoid_: Input receipt、内核 Event、已送达
+
+**Application inbox（应用收件箱）**:
+EndUser 的问答线程回复、提问与审批索引，只含 ID、种类、首次处理时间和已读状态；正文通过 BFF 按当前权限读取。内部工作 Session 不进入应用收件箱。
+_Avoid_: Node Inbox、事件日志
+
+**Notification job（通知任务）**:
+应用持久保存的触达意图，来源是出站接收记录或 Persona 当前提醒集合中的承诺版本。包含状态、尝试次数和重试时间；发送前复核当前资格、偏好与账号状态，超时不代表未触达。
+_Avoid_: 内核 Notification、模型 Run、恰好一次触达
+
+**Channel adapter（渠道适配器）**:
+应用控制的文字与深链发送契约，以及绑定账号后的普通文字入站入口；以供应商消息 ID 去重，不能执行审批。P4 只有确定性 fake，不提供真实供应商 webhook。
+_Avoid_: Node、内核推送登记

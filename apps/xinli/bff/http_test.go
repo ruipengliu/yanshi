@@ -26,6 +26,7 @@ import (
 	personaPG "persona/store/pgstore"
 	"xinli/account"
 	"xinli/bff"
+	"xinli/delivery"
 	"xinli/kernel"
 	appTest "xinli/pg/pgtest"
 	"xinli/task"
@@ -128,7 +129,7 @@ func newHarness(t *testing.T, kind string) *harness {
 	h.reader = reader
 	h.writer = &command.Client{BaseURL: persona.URL, Token: reader.Token}
 	client := &kernel.Client{BaseURL: backend.URL, Tokens: tokenSource(func(ctx context.Context, line string) (string, error) { return "kernel-" + line, nil })}
-	h.api = httptest.NewServer(bff.Handler(bff.Options{Accounts: h.accounts, Persona: reader, Commands: h.writer, Kernel: client, Tasks: h.tasks, Now: clock}))
+	h.api = httptest.NewServer(bff.Handler(bff.Options{Accounts: h.accounts, Persona: reader, Commands: h.writer, Kernel: client, Tasks: h.tasks, Inbox: h.tasks.(delivery.Store), Now: clock}))
 	t.Cleanup(h.api.Close)
 	return h
 }

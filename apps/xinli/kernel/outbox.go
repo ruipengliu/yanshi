@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 // Envelope 是公开出站信封的无正文元数据；恢复等价物没有 EnvelopeID，以 SessionID/Seq 去重。
@@ -42,10 +43,17 @@ func OutboxResetRequired(err error) bool {
 }
 
 func (c *Client) OutboxHeads(ctx context.Context, line string) ([]OutboxShard, error) {
+	return c.OutboxHeadsKinds(ctx, line, nil)
+}
+
+func (c *Client) OutboxHeadsKinds(ctx context.Context, line string, kinds []string) ([]OutboxShard, error) {
 	var out struct {
 		Shards []OutboxShard `json:"shards"`
 	}
 	q := url.Values{"business_line": {line}}
+	if len(kinds) > 0 {
+		q.Set("kinds", strings.Join(kinds, ","))
+	}
 	if err := c.request(WithBusinessLine(ctx, line), http.MethodGet, "/v1/outbox/shards?"+q.Encode(), nil, &out); err != nil {
 		return nil, err
 	}
@@ -63,8 +71,15 @@ func (c *Client) OutboxHeads(ctx context.Context, line string) ([]OutboxShard, e
 }
 
 func (c *Client) Outbox(ctx context.Context, line string, shard int, after string, limit int) (OutboxPage, error) {
+	return c.OutboxKinds(ctx, line, shard, after, limit, nil)
+}
+
+func (c *Client) OutboxKinds(ctx context.Context, line string, shard int, after string, limit int, kinds []string) (OutboxPage, error) {
 	var out OutboxPage
 	q := url.Values{"business_line": {line}, "shard": {strconv.Itoa(shard)}, "after": {after}, "limit": {strconv.Itoa(limit)}}
+	if len(kinds) > 0 {
+		q.Set("kinds", strings.Join(kinds, ","))
+	}
 	if err := c.request(WithBusinessLine(ctx, line), http.MethodGet, "/v1/outbox?"+q.Encode(), nil, &out); err != nil {
 		return out, err
 	}

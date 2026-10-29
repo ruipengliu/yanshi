@@ -147,7 +147,7 @@ func (s *Store) UpdateAccount(ctx context.Context, owner task.Owner, fn func(*ac
 				payload=jsonb_build_object('SessionID',session_id,'Gone',true) WHERE business_line=$1 AND end_user=$2`, owner.BusinessLine, owner.EndUser); err != nil {
 				return err
 			}
-			for _, table := range []string{"session_creations", "task_sessions", "orchestration_tasks", "task_sources", "account_identities"} {
+			for _, table := range []string{"delivery_state", "session_creations", "task_sessions", "orchestration_tasks", "task_sources", "account_identities"} {
 				if _, err = tx.Exec(ctx, `DELETE FROM `+table+` WHERE business_line=$1 AND end_user=$2`, owner.BusinessLine, owner.EndUser); err != nil {
 					return err
 				}

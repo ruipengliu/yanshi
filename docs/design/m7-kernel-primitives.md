@@ -170,7 +170,7 @@ Schedule {
 
 ## 6. 出站流（Outbox）
 
-> B3 的原子信封与 B4 的消费、保留协议已实现；B5 已加入稳定分页与记录型恢复器，B6 应用消费者待实现。依据[整体架构](./persona-architecture.md) §13 Q105–Q106、Q117、Q118；范围与验收见该文 §11 的 B3–B6。
+> B3 的原子信封与 B4 的消费、保留协议已实现；B5 已加入稳定分页与恢复器；B6 应用消费者、收件箱与 fake 通知路径已接入，远端检查待执行。依据[整体架构](./persona-architecture.md) §13 Q105–Q106、Q117、Q118；范围与验收见该文 §11 的 B3–B6。
 
 ### 6.1 用途与信封
 
@@ -289,6 +289,38 @@ Janitor 默认每分钟调用维护，每轮至多删除 1000 行：取得元数
 应用迁移 `0005_outbox_recovery.sql` 增加恢复进度、Session 检查点和记录型接收表；`0006_accounts_stable_order.sql` 独立并发创建账号稳定枚举索引。进度保存轮次、当前 owner/Session、两个扫描位置、确认位置及各分片 H/after。检查点只存 ID、Agent 版本、首次提问派发及未了结后台调用元数据，不存正文；页提交前崩溃重读，提交后回包丢失则从持久位置继续。删除清普通接收记录和元数据，保留无 owner 的不可访问标记，阻止重读复活；账号 Cleanup 同事务清理并以账号终态挡住迟到页。
 
 B5 不启动生产消费循环、不创建收件箱或通知任务。B6 复用上述事务边界，把接收与后续任务原子保存，接入启动/周期调度、退避以及产品侧新增的已知 Session 来源；发送前仍须读取当前可访问状态并过滤过时事项。记录型实现只验证恢复和去重，不代表通知交付。
+
+#### B6 的应用消费者、收件箱与通知（Q105、Q106、Q108、Q120）
+
+实现位于 `apps/xinli/delivery`，由 xinli 的 orchestrator 角色启动，沿用应用库与账号枚举，不新增内核配置或进程角色。生产装配和开发装配均只接确定性 fake，不代表真实推送已接通。启动即恢复与扫描，之后持续按分片长轮询；接收、处理、通知扫描分别运行。只订阅 `approval_requested/question/run_completed/run_failed/session_deleted`，H 与后续请求使用同一集合；B5 全种类游标升级遇到 `outbox_filter_changed` 时显式重新对账。普通消费的各分片独立请求、独立 CAS 提交；网络故障不撤销健康分片已提交的页。首次及过期恢复仍使用 B5 的完整阶段机。
+
+事务边界分两段：
+
+1. `recovery.Consumer.Commit` 在同一应用事务内校验 progress 版本、按 envelope_id 与 `(business_line,session_id,seq)` 去重插入接收行、保存完整页检查点及游标。接收行默认 `processed=false`。写入失败全部回滚，空页也只在提交成功后推进游标。
+2. `delivery.Store.Process` 从库中重读接收行，在同一事务中创建收件箱/通知任务、提前安排内部任务的对账时间并标记 processed。接收后、处理前退出从 Pending 继续；处理提交前退出全部重做，提交后重复调用无副作用。恢复等价物与真实信封共用 Session/seq 派生的稳定应用 ID，后到真实 envelope_id 不会重建任务。
+
+应用新增迁移 `0007_delivery.sql`（接收处理状态及 owner 的 `delivery_state`）与 `0008_delivery_pending.sql`（并发建未处理索引）。当前每个 owner 的收件箱、通知任务及渠道绑定/消息 ID 在一个 JSONB 短事务快照中维护；属于 P4 的存储形状，不声明大规模通知吞吐。内存实现使用同一临界区。PG 普通接收、处理、通知回写使用一致锁序，删除与首次渠道 Session 登记串行；账号 Cleanup 与迟到写入共享账号终态检查。
+
+`xinli-assistant` 的 `run_completed`（含定时 Run）、`question`、`approval_requested` 进入收件箱。条目为 `{id,session_id,seq,kind,run_id?,call_id?,at,read}`，at 是首次处理接收记录的应用时间，不冒充原事件时刻。没有正文或调用参数。BFF 新增 `GET /v1/inbox?limit=&cursor=`（沿用 owner 绑定的不透明分页）和 `POST /v1/inbox/{id}/read`（空对象或空 body，幂等，其他 owner 的 ID 为 404），均走 B1/B2 可撤销登录态与 Persona 访问屏障。正文通过既有 `/v1/threads/{id}/events` 等接口现取，已读不等于回答或审批。
+
+内部工作 Session 的 `run_completed/run_failed` 不进入收件箱，而是让匹配的 accepted/unknown 编排任务提前到期并唤醒 A8 扫描。保留 `FindInput` 的完整日志安全对账，因为它还验证写调用是否全部收尾、Unsafe、Steered 等事实；信封不能单独证明可以释放命令占用。周期扫描继续作为丢失本地唤醒、未知提交与中断的兜底，业务接受仍来自 Persona。
+
+通知任务状态为 pending/sending/sent/cancelled，持久保存重试时间和尝试次数，复用稳定抖动指数退避。发送在账号 gate 内、SQL 事务外执行，互斥同 owner 的发送与禁用/注销；发送前读取当前账号偏好、内核公开投影/事件或 Persona 查询：
+
+- 提问须仍是同 Run、同 call_id 的 question 等待，审批须仍是 approval 等待，期限已过也取消。
+- 回复与定时结果须仍可访问，完整补读事件确认没有 `run_requested.redo_of` 指向旧 Run；重答接受即替代，不等新 Run 成功。读失败只退避，不能当作仍有效。
+- 承诺任务不经模型或出站流；完整分页读取 open 承诺，在内存调用 Persona 的 `State.Reminders()`，再按账号时区筛到期日期，排除未核对与可能重复集合的旧项。任务按承诺 ID/rev 去重；发送前重做集合选择并核验当前 ID、rev、due_date，改期、完成、取消、合并或不再是提醒集合成员时取消旧任务。正文不持久化在通知库。
+- `session_deleted` 或恢复器逐 ID 确认 404，在接收事务中清除相关收件箱、通知任务和渠道入站 ID，保留无 EndUser 的 Gone 屏障；已取得旧任务的执行者回写不能复活它。账号注销删除整个 delivery_state。独立应用库经出站/恢复器清理，不接入内核 `app.SessionData` 或 import 内核包。
+
+账号偏好使用 `preferences.notifications={channel:"push"|"channel"|"off",quiet_start?:"HH:MM",quiet_end?:"HH:MM"}`，默认 push；BFF 保存时校验，发送时再次校验。免打扰采用账号当前 IANA 时区，开始包含、结束不含，支持跨午夜；相同时段表示不静默，每分钟复核。channel 使用已绑定渠道名排序后的第一条绑定，一次任务只选一条触达路径；P4 尚无产品渠道绑定页面，`Inbound.Bind` 是经应用身份控制的适配接缝。无绑定或适配器失败会持久退避。
+
+**唯一发送归属选择：xinli 应用独占实际推送。** P4 客户端只有 BFF 凭据，BFF 不开放内核 Connection/Hello 推送登记；应用适配器不登记内核推送设备。`internal/notify.Notifier.Deliver` 的 Registry 为空时返回 NoDevice，不调用 Pusher。内核目前装配 LogPusher 只是额外的现状，不能把日志桩作为永久去重保障。当前没有公开的按业务线/种类关闭 Notification 配置，也没有可供应用订阅的 Notification 转发流，所以选择无内核设备登记的现有边界。若业务线此前已有内核推送登记，必须先撤销旧登记再启用应用实际推送；未来直连内核或真实供应商接入不得破坏此边界，否则必须先设计并实现新的唯一归属机制。本次不改内核。
+
+中立接口为 `Push.Push(ctx,owner,PushMessage)` 与 `Channel.Send(ctx,owner,address,ChannelMessage)`。PushMessage 的类型只提供种类、ID 与深链；ChannelMessage 只提供普通文字与深链；普通回复按目标 Run/seq 现取最后一条无工具调用的 assistant_message 文字，不转发 reasoning 或参数。卡片、提问与审批降级为打开 App 的文字提示，审批明确提示回 App 决定；读完回复页后再复核当前资格。Inbound.Message 校验受控账号绑定与问答线程 owner，只允许 action=message，没有批准或回答工具调用的入口；消息 ID 在提交前持久化并派生 input_id。重复消息完整对账，若旧调用结果仍未知则返回 ErrUnknown、不自动重交，不把内核最近 64 条输入当永久去重。未知入站的人工处理与供应商签名/webhook 不在 fake 阶段伪装完成。
+
+Fake sink 记录发送，支持排定失败及“已记录触达但返回 ErrUnknown”的超时，不按消息 ID 吞掉重复。供应商超时或发送成功后应用回写前退出，重试可能再次触达；**不能保证恰好一次触达**。发送前复核与远端发送之间也不存在跨服务原子快照：检查后才发生的回答、删除或改期不能撤回已经在途的外部消息。深链内容始终由 BFF 当前权限决定。
+
+B6 测试位于 `delivery/*_test.go` 和 `bff/inbox_test.go`，同一用例运行 memory/PG：接收后重建消费者、重复处理、唯一键冲突回滚、数据库失败不推进、410/epoch/过滤升级进入恢复、恢复等价物与追赶合并、内部终态唤醒而不绕过安全对账、改期/完成/取消/未核对后旧提醒取消、可能重复承诺选择、已回答/已审批/重答/404 复核、删除与迟到回放、账号清理、偏好与免打扰、失败退避与未知结果重复、渠道降级/禁止审批/入站去重、BFF owner 隔离与已读。HTTP fake 检查服务令牌、稳定过滤以及没有内核推送登记请求；它不声称验证真实内核供应商或真实终端触达。本机未运行 Go 检查，需远端 `dev fmt` 与完整 `make check` 后才能确认验收。
 
 ### 6.6 验收与实时事件流
 

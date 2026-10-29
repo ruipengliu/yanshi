@@ -18,6 +18,7 @@ import (
 	"persona/query"
 	"persona/store"
 	"xinli/account"
+	"xinli/delivery"
 	"xinli/kernel"
 	"xinli/task"
 )
@@ -34,6 +35,7 @@ type Options struct {
 	Persona             query.Reader
 	Commands            command.Writer
 	Kernel              Kernel
+	Inbox               delivery.Store
 	Tasks               task.Reader
 	Now                 func() time.Time
 	StreamCheckInterval time.Duration
@@ -77,6 +79,8 @@ func Handler(opts Options) http.Handler {
 	})
 	mux.HandleFunc("GET /v1/threads", opts.threads)
 	mux.HandleFunc("GET /v1/threads/{id}/events", opts.events)
+	mux.HandleFunc("GET /v1/inbox", opts.inbox)
+	mux.HandleFunc("POST /v1/inbox/{id}/read", opts.readInbox)
 	mux.HandleFunc("GET /v1/tasks", opts.tasks)
 	mux.HandleFunc("GET /v1/tasks/{id}", opts.task)
 	mux.HandleFunc("GET /v1/entitlements", opts.entitlements)

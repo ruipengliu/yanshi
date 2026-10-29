@@ -10,6 +10,7 @@ import (
 
 	"persona/query"
 	"xinli/account"
+	"xinli/delivery"
 )
 
 func appToken(r *http.Request) string {
@@ -65,6 +66,10 @@ func (o Options) accountRoutes(mux *http.ServeMux) {
 		}
 		if len(in.Preferences) > 0 {
 			prefs = in.Preferences
+		}
+		if _, err := delivery.ReadPreferences(prefs); err != nil {
+			accountError(w, err)
+			return
 		}
 		if err := o.Accounts.Profile(r.Context(), p.Owner, zone, prefs); err != nil {
 			accountError(w, err)

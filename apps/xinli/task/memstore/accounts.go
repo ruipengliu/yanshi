@@ -101,6 +101,7 @@ func (s *Store) UpdateAccount(ctx context.Context, owner task.Owner, fn func(*ac
 		ctx = context.WithoutCancel(ctx)
 		// 先验证全部再修改；失败回调不泄露半份账号或任务。
 		if next.Cleanup {
+			delete(s.deliveries, owner)
 			for key, cp := range s.recoverySessions {
 				if key[0] == owner.BusinessLine && cp.EndUser == owner.EndUser {
 					s.forgetRecovery(owner.BusinessLine, cp.SessionID)

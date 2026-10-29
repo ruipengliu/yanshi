@@ -28,10 +28,12 @@ import (
 	"xinli/account"
 	"xinli/bff"
 	"xinli/capture"
+	"xinli/delivery"
 	"xinli/devui"
 	"xinli/kernel"
 	"xinli/orchestrator"
 	appPG "xinli/pg"
+	"xinli/recovery"
 	"xinli/task"
 	taskmem "xinli/task/memstore"
 	taskpg "xinli/task/pgstore"
@@ -118,6 +120,12 @@ func serve(ctx context.Context, cfg config, stdin io.Reader, stdout, stderr io.W
 		if cfg.roles.orchestrator {
 			accountWorker := &account.Worker{Accounts: accounts, Tasks: tasks, Persona: books, Kernel: client}
 			orch = orchestrator.New(life, books, client, orchestrator.Options{Logger: logger, Tasks: tasks, Accounts: accounts, AccountWorker: accountWorker})
+			// 应用独占推送登记；不向内核 Connection 注册推送设备。P4 只有确定性 fake。
+			sink := &delivery.Fake{}
+			consumer := &delivery.Consumer{Progress: tasks.(recovery.Consumer), Store: tasks.(delivery.Store), Kernel: delivery.Source{Client: client}, Accounts: tasks.(account.Enumerator), Terminal: orch.ScanTasks}
+			worker := &delivery.Worker{Store: tasks.(delivery.Store), Accounts: accounts.Store, Persona: &query.Service{Store: books}, Kernel: client, Push: sink, Channel: sink}
+			stopDelivery := delivery.Start(life, cfg.lines, consumer, worker, func() { logger.Warn("application delivery retry") })
+			defer stopDelivery()
 		}
 		defer func() {
 			cancelLife()
@@ -330,10 +338,12 @@ func mountBFF(mux *http.ServeMux, cfg config, books store.Store, client *kernel.
 		writer = &command.Client{BaseURL: cfg.personaURL, Token: token}
 	}
 	var tasks task.Reader
+	var inbox delivery.Store
 	if accounts != nil {
 		tasks, _ = accounts.Store.(task.Reader)
+		inbox, _ = accounts.Store.(delivery.Store)
 	}
-	mux.Handle("/v1/", bff.Handler(bff.Options{Accounts: accounts, Persona: reader, Commands: writer, Kernel: client, Tasks: tasks}))
+	mux.Handle("/v1/", bff.Handler(bff.Options{Accounts: accounts, Persona: reader, Commands: writer, Kernel: client, Tasks: tasks, Inbox: inbox}))
 }
 
 func startPurger(ctx context.Context, purger store.Purger, logger *slog.Logger) func() {

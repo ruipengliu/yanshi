@@ -229,6 +229,22 @@ func TestDevWeekReviewWithKernel(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer "+token {
 			t.Error("missing service token")
 		}
+		// B6 的恢复与长轮询是只读发现，不计入这个夹具的命令提交次数。
+		if r.Method == http.MethodGet {
+			switch r.URL.Path {
+			case "/v1/outbox/shards":
+				_, _ = io.WriteString(w, `{"shards":[{"shard":0,"status":"ready","next":"head"}]}`)
+			case "/v1/outbox":
+				<-r.Context().Done()
+			case "/v1/sessions/week-session":
+				_, _ = io.WriteString(w, `{"session_id":"week-session","business_line":"bl","end_user":"u","agent":{"name":"xinli-week"},"runs":[]}`)
+			case "/v1/sessions/week-session/events":
+				_, _ = io.WriteString(w, `{"events":[]}`)
+			default:
+				w.WriteHeader(404)
+			}
+			return
+		}
 		var body map[string]string
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Error(err)
