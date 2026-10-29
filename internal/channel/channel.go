@@ -166,9 +166,26 @@ func (c *Conn) heartbeat() {
 		case <-c.ctx.Done():
 			return
 		case <-t.C:
-			if err := c.h.Presence.Store.Touch(c.ctx, c.connID, c.h.now().Add(presence.TTL)); err != nil && c.ctx.Err() == nil {
-				c.h.log().Warn("presence heartbeat failed", "err", err)
-			}
+			c.touchPresence()
+		}
+	}
+}
+
+func (c *Conn) touchPresence() {
+	// 只复制已授权的订阅；数据库调用不占连接锁。退订后的迟到续期不会重建记录。
+	c.mu.Lock()
+	var sessions []string
+	for sid, sub := range c.subs {
+		if sub.joined {
+			sessions = append(sessions, sid)
+		}
+	}
+	c.mu.Unlock()
+	slices.Sort(sessions)
+	expires := c.h.now().Add(presence.TTL)
+	for _, sid := range sessions {
+		if err := c.h.Presence.Store.Touch(c.ctx, sid, c.connID, expires); err != nil && c.ctx.Err() == nil {
+			c.h.log().Warn("presence heartbeat failed", "session", sid, "err", err)
 		}
 	}
 }

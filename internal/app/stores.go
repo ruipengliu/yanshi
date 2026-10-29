@@ -34,7 +34,6 @@ import (
 	"yanshi/internal/workqueue"
 	"yanshi/internal/workqueue/memqueue"
 	"yanshi/internal/workqueue/pgqueue"
-	"yanshi/sdk/nodesdk"
 )
 
 // Stores 是一套存储实现。同一套中的各存储必须落在同一个存储系统上：Waking 是 Log 与 Queue 的原子组合。
@@ -48,7 +47,7 @@ type Stores struct {
 	Inbox  node.Inbox
 	// 沙箱控制器的队列与共享状态
 	SandboxQueue workqueue.Queue
-	Ledger       nodesdk.Ledger
+	Ledger       sandbox.Ledger
 	Activity     sandbox.Activity
 	ArtifactMeta artifact.MetaStore
 	// Session 生命周期：索引、删除记录与清理队列
@@ -71,7 +70,7 @@ func Memory(clk clock.Clock) Stores {
 	l, q := memlog.NewWithOutbox(o), memqueue.New(clk)
 	return Stores{
 		Outbox: o, Log: l, Queue: q, Waking: l.Waking(q), Dir: node.NewMemDirectory(clk), Inbox: node.NewMemInbox(),
-		SandboxQueue: memqueue.New(clk), Ledger: nodesdk.NewMemLedger(), Activity: sandbox.NewMemActivity(),
+		SandboxQueue: memqueue.New(clk), Ledger: sandbox.NewMemLedger(), Activity: sandbox.NewMemActivity(),
 		ArtifactMeta: artifact.NewMemMeta(), Index: lifecycle.NewMemIndex(), Deletions: lifecycle.NewMemDeletionsWithOutbox(o),
 		JanitorQueue: memqueue.New(clk), Memories: memory.NewMemStore(), Grants: memory.NewMemGrants(),
 		Snapshots: session.NewMemSnapshots(), Usage: usage.NewMem(), Tiers: usage.NewMemTiers(), Presence: presence.NewMem(), Push: notify.NewMemRegistry(),

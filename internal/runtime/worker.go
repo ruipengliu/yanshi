@@ -771,7 +771,11 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 			if reason := w.delegationRefused(r, def, c); reason != "" {
 				return w.commit(ctx, w.toolResult(r, id, model.TextBlocks(reason), true))
 			}
-			nodeID = delegation.NodeID(delegation.ChildSessionID(w.st.SessionID, id))
+			child, err := delegation.ChildSessionID(w.st.SessionID, id, w.st.Created.GetEndUser())
+			if err != nil {
+				return err
+			}
+			nodeID = delegation.NodeID(child)
 		}
 		deadline := w.now().Add(tool.Timeout)
 		return w.commit(ctx, &v1.Event{Payload: &v1.Event_ToolCallStarted{ToolCallStarted: &v1.ToolCallStarted{
@@ -1154,8 +1158,11 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 
 	// 模型给出的调用 ID 可能为空或跨轮、跨 Run 重复；一律改写为全局唯一 ID，
 	// 使其可作为下游幂等键。改写后的 ID 随事件落盘，后续上下文都使用它。
+	// 新 ID 继承 Session 的槽位（ADR-0051）；存储访问仍须带真实 Session，不凭 ID 外形定位。
 	for _, tc := range resp.ToolCalls {
-		tc.CallId = "call_" + w.cfg.Store.IDs()
+		if tc.CallId, err = w.cfg.Store.IDs.ForSession("call", w.st.SessionID); err != nil {
+			return err
+		}
 	}
 	msg := newAssistantMessage(r.ID, w.attempt, resp, w.now().Sub(called), firstToken)
 	var events []*v1.Event

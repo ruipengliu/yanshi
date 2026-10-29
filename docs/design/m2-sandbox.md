@@ -29,7 +29,7 @@ Worker ──Dispatch(sbx_X)──▶ Inbox[sbx_X] + 沙箱队列.Enqueue(sbx_X)
 ```
 
 - **沙箱队列**复用 `workqueue.Queue` 的语义（租约、唤醒、停放），只是键是沙箱 Node ID。持有租约的控制器独占该沙箱，同一沙箱内的调用串行执行。
-- **去重账本**放在共享存储中（`nodesdk.Ledger` 的 PG 实现）。控制器在执行途中崩溃后，接管者看到"执行中"：`exec` / `run_python` 返回"结果未知"，读写文件则重做。
+- **去重账本**放在共享存储中（`sandbox.Ledger` 的内存 / PG 实现，按真实 Session 与 call_id 去重，再绑定 Session 适配给 `nodesdk.Ledger`）。控制器在执行途中崩溃后，接管者看到"执行中"：`exec` / `run_python` 返回"结果未知"，读写文件则重做。
 - **中断**会撤回 Inbox 条目；执行中的控制器监视 Inbox，发现条目被撤回时取消执行。
 - 执行期间控制器持续续租。
 

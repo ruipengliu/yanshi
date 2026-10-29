@@ -340,7 +340,7 @@ type World struct {
 	sandboxQueue workqueue.Queue
 	provider     *sandbox.Fake
 	artifacts    *artifact.Service
-	ledger       nodesdk.Ledger
+	ledger       sandbox.Ledger
 	activity     sandbox.Activity
 	controllers  []*sandbox.Controller
 	nextC        int
@@ -1615,8 +1615,8 @@ func (w *World) presenceStep() error {
 		w.tracef("presence remove %s %s", sid, conn)
 		return w.presence.Store.Remove(ctx, sid, conn)
 	default:
-		w.tracef("presence touch %s", conn)
-		return w.presence.Store.Touch(ctx, conn, now.Add(presence.TTL))
+		w.tracef("presence touch %s %s", sid, conn)
+		return w.presence.Store.Touch(ctx, sid, conn, now.Add(presence.TTL))
 	}
 	return nil
 }

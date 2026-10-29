@@ -14,7 +14,6 @@ import (
 	"yanshi/internal/service"
 	"yanshi/internal/session"
 	"yanshi/internal/workqueue"
-	"yanshi/sdk/nodesdk"
 )
 
 // Session 生命周期的模拟（docs/design/m2-session-lifecycle.md §7）：随机关闭与删除 Session——
@@ -252,7 +251,9 @@ func (w *World) checkDeleted(final bool) error {
 		if entries, _, _ := w.presence.Store.List(ctx, sid, time.Time{}); len(entries) > 0 {
 			return fmt.Errorf("invariant: deleted session %s still has %d presence entries", sid, len(entries))
 		}
-		if l, ok := w.ledger.(*nodesdk.MemLedger); ok && l.HasSession(sid) {
+		if exists, err := w.ledger.HasSession(sid); err != nil {
+			return err
+		} else if exists {
 			return fmt.Errorf("invariant: deleted session %s still in the sandbox ledger", sid)
 		}
 		if final {

@@ -3,6 +3,7 @@ package delegation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -81,6 +82,14 @@ func (d *Delegator) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke)
 	}
 	if parent.Created == nil {
 		return nil
+	}
+	// 归属只取父投影；不能把调用方传来的目标或槽位当作真实 EndUser。
+	expected, err := ChildSessionID(parent.SessionID, inv.GetCallId(), parent.Created.GetEndUser())
+	if err != nil {
+		return err
+	}
+	if nodeID != NodeID(expected) {
+		return fmt.Errorf("%w: delegation target does not match parent", service.ErrInvalid)
 	}
 	args, err := ParseArgs(inv.GetArgumentsJson())
 	if err != nil {

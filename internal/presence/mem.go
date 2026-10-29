@@ -48,13 +48,11 @@ func (m *Mem) Put(_ context.Context, e *Entry) error {
 	return nil
 }
 
-func (m *Mem) Touch(_ context.Context, connID string, expires time.Time) error {
+func (m *Mem) Touch(_ context.Context, sessionID, connID string, expires time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, conns := range m.entries {
-		if e := conns[connID]; e != nil {
-			e.Expires = expires
-		}
+	if e := m.entries[sessionID][connID]; e != nil {
+		e.Expires = expires
 	}
 	return nil
 }

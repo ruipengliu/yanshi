@@ -74,8 +74,16 @@ func (w *World) checkDelegation(final bool) error {
 		}
 		if st.Created != nil {
 			p := st.Created.GetParent()
-			if p.GetSessionId() != w.parentOf[child] || delegation.ChildSessionID(p.GetSessionId(), p.GetCallId()) != child {
+			expected, err := delegation.ChildSessionID(p.GetSessionId(), p.GetCallId(), st.Created.GetEndUser())
+			if err != nil || p.GetSessionId() != w.parentOf[child] || expected != child {
 				return fmt.Errorf("invariant: child session %s has parent %v, discovered under %s", child, p, w.parentOf[child])
+			}
+			parent, err := w.store.Load(ctx, p.GetSessionId())
+			if err != nil {
+				return err
+			}
+			if parent.Created != nil && (parent.Created.GetEndUser() != st.Created.GetEndUser() || parent.Created.GetBusinessLine() != st.Created.GetBusinessLine()) {
+				return fmt.Errorf("invariant: child session %s changed parent ownership", child)
 			}
 			if depth := len(p.GetAncestors()) + 1; depth > simMaxDepth {
 				return fmt.Errorf("invariant: child session %s is at delegation depth %d, limit %d", child, depth, simMaxDepth)

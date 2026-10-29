@@ -11,7 +11,6 @@ import (
 	"yanshi/internal/sandbox"
 	"yanshi/internal/workqueue"
 	"yanshi/internal/workqueue/memqueue"
-	"yanshi/sdk/nodesdk"
 )
 
 // 沙箱只执行本 Session 的调用：工作区按 Node ID 打开，别的 Session 的调用即使进了它的 Inbox 也不执行。
@@ -36,7 +35,7 @@ func TestSandboxRunsOnlyItsOwnSessionsCalls(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := &sandbox.Controller{ID: "c1", Queue: q, Hub: hub, Provider: fake, Activity: sandbox.NewMemActivity(),
-		Ledger: nodesdk.NewMemLedger(), Clock: clk}
+		Ledger: sandbox.NewMemLedger(), Clock: clk}
 	if _, err := c.Step(ctx); err != nil {
 		t.Fatal(err)
 	}

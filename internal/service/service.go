@@ -19,11 +19,13 @@ import (
 	"yanshi/internal/artifact"
 	"yanshi/internal/askuser"
 	"yanshi/internal/eventlog"
+	"yanshi/internal/ids"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/metrics"
 	"yanshi/internal/model"
 	"yanshi/internal/moderation"
 	"yanshi/internal/session"
+	"yanshi/internal/shard"
 	"yanshi/internal/usage"
 	"yanshi/internal/workqueue"
 )
@@ -82,8 +84,8 @@ type CreateRequest struct {
 	// Agent 是 AgentDef 名称；AgentVersion 为空时取默认版本。
 	Agent        string
 	AgentVersion string
-	// SessionID 与 Parent 只用于委托派生的子 Session（docs/design/m5-multi-agent.md）：ID 由父调用推导，
-	// 重复创建返回已有的 Session（幂等）。
+	// SessionID 只供内部调用指定（委托派生与测试）；HTTP / Connection 不接受指定 ID。
+	// 新格式须匹配真实 EndUser 的槽位；旧格式保留重试身份（ADR-0051）。Parent 记录委托来处。
 	SessionID string
 	Parent    *v1.ParentRef
 }
@@ -121,7 +123,13 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (sessionID stri
 	}
 	st := &session.State{SessionID: req.SessionID}
 	if st.SessionID == "" {
-		st.SessionID = "ses_" + s.Store.IDs()
+		st.SessionID, err = s.Store.IDs.Session(req.EndUser)
+		if err != nil {
+			return "", err
+		}
+	}
+	if slot, legacy, err := ids.EndUserSlotOfSession(st.SessionID); err != nil || (!legacy && slot != shard.Hash(req.EndUser)) {
+		return "", fmt.Errorf("%w: session ID does not match EndUser or has an invalid format", ErrInvalid)
 	}
 	// 索引与日志都可能和注销交错；所有返回路径（含指定 ID 的幂等重试）统一复查。
 	defer func() {
@@ -166,6 +174,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (sessionID stri
 	if errors.Is(err, eventlog.ErrConflict) && req.SessionID != "" {
 		// 指定 ID 的 Session 已存在：是同一次委托的重复创建时返回它。
 		if existing, lerr := s.Store.Load(ctx, req.SessionID); lerr == nil && existing.Created != nil &&
+			existing.Created.GetBusinessLine() == req.BusinessLine && existing.Created.GetEndUser() == req.EndUser &&
 			existing.Created.GetParent().GetCallId() == req.Parent.GetCallId() && existing.Created.GetParent().GetSessionId() == req.Parent.GetSessionId() {
 			return req.SessionID, nil
 		}

@@ -128,7 +128,9 @@ func TestDeleteSessionRemovesEverything(t *testing.T) {
 	if workspaceExists(sbx) {
 		t.Errorf("sandbox workspace %s still exists", sbx)
 	}
-	if l, ok := st.Ledger.(*nodesdk.MemLedger); ok && l.HasSession(sid) {
+	if exists, err := st.Ledger.HasSession(sid); err != nil {
+		t.Fatal(err)
+	} else if exists {
 		t.Error("sandbox ledger still has records")
 	}
 }

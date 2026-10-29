@@ -47,7 +47,7 @@ func Run(t *testing.T, newStore func(t *testing.T) presence.Store) {
 		if _, v := list(t, s, "s1", t0); v != v1 {
 			t.Fatal("renewing an entry must not change the version")
 		}
-		if err := s.Touch(ctx, "c1", t0.Add(3*presence.TTL)); err != nil {
+		if err := s.Touch(ctx, "s1", "c1", t0.Add(3*presence.TTL)); err != nil {
 			t.Fatal(err)
 		}
 		es, v := list(t, s, "s1", t0.Add(2*presence.TTL+time.Second))
@@ -85,6 +85,35 @@ func Run(t *testing.T, newStore func(t *testing.T) presence.Store) {
 		}
 		if es, _ := list(t, s, "s1", t0); len(es) != 1 || es[0].ConnID != "a" {
 			t.Fatalf("after prune: %+v", es)
+		}
+	})
+
+	t.Run("TouchIsScopedToSessionAndConnection", func(t *testing.T) {
+		s := newStore(t)
+		for _, e := range []*presence.Entry{entry("s1", "a"), entry("s1", "b"), entry("s2", "a")} {
+			if err := s.Put(ctx, e); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_, v1 := list(t, s, "s1", t0)
+		_, v2 := list(t, s, "s2", t0)
+		if err := s.Touch(ctx, "s1", "a", t0.Add(2*presence.TTL)); err != nil {
+			t.Fatal(err)
+		}
+		if es, v := list(t, s, "s1", t0.Add(presence.TTL)); len(es) != 1 || es[0].ConnID != "a" || v != v1 {
+			t.Fatalf("touch affected another connection or version: %+v, %d", es, v)
+		}
+		if es, v := list(t, s, "s2", t0.Add(presence.TTL)); len(es) != 0 || v != v2 {
+			t.Fatalf("touch affected another session: %+v, %d", es, v)
+		}
+		if err := s.Remove(ctx, "s1", "a"); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Touch(ctx, "s1", "a", t0.Add(3*presence.TTL)); err != nil {
+			t.Fatal(err)
+		}
+		if es, _ := list(t, s, "s1", t0.Add(presence.TTL)); len(es) != 0 {
+			t.Fatal("late heartbeat recreated a removed subscription")
 		}
 	})
 

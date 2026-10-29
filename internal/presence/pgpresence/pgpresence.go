@@ -76,8 +76,8 @@ func sameVisible(a, b *presence.Entry) bool {
 		a.TypingUntil.Truncate(time.Microsecond).Equal(b.TypingUntil.Truncate(time.Microsecond))
 }
 
-func (s Store) Touch(ctx context.Context, connID string, expires time.Time) error {
-	_, err := s.Pool.Exec(ctx, `UPDATE presence SET expires_at = $2 WHERE conn_id = $1`, connID, expires)
+func (s Store) Touch(ctx context.Context, sessionID, connID string, expires time.Time) error {
+	_, err := s.Pool.Exec(ctx, `UPDATE presence SET expires_at = $3 WHERE session_id = $1 AND conn_id = $2`, sessionID, connID, expires)
 	return err
 }
 
@@ -152,8 +152,21 @@ func (s Store) DeleteSession(ctx context.Context, sessionID string) error {
 }
 
 func (s Store) Prune(ctx context.Context, before time.Time) error {
-	_, err := s.Pool.Exec(ctx, `DELETE FROM presence WHERE expires_at <= $1`, before)
-	return err
+	rows, err := s.Pool.Query(ctx, `SELECT DISTINCT session_id FROM presence WHERE expires_at <= $1 ORDER BY session_id`, before)
+	if err != nil {
+		return err
+	}
+	sessions, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return err
+	}
+	// 离线扫描只取键，删除逐 Session；并发续期的记录不被旧候选误删。
+	for _, sid := range sessions {
+		if _, err := s.Pool.Exec(ctx, `DELETE FROM presence WHERE session_id = $1 AND expires_at <= $2`, sid, before); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // HasSession 报告是否还有该 Session 的记录，供删除不变量检查。

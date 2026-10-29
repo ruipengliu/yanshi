@@ -68,7 +68,7 @@ status: accepted
 |---|---|
 | Node 注册归属检查、Directory.Get / SetOffline、心跳与断开 | 经认证的 EndUser；Node ID 改为 EndUser 内唯一 |
 | Inbox.Put / Remove / Pending / Wait 及版本查询，网关投递与 Worker 撤回 | EndUser + Node ID；结果仍核对 Session 与调用 |
-| 模型或设备给的 `call_id`；Sandbox Ledger.Get / Put、重复调用结果 | 所属 Session；不能按 call_id 哈希或相信其版本化外形 |
+| `call_id`；Sandbox Ledger.Get / Put、重复调用结果 | 所属 Session；不能按 call_id 哈希或相信其外形（模型给的 ID 由 Worker 改写为平台 ID，设备侧仍只把它当去重键） |
 | Presence.Touch / 连接退出 | 连接的已认证订阅 Session 集合，逐 Session 续期或删除；不能按 Connection ID 选一个库 |
 | EndUser 的用量、档位、Node、Grant、删除屏障、推送登记 | 原始 EndUser；不拼 BusinessLine，也不解析 EndUser ID 的字符串外形 |
 | 内部 `CreateRequest.SessionID`（委托派生） | 真实 EndUser 和父 Session / call_id；C2 校验新格式并保留旧派生的幂等身份 |
@@ -125,29 +125,51 @@ status: accepted
 
 按 Q118，健康分片的读取、写入、认领和出站消费继续。仅依赖失联分片的请求有界失败；汇总不得把部分成功当作完整成功。就绪检查报告每个分片的 SQL、迁移与 LISTEN 状态，结合进程角色和可服务分片决定是否接受流量，不能简单对所有分片取 AND；请求处理仍按其实际依赖拒绝不可用目标。控制库 0 失联可阻塞删除请求查询等依赖它的操作，但不能因此关闭不依赖它的健康 Session。
 
-## 8. C1 交付边界与后续生成点
+## 8. C1 / C2 交付边界与后续生成点
 
-C1 只接 `artifact.Service.Put`：有槽 Session 生成同槽工件，旧 Session 的 ID 与生成器调用次数完全沿用。新增包没有存储、事务、网络、时间或新的随机源；不改 `app.Postgres`、`pg.Tables.Gaps`、投影或协议。生产 Session 仍是旧格式，因此此阶段正常生产工件仍是旧格式；新格式由 API 和显式新 Session 的测试覆盖。
+C1 只接 `artifact.Service.Put`：有槽 Session 生成同槽工件，旧 Session 的 ID 与生成器调用次数完全沿用。新增包没有存储、事务、网络、时间或新的随机源；不改 `app.Postgres`、`pg.Tables.Gaps`、投影或协议。C1 阶段生产 Session 仍是旧格式；C2 接通下面的 Session 生成点后，正常新建 Session 与其工件开始使用新格式。
 
-| 构造点 | C1 后的安排 |
+| 构造点 | C2 后的状态 / 后续安排 |
 |---|---|
-| service.Create：`ses_ + Store.IDs()` | C2 与委托一起接 `Generator.Session(EndUser)`，不单独提前启用 |
-| delegation.ChildSessionID：父 Session / call_id 的 SHA-256 派生 | C2 保留原 token 推导，补真实 EndUser 及旧派生重试兼容，再接 SessionID |
+| service.Create | C2 已接 `Generator.Session(EndUser)`，仍只消费一个原始 ID；写入前校验新格式的真实 EndUser 槽，legacy 接受 |
+| delegation.ChildSessionID：父 Session / call_id 的 SHA-256 派生 | C2 已补真实 EndUser：旧父保留 `ses_<hex>`，新父接 `SessionID`；子自身槽来自原 token，EndUser 来自父投影；派发重推导并核对目标 |
 | artifact.Service.Put | C1 已接 ForSession；C4 才接裸 ID 定位 |
 | memory.Service.Save：`mem_ + CallID` 或 IDs；capabilities 的重复判断 | C3/C4 接 WithEndUser / ForEndUser，并同步修改重复判断、旧幂等定位与真实归属检查 |
 | memory.Service.CreateGrant | C3/C4 接 ForEndUser，读 / 撤销仍核对真实 EndUser 与业务线 |
 | runtime.Worker 的模型 / 决策计量、runtime.compact | C3 接真实 EndUser 的用量 ID，不继承 Session 槽 |
 | oneshot.Service、speech.Service 的用量生成 | C3 接 ForEndUser；保持调用次数与匿名化重查的定位 |
 | sandbox.Controller 的 `sbx_ + call_id` 用量、call.Call 的 `call_<meterID>/<轮次>` 用量 | C3 把确定性去重 token 编码为安全字符并嵌 EndUser 槽；保留历史幂等键兼容 |
-| runtime.Worker 为缺省 call_id 补 IDs | C2 传 Session；模型给的 call_id 不重写，接口带真实键 |
+| runtime.Worker 改写模型给的 call_id | C2 已接 `ForSession("call", SessionID)`：模型给的 ID 可能为空或跨轮、跨 Run 重复，仍一律改写为平台 ID（每个调用消费一次生成器，与原来相同），新 ID 继承 Session 槽位 |
 | service.checkpoint / background 的 Run、schedule 的 Schedule / Run、schedule_capability 派生 ID；session.Store 的 Event | 已随 Session 传递，无独立裸 ID 查库需求，可保持旧局部格式；以后若独立定位，必须用 WithSession / ForSession |
 | service 的删除请求 ID | 控制数据固定库 0，不根据请求 ID 随机分片 |
 | channel 的 Connection ID、serve 的进程 ID | 非持久对象定位键，继续原生成器；Presence 从订阅集合取得真实 Session |
 
-C2 清 Session 接口（Presence、Ledger）并接普通 / 委托 Session；C3 清 EndUser 接口（Node / Inbox / 索引 / Memory / Grant / 用量 / Tier / 删除屏障）；C4 接裸 ID 与显式兼容定位；C5 只在这些阻断项关闭后装配多库、fan-out、完整缓存与部分就绪。存储接口已有真实键就直接传，不拿新增 ID API 代替缺口清理。
+C2 已清 Session 接口（Presence、Ledger）并接普通 / 委托 Session；C3 清 EndUser 接口（Node / Inbox / 索引 / Memory / Grant / 用量 / Tier / 删除屏障）；C4 接裸 ID 与显式兼容定位；C5 只在这些阻断项关闭后装配多库、fan-out、完整缓存与部分就绪。存储接口已有真实键就直接传，不拿新增 ID API 代替缺口清理。
 
 已发现的后续缺口：Memory.Save 当前命中 `Store.Get(mem_ + CallID)` 后直接返回，未核对 EndUser / BusinessLine；C3/C4 必须补归属校验，并覆盖跨用户相同外部 call_id 与同槽碰撞。旧用量 token 含 `/`、旧派生幂等 ID、历史 EndUser 槽固定在 0 的约束，均是多库启用前的阻断项，不能仅靠格式单测宣称已解决。
 
-proto 的 ID 均为 string；SDK 没有 Session 固定长度解析。新随机工件 43 字符满足 ask_user 的 64 字符上限与 fsblob 的 128 字符上限；字符集兼容 nodesdk Ledger。C1 不修改 proto、SDK 或 mobile，不需要 `make gen` / `make mobile`。C2 若改 Ledger 或节点协议，须按仓库规则执行相应检查。
+proto 的 ID 均为 string；SDK 没有 Session 固定长度解析。新随机工件 43 字符满足 ask_user 的 64 字符上限与 fsblob 的 128 字符上限；字符集兼容 nodesdk Ledger。C1 不修改 proto、SDK 或 mobile，不需要 `make gen` / `make mobile`。C2 仅增加内部 `sandbox.Ledger` 的 Session 键与绑定适配器，未改 `sdk/nodesdk.Ledger`、Executor 或节点协议，不需要 `make gen` / `make mobile`。
 
 验证覆盖：固定哈希向量、1024 槽全量编码往返、未知版本 / 非法槽位拒绝、Session 双槽与真实键继承、legacy 库 0 与槽位 0 分离、配置遗漏 / 重叠 / 越界拒绝、生成器确定性与消费次数、工件 URI / 文件存储往返、伪造槽位仍被真实归属拒绝且不写日志。真实单 / 双库差分与故障注入属 C5；本地不具备 Go 工具链，C1 的 `make check` 与 `make sim` 由远端验证后才能确认通过。
+
+### C2 入口、迁移与格式检查
+
+- **顶层生成点**只有 `service.Create`。HTTP `create`、Connection `channel.Handler.do`、eval 的 `(*instance).trial`、sim 初始化与关闭 / 注销后的替换 Session 都调用它，没有另一个生产顶层生成器。外部 HTTP / Connection 的创建契约不暴露指定 ID；`CreateRequest.SessionID` 只由内部委托及测试指定。内部指定 ID 也在任何索引或日志写入前校验；幂等重试同时核对真实 BusinessLine / EndUser 与父调用。
+- **委托**：`ChildSessionID(parentSession, callID, endUser)` 返回 `(string, error)`；Worker 用父投影的 EndUser，Delegator 再从父投影推导并核对目标，不接受从子 ID 反推归属。sim 不变量同时核对父子真实归属。旧父的在途委托仍命中原子 Session，两类槽均按 legacy 留在兼容库 0。
+- **账本**：内部 `sandbox.Ledger.Get / Put` 带 `(SessionID, callID)`，`BindLedger` 给单次沙箱执行固定 Session。控制器先核对 `sbx_<SessionID>` 与 Invoke 归属，再构造 Executor；SDK 的 started 写入与执行顺序不变。内存与 PG 使用同一一致性套件；`HasSession` 让模拟删除不变量同时检查两种实现。`app.SessionData` 的 Forget 登记继续有效。
+- **迁移**：`0032` 独立、可重复的 `CREATE UNIQUE INDEX CONCURRENTLY` 建立 `(session_id, call_id)` 索引；`0033` 将 Session 设为非空，并用该索引替换原 call_id 主键，不重写历史 ID 或结果。升级前须核实 `sandbox_ledger.session_id IS NULL` 的历史行；有此类行时迁移失败并保留原记录，不能猜归属、直接删除或丢掉 started。切换主键后旧控制器的 `ON CONFLICT (call_id)` 已不适用，迁移与控制器版本须按停写流程同步切换。
+- **Presence**：`Touch(ctx, sessionID, connID, expires)` 只续期已存在的单条订阅；连接心跳复制 `joined` 的已认证 Session 集合后逐个续期，退出仍由每个订阅逐 Session Remove。Presence 与账本的 Prune 先离线扫描 Session，再逐 Session 删除并复验时间条件；有界多库扫描与续扫仍留 C5。`pg.Tables` 仅清掉本步的两个 Gap，artifacts 与 EndUser Gaps 保留。
+
+| 检查项 | C2 结论 |
+|---|---|
+| Session、沙箱 Node、委托 Node | 随机 Session 47 字符，`sbx_` 后为 51；委托实际是 `@agent/`，为 54。均完整传递，无定长截断 |
+| Docker 名称与标签 | `yanshi-sbx-` + Node 共 62，`yanshi-ws-` + Node 共 61；新字符集不会被名称清洗替换，标签保留完整 ID |
+| 工件、S3 与 ask_user | 工件 ID 43，blob key 不拼 Session；S3 为配置前缀加工件 key。满足 fsblob 128 与 ask_user 图片 ID 64 的上限 |
+| 平台补的 call_id 与设备账本 | 新随机 call ID 44，满足 FileLedger 128 字符与字符集约束；Session 存储长度为 uint16，可容纳 47 |
+| Persona / xinli | Persona 的 Session 列为 bytea，xinli 为 text，其余相关值在 JSONB；没有定长列，不需业务库迁移 |
+| 网页 SDK / 控制台 | 委托只去掉完整 `@agent/` 前缀；显示末 8 位不影响路由与存储，未按 ses_hex 解析 |
+| eval / e2e | 没有 Session 固定长度假设；脚本与评测替身给的固定 ID（如 `x`）照旧由 Worker 改写 |
+
+C2 新增 / 更新的验证：`TestCreateSessionIDs`、`TestChildSessionIDFollowsParentFormat`、`TestDispatchUsesParentEndUserAndRetriesSameChild`、`TestWorkerRewritesCallIDs`、`sandboxtest.RunLedger`（内存 / PG：跨 Session 同 call_id、状态结果、Forget / Prune、started 先落盘、接管重试与写入失败）、`TestLedgerMigrationPreservesStartedAndRequiresSession`、`presencetest` 的 Touch 隔离与迟到心跳、`TestHeartbeatTouchesOnlyJoinedSubscriptions`；已有委托 e2e / Janitor 调用点同步更新。远端须执行 `make check`、`make sim`，包含 `TestEveryTableHasShardKey`、`TestSimulationIsDeterministic` 与 `TestPostgresMatchesMemory`；本机未运行 Go 测试，不据静态检查宣称已通过。
+
+仍有范围外缺口：设备 SDK 的账本与 Inbox、Memory 派生（`mem_ + call_id`）与沙箱用量去重以 call_id 为键，跨 Session 的唯一性依赖平台改写出的全局唯一 ID；分片后这些存储仍须带真实键（C3 / C4）。FileLedger 限制 ID 的字符集和长度，平台 ID 满足。本步不扩展三端 SDK，没有修改投影或 `ProjectionVersion`。

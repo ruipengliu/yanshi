@@ -16,6 +16,7 @@ import (
 	"yanshi/internal/moderation"
 	"yanshi/internal/realtime/fake"
 	"yanshi/internal/session"
+	"yanshi/sdk/nodesdk"
 )
 
 // callClient 是直接说 Connection 协议的会话客户端（Go SDK 的 Call 接口尚未提供）。
@@ -269,7 +270,7 @@ func TestCallRelay(t *testing.T) {
 // Run 等待审批时告知模型，批准后的结果再播报。
 func TestCallLongTaskAndApproval(t *testing.T) {
 	e, st := callEnv(t, 300*time.Millisecond)
-	stop := e.startNode(st.Ledger)
+	stop := e.startNode(nodesdk.NewMemLedger()) // 设备自己的账本，与平台沙箱账本无关
 	defer stop()
 	phone := e.dialCall("phone")
 	sid := phone.createSession()

@@ -45,7 +45,7 @@ type Janitor struct {
 	Inbox node.Inbox
 	Nodes node.Directory
 	// Ledger 是沙箱控制器共享的去重账本，定期清理过期记录。
-	Ledger nodesdk.Ledger
+	Ledger sandbox.Ledger
 	// Queues 是统计积压的队列，键为指标中的队列名。
 	Queues    map[string]workqueue.Queue
 	Index     lifecycle.Index

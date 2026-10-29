@@ -49,8 +49,8 @@ func (e *Entry) visible(o *Entry) bool {
 type Store interface {
 	// Put 按 (SessionID, ConnID) 写入或覆盖一条记录。显示内容（有效期之外的字段）有变化时版本递增并通知等待者。
 	Put(ctx context.Context, e *Entry) error
-	// Touch 把连接 connID 的全部记录续期到 expires，不改变版本。
-	Touch(ctx context.Context, connID string, expires time.Time) error
+	// Touch 只续期已授权订阅的一个 Session，不改变版本，也不重建已撤下的记录。
+	Touch(ctx context.Context, sessionID, connID string, expires time.Time) error
 	// Remove 删除一条记录；记录存在时版本递增。
 	Remove(ctx context.Context, sessionID, connID string) error
 	// List 返回 Session 中 Expires 晚于 now 的记录（按 ConnID 排序）与当前版本。

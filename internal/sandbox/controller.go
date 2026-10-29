@@ -25,7 +25,7 @@ type Controller struct {
 	Hub      *node.Hub       // 提供 Inbox 与结果回写
 	Provider Provider
 	Activity Activity
-	Ledger   nodesdk.Ledger // 共享存储，使任一控制器都能接管
+	Ledger   Ledger // 共享存储，使任一控制器都能接管
 	// Artifacts 用于工作区与工件之间的导入导出。
 	Artifacts *artifact.Service
 	// Lifecycle 非 nil 时，创建沙箱后复查 Session 是否已关闭或删除，是则销毁（ADR-0015）。
@@ -44,7 +44,6 @@ type Controller struct {
 	// Idle 非空时，同一进程的控制器共享它：空闲时至多一个控制器轮询沙箱队列。
 	Idle *workqueue.IdleGate
 
-	exec     *nodesdk.Executor
 	lease    *workqueue.Lease
 	lastReap time.Time
 }
@@ -53,9 +52,6 @@ type Controller struct {
 func (c *Controller) reapDue() bool { return c.Clock.Now().Sub(c.lastReap) > c.IdleTTL/4 }
 
 func (c *Controller) init() {
-	if c.exec == nil {
-		c.exec = nodesdk.NewExecutor(c.Ledger, Capabilities(c.Provider, c.Artifacts)...)
-	}
 	if c.LeaseTTL == 0 {
 		c.LeaseTTL = 30 * time.Second
 	}
@@ -173,8 +169,10 @@ func (c *Controller) Step(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	start := c.Clock.Now()
+	// 已核对沙箱 Node 与调用的 Session；每次执行绑定账本，共享持久记录承担接管去重。
+	exec := nodesdk.NewExecutor(BindLedger(c.Ledger, inv.GetSessionId()), Capabilities(c.Provider, c.Artifacts)...)
 	res, err := c.during(ctx, id, inv.GetCallId(), func(ctx context.Context) (*v1.InvokeResult, error) {
-		return c.exec.Execute(WithSandbox(ctx, id, inv.GetCallId()), inv)
+		return exec.Execute(WithSandbox(ctx, id, inv.GetCallId()), inv)
 	})
 	if err == nil && res != nil {
 		c.meter(ctx, inv, c.Clock.Now().Sub(start))

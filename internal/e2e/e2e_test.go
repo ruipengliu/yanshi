@@ -310,7 +310,8 @@ func (e *env) do(method, path string, body any, out any) int {
 }
 
 type sessionView struct {
-	Runs []struct {
+	EndUser string `json:"end_user"`
+	Runs    []struct {
 		RunID   string `json:"run_id"`
 		Status  string `json:"status"`
 		Waiting *struct {

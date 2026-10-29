@@ -205,7 +205,10 @@ func TestErasureAndDeadlineCascade(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			child := delegation.ChildSessionID(sid, "delegate")
+			child, err := delegation.ChildSessionID(sid, "delegate", st.Created.GetEndUser())
+			if err != nil {
+				t.Fatal(err)
+			}
 			err = e.core.Service.Store.Commit(ctx, st,
 				&v1.Event{Payload: &v1.Event_AttemptStarted{AttemptStarted: &v1.AttemptStarted{RunId: run.RunID, Attempt: 1}}},
 				&v1.Event{Payload: &v1.Event_AssistantMessage{AssistantMessage: &v1.AssistantMessage{RunId: run.RunID, Attempt: 1, ToolCalls: []*v1.ToolCall{{CallId: "delegate", Capability: "agent__project", ArgumentsJson: `{"task":"任务"}`}}}}},
@@ -272,7 +275,14 @@ func TestParentDeletionDuringDelegationKeepsReason(t *testing.T) {
 			e := newEnv(t)
 			ctx := context.Background()
 			sid := e.session(t, "day")
-			child := delegation.ChildSessionID(sid, "racing")
+			parent, err := e.core.Service.Load(ctx, sid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			child, err := delegation.ChildSessionID(sid, "racing", parent.Created.GetEndUser())
+			if err != nil {
+				t.Fatal(err)
+			}
 			d := &delegation.Delegator{Service: e.core.Service, BeforeCreate: func(ctx context.Context, _ string) {
 				if err := e.core.Service.Delete(ctx, sid, reason, ""); err != nil {
 					t.Fatal(err)

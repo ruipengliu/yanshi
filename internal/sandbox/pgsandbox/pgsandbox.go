@@ -4,6 +4,7 @@ package pgsandbox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -15,31 +16,30 @@ import (
 	"yanshi/sdk/nodesdk"
 )
 
-// Ledger 实现 nodesdk.Ledger。nodesdk.Ledger 不带 context，这里使用后台 context 并设超时。
+// Ledger 由控制器按 Session 绑定给 SDK；SDK 账本不带 context，这里使用后台 context 并设超时。
 type Ledger struct{ Pool *pgxpool.Pool }
 
-var _ nodesdk.Ledger = Ledger{}
+var _ sandbox.Ledger = Ledger{}
 
 const ledgerTimeout = 10 * time.Second
 
-func (l Ledger) Get(callID string) (*nodesdk.Record, error) {
+func (l Ledger) Get(sessionID, callID string) (*nodesdk.Record, error) {
+	if sessionID == "" {
+		return nil, fmt.Errorf("sandbox ledger: Session is required")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), ledgerTimeout)
 	defer cancel()
 	var state int16
 	var result []byte
-	var sid *string
 	var at time.Time
-	err := l.Pool.QueryRow(ctx, `SELECT state, result, session_id, updated_at FROM sandbox_ledger WHERE call_id = $1`, callID).Scan(&state, &result, &sid, &at)
+	err := l.Pool.QueryRow(ctx, `SELECT state, result, updated_at FROM sandbox_ledger WHERE session_id = $1 AND call_id = $2`, sessionID, callID).Scan(&state, &result, &at)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return &nodesdk.Record{}, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	r := &nodesdk.Record{State: nodesdk.State(state), UpdatedAt: at}
-	if sid != nil {
-		r.SessionID = *sid
-	}
+	r := &nodesdk.Record{State: nodesdk.State(state), SessionID: sessionID, UpdatedAt: at}
 	if result != nil {
 		r.Result = &v1.InvokeResult{}
 		if err := proto.Unmarshal(result, r.Result); err != nil {
@@ -49,7 +49,10 @@ func (l Ledger) Get(callID string) (*nodesdk.Record, error) {
 	return r, nil
 }
 
-func (l Ledger) Put(callID string, r *nodesdk.Record) error {
+func (l Ledger) Put(sessionID, callID string, r *nodesdk.Record) error {
+	if sessionID == "" || r.SessionID != sessionID {
+		return fmt.Errorf("sandbox ledger: session mismatch")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), ledgerTimeout)
 	defer cancel()
 	var result []byte
@@ -60,18 +63,14 @@ func (l Ledger) Put(callID string, r *nodesdk.Record) error {
 		}
 		result = b
 	}
-	var sid *string
-	if r.SessionID != "" {
-		sid = &r.SessionID
-	}
 	at := r.UpdatedAt
 	if at.IsZero() {
 		at = time.Now()
 	}
 	_, err := l.Pool.Exec(ctx, `
 		INSERT INTO sandbox_ledger (call_id, state, result, session_id, updated_at) VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (call_id) DO UPDATE SET state = $2, result = $3, session_id = $4, updated_at = $5`,
-		callID, int16(r.State), result, sid, at)
+		ON CONFLICT (session_id, call_id) DO UPDATE SET state = $2, result = $3, updated_at = $5`,
+		callID, int16(r.State), result, sessionID, at)
 	return err
 }
 
@@ -82,11 +81,31 @@ func (l Ledger) Forget(sessionID string) error {
 	return err
 }
 
+func (l Ledger) HasSession(sessionID string) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), ledgerTimeout)
+	defer cancel()
+	var exists bool
+	err := l.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM sandbox_ledger WHERE session_id = $1)`, sessionID).Scan(&exists)
+	return exists, err
+}
+
 func (l Ledger) Prune(before time.Time) error {
 	ctx, cancel := context.WithTimeout(context.Background(), ledgerTimeout)
 	defer cancel()
-	_, err := l.Pool.Exec(ctx, `DELETE FROM sandbox_ledger WHERE updated_at < $1`, before)
-	return err
+	rows, err := l.Pool.Query(ctx, `SELECT DISTINCT session_id FROM sandbox_ledger WHERE updated_at < $1 ORDER BY session_id`, before)
+	if err != nil {
+		return err
+	}
+	sessions, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return err
+	}
+	for _, sid := range sessions {
+		if _, err := l.Pool.Exec(ctx, `DELETE FROM sandbox_ledger WHERE session_id = $1 AND updated_at < $2`, sid, before); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type Activity struct{ Pool *pgxpool.Pool }

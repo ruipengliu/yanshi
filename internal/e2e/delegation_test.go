@@ -62,7 +62,10 @@ func TestDelegationCascades(t *testing.T) {
 	v := e.until(sid, func(v sessionView) bool {
 		return len(v.Runs) == 1 && v.Runs[0].Waiting != nil && v.Runs[0].Waiting.Kind == "agent"
 	})
-	child := delegation.ChildSessionID(sid, v.Runs[0].Waiting.CallID)
+	child, err := delegation.ChildSessionID(sid, v.Runs[0].Waiting.CallID, v.EndUser)
+	if err != nil {
+		t.Fatal(err)
+	}
 	e.until(child, func(v sessionView) bool { st, _ := lastRun(v); return st == "running" })
 	if code := e.do(http.MethodPost, "/v1/sessions/"+sid+"/runs/"+v.Runs[0].RunID+"/interrupt", nil, nil); code != http.StatusOK && code != http.StatusNoContent {
 		t.Fatalf("interrupt: %d", code)
@@ -95,7 +98,10 @@ func TestDelegationOrphanStops(t *testing.T) {
 	v := e.until(sid, func(v sessionView) bool {
 		return len(v.Runs) == 1 && v.Runs[0].Waiting != nil && v.Runs[0].Waiting.Kind == "agent"
 	})
-	child := delegation.ChildSessionID(sid, v.Runs[0].Waiting.CallID)
+	child, err := delegation.ChildSessionID(sid, v.Runs[0].Waiting.CallID, v.EndUser)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cv := e.until(child, func(v sessionView) bool {
 		return len(v.Runs) == 1 && v.Runs[0].Waiting != nil && v.Runs[0].Waiting.Kind == "question"
 	})
