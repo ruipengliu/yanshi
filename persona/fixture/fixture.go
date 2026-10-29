@@ -2,6 +2,7 @@
 //
 // 所有路径以 /v1/fixture/{businessLine}/{endUser} 为前缀，身份取自路径：
 // GET /state 返回 domain.State；POST /seed 的整个请求体是 domain.SeedData（字段名为 snake_case）。
+// POST /owner_deletion {} 建立注销屏障；GET /owner_deletion 查询 Persona 清理进度。
 // POST /reset {} 清空 owner 的全部夹具数据（须先停下该 owner 的工作）；Seed 仍为追加预置。
 // POST /bind {project,session}；POST /submitted {session,input}；POST /edit {id,status,due_date}；
 // POST /resolve {session,exchange,project}；POST /resolve_merge {id,accept}；POST /archive {}。
@@ -19,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"math"
 	"net/http"
@@ -71,6 +73,31 @@ func Handler(s store.Store, opts Options) http.Handler {
 			}
 			if result, ok := out.(deletionResult); ok && opts.Notifier != nil {
 				opts.Notifier.DeletionPending(r.Context(), r.PathValue("businessLine"), r.PathValue("endUser"), result.Task.ID)
+			}
+			write(w, http.StatusOK, out)
+		})
+	}
+	// TODO(A11): 与生产内部接口统一鉴权，核验调用方业务线；当前只挂在开发夹具层。
+	for _, method := range []string{"POST", "GET"} {
+		mux.HandleFunc(method+" "+prefix+"/owner_deletion", func(w http.ResponseWriter, r *http.Request) {
+			var out store.OwnerDeletion
+			var err error
+			bl, eu := r.PathValue("businessLine"), r.PathValue("endUser")
+			if method == "POST" {
+				var in struct{}
+				if err = decode(r, &in); err == nil {
+					out, err = s.BeginOwnerDeletion(r.Context(), bl, eu, now())
+				}
+			} else {
+				out, err = s.OwnerDeletion(r.Context(), bl, eu)
+			}
+			if err != nil {
+				status := http.StatusBadRequest
+				if errors.Is(err, store.ErrDeletionNotStarted) {
+					status = http.StatusNotFound
+				}
+				write(w, status, map[string]string{"error": err.Error()})
+				return
 			}
 			write(w, http.StatusOK, out)
 		})

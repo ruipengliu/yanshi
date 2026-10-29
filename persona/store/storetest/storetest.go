@@ -15,6 +15,10 @@ import (
 
 func Run(t *testing.T, factory func() store.Store) {
 	t.Helper()
+	t.Run("deletion_discovery", func(t *testing.T) { deletionDiscovery(t, factory) })
+	t.Run("owner_deletion", func(t *testing.T) { ownerDeletion(t, factory) })
+	t.Run("deletion_interleavings", func(t *testing.T) { deletionInterleavings(t, factory) })
+	t.Run("deletion_read", func(t *testing.T) { deletionRead(t, factory) })
 	t.Run("expiration", func(t *testing.T) { expiration(t, factory) })
 	t.Run("captures", func(t *testing.T) {
 		captures(t, factory)

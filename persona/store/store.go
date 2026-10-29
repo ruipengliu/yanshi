@@ -10,10 +10,19 @@ import (
 
 // Store 的读写事务只涉及一个键；PendingDeletions 只发现键，不跨键写入。Update 在隔离的 Book 上执行回调，成功才原子提交；
 // 同键并发更新串行化。View 给出隔离的快照，回调的修改不会提交。
+// 屏障在同键写锁内检查；View 在快照前及返回前检查，调用方必须丢弃失败回调的结果，不能在回调内交付数据。
 // 回调中的 Book 已绑定 domain.CaptureAccess，原文与账本使用同一快照/提交点。
 // 回调不得重入同键操作；退出（含失败或 panic）即关闭原文接缝及迭代器，不能带到事务外使用。
 // 账本引用离开回调后的修改不得影响存储；Call 的文字回执须同时检查 Call.Err 并作为回调错误返回。
 type Store interface {
+	// BeginOwnerDeletion 与写入串行化，重复请求保留第一次时间及完成状态。
+	BeginOwnerDeletion(ctx context.Context, businessLine, endUser string, now time.Time) (OwnerDeletion, error)
+	// OwnerDeletion 不存在时返回 ErrDeletionNotStarted；只查询控制状态，不开放业务读取。
+	OwnerDeletion(ctx context.Context, businessLine, endUser string) (OwnerDeletion, error)
+	// Purge 必须先有屏障；每次至多删除 limit 个存储项，完成时间与最后一批同事务提交。
+	Purge(ctx context.Context, businessLine, endUser string, limit int, now time.Time) (OwnerDeletion, error)
+	// PendingPurges 按 owner 字节顺序发现未完成屏障，不读取业务载荷。
+	PendingPurges(ctx context.Context) ([]Owner, error)
 	Update(ctx context.Context, businessLine, endUser string, fn func(*domain.Book) error) error
 	View(ctx context.Context, businessLine, endUser string, fn func(*domain.Book) error) error
 	// PendingDeletions 按 BusinessLine、EndUser 的 Go 字节顺序返回去重的所有者；
@@ -31,6 +40,7 @@ type Owner struct {
 
 // Resetter 仅供开发与评测回收 owner，不是生产的 EndUser 删除协议。
 // 调用方须先停下该 owner 的工作；清空账本、原文、绑定、进度与删除待办，可重复调用。
+// 已有注销屏障时同样拒绝，不能用夹具复活旧 ID。
 // 与 Store 分开，避免生产调用方依赖评测专用的删除入口。
 type Resetter interface {
 	ResetOwner(ctx context.Context, businessLine, endUser string) error

@@ -52,18 +52,17 @@ func (s *Store) Update(ctx context.Context, businessLine, endUser string, fn fun
 	}
 	defer pg.Rollback(tx)
 	bl, eu := []byte(businessLine), []byte(endUser)
-	// 首次写入也参与同键串行化：冲突插入会等前一个创建事务结束。
-	tag, err := tx.Exec(ctx, `INSERT INTO owners (business_line,end_user) VALUES ($1,$2) ON CONFLICT DO NOTHING`, bl, eu)
+	created, err := lockOwner(ctx, tx, bl, eu)
 	if err != nil {
 		return contextError(ctx, err)
 	}
-	var locked []byte
-	if err := tx.QueryRow(ctx, `SELECT business_line FROM owners WHERE business_line=$1 AND end_user=$2 FOR UPDATE`, bl, eu).Scan(&locked); err != nil {
-		return contextError(ctx, err)
+	// 屏障与写入竞争同一行锁：先提交的写入归清理，后来的写入连回调也不进入。
+	if err := checkOwner(ctx, tx, bl, eu); err != nil {
+		return err
 	}
 	book := domain.NewBook()
 	var before bookSnapshot
-	if tag.RowsAffected() == 0 {
+	if !created {
 		book, before, err = loadBook(ctx, tx, bl, eu)
 		if err != nil {
 			return contextError(ctx, err)
@@ -105,6 +104,9 @@ func (s *Store) View(ctx context.Context, businessLine, endUser string, fn func(
 	}
 	defer pg.Rollback(tx)
 	bl, eu := []byte(businessLine), []byte(endUser)
+	if err := checkOwner(ctx, tx, bl, eu); err != nil {
+		return err
+	}
 	book, _, err := loadBook(ctx, tx, bl, eu)
 	if err != nil {
 		return contextError(ctx, err)
@@ -113,17 +115,21 @@ func (s *Store) View(ctx context.Context, businessLine, endUser string, fn func(
 	defer access.close()
 	book.SetCaptureAccess(access)
 	book.SetCaptureClock(s.now)
-	if err := fn(book); err != nil {
+	callbackErr := fn(book)
+	// 释放快照连接后再查最新屏障，单连接池也不会自锁；失败时入口必须丢弃回调结果。
+	access.close()
+	pg.Rollback(tx)
+	if err := checkOwner(ctx, s.pool, bl, eu); err != nil {
 		return err
 	}
-	return ctx.Err()
+	return callbackErr
 }
 
 func (s *Store) PendingDeletions(ctx context.Context) ([]store.Owner, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT DISTINCT business_line,end_user FROM deletion_tasks WHERE status='pending' OR rebuild_pending`)
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT business_line,end_user FROM deletion_tasks t WHERE (status='pending' OR rebuild_pending) AND NOT EXISTS (SELECT 1 FROM owner_deletions d WHERE d.business_line=t.business_line AND d.end_user=t.end_user)`)
 	if err != nil {
 		return nil, contextError(ctx, err)
 	}
@@ -153,7 +159,7 @@ func (s *Store) ExpiringCaptures(ctx context.Context, now time.Time) ([]store.Ow
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT DISTINCT business_line,end_user FROM business_days WHERE NOT capture_cleanup_done AND (expires_at <= $1 OR expires_at IS NULL)`, now)
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT business_line,end_user FROM business_days t WHERE NOT capture_cleanup_done AND (expires_at <= $1 OR expires_at IS NULL) AND NOT EXISTS (SELECT 1 FROM owner_deletions d WHERE d.business_line=t.business_line AND d.end_user=t.end_user)`, now)
 	if err != nil {
 		return nil, contextError(ctx, err)
 	}
@@ -191,6 +197,20 @@ func (s *Store) ResetOwner(ctx context.Context, businessLine, endUser string) er
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	_, err := s.pool.Exec(ctx, `DELETE FROM owners WHERE business_line=$1 AND end_user=$2`, []byte(businessLine), []byte(endUser))
-	return contextError(ctx, err)
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return contextError(ctx, err)
+	}
+	defer pg.Rollback(tx)
+	bl, eu := []byte(businessLine), []byte(endUser)
+	if _, err := lockOwner(ctx, tx, bl, eu); err != nil {
+		return contextError(ctx, err)
+	}
+	if err := checkOwner(ctx, tx, bl, eu); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM owners WHERE business_line=$1 AND end_user=$2`, bl, eu); err != nil {
+		return contextError(ctx, err)
+	}
+	return contextError(ctx, tx.Commit(ctx))
 }

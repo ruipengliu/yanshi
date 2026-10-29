@@ -71,3 +71,7 @@ _Avoid_: 处理进度、读取位置、Revision（那是承诺修订）
 **Domain change（领域变化）**（P4 设计，Q99、Q115）:
 Persona 接受日总览、周回顾等领域事实时，在同一 owner 事务记录的稳定事实 ID 与版本。供应用可靠发现后续工作，应用持久接收后才确认；只表达事实，不保存调用哪个 Agent 的策略。空周回顾也是接受，同命令重复交付去重，合法重交形成新版本。
 _Avoid_: Event（那是内核日志）、编排任务、Run 终态
+
+**Owner deletion barrier（owner 注销屏障）**（P4，Q104）:
+按 (BusinessLine, EndUser) 永久保存的注销记录。建立后拒绝该 owner 的业务读写，逐批清除 Persona 数据；完成状态只指 Persona 清理完成。重新注册使用新 EndUser ID，旧屏障仅保存键、状态与时间，不能由夹具重置。应用负责封禁登录、内核及逐库注销。
+_Avoid_: 删除待办（那是擦除后的工作 Session 清理）、内核 EndUser 宽限期

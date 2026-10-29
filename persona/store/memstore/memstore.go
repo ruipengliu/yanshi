@@ -3,6 +3,7 @@ package memstore
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ type entry struct {
 	mu       sync.Mutex
 	book     *domain.Book
 	captures captureData
+	deletion store.OwnerDeletion
 }
 type Store struct {
 	mu    sync.Mutex
@@ -58,6 +60,9 @@ func (s *Store) Update(ctx context.Context, bl, eu string, fn func(*domain.Book)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if e.deletion.Status != "" {
+		return store.ErrOwnerDeleting
+	}
 	working, err := e.book.Clone()
 	if err != nil {
 		return err
@@ -87,8 +92,13 @@ func (s *Store) View(ctx context.Context, bl, eu string, fn func(*domain.Book) e
 	}
 	e := s.entry(bl, eu)
 	e.mu.Lock()
+	if e.deletion.Status != "" {
+		e.mu.Unlock()
+		return store.ErrOwnerDeleting
+	}
 	snapshot, err := e.book.Clone()
-	captures := newCaptureTx(ctx, e.captures)
+	// 注销清理会逐项收回目录；只复制目录以保持在途 View 的片段快照不可变。
+	captures := newCaptureTx(ctx, maps.Clone(e.captures))
 	e.mu.Unlock()
 	defer captures.close()
 	if err != nil {
@@ -99,10 +109,17 @@ func (s *Store) View(ctx context.Context, bl, eu string, fn func(*domain.Book) e
 	}
 	snapshot.SetCaptureAccess(captures)
 	snapshot.SetCaptureClock(s.now)
-	if err := fn(snapshot); err != nil {
+	callbackErr := fn(snapshot)
+	captures.close()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.deletion.Status != "" {
+		return store.ErrOwnerDeleting
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return ctx.Err()
+	return callbackErr
 }
 
 // PendingDeletions 先复制键再逐键查看，避免全局锁与 Book 锁嵌套。
@@ -123,7 +140,7 @@ func (s *Store) PendingDeletions(ctx context.Context) ([]store.Owner, error) {
 			return nil, err
 		}
 		e.mu.Lock()
-		pending := len(e.book.PendingDeletionTasks()) > 0
+		pending := e.deletion.Status == "" && len(e.book.PendingDeletionTasks()) > 0
 		e.mu.Unlock()
 		if pending {
 			out = append(out, store.Owner{BusinessLine: k.businessLine, EndUser: k.endUser})
@@ -149,6 +166,9 @@ func (s *Store) ResetOwner(ctx context.Context, bl, eu string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if e.deletion.Status != "" {
+		return store.ErrOwnerDeleting
+	}
 	e.book, e.captures = domain.NewBook(), nil
 	return nil
 }
@@ -169,7 +189,7 @@ func (s *Store) ExpiringCaptures(ctx context.Context, now time.Time) ([]store.Ow
 			return nil, err
 		}
 		e.mu.Lock()
-		pending := len(e.book.ExpiringCaptureDays(now)) > 0
+		pending := e.deletion.Status == "" && len(e.book.ExpiringCaptureDays(now)) > 0
 		e.mu.Unlock()
 		if pending {
 			out = append(out, store.Owner{BusinessLine: k.businessLine, EndUser: k.endUser})
