@@ -62,6 +62,8 @@ type Book struct {
 	captureClock  func() time.Time
 	captureDays   map[string]*captureDay
 	deletionTasks []DeletionTask
+	acceptedFacts map[string]acceptedFact
+	domainChanges []DomainChange
 	projects      []Project
 	// changesets 是变更集的日志，ledger 是由它叠加出的交谈与承诺（每次改动之后重新叠加）。
 	changesets []Changeset
@@ -315,17 +317,33 @@ func (c *Call) FileDay() string {
 	}
 	now := c.now
 	date := now.Format(time.DateOnly)
+	id := sessionFactID(FactDay, c.session)
 	// 整理可能拖到次日，业务日由工作 Session 的绑定决定，不随提交时钟漂移。
 	if bound, _ := c.u.boundDay(c.session); bound != "" {
-		date = bound
+		date, id = bound, factID(FactDay, bound)
+	} else {
+		for _, d := range c.u.days {
+			if d.Session == c.session {
+				date = d.Date
+				break
+			}
+		}
 	}
 	day := Day{Date: date, Session: c.session, FiledAt: now, Headline: in.Day.Headline,
 		Highlights: in.Day.Highlights, Awareness: in.Awareness}
-	// 重建工作 Session 后仍取代同一业务日的总览，未绑定时沿用 Session。
-	if c.session != "" {
+	// 空集合与省略字段表达相同内容；只规范化去重输入，保持原有正文形状。
+	command := in
+	command.Day.Highlights = orEmpty(command.Day.Highlights)
+	command.Awareness.Habits = orEmpty(command.Awareness.Habits)
+	command.Awareness.Suggestions = orEmpty(command.Awareness.Suggestions)
+	// 绑定过的 Session 按业务日取代；旧路径按 Session 隔离，不能仅凭展示日期合并。
+	if c.acceptFact(FactDay, id, date, command) {
 		c.u.days = slices.DeleteFunc(c.u.days, func(d Day) bool { return c.u.sameDay(d.Session, c.session) })
+		c.u.days = append(c.u.days, day)
 	}
-	c.u.days = append(c.u.days, day)
+	if c.err != nil {
+		return ""
+	}
 	var touched []string
 	n := 0
 	for _, e := range c.u.exchanges {

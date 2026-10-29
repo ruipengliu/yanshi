@@ -16,6 +16,11 @@ func TestPurgeRemovesPhysicalData(t *testing.T) {
 	if err := s.Update(ctx, "bl", "u", func(b *domain.Book) error {
 		b.Seed(domain.SeedData{Projects: []domain.Project{{ID: "P-1"}}, Commitments: []domain.SeedCommitment{{Kind: "mine", Content: "待删"}}}, now)
 		b.BindWeek("2026-10-21", "week")
+		call := domain.NewCall(b, "week", []byte(`{}`), nil, now)
+		call.FileWeek()
+		if err := call.Err(); err != nil {
+			return err
+		}
 		b.Submitted("day", "整理今天")
 		_, err := b.AppendCaptures("2026-10-27", "batch", []domain.CaptureSegment{{Speaker: "wearer", Text: "原文"}})
 		return err

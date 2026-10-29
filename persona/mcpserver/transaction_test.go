@@ -46,6 +46,9 @@ func TestNotificationAfterCommit(t *testing.T) {
 	if notified != 1 {
 		t.Fatal("rejection notified")
 	}
+	if changes, err := x.store.PendingDomainChanges(context.Background(), "bl", "u"); err != nil || len(changes) != 1 {
+		t.Fatal("rejection changed accepted facts", changes, err)
+	}
 }
 
 type failingStore struct {
@@ -66,7 +69,7 @@ func TestCommitFailureHasNoResultOrNotification(t *testing.T) {
 	failure := errors.New("commit failed")
 	notifier := &recordFiled{}
 	runtime := newRuntime(failingStore{x.store, failure}, Options{Now: x.now, Notifier: notifier})
-	for _, name := range []string{"file_changes", "file_day"} {
+	for _, name := range []string{"file_changes", "file_day", "file_week"} {
 		for _, tool := range tools {
 			if tool.tool.Name != name {
 				continue
@@ -79,8 +82,11 @@ func TestCommitFailureHasNoResultOrNotification(t *testing.T) {
 		}
 	}
 	st := x.State("bl", "u")
-	if len(notifier.days) != 0 || len(st.Days) != 0 || len(st.Changesets) != 0 {
+	if len(notifier.days) != 0 || len(st.Days) != 0 || len(st.Changesets) != 0 || len(st.Weeks) != 0 {
 		t.Fatal("failed commit escaped")
+	}
+	if changes, err := x.store.PendingDomainChanges(context.Background(), "bl", "u"); err != nil || len(changes) != 0 {
+		t.Fatal("failed commit emitted domain change", changes, err)
 	}
 }
 

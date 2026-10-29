@@ -15,6 +15,8 @@ func (u *Book) PurgeBatch(limit int) int {
 	purgeSlice(&u.weeks, &left)
 	purgeSlice(&u.merges, &left)
 	purgeSlice(&u.deletionTasks, &left)
+	purgeSlice(&u.domainChanges, &left)
+	purgeMap(u.acceptedFacts, &left)
 	purgeMap(u.captureDays, &left)
 	purgeMap(u.weekSessions, &left)
 	purgeMap(u.submitted, &left)

@@ -40,6 +40,8 @@ var categories = []category{
 	{"Commitments", "commitments", "commitment_key", sequence},
 	{"Projects", "projects", "project_key", sequence},
 	{"Days", "days", "day_key", sequence},
+	{"AcceptedFacts", "accepted_facts", "fact_key", mapping},
+	{"DomainChanges", "domain_changes", "change_key", sequence},
 	{"Weeks", "weeks", "week_key", sequence},
 	{"Merges", "merges", "merge_key", sequence},
 	{"CaptureDays", "business_days", "business_day", mapping},
@@ -136,12 +138,18 @@ func rowIdentity(field string, raw json.RawMessage, scopes map[string]string) (s
 		return "", err
 	}
 	switch field {
+	case "DomainChanges":
+		var change domain.DomainChange
+		if err := json.Unmarshal(raw, &change); err != nil {
+			return "", err
+		}
+		return entityKey(change.ID, strconv.FormatUint(change.Version, 10)), nil
 	case "Exchanges":
 		return entityKey(scopeKey(item.Session, scopes), item.ID), nil
 	case "Days":
 		return entityKey(item.Date, scopeKey(item.Session, scopes)), nil
 	case "Weeks":
-		// Week 尚无周起点字段，领域的重交身份是 Session，不能由 FiledAt 猜周。
+		// 正文仍以 Session 定位；稳定周身份与版本另存在 AcceptedFacts，不能由 FiledAt 猜周。
 		return entityKey(item.Session), nil
 	default:
 		return entityKey(item.ID), nil
@@ -206,6 +214,16 @@ func snapshotRows(book *domain.Book, before bookSnapshot) (bookSnapshot, error) 
 						return nil, err
 					}
 					row.status, row.rebuildPending = task.Status, task.RebuildPending
+				}
+				if c.field == "DomainChanges" {
+					var change domain.DomainChange
+					if err := json.Unmarshal(value, &change); err != nil {
+						return nil, err
+					}
+					row.status = "pending"
+					if !change.AcknowledgedAt.IsZero() {
+						row.status = "acknowledged"
+					}
 				}
 				rows = append(rows, row)
 			}
@@ -495,6 +513,9 @@ func loadRows(ctx context.Context, tx pgx.Tx, bl, eu []byte, c category) ([]book
 		ordinal = "ordinal::text"
 	}
 	status, rebuild := `''::text`, "false"
+	if c.field == "DomainChanges" {
+		status = "status"
+	}
 	if c.field == "DeletionTasks" {
 		status, rebuild = "status", "rebuild_pending"
 	}
@@ -605,6 +626,12 @@ func writeRow(ctx context.Context, tx pgx.Tx, bl, eu []byte, c category, row boo
 		values += ",$6,$7"
 		updates += ",status=EXCLUDED.status,rebuild_pending=EXCLUDED.rebuild_pending"
 		args = append(args, row.status, row.rebuildPending)
+	}
+	if c.field == "DomainChanges" {
+		columns += ",status"
+		values += ",$6"
+		updates += ",status=EXCLUDED.status"
+		args = append(args, row.status)
 	}
 	if row.replaces && row.previousKey != row.key {
 		// 来源取代会换变更集 ID，只更新原实体行，序位沿用装载时的值。

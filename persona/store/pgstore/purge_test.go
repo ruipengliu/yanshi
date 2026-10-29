@@ -28,6 +28,11 @@ func TestPurgeRestartAndBound(t *testing.T) {
 			if err := b.BindDay("2026-10-27", "day"); err != nil {
 				return err
 			}
+			call := domain.NewCall(b, "week", []byte(`{}`), nil, now)
+			call.FileWeek()
+			if err := call.Err(); err != nil {
+				return err
+			}
 			close(entered)
 			select {
 			case <-release:

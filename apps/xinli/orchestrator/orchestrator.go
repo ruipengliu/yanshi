@@ -1,4 +1,4 @@
-// Package orchestrator 在应用层驱动跨 Session 归集，通知暂代未来的出站流。
+// Package orchestrator 在应用层驱动跨 Session 归集；现有通知路径暂留到持久消费接入。
 package orchestrator
 
 import (
@@ -122,6 +122,8 @@ func (o *Orchestrator) acquire(ctx context.Context, bl, eu string) (func(), erro
 	}
 }
 
+// TODO(P4-A8/A10)：从 Persona 领域变化持久接收归集任务后再确认，DayFiled 仅作唤醒提示。
+// 接入前保留现有归集行为，不能提前确认变化而让崩溃后丢失后续工作。
 func (o *Orchestrator) DayFiled(_ context.Context, bl, eu, daySession, date string, projects []string) {
 	if !o.begin() {
 		return
@@ -200,7 +202,8 @@ func (o *Orchestrator) Week(ctx context.Context, bl, eu string) (string, error) 
 		return "", err
 	}
 	sid := plan.Session
-	// 提交回顾之后重新读，与旧实现一致，纳入这期间发生的领域变更。
+	// TODO(P4-A8/A10)：把重写迁至 file_week 接受变化的持久消费；空回顾也触发，按事实版本去重。
+	// 本步保留原行为与既有开发入口，尚未接入消费者时不能取消项目重写。
 	if err = o.store.View(ctx, bl, eu, func(b *domain.Book) error { plan = b.ReviewWeek(now); return nil }); err != nil {
 		return "", err
 	}

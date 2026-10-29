@@ -173,7 +173,12 @@ func (u *Book) erase(date string, from, to Ref, whole bool, now time.Time) (Dele
 		day.Tombstones = append(day.Tombstones, Source{From: "#" + from.String(), To: "#" + to.String()})
 	}
 	u.changesets = kept
-	u.days = slices.DeleteFunc(u.days, func(d Day) bool { return d.Date == date })
+	// 展示日期相同的旧 Session 并不属于这个业务日，擦除只沿实际绑定传播。
+	u.days = slices.DeleteFunc(u.days, func(d Day) bool {
+		bound, _ := u.sessionDay(d.Session)
+		return bound == date
+	})
+	u.invalidateDayFact(date)
 	if whole {
 		day.Progress, day.Deleted = "0", true
 	}

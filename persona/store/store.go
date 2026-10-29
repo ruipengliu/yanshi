@@ -8,13 +8,19 @@ import (
 	"persona/domain"
 )
 
-// Store 的读写事务只涉及一个键；PendingDeletions 只发现键，不跨键写入。Update 在隔离的 Book 上执行回调，成功才原子提交；
+// Store 的读写事务只涉及一个键；各发现接口只返回键，不跨键写入。Update 在隔离的 Book 上执行回调，成功才原子提交；
 // 同键并发更新串行化。View 给出隔离的快照，回调的修改不会提交。
 // 屏障在同键写锁内检查；View 在快照前及返回前检查，调用方必须丢弃失败回调的结果，不能在回调内交付数据。
 // 回调中的 Book 已绑定 domain.CaptureAccess，原文与账本使用同一快照/提交点。
 // 回调不得重入同键操作；退出（含失败或 panic）即关闭原文接缝及迭代器，不能带到事务外使用。
 // 账本引用离开回调后的修改不得影响存储；Call 的文字回执须同时检查 Call.Err 并作为回调错误返回。
 type Store interface {
+	// PendingDomainChanges 重复读取未确认变化；不认领、不自动确认，失败时不交付结果。
+	PendingDomainChanges(ctx context.Context, businessLine, endUser string) ([]DomainChange, error)
+	// AckDomainChanges 在 owner 事务中幂等确认一个事实截至 through 的全部版本。
+	AckDomainChanges(ctx context.Context, businessLine, endUser, factID string, through uint64, now time.Time) error
+	// PendingChangeOwners 只从未确认索引发现键；注销屏障建立后即不再发现。
+	PendingChangeOwners(ctx context.Context) ([]Owner, error)
 	// BeginOwnerDeletion 与写入串行化，重复请求保留第一次时间及完成状态。
 	BeginOwnerDeletion(ctx context.Context, businessLine, endUser string, now time.Time) (OwnerDeletion, error)
 	// OwnerDeletion 不存在时返回 ErrDeletionNotStarted；只查询控制状态，不开放业务读取。

@@ -412,7 +412,7 @@ func TestFileDayBusinessDateAfterMidnight(t *testing.T) {
 		want  string
 	}{
 		{"bound", true, "2026-10-27"},
-		{"unbound", false, "2026-10-28"},
+		{"unbound", false, "2026-10-27"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b := newCaptureTestBook()
@@ -423,10 +423,11 @@ func TestFileDayBusinessDateAfterMidnight(t *testing.T) {
 			}
 			args := json.RawMessage(`{"day":{"headline":"交付进展"}}`)
 			NewCall(b, "s", args, nil, first).FileDay()
+			// 重试保留第一次接受；未绑定兼容入口也不能因跨午夜生成另一个事实。
 			c := NewCall(b, "s", args, nil, next)
 			text := c.FileDay()
 			days := b.State().Days
-			if len(days) != 1 || days[0].Session != "s" || days[0].Date != tc.want || !days[0].FiledAt.Equal(next) {
+			if len(days) != 1 || days[0].Session != "s" || days[0].Date != tc.want || !days[0].FiledAt.Equal(first) {
 				t.Fatalf("daily summary = %+v", days)
 			}
 			if c.Filed == nil || c.Filed.Session != "s" || c.Filed.Date != tc.want {

@@ -15,6 +15,7 @@ import (
 
 func Run(t *testing.T, factory func() store.Store) {
 	t.Helper()
+	t.Run("domain_changes", func(t *testing.T) { domainChanges(t, factory) })
 	t.Run("deletion_discovery", func(t *testing.T) { deletionDiscovery(t, factory) })
 	t.Run("owner_deletion", func(t *testing.T) { ownerDeletion(t, factory) })
 	t.Run("deletion_interleavings", func(t *testing.T) { deletionInterleavings(t, factory) })

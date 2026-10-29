@@ -24,7 +24,9 @@ func resetOwner(t *testing.T, factory func() store.Store) {
 		b.Seed(seed, captureNow)
 		b.BindWeek("2026-10-21", "week")
 		b.Submitted("session", "整理今天")
-		return nil
+		call := domain.NewCall(b, "week", []byte(`{}`), nil, captureNow)
+		call.FileWeek()
+		return call.Err()
 	}
 	for _, eu := range []string{"u", "other"} {
 		if err := s.Update(ctx, "bl", eu, populate); err != nil {
@@ -70,6 +72,9 @@ func resetOwner(t *testing.T, factory func() store.Store) {
 	}
 	if owners, err := s.PendingDeletions(ctx); err != nil || len(owners) != 0 {
 		t.Fatal("reset retained pending owner", owners, err)
+	}
+	if changes, err := s.PendingDomainChanges(ctx, "bl", "u"); err != nil || len(changes) != 0 {
+		t.Fatal("reset retained domain changes", changes, err)
 	}
 	// 同批次与同引用必须重新可用，且不能读到重置前的原文。
 	if err := s.Update(ctx, "bl", "u", func(b *domain.Book) error {

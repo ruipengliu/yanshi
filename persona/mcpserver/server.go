@@ -30,9 +30,9 @@ func XinliRegistration() Registration {
 		CiteCaptures: true, Acks: false, AttestsSpeakers: true, Timeout: 30 * time.Second}
 }
 
-// Notifier 是出站流（ADR-0046，docs/design/m7-kernel-primitives.md §6）就位前的进程内替身。
+// Notifier 是接受事实后的进程内提示；可靠发现来自同事务保存的领域变化（Q99）。
 // 只在事务提交成功、锁释放后同步通知；重复交出会重复通知，编排器须按 Session 与项目去重。
-// 通知不具备持久交付保证，调用方不能用它代替未来的出站流。
+// TODO(P4-A8/A10)：应用持久接收领域变化后再确认；此提示不能代替恢复扫描。
 type Notifier interface {
 	DayFiled(ctx context.Context, businessLine, endUser, daySession, date string, projects []string)
 }

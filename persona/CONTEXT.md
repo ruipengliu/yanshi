@@ -69,7 +69,7 @@ _Avoid_: 擦除、删一天、Retention（那是内核 Session 的策略）
 _Avoid_: 处理进度、读取位置、Revision（那是承诺修订）
 
 **Domain change（领域变化）**（P4 设计，Q99、Q115）:
-Persona 接受日总览、周回顾等领域事实时，在同一 owner 事务记录的稳定事实 ID 与版本。供应用可靠发现后续工作，应用持久接收后才确认；只表达事实，不保存调用哪个 Agent 的策略。空周回顾也是接受，同命令重复交付去重，合法重交形成新版本。
+Persona 接受日总览、周回顾等领域事实时，在同一 owner 事务记录的稳定事实 ID 与版本。供应用可靠发现后续工作，应用持久接收后才确认；只表达事实，不保存调用哪个 Agent 的策略。空周回顾也是接受，同命令重复交付去重，合法重交形成新版本。事实 ID 在 owner 内唯一，完整去重键含 owner、事实 ID 与版本；确认历史可清理，版本计数保留至注销（[A7 实现规则](../docs/design/xinli-captures.md#接受事实与领域变化p4-a7)）。
 _Avoid_: Event（那是内核日志）、编排任务、Run 终态
 
 **Owner deletion barrier（owner 注销屏障）**（P4，Q104）:

@@ -11,6 +11,8 @@ import (
 type bookData struct {
 	CaptureDays         map[string]*captureDay
 	DeletionTasks       []DeletionTask
+	AcceptedFacts       map[string]acceptedFact
+	DomainChanges       []DomainChange
 	Projects            []Project
 	Changesets          []Changeset
 	Days                []Day
@@ -28,6 +30,7 @@ func NewBook() *Book {
 func (u *Book) MarshalJSON() ([]byte, error) {
 	return json.Marshal(bookData{
 		CaptureDays: u.captureDays, DeletionTasks: u.deletionTasks,
+		AcceptedFacts: u.acceptedFacts, DomainChanges: u.domainChanges,
 		Projects: u.projects, Changesets: u.changesets, Days: u.days, Weeks: u.weeks, Merges: u.merges,
 		WeekSessions: u.weekSessions, Submitted: u.submitted,
 		Next: u.next, NextC: u.nextC, NextCS: u.nextCS,
@@ -56,6 +59,7 @@ func (u *Book) UnmarshalJSON(data []byte) error {
 	next := NewBook()
 	next.captureDays = d.CaptureDays
 	next.deletionTasks = d.DeletionTasks
+	next.acceptedFacts, next.domainChanges = d.AcceptedFacts, d.DomainChanges
 	// 旧快照只有当前 Session，至少补齐这个已知绑定；无法推断更早的换绑历史。
 	for date, day := range next.captureDays {
 		// A2 已保存旧推导的最后时区；装载时一次性升级，之后不再随片段改变。

@@ -216,8 +216,28 @@ func (c *Call) FileWeek() string {
 			single = append(single, h.Habit)
 		}
 	}
-	c.u.weeks = slices.DeleteFunc(c.u.weeks, func(w Week) bool { return w.Session == c.session })
-	c.u.weeks = append(c.u.weeks, Week{Session: c.session, FiledAt: c.now, Habits: kept, Suggestions: in.Suggestions})
+	from, bound := c.weekStart()
+	id := sessionFactID(FactWeek, c.session)
+	if bound {
+		id = factID(FactWeek, from)
+	}
+	previous := c.u.acceptedFacts[id].Session
+	command := in
+	command.Habits = orEmpty(slices.Clone(command.Habits))
+	for i := range command.Habits {
+		command.Habits[i].Days = orEmpty(command.Habits[i].Days)
+	}
+	command.Suggestions = orEmpty(command.Suggestions)
+	// 过滤前的命令参与去重，空结果也必须记录接受；换绑后的同一周取代原事实。
+	if c.acceptFact(FactWeek, id, from, command) {
+		c.u.weeks = slices.DeleteFunc(c.u.weeks, func(w Week) bool {
+			return w.Session == c.session || previous != "" && w.Session == previous
+		})
+		c.u.weeks = append(c.u.weeks, Week{Session: c.session, FiledAt: c.now, Habits: kept, Suggestions: in.Suggestions})
+	}
+	if c.err != nil {
+		return ""
+	}
 	out := fmt.Sprintf("已收到本周的觉察（%d 个习惯）", len(kept))
 	if len(single) > 0 {
 		out += "；只出现一天的不算习惯，没有收录：" + strings.Join(single, "、")
