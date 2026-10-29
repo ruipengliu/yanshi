@@ -8,6 +8,7 @@ import (
 
 	"persona/domain"
 	"persona/store"
+	"xinli/account"
 	"xinli/task"
 )
 
@@ -73,6 +74,13 @@ func (o *Orchestrator) scanInputs(ctx context.Context) error {
 			result = errors.Join(result, err)
 			continue
 		}
+		if account.IsTask(t) {
+			if o.accountWorker != nil {
+				_, err = o.accountWorker.Run(ctx, id)
+				result = errors.Join(result, err)
+			}
+			continue
+		}
 		// 删除步骤仍由 Persona 的扫描顺序驱动；输入任务由同一 receipt 执行器处理。
 		if t.Operation == "delete" {
 			result = errors.Join(result, o.resumeDeletion(ctx, t))
@@ -86,7 +94,7 @@ func (o *Orchestrator) scanInputs(ctx context.Context) error {
 			result = errors.Join(result, claimErr)
 			continue
 		}
-		_, err = o.worker.Run(ctx, id)
+		_, err = o.runTask(ctx, id)
 		result = errors.Join(result, err)
 	}
 	return result
@@ -111,7 +119,7 @@ func (o *Orchestrator) resumeDeletion(ctx context.Context, t task.Task) error {
 	return errors.Join(err, o.tasks.Save(ctx, job, o.now(), true))
 }
 
-func (o *Orchestrator) receiveChanges(ctx context.Context, bl, eu string) error {
+func (o *Orchestrator) receiveChangesActive(ctx context.Context, bl, eu string) error {
 	changes, err := o.store.PendingDomainChanges(ctx, bl, eu)
 	if err != nil {
 		return err
@@ -202,7 +210,7 @@ func (o *Orchestrator) weekInput(ctx context.Context, bl, eu, from, operation, t
 	if err := o.tasks.Receive(ctx, source, []task.Spec{spec}, o.now()); err != nil {
 		return task.Task{}, err
 	}
-	return o.worker.Run(ctx, task.Identity(source, spec))
+	return o.runTask(ctx, task.Identity(source, spec))
 }
 
 func (o *Orchestrator) prepareCollect(ctx context.Context, t task.Task) (string, string, error) {
@@ -276,5 +284,5 @@ func (o *Orchestrator) rebuildTask(ctx context.Context, bl, eu string, d domain.
 	if err := o.tasks.Receive(ctx, source, []task.Spec{spec}, o.now()); err != nil {
 		return task.Task{}, err
 	}
-	return o.worker.Run(ctx, task.Identity(source, spec))
+	return o.runTask(ctx, task.Identity(source, spec))
 }

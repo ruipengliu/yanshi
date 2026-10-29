@@ -23,6 +23,7 @@ import (
 	"persona/store"
 	"persona/store/memstore"
 	"persona/store/pgstore"
+	"xinli/account"
 	"xinli/devui"
 	"xinli/kernel"
 	"xinli/orchestrator"
@@ -100,7 +101,8 @@ func serve(ctx context.Context, cfg config, stdin io.Reader, stdout, stderr io.W
 	checks := []func(context.Context) error{personaReady}
 	var orch *orchestrator.Orchestrator
 	var client *kernel.Client
-	if cfg.roles.orchestrator {
+	var accounts *account.Service
+	if cfg.roles.orchestrator || cfg.roles.bff || cfg.mode == "dev" && cfg.identityProvider != nil {
 		tasks, closeTasks, taskReady, err := openTasks(ctx, cfg.store, cfg.appDSN, cfg.personaDSN, cfg.mode == "dev")
 		if err != nil {
 			return err
@@ -108,13 +110,19 @@ func serve(ctx context.Context, cfg config, stdin io.Reader, stdout, stderr io.W
 		defer closeTasks()
 		checks = append(checks, taskReady)
 		client = &kernel.Client{BaseURL: cfg.kernelURL, Tokens: cfg.tokens}
-		orch = orchestrator.New(life, books, client, orchestrator.Options{Logger: logger, Tasks: tasks})
+		accounts = &account.Service{Store: tasks.(account.Store), Provider: cfg.identityProvider, AllowUnregistered: cfg.mode == "dev"}
+		if cfg.roles.orchestrator {
+			accountWorker := &account.Worker{Accounts: accounts, Tasks: tasks, Persona: books, Kernel: client}
+			orch = orchestrator.New(life, books, client, orchestrator.Options{Logger: logger, Tasks: tasks, Accounts: accounts, AccountWorker: accountWorker})
+		}
 		defer func() {
 			cancelLife()
-			_ = orch.Shutdown(context.Background())
+			if orch != nil {
+				_ = orch.Shutdown(context.Background())
+			}
 		}()
 	}
-	mux := routes(cfg, books, orch, client)
+	mux := routes(cfg, books, orch, client, accounts)
 	probes := http.NewServeMux()
 	probes.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -245,7 +253,11 @@ func serve(ctx context.Context, cfg config, stdin io.Reader, stdout, stderr io.W
 	return result
 }
 
-func routes(cfg config, books store.Store, orch *orchestrator.Orchestrator, client *kernel.Client) http.Handler {
+func routes(cfg config, books store.Store, orch *orchestrator.Orchestrator, client *kernel.Client, services ...*account.Service) http.Handler {
+	var accounts *account.Service
+	if len(services) > 0 {
+		accounts = services[0]
+	}
 	mux := http.NewServeMux()
 	if cfg.roles.persona {
 		opts := mcpserver.Options{Credentials: cfg.credentials, InsecureDev: cfg.insecureMCP, AllowUnmanaged: cfg.mode == "dev" && orch == nil}
@@ -257,6 +269,9 @@ func routes(cfg config, books store.Store, orch *orchestrator.Orchestrator, clie
 	}
 	if cfg.roles.bff {
 		mountBFF(mux)
+	}
+	if accounts != nil && (cfg.roles.bff || cfg.mode == "dev") {
+		mux.Handle("/v1/auth/", accounts.Handler())
 	}
 	if cfg.mode != "dev" {
 		return mux
@@ -284,6 +299,9 @@ func routes(cfg config, books store.Store, orch *orchestrator.Orchestrator, clie
 		_ = json.NewEncoder(w).Encode(map[string]string{"session_id": sid})
 	})
 	mux.Handle("/", devui.Handler(devui.Config{BusinessLines: cfg.lines, ConsoleURL: cfg.consoleURL}, uiOpts))
+	if accounts != nil {
+		return accounts.DevelopmentHandler(mux)
+	}
 	return mux
 }
 

@@ -53,3 +53,23 @@ _Avoid_: 内核定时、Run 完成（指业务完成时）
 **Kernel TokenSource（内核令牌来源）**:
 应用按业务线取得短期内核服务令牌的并发安全接口；可重读静态文件/环境值，或读取业务线私钥签发并在到期前刷新。身份从持久任务 owner 传递，不在共享 Client 上保存可变的当前业务线。
 _Avoid_: 应用登录态、Persona MCP 服务凭据
+
+**Account（账号）**:
+应用拥有的业务线与 EndUser 身份，状态为 active、disabled、deleting、deleted；包含时区、偏好和带单调版本的权益。禁用撤销全部登录态，注销终态永久保存旧 ID 屏障；同身份重新注册生成新的 EndUser ID。
+_Avoid_: 内核 Session、Persona owner 的知识账本
+
+**Installation（安装实例）**:
+应用账号绑定的设备 ID、平台、绑定时间和撤销状态。登录态属于安装实例，单设备登出只撤销该实例；领夹不建模为内核 Device 或 Node。
+_Avoid_: Node、Connection
+
+**Application session（应用登录态）**:
+应用签发的不透明随机访问与刷新凭据；服务端只存 SHA-256。刷新同时轮换两种凭据，撤销与过期逐次检查；BFF 以自己的内核服务令牌代表已认证用户访问内核。
+_Avoid_: 内核 Session、内核 JWT
+
+**Account deletion（账号注销）**:
+应用持久驱动的跨库清理流程：封禁与撤销、Persona 屏障与清理、内核注销与完成查询、应用清理。仅最后一步完成后为 deleted；独立只读注销查询凭据只存哈希，登录态失效后仍可查询进度。
+_Avoid_: 单个 Session 删除、Persona 清理完成
+
+**Account gate（账号操作互斥）**:
+同 owner 的应用请求、权益调用与禁用/注销操作共享的串行边界。内存使用互斥通道，PG 使用连接级咨询锁；短事务负责落库，远程调用不持有 SQL 事务。它不等于内核的远端版本条件写入，连接丢失后的迟到请求仍须内核契约提供 fencing。
+_Avoid_: Worker 租约、Persona 注销屏障

@@ -11,6 +11,7 @@ import (
 	"persona/domain"
 	"persona/mcpserver"
 	"persona/store"
+	"xinli/account"
 	"xinli/task"
 	taskmem "xinli/task/memstore"
 )
@@ -26,6 +27,8 @@ type Kernel interface {
 type Options struct {
 	// Tasks 由装配方注入应用独立数据库；省略仅适用于内存开发模式。
 	Tasks           task.Store
+	Accounts        account.Guard
+	AccountWorker   *account.Worker
 	Now             func() time.Time
 	Logger          *slog.Logger
 	CommandTimeout  time.Duration
@@ -53,6 +56,8 @@ type Orchestrator struct {
 	startedRetries     bool
 	startedExpirations bool
 	tasks              task.Store
+	accounts           account.Guard
+	accountWorker      *account.Worker
 	worker             *task.Executor
 	startedTasks       bool
 	startedSchedules   bool
@@ -86,7 +91,7 @@ func New(ctx context.Context, s store.Store, k Kernel, opts Options) *Orchestrat
 		opts.Tasks = taskmem.New()
 	}
 	o := &Orchestrator{retryInterval: opts.RetryInterval, retryMax: opts.RetryMax, defaultZone: zone,
-		stopRetries: make(chan struct{}), tasks: opts.Tasks, store: s, kernel: k, ctx: ctx, now: opts.Now, logger: opts.Logger, locks: make(map[owner]chan struct{})}
+		accounts: opts.Accounts, accountWorker: opts.AccountWorker, stopRetries: make(chan struct{}), tasks: opts.Tasks, store: s, kernel: k, ctx: ctx, now: opts.Now, logger: opts.Logger, locks: make(map[owner]chan struct{})}
 	taskKernel, _ := k.(task.Kernel)
 	o.orphanGrace = opts.OrphanGrace
 	if o.orphanGrace <= 0 {
@@ -162,7 +167,7 @@ func (o *Orchestrator) WeekFiled(ctx context.Context, bl, eu string) {
 	o.DayFiled(ctx, bl, eu, "", "", nil)
 }
 
-func (o *Orchestrator) Week(ctx context.Context, bl, eu string) (string, error) {
+func (o *Orchestrator) weekActive(ctx context.Context, bl, eu string) (string, error) {
 	if !o.begin() {
 		return "", errors.New("orchestrator: shutting down")
 	}

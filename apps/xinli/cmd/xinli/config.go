@@ -18,6 +18,7 @@ import (
 
 	"persona/mcpserver"
 	"persona/pg"
+	"xinli/account"
 	"xinli/kernel"
 	appPG "xinli/pg"
 
@@ -43,23 +44,24 @@ func (r roles) names() []string {
 }
 
 type config struct {
-	mode         string
-	addr         string
-	healthAddr   string
-	store        string
-	personaDSN   string
-	appDSN       string
-	kernelURL    string
-	consoleURL   string
-	mcpDir       string
-	lines        []string
-	roles        roles
-	autoSchedule bool
-	exitOnEOF    bool
-	insecureMCP  bool
-	credentials  []mcpserver.Credential
-	headers      map[string]map[string]string
-	tokens       kernel.TokenSource
+	mode             string
+	addr             string
+	healthAddr       string
+	store            string
+	personaDSN       string
+	appDSN           string
+	kernelURL        string
+	consoleURL       string
+	mcpDir           string
+	lines            []string
+	roles            roles
+	autoSchedule     bool
+	exitOnEOF        bool
+	insecureMCP      bool
+	credentials      []mcpserver.Credential
+	headers          map[string]map[string]string
+	tokens           kernel.TokenSource
+	identityProvider account.IdentityProvider
 }
 
 func envDefault(name, fallback string) string {
@@ -104,6 +106,8 @@ func parseConfig(args []string, stderr io.Writer) (config, error) {
 	mcpEnv := flags.String("mcp-credentials-env", os.Getenv("XINLI_MCP_CREDENTIALS_ENV"), "MCP 凭据引用 JSON 所在环境变量名")
 	tokenFile := flags.String("kernel-tokens-file", os.Getenv("XINLI_KERNEL_TOKENS_FILE"), "按业务线的内核凭据来源 JSON 文件")
 	tokenEnv := flags.String("kernel-tokens-env", os.Getenv("XINLI_KERNEL_TOKENS_ENV"), "按业务线的内核凭据来源 JSON 所在环境变量名")
+	testFile := flags.String("test-identities-file", os.Getenv("XINLI_TEST_IDENTITIES_FILE"), "测试身份配置引用 JSON 文件")
+	testEnv := flags.String("test-identities-env", os.Getenv("XINLI_TEST_IDENTITIES_ENV"), "测试身份配置引用 JSON 所在环境变量名")
 	legacyTokenEnv := flags.String("kernel-token-env", os.Getenv("XINLI_KERNEL_TOKEN_ENV"), "单业务线静态服务令牌所在环境变量名")
 	audience := flags.String("kernel-audience", envDefault("XINLI_KERNEL_AUDIENCE", "yanshi"), "内核 JWT audience")
 	ttl := flags.String("kernel-token-ttl", envDefault("XINLI_KERNEL_TOKEN_TTL", "15m"), "签发令牌有效期，至多 1h 且不超过内核 max_ttl")
@@ -144,6 +148,32 @@ func parseConfig(args []string, stderr io.Writer) (config, error) {
 			seen[line] = true
 		}
 	}
+	if *testFile != "" || *testEnv != "" {
+		var refs []struct {
+			BusinessLine string `json:"business_line"`
+			Subject      string `json:"subject"`
+			CodeEnv      string `json:"code_env"`
+		}
+		if err := readConfigJSON(*testFile, *testEnv, &refs); err != nil {
+			return cfg, err
+		}
+		provider := account.TestProvider{}
+		validEnv := regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+		proofs := map[string]bool{}
+		for _, ref := range refs {
+			if !seen[ref.BusinessLine] || ref.Subject == "" || !validEnv.MatchString(ref.CodeEnv) {
+				return cfg, errors.New("xinli: invalid test identity configuration")
+			}
+			code := os.Getenv(ref.CodeEnv)
+			key := ref.BusinessLine + ":" + account.Hash(code)
+			if len(code) < 16 || proofs[key] {
+				return cfg, errors.New("xinli: test identity secret missing, short or duplicated")
+			}
+			proofs[key] = true
+			provider.Identities = append(provider.Identities, account.TestIdentity{BusinessLine: ref.BusinessLine, Subject: ref.Subject, Code: code})
+		}
+		cfg.identityProvider = provider
+	}
 	if cfg.mode == "dev" {
 		cfg.roles = roles{persona: true, orchestrator: cfg.kernelURL != ""}
 		host, _, err := net.SplitHostPort(cfg.addr)
@@ -172,7 +202,7 @@ func parseConfig(args []string, stderr io.Writer) (config, error) {
 		return cfg, errors.New("xinli: invalid store")
 	}
 	if cfg.store == "pg" {
-		if cfg.personaDSN == "" || cfg.roles.orchestrator && cfg.appDSN == "" {
+		if cfg.personaDSN == "" || (cfg.roles.orchestrator || cfg.roles.bff || cfg.identityProvider != nil) && cfg.appDSN == "" {
 			return cfg, errors.New("xinli: required database DSN missing")
 		}
 		if err := validateDatabases(cfg.personaDSN, cfg.appDSN); err != nil {

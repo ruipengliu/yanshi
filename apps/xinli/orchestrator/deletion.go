@@ -86,7 +86,7 @@ func (o *Orchestrator) DeletionPending(_ context.Context, bl, eu, _ string) {
 	}()
 }
 
-func (o *Orchestrator) processDeletions(ctx context.Context, bl, eu string) error {
+func (o *Orchestrator) processDeletionsActive(ctx context.Context, bl, eu string) error {
 	release, err := o.acquire(ctx, bl, eu)
 	if err != nil {
 		return err
@@ -259,7 +259,7 @@ func (o *Orchestrator) rebuildDue(task domain.DeletionTask) bool {
 	return task.Date < now.In(zone).Format(time.DateOnly) && (task.DeleteAt.IsZero() || task.DeleteAt.After(now))
 }
 
-func (o *Orchestrator) EnsureDaySession(ctx context.Context, bl, eu, date string) (string, error) {
+func (o *Orchestrator) ensureDaySessionActive(ctx context.Context, bl, eu, date string) (string, error) {
 	if !o.begin() {
 		return "", errors.New("orchestrator: shutting down")
 	}
@@ -300,4 +300,17 @@ func deleteWorkSession(ctx context.Context, k DeletionKernel, bl, sid, reason st
 		return false, "", nil
 	}
 	return true, "", nil
+}
+
+func (o *Orchestrator) processDeletions(ctx context.Context, bl, eu string) error {
+	return o.withActive(ctx, task.Owner{BusinessLine: bl, EndUser: eu}, func(ctx context.Context) error { return o.processDeletionsActive(ctx, bl, eu) })
+}
+func (o *Orchestrator) EnsureDaySession(ctx context.Context, bl, eu, date string) (string, error) {
+	var out string
+	err := o.withActive(ctx, task.Owner{BusinessLine: bl, EndUser: eu}, func(ctx context.Context) error {
+		var err error
+		out, err = o.ensureDaySessionActive(ctx, bl, eu, date)
+		return err
+	})
+	return out, err
 }

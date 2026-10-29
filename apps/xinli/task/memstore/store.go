@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"xinli/account"
 	"xinli/task"
 )
 
@@ -15,25 +16,36 @@ type sourceKey struct {
 	Version uint64
 }
 type Store struct {
-	mu        sync.Mutex
-	sources   map[sourceKey]bool
-	tasks     map[string]task.Task
-	creations map[string]task.Creation
-	sequence  int64
+	mu         sync.Mutex
+	gatesMu    sync.Mutex
+	gates      map[task.Owner]*ownerGate
+	accounts   map[task.Owner]account.Record
+	identities map[string]task.Owner
+	sources    map[sourceKey]bool
+	tasks      map[string]task.Task
+	creations  map[string]task.Creation
+	sequence   int64
 }
 
 func New() *Store {
-	return &Store{creations: make(map[string]task.Creation), sources: make(map[sourceKey]bool), tasks: make(map[string]task.Task)}
+	return &Store{gates: make(map[task.Owner]*ownerGate), accounts: make(map[task.Owner]account.Record), identities: make(map[string]task.Owner), creations: make(map[string]task.Creation), sources: make(map[sourceKey]bool), tasks: make(map[string]task.Task)}
 }
 
 func (s *Store) Receive(ctx context.Context, source task.Source, specs []task.Spec, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.receiveLocked(ctx, source, specs, now, false)
+}
+
+func (s *Store) receiveLocked(ctx context.Context, source task.Source, specs []task.Spec, now time.Time, accountChange bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if !task.ValidSource(source, specs, now) {
 		return task.ErrInvalid
+	}
+	if r, ok := s.accounts[source.Owner]; ok && r.Account.Status != account.Active && !(accountChange && r.Account.Status != account.Deleted && source.ID == account.DeleteOperation) {
+		return account.ErrInactive
 	}
 	key := sourceKey{source.Owner, source.ID, source.Version}
 	if s.sources[key] {
@@ -66,6 +78,9 @@ func (s *Store) Get(ctx context.Context, id string) (task.Task, error) {
 }
 
 func (s *Store) due(t task.Task, now time.Time) bool {
+	if r, ok := s.accounts[t.Owner]; ok && r.Account.Status != account.Active && !account.IsTask(t) {
+		return false
+	}
 	if !task.Ready(t, now) {
 		return false
 	}

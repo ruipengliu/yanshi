@@ -81,7 +81,7 @@ func scheduled(owner task.Owner, kind, date string, version uint64) scheduledInp
 		task.Spec{Operation: operation, Target: target, Date: date}}
 }
 
-func (o *Orchestrator) scheduleOwner(ctx context.Context, owner store.Owner) error {
+func (o *Orchestrator) scheduleOwnerActive(ctx context.Context, owner store.Owner) error {
 	now := o.now()
 	key := task.Owner{BusinessLine: owner.BusinessLine, EndUser: owner.EndUser}
 	var inputs []scheduledInput

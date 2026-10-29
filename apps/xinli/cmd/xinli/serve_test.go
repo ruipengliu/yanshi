@@ -272,3 +272,25 @@ func startProductionProcess(t *testing.T, args []string) ready {
 	}
 	return ready{}
 }
+
+func TestConfiguredTestIdentity(t *testing.T) {
+	t.Setenv("TEST_IDENTITY_SECRET", "a-test-secret-long-enough")
+	t.Setenv("TEST_IDENTITY_CONFIG", `[{"business_line":"bl","subject":"test-user","code_env":"TEST_IDENTITY_SECRET"}]`)
+	cfg, err := parseConfig([]string{"dev", "-business-lines", "bl", "-test-identities-env", "TEST_IDENTITY_CONFIG"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := startService(t, cfg)
+	resp, err := http.Post(info.PageURL+"v1/auth/login", "application/json", strings.NewReader(`{"business_line":"bl","proof":"a-test-secret-long-enough","device_id":"phone","platform":"ios"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatal(resp.StatusCode)
+	}
+	t.Setenv("TEST_IDENTITY_SECRET", "")
+	if _, err := parseConfig([]string{"dev", "-business-lines", "bl", "-test-identities-env", "TEST_IDENTITY_CONFIG"}, io.Discard); err == nil {
+		t.Fatal("missing configured secret accepted")
+	}
+}

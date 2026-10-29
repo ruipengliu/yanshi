@@ -136,7 +136,7 @@ func (o *Orchestrator) retireCommand(ctx context.Context, t task.Task) error {
 }
 
 // DayInput 与删除后的重建共用任务执行器；入口不能先提交文字再补登记。
-func (o *Orchestrator) DayInput(ctx context.Context, bl, eu, date, kind, inputID string) (string, error) {
+func (o *Orchestrator) dayInputActive(ctx context.Context, bl, eu, date, kind, inputID string) (string, error) {
 	if kind != "day" && kind != "exchange" || inputID == "" {
 		return "", task.ErrConfiguration
 	}
@@ -149,7 +149,7 @@ func (o *Orchestrator) DayInput(ctx context.Context, bl, eu, date, kind, inputID
 	if err := o.tasks.Receive(ctx, source, []task.Spec{spec}, o.now()); err != nil {
 		return "", err
 	}
-	job, err := o.worker.Run(ctx, task.Identity(source, spec))
+	job, err := o.runTask(ctx, task.Identity(source, spec))
 	if err != nil {
 		return "", err
 	}
@@ -160,7 +160,7 @@ func (o *Orchestrator) DayInput(ctx context.Context, bl, eu, date, kind, inputID
 }
 
 // 无内容的按需创建也使用有租约的持久任务；每次换绑/擦除后的版本都产生新的创建身份。
-func (o *Orchestrator) ensureDay(ctx context.Context, bl, eu, date string) (string, error) {
+func (o *Orchestrator) ensureDayActive(ctx context.Context, bl, eu, date string) (string, error) {
 	var target domain.WorkTarget
 	err := o.store.View(ctx, bl, eu, func(b *domain.Book) error {
 		b.SetCaptureClock(o.now)
@@ -189,7 +189,7 @@ func (o *Orchestrator) ensureDay(ctx context.Context, bl, eu, date string) (stri
 	return o.runEnsure(ctx, job)
 }
 
-func (o *Orchestrator) runEnsure(ctx context.Context, job task.Task) (string, error) {
+func (o *Orchestrator) runEnsureActive(ctx context.Context, job task.Task) (string, error) {
 	callCtx, cancel := context.WithTimeout(ctx, max(time.Nanosecond, job.LeaseUntil.Sub(o.now())))
 	defer cancel()
 	sid, err := o.ensureWork(callCtx, job, DayAgent)
