@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"yanshi/internal/outbox"
+
 	"google.golang.org/protobuf/proto"
 
 	v1 "yanshi/gen/yanshi/v1"
@@ -77,7 +79,9 @@ type Options struct {
 
 // Stats 统计模拟中被覆盖到的路径，防止模拟"空转"。
 type Stats struct {
-	Redos, RedoConflicts, RedoDuplicates, RedoCardRejects int
+	OutboxRunCompleted, OutboxRunFailed, OutboxQuestions, OutboxApprovals int
+	OutboxBackgroundSettled, OutboxSessionClosed, OutboxSessionDeleted    int
+	Redos, RedoConflicts, RedoDuplicates, RedoCardRejects                 int
 	// FarParks 与 DuePromotions 只在 PostgreSQL 差分种子中要求覆盖。
 	FarParks, DuePromotions int
 
@@ -184,15 +188,15 @@ type flakyLog struct {
 	w *World
 }
 
-func (l flakyLog) Append(ctx context.Context, sid string, expected uint64, events ...*v1.Event) (uint64, error) {
+func (l flakyLog) Append(ctx context.Context, sid string, expected uint64, envelopes []outbox.Envelope, events ...*v1.Event) (uint64, error) {
 	if !l.w.faults || !l.w.chance(0.03) {
-		return l.appendRecorded(ctx, sid, expected, events...)
+		return l.appendRecorded(ctx, sid, expected, envelopes, events...)
 	}
 	l.w.Stats.StoreFaults++
 	if l.w.chance(0.5) {
 		return 0, &storeFault{}
 	}
-	if _, err := l.appendRecorded(ctx, sid, expected, events...); err != nil {
+	if _, err := l.appendRecorded(ctx, sid, expected, envelopes, events...); err != nil {
 		return 0, err
 	}
 	return 0, &storeFault{written: true}
@@ -206,13 +210,13 @@ type flakyWaking struct {
 	w *World
 }
 
-func (l flakyWaking) AppendAndEnqueue(ctx context.Context, sid string, expected uint64, class workqueue.Class, events ...*v1.Event) (uint64, error) {
+func (l flakyWaking) AppendAndEnqueue(ctx context.Context, sid string, expected uint64, class workqueue.Class, envelopes []outbox.Envelope, events ...*v1.Event) (uint64, error) {
 	if l.w.faults && l.w.chance(0.04) {
 		l.w.Stats.WakeFaults++
 		if l.w.chance(0.5) {
 			return 0, &storeFault{}
 		}
-		if _, err := l.WakingLog.AppendAndEnqueue(ctx, sid, expected, class, events...); err != nil {
+		if _, err := l.WakingLog.AppendAndEnqueue(ctx, sid, expected, class, envelopes, events...); err != nil {
 			return 0, err
 		}
 		if err := l.w.interleave(); err != nil {
@@ -220,7 +224,7 @@ func (l flakyWaking) AppendAndEnqueue(ctx context.Context, sid string, expected 
 		}
 		return 0, &storeFault{written: true}
 	}
-	head, err := l.WakingLog.AppendAndEnqueue(ctx, sid, expected, class, events...)
+	head, err := l.WakingLog.AppendAndEnqueue(ctx, sid, expected, class, envelopes, events...)
 	if err != nil {
 		return 0, err
 	}
@@ -367,7 +371,8 @@ type World struct {
 
 	sessions []string
 	// observedRuns 保留各 Session 已见的请求数，避免重复检查或删除日志改变累计覆盖。
-	observedRuns map[string]int
+	observedRuns      map[string]int
+	observedEnvelopes map[string]bool
 	// children 是发现的委托子 Session（discoverChildren），parentOf 是它们的父 Session。
 	children  []string
 	parentOf  map[string]string
@@ -1233,6 +1238,9 @@ func (w *World) quiesce() error {
 
 // CheckInvariants 独立于写入方重新投影每个 Session 日志，并检查跨组件不变量。
 func (w *World) CheckInvariants() error {
+	if err := w.checkOutbox(); err != nil {
+		return err
+	}
 	if err := w.discoverChildren(); err != nil {
 		return err
 	}
@@ -1549,6 +1557,7 @@ func (w *World) Fingerprint() string {
 		w.fingerprintBackground(h, sid)
 		w.fingerprintSchedules(h, sid)
 	}
+	w.fingerprintOutbox(h)
 	w.fingerprintInboxes(h)
 	w.fingerprintEndUsers(h)
 	for i := range w.users {

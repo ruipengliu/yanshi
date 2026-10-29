@@ -13,6 +13,7 @@ import (
 	"yanshi/internal/ids"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/metrics"
+	"yanshi/internal/outbox"
 )
 
 // Store 是读写 Session 日志的唯一入口：写入前用投影校验，写入后同步本地投影。
@@ -25,8 +26,10 @@ type Store struct {
 	// 超过 SnapshotEvery（默认 200）条，就写入新快照。
 	Snapshots     Snapshots
 	SnapshotEvery int
-	// Deletions 非空时，写入快照后复查删除记录，Session 已删除则撤回（ADR-0015）。
+	// Deletions 非空时，写入快照或普通信封后复查删除记录，Session 已删除则撤回（ADR-0015）。
 	Deletions lifecycle.Deletions
+	// Outbox 与 Log 共用提交契约；这里只负责写后删除复查。
+	Outbox outbox.Store
 	// Waking 是与 Log 同一存储的原子"追加并入队"，供 CommitAndWake 使用；为 nil 时 CommitAndWake 报错。
 	Waking eventlog.WakingLog
 }
@@ -119,7 +122,7 @@ type invalidError struct{ err error }
 func (e invalidError) Error() string   { return e.err.Error() }
 func (e invalidError) Unwrap() []error { return []error{ErrInvalid, e.err} }
 
-// ErrGone 表示 Session 的日志已被删除（ADR-0015）：追加冲突后同步，却没有任何新事件，说明日志变短了。
+// ErrGone 表示 Session 已删除（ADR-0015）：追加冲突后同步发现日志变短，或写后复查发现删除记录。
 var ErrGone = errors.New("session log is gone")
 
 // SyncAfterConflict 在追加冲突后同步投影。冲突必然意味着日志前进了；若同步没有读到新事件，
@@ -165,10 +168,26 @@ func (s *Store) commit(ctx context.Context, st *State, wake bool, events []*v1.E
 	if err != nil {
 		return invalidError{err}
 	}
+	envelopes, err := selectEnvelopes(st, events)
+	if err != nil {
+		return invalidError{err}
+	}
 	if wake {
-		_, err = s.Waking.AppendAndEnqueue(ctx, st.SessionID, st.Seq, next.WorkClass(), events...)
+		_, err = s.Waking.AppendAndEnqueue(ctx, st.SessionID, st.Seq, next.WorkClass(), envelopes, events...)
 	} else {
-		_, err = s.Log.Append(ctx, st.SessionID, st.Seq, events...)
+		_, err = s.Log.Append(ctx, st.SessionID, st.Seq, envelopes, events...)
+	}
+	// 丢响应也可能已经提交；复查不能只放在成功返回的分支，且不能继承已取消的请求。
+	if s.Outbox != nil && len(envelopes) > 0 {
+		gone, recheckErr := lifecycle.Recheck(context.WithoutCancel(ctx), s.Deletions, st.SessionID, func(ctx context.Context) error {
+			return s.Outbox.DeleteSession(ctx, st.SessionID)
+		})
+		if recheckErr != nil {
+			return errors.Join(err, recheckErr)
+		}
+		if gone {
+			return ErrGone
+		}
 	}
 	if err != nil {
 		return err

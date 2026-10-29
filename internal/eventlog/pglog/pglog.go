@@ -9,6 +9,9 @@ import (
 	"errors"
 	"fmt"
 
+	"yanshi/internal/outbox"
+	"yanshi/internal/outbox/pgoutbox"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/protobuf/proto"
@@ -29,7 +32,10 @@ func New(pool *pgxpool.Pool, n *pg.Notifier) *Log { return &Log{pool: pool, noti
 
 var _ eventlog.Log = (*Log)(nil)
 
-func (l *Log) Append(ctx context.Context, sessionID string, expectedSeq uint64, events ...*v1.Event) (uint64, error) {
+func (l *Log) Append(ctx context.Context, sessionID string, expectedSeq uint64, envelopes []outbox.Envelope, events ...*v1.Event) (uint64, error) {
+	if err := outbox.ValidateAppend(sessionID, expectedSeq, len(events), envelopes); err != nil {
+		return 0, err
+	}
 	if len(events) == 0 {
 		return expectedSeq, nil
 	}
@@ -37,15 +43,24 @@ func (l *Log) Append(ctx context.Context, sessionID string, expectedSeq uint64, 
 	if err != nil {
 		return 0, err
 	}
-	// 一条语句、一次往返完成检查、插入与通知（原来是事务中的五条语句）：末尾不是 expectedSeq 时不插入任何行；
-	// 并发的同 seq 追加由主键冲突裁决。只有插入成功才通知，负载带上新的末尾 seq，等待者无需再查询
-	// （pg.Notifier.WaitAbove）。
-	err = l.pool.QueryRow(ctx, `
+	// 事件与信封共用事务；出站失败时事件与通知也回滚。
+	tx, err := l.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	err = tx.QueryRow(ctx, `
 		WITH ins AS (`+insertSQL+`)
 		SELECT count(*), pg_notify($4, $5) FROM ins HAVING count(*) > 0`,
 		sessionID, int64(expectedSeq), rows, l.notifier.Channel(pg.TopicEvents, sessionID),
 		fmt.Sprintf("%s:%d", sessionID, expectedSeq+uint64(len(events))),
 	).Scan(new(int), nil)
+	if err == nil {
+		err = pgoutbox.Insert(ctx, tx, envelopes)
+	}
+	if err == nil {
+		err = tx.Commit(ctx)
+	}
 	return l.appended(sessionID, expectedSeq, events, err)
 }
 
@@ -97,7 +112,10 @@ type waking struct {
 	q *pgqueue.Queue
 }
 
-func (w waking) AppendAndEnqueue(ctx context.Context, sessionID string, expectedSeq uint64, class workqueue.Class, events ...*v1.Event) (uint64, error) {
+func (w waking) AppendAndEnqueue(ctx context.Context, sessionID string, expectedSeq uint64, class workqueue.Class, envelopes []outbox.Envelope, events ...*v1.Event) (uint64, error) {
+	if err := outbox.ValidateAppend(sessionID, expectedSeq, len(events), envelopes); err != nil {
+		return 0, err
+	}
 	if len(events) == 0 {
 		return expectedSeq, w.q.Enqueue(ctx, sessionID, class)
 	}
@@ -121,6 +139,9 @@ func (w waking) AppendAndEnqueue(ctx context.Context, sessionID string, expected
 		fmt.Sprintf("%s:%d", sessionID, expectedSeq+uint64(len(events))), workCh, workPayload,
 		class.BusinessLine, int16(class.Priority), w.q.Now(),
 	).Scan(new(int64), nil, nil)
+	if err == nil {
+		err = pgoutbox.Insert(ctx, tx, envelopes)
+	}
 	if err == nil {
 		err = tx.Commit(ctx)
 	}

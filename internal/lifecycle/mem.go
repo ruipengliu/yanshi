@@ -5,6 +5,9 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"yanshi/internal/outbox"
+	"yanshi/internal/outbox/memoutbox"
 )
 
 // MemIndex 是 Index 的进程内实现。
@@ -156,6 +159,7 @@ func (x *MemIndex) Delete(_ context.Context, id string) error {
 
 // MemDeletions 是 Deletions 的进程内实现。
 type MemDeletions struct {
+	outbox   *memoutbox.Store
 	mu       sync.Mutex
 	tombs    map[string]*Tombstone
 	requests map[string]*Request
@@ -165,7 +169,11 @@ type MemDeletions struct {
 }
 
 func NewMemDeletions() *MemDeletions {
-	return &MemDeletions{tombs: map[string]*Tombstone{}, requests: map[string]*Request{}, marked: make(chan struct{})}
+	return NewMemDeletionsWithOutbox(memoutbox.New())
+}
+
+func NewMemDeletionsWithOutbox(o *memoutbox.Store) *MemDeletions {
+	return &MemDeletions{outbox: o, tombs: map[string]*Tombstone{}, requests: map[string]*Request{}, marked: make(chan struct{})}
 }
 
 var (
@@ -190,17 +198,24 @@ func (d *MemDeletions) WaitDeleted(ctx context.Context, sessionID string) error 
 	}
 }
 
-func (d *MemDeletions) Mark(_ context.Context, t *Tombstone) (bool, error) {
+func (d *MemDeletions) Mark(ctx context.Context, t *Tombstone) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if _, ok := d.tombs[t.SessionID]; ok {
 		return false, nil
 	}
-	close(d.marked)
-	d.marked = make(chan struct{})
-	cp := *t
-	d.tombs[t.SessionID] = &cp
-	return true, nil
+	envelope := outbox.Deleted(t.BusinessLine, t.SessionID, t.Reason, t.RequestID)
+	err := d.outbox.Commit(ctx, []outbox.Envelope{envelope}, func() error {
+		close(d.marked)
+		d.marked = make(chan struct{})
+		cp := *t
+		d.tombs[t.SessionID] = &cp
+		return nil
+	})
+	return err == nil, err
 }
 
 func (d *MemDeletions) Get(_ context.Context, id string) (*Tombstone, error) {

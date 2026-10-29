@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"yanshi/internal/outbox"
+
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -26,12 +28,12 @@ type redoWaking struct {
 	calls  int
 }
 
-func (w *redoWaking) AppendAndEnqueue(ctx context.Context, sid string, seq uint64, class workqueue.Class, events ...*v1.Event) (uint64, error) {
+func (w *redoWaking) AppendAndEnqueue(ctx context.Context, sid string, seq uint64, class workqueue.Class, envelopes []outbox.Envelope, events ...*v1.Event) (uint64, error) {
 	if hook := w.before; hook != nil {
 		w.before = nil
 		hook()
 	}
-	n, err := w.WakingLog.AppendAndEnqueue(ctx, sid, seq, class, events...)
+	n, err := w.WakingLog.AppendAndEnqueue(ctx, sid, seq, class, envelopes, events...)
 	if err == nil {
 		w.calls++
 		if w.lose {

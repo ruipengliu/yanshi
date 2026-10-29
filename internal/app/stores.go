@@ -19,6 +19,9 @@ import (
 	"yanshi/internal/node/pgnode"
 	"yanshi/internal/notify"
 	"yanshi/internal/notify/pgnotify"
+	"yanshi/internal/outbox"
+	"yanshi/internal/outbox/memoutbox"
+	"yanshi/internal/outbox/pgoutbox"
 	"yanshi/internal/pg"
 	"yanshi/internal/presence"
 	"yanshi/internal/presence/pgpresence"
@@ -36,8 +39,9 @@ import (
 
 // Stores 是一套存储实现。同一套中的各存储必须落在同一个存储系统上：Waking 是 Log 与 Queue 的原子组合。
 type Stores struct {
-	Log   eventlog.Log
-	Queue workqueue.Queue
+	Outbox outbox.Store
+	Log    eventlog.Log
+	Queue  workqueue.Queue
 	// Waking 是 Log 与 Queue 的原子组合（session.Store.CommitAndWake）。
 	Waking eventlog.WakingLog
 	Dir    node.Directory
@@ -63,11 +67,12 @@ type Stores struct {
 
 // Memory 返回进程内存储：单进程开发、模拟测试与评测。
 func Memory(clk clock.Clock) Stores {
-	l, q := memlog.New(), memqueue.New(clk)
+	o := memoutbox.New()
+	l, q := memlog.NewWithOutbox(o), memqueue.New(clk)
 	return Stores{
-		Log: l, Queue: q, Waking: l.Waking(q), Dir: node.NewMemDirectory(clk), Inbox: node.NewMemInbox(),
+		Outbox: o, Log: l, Queue: q, Waking: l.Waking(q), Dir: node.NewMemDirectory(clk), Inbox: node.NewMemInbox(),
 		SandboxQueue: memqueue.New(clk), Ledger: nodesdk.NewMemLedger(), Activity: sandbox.NewMemActivity(),
-		ArtifactMeta: artifact.NewMemMeta(), Index: lifecycle.NewMemIndex(), Deletions: lifecycle.NewMemDeletions(),
+		ArtifactMeta: artifact.NewMemMeta(), Index: lifecycle.NewMemIndex(), Deletions: lifecycle.NewMemDeletionsWithOutbox(o),
 		JanitorQueue: memqueue.New(clk), Memories: memory.NewMemStore(), Grants: memory.NewMemGrants(),
 		Snapshots: session.NewMemSnapshots(), Usage: usage.NewMem(), Tiers: usage.NewMemTiers(), Presence: presence.NewMem(), Push: notify.NewMemRegistry(),
 	}
@@ -75,9 +80,10 @@ func Memory(clk clock.Clock) Stores {
 
 // Postgres 返回 PostgreSQL 上的存储；n 是该库的通知监听（须在运行）。多个进程共享同一套即构成分布式部署。
 func Postgres(pool *pgxpool.Pool, n *pg.Notifier, clk clock.Clock) Stores {
+	o := pgoutbox.Store{Pool: pool}
 	l, q := pglog.New(pool, n), pgqueue.New(pool, clk, pgqueue.Sessions).WithNotifier(n)
 	return Stores{
-		Log: l, Queue: q, Waking: l.Waking(q), Dir: pgnode.NewDirectory(pool, clk), Inbox: pgnode.NewInbox(pool, n),
+		Outbox: o, Log: l, Queue: q, Waking: l.Waking(q), Dir: pgnode.NewDirectory(pool, clk), Inbox: pgnode.NewInbox(pool, n),
 		SandboxQueue: pgqueue.New(pool, clk, pgqueue.Sandboxes).WithNotifier(n), Ledger: pgsandbox.Ledger{Pool: pool},
 		Activity: pgsandbox.Activity{Pool: pool}, ArtifactMeta: pgartifact.Meta{Pool: pool},
 		Index: pglifecycle.Index{Pool: pool}, Deletions: pglifecycle.Deletions{Pool: pool, Notifier: n},

@@ -8,6 +8,8 @@ import (
 	"context"
 	"errors"
 
+	"yanshi/internal/outbox"
+
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/workqueue"
 )
@@ -16,10 +18,11 @@ import (
 var ErrConflict = errors.New("eventlog: append conflict")
 
 type Log interface {
-	// Append 原子地追加 events，仅当日志末尾 seq 等于 expectedSeq 时成功。
+	// Append 原子地追加 events 与已由合法投影派生的 envelopes，仅当日志末尾 seq 等于 expectedSeq 时成功。
+	// 信封必须属于同一 Session、同一批事件；任何失败不得留下事件或信封。
 	// 实现为每个事件设置 session_id 与 seq（会修改入参），返回新的末尾 seq。
 	// 追加后事件视为不可变，调用方不得再修改。
-	Append(ctx context.Context, sessionID string, expectedSeq uint64, events ...*v1.Event) (uint64, error)
+	Append(ctx context.Context, sessionID string, expectedSeq uint64, envelopes []outbox.Envelope, events ...*v1.Event) (uint64, error)
 
 	// Read 按顺序返回 seq > after 的事件，最多 limit 条；limit <= 0 表示不限。
 	// 返回的事件不可修改。
@@ -52,5 +55,5 @@ type HeadHinter interface {
 type WakingLog interface {
 	// AppendAndEnqueue 与 Log.Append 相同，追加成功时在同一事务中以 class 入队（语义同 workqueue.Queue.Enqueue）：
 	// 二者同时生效或同时不生效。冲突时返回 ErrConflict，队列不变。
-	AppendAndEnqueue(ctx context.Context, sessionID string, expectedSeq uint64, class workqueue.Class, events ...*v1.Event) (uint64, error)
+	AppendAndEnqueue(ctx context.Context, sessionID string, expectedSeq uint64, class workqueue.Class, envelopes []outbox.Envelope, events ...*v1.Event) (uint64, error)
 }

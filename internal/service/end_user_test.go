@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"yanshi/internal/outbox"
+
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
 	"yanshi/internal/app"
@@ -111,14 +113,14 @@ type delayedSessionCreation struct {
 	beforeAppend func() error
 }
 
-func (l *delayedSessionCreation) Append(ctx context.Context, sid string, expected uint64, events ...*v1.Event) (uint64, error) {
+func (l *delayedSessionCreation) Append(ctx context.Context, sid string, expected uint64, envelopes []outbox.Envelope, events ...*v1.Event) (uint64, error) {
 	if hook := l.beforeAppend; hook != nil {
 		l.beforeAppend = nil
 		if err := hook(); err != nil {
 			return 0, err
 		}
 	}
-	return l.Log.Append(ctx, sid, expected, events...)
+	return l.Log.Append(ctx, sid, expected, envelopes, events...)
 }
 
 func TestEndUserDeletionCompletesBeforeInFlightSessionAppend(t *testing.T) {

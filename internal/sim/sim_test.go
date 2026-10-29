@@ -129,7 +129,8 @@ func TestSimulationWithFaults(t *testing.T) {
 	total := parallelSeeds(t, seedList(), func(t *testing.T, s uint64) Stats {
 		return run(t, s, Options{Faults: true, Attested: true}).Stats
 	})
-	requireCoverage(t, total, "Runs", "Steers", "Interrupts", "Crashes", "Takeovers", "OutcomeUnknown", "Retried",
+	requireCoverage(t, total, "OutboxRunCompleted", "OutboxRunFailed", "OutboxQuestions", "OutboxApprovals",
+		"OutboxBackgroundSettled", "OutboxSessionClosed", "OutboxSessionDeleted", "Runs", "Steers", "Interrupts", "Crashes", "Takeovers", "OutcomeUnknown", "Retried",
 		"NodeCrashes", "Redeliveries", "Approvals", "Denials", "Suspensions", "DeviceResults", "Timeouts",
 		"ControllerCrashes", "SandboxExecs", "Reaps", "EnqueueInterleavings", "Closes", "Deletions", "JanitorCrashes", "DeletionsCompleted", "Recalls", "MemorySaves", "Compactions", "SummaryFaults", "Overflows", "AttemptsAfterCompaction",
 		"QuotaSuspensions", "QuotaRejections", "QuotaResumes", "AccountDeletions", "EndUserBarrierWithdrawn", "AgentSwitches",

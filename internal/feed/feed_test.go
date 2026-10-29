@@ -48,7 +48,7 @@ func TestStreamRecoversFromWaitErrors(t *testing.T) {
 	ev := func(i int) *v1.Event {
 		return &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r" + string(rune('0'+i))}}}
 	}
-	if _, err := log.Append(ctx, "s1", 0, ev(1)); err != nil {
+	if _, err := log.Append(ctx, "s1", 0, nil, ev(1)); err != nil {
 		t.Fatal(err)
 	}
 	sink := chanSink{events: make(chan *v1.Event, 8)}
@@ -60,7 +60,7 @@ func TestStreamRecoversFromWaitErrors(t *testing.T) {
 	defer func() { cancel(); <-stopped }() // 先于下一个用例修改退避参数结束
 	for i := 1; i <= 3; i++ {
 		if i > 1 {
-			if _, err := log.Append(ctx, "s1", uint64(i-1), ev(i)); err != nil {
+			if _, err := log.Append(ctx, "s1", uint64(i-1), nil, ev(i)); err != nil {
 				t.Fatal(err)
 			}
 		}

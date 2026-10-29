@@ -57,7 +57,7 @@ func citationNamespaceLog(t *testing.T) *memlog.Log {
 		e.SessionId = "s"
 		e.Seq = uint64(i + 1)
 	}
-	if _, err := log.Append(ctx, "s", 0, events...); err != nil {
+	if _, err := log.Append(ctx, "s", 0, nil, events...); err != nil {
 		t.Fatal(err)
 	}
 	return log

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"yanshi/internal/outbox"
+
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog"
@@ -17,7 +19,7 @@ import (
 func updateFixture(t *testing.T, log eventlog.Log) (*Store, *State) {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := log.Append(ctx, "s", 0, build(created(), requested("r1"), attempt("r1", 1))...); err != nil {
+	if _, err := log.Append(ctx, "s", 0, nil, build(created(), requested("r1"), attempt("r1", 1))...); err != nil {
 		t.Fatal(err)
 	}
 	store := &Store{Log: log, IDs: ids.Sequential("e"), Clock: clock.Real{}}
@@ -189,8 +191,8 @@ func TestUpdateGoneAfterDeletion(t *testing.T) {
 // alwaysConflicting 每次追加都先让日志前进一条（别的写入方抢先），再报告冲突。
 type alwaysConflicting struct{ *memlog.Log }
 
-func (l alwaysConflicting) Append(ctx context.Context, sid string, expected uint64, _ ...*v1.Event) (uint64, error) {
-	if _, err := l.Log.Append(ctx, sid, expected, steered("r1")); err != nil {
+func (l alwaysConflicting) Append(ctx context.Context, sid string, expected uint64, envelopes []outbox.Envelope, _ ...*v1.Event) (uint64, error) {
+	if _, err := l.Log.Append(ctx, sid, expected, nil, steered("r1")); err != nil {
 		return 0, err
 	}
 	return 0, eventlog.ErrConflict

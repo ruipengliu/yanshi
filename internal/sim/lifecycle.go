@@ -184,6 +184,9 @@ func (w *World) lifecycleDone() (bool, error) {
 
 // checkDeleted 检查已完成删除的 Session 在所有存储中都不再有数据，并且没有"复活"。
 func (w *World) checkDeleted(final bool) error {
+	if err := w.checkOutbox(); err != nil {
+		return err
+	}
 	ctx := context.Background()
 	if err := w.checkEndUserDeleted(final); err != nil {
 		return err

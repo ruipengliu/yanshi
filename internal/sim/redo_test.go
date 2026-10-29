@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"yanshi/internal/outbox"
+
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/model"
@@ -143,8 +145,8 @@ type redoLostWaking struct {
 	lost bool
 }
 
-func (w *redoLostWaking) AppendAndEnqueue(ctx context.Context, sid string, seq uint64, class workqueue.Class, events ...*v1.Event) (uint64, error) {
-	n, err := w.WakingLog.AppendAndEnqueue(ctx, sid, seq, class, events...)
+func (w *redoLostWaking) AppendAndEnqueue(ctx context.Context, sid string, seq uint64, class workqueue.Class, envelopes []outbox.Envelope, events ...*v1.Event) (uint64, error) {
+	n, err := w.WakingLog.AppendAndEnqueue(ctx, sid, seq, class, envelopes, events...)
 	if err == nil && !w.lost {
 		w.lost = true
 		return n, &storeFault{written: true}

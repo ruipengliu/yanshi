@@ -5,6 +5,9 @@ import (
 	"context"
 	"sync"
 
+	"yanshi/internal/outbox"
+	"yanshi/internal/outbox/memoutbox"
+
 	"google.golang.org/protobuf/proto"
 
 	v1 "yanshi/gen/yanshi/v1"
@@ -16,6 +19,7 @@ import (
 type Log struct {
 	mu       sync.Mutex
 	sessions map[string]*stream
+	outbox   *memoutbox.Store
 }
 
 type stream struct {
@@ -24,7 +28,11 @@ type stream struct {
 	changed chan struct{}
 }
 
-func New() *Log { return &Log{sessions: map[string]*stream{}} }
+func New() *Log { return NewWithOutbox(memoutbox.New()) }
+
+func NewWithOutbox(o *memoutbox.Store) *Log {
+	return &Log{sessions: map[string]*stream{}, outbox: o}
+}
 
 var _ eventlog.Log = (*Log)(nil)
 
@@ -37,8 +45,11 @@ func (l *Log) stream(id string) *stream {
 	return s
 }
 
-func (l *Log) Append(ctx context.Context, sessionID string, expectedSeq uint64, events ...*v1.Event) (uint64, error) {
+func (l *Log) Append(ctx context.Context, sessionID string, expectedSeq uint64, envelopes []outbox.Envelope, events ...*v1.Event) (uint64, error) {
 	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if err := outbox.ValidateAppend(sessionID, expectedSeq, len(events), envelopes); err != nil {
 		return 0, err
 	}
 	// 与持久化实现一致：无法序列化的事件（如含非法 UTF-8）一律拒绝，而不是只在内存中存在。
@@ -53,14 +64,20 @@ func (l *Log) Append(ctx context.Context, sessionID string, expectedSeq uint64, 
 	if uint64(len(s.events)) != expectedSeq {
 		return 0, eventlog.ErrConflict
 	}
-	for i, e := range events {
-		e.SessionId = sessionID
-		e.Seq = expectedSeq + uint64(i) + 1
-		s.events = append(s.events, proto.Clone(e).(*v1.Event))
-	}
-	if len(events) > 0 {
-		close(s.changed)
-		s.changed = make(chan struct{})
+	err := l.outbox.Commit(ctx, envelopes, func() error {
+		for i, e := range events {
+			e.SessionId = sessionID
+			e.Seq = expectedSeq + uint64(i) + 1
+			s.events = append(s.events, proto.Clone(e).(*v1.Event))
+		}
+		if len(events) > 0 {
+			close(s.changed)
+			s.changed = make(chan struct{})
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
 	}
 	return uint64(len(s.events)), nil
 }
@@ -73,10 +90,10 @@ type waking struct {
 	q *memqueue.Queue
 }
 
-func (w waking) AppendAndEnqueue(ctx context.Context, sessionID string, expectedSeq uint64, class workqueue.Class, events ...*v1.Event) (uint64, error) {
+func (w waking) AppendAndEnqueue(ctx context.Context, sessionID string, expectedSeq uint64, class workqueue.Class, envelopes []outbox.Envelope, events ...*v1.Event) (uint64, error) {
 	var head uint64
 	err := w.q.EnqueueIf(sessionID, class, func() (err error) {
-		head, err = w.l.Append(ctx, sessionID, expectedSeq, events...)
+		head, err = w.l.Append(ctx, sessionID, expectedSeq, envelopes, events...)
 		return err
 	})
 	return head, err

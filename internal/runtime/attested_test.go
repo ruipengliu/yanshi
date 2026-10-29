@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"yanshi/internal/outbox"
+
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
 	"yanshi/internal/app"
@@ -161,12 +163,12 @@ type pageResultFailures struct {
 	left int
 }
 
-func (l *pageResultFailures) Append(ctx context.Context, sid string, expected uint64, events ...*v1.Event) (uint64, error) {
+func (l *pageResultFailures) Append(ctx context.Context, sid string, expected uint64, envelopes []outbox.Envelope, events ...*v1.Event) (uint64, error) {
 	for _, e := range events {
 		if e.GetToolResult() != nil && l.left > 0 {
 			l.left--
 			return 0, errPageAppend
 		}
 	}
-	return l.Log.Append(ctx, sid, expected, events...)
+	return l.Log.Append(ctx, sid, expected, envelopes, events...)
 }

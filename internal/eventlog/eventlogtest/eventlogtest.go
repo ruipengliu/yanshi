@@ -30,11 +30,11 @@ func Run(t *testing.T, newLog func(t *testing.T) eventlog.Log) {
 
 	t.Run("AppendAssignsContiguousSeq", func(t *testing.T) {
 		l := newLog(t)
-		head, err := l.Append(ctx, "s", 0, ev("a"), ev("b"))
+		head, err := l.Append(ctx, "s", 0, nil, ev("a"), ev("b"))
 		if err != nil || head != 2 {
 			t.Fatalf("append = %d, %v", head, err)
 		}
-		head, err = l.Append(ctx, "s", 2, ev("c"))
+		head, err = l.Append(ctx, "s", 2, nil, ev("c"))
 		if err != nil || head != 3 {
 			t.Fatalf("append = %d, %v", head, err)
 		}
@@ -54,11 +54,11 @@ func Run(t *testing.T, newLog func(t *testing.T) eventlog.Log) {
 
 	t.Run("AppendConflictIsAtomic", func(t *testing.T) {
 		l := newLog(t)
-		if _, err := l.Append(ctx, "s", 0, ev("a")); err != nil {
+		if _, err := l.Append(ctx, "s", 0, nil, ev("a")); err != nil {
 			t.Fatal(err)
 		}
 		for _, expected := range []uint64{0, 2} {
-			if _, err := l.Append(ctx, "s", expected, ev("x"), ev("y")); !errors.Is(err, eventlog.ErrConflict) {
+			if _, err := l.Append(ctx, "s", expected, nil, ev("x"), ev("y")); !errors.Is(err, eventlog.ErrConflict) {
 				t.Fatalf("expected=%d: err = %v, want ErrConflict", expected, err)
 			}
 		}
@@ -71,17 +71,17 @@ func Run(t *testing.T, newLog func(t *testing.T) eventlog.Log) {
 	// 冲突的追加不改动调用方的事件：调用方同步后以同一批事件重试（session.Store 的冲突重试）。
 	t.Run("ConflictLeavesEventsUntouched", func(t *testing.T) {
 		l := newLog(t)
-		if _, err := l.Append(ctx, "s", 0, ev("a")); err != nil {
+		if _, err := l.Append(ctx, "s", 0, nil, ev("a")); err != nil {
 			t.Fatal(err)
 		}
 		x := ev("x")
-		if _, err := l.Append(ctx, "s", 0, x); !errors.Is(err, eventlog.ErrConflict) {
+		if _, err := l.Append(ctx, "s", 0, nil, x); !errors.Is(err, eventlog.ErrConflict) {
 			t.Fatalf("err = %v, want ErrConflict", err)
 		}
 		if x.GetSeq() != 0 || x.GetSessionId() != "" {
 			t.Fatalf("failed append set seq %d session %q", x.GetSeq(), x.GetSessionId())
 		}
-		if _, err := l.Append(ctx, "s", 1, x); err != nil {
+		if _, err := l.Append(ctx, "s", 1, nil, x); err != nil {
 			t.Fatal(err)
 		}
 		if x.GetSeq() != 2 || x.GetSessionId() != "s" {
@@ -91,10 +91,10 @@ func Run(t *testing.T, newLog func(t *testing.T) eventlog.Log) {
 
 	t.Run("SessionsAreIndependent", func(t *testing.T) {
 		l := newLog(t)
-		if _, err := l.Append(ctx, "s1", 0, ev("a")); err != nil {
+		if _, err := l.Append(ctx, "s1", 0, nil, ev("a")); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := l.Append(ctx, "s2", 0, ev("b")); err != nil {
+		if _, err := l.Append(ctx, "s2", 0, nil, ev("b")); err != nil {
 			t.Fatal(err)
 		}
 		got, _ := eventlog.ReadAll(ctx, l, "s2", 0)
@@ -105,7 +105,7 @@ func Run(t *testing.T, newLog func(t *testing.T) eventlog.Log) {
 
 	t.Run("ReadAfterAndLimit", func(t *testing.T) {
 		l := newLog(t)
-		if _, err := l.Append(ctx, "s", 0, ev("a"), ev("b"), ev("c"), ev("d")); err != nil {
+		if _, err := l.Append(ctx, "s", 0, nil, ev("a"), ev("b"), ev("c"), ev("d")); err != nil {
 			t.Fatal(err)
 		}
 		got, _ := l.Read(ctx, "s", 1, 2)
@@ -125,7 +125,7 @@ func Run(t *testing.T, newLog func(t *testing.T) eventlog.Log) {
 	t.Run("AppendedEventsAreNotAliased", func(t *testing.T) {
 		l := newLog(t)
 		e := ev("a")
-		if _, err := l.Append(ctx, "s", 0, e); err != nil {
+		if _, err := l.Append(ctx, "s", 0, nil, e); err != nil {
 			t.Fatal(err)
 		}
 		e.Id = "mutated"
@@ -148,7 +148,7 @@ func Run(t *testing.T, newLog func(t *testing.T) eventlog.Log) {
 			head, werr = l.Wait(c, "s", 0)
 		}()
 		time.Sleep(10 * time.Millisecond)
-		if _, err := l.Append(ctx, "s", 0, ev("a")); err != nil {
+		if _, err := l.Append(ctx, "s", 0, nil, ev("a")); err != nil {
 			t.Fatal(err)
 		}
 		wg.Wait()
@@ -159,7 +159,7 @@ func Run(t *testing.T, newLog func(t *testing.T) eventlog.Log) {
 
 	t.Run("WaitReturnsImmediatelyWhenBehind", func(t *testing.T) {
 		l := newLog(t)
-		if _, err := l.Append(ctx, "s", 0, ev("a")); err != nil {
+		if _, err := l.Append(ctx, "s", 0, nil, ev("a")); err != nil {
 			t.Fatal(err)
 		}
 		head, err := l.Wait(ctx, "s", 0)
@@ -171,7 +171,7 @@ func Run(t *testing.T, newLog func(t *testing.T) eventlog.Log) {
 	t.Run("RejectsUnserializableEvents", func(t *testing.T) {
 		l := newLog(t)
 		bad := &v1.Event{Payload: &v1.Event_Steered{Steered: &v1.Steered{RunId: "r\xff"}}}
-		if _, err := l.Append(ctx, "s", 0, ev("a"), bad); err == nil {
+		if _, err := l.Append(ctx, "s", 0, nil, ev("a"), bad); err == nil {
 			t.Fatal("accepted an event with invalid UTF-8")
 		}
 		if got, _ := eventlog.ReadAll(ctx, l, "s", 0); len(got) != 0 {
@@ -181,8 +181,8 @@ func Run(t *testing.T, newLog func(t *testing.T) eventlog.Log) {
 
 	t.Run("DeleteRemovesOnlyThatSession", func(t *testing.T) {
 		l := newLog(t)
-		_, _ = l.Append(ctx, "s", 0, ev("a"), ev("b"))
-		_, _ = l.Append(ctx, "other", 0, ev("x"))
+		_, _ = l.Append(ctx, "s", 0, nil, ev("a"), ev("b"))
+		_, _ = l.Append(ctx, "other", 0, nil, ev("x"))
 		if err := l.Delete(ctx, "s"); err != nil {
 			t.Fatal(err)
 		}

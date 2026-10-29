@@ -37,7 +37,7 @@ func appendN(t *testing.T, l *memlog.Log, from, n int) {
 	t.Helper()
 	for i := range n {
 		e := &v1.Event{Payload: &v1.Event_Steered{Steered: &v1.Steered{RunId: fmt.Sprint(from + i)}}}
-		if _, err := l.Append(context.Background(), "s1", uint64(from+i-1), e); err != nil {
+		if _, err := l.Append(context.Background(), "s1", uint64(from+i-1), nil, e); err != nil {
 			t.Fatal(err)
 		}
 	}

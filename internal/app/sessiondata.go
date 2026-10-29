@@ -20,6 +20,7 @@ func SessionData(s Stores, workspaces sandbox.Workspaces, artifacts *artifact.Se
 		{Name: "sandbox", DeleteSession: workspaces.DeleteSession},
 		{Name: "sandbox_ledger", DeleteSession: func(_ context.Context, sid string) error { return s.Ledger.Forget(sid) }},
 		{Name: "snapshots", DeleteSession: s.Snapshots.Delete},
+		{Name: "outbox", DeleteSession: s.Outbox.DeleteSession},
 		// retention 与 erasure 保留既有 Memory；迟到写入仍由 Recheck 撤回（ADR-0050，docs/design/m4-memory-grant.md §7）。
 		{Name: "memories", DeleteSession: s.Memories.DeleteSession, KeepOnRetention: true},
 		{Name: "presence", DeleteSession: s.Presence.DeleteSession},

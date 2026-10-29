@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"yanshi/internal/outbox"
+
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
 	"yanshi/internal/capability"
@@ -37,14 +39,14 @@ type failingResults struct {
 	n int
 }
 
-func (l *failingResults) Append(ctx context.Context, sid string, expected uint64, events ...*v1.Event) (uint64, error) {
+func (l *failingResults) Append(ctx context.Context, sid string, expected uint64, envelopes []outbox.Envelope, events ...*v1.Event) (uint64, error) {
 	for _, e := range events {
 		if e.GetToolResult() != nil && l.n > 0 {
 			l.n--
 			return 0, errors.New("simulated storage failure")
 		}
 	}
-	return l.Log.Append(ctx, sid, expected, events...)
+	return l.Log.Append(ctx, sid, expected, envelopes, events...)
 }
 
 // 结果写入失败后，同一 Attempt 只重试写入，不再执行非幂等的调用。

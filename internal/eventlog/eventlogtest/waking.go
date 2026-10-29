@@ -44,7 +44,7 @@ func RunWaking(t *testing.T, newStores func(t *testing.T, c clock.Clock) WakingS
 
 	t.Run("AppendsAndEnqueues", func(t *testing.T) {
 		_, s := setup(t)
-		head, err := s.Waking.AppendAndEnqueue(ctx, "s", 0, class, ev("a"), ev("b"))
+		head, err := s.Waking.AppendAndEnqueue(ctx, "s", 0, class, nil, ev("a"), ev("b"))
 		if err != nil || head != 2 {
 			t.Fatalf("append = %d, %v", head, err)
 		}
@@ -59,21 +59,21 @@ func RunWaking(t *testing.T, newStores func(t *testing.T, c clock.Clock) WakingS
 
 	t.Run("ConflictLeavesQueueUnchanged", func(t *testing.T) {
 		_, s := setup(t)
-		if _, err := s.Log.Append(ctx, "s", 0, ev("a")); err != nil {
+		if _, err := s.Log.Append(ctx, "s", 0, nil, ev("a")); err != nil {
 			t.Fatal(err)
 		}
 		for _, expected := range []uint64{0, 2} {
-			if _, err := s.Waking.AppendAndEnqueue(ctx, "s", expected, class, ev("x")); !errors.Is(err, eventlog.ErrConflict) {
+			if _, err := s.Waking.AppendAndEnqueue(ctx, "s", expected, class, nil, ev("x")); !errors.Is(err, eventlog.ErrConflict) {
 				t.Fatalf("expected %d: err = %v", expected, err)
 			}
 		}
 		empty(t, s.Queue)
 		// 以同一批事件重试（"提交成功但回包丢失"后的重试）：第一次生效，第二次冲突，队列中只有一项。
 		e := ev("b")
-		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 1, class, e); err != nil {
+		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 1, class, nil, e); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 1, class, ev("b")); !errors.Is(err, eventlog.ErrConflict) {
+		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 1, class, nil, ev("b")); !errors.Is(err, eventlog.ErrConflict) {
 			t.Fatalf("retry err = %v", err)
 		}
 		l := claim(t, s.Queue)
@@ -86,7 +86,7 @@ func RunWaking(t *testing.T, newStores func(t *testing.T, c clock.Clock) WakingS
 
 	t.Run("WakesParked", func(t *testing.T) {
 		c, s := setup(t)
-		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 0, class, ev("a")); err != nil {
+		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 0, class, nil, ev("a")); err != nil {
 			t.Fatal(err)
 		}
 		l := claim(t, s.Queue)
@@ -95,11 +95,11 @@ func RunWaking(t *testing.T, newStores func(t *testing.T, c clock.Clock) WakingS
 		}
 		empty(t, s.Queue)
 		// 冲突不能把到期表恢复成可认领项，且恢复本身必须回滚。
-		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 0, class, ev("conflict")); !errors.Is(err, eventlog.ErrConflict) {
+		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 0, class, nil, ev("conflict")); !errors.Is(err, eventlog.ErrConflict) {
 			t.Fatalf("parked conflict = %v", err)
 		}
 		empty(t, s.Queue)
-		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 1, class, ev("b")); err != nil {
+		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 1, class, nil, ev("b")); err != nil {
 			t.Fatal(err)
 		}
 		claim(t, s.Queue)
@@ -107,19 +107,19 @@ func RunWaking(t *testing.T, newStores func(t *testing.T, c clock.Clock) WakingS
 
 	t.Run("DuringLeaseSurvivesParkAndRelease", func(t *testing.T) {
 		c, s := setup(t)
-		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 0, class, ev("a")); err != nil {
+		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 0, class, nil, ev("a")); err != nil {
 			t.Fatal(err)
 		}
 		// 持有者读到的日志不含随后的追加，据此挂起或以 done 释放：追加仍须被看到。
 		l := claim(t, s.Queue)
-		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 1, class, ev("b")); err != nil {
+		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 1, class, nil, ev("b")); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.Queue.Park(ctx, l, c.Now().Add(24*time.Hour)); err != nil {
 			t.Fatal(err)
 		}
 		l = claim(t, s.Queue)
-		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 2, class, ev("c")); err != nil {
+		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 2, class, nil, ev("c")); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.Queue.Release(ctx, l, true); err != nil {
@@ -130,7 +130,7 @@ func RunWaking(t *testing.T, newStores func(t *testing.T, c clock.Clock) WakingS
 
 	t.Run("NoResurrectionAfterDelete", func(t *testing.T) {
 		_, s := setup(t)
-		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 0, class, ev("a")); err != nil {
+		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 0, class, nil, ev("a")); err != nil {
 			t.Fatal(err)
 		}
 		// 删除（ADR-0015）：清除日志与队列项之后，基于旧投影的迟到写入冲突，不留下队列项。
@@ -140,7 +140,7 @@ func RunWaking(t *testing.T, newStores func(t *testing.T, c clock.Clock) WakingS
 		if err := s.Log.Delete(ctx, "s"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 1, class, ev("b")); !errors.Is(err, eventlog.ErrConflict) {
+		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 1, class, nil, ev("b")); !errors.Is(err, eventlog.ErrConflict) {
 			t.Fatalf("late append err = %v", err)
 		}
 		empty(t, s.Queue)
@@ -150,7 +150,7 @@ func RunWaking(t *testing.T, newStores func(t *testing.T, c clock.Clock) WakingS
 		_, s := setup(t)
 		bad := ev("a")
 		bad.GetSteered().RunId = "\xff" // 非法 UTF-8 无法序列化
-		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 0, class, bad); err == nil {
+		if _, err := s.Waking.AppendAndEnqueue(ctx, "s", 0, class, nil, bad); err == nil {
 			t.Fatal("append of unserializable event succeeded")
 		}
 		empty(t, s.Queue)

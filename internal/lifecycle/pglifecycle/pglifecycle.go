@@ -10,6 +10,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"yanshi/internal/lifecycle"
+	"yanshi/internal/outbox"
+	"yanshi/internal/outbox/pgoutbox"
 	"yanshi/internal/pg"
 )
 
@@ -169,8 +171,13 @@ func (d Deletions) Mark(ctx context.Context, t *lifecycle.Tombstone) (bool, erro
 	if t.RequestID != "" {
 		req = &t.RequestID
 	}
-	// 写入并通知在同一条语句中；已有删除记录时什么也不做，也不通知。
-	err := d.Pool.QueryRow(ctx, `
+	// 删除信封只在首次 Mark 产生，与删除记录、通知一起提交或回滚。
+	tx, err := d.Pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	err = tx.QueryRow(ctx, `
 		WITH ins AS (
 			INSERT INTO session_tombstones (session_id, business_line, reason, request_id, requested_at)
 			VALUES ($1, $2, $3, $4, $5) ON CONFLICT (session_id) DO NOTHING
@@ -179,6 +186,12 @@ func (d Deletions) Mark(ctx context.Context, t *lifecycle.Tombstone) (bool, erro
 		t.SessionID, t.BusinessLine, t.Reason, req, t.RequestedAt, d.Notifier.Channel(pg.TopicDeletions, t.SessionID)).Scan(nil)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
+	}
+	if err == nil {
+		err = pgoutbox.Insert(ctx, tx, []outbox.Envelope{outbox.Deleted(t.BusinessLine, t.SessionID, t.Reason, t.RequestID)})
+	}
+	if err == nil {
+		err = tx.Commit(ctx)
 	}
 	return err == nil, err
 }

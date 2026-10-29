@@ -564,6 +564,11 @@ func (w *Worker) fail(ctx context.Context, r *session.Run, reason string) error 
 	w.cfg.Logger.Warn("run failed", "session", w.st.SessionID, "run", r.ID, "reason", reason)
 	e := &v1.Event{Payload: &v1.Event_RunFailed{RunFailed: &v1.RunFailed{RunId: r.ID, Attempt: r.Attempt, Reason: reason}}}
 	err := w.cfg.Store.Commit(ctx, w.st, e)
+	if errors.Is(err, session.ErrGone) {
+		// RunFailed 的信封复查也可能先于日志清理发现删除；与 tryCommit 一样终止并清空本地状态。
+		w.drop()
+		return nil
+	}
 	if errors.Is(err, eventlog.ErrConflict) {
 		return nil
 	}

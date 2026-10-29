@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"yanshi/internal/outbox"
+
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog"
@@ -24,11 +26,11 @@ type downLog struct {
 	down bool
 }
 
-func (l *downLog) AppendAndEnqueue(ctx context.Context, sid string, expected uint64, class workqueue.Class, events ...*v1.Event) (uint64, error) {
+func (l *downLog) AppendAndEnqueue(ctx context.Context, sid string, expected uint64, class workqueue.Class, envelopes []outbox.Envelope, events ...*v1.Event) (uint64, error) {
 	if l.down {
 		return 0, errors.New("database unavailable")
 	}
-	return l.WakingLog.AppendAndEnqueue(ctx, sid, expected, class, events...)
+	return l.WakingLog.AppendAndEnqueue(ctx, sid, expected, class, envelopes, events...)
 }
 
 // 结果没有写入日志时不能确认：Inbox 保留调用，设备重连后从账本重新返回，结果最终写入。

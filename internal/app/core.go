@@ -138,7 +138,7 @@ func NewCore(stores Stores, opts Options) *Core {
 	}
 	c := &Core{Stores: stores, opts: opts}
 	c.Store = &session.Store{Log: stores.Log, Waking: stores.Waking, IDs: opts.IDs("id"), Clock: opts.Clock,
-		Snapshots: stores.Snapshots, Deletions: stores.Deletions}
+		Snapshots: stores.Snapshots, Deletions: stores.Deletions, Outbox: stores.Outbox}
 	c.Artifacts = &artifact.Service{Meta: stores.ArtifactMeta, Blobs: opts.Blobs, IDs: opts.IDs("art"), Clock: opts.Clock,
 		Deletions: stores.Deletions}
 	c.Hub = &node.Hub{Dir: stores.Dir, Inbox: stores.Inbox, Store: c.Store, Auth: opts.NodeAuth, Push: stores.Push,

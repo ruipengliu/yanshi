@@ -147,7 +147,7 @@ func TestSnapshotAtEveryPositionMatchesReplay(t *testing.T) {
 	ctx := context.Background()
 	log := memlog.New()
 	events := richLog()
-	if _, err := log.Append(ctx, "s", 0, events...); err != nil {
+	if _, err := log.Append(ctx, "s", 0, nil, events...); err != nil {
 		t.Fatal(err)
 	}
 	all, _ := log.Read(ctx, "s", 0, 0)
@@ -189,7 +189,7 @@ func TestSnapshotAtEveryPositionMatchesReplay(t *testing.T) {
 func TestSnapshotIgnoredAfterLogDeleted(t *testing.T) {
 	ctx := context.Background()
 	log := memlog.New()
-	_, _ = log.Append(ctx, "s", 0, richLog()...)
+	_, _ = log.Append(ctx, "s", 0, nil, richLog()...)
 	snaps := session.NewMemSnapshots()
 	store := &session.Store{Log: log, IDs: ids.Sequential("e"), Clock: clock.Real{}, Snapshots: snaps, SnapshotEvery: 1}
 	if _, err := store.Load(ctx, "s"); err != nil || !snaps.Has("s") {

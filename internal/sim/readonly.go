@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"yanshi/internal/outbox"
+
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/model"
@@ -21,8 +23,8 @@ type readOnlyStart struct {
 }
 
 // appendRecorded 只记录真正生效的 Started，包括生效后向 Worker 报告存储故障的情形。
-func (l flakyLog) appendRecorded(ctx context.Context, sid string, expected uint64, events ...*v1.Event) (uint64, error) {
-	head, err := l.Log.Append(ctx, sid, expected, events...)
+func (l flakyLog) appendRecorded(ctx context.Context, sid string, expected uint64, envelopes []outbox.Envelope, events ...*v1.Event) (uint64, error) {
+	head, err := l.Log.Append(ctx, sid, expected, envelopes, events...)
 	if err == nil && l.w.faults && l.w.readOnlyWorker != "" {
 		for _, e := range events {
 			if m := e.GetToolCallStarted(); m != nil && m.GetReadOnly() {

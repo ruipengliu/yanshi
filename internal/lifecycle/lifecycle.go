@@ -160,7 +160,7 @@ type Request struct {
 
 type Deletions interface {
 	EndUserDeletions
-	// Mark 写入删除记录；已存在时不变并返回 false。
+	// Mark 在同一事务写入删除记录与 session_deleted 信封；已存在时不变并返回 false。
 	Mark(ctx context.Context, t *Tombstone) (bool, error)
 	Get(ctx context.Context, sessionID string) (*Tombstone, error)
 	Complete(ctx context.Context, sessionID string, at time.Time) error
