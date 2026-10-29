@@ -294,7 +294,7 @@ P4 自动调度以固定业务日时区、原文与处理进度为依据，抖�
 
 ADR-0050 的 P1 第 2 步已切换：xinli-day 版本 2 使用 `mcp_xinli__captures`，不再声明 `streams`。xinli 登记已开启 `attests_speakers`，Persona 不再输出交付回执；处理进度与接受范围变更集同事务推进。评测经夹具绑定业务日并向 Persona 提交旁听；内核 Capture 路径已退役。P1-④a 已补充 Persona 的擦除、删除待办与删除期限保存（见本节末）；④b 已接入内核删除与重建执行（见本节末），测试与效果仍由远端验收。
 
-P4-A5 已引入 capture_revision；后续按[整体架构](./persona-architecture.md) §13 Q97、Q98、Q114 为有序采集补齐序号、缺口暂存与采集世代：擦除或删一天推进世代并清旧缓冲，拒绝旧请求；到期与注销清全部缓冲正文，不允许把旧请求自动改成新世代。以下是现有领域契约，生产接入须同时满足这些约束。
+P4-A5 已引入 capture_revision；P4-A13 按[整体架构](./persona-architecture.md) §13 Q97、Q98、Q114 已为有序采集补齐序号、缺口暂存与采集世代：擦除或删一天推进世代并清旧缓冲，拒绝旧请求；到期与注销清全部缓冲正文，不允许把旧请求自动改成新世代。以下是现有领域契约，生产接入须同时满足这些约束。
 
 原文按（BusinessLine、EndUser、业务日）隔离。业务日是提交方按用户当地日期给出的 YYYY-MM-DD，不从服务器时钟或片段时间反推。每个业务日记录当前工作 Session，绑定可幂等重试、可换绑；旧 Session 随即不能再读原文，一个 Session 不能同时绑定两个业务日。它不复用每日整理总览，已有 State 的字段形状保持不变。
 
@@ -320,7 +320,7 @@ A2 已将旧的“最后尚存片段时区”推导结果保存在业务日元�
 
 `now >= ExpiresAt` 时，领域读取守卫拒绝所有 `CaptureAccess` 读取（包括迭代器恢复后的下一段）、追加以及历史/当前工作 Session 的 `captures`、`file_changes`、`file_day`。首次收到已过期的历史日也拒收。入口注入可信时钟，未注入时用真实时间；时钟不进入快照。长期账本查询与用户修改不经过原文闸门。
 
-`Book.ExpireCaptures(date, now)` 幂等删除整日原文片段，清空 `ReadThrough`、分页间隔等读页状态，设置独立 `Expired` 状态并递增原文版本；保留处理进度结论、长期账本、历史 Session 绑定、提交 ID 与批次编号。它不调用 `EraseDay`，也不产生擦除的级联或删除待办。A13 的缺口正文须接入这个事务清理点。
+`Book.ExpireCaptures(date, now)` 幂等删除整日原文片段，清空 `ReadThrough`、分页间隔等读页状态，设置独立 `Expired` 状态并递增原文版本；保留处理进度结论、长期账本、历史 Session 绑定、提交 ID 与批次编号。它不调用 `EraseDay`，也不产生擦除的级联或删除待办。A13 的缺口正文在同一事务清除，涉及该日的采集会话失效。
 
 `Store.ExpiringCaptures(ctx, now)` 发现 owner，`ScanExpirations` 逐 owner Update 重查并清理；`StartExpirations` 启动立即扫描，随后按周期运行，可注入时钟与 tick。失败事务不丢失发现条件，下一轮或重启可恢复。A11 再接生产启动入口。本步没有改变注销或领域变化协议。
 
@@ -336,7 +336,7 @@ A2 已将旧的“最后尚存片段时区”推导结果保存在业务日元�
 
 夹具层新增 `POST /v1/fixture/{businessLine}/{endUser}/owner_deletion {}` 与同路径 GET；前者建立屏障、后者查进度。生产鉴权与扫描装配留给 A11，登录封禁、内核删除、逐库推进和账号完成判定留给 A12。Persona 的 completed 不等于账号注销完成，也不能撤回应用层已经发出的内核请求。
 
-迁移 `0004_owner_deletions.sql` 新建独立屏障表及部分索引。Q104 规定重注册生成新 EndUser ID，因此旧屏障与空锁键长期保留，只含键、状态与时间；夹具 reset 也不能撤销屏障。新增持久类别必须接入同一清理目录及残留测试：A7 的接受事实元数据与领域变化已纳入同一目录及物理残留测试；采集缺口正文待 A13 接入。
+迁移 `0004_owner_deletions.sql` 新建独立屏障表及部分索引。Q104 规定重注册生成新 EndUser ID，因此旧屏障与空锁键长期保留，只含键、状态与时间；夹具 reset 也不能撤销屏障。新增持久类别必须接入同一清理目录及残留测试：A7 的接受事实元数据与领域变化已纳入同一目录及物理残留测试；A13 的采集缺口正文与不含正文的采集会话元数据也已接入。
 
 ### 擦除与删除一天（P1-④a）
 
@@ -443,3 +443,52 @@ Persona 的业务日查询公开 `capture_revision`（原文版本）。请求�
 前端用独立请求代次（不复用轮询原文的刷新序号）。切换业务日或身份、离开页面、提交新原文、发起擦除/删一天时立即清空显示并作废旧代次；因此切走又切回也不会显示旧请求结果。简述生成期间仍可擦除。服务器只能核对请求指定的业务日，浏览器当前选择由前端代次保证；返回前最后一次读取之后发生的并发变化，无法靠两个独立 HTTP 请求作原子显示保证，开发页自身的擦除仍由代次拦截。
 
 `kernel.Client.Oneshot(ctx, endUser, name, input)` 返回 version、model 与 `json.RawMessage` output；开发模式另用 `OneshotForBusinessLine` 明确传 business_line，兼容无鉴权内核和多业务线页面，不修改共享 Client 的身份字段。429、422、503、504 保持对应状态，其他下游错误映射 502；没有原文或业务日已删除返回 409。
+
+
+### 有序文字采集与持久发送端（P4-A13）
+
+应用 `capture.Handler` 装配在 `serve` 的 BFF 角色及带账号服务的 `dev`，全部经 A12 登录态认证。owner 和安装实例来自认证上下文，请求不能自填；同一采集会话绑定第一次提交的安装实例。每个 owner 同时只开放一条采集会话，多设备合流仍不支持。
+
+`POST /v1/captures/batches` 请求：
+
+```json
+{
+  "session_id": "recording-client-id",
+  "seq": 1,
+  "capture_id": "batch-client-id",
+  "business_day": "2026-10-28",
+  "time_zone": "Asia/Shanghai",
+  "generation": 0,
+  "segments": [
+    {"speaker": "wearer", "text": "文字", "at": "2026-10-28T10:00:00+08:00"},
+    {"speaker": "other-1", "text": "回应", "at": "2026-10-28T10:00:01+08:00", "speaker_ref": "P-1"}
+  ]
+}
+```
+
+`generation` 必填，初始为 0。`seq` 从 1 开始，跨午夜连续；与业务日内引用编号分开。`speaker` 为 `wearer`、`other` 或 `other-<标识>`，他人的整个标签映射为 Persona 的 `speaker_key`，沿用其 32 字符约束；只有他人可带 `speaker_ref`。`business_day` 可省略，此时入口由首段 `at` 和批次时区确定，随后必须持久保存；各段须属于该日，跨午夜分批。已有业务日的固定时区与期限不会被后来的批次改写。每批仍为 1–200 段、每段 1–2000 字，无 512 批上限。
+
+| HTTP | 结果 |
+| --- | --- |
+| 200 | `status=accepted`，`business_day`、`generation`、`next_seq`、`refs`；正式追加事务成功后才返回引用 |
+| 202 | `status=staged`，`next_seq` 是等待补齐的序号，无 `refs`；暂存不算接受 |
+| 400 | `code=invalid_batch`，字段、时间、内容或请求形状不合法 |
+| 401 | 未登录、凭据过期或安装实例已撤销 |
+| 403 | `code=account_inactive`，Persona 注销屏障拒绝请求 |
+| 409 | `code=capture_conflict`，同序号异文、复用 capture_id、不同设备或并行采集会话；`code=resync_required` 表示旧世代或失效会话，带当前日世代与序号 |
+| 410 | `code=expired/day_deleted`，业务日已到期或已删除；旧世代请求优先返回 409 重新同步 |
+| 503 | `code=unavailable`，存储或暂时故障，不返回事务内尚未提交的引用 |
+
+`GET /v1/captures/sync?business_day=...&session_id=...` 只查询世代、下一个序号及 `ready/closed/resync_required` 状态。取得新世代不授权重标旧正文。`POST /v1/captures/sessions/{id}/close` 返回 204，结束没有缺口的会话（失效会话也可结束），随后用新客户端 ID 开始下一次录音；关闭不删除去重元数据，已接受请求仍可原样重试。
+
+领域规则集中在 `Book.ReceiveCaptures`，批次校验与 `AppendCaptures` 共享。先校验再暂存；补齐时在同一 owner 事务按序排空，只由 `AppendCaptures` 分配引用，因此录音时间早晚不改变已分配顺序。整个排空失败则整体回滚，客户端重发原批次。重复只返回当前批次的原引用；由排空正式追加的其他批次在其重发时各自确认。
+
+Persona 迁移 `0007_capture_ingest.sql` 增加原文暂存表 `capture_pending`，键为 `(business_line,end_user,business_day,session_id,seq,generation)`，payload 仅含结构化片段；正式追加后立即删除对应暂存行。`business_days.payload.CaptureGeneration` 保存日世代；`capture_streams` 保存安装实例、下一序号、关闭/失效状态与各序号的业务日、世代、capture_id、SHA-256 和引用，不含正文。内存实现同样把暂存正文放在 Book 之外，通过原文事务提交。PG 复用 owner 行锁和同一 SQL 事务，`View` 的演练修改不落库。
+
+擦除和删一天在删除原文、写墓碑和删除待办的同一事务推进日世代并清空该日暂存；涉及该日的采集会话整体失效，避免跨午夜序列带着旧缺口继续发送。自然到期清除正式原文和当天暂存并使相关会话失效，长期账本不级联；注销按原有预算逐批清除暂存、采集元数据与全部业务数据；reset 同样覆盖。去重信息不重新夹带已擦除正文。
+
+`apps/xinli/capture/sender` 是可复用的开发 HostApp：`Open(path, Identity)` 加进程文件锁；`Enqueue` 生成 capture_id、分配持久序号并保存原业务日；`Flush(ctx, Transport)` 按序发送。状态是 `pending → staged → accepted`（可直接接受）；网络失败保持原状态，成功回包丢失后仍重发同一 ID/序号。只有 accepted 清除本地正文；202 保存暂存回执并返回 `ErrGap`，不会确认。`resync_required` 或永久拒绝持久停止会话，重启仍停止；没有自动更换世代的入口。重新同步须由宿主显式处理旧文件并为新采集创建新会话，`Sender.Close` 只关闭本地文件，结束服务端会话另用 `capture.Client.CloseSession`。文件以 0600 临时文件写入、fsync、rename、目录 fsync 更新；保存失败停止当前对象，须关闭重开确认磁盘状态。一个文件绑定一个 owner、安装实例和采集会话，不能换账号复用。它用于 macOS/Linux 开发测试，不是移动平台生产存储。
+
+`apps/xinli/recognition.Recognizer.Recognize(ctx, ChunkRef)` 返回 `[]capture.Segment`。确定性 fake 按分片引用配置文字、延迟、失败、说话人标签覆盖与 speaker_ref；等待函数可注入虚拟时钟，支持取消，配置和结果均复制。接口不接收音频字节，fake 不读取音频引用、不落盘，不实现供应商协议。
+
+测试分为 Persona 内存/PG 共用的有序采集一致性套件（520 批、重复/异文、跨午夜、缺口排空、View/回滚、世代与生命周期）、两个存储的暂存物理残留检查、应用内存/PG 的真实 HTTP 与发送端重启/丢响应测试，以及本地持久状态机和识别 fake 测试。真实硬件、ASR、声纹与多设备合流仍属于后续外部接入范围。

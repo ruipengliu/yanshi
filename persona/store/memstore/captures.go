@@ -19,16 +19,21 @@ type batchKey struct {
 type captureData map[batchKey][]domain.CaptureSegment
 
 type captureTx struct {
-	ctx    context.Context
-	base   captureData
-	writes captureData
-	closed bool
+	pendingBase, pendingWrites pendingData
+	ctx                        context.Context
+	base                       captureData
+	writes                     captureData
+	closed                     bool
 }
 
 var _ domain.CaptureAccess = (*captureTx)(nil)
 
-func newCaptureTx(ctx context.Context, base captureData) *captureTx {
-	return &captureTx{ctx: ctx, base: base, writes: captureData{}}
+func newCaptureTx(ctx context.Context, base captureData, pending ...pendingData) *captureTx {
+	t := &captureTx{ctx: ctx, base: base, writes: captureData{}}
+	if len(pending) > 0 {
+		t.pendingBase = pending[0]
+	}
+	return t
 }
 
 func (t *captureTx) check() error {
@@ -40,6 +45,7 @@ func (t *captureTx) check() error {
 
 func (t *captureTx) close() {
 	t.closed = true
+	t.pendingBase, t.pendingWrites = nil, nil
 	t.base, t.writes, t.ctx = nil, nil, nil
 }
 

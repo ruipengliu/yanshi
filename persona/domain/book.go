@@ -58,15 +58,16 @@ type State struct {
 
 // Book 保存一个 owner 的非原文账本；原文只经所属事务绑定的接缝访问。
 type Book struct {
-	workBindings  map[string]workBinding
-	workSessions  map[string]workSession
-	captures      CaptureAccess
-	captureClock  func() time.Time
-	captureDays   map[string]*captureDay
-	deletionTasks []DeletionTask
-	acceptedFacts map[string]acceptedFact
-	domainChanges []DomainChange
-	projects      []Project
+	captureStreams map[string]*captureStream
+	workBindings   map[string]workBinding
+	workSessions   map[string]workSession
+	captures       CaptureAccess
+	captureClock   func() time.Time
+	captureDays    map[string]*captureDay
+	deletionTasks  []DeletionTask
+	acceptedFacts  map[string]acceptedFact
+	domainChanges  []DomainChange
+	projects       []Project
 	// changesets 是变更集的日志，ledger 是由它叠加出的交谈与承诺（每次改动之后重新叠加）。
 	changesets []Changeset
 	ledger

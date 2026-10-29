@@ -15,6 +15,8 @@ import (
 
 func Run(t *testing.T, factory func() store.Store) {
 	t.Helper()
+	t.Run("ordered_capture_ingest", func(t *testing.T) { orderedCaptureIngest(t, factory) })
+	t.Run("concurrent_capture_ingest", func(t *testing.T) { concurrentCaptureIngest(t, factory) })
 	t.Run("work_sessions", func(t *testing.T) { workSessions(t, factory) })
 	t.Run("work_fact_recovery", func(t *testing.T) { workFactRecovery(t, factory) })
 	t.Run("work_project_recovery", func(t *testing.T) { workProjectRecovery(t, factory) })

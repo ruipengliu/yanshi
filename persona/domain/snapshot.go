@@ -9,6 +9,7 @@ import (
 // bookData 只序列化事实与分配位置；投影从变更集重建，避免两份当前值漂移。
 // 它是存储格式，与对外 State 的 JSON 形状分开；CaptureDays 只含元数据，不含原文或事务接缝。
 type bookData struct {
+	CaptureStreams      map[string]*captureStream
 	WorkBindings        map[string]workBinding
 	WorkSessions        map[string]workSession
 	CaptureDays         map[string]*captureDay
@@ -31,7 +32,8 @@ func NewBook() *Book {
 
 func (u *Book) MarshalJSON() ([]byte, error) {
 	return json.Marshal(bookData{
-		WorkBindings: u.workBindings, WorkSessions: u.workSessions,
+		CaptureStreams: u.captureStreams,
+		WorkBindings:   u.workBindings, WorkSessions: u.workSessions,
 		CaptureDays: u.captureDays, DeletionTasks: u.deletionTasks,
 		AcceptedFacts: u.acceptedFacts, DomainChanges: u.domainChanges,
 		Projects: u.projects, Changesets: u.changesets, Days: u.days, Weeks: u.weeks, Merges: u.merges,
@@ -60,6 +62,7 @@ func (u *Book) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	next := NewBook()
+	next.captureStreams = d.CaptureStreams
 	next.workBindings, next.workSessions = d.WorkBindings, d.WorkSessions
 	next.captureDays = d.CaptureDays
 	next.deletionTasks = d.DeletionTasks

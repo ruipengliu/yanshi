@@ -22,23 +22,24 @@ type CaptureSegment struct {
 
 // captureDay 独立于 file_day 的总览，换绑工作 Session 不改变引用与处理进度。
 type captureDay struct {
-	LastBatchAt     time.Time
-	Tail            Ref
-	Session         string
-	Sessions        []string
-	DeleteAt        time.Time
-	Deleted         bool
-	Tombstones      []Source
-	BatchIDs        map[string]uint64
-	TimeZone        string
-	ExpiresAt       time.Time
-	Expired         bool
-	CaptureRevision uint64
-	Next            uint64
-	Progress        string
-	ReadThrough     Ref
-	GapMS           int64
-	GapSet          bool
+	CaptureGeneration uint64
+	LastBatchAt       time.Time
+	Tail              Ref
+	Session           string
+	Sessions          []string
+	DeleteAt          time.Time
+	Deleted           bool
+	Tombstones        []Source
+	BatchIDs          map[string]uint64
+	TimeZone          string
+	ExpiresAt         time.Time
+	Expired           bool
+	CaptureRevision   uint64
+	Next              uint64
+	Progress          string
+	ReadThrough       Ref
+	GapMS             int64
+	GapSet            bool
 }
 
 func (u *Book) captureDay(date string) *captureDay {
@@ -113,36 +114,8 @@ func (u *Book) AppendCaptures(date, captureID string, segments []CaptureSegment)
 	if err := u.CheckCaptures(date); err != nil {
 		return nil, err
 	}
-	if captureID == "" || len(captureID) > 128 {
-		return nil, fmt.Errorf("capture_id must contain 1 to 128 bytes")
-	}
-	if len(segments) == 0 || len(segments) > 200 {
-		return nil, fmt.Errorf("captures must contain 1 to 200 segments")
-	}
-	for _, g := range segments {
-		if g.Speaker != "wearer" && g.Speaker != "other" {
-			return nil, fmt.Errorf("invalid capture speaker")
-		}
-		if g.Speaker == "wearer" && g.SpeakerKey != "" || g.Speaker == "other" && !captureSpeakerKey.MatchString(g.SpeakerKey) {
-			return nil, fmt.Errorf("invalid capture speaker_key")
-		}
-		if g.SpeakerRef != "" && (g.Speaker != "other" || !captureSpeakerRef.MatchString(g.SpeakerRef)) {
-			return nil, fmt.Errorf("invalid capture speaker_ref")
-		}
-		if g.Text == "" || utf8.RuneCountInString(g.Text) > 2000 {
-			return nil, fmt.Errorf("capture text must contain 1 to 2000 characters")
-		}
-		if g.SpokenAt != "" {
-			at, err := time.Parse(time.RFC3339Nano, g.SpokenAt)
-			if err != nil || at.UTC().Year() < 1 || at.UTC().Year() > 9999 {
-				return nil, fmt.Errorf("invalid capture spoken_at")
-			}
-		}
-		if g.TimeZone != "" {
-			if _, ok := captureZone(g.TimeZone); !ok {
-				return nil, fmt.Errorf("invalid capture time_zone")
-			}
-		}
+	if err := validateCaptureBatch(captureID, segments); err != nil {
+		return nil, err
 	}
 	// 首批只决定一次时区；无时区的旧采集入口沿用上海默认值。
 	zone := segments[len(segments)-1].TimeZone
@@ -348,4 +321,39 @@ func (u *Book) DayCaptures(date string) ([]PageSegment, error) {
 		out = append(out, PageSegment{Ref: s.ref.String(), Speaker: g.Speaker, SpeakerKey: g.SpeakerKey, SpeakerRef: g.SpeakerRef, Text: g.Text, SpokenAt: g.SpokenAt, TimeZone: g.TimeZone})
 	}
 	return out, nil
+}
+
+func validateCaptureBatch(captureID string, segments []CaptureSegment) error {
+	if captureID == "" || len(captureID) > 128 {
+		return fmt.Errorf("capture_id must contain 1 to 128 bytes")
+	}
+	if len(segments) == 0 || len(segments) > 200 {
+		return fmt.Errorf("captures must contain 1 to 200 segments")
+	}
+	for _, g := range segments {
+		if g.Speaker != "wearer" && g.Speaker != "other" {
+			return fmt.Errorf("invalid capture speaker")
+		}
+		if g.Speaker == "wearer" && g.SpeakerKey != "" || g.Speaker == "other" && !captureSpeakerKey.MatchString(g.SpeakerKey) {
+			return fmt.Errorf("invalid capture speaker_key")
+		}
+		if g.SpeakerRef != "" && (g.Speaker != "other" || !captureSpeakerRef.MatchString(g.SpeakerRef)) {
+			return fmt.Errorf("invalid capture speaker_ref")
+		}
+		if g.Text == "" || utf8.RuneCountInString(g.Text) > 2000 {
+			return fmt.Errorf("capture text must contain 1 to 2000 characters")
+		}
+		if g.SpokenAt != "" {
+			at, err := time.Parse(time.RFC3339Nano, g.SpokenAt)
+			if err != nil || at.UTC().Year() < 1 || at.UTC().Year() > 9999 {
+				return fmt.Errorf("invalid capture spoken_at")
+			}
+		}
+		if g.TimeZone != "" {
+			if _, ok := captureZone(g.TimeZone); !ok {
+				return fmt.Errorf("invalid capture time_zone")
+			}
+		}
+	}
+	return nil
 }

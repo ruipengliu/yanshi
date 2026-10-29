@@ -18,6 +18,7 @@ type entry struct {
 	mu       sync.Mutex
 	book     *domain.Book
 	captures captureData
+	pending  pendingData
 	deletion store.OwnerDeletion
 }
 type Store struct {
@@ -67,7 +68,7 @@ func (s *Store) Update(ctx context.Context, bl, eu string, fn func(*domain.Book)
 	if err != nil {
 		return err
 	}
-	captures := newCaptureTx(ctx, e.captures)
+	captures := newCaptureTx(ctx, e.captures, e.pending)
 	defer captures.close()
 	working.SetCaptureAccess(captures)
 	working.SetCaptureClock(s.now)
@@ -83,6 +84,7 @@ func (s *Store) Update(ctx context.Context, bl, eu string, fn func(*domain.Book)
 		return err
 	}
 	e.book, e.captures = committed, captures.commit()
+	e.pending = captures.commitPending()
 	return nil
 }
 
@@ -98,7 +100,7 @@ func (s *Store) View(ctx context.Context, bl, eu string, fn func(*domain.Book) e
 	}
 	snapshot, err := e.book.Clone()
 	// 注销清理会逐项收回目录；只复制目录以保持在途 View 的片段快照不可变。
-	captures := newCaptureTx(ctx, maps.Clone(e.captures))
+	captures := newCaptureTx(ctx, maps.Clone(e.captures), maps.Clone(e.pending))
 	e.mu.Unlock()
 	defer captures.close()
 	if err != nil {
@@ -170,6 +172,7 @@ func (s *Store) ResetOwner(ctx context.Context, bl, eu string) error {
 		return store.ErrOwnerDeleting
 	}
 	e.book, e.captures = domain.NewBook(), nil
+	e.pending = nil
 	return nil
 }
 

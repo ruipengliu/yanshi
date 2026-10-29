@@ -161,6 +161,9 @@ func (u *Book) erase(date string, from, to Ref, whole bool, now time.Time) (Dele
 	if err != nil {
 		return DeletionTask{}, err
 	}
+	if err := u.invalidateCaptureGeneration(date); err != nil {
+		return DeletionTask{}, err
+	}
 	if err := access.Erase(date, from, to); err != nil {
 		return DeletionTask{}, err
 	}

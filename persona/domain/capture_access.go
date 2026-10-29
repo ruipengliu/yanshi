@@ -17,6 +17,7 @@ type CaptureRecord struct {
 // 读取错误必须返回，不能用 found=false 或空迭代代替。调用方不并发使用同一事务，
 // 不在迭代中写入或重入读取；实现须保留事务取消错误，Scan 消费结束前仍属于该事务。
 type CaptureAccess interface {
+	CaptureStaging
 	// Check 只检查事务寿命与取消，优先于到期判断，不读取正文。
 	Check() error
 	// Lookup 的 found 只表示尚存原文；不存在与已擦除都为 false，故障另由 error 表达。
@@ -165,4 +166,25 @@ func (g captureGuard) Append(date string, number uint64, segments []CaptureSegme
 		return err
 	}
 	return g.CaptureAccess.Append(date, number, segments)
+}
+
+func (g captureGuard) Pending(date, session string, seq, generation uint64) ([]CaptureSegment, error) {
+	if err := g.check(date); err != nil {
+		return nil, err
+	}
+	segments, err := g.CaptureAccess.Pending(date, session, seq, generation)
+	if err == nil {
+		err = g.check(date)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return segments, nil
+}
+
+func (g captureGuard) PutPending(date, session string, seq, generation uint64, segments []CaptureSegment) error {
+	if err := g.check(date); err != nil {
+		return err
+	}
+	return g.CaptureAccess.PutPending(date, session, seq, generation, segments)
 }

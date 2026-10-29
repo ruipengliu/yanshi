@@ -129,7 +129,7 @@ func (s *Store) Purge(ctx context.Context, businessLine, endUser string, limit i
 		return out, nil
 	}
 	// 不装载 Book，不触发整 owner 的级联。静态表目录复用账本持久化映射，新增类别自动纳入。
-	tables := []string{"capture_segments"}
+	tables := []string{"capture_segments", "capture_pending"}
 	for _, c := range categories {
 		tables = append(tables, c.table)
 	}

@@ -26,7 +26,7 @@ func TestMigrate(t *testing.T) {
 	if database != pgtest.Database {
 		t.Fatalf("not a dedicated database: %s", database)
 	}
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM persona_schema_migrations`).Scan(&count); err != nil || count != 6 {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM persona_schema_migrations`).Scan(&count); err != nil || count != 7 {
 		t.Fatal("migration was not recorded once", count, err)
 	}
 }
@@ -35,18 +35,18 @@ func TestMigrationRollbackAndConcurrentIndex(t *testing.T) {
 	pool := pgtest.New(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	broken := fstest.MapFS{"migrations/0007_broken.sql": {Data: []byte(`CREATE TABLE migration_probe (id int); SELECT 1/0;`)}}
+	broken := fstest.MapFS{"migrations/0008_broken.sql": {Data: []byte(`CREATE TABLE migration_probe (id int); SELECT 1/0;`)}}
 	if err := pg.MigrateFS(ctx, pool, broken); err == nil {
 		t.Fatal("broken migration succeeded")
 	}
 	var absent bool
 	if err := pool.QueryRow(ctx, `SELECT to_regclass('migration_probe') IS NULL
-		AND NOT EXISTS (SELECT 1 FROM persona_schema_migrations WHERE version=7)`).Scan(&absent); err != nil || !absent {
+		AND NOT EXISTS (SELECT 1 FROM persona_schema_migrations WHERE version=8)`).Scan(&absent); err != nil || !absent {
 		t.Fatal("migration did not roll back", err)
 	}
 	files := fstest.MapFS{
-		"migrations/0007_probe.sql": {Data: []byte(`CREATE TABLE migration_probe (id int);`)},
-		"migrations/0008_index.sql": {Data: []byte(pg.NoTransaction + "\nCREATE INDEX CONCURRENTLY IF NOT EXISTS migration_probe_idx ON migration_probe(id);")},
+		"migrations/0008_probe.sql": {Data: []byte(`CREATE TABLE migration_probe (id int);`)},
+		"migrations/0009_index.sql": {Data: []byte(pg.NoTransaction + "\nCREATE INDEX CONCURRENTLY IF NOT EXISTS migration_probe_idx ON migration_probe(id);")},
 	}
 	results := make(chan error, 2)
 	for range 2 {
@@ -58,7 +58,7 @@ func TestMigrationRollbackAndConcurrentIndex(t *testing.T) {
 		}
 	}
 	// 模拟非事务 SQL 成功、记录版本之前退出；可重复执行不能破坏索引。
-	if _, err := pool.Exec(ctx, `DELETE FROM persona_schema_migrations WHERE version=8`); err != nil {
+	if _, err := pool.Exec(ctx, `DELETE FROM persona_schema_migrations WHERE version=9`); err != nil {
 		t.Fatal(err)
 	}
 	if err := pg.MigrateFS(ctx, pool, files); err != nil {

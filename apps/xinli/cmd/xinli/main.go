@@ -24,6 +24,7 @@ import (
 	"persona/store/memstore"
 	"persona/store/pgstore"
 	"xinli/account"
+	"xinli/capture"
 	"xinli/devui"
 	"xinli/kernel"
 	"xinli/orchestrator"
@@ -272,6 +273,7 @@ func routes(cfg config, books store.Store, orch *orchestrator.Orchestrator, clie
 	}
 	if accounts != nil && (cfg.roles.bff || cfg.mode == "dev") {
 		mux.Handle("/v1/auth/", accounts.Handler())
+		mux.Handle("/v1/captures/", capture.Handler(books, accounts))
 	}
 	if cfg.mode != "dev" {
 		return mux

@@ -5,6 +5,8 @@ import (
 	"iter"
 	"maps"
 	"slices"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -128,3 +130,34 @@ func (m testCaptures) Erase(date string, from, to Ref) error {
 func (m testCaptures) DeleteDay(date string) error { delete(m, date); return nil }
 
 func (m testCaptures) Check() error { return nil }
+
+// 暂存使用独立命名空间，不能被正式原文 Scan 或 Batch 读出。
+func testPendingDate(date, session string, generation uint64) string {
+	return date + "\x00" + strconv.FormatUint(generation, 10) + "\x00" + session
+}
+
+func (m testCaptures) Pending(date, session string, seq, generation uint64) ([]CaptureSegment, error) {
+	return slices.Clone(m[testPendingDate(date, session, generation)][seq]), nil
+}
+
+func (m testCaptures) PutPending(date, session string, seq, generation uint64, segments []CaptureSegment) error {
+	key := testPendingDate(date, session, generation)
+	if segments == nil {
+		delete(m[key], seq)
+		return nil
+	}
+	if m[key] == nil {
+		m[key] = map[uint64][]CaptureSegment{}
+	}
+	m[key][seq] = slices.Clone(segments)
+	return nil
+}
+
+func (m testCaptures) ClearPending(date string) error {
+	for key := range m {
+		if strings.HasPrefix(key, date+"\x00") {
+			delete(m, key)
+		}
+	}
+	return nil
+}

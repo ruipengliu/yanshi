@@ -111,6 +111,13 @@ func (s *Store) Purge(ctx context.Context, bl, eu string, limit int, now time.Ti
 		}
 		left -= n
 	}
+	for key := range e.pending {
+		if left == 0 {
+			break
+		}
+		delete(e.pending, key)
+		left--
+	}
 	if left > 0 {
 		left -= e.book.PurgeBatch(left)
 	}

@@ -58,7 +58,7 @@ func (u *Book) ExpiringCaptureDays(now time.Time) []string {
 }
 
 // ExpireCaptures 不经过 EraseDay：到期只清原文及读页状态，保留账本与处理结论。
-// A13 的缺口暂存正文应在同一个事务清除，不能另留一份超过期限的原文。
+// 缺口暂存正文在同一个事务清除，不能另留一份超过期限的原文。
 func (u *Book) ExpireCaptures(date string, now time.Time) error {
 	day := u.captureDays[date]
 	if day == nil {
@@ -79,6 +79,10 @@ func (u *Book) ExpireCaptures(date string, now time.Time) error {
 	if err := u.captures.DeleteDay(date); err != nil {
 		return err
 	}
+	if err := u.captures.ClearPending(date); err != nil {
+		return err
+	}
+	u.invalidateCaptureStreams(date)
 	day.Expired = true
 	day.CaptureRevision++
 	day.ReadThrough, day.GapMS, day.GapSet = Ref{}, 0, false

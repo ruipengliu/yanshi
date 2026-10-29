@@ -25,11 +25,13 @@ type erasedRange struct {
 }
 
 type captureTx struct {
-	ctx      context.Context
-	tx       pgx.Tx
-	bl, eu   []byte
-	closed   bool
-	readOnly bool
+	pendingWrites  map[pendingKey][]domain.CaptureSegment
+	pendingCleared map[string]bool
+	ctx            context.Context
+	tx             pgx.Tx
+	bl, eu         []byte
+	closed         bool
+	readOnly       bool
 	// View 允许演练领域命令，但数据库事务保持只读；仅保存本次追加及擦除范围。
 	appended map[batchKey][]domain.CaptureSegment
 	erased   []erasedRange
@@ -51,6 +53,7 @@ func (t *captureTx) check() error {
 
 func (t *captureTx) close() {
 	t.closed = true
+	t.pendingWrites, t.pendingCleared = nil, nil
 	t.tx, t.ctx, t.appended, t.erased, t.purged = nil, nil, nil, nil, nil
 }
 
