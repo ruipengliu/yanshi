@@ -235,7 +235,7 @@ func TestDayMappingKeepsLegacySessionsSeparate(t *testing.T) {
 	o := New(ctx, books, &fakeKernel{}, Options{Now: captureClock})
 	defer finish(t, o)
 	for i, change := range changes {
-		specs, err := o.dayTasks(ctx, change)
+		specs, err := o.factTasks(ctx, change)
 		if err != nil || len(specs) != 1 || specs[0].Target != []string{"project/p", "project/q"}[i] {
 			t.Fatal(specs, err)
 		}

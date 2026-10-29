@@ -22,6 +22,8 @@ type CaptureSegment struct {
 
 // captureDay 独立于 file_day 的总览，换绑工作 Session 不改变引用与处理进度。
 type captureDay struct {
+	LastBatchAt     time.Time
+	Tail            Ref
 	Session         string
 	Sessions        []string
 	DeleteAt        time.Time
@@ -202,6 +204,9 @@ func (u *Book) AppendCaptures(date, captureID string, segments []CaptureSegment)
 	day.BatchIDs[captureID], day.Next = number, number
 	day.TimeZone, day.ExpiresAt, day.DeleteAt = zone, expiresAt, expiresAt
 	day.CaptureRevision++
+	// 静默从服务端正式接收算起；补传不能借历史说话时间立刻触发整理。
+	day.LastBatchAt = u.captureNow().UTC()
+	day.Tail = Ref{Seq: number, Index: len(segments) - 1}
 	return batchRefs(number, len(segments)), nil
 }
 

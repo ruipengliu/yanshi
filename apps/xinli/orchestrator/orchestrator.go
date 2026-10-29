@@ -55,6 +55,7 @@ type Orchestrator struct {
 	tasks              task.Store
 	worker             *task.Executor
 	startedTasks       bool
+	startedSchedules   bool
 	orphanGrace        time.Duration
 }
 
@@ -91,7 +92,7 @@ func New(ctx context.Context, s store.Store, k Kernel, opts Options) *Orchestrat
 	if o.orphanGrace <= 0 {
 		o.orphanGrace = 10 * time.Minute
 	}
-	o.worker = &task.Executor{Register: o.registerCommand, Finish: o.finishCommand, Retire: o.retireCommand, CommandTimeout: opts.CommandTimeout, Store: o.tasks, Kernel: taskKernel, Prepare: o.prepareTask, Now: o.now, RetryBase: o.retryInterval, RetryMax: o.retryMax}
+	o.worker = &task.Executor{Check: o.checkScheduledTask, Complete: o.completeScheduledTask, Register: o.registerCommand, Finish: o.finishCommand, Retire: o.retireCommand, CommandTimeout: opts.CommandTimeout, Store: o.tasks, Kernel: taskKernel, Prepare: o.prepareTask, Now: o.now, RetryBase: o.retryInterval, RetryMax: o.retryMax}
 	return o
 }
 
@@ -157,6 +158,10 @@ func (o *Orchestrator) DayFiled(_ context.Context, bl, eu, _, _ string, _ []stri
 	}()
 }
 
+func (o *Orchestrator) WeekFiled(ctx context.Context, bl, eu string) {
+	o.DayFiled(ctx, bl, eu, "", "", nil)
+}
+
 func (o *Orchestrator) Week(ctx context.Context, bl, eu string) (string, error) {
 	if !o.begin() {
 		return "", errors.New("orchestrator: shutting down")
@@ -184,21 +189,7 @@ func (o *Orchestrator) Week(ctx context.Context, bl, eu string) (string, error) 
 	if job.State != task.Accepted && job.State != task.Succeeded {
 		return "", errors.New("orchestrator: week submission pending or failed")
 	}
-	sid := job.Session
-	// TODO(P4-A10)：把重写迁至 file_week 接受变化的持久消费；空回顾也触发，按事实版本去重。
-	// 本步保留原行为与既有开发入口，尚未接入消费者时不能取消项目重写。
-	if err = o.store.View(ctx, bl, eu, func(b *domain.Book) error {
-		plan = b.ReviewWeek(now)
-		return nil
-	}); err != nil {
-		return "", err
-	}
-	for _, p := range plan.Rewrite {
-		if _, err := o.weekInput(ctx, bl, eu, plan.From, "rewrite", "project/"+p.ID); err != nil {
-			o.failed("rewrite", bl, p.Session, p.ID, err)
-		}
-	}
-	return sid, nil
+	return job.Session, nil
 }
 
 func (o *Orchestrator) failed(operation, bl, sid, project string, err error) {

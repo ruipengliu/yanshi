@@ -164,6 +164,15 @@ func (u *Book) erase(date string, from, to Ref, whole bool, now time.Time) (Dele
 	if err := access.Erase(date, from, to); err != nil {
 		return DeletionTask{}, err
 	}
+	if whole {
+		day.Tail = Ref{}
+	} else {
+		last, _, err := access.Adjacent(date, Ref{}, true)
+		if err != nil {
+			return DeletionTask{}, err
+		}
+		day.Tail = last.Ref
+	}
 	if !whole {
 		if err := u.rewindCaptures(date, affected, gap); err != nil {
 			return DeletionTask{}, err

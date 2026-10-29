@@ -258,7 +258,7 @@ func TestDevWeekReviewWithKernel(t *testing.T) {
 	writer := readyWriter{make(chan []byte, 1)}
 	done := make(chan error, 1)
 	go func() {
-		done <- run(ctx, []string{"dev", "-business-lines", "bl", "-kernel-url", backend.URL, "-kernel-token-env", "XINLI_TEST_TOKEN"}, strings.NewReader(""), writer, io.Discard)
+		done <- run(ctx, []string{"dev", "-business-lines", "bl", "-auto-schedule=false", "-kernel-url", backend.URL, "-kernel-token-env", "XINLI_TEST_TOKEN"}, strings.NewReader(""), writer, io.Discard)
 	}()
 	var info ready
 	select {

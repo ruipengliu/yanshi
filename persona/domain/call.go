@@ -30,6 +30,7 @@ type Call struct {
 	cites       map[string]Citation
 	now         time.Time
 	Filed       *DayFiled
+	WeekFiled   bool
 }
 
 // DayFiled 是已接受的当天整理所涉及的项目；只描述事实，不创建 Session 或提交输入。

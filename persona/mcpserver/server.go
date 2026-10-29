@@ -32,9 +32,14 @@ func XinliRegistration() Registration {
 
 // Notifier 是接受事实后的进程内提示；可靠发现来自同事务保存的领域变化（Q99）。
 // 只在事务提交成功、锁释放后同步通知；重复交出会重复通知，编排器须按 Session 与项目去重。
-// TODO(P4-A8/A10)：应用持久接收领域变化后再确认；此提示不能代替恢复扫描。
+// 应用持久接收领域变化后再确认；此提示不能代替恢复扫描。
 type Notifier interface {
 	DayFiled(ctx context.Context, businessLine, endUser, daySession, date string, projects []string)
+}
+
+// WeekNotifier 是可选的接受提示；没有实现时仍由持久扫描发现周事实。
+type WeekNotifier interface {
+	WeekFiled(ctx context.Context, businessLine, endUser string)
 }
 
 // DeletionNotifier 与 DayFiled 分开，现有编排器可以在④b 接入删除待办。
@@ -109,6 +114,11 @@ func (x *server) call(ctx context.Context, metadata mcp.Meta, args json.RawMessa
 	if call.Filed != nil && x.notifier != nil {
 		day := call.Filed
 		x.notifier.DayFiled(ctx, bl, eu, day.Session, day.Date, day.Projects)
+	}
+	if call.WeekFiled {
+		if notifier, ok := x.notifier.(WeekNotifier); ok {
+			notifier.WeekFiled(ctx, bl, eu)
+		}
 	}
 	result := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}
 	return result, nil

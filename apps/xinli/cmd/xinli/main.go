@@ -92,6 +92,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	storeKind := flags.String("store", "memory", "Persona 存储：memory | pg")
 	personaDSN := flags.String("persona-dsn", os.Getenv("YANSHI_PERSONA_PG_DSN"), "Persona 独立数据库 DSN（YANSHI_PERSONA_PG_DSN；pg 必填）")
 	appDSN := flags.String("app-dsn", os.Getenv("YANSHI_XINLI_PG_DSN"), "应用独立数据库 DSN（YANSHI_XINLI_PG_DSN；pg 编排必填）")
+	autoSchedule := flags.Bool("auto-schedule", true, "自动白天、日终与周回顾（需 kernel-url；评测不装配编排器）")
 	exitOnEOF := flags.Bool("exit-on-stdin-eof", false, "stdin 关闭时退出")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
@@ -209,6 +210,9 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	if orch != nil {
 		orch.StartDeletions()
 		orch.StartTasks(nil)
+		if *autoSchedule {
+			orch.StartSchedules(nil)
+		}
 	}
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError)}
 	serveErr := make(chan error, 1)

@@ -111,7 +111,18 @@ func (u *Book) ResolveMerge(id string, accept bool) error {
 
 func (c *Call) WeekOverview() string {
 	var b strings.Builder
-	for _, d := range c.u.weekDays(c.now) {
+	days := c.u.weekDays(c.now)
+	if from, bound := c.weekStart(); bound {
+		start, _ := time.Parse(time.DateOnly, from)
+		until := start.AddDate(0, 0, 7).Format(time.DateOnly)
+		days = nil
+		for _, day := range c.u.sortedDays() {
+			if day.Date >= from && day.Date < until {
+				days = append(days, day)
+			}
+		}
+	}
+	for _, d := range days {
 		fmt.Fprintf(&b, "%s：%s\n", d.Date, d.Headline)
 		for _, e := range c.u.exchanges {
 			if e.Date == d.Date && e.Live() {
@@ -244,6 +255,7 @@ func (c *Call) FileWeek() string {
 	if c.err != nil {
 		return ""
 	}
+	c.WeekFiled = true
 	out := fmt.Sprintf("已收到本周的觉察（%d 个习惯）", len(kept))
 	if len(single) > 0 {
 		out += "；只出现一天的不算习惯，没有收录：" + strings.Join(single, "、")

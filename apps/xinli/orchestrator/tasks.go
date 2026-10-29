@@ -117,11 +117,11 @@ func (o *Orchestrator) receiveChanges(ctx context.Context, bl, eu string) error 
 		return err
 	}
 	for _, change := range changes {
-		// 周回顾的接受映射在 A10 接入；不能提前确认尚未接收的变化。
-		if change.Kind != domain.FactDay {
+		// 未识别的事实不提前确认；已识别的空映射也须先落库。
+		if change.Kind != domain.FactDay && change.Kind != domain.FactWeek {
 			continue
 		}
-		specs, err := o.dayTasks(ctx, change)
+		specs, err := o.factTasks(ctx, change)
 		if err != nil {
 			return err
 		}
@@ -136,15 +136,19 @@ func (o *Orchestrator) receiveChanges(ctx context.Context, bl, eu string) error 
 	return nil
 }
 
-func (o *Orchestrator) dayTasks(ctx context.Context, change store.DomainChange) ([]task.Spec, error) {
+func (o *Orchestrator) factTasks(ctx context.Context, change store.DomainChange) ([]task.Spec, error) {
 	var specs []task.Spec
 	err := o.store.View(ctx, change.BusinessLine, change.EndUser, func(b *domain.Book) error {
 		// 已擦除的事实仍须持久接收空映射，然后才能确认；不借旧变化复活被擦除的工作。
 		if _, active := b.AcceptedFactByID(change.ID); !active {
 			return nil
 		}
-		for _, id := range b.DayProjects(change.ID) {
-			specs = append(specs, task.Spec{Operation: "collect", Target: "project/" + id, Date: change.Date})
+		ids, operation := b.DayProjects(change.ID), "collect"
+		if change.Kind == domain.FactWeek {
+			ids, operation = b.WeekProjects(change.Date), "rewrite"
+		}
+		for _, id := range ids {
+			specs = append(specs, task.Spec{Operation: operation, Target: "project/" + id, Date: change.Date})
 		}
 		return nil
 	})
@@ -173,6 +177,16 @@ func (o *Orchestrator) prepareTask(ctx context.Context, t task.Task) (sessionID,
 		sid, err := o.ensureWork(ctx, t, WeekAgent)
 		return sid, "回顾本周", err
 	case "rewrite":
+		if t.Kind == domain.FactWeek {
+			if err := o.store.View(ctx, t.BusinessLine, t.EndUser, func(b *domain.Book) error {
+				if _, active := b.AcceptedFactByID(t.ID); !active {
+					return task.ErrObsolete
+				}
+				return nil
+			}); err != nil {
+				return "", "", err
+			}
+		}
 		sid, err := o.ensureWork(ctx, t, ProjectAgent)
 		return sid, "重写现状", err
 	default:
@@ -181,7 +195,7 @@ func (o *Orchestrator) prepareTask(ctx context.Context, t task.Task) (sessionID,
 }
 
 // 旧 Week 开发入口也经过 Session 槽位，避免绕过归集的单在途限制。
-// 触发重写的时机仍保留旧行为，A10 再迁到周回顾接受变化。
+// 项目重写只由接受变化生成，此入口只负责提交回顾。
 func (o *Orchestrator) weekInput(ctx context.Context, bl, eu, from, operation, target string) (task.Task, error) {
 	source := task.Source{Owner: task.Owner{BusinessLine: bl, EndUser: eu}, Kind: "week_request", ID: "week_request/" + from + "/" + operation + "/" + target, Version: 1}
 	spec := task.Spec{Operation: operation, Target: target, Date: from}

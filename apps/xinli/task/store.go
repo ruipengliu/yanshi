@@ -113,9 +113,9 @@ func Ready(t Task, now time.Time) bool {
 	return !t.Terminal() && !t.RetryAt.After(now) && !t.LeaseUntil.After(now)
 }
 
-// 只有明确完成的 Run 释放槽位；失败/中断后潜在的旧远端写入由 A9 的退役处理。
+// succeeded 表示安全终态，或业务已完成且旧 Session 已退役；其余失败仍保留槽位。
 func HoldsSession(t Task) bool {
-	if t.State == Terminated {
+	if t.State == Terminated || t.State == Succeeded {
 		return false
 	}
 	return t.Session != "" && (t.State == Unknown || t.State == Accepted || (t.Receipt.RunID != "" && t.Receipt.Terminal != "completed"))

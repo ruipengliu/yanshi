@@ -6,9 +6,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"xinli/kernel"
+	"xinli/schedule"
 )
 
 type Kernel interface {
@@ -17,6 +19,8 @@ type Kernel interface {
 }
 
 var (
+	ErrExpired       = errors.New("task: expired before business completion")
+	ErrNoProgress    = errors.New("task: business completion retry limit")
 	ErrObsolete      = errors.New("task: source or target deleted")
 	ErrConfiguration = errors.New("task: configuration")
 )
@@ -36,6 +40,9 @@ func IsConfiguration(err error) bool {
 type Prepare func(context.Context, Task) (sessionID, text string, err error)
 
 type Executor struct {
+	// Check 在每次认领后重查业务期限；Complete 在安全终态后核对接受事实与进度。
+	Check          func(context.Context, Task) error
+	Complete       func(context.Context, Task) (bool, error)
 	Register       func(context.Context, Task) error
 	Finish         func(context.Context, Task) error
 	Retire         func(context.Context, Task) error
@@ -94,6 +101,10 @@ func (w *Executor) failure(ctx context.Context, t Task, cause error) (Task, erro
 	before := t.State
 	class := "retryable"
 	switch {
+	case errors.Is(cause, ErrExpired):
+		t.State, class = Failed, "expired_unprocessed"
+	case errors.Is(cause, ErrNoProgress):
+		t.State, class = Failed, "no_progress"
 	case errors.Is(cause, kernel.ErrNotFound), errors.Is(cause, ErrObsolete):
 		t.State = Terminated
 		class = "target_deleted"
@@ -122,8 +133,26 @@ func (w *Executor) accepted(ctx context.Context, t Task, receipt kernel.InputRec
 	}
 	t.Receipt = receipt
 	t.State = Accepted
+	if strings.HasPrefix(t.Kind, "schedule_") && receipt.Terminal == "" && w.Complete != nil {
+		done, err := w.Complete(ctx, t)
+		if err != nil {
+			return w.deferTask(ctx, t, "business_read", err)
+		}
+		if done {
+			return w.finishRetired(ctx, t)
+		}
+	}
 	class := ""
 	if receipt.Terminal == "completed" {
+		if w.Complete != nil {
+			done, err := w.Complete(ctx, t)
+			if err != nil {
+				return w.deferTask(ctx, t, "business_read", err)
+			}
+			if !done {
+				return w.retire(ctx, t, false)
+			}
+		}
 		if w.Finish != nil {
 			if err := w.Finish(ctx, t); err != nil {
 				return w.deferTask(ctx, t, "finish", err)
@@ -150,6 +179,11 @@ func (w *Executor) Run(ctx context.Context, id string) (Task, error) {
 	}
 	if !claimed {
 		return w.Store.Get(ctx, id)
+	}
+	if w.Check != nil {
+		if err := w.Check(ctx, t); err != nil {
+			return w.failure(ctx, t, err)
+		}
 	}
 	if w.Kernel == nil || w.Prepare == nil {
 		return w.failure(ctx, t, ErrConfiguration)
@@ -239,12 +273,30 @@ func (w *Executor) Scan(ctx context.Context, limit int) error {
 
 // 先提交 Persona 的退役屏障，再清应用槽位；中间崩溃只会重复退役，不会复用旧 Session。
 func (w *Executor) retire(ctx context.Context, t Task, retryNow bool) (Task, error) {
+	if strings.HasPrefix(t.Kind, "schedule_") && w.Complete != nil {
+		done, err := w.Complete(ctx, t)
+		if err != nil {
+			return w.deferTask(ctx, t, "business_read", err)
+		}
+		if done {
+			return w.finishRetired(ctx, t)
+		}
+	}
+	if strings.HasPrefix(t.Kind, "schedule_") && t.Retirements+1 >= schedule.MaxAttempts {
+		return w.failure(ctx, t, ErrNoProgress)
+	}
 	if err := w.Retire(ctx, t); err != nil {
 		return w.deferTask(ctx, t, "retire", err)
 	}
 	t.Session, t.State, t.Receipt = "", Pending, kernel.InputReceipt{}
 	t.CommandStartedAt = time.Time{}
 	t.Retirements++
+	if strings.HasPrefix(t.Kind, "schedule_") {
+		// 业务重做使用独立的有界退避，不让终态轮询的认领次数放大等待。
+		t.LastErrorClass = "no_progress"
+		t.RetryAt = w.now().Add(Backoff(t.TaskID, t.Retirements, schedule.RetryBase, schedule.RetryMax))
+		return t, w.Store.Save(ctx, t, w.now(), true)
+	}
 	if retryNow {
 		t.LastErrorClass, t.RetryAt = "retired", w.now()
 		if err := w.Store.Save(ctx, t, w.now(), true); err != nil {
@@ -254,4 +306,16 @@ func (w *Executor) retire(ctx context.Context, t Task, retryNow bool) (Task, err
 		return w.Run(ctx, t.TaskID)
 	}
 	return w.deferTask(ctx, t, "retired", nil)
+}
+
+// 业务已接受而运行尚未安全结束时，先封住迟到写入再释放槽位；不为了等终态重做业务。
+func (w *Executor) finishRetired(ctx context.Context, t Task) (Task, error) {
+	if w.Retire == nil {
+		return w.failure(ctx, t, ErrConfiguration)
+	}
+	if err := w.Retire(ctx, t); err != nil {
+		return w.deferTask(ctx, t, "retire", err)
+	}
+	t.State = Succeeded
+	return w.deferTask(ctx, t, "", nil)
 }

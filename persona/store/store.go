@@ -15,6 +15,8 @@ import (
 // 回调不得重入同键操作；退出（含失败或 panic）即关闭原文接缝及迭代器，不能带到事务外使用。
 // 账本引用离开回调后的修改不得影响存储；Call 的文字回执须同时检查 Call.Err 并作为回调错误返回。
 type Store interface {
+	// SchedulingOwners 只发现 owner 键；执行时逐键重读，并重新检查注销屏障。
+	SchedulingOwners(context.Context) ([]Owner, error)
 	// PendingDomainChanges 重复读取未确认变化；不认领、不自动确认，失败时不交付结果。
 	PendingDomainChanges(ctx context.Context, businessLine, endUser string) ([]DomainChange, error)
 	// AckDomainChanges 在 owner 事务中幂等确认一个事实截至 through 的全部版本。

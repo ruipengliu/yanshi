@@ -219,7 +219,7 @@ func TestWeeklyReview(t *testing.T) {
 	if len(k.sessions) != 1 || k.sessions[0].agent != WeekAgent {
 		t.Fatalf("sessions: %+v", k.sessions)
 	}
-	for _, want := range []struct{ sid, text string }{{"ses_1", "回顾本周"}, {"ses_p1", "重写现状"}} {
+	for _, want := range []struct{ sid, text string }{{"ses_1", "回顾本周"}} {
 		found := false
 		for _, got := range k.inputs {
 			if got.sid == want.sid && got.text == want.text {
@@ -230,7 +230,7 @@ func TestWeeklyReview(t *testing.T) {
 			t.Fatalf("missing input: %+v", want)
 		}
 	}
-	if len(k.inputs) != 2 {
+	if len(k.inputs) != 1 {
 		t.Fatalf("unique inputs: %d", len(k.inputs))
 	}
 	if err := books.View(ctx, "bl", "u", func(b *domain.Book) error {
@@ -265,7 +265,7 @@ func TestWeekSubmitFailureRetiresBinding(t *testing.T) {
 	}
 }
 
-func TestRewriteFailureDoesNotFailReview(t *testing.T) {
+func TestWeekSubmissionDoesNotRewrite(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
 	books := memstore.New(captureClock)
@@ -283,7 +283,7 @@ func TestRewriteFailureDoesNotFailReview(t *testing.T) {
 		t.Fatalf("review: %q %v", sid, err)
 	}
 	finish(t, o)
-	if len(k.attempts) != 2 || len(k.inputs) != 1 {
+	if len(k.attempts) != 1 || len(k.inputs) != 1 {
 		t.Fatalf("attempts=%d inputs=%d", len(k.attempts), len(k.inputs))
 	}
 }
