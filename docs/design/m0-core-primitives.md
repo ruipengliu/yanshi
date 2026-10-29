@@ -30,6 +30,7 @@
 - 终态：`completed`、`failed`、`interrupted`。进入终态后该 Run 不得再有任何事件。
 - M0 约束：**一个 Session 同时至多一个非终态 Run**。用户输入在有活跃 Run 时成为 `Steered`，否则成为新的 `RunRequested`（由 API 层基于当前投影判定，以乐观并发保证无竞态）。
 - `Steered` 不改变状态，只把输入加入上下文，Worker 在下一次模型调用时可见。
+- 重答接受时以 `RunRequested.redo_of` 指明被替代的最后一个合格 Run；Transcript 略去它的输入、召回、助手回复、调用与结果，连续重答只保留最后一份输入。日志、来源推导与写入闸门保留完整历史，失败或中断不恢复旧答（[M7 §9](./m7-kernel-primitives.md#9-重答redo)）。
 - `RunInterrupted` 可由用户（经 API）或 Worker 追加；Interrupt 保留已产生的输出，Session 可继续接收新输入。
 
 ## 3. Worker、Attempt 与 fencing

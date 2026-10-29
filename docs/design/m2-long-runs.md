@@ -50,6 +50,8 @@ message ContextCompacted {
 
 多次压缩是滚动进行的：新的压缩以"上一份摘要 + 其后到新截断点之间的历史"为输入。
 
+**重答过滤。** `filterModelHistory` 按完整投影的被替代 Run 集合排除其输入、召回、回复、调用与结果；Transcript、前缀摘要、压缩选段、token 估算和 `renderForSummary` 的文本 fallback 共用它。先确定替代关系，再按 through_seq 截前缀，避免截点早于 redo 事件时把旧答写进摘要。估算的真实用量校准也跳过被替代的 AssistantMessage。目标输入之后发生过任何压缩（含 scope: run）即不能重答，因此不会出现已生成摘要仍含后来被替代内容的情况；安全来源继续看原投影。
+
 **只看本轮（`context.scope: run`，2026-10-25）。** AgentDef 可以把上下文限定为当前 Run 的事件（`runtime.contextView`）：之前的 Run 及其压缩摘要都不进入，当前 Run 内的压缩照常滚动；压缩的时机与截断点也只按当前 Run 计算。默认 `session` 为上面的行为。它供每次输入彼此独立、靠外部状态衔接的 Agent 使用（[旁听业务线 xinli](./xinli-captures.md) §3 的 `xinli-day`）；写入闸门与注入判断仍按整个 Session 的历史判断，只会更严。
 
 ## 3. 何时压缩、截断在哪里

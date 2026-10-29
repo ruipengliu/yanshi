@@ -27,6 +27,8 @@ type SummaryInput struct {
 	Previous []*v1.ContentBlock
 	// History 是要压缩的历史事件（上一份摘要之后、截断点及之前）。
 	History []*v1.Event
+	// 完整投影中的替代关系，不能从截断后的 History 重新推导。
+	SupersededRuns map[string]bool
 	// MaxToolResult 是单条调用结果的上限，与模型上下文中的截断一致。
 	MaxToolResult int
 	// TargetTokens 是摘要的目标长度。
@@ -105,7 +107,7 @@ func renderForSummary(in SummaryInput) string {
 		fmt.Fprintf(&b, "<上一份摘要>\n%s\n</上一份摘要>\n\n", blocksText(in.Previous))
 	}
 	b.WriteString("<对话记录>\n")
-	for _, e := range in.History {
+	for _, e := range filterModelHistory(in.History, in.SupersededRuns) {
 		switch p := e.GetPayload().(type) {
 		case *v1.Event_RunRequested:
 			speaker := "[用户]"
@@ -199,6 +201,7 @@ func eventTokens(e *v1.Event, maxToolResult int, states ...*session.State) int {
 // estimate 估算 req 的大小。若压缩之后有过模型调用，用其真实用量校准：
 // 上次输入 + 上次输出 + 其后新增事件，取与纯估算的较大者（宁可早压缩）。
 func estimate(st *session.State, req *model.Request, maxToolResult int) int {
+	st = redoView(st)
 	n := model.EstimateRequest(req)
 	for i := len(st.History) - 1; i >= 0; i-- {
 		e := st.History[i]
@@ -227,6 +230,7 @@ func estimate(st *session.State, req *model.Request, maxToolResult int) int {
 // 摘要请求优先以主请求的前缀开头（命中前缀缓存），此时系统指令与工具定义也占用它的预算；按此预算找不到
 // 截断点时（窗口相对工具定义很小），退回不带前缀的文本模式与原预算，usePrefix 为 false。
 func planCompaction(st *session.State, req *model.Request, cfg agentdef.Context, force bool) (through uint64, usePrefix bool) {
+	st = redoView(st)
 	if !force && estimate(st, req, cfg.MaxToolResult) <= cfg.Threshold() {
 		return 0, false
 	}
@@ -278,6 +282,7 @@ func pickCut(st *session.State, sizes []int, total, budget, keep int, force bool
 // compact 生成摘要并提交 ContextCompacted；一次 compact 是一个完整的 Step。main 非 nil 时摘要请求以它的前缀开头
 // （见 planCompaction）。view 是模型上下文依据的投影（contextView）：只看本轮时，之前的 Run 不进摘要。
 func (w *Worker) compact(ctx context.Context, r *session.Run, def *agentdef.Def, view *session.State, through uint64, main *model.Request) error {
+	view = redoView(view)
 	var hist []*v1.Event
 	for _, e := range view.History {
 		if e.GetSeq() > through {
@@ -286,7 +291,7 @@ func (w *Worker) compact(ctx context.Context, r *session.Run, def *agentdef.Def,
 		hist = append(hist, e)
 	}
 	in := SummaryInput{
-		Model: def.Model, Previous: view.Compaction.GetSummary(), History: hist,
+		Model: def.Model, Previous: view.Compaction.GetSummary(), History: hist, SupersededRuns: view.SupersededRuns,
 		MaxToolResult: def.Context.MaxToolResult, TargetTokens: def.Context.Window / 16,
 	}
 	if main != nil {

@@ -485,10 +485,14 @@ func parentView(st *session.State) map[string]string {
 
 func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Text     string          `json:"text"`
-		Schedule json.RawMessage `json:"schedule"`
+		Text          json.RawMessage `json:"text"`
+		Input         json.RawMessage `json:"input"`
+		Redo          bool            `json:"redo"`
+		RedoOf        json.RawMessage `json:"redo_of"`
+		ExpectedRunID string          `json:"expected_run_id"`
+		Schedule      json.RawMessage `json:"schedule"`
 		// Content 是 ContentBlock 的 JSON 数组；与 Text 同时给出时 Text 在前。
-		Content []json.RawMessage `json:"content"`
+		Content json.RawMessage `json:"content"`
 		// InputID 是客户端生成的输入 ID：超时等结果未知时以同一 ID 重试是安全的（docs/design/m3-duplex-channel.md §5）。
 		InputID string `json:"input_id"`
 	}
@@ -500,19 +504,51 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, service.CheckClientInput(nil, &v1.ScheduleMark{}))
 		return
 	}
-	var input []*v1.ContentBlock
-	if req.Text != "" {
-		input = model.TextBlocks(req.Text)
+	if len(req.RedoOf) > 0 {
+		s.fail(w, service.CheckClientInput(nil, nil, "client"))
+		return
 	}
-	for _, raw := range req.Content {
-		b := &v1.ContentBlock{}
-		if err := protojson.Unmarshal(raw, b); err != nil {
-			s.fail(w, fmt.Errorf("%w: content: %v", service.ErrInvalid, err))
+	var res *service.SubmitResult
+	var err error
+	if req.Redo {
+		if len(req.Text) > 0 || len(req.Content) > 0 || len(req.Input) > 0 {
+			s.fail(w, fmt.Errorf("%w: redo and input content are mutually exclusive", service.ErrInvalid))
 			return
 		}
-		input = append(input, b)
+		res, err = s.Service.Redo(owned(r), r.PathValue("id"), req.InputID, req.ExpectedRunID)
+	} else {
+		if req.ExpectedRunID != "" {
+			s.fail(w, fmt.Errorf("%w: expected_run_id requires redo", service.ErrInvalid))
+			return
+		}
+		var text string
+		var content []json.RawMessage
+		if len(req.Text) > 0 {
+			if err := json.Unmarshal(req.Text, &text); err != nil {
+				s.fail(w, fmt.Errorf("%w: text must be a string", service.ErrInvalid))
+				return
+			}
+		}
+		if len(req.Content) > 0 {
+			if err := json.Unmarshal(req.Content, &content); err != nil {
+				s.fail(w, fmt.Errorf("%w: content must be an array", service.ErrInvalid))
+				return
+			}
+		}
+		var input []*v1.ContentBlock
+		if text != "" {
+			input = model.TextBlocks(text)
+		}
+		for _, raw := range content {
+			b := &v1.ContentBlock{}
+			if err := protojson.Unmarshal(raw, b); err != nil {
+				s.fail(w, fmt.Errorf("%w: content: %v", service.ErrInvalid, err))
+				return
+			}
+			input = append(input, b)
+		}
+		res, err = s.Service.SubmitWithID(owned(r), r.PathValue("id"), req.InputID, input)
 	}
-	res, err := s.Service.SubmitWithID(owned(r), r.PathValue("id"), req.InputID, input)
 	if err != nil {
 		s.fail(w, err)
 		return

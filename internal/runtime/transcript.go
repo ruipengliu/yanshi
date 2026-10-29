@@ -37,6 +37,7 @@ func transcriptThrough(st *session.State, maxToolResult int, through uint64) []m
 }
 
 func transcript(st *session.State, maxToolResult int, through uint64) []model.Message {
+	st = redoView(st)
 	var out, deferred []model.Message
 	var pending []string // 当前助手消息中尚无结果的调用，按顺序
 
@@ -127,6 +128,7 @@ func transcript(st *session.State, maxToolResult int, through uint64) []model.Me
 // 摘要都不进入上下文（docs/design/m2-long-runs.md §2）。写入闸门与注入判断不用它，照旧按整个 Session 判断，只会更严。
 // 返回的是浅拷贝：History 是新切片，其余字段与 st 共享，调用方只读。
 func contextView(st *session.State, def *agentdef.Def) *session.State {
+	st = redoView(st)
 	r := st.Active()
 	if def.Context.Scope != agentdef.ScopeRun || r == nil {
 		return st

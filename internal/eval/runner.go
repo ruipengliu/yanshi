@@ -511,7 +511,7 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		}
 		devs = append(devs, dev)
 	}
-	var sid, sessionAgent, businessDay string
+	var sid, sessionAgent, businessDay, previousRunID string
 	// 一次 trial 共用运行当天；长用例跨午夜也不因新建 Session 换业务日。
 	runDay := captureBusinessDay(start)
 	captureDays := map[string]string{}
@@ -557,7 +557,7 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 				tr.Err = "create session: " + err.Error()
 				return tr
 			}
-			sid, sessionAgent = id, agent
+			sid, sessionAgent, previousRunID = id, agent, ""
 			sessions = append(sessions, id)
 			def, err := in.agents.Get(&v1.AgentRef{Name: agent, Version: version})
 			if err != nil {
@@ -629,10 +629,11 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		} else if c.XinliSpanRuns && sessionAgent == "xinli-day" && (turn.Input == "整理交谈" || turn.Input == "整理今天") {
 			obs, err = in.spanTurns(tctx, sid, bl, endUser, turn, c.Timeout)
 		} else {
-			obs, err = in.turn(tctx, sid, turn, c.Timeout)
+			obs, err = in.turn(tctx, sid, turn, c.Timeout, previousRunID)
 		}
 		// 实验中途因缺少回执等原因停止时，已经消耗的用量仍计入；不能把失败的实验显示为零成本。
 		if obs != nil {
+			previousRunID = obs.runID
 			tr.Tokens += obs.tokens
 			tr.Calls, tr.Compactions, tr.Takeovers = tr.Calls+len(obs.calls), tr.Compactions+obs.compactions, tr.Takeovers+obs.takeovers
 			tr.InputTokens, tr.CachedInputTokens = tr.InputTokens+obs.inTokens, tr.CachedInputTokens+obs.cachedTokens
@@ -680,6 +681,7 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 
 // observation 是一轮中观察到的事实，断言据此判定。
 type observation struct {
+	runID     string
 	schedules []*session.Schedule
 	input     string
 	status    string
@@ -707,7 +709,7 @@ type observation struct {
 }
 
 // turn 提交一轮输入，按 approve 自动作出审批决定，等待 Run 结束并收集本轮的事件。
-func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout time.Duration) (obs *observation, err error) {
+func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout time.Duration, previousRunID ...string) (obs *observation, err error) {
 	st, err := in.svc.Load(ctx, sid)
 	if err != nil {
 		return nil, err
@@ -744,7 +746,7 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 		runID, err = in.awaitBackground(ctx, sid, after, deadline)
 	} else {
 		submitCtx, cancel := context.WithDeadline(ctx, deadline)
-		runID, err = in.submitTurn(submitCtx, sid, turn)
+		runID, err = in.submitTurn(submitCtx, sid, turn, previousRunID...)
 		cancel()
 	}
 	if err != nil {
@@ -820,6 +822,14 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 		events = scheduledRunEvents(events, runID)
 	}
 	input := turn.Input
+	if turn.Redo {
+		for _, e := range events {
+			if r := e.GetRunRequested(); r.GetRunId() == runID {
+				input = model.Text(r.GetInput())
+				break
+			}
+		}
+	}
 	if turn.AwaitBackground {
 		input = "（用户没有输入：设备上线后，之前转入后台的调用的结果由平台送达）"
 	}
@@ -831,7 +841,7 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 			}
 		}
 	}
-	obs = &observation{schedules: schedules, input: input, status: run.Status.String(), compacted: compacted, takeovers: run.Takeovers}
+	obs = &observation{runID: runID, schedules: schedules, input: input, status: run.Status.String(), compacted: compacted, takeovers: run.Takeovers}
 	if asked {
 		obs.status = "asked"
 	}
@@ -859,7 +869,17 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 }
 
 // submitTurn 提交本轮的输入（文字、界面上下文或卡片动作），返回开启或并入的 Run。
-func (in *instance) submitTurn(ctx context.Context, sid string, turn Turn) (string, error) {
+func (in *instance) submitTurn(ctx context.Context, sid string, turn Turn, previousRunID ...string) (string, error) {
+	if turn.Redo {
+		if len(previousRunID) != 1 || previousRunID[0] == "" {
+			return "", fmt.Errorf("redo requires the previous turn run id")
+		}
+		res, err := in.svc.Redo(ctx, sid, "redo_"+in.svc.Store.IDs(), previousRunID[0])
+		if err != nil {
+			return "", err
+		}
+		return res.RunID, nil
+	}
 	if turn.AdvanceToNextSchedule {
 		return in.advanceToNextSchedule(ctx, sid)
 	}

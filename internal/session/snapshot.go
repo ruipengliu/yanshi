@@ -15,7 +15,7 @@ import (
 
 // ProjectionVersion 是投影语义的版本。改动 Apply 或 State 的字段时必须递增：旧快照随之作废，
 // 加载退回完整回放，因此快照永远不会与当前代码的投影结果不一致。
-const ProjectionVersion = 23
+const ProjectionVersion = 24
 
 // Snapshots 存放每个 Session 最新的投影快照。快照只是加速加载的缓存，删除或丢失都不影响正确性。
 type Snapshots interface {
@@ -50,6 +50,14 @@ func (s *State) Snapshot() *v1.SessionSnapshot {
 		Version: ProjectionVersion, SessionId: s.SessionID, Seq: s.Seq, Created: s.Created, Agent: s.Agent, Closed: s.Closed,
 		Compaction: s.Compaction, CompactedAt: s.CompactedAt, History: s.History, DelegatedRun: s.Delegated,
 	}
+	for id := range s.SupersededRuns {
+		snap.SupersededRuns = append(snap.SupersededRuns, id)
+	}
+	for id := range s.SupersededCardCalls {
+		snap.SupersededCardCalls = append(snap.SupersededCardCalls, id)
+	}
+	slices.Sort(snap.SupersededRuns)
+	slices.Sort(snap.SupersededCardCalls)
 	for _, item := range s.Schedules {
 		snap.Schedules = append(snap.Schedules, &v1.ScheduleSnapshot{Created: item.Created, Last: ts(item.Last), NextDue: ts(item.NextDue)})
 	}
@@ -62,7 +70,7 @@ func (s *State) Snapshot() *v1.SessionSnapshot {
 			Takeovers: int32(r.Takeovers), StalledTakeovers: int32(r.StalledTakeovers), Turns: int32(r.Turns),
 			Recall: r.Recall, Recalled: r.Recalled, SuspendReason: r.SuspendReason, SuspendedUntil: ts(r.SuspendedUntil),
 			Compactions: int32(r.Compactions), OutputTokens: r.OutputTokens, Resume: r.Resume, Decisions: r.Decisions,
-			FromBackground: r.FromBackground,
+			FromBackground: r.FromBackground, Request: r.Request, RequestedSeq: r.RequestedSeq, Steered: r.Steered,
 		}
 		for _, c := range r.Calls {
 			cs := &v1.CallSnapshot{Call: c.Call, StartedAttempts: c.StartedAttempts, NodeId: c.NodeID, Deadline: ts(c.Deadline), Done: c.Done,
@@ -109,6 +117,18 @@ func FromSnapshot(snap *v1.SessionSnapshot) (*State, error) {
 		Compaction: snap.GetCompaction(), CompactedAt: snap.GetCompactedAt(), History: snap.GetHistory(),
 		Delegated: snap.GetDelegatedRun(), callIDsOld: map[string]bool{},
 	}
+	if len(snap.GetSupersededRuns()) > 0 {
+		s.SupersededRuns = map[string]bool{}
+		for _, id := range snap.GetSupersededRuns() {
+			s.SupersededRuns[id] = true
+		}
+	}
+	if len(snap.GetSupersededCardCalls()) > 0 {
+		s.SupersededCardCalls = map[string]bool{}
+		for _, id := range snap.GetSupersededCardCalls() {
+			s.SupersededCardCalls[id] = true
+		}
+	}
 	for _, item := range snap.GetSchedules() {
 		if s.Schedules == nil {
 			s.Schedules = map[string]*Schedule{}
@@ -134,6 +154,7 @@ func FromSnapshot(snap *v1.SessionSnapshot) (*State, error) {
 			SuspendReason: rs.GetSuspendReason(), SuspendedUntil: fromTS(rs.GetSuspendedUntil()),
 			Compactions: int(rs.GetCompactions()), OutputTokens: rs.GetOutputTokens(), Resume: rs.GetResume(),
 			Decisions: rs.GetDecisions(), FromBackground: rs.GetFromBackground(),
+			Request: rs.GetRequest(), RequestedSeq: rs.GetRequestedSeq(), Steered: rs.GetSteered(),
 		}
 		for _, cs := range rs.GetCalls() {
 			c := &Call{Call: cs.GetCall(), StartedAttempts: cs.GetStartedAttempts(), NodeID: cs.GetNodeId(), Deadline: fromTS(cs.GetDeadline()), Done: cs.GetDone(),

@@ -206,9 +206,9 @@ func TestSnapshotIgnoredAfterLogDeleted(t *testing.T) {
 // 否则从快照恢复会悄悄丢失它——而 Equal 按快照比较，看不出差别。
 func TestSnapshotCoversEveryField(t *testing.T) {
 	covered := map[string][]string{
-		"State":          {"SessionID", "Seq", "Created", "Agent", "Closed", "Compaction", "CompactedAt", "Runs", "Past", "History", "callIDsOld", "callIDs", "Inputs", "ActiveCall", "Delegated", "Background", "Schedules"},
+		"State":          {"SessionID", "Seq", "Created", "Agent", "Closed", "Compaction", "CompactedAt", "Runs", "Past", "History", "callIDsOld", "callIDs", "Inputs", "ActiveCall", "Delegated", "Background", "Schedules", "SupersededRuns", "SupersededCardCalls"},
 		"RunSummary":     {"ID", "Status", "RequestedAt", "Attempt", "Turns", "FromBackground"},
-		"Run":            {"ID", "Status", "RequestedAt", "Attempt", "LiveEndpoint", "Takeovers", "StalledTakeovers", "Turns", "Recall", "Recalled", "Calls", "SuspendReason", "SuspendedUntil", "Compactions", "OutputTokens", "Resume", "Decisions", "FromBackground"},
+		"Run":            {"ID", "Status", "RequestedAt", "Attempt", "LiveEndpoint", "Takeovers", "StalledTakeovers", "Turns", "Recall", "Recalled", "Calls", "SuspendReason", "SuspendedUntil", "Compactions", "OutputTokens", "Resume", "Decisions", "FromBackground", "Request", "RequestedSeq", "Steered"},
 		"Call":           {"Call", "StartedAttempts", "StartedReadOnly", "NodeID", "Deadline", "DispatchedAt", "Done", "Background", "Approval"},
 		"Schedule":       {"Created", "Last", "NextDue"},
 		"BackgroundCall": {"CallID", "RunID", "NodeID", "Capability", "Deadline"},

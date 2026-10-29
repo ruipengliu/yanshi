@@ -37,6 +37,9 @@ message SessionSnapshot {
   // 未了结的后台调用（session.State.Background），按调用 ID 排序。
   repeated BackgroundCallSnapshot background = 16;
   repeated ScheduleSnapshot schedules = 18;
+  // 不随 Run 明细淘汰；排序后存放。
+  repeated string superseded_runs = 19;
+  repeated string superseded_card_calls = 20;
   reserved 17;
   reserved "captures";
 }
@@ -97,6 +100,9 @@ message RunSnapshot {
   map<string, string> decisions = 17;
   // 由后台调用的了结开启的 Run：该后台调用的 ID。
   string from_background = 18;
+  RunRequested request = 22;
+  uint64 requested_seq = 23;
+  bool steered = 24;
   reserved 19, 20, 21;
   reserved "capture_reads", "capture_pages", "capture_acks";
 }

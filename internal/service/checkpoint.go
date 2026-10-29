@@ -50,10 +50,48 @@ func (s *Service) admitRun(ctx context.Context, st *session.State, admission boo
 	return s.CheckQuota(ctx, st, "submit")
 }
 
-// CheckClientInput 在传输层解码事件级字段后拒绝定时标记；普通 Submit API 不接收这个字段。
-func CheckClientInput(input []*v1.ContentBlock, mark *v1.ScheduleMark) error {
+// CheckClientInput 在传输层解码事件级字段后拒绝定时与重答标记；普通 Submit API 不接收这些字段。
+func CheckClientInput(input []*v1.ContentBlock, mark *v1.ScheduleMark, redoOf ...string) error {
+	for _, id := range redoOf {
+		if id != "" {
+			return fmt.Errorf("%w: redo_of is written by the platform", ErrInvalid)
+		}
+	}
 	if mark != nil {
 		return fmt.Errorf("%w: schedule mark is written by the platform", ErrInvalid)
 	}
 	return rejectPlatformOnly(input)
+}
+
+// checkInputID 与普通输入共享去重键的边界；空 ID 沿用无去重的既有语义。
+func checkInputID(inputID string) error {
+	if strings.HasPrefix(inputID, "schedule_") {
+		return fmt.Errorf("%w: schedule input_id is reserved for the platform", ErrInvalid)
+	}
+	if len(inputID) > MaxInputIDLen {
+		return fmt.Errorf("%w: input_id exceeds %d bytes", ErrInvalid, MaxInputIDLen)
+	}
+	return nil
+}
+
+// checkSubmitInput 共用输入审核与新 Run 的准入、配额；插话的配额由下一次模型调用检查。
+func (s *Service) checkSubmitInput(ctx context.Context, st *session.State, input []*v1.ContentBlock, admission bool) error {
+	if err := s.moderateInput(ctx, st, input); err != nil {
+		return err
+	}
+	if st.Active() == nil {
+		return s.admitRun(ctx, st, admission)
+	}
+	return nil
+}
+
+// newRunEvents 使普通输入与重答共用撤回版本切换，切换与新 Run 一起提交。
+func (s *Service) newRunEvents(st *session.State, request *v1.RunRequested) []*v1.Event {
+	request.RunId = "run_" + s.Store.IDs()
+	var events []*v1.Event
+	if to, ok := s.Agents.Withdrawn(st.Agent); ok {
+		events = append(events, &v1.Event{Payload: &v1.Event_AgentSwitched{AgentSwitched: &v1.AgentSwitched{
+			From: st.Agent, To: to.Ref(), Reason: "withdrawn"}}})
+	}
+	return append(events, &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: request}})
 }

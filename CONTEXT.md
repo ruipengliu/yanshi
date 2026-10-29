@@ -178,8 +178,8 @@ _Avoid_: 异步任务、离线队列、延迟调用
 EndUser 在 Run 进行中追加输入，以改变其后续方向而不终止它。
 _Avoid_: 追加消息、打断
 
-**Redo（重答）**（设计中，[设计](docs/design/m7-kernel-primitives.md) §9）:
-EndUser 让 Session 中最后一个已完成、且没有执行过写入的 Run 以同一输入重新回答；之后的上下文略去被重做的 Run，日志保留全部。
+**Redo（重答）**（已实现，[设计](docs/design/m7-kernel-primitives.md) §9）:
+EndUser 让 Session 中最后一个符合资格的 completed Run 以同一输入重新回答；调用须有只读证据或为 show_card，其他资格见设计。接受即替代，被替代 Run 不再进入模型上下文、其中卡片动作按 call_id 失效；日志与安全来源保留全部。
 _Avoid_: 重试（那是故障后的接管）、重新生成（产品文案可用）
 
 **Worker**:

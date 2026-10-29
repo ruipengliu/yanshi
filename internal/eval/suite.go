@@ -235,6 +235,9 @@ type DeviceSetup struct {
 }
 
 type Turn struct {
+	// Redo 复制上一轮的输入，以那一轮的 Run ID 作比较并替换。
+	Redo         bool `yaml:"redo"`
+	inputPresent bool
 	// AdvanceToNextSchedule 不提交输入，让已有定时经 Worker 到点开启 Run。
 	AdvanceToNextSchedule bool `yaml:"advance_to_next_schedule"`
 	// Scheduled 通过真实定时入口提交本轮文字，验证来源与到点标记。
@@ -275,6 +278,22 @@ type Turn struct {
 	// XinliEdit 是本轮旁听与输入之前用户在 App 中对承诺的改动（按金标 ID 找到对应的承诺）。
 	XinliEdit []GoldEdit `yaml:"xinli_edit"`
 	Expect    Expect     `yaml:"expect"`
+}
+
+// UnmarshalYAML 保留 input 的存在性：显式空输入也不能与重答混用。
+func (t *Turn) UnmarshalYAML(node *yaml.Node) error {
+	type plain Turn
+	var value plain
+	if err := node.Decode(&value); err != nil {
+		return err
+	}
+	*t = Turn(value)
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == "input" {
+			t.inputPresent = true
+		}
+	}
+	return nil
 }
 
 // CardActionScript 模拟用户在卡片上点按钮或点选列表项。Action 为空时点第一个按钮；Label 非空时点标签包含它的按钮或条目。
@@ -418,6 +437,9 @@ func LoadSuite(dir string) ([]*Case, error) {
 		}
 		labelled := map[string]bool{}
 		for i, t := range c.Turns {
+			if t.Redo && (i == 0 || t.inputPresent || t.Input != "" || t.Scheduled || t.AdvanceToNextSchedule || t.AwaitBackground || t.CardAction != nil || t.UIContext != nil || t.FromDevice != "" || t.NewSession || len(t.Captures) > 0 || t.CapturesFile != "" || len(t.XinliEdit) > 0 || c.Call) {
+				return nil, fmt.Errorf("%s: turn %d redo requires a previous turn and cannot also submit input or start a session", f, i+1)
+			}
 			if t.Agent != "" && i > 0 && !t.NewSession {
 				return nil, fmt.Errorf("%s: turn %d sets an agent without starting a new session", f, i+1)
 			}

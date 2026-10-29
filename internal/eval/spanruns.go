@@ -247,6 +247,7 @@ func newSessionChangesets(before, after []xinlifixture.Changeset, sid string) []
 }
 
 func (o *observation) appendRun(r *observation) {
+	o.runID = r.runID
 	o.status = r.status
 	o.calls = append(o.calls, r.calls...)
 	o.callArgs = append(o.callArgs, r.callArgs...)
