@@ -62,3 +62,8 @@ func (x *server) authorize(metadata mcp.Meta) error {
 	}
 	return nil
 }
+
+// AuthenticateService 供 Persona 内部查询 API 复用逐请求服务凭据校验；不接受调用方自报业务线。
+func AuthenticateService(r *http.Request, credentials []Credential, now time.Time) string {
+	return authenticate(r, credentials, now)
+}

@@ -22,7 +22,6 @@ func (u *Book) SchedulingDays() []CaptureSchedule {
 		if d.ExpiresAt.IsZero() {
 			continue
 		}
-		progress, _ := parseCaptureCursor(d.Progress)
 		revision := d.CaptureRevision
 		// 自然到期清理不代表新原文；失败任务身份在清理前后保持相同。
 		if d.Expired && revision > 0 {
@@ -30,7 +29,7 @@ func (u *Book) SchedulingDays() []CaptureSchedule {
 		}
 		out = append(out, CaptureSchedule{BusinessDay: u.BusinessDay(date), Date: date,
 			LastBatchAt: d.LastBatchAt, Revision: revision,
-			Processed: d.Tail.Seq == 0 && (d.Next == 0 || !d.LastBatchAt.IsZero()) || d.Tail.Seq != 0 && refLE(d.Tail, progress.Last)})
+			Processed: d.processed()})
 	}
 	return out
 }
@@ -80,4 +79,10 @@ func (u *Book) PrepareScheduling() error {
 		d.Tail, d.LastBatchAt = last.Ref, u.captureNow().UTC()
 	}
 	return nil
+}
+
+// 调度与产品页面使用同一处理完成判定，不能把 Run 终态当成整理完成。
+func (d *captureDay) processed() bool {
+	progress, _ := parseCaptureCursor(d.Progress)
+	return d.Tail.Seq == 0 && (d.Next == 0 || !d.LastBatchAt.IsZero()) || d.Tail.Seq != 0 && refLE(d.Tail, progress.Last)
 }

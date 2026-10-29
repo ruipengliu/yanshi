@@ -10,70 +10,16 @@ import (
 
 func (c *Call) ListCommitments() string {
 	var in struct {
-		Kind, Status, Counterpart, Query, Project, After string
-		DueFrom                                          string `json:"due_from"`
-		DueTo                                            string `json:"due_to"`
+		CommitmentFilter
+		After string
 	}
 	if json.Unmarshal(c.args, &in) != nil {
 		return "参数格式不正确"
 	}
-	if in.Status == "" {
-		in.Status = "open"
+	found, err := c.u.QueryCommitments(in.CommitmentFilter)
+	if err != nil {
+		return err.Error()
 	}
-	if in.Kind != "" && in.Kind != "mine" && in.Kind != "theirs" {
-		return "kind 须为 mine 或 theirs"
-	}
-	if !slices.Contains([]string{"open", "done", "cancelled", "all"}, in.Status) {
-		return "status 须为 open、done、cancelled 或 all"
-	}
-	for _, date := range []string{in.DueFrom, in.DueTo} {
-		if date != "" {
-			if _, err := time.Parse(time.DateOnly, date); err != nil {
-				return "期限须为 YYYY-MM-DD"
-			}
-		}
-	}
-	if in.DueFrom != "" && in.DueTo != "" && in.DueFrom > in.DueTo {
-		return "due_from 不能晚于 due_to"
-	}
-	var found []*Commitment
-	for i := range c.u.commitments {
-		m := &c.u.commitments[i]
-		if m.MergedInto != "" || (in.Kind != "" && m.Kind != in.Kind) || (in.Status != "all" && m.Status != in.Status) {
-			continue
-		}
-		if in.Project != "" && m.Project != c.u.canon(in.Project) {
-			continue
-		}
-		if !strings.Contains(m.Counterpart, in.Counterpart) {
-			continue
-		}
-		if in.Query != "" && textSimilarity(in.Query, m.Content+" "+m.Counterpart) < relatedTopic {
-			continue
-		}
-		if (in.DueFrom != "" || in.DueTo != "") && m.DueDate == "" {
-			continue
-		}
-		if in.DueFrom != "" && m.DueDate < in.DueFrom || in.DueTo != "" && m.DueDate > in.DueTo {
-			continue
-		}
-		found = append(found, m)
-	}
-	slices.SortFunc(found, func(a, b *Commitment) int {
-		if a.DueDate != b.DueDate {
-			if a.DueDate == "" {
-				return 1
-			}
-			if b.DueDate == "" {
-				return -1
-			}
-			return strings.Compare(a.DueDate, b.DueDate)
-		}
-		if n := a.SpokenAt.Compare(b.SpokenAt); n != 0 {
-			return n
-		}
-		return strings.Compare(a.ID, b.ID)
-	})
 	start := 0
 	if in.After != "" {
 		i := slices.IndexFunc(found, func(m *Commitment) bool { return m.ID == in.After })
@@ -180,18 +126,7 @@ func (c *Call) CommitmentHistory() string {
 
 func (c *Call) writeCommitmentRevisions(b *strings.Builder, m *Commitment) {
 	// 新建修订不存 Fields；初值必须取自创建项，不能拿当前值倒推未曾保存的旧值。
-	values := map[string]string{}
-	for _, cs := range c.u.changesets {
-		for _, initial := range cs.CreateCommitments {
-			if initial.ID == m.ID {
-				status := initial.Status
-				if status == "" {
-					status = "open"
-				}
-				values = map[string]string{"kind": initial.Kind, "content": initial.Content, "counterpart": initial.Counterpart, "due_date": initial.DueDate, "due_text": initial.DueText, "project": initial.Project, "status": status}
-			}
-		}
-	}
+	values := c.u.commitmentInitialValues(m.ID)
 	revisions := slices.Clone(m.Revisions)
 	slices.SortStableFunc(revisions, func(a, b Revision) int {
 		// 创建项先建立初值；没有说话时间的用户操作与合并以记录时间排序，展示仍明确说话时间未记录。
@@ -266,4 +201,72 @@ func (c *Call) writeCommitmentRevisions(b *strings.Builder, m *Commitment) {
 		}
 		b.WriteByte('\n')
 	}
+}
+
+// CommitmentFilter 与 MCP 查询共用筛选和排序，应用不另定义承诺语义。
+type CommitmentFilter struct {
+	Kind, Status, Counterpart, Query, Project string
+	DueFrom                                   string `json:"due_from"`
+	DueTo                                     string `json:"due_to"`
+}
+
+func (u *Book) QueryCommitments(in CommitmentFilter) ([]*Commitment, error) {
+	if in.Status == "" {
+		in.Status = "open"
+	}
+	if in.Kind != "" && in.Kind != "mine" && in.Kind != "theirs" {
+		return nil, fmt.Errorf("kind 须为 mine 或 theirs")
+	}
+	if !slices.Contains([]string{"open", "done", "cancelled", "all"}, in.Status) {
+		return nil, fmt.Errorf("status 须为 open、done、cancelled 或 all")
+	}
+	for _, date := range []string{in.DueFrom, in.DueTo} {
+		if date != "" {
+			if _, err := time.Parse(time.DateOnly, date); err != nil {
+				return nil, fmt.Errorf("期限须为 YYYY-MM-DD")
+			}
+		}
+	}
+	if in.DueFrom != "" && in.DueTo != "" && in.DueFrom > in.DueTo {
+		return nil, fmt.Errorf("due_from 不能晚于 due_to")
+	}
+	var found []*Commitment
+	for i := range u.commitments {
+		m := &u.commitments[i]
+		if m.MergedInto != "" || (in.Kind != "" && m.Kind != in.Kind) || (in.Status != "all" && m.Status != in.Status) {
+			continue
+		}
+		if in.Project != "" && m.Project != u.canon(in.Project) {
+			continue
+		}
+		if !strings.Contains(m.Counterpart, in.Counterpart) {
+			continue
+		}
+		if in.Query != "" && textSimilarity(in.Query, m.Content+" "+m.Counterpart) < relatedTopic {
+			continue
+		}
+		if (in.DueFrom != "" || in.DueTo != "") && m.DueDate == "" {
+			continue
+		}
+		if in.DueFrom != "" && m.DueDate < in.DueFrom || in.DueTo != "" && m.DueDate > in.DueTo {
+			continue
+		}
+		found = append(found, m)
+	}
+	slices.SortFunc(found, func(a, b *Commitment) int {
+		if a.DueDate != b.DueDate {
+			if a.DueDate == "" {
+				return 1
+			}
+			if b.DueDate == "" {
+				return -1
+			}
+			return strings.Compare(a.DueDate, b.DueDate)
+		}
+		if n := a.SpokenAt.Compare(b.SpokenAt); n != 0 {
+			return n
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return found, nil
 }

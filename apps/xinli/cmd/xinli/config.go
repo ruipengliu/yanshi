@@ -50,6 +50,7 @@ type config struct {
 	store            string
 	personaDSN       string
 	appDSN           string
+	personaURL       string
 	kernelURL        string
 	consoleURL       string
 	mcpDir           string
@@ -97,6 +98,7 @@ func parseConfig(args []string, stderr io.Writer) (config, error) {
 	flags.StringVar(&cfg.addr, "addr", envDefault("XINLI_ADDR", addr), "Persona/BFF 监听地址")
 	flags.StringVar(&cfg.healthAddr, "health-addr", envDefault("XINLI_HEALTH_ADDR", ":9091"), "serve 健康探针监听地址")
 	flags.StringVar(&cfg.store, "store", envDefault("XINLI_STORE", kind), "dev: memory | pg；serve: pg")
+	flags.StringVar(&cfg.personaURL, "persona-url", os.Getenv("XINLI_PERSONA_URL"), "BFF 的 Persona 查询 HTTP 地址；为空时使用进程内 API")
 	flags.StringVar(&cfg.kernelURL, "kernel-url", os.Getenv("XINLI_KERNEL_URL"), "内核 HTTP 地址")
 	flags.StringVar(&cfg.consoleURL, "console-url", os.Getenv("XINLI_CONSOLE_URL"), "dev 内核控制台地址")
 	flags.StringVar(&cfg.mcpDir, "mcp-dir", os.Getenv("XINLI_MCP_DIR"), "MCP 登记输出目录")
@@ -209,7 +211,7 @@ func parseConfig(args []string, stderr io.Writer) (config, error) {
 			return cfg, err
 		}
 	}
-	for _, raw := range []string{cfg.kernelURL, cfg.consoleURL} {
+	for _, raw := range []string{cfg.kernelURL, cfg.consoleURL, cfg.personaURL} {
 		if raw == "" {
 			continue
 		}
@@ -218,9 +220,9 @@ func parseConfig(args []string, stderr io.Writer) (config, error) {
 			return cfg, errors.New("xinli: invalid HTTP URL")
 		}
 	}
-	if cfg.roles.orchestrator {
+	if cfg.roles.orchestrator || cfg.roles.bff {
 		if cfg.kernelURL == "" {
-			return cfg, errors.New("xinli: orchestrator requires kernel-url")
+			return cfg, errors.New("xinli: orchestrator and bff require kernel-url")
 		}
 		var locations map[string]kernel.TokenLocation
 		configured := *tokenFile != "" || *tokenEnv != ""
@@ -257,12 +259,13 @@ func parseConfig(args []string, stderr io.Writer) (config, error) {
 			}
 		}
 	}
-	if cfg.roles.persona {
+	if !cfg.roles.persona && cfg.mcpDir != "" {
+		return cfg, errors.New("xinli: mcp-dir requires persona role")
+	}
+	if cfg.roles.persona || cfg.roles.bff && cfg.personaURL != "" {
 		if err := cfg.configureMCP(*mcpFile, *mcpEnv); err != nil {
 			return cfg, err
 		}
-	} else if cfg.mcpDir != "" {
-		return cfg, errors.New("xinli: mcp-dir requires persona role")
 	}
 	return cfg, nil
 }

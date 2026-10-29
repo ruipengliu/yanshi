@@ -20,10 +20,12 @@ import (
 	"persona/fixture"
 	"persona/mcpserver"
 	"persona/pg"
+	"persona/query"
 	"persona/store"
 	"persona/store/memstore"
 	"persona/store/pgstore"
 	"xinli/account"
+	"xinli/bff"
 	"xinli/capture"
 	"xinli/devui"
 	"xinli/kernel"
@@ -267,9 +269,10 @@ func routes(cfg config, books store.Store, orch *orchestrator.Orchestrator, clie
 			opts.Notifier = orch
 		}
 		mux.Handle("/mcp", mcpserver.Handler(books, opts))
+		mux.Handle("/v1/query/", query.Handler(&query.Service{Store: books}, cfg.credentials, nil))
 	}
 	if cfg.roles.bff {
-		mountBFF(mux)
+		mountBFF(mux, cfg, books, client, accounts)
 	}
 	if accounts != nil && (cfg.roles.bff || cfg.mode == "dev") {
 		mux.Handle("/v1/auth/", accounts.Handler())
@@ -307,8 +310,26 @@ func routes(cfg config, books store.Store, orch *orchestrator.Orchestrator, clie
 	return mux
 }
 
-// B1 在此接入经过应用登录态认证的产品路由；A11 不提供绕过认证的占位成功接口。
-func mountBFF(_ *http.ServeMux) {}
+// 同进程与远程 Persona 共用只读契约；产品请求始终先经过应用登录态。
+func mountBFF(mux *http.ServeMux, cfg config, books store.Store, client *kernel.Client, accounts *account.Service) {
+	var reader query.Reader = &query.Service{Store: books}
+	if cfg.personaURL != "" {
+		reader = &query.Client{BaseURL: cfg.personaURL, Token: func(ctx context.Context, line string) (string, error) {
+			for i := len(cfg.credentials) - 1; i >= 0; i-- {
+				credential := cfg.credentials[i]
+				if credential.BusinessLine == line && time.Now().Before(credential.ExpiresAt) {
+					return credential.Token, nil
+				}
+			}
+			return "", errors.New("xinli: Persona credential unavailable")
+		}}
+	}
+	var tasks task.Reader
+	if accounts != nil {
+		tasks, _ = accounts.Store.(task.Reader)
+	}
+	mux.Handle("/v1/", bff.Handler(bff.Options{Accounts: accounts, Persona: reader, Kernel: client, Tasks: tasks}))
+}
 
 func startPurger(ctx context.Context, purger store.Purger, logger *slog.Logger) func() {
 	ctx, cancel := context.WithCancel(ctx)
