@@ -125,7 +125,7 @@ Janitor 的 Sweep 同时把 Horizon 内的远期停放移回工作队列（[M7 �
 }
 ```
 
-文件包含凭据时按 Secret 管理；DSN 和兼容清单不写日志。解析拒绝未知字段、重复字段、重复或缺失分片、遗漏 DSN，并调用 `ValidateActivation`。迁移 0041 建立固定 `public.shard_identity`（Global，每库各一行），含随机 `instance_id` 与配置中的 `shard_id`。分片迁移先应用 schema，再用 INSERT ON CONFLICT 初始化空身份，随后只读核对，绝不改绑已有分片号。固定 public 防止两个 schema 把同一个 database 伪装成两个分片。SQL/直连必须读取同一身份和业务 schema；实例 ID 不得跨片重复，DSN 互换或重复都拒绝。运行角色只需 SELECT 身份表，不再依赖 `pg_control_system()`。主备复制保留该行，切换协议与旧主隔离留 C6。
+文件包含凭据时按 Secret 管理；DSN 和兼容清单不写日志。解析拒绝未知字段、重复字段、重复或缺失分片、遗漏 DSN，并调用 `ValidateActivation`。迁移 0041 建立固定 `public.shard_identity`（Global，每库各一行），含随机 `instance_id` 与配置中的 `shard_id`。分片迁移先应用 schema，再用 INSERT ON CONFLICT 初始化空身份，随后只读核对，绝不改绑已有分片号。固定 public 防止两个 schema 把同一个 database 伪装成两个分片。SQL/直连必须读取同一身份和业务 schema；实例 ID 不得跨片重复，DSN 互换或重复都拒绝。运行角色只需 SELECT 身份表，不再依赖 `pg_control_system()`。主备复制保留该行，切换协议与旧主隔离见 §10。
 
 生产先运行 `yanshi migrate -shards <file>`，再让各角色以 `-migrate=false` 启动；开发可用 `-migrate=true` 逐库迁移。每库使用自己的 SQL 池、直连池与 Notifier；迁移锁只走直连，启动检查可达 SQL 入口的迁移与身份，并启动每库独立重连的 Notifier。`-migrate=false` 时暂时不可达的库保留池、等待恢复，不阻止健康片冷启动；可达库身份/迁移错误仍阻止启动。恢复目标必须再次通过身份、schema 与迁移校验。所有角色使用相同配置，全部角色合在一个进程仍可运行。`notify-shards` 只控制每库内部的通知频道数，与数据库分片数无关。
 
@@ -160,9 +160,9 @@ xinli 多片消费从该枚举启动每片独立的长轮询、退避和恢复�
 
 分片差分采用方案 (a)：模拟队列只读各库头部候选，按优先级、全局逻辑入队/归还顺序选择，并涵盖 Waking 内部入队。生产仍公平轮转。`CompareShards` 仅在新差分种子启用：保留全部 Session 日志、状态指纹，出站列表按 Session/seq/信封 ID 规范化，忽略跨库不存在的全局插入顺序；C5a 直接核对各库全部信封，不测试 C5b 的流游标。普通单库种子不启用该选项、不改变原指纹定义。新增单库内存/双库内存/双库 PG 三方比较，逐库删除不变量，以及 Session 分布、跨片父子与同用户跨片 Session 计数；短 Horizon 另外要求远期停放和提升覆盖。
 
-`make check` 默认包含 3 个双库种子，`make sim` 以 `-sim.shardseeds=100` 增加同量级双库种子。以上改动尚待远端 `dev fmt`、`make check`、`make sim` 验证；没有将静态检查记为测试通过。
+`make check` 默认包含 3 个双库种子，`make sim` 以 `-sim.shardseeds=100` 增加同量级双库种子。
 
-`TestDayShards` 使用两个真实内核 database 与独立 xinli 进程，覆盖两片创建、输入、Run、跨片委托、级联删除、EndUser 注销及两片出站消费，并用 TCP 代理切断一片的实际 SQL/LISTEN 连接、验证健康输入/Run/创建/消费继续及恢复后续传；`make check` 和 `make day-short` 都包含它。使用脚本模型、最多 32 次寻找跨片父子，测试打印总耗时并断言小于 60 秒；正常预期约 10–20 秒，当前并发恢复修复的实测耗时仍待远端运行确认。冷启动要求两片持久进度均完成 follow，并校验版本、分片与非空游标；失败诊断只读取恢复阶段、版本与 ID，不输出游标。`TestShardOutageHealthySessionContinues` 覆盖可用性接缝上的故障与恢复，真实 TCP 断片恢复由双库 day 场景覆盖，角色探针与冷启动另由装配测试覆盖。P4 仍不做在线迁槽、自动再平衡、旧数据迁出库 0 或网关通知归属。
+`TestDayShards` 使用两个真实内核 database 与独立 xinli 进程，覆盖两片创建、输入、Run、跨片委托、级联删除、EndUser 注销及两片出站消费，并用 TCP 代理切断一片的实际 SQL/LISTEN 连接、验证健康输入/Run/创建/消费继续及恢复后续传；`make check` 和 `make day-short` 都包含它。使用脚本模型、最多 32 次寻找跨片父子，测试打印总耗时并断言小于 60 秒；正常预期约 10–20 秒，具体耗时以对应源码摘要的远端报告为准。冷启动要求两片持久进度均完成 follow，并校验版本、分片与非空游标；失败诊断只读取恢复阶段、版本与 ID，不输出游标。`TestShardOutageHealthySessionContinues` 覆盖可用性接缝上的故障与恢复，真实 TCP 断片恢复由双库 day 场景覆盖，角色探针与冷启动另由装配测试覆盖。P4 仍不做在线迁槽、自动再平衡、旧数据迁出库 0 或网关通知归属。
 
 ### 到期表的首次升级与回滚
 
@@ -192,3 +192,90 @@ xinli 多片消费从该枚举启动每片独立的长轮询、退避和恢复�
 | -oneshot-deadline | 60s | 从声明校验之前开始的总时限，含审核、排队与一次 Schema 修复；必须为正 |
 
 业务线 YAML 可写 `oneshots: {max_concurrency: 4}`；0 表示只受合计及声明上限限制。三层都是进程内上限，分角色或多副本部署必须按提供商账号容量静态分摊，扩缩容时联动配置。只部署 gateway 也会调用模型，因此应计入持有提供商的进程数。声明模型在配有 Quota 时必须有价格；发布选择每 10 秒热加载，声明、并发及业务线设置修改需重启。
+
+## 10. P4-C6：隔离同步主备切换与容量
+
+### 10.1 环境、持久性与代理
+
+`deploy/failover/compose.yaml` 固定项目名 `yanshi-failover`。主库、流复制备库使用相同 `pgvector/pgvector:pg16` 镜像，独立健康 PG 实例承载另一内核分片及应用库。三者仅发布到 Mac mini 回环端口 55430、55431、55432，卷和网络均属于该项目；与共享 `yanshi` 的 54329、58333 无关。入口的每条 Compose 命令都显式给 `-p yanshi-failover -f deploy/failover/compose.yaml`，不继承 `dev run` 的共享 Compose 文件。固定端口意味着不同工作树须串行使用此环境；脚本用临时目录锁排斥并发运行。`down -v` 只删除此演练项目。
+
+主库配置 `synchronous_standby_names='FIRST 1 (failover_standby)'`、`synchronous_commit=on`，保持 `fsync` 默认开启。开始迁移和负载前，驱动核对 `pg_stat_replication` 为 streaming/sync。`on` 在返回提交成功前等待同步备库将提交 WAL 刷入持久存储；不要求备库已经应用，但提升会重放可用 WAL。它满足本演练“单次主库失效不丢已确认写入”，不承诺主备磁盘同时损坏仍无损。`remote_apply` 还等待备库查询可见，本场景无备库读流量，因此没有选它。依据：[PG16 同步提交设置](https://www.postgresql.org/docs/16/runtime-config-wal.html#GUC-SYNCHRONOUS-COMMIT)、[PG16 备库提升](https://www.postgresql.org/docs/16/warm-standby.html#STANDBY-SERVER-OPERATION)。
+
+固定端点采用 Go 驱动内可控 TCP 代理：每次演练绑定一次回环地址，所有 SQL 和 LISTEN 连接（包括 xinli 子进程和生产 serve 身份检查）使用该地址。管理连接仅用于核对复制及 `pg_promote()`。代理不按“端口可达”自动挑主；切换先关闭准入和存量连接，提升备库，再停止旧主容器并核实它不在运行列表，最后原地址改指新主。任一步失败都不开放入口。旧主配置 `restart: "no"`，代理目标只有新主，没有恢复后自动回选的路径。不得对保留的现场再执行 `up` 来恢复旧主；下一轮先删除整个隔离项目及卷再建。
+
+备库覆盖 `synchronous_standby_names=''`，提升后继续本地持久提交；这是单次切换后的明确降级状态，不代表仍有同步冗余。生产须通过 Patroni 或等价 HA 控制器选主、STONITH/实例停机/网络隔离确认旧主失去写权限，再更新 HAProxy 或等价固定主库服务端点；SQL 可再经 PgBouncer 事务池，LISTEN/迁移锁走绕过事务池的固定端点。仅 TCP 健康检查、DNS 改名或 `default_transaction_read_only` 不能取代旧主隔离。旧主只能经 rewind/重新基准备份并作为备库加入；在再次承诺容忍主库故障之前恢复同步冗余。本演练不部署自动选主或验证生产 HA 控制器。
+
+同一物理流的同步提升保留 `public.shard_identity`、出站 epoch、cursor key、地板和检查点，不旋转 epoch。测试同时比对身份与旧事件前缀，并运行生产 `yanshi serve -migrate=false` 的 `/readyz` 身份核验。恢复备份、PITR 或不能证明连续性时仍须按 [M7 §6](./m7-kernel-primitives.md#6-出站流outbox) 在开放入口前旋转 epoch；不能用换 epoch 掩盖本演练丢失已确认数据。
+
+### 10.2 演练与结果记录
+
+`make failover` 显式设置 `YANSHI_TEST_FAILOVER=1`，不属于 `make check`，不依赖 `deps-up`。每种场景重新创建隔离集群；所有应用进程和池保持原 DSN。报告只含时间、状态与计数，不保存输入、工具正文、凭据或游标。
+
+| 场景 | 步骤与硬断言 |
+| --- | --- |
+| 内核 `TestFailoverKernel` | 两分片 `app.NewCore`、Worker、Janitor 和 xinli 消费者；片 1 同步提升。保留客户端读到的 Event 前缀和信封，持续提交带 input_id 的输入；近期 ID 重投必须返回同 Run/duplicate，持续负载先以完整日志核对全部确认输入，未知结果查无记录后才沿用原 ID，日志只出现一次且 seq 连续。真实工具经 FileLedger 的 Executor 先写 started 再产生副作用，结果回写前跨切换，恢复后重开 Executor 重投同 call_id，副作用计数仍为一。工具适配器替代设备传输，此处不另验 WebSocket/mobile。 |
+| 内核恢复边界 | 真实长事务取得 xid 后阻挡已完成 Run 的信封，旧游标不能越过；旧主退出后事务中止，同 epoch 的旧游标能继续读到该信封。Notifier 的 Generation 增长、重新 LISTEN 并补提示；原连接池、Worker 认领、消费与 fake 发送继续。停机期间健康片持续创建、输入、完成 Run、读取出站并提交删除；故障片返回有界 503。恢复后 Janitor 删除完成、日志为空，生产 serve 核对两片身份成功。 |
+| Persona `TestFailoverPersona/writes` | 复用上午补传、自动整理和 file_day；先确认用户修改。下午 file_day 已提交但通知尚未发出时保持 MCP 在途，下一批原文暂停于事务提交前并切换；同时尝试查询及用户编辑。恢复后已确认事实、总览、revision/progress 和编辑不变；未知上传同 ID 重交，同 ID 同引用；后续编辑按原 rev 重试，自动整理继续到新 revision，领域变化/消费收敛。 |
+| Persona `TestFailoverPersona/deletions` | 在另一套全新主备中，确认用户修改后擦除原文，停编排器保留持久删除待办，再提升。待办 ID/载荷、数量及进度保持，恢复编排器完成删除与重新整理；旧 Session 日志为空、擦除批次重投拒绝、无关用户编辑保留。 |
+
+内核和未知上传使用 3 秒客户端截止，Persona 可用性探针使用 20 秒；明确不可用的探针须返回 503，持续负载及人为暂停的未知请求可记录状态 0（连接错误/客户端截止），之后必须按原 ID 对账。报告的 `window_requests` 只统计代理关闭至新目标开放期间结束的请求，分别使用 `http_503` 等 HTTP 状态、`timeout`、`network` 计数；0 不当作成功；`max_request_ms` 记录最长耗时。`switch_window_ms` 从代理关闭到新目标开放（含健康片验证操作）；`recovery_ms` 从开放到实际服务/Notifier 恢复；`elapsed_ms` 为完整用例耗时。窗口包含人为验证时间，不是生产 RTO 承诺。
+
+| Mac mini / 源码摘要 | 场景 | 结果 | 用例耗时 | 切换窗口 | 恢复 | 窗口内请求 | 最长请求 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-10-29，`b3d49d144a99b0a2` | 内核（片 1 提升，片 0 持续服务） | passed | 5551ms | 604ms | 483ms | http_202=6、http_503=22 | 9ms |
+| 同上 | Persona writes | passed | 7382ms | 3607ms | 33ms | http_503=3、timeout=1（人为暂停的未知上传，3 秒截止，之后按原 ID 对账） | 3002ms |
+| 同上 | Persona deletions | passed | 3077ms | 523ms | 32ms | http_503=2 | 2ms |
+
+切换窗口包含驱动的人为验证步骤（暂停的提交、健康片操作），不是生产 RTO 承诺。
+
+当前预算分层如下，均保留调用方更短期限：
+
+| 层 | 预算 | 范围与原因 |
+| --- | --- | --- |
+| PG 建连 / 初始 Ping | 1 秒 | TCP、PG 握手及认证不可达时快速失败；Persona 与应用库沿用此约束 |
+| Persona 借连接 | 1 秒 | 每个事务、直接扫描和 View 末尾屏障核对显式 Acquire；只限制尚未开始的操作 |
+| xinli gate 借连接 | 1 秒 | 与锁排队分开，不把健康连接上的正常等待塞进短预算 |
+| owner gate 等待 | 15 秒 | PG/内存一致；取得后回调继承父 context，保持串行、撤销与注销屏障 |
+| Persona 事务内语句 / 行锁 | 15 秒 | 用事务内 SET LOCAL 设置，不污染归还连接或 DDL 迁移 |
+| Persona 存储完整操作 | 30 秒 | 覆盖正常锁等待、全量账本读写和回调；不自动重试未知提交 |
+| 普通认证请求 / Persona 查询与命令 HTTP | 30 秒 | 恢复正常排队与执行余量；默认 HTTP transport 的 TCP/TLS 建连各 1 秒，不限制正常响应头计算为 1 秒 |
+| 已有 MCP 工具调用 | 15 秒 | 保留一天场景原有注册值，不变更模型、AgentDef 或结果判定 |
+
+**为什么分层**：快速有界失败只用于"不可达、无法开始"（建连、握手、借连接）；正常的锁排队、全量账本读写与回调使用宽裕上限。曾经把 Persona 完整操作统一限制为 2 秒、owner 等待限制为 1 秒，failover 演练能通过，但真实模型的一天（`make day-ark`，以 main 对照）中下午整理两次未完成：`file_day / file_changes / captures` 经内核 Worker→MCP→Persona Store、不经 query/command 客户端，正常并发下的排队与账本读写超过 2 秒即成为工具错误。由此确定上表的分层，并在 `day-ark` 报告中增加逐阶段诊断（工具 `is_error` 与按工具计数、存储与编排告警、HTTP 状态、任务错误类别与重试），因为 `failed_runs=0` 不能证明执行层没有故障。
+
+Persona 不可达返回固定 503 与 `Retry-After: 1`，凭据无效仍为 401（鉴权存储错误不伪装为 401）。演练中故意暂停于提交前的上传持有应用 owner gate；它因 3 秒截止取消后在被切断的连接上失败、回滚并释放 gate，同 owner 的 GET 随后进入 Persona 并得到 503；即使 gate 未释放，15 秒等待也有界返回 503。Persona 可用性探针使用 20 秒客户端上界、不接受状态 0；内核探针为 3 秒。没有为加速切换放开串行或盲重试写入。
+
+无需主备环境的回归包括：同 owner 的慢操作（内存/PG）正常排队后成功；只接受 TCP 不应答的 Persona HTTP 与 PG 握手；Store 快速借连接超时、两次大于 2 秒的同 owner 正常写入与调用方主动缩短的行锁期限；鉴权存储错误不伪装 401；查询/命令半截响应在预算内映射为 503；父观察池断链恢复和离线代理恢复后的 schema 清理。
+
+### 10.3 双库容量配方与报告
+
+`make shard-capacity` / `scripts/shard-capacity.sh` 在独立项目中运行 `TestShardCapacity`。单库与双库都创建新的 database/schema、使用固定 TCP 代理、同样的两个 Worker、同一脚本模型与 FileLedger；双库采用 0–511 / 512–1023 槽位。固定 16 个 EndUser，每人 4 个 Session，每 Session 3 个 Run，每 Run 一次工具调用并消费完成信封，共 64 Session、192 Run。客户端并发固定 1，先后执行两个配置；吞吐的分母含创建、Run 执行与出站消费，p50/p95 是输入提交到消费到完成信封的完整延迟，不含建 Session。不设性能阈值，但 Session/信封总数与副作用去重必须正确。
+
+当前两个独立 database 位于隔离的 healthy PG 实例，故没有 CPU/磁盘隔离，不据此宣称双机线性扩容。记录每库 Event、Session、完成信封数、schema 的 `pg_stat_user_tables` 插入/更新/删除增量、10ms 采样的应用池连接峰值及结束时 `pg_stat_activity` 的本库连接数。PG 统计异步发布，结束后等两秒采样，表写次数是观察值。WAL 为同一实例 LSN 增量，包含应用/Persona 的背景活动，不能冒称每库 WAL。报告同时给出总吞吐和 p50/p95；比较每库行数与写入量是否大致随槽位分摊，不把 16 用户的小样本偏差判为失败。
+
+| Mac mini / 源码摘要 | 配置 | Run/s | p50 / p95 ms | 各库 Session / Event / 写元组（插/改/删）/ 池连接峰值 | 实例 WAL |
+| --- | --- | --- | --- | --- | --- |
+| 2026-10-29，`419431b4bdce0442` | 单库 | 22.4 | 38.2 / 75.1 | 库 0：64 / 1600 / 2090·256·192 / 5 | 0.95MB |
+| 同上 | 双 database、同 PG 实例（0–511 / 512–1023） | 23.3 | 37.8 / 71.8 | 库 0：32 / 800 / 1066·128·96 / 5；库 1：32 / 800 / 1016·123·90 / 5 | 0.94MB |
+
+负载按槽位均分（各 8 个 EndUser、32 个 Session），每库写入约为单库的一半；吞吐与延迟基本不变，因为客户端并发为 1 且两个 database 共用一个 PG 实例——这一结果只说明分摊正确，不说明多机扩容能力。
+
+结果文件分别为 `eval-results/failover/capacity-1.json`、`capacity-2.json`。故障隔离使用 §10.2 内核演练的两个独立 PG 实例验证，容量入口不再切断同实例中的单 database；不将前者的故障隔离结论当作后者已有独立资源。Persona 一年账本＋八天原文的追加、分页、重交、擦除、p50/p99、SQL 与装载成本仍见 [Persona 架构容量章节](./persona-architecture.md#persona-大工作集成本a14)，本入口补内核出站与双库分摊，不替代 A14 配方。
+
+### 10.4 Mac mini 命令
+
+在本工作树调用；没有 Go 的编码机不执行 Compose/Go，不手写 SSH，不提交 Git。`dev fmt` 会取回格式化结果；其余运行产物留在远端。
+
+```bash
+dev fmt
+dev run 'make failover'
+dev run 'make shard-capacity'
+dev run 'cat eval-results/failover/kernel.json'
+dev run 'cat eval-results/failover/persona.json'
+dev run 'cat eval-results/failover/capacity-1.json'
+dev run 'cat eval-results/failover/capacity-2.json'
+dev run 'docker compose -p yanshi-failover -f deploy/failover/compose.yaml ps -a'
+dev run 'make failover-down'
+```
+
+`failover` 和 `shard-capacity` 每次运行都会删除上次隔离现场，先读取需要保留的结果。失败后保留容器/卷供检查；`failover-down` 显式删除独立卷。不得将上述命令中的项目名换成共享 `yanshi`。最终回归命令见 [一天验收](./day-acceptance.md#p4-关闭前的最终回归)。

@@ -54,6 +54,8 @@ type Client struct {
 }
 
 func (c *Client) Execute(ctx context.Context, owner store.Owner, in Request) (json.RawMessage, error) {
+	ctx, cancel := context.WithTimeout(ctx, query.RequestTimeout)
+	defer cancel()
 	unavailable := &query.Error{Status: 503, Code: "unavailable"}
 	if owner.BusinessLine == "" || owner.EndUser == "" || c.Token == nil {
 		return nil, unavailable
@@ -73,11 +75,7 @@ func (c *Client) Execute(ctx context.Context, owner store.Owner, in Request) (js
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	client := c.HTTP
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
-	transport := *client
+	transport := query.RequestClient(c.HTTP)
 	transport.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := transport.Do(req)
 	if err != nil {

@@ -108,6 +108,9 @@ func WriteError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrOwnerDeleting):
 		status, code = 403, "account_deleting"
 	}
+	if status == http.StatusServiceUnavailable {
+		w.Header().Set("Retry-After", "1")
+	}
 	WriteJSON(w, status, map[string]string{"error": code})
 }
 

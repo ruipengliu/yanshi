@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 
 // 生产构建没有实现或注册测试参数；装配接缝让验收使用同一对象图。
 type testHooks interface {
+	LogHandler(slog.Handler) slog.Handler
 	Now() time.Time
 	Books(store.Store) store.Store
 	Notifier(mcpserver.Notifier) mcpserver.Notifier

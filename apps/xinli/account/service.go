@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"xinli/task"
@@ -179,12 +180,18 @@ func (s *Service) WithToken(ctx context.Context, token string, fn func(context.C
 	hash := Hash(token)
 	owner, err := s.Store.TokenOwner(ctx, hash)
 	if err != nil {
-		return ErrUnauthorized
+		if errors.Is(err, ErrNotFound) {
+			return ErrUnauthorized
+		}
+		return err
 	}
 	return s.Store.WithOwner(ctx, owner, func(ctx context.Context) error {
 		r, err := s.Store.ReadAccount(ctx, owner)
 		if err != nil {
-			return ErrUnauthorized
+			if errors.Is(err, ErrNotFound) {
+				return ErrUnauthorized
+			}
+			return err
 		}
 		ss, ok := validSession(r, hash, false, s.now())
 		if !ok {

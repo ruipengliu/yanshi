@@ -135,6 +135,12 @@ dev run 'YANSHI_DAY_BASELINE=evals/baselines/day-ark.json make day-ark'
 
 报告默认写入 `eval-results/day-ark.json`，可用 `YANSHI_DAY_REPORT` 覆盖路径；相对路径按仓库根目录解释。报告包含阶段处理/归档状态、事实与原文计数、Run 完成/失败数量、收件箱/发送数量、各步骤 outcome，以及与上一份同格式报告的差异字段。差异只报告、不判脚本执行失败；模型超时、未抽取事实、无法重答也只记结果。构建、配置、HTTP/PG 等基础设施错误仍会使该入口失败。报告不保存原文、模型输出或工具参数。
 
+报告新增 `diagnostics`，与既有 `stages/outcomes/differences` 分开，不参与基线比较，版本仍为 1。每个已观察阶段保存工具结果总数、`is_error` 总数及新增数、按工具名统计的错误；父驱动跨子进程重启累计测试制品发出的存储错误及编排告警类别（timeout/canceled/unavailable/sql_canceled/lock_timeout/operation_failed），并保存 BFF/Persona/内核 HTTP 状态计数。另读当前任务状态、最后错误分类、认领次数总和、退役数及至多 50 个未终态任务的 ID、操作、错误分类和 retry_at。认领包含正常终态轮询，不冒称失败重试次数；最后错误是当前快照，不冒称持久失败历史。告警信号为测试控制面的尽力传送，零计数不能证明从未发生错误；同一失败可同时出现于 store 与 orchestrator 类别，不将两者相加当独立故障数。HTTP 状态只统计正常结束的请求，尚未结束的 MCP/SSE 及有意丢响应不计入；MCP 工具错误可能封在 HTTP 200 内，必须结合工具与存储计数看。
+
+`diagnostics.afternoon-review` 在下午 organized 返回后、用户编辑之前采集，即使 outcome=false 也记录，不再依赖 t.Failed 的诊断。其余阶段随既有 observe 采样；累积和阶段新增错误分开，已观察事件按 Session/seq 去重，擦除删除日志不会让之前观察到的错误计数归零。诊断只输出类型、工具名和计数；不保存工具参数、结果正文或错误原文。诊断读取失败用固定 `read_errors` 标记，不能把缺数据解释为零错误。工具/HTTP/任务读数非同一事务，作为执行诊断而非新 outcome 判据。
+
+诊断字段的来由：Persona 正常操作曾被统一限制为 2 秒，Ark 的 `afternoon_review` 两次为 false（main 对照为 true）而 `failed_runs=0`；仅凭 outcome 无法区分模型效果与执行层错误。修正后的预算分层见 deployment §10.2，Ark 基线、outcome 与三分钟阶段观察均未改变。
+
 首次没有基线时明确写 `not_recorded`。首份基线（2026-10-29）已审阅并提交在 `evals/baselines/day-ark.json`：执行相关的 outcome 均为真；`final_review` 与 `erasure_reprocessed` 为假，是真实模型在午夜日终与擦除后重整理时没有覆盖剩余的闲聊原文，处理进度未走到底（效果问题，按 Q122 只记录）；`ledger_retained` 依赖 `erasure_reprocessed` 因而同为假，但到期前后承诺数一致（1 → 1）；`settled_before_restart` 为假是重启前仍有在途工作，不影响之后各阶段。`dev run` 的产物留在远端，按本地开发文档取回或检查。
 
 ## 验收记录与边界
@@ -155,3 +161,68 @@ dev run 'YANSHI_DAY_BASELINE=evals/baselines/day-ark.json make day-ark'
 | Mac mini，`06803c5ad7357ce6` | `make day-ark` | 通过（基础设施无错误）；首份基线经审阅后提交为 `evals/baselines/day-ark.json` | 612.6 秒 |
 
 本次不改 runtime/session/service 执行语义，不新增生产数据库表，不把测试屏障接入生产故障 API。工件正文使用内存实现，此剧本不验收 S3 或沙箱；这些仍由完整 `make check` 覆盖。真实多库固定槽位、故障提升、旧主隔离属于 C6；B7 通过也不关闭 P4。
+
+## P4 关闭前的最终回归
+
+C6 的隔离同步主备项目、内核 / Persona 提升驱动与双库容量入口见 [deployment §10](./deployment.md#10-p4-c6隔离同步主备切换与容量)。下表是关闭条件；本次结果见其后的记录。
+
+| 检查 | 关闭条件 |
+| --- | --- |
+| `make check` | 全量 Go/Persona/xinli、存储一致性、Node/pnpm 互通与 Docker/S3 沙箱检查全绿；不以开关缺失的 skip 替代 |
+| `make sim` | 单库、双库差分与删除不变量全绿；故障种子可复现 |
+| `make day` | 完整一天、断网补传、Persona 故障、消费者落后三类故障及定时/长事务全部通过 |
+| `make day-shards` | 现有双真实 database 专项 `TestDayShards`：部分可服务、恢复、跨片委托/删除、两片消费；它不是完整一天的双片版本（完整剧本仍有单游标假设） |
+| `make failover` | 第四类故障：内核片 1 与 Persona 分别真实提升同步备库、旧主隔离、确认写入/引用/seq/游标不丢、未知结果安全重试；JSON 报告的每项 passed=true |
+| `make shard-capacity` | 固定配方正确性通过，记录单/双库吞吐、p50/p95、每库写入与连接；无性能硬门槛，但不可省略实测报告 |
+| `make day-ark` | 同一整日驱动运行 Ark，与 `evals/baselines/day-ark.json` 比较并审阅差异；该入口的效果差异只记录，不自动判退出失败，不能仅凭退出码判无回归 |
+| 相关 / 全量 `make eval` | `capture-*`、`memory-*` 及全量套件对 `evals/baselines/default.json` 比较；所有执行契约通过、无未解释效果回归。Q122 的效果记录不要求逐字相同；不自动更新基线来掩盖回归 |
+
+在当前工作树依次执行；`dev check` 等价于远端完整 `make check`，`dev sim` 等价于 `make sim`。普通回归沿用已配置的共享依赖；C6 的启动/停止/配置变更仅操作 `yanshi-failover`，不对共享 Compose 项目执行 down、stop 或修改配置。
+
+```bash
+dev fmt
+dev check
+dev sim
+dev run 'make day'
+dev run 'make day-shards'
+dev run 'make failover'
+dev run 'make shard-capacity'
+dev run 'YANSHI_DAY_BASELINE=evals/baselines/day-ark.json make day-ark'
+dev run 'make eval EVAL_FLAGS="-sandbox docker -case capture-* -xinli-store pg -baseline evals/baselines/default.json"'
+dev run 'make eval EVAL_FLAGS="-sandbox docker -case memory-* -baseline evals/baselines/default.json"'
+dev run 'make eval EVAL_FLAGS="-sandbox docker -baseline evals/baselines/default.json"'
+dev run 'cat eval-results/failover/kernel.json'
+dev run 'cat eval-results/failover/persona.json'
+dev run 'cat eval-results/failover/capacity-1.json'
+dev run 'cat eval-results/failover/capacity-2.json'
+dev run 'make failover-down'
+```
+
+Ark/eval 需要远端已配置的模型凭据；全量 suite 中的实时语音用例另按既有要求配置 `VOLC_SPEECH_API_KEY`。不要将缺凭据而跳过的用例写成通过。记录每条命令的源码摘要、退出状态、耗时和报告路径；有意效果变更需先审阅再另行更新基线。固定容量报告与两个切换报告填回 deployment 的表格后，才具备关闭 P4 的证据。
+
+### 最终回归记录（2026-10-30，Mac mini）
+
+源码摘要以 `dev` 同步时记录的为准；`b3d49d144a99b0a2` 为 C6 最终代码（含 Persona 超时分层）。
+
+| 检查 | 源码摘要 | 结果 |
+| --- | --- | --- |
+| `make check` | `b3d49d144a99b0a2` | 通过（含 `TestDayShort`、`TestDayShards`） |
+| `make sim` | `b3d49d144a99b0a2` | 通过（2000 内存种子、100 PG 种子、100 双库种子） |
+| `make day` | `b3d49d144a99b0a2` | 通过：`TestDay` 12.41 秒、`TestDayLongTransaction` 2.69 秒、`TestDayScheduleHTTP` 2.08 秒 |
+| `make day-shards` | `b3d49d144a99b0a2` | 通过，双库一天 7.17 秒 |
+| `make failover` | `b3d49d144a99b0a2` | 内核、Persona writes、Persona deletions 均 passed；数值见 [deployment §10.2](./deployment.md#102-演练与结果记录) |
+| `make shard-capacity` | `419431b4bdce0442`（容量路径与之后的 Persona 超时改动无关） | 通过；单 / 双库数值见 [deployment §10.3](./deployment.md#103-双库容量配方与报告) |
+| `make day-ark` | `b3d49d144a99b0a2` | 通过，与 `evals/baselines/day-ark.json` 比较 0 处差异，614 秒。此前一版把 Persona 正常操作限制为 2 秒，两次运行下午整理均未完成（以 main 对照确认），已按 deployment §10.2 的分层修正 |
+| 全量 `make eval` | `b3d49d144a99b0a2` | 执行契约全部通过；报告的 7 项效果回归经对照判定为模型噪声（下表） |
+| `capture-*`（xinli PG 存储） | `b3d49d144a99b0a2` | 执行契约全部通过；效果差异落在 multiday / workday 的既有 0/3 用例与噪声范围内 |
+
+全量 eval 回归项的对照（每格为通过 / 3）：
+
+| 用例 | C6 首次 | C6 复跑 | 当日 main 对照 | 判定 |
+| --- | --- | --- | --- | --- |
+| `capture-health-category` | 0 | 2（PG 存储） | 1 | 噪声 |
+| `capture-project-grouping` | 0 | 0（PG）、2 | 1 | 噪声 |
+| `device-ambiguous-ask` | 1 | 3 | 3 | 噪声（C6 不涉及设备路由） |
+| `capture-multiday`、`capture-multiday-noisy` | 0 | 0 | 0（基线亦为 0） | 既有失败；逐轮指标在 main 对照的波动范围内 |
+
+基线未更新。

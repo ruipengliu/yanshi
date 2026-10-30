@@ -53,20 +53,30 @@ func readDeletion(ctx context.Context, q querier, bl, eu []byte) (store.OwnerDel
 }
 
 func (s *Store) OwnerDeletion(ctx context.Context, bl, eu string) (store.OwnerDeletion, error) {
-	return readDeletion(ctx, s.pool, []byte(bl), []byte(eu))
+	ctx, cancel := pg.Operation(ctx)
+	defer cancel()
+	conn, err := pg.Acquire(ctx, s.pool)
+	if err != nil {
+		return store.OwnerDeletion{}, contextError(ctx, err)
+	}
+	defer conn.Release()
+	return readDeletion(ctx, conn, []byte(bl), []byte(eu))
 }
 
 func (s *Store) BeginOwnerDeletion(ctx context.Context, businessLine, endUser string, now time.Time) (store.OwnerDeletion, error) {
+	ctx, cancel := pg.Operation(ctx)
+	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return store.OwnerDeletion{}, err
 	}
 	if now.IsZero() {
 		return store.OwnerDeletion{}, store.ErrDeletionTime
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	tx, release, err := s.begin(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return store.OwnerDeletion{}, contextError(ctx, err)
 	}
+	defer release()
 	defer pg.Rollback(tx)
 	bl, eu := []byte(businessLine), []byte(endUser)
 	if _, err := lockOwner(ctx, tx, bl, eu); err != nil {
@@ -86,7 +96,14 @@ func (s *Store) BeginOwnerDeletion(ctx context.Context, businessLine, endUser st
 }
 
 func (s *Store) PendingPurges(ctx context.Context) ([]store.Owner, error) {
-	rows, err := s.pool.Query(ctx, `SELECT business_line,end_user FROM owner_deletions WHERE status='pending' ORDER BY business_line,end_user`)
+	ctx, cancel := pg.Operation(ctx)
+	defer cancel()
+	conn, err := pg.Acquire(ctx, s.pool)
+	if err != nil {
+		return nil, contextError(ctx, err)
+	}
+	defer conn.Release()
+	rows, err := conn.Query(ctx, `SELECT business_line,end_user FROM owner_deletions WHERE status='pending' ORDER BY business_line,end_user`)
 	if err != nil {
 		return nil, contextError(ctx, err)
 	}
@@ -103,6 +120,8 @@ func (s *Store) PendingPurges(ctx context.Context) ([]store.Owner, error) {
 }
 
 func (s *Store) Purge(ctx context.Context, businessLine, endUser string, limit int, now time.Time) (store.OwnerDeletion, error) {
+	ctx, cancel := pg.Operation(ctx)
+	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return store.OwnerDeletion{}, err
 	}
@@ -112,10 +131,11 @@ func (s *Store) Purge(ctx context.Context, businessLine, endUser string, limit i
 	if now.IsZero() {
 		return store.OwnerDeletion{}, store.ErrDeletionTime
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	tx, release, err := s.begin(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return store.OwnerDeletion{}, contextError(ctx, err)
 	}
+	defer release()
 	defer pg.Rollback(tx)
 	bl, eu := []byte(businessLine), []byte(endUser)
 	if _, err := lockOwner(ctx, tx, bl, eu); err != nil {

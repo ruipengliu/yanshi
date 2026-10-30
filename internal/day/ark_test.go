@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"reflect"
-	"sort"
 	"testing"
 	"time"
 
@@ -25,11 +23,12 @@ type arkObservation struct {
 	Sent          int    `json:"sent"`
 }
 type arkReport struct {
-	Version     int                       `json:"version"`
-	Stages      map[string]arkObservation `json:"stages"`
-	Outcomes    map[string]bool           `json:"outcomes"`
-	Baseline    string                    `json:"baseline"`
-	Differences []string                  `json:"differences"`
+	Version     int                                `json:"version"`
+	Stages      map[string]arkObservation          `json:"stages"`
+	Outcomes    map[string]bool                    `json:"outcomes"`
+	Baseline    string                             `json:"baseline"`
+	Differences []string                           `json:"differences"`
+	Diagnostics map[string]arkExecutionObservation `json:"diagnostics,omitempty"`
 }
 
 // Ark 共用三库、角色、时钟、采集正文与阶段顺序；模型结果只记报告，不决定脚本验收是否正确。
@@ -40,6 +39,9 @@ func TestDayArk(t *testing.T) {
 	}
 	e := newEnvironment(t, true)
 	report := arkReport{Version: 1, Stages: map[string]arkObservation{}, Outcomes: map[string]bool{}, Baseline: "not_recorded", Differences: []string{}}
+	tracker := new(arkExecutionTracker)
+	report.Diagnostics = map[string]arkExecutionObservation{}
+	execution := func(stage string) { report.Diagnostics[stage] = e.arkExecution(tracker) }
 	observe := func(stage string) {
 		d := e.day(businessDay)
 		state := e.delivery()
@@ -53,6 +55,7 @@ func TestDayArk(t *testing.T) {
 			Commitments: len(e.commitments()), Revision: d.Revision, LiveCaptures: e.count(e.personaPool, `SELECT count(*) FROM capture_segments WHERE live`),
 			CompletedRuns: e.count(e.kernelPool, `SELECT count(*) FROM outbox WHERE kind='run_completed'`),
 			FailedRuns:    e.count(e.kernelPool, `SELECT count(*) FROM outbox WHERE kind='run_failed'`), Inbox: len(state.Items), Sent: sent}
+		execution(stage)
 		t.Log("ark phase=" + stage)
 	}
 	wait := func(fn func() bool) bool {
@@ -101,27 +104,7 @@ func TestDayArk(t *testing.T) {
 				t.Fatal("incompatible Ark day baseline")
 			}
 			report.Baseline = baseline
-			for stage, current := range report.Stages {
-				if !reflect.DeepEqual(previous.Stages[stage], current) {
-					report.Differences = append(report.Differences, "stage:"+stage)
-				}
-			}
-			for name, value := range report.Outcomes {
-				if old, ok := previous.Outcomes[name]; !ok || old != value {
-					report.Differences = append(report.Differences, "outcome:"+name)
-				}
-			}
-			for stage := range previous.Stages {
-				if _, ok := report.Stages[stage]; !ok {
-					report.Differences = append(report.Differences, "missing-stage:"+stage)
-				}
-			}
-			for name := range previous.Outcomes {
-				if _, ok := report.Outcomes[name]; !ok {
-					report.Differences = append(report.Differences, "missing-outcome:"+name)
-				}
-			}
-			sort.Strings(report.Differences)
+			report.Differences = arkDifferences(previous, report)
 		}
 		path := os.Getenv("YANSHI_DAY_REPORT")
 		if path == "" {
@@ -157,6 +140,7 @@ func TestDayArk(t *testing.T) {
 	e.advance("2035-01-08T14:10:00+08:00")
 	e.start("orchestrator")
 	report.Outcomes["afternoon_review"] = organized(businessDay, 3)
+	execution("afternoon-review")
 	for _, c := range e.commitments() {
 		if c.Due == "2035-01-10" {
 			report.Outcomes["model_rescheduled"] = true

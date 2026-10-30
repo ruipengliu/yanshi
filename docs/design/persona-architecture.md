@@ -1,6 +1,6 @@
 # xinli 与 persona agent 的整体架构
 
-> 状态：P0–P3 已实现，P4 设计定稿（2026-10-29，§11、§13 Q91–Q124），未实现。原设计（2026-10-27）经逐题讨论确认（§13），再经 Codex 两轮评审修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）· ADR-0043（三层）、ADR-0044（已由 ADR-0050 取代）、ADR-0045（定时）、ADR-0046（出站流）、ADR-0047（单次调用）、ADR-0048（三方 Agent）、ADR-0049（已由 ADR-0050 取代）、ADR-0050（原文在业务线）· 内核的新增原语见 [M7 内核补充](./m7-kernel-primitives.md)，三方 Agent 见 [M7 Agent 生态](./m7-agent-ecosystem.md) · 承接：[旁听](./captures.md)、[旁听业务线 xinli](./xinli-captures.md)、[xinli 的建模](./xinli-model.md)、[评审：xinli 与内核的下一步](../review/2026-10-27-xinli-kernel-next.md) · 已由 ADR-0050 裁决：[Capture 与流该不该在内核](../review/2026-10-27-capture-boundary-review.md)、[带图示的评估页面](../review/2026-10-27-persona-plan.html) · 内核术语见 [CONTEXT.md](../../CONTEXT.md)，Persona 与应用层术语分别见 [Persona 术语](../../persona/CONTEXT.md)、[xinli 术语](../../apps/xinli/CONTEXT.md)（§3.1）
+> 状态：P0–P4 已实现；P4（§11、§13 Q91–Q124）于 2026-10-30 完成最终回归（[一天验收](./day-acceptance.md#p4-关闭前的最终回归)），真实硬件、识别供应商与渠道接入另列阶段。原设计（2026-10-27）经逐题讨论确认（§13），再经 Codex 两轮评审修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）· ADR-0043（三层）、ADR-0044（已由 ADR-0050 取代）、ADR-0045（定时）、ADR-0046（出站流）、ADR-0047（单次调用）、ADR-0048（三方 Agent）、ADR-0049（已由 ADR-0050 取代）、ADR-0050（原文在业务线）· 内核的新增原语见 [M7 内核补充](./m7-kernel-primitives.md)，三方 Agent 见 [M7 Agent 生态](./m7-agent-ecosystem.md) · 承接：[旁听](./captures.md)、[旁听业务线 xinli](./xinli-captures.md)、[xinli 的建模](./xinli-model.md)、[评审：xinli 与内核的下一步](../review/2026-10-27-xinli-kernel-next.md) · 已由 ADR-0050 裁决：[Capture 与流该不该在内核](../review/2026-10-27-capture-boundary-review.md)、[带图示的评估页面](../review/2026-10-27-persona-plan.html) · 内核术语见 [CONTEXT.md](../../CONTEXT.md)，Persona 与应用层术语分别见 [Persona 术语](../../persona/CONTEXT.md)、[xinli 术语](../../apps/xinli/CONTEXT.md)（§3.1）
 
 心力球是以录音为入口的个人助手：记录、回忆、跟进事务、反思成长。本文回答三个问题：现在的 yanshi 能不能承载它；不能承载的部分补在哪一层；以后它演进成更完整的 persona agent、接入三方 Agent 时，扩展的范式是什么。
 
@@ -217,7 +217,7 @@ Persona 的领域变化驱动业务后续；内核出站只承担运行事件（
 4. Persona 接受 `file_day` 时同事务记录领域变化，编排器据其事实版本归集到各项目；Run 完成只用于执行跟踪（Q99）。
 5. 应用层关闭当天的 Session；到删除期限时内核删除工作 Session（日志中的原文副本），Persona 按固定的业务日 UTC 期限自然到期并清理原文（Q95、Q96）；交谈、承诺与 Memory 保留。
 
-B7 的跨进程驱动位于 `internal/day`，运行入口为 `make day`、`make day-short` 与 `make day-ark`；三库、共用业务时钟、生产保护、逐阶段断言、前三类故障与待填写的 Mac mini 验收记录见 [单库完整一天验收](./day-acceptance.md)。完整场景默认不进入 `make check`，数据库切换演练留在 C6。
+B7 的跨进程驱动位于 `internal/day`，运行入口为 `make day`、`make day-short` 与 `make day-ark`；三库、共用业务时钟、生产保护、逐阶段断言、前三类故障与 Mac mini 验收记录见 [单库完整一天验收](./day-acceptance.md)。完整场景默认不进入 `make check`，数据库切换演练留在 C6。
 
 ### 6.2 删除一段谈话
 
@@ -390,7 +390,7 @@ evals/                    评测用例；夹具经契约指向 Persona
 | P3 内核：补充（实现已完成） | 单次调用（只做 generate）；档位；重答；`speaker_ref`（范围与顺序见 §13 的 Q77–Q90） | 同上；单次调用的评测；子限额下问答首字延迟不退化 |
 | P4a 持久闭环（A1–A14） | Persona PG 与事务内原文存取、自然到期、注销屏障、领域变化；持久编排与自动调度；生产装配认证、账号设备权益、有序文字采集；识别只做 fake（Q91–Q104、Q112–Q116、Q119、Q120） | Store 一致性、内存/PG 逐步 HTTP 夹具与相关真实模型评测；并发、未知提交、重启、删除不复活；固定一年账本＋八天原文成本报告（Q123） |
 | P4b 产品数据面（B1–B7） | BFF 查询、操作与 SSE；七种出站信封、原子写入、水位与保留、稳定分页恢复；应用收件箱、通知任务、渠道与推送 fake；笔记留 P5（Q103、Q105–Q108、Q117、Q120） | 脚本模型＋虚拟时钟＋真实 HTTP/PG 的完整一天，另跑 Ark 整日并比较基线；断网补传、Persona 故障、消费者落后三类演练（Q122） |
-| P4c 真实多库与切换（C1–C6） | 路由与裸 ID ADR、真实双库固定槽位、Session/EndUser 访问缺口与兼容定位；全局汇总、部分可服务、同步主备切换（Q109–Q111、Q118、Q121） | 全套存储契约、单/双库差分 sim、固定负载分摊报告；内核与 Persona 分别真实提升同步备库、隔离旧主；最终一天、四故障与相关 eval 全绿才关闭 P4（Q122、Q124） |
+| P4c 真实多库与切换（C1–C6） | 路由与裸 ID ADR、真实双库固定槽位、Session/EndUser 访问缺口与兼容定位；全局汇总、部分可服务、同步主备切换；C6 入口为 `deploy/failover`、`make failover`、`make shard-capacity`（Q109–Q111、Q118、Q121） | 全套存储契约、单/双库差分 sim、固定负载分摊报告；内核与 Persona 分别真实提升同步备库、隔离旧主；最终一天、四故障与相关 eval 全绿才关闭 P4（Q122、Q124） |
 | 外部接入 | 真实硬件、蓝牙、ASR/声纹、短信、微信/飞书/TeamTalk、APNs/FCM（Q108） | 用真实设备、账号与服务分别验证采集、识别、鉴权与送达；fake 不代替真实验收 |
 | P5 Persona 新能力 | 实体与时间线、笔记、关注项、目标与心力优先、画像、词库 | 每项新增评测用例 |
 | P6 生态 | 先做授权上下文与出境规则，再接协议：A2A 出站能力 → A2A 入站与提议写入 → 托管（注册中心里程碑） | [M7 Agent 生态](./m7-agent-ecosystem.md) §7 |
@@ -431,7 +431,7 @@ A1–A14 → B1–B7 → C1–C6 串行交付。每步完整 dev check（即 mak
 | **C3** | 清理 EndUser 类访问缺口 | Node/Inbox、Session 索引、Memory/Grant、用量、Tier、删除屏障 | 对应套件；一个事务一个键；跨业务线 Grant 语义；make sim |
 | **C4** | 接通裸 ID 定位与兼容路径 | 工件、Memory、Grant 等裸 ID 入口；C1 规则 | 新 ID 选正确库；旧 ID 仅去约定兼容位置；无在线全库试探；按需 make mobile |
 | **C5** | 实际双库装配及离线 fan-out；全局汇总、分片状态与故障隔离 | app.Postgres 新增分片装配；serve 存储/ready；队列、Janitor、usage、outbox | 全套存储测试；单/双库差分 sim；坏库有界失败、健康独立操作继续；不把部分汇总当完整 |
-| **C6** | 同步主备切换、双库负载与最终回归 | 隔离 OrbStack 容器、固定代理、故障驱动、容量报告 | 内核/Persona 分别切换；旧主隔离；确认数据不丢；seq/游标正确；最终一天、四故障、相关 eval |
+| **C6** | 同步主备切换、双库负载与最终回归 | `deploy/failover` 隔离同步 PG 主备、Go 固定代理；`internal/day` 内核/Persona 提升与双库负载驱动，`make failover`、`make shard-capacity`、`make day-shards`；报告与回归记录见 [部署 §10](./deployment.md#10-p4-c6隔离同步主备切换与容量) 和 [一天验收](./day-acceptance.md#p4-关闭前的最终回归)，已实测通过 | 内核/Persona 分别切换；旧主隔离；确认数据不丢；seq/游标正确；最终一天、四故障、相关 eval |
 
 A 阶段完成持久闭环，B 阶段完成产品数据面，C6 后才关闭 P4。涉及协议执行 make gen；涉及移动契约按仓库规则执行 make mobile；模型可见行为变化执行 make eval 并比较基线。
 

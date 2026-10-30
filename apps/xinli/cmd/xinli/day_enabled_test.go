@@ -5,7 +5,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -104,6 +106,42 @@ func TestDayDiagnosticsAuthenticatesAndReadsClockEveryTime(t *testing.T) {
 		}
 		if got.Offset != int64(duration) || got.First != int64(time.Hour) || got.Reads != uint64(i+1) || got.Now.Before(time.Now().Add(duration-time.Second)) {
 			t.Fatal("diagnostics used a startup-only clock offset")
+		}
+	}
+}
+
+func TestDayExecutionDiagnosticsContainOnlyCategories(t *testing.T) {
+	received := make(chan []byte, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer token" {
+			t.Error("missing control credential")
+		}
+		raw, _ := io.ReadAll(r.Body)
+		received <- raw
+		w.WriteHeader(200)
+	}))
+	defer server.Close()
+	control := &dayControl{base: server.URL, token: "token", http: server.Client(), role: "orchestrator"}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	control.executionError(ctx, "store.update", fmt.Errorf("private payload: %w", context.DeadlineExceeded))
+	logger := slog.New(control.LogHandler(slog.NewTextHandler(io.Discard, nil)))
+	logger.Warn("xinli: schedule_scan", "error", "deadline exceeded")
+	for range 2 {
+		select {
+		case raw := <-received:
+			if strings.Contains(string(raw), "private") {
+				t.Fatal("diagnostic leaked error content")
+			}
+			var event struct {
+				Point string
+				Value struct{ Component, Operation, Class string }
+			}
+			if json.Unmarshal(raw, &event) != nil || event.Point != "execution.error" || event.Value.Class != "timeout" || event.Value.Component != "orchestrator" {
+				t.Fatal("missing execution error category")
+			}
+		case <-time.After(time.Second):
+			t.Fatal("diagnostic was lost after cancellation")
 		}
 	}
 }

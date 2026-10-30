@@ -3,6 +3,7 @@ package memstore
 import (
 	"context"
 	"sort"
+	"time"
 
 	"xinli/account"
 	"xinli/task"
@@ -41,11 +42,14 @@ func (s *Store) WithOwner(ctx context.Context, owner task.Owner, fn func(context
 			delete(s.gates, owner)
 		}
 	}()
+	wait, stop := context.WithTimeout(ctx, 15*time.Second)
+	defer stop()
 	select {
 	case gate.token <- struct{}{}:
-	case <-ctx.Done():
-		return ctx.Err()
+	case <-wait.Done():
+		return wait.Err()
 	}
+	stop()
 	defer func() { <-gate.token }()
 	return fn(context.WithValue(ctx, gateKey{}, heldGate{s, owner}))
 }

@@ -377,7 +377,7 @@ func (e *environment) snapshotRuns() {
 			}
 			if result := event.GetToolResult(); result != nil {
 				preview := ""
-				if !e.ark {
+				if !e.ark && !e.idsOnlyDiagnostics {
 					text := model.Text(result.GetContent())
 					if result.GetIsError() || strings.Contains(text, "没有被接受") || strings.Contains(text, "没有收下") {
 						preview = e.preview(text)
@@ -387,7 +387,7 @@ func (e *environment) snapshotRuns() {
 			}
 			if failed := event.GetRunFailed(); failed != nil {
 				preview := ""
-				if !e.ark {
+				if !e.ark && !e.idsOnlyDiagnostics {
 					preview = e.preview(failed.GetReason())
 				}
 				e.t.Logf("day kernel_failed session=%s run=%s category=%s error_preview=%q", sid, run, failureCategory(failed.GetReason()), preview)
@@ -445,7 +445,7 @@ func (s *scriptTrace) record(req *model.Request, response *model.Response, err e
 }
 
 func (e *environment) dumpScript() {
-	if e.script == nil || e.ark {
+	if e.script == nil || e.ark || e.idsOnlyDiagnostics {
 		return
 	}
 	e.script.mu.Lock()

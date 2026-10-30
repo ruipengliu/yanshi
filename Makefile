@@ -136,3 +136,19 @@ day-short: deps-up day-bin
 # 与前次真实模型报告比较；首轮不冒充已有基线，报告只含状态、计数与差异。
 day-ark: deps-up day-bin
 	YANSHI_DAY_BIN=$(CURDIR)/bin/xinli-day YANSHI_DAY_ARK=1 go test ./internal/day -run '^TestDayArk$$' -count=1 -timeout 45m -v
+
+# C6 只操作独立 yanshi-failover 项目；不能依赖 deps-up（dev 会将它指向共享项目）。
+.PHONY: failover failover-down shard-capacity day-shards
+failover: day-bin
+	go build -o bin/yanshi ./cmd/yanshi
+	scripts/failover.sh
+
+failover-down:
+	scripts/failover.sh down
+
+shard-capacity: day-bin
+	scripts/shard-capacity.sh
+
+# 现有双库专项包含真实断片、恢复、委托和删除；完整 TestDay 仍按单库游标验收。
+day-shards: deps-up day-bin
+	YANSHI_DAY_BIN=$(CURDIR)/bin/xinli-day go test -race ./internal/day -run '^TestDayShards$$' -count=1 -timeout 5m -v

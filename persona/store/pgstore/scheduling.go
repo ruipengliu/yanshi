@@ -5,14 +5,22 @@ import (
 	"slices"
 	"strings"
 
+	"persona/pg"
 	"persona/store"
 )
 
 func (s *Store) SchedulingOwners(ctx context.Context) ([]store.Owner, error) {
+	ctx, cancel := pg.Operation(ctx)
+	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT DISTINCT business_line,end_user FROM owners t WHERE NOT EXISTS (SELECT 1 FROM owner_deletions d WHERE d.business_line=t.business_line AND d.end_user=t.end_user)`)
+	conn, err := pg.Acquire(ctx, s.pool)
+	if err != nil {
+		return nil, contextError(ctx, err)
+	}
+	defer conn.Release()
+	rows, err := conn.Query(ctx, `SELECT DISTINCT business_line,end_user FROM owners t WHERE NOT EXISTS (SELECT 1 FROM owner_deletions d WHERE d.business_line=t.business_line AND d.end_user=t.end_user)`)
 	if err != nil {
 		return nil, contextError(ctx, err)
 	}

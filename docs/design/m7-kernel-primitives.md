@@ -1,6 +1,6 @@
 # M7 内核补充：Capture 正文存储、擦除、交付确认、定时、出站流、单次调用
 
-> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）；交付确认（§11）已删除，EndUser 删除屏障（§12）已实现，定时已全部实现（含 xinli-assistant 版本 2 使用、评测拨钟、pgqueue 内部到期表，压测结果见 §13），P3 已全部实现并验证（单次调用、档位、重答与 `speaker_ref`；[整体架构](./persona-architecture.md) §13 的 Q77–Q90；首字延迟压测见 §13）；P4 的出站流按 Q105–Q106 改写，未实现 · **§2–§4、§11 由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 取代**（旁听原文存放在业务线；§11 已删除），§5 按 P2 的讨论改写（没有窗口），§6 按 P4 的 Q105、Q106、Q117、Q118 改写 · ADR-0044（已取代）、ADR-0045、ADR-0046、ADR-0047、ADR-0049（已取代）、ADR-0050 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
+> 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）；交付确认（§11）已删除，EndUser 删除屏障（§12）已实现，定时已全部实现（含 xinli-assistant 版本 2 使用、评测拨钟、pgqueue 内部到期表，压测结果见 §13），P3 已全部实现并验证（单次调用、档位、重答与 `speaker_ref`；[整体架构](./persona-architecture.md) §13 的 Q77–Q90；首字延迟压测见 §13）；P4 的出站流按 Q105–Q106 改写并已实现（含多分片，ADR-0051） · **§2–§4、§11 由 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md) 取代**（旁听原文存放在业务线；§11 已删除），§5 按 P2 的讨论改写（没有窗口），§6 按 P4 的 Q105、Q106、Q117、Q118 改写 · ADR-0044（已取代）、ADR-0045、ADR-0046、ADR-0047、ADR-0049（已取代）、ADR-0050 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §2.3 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)、[Session 生命周期](./m2-session-lifecycle.md)（ADR-0015）、[Memory 与 Grant](./m4-memory-grant.md)、[配额与用量](./m4-quota-usage.md)、[模型调用](./model-calls.md) · 术语：`CONTEXT.md` 的 Erasure、CaptureCorrection、Ack、Schedule、Outbox、Oneshot、Tier、Redo
 
 xinli 落地需要内核补上的原语。每一项都按[整体架构](./persona-architecture.md) §9 的判据给出理由：第二条业务线也会需要，并且业务侧做不到或做了不安全。业务语义（交谈、承诺、项目、人）一律不进内核。
 
@@ -15,7 +15,7 @@ xinli 落地需要内核补上的原语。每一项都按[整体架构](./person
 | 4 | 原文修订（CaptureCorrection） | 日志只追加，业务侧改不了原文 | P1 |
 | 11 | 交付确认（Ack） | 读取位置现在随 Run 完成提交，"读过"不等于"业务已保存"；只有平台能决定位置 | P1 |
 | 12 | EndUser 删除屏障 | 注销期间按 EndUser 的写入（新 Session、用量、档位）可能复活数据 | P1 |
-| 6 | 出站流（Outbox） | 无在线客户端时可靠发现运行事件；业务侧无法与内核日志原子提交 | P4b，未实现 |
+| 6 | 出站流（Outbox） | 无在线客户端时可靠发现运行事件；业务侧无法与内核日志原子提交 | P4b，已实现 |
 | 5 | 定时（Schedule） | 业务侧提交的输入在投影中是用户原话 | P2 |
 | 7 | 单次调用（Oneshot） | 业务侧直连模型会绕过计量、内容安全与评测 | P3 |
 | 8 | 档位（Tier） | 触发与定时的 Run 没有用户令牌，配额只能在内核执行 | P3，已实现 |
@@ -170,7 +170,7 @@ Schedule {
 
 ## 6. 出站流（Outbox）
 
-> B3 的原子信封与 B4 的消费、保留协议已实现；B5 已加入稳定分页与恢复器；B6 应用消费者、收件箱与 fake 通知路径已接入，远端检查待执行。依据[整体架构](./persona-architecture.md) §13 Q105–Q106、Q117、Q118；范围与验收见该文 §11 的 B3–B6。
+> B3 的原子信封与 B4 的消费、保留协议已实现；B5 已加入稳定分页与恢复器；B6 应用消费者、收件箱与 fake 通知路径已接入；C5b 起按分片消费，C6 验证了同步主备提升后 epoch 与游标的连续性（[部署 §10](./deployment.md#10-p4-c6隔离同步主备切换与容量)）。依据[整体架构](./persona-architecture.md) §13 Q105–Q106、Q117、Q118；范围与验收见该文 §11 的 B3–B6。
 
 ### 6.1 用途与信封
 

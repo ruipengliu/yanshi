@@ -202,7 +202,9 @@ func (s *Store) UpdateAccount(ctx context.Context, owner task.Owner, fn func(*ac
 }
 func (s *Store) TokenOwner(ctx context.Context, hash string) (task.Owner, error) {
 	var out task.Owner
-	err := pg.Executor(ctx, s.pool).QueryRow(ctx, `SELECT business_line,end_user FROM account_sessions WHERE access_hash=$1 OR refresh_hash=$1`, hash).Scan(&out.BusinessLine, &out.EndUser)
+	err := pg.WithConnection(ctx, s.pool, func(db pg.DB) error {
+		return db.QueryRow(ctx, `SELECT business_line,end_user FROM account_sessions WHERE access_hash=$1 OR refresh_hash=$1`, hash).Scan(&out.BusinessLine, &out.EndUser)
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = account.ErrNotFound
 	}
@@ -213,7 +215,9 @@ var _ account.Store = (*Store)(nil)
 
 func (s *Store) DeletionOwner(ctx context.Context, hash string) (task.Owner, error) {
 	var out task.Owner
-	err := pg.Executor(ctx, s.pool).QueryRow(ctx, `SELECT business_line,end_user FROM account_deletions WHERE receipt_hash=$1`, hash).Scan(&out.BusinessLine, &out.EndUser)
+	err := pg.WithConnection(ctx, s.pool, func(db pg.DB) error {
+		return db.QueryRow(ctx, `SELECT business_line,end_user FROM account_deletions WHERE receipt_hash=$1`, hash).Scan(&out.BusinessLine, &out.EndUser)
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = account.ErrNotFound
 	}

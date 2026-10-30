@@ -16,6 +16,9 @@ func Open(ctx context.Context, dsn, schema string) (*pgxpool.Pool, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.ConnConfig.ConnectTimeout == 0 || cfg.ConnConfig.ConnectTimeout > time.Second {
+		cfg.ConnConfig.ConnectTimeout = time.Second
+	}
 	if schema != "" {
 		cfg.ConnConfig.RuntimeParams["search_path"] = pgx.Identifier{schema}.Sanitize()
 	}
@@ -23,7 +26,9 @@ func Open(ctx context.Context, dsn, schema string) (*pgxpool.Pool, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := pool.Ping(ctx); err != nil {
+	probe, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if err := pool.Ping(probe); err != nil {
 		pool.Close()
 		return nil, err
 	}

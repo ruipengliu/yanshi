@@ -42,6 +42,7 @@ import (
 	"yanshi/internal/model/openaicompat"
 	"yanshi/internal/model/script"
 	"yanshi/internal/node"
+	"yanshi/internal/pg"
 	"yanshi/internal/pg/pgtest"
 	"yanshi/internal/runtime"
 	"yanshi/internal/shard"
@@ -72,8 +73,12 @@ type environment struct {
 	token, refreshToken, endUser, serviceToken, senderPath string
 	accessExpires                                          time.Time
 	ark                                                    bool
+	idsOnlyDiagnostics                                     bool
 	locator                                                shard.Locator
 	shardProxies                                           map[int]*tcpProxy
+	shardPools                                             map[int]*pgxpool.Pool
+	shardNotifiers                                         map[int]*pg.Notifier
+	effects                                                *effectProbe
 }
 
 type process struct {
@@ -108,6 +113,10 @@ func randomID(t *testing.T) string {
 func newEnvironment(t *testing.T, ark bool) *environment { return newEnvironmentShards(t, ark, false) }
 
 func newEnvironmentShards(t *testing.T, ark, multiple bool) *environment {
+	return newEnvironmentConfigured(t, ark, multiple, "", nil)
+}
+
+func newEnvironmentConfigured(t *testing.T, ark, multiple bool, personaBase string, kernelDSNs []string) *environment {
 	t.Helper()
 	bin := os.Getenv("YANSHI_DAY_BIN")
 	if bin == "" {
@@ -122,14 +131,30 @@ func newEnvironmentShards(t *testing.T, ark, multiple bool) *environment {
 	must(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	e := &environment{t: t, ctx: ctx, root: root, bin: bin, ark: ark, processes: map[string]*process{}, senderPath: filepath.Join(t.TempDir(), "sender.json")}
+	e.idsOnlyDiagnostics = os.Getenv("YANSHI_TEST_FAILOVER") == "1" || os.Getenv("YANSHI_TEST_CAPACITY") == "1"
 	e.control = newControl(t)
+	e.effects = newEffectProbe(t)
 	e.persona, e.bff = newFront(t), newFront(t)
-	pool, notifier := pgtest.Fresh(t)
-	e.kernelPool = pool
-	e.personaPool, e.personaDSN = freshBusinessDB(t, "yanshi_day_persona")
+	var pool *pgxpool.Pool
+	var notifier *pg.Notifier
+	if !multiple {
+		if len(kernelDSNs) == 1 {
+			proxy, dsn := newTCPProxy(t, kernelDSNs[0])
+			e.shardProxies = map[int]*tcpProxy{0: proxy}
+			pool, notifier = pgtest.FreshAt(t, dsn)
+		} else {
+			pool, notifier = pgtest.Fresh(t)
+		}
+		e.kernelPool = pool
+	}
+	e.personaPool, e.personaDSN = freshBusinessDBAt(t, "yanshi_day_persona", personaBase)
 	e.appPool, e.appDSN = freshBusinessDB(t, "yanshi_day_app")
 	databases := map[string]bool{}
-	for _, db := range []*pgxpool.Pool{e.kernelPool, e.personaPool, e.appPool} {
+	layerPools := []*pgxpool.Pool{e.personaPool, e.appPool}
+	if pool != nil {
+		layerPools = append(layerPools, pool)
+	}
+	for _, db := range layerPools {
 		var name string
 		must(t, db.QueryRow(ctx, `SELECT current_database()`).Scan(&name))
 		if databases[name] {
@@ -170,6 +195,9 @@ func newEnvironmentShards(t *testing.T, ark, multiple bool) *environment {
 		}
 		if name == "xinli-assistant" && !ark {
 			def.Capabilities = append(def.Capabilities, "approval_probe")
+			if e.idsOnlyDiagnostics {
+				def.Capabilities = append(def.Capabilities, "failover_probe")
+			}
 		}
 		defs = append(defs, &def)
 	}
@@ -197,16 +225,28 @@ func newEnvironmentShards(t *testing.T, ark, multiple bool) *environment {
 	}
 	registration := mcpcap.Server{Name: "xinli", BusinessLine: businessLine, URL: e.persona.server.URL + "/mcp", Headers: map[string]string{"Authorization": "Bearer " + mcpToken}, Timeout: 15 * time.Second, CiteCaptures: true, AttestsSpeakers: true}
 	registration.Tools.NoApproval = []string{"file_changes", "file_day", "set_status", "update_commitments", "propose_merge", "file_week"}
-	stores := app.Postgres(pool, notifier, e.control)
+	var stores app.Stores
+	if !multiple {
+		stores = app.Postgres(pool, notifier, e.control)
+		e.shardPools = map[int]*pgxpool.Pool{0: pool}
+	}
 	if multiple {
 		e.locator, err = shard.ParseDeployment([]byte(`{"table":{"shards":[0,1],"ranges":[{"first":0,"last":511,"shard":0},{"first":512,"last":1023,"shard":1}]},"compatibility":{"version":"day-dual"}}`))
 		must(t, err)
-		firstProxy, firstDSN := newTCPProxy(t, pgtest.Database(t))
-		secondProxy, secondDSN := newTCPProxy(t, pgtest.Database(t))
+		if len(kernelDSNs) == 0 {
+			kernelDSNs = []string{pgtest.Database(t), pgtest.Database(t)}
+		}
+		firstProxy, firstDSN := newTCPProxy(t, kernelDSNs[0])
+		secondProxy, secondDSN := newTCPProxy(t, kernelDSNs[1])
 		e.shardProxies = map[int]*tcpProxy{0: firstProxy, 1: secondProxy}
 		first, firstNotifier := pgtest.FreshAt(t, firstDSN)
 		second, secondNotifier := pgtest.FreshAt(t, secondDSN)
 		e.kernelPool = first
+		e.shardPools = map[int]*pgxpool.Pool{0: first, 1: second}
+		e.shardNotifiers = map[int]*pg.Notifier{0: firstNotifier, 1: secondNotifier}
+		for id, db := range e.shardPools {
+			must(t, pg.InitShardIdentity(ctx, db, id))
+		}
 		stores, err = app.Sharded(ctx, e.locator, map[int]app.Stores{
 			0: app.PostgresShard(first, firstNotifier, e.control, e.locator, 0),
 			1: app.PostgresShard(second, secondNotifier, e.control, e.locator, 1),
@@ -214,7 +254,7 @@ func newEnvironmentShards(t *testing.T, ark, multiple bool) *environment {
 		must(t, err)
 	}
 	connector := &mcpcap.Connector{Servers: []mcpcap.Server{registration}, Log: stores.Log, CacheTTL: 200 * time.Millisecond}
-	local := []capability.Capability{capability.ClockNow(e.control), card.New(stores.ArtifactMeta), capability.Func{
+	local := []capability.Capability{e.effects.capability(), capability.ClockNow(e.control), card.New(stores.ArtifactMeta), capability.Func{
 		S: capability.Spec{Name: "approval_probe", Risk: v1.Risk_RISK_HIGH, Idempotent: true, InputSchema: json.RawMessage(`{"type":"object","properties":{}}`)},
 		Fn: func(context.Context, capability.Invocation) ([]*v1.ContentBlock, error) {
 			return model.TextBlocks("已确认"), nil
@@ -380,9 +420,15 @@ func (e *environment) login() {
 
 // 与普通 PG 测试共用实例，但每层独立 database，每次验收独占 schema。
 func freshBusinessDB(t *testing.T, database string) (*pgxpool.Pool, string) {
+	return freshBusinessDBAt(t, database, "")
+}
+
+func freshBusinessDBAt(t *testing.T, database, dsn string) (*pgxpool.Pool, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	dsn := os.Getenv("YANSHI_TEST_PG")
+	if dsn == "" {
+		dsn = os.Getenv("YANSHI_TEST_PG")
+	}
 	u, err := url.Parse(dsn)
 	must(t, err)
 	if u.Scheme != "postgres" && u.Scheme != "postgresql" {
@@ -413,14 +459,8 @@ func freshBusinessDB(t *testing.T, database string) (*pgxpool.Pool, string) {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		conn, err := pgx.Connect(ctx, adminDSN)
-		if err != nil {
+		if err := dropDaySchema(ctx, adminDSN, schema); err != nil {
 			t.Error("cannot clean day schema")
-			return
-		}
-		defer conn.Close(context.Background())
-		if _, err = conn.Exec(ctx, "DROP SCHEMA "+pgx.Identifier{schema}.Sanitize()+" CASCADE"); err != nil {
-			t.Error("cannot drop day schema")
 		}
 	})
 	values.Set("search_path", schema)
@@ -465,4 +505,25 @@ func (e *environment) ensureAuth() {
 	}
 	must(e.t, json.Unmarshal(raw, &out))
 	e.token, e.refreshToken, e.accessExpires = out.Access, out.Refresh, out.Expires
+}
+
+// 仅清理自己的随机 schema；丢响应后重复 DROP 安全，不为业务写入引入重试。
+func dropDaySchema(ctx context.Context, dsn, schema string) error {
+	for {
+		attempt, cancel := context.WithTimeout(ctx, 2*time.Second)
+		conn, err := pgx.Connect(attempt, dsn)
+		if err == nil {
+			_, err = conn.Exec(attempt, "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
+			_ = conn.Close(attempt)
+		}
+		cancel()
+		if err == nil || !pg.IsUnavailable(err) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(30 * time.Millisecond):
+		}
+	}
 }

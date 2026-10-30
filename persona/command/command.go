@@ -120,5 +120,8 @@ func WriteError(w http.ResponseWriter, err error) {
 	case errors.Is(err, domain.ErrCapturesExpired):
 		status, code = 410, "expired"
 	}
+	if status == http.StatusServiceUnavailable {
+		w.Header().Set("Retry-After", "1")
+	}
 	query.WriteJSON(w, status, map[string]string{"error": code})
 }

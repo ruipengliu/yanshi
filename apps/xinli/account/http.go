@@ -3,9 +3,11 @@ package account
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"xinli/task"
 )
@@ -32,12 +34,20 @@ func bearer(r *http.Request) string {
 // Middleware 由 BFF 包裹有界请求；长流须逐次读取时重新验证，不能把首次鉴权当永久授权。
 func (s *Service) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		err := s.WithToken(r.Context(), bearer(r), func(ctx context.Context, owner task.Owner, device string) error {
+		// 普通请求给正常排队与执行留足预算；建连和借连接由存储层单独快速失败。
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		err := s.WithToken(ctx, bearer(r), func(ctx context.Context, owner task.Owner, device string) error {
 			next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, principalKey{}, Principal{owner, device})))
 			return nil
 		})
 		if err != nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			if errors.Is(err, ErrUnauthorized) {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+			} else {
+				w.Header().Set("Retry-After", "1")
+				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "unavailable"})
+			}
 		}
 	})
 }

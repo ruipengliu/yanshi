@@ -4,7 +4,7 @@ status: accepted
 
 # 固定槽位、裸 ID 定位与停写迁移
 
-[ADR-0028](0028-shard-keys.md) 已确定 Session / EndUser 两类键。[Persona 架构](../design/persona-architecture.md) §13 Q109、Q110、Q118 与 §11 Q124 的 C1 要求真实多库之前先固定裸 ID 定位与兼容规则。本 ADR 确定格式、定位与迁移规则。C1–C4 已具备带真实键的接口、定位器、只读兼容映射与历史预检；装配层现已提供每库连接/通知/迁移、按键路由、有界 Offline fan-out、完整用量缓存、部分就绪与多分片出站消费；验收仍以远端 `make check`、`make sim` 为准。
+[ADR-0028](0028-shard-keys.md) 确定 Session / EndUser 两类键。本决定固定持久 ID、槽位定位、兼容与停写约束；实现包含按键多库装配、有界遍历、部分可服务、逐片出站消费与分片身份。隔离同步主备演练、容量配方与实测结果见 [部署 §10](../design/deployment.md#10-p4-c6隔离同步主备切换与容量)，最终验收入口见 [一天验收](../design/day-acceptance.md#p4-关闭前的最终回归)。P4 的完整回归已于 2026-10-30 通过。
 
 ## 1. 固定槽位与部署配置
 
@@ -13,7 +13,7 @@ status: accepted
 - 槽位到分片是静态部署表。分片号是非负稳定编号，不是 DSN 数组下标；必须登记兼容库 `0`。每个槽位恰好赋值一次，拒绝遗漏、重叠、越界与未登记的分片；没有配置的零值表不能用于定位。
 - 不能用 `hash % 库数`：库数变化会重映射大量没有搬迁的键。同样不能使用 Go 进程随机种子的哈希。扩容迁移的是槽位，完成停写搬迁后才切换表，键到槽位不变。
 
-`shard.ParseTable` 解析下列 JSON（区间首尾均包含），拒绝未知字段、非法值与尾随 JSON；`NewTable` 复制为不可变的表。纯定位配置不打开数据库；C5a 由 `app.ParseShardConfig` 在同一制品中补 `databases`（id、sql_dsn、direct_dsn），serve/migrate 校验每库物理身份、迁移与 Notifier，格式见 deployment.md。
+`shard.ParseTable` 解析下列 JSON（区间首尾均包含），拒绝未知字段、非法值与尾随 JSON；`NewTable` 复制为不可变的表。纯定位配置不打开数据库；`app.ParseShardConfig` 在同一制品中补 `databases`（id、sql_dsn、direct_dsn），serve/migrate 校验每库物理身份、迁移与 Notifier，格式见 deployment.md。
 
 ```json
 {
@@ -50,15 +50,15 @@ status: accepted
 | 工件、平台生成的调用等 Session 对象 | `<prefix>_v1_<sss>_<token>` | 读所属 Session 的 `sss`，不哈希对象 token |
 | Memory、Grant、用量等 EndUser 对象 | `<prefix>_v1_<uuu>_<token>` | `Hash(EndUser)`，不从来源 Session / call_id 取槽 |
 
-对象 prefix 只含小写英文字母，`ses` 专用于两槽格式；现有前缀 `art`、`mem`、`grant` 保留，用量可用 `use`。token 非空，仅含 `[A-Za-z0-9_-]`；生产随机 token 保留原来完整的 128 位（32 个小写十六进制字符），确定性生成器保留 `prefix-N`。生产随机 Session 长 47、工件长 43。外部派生值若不符合 token 字符集，须先用已有或明确的新确定性摘要方案编码，不能截断外部 ID。token 的唯一性 / 幂等范围仍由调用方保证，槽位不能替代命名空间；C3 的 Memory 派生须包含真实 EndUser、业务线与调用的完整身份，覆盖不同 EndUser 同槽且 call_id 相同的情况。
+对象 prefix 只含小写英文字母，`ses` 专用于两槽格式；现有前缀 `art`、`mem`、`grant` 保留，用量可用 `use`。token 非空，仅含 `[A-Za-z0-9_-]`；生产随机 token 保留原来完整的 128 位（32 个小写十六进制字符），确定性生成器保留 `prefix-N`。生产随机 Session 长 47、工件长 43。外部派生值若不符合 token 字符集，须先用已有或明确的新确定性摘要方案编码，不能截断外部 ID。token 的唯一性 / 幂等范围仍由调用方保证，槽位不能替代命名空间；Memory 派生须包含真实 EndUser、业务线与调用的完整身份，覆盖不同 EndUser 同槽且 call_id 相同的情况。
 
-`ids.Generator` 仍是 `func() string`：`Random`、`Sequential` 不变；新增 `Session(endUser)`、`ForSession(prefix, sessionID)`、`ForEndUser(prefix, endUser)`，每次只消耗一个原始 ID。`SessionID(token, endUser)`、`WithSession(prefix, token, sessionID)`、`WithEndUser(prefix, token, endUser)` 支持幂等派生，不消费生成器。错误不重试、不额外抽随机数。
+`ids.Generator` 仍是 `func() string`：`Random`、`Sequential` 不变；`Session(endUser)`、`ForSession(prefix, sessionID)`、`ForEndUser(prefix, endUser)`，每次只消耗一个原始 ID。`SessionID(token, endUser)`、`WithSession(prefix, token, sessionID)`、`WithEndUser(prefix, token, endUser)` 支持幂等派生，不消费生成器。错误不重试、不额外抽随机数。
 
 `SlotOf` 返回 `(slot, legacy, error)`；`SessionSlotOf` 与 `EndUserSlotOfSession` 分别取得 Session 数据和索引的槽位。Session 专用解析拒绝其他对象的新格式。第二段为 `v` 加十进制数字时进入版本化命名空间：未知版本、非规范槽位、缺段、非法 token 均报错，不按旧 ID 处理。没有版本标记才是 legacy；这种宽松解析保留已有测试与内部指定的旧 ID，并不是身份验证器。
 
 **选择在 Session ID 中同时携带 EndUser 槽位。** `sessions` 表仍 ByEndUser；`Get / Touch / SetNextDue / MarkClosed / Delete` 只有 Session ID 时用 `uuu` 定位，日志、队列、快照等用 `sss`。旧 Session 的这两种访问分别查兼容映射；未覆盖时仅在明确允许的部署中去兼容库 0。代价是 Session ID 多四个字符、归属 EndUser 不能被任意修改；收益是不增加需要一致性维护与删除登记的辅助索引，也不增加每次访问的定位查询。
 
-槽位只能定位到库，不能还原真实 EndUser。索引接口仍须在调用方已知时传入 EndUser；只有裸 ID 的路径先在唯一目标库取真实索引行，再以真实 EndUser 做等值访问与归属检查，不能把 `uuu` 当真实键或权限。新建 Session 时须校验 `uuu == Hash(真实 EndUser)`；C2 的委托派生必须拿到相同的真实 EndUser，子 Session 自身仍独立选槽，不继承父 Session 数据槽。
+槽位只能定位到库，不能还原真实 EndUser。索引接口仍须在调用方已知时传入 EndUser；只有裸 ID 的路径先在唯一目标库取真实索引行，再以真实 EndUser 做等值访问与归属检查，不能把 `uuu` 当真实键或权限。新建 Session 时须校验 `uuu == Hash(真实 EndUser)`；委托派生必须拿到相同的真实 EndUser，子 Session 自身仍独立选槽，不继承父 Session 数据槽。
 
 ## 4. 外部 ID 与授权
 
@@ -66,12 +66,12 @@ status: accepted
 
 | 入口 | 必须携带 / 恢复的真实键 |
 |---|---|
-| Node 注册归属检查、Directory.Get / SetOffline、心跳与断开 | C3a 已补经认证的 EndUser；Node ID 在 EndUser 内唯一，注册仍核对完整 Scope |
-| Inbox.Put / Remove / Pending / Wait 及版本查询，网关投递与 Worker 撤回 | C3a 已补 EndUser + Node ID；结果仍以所属 Inbox 中的 Session / Run / call_id 回写 |
+| Node 注册归属检查、Directory.Get / SetOffline、心跳与断开 | 经认证的 EndUser；Node ID 在 EndUser 内唯一，注册仍核对完整 Scope |
+| Inbox.Put / Remove / Pending / Wait 及版本查询，网关投递与 Worker 撤回 | EndUser + Node ID；结果仍以所属 Inbox 中的 Session / Run / call_id 回写 |
 | `call_id`；Sandbox Ledger.Get / Put、重复调用结果 | 所属 Session；不能按 call_id 哈希或相信其外形（模型给的 ID 由 Worker 改写为平台 ID，设备侧仍只把它当去重键） |
 | Presence.Touch / 连接退出 | 连接的已认证订阅 Session 集合，逐 Session 续期或删除；不能按 Connection ID 选一个库 |
 | EndUser 的用量、档位、Node、Grant、删除屏障、推送登记 | 原始 EndUser；不拼 BusinessLine，也不解析 EndUser ID 的字符串外形 |
-| 内部 `CreateRequest.SessionID`（委托派生） | 真实 EndUser 和父 Session / call_id；C2 校验新格式并保留旧派生的幂等身份 |
+| 内部 `CreateRequest.SessionID`（委托派生） | 真实 EndUser 和父 Session / call_id；校验新格式并保留旧派生的幂等身份 |
 | 客户端 input_id、card_id、动作 ID、外部 Schedule ID | 已授权 Session 内的去重或定位，不能作为独立分片键 |
 
 在线裸工件、Memory、Grant、用量 ID 只能选一个明确目标；禁止逐库试探。读出后仍核对元数据的 Session、EndUser、BusinessLine 或 Grant 条件。伪造、篡改、碰撞的槽位最多改变查询地点，不能改变授权；不存在与不属于请求方走既有拒绝路径。工件输入仍由 `service.normalizeMedia` 比较真实 `Meta.SessionID`，HTTP 下载仍按真实 Session 鉴权。
@@ -128,9 +128,9 @@ EndUser 由业务线指定，字符串没有可判定新旧的版本。其兼容
 }
 ```
 
-示例中迁出的 `ses_old` 只表示历史对象位置，不授权恢复其写入（见下段）。解析拒绝未知字段、重复 JSON 字段、重复 Kind / Key、空键、未知类别、缺失目标分片、负数或未登记分片、缺失版本、尾随 JSON。普通兼容条目只接受无版本 ID；版本化历史碰撞须显式 `historical: true`。`Locator.Identity()` 返回版本与规范化 SHA-256 摘要，摘要覆盖槽位表、登记分片、排序后的全部条目和回退声明，条目顺序不影响摘要。C5 须用它核对所有进程的一致性，不能只比较版本标签。
+这个纯定位格式示例描述未来停写迁移清单，不是 P4 的有效部署：`app.ParseShardConfig` 拒绝其中迁出库 0 的条目。解析拒绝未知字段、重复 JSON 字段、重复 Kind / Key、空键、未知类别、缺失目标分片、负数或未登记分片、缺失版本、尾随 JSON。普通兼容条目只接受无版本 ID；版本化历史碰撞须显式 `historical: true`。`Locator.Identity()` 返回版本与规范化 SHA-256 摘要，摘要覆盖槽位表、登记分片、排序后的全部条目和回退声明，条目顺序不影响摘要。各进程须用它核对所有进程的一致性，不能只比较版本标签。
 
-**保留的写入限制：** 旧 Session 下新工件仍产生旧式随机 ID，旧父的委托仍保持旧派生身份；静态旧 ID 清单不能定位这些未来对象。保持现有生成语义、又不增加在线目录时，不能把仍可产生这类对象的 legacy Session 搬离库 0 后恢复写入，也不能关闭其未来旧 ID 所需的回退。迁出的历史 Session 可由映射读取、清理，但恢复写入前必须另行决定可恢复的 ID 方案并验证；不能靠逐库搜索、静默新建第二份对象或假装静态清单已覆盖未来 ID 补漏。C5 必须把这一项作为启用阻断条件。EndUser 覆盖与新 ID 槽不一致、损坏版本命名空间的历史 Session 继续生成对象也有同类限制。
+**保留的写入限制：** 旧 Session 下新工件仍产生旧式随机 ID，旧父的委托仍保持旧派生身份；静态旧 ID 清单不能定位这些未来对象。保持现有生成语义、又不增加在线目录时，不能把仍可产生这类对象的 legacy Session 搬离库 0 后恢复写入，也不能关闭其未来旧 ID 所需的回退。迁出的历史 Session 可由映射读取、清理，但恢复写入前必须另行决定可恢复的 ID 方案并验证；不能靠逐库搜索、静默新建第二份对象或假装静态清单已覆盖未来 ID 补漏。这一项是启用阻断条件。EndUser 覆盖与新 ID 槽不一致、损坏版本命名空间的历史 Session 继续生成对象也有同类限制。
 
 兼容清单属于受控的迁移制品，包含真实 EndUser 与对象 ID，不进入日志、指标或公开诊断。数据删除后，清单及迁移报告按部署数据删除 / 备份保留政策退役；不能把停写制品变成绕过 ADR-0015 的永久用户目录。没有新增由 Janitor 在线维护的 Session 数据存储。
 
@@ -156,7 +156,7 @@ yanshi id-preflight -pg-dsn "$HISTORICAL_PG_DSN" -historical-snapshot > id-prefl
 
 ## 6. `pg.Tables.Offline` 的逐项安排
 
-所有 fan-out 有并发上限、每库超时、总预算和续扫位置；分片失败不能阻止健康分片做独立清理，但依赖全部结果的操作必须显式失败，不把部分结果报成完整结果。扫描先取得键，随后每条事务只处理一个真实键。下表对应 C1 时 `pg.Tables` 的每一项 Offline。`app.fanout` 统一限制为默认并发 4、每片 1 秒、整轮 4 秒，分片号按配置顺序合并，轮次起点公平轮转。`ShardOptions.Fanout` 可覆盖这些值；模拟的 `DeterministicQueues` 使用原顺序、不启动 goroutine、不以墙钟截止。
+所有 fan-out 有并发上限、每库超时、总预算和续扫位置；分片失败不能阻止健康分片做独立清理，但依赖全部结果的操作必须显式失败，不把部分结果报成完整结果。扫描先取得键，随后每条事务只处理一个真实键。下表对应 `pg.Tables` 的 Offline 路径。`app.fanout` 统一限制为默认并发 4、每片 1 秒、整轮 4 秒，分片号按配置顺序合并，轮次起点公平轮转。`ShardOptions.Fanout` 可覆盖这些值；模拟的 `DeterministicQueues` 使用原顺序、不启动 goroutine、不以墙钟截止。
 
 只有连接故障、分片不可用和截止时限耗尽归为 `shard_unavailable`。存储约束、事务归属与清理回调的业务错误保留错误链，调用方仍可用 `errors.Is/As` 判断；独立清理即使取得健康片结果也必须返回这些业务错误，不能把它们当成可忽略的断片。调用方主动取消保留取消错误。
 
@@ -175,7 +175,7 @@ yanshi id-preflight -pg-dsn "$HISTORICAL_PG_DSN" -historical-snapshot > id-prefl
 | presence.Prune | 独立清理 | 逐库扫描过期项，逐 Session 清理并更新本库版本 |
 | session_tombstones.Pending | 独立清理 | 各库独立列出未完成删除并入本库 Janitor 队列，可重复执行 |
 | session_tombstones.Request | 需要全部结果 | 先在库 0 读取并授权删除请求，再到每库按 request_id 统计，累计 Sessions / Completed；去掉与 deletion_requests 的跨库 JOIN，缺库时报不可用，不报告完成 |
-| inbox.RemoveSession | 需要全部结果 | C3a 已支持已知 EndUser 时只清该用户；归属索引已删时离线扫描恢复 EndUser、逐键事务删除，全部成功才完成清理。C5 再装配逐库有界扫描 |
+| inbox.RemoveSession | 需要全部结果 | 已知 EndUser 时只清该用户；归属索引已删时离线扫描恢复 EndUser、逐键事务删除，全部成功才完成清理。逐库扫描有界 |
 | sessions.List（未指定 EndUser） | 需要全部结果 | 低频业务线服务端查询，各库取有界分页，以稳定排序键合并；分页位置保留各库进度，缺库不返回完整列表 |
 | sessions.IdleBefore / ClosedBefore / DueBefore / ScheduledAfter | 独立清理 | 每库扫描保留策略或绝对期限候选；按真实 EndUser 更新索引，按 Session 槽执行关闭 / 删除 / 定时，多步可重复 |
 | memories.DeleteSession | 需要全部结果 | 逐 EndUser 分片查来源 Session，再按真实 EndUser 删除；所有分片完成后才确认该清理步骤 |
@@ -203,20 +203,15 @@ SQL 池先构造、再有界探测，`-migrate=false` 允许断片时冷启动�
 
 Session、工件、Memory、Grant、用量等原本全局唯一的 ID 保持原契约，不能放宽为 `(EndUser, ID)` 可重复存两行；真实键用于定位和等值访问，不改变幂等身份。
 
-| 范围 | 当前状态 / 持续约束 |
-|---|---|
-| 固定格式与生成器 | 1024 槽、双槽 Session、单槽对象已实现；一次生成只消费一次原始 ID，不改变随机位数或确定性轨迹 |
-| 普通 / 委托 Session | 顶层入口只有 service.Create；HTTP / Connection 不暴露指定 ID。内部指定 ID 写前校验真实 EndUser 槽；重试核对 BusinessLine、EndUser、父调用。ChildSessionID 用父 Session / call_id 摘要，真实 EndUser 来自父投影；旧父保持原子 Session 身份，新子独立选自身槽；Delegator 重推导核对 |
-| 平台调用、局部 ID | Worker 仍一律改写模型 call_id 为 ForSession；Run、Schedule、Event 随已知 Session，不独立定位，若以后独立定位须用 ForSession / WithSession。删除请求固定库 0；Connection / 进程 ID 不作为持久分片键 |
-| Presence / Sandbox Ledger | Touch 按已认证订阅的 Session 逐项续期、退出逐项 Remove。账本带 Session / call_id；BindLedger 在核对 sbx_ 与 Invoke 归属后绑定；started 先落盘再执行。Prune 先扫描真实 Session 再逐键复验删除，Forget 与模拟删除检查均保留；Controller / lifecycle.Guard.Ended 保持索引消失时不计沙箱费用的行为 |
-| Node / Inbox | 按真实 EndUser + Node ID 寻址，结果只接受该用户该 Node 的 Inbox 调用；同用户 Node 不能更换 BusinessLine，跨用户同名 Node 的代数 / 状态独立。Worker 取投影 EndUser，网关取认证 Conn.EndUser，不信 Hello 自报值；通知键为 UTF-8 字节长度前缀 `len(EndUser):EndUserNodeID:`，尾冒号防止数字后缀误作版本，notify-shards 不等于数据库槽 |
-| 伪 Node | @user 不经目录 / Inbox；@agent/ 直接委托；sbx_ 不登记目录但经 Inbox，控制器读真实投影恢复 EndUser，投影消失释放陈旧队列项交 Janitor 清理。设备 forget 跳过三种伪 Node，HostApp 切账号负责隔离 / 清理本地数据 |
-| Session 索引 | Get / Touch / SetNextDue / MarkClosed / Delete 显式带 EndUser，SQL 等值匹配。LookupSession 经 SessionIndex 定位；生产入口为 service.Delete 的日志缺失恢复、janitor.delete、app.SessionData 的 Inbox 清理恢复；sim 删除不变量和 lifecycletest 同步覆盖。裸查后使用真实行授权和带键访问 |
-| 工件 | Get / Delete、Service.Stat / Open 带真实 Session，读内容前核对 Meta.SessionID。调用点为 normalizeMedia、runtime.readArtifact、sandbox import_file、card.New、HTTP 鉴权后下载、Put 撤回与 DeleteSession。唯一在线裸查为 HTTP 下载 / meta 共用的 artifact()：Lookup 经 Object 定位，再加载真实 Session 按业务线 / EndUser 鉴权。Janitor 仍先删 Blob 再删元数据，两遍清扫与写后复查不变 |
-| Memory / Grant | 全部在线 Get / Delete / Supersede / RecordAccess / Revoke 已带真实 EndUser，业务线 / Grant 条件仍检查，无剩余裸 ID 入口。Memory 派生 token 是 EndUser、BusinessLine、SourceSession、完整 CallID 的逐字段 `十进制字节长度:原字节` 串的 SHA-256；旧 mem_call → 新派生 → 相似度流程，只有 ErrNotFound 继续，任何幂等命中均核对完整归属；capabilities 同时识别两种 ID，不改原 Put 覆盖契约、相似度、历史失效、审批或召回规则。RecordAccess 同时核对 EndUser / Owner，保留单次召回批写；Grant 撤销要求调用业务线属于 From / To，创建时删除屏障检查两方业务线 |
-| 用量、其他 EndUser 数据 | Meter 统一将完整原键 SHA-256 后 WithEndUser(use)，不截断含斜杠的键、不继承 Session 槽、不额外消费 IDs。Record 对 ID 或原幂等键冲突不插入，仅新行更新小时聚合；匿名化不恢复归属，写后复查按原 EndUser / 原键撤回。Tier、删除屏障、推送设备已有真实 EndUser；无新增在线裸查 |
-| 定位与装配 | pg.Tables.Gaps 全空，Locate 仅登记 artifacts.Lookup、sessions.LookupSession。PG 存储提交 Target 给 pg.PoolSelector；app.Postgres 注入 SinglePoolSelector（默认 Locator，只有库 0），直接构造 PG 存储的默认路径也经 Locator；内存裸查同样执行默认定位。C5a 在 app 层包装全部带键接口，每库 PostgresShard 的 Select 只断言本分片；app.Stores / app.NewCore 仍是唯一装配。多库连接、有界遍历、完整汇总缓存、部分就绪与多分片消费均在 app 装配；普通单库入口不启用这些策略 |
-| 预检 / 验证 | Locator 覆盖新旧目标、映射、回退、损坏 ID、配置拒绝与启用校验；artifacttest 覆盖错误 Session 读删拒绝；HTTP 用两份 PG schema 验证槽位 / 映射只决定地点及不逐库试探；PG 历史预检覆盖碰撞、正常、结构化派生引用与损坏载荷。完整 make check / make sim 仍是验收标准；C5a 新增真实双 database 一致性与确定性差分种子、逐库删除不变量，尚待远端运行；断片隔离与恢复由 C5b 测试覆盖，运行结果待远端验收 |
+- 所有顶层 Session 只经 service.Create，HTTP/Connection 不开放指定 ID；内部重试核对业务线、真实 EndUser、父调用，委托由父 Session/call_id 摘要派生，新子独立选槽，旧父保持原身份。
+- Worker 改写模型 call_id 为 ForSession；Run、Schedule、Event 在已知 Session 下定位，今后若独立寻址也须带 Session 槽。Connection/进程 ID 不作为持久分片键。
+- Presence 只续期已认证的 Session，连接退出逐 Session Remove；Sandbox Ledger 以 Session/call_id 定位，核对 sbx_ 与 Invoke 归属，started 先落盘，Prune 先扫描真实 Session 再逐键复验删除，Forget 及模拟删除检查保持。投影消失不计沙箱费用，陈旧队列释放后交 Janitor。
+- Node/Inbox 按真实 EndUser+Node ID 定位，同用户 Node 不可改业务线，跨用户同名 Node 的代数独立；以认证 Conn.EndUser 而非 Hello 自报值授权。通知键用 `len(EndUser):EndUserNodeID:`（UTF-8 字节数及尾冒号），不将通知频道数当数据库槽位数。
+- @user 不经目录/Inbox，@agent/ 直接委托，sbx_ 不登记目录但经 Inbox；设备 forget 跳过三种伪 Node，HostApp 切账号负责隔离和清理本地数据。
+- Session 索引、工件、Memory/Grant、用量等在线访问均携带真实键；裸查只在唯一定位目标中恢复真实归属再鉴权，不逐库试探。工件在读内容前核对 Meta.SessionID；Janitor 先删 Blob 再删元数据，两遍清扫和写后复查保持。Memory 幂等命中（旧 mem_call、新派生或相似度）均核对完整归属，仅 ErrNotFound 继续；派生摘要包含 EndUser、业务线、来源 Session 和完整 CallID 的逐字段十进制字节长度前缀。Memory 保留 Put 覆盖、相似度、历史失效、审批与召回规则；RecordAccess 同时核对 EndUser/Owner，保留单次召回批写。Grant 撤销核对 From/To，创建核对双方删除屏障。
+- 计量对完整原幂等键作 SHA-256 后 WithEndUser(use)，不截断含斜杠的键、不继承 Session 槽、不额外消耗 ID；ID 或原键冲突不再次累计，新行才更新小时聚合，匿名化及写后复查保持。
+- `pg.Tables.Gaps` 为空，裸定位只登记 artifacts.Lookup、sessions.LookupSession。所有 PG 存储经 PoolSelector；普通单库默认 Locator，多库由 app 包装，每库 PostgresShard 的 Select 只断言本分片；直接构造的 PG 存储和内存同样遵守默认定位。核心对象图只由 app.Stores/app.NewCore 装配，不各自布线。
+- 1024 槽格式、两真实 database 的存储一致性与差分、逐库删除不变量、部分可服务、独立出站消费已有测试入口；完整 check/sim 和部署 §10 的同步提升、容量、最终一天与 eval 报告是验收证据，不能由接口存在推定通过。
 
 必要迁移注意事项：
 
@@ -225,4 +220,11 @@ Session、工件、Memory、Grant、用量等原本全局唯一的 ID 保持原�
 - **0039–0040（用量）**：原 ID 回填非空 idempotency_key，再独立单语句、可重复并发唯一索引；不改历史 ID、金额、聚合或匿名归属。索引完成后才能恢复新写入者，旧写入者缺非空列不得混跑；旧 / 新 / 匿名重复顺序均须保持去重。
 - **删除恢复**：Janitor 先用投影 EndUser，投影已删则 LookupSession；清日志与快照后第二遍清扫，再删索引。两者皆无时 Inbox 离线恢复真实 EndUser、逐用户事务，全部成功才完成；Session tombstone 不新增 EndUser。Memory 保留既有离线 DeleteSession，已知归属优先 DeleteSessionForEndUser。不能通过改变删除顺序来规避定位。
 - **迁出后的生成与碰撞**：§5.2–§5.5 的映射完整性、同键新写入位置、未来 legacy 对象、碰撞历史 Session 的写入限制必须关闭后才可启用相关多库流量；静态映射的存在不等于可以恢复所有写入。
-- **协议与长度**：proto 均为 string；随机 Session 47，sbx_ 后 51，@agent/ 后 54，Docker 名称 62 / 61；工件 43、调用 44，满足 ask_user 64 与 fsblob / FileLedger 128。S3 key 不拼 Session；Persona Session 为 bytea、xinli 为 text / JSONB，无需定长迁移；网页展示截尾不影响完整 ID。没有改 proto、SDK、投影语义或模型文本，C4 不需 gen / mobile / eval；已有 C2/C3b 生成格式变化的评测要求仍保留。
+- **协议与长度**：proto 均为 string；随机 Session 47，sbx_ 后 51，@agent/ 后 54，Docker 名称 62 / 61；工件 43、调用 44，满足 ask_user 64 与 fsblob / FileLedger 128。S3 key 不拼 Session；Persona Session 为 bytea、xinli 为 text / JSONB，无需定长迁移；网页展示截尾不影响完整 ID。修改协议运行 gen；修改移动契约运行 mobile；格式生成或模型可见行为变化按项目规则评测。
+
+
+## 9. 同步提升与身份连续性
+
+每个分片的 `public.shard_identity` 保存随机 instance_id 和稳定 shard_id。只由迁移在空表初始化，serve 只读核对；SQL 与直连入口须同身份、同业务 schema，分片间 instance_id 不得重复。固定 public 防止多个 schema 假扮独立 database。恢复目标再次核对迁移、身份；主备物理复制保留该行。
+
+已确认写入的无损切换要求同步备库持久化提交 WAL。唯一应用代理先关闭准入及存量连接，提升同步备库、隔离旧主并核实，最后固定端点改指新主；不允许靠旧主恢复可达而自动回选。失败保持入口关闭，生产 HA 控制器必须有真实 fencing。同步提升保留出站 epoch/key/水位；备份恢复或连续性不可证明时，在开放入口前显式旋转 epoch，不能借此放宽已确认写入不丢的要求。切换后的单主降级必须明确，在恢复同步冗余前不再承诺容忍下一次主库失效。

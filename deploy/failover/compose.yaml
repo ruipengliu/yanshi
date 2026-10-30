@@ -1,0 +1,44 @@
+# 仅演练使用；不继承共享 yanshi 项目的端口、网络或卷。
+name: yanshi-failover
+services:
+  primary:
+    image: pgvector/pgvector:pg16
+    restart: "no"
+    environment: &pg-env
+      POSTGRES_USER: yanshi
+      POSTGRES_PASSWORD: failover-test
+      POSTGRES_DB: yanshi
+    command: [postgres, -c, wal_level=replica, -c, max_wal_senders=8, -c, synchronous_commit=on]
+    ports: ["127.0.0.1:55430:5432"]
+    volumes:
+      - primary:/var/lib/postgresql/data
+      - ./primary-init.sh:/docker-entrypoint-initdb.d/replication.sh:ro
+    healthcheck: &health
+      test: [CMD-SHELL, "pg_isready -h 127.0.0.1 -U yanshi -d yanshi"]
+      interval: 1s
+      timeout: 3s
+      retries: 90
+  standby:
+    image: pgvector/pgvector:pg16
+    restart: "no"
+    environment: *pg-env
+    entrypoint: [bash, /standby.sh]
+    ports: ["127.0.0.1:55431:5432"]
+    volumes:
+      - standby:/var/lib/postgresql/data
+      - ./standby.sh:/standby.sh:ro
+    depends_on:
+      primary:
+        condition: service_healthy
+    healthcheck: *health
+  healthy:
+    image: pgvector/pgvector:pg16
+    restart: "no"
+    environment: *pg-env
+    ports: ["127.0.0.1:55432:5432"]
+    volumes: ["healthy:/var/lib/postgresql/data"]
+    healthcheck: *health
+volumes:
+  primary:
+  standby:
+  healthy:

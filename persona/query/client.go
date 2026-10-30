@@ -13,6 +13,9 @@ import (
 	"persona/store"
 )
 
+// RequestTimeout 包含正常的服务端排队与执行；连接建立另用短预算。
+const RequestTimeout = 30 * time.Second
+
 type Client struct {
 	BaseURL string
 	// Token 每请求按业务线取得服务凭据，允许部署方在轮换时替换秘密。
@@ -29,6 +32,8 @@ func urlValues(r *http.Request) (url.Values, error) {
 }
 
 func (c *Client) Read(ctx context.Context, owner store.Owner, q Request) (json.RawMessage, error) {
+	ctx, cancel := context.WithTimeout(ctx, RequestTimeout)
+	defer cancel()
 	if err := q.validate(); err != nil {
 		return nil, err
 	}
@@ -78,11 +83,7 @@ func (c *Client) Read(ctx context.Context, owner store.Owner, q Request) (json.R
 		return nil, &Error{Status: 503, Code: "unavailable"}
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	client := c.HTTP
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
-	transport := *client
+	transport := RequestClient(c.HTTP)
 	transport.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := transport.Do(req)
 	if err != nil {

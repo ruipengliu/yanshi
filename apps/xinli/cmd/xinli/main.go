@@ -99,7 +99,11 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 
 // serve 与 dev 共用对象图与生命周期，只有路由和默认配置不同。
 func serve(ctx context.Context, cfg config, stdin io.Reader, stdout, stderr io.Writer) error {
-	logger := slog.New(slog.NewTextHandler(stderr, nil))
+	var logHandler slog.Handler = slog.NewTextHandler(stderr, nil)
+	if cfg.test != nil {
+		logHandler = cfg.test.LogHandler(logHandler)
+	}
+	logger := slog.New(logHandler)
 	life, cancelLife := context.WithCancel(context.Background())
 	defer cancelLife()
 	books, closeBooks, personaReady, err := openStore(ctx, cfg.store, cfg.personaDSN, cfg.mode == "dev", cfg.now)

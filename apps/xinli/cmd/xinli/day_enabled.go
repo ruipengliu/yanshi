@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -17,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"persona/domain"
 	"persona/mcpserver"
@@ -210,6 +213,7 @@ func (s dayBooks) SchedulingOwners(ctx context.Context) ([]store.Owner, error) {
 		return nil, err
 	}
 	owners, err := s.Store.SchedulingOwners(ctx)
+	s.control.executionError(ctx, "store.scheduling_owners", err)
 	status := "ok"
 	if err != nil {
 		status = "store_error"
@@ -219,12 +223,18 @@ func (s dayBooks) SchedulingOwners(ctx context.Context) ([]store.Owner, error) {
 	}
 	return owners, err
 }
-func (s dayBooks) Update(ctx context.Context, bl, eu string, fn func(*domain.Book) error) error {
+func (s dayBooks) Update(ctx context.Context, bl, eu string, fn func(*domain.Book) error) (err error) {
+	defer func() { s.control.executionError(ctx, "store.update", err) }()
 	return s.Store.Update(ctx, bl, eu, func(b *domain.Book) error {
 		if err := fn(b); err != nil {
 			return err
 		}
-		return s.control.hit(ctx, "persona.before_commit", nil)
+		// 只携带日期与版本，让父测试识别目标采集事务，避免被后台更新抢先命中。
+		days := make([]map[string]any, 0)
+		for _, day := range b.SchedulingDays() {
+			days = append(days, map[string]any{"date": day.Date, "revision": day.Revision})
+		}
+		return s.control.hit(ctx, "persona.before_commit", days)
 	})
 }
 
@@ -354,4 +364,71 @@ func testCommand(ctx context.Context, args []string, stdin io.Reader, stdout io.
 		}
 	}
 	return true, json.NewEncoder(stdout).Encode(map[string]any{"error": code, "batch": batch, "state": s.State()})
+}
+
+// 只传固定类别和计数信号；跨子进程重启的诊断由父驱动保存，不写业务库或工具正文。
+func (c *dayControl) executionError(ctx context.Context, operation string, err error) {
+	if err == nil {
+		return
+	}
+	class := "operation_failed"
+	var network net.Error
+	var database *pgconn.PgError
+	var connect *pgconn.ConnectError
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		class = "timeout"
+	case errors.Is(err, context.Canceled):
+		class = "canceled"
+	case errors.As(err, &network) && network.Timeout():
+		class = "timeout"
+	case errors.As(err, &database) && database.Code == "57014":
+		class = "sql_canceled"
+	case errors.As(err, &database) && database.Code == "55P03":
+		class = "lock_timeout"
+	case errors.As(err, &connect), errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		class = "unavailable"
+	}
+	c.executionClass(ctx, operation, class)
+}
+func (c *dayControl) executionClass(ctx context.Context, operation, class string) {
+	report, stop := context.WithTimeout(context.WithoutCancel(ctx), 250*time.Millisecond)
+	defer stop()
+	_ = c.hit(report, "execution.error", map[string]string{"component": c.role, "operation": operation, "class": class})
+}
+func (s dayBooks) View(ctx context.Context, bl, eu string, fn func(*domain.Book) error) (err error) {
+	defer func() { s.control.executionError(ctx, "store.view", err) }()
+	return s.Store.View(ctx, bl, eu, fn)
+}
+
+type dayLogHandler struct {
+	slog.Handler
+	control *dayControl
+}
+
+func (c *dayControl) LogHandler(handler slog.Handler) slog.Handler { return dayLogHandler{handler, c} }
+func (h dayLogHandler) Handle(ctx context.Context, record slog.Record) error {
+	err := h.Handler.Handle(ctx, record)
+	if record.Level >= slog.LevelWarn && strings.HasPrefix(record.Message, "xinli: ") {
+		class := "operation_failed"
+		record.Attrs(func(attr slog.Attr) bool {
+			if attr.Key == "error" {
+				switch attr.Value.String() {
+				case "deadline exceeded":
+					class = "timeout"
+				case "canceled":
+					class = "canceled"
+				}
+			}
+			return true
+		})
+		h.control.executionClass(ctx, "orchestrator."+strings.TrimPrefix(record.Message, "xinli: "), class)
+	}
+	return err
+}
+func (h dayLogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return dayLogHandler{h.Handler.WithAttrs(attrs), h.control}
+}
+func (h dayLogHandler) WithGroup(name string) slog.Handler {
+	return dayLogHandler{h.Handler.WithGroup(name), h.control}
 }

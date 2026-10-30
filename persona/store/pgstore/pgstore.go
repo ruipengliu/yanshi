@@ -5,6 +5,7 @@ import (
 	"context"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -42,14 +43,39 @@ func New(pool *pgxpool.Pool, now ...func() time.Time) *Store {
 
 func (s *Store) Close() { s.pool.Close() }
 
+// begin 先以短预算借连接，再以操作预算执行；release 可在 View 的末尾屏障检查前调用。
+func (s *Store) begin(ctx context.Context, opts pgx.TxOptions) (pgx.Tx, func(), error) {
+	conn, err := pg.Acquire(ctx, s.pool)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	release := sync.OnceFunc(conn.Release)
+	tx, err := conn.BeginTx(ctx, opts)
+	if err != nil {
+		release()
+		return nil, func() {}, err
+	}
+	// SET LOCAL 不污染归还后的连接，也不给 DDL 迁移施加普通业务语句预算。
+	_, err = tx.Exec(ctx, `SELECT set_config('statement_timeout',$1,true),set_config('lock_timeout',$1,true)`, pg.StatementTimeout.String())
+	if err != nil {
+		pg.Rollback(tx)
+		release()
+		return nil, func() {}, err
+	}
+	return tx, release, nil
+}
+
 func (s *Store) Update(ctx context.Context, businessLine, endUser string, fn func(*domain.Book) error) error {
+	ctx, cancel := pg.Operation(ctx)
+	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	tx, release, err := s.begin(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return contextError(ctx, err)
 	}
+	defer release()
 	defer pg.Rollback(tx)
 	bl, eu := []byte(businessLine), []byte(endUser)
 	created, err := lockOwner(ctx, tx, bl, eu)
@@ -95,13 +121,16 @@ func (s *Store) Update(ctx context.Context, businessLine, endUser string, fn fun
 }
 
 func (s *Store) View(ctx context.Context, businessLine, endUser string, fn func(*domain.Book) error) error {
+	ctx, cancel := pg.Operation(ctx)
+	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	tx, release, err := s.begin(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return contextError(ctx, err)
 	}
+	defer release()
 	defer pg.Rollback(tx)
 	bl, eu := []byte(businessLine), []byte(endUser)
 	if err := checkOwner(ctx, tx, bl, eu); err != nil {
@@ -119,17 +148,30 @@ func (s *Store) View(ctx context.Context, businessLine, endUser string, fn func(
 	// 释放快照连接后再查最新屏障，单连接池也不会自锁；失败时入口必须丢弃回调结果。
 	access.close()
 	pg.Rollback(tx)
-	if err := checkOwner(ctx, s.pool, bl, eu); err != nil {
+	release()
+	latest, err := pg.Acquire(ctx, s.pool)
+	if err != nil {
+		return contextError(ctx, err)
+	}
+	defer latest.Release()
+	if err := checkOwner(ctx, latest, bl, eu); err != nil {
 		return err
 	}
 	return callbackErr
 }
 
 func (s *Store) PendingDeletions(ctx context.Context) ([]store.Owner, error) {
+	ctx, cancel := pg.Operation(ctx)
+	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT DISTINCT business_line,end_user FROM deletion_tasks t WHERE (status='pending' OR rebuild_pending) AND NOT EXISTS (SELECT 1 FROM owner_deletions d WHERE d.business_line=t.business_line AND d.end_user=t.end_user)`)
+	conn, err := pg.Acquire(ctx, s.pool)
+	if err != nil {
+		return nil, contextError(ctx, err)
+	}
+	defer conn.Release()
+	rows, err := conn.Query(ctx, `SELECT DISTINCT business_line,end_user FROM deletion_tasks t WHERE (status='pending' OR rebuild_pending) AND NOT EXISTS (SELECT 1 FROM owner_deletions d WHERE d.business_line=t.business_line AND d.end_user=t.end_user)`)
 	if err != nil {
 		return nil, contextError(ctx, err)
 	}
@@ -156,10 +198,17 @@ func (s *Store) PendingDeletions(ctx context.Context) ([]store.Owner, error) {
 }
 
 func (s *Store) ExpiringCaptures(ctx context.Context, now time.Time) ([]store.Owner, error) {
+	ctx, cancel := pg.Operation(ctx)
+	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT DISTINCT business_line,end_user FROM business_days t WHERE NOT capture_cleanup_done AND (expires_at <= $1 OR expires_at IS NULL) AND NOT EXISTS (SELECT 1 FROM owner_deletions d WHERE d.business_line=t.business_line AND d.end_user=t.end_user)`, now)
+	conn, err := pg.Acquire(ctx, s.pool)
+	if err != nil {
+		return nil, contextError(ctx, err)
+	}
+	defer conn.Release()
+	rows, err := conn.Query(ctx, `SELECT DISTINCT business_line,end_user FROM business_days t WHERE NOT capture_cleanup_done AND (expires_at <= $1 OR expires_at IS NULL) AND NOT EXISTS (SELECT 1 FROM owner_deletions d WHERE d.business_line=t.business_line AND d.end_user=t.end_user)`, now)
 	if err != nil {
 		return nil, contextError(ctx, err)
 	}
@@ -194,13 +243,16 @@ func contextError(ctx context.Context, err error) error {
 
 // 外键级联覆盖原文和账本，避免只清 State 后遗留引用、墓碑或删除待办。
 func (s *Store) ResetOwner(ctx context.Context, businessLine, endUser string) error {
+	ctx, cancel := pg.Operation(ctx)
+	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	tx, release, err := s.begin(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return contextError(ctx, err)
 	}
+	defer release()
 	defer pg.Rollback(tx)
 	bl, eu := []byte(businessLine), []byte(endUser)
 	if _, err := lockOwner(ctx, tx, bl, eu); err != nil {

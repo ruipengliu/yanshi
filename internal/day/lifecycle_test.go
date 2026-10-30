@@ -12,6 +12,7 @@ import (
 
 	"yanshi/internal/eventlog"
 	"yanshi/internal/outbox"
+	"yanshi/internal/pg"
 	"yanshi/internal/session"
 )
 
@@ -42,10 +43,27 @@ func (e *environment) awaitBFFRead(label, path string, out any) {
 func (e *environment) personaRecovered(date string) dayView {
 	e.t.Helper()
 	var day dayView
-	// 查询走 Persona 进程的池，采集同步走 BFF 自己的池；不能只验证其中一个或直连父进程池。
+	// 父测试只负责观察，不参与服务恢复。丢弃它的旧连接，不能把观察连接的 EOF 当成业务丢数据。
+	e.observationPoolRecovered()
+	// 查询走 Persona 进程的池，采集同步走 BFF 自己的池；两条生产链路仍各自证明恢复。
 	e.awaitBFFRead("BFF reads Persona after recovery", "/v1/days/"+date, &day)
 	e.awaitBFFRead("BFF capture store recovers", "/v1/captures/sync?business_day="+date+"&session_id=capture-day", nil)
 	return day
+}
+
+func (e *environment) observationPoolRecovered() {
+	e.t.Helper()
+	e.personaPool.Reset()
+	eventually(e.t, "parent Persona observation pool reconnects", func() bool {
+		ctx, cancel := context.WithTimeout(e.ctx, time.Second)
+		defer cancel()
+		var one int
+		err := e.personaPool.QueryRow(ctx, `SELECT 1`).Scan(&one)
+		if err != nil && !pg.IsUnavailable(err) {
+			e.t.Fatal(err)
+		}
+		return err == nil && one == 1
+	})
 }
 
 func (e *environment) roleReady(p *process) {

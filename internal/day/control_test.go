@@ -53,16 +53,17 @@ func (b *barrier) wait(t *testing.T) json.RawMessage {
 
 type control struct {
 	*offsetClock
-	server      *httptest.Server
-	token       string
-	mu          sync.Mutex
-	barriers    map[string]*barrier
-	pushes      []map[string]string
-	diagnostics map[string]json.RawMessage
+	server          *httptest.Server
+	token           string
+	mu              sync.Mutex
+	barriers        map[string]*barrier
+	pushes          []map[string]string
+	diagnostics     map[string]json.RawMessage
+	executionErrors map[string]int
 }
 
 func newControl(t *testing.T) *control {
-	c := &control{offsetClock: &offsetClock{}, token: randomID(t), barriers: map[string]*barrier{}, diagnostics: map[string]json.RawMessage{}}
+	c := &control{offsetClock: &offsetClock{}, token: randomID(t), barriers: map[string]*barrier{}, diagnostics: map[string]json.RawMessage{}, executionErrors: map[string]int{}}
 	c.advance(t, time.Date(2035, 1, 8, 1, 0, 0, 0, time.UTC)) // 周一当地 09:00。
 	c.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+c.token {
@@ -88,6 +89,18 @@ func newControl(t *testing.T) *control {
 		c.mu.Lock()
 		if in.Point == "scheduler.discovery_started" || in.Point == "scheduler.discovery_completed" {
 			c.diagnostics[in.Point] = append(json.RawMessage(nil), in.Value...)
+		}
+		if in.Point == "execution.error" {
+			var value struct{ Component, Operation, Class string }
+			if json.Unmarshal(in.Value, &value) == nil && len(value.Operation) < 128 {
+				if c.executionErrors == nil {
+					c.executionErrors = map[string]int{}
+				}
+				key := value.Component + "/" + value.Operation + "/" + value.Class
+				if _, exists := c.executionErrors[key]; exists || len(c.executionErrors) < 200 {
+					c.executionErrors[key]++
+				}
+			}
 		}
 		if in.Point == "push.sent" {
 			var ids map[string]string
@@ -149,6 +162,7 @@ func (c *control) sent(run, kind string) int {
 
 // 固定代理地址跨子进程重启保持不变；只在采集请求上丢弃已完成的响应。
 type frontProxy struct {
+	trace   *httpTrace
 	server  *httptest.Server
 	mu      sync.RWMutex
 	target  *httputil.ReverseProxy
@@ -157,8 +171,8 @@ type frontProxy struct {
 }
 
 func newFront(t *testing.T) *frontProxy {
-	p := &frontProxy{}
-	p.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	p := &frontProxy{trace: &httpTrace{}}
+	p.server = httptest.NewServer(p.trace.handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p.mu.RLock()
 		target := p.target
 		p.mu.RUnlock()
@@ -167,7 +181,7 @@ func newFront(t *testing.T) *frontProxy {
 			return
 		}
 		target.ServeHTTP(w, r)
-	}))
+	})))
 	t.Cleanup(p.server.Close)
 	return p
 }
@@ -194,6 +208,7 @@ type tcpProxy struct {
 	listener    net.Listener
 	mu          sync.Mutex
 	offline     bool
+	target      string
 	connections map[net.Conn]bool
 }
 
@@ -205,8 +220,7 @@ func newTCPProxy(t *testing.T, dsn string) (*tcpProxy, string) {
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	must(t, err)
-	p := &tcpProxy{listener: listener, connections: map[net.Conn]bool{}}
-	target := net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
+	p := &tcpProxy{listener: listener, connections: map[net.Conn]bool{}, target: net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))}
 	go func() {
 		for {
 			in, err := listener.Accept()
@@ -221,6 +235,7 @@ func newTCPProxy(t *testing.T, dsn string) (*tcpProxy, string) {
 					return
 				}
 				p.connections[in] = true
+				target := p.target
 				p.mu.Unlock()
 				defer func() { _ = in.Close(); p.mu.Lock(); delete(p.connections, in); p.mu.Unlock() }()
 				out, err := net.DialTimeout("tcp", target, 2*time.Second)
@@ -294,4 +309,17 @@ func (c *control) sentID(id string) int {
 		}
 	}
 	return n
+}
+
+// 只在旧主已隔离后改目标；没有健康探测回选旧主的路径。
+func (p *tcpProxy) switchTo(t *testing.T, dsn string) {
+	cfg, err := pgx.ParseConfig(dsn)
+	must(t, err)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for conn := range p.connections {
+		_ = conn.Close()
+	}
+	p.target = net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
+	p.offline = false
 }

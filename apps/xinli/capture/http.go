@@ -78,6 +78,9 @@ func failure(w http.ResponseWriter, out Receipt, err error) {
 	case errors.Is(err, store.ErrOwnerDeleting):
 		code, status = "account_inactive", http.StatusForbidden
 	}
+	if status == http.StatusServiceUnavailable {
+		w.Header().Set("Retry-After", "1")
+	}
 	jsonResponse(w, status, Error{Code: code, Receipt: out})
 }
 
