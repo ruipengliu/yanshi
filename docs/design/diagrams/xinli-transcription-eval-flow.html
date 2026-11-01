@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>xinli 转写评测与选型流程</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&family=Noto+Sans+KR:wght@400;500;600&family=Noto+Serif+KR:wght@400&family=Noto+Sans+TC:wght@400;500;600&family=Noto+Serif+TC:wght@400&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #f5f5f5;
+      --color-ink:     #2d3142;
+      --color-muted:   #4f5d75;
+      --color-accent:  #bf4520;
+      --font-sans:     'Geist', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', 'Noto Serif SC', 'Songti SC', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .frame { max-width: 960px; min-width: 0; width: 100%; }
+
+    .diagram-container { width: 100%; overflow-x: auto; }
+
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+
+    svg { width: 100%; min-width: 960px; display: block; }
+
+    @media print {
+      .diagram-container { overflow-x: visible; }
+      svg { min-width: 0; }
+    }
+
+    svg text { fill: #2d3142; font-family: var(--font-sans); }
+    .title { font-family: var(--font-serif); font-size: 28px; font-weight: 400; }
+    .node { font-size: 16px; font-weight: 600; }
+    .group { font-size: 14px; font-weight: 600; }
+    .body { font-size: 12px; font-weight: 400; fill: #4f5d75; }
+    .tag { font-family: var(--font-mono); font-size: 12px; font-weight: 500; }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <div class="diagram-container">
+<svg viewBox="0 0 960 1440" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="xinli-transcription-eval-flow-title xinli-transcription-eval-flow-desc">
+<title id="xinli-transcription-eval-flow-title">xinli 转写评测与选型流程</title>
+<desc id="xinli-transcription-eval-flow-desc">准备人工参考并冻结规则，逐环筛选后比较完整链路，首轮门槛通过者进入短名单验证，全部门槛通过且证据齐全后选定主用与备份，不通过或证据不足者暂不定案。</desc>
+<defs><marker id="arrow-main" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><path d="M0 0 L8 3 L0 6 Z" fill="#4f5d75"/></marker></defs>
+<rect width="960" height="1440" fill="#f5f5f5"/>
+<text x="64" y="48" class="title" text-anchor="start">xinli 转写评测与选型流程</text>
+<text x="64" y="76" class="body" text-anchor="start">设计方案 · 尚无实测结论　｜　比较整条链路，先过门槛，再看分数</text>
+<path d="M316 196 V236" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow-main)"/>
+<path d="M316 316 V356" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow-main)"/>
+<path d="M316 452 V492" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow-main)"/>
+<path d="M316 588 V628" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow-main)"/>
+<path d="M316 756 V808" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow-main)"/>
+<path d="M316 920 V960" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow-main)"/>
+<path d="M316 1088 V1140" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow-main)"/>
+<path d="M536 692 H752 Q760 692 760 700 V808" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow-main)"/>
+<path d="M536 1024 H752 Q760 1024 760 1016 V952" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow-main)"/>
+<rect x="552" y="664" width="192" height="20" fill="#f5f5f5"/>
+<text x="648.0" y="678" class="body" text-anchor="middle">不通过 / 证据不足</text>
+<rect x="552" y="996" width="192" height="20" fill="#f5f5f5"/>
+<text x="648.0" y="1010" class="body" text-anchor="middle">不通过 / 证据不足</text>
+<rect x="324" y="772" width="56" height="20" fill="#f5f5f5"/>
+<text x="352.0" y="786" class="body" text-anchor="middle">通过</text>
+<rect x="324" y="1104" width="56" height="20" fill="#f5f5f5"/>
+<text x="352.0" y="1118" class="body" text-anchor="middle">通过</text>
+<g data-node="准备真实数据与人工参考"><rect x="96" y="100" width="440" height="96" rx="20" fill="#e4e6e8" stroke="#4f5d75" stroke-width="1.2"/>
+<rect x="112" y="112" width="28" height="20" rx="2" fill="#ececec"/>
+<text x="126" y="126" class="tag" text-anchor="middle">01</text>
+<text x="152" y="128" class="node" text-anchor="start">准备真实数据与人工参考</text>
+<text x="116" y="148" class="body" text-anchor="start">确认硬件、产品范围、数据协议与处理依据</text>
+<text x="116" y="166" class="body" text-anchor="start">多人多日采样；人工核实原话、说话人与时间</text>
+<text x="116" y="184" class="body" text-anchor="start">建立参照链路；合成与重录补充，不能代替真人</text>
+</g>
+<g data-node="分开调参与验收，提前冻结规则"><rect x="96" y="236" width="440" height="80" rx="6" fill="#f4e7e3" stroke="#bf4520" stroke-width="1.2"/>
+<rect x="112" y="248" width="28" height="20" rx="2" fill="#ececec"/>
+<text x="126" y="262" class="tag" text-anchor="middle">02</text>
+<text x="152" y="264" class="node" text-anchor="start">分开调参与验收，提前冻结规则</text>
+<text x="116" y="284" class="body" text-anchor="start">按人、原始会话和日期划分调参集与留出集</text>
+<text x="116" y="302" class="body" text-anchor="start">正式留出结果可见前，冻结门槛、权重和样本计划</text>
+</g>
+<g data-node="逐个筛选环节"><rect x="96" y="356" width="440" height="96" rx="6" fill="#ffffff" stroke="#4f5d75" stroke-width="1.2"/>
+<rect x="112" y="368" width="28" height="20" rx="2" fill="#ececec"/>
+<text x="126" y="382" class="tag" text-anchor="middle">03</text>
+<text x="152" y="384" class="node" text-anchor="start">逐个筛选环节</text>
+<text x="116" y="404" class="body" text-anchor="start">固定其他环节，每次只换一环；同时报告节省与损失</text>
+<text x="116" y="422" class="body" text-anchor="start">完成预定交叉试验；增量损失超限的已测组合不进入首轮</text>
+<text x="116" y="440" class="body" text-anchor="start">每个环节保留 1–2 个候选，组成少量完整链路</text>
+</g>
+<g data-node="完整链路首轮比较"><rect x="96" y="492" width="440" height="96" rx="6" fill="#ffffff" stroke="#4f5d75" stroke-width="1.2"/>
+<rect x="112" y="504" width="28" height="20" rx="2" fill="#ececec"/>
+<text x="126" y="518" class="tag" text-anchor="middle">04</text>
+<text x="152" y="520" class="node" text-anchor="start">完整链路首轮比较</text>
+<text x="116" y="540" class="body" text-anchor="start">同一批录音，检查关键文字、漏识、幻觉和说话人</text>
+<text x="116" y="558" class="body" text-anchor="start">同时测时间、可靠性、完整成本、容量及数据门槛</text>
+<text x="116" y="576" class="body" text-anchor="start">首轮不运行整理 Agent；下游验收 A4 暂缓</text>
+</g>
+<g data-node="首轮门槛通过？"><path d="M316 628 L536 692 L316 756 L96 692 Z" fill="#ffffff" stroke="#4f5d75" stroke-width="1.2"/>
+<text x="316" y="684" class="node" text-anchor="middle">首轮门槛通过？</text>
+<text x="316" y="712" class="body" text-anchor="middle">证据不足不能当作通过</text>
+</g>
+<g data-node="短名单端到端验证"><rect x="96" y="808" width="440" height="112" rx="6" fill="#ffffff" stroke="#4f5d75" stroke-width="1.2"/>
+<rect x="112" y="820" width="28" height="20" rx="2" fill="#ececec"/>
+<text x="126" y="834" class="tag" text-anchor="middle">05</text>
+<text x="152" y="836" class="node" text-anchor="start">短名单端到端验证</text>
+<text x="116" y="856" class="body" text-anchor="start">依据分数、原始指标与不确定性，取 2–3 个配置</text>
+<text x="116" y="874" class="body" text-anchor="start">先修正并验证评分器，再用同一整理 Agent 配对比较</text>
+<text x="116" y="892" class="body" text-anchor="start">人工参考与链路输出：承诺、对象、期限、提醒与修订</text>
+<text x="116" y="910" class="body" text-anchor="start">下游损失只判是否达标，不计分、不用于通过者排序</text>
+</g>
+<g data-node="暂不定案"><rect x="624" y="808" width="272" height="144" rx="6" fill="#eaeaec" stroke="#4f5d75" stroke-width="1.2"/>
+<text x="644" y="836" class="node" text-anchor="start">暂不定案</text>
+<text x="644" y="856" class="body" text-anchor="start">不通过：记录原因，不进入排名</text>
+<text x="644" y="874" class="body" text-anchor="start">证据不足：列入待补测</text>
+<text x="644" y="892" class="body" text-anchor="start">缺数据不能按已填项目重算总分</text>
+<text x="644" y="910" class="body" text-anchor="start">看过留出结果后改配置或门槛：</text>
+<text x="644" y="928" class="body" text-anchor="start">开启新一轮，使用新的留出数据</text>
+</g>
+<g data-node="全部门槛通过且证据齐全？"><path d="M316 960 L536 1024 L316 1088 L96 1024 Z" fill="#f4e7e3" stroke="#bf4520" stroke-width="1.2"/>
+<text x="316" y="1016" class="node" text-anchor="middle">全部门槛通过且证据齐全？</text>
+<text x="316" y="1044" class="body" text-anchor="middle">包含下游验收 A4</text>
+</g>
+<g data-node="选定主用与合格备份"><rect x="96" y="1140" width="440" height="112" rx="20" fill="#ececec" stroke="#4f5d75" stroke-width="1.2"/>
+<rect x="112" y="1152" width="28" height="20" rx="2" fill="#ececec"/>
+<text x="126" y="1166" class="tag" text-anchor="middle">06</text>
+<text x="152" y="1168" class="node" text-anchor="start">选定主用与合格备份</text>
+<text x="116" y="1188" class="body" text-anchor="start">按同一组权重，用真人留出结果计算最终分数</text>
+<text x="116" y="1206" class="body" text-anchor="start">效果已证明接近时，比较完整成本与可替代性</text>
+<text x="116" y="1224" class="body" text-anchor="start">主备须通过同样门槛，验证切换、声纹与热词迁移及删除</text>
+<text x="116" y="1242" class="body" text-anchor="start">第二名不自动成为备份；没有合格备份就继续补测</text>
+</g>
+<path d="M608 364 V448" stroke="#bfc0c0" fill="none"/>
+<text x="624" y="380" class="group" text-anchor="start">省钱不能抵消漏话</text>
+<text x="624" y="408" class="body" text-anchor="start">VAD 裁剪、增强和后处理，</text>
+<text x="624" y="428" class="body" text-anchor="start">都要检查新增的漏识与关键错误。</text>
+<text x="624" y="448" class="body" text-anchor="start">一个搭配失败，不代表组件全局失败。</text>
+<path d="M608 1176 V1260" stroke="#bfc0c0" fill="none"/>
+<text x="624" y="1192" class="group" text-anchor="start">零次错误不等于零风险</text>
+<text x="624" y="1220" class="body" text-anchor="start">最终效果和身份安全以真人验收为准。</text>
+<text x="624" y="1240" class="body" text-anchor="start">样本不足或误差范围跨越门槛，</text>
+<text x="624" y="1260" class="body" text-anchor="start">结论仍是“证据不足”。</text>
+<text x="64" y="1312" class="body" text-anchor="start">每个候选都是固定的链路配置；改变模型、参数或环节实现，另记一个配置。</text>
+<text x="64" y="1332" class="body" text-anchor="start">门槛数值与权重在正式评测前确认；详细方法见正文 §2、§5–§9 与配套评分表。</text>
+<path d="M64 1360 H896" stroke="#bfc0c0"/>
+<rect x="64" y="1384" width="16" height="16" rx="2" fill="#f4e7e3" stroke="#bf4520"/>
+<text x="88" y="1396" class="body" text-anchor="start">重点：事先定规则，证据齐全再选定</text>
+<path d="M464 1392 H504" stroke="#4f5d75" marker-end="url(#arrow-main)"/>
+<text x="516" y="1396" class="body" text-anchor="start">流程方向</text>
+</svg>
+    </div>
+  </div>
+</body>
+</html>

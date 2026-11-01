@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>xinli 声音转写处理流程</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&family=Noto+Sans+KR:wght@400;500;600&family=Noto+Serif+KR:wght@400&family=Noto+Sans+TC:wght@400;500;600&family=Noto+Serif+TC:wght@400&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #f5f5f5;   /* white-smoke */
+      --color-ink:     #2d3142;   /* jet-black */
+      --color-muted:   #4f5d75;   /* blue-slate */
+      --color-accent:  #bf4520;   /* burnt-tangerine */
+      --font-sans:     'Geist', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', 'Noto Serif SC', 'Songti SC', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .frame { max-width: 960px; min-width: 0; width: 100%; }
+    /* The SVG holds its readable width (min-width == the viewBox width, so the
+       type ramp is never silently scaled down). This wrapper lets a narrow
+       screen scroll the diagram instead of the whole page. */
+    .diagram-container { width: 100%; overflow-x: auto; }
+
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+
+    svg { width: 100%; min-width: 960px; display: block; }
+    /* Paper has no scrollbar, so the local scroller would clip instead of
+       scroll. Let the diagram scale down to the sheet: smaller but whole
+       beats sharp but cut off. Must come after the svg rule above - a media
+       query adds no specificity, so a later plain rule would win. */
+    @media print {
+      .diagram-container { overflow-x: visible; }
+      svg { min-width: 0; }
+    }
+
+    svg text { fill: #2d3142; font-family: var(--font-sans); }
+    .title { font-family: var(--font-serif); font-size: 28px; font-weight: 400; }
+    .node { font-size: 16px; font-weight: 600; }
+    .group { font-size: 14px; font-weight: 600; }
+    .body { font-size: 12px; font-weight: 400; fill: #4f5d75; }
+    .tag { font-family: var(--font-mono); font-size: 12px; font-weight: 500; }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <div class="diagram-container">
+<svg viewBox="0 0 960 1240" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="xinli-transcription-flow-title xinli-transcription-flow-desc">
+<title id="xinli-transcription-flow-title">xinli 声音转写处理流程</title>
+<desc id="xinli-transcription-flow-desc">领夹与手机上传音频，云端保守检测语音、忠实识别并确认说话人，再持久组批和有序提交，分别在可靠交接与正式接受后清理音频及待提交文字。</desc>
+<defs><marker id="arrow-main" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><path d="M0 0 L8 3 L0 6 Z" fill="#4f5d75"/></marker><marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><path d="M0 0 L8 3 L0 6 Z" fill="#2e5aa8"/></marker></defs>
+<rect width="960" height="1240" fill="#f5f5f5"/>
+<text x="64" y="48" class="title" text-anchor="start">xinli 声音转写处理流程</text>
+<text x="64" y="76" class="body" text-anchor="start">首期设计 · 尚未实现　｜　从音频到带说话人与原始时间的文字</text>
+<rect x="64" y="196" width="848" height="940" rx="8" fill="none" stroke="#bfc0c0" stroke-dasharray="4,4"/>
+<text x="88" y="220" class="group" text-anchor="start">云端采集服务</text>
+<path d="M316 172 V240" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+<path d="M316 320 V352" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow-main)"/>
+<path d="M316 480 V528" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow-main)"/>
+<path d="M316 592 V632" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow-main)"/>
+<path d="M316 712 V752" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow-main)"/>
+<path d="M316 832 V872" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow-main)"/>
+<path d="M316 968 V1008" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow-main)"/>
+<path d="M536 416 H624" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow-main)"/>
+<rect x="324" y="492" width="136" height="20" fill="#f5f5f5"/>
+<text x="392.0" y="506" class="body" text-anchor="middle">有语音或不确定</text>
+<rect x="544" y="388" width="72" height="20" fill="#f5f5f5"/>
+<text x="580.0" y="402" class="body" text-anchor="middle">无语音</text>
+<g data-node="领夹录音 → 手机上传"><rect x="96" y="100" width="440" height="72" rx="20" fill="#e4e6e8" stroke="#4f5d75" stroke-width="1.2"/>
+<text x="116" y="128" class="node" text-anchor="start">领夹录音 → 手机上传</text>
+<text x="116" y="148" class="body" text-anchor="start">加密缓冲、记录原始时间；原码流上传，断网补传</text>
+</g>
+<g data-node="接收与前端处理"><rect x="96" y="240" width="440" height="80" rx="6" fill="#ffffff" stroke="#4f5d75" stroke-width="1.2"/>
+<rect x="112" y="252" width="28" height="20" rx="2" fill="#ececec"/>
+<text x="126" y="266" class="tag" text-anchor="middle">01</text>
+<text x="152" y="268" class="node" text-anchor="start">接收与前端处理</text>
+<text x="116" y="288" class="body" text-anchor="start">音频持久保存后确认接收；解码、重采样、高通滤波</text>
+<text x="116" y="306" class="body" text-anchor="start">音量、削波与静默只标记；默认不做降噪增强</text>
+</g>
+<g data-node="语音活动检测"><path d="M316 352 L536 416 L316 480 L96 416 Z" fill="#ffffff" stroke="#4f5d75" stroke-width="1.2"/>
+<text x="316" y="400" class="node" text-anchor="middle">02  语音活动检测（VAD）</text>
+<text x="316" y="424" class="body" text-anchor="middle">保留前后余量；噪声大、拿不准时整段送</text>
+<text x="316" y="444" class="body" text-anchor="middle">按停顿分片，保留原始时间映射</text>
+</g>
+<g data-node="该区间不送识别"><rect x="624" y="384" width="272" height="64" rx="20" fill="#ececec" stroke="#4f5d75" stroke-width="1.2"/>
+<text x="644" y="412" class="node" text-anchor="start">该区间不送识别</text>
+<text x="644" y="432" class="body" text-anchor="start">电视对白、唱歌仍是人声，照常送</text>
+</g>
+<g data-node="语音识别"><rect x="96" y="528" width="440" height="64" rx="6" fill="#ffffff" stroke="#4f5d75" stroke-width="1.2"/>
+<rect x="112" y="540" width="28" height="20" rx="2" fill="#ececec"/>
+<text x="126" y="554" class="tag" text-anchor="middle">03</text>
+<text x="152" y="556" class="node" text-anchor="start">语音识别</text>
+<text x="116" y="576" class="body" text-anchor="start">使用未经增强的音频；关闭顺滑、去口误和改写</text>
+</g>
+<g data-node="说话人区分与佩戴者判定"><rect x="96" y="632" width="440" height="80" rx="6" fill="#f4e7e3" stroke="#bf4520" stroke-width="1.2"/>
+<rect x="112" y="644" width="28" height="20" rx="2" fill="#ececec"/>
+<text x="126" y="658" class="tag" text-anchor="middle">04</text>
+<text x="152" y="660" class="node" text-anchor="start">说话人区分与佩戴者判定</text>
+<text x="116" y="680" class="body" text-anchor="start">先按声音分组，再与注册声纹比对并对齐文字</text>
+<text x="116" y="698" class="body" text-anchor="start">可靠才标 wearer；重叠或不确定时标 other</text>
+</g>
+<g data-node="保守后处理"><rect x="96" y="752" width="440" height="80" rx="6" fill="#ffffff" stroke="#4f5d75" stroke-width="1.2"/>
+<rect x="112" y="764" width="28" height="20" rx="2" fill="#ececec"/>
+<text x="126" y="778" class="tag" text-anchor="middle">05</text>
+<text x="152" y="780" class="node" text-anchor="start">保守后处理</text>
+<text x="116" y="800" class="body" text-anchor="start">可疑文字只标记；仅在时间范围含余量内无语音帧、</text>
+<text x="116" y="818" class="body" text-anchor="start">且不属于不确定区间时才删除；不自动纠错或改写</text>
+</g>
+<g data-node="固定结果与持久组批"><rect x="96" y="872" width="440" height="96" rx="6" fill="#f4e7e3" stroke="#bf4520" stroke-width="1.2"/>
+<rect x="112" y="884" width="28" height="20" rx="2" fill="#ececec"/>
+<text x="126" y="898" class="tag" text-anchor="middle">06</text>
+<text x="152" y="900" class="node" text-anchor="start">固定结果与持久组批</text>
+<text x="116" y="920" class="body" text-anchor="start">固定识别结果、批次清单与建立进度</text>
+<text x="116" y="938" class="body" text-anchor="start">按业务日拆段组批；全部文字批次持久入队</text>
+<text x="116" y="956" class="body" text-anchor="start">最后持久登记成功终态，重启后按记录续建</text>
+</g>
+<g data-node="按录音顺序提交 Persona"><rect x="96" y="1008" width="440" height="104" rx="6" fill="#eaeaec" stroke="#4f5d75" stroke-width="1.2"/>
+<rect x="112" y="1020" width="28" height="20" rx="2" fill="#ececec"/>
+<text x="126" y="1034" class="tag" text-anchor="middle">07</text>
+<text x="152" y="1036" class="node" text-anchor="start">按录音顺序提交 Persona</text>
+<text x="116" y="1056" class="body" text-anchor="start">乱序先保存结果；按序提交，不重新识别</text>
+<text x="116" y="1074" class="body" text-anchor="start">断网或 staged：保留原批次、原序号、原内容重试</text>
+<text x="116" y="1092" class="body" text-anchor="start">收到 accepted：清理待提交文字</text>
+</g>
+<path d="M608 636 V720" stroke="#bfc0c0" fill="none"/>
+<text x="624" y="652" class="group" text-anchor="start">为什么不能凭音量认人？</text>
+<text x="624" y="680" class="body" text-anchor="start">离麦克风近，不代表是佩戴者。</text>
+<text x="624" y="700" class="body" text-anchor="start">每个识别分片重新比对声纹。</text>
+<text x="624" y="720" class="body" text-anchor="start">佩戴者可能整片没有说话。</text>
+<path d="M608 876 V1000" stroke="#bfc0c0" fill="none"/>
+<text x="624" y="892" class="group" text-anchor="start">音频何时可以删除？</text>
+<text x="624" y="920" class="body" text-anchor="start">成功：全部文字批次持久入队，</text>
+<text x="624" y="940" class="body" text-anchor="start">且分片成功终态已持久登记后。</text>
+<text x="624" y="960" class="body" text-anchor="start">空结果或永久失败：终态持久登记后。</text>
+<text x="624" y="980" class="body" text-anchor="start">清理音频及临时派生数据，</text>
+<text x="624" y="1000" class="body" text-anchor="start">不必等 Persona 接受。</text>
+<text x="64" y="1164" class="body" text-anchor="start">空结果推进时间水位；永久失败记录缺口后继续，两者都不占文字序号。</text>
+<text x="64" y="1184" class="body" text-anchor="start">擦除、到期、注销：取消并清理，拒收旧世代迟到结果。细则见正文 §4.7、§5。</text>
+<path d="M64 1200 H896" stroke="#bfc0c0"/>
+<rect x="64" y="1212" width="16" height="16" rx="2" fill="#f4e7e3" stroke="#bf4520"/>
+<text x="88" y="1224" class="body" text-anchor="start">重点：身份可信与可靠交接</text>
+<path d="M352 1220 H392" stroke="#4f5d75" marker-end="url(#arrow-main)"/>
+<text x="404" y="1224" class="body" text-anchor="start">处理方向</text>
+<rect x="552" y="1212" width="24" height="16" fill="none" stroke="#4f5d75" stroke-dasharray="4,4"/>
+<text x="588" y="1224" class="body" text-anchor="start">虚线范围：云端处理</text>
+</svg>
+    </div>
+  </div>
+</body>
+</html>
