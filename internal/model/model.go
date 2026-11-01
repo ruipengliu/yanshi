@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
-	_ "time/tzdata" // 旁听的时区由 HostApp 给出，不依赖服务器上的时区数据库
+	_ "time/tzdata" // 旁听的时区由 HostApp 给出；内嵌时区库只在主机没有时区库时兜底，有时以主机为准
 	"unicode/utf8"
 
 	v1 "yanshi/gen/yanshi/v1"

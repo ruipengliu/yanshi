@@ -6,7 +6,7 @@ import (
 	"iter"
 	"strings"
 	"time"
-	_ "time/tzdata"
+	_ "time/tzdata" // 旁听的时区由 HostApp 给出；内嵌时区库只在主机没有时区库时兜底，有时以主机为准
 	"unicode/utf8"
 )
 
