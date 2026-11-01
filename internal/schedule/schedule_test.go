@@ -178,7 +178,7 @@ func TestNext(t *testing.T) {
 		{"until_local", "2026-10-28T00:00:00Z", "Asia/Shanghai", "FREQ=DAILY;BYHOUR=9;BYMINUTE=0;UNTIL=20261029T090000", []string{"2026-10-28T01:00:00Z", "2026-10-29T01:00:00Z"}, true},
 		{"spring", "2026-03-07T12:00:00Z", "America/New_York", "FREQ=DAILY;BYHOUR=2;BYMINUTE=30", []string{"2026-03-08T07:00:00Z", "2026-03-09T06:30:00Z"}, false},
 		{"fall", "2026-10-31T12:00:00Z", "America/New_York", "FREQ=DAILY;BYHOUR=1;BYMINUTE=30", []string{"2026-11-01T05:30:00Z", "2026-11-02T06:30:00Z"}, false},
-		{"midnight_fall", "2026-10-31T12:00:00Z", "America/Havana", "FREQ=DAILY;BYHOUR=0;BYMINUTE=30", []string{"2026-11-01T04:30:00Z", "2026-11-02T05:30:00Z"}, false},
+		{"midnight_fall", "2026-10-31T12:00:00Z", midnightFallZone, "FREQ=DAILY;BYHOUR=0;BYMINUTE=30", []string{"2026-11-01T04:30:00Z", "2026-11-02T05:30:00Z"}, false},
 		{"spring_deduplicate", "2026-03-07T12:00:00Z", "America/New_York", "FREQ=DAILY;BYHOUR=2,3;BYMINUTE=0;COUNT=2", []string{"2026-03-08T07:00:00Z", "2026-03-09T06:00:00Z"}, true},
 		{"date_skip", "2011-12-29T12:00:00Z", "Pacific/Apia", "FREQ=DAILY;BYHOUR=0;BYMINUTE=0;COUNT=2", []string{"2011-12-30T10:00:00Z", "2011-12-31T10:00:00Z"}, true},
 	} {
