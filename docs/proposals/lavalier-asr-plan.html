@@ -311,7 +311,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
     <div><b>8B 单路全量</b>600M 只做对齐与可疑片段校验。级联路由每人每月只省约 ¥3<span class="tg es">估算</span>。</div>
     <div><b>三类热词</b>解码前按上下文检索出偏置表，只解码一次；解码后拼音召回，再做闭集纠错。个人热词不从纪要回收。</div>
     <div><b>机主判定</b>一期纯声纹（门槛更严）；二期按 VPU 三态 × 声纹三档融合。VPU 分不清电视和在场的真人。记忆与待办只引用“证据级”原话。</div>
-    <div><b>按对话单元出纪要</b>日历会议或 10 分钟静默切出单元；没有机主参与的单元不出纪要；迟到数据和立即同步后的续说会重开单元、更新纪要。</div>
+    <div><b>按对话单元出纪要</b>日历会议、10 分钟静默或参与者换了一批时切出单元；没有机主参与的单元不出纪要；与机主没有来回的“背景簇”不作纪要上下文、不支撑待办。待办按承担人分四类。迟到数据、续说和用户改字、改标都会重开单元、更新纪要。</div>
     <div><b>约 ¥25/人/月</b>按需求口径每天 5 小时有效音频（约 20 小时佩戴，属高位）、8B ¥0.10/小时<span class="tg es">估算</span>，落在 ¥23–27 内。典型佩戴 12 小时约 3 小时有效，约 ¥15。</div>
     <div><b>音频在 G5 后即删</b>识别结果落盘就删音频，之后只读文字；他人只留簇质心，业务日结束后 12 小时删除。代价是不能事后重跑；低置信区间保留文字候选。</div>
   </div>
@@ -325,7 +325,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
     <thead><tr><th>前提</th><th>值</th><th>标注</th></tr></thead>
     <tbody>
       <tr><td>链路</td><td>领夹 → 手机暂存 → 手机定时批量上云 → 云端异步 → 回传 App；设备不直连云端</td><td><span class="tg as">假设</span> 硬约束</td></tr>
-      <tr><td>延迟</td><td>需求为几十分钟到几小时，无实时字幕。本方案：常规批从录音到 App 可见 P90 ≤3 小时；立即同步从上传完成到转写可见 P90 ≤10 分钟</td><td><span class="tg as">假设</span> <span class="tg go">目标</span></td></tr>
+      <tr><td>延迟</td><td>需求为几十分钟到几小时，无实时字幕。本方案：常规批从录音到 App 可见 P90 ≤3 小时；立即同步从上传完成到转写可见 P90 ≤10 分钟；单元关闭后纪要可见 P90 ≤30 分钟</td><td><span class="tg as">假设</span> <span class="tg go">目标</span></td></tr>
       <tr><td>8B / 600M 单价</td><td>¥0.10 / ¥0.06 每音频小时（自研，异步）</td><td><span class="tg as">假设</span></td></tr>
       <tr><td>有效音频</td><td>每人每天约 5 小时（VAD 后）。按全天有效比例 0.25，相当于约 20 小时佩戴，属于高位；典型佩戴 12–16 小时对应 3–4 小时</td><td><span class="tg as">假设</span> <span class="tg es">估算</span></td></tr>
       <tr><td>文本量</td><td>1 小时有效语音 ≈ 1.3 万汉字 ≈ 1.5 万 token</td><td><span class="tg as">假设</span></td></tr>
@@ -336,15 +336,34 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
   </table></div>
   <div class="chips" aria-label="非目标">
     <span class="muted small">非目标：</span>
-    <span class="chip no">实时流式与字幕</span><span class="chip no">他人实名分离</span><span class="chip no">设备直连云端</span><span class="chip no">按三方 API 零售价计成本</span>
+    <span class="chip no">实时流式与字幕</span><span class="chip no">跨天识别他人身份</span><span class="chip no">设备直连云端</span><span class="chip no">按三方 API 零售价计成本</span>
   </div>
+  <h3>用户反馈对照</h3>
+  <p class="small">来自现有产品的用户问卷，人数为反映该问题、影响当前体验的人数。前两项正是本方案的主攻方向，也印证了“宁可漏记，不可错记”：错记的抱怨约为遗漏的两倍。</p>
+  <div class="tbl"><table>
+    <thead><tr><th>问题</th><th class="num">人数</th><th>本方案的应对</th><th>不在本方案范围</th></tr></thead>
+    <tbody>
+      <tr><td>旁人闲聊、视频、播客混入记录</td><td class="num">72</td><td>手机外放靠场景事件；播放声隔离；下游只读接受档；背景簇不作上下文、不支撑待办（§5.8）；机主少于 3 句的单元不出纪要</td><td>“电视里的普通对话”在声学上难分（R2）</td></tr>
+      <tr><td>内容和任务归错人</td><td class="num">65</td><td>证据级门槛、未知说话人（§5.6）；待办按承担人分四类；单元内簇名由用户确认</td><td>跨天识别他人身份</td></tr>
+      <tr><td>人名、术语、中英混说识别不准</td><td class="num">46</td><td>三类热词、闭集纠错；英文术语按音素与拼写召回（§5.3）；中英混说单独评测</td><td>—</td></tr>
+      <tr><td>纠错、编辑和同步不方便</td><td class="num">46</td><td>改字、改标重开单元，纪要与待办随之更新；同单元同类误识别一并提示替换</td><td>编辑界面本身</td></tr>
+      <tr><td>多场会议混合、重复总结</td><td class="num">38</td><td>对话单元按会议、静默、参与者换批切分；重开时替换纪要而不是追加（§5.9）；分段误差列入评测（N1）</td><td>—</td></tr>
+      <tr><td>遗漏结论、负责人和时间</td><td class="num">35</td><td>关键信息错误率 A6；线上会议“单边录音”提示；纪要要素召回列入评测（N2）</td><td>部分遗漏是“宁可漏记”的代价：未知说话人不支撑待办</td></tr>
+      <tr><td>记录不出现、长期“正在整理”</td><td class="num">28</td><td>两级队列目标；单元显示处理状态与不出纪要的原因；等缺口最多 2 小时</td><td>—</td></tr>
+      <tr><td>记录无法转为行动（日历、笔记、IM）</td><td class="num">57</td><td>只提供依据：待办核实状态、承担人、溯源</td><td>与日历、IM 的联动</td></tr>
+      <tr><td>计时与费用不透明</td><td class="num">48</td><td>清单已有佩戴、有效、过滤三种时长，可直接做计量</td><td>计费口径（§13 待决策）</td></tr>
+      <tr><td>外部 AI 读不全原文</td><td class="num">30</td><td>转写片段带说话人、单元与时刻，结构上可导出</td><td>是否开放给第三方（§13 待决策）</td></tr>
+    </tbody>
+  </table></div>
   <details class="more"><summary>术语表</summary><div>
     <div class="tbl"><table><tbody>
       <tr><th>机主</th><td>佩戴领夹的用户本人</td></tr>
-      <tr><th>他人</th><td>机主以外的说话人，只做匿名聚类（<code>他人-簇号</code>），簇号只在业务日内有效</td></tr>
+      <tr><th>他人</th><td>机主以外的说话人，只做匿名聚类（<code>他人-簇号</code>），簇号只在业务日内有效；簇可以带用户确认过的名字，同样只在业务日内有效</td></tr>
+      <tr><th>参与者 / 背景簇</th><td>在一个对话单元里，与机主直接或间接轮流发言的他人簇是参与者；其余他人簇是背景簇（邻座闲聊、漏网的电视台词）。背景簇照常显示，但不作纪要上下文、不支撑待办</td></tr>
+      <tr><th>承担人</th><td>待办由谁去做，与“原话是谁说的”分开记录</td></tr>
       <tr><th>未知说话人</th><td>说不准是谁说的（不确定或重叠）：按接受档保存和显示，只作纪要上下文，不支撑待办、不进记忆</td></tr>
       <tr><th>说话人轮次</th><td>按换人点切出的一段连续发言；G5 判定与转写片段都以它为单位</td></tr>
-      <tr><th>对话单元</th><td>下游的处理单位：一场日历会议，或以 ≥10 分钟没有接受档语音切开的一段；单元关闭后生成纪要、待办、记忆</td></tr>
+      <tr><th>对话单元</th><td>下游的处理单位：一场日历会议，或以 ≥10 分钟没有接受档语音、参与者换了一批时切开的一段；单元关闭后生成纪要、待办、记忆</td></tr>
       <tr><th>业务日</th><td>本地时间 04:00 至次日 04:00</td></tr>
       <tr><th>播放声</th><td>经扬声器重放的人声：电视、音箱、短视频、手机外放等</td></tr>
       <tr><th>疑似回放</th><td>声纹像机主，但物理证据表明机主此刻没有发声的语音</td></tr>
@@ -440,7 +459,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <path class="e" d="M700 350V468" marker-end="url(#ah)"/>
 
       <!-- 下游 -->
-      <g class="nd" tabindex="0" data-tip="对话单元关闭后生成。纪要读接受档，已归属机主少于 3 句的单元不出（日历会议除外）；机主待办须引用证据级机主原话，对方待办须引用他人原话，未知说话人不能支撑，否则未核实、不提醒；记忆只采信证据级机主原话。" data-ref="s5-8"><rect x="1022" y="84" width="150" height="50" rx="7"/><text class="t c" x="1097" y="105">纪要 · 待办 · 记忆</text><text class="s c" x="1097" y="122">只读接受档</text></g>
+      <g class="nd" tabindex="0" data-tip="对话单元关闭后生成。纪要读接受档，背景簇不作上下文，已归属机主少于 3 句的单元不出（日历会议除外）；待办按承担人分四类，各按说话人核对引用，未知说话人与背景簇不能支撑，否则未核实、不提醒；记忆只采信证据级机主原话。" data-ref="s5-8"><rect x="1022" y="84" width="150" height="50" rx="7"/><text class="t c" x="1097" y="105">纪要 · 待办 · 记忆</text><text class="s c" x="1097" y="122">只读接受档</text></g>
       <path class="e" d="M1097 156V136" marker-end="url(#ah)"/>
       <use href="#hex" x="1097" y="170" class="gate g-store"/><text class="gt c" x="1097" y="174">G8</text>
       <text class="gl" x="1116" y="174">入库闸门</text>
@@ -480,7 +499,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <tr><td class="mono">G5</td><td>云端</td><td>机主 / 他人 / 未知；疑似回放</td><td>疑似回放 → 隔离；不确定 → 未知说话人（接受）</td><td>纯声纹</td><td>声纹 × VPU</td></tr>
       <tr><td class="mono">G6</td><td>云端</td><td>文字层面的媒体内容</td><td>只能把接受降为隔离</td><td>✔</td><td>✔</td></tr>
       <tr><td class="mono">G7</td><td>云端</td><td>汇总各级证据</td><td>记下全部原因，取最严一档</td><td>✔</td><td>✔</td></tr>
-      <tr><td class="mono">G8</td><td>云端</td><td>纪要、待办、记忆的写入条件</td><td>按对话单元触发；只读接受档；按说话人核对</td><td>✔</td><td>✔</td></tr>
+      <tr><td class="mono">G8</td><td>云端</td><td>纪要、待办、记忆的写入条件</td><td>按对话单元触发；只读接受档；排除背景簇；按承担人与说话人核对</td><td>✔</td><td>✔</td></tr>
     </tbody>
   </table></div>
 
@@ -789,16 +808,16 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
     <svg viewBox="0 0 1000 420" role="img" aria-label="L1 入库与下游：接受档按对话单元聚合，经 G8 入库闸门进入纪要、待办、记忆，均记录溯源；隔离档折叠显示在 App；用户的放回、降级、改标说话人、改字回写转写库并撤回依赖项">
       <g class="nd store" tabindex="0" data-tip="接受档：按用户的留存设置保存；可搜。说话人为机主、他人-簇号或未知说话人。" data-ref="s5-7"><rect x="20" y="70" width="160" height="60" rx="7"/><use href="#lock" class="lock" x="30" y="78" width="12" height="14"/><text class="t c" x="100" y="96">转写库 · 接受档</text><text class="s c" x="100" y="114">机主 · 他人 · 未知</text></g>
       <path class="e" d="M180 100H208" marker-end="url(#ah)"/>
-      <g class="nd" tabindex="0" data-tip="日历会议时段成一个单元；其余时段连续 ≥10 分钟没有接受档语音即切开。切口出现、且之前没有还在路上的缺口时关闭；缺口等待超过 6 小时先关闭并标“可能不完整”。立即同步临时关闭；迟到分片与续说会重开、重新生成。" data-ref="s5-9"><rect x="210" y="70" width="160" height="60" rx="7"/><text class="t c" x="290" y="96">对话单元</text><text class="s c" x="290" y="114">会议 · 10 分钟静默</text></g>
+      <g class="nd" tabindex="0" data-tip="日历会议时段成一个单元；其余时段连续 ≥10 分钟没有接受档语音即切开。切口出现、且之前没有还在路上的缺口时关闭；缺口等待超过 2 小时先关闭并标“可能不完整”。立即同步临时关闭；迟到分片、续说与用户改字、改标会重开、重新生成。" data-ref="s5-9"><rect x="210" y="70" width="160" height="60" rx="7"/><text class="t c" x="290" y="96">对话单元</text><text class="s c" x="290" y="114">会议 · 10 分钟静默</text></g>
       <path class="e" d="M370 100H398" marker-end="url(#ah)"/>
-      <g class="nd" tabindex="0" data-tip="G8 规则见 §5.8：单元关闭后运行；只读接受档；待办按说话人核对，未知说话人不能支撑；记忆只采信证据级机主原话；他人话里关于机主的说法不写成事实。" data-ref="s5-8"><rect x="400" y="70" width="150" height="60" rx="7"/><text class="t c" x="482" y="96">入库闸门</text><text class="s c" x="482" y="114">按说话人核对</text></g>
+      <g class="nd" tabindex="0" data-tip="G8 规则见 §5.8：单元关闭后运行；只读接受档；按轮流发言判出背景簇，不作上下文；待办按承担人分四类、按说话人核对，未知说话人与背景簇不能支撑；记忆只采信证据级机主原话；他人话里关于机主的说法不写成事实。" data-ref="s5-8"><rect x="400" y="70" width="150" height="60" rx="7"/><text class="t c" x="482" y="96">入库闸门</text><text class="s c" x="482" y="114">按说话人核对</text></g>
       <use href="#hex" x="414" y="70" class="gate g-store"/><text class="gt c" x="414" y="74">G8</text>
       <path class="e" d="M550 100H570M570 40V207"/>
       <path class="e" d="M570 40H598" marker-end="url(#ah)"/>
       <path class="e" d="M570 127H598" marker-end="url(#ah)"/>
       <path class="e" d="M570 207H598" marker-end="url(#ah)"/>
-      <g class="nd"><rect x="600" y="10" width="190" height="60" rx="7"/><text class="t c" x="695" y="30">纪要</text><text class="s c" x="695" y="47">机主 · 他人 · 未知都作上下文</text><text class="s c" x="695" y="63">机主 &lt;3 句不出（会议除外）</text></g>
-      <g class="nd"><rect x="600" y="80" width="190" height="94" rx="7"/><text class="t c" x="695" y="99">待办</text><text class="s c" x="695" y="117">我答应的：证据级机主原话</text><text class="s c" x="695" y="133">对方答应的：他人原话</text><text class="s c" x="695" y="149">未知说话人：不能支撑</text><text class="s c" x="695" y="165">否则：未核实，不提醒</text></g>
+      <g class="nd"><rect x="600" y="10" width="190" height="60" rx="7"/><text class="t c" x="695" y="30">纪要</text><text class="s c" x="695" y="47">背景簇不作上下文</text><text class="s c" x="695" y="63">机主 &lt;3 句不出（会议除外）</text></g>
+      <g class="nd"><rect x="600" y="80" width="190" height="94" rx="7"/><text class="t c" x="695" y="99">待办</text><text class="s c" x="695" y="117">按承担人分四类</text><text class="s c" x="695" y="133">我答应的：证据级机主原话</text><text class="s c" x="695" y="149">未知与背景簇：不能支撑</text><text class="s c" x="695" y="165">否则：未核实，不提醒</text></g>
       <g class="nd"><rect x="600" y="184" width="190" height="46" rx="7"/><text class="t c" x="695" y="203">记忆</text><text class="s c" x="695" y="220">只采信证据级机主原话</text></g>
       <path class="e" d="M790 127H818" marker-end="url(#ah)"/>
       <path class="e" d="M790 207H818" marker-end="url(#ah)"/>
@@ -819,7 +838,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <text class="tiny c" x="450" y="396">回写转写库：放回、降级、改标说话人、改字</text>
     </svg>
     </div>
-    <figcaption>用户放回、把未知说话人改标为机主，都记为“用户确认”，可作为证据级；改标为他人可以支撑“对方答应的”待办。改字只改文字、不改说话人，改过的专名进入个人热词。</figcaption>
+    <figcaption>用户放回、把未知说话人改标为机主，都记为“用户确认”，可作为证据级；改标为他人可以支撑“对方答应的”待办。改字只改文字、不改说话人，改过的专名进入个人热词。改字、改标和改背景标记都会重开所在单元，纪要与待办随之更新。</figcaption>
   </figure>
 
   <!-- 5.1 -->
@@ -867,7 +886,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
         <tr><td>声学回放特征</td><td>回放检测模型，自建重录语料训练</td><td>扬声器频响、压缩痕迹、房间混响</td><td>好音箱近距离不明显；16 kb/s 抹掉细节</td></tr>
         <tr><td>手机场景快照</td><td>§4.4</td><td>本机外放几乎确定</td><td>不覆盖电视、电脑、别人的手机</td></tr>
         <tr class="p2only"><td>空间特征（二期双麦）</td><td>方向长时间不变、相干性低、混响大</td><td>固定远场声源</td><td>坐着不动的真人也是固定方向</td></tr>
-        <tr><td>交互特征（G6 计算）</td><td>机主是否与该声源轮流发言</td><td>电视不会接机主的话</td><td>需识别之后才能算</td></tr>
+        <tr><td>交互特征（G6 计算）</td><td>机主是否与该声源轮流发言</td><td>电视不会接机主的话</td><td>需识别之后才能算；线上会议的远端发言经外放也会与机主轮流，属于真人。单元级的参与者判定见 §5.8</td></tr>
         <tr class="p2only"><td>VPU（二期）</td><td>机主是否在发声</td><td><b>只判机主有没有说话</b></td><td>分不清电视和在场的真人</td></tr>
       </tbody>
     </table></div>
@@ -960,8 +979,9 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
         <tr><td>个人</td><td>通讯录（近 90 天）、日历参会人与标题专名、项目、用户在 App 里改过的专名</td><td class="num">几百–几千</td><td>自动收集，时间窗生效；生效条目超过 N 时按最近联系频次截断；可查看、删除；随用户删除</td></tr>
       </tbody>
     </table></div>
-    <p class="small">不从纪要回收专名：纪要里的专名本身是 ASR 的产物。8B 两次把“张伟”识别成“章威”，“章威”就会进热词，之后偏置和纠错都往错的方向推。用户改字是独立证据，改字记入 <code>edits</code>，来源标为 <code>user</code>。</p>
-    <p class="small muted">评测要点：三类分别报告召回率与误触发率，另报偏置表截断造成的召回损失、时间窗外误触发、行业包扩大后误触发的变化。误触发不达标时先缩小 N，再提高纠错门槛。</p>
+    <p class="small">不从纪要回收专名：纪要里的专名本身是 ASR 的产物。8B 两次把“张伟”识别成“章威”，“章威”就会进热词，之后偏置和纠错都往错的方向推。用户改字是独立证据，改字记入 <code>edits</code>，来源标为 <code>user</code>。改字时，同一单元内文字相同、或 <code>alternatives</code> 里含改后词的片段一并列出，用户逐条或一键替换。</p>
+    <p class="small">中英混说：拼音召回对英文术语无效。英文热词按音素与字母拼写相似度召回，也召回 8B 写成中文音译的情况（如把 Kubernetes 写成“库伯内蒂斯”）；闭集纠错的候选同样可以是英文词。评测单独报中英混说切片。</p>
+    <p class="small muted">评测要点：三类分别报告召回率与误触发率，另报英文术语、偏置表截断造成的召回损失、时间窗外误触发、行业包扩大后误触发的变化。误触发不达标时先缩小 N，再提高纠错门槛。</p>
   </div>
 
   <!-- 5.4 -->
@@ -1077,6 +1097,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
           <li>&lt;1.5 s 短轮次：簇得分高、离簇中心近、不与他人相邻或重叠时才随簇；否则记为未知说话人。</li>
           <li>重叠段记为未知说话人。</li>
           <li>近场特征只作辅助与否决，不能单独授予机主。</li>
+          <li>簇名：单元关闭时，LLM 按称呼线索（“小王你……”）和该会议时段的个人热词（日历参会人）给他人簇建议名字，用户确认后才显示。名字只在业务日内有效，不跨天关联，不形成他人身份档案。</li>
         </ol>
       </div>
       <div class="card"><h3>证据级 ≠ 时间线级</h3>
@@ -1116,7 +1137,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
         <text class="s" x="30" y="404">处置取命中原因中最严的一档（拒绝 &gt; 隔离 &gt; 接受）；主原因取该档最靠上的一条，其余原因一并保存。</text>
       </svg>
       </div>
-      <figcaption>“每一级省多少、伤多少”（§9）按 reasons 全量统计，所以不能在第一个命中处停下。原来的可选策略“背景他人语音隔离”已删除：没有机主参与的对话单元不出纪要（§5.9），不必再隔离。</figcaption>
+      <figcaption>“每一级省多少、伤多少”（§9）按 reasons 全量统计，所以不能在第一个命中处停下。原来的可选策略“背景他人语音隔离”已删除：没有机主参与的对话单元不出纪要（§5.9）；有机主参与的单元里，与机主没有来回的背景簇不作纪要上下文（§5.8），都不必隔离。</figcaption>
     </figure>
 
     <div class="tbl"><table>
@@ -1124,8 +1145,8 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <tbody>
         <tr><th>存文字</th><td>是，按用户留存设置</td><td>是，<b>7 天后自动删除</b></td><td>否，只记时长与原因</td></tr>
         <tr><th>App 时间线</th><td>正常显示；未知说话人单独标注，可改标</td><td>折叠、标原因、可放回</td><td>只显示“已过滤 X 分钟”</td></tr>
-        <tr><th>纪要</th><td>进入（按对话单元）；未知说话人只作上下文</td><td>不进入</td><td>—</td></tr>
-        <tr><th>待办</th><td>可引用（按 G8 核对）；未知说话人不能支撑</td><td>不可</td><td>—</td></tr>
+        <tr><th>纪要</th><td>进入（按对话单元）；未知说话人只作上下文，背景簇不进入</td><td>不进入</td><td>—</td></tr>
+        <tr><th>待办</th><td>可引用（按 G8 核对）；未知说话人与背景簇不能支撑</td><td>不可</td><td>—</td></tr>
         <tr><th>记忆</th><td>证据级机主原话可写入；未知说话人不进</td><td>不可</td><td>—</td></tr>
         <tr><th>搜索</th><td>可搜</td><td>只在隔离区内可搜</td><td>—</td></tr>
       </tbody>
@@ -1138,11 +1159,15 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
     <div class="tbl"><table>
       <thead><tr><th>产物</th><th>规则</th></tr></thead>
       <tbody>
-        <tr><td>触发</td><td>对话单元关闭后运行（§5.9）；单元重开时重新生成</td></tr>
-        <tr><td>纪要</td><td>只读接受档；机主、他人、未知说话人的话都可作上下文。已归属机主少于 3 句的单元不生成纪要和待办（日历会议除外，用户可手动生成）</td></tr>
-        <tr><td>机主的待办（我答应的）</td><td>至少引用一段<b>证据级机主原话</b>；否则“未核实”：照常展示，不按期限提醒</td></tr>
-        <tr><td>他人的待办（对方答应的）</td><td>至少引用一段他人原话；否则“未核实”</td></tr>
-        <tr><td>未知说话人</td><td>只作纪要上下文，不能支撑任何待办，不进记忆</td></tr>
+        <tr><td>触发</td><td>对话单元关闭后运行（§5.9）；单元重开时重新生成。用户改字、改标说话人、改背景标记都会重开所在单元</td></tr>
+        <tr><td>参与者与背景簇</td><td>按轮次时间建轮流发言网络：两个说话人的轮次相隔不到几秒、前后相接就连一条边。与机主连通的他人簇是参与者，其余是背景簇；阈值由评测调整。只用说话人标签与时刻，不需要音频。日历会议单元不判背景簇：会上机主可能一直不说话，与会者之间的讨论连不到机主，但仍是会议内容。用户可把背景簇改为参与者</td></tr>
+        <tr><td>纪要</td><td>只读接受档；机主、参与者、未知说话人的话都可作上下文，背景簇不作上下文。已归属机主少于 3 句的单元不生成纪要和待办（日历会议除外，用户可手动生成）</td></tr>
+        <tr><td>待办分类</td><td>按承担人分四类，承担人与说话人分开记录：“这个交给小王”是机主原话，任务却是小王的</td></tr>
+        <tr><td>我答应的</td><td>承担人是机主：至少引用一段<b>证据级机主原话</b>；否则“未核实”：照常展示，不按期限提醒</td></tr>
+        <tr><td>对方要我做的</td><td>承担人是机主：引用参与者的请求原话，并有机主的应答（时间线级即可）；机主没有应答则“未核实”</td></tr>
+        <tr><td>对方答应的</td><td>承担人是参与者：至少引用一段该参与者的原话；否则“未核实”</td></tr>
+        <tr><td>我分派的</td><td>承担人是参与者：引用机主原话（时间线级即可）；只提醒机主跟进，不记成对方的承诺</td></tr>
+        <tr><td>未知说话人与背景簇</td><td>未知说话人只作纪要上下文；两者都不能支撑任何待办，不进记忆</td></tr>
         <tr><td>记忆</td><td>只从证据级机主原话抽取关于机主本人的事实；他人话里关于机主的说法不写成事实；从他人话中得出的内容不进长期记忆（除非用户确认）</td></tr>
         <tr><td>用户确认</td><td>放回、把未知说话人改标为机主，记为用户确认，可作为证据级；改标为他人可支撑“对方答应的”；改字只改文字、不改说话人</td></tr>
         <tr><td>溯源</td><td>每条待办和记忆记录引用的片段 ID；片段降级、删除或单元重开时撤回或请用户确认；也用于污染率评测</td></tr>
@@ -1156,7 +1181,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
     <figure id="fig-units">
       <div class="fighead"><div><span class="lvl">L2</span><b>对话单元：怎么切、何时关、何时重开</b></div></div>
       <div class="fig wide">
-      <svg viewBox="0 0 1100 206" role="img" aria-label="示意：一天中的六段语音。通勤段机主只说一句，不出纪要；日历会议机主只说两句，按会议例外出纪要；走廊段在立即同步后十分钟内续说，重开并更新纪要；午饭段静默十分钟后关闭；一对一段有缺口，超过六小时先关闭，补到后重开；看电视段在隔离档，不进任何单元">
+      <svg viewBox="0 0 1100 206" role="img" aria-label="示意：一天中的六段语音。通勤段机主只说一句，不出纪要；日历会议机主只说两句，按会议例外出纪要；走廊段在立即同步后十分钟内续说，重开并更新纪要；午饭段静默十分钟后关闭；一对一段有缺口，超过两小时先关闭，补到后重开；看电视段在隔离档，不进任何单元">
         <path class="grid" d="M60 28V112"/><text class="tiny c" x="60" y="20" style="font-family:var(--f-num);font-size:12px">08:00</text>
         <path class="grid" d="M226.7 28V112"/><text class="tiny c" x="226.7" y="20" style="font-family:var(--f-num);font-size:12px">10:00</text>
         <path class="grid" d="M393.3 28V112"/><text class="tiny c" x="393.3" y="20" style="font-family:var(--f-num);font-size:12px">12:00</text>
@@ -1224,7 +1249,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
         <text class="s c" x="462.8" y="173" style="fill:var(--fg);font-weight:500">关闭，出纪要</text>
         <path class="axis" d="M601.7 112V118H671.1V112" fill="none"/>
         <text class="s c" x="636.4" y="138" style="fill:var(--fg);font-weight:700">1 对 1</text>
-        <text class="tiny c" x="636.4" y="155">缺口超过 6 小时</text>
+        <text class="tiny c" x="636.4" y="155">缺口超过 2 小时</text>
         <text class="s c" x="636.4" y="173" style="fill:var(--fg);font-weight:500">先关闭，补到后重开</text>
         <path class="axis" d="M976.7 112V118H1046.1V112" fill="none" stroke-dasharray="4 3"/>
         <text class="s c" x="1011.4" y="138" style="fill:var(--fg);font-weight:700">看电视</text>
@@ -1249,11 +1274,13 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
     <div class="tbl"><table>
       <thead><tr><th>规则</th><th>内容</th></tr></thead>
       <tbody>
-        <tr><td>切分</td><td>日历会议时段内的轮次按 <code>meeting_hash</code> 成为一个单元；其余时段连续 ≥10 分钟没有接受档语音就切开，阈值由评测调整。隔离档不参与切分，也不进任何单元。</td></tr>
-        <tr><td>关闭</td><td>切口已经出现，而且切口之前没有还在路上的缺口。帧序号有空洞、又没有缺口记录（<code>device_gate</code>、<code>device_drop</code>、<code>flash_error</code>）就视为还在路上；等待超过 6 小时先关闭，标“可能不完整”。</td></tr>
+        <tr><td>切分</td><td>日历会议时段内的轮次按 <code>meeting_hash</code> 成为一个单元；其余时段连续 ≥10 分钟没有接受档语音就切开；停顿不到 10 分钟、但前后各 5 分钟的参与者没有交集（机主先后和两拨人说话）也切开，阈值由评测调整。日历时段前后各留 10 分钟容差：提前开始或超时的轮次，参与者与会中相同就并入会议单元。隔离档不参与切分，也不进任何单元。</td></tr>
+        <tr><td>关闭</td><td>切口已经出现，而且切口之前没有还在路上的缺口。帧序号有空洞、又没有缺口记录（<code>device_gate</code>、<code>device_drop</code>、<code>flash_error</code>）就视为还在路上；等待超过 2 小时先关闭，标“可能不完整”，补到后重开。</td></tr>
         <tr><td>生成</td><td>单元关闭后运行 G8，生成纪要、待办、记忆。已归属机主少于 3 句的单元不生成纪要和待办，但仍显示在时间线上、可搜索；日历会议除外，用户也可以在时间线上手动生成。</td></tr>
         <tr><td>立即同步</td><td>在最新一帧处临时关闭当前单元，转写可见后随即生成纪要。10 分钟内又有语音，或属于同一 <code>meeting_hash</code>，就重开这个单元。</td></tr>
-        <tr><td>重开</td><td>迟到或补传的分片落进已关闭的单元，或立即同步后有续说：重新生成纪要，被取代的待办与记忆按溯源撤回，App 显示“纪要已更新”。</td></tr>
+        <tr><td>重开</td><td>迟到或补传的分片落进已关闭的单元，立即同步后有续说，或用户改字、改标说话人、改背景标记：重新生成纪要，替换而不是追加；被取代的待办与记忆按溯源撤回，App 显示“纪要已更新”。</td></tr>
+        <tr><td>线上会议</td><td><code>calendar.is_online</code> 为真、单元里他人语音占比低于阈值时，标“单边录音”：机主多半戴着耳机，对方的话没录到。纪要只写机主说过的话，不推断对方的结论，并提示用户。对方经外放时，远端发言会被 G3 打上播放声标签，但只是标签；它们与机主轮流发言，是参与者。</td></tr>
+        <tr><td>处理状态</td><td>App 对每个单元显示当前状态：等待领夹同步、上传中、识别中（服务降级时注明）、等待补传、生成纪要、已完成。不出纪要的单元写明原因：机主发言少于 3 句、全在隔离档、单边录音，并给出“手动生成”。</td></tr>
         <tr><td>业务日与簇质心</td><td>业务日为本地 04:00 至次日 04:00。他人簇质心在业务日结束后再留 12 小时，供迟到分片归簇；更晚到达的分片单独聚类，簇号标“迟到”，不回并。</td></tr>
       </tbody>
     </table></div>
@@ -1337,9 +1364,9 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <tr><td class="mono">t_start_utc_ms · t_end_utc_ms</td><td class="mono">int64</td><td>原始录音时刻</td></tr>
       <tr><td class="mono">text</td><td class="mono">string</td><td>纠错后的文字</td></tr>
       <tr><td class="mono">asr_text</td><td class="mono">string</td><td>8B 原始输出</td></tr>
-      <tr><td class="mono">edits</td><td class="mono">array</td><td>§5.5 的 diff 与依据，以及用户改字；每条带 <code>source: "model"|"user"</code></td></tr>
+      <tr><td class="mono">edits</td><td class="mono">array</td><td>§5.5 的 diff 与依据，以及用户改字；每条带 <code>source: "model"|"user"</code>；用户改字会重开所在单元</td></tr>
       <tr><td class="mono">alternatives</td><td class="mono">array</td><td>低置信区间 top-3 候选文字（供日后热词重排）</td></tr>
-      <tr><td class="mono">speaker</td><td class="mono">object</td><td><code>{label:"owner"|"other"|"unknown", cluster, owner_score, cluster_score, evidence_grade, source:"model"|"user"}</code></td></tr>
+      <tr><td class="mono">speaker</td><td class="mono">object</td><td><code>{label:"owner"|"other"|"unknown", cluster, cluster_name, engagement:"participant"|"background", owner_score, cluster_score, evidence_grade, source:"model"|"user"}</code>；<code>cluster_name</code> 只存用户确认过的名字，<code>engagement</code> 在单元关闭时计算、重开时重算</td></tr>
       <tr><td class="mono">disposition</td><td class="mono">object</td><td><code>{tier:"accept"|"quarantine"|"reject", reasons, primary, flags, expires_at_utc_ms}</code>；<code>reasons</code> 记全部命中原因，<code>flags</code> 如 <code>low_confidence</code></td></tr>
       <tr><td class="mono">scores</td><td class="mono">object</td><td><code>{p_speech, p_playback_acoustic, p_media_content, phone_media, call_speaker, vpu:{state, voiced_ratio, valid_ratio}, overlap, asr_disagreement, spatial}</code></td></tr>
       <tr><td class="mono">hotwords</td><td class="mono">array</td><td>命中的热词 ID、类别、来源层</td></tr>
@@ -1544,7 +1571,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <text class="t r" x="880" y="35">28 h</text><text class="s r" x="880" y="54">精标 5 h</text>
     </svg>
     </div>
-    <figcaption>对抗子集：回放机主本人录音（手机、电脑、电视、蓝牙音箱，0.5–3 m）、音色相近的家人（≥5 对）、重叠说话、耳语/感冒/沙哑、各类播放声经扬声器重录（含最难的“电视里的普通对话”）。采集 ≥20 位机主、≥60 位他人；调参集与测试集按机主 1:2 划分。</figcaption>
+    <figcaption>对抗子集：回放机主本人录音（手机、电脑、电视、蓝牙音箱，0.5–3 m）、音色相近的家人（≥5 对）、重叠说话、耳语/感冒/沙哑、各类播放声经扬声器重录（含最难的“电视里的普通对话”）、线上会议（外放与戴耳机两种）、开放办公区邻座闲聊。多人会议与全天佩戴子集另标对话边界、结论、负责人、时间点和待办承担人。采集 ≥20 位机主、≥60 位他人；调参集与测试集按机主 1:2 划分。</figcaption>
   </figure>
 
   <h3>目标与可达性</h3>
@@ -1561,6 +1588,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <tr><td>R3 真人误拒</td><td>&lt;2%</td><td><span class="light g"><i></i>可能</span></td><td><span class="light g"><i></i>可能</span></td><td>只有 VAD 漏检会误拒</td></tr>
       <tr><td>R4 真人误隔离</td><td>—（本方案新增）</td><td>≤3%<span class="tg go">目标</span></td><td>≤2%<span class="tg go">目标</span></td><td>隔离过多会掏空纪要；G3、G6 的阈值在这个上限内选定</td></tr>
       <tr><td>A1 CER</td><td>近场 &lt;8% · 远场 &lt;15% · 全天 &lt;20%</td><td><span class="light y"><i></i>近场可能，余须实测</span></td><td><span class="light y"><i></i>同左</span></td><td>16 kb/s、单麦、远场与重叠；无同条件数据</td></tr>
+      <tr><td>N1–N4 分段、纪要与承担人</td><td>—（本方案新增）</td><td colspan="2">一期报告并冻结基线，二期起不得回退<span class="tg go">目标</span></td><td>问卷中的分段、遗漏、归错人与混入都落在这里</td></tr>
       <tr><td>A3/A4/A5 热词与幻觉</td><td>单独设指标</td><td colspan="2">个人热词召回 ≥90%，误触发 ≤0.5 次/千字，非语音幻觉 ≤1 事件/小时<span class="tg go">目标</span></td><td>待一期基线校准</td></tr>
     </tbody>
   </table></div>
@@ -1578,7 +1606,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
     </div>
   </figure>
 
-  <details class="more"><summary>指标定义（S 安全 · R 拒识 · A 转写 · O 机主）</summary><div>
+  <details class="more"><summary>指标定义（S 安全 · R 拒识 · A 转写 · O 机主 · N 纪要）</summary><div>
     <div class="tbl"><table>
       <thead><tr><th>编号</th><th>指标</th><th>定义</th></tr></thead>
       <tbody>
@@ -1590,14 +1618,18 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
         <tr><td class="mono">R2</td><td>播放声拦截召回</td><td>参考播放声发言中被隔离或拒绝的比例，按内容类别分报</td></tr>
         <tr><td class="mono">R3</td><td>真人误拒率</td><td>真人语音被<b>拒绝</b>的比例；按机主/他人、短回应/其他分报</td></tr>
         <tr><td class="mono">R4</td><td>真人误隔离率</td><td>真人语音被隔离的比例（可恢复）</td></tr>
-        <tr><td class="mono">A1</td><td>CER</td><td>（替换 + 删除 + 插入）÷ 参考字数，按场景分报；英文按词计后合并</td></tr>
+        <tr><td class="mono">A1</td><td>CER</td><td>（替换 + 删除 + 插入）÷ 参考字数，按场景分报，中英混说单独分报；英文按词计后合并</td></tr>
         <tr><td class="mono">A2</td><td>专名准确率</td><td>参考专名被正确转写的比例；人名单报</td></tr>
-        <tr><td class="mono">A3</td><td>热词召回率</td><td>参考中出现的热词在最终文字中正确出现的比例；三类分报</td></tr>
+        <tr><td class="mono">A3</td><td>热词召回率</td><td>参考中出现的热词在最终文字中正确出现的比例；三类分报，英文术语单报</td></tr>
         <tr><td class="mono">A4</td><td>热词误触发率</td><td>未说却出现的热词，每千字计；另报纠错层“把对的改错”次数</td></tr>
         <tr><td class="mono">A5</td><td>幻觉率</td><td>非语音区间每小时插入字数与事件数；语音区间无对应插入片段每小时</td></tr>
         <tr><td class="mono">A6</td><td>关键信息错误率</td><td>否定、数字、日期、情态、改口被转错的比例</td></tr>
         <tr><td class="mono">O1</td><td>机主召回</td><td>参考为机主的发言中被判机主且被接受的比例</td></tr>
         <tr><td class="mono">O2</td><td>未知说话人占比</td><td>判为未知说话人的语音时长占比，按机主与他人分报</td></tr>
+        <tr><td class="mono">N1</td><td>分段错误率</td><td>参考对话中被并入别的单元（误合并）或被切成多个单元（误切分）的比例，两者分报</td></tr>
+        <tr><td class="mono">N2</td><td>纪要要素召回</td><td>参考标注的结论、负责人、时间点在纪要中正确出现的比例；单边录音单元单报</td></tr>
+        <tr><td class="mono">N3</td><td>纪要混入率</td><td>纪要陈述中依据来自背景簇、播放声或参考为无关内容的比例</td></tr>
+        <tr><td class="mono">N4</td><td>承担人准确率</td><td>待办的承担人与类别都与参考一致的比例，四类分报</td></tr>
       </tbody>
     </table></div>
   </div></details>
@@ -1605,7 +1637,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
     <li><b>质量类</b>按场景报告点估计与按机主自助抽样的置信区间；任何场景不得出现超出噪声的回退。</li>
     <li><b>每一级与“不做”配对</b>：G1 丢弃、G3 跳过（可选）、G4 拒绝与隔离、G6 降级、专名纠错、热词偏置分别报“省多少、伤多少”，按 <code>reasons</code> 全量统计。</li>
     <li><b>同音色家人</b>逐对报告；二期退出时，最差一对的证据级误判点估计 ≤2%。</li>
-    <li><b>线上监控</b>：拒绝时长占比、隔离占比与原因、未知说话人占比、用户放回率、改标与改字率、纪要重开率、两级队列延迟、“这不是我说的”反馈率。</li>
+    <li><b>线上监控</b>：拒绝时长占比、隔离占比与原因、未知说话人占比、用户放回率、改标与改字率、纪要重开率、两级队列延迟、单元关闭到纪要可见的延迟、各处理状态的停留时长、手动生成纪要率、背景簇改为参与者的比例、“这不是我说的”反馈率。</li>
   </ul>
 </section>
 
@@ -1634,6 +1666,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
         <li>O1 ≥85%（过渡）</li>
         <li>CER 近场 &lt;8%；远场、全天按基线冻结</li>
         <li>R2 按类别报告并给出差距</li>
+          <li>N1–N4 报告并冻结基线；纪要 P90 ≤30 分钟（单元关闭后）</li>
         <li>常规 P90 ≤3 小时，立即同步 P90 ≤10 分钟</li>
         <li>删除链故障注入后无遗留音频</li>
         <li>实测成本 ≤¥27/人/月</li>
@@ -1712,7 +1745,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <tbody>
         <tr><td class="num">1</td><td>VPU 隔着衣物信号不稳</td><td>两套传感器；弹性压片；备选形态；有效性单独上报，失效退回一期</td></tr>
         <tr><td class="num">2</td><td>播放声训练数据稀缺</td><td>自建重录台：多扬声器 × 多房间 × 多距离；Opus 编码后再训练</td></tr>
-        <tr><td class="num">3</td><td>电视普通对话不可分</td><td>按类别如实报告；作为他人被接受时不进记忆；二期靠空间特征</td></tr>
+        <tr><td class="num">3</td><td>电视普通对话不可分</td><td>按类别如实报告；作为他人被接受时不进记忆；不与机主轮流发言时判为背景簇，不进纪要、不支撑待办；二期靠空间特征</td></tr>
         <tr><td class="num">4</td><td>手机后台保活受限</td><td>Flash ≥8 h；BLE 后台模式；L1 随 BLE 唤醒增量运行；写满前推送提醒</td></tr>
         <tr><td class="num">5</td><td>大陆 VoIP 观测不到</td><td><code>call.kind=unknown</code> 时不用本机外放证据；对抗集单测</td></tr>
         <tr><td class="num">6</td><td>8B 幻觉</td><td>无语音不送；健康检查；600M 校验；无语音帧直接拒绝</td></tr>
@@ -1761,6 +1794,14 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <tr><td class="mono">D22</td><td>G7 记下全部原因，取最严一档</td><td>按顺序先到先定</td><td>逐级的“省多少、伤多少”需要全量原因</td></tr>
       <tr><td class="mono">D23</td><td>个人热词不从纪要回收，改收用户改过的专名</td><td>历史纪要出现 ≥2 次的专名</td><td>纪要专名来自 ASR，会把错误越放越大</td></tr>
       <tr><td class="mono">D24</td><td>R4 列入验收（一期 ≤3%、二期 ≤2%），G3、G6 阈值在其内选定；安全上限按说话人聚类计算</td><td>只追 R2；按句独立的二项上限</td><td>一味追召回会掏空纪要；误判集中在少数说话人</td></tr>
+      <tr><td class="mono">D25</td><td>按轮流发言网络判参与者；背景簇照常显示，但不作纪要上下文、不支撑待办；日历会议不判</td><td>恢复“背景他人语音隔离”；不区分</td><td>隔离会伤到真人；不区分则邻座闲聊和漏网的电视台词能生成待办（问卷 72 人）</td></tr>
+      <tr><td class="mono">D26</td><td>待办按承担人分四类，承担人与说话人分开记录</td><td>只按说话人核对</td><td>“这个交给小王”是机主原话，任务却是小王的（问卷 65 人）</td></tr>
+      <tr><td class="mono">D27</td><td>改字、改标、改背景标记都重开所在单元；同单元同类误识别一并提示替换</td><td>只改转写</td><td>纪要和待办会停在改之前的错误上</td></tr>
+      <tr><td class="mono">D28</td><td>英文术语按音素与拼写召回；中英混说单独评测</td><td>只用拼音召回</td><td>拼音对英文术语无效</td></tr>
+      <tr><td class="mono">D29</td><td>参与者换批时切开单元；日历时段前后留 10 分钟容差</td><td>只按日历与 10 分钟静默</td><td>连开的两场会会合并，超时的会会被切开</td></tr>
+      <tr><td class="mono">D30</td><td>线上会议只录到机主时标“单边录音”，纪要不推断对方的话</td><td>照常生成</td><td>戴耳机开会时领夹只录到机主一侧</td></tr>
+      <tr><td class="mono">D31</td><td>缺口等待 2 小时；每个单元显示处理状态与不出纪要的原因</td><td>等 6 小时；只显示“正在整理”</td><td>保守设计在用户看来就是“记录不出现”</td></tr>
+      <tr><td class="mono">D32</td><td>他人簇名由 LLM 建议、用户确认，只在业务日内有效</td><td>跨天识别他人；只显示簇号</td><td>负责人需要名字；不形成他人身份档案</td></tr>
     </tbody>
   </table></div>
 </section>
@@ -1780,6 +1821,8 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <tr><td>双麦、VPU、骨导加速度计、IMU、SPI NAND、电池的型号与单价</td><td><span class="tg ask">待询价</span></td><td>二期 BOM</td></tr>
       <tr><td>iOS/Android 场景 API 的后台可用性与权限</td><td><span class="tg ask">待确认</span></td><td>场景覆盖率</td></tr>
       <tr><td>iOS 在 BLE 后台唤醒时间内增量跑 VAD 是否可行（每个 5 分钟分片约数秒 CPU）</td><td><span class="tg ask">待确认</span></td><td>L1 运行方式与上传新鲜度</td></tr>
+      <tr><td>计费口径：按佩戴、有效还是接受档时长计；被隔离的播放声是否计费</td><td><span class="tg ask">待决策</span>（产品）</td><td>用户可见的用量与套餐（问卷 48 人）</td></tr>
+      <tr><td>是否向外部 AI 开放转写原文、开放到什么粒度（只给纪要，或给带说话人的片段）；与本仓库 ADR-0048“旁听原文不给任何三方”的关系</td><td><span class="tg ask">待决策</span>（产品）</td><td>导出接口与授权（问卷 30 人）</td></tr>
       <tr><td>旁观者告知、通话录音、声纹处理、未成年人语音的合规意见；他人簇质心的留存期</td><td><span class="tg ask">待确认</span>（法务）</td><td>产品形态与默认设置</td></tr>
     </tbody>
   </table></div>
