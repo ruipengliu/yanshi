@@ -2548,22 +2548,32 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
     }
     tip.hidden = false; place(el);
   }
-  function hide(force){ if (pinned && !force) return; pinned = null; tip.hidden = true; }
+  // 鼠标只靠悬停：离开节点后稍等片刻再关，留时间把指针移进弹窗点“查看”链接；
+  // 点按固定只给触屏与触控笔（没有悬停可用）。键盘靠焦点显示、失焦关闭。
+  var hideTimer = null, lastPointer = 'mouse';
+  function hide(){ clearTimeout(hideTimer); hideTimer = null; pinned = null; tip.hidden = true; }
+  function hideSoon(){ clearTimeout(hideTimer); hideTimer = setTimeout(function(){ if (!pinned) hide(); }, 150); }
+  function keep(){ clearTimeout(hideTimer); hideTimer = null; }
+  document.addEventListener('pointerdown', function(e){ lastPointer = e.pointerType || 'mouse'; }, true);
   document.querySelectorAll('[data-tip]').forEach(function(el){
-    el.addEventListener('pointerenter', function(e){ if (e.pointerType === 'mouse' && !pinned) show(el); });
-    el.addEventListener('pointerleave', function(e){ if (e.pointerType === 'mouse') hide(false); });
-    el.addEventListener('focus', function(){ if (!pinned) show(el); });
-    el.addEventListener('blur', function(){ hide(false); });
+    el.addEventListener('pointerenter', function(e){ if (e.pointerType === 'mouse') { keep(); pinned = null; show(el); } });
+    el.addEventListener('pointerleave', function(e){ if (e.pointerType === 'mouse') hideSoon(); });
+    el.addEventListener('focus', function(){ if (lastPointer === 'mouse' && el.matches(':hover')) return; keep(); show(el); });
+    el.addEventListener('blur', function(e){ if (!pinned && !tip.contains(e.relatedTarget)) hideSoon(); });
     el.addEventListener('click', function(e){
       e.stopPropagation();
-      if (pinned === el) { hide(true); return; }
-      pinned = null; show(el); pinned = el;
+      if (lastPointer === 'mouse') return;
+      if (pinned === el) { hide(); return; }
+      keep(); show(el); pinned = el;
     });
     el.addEventListener('keydown', function(e){ if (e.key === 'Enter') { var a = tip.querySelector('a'); if (a) a.click(); } });
   });
-  document.addEventListener('click', function(e){ if (pinned && !tip.contains(e.target)) hide(true); });
-  document.addEventListener('keydown', function(e){ if (e.key === 'Escape') hide(true); });
-  window.addEventListener('scroll', function(){ if (!tip.hidden) hide(true); }, {passive:true});
+  tip.addEventListener('pointerenter', function(e){ if (e.pointerType === 'mouse') keep(); });
+  tip.addEventListener('pointerleave', function(e){ if (e.pointerType === 'mouse' && !pinned) hideSoon(); });
+  tip.addEventListener('focusout', function(e){ if (!pinned && !tip.contains(e.relatedTarget)) hideSoon(); });
+  document.addEventListener('click', function(e){ if (!tip.hidden && !tip.contains(e.target)) hide(); });
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape') hide(); });
+  window.addEventListener('scroll', function(){ if (!tip.hidden) hide(); }, {passive:true});
 
   // 目录高亮
   var links = {};
