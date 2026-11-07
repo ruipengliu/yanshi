@@ -243,7 +243,6 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
     <a href="#s11"><span class="n">11</span>风险</a>
     <a href="#s12"><span class="n">12</span>决策记录</a>
     <a href="#s13"><span class="n">13</span>待确认</a>
-    <a href="#s14"><span class="n">附</span>转换中的发现</a>
   </nav>
   <div>
     <h4>闸门（按最严处置着色）</h4>
@@ -313,8 +312,8 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
     <div><b>三类热词</b>解码前按上下文检索出偏置表，只解码一次；解码后拼音召回，再做闭集纠错。</div>
     <div><b>机主判定</b>一期纯声纹（门槛更严）；二期按 VPU 三态 × 声纹三档融合。记忆与待办只引用“证据级”原话。</div>
     <div><b>VPU 的边界</b>它分得清“机主”和“非机主”，分不清电视和在场的真人。90% 播放声召回一期大概率达不到。</div>
-    <div><b>约 ¥25/人/月</b>按每天 5 小时、8B ¥0.10/小时自部署口径<span class="tg es">估算</span>，落在 ¥23–27 内；对有效时长最敏感。</div>
-    <div><b>音频处理完即删</b>摘要不在等待之列。代价是不能事后重跑；低置信区间保留文字候选。</div>
+    <div><b>约 ¥25/人/月</b>按需求口径每天 5 小时有效音频（约 20 小时佩戴，属高位）、8B ¥0.10/小时<span class="tg es">估算</span>，落在 ¥23–27 内。典型佩戴 12 小时约 3 小时有效，约 ¥15。</div>
+    <div><b>音频在 G5 后即删</b>G5 判定与对齐完成、识别结果落盘就删音频；内容门控、纠错、裁决和摘要都只读文字。代价是不能事后重跑；低置信区间保留文字候选。</div>
   </div>
 </section>
 
@@ -328,7 +327,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <tr><td>链路</td><td>领夹 → 手机暂存 → 手机定时批量上云 → 云端异步 → 回传 App；设备不直连云端</td><td><span class="tg as">假设</span> 硬约束</td></tr>
       <tr><td>延迟</td><td>几十分钟到几小时，无实时字幕</td><td><span class="tg as">假设</span></td></tr>
       <tr><td>8B / 600M 单价</td><td>¥0.10 / ¥0.06 每音频小时（自研，异步）</td><td><span class="tg as">假设</span></td></tr>
-      <tr><td>有效音频</td><td>每人每天约 5 小时（VAD 后）</td><td><span class="tg as">假设</span></td></tr>
+      <tr><td>有效音频</td><td>每人每天约 5 小时（VAD 后）。按全天有效比例 0.25，相当于约 20 小时佩戴，属于高位；典型佩戴 12–16 小时对应 3–4 小时</td><td><span class="tg as">假设</span> <span class="tg es">估算</span></td></tr>
       <tr><td>文本量</td><td>1 小时有效语音 ≈ 1.3 万汉字 ≈ 1.5 万 token</td><td><span class="tg as">假设</span></td></tr>
       <tr><td>有效音频比例</td><td>会议约 0.7，全天佩戴约 0.25</td><td><span class="tg as">假设</span></td></tr>
       <tr><td>现有设备编码</td><td>Opus，16 kHz，20 ms 一帧，约 16 kb/s（约 16:1）</td><td><span class="tg ok">已确认</span></td></tr>
@@ -370,7 +369,9 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <text class="ph" x="30" y="66">领夹</text>
       <text class="ph" x="276" y="66">手机 App</text>
       <text class="ph" x="554" y="66">云端 · 识别与判定</text>
-      <text class="tiny r" x="944" y="66">音频只在此段，处理完即删</text>
+      <text class="tiny r" x="944" y="66" style="fill:var(--accent)">虚线框内需要音频，G5 后即删</text>
+      <path d="M548 76H954V248H852V146H548Z" fill="none" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="6 4"/>
+      <text class="tiny r" x="846" y="262" style="fill:var(--accent);font-weight:700">G5 后：识别结果落盘，删除音频</text>
       <text class="ph" x="1022" y="66">云端 · 入库与下游</text>
 
       <!-- 领夹 -->
@@ -401,7 +402,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
 
       <!-- 手机 → 云端 -->
       <path class="e" d="M472 298H516V109H552" marker-end="url(#ah)"/>
-      <g class="pill"><rect x="478" y="142" width="76" height="36" rx="10"/><text class="tiny c" x="516" y="156">分片 + 清单</text><text class="pv c" x="516" y="172">≈0.35 h</text></g>
+      <g class="pill"><rect x="478" y="152" width="76" height="36" rx="10"/><text class="tiny c" x="516" y="166">分片 + 清单</text><text class="pv c" x="516" y="182">≈0.35 h</text></g>
       <path class="e d" d="M554 335H500V312H474" marker-end="url(#ah)"/>
       <text class="tiny" x="482" y="352">回执 · 可删</text>
 
@@ -420,10 +421,10 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <path class="e" d="M904 134V188" marker-end="url(#ah)"/>
 
       <!-- 云端 第二行（右 → 左） -->
-      <g class="nd" tabindex="0" data-tip="当天匿名聚类 + 机主声纹验证（片段级与簇级）。重叠段永不判机主。一期纯声纹；二期按 VPU 三态 × 声纹三档融合。不确定、疑似回放 → 隔离。" data-ref="s5-6"><rect x="860" y="190" width="88" height="50" rx="7"/><text class="t c" x="904" y="214">机主判定</text><text class="s c" x="904" y="231"><tspan class="only-p1">声纹</tspan><tspan class="only-p2">声纹 × VPU</tspan></text></g>
+      <g class="nd" tabindex="0" data-tip="当天匿名聚类 + 机主声纹验证（片段级与簇级）。重叠段永不判机主。一期纯声纹；二期按 VPU 三态 × 声纹三档融合。不确定、疑似回放 → 隔离。完成后识别结果落盘，删除音频及派生物。" data-ref="s5-6"><rect x="860" y="190" width="88" height="50" rx="7"/><text class="t c" x="904" y="214">机主判定</text><text class="s c" x="904" y="231"><tspan class="only-p1">声纹</tspan><tspan class="only-p2">声纹 × VPU</tspan></text></g>
       <use href="#hex" x="874" y="190" class="gate g-iso"/><text class="gt c" x="874" y="194">G5</text>
       <path class="e" d="M860 215H848" marker-end="url(#ah)"/>
-      <g class="nd" tabindex="0" data-tip="自部署 7B 级小模型对文字分类：剧台词、广告、播报、解说、歌词、有声书。输出只能把接受降为隔离。" data-ref="s5-1"><rect x="758" y="190" width="88" height="50" rx="7"/><text class="t c" x="802" y="214">内容门控</text><text class="s c" x="802" y="231">只降级</text></g>
+      <g class="nd" tabindex="0" data-tip="自部署 7B 级小模型对文字分类：剧台词、广告、播报、解说、歌词、有声书。输出只能把接受降为隔离。只读文字，在音频删除后运行。" data-ref="s5-1"><rect x="758" y="190" width="88" height="50" rx="7"/><text class="t c" x="802" y="214">内容门控</text><text class="s c" x="802" y="231">只降级</text></g>
       <use href="#hex" x="772" y="190" class="gate g-iso"/><text class="gt c" x="772" y="194">G6</text>
       <path class="e" d="M758 215H746" marker-end="url(#ah)"/>
       <g class="nd" tabindex="0" data-tip="只改专名；在拼音召回出的候选中做闭集选择，只输出 diff，每条带依据；否定、数字、日期、情态、改口不可触碰。默认关闭。" data-ref="s5-5"><rect x="656" y="190" width="88" height="50" rx="7"/><text class="t c" x="700" y="214">专名纠错</text><text class="s c" x="700" y="231">闭集 diff</text></g>
@@ -431,7 +432,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <g class="nd" tabindex="0" data-tip="按 7 步顺序裁决，先到先定，只收紧不放宽。拒绝只用于非语音与无语音帧的幻觉。" data-ref="s5-7"><rect x="554" y="190" width="88" height="50" rx="7"/><text class="t c" x="598" y="214">三档裁决</text><text class="s c" x="598" y="231">接受·隔离·拒绝</text></g>
       <use href="#hex" x="568" y="190" class="gate g-verdict"/><text class="gt c" x="568" y="194">G7</text>
       <path class="e" d="M598 240V298" marker-end="url(#ah)"/>
-      <g class="nd" tabindex="0" data-tip="需要音频的环节完成、文字持久落盘后，删除云端音频及派生物（PCM、VAD、临时嵌入、VPU/IMU 轨迹、场景快照），回执手机。" data-ref="s7"><rect x="554" y="300" width="200" height="50" rx="7"/><text class="t c" x="654" y="321">文字落盘 · 删除音频</text><text class="s c" x="654" y="338">派生物同删 · 回执手机</text></g>
+      <g class="nd" tabindex="0" data-tip="G7 的裁决结果写入转写库。云端音频及派生物（PCM、VAD、临时嵌入、VPU/IMU 轨迹、场景快照）已在 G5 检查点删除，此时回执手机删除暂存。" data-ref="s7"><rect x="554" y="300" width="200" height="50" rx="7"/><text class="t c" x="654" y="321">写入转写库</text><text class="s c" x="654" y="338">回执手机：可删暂存</text></g>
       <path class="e" d="M700 350V468" marker-end="url(#ah)"/>
 
       <!-- 下游 -->
@@ -459,7 +460,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <text class="tiny" x="922" y="509">放回 / 降级 / 撤回</text>
     </svg>
     </div>
-    <figcaption><b>读图</b>：悬停或点按模块看完整参数，点链接跳到对应章节。左侧开关切换一期视图。流量按每佩戴 1 小时计，接受与隔离的比例没有数据，不标数字。<span class="tg as">假设</span> 全天有效比例 0.25 下，每天 5 小时有效音频对应约 20 小时佩戴（见附录）。</figcaption>
+    <figcaption><b>读图</b>：悬停或点按模块看完整参数，点链接跳到对应章节。左侧开关切换一期视图。流量按每佩戴 1 小时计，接受与隔离的比例没有数据，不标数字。<span class="tg as">假设</span> 全天有效比例 0.25 下，每天 5 小时有效音频对应约 20 小时佩戴，属于高位（见 §1 前提）。</figcaption>
   </figure>
 
   <div class="tbl"><table>
@@ -714,7 +715,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
 <!-- §5 -->
 <section id="s5" data-label="§5">
   <h2><span class="no">§5</span>云端</h2>
-  <p class="lede">云端在“转写库”处分成两段：前段需要音频，做拒识、转写、判定与裁决；后段只读文字，做入库与下游。</p>
+  <p class="lede">G2 到 G5 需要音频；G5 判定与对齐完成后，识别结果落盘，音频随即删除。之后的内容门控、专名纠错、三档裁决和入库都只读文字。</p>
 
   <figure id="fig-l1c">
     <div class="fighead"><div><span class="lvl">L1</span><b>云端 · 识别与判定</b></div><span class="minimap" data-seg="2"></span></div>
@@ -748,6 +749,8 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <g class="nd" tabindex="0" data-tip="当天聚类；每片段与每簇（≥10 s 语音）各算一次机主得分；&lt;1.5 s 短片段只在簇得分高、离簇中心近、不与他人相邻或重叠时随簇。重叠段 → 不确定。" data-ref="s5-6"><rect x="860" y="230" width="170" height="64" rx="7"/><text class="t c" x="945" y="257">机主判定</text><text class="s c" x="945" y="276"><tspan class="only-p1">聚类 + 声纹</tspan><tspan class="only-p2">聚类 + 声纹 × VPU</tspan></text></g>
       <use href="#hex" x="874" y="230" class="gate g-iso"/><text class="gt c" x="874" y="234">G5</text>
       <path class="e" d="M860 262H822" marker-end="url(#ah)"/>
+      <path d="M840 196V304" stroke="var(--accent)" stroke-width="1.6" stroke-dasharray="6 4"/>
+      <text class="tiny r" x="834" y="212" style="fill:var(--accent);font-weight:700">检查点：识别结果落盘，删除音频</text>
       <g class="nd" tabindex="0" data-tip="输入：该段 + 前后各 2 段上下文 + G3 标签；输出 JSON {p_media, kind}；无工具权限，只分类不执行。他人语音前后 2 分钟机主都没发言且 p_media 偏高时加重播放判断。" data-ref="s5-1"><rect x="650" y="230" width="170" height="64" rx="7"/><text class="t c" x="735" y="257">内容门控</text><text class="s c" x="735" y="276">小 LLM · 只降级</text></g>
       <use href="#hex" x="664" y="230" class="gate g-iso"/><text class="gt c" x="664" y="234">G6</text>
       <path class="e" d="M650 262H612" marker-end="url(#ah)"/>
@@ -756,7 +759,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <g class="nd" tabindex="0" data-tip="7 步顺序裁决，见 L2 三档裁决图。" data-ref="s5-7"><rect x="230" y="230" width="170" height="64" rx="7"/><text class="t c" x="315" y="257">三档裁决</text><text class="s c" x="315" y="276">接受 / 隔离 / 拒绝</text></g>
       <use href="#hex" x="244" y="230" class="gate g-verdict"/><text class="gt c" x="244" y="234">G7</text>
       <path class="e" d="M230 262H192" marker-end="url(#ah)"/>
-      <g class="nd store" tabindex="0" data-tip="文字持久落盘后，删除音频与派生物，只保留写进片段的分数与标签。" data-ref="s6"><rect x="20" y="230" width="170" height="64" rx="7"/><use href="#lock" class="lock" x="30" y="238" width="12" height="14"/><text class="t c" x="105" y="257">转写库</text><text class="s c" x="105" y="276">文字落盘 → 删音频</text></g>
+      <g class="nd store" tabindex="0" data-tip="G7 结果写入。音频已在 G5 检查点删除，只保留写进片段的分数与标签。" data-ref="s6"><rect x="20" y="230" width="170" height="64" rx="7"/><use href="#lock" class="lock" x="30" y="238" width="12" height="14"/><text class="t c" x="105" y="257">转写库</text><text class="s c" x="105" y="276">接受档 · 隔离档</text></g>
 
       <path class="e d" d="M105 294V368" marker-end="url(#ah)"/>
       <g class="nd" tabindex="0" data-tip="回执字段：audio_stage、text_persisted_at、cloud_audio_deleted_at、gaps_recorded（§6.3）。" data-ref="s6"><rect x="20" y="370" width="170" height="50" rx="7"/><text class="t c" x="105" y="391">回执 → 手机</text><text class="s c" x="105" y="408">音频与派生物已删</text></g>
@@ -1236,7 +1239,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
 <!-- §7 -->
 <section id="s7" data-label="§7">
   <h2><span class="no">§7</span>删除链</h2>
-  <p class="lede">设备等手机回执、手机等云端回执、云端等文字落盘。音频在需要音频的环节完成后即删，纪要、待办、记忆不在等待之列。</p>
+  <p class="lede">设备等手机回执、手机等云端回执、云端等识别结果落盘。音频在 G5 判定与对齐完成后即删；内容门控、纠错、裁决、纪要、待办、记忆都只读文字，不在等待之列。</p>
   <figure>
     <div class="fig wide">
     <svg viewBox="0 0 1100 360" role="img" aria-label="删除链三泳道状态机：设备、手机、云端各自的状态与跨段回执">
@@ -1267,9 +1270,9 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
 
       <g class="nd"><rect x="390" y="275" width="116" height="40" rx="20"/><text class="s c" x="448" y="299" style="fill:var(--fg)">已接收</text></g>
       <path class="e" d="M506 295H528" marker-end="url(#ah)"/>
-      <g class="nd"><rect x="530" y="275" width="116" height="40" rx="20"/><text class="s c" x="588" y="299" style="fill:var(--fg)">G2–G7 处理</text></g>
+      <g class="nd"><rect x="530" y="275" width="116" height="40" rx="20"/><text class="s c" x="588" y="299" style="fill:var(--fg)">G2–G5 + 对齐</text></g>
       <path class="e" d="M646 295H668" marker-end="url(#ah)"/>
-      <g class="nd"><rect x="670" y="275" width="140" height="40" rx="20"/><text class="s c" x="740" y="299" style="fill:var(--fg)">文字落盘</text></g>
+      <g class="nd"><rect x="670" y="275" width="140" height="40" rx="20"/><text class="s c" x="740" y="299" style="fill:var(--fg)">识别结果落盘</text></g>
       <path class="e" d="M810 295H838" marker-end="url(#ah)"/>
       <g class="nd"><rect x="840" y="275" width="116" height="40" rx="20"/><text class="s c" x="898" y="299" style="fill:var(--fg);font-weight:700">音频已删</text></g>
       <rect x="970" y="275" width="110" height="40" rx="6" class="drop"/><text class="tiny c drop-t" x="1025" y="299">兜底 72 h</text>
@@ -1288,7 +1291,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <text class="tiny c" x="740" y="347">永久失败：重试 48 h 后删除并登记缺口</text>
     </svg>
     </div>
-    <figcaption>音频的派生物（解码 PCM、VAD 结果、临时嵌入、VPU/IMU 轨迹、场景快照）与音频同时删除。用户擦除时三端一起删；设备离线时记为“待清除”，重连后先清除再恢复上传。</figcaption>
+    <figcaption>识别结果包括 8B 文字、600M 校验结果、说话人判定与各项分数，足以让 G6 之后的环节不再需要音频。音频的派生物（解码 PCM、VAD 结果、临时嵌入、VPU/IMU 轨迹、场景快照）与音频同时删除。用户擦除时三端一起删；设备离线时记为“待清除”，重连后先清除再恢复上传。</figcaption>
   </figure>
   <div class="grid3">
     <div class="card"><h3>放弃了什么</h3><p class="small">模型升级后不能重转历史音频；误拒或误判无法回到声学层复核。</p></div>
@@ -1301,7 +1304,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
 <!-- §8 -->
 <section id="s8" data-label="§8">
   <h2><span class="no">§8</span>成本</h2>
-  <p class="lede">每天 5 小时有效音频、8B ¥0.10/小时时，约 ¥0.84/天、¥25/月<span class="tg es">估算</span>，落在 ¥23–27 目标内。月成本 ≈ 30 × 有效小时 × (8B 单价 + 0.068)。</p>
+  <p class="lede">每天 5 小时有效音频、8B ¥0.10/小时时，约 ¥0.84/天、¥25/月<span class="tg es">估算</span>，落在 ¥23–27 目标内。月成本 ≈ 30 × 有效小时 × (8B 单价 + 0.068)。5 小时是需求口径，按全天有效比例 0.25 相当于约 20 小时佩戴，属于高位；典型佩戴 12 小时约 3 小时有效，约 ¥15/月。</p>
 
   <figure>
     <div class="fighead"><div><b>单人单日成本构成</b><span class="tg es">估算</span></div></div>
@@ -1359,7 +1362,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
           <tr><td>8</td><td class="h-hi">28.3</td><td class="h-vhi">40.3</td><td class="h-vhi">52.3</td><td class="h-vhi">64.3</td></tr>
         </tbody>
       </table></div>
-      <figcaption>色块：绿 &lt;¥23 · 青 ¥23–27（目标） · 黄 ¥27–40 · 红 &gt;¥40。按 P90 有效时长定价，不按平均值。</figcaption>
+      <figcaption>色块：绿 &lt;¥23 · 青 ¥23–27（目标） · 黄 ¥27–40 · 红 &gt;¥40。按 P90 有效时长定价，不按平均值。需求口径的 5 小时约对应 20 小时佩戴，典型佩戴 12 小时落在 3 小时这一行。</figcaption>
     </figure>
     <figure>
       <div class="fighead"><div><b>其他敏感项（基线 ¥25.2）</b></div></div>
@@ -1622,7 +1625,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <tr><td class="mono">D5</td><td>拒绝只用于非语音与无语音帧幻觉；其余可疑一律隔离 7 天</td><td>播放声直接丢弃</td><td>音频删除后隔离区是唯一可恢复处</td></tr>
       <tr><td class="mono">D6</td><td>不确定区隔离，不按他人接受</td><td>不确定按他人接受</td><td>机主的话当成他人会产生错误的“对方答应的”</td></tr>
       <tr><td class="mono">D7</td><td>下游只读接受档</td><td>把标记交给模型判断</td><td>模型看不到隔离内容就不会被诱导</td></tr>
-      <tr><td class="mono">D8</td><td>音频在需要音频的环节完成后即删</td><td>等摘要完成再删</td><td>摘要只读文字；缩短泄露窗口</td></tr>
+      <tr><td class="mono">D8</td><td>G5 判定与对齐完成、识别结果落盘后即删音频</td><td>等文字落盘或摘要完成再删</td><td>G6 之后只读文字；进一步缩短保留窗口</td></tr>
       <tr><td class="mono">D9</td><td>三类热词，检索 + 拼音召回，只解码一次</td><td>二次解码</td><td>8B 成本接近翻倍；列为评测变体</td></tr>
       <tr><td class="mono">D10</td><td>专名纠错：闭集、diff、依据、分级、默认关</td><td>整段改写；开放纠错</td><td>防止把对的改错</td></tr>
       <tr><td class="mono">D11</td><td>行业由用户自选</td><td>自动推断行业</td><td>避免画像与误判</td></tr>
@@ -1641,6 +1644,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
     <thead><tr><th>项</th><th>类别</th><th>影响</th></tr></thead>
     <tbody>
       <tr><td>现有设备麦克风数、AGC/降噪可否关、Opus CBR/VBR、FEC/DTX、码率可否 OTA</td><td><span class="tg ask">待确认</span></td><td>一期前端与码率评测</td></tr>
+      <tr><td>每天 5 小时有效音频是平均值还是高位值（按比例 0.25 约对应 20 小时佩戴）</td><td><span class="tg ask">待确认</span>（需求方）</td><td>成本目标与定价口径</td></tr>
       <tr><td>现有设备有无本地缓存、能否远程擦除</td><td><span class="tg ask">待确认</span></td><td>一期删除链</td></tr>
       <tr><td>8B 输入上限、偏置容量、是否输出 token 置信度与时间戳</td><td><span class="tg ask">待确认</span></td><td>识别分片长度、N、G4</td></tr>
       <tr><td>600M 是否有 CTC 头</td><td><span class="tg ask">待确认</span></td><td>对齐方案与成本</td></tr>
@@ -1652,13 +1656,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
   </table></div>
 </section>
 
-<!-- 附 -->
-<section id="s14" data-label="附录">
-  <h2><span class="no">附</span>转换中的发现</h2>
-  <p class="lede">转换只改形式、不改内容。以下两处在画图时发现，只列出，未修改正文。</p>
-  <div class="find"><p><b>1. 佩戴时长与有效音频</b>：按全天有效比例 0.25<span class="tg as">假设</span>，每天 5 小时有效音频对应约 20 小时佩戴。若实际佩戴约 12 小时，有效音频约 3 小时，月成本约 ¥15（见敏感性表）。建议向需求方确认 5 小时是平均值还是高位值。</p></div>
-  <div class="find"><p><b>2. 音频可以更早删除</b>：G6 内容门控、专名纠错、G7 裁决都只读文字，音频其实可以在 G5 判定与 600M 对齐完成后即删，比现在（文字落盘后）早一步，进一步缩短保留窗口。图中仍按原文画在转写库之后。</p></div>
-</section>
+
 </main>
 </div>
 
