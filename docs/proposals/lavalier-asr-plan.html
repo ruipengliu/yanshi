@@ -192,6 +192,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
 [data-phase="1"] .p2only rect,[data-phase="1"] .p2only polygon{stroke-dasharray:4 3}
 
 #tip{position:fixed;z-index:30;width:min(460px,calc(100vw - 16px));max-height:calc(100vh - 16px);overflow:auto;background:var(--surface);color:var(--fg);border:1px solid var(--line);border-top:3px solid var(--accent);border-radius:6px;padding:10px 12px;font-size:13px;line-height:1.65;box-shadow:0 8px 28px rgba(15,20,30,.2);display:flex;flex-direction:column;gap:6px}
+#tip[hidden]{display:none}
 #tip p{margin:0}
 #tip .tt-h b{font-family:var(--f-display);font-size:15px}
 #tip dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:5px 12px;margin:0}
