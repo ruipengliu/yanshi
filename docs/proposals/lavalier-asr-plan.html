@@ -403,8 +403,8 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <!-- 手机 → 云端 -->
       <path class="e" d="M472 298H516V109H552" marker-end="url(#ah)"/>
       <g class="pill"><rect x="478" y="152" width="76" height="36" rx="10"/><text class="tiny c" x="516" y="166">分片 + 清单</text><text class="pv c" x="516" y="182">≈0.35 h</text></g>
-      <path class="e d" d="M554 335H500V312H474" marker-end="url(#ah)"/>
-      <text class="tiny" x="482" y="352">回执 · 可删</text>
+      <path class="e d" d="M904 240V280H500V312H474" marker-end="url(#ah)"/>
+      <text class="tiny" x="770" y="296">回执：音频已删，手机可删暂存</text>
 
       <!-- 云端 第一行 -->
       <g class="nd" tabindex="0" data-tip="云端 VAD 偏召回复核：前置 300–500 ms、拖尾 500–1000 ms，间隔 &lt;1–2 s 合并；在停顿处切识别分片。非语音 → 拒绝。" data-ref="s5-1"><rect x="554" y="84" width="88" height="50" rx="7"/><text class="t c" x="598" y="108">VAD 复核</text><text class="s c" x="598" y="125">切识别分片</text></g>
@@ -421,7 +421,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <path class="e" d="M904 134V188" marker-end="url(#ah)"/>
 
       <!-- 云端 第二行（右 → 左） -->
-      <g class="nd" tabindex="0" data-tip="当天匿名聚类 + 机主声纹验证（片段级与簇级）。重叠段永不判机主。一期纯声纹；二期按 VPU 三态 × 声纹三档融合。不确定、疑似回放 → 隔离。完成后识别结果落盘，删除音频及派生物。" data-ref="s5-6"><rect x="860" y="190" width="88" height="50" rx="7"/><text class="t c" x="904" y="214">机主判定</text><text class="s c" x="904" y="231"><tspan class="only-p1">声纹</tspan><tspan class="only-p2">声纹 × VPU</tspan></text></g>
+      <g class="nd" tabindex="0" data-tip="当天匿名聚类 + 机主声纹验证（片段级与簇级）。重叠段永不判机主。一期纯声纹；二期按 VPU 三态 × 声纹三档融合。不确定、疑似回放 → 隔离。完成后识别结果落盘，删除音频及派生物，并回执手机删除暂存。" data-ref="s5-6"><rect x="860" y="190" width="88" height="50" rx="7"/><text class="t c" x="904" y="214">机主判定</text><text class="s c" x="904" y="231"><tspan class="only-p1">声纹</tspan><tspan class="only-p2">声纹 × VPU</tspan></text></g>
       <use href="#hex" x="874" y="190" class="gate g-iso"/><text class="gt c" x="874" y="194">G5</text>
       <path class="e" d="M860 215H848" marker-end="url(#ah)"/>
       <g class="nd" tabindex="0" data-tip="自部署 7B 级小模型对文字分类：剧台词、广告、播报、解说、歌词、有声书。输出只能把接受降为隔离。只读文字，在音频删除后运行。" data-ref="s5-1"><rect x="758" y="190" width="88" height="50" rx="7"/><text class="t c" x="802" y="214">内容门控</text><text class="s c" x="802" y="231">只降级</text></g>
@@ -432,7 +432,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <g class="nd" tabindex="0" data-tip="按 7 步顺序裁决，先到先定，只收紧不放宽。拒绝只用于非语音与无语音帧的幻觉。" data-ref="s5-7"><rect x="554" y="190" width="88" height="50" rx="7"/><text class="t c" x="598" y="214">三档裁决</text><text class="s c" x="598" y="231">接受·隔离·拒绝</text></g>
       <use href="#hex" x="568" y="190" class="gate g-verdict"/><text class="gt c" x="568" y="194">G7</text>
       <path class="e" d="M598 240V298" marker-end="url(#ah)"/>
-      <g class="nd" tabindex="0" data-tip="G7 的裁决结果写入转写库。云端音频及派生物（PCM、VAD、临时嵌入、VPU/IMU 轨迹、场景快照）已在 G5 检查点删除，此时回执手机删除暂存。" data-ref="s7"><rect x="554" y="300" width="200" height="50" rx="7"/><text class="t c" x="654" y="321">写入转写库</text><text class="s c" x="654" y="338">回执手机：可删暂存</text></g>
+      <g class="nd" tabindex="0" data-tip="G7 的裁决结果写入转写库。云端音频及派生物（PCM、VAD、临时嵌入、VPU/IMU 轨迹、场景快照）已在 G5 检查点删除，回执也已在那时发给手机。" data-ref="s6"><rect x="554" y="300" width="200" height="50" rx="7"/><text class="t c" x="654" y="321">写入转写库</text><text class="s c" x="654" y="338">接受档 · 隔离档</text></g>
       <path class="e" d="M700 350V468" marker-end="url(#ah)"/>
 
       <!-- 下游 -->
@@ -761,8 +761,9 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <path class="e" d="M230 262H192" marker-end="url(#ah)"/>
       <g class="nd store" tabindex="0" data-tip="G7 结果写入。音频已在 G5 检查点删除，只保留写进片段的分数与标签。" data-ref="s6"><rect x="20" y="230" width="170" height="64" rx="7"/><use href="#lock" class="lock" x="30" y="238" width="12" height="14"/><text class="t c" x="105" y="257">转写库</text><text class="s c" x="105" y="276">接受档 · 隔离档</text></g>
 
-      <path class="e d" d="M105 294V368" marker-end="url(#ah)"/>
-      <g class="nd" tabindex="0" data-tip="回执字段：audio_stage、text_persisted_at、cloud_audio_deleted_at、gaps_recorded（§6.3）。" data-ref="s6"><rect x="20" y="370" width="170" height="50" rx="7"/><text class="t c" x="105" y="391">回执 → 手机</text><text class="s c" x="105" y="408">音频与派生物已删</text></g>
+      <path class="e d" d="M840 304V340H105V368" marker-end="url(#ah)"/>
+      <text class="tiny c" x="680" y="334">音频删除后即回执</text>
+      <g class="nd" tabindex="0" data-tip="在 G5 检查点识别结果落盘、音频删除后发出。回执字段：audio_stage、text_persisted_at（识别结果落盘时刻）、cloud_audio_deleted_at、gaps_recorded。" data-ref="s6"><rect x="20" y="370" width="170" height="50" rx="7"/><text class="t c" x="105" y="391">回执 → 手机</text><text class="s c" x="105" y="408">音频与派生物已删</text></g>
       <path class="e" d="M315 294V368" marker-end="url(#ah)"/>
       <g class="nd" tabindex="0" data-tip="被拒绝的内容不存文字，只记时长与原因计数。" data-ref="s5-7"><rect x="230" y="370" width="170" height="50" rx="7"/><text class="t c" x="315" y="391">拒绝计量</text><text class="s c" x="315" y="408">只记时长 · G2 / G4 / G7</text></g>
       <g class="nd store" tabindex="0" data-tip="全量三类词库，按拼音音节建 n-gram 索引；模糊规则 z/zh、c/ch、s/sh、n/l、f/h、an/ang、en/eng、in/ing，可按口音配置；英文建音形码与常见音译索引。" data-ref="s5-3"><rect x="440" y="370" width="170" height="50" rx="7"/><text class="t c" x="525" y="391">热词全量库</text><text class="s c" x="525" y="408">拼音模糊召回</text></g>
