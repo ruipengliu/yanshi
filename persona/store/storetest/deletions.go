@@ -105,7 +105,7 @@ func deletions(t *testing.T, factory func() store.Store) {
 func deletionRebuild(t *testing.T, factory func() store.Store) {
 	ctx := context.Background()
 	s := factory()
-	now := time.Now()
+	now := captureNow
 	var task domain.DeletionTask
 	if err := s.Update(ctx, "bl", "eu", func(b *domain.Book) error {
 		if _, err := b.AppendCaptures("2026-10-27", "c", []domain.CaptureSegment{{Speaker: "wearer", Text: "原文"}}); err != nil {
