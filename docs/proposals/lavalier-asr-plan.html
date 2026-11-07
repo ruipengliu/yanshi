@@ -508,7 +508,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <ul class="small">
         <li><b>L1</b>：<a href="#fig-l1a">领夹</a> · <a href="#fig-l1b">手机</a> · <a href="#fig-l1c">云端·识别与判定</a> · <a href="#fig-l1d">云端·入库与下游</a></li>
         <li><b>L2</b>：<a href="#fig-funnel">拒识漏斗</a> · <a href="#fig-verdict">三档裁决</a> · <a href="#fig-fusion">融合矩阵</a> · <a href="#fig-hot">热词流水线</a> · <a href="#fig-units">对话单元</a></li>
-        <li><b>能力</b>：<a href="#fig-effect">效果架构</a> · <a href="#s5-10">模块能力规格</a> · 写入资格</li>
+        <li><b>能力</b>：<a href="#fig-effect">效果架构</a> · <a href="#s5-10">模块能力规格</a> · <a href="#s5-10-sel">选型、原理与指标</a> · 写入资格</li>
         <li><b>实现</b>：<a href="#fig-svc">服务与数据流</a> · <a href="#s5-12">存储与接口</a> · <a href="#s5-13">模型服务与容量</a> · <a href="#s5-14">删除、安全与运维</a></li>
       </ul>
     </div>
@@ -1292,7 +1292,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
   <!-- 5.10 -->
   <div id="s5-10" data-label="§5.10" style="display:flex;flex-direction:column;gap:14px">
     <h3>5.10 模块能力与效果规格</h3>
-    <p class="small">5.1–5.9 写的是处置规则，这一节写各模块的判别能力本身。问卷前两位的问题（混入、归错人）能改善多少，取决于能力与规则的组合。本节结论经两轮对辩形成：先请外部模型独立评估，再把我们的判断交给它逐条反驳，事实性陈述由我们核实后取舍。下面的参数是建议的初始值，须在调参集上实测后冻结。</p>
+    <p class="small">5.1–5.9 写的是处置规则，这一节写各模块的判别能力本身。问卷前两位的问题（混入、归错人）能改善多少，取决于能力与规则的组合。本节结论经两轮对辩形成：先请外部模型独立评估，再把我们的判断交给它逐条反驳，事实性陈述由我们核实后取舍。下面的参数是建议的初始值，须在调参集上实测后冻结。模块能力表之后是各模块的选型、算法原理与关键指标。</p>
     <div class="grid3">
       <div class="card"><h3>G5 是声学证据的最终完成点</h3><p class="small">音频删除后，只能读文字，无法再做任何声学判断。所以凡是需要音频的工作，都在 G5 定稿前做完：批内重聚类与重分段、候选的声学评分、限额的局部复核。之后的环节只读文字，承诺不变。</p></div>
       <div class="card"><h3>删音频前写进片段的证据</h3><p class="small">词级候选及来源、候选的声学评分、全量声学支持与局部低支持区间、归属模糊区间、实际重叠范围、来源证据及其覆盖范围、相对声级与直达/混响比、二期的 VPU 有效性与同步质量。只存标量、区间与标签，不存高维声学表示，免得变相保留重跑能力。</p></div>
@@ -1359,6 +1359,250 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
         <tr><td>纪要、待办、记忆（G8）</td><td>先抽原子事件，再生成产物。每条带原文跨度、发言者、被请求者、承担人、动作、对象、期限、条件、否定和状态（请求、知悉、接受、拒绝、撤销）；期限以录音当地日期为锚解析“明天下午”；后来的改口与撤销会取消前面的承诺。纪要以已核实的事实、决定、未决问题为基础，长单元先抽证据再聚合。记忆区分本人事实、引用他人、假设、愿望和临时状态。代码校验引用范围、字段与资格；引用是否真的支持结论，由核验步骤判断，不能只看引用 ID 存在。</td><td>更强的模型只处理疑难：承担人或状态冲突、跨轮次撤销。按 20% token 工作量替换约 +¥0.9/月。全量换强不设期次，由净收益决定。</td><td>N4 待办的动作、承担人、期限、状态联合正确率；纪要事实精度与 N2；记忆事实错误率；请求、知悉、接受、拒绝、撤销的最小对照集</td></tr>
       </tbody>
     </table></div>
+
+    <h3 id="s5-10-sel">选型、算法原理与关键指标</h3>
+    <p class="small">选型原则：先用成熟的开源或自研基线，在领夹 16 kb/s Opus 数据上微调后比较；在什么数据上胜出由评测决定，不按模型名气决定。下表列一期选型与对照，各模块的候选比较、原理与指标在后面的折叠块里。模型名只代表“这一类”方法，具体版本以评测为准。目标值标<span class="tg go">目标</span>，其余在一期基线后确定。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>模块</th><th>一期选型</th><th>对照（变体）</th><th>首要指标 · 一期目标</th></tr></thead>
+      <tbody>
+        <tr><td>VAD 与切分</td><td>非流式帧级 VAD（FSMN-VAD 或 Silero 一类起步，领夹数据微调）+ 双阈值滞回 + 停顿优先的窗口切分</td><td>带重叠检测的分段模型（powerset 分段一类）</td><td>短回应召回 ≥95%<span class="tg go">目标</span>；语音漏检 ≤2%</td></tr>
+        <tr><td>来源与播放</td><td>LFCC/CQCC 特征 + 轻量卷积网络（LCNN、ResNet 一类）的回放检测；音频标注模型（PANNs、BEATs 一类）出媒体底噪；与场景事件按逻辑回归融合</td><td>信道一致性特征；梯度提升树融合</td><td>外放远端会议保留率 ≥95%<span class="tg go">目标</span>；R4 ≤3%</td></tr>
+        <tr><td>8B 偏置</td><td>按 8B 架构二选一：可搜索解码用前缀树浅融合；音频 LLM 架构用提示词式上下文</td><td>训练得到的上下文偏置（CLAS、TCPGen 一类）</td><td>个人热词召回 ≥90%；非热词字错率劣化 ≤0.3 个点<span class="tg go">目标</span></td></tr>
+        <tr><td>热词检索</td><td>场景检索（时间窗、会议、项目）+ 音节 n-gram 倒排的音系检索（拼音模糊音、英文 G2P 音素）</td><td>CTC 后验关键词检索</td><td>正确热词进入偏置表 ≥97%<span class="tg go">目标</span></td></tr>
+        <tr><td>专名纠错</td><td>候选重排打分：声学分 + 上下文先验 + 语言模型分，分差不足即弃权</td><td>受约束 LLM 在 N-best 中选</td><td>修改精确率 ≥95%<span class="tg go">目标</span></td></tr>
+        <tr><td>幻觉防护</td><td>规则触发（重复、字速、gzip 压缩比、短语表、语种）+ 600M CTC 声学支持 + 600M 交叉校验</td><td>限额局部重识别</td><td>非语音幻觉 ≤1 事件/小时；真人误触发 ≤5%<span class="tg go">目标</span></td></tr>
+        <tr><td>说话人与机主</td><td>CAM++ 或 ERes2NetV2 一类嵌入（领夹数据微调）+ 重叠感知分段 + 在线质心与批内 AHC 重聚类 + 余弦打分、AS-norm、逻辑回归校准，近场特征一同进融合</td><td>VBx 重分段；personal VAD / TS-VAD；嵌入缓存</td><td>S2 时间线级 ≤1%；O1 ≥85%</td></tr>
+        <tr><td>相关性</td><td>小 LLM 按窗口输出相关性，配合结构化特征，在标注集上做保序回归校准</td><td>微调的小型文本分类器</td><td>N3 ≤5%；参与者被误判为背景 ≤3%<span class="tg go">目标</span></td></tr>
+        <tr><td>裁决与资格</td><td>硬规则 + 校准分数的逻辑回归融合；阈值在 R4 上限下选</td><td>梯度提升树融合</td><td>R3 &lt;2%；R4 ≤3%</td></tr>
+        <tr><td>对话单元</td><td>事件边界：静默 + 参与者分布变化点；主题边界：句向量相似度的 TextTiling 式切分，由 LLM 复核</td><td>端到端 LLM 切分</td><td>误合并 ≤5%、误切分 ≤10%<span class="tg go">目标</span></td></tr>
+        <tr><td>G8 抽取</td><td>中 LLM 按 JSON 模式抽言语行为与字段 + 蕴含核验（AlignScore 一类或 LLM 判别）+ 规则化时间解析</td><td>疑难样本升级到更强模型</td><td>N4 ≥85%；纪要事实精度 ≥95%<span class="tg go">目标</span></td></tr>
+        <tr><td>域适配</td><td>仿真链路：干净语音 → 领夹房间冲激响应 → 噪声 → Opus 16 kb/s 编解码；8B 与嵌入模型做参数高效微调</td><td>真实领夹录音少量精标后再调</td><td>近场 CER &lt;8%；Opus 与原始 PCM 的 CER 差距报告</td></tr>
+      </tbody>
+    </table></div>
+
+    <details class="more"><summary>VAD 与识别窗口：选型、原理、指标</summary><div>
+      <div class="tbl"><table>
+        <thead><tr><th>候选</th><th>原理</th><th>本场景的取舍</th></tr></thead>
+        <tbody>
+          <tr><td>WebRTC VAD 一类</td><td>GMM 判别子带能量</td><td>不选：噪声与远场下误检多，短回应漏检</td></tr>
+          <tr><td>Silero VAD 一类</td><td>小型神经网络逐帧给语音概率，可 ONNX 部署</td><td>手机 G1 与云端起点；云端改用双向平滑</td></tr>
+          <tr><td>FSMN-VAD 一类</td><td>带记忆块的前馈网络，中文数据训练</td><td>云端起点之一，与 Silero 一类在领夹数据上比</td></tr>
+          <tr><td>powerset 分段模型</td><td>把每帧的“无人 / 某人 / 某两人同时”当作一个多分类，同时给出语音、换人与重叠</td><td>对照：能复用为 G5 的分段，省一次计算</td></tr>
+        </tbody>
+      </table></div>
+      <ol class="small">
+        <li>逐帧（10–20 ms）出语音概率；双向平滑：用前后各约 0.5 秒的上下文，比流式只看过去更稳。</li>
+        <li>双阈值滞回：概率高于启动阈值才进入语音、低于结束阈值才退出，避免在一个词中间来回切；最短语音段保留到约 150 ms，保住“嗯”“好”。</li>
+        <li>前后余量 300–500 ms / 500–1000 ms，间隔短于合并阈值的语音段合并。</li>
+        <li>识别窗口：在 15–45 秒内找最长的停顿下刀；找不到就在能量最低处强切，两侧各多送 300–500 ms 作声学上下文，只保留核心区的输出并按时间去重。</li>
+      </ol>
+      <div class="tbl"><table>
+        <thead><tr><th>指标</th><th>定义</th><th>一期目标</th></tr></thead>
+        <tbody>
+          <tr><td>语音漏检率</td><td>参考语音时长中被判为非语音的比例（即 R3 的主要来源）</td><td>≤2%</td></tr>
+          <tr><td>短回应召回</td><td>参考中 &lt;1 秒的独立回应（“嗯”“好”“不行”）被保留的比例</td><td>≥95%<span class="tg go">目标</span></td></tr>
+          <tr><td>首尾截断率</td><td>语音段首字或尾字被切掉的比例</td><td>≤1%<span class="tg go">目标</span></td></tr>
+          <tr><td>切点附近 CER</td><td>切点前后 1 秒内的字错率，与全段 CER 的差</td><td>差值 ≤2 个点<span class="tg go">目标</span></td></tr>
+          <tr><td>非语音误检率</td><td>参考非语音时长被判为语音的比例，决定送 8B 的量与成本</td><td>报告</td></tr>
+        </tbody>
+      </table></div>
+    </div></details>
+
+    <details class="more"><summary>来源与播放检测：选型、原理、指标</summary><div>
+      <div class="tbl"><table>
+        <thead><tr><th>候选</th><th>原理</th><th>本场景的取舍</th></tr></thead>
+        <tbody>
+          <tr><td>CQCC / LFCC + GMM</td><td>常 Q 或线性倒谱刻画扬声器与房间的频响</td><td>只作基线</td></tr>
+          <tr><td>LCNN、ResNet 一类</td><td>在上述谱特征上用卷积网络学“经过扬声器”的痕迹</td><td>一期选型；在自建重录语料（多扬声器 × 多房间 × 多距离、Opus 编码后）上训练</td></tr>
+          <tr><td>AASIST 一类</td><td>图注意力网络，原本针对合成、转换语音</td><td>可借结构，不能拿它在合成语音上的成绩当回放能力的证据</td></tr>
+          <tr><td>PANNs、BEATs 一类音频标注</td><td>AudioSet 预训练，给“音乐、电视、笑声、掌声”等类别概率</td><td>一期选型：出媒体底噪证据</td></tr>
+          <tr><td>信道一致性</td><td>从各说话人簇提取与说话人无关的信道特征，比较簇间相似度</td><td>变体：几个不同声纹共享同一稳定信道，而机主不同，像同一台扬声器</td></tr>
+        </tbody>
+      </table></div>
+      <ol class="small">
+        <li>按 2–4 秒窗口出回放概率与媒体底噪概率，聚合到片段；同时标“真人与外放同时存在”。</li>
+        <li>场景事件只作先验：手机外放时段提高先验，不直接判定某句来自手机。</li>
+        <li>融合：逻辑回归把各路分数合成一个来源概率，在标注集上校准；证据缺失（如未观测场景）作为单独输入，不当作 0。</li>
+        <li>输出只打标签，处置交给 G6、G7。</li>
+      </ol>
+      <div class="tbl"><table>
+        <thead><tr><th>指标</th><th>定义</th><th>一期目标</th></tr></thead>
+        <tbody>
+          <tr><td>R2a 物理回放检测</td><td>经扬声器重放的发言中被判为播放声的比例；另报 EER</td><td>报告（未见扬声器、房间、节目分开报）</td></tr>
+          <tr><td>R2b 无关媒体拦截</td><td>无关媒体被隔离、拒绝或判为背景的比例，按内容类别</td><td>报告；二期 ≥90%</td></tr>
+          <tr><td>外放远端会议保留率</td><td>线上会议经外放的远端发言仍在接受档且判为参与者的比例</td><td>≥95%<span class="tg go">目标</span></td></tr>
+          <tr><td>R4 真人误隔离</td><td>真人语音被隔离的比例</td><td>≤3%</td></tr>
+        </tbody>
+      </table></div>
+    </div></details>
+
+    <details class="more"><summary>8B 偏置与热词检索：选型、原理、指标</summary><div>
+      <div class="tbl"><table>
+        <thead><tr><th>候选</th><th>原理</th><th>本场景的取舍</th></tr></thead>
+        <tbody>
+          <tr><td>前缀树浅融合</td><td>解码搜索时，假设走到热词前缀就加分，走完整词再加完成奖励；中途偏离则撤回已加的分</td><td>8B 支持束搜索时的一期选型；不需重训</td></tr>
+          <tr><td>提示词式上下文</td><td>音频 LLM 把热词表与前文放进提示，由模型自行利用</td><td>8B 是音频 LLM 架构时的一期选型；对偏置强度的控制较弱，须测无关偏置下的误插入</td></tr>
+          <tr><td>CLAS、TCPGen 一类</td><td>训练时让模型学会对热词表做注意力或指针选择</td><td>对照：效果通常更好，但要重训 8B</td></tr>
+          <tr><td>音系检索</td><td>把 8B 文字转成拼音音节（带模糊音：z/zh、n/l、an/ang 等）或英文音素（G2P），用音节 n-gram 倒排索引找发音相近的词</td><td>一期选型：召回解码时没进偏置表的词</td></tr>
+          <tr><td>CTC 后验关键词检索</td><td>用 600M 的帧级后验直接在音频上搜热词</td><td>变体：取决于 600M 能力，能召回 8B 完全写偏的词</td></tr>
+        </tbody>
+      </table></div>
+      <ol class="small">
+        <li>每个识别窗口先做场景检索：当前时间窗的日历参会人与项目、近期联系人、所选行业包，再加少量公共高频词。</li>
+        <li>按类别配额截断到 N（个人、行业、公共各有下限），避免个人词把当天新出现的项目名挤掉。</li>
+        <li>解码时偏置；解码后对全文做音系检索，命中的候选交给纠错层，不直接替换。</li>
+      </ol>
+      <div class="tbl"><table>
+        <thead><tr><th>指标</th><th>定义</th><th>一期目标</th></tr></thead>
+        <tbody>
+          <tr><td>热词字错率（B-CER）与非热词字错率（U-CER）</td><td>只在热词位置上算的字错率，与其余位置的字错率分开报</td><td>U-CER 相对无偏置劣化 ≤0.3 个点<span class="tg go">目标</span></td></tr>
+          <tr><td>A3 个人热词召回</td><td>参考中出现的个人热词在最终文字中正确出现的比例</td><td>≥90%</td></tr>
+          <tr><td>A4 误触发</td><td>未说却出现的热词，每千字</td><td>≤0.5</td></tr>
+          <tr><td>偏置表召回</td><td>参考中出现的热词进入该窗口偏置表的比例；另报截断造成的损失</td><td>≥97%<span class="tg go">目标</span></td></tr>
+          <tr><td>四组对照</td><td>无偏置、正确偏置、无关偏置、同音干扰偏置下的 B-CER、U-CER 与 A6</td><td>报告</td></tr>
+        </tbody>
+      </table></div>
+    </div></details>
+
+    <details class="more"><summary>专名纠错与幻觉防护：选型、原理、指标</summary><div>
+      <div class="tbl"><table>
+        <thead><tr><th>候选</th><th>原理</th><th>本场景的取舍</th></tr></thead>
+        <tbody>
+          <tr><td>开放式 LLM 纠错</td><td>让 LLM 直接改写转写</td><td>不选：会补出没说过的名字</td></tr>
+          <tr><td>候选重排 + 弃权</td><td>原文与召回的候选一起打分，分差够大才换</td><td>一期选型</td></tr>
+          <tr><td>受约束 LLM 选择（N-best）</td><td>LLM 只能从 8B 的 N 个候选或“保持原文”中选</td><td>变体：需 8B 输出 N-best</td></tr>
+          <tr><td>CTC 声学支持</td><td>给定文字做强制对齐，比较对齐路径与不受约束的最优路径的得分</td><td>一期选型：G4 与纠错共用</td></tr>
+        </tbody>
+      </table></div>
+      <ol class="small">
+        <li><b>声学分</b>：在删音频前，对片段内每个候选做 600M CTC 强制对齐，取按帧数归一的对数似然；原文也算一次。候选的声学分减原文的声学分即“声学支持差”。</li>
+        <li><b>打分</b>：声学支持差 + 上下文先验（类别、生效时间窗、是否本场会议的参会人）+ 语言模型分，权重在调参集上用逻辑回归拟合。</li>
+        <li><b>弃权</b>：最高分与原文的分差低于阈值就不改，只在时间线列出候选。同音名字声学分几乎相同，基本都会走到弃权。</li>
+        <li><b>幻觉的声学支持</b>：对 8B 输出做强制对齐，逐字算“对齐路径得分 − 同一帧段最优路径得分”，按长度和语种校准；低于阈值的连续字段标为低支持区间。它只触发复核或降级，不单独处置。</li>
+        <li><b>规则触发</b>：同一 n-gram 重复 ≥3、字速 &gt;9 字/秒、gzip 压缩比过高（常见经验阈值约 2.4）、幻觉短语表、语种突变。</li>
+      </ol>
+      <div class="tbl"><table>
+        <thead><tr><th>指标</th><th>定义</th><th>一期目标</th></tr></thead>
+        <tbody>
+          <tr><td>修改精确率</td><td>自动替换中改对的比例</td><td>≥95%<span class="tg go">目标</span></td></tr>
+          <tr><td>改错率</td><td>把对的改错的次数，每千字</td><td>≤0.2<span class="tg go">目标</span></td></tr>
+          <tr><td>弃权率与候选命中</td><td>该改未改的比例；弃权时正确词在所列候选中的比例</td><td>报告</td></tr>
+          <tr><td>A5 非语音幻觉</td><td>非语音区间每小时的插入事件数</td><td>≤1</td></tr>
+          <tr><td>低支持的真人误触发</td><td>参考正确的真人文字被标低支持的比例（只触发复核，影响成本与已核实资格）</td><td>≤5%<span class="tg go">目标</span></td></tr>
+          <tr><td>关键字段错误的捕获率</td><td>A6 类错误（否定、数字、日期、人名）落在低支持区间内的比例</td><td>报告</td></tr>
+        </tbody>
+      </table></div>
+    </div></details>
+
+    <details class="more"><summary>说话人与机主：选型、原理、指标</summary><div>
+      <div class="tbl"><table>
+        <thead><tr><th>候选</th><th>原理</th><th>本场景的取舍</th></tr></thead>
+        <tbody>
+          <tr><td>ECAPA-TDNN 一类</td><td>带通道注意力的时延网络，输出定长声纹嵌入</td><td>对照</td></tr>
+          <tr><td>CAM++、ERes2NetV2 一类</td><td>上下文感知掩码或多尺度残差结构的嵌入网络，中文数据上常用</td><td>一期选型：二者在领夹 Opus 数据上微调后按 EER 选一个</td></tr>
+          <tr><td>余弦 / PLDA 打分</td><td>比较嵌入的夹角，或在概率模型下算同人与异人的似然比</td><td>余弦起步，PLDA 作对照</td></tr>
+          <tr><td>在线质心 + 批内 AHC</td><td>新轮次就近归入质心；每批删音频前用凝聚层次聚类重排，合并或拆开错簇</td><td>一期选型</td></tr>
+          <tr><td>VBx</td><td>把嵌入序列放进贝叶斯隐马尔可夫模型，同时做聚类与时间平滑</td><td>变体：重分段更稳</td></tr>
+          <tr><td>personal VAD / TS-VAD</td><td>以机主注册嵌入为条件，逐帧输出“机主在说 / 他人在说 / 无人”</td><td>变体：短回应与重叠边界上可能更好</td></tr>
+          <tr><td>端到端说话人归属 ASR</td><td>识别时直接输出带说话人标签的文字</td><td>二期挑战者</td></tr>
+        </tbody>
+      </table></div>
+      <ol class="small">
+        <li><b>分段</b>：重叠感知的分段模型给出换人点与重叠区间；600M CTC 对齐把字落到轮次上。</li>
+        <li><b>嵌入</b>：每个轮次提取嵌入，按时长与信噪比给质量权重；重叠、疑似回放、低质量短段不更新质心。</li>
+        <li><b>聚类</b>：在线归入当天质心；删音频前对本批做一次 AHC 重聚类（距离阈值在调参集上定），再与日内簇关联。给新轮次打分时，从质心里扣掉它自己的贡献。</li>
+        <li><b>机主打分</b>：轮次嵌入与机主模板的余弦分 → AS-norm（用一组冒认者的得分分布做对称归一）→ 逻辑回归校准成似然比；近场特征（相对机主基线的声级、直达/混响比）与簇级分一起进校准模型。</li>
+        <li><b>三档</b>：T_high、T_evidence 按误判上限在调参集上选，T_low 按召回选；夹在中间的记为未知。</li>
+      </ol>
+      <div class="tbl"><table>
+        <thead><tr><th>指标</th><th>定义</th><th>一期目标</th></tr></thead>
+        <tbody>
+          <tr><td>嵌入 EER、minDCF</td><td>领夹 Opus 数据上的说话人验证等错误率与检测代价</td><td>报告，选型用</td></tr>
+          <tr><td>Cllr</td><td>校准后似然比的对数损失，衡量分数能否直接当概率用</td><td>报告</td></tr>
+          <tr><td>S2 他人误判为机主</td><td>时间线级与证据级，按说话人聚类求上限</td><td>时间线级 ≤1%；证据级 ≤0.5%（过渡）</td></tr>
+          <tr><td>O1 机主召回</td><td>机主发言被判机主且接受的比例</td><td>≥85%（过渡）</td></tr>
+          <tr><td>O3 词级归属错误</td><td>机主身份固定，归错说话人的字数比例；换人点前后 1 秒单报</td><td>报告，二期不回退</td></tr>
+          <tr><td>DER / JER</td><td>他人之间分离的错误率（允许标签置换）</td><td>报告</td></tr>
+          <tr><td>每用户最差十分位的误判率</td><td>按用户统计 S2，取最差 10% 用户的均值</td><td>报告，防止平均值掩盖个别用户</td></tr>
+        </tbody>
+      </table></div>
+    </div></details>
+
+    <details class="more"><summary>相关性与裁决：选型、原理、指标</summary><div>
+      <div class="tbl"><table>
+        <thead><tr><th>候选</th><th>原理</th><th>本场景的取舍</th></tr></thead>
+        <tbody>
+          <tr><td>只按时间相邻</td><td>与机主轮次前后相接就算参与者</td><td>不选：偶然相邻会连进无关的人</td></tr>
+          <tr><td>小 LLM + 结构化特征</td><td>窗口内文字加特征（称呼、问答配对、语义承接、互动间隔、声源与近场证据），逐片段输出相关性</td><td>一期选型</td></tr>
+          <tr><td>微调的小型分类器</td><td>用标注的对话窗口训练文本分类器（对话解缠一类任务）</td><td>对照：更便宜、更稳定，但需要标注量</td></tr>
+          <tr><td>逻辑回归 / 梯度提升树融合</td><td>把校准后的各路分数合成档位与资格</td><td>G7 一期用逻辑回归，树模型作对照</td></tr>
+        </tbody>
+      </table></div>
+      <ol class="small">
+        <li>相关性以片段为单位：问答配对（问句后紧接的回答）、称呼（“小王你……”）、语义承接（与机主前后话的句向量相似度）、互动间隔，作为 LLM 的输入与独立特征。</li>
+        <li>簇级先验：同一簇在本单元的多数片段相关时，提高其余片段的先验；反之亦然。</li>
+        <li>校准：LLM 输出的分数在标注集上做保序回归，使 0.8 真的约等于 80% 相关。</li>
+        <li>G7：确证非语音等硬条件直接定档；其余用校准分数做逻辑回归，阈值在“R4 ≤ 上限”的约束下取 R2b 最大的点。</li>
+      </ol>
+      <div class="tbl"><table>
+        <thead><tr><th>指标</th><th>定义</th><th>一期目标</th></tr></thead>
+        <tbody>
+          <tr><td>N3 纪要混入</td><td>纪要陈述的依据来自背景、播放声或无关内容的比例</td><td>≤5%</td></tr>
+          <tr><td>参与者误判为背景</td><td>参考为参与者的话语被判背景的比例</td><td>≤3%<span class="tg go">目标</span></td></tr>
+          <tr><td>校准误差 ECE</td><td>相关性分数分箱后，预测概率与实际比例的平均差</td><td>≤0.05<span class="tg go">目标</span></td></tr>
+          <tr><td>R3、R4</td><td>真人误拒、误隔离</td><td>&lt;2%、≤3%</td></tr>
+          <tr><td>五个切片</td><td>邻座闲聊、电视普通对话、机主少发言的会议、引用媒体内容、外放远端</td><td>分别报告</td></tr>
+        </tbody>
+      </table></div>
+    </div></details>
+
+    <details class="more"><summary>对话单元与 G8 抽取：选型、原理、指标</summary><div>
+      <div class="tbl"><table>
+        <thead><tr><th>候选</th><th>原理</th><th>本场景的取舍</th></tr></thead>
+        <tbody>
+          <tr><td>静默 + 参与者分布变化点</td><td>静默超阈值，或前后窗口参与者分布（排除机主）的差异超阈值即切</td><td>事件边界的一期选型</td></tr>
+          <tr><td>TextTiling 式主题切分</td><td>相邻文字块的句向量相似度出现低谷处为主题边界</td><td>主题边界的一期选型，由 LLM 复核低谷</td></tr>
+          <tr><td>端到端 LLM 切分</td><td>整段交给 LLM 标边界</td><td>对照：长单元成本高、稳定性待测</td></tr>
+          <tr><td>直接生成纪要</td><td>LLM 一步写纪要与待办</td><td>不选：负责人与日期容易在压缩中丢失</td></tr>
+          <tr><td>先抽取后生成 + 蕴含核验</td><td>先抽带原文跨度的条目，再用蕴含模型或 LLM 判别“这段原文是否支持这条结论”</td><td>一期选型</td></tr>
+        </tbody>
+      </table></div>
+      <ol class="small">
+        <li><b>抽取</b>：中 LLM 按 JSON 模式逐窗口抽言语行为（请求、知悉、接受、拒绝、撤销、决定）与字段（发言者、被请求者、承担人、动作、对象、期限、条件、否定），每条带原文跨度。</li>
+        <li><b>状态归并</b>：同一承诺的后续行为按时间顺序更新状态，撤销会关闭前面的承诺。</li>
+        <li><b>时间解析</b>：以录音当地日期为锚，规则先解析“明天下午三点”“下周三”这类表达，规则解析不了再交 LLM，结果带置信度。</li>
+        <li><b>核验</b>：每条结论与其原文跨度过一次蕴含判断；不支持的降为未核实。再由代码检查四维资格（§5.10 写入资格表）。</li>
+        <li><b>生成</b>：纪要只用已核实的条目、决定与未决问题，长单元分段抽取后再汇总。</li>
+      </ol>
+      <div class="tbl"><table>
+        <thead><tr><th>指标</th><th>定义</th><th>一期目标</th></tr></thead>
+        <tbody>
+          <tr><td>N1 误合并 / 误切分</td><td>参考对话被并入别的单元、或被切成多个单元的比例；另报 Pk、WindowDiff</td><td>≤5% / ≤10%<span class="tg go">目标</span></td></tr>
+          <tr><td>N4 待办联合正确率</td><td>动作、承担人、期限、状态都对的比例</td><td>≥85%</td></tr>
+          <tr><td>N2 纪要要素召回</td><td>结论、负责人、时间点被纪要正确覆盖的比例</td><td>≥80%</td></tr>
+          <tr><td>纪要事实精度</td><td>纪要陈述被原文支持的比例</td><td>≥95%<span class="tg go">目标</span></td></tr>
+          <tr><td>期限解析准确率</td><td>待办期限解析成正确日期时间的比例</td><td>≥95%<span class="tg go">目标</span></td></tr>
+          <tr><td>记忆事实错误率</td><td>写入的记忆与事实不符或类型错（假设、愿望当成事实）的比例</td><td>&lt;2%（同 S1）</td></tr>
+        </tbody>
+      </table></div>
+    </div></details>
+
+    <details class="more"><summary>域适配：选型、原理、指标</summary><div>
+      <ol class="small">
+        <li><b>仿真链路</b>：干净中文与中英混说语音 → 卷积领夹位置的房间冲激响应（实测为主、仿真补充）→ 混入办公、街道、餐厅噪声 → Opus 16 kb/s 编解码（与设备相同的帧长与码率模式）。</li>
+        <li><b>微调</b>：8B 与声纹嵌入模型用参数高效微调（LoRA 一类），保留原有能力；同时混入少量真实领夹录音。</li>
+        <li><b>先测差距再决定</b>：一期先测“原始 PCM 与 Opus 16 kb/s”“近场与远场”的 CER 差，差距明显才微调，有收益才合入。</li>
+      </ol>
+      <div class="tbl"><table>
+        <thead><tr><th>指标</th><th>定义</th><th>一期目标</th></tr></thead>
+        <tbody>
+          <tr><td>A1 分场景 CER</td><td>近场、远场、全天分报；中英混说报 MER，另报中文 CER 与英文 WER</td><td>近场 &lt;8%</td></tr>
+          <tr><td>编码差距</td><td>同一录音 PCM 与 Opus 16 kb/s 的 CER 差</td><td>报告；用于决定码率（§3）</td></tr>
+          <tr><td>适配收益</td><td>微调前后的 CER、A6、短回应召回、S2 的配对差</td><td>任何场景不回退</td></tr>
+        </tbody>
+      </table></div>
+    </div></details>
+
 
     <h3>写入资格：四维分别核验</h3>
     <div class="tbl"><table>
@@ -2033,6 +2277,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
     </table></div>
   </div></details>
   <ul class="small">
+    <li><b>模块级指标</b>（VAD、播放检测、偏置、纠错、声纹、相关性、切分、抽取）的定义与一期目标见 <a href="#s5-10-sel">§5.10 选型、原理与指标</a>；本节只列端到端指标。</li>
     <li><b>质量类</b>按场景报告点估计与按机主自助抽样的置信区间；任何场景不得出现超出噪声的回退。</li>
     <li><b>每一级与“不做”配对</b>：G1 丢弃、G3 跳过（可选）、G4 拒绝与隔离、G6 降级、专名纠错、热词偏置分别报“省多少、伤多少”，按 <code>reasons</code> 全量统计。</li>
     <li><b>可验证性</b>：样本量按有效样本计。一期 ≥60 位他人按说话人聚类后，有效样本可能只有数百：能验时间线级 ≤1% 的零错误情形（约 300），验不了证据级 ≤0.2%（约 1,500）。二期验收前把他人扩到相应规模；在此之前，证据级 ≤0.2% 只报点估计与上限，不作为已证明的结论。28 小时、5 小时精标适合建开发基线，不足以单独支撑低误判承诺。</li>
