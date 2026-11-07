@@ -308,10 +308,10 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
     <div><b>批处理链路</b>领夹 → 手机暂存 → 按批上云 → 异步处理 → 回传 App。两级队列：常规 P90 ≤3 小时，“立即同步”上传后 P90 ≤10 分钟<span class="tg go">目标</span>。</div>
     <div><b>四级拒识级联</b>越靠前越便宜，也越保守。设备和手机只丢非语音，像人声的一律上云。播放检测只打标签，二期“跳过识别”为可选、默认关。</div>
     <div><b>三档处置</b>拒绝只用于非语音和无语音帧的幻觉；播放声、疑似回放、幻觉型分歧隔离 7 天，可放回。说话人不确定不隔离，记为“未知说话人”接受。写入纪要、待办、记忆另按身份、文字、相关性、语义支持四维核验。</div>
-    <div><b>8B 单路全量</b>600M 只做对齐与可疑片段校验。级联路由每人每月只省约 ¥3<span class="tg es">估算</span>。</div>
-    <div><b>三类热词</b>解码前按上下文检索出偏置表，只解码一次；解码后拼音召回，再做闭集纠错。个人热词不从纪要回收。</div>
-    <div><b>机主判定</b>一期纯声纹（门槛更严）；二期按 VPU 三态 × 声纹三档融合。VPU 分不清电视和在场的真人。记忆与待办只引用“证据级”原话。</div>
-    <div><b>按对话单元出纪要</b>日历会议、10 分钟静默或参与者换了一批时切出单元；没有机主参与的单元不出纪要；与机主没有来回的“背景簇”不作纪要上下文、不支撑待办。待办按承担人分四类。迟到数据、续说和用户改字、改标都会重开单元、更新纪要。</div>
+    <div><b>8B 单路全量</b>600M 只做对齐、全量声学支持评分与可疑片段校验。级联路由每人每月只省约 ¥3<span class="tg es">估算</span>。</div>
+    <div><b>三类热词</b>解码前按上下文检索出偏置表，只解码一次；解码后按拼音、音素召回，再做可弃权的闭集纠错。个人热词不从纪要回收。</div>
+    <div><b>机主判定</b>一期以声纹为主，近场特征作为模型输入，删音频前做批内重聚类；二期加 VPU 融合。VPU 分不清电视和在场的真人。记忆与待办只引用“证据级”原话，且要过四维核验。</div>
+    <div><b>按对话单元出纪要</b>日历会议、10 分钟静默或参与者换了一批时切出单元；没有机主参与的单元不出纪要；相关性判定为背景的人（邻座闲聊、漏网的电视台词）不作纪要上下文、不支撑待办。待办按承担人分四类。迟到数据、续说和用户改字、改标都会重开单元、更新纪要。</div>
     <div><b>约 ¥25/人/月</b>按需求口径每天 5 小时有效音频（约 20 小时佩戴，属高位）、8B ¥0.10/小时<span class="tg es">估算</span>，落在 ¥23–27 内。典型佩戴 12 小时约 3 小时有效，约 ¥15。</div>
     <div><b>音频在 G5 后即删</b>识别结果落盘就删音频，领夹在手机回执后即擦除，之后只读文字；他人只留簇质心，业务日结束后 12 小时删除。代价是不能事后重跑；低置信区间保留文字候选。</div>
   </div>
@@ -444,13 +444,13 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <path class="e" d="M904 134V188" marker-end="url(#ah)"/>
 
       <!-- 云端 第二行（右 → 左） -->
-      <g class="nd" tabindex="0" data-tip="按说话人轮次判定：当天在线聚类（只留簇质心）+ 机主声纹验证（轮次级与簇级）。重叠段永不判机主。一期纯声纹；二期按 VPU 三态 × 声纹三档融合。疑似回放 → 隔离；不确定 → 未知说话人（接受）。完成后识别结果落盘，删除音频及派生物（簇质心除外），并回执手机删除暂存。" data-ref="s5-6"><rect x="860" y="190" width="88" height="50" rx="7"/><text class="t c" x="904" y="214">机主判定</text><text class="s c" x="904" y="231"><tspan class="only-p1">声纹</tspan><tspan class="only-p2">声纹 × VPU</tspan></text></g>
+      <g class="nd" tabindex="0" data-tip="按说话人轮次判定：当天在线聚类（只留簇质心）+ 机主声纹验证（轮次级与簇级）。实际重叠区间不判机主。一期以声纹为主（近场特征作为输入）；二期按 VPU 三态 × 声纹三档融合。疑似回放 → 隔离；不确定 → 未知说话人（接受）。完成后识别结果落盘，删除音频及派生物（簇质心除外），并回执手机删除暂存。" data-ref="s5-6"><rect x="860" y="190" width="88" height="50" rx="7"/><text class="t c" x="904" y="214">机主判定</text><text class="s c" x="904" y="231"><tspan class="only-p1">声纹</tspan><tspan class="only-p2">声纹 × VPU</tspan></text></g>
       <use href="#hex" x="874" y="190" class="gate g-iso"/><text class="gt c" x="874" y="194">G5</text>
       <path class="e" d="M860 215H848" marker-end="url(#ah)"/>
-      <g class="nd" tabindex="0" data-tip="自部署 7B 级小模型对文字分类：剧台词、广告、播报、解说、歌词、有声书。输出只能把接受降为隔离。只读文字，在音频删除后运行。" data-ref="s5-1"><rect x="758" y="190" width="88" height="50" rx="7"/><text class="t c" x="802" y="214">内容门控</text><text class="s c" x="802" y="231">只降级</text></g>
+      <g class="nd" tabindex="0" data-tip="自部署 7B 级小模型只读文字，在音频删除后运行。两件事：媒体内容（剧台词、广告、播报、解说、歌词、有声书）可降为隔离；与机主不在同一场对话的真人标为背景，仍在接受档，但不进纪要与待办。" data-ref="s5-1"><rect x="758" y="190" width="88" height="50" rx="7"/><text class="t c" x="802" y="214">相关性</text><text class="s c" x="802" y="231">降级或标背景</text></g>
       <use href="#hex" x="772" y="190" class="gate g-iso"/><text class="gt c" x="772" y="194">G6</text>
       <path class="e" d="M758 215H746" marker-end="url(#ah)"/>
-      <g class="nd" tabindex="0" data-tip="只改专名；在拼音召回出的候选中做闭集选择，只输出 diff，每条带依据；否定、数字、日期、情态、改口不可触碰。默认关闭。" data-ref="s5-5"><rect x="656" y="190" width="88" height="50" rx="7"/><text class="t c" x="700" y="214">专名纠错</text><text class="s c" x="700" y="231">闭集 diff</text></g>
+      <g class="nd" tabindex="0" data-tip="只改专名；在拼音、音素召回出的候选中做可弃权的闭集重排，原文始终是候选之一；只输出 diff，每条带依据；否定、数字、日期、情态、改口不可触碰。默认关闭。" data-ref="s5-5"><rect x="656" y="190" width="88" height="50" rx="7"/><text class="t c" x="700" y="214">专名纠错</text><text class="s c" x="700" y="231">闭集 diff</text></g>
       <path class="e" d="M656 215H644" marker-end="url(#ah)"/>
       <g class="nd" tabindex="0" data-tip="逐项判定，记下全部命中原因，处置取最严的一档，只收紧不放宽。拒绝只用于非语音与无语音帧的幻觉。" data-ref="s5-7"><rect x="554" y="190" width="88" height="50" rx="7"/><text class="t c" x="598" y="214">三档裁决</text><text class="s c" x="598" y="231">接受·隔离·拒绝</text></g>
       <use href="#hex" x="568" y="190" class="gate g-verdict"/><text class="gt c" x="568" y="194">G7</text>
@@ -497,7 +497,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <tr><td class="mono">G3</td><td>云端</td><td>播放声</td><td>只打标签；二期可选跳过，默认关</td><td>标签</td><td>标签（可选跳过）</td></tr>
       <tr><td class="mono">G4</td><td>云端</td><td>ASR 幻觉</td><td>无语音帧 → 拒绝；幻觉型且分歧大 → 隔离</td><td>✔</td><td>✔</td></tr>
       <tr><td class="mono">G5</td><td>云端</td><td>机主 / 他人 / 未知；疑似回放</td><td>疑似回放 → 隔离；不确定 → 未知说话人（接受）</td><td>纯声纹</td><td>声纹 × VPU</td></tr>
-      <tr><td class="mono">G6</td><td>云端</td><td>文字层面的媒体内容</td><td>只能把接受降为隔离</td><td>✔</td><td>✔</td></tr>
+      <tr><td class="mono">G6</td><td>云端</td><td>对话相关性与媒体内容</td><td>媒体内容降为隔离；不相关的真人标为背景（仍在接受档）</td><td>✔</td><td>✔</td></tr>
       <tr><td class="mono">G7</td><td>云端</td><td>汇总各级证据</td><td>记下全部原因，取最严一档</td><td>✔</td><td>✔</td></tr>
       <tr><td class="mono">G8</td><td>云端</td><td>纪要、待办、记忆的写入条件</td><td>按对话单元触发；只读接受档；排除背景簇；按承担人与说话人核对</td><td>✔</td><td>✔</td></tr>
     </tbody>
@@ -516,7 +516,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <ol class="small">
         <li>不可逆操作最保守：丢音频、不送识别、改写文字，证据充分才做。</li>
         <li>越靠前越便宜，但越靠前越不许误杀人声。</li>
-        <li>处置只收紧不放宽；只有用户“放回”可以升级。</li>
+        <li>处置只收紧不放宽；只有用户操作可以升级，且每种操作只确认一个维度（§5.10）。</li>
         <li>宁可漏记，不可错记；说不准是谁说的就记为“未知说话人”，不归到任何人名下。</li>
         <li>每一级都能单独开关，与“不做”配对评测。</li>
       </ol>
@@ -534,7 +534,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
     <div class="fig wide">
     <svg viewBox="0 0 1000 320" role="img" aria-label="L1 领夹模块图：麦克风、VPU、IMU 输入常开 VAD 与特征提取，经 Opus 编码写入 Flash 环形缓冲，再由 BLE 突发传输到手机">
       <g class="nd" tabindex="0" data-tip="二期上向麦：SNR ≥65 dBA，声学过载点 ≥120 dB SPL，低功耗模式，加防风网罩。一期按单麦（待确认）。" data-ref="s3"><rect x="20" y="30" width="150" height="44" rx="7"/><text class="t c" x="95" y="49"><tspan class="only-p2">上向麦</tspan><tspan class="only-p1">麦克风</tspan></text><text class="s c" x="95" y="65"><tspan class="only-p2">SNR ≥65 · AOP ≥120 dB</tspan><tspan class="only-p1">一期按单麦（待确认）</tspan></text></g>
-      <g class="nd p2only" tabindex="0" data-tip="外向麦：机械隔振；价值在方向（机主固定在上方）和相干性（远场声源两麦相干性低），而非 1–1.5 cm 间距下只有零点几 dB 的声级差。" data-ref="s3"><rect x="20" y="86" width="150" height="44" rx="7"/><text class="t c" x="95" y="105">外向麦</text><text class="s c" x="95" y="121">隔振 · 方向/相干性</text><text class="corner r" x="166" y="97">二期</text></g>
+      <g class="nd p2only" tabindex="0" data-tip="外向麦：机械隔振；价值在方向（机主固定在上方）和直达/混响比，而非 1–1.5 cm 间距下只有零点几 dB 的声级差。理想的单一远场声源在两麦上高度相干，不能拿相干性低当播放声判据。" data-ref="s3"><rect x="20" y="86" width="150" height="44" rx="7"/><text class="t c" x="95" y="105">外向麦</text><text class="s c" x="95" y="121">隔振 · 方向/混响比</text><text class="corner r" x="166" y="97">二期</text></g>
       <path class="e" d="M170 52H205V78H238" marker-end="url(#ah)"/>
       <path class="e p2only" d="M170 108H205V78"/>
 
@@ -576,7 +576,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
         <thead><tr><th>方案</th><th>提供什么</th><th>结论</th></tr></thead>
         <tbody>
           <tr><td>单麦</td><td>相对机主基线的声级、直达/混响比</td><td>一期现状</td></tr>
-          <tr><td><b>双麦（上向 + 外向）</b></td><td>方向先验、相干性</td><td><b>二期基线</b></td></tr>
+          <tr><td><b>双麦（上向 + 外向）</b></td><td>方向先验、直达/混响比</td><td><b>二期基线</b></td></tr>
           <tr><td>三麦及以上</td><td>更好的波束与定位</td><td>不做：功耗、尺寸</td></tr>
         </tbody>
       </table></div>
@@ -743,12 +743,12 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
 <!-- §5 -->
 <section id="s5" data-label="§5">
   <h2><span class="no">§5</span>云端</h2>
-  <p class="lede">G2 到 G5 需要音频；G5 判定与对齐完成后，识别结果落盘，音频随即删除。之后的内容门控、专名纠错、三档裁决和入库都只读文字，纪要、待办、记忆按对话单元生成。5.1–5.9 定规则，5.10 写各模块的能力与效果规格，5.11–5.14 是技术中立的实现设计。</p>
+  <p class="lede">G2 到 G5 需要音频；G5 判定与对齐完成后，识别结果落盘，音频随即删除。之后的相关性门控、专名纠错、三档裁决和入库都只读文字，纪要、待办、记忆按对话单元生成。5.1–5.9 定规则，5.10 写各模块的能力与效果规格，5.11–5.14 是技术中立的实现设计。</p>
 
   <figure id="fig-l1c">
     <div class="fighead"><div><span class="lvl">L1</span><b>云端 · 识别与判定</b></div><span class="minimap" data-seg="2"></span></div>
     <div class="fig wide">
-    <svg viewBox="0 0 1100 430" role="img" aria-label="L1 云端识别与判定：接收解码、VAD 复核、播放检测、8B 主干转写、健康检查，再经机主判定、内容门控、专名纠错、三档裁决进入转写库；旁路有音频桶、清单、偏置表、600M、热词库、声纹库与 VPU">
+    <svg viewBox="0 0 1100 430" role="img" aria-label="L1 云端识别与判定：接收解码、VAD 复核、播放检测、8B 主干转写、健康检查，再经机主判定、相关性门控、专名纠错、三档裁决进入转写库；旁路有音频桶、清单、偏置表、600M、热词库、声纹库与 VPU">
       <g class="nd store" tabindex="0" data-tip="短期存储桶，每用户数据密钥加密；永久失败重试 48 小时后删除，生命周期规则 72 小时强制删除兜底。关闭版本控制，不进备份，不做跨区域复制。" data-ref="s7"><rect x="20" y="10" width="170" height="50" rx="7"/><use href="#lock" class="lock" x="30" y="18" width="12" height="14"/><text class="t c" x="105" y="31">短期音频桶</text><text class="s c" x="105" y="48">重试 48 h · 兜底 72 h</text></g>
       <path class="e dot" d="M105 60V88" marker-end="url(#ah)"/>
       <g class="nd" tabindex="0" data-tip="来自手机清单：场景事件（本机外放、免提、日历派生字段）、L1 的 VAD 结果。" data-ref="s4-4"><rect x="440" y="10" width="170" height="50" rx="7"/><text class="t c" x="525" y="31">清单输入</text><text class="s c" x="525" y="48">场景快照 · L1 标签</text></g>
@@ -774,12 +774,12 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <use href="#hex" x="874" y="90" class="gate g-drop"/><text class="gt c" x="874" y="94">G4</text>
       <path class="e" d="M945 154V228" marker-end="url(#ah)"/>
 
-      <g class="nd" tabindex="0" data-tip="按说话人轮次判定。当天在线聚类，只留簇质心与计数；每个轮次与每簇（≥10 s 语音）各算一次机主得分；&lt;1.5 s 短轮次只在簇得分高、离簇中心近、不与他人相邻或重叠时随簇。重叠段与不确定 → 未知说话人。" data-ref="s5-6"><rect x="860" y="230" width="170" height="64" rx="7"/><text class="t c" x="945" y="257">机主判定</text><text class="s c" x="945" y="276"><tspan class="only-p1">聚类 + 声纹</tspan><tspan class="only-p2">聚类 + 声纹 × VPU</tspan></text></g>
+      <g class="nd" tabindex="0" data-tip="按说话人轮次判定。当天在线聚类，只留簇质心与计数；每个轮次与每簇（≥10 s 语音）各算一次机主得分；&lt;1.5 s 短轮次结合簇得分、前后长轮次与帧级证据判断，不因紧邻他人就自动记未知。实际重叠区间与仍拿不准的 → 未知说话人。" data-ref="s5-6"><rect x="860" y="230" width="170" height="64" rx="7"/><text class="t c" x="945" y="257">机主判定</text><text class="s c" x="945" y="276"><tspan class="only-p1">聚类 + 声纹</tspan><tspan class="only-p2">聚类 + 声纹 × VPU</tspan></text></g>
       <use href="#hex" x="874" y="230" class="gate g-iso"/><text class="gt c" x="874" y="234">G5</text>
       <path class="e" d="M860 262H822" marker-end="url(#ah)"/>
       <path d="M840 196V304" stroke="var(--accent)" stroke-width="1.6" stroke-dasharray="6 4"/>
       <text class="tiny r" x="834" y="212" style="fill:var(--accent);font-weight:700">检查点：识别结果落盘，删除音频</text>
-      <g class="nd" tabindex="0" data-tip="按窗口批量输入（约 20 个轮次一窗，窗间重叠 2 个作上下文）+ G3 标签，逐轮次输出 JSON {p_media, kind}；输入 token 约为转写量的 1.3 倍。无工具权限，只分类不执行。他人语音前后 2 分钟机主都没发言且 p_media 偏高时加重播放判断。" data-ref="s5-1"><rect x="650" y="230" width="170" height="64" rx="7"/><text class="t c" x="735" y="257">内容门控</text><text class="s c" x="735" y="276">小 LLM · 只降级</text></g>
+      <g class="nd" tabindex="0" data-tip="窗口按时间与 token 双重限制（初始约 2 分钟或 2,000 token，前后各留上下文）+ G3 标签与来源证据，逐片段输出 JSON {p_media, kind, relevance}；p_media 须在标注集上校准后才当概率用。输入 token 约为转写量的 1.3 倍。无工具权限，只分类不执行。媒体内容可降为隔离；不相关的真人标为背景。" data-ref="s5-1"><rect x="650" y="230" width="170" height="64" rx="7"/><text class="t c" x="735" y="257">相关性门控</text><text class="s c" x="735" y="276">小 LLM · 降级或标背景</text></g>
       <use href="#hex" x="664" y="230" class="gate g-iso"/><text class="gt c" x="664" y="234">G6</text>
       <path class="e" d="M650 262H612" marker-end="url(#ah)"/>
       <g class="nd" tabindex="0" data-tip="闭集选择、只输出 diff、按热词类别分级证据门槛、每段最多 3 条、保护词不可触碰；原识别文字与 diff 一起保存，可一键撤销。默认关闭。" data-ref="s5-5"><rect x="440" y="230" width="170" height="64" rx="7"/><text class="t c" x="525" y="257">专名纠错</text><text class="s c" x="525" y="276">闭集 diff · 默认关闭</text></g>
@@ -812,7 +812,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <path class="e" d="M180 100H208" marker-end="url(#ah)"/>
       <g class="nd" tabindex="0" data-tip="日历会议时段成一个单元；其余时段连续 ≥10 分钟没有接受档语音即切开。切口出现、且之前没有还在路上的缺口时关闭；缺口等待超过 2 小时先关闭并标“可能不完整”。立即同步临时关闭；迟到分片、续说与用户改字、改标会重开、重新生成。" data-ref="s5-9"><rect x="210" y="70" width="160" height="60" rx="7"/><text class="t c" x="290" y="96">对话单元</text><text class="s c" x="290" y="114">会议 · 10 分钟静默</text></g>
       <path class="e" d="M370 100H398" marker-end="url(#ah)"/>
-      <g class="nd" tabindex="0" data-tip="G8 规则见 §5.8：单元关闭后运行；只读接受档；按轮流发言判出背景簇，不作上下文；待办按承担人分四类、按说话人核对，未知说话人与背景簇不能支撑；记忆只采信证据级机主原话；他人话里关于机主的说法不写成事实。" data-ref="s5-8"><rect x="400" y="70" width="150" height="60" rx="7"/><text class="t c" x="482" y="96">入库闸门</text><text class="s c" x="482" y="114">按说话人核对</text></g>
+      <g class="nd" tabindex="0" data-tip="G8 规则见 §5.8：单元关闭后运行；只读接受档；相关性判定为背景的不作上下文；待办按承担人分四类、按说话人核对，未知说话人与背景簇不能支撑；记忆只采信证据级机主原话；他人话里关于机主的说法不写成事实。" data-ref="s5-8"><rect x="400" y="70" width="150" height="60" rx="7"/><text class="t c" x="482" y="96">入库闸门</text><text class="s c" x="482" y="114">按说话人核对</text></g>
       <use href="#hex" x="414" y="70" class="gate g-store"/><text class="gt c" x="414" y="74">G8</text>
       <path class="e" d="M550 100H570M570 40V207"/>
       <path class="e" d="M570 40H598" marker-end="url(#ah)"/>
@@ -886,7 +886,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <thead><tr><th>G3 证据</th><th>来源</th><th>判别力</th><th>局限</th></tr></thead>
       <tbody>
         <tr><td>声学回放特征</td><td>回放检测模型，自建重录语料训练</td><td>扬声器频响、压缩痕迹、房间混响</td><td>好音箱近距离不明显；16 kb/s 抹掉细节</td></tr>
-        <tr><td>手机场景快照</td><td>§4.4</td><td>本机外放几乎确定</td><td>不覆盖电视、电脑、别人的手机</td></tr>
+        <tr><td>手机场景快照</td><td>§4.4</td><td>本机外放的时段几乎确定</td><td>不覆盖电视、电脑、别人的手机；只说明当时有外放，不证明某句话来自手机</td></tr>
         <tr class="p2only"><td>空间特征（二期双麦）</td><td>方向长时间不变、直达/混响比低</td><td>固定远场声源</td><td>坐着不动的真人也是固定方向</td></tr>
         <tr><td>交互特征（G6 计算）</td><td>机主是否与该声源轮流发言</td><td>电视不会接机主的话</td><td>需识别之后才能算；线上会议的远端发言经外放也会与机主轮流，属于真人。单元级的参与者判定见 §5.8</td></tr>
         <tr class="p2only"><td>VPU（二期）</td><td>机主是否在发声</td><td><b>只判机主有没有说话</b></td><td>分不清电视和在场的真人</td></tr>
@@ -906,11 +906,11 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
         </ul>
       </div>
       <div class="card"><h3>G6 内容门控的边界</h3>
-        <p class="small">对风格化内容（广告、播报、歌词、剧台词）有效；对“电视里的普通对话”和“在场真人的闲聊”基本无能为力，这部分只能靠声学与空间特征。90% 播放声召回要按内容类别分别报告。</p>
+        <p class="small">文风判断对风格化内容（广告、播报、歌词、剧台词）有效，对“电视里的普通对话”和“在场真人的闲聊”帮不上。这两类交给 §5.10 的相关性判定：称呼、问答关系、语义承接、连续互动与声源证据。无关媒体的拦截召回按内容类别报告（R2b）。</p>
         <div class="tbl"><table>
           <thead><tr><th>回放机主录音</th><th>手段</th><th>残余</th></tr></thead>
           <tbody>
-            <tr><td>一期</td><td>本机外放 + 声纹高 → 疑似回放；回放特征</td><td><b>别的设备回放防不住</b></td></tr>
+            <tr><td>一期</td><td>本机外放 + 声纹高 + 回放特征（或机主活动证据弱）→ 疑似回放；机主可能边听边说，单凭外放不判</td><td><b>别的设备回放防不住</b></td></tr>
             <tr><td>二期</td><td>声纹高 + VPU 有效且静默 → 隔离</td><td>VPU 失效时退回一期</td></tr>
           </tbody>
         </table></div>
@@ -925,7 +925,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <thead><tr><th>模型</th><th>职责</th><th class="num">处理量</th></tr></thead>
       <tbody>
         <tr><td><b>8B 主干</b></td><td>全部有效音频转写，接收上下文热词偏置</td><td class="num">100%</td></tr>
-        <tr><td>600M 辅助</td><td>可疑片段交叉校验；强制对齐（CTC 头<span class="tg ask">待确认</span>）；可选编码器特征</td><td class="num">校验 ≈20% · 对齐 100%</td></tr>
+        <tr><td>600M 辅助</td><td>可疑片段交叉校验；强制对齐与全量声学支持评分（CTC 头<span class="tg ask">待确认</span>）；可选编码器特征</td><td class="num">校验 ≈20% · 对齐 100%</td></tr>
         <tr><td>CPU 小模型</td><td>VAD、声音事件、回放检测、声纹嵌入、重叠检测</td><td class="num">100%</td></tr>
       </tbody>
     </table></div>
@@ -943,9 +943,9 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
   <div id="s5-3" data-label="§5.3" style="display:flex;flex-direction:column;gap:14px">
     <h3>5.3 热词：三类来源，三层机制</h3>
     <figure id="fig-hot">
-      <div class="fighead"><div><span class="lvl">L2</span><b>热词流水线：① 解码前检索 → ② 解码后拼音召回 → ③ 闭集纠错</b></div></div>
+      <div class="fighead"><div><span class="lvl">L2</span><b>热词流水线：① 解码前检索 → ② 解码后音系召回 → ③ 闭集纠错</b></div></div>
       <div class="fig wide">
-      <svg viewBox="0 0 1000 300" role="img" aria-label="热词流水线：公共、行业、个人三类来源经上下文检索生成偏置表送入 8B 解码一次；转写文本再经拼音召回全量词库，最后闭集纠错输出 diff">
+      <svg viewBox="0 0 1000 300" role="img" aria-label="热词流水线：公共、行业、个人三类来源经上下文检索生成偏置表送入 8B 解码一次；转写文本再经拼音、音素召回全量词库，最后闭集纠错输出 diff">
         <g class="nd store"><rect x="20" y="20" width="170" height="48" rx="7"/><text class="t c" x="105" y="40">公共热词</text><text class="s c" x="105" y="57">1–5 万 · 运营按版本发布</text></g>
         <g class="nd store"><rect x="20" y="80" width="170" height="48" rx="7"/><text class="t c" x="105" y="100">行业热词</text><text class="s c" x="105" y="117">每包 0.5–3 万 · 用户自选</text></g>
         <g class="nd store"><rect x="20" y="140" width="170" height="48" rx="7"/><text class="t c" x="105" y="160">个人热词</text><text class="s c" x="105" y="177">几百至几千 · 按时间窗</text></g>
@@ -963,7 +963,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
         <path class="e" d="M885 114V150H710V178" marker-end="url(#ah)"/>
         <path class="e" d="M205 230H628" marker-end="url(#ah)"/>
         <text class="tiny" x="420" y="224">全量三类库</text>
-        <g class="nd"><rect x="630" y="180" width="160" height="56" rx="7"/><text class="t c" x="710" y="203">② 拼音召回</text><text class="s c" x="710" y="221">全量库 · 模糊音</text></g>
+        <g class="nd"><rect x="630" y="180" width="160" height="56" rx="7"/><text class="t c" x="710" y="203">② 音系召回</text><text class="s c" x="710" y="221">拼音 · 音素 · 模糊音</text></g>
         <path class="e" d="M790 208H818" marker-end="url(#ah)"/>
         <g class="nd"><rect x="820" y="180" width="160" height="56" rx="7"/><text class="t c" x="900" y="203">③ 闭集纠错</text><text class="s c" x="900" y="221">分级门槛 · 只出 diff</text></g>
         <path class="e" d="M980 208H996" marker-end="url(#ah)"/>
@@ -1065,7 +1065,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
         <rect x="40" y="62" width="104" height="56" rx="6" class="owner"/><text class="t c owner-t" x="92" y="95">机主</text>
         <rect x="150" y="62" width="104" height="56" rx="6" class="unk"/><text class="t c unk-t" x="202" y="88">未知</text><text class="tiny c unk-t" x="202" y="106">接受 · 不归属</text>
         <rect x="260" y="62" width="104" height="56" rx="6" class="other"/><text class="t c other-t" x="312" y="95">他人</text>
-        <rect x="40" y="134" width="324" height="40" rx="6" class="iso"/><text class="tiny iso-t" x="52" y="158">本机外放 + 声纹高 → 疑似回放 → 隔离</text>
+        <rect x="40" y="134" width="324" height="40" rx="6" class="iso"/><text class="tiny iso-t" x="52" y="158">本机外放 + 声纹高 + 回放特征 → 疑似回放 → 隔离</text>
         <text class="tiny" x="40" y="196" style="fill:var(--g-drop)">用别的设备回放机主录音：一期防不住</text>
         <text class="tiny" x="40" y="214">T_high¹ 比二期的 T_high² 更严</text>
 
@@ -1095,11 +1095,11 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <div class="card"><h3>流程</h3>
         <ol class="small">
           <li>判定单位是说话人轮次：按换人点切分，再用 600M 的 CTC 对齐把字分到各轮次；一个识别分片可以包含多个轮次。</li>
-          <li>当天在线聚类（CAM++ / ERes2NetV2 一类）：只保留各簇质心与计数，新轮次归入已有簇或新建；逐轮次嵌入在 G5 检查点删除。簇号只在业务日内有效，质心在业务日结束后再留 12 小时供迟到分片使用，更晚到达的分片单独聚类、簇号标“迟到”。</li>
+          <li>当天在线聚类（CAM++ / ERes2NetV2 一类）：只保留各簇质心与计数，新轮次归入已有簇或新建；逐轮次嵌入在批内重聚类后、G5 检查点删除（2 / 6 小时缓存是一期变体，§5.10）。簇号只在业务日内有效，质心在业务日结束后再留 12 小时供迟到分片使用，更晚到达的分片单独聚类、簇号标“迟到”。</li>
           <li>轮次级得分 + 簇级得分（簇累计 ≥10 s 语音后）。</li>
-          <li>&lt;1.5 s 短轮次：簇得分高、离簇中心近、不与他人相邻或重叠时才随簇；否则记为未知说话人。</li>
-          <li>重叠段记为未知说话人。</li>
-          <li>近场特征只作辅助与否决，不能单独授予机主。</li>
+          <li>&lt;1.5 s 短轮次：结合簇得分、离簇中心距离、前后长轮次与帧级证据判断，不因紧邻他人就自动记为未知；仍拿不准的记为未知说话人。</li>
+          <li>只有实际重叠和边界模糊的区间记为未知说话人，不扩大到整段。</li>
+          <li>近场特征（相对声级、直达/混响比）作为模型输入，不能单独授予机主。</li>
           <li>簇名：单元关闭时，LLM 按称呼线索（“小王你……”）和该会议时段的个人热词（日历参会人）给他人簇建议名字，用户确认后才显示。名字只在业务日内有效，不跨天关联，不形成他人身份档案。</li>
         </ol>
       </div>
@@ -1140,7 +1140,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
         <text class="s" x="30" y="404">处置取命中原因中最严的一档（拒绝 &gt; 隔离 &gt; 接受）；主原因取该档最靠上的一条，其余原因一并保存。</text>
       </svg>
       </div>
-      <figcaption>“每一级省多少、伤多少”（§9）按 reasons 全量统计，所以不能在第一个命中处停下。原来的可选策略“背景他人语音隔离”已删除：没有机主参与的对话单元不出纪要（§5.9）；有机主参与的单元里，与机主没有来回的背景簇不作纪要上下文（§5.8），都不必隔离。</figcaption>
+      <figcaption>“每一级省多少、伤多少”（§9）按 reasons 全量统计，所以不能在第一个命中处停下。原来的可选策略“背景他人语音隔离”已删除：没有机主参与的对话单元不出纪要（§5.9）；有机主参与的单元里，相关性判定为背景的人不作纪要上下文（§5.8），都不必隔离。</figcaption>
     </figure>
 
     <div class="tbl"><table>
@@ -1150,7 +1150,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
         <tr><th>App 时间线</th><td>正常显示；未知说话人单独标注，可改标；低置信处在原文旁列出候选，点选即改字</td><td>折叠、标原因、可放回</td><td>只显示“已过滤 X 分钟”</td></tr>
         <tr><th>纪要</th><td>进入（按对话单元）；未知说话人只作上下文，背景簇不进入</td><td>内容不进入；落在单元时段内的只给占位：时段与原因（如“20:05–20:17 播放视频，已隔离”）</td><td>—</td></tr>
         <tr><th>待办</th><td>可引用（按 G8 核对）；未知说话人与背景簇不能支撑</td><td>不可</td><td>—</td></tr>
-        <tr><th>记忆</th><td>证据级机主原话可写入；未知说话人不进</td><td>不可</td><td>—</td></tr>
+        <tr><th>记忆</th><td>证据级机主原话、且过四维核验才可写入；未知说话人不进</td><td>不可</td><td>—</td></tr>
         <tr><th>搜索</th><td>可搜</td><td>只在隔离区内可搜</td><td>—</td></tr>
       </tbody>
     </table></div>
@@ -1164,7 +1164,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <tbody>
         <tr><td>触发</td><td>对话单元关闭后运行（§5.9）；单元重开时重新生成。用户改字、改标说话人、改背景标记都会重开所在单元</td></tr>
         <tr><td>参与者与背景</td><td>由 G6 的相关性判定（§5.10）：综合称呼、问答关系、语义承接、连续互动、声源证据与场景先验，以片段为主、簇级结论作先验。轮次前后相接只是一项特征，偶然相邻会把无关簇连进来；日历只是先验，日历会议同样评估。相关性低的他人片段或簇为背景：照常显示，不作纪要上下文，不支撑待办。用户可把背景改为参与者</td></tr>
-        <tr><td>纪要</td><td>只读接受档；机主、参与者、未知说话人的话都可作上下文，背景簇不作上下文。隔离档只以占位出现：时段与原因，不含任何文字，让模型知道“当时在看视频”而读不到视频里的话。已归属机主少于 3 句的单元不生成纪要和待办（日历会议除外，用户可手动生成）</td></tr>
+        <tr><td>纪要</td><td>只读接受档；机主、参与者、未知说话人的话都可作上下文，背景簇不作上下文。隔离档只以占位出现：时段与原因，不含任何文字，让模型知道“当时在看视频”而读不到视频里的话。已归属机主少于 3 句的单元不生成纪要和待办（日历会议与机主明确口述的记录或提醒除外，用户可手动生成）</td></tr>
         <tr><td>待办分类</td><td>按承担人分四类，承担人与说话人分开记录：“这个交给小王”是机主原话，任务却是小王的</td></tr>
         <tr><td>我答应的</td><td>承担人是机主：至少引用一段<b>证据级机主原话</b>，且引用中的关键字段（否定、数字、日期、人名）没有低声学支持区间，引用确实支持“已接受”的状态；否则“未核实”：照常展示，不按期限提醒</td></tr>
         <tr><td>对方要我做的</td><td>承担人是机主：引用参与者的请求原话，并有机主的应答（时间线级即可）；机主没有应答则“未核实”</td></tr>
@@ -1279,10 +1279,10 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <tbody>
         <tr><td>切分</td><td>日历会议时段内的轮次按 <code>meeting_hash</code> 成为一个单元；其余时段连续 ≥10 分钟没有接受档语音就切开；停顿不到 10 分钟、但前后各 5 分钟的参与者没有交集（机主先后和两拨人说话）也切开，阈值由评测调整。日历时段前后各留 10 分钟容差：提前开始或超时的轮次，参与者与会中相同就并入会议单元。隔离档不参与切分，也不进任何单元。</td></tr>
         <tr><td>关闭</td><td>切口已经出现，而且切口之前没有还在路上的缺口。帧序号有空洞、又没有缺口记录（手机上报的 <code>device_gate</code>、<code>device_drop</code>、<code>flash_error</code>、<code>phone_expired</code>，云端登记的 <code>cloud_failed</code>）就视为还在路上；等待超过 2 小时先关闭，标“可能不完整”，补到后重开。</td></tr>
-        <tr><td>生成</td><td>单元关闭后运行 G8，生成纪要、待办、记忆。已归属机主少于 3 句的单元不生成纪要和待办，但仍显示在时间线上、可搜索；日历会议除外，用户也可以在时间线上手动生成。</td></tr>
+        <tr><td>生成</td><td>单元关闭后运行 G8，生成纪要、待办、记忆。已归属机主少于 3 句的单元不生成纪要和待办，但仍显示在时间线上、可搜索；日历会议与机主明确口述的记录或提醒除外，用户也可以在时间线上手动生成。这是一期基线，相关性门槛验证后替换（§5.10）。</td></tr>
         <tr><td>立即同步</td><td>在最新一帧处临时关闭当前单元，转写可见后随即生成纪要。10 分钟内又有语音，或属于同一 <code>meeting_hash</code>，就重开这个单元。</td></tr>
         <tr><td>重开</td><td>迟到或补传的分片落进已关闭的单元，立即同步后有续说，或用户改字、改标说话人、改背景标记：重新生成纪要，替换而不是追加；被取代的待办与记忆按溯源撤回，App 显示“纪要已更新”。</td></tr>
-        <tr><td>线上会议</td><td><code>calendar.is_online</code> 为真、单元里他人语音占比低于阈值时，标“单边录音”：机主多半戴着耳机，对方的话没录到。纪要只写机主说过的话，不推断对方的结论，并提示用户。对方经外放时，远端发言会被 G3 打上播放声标签，但只是标签；它们与机主轮流发言，是参与者。</td></tr>
+        <tr><td>线上会议</td><td><code>calendar.is_online</code> 为真、单元里他人语音占比低于阈值时，标“单边录音”：机主多半戴着耳机，对方的话没录到。纪要只写机主说过的话，不推断对方的结论，并提示用户。对方经外放时，远端发言会被 G3 打上播放声标签，但只是标签；它们与机主有问答往来，相关性判定为参与者。</td></tr>
         <tr><td>处理状态</td><td>App 对每个单元显示当前状态：等待领夹同步、上传中、识别中（服务降级时注明）、等待补传、生成纪要、已完成。不出纪要的单元写明原因：机主发言少于 3 句、全在隔离档、单边录音，并给出“手动生成”。</td></tr>
         <tr><td>业务日与簇质心</td><td>业务日为本地 04:00 至次日 04:00。他人簇质心在业务日结束后再留 12 小时，供迟到分片归簇；更晚到达的分片单独聚类，簇号标“迟到”，不回并。</td></tr>
       </tbody>
@@ -1293,8 +1293,9 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
   <div id="s5-10" data-label="§5.10" style="display:flex;flex-direction:column;gap:14px">
     <h3>5.10 模块能力与效果规格</h3>
     <p class="small">5.1–5.9 写的是处置规则，这一节写各模块的判别能力本身。问卷前两位的问题（混入、归错人）能改善多少，取决于能力与规则的组合。本节结论经两轮对辩形成：先请外部模型独立评估，再把我们的判断交给它逐条反驳，事实性陈述由我们核实后取舍。下面的参数是建议的初始值，须在调参集上实测后冻结。</p>
-    <div class="grid2">
+    <div class="grid3">
       <div class="card"><h3>G5 是声学证据的最终完成点</h3><p class="small">音频删除后，只能读文字，无法再做任何声学判断。所以凡是需要音频的工作，都在 G5 定稿前做完：批内重聚类与重分段、候选的声学评分、限额的局部复核。之后的环节只读文字，承诺不变。</p></div>
+      <div class="card"><h3>删音频前写进片段的证据</h3><p class="small">词级候选及来源、候选的声学评分、全量声学支持与局部低支持区间、归属模糊区间、实际重叠范围、来源证据及其覆盖范围、相对声级与直达/混响比、二期的 VPU 有效性与同步质量。只存标量、区间与标签，不存高维声学表示，免得变相保留重跑能力。</p></div>
       <div class="card"><h3>能力与规则联合验收</h3><p class="small">每个模块单独评测，也看组合后的最终产物。阈值只在调参集选定，冻结后到测试集验收；同时报告产出覆盖率，避免靠大量弃权换来漂亮的精度。</p></div>
     </div>
     <figure id="fig-effect">
@@ -1381,7 +1382,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
 
     <div class="grid2">
       <div class="card"><h3>效果预算</h3>
-        <p class="small">按 5 小时高位口径，基线约 ¥25.2/月，离 ¥27 只剩约 ¥1.8。5% 音频的局部复核约 +¥0.75，G8 疑难升级约 +¥0.9，合计 ¥1.65，已接近全部余量。所以一期默认只启用复用现有计算的能力：CTC 声学支持（复用对齐）、批内重聚类（复用嵌入）、结构化抽取（同一模型，不加调用）。复核与升级作为变体，联合成本过线才启用。典型 3 小时用户余量更大，但验收按高位口径。</p>
+        <p class="small">按 5 小时高位口径，基线约 ¥25.2/月，离 ¥27 只剩约 ¥1.8。5% 音频的局部复核约 +¥0.75，G8 疑难升级约 +¥0.9，合计 ¥1.65，已接近全部余量。所以一期默认只启用复用现有计算的能力：CTC 声学支持（复用对齐）、批内重聚类（复用嵌入）、结构化抽取（同一模型，不加调用）。复核与升级作为变体，联合成本过线才启用。这笔余量还没扣立即同步的峰值预留（§8，+¥0–3）：同步若集中在下班时段，高位口径下已无余量，复核与升级只能靠压低预留或其他环节的节省腾出。典型 3 小时用户余量更大，但验收按高位口径。</p>
       </div>
       <div class="card"><h3>逐轮次嵌入缓存（一期变体）</h3>
         <p class="small">默认在批内重聚类后即删。变体比较批内、最长 2 小时、最长 6 小时三档；只有跨批的 S2、O1、N3、N4 有明确净收益才采用，并取最短有效期限。若采用：音频仍在 G5 后即删；只保留嵌入、轮次对应与质量权重，仅用于同用户、同业务日内当前对话的归属修订；单元首次关闭后的重聚类完成即删，任何情况下不超过提取后 6 小时；续说、补传、用户编辑都不延长期限，单元重开也不恢复；不用于跨天关联、模板更新、训练或属性推断。采用时同步修改 §7 的例外说明。</p>
@@ -1442,12 +1443,12 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
         <path class="e d" d="M530 250H405V100H360V88" marker-end="url(#ah)"/>
 
         <path class="e" d="M965 272V316" marker-end="url(#ah)"/>
-        <g class="nd" tabindex="0" data-tip="只读文字：G6 内容门控、专名纠错（小 LLM）、G7 汇总裁决。G7 完成前片段对 App 不可见，免得电视台词先露出来再被隔离。" data-ref="s5-7"><rect x="890" y="318" width="150" height="60" rx="7"/><text class="t c" x="965" y="342">文字管线</text><text class="s c" x="965" y="360">G6 · 纠错 · G7</text></g>
+        <g class="nd" tabindex="0" data-tip="只读文字：G6 相关性与内容门控、专名纠错（小 LLM）、G7 汇总裁决与四维资格。G7 完成前片段对 App 不可见，免得电视台词先露出来再被隔离。" data-ref="s5-7"><rect x="890" y="318" width="150" height="60" rx="7"/><text class="t c" x="965" y="342">文字管线</text><text class="s c" x="965" y="360">G6 · 纠错 · G7</text></g>
         <use href="#hex" x="904" y="318" class="gate g-verdict"/><text class="gt c" x="904" y="322">G7</text>
         <path class="e" d="M890 348H852" marker-end="url(#ah)"/>
         <g class="nd store" tabindex="0" data-tip="片段表与全文索引，按 user_ref 分片；隔离档只在隔离区可搜，7 天到期删除。" data-ref="s5-12"><rect x="700" y="318" width="150" height="60" rx="7"/><use href="#lock" class="lock" x="710" y="326" width="12" height="14"/><text class="t c" x="775" y="342">转写库</text><text class="s c" x="775" y="360">片段 · 三档 · 索引</text></g>
         <path class="e" d="M700 348H662" marker-end="url(#ah)"/>
-        <g class="nd" tabindex="0" data-tip="每个用户单写者的状态机：切分、关闭、立即同步临时关闭、重开；计算参与者与背景簇；每次关闭或重开递增单元代次。" data-ref="s5-9"><rect x="510" y="318" width="150" height="60" rx="7"/><text class="t c" x="585" y="342">单元调度器</text><text class="s c" x="585" y="360">按用户串行 · 代次</text></g>
+        <g class="nd" tabindex="0" data-tip="每个用户单写者的状态机：切分、关闭、立即同步临时关闭、重开；汇总 G6 的相关性，得出参与者与背景；每次关闭或重开递增单元代次。" data-ref="s5-9"><rect x="510" y="318" width="150" height="60" rx="7"/><text class="t c" x="585" y="342">单元调度器</text><text class="s c" x="585" y="360">按用户串行 · 代次</text></g>
         <path class="e" d="M510 348H472" marker-end="url(#ah)"/>
         <g class="nd" tabindex="0" data-tip="LLM 提议纪要、待办与记忆候选；G8 规则由代码校验：引用片段必须属于该单元、说话人与类别相符，不符的降为未核实或丢弃。完成时单元代次已变就作废重来。" data-ref="s5-8"><rect x="330" y="318" width="140" height="60" rx="7"/><text class="t c" x="400" y="342">G8 生成</text><text class="s c" x="400" y="360">LLM 提议 · 代码校验</text></g>
         <use href="#hex" x="344" y="318" class="gate g-store"/><text class="gt c" x="344" y="322">G8</text>
@@ -1747,7 +1748,9 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <tr><td class="mono">alternatives</td><td class="mono">array</td><td>低置信区间 top-3 候选文字：时间线上供点选改字（音频已删，无法回听），也供日后热词重排</td></tr>
       <tr><td class="mono">speaker</td><td class="mono">object</td><td><code>{label:"owner"|"other"|"unknown", cluster, cluster_name, engagement:"participant"|"background", owner_score, cluster_score, evidence_grade, source:"model"|"user"}</code>；<code>cluster_name</code> 只存用户确认过的名字，<code>engagement</code> 在单元关闭时计算、重开时重算</td></tr>
       <tr><td class="mono">disposition</td><td class="mono">object</td><td><code>{tier:"accept"|"quarantine"|"reject", reasons, primary, flags, expires_at_utc_ms}</code>；<code>reasons</code> 记全部命中原因，<code>flags</code> 如 <code>low_confidence</code></td></tr>
-      <tr><td class="mono">scores</td><td class="mono">object</td><td><code>{p_speech, p_playback_acoustic, p_media_content, phone_media, call_speaker, vpu:{state, voiced_ratio, valid_ratio}, overlap, asr_disagreement, spatial}</code></td></tr>
+      <tr><td class="mono">scores</td><td class="mono">object</td><td><code>{p_speech, p_playback_acoustic, p_media_content, relevance, phone_media, call_speaker, vpu:{state, voiced_ratio, valid_ratio}, overlap, asr_disagreement, acoustic_support, near_field:{rel_level_db, drr}, spatial}</code></td></tr>
+      <tr><td class="mono">low_support_spans</td><td class="mono">array</td><td>局部低声学支持区间（§5.10）：时间线在此列出候选；落在关键字段上时取消已核实待办与记忆的资格</td></tr>
+      <tr><td class="mono">eligibility</td><td class="mono">object</td><td><code>{summary, verified_todo, memory}</code>：四维核验的结果，记下不满足的维度（§5.10）；单元重开时重算</td></tr>
       <tr><td class="mono">hotwords</td><td class="mono">array</td><td>命中的热词 ID、类别、来源层</td></tr>
       <tr><td class="mono">versions</td><td class="mono">object</td><td>各环节模型与配置版本、声纹版本</td></tr>
       <tr><td class="mono">user_override</td><td class="mono">object</td><td>放回、降级、改标说话人的记录</td></tr>
@@ -1758,7 +1761,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
 <!-- §7 -->
 <section id="s7" data-label="§7">
   <h2><span class="no">§7</span>删除链</h2>
-  <p class="lede">设备等手机回执、手机等云端回执、云端等识别结果落盘。音频在 G5 判定与对齐完成后即删；内容门控、纠错、裁决、纪要、待办、记忆都只读文字，不在等待之列。领夹在手机回执后立即擦除，不只是标为可覆盖。唯一留下的声学派生物是他人簇质心，业务日结束后 12 小时删除。</p>
+  <p class="lede">设备等手机回执、手机等云端回执、云端等识别结果落盘。音频在 G5 判定与对齐完成后即删；内容门控、纠错、裁决、纪要、待办、记忆都只读文字，不在等待之列。领夹在手机回执后立即擦除，不只是标为可覆盖。写进片段的只有标量、区间与标签（§5.10）；高维的声学派生物只留他人簇质心，业务日结束后 12 小时删除。</p>
   <figure>
     <div class="fig wide">
     <svg viewBox="0 0 1100 360" role="img" aria-label="删除链三泳道状态机：设备、手机、云端各自的状态与跨段回执">
@@ -1811,7 +1814,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <text class="tiny c" x="740" y="347">永久失败：重试 48 h 后删除并登记缺口</text>
     </svg>
     </div>
-    <figcaption>识别结果包括 8B 文字、600M 校验结果、说话人判定与各项分数，足以让 G6 之后的环节不再需要音频。音频的派生物（解码 PCM、VAD 结果、逐轮次嵌入、VPU/IMU 轨迹、场景快照）与音频同时删除；后续还要用的场景字段（本机外放、免提、<code>meeting_hash</code>）在删除前写进片段。例外是他人簇质心（不含逐轮次嵌入），留到业务日结束后 12 小时。识别分片跨上传分片时，最后一个停顿点之后的尾部音频等下一批到达再识别，仍受 48 / 72 小时兜底约束。用户擦除时三端一起删；设备离线时记为“待清除”，重连后先清除再恢复上传。</figcaption>
+    <figcaption>识别结果包括 8B 文字、600M 校验结果、说话人判定、声学支持与低支持区间、词级候选、重叠范围与来源证据等标量，足以让 G6 之后的环节不再需要音频。音频的派生物（解码 PCM、VAD 结果、逐轮次嵌入、VPU/IMU 轨迹、场景快照）与音频同时删除；后续还要用的场景字段（本机外放、免提、<code>meeting_hash</code>）在删除前写进片段。例外是他人簇质心（不含逐轮次嵌入），留到业务日结束后 12 小时。识别分片跨上传分片时，最后一个停顿点之后的尾部音频等下一批到达再识别，仍受 48 / 72 小时兜底约束。用户擦除时三端一起删；设备离线时记为“待清除”，重连后先清除再恢复上传。</figcaption>
   </figure>
   <div class="grid3">
     <div class="card"><h3>放弃了什么</h3><p class="small">模型升级后不能重转历史音频；误拒或误判无法回到声学层复核；用户改字时无法回听。</p></div>
@@ -1914,7 +1917,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
         <text class="tiny c" x="240" y="220">−¥5</text><text class="tiny c" x="300" y="220">0</text><text class="tiny c" x="360" y="220">+¥5</text><text class="tiny c" x="420" y="220">+¥10</text><text class="tiny c" x="480" y="220">+¥15</text>
       </svg>
       </div>
-      <figcaption>常规批在低谷时段补满，利于 GPU 利用率；立即同步走快队列，按它的峰值预留容量。用量适中时预留几乎不增加成本，集中在下班时段使用时约 +¥3/月<span class="tg es">估算</span>。§5.10 的局部复核（5% 音频约 +¥0.75）与 G8 疑难升级（约 +¥0.9）合计约占高位口径下 ¥1.8 余量的全部，作为变体按联合成本启用。</figcaption>
+      <figcaption>常规批在低谷时段补满，利于 GPU 利用率；立即同步走快队列，按它的峰值预留容量。用量适中时预留几乎不增加成本，集中在下班时段使用时约 +¥3/月<span class="tg es">估算</span>。§5.10 的局部复核（5% 音频约 +¥0.75）与 G8 疑难升级（约 +¥0.9）合计约占高位口径下 ¥1.8 余量的全部；再加上立即同步预留就会超出 ¥27，所以二者作为变体，按联合成本启用。</figcaption>
     </figure>
   </div>
 
@@ -2032,6 +2035,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
   <ul class="small">
     <li><b>质量类</b>按场景报告点估计与按机主自助抽样的置信区间；任何场景不得出现超出噪声的回退。</li>
     <li><b>每一级与“不做”配对</b>：G1 丢弃、G3 跳过（可选）、G4 拒绝与隔离、G6 降级、专名纠错、热词偏置分别报“省多少、伤多少”，按 <code>reasons</code> 全量统计。</li>
+    <li><b>可验证性</b>：样本量按有效样本计。一期 ≥60 位他人按说话人聚类后，有效样本可能只有数百：能验时间线级 ≤1% 的零错误情形（约 300），验不了证据级 ≤0.2%（约 1,500）。二期验收前把他人扩到相应规模；在此之前，证据级 ≤0.2% 只报点估计与上限，不作为已证明的结论。28 小时、5 小时精标适合建开发基线，不足以单独支撑低误判承诺。</li>
     <li><b>同音色家人</b>逐对报告；二期退出时，最差一对的证据级误判点估计 ≤2%。</li>
     <li><b>线上监控</b>：拒绝时长占比、隔离占比与原因、未知说话人占比、用户放回率、改标与改字率、纪要重开率、两级队列延迟、单元关闭到纪要可见的延迟、各处理状态的停留时长、手动生成纪要率、背景簇改为参与者的比例、“这不是我说的”反馈率。</li>
   </ul>
@@ -2061,7 +2065,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
         <li>R1 ≥98%，R3 &lt;2%，R4 ≤3%</li>
         <li>O1 ≥85%（过渡）</li>
         <li>CER 近场 &lt;8%；远场、全天按基线冻结</li>
-        <li>R2 按类别报告并给出差距</li>
+        <li>R2a、R2b 按类别报告并给出差距；外放远端会议的保留率单报</li>
           <li>N2 ≥80%、N3 ≤5%、N4 ≥85%（报告覆盖率），N1 报告；纪要 P90 ≤30 分钟（单元关闭后）</li>
         <li>常规 P90 ≤3 小时，立即同步 P90 ≤10 分钟</li>
         <li>删除链故障注入后三端无遗留音频：读出领夹 Flash 的原始块、检查对象存储的历史版本与备份；§5.14 故障注入清单全部通过</li>
@@ -2141,7 +2145,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <tbody>
         <tr><td class="num">1</td><td>VPU 隔着衣物信号不稳</td><td>两套传感器；弹性压片；备选形态；有效性单独上报，失效退回一期</td></tr>
         <tr><td class="num">2</td><td>播放声训练数据稀缺</td><td>自建重录台：多扬声器 × 多房间 × 多距离；Opus 编码后再训练</td></tr>
-        <tr><td class="num">3</td><td>电视普通对话不可分</td><td>按类别如实报告；作为他人被接受时不进记忆；不与机主轮流发言时判为背景簇，不进纪要、不支撑待办；二期靠空间特征</td></tr>
+        <tr><td class="num">3</td><td>电视普通对话不可分</td><td>按类别如实报告；作为他人被接受时不进记忆；相关性判定为背景时不进纪要、不支撑待办；二期靠空间特征</td></tr>
         <tr><td class="num">4</td><td>手机后台保活受限</td><td>Flash ≥8 h；BLE 后台模式；L1 随 BLE 唤醒增量运行；写满前推送提醒</td></tr>
         <tr><td class="num">5</td><td>大陆 VoIP 观测不到</td><td><code>call.kind=unknown</code> 时不用本机外放证据；对抗集单测</td></tr>
         <tr><td class="num">6</td><td>8B 幻觉</td><td>无语音不送；健康检查；600M 校验；无语音帧直接拒绝</td></tr>
@@ -2151,7 +2155,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
         <tr><td class="num">10</td><td>删除后不能重跑</td><td>上线前评测；文字候选；隔离区 7 天</td></tr>
         <tr><td class="num">11</td><td>有效时长超假设</td><td>按用户计量；按 P90 定价；可选的播放跳过；无机主参与的单元不出纪要</td></tr>
         <tr><td class="num">12</td><td>旁观者录音同意</td><td>硬件指示灯（软件不可关）；物理静音键；他人只做当天匿名聚类；法务评估告知义务</td></tr>
-        <tr><td class="num">13</td><td>声纹合规</td><td>单独同意、加密、可删、注册音频即删；不保存他人声纹，他人簇质心业务日结束后 12 小时删除</td></tr>
+        <tr><td class="num">13</td><td>声纹合规</td><td>单独同意、加密、可删、注册音频即删；不长期保存他人声音特征，簇质心业务日结束后 12 小时删除</td></tr>
         <tr><td class="num">14</td><td>免提通话录下远端</td><td>告知义务由法务确认；“通话期间自动暂停”选项</td></tr>
         <tr><td class="num">15</td><td>时钟漂移与重启</td><td>启动世代、同步点拟合；质量差时不用场景证据</td></tr>
         <tr><td class="num">16</td><td>单一 8B 管线故障</td><td>排队等待；超过 12 小时才 600M 降级并打标</td></tr>
