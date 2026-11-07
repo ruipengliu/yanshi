@@ -1,0 +1,1719 @@
+<title>领夹 ASR 整体方案</title>
+<meta charset="utf-8">
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@600;700&display=swap">
+<style>
+/* 版式：左侧固定导航（阶段切换 + 图例 + 目录），右侧单栏正文；图优先，文字只留结论与查表内容 */
+:root {
+  --bg:#f4f6f7; --surface:#ffffff; --surface-2:#e9eef0; --panel:#f9fbfb;
+  --fg:#172026; --muted:#56636c; --line:#c5cfd5; --edge:#6a7881;
+  --accent:#0e6b70; --accent-soft:#d5ebeb; --on-accent:#ffffff;
+  --g-drop:#c0392b; --g-iso:#c77c0a; --g-tag:#2c6db0; --g-verdict:#7247a8; --g-store:#2b8550; --on-gate:#ffffff;
+  --t-assume:#5a6b7b; --t-ok:#12775a; --t-est:#946300; --t-goal:#4548ad; --t-ask:#b0365f;
+  --owner-bg:#d3ecea; --owner:#0b5a5e; --other-bg:#e6eaed; --other:#46525a;
+  --iso-bg:#f8e7c8; --iso:#7d4e00; --drop-bg:#f6d9d5; --drop:#8f2418;
+  --ok:#2b8550; --warn:#c77c0a; --bad:#c0392b; --ok-bg:#dcefe3; --warn-bg:#f8e7c8; --bad-bg:#f6d9d5;
+  --c-asr:#2c6db0; --c-cpu:#7a8790; --c-llm:#0e6b70; --c-sto:#b08a3c;
+  --band:#d5ebeb;
+  --f-display:"Noto Serif SC","Songti SC","SimSun",serif;
+  --f-body:"Noto Sans SC","PingFang SC","Microsoft YaHei","Hiragino Sans GB",sans-serif;
+  --f-mono:"IBM Plex Mono","SFMono-Regular",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg:#0f1417; --surface:#172025; --surface-2:#1f2a30; --panel:#141b1f;
+  --fg:#e2e8eb; --muted:#9aa7af; --line:#33424b; --edge:#8796a0;
+  --accent:#4fb6b4; --accent-soft:#173b3d; --on-accent:#08201f;
+  --g-drop:#e8705e; --g-iso:#e3a640; --g-tag:#66a3e6; --g-verdict:#a888dd; --g-store:#5dbb82; --on-gate:#0c1114;
+  --t-assume:#9db0c0; --t-ok:#4fc79c; --t-est:#d9a948; --t-goal:#9a9df0; --t-ask:#ec82a6;
+  --owner-bg:#173b3d; --owner:#8ee0dc; --other-bg:#232e35; --other:#c3ced5;
+  --iso-bg:#3d2e12; --iso:#f0c375; --drop-bg:#40201b; --drop:#f3a397;
+  --ok:#5dbb82; --warn:#e3a640; --bad:#e8705e; --ok-bg:#183324; --warn-bg:#3d2e12; --bad-bg:#40201b;
+  --c-asr:#66a3e6; --c-cpu:#8b98a1; --c-llm:#4fb6b4; --c-sto:#d0ac5c;
+  --band:#173b3d; color-scheme:dark;
+} }
+:root[data-theme="dark"] {
+  --bg:#0f1417; --surface:#172025; --surface-2:#1f2a30; --panel:#141b1f;
+  --fg:#e2e8eb; --muted:#9aa7af; --line:#33424b; --edge:#8796a0;
+  --accent:#4fb6b4; --accent-soft:#173b3d; --on-accent:#08201f;
+  --g-drop:#e8705e; --g-iso:#e3a640; --g-tag:#66a3e6; --g-verdict:#a888dd; --g-store:#5dbb82; --on-gate:#0c1114;
+  --t-assume:#9db0c0; --t-ok:#4fc79c; --t-est:#d9a948; --t-goal:#9a9df0; --t-ask:#ec82a6;
+  --owner-bg:#173b3d; --owner:#8ee0dc; --other-bg:#232e35; --other:#c3ced5;
+  --iso-bg:#3d2e12; --iso:#f0c375; --drop-bg:#40201b; --drop:#f3a397;
+  --ok:#5dbb82; --warn:#e3a640; --bad:#e8705e; --ok-bg:#183324; --warn-bg:#3d2e12; --bad-bg:#40201b;
+  --c-asr:#66a3e6; --c-cpu:#8b98a1; --c-llm:#4fb6b4; --c-sto:#d0ac5c;
+  --band:#173b3d; color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.7;margin:0}
+.wrap{display:grid;grid-template-columns:260px minmax(0,1fr);gap:40px;max-width:1340px;margin:0 auto;padding-block:28px 80px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+aside.side{position:sticky;top:calc(env(safe-area-inset-top,0px) + 16px);align-self:start;max-height:calc(100vh - 32px);overflow:auto;display:flex;flex-direction:column;gap:18px;font-size:13px;padding-right:4px}
+main{min-width:0}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;line-height:1.35;margin:0}
+h1{font-size:30px;font-weight:700}
+h2{font-size:23px;font-weight:700;display:flex;gap:12px;align-items:baseline}
+h2 .no{font-family:var(--f-mono);font-size:15px;color:var(--accent);font-weight:500}
+h3{font-size:17px;font-weight:600;margin-top:8px}
+section{display:flex;flex-direction:column;gap:16px;padding-block:34px;border-top:1px solid var(--line)}
+section:first-of-type{border-top:0}
+p{margin:0;max-width:72ch}
+.lede{font-size:16px;color:var(--fg);max-width:70ch;padding-left:14px;border-left:3px solid var(--accent)}
+.muted{color:var(--muted)}
+.small{font-size:13px}
+ul,ol{margin:0;padding-left:1.3em;max-width:72ch}
+li+li{margin-top:4px}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+code{background:var(--surface-2);padding:1px 5px;border-radius:4px}
+a{color:var(--accent)}
+a:focus-visible,button:focus-visible,summary:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.side .brand{font-family:var(--f-display);font-size:17px;font-weight:700;line-height:1.35}
+.side h4{margin:0 0 6px;font-size:11px;letter-spacing:.08em;color:var(--muted);font-weight:700}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface)}
+.seg button{flex:1;border:0;background:transparent;color:var(--fg);font:inherit;font-size:13px;padding:7px 0;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--on-accent);font-weight:700}
+.toc{display:flex;flex-direction:column;gap:1px}
+.toc a{color:var(--muted);text-decoration:none;padding:3px 8px;border-radius:5px;display:flex;gap:8px}
+.toc a .n{font-family:var(--f-mono);width:20px;flex:none}
+.toc a:hover{background:var(--surface-2);color:var(--fg)}
+.toc a[aria-current="true"]{color:var(--fg);background:var(--accent-soft);font-weight:500}
+.legend{display:flex;flex-direction:column;gap:5px}
+.legend .row{display:flex;gap:8px;align-items:center}
+.legend svg{flex:none}
+
+.tg{display:inline-block;font-size:11px;line-height:1;padding:3px 5px;border-radius:4px;border:1px solid currentColor;margin-left:4px;vertical-align:1px;white-space:nowrap;font-weight:500}
+.tg.as{color:var(--t-assume)} .tg.ok{color:var(--t-ok)} .tg.es{color:var(--t-est)} .tg.go{color:var(--t-goal)} .tg.ask{color:var(--t-ask)}
+
+.hero{display:flex;flex-direction:column;gap:14px;padding-bottom:26px}
+.hero .meta{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:13px;color:var(--muted)}
+.note{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-size:14px;max-width:none}
+.note.warn{border-color:var(--warn);background:var(--warn-bg)}
+
+figure{margin:0;display:flex;flex-direction:column;gap:8px}
+.fig{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px}
+.fig svg{display:block;width:100%;height:auto}
+.fig.wide svg{min-width:860px}
+.fig.mid svg{min-width:640px}
+figcaption{font-size:13px;color:var(--muted);max-width:none}
+figcaption b{color:var(--fg);font-weight:600}
+.fighead{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.fighead .lvl{font-family:var(--f-mono);font-size:12px;color:var(--accent);border:1px solid var(--accent);border-radius:4px;padding:1px 6px;margin-right:8px}
+.minimap{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+
+table{border-collapse:collapse;width:100%;font-size:13.5px;background:var(--surface)}
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:10px}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:var(--surface-2);font-weight:700;font-size:12.5px;white-space:nowrap}
+tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--f-mono);font-size:12.5px}
+td .mono{white-space:nowrap}
+.heat td{text-align:center;font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.heat td:first-child{text-align:left;font-family:var(--f-body)}
+.h-lo{background:var(--ok-bg)} .h-in{background:var(--accent-soft);font-weight:700} .h-hi{background:var(--warn-bg)} .h-vhi{background:var(--bad-bg)}
+.light{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.light i{width:10px;height:10px;border-radius:50%;display:inline-block}
+.light.g i{background:var(--ok)} .light.y i{background:var(--warn)} .light.r i{background:var(--bad)}
+
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.card h3{margin:0}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:4px 14px;font-size:14px}
+.kv dt{color:var(--muted)} .kv dd{margin:0}
+.concl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.concl div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:14px;min-width:0}
+.concl b{display:block;font-family:var(--f-display);font-size:15px;margin-bottom:4px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font-size:13px;padding:3px 10px;border-radius:99px;background:var(--surface-2);color:var(--muted)}
+.chip.no{text-decoration:line-through}
+details.more{border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+details.more>summary{cursor:pointer;padding:9px 14px;font-size:13.5px;color:var(--accent);font-weight:500}
+details.more>div{padding:4px 16px 14px;display:flex;flex-direction:column;gap:10px;font-size:14px}
+.json{font-family:var(--f-mono);font-size:12.5px;background:var(--surface-2);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;margin:0}
+.checks{list-style:none;padding:0;display:flex;flex-direction:column;gap:6px;max-width:none}
+.checks li{display:flex;gap:8px;margin:0}
+.checks li::before{content:"✓";color:var(--accent);font-weight:700}
+.phases .card ol{font-size:13.5px}
+.find{border-left:3px solid var(--warn);padding:8px 14px;background:var(--surface);border-radius:0 8px 8px 0}
+
+/* SVG */
+svg text{font-family:var(--f-body);fill:var(--fg)}
+svg .t{font-size:14px;font-weight:700}
+svg .s{font-size:11.5px;fill:var(--muted)}
+svg .tiny{font-size:10.5px;fill:var(--muted)}
+svg .ph{font-size:15px;font-weight:700;font-family:var(--f-display)}
+svg .gl{font-size:12px;font-weight:700}
+svg .gt{font-size:10.5px;font-weight:700;fill:var(--on-gate);font-family:var(--f-mono)}
+svg .pv{font-size:12px;font-weight:700;fill:var(--accent);font-family:var(--f-mono)}
+svg .mono{font-family:var(--f-mono);font-size:11.5px}
+svg .c{text-anchor:middle} svg .r{text-anchor:end}
+svg .corner{font-size:9.5px;fill:var(--g-tag);font-weight:700}
+svg .panel{fill:var(--panel);stroke:var(--line);stroke-width:1.2}
+svg .nd rect{fill:var(--surface);stroke:var(--line);stroke-width:1.3}
+svg .nd.store rect{fill:var(--surface-2);stroke:var(--edge);stroke-width:1.3}
+svg .nd[data-tip]{cursor:pointer}
+svg .nd[data-tip]:hover rect,svg .nd[data-tip]:focus rect{stroke:var(--accent);stroke-width:2}
+svg .nd:focus{outline:none}
+svg .e{stroke:var(--edge);stroke-width:1.6;fill:none}
+svg .e.d{stroke-dasharray:5 4}
+svg .e.dot{stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .e.hl{stroke:var(--accent)}
+svg .ahp{fill:var(--edge)}
+svg .pill rect{fill:var(--surface);stroke:var(--accent);stroke-width:1.2}
+svg .lock{fill:var(--muted);stroke:var(--muted)}
+svg .gate{stroke:none}
+svg .g-drop{fill:var(--g-drop)} svg .g-iso{fill:var(--g-iso)} svg .g-tag{fill:var(--g-tag)} svg .g-verdict{fill:var(--g-verdict)} svg .g-store{fill:var(--g-store)}
+svg .g3{fill:var(--g-drop)}
+[data-phase="1"] svg .g3{fill:var(--g-tag)}
+svg .owner{fill:var(--owner-bg);stroke:var(--owner)} svg .owner-t{fill:var(--owner)}
+svg .other{fill:var(--other-bg);stroke:var(--line)} svg .other-t{fill:var(--other)}
+svg .iso{fill:var(--iso-bg);stroke:var(--g-iso)} svg .iso-t{fill:var(--iso)}
+svg .drop{fill:var(--drop-bg);stroke:var(--g-drop)} svg .drop-t{fill:var(--drop)}
+svg .fb{fill:var(--surface-2);stroke:var(--edge);stroke-dasharray:4 3}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .axis{stroke:var(--edge);stroke-width:1}
+.only-p1{display:none}
+[data-phase="1"] .only-p1{display:inline}
+[data-phase="1"] .only-p2{display:none}
+[data-phase="1"] .p2only{opacity:.3}
+[data-phase="1"] .p2only rect,[data-phase="1"] .p2only polygon{stroke-dasharray:4 3}
+
+#tip{position:fixed;z-index:30;max-width:320px;background:var(--surface);color:var(--fg);border:1px solid var(--accent);border-radius:8px;padding:10px 12px;font-size:13px;line-height:1.6;box-shadow:0 6px 24px rgba(0,0,0,.18);display:flex;flex-direction:column;gap:6px}
+#tip p{margin:0}
+#tip a{font-weight:500;font-size:12.5px}
+
+@media (max-width:1000px){
+  .wrap{grid-template-columns:minmax(0,1fr);gap:8px}
+  aside.side{position:static;max-height:none;overflow:visible;padding:0}
+  .toc{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+  .concl,.grid3{grid-template-columns:minmax(0,1fr)}
+}
+@media (max-width:700px){
+  .grid2{grid-template-columns:minmax(0,1fr)}
+  h1{font-size:25px}
+}
+@media (prefers-reduced-motion:no-preference){ html{scroll-behavior:smooth} }
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="ahp"/></marker>
+    <polygon id="hex" points="0,-14 12.1,-7 12.1,7 0,14 -12.1,7 -12.1,-7"/>
+    <symbol id="lock" viewBox="0 0 12 14"><rect x="1" y="6" width="10" height="8" rx="1.5"/><path d="M3.5 6V4a2.5 2.5 0 0 1 5 0v2" fill="none" stroke-width="1.6"/></symbol>
+  </defs>
+</svg>
+
+<div class="wrap">
+<aside class="side" aria-label="导航与图例">
+  <div class="brand">领夹 ASR 整体方案</div>
+  <div>
+    <h4>阶段视图</h4>
+    <div class="seg" role="group" aria-label="切换一期或二期视图">
+      <button type="button" id="ph1" data-phase-btn="1" aria-pressed="false">一期 · 无 VPU</button>
+      <button type="button" id="ph2" data-phase-btn="2" aria-pressed="true">二期 · 硬件</button>
+    </div>
+    <p class="muted small" style="margin-top:6px">二期才有的部件在一期视图中变灰、虚线框显示。</p>
+  </div>
+  <nav class="toc" aria-label="目录">
+    <a href="#s0"><span class="n">0</span>结论</a>
+    <a href="#s1"><span class="n">1</span>范围与前提</a>
+    <a href="#s2"><span class="n">2</span>总体架构</a>
+    <a href="#s3"><span class="n">3</span>硬件（领夹）</a>
+    <a href="#s4"><span class="n">4</span>手机端</a>
+    <a href="#s5"><span class="n">5</span>云端</a>
+    <a href="#s6"><span class="n">6</span>数据模型</a>
+    <a href="#s7"><span class="n">7</span>删除链</a>
+    <a href="#s8"><span class="n">8</span>成本</a>
+    <a href="#s9"><span class="n">9</span>评测</a>
+    <a href="#s10"><span class="n">10</span>分阶段路线</a>
+    <a href="#s11"><span class="n">11</span>风险</a>
+    <a href="#s12"><span class="n">12</span>决策记录</a>
+    <a href="#s13"><span class="n">13</span>待确认</a>
+    <a href="#s14"><span class="n">附</span>转换中的发现</a>
+  </nav>
+  <div>
+    <h4>闸门（按最严处置着色）</h4>
+    <div class="legend">
+      <div class="row"><svg width="26" height="28" viewBox="-13 -14 26 28"><use href="#hex" class="g-drop"/></svg>可丢弃数据　G0 G1 G2 G4</div>
+      <div class="row"><svg width="26" height="28" viewBox="-13 -14 26 28"><use href="#hex" class="g-iso"/></svg>最多降为隔离　G5 G6</div>
+      <div class="row"><svg width="26" height="28" viewBox="-13 -14 26 28"><use href="#hex" class="g-tag"/></svg>只打标签　G3（一期）</div>
+      <div class="row"><svg width="26" height="28" viewBox="-13 -14 26 28"><use href="#hex" class="g-verdict"/></svg>汇总裁决　G7</div>
+      <div class="row"><svg width="26" height="28" viewBox="-13 -14 26 28"><use href="#hex" class="g-store"/></svg>入库规则　G8</div>
+    </div>
+  </div>
+  <div>
+    <h4>连线</h4>
+    <div class="legend">
+      <div class="row"><svg width="36" height="10"><path class="e" d="M2 5H34"/></svg>数据流</div>
+      <div class="row"><svg width="36" height="10"><path class="e d" d="M2 5H34"/></svg>回执 / 用户纠错</div>
+      <div class="row"><svg width="36" height="10"><path class="e dot" d="M2 5H34"/></svg>存储读写</div>
+    </div>
+  </div>
+  <div>
+    <h4>数字标注</h4>
+    <div class="legend">
+      <div class="row"><span class="tg as" style="margin:0">假设</span>需求方给定的前提</div>
+      <div class="row"><span class="tg ok" style="margin:0">已确认</span>已在现有设备核实</div>
+      <div class="row"><span class="tg es" style="margin:0">估算</span>推算，须实测校准</div>
+      <div class="row"><span class="tg go" style="margin:0">目标</span>验收目标，非承诺</div>
+      <div class="row"><span class="tg ask" style="margin:0">待询价</span>待询价 / 待确认</div>
+    </div>
+  </div>
+</aside>
+
+<main>
+<header class="hero">
+  <h1>领夹式 AI 录音设备的 ASR 整体处理方案</h1>
+  <div class="meta"><span>独立方案（提案）</span><span>2026-11-07</span><span>不约束本仓库的现有实现：现行实现仍以 <code>docs/design</code> 为准</span></div>
+  <p class="lede">机主全天佩戴，录音经手机批量上云。方案要回答三件事：哪些声音不该进转写和记忆，转写准不准（尤其专名），以及每句话是不是机主说的。原则是<b>宁可漏记，不可错记</b>。</p>
+</header>
+
+<!-- §0 -->
+<section id="s0" data-label="§0">
+  <h2><span class="no">§0</span>结论</h2>
+  <div class="concl">
+    <div><b>批处理链路</b>领夹 → 手机暂存 → 按批上云 → 异步处理 → 回传 App。新鲜度为小时级，提供“立即同步”。</div>
+    <div><b>四级拒识级联</b>越靠前越便宜，也越保守。设备和手机只丢非人声，像人声的一律上云。</div>
+    <div><b>三档处置</b>拒绝只用于非语音和无语音帧的幻觉；播放声、不确定、疑似回放一律隔离 7 天，可放回。</div>
+    <div><b>8B 单路全量</b>600M 只做对齐与可疑片段校验。级联路由每人每月只省约 ¥3<span class="tg es">估算</span>。</div>
+    <div><b>三类热词</b>解码前按上下文检索出偏置表，只解码一次；解码后拼音召回，再做闭集纠错。</div>
+    <div><b>机主判定</b>一期纯声纹（门槛更严）；二期按 VPU 三态 × 声纹三档融合。记忆与待办只引用“证据级”原话。</div>
+    <div><b>VPU 的边界</b>它分得清“机主”和“非机主”，分不清电视和在场的真人。90% 播放声召回一期大概率达不到。</div>
+    <div><b>约 ¥25/人/月</b>按每天 5 小时、8B ¥0.10/小时自部署口径<span class="tg es">估算</span>，落在 ¥23–27 内；对有效时长最敏感。</div>
+    <div><b>音频处理完即删</b>摘要不在等待之列。代价是不能事后重跑；低置信区间保留文字候选。</div>
+  </div>
+</section>
+
+<!-- §1 -->
+<section id="s1" data-label="§1">
+  <h2><span class="no">§1</span>范围与前提</h2>
+  <p class="lede">从领夹拾音写到纪要、待办、记忆的入库闸门为止；记忆系统本身的存储、召回、搜索与问答不在本文范围。</p>
+  <div class="tbl"><table>
+    <thead><tr><th>前提</th><th>值</th><th>标注</th></tr></thead>
+    <tbody>
+      <tr><td>链路</td><td>领夹 → 手机暂存 → 手机定时批量上云 → 云端异步 → 回传 App；设备不直连云端</td><td><span class="tg as">假设</span> 硬约束</td></tr>
+      <tr><td>延迟</td><td>几十分钟到几小时，无实时字幕</td><td><span class="tg as">假设</span></td></tr>
+      <tr><td>8B / 600M 单价</td><td>¥0.10 / ¥0.06 每音频小时（自研，异步）</td><td><span class="tg as">假设</span></td></tr>
+      <tr><td>有效音频</td><td>每人每天约 5 小时（VAD 后）</td><td><span class="tg as">假设</span></td></tr>
+      <tr><td>文本量</td><td>1 小时有效语音 ≈ 1.3 万汉字 ≈ 1.5 万 token</td><td><span class="tg as">假设</span></td></tr>
+      <tr><td>有效音频比例</td><td>会议约 0.7，全天佩戴约 0.25</td><td><span class="tg as">假设</span></td></tr>
+      <tr><td>现有设备编码</td><td>Opus，16 kHz，20 ms 一帧，约 16 kb/s（约 16:1）</td><td><span class="tg ok">已确认</span></td></tr>
+      <tr><td>现有设备麦克风数、AGC/降噪可否关、码率可否 OTA</td><td>一期按单麦做保守设计</td><td><span class="tg ask">待确认</span></td></tr>
+    </tbody>
+  </table></div>
+  <div class="chips" aria-label="非目标">
+    <span class="muted small">非目标：</span>
+    <span class="chip no">实时流式与字幕</span><span class="chip no">他人实名分离</span><span class="chip no">设备直连云端</span><span class="chip no">按三方 API 零售价计成本</span>
+  </div>
+  <details class="more"><summary>术语表</summary><div>
+    <div class="tbl"><table><tbody>
+      <tr><th>机主</th><td>佩戴领夹的用户本人</td></tr>
+      <tr><th>他人</th><td>机主以外的说话人，只做匿名聚类（<code>他人-簇号</code>），簇号只在当天有效</td></tr>
+      <tr><th>播放声</th><td>经扬声器重放的人声：电视、音箱、短视频、手机外放等</td></tr>
+      <tr><th>疑似回放</th><td>声纹像机主，但物理证据表明机主此刻没有发声的语音</td></tr>
+      <tr><th>接受 / 隔离 / 拒绝</th><td>接受：进下游；隔离：保留文字、折叠显示、不进下游、7 天后删除、可放回；拒绝：不存文字，只记时长</td></tr>
+      <tr><th>证据级</th><td>足以被待办和记忆引用为“机主原话”的置信等级，比时间线上的机主标签更严</td></tr>
+      <tr><th>上传分片 / 识别分片</th><td>前者是手机按帧序号切的固定 5 分钟分片，只服务于传输；后者是云端在停顿处切出、送 8B 的分片</td></tr>
+      <tr><th>有效音频</th><td>经 VAD 判为语音、含前后余量、实际送入 8B 的音频时长</td></tr>
+    </tbody></table></div>
+  </div></details>
+</section>
+
+<!-- §2 -->
+<section id="s2" data-label="§2">
+  <h2><span class="no">§2</span>总体架构</h2>
+  <p class="lede">架构分三层画：L0 看全局和闸门位置，L1 看每段由什么组成，L2 看关键闸怎么判。每佩戴 1 小时，上云约 0.35 小时，送入 8B 约 0.25 小时。</p>
+
+  <figure id="fig-l0">
+    <div class="fighead"><div><span class="lvl">L0</span><b>全景：四段 · 九道闸 · 三个跨段存储</b></div></div>
+    <div class="fig wide">
+    <svg viewBox="0 0 1200 560" role="img" aria-label="L0 全景架构图：领夹、手机、云端识别与判定、云端入库与下游四段，标出 G0 到 G8 九道闸、三个跨段存储，以及回执与用户纠错两条回路">
+      <!-- 面板 -->
+      <rect class="panel" x="16" y="40" width="190" height="380" rx="10"/>
+      <rect class="panel" x="262" y="40" width="226" height="380" rx="10"/>
+      <rect class="panel" x="540" y="40" width="418" height="380" rx="10"/>
+      <rect class="panel" x="1010" y="40" width="174" height="380" rx="10"/>
+      <text class="ph" x="30" y="66">领夹</text>
+      <text class="ph" x="276" y="66">手机 App</text>
+      <text class="ph" x="554" y="66">云端 · 识别与判定</text>
+      <text class="tiny r" x="944" y="66">音频只在此段，处理完即删</text>
+      <text class="ph" x="1022" y="66">云端 · 入库与下游</text>
+
+      <!-- 领夹 -->
+      <g class="nd" tabindex="0" data-tip="一期：现有设备，按单麦设计（待确认）。二期：上向麦 + 外向麦、VPU 或骨导加速度计、低速 IMU。" data-ref="s3"><rect x="32" y="84" width="158" height="50" rx="7"/><text class="t c" x="111" y="105">拾音</text><text class="s c" x="111" y="122"><tspan class="only-p1">单麦（待确认）</tspan><tspan class="only-p2">双麦 · VPU · IMU</tspan></text></g>
+      <path class="e" d="M111 134V146" marker-end="url(#ah)"/>
+      <g class="p2only"><use href="#hex" x="111" y="162" class="gate g-drop"/><text class="gt c" x="111" y="166">G0</text></g>
+      <text class="gl" x="132" y="166"><tspan class="only-p2">设备门控</tspan><tspan class="only-p1">一期无门控</tspan></text>
+      <path class="e" d="M111 176V188" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="Opus 16 kHz、20 ms 一帧、约 16 kb/s（已确认）。先写 Flash 环形缓冲（建议 ≥8 小时、128 MB），再突发传输。" data-ref="s3"><rect x="32" y="190" width="158" height="50" rx="7"/><text class="t c" x="111" y="211">编码与缓冲</text><text class="s c" x="111" y="228">Opus 16 kb/s · Flash</text></g>
+      <path class="e" d="M111 240V274" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="BLE 自定义 GATT / L2CAP CoC 突发传输。手机按帧序号区间回执后，设备才把该区间标为可覆盖。" data-ref="s3-6"><rect x="32" y="276" width="158" height="44" rx="7"/><text class="t c" x="111" y="295">BLE 突发传输</text><text class="s c" x="111" y="311">回执后才可覆盖</text></g>
+
+      <!-- 领夹 → 手机 -->
+      <path class="e" d="M190 298H234V109H276" marker-end="url(#ah)"/>
+      <path class="e d" d="M278 126H252V215H192" marker-end="url(#ah)"/>
+      <text class="tiny" x="256" y="176">回执</text>
+      <g class="pill"><rect x="196" y="232" width="76" height="36" rx="10"/><text class="tiny c" x="234" y="246">Opus 码流</text><text class="pv c" x="234" y="262"><tspan class="only-p1">1 h</tspan><tspan class="only-p2">≈0.35 h</tspan></text></g>
+
+      <!-- 手机 -->
+      <g class="nd" tabindex="0" data-tip="按 (设备, 启动世代, 帧序号) 拼接时间线；时钟同步点线性拟合，还原误差目标 ≤200 ms；设备码流原样加密落盘，不重新编码。" data-ref="s4-1"><rect x="278" y="84" width="194" height="50" rx="7"/><text class="t c" x="375" y="105">接收 · 暂存 · 时钟</text><text class="s c" x="375" y="122">帧序号拼接 · 加密落盘</text></g>
+      <path class="e" d="M375 134V146" marker-end="url(#ah)"/>
+      <use href="#hex" x="375" y="162" class="gate g-drop"/><text class="gt c" x="375" y="166">G1</text>
+      <text class="gl" x="396" y="166">L1 拒识</text>
+      <path class="e" d="M375 176V188" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="分片清单带场景事件（外放、通话、路由、日历派生字段）、L1 标签、时钟参数与缺口。" data-ref="s4-4"><rect x="278" y="190" width="194" height="50" rx="7"/><text class="t c" x="375" y="211">清单打包</text><text class="s c" x="375" y="228">场景快照 · L1 标签</text></g>
+      <path class="e" d="M375 240V274" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="触发：累计 ≥30 分钟有效音频，或最旧分片 &gt;2 小时，或用户点“立即同步”。优先 WiFi；蜂窝只用于立即同步或最旧 &gt;4 小时。" data-ref="s4-5"><rect x="278" y="276" width="194" height="44" rx="7"/><text class="t c" x="375" y="295">批量上传调度</text><text class="s c" x="375" y="311">≥30 分钟 · 2 小时 · 立即同步</text></g>
+
+      <!-- 手机 → 云端 -->
+      <path class="e" d="M472 298H516V109H552" marker-end="url(#ah)"/>
+      <g class="pill"><rect x="478" y="142" width="76" height="36" rx="10"/><text class="tiny c" x="516" y="156">分片 + 清单</text><text class="pv c" x="516" y="172">≈0.35 h</text></g>
+      <path class="e d" d="M554 335H500V312H474" marker-end="url(#ah)"/>
+      <text class="tiny" x="482" y="352">回执 · 可删</text>
+
+      <!-- 云端 第一行 -->
+      <g class="nd" tabindex="0" data-tip="云端 VAD 偏召回复核：前置 300–500 ms、拖尾 500–1000 ms，间隔 &lt;1–2 s 合并；在停顿处切识别分片。非语音 → 拒绝。" data-ref="s5-1"><rect x="554" y="84" width="88" height="50" rx="7"/><text class="t c" x="598" y="108">VAD 复核</text><text class="s c" x="598" y="125">切识别分片</text></g>
+      <use href="#hex" x="568" y="84" class="gate g-drop"/><text class="gt c" x="568" y="88">G2</text>
+      <path class="e" d="M642 109H654" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="证据：声学回放特征、本机外放快照、二期双麦空间特征与 VPU。一期只打标签；二期在 VPU 有效且静默、分类器高置信、整段 ≥60 s 三条件同时满足时才跳过识别。" data-ref="s5-1"><rect x="656" y="84" width="88" height="50" rx="7"/><text class="t c" x="700" y="108">播放检测</text><text class="s c" x="700" y="125"><tspan class="only-p1">只打标签</tspan><tspan class="only-p2">有条件跳过</tspan></text></g>
+      <use href="#hex" x="670" y="84" class="gate g3"/><text class="gt c" x="670" y="88">G3</text>
+      <path class="e" d="M744 109H756" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="自研 8B 全量转写，¥0.10/音频小时（假设）。每个识别分片一张偏置表（≤300 条，待确认容量）。关闭顺滑、去口误、书面化与敏感词替换。" data-ref="s5-2"><rect x="758" y="84" width="88" height="50" rx="7"/><text class="t c" x="802" y="108">8B 转写</text><text class="s c" x="802" y="125">全量 · 偏置</text></g>
+      <path class="e" d="M846 109H858" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="健康检查：重复、字速、压缩比、幻觉短语表、低置信、语种突变。可疑约 20% 用 600M 重识别：分歧大 → 隔离；落在无语音帧 → 拒绝。" data-ref="s5-1"><rect x="860" y="84" width="88" height="50" rx="7"/><text class="t c" x="904" y="108">幻觉检查</text><text class="s c" x="904" y="125">600M 交叉校验</text></g>
+      <use href="#hex" x="874" y="84" class="gate g-drop"/><text class="gt c" x="874" y="88">G4</text>
+      <text class="pv c" x="700" y="166">送入 8B ≈0.25 h</text>
+      <path class="e" d="M904 134V188" marker-end="url(#ah)"/>
+
+      <!-- 云端 第二行（右 → 左） -->
+      <g class="nd" tabindex="0" data-tip="当天匿名聚类 + 机主声纹验证（片段级与簇级）。重叠段永不判机主。一期纯声纹；二期按 VPU 三态 × 声纹三档融合。不确定、疑似回放 → 隔离。" data-ref="s5-6"><rect x="860" y="190" width="88" height="50" rx="7"/><text class="t c" x="904" y="214">机主判定</text><text class="s c" x="904" y="231"><tspan class="only-p1">声纹</tspan><tspan class="only-p2">声纹 × VPU</tspan></text></g>
+      <use href="#hex" x="874" y="190" class="gate g-iso"/><text class="gt c" x="874" y="194">G5</text>
+      <path class="e" d="M860 215H848" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="自部署 7B 级小模型对文字分类：剧台词、广告、播报、解说、歌词、有声书。输出只能把接受降为隔离。" data-ref="s5-1"><rect x="758" y="190" width="88" height="50" rx="7"/><text class="t c" x="802" y="214">内容门控</text><text class="s c" x="802" y="231">只降级</text></g>
+      <use href="#hex" x="772" y="190" class="gate g-iso"/><text class="gt c" x="772" y="194">G6</text>
+      <path class="e" d="M758 215H746" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="只改专名；在拼音召回出的候选中做闭集选择，只输出 diff，每条带依据；否定、数字、日期、情态、改口不可触碰。默认关闭。" data-ref="s5-5"><rect x="656" y="190" width="88" height="50" rx="7"/><text class="t c" x="700" y="214">专名纠错</text><text class="s c" x="700" y="231">闭集 diff</text></g>
+      <path class="e" d="M656 215H644" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="按 7 步顺序裁决，先到先定，只收紧不放宽。拒绝只用于非语音与无语音帧的幻觉。" data-ref="s5-7"><rect x="554" y="190" width="88" height="50" rx="7"/><text class="t c" x="598" y="214">三档裁决</text><text class="s c" x="598" y="231">接受·隔离·拒绝</text></g>
+      <use href="#hex" x="568" y="190" class="gate g-verdict"/><text class="gt c" x="568" y="194">G7</text>
+      <path class="e" d="M598 240V298" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="需要音频的环节完成、文字持久落盘后，删除云端音频及派生物（PCM、VAD、临时嵌入、VPU/IMU 轨迹、场景快照），回执手机。" data-ref="s7"><rect x="554" y="300" width="200" height="50" rx="7"/><text class="t c" x="654" y="321">文字落盘 · 删除音频</text><text class="s c" x="654" y="338">派生物同删 · 回执手机</text></g>
+      <path class="e" d="M700 350V468" marker-end="url(#ah)"/>
+
+      <!-- 下游 -->
+      <g class="nd" tabindex="0" data-tip="纪要读接受档；机主待办须引用证据级机主原话，对方待办须引用他人原话，否则未核实、不提醒；记忆只采信证据级机主原话。" data-ref="s5-8"><rect x="1022" y="84" width="150" height="50" rx="7"/><text class="t c" x="1097" y="105">纪要 · 待办 · 记忆</text><text class="s c" x="1097" y="122">只读接受档</text></g>
+      <path class="e" d="M1097 156V136" marker-end="url(#ah)"/>
+      <use href="#hex" x="1097" y="170" class="gate g-store"/><text class="gt c" x="1097" y="174">G8</text>
+      <text class="gl" x="1116" y="174">入库闸门</text>
+      <g class="nd" tabindex="0" data-tip="接受档正常显示；隔离档折叠显示并标注原因，用户可“放回”；拒绝只显示“已过滤 X 分钟”。" data-ref="s5-7"><rect x="1022" y="276" width="150" height="60" rx="7"/><text class="t c" x="1097" y="297">App 时间线</text><text class="s c" x="1097" y="314">接受：正常显示</text><text class="s c" x="1097" y="329">隔离：折叠 · 可放回</text></g>
+
+      <!-- 存储带 -->
+      <text class="ph" x="24" y="496">跨段存储</text>
+      <text class="tiny" x="24" y="514">锁形 = 敏感数据</text>
+      <g class="nd store" tabindex="0" data-tip="公共与行业词库按版本发布；个人热词来自通讯录（近 90 天）、日历、项目与历史纪要，可查看、可删除，随用户删除。" data-ref="s5-3"><rect x="262" y="470" width="190" height="60" rx="7"/><text class="t c" x="357" y="491">热词库</text><text class="s c" x="357" y="508">个人 · 行业 · 公共</text><text class="s c" x="357" y="523">→ 8B 偏置 · 纠错召回</text></g>
+      <g class="nd store" tabindex="0" data-tip="只存嵌入向量，每用户数据密钥加密（KMS），带版本；注册音频生成嵌入后即删；单独同意，可随时删除或重新注册。" data-ref="s5-4"><rect x="470" y="470" width="150" height="60" rx="7"/><use href="#lock" class="lock" x="480" y="478" width="12" height="14"/><text class="t c" x="545" y="491">声纹库</text><text class="s c" x="545" y="508">加密 · 直到用户删除</text><text class="s c" x="545" y="523">→ G5 比对</text></g>
+      <g class="nd store" tabindex="0" data-tip="每个片段带说话人、三档处置、原因与分数；接受档按用户留存设置，隔离档 7 天后自动删除，拒绝不存文字。" data-ref="s6"><rect x="650" y="470" width="260" height="60" rx="7"/><use href="#lock" class="lock" x="660" y="478" width="12" height="14"/><text class="t c" x="780" y="491">转写库</text><text class="s c" x="780" y="508">接受档：按用户设置</text><text class="s c" x="780" y="523">隔离档：7 天自动删除</text></g>
+      <path class="e dot" d="M357 420V468" marker-end="url(#ah)"/>
+      <text class="tiny" x="363" y="448">个人热词采集</text>
+      <path class="e dot" d="M545 468V422" marker-end="url(#ah)"/>
+      <text class="tiny" x="551" y="448">比对</text>
+
+      <!-- 转写库 → 下游；用户回路 -->
+      <path class="e" d="M910 490H990V170H1081" marker-end="url(#ah)"/>
+      <path class="e" d="M990 306H1020" marker-end="url(#ah)"/>
+      <path class="e d" d="M1140 336V515H912" marker-end="url(#ah)"/>
+      <text class="tiny" x="922" y="509">放回 / 降级 / 撤回</text>
+    </svg>
+    </div>
+    <figcaption><b>读图</b>：悬停或点按模块看完整参数，点链接跳到对应章节。左侧开关切换一期视图。流量按每佩戴 1 小时计，接受与隔离的比例没有数据，不标数字。<span class="tg as">假设</span> 全天有效比例 0.25 下，每天 5 小时有效音频对应约 20 小时佩戴（见附录）。</figcaption>
+  </figure>
+
+  <div class="tbl"><table>
+    <thead><tr><th>闸</th><th>位置</th><th>判什么</th><th>能做的处置</th><th>一期</th><th>二期</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">G0</td><td>设备</td><td>静音、低能量</td><td>不编码、不传</td><td>无门控，全量传</td><td>能量 + 小模型 VAD，预缓冲 500 ms</td></tr>
+      <tr><td class="mono">G1</td><td>手机</td><td>非人声、静音；声音事件</td><td>丢高置信非人声；其余只打标签</td><td>✔</td><td>✔ 复核</td></tr>
+      <tr><td class="mono">G2</td><td>云端</td><td>精确 VAD、切分</td><td>非语音不送识别</td><td>✔</td><td>✔</td></tr>
+      <tr><td class="mono">G3</td><td>云端</td><td>播放声</td><td>一期标签；二期三条件才跳过</td><td>标签</td><td>有条件跳过</td></tr>
+      <tr><td class="mono">G4</td><td>云端</td><td>ASR 幻觉</td><td>无语音帧 → 拒绝；分歧大 → 隔离</td><td>✔</td><td>✔</td></tr>
+      <tr><td class="mono">G5</td><td>云端</td><td>机主 / 他人 / 不确定；疑似回放</td><td>不确定、疑似回放 → 隔离</td><td>纯声纹</td><td>声纹 × VPU</td></tr>
+      <tr><td class="mono">G6</td><td>云端</td><td>文字层面的媒体内容</td><td>只能把接受降为隔离</td><td>✔</td><td>✔</td></tr>
+      <tr><td class="mono">G7</td><td>云端</td><td>汇总各级证据</td><td>接受 / 隔离 / 拒绝</td><td>✔</td><td>✔</td></tr>
+      <tr><td class="mono">G8</td><td>云端</td><td>纪要、待办、记忆的写入条件</td><td>只读接受档；按说话人核对</td><td>✔</td><td>✔</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="grid2">
+    <div class="card"><h3>图层导航</h3>
+      <ul class="small">
+        <li><b>L1</b>：<a href="#fig-l1a">领夹</a> · <a href="#fig-l1b">手机</a> · <a href="#fig-l1c">云端·识别与判定</a> · <a href="#fig-l1d">云端·入库与下游</a></li>
+        <li><b>L2</b>：<a href="#fig-funnel">拒识漏斗</a> · <a href="#fig-verdict">三档裁决</a> · <a href="#fig-fusion">融合矩阵</a> · <a href="#fig-hot">热词流水线</a></li>
+      </ul>
+    </div>
+    <div class="card"><h3>五条设计原则</h3>
+      <ol class="small">
+        <li>不可逆操作最保守：丢音频、不送识别、改写文字，证据充分才做。</li>
+        <li>越靠前越便宜，但越靠前越不许误杀人声。</li>
+        <li>处置只收紧不放宽；只有用户“放回”可以升级。</li>
+        <li>宁可漏记，不可错记；不确定区占比单独计量。</li>
+        <li>每一级都能单独开关，与“不做”配对评测。</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<!-- §3 -->
+<section id="s3" data-label="§3">
+  <h2><span class="no">§3</span>硬件（领夹）</h2>
+  <p class="lede">设备只做拾音、门控、压缩、缓冲、打时间和传感器特征；ASR、声纹、播放声判定都放云端。二期整机平均功耗估算 2.2–5.2 mW，建议电池 60–80 mAh。</p>
+
+  <figure id="fig-l1a">
+    <div class="fighead"><div><span class="lvl">L1</span><b>领夹内部</b></div><span class="minimap" data-seg="0"></span></div>
+    <div class="fig wide">
+    <svg viewBox="0 0 1000 320" role="img" aria-label="L1 领夹模块图：麦克风、VPU、IMU 输入常开 VAD 与特征提取，经 Opus 编码写入 Flash 环形缓冲，再由 BLE 突发传输到手机">
+      <g class="nd" tabindex="0" data-tip="二期上向麦：SNR ≥65 dBA，声学过载点 ≥120 dB SPL，低功耗模式，加防风网罩。一期按单麦（待确认）。" data-ref="s3"><rect x="20" y="30" width="150" height="44" rx="7"/><text class="t c" x="95" y="49"><tspan class="only-p2">上向麦</tspan><tspan class="only-p1">麦克风</tspan></text><text class="s c" x="95" y="65"><tspan class="only-p2">SNR ≥65 · AOP ≥120 dB</tspan><tspan class="only-p1">一期按单麦（待确认）</tspan></text></g>
+      <g class="nd p2only" tabindex="0" data-tip="外向麦：机械隔振；价值在方向（机主固定在上方）和相干性（远场声源两麦相干性低），而非 1–1.5 cm 间距下只有零点几 dB 的声级差。" data-ref="s3"><rect x="20" y="86" width="150" height="44" rx="7"/><text class="t c" x="95" y="105">外向麦</text><text class="s c" x="95" y="121">隔振 · 方向/相干性</text><text class="corner r" x="166" y="97">二期</text></g>
+      <path class="e" d="M170 52H205V78H238" marker-end="url(#ah)"/>
+      <path class="e p2only" d="M170 108H205V78"/>
+
+      <g class="nd p2only" tabindex="0" data-tip="常开低功耗 VAD（能量 + 小模型），预缓冲 ≥500 ms，拖尾 ≥1 s；不做播放声判定。" data-ref="s3"><rect x="240" y="48" width="170" height="60" rx="7"/><text class="t c" x="325" y="73">常开 VAD</text><text class="s c" x="325" y="91">预缓冲 500 ms · 拖尾 1 s</text><text class="corner r" x="406" y="60">二期</text></g>
+      <g class="p2only"><use href="#hex" x="254" y="48" class="gate g-drop"/><text class="gt c" x="254" y="52">G0</text></g>
+      <text class="tiny only-p1" x="245" y="126">一期：无门控，全量编码</text>
+      <path class="e" d="M410 78H458" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="Opus 16 kHz、20 ms 一帧、16 kb/s（已确认）。二期码率可配 16/24/32 kb/s，由评测决定。" data-ref="s3-6"><rect x="460" y="48" width="150" height="60" rx="7"/><text class="t c" x="535" y="73">Opus 编码</text><text class="s c" x="535" y="91">16 kHz · 20 ms · 16 kb/s</text></g>
+      <path class="e" d="M610 78H658" marker-end="url(#ah)"/>
+      <g class="nd store" tabindex="0" data-tip="建议 ≥8 小时满码率（约 58 MB），选 128 MB SPI NAND（待询价）。未确认的数据不覆盖；写满时停录并告警。" data-ref="s3-6"><rect x="660" y="48" width="150" height="60" rx="7"/><text class="t c" x="735" y="73">Flash 环形缓冲</text><text class="s c" x="735" y="91">≥8 h · 128 MB</text></g>
+      <path class="e" d="M810 78H838" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="先写 Flash，再按连接间隔批量发送，比持续推流省电。BLE 丢包由协议重传；设备侧真实丢帧按序号缺口上报。" data-ref="s3-6"><rect x="840" y="48" width="140" height="60" rx="7"/><text class="t c" x="910" y="73">BLE 突发传输</text><text class="s c" x="910" y="91">GATT / L2CAP CoC</text></g>
+      <path class="e" d="M980 78H996" marker-end="url(#ah)"/>
+      <text class="tiny r" x="996" y="66">手机</text>
+      <path class="e d" d="M910 48V26H735V46" marker-end="url(#ah)"/>
+      <text class="tiny c" x="822" y="20">手机按序号回执 → 可覆盖</text>
+
+      <g class="nd" tabindex="0" data-tip="单调帧序号 + 32.768 kHz RTC 计数 + 启动世代号（每次上电递增），供手机还原录音时刻。" data-ref="s4-2"><rect x="460" y="128" width="150" height="40" rx="7"/><text class="s c" x="535" y="153" style="fill:var(--fg);font-weight:700">RTC · 帧序号 · 世代</text></g>
+      <path class="e" d="M535 128V110" marker-end="url(#ah)"/>
+
+      <g class="nd p2only" tabindex="0" data-tip="专用 VPU 与高带宽骨导加速度计两套样件对照；放在夹背，加弹性压片；隔着衣物的信号强度未知，是二期首要验证项。" data-ref="s3"><rect x="20" y="190" width="150" height="44" rx="7"/><text class="t c" x="95" y="209">VPU / 骨导</text><text class="s c" x="95" y="225">夹背 · 弹性压片</text><text class="corner r" x="166" y="201">二期</text></g>
+      <g class="nd p2only" tabindex="0" data-tip="低功耗三轴加速度计 25–50 Hz：佩戴状态、摩擦与撞击事件、步行。" data-ref="s3"><rect x="20" y="256" width="150" height="44" rx="7"/><text class="t c" x="95" y="275">IMU</text><text class="s c" x="95" y="291">25–50 Hz</text><text class="corner r" x="166" y="267">二期</text></g>
+      <path class="e p2only" d="M170 212H238" marker-end="url(#ah)"/>
+      <path class="e p2only" d="M170 278H238" marker-end="url(#ah)"/>
+      <g class="nd p2only" tabindex="0" data-tip="不传原始振动波形（数据量大且可还原出类语音）。只传 10 ms 一帧的语音带能量、浊音概率与有效性（有效 / 未佩戴 / 接触不良 / 饱和 / 失步），约 0.8 kb/s（估算）。" data-ref="s3"><rect x="240" y="187" width="170" height="50" rx="7"/><text class="t c" x="325" y="208">VPU 特征</text><text class="s c" x="325" y="225">10 ms 帧 · 有效性标记</text></g>
+      <g class="nd p2only" tabindex="0" data-tip="IMU 派生的佩戴状态与摩擦事件标签，供 G1、G2 和 VPU 有效性判断使用。" data-ref="s3"><rect x="240" y="253" width="170" height="50" rx="7"/><text class="t c" x="325" y="274">佩戴 · 摩擦事件</text><text class="s c" x="325" y="291">IMU 派生标签</text></g>
+      <path class="e p2only" d="M380 187V110" marker-end="url(#ah)"/>
+      <text class="tiny p2only" x="386" y="152">唤醒</text>
+      <path class="e p2only" d="M410 212H760V110" marker-end="url(#ah)"/>
+      <path class="e p2only" d="M410 278H760V212"/>
+      <text class="tiny p2only" x="600" y="205">特征流 ≈0.8 kb/s</text>
+    </svg>
+    </div>
+  </figure>
+
+  <div class="grid2">
+    <div class="card"><h3>麦克风阵列</h3>
+      <div class="tbl"><table>
+        <thead><tr><th>方案</th><th>提供什么</th><th>结论</th></tr></thead>
+        <tbody>
+          <tr><td>单麦</td><td>相对机主基线的声级、直达/混响比</td><td>一期现状</td></tr>
+          <tr><td><b>双麦（上向 + 外向）</b></td><td>方向先验、相干性</td><td><b>二期基线</b></td></tr>
+          <tr><td>三麦及以上</td><td>更好的波束与定位</td><td>不做：功耗、尺寸</td></tr>
+        </tbody>
+      </table></div>
+      <p class="small muted">近场线索：机主约 20 cm、他人约 1.5 m，声级差约 17.5 dB<span class="tg es">估算</span>；近处他人和开大的电视会破坏它。</p>
+    </div>
+    <div class="card"><h3>VPU / 骨传导</h3>
+      <div class="tbl"><table>
+        <thead><tr><th>方案</th><th>风险</th></tr></thead>
+        <tbody>
+          <tr><td>专用 VPU</td><td>为贴耳道设计，隔着衣物贴胸口的信号未知</td></tr>
+          <tr><td>骨导加速度计（≥1–2 kHz）</td><td>走路、摩擦等机械噪声耦合更强</td></tr>
+          <tr><td>低速 IMU</td><td>拾不到发声振动，只判佩戴与运动</td></tr>
+        </tbody>
+      </table></div>
+      <p class="small muted">二期两套样件对照；不达标时备选磁吸背板或贴近胸骨的挂坠。型号与单价<span class="tg ask">待询价</span>。</p>
+    </div>
+  </div>
+
+  <figure id="fig-power">
+    <div class="fighead"><div><b>功耗：各模块平均功耗区间与 5 mW 预算</b><span class="tg es">估算</span></div></div>
+    <div class="fig mid">
+    <svg viewBox="0 0 900 340" role="img" aria-label="功耗区间图：八个模块的平均功耗区间，合计 2.2 到 5.2 毫瓦，预算 5 毫瓦">
+      <text class="tiny" x="300" y="20">0</text><text class="tiny c" x="400" y="20">0.5</text><text class="tiny c" x="500" y="20">1.0</text><text class="tiny c" x="600" y="20">1.5</text><text class="tiny c" x="700" y="20">2.0 mW</text>
+      <path class="grid" d="M300 26V258M400 26V258M500 26V258M600 26V258M700 26V258"/>
+      <g>
+        <text class="s" x="20" y="48" style="fill:var(--fg)">2 × MEMS 麦克风</text><rect x="380" y="36" width="80" height="16" rx="3" fill="var(--c-asr)"/><text class="mono" x="720" y="48">0.4–0.8</text>
+        <text class="s" x="20" y="76" style="fill:var(--fg)">采集接口 + 常开 VAD</text><rect x="400" y="64" width="100" height="16" rx="3" fill="var(--c-asr)"/><text class="mono" x="720" y="76">0.5–1.0</text>
+        <text class="s" x="20" y="104" style="fill:var(--fg)">主控 + Opus（占空 30–40%）</text><rect x="420" y="92" width="200" height="16" rx="3" fill="var(--c-llm)"/><text class="mono" x="720" y="104">0.6–1.6</text>
+        <text class="s" x="20" y="132" style="fill:var(--fg)">VPU / 骨导（常开）</text><rect x="340" y="120" width="60" height="16" rx="3" fill="var(--c-asr)"/><text class="mono" x="720" y="132">0.2–0.5</text>
+        <text class="s" x="20" y="160" style="fill:var(--fg)">IMU（低速）</text><rect x="302" y="148" width="8" height="16" rx="2" fill="var(--c-cpu)"/><text class="mono" x="720" y="160">≈0.03</text>
+        <text class="s" x="20" y="188" style="fill:var(--fg)">Flash 写入</text><rect x="320" y="176" width="20" height="16" rx="2" fill="var(--c-cpu)"/><text class="mono" x="720" y="188">0.1–0.2</text>
+        <text class="s" x="20" y="216" style="fill:var(--fg)">BLE（连接维持 + 突发）</text><rect x="360" y="204" width="100" height="16" rx="3" fill="var(--c-sto)"/><text class="mono" x="720" y="216">0.3–0.8</text>
+        <text class="s" x="20" y="244" style="fill:var(--fg)">漏电 · LDO · RTC</text><rect x="320" y="232" width="20" height="16" rx="2" fill="var(--c-cpu)"/><text class="mono" x="720" y="244">0.1–0.2</text>
+      </g>
+      <path class="axis" d="M20 270H880"/>
+      <text class="t" x="20" y="304">合计</text>
+      <text class="tiny" x="62" y="304">（另一刻度）</text>
+      <path class="grid" d="M300 286V320M380 286V320M460 286V320M540 286V320M620 286V320M700 286V320M780 286V320"/>
+      <rect x="476" y="292" width="240" height="20" rx="4" fill="var(--accent)" opacity=".85"/>
+      <text class="mono c" x="596" y="306" style="fill:var(--on-accent);font-weight:500">2.2–5.2 mW</text>
+      <path d="M700 282V322" stroke="var(--g-drop)" stroke-width="2" stroke-dasharray="4 3"/>
+      <text class="gl" x="706" y="290" style="fill:var(--g-drop)">预算 5 mW</text>
+      <text class="tiny c" x="300" y="334">0</text><text class="tiny c" x="380" y="334">1</text><text class="tiny c" x="460" y="334">2</text><text class="tiny c" x="540" y="334">3</text><text class="tiny c" x="620" y="334">4</text><text class="tiny c" x="700" y="334">5</text><text class="tiny c" x="780" y="334">6 mW</text>
+    </svg>
+    </div>
+    <figcaption>门控打开约 35% 的全天画像。5 mW × 24 h = 120 mWh ≈ 32 mAh（3.7 V），留 40% 余量建议 60–80 mAh。最大变量是门控占空比与 BLE 策略；须在原型上按“安静办公 / 会议 / 通勤 / 看电视”四种画像实测。</figcaption>
+  </figure>
+
+  <div id="s3-6" class="card" data-label="§3 缓冲与传输"><h3>缓冲与传输</h3>
+    <dl class="kv">
+      <dt>码流</dt><dd>16 kb/s ≈ 7.2 MB/小时</dd>
+      <dt>Flash</dt><dd>≥8 小时满码率（约 58 MB），128 MB SPI NAND<span class="tg ask">待询价</span>；未确认的数据不覆盖，写满时停录并告警</dd>
+      <dt>传输</dt><dd>BLE 自定义 GATT / L2CAP CoC 突发；手机按帧序号区间回执</dd>
+      <dt>码率</dt><dd>默认 16 kb/s；远场 CER 或短回应受限且功耗允许时提到 24–32 kb/s</dd>
+    </dl>
+  </div>
+</section>
+
+<!-- §4 -->
+<section id="s4" data-label="§4">
+  <h2><span class="no">§4</span>手机端</h2>
+  <p class="lede">手机是中间处理层：拼时间线、校时钟、做 L1 拒识、记场景、调度上传、管删除链。L1 只丢高置信非人声，而且在上传前批量运行，优先在充电时进行。</p>
+
+  <figure id="fig-l1b">
+    <div class="fighead"><div><span class="lvl">L1</span><b>手机 App 内部</b></div><span class="minimap" data-seg="1"></span></div>
+    <div class="fig wide">
+    <svg viewBox="0 0 1040 340" role="img" aria-label="L1 手机模块图：BLE 接收、时间线拼接、加密暂存、L1 拒识、清单打包、批量上传，旁路有时钟校准、场景事件时间线、调度条件与个人热词采集">
+      <path class="e" d="M4 90H18" marker-end="url(#ah)"/><text class="tiny" x="2" y="80">领夹</text>
+      <g class="nd" tabindex="0" data-tip="接收设备突发数据；加密落盘后按帧序号区间回执，设备才可覆盖。" data-ref="s4-1"><rect x="20" y="60" width="130" height="60" rx="7"/><text class="t c" x="85" y="86">BLE 接收</text><text class="s c" x="85" y="104">按序号回执</text></g>
+      <path class="e" d="M150 90H178" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="主键 (device_id, boot_generation, frame_seq)，与收到顺序无关；设备侧缺口用静音或丢包补偿填满原时长，不压缩时间轴；时间只按帧序号推算。" data-ref="s4-1"><rect x="180" y="60" width="160" height="60" rx="7"/><text class="t c" x="260" y="86">时间线拼接</text><text class="s c" x="260" y="104">设备 · 世代 · 帧序号</text></g>
+      <path class="e" d="M340 90H368" marker-end="url(#ah)"/>
+      <g class="nd store" tabindex="0" data-tip="App 私有目录 + 文件级加密，密钥在钥匙串 / Keystore。上限 2 GB（可设置），最长 7 天；超期删除并登记缺口。原样保存设备 Opus 码流，不重编码。" data-ref="s4-6"><rect x="370" y="60" width="150" height="60" rx="7"/><use href="#lock" class="lock" x="380" y="68" width="12" height="14"/><text class="t c" x="445" y="86">加密暂存</text><text class="s c" x="445" y="104">≤2 GB · ≤7 天</text></g>
+      <path class="e" d="M520 90H548" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="轻量 VAD（Silero / FireRedVAD 一类，ONNX）+ 声音事件分类。只丢“前后各留 500 ms 后仍为非语音”的区间；间隔 &lt;2 s 合并；事件只打标签。二期只复核、原则上不再丢弃。" data-ref="s4-3"><rect x="550" y="60" width="170" height="60" rx="7"/><text class="t c" x="635" y="86">L1 拒识</text><text class="s c" x="635" y="104">上传前批量 · 充电优先</text></g>
+      <use href="#hex" x="564" y="60" class="gate g-drop"/><text class="gt c" x="564" y="64">G1</text>
+      <text class="tiny c" x="635" y="142">声音事件 / 本机外放：只打标签</text>
+      <path class="e" d="M720 90H748" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="分片清单（§6.1）：分片 ID、帧序号、编码、时钟、缺口、L1 结果、场景事件、二期传感器轨迹。" data-ref="s6"><rect x="750" y="60" width="110" height="60" rx="7"/><text class="t c" x="805" y="86">清单打包</text><text class="s c" x="805" y="104">快照 + 标签</text></g>
+      <path class="e" d="M860 90H878" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="分片 ID = device_id:boot_generation:seq_start，重试复用，云端去重。流量约 47 MB/天、1.4 GB/月（估算），主要走 WiFi。" data-ref="s4-5"><rect x="880" y="60" width="110" height="60" rx="7"/><text class="t c" x="935" y="86">批量上传</text><text class="s c" x="935" y="104">幂等分片 ID</text></g>
+      <path class="e" d="M990 90H1034" marker-end="url(#ah)"/><text class="tiny r" x="1034" y="80">云端</text>
+
+      <path class="e d" d="M400 60V30H85V58" marker-end="url(#ah)"/>
+      <text class="tiny c" x="242" y="24">加密落盘后按序号回执 → 领夹可覆盖</text>
+      <path class="e d" d="M1034 40H445V58" marker-end="url(#ah)"/>
+      <text class="tiny c" x="740" y="34">云端回执：音频已删 → 删除暂存</text>
+
+      <g class="nd" tabindex="0" data-tip="每次 BLE 连接及连接期间每 5 分钟记录同步点（RTC ↔ NTP 校正后的 UTC），线性拟合 offset 与 drift；检测重启、手动改时间、残差过大，异常时分段重拟合。RTC ±20 ppm 时日漂移 ≤1.7 s（估算）。" data-ref="s4-2"><rect x="180" y="170" width="160" height="56" rx="7"/><text class="t c" x="260" y="194">时钟校准</text><text class="s c" x="260" y="212">同步点拟合 · ≤200 ms</text></g>
+      <path class="e" d="M260 170V122" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="App 存活时持续记录状态变化，按录音时刻关联；未观测时段标 coverage=unknown。不含日历标题、姓名等自由文本。" data-ref="s4-4"><rect x="550" y="170" width="170" height="56" rx="7"/><text class="t c" x="635" y="194">场景事件时间线</text><text class="s c" x="635" y="212">外放 · 通话 · 路由 · 日历</text></g>
+      <path class="e" d="M720 198H805V122" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="调度只承诺“小时级”：系统可能推迟后台任务。电量 &lt;20% 且未充电时只上传、不跑 L1，由云端 G2 兜底。" data-ref="s4-5"><rect x="870" y="160" width="150" height="100" rx="7"/><text class="t c" x="945" y="182">调度条件</text><text class="s c" x="945" y="202">累计 ≥30 分钟有效</text><text class="s c" x="945" y="218">最旧 &gt;2 小时</text><text class="s c" x="945" y="234">立即同步（可用蜂窝）</text><text class="s c" x="945" y="250">WiFi 优先 · 蜂窝 &gt;4 h</text></g>
+      <path class="e" d="M935 160V122" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="通讯录只取近 90 天有联系的；日历参会人与标题专名只在会议前后 30 分钟生效；进行中的项目；历史纪要出现 ≥2 次的专名。" data-ref="s5-3"><rect x="180" y="270" width="200" height="50" rx="7"/><text class="t c" x="280" y="291">个人热词采集</text><text class="s c" x="280" y="308">通讯录 90 天 · 日历 · 项目</text></g>
+      <path class="e dot" d="M380 295H1034" marker-end="url(#ah)"/>
+      <text class="tiny c" x="700" y="289">→ 云端 · 个人热词库（可查看 / 删除）</text>
+    </svg>
+    </div>
+  </figure>
+
+  <div class="grid2">
+    <div id="s4-1" class="card" data-label="§4.1"><h3>分片与时间线</h3>
+      <ul class="small">
+        <li>上传分片固定 5 分钟设备时间（15,000 帧），不按语音切。</li>
+        <li>主键 <code>(device_id, boot_generation, frame_seq)</code>，乱序与补传都能拼回原位。</li>
+        <li>缺口不压缩时间轴；开启 DTX 时只按帧序号推算时间。</li>
+        <li>原样保存设备码流，L1 只解一份临时 PCM。</li>
+      </ul>
+    </div>
+    <div id="s4-2" class="card" data-label="§4.2"><h3>时钟校准</h3>
+      <ul class="small">
+        <li>同步点：每次连接 + 连接中每 5 分钟。</li>
+        <li>线性拟合 <code>offset</code>、<code>drift_ppm</code>；日漂移 ≤1.7 s<span class="tg es">估算</span>。</li>
+        <li>异常：重启（世代变化）、手动改时间、拟合残差过大 → 分段重拟合，标 <code>sync_quality_ms</code>。</li>
+        <li>录音时刻还原误差 ≤200 ms<span class="tg go">目标</span>。</li>
+      </ul>
+    </div>
+    <div id="s4-3" class="card" data-label="§4.3"><h3>L1 拒识</h3>
+      <ul class="small">
+        <li><b>只丢</b>：VAD 高置信非语音，前后各留 500 ms 后仍为非语音；间隔 &lt;2 s 的语音段合并。</li>
+        <li><b>只打标签</b>：声音事件（电视、音乐等）、本机外放区间。</li>
+        <li>一期是第一道丢弃闸，挡掉全天约 75% 非语音<span class="tg as">假设</span>；二期只复核。</li>
+      </ul>
+    </div>
+    <div id="s4-5" class="card" data-label="§4.5"><h3>平台机制<span class="tg ask">待确认</span></h3>
+      <ul class="small">
+        <li>iOS：BLE 中心后台模式接收；<code>BGProcessingTask</code>（可要求外接电源与网络）跑 L1；后台 <code>URLSession</code> 上传。</li>
+        <li>Android：<code>connectedDevice</code> 前台服务 + WorkManager 约束。</li>
+      </ul>
+    </div>
+  </div>
+
+  <div id="s4-4" data-label="§4.4" style="display:flex;flex-direction:column;gap:10px">
+    <h3>场景事件（随清单上云，按录音时刻关联）</h3>
+    <p class="small muted">设备离线缓冲时，“手机收到分片”可能比录音晚几个小时，所以按事件时间线记录，不在收到时取一次快照。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>字段</th><th>类型</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">t_utc</td><td class="mono">int64 ms</td><td>状态变化时刻</td></tr>
+        <tr><td class="mono">coverage</td><td class="mono">observed | unknown</td><td>App 是否观测到该时段</td></tr>
+        <tr><td class="mono">media.active</td><td class="mono">bool</td><td>手机自身是否在播放</td></tr>
+        <tr><td class="mono">media.route</td><td class="mono">speaker | receiver | wired | bt_a2dp | bt_hfp | airplay | unknown</td><td>只有 <code>speaker</code> 会被领夹录到</td></tr>
+        <tr><td class="mono">call.state</td><td class="mono">none | ringing | active</td><td>通话状态</td></tr>
+        <tr><td class="mono">call.route</td><td class="mono">同上</td><td><code>speaker</code> 即免提</td></tr>
+        <tr><td class="mono">call.kind</td><td class="mono">cellular | voip | unknown</td><td>通话类型</td></tr>
+        <tr><td class="mono">calendar.in_meeting</td><td class="mono">bool</td><td>是否处于日历事件时间窗</td></tr>
+        <tr><td class="mono">calendar.meeting_hash</td><td class="mono">string</td><td>事件 ID 加盐哈希，关联同一会议的分片</td></tr>
+        <tr><td class="mono">calendar.attendee_count</td><td class="mono">int</td><td>参会人数</td></tr>
+        <tr><td class="mono">calendar.is_online</td><td class="mono">bool</td><td>是否线上会议</td></tr>
+        <tr><td class="mono">hotword_set_version</td><td class="mono">string</td><td>当时生效的个人热词表版本</td></tr>
+      </tbody>
+    </table></div>
+    <p class="small">不进快照：日历标题、参会人姓名、通讯录内容（只进个人热词库）。</p>
+    <details class="more"><summary>平台 API 与已知盲区<span class="tg ask">待确认</span></summary><div>
+      <p>iOS：外放 <code>AVAudioSession.isOtherAudioPlaying</code> / <code>secondaryAudioShouldBeSilencedHint</code>，路由 <code>currentRoute.outputs</code>，通话 <code>CXCallObserver</code>，日历 EventKit。中国大陆区的 VoIP 应用通常不接入 CallKit，微信等通话可能观测不到，此时 <code>call.kind=unknown</code>，回退到声学判断。</p>
+      <p>Android：外放 <code>AudioManager.getActivePlaybackConfigurations</code> / <code>isMusicActive</code>，通话 <code>getMode()</code>、<code>TelephonyCallback</code>（需电话权限），路由 <code>getCommunicationDevice</code>，日历 <code>CalendarContract</code>。</p>
+    </div></details>
+  </div>
+  <p id="s4-6" class="small muted" data-label="§4.6">暂存上限 2 GB、最长 7 天；超期删除并登记缺口。隐私上限优先于完整性。</p>
+</section>
+
+<!-- §5 -->
+<section id="s5" data-label="§5">
+  <h2><span class="no">§5</span>云端</h2>
+  <p class="lede">云端在“转写库”处分成两段：前段需要音频，做拒识、转写、判定与裁决；后段只读文字，做入库与下游。</p>
+
+  <figure id="fig-l1c">
+    <div class="fighead"><div><span class="lvl">L1</span><b>云端 · 识别与判定</b></div><span class="minimap" data-seg="2"></span></div>
+    <div class="fig wide">
+    <svg viewBox="0 0 1100 430" role="img" aria-label="L1 云端识别与判定：接收解码、VAD 复核、播放检测、8B 主干转写、健康检查，再经机主判定、内容门控、专名纠错、三档裁决进入转写库；旁路有音频桶、清单、偏置表、600M、热词库、声纹库与 VPU">
+      <g class="nd store" tabindex="0" data-tip="短期存储桶，每用户数据密钥加密；永久失败重试 48 小时后删除，生命周期规则 72 小时强制删除兜底。" data-ref="s7"><rect x="20" y="10" width="170" height="50" rx="7"/><use href="#lock" class="lock" x="30" y="18" width="12" height="14"/><text class="t c" x="105" y="31">短期音频桶</text><text class="s c" x="105" y="48">重试 48 h · 兜底 72 h</text></g>
+      <path class="e dot" d="M105 60V88" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="来自手机清单：场景事件（本机外放、免提）、L1 声音事件标签。" data-ref="s4-4"><rect x="440" y="10" width="170" height="50" rx="7"/><text class="t c" x="525" y="31">清单输入</text><text class="s c" x="525" y="48">场景快照 · L1 标签</text></g>
+      <path class="e" d="M525 60V88" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="每个识别分片一张：个人热词中当前生效的全部 + 行业包按上下文检索 top-K + 少量高频公共词，截断到 N。" data-ref="s5-3"><rect x="650" y="10" width="170" height="50" rx="7"/><text class="t c" x="735" y="31">偏置表</text><text class="s c" x="735" y="48">≤300 条 · 按上下文检索</text></g>
+      <path class="e" d="M735 60V88" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="600M 只在可疑片段（约 20%）完整解码做交叉校验；对齐用编码器 + CTC（若有 CTC 头，待确认），成本按完整解码约 10% 估。" data-ref="s5-2"><rect x="860" y="10" width="170" height="50" rx="7"/><text class="t c" x="945" y="31">600M 辅助</text><text class="s c" x="945" y="48">交叉校验 · 强制对齐</text></g>
+      <path class="e" d="M945 60V88" marker-end="url(#ah)"/>
+      <path class="e" d="M1030 35H1070V262H1032" marker-end="url(#ah)"/>
+      <text class="tiny" x="1074" y="150">对齐</text>
+
+      <g class="nd" tabindex="0" data-tip="解码一次生成 16 kHz PCM；检查削波比例、长时间零值、码流缺口，只标记和计量，不据此删除。" data-ref="s5-1"><rect x="20" y="90" width="170" height="64" rx="7"/><text class="t c" x="105" y="117">接收 · 解码</text><text class="s c" x="105" y="136">质量检查（只标记）</text></g>
+      <path class="e" d="M190 122H228" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="FireRedVAD 一类，阈值偏低；前置 300–500 ms、拖尾 500–1000 ms，间隔 &lt;1–2 s 合并。识别分片长度按 8B 输入上限（例如 30–60 s，待确认），拼接处留 200 ms 静音。" data-ref="s5-1"><rect x="230" y="90" width="170" height="64" rx="7"/><text class="t c" x="315" y="117">VAD 复核 · 切分</text><text class="s c" x="315" y="136">偏召回 · 停顿处切</text></g>
+      <use href="#hex" x="244" y="90" class="gate g-drop"/><text class="gt c" x="244" y="94">G2</text>
+      <path class="e" d="M400 122H438" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="回放检测模型（LFCC/CQCC + 轻量 CNN 或 AASIST 一类），用自建扬声器重录语料训练；输出 p_playback_acoustic。二期三条件：VPU 有效且持续静默、分类器高置信、连续 ≥60 s 且无其他人声。" data-ref="s5-1"><rect x="440" y="90" width="170" height="64" rx="7"/><text class="t c" x="525" y="117">播放检测</text><text class="s c" x="525" y="136"><tspan class="only-p1">一期：只打标签</tspan><tspan class="only-p2">二期：三条件才跳过</tspan></text></g>
+      <use href="#hex" x="454" y="90" class="gate g3"/><text class="gt c" x="454" y="94">G3</text>
+      <path class="e" d="M610 122H648" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="100% 有效音频。8B 故障时排队等待，超过 12 小时才用 600M 降级并标 degraded，恢复后不重跑。标点用 8B 自带；不做 ITN。" data-ref="s5-2"><rect x="650" y="90" width="170" height="64" rx="7"/><text class="t c" x="735" y="117">8B 主干转写</text><text class="s c" x="735" y="136">100% 有效音频</text></g>
+      <path class="e" d="M820 122H858" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="命中任一即可疑：n-gram 重复 ≥3、字速 &gt;9 字/秒或 &lt;0.5 字/秒（&gt;5 s）、压缩比异常、幻觉短语表、低置信、语种突变。" data-ref="s5-1"><rect x="860" y="90" width="170" height="64" rx="7"/><text class="t c" x="945" y="117">健康检查</text><text class="s c" x="945" y="136">可疑 ≈20% → 600M</text></g>
+      <use href="#hex" x="874" y="90" class="gate g-drop"/><text class="gt c" x="874" y="94">G4</text>
+      <path class="e" d="M945 154V228" marker-end="url(#ah)"/>
+
+      <g class="nd" tabindex="0" data-tip="当天聚类；每片段与每簇（≥10 s 语音）各算一次机主得分；&lt;1.5 s 短片段只在簇得分高、离簇中心近、不与他人相邻或重叠时随簇。重叠段 → 不确定。" data-ref="s5-6"><rect x="860" y="230" width="170" height="64" rx="7"/><text class="t c" x="945" y="257">机主判定</text><text class="s c" x="945" y="276"><tspan class="only-p1">聚类 + 声纹</tspan><tspan class="only-p2">聚类 + 声纹 × VPU</tspan></text></g>
+      <use href="#hex" x="874" y="230" class="gate g-iso"/><text class="gt c" x="874" y="234">G5</text>
+      <path class="e" d="M860 262H822" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="输入：该段 + 前后各 2 段上下文 + G3 标签；输出 JSON {p_media, kind}；无工具权限，只分类不执行。他人语音前后 2 分钟机主都没发言且 p_media 偏高时加重播放判断。" data-ref="s5-1"><rect x="650" y="230" width="170" height="64" rx="7"/><text class="t c" x="735" y="257">内容门控</text><text class="s c" x="735" y="276">小 LLM · 只降级</text></g>
+      <use href="#hex" x="664" y="230" class="gate g-iso"/><text class="gt c" x="664" y="234">G6</text>
+      <path class="e" d="M650 262H612" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="闭集选择、只输出 diff、按热词类别分级证据门槛、每段最多 3 条、保护词不可触碰；原识别文字与 diff 一起保存，可一键撤销。默认关闭。" data-ref="s5-5"><rect x="440" y="230" width="170" height="64" rx="7"/><text class="t c" x="525" y="257">专名纠错</text><text class="s c" x="525" y="276">闭集 diff · 默认关闭</text></g>
+      <path class="e" d="M440 262H402" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="7 步顺序裁决，见 L2 三档裁决图。" data-ref="s5-7"><rect x="230" y="230" width="170" height="64" rx="7"/><text class="t c" x="315" y="257">三档裁决</text><text class="s c" x="315" y="276">接受 / 隔离 / 拒绝</text></g>
+      <use href="#hex" x="244" y="230" class="gate g-verdict"/><text class="gt c" x="244" y="234">G7</text>
+      <path class="e" d="M230 262H192" marker-end="url(#ah)"/>
+      <g class="nd store" tabindex="0" data-tip="文字持久落盘后，删除音频与派生物，只保留写进片段的分数与标签。" data-ref="s6"><rect x="20" y="230" width="170" height="64" rx="7"/><use href="#lock" class="lock" x="30" y="238" width="12" height="14"/><text class="t c" x="105" y="257">转写库</text><text class="s c" x="105" y="276">文字落盘 → 删音频</text></g>
+
+      <path class="e d" d="M105 294V368" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="回执字段：audio_stage、text_persisted_at、cloud_audio_deleted_at、gaps_recorded（§6.3）。" data-ref="s6"><rect x="20" y="370" width="170" height="50" rx="7"/><text class="t c" x="105" y="391">回执 → 手机</text><text class="s c" x="105" y="408">音频与派生物已删</text></g>
+      <path class="e" d="M315 294V368" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="被拒绝的内容不存文字，只记时长与原因计数。" data-ref="s5-7"><rect x="230" y="370" width="170" height="50" rx="7"/><text class="t c" x="315" y="391">拒绝计量</text><text class="s c" x="315" y="408">只记时长 · G2 / G4 / G7</text></g>
+      <g class="nd store" tabindex="0" data-tip="全量三类词库，按拼音音节建 n-gram 索引；模糊规则 z/zh、c/ch、s/sh、n/l、f/h、an/ang、en/eng、in/ing，可按口音配置；英文建音形码与常见音译索引。" data-ref="s5-3"><rect x="440" y="370" width="170" height="50" rx="7"/><text class="t c" x="525" y="391">热词全量库</text><text class="s c" x="525" y="408">拼音模糊召回</text></g>
+      <path class="e dot" d="M525 370V296" marker-end="url(#ah)"/>
+      <g class="nd store" tabindex="0" data-tip="机主声纹嵌入，加密，带版本。" data-ref="s5-4"><rect x="860" y="370" width="80" height="50" rx="7"/><text class="t c" x="900" y="391">声纹库</text><text class="s c" x="900" y="408">加密</text></g>
+      <path class="e dot" d="M900 370V296" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="来自清单：场景快照（本机外放、免提），二期另有 VPU 特征与有效性、IMU 佩戴状态。" data-ref="s5-6"><rect x="950" y="370" width="80" height="50" rx="7"/><text class="t c" x="990" y="391"><tspan class="only-p2">VPU·快照</tspan><tspan class="only-p1">场景快照</tspan></text><text class="s c" x="990" y="408">来自清单</text></g>
+      <path class="e" d="M990 370V296" marker-end="url(#ah)"/>
+    </svg>
+    </div>
+  </figure>
+
+  <figure id="fig-l1d">
+    <div class="fighead"><div><span class="lvl">L1</span><b>云端 · 入库与下游</b></div><span class="minimap" data-seg="3"></span></div>
+    <div class="fig wide">
+    <svg viewBox="0 0 1000 390" role="img" aria-label="L1 入库与下游：接受档经 G8 入库闸门进入纪要、待办、记忆，均记录溯源；隔离档折叠显示在 App；用户放回、降级会撤回依赖项">
+      <g class="nd store" tabindex="0" data-tip="接受档：按用户的留存设置保存；可搜。" data-ref="s5-7"><rect x="20" y="60" width="170" height="60" rx="7"/><use href="#lock" class="lock" x="30" y="68" width="12" height="14"/><text class="t c" x="105" y="86">转写库 · 接受档</text><text class="s c" x="105" y="104">按用户留存设置</text></g>
+      <g class="nd store" tabindex="0" data-tip="隔离档：7 天后自动删除；只在“隔离区”内可搜；不进纪要、待办、记忆。" data-ref="s5-7"><rect x="20" y="250" width="170" height="60" rx="7"/><use href="#lock" class="lock" x="30" y="258" width="12" height="14"/><text class="t c" x="105" y="276">转写库 · 隔离档</text><text class="s c" x="105" y="294">7 天自动删除</text></g>
+      <path class="e" d="M190 90H258" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-tip="G8 规则见 §5.8：只读接受档；待办按说话人核对；记忆只采信证据级机主原话；他人话里关于机主的说法不写成事实。" data-ref="s5-8"><rect x="260" y="60" width="170" height="60" rx="7"/><text class="t c" x="345" y="86">入库闸门</text><text class="s c" x="345" y="104">只读接受档</text></g>
+      <use href="#hex" x="274" y="60" class="gate g-store"/><text class="gt c" x="274" y="64">G8</text>
+      <path class="e" d="M430 90H470M470 43V183"/>
+      <path class="e" d="M470 43H518" marker-end="url(#ah)"/>
+      <path class="e" d="M470 113H518" marker-end="url(#ah)"/>
+      <path class="e" d="M470 183H518" marker-end="url(#ah)"/>
+      <g class="nd"><rect x="520" y="20" width="200" height="46" rx="7"/><text class="t c" x="620" y="39">纪要</text><text class="s c" x="620" y="56">机主与他人的话都作上下文</text></g>
+      <g class="nd"><rect x="520" y="76" width="200" height="74" rx="7"/><text class="t c" x="620" y="95">待办</text><text class="s c" x="620" y="112">我答应的：证据级机主原话</text><text class="s c" x="620" y="127">对方答应的：他人原话</text><text class="s c" x="620" y="142">否则：未核实，不提醒</text></g>
+      <g class="nd"><rect x="520" y="160" width="200" height="46" rx="7"/><text class="t c" x="620" y="179">记忆</text><text class="s c" x="620" y="196">只采信证据级机主原话</text></g>
+      <path class="e" d="M720 113H778" marker-end="url(#ah)"/>
+      <path class="e" d="M720 183H778" marker-end="url(#ah)"/>
+      <g class="nd"><rect x="780" y="76" width="190" height="130" rx="7"/><text class="t c" x="875" y="100">溯源</text><text class="s c" x="875" y="122">每条待办与记忆</text><text class="s c" x="875" y="140">记录引用的片段 ID</text><text class="s c" x="875" y="166">片段降级或删除时</text><text class="s c" x="875" y="184">撤回或请用户确认</text></g>
+
+      <path class="e" d="M150 120V228H600V263" marker-end="url(#ah)"/>
+      <path class="e" d="M105 310V360H620V327" marker-end="url(#ah)"/>
+      <text class="tiny" x="300" y="374">折叠显示 · 标注原因</text>
+      <g class="nd"><rect x="520" y="265" width="200" height="60" rx="7"/><text class="t c" x="620" y="290">App 时间线</text><text class="s c" x="620" y="308">接受正常 · 隔离折叠</text></g>
+      <path class="e d" d="M520 295H432" marker-end="url(#ah)"/>
+      <g class="nd"><rect x="260" y="250" width="170" height="80" rx="7"/><text class="t c" x="345" y="272">用户操作</text><text class="s c" x="345" y="291">放回：隔离 → 接受</text><text class="s c" x="345" y="307">降级：接受 → 隔离</text><text class="tiny c" x="345" y="322">“这不是我说的” / “这是电视”</text></g>
+      <path class="e d" d="M260 290H192" marker-end="url(#ah)"/>
+      <text class="tiny c" x="226" y="284">降级</text>
+      <path class="e d" d="M280 250V240H225V105H192" marker-end="url(#ah)"/>
+      <text class="tiny" x="231" y="170">放回</text>
+      <path class="e d" d="M430 315H450V345H875V208" marker-end="url(#ah)"/>
+      <text class="tiny c" x="760" y="340">撤回依赖项</text>
+    </svg>
+    </div>
+    <figcaption>用户放回的片段记为“用户确认”，可作为证据级。</figcaption>
+  </figure>
+
+  <!-- 5.1 -->
+  <div id="s5-1" data-label="§5.1" style="display:flex;flex-direction:column;gap:14px">
+    <h3>5.1 拒识级联</h3>
+    <figure id="fig-funnel">
+      <div class="fighead"><div><span class="lvl">L2</span><b>拒识漏斗：每佩戴 1 小时，各级保留多少、丢掉什么</b></div></div>
+      <div class="fig mid">
+      <svg viewBox="0 0 900 290" role="img" aria-label="拒识漏斗：佩戴 1 小时，上传约 0.35 小时，送入 8B 约 0.25 小时，最后分为接受与隔离">
+        <text class="s r" x="190" y="45" style="fill:var(--fg)">佩戴音频</text>
+        <rect x="200" y="20" width="520" height="40" rx="5" fill="var(--accent)" opacity=".35"/>
+        <text class="mono" x="212" y="45" style="font-weight:500">1.00 h</text>
+        <text class="tiny" x="734" y="38">全天有效比例 ≈0.25</text><text class="tiny" x="734" y="54" style="fill:var(--t-assume)">假设</text>
+
+        <text class="s r" x="190" y="101" style="fill:var(--fg)">上传（G0 / G1 后）</text>
+        <rect x="200" y="76" width="182" height="40" rx="5" fill="var(--accent)" opacity=".6"/>
+        <text class="mono" x="212" y="101" style="font-weight:500">≈0.35 h</text>
+        <rect x="396" y="84" width="236" height="24" rx="12" class="drop"/><text class="tiny drop-t" x="408" y="100">拒绝：静音 · 低能量 · 非人声噪声</text>
+
+        <text class="s r" x="190" y="157" style="fill:var(--fg)">送入 8B（G2 后）</text>
+        <rect x="200" y="132" width="130" height="40" rx="5" fill="var(--accent)" opacity=".85"/>
+        <text class="mono" x="212" y="157" style="fill:var(--on-accent);font-weight:500">≈0.25 h</text>
+        <rect x="344" y="140" width="130" height="24" rx="12" class="drop"/><text class="tiny drop-t" x="356" y="156">拒绝：非语音</text>
+        <rect x="484" y="140" width="250" height="24" rx="12" class="other"/><text class="tiny other-t" x="496" y="156">G3 播放检测：<tspan class="only-p1">一期只打标签</tspan><tspan class="only-p2">二期三条件才跳过</tspan></text>
+
+        <text class="s r" x="190" y="213" style="fill:var(--fg)">幻觉检查（G4 后）</text>
+        <rect x="200" y="188" width="130" height="40" rx="5" fill="var(--accent)" opacity=".85"/>
+        <text class="mono" x="212" y="213" style="fill:var(--on-accent);font-weight:500">≈0.25 h</text>
+        <rect x="344" y="196" width="170" height="24" rx="12" class="drop"/><text class="tiny drop-t" x="356" y="212">拒绝：无语音帧的幻觉</text>
+        <rect x="524" y="196" width="170" height="24" rx="12" class="iso"/><text class="tiny iso-t" x="536" y="212">隔离：交叉校验分歧大</text>
+
+        <text class="s r" x="190" y="269" style="fill:var(--fg)">三档裁决（G5–G7）</text>
+        <rect x="200" y="244" width="91" height="40" rx="5" fill="var(--accent)"/>
+        <rect x="291" y="244" width="39" height="40" rx="0" fill="var(--g-iso)"/>
+        <text class="tiny" x="206" y="268" style="fill:var(--on-accent);font-weight:700">接受</text>
+        <rect x="344" y="252" width="290" height="24" rx="12" class="iso"/><text class="tiny iso-t" x="356" y="268">隔离：疑似回放 · 不确定 · 播放声 · 媒体内容</text>
+        <text class="tiny" x="648" y="268">比例为示意，无数据</text>
+      </svg>
+      </div>
+    </figure>
+
+    <div class="tbl"><table>
+      <thead><tr><th>G3 证据</th><th>来源</th><th>判别力</th><th>局限</th></tr></thead>
+      <tbody>
+        <tr><td>声学回放特征</td><td>回放检测模型，自建重录语料训练</td><td>扬声器频响、压缩痕迹、房间混响</td><td>好音箱近距离不明显；16 kb/s 抹掉细节</td></tr>
+        <tr><td>手机场景快照</td><td>§4.4</td><td>本机外放几乎确定</td><td>不覆盖电视、电脑、别人的手机</td></tr>
+        <tr class="p2only"><td>空间特征（二期双麦）</td><td>方向长时间不变、相干性低、混响大</td><td>固定远场声源</td><td>坐着不动的真人也是固定方向</td></tr>
+        <tr><td>交互特征（G6 计算）</td><td>机主是否与该声源轮流发言</td><td>电视不会接机主的话</td><td>需识别之后才能算</td></tr>
+        <tr class="p2only"><td>VPU（二期）</td><td>机主是否在发声</td><td><b>只判机主有没有说话</b></td><td>分不清电视和在场的真人</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="grid2">
+      <div class="card"><h3>G4 幻觉防护</h3>
+        <ul class="small">
+          <li>无语音不送 8B（G2 保证）。</li>
+          <li>健康检查：重复 ≥3、字速 &gt;9 字/秒、压缩比、幻觉短语表（“谢谢观看”、字幕组署名…）、低置信、语种突变。</li>
+          <li>可疑约 20%<span class="tg es">估算</span>用 600M 重识别：距离小 → 保留；距离大 → 隔离；无语音帧 → 拒绝。</li>
+          <li>不按“不通顺”删；不删与语音帧重叠的输出。</li>
+        </ul>
+      </div>
+      <div class="card"><h3>G6 内容门控的边界</h3>
+        <p class="small">对风格化内容（广告、播报、歌词、剧台词）有效；对“电视里的普通对话”和“在场真人的闲聊”基本无能为力，这部分只能靠声学与空间特征。90% 播放声召回要按内容类别分别报告。</p>
+        <div class="tbl"><table>
+          <thead><tr><th>回放机主录音</th><th>手段</th><th>残余</th></tr></thead>
+          <tbody>
+            <tr><td>一期</td><td>本机外放 + 声纹高 → 疑似回放；回放特征</td><td><b>别的设备回放防不住</b></td></tr>
+            <tr><td>二期</td><td>声纹高 + VPU 有效且静默 → 隔离</td><td>VPU 失效时退回一期</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5.2 -->
+  <div id="s5-2" data-label="§5.2" style="display:flex;flex-direction:column;gap:12px">
+    <h3>5.2 转写主干与辅助模型</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>模型</th><th>职责</th><th class="num">处理量</th></tr></thead>
+      <tbody>
+        <tr><td><b>8B 主干</b></td><td>全部有效音频转写，接收上下文热词偏置</td><td class="num">100%</td></tr>
+        <tr><td>600M 辅助</td><td>可疑片段交叉校验；强制对齐（CTC 头<span class="tg ask">待确认</span>）；可选编码器特征</td><td class="num">校验 ≈20% · 对齐 100%</td></tr>
+        <tr><td>CPU 小模型</td><td>VAD、声音事件、回放检测、声纹嵌入、重叠检测</td><td class="num">100%</td></tr>
+      </tbody>
+    </table></div>
+    <p class="small"><b>8B 故障</b>：排队等待，超过 12 小时才用 600M 降级并标 <code>degraded</code>，恢复后不重跑。<b>识别配置</b>：关闭顺滑、去口误、书面化、敏感词替换；标点用 8B 自带；不做 ITN。</p>
+  </div>
+
+  <!-- 5.3 -->
+  <div id="s5-3" data-label="§5.3" style="display:flex;flex-direction:column;gap:14px">
+    <h3>5.3 热词：三类来源，三层机制</h3>
+    <figure id="fig-hot">
+      <div class="fighead"><div><span class="lvl">L2</span><b>热词流水线：① 解码前检索 → ② 解码后拼音召回 → ③ 闭集纠错</b></div></div>
+      <div class="fig wide">
+      <svg viewBox="0 0 1000 300" role="img" aria-label="热词流水线：公共、行业、个人三类来源经上下文检索生成偏置表送入 8B 解码一次；转写文本再经拼音召回全量词库，最后闭集纠错输出 diff">
+        <g class="nd store"><rect x="20" y="20" width="170" height="48" rx="7"/><text class="t c" x="105" y="40">公共热词</text><text class="s c" x="105" y="57">1–5 万 · 运营按版本发布</text></g>
+        <g class="nd store"><rect x="20" y="80" width="170" height="48" rx="7"/><text class="t c" x="105" y="100">行业热词</text><text class="s c" x="105" y="117">每包 0.5–3 万 · 用户自选</text></g>
+        <g class="nd store"><rect x="20" y="140" width="170" height="48" rx="7"/><text class="t c" x="105" y="160">个人热词</text><text class="s c" x="105" y="177">几百至几千 · 按时间窗</text></g>
+        <path class="e" d="M190 44H205M190 104H205M190 164H205M205 44V230"/>
+        <path class="e" d="M205 82H248" marker-end="url(#ah)"/>
+        <g class="nd"><rect x="250" y="50" width="170" height="64" rx="7"/><text class="t c" x="335" y="70">① 上下文检索</text><text class="s c" x="335" y="88">个人生效 + 行业 top-K</text><text class="s c" x="335" y="104">+ 高频公共 → 截断</text></g>
+        <g class="nd"><rect x="250" y="160" width="170" height="48" rx="7"/><text class="t c" x="335" y="180">上下文</text><text class="s c" x="335" y="197">前文转写 · 日历 · 行业</text></g>
+        <path class="e" d="M335 160V116" marker-end="url(#ah)"/>
+        <path class="e" d="M420 82H458" marker-end="url(#ah)"/>
+        <g class="nd store"><rect x="460" y="50" width="130" height="64" rx="7"/><text class="t c" x="525" y="76">偏置表</text><text class="s c" x="525" y="95">≤ N=300 / 分片</text></g>
+        <path class="e" d="M590 82H628" marker-end="url(#ah)"/>
+        <g class="nd"><rect x="630" y="50" width="130" height="64" rx="7"/><text class="t c" x="695" y="76">8B 解码</text><text class="s c" x="695" y="95">只解码一次</text></g>
+        <path class="e" d="M760 82H798" marker-end="url(#ah)"/>
+        <g class="nd"><rect x="800" y="50" width="170" height="64" rx="7"/><text class="t c" x="885" y="76">转写文本</text><text class="s c" x="885" y="95">含置信度</text></g>
+        <path class="e" d="M885 114V150H710V178" marker-end="url(#ah)"/>
+        <path class="e" d="M205 230H628" marker-end="url(#ah)"/>
+        <text class="tiny" x="420" y="224">全量三类库</text>
+        <g class="nd"><rect x="630" y="180" width="160" height="56" rx="7"/><text class="t c" x="710" y="203">② 拼音召回</text><text class="s c" x="710" y="221">全量库 · 模糊音</text></g>
+        <path class="e" d="M790 208H818" marker-end="url(#ah)"/>
+        <g class="nd"><rect x="820" y="180" width="160" height="56" rx="7"/><text class="t c" x="900" y="203">③ 闭集纠错</text><text class="s c" x="900" y="221">分级门槛 · 只出 diff</text></g>
+        <path class="e" d="M980 208H996" marker-end="url(#ah)"/>
+        <g class="nd"><rect x="820" y="252" width="160" height="36" rx="7"/><text class="s c" x="900" y="275" style="fill:var(--fg)">8B 置信度 · 600M 输出</text></g>
+        <path class="e" d="M900 252V238" marker-end="url(#ah)"/>
+        <text class="tiny" x="20" y="262">冲突优先级：个人 &gt; 行业 &gt; 公共</text>
+        <text class="tiny" x="20" y="280">不做二次解码（8B 成本接近翻倍），列为评测变体</text>
+      </svg>
+      </div>
+    </figure>
+    <div class="tbl"><table>
+      <thead><tr><th>类别</th><th>来源</th><th>规模<span class="tg es">估算</span></th><th>维护</th></tr></thead>
+      <tbody>
+        <tr><td>公共</td><td>运营整理的新词、热门实体</td><td class="num">1–5 万</td><td>按版本发布；评测集上召回与误插入不回退才发布</td></tr>
+        <tr><td>行业</td><td>按行业分包</td><td class="num">每包 0.5–3 万</td><td>用户在引导页自选，可多选；<b>不从录音推断行业</b></td></tr>
+        <tr><td>个人</td><td>通讯录（近 90 天）、日历参会人与标题专名、项目、纪要中出现 ≥2 次的专名</td><td class="num">几百–几千</td><td>自动收集，时间窗生效；可查看、删除；随用户删除</td></tr>
+      </tbody>
+    </table></div>
+    <p class="small muted">评测要点：三类分别报告召回率与误触发率，另报偏置表截断造成的召回损失、时间窗外误触发、行业包扩大后误触发的变化。误触发不达标时先缩小 N，再提高纠错门槛。</p>
+  </div>
+
+  <!-- 5.4 -->
+  <div id="s5-4" data-label="§5.4" style="display:flex;flex-direction:column;gap:12px">
+    <h3>5.4 声纹注册（约 1 分钟）</h3>
+    <div class="fig mid">
+    <svg viewBox="0 0 900 150" role="img" aria-label="声纹注册：0 到 30 秒朗读，30 到 60 秒自然说话，可选轻声与站坐姿；之后质量检查、生成嵌入、删除注册音频、加密保存">
+      <rect x="40" y="20" width="300" height="34" rx="5" fill="var(--accent)"/>
+      <text class="tiny" x="52" y="42" style="fill:var(--on-accent);font-weight:700">朗读 3 段 · 音素均衡</text>
+      <rect x="340" y="20" width="300" height="34" rx="0" fill="var(--accent)" opacity=".6"/>
+      <text class="tiny" x="352" y="42" style="fill:var(--fg);font-weight:700">回答 3 个开放问题 · 自然说话</text>
+      <rect x="640" y="20" width="200" height="34" rx="5" class="fb"/>
+      <text class="tiny" x="652" y="42">可选：轻声 · 站姿 / 坐姿</text>
+      <text class="tiny c" x="40" y="70">0 s</text><text class="tiny c" x="340" y="70">30 s</text><text class="tiny c" x="640" y="70">60 s</text>
+      <g class="nd"><rect x="40" y="96" width="160" height="32" rx="6"/><text class="s c" x="120" y="116" style="fill:var(--fg)">领夹录音（信道一致）</text></g>
+      <path class="e" d="M200 112H218" marker-end="url(#ah)"/>
+      <g class="nd"><rect x="220" y="96" width="100" height="32" rx="6"/><text class="s c" x="270" y="116" style="fill:var(--fg)">质量检查</text></g>
+      <path class="e" d="M320 112H338" marker-end="url(#ah)"/>
+      <g class="nd"><rect x="340" y="96" width="100" height="32" rx="6"/><text class="s c" x="390" y="116" style="fill:var(--fg)">生成嵌入</text></g>
+      <path class="e" d="M440 112H458" marker-end="url(#ah)"/>
+      <g class="nd"><rect x="460" y="96" width="130" height="32" rx="6"/><text class="s c" x="525" y="116" style="fill:var(--fg)">删除注册音频</text></g>
+      <path class="e" d="M590 112H608" marker-end="url(#ah)"/>
+      <g class="nd store"><rect x="610" y="96" width="230" height="32" rx="6"/><use href="#lock" class="lock" x="620" y="104" width="12" height="14"/><text class="s c" x="730" y="116" style="fill:var(--fg)">加密保存（KMS · 带版本）</text></g>
+    </svg>
+    </div>
+    <ul class="small">
+      <li><b>必须用领夹录</b>：手机麦克风注册会造成信道失配。质量检查看信噪比、有效时长、各段嵌入的一致性。</li>
+      <li><b>单独同意</b>，与录音同意分开；可随时删除或重新注册，旧版本立即失效，未入库的片段转为不确定。</li>
+      <li><b>不自动更新</b>，防外放或冒认投毒；得分分布持续下移时提示重新注册。</li>
+    </ul>
+  </div>
+
+  <!-- 5.5 -->
+  <div id="s5-5" data-label="§5.5" style="display:flex;flex-direction:column;gap:12px">
+    <h3>5.5 专名纠错（默认关闭）</h3>
+    <div class="grid2">
+      <div class="card"><h3>输出只能是 diff</h3>
+<pre class="json">{
+  "edits": [
+    {"start": 12, "end": 14,
+     "from": "章威", "to": "张伟",
+     "candidate_id": "c3",
+     "reason": "上下文为会议参会人"}
+  ]
+}</pre>
+        <p class="small muted">原识别文字与 diff 一起保存，App 可查看原识别、一键撤销。</p>
+      </div>
+      <div class="card"><h3>校验（任一不过即丢弃该条）</h3>
+        <ul class="checks small">
+          <li><code>from</code> 与原文 <code>[start,end)</code> 完全一致</li>
+          <li><code>to</code> 必须是该候选词：闭集选择</li>
+          <li>不碰否定、数字日期、情态、改口标记</li>
+          <li>拼音相似度达到门槛</li>
+          <li>每段最多 3 条</li>
+          <li>满足按类别分级的证据门槛（下表）</li>
+        </ul>
+      </div>
+    </div>
+    <div class="tbl"><table>
+      <thead><tr><th>类别</th><th>额外证据要求</th></tr></thead>
+      <tbody>
+        <tr><td>个人</td><td>拼音匹配 + 上下文相关即可</td></tr>
+        <tr><td>行业</td><td>还须满足其一：8B 与 600M 在此处不一致，或 8B 在此处置信度低</td></tr>
+        <tr><td>公共</td><td>同“行业”，并且<b>不能只凭拼音相近触发</b></td></tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <!-- 5.6 -->
+  <div id="s5-6" data-label="§5.6" style="display:flex;flex-direction:column;gap:14px">
+    <h3>5.6 机主判定</h3>
+    <figure id="fig-fusion">
+      <div class="fighead"><div><span class="lvl">L2</span><b>融合矩阵：一期纯声纹，二期 VPU 三态 × 声纹三档</b></div></div>
+      <div class="fig mid">
+      <svg viewBox="0 0 900 290" role="img" aria-label="融合矩阵：一期按声纹高中低判机主、不确定、他人；二期按 VPU 有效有发声、有效静默、无效未知三行与声纹三列融合">
+        <text class="ph" x="40" y="24">一期 · 纯声纹</text>
+        <text class="tiny c" x="92" y="54">高 ≥T_high¹</text><text class="tiny c" x="202" y="54">中</text><text class="tiny c" x="312" y="54">低 &lt;T_low</text>
+        <rect x="40" y="62" width="104" height="56" rx="6" class="owner"/><text class="t c owner-t" x="92" y="95">机主</text>
+        <rect x="150" y="62" width="104" height="56" rx="6" class="iso"/><text class="t c iso-t" x="202" y="88">不确定</text><text class="tiny c iso-t" x="202" y="106">→ 隔离</text>
+        <rect x="260" y="62" width="104" height="56" rx="6" class="other"/><text class="t c other-t" x="312" y="95">他人</text>
+        <rect x="40" y="134" width="324" height="40" rx="6" class="iso"/><text class="tiny iso-t" x="52" y="158">本机外放 + 声纹高 → 疑似回放 → 隔离</text>
+        <text class="tiny" x="40" y="196" style="fill:var(--g-drop)">用别的设备回放机主录音：一期防不住</text>
+        <text class="tiny" x="40" y="214">T_high¹ 比二期的 T_high² 更严</text>
+
+        <g class="p2only">
+        <text class="ph" x="440" y="24">二期 · VPU × 声纹</text>
+        <text class="tiny c" x="608" y="54">高 ≥T_high²</text><text class="tiny c" x="716" y="54">中</text><text class="tiny c" x="824" y="54">低</text>
+        <text class="s" x="440" y="94" style="fill:var(--fg);font-weight:700">有效 · 有发声</text>
+        <text class="s" x="440" y="154" style="fill:var(--fg);font-weight:700">有效 · 静默</text>
+        <text class="s" x="440" y="214" style="fill:var(--fg);font-weight:700">无效 / 未知</text>
+        <rect x="556" y="62" width="104" height="56" rx="6" class="owner"/><text class="t c owner-t" x="608" y="95">机主</text>
+        <rect x="664" y="62" width="104" height="56" rx="6" class="owner"/><text class="t c owner-t" x="716" y="88">机主*</text><text class="tiny c owner-t" x="716" y="106">救回声纹漂移</text>
+        <rect x="772" y="62" width="104" height="56" rx="6" class="iso"/><text class="t c iso-t" x="824" y="88">不确定</text><text class="tiny c iso-t" x="824" y="106">→ 隔离（可能重叠）</text>
+        <rect x="556" y="122" width="104" height="56" rx="6" class="iso"/><text class="t c iso-t" x="608" y="148">疑似回放</text><text class="tiny c iso-t" x="608" y="166">→ 隔离</text>
+        <rect x="664" y="122" width="104" height="56" rx="6" class="other"/><text class="t c other-t" x="716" y="155">他人</text>
+        <rect x="772" y="122" width="104" height="56" rx="6" class="other"/><text class="t c other-t" x="824" y="155">他人</text>
+        <rect x="556" y="182" width="104" height="56" rx="6" class="fb"/><text class="t c" x="608" y="208" style="font-size:13px">退回</text><text class="tiny c" x="608" y="226">一期规则</text>
+        <rect x="664" y="182" width="104" height="56" rx="6" class="iso"/><text class="t c iso-t" x="716" y="208">不确定</text><text class="tiny c iso-t" x="716" y="226">→ 隔离</text>
+        <rect x="772" y="182" width="104" height="56" rx="6" class="other"/><text class="t c other-t" x="824" y="215">他人</text>
+        <text class="tiny" x="440" y="262">* 前提：没有检测到重叠，且 VPU 覆盖了足够比例的语音帧。</text>
+        <text class="tiny" x="440" y="280">检测到重叠的时段永不判为机主；“静默”只有在信号有效时才是证据。</text>
+        </g>
+      </svg>
+      </div>
+    </figure>
+
+    <div class="grid2">
+      <div class="card"><h3>流程</h3>
+        <ol class="small">
+          <li>当天匿名聚类（CAM++ / ERes2NetV2 一类），簇号只在当天有效。</li>
+          <li>片段级得分 + 簇级得分（簇累计 ≥10 s 语音后）。</li>
+          <li>&lt;1.5 s 短片段：簇得分高、离簇中心近、不与他人相邻或重叠时才随簇；否则不确定。</li>
+          <li>重叠段转为不确定。</li>
+          <li>近场特征只作辅助与否决，不能单独授予机主。</li>
+        </ol>
+      </div>
+      <div class="card"><h3>证据级 ≠ 时间线级</h3>
+        <p class="small">证据级条件：声纹 ≥T_evidence（高于 T_high）；二期还要求 VPU 有效且有发声；不在重叠或邻近重叠处；片段 ≥1 s。</p>
+        <p class="small">理由<span class="tg es">估算</span>：他人每天可能说 2–3 小时，1% 误判就是每天 1–2 分钟被标成机主，足以每周产生数条错误的“我答应的”待办。</p>
+        <p class="small muted">阈值只在调参集选定；T_high、T_evidence 按误判上限定，不随召回放宽；T_low 按召回定。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5.7 -->
+  <div id="s5-7" data-label="§5.7" style="display:flex;flex-direction:column;gap:14px">
+    <h3>5.7 三档裁决与下游差异</h3>
+    <figure id="fig-verdict">
+      <div class="fighead"><div><span class="lvl">L2</span><b>三档裁决：按顺序判，先到先定，只收紧不放宽</b></div></div>
+      <div class="fig mid">
+      <svg viewBox="0 0 900 450" role="img" aria-label="三档裁决流程：七步依次判定，前两步拒绝，第三到第六步隔离，其余接受">
+        <!-- 1 -->
+        <circle cx="24" cy="32" r="13" fill="var(--surface-2)" stroke="var(--edge)"/><text class="mono c" x="24" y="36">1</text>
+        <g class="nd"><rect x="48" y="10" width="560" height="44" rx="7"/><text class="t" x="62" y="37">G2 · 判为非语音</text></g>
+        <path class="e" d="M608 32H648" marker-end="url(#ah)"/><text class="tiny c" x="628" y="26">是</text>
+        <rect x="650" y="10" width="230" height="44" rx="7" class="drop"/><text class="t drop-t" x="664" y="30">拒绝</text><text class="tiny drop-t" x="664" y="46">不识别 · 不存文字</text>
+        <path class="e" d="M300 54V70" marker-end="url(#ah)"/><text class="tiny" x="306" y="66">否</text>
+        <!-- 2 -->
+        <circle cx="24" cy="94" r="13" fill="var(--surface-2)" stroke="var(--edge)"/><text class="mono c" x="24" y="98">2</text>
+        <g class="nd"><rect x="48" y="72" width="560" height="44" rx="7"/><text class="t" x="62" y="99">G4 · 输出落在没有语音帧的时间段</text></g>
+        <path class="e" d="M608 94H648" marker-end="url(#ah)"/><text class="tiny c" x="628" y="88">是</text>
+        <rect x="650" y="72" width="230" height="44" rx="7" class="drop"/><text class="t drop-t" x="664" y="92">拒绝</text><text class="tiny drop-t mono" x="664" y="108">no_speech_hallucination</text>
+        <path class="e" d="M300 116V132" marker-end="url(#ah)"/><text class="tiny" x="306" y="128">否</text>
+        <!-- 3 -->
+        <circle cx="24" cy="156" r="13" fill="var(--surface-2)" stroke="var(--edge)"/><text class="mono c" x="24" y="160">3</text>
+        <g class="nd"><rect x="48" y="134" width="560" height="44" rx="7"/><text class="t" x="62" y="161">G4 · 8B 与 600M 交叉校验分歧大</text></g>
+        <path class="e" d="M608 156H648" marker-end="url(#ah)"/><text class="tiny c" x="628" y="150">是</text>
+        <rect x="650" y="134" width="230" height="44" rx="7" class="iso"/><text class="t iso-t" x="664" y="154">隔离</text><text class="tiny iso-t mono" x="664" y="170">asr_disagreement</text>
+        <path class="e" d="M300 178V194" marker-end="url(#ah)"/><text class="tiny" x="306" y="190">否</text>
+        <!-- 4 -->
+        <circle cx="24" cy="218" r="13" fill="var(--surface-2)" stroke="var(--edge)"/><text class="mono c" x="24" y="222">4</text>
+        <g class="nd"><rect x="48" y="196" width="560" height="44" rx="7"/><text class="t" x="62" y="223">G5 · 声纹像机主，但证据表明机主没有发声</text></g>
+        <path class="e" d="M608 218H648" marker-end="url(#ah)"/><text class="tiny c" x="628" y="212">是</text>
+        <rect x="650" y="196" width="230" height="44" rx="7" class="iso"/><text class="t iso-t" x="664" y="216">隔离</text><text class="tiny iso-t mono" x="664" y="232">suspected_replay</text>
+        <path class="e" d="M300 240V256" marker-end="url(#ah)"/><text class="tiny" x="306" y="252">否</text>
+        <!-- 5 -->
+        <circle cx="24" cy="280" r="13" fill="var(--surface-2)" stroke="var(--edge)"/><text class="mono c" x="24" y="284">5</text>
+        <g class="nd"><rect x="48" y="258" width="560" height="44" rx="7"/><text class="t" x="62" y="285">G5 · 机主判定不确定（含重叠）</text></g>
+        <path class="e" d="M608 280H648" marker-end="url(#ah)"/><text class="tiny c" x="628" y="274">是</text>
+        <rect x="650" y="258" width="230" height="44" rx="7" class="iso"/><text class="t iso-t" x="664" y="278">隔离</text><text class="tiny iso-t mono" x="664" y="294">speaker_uncertain</text>
+        <path class="e" d="M300 302V318" marker-end="url(#ah)"/><text class="tiny" x="306" y="314">否</text>
+        <!-- 6 -->
+        <circle cx="24" cy="344" r="13" fill="var(--surface-2)" stroke="var(--edge)"/><text class="mono c" x="24" y="348">6</text>
+        <g class="nd"><rect x="48" y="320" width="560" height="50" rx="7"/><text class="t" x="62" y="341">播放证据高（G3 声学 / 本机外放 / 空间 / G6 内容）</text><text class="tiny" x="62" y="361">例外：免提通话（call.route=speaker）的远端声 → 接受为他人，此时段不用“本机外放”证据</text></g>
+        <path class="e" d="M608 344H648" marker-end="url(#ah)"/><text class="tiny c" x="628" y="338">是</text>
+        <rect x="650" y="322" width="230" height="44" rx="7" class="iso"/><text class="t iso-t" x="664" y="342">隔离</text><text class="tiny iso-t mono" x="664" y="358">playback</text>
+        <path class="e" d="M300 370V386" marker-end="url(#ah)"/><text class="tiny" x="306" y="382">否</text>
+        <!-- 7 -->
+        <circle cx="24" cy="410" r="13" fill="var(--surface-2)" stroke="var(--edge)"/><text class="mono c" x="24" y="414">7</text>
+        <g class="nd"><rect x="48" y="388" width="560" height="44" rx="7"/><text class="t" x="62" y="415">其余</text></g>
+        <path class="e" d="M608 410H648" marker-end="url(#ah)"/>
+        <rect x="650" y="388" width="230" height="44" rx="7" class="owner"/><text class="t owner-t" x="664" y="408">接受</text><text class="tiny owner-t" x="664" y="424">机主（证据级 / 普通）或 他人-簇号</text>
+      </svg>
+      </div>
+      <figcaption>可选策略“背景他人语音”（默认关闭）：他人语音前后 W 分钟机主都没发言且不在日历会议中 → 隔离（<code>background</code>）。会漏掉“机主安静听会但会议没进日历”，按评测的召回损失决定是否开启。</figcaption>
+    </figure>
+
+    <div class="tbl"><table>
+      <thead><tr><th></th><th>接受</th><th>隔离</th><th>拒绝</th></tr></thead>
+      <tbody>
+        <tr><th>存文字</th><td>是，按用户留存设置</td><td>是，<b>7 天后自动删除</b></td><td>否，只记时长与原因</td></tr>
+        <tr><th>App 时间线</th><td>正常显示</td><td>折叠、标原因、可放回</td><td>只显示“已过滤 X 分钟”</td></tr>
+        <tr><th>纪要</th><td>进入</td><td>不进入</td><td>—</td></tr>
+        <tr><th>待办</th><td>可引用（按 G8 核对）</td><td>不可</td><td>—</td></tr>
+        <tr><th>记忆</th><td>证据级机主原话可写入</td><td>不可</td><td>—</td></tr>
+        <tr><th>搜索</th><td>可搜</td><td>只在隔离区内可搜</td><td>—</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <!-- 5.8 -->
+  <div id="s5-8" data-label="§5.8" style="display:flex;flex-direction:column;gap:12px">
+    <h3>5.8 入库闸门（G8）</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>产物</th><th>规则</th></tr></thead>
+      <tbody>
+        <tr><td>纪要</td><td>只读接受档；机主与他人的话都可作上下文</td></tr>
+        <tr><td>机主的待办（我答应的）</td><td>至少引用一段<b>证据级机主原话</b>；否则“未核实”：照常展示，不按期限提醒</td></tr>
+        <tr><td>他人的待办（对方答应的）</td><td>至少引用一段他人原话；否则“未核实”</td></tr>
+        <tr><td>记忆</td><td>只从证据级机主原话抽取关于机主本人的事实；他人话里关于机主的说法不写成事实；从他人话中得出的内容不进长期记忆（除非用户确认）</td></tr>
+        <tr><td>溯源</td><td>每条待办和记忆记录引用的片段 ID，用于撤回与污染率评测</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<!-- §6 -->
+<section id="s6" data-label="§6">
+  <h2><span class="no">§6</span>数据模型与接口</h2>
+  <p class="lede">三份数据按 <code>chunk_id</code> 关联：手机上传分片清单，云端产出转写片段并回执手机。</p>
+  <figure>
+    <div class="fig wide">
+    <svg viewBox="0 0 1000 300" role="img" aria-label="数据模型关系图：分片清单一对多转写片段，一对一处理回执">
+      <path class="e" d="M160 40V20H850V40" marker-end="url(#ah)"/>
+      <text class="tiny c" x="505" y="15">1 : 1 · chunk_id</text>
+      <!-- 清单 -->
+      <rect x="20" y="40" width="280" height="250" rx="8" fill="var(--surface)" stroke="var(--line)"/>
+      <rect x="20" y="40" width="280" height="32" rx="8" fill="var(--surface-2)"/>
+      <text class="t" x="34" y="61">分片清单</text><text class="tiny r" x="290" y="61">手机 → 云端</text>
+      <text class="mono" x="34" y="92" style="font-weight:500">chunk_id</text><text class="tiny r" x="290" y="92">幂等键</text>
+      <text class="mono" x="34" y="116">device_id · boot_generation</text>
+      <text class="mono" x="34" y="140">seq_start / seq_end</text>
+      <text class="mono" x="34" y="164">codec · clock · tz · gaps</text>
+      <text class="mono" x="34" y="188">l1 {kept, dropped, tags}</text>
+      <text class="mono" x="34" y="212">scene [ ]</text>
+      <text class="mono p2only" x="34" y="236">sensors（二期）</text>
+      <text class="mono" x="34" y="260">payload {ogg_opus, sha256}</text>
+      <!-- 片段 -->
+      <rect x="360" y="40" width="300" height="250" rx="8" fill="var(--surface)" stroke="var(--line)"/>
+      <rect x="360" y="40" width="300" height="32" rx="8" fill="var(--surface-2)"/>
+      <text class="t" x="374" y="61">转写片段</text><text class="tiny r" x="650" y="61">云端 → App / 下游</text>
+      <text class="mono" x="374" y="92" style="font-weight:500">segment_id</text>
+      <text class="mono" x="374" y="116">chunk_ids [ ]</text><text class="tiny r" x="650" y="116">1 : N</text>
+      <text class="mono" x="374" y="140">t_start / t_end (UTC)</text>
+      <text class="mono" x="374" y="164">text · asr_text · edits</text>
+      <text class="mono" x="374" y="188">speaker {label, evidence_grade}</text>
+      <text class="mono" x="374" y="212">disposition {tier, reasons}</text>
+      <text class="mono" x="374" y="236">scores · alternatives</text>
+      <text class="mono" x="374" y="260">versions · user_override</text>
+      <path class="e" d="M360 112H330V88H302" marker-end="url(#ah)"/>
+      <!-- 回执 -->
+      <rect x="720" y="40" width="260" height="190" rx="8" fill="var(--surface)" stroke="var(--line)"/>
+      <rect x="720" y="40" width="260" height="32" rx="8" fill="var(--surface-2)"/>
+      <text class="t" x="734" y="61">处理回执</text><text class="tiny r" x="970" y="61">云端 → 手机</text>
+      <text class="mono" x="734" y="92" style="font-weight:500">chunk_id</text>
+      <text class="mono" x="734" y="116">stored_at</text><text class="tiny r" x="970" y="116">不删</text>
+      <text class="mono" x="734" y="140">audio_stage</text><text class="tiny r" x="970" y="140">done | failed</text>
+      <text class="mono" x="734" y="164">text_persisted_at</text>
+      <text class="mono" x="734" y="188">cloud_audio_deleted_at</text><text class="tiny r" x="970" y="188">→ 手机可删</text>
+      <text class="mono" x="734" y="212">gaps_recorded</text>
+    </svg>
+    </div>
+  </figure>
+
+  <details class="more" open><summary>6.1 分片清单字段</summary><div><div class="tbl"><table>
+    <thead><tr><th>字段</th><th>类型</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">chunk_id</td><td class="mono">string</td><td><code>device_id:boot_generation:seq_start</code>，幂等键</td></tr>
+      <tr><td class="mono">user_ref</td><td class="mono">string</td><td>用户假名 ID</td></tr>
+      <tr><td class="mono">device_id · firmware_version · app_version</td><td class="mono">string</td><td>版本可追溯</td></tr>
+      <tr><td class="mono">boot_generation</td><td class="mono">int</td><td>设备启动世代</td></tr>
+      <tr><td class="mono">seq_start · seq_end</td><td class="mono">int64</td><td>帧序号范围（含首不含尾）</td></tr>
+      <tr><td class="mono">frame_ms</td><td class="mono">int</td><td>20</td></tr>
+      <tr><td class="mono">codec</td><td class="mono">object</td><td><code>{name:"opus", sample_rate:16000, channels:1, bitrate_mode, bitrate:16000, fec, dtx}</code></td></tr>
+      <tr><td class="mono">clock</td><td class="mono">object</td><td><code>{utc_start_ms, utc_end_ms, offset_ms, drift_ppm, sync_quality_ms, last_sync_utc_ms}</code></td></tr>
+      <tr><td class="mono">tz</td><td class="mono">string</td><td>IANA 时区，用于业务日</td></tr>
+      <tr><td class="mono">gaps</td><td class="mono">array</td><td><code>[{seq_start, seq_end, cause:"device_drop"|"flash_error"}]</code></td></tr>
+      <tr><td class="mono">l1</td><td class="mono">object</td><td><code>{model_version, kept, dropped:[…reason], tags:[{…label, score}]}</code></td></tr>
+      <tr class="p2only"><td class="mono">sensors（二期）</td><td class="mono">object</td><td><code>{vpu_track, imu_track, wear:[{…state}]}</code></td></tr>
+      <tr><td class="mono">scene</td><td class="mono">array</td><td>§4.4 场景事件，含分片起点时刻的状态</td></tr>
+      <tr><td class="mono">payload</td><td class="mono">object</td><td><code>{format:"ogg_opus", bytes, sha256}</code>，设备原码流，只截取 <code>kept</code></td></tr>
+    </tbody>
+  </table></div></div></details>
+
+  <details class="more" open><summary>6.2 转写片段字段</summary><div><div class="tbl"><table>
+    <thead><tr><th>字段</th><th>类型</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">segment_id</td><td class="mono">string</td><td>稳定 ID</td></tr>
+      <tr><td class="mono">chunk_ids</td><td class="mono">array</td><td>来源分片</td></tr>
+      <tr><td class="mono">t_start_utc_ms · t_end_utc_ms</td><td class="mono">int64</td><td>原始录音时刻</td></tr>
+      <tr><td class="mono">text</td><td class="mono">string</td><td>纠错后的文字</td></tr>
+      <tr><td class="mono">asr_text</td><td class="mono">string</td><td>8B 原始输出</td></tr>
+      <tr><td class="mono">edits</td><td class="mono">array</td><td>§5.5 的 diff 与依据</td></tr>
+      <tr><td class="mono">alternatives</td><td class="mono">array</td><td>低置信区间 top-3 候选文字（供日后热词重排）</td></tr>
+      <tr><td class="mono">speaker</td><td class="mono">object</td><td><code>{label:"owner"|"other"|"uncertain", cluster, owner_score, cluster_score, evidence_grade}</code></td></tr>
+      <tr><td class="mono">disposition</td><td class="mono">object</td><td><code>{tier:"accept"|"quarantine"|"reject", reasons, expires_at_utc_ms}</code></td></tr>
+      <tr><td class="mono">scores</td><td class="mono">object</td><td><code>{p_speech, p_playback_acoustic, p_media_content, phone_media, call_speaker, vpu:{state, voiced_ratio, valid_ratio}, overlap, asr_disagreement, spatial}</code></td></tr>
+      <tr><td class="mono">hotwords</td><td class="mono">array</td><td>命中的热词 ID、类别、来源层</td></tr>
+      <tr><td class="mono">versions</td><td class="mono">object</td><td>各环节模型与配置版本、声纹版本</td></tr>
+      <tr><td class="mono">user_override</td><td class="mono">object</td><td>放回或降级记录</td></tr>
+    </tbody>
+  </table></div></div></details>
+</section>
+
+<!-- §7 -->
+<section id="s7" data-label="§7">
+  <h2><span class="no">§7</span>删除链</h2>
+  <p class="lede">设备等手机回执、手机等云端回执、云端等文字落盘。音频在需要音频的环节完成后即删，纪要、待办、记忆不在等待之列。</p>
+  <figure>
+    <div class="fig wide">
+    <svg viewBox="0 0 1100 360" role="img" aria-label="删除链三泳道状态机：设备、手机、云端各自的状态与跨段回执">
+      <rect x="10" y="10" width="1080" height="100" rx="8" fill="var(--panel)" stroke="var(--line)"/>
+      <rect x="10" y="118" width="1080" height="116" rx="8" fill="var(--panel)" stroke="var(--line)"/>
+      <rect x="10" y="240" width="1080" height="110" rx="8" fill="var(--panel)" stroke="var(--line)"/>
+      <text class="ph" x="26" y="66">设备</text><text class="ph" x="26" y="176">手机</text><text class="ph" x="26" y="300">云端</text>
+
+      <g class="nd"><rect x="110" y="40" width="116" height="40" rx="20"/><text class="s c" x="168" y="64" style="fill:var(--fg)">已录制</text></g>
+      <path class="e" d="M226 60H248" marker-end="url(#ah)"/>
+      <g class="nd"><rect x="250" y="40" width="116" height="40" rx="20"/><text class="s c" x="308" y="64" style="fill:var(--fg)">已发送</text></g>
+      <path class="e" d="M366 60H388" marker-end="url(#ah)"/>
+      <g class="nd"><rect x="390" y="40" width="116" height="40" rx="20"/><text class="s c" x="448" y="64" style="fill:var(--fg);font-weight:700">可覆盖</text></g>
+      <rect x="970" y="40" width="110" height="40" rx="6" class="drop"/><text class="tiny c drop-t" x="1025" y="64">满：停录告警</text>
+
+      <g class="nd"><rect x="110" y="150" width="116" height="40" rx="20"/><text class="s c" x="168" y="174" style="fill:var(--fg)">已接收（加密）</text></g>
+      <path class="e" d="M226 170H248" marker-end="url(#ah)"/>
+      <g class="nd"><rect x="250" y="150" width="116" height="40" rx="20"/><text class="s c" x="308" y="174" style="fill:var(--fg)">L1 完成</text></g>
+      <path class="e" d="M366 170H388" marker-end="url(#ah)"/>
+      <g class="nd"><rect x="390" y="150" width="116" height="40" rx="20"/><text class="s c" x="448" y="174" style="fill:var(--fg)">上传中</text></g>
+      <path class="e" d="M506 170H528" marker-end="url(#ah)"/>
+      <g class="nd"><rect x="530" y="150" width="116" height="40" rx="20"/><text class="s c" x="588" y="174" style="fill:var(--fg)">云端已存</text></g>
+      <path class="e" d="M646 170H668" marker-end="url(#ah)"/>
+      <g class="nd"><rect x="670" y="150" width="140" height="40" rx="20"/><text class="s c" x="740" y="174" style="fill:var(--fg)">音频环节完成</text></g>
+      <path class="e" d="M810 170H838" marker-end="url(#ah)"/>
+      <g class="nd"><rect x="840" y="150" width="116" height="40" rx="20"/><text class="s c" x="898" y="174" style="fill:var(--fg);font-weight:700">已删除</text></g>
+      <rect x="970" y="150" width="110" height="40" rx="6" class="iso"/><text class="tiny c iso-t" x="1025" y="174">上限 7 天</text>
+
+      <g class="nd"><rect x="390" y="275" width="116" height="40" rx="20"/><text class="s c" x="448" y="299" style="fill:var(--fg)">已接收</text></g>
+      <path class="e" d="M506 295H528" marker-end="url(#ah)"/>
+      <g class="nd"><rect x="530" y="275" width="116" height="40" rx="20"/><text class="s c" x="588" y="299" style="fill:var(--fg)">G2–G7 处理</text></g>
+      <path class="e" d="M646 295H668" marker-end="url(#ah)"/>
+      <g class="nd"><rect x="670" y="275" width="140" height="40" rx="20"/><text class="s c" x="740" y="299" style="fill:var(--fg)">文字落盘</text></g>
+      <path class="e" d="M810 295H838" marker-end="url(#ah)"/>
+      <g class="nd"><rect x="840" y="275" width="116" height="40" rx="20"/><text class="s c" x="898" y="299" style="fill:var(--fg);font-weight:700">音频已删</text></g>
+      <rect x="970" y="275" width="110" height="40" rx="6" class="drop"/><text class="tiny c drop-t" x="1025" y="299">兜底 72 h</text>
+
+      <path class="e d" d="M140 150V122H448V82" marker-end="url(#ah)"/>
+      <text class="tiny" x="196" y="117">按序号回执</text>
+      <path class="e d" d="M190 150V136H898V148" marker-end="url(#ah)"/>
+      <text class="tiny c" x="660" y="132">超过 7 天未上传：删除并登记缺口</text>
+      <path class="e" d="M448 190V273" marker-end="url(#ah)"/>
+      <text class="tiny" x="400" y="232">上传</text>
+      <path class="e d" d="M480 275V250H588V192" marker-end="url(#ah)"/>
+      <text class="tiny mono" x="494" y="262">stored_at</text>
+      <path class="e d" d="M898 275V250H740V192" marker-end="url(#ah)"/>
+      <text class="tiny" x="752" y="262">回执：可删</text>
+      <path class="e d" d="M588 315V335H898V317" marker-end="url(#ah)"/>
+      <text class="tiny c" x="740" y="347">永久失败：重试 48 h 后删除并登记缺口</text>
+    </svg>
+    </div>
+    <figcaption>音频的派生物（解码 PCM、VAD 结果、临时嵌入、VPU/IMU 轨迹、场景快照）与音频同时删除。用户擦除时三端一起删；设备离线时记为“待清除”，重连后先清除再恢复上传。</figcaption>
+  </figure>
+  <div class="grid3">
+    <div class="card"><h3>放弃了什么</h3><p class="small">模型升级后不能重转历史音频；误拒或误判无法回到声学层复核。</p></div>
+    <div class="card"><h3>为什么接受</h3><p class="small">长期保存全天录音是最大的隐私风险源，还包括大量他人的声音；需求明确要求删除链。</p></div>
+    <div class="card"><h3>怎么缓解</h3><ul class="small"><li>上线前充分评测</li><li>低置信区间保留文字 top-3 候选</li><li>隔离区 7 天纠正窗口</li><li><b>不设</b>保留音频的后门</li></ul></div>
+  </div>
+  <p class="small muted">其他保护：日志与指标只记 ID、时长、计数与分数分布；传输 TLS；暂存与对象存储按用户数据密钥加密。</p>
+</section>
+
+<!-- §8 -->
+<section id="s8" data-label="§8">
+  <h2><span class="no">§8</span>成本</h2>
+  <p class="lede">每天 5 小时有效音频、8B ¥0.10/小时时，约 ¥0.84/天、¥25/月<span class="tg es">估算</span>，落在 ¥23–27 目标内。月成本 ≈ 30 × 有效小时 × (8B 单价 + 0.068)。</p>
+
+  <figure>
+    <div class="fighead"><div><b>单人单日成本构成</b><span class="tg es">估算</span></div></div>
+    <div class="fig mid">
+    <svg viewBox="0 0 900 200" role="img" aria-label="成本堆叠条：8B 转写 0.50 元每天占大头，纪要 0.15 元，合计约 0.84 元每天，落在目标区间内">
+      <rect x="653.6" y="54" width="106.4" height="66" fill="var(--band)"/>
+      <text class="tiny c" x="707" y="46" style="fill:var(--accent);font-weight:700">目标 ¥23–27/月</text>
+      <rect x="40" y="66" width="400" height="42" fill="var(--c-asr)"/>
+      <rect x="440" y="66" width="48" height="42" fill="var(--c-asr)" opacity=".7"/>
+      <rect x="488" y="66" width="24" height="42" fill="var(--c-asr)" opacity=".45"/>
+      <rect x="512" y="66" width="16" height="42" fill="var(--c-cpu)"/>
+      <rect x="528" y="66" width="16" height="42" fill="var(--c-llm)" opacity=".45"/>
+      <rect x="544" y="66" width="4" height="42" fill="var(--c-llm)" opacity=".3"/>
+      <rect x="548" y="66" width="120" height="42" fill="var(--c-llm)"/>
+      <rect x="668" y="66" width="33.6" height="42" fill="var(--c-llm)" opacity=".7"/>
+      <rect x="701.6" y="66" width="8" height="42" fill="var(--c-sto)"/>
+      <text class="t c" x="240" y="92" style="fill:var(--on-accent)">8B 转写 ¥0.50</text>
+      <text class="s c" x="608" y="92" style="fill:var(--on-accent);font-weight:700">纪要 ¥0.15</text>
+      <path d="M709.6 60V116" stroke="var(--fg)" stroke-width="2"/>
+      <text class="gl" x="716" y="132">合计 ≈¥0.84/天 ≈ ¥25/月</text>
+      <path class="axis" d="M40 150H840"/>
+      <path class="grid" d="M40 150V156M200 150V156M360 150V156M520 150V156M680 150V156M840 150V156"/>
+      <text class="tiny c" x="40" y="170">0</text><text class="tiny c" x="200" y="170">¥0.2</text><text class="tiny c" x="360" y="170">¥0.4</text><text class="tiny c" x="520" y="170">¥0.6</text><text class="tiny c" x="680" y="170">¥0.8</text><text class="tiny c" x="840" y="170">¥1.0/天</text>
+    </svg>
+    </div>
+  </figure>
+  <div class="tbl"><table>
+    <thead><tr><th>环节</th><th>计算</th><th class="num">¥/天</th></tr></thead>
+    <tbody>
+      <tr><td>8B 全量转写</td><td>5 h × 0.10</td><td class="num">0.500</td></tr>
+      <tr><td>600M 交叉校验</td><td>5 h × 20% × 0.06</td><td class="num">0.060</td></tr>
+      <tr><td>600M 对齐</td><td>5 h × 0.006（完整解码约 10%）</td><td class="num">0.030</td></tr>
+      <tr><td>CPU 小模型</td><td>5 h × 0.004（¥0.10/核时<span class="tg ask">待确认</span>）</td><td class="num">0.020</td></tr>
+      <tr><td>内容门控（小 LLM）</td><td>≈10 万输入 token × ¥0.2/百万</td><td class="num">0.020</td></tr>
+      <tr><td>专名纠错（小 LLM）</td><td>≈2 万输入 token</td><td class="num">0.005</td></tr>
+      <tr><td>纪要与待办（中 LLM）</td><td>11 万输入 × ¥1/百万 + 1 万输出 × ¥4/百万</td><td class="num">0.150</td></tr>
+      <tr><td>记忆抽取（中 LLM）</td><td>3 万输入 + 0.3 万输出</td><td class="num">0.042</td></tr>
+      <tr><td>存储与流量</td><td>5 h × 0.002</td><td class="num">0.010</td></tr>
+      <tr><th>合计</th><th></th><th class="num">≈0.84</th></tr>
+    </tbody>
+  </table></div>
+  <details class="more"><summary>单价口径</summary><div>
+    <p>小 LLM（7B 级自部署）：输入约 ¥0.2/百万 token，输出约 ¥1/百万；中 LLM（30B 级或 MoE）：输入约 ¥1/百万，输出约 ¥4/百万<span class="tg es">估算</span>。依据：一张推理卡跑 7B 级批量预填充约 1–2 万 token/秒，卡时按 ¥10 假设<span class="tg ask">待确认</span>。商用 API 只作对照<span class="tg ask">待询价</span>，不计入主成本。</p>
+  </div></details>
+
+  <div class="grid2">
+    <figure>
+      <div class="fighead"><div><b>月成本敏感性（元/人/月）</b></div></div>
+      <div class="tbl"><table class="heat">
+        <thead><tr><th>有效小时/天 \ 8B 单价</th><th class="num">¥0.05</th><th class="num">¥0.10</th><th class="num">¥0.15</th><th class="num">¥0.20</th></tr></thead>
+        <tbody>
+          <tr><td>2</td><td class="h-lo">7.1</td><td class="h-lo">10.1</td><td class="h-lo">13.1</td><td class="h-lo">16.1</td></tr>
+          <tr><td>3</td><td class="h-lo">10.6</td><td class="h-lo">15.1</td><td class="h-lo">19.6</td><td class="h-in">24.1</td></tr>
+          <tr><td><b>5</b></td><td class="h-lo">17.7</td><td class="h-in">25.2</td><td class="h-hi">32.7</td><td class="h-vhi">40.2</td></tr>
+          <tr><td>8</td><td class="h-hi">28.3</td><td class="h-vhi">40.3</td><td class="h-vhi">52.3</td><td class="h-vhi">64.3</td></tr>
+        </tbody>
+      </table></div>
+      <figcaption>色块：绿 &lt;¥23 · 青 ¥23–27（目标） · 黄 ¥27–40 · 红 &gt;¥40。按 P90 有效时长定价，不按平均值。</figcaption>
+    </figure>
+    <figure>
+      <div class="fighead"><div><b>其他敏感项（基线 ¥25.2）</b></div></div>
+      <div class="fig">
+      <svg viewBox="0 0 520 230" role="img" aria-label="龙卷风图：LLM 单价乘三增加 13.2 元，二期播放声跳过减少 5 元，其他影响较小">
+        <path class="axis" d="M300 24V200"/>
+        <text class="tiny c" x="300" y="16">基线 ¥25.2</text>
+        <text class="s" x="8" y="45" style="fill:var(--fg)">LLM 单价 ×3</text><rect x="300" y="32" width="158" height="20" rx="3" fill="var(--g-drop)"/><text class="mono" x="464" y="47">¥38.4</text>
+        <text class="s" x="8" y="81" style="fill:var(--fg)">二期播放声跳过（1 h/天）</text><rect x="240" y="68" width="60" height="20" rx="3" fill="var(--ok)"/><text class="mono r" x="234" y="83">¥20.2</text>
+        <text class="s" x="8" y="117" style="fill:var(--fg)">交叉校验 20% → 40%</text><rect x="300" y="104" width="22" height="20" rx="3" fill="var(--g-drop)"/><text class="mono" x="328" y="119">¥27.0</text>
+        <text class="s" x="8" y="153" style="fill:var(--fg)">背景语音隔离开启</text><rect x="286" y="140" width="14" height="20" rx="3" fill="var(--ok)"/><text class="mono" x="306" y="155">≈¥24</text>
+        <text class="s" x="8" y="189" style="fill:var(--fg)">Opus 16 → 32 kb/s</text><rect x="300" y="176" width="2" height="20" fill="var(--g-drop)"/><text class="mono" x="308" y="191">+¥0.1 内</text>
+        <path class="grid" d="M240 200V206M360 200V206M420 200V206M480 200V206"/>
+        <text class="tiny c" x="240" y="220">−¥5</text><text class="tiny c" x="300" y="220">0</text><text class="tiny c" x="360" y="220">+¥5</text><text class="tiny c" x="420" y="220">+¥10</text><text class="tiny c" x="480" y="220">+¥15</text>
+      </svg>
+      </div>
+      <figcaption>小时级延迟允许把负载摊平到 24 小时，利于 GPU 利用率；若要求白天当小时出结果，须按峰值备容量。</figcaption>
+    </figure>
+  </div>
+
+  <figure>
+    <div class="fighead"><div><b>级联路由不值得：复核需求中的结论</b><span class="tg es">估算</span></div></div>
+    <div class="fig mid">
+    <svg viewBox="0 0 900 200" role="img" aria-label="左：8B 全量每小时 0.10 元，级联 0.08 元，每月只省 3 元；右：8B 单价升到 0.20 元时级联每月省约 15 元">
+      <text class="ph" x="20" y="24">每音频小时 ASR 成本</text>
+      <text class="s" x="20" y="62" style="fill:var(--fg)">8B 全量</text>
+      <rect x="140" y="46" width="250" height="26" rx="3" fill="var(--c-asr)"/><text class="mono" x="396" y="64">¥0.10</text>
+      <text class="s" x="20" y="108" style="fill:var(--fg)">级联</text>
+      <rect x="140" y="92" width="150" height="26" rx="3" fill="var(--c-cpu)"/><rect x="290" y="92" width="50" height="26" rx="3" fill="var(--c-asr)"/>
+      <text class="tiny" x="148" y="109" style="fill:var(--on-accent);font-weight:700">600M 全量 0.06</text><text class="mono" x="346" y="110">¥0.08</text>
+      <text class="tiny" x="20" y="146">每月只省 5 × 0.02 × 30 = ¥3；路由漏检（专名最易）+ 两条管线</text>
+      <text class="tiny" x="20" y="164">本方案的 600M 只做校验（¥0.012/h），不是路由</text>
+
+      <text class="ph" x="500" y="24">级联月节省 vs 8B 单价</text>
+      <path class="axis" d="M520 160H860M520 30V160"/>
+      <path class="grid" d="M520 160V166M633.3 160V166M746.7 160V166M860 160V166"/>
+      <text class="tiny c" x="520" y="180">¥0.10</text><text class="tiny c" x="633" y="180">¥0.15</text><text class="tiny c" x="747" y="180">¥0.20</text><text class="tiny c" x="860" y="180">¥0.25</text>
+      <polyline points="520,143.75 633.3,111.25 746.7,78.75 860,46.25" fill="none" stroke="var(--accent)" stroke-width="2"/>
+      <circle cx="520" cy="143.75" r="4" fill="var(--accent)"/><circle cx="633.3" cy="111.25" r="4" fill="var(--accent)"/><circle cx="746.7" cy="78.75" r="5" fill="var(--g-drop)"/><circle cx="860" cy="46.25" r="4" fill="var(--accent)"/>
+      <text class="mono" x="528" y="138">¥3</text><text class="mono" x="641" y="106">¥9</text><text class="mono" x="754" y="74">¥15</text><text class="mono r" x="852" y="42">¥21</text>
+      <text class="tiny" x="660" y="196">节省 = 150 × (0.8 × 单价 − 0.06)；到 ¥0.20 时值得用漏检实测重评</text>
+    </svg>
+    </div>
+  </figure>
+</section>
+
+<!-- §9 -->
+<section id="s9" data-label="§9">
+  <h2><span class="no">§9</span>评测</h2>
+  <p class="lede">28 小时自建评测集，5 小时精标；安全类指标按 95% 置信上限验收。只用自建采集，不使用线上用户音频。</p>
+
+  <figure>
+    <div class="fighead"><div><b>评测集构成</b></div></div>
+    <div class="fig mid">
+    <svg viewBox="0 0 900 250" role="img" aria-label="评测集构成：多人会议 6 小时、一对一 4 小时、全天佩戴 8 小时、噪声口音中英混说 4 小时、远场单人 2 小时、对抗子集 4 小时，共 28 小时，精标 5 小时">
+      <text class="s r" x="210" y="35" style="fill:var(--fg)">多人会议</text><rect x="220" y="20" width="90" height="22" fill="var(--accent)"/><rect x="310" y="20" width="270" height="22" fill="var(--accent)" opacity=".3"/><text class="mono" x="590" y="36">6 h · 精标 1.5 h</text>
+      <text class="s r" x="210" y="69" style="fill:var(--fg)">1 对 1 对话</text><rect x="220" y="54" width="60" height="22" fill="var(--accent)"/><rect x="280" y="54" width="180" height="22" fill="var(--accent)" opacity=".3"/><text class="mono" x="470" y="70">4 h · 精标 1 h</text>
+      <text class="s r" x="210" y="103" style="fill:var(--fg)">全天佩戴</text><rect x="220" y="88" width="60" height="22" fill="var(--accent)"/><rect x="280" y="88" width="420" height="22" fill="var(--accent)" opacity=".3"/><text class="mono" x="710" y="104">8 h · 精标 1 h</text>
+      <text class="s r" x="210" y="137" style="fill:var(--fg)">噪声 / 口音 / 中英混说</text><rect x="220" y="122" width="60" height="22" fill="var(--accent)"/><rect x="280" y="122" width="180" height="22" fill="var(--accent)" opacity=".3"/><text class="mono" x="470" y="138">4 h · 精标 1 h</text>
+      <text class="s r" x="210" y="171" style="fill:var(--fg)">远场单人</text><rect x="220" y="156" width="30" height="22" fill="var(--accent)"/><rect x="250" y="156" width="90" height="22" fill="var(--accent)" opacity=".3"/><text class="mono" x="350" y="172">2 h · 精标 0.5 h</text>
+      <text class="s r" x="210" y="205" style="fill:var(--fg);font-weight:700">对抗子集</text><rect x="220" y="190" width="240" height="22" fill="var(--g-iso)" opacity=".55"/><text class="mono" x="470" y="206">4 h · 说话人与播放标注</text>
+      <path class="axis" d="M220 226H700"/>
+      <rect x="220" y="234" width="14" height="10" fill="var(--accent)"/><text class="tiny" x="240" y="243">精标（逐字 + 时间戳 + 说话人 + 播放 + 专名）</text>
+      <rect x="560" y="234" width="14" height="10" fill="var(--accent)" opacity=".3"/><text class="tiny" x="580" y="243">粗标（区间 + 说话人 + 播放 + 专名）</text>
+      <text class="t r" x="880" y="35">28 h</text><text class="s r" x="880" y="54">精标 5 h</text>
+    </svg>
+    </div>
+    <figcaption>对抗子集：回放机主本人录音（手机、电脑、电视、蓝牙音箱，0.5–3 m）、音色相近的家人（≥5 对）、重叠说话、耳语/感冒/沙哑、各类播放声经扬声器重录（含最难的“电视里的普通对话”）。采集 ≥20 位机主、≥60 位他人；调参集与测试集按机主 1:2 划分。</figcaption>
+  </figure>
+
+  <h3>目标与可达性</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>指标</th><th>需求目标</th><th>一期</th><th>二期</th><th>依据</th></tr></thead>
+    <tbody>
+      <tr><td>S1 记忆污染率</td><td>&lt;2%</td><td><span class="light g"><i></i>可能</span></td><td><span class="light g"><i></i>可能</span></td><td>记忆只采信证据级原话 + 不确定隔离；风险在同音色家人与回放</td></tr>
+      <tr><td>S2 他人误判为机主</td><td>≤1%</td><td><span class="light y"><i></i>时间线级可能</span></td><td><span class="light y"><i></i>同左</span></td><td>对记忆偏宽；<b>证据级建议 ≤0.2%</b></td></tr>
+      <tr><td>S3 机主归属精度</td><td>≥98%</td><td><span class="light g"><i></i>可能</span></td><td><span class="light g"><i></i>可能</span></td><td>由证据级门槛换来，代价是召回</td></tr>
+      <tr><td>O1 机主召回</td><td>≥90%</td><td><span class="light r"><i></i>难，80–90%</span></td><td><span class="light y"><i></i>靠 VPU 救回</span></td><td>短回应与声纹漂移落入不确定区</td></tr>
+      <tr><td>R1 噪声拒识召回</td><td>≥98%</td><td><span class="light g"><i></i>可能</span></td><td><span class="light g"><i></i>可能</span></td><td>VAD 成熟能力</td></tr>
+      <tr><td>R2 播放声拦截召回</td><td>≥90%</td><td><span class="light r"><i></i>难</span></td><td><span class="light y"><i></i>未必</span></td><td>“电视里的普通对话”最难</td></tr>
+      <tr><td>R3 真人误拒</td><td>&lt;2%</td><td><span class="light g"><i></i>可能</span></td><td><span class="light g"><i></i>可能</span></td><td>只有 VAD 漏检会误拒</td></tr>
+      <tr><td>A1 CER</td><td>近场 &lt;8% · 远场 &lt;15% · 全天 &lt;20%</td><td><span class="light y"><i></i>近场可能，余须实测</span></td><td><span class="light y"><i></i>同左</span></td><td>16 kb/s、单麦、远场与重叠；无同条件数据</td></tr>
+      <tr><td>A3/A4/A5 热词与幻觉</td><td>单独设指标</td><td colspan="2">个人热词召回 ≥90%，误触发 ≤0.5 次/千字，非语音幻觉 ≤1 事件/小时<span class="tg go">目标</span></td><td>待一期基线校准</td></tr>
+    </tbody>
+  </table></div>
+
+  <figure>
+    <div class="fighead"><div><b>安全类验收需要多少独立样本（95% 置信上限）</b></div></div>
+    <div class="fig mid">
+    <svg viewBox="0 0 900 140" role="img" aria-label="样本量：证明不高于百分之一零错误需约 300 个独立他人发言，观测 0.5% 时约 600 个，证明证据级不高于 0.2% 约需 1500 个">
+      <text class="s r" x="250" y="34" style="fill:var(--fg)">≤1%（零错误）</text><rect x="260" y="20" width="105" height="20" rx="3" fill="var(--accent)" opacity=".6"/><text class="mono" x="372" y="35">≈300</text>
+      <text class="s r" x="250" y="70" style="fill:var(--fg)">≤1%（观测 0.5%）</text><rect x="260" y="56" width="210" height="20" rx="3" fill="var(--accent)" opacity=".8"/><text class="mono" x="477" y="71">≈600</text>
+      <text class="s r" x="250" y="106" style="fill:var(--fg)">证据级 ≤0.2%（零错误）</text><rect x="260" y="92" width="525" height="20" rx="3" fill="var(--accent)"/><text class="mono" x="792" y="107">≈1,500</text>
+      <text class="tiny" x="260" y="132">独立他人发言机会数 · 按说话人与会话聚类，同一人连续的话不算多个样本 · 零错误上限 = 1 − 0.05^(1/n)</text>
+    </svg>
+    </div>
+  </figure>
+
+  <details class="more"><summary>指标定义（S 安全 · R 拒识 · A 转写 · O 机主）</summary><div>
+    <div class="tbl"><table>
+      <thead><tr><th>编号</th><th>指标</th><th>定义</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">S1</td><td>记忆污染率</td><td>全天与对抗子集端到端运行，人工判定每条记忆与机主待办的依据是否真来自机主发声；污染条目 ÷ 写入总数，记忆与待办分开报</td></tr>
+        <tr><td class="mono">S2</td><td>他人误判为机主</td><td>参考为他人（含播放声）的发言中被判为机主的比例；分时间线级与证据级</td></tr>
+        <tr><td class="mono">S3</td><td>机主归属精度</td><td>进入记忆与待办的片段中确为机主说的比例</td></tr>
+        <tr><td class="mono">S4</td><td>疑似回放拦截率</td><td>回放机主录音子集中被判疑似回放或隔离的比例</td></tr>
+        <tr><td class="mono">R1</td><td>噪声/静音拒识召回</td><td>参考非语音时长中被拒绝的比例</td></tr>
+        <tr><td class="mono">R2</td><td>播放声拦截召回</td><td>参考播放声发言中被隔离或拒绝的比例，按内容类别分报</td></tr>
+        <tr><td class="mono">R3</td><td>真人误拒率</td><td>真人语音被<b>拒绝</b>的比例；按机主/他人、短回应/其他分报</td></tr>
+        <tr><td class="mono">R4</td><td>真人误隔离率</td><td>真人语音被隔离的比例（可恢复）</td></tr>
+        <tr><td class="mono">A1</td><td>CER</td><td>（替换 + 删除 + 插入）÷ 参考字数，按场景分报；英文按词计后合并</td></tr>
+        <tr><td class="mono">A2</td><td>专名准确率</td><td>参考专名被正确转写的比例；人名单报</td></tr>
+        <tr><td class="mono">A3</td><td>热词召回率</td><td>参考中出现的热词在最终文字中正确出现的比例；三类分报</td></tr>
+        <tr><td class="mono">A4</td><td>热词误触发率</td><td>未说却出现的热词，每千字计；另报纠错层“把对的改错”次数</td></tr>
+        <tr><td class="mono">A5</td><td>幻觉率</td><td>非语音区间每小时插入字数与事件数；语音区间无对应插入片段每小时</td></tr>
+        <tr><td class="mono">A6</td><td>关键信息错误率</td><td>否定、数字、日期、情态、改口被转错的比例</td></tr>
+        <tr><td class="mono">O1</td><td>机主召回</td><td>参考为机主的发言中被判机主且被接受的比例</td></tr>
+        <tr><td class="mono">O2</td><td>不确定区占比</td><td>判为不确定的语音时长占比，按机主与他人分报</td></tr>
+      </tbody>
+    </table></div>
+  </div></details>
+  <ul class="small">
+    <li><b>质量类</b>按场景报告点估计与按机主自助抽样的置信区间；任何场景不得出现超出噪声的回退。</li>
+    <li><b>每一级与“不做”配对</b>：G1 丢弃、G3 跳过、G4 删除、G6 降级、专名纠错、热词偏置分别报“省多少、伤多少”。</li>
+    <li><b>线上监控</b>：拒绝时长占比、隔离占比与原因、不确定区占比、用户放回率、“这不是我说的”反馈率。</li>
+  </ul>
+</section>
+
+<!-- §10 -->
+<section id="s10" data-label="§10">
+  <h2><span class="no">§10</span>分阶段路线</h2>
+  <p class="lede">一期在现有设备上把软件链路做完整，必须能独立上线；二期验证 VPU 与播放声可分性；三期做模型级优化与降本。</p>
+  <div class="fig mid">
+  <svg viewBox="0 0 900 64" role="img" aria-label="路线：一期软件先行，二期硬件原型，三期模型优化">
+    <polygon points="0,6 280,6 300,32 280,58 0,58" fill="var(--accent)"/>
+    <polygon points="300,6 580,6 600,32 580,58 300,58 320,32" fill="var(--accent)" opacity=".7"/>
+    <polygon points="600,6 880,6 900,32 880,58 600,58 620,32" fill="var(--accent)" opacity=".45"/>
+    <text class="t" x="20" y="38" style="fill:var(--on-accent)">一期 · 软件先行（无 VPU）</text>
+    <text class="t" x="336" y="38" style="fill:var(--on-accent)">二期 · 硬件原型</text>
+    <text class="t" x="636" y="38" style="fill:var(--fg)">三期 · 模型级优化</text>
+  </svg>
+  </div>
+  <div class="grid3 phases">
+    <div class="card"><h3>一期</h3>
+      <p class="small muted">做：手机端全套、云端 G2–G8、8B + 600M、声纹注册与一期规则、三类热词、纠错（评测后开）、三档与隔离区、评测集。</p>
+      <p class="small"><b>退出标准</b><span class="tg go">目标</span></p>
+      <ol>
+        <li>S1 上限 &lt;2%</li>
+        <li>S2 时间线级 ≤1%，证据级 ≤0.5%（过渡）</li>
+        <li>R1 ≥98%，R3 &lt;2%</li>
+        <li>O1 ≥85%（过渡）</li>
+        <li>CER 近场 &lt;8%；远场、全天按基线冻结</li>
+        <li>R2 按类别报告并给出差距</li>
+        <li>删除链故障注入后无遗留音频</li>
+        <li>实测成本 ≤¥27/人/月</li>
+      </ol>
+    </div>
+    <div class="card"><h3>二期</h3>
+      <p class="small muted">做：双麦 + VPU/骨导（两套对照）+ IMU 原型 10–20 台；G0；VPU 特征上报；融合规则；空间特征；回放检测训练；功耗实测。VPU 验证必须用真人自然发声。</p>
+      <p class="small"><b>退出标准</b><span class="tg go">目标</span></p>
+      <ol>
+        <li>VPU 命中 ≥95%，外部声误报 ≤2%，“无效”识别 ≥95%；不达标换形态再测，仍不达标退回一期规则</li>
+        <li>O1 ≥90%，S2 时间线级 ≤1%、证据级 ≤0.2%</li>
+        <li>S4 疑似回放拦截 ≥95%</li>
+        <li>R2 ≥90%，“电视普通对话”单独结论</li>
+        <li>平均功耗 ≤5 mW，续航 ≥24 h</li>
+        <li>开启播放跳过时，真人误拒增量 ≤0.2 个百分点</li>
+      </ol>
+    </div>
+    <div class="card"><h3>三期</h3>
+      <p class="small muted">做：8B 领域适配（16 kb/s、远场、口音）；偏置专项训练；以 VPU 为条件的判定模型取代手写融合表；扩充重录语料；VAD/事件蒸馏到手机；8B 量化与批处理；可选家人自愿注册“已知他人”。</p>
+      <p class="small"><b>退出标准</b><span class="tg go">目标</span></p>
+      <ol>
+        <li>CER 全场景达标</li>
+        <li>O1 ≥92%，S2 不回退</li>
+        <li>8B ≤¥0.08/h 或成本 ≤¥22/人/月</li>
+        <li>每次更新通过回归</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<!-- §11 -->
+<section id="s11" data-label="§11">
+  <h2><span class="no">§11</span>风险</h2>
+  <p class="lede">影响最大的四项：VPU 信号不稳、同音色家人、旁观者同意、声纹合规。可能性与影响的分级是本文的判断<span class="tg es">估算</span>。</p>
+  <div class="grid2">
+    <figure>
+      <div class="fig">
+      <svg viewBox="0 0 520 430" role="img" aria-label="风险矩阵：横轴可能性，纵轴影响，16 项风险按编号落在格中">
+        <rect x="80" y="20" width="140" height="120" fill="var(--warn-bg)"/><rect x="220" y="20" width="140" height="120" fill="var(--bad-bg)"/><rect x="360" y="20" width="140" height="120" fill="var(--bad-bg)"/>
+        <rect x="80" y="140" width="140" height="120" fill="var(--ok-bg)"/><rect x="220" y="140" width="140" height="120" fill="var(--warn-bg)"/><rect x="360" y="140" width="140" height="120" fill="var(--bad-bg)"/>
+        <rect x="80" y="260" width="140" height="120" fill="var(--ok-bg)"/><rect x="220" y="260" width="140" height="120" fill="var(--ok-bg)"/><rect x="360" y="260" width="140" height="120" fill="var(--warn-bg)"/>
+        <path class="grid" d="M80 20H500V380H80ZM220 20V380M360 20V380M80 140H500M80 260H500" fill="none"/>
+        <text class="s c" x="150" y="400">低</text><text class="s c" x="290" y="400">中</text><text class="s c" x="430" y="400">高</text>
+        <text class="gl c" x="290" y="422">可能性 →</text>
+        <text class="s r" x="70" y="84">高</text><text class="s r" x="70" y="204">中</text><text class="s r" x="70" y="324">低</text>
+        <text class="gl c" x="20" y="200" transform="rotate(-90 20 200)">影响 →</text>
+        <g class="dots">
+          <!-- (中,高) 1 8 12 -->
+          <circle cx="250" cy="60" r="14"/><text class="c" x="250" y="64">1</text>
+          <circle cx="290" cy="60" r="14"/><text class="c" x="290" y="64">8</text>
+          <circle cx="330" cy="60" r="14"/><text class="c" x="330" y="64">12</text>
+          <!-- (低,高) 13 -->
+          <circle cx="110" cy="60" r="14"/><text class="c" x="110" y="64">13</text>
+          <!-- (高,中) 2 3 9 -->
+          <circle cx="390" cy="180" r="14"/><text class="c" x="390" y="184">2</text>
+          <circle cx="430" cy="180" r="14"/><text class="c" x="430" y="184">3</text>
+          <circle cx="470" cy="180" r="14"/><text class="c" x="470" y="184">9</text>
+          <!-- (中,中) 4 6 7 11 14 -->
+          <circle cx="250" cy="180" r="14"/><text class="c" x="250" y="184">4</text>
+          <circle cx="290" cy="180" r="14"/><text class="c" x="290" y="184">6</text>
+          <circle cx="330" cy="180" r="14"/><text class="c" x="330" y="184">7</text>
+          <circle cx="250" cy="224" r="14"/><text class="c" x="250" y="228">11</text>
+          <circle cx="290" cy="224" r="14"/><text class="c" x="290" y="228">14</text>
+          <!-- (高,低) 5 10 -->
+          <circle cx="390" cy="300" r="14"/><text class="c" x="390" y="304">5</text>
+          <circle cx="430" cy="300" r="14"/><text class="c" x="430" y="304">10</text>
+          <!-- (低,低) 15 16 -->
+          <circle cx="110" cy="300" r="14"/><text class="c" x="110" y="304">15</text>
+          <circle cx="150" cy="300" r="14"/><text class="c" x="150" y="304">16</text>
+        </g>
+      </svg>
+      </div>
+    </figure>
+    <div class="tbl"><table>
+      <thead><tr><th>#</th><th>风险</th><th>应对</th></tr></thead>
+      <tbody>
+        <tr><td class="num">1</td><td>VPU 隔着衣物信号不稳</td><td>两套传感器；弹性压片；备选形态；有效性单独上报，失效退回一期</td></tr>
+        <tr><td class="num">2</td><td>播放声训练数据稀缺</td><td>自建重录台：多扬声器 × 多房间 × 多距离；Opus 编码后再训练</td></tr>
+        <tr><td class="num">3</td><td>电视普通对话不可分</td><td>按类别如实报告；作为他人被接受时不进记忆；二期靠空间特征</td></tr>
+        <tr><td class="num">4</td><td>手机后台保活受限</td><td>Flash ≥8 h；BLE 后台模式；写满前推送提醒</td></tr>
+        <tr><td class="num">5</td><td>大陆 VoIP 观测不到</td><td><code>call.kind=unknown</code> 时不用本机外放证据；对抗集单测</td></tr>
+        <tr><td class="num">6</td><td>8B 幻觉</td><td>无语音不送；健康检查；600M 校验；无语音帧直接拒绝</td></tr>
+        <tr><td class="num">7</td><td>热词误触发</td><td>时间窗与上限 N；闭集纠错；分级门槛</td></tr>
+        <tr><td class="num">8</td><td>同音色家人</td><td>证据级门槛；二期 VPU；三期家人自愿注册</td></tr>
+        <tr><td class="num">9</td><td>机主声纹漂移</td><td>落入不确定区（可放回）；VPU 救回；提示重新注册</td></tr>
+        <tr><td class="num">10</td><td>删除后不能重跑</td><td>上线前评测；文字候选；隔离区 7 天</td></tr>
+        <tr><td class="num">11</td><td>有效时长超假设</td><td>按用户计量；按 P90 定价；播放跳过与背景隔离</td></tr>
+        <tr><td class="num">12</td><td>旁观者录音同意</td><td>硬件指示灯（软件不可关）；物理静音键；他人只做当天匿名聚类；法务评估告知义务</td></tr>
+        <tr><td class="num">13</td><td>声纹合规</td><td>单独同意、加密、可删、注册音频即删；不收集他人声纹</td></tr>
+        <tr><td class="num">14</td><td>免提通话录下远端</td><td>告知义务由法务确认；“通话期间自动暂停”选项</td></tr>
+        <tr><td class="num">15</td><td>时钟漂移与重启</td><td>启动世代、同步点拟合；质量差时不用场景证据</td></tr>
+        <tr><td class="num">16</td><td>单一 8B 管线故障</td><td>排队等待；超过 12 小时才 600M 降级并打标</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<!-- §12 -->
+<section id="s12" data-label="§12">
+  <h2><span class="no">§12</span>关键决策记录</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>#</th><th>决定</th><th>放弃的选项</th><th>理由</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">D1</td><td>8B 单路全量，600M 辅助</td><td>600M 全量 + 8B 重跑 20%</td><td>每月只省约 ¥3；路由漏检；两条管线</td></tr>
+      <tr><td class="mono">D2</td><td>批处理，小时级，“立即同步”</td><td>分钟级或流式</td><td>硬约束；利于 GPU 利用率与手机省电</td></tr>
+      <tr><td class="mono">D3</td><td>手机 L1 只丢高置信非人声</td><td>手机端丢播放声</td><td>播放声就是人声，手机证据不足</td></tr>
+      <tr><td class="mono">D4</td><td>识别前播放检测一期不跳过</td><td>一期就跳过</td><td>跳过等于删人声；等 VPU 物理证据</td></tr>
+      <tr><td class="mono">D5</td><td>拒绝只用于非语音与无语音帧幻觉；其余可疑一律隔离 7 天</td><td>播放声直接丢弃</td><td>音频删除后隔离区是唯一可恢复处</td></tr>
+      <tr><td class="mono">D6</td><td>不确定区隔离，不按他人接受</td><td>不确定按他人接受</td><td>机主的话当成他人会产生错误的“对方答应的”</td></tr>
+      <tr><td class="mono">D7</td><td>下游只读接受档</td><td>把标记交给模型判断</td><td>模型看不到隔离内容就不会被诱导</td></tr>
+      <tr><td class="mono">D8</td><td>音频在需要音频的环节完成后即删</td><td>等摘要完成再删</td><td>摘要只读文字；缩短泄露窗口</td></tr>
+      <tr><td class="mono">D9</td><td>三类热词，检索 + 拼音召回，只解码一次</td><td>二次解码</td><td>8B 成本接近翻倍；列为评测变体</td></tr>
+      <tr><td class="mono">D10</td><td>专名纠错：闭集、diff、依据、分级、默认关</td><td>整段改写；开放纠错</td><td>防止把对的改错</td></tr>
+      <tr><td class="mono">D11</td><td>行业由用户自选</td><td>自动推断行业</td><td>避免画像与误判</td></tr>
+      <tr><td class="mono">D12</td><td>VPU 三态 × 声纹三档；VPU 只在有效时是证据</td><td>简单帧占比阈值</td><td>未佩戴时“没有振动”什么也说明不了</td></tr>
+      <tr><td class="mono">D13</td><td>证据级与时间线级分开设门槛</td><td>统一门槛</td><td>进记忆与待办的错误后果更重</td></tr>
+      <tr><td class="mono">D14</td><td>只用自建采集</td><td>线上抽样标注</td><td>与删除链和声纹同意一致</td></tr>
+      <tr><td class="mono">D15</td><td>场景按事件时间线记录、按录音时刻关联，无自由文本</td><td>收到分片时取一次快照</td><td>离线缓冲时收到时刻 ≠ 录音时刻</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- §13 -->
+<section id="s13" data-label="§13">
+  <h2><span class="no">§13</span>待确认与待询价</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>项</th><th>类别</th><th>影响</th></tr></thead>
+    <tbody>
+      <tr><td>现有设备麦克风数、AGC/降噪可否关、Opus CBR/VBR、FEC/DTX、码率可否 OTA</td><td><span class="tg ask">待确认</span></td><td>一期前端与码率评测</td></tr>
+      <tr><td>现有设备有无本地缓存、能否远程擦除</td><td><span class="tg ask">待确认</span></td><td>一期删除链</td></tr>
+      <tr><td>8B 输入上限、偏置容量、是否输出 token 置信度与时间戳</td><td><span class="tg ask">待确认</span></td><td>识别分片长度、N、G4</td></tr>
+      <tr><td>600M 是否有 CTC 头</td><td><span class="tg ask">待确认</span></td><td>对齐方案与成本</td></tr>
+      <tr><td>GPU 卡时、CPU 核时成本</td><td><span class="tg ask">待确认</span></td><td>全部 LLM 与小模型成本</td></tr>
+      <tr><td>双麦、VPU、骨导加速度计、IMU、SPI NAND、电池的型号与单价</td><td><span class="tg ask">待询价</span></td><td>二期 BOM</td></tr>
+      <tr><td>iOS/Android 场景 API 的后台可用性与权限</td><td><span class="tg ask">待确认</span></td><td>场景覆盖率</td></tr>
+      <tr><td>旁观者告知、通话录音、声纹处理的合规意见</td><td><span class="tg ask">待确认</span>（法务）</td><td>产品形态与默认设置</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 附 -->
+<section id="s14" data-label="附录">
+  <h2><span class="no">附</span>转换中的发现</h2>
+  <p class="lede">转换只改形式、不改内容。以下两处在画图时发现，只列出，未修改正文。</p>
+  <div class="find"><p><b>1. 佩戴时长与有效音频</b>：按全天有效比例 0.25<span class="tg as">假设</span>，每天 5 小时有效音频对应约 20 小时佩戴。若实际佩戴约 12 小时，有效音频约 3 小时，月成本约 ¥15（见敏感性表）。建议向需求方确认 5 小时是平均值还是高位值。</p></div>
+  <div class="find"><p><b>2. 音频可以更早删除</b>：G6 内容门控、专名纠错、G7 裁决都只读文字，音频其实可以在 G5 判定与 600M 对齐完成后即删，比现在（文字落盘后）早一步，进一步缩短保留窗口。图中仍按原文画在转写库之后。</p></div>
+</section>
+</main>
+</div>
+
+<div id="tip" role="tooltip" hidden></div>
+
+<script>
+(function(){
+  var root = document.documentElement;
+  // 阶段切换：默认二期
+  var btns = document.querySelectorAll('[data-phase-btn]');
+  function setPhase(p){
+    root.setAttribute('data-phase', p);
+    btns.forEach(function(b){ b.setAttribute('aria-pressed', b.getAttribute('data-phase-btn') === p ? 'true' : 'false'); });
+    try { localStorage.setItem('lav-phase', p); } catch(e) {}
+  }
+  var saved = null;
+  try { saved = localStorage.getItem('lav-phase'); } catch(e) {}
+  setPhase(saved === '1' ? '1' : '2');
+  btns.forEach(function(b){ b.addEventListener('click', function(){ setPhase(b.getAttribute('data-phase-btn')); }); });
+
+  // L1 缩略图：标出放大自 L0 的哪一段
+  var names = ['领夹','手机','识别与判定','入库与下游'];
+  var widths = [30,34,52,26];
+  document.querySelectorAll('.minimap').forEach(function(m){
+    var seg = +m.getAttribute('data-seg'), x = 1, parts = '';
+    widths.forEach(function(w, i){
+      var on = i === seg;
+      parts += '<rect x="'+x+'" y="2" width="'+w+'" height="18" rx="3" fill="'+(on?'var(--accent)':'var(--surface-2)')+'" stroke="var(--line)"/>';
+      x += w + 3;
+    });
+    m.innerHTML = '<svg width="'+(x)+'" height="22" viewBox="0 0 '+x+' 22" aria-hidden="true">'+parts+'</svg><span>放大自 L0 · '+names[seg]+'</span>';
+  });
+
+  // 模块详情：悬停显示，点按固定
+  var tip = document.getElementById('tip'), pinned = null;
+  function place(el){
+    var r = el.getBoundingClientRect(), tw = tip.offsetWidth, th = tip.offsetHeight;
+    var left = Math.min(Math.max(8, r.left + r.width/2 - tw/2), window.innerWidth - tw - 8);
+    var top = r.bottom + 8;
+    if (top + th > window.innerHeight - 8) top = Math.max(8, r.top - th - 8);
+    tip.style.left = left + 'px'; tip.style.top = top + 'px';
+  }
+  function show(el){
+    tip.textContent = '';
+    var p = document.createElement('p'); p.textContent = el.getAttribute('data-tip'); tip.appendChild(p);
+    var ref = el.getAttribute('data-ref');
+    if (ref) {
+      var target = document.getElementById(ref);
+      var a = document.createElement('a'); a.href = '#' + ref;
+      a.textContent = '查看 ' + ((target && target.getAttribute('data-label')) || '对应章节') + ' →';
+      a.addEventListener('click', function(){ hide(true); });
+      tip.appendChild(a);
+    }
+    tip.hidden = false; place(el);
+  }
+  function hide(force){ if (pinned && !force) return; pinned = null; tip.hidden = true; }
+  document.querySelectorAll('[data-tip]').forEach(function(el){
+    el.addEventListener('pointerenter', function(e){ if (e.pointerType === 'mouse' && !pinned) show(el); });
+    el.addEventListener('pointerleave', function(e){ if (e.pointerType === 'mouse') hide(false); });
+    el.addEventListener('focus', function(){ if (!pinned) show(el); });
+    el.addEventListener('blur', function(){ hide(false); });
+    el.addEventListener('click', function(e){
+      e.stopPropagation();
+      if (pinned === el) { hide(true); return; }
+      pinned = null; show(el); pinned = el;
+    });
+    el.addEventListener('keydown', function(e){ if (e.key === 'Enter') { var a = tip.querySelector('a'); if (a) a.click(); } });
+  });
+  document.addEventListener('click', function(e){ if (pinned && !tip.contains(e.target)) hide(true); });
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape') hide(true); });
+  window.addEventListener('scroll', function(){ if (!tip.hidden) hide(true); }, {passive:true});
+
+  // 目录高亮
+  var links = {};
+  document.querySelectorAll('.toc a').forEach(function(a){ links[a.getAttribute('href').slice(1)] = a; });
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(en){
+        if (en.isIntersecting && links[en.target.id]) {
+          Object.keys(links).forEach(function(k){ links[k].removeAttribute('aria-current'); });
+          links[en.target.id].setAttribute('aria-current', 'true');
+        }
+      });
+    }, {rootMargin: '-20% 0px -70% 0px'});
+    document.querySelectorAll('main > section').forEach(function(s){ io.observe(s); });
+  }
+})();
+</script>
+<style>
+svg .dots circle{fill:var(--fg)}
+svg .dots text{fill:var(--bg);font-family:var(--f-mono);font-size:12px;font-weight:500}
+</style>
