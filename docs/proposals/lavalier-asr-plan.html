@@ -508,6 +508,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <ul class="small">
         <li><b>L1</b>：<a href="#fig-l1a">领夹</a> · <a href="#fig-l1b">手机</a> · <a href="#fig-l1c">云端·识别与判定</a> · <a href="#fig-l1d">云端·入库与下游</a></li>
         <li><b>L2</b>：<a href="#fig-funnel">拒识漏斗</a> · <a href="#fig-verdict">三档裁决</a> · <a href="#fig-fusion">融合矩阵</a> · <a href="#fig-hot">热词流水线</a> · <a href="#fig-units">对话单元</a></li>
+        <li><b>实现</b>：<a href="#fig-svc">服务与数据流</a> · <a href="#s5-11">存储与接口</a> · <a href="#s5-12">模型服务与容量</a> · <a href="#s5-13">删除、安全与运维</a></li>
       </ul>
     </div>
     <div class="card"><h3>五条设计原则</h3>
@@ -679,7 +680,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
   <div class="grid2">
     <div id="s4-1" class="card" data-label="§4.1"><h3>分片与时间线</h3>
       <ul class="small">
-        <li>上传分片固定 5 分钟设备时间（15,000 帧），不按语音切。</li>
+        <li>上传分片固定 5 分钟设备时间（15,000 帧），不按语音切；立即同步时把未满的当前分片截断上传，下一片从截断处起算。</li>
         <li>主键 <code>(device_id, boot_generation, frame_seq)</code>，乱序与补传都能拼回原位。</li>
         <li>缺口不压缩时间轴；开启 DTX 时只按帧序号推算时间。</li>
         <li>原样保存设备码流，L1 只解一份临时 PCM。</li>
@@ -741,7 +742,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
 <!-- §5 -->
 <section id="s5" data-label="§5">
   <h2><span class="no">§5</span>云端</h2>
-  <p class="lede">G2 到 G5 需要音频；G5 判定与对齐完成后，识别结果落盘，音频随即删除。之后的内容门控、专名纠错、三档裁决和入库都只读文字，纪要、待办、记忆按对话单元生成。</p>
+  <p class="lede">G2 到 G5 需要音频；G5 判定与对齐完成后，识别结果落盘，音频随即删除。之后的内容门控、专名纠错、三档裁决和入库都只读文字，纪要、待办、记忆按对话单元生成。5.1–5.9 定规则，5.10–5.13 是技术中立的实现设计。</p>
 
   <figure id="fig-l1c">
     <div class="fighead"><div><span class="lvl">L1</span><b>云端 · 识别与判定</b></div><span class="minimap" data-seg="2"></span></div>
@@ -1275,7 +1276,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <thead><tr><th>规则</th><th>内容</th></tr></thead>
       <tbody>
         <tr><td>切分</td><td>日历会议时段内的轮次按 <code>meeting_hash</code> 成为一个单元；其余时段连续 ≥10 分钟没有接受档语音就切开；停顿不到 10 分钟、但前后各 5 分钟的参与者没有交集（机主先后和两拨人说话）也切开，阈值由评测调整。日历时段前后各留 10 分钟容差：提前开始或超时的轮次，参与者与会中相同就并入会议单元。隔离档不参与切分，也不进任何单元。</td></tr>
-        <tr><td>关闭</td><td>切口已经出现，而且切口之前没有还在路上的缺口。帧序号有空洞、又没有缺口记录（<code>device_gate</code>、<code>device_drop</code>、<code>flash_error</code>）就视为还在路上；等待超过 2 小时先关闭，标“可能不完整”，补到后重开。</td></tr>
+        <tr><td>关闭</td><td>切口已经出现，而且切口之前没有还在路上的缺口。帧序号有空洞、又没有缺口记录（手机上报的 <code>device_gate</code>、<code>device_drop</code>、<code>flash_error</code>、<code>phone_expired</code>，云端登记的 <code>cloud_failed</code>）就视为还在路上；等待超过 2 小时先关闭，标“可能不完整”，补到后重开。</td></tr>
         <tr><td>生成</td><td>单元关闭后运行 G8，生成纪要、待办、记忆。已归属机主少于 3 句的单元不生成纪要和待办，但仍显示在时间线上、可搜索；日历会议除外，用户也可以在时间线上手动生成。</td></tr>
         <tr><td>立即同步</td><td>在最新一帧处临时关闭当前单元，转写可见后随即生成纪要。10 分钟内又有语音，或属于同一 <code>meeting_hash</code>，就重开这个单元。</td></tr>
         <tr><td>重开</td><td>迟到或补传的分片落进已关闭的单元，立即同步后有续说，或用户改字、改标说话人、改背景标记：重新生成纪要，替换而不是追加；被取代的待办与记忆按溯源撤回，App 显示“纪要已更新”。</td></tr>
@@ -1284,6 +1285,282 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
         <tr><td>业务日与簇质心</td><td>业务日为本地 04:00 至次日 04:00。他人簇质心在业务日结束后再留 12 小时，供迟到分片归簇；更晚到达的分片单独聚类，簇号标“迟到”，不回并。</td></tr>
       </tbody>
     </table></div>
+  </div>
+
+  <!-- 5.10 -->
+  <div id="s5-10" data-label="§5.10" style="display:flex;flex-direction:column;gap:14px">
+    <h3>5.10 详细设计：服务拆分与数据流</h3>
+    <p class="small">5.10–5.13 是 5.1–5.9 的实现设计，技术中立：只规定组件类型、契约与不变量，不绑定语言与具体产品。逻辑服务可以合在一个进程里部署，拆分只沿扩缩容维度（GPU、CPU、LLM）与权限边界（能否读音频）进行。</p>
+    <figure id="fig-svc">
+      <div class="fighead"><div><b>服务与数据流：音频只在中间一段存在</b></div></div>
+      <div class="fig wide">
+      <svg viewBox="0 0 1100 480" role="img" aria-label="服务与数据流：接入段由手机、接入网关、短期音频桶、元数据库、热词服务组成；音频段由拼接器、两级队列、解码与小模型、8B、600M、说话人判定组成，判定后依次写识别结果、删除音频、回执手机；文字段由文字管线、转写库、单元调度器、G8 生成、产物组成，另有 App 接口、删除服务与计量">
+        <rect x="10" y="10" width="1080" height="96" rx="8" fill="var(--panel)" stroke="var(--line)"/>
+        <rect x="10" y="114" width="1080" height="176" rx="8" fill="var(--panel)" stroke="var(--line)"/>
+        <rect x="10" y="298" width="1080" height="172" rx="8" fill="var(--panel)" stroke="var(--line)"/>
+        <text class="ph" x="26" y="64">接入</text><text class="ph" x="26" y="206">音频段</text><text class="ph" x="26" y="390">文字段</text>
+
+        <g class="nd" tabindex="0" data-tip="上传分片清单与音频分开走：清单经接入网关，音频用预签名地址直传短期音频桶。回执由手机按游标拉取，推送只作提醒。" data-ref="s5-11"><rect x="90" y="36" width="110" height="50" rx="7"/><text class="t c" x="145" y="58">手机 App</text><text class="s c" x="145" y="76">清单 · 回执</text></g>
+        <path class="e d" d="M145 36V22H515V34" marker-end="url(#ah)"/>
+        <text class="tiny c" x="330" y="18">预签名直传音频</text>
+        <path class="e" d="M200 61H238" marker-end="url(#ah)"/>
+        <g class="nd" tabindex="0" data-tip="鉴权与设备绑定；校验清单字段与对象的 sha256、字节数；chunk_id 幂等，重复提交直接返回已有状态；写入后再查一次擦除记录，落在已擦除时段的分片直接删除。" data-ref="s5-11"><rect x="240" y="36" width="150" height="50" rx="7"/><text class="t c" x="315" y="58">接入网关</text><text class="s c" x="315" y="76">鉴权 · 校验 · 幂等</text></g>
+        <g class="nd store" tabindex="0" data-tip="唯一存放音频的地方。按用户数据密钥加密；关闭版本控制，不进备份，不做跨区域复制；生命周期规则 72 小时强制删除。只有音频段的服务账号能读。" data-ref="s5-13"><rect x="430" y="36" width="170" height="50" rx="7"/><use href="#lock" class="lock" x="440" y="44" width="12" height="14"/><text class="t c" x="515" y="58">短期音频桶</text><text class="s c" x="515" y="76">直传 · 72 h 强删</text></g>
+        <g class="nd store" tabindex="0" data-tip="分片、作业、片段、单元、产物、簇质心、热词、计量等表；全部以 user_ref 为分片键，在线路径一条语句只涉及一个用户。各服务都读写它，图中不画这些连线。" data-ref="s5-11"><rect x="640" y="36" width="170" height="50" rx="7"/><use href="#lock" class="lock" x="650" y="44" width="12" height="14"/><text class="t c" x="725" y="58">元数据库</text><text class="s c" x="725" y="76">按 user_ref 分片</text></g>
+        <g class="nd" tabindex="0" data-tip="按用户、录音时刻、meeting_hash 检索三类热词，排序截断到 N 条，按用户与小时缓存。" data-ref="s5-3"><rect x="850" y="36" width="170" height="50" rx="7"/><text class="t c" x="935" y="58">热词服务</text><text class="s c" x="935" y="76">按上下文出偏置表</text></g>
+
+        <path class="e" d="M280 86V120H165V134" marker-end="url(#ah)"/>
+        <text class="tiny" x="174" y="130">分片已存</text>
+        <path class="e" d="M515 86V134" marker-end="url(#ah)"/>
+        <text class="tiny" x="522" y="112">读音频</text>
+        <path class="e" d="M900 86V104H655V134" marker-end="url(#ah)"/>
+        <text class="tiny" x="760" y="100">偏置表</text>
+
+        <g class="nd" tabindex="0" data-tip="每个用户单写者：拼接帧序号、区分缺口与在路上的数据，在停顿处切识别分片；分片末尾最后一个停顿之后的音频顺延到下一批，常规最多等 20 分钟，立即同步不等。" data-ref="s5-10"><rect x="90" y="136" width="150" height="64" rx="7"/><text class="t c" x="165" y="160">拼接器</text><text class="s c" x="165" y="178">按用户串行</text><text class="s c" x="165" y="193">切识别分片 · 尾部顺延</text></g>
+        <path class="e" d="M240 168H268" marker-end="url(#ah)"/>
+        <g class="nd" tabindex="0" data-tip="立即同步作业优先；常规作业按截止时间（录音结束 + 3 小时 − 预计处理时长）排序，空闲时借用为立即同步预留的容量，在批边界让出。" data-ref="s5-12"><rect x="270" y="136" width="120" height="64" rx="7"/><text class="t c" x="330" y="160">两级队列</text><text class="s c" x="330" y="178">立即同步优先</text><text class="s c" x="330" y="193">常规按截止时间</text></g>
+        <path class="e" d="M390 168H418" marker-end="url(#ah)"/>
+        <g class="nd" tabindex="0" data-tip="作业进程把音频解码成内存中的 PCM，调用 CPU 小模型服务：VAD（G2）、声音事件、回放特征（G3）、声纹嵌入、重叠检测、换人点。中间结果只在内存。" data-ref="s5-1"><rect x="420" y="136" width="150" height="64" rx="7"/><text class="t c" x="495" y="160">解码 · 小模型</text><text class="s c" x="495" y="178">VAD · 事件 · 回放</text><text class="s c" x="495" y="193">嵌入 · 重叠 · 换人点</text></g>
+        <use href="#hex" x="434" y="136" class="gate g-drop"/><text class="gt c" x="434" y="140">G2</text>
+        <path class="e" d="M570 168H598" marker-end="url(#ah)"/>
+        <g class="nd" tabindex="0" data-tip="GPU 池 A，按长度分桶动态组批；每个请求带自己的偏置表。无状态服务，不记录请求内容。" data-ref="s5-12"><rect x="600" y="136" width="110" height="64" rx="7"/><text class="t c" x="655" y="160">8B 转写</text><text class="s c" x="655" y="178">GPU 池 A</text><text class="s c" x="655" y="193">带偏置表</text></g>
+        <path class="e" d="M710 168H738" marker-end="url(#ah)"/>
+        <g class="nd" tabindex="0" data-tip="GPU 池 B：G4 健康检查命中的约 20% 做交叉校验；全部片段做 CTC 强制对齐，把字分到说话人轮次。" data-ref="s5-1"><rect x="740" y="136" width="120" height="64" rx="7"/><text class="t c" x="800" y="160">600M</text><text class="s c" x="800" y="178">GPU 池 B</text><text class="s c" x="800" y="193">校验 · 对齐</text></g>
+        <use href="#hex" x="754" y="136" class="gate g-drop"/><text class="gt c" x="754" y="140">G4</text>
+        <path class="e" d="M860 168H888" marker-end="url(#ah)"/>
+        <g class="nd" tabindex="0" data-tip="按轮次判机主、他人、未知；当天在线聚类。同一用户的作业可以并行跑到这里，提交时按簇状态版本号做乐观并发，冲突就用内存里的嵌入重新归簇。" data-ref="s5-6"><rect x="890" y="136" width="150" height="64" rx="7"/><text class="t c" x="965" y="160">说话人判定</text><text class="s c" x="965" y="178">簇状态乐观并发</text><text class="s c" x="965" y="193">在线聚类</text></g>
+        <use href="#hex" x="904" y="136" class="gate g-iso"/><text class="gt c" x="904" y="140">G5</text>
+
+        <path class="e" d="M965 200V226" marker-end="url(#ah)"/>
+        <g class="nd" tabindex="0" data-tip="一个事务内：写识别结果（片段、分数、候选）、更新簇质心、作业置为已落盘、写出站事件。" data-ref="s5-10"><rect x="890" y="228" width="150" height="44" rx="22"/><text class="s c" x="965" y="248" style="fill:var(--fg);font-weight:700">① 写识别结果</text><text class="tiny c" x="965" y="263">与聚类状态同一事务</text></g>
+        <path class="e" d="M890 250H862" marker-end="url(#ah)"/>
+        <g class="nd" tabindex="0" data-tip="分片的全部帧都已落盘才删对象；删除后再确认对象不存在，才记 audio_deleted_at。" data-ref="s5-13"><rect x="710" y="228" width="150" height="44" rx="22"/><text class="s c" x="785" y="248" style="fill:var(--fg);font-weight:700">② 删除音频</text><text class="tiny c" x="785" y="263">确认对象已不存在</text></g>
+        <path class="e" d="M710 250H682" marker-end="url(#ah)"/>
+        <g class="nd" tabindex="0" data-tip="回执只在音频确认删除之后发出；手机收到后删除暂存。" data-ref="s7"><rect x="530" y="228" width="150" height="44" rx="22"/><text class="s c" x="605" y="248" style="fill:var(--fg);font-weight:700">③ 回执手机</text><text class="tiny c" x="605" y="263">手机随即删暂存</text></g>
+        <path class="e d" d="M530 250H405V100H360V88" marker-end="url(#ah)"/>
+
+        <path class="e" d="M965 272V316" marker-end="url(#ah)"/>
+        <g class="nd" tabindex="0" data-tip="只读文字：G6 内容门控、专名纠错（小 LLM）、G7 汇总裁决。G7 完成前片段对 App 不可见，免得电视台词先露出来再被隔离。" data-ref="s5-7"><rect x="890" y="318" width="150" height="60" rx="7"/><text class="t c" x="965" y="342">文字管线</text><text class="s c" x="965" y="360">G6 · 纠错 · G7</text></g>
+        <use href="#hex" x="904" y="318" class="gate g-verdict"/><text class="gt c" x="904" y="322">G7</text>
+        <path class="e" d="M890 348H852" marker-end="url(#ah)"/>
+        <g class="nd store" tabindex="0" data-tip="片段表与全文索引，按 user_ref 分片；隔离档只在隔离区可搜，7 天到期删除。" data-ref="s5-11"><rect x="700" y="318" width="150" height="60" rx="7"/><use href="#lock" class="lock" x="710" y="326" width="12" height="14"/><text class="t c" x="775" y="342">转写库</text><text class="s c" x="775" y="360">片段 · 三档 · 索引</text></g>
+        <path class="e" d="M700 348H662" marker-end="url(#ah)"/>
+        <g class="nd" tabindex="0" data-tip="每个用户单写者的状态机：切分、关闭、立即同步临时关闭、重开；计算参与者与背景簇；每次关闭或重开递增单元代次。" data-ref="s5-9"><rect x="510" y="318" width="150" height="60" rx="7"/><text class="t c" x="585" y="342">单元调度器</text><text class="s c" x="585" y="360">按用户串行 · 代次</text></g>
+        <path class="e" d="M510 348H472" marker-end="url(#ah)"/>
+        <g class="nd" tabindex="0" data-tip="LLM 提议纪要、待办与记忆候选；G8 规则由代码校验：引用片段必须属于该单元、说话人与类别相符，不符的降为未核实或丢弃。完成时单元代次已变就作废重来。" data-ref="s5-8"><rect x="330" y="318" width="140" height="60" rx="7"/><text class="t c" x="400" y="342">G8 生成</text><text class="s c" x="400" y="360">LLM 提议 · 代码校验</text></g>
+        <use href="#hex" x="344" y="318" class="gate g-store"/><text class="gt c" x="344" y="322">G8</text>
+        <path class="e" d="M330 348H292" marker-end="url(#ah)"/>
+        <g class="nd store"><rect x="90" y="318" width="200" height="60" rx="7"/><use href="#lock" class="lock" x="100" y="326" width="12" height="14"/><text class="t c" x="190" y="342">纪要 · 待办 · 记忆</text><text class="s c" x="190" y="360">按单元代次 · 溯源</text></g>
+
+        <g class="nd" tabindex="0" data-tip="只记每个用户每天的佩戴、上传、有效、接受、隔离、拒绝时长与立即同步次数，不含内容。" data-ref="s5-11"><rect x="330" y="410" width="140" height="44" rx="7"/><text class="s c" x="400" y="430" style="fill:var(--fg);font-weight:700">计量</text><text class="tiny c" x="400" y="445">只记时长与计数</text></g>
+        <g class="nd" tabindex="0" data-tip="时间线、单元状态、隔离区、用户操作（放回、降级、改标、改字、点选候选、改背景、确认簇名、手动生成）。没有任何读音频的接口。" data-ref="s5-11"><rect x="510" y="410" width="150" height="44" rx="7"/><text class="s c" x="585" y="430" style="fill:var(--fg);font-weight:700">App 接口</text><text class="tiny c" x="585" y="445">时间线 · 操作 · 状态</text></g>
+        <path class="e d" d="M585 410V380" marker-end="url(#ah)"/>
+        <text class="tiny" x="592" y="400">操作 → 重开</text>
+        <path class="e d" d="M660 425H775V380" marker-end="url(#ah)"/>
+        <g class="nd" tabindex="0" data-tip="到期删除（隔离档 7 天、接受档按用户设置、簇质心业务日结束 + 12 小时）、用户擦除、音频巡检。" data-ref="s5-13"><rect x="890" y="410" width="150" height="44" rx="7"/><text class="s c" x="965" y="430" style="fill:var(--fg);font-weight:700">删除服务</text><text class="tiny c" x="965" y="445">到期 · 擦除 · 巡检</text></g>
+      </svg>
+      </div>
+      <figcaption>中间一段是唯一接触音频的服务，也是唯一需要读短期音频桶的权限。<b>①②③ 的顺序是删除链的核心</b>：结果先落盘，再删音频，确认删除后才回执。三处“按用户串行”分别是拼接器、单元调度器和簇状态提交，其余环节可以任意并行。服务间用事务外发表（状态与待发事件同一事务提交，再由中继投递）传事件，投递至少一次，消费方按稳定 ID 幂等。</figcaption>
+    </figure>
+    <div class="tbl"><table>
+      <thead><tr><th>服务</th><th>职责</th><th>状态与并发</th><th>扩缩依据</th></tr></thead>
+      <tbody>
+        <tr><td>接入网关</td><td>鉴权、签发直传地址、提交确认、回执查询、立即同步配额</td><td>无状态；幂等键 <code>chunk_id</code></td><td>请求数</td></tr>
+        <tr><td>拼接器</td><td>按 <code>(device_id, boot_generation, frame_seq)</code> 拼时间线；判缺口与在路上；切识别分片；生成识别作业</td><td>每用户单写者：按 <code>user_ref</code> 分区的队列，或带防护令牌（fencing token）的租约</td><td>用户数</td></tr>
+        <tr><td>音频作业</td><td>一个作业在一个进程里跑完 G2–G5：解码、调小模型、8B、600M、说话人判定，再走 ①②③</td><td>中间结果只在内存，不落盘；进程崩溃就从音频重跑整个作业</td><td>队列深度与截止时间</td></tr>
+        <tr><td>模型服务</td><td>CPU 小模型、8B、600M 各自成池，跨用户组批</td><td>无状态；不记录请求与输出</td><td>见 §5.12</td></tr>
+        <tr><td>文字管线</td><td>G6、专名纠错、G7；写片段的档位与原因</td><td>按 <code>segment_id</code> + 管线版本幂等</td><td>小 LLM 吞吐</td></tr>
+        <tr><td>单元调度器</td><td>§5.9 的切分、关闭、重开、处理状态；参与者与背景簇</td><td>每用户单写者；单元带代次 <code>generation</code></td><td>用户数</td></tr>
+        <tr><td>G8 生成</td><td>纪要、待办、记忆候选；代码校验 G8 规则；写溯源；撤回被取代的产物</td><td>按 <code>(unit_id, generation)</code> 幂等；完成时代次已变就丢弃结果</td><td>中 LLM 吞吐</td></tr>
+        <tr><td>App 接口</td><td>时间线、状态、隔离区、用户操作、用量</td><td>写操作带片段版本号，过期返回冲突</td><td>请求数</td></tr>
+        <tr><td>删除服务 · 计量</td><td>见 §5.13；按天汇总时长</td><td>定时任务，按用户分批</td><td>用户数</td></tr>
+      </tbody>
+    </table></div>
+    <div class="grid2">
+      <div class="card"><h3>识别作业的状态</h3>
+        <ol class="small">
+          <li><code>queued</code>：拼接器生成，带队列类别与截止时间。作业 ID = 用户 + 设备 + 启动世代 + 帧序号区间 + 管线版本的哈希，重复生成即同一作业。</li>
+          <li><code>running</code>：领取时写入租约与过期时间；租约过期由别的进程接手，从音频重跑。</li>
+          <li><code>persisted</code>：① 完成。此后不再重跑，片段 ID = 作业 ID + 轮次序号，保持稳定。</li>
+          <li><code>audio_deleted</code> → <code>receipted</code>：② ③ 完成。</li>
+          <li>失败：按退避重试；永久失败满 48 小时，删除音频、登记缺口（<code>cloud_failed</code>）并回执，App 显示该时段识别失败。</li>
+        </ol>
+      </div>
+      <div class="card"><h3>崩溃点与恢复</h3>
+        <ul class="small">
+          <li><b>① 之前</b>：事务未提交，簇质心也未更新；作业从音频重跑。</li>
+          <li><b>① 与 ② 之间</b>：巡检找出全部帧已落盘、对象仍在的分片，补删。</li>
+          <li><b>② 与 ③ 之间</b>：巡检确认对象不存在，补记并补发回执。</li>
+          <li><b>回执丢失</b>：手机按游标拉取，回执可重复；手机重复上传已删除的分片时，网关按 <code>chunk_id</code> 直接返回“已删除”，不再收音频。</li>
+          <li><b>文字段失败</b>：只推迟可见，不影响删除链；按片段重试。</li>
+        </ul>
+      </div>
+    </div>
+    <div class="tbl"><table>
+      <thead><tr><th>规则</th><th>内容</th></tr></thead>
+      <tbody>
+        <tr><td>识别分片</td><td>在 ≥300 ms 的停顿处切，目标 15–60 秒<span class="tg es">估算</span>；60 秒内没有停顿就在能量最低处强切。上限以 8B 输入上限为准（§13）。</td></tr>
+        <tr><td>尾部顺延</td><td>上传分片最后一个停顿之后的音频并入下一批。常规批最多等 20 分钟，到时单独识别；立即同步不等；会话结束（手机上报领夹断开或电量告警）不等。</td></tr>
+        <tr><td>立即同步</td><td>App 请求后网关检查配额（每天 3 次），标记该用户的同步窗口；手机把未满 5 分钟的当前分片截断上传，<code>chunk_id</code> 照常按起始帧序号；窗口内的作业进入立即同步队列，单元调度器在最新一帧处临时关闭单元。</td></tr>
+        <tr><td>可见时机</td><td>片段在 G7 完成后才对 App 可见；单元关闭后 G8 生成，纪要可见 P90 ≤30 分钟<span class="tg go">目标</span>。</td></tr>
+        <tr><td>迟到与重开</td><td>迟到分片的作业照常处理；单元调度器发现片段落入已关闭单元，递增代次并重新生成。G8 生成完成时如代次已变，丢弃结果，以免旧纪要覆盖新纪要。</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <!-- 5.11 -->
+  <div id="s5-11" data-label="§5.11" style="display:flex;flex-direction:column;gap:14px">
+    <h3>5.11 详细设计：存储与接口</h3>
+    <p class="small">字段定义见 §6；这里补齐表、对象布局与接口。所有表以 <code>user_ref</code> 为分片键，在线路径的一条语句、一个事务只涉及一个用户；跨用户的只有计量的离线汇总，且不含内容。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>存储</th><th>内容</th><th>写入方</th><th>留存</th></tr></thead>
+      <tbody>
+        <tr><td>短期音频桶</td><td>对象键 <code>{user_ref}/{chunk_id}.opus</code>；按用户数据密钥加密</td><td>手机直传</td><td>识别完成即删；兜底 72 小时</td></tr>
+        <tr><td class="mono">chunks</td><td>§6.1 清单（不含音频）、<code>state</code>、<code>stored_at</code>、<code>frames_persisted_upto</code>、<code>audio_deleted_at</code>、<code>receipt_seq</code></td><td>网关、音频作业</td><td>音频删除后保留元数据，随用户擦除</td></tr>
+        <tr><td class="mono">gaps</td><td>帧序号区间与原因：手机上报的 <code>device_gate|device_drop|flash_error</code>，云端登记的 <code>cloud_failed|phone_expired</code></td><td>网关、音频作业</td><td>同上</td></tr>
+        <tr><td class="mono">rec_jobs</td><td>作业 ID、帧区间、队列类别、截止时间、状态、租约、尝试次数、各环节版本、错误码（只有码，不含内容）</td><td>拼接器、音频作业</td><td>完成后 7 天</td></tr>
+        <tr><td class="mono">segments</td><td>§6.2 全部字段，外加 <code>rev</code>（乐观并发）与可见标记；全文索引同分片</td><td>音频作业、文字管线、App 接口</td><td>接受档按用户设置；隔离档 7 天；拒绝档只留时长与原因</td></tr>
+        <tr><td class="mono">clusters</td><td>业务日、簇号、加密的质心、计数、累计语音秒数、用户确认的簇名、版本号、到期时间</td><td>音频作业、App 接口</td><td>业务日结束后 12 小时</td></tr>
+        <tr><td class="mono">voiceprints</td><td>机主声纹模板（加密）与版本；注册音频不入库</td><td>注册流程</td><td>到用户删除或重新注册</td></tr>
+        <tr><td class="mono">units</td><td>单元 ID、类型（会议、静默切分）、<code>meeting_hash</code>、起止时刻、状态、代次、关闭原因、可能不完整、单边录音、参与者与背景簇、App 状态</td><td>单元调度器</td><td>随单元内片段</td></tr>
+        <tr><td class="mono">outputs</td><td>纪要（按单元代次）；待办（类别、承担人、核实状态、期限、引用片段、有效或已撤回）；记忆候选的溯源</td><td>G8 生成、App 接口</td><td>按用户设置；引用的片段删除时撤回或请用户确认</td></tr>
+        <tr><td class="mono">hotwords</td><td>词条、类别、来源（通讯录、日历、项目、改字）、生效时间窗、权重、最近联系时刻</td><td>App 接口、热词服务</td><td>随用户删除</td></tr>
+        <tr><td class="mono">user_actions</td><td>放回、降级、改标、改字、点选候选、改背景、确认簇名、手动生成：操作类型、对象 ID、时刻</td><td>App 接口</td><td>随对象删除</td></tr>
+        <tr><td class="mono">usage_daily</td><td>佩戴、上传、有效、接受、隔离、拒绝时长，立即同步次数</td><td>计量</td><td>计费所需期限，不含内容</td></tr>
+        <tr><td class="mono">erasures</td><td>擦除请求：范围、时刻、各端进度、设备待清除</td><td>App 接口、删除服务</td><td>只留 ID 与时刻</td></tr>
+        <tr><td class="mono">outbox</td><td>待投递事件（只有 ID 与类型）</td><td>各服务，与状态同一事务</td><td>投递后删除</td></tr>
+      </tbody>
+    </table></div>
+    <div class="grid2">
+      <div class="card"><h3>手机接口</h3>
+        <div class="tbl"><table>
+          <tbody>
+            <tr><td class="mono">POST /v1/chunks:prepare</td><td>提交清单，返回 15 分钟有效的直传地址；已存在则返回当前状态</td></tr>
+            <tr><td class="mono">POST /v1/chunks/{id}:commit</td><td>校验对象的 sha256 与字节数，进入 <code>stored</code></td></tr>
+            <tr><td class="mono">GET /v1/receipts?after=</td><td>按游标拉取回执：已删音频、失败并登记缺口</td></tr>
+            <tr><td class="mono">POST /v1/sync</td><td>立即同步；返回剩余配额</td></tr>
+            <tr><td class="mono">GET /v1/device-commands</td><td>领夹待清除的帧区间，手机转发后确认</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+      <div class="card"><h3>App 接口</h3>
+        <div class="tbl"><table>
+          <tbody>
+            <tr><td class="mono">GET /v1/timeline?from=&amp;to=</td><td>片段与单元，含处理状态；隔离档折叠</td></tr>
+            <tr><td class="mono">GET /v1/units/{id}</td><td>纪要、待办、状态与不出纪要的原因</td></tr>
+            <tr><td class="mono">POST /v1/segments/{id}:{action}</td><td><code>restore|downgrade|relabel|edit|pick</code>；带 <code>rev</code></td></tr>
+            <tr><td class="mono">POST /v1/clusters/{day}/{id}:{action}</td><td><code>name|participant</code></td></tr>
+            <tr><td class="mono">POST /v1/units/{id}:generate</td><td>手动生成纪要</td></tr>
+            <tr><td class="mono">GET /v1/usage · DELETE /v1/data</td><td>用量；按范围擦除</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+    <p class="small muted">内部事件：<code>chunk.stored</code>、<code>job.persisted</code>、<code>segment.final</code>、<code>unit.closed</code>、<code>unit.reopened</code>、<code>user.action</code>、<code>erase.requested</code>。事件体只带 ID 与类型，内容由消费方按 ID 读库，免得队列里留下文字。</p>
+  </div>
+
+  <!-- 5.12 -->
+  <div id="s5-12" data-label="§5.12" style="display:flex;flex-direction:column;gap:14px">
+    <h3>5.12 详细设计：模型服务与容量</h3>
+    <p class="small">吞吐由 §8 的单价与卡时假设反推，是容量规划的起点，不是实测值：8B ¥0.10/音频小时、卡时 ¥10，意味着一张卡每小时要处理约 100 音频小时（约 0.01 倍实时）。实测达不到时，成本与容量同时按比例上调。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>池</th><th>负载</th><th>组批</th><th class="num">隐含吞吐</th><th>备注</th></tr></thead>
+      <tbody>
+        <tr><td>GPU 池 A · 8B</td><td>100% 有效音频</td><td>按识别分片长度分桶，动态组批；偏置表逐请求</td><td class="num">≈100 h/卡时</td><td><span class="tg es">估算</span> 逐请求偏置是否影响组批待确认</td></tr>
+        <tr><td>GPU 池 B · 600M</td><td>交叉校验约 20%，对齐 100%</td><td>校验与对齐分队列</td><td class="num">≈170 h/卡时</td><td><span class="tg es">估算</span> 可与池 A 混部</td></tr>
+        <tr><td>CPU 池 · 小模型</td><td>VAD、事件、回放、嵌入、重叠、换人点</td><td>按作业整段调用</td><td class="num">≈25 h/核时</td><td><span class="tg es">估算</span> 核时 ¥0.10 待确认</td></tr>
+        <tr><td>小 LLM</td><td>G6、专名纠错</td><td>批量预填充</td><td class="num">1–2 万 token/秒/卡</td><td>见 §8 单价口径</td></tr>
+        <tr><td>中 LLM</td><td>G8 纪要、待办、记忆</td><td>按单元，单元关闭即发</td><td class="num">—</td><td>纪要 P90 ≤30 分钟决定其峰值容量</td></tr>
+      </tbody>
+    </table></div>
+    <div class="tbl"><table>
+      <thead><tr><th>8B 容量示例：1 万活跃用户</th><th>算式</th><th class="num">卡数</th></tr></thead>
+      <tbody>
+        <tr><td>日均</td><td>1 万 × 3 有效小时 ÷ 100 h/卡时 ÷ 24</td><td class="num">≈13</td></tr>
+        <tr><td>常规峰值</td><td>日均 × 录音时段的峰值系数约 2<span class="tg es">估算</span></td><td class="num">≈25</td></tr>
+        <tr><td>立即同步预留</td><td>高峰小时 10% 用户同步、每次约 0.5 小时待传音频<span class="tg as">假设</span>：500 h/小时 ÷ 100，× 1.5 突发余量</td><td class="num">≈8</td></tr>
+        <tr><td>高峰合计</td><td>预留容量空闲时借给常规批</td><td class="num">≈33</td></tr>
+      </tbody>
+    </table></div>
+    <p class="small">§8 的单价假设隐含了利用率。按峰值备卡、低谷闲置，会把实际单价抬到日均的约 2.5 倍；所以常规批要靠截止时间把负载摊到低谷，GPU 池应与其他离线业务混部或使用可抢占的弹性实例。立即同步的预留按“+¥0–3/月”计入 §8。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>故障</th><th>影响</th><th>处理</th></tr></thead>
+      <tbody>
+        <tr><td>8B 池不可用</td><td>音频滞留在短期音频桶</td><td>排队；超过 12 小时用 600M 降级识别并标 <code>degraded</code>，恢复后不重跑。音频滞留 24 小时告警；72 小时由生命周期规则删除并登记 <code>cloud_failed</code></td></tr>
+        <tr><td>600M 池不可用</td><td>没有对齐就切不出轮次</td><td>排队；超过 12 小时跳过交叉校验，可疑片段一律标 <code>low_confidence</code>，对齐退回 8B 时间戳（若有，§13），G5 按整段判，标 <code>degraded</code></td></tr>
+        <tr><td>CPU 小模型不可用</td><td>G2、G5 的输入缺失</td><td>排队，不降级：没有 VAD 与嵌入就无法安全判定</td></tr>
+        <tr><td>小 LLM 不可用</td><td>G7 完不成，片段不可见</td><td>排队；音频删除不受影响。App 显示“识别中”</td></tr>
+        <tr><td>中 LLM 不可用</td><td>纪要延迟</td><td>转写照常可见；单元停在“生成纪要”</td></tr>
+        <tr><td>密钥服务不可用</td><td>无法加解密</td><td>失败即关闭：网关拒收上传，手机继续暂存（最长 7 天）；音频作业暂停</td></tr>
+        <tr><td>某个数据库分片不可用</td><td>该分片上的用户</td><td>只影响这些用户；其余照常</td></tr>
+      </tbody>
+    </table></div>
+    <div class="grid2">
+      <div class="card"><h3>模型与提示词的版本</h3>
+        <ul class="small">
+          <li>每个环节的模型、阈值、提示词都有版本，写入片段的 <code>versions</code>。</li>
+          <li>新版本先在自建评测集上与当前版本配对比较（§9），不回退才进入灰度。</li>
+          <li>灰度按用户比例分流，只比线上统计：拒绝、隔离、未知说话人占比，放回率，改标与改字率，“这不是我说的”反馈率。音频不保留，不能拿线上音频回放。</li>
+          <li>回滚只改配置；已处理的片段不重跑。</li>
+        </ul>
+      </div>
+      <div class="card"><h3>LLM 调用的约束</h3>
+        <ul class="small">
+          <li>输入只有文字与元数据；隔离档只以“时段 + 原因”的占位出现。</li>
+          <li>输出是结构化结果，先按模式校验，不合格重试一次后丢弃。</li>
+          <li>LLM 只提议，G8 规则由代码判定：引用的片段必须属于该单元，说话人、证据级与待办类别相符，否则降为未核实或丢弃。</li>
+          <li>提示词前缀保持稳定，单元内容放在末尾，以便利用前缀缓存。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5.13 -->
+  <div id="s5-13" data-label="§5.13" style="display:flex;flex-direction:column;gap:14px">
+    <h3>5.13 详细设计：删除、安全与运维</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>删除对象</th><th>触发</th><th>机制</th><th>校验</th></tr></thead>
+      <tbody>
+        <tr><td>云端音频</td><td>分片全部帧落盘</td><td>删除对象，确认不存在后记 <code>audio_deleted_at</code>；生命周期规则 72 小时兜底</td><td>每小时巡检：桶内超过 24 小时的对象数应为 0，非 0 告警</td></tr>
+        <tr><td>作业进程内的派生物</td><td>作业结束或崩溃</td><td>解码 PCM、VAD、嵌入只在内存；禁用临时文件、核心转储与未加密交换区</td><td>部署检查项；故障注入后检查节点磁盘</td></tr>
+        <tr><td>领夹与手机暂存</td><td>回执</td><td>手机删暂存；领夹按区间销毁密钥、空闲时擦除整块（§7）</td><td>读出领夹 Flash 原始块</td></tr>
+        <tr><td>隔离档文字</td><td><code>expires_at</code></td><td>删除服务每小时清理</td><td>到期未删条数应为 0</td></tr>
+        <tr><td>他人簇质心</td><td>业务日结束 + 12 小时</td><td>同上。簇名是用户输入的文字、不是声学数据，已写进片段与待办，按文字留存</td><td>同上</td></tr>
+        <tr><td>用户擦除</td><td>App 请求</td><td>先写擦除记录作为屏障，再删对象、片段、单元、产物、簇质心、热词；按溯源撤回待办与记忆；向手机与领夹下发清除</td><td>擦除进度对用户可见；三端完成才标“已完成”</td></tr>
+        <tr><td>注销账号</td><td>App 请求</td><td>在用户擦除之后销毁该用户的数据密钥，遗漏在任何地方的密文一并失效</td><td>密钥服务审计记录</td></tr>
+      </tbody>
+    </table></div>
+    <div class="grid2">
+      <div class="card"><h3>安全</h3>
+        <ul class="small">
+          <li><b>密钥</b>：信封加密，每个用户一把数据密钥，由密钥服务的主密钥包裹；音频、质心、声纹模板、片段文字都用它加密。</li>
+          <li><b>权限</b>：只有音频作业的服务账号能读短期音频桶；文字段与 App 接口没有任何读音频的权限或接口。</li>
+          <li><b>鉴权</b>：用户令牌短期有效；领夹与用户绑定，清单中的 <code>device_id</code> 必须属于该用户。</li>
+          <li><b>日志</b>：只记 ID、时长、计数与分数分布；错误信息只带错误码；LLM 的输入输出、模型服务的请求体都不记录。</li>
+          <li><b>人工访问</b>：没有人工访问音频的途径；访问用户文字须有用户授权的工单，并留审计记录。</li>
+        </ul>
+      </div>
+      <div class="card"><h3>监控与告警</h3>
+        <ul class="small">
+          <li><b>时延</b>：常规 P90 ≤3 小时、立即同步 P90 ≤10 分钟、纪要 P90 ≤30 分钟；按截止时间预测的超时作业数。</li>
+          <li><b>删除链</b>：音频最大滞留时长（24 小时告警）、落盘到删除 P99、删除到回执 P99、到期未删条数。</li>
+          <li><b>容量</b>：各队列深度、各池利用率、借用的预留容量。</li>
+          <li><b>质量</b>（§9 线上监控）：按原因的拒绝与隔离占比、未知说话人占比、放回率、改标与改字率、“这不是我说的”反馈率，按模型版本分开，偏离对照带即告警。</li>
+        </ul>
+      </div>
+    </div>
+    <details class="more"><summary>上线前的故障注入清单</summary><div>
+      <ul class="checks small">
+        <li>在 ①、②、③ 前后各杀一次作业进程：无遗留音频，无重复片段，回执最终送达</li>
+        <li>同一分片重复上传、乱序上传、回执丢失后重传：片段不重复，已删分片不再收音频</li>
+        <li>同一用户的两个作业同时提交簇状态：一方冲突后重新归簇，簇计数正确</li>
+        <li>G8 生成期间单元重开：旧代次的结果被丢弃</li>
+        <li>8B 池停 13 小时：降级识别、标 <code>degraded</code>，恢复后不重跑</li>
+        <li>密钥服务不可用：网关拒收，手机暂存，恢复后补传</li>
+        <li>生命周期规则失效（模拟）：巡检在 24 小时内告警</li>
+        <li>用户擦除与上传并发：擦除时段内的分片在写入后被复查删除</li>
+      </ul>
+    </div></details>
   </div>
 </section>
 
@@ -1347,7 +1624,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <tr><td class="mono">codec</td><td class="mono">object</td><td><code>{name:"opus", sample_rate:16000, channels:1, bitrate_mode, bitrate:16000, fec, dtx}</code></td></tr>
       <tr><td class="mono">clock</td><td class="mono">object</td><td><code>{utc_start_ms, utc_end_ms, offset_ms, drift_ppm, sync_quality_ms, last_sync_utc_ms}</code></td></tr>
       <tr><td class="mono">tz</td><td class="mono">string</td><td>IANA 时区，用于业务日</td></tr>
-      <tr><td class="mono">gaps</td><td class="mono">array</td><td><code>[{seq_start, seq_end, cause:"device_gate"|"device_drop"|"flash_error"}]</code>；<code>device_gate</code> 是二期 G0 门控掉的静音，云端据此区分“静音”和“数据还没到”</td></tr>
+      <tr><td class="mono">gaps</td><td class="mono">array</td><td><code>[{seq_start, seq_end, cause:"device_gate"|"device_drop"|"flash_error"|"phone_expired"}]</code>；<code>phone_expired</code> 是手机暂存超 7 天删除的区间；云端失败另记 <code>cloud_failed</code>（§5.11）；<code>device_gate</code> 是二期 G0 门控掉的静音，云端据此区分“静音”和“数据还没到”</td></tr>
       <tr><td class="mono">l1</td><td class="mono">object</td><td><code>{model_version, kept, dropped:[…reason]}</code>，只有 VAD 结果；声音事件在云端分类</td></tr>
       <tr class="p2only"><td class="mono">sensors（二期）</td><td class="mono">object</td><td><code>{vpu_track, imu_track, wear:[{…state}]}</code></td></tr>
       <tr><td class="mono">scene</td><td class="mono">array</td><td>§4.4 场景事件，含分片起点时刻的状态</td></tr>
@@ -1683,7 +1960,7 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
         <li>R2 按类别报告并给出差距</li>
           <li>N1–N4 报告并冻结基线；纪要 P90 ≤30 分钟（单元关闭后）</li>
         <li>常规 P90 ≤3 小时，立即同步 P90 ≤10 分钟</li>
-        <li>删除链故障注入后三端无遗留音频：读出领夹 Flash 的原始块、检查对象存储的历史版本与备份</li>
+        <li>删除链故障注入后三端无遗留音频：读出领夹 Flash 的原始块、检查对象存储的历史版本与备份；§5.13 故障注入清单全部通过</li>
         <li>实测成本 ≤¥27/人/月</li>
       </ol>
     </div>
@@ -1821,6 +2098,12 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <tr><td class="mono">D34</td><td>对外承诺写明未识别音频在各端的最长保留，并单列声纹模板与他人簇质心</td><td>只写“不保留音频”</td><td>识别前音频确实短暂存在；声纹派生物不是音频，不写出来就是隐瞒</td></tr>
       <tr><td class="mono">D35</td><td>低置信处在时间线上列出 top-3 候选，点选即改字</td><td>只能手动重写</td><td>音频已删，用户无法回听，只能凭记忆改</td></tr>
       <tr><td class="mono">D36</td><td>隔离档以“时段 + 原因”的占位进入纪要输入，不含文字</td><td>完全不提；给内容并加标签</td><td>不提会让“刚才广告里的那款”失去上下文；给内容会被诱导、增加成本，且标签无法验收</td></tr>
+      <tr><td class="mono">D37</td><td>一个识别作业在一个进程内跑完 G2–G5，中间结果只在内存，崩溃就从音频重跑</td><td>各环节落盘中间结果、分段重试</td><td>中间结果是音频派生物，落盘就要再进删除链；重跑一个作业的成本很小</td></tr>
+      <tr><td class="mono">D38</td><td>只在拼接器、单元调度器、簇状态提交三处按用户串行，其余并行</td><td>整条链路按用户串行</td><td>只有这三处有跨作业的顺序依赖；整条串行会让立即同步排在常规批后面</td></tr>
+      <tr><td class="mono">D39</td><td>① 识别结果与簇状态同一事务落盘 → ② 删音频并确认 → ③ 回执；巡检补齐中断</td><td>先删后写；落盘即回执</td><td>先删后写会丢数据；删除确认后才回执，手机删暂存时云端音频已不存在</td></tr>
+      <tr><td class="mono">D40</td><td>LLM 只提议，G8 规则由代码判定</td><td>把规则写进提示词</td><td>提示词里的规则无法验收，代码规则可以逐条测试</td></tr>
+      <tr><td class="mono">D41</td><td>事件只带 ID 与类型；片段在 G7 完成后才对 App 可见</td><td>事件携带内容；识别完即可见</td><td>队列里不留文字；电视台词不会先露出再消失</td></tr>
+      <tr><td class="mono">D42</td><td>GPU 池与其他离线业务混部或用弹性实例，常规批按截止时间摊到低谷</td><td>独占、按峰值备卡</td><td>单价假设隐含了利用率，按峰值独占约贵 2.5 倍</td></tr>
     </tbody>
   </table></div>
 </section>
@@ -1834,9 +2117,9 @@ svg .w-rej{stroke:var(--wave-rej)} svg .w-own{stroke:var(--accept)} svg .w-oth{s
       <tr><td>现有设备麦克风数、AGC/降噪可否关、Opus CBR/VBR、FEC/DTX、码率可否 OTA</td><td><span class="tg ask">待确认</span></td><td>一期前端与码率评测</td></tr>
       <tr><td>每天 5 小时有效音频是平均值还是高位值（按比例 0.25 约对应 20 小时佩戴）</td><td><span class="tg ask">待确认</span>（需求方）</td><td>成本目标与定价口径</td></tr>
       <tr><td>现有设备有无本地缓存、能否按区间擦除与远程擦除</td><td><span class="tg ask">待确认</span>（一期上线条件）</td><td>做不到就不能对外承诺“转写后不保留音频”</td></tr>
-      <tr><td>8B 输入上限、偏置容量、是否输出 token 置信度与时间戳</td><td><span class="tg ask">待确认</span></td><td>识别分片长度、N、G4</td></tr>
+      <tr><td>8B 输入上限、偏置容量、是否输出 token 置信度与时间戳；逐请求偏置是否影响组批</td><td><span class="tg ask">待确认</span></td><td>识别分片长度、N、G4</td></tr>
       <tr><td>600M 是否有 CTC 头</td><td><span class="tg ask">待确认</span></td><td>对齐方案与成本</td></tr>
-      <tr><td>GPU 卡时、CPU 核时成本</td><td><span class="tg ask">待确认</span></td><td>全部 LLM 与小模型成本</td></tr>
+      <tr><td>GPU 卡时、CPU 核时成本；8B 实测吞吐（单价假设隐含约 100 音频小时/卡时）</td><td><span class="tg ask">待确认</span></td><td>全部 LLM 与小模型成本</td></tr>
       <tr><td>双麦、VPU、骨导加速度计、IMU、SPI NAND、电池的型号与单价</td><td><span class="tg ask">待询价</span></td><td>二期 BOM</td></tr>
       <tr><td>iOS/Android 场景 API 的后台可用性与权限</td><td><span class="tg ask">待确认</span></td><td>场景覆盖率</td></tr>
       <tr><td>iOS 在 BLE 后台唤醒时间内增量跑 VAD 是否可行（每个 5 分钟分片约数秒 CPU）</td><td><span class="tg ask">待确认</span></td><td>L1 运行方式与上传新鲜度</td></tr>
