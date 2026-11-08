@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>领夹 ASR · 详细设计 · 说话人与热词</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@600;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="design-speaker.html">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="ahp"/></marker>
+    <polygon id="hex" points="0,-14 12.1,-7 12.1,7 0,14 -12.1,7 -12.1,-7"/>
+    <symbol id="lock" viewBox="0 0 12 14"><rect x="1" y="6" width="10" height="8" rx="1.5"/><path d="M3.5 6V4a2.5 2.5 0 0 1 5 0v2" fill="none" stroke-width="1.6"/></symbol>
+  </defs>
+</svg>
+
+<div class="wrap">
+<aside class="side" id="side" aria-label="导航与图例"></aside>
+
+<main>
+<header class="phead">
+  <p class="crumb"><a href="index.html">领夹 ASR 整体方案</a> / 详细设计</p>
+  <h1>详细设计 · 说话人与热词</h1>
+  <p class="lede">机主判定（G5）、声纹注册、热词检索与偏置表、音系召回与专名纠错。G5 是声学证据的最终完成点：凡要音频的判断都在这里做完，之后只剩文字。</p>
+<div class="note"><b>读法。</b>每节按同一模板：职责与边界、原理、流程、数据结构与接口、算法、参数、失败与恢复、测试与验收、未决项。G5、音系召回与候选声学评分都在音频作业内运行（<a href="design-asr.html">详设 5–9</a> 之后、落盘 ① 之前）；专名纠错的重排在文字管线里运行，只读已写进片段的标量。共同约定沿用<a href="design-asr.html">识别</a>页：区间左闭右开；声学运算只用原始设备时间轴，不用去静音后的拼接时间；文字跨度用 Unicode 码点并带 <code>text_revision</code>；缺失的分数为空并带缺失原因，不填 0；没有完成标定的配置不得自动授予证据级或自动替换专名。</div>
+</header>
+<section id="dd-g5" data-label="详设 10">
+  <h2><span class="no">10</span>机主判定（G5）</h2>
+  <p class="ncs" data-dd-of="c-owner e-acoustic e-align e-final">契约：</p>
+<h3>职责与边界</h3>
+<p>G5 输出三个互相独立的判断，不能合成一个 <code>owner_score</code>：</p>
+<div class="tbl"><table><thead><tr><th>判断</th><th>输出</th><th>不能推出</th></tr></thead><tbody><tr><td>谁在说</td><td>局部说话人轨迹、轮次、当天的簇</td><td>簇号不是身份</td></tr><tr><td>是否机主</td><td><code>owner / other / unknown</code>，是否达到证据级</td><td>声纹高不证明现场发声</td></tr><tr><td>声源与文字限制</td><td>实际重叠、归属模糊、疑似回放的区间</td><td>高 CTC 支持不证明字形正确（D47）</td></tr></tbody></table></div>
+<ul><li>把 8B 的字按 600M 的对齐落到轮次上；一个识别窗口可以包含多个轮次，一个轮次也可以跨窗口。</li><li>删音频前做完：批内重聚类与重分段、候选声学评分（详设 13）、限额局部复核（一期变体）。G5 落盘后不再有任何声学计算。</li><li>不做：相关性（G6）、参与者与背景（单元关闭时，详设 16）、簇的命名（单元关闭时由 LLM 建议、用户确认）。</li></ul>
+<h3>原理</h3>
+<ul><li><b>四步：局部分段 → 批内聚类与重分段 → 日内关联 → 身份校准。</b> 说话人分离与机主验证分开训练、分开验收。Powerset 分段把“无人 / 单人 / 两人同时”建模为类别，能表达重叠；它的局部槽位编号只在一个分段窗口内有意义，要靠嵌入与聚类连起来，不能当身份。</li><li><b>声纹验证。</b> 嵌入网络（CAM++、ERes2NetV2 一类）把语音映射为定长向量；与注册模板的余弦分经 AS-norm 对称归一，可能缓解说话人与信道造成的分数分布失配，但不保证消除（Matějka 等，Interspeech 2017）。<b>AS-norm 只是归一化，不是概率</b>：再用带真实身份标签的试验训练校准器，输入归一化分、有效时长、质量、模板质量、独立簇证据与缺失标志，输出对数似然比。时长等条件会改变分数分布，长句的校准器不能直接用于短回应。</li><li><b>簇比轮次稳，但不能自证。</b> 短轮次的嵌入噪声大，同一人当天累积的簇质心稳得多；给一个轮次打分时，簇证据必须扣掉该轮次自己（以及与它共享上下文音频的部分）的贡献。“簇像不像机主”（<code>cluster_owner_score</code>）和“这个轮次是否属于这个簇”（<code>cluster_assignment_score</code>）是两个分数。</li><li><b>近场线索只作输入。</b> 机主嘴到领夹约 20 cm、他人约 1.5 m，声级差约 17.5 dB<span class="tg es">估算</span>；近处他人与开大的电视会破坏它，所以只进融合。单麦估计的 DRR 必须带估计方法与缺失状态，不能冒充二期的空间测量。</li><li><b>宁可未知，不可错人。</b> 误把他人当机主会产生错误的“我答应的”待办。T_high、T_evidence 按误判上限定，不随召回放宽；夹在中间的记未知。重叠只把实际重叠与边界模糊的区间记未知，不扩大到整个轮次。</li><li><b>一期的限制。</b> 重叠检测不是语音分离：混合音频产出的一串字不能可靠分给两个人。音频删除后簇只剩质心，无法拆开已经误合并的簇，所以拆分与合并都要在批内做完。不维护“持续学习机主声音”的模板（防投毒，详设 11）。</li></ul>
+<figure class="ddfig"><div class="fighead"><div><b>G5 在作业内的流程</b></div></div><div class="fig wide"><svg viewBox="0 0 900 310" role="img" aria-label="重叠感知分段，干净片段嵌入，带不能合并约束的批内聚类与重分段，字落轮次，读当天簇目录并关联，机主打分与分档，候选声学评分，与簇状态同一事务落盘；版本冲突时回到关联"><path class="e" d="M180 57L210 57" marker-end="url(#ah)"/><path class="e" d="M360 57L390 57" marker-end="url(#ah)"/><path class="e" d="M540 57L570 57" marker-end="url(#ah)"/><path class="e" d="M720 57L750 57" marker-end="url(#ah)"/><path class="e" d="M815 84L815 140" marker-end="url(#ah)"/><path class="e" d="M750 167L720 167" marker-end="url(#ah)"/><path class="e" d="M570 167L540 167" marker-end="url(#ah)"/><path class="e" d="M390 167L360 167" marker-end="url(#ah)"/><path class="e" d="M210 167L180 167" marker-end="url(#ah)"/><path class="e" d="M100 194V222H200V250" marker-end="url(#ah)"/><path class="e dot" d="M100 194L100 230L815 230L815 194" marker-end="url(#ah)"/><text class="tiny lb" x="819" y="225">目录或声纹版本冲突</text><g class="nd"><rect x="20" y="30" width="160" height="54" rx="8"/><text class="t c" x="100" y="54">重叠感知分段</text><text class="s c" x="100" y="70">无人 · 单人 · 重叠</text></g><g class="nd"><rect x="210" y="30" width="150" height="54" rx="8"/><text class="t c" x="285" y="54">干净片段嵌入</text><text class="s c" x="285" y="70">排除重叠与边界</text></g><g class="nd"><rect x="390" y="30" width="150" height="54" rx="8"/><text class="t c" x="465" y="54">批内 AHC</text><text class="s c" x="465" y="70">不能合并约束</text></g><g class="nd"><rect x="570" y="30" width="150" height="54" rx="8"/><text class="t c" x="645" y="54">重分段</text><text class="s c" x="645" y="70">一次</text></g><g class="nd"><rect x="750" y="30" width="130" height="54" rx="8"/><text class="t c" x="815" y="54">字落轮次</text><text class="s c" x="815" y="70">加权覆盖</text></g><g class="nd"><rect x="750" y="140" width="130" height="54" rx="8"/><text class="t c" x="815" y="164">日内关联</text><text class="s c" x="815" y="180">读簇目录</text></g><g class="nd"><rect x="570" y="140" width="150" height="54" rx="8"/><text class="t c" x="645" y="164">机主打分</text><text class="s c" x="645" y="180">AS-norm · 校准</text></g><g class="nd"><rect x="390" y="140" width="150" height="54" rx="8"/><text class="t c" x="465" y="164">分档 · 回放</text><text class="s c" x="465" y="180">三档阈值</text></g><g class="nd"><rect x="210" y="140" width="150" height="54" rx="8"/><text class="t c" x="285" y="164">候选声学分</text><text class="s c" x="285" y="180">详设 13</text></g><g class="nd"><rect x="20" y="140" width="160" height="54" rx="8"/><text class="t c" x="100" y="164">① 同一事务落盘</text><text class="s c" x="100" y="180">片段 + 簇 + 目录</text></g><g><rect class="drop" x="20" y="250" width="360" height="44" rx="8"/><text class="t c" x="200" y="277">之后删音频与派生物（详设 18）</text></g></svg></div></figure>
+<h3>业务日</h3>
+<pre><code>BusinessDay { day_id, timezone_id /* 录音时刻所在时区 */, tz_policy_version,
+              start_utc_ms, end_utc_ms /* 当地 04:00 到次日 04:00 */, expires_at_utc_ms = end_utc_ms + 12 h }</code></pre>
+<ul><li>业务日按录音时刻的当地时区与 04:00 边界算成明确的 UTC 区间（D18），不能用“UTC 减四小时取日期”，也不用上传时设备当前的时区。夏令时切换日的区间长度可以不是 24 小时。</li><li><b>归属一经提交即冻结。</b> 时区取清单的 <code>tz</code>（录音时手机的时区）；多设备时区不一致时以该分片自己的清单为准。<code>day_id</code> 在 ① 时按当时的时钟映射版本与时区政策版本算出，写进片段；之后的时钟重拟合或时区改动不让已提交片段换日，也不延长已建簇的 <code>expires_at</code>（簇建立时固定）。旅行跨时区时，一次录音可能落进与日历日不同的业务日，这是有意的：业务日跟着录音时刻走。</li><li>跨 04:00 的作业按业务日分别关联与计数；同一个字只输出一次。</li><li><b>迟到</b>：录音所在业务日的簇还没到期（<code>expires_at</code> 之前）就照常关联；已到期的，只在本作业内聚类，簇号用 <code>late:&lt;day_id&gt;:&lt;job_id&gt;</code> 命名空间；G5 后丢弃质心与嵌入，片段里保留这个 late 簇号作稳定引用（同一作业内的“他人 A”仍是同一个人），不复活已删除的质心，也不另外保留 12 小时。</li></ul>
+<h3>数据结构</h3>
+<pre><code>ActivityInterval { source_range, local_tracks[], state: "silence"|"single"|"overlap"|"uncertain",
+                   confidence?, boundary_uncertainty_ms, coverage: "valid"|"partial"|"missing" }
+TurnRuntime      { turn_key = job_id + ":" + k, source_range, track_id?, clean_speech_ms,
+                   emb (仅内存), emb_weight, quality: { snr_db?, clip_ratio?, seg_confidence?, playback_excluded_ms },
+                   rel_level_db? }                                   // 只在作业内存中
+CharAttribution  { text_revision, char_from, char_to, aligned_range?, turn_key?,
+                   attribution: "assigned"|"ambiguous"|"unaligned", score?, runner_up?, reasons[] }
+ClusterState     { user_ref, day_id, cluster_id, embedding_model_version,
+                   mean_enc /* 未单位化的加权均值，按用户数据密钥加密 */, total_weight, clean_speech_ms,
+                   n_contrib, dispersion, rev, expires_at_utc_ms, name?: 用户确认的名字 }
+DayDirectory     { user_ref, day_id, rev, cluster_ids[], embedding_model_version, closed: bool }
+SpeakerDecision  { label: "owner"|"other"|"unknown", cluster_id?,
+                   owner_score? /* 校准后概率 */, cluster_owner_score?, cluster_assignment_score?,
+                   evidence_grade: "none"|"timeline"|"identity_evidence", reasons[],
+                   replay: { suspected: bool, score?, evidence_spans[], coverage_ratio } }</code></pre>
+<ul><li>只存单位化质心与计数，无法精确续算质量加权的均值，所以存未单位化均值与总权重；余弦用 <code>m/‖m‖</code>。</li><li>簇不带“机主 / 他人”标签：当天与机主匹配的那个簇也照常存，它提供跨批的 <code>cluster_owner_score</code>，对短回应的 O1 有用。它与其他簇同样在业务日结束后 12 小时删除，从不回写声纹模板，所以不是“持续学习机主声音”。§7 的“他人声音特征（簇质心）”应改为“说话人簇质心”。</li><li>逐轮次嵌入只在作业内存中，落盘后丢弃（缓存是一期变体，§5.10）。片段 <code>speaker</code> 字段之外，逐字归属体现为片段切分：连续、同轨迹、同归属状态的字组成一个输出片段；夹在两段机主语音中的重叠区单独成一个 <code>unknown</code> 片段。</li></ul>
+<h3>接口</h3>
+<p>G5 不新增网络接口。它的结果随详设 5 的 <code>PersistResult</code> 一起提交，请求里加：</p>
+<div class="tbl"><table><thead><tr><th>字段</th><th>用途</th></tr></thead><tbody><tr><td><code>expected_day_directory_revs: [{day_id, rev}]</code></td><td>保护“扫描已有簇后新建簇”：只比较被更新簇的行版本时，两个并发作业都看到“没有对应簇”，会各建一个</td></tr><tr><td><code>expected_voiceprint_epoch</code></td><td>注册新版本后，旧版本判出的结果不能提交</td></tr><tr><td><code>cluster_updates: [{cluster_id, expected_rev, delta_sum, delta_weight, delta_speech_ms}]</code></td><td>增量，不是覆盖</td></tr><tr><td>片段新增字段：<code>sentence_anchor_id</code>、<code>meeting_instance_ref</code>、<code>recorded_local_date</code>、<code>tz</code>、<code>day_id</code></td><td>句锚供单元的“机主 ≥3 句”计数（详设 16）；其余由清单与场景字段在提交时写入并冻结</td></tr></tbody></table></div>
+<p>响应在 <code>committed / already_committed</code> 之外增加 <code>conflict: "cluster"|"voiceprint"|"lease"|"erasure"</code>。</p>
+<h3>算法</h3>
+<p><b>字落轮次。</b> 不用时间戳中点：设字 c 的对齐帧权重为 <code>w_c(t)</code>（来自 600M 对齐，去掉远处的 blank 尾巴），轨迹 k 的活动概率为 <code>p_k(t)</code>，覆盖分 <code>A(c,k) = Σ_t w_c(t)·p_k(t) / Σ_t w_c(t)</code>。</p>
+<pre><code>def assign_char(ch, activity, cfg):
+    if not ch.alignment_valid: return ambiguous("unaligned")
+    sup = alignment_support(ch)                                   # 非 blank 占用帧 + 按中点分配的 blank
+    if intersects(sup, activity.overlap): return ambiguous("actual_overlap")
+    if boundary_mass(sup, activity) &gt; cfg.max_boundary_mass: return ambiguous("speaker_boundary")
+    best, second = top2(A(ch, k) for k in activity.tracks)
+    if best.score &lt; cfg.assign_min: return ambiguous("insufficient_coverage")
+    if best.score - second.score &lt; cfg.assign_margin: return ambiguous("competing_speaker")
+    return assigned(best.track)</code></pre>
+<p>中文按字；英文若 CTC 只给子词边界，不伪造字母级时间。标点附着于邻近的字，不贡献说话人证据。有语音但 8B 没出字的短回应仍计入漏识别与 O1 的分母。</p>
+<p><b>批内聚类与日内关联。</b></p>
+<pre><code>def link_slots(seg_windows):                                     # 分段模型的局部槽位 → 作业内轨迹
+    tracks = Tracks()
+    for prev, cur in pairwise(seg_windows):                      # 相邻分段窗口有重叠区（步长 &lt; 窗长）
+        sim = activity_correlation(prev.slots, cur.slots, on=prev.overlap_with(cur))
+        for a, b in hungarian(sim, min_corr=0.5):                # 重叠区里活动曲线相关 ≥0.5 才连
+            tracks.link(prev.slot(a), cur.slot(b))
+        # 没连上的槽位开新轨迹；之后靠嵌入聚类合并
+    return tracks
+
+def optimize_batch(turns, day, g3seg, cfg):
+    usable = [t for t in turns if t.clean_speech_ms &gt;= 1500 and t.quality_ok and not t.overlap
+              and acoustic_playback_ratio(t, g3seg) &lt; 0.2]       # 先用 G3 已有的声学证据排除回放
+    cannot = coactive_track_pairs(turns)                         # 同一时刻都在活动的两条轨迹不能是同一人
+    local = constrained_ahc(usable, score=calibrated_same_speaker, linkage="quality_weighted_average",
+                            threshold=cfg.ahc, cannot_link=cannot, tie_break="stable_id")
+    turns = resegment_once(turns, local)                         # 边界改变的轮次重算嵌入、权重与约束，不沿用旧统计
+    local = recompute_changed(local, turns)
+    assoc = associate(local, day.clusters, min_p=cfg.assoc_p, min_margin=cfg.assoc_margin,
+                      check_pairwise=True)                       # 多个本地簇映射到同一日内簇时，彼此也要兼容
+    for t in turns:
+        c = assoc.cluster_of(t)
+        t.cluster_support = support_excluding(c, t, also_exclude_shared_context=True)
+    return turns, assoc
+
+# 机主判定之后：被判为疑似回放的轮次撤销它对簇的贡献，重算受影响簇上其他轮次的簇证据与判定（最多一遍）
+
+def update_centroid(c, contribs):                                # 未单位化均值 m 与总权重 W
+    W2 = c.total_weight + sum(w for _, w in contribs)
+    c.mean = (c.total_weight * c.mean + sum(w * e for e, w in contribs)) / W2
+    c.total_weight = W2
+
+def contrib_weight(t):                                           # 不合格的更新权重为 0；重叠的上下文音频不重复计时长
+    return min(t.clean_speech_ms / 1000, 8) * q_snr(t) * q_seg(t)</code></pre>
+<p><b>机主打分。</b></p>
+<pre><code>s_as = ½ · [ (s − μ_enroll) / max(σ_enroll, ε) + (s − μ_test) / max(σ_test, ε) ]
+       μ, σ：模板一侧与测试一侧各自对固定冒认者集合取相似度最高的 K 个样本
+llr  = calibrator(s_as, log 时长, 质量, 模板质量, cluster_owner_score?, rel_level_db?, 缺失标志)
+owner_score = sigmoid(llr + prior_log_odds)</code></pre>
+<p>冒认者集合来自独立、自建、获同意的数据（领夹 Opus 链路），不能用当天碰巧录到的他人。</p>
+<div class="tbl"><table><thead><tr><th>轮次时长</th><th>判法</th></tr></thead><tbody><tr><td>≥1.5 s</td><td>常规校准器</td></tr><tr><td>1–1.5 s</td><td>短轮次校准器；可以用独立簇支持，但必须有自身声学证据；满足额外门槛才可达证据级</td></tr><tr><td>&lt;1 s</td><td>不授证据级（§5.6）；时间线归属由短轮次分、已连接的活动轨迹与独立长轮次支持共同判断</td></tr><tr><td>极短、没有可靠嵌入</td><td>只有经短回应评测验证的“轨迹连接”分支才允许归属，否则未知；不复制前一个人的标签</td></tr></tbody></table></div>
+<p>“前后长轮次支持”指同一声学轨迹或经嵌入验证的同簇支持，不是时间上相邻。</p>
+<pre><code>def tier(p, t, job):
+    if t.voiceprint is None: return Decision("unknown", reasons=["no_voiceprint"])   # 硬前置条件先于阈值
+    if t.state in ("overlap", "ambiguous"): return Decision("unknown", reasons=[t.state])
+    evidence_ok = (t.single_speaker_ms &gt;= 1000                    # 有效单人语音时长，不含静音与重叠
+                   and not near_overlap(t, ms=500) and t.calibrated_branch_ok
+                   and job.exec.alignment_source == "600m")      # 降级期间不授证据级
+    if p &gt;= T_EVIDENCE and evidence_ok:
+        return Decision("owner", evidence_grade="identity_evidence", owner_score=p)
+    if p &gt;= T_HIGH: return Decision("owner", evidence_grade="timeline", owner_score=p)
+    if p &lt;= T_LOW:  return Decision("other", cluster_id=t.cluster_id, owner_score=p)
+    return Decision("unknown", owner_score=p)
+
+def suspected_replay(t, d, g3seg, scene):                     # 处置在 G7
+    return (d.owner_score is not None and d.owner_score &gt;= T_HIGH
+            and scene.media_speaker_covers(t) is True             # 本机外放事件覆盖该语音
+            and g3seg.valid_coverage &gt;= 0.5 and scene.coverage_at(t) == "observed"
+            and overlap_ratio(t, g3seg.playback_acoustic_spans) &gt;= REPLAY_COVER   # 纯声学证据区间，不用融合区间
+            and g3seg.p_playback_acoustic is not None and g3seg.p_playback_acoustic &gt;= REPLAY_P
+            and not unresolved_mix(t, g3seg.mixed_spans))
+    # 证据区间是 1 秒分辨率：轮次短于 2 s 时覆盖比例不可靠，只能靠片段级分，REPLAY_COVER 不适用</code></pre>
+<p>一期没有机主活动证据（VPU 在二期），缺失不当作“活动弱”。只有手机外放事件不能触发疑似回放。</p>
+<p><b>并发提交。</b></p>
+<pre><code>def finalize(job, batch):
+    while now() &lt; job.hard_deadline():                           # 48 h 失败期限与强删前余量，不是可见截止
+        snap = read_day_directories_and_voiceprint(job.user)     # 含目录 rev、簇 rev、声纹 epoch、擦除代次
+        if snap.erased: return abort()
+        plan = associate_and_decide(batch, snap)                 # 重算关联、排除自身的簇证据、owner 分、证据级、疑似回放与受影响的字归属
+        r = persist_result(job, plan, expected=snap.versions)
+        if r.status in ("committed", "already_committed"): return r
+        if r.conflict in ("lease", "erasure"): return stop()
+        # 冲突：内存里的分段、嵌入与 CTC 都还在，只重做关联与判定，不重新解码
+    return to_retry_wait(job)                                    # 到期退出：作业进 retry_wait，按详设 5 的失败规则处理</code></pre>
+<p>连续冲突时进入按用户的短提交队列；不把整个识别串行，也不只重放旧的质心增量。</p>
+<h3>参数</h3>
+<div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>标定</th></tr></thead><tbody><tr><td>分段窗口 / 步长</td><td>模型原生；可配时 5 s / 0.5 s 起</td><td>换人、短回应、重叠精标集上看 O3 与 DER</td></tr><tr><td>边界保护</td><td>100 ms</td><td>扫描 40/80/100/160/250 ms，兼顾错归属与未知覆盖</td></tr><tr><td>字归属 <code>assign_min</code> / <code>assign_margin</code></td><td>0.8 / 0.2</td><td>字级说话人标注上取高精度工作点；换人点前后 1 s 单报</td></tr><tr><td>簇更新最短干净语音</td><td>1.5 s</td><td>簇污染率与短回应召回</td></tr><tr><td>簇级分启用</td><td>扣除当前轮次后 ≥10 s</td><td>扫描 5/10/20 s；不能把当前轮次算进去凑数</td></tr><tr><td>冒认者集合</td><td>1000 个说话人，top-K = 200</td><td>K 扫描 50/100/200/400；说话人与信道与训练集不重叠</td></tr><tr><td>AS-norm 标准差下限 ε</td><td>0.05（余弦尺度）</td><td>检查分母塌缩与极端分</td></tr><tr><td>AHC / 日内关联</td><td>校准同人概率 0.95 / 0.98，领先第二名 ≥0.1</td><td>误合并比误拆分代价大，优先控误合并</td></tr><tr><td>疑似回放</td><td><code>REPLAY_P</code> 0.9，<code>REPLAY_COVER</code> 0.8</td><td>受 R4 ≤3% 与外放远端会议保留率 ≥95% 约束</td></tr><tr><td>T_low / T_high / T_evidence</td><td>0.1 / 0.99 / 0.995，仅作开发占位</td><td>按下面的步骤重选</td></tr></tbody></table></div>
+<p><b>三档阈值的选法</b>（在最终决策链上选，不在裸声纹分的 ROC 上选）：</p>
+<ol><li>按机主、他人真实身份与录制会话分组，划分训练、校准、阈值选择、验收四个集合，同一个人不跨集合。</li><li>T_high 取满足“时间线级 S2 的单侧 95% 上界 ≤1%”的最低阈值。</li><li>T_evidence &gt; T_high，取满足“证据级 S2 上界 ≤0.5%”的最低阈值，另报与 0.2% 长期目标的距离。</li><li>T_low 只决定“未知”与“他人”的分界，降低它不能提高 O1。它按“机主被判为他人”的比例选：分母是参考机主发言时长，目标是点估计 ≤2%（同时报单侧 95% 上界，但不作硬门槛，因为这是召回侧的错误）。这是提案“按召回定”的可执行口径。</li><li>安全上限固定后再检查 O1 ≥85%。不满足就改模型、注册质量或短轮次处理，不降低安全阈值换召回。</li><li>短轮次、家人、回放、不同信噪比单独报；数据不足的分支保持弃权。</li></ol>
+<p>S2 的主口径沿用 §9 的“参考发言比例”，参考发言的划分在评测前固定。有错误时按真实说话人整组重抽样，同一人的回放归入同组。<b>零错误时</b>不能用普通 bootstrap 得到“上界为零”。<code>1 − 0.05^(1/n)</code> 是“n 个独立他人中至少一人被误判”的人级事件上界：60 人约 4.87%，证明 ≤0.5% 约需 598 人。它不是按发言计的 S2 上界；要把两者接起来，评测集须固定每人的发言配额（同等时长），S2 按人均匀加权，此时人级上界是 S2 的保守上界。两种口径都报，同一人的大量句子不能充当独立单位。</p>
+<h3>失败与恢复</h3>
+<div class="tbl"><table><thead><tr><th>情况</th><th>处理</th></tr></thead><tbody><tr><td>CPU 小模型（分段、嵌入）不可用</td><td>作业排队，不降级</td></tr><tr><td>600M 不可用超过 12 小时</td><td>对齐退回 8B 时间戳，降级期间不授证据级。8B 也没有词级时间时，按详设 9 继续等待或最终登记失败；唯一例外是窗口没有重叠上下文（输出必然来自核心区）且整窗为单一轨迹、无换人点，此时可整窗归属（§5.13 的“整段判”按此收紧）</td></tr><tr><td>声纹模板缺失或已删除</td><td>不判机主；保留分段与簇，标签为 <code>unknown</code> 或 <code>other</code></td></tr><tr><td>簇的嵌入模型版本不同</td><td>不直接比较向量；同一用户日固定一个版本，否则进新命名空间</td></tr><tr><td>提交成功、响应丢失</td><td>查作业状态，按已提交继续删音频，不再累加簇</td></tr><tr><td>簇到期与提交并发</td><td>提交时校验 <code>expires_at</code> 与目录 rev；失败后按迟到处理</td></tr><tr><td>落盘前崩溃</td><td>从音频重跑整个作业；簇状态未提交，不会重复计数</td></tr><tr><td>用户擦除</td><td>擦除屏障优先于任何重试与复核</td></tr></tbody></table></div>
+<p><b>复核（一期变体，e-trigger、e-rereview）</b>：</p>
+<ul><li>预算：每个作业可复核的音频秒数 = 该作业有效语音秒数 × 5%，按作业预留，不跨作业借用；按上下文扩展后的实际重识别秒数计，重叠区间先合并，崩溃重试的成本另记。</li><li>排序：<code>gain = P(错) × 代价 ÷ 额外秒数</code>。<code>P(错)</code> 来自已校准的信号（低支持、交叉校验分歧、归属模糊）；代价按类别固定：承担人与关键字段 5、专名 2、其他 1（变体参数，配对评测时扫描）。</li><li>接受规则：同一帧区间上，新结果的 600M 支持 <code>g_label</code> 比原结果高至少 0.5，且独立 600M 解码（若有）与新结果一致，才替换；归属复核要求新的覆盖分领先次优 ≥0.2。否则保留原文与标记。每个区间最多一轮。</li></ul>
+<h3>测试与验收</h3>
+<ul><li>A 说 → A、B 重叠 → A 继续：只有重叠区未知。200–800 ms 回应、跨窗口的同人长句、换人点落在一个中文词内部。</li><li>同一人两种声态、相似音色的家人、响亮的远场他人、轻声的机主；本机外放机主录音、外部音箱回放、外放远端会议、真人与媒体同时发声。</li><li>当前轮次加入质心前后的打分对照，确认已排除自身；疑似回放轮次的簇贡献被撤销；相邻分段窗口的槽位连接正确。</li><li>两个并发作业同时新建同一人的簇；一个重注册、一个提交；簇到期时提交；擦除时提交。① 前后、删除前后杀进程：无重复计数、无重复片段、旧租约无效。</li><li>04:00 边界、时区变更、夏令时、乱序、超过 12 小时的迟到。</li><li>指标（§5.10）：S2（时间线级 ≤1%、证据级 ≤0.5%，按上面的上界口径）、O1 ≥85%、证据级覆盖、O3、固定机主身份的 SA-CER、短回应召回、DER/JER、每用户每天错人事件数。标签可置换的 DER 改善不能替代机主身份验收。</li></ul>
+<h3>与提案的差异</h3>
+<ul><li>§5.6、<code>c-owner</code>：<code>cluster_score</code> 拆成 <code>cluster_assignment_score</code> 与 <code>cluster_owner_score</code>；簇存未单位化均值与总权重，不是“质心与计数”。</li><li>§6.2：每个片段一个 <code>speaker</code>，逐字归属靠片段切分表达，重叠区单独成片段。</li><li>§5.6：T_low 的口径改为“机主被判为他人”的上限。</li><li>§5.13：“600M 不可用后 G5 按整段判”按上面的失败表收紧：不授证据级、有换人点的窗口记未知。</li><li>§7、D18：到期后的迟到簇不保留质心。§9：由约 60 位他人推出数百有效样本需要相关性证据，不能据此宣称低误判上限已验证。</li></ul>
+<h3>未决</h3>
+<ul><li>单麦 DRR 是否值得加入，看调参集上的增益；一期可以只用相对声级。</li><li>逐轮次嵌入缓存（2 / 6 小时）是一期变体，只有跨批的 S2、O1、N3、N4 有净收益才采用，并同步改 §7：期限从提取时刻起算，不因补传或编辑刷新。</li></ul>
+</section>
+
+<section id="dd-enroll" data-label="详设 11">
+  <h2><span class="no">11</span>声纹注册</h2>
+  <p class="ncs" data-dd-of="c-vp">契约：</p>
+<h3>职责与边界</h3>
+<ul><li>用领夹录约 1 分钟机主语音，生成声纹模板与近场声级基线；单独同意，可随时删除或重新注册。</li><li>要防的是：旧录音直接提交、误录他人、多人混录、重注册投毒。<b>不承诺</b>挡住实时变声、实时合成或账号被他人控制后的冒认；账号认证、设备绑定与声纹一致，都不等于现实身份已核实。</li><li>注册音频只在注册请求的内存中处理，不进短期音频桶与通用上传重试链；生成模板后即丢弃。</li><li>不做：自动更新模板（防外放或冒认投毒）。</li></ul>
+<h3>原理</h3>
+<ul><li><b>同一信道。</b> 手机麦克风注册会造成信道失配，所以只接受领夹经 BLE 实时送来的帧。App 上报的 <code>device_id</code> 本身不能证明音频来自领夹：建议领夹用<b>每设备</b>的出厂密钥对注册帧做 MAC、云端校验（建议，非约束，依赖设备密钥的预置方式，§13）。MAC 至少覆盖 <code>enrollment_id、challenge_id、nonce、boot_gen、帧序号、编码格式与音频字节</code>，且只由领夹的采集路径生成，否则旧的合法帧可以被重新挂到新会话或拼接。MAC 只证明“这些字节出自这台领夹、属于这次挑战”，不防现场重放，也不证明真人在场。没有这项机制时，“来自领夹”只是客户端声明，作为已知边界记录。</li><li><b>一次性挑战。</b> 静态朗读稿可以预先准备。服务器逐段下发挑战：朗读段从音素均衡语料中抽，加入本次随机短语；开放回答要求引用本次的随机元素。这主要挡住旧录音复用；对实时合成的效果是待实测的假设，不作活体宣传。</li><li><b>分项检查，分项失败码。</b> 音素覆盖、内容响应、单人一致性与回放分别检查。“多数段像同一个人”不能作为通过理由：混入一段他人，就该补录或拒绝，而不是丢掉那段继续。</li><li><b>只存一个模板。</b> 多模板取最高分会改变误判分布，沿用单模板阈值就不成立；轻声与正常声分开的多模板是显式变体。</li></ul>
+<figure class="ddfig"><div class="fighead"><div><b>声纹注册</b></div></div><div class="fig wide"><svg viewBox="0 0 900 210" role="img" aria-label="单独同意，服务器逐段下发挑战，领夹实时录制，逐段检查质量、内容与单人，不合格补录该段，全部完成后做留一一致性检查，原子激活并递增版本，清除音频与逐段嵌入"><path class="e" d="M160 56L190 56" marker-end="url(#ah)"/><path class="e" d="M350 56L380 56" marker-end="url(#ah)"/><path class="e" d="M530 56L560 56" marker-end="url(#ah)"/><path class="e" d="M710 56L740 56" marker-end="url(#ah)"/><text class="tiny lb" x="729" y="51">不过</text><path class="e dot" d="M810 30L810 18L270 18L270 30" marker-end="url(#ah)"/><path class="e" d="M635 82L635 130" marker-end="url(#ah)"/><text class="tiny lb" x="639" y="101">通过</text><path class="e" d="M560 156L530 156" marker-end="url(#ah)"/><path class="e" d="M380 156L350 156" marker-end="url(#ah)"/><path class="e d" d="M635 182L635 196L90 196L90 182" marker-end="url(#ah)"/><text class="tiny lb" x="94" y="191">不一致</text><g class="nd"><rect x="20" y="30" width="140" height="52" rx="8"/><text class="t c" x="90" y="53">单独同意</text><text class="s c" x="90" y="69">与录音同意分开</text></g><g class="nd"><rect x="190" y="30" width="160" height="52" rx="8"/><text class="t c" x="270" y="53">下发挑战</text><text class="s c" x="270" y="69">一次性 · 逐段</text></g><g class="nd"><rect x="380" y="30" width="150" height="52" rx="8"/><text class="t c" x="455" y="53">领夹实时录制</text><text class="s c" x="455" y="69">帧带 MAC（建议）</text></g><g class="nd"><rect x="560" y="30" width="150" height="52" rx="8"/><text class="t c" x="635" y="53">逐段检查</text><text class="s c" x="635" y="69">质量 · 内容 · 单人</text></g><g><rect class="fb" x="740" y="30" width="140" height="52" rx="8"/><text class="t c" x="810" y="53">补录该段</text><text class="s c" x="810" y="69">给出失败码</text></g><g class="nd"><rect x="560" y="130" width="150" height="52" rx="8"/><text class="t c" x="635" y="153">整体一致性</text><text class="s c" x="635" y="169">留一 · 最差一对</text></g><g class="nd"><rect x="380" y="130" width="150" height="52" rx="8"/><text class="t c" x="455" y="153">原子激活</text><text class="s c" x="455" y="169">epoch + 1</text></g><g class="nd"><rect x="190" y="130" width="160" height="52" rx="8"/><text class="t c" x="270" y="153">清除音频</text><text class="s c" x="270" y="169">与逐段嵌入</text></g><g><rect class="drop" x="20" y="130" width="140" height="52" rx="8"/><text class="t c" x="90" y="153">拒绝</text><text class="s c" x="90" y="169">混入他人 · 回放</text></g></svg></div></figure>
+<h3>状态机</h3>
+<p><code>CREATED → CONSENTED → CHALLENGING → QUALITY_CHECKED → TEMPLATE_READY → ACTIVATED → AUDIO_PURGED</code>；异常终态 <code>CANCELLED | EXPIRED | REJECTED</code>，进入任一终态都立即清除注册音频与逐段嵌入。</p>
+<ul><li>新模板只有全部检查通过才原子激活；激活事务同时递增 <code>voiceprint_epoch</code>，正在用旧版本提交的 G5 作业因此冲突重算（详设 10）。</li><li>重注册失败不破坏旧模板；用户主动删除旧模板则立即失效。</li><li>已完成 ① 的历史片段保持原标签，<code>versions</code> 记录所用模板版本（§5.4）。</li></ul>
+<h3>数据结构与接口</h3>
+<pre><code>EnrollmentSession { enrollment_id, user_ref, device_id, consent_receipt_id, expected_voiceprint_epoch,
+                    challenge_version, expires_at, state, next_part, attempt_count }
+EnrollmentPart    { challenge_id, nonce, seq, kind: "read"|"spontaneous", frames (仅内存),
+                    device_id, boot_gen, frame_range, frame_mac? }
+PartCheck         { valid_speech_ms, snr_db?, clip_ratio?, overlap_ratio, challenge_match?, replay_score?,
+                    failed: ["low_snr"|"too_short"|"clipped"|"multi_speaker"|"challenge_mismatch"|"replay"|"bad_source"] }
+Voiceprint        { voiceprint_id, user_ref, version, epoch, embedding_model_version, template_enc,
+                    level_baseline_db, template_quality, enrolled_device_id, consent_receipt_id,
+                    created_at, status: "active"|"revoked" }</code></pre>
+<div class="tbl"><table><thead><tr><th>接口</th><th>请求</th><th>响应</th></tr></thead><tbody><tr><td><code>POST /v1/voiceprint-enrollments</code></td><td>{device_id, consent_receipt_id, expected_voiceprint_epoch, idempotency_key}</td><td>{enrollment_id, expires_at, first_challenge}</td></tr><tr><td><code>POST …/{id}/parts</code></td><td>EnrollmentPart（流式）</td><td>{status: accepted\</td><td>retake, failed[], next_challenge?}</td></tr><tr><td><code>POST …/{id}:activate</code></td><td>{expected_voiceprint_epoch, idempotency_key}</td><td>{status: active\</td><td>rejected\</td><td>conflict, version?, epoch?, quality_summary}</td></tr><tr><td><code>DELETE /v1/voiceprint</code></td><td>{expected_voiceprint_epoch, idempotency_key}</td><td>{status: revoked, epoch}</td></tr></tbody></table></div>
+<p>返回值、错误日志与审计事件里不出现嵌入、录音或开放回答的文字。</p>
+<h3>算法</h3>
+<pre><code>def check_part(part, ch):                                  # 每段一次
+    if (r := idempotent_result(part)): return r            # 同一请求的重传先返回原结果，再查 nonce
+    require_unused_nonce(part, ch); require_bound_source(part)        # 帧 MAC 或绑定校验
+    pcm = decode(part.frames)                              # 只在内存
+    q = measure(pcm)
+    if q.valid_speech_ms &lt; 3000 or q.snr_db &lt; 15 or q.clip_ratio &gt; 0.005: return retake(q)
+    if multi_speaker(pcm): return retake("multi_speaker")
+    text = asr_600m(pcm)
+    if ch.kind == "read" and phonetic_match(text, ch.script) &lt; 0.9: return retake("challenge_mismatch")
+    if ch.kind == "spontaneous" and not contains_all(text, ch.required_elements, phonetic=True):
+        return retake("challenge_mismatch")                # 开放回答只核验要求出现的随机元素
+    if q.replay_score is None: return retake("replay_unscored")        # 证据缺失不当通过
+    if q.replay_score &gt;= REPLAY_ENROLL: return reject("replay")
+    return accepted(embed(clean_single_speaker(pcm)), q)
+
+def activate(parts):
+    require(len(parts.read) &gt;= 3 and len(parts.spontaneous) &gt;= 3)
+    require(total_ms(parts) &gt;= 35_000 and total_ms(parts.read) &gt;= 15_000 and total_ms(parts.spontaneous) &gt;= 15_000)
+    E = [p.emb for p in parts]
+    loo = [same_speaker_p(e, mean(E without e)) for e in E]          # 每段对其余段的留一分
+    if min(loo) &lt; 0.99 or min_pair(E) &lt; PAIR_MIN: return reject("inconsistent_speakers")
+    tpl = l2norm(weighted_mean(E, bounded_quality_weights(parts)))
+    with txn():                                            # 同一事务内重查，再撤销旧版并激活
+        if (r := idempotent_result(req)): return r
+        require(session.state == "QUALITY_CHECKED" and consent_active(session) and not erased(user))
+        require(current_epoch() == req.expected_voiceprint_epoch)      # CAS：两个注册会话不能互相覆盖
+        v = store(tpl, level_baseline_db=median_level(parts), epoch=req.expected_voiceprint_epoch + 1)
+    zeroize(parts)                                         # 清除音频与逐段嵌入；写入失败不能报成功
+    return v</code></pre>
+<ul><li><b>得分漂移提示</b>：只看证据级轮次的分数会有选择偏差（漂移后低分的轮次先被门槛剔除，剩下的中位数不降）。所以每天在 G5 里按模板版本与模型版本，聚合<b>所有被关联到机主簇的轮次</b>的原始余弦分位数（P10、P50）、证据级覆盖率与样本数，存成每用户每天一行统计（不含内容，随用户擦除）。证据级覆盖率比注册后第一周下降 ≥30%，或 P50 下降 ≥0.08 且样本数 ≥50 时，提示重新注册。只提示，不自动更新。</li><li><b>重注册</b>不要求“必须像旧声纹”，否则真实的声音变化会被锁死；改为要求额外的账号认证与完整的新挑战。</li></ul>
+<h3>参数</h3>
+<div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>标定</th></tr></thead><tbody><tr><td>会话有效期</td><td>10 分钟</td><td>完成率与挑战重用风险</td></tr><tr><td>必选段</td><td>3 朗读 + 3 开放回答，每段干净语音 ≥3 s</td><td>嵌入模型的短时稳定性</td></tr><tr><td>总干净语音</td><td>≥35 s，朗读与开放各 ≥15 s</td><td>扫描 25/35/45 s，看注册耗时与之后的 S2/O1</td></tr><tr><td>信噪比 / 削波</td><td>≥15 dB / ≤0.5%</td><td>领夹实录上标定；估计器输出不等于真实信噪比</td></tr><tr><td>内容匹配</td><td>音系匹配 ≥0.9</td><td>口音、专名、ASR 错误下的误拒率</td></tr><tr><td>留一一致性</td><td>校准同人概率 ≥0.99</td><td>真同人、混入另一人、回放三层对照</td></tr></tbody></table></div>
+<p>“约 1 分钟”是正常条件下的体验目标；质量不达标时明确补录哪一段，不为守住一分钟放松门槛。</p>
+<h3>失败与恢复</h3>
+<ul><li>nonce 只用一次；同一请求重复提交返回原结果，换了内容的重复请求拒绝。</li><li>不能证明音频来自绑定的领夹时，不悄悄退回手机麦克风。</li><li>中断即删除临时音频；恢复时重新下发挑战，不从持久化录音恢复。</li><li>激活前崩溃保持旧版本；激活成功、响应丢失时按幂等键返回新版本，不再生成另一个版本。</li><li>同意撤回与用户删除优先于激活事务。</li><li>声纹模型升级后，旧模板不能与新模型的嵌入直接比较：保留旧模型的打分服务直到用户重新注册，或做经过独立验证的显式迁移。</li></ul>
+<h3>测试与验收</h3>
+<ul><li>冒认分三种，验收不同：<b>混入他人</b>（六段里有一段或交替回答）必须被检出；<b>外放回放、手机麦克风录音、旧挑战重放、跨设备伪装</b>应被拒绝；<b>账号持有人主动用他人的声音注册</b>属于已声明的身份边界，系统无法知道谁才是真机主，不作为验收项。</li><li>六段中混入一段他人、两人交替回答，应被检出。</li><li>完成率、补录率、完成耗时、不同口音的误拒率；新用户、感冒后重注册、换领夹、轻声与正常声分开报。</li><li>新模板对 G5 的配对效果；不能只凭注册内部一致性验收。重注册与 G5 并发、撤回同意与激活并发、激活响应丢失。</li><li>注册结束后，临时音频、逐段嵌入及模型服务的请求体都不可恢复。</li></ul>
+<h3>与提案的差异</h3>
+<ul><li>§5.4 只写了质量检查：补防冒认的挑战、新旧模板切换的原子边界、分项失败码，以及注册失败、断网、崩溃时音频的去向。</li><li>§5.4 的“必须用领夹”缺来源验证协议；§13 增加“领夹注册帧 MAC 与设备密钥预置”。</li><li>§5.4、§5.13 补嵌入模型升级与已有模板的兼容关系。</li></ul>
+</section>
+
+<section id="dd-hotlist" data-label="详设 12">
+  <h2><span class="no">12</span>热词检索与偏置表</h2>
+  <p class="ncs" data-dd-of="h-retrieve h-ctx h-table h-pub h-ind h-per c-hotidx b-hotcollect">契约：</p>
+<h3>职责与边界</h3>
+<ul><li>维护三类词条与音系索引的版本；按录音时刻、当时的会议与用户所选行业包，为每个识别窗口生成一张有限的偏置表；向音系召回（详设 13）提供完整的可见词库。</li><li>D52 的边界写进接口校验：<b>请求里不接收前文转写</b>。用户明确改字可以形成个人词条；模型自动纠错与纪要不能。</li><li>“个人 / 行业 / 公共”是<b>来源类别</b>，“人名 / 组织 / 项目 / 产品 / 术语”是<b>语义类别</b>，分开存：前者决定配额与去重，后者决定纠错风险（详设 13）。</li><li>不做：从纪要或转写回收专名；推断用户的行业。</li></ul>
+<h3>原理</h3>
+<ul><li>偏置表是有限资源：条目越多，无关偏置造成的误插入越多，非热词字错率越差。所以先按场景筛到当下最可能出现的几百条，再按类别配额截断，保证当天新出现的低频项目名不被大量联系人挤掉。条数之外还有按真实 tokenizer 计的 token 上限。</li><li>检索排序表达“当前可能说到什么”，不是“音频里说了什么”：参会人能提升排序，但不证明在场，也不证明字形正确。“个人 &gt; 行业 &gt; 公共”只用于同一词形的去重，同音不同词不合并，留给候选评分。</li><li>不用前文转写：常规批并行解码时前文多半还没出来；用 8B 输出排序还会自我强化（D52）。</li><li>缓存按完整的键，而不是“用户 × 小时”：同一小时里会议切换、个人词到期或被删、行业包切换，都必须形成新键。同键内的窗口拿到同一张表，提示词式偏置的前缀也能命中推理服务的缓存。</li></ul>
+<h3>流程</h3>
+<ul><li>词条写入：<code>RECEIVED → VALIDATED → NORMALIZED → INDEXED → ACTIVE</code>（或 <code>REJECTED</code>）；之后 <code>UPDATED | REVOKED | EXPIRED</code>。</li><li>公共与行业包发布：<code>DRAFT → BUILT → OFFLINE_EVALUATED → PUBLISHED → RETIRED</code>。词库与索引整体构建、评测通过后才切换发布指针，读取方只会看到完整的旧版或完整的新版。</li><li>偏置表构建：固定各版本 → 取录音时刻覆盖的会议与项目 → 按有效期与授权过滤 → 三类分别排序 → 词形去重（合并来源与读音，不合并实体）→ 配额、条数、token 截断 → 确定性排序与内容哈希 → 缓存。</li><li><b>窗口跨过生效边界</b>：词条的生效区间与窗口核心区<b>有交集</b>就进表，不漏会议开头的专名；代价是最多一个窗口（≤45 s）的窗外偏置。<b>背靠背会议</b>另作截断：后一场会议开始后，前一场的会后余量在后一场的开始时刻截止，避免旧参会人偏置新会议。缓存键的上下文签名包含核心区两端各自落入的生效分区，跨分区的窗口不复用只按起点算的表。泄漏按每种生效边界（会前、会后、背靠背、项目归档、个人词到期）分别统计。</li></ul>
+<h3>数据结构与接口</h3>
+<pre><code>HotwordEntry  { entry_id, revision, scope: "public"|"industry"|"personal", owner_user_ref?, package_id?,
+                entity_type: "person"|"organization"|"project"|"product"|"term"|"other",
+                surface, normalized_surface, language: "zh"|"en"|"mixed",
+                pronunciations: [Pronunciation], aliases: [{ text, kind: "translit"|"abbrev"|"variant", generated: bool }],
+                sources: [{ kind: "contact"|"calendar"|"project"|"user_edit"|"operator", source_ref,
+                            source_generation, valid_from?, valid_until?, meeting_hash?,
+                            last_contact_at?, contact_count_90d?, observed_at }],
+                frequency?, status: "active"|"revoked", tombstone_at? }
+Pronunciation { pronunciation_id, alphabet: "pinyin"|"arpabet"|"common_phone", units[], tones?,
+                origin: "user"|"lexicon"|"g2p", confidence?, generator_version }
+BiasTable     { table_id = content_hash, snapshot: { public_version, industry_versions[], personal_revision,
+                selection_revision, ranking_version, pronunciation_version, tokenizer_version, bias_adapter_version },
+                applicable_from_utc, applicable_to_utc,
+                entries: [{ surface, pronunciations, scope, entity_type, entry_refs[], weight, reasons[] }],
+                token_cost, truncated: { by_count, by_token, quota_shortfall }, expires_at }</code></pre>
+<p>个人热词的生效规则：通讯录取近 90 天有联系的（平台拿不到联系记录时该字段为空，按已有证据排序，不当成“零次联系”）；日历参会人与标题专名只在会议前后 30 分钟生效；项目到归档为止；用户改字来源一直有效，直到用户删除。一个词条有多个来源时，任一来源有效即保留；撤销一个来源只重算来源集合。</p>
+<div class="tbl"><table><thead><tr><th>接口</th><th>请求</th><th>响应</th></tr></thead><tbody><tr><td><code>POST /v1/hotwords:sync</code></td><td>{source_type, source_generation, cursor, idempotency_key, upserts[], deletes: [{entry_id, expected_revision}]}</td><td>{accepted_ids, rejected: [{client_id, reason}], personal_revision, next_cursor}</td></tr><tr><td>BuildBias（内部）</td><td>{job_id, win_id, core_from_utc, core_to_utc, meeting_hashes, decoder_capability_id, max_entries, max_tokens}</td><td>{status: ready, table, cache_status} 或 {status: unavailable, reason, retry_after_ms}</td></tr></tbody></table></div>
+<p><code>source_generation</code> 挡住撤销权限之后才晚到的同步包复活词条；删除留墓碑。用户身份从认证上下文取，不接受请求里的 <code>user_ref</code>。</p>
+<h3>算法</h3>
+<p><b>个人词</b>按显式的优先级分层，不用一个连续加权分，避免关键项被淹没：</p>
+<ol><li>当前会议的参会人；</li><li>当前会议标题专名、当前项目名；</li><li>用户明确改过的专名；</li><li>其他生效的个人词。</li></ol>
+<p>同层内按联系频次、最近联系、来源可信度、稳定 ID 排序。</p>
+<p><b>行业词</b>：<code>S = 0.55·F + 0.30·J_text + 0.15·J_phone</code>。F 是包内 <code>log(1+频次)</code> 的分位数；J_text、J_phone 是与当前项目名、会议标题专名的字面 n-gram 与音节相似度；没有上下文时只用 F。多个行业包先按用户选择分配名额，再比较包内分位数，不直接比较不同包的原始词频。</p>
+<pre><code>def select_bias(personal, industry, public, max_entries=300, max_tokens=2048):
+    g = dedupe_same_surface(personal, industry, public, precedence=["personal", "industry", "public"])
+    sel = Selection(max_entries, max_tokens)
+    sel.take(g.industry, upto=60); sel.take(g.public, upto=20)      # 先保底
+    sel.take(g.personal, upto=220)
+    while sel.has_room():                                          # 空出的名额顺延：个人 → 行业 → 公共
+        item = next_ranked(g, order=["personal", "industry", "public"], caps={"personal": 220})
+        if item is None: break
+        sel.add_if_fits(item)                                      # 长词装不下时试后面的短词，记 token 截断
+    sel.record_shortfall()                                         # 不足保底时报 quota_shortfall，不重复词条凑数
+    return stable_order_and_hash(sel)
+
+def cache_key(user, core, ctx, snap, cap):
+    return H(user.ref, hour_of(core.from_utc), ctx.signature /* 会议集合、项目集合与生效分区 */,
+             snap.personal_revision, snap.industry_versions, snap.public_version, snap.selection_revision,
+             snap.ranking_version, snap.pronunciation_version, cap.decoder_capability_id,
+             snap.tokenizer_version, snap.bias_adapter_version, cap.max_entries, cap.max_tokens, user.erasure_epoch)</code></pre>
+<p>命中缓存后仍校验核心区落在 <code>applicable_*</code> 内。偏置强度由解码适配层解释：有搜索接口时把抽象权重映射为前缀与完成奖励（详设 8）；提示词式只用固定结构传词表，不宣称有连续的权重控制。两种适配器分别版本化、分别评测。读音生成：中文用带词典的多音字转换（pypinyin 一类，建议，非约束），英文用发音词典加 G2P（CMUdict、g2p_en 一类，建议，非约束），都固定版本并允许人工词典覆盖。</p>
+<h3>参数</h3>
+<div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>标定</th></tr></thead><tbody><tr><td>总条数</td><td>300</td><td>扫描 100/200/300/500</td></tr><tr><td>类别配额</td><td>行业保底 60、公共保底 20、个人 ≤220</td><td>D52；分类别的召回与误插入曲线</td></tr><tr><td>词表 token 上限</td><td>2048 起，受 8B 实际容量限制</td><td>按实际 tokenizer 计完整偏置输入的成本</td></tr><tr><td>单词形长度</td><td>≤24 码点或 12 个解码 token</td><td>超限不截断词形，记未选原因</td></tr><tr><td>每词读音路径</td><td>≤4 条</td><td>多音召回收益与噪声</td></tr><tr><td>缓存最长有效期</td><td>1 小时</td><td>同时受最近的有效期边界、版本变化与删除约束</td></tr><tr><td>日历生效窗</td><td>会议前后 30 分钟</td><td>与单元关联的 10 分钟容差是两回事</td></tr></tbody></table></div>
+<p>调参按顺序看四个损失，否则分不清“词库里没有”“时间窗排除”“名额不够”“模型没用上”：词库覆盖 → 时间与权限过滤后的覆盖 → 配额截断后的偏置表召回 → 偏置后的 A3、A4、U-CER 与 A6。四组对照（无偏置、正确、无关、同音干扰），在偏置表召回 ≥97%<span class="tg go">目标</span>、A3 ≥90%、A4 ≤0.5 / 千字、U-CER 劣化 ≤0.3 个点的联合工作点上冻结。</p>
+<h3>失败与恢复</h3>
+<ul><li>热词服务不可用：只复用版本、上下文、有效期都兼容的缓存，旧小时的表不算可用缓存；没有就排队，到详设 8 的无偏置启动时刻（可见截止 − 预计剩余）仍不可用，才无偏置解码并标 <code>bias = none_deadline</code>。音频删除后无法补救，所以不急于降级（§5.13）。</li><li>一次识别绑定固定的偏置表快照（详设 8：重试用同一快照）。<b>唯一例外是删除与撤权</b>：热词服务在删除或撤权时递增该用户的 <code>bias_revoke_epoch</code>；作业在 <code>CommitPlan</code> 与 <code>PersistResult</code> 时校验它，不一致即拒绝提交，旧尝试因此被挡住。作业重新领取时用新快照，<b>全部窗口</b>重新解码（偏置会影响每个窗口），并在 <code>versions</code> 记录快照变化。</li><li>撤销来源权限：撤销该来源支撑的词条、索引与缓存。删除一个热词不擦除已有时间线原文，只是之后不再取用或应用该候选。用户数据擦除覆盖所有词条、缓存、派生索引与在途作业（详设 18 的屏障）。</li><li><b>复现</b>：<code>versions</code> 记录偏置表的快照；个人词或会议上下文被删除后，版本号无法恢复内容，评测标“不可完全复现”，不为复现另存长期的个人快照。</li></ul>
+<h3>测试与验收</h3>
+<ul><li>同用户同小时两场会议不混用缓存；录音后两天上传，按录音时刻而非上传时刻选词；窗口跨会议词的生效边界。</li><li>几千条个人词、多个行业包、长英文术语下的条数与 token 双重预算；同词形多来源、同音不同词、同名不同人。</li><li>撤销日历权限后旧同步包晚到；删除后缓存节点尚未刷新；发布一半失败。相同快照与配置生成完全相同的排序与哈希。</li><li>偏置表召回 ≥97%<span class="tg go">目标</span>；另报每一步的过滤损失、配额损失、token 截断损失、时间窗外误触发与缓存错用率；三类分别报，英文术语与中英混说单独切片（§5.3）。</li></ul>
+<h3>与提案的差异</h3>
+<ul><li><code>h-retrieve</code>、<code>h-table</code>：缓存键从“用户 × 小时”改为完整键；“只存版本即可复现”补删除后的例外。</li><li>D52、<code>h-retrieve</code>：补配额顺延、多行业分配、token 预算与长词规则。</li><li><code>h-per</code>、<code>b-hotcollect</code>：补多来源合并、权限撤回、过期与乱序同步语义；联系记录是可空能力字段，各平台能否取得需确认（§13）。</li></ul>
+</section>
+
+<section id="dd-fix" data-label="详设 13">
+  <h2><span class="no">13</span>音系召回与专名纠错</h2>
+  <p class="ncs" data-dd-of="h-recall h-evid c-fix">契约：</p>
+<h3>职责与边界</h3>
+<p>两个执行阶段，以 ① 为界：</p>
+<div class="tbl"><table><thead><tr><th>阶段</th><th>位置</th><th>做什么</th></tr></thead><tbody><tr><td>召回与评分</td><td>音频作业内，G5 之前</td><td>枚举候选区间、音系召回、候选 CTC 评分，把有限候选与标量证据写进片段</td></tr><tr><td>重排与校验</td><td>文字管线，默认关闭</td><td>读取这些证据，可弃权地重排，校验后输出 diff</td></tr></tbody></table></div>
+<ul><li><code>c-fix</code> 关闭时，召回与评分照常做，为时间线提供 top-3 候选（D35）；开启纠错不改变音频的保留策略。</li><li>音频删除后新检索到、没有声学评分的候选只能列出建议，不沿用别的候选的分数。</li><li>不做：开放式改写；碰否定、数字日期、情态、改口标记。</li></ul>
+<h3>原理</h3>
+<ul><li>8B 写错专名，多半写成发音相近的别的字：音节相近，字形可以完全不同。把文字转成拼音音节或英文音素，在 n-gram 倒排索引上找发音相近的词条，就能召回解码时没进偏置表、或进了表也没被选中的词。“全量库”指不受偏置表 300 条的截断，仍然执行用户、行业授权与有效期规则。召回分两条通道：<b>可自动修改</b>（录音时刻有效的词条）与<b>仅建议</b>（录音时刻已过期 7 天内的会议专名），后者带 <code>suggest_only</code>，重排后只能列为候选。</li><li><b>索引侧精确，查询侧扩展。</b> 中文索引保留整词读音路径、声母、韵母、声调、可接受的变调与读音来源；多音字不能只取当前上下文下的一种读音（ASR 错字本身会改变上下文判断），所以词典与用户给的读音优先，再加有限的备选路径。模糊音（z/zh、an/ang 等）在查询侧按代价展开，不全量免费等价化，避免索引组合爆炸。</li><li><b>跨语言。</b> 中文音译与英文不能直接比较拼音串与英文音素：优先用维护过的“中文音译别名 → 英文词条”；其次转到共同音素空间，按跨语言混淆代价召回。自动生成的音译桥接带 <code>generated</code> 标志，混说数据验证前只提供候选，不作为自动替换的独立依据。</li><li><b>声学比较必须公平。</b> CTC 给一个标签序列的概率是所有合法对齐路径之和。原文与候选必须在<b>同一音频帧区间、同一左右文字锚点、同一模型与规范化、同一路径聚合方式、同一分母</b>上比较；不能一方用前向总概率、另一方用 Viterbi 最佳路径，也不能各自除以自己的 token 数。这一比较与详设 9 的 <code>g_frame</code>、<code>g_label</code>（全量支持诊断，用 Viterbi）是不同的量，字段分开。</li><li><b>同音人名不能靠声学定字形。</b> “章威 / 张伟”读音相同时，CTC 分差主要反映模型学到的字形先验。该分差不能作为区分同音字形的独立声学证据，所以同音标 <code>acoustic_discriminative = false</code>；会改变人名身份的同音替换一期只列候选、由用户点选。这是对 D48 必要条件的收紧。</li><li>决定改不改用三类证据：声学（上面的公平分差）、上下文先验（类别、是否在生效窗、是否本场参会人、是否用户改过）、语言模型（固定版本、共同上下文下的条件分差）。重排是一个<b>条件 logit（多选一）</b>模型：每个区间的选项是 {原文, 候选 1…k, 都不对}，标签是其中正确的那一项（原文本来就对 → 原文；换成某候选才对 → 该候选；都不对 → 都不对）。这样原文与“都不对”有可比较的分，而不是“哪个候选更像标准词”。训练集要有大量原文本来就对、以及正确词不在词库里的样本。</li></ul>
+<figure class="ddfig"><div class="fighead"><div><b>召回在作业内，重排在文字管线</b></div></div><div class="fig wide"><svg viewBox="0 0 900 230" role="img" aria-label="作业内枚举候选区间、音系召回、候选声学评分并写入片段；音频删除后，文字管线读取这些标量做可弃权重排、按类别门槛与确定性校验，输出 diff 或只列候选"><rect class="panel" x="550" y="10" width="340" height="210" rx="10"/><text class="tiny" x="560" y="26">文字管线（只读文字与标量）</text><rect class="panel" x="10" y="10" width="520" height="210" rx="10"/><text class="tiny" x="20" y="26">音频作业内（删音频前）</text><path class="e" d="M180 66L200 66" marker-end="url(#ah)"/><path class="e" d="M350 66L370 66" marker-end="url(#ah)"/><path class="e" d="M440 92L440 140" marker-end="url(#ah)"/><path class="e dot" d="M510 166L540 166L540 115L640 115L640 92" marker-end="url(#ah)"/><text class="tiny lb" x="544" y="110">音频已删</text><path class="e" d="M710 66L730 66" marker-end="url(#ah)"/><path class="e" d="M800 92L800 140" marker-end="url(#ah)"/><text class="tiny lb" x="804" y="111">过</text><path class="e" d="M800 92L800 120L640 120L640 140" marker-end="url(#ah)"/><text class="tiny lb" x="644" y="115">不过</text><g class="nd"><rect x="30" y="40" width="150" height="52" rx="8"/><text class="t c" x="105" y="63">候选区间</text><text class="s c" x="105" y="79">专名 · 分歧 · 低支持</text></g><g class="nd"><rect x="200" y="40" width="150" height="52" rx="8"/><text class="t c" x="275" y="63">音系召回</text><text class="s c" x="275" y="79">音节 n-gram · 模糊代价</text></g><g class="nd"><rect x="370" y="40" width="140" height="52" rx="8"/><text class="t c" x="440" y="63">同区间评分</text><text class="s c" x="440" y="79">CTC 前向 · 共同帧</text></g><g class="nd"><rect x="370" y="140" width="140" height="52" rx="8"/><text class="t c" x="440" y="163">写进片段</text><text class="s c" x="440" y="179">候选与标量</text></g><g class="nd"><rect x="570" y="40" width="140" height="52" rx="8"/><text class="t c" x="640" y="63">可弃权重排</text><text class="s c" x="640" y="79">含原文与都不对</text></g><g class="nd"><rect x="730" y="40" width="140" height="52" rx="8"/><text class="t c" x="800" y="63">类别门槛</text><text class="s c" x="800" y="79">同音人名只建议</text></g><g class="nd"><rect x="730" y="140" width="140" height="52" rx="8"/><text class="t c" x="800" y="163">确定性校验</text><text class="s c" x="800" y="179">diff · 每段 ≤3</text></g><g class="nd"><rect x="570" y="140" width="140" height="52" rx="8"/><text class="t c" x="640" y="163">只列候选</text><text class="s c" x="640" y="179">弃权</text></g></svg></div></figure>
+<h3>数据结构与接口</h3>
+<pre><code>PhoneticPosting     { namespace, index_version, alphabet, ngram[], entry_id, pronunciation_id,
+                      unit_position, pronunciation_length, path_prior }
+CorrectionCandidate { candidate_id, text_revision, span: { from, to, from_text }, entry_id?, entry_revision?,
+                      to_text, scope: "personal"|"industry"|"public", entity_type,
+                      retrieval: { pronunciation_ids[], channel: "pinyin"|"english_phone"|"spelling"|"translit",
+                                   phonetic_sim, exact_homophone: bool, effective_at_audio_time: bool },
+                      acoustic: { status: "valid"|"missing"|"unsupported"|"unalignable", score_region_id?,
+                                  logp_cand?, logp_orig?, delta_per_frame?, frames?, n_labels_orig?, n_labels_cand?,
+                                  discriminative: bool, missing_reason? },
+                      cross_asr: { checked: bool, disagreement?, secondary_matches_candidate? } }
+ScoreRegion         { score_region_id, source_range, left_anchor, right_anchor,
+                      ctc_model_version, tokenizer_version, normalizer_version }
+CorrectionEdit      { start, end, from, to, candidate_id, source: "model", reasons[], p, evidence_version }</code></pre>
+<p>候选与标量写进片段的 <code>alternatives</code> 与 <code>scores</code>（§6.2），后验矩阵不落盘。600M 只做了对齐、没做独立解码时 <code>cross_asr.checked = false</code>：对齐结果不能冒充“第二个模型不同意”。</p>
+<div class="tbl"><table><thead><tr><th>接口</th><th>请求</th><th>响应</th></tr></thead><tbody><tr><td>Recall（作业内）</td><td>{text_revision, text, char_time_map, lexicon_snapshot, recording_context, protected_spans}</td><td>{candidates, truncation_stats, versions}</td></tr><tr><td>ScoreCandidates（作业内，不落队列）</td><td>{ctc_handle, region, original, candidates}</td><td>{candidate_evidence}</td></tr><tr><td>Rerank（文字管线）</td><td>{segment_id, expected_rev, text_revision, text_hash, evidence_version, policy_version}</td><td>{edits ≤3, suggestions, abstentions: [{span, reasons}]}</td></tr></tbody></table></div>
+<h3>算法</h3>
+<p><b>候选区间</b>：专名识别、8B 与 600M 的局部分歧、低支持区间；为了不漏掉“写成普通词的专名”，另枚举有界的中文短串（1–8 字）与英文词组（1–4 词，缩写另走一路）。区间不跨说话人边界、文字修订边界与保护区间；长项目名按词条的真实长度扩展查询。</p>
+<p><b>模糊音代价</b>（查询侧）：完全相同 0；只差声调 0.15；配置允许的 z/zh、c/ch、s/sh、an/ang 等 0.25；普通替换、插入、删除 1。n/l、f/h 只在用户显式选了口音配置时降为 0.25，否则走高代价通道。</p>
+<pre><code>def recall(text, lexicon, cfg):
+    out = []
+    for span in candidate_spans(text, cfg):
+        paths = pronunciation_paths(span.text, max_paths=4, keep_context_alternatives=True)
+        pool = union(exact_surface(span), ngram_index(paths, n=(2, 3)),
+                     short_word_index(paths) if span.n_syllables &lt;= 2 else [],   # 1-gram 通道，候选限额更严
+                     english_spelling(span), curated_translit(span))
+        pool = [mark_channel(e, span.audio_time) for e in pool if visible(e)]   # auto / suggest_only / 丢弃
+        for e in pool:
+            d = weighted_phonetic_distance(paths, e, FUZZY_COST)
+            e.phonetic_sim = 1 - d / max(len(paths.best), len(e.units))         # 归一到 [0, 1]
+        pool = [e for e in pool if e.phonetic_sim &gt;= SIM_MIN[e.scope]]          # 行业、公共 0.75；个人 0.85
+        out += diversify(sorted(pool, key=lambda e: -e.phonetic_sim), per_span=20)                    # 多条读音命中同一词只留一个候选，记全部路径
+    return include_original(out)
+
+def score_candidates(orig, cands, align, logp):                 # 作业内，删音频前
+    reg = common_region(orig, align, left_anchor_tokens=2, right_anchor_tokens=2, pad_ms=300)  # 先定区间，候选不能自选
+    L = {}
+    for item in [orig] + cands:
+        labels = tokenize(normalize(reg.left_text + item.text + reg.right_text))
+        if has_unknown_label(labels):           L[item.id] = unsupported("ctc_vocabulary"); continue
+        if not ctc_feasible(labels, reg.frames): L[item.id] = unsupported("insufficient_frames"); continue
+        L[item.id] = ctc_forward_logsumexp(logp[reg.frames], labels)   # 相邻重复标签之间必须经过 blank
+    if not valid(L[orig.id]): return mark_all("invalid_original_comparison")   # 原文无路径不等于候选自动胜出
+    for c in cands:
+        if valid(L[c.id]):
+            c.acoustic.delta_per_frame = (L[c.id] - L[orig.id]) / len(reg.frames)
+            c.acoustic.discriminative = not c.retrieval.exact_homophone
+
+def propose(ev, cfg):                                           # 文字管线，默认关闭
+    if ev.touches_protected: return abstain("protected_semantics")
+    ranked = RERANK(ev)                                         # 条件 logit：P(原文)、P(候选 i)、P(都不对)，和为 1
+    best = ranked.best_candidate
+    if best is None or best.suggest_only or not category_gate(best, ev): return suggestions_only()
+    if best.retrieval.exact_homophone and best.entity_type == "person": return suggestions_only("homophone_identity")
+    if best.p &lt; TAU[risk_class(best)]: return suggestions_only("insufficient_precision")
+    if best.p - max(ranked.p_original, ranked.p_none, ranked.p_runner_up) &lt; MARGIN:   # 概率差，初值 0.2
+        return suggestions_only("ambiguous_choice")
+    return validate(best, ev)</code></pre>
+<p>每个选项的效用 <code>z = b_类别 + wᵀ x</code>，原文与“都不对”各有自己的截距。特征分两处产出：</p>
+<div class="tbl"><table><thead><tr><th>在 ① 前写进片段（音频作业）</th><th>在文字管线算</th></tr></thead><tbody><tr><td><code>delta_per_frame</code>、<code>logp_*</code>、共同帧数、标签数；<code>phonetic_sim</code>、<code>exact_homophone</code>、通道；8B 在区间内的校准置信度；<code>cross_asr</code>（只在 <code>ExecConfig.crosscheck == independent</code> 时算“分歧”）；上下文标志：是否本场参会人、是否在生效窗、是否用户改过（在 ① 时从当时的上下文取值并冻结，之后场景快照删除也不影响）；区间的 G2 质量与低支持标记</td><td><code>Δ_LM</code>：固定版本的小语言模型在同一左右上下文下的条件对数概率差；类别与长度特征</td></tr></tbody></table></div>
+<p>长度差、语种与 token 粒度作为特征。小 LLM 作对照变体时，只能在闭集候选与“保持原文”中选，没有可比较的 logprob 就不把它自报的置信当概率。</p>
+<p><b>类别门槛</b>（自动替换前的必要条件，之后还要过 TAU 与差距）：</p>
+<div class="tbl"><table><thead><tr><th>类别</th><th>必要条件</th></tr></thead><tbody><tr><td>个人</td><td>候选声学评分已完成；有可区分的声学优势，或 8B/600M 真实分歧且第二模型给出该候选</td></tr><tr><td>行业</td><td>8B/600M 真实分歧，或 8B 在该区间的校准置信度低</td></tr><tr><td>公共</td><td>同行业，另外不能只凭音系相近触发</td></tr><tr><td>任何来源的人名</td><td>按个人人名的门槛，不因来自公共包而放宽</td></tr><tr><td>同音人名</td><td>只建议，不自动改</td></tr></tbody></table></div>
+<p><b>确定性校验</b>（任一不过即丢弃该条）：<code>from == asr_text[start:end]</code>，修订号与哈希一致；<code>to</code> 与已评分的候选完全相同，候选仍有效、可见；不与否定、数字日期、情态、改口的保护区相交；不跨轮次，不与其他 edit 重叠，不覆盖用户已修改的区间；每段最多 3 条，按收益选不相交子集，从右向左应用并生成新的坐标映射；不写回个人热词；不改 <code>speaker</code>。</p>
+<h3>参数</h3>
+<div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>标定</th></tr></thead><tbody><tr><td>候选短串</td><td>中文 1–8 字，英文 1–4 词</td><td>写成普通词的专名召回；中英混说与字母读法单报</td></tr><tr><td>倒排粗召回 / 声学评分</td><td>每区间 200 条 / 每区间 20 条、每 45 s 窗口共 100 条</td><td>看 oracle 召回的饱和点，报截断损失</td></tr><tr><td>音系相似门槛</td><td>行业、公共 0.75；个人 0.85</td><td>按语种、长度、模糊规则分层校准</td></tr><tr><td>TAU（校准后的“改对”概率）</td><td>个人与人名 0.98、公共 0.97、行业 0.95，<b>仅作扫描起点</b></td><td>按最终修改密度与类别风险联合选：每千字改 10 处、5% 改错就有 0.5 次 / 千字，精确率 ≥95%<span class="tg go">目标</span> 仍可能违反改错 ≤0.2 / 千字。约束精确率、改错率、A4 ≤0.5 / 千字后最大化 A3</td></tr><tr><td>MARGIN</td><td>0.2（概率差）</td><td>扫描 0.1/0.2/0.3，看歧义弃权与改错</td></tr><tr><td>每段 edit</td><td>≤3</td><td>§5.5；三条的组合风险也要测</td></tr><tr><td>自动开关</td><td>关闭</td><td>测试集达标后按用户比例灰度开启</td></tr></tbody></table></div>
+<p>标定集包含自然的 ASR 错误，不只用随机替字构造的简单负例；训练、调参、测试按说话人、会议、实体分组，留出未见实体的切片。</p>
+<h3>失败与恢复</h3>
+<ul><li>G2P 失败：走词典与精确词形通道，不编造发音。正确词不在库：保持原文或弃权，闭集重排不能被迫选错。</li><li>候选含 CTC 不支持的字符、英文或音译路径：标 <code>unsupported</code>，不填默认低分。8B 没有置信度：标缺失，走校准过的缺失分支，不当低置信。</li><li>重排超时或输出不合法：保留原文与候选。G5 前崩溃：候选评分随作业重跑。G5 后重排崩溃：按 <code>(segment_id, text_revision, evidence_version, policy_version)</code> 幂等重试。</li><li>用户已改字导致版本冲突：丢弃旧的模型 diff，不用旧偏移强行应用。词条在评分后被删除：取消该候选之后的自动应用。用户撤销某条模型 edit 后，同一证据版本不再自动应用它。</li><li><b>用户改字的传播</b>：同一单元内文字相同、或 <code>alternatives</code> 里含改后词的片段一并列出，由用户逐条或一键替换；只有用户确认的<b>专名跨度</b>作为 <code>user_edit</code> 来源的个人词条入库（详设 12）；否定、金额、日期与整句修改不进热词（D23）。</li></ul>
+<h3>测试与验收</h3>
+<ul><li>多音姓氏、人名、项目名（含词典没覆盖的读音）；模糊音与普通近音；一字人名单报；英文缩写、字母读法、连读、中文音译、混合词。</li><li>原文正确但偏置表里有高频同音词；正确词不在库、只在未选的行业包里、只在已过期的会议里。</li><li>长短候选、相邻重复标签、原文无法对齐、候选含未知标签；故意让候选各用不同裁剪边界的错误实现，应被一致性测试抓出。</li><li>人名紧邻“不”“可能”“改成”；含数字的产品名；跨轮次专名；三条 edit 互相重叠；Unicode 扩展字符；用户修改与模型修改并发。</li><li>分层报四个瓶颈：词库覆盖 → 音系候选覆盖 → 声学评分覆盖 → 重排选择正确率。指标（§5.10）：修改精确率 ≥95%<span class="tg go">目标</span>；改错 ≤0.2 / 千字；承担人因纠错改变的比例、弃权率、弃权时正确词在候选里的比例（报告）。</li></ul>
+<h3>与提案的差异</h3>
+<ul><li><code>h-evid</code>、§5.5：600M 的独立解码、CTC 对齐与候选评分是三种证据，分别记覆盖状态。</li><li><code>e-align</code>、<code>c-fix</code>：候选的声学比较补统一的比较域（同帧区间、同锚点、同分母、前向概率）。</li><li>D48、§5.5：“有声学支持或模型分歧”只是必要条件；同音人名不能据此自动认定字形。</li><li>§5.5、§6.2：diff 补偏移单位（码点）、文字版本、不重叠要求与修改后的坐标映射。</li></ul>
+</section>
+</main>
+</div>
+
+<div id="tip" role="tooltip" hidden></div>
+<script src="contracts.js"></script>
+<script src="site.js"></script>
+</body>
+</html>

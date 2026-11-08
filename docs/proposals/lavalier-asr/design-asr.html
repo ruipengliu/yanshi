@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>领夹 ASR · 详细设计 · 识别</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@600;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="design-asr.html">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="ahp"/></marker>
+    <polygon id="hex" points="0,-14 12.1,-7 12.1,7 0,14 -12.1,7 -12.1,-7"/>
+    <symbol id="lock" viewBox="0 0 12 14"><rect x="1" y="6" width="10" height="8" rx="1.5"/><path d="M3.5 6V4a2.5 2.5 0 0 1 5 0v2" fill="none" stroke-width="1.6"/></symbol>
+  </defs>
+</svg>
+
+<div class="wrap">
+<aside class="side" id="side" aria-label="导航与图例"></aside>
+
+<main>
+<header class="phead">
+  <p class="crumb"><a href="index.html">领夹 ASR 整体方案</a> / 详细设计</p>
+  <h1>详细设计 · 识别</h1>
+  <p class="lede">云端音频段：拼接与作业调度，VAD 复核与识别窗口（G2），播放检测（G3），8B 主干转写，600M 辅助与健康检查（G4）。这一段是唯一接触音频的地方，中间结果只在内存。</p>
+<div class="note"><b>读法。</b>每节按同一模板：职责与边界、原理、流程、数据结构与接口、算法、参数、失败与恢复、测试与验收、未决项。“作业”指一次音频作业：在一个进程里跑完 G2–G5 再落盘（§5.11）；本页写 G2–G4，G5 与落盘见<a href="design-speaker.html">说话人与热词</a>与<a href="design-text.html">裁决、文字与删除</a>。共同约定：区间一律左闭右开；身份与去重用设备帧坐标 <code>(device_id, boot_gen, seq, sample_offset)</code>，UTC 只用于展示、场景关联与截止时间，时钟重拟合不改变任何 ID；文字跨度用 Unicode 码点索引；概率可以为空并带覆盖状态，缺失的证据不编码成 0；模型、预处理、规范化、阈值与校准器分别版本化，模型升级后旧校准器不能默认沿用。</div>
+</header>
+<section id="dd-jobs" data-label="详设 5">
+  <h2><span class="no">5</span>拼接器、两级队列与识别作业</h2>
+  <p class="ncs" data-dd-of="s-stitch s-queue c-bucket c-manifest">契约：</p>
+<h3>职责与边界</h3>
+<p>四个对象分开：</p>
+<div class="tbl"><table><thead><tr><th>对象</th><th>用途</th><th>读音频</th></tr></thead><tbody><tr><td>上传分片 Chunk</td><td>上传、对象校验、删除与回执的单位</td><td>否</td></tr><tr><td>作业 RecJob</td><td>冻结一段待处理的帧范围及其输入对象</td><td>是（在作业进程内）</td></tr><tr><td>识别窗口 Window</td><td>G2 切出的 8B 输入，含核心区与上下文</td><td>是</td></tr><tr><td>尾部等待 TailHold</td><td>尚未处理的尾部及其依赖</td><td>否</td></tr></tbody></table></div>
+<ul><li><b>拼接器</b>（每用户单写者）只处理清单、帧覆盖、乱序、缺口与等待期限。它可以用 L1 明确丢弃的 ≥1 秒区间作安全边界，<b>不能</b>从清单推断保留音频里的 300 ms 停顿，也不选能量最低点：这两件事归 G2。</li><li><b>两级队列</b>：立即同步优先，常规按最晚开始时间；派发带租约与防护令牌。</li><li>作业状态与对象删除状态分成两条状态机：一个作业可以读多个对象，一个对象也可以被多个作业读。</li></ul>
+<h3>原理</h3>
+<ul><li><b>确定性 ID 解决“重复创建”，租约解决“谁在执行”，防护令牌解决“过期执行者能否提交”</b>，三者缺一不可。</li><li><b>切分提议由 G2 给出、由拼接器冻结。</b> 作业领取后先解码、跑 G2，得到“本次定稿到哪里、哪段尾部顺延、需要读哪些上下文”的最小提议，用 <code>CommitPlan</code> 交拼接器原子地冻结；此后 G3–G5 在内存里接着跑，下一个作业可以并行开始。冻结的计划含归属切点与<b>识别窗口边界</b>；重试时重新解码、重新计算 G2 的证据（语音掩码、质量），但不改切点、窗口与范围归属。所有归属切点都量化到设备帧边界（20 ms），覆盖账因此只记整帧；<code>sample_offset</code> 只用于窗口内部的样本映射。</li><li><b>同设备、同启动世代的作业按顺序分配。</b> 下一段等前一段的计划冻结后再分配，这样前一段产生的尾部一定在下一段分配之前并入；冻结之后 G3–G5 仍可并行。</li><li><b>删除看覆盖账，不看水位。</b> <code>[0,100)</code> 与 <code>[200,300)</code> 完成了，不能把进度记为 300 后删掉还含 <code>[100,200)</code> 的对象；下一作业还要读的 400 ms 左上下文也算依赖。</li><li><b>截止时间驱动调度。</b> 常规截止 = 录音结束 + 3 小时；同步截止 = 上传完成 + 10 分钟。按“最晚开始时间 = 截止 − 预计处理时长”派发，负载自然摊到低谷。离线数小时后补传的数据达不到端到端 3 小时，“录音到上传”与“上传到可见”分开统计，不靠改起点掩盖。</li></ul>
+<figure class="ddfig"><div class="fighead"><div><b>作业与对象的两条状态机</b></div></div><div class="fig wide"><svg viewBox="0 0 900 290" role="img" aria-label="作业从排队、运行、冻结计划到落盘，失败退避或终止；上传对象从已存、待删、删除中到已删和回执"><rect class="panel" x="10" y="160" width="880" height="120" rx="10"/><text class="tiny" x="20" y="176">上传对象（按 chunk_id）</text><rect class="panel" x="10" y="10" width="880" height="130" rx="10"/><text class="tiny" x="20" y="26">作业（按 job_id）</text><path class="e" d="M160 76L190 76" marker-end="url(#ah)"/><path class="e" d="M330 76L360 76" marker-end="url(#ah)"/><text class="tiny lb" x="349" y="71">G2 提议</text><path class="e" d="M510 76L540 76" marker-end="url(#ah)"/><path class="e d" d="M260 102L260 124L790 124L790 102" marker-end="url(#ah)"/><text class="tiny lb" x="794" y="119">满 48 h</text><path class="e" d="M160 226L190 226" marker-end="url(#ah)"/><path class="e" d="M340 226L370 226" marker-end="url(#ah)"/><path class="e" d="M520 226L550 226" marker-end="url(#ah)"/><text class="tiny lb" x="539" y="221">②</text><path class="e" d="M680 226L710 226" marker-end="url(#ah)"/><path class="e dot" d="M610 102L610 140L265 140L265 200" marker-end="url(#ah)"/><text class="tiny lb" x="269" y="135">覆盖账</text><g class="nd"><rect x="30" y="50" width="130" height="52" rx="18"/><text class="t c" x="95" y="73">queued</text><text class="s c" x="95" y="89">带截止时间</text></g><g class="nd"><rect x="190" y="50" width="140" height="52" rx="18"/><text class="t c" x="260" y="73">running</text><text class="s c" x="260" y="89">租约 · 令牌</text></g><g class="nd"><rect x="360" y="50" width="150" height="52" rx="18"/><text class="t c" x="435" y="73">planned</text><text class="s c" x="435" y="89">计划已冻结</text></g><g class="nd"><rect x="540" y="50" width="140" height="52" rx="18"/><text class="t c" x="610" y="73">persisted</text><text class="s c" x="610" y="89">① 已落盘</text></g><g><rect class="drop" x="710" y="50" width="160" height="52" rx="8"/><text class="t c" x="790" y="73">failed_terminal</text><text class="s c" x="790" y="89">满 48 h · cloud_failed</text></g><g class="nd"><rect x="30" y="200" width="130" height="52" rx="18"/><text class="t c" x="95" y="231">stored</text></g><g class="nd"><rect x="190" y="200" width="150" height="52" rx="18"/><text class="t c" x="265" y="223">delete_pending</text><text class="s c" x="265" y="239">覆盖账闭合</text></g><g class="nd"><rect x="370" y="200" width="150" height="52" rx="18"/><text class="t c" x="445" y="223">fenced</text><text class="s c" x="445" y="239">等直传地址过期</text></g><g class="nd"><rect x="550" y="200" width="130" height="52" rx="18"/><text class="t c" x="615" y="223">deleted</text><text class="s c" x="615" y="239">确认不存在</text></g><g class="nd"><rect x="710" y="200" width="160" height="52" rx="18"/><text class="t c" x="790" y="223">receipted</text><text class="s c" x="790" y="239">③</text></g></svg></div></figure>
+<h3>数据结构</h3>
+<pre><code>RecJob {
+  job_id = SHA256(canonical(schema_version, user_ref, device_id, boot_gen,
+                            input_ranges, input_manifest_digests, pipeline_bundle_version))
+          // 字段顺序、整数编码、区间排序固定；不含队列类别、重试次数、租约、UTC、worker
+  input_ranges[], source_chunks[{chunk_id, object_digest}]
+  plan?: { commit_ranges[], windows: [{win_id, core_range, read_range}], read_ranges[],
+          tail_hold_id?, exec: ExecConfig, plan_version }   // CommitPlan 后不变
+  queue_class: "regular"|"sync", visible_deadline_ms, est_remaining_ms
+  state: queued|running|retry_wait|planned|persisted|failed_terminal|cancelled_erasure
+  attempt, lease_owner?, lease_epoch, lease_until_ms?, next_attempt_at_ms?
+  blocked_dependency?, blocked_since_ms?          // 如 "8b_pool"，用于 12 小时降级计时
+  erasure_epoch, result_digest?
+}
+ExecConfig {                                     // 各维度独立，可以同时降级；冻结进计划
+  primary_asr: "8b"|"600m",                      // 600m 即 8B 阻塞超 12 小时的降级
+  bias: "applied"|"none_unavailable"|"none_deadline", bias_snapshot?, bias_revoke_epoch?,
+  alignment_source: "600m"|"8b_timestamps"|"none",
+  crosscheck: "independent"|"same_model"|"unavailable" }
+TailHold { hold_id, ranges[], context_read_ranges[], source_chunks[], first_deferred_at_ms,
+           release_at_ms, state: waiting|assigned|cancelled, assigned_job_id? }
+CoverageEntry { chunk_id, seq_from, seq_to /* 整帧 */,
+                outcome: recognized|non_speech|l1_dropped|source_gap|cloud_failed|erased, producer_job_id?, committed_at_ms }
+ReadDependency { dep_id, holder: job|tail_hold, holder_id, chunk_id, read_ranges[], state: active|released }</code></pre>
+<p>§5.12 的 <code>frames_persisted_upto</code> 只能表示连续前缀，并行完成时不够用，由覆盖账取代。尾部范围与读依赖是调度元数据，不属于 D37 禁止落盘的“中间结果”；VAD 概率、PCM、后验与嵌入仍只在内存。</p>
+<h3>接口（进程间）</h3>
+<div class="tbl"><table><thead><tr><th>接口</th><th>请求</th><th>响应</th></tr></thead><tbody><tr><td>ClaimJob</td><td>{worker_id, pools}</td><td>{spec, lease_epoch, lease_until_ms} 或 none</td></tr><tr><td>RenewLease</td><td>{job_id, worker_id, lease_epoch}</td><td>{lease_until_ms} 或 stale_lease</td></tr><tr><td>CommitPlan</td><td>{job_id, lease_epoch, erasure_epoch, commit_ranges, tail_ranges, windows, read_dependencies, exec, plan_version}</td><td>{frozen_plan}（已冻结则返回既有计划）</td></tr><tr><td>PersistResult</td><td>{job_id, lease_epoch, erasure_epoch, result_digest, segments, coverage, cluster_updates}</td><td>{committed_at_ms, already_committed}</td></tr></tbody></table></div>
+<p>片段文字与证据经受控接口写库，不放进队列事件；事件只带 ID 与类型（D41）。</p>
+<h3>算法</h3>
+<pre><code>def on_chunk_stored(c):                                    # 拼接器，每用户单写者
+    register_coverage(c)                                   # L1 丢弃 → l1_dropped；设备缺口 → source_gap
+    try_assign(c.device_id, c.boot_gen)
+
+def try_assign(dev, gen):                                  # 拼接器；分片到达、计划冻结、尾部到期时调用
+    with user_txn(user_of(dev)):
+        if unfrozen_job_exists(dev, gen): return           # 前一段未冻结：等它，尾部才不会被越过
+        rng = next_unassigned_range(dev, gen)              # 未分配、连续可用的帧；序号空洞处停止
+        if not rng: return
+        hold = waiting_tail_before(rng)                    # 只能是紧邻 rng 之前的尾部
+        start = hold.ranges[0].start if hold else rng.start
+        end = last_safe_boundary(rng, max_audio_min=10)    # 优先停在 ≥1 s 的 L1 丢弃区
+        job = create_job(input_ranges=[(start, end)], queue=queue_of(rng))  # 同 ID 已存在则返回既有作业
+        add_read_dependencies(job, input_and_context(start, end))   # 首次读音频之前登记
+        if hold:                                           # 同一事务：并入尾部、转移依赖
+            hold.state, hold.assigned_job_id = "assigned", job.job_id
+            transfer_read_dependencies(hold, job)
+
+def commit_plan(job, proposal):                            # 作业跑完 G2 后调用
+    with user_txn(job.user_ref):
+        if job.plan: return job.plan                       # 重试：沿用冻结的计划
+        require_lease(job, proposal.lease_epoch); require_erasure_epoch(proposal.erasure_epoch)
+        require_bias_revoke_epoch(job.user_ref, proposal.exec.bias_snapshot)   # 删词或撤权后旧偏置快照不能冻结（详设 12）
+        require(job.state == "running")                    # 终态、擦除取消的作业不能冻结
+        require(disjoint(proposal.commit_ranges, proposal.tail_ranges))
+        require(union(proposal.commit_ranges, proposal.tail_ranges) == union(job.input_ranges))
+        require(all(on_frame_boundary(r) for r in proposal.commit_ranges))
+        if proposal.tail_ranges:
+            hold = TailHold(ranges=proposal.tail_ranges, first_deferred_at_ms=inherit_or_now(proposal),
+                            release_at_ms=release_deadline(proposal, job))
+            add_read_dependencies(hold, proposal.tail_ranges + proposal.read_ranges)  # 尾部独立持有依赖
+        job.plan = freeze(proposal); job.state = "planned"
+    try_assign(job.device_id, job.boot_gen)                # 计划冻结后才分配下一段
+
+def persist_result(req):                                   # ①
+    with user_txn(req.user_ref):
+        job = load_job(req.job_id)
+        if job.state == "persisted": return already_committed(job.result_digest)
+        require_lease(job, req.lease_epoch); require_erasure_epoch(req.erasure_epoch)
+        require_bias_revoke_epoch(job.user_ref, job.plan.exec.bias_snapshot)
+        require_exact_coverage(req.coverage, job.plan.commit_ranges)
+        write_segments(req.segments); update_clusters_with_version_check(req.cluster_updates)
+        write_coverage(req.coverage); release_read_dependencies(job.job_id)
+        job.state = "persisted"; emit_id_only("job.persisted", job.job_id)
+        for c in job.source_chunks:
+            if can_delete(c): emit_id_only("chunk.deletable", c.chunk_id)   # 交删除链（详设 18）
+
+def can_delete(c):
+    return (union(coverage(c)) == c.logical_range and not active_read_dependencies(c)
+            and not unassigned_tail(c))
+
+def release_deadline(p, job):                               # 尾部最迟何时单独识别；已过即立即释放
+    est = estimate_remaining(tail=p.tail_ranges)           # 识别 + G5 + 文字管线，近期 P90
+    return min(p.first_deferred_at_ms + minutes(20),       # 常规最多等 20 分钟，起点不因转交而重置
+               job.visible_deadline_ms - est,              # 不让尾部拖过 3 小时 / 10 分钟截止
+               fail_deadline(p.source_chunks) - est,      # 48 小时失败期限
+               earliest_hard_expiry(p.source_chunks) - est - minutes(30))   # 72 小时强删前留余量</code></pre>
+<ul><li><b>尾部释放</b>：下一批到达、20 分钟到期、立即同步、会话结束（领夹断开或电量告警）任一发生即释放。连续说话没有停顿时，尾部退到最后一个已完成识别窗口的边界，长度不超过一个窗口（详设 6），不会顺延整个作业。尾部等待（20 分钟）与“缺口还在路上”（2 小时，详设 16）是两种状态；缺口不能当作静音。</li><li><b>调度</b>：<code>sync</code> 池按最早截止派发；同步预留容量空闲时借给常规，在各资源池的<b>模型批边界</b>收回（不等整个作业结束，也不拆开正在跑的批）。常规按最晚开始时间派发，同用户最多 2 个作业并行。立即同步是对已有作业的<b>优先级提升</b>，不生成新的 job_id。预留与公平性覆盖 CPU、8B、600M 三个池。</li><li><b>领取与续约</b>：租约 120 秒、心跳 30 秒；续约失败立即停止提交。旧 worker 即使算完，也会被 <code>lease_epoch</code> 拒绝。失去租约不释放读依赖：接管者仍需要音频。</li><li><b>计时锚点</b>：48 小时失败、72 小时强删都以首次上传时间为准，不因重试、转尾部、换 worker 重置。72 小时强删是隐私兜底，可以越过正常完成条件，随后只为未完成范围登记 <code>cloud_failed</code>，已落盘结果保留。</li></ul>
+<h3>参数</h3>
+<div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>标定</th></tr></thead><tbody><tr><td>单作业上限</td><td>10 分钟音频</td><td>看 8B 的 GPU 时长与崩溃重跑的代价</td></tr><tr><td>租约 / 心跳</td><td>120 s / 30 s</td><td>故障注入：进程暂停、网络分区、旧 worker 恢复</td></tr><tr><td>重试</td><td>5 s 起指数退避，封顶 5 分钟，带抖动</td><td>依赖恢复时间与重试放大率</td></tr><tr><td>同用户并行作业</td><td>2</td><td>大用户公平性、立即同步尾延迟</td></tr><tr><td>同步预留</td><td>约 25% 作压测起点</td><td>用真实同步峰值分布与各池瓶颈确定（§5.13）</td></tr><tr><td>预计处理时长</td><td>近期同配置作业的 P90</td><td>特征：有效音频秒数、窗口数、偏置长度、交叉校验比例</td></tr></tbody></table></div>
+<h3>失败与恢复</h3>
+<div class="tbl"><table><thead><tr><th>崩溃点</th><th>恢复</th></tr></thead><tbody><tr><td>计划冻结前</td><td>重领后从音频重跑 G2 再提议；并发提议以第一次冻结为准</td></tr><tr><td>计划冻结后、① 前</td><td>重领后重新解码、重算 G2 证据，按冻结的切点与窗口重跑 G3–G5</td></tr><tr><td>① 已提交、响应丢失</td><td>读作业状态，不重新转写</td></tr><tr><td>① 后对象仍在</td><td>巡检补删；对象已删、记录未更新：确认不存在后补记并回执</td></tr><tr><td>用户擦除</td><td>擦除代次使旧作业不能把文字或尾部记录写回</td></tr><tr><td>分片之间有序号空洞、无缺口记录</td><td>视为在路上，不切跨空洞的作业。等 2 小时（D31）后两侧作业照常处理，空洞两侧的上下文标 <code>truncated_context</code>；迟到的分片补成独立作业。只有手机明确报告丢失（应用重装、存储被清）才登记 <code>phone_lost</code>；超过手机暂存期（7 天）加 1 天仍未到登记 <code>never_arrived</code>。两者都不当静音（新原因，需补进 §6.1）</td></tr></tbody></table></div>
+<h3>测试与验收</h3>
+<ul><li>重复、乱序、重叠清单；同 chunk_id 不同内容必须报冲突。</li><li>租约过期后两个 worker 同时提交，只能成功一次；时钟重拟合不改变作业 ID；立即同步提升优先级不重复转写。</li><li>前一段未冻结时下一段不分配；尾部到期时刻已过的作业立即释放尾部；8B 与热词同时故障时执行配置两个维度都降级。</li><li>多个作业覆盖同一对象、尾部与上下文仍被引用时不可删除；G2 全部拒识、空载荷、局部解码失败也能闭合覆盖账，不会永久卡住删除。</li><li>负载：按一天的到达曲线回放 1 万用户的清单，常规 P90 ≤3 小时、同步 P90 ≤10 分钟（§9）。</li></ul>
+<h3>与提案的差异</h3>
+<ul><li><code>s-stitch</code> 的“在 ≥300 ms 停顿处切”改由 G2 承担，拼接器只按已知静音切作业。</li><li>§5.12 的 <code>frames_persisted_upto</code> 由覆盖账取代；§5.11 的作业状态与对象删除状态拆成两条。</li><li>§5.14 的“桶内超过 24 小时的对象数应为 0”是告警线，不是硬上限；硬上限是 72 小时。</li></ul>
+</section>
+
+<section id="dd-g2" data-label="详设 6">
+  <h2><span class="no">6</span>解码、VAD 复核与识别窗口（G2）</h2>
+  <p class="ncs" data-dd-of="c-decode c-vad s-cpu">契约：</p>
+<h3>职责与边界</h3>
+<ul><li><b>解码</b>：按清单的 <code>payload.runs</code> 把每个 chained Ogg Opus 逻辑流解码为带来源坐标的 PCM，核验清单与载荷一致。</li><li><b>G2</b>：在云端重做 VAD，得到语音段与非语音段（非语音 → 拒绝 <code>non_speech</code>，不送 8B）；把语音组成识别窗口；给拼接器提议本作业定稿到哪里（详设 5 的 CommitPlan）。</li><li>不做：说话人分段（详设 10）、播放判定（详设 7）。</li></ul>
+<h3>原理</h3>
+<ul><li>三条时间轴不能互相代替：<b>设备时间</b>（缺口、轮次、场景、交互、删除覆盖）、<b>解码音频时间</b>（实际存在的 PCM 样本）、<b>模型输入时间</b>（加了上下文的窗口）。L1 丢弃的区间在设备时间上存在、在解码音频里不存在。</li><li>Ogg Opus 的 <code>pre_skip</code> 与 granule 用 48 kHz 单位；设备把 <code>pre_skip</code> 设为“编码延迟 + 预卷样本数”（详设 4），所以解码接口<b>返回裁掉 <code>pre_skip</code> 之后的 PCM</b>，其中已经没有预卷样本，第一个样本对应 <code>runs.core_from</code> 帧的起点。业务层不能再减一次预卷，否则会丢字（<a href="https://www.rfc-editor.org/rfc/rfc7845.html#section-4.2">RFC 7845 §4.2</a>）。</li><li><b>两种语音区间分开存。</b> 原始语音掩码 <code>speech_raw</code>（滞回的直接输出）用于找停顿、算字速、判无语音；送识别的保留区间 <code>keep</code> 是它加前后余量的结果。在加过余量的区间上找停顿，800 ms 的真实停顿会被两侧共 1100 ms 的余量填平。</li><li><b>平滑不能吞掉短回应。</b> “前后各 0.5 秒的双向上下文”若实现成 1 秒均值滤波，150 ms 的“嗯”会被平均到约 0.15、低于启动阈值。所以用短时中值滤波去毛刺，再用双阈值滞回；高置信的短峰单独保留为可疑语音。双向的好处体现在离线可以向后看：结束判定等 200 ms 确认，而不是看到一帧低值就结束。</li><li>识别窗口越长，8B 上下文越足、组批效率越高；越长也越容易漂移或幻觉。15–45 秒是打包目标，不是准入门槛；短回应并入相邻窗口，不单独成窗、也不为凑长度补造语音。</li><li><b>一期不压缩静音。</b> 窗口里只放语音段及其间的短停顿；长于停顿阈值的非语音本来就是窗口边界，不需要压缩。压缩已知静音作为变体。</li></ul>
+<figure class="ddfig"><div class="fighead"><div><b>解码与识别窗口</b></div></div><div class="fig wide"><svg viewBox="0 0 900 210" role="img" aria-label="校验对象，按逻辑流解码并裁掉预卷，连续有效区域上跑 VAD，短时中值滤波加滞回，余量，停顿优先切窗或强切，加上下文"><path class="e" d="M170 56L200 56" marker-end="url(#ah)"/><path class="e" d="M350 56L380 56" marker-end="url(#ah)"/><path class="e" d="M540 56L570 56" marker-end="url(#ah)"/><path class="e" d="M720 56L750 56" marker-end="url(#ah)"/><path class="e" d="M645 82L645 130" marker-end="url(#ah)"/><path class="e" d="M570 156L540 156" marker-end="url(#ah)"/><text class="tiny lb" x="559" y="151">无停顿</text><path class="e" d="M380 156L350 156" marker-end="url(#ah)"/><path class="e" d="M200 156L170 156" marker-end="url(#ah)"/><g class="nd"><rect x="20" y="30" width="150" height="52" rx="8"/><text class="t c" x="95" y="53">校验对象</text><text class="s c" x="95" y="69">sha256 · 样本数</text></g><g class="nd"><rect x="200" y="30" width="150" height="52" rx="8"/><text class="t c" x="275" y="53">按逻辑流解码</text><text class="s c" x="275" y="69">裁 pre_skip 后的 PCM</text></g><g class="nd"><rect x="380" y="30" width="160" height="52" rx="8"/><text class="t c" x="460" y="53">帧级 VAD</text><text class="s c" x="460" y="69">只在有效区域</text></g><g class="nd"><rect x="570" y="30" width="150" height="52" rx="8"/><text class="t c" x="645" y="53">中值滤波 · 滞回</text><text class="s c" x="645" y="69">短峰保留</text></g><g><rect class="drop" x="750" y="30" width="130" height="52" rx="8"/><text class="t c" x="815" y="53">非语音</text><text class="s c" x="815" y="69">拒绝 non_speech</text></g><g class="nd"><rect x="570" y="130" width="150" height="52" rx="8"/><text class="t c" x="645" y="153">停顿优先切窗</text><text class="s c" x="645" y="169">15–45 s 含上下文</text></g><g class="nd"><rect x="380" y="130" width="160" height="52" rx="8"/><text class="t c" x="460" y="153">强切</text><text class="s c" x="460" y="169">末 5 s 能量最低</text></g><g class="nd"><rect x="200" y="130" width="150" height="52" rx="8"/><text class="t c" x="275" y="153">加上下文</text><text class="s c" x="275" y="169">两侧 400 ms</text></g><g class="nd"><rect x="20" y="130" width="150" height="52" rx="8"/><text class="t c" x="95" y="153">8B 请求</text><text class="s c" x="95" y="169">详设 8</text></g></svg></div></figure>
+<h3>数据结构</h3>
+<pre><code>SampleMap  { in_from, in_to /* 解码样本，裁 pre_skip 之后 */, source_from: SourcePos, kind: "original"|"concealed" /* PLC、FEC 或补零 */ }
+Decoded    { pcm (仅内存, 16 kHz f32), maps: [SampleMap], invalid: [{source_range, reason}],
+             quality: { clip_ratio, longest_zero_ms, decode_errors } }
+Window     { win_id = job_id + ":" + k, core_ranges: [SourceRange], read_ranges: [SourceRange],
+             input_map: [SampleMap], cut_reason: "pause"|"forced"|"gap"|"flush"|"end",
+             ctx_left_ms, ctx_right_ms, truncated_context: bool }
+G2Result   { speech_raw: [SourceRange],   // 滞回直接输出，找停顿、算字速、判无语音用
+             keep: [SourceRange],         // speech_raw 加余量，送识别
+             non_speech: [SourceRange],   // 有效原始音频中 keep 的补集 → 拒绝 non_speech
+             unknown: [SourceRange],      // 损坏、无法解码、concealed：不拒绝也不当语音证据
+             windows: [Window], proposal: { commit_ranges, tail_ranges, windows, read_ranges } }</code></pre>
+<h3>算法</h3>
+<pre><code>def decode(obj, manifest):
+    verify_sha256(obj, manifest.payload.sha256)                    # 不符 → 对象校验失败，不当静音
+    out = []
+    for run in manifest.payload.runs:
+        pcm = opus_decode_stream(obj.stream(run.stream_serial))   # 返回裁掉 pre_skip（含预卷）之后的 PCM
+        if len(pcm) != expected_samples(run.core_from, run.core_to):   # 清单与样本数不一致
+            raise TimelineMismatch(run)                            # 不偷偷拉伸 PCM
+        out.append(map_samples(pcm, run))                          # 第一个样本 = core_from 帧起点
+    return Decoded(out)
+
+def g2(dec, frozen=None):
+    W, raw_all, keep_all = [], [], []
+    for region in dec.contiguous_valid_regions():                  # 真实缺失与 concealed 处断开 VAD 状态
+        p_raw = vad(region.pcm)                                    # 适配器给出模型原生步长（Silero 512 样本，FSMN 10 ms）
+        p = median_filter(p_raw, ms=50)
+        raw = hysteresis(p, on=0.60, off=0.35, end_confirm_ms=200, min_speech_ms=150,
+                         rescue=lambda seg: max(p_raw[seg]) &gt;= 0.85)  # 高置信短峰保留为可疑语音
+        if not raw: continue                                       # 整段非语音：不切窗
+        keep = clip(pad(raw, pre_ms=400, post_ms=700), region)
+        raw_all += raw; keep_all += keep
+        if not frozen:
+            W += make_windows(region, raw, keep, max_in_s=min(45, MODEL_MAX_S), ctx_ms=400)
+    if frozen: W = frozen.windows                                  # 重试：证据重算，窗口与切点不动
+    valid = dec.valid_original_ranges()
+    return G2Result(speech_raw=raw_all, keep=keep_all,
+                    non_speech=complement(keep_all, within=valid),  # 只在有效原始音频里取补集
+                    unknown=dec.invalid_ranges() + dec.concealed_ranges(), windows=W,
+                    proposal=None if frozen else propose(W, raw_all, dec))
+
+def make_windows(region, raw, keep, max_in_s, ctx_ms):
+    max_core = max_in_s * 1000 - 2 * ctx_ms                        # 45 s 上限包含上下文
+    out, start = [], keep[0].start
+    while start &lt; keep[-1].end:
+        cands = pauses(raw, start + 15_000, start + max_core, min_ms=300)   # 停顿在原始掩码上找
+        if cands:
+            best = max(cands, key=lambda q: (len(q), -abs(mid(q) - (start + 30_000)), -q.start))
+            cut, why, ctx = mid(best), "pause", 0                  # 最长停顿；并列取更近目标长度、再取更早
+        elif speech_end_from(keep, start) &lt;= start + max_core:
+            cut, why, ctx = speech_end_from(keep, start), "end", 0
+        else:
+            cut, why, ctx = argmin_energy(start + max_core - 5000, start + max_core, win_ms=100), "forced", ctx_ms
+        cut = snap_to_frame(cut)                                   # 归属切点量化到 20 ms 帧边界
+        out.append(Window(core=(start, cut), read=(start - ctx_prev(out), cut + ctx), cut_reason=why))
+        start = next_speech_from(keep, cut)
+    return out
+
+def propose(W, raw, dec):                                          # 给 CommitPlan 的提议
+    if dec.is_final_release or not W or not ends_in_speech(raw, dec.end):
+        return Proposal(commit=dec.input_ranges, tail=[], windows=W)
+    last = W[-1]                                                   # 末窗可能被作业边界截断
+    p = last_pause(raw, after=last.core.start, min_ms=300)
+    cut = snap_to_frame(mid(p)) if p else last.core.start          # 无合适停顿：退到上一个完成窗口的边界
+    if cut &lt;= dec.input_start:                                     # 整个作业只有一个无停顿的窗口
+        return Proposal(commit=dec.input_ranges, tail=[], windows=W)   # 直接定稿，不顺延零长度提交
+    windows = [w for w in W if w.core.end &lt;= cut] + trim_window(last, end=cut)
+    return Proposal(commit=[(dec.input_start, cut)], tail=[(cut, dec.input_end)],
+                    windows=windows, read=[(cut - 400, cut)])      # 下一作业读 400 ms 左上下文</code></pre>
+<ul><li><b>核心区去重</b>在 600M 词级对齐之后做：每个词取原始时间中点，只保留在唯一包含它的核心区那个窗口的假设；只在相邻窗口的重叠上下文里做受时间约束的匹配，不按相同字符串全局去重（否则“对对对”“不要，不要”会被删）。时间戳不可用时保留边界不确定标记，不凭字符串强删。</li><li><b>尾部提议</b>：作业末尾以语音结尾、且不是最终释放的尾部时，只有末窗可以顺延：在末窗里找最后一个 ≥300 ms 的原始停顿；没有就退到末窗起点（上一个完成窗口的边界）。顺延长度因此不超过一个窗口（≤45 s）。整个作业只有一个无停顿窗口时直接定稿。</li><li><b>全部非语音</b>：G2 全判非语音时照样提交覆盖账，驱动删除，不生成空片段。</li><li><b>质量标记</b>：削波比例、长时间零值、解码错误只计量，不据此删内容；可确定的损坏范围登记缺口 <code>decode_error</code>。</li></ul>
+<h3>参数</h3>
+<div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>标定</th></tr></thead><tbody><tr><td>启动 / 结束阈值</td><td>0.60 / 0.35</td><td>在 L1 之后的真实分布上标定，先满足语音漏检 ≤2%（L1+G2 端到端另评）</td></tr><tr><td>中值滤波</td><td>50 ms</td><td>对照短回应召回与噪声误检</td></tr><tr><td>结束确认</td><td>200 ms</td><td>首尾截断与多送的音频量</td></tr><tr><td>最短语音 / 短峰保留</td><td>150 ms / 原始分 ≥0.85</td><td>“嗯、好、不”单独分报，短回应召回 ≥95%</td></tr><tr><td>余量</td><td>前 400 ms、后 700 ms</td><td>首尾截断 ≤1%</td></tr><tr><td>窗口</td><td>核心 15 s 起，含上下文 ≤ min(45 s, 8B 实测上限)</td><td>15/30/45 s 扫描，看 CER、幻觉与吞吐</td></tr><tr><td>强切上下文</td><td>两侧 400 ms</td><td>切点 ±1 s 的 CER 比全段高 ≤2 个点</td></tr></tbody></table></div>
+<h3>失败与恢复</h3>
+<ul><li>CPU 小模型池不可用：排队，不降级（没有 VAD 无法安全判定），不切到“全送 8B”。</li><li>“每个对象只解码一次”指同一次执行内复用；崩溃接管、跨作业读上下文会重新解码。</li><li>若启用 PLC、FEC 或补零，样本标 <code>concealed</code>，计入 <code>unknown</code>：不判非语音、不充当声学支持。</li></ul>
+<h3>测试与验收</h3>
+<ul><li>编码测试集：单流、多流、80 ms 预卷、非零 <code>pre_skip</code>、末包裁剪；每个保留区间首尾都有短音节，检查没有重复扣除预卷、第一个样本对齐 <code>core_from</code>；800 ms 停顿在加余量后仍能被找到；整段非语音与只有损坏区的作业能闭合覆盖账；10 分钟无停顿连续说话的尾部不超过一个窗口；DTX、坏页、截断尾部、重启世代、长 L1 丢弃区间。</li><li>150 ms 回应、低声“不是”、连续真实重复、跨窗口的否定词；输出词不落入已知缺口或预卷区。</li><li>指标（§5.10）：语音漏检 ≤2%、短回应召回 ≥95%、首尾截断 ≤1%、切点附近 CER 差 ≤2 个点，分别验收。</li></ul>
+<h3>未决</h3>
+<ul><li>8B 的输入上限（§13），决定窗口上限。</li></ul>
+</section>
+
+<section id="dd-g3" data-label="详设 7">
+  <h2><span class="no">7</span>播放检测（G3）</h2>
+  <p class="ncs" data-dd-of="c-play c-scene">契约：</p>
+<h3>职责与边界</h3>
+<ul><li>分开回答：是否含<b>经扬声器重放</b>的语音；是否含<b>现场真人</b>语音；两者是否<b>同时存在</b>；是否有<b>媒体底噪</b>（音乐、笑声、掌声）。</li><li><b>只打标签。</b> 处置由 G6、G7 决定。外放远端会议应被正确识别为重放，同时仍可由 G6/G7 判为参与者；所以“经扬声器播放”与“应该记录的对话”是两个问题。</li><li>不做：判断内容是否相关（G6）；判定疑似回放机主录音（需要声纹，在 G5 与 G7 合成）。</li></ul>
+<h3>原理</h3>
+<ul><li>扬声器重放会留下痕迹：小扬声器的低频滚降与高频谐振、功放与压缩失真、房间二次混响。线性或常 Q 倒谱（LFCC、CQCC）把频响细节展开，轻量卷积网络（LCNN、ResNet 一类）在其上学“经过扬声器”与否。</li><li>局限：分类器可能学到扬声器、麦克风、房间与编码链的偶然差异，在未见环境上不泛化（ASVspoof 2021 对物理回放的分析报告过这类鲁棒性问题）。好音箱近距离重放与真人难分；16 kb/s Opus 抹掉部分高频细节。所以训练与评测都用 Opus 编码后的领夹录音，按未见扬声器、房间、节目分开报。</li><li>字段语义分开：<code>p_playback_acoustic</code> 只含声学证据；<code>p_playback_fused</code> 才融合场景先验。<code>p_live</code> 与 <code>p_playback</code> 不互补，混合声是单独训练的一个输出，不用两者相乘冒充。</li><li>一期单麦不能可靠地把窗口级回放概率分给窗口里的每个说话人；片段级聚合时只用与该轮次重叠的窗口，并记下证据分辨率的限制。</li><li><b>聚合保留位置。</b> 一个轮次前 28 秒是真人、末 2 秒出现电视，若只存 <code>max</code> 与 <code>any</code>，短暂证据会扩展到整个轮次，删掉音频后也无法恢复位置。所以片段除标量外还保留按 1 秒量化的<b>证据区间</b>（回放、混合、媒体底噪各自的高证据区间）与有效覆盖比例。窗口概率的加权均值不是校准过的轮次概率：片段级分数另用片段级校准器（按轮次长度分组）。</li></ul>
+<h3>数据结构</h3>
+<pre><code>SceneCoverage { source_range, coverage: "observed"|"unknown"|"stale", clock_uncertainty_ms,
+                media_speaker: bool?, call_speaker: bool?, meeting_hash? }
+G3Window      { source_range /* 3 s 窗、1 s 步进 */, p_playback_acoustic?, p_live?, p_mixed?, p_media_bg?,
+                p_playback_fused?, coverage: { acoustic: "valid"|"too_short"|"invalid", scene: "observed"|"unknown"|"stale" } }
+G3Seg         { p_playback_acoustic?, p_playback_fused?, p_media_content?,   // 片段级校准后的标量
+                playback_spans: [SourceRange],            // 来自 p_playback_fused，含场景先验
+                playback_acoustic_spans: [SourceRange],   // 来自 p_playback_acoustic，疑似回放判定用这个
+                mixed_spans: [SourceRange], media_spans: [SourceRange],
+                valid_coverage: float,            // 有有效声学证据的时长 ÷ 轮次时长
+                resolution_ms: 1000, calibration_version, coverage }       // 写进片段 scores</code></pre>
+<h3>算法</h3>
+<pre><code>def g3(dec, scene, versions):
+    out = []
+    for w in windows(dec, size_ms=3000, hop_ms=1000):           # 原始设备时间上的窗口，只取 original 样本
+        if valid_fraction(w) &lt; 1/3: out.append(G3Window(w, acoustic="too_short")); continue
+        lf = lfcc(w.pcm, n_filters=70, n_ceps=20, deltas=True)
+        a = replay_model(lf)                                    # 输出 replay_logit 与 live_logit
+        m = mixed_head(lf)                                      # 混合声单独训练
+        t = audio_tagger(w.pcm)                                 # AudioSet 类别：music、tv、laughter、applause
+        sc = scene_for(scene, w.source_range)                   # 不确定范围跨过一次路由变化 → unknown
+        x = { "replay": a.replay_logit, "media": logit(max(t.music, t.tv, t.laughter, t.applause)),
+              "mixed": m.logit, "phone_speaker": obs(sc.media_speaker), "call_speaker": obs(sc.call_speaker),
+              "scene_missing": sc.coverage != "observed", "clock_unc": sc.clock_uncertainty_ms,
+              "valid_frac": valid_fraction(w) }
+        out.append(G3Window(w, p_playback_acoustic=CAL_A(a.replay_logit), p_live=CAL_L(a.live_logit),
+                            p_mixed=CAL_M(m.logit), p_media_bg=CAL_T(x["media"]),
+                            p_playback_fused=CAL_F(FUSION(x)), scene=sc.coverage))
+    return out
+
+def aggregate(turn, W):                                         # 在 G5 切出轮次后、同一作业内
+    ws = [w for w in W if overlap_ms(w, turn) &gt; 0 and w.coverage.acoustic == "valid"]
+    if not ws: return G3Seg(coverage="none")
+    wt = [overlap_ms(w, turn) for w in ws]
+    feats = seg_features(ws, wt)                                # 加权均值、最大值、高证据占比、轮次长度
+    return G3Seg(p_playback_acoustic=CAL_SEG_A(feats.acoustic), p_playback_fused=CAL_SEG_F(feats.fused),
+                 p_media_content=CAL_SEG_T(feats.media),
+                 playback_spans=spans_where(ws, "p_playback_fused", "&gt;=", 0.8, clip=turn, quant_ms=1000),
+                 playback_acoustic_spans=spans_where(ws, "p_playback_acoustic", "&gt;=", 0.8, clip=turn, quant_ms=1000),
+                 mixed_spans=spans_where(ws, "p_mixed", "&gt;=", 0.5, clip=turn, quant_ms=1000),
+                 media_spans=spans_where(ws, "p_media_bg", "&gt;=", 0.5, clip=turn, quant_ms=1000),
+                 valid_coverage=covered_ms(ws, turn) / turn.duration_ms)</code></pre>
+<p><code>obs(v)</code> 把 <code>None</code> 编码为“缺失指示位 = 1、取值 = 0”；融合器必须在含缺失模式的数据上训练。逻辑回归作基线，梯度提升树作对照；标准化参数与缺失处理一起版本化。片段级标量与 1 秒量化的证据区间写进 <code>scores</code>；窗口级概率随作业结束丢弃。G6/G7 按区间处置（只隔离电视那 2 秒对应的文字），不按整轮。</p>
+<h3>训练与标定数据</h3>
+<div class="tbl"><table><thead><tr><th>维度</th><th>必须覆盖</th></tr></thead><tbody><tr><td>声源</td><td>现场真人、回放机主本人、回放他人、线上会议远端、电视普通对话</td></tr><tr><td>混合</td><td>真人与媒体同时、轮流、低声真人被媒体盖住；现场与外放相对声级 −15、−5、0、+5、+15 dB</td></tr><tr><td>硬件</td><td>手机、笔记本、电视、蓝牙音箱、智能音箱；不同领夹</td></tr><tr><td>声学</td><td>房间、距离 0.5–3 m、朝向、衣物遮挡</td></tr><tr><td>链路</td><td>设备实际处理、16 kb/s Opus、不同音量</td></tr><tr><td>场景先验</td><td>正确、缺失、过期、与实际声源无关</td></tr></tbody></table></div>
+<p>同一节目、同一说话内容及其重录版本必须在同一数据划分；测试集分别留出未见扬声器、未见房间、未见节目，以及三者同时未见的组合。按 D14 自建采集，公开数据只作方法参考与外部对照。</p>
+<h3>参数</h3>
+<div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>标定</th></tr></thead><tbody><tr><td>窗口</td><td>3 s、步进 1 s；有效音频 &lt;1 s 标 too_short</td><td>2/3/4 s 扫描，看 EER 与时间分辨率</td></tr><tr><td>LFCC</td><td>70 个滤波器、20 维倒谱 + 一二阶差分</td><td>与 CQCC 对照</td></tr><tr><td>融合后的展示标签</td><td>p_playback_fused ≥0.8</td><td>只作展示与统计；处置阈值在 G7 定</td></tr><tr><td>校准</td><td>保序回归，按部署分布</td><td>报可靠性曲线、Brier 分数与分组误差</td></tr></tbody></table></div>
+<h3>失败与恢复</h3>
+<ul><li>场景缺失：走声学路径并记录缺失，不补成“未外放”。单个模型无结果：对应字段为空。</li><li>超时是依赖故障，按 CPU 池等待策略排队，不转换成 <code>p = 0</code>；音频太短、损坏属正常弃权，不无限重试。</li></ul>
+<h3>测试与验收</h3>
+<ul><li>R2a 物理回放检测（EER，未见条件分开报）；外放远端会议保留率 ≥95%<span class="tg go">目标</span>；真人与播放同时存在时真人被误隔离的比例；“回放机主本人”与“现场机主”对照；场景缺失时的退化。</li><li>R4 ≤3% 是整条处置链的预算，不给 G3、G4、G6 各分 3% 再取并集；按说话人聚类求置信区间。</li><li>消融：去掉场景先验、去掉媒体底噪，各自对 R2b 与 R4 的影响，防止模型只靠“手机正在外放”判断。</li></ul>
+<h3>与提案的差异</h3>
+<ul><li><code>c-play</code> 区分纯声学分与融合分；§5.10 补混合声的标注与概率定义；<code>c-scene</code> 补观测覆盖的终点与时钟不确定性。</li><li>R2a 的“正确回放”可能是应保留的远端会议，不能直接拿 R2a 的阈值实现 R2b。</li></ul>
+</section>
+
+<section id="dd-8b" data-label="详设 8">
+  <h2><span class="no">8</span>8B 主干转写</h2>
+  <p class="ncs" data-dd-of="c-asr">契约：</p>
+<h3>职责与边界</h3>
+<ul><li>对每个识别窗口解码一次，带冻结的偏置表快照；输出原始文字、时间信息、可用的候选与置信特征；允许空输出。</li><li>关闭顺滑、去口误、书面化、敏感词替换：下游要的是说了什么。默认不做全量第二遍解码（D9），不用前文转写检索热词（D52）；前文提示是一期关闭的变体（D46）。</li><li>不做：说话人标注；专名纠错（详设 13）；幻觉判断（详设 9）。</li></ul>
+<h3>能力探测</h3>
+<p>8B 型号未定（§13），能力必须探测而不是按参数量推定。上线前填这张矩阵，缺项决定可用的偏置方式与下游降级：</p>
+<pre><code>ASRCapabilities { max_audio_samples, bias_mode: "trie"|"prompt"|"none",
+                  pre_prune_score_hook: bool,     // 浅融合需要在束剪枝前改分；只有 beam_size 参数不够
+                  token_logprobs: bool, timestamps: "none"|"segment"|"token"|"word",
+                  nbest_max, per_request_bias_in_batch: bool, languages[] }</code></pre>
+<h3>原理：偏置的两种形态</h3>
+<p>两者的强度、候选空间与置信度含义都不同，不能共用参数或校准器，分别评测。</p>
+<ul><li><b>前缀树浅融合</b>（有剪枝前打分接口时）：把偏置词按 8B 的分词器建成前缀树（带失败链接处理重叠前缀）。搜索分 <code>S(y) = log P(y|x) + B(y)</code>，偏置分定义为</li></ul>
+<p><code>B(y) = β · Σ_{y 中已完成的词条出现} w(词条) + Φ(s(y))</code></p>
+<p>其中 <code>s(y)</code> 是 Aho–Corasick 自动机读完 <code>y</code> 后的状态，即 <code>y</code> 的<b>最长</b>一个仍是某词条前缀的后缀，所以任一时刻只有一个活跃前缀，不存在取 max 还是 sum 的问题；<code>Φ(s) = min(λ·depth(s), Φ_max)</code>，<code>depth</code> 是该前缀的 token 数。每扩展一个 token 的增量 <code>ΔB = B(y·t) − B(y)</code>，按定义直接算。走偏后状态沿失败链接退到更短的后缀，<code>Φ</code> 随之下降，等于撤回多给的分；失败链接保留的后缀仍按它自己的深度计势能。同一位置完成多个嵌套词条（“张伟”与“伟”）只奖励最长的一个；同一词条的写法变体是不同路径、共用词条 ID，在同一位置不会重复领奖。结束时减去 <code>Φ(s(y))</code>，只留完成奖励。偏置在剪枝前加，否则目标词还没走完就被剪掉（Zhao 等，Interspeech 2019）。</p>
+<p>逐 token 例子（λ = 0.3，Φ_max = 1.0，β = 2，w = 1）：</p>
+<div class="tbl"><table><thead><tr><th>词条</th><th>假设</th><th>各 token 的 ΔB</th><th>结束时 B</th></tr></thead><tbody><tr><td>张伟</td><td>张 · 伟 · 好</td><td>+0.3（张，深 1）· +2.3（伟，深 2 且完成）· −0.6（好，回根）</td><td>2.0</td></tr><tr><td>张伟</td><td>张 · 三</td><td>+0.3 · −0.3</td><td>0</td></tr><tr><td>北京、京东</td><td>北 · 京 · 东</td><td>+0.3 · +2.3（完成北京）· +2.0（失败链接到“京”再进“京东”，深度不变且完成）</td><td>4.6 − 0.6 = 4.0</td></tr><tr><td>张伟、伟</td><td>张 · 伟</td><td>+0.3 · +2.3（只奖励最长的“张伟”）</td><td>2.0</td></tr></tbody></table></div>
+<ul><li><b>提示词式</b>（8B 是音频 LLM 时）：固定模板，词表放在结构化字段里。强度只能用离散配置调：条数、总 token、排序、模板版本；不靠重复词条增强，也不假设提示里的数字权重能线性加分。偏置表按完整的缓存键复用（详设 12），同键内的窗口共享同一前缀，可命中推理服务的前缀缓存。</li></ul>
+<pre><code>任务：逐字转写音频。保留重复、口误、否定和未说完的话；不润色、不补全、不做 ITN。
+下列词条只是可能出现的拼写候选，不代表音频中一定出现。只输出听到的内容；没有可识别语音时输出空文本。
+候选词条：&lt;结构化、转义后的列表，按类别、权重排序&gt;</code></pre>
+<h3>接口</h3>
+<pre><code>ASRRequest  { request_id, job_id, win_id, pcm (仅内存), sample_count,
+              bias_snapshot_id, bias_entries: [{ id, surface, category, weight }], bias_mode, bias_config_version,
+              previous_text: null, decode_config_version, model_version, deadline_ms }
+ASRResponse { status: "ok"|"empty"|"unsupported"|"retryable_error", asr_text,
+              tokens: [{ text_span, token_id, logprob_model?, search_bias_bonus?, in_from?, in_to? }],
+              hypotheses: [{ text, model_score, search_score }],      // 能力支持时最多 3 个真实候选
+              language_spans: [{ text_span, language, confidence }],
+              confidence: { calibrated_correctness?, calibration_version?, coverage: "available"|"unavailable" },
+              finish_reason: "eos"|"empty"|"max_length"|"error" }</code></pre>
+<p>原始模型分与偏置奖励分开返回，奖励后的搜索分不能当置信度。<code>max_length</code> 不是正常结束，触发 G4 标记与容量诊断。</p>
+<h3>算法</h3>
+<pre><code>PHI = lambda s: min(LAMBDA * s.depth, PHI_MAX)
+
+def extend(hyp, token):                                   # 浅融合，每条假设独立的自动机状态
+    new_state = AC.goto(hyp.trie_state, token)            # 沿失败链接直到有该子节点或回根；blank 不推进
+    done = AC.longest_output(new_state)                   # 在此结束的最长词条（含经输出链接可达的），可为空
+    bonus = PHI(new_state) - PHI(hyp.trie_state) + (BETA * done.weight if done else 0)
+    return hyp.extend(token, model_score=logp(token), bias_score=bonus, trie_state=new_state)
+
+def finalize(hyp):
+    return hyp.score - PHI(hyp.trie_state)                # 结束时撤回未完成前缀的势能</code></pre>
+<ul><li><b>组批</b>：组批键含模型版本、偏置方式、精度、束配置；再按音频长度与提示 token 长度分桶。每个请求保有独立的前缀树、提示、掩码与停止条件；不把整批用户的词表取并集。批上限按音频帧、提示 token、输出 token 与显存实测，不只按请求数。同步请求在批边界拿预留容量，不拆开正在跑的批。OOM 时缩小批重试，不改偏置与文字配置。</li><li><b>置信度</b>：按中文、英文、混说、热词/非热词、偏置方式分别校准，目标是“该单位文字正确”；没有概率接口时返回缺失，不让模型自报把握。</li><li><b>重试</b>使用同一偏置快照；热词服务恢复后不在同一作业的重试里换词表。</li><li><b>降级</b>：执行配置的各维度独立（详设 5 的 <code>ExecConfig</code>），可以同时降级。8B 池因故障阻塞超过 12 小时（从 <code>blocked_since</code> 起算，一般排队不算）→ <code>primary_asr = 600m</code> 并标 <code>degraded</code>，落盘后恢复也不重跑。热词服务不可用且没有缓存时，在 <code>visible_deadline − estimated_remaining</code>（识别、G5 提交与文字管线的 P90）时刻决定无偏置启动 → <code>bias = none_deadline</code>，不等到用户可见截止才开始解码。</li></ul>
+<h3>参数</h3>
+<div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>扫描与选择</th></tr></thead><tbody><tr><td>偏置词数</td><td>最多 300，按详设 12 的类别配额</td><td>50/100/200/300</td></tr><tr><td>词表 token 上限</td><td>2048，且不超过模型剩余容量</td><td>512/1024/2048</td></tr><tr><td>束宽</td><td>8</td><td>4/8/16，召回与成本</td></tr><tr><td>每 token 势能 λ / 上限 Φ_max</td><td>0.3 / 1.0（自然对数）</td><td>λ 0.1/0.3/0.5，Φ_max 0/0.5/1/2</td></tr><tr><td>完成奖励 β</td><td>2.0 × 词权重</td><td>0/1/2/4</td></tr><tr><td>采样</td><td>关闭随机采样（提示词式）</td><td>评测插入与前文复制</td></tr><tr><td>组批等待</td><td>同步 50 ms、常规 500 ms</td><td>吞吐与截止时间联合调</td></tr></tbody></table></div>
+<p>数值只适用于上面的自然对数定义，不能移植别的实现里的 <code>boost = 20</code> 一类数值。四组对照（无偏置、正确、无关、同音干扰）上选满足 U-CER 劣化 ≤0.3 个点、A4 ≤0.5 / 千字的最佳热词召回配置。</p>
+<h3>域适配</h3>
+<p>先测差距再决定（§5.10）：原始 PCM 与 Opus 16 kb/s、近场与远场的 CER 差。差距明显时，用仿真链路（干净语音 → 领夹房间冲激响应 → 噪声 → Opus 编解码）加少量真实领夹录音做参数高效微调（LoRA 一类）；任何场景回退都不合入。</p>
+<h3>测试与验收</h3>
+<ul><li>单请求与混合组批的词表、输出、置信特征隔离；同前缀、同音词、英文缩写、长词、无关词表、空词表；前缀匹配失败后奖励归零、结束时不残留前缀奖励。</li><li>真实重复、口误、否定、数字不被“润色”。</li><li>指标：A1 近场 CER &lt;8%；U-CER 劣化 ≤0.3 个点<span class="tg go">目标</span>；A3 ≥90%（与纠错合计）；A4 ≤0.5 / 千字。吞吐分报纯推理与端到端（含上下文重叠、600M、组批空闲与重试）；≈100 音频小时 / 卡时是成本反推的假设（§5.13），不是部署容量。</li></ul>
+<h3>与提案的差异</h3>
+<ul><li>“支持束搜索就用前缀树”改为“有剪枝前打分接口才用”；<code>c-asr</code> 承诺的词级时间与置信度先由能力矩阵确认。</li><li>“top-3 候选”解释为最多三个真实候选，没有时明确缺失。</li></ul>
+</section>
+
+<section id="dd-g4" data-label="详设 9">
+  <h2><span class="no">9</span>600M 辅助与健康检查（G4）</h2>
+  <p class="ncs" data-dd-of="c-600m c-health">契约：</p>
+<h3>职责与边界</h3>
+<p>600M 拆成共享同一次编码的三个操作：<b>全量 CTC 后验与强制对齐</b>、<b>全量声学支持评分</b>、<b>仅对可疑窗口的独立解码</b>（交叉校验）。候选的声学评分也复用同一后验（详设 13）。</p>
+<p>G4 分前后两步，避免循环依赖：8B 输出先做文本初筛；与 600M 的后验、对齐、支持分合并后，再决定是否完整交叉解码，最后给处置建议。交叉解码不以 8B 文字为提示、不注入个人偏置表，减少两路共享同一种错误诱因；即便如此，两个模型仍可能相关出错，不能当作独立证明。</p>
+<p>G4 的“通过”只表示过了本闸门，不代替 G6/G7 授予接受档或下游资格。</p>
+<h3>原理</h3>
+<p>CTC 把含 blank 的帧级路径折叠成标签序列，一个文字序列对应多条路径。强制对齐找的是“给定文字最适合放在哪里”，不验证文字一定存在。这里的<b>声学支持</b>准确地说是：600M 对该文字的帧级支持，比它自己无文字约束的最佳帧路径差多少。</p>
+<p>设 ℓ_t(k) = log p(k | x, t)，规范化后的目标为 y。全文强制对齐的最佳路径 π* = argmax_{π: B(π)=y} Σ_t ℓ_t(π_t)。对固定帧区间 I：</p>
+<pre><code>A(I) = Σ_{t∈I} ℓ_t(π*_t)            // 强制路径在区间内的得分
+U(I) = Σ_{t∈I} max_k ℓ_t(k)          // 无约束最佳帧路径（逐帧取最大），不是概率和最大的文字序列
+g_frame(I) = (A(I) − U(I)) / |I|     ≤ 0
+g_label(I) = (A(I) − U(I)) / max(1, 区间内目标标签数)</code></pre>
+<p>两个归一化一起进校准：大量 blank 会稀释单个错词的帧均值，按标签数归一能把一个错掉的“不”字显出来。局部区间由全文对齐确定：取各目标标签的非 blank 占用帧，相邻标签之间的 blank 按中点分配；原文与候选用<b>同一区间</b>比较，不让候选自选更有利的起止帧。同音词、共享的模型错误与重叠语音都可能得到高支持，所以高支持不取消其他风险标记（D47）。</p>
+<h3>文字规范化</h3>
+<p>保留三份：<code>asr_text</code>（8B 原文，不覆盖）、<code>alignment_text</code>（适配 600M 词表的副本，带到原文跨度的可逆映射）、<code>comparison_units</code>（交叉比较用的固定单位）。</p>
+<ol><li>Unicode 规范化、大小写、空白与标点处理都版本化并保留跨度映射。</li><li>对齐副本可去标点，但不能去掉“不、没、未、not”等语义单位。</li><li>简繁转换只用于对齐副本。数字、日期、缩写需要展开时，用受限的读法候选图（一对多），不改写展示文字。</li><li>同音字不折叠成同一比较单位，否则人名错误会被掩盖。</li><li>600M 词表不支持的 token 标为不可评分，不能静默删掉后把其余部分的成功当成全文成功；不支持的语种返回 <code>unsupported</code>。</li></ol>
+<h3>接口</h3>
+<pre><code>AuxRequest  { job_id, win_id, pcm (仅内存), input_map, asr_text, language_spans,
+              modes: ["align","support","decode","score_candidates"], candidates: [{ text_span, texts[] }],
+              model_version, normalization_version }
+AuxResponse { alignment_status: "ok"|"partial"|"no_valid_path"|"unsupported"|"unavailable",
+              norm_map: [{ text_span, norm_from, norm_to, transform }],
+              aligned_units: [{ text_span, source_ranges, timing_uncertainty_ms }],
+              support: { status, g_frame?, g_label?, calibration_version? },
+              low_support_spans: [{ text_span, source_ranges, score, threshold }],
+              crosscheck: { status: "not_requested"|"ok"|"unavailable"|"unsupported", text?, disagreement?,
+                            edits: { sub, del, ins }?, key_field_diffs: [...] },
+              alternatives: [{ text_span, text, source: "asr8b"|"asr600m"|"lexicon", acoustic_delta? }] }
+HealthDecision { action: "pass"|"flag"|"quarantine"|"reject", reasons[], low_confidence_spans[],
+                 qualification_blocks: [{ text_span, products: ["verified_todo","memory"] }] }</code></pre>
+<p><code>no_valid_path</code>、<code>unsupported</code>、<code>unavailable</code> 互相区分，都不是“原文是幻觉”的证明。CTC 后验矩阵只在内存中。</p>
+<h3>算法</h3>
+<pre><code>def score_support(logp, target):
+    path = ctc_viterbi(logp, target)          # 扩展序列插 blank；相同相邻标签之间必须经过 blank
+    if path is None: return unavailable("no_valid_path")
+    deficit = gather(logp, path.labels) - logp.max(axis="labels")
+    out = []
+    for span in spans_from_alignment(path):   # 非 blank 占用帧 + 按中点分配的 blank
+        d = deficit[span.frames].sum()
+        out.append({"g_frame": d / len(span.frames), "g_label": d / max(1, span.n_labels),
+                    "dur": span.duration, "lang": span.language})
+    return calibrate_and_mark(out)            # 低于阈值的连续单位 → 低支持区间；一个字也算
+
+def g4(win, asr, aux, g2):
+    T = text_rules(asr, win)                  # 幻觉型：repeat、rate、zlib、phrase、lang_shift；另有 weak_repeat、low_conf
+    out = Decision(per_span=[])               # 处置按文字跨度，不默认整窗
+    for span in no_speech_spans(asr, g2, aux):                 # 见下
+        out.per_span.append((span, "reject", "no_speech_hallucination"))
+    rest = asr.minus(out.rejected_spans())
+    halluc = T &amp; {"repeat", "rate_hi", "rate_lo", "zlib", "phrase", "lang_shift"}   # weak_repeat 不在其中
+    if T: aux.crosscheck = m600_decode(win, bias=None)
+    level = disagreement_level(aux.crosscheck, rest, g2)
+    if halluc and level == "large":
+        out.window_action = quarantine(["asr_disagreement"] + sorted(halluc))
+    elif level == "short_mark" or "weak_repeat" in T or "low_conf" in T \
+            or aux.low_support_spans or missing_evidence(aux):
+        out.window_action = flag_low_confidence(candidates=aux.alternatives[:3])  # 低支持不进幻觉集合
+    else:
+        out.window_action = pass_()
+    return out
+
+def disagreement_level(cc, rest, g2):         # 长度基准固定为 8B 的比较单位数与原始语音时长
+    if cc.status != "ok": return "none"
+    n8, speech_s = len(cc.units_8b), duration_s(g2.speech_raw, within=rest.source_range)
+    if n8 &gt;= 10 and speech_s &gt;= 2.0:
+        return "large" if cc.disagreement &gt; 0.35 else "none"
+    if n8 &gt;= 5:
+        return "large" if cc.edits.total &gt;= 3 and cc.disagreement &gt; 0.45 else "none"
+    return "short_mark" if cc.edits.total &gt; 0 else "none"     # 8B 不足 5 个单位：只标记，不隔离
+
+def no_speech_spans(asr, g2, aux):            # 只拒绝落在可靠非语音里的跨度
+    if aux.alignment_status != "ok": return []                  # 对齐失败、部分对齐、不支持都不拒绝
+    mask = dilate(g2.speech_raw + g2.unknown, ms=TOL_MASK)    # 保守掩码：未知区当作可能有语音
+    out = []
+    for u in aux.aligned_units:
+        if u.timing_uncertainty_ms &gt; MAX_UNC: continue          # 时间不可靠的单位不参与
+        r = dilate(u.source_ranges, ms=u.timing_uncertainty_ms)
+        if within(r, g2.non_speech) and not overlaps(r, mask):
+            out.append(u.text_span)
+    return merge_adjacent(out, min_units=2)   # 至少连续 2 个单位才拒绝，单字只交给低支持</code></pre>
+<p>“对齐可靠”的计算定义：<code>alignment_status == ok</code>，且该单位的 <code>timing_uncertainty_ms</code> ≤ <code>MAX_UNC</code>。强制对齐成功本身不证明文字存在，所以这里只用它的时间位置，不用支持分。窗口前部是真人、尾部是无声插入时，只拒绝尾部跨度，前部照常走后面的规则。</p>
+<p><b>拒绝跨度的清除</b>：<code>no_speech_spans</code> 给出的跨度在 <code>PersistResult</code> 之前从 <code>asr_text</code>、<code>alternatives</code>、候选证据与坐标映射中删掉，后面的码点重新编号；片段只留被删跨度的时长与原因（<code>v-nohall</code>）。整段都被拒绝时不生成片段，覆盖账记 <code>non_speech</code>。</p>
+<p>交叉比较的单位：中文按汉字，英文按固定词法规则，混说按固定的 MER 单位；标点与大小写另报；数字同时保留词面差与规范化值差；否定、日期、人名另列关键字段差异，全段差异低也不掩盖局部否定词的变化。<code>d = Levenshtein(u_8B, u_600M) / max(|u_8B|, |u_600M|, 1)</code>。</p>
+<h3>参数</h3>
+<p>以下都是触发检查的起点，不是拒绝阈值：</p>
+<div class="tbl"><table><thead><tr><th>规则</th><th>初值与定义</th><th>语种与例外</th></tr></thead><tbody><tr><td>重复</td><td>相邻同一 n-gram 连续 ≥3 次；中文扫 1–4 字，英文扫 1–3 词</td><td>重复部分 ≤4 个单位且重复次数 ≤4（“对对对”）记 <code>weak_repeat</code>：只标记，不进幻觉集合</td></tr><tr><td>过快</td><td>中文 &gt;9 字 / 有效语音秒</td><td>英文先试 &gt;4.5 词/秒；混说按语言跨度分别算</td></tr><tr><td>过慢</td><td>中文 &lt;0.5 字/秒，且有效语音 &gt;5 s</td><td>英文先试 &lt;0.3 词/秒；排除静音、缺口、纯音乐</td></tr><tr><td>压缩比</td><td>UTF-8 字节数 ÷ zlib 压缩后字节数，&gt;2.4；短于 100 字节不触发</td><td>2.4 来自 Whisper 的 zlib 口径（不是 gzip）；按语种、长度重标</td></tr><tr><td>短语表</td><td>版本化的精确短语或规则</td><td>真实说出的“谢谢观看”不是幻觉，只触发校验</td></tr><tr><td>语种突变</td><td>持续约 2 s、≥5 个比较单位，且有高置信语言证据冲突</td><td>合法的中英切换不算</td></tr><tr><td>交叉校验长度基准</td><td>8B 比较单位数；≥10 且原始语音 ≥2 s 用长段规则，5–9 用中段规则，&lt;5 只标记</td><td>用 600M 的单位数会让“3 字对 10 字”误入长段规则</td></tr><tr><td>无语音拒绝</td><td><code>MAX_UNC</code> 300 ms，<code>TOL_MASK</code> 200 ms，连续 ≥2 个单位</td><td>用无声插入与真实短回应的对照集标定</td></tr><tr><td>低置信</td><td>校准后的正确概率 &lt;0.8</td><td>没有校准器就记缺失，不拿原始 logprob 当概率</td></tr><tr><td>局部低支持</td><td>取正确真人文字支持分布的低分位，按约 5% 的触发预算定</td><td>按语种、长度、模型版本校准；样本不足的语种不启用</td></tr></tbody></table></div>
+<p>低支持的标定：收集真实正确文字、真实 ASR 错误与关键字段错误（人工造错只作补充）；按说话人与会话划分；调参集上使正确真人文字的误触发 ≤5%，约束内最大化否定、数字、日期、人名错误的捕获率；测试集冻结阈值后分报 token 误触发率、受影响片段率、取消资格比例与关键字段召回。“约 20% 送交叉校验”是容量估算，超过时告警、排队、扩容，不能把剩下的当作通过。</p>
+<h3>失败与恢复</h3>
+<ul><li>600M 不可用：不能产出“高支持”。超过 12 小时按提案降级：可疑片段标 <code>low_confidence</code> 并记证据缺失原因；对齐退回 8B 时间戳（若有）。8B 与 600M 都给不出时间信息时，不伪造词级归属与核心区去重，继续等待或最终登记失败。</li><li>8B 已降级为 600M 时，600M 的另一遍输出不再称为独立交叉校验。</li><li>600M 不支持某语种：只取消对应证据，不按识别差异隔离该语种。</li><li>有语音但 8B 空输出：标为潜在漏识别，不当作非语音完成。</li></ul>
+<h3>测试与验收</h3>
+<ul><li>窗口前半真人、后半无声插入，只拒绝后半；8B 3 字、600M 10 字只标记不隔离；长窗口中的“对对对”不进幻觉集合；对齐 <code>partial</code> 时不拒绝。</li><li>最小对照：“要 / 不要”“可以 / 不可以”“周二 / 周四”“十五 / 五十”；同音人名、词表外的正确词、英文缩写、数字读法、中英切换；真重复与模型循环；真实说出的幻觉短语与无声插入；远场、口音、耳语、重叠下的正确文字；两模型一致但同时错、两模型分歧但 8B 正确；blank 占比很高时一个错误否定词仍能触发局部检查。</li><li>指标：A5 ≤1 事件/小时；低支持的真人误触发 ≤5%<span class="tg go">目标</span>；A6、G4 新增误隔离、交叉校验触发比例、共同错误漏检、候选覆盖率（报告）；600M 各子操作（编码、对齐动态规划、候选评分、完整解码）的实测成本分开报。</li></ul>
+<h3>与提案的差异</h3>
+<ul><li><code>c-600m</code> 与 §5.10 补上声学支持的精确定义（逐帧最大的无约束路径、blank 分配、两种归一化）。</li><li>§5.1 的“gzip 压缩比约 2.4”改为 zlib 口径，并按语种重标；字速阈值按语种分开。</li><li>§5.1 的“无语音帧”补时间容差：只在音频有效、对齐可靠、保守语音掩码仍无覆盖时拒绝。</li><li>§13 的“600M 是否有 CTC 头”是一期开工前必须关闭的依赖：没有就另选支持所需语种的 CTC 模型并重新核算成本。</li></ul>
+</section>
+</main>
+</div>
+
+<div id="tip" role="tooltip" hidden></div>
+<script src="contracts.js"></script>
+<script src="site.js"></script>
+</body>
+</html>

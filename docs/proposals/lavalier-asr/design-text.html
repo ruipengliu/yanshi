@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>领夹 ASR · 详细设计 · 裁决、文字与删除</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@600;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="design-text.html">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="ahp"/></marker>
+    <polygon id="hex" points="0,-14 12.1,-7 12.1,7 0,14 -12.1,7 -12.1,-7"/>
+    <symbol id="lock" viewBox="0 0 12 14"><rect x="1" y="6" width="10" height="8" rx="1.5"/><path d="M3.5 6V4a2.5 2.5 0 0 1 5 0v2" fill="none" stroke-width="1.6"/></symbol>
+  </defs>
+</svg>
+
+<div class="wrap">
+<aside class="side" id="side" aria-label="导航与图例"></aside>
+
+<main>
+<header class="phead">
+  <p class="crumb"><a href="index.html">领夹 ASR 整体方案</a> / 详细设计</p>
+  <h1>详细设计 · 裁决、文字与删除</h1>
+  <p class="lede">相关性门控（G6）、三档裁决与写入资格（G7）、对话单元、入库闸门（G8）与溯源，以及删除服务与删除链。除删除链的前半段外，这里都只读文字。</p>
+<div class="note"><b>读法。</b>每节按同一模板：职责与边界、原理、流程、数据结构与接口、算法、参数、失败与恢复、测试与验收、未决项。贯穿本页的约定：<b>上下文就绪、片段裁决、单元定稿、产物核验、删除完成</b>是五个独立的状态，各有版本，不能互相代替；否则会出现循环依赖、旧结果覆盖新结果，或删除后被异步任务写回。引用一律带版本：<code>segment_id + segment_rev</code>、<code>unit_id + generation + input_revision</code>；片段有两种版本：<code>evidence_rev</code>（文字、身份、来源证据等输入变了才递增）与 <code>decision_rev</code>（档位、资格等派生结果）；上下文摘要只看前者，写一次档位不会触发自己的重算。文字跨度沿用前几页的 <code>text_revision</code> + 码点；擦除代次统一叫 <code>erasure_epoch</code>；身份级别沿用详设 10 的 <code>none | timeline | identity_evidence</code>，用户确认另记来源 <code>user_confirmed</code>。所有持久化命令带 <code>request_id</code>、预期版本与 <code>erasure_epoch</code>，同键同内容返回原结果，同键不同内容返回冲突。资格取 <code>pass | fail | unknown | deferred</code>，不是布尔值。LLM 调用只读文字与元数据，输出先按模式校验，不合格重试一次后丢弃（§5.13）；模型不能提交 <code>verified</code>、<code>speaker</code>、提醒开关这类权威字段，它们由代码派生。</div>
+</header>
+<section id="dd-g6" data-label="详设 14">
+  <h2><span class="no">14</span>相关性门控（G6）</h2>
+  <p class="ncs" data-dd-of="c-g6 e-elig">契约：</p>
+<h3>职责与边界</h3>
+<p>G6 回答两个不同的问题，输出分开：</p>
+<div class="tbl"><table><thead><tr><th>输出</th><th>含义</th><th>谁用</th></tr></thead><tbody><tr><td><code>p_media_content</code></td><td>属于待排除的媒体内容（电视、视频里的台词与广告）的概率</td><td>G7 判来源风险</td></tr><tr><td><code>p_related</code></td><td>属于机主正在参与、记录或明确要保留的对话的概率</td><td>单元的参与者与背景、产物资格</td></tr><tr><td><code>kind</code></td><td>广告、播报、歌词、普通对话、引用、口述记录等描述性标签</td><td>展示与统计</td></tr></tbody></table></div>
+<p>三者不能互相替代：真人引用广告词可以相关；外放的远端会议是物理回放，但相关；电视里的普通对话没有明显的媒体文风。</p>
+<ul><li>片段级结论；“某簇是参与者”只是单元内的汇总，不写成簇的永久属性。同一人一部分话相关、一部分是跟邻座闲聊，是正常的。</li><li>不做：改说话人、认定声学证据级、补写文字、直接授予待办或记忆资格；读音频（G6 没有音频访问权，但不必等手机回执）。</li></ul>
+<h3>原理</h3>
+<ul><li>文风判断对风格化内容有效，对“电视里的普通对话”和“在场真人的闲聊”帮不上，后两类要看<b>互动</b>：称呼（“小王你……”）、问答配对、语义承接、互动间隔，加上声源证据（G3 纯声学分、场景外放）。</li><li><b>两个作用域，打破循环。</b> 单元的切分用到相关性，相关性又要上下文；所以先在不依赖正式单元的时间窗上算 <code>base</code>，供 G7 与切分使用；单元关闭时，对上下文变了的片段再算一次 <code>unit_final</code>，确定参与者与背景。同一个输入快照内，<code>unit_final</code> 不反向驱动自己的边界：发现需要改档位或切分，就产生一个新的输入修订事件，由调度器重开，不在一个事务里迭代到“看起来稳定”。</li><li><b>LLM 给的数字不是概率。</b> 先把 LLM 原始分与结构化特征用逻辑回归融合成一个标量，再对这个标量做保序回归；校准效果只能在留出数据上验证，换了部署分布要重新检查（Guo 等，ICML 2017）。</li><li>簇先验只用窗口里除目标片段之外的可靠判断，且有最小支持量；本轮输出不反复喂回下一轮放大。</li></ul>
+<h3>流程</h3>
+<p><code>WAIT_CONTEXT → READY → RUNNING → COMMITTED</code>；模式两次不合格 → <code>DISCARDED</code>；服务不可用 → 排队；输入版本变化 → <code>STALE</code>；命中擦除屏障 → <code>ERASED</code>。</p>
+<p>就绪规则（<code>base</code>）：</p>
+<ol><li>目标片段已经由 <code>PersistResult</code> 提交。</li><li>取目标前后各 60 秒的片段，合计 ≤2,000 token，目标本身不得被截掉。</li><li>“右侧上下文到齐”由覆盖账与 G5 处理进度证明（右侧 60 秒的帧都有终结结果，或已登记缺口），不能由“目前没查到后文”推断。已知录音结束可以关闭右边界；缺口终结等待，但快照标 <code>forced_partial</code>。</li><li>等待截止 = min(开始等待 + 15 分钟, 可见截止 − 后续处理预算)；已在等待的片段被立即同步提升时立即解除等待。超时用 <code>forced_partial</code> 快照，相关性允许弃权。上传按“累计 30 分钟有效音频或最旧分片超过 2 小时”触发，右侧上下文常常要等下一批，所以单元关闭时的 <code>unit_final</code> 是兜底。</li><li>单元关闭时，对上下文快照与 <code>base</code> 不同（迟到文字、边界变化、用户编辑）的片段补跑 <code>unit_final</code>；输入摘要只由实际读取的文字、身份、来源证据、覆盖与上下文的 <code>evidence_rev</code> 算出，相同就复用，结果相同也不产生新的修订事件。</li><li>G6 读 8B 原文 <code>asr_text</code>；专名纠错（默认关闭）在 G6 之后、G7 之前运行，只产出 edits，不触发 G6 重算；用户改字产生新的 <code>text_revision</code>，在单元关闭时进入 <code>unit_final</code>。</li></ol>
+<p>已隔离的片段在别人的上下文里只给占位；因上游硬条件已隔离、无需再读文字的目标，G6 记 <code>not_evaluated</code>，不伪记为“不是媒体”。</p>
+<h3>数据结构与接口</h3>
+<pre><code>ContextSnapshot { snapshot_id, input_digest /* 由引用、版本与覆盖状态算出，不用正文作长期指纹 */,
+                  scope: "base"|"unit_final", unit_ref?: {unit_id, generation},
+                  target_refs: [{segment_id, segment_rev}], context_refs: [{segment_id, segment_rev}],
+                  interval_utc, completeness: "complete"|"recording_end"|"forced_partial"|"token_capped",
+                  missing_ranges: [{range, cause}], coverage_revision, erasure_epoch }
+G6InputSegment  { segment_id, segment_rev, t_rel_s, text, speaker: "机主"|"他人-3"|"未知",
+                  identity_grade: "timeline"|"evidence"|"user_confirmed"|"unknown",
+                  source: { playback_acoustic_spans, media_spans, mixed_spans, valid_coverage },   // 来自 G3 片段证据
+                  scene: { media_route, call_route, meeting_ref?, coverage }, low_support_spans }
+G6Features      { addressing: bool, qa_pair_with_owner: bool, sim_owner_prev?, sim_owner_next?,
+                  gap_to_owner_s?, cluster_prior? }                   // 代码先算好
+G6Result        { snapshot_id, segment_id, segment_rev, status: "ok"|"abstained"|"discarded"|"not_evaluated",
+                  kind, p_media_raw?, p_media_content?, p_related_raw?, p_related?,
+                  engagement: "participant"|"background"|"undetermined",
+                  evidence_spans: [TextSpan], interaction_links: [{other_segment_id, relation, score}],
+                  missing_dimensions[], model_version, prompt_version, calibration_version }</code></pre>
+<p>结构化特征一边作 LLM 的输入，一边作校准模型的独立特征：称呼用规则匹配（个人热词中的人名、呼语）；问答配对看问句（疑问词、句末问号）后 3 秒内是否换人应答；语义承接用句向量余弦；互动间隔是到最近机主轮次的秒数。</p>
+<p>内部接口 <code>ClassifyContext {request_id, snapshot_id, expected_input_digest, erasure_epoch} → {status: queued|completed|discarded|stale|erased, result_ids, retry_after_ms?}</code>。快照由服务端加载，调用方不能传入“该簇已经是参与者”之类未登记的结论。</p>
+<h3>算法</h3>
+<pre><code>def classify(snap):
+    assert_current(snap)
+    items = load_exact_revisions(snap)
+    raw = llm_json(SMALL_LLM, PROMPT_PREFIX, render(items, snap), schema=G6_SCHEMA, retries=1)
+    if raw is None: return commit_if_current(snap, discarded(items))
+    require_refs_in(raw, items)                                  # 输出只能引用快照里的片段与跨度
+    out = []
+    for it in raw.items:
+        x = features(it, snap.completeness)                     # LLM 原始分 + 结构化特征 + 声源证据 + 是否机主（强先验，不直接定结论）+ 缺失掩码
+        pm, pr = ISO_MEDIA(LR_MEDIA(x)), ISO_REL(LR_REL(x))      # 先融合成标量，再保序校准；按完整度分组
+        if it.user_engagement:      eng = it.user_engagement     # 用户设置的参与者 / 背景优先
+        elif it.insufficient:       eng = "undetermined"
+        elif pr &lt;= T_BACKGROUND:    eng = "background"
+        elif pr &gt;= T_PARTICIPANT:   eng = "participant"
+        else:                       eng = "undetermined"
+        out.append(G6Result(it, p_media_content=pm, p_related=pr, engagement=eng))
+    return commit_if_current(snap, out)                         # 快照已过时就丢弃，不覆盖新结果</code></pre>
+<ul><li><b>提示词</b>：指令与输出模式放在稳定前缀，窗口内容放在末尾，以利用前缀缓存。只分类、不改写；电视或视频里的对话即使像真人对话也按媒体判；线上会议外放的远端发言与机主有问答往来，按参与者判。</li><li><b><code>undetermined</code> 的去向</b>：只在时间线显示，不进纪要上下文、不支撑待办与记忆。邻座闲聊进了上下文，纪要会准确复述它，蕴含核验也会通过，但仍然违反 N3；标“来源不确定”解决不了“不相关”。代价是中间区里的真参与者进不了纪要，所以另报 <code>undetermined</code> 比例与它造成的 N2 损失。机主本人的话只是强先验：用户把一段改标为机主，不会顺带让相关性通过。</li><li><b>幂等键</b>：<code>(scope, target_refs, context_refs /* 带 evidence_rev */, completeness, 簇先验摘要, model_version, prompt_version, calibration_version, policy_version)</code>；只用 <code>segment_id + 管线版本</code> 不够，旧上下文的结果会覆盖新结果。</li></ul>
+<h3>参数</h3>
+<div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>标定</th></tr></thead><tbody><tr><td>上下文</td><td>前后各 60 s、≤2,000 token</td><td>扫描 30/60/120 s，看参与者误排、N3、时延与费用</td></tr><tr><td>等待右侧上下文</td><td>最多 15 分钟</td><td>回放真实的分批到达顺序，看完整度提升与可见时延</td></tr><tr><td>T_PARTICIPANT / T_BACKGROUND</td><td>0.80 / 0.20，中间为未定（不进纪要）</td><td>在参与者误判为背景 ≤3%<span class="tg go">目标</span> 的约束下选覆盖率；背景阈值单独控“把真人参与者排除”的风险</td></tr><tr><td>簇先验最小支持</td><td>3 个独立轮次且 10 s 有效发言</td><td>按短回应、少发言会议分别消融</td></tr><tr><td>校准分箱</td><td>10 个等样本量箱</td><td>报 ECE、Brier 与可靠性曲线，不只报 ECE</td></tr></tbody></table></div>
+<p>标注集包含完整对话、真实上传顺序与缺口，覆盖 §5.10 的五个切片；训练、校准、阈值选择、测试分开，相邻重叠窗口不跨集合；按机主划分，另隔离节目、房间与播放设备。</p>
+<h3>失败与恢复</h3>
+<ul><li>小 LLM 不可用：排队，片段暂不可见；音频删除不受影响，也不延长音频保留。</li><li>两次模式失败或弃权：不改档位、不标背景；相关性记 <code>unknown</code>，不进纪要上下文、已核实待办与记忆（§5.13）；时间线照常由 G7 决定。</li></ul>
+<h3>测试与验收</h3>
+<ul><li>同一录音按顺序、逆序、分批、缺一批到达，完整快照的最终结果一致。</li><li>电视台词与机主真实问答交错；引用广告；边听边说；外放远端会议；只有机主一句话的会议不能把其他人全判背景；簇里多数相关、某段转向邻座，片段结论能覆盖簇先验。</li><li>指标（§5.10）：N3 纪要混入 ≤5%；参与者误判为背景 ≤3%<span class="tg go">目标</span>；ECE ≤0.05<span class="tg go">目标</span>；另报弃权率与产出覆盖率。对照：同特征的微调小型文本分类器，在同一风险上限下比覆盖率、费用与缺上下文时的表现。</li></ul>
+<h3>与提案的差异</h3>
+<ul><li><code>c-g6</code> 需要前后文，<code>d-unit</code> 又依赖 G6：补 <code>base</code> / <code>unit_final</code> 两个作用域。§6.2 的 <code>engagement</code> 在单元关闭时才定，切分用的是 <code>base</code>。</li><li>§5.11 的幂等键补上下文版本。<code>c-g6</code> 的“音频已删除”改为“无音频访问权”：文字管线由 <code>job.persisted</code> 触发，不等删除。</li></ul>
+</section>
+
+<section id="dd-g7" data-label="详设 15">
+  <h2><span class="no">15</span>三档裁决与写入资格（G7）</h2>
+  <p class="ncs" data-dd-of="c-verdict c-store d-acc d-iso v-nonspeech v-nohall v-disagree v-replay v-playback v-accept">契约：</p>
+<h3>职责与边界</h3>
+<p>G7 输出两样东西：<b>档位</b>（接受 / 隔离 / 拒绝）与<b>能力限制</b>（四种产物在四个维度上现在能确定什么、还要等什么）。</p>
+<ul><li>四维按 D45：<b>身份、文字可靠性、相关性、语义支持</b>。来源安全由档位这个前置条件表达：只有接受档往下走。</li><li>片段在 G7 完成后才对 App 可见（<code>segment.final</code>）。</li><li>不做：参与者与背景（单元关闭时）；某句话是否足以证明某条待办（此时还没有动作、承担人、期限，G8 才能定）。</li></ul>
+<h3>原理</h3>
+<ul><li><b>硬条件直接定档，概率先融合再定档。</b> 播放声、媒体内容这些概率判断，如果每条各设一个保守阈值再取并集，真人误隔离会层层累加、突破 R4；所以融合成一个概率，再在合并后的 R4 上限下选阈值。各模块概率不直接相乘，G3 的融合分与它的全部输入也不重复计入。</li><li><b>融合的训练标签是“应排除的无关播放内容”</b>，不是“物理上经过扬声器”，否则外放会议天然被误隔离。免提通话期间屏蔽“本机正在外放”这一证据，其他独立证据照用。</li><li><b>只收紧不放宽</b>指<b>一次裁决之内</b>：多个原因合并时取最严，缺失证据不当作通过。上下文快照变了（例如后文到齐，证明那是远端会议）就在新快照上从头裁决，不与旧档位比严，这样完整快照的结果与到达顺序无关；旧快照上的误隔离因此能自动恢复。用户“放回”是单独的、可审计的授权覆盖，只覆盖那一次裁决；参与者与背景、资格随新上下文重算。</li><li><b>全部原因都记，包括没算的。</b> 每个原因记 <code>hit | miss | unknown | not_evaluated</code>；G2 判为非语音的内容没有文字，后面的原因记 <code>not_evaluated</code>，不为了补原因去跑无意义的识别，统计也不把“没算”当“未命中”。</li></ul>
+<div class="tbl"><table><thead><tr><th>原因节点</th><th>生效条件</th><th>处置</th></tr></thead><tbody><tr><td><code>v-nonspeech</code></td><td>G2 判定的非语音区间</td><td>拒绝，本来就没有文字</td></tr><tr><td><code>v-nohall</code></td><td>G4 指定的无语音幻觉<b>文字跨度</b></td><td>只拒绝该跨度：作业在 <code>PersistResult</code> 之前从 <code>asr_text</code>、候选与坐标映射中删掉它（详设 9），落盘的片段只留时长与原因</td></tr><tr><td><code>v-disagree</code></td><td>G4：幻觉型触发成立，且交叉识别分歧大</td><td>隔离</td></tr><tr><td><code>v-replay</code></td><td>G5 的疑似回放规则成立</td><td>隔离</td></tr><tr><td><code>v-playback</code></td><td>融合后的“应排除播放内容”概率 ≥ 阈值</td><td>隔离</td></tr><tr><td><code>v-accept</code></td><td>没有成立的拒绝或隔离原因</td><td>接受，可带缺证据标记</td></tr></tbody></table></div>
+<p><code>low_confidence</code>、说话人未知、相关性未知、背景发言都不能单独触发拒绝或隔离。</p>
+<figure class="ddfig"><div class="fighead"><div><b>G7 的裁决</b></div></div><div class="fig wide"><svg viewBox="0 0 900 270" role="img" aria-label="硬条件直接拒绝；幻觉分歧与疑似回放来自 G4、G5；播放与媒体先融合成一个概率再按阈值隔离；全部原因都记下，取最严的一档，接受档再按四维给出能力限制；用户放回是单独的覆盖"><path class="e" d="M105 82L105 140" marker-end="url(#ah)"/><text class="tiny lb" x="109" y="106">命中</text><path class="e" d="M305 82L305 110L520 110L520 140" marker-end="url(#ah)"/><text class="tiny lb" x="524" y="105">命中</text><path class="e" d="M520 82L520 140" marker-end="url(#ah)"/><text class="tiny lb" x="524" y="106">≥ 阈值</text><path class="e" d="M620 56L650 56" marker-end="url(#ah)"/><path class="e" d="M105 30L105 14L765 14L765 30" marker-end="url(#ah)"/><path class="e" d="M305 30L305 14L765 14L765 30" marker-end="url(#ah)"/><path class="e" d="M765 82L765 140" marker-end="url(#ah)"/><text class="tiny lb" x="769" y="106">都未命中</text><path class="e d" d="M765 220L765 192" marker-end="url(#ah)"/><g class="nd"><rect x="20" y="30" width="170" height="52" rx="8"/><text class="t c" x="105" y="53">硬条件</text><text class="s c" x="105" y="69">非语音 · 无语音跨度</text></g><g><rect class="drop" x="20" y="140" width="170" height="52" rx="8"/><text class="t c" x="105" y="163">拒绝</text><text class="s c" x="105" y="179">只留时长与原因</text></g><g class="nd"><rect x="220" y="30" width="170" height="52" rx="8"/><text class="t c" x="305" y="53">G4 · G5 原因</text><text class="s c" x="305" y="69">分歧 · 疑似回放</text></g><g class="nd"><rect x="420" y="30" width="200" height="52" rx="8"/><text class="t c" x="520" y="53">播放融合</text><text class="s c" x="520" y="69">纯声学 · G6 媒体 · 场景</text></g><g><rect class="iso" x="420" y="140" width="200" height="52" rx="8"/><text class="t c" x="520" y="163">隔离</text><text class="s c" x="520" y="179">7 天 · 可放回</text></g><g class="nd"><rect x="650" y="30" width="230" height="52" rx="8"/><text class="t c" x="765" y="53">取最严 · 记全部原因</text><text class="s c" x="765" y="69">hit · miss · 未算</text></g><g><rect class="owner" x="650" y="140" width="230" height="52" rx="8"/><text class="t c" x="765" y="163">接受</text><text class="s c" x="765" y="179">四维能力限制</text></g><g><rect class="fb" x="650" y="220" width="230" height="40" rx="8"/><text class="t c" x="765" y="245">用户放回：只覆盖那次裁决</text></g></svg></div></figure>
+<p><b>按区间处置。</b> G3 的证据区间（1 秒分辨率）经字对齐映射到文字跨度：高证据区间 ≥2 s 且能对齐时，把片段切成子片段（ID = <code>segment_id + ":" + 起点码点</code>，稳定），各自裁决；对不齐或区间太短时整段按融合分处置。“真人 28 秒、电视 2 秒”因此只隔离电视那 2 秒的字。证据区间不含逐秒概率，融合特征只用片段级校准分与区间覆盖比例，不从区间重建时长加权概率。</p>
+<p><b>资格分三个阶段定</b>：</p>
+<div class="tbl"><table><thead><tr><th>阶段</th><th>能确定</th><th>留作 <code>deferred</code></th></tr></thead><tbody><tr><td>G7</td><td>档位、身份级别、低支持区间、<code>base</code> 相关性</td><td>具体产物的语义支持、实际引用字段的可靠性</td></tr><tr><td>单元关闭</td><td>单元成员、<code>unit_final</code> 相关性、参与者作用域、生成门槛</td><td>每条结论是否被引用支持</td></tr><tr><td>G8</td><td>具体引用范围内的四维</td><td>核实不了的字段继续 <code>unknown</code>，不强行通过</td></tr></tbody></table></div>
+<p><b>产物 × 维度</b>（§5.10 写入资格表的可执行版）：</p>
+<div class="tbl"><table><thead><tr><th>产物</th><th>身份</th><th>文字可靠性</th><th>相关性</th><th>语义支持</th></tr></thead><tbody><tr><td>时间线</td><td>任意</td><td>任意，低支持区间显示候选</td><td>接受档即可</td><td>—</td></tr><tr><td>纪要上下文</td><td>机主、参与者、未知</td><td>任意，低支持带标记</td><td>参与者（<code>undetermined</code> 与背景都不进）</td><td>每条陈述有原文跨度</td></tr><tr><td>已核实待办</td><td>按类别（详设 17）</td><td>引用的关键字段不与未修复的低支持区间相交，也不在 G4 的 <code>qualification_blocks</code> 里</td><td>参与者</td><td>引用支持动作、承担人、期限与状态</td></tr><tr><td>记忆</td><td>证据级或用户确认的机主</td><td>引用区间没有低支持，且 G4 支持状态为 <code>ok</code></td><td>参与者</td><td>本人事实</td></tr></tbody></table></div>
+<p><b>文字维度要看证据是否存在。</b> 600M 不可用（<code>support.status ≠ ok</code>、<code>alignment_status ≠ ok</code>）时低支持列表为空，不等于通过：文字可靠性记 <code>unknown</code>，已核实待办与记忆因此不过；用户明确确认的跨度除外。</p>
+<h3>数据结构与接口</h3>
+<pre><code>ReasonEvaluation { reason: "non_speech"|"no_speech_hallucination"|"asr_disagreement"|"suspected_replay"|"playback",
+                   evaluation: "hit"|"miss"|"unknown"|"not_evaluated", severity: "reject"|"quarantine",
+                   score?, evidence_refs[], affected_spans: [TextSpan], rule_version }
+Disposition      { model_tier, effective_tier: "accept"|"quarantine"|"reject", reasons: [ReasonEvaluation],
+                   primary_reason?, flags: ["low_confidence"|"degraded"|"no_bias"|"g6_unknown"],
+                   decided_at, quarantine_started_at?, expires_at?, override_action_id? }
+DimensionResult  { state: "pass"|"fail"|"unknown"|"deferred", reason_codes[], evidence_refs[],
+                   scope_spans: [TextSpan], confirmed_by_action_id? }
+EligibilityHint  { product: "timeline"|"summary_context"|"verified_todo"|"memory", disposition_allowed: bool,
+                   dims: { identity, text_reliability, relevance, semantic_support: DimensionResult },
+                   stage: "segment"|"unit"|"claim", evaluated_segment_rev, unit_generation? }</code></pre>
+<p><code>DecideSegment {request_id, segment_id, expected_segment_rev, g6_result_id?, evidence_revision, erasure_epoch, policy_version} → {status: completed|waiting|stale|erased, new_segment_rev?, disposition?, hints?}</code>。</p>
+<p>用户操作用判别联合类型，<code>user_ref</code> 从认证上下文注入：</p>
+<pre><code>SegmentAction { action_id, expected_rev, erasure_epoch,
+                action: restore {decision_id} | downgrade {reason} | relabel {speaker_ref}
+                      | edit {span, replacement} | pick {alternative_id}
+                      | engagement {scope: segment|interval|unit, scope_spans, value} }
+              → { new_rev, affected_unit_ids, action_id }</code></pre>
+<div class="tbl"><table><thead><tr><th>操作</th><th>确认了什么</th><th>没有确认什么</th></tr></thead><tbody><tr><td>放回</td><td>这次裁决可以回到接受档</td><td>身份、相关性、文字；同一原因的重试不能立刻再隔离，新证据可以产生新裁决</td></tr><tr><td>改标为机主</td><td>身份（<code>identity.source = user_confirmed</code>，可达证据级）</td><td>文字；不伪造声学高分，不更新声纹模板</td></tr><tr><td>改字、点选候选</td><td><b>实际编辑的跨度</b>的文字可靠性</td><td>身份；改了人名不等于确认同句的日期与否定词</td></tr><tr><td>标参与者 / 背景</td><td>指定作用域内的相关性</td><td>不自动应用到该簇当天所有未来发言</td></tr><tr><td>“这是电视”</td><td>降为隔离</td><td>—</td></tr></tbody></table></div>
+<h3>算法</h3>
+<pre><code>def decide(seg, g6, policy):
+    ev = [eval_nonspeech(seg), eval_no_speech_spans(seg),        # 来自 G2、G4，按跨度
+          eval_disagreement(seg.g4), eval_replay(seg.g5)]
+    x = playback_features(
+        acoustic=seg.g3.p_playback_acoustic, acoustic_span_ratio=ratio(seg.g3.playback_acoustic_spans),
+        coverage=seg.g3.valid_coverage, mixed=ratio(seg.g3.mixed_spans), media_bg=seg.g3.p_media_content,
+        media_content=g6.p_media_content if g6.ok else None, related=g6.p_related if g6.ok else None,
+        scene=mask_phone_playback_during_speakerphone(seg.scene), missing_masks=True)
+    p = CAL_PLAYBACK(x)                                          # 逻辑回归；树模型作对照
+    ev.append(ReasonEvaluation("playback", "hit" if p &gt;= TAU_ISO else "miss", "quarantine", score=p))
+    model_tier = most_severe_hit(ev, default="accept")          # 一次裁决之内取最严；不与旧快照的档位比
+    eff = apply_scoped_override(model_tier, seg.user_actions, ev) # 放回只覆盖那次裁决
+    hints = capability_hints(seg, g6, eff, semantic_support="deferred")
+    return commit_atomically(seg, ev, model_tier, eff, hints,   # 档位、可见性、资格、索引任务、出站事件同一事务
+                             expected_rev=seg.rev, erasure_epoch=seg.erasure_epoch)</code></pre>
+<ul><li><b>关键字段</b>：否定词、数字、日期时间、人名（个人热词与称呼规则识别）；G7 先给出片段里关键字段与低支持区间的交集，G8 再按实际引用的跨度判。</li><li><b>拒绝档</b>只记时长与原因，不存文字；拒绝跨度不得残留在 <code>asr_text</code>、候选、编辑历史或全文索引里。<b>隔离档</b>存文字 7 天，从首次进入这次隔离计时，重试、重新生成、重复消息都不刷新期限；只在隔离区可搜，不进单元。</li><li><b>混合声</b>无法对应到具体文字时，不因某一秒的最高回放分而隔离整轮，保留混合与来源不确定标记，由融合的工作点决定。</li><li>索引与缓存的读取也检查当前档位与擦除屏障。</li></ul>
+<h3>参数</h3>
+<div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>标定</th></tr></thead><tbody><tr><td>TAU_ISO</td><td>0.95 起扫</td><td>在<b>全部隔离规则合并后</b>的 R4 ≤3% 上限下最大化 R2b，不让各规则各用 3%；同时约束外放远端会议保留率 ≥95%</td></tr><tr><td>融合特征</td><td>片段级纯声学回放分与证据区间覆盖比例、有效覆盖、混合比例、媒体底噪、G6 两类分、场景状态、缺失掩码</td><td>标注集拟合；树模型对照</td></tr><tr><td>疑似回放、分歧阈值</td><td>沿用详设 9、10 的冻结版本</td><td>G7 不把缺失证据重新解释为否定证据</td></tr></tbody></table></div>
+<h3>测试与验收</h3>
+<ul><li>六个原因节点逐项测，并覆盖多原因同时命中、缺失、未执行。“低置信 + 大分歧 + 无幻觉型触发”必须接受并标记；一句里只有部分无语音幻觉，只移除对应跨度。</li><li>免提远端、机主边听边说、只有手机外放状态。放回后仍不能直接生成已核实待办；改身份不清除文字低支持。</li><li>指标：R3 真人误拒 &lt;2%；R4 真人误隔离 ≤3%（整体，按说话人聚类求上界）；各产物的风险—覆盖曲线；按维度真正关闭模块做配对消融，不能只统计 reasons。同一输入、同一版本，G7 结果完全确定。</li></ul>
+<h3>与提案的差异</h3>
+<ul><li><code>c-verdict</code>、<code>e-elig</code> 与 §5.10 的四维写法统一为 D45；§6.2 的 <code>{summary, verified_todo, memory}</code> 改为按阶段的维度结果，不是三个最终布尔值。</li><li>§5.7 的“只收紧”补放回的覆盖范围与新证据语义；六个原因补 <code>unknown / not_evaluated</code>。</li></ul>
+</section>
+
+<section id="dd-unit" data-label="详设 16">
+  <h2><span class="no">16</span>对话单元</h2>
+  <p class="ncs" data-dd-of="d-unit">契约：</p>
+<h3>职责与边界</h3>
+<ul><li>单元调度器（每用户单写者，带防护令牌）把接受档片段组织成对话单元：成员、边界、关闭、重开与代次；单元关闭时确定参与者与背景、判断是否生成纪要、触发 G8。</li><li>两层结构：<b>事件单元</b>（日历会议、连续交谈、明确的口述记录）是纪要的单位；<b>主题分段</b>是单元内的章节，供抽取与纪要分节使用。</li><li>不做：重新聚类声纹；从名字推断跨日身份；把主题变化当作说话人变化。隔离档片段不参与切分、不进任何单元，只以“时段 + 原因”的占位出现。</li></ul>
+<h3>原理</h3>
+<ul><li>上传批只服务传输，识别窗口只服务 8B；纪要要按“一场对话”生成。按批会把会议切碎，按天会让立即同步失去意义。</li><li><b>边界证据的优先级</b>：明确的录音结束、不同的会议实例、确认的长静默 &gt; 非会议中的参与者换组 &gt; 主题变化。同一日历会议实例保持一个单元（D16），会议里的话题变化只形成章节。一期非会议的长事件也只按主题分节、不拆单元：拆单元会把“请求—接受”“承诺—改口”切到两边，核验所需的证据就不在一起了。按主题拆单元是变体，用 N1 与跨边界任务遗漏比较后再定。</li><li><b>参与者比较排除机主</b>：机主在每场对话里都在，算进去集合永远有交集。两边都是空集、未知簇占比高、跨 <code>day_id</code> 的簇号不可比时，都是证据不足，不能判为“没有交集”。</li><li><b>关闭要等在路上的数据</b>：覆盖账里有未终结的区间（帧序号空洞、作业未落盘），说明数据还没到；等满 2 小时就带 <code>possibly_incomplete</code> 关闭，补到后重开。等满只是允许关闭，不登记 <code>never_arrived</code> 或 <code>phone_lost</code>（那两个按详设 5 的规则登记）。</li><li>主题低谷借鉴 TextTiling（Hearst 1997）的思想，在句向量上找；这不是直接套用原算法就能得到对话边界的准确率。</li></ul>
+<figure class="ddfig"><div class="fighead"><div><b>单元的状态</b></div></div><div class="fig wide"><svg viewBox="0 0 900 240" role="img" aria-label="单元从开放、出现切口、等覆盖终结到关闭，再生成纪要；立即同步按手机截点临时关闭；迟到数据、续说、裁决改变或用户操作使其重开，代次递增；拆分合并后的旧单元被取代"><path class="e" d="M160 66L200 66" marker-end="url(#ah)"/><text class="tiny lb" x="184" y="61">切口</text><path class="e" d="M370 66L410 66" marker-end="url(#ah)"/><text class="tiny lb" x="394" y="61">覆盖终结或等满 2 h</text><path class="e" d="M560 66L600 66" marker-end="url(#ah)"/><text class="tiny lb" x="584" y="61">生成门槛</text><path class="e" d="M740 66L780 66" marker-end="url(#ah)"/><path class="e d" d="M90 40L90 18L485 18L485 40" marker-end="url(#ah)"/><text class="tiny lb" x="489" y="13">立即同步：按截点关闭</text><path class="e" d="M830 92L830 176L660 176" marker-end="url(#ah)"/><path class="e" d="M300 176L90 176L90 92" marker-end="url(#ah)"/><g class="nd"><rect x="20" y="40" width="140" height="52" rx="18"/><text class="t c" x="90" y="63">open</text><text class="s c" x="90" y="79">片段持续加入</text></g><g class="nd"><rect x="200" y="40" width="170" height="52" rx="18"/><text class="t c" x="285" y="63">waiting</text><text class="s c" x="285" y="79">切口已现 · 等覆盖</text></g><g class="nd"><rect x="410" y="40" width="150" height="52" rx="18"/><text class="t c" x="485" y="63">closed(g)</text><text class="s c" x="485" y="79">成员与相关性冻结</text></g><g class="nd"><rect x="600" y="40" width="140" height="52" rx="18"/><text class="t c" x="670" y="63">generating</text><text class="s c" x="670" y="79">G8(unit, g)</text></g><g class="nd"><rect x="780" y="40" width="100" height="52" rx="18"/><text class="t c" x="830" y="71">published</text></g><g class="nd"><rect x="300" y="150" width="360" height="52" rx="18"/><text class="t c" x="480" y="173">reopened → g+1</text><text class="s c" x="480" y="189">迟到 · 续说 · 裁决改变 · 用户操作</text></g><g><rect class="drop" x="700" y="150" width="180" height="52" rx="8"/><text class="t c" x="790" y="173">superseded</text><text class="s c" x="790" y="189">拆分或合并后</text></g></svg></div></figure>
+<h3>数据结构与接口</h3>
+<pre><code>ConversationUnit { unit_id, generation, input_revision, type: "calendar_meeting"|"conversation"|"dictation",
+                   state: open|waiting|closed|generating|published|superseded|erasing|erased,
+                   meeting_instance_ref? /* 会议实例，不是周期性会议的系列 */, start_utc_ms, end_utc_ms?, day_ids[],
+                   member_refs: [{segment_id, segment_rev}], quarantine_placeholders: [{interval, reason_codes}],
+                   boundary?: { kind: "silence"|"participant_change"|"recording_end"|"meeting_boundary"|"sync_cut",
+                                evidence_refs[], proposed_at },
+                   pending_ranges: [FrameRange], gap_wait_started_at?, close_reason?, possibly_incomplete: bool,
+                   one_sided: "yes"|"no"|"undetermined", owner_sentence_count, generation_gate?,
+                   participant_intervals: [{speaker_ref, intervals, engagement, source: "g6"|"user"}],
+                   topic_sections: [{section_id, member_refs}], lineage: {supersedes[], superseded_by[]},
+                   input_digest?, erasure_epoch }
+SyncCut          { device_id, boot_gen, cut_seq_exclusive }      // 手机报告的明确截点</code></pre>
+<div class="tbl"><table><thead><tr><th>命令</th><th>请求</th><th>响应</th></tr></thead><tbody><tr><td>ApplyUnitInput</td><td>{request_id, input_event_id, expected_scheduler_fence, erasure_epoch}</td><td>{affected_units: [{unit_id, generation, state}]}</td></tr><tr><td>CloseUnit</td><td>{request_id, unit_id, expected_generation, expected_input_revision, cut_frame_vector, reason, erasure_epoch}</td><td>{status: closed\</td><td>waiting\</td><td>conflict\</td><td>erased, generation, blockers}</td></tr><tr><td>ReopenUnit</td><td>{request_id, unit_id, expected_generation, cause_ref, erasure_epoch}</td><td>{generation, suspended_output_ids}</td></tr></tbody></table></div>
+<p><b>代次规则</b>：创建 <code>open(g=0)</code>；关闭 → <code>closed(g=1)</code>；重开 → <code>open(g=2)</code>；再关闭 → <code>closed(g=3)</code>。同一关闭或重开事件重投不递增；开放期间的输入变化只递增 <code>input_revision</code>。</p>
+<h3>算法</h3>
+<pre><code>def boundary_between(left, right, coverage):
+    if different_meeting_instances(left, right): return "meeting_boundary"
+    if same_meeting_instance(left, right): return None           # 会议内只分节
+    if right is None: return None                                # 尾部的关闭由 tail_boundary 处理
+    if observed_no_accepted_speech(left.end, right.start, coverage, min_minutes=10):
+        return "silence"                                         # 静默必须是覆盖账证明的，不是“数据没到”
+    a = reliable_others(left.last_minutes(5))                    # 排除机主；只算相关的他人
+    b = reliable_others(right.first_minutes(5))
+    if enough(a) and enough(b) and comparable_namespaces(a, b) and disjoint(a, b):
+        return "participant_change"
+    return None
+
+def tail_boundary(u, coverage, now):                           # 最后一场对话后面没有新片段时，定时触发
+    if coverage.recording_ended_after(u.end_utc_ms): return "recording_end"   # 明确的录音结束优先于同一会议
+    if u.meeting_instance_ref and now &gt;= meeting_end(u) + minutes(10): return "meeting_boundary"
+    if coverage.watermark_utc &gt;= u.end_utc_ms + minutes(10) and no_accepted_speech_after(u, coverage):
+        return "silence"                                         # 覆盖水位证明后面 10 分钟确实没有接受档语音
+    return None
+
+def close_if_ready(u, now):
+    if not u.boundary: return WAIT
+    unresolved = unresolved_coverage_before(u, u.boundary)
+    if unresolved and now &lt; u.gap_wait_started_at + hours(2): return WAIT   # 起点是首次因该缺口阻塞关闭，重试不刷新
+    if any(s.g7_pending for s in arrived_segments(u)): return WAIT          # 小 LLM 故障不能当成没有语音
+    rerun_g6_unit_final(u)                                       # 只补跑上下文变了的片段
+    snap = freeze_members_and_engagement(u)
+    u.one_sided = one_sided(u); u.generation_gate = generation_gate(u)
+    return atomic_close(snap, possibly_incomplete=bool(unresolved), generation=u.generation + 1)
+
+def reopen(u, cause):                                            # 同一事务
+    u.generation += 1; u.state = "open"
+    suspend_outputs(u, previous_generation=True)                 # 旧代次产物立即暂停、取消提醒；新一代发布后再替换
+
+def generation_gate(u):
+    if u.type in ("calendar_meeting", "dictation"): return "ok"
+    n = count_distinct_sentence_anchors(u, speaker="owner", grade="timeline")  # 按句锚计数，不按片段行数
+    return "ok" if n &gt;= 3 or has_owner_dictation(u) else "owner_lt3"           # “记一下”“提醒我……”一类口述</code></pre>
+<ul><li><b>句锚</b>：G5 切片段之前，在核心区去重后的 8B 文字上按句末标点与 ≥300 ms 停顿给每句一个稳定的 <code>sentence_anchor_id = job_id + ":" + 句序号</code>，随片段一起写进 <code>PersistResult</code>（G5 的提交 schema 增加这个字段）；跨识别窗口的一句按去重后的文字连续性延续同一个句锚。同一句因重叠、低支持被切成三段，仍只算一句；一个句锚里时间线级机主的字占 ≥50% 才算机主的一句。身份按时间线级（D17），不要求证据级。片段上的会议实例、录音当地日期与时区同样在 G5 提交时由清单与场景字段写入。</li><li><b>立即同步</b>：按手机报告的 <code>SyncCut</code> 临时关闭，不能用云端当时收到的最大帧代替，否则未传到的尾部会漏出此次同步。截点之后 10 分钟内又有语音，或属于同一会议实例，就重开该单元。</li><li><b>单边录音</b>：线上会议、有足够语音（≥2 分钟）、他人语音按不重复时长占比 &lt;10% 时标 <code>one_sided = yes</code>；未知语音占比高时标 <code>undetermined</code>。单边只限制纪要的推断范围（D30：只写机主说过的话），不阻止生成纪要。</li><li><b>拆分与合并</b>记录谱系，旧单元标 <code>superseded</code> 并撤回其产物；新旧单元不能同时把同一片段当作当前成员。</li><li>簇质心过期后，文字单元仍可以重开，但不能再做声学归簇。</li></ul>
+<h3>参数</h3>
+<div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>标定</th></tr></thead><tbody><tr><td>非会议静默切分</td><td>≥10 分钟无接受档语音（D16）</td><td>N1 误合并 ≤5%、误切分 ≤10%<span class="tg go">目标</span>；短暂中断后续聊</td></tr><tr><td>参与者比较</td><td>前后各 5 分钟，排除机主；每侧至少 2 轮、10 s 相关他人语音</td><td>“同一批人连开两场会”、只有机主发言</td></tr><tr><td>会议容差</td><td>日历时段前后各 10 分钟，参与者相容才并入</td><td>提前开始、超时、背靠背会议</td></tr><tr><td>缺口等待</td><td>2 小时</td><td>与纪要 P90 ≤30 分钟一起看</td></tr><tr><td>主题块</td><td>约 200–300 token 一块</td><td>低谷深度、最短章节长度</td></tr><tr><td>单边录音</td><td>他人占比 &lt;10%，语音 ≥2 分钟</td><td>线上会议切片</td></tr></tbody></table></div>
+<h3>测试与验收</h3>
+<ul><li>同会议提前开始、超时、连续两个会议、周期性会议的不同实例。机主先后和两拨人谈话；两侧只有机主；一侧他人全部未知。</li><li>立即同步后 9 分钟续说、11 分钟续说、同会议续说。缺口在关闭前补到、2 小时后补到、登记缺失后才补到。</li><li>一句被切成多个片段不突破 3 句门槛。重开、关闭事件重复与乱序；旧 G8 结果晚到被丢弃；被取代的产物撤回。</li><li>指标：N1（一期报告，设计目标误合并 ≤5%、误切分 ≤10%；另报 Pk、WindowDiff）；跨边界的任务遗漏；生成覆盖率；单句口述是否生成。</li></ul>
+<h3>与提案的差异</h3>
+<ul><li>§5.9 的“前后参与者没有交集”补：排除机主、空集与不可比簇号算证据不足。<code>meeting_hash</code> 指向会议实例。</li><li>§5.9 会议成一个单元与主题切分并存时缺层级：一期主题只分节。</li><li>§5.9 的处理状态把“单边录音”列为不出纪要的原因，与 D30 不一致：单边照常出纪要。</li><li>N1：§9 与 §5.10 的口径不一致；一期按报告项处理，误合并 ≤5%、误切分 ≤10% 作为设计目标<span class="tg go">目标</span>。</li></ul>
+</section>
+
+<section id="dd-g8" data-label="详设 17">
+  <h2><span class="no">17</span>入库闸门（G8）与溯源</h2>
+  <p class="ncs" data-dd-of="d-g8 d-sum d-todo d-mem d-prov s-outputs d-user">契约：</p>
+<h3>职责与边界</h3>
+<ul><li>G8 是“抽取建议 + 确定性核验 + 原子发布”：单元关闭后，对可作上下文的片段抽取带原文跨度的言语行为，核验后生成纪要、待办、记忆候选。模型只提议，不直接写最终的待办或长期记忆。</li><li>输入由服务端构造：已关闭单元的确切片段版本、资格、用户确认与隔离占位。背景不进上下文；未知说话人只在相关性通过时进纪要上下文，不能成为任何待办的支持来源。</li><li>维护溯源：片段降级、改字、删除、单元重开时，暂停、重核或撤回受影响的产物。</li><li>不做：记忆系统本身的存储、召回与问答。</li></ul>
+<h3>原理</h3>
+<ul><li><b>六步</b>：原子言语行为抽取 → 实体与指代解析 → 承诺关系绑定与状态归并 → 期限解析 → 逐字段蕴含与四维校验 → 纪要、待办、记忆发布。一步生成纪要时，承担人与日期最容易在压缩中丢失或张冠李戴。</li><li><b>蕴含核验确认“引用文字支持结论”</b>，不证明 ASR 文字就是实际说过的话，所以必须与身份、低支持区间、相关性联合使用（Kryściński 等，EMNLP 2020 的思路；结果不能直接当作中文领夹场景的效果承诺）。同一生成调用里的“自评通过”不算独立核验。</li><li><b>承担人与说话人分开</b>：“这个交给小王”是机主的原话，任务是小王的；待办四类按承担人与说话人的组合定义，各有证据门槛（§5.8）。</li><li><b>业务状态与核实状态分开</b>：业务状态 <code>requested → acknowledged → accepted | declined</code>，<code>accepted → conditional | active → completed | withdrawn | superseded</code>，任何阶段可进入 <code>conflicted</code>；核实状态 <code>unverified | verified | user_confirmed | invalidated</code>。“知道了”证明知悉，不证明接受；<code>user_confirmed</code> 也不意味着所有来源维度都通过。</li><li><b>只有原行为人能撤回</b>：原请求者撤回自己的请求、原承诺者撤回自己的承诺；第三人说“他不做了”不能直接取消他人的承诺。跨设备录音的时间有重叠不确定时，不靠到达顺序认定哪句是后来的改口，无法确定就标冲突。</li></ul>
+<figure class="ddfig"><div class="fighead"><div><b>G8 的流程</b></div></div><div class="fig wide"><svg viewBox="0 0 900 220" role="img" aria-label="按窗口抽取言语行为，解析实体，绑定关系并归并承诺状态，规则解析期限，逐字段蕴含与四维校验，代码派生待办类别与提醒，纪要由核实条目写成并逐条复核，原子发布并写溯源"><path class="e" d="M170 56L200 56" marker-end="url(#ah)"/><path class="e" d="M350 56L380 56" marker-end="url(#ah)"/><path class="e" d="M530 56L560 56" marker-end="url(#ah)"/><path class="e" d="M710 56L740 56" marker-end="url(#ah)"/><path class="e" d="M810 82L810 140" marker-end="url(#ah)"/><path class="e" d="M810 82L810 118L635 118L635 140" marker-end="url(#ah)"/><path class="e" d="M810 82L810 118L455 118L455 140" marker-end="url(#ah)"/><path class="e dot" d="M380 166L350 166" marker-end="url(#ah)"/><g class="nd"><rect x="20" y="30" width="150" height="52" rx="8"/><text class="t c" x="95" y="53">窗口抽取</text><text class="s c" x="95" y="69">中 LLM · JSON 模式</text></g><g class="nd"><rect x="200" y="30" width="150" height="52" rx="8"/><text class="t c" x="275" y="53">关系与状态</text><text class="s c" x="275" y="69">只许原行为人撤回</text></g><g class="nd"><rect x="380" y="30" width="150" height="52" rx="8"/><text class="t c" x="455" y="53">期限解析</text><text class="s c" x="455" y="69">发言当地日期为锚</text></g><g class="nd"><rect x="560" y="30" width="150" height="52" rx="8"/><text class="t c" x="635" y="53">逐字段核验</text><text class="s c" x="635" y="69">蕴含 · 四维</text></g><g class="nd"><rect x="740" y="30" width="140" height="52" rx="8"/><text class="t c" x="810" y="53">代码派生</text><text class="s c" x="810" y="69">类别 · 提醒</text></g><g class="nd"><rect x="740" y="140" width="140" height="52" rx="8"/><text class="t c" x="810" y="163">待办</text><text class="s c" x="810" y="179">已核实 / 未核实</text></g><g class="nd"><rect x="560" y="140" width="150" height="52" rx="8"/><text class="t c" x="635" y="163">记忆候选</text><text class="s c" x="635" y="179">本人事实</text></g><g class="nd"><rect x="380" y="140" width="150" height="52" rx="8"/><text class="t c" x="455" y="163">纪要</text><text class="s c" x="455" y="179">逐条复核</text></g><g class="nd store"><rect x="200" y="140" width="150" height="52" rx="8"/><text class="t c" x="275" y="163">原子发布</text><text class="s c" x="275" y="179">溯源 · 依赖</text></g></svg></div></figure>
+<h3>数据结构</h3>
+<pre><code>TextSpan   { segment_id, segment_rev, char_from, char_to }          // 码点、半开
+EntityRef  { kind: "owner"|"participant"|"unresolved", speaker_ref?, name_span?, resolution_source: "speaker"|"explicit_text"|"user" }
+SpeechAct  { act_id, kind: "request"|"acknowledge"|"accept"|"reject"|"revoke"|"amend"|"decide"|"report_complete"
+                          |"assert_fact"|"ask_question",
+             speaker_ref, addressee?: EntityRef, assignee?: EntityRef,
+             action: {text, refs: [TextSpan]}, object?: {text, refs}, condition?: {text, refs}, deadline_expr?: {text, refs},
+             polarity: "positive"|"negative"|"uncertain", modality: "definite"|"conditional"|"hypothetical"|"desire"|"quoted",
+             memory_type?: "self_fact"|"quote_other"|"hypothesis"|"wish"|"temporary",
+             source_refs: [TextSpan], relations: [{target_act_id, relation: "responds_to"|"accepts"|"rejects"|"revokes"|"amends",
+                                                  score, evidence_refs}] }
+Deadline   { kind: "none"|"instant"|"date"|"interval"|"relative_event"|"unresolved", raw_refs, anchor_recorded_at,
+             anchor_local_date, timezone, utc_offset_at_recording, tz_rules_version, local_value?, utc_start_ms?, utc_end_ms?,
+             precision: "minute"|"hour"|"part_of_day"|"day"|"unknown", alternatives[], parser: "rule"|"llm_candidate"|"user",
+             parser_version, confidence?, ambiguity_codes[] }
+Output     { output_id, output_rev, unit_id, unit_generation, kind: "summary_claim"|"todo"|"memory_candidate",
+             category?: "owner_promised"|"requested_of_owner"|"other_promised"|"owner_assigned",
+             speaker_ref?, assignee?: EntityRef, content, commitment_state?, verification_state, deadline?: Deadline,
+             field_proofs: [{field, support_refs: [TextSpan], identity, text_reliability, relevance, semantics: DimensionResult}],
+             display_refs: [TextSpan], dependency_refs: [act_id]   /* 计算依赖，含被撤销的原承诺与撤销原话 */,
+             confirmation_refs[], lifecycle: "staged"|"active"|"suspended"|"withdrawn"|"erased",
+             reminder_mode: "none"|"owner_action"|"follow_up", supersedes_output_id?, erasure_epoch }
+Summary    { unit_id, generation, sections: [{ title?, bullets: [{ text, act_ids[], check: pass|dropped }] }],
+             placeholders: [{ interval, reason }] }               // 隔离档只以“时段 + 原因”出现</code></pre>
+<div class="tbl"><table><thead><tr><th>接口</th><th>请求</th><th>响应</th></tr></thead><tbody><tr><td>GenerateUnit</td><td>{request_id, unit_id, expected_generation, expected_input_digest, erasure_epoch, pipeline_version}</td><td>{generation_job_id, status}</td></tr><tr><td>CommitOutputs</td><td>{request_id, unit_id, expected_generation, expected_input_digest, erasure_epoch, outputs, retire_output_ids}</td><td>{status: published\</td><td>stale\</td><td>erased, output_refs}</td></tr><tr><td>ConfirmOutput</td><td>{action_id, output_id, expected_output_rev, confirmed_fields, field_values, erasure_epoch}</td><td>{new_output_rev, verification_state, remaining_blockers}</td></tr></tbody></table></div>
+<h3>算法</h3>
+<pre><code>def g8(unit_id, gen, digest):
+    snap = load_snapshot(unit_id, gen, digest)                  # 不一致即 stale
+    if snap.generation_gate != "ok" and not snap.manual: return
+    acts = []
+    for w in overlapping_windows(snap.context_segments, core_tokens=1500, overlap_tokens=300):
+        out = llm_json(MID_LLM, PREFIX_G8, render(w, placeholders=snap.quarantine_placeholders),
+                       schema=ACT_SCHEMA, retries=1)
+        acts += keep_core_owned(validate_spans(out.acts, w), w)  # 跨度必须真实存在；重叠区的行为归核心区所在窗口
+    acts = resolve_entities(dedupe(acts))                       # 不凭空创造参与者；对不上的承担人标 unresolved
+    links = bind_relations(acts, min_p=0.90, min_margin=0.15)   # 承担人、对象、条件与对话关系相容后才做语义匹配
+    commitments = reduce_in_recording_order(acts, links)        # apply_act，见下
+    cands = atomic_candidates(acts, commitments)
+    for c in cands:
+        c.deadline = parse_deadline(c)
+        c.field_proofs = verify_fields(c, snap)                 # 每个字段：蕴含 + 四维
+        apply_code_rules(c)                                     # 类别、核实状态、提醒方式由代码派生
+    summary = write_summary(MID_LLM, [c for c in cands if c.verified_for_summary], placeholders=snap.quarantine_placeholders)
+    for sec in summary.sections:                                # 自由改写会重新引入无依据内容，标题与条目都逐条复核
+        for b in [sec.title_claim] + sec.bullets:
+            b.check = "pass" if (cites_only_whitelist(b, cands)                 # 只引用本次核实过的条目
+                                 and fields_allowed(b, cands)                    # 不重新写出被省略的低支持字段
+                                 and states_current(b, commitments)              # 不复述已撤销或冲突的承诺
+                                 and entails(premise=spans_of(b.act_ids), hypothesis=b.text) &gt;= TAU_ENT["summary"]) \
+                      else "dropped"
+    return commit_outputs(snap, summary, cands)                 # 代次、输入摘要或擦除代次变了就 stale
+
+def apply_act(state, act, link):                                # 按下面的转移表；表外的组合一律标冲突
+    if not link.unambiguous:         return state.conflict(act)
+    if act.kind == "acknowledge":    return state.acknowledged() if state.status == "requested" else state  # 不升级、也不让已接受的降级
+    if act.kind == "accept" and can_accept(act, state):
+        return state.accept(conditional=bool(act.condition), evidence=act.source_refs)
+    if act.kind == "revoke":
+        return state.withdraw(act.source_refs) if is_original_actor(act, state) else state.unresolved_revocation(act)
+    if act.kind == "amend":
+        return state.replace_fields(act) if explicit_amendment(act, state) else state.conflict(act)
+    return state.apply_non_destructive(act)</code></pre>
+<p><b>承诺状态转移表</b>（行为人一栏指谁说的这句话才有效）：</p>
+<div class="tbl"><table><thead><tr><th>当前状态</th><th>行为</th><th>行为人</th><th>新状态</th></tr></thead><tbody><tr><td>requested</td><td>acknowledge</td><td>被请求者</td><td>acknowledged</td></tr><tr><td>requested、acknowledged</td><td>accept（有条件）</td><td>被请求者</td><td>conditional（否则 active）</td></tr><tr><td>requested、acknowledged</td><td>reject</td><td>被请求者</td><td>declined</td></tr><tr><td>requested</td><td>revoke</td><td>原请求者</td><td>withdrawn</td></tr><tr><td>conditional</td><td>条件满足的明确陈述</td><td>任一参与者，需引用</td><td>active</td></tr><tr><td>active、conditional</td><td>revoke</td><td>原承诺者</td><td>withdrawn</td></tr><tr><td>active、conditional</td><td>amend（明确改期限或对象）</td><td>原承诺者</td><td>同状态，字段替换并保留旧值的溯源</td></tr><tr><td>active</td><td>report_complete</td><td>原承诺者</td><td>completed</td></tr><tr><td>accepted 之后的任一状态</td><td>acknowledge</td><td>任何人</td><td>不变</td></tr></tbody></table></div>
+<p><b>四类待办的代码规则</b>：</p>
+<div class="tbl"><table><thead><tr><th>类别</th><th>最小有效证据</th><th>状态与提醒限制</th></tr></thead><tbody><tr><td>我答应的</td><td>证据级或用户确认身份的机主<b>接受</b>原话；承担人是机主</td><td>必须已接受；条件未满足不当无条件执行</td></tr><tr><td>对方要我做的</td><td>参与者的请求 + 绑定到该请求的机主应答（时间线级即可）</td><td>知悉、接受、拒绝分别保存；知悉不冒充“我答应了”</td></tr><tr><td>对方答应的</td><td>承担人本人（参与者）的接受原话</td><td>不能用机主转述代替</td></tr><tr><td>我分派的</td><td>机主（时间线级以上）的分派原话；承担人解析为参与者</td><td>只构成分派与跟进，不证明对方已接受</td></tr></tbody></table></div>
+<p>四类共同要求：来源都是接受档、参与者（非背景、非 <code>undetermined</code>）、身份满足该类别；动作、对象、承担人、否定、日期、数字、情态、条件这些关键字段有明确跨度，且不与未经用户修复的低支持区间相交。未知说话人不能支撑任何待办，也不能借“未核实”绕过来源限制；“对方请求但机主未应答”可以形成未核实的请求候选，依据仍须来自参与者；“交给小王”里的小王对不上参与者时，保留承担人未解析的候选，不自动创造参与者。</p>
+<pre><code>def reminder_mode(t):                                          # 公共限制先于类别分支
+    if not t.all_required_dims_pass or t.lifecycle != "active" or t.has_unresolved_conflict: return "none"
+    if t.extraction_gap_affects: return "none"                   # 后文抽取失败，可能漏掉撤销
+    if not t.deadline or t.deadline.kind in ("none", "unresolved", "relative_event") or t.deadline.alternatives:
+        return "none"
+    if t.has_unmet_condition: return "none"
+    if t.category == "owner_assigned":
+        return "follow_up" if t.assignment_state == "active" else "none"   # 已撤销的分派不提醒
+    if t.commitment_state != "active": return "none"
+    return "owner_action" if t.assignee.kind == "owner" else "follow_up"</code></pre>
+<p><b>期限解析</b>（确定性规则，带版本）：</p>
+<ul><li>锚点是<b>发言时的当地自然日</b>，不是上传日，也不是 04:00 起算的 <code>day_id</code>：11 月 8 日 03:30 说的“明天”按规则是 11 月 9 日。凌晨（00:00–05:00）说的“明天”口语上可能指睡醒后的当天，这种情况把 11 月 8 日放进 <code>alternatives</code> 并标歧义，不进提醒。</li><li>“下周三”固定为以周一为首日的下一自然周的周三；政策带版本。</li><li>保留实际精度：“周三”“下午”“月底”不偷偷补成 23:59；只有日期没有时刻时，提醒时刻是用户偏好，不回写成原话的期限。</li><li>“收到材料后三天”存为事件相对期限，触发事件未确认就不生成绝对日期。夏令时重复或不存在的当地时间保留歧义，不自行挑一个 UTC 时刻。</li><li>时区名与当时的 UTC 偏移都存（RFC 9557）。规则解析不了，LLM 只给候选，再校验日历有效性、锚点与引用。</li></ul>
+<p><b>纪要与记忆的另外两条限制</b>：纪要上下文允许低支持文字，不代表纪要可以确定地复述其中的低支持姓名、数字或日期，这类字段在纪要里省略或标“不确定”；记忆只自动接受本人事实，假设、愿望、引用、临时状态与他人评价不转为本人长期事实。</p>
+<h3>溯源与撤回</h3>
+<p>溯源同时记<b>展示引用</b>与<b>计算依赖</b>：一条最终被撤销的承诺，依赖原承诺与撤销原话，不能只存卡片上显示的那一条。</p>
+<div class="tbl"><table><thead><tr><th>事件</th><th>自动产物</th><th>用户确认过的产物</th></tr></thead><tbody><tr><td>单元重开</td><td>立即暂停旧代次，等新一代重核</td><td>同样暂停；新一代仍有支持就恢复，否则请用户确认</td></tr><tr><td>改字、改身份、改背景</td><td>受影响字段的证明失效、重核</td><td>旧确认只绑定旧版本，不能确认新内容</td></tr><tr><td>来源降为隔离</td><td>撤回并停止提醒</td><td>同样撤回，或请用户重新确认</td></tr><tr><td>来源正常到期删除</td><td>失去依据的自动内容一并删除</td><td>确认不构成永久保留授权；用户可以事先“存为我的待办”，这是独立操作，明确展示保存哪些字段</td></tr><tr><td>用户范围擦除</td><td>删除范围内的来源及派生产物</td><td>同样删除，确认不豁免擦除；“存为我的待办”的条目若派生自擦除范围，也删除</td></tr></tbody></table></div>
+<p><b>存为我的待办</b>：<code>SaveAsOwnTodo {action_id, output_id, expected_output_rev, fields: [action, assignee, deadline, note]} → {user_item_id}</code>。生成一条新身份的用户条目，只复制用户在界面上看到并选择保存的字段，不复制原文；它不再依赖来源片段，留存到用户删除为止，不随来源到期。条目带最小的 <code>erasure_lineage {device_id, boot_gen, frame_ranges, day_id}</code>：来源片段与 <code>act_id</code> 到期清除后，之后的范围擦除仍能凭它找到这条，并一同删除。</p>
+<p>重开后完全相同的有效任务（动作、承担人、条件、期限、来源与状态都没有冲突）保留稳定的 <code>output_id</code> 与用户的完成状态，只生成新的 <code>output_rev</code>。提醒任务只存产物 ID、版本与计划 ID，发送前重新检查产物是否有效、是否命中擦除。</p>
+<h3>参数</h3>
+<div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>标定</th></tr></thead><tbody><tr><td>抽取窗口</td><td>核心 1,500 token、重叠 300 token</td><td>字段遗漏、跨窗口请求—应答与撤销的召回、费用</td></tr><tr><td>关系自动绑定</td><td>校准分 ≥0.90 且领先次优 ≥0.15</td><td>优先控错误归并，其余标冲突</td></tr><tr><td>TAU_ENT（校准后的支持概率）</td><td>纪要、待办、记忆各一个工作点，初值都是 0.90</td><td>扫描 0.8–0.95，分别冻结：纪要在事实精度 ≥95%<span class="tg go">目标</span> 下最大化 N2；待办在 N4 ≥85% 下最大化覆盖；记忆在事实错误率 &lt;2% 下最大化覆盖</td></tr><tr><td>生成门槛</td><td>机主 ≥3 句（按句锚），会议与口述例外</td><td>一期基线（D17），相关性门槛验证后替换</td></tr><tr><td>强模型升级</td><td>默认关闭</td><td>变体，联合费用与增益通过后启用（§5.10）</td></tr></tbody></table></div>
+<p>蕴含核验、重叠窗口与重开重算的调用费用实测计入 §5.10 的效果预算；可以用独立的小型核验模型。</p>
+<h3>失败与恢复</h3>
+<ul><li>模式两次不合格：不用半成品，该窗口记一个<b>抽取覆盖缺口</b>，单元标“部分生成”。核心区在缺口之前、且关系可能延伸到缺口里的承诺（同一承担人或对象在缺口前后出现，或缺口在承诺之后 10 分钟内），记 <code>extraction_gap_affects</code>，不能取得核实状态，也不提醒；无法界定影响范围时，暂停整个单元的自动核实与提醒。模型不可用：排队。</li><li>生成期间单元重开或擦除：<code>CommitOutputs</code> 因代次、输入摘要或擦除代次不一致返回 <code>stale</code> / <code>erased</code>，结果丢弃。</li><li>提交成功、响应丢失：按 <code>request_id</code> 返回原结果，不重复发布。</li></ul>
+<h3>测试与验收</h3>
+<ul><li>最小对：“我明天交 / 我不一定明天交”“好 / 知道了 / 你说得对，但我做不了”“交给小王 / 小王答应交”“明天交 / 刚才说错了，后天交”“如果审批通过就买 / 审批通过了，现在买”“他说我负责 / 我负责”。</li><li>四类待办逐类测身份门槛、原话来源、承担人与说话人分离；知悉不变承诺、拒绝不变待办、撤销覆盖原承诺；未知与背景不产生任何待办；隔离正文不进模型输入。</li><li>跨窗口改口、同动作不同对象、同名不同簇、条件承诺；03:30 的“明天”、跨时区、夏令时、日期型与事件相对期限。每个结论字段都能回到准确的版本与跨度，文字相同但版本错的引用拒收。已确认待办在来源被删、改字或重开后停止提醒。</li><li>指标（§5.10）：N4 待办联合正确率（动作、承担人、期限、状态）≥85%；纪要事实精度 ≥95%<span class="tg go">目标</span>；N2 ≥80%；期限解析准确率 ≥95%<span class="tg go">目标</span>；记忆事实错误率 &lt;2%；另报未核实比例、弃权率与产出覆盖率。</li></ul>
+<h3>与提案的差异</h3>
+<ul><li>§9 的 N4 只核对承担人与类别，统一为 §5.10 的四字段联合正确，并分项报告。</li><li>§5.8 的“有机主应答”区分知悉、接受与拒绝。§5.8、§6.2 的引用补片段版本与字段级证明。</li><li><code>d-prov</code> 的“撤回或请用户确认”区分普通到期与用户擦除，确认不能成为删除豁免。</li><li>§5.10 的“结构化抽取不加调用”补上蕴含核验与纪要复核的费用。一期不自动跨日关联他人的承诺。</li></ul>
+</section>
+
+<section id="dd-delete" data-label="详设 18">
+  <h2><span class="no">18</span>删除服务与删除链</h2>
+  <p class="ncs" data-dd-of="s-commit s-del c-receipt s-delsvc">契约：</p>
+<h3>职责与边界</h3>
+<ul><li>删除服务判定哪些数据可以删、挡住迟到写入、执行删除、核验结果、推进各端进度、瘦身元数据。</li><li>三种完成状态分开：<b>识别结果已提交</b>（覆盖账里该范围的结果已持久化）；<b>云端音频已删除</b>（对象与可写入口都处理完，可以发回执让手机释放暂存）；<b>三端擦除已完成</b>（云、手机、领夹都确认清除了指定范围）。</li><li>领夹的正常释放依据是手机可靠落盘后的帧回执（详设 1），不等云端识别；用户擦除另向两端下发范围清除命令。</li><li>到期删除：隔离档 7 天、接受档按用户设置、簇质心业务日结束后 12 小时；用户擦除与注销。不做：领夹与手机端的删除实现（详设 1、4），但给它们下发命令并跟踪进度。</li></ul>
+<h3>原理</h3>
+<ul><li><b>先写后删，先删后报。</b> 结果没落盘就删音频，会丢数据；回执早于删除，手机会删掉最后一份可重传的副本，而云端还留着音频。顺序固定后，每个崩溃点都能由巡检补齐。</li><li><b>可删看覆盖账，不看最大序号</b>：对象实际包含的全部有效帧都有终结结果（识别、非语音、已登记的失败缺口或擦除），且没有仍合法持有这些字节的作业或尾部（详设 5 的读依赖）。</li><li><b>先立刻删，再等入口静默，最后清扫。</b> 识别完成的对象立即删除，以缩短实际保留；预签名地址在有效期内可以重复使用，且过期检查发生在请求开始时（S3 文档以下载为例说明）；过期前开始的上传能否跨过过期时刻写入，要按存储适配器实测，不当作已知保证。所以“音频已删除”要等全部已签发地址过期、在途写入也确定结束，再清扫一次、确认不存在，才成立。</li><li><b>存储适配器契约</b>：必须提供以下之一，否则不能确认删除状态：（a）可靠的屏障：“该范围没有未完成的写入，且不再接受新写入”；或（b）经过验证、强制执行的单次请求最长时长，等全部授权过期再加这个上界，清理未完成的分块上传，再最后清扫。盲目多做两次 <code>HEAD</code> 不能替代。</li><li><b>擦除是屏障，不是一次性删除。</b> 先写擦除记录，再删数据；所有写入方“先写、后查”擦除记录，读路径也检查屏障。跨存储能保证的是：屏障生效后不再对用户可见，物理清除按可核验的进度推进。</li></ul>
+<figure class="ddfig"><div class="fighead"><div><b>云端删除链</b></div></div><div class="fig wide"><svg viewBox="0 0 900 230" role="img" aria-label="落盘后对象被判为可删，关闭签发并加防护，立即删除现存对象，等全部授权过期与在途写入静默，最后清扫并取得不存在确认，销毁云端包裹的密钥，记录删除并生成回执，手机拉取后销毁本地密钥并确认"><path class="e" d="M170 56L200 56" marker-end="url(#ah)"/><path class="e" d="M350 56L380 56" marker-end="url(#ah)"/><path class="e" d="M540 56L570 56" marker-end="url(#ah)"/><path class="e" d="M720 56L750 56" marker-end="url(#ah)"/><path class="e" d="M815 82L815 140" marker-end="url(#ah)"/><path class="e" d="M750 166L720 166" marker-end="url(#ah)"/><path class="e" d="M570 166L540 166" marker-end="url(#ah)"/><path class="e" d="M380 166L350 166" marker-end="url(#ah)"/><g class="nd"><rect x="20" y="30" width="150" height="52" rx="8"/><text class="t c" x="95" y="53">① 落盘</text><text class="s c" x="95" y="69">片段 · 覆盖 · 簇</text></g><g class="nd"><rect x="200" y="30" width="150" height="52" rx="8"/><text class="t c" x="275" y="53">判为可删</text><text class="s c" x="275" y="69">覆盖终结 · 无读依赖</text></g><g class="nd"><rect x="380" y="30" width="160" height="52" rx="8"/><text class="t c" x="460" y="53">防护</text><text class="s c" x="460" y="69">不再签发地址</text></g><g class="nd"><rect x="570" y="30" width="150" height="52" rx="8"/><text class="t c" x="645" y="53">立即删除</text><text class="s c" x="645" y="69">现存对象</text></g><g class="nd"><rect x="750" y="30" width="130" height="52" rx="8"/><text class="t c" x="815" y="53">等入口静默</text><text class="s c" x="815" y="69">授权过期 + 在途</text></g><g class="nd"><rect x="750" y="140" width="130" height="52" rx="8"/><text class="t c" x="815" y="163">② 最后清扫</text><text class="s c" x="815" y="179">确认不存在</text></g><g class="nd"><rect x="570" y="140" width="150" height="52" rx="8"/><text class="t c" x="645" y="163">销毁包裹的 K</text><text class="s c" x="645" y="179">云端密钥表</text></g><g class="nd"><rect x="380" y="140" width="160" height="52" rx="8"/><text class="t c" x="460" y="163">③ 回执</text><text class="s c" x="460" y="179">出站表 · 手机拉取</text></g><g class="nd"><rect x="200" y="140" width="150" height="52" rx="8"/><text class="t c" x="275" y="163">手机销毁 K</text><text class="s c" x="275" y="179">清本地副本并确认</text></g><g><rect class="fb" x="20" y="140" width="150" height="52" rx="8"/><text class="t c" x="95" y="163">巡检四类账</text><text class="s c" x="95" y="179">每小时</text></g></svg></div></figure>
+<h3>数据结构</h3>
+<pre><code>AudioObjectRecord { object_id, chunk_id, frame_ranges, object_keys[], state: stored|delete_eligible|delete_fenced
+                    |waiting_quiet|deleting|verified_absent|receipt_ready,
+                    first_stored_at, hard_expire_at, coverage_revision, delete_fence?, grants_closed_at?,
+                    latest_grant_expires_at?, writes_quiet_at?, cloud_audio_deleted_at?, deletion_proof_ref?, receipt_seq? }
+UploadGrant       { grant_id, object_id, object_key, issued_at, expires_at, max_request_duration_ms?,
+                    state: reserved|issued|expired|revoked, erasure_epoch }      // 签发前先持久化 reserved
+audio_keys        { chunk_id, wrapped_k }       // commit 时手机交出 K，云端用用户数据密钥包裹后写入；作业解密时读取；
+                                                 // 与短期音频桶同等待遇：不进备份、不做时间点恢复
+DeletionTask      { task_id, target_ref, trigger: processed|retention|processing_failed|user_erase,
+                    state: pending|fenced|waiting|deleting|verifying|done, attempts, next_attempt_at,
+                    last_error_code?, expected_erasure_epoch }
+Erasure           { erasure_id, erasure_epoch, requested_at,
+                    scope: { kind: all|time_range|explicit_ids|voiceprint, time_range?, frame_ranges?, object_ids? },
+                    state: fenced|cloud_clearing|device_pending|completed,
+                    cloud_progress, phone_progress, device_progress, completed_at? }
+Receipt           { receipt_seq (每用户递增), receipt_id, chunk_id, audio_stage: "cloud_deleted",
+                    outcome: processed|partial|failed|erased, text_persisted_at?, cloud_audio_deleted_at,
+                    gaps_recorded: [{range, cause}], erasure_epoch }</code></pre>
+<ul><li><code>processed</code> 可以全是非语音，不保证有文字；<code>partial</code>、<code>failed</code> 必须列出失败的覆盖；<code>cloud_deleted</code> 不等于手机与领夹都已完成擦除。</li><li><code>UploadGrant</code> 在签发地址之前先落 <code>reserved</code>，签发进程崩溃也不会留下未登记、仍可用的地址。</li></ul>
+<h3>接口</h3>
+<div class="tbl"><table><thead><tr><th>接口</th><th>请求</th><th>响应</th></tr></thead><tbody><tr><td><code>POST /v1/erasures</code></td><td>{request_id, scope}</td><td>{erasure_id, erasure_epoch, state, endpoint_progress}</td></tr><tr><td><code>GET /v1/erasures/{id}</code></td><td>—</td><td>{state, cloud_progress, phone_progress, device_progress}</td></tr><tr><td><code>GET /v1/receipts</code></td><td>{after_cursor, limit}</td><td>{receipts, next_cursor}</td></tr><tr><td><code>POST /v1/receipts:ack-local</code></td><td>{request_id, receipt_id, chunk_id, key_erased, local_copies_removed}</td><td>{acknowledged}</td></tr><tr><td><code>POST /v1/device-erase:ack</code></td><td>{request_id, command_id, device_id, boot_gen, cleared_ranges, key_erasure_completed, block_cleanup_state}</td><td>{remaining_ranges, state}</td></tr></tbody></table></div>
+<p>客户端确认只证明该端报告的完成状态；服务端不能因消息已送达就改成完成。</p>
+<h3>算法</h3>
+<pre><code>def delete_processed_audio(obj):
+    with user_txn(obj.user_ref):
+        cur = load_for_update(obj.id)
+        require_terminal_coverage(cur.frame_ranges); require_no_active_read_dependencies(cur)
+        close_upload_grants(cur); cur.state = "delete_fenced"   # 此后 prepare / commit 返回 deletion_pending：禁止新上传，手机仍不能释放
+    delete_all_keys(cur)                                        # 先缩短实际保留
+    if not all_grants_expired(cur) or not storage_writes_quiet(cur):   # 适配器契约 (a) 或 (b)
+        return schedule(delete_processed_audio, obj, at=quiet_deadline(cur))
+    abort_incomplete_multipart(cur); delete_all_keys(cur)       # 最后清扫
+    proof = verify_authoritative_absence(cur)                   # 查询超时、鉴权失败不等于“不存在”
+    with user_txn(obj.user_ref):
+        recheck_fence_and_grants(cur); require(proof.ok)
+        audio_keys.delete(cur.chunk_id)
+        cur.state, cur.cloud_audio_deleted_at = "verified_absent", now()
+        create_receipt_once(cur); outbox.add_id_only("receipt", cur.receipt_id)   # 手机按游标拉取，可重复
+
+def guarded_write(cmd):                                         # 所有写入方：网关、作业、文字管线、G8、索引、提醒
+    fence = read_erasure_state(cmd.user)
+    require(cmd.erasure_epoch == fence.epoch and not fence.covers(cmd.dependencies))
+    staged = write_staged(cmd)                                  # 外部索引、缓存先写不可见状态
+    with user_txn(cmd.user):
+        cur = read_erasure_state_for_update(cmd.user)
+        if cur.changed_since(fence, cmd.dependencies): register_cleanup(staged); return ERASED_OR_STALE
+        activate(staged)
+    if dependencies_now_erased(cmd.dependencies): withdraw_and_delete(staged); return ERASED   # 外部副作用后再查一次
+    return COMMITTED
+
+def erase(user, scope):
+    scope = expand_to_chunk_boundaries(user, scope)             # 每片一把 K：音频范围按分片边界向外扩，结果里展示实际范围
+    with user_txn(user):                                        # 屏障与可恢复的擦除计划同一事务落盘
+        e = erasures.insert(user, scope, erasure_epoch=next_epoch(user))
+        plan = erasure_plan(user, scope)                        # 列出全部子任务：对象、文字、单元、簇、热词、端侧命令
+        persist(plan)
+    cancel_in_flight(user, scope)                               # 作业、G6/G7/G8；取消失败时其提交也被屏障拒绝
+    for obj in objects_in_scope(user, scope):                   # 强删路径：不走正常的覆盖检查
+        release_read_dependencies_and_tailholds(obj, scope)
+        terminate_coverage(obj, scope, outcome="erased")        # 未完成的覆盖终结为 erased，扩出来的部分登记 user_erase 缺口
+        enqueue(DeletionTask(obj, trigger="user_erase"))
+    delete_text_in_scope(user, scope)                           # 片段正文、原始 ASR、候选、编辑历史、全文与向量索引、缓存
+    delete_units_and_outputs(user, scope)                       # 单元、抽取中间结果、产物、引用副本、提醒任务、确认快照
+    delete_affected_centroids(user, scope)                      # 受影响的簇 = 范围内片段引用的 cluster_id（含与机主匹配的簇）；
+                                                                # 质心无法减去被擦除样本：删除质心、目录项失效、目录版本 +1 同一事务；
+                                                                # 簇 ID 保留给范围外仍引用它的文字，不复用
+    revoke_derived_hotwords(user, scope)                        # 由被擦除内容派生的个人热词，递增 bias_revoke_epoch
+    if scope.kind in ("all", "voiceprint"): voiceprints.revoke(user)
+    device_commands.add(user, kind="ERASE", ranges=frame_ranges_in_scope(user, scope))   # 手机转发给领夹
+    # cloud_progress 由各子任务核验完成后汇总（对象确认不存在、索引与缓存清除确认），排队不算完成；
+    # 云端全部完成 → device_pending；两端确认后才 completed</code></pre>
+<ul><li><b>巡检四类账（每小时）</b>：元数据认为该删、对象仍在；对象存在却没有有效清单或提交记录；对象已不存在、但没有删除确认或回执；<b>已发回执的对象又出现</b>。第四类是高优先级异常：检查未登记的授权、在途写入与旧客户端重传。</li><li><b>永久失败</b>：作业失败满 48 小时，登记 <code>cloud_failed</code> 缺口，走同一删除流程，回执 <code>outcome = failed</code>。<b>72 小时</b>不能只靠生命周期规则：接近上限仍有未完成作业的对象，主动取消租约、给剩余覆盖登记失败并删音频；超过上限记为保留违约，不因“后台还在删”而显示达标。</li><li><b>到期的文字</b>：到期时刻起立即不可读（读路径检查 <code>expires_at</code>），清理事件即时发出，小时巡检只负责补漏。</li><li><b>手机销毁 K</b> 要处理密钥表的历史页、日志、缓存与任何可恢复副本；只删包裹密钥所在的一行，不能未经验证就声称不可恢复（NIST SP 800-88）。</li><li><b>注销</b>：用户擦除完成后销毁该用户的数据密钥，遗漏在任何地方的密文一并失效；擦除任务的控制记录（不含正文与可恢复密钥）不随之销毁。设备离线时保持 <code>device_pending</code>，重连后先清除、再恢复相关上传。恢复备份、重建索引之前先应用擦除记录。</li></ul>
+<h3>清单瘦身</h3>
+<div class="tbl"><table><thead><tr><th>阶段</th><th>保留</th><th>删除</th></tr></thead><tbody><tr><td>G5 提交后</td><td>后续需要的片段标量与区间、录音当地日期与时区、会议实例字段</td><td>PCM、逐轮次嵌入、完整传感器与场景轨迹</td></tr><tr><td>云端音频确认删除后</td><td>分片 ID、帧范围、覆盖结论、删除证明、回执信息</td><td>直传地址、完整原始清单与场景快照、L1 细节、二期传感器字段</td></tr><tr><td>手机确认回执后</td><td>精简的释放凭据、拒绝重传所需的范围记录</td><td>逐次上传的诊断</td></tr><tr><td>作业完成 7 天后</td><td>必要的覆盖与删除墓碑</td><td>详细作业记录（§5.12）</td></tr><tr><td>范围记录可合并时</td><td>按设备、启动世代的连续已终结区间及例外的洞</td><td>重复的逐片清单</td></tr></tbody></table></div>
+<p>合并不能跨过没见过的序号洞，也不能把 <code>never_arrived</code>、<code>phone_lost</code> 与已识别混成同一种成功记录。详细清单删除后，网关仍须依据精简墓碑拒收已释放的分片。擦除墓碑不随 <code>rec_jobs</code> 的 7 天期限删除，要覆盖旧凭据、旧设备与迟到消息仍可能重放的期限；设备彻底退役后，可以用绑定世代失效代替大量逐片墓碑。</p>
+<h3>参数</h3>
+<div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>说明</th></tr></thead><tbody><tr><td>删除触发</td><td>覆盖终结后立即</td><td>测落盘到首次删除的 P99</td></tr><tr><td>删除重试</td><td>1、5、30 秒，之后封顶 5 分钟，带抖动</td><td>故障恢复时避免重试风暴</td></tr><tr><td>直传地址有效期</td><td>15 分钟</td><td>所有已签发授权都可枚举</td></tr><tr><td>在途写入上界</td><td>由适配器验证后配置</td><td>不凭经验假定</td></tr><tr><td>巡检</td><td>每小时</td><td>四类账；桶内 &gt;24 小时对象数是告警线，不是合法保留目标</td></tr><tr><td>生命周期兜底</td><td>72 小时，按首次存入时间，重传不续期</td><td>§5.14、§7</td></tr></tbody></table></div>
+<h3>失败与恢复</h3>
+<div class="tbl"><table><thead><tr><th>崩溃点</th><th>恢复</th></tr></thead><tbody><tr><td>① 之前</td><td>作业从音频重跑</td></tr><tr><td>① 与首次删除之间</td><td>巡检找出覆盖已终结、无读依赖、对象仍在的分片，补删</td></tr><tr><td>等待静默期间</td><td>定时任务继续；重启后按 <code>latest_grant_expires_at</code> 与写入状态恢复</td></tr><tr><td>② 删了对象、未记删除</td><td>再取不存在确认后补记；回执经出站表补发</td></tr><tr><td>② 与 ③ 之间</td><td>巡检补发回执；回执可重复，手机幂等</td></tr><tr><td>手机删钥后崩溃</td><td>重启后重发 <code>ack-local</code>，服务端幂等</td></tr><tr><td>擦除与上传或写入并发</td><td>写入后复查屏障，提交后立即删除</td></tr></tbody></table></div>
+<h3>测试与验收</h3>
+<ul><li>在 <code>PersistResult</code>、首次删除、等待授权过期、最后清扫、记录不存在、生成回执前后逐点杀进程：无遗留音频、无重复片段、回执最终送达。</li><li>一片被多个作业覆盖、尾部尚未处理时不能提前删。回执丢失、重复拉取、重复端侧确认。</li><li>删除后用仍在有效期内的旧地址 PUT；过期前开始、过期后结束的上传；未完成的分块上传：巡检周期内被删且不可解密。</li><li>擦除与 G6、G7、G8、用户改字、热词更新、索引写入、提醒发送并发；云端完成而设备离线时状态仍显示设备待清除；清单瘦身后的重传、乱序旧事件与过期租约提交不能复活数据。</li><li>不变量：没有未覆盖的帧被正常释放；没有旧代次结果越过屏障；没有已撤回的产物继续提醒；“三端完成”必有三端的完成依据。</li><li>监控：音频最大滞留时长、落盘到删除 P99、删除到回执 P99（含等待地址过期的约 15 分钟）、到期未删条数为 0。</li></ul>
+<h3>与提案的差异</h3>
+<ul><li>§5.11 把作业状态与音频对象状态串在一起：按详设 5 拆成两条状态机。<code>s-del</code> 的“全部帧落盘”与 §5.12 的 <code>frames_persisted_upto</code> 改为覆盖账。</li><li><code>c-receipt</code> 补语义：释放音频不代表产生文字，也不代表三端都已删完。</li><li>§5.14 的每小时删除与“到期未删条数为 0”区分“到期不可读”与“物理清除延迟”。</li><li>§7 的“识别完成后立即删除，三端都不保留”按可核验的阶段表述（回执传输、离线设备、在途上传）；§5.12 清单长期保留与 §7 场景快照随音频删除的冲突，按上面的瘦身表解决。</li></ul>
+<h3>未决</h3>
+<ul><li>存储写入静默的保证由哪种适配器机制提供；文字备份是否允许、保留多久、怎样失效；墓碑的保留上界；端侧密钥不可恢复的验证方法。</li></ul>
+</section>
+</main>
+</div>
+
+<div id="tip" role="tooltip" hidden></div>
+<script src="contracts.js"></script>
+<script src="site.js"></script>
+</body>
+</html>

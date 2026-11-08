@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>领夹 ASR · 领夹与手机</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@600;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="device.html">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="ahp"/></marker>
+    <polygon id="hex" points="0,-14 12.1,-7 12.1,7 0,14 -12.1,7 -12.1,-7"/>
+    <symbol id="lock" viewBox="0 0 12 14"><rect x="1" y="6" width="10" height="8" rx="1.5"/><path d="M3.5 6V4a2.5 2.5 0 0 1 5 0v2" fill="none" stroke-width="1.6"/></symbol>
+  </defs>
+</svg>
+
+<div class="wrap">
+<aside class="side" id="side" aria-label="导航与图例"></aside>
+
+<main>
+<header class="phead">
+  <p class="crumb"><a href="index.html">领夹 ASR 整体方案</a></p>
+  <h1>领夹与手机</h1>
+  <p class="lede">§3 硬件与 §4 手机端：采集、缓冲、传输、L1 拒识与上传。</p>
+</header>
+
+<section id="s3" data-label="§3">
+  <h2><span class="no">§3</span>硬件（领夹）</h2>
+  <p class="lede">设备只做拾音、门控、压缩、缓冲、打时间和传感器特征；ASR、声纹、播放声判定都放云端。二期整机平均功耗估算 2.2–5.2 mW，建议电池 60–80 mAh。</p>
+
+  <figure id="fig-l1a">
+    <div class="fighead"><div><span class="lvl">L1</span><b>领夹内部</b></div><span class="minimap" data-seg="0"></span></div>
+    <div class="fig wide">
+    <svg viewBox="0 0 1000 320" role="img" aria-label="L1 领夹模块图：麦克风、VPU、IMU 输入常开 VAD 与特征提取，经 Opus 编码写入 Flash 环形缓冲，再由 BLE 突发传输到手机">
+      <g class="nd" tabindex="0" data-nc="a-mic"><rect x="20" y="30" width="150" height="44" rx="7"/><text class="t c" x="95" y="49"><tspan class="only-p2">上向麦</tspan><tspan class="only-p1">麦克风</tspan></text><text class="s c" x="95" y="65"><tspan class="only-p2">SNR ≥65 · AOP ≥120 dB</tspan><tspan class="only-p1">一期按单麦（待确认）</tspan></text></g>
+      <g class="nd p2only" tabindex="0" data-nc="a-outmic"><rect x="20" y="86" width="150" height="44" rx="7"/><text class="t c" x="95" y="105">外向麦</text><text class="s c" x="95" y="121">隔振 · 方向/混响比</text><text class="corner r" x="166" y="97">二期</text></g>
+      <path class="e" d="M170 52H205V78H238" marker-end="url(#ah)"/>
+      <path class="e p2only" d="M170 108H205V78"/>
+
+      <g class="nd p2only" tabindex="0" data-nc="a-vad"><rect x="240" y="48" width="170" height="60" rx="7"/><text class="t c" x="325" y="73">常开 VAD</text><text class="s c" x="325" y="91">预缓冲 500 ms · 拖尾 1 s</text><text class="corner r" x="406" y="60">二期</text></g>
+      <g class="p2only"><use href="#hex" x="254" y="48" class="gate g-drop"/><text class="gt c" x="254" y="52">G0</text></g>
+      <text class="tiny only-p1" x="245" y="126">一期：无门控，全量编码</text>
+      <path class="e" d="M410 78H458" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-nc="a-opus"><rect x="460" y="48" width="150" height="60" rx="7"/><text class="t c" x="535" y="73">Opus 编码</text><text class="s c" x="535" y="91">16 kHz · 20 ms · 16 kb/s</text></g>
+      <path class="e" d="M610 78H658" marker-end="url(#ah)"/>
+      <g class="nd store" tabindex="0" data-nc="a-flash"><rect x="660" y="48" width="150" height="60" rx="7"/><text class="t c" x="735" y="73">Flash 环形缓冲</text><text class="s c" x="735" y="91">≥8 h · 128 MB</text></g>
+      <path class="e" d="M810 78H838" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-nc="a-ble"><rect x="840" y="48" width="140" height="60" rx="7"/><text class="t c" x="910" y="73">BLE 突发传输</text><text class="s c" x="910" y="91">GATT / L2CAP CoC</text></g>
+      <path class="e" d="M980 78H996" marker-end="url(#ah)"/>
+      <text class="tiny r" x="996" y="66">手机</text>
+      <path class="e d" d="M910 48V26H735V46" marker-end="url(#ah)"/>
+      <text class="tiny c" x="822" y="20">手机按序号回执 → 立即擦除</text>
+
+      <g class="nd" tabindex="0" data-nc="a-rtc"><rect x="460" y="128" width="150" height="40" rx="7"/><text class="s c" x="535" y="153" style="fill:var(--fg);font-weight:700">RTC · 帧序号 · 世代</text></g>
+      <path class="e" d="M535 128V110" marker-end="url(#ah)"/>
+
+      <g class="nd p2only" tabindex="0" data-nc="a-vpu"><rect x="20" y="190" width="150" height="44" rx="7"/><text class="t c" x="95" y="209">VPU / 骨导</text><text class="s c" x="95" y="225">夹背 · 弹性压片</text><text class="corner r" x="166" y="201">二期</text></g>
+      <g class="nd p2only" tabindex="0" data-nc="a-imu"><rect x="20" y="256" width="150" height="44" rx="7"/><text class="t c" x="95" y="275">IMU</text><text class="s c" x="95" y="291">25–50 Hz</text><text class="corner r" x="166" y="267">二期</text></g>
+      <path class="e p2only" d="M170 212H238" marker-end="url(#ah)"/>
+      <path class="e p2only" d="M170 278H238" marker-end="url(#ah)"/>
+      <g class="nd p2only" tabindex="0" data-nc="a-vpufeat"><rect x="240" y="187" width="170" height="50" rx="7"/><text class="t c" x="325" y="208">VPU 特征</text><text class="s c" x="325" y="225">10 ms 帧 · 有效性标记</text></g>
+      <g class="nd p2only" tabindex="0" data-nc="a-wear"><rect x="240" y="253" width="170" height="50" rx="7"/><text class="t c" x="325" y="274">佩戴 · 摩擦事件</text><text class="s c" x="325" y="291">IMU 派生标签</text></g>
+      <path class="e p2only" d="M380 187V110" marker-end="url(#ah)"/>
+      <text class="tiny p2only" x="386" y="152">唤醒</text>
+      <path class="e p2only" d="M410 212H760V110" marker-end="url(#ah)"/>
+      <path class="e p2only" d="M410 278H760V212"/>
+      <text class="tiny p2only" x="600" y="205">特征流 ≈0.8 kb/s</text>
+    </svg>
+    </div>
+  </figure>
+    <details class="more nc" id="nc-of-fig-l1a"><summary>节点契约：本图每个节点的输入、输出、做法与指标</summary><div><p class="small muted">本图 11 个模块都在这里定义。悬停或点按图中节点看到的是同一份契约。指标列写一期目标或上限，写“报告”的只报告、不设门槛。</p><div class="tbl"><table class="nct"><thead><tr><th>节点</th><th>输入</th><th>输出</th><th>做法（能力 / 算法）</th><th>指标 · 一期目标</th><th>失败或缺证据时</th></tr></thead><tbody data-rows="a-mic a-outmic a-vad a-opus a-ble a-rtc a-vpu a-imu a-vpufeat a-wear"></tbody></table></div><div class="tbl"><table class="nct st"><thead><tr><th>存储与输入</th><th>存什么</th><th>谁写 · 谁读</th><th>保留与删除</th></tr></thead><tbody data-rows="a-flash"></tbody></table></div></div></details>
+
+  <div class="grid2">
+    <div class="card"><h3>麦克风阵列</h3>
+      <div class="tbl"><table>
+        <thead><tr><th>方案</th><th>提供什么</th><th>结论</th></tr></thead>
+        <tbody>
+          <tr><td>单麦</td><td>相对机主基线的声级、直达/混响比</td><td>一期现状</td></tr>
+          <tr><td><b>双麦（上向 + 外向）</b></td><td>方向先验、直达/混响比</td><td><b>二期基线</b></td></tr>
+          <tr><td>三麦及以上</td><td>更好的波束与定位</td><td>不做：功耗、尺寸</td></tr>
+        </tbody>
+      </table></div>
+      <p class="small muted">近场线索：机主约 20 cm、他人约 1.5 m，声级差约 17.5 dB<span class="tg es">估算</span>（等声功率、自由场的距离衰减；实际受音量、朝向、衣物与 AGC 影响）；近处他人和开大的电视会破坏它。</p>
+    </div>
+    <div class="card"><h3>VPU / 骨传导</h3>
+      <div class="tbl"><table>
+        <thead><tr><th>方案</th><th>风险</th></tr></thead>
+        <tbody>
+          <tr><td>专用 VPU</td><td>为贴耳道设计，隔着衣物贴胸口的信号未知</td></tr>
+          <tr><td>骨导加速度计（≥1–2 kHz）</td><td>走路、摩擦等机械噪声耦合更强</td></tr>
+          <tr><td>低速 IMU</td><td>拾不到发声振动，只判佩戴与运动</td></tr>
+        </tbody>
+      </table></div>
+      <p class="small muted">二期两套样件对照；不达标时备选磁吸背板或贴近胸骨的挂坠。型号与单价<span class="tg ask">待询价</span>。</p>
+    </div>
+  </div>
+
+  <figure id="fig-power">
+    <div class="fighead"><div><b>功耗：各模块平均功耗区间与 5 mW 预算</b><span class="tg es">估算</span></div></div>
+    <div class="fig mid">
+    <svg viewBox="0 0 900 340" role="img" aria-label="功耗区间图：八个模块的平均功耗区间，合计 2.2 到 5.2 毫瓦，预算 5 毫瓦">
+      <text class="tiny" x="300" y="20">0</text><text class="tiny c" x="400" y="20">0.5</text><text class="tiny c" x="500" y="20">1.0</text><text class="tiny c" x="600" y="20">1.5</text><text class="tiny c" x="700" y="20">2.0 mW</text>
+      <path class="grid" d="M300 26V258M400 26V258M500 26V258M600 26V258M700 26V258"/>
+      <g>
+        <text class="s" x="20" y="48" style="fill:var(--fg)">2 × MEMS 麦克风</text><rect x="380" y="36" width="80" height="16" rx="3" fill="var(--c-asr)"/><text class="mono" x="720" y="48">0.4–0.8</text>
+        <text class="s" x="20" y="76" style="fill:var(--fg)">采集接口 + 常开 VAD</text><rect x="400" y="64" width="100" height="16" rx="3" fill="var(--c-asr)"/><text class="mono" x="720" y="76">0.5–1.0</text>
+        <text class="s" x="20" y="104" style="fill:var(--fg)">主控 + Opus（占空 30–40%）</text><rect x="420" y="92" width="200" height="16" rx="3" fill="var(--c-llm)"/><text class="mono" x="720" y="104">0.6–1.6</text>
+        <text class="s" x="20" y="132" style="fill:var(--fg)">VPU / 骨导（常开）</text><rect x="340" y="120" width="60" height="16" rx="3" fill="var(--c-asr)"/><text class="mono" x="720" y="132">0.2–0.5</text>
+        <text class="s" x="20" y="160" style="fill:var(--fg)">IMU（低速）</text><rect x="302" y="148" width="8" height="16" rx="2" fill="var(--c-cpu)"/><text class="mono" x="720" y="160">≈0.03</text>
+        <text class="s" x="20" y="188" style="fill:var(--fg)">Flash 写入</text><rect x="320" y="176" width="20" height="16" rx="2" fill="var(--c-cpu)"/><text class="mono" x="720" y="188">0.1–0.2</text>
+        <text class="s" x="20" y="216" style="fill:var(--fg)">BLE（连接维持 + 突发）</text><rect x="360" y="204" width="100" height="16" rx="3" fill="var(--c-sto)"/><text class="mono" x="720" y="216">0.3–0.8</text>
+        <text class="s" x="20" y="244" style="fill:var(--fg)">漏电 · LDO · RTC</text><rect x="320" y="232" width="20" height="16" rx="2" fill="var(--c-cpu)"/><text class="mono" x="720" y="244">0.1–0.2</text>
+      </g>
+      <path class="axis" d="M20 270H880"/>
+      <text class="t" x="20" y="304">合计</text>
+      <text class="tiny" x="62" y="304">（另一刻度）</text>
+      <path class="grid" d="M300 286V320M380 286V320M460 286V320M540 286V320M620 286V320M700 286V320M780 286V320"/>
+      <rect x="476" y="292" width="240" height="20" rx="4" fill="var(--accent)" opacity=".85"/>
+      <text class="mono c" x="596" y="306" style="fill:var(--on-accent);font-weight:500">2.2–5.2 mW</text>
+      <path d="M700 282V322" stroke="var(--g-drop)" stroke-width="2" stroke-dasharray="4 3"/>
+      <text class="gl" x="706" y="290" style="fill:var(--g-drop)">预算 5 mW</text>
+      <text class="tiny c" x="300" y="334">0</text><text class="tiny c" x="380" y="334">1</text><text class="tiny c" x="460" y="334">2</text><text class="tiny c" x="540" y="334">3</text><text class="tiny c" x="620" y="334">4</text><text class="tiny c" x="700" y="334">5</text><text class="tiny c" x="780" y="334">6 mW</text>
+    </svg>
+    </div>
+    <figcaption>门控打开约 35% 的全天画像。5 mW × 24 h = 120 mWh ≈ 32 mAh（3.7 V），留 40% 余量建议 60–80 mAh。最大变量是门控占空比与 BLE 策略；须在原型上按“安静办公 / 会议 / 通勤 / 看电视”四种画像实测。</figcaption>
+  </figure>
+
+  <div id="s3-6" class="card" data-label="§3 缓冲与传输"><h3>缓冲与传输</h3>
+    <dl class="kv">
+      <dt>码流</dt><dd>16 kb/s ≈ 7.2 MB/小时</dd>
+      <dt>Flash</dt><dd>≥8 小时满码率（约 58 MB），128 MB SPI NAND<span class="tg ask">待询价</span>；未确认的数据不覆盖，写满时停录并告警；手机回执后立即擦除该区间：按段加密、销毁该段密钥，再在空闲时擦除整块。只标为可覆盖不算删除，128 MB 扣除坏块预留后能存约 16.5 小时音频，领夹丢失就会泄露</dd>
+      <dt>传输</dt><dd>BLE 自定义 GATT / L2CAP CoC 突发；手机按帧序号区间回执</dd>
+      <dt>码率</dt><dd>默认 16 kb/s；远场 CER 或短回应受限且功耗允许时提到 24–32 kb/s</dd>
+    </dl>
+  </div>
+</section>
+
+<section id="s4" data-label="§4">
+  <h2><span class="no">§4</span>手机端</h2>
+  <p class="lede">手机是中间处理层：拼时间线、校时钟、做 L1 拒识、记场景、调度上传、管删除链。L1 只跑 VAD、只丢高置信非语音，在 BLE 收到数据后增量运行。</p>
+
+  <figure id="fig-l1b">
+    <div class="fighead"><div><span class="lvl">L1</span><b>手机 App 内部</b></div><span class="minimap" data-seg="1"></span></div>
+    <div class="fig wide">
+    <svg viewBox="0 0 1040 340" role="img" aria-label="L1 手机模块图：BLE 接收、时间线拼接、加密暂存、L1 拒识、清单打包、批量上传，旁路有时钟校准、场景事件时间线、调度条件与个人热词采集">
+      <path class="e" d="M4 90H18" marker-end="url(#ah)"/><text class="tiny" x="2" y="80">领夹</text>
+      <g class="nd" tabindex="0" data-nc="b-rx"><rect x="20" y="60" width="130" height="60" rx="7"/><text class="t c" x="85" y="86">BLE 接收</text><text class="s c" x="85" y="104">按序号回执</text></g>
+      <path class="e" d="M150 90H178" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-nc="b-stitch"><rect x="180" y="60" width="160" height="60" rx="7"/><text class="t c" x="260" y="86">时间线拼接</text><text class="s c" x="260" y="104">设备 · 世代 · 帧序号</text></g>
+      <path class="e" d="M340 90H368" marker-end="url(#ah)"/>
+      <g class="nd store" tabindex="0" data-nc="b-stage"><rect x="370" y="60" width="150" height="60" rx="7"/><use href="#lock" class="lock" x="380" y="68" width="12" height="14"/><text class="t c" x="445" y="86">加密暂存</text><text class="s c" x="445" y="104">≤2 GB · ≤7 天</text></g>
+      <path class="e" d="M520 90H548" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-nc="b-l1"><rect x="550" y="60" width="170" height="60" rx="7"/><text class="t c" x="635" y="86">L1 拒识</text><text class="s c" x="635" y="104">接收后增量 · 只跑 VAD</text></g>
+      <use href="#hex" x="564" y="60" class="gate g-drop"/><text class="gt c" x="564" y="64">G1</text>
+      <text class="tiny c" x="635" y="142">声音事件分类在云端做</text>
+      <path class="e" d="M720 90H748" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-nc="b-manifest"><rect x="750" y="60" width="110" height="60" rx="7"/><text class="t c" x="805" y="86">清单打包</text><text class="s c" x="805" y="104">快照 + 标签</text></g>
+      <path class="e" d="M860 90H878" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-nc="b-upload"><rect x="880" y="60" width="110" height="60" rx="7"/><text class="t c" x="935" y="86">批量上传</text><text class="s c" x="935" y="104">幂等分片 ID</text></g>
+      <path class="e" d="M990 90H1034" marker-end="url(#ah)"/><text class="tiny r" x="1034" y="80">云端</text>
+
+      <path class="e d" d="M400 60V30H85V58" marker-end="url(#ah)"/>
+      <text class="tiny c" x="242" y="24">加密落盘后按序号回执 → 领夹擦除</text>
+      <path class="e d" d="M1034 40H445V58" marker-end="url(#ah)"/>
+      <text class="tiny c" x="740" y="34">云端回执：音频已删 → 删除暂存</text>
+
+      <g class="nd" tabindex="0" data-nc="b-clock"><rect x="180" y="170" width="160" height="56" rx="7"/><text class="t c" x="260" y="194">时钟校准</text><text class="s c" x="260" y="212">同步点拟合 · ≤200 ms</text></g>
+      <path class="e" d="M260 170V122" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-nc="b-scene"><rect x="550" y="170" width="170" height="56" rx="7"/><text class="t c" x="635" y="194">场景事件时间线</text><text class="s c" x="635" y="212">外放 · 通话 · 路由 · 日历</text></g>
+      <path class="e" d="M720 198H805V122" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-nc="b-sched"><rect x="870" y="160" width="150" height="100" rx="7"/><text class="t c" x="945" y="182">调度条件</text><text class="s c" x="945" y="202">累计 ≥30 分钟有效</text><text class="s c" x="945" y="218">最旧 &gt;2 小时</text><text class="s c" x="945" y="234">立即同步（可用蜂窝）</text><text class="s c" x="945" y="250">WiFi 优先 · 蜂窝 &gt;4 h</text></g>
+      <path class="e" d="M935 160V122" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-nc="b-hotcollect"><rect x="180" y="270" width="200" height="50" rx="7"/><text class="t c" x="280" y="291">个人热词采集</text><text class="s c" x="280" y="308">通讯录 · 日历 · 项目 · 改字</text></g>
+      <path class="e dot" d="M380 295H1034" marker-end="url(#ah)"/>
+      <text class="tiny c" x="700" y="289">→ 云端 · 个人热词库（可查看 / 删除）</text>
+    </svg>
+    </div>
+  </figure>
+    <details class="more nc" id="nc-of-fig-l1b"><summary>节点契约：本图每个节点的输入、输出、做法与指标</summary><div><p class="small muted">本图 10 个模块都在这里定义。悬停或点按图中节点看到的是同一份契约。指标列写一期目标或上限，写“报告”的只报告、不设门槛。</p><div class="tbl"><table class="nct"><thead><tr><th>节点</th><th>输入</th><th>输出</th><th>做法（能力 / 算法）</th><th>指标 · 一期目标</th><th>失败或缺证据时</th></tr></thead><tbody data-rows="b-rx b-stitch b-l1 b-manifest b-upload b-clock b-scene b-sched b-hotcollect"></tbody></table></div><div class="tbl"><table class="nct st"><thead><tr><th>存储与输入</th><th>存什么</th><th>谁写 · 谁读</th><th>保留与删除</th></tr></thead><tbody data-rows="b-stage"></tbody></table></div></div></details>
+
+  <div class="grid2">
+    <div id="s4-1" class="card" data-label="§4.1"><h3>分片与时间线</h3>
+      <ul class="small">
+        <li>上传分片固定 5 分钟设备时间（15,000 帧），不按语音切；立即同步时把未满的当前分片截断上传，下一片从截断处起算。</li>
+        <li>主键 <code>(device_id, boot_generation, frame_seq)</code>，乱序与补传都能拼回原位。</li>
+        <li>缺口不压缩时间轴；开启 DTX 时只按帧序号推算时间。</li>
+        <li>原样保存设备码流，L1 只解一份临时 PCM。</li>
+      </ul>
+    </div>
+    <div id="s4-2" class="card" data-label="§4.2"><h3>时钟校准</h3>
+      <ul class="small">
+        <li>同步点：每次连接 + 连接中每 5 分钟。</li>
+        <li>线性拟合 <code>offset</code>、<code>drift_ppm</code>；日漂移 ≤1.7 s<span class="tg es">估算</span>。</li>
+        <li>异常：重启（世代变化）、手动改时间、拟合残差过大 → 分段重拟合，标 <code>sync_quality_ms</code>。</li>
+        <li>录音时刻还原误差 ≤200 ms<span class="tg go">目标</span>。</li>
+      </ul>
+    </div>
+    <div id="s4-3" class="card" data-label="§4.3"><h3>L1 拒识</h3>
+      <ul class="small">
+        <li><b>只丢</b>：VAD 高置信非语音，前后各留 500 ms 后仍为非语音；间隔 &lt;2 s 的语音段合并。</li>
+        <li><b>不做</b>声音事件分类：云端的 CPU 小模型已包含；本机外放由场景事件记录。</li>
+        <li><b>运行时机</b>：BLE 收到数据后增量运行，每个 5 分钟分片约数秒 CPU<span class="tg es">估算</span>，不依赖系统择机执行的后台任务。</li>
+        <li>一期是第一道丢弃闸：留出前后余量后，约丢掉 65% 的佩戴时长，每佩戴 1 小时上传约 0.35 小时<span class="tg as">假设</span>；二期只复核。</li>
+      </ul>
+    </div>
+    <div id="s4-5" class="card" data-label="§4.5"><h3>平台机制<span class="tg ask">待确认</span></h3>
+      <ul class="small">
+        <li>iOS：BLE 中心后台模式接收，在唤醒时间内增量跑 VAD；<code>BGProcessingTask</code> 只补跑积压；后台 <code>URLSession</code> 上传。</li>
+        <li>Android：<code>connectedDevice</code> 前台服务负责接收与 VAD；WorkManager 约束负责上传。</li>
+      </ul>
+    </div>
+  </div>
+
+  <div id="s4-4" data-label="§4.4" style="display:flex;flex-direction:column;gap:10px">
+    <h3>场景事件（随清单上云，按录音时刻关联）</h3>
+    <p class="small muted">设备离线缓冲时，“手机收到分片”可能比录音晚几个小时，所以按事件时间线记录，不在收到时取一次快照。</p>
+    <div class="tbl"><table>
+      <thead><tr><th>字段</th><th>类型</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">t_utc</td><td class="mono">int64 ms</td><td>状态变化时刻</td></tr>
+        <tr><td class="mono">coverage</td><td class="mono">observed | unknown</td><td>App 是否观测到该时段</td></tr>
+        <tr><td class="mono">media.active</td><td class="mono">bool</td><td>手机自身是否在播放</td></tr>
+        <tr><td class="mono">media.route</td><td class="mono">speaker | receiver | wired | bt_a2dp | bt_hfp | airplay | unknown</td><td>只有 <code>speaker</code> 会被领夹录到</td></tr>
+        <tr><td class="mono">call.state</td><td class="mono">none | ringing | active</td><td>通话状态</td></tr>
+        <tr><td class="mono">call.route</td><td class="mono">同上</td><td><code>speaker</code> 即免提</td></tr>
+        <tr><td class="mono">call.kind</td><td class="mono">cellular | voip | unknown</td><td>通话类型</td></tr>
+        <tr><td class="mono">calendar.in_meeting</td><td class="mono">bool</td><td>是否处于日历事件时间窗</td></tr>
+        <tr><td class="mono">calendar.meeting_hash</td><td class="mono">string</td><td>事件 ID 加盐哈希，关联同一会议的分片</td></tr>
+        <tr><td class="mono">calendar.attendee_count</td><td class="mono">int</td><td>参会人数</td></tr>
+        <tr><td class="mono">calendar.is_online</td><td class="mono">bool</td><td>是否线上会议</td></tr>
+        <tr><td class="mono">hotword_set_version</td><td class="mono">string</td><td>当时生效的个人热词表版本</td></tr>
+      </tbody>
+    </table></div>
+    <p class="small">不进快照：日历标题、参会人姓名、通讯录内容（只进个人热词库）。</p>
+    <details class="more"><summary>平台 API 与已知盲区<span class="tg ask">待确认</span></summary><div>
+      <p>iOS：外放 <code>AVAudioSession.isOtherAudioPlaying</code> / <code>secondaryAudioShouldBeSilencedHint</code>，路由 <code>currentRoute.outputs</code>，通话 <code>CXCallObserver</code>，日历 EventKit。中国大陆区的 VoIP 应用通常不接入 CallKit，微信等通话可能观测不到，此时 <code>call.kind=unknown</code>，回退到声学判断。</p>
+      <p>Android：外放 <code>AudioManager.getActivePlaybackConfigurations</code> / <code>isMusicActive</code>，通话 <code>getMode()</code>、<code>TelephonyCallback</code>（需电话权限），路由 <code>getCommunicationDevice</code>，日历 <code>CalendarContract</code>。</p>
+    </div></details>
+  </div>
+  <p id="s4-6" class="small muted" data-label="§4.6">暂存上限 2 GB、最长 7 天；超期删除并登记缺口。隐私上限优先于完整性。</p>
+</section>
+</main>
+</div>
+
+<div id="tip" role="tooltip" hidden></div>
+<script src="contracts.js"></script>
+<script src="site.js"></script>
+</body>
+</html>

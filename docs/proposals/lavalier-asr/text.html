@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>领夹 ASR · 入库与下游</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@600;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="text.html">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="ahp"/></marker>
+    <polygon id="hex" points="0,-14 12.1,-7 12.1,7 0,14 -12.1,7 -12.1,-7"/>
+    <symbol id="lock" viewBox="0 0 12 14"><rect x="1" y="6" width="10" height="8" rx="1.5"/><path d="M3.5 6V4a2.5 2.5 0 0 1 5 0v2" fill="none" stroke-width="1.6"/></symbol>
+  </defs>
+</svg>
+
+<div class="wrap">
+<aside class="side" id="side" aria-label="导航与图例"></aside>
+
+<main>
+<header class="phead">
+  <p class="crumb"><a href="index.html">领夹 ASR 整体方案</a></p>
+  <h1>入库与下游</h1>
+  <p class="lede">§5.9：对话单元、纪要、待办与记忆。</p>
+</header>
+
+<section id="s5-down" data-label="§5 入库与下游">
+  <h2><span class="no">§5</span>云端 · 入库与下游</h2>
+  <figure id="fig-l1d">
+    <div class="fighead"><div><span class="lvl">L1</span><b>云端 · 入库与下游</b></div><span class="minimap" data-seg="3"></span></div>
+    <div class="fig wide">
+    <svg viewBox="0 0 1000 420" role="img" aria-label="L1 入库与下游：接受档按对话单元聚合，经 G8 入库闸门进入纪要、待办、记忆，均记录溯源；隔离档折叠显示在 App；用户的放回、降级、改标说话人、改字回写转写库并撤回依赖项">
+      <g class="nd store" tabindex="0" data-nc="d-acc"><rect x="20" y="70" width="160" height="60" rx="7"/><use href="#lock" class="lock" x="30" y="78" width="12" height="14"/><text class="t c" x="100" y="96">转写库 · 接受档</text><text class="s c" x="100" y="114">机主 · 他人 · 未知</text></g>
+      <path class="e" d="M180 100H208" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-nc="d-unit"><rect x="210" y="70" width="160" height="60" rx="7"/><text class="t c" x="290" y="96">对话单元</text><text class="s c" x="290" y="114">会议 · 10 分钟静默</text></g>
+      <path class="e" d="M370 100H398" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-nc="d-g8"><rect x="400" y="70" width="150" height="60" rx="7"/><text class="t c" x="482" y="96">入库闸门</text><text class="s c" x="482" y="114">按说话人核对</text></g>
+      <use href="#hex" x="414" y="70" class="gate g-store"/><text class="gt c" x="414" y="74">G8</text>
+      <path class="e" d="M550 100H570M570 40V207"/>
+      <path class="e" d="M570 40H598" marker-end="url(#ah)"/>
+      <path class="e" d="M570 127H598" marker-end="url(#ah)"/>
+      <path class="e" d="M570 207H598" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-nc="d-sum"><rect x="600" y="10" width="190" height="60" rx="7"/><text class="t c" x="695" y="30">纪要</text><text class="s c" x="695" y="47">背景簇不作上下文</text><text class="s c" x="695" y="63">机主 &lt;3 句不出（会议除外）</text></g>
+      <g class="nd" tabindex="0" data-nc="d-todo"><rect x="600" y="80" width="190" height="94" rx="7"/><text class="t c" x="695" y="99">待办</text><text class="s c" x="695" y="117">按承担人分四类</text><text class="s c" x="695" y="133">我答应的：证据级机主原话</text><text class="s c" x="695" y="149">未知与背景簇：不能支撑</text><text class="s c" x="695" y="165">否则：未核实，不提醒</text></g>
+      <g class="nd" tabindex="0" data-nc="d-mem"><rect x="600" y="184" width="190" height="46" rx="7"/><text class="t c" x="695" y="203">记忆</text><text class="s c" x="695" y="220">只采信证据级机主原话</text></g>
+      <path class="e" d="M790 127H818" marker-end="url(#ah)"/>
+      <path class="e" d="M790 207H818" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-nc="d-prov"><rect x="820" y="80" width="160" height="150" rx="7"/><text class="t c" x="900" y="104">溯源</text><text class="s c" x="900" y="126">每条待办与记忆</text><text class="s c" x="900" y="144">记录引用的片段 ID</text><text class="s c" x="900" y="172">片段降级、删除</text><text class="s c" x="900" y="190">或单元重开时</text><text class="s c" x="900" y="208">撤回或请用户确认</text></g>
+
+      <g class="nd store" tabindex="0" data-nc="d-iso"><rect x="20" y="270" width="160" height="60" rx="7"/><use href="#lock" class="lock" x="30" y="278" width="12" height="14"/><text class="t c" x="100" y="296">转写库 · 隔离档</text><text class="s c" x="100" y="314">7 天自动删除</text></g>
+      <path class="e" d="M100 130V248H660V268" marker-end="url(#ah)"/>
+      <text class="tiny" x="300" y="242">正常显示 · 未知说话人单独标注</text>
+      <path class="e" d="M180 300H598" marker-end="url(#ah)"/>
+      <text class="tiny" x="300" y="294">折叠显示 · 标注原因</text>
+      <g class="nd" tabindex="0" data-nc="d-app"><rect x="600" y="270" width="190" height="64" rx="7"/><text class="t c" x="695" y="294">App 时间线</text><text class="s c" x="695" y="313">接受正常 · 隔离折叠</text></g>
+      <path class="e d" d="M790 302H804" marker-end="url(#ah)"/>
+      <g class="nd" tabindex="0" data-nc="d-user"><rect x="806" y="256" width="176" height="96" rx="7"/><text class="t c" x="894" y="278">用户操作</text><text class="s c" x="894" y="298">放回 · 降级</text><text class="s c" x="894" y="315">改标说话人 · 改字</text><text class="tiny c" x="894" y="338">“这不是我说的” / “这是电视”</text></g>
+      <path class="e d" d="M894 256V233" marker-end="url(#ah)"/>
+      <text class="tiny" x="904" y="248">撤回依赖项</text>
+      <path class="e d" d="M894 352V402H8V108H18" marker-end="url(#ah)"/>
+      <path class="e d" d="M8 306H18" marker-end="url(#ah)"/>
+      <text class="tiny c" x="450" y="396">回写转写库：放回、降级、改标说话人、改字</text>
+    </svg>
+    </div>
+    <figcaption>用户操作只确认各自的维度：放回只确认内容可以回到接受档；把未知说话人改标为机主确认身份，可作为证据级身份；改标为他人可以支撑“对方答应的”待办。改字只改文字、不改说话人，改过的专名进入个人热词。改字、改标和改背景标记都会重开所在单元，纪要与待办随之更新。</figcaption>
+  </figure>
+    <details class="more nc" id="nc-of-fig-l1d"><summary>节点契约：本图每个节点的输入、输出、做法与指标</summary><div><p class="small muted">本图 10 个模块都在这里定义。悬停或点按图中节点看到的是同一份契约。指标列写一期目标或上限，写“报告”的只报告、不设门槛。</p><div class="tbl"><table class="nct"><thead><tr><th>节点</th><th>输入</th><th>输出</th><th>做法（能力 / 算法）</th><th>指标 · 一期目标</th><th>失败或缺证据时</th></tr></thead><tbody data-rows="d-unit d-g8 d-sum d-todo d-mem d-prov d-app d-user"></tbody></table></div><div class="tbl"><table class="nct st"><thead><tr><th>存储与输入</th><th>存什么</th><th>谁写 · 谁读</th><th>保留与删除</th></tr></thead><tbody data-rows="d-acc d-iso"></tbody></table></div></div></details>
+  <div id="s5-9" data-label="§5.9" style="display:flex;flex-direction:column;gap:14px">
+    <h3>5.9 对话单元与下游触发</h3>
+    <p class="small">上传批只服务于传输，识别分片只服务于 8B；纪要、待办、记忆按“对话单元”生成。按批生成会把一场会议切碎，按天生成会让“立即同步”对纪要失去意义。</p>
+    <figure id="fig-units">
+      <div class="fighead"><div><span class="lvl">L2</span><b>对话单元：怎么切、何时关、何时重开</b></div></div>
+      <div class="fig wide">
+      <svg viewBox="0 0 1100 206" role="img" aria-label="示意：一天中的六段语音。通勤段机主只说一句，不出纪要；日历会议机主只说两句，按会议例外出纪要；走廊段在立即同步后十分钟内续说，重开并更新纪要；午饭段静默十分钟后关闭；一对一段有缺口，超过两小时先关闭，补到后重开；看电视段在隔离档，不进任何单元">
+        <path class="grid" d="M60 28V112"/><text class="tiny c" x="60" y="20" style="font-family:var(--f-num);font-size:12px">08:00</text>
+        <path class="grid" d="M226.7 28V112"/><text class="tiny c" x="226.7" y="20" style="font-family:var(--f-num);font-size:12px">10:00</text>
+        <path class="grid" d="M393.3 28V112"/><text class="tiny c" x="393.3" y="20" style="font-family:var(--f-num);font-size:12px">12:00</text>
+        <path class="grid" d="M560 28V112"/><text class="tiny c" x="560" y="20" style="font-family:var(--f-num);font-size:12px">14:00</text>
+        <path class="grid" d="M726.7 28V112"/><text class="tiny c" x="726.7" y="20" style="font-family:var(--f-num);font-size:12px">16:00</text>
+        <path class="grid" d="M893.3 28V112"/><text class="tiny c" x="893.3" y="20" style="font-family:var(--f-num);font-size:12px">18:00</text>
+        <path class="grid" d="M1060 28V112"/><text class="tiny c" x="1060" y="20" style="font-family:var(--f-num);font-size:12px">20:00</text>
+        <rect x="185" y="34" width="83.3" height="18" rx="3" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1"/><text class="tiny c" x="226.7" y="47" style="fill:var(--accent);font-weight:700">日历会议</text>
+        <rect x="80.8" y="66" width="4.4" height="38" fill="var(--accept)" opacity=".45"/>
+        <rect x="89.2" y="66" width="5.7" height="38" fill="var(--accept)" opacity=".45"/>
+        <rect x="96.1" y="66" width="4.4" height="38" fill="var(--accept)"/>
+        <rect x="105.8" y="66" width="7.1" height="38" fill="var(--accept)" opacity=".45"/>
+        <rect x="118.3" y="66" width="3" height="38" fill="var(--accept)" opacity=".45"/>
+        <rect x="185" y="66" width="8.5" height="38" fill="var(--accept)" opacity=".45"/>
+        <rect x="195.3" y="66.6" width="4.5" height="36.8" fill="var(--surface)" stroke="var(--accept)" stroke-width="1.2" stroke-dasharray="3 2"/>
+        <rect x="201.7" y="66" width="11.3" height="38" fill="var(--accept)" opacity=".45"/>
+        <rect x="214.2" y="66" width="4.4" height="38" fill="var(--accept)"/>
+        <rect x="219.7" y="66" width="7.1" height="38" fill="var(--accept)" opacity=".45"/>
+        <rect x="228.7" y="66.6" width="4.5" height="36.8" fill="var(--surface)" stroke="var(--accept)" stroke-width="1.2" stroke-dasharray="3 2"/>
+        <rect x="235" y="66" width="9.9" height="38" fill="var(--accept)" opacity=".45"/>
+        <rect x="246.1" y="66" width="4.4" height="38" fill="var(--accept)"/>
+        <rect x="251.7" y="66" width="8.5" height="38" fill="var(--accept)" opacity=".45"/>
+        <rect x="262" y="66.6" width="4.5" height="36.8" fill="var(--surface)" stroke="var(--accept)" stroke-width="1.2" stroke-dasharray="3 2"/>
+        <rect x="316.9" y="66" width="5.7" height="38" fill="var(--accept)"/>
+        <rect x="323.9" y="66" width="4.4" height="38" fill="var(--accept)" opacity=".45"/>
+        <rect x="330" y="66.6" width="4.5" height="36.8" fill="var(--surface)" stroke="var(--accept)" stroke-width="1.2" stroke-dasharray="3 2"/>
+        <rect x="336.4" y="66" width="7.1" height="38" fill="var(--accept)"/>
+        <rect x="344.7" y="66" width="3" height="38" fill="var(--accept)" opacity=".45"/>
+        <rect x="348.9" y="66" width="8.5" height="38" fill="var(--accept)"/>
+        <rect x="365.6" y="66" width="4.4" height="38" fill="var(--accept)"/>
+        <rect x="371.1" y="66" width="7.1" height="38" fill="var(--accept)" opacity=".45"/>
+        <rect x="435" y="66" width="7.1" height="38" fill="var(--accept)" opacity=".45"/>
+        <rect x="443.3" y="66" width="5.7" height="38" fill="var(--accept)"/>
+        <rect x="455.8" y="66" width="8.5" height="38" fill="var(--accept)" opacity=".45"/>
+        <rect x="466.2" y="66.6" width="4.5" height="36.8" fill="var(--surface)" stroke="var(--accept)" stroke-width="1.2" stroke-dasharray="3 2"/>
+        <rect x="472.5" y="66" width="5.7" height="38" fill="var(--accept)"/>
+        <rect x="479.4" y="66" width="9.9" height="38" fill="var(--accept)" opacity=".45"/>
+        <rect x="601.7" y="66" width="9.9" height="38" fill="var(--accept)"/>
+        <rect x="612.8" y="66" width="8.5" height="38" fill="var(--accept)" opacity=".45"/>
+        <rect x="622.5" y="66" width="5.7" height="38" fill="var(--accept)"/>
+        <rect x="630" y="66.6" width="11.5" height="36.8" fill="none" stroke="var(--g-drop)" stroke-width="1.2" stroke-dasharray="3 2"/>
+        <text class="tiny c" x="635.8" y="47" style="fill:var(--g-drop);font-weight:700">缺口</text>
+        <rect x="643.3" y="66" width="7.1" height="38" fill="var(--accept)" opacity=".45"/>
+        <rect x="651.7" y="66" width="9.9" height="38" fill="var(--accept)"/>
+        <rect x="662.8" y="66" width="7.1" height="38" fill="var(--accept)" opacity=".45"/>
+        <rect x="976.7" y="66" width="15.5" height="38" fill="var(--g-iso)" opacity=".8"/>
+        <rect x="996.1" y="66" width="19.6" height="38" fill="var(--g-iso)" opacity=".8"/>
+        <rect x="1021.1" y="66" width="23.8" height="38" fill="var(--g-iso)" opacity=".8"/>
+        <path d="M359.3 56V110" stroke="var(--accent)" stroke-width="2"/><text class="tiny c" x="359.3" y="47" style="fill:var(--accent);font-weight:700">立即同步</text>
+        <path class="axis" d="M80.8 112V118H122.5V112" fill="none"/>
+        <text class="s c" x="101.7" y="138" style="fill:var(--fg);font-weight:700">通勤</text>
+        <text class="tiny c" x="101.7" y="155">机主 1 句</text>
+        <text class="s c" x="101.7" y="173" style="fill:var(--muted)">不出纪要</text>
+        <path class="axis" d="M185 112V118H268.3V112" fill="none"/>
+        <text class="s c" x="226.7" y="138" style="fill:var(--fg);font-weight:700">日历会议</text>
+        <text class="tiny c" x="226.7" y="155">机主 2 句</text>
+        <text class="s c" x="226.7" y="173" style="fill:var(--fg);font-weight:500">会议例外，出纪要</text>
+        <path class="axis" d="M316.9 112V118H379.4V112" fill="none"/>
+        <text class="s c" x="348.2" y="138" style="fill:var(--fg);font-weight:700">走廊</text>
+        <text class="tiny c" x="348.2" y="155">同步后 10 分钟内续说</text>
+        <text class="s c" x="348.2" y="173" style="fill:var(--fg);font-weight:500">重开，纪要更新</text>
+        <path class="axis" d="M435 112V118H490.6V112" fill="none"/>
+        <text class="s c" x="462.8" y="138" style="fill:var(--fg);font-weight:700">午饭</text>
+        <text class="tiny c" x="462.8" y="155">静默 10 分钟</text>
+        <text class="s c" x="462.8" y="173" style="fill:var(--fg);font-weight:500">关闭，出纪要</text>
+        <path class="axis" d="M601.7 112V118H671.1V112" fill="none"/>
+        <text class="s c" x="636.4" y="138" style="fill:var(--fg);font-weight:700">1 对 1</text>
+        <text class="tiny c" x="636.4" y="155">缺口超过 2 小时</text>
+        <text class="s c" x="636.4" y="173" style="fill:var(--fg);font-weight:500">先关闭，补到后重开</text>
+        <path class="axis" d="M976.7 112V118H1046.1V112" fill="none" stroke-dasharray="4 3"/>
+        <text class="s c" x="1011.4" y="138" style="fill:var(--fg);font-weight:700">看电视</text>
+        <text class="tiny c" x="1011.4" y="155">隔离档</text>
+        <text class="s c" x="1011.4" y="173" style="fill:var(--muted)">不进任何单元</text>
+        <rect x="60" y="189" width="14" height="10" fill="var(--accept)"/>
+        <text class="tiny" x="80" y="198">机主</text>
+        <rect x="124" y="189" width="14" height="10" fill="var(--accept)" opacity=".45"/>
+        <text class="tiny" x="144" y="198">他人</text>
+        <rect x="188.6" y="189.6" width="12.8" height="8.8" fill="var(--surface)" stroke="var(--accept)" stroke-width="1.2" stroke-dasharray="3 2"/>
+        <text class="tiny" x="208" y="198">未知说话人</text>
+        <rect x="285" y="189" width="14" height="10" fill="var(--g-iso)" opacity=".8"/>
+        <text class="tiny" x="305" y="198">隔离档</text>
+        <path d="M367 187V200" stroke="var(--accent)" stroke-width="2"/>
+        <text class="tiny" x="380" y="198">立即同步</text>
+        <rect x="446.6" y="189.6" width="12.8" height="8.8" fill="none" stroke="var(--g-drop)" stroke-width="1.2" stroke-dasharray="3 2"/>
+        <text class="tiny" x="466" y="198">缺口：分片还在路上</text>
+        <text class="tiny r" x="1060" y="198">示意，非实测</text>
+      </svg>
+      </div>
+    </figure>
+    <div class="tbl"><table>
+      <thead><tr><th>规则</th><th>内容</th></tr></thead>
+      <tbody>
+        <tr><td>切分</td><td>日历会议时段内的轮次按 <code>meeting_hash</code> 成为一个单元；其余时段连续 ≥10 分钟没有接受档语音就切开；停顿不到 10 分钟、但前后各 5 分钟的参与者没有交集（机主先后和两拨人说话）也切开，阈值由评测调整。日历时段前后各留 10 分钟容差：提前开始或超时的轮次，参与者与会中相同就并入会议单元。隔离档不参与切分，也不进任何单元。</td></tr>
+        <tr><td>关闭</td><td>切口已经出现，而且切口之前没有还在路上的缺口。帧序号有空洞、又没有缺口记录（手机上报的 <code>device_gate</code>、<code>device_drop</code>、<code>flash_error</code>、<code>phone_expired</code>，云端登记的 <code>cloud_failed</code>）就视为还在路上；等待超过 2 小时先关闭，标“可能不完整”，补到后重开。</td></tr>
+        <tr><td>生成</td><td>单元关闭后运行 G8，生成纪要、待办、记忆。已归属机主少于 3 句的单元不生成纪要和待办，但仍显示在时间线上、可搜索；日历会议与机主明确口述的记录或提醒除外，用户也可以在时间线上手动生成。这是一期基线，相关性门槛验证后替换（§5.10）。</td></tr>
+        <tr><td>立即同步</td><td>在最新一帧处临时关闭当前单元，转写可见后随即生成纪要。10 分钟内又有语音，或属于同一 <code>meeting_hash</code>，就重开这个单元。</td></tr>
+        <tr><td>重开</td><td>迟到或补传的分片落进已关闭的单元，立即同步后有续说，或用户改字、改标说话人、改背景标记：重新生成纪要，替换而不是追加；被取代的待办与记忆按溯源撤回，App 显示“纪要已更新”。</td></tr>
+        <tr><td>线上会议</td><td><code>calendar.is_online</code> 为真、单元里他人语音占比低于阈值时，标“单边录音”：机主多半戴着耳机，对方的话没录到。纪要只写机主说过的话，不推断对方的结论，并提示用户。对方经外放时，远端发言会被 G3 打上播放声标签，但只是标签；它们与机主有问答往来，相关性判定为参与者。</td></tr>
+        <tr><td>处理状态</td><td>App 对每个单元显示当前状态：等待领夹同步、上传中、识别中（服务降级时注明）、等待补传、生成纪要、已完成。不出纪要的单元写明原因：机主发言少于 3 句、全在隔离档，并给出“手动生成”。单边录音照常出纪要（只写机主说过的话，D30），只在单元上标注。</td></tr>
+        <tr><td>业务日与簇质心</td><td>业务日为本地 04:00 至次日 04:00。他人簇质心在业务日结束后再留 12 小时，供迟到分片归簇；更晚到达的分片单独聚类，簇号标“迟到”，不回并。</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+</main>
+</div>
+
+<div id="tip" role="tooltip" hidden></div>
+<script src="contracts.js"></script>
+<script src="site.js"></script>
+</body>
+</html>
