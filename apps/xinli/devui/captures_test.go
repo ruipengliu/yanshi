@@ -121,7 +121,7 @@ func TestCaptureRoutes(t *testing.T) {
 
 func TestCaptureRoutesWithoutKernel(t *testing.T) {
 	books := memstore.New(captureClock)
-	h := Handler(Config{}, Options{Store: books})
+	h := Handler(Config{}, Options{Store: books, Now: captureClock})
 	for _, tc := range []struct {
 		method, path, body string
 		status             int
