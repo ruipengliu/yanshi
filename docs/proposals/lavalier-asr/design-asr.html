@@ -34,9 +34,9 @@
 <h3>职责与边界</h3>
 <p>四个对象分开：</p>
 <div class="tbl"><table><thead><tr><th>对象</th><th>用途</th><th>读音频</th></tr></thead><tbody><tr><td>上传分片 Chunk</td><td>上传、对象校验、删除与回执的单位</td><td>否</td></tr><tr><td>作业 RecJob</td><td>冻结一段待处理的帧范围及其输入对象</td><td>是（在作业进程内）</td></tr><tr><td>识别窗口 Window</td><td>G2 切出的 8B 输入，含核心区与上下文</td><td>是</td></tr><tr><td>尾部等待 TailHold</td><td>尚未处理的尾部及其依赖</td><td>否</td></tr></tbody></table></div>
-<ul><li><b>拼接器</b>（每用户单写者）只处理清单、帧覆盖、乱序、缺口与等待期限。它可以用 L1 明确丢弃的 ≥1 秒区间作安全边界，<b>不能</b>从清单推断保留音频里的 300 ms 停顿，也不选能量最低点：这两件事归 G2。</li><li><b>两级队列</b>：立即同步优先，常规按最晚开始时间；派发带租约与防护令牌。</li><li>作业状态与对象删除状态分成两条状态机：一个作业可以读多个对象，一个对象也可以被多个作业读。</li></ul>
+<ul><li><b>拼接器</b>（每用户单写者）只处理清单、帧覆盖、乱序、缺口与等待期限。它优先用 L1 明确丢弃的 ≥1 秒区间作安全边界，<b>不能</b>从清单推断保留音频里的 300 ms 停顿，也不选能量最低点：这两件事归 G2。连续会议或 L1 被跳过时 10 分钟内可能没有这种区间，此时在 10 分钟处、世代末端或序号空洞前按帧取<b>暂定边界</b>；作业照常运行，由 G2 在边界前找停顿，停顿之后的部分作为尾部顺延给下一段，所以暂定边界不会切进识别窗口的核心区。</li><li><b>两级队列</b>：立即同步优先，常规按最晚开始时间；派发带租约与防护令牌。</li><li>作业状态与对象删除状态分成两条状态机：一个作业可以读多个对象，一个对象也可以被多个作业读。</li></ul>
 <h3>原理</h3>
-<ul><li><b>确定性 ID 解决“重复创建”，租约解决“谁在执行”，防护令牌解决“过期执行者能否提交”</b>，三者缺一不可。</li><li><b>切分提议由 G2 给出、由拼接器冻结。</b> 作业领取后先解码、跑 G2，得到“本次定稿到哪里、哪段尾部顺延、需要读哪些上下文”的最小提议，用 <code>CommitPlan</code> 交拼接器原子地冻结；此后 G3–G5 在内存里接着跑，下一个作业可以并行开始。冻结的计划含归属切点与<b>识别窗口边界</b>；重试时重新解码、重新计算 G2 的证据（语音掩码、质量），但不改切点、窗口与范围归属。所有归属切点都量化到设备帧边界（20 ms），覆盖账因此只记整帧；<code>sample_offset</code> 只用于窗口内部的样本映射。</li><li><b>同设备、同启动世代的作业按顺序分配。</b> 下一段等前一段的计划冻结后再分配，这样前一段产生的尾部一定在下一段分配之前并入；冻结之后 G3–G5 仍可并行。</li><li><b>删除看覆盖账，不看水位。</b> <code>[0,100)</code> 与 <code>[200,300)</code> 完成了，不能把进度记为 300 后删掉还含 <code>[100,200)</code> 的对象；下一作业还要读的 400 ms 左上下文也算依赖。</li><li><b>截止时间驱动调度。</b> 常规截止 = 录音结束 + 3 小时；同步截止 = 上传完成 + 10 分钟。按“最晚开始时间 = 截止 − 预计处理时长”派发，负载自然摊到低谷。离线数小时后补传的数据达不到端到端 3 小时，“录音到上传”与“上传到可见”分开统计，不靠改起点掩盖。</li></ul>
+<ul><li><b>确定性 ID 解决“重复创建”，租约解决“谁在执行”，防护令牌解决“过期执行者能否提交”</b>，三者缺一不可。</li><li><b>切分提议由 G2 给出、由拼接器冻结。</b> 作业领取后先解码、跑 G2，得到“本次定稿到哪里、哪段尾部顺延、需要读哪些上下文”的最小提议，用 <code>CommitPlan</code> 交拼接器原子地冻结；此后 G3–G5 在内存里接着跑，下一个作业可以并行开始。冻结的计划含归属切点与<b>识别窗口边界</b>；重试时重新解码、重新计算 G2 的证据（语音掩码、质量），但不改切点、窗口与范围归属。<b>执行配置不在冻结范围内</b>：它带自己的代次 <code>exec_gen</code>，热词删除或撤权、8B 阻塞超 12 小时降级时，用 <code>RebindExec</code> 原子换代并作废当前租约；接管者按同一组冻结窗口全部重新解码。这样撤权不会让旧快照永远提交不了，切点也不因换配置而移动。所有归属切点都量化到设备帧边界（20 ms），覆盖账因此只记整帧；<code>sample_offset</code> 只用于窗口内部的样本映射。</li><li><b>同设备、同启动世代的作业按顺序分配。</b> 下一段等前一段的计划冻结后再分配，这样前一段产生的尾部一定在下一段分配之前并入；冻结之后 G3–G5 仍可并行。</li><li><b>删除看覆盖账，不看水位。</b> <code>[0,100)</code> 与 <code>[200,300)</code> 完成了，不能把进度记为 300 后删掉还含 <code>[100,200)</code> 的对象；下一作业还要读的 400 ms 左上下文也算依赖。</li><li><b>截止时间驱动调度。</b> 常规截止 = 录音结束 + 3 小时；同步截止 = 上传完成 + 10 分钟。按“最晚开始时间 = 截止 − 预计处理时长”派发，负载自然摊到低谷。离线数小时后补传的数据达不到端到端 3 小时，“录音到上传”与“上传到可见”分开统计，不靠改起点掩盖。</li></ul>
 <figure class="ddfig"><div class="fighead"><div><b>作业与对象的两条状态机</b></div></div><div class="fig wide"><svg viewBox="0 0 900 290" role="img" aria-label="作业从排队、运行、冻结计划到落盘，失败退避或终止；上传对象从已存、待删、删除中到已删和回执"><rect class="panel" x="10" y="160" width="880" height="120" rx="10"/><text class="tiny" x="20" y="176">上传对象（按 chunk_id）</text><rect class="panel" x="10" y="10" width="880" height="130" rx="10"/><text class="tiny" x="20" y="26">作业（按 job_id）</text><path class="e" d="M160 76L190 76" marker-end="url(#ah)"/><path class="e" d="M330 76L360 76" marker-end="url(#ah)"/><text class="tiny lb" x="349" y="71">G2 提议</text><path class="e" d="M510 76L540 76" marker-end="url(#ah)"/><path class="e d" d="M260 102L260 124L790 124L790 102" marker-end="url(#ah)"/><text class="tiny lb" x="794" y="119">满 48 h</text><path class="e" d="M160 226L190 226" marker-end="url(#ah)"/><path class="e" d="M340 226L370 226" marker-end="url(#ah)"/><path class="e" d="M520 226L550 226" marker-end="url(#ah)"/><text class="tiny lb" x="539" y="221">②</text><path class="e" d="M680 226L710 226" marker-end="url(#ah)"/><path class="e dot" d="M610 102L610 140L265 140L265 200" marker-end="url(#ah)"/><text class="tiny lb" x="269" y="135">覆盖账</text><g class="nd"><rect x="30" y="50" width="130" height="52" rx="18"/><text class="t c" x="95" y="73">queued</text><text class="s c" x="95" y="89">带截止时间</text></g><g class="nd"><rect x="190" y="50" width="140" height="52" rx="18"/><text class="t c" x="260" y="73">running</text><text class="s c" x="260" y="89">租约 · 令牌</text></g><g class="nd"><rect x="360" y="50" width="150" height="52" rx="18"/><text class="t c" x="435" y="73">planned</text><text class="s c" x="435" y="89">计划已冻结</text></g><g class="nd"><rect x="540" y="50" width="140" height="52" rx="18"/><text class="t c" x="610" y="73">persisted</text><text class="s c" x="610" y="89">① 已落盘</text></g><g><rect class="drop" x="710" y="50" width="160" height="52" rx="8"/><text class="t c" x="790" y="73">failed_terminal</text><text class="s c" x="790" y="89">满 48 h · cloud_failed</text></g><g class="nd"><rect x="30" y="200" width="130" height="52" rx="18"/><text class="t c" x="95" y="231">stored</text></g><g class="nd"><rect x="190" y="200" width="150" height="52" rx="18"/><text class="t c" x="265" y="223">delete_pending</text><text class="s c" x="265" y="239">覆盖账闭合</text></g><g class="nd"><rect x="370" y="200" width="150" height="52" rx="18"/><text class="t c" x="445" y="223">fenced</text><text class="s c" x="445" y="239">等直传地址过期</text></g><g class="nd"><rect x="550" y="200" width="130" height="52" rx="18"/><text class="t c" x="615" y="223">deleted</text><text class="s c" x="615" y="239">确认不存在</text></g><g class="nd"><rect x="710" y="200" width="160" height="52" rx="18"/><text class="t c" x="790" y="223">receipted</text><text class="s c" x="790" y="239">③</text></g></svg></div></figure>
 <h3>数据结构</h3>
 <pre><code>RecJob {
@@ -45,7 +45,9 @@
           // 字段顺序、整数编码、区间排序固定；不含队列类别、重试次数、租约、UTC、worker
   input_ranges[], source_chunks[{chunk_id, object_digest}]
   plan?: { commit_ranges[], windows: [{win_id, core_range, read_range}], read_ranges[],
-          tail_hold_id?, exec: ExecConfig, plan_version }   // CommitPlan 后不变
+          tail_hold_id?, plan_version }                     // CommitPlan 后不变
+  exec: ExecConfig, exec_gen                                // 可换代（RebindExec）；提交须与当前代一致
+  final_release: bool                                       // 由到期尾部单独生成的作业：G2 不再顺延尾部
   queue_class: "regular"|"sync", visible_deadline_ms, est_remaining_ms
   state: queued|running|retry_wait|planned|persisted|failed_terminal|cancelled_erasure
   attempt, lease_owner?, lease_epoch, lease_until_ms?, next_attempt_at_ms?
@@ -55,16 +57,21 @@
 ExecConfig {                                     // 各维度独立，可以同时降级；冻结进计划
   primary_asr: "8b"|"600m",                      // 600m 即 8B 阻塞超 12 小时的降级
   bias: "applied"|"none_unavailable"|"none_deadline", bias_snapshot?, bias_revoke_epoch?,
+  bias_tables?: [{win_id, bias_snapshot, entries: [{id, surface, reading, category, weight}]}],
+      // 每个识别窗口一张（详设 12 按窗口核心区的录音时刻构表，跨会议的作业各窗口可能不同）；
+      // 内容随作业记录保存，重试、换 worker、重启都从这里读，不依赖热词服务的 1 小时缓存；作业终结时随作业详情删除
   alignment_source: "600m"|"8b_timestamps"|"none",
   crosscheck: "independent"|"same_model"|"unavailable" }
-TailHold { hold_id, ranges[], context_read_ranges[], source_chunks[], first_deferred_at_ms,
-           release_at_ms, state: waiting|assigned|cancelled, assigned_job_id? }
+TailHold { hold_id, device_id, boot_gen, ranges[], context_read_ranges[], source_chunks[], first_deferred_at_ms,
+           release_at_ms, force_release: bool /* 立即同步、会话结束时置位 */,
+           queue_class, visible_deadline_ms /* 继承来源作业，不因转交重置 */,
+           state: waiting|assigned|cancelled, assigned_job_id? }
 CoverageEntry { chunk_id, seq_from, seq_to /* 整帧 */,
                 outcome: recognized|non_speech|l1_dropped|source_gap|cloud_failed|erased, producer_job_id?, committed_at_ms }
 ReadDependency { dep_id, holder: job|tail_hold, holder_id, chunk_id, read_ranges[], state: active|released }</code></pre>
 <p>§5.12 的 <code>frames_persisted_upto</code> 只能表示连续前缀，并行完成时不够用，由覆盖账取代。尾部范围与读依赖是调度元数据，不属于 D37 禁止落盘的“中间结果”；VAD 概率、PCM、后验与嵌入仍只在内存。</p>
 <h3>接口（进程间）</h3>
-<div class="tbl"><table><thead><tr><th>接口</th><th>请求</th><th>响应</th></tr></thead><tbody><tr><td>ClaimJob</td><td>{worker_id, pools}</td><td>{spec, lease_epoch, lease_until_ms} 或 none</td></tr><tr><td>RenewLease</td><td>{job_id, worker_id, lease_epoch}</td><td>{lease_until_ms} 或 stale_lease</td></tr><tr><td>CommitPlan</td><td>{job_id, lease_epoch, erasure_epoch, commit_ranges, tail_ranges, windows, read_dependencies, exec, plan_version}</td><td>{frozen_plan}（已冻结则返回既有计划）</td></tr><tr><td>PersistResult</td><td>{job_id, lease_epoch, erasure_epoch, result_digest, segments, coverage, cluster_updates}</td><td>{committed_at_ms, already_committed}</td></tr></tbody></table></div>
+<div class="tbl"><table><thead><tr><th>接口</th><th>请求</th><th>响应</th></tr></thead><tbody><tr><td>ClaimJob</td><td>{worker_id, pools}</td><td>{spec, lease_epoch, lease_until_ms} 或 none</td></tr><tr><td>RenewLease</td><td>{job_id, worker_id, lease_epoch}</td><td>{lease_until_ms} 或 stale_lease</td></tr><tr><td>CommitPlan</td><td>{job_id, lease_epoch, exec_gen, erasure_epoch, commit_ranges, tail_ranges, windows, read_dependencies, plan_version}</td><td>{frozen_plan}（已冻结则返回既有计划）</td></tr><tr><td>RebindExec</td><td>{request_id, job_id, expected_exec_gen, changes: {bias?, bias_tables?, bias_revoke_epoch?, primary_asr?, alignment_source?, crosscheck?}, reason: bias_revoked|asr_degraded|bias_unavailable}</td><td>{exec_gen, lease_epoch}（旧租约作废）；<code>expected_exec_gen</code> 不符返回 conflict，调用方重读后按当前配置重算变更</td></tr><tr><td>PersistResult</td><td>{job_id, lease_epoch, exec_gen, bias_table_refs, erasure_epoch, result_digest, segments, coverage, cluster_updates}</td><td>{committed_at_ms, already_committed}</td></tr></tbody></table></div>
 <p>片段文字与证据经受控接口写库，不放进队列事件；事件只带 ID 与类型（D41）。</p>
 <h3>算法</h3>
 <pre><code>def on_chunk_stored(c):                                    # 拼接器，每用户单写者
@@ -73,13 +80,23 @@ ReadDependency { dep_id, holder: job|tail_hold, holder_id, chunk_id, read_ranges
 
 def try_assign(dev, gen):                                  # 拼接器；分片到达、计划冻结、尾部到期时调用
     with user_txn(user_of(dev)):
-        if unfrozen_job_exists(dev, gen): return           # 前一段未冻结：等它，尾部才不会被越过
         rng = next_unassigned_range(dev, gen)              # 未分配、连续可用的帧；序号空洞处停止
+        for hold in waiting_tails(dev, gen):               # 先处理到期或被强制释放的独立尾部，不等前一段冻结
+            due = hold.release_at_ms &lt;= now_ms() or hold.force_release
+            if due and not (rng and adjacent(hold, rng)):  # 不紧邻下一批（中间有空洞或没有下一批）：单独成作业
+                job = create_job(input_ranges=hold.ranges, queue=hold.queue_class, final_release=True,
+                                 visible_deadline_ms=hold.visible_deadline_ms)
+                hold.state, hold.assigned_job_id = "assigned", job.job_id
+                transfer_read_dependencies(hold, job)      # 同一事务转移依赖
+        if unfrozen_job_exists(dev, gen): return           # 前一段未冻结：等它，紧邻的尾部才不会被越过
         if not rng: return
-        hold = waiting_tail_before(rng)                    # 只能是紧邻 rng 之前的尾部
+        hold = waiting_tail_before(rng)                    # 只能是紧邻 rng 之前、仍在等待的尾部
         start = hold.ranges[0].start if hold else rng.start
-        end = last_safe_boundary(rng, max_audio_min=10)    # 优先停在 ≥1 s 的 L1 丢弃区
-        job = create_job(input_ranges=[(start, end)], queue=queue_of(rng))  # 同 ID 已存在则返回既有作业
+        end = last_safe_boundary(rng, max_audio_min=10)    # ≥1 s 的 L1 丢弃区；没有就在 10 分钟、世代末或空洞前取暂定边界
+        queue = max_priority(queue_of(rng), hold.queue_class) if hold else queue_of(rng)
+        deadline = min(deadline_of(rng), hold.visible_deadline_ms) if hold else deadline_of(rng)   # 合并取最高优先级、最早截止
+        job = create_job(input_ranges=[(start, end)], queue=queue, visible_deadline_ms=deadline,
+                         final_release=False)                # 同 ID 已存在则返回既有作业
         add_read_dependencies(job, input_and_context(start, end))   # 首次读音频之前登记
         if hold:                                           # 同一事务：并入尾部、转移依赖
             hold.state, hold.assigned_job_id = "assigned", job.job_id
@@ -89,7 +106,7 @@ def commit_plan(job, proposal):                            # 作业跑完 G2 后
     with user_txn(job.user_ref):
         if job.plan: return job.plan                       # 重试：沿用冻结的计划
         require_lease(job, proposal.lease_epoch); require_erasure_epoch(proposal.erasure_epoch)
-        require_bias_revoke_epoch(job.user_ref, proposal.exec.bias_snapshot)   # 删词或撤权后旧偏置快照不能冻结（详设 12）
+        require(proposal.exec_gen == job.exec_gen)         # 执行配置已换代：本次尝试作废
         require(job.state == "running")                    # 终态、擦除取消的作业不能冻结
         require(disjoint(proposal.commit_ranges, proposal.tail_ranges))
         require(union(proposal.commit_ranges, proposal.tail_ranges) == union(job.input_ranges))
@@ -106,13 +123,28 @@ def persist_result(req):                                   # ①
         job = load_job(req.job_id)
         if job.state == "persisted": return already_committed(job.result_digest)
         require_lease(job, req.lease_epoch); require_erasure_epoch(req.erasure_epoch)
-        require_bias_revoke_epoch(job.user_ref, job.plan.exec.bias_snapshot)
+        require(req.exec_gen == job.exec_gen)
+        require(job.exec.bias != "applied" or job.exec.bias_revoke_epoch &gt;= current_bias_revoke_epoch(job.user_ref))  # 撤权与换代之间的竞态兜底
+        require(req.bias_table_refs == [(t.win_id, t.bias_snapshot) for t in job.exec.bias_tables or []])     # 各窗口用的就是当前代的表
         require_exact_coverage(req.coverage, job.plan.commit_ranges)
         write_segments(req.segments); update_clusters_with_version_check(req.cluster_updates)
         write_coverage(req.coverage); release_read_dependencies(job.job_id)
         job.state = "persisted"; emit_id_only("job.persisted", job.job_id)
         for c in job.source_chunks:
             if can_delete(c): emit_id_only("chunk.deletable", c.chunk_id)   # 交删除链（详设 18）
+
+def rebind_exec(req):                                      # 热词撤权（详设 12）、8B 降级时调用
+    with user_txn(req.user_ref):
+        job = load_job(req.job_id)
+        if seen(req.request_id): return previous_result(req.request_id)          # 同键重放：不再作废租约
+        if job.state not in ("queued", "running", "retry_wait", "planned"): return   # 已落盘或终结：不换
+        if req.expected_exec_gen != job.exec_gen: return conflict(job.exec_gen)
+        new_exec = job.exec.merge(req.changes)             # 只改请求涉及的维度：降级不会覆盖刚换上的撤权快照
+        require(new_exec.bias_revoke_epoch &gt;= current_bias_revoke_epoch(job.user_ref) or new_exec.bias != "applied")
+        if new_exec == job.exec: return no_change(job.exec_gen)
+        job.exec, job.exec_gen = new_exec, job.exec_gen + 1
+        job.lease_epoch += 1; job.state = "retry_wait" if job.state != "queued" else "queued"
+        # 计划（切点、窗口）保持不变；接管者用新配置把全部冻结窗口重新解码
 
 def can_delete(c):
     return (union(coverage(c)) == c.logical_range and not active_read_dependencies(c)
@@ -124,13 +156,13 @@ def release_deadline(p, job):                               # 尾部最迟何时
                job.visible_deadline_ms - est,              # 不让尾部拖过 3 小时 / 10 分钟截止
                fail_deadline(p.source_chunks) - est,      # 48 小时失败期限
                earliest_hard_expiry(p.source_chunks) - est - minutes(30))   # 72 小时强删前留余量</code></pre>
-<ul><li><b>尾部释放</b>：下一批到达、20 分钟到期、立即同步、会话结束（领夹断开或电量告警）任一发生即释放。连续说话没有停顿时，尾部退到最后一个已完成识别窗口的边界，长度不超过一个窗口（详设 6），不会顺延整个作业。尾部等待（20 分钟）与“缺口还在路上”（2 小时，详设 16）是两种状态；缺口不能当作静音。</li><li><b>调度</b>：<code>sync</code> 池按最早截止派发；同步预留容量空闲时借给常规，在各资源池的<b>模型批边界</b>收回（不等整个作业结束，也不拆开正在跑的批）。常规按最晚开始时间派发，同用户最多 2 个作业并行。立即同步是对已有作业的<b>优先级提升</b>，不生成新的 job_id。预留与公平性覆盖 CPU、8B、600M 三个池。</li><li><b>领取与续约</b>：租约 120 秒、心跳 30 秒；续约失败立即停止提交。旧 worker 即使算完，也会被 <code>lease_epoch</code> 拒绝。失去租约不释放读依赖：接管者仍需要音频。</li><li><b>计时锚点</b>：48 小时失败、72 小时强删都以首次上传时间为准，不因重试、转尾部、换 worker 重置。72 小时强删是隐私兜底，可以越过正常完成条件，随后只为未完成范围登记 <code>cloud_failed</code>，已落盘结果保留。</li></ul>
+<ul><li><b>尾部释放</b>：下一批到达、20 分钟到期、立即同步、会话结束（领夹断开或电量告警）任一发生即释放。<code>release_at_ms</code> 登记定时器，到点调用 <code>try_assign</code>；没有下一批时尾部单独生成 <code>final_release = true</code> 的作业，G2 不再顺延它（<code>propose</code> 里的 <code>dec.is_final_release</code> 取自作业的这个字段）。连续说话没有停顿时，尾部退到最后一个已完成识别窗口的边界，长度不超过一个窗口（详设 6），不会顺延整个作业。尾部等待（20 分钟）与“缺口还在路上”（2 小时，详设 16）是两种状态；缺口不能当作静音。</li><li><b>调度</b>：<code>sync</code> 池按最早截止派发；同步预留容量空闲时借给常规，在各资源池的<b>模型批边界</b>收回（不等整个作业结束，也不拆开正在跑的批）。常规按最晚开始时间派发，同用户最多 2 个作业并行。立即同步是对已有作业的<b>优先级提升</b>，不生成新的 job_id。预留与公平性覆盖 CPU、8B、600M 三个池。</li><li><b>领取与续约</b>：租约 120 秒、心跳 30 秒；续约失败立即停止提交。旧 worker 即使算完，也会被 <code>lease_epoch</code> 拒绝。失去租约不释放读依赖：接管者仍需要音频。</li><li><b>计时锚点</b>：48 小时失败、72 小时强删都以首次上传时间为准，不因重试、转尾部、换 worker 重置。72 小时强删是隐私兜底，可以越过正常完成条件，随后只为未完成范围登记 <code>cloud_failed</code>，已落盘结果保留。</li></ul>
 <h3>参数</h3>
 <div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>标定</th></tr></thead><tbody><tr><td>单作业上限</td><td>10 分钟音频</td><td>看 8B 的 GPU 时长与崩溃重跑的代价</td></tr><tr><td>租约 / 心跳</td><td>120 s / 30 s</td><td>故障注入：进程暂停、网络分区、旧 worker 恢复</td></tr><tr><td>重试</td><td>5 s 起指数退避，封顶 5 分钟，带抖动</td><td>依赖恢复时间与重试放大率</td></tr><tr><td>同用户并行作业</td><td>2</td><td>大用户公平性、立即同步尾延迟</td></tr><tr><td>同步预留</td><td>约 25% 作压测起点</td><td>用真实同步峰值分布与各池瓶颈确定（§5.13）</td></tr><tr><td>预计处理时长</td><td>近期同配置作业的 P90</td><td>特征：有效音频秒数、窗口数、偏置长度、交叉校验比例</td></tr></tbody></table></div>
 <h3>失败与恢复</h3>
 <div class="tbl"><table><thead><tr><th>崩溃点</th><th>恢复</th></tr></thead><tbody><tr><td>计划冻结前</td><td>重领后从音频重跑 G2 再提议；并发提议以第一次冻结为准</td></tr><tr><td>计划冻结后、① 前</td><td>重领后重新解码、重算 G2 证据，按冻结的切点与窗口重跑 G3–G5</td></tr><tr><td>① 已提交、响应丢失</td><td>读作业状态，不重新转写</td></tr><tr><td>① 后对象仍在</td><td>巡检补删；对象已删、记录未更新：确认不存在后补记并回执</td></tr><tr><td>用户擦除</td><td>擦除代次使旧作业不能把文字或尾部记录写回</td></tr><tr><td>分片之间有序号空洞、无缺口记录</td><td>视为在路上，不切跨空洞的作业。等 2 小时（D31）后两侧作业照常处理，空洞两侧的上下文标 <code>truncated_context</code>；迟到的分片补成独立作业。只有手机明确报告丢失（应用重装、存储被清）才登记 <code>phone_lost</code>；超过手机暂存期（7 天）加 1 天仍未到登记 <code>never_arrived</code>。两者都不当静音（新原因，需补进 §6.1）</td></tr></tbody></table></div>
 <h3>测试与验收</h3>
-<ul><li>重复、乱序、重叠清单；同 chunk_id 不同内容必须报冲突。</li><li>租约过期后两个 worker 同时提交，只能成功一次；时钟重拟合不改变作业 ID；立即同步提升优先级不重复转写。</li><li>前一段未冻结时下一段不分配；尾部到期时刻已过的作业立即释放尾部；8B 与热词同时故障时执行配置两个维度都降级。</li><li>多个作业覆盖同一对象、尾部与上下文仍被引用时不可删除；G2 全部拒识、空载荷、局部解码失败也能闭合覆盖账，不会永久卡住删除。</li><li>负载：按一天的到达曲线回放 1 万用户的清单，常规 P90 ≤3 小时、同步 P90 ≤10 分钟（§9）。</li></ul>
+<ul><li>重复、乱序、重叠清单；同 chunk_id 不同内容必须报冲突。</li><li>租约过期后两个 worker 同时提交，只能成功一次；时钟重拟合不改变作业 ID；立即同步提升优先级不重复转写。</li><li>前一段未冻结时下一段不分配；尾部到期时刻已过的作业立即释放尾部；没有下一批时到期尾部单独成作业且不再顺延；8B 与热词同时故障时执行配置两个维度都降级；计划冻结后撤权，换代后能提交、旧尝试被拒；10 分钟连续说话没有 L1 丢弃区时按暂定边界切出作业。</li><li>多个作业覆盖同一对象、尾部与上下文仍被引用时不可删除；G2 全部拒识、空载荷、局部解码失败也能闭合覆盖账，不会永久卡住删除。</li><li>负载：按一天的到达曲线回放 1 万用户的清单，常规 P90 ≤3 小时、同步 P90 ≤10 分钟（§9）。</li></ul>
 <h3>与提案的差异</h3>
 <ul><li><code>s-stitch</code> 的“在 ≥300 ms 停顿处切”改由 G2 承担，拼接器只按已知静音切作业。</li><li>§5.12 的 <code>frames_persisted_upto</code> 由覆盖账取代；§5.11 的作业状态与对象删除状态拆成两条。</li><li>§5.14 的“桶内超过 24 小时的对象数应为 0”是告警线，不是硬上限；硬上限是 72 小时。</li></ul>
 </section>
@@ -141,7 +173,7 @@ def release_deadline(p, job):                               # 尾部最迟何时
 <h3>职责与边界</h3>
 <ul><li><b>解码</b>：按清单的 <code>payload.runs</code> 把每个 chained Ogg Opus 逻辑流解码为带来源坐标的 PCM，核验清单与载荷一致。</li><li><b>G2</b>：在云端重做 VAD，得到语音段与非语音段（非语音 → 拒绝 <code>non_speech</code>，不送 8B）；把语音组成识别窗口；给拼接器提议本作业定稿到哪里（详设 5 的 CommitPlan）。</li><li>不做：说话人分段（详设 10）、播放判定（详设 7）。</li></ul>
 <h3>原理</h3>
-<ul><li>三条时间轴不能互相代替：<b>设备时间</b>（缺口、轮次、场景、交互、删除覆盖）、<b>解码音频时间</b>（实际存在的 PCM 样本）、<b>模型输入时间</b>（加了上下文的窗口）。L1 丢弃的区间在设备时间上存在、在解码音频里不存在。</li><li>Ogg Opus 的 <code>pre_skip</code> 与 granule 用 48 kHz 单位；设备把 <code>pre_skip</code> 设为“编码延迟 + 预卷样本数”（详设 4），所以解码接口<b>返回裁掉 <code>pre_skip</code> 之后的 PCM</b>，其中已经没有预卷样本，第一个样本对应 <code>runs.core_from</code> 帧的起点。业务层不能再减一次预卷，否则会丢字（<a href="https://www.rfc-editor.org/rfc/rfc7845.html#section-4.2">RFC 7845 §4.2</a>）。</li><li><b>两种语音区间分开存。</b> 原始语音掩码 <code>speech_raw</code>（滞回的直接输出）用于找停顿、算字速、判无语音；送识别的保留区间 <code>keep</code> 是它加前后余量的结果。在加过余量的区间上找停顿，800 ms 的真实停顿会被两侧共 1100 ms 的余量填平。</li><li><b>平滑不能吞掉短回应。</b> “前后各 0.5 秒的双向上下文”若实现成 1 秒均值滤波，150 ms 的“嗯”会被平均到约 0.15、低于启动阈值。所以用短时中值滤波去毛刺，再用双阈值滞回；高置信的短峰单独保留为可疑语音。双向的好处体现在离线可以向后看：结束判定等 200 ms 确认，而不是看到一帧低值就结束。</li><li>识别窗口越长，8B 上下文越足、组批效率越高；越长也越容易漂移或幻觉。15–45 秒是打包目标，不是准入门槛；短回应并入相邻窗口，不单独成窗、也不为凑长度补造语音。</li><li><b>一期不压缩静音。</b> 窗口里只放语音段及其间的短停顿；长于停顿阈值的非语音本来就是窗口边界，不需要压缩。压缩已知静音作为变体。</li></ul>
+<ul><li>三条时间轴不能互相代替：<b>设备时间</b>（缺口、轮次、场景、交互、删除覆盖）、<b>解码音频时间</b>（实际存在的 PCM 样本）、<b>模型输入时间</b>（加了上下文的窗口）。L1 丢弃的区间在设备时间上存在、在解码音频里不存在。</li><li>Ogg Opus 的 <code>pre_skip</code> 与 granule 用 48 kHz 单位；设备把 <code>pre_skip</code> 设为“编码延迟 + 预卷样本数”（详设 4），所以解码接口<b>返回裁掉 <code>pre_skip</code> 之后的 PCM</b>，其中已经没有预卷样本，第一个样本对应 <code>runs.core_from</code> 帧的起点。业务层不能再减一次预卷，否则会丢字（<a href="https://www.rfc-editor.org/rfc/rfc7845.html#section-4.2">RFC 7845 §4.2</a>）。尾部同理：设备多带一个后续包、用末页 granule 裁尾（RFC 7845 §4.4），解码器必须执行末尾裁剪；样本数应等于核心区长度减 <code>runs.tail_short_samples</code>（取不到后续包时尾部缺的编码延迟，48 kHz 单位，16 kHz PCM 上除以 3）。缺的样本补零并标 <code>concealed</code>，最后一帧照常按整帧进覆盖账。多数情况下这 ≤20 ms 落在核心区的非语音余量里；但连续讲话跨 5 分钟硬封口、立即同步截断或 L1 被跳过时可能是语音，所以它只进 <code>unknown</code>、不当语音证据也不当静音，片段在 <code>low_support_spans</code> 里标出可能被截掉的字尾。</li><li><b>两种语音区间分开存。</b> 原始语音掩码 <code>speech_raw</code>（滞回的直接输出）用于找停顿、算字速、判无语音；送识别的保留区间 <code>keep</code> 是它加前后余量的结果。在加过余量的区间上找停顿，800 ms 的真实停顿会被两侧共 1100 ms 的余量填平。</li><li><b>平滑不能吞掉短回应。</b> “前后各 0.5 秒的双向上下文”若实现成 1 秒均值滤波，150 ms 的“嗯”会被平均到约 0.15、低于启动阈值。所以用短时中值滤波去毛刺，再用双阈值滞回；高置信的短峰单独保留为可疑语音。双向的好处体现在离线可以向后看：结束判定等 200 ms 确认，而不是看到一帧低值就结束。</li><li>识别窗口越长，8B 上下文越足、组批效率越高；越长也越容易漂移或幻觉。15–45 秒是打包目标，不是准入门槛；短回应并入相邻窗口，不单独成窗、也不为凑长度补造语音。</li><li><b>一期不压缩静音。</b> 窗口里只放语音段及其间的短停顿；长于停顿阈值的非语音本来就是窗口边界，不需要压缩。压缩已知静音作为变体。</li></ul>
 <figure class="ddfig"><div class="fighead"><div><b>解码与识别窗口</b></div></div><div class="fig wide"><svg viewBox="0 0 900 210" role="img" aria-label="校验对象，按逻辑流解码并裁掉预卷，连续有效区域上跑 VAD，短时中值滤波加滞回，余量，停顿优先切窗或强切，加上下文"><path class="e" d="M170 56L200 56" marker-end="url(#ah)"/><path class="e" d="M350 56L380 56" marker-end="url(#ah)"/><path class="e" d="M540 56L570 56" marker-end="url(#ah)"/><path class="e" d="M720 56L750 56" marker-end="url(#ah)"/><path class="e" d="M645 82L645 130" marker-end="url(#ah)"/><path class="e" d="M570 156L540 156" marker-end="url(#ah)"/><text class="tiny lb" x="559" y="151">无停顿</text><path class="e" d="M380 156L350 156" marker-end="url(#ah)"/><path class="e" d="M200 156L170 156" marker-end="url(#ah)"/><g class="nd"><rect x="20" y="30" width="150" height="52" rx="8"/><text class="t c" x="95" y="53">校验对象</text><text class="s c" x="95" y="69">sha256 · 样本数</text></g><g class="nd"><rect x="200" y="30" width="150" height="52" rx="8"/><text class="t c" x="275" y="53">按逻辑流解码</text><text class="s c" x="275" y="69">裁 pre_skip 后的 PCM</text></g><g class="nd"><rect x="380" y="30" width="160" height="52" rx="8"/><text class="t c" x="460" y="53">帧级 VAD</text><text class="s c" x="460" y="69">只在有效区域</text></g><g class="nd"><rect x="570" y="30" width="150" height="52" rx="8"/><text class="t c" x="645" y="53">中值滤波 · 滞回</text><text class="s c" x="645" y="69">短峰保留</text></g><g><rect class="drop" x="750" y="30" width="130" height="52" rx="8"/><text class="t c" x="815" y="53">非语音</text><text class="s c" x="815" y="69">拒绝 non_speech</text></g><g class="nd"><rect x="570" y="130" width="150" height="52" rx="8"/><text class="t c" x="645" y="153">停顿优先切窗</text><text class="s c" x="645" y="169">15–45 s 含上下文</text></g><g class="nd"><rect x="380" y="130" width="160" height="52" rx="8"/><text class="t c" x="460" y="153">强切</text><text class="s c" x="460" y="169">末 5 s 能量最低</text></g><g class="nd"><rect x="200" y="130" width="150" height="52" rx="8"/><text class="t c" x="275" y="153">加上下文</text><text class="s c" x="275" y="169">两侧 400 ms</text></g><g class="nd"><rect x="20" y="130" width="150" height="52" rx="8"/><text class="t c" x="95" y="153">8B 请求</text><text class="s c" x="95" y="169">详设 8</text></g></svg></div></figure>
 <h3>数据结构</h3>
 <pre><code>SampleMap  { in_from, in_to /* 解码样本，裁 pre_skip 之后 */, source_from: SourcePos, kind: "original"|"concealed" /* PLC、FEC 或补零 */ }
@@ -161,9 +193,11 @@ G2Result   { speech_raw: [SourceRange],   // 滞回直接输出，找停顿、�
     out = []
     for run in manifest.payload.runs:
         pcm = opus_decode_stream(obj.stream(run.stream_serial))   # 返回裁掉 pre_skip（含预卷）之后的 PCM
-        if len(pcm) != expected_samples(run.core_from, run.core_to):   # 清单与样本数不一致
+        short = run.tail_short_samples // 3                       # 清单按 48 kHz 记，PCM 是 16 kHz
+        if len(pcm) != expected_samples_16k(run.core_from, run.core_to) - short:   # 清单与样本数不一致
             raise TimelineMismatch(run)                            # 不偷偷拉伸 PCM
-        out.append(map_samples(pcm, run))                          # 第一个样本 = core_from 帧起点
+        pcm = pad_zeros(pcm, short)                                # 尾部缺的 ≤20 ms 补零，SampleMap 记 concealed：
+        out.append(map_samples(pcm, run, concealed_tail=short))    # 覆盖账仍按整帧记，这段只进 unknown，不当语音也不当静音
     return Decoded(out)
 
 def g2(dec, frozen=None):
@@ -331,7 +365,7 @@ def extend(hyp, token):                                   # 浅融合，每条�
 
 def finalize(hyp):
     return hyp.score - PHI(hyp.trie_state)                # 结束时撤回未完成前缀的势能</code></pre>
-<ul><li><b>组批</b>：组批键含模型版本、偏置方式、精度、束配置；再按音频长度与提示 token 长度分桶。每个请求保有独立的前缀树、提示、掩码与停止条件；不把整批用户的词表取并集。批上限按音频帧、提示 token、输出 token 与显存实测，不只按请求数。同步请求在批边界拿预留容量，不拆开正在跑的批。OOM 时缩小批重试，不改偏置与文字配置。</li><li><b>置信度</b>：按中文、英文、混说、热词/非热词、偏置方式分别校准，目标是“该单位文字正确”；没有概率接口时返回缺失，不让模型自报把握。</li><li><b>重试</b>使用同一偏置快照；热词服务恢复后不在同一作业的重试里换词表。</li><li><b>降级</b>：执行配置的各维度独立（详设 5 的 <code>ExecConfig</code>），可以同时降级。8B 池因故障阻塞超过 12 小时（从 <code>blocked_since</code> 起算，一般排队不算）→ <code>primary_asr = 600m</code> 并标 <code>degraded</code>，落盘后恢复也不重跑。热词服务不可用且没有缓存时，在 <code>visible_deadline − estimated_remaining</code>（识别、G5 提交与文字管线的 P90）时刻决定无偏置启动 → <code>bias = none_deadline</code>，不等到用户可见截止才开始解码。</li></ul>
+<ul><li><b>组批</b>：组批键含模型版本、偏置方式、精度、束配置；再按音频长度与提示 token 长度分桶。每个请求保有独立的前缀树、提示、掩码与停止条件；不把整批用户的词表取并集。批上限按音频帧、提示 token、输出 token 与显存实测，不只按请求数。同步请求在批边界拿预留容量，不拆开正在跑的批。OOM 时缩小批重试，不改偏置与文字配置。</li><li><b>置信度</b>：按中文、英文、混说、热词/非热词、偏置方式分别校准，目标是“该单位文字正确”；没有概率接口时返回缺失，不让模型自报把握。</li><li><b>重试</b>使用作业记录里的同一偏置快照（<code>ExecConfig.bias_tables</code> 中该窗口的表）；热词服务恢复后不在同一作业的重试里换词表。唯一例外是删除与撤权：经 <code>RebindExec</code> 换代（详设 5）。</li><li><b>降级</b>：执行配置的各维度独立（详设 5 的 <code>ExecConfig</code>），可以同时降级。8B 池因故障阻塞超过 12 小时（从 <code>blocked_since</code> 起算，一般排队不算）→ <code>primary_asr = 600m</code> 并标 <code>degraded</code>，落盘后恢复也不重跑。热词服务不可用且没有缓存时，在 <code>visible_deadline − estimated_remaining</code>（识别、G5 提交与文字管线的 P90）时刻决定无偏置启动 → <code>bias = none_deadline</code>，不等到用户可见截止才开始解码。</li></ul>
 <h3>参数</h3>
 <div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>扫描与选择</th></tr></thead><tbody><tr><td>偏置词数</td><td>最多 300，按详设 12 的类别配额</td><td>50/100/200/300</td></tr><tr><td>词表 token 上限</td><td>2048，且不超过模型剩余容量</td><td>512/1024/2048</td></tr><tr><td>束宽</td><td>8</td><td>4/8/16，召回与成本</td></tr><tr><td>每 token 势能 λ / 上限 Φ_max</td><td>0.3 / 1.0（自然对数）</td><td>λ 0.1/0.3/0.5，Φ_max 0/0.5/1/2</td></tr><tr><td>完成奖励 β</td><td>2.0 × 词权重</td><td>0/1/2/4</td></tr><tr><td>采样</td><td>关闭随机采样（提示词式）</td><td>评测插入与前文复制</td></tr><tr><td>组批等待</td><td>同步 50 ms、常规 500 ms</td><td>吞吐与截止时间联合调</td></tr></tbody></table></div>
 <p>数值只适用于上面的自然对数定义，不能移植别的实现里的 <code>boost = 20</code> 一类数值。四组对照（无偏置、正确、无关、同音干扰）上选满足 U-CER 劣化 ≤0.3 个点、A4 ≤0.5 / 千字的最佳热词召回配置。</p>

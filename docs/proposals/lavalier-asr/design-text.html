@@ -26,7 +26,7 @@
   <p class="crumb"><a href="index.html">领夹 ASR 整体方案</a> / 详细设计</p>
   <h1>详细设计 · 裁决、文字与删除</h1>
   <p class="lede">相关性门控（G6）、三档裁决与写入资格（G7）、对话单元、入库闸门（G8）与溯源，以及删除服务与删除链。除删除链的前半段外，这里都只读文字。</p>
-<div class="note"><b>读法。</b>每节按同一模板：职责与边界、原理、流程、数据结构与接口、算法、参数、失败与恢复、测试与验收、未决项。贯穿本页的约定：<b>上下文就绪、片段裁决、单元定稿、产物核验、删除完成</b>是五个独立的状态，各有版本，不能互相代替；否则会出现循环依赖、旧结果覆盖新结果，或删除后被异步任务写回。引用一律带版本：<code>segment_id + segment_rev</code>、<code>unit_id + generation + input_revision</code>；片段有两种版本：<code>evidence_rev</code>（文字、身份、来源证据等输入变了才递增）与 <code>decision_rev</code>（档位、资格等派生结果）；上下文摘要只看前者，写一次档位不会触发自己的重算。文字跨度沿用前几页的 <code>text_revision</code> + 码点；擦除代次统一叫 <code>erasure_epoch</code>；身份级别沿用详设 10 的 <code>none | timeline | identity_evidence</code>，用户确认另记来源 <code>user_confirmed</code>。所有持久化命令带 <code>request_id</code>、预期版本与 <code>erasure_epoch</code>，同键同内容返回原结果，同键不同内容返回冲突。资格取 <code>pass | fail | unknown | deferred</code>，不是布尔值。LLM 调用只读文字与元数据，输出先按模式校验，不合格重试一次后丢弃（§5.13）；模型不能提交 <code>verified</code>、<code>speaker</code>、提醒开关这类权威字段，它们由代码派生。</div>
+<div class="note"><b>读法。</b>每节按同一模板：职责与边界、原理、流程、数据结构与接口、算法、参数、失败与恢复、测试与验收、未决项。贯穿本页的约定：<b>上下文就绪、片段裁决、单元定稿、产物核验、删除完成</b>是五个独立的状态，各有版本，不能互相代替；否则会出现循环依赖、旧结果覆盖新结果，或删除后被异步任务写回。引用一律带版本：<code>segment_id + segment_rev</code>、<code>unit_id + generation + input_revision</code>；片段有两种版本：<code>evidence_rev</code>（文字、身份、来源证据等输入变了才递增）与 <code>decision_rev</code>（档位、资格等派生结果）；上下文摘要只看前者，写一次档位不会触发自己的重算；唯一例外是别的片段在本片段上下文里的<b>可见性</b>（正文或隔离占位），它随对方的档位变化，算作本片段的上下文输入。文字有两个视图：<code>base</code>（8B 原文 <code>asr_text</code> 叠加用户编辑，不含专名纠错等模型编辑）与 <code>display</code>（<code>base</code> 再叠加已接受的模型编辑）；两个视图各有修订号：<code>base_rev</code> 只在用户编辑时递增（同时递增 <code>evidence_rev</code>）；<code>display_rev</code> 在任一视图变化时递增。G6 与资格核验只引用 <code>base_rev</code>，模型纠错只动 <code>display_rev</code>，不会让 G6 的快照过时。模型编辑一律记成“<code>base</code> 上的区间 → 替换文字”，<code>display</code> 坐标经这张表可以逆映射回 <code>base</code>。用户在界面上的编辑先逆映射；与某条模型编辑重叠时，把该模型编辑的整个替换块按用户修改后的样子提升为一条用户编辑（base“张三”→ display“张小三”，用户把“小”改成“大”，生成的用户编辑是“张三 → 张大三”，前后未改的字保留），原模型编辑作废。文字跨度一律写明视图与该视图的修订号（<code>base_rev</code> 或 <code>display_rev</code>），再加码点；详设 10、13 里的 <code>text_revision</code> 就是这里的 <code>base_rev</code>（纠错候选都在 <code>base</code> 上计算）；擦除代次统一叫 <code>erasure_epoch</code>；身份级别沿用详设 10 的 <code>none | timeline | identity_evidence</code>，用户确认另记来源 <code>user_confirmed</code>。所有持久化命令带 <code>request_id</code>、预期版本与 <code>erasure_epoch</code>，同键同内容返回原结果，同键不同内容返回冲突。资格取 <code>pass | fail | unknown | deferred</code>，不是布尔值。LLM 调用只读文字与元数据，输出先按模式校验，不合格重试一次后丢弃（§5.13）；模型不能提交 <code>verified</code>、<code>speaker</code>、提醒开关这类权威字段，它们由代码派生。</div>
 </header>
 <section id="dd-g6" data-label="详设 14">
   <h2><span class="no">14</span>相关性门控（G6）</h2>
@@ -41,16 +41,17 @@
 <h3>流程</h3>
 <p><code>WAIT_CONTEXT → READY → RUNNING → COMMITTED</code>；模式两次不合格 → <code>DISCARDED</code>；服务不可用 → 排队；输入版本变化 → <code>STALE</code>；命中擦除屏障 → <code>ERASED</code>。</p>
 <p>就绪规则（<code>base</code>）：</p>
-<ol><li>目标片段已经由 <code>PersistResult</code> 提交。</li><li>取目标前后各 60 秒的片段，合计 ≤2,000 token，目标本身不得被截掉。</li><li>“右侧上下文到齐”由覆盖账与 G5 处理进度证明（右侧 60 秒的帧都有终结结果，或已登记缺口），不能由“目前没查到后文”推断。已知录音结束可以关闭右边界；缺口终结等待，但快照标 <code>forced_partial</code>。</li><li>等待截止 = min(开始等待 + 15 分钟, 可见截止 − 后续处理预算)；已在等待的片段被立即同步提升时立即解除等待。超时用 <code>forced_partial</code> 快照，相关性允许弃权。上传按“累计 30 分钟有效音频或最旧分片超过 2 小时”触发，右侧上下文常常要等下一批，所以单元关闭时的 <code>unit_final</code> 是兜底。</li><li>单元关闭时，对上下文快照与 <code>base</code> 不同（迟到文字、边界变化、用户编辑）的片段补跑 <code>unit_final</code>；输入摘要只由实际读取的文字、身份、来源证据、覆盖与上下文的 <code>evidence_rev</code> 算出，相同就复用，结果相同也不产生新的修订事件。</li><li>G6 读 8B 原文 <code>asr_text</code>；专名纠错（默认关闭）在 G6 之后、G7 之前运行，只产出 edits，不触发 G6 重算；用户改字产生新的 <code>text_revision</code>，在单元关闭时进入 <code>unit_final</code>。</li></ol>
-<p>已隔离的片段在别人的上下文里只给占位；因上游硬条件已隔离、无需再读文字的目标，G6 记 <code>not_evaluated</code>，不伪记为“不是媒体”。</p>
+<ol><li>目标片段已经由 <code>PersistResult</code> 提交。</li><li>取目标前后各 60 秒的片段，合计 ≤2,000 token，目标本身不得被截掉。</li><li>“右侧上下文到齐”由覆盖账与 G5 处理进度证明（右侧 60 秒的帧都有终结结果，或已登记缺口），不能由“目前没查到后文”推断。已知录音结束可以关闭右边界；缺口终结等待，但快照标 <code>forced_partial</code>。</li><li>等待截止 = min(开始等待 + 15 分钟, 可见截止 − 后续处理预算)；已在等待的片段被立即同步提升时立即解除等待。超时用 <code>forced_partial</code> 快照，相关性允许弃权。上传按“累计 30 分钟有效音频或最旧分片超过 2 小时”触发，右侧上下文常常要等下一批，所以单元关闭时的 <code>unit_final</code> 是兜底。</li><li>每个快照登记依赖范围（<code>interval_utc</code> 与 <code>missing_ranges</code>）。覆盖账在这些范围有新的终结结果（迟到分片、缺口终结）时，唤醒依赖它的全部目标，<b>含已隔离、不在任何单元里的目标</b>，在新快照上重跑 <code>base</code> 与 G7；这是被不完整上下文误隔离的片段恢复的入口。</li><li>单元关闭时，对上下文快照与 <code>base</code> 不同（迟到文字、边界变化、用户编辑）的片段补跑 <code>unit_final</code>；输入摘要只由实际读取的文字、身份、来源证据、覆盖与上下文的 <code>evidence_rev</code> 算出，相同就复用，结果相同也不产生新的修订事件。</li><li>G6 读 <code>base</code> 视图（8B 原文叠加用户编辑，排除模型编辑），快照记下所读的 <code>base_rev</code>；专名纠错（默认关闭）在 G6 之后、G7 之前运行，只产出 edits、只改 <code>display</code>，不触发 G6 重算；用户改字改变 <code>base</code>，产生新的 <code>base_rev</code> 与 <code>evidence_rev</code>，在单元关闭时进入 <code>unit_final</code>；目标已隔离、不在任何单元里时，<code>evidence_rev</code> 变化直接唤醒它的 <code>base</code> 快照重算。</li></ol>
+<p>已隔离的片段在别人的上下文里只给占位。决定占位与否的是<b>不依赖 G6 的声学档位</b> <code>acoustic_tier</code>（只取非语音、无语音幻觉、交叉识别分歧、疑似回放四个原因中最严的一档，不含播放融合，因为融合用到 G6 的分；这四个原因在 <code>PersistResult</code> 时都已确定，所以由同一个函数在落盘时派生并随片段保存，G6 构建快照时直接读取，G7 裁决时复用，不等 G6），不是最终档位。只因播放融合被隔离的片段（如电视）在 G6 上下文里仍给正文，这反而帮 G6 判断“此处在放电视”；G8 与纪要仍按最终档位只给占位。否则否则 A 的档位取决于 B 是否可见、B 又取决于 A，可能来回翻转。邻接片段的声学档位变化时，引用它的快照因 <code>visibility</code> 变化而失效、重算；因上游硬条件已隔离、无需再读文字的目标，G6 记 <code>not_evaluated</code>，不伪记为“不是媒体”。</p>
 <h3>数据结构与接口</h3>
 <pre><code>ContextSnapshot { snapshot_id, input_digest /* 由引用、版本与覆盖状态算出，不用正文作长期指纹 */,
                   scope: "base"|"unit_final", unit_ref?: {unit_id, generation},
-                  target_refs: [{segment_id, segment_rev}], context_refs: [{segment_id, segment_rev}],
+                  target_refs: [{segment_id, evidence_rev, base_rev}],
+                  context_refs: [{segment_id, evidence_rev, base_rev, visibility: "text"|"placeholder"}],   // 可见性进摘要
                   interval_utc, completeness: "complete"|"recording_end"|"forced_partial"|"token_capped",
                   missing_ranges: [{range, cause}], coverage_revision, erasure_epoch }
 G6InputSegment  { segment_id, segment_rev, t_rel_s, text, speaker: "机主"|"他人-3"|"未知",
-                  identity_grade: "timeline"|"evidence"|"user_confirmed"|"unknown",
+                  identity_grade: "none"|"timeline"|"identity_evidence", identity_source: "model"|"user_confirmed",   // 同详设 10
                   source: { playback_acoustic_spans, media_spans, mixed_spans, valid_coverage },   // 来自 G3 片段证据
                   scene: { media_route, call_route, meeting_ref?, coverage }, low_support_spans }
 G6Features      { addressing: bool, qa_pair_with_owner: bool, sim_owner_prev?, sim_owner_next?,
@@ -80,7 +81,7 @@ G6Result        { snapshot_id, segment_id, segment_rev, status: "ok"|"abstained"
         else:                       eng = "undetermined"
         out.append(G6Result(it, p_media_content=pm, p_related=pr, engagement=eng))
     return commit_if_current(snap, out)                         # 快照已过时就丢弃，不覆盖新结果</code></pre>
-<ul><li><b>提示词</b>：指令与输出模式放在稳定前缀，窗口内容放在末尾，以利用前缀缓存。只分类、不改写；电视或视频里的对话即使像真人对话也按媒体判；线上会议外放的远端发言与机主有问答往来，按参与者判。</li><li><b><code>undetermined</code> 的去向</b>：只在时间线显示，不进纪要上下文、不支撑待办与记忆。邻座闲聊进了上下文，纪要会准确复述它，蕴含核验也会通过，但仍然违反 N3；标“来源不确定”解决不了“不相关”。代价是中间区里的真参与者进不了纪要，所以另报 <code>undetermined</code> 比例与它造成的 N2 损失。机主本人的话只是强先验：用户把一段改标为机主，不会顺带让相关性通过。</li><li><b>幂等键</b>：<code>(scope, target_refs, context_refs /* 带 evidence_rev */, completeness, 簇先验摘要, model_version, prompt_version, calibration_version, policy_version)</code>；只用 <code>segment_id + 管线版本</code> 不够，旧上下文的结果会覆盖新结果。</li></ul>
+<ul><li><b>提示词</b>：指令与输出模式放在稳定前缀，窗口内容放在末尾，以利用前缀缓存。只分类、不改写；电视或视频里的对话即使像真人对话也按媒体判；线上会议外放的远端发言与机主有问答往来，按参与者判。</li><li><b><code>undetermined</code> 的去向</b>：只在时间线显示，不进纪要上下文、不支撑待办与记忆。邻座闲聊进了上下文，纪要会准确复述它，蕴含核验也会通过，但仍然违反 N3；标“来源不确定”解决不了“不相关”。代价是中间区里的真参与者进不了纪要，所以另报 <code>undetermined</code> 比例与它造成的 N2 损失。机主本人的话只是强先验：用户把一段改标为机主，不会顺带让相关性通过。</li><li><b>幂等键</b>：<code>(scope, target_refs, context_refs /* 带 evidence_rev、base_rev 与 visibility */, completeness, 簇先验摘要, model_version, prompt_version, calibration_version, policy_version)</code>；只用 <code>segment_id + 管线版本</code> 不够，旧上下文的结果会覆盖新结果。</li></ul>
 <h3>参数</h3>
 <div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>标定</th></tr></thead><tbody><tr><td>上下文</td><td>前后各 60 s、≤2,000 token</td><td>扫描 30/60/120 s，看参与者误排、N3、时延与费用</td></tr><tr><td>等待右侧上下文</td><td>最多 15 分钟</td><td>回放真实的分批到达顺序，看完整度提升与可见时延</td></tr><tr><td>T_PARTICIPANT / T_BACKGROUND</td><td>0.80 / 0.20，中间为未定（不进纪要）</td><td>在参与者误判为背景 ≤3%<span class="tg go">目标</span> 的约束下选覆盖率；背景阈值单独控“把真人参与者排除”的风险</td></tr><tr><td>簇先验最小支持</td><td>3 个独立轮次且 10 s 有效发言</td><td>按短回应、少发言会议分别消融</td></tr><tr><td>校准分箱</td><td>10 个等样本量箱</td><td>报 ECE、Brier 与可靠性曲线，不只报 ECE</td></tr></tbody></table></div>
 <p>标注集包含完整对话、真实上传顺序与缺口，覆盖 §5.10 的五个切片；训练、校准、阈值选择、测试分开，相邻重叠窗口不跨集合；按机主划分，另隔离节目、房间与播放设备。</p>
@@ -113,7 +114,7 @@ G6Result        { snapshot_id, segment_id, segment_rev, status: "ok"|"abstained"
 <pre><code>ReasonEvaluation { reason: "non_speech"|"no_speech_hallucination"|"asr_disagreement"|"suspected_replay"|"playback",
                    evaluation: "hit"|"miss"|"unknown"|"not_evaluated", severity: "reject"|"quarantine",
                    score?, evidence_refs[], affected_spans: [TextSpan], rule_version }
-Disposition      { model_tier, effective_tier: "accept"|"quarantine"|"reject", reasons: [ReasonEvaluation],
+Disposition      { model_tier, acoustic_tier, effective_tier: "accept"|"quarantine"|"reject", reasons: [ReasonEvaluation],
                    primary_reason?, flags: ["low_confidence"|"degraded"|"no_bias"|"g6_unknown"],
                    decided_at, quarantine_started_at?, expires_at?, override_action_id? }
 DimensionResult  { state: "pass"|"fail"|"unknown"|"deferred", reason_codes[], evidence_refs[],
@@ -140,6 +141,7 @@ EligibilityHint  { product: "timeline"|"summary_context"|"verified_todo"|"memory
         scene=mask_phone_playback_during_speakerphone(seg.scene), missing_masks=True)
     p = CAL_PLAYBACK(x)                                          # 逻辑回归；树模型作对照
     ev.append(ReasonEvaluation("playback", "hit" if p &gt;= TAU_ISO else "miss", "quarantine", score=p))
+    acoustic_tier = derive_acoustic_tier(ev)                    # 与落盘时同一函数（不含播放融合），结果应与已存值一致
     model_tier = most_severe_hit(ev, default="accept")          # 一次裁决之内取最严；不与旧快照的档位比
     eff = apply_scoped_override(model_tier, seg.user_actions, ev) # 放回只覆盖那次裁决
     hints = capability_hints(seg, g6, eff, semantic_support="deferred")
@@ -175,7 +177,7 @@ EligibilityHint  { product: "timeline"|"summary_context"|"verified_todo"|"memory
                    topic_sections: [{section_id, member_refs}], lineage: {supersedes[], superseded_by[]},
                    input_digest?, erasure_epoch }
 SyncCut          { device_id, boot_gen, cut_seq_exclusive }      // 手机报告的明确截点</code></pre>
-<div class="tbl"><table><thead><tr><th>命令</th><th>请求</th><th>响应</th></tr></thead><tbody><tr><td>ApplyUnitInput</td><td>{request_id, input_event_id, expected_scheduler_fence, erasure_epoch}</td><td>{affected_units: [{unit_id, generation, state}]}</td></tr><tr><td>CloseUnit</td><td>{request_id, unit_id, expected_generation, expected_input_revision, cut_frame_vector, reason, erasure_epoch}</td><td>{status: closed\</td><td>waiting\</td><td>conflict\</td><td>erased, generation, blockers}</td></tr><tr><td>ReopenUnit</td><td>{request_id, unit_id, expected_generation, cause_ref, erasure_epoch}</td><td>{generation, suspended_output_ids}</td></tr></tbody></table></div>
+<div class="tbl"><table><thead><tr><th>命令</th><th>请求</th><th>响应</th></tr></thead><tbody><tr><td>ApplyUnitInput</td><td>{request_id, input_event_id, expected_scheduler_fence, erasure_epoch}</td><td>{affected_units: [{unit_id, generation, state}]}</td></tr><tr><td>CloseUnit</td><td>{request_id, unit_id, expected_generation, expected_input_revision, cut_frame_vector, reason, erasure_epoch}</td><td>{status: closed|waiting|conflict|erased, generation, blockers}</td></tr><tr><td>ReopenUnit</td><td>{request_id, unit_id, expected_generation, cause_ref, erasure_epoch}</td><td>{generation, suspended_output_ids}</td></tr></tbody></table></div>
 <p><b>代次规则</b>：创建 <code>open(g=0)</code>；关闭 → <code>closed(g=1)</code>；重开 → <code>open(g=2)</code>；再关闭 → <code>closed(g=3)</code>。同一关闭或重开事件重投不递增；开放期间的输入变化只递增 <code>input_revision</code>。</p>
 <h3>算法</h3>
 <pre><code>def boundary_between(left, right, coverage):
@@ -212,6 +214,7 @@ def reopen(u, cause):                                            # 同一事务
     suspend_outputs(u, previous_generation=True)                 # 旧代次产物立即暂停、取消提醒；新一代发布后再替换
 
 def generation_gate(u):
+    if not has_valid_sources(u): return "sources_expired"          # 来源全部到期或被擦除：先于会议、口述例外
     if u.type in ("calendar_meeting", "dictation"): return "ok"
     n = count_distinct_sentence_anchors(u, speaker="owner", grade="timeline")  # 按句锚计数，不按片段行数
     return "ok" if n &gt;= 3 or has_owner_dictation(u) else "owner_lt3"           # “记一下”“提醒我……”一类口述</code></pre>
@@ -230,12 +233,13 @@ def generation_gate(u):
 <h3>职责与边界</h3>
 <ul><li>G8 是“抽取建议 + 确定性核验 + 原子发布”：单元关闭后，对可作上下文的片段抽取带原文跨度的言语行为，核验后生成纪要、待办、记忆候选。模型只提议，不直接写最终的待办或长期记忆。</li><li>输入由服务端构造：已关闭单元的确切片段版本、资格、用户确认与隔离占位。背景不进上下文；未知说话人只在相关性通过时进纪要上下文，不能成为任何待办的支持来源。</li><li>维护溯源：片段降级、改字、删除、单元重开时，暂停、重核或撤回受影响的产物。</li><li>不做：记忆系统本身的存储、召回与问答。</li></ul>
 <h3>原理</h3>
-<ul><li><b>六步</b>：原子言语行为抽取 → 实体与指代解析 → 承诺关系绑定与状态归并 → 期限解析 → 逐字段蕴含与四维校验 → 纪要、待办、记忆发布。一步生成纪要时，承担人与日期最容易在压缩中丢失或张冠李戴。</li><li><b>蕴含核验确认“引用文字支持结论”</b>，不证明 ASR 文字就是实际说过的话，所以必须与身份、低支持区间、相关性联合使用（Kryściński 等，EMNLP 2020 的思路；结果不能直接当作中文领夹场景的效果承诺）。同一生成调用里的“自评通过”不算独立核验。</li><li><b>承担人与说话人分开</b>：“这个交给小王”是机主的原话，任务是小王的；待办四类按承担人与说话人的组合定义，各有证据门槛（§5.8）。</li><li><b>业务状态与核实状态分开</b>：业务状态 <code>requested → acknowledged → accepted | declined</code>，<code>accepted → conditional | active → completed | withdrawn | superseded</code>，任何阶段可进入 <code>conflicted</code>；核实状态 <code>unverified | verified | user_confirmed | invalidated</code>。“知道了”证明知悉，不证明接受；<code>user_confirmed</code> 也不意味着所有来源维度都通过。</li><li><b>只有原行为人能撤回</b>：原请求者撤回自己的请求、原承诺者撤回自己的承诺；第三人说“他不做了”不能直接取消他人的承诺。跨设备录音的时间有重叠不确定时，不靠到达顺序认定哪句是后来的改口，无法确定就标冲突。</li></ul>
+<ul><li><b>六步</b>：原子言语行为抽取 → 实体与指代解析 → 承诺关系绑定与状态归并 → 期限解析 → 逐字段蕴含与四维校验 → 纪要、待办、记忆发布。一步生成纪要时，承担人与日期最容易在压缩中丢失或张冠李戴。</li><li><b>蕴含核验确认“引用文字支持结论”</b>，不证明 ASR 文字就是实际说过的话，所以必须与身份、低支持区间、相关性联合使用（Kryściński 等，EMNLP 2020 的思路；结果不能直接当作中文领夹场景的效果承诺）。同一生成调用里的“自评通过”不算独立核验。</li><li><b>承担人与说话人分开</b>：“这个交给小王”是机主的原话，任务是小王的；待办四类按承担人与说话人的组合定义，各有证据门槛（§5.8）。</li><li><b>业务状态与核实状态分开</b>：持久的业务状态是 <code>requested | acknowledged | declined | conditional | active | completed | withdrawn | superseded | conflicted</code>；“接受”是一个事件，不是状态，它把 <code>requested</code>、<code>acknowledged</code> 推进到 <code>conditional</code> 或 <code>active</code>。承诺有两种起点：请求（<code>request</code> 新建 <code>requested</code>）与主动承诺（<code>commit</code>：说话人给自己定的明确承诺，如“我明天交”，新建 <code>active</code> 或 <code>conditional</code>）；核实状态 <code>unverified | verified | user_confirmed | invalidated</code>。“知道了”证明知悉，不证明接受；<code>user_confirmed</code> 也不意味着所有来源维度都通过。</li><li><b>只有原行为人能撤回</b>：原请求者撤回自己的请求、原承诺者撤回自己的承诺；第三人说“他不做了”不能直接取消他人的承诺。跨设备录音的时间有重叠不确定时，不靠到达顺序认定哪句是后来的改口，无法确定就标冲突。</li></ul>
 <figure class="ddfig"><div class="fighead"><div><b>G8 的流程</b></div></div><div class="fig wide"><svg viewBox="0 0 900 220" role="img" aria-label="按窗口抽取言语行为，解析实体，绑定关系并归并承诺状态，规则解析期限，逐字段蕴含与四维校验，代码派生待办类别与提醒，纪要由核实条目写成并逐条复核，原子发布并写溯源"><path class="e" d="M170 56L200 56" marker-end="url(#ah)"/><path class="e" d="M350 56L380 56" marker-end="url(#ah)"/><path class="e" d="M530 56L560 56" marker-end="url(#ah)"/><path class="e" d="M710 56L740 56" marker-end="url(#ah)"/><path class="e" d="M810 82L810 140" marker-end="url(#ah)"/><path class="e" d="M810 82L810 118L635 118L635 140" marker-end="url(#ah)"/><path class="e" d="M810 82L810 118L455 118L455 140" marker-end="url(#ah)"/><path class="e dot" d="M380 166L350 166" marker-end="url(#ah)"/><g class="nd"><rect x="20" y="30" width="150" height="52" rx="8"/><text class="t c" x="95" y="53">窗口抽取</text><text class="s c" x="95" y="69">中 LLM · JSON 模式</text></g><g class="nd"><rect x="200" y="30" width="150" height="52" rx="8"/><text class="t c" x="275" y="53">关系与状态</text><text class="s c" x="275" y="69">只许原行为人撤回</text></g><g class="nd"><rect x="380" y="30" width="150" height="52" rx="8"/><text class="t c" x="455" y="53">期限解析</text><text class="s c" x="455" y="69">发言当地日期为锚</text></g><g class="nd"><rect x="560" y="30" width="150" height="52" rx="8"/><text class="t c" x="635" y="53">逐字段核验</text><text class="s c" x="635" y="69">蕴含 · 四维</text></g><g class="nd"><rect x="740" y="30" width="140" height="52" rx="8"/><text class="t c" x="810" y="53">代码派生</text><text class="s c" x="810" y="69">类别 · 提醒</text></g><g class="nd"><rect x="740" y="140" width="140" height="52" rx="8"/><text class="t c" x="810" y="163">待办</text><text class="s c" x="810" y="179">已核实 / 未核实</text></g><g class="nd"><rect x="560" y="140" width="150" height="52" rx="8"/><text class="t c" x="635" y="163">记忆候选</text><text class="s c" x="635" y="179">本人事实</text></g><g class="nd"><rect x="380" y="140" width="150" height="52" rx="8"/><text class="t c" x="455" y="163">纪要</text><text class="s c" x="455" y="179">逐条复核</text></g><g class="nd store"><rect x="200" y="140" width="150" height="52" rx="8"/><text class="t c" x="275" y="163">原子发布</text><text class="s c" x="275" y="179">溯源 · 依赖</text></g></svg></div></figure>
 <h3>数据结构</h3>
-<pre><code>TextSpan   { segment_id, segment_rev, char_from, char_to }          // 码点、半开
+<pre><code>TextSpan   { segment_id, text_view: "base"|"display", view_rev /* base_rev 或 display_rev */, char_from, char_to }   // 码点、半开；视图见页首约定
+           // 编辑后旧跨度按编辑记录映射到新修订；映射落进被替换的部分时，该跨度的证明失效、重核
 EntityRef  { kind: "owner"|"participant"|"unresolved", speaker_ref?, name_span?, resolution_source: "speaker"|"explicit_text"|"user" }
-SpeechAct  { act_id, kind: "request"|"acknowledge"|"accept"|"reject"|"revoke"|"amend"|"decide"|"report_complete"
+SpeechAct  { act_id, kind: "request"|"commit"|"acknowledge"|"accept"|"reject"|"revoke"|"amend"|"decide"|"report_complete"
                           |"assert_fact"|"ask_question",
              speaker_ref, addressee?: EntityRef, assignee?: EntityRef,
              action: {text, refs: [TextSpan]}, object?: {text, refs}, condition?: {text, refs}, deadline_expr?: {text, refs},
@@ -256,15 +260,18 @@ Output     { output_id, output_rev, unit_id, unit_generation, kind: "summary_cla
              reminder_mode: "none"|"owner_action"|"follow_up", supersedes_output_id?, erasure_epoch }
 Summary    { unit_id, generation, sections: [{ title?, bullets: [{ text, act_ids[], check: pass|dropped }] }],
              placeholders: [{ interval, reason }] }               // 隔离档只以“时段 + 原因”出现</code></pre>
-<div class="tbl"><table><thead><tr><th>接口</th><th>请求</th><th>响应</th></tr></thead><tbody><tr><td>GenerateUnit</td><td>{request_id, unit_id, expected_generation, expected_input_digest, erasure_epoch, pipeline_version}</td><td>{generation_job_id, status}</td></tr><tr><td>CommitOutputs</td><td>{request_id, unit_id, expected_generation, expected_input_digest, erasure_epoch, outputs, retire_output_ids}</td><td>{status: published\</td><td>stale\</td><td>erased, output_refs}</td></tr><tr><td>ConfirmOutput</td><td>{action_id, output_id, expected_output_rev, confirmed_fields, field_values, erasure_epoch}</td><td>{new_output_rev, verification_state, remaining_blockers}</td></tr></tbody></table></div>
+<div class="tbl"><table><thead><tr><th>接口</th><th>请求</th><th>响应</th></tr></thead><tbody><tr><td>GenerateUnit</td><td>{request_id, unit_id, expected_generation, expected_input_digest, erasure_epoch, pipeline_version}</td><td>{generation_job_id, status}；作业键 = (unit_id, generation, input_revision, pipeline_version)，同一代次的新输入修订是新作业</td></tr><tr><td>CommitOutputs</td><td>{request_id, unit_id, expected_generation, expected_input_digest, erasure_epoch, outputs, retire_output_ids}</td><td>{status: published|stale|erased|source_expired, output_refs}；发布事务内逐一复核每个产物引用的来源仍存在、版本一致且未到期，否则不发布。到期删除与发布在同一用户事务里串行，所以不需要额外余量</td></tr><tr><td>ConfirmOutput</td><td>{action_id, output_id, expected_output_rev, confirmed_fields, field_values, erasure_epoch}</td><td>{new_output_rev, verification_state, remaining_blockers}</td></tr></tbody></table></div>
 <h3>算法</h3>
 <pre><code>def g8(unit_id, gen, digest):
     snap = load_snapshot(unit_id, gen, digest)                  # 不一致即 stale
     if snap.generation_gate != "ok" and not snap.manual: return
     acts = []
+    acts, gaps = [], []
     for w in overlapping_windows(snap.context_segments, core_tokens=1500, overlap_tokens=300):
         out = llm_json(MID_LLM, PREFIX_G8, render(w, placeholders=snap.quarantine_placeholders),
                        schema=ACT_SCHEMA, retries=1)
+        if out is None:                                         # 两次模式不合格：不用半成品
+            gaps.append(w.core_range); continue                 # 记抽取覆盖缺口，单元标“部分生成”
         acts += keep_core_owned(validate_spans(out.acts, w), w)  # 跨度必须真实存在；重叠区的行为归核心区所在窗口
     acts = resolve_entities(dedupe(acts))                       # 不凭空创造参与者；对不上的承担人标 unresolved
     links = bind_relations(acts, min_p=0.90, min_margin=0.15)   # 承担人、对象、条件与对话关系相容后才做语义匹配
@@ -273,6 +280,7 @@ Summary    { unit_id, generation, sections: [{ title?, bullets: [{ text, act_ids
     for c in cands:
         c.deadline = parse_deadline(c)
         c.field_proofs = verify_fields(c, snap)                 # 每个字段：蕴含 + 四维
+        c.extraction_gap_affects = gap_may_affect(c, gaps)      # 见“失败与恢复”；无法界定时整个单元暂停核实与提醒
         apply_code_rules(c)                                     # 类别、核实状态、提醒方式由代码派生
     summary = write_summary(MID_LLM, [c for c in cands if c.verified_for_summary], placeholders=snap.quarantine_placeholders)
     for sec in summary.sections:                                # 自由改写会重新引入无依据内容，标题与条目都逐条复核
@@ -285,26 +293,36 @@ Summary    { unit_id, generation, sections: [{ title?, bullets: [{ text, act_ids
     return commit_outputs(snap, summary, cands)                 # 代次、输入摘要或擦除代次变了就 stale
 
 def apply_act(state, act, link):                                # 按下面的转移表；表外的组合一律标冲突
-    if not link.unambiguous:         return state.conflict(act)
+    if state is None:                                           # 还没有关联的承诺：只有两种行为能新建
+        if act.kind == "request" and act.modality == "definite": return Commitment.requested(act)
+        if act.kind == "commit" and act.assignee_is_speaker and act.modality in ("definite", "conditional"):
+            c = Commitment.self_committed(act, conditional=(act.modality == "conditional"))   # 状态由情态定
+            if act.modality == "conditional" and not act.condition: c.condition = "unresolved"    # 有条件但条件没抽出：禁止提醒
+            return c
+        return None                                             # 其余行为找不到对象：不新建，记为未关联
+    if link.ambiguous:               return state.conflict(act) # 有多个候选、领先不足 0.15
+    if not link.found:               return state.unlinked(act) # 找不到对应的请求或承诺：不改状态
     if act.kind == "acknowledge":    return state.acknowledged() if state.status == "requested" else state  # 不升级、也不让已接受的降级
     if act.kind == "accept" and can_accept(act, state):
-        return state.accept(conditional=bool(act.condition), evidence=act.source_refs)
+        nxt = state.accept(conditional=(act.modality == "conditional"), evidence=act.source_refs)   # 状态由情态定
+        if act.modality == "conditional" and not act.condition: nxt.condition = "unresolved"        # 禁止提醒
+        return nxt
     if act.kind == "revoke":
         return state.withdraw(act.source_refs) if is_original_actor(act, state) else state.unresolved_revocation(act)
     if act.kind == "amend":
         return state.replace_fields(act) if explicit_amendment(act, state) else state.conflict(act)
     return state.apply_non_destructive(act)</code></pre>
 <p><b>承诺状态转移表</b>（行为人一栏指谁说的这句话才有效）：</p>
-<div class="tbl"><table><thead><tr><th>当前状态</th><th>行为</th><th>行为人</th><th>新状态</th></tr></thead><tbody><tr><td>requested</td><td>acknowledge</td><td>被请求者</td><td>acknowledged</td></tr><tr><td>requested、acknowledged</td><td>accept（有条件）</td><td>被请求者</td><td>conditional（否则 active）</td></tr><tr><td>requested、acknowledged</td><td>reject</td><td>被请求者</td><td>declined</td></tr><tr><td>requested</td><td>revoke</td><td>原请求者</td><td>withdrawn</td></tr><tr><td>conditional</td><td>条件满足的明确陈述</td><td>任一参与者，需引用</td><td>active</td></tr><tr><td>active、conditional</td><td>revoke</td><td>原承诺者</td><td>withdrawn</td></tr><tr><td>active、conditional</td><td>amend（明确改期限或对象）</td><td>原承诺者</td><td>同状态，字段替换并保留旧值的溯源</td></tr><tr><td>active</td><td>report_complete</td><td>原承诺者</td><td>completed</td></tr><tr><td>accepted 之后的任一状态</td><td>acknowledge</td><td>任何人</td><td>不变</td></tr></tbody></table></div>
+<div class="tbl"><table><thead><tr><th>当前状态</th><th>行为</th><th>行为人</th><th>新状态</th></tr></thead><tbody><tr><td>requested</td><td>acknowledge</td><td>被请求者</td><td>acknowledged</td></tr><tr><td>requested、acknowledged</td><td>accept（有条件）</td><td>被请求者</td><td>conditional（否则 active）</td></tr><tr><td>requested、acknowledged</td><td>reject</td><td>被请求者</td><td>declined</td></tr><tr><td>（无）</td><td>request（明确）</td><td>请求者</td><td>requested</td></tr><tr><td>（无）</td><td>commit（明确或有条件，承担人是说话人本人）</td><td>承诺者</td><td>active 或 conditional</td></tr><tr><td>requested、acknowledged</td><td>revoke</td><td>原请求者</td><td>withdrawn</td></tr><tr><td>conditional</td><td>条件满足的明确陈述</td><td>任一参与者，需引用</td><td>active</td></tr><tr><td>active、conditional</td><td>revoke</td><td>原承诺者</td><td>withdrawn</td></tr><tr><td>active、conditional</td><td>amend（明确改期限或对象）</td><td>原承诺者</td><td>同状态，字段替换并保留旧值的溯源</td></tr><tr><td>active</td><td>report_complete</td><td>原承诺者</td><td>completed</td></tr><tr><td>conditional、active、completed、declined、withdrawn</td><td>acknowledge</td><td>任何人</td><td>不变</td></tr></tbody></table></div>
 <p><b>四类待办的代码规则</b>：</p>
-<div class="tbl"><table><thead><tr><th>类别</th><th>最小有效证据</th><th>状态与提醒限制</th></tr></thead><tbody><tr><td>我答应的</td><td>证据级或用户确认身份的机主<b>接受</b>原话；承担人是机主</td><td>必须已接受；条件未满足不当无条件执行</td></tr><tr><td>对方要我做的</td><td>参与者的请求 + 绑定到该请求的机主应答（时间线级即可）</td><td>知悉、接受、拒绝分别保存；知悉不冒充“我答应了”</td></tr><tr><td>对方答应的</td><td>承担人本人（参与者）的接受原话</td><td>不能用机主转述代替</td></tr><tr><td>我分派的</td><td>机主（时间线级以上）的分派原话；承担人解析为参与者</td><td>只构成分派与跟进，不证明对方已接受</td></tr></tbody></table></div>
+<div class="tbl"><table><thead><tr><th>类别</th><th>最小有效证据</th><th>状态与提醒限制</th></tr></thead><tbody><tr><td>我答应的</td><td>证据级或用户确认身份的机主<b>接受（accept）或主动承诺（commit）</b>原话；承担人是机主</td><td>必须已接受；条件未满足不当无条件执行</td></tr><tr><td>对方要我做的</td><td>参与者的请求 + 绑定到该请求的机主应答（时间线级即可）</td><td>知悉、接受、拒绝分别保存；知悉不冒充“我答应了”</td></tr><tr><td>对方答应的</td><td>承担人本人（参与者）的接受或主动承诺原话</td><td>不能用机主转述代替</td></tr><tr><td>我分派的</td><td>机主（时间线级以上）的分派原话；承担人解析为参与者</td><td>只构成分派与跟进，不证明对方已接受</td></tr></tbody></table></div>
 <p>四类共同要求：来源都是接受档、参与者（非背景、非 <code>undetermined</code>）、身份满足该类别；动作、对象、承担人、否定、日期、数字、情态、条件这些关键字段有明确跨度，且不与未经用户修复的低支持区间相交。未知说话人不能支撑任何待办，也不能借“未核实”绕过来源限制；“对方请求但机主未应答”可以形成未核实的请求候选，依据仍须来自参与者；“交给小王”里的小王对不上参与者时，保留承担人未解析的候选，不自动创造参与者。</p>
 <pre><code>def reminder_mode(t):                                          # 公共限制先于类别分支
     if not t.all_required_dims_pass or t.lifecycle != "active" or t.has_unresolved_conflict: return "none"
     if t.extraction_gap_affects: return "none"                   # 后文抽取失败，可能漏掉撤销
     if not t.deadline or t.deadline.kind in ("none", "unresolved", "relative_event") or t.deadline.alternatives:
         return "none"
-    if t.has_unmet_condition: return "none"
+    if t.has_unmet_condition or t.condition == "unresolved": return "none"
     if t.category == "owner_assigned":
         return "follow_up" if t.assignment_state == "active" else "none"   # 已撤销的分派不提醒
     if t.commitment_state != "active": return "none"
@@ -321,7 +339,7 @@ def apply_act(state, act, link):                                # 按下面的�
 <div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>标定</th></tr></thead><tbody><tr><td>抽取窗口</td><td>核心 1,500 token、重叠 300 token</td><td>字段遗漏、跨窗口请求—应答与撤销的召回、费用</td></tr><tr><td>关系自动绑定</td><td>校准分 ≥0.90 且领先次优 ≥0.15</td><td>优先控错误归并，其余标冲突</td></tr><tr><td>TAU_ENT（校准后的支持概率）</td><td>纪要、待办、记忆各一个工作点，初值都是 0.90</td><td>扫描 0.8–0.95，分别冻结：纪要在事实精度 ≥95%<span class="tg go">目标</span> 下最大化 N2；待办在 N4 ≥85% 下最大化覆盖；记忆在事实错误率 &lt;2% 下最大化覆盖</td></tr><tr><td>生成门槛</td><td>机主 ≥3 句（按句锚），会议与口述例外</td><td>一期基线（D17），相关性门槛验证后替换</td></tr><tr><td>强模型升级</td><td>默认关闭</td><td>变体，联合费用与增益通过后启用（§5.10）</td></tr></tbody></table></div>
 <p>蕴含核验、重叠窗口与重开重算的调用费用实测计入 §5.10 的效果预算；可以用独立的小型核验模型。</p>
 <h3>失败与恢复</h3>
-<ul><li>模式两次不合格：不用半成品，该窗口记一个<b>抽取覆盖缺口</b>，单元标“部分生成”。核心区在缺口之前、且关系可能延伸到缺口里的承诺（同一承担人或对象在缺口前后出现，或缺口在承诺之后 10 分钟内），记 <code>extraction_gap_affects</code>，不能取得核实状态，也不提醒；无法界定影响范围时，暂停整个单元的自动核实与提醒。模型不可用：排队。</li><li>生成期间单元重开或擦除：<code>CommitOutputs</code> 因代次、输入摘要或擦除代次不一致返回 <code>stale</code> / <code>erased</code>，结果丢弃。</li><li>提交成功、响应丢失：按 <code>request_id</code> 返回原结果，不重复发布。</li></ul>
+<ul><li>模式两次不合格：不用半成品，该窗口记一个<b>抽取覆盖缺口</b>，单元标“部分生成”。核心区在缺口之前、且关系可能延伸到缺口里的承诺（同一承担人或对象在缺口前后出现，或缺口在承诺之后 10 分钟内），记 <code>extraction_gap_affects</code>，不能取得核实状态，也不提醒；无法界定影响范围时，暂停整个单元的自动核实与提醒。模型不可用：排队。</li><li>生成期间单元重开或擦除：<code>CommitOutputs</code> 因代次、输入摘要或擦除代次不一致返回 <code>stale</code> / <code>erased</code>，结果丢弃。</li><li>生成期间来源正常到期：到期与擦除不同，不改变上面三个版本，所以 <code>CommitOutputs</code> 另查来源的存在与到期时刻，命中返回 <code>source_expired</code>；产物读取路径也检查依赖的到期时刻，到期删除与发布并发时不会留下失去依据的产物。收到 <code>source_expired</code> 后，单元按剩余的有效来源产生新的输入修订并重新生成（单元回到 <code>generating</code>）；剩余来源不满足生成门槛时，<code>generation_gate</code> 记 <code>sources_expired</code>，单元以“无纪要产物”转 <code>published</code>（App 显示不生成的原因），不停在 <code>generating</code>。</li><li>提交成功、响应丢失：按 <code>request_id</code> 返回原结果，不重复发布。</li></ul>
 <h3>测试与验收</h3>
 <ul><li>最小对：“我明天交 / 我不一定明天交”“好 / 知道了 / 你说得对，但我做不了”“交给小王 / 小王答应交”“明天交 / 刚才说错了，后天交”“如果审批通过就买 / 审批通过了，现在买”“他说我负责 / 我负责”。</li><li>四类待办逐类测身份门槛、原话来源、承担人与说话人分离；知悉不变承诺、拒绝不变待办、撤销覆盖原承诺；未知与背景不产生任何待办；隔离正文不进模型输入。</li><li>跨窗口改口、同动作不同对象、同名不同簇、条件承诺；03:30 的“明天”、跨时区、夏令时、日期型与事件相对期限。每个结论字段都能回到准确的版本与跨度，文字相同但版本错的引用拒收。已确认待办在来源被删、改字或重开后停止提醒。</li><li>指标（§5.10）：N4 待办联合正确率（动作、承担人、期限、状态）≥85%；纪要事实精度 ≥95%<span class="tg go">目标</span>；N2 ≥80%；期限解析准确率 ≥95%<span class="tg go">目标</span>；记忆事实错误率 &lt;2%；另报未核实比例、弃权率与产出覆盖率。</li></ul>
 <h3>与提案的差异</h3>
@@ -357,7 +375,7 @@ Receipt           { receipt_seq (每用户递增), receipt_id, chunk_id, audio_s
                     gaps_recorded: [{range, cause}], erasure_epoch }</code></pre>
 <ul><li><code>processed</code> 可以全是非语音，不保证有文字；<code>partial</code>、<code>failed</code> 必须列出失败的覆盖；<code>cloud_deleted</code> 不等于手机与领夹都已完成擦除。</li><li><code>UploadGrant</code> 在签发地址之前先落 <code>reserved</code>，签发进程崩溃也不会留下未登记、仍可用的地址。</li></ul>
 <h3>接口</h3>
-<div class="tbl"><table><thead><tr><th>接口</th><th>请求</th><th>响应</th></tr></thead><tbody><tr><td><code>POST /v1/erasures</code></td><td>{request_id, scope}</td><td>{erasure_id, erasure_epoch, state, endpoint_progress}</td></tr><tr><td><code>GET /v1/erasures/{id}</code></td><td>—</td><td>{state, cloud_progress, phone_progress, device_progress}</td></tr><tr><td><code>GET /v1/receipts</code></td><td>{after_cursor, limit}</td><td>{receipts, next_cursor}</td></tr><tr><td><code>POST /v1/receipts:ack-local</code></td><td>{request_id, receipt_id, chunk_id, key_erased, local_copies_removed}</td><td>{acknowledged}</td></tr><tr><td><code>POST /v1/device-erase:ack</code></td><td>{request_id, command_id, device_id, boot_gen, cleared_ranges, key_erasure_completed, block_cleanup_state}</td><td>{remaining_ranges, state}</td></tr></tbody></table></div>
+<div class="tbl"><table><thead><tr><th>接口</th><th>请求</th><th>响应</th></tr></thead><tbody><tr><td><code>POST /v1/erasures</code></td><td>{request_id, scope}</td><td>{erasure_id, erasure_epoch, state, endpoint_progress}</td></tr><tr><td><code>GET /v1/erasures/{id}</code></td><td>—</td><td>{state, cloud_progress, phone_progress, device_progress}</td></tr><tr><td><code>GET /v1/receipts</code></td><td>{after_cursor, limit}</td><td>{receipts, next_cursor}</td></tr><tr><td><code>POST /v1/receipts:ack-local</code></td><td>{request_id, receipt_id, chunk_id, install_id, receiver_epoch, local_state: removed|not_held}</td><td>{acknowledged}；只有 commit 该分片的安装实例报 <code>removed</code> 才计入手机端完成，<code>not_held</code> 不能证明旧手机已清除</td></tr><tr><td><code>POST /v1/device-erase:ack</code></td><td>{request_id, command_id, device_id, boot_gen, cleared_ranges, key_erasure_completed, block_cleanup_state}</td><td>{remaining_ranges, state}</td></tr></tbody></table></div>
 <p>客户端确认只证明该端报告的完成状态；服务端不能因消息已送达就改成完成。</p>
 <h3>算法</h3>
 <pre><code>def delete_processed_audio(obj):
@@ -408,10 +426,10 @@ def erase(user, scope):
     device_commands.add(user, kind="ERASE", ranges=frame_ranges_in_scope(user, scope))   # 手机转发给领夹
     # cloud_progress 由各子任务核验完成后汇总（对象确认不存在、索引与缓存清除确认），排队不算完成；
     # 云端全部完成 → device_pending；两端确认后才 completed</code></pre>
-<ul><li><b>巡检四类账（每小时）</b>：元数据认为该删、对象仍在；对象存在却没有有效清单或提交记录；对象已不存在、但没有删除确认或回执；<b>已发回执的对象又出现</b>。第四类是高优先级异常：检查未登记的授权、在途写入与旧客户端重传。</li><li><b>永久失败</b>：作业失败满 48 小时，登记 <code>cloud_failed</code> 缺口，走同一删除流程，回执 <code>outcome = failed</code>。<b>72 小时</b>不能只靠生命周期规则：接近上限仍有未完成作业的对象，主动取消租约、给剩余覆盖登记失败并删音频；超过上限记为保留违约，不因“后台还在删”而显示达标。</li><li><b>到期的文字</b>：到期时刻起立即不可读（读路径检查 <code>expires_at</code>），清理事件即时发出，小时巡检只负责补漏。</li><li><b>手机销毁 K</b> 要处理密钥表的历史页、日志、缓存与任何可恢复副本；只删包裹密钥所在的一行，不能未经验证就声称不可恢复（NIST SP 800-88）。</li><li><b>注销</b>：用户擦除完成后销毁该用户的数据密钥，遗漏在任何地方的密文一并失效；擦除任务的控制记录（不含正文与可恢复密钥）不随之销毁。设备离线时保持 <code>device_pending</code>，重连后先清除、再恢复相关上传。恢复备份、重建索引之前先应用擦除记录。</li></ul>
+<ul><li><b>巡检四类账（每小时）</b>：元数据认为该删、对象仍在；对象存在却没有有效清单或提交记录；对象已不存在、但没有删除确认或回执；<b>已发回执的对象又出现</b>。第四类是高优先级异常：检查未登记的授权、在途写入与旧客户端重传。</li><li><b>永久失败</b>：作业失败满 48 小时，登记 <code>cloud_failed</code> 缺口，走同一删除流程，回执 <code>outcome = failed</code>。<b>72 小时</b>不能只靠生命周期规则：接近上限仍有未完成作业的对象，主动取消租约、给剩余覆盖登记失败并删音频；超过上限记为保留违约，不因“后台还在删”而显示达标。</li><li><b>到期的文字</b>：到期时刻起立即不可读（读路径检查 <code>expires_at</code>），清理事件即时发出，小时巡检只负责补漏。同一事务把依赖它的自动产物转为 <code>suspended</code> 并排队删除（溯源表的“来源正常到期删除”一行），在途的 G8 发布由 <code>CommitOutputs</code> 的来源复核挡住。</li><li><b>手机销毁 K</b> 要处理密钥表的历史页、日志、缓存与任何可恢复副本；只删包裹密钥所在的一行，不能未经验证就声称不可恢复（NIST SP 800-88）。</li><li><b>注销</b>：用户擦除完成后销毁该用户的数据密钥，遗漏在任何地方的密文一并失效；擦除任务的控制记录（不含正文与可恢复密钥）不随之销毁。设备离线时保持 <code>device_pending</code>，重连后先清除、再恢复相关上传。恢复备份、重建索引之前先应用擦除记录。</li></ul>
 <h3>清单瘦身</h3>
 <div class="tbl"><table><thead><tr><th>阶段</th><th>保留</th><th>删除</th></tr></thead><tbody><tr><td>G5 提交后</td><td>后续需要的片段标量与区间、录音当地日期与时区、会议实例字段</td><td>PCM、逐轮次嵌入、完整传感器与场景轨迹</td></tr><tr><td>云端音频确认删除后</td><td>分片 ID、帧范围、覆盖结论、删除证明、回执信息</td><td>直传地址、完整原始清单与场景快照、L1 细节、二期传感器字段</td></tr><tr><td>手机确认回执后</td><td>精简的释放凭据、拒绝重传所需的范围记录</td><td>逐次上传的诊断</td></tr><tr><td>作业完成 7 天后</td><td>必要的覆盖与删除墓碑</td><td>详细作业记录（§5.12）</td></tr><tr><td>范围记录可合并时</td><td>按设备、启动世代的连续已终结区间及例外的洞</td><td>重复的逐片清单</td></tr></tbody></table></div>
-<p>合并不能跨过没见过的序号洞，也不能把 <code>never_arrived</code>、<code>phone_lost</code> 与已识别混成同一种成功记录。详细清单删除后，网关仍须依据精简墓碑拒收已释放的分片。擦除墓碑不随 <code>rec_jobs</code> 的 7 天期限删除，要覆盖旧凭据、旧设备与迟到消息仍可能重放的期限；设备彻底退役后，可以用绑定世代失效代替大量逐片墓碑。</p>
+<p>合并不能跨过没见过的序号洞，也不能把 <code>never_arrived</code>、<code>phone_lost</code> 与已识别混成同一种成功记录。详细清单删除后，网关仍须依据精简墓碑拒收已释放的分片。擦除墓碑不随 <code>rec_jobs</code> 的 7 天期限删除，要覆盖旧凭据、旧设备与迟到消息仍可能重放的期限；墓碑必须保留拦截所需的字段：擦除范围（设备、启动世代、帧区间、业务日）、<code>erasure_epoch</code>、绑定代次与各端完成状态，不含正文。§5.12 的“只留 ID 与时刻”只适用于不承担屏障作用的审计摘要；设备彻底退役后，可以用绑定世代失效代替大量逐片墓碑。</p>
 <h3>参数</h3>
 <div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>说明</th></tr></thead><tbody><tr><td>删除触发</td><td>覆盖终结后立即</td><td>测落盘到首次删除的 P99</td></tr><tr><td>删除重试</td><td>1、5、30 秒，之后封顶 5 分钟，带抖动</td><td>故障恢复时避免重试风暴</td></tr><tr><td>直传地址有效期</td><td>15 分钟</td><td>所有已签发授权都可枚举</td></tr><tr><td>在途写入上界</td><td>由适配器验证后配置</td><td>不凭经验假定</td></tr><tr><td>巡检</td><td>每小时</td><td>四类账；桶内 &gt;24 小时对象数是告警线，不是合法保留目标</td></tr><tr><td>生命周期兜底</td><td>72 小时，按首次存入时间，重传不续期</td><td>§5.14、§7</td></tr></tbody></table></div>
 <h3>失败与恢复</h3>

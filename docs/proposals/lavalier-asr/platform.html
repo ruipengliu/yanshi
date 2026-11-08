@@ -112,9 +112,9 @@
         <tr><td>拼接器</td><td>按 <code>(device_id, boot_generation, frame_seq)</code> 拼时间线；判缺口与在路上；切识别分片；生成识别作业</td><td>每用户单写者：按 <code>user_ref</code> 分区的队列，或带防护令牌（fencing token）的租约</td><td>用户数</td></tr>
         <tr><td>音频作业</td><td>一个作业在一个进程里跑完 G2–G5：解码、调小模型、8B、600M、说话人判定，再走 ①②③</td><td>中间结果只在内存，不落盘；进程崩溃就从音频重跑整个作业</td><td>队列深度与截止时间</td></tr>
         <tr><td>模型服务</td><td>CPU 小模型、8B、600M 各自成池，跨用户组批</td><td>无状态；不记录请求与输出</td><td>见 §5.13</td></tr>
-        <tr><td>文字管线</td><td>G6、专名纠错、G7；写片段的档位与原因</td><td>按 <code>segment_id</code> + 管线版本幂等</td><td>小 LLM 吞吐</td></tr>
+        <tr><td>文字管线</td><td>G6、专名纠错、G7；写片段的档位与原因</td><td>按上下文快照键幂等（目标与上下文的证据版本、可见性、完整度、模型与提示词版本）；提交时比较当前输入摘要，过时结果返回 <code>stale</code>（<a href="design-text.html#dd-g6">详细设计</a>）</td><td>小 LLM 吞吐</td></tr>
         <tr><td>单元调度器</td><td>§5.9 的切分、关闭、重开、处理状态；参与者与背景簇</td><td>每用户单写者；单元带代次 <code>generation</code></td><td>用户数</td></tr>
-        <tr><td>G8 生成</td><td>纪要、待办、记忆候选；代码校验 G8 规则；写溯源；撤回被取代的产物</td><td>按 <code>(unit_id, generation)</code> 幂等；完成时代次已变就丢弃结果</td><td>中 LLM 吞吐</td></tr>
+        <tr><td>G8 生成</td><td>纪要、待办、记忆候选；代码校验 G8 规则；写溯源；撤回被取代的产物</td><td>按 <code>(unit_id, generation, input_revision)</code> 幂等；完成时代次或输入摘要已变就丢弃结果</td><td>中 LLM 吞吐</td></tr>
         <tr><td>App 接口</td><td>时间线、状态、隔离区、用户操作、用量</td><td>写操作带片段版本号，过期返回冲突</td><td>请求数</td></tr>
         <tr><td>删除服务 · 计量</td><td>见 §5.14；按天汇总时长</td><td>定时任务，按用户分批</td><td>用户数</td></tr>
       </tbody>
@@ -124,8 +124,9 @@
         <ol class="small">
           <li><code>queued</code>：拼接器生成，带队列类别与截止时间。作业 ID = 用户 + 设备 + 启动世代 + 帧序号区间 + 管线版本的哈希，重复生成即同一作业。</li>
           <li><code>running</code>：领取时写入租约与过期时间；租约过期由别的进程接手，从音频重跑。</li>
+          <li><code>planned</code>：G2 的切点与识别窗口经 <code>CommitPlan</code> 冻结；执行配置另带代次，撤权或降级时换代，切点不动。</li>
           <li><code>persisted</code>：① 完成。此后不再重跑，片段 ID = 作业 ID + 轮次序号，保持稳定。</li>
-          <li><code>audio_deleted</code> → <code>receipted</code>：② ③ 完成。</li>
+          <li>② ③ 不是作业的后继状态：一个作业可读多个上传对象，一个对象也可被多个作业读。对象另有一条状态机（已存 → 可删 → 防护 → 等入口静默 → 确认不存在 → 回执），按覆盖账与读依赖推进（D61，<a href="design-text.html#dd-delete">详细设计</a>）。</li>
           <li>失败：按退避重试；永久失败满 48 小时，删除音频、登记缺口（<code>cloud_failed</code>）并回执，App 显示该时段识别失败。</li>
         </ol>
       </div>
@@ -142,7 +143,7 @@
     <div class="tbl"><table>
       <thead><tr><th>规则</th><th>内容</th></tr></thead>
       <tbody>
-        <tr><td>识别分片</td><td>拼接器只在 L1 已丢弃的 ≥1 秒静音处切作业（每个作业 ≤10 分钟音频），不从清单推断停顿。作业内由 G2 在 ≥300 ms 的停顿处切识别窗口，目标 15–45 秒<span class="tg es">估算</span>（与 §5.10 一致）；45 秒内没有停顿就在能量最低处强切，两侧多送 400 ms 上下文、只保留核心区输出。上限以 8B 输入上限为准（§13）。切点经 <code>CommitPlan</code> 冻结，重试不移动（<a href="design-asr.html#dd-jobs">详细设计</a>）。</td></tr>
+        <tr><td>识别分片</td><td>拼接器优先在 L1 已丢弃的 ≥1 秒静音处切作业（每个作业 ≤10 分钟音频），不从清单推断停顿；10 分钟内没有这种区间时取暂定边界，由 G2 在边界前找停顿、把其后的部分顺延为尾部。作业内由 G2 在 ≥300 ms 的停顿处切识别窗口，目标 15–45 秒<span class="tg es">估算</span>（与 §5.10 一致）；45 秒内没有停顿就在能量最低处强切，两侧多送 400 ms 上下文、只保留核心区输出。上限以 8B 输入上限为准（§13）。切点经 <code>CommitPlan</code> 冻结，重试不移动（<a href="design-asr.html#dd-jobs">详细设计</a>）。</td></tr>
         <tr><td>尾部顺延</td><td>作业末窗最后一个停顿之后的音频并入下一个作业，长度不超过一个窗口；同设备的下一段等前一段计划冻结后再分配。常规批最多等 20 分钟，到时单独识别；立即同步不等；会话结束（手机上报领夹断开或电量告警）不等。</td></tr>
         <tr><td>立即同步</td><td>App 请求后网关检查配额（每天 3 次），标记该用户的同步窗口；手机把未满 5 分钟的当前分片截断上传，<code>chunk_id</code> 照常按起始帧序号；窗口内的作业进入立即同步队列，单元调度器在最新一帧处临时关闭单元。</td></tr>
         <tr><td>可见时机</td><td>片段在 G7 完成后才对 App 可见；单元关闭后 G8 生成，纪要可见 P90 ≤30 分钟<span class="tg go">目标</span>。</td></tr>
@@ -167,11 +168,11 @@
         <tr><td class="mono">clusters</td><td>业务日、簇号、加密的质心、计数、累计语音秒数、用户确认的簇名、版本号、到期时间</td><td>音频作业、App 接口</td><td>业务日结束后 12 小时</td></tr>
         <tr><td class="mono">voiceprints</td><td>机主声纹模板（加密）与版本；注册音频不入库</td><td>注册流程</td><td>到用户删除或重新注册</td></tr>
         <tr><td class="mono">units</td><td>单元 ID、类型（会议、静默切分）、<code>meeting_hash</code>、起止时刻、状态、代次、关闭原因、可能不完整、单边录音、参与者与背景簇、App 状态</td><td>单元调度器</td><td>随单元内片段</td></tr>
-        <tr><td class="mono">outputs</td><td>纪要（按单元代次）；待办（类别、承担人、核实状态、期限、引用片段、有效或已撤回）；记忆候选的溯源</td><td>G8 生成、App 接口</td><td>按用户设置；引用的片段删除时撤回或请用户确认</td></tr>
+        <tr><td class="mono">outputs</td><td>纪要（按单元代次）；待办（类别、承担人、核实状态、期限、引用片段、有效或已撤回）；记忆候选的溯源</td><td>G8 生成、App 接口</td><td>按用户设置。来源正常到期：失去依据的自动内容一并删除，用户确认不构成保留授权，只有事先“存为我的待办”的条目留下；来源降为隔离：撤回；用户擦除：范围内的一律删除，含派生自该范围的“存为我的待办”</td></tr>
         <tr><td class="mono">hotwords</td><td>词条、类别、来源（通讯录、日历、项目、改字）、生效时间窗、权重、最近联系时刻</td><td>App 接口、热词服务</td><td>随用户删除</td></tr>
         <tr><td class="mono">user_actions</td><td>放回、降级、改标、改字、点选候选、改背景、确认簇名、手动生成：操作类型、对象 ID、时刻</td><td>App 接口</td><td>随对象删除</td></tr>
         <tr><td class="mono">usage_daily</td><td>佩戴、上传、有效、接受、隔离、拒绝时长，立即同步次数</td><td>计量</td><td>计费所需期限，不含内容</td></tr>
-        <tr><td class="mono">erasures</td><td>擦除请求：范围、时刻、各端进度、设备待清除</td><td>App 接口、删除服务</td><td>只留 ID 与时刻</td></tr>
+        <tr><td class="mono">erasures</td><td>擦除请求：范围、时刻、各端进度、设备待清除</td><td>App 接口、删除服务</td><td>擦除墓碑保留拦截所需的范围（设备、启动世代、帧区间、业务日）、擦除代次、绑定代次与各端完成状态，不含正文，覆盖旧凭据与迟到消息可能重放的期限；“只留 ID 与时刻”只适用于审计摘要</td></tr>
         <tr><td class="mono">outbox</td><td>待投递事件（只有 ID 与类型）</td><td>各服务，与状态同一事务</td><td>投递后删除</td></tr>
       </tbody>
     </table></div>
@@ -230,9 +231,9 @@
     <div class="tbl"><table>
       <thead><tr><th>故障</th><th>影响</th><th>处理</th></tr></thead>
       <tbody>
-        <tr><td>8B 池不可用</td><td>音频滞留在短期音频桶</td><td>排队；超过 12 小时用 600M 降级识别并标 <code>degraded</code>，恢复后不重跑。音频滞留 24 小时告警；72 小时由生命周期规则删除并登记 <code>cloud_failed</code></td></tr>
-        <tr><td>热词服务不可用</td><td>拿不到偏置表</td><td>先用按用户 × 小时缓存的表；没有缓存就排队，到作业截止时间仍不可用才无偏置解码并标 <code>no_bias</code>。音频删除后无法补救，所以不急于降级</td></tr>
-        <tr><td>600M 池不可用</td><td>没有对齐就切不出轮次</td><td>排队；超过 12 小时跳过交叉校验，可疑片段一律标 <code>low_confidence</code>，对齐退回 8B 时间戳（若有，§13），G5 按整段判，标 <code>degraded</code></td></tr>
+        <tr><td>8B 池不可用</td><td>音频滞留在短期音频桶</td><td>排队；超过 12 小时用 600M 降级识别并标 <code>degraded</code>，恢复后不重跑。音频滞留 24 小时告警；接近 72 小时由删除服务主动取消租约、登记 <code>cloud_failed</code> 并删除、核验不存在；生命周期规则是异步的，只作补漏，超过 72 小时计为保留违约</td></tr>
+        <tr><td>热词服务不可用</td><td>拿不到偏置表</td><td>只复用完整键兼容的缓存表（D71）；没有就排队，到“可见截止 − 预计剩余处理时长”（识别、G5 与文字管线）仍不可用才无偏置解码并标 <code>bias = none_deadline</code>。音频删除后无法补救，所以不急于降级</td></tr>
+        <tr><td>600M 池不可用</td><td>没有对齐就切不出轮次</td><td>排队；超过 12 小时跳过交叉校验，可疑片段一律标 <code>low_confidence</code>，对齐退回 8B 时间戳（若有，§13），降级期间不授证据级，标 <code>degraded</code>；8B 也没有词级时间时，只有无重叠上下文、整窗单一轨迹且无换人点的窗口可以整窗归属，其余记未知或等待（<a href="design-speaker.html#dd-g5">详细设计</a>）</td></tr>
         <tr><td>CPU 小模型不可用</td><td>G2、G5 的输入缺失</td><td>排队，不降级：没有 VAD 与嵌入就无法安全判定</td></tr>
         <tr><td>小 LLM 不可用</td><td>G7 完不成，片段不可见</td><td>排队；音频删除不受影响。App 显示“识别中”</td></tr>
         <tr><td>中 LLM 不可用</td><td>纪要延迟</td><td>转写照常可见；单元停在“生成纪要”</td></tr>
@@ -251,7 +252,7 @@
       </div>
       <div class="card"><h3>LLM 调用的约束</h3>
         <ul class="small">
-          <li>输入只有文字与元数据；隔离档只以“时段 + 原因”的占位出现。</li>
+          <li>输入只有文字与元数据。G8 与纪要里隔离档只以“时段 + 原因”的占位出现；G6 的上下文按不含播放融合的声学档位给占位，只因播放融合被隔离的片段仍给正文（<a href="design-text.html#dd-g6">详细设计</a>）。</li>
           <li>输出是结构化结果，先按模式校验，不合格重试一次后丢弃。G6 的结果被丢弃时，片段按“未判定”进 G7：不降级、不标背景，但相关性一维记为未满足，不进纪要上下文、已核实待办与记忆。</li>
           <li>LLM 只提议，G8 规则由代码判定：引用的片段必须属于该单元，说话人、证据级与待办类别相符，否则降为未核实或丢弃。</li>
           <li>提示词前缀保持稳定，单元内容放在末尾，以便利用前缀缓存。</li>
@@ -372,7 +373,7 @@
       <tr><td class="mono">l1</td><td class="mono">object</td><td><code>{model_version, kept, dropped:[…reason]}</code>，只有 VAD 结果；声音事件在云端分类</td></tr>
       <tr class="p2only"><td class="mono">sensors（二期）</td><td class="mono">object</td><td><code>{vpu_track, imu_track, spatial_track, wear:[{…state}]}</code>；spatial_track 是外向麦在设备端算出的方向与直达/混响比特征，第二路音频不上传</td></tr>
       <tr><td class="mono">scene</td><td class="mono">array</td><td>§4.4 场景事件，含分片起点时刻的状态</td></tr>
-      <tr><td class="mono">payload</td><td class="mono">object</td><td><code>{format:"ogg_opus", bytes, sha256, plain_sha256, enc:{alg}, runs:[{stream_serial, seq_from, seq_to, core_from, core_to, preroll_frames}]}</code>：设备原码流，只截取 <code>kept</code>，每个保留区间一个 chained Ogg Opus 逻辑流；<code>bytes/sha256</code> 指上传的密文，<code>plain_sha256</code> 供解密后校验（<a href="design-device.html">详细设计</a>）</td></tr>
+      <tr><td class="mono">payload</td><td class="mono">object</td><td><code>{format:"ogg_opus", bytes, sha256, plain_sha256, enc:{alg}, runs:[{stream_serial, seq_from, seq_to, core_from, core_to, preroll_frames, postroll_frames, encoder_delay, tail_short_samples}]}</code>（<code>encoder_delay</code>、<code>tail_short_samples</code> 为 48 kHz 样本数）：设备原码流，只截取 <code>kept</code>，每个保留区间一个 chained Ogg Opus 逻辑流；<code>bytes/sha256</code> 指上传的密文，<code>plain_sha256</code> 供解密后校验（<a href="design-device.html">详细设计</a>）</td></tr>
     </tbody>
   </table></div></div></details>
 
@@ -383,11 +384,11 @@
       <tr><td class="mono">unit_id · meeting_hash</td><td class="mono">string</td><td>所属对话单元（§5.9）；<code>meeting_hash</code> 在 G5 删除场景快照前写入</td></tr>
       <tr><td class="mono">chunk_ids</td><td class="mono">array</td><td>来源分片</td></tr>
       <tr><td class="mono">t_start_utc_ms · t_end_utc_ms</td><td class="mono">int64</td><td>原始录音时刻</td></tr>
-      <tr><td class="mono">text</td><td class="mono">string</td><td>纠错后的文字</td></tr>
-      <tr><td class="mono">asr_text</td><td class="mono">string</td><td>8B 原始输出</td></tr>
+      <tr><td class="mono">text</td><td class="mono">string</td><td><code>display</code> 视图：<code>base</code> 再叠加已接受的模型编辑，供展示</td></tr>
+      <tr><td class="mono">asr_text</td><td class="mono">string</td><td>8B 原始输出；<code>base</code> 视图 = <code>asr_text</code> 叠加用户编辑（G6 与核验读它），用户编辑递增 <code>base_rev</code>，任一视图变化递增 <code>display_rev</code>（<a href="design-text.html">详细设计</a>）</td></tr>
       <tr><td class="mono">edits</td><td class="mono">array</td><td>§5.5 的 diff 与依据，以及用户改字；每条带 <code>source: "model"|"user"</code>；用户改字会重开所在单元</td></tr>
       <tr><td class="mono">alternatives</td><td class="mono">array</td><td>低置信区间 top-3 候选文字：时间线上供点选改字（音频已删，无法回听），也供日后热词重排</td></tr>
-      <tr><td class="mono">speaker</td><td class="mono">object</td><td><code>{label:"owner"|"other"|"unknown", cluster, cluster_name, engagement:"participant"|"background", owner_score, cluster_score, evidence_grade, source:"model"|"user"}</code>；<code>cluster_name</code> 只存用户确认过的名字，<code>engagement</code> 在单元关闭时计算、重开时重算</td></tr>
+      <tr><td class="mono">speaker</td><td class="mono">object</td><td><code>{label:"owner"|"other"|"unknown", cluster, cluster_name, engagement:"participant"|"background"|"undetermined", owner_score, cluster_assignment_score, cluster_owner_score, evidence_grade:"none"|"timeline"|"identity_evidence", source:"model"|"user_confirmed"}</code>；<code>cluster_name</code> 只存用户确认过的名字，<code>engagement</code> 在单元关闭时计算、重开时重算</td></tr>
       <tr><td class="mono">disposition</td><td class="mono">object</td><td><code>{tier:"accept"|"quarantine"|"reject", reasons, primary, flags, expires_at_utc_ms}</code>；<code>reasons</code> 记全部命中原因，<code>flags</code> 如 <code>low_confidence</code></td></tr>
       <tr><td class="mono">scores</td><td class="mono">object</td><td><code>{p_speech, p_playback_acoustic, p_media_content, relevance, phone_media, call_speaker, vpu:{state, voiced_ratio, valid_ratio}, overlap, asr_disagreement, acoustic_support, near_field:{rel_level_db, drr}, spatial}</code></td></tr>
       <tr><td class="mono">low_support_spans</td><td class="mono">array</td><td>局部低声学支持区间（§5.10）：时间线在此列出候选；落在关键字段上时取消已核实待办与记忆的资格</td></tr>
@@ -470,13 +471,13 @@
       <tr><td>未识别的音频</td><td>领夹</td><td>到手机回执为止；手机不在身边时最多到 Flash 写满后停录（128 MB 约 16.5 小时）；按领夹通电运行时间超过 7 天的块销毁密钥并登记缺口，断电期间不计时</td></tr>
       <tr><td>未识别的音频</td><td>手机</td><td>到云端识别完成的回执为止，最长 7 天，超期删除并登记缺口；手机长期关机或 App 被挂起时，在恢复运行后立即删除超期数据</td></tr>
       <tr><td>未识别的音频</td><td>云端</td><td>识别完成即删；排队、等下一批补齐尾部、服务故障等待合计最长 72 小时</td></tr>
-      <tr><td>已识别的音频</td><td>三端</td><td>不保留</td></tr>
+      <tr><td>已识别的音频</td><td>三端</td><td>领夹：安全传到手机后销毁密钥；云端：识别结果保存后立即删除、确认不存在后发回执；手机：收到回执后删除，离线时在下次联网后完成。期间副本只以加密形式存在</td></tr>
       <tr><td>机主声纹模板</td><td>云端</td><td>到用户删除或重新注册；注册音频即删</td></tr>
       <tr><td>说话人簇质心（含当天与机主匹配的簇）</td><td>云端</td><td>业务日结束后 12 小时，即最晚次日 16:00；不跨天关联，从不回写声纹模板</td></tr>
       <tr><td>转写文字</td><td>云端</td><td>接受档按用户留存设置；隔离档 7 天</td></tr>
     </tbody>
   </table></div>
-  <p class="small">建议措辞：识别完成后立即删除录音，领夹、手机、云端都不保留；尚未识别的录音在领夹上按通电时间最多保留 7 天，在手机最多保留 7 天（关机期间超期的，开机后立即删除），在云端最多 72 小时。我们保存你的声纹模板，用来判断哪些话是你说的，你可以随时删除；其他人的声音特征只在当天用于区分说话人，最晚次日 16:00 删除。最终措辞由法务确认。</p>
+  <p class="small">建议措辞：领夹上的录音在安全传到手机后删除；云端在识别结果保存后立即删除录音，确认删除后通知手机删除本地副本（手机离线时在下次联网后完成）。这几步之间录音只以加密形式存在，期间仍有副本；尚未识别的录音在领夹上按通电时间最多保留 7 天，在手机最多保留 7 天（关机期间超期的，开机后立即删除），在云端最多 72 小时。我们保存你的声纹模板，用来判断哪些话是你说的，你可以随时删除；其他人的声音特征只在当天用于区分说话人，最晚次日 16:00 删除。最终措辞由法务确认。</p>
 </section>
 </main>
 </div>

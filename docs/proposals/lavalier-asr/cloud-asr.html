@@ -158,7 +158,7 @@
         <div class="tbl"><table>
           <thead><tr><th>回放机主录音</th><th>手段</th><th>残余</th></tr></thead>
           <tbody>
-            <tr><td>一期</td><td>本机外放 + 声纹高 + 回放特征（或机主活动证据弱）→ 疑似回放；机主可能边听边说，单凭外放不判</td><td><b>别的设备回放防不住</b></td></tr>
+            <tr><td>一期</td><td>本机外放 + 声纹高 + 纯声学回放特征（覆盖足够、不是未解开的混合声）→ 疑似回放；一期没有机主活动证据，缺失不当作“活动弱”；机主可能边听边说，单凭外放不判</td><td><b>别的设备回放防不住</b></td></tr>
             <tr><td>二期</td><td>声纹高 + VPU 有效且静默 → 隔离</td><td>VPU 失效时退回一期</td></tr>
           </tbody>
         </table></div>
@@ -353,9 +353,9 @@
         </ol>
       </div>
       <div class="card"><h3>证据级 ≠ 时间线级</h3>
-        <p class="small">证据级条件：声纹 ≥T_evidence（高于 T_high）；二期还要求 VPU 有效且有发声；不在重叠或邻近重叠处；片段 ≥1 s。</p>
+        <p class="small">证据级条件：声纹 ≥T_evidence（T_evidence ≥ T_high）；二期还要求 VPU 有效且有发声；不在重叠或邻近重叠处；片段 ≥1 s。</p>
         <p class="small">理由<span class="tg es">估算</span>：他人每天可能说 2–3 小时，1% 误判就是每天 1–2 分钟被标成机主，足以每周产生数条错误的“我答应的”待办。</p>
-        <p class="small muted">阈值只在调参集选定；T_high、T_evidence 按误判上限定，不随召回放宽；T_low 按召回定。</p>
+        <p class="small muted">阈值只在调参集选定；T_high、T_evidence 按误判上限定，不随召回放宽，一期他人规模不足时取零误判的最低阈值并只报上界；T_low 按“机主被判为他人”的比例定（D69）。</p>
       </div>
     </div>
   </div>

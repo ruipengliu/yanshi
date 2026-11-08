@@ -44,17 +44,21 @@
 <p>密钥区是日志结构：若干 NOR 页，每页 64 个槽，槽 = <code>{block_idx u16, epoch u16, key[16]}</code>。块转为 WRITING 时由 TRNG 生成密钥，追加写进下一个空槽；销毁时先在控制日志写<b>删除意图</b> <code>{block_idx, epoch}</code>，再把该槽的 key 编程为全 0、读回验证，最后在控制日志记“已销毁”。槽有三态：全 1（空）、随机值（有效）、全 0（已销毁）；启动时先完成所有未完成的删除意图，再按槽状态恢复。</p>
 <p>一页的槽全部销毁后整页擦除回收；空槽不够而某页仍有少量有效密钥时，把有效密钥复制到新页、在控制日志登记迁移，再擦除旧页（旧副本随擦除消失）。内部 Flash 的擦写寿命按每天约 1.4 轮写满 1024 块估算足够，须查具体 MCU 手册确认。</p>
 <h4>控制状态（内部 Flash，掉电保持）</h4>
-<p><code>boot_gen u32</code>（上电时先 +1 并写回，写失败不开始录音；允许跳号，禁止回退。恢复出厂若会清零它，必须同时更换 <code>device_id</code>）；<code>receiver_epoch u32</code>（当前绑定手机的代次）；<code>acked = {gen u32, seq_upto u32}</code>（只作启动加速，真值仍以密钥表为准）。</p>
+<p><code>boot_gen u32</code>（上电时先 +1 并写回，写失败不开始录音；允许跳号，禁止回退。恢复出厂若会清零它，必须同时更换 <code>device_id</code>）；<code>receiver_epoch u32</code>（当前绑定手机的代次）；<code>acked = {gen u32, seq_upto u32}</code>：每个世代持久化的回执水位，是删除许可，先写它、再销毁密钥；某块是否已销毁以密钥表为准。<code>cmds</code>：收到的 CMD 及其状态 <code>pending | executing | completed</code>。</p>
 <p>NOR 原地写 0 要求 MCU 允许对已编程的字再编程一次（不少 MCU 限定擦除前同一字最多写 2 次），选型时核实；不允许时改为每个密钥槽占一个可独立擦除的小扇区。</p>
 <h4>链路消息（L2CAP CoC 的 SDU；GATT 回退时同一格式分包）</h4>
-<div class="tbl"><table><thead><tr><th>消息</th><th>方向</th><th>字段</th></tr></thead><tbody><tr><td>HELLO</td><td>领夹 → 手机</td><td>device_id, fw_version, receiver_epoch, boot_gen, oldest {gen, seq}, newest {gen, seq}, rtc_now, flash_used_pct, battery_pct, codec {bitrate, vbr, dtx, fec}（读固件实际配置，不填默认值）</td></tr><tr><td>DATA</td><td>领夹 → 手机</td><td>解密后的整页：gen, seq_first, rtc_first, n_frames, frames</td></tr><tr><td>GAP</td><td>领夹 → 手机</td><td>gen, seq_from, seq_to, cause（device_drop、flash_error）</td></tr><tr><td>ACK</td><td>手机 → 领夹</td><td>receiver_epoch, gen, seq_upto（不含）, last_page_crc：该世代此前的帧、索引与本地密钥都已落盘；crc 用来发现两端错位</td></tr><tr><td>TIME_REQ / TIME_RSP</td><td>双向</td><td>req_id；领夹回收到请求与发出响应时的 RTC 计数 r2、r3，以及最近一页的 (seq, rtc) 锚点</td></tr><tr><td>CMD</td><td>手机 → 领夹</td><td>cmd_id, receiver_epoch, ERASE {gen, seq_from, seq_to} 或 SET_BITRATE {kbps}；领夹先把命令持久化，执行后回 CMD_DONE {cmd_id}；同一 cmd_id 重发时直接回 CMD_DONE（幂等）</td></tr></tbody></table></div>
+<div class="tbl"><table><thead><tr><th>消息</th><th>方向</th><th>字段</th></tr></thead><tbody><tr><td>HELLO</td><td>领夹 → 手机</td><td>device_id, fw_version, receiver_epoch, boot_gen, oldest {gen, seq}, newest {gen, seq}, rtc_now, flash_used_pct, battery_pct, codec {bitrate, vbr, dtx, fec, encoder_delay}（读固件实际配置，不填默认值；<code>encoder_delay</code> 是 48 kHz 样本数：<code>OPUS_GET_LOOKAHEAD</code> 返回编码器采样率下的样本数，设备按 48000 / Fs 换算后再填，16 kHz 编码时乘 3）, cmds_unfinished[]</td></tr><tr><td>RESUME</td><td>手机 → 领夹</td><td>receiver_epoch, cmd_upto：本绑定代次下 <code>cmd_seq &lt; cmd_upto</code> 的命令都已下发并收到 CMD_DONE；领夹核对自己记录的这些命令全部 <code>completed</code> 后才发 DATA</td></tr><tr><td>DATA</td><td>领夹 → 手机</td><td>解密后的整页：gen, seq_first, rtc_first, n_frames, frames</td></tr><tr><td>GAP</td><td>领夹 → 手机</td><td>gen, seq_from, seq_to, cause（device_drop、flash_error）</td></tr><tr><td>ACK</td><td>手机 → 领夹</td><td>receiver_epoch, gen, seq_upto（不含）, last_page_crc：该世代此前的帧、索引与本地密钥都已落盘；crc 用来发现两端错位</td></tr><tr><td>TIME_REQ / TIME_RSP</td><td>双向</td><td>req_id；领夹回收到请求与发出响应时的 RTC 计数 r2、r3，以及最近一页的 (seq, rtc) 锚点</td></tr><tr><td>CMD</td><td>手机 → 领夹</td><td>cmd_id, cmd_seq（每个绑定代次内从 0 连续递增，手机持久化分配）, receiver_epoch, ERASE {gen, seq_from, seq_to} 或 SET_BITRATE {kbps}；领夹先把命令持久化为 <code>pending</code>，开始执行时记 <code>executing</code>，ERASE 的密钥销毁读回验证后记 <code>completed</code>，再回 CMD_DONE {cmd_id}。同一 cmd_id 重发时：<code>completed</code> 直接回 CMD_DONE；<code>pending</code>、<code>executing</code> 继续执行，完成后再回。启动时先恢复未完成的命令，再开始录音与传输</td></tr></tbody></table></div>
 <p>链路层用 LE Secure Connections 绑定加密，DATA 发明文页（链路已加密），手机收到后用自己的密钥重新加密落盘。传输优先 L2CAP CoC（iOS 11+、Android 10+ 提供接口），不可用时回退到 GATT 通知加应用层窗口（32 KiB 未确认上限）；两者用同一套消息与回执语义。消息长度设上限，不按对端声称的长度分配内存。</p>
 <h3>流程</h3>
 <figure class="ddfig"><div class="fighead"><div><b>一次连接内的突发传输</b></div></div><div class="fig wide"><svg viewBox="0 0 900 250" role="img" aria-label="连接建立后握手、校时、按序发送、手机落盘后累计回执、领夹销毁密钥，最后降回长连接间隔"><path class="e" d="M180 55L230 55" marker-end="url(#ah)"/><path class="e" d="M390 55L440 55" marker-end="url(#ah)"/><path class="e" d="M610 55L660 55" marker-end="url(#ah)"/><path class="e" d="M765 80L765 150" marker-end="url(#ah)"/><path class="e" d="M660 175L610 175" marker-end="url(#ah)"/><path class="e" d="M440 175L390 175" marker-end="url(#ah)"/><path class="e" d="M230 175L180 175" marker-end="url(#ah)"/><path class="e d" d="M870 175L890 175L890 55L870 55" marker-end="url(#ah)"/><text class="tiny lb" x="894" y="50">续发</text><g class="nd"><rect x="20" y="30" width="160" height="50" rx="8"/><text class="t c" x="100" y="52">连接 · 绑定加密</text><text class="s c" x="100" y="68">LE Secure Connections</text></g><g class="nd"><rect x="230" y="30" width="160" height="50" rx="8"/><text class="t c" x="310" y="52">HELLO</text><text class="s c" x="310" y="68">积压范围 · 电量</text></g><g class="nd"><rect x="440" y="30" width="170" height="50" rx="8"/><text class="t c" x="525" y="52">校时 ×8</text><text class="s c" x="525" y="68">取往返最短的一次</text></g><g class="nd"><rect x="660" y="30" width="210" height="50" rx="8"/><text class="t c" x="765" y="52">突发发送</text><text class="s c" x="765" y="68">缩短连接间隔 · 2M PHY</text></g><g class="nd"><rect x="660" y="150" width="210" height="50" rx="8"/><text class="t c" x="765" y="172">手机落盘 → ACK</text><text class="s c" x="765" y="188">每 2 秒或 64 页一次</text></g><g class="nd"><rect x="440" y="150" width="170" height="50" rx="8"/><text class="t c" x="525" y="172">销毁密钥</text><text class="s c" x="525" y="188">回执覆盖整块</text></g><g class="nd"><rect x="230" y="150" width="160" height="50" rx="8"/><text class="t c" x="310" y="172">积压清空</text><text class="s c" x="310" y="188">恢复长连接间隔</text></g><g class="nd"><rect x="20" y="150" width="160" height="50" rx="8"/><text class="t c" x="100" y="172">空闲擦除</text><text class="s c" x="100" y="188">KEY_ZEROED → FREE</text></g></svg></div></figure>
-<ol><li>连接建立（或重连）后领夹发 HELLO，手机<b>先下发并确认所有待执行的 CMD（用户擦除）</b>，再开始收数据（§7：重连后先清除再上传）。手机对比自己已落盘的 <code>(gen, seq_upto)</code>；比领夹的 oldest 还新的部分立即 ACK，领夹跳过已落盘的数据（处理“手机落盘了、ACK 丢了”）。</li><li>校时：手机连发 8 次 TIME_REQ，记录发出与收到时的 UTC，取往返最短的一次作为样本（详设 2）。连接期间每 5 分钟再采一次。</li><li>领夹请求短连接间隔（15–30 ms）与 2M PHY，按 (gen, seq) 从旧到新发 DATA；缺口发 GAP。积压清空后请求长连接间隔（500–1000 ms，外设延迟 4），只维持连接。</li><li>手机每收约 2 秒数据或 64 页，落盘并 fsync 后发 ACK。领夹把被 <code>seq_upto</code> 完全覆盖的 SEALED 块转为 KEY_ZEROED。</li><li>常态（手机在身边）下，新数据每 60 秒成批发一次，而不是逐帧推流：每分钟约 120 KB，按 25–60 KB/s 的实得吞吐射频活动约 2–5 秒。</li><li><b>部分块的封口</b>：停录、世代结束（关机前）时，当前 WRITING 块就地封口为 SEALED（剩余页不再写），这样已回执的半块也能销毁密钥。立即同步不需要封口领夹的块。</li></ol>
+<ol><li>连接建立（或重连）后领夹发 HELLO，手机<b>先下发并确认所有待执行的 CMD（用户擦除）</b>，全部收到 CMD_DONE 后发 RESUME 放行；领夹收到 RESUME 之前不发 DATA（§7：重连后先清除再上传）。手机对比自己已落盘的 <code>(gen, seq_upto)</code>；比领夹的 oldest 还新的部分立即 ACK，领夹跳过已落盘的数据（处理“手机落盘了、ACK 丢了”）。</li><li>校时：手机连发 8 次 TIME_REQ，记录发出与收到时的 UTC，取往返最短的一次作为样本（详设 2）。连接期间每 5 分钟再采一次。</li><li>领夹请求短连接间隔（15–30 ms）与 2M PHY，按 (gen, seq) 从旧到新发 DATA；缺口发 GAP。积压清空后请求长连接间隔（285–300 ms、外设延迟 4、监督超时 5 s），只维持连接。Apple 配件设计指南要求 Interval Max ×（外设延迟 + 1）≤2 s，且其 3 倍小于监督超时（QA1931 引用的同一组规则，按当前版本核对）；原先的 1000 ms × 5 = 5 s 不合规。</li><li>手机每收约 2 秒数据或 64 页，落盘并 fsync 后发 ACK。领夹把被 <code>seq_upto</code> 完全覆盖的 SEALED 块转为 KEY_ZEROED。</li><li>常态（手机在身边）下，新数据每 60 秒成批发一次，而不是逐帧推流：每分钟约 120 KB，按 25–60 KB/s 的实得吞吐射频活动约 2–5 秒。</li><li><b>部分块的封口</b>：停录、世代结束（关机前）时，当前 WRITING 块就地封口为 SEALED（剩余页不再写），封口后立即按已持久化的回执水位补做销毁（<code>zeroize_covered</code>），这样最后一页先被回执、后封口的半块也能销毁密钥，不必等下一个回执。立即同步不需要封口领夹的块。</li></ol>
 <h4>发送与回执（领夹）</h4>
 <pre><code>def on_connected(link):
     link.send(Hello(...))
+    while (m := link.recv()).type != "RESUME":               # 清除同步阶段：只处理 CMD 与 TIME_REQ
+        handle_control(m)
+    if m.receiver_epoch != receiver_epoch or not cmds_completed(upto=m.cmd_upto):
+        return link.close()                                   # 未放行就不发数据
     for page in flash.pages_from(oldest_unacked()):          # 按 (gen, seq) 升序
         if page.is_gap: link.send(Gap(page.gen, page.seq_from, page.seq_to, page.cause))
         else:           link.send(Data(decrypt(page)))
@@ -63,27 +67,32 @@
 def on_ack(epoch, gen, seq_upto, last_page_crc):
     if epoch != receiver_epoch or not crc_matches(gen, seq_upto, last_page_crc):
         return reject()                                         # 旧手机或两端错位：不删
-    if seq_upto &lt;= acked_watermark(gen) or seq_upto &gt; sent_upto(gen):
-        return ignore()                                         # 重复或越界的回执
+    if seq_upto &gt; sent_upto(gen):
+        return ignore()                                         # 越界的回执
+    if seq_upto &gt; acked_watermark(gen):
+        persist_acked(gen, seq_upto)                            # 先持久化删除许可
+    zeroize_covered(gen)                                        # 重复回执也补做，幂等
+
+def zeroize_covered(gen):                                       # 回执、封口、启动恢复三处调用
     for blk in sealed_blocks(gen=gen):                          # 只处理该世代；旧世代须各自回执
-        if blk.last_seq_end &lt;= seq_upto:                        # 整块都已落盘
-            keytab.zeroize(blk.idx)                               # NOR 原地写 0
+        if blk.last_seq_end &lt;= acked_watermark(gen):            # 整块都已落盘
+            keytab.zeroize(blk.idx)                               # NOR 原地写 0，读回验证
             blk.state = KEY_ZEROED                                # 擦除留到空闲
-    persist_acked(gen, seq_upto)
 
 def on_write_page_full():
     nxt = next_block()
     if nxt.state != FREE:                 # 有未回执数据：不覆盖
         stop_recording(); led_alert(); report_on_next_hello("flash_full")</code></pre>
 <p><code>last_page_crc</code> 是 seq_upto 之前最后一页的规范明文（DATA 中的页头字段 + 帧区，小端）的 CRC32C，两端用同一字节序列计算。</p>
+<p>启动恢复：扫描完成后，先把上一世代遗留的 WRITING 块（突然断电时没来得及封口）按有效页前缀封口为 SEALED，再对每个世代调用 <code>zeroize_covered</code>，最后执行未完成的 CMD。</p>
 <p>启动扫描：块内页按顺序写，所以每块二分查找最后一个已编程页（全 1 为空页），再从该页往前验证认证标签，得到有效页前缀；撕裂页（crc 或标签不对）视为该块写入的终点，前面的页照常可用。读错误的块标坏块，其中已写数据报 <code>flash_error</code> 缺口。1024 块每块约 7 次读，&lt;1 秒。</p>
 <h3>参数</h3>
-<div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>标定方法</th></tr></thead><tbody><tr><td>Opus 码率</td><td>16 kb/s CBR，DTX 关</td><td>同一批近场与 1.5 m 他人录音在 16/24/32 kb/s 下的 CER 差（§5.10 编码差距），差距 &lt;0.3 个百分点即取最低码率</td></tr><tr><td>突发周期</td><td>60 秒</td><td>原型上测四种画像的平均电流；在 30/60/120 秒中取总功耗最低且领夹 Flash 峰值占用 &lt;5% 的</td></tr><tr><td>突发连接间隔</td><td>请求 15–30 ms，2M PHY</td><td>请求值不等于实得值（Apple QA1931：部分机型把 15 ms 调成 30 ms）；按实测吞吐定，目标 ≥25 KB/s</td></tr><tr><td>长连接间隔</td><td>500–1000 ms，外设延迟 4</td><td>测空闲电流与重连成功率</td></tr><tr><td>ACK 间隔</td><td>2 秒或 64 页</td><td>越短领夹 Flash 释放越快，手机 fsync 次数越多；看手机端 CPU 与电量</td></tr><tr><td>Flash 停录告警</td><td>剩余可写 &lt;10%（约 1.7 小时）提醒、0 时停录</td><td>产品决定</td></tr></tbody></table></div>
+<div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>标定方法</th></tr></thead><tbody><tr><td>Opus 码率</td><td>16 kb/s CBR，DTX 关</td><td>同一批近场与 1.5 m 他人录音在 16/24/32 kb/s 下的 CER 差（§5.10 编码差距），差距 &lt;0.3 个百分点即取最低码率</td></tr><tr><td>突发周期</td><td>60 秒</td><td>原型上测四种画像的平均电流；在 30/60/120 秒中取总功耗最低且领夹 Flash 峰值占用 &lt;5% 的</td></tr><tr><td>突发连接间隔</td><td>请求 15–30 ms，2M PHY</td><td>请求值不等于实得值（Apple QA1931：部分机型把 15 ms 调成 30 ms）；按实测吞吐定，目标 ≥25 KB/s</td></tr><tr><td>长连接间隔</td><td>285–300 ms、外设延迟 4、监督超时 5 s</td><td>须满足 Apple 配件设计指南的连接参数规则；按实际协商到的参数测空闲电流与重连成功率</td></tr><tr><td>ACK 间隔</td><td>2 秒或 64 页</td><td>越短领夹 Flash 释放越快，手机 fsync 次数越多；看手机端 CPU 与电量</td></tr><tr><td>Flash 停录告警</td><td>剩余可写 &lt;10%（约 1.7 小时）提醒、0 时停录</td><td>产品决定</td></tr></tbody></table></div>
 <p>吞吐估算<span class="tg es">估算</span>：16 kb/s 的实时码流是 2 KB/s；手机离开 8 小时积压约 58 MB。边录边补时补传时间 = 积压 ÷（实得吞吐 − 2 KB/s）：实得 25 KB/s 约 42 分钟，60 KB/s 约 17 分钟。实得吞吐须在目标机型、屏灭与后台状态下实测。功耗用实测的各状态电流按占空比积分，不从吞吐推定。</p>
 <h3>失败、降级与恢复</h3>
-<div class="tbl"><table><thead><tr><th>崩溃或故障点</th><th>恢复后的状态</th></tr></thead><tbody><tr><td>领夹在写页时掉电</td><td>世代 +1；当前未封的页（≤1 秒）丢失，手机看到上一世代在此结束，不需要缺口记录</td></tr><tr><td>领夹已销毁密钥、未擦除时掉电</td><td>启动扫描见密钥为 0，块转 KEY_ZEROED，稍后擦除</td></tr><tr><td>手机已落盘、ACK 丢失</td><td>领夹重发；手机按主键去重，HELLO 时直接回 ACK</td></tr><tr><td>手机落盘失败（存储满、加密失败）</td><td>不回执；领夹保留数据并持续告警</td></tr><tr><td>BLE 断开</td><td>继续写 Flash；重连后从回执点续发</td></tr><tr><td>坏块</td><td>坏块表跳过；运行中写失败的块标坏，已写数据报 <code>flash_error</code> 缺口</td></tr><tr><td>内部 Flash 世代号写失败</td><td>不开始录音（宁可漏记，不能出现重复的 (gen, seq)）</td></tr><tr><td>收到 ACK、销毁密钥前掉电</td><td>手机重连后 HELLO 时重发同一 ACK，继续销毁</td></tr><tr><td>手机暂存满或钥匙串不可用</td><td>手机停发 ACK，领夹继续缓冲直至写满停录</td></tr></tbody></table></div>
+<div class="tbl"><table><thead><tr><th>崩溃或故障点</th><th>恢复后的状态</th></tr></thead><tbody><tr><td>领夹在写页时掉电</td><td>世代 +1；当前未封的页（≤1 秒）丢失，手机看到上一世代在此结束，不需要缺口记录</td></tr><tr><td>领夹已销毁密钥、未擦除时掉电</td><td>启动扫描见密钥为 0，块转 KEY_ZEROED，稍后擦除</td></tr><tr><td>手机已落盘、ACK 丢失</td><td>领夹重发；手机按主键去重，HELLO 时直接回 ACK</td></tr><tr><td>手机落盘失败（存储满、加密失败）</td><td>不回执；领夹保留数据并持续告警</td></tr><tr><td>BLE 断开</td><td>继续写 Flash；重连后从回执点续发</td></tr><tr><td>坏块</td><td>坏块表跳过；运行中写失败的块标坏，已写数据报 <code>flash_error</code> 缺口</td></tr><tr><td>内部 Flash 世代号写失败</td><td>不开始录音（宁可漏记，不能出现重复的 (gen, seq)）</td></tr><tr><td>收到 ACK、销毁密钥前掉电</td><td>水位已持久化时，启动恢复按水位补做销毁；水位未写入时，手机重连后重发同一 ACK，重复回执同样触发补做</td></tr><tr><td>CMD 已持久化、擦除未完成时掉电</td><td>启动时按 <code>pending</code> / <code>executing</code> 继续执行；完成前对重发的同一 cmd_id 不回 CMD_DONE</td></tr><tr><td>手机暂存满或钥匙串不可用</td><td>手机停发 ACK，领夹继续缓冲直至写满停录</td></tr></tbody></table></div>
 <h3>测试与验收</h3>
-<ul><li>单测：页编解码与 crc；累计回执覆盖判定；启动扫描在各种块状态组合下恢复正确；序号缺口生成 GAP。</li><li>故障注入：写页、销毁密钥、擦除各点随机掉电 1000 次，校验 (gen, seq) 无重复、已回执块不可解密、未回执块可完整读出。</li><li>链路：断线重连、ACK 丢失、手机进程被杀，三者组合下手机端拼出的时间线与领夹原始序列逐帧一致。</li><li>验收：设备侧真实丢帧率（报告）；回执后到密钥清零 P99 &lt;5 秒；读出 Flash 原始块确认已回执数据不可解密（§5.14）。</li></ul>
+<ul><li>单测：页编解码与 crc；累计回执覆盖判定；启动扫描在各种块状态组合下恢复正确；序号缺口生成 GAP。</li><li>故障注入：写页、销毁密钥、擦除各点随机掉电 1000 次，校验 (gen, seq) 无重复、已回执块不可解密、未回执块可完整读出。</li><li>链路：断线重连、ACK 丢失、手机进程被杀，三者组合下手机端拼出的时间线与领夹原始序列逐帧一致。</li><li>删除许可：最后一页先被回执、之后停录封口的半块，在没有新回执时也被销毁；CMD 持久化后、擦除完成前掉电，重发不得提前得到 CMD_DONE；收到 RESUME 之前领夹不发任何 DATA。</li><li>验收：设备侧真实丢帧率（报告）；回执后到密钥清零 P99 &lt;5 秒；读出 Flash 原始块确认已回执数据不可解密（§5.14）。</li></ul>
 <h3>未决</h3>
 <ul><li>一期是否能改现有领夹固件，Flash 容量与 MCU 型号（§13）。不能改时，至少需要帧序号、世代与 RTC 锚点三项，否则详设 2 的时间还原无法达到 ≤200 ms。</li><li>用户擦除按块粒度执行时，块内不在擦除范围的音频会一起销毁：建议登记为新缺口原因 <code>user_erase</code>，需要在 §6.1 的 cause 枚举中补上。</li><li><b>领夹侧的保留上限。</b> 写满停录只限制能录多久，不限制旧录音在领夹上留多久：领夹长期连不上手机时，旧块会无限期留存。RTC 掉电归零，跨世代算不出绝对年龄，所以建议按<b>领夹通电运行时间</b>计：控制日志每小时记一次累计运行时长，块写入时记下当时的累计值，差值超过 7 天即销毁密钥并登记缺口 <code>device_expired</code>。长期断电期间不计时，数据保持加密；§7 的对外承诺须照此措辞，不能写成绝对 7 天。</li></ul>
 </section>
@@ -99,7 +108,7 @@ def on_write_page_full():
 <pre><code>SyncSample   { gen u32, probe_id u64, m1_ns u64, m4_ns u64 /* 手机单调：发出、收到 */, r2 u64, r3 u64 /* 领夹 RTC：收到、发出 */,
                phone_domain id /* 安装实例 + 手机启动 */, accepted bool, reject_reason }
 MonoToUtc    { phone_domain id, mono_from_ns u64, offset_ns i64, source: "os"|"server", uncertainty_ms f64 }
-ClockSegment { gen u32, rtc_from u64, rtc_to u64, a_ms f64, b f64 /* ms per tick */,
+ClockSegment { gen u32, phone_domain id, rtc_from u64, rtc_to u64, a_ms f64 /* 手机单调时钟 ms */, b f64 /* ms per tick */,
                drift_ppm f64, rms_ms f64, n_samples i32, span_min f64, last_sync_utc_ms i64,
                state: "fitted"|"offset_only"|"unsynced" }   // offset_only：跨度不足，斜率借用历史漂移
 Anchor       { gen u32, seq u32, rtc u64 }      // 每页一条，来自 DATA 的 seq_first 与 rtc_first
@@ -108,32 +117,37 @@ Gap          { gen u32, seq_from u32, seq_to u32, cause }</code></pre>
 <h3>算法</h3>
 <pre><code>def to_utc(gen, seq):
     rtc = interp(anchors[gen], seq)                 # 相邻两页锚点线性插值，越界按 20 ms/帧外推
-    seg = segment_for(gen, rtc)
-    utc = seg.a_ms + seg.b * rtc
+    seg = segment_for(gen, rtc)                     # 该 RTC 所在或最近的域段；域之间的间隔按距离较近的一侧
+    mono_ms = seg.a_ms + seg.b * rtc                # 第一级：RTC → 该段所属手机启动域的单调时刻
+    utc = mono_to_utc(seg.phone_domain, mono_ms)    # 第二级：MonoToUtc（跳变检测、服务器校验）
     q = quality(seg, rtc)
     return utc, q
 
 def sample_point(p):                               # 四时间戳：扣掉领夹处理时间
     rtt = (p.m4_ns - p.m1_ns) - (p.r3 - p.r2) * NS_PER_TICK
     if rtt &lt; 0 or rtt &gt; 200e6: return reject(p)
-    return Point(rtc=(p.r2 + p.r3) / 2, mono_ms=(p.m1_ns + p.m4_ns) / 2e6, half_rtt_ms=rtt / 2e6)
+    return Point(rtc=(p.r2 + p.r3) / 2, mono_ms=(p.m1_ns + p.m4_ns) / 2e6, half_rtt_ms=rtt / 2e6,
+                 phone_domain=p.phone_domain)
 
 def fit(gen):
+    # 拟合 RTC → 手机单调时钟。同一世代可能跨多个手机启动域（手机重启、换机）：各域的单调时钟零点不同，
+    # 但领夹晶振只有一个，所以斜率 b 共享、每域一个截距 a。UTC 只在 to_utc 里经 MonoToUtc 得到。
     S = [sample_point(p) for p in samples[gen] if p.accepted]
-    # 第一级拟合 RTC → 手机单调时钟（按手机启动域分组，斜率共享），第二级再套 MonoToUtc；
-    # 下面为简洁写成单级，y 取的是 mono_to_utc 之前的单调时刻。
-    if len(S) &gt;= 6 and span_minutes(S) &gt;= 30:
-        a, b = weighted_least_squares(x=[s.rtc for s in S], y=[s.mono_ms for s in S],
-                                      w=[1 / max(s.half_rtt_ms, 5) ** 2 for s in S])
-        r = residuals(S, a, b)
-        if max(abs(r)) &gt; 500:                      # 时间跳变：在最大残差处分段，各自重拟合
+    if not S: return [Segment(gen=gen, state="unsynced")]          # 本世代从未连上手机
+    groups = group_by(S, key=lambda s: s.phone_domain)
+    main = max(groups.values(), key=len)                           # 斜率只能从域内的点估计
+    if len(main) &gt;= 6 and span_minutes(main) &gt;= 30:                # 至少一个域内 ≥6 点、跨度 ≥30 分钟，矩阵才满秩
+        b, a_by_domain = wls_shared_slope(groups, x="rtc", y="mono_ms",   # 设计矩阵：[rtc, 各域的 one-hot]
+                                          w=lambda s: 1 / max(s.half_rtt_ms, 5) ** 2)
+        r = {d: residuals(g, a_by_domain[d], b) for d, g in groups.items()}
+        if max(abs(x) for v in r.values() for x in v) &gt; 500:     # 域内时间跳变：在最大残差处分段，各自重拟合
             return split_and_refit(S)
-        return Segment(a, b, rms=rms(r), state="fitted")
-    if len(S) &gt;= 1:                                # 跨度不足：只定偏移，斜率借用本设备的历史漂移
-        b = nominal_b * (1 + device_drift_ppm_median / 1e6)
-        a = median(s.utc_ms - b * s.rtc for s in lowest_rtt(S, 3))
-        return Segment(a=a, b=b, state="offset_only")
-    return Segment(state="unsynced")              # 本世代从未连上手机
+        return [Segment(gen=gen, phone_domain=d, a=a_by_domain[d], b=b, rms=rms(r[d]), state="fitted",
+                        rtc_from=min(s.rtc for s in g), rtc_to=max(s.rtc for s in g)) for d, g in groups.items()]
+    b = nominal_b * (1 + device_drift_ppm_median / 1e6)            # 跨度不足：只定偏移，斜率借用本设备的历史漂移
+    return [Segment(gen=gen, phone_domain=d, b=b, state="offset_only",
+                    a=median(s.mono_ms - b * s.rtc for s in lowest_rtt(g, 3)),
+                    rtc_from=min(s.rtc for s in g), rtc_to=max(s.rtc for s in g)) for d, g in groups.items()]
 
 def quality(seg, rtc):
     if seg.state == "unsynced": return None        # 清单里写 null，云端按“时刻未知”处理
@@ -143,7 +157,7 @@ def quality(seg, rtc):
     return utc_source_unc_ms(seg) + min_half_rtt_ms(seg) + seg.rms_ms + dist_s * drift_unc_ppm / 1000</code></pre>
 <ul><li><b>墙上时间跳变检测</b>：相邻样本的 <code>Δutc − Δmono</code> 超过 1 秒，说明手机时间被改；后一个样本起改用服务器时间修正后的 UTC，修正量写进样本，<code>utc_source = "server"</code>。</li><li><b>未同步的世代</b>（领夹离开手机期间重启，重启后又在重连前没电）：只知道它位于前后两个世代之间。上界取下一个世代首个锚点的 UTC，下界取上一个世代末帧的 UTC，按时长从后往前排；<code>state = "unsynced"</code>，<code>sync_quality_ms = null</code>，云端不用它对齐日历与场景事件。</li><li><b>拼接</b>：收到 DATA 时按主键写入（已存在则跳过）。分片只在<b>每个序号位置都有数据或已持久化的 GAP</b> 时才能封口，累计回执也只推进到这样的连续前缀。</li><li><b>换机</b>：新手机（receiver_epoch 变了）在为某个世代封第一个分片前，先查云端已有的分片边界（<code>GET /v1/chunks?device_id=&amp;boot_gen=</code>）：已被旧手机上传的序号范围直接回执给领夹、不再上传，新分片从已有边界之后起算，避免同一 chunk_id 出现两种内容。</li></ul>
 <h3>参数</h3>
-<div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>标定方法</th></tr></thead><tbody><tr><td>每次连接校时次数</td><td>8 次，取往返最短的 2–3 个</td><td>比较 4/8/16 次对误差与耗电的改善</td></tr><tr><td>可拟合斜率的条件</td><td>≥6 个有效样本、跨度 ≥30 分钟</td><td>用已知频偏的领夹测斜率方差</td></tr><tr><td>单样本往返上限</td><td>200 ms</td><td>按机型的往返时延分布调整</td></tr><tr><td>连接中校时周期</td><td>5 分钟</td><td>拟合残差稳定后可放宽到 15 分钟</td></tr><tr><td>跳变判定</td><td>残差 &gt;500 ms 或 Δutc−Δmono &gt;1 s</td><td>用人工改时间、跨时区、领夹重启的录制样本验证无漏判</td></tr><tr><td>历史漂移</td><td>每台设备最近 7 天拟合的 drift_ppm 中位数</td><td>测体温环境下的温漂，确认 ±2 ppm 的不确定度够用</td></tr></tbody></table></div>
+<div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>标定方法</th></tr></thead><tbody><tr><td>每次连接校时次数</td><td>8 次，取往返最短的 2–3 个</td><td>比较 4/8/16 次对误差与耗电的改善</td></tr><tr><td>可拟合斜率的条件</td><td>同一手机启动域内 ≥6 个有效样本、跨度 ≥30 分钟</td><td>用已知频偏的领夹测斜率方差</td></tr><tr><td>单样本往返上限</td><td>200 ms</td><td>按机型的往返时延分布调整</td></tr><tr><td>连接中校时周期</td><td>5 分钟</td><td>拟合残差稳定后可放宽到 15 分钟</td></tr><tr><td>跳变判定</td><td>残差 &gt;500 ms 或 Δutc−Δmono &gt;1 s</td><td>用人工改时间、跨时区、领夹重启的录制样本验证无漏判</td></tr><tr><td>历史漂移</td><td>每台设备最近 7 天拟合的 drift_ppm 中位数</td><td>测体温环境下的温漂，确认 ±2 ppm 的不确定度够用</td></tr></tbody></table></div>
 <h3>失败与恢复</h3>
 <ul><li>手机进程被杀：样本与锚点都在暂存库，重启后重新拟合，结果确定。</li><li>清单已上传后，后来的样本改变了拟合结果：已上传的清单不改；云端以清单为准，一期不提供事后修正时钟的接口。多数离线区间在重连时已有前后两端的同步点，可以插值；但领夹离线期间重启的新世代只有右端锚点，这类区间按 <code>offset_only</code> 如实报较大的误差，并计入“≤200 ms 覆盖率”的分母。</li></ul>
 <h3>测试与验收</h3>
@@ -199,15 +213,15 @@ def quality(seg, rtc):
   <h2><span class="no">4</span>暂存、清单与上传（手机）</h2>
   <p class="ncs" data-dd-of="b-stage b-manifest b-sched b-upload">契约：</p>
 <h3>职责与边界</h3>
-<ul><li>把收到的帧加密暂存，按 5 分钟设备时间封成上传分片；L1 后生成只含保留帧的载荷与 §6.1 清单；按调度条件上传；按云端回执删除。</li><li>暂存上限 2 GB、最长 7 天，超出时删除并登记 <code>phone_expired</code> 缺口。隐私上限优先于完整性。</li><li>不做：不在手机上重编码；不保留已上传且已回执的任何音频。</li></ul>
+<ul><li>把收到的帧加密暂存，按 5 分钟设备时间封成上传分片；L1 后生成只含保留帧的载荷与 §6.1 清单；按调度条件上传；按云端回执删除。</li><li>暂存最长 7 天，到期删除并登记 <code>phone_expired</code> 缺口，隐私上限优先于完整性；2 GB 是背压上限，到达时停发回执，不删除未到期数据。</li><li>不做：不在手机上重编码；不保留已上传且已回执的任何音频。</li></ul>
 <h3>原理</h3>
 <ul><li><b>原始帧与载荷分开。</b> 原始帧文件只活到 L1 完成；载荷只含保留帧。丢弃的帧在 L1 后立即删除，不等上传。</li><li><b>载荷在手机端就加密，上传密文。</b> 每个分片一把随机密钥 K，载荷用 K 加密后既是暂存文件、也是上传对象；commit 时把 K 经 TLS 交给网关，网关用用户数据密钥包裹后存进元数据库。这样后台上传不需要明文临时文件，云端删除 K 就让对象立即不可读，与对象删除互为兜底。这是对 §5.12 的补充，详设 18 的删除链据此设计。</li><li><b>分片 ID 是幂等键。</b> <code>chunk_id = device_id:boot_gen:seq_start</code>，重试、重装 App 后重传都落到同一条记录上。同一 ID 再次 prepare 时，清单摘要不同就是冲突（409），不覆盖。</li><li><b>分片内不会有“还在路上”的空洞。</b> 领夹按 (gen, seq) 顺序发送、手机累计回执，分片只在连续收到的范围上封口；分片之间的空洞（换机、手机丢失）才由云端按“序号空洞且无缺口记录”处理。所以清单不需要修订版本，一个分片只上传一次。</li><li><b>迟到的直传不能复活音频。</b> 预签名地址在有效期内可以重复使用（S3 文档明确如此），网关拒绝新的 prepare 挡不住旧地址再 PUT。所以云端在发“音频已删除”回执前，要等该分片签发过的所有直传地址都已过期（≤15 分钟）、在途请求超过上限时长，再做一次最后清扫（详设 18）。手机端加密是纵深防护：对象是用 K 加密的密文，K 包裹后存在与短期音频桶同等待遇的密钥表里（不进备份、不做时间点恢复），删除时一并销毁；已终结的分片拒绝再次 commit。</li></ul>
-<figure class="ddfig"><div class="fighead"><div><b>上传分片在手机上的状态</b></div></div><div class="fig wide"><svg viewBox="0 0 900 260" role="img" aria-label="分片从接收、封口、L1、生成载荷、准备、上传、提交，到收到识别完成回执后删除；超期则删除并登记缺口"><path class="e" d="M150 55L175 55" marker-end="url(#ah)"/><path class="e" d="M295 55L320 55" marker-end="url(#ah)"/><path class="e" d="M440 55L465 55" marker-end="url(#ah)"/><path class="e" d="M595 55L620 55" marker-end="url(#ah)"/><path class="e" d="M740 55L765 55" marker-end="url(#ah)"/><path class="e" d="M825 80L825 150" marker-end="url(#ah)"/><path class="e" d="M765 175L710 175" marker-end="url(#ah)"/><path class="e d" d="M235 80V115H290V150" marker-end="url(#ah)"/><text class="tiny lb" x="266.5" y="110">超期</text><g class="nd"><rect x="20" y="30" width="130" height="50" rx="18"/><text class="t c" x="85" y="52">RECEIVING</text><text class="s c" x="85" y="68">写原始帧</text></g><g class="nd"><rect x="175" y="30" width="120" height="50" rx="18"/><text class="t c" x="235" y="52">SEALED</text><text class="s c" x="235" y="68">15,000 帧或截断</text></g><g class="nd"><rect x="320" y="30" width="120" height="50" rx="18"/><text class="t c" x="380" y="52">L1_DONE</text><text class="s c" x="380" y="68">或已跳过</text></g><g class="nd"><rect x="465" y="30" width="130" height="50" rx="18"/><text class="t c" x="530" y="52">PAYLOAD</text><text class="s c" x="530" y="68">载荷密文 · 清单</text></g><g class="nd"><rect x="620" y="30" width="120" height="50" rx="18"/><text class="t c" x="680" y="52">PREPARED</text><text class="s c" x="680" y="68">拿到直传地址</text></g><g class="nd"><rect x="765" y="30" width="120" height="50" rx="18"/><text class="t c" x="825" y="52">UPLOADED</text><text class="s c" x="825" y="68">对象已写入</text></g><g class="nd"><rect x="765" y="150" width="120" height="50" rx="18"/><text class="t c" x="825" y="172">COMMITTED</text><text class="s c" x="825" y="188">网关已登记</text></g><g class="nd"><rect x="560" y="150" width="150" height="50" rx="18"/><text class="t c" x="635" y="172">回执 → 删除</text><text class="s c" x="635" y="188">识别完成或失败登记</text></g><g><rect class="drop" x="175" y="150" width="230" height="50" rx="8"/><text class="t c" x="290" y="172">EXPIRED</text><text class="s c" x="290" y="188">超 7 天或超 2 GB · 删除并登记缺口</text></g></svg></div></figure>
+<figure class="ddfig"><div class="fighead"><div><b>上传分片在手机上的状态</b></div></div><div class="fig wide"><svg viewBox="0 0 900 260" role="img" aria-label="分片从接收、封口、L1、生成载荷、准备、上传、提交，到收到识别完成回执后删除；超期则删除并登记缺口"><path class="e" d="M150 55L175 55" marker-end="url(#ah)"/><path class="e" d="M295 55L320 55" marker-end="url(#ah)"/><path class="e" d="M440 55L465 55" marker-end="url(#ah)"/><path class="e" d="M595 55L620 55" marker-end="url(#ah)"/><path class="e" d="M740 55L765 55" marker-end="url(#ah)"/><path class="e" d="M825 80L825 150" marker-end="url(#ah)"/><path class="e" d="M765 175L710 175" marker-end="url(#ah)"/><path class="e d" d="M235 80V115H290V150" marker-end="url(#ah)"/><text class="tiny lb" x="266.5" y="110">超期</text><g class="nd"><rect x="20" y="30" width="130" height="50" rx="18"/><text class="t c" x="85" y="52">RECEIVING</text><text class="s c" x="85" y="68">写原始帧</text></g><g class="nd"><rect x="175" y="30" width="120" height="50" rx="18"/><text class="t c" x="235" y="52">SEALED</text><text class="s c" x="235" y="68">15,000 帧或截断</text></g><g class="nd"><rect x="320" y="30" width="120" height="50" rx="18"/><text class="t c" x="380" y="52">L1_DONE</text><text class="s c" x="380" y="68">或已跳过</text></g><g class="nd"><rect x="465" y="30" width="130" height="50" rx="18"/><text class="t c" x="530" y="52">PAYLOAD</text><text class="s c" x="530" y="68">载荷密文 · 清单</text></g><g class="nd"><rect x="620" y="30" width="120" height="50" rx="18"/><text class="t c" x="680" y="52">PREPARED</text><text class="s c" x="680" y="68">拿到直传地址</text></g><g class="nd"><rect x="765" y="30" width="120" height="50" rx="18"/><text class="t c" x="825" y="52">UPLOADED</text><text class="s c" x="825" y="68">对象已写入</text></g><g class="nd"><rect x="765" y="150" width="120" height="50" rx="18"/><text class="t c" x="825" y="172">COMMITTED</text><text class="s c" x="825" y="188">网关已登记</text></g><g class="nd"><rect x="560" y="150" width="150" height="50" rx="18"/><text class="t c" x="635" y="172">回执 → 删除</text><text class="s c" x="635" y="188">识别完成或失败登记</text></g><g><rect class="drop" x="175" y="150" width="230" height="50" rx="8"/><text class="t c" x="290" y="172">EXPIRED</text><text class="s c" x="290" y="188">超 7 天 · 删除并登记缺口</text></g></svg></div></figure>
 <h3>数据结构</h3>
 <p>暂存库（SQLite 一类，建议）：</p>
-<div class="tbl"><table><thead><tr><th>表</th><th>字段</th></tr></thead><tbody><tr><td>chunks</td><td>chunk_id PK, device_id, boot_gen, seq_start, seq_end, state, sealed_reason（full、sync、gen_end）, raw_path, payload_path, payload_bytes, payload_sha256, wrapped_k, manifest_json, l1_status, upload_attempts, next_attempt_at, prepared_url_expires_at, created_at, sealed_at, committed_at</td></tr><tr><td>anchors · samples · segments</td><td>详设 2</td></tr><tr><td>scene_events</td><td>t_utc_ms, 字段变化（§4.4）</td></tr><tr><td>pending_gaps</td><td>gen, seq_from, seq_to, cause（phone_expired 等），reported</td></tr><tr><td>device_commands</td><td>cmd_id, kind, 参数, state（received、sent、done）</td></tr></tbody></table></div>
+<div class="tbl"><table><thead><tr><th>表</th><th>字段</th></tr></thead><tbody><tr><td>chunks</td><td>chunk_id PK, device_id, boot_gen, seq_start, seq_end, state, sealed_reason（full、sync、gen_end）, raw_path, payload_path, payload_bytes, payload_sha256, wrapped_k, manifest_json, l1_status, upload_attempts, next_attempt_at, prepared_url_expires_at, created_at, sealed_at, committed_at</td></tr><tr><td>anchors · samples · segments</td><td>详设 2</td></tr><tr><td>scene_events</td><td>t_utc_ms, 字段变化（§4.4）</td></tr><tr><td>pending_gaps</td><td>gen, seq_from, seq_to, cause（phone_expired 等），reported</td></tr><tr><td>device_commands</td><td>cmd_id, cmd_seq, kind, 参数, state（received、sent、done）</td></tr><tr><td>receipt_acks</td><td>receipt_id PK, body（完整的 ack-local 请求）, cleanup_done, acknowledged；启动时对 cleanup_done = false 的记录恢复清理</td></tr></tbody></table></div>
 <p>文件：<code>stage/{device_id}/{gen}/{seq_start}.raw</code>（原始帧，按 BLE 页追加，每页一条 AEAD 记录，密钥在钥匙串 / Keystore）；<code>.../{seq_start}.pay</code>（载荷密文）。iOS 的文件保护级别用“首次解锁后可访问”，因为锁屏时也要写入。</p>
-<p>载荷格式：每个保留区间封成一个独立的 Ogg Opus 逻辑流，按序号顺序串接（chained Ogg，RFC 7845）；每个流前面多带最多 4 帧（80 ms）紧邻的前序包作解码预卷：前序包须是本分片内、原始帧仍在的帧；分片开头或世代开头取不到时按实际可得的帧数带（可以是 0）。<code>OpusHead.pre_skip</code> 设为“设备编码器的原始延迟 + 预卷样本数”（48 kHz 单位），granule 位置按 RFC 7845 从流起点以 48 kHz 计；<code>runs</code> 记录映射：<code>{stream_serial, seq_from, seq_to, core_from, core_to, preroll_frames}</code>。预卷只用于解码收敛，不转写、不计量；保留区间两侧本来就有 500 ms 的非语音余量，预卷不足也不会切掉语音。Ogg 内的 granule 时间只在流内有意义，录音时刻一律从 <code>runs</code> 与清单 <code>clock</code> 还原。原 Opus 包字节不变、不重编码。整个文件再用 K 做分段 AEAD（64 KiB 一段，AES-256-GCM，段号进 nonce）。</p>
+<p>载荷格式：每个保留区间封成一个独立的 Ogg Opus 逻辑流，按序号顺序串接（chained Ogg，RFC 7845）；每个流前面多带最多 4 帧（80 ms）紧邻的前序包作解码预卷：前序包须是本分片内、原始帧仍在的帧；分片开头或世代开头取不到时按实际可得的帧数带（可以是 0）。<code>OpusHead.pre_skip</code> 设为“编码器延迟 d + 预卷样本数”（48 kHz 单位；d 取 HELLO 里的 <code>codec.encoder_delay</code>），granule 位置按 RFC 7845 从流起点以 48 kHz 计。编码器延迟意味着核心区最后 d 个样本落在 <code>core_to</code> 之后的包里，所以每个流在核心区之后再带 1 个紧邻的后续包（20 ms = 960 样本 ≥ d），末页 granule 置为 <code>pre_skip + 核心区样本数</code>，按 RFC 7845 §4.4 的末尾裁剪丢掉多出的样本，解码样本数因此恰好等于核心区长度。后续包取不到时（分片末尾、世代结束、停录）不带，末页 granule 取实际可得的样本数，并在 <code>tail_short_samples</code> 记下核心区尾部缺的 d 个样本。<code>runs</code> 记录映射：<code>{stream_serial, seq_from, seq_to, core_from, core_to, preroll_frames, postroll_frames, encoder_delay, tail_short_samples}</code>。预卷与后续包只用于解码，不转写、不计量；保留区间两侧通常有 500 ms 的非语音余量，预卷不足一般不会切掉语音；连续讲话跨分片硬封口、立即同步截断时没有余量，首尾可能缺几十毫秒，云端按 concealed 处理并标出（详设 6）。Ogg 内的 granule 时间只在流内有意义，录音时刻一律从 <code>runs</code> 与清单 <code>clock</code> 还原。原 Opus 包字节不变、不重编码。整个文件再用 K 做分段 AEAD（64 KiB 一段，AES-256-GCM，段号进 nonce）。</p>
 <p>清单：§6.1 全部字段，外加 <code>payload.enc = {alg: "aes256gcm-seg64k"}</code>、<code>payload.runs</code>、<code>sealed_reason</code>、<code>receiver_epoch</code>；<code>payload.bytes/sha256</code> 指上传的密文，另带 <code>plain_sha256</code> 供云端解密后校验。<code>user_ref</code> 由网关从认证上下文取得，不信任清单里的值。</p>
 <h3>流程与算法</h3>
 <pre><code>def on_frames_persisted(gen, seq_upto):
@@ -236,21 +250,36 @@ def scheduler_tick(now):
 def upload(c):
     r = POST("/v1/chunks:prepare", manifest=c.manifest_json, queue=c.queue)
     if r.state in ("stored", "processing", "done"):  c.state = COMMITTED; return
+    if r.state == "deletion_pending":                 # 云端正在删除：不上传、不释放，等回执
+        c.state = COMMITTED; return
     if r.state == "deleted":                          finish(c); return    # 早已处理完
     put_file(r.upload_url, c.payload_path)             # 后台上传任务
     POST(f"/v1/chunks/{c.chunk_id}:commit", sha256=c.payload_sha256, bytes=c.payload_bytes,
          k=keystore.unwrap(c.wrapped_k))
     c.state = COMMITTED
 
-def on_receipt(rc):                                    # GET /v1/receipts?after=cursor
-    if rc.kind in ("audio_deleted", "failed_gap_recorded"): finish(rc.chunk)
+def on_receipt(rc):                                    # GET /v1/receipts?after=cursor；Receipt 见详设 18
+    if rc.audio_stage != "cloud_deleted": return       # 只有云端确认删除才释放
+    ack = receipt_acks.get(rc.receipt_id)              # 确认状态独立持久化，不随分片行清理
+    if ack is None:
+        c = chunk(rc.chunk_id)
+        held = "not_held" if c is None else "removed"  # 本安装实例从未持有（换机、重装）：不能替别的手机确认
+        ack = receipt_acks.insert(rc.receipt_id, cleanup_done=(c is None), body=dict(   # 先把完整请求体落盘，重放时原样发送
+            request_id=sha256(rc.receipt_id, install_id), receipt_id=rc.receipt_id, chunk_id=rc.chunk_id,
+            install_id=install_id, receiver_epoch=receiver_epoch, local_state=held))
+    if not ack.cleanup_done:                           # 已有记录也恢复清理：插入后、清理前崩溃不会跳过
+        c = chunk(rc.chunk_id)
+        if c is not None and c.state != DONE: finish(c) # processed、partial、failed、erased 都释放：失败覆盖已登记为缺口
+        receipt_acks.mark_cleanup_done(rc.receipt_id)  # 清理完成之后才发送 removed
+    POST("/v1/receipts:ack-local", **ack.body)         # 重配对后 receiver_epoch 变了也不改旧请求
+    receipt_acks.mark_acknowledged(rc.receipt_id)      # 服务端确认后才可清理 receipt_acks 与分片行
 
 def finish(c):
     delete(c.payload_path); c.wrapped_k = None; c.state = DONE; purge_row_later(c)
     if all_done(c.sealed_day): delete_day_key(c.sealed_day)  # 当天的分片都已终结：销毁包裹密钥，残留副本一并失效</code></pre>
-<ul><li><b>截断</b>：立即同步时封口当前分片（<code>sealed_reason = "sync"</code>），下一分片从截断处起算。</li><li><b>超期与容量</b>：7 天是硬期限，期限从首次落盘起算、重试不顺延；每小时与每次启动检查，超期即删并写 <code>pending_gaps(cause="phone_expired")</code>。2 GB 是背压而不是删除条件：总量（原始帧、载荷、临时文件合计）到上限时停止向领夹发回执，领夹继续缓冲，不提前删未到期数据。</li><li><b>缺口上报</b>：手机过期删除的范围用独立的幂等接口 <code>POST /v1/gaps {device_id, boot_gen, ranges, cause}</code> 上报，不修改已 prepare 的清单；只报从未成功 commit 的范围，云端已存的不报。L1 把整片都判为非语音时，照常 prepare 一个 <code>payload.bytes = 0</code> 的清单。</li><li><b>平台</b>：iOS 用后台 URLSession 从文件上传，常规批设 <code>allowsCellularAccess = false</code> 与 discretionary，立即同步不设；Android 用 WorkManager，常规批约束 <code>UNMETERED</code>，立即同步用加急任务。直传地址 15 分钟过期，过期后重新 prepare。</li><li><b>并发与顺序</b>：同一设备按 seq 从旧到新、最多 2 个并发；立即同步队列优先。</li></ul>
+<ul><li><b>截断</b>：立即同步时封口当前分片（<code>sealed_reason = "sync"</code>），下一分片从截断处起算。</li><li><b>超期与容量</b>：7 天是硬期限，期限从首次落盘起算、重试不顺延；每小时与每次启动检查，超期即删并写 <code>pending_gaps(cause="phone_expired")</code>。2 GB 是背压而不是删除条件：总量（原始帧、载荷、临时文件合计）到上限时停止向领夹发回执，领夹继续缓冲，不提前删未到期数据。上限内为生成载荷预留空间（不超过待封口分片的原始帧大小），否则已封口的分片可能因空间不足生成不了载荷。</li><li><b>缺口上报</b>：手机过期删除的范围用独立的幂等接口 <code>POST /v1/gaps {device_id, boot_gen, ranges, cause}</code> 上报，不修改已 prepare 的清单；只报从未成功 commit 的范围，云端已存的不报。L1 把整片都判为非语音时，照常 prepare 一个 <code>payload.bytes = 0</code> 的清单。</li><li><b>平台</b>：网络约束按调度结果设置。<code>network = "wifi"</code> 时，iOS 后台 URLSession 设 <code>allowsCellularAccess = false</code> 与 discretionary，Android WorkManager 约束 <code>UNMETERED</code>；<code>network = "any"</code>（立即同步，或最旧分片超过 4 小时）时允许蜂窝，立即同步在 Android 上用加急任务。已排队的 wifi 任务在最旧分片跨过 4 小时后取消，并以 <code>any</code> 重建（iOS 后台任务创建后不能改约束；Android 用同一唯一任务名的 REPLACE 策略重新入队）。直传地址 15 分钟过期，过期后重新 prepare。</li><li><b>并发与顺序</b>：同一设备按 seq 从旧到新、最多 2 个并发；立即同步队列优先。</li></ul>
 <h3>参数</h3>
-<div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>说明</th></tr></thead><tbody><tr><td>分片长度</td><td>15,000 帧（5 分钟设备时间）</td><td>§4.1</td></tr><tr><td>触发</td><td>有效 ≥30 分钟、最旧 &gt;2 小时、立即同步</td><td>§4 调度条件</td></tr><tr><td>蜂窝</td><td>仅立即同步或最旧 &gt;4 小时</td><td></td></tr><tr><td>重试</td><td>指数退避 30 秒起、上限 30 分钟，加抖动</td><td>网关拒收（如密钥服务不可用）同样退避</td></tr><tr><td>暂存上限</td><td>2 GB、7 天</td><td>隐私上限，不因积压放宽</td></tr></tbody></table></div>
+<div class="tbl"><table><thead><tr><th>参数</th><th>初值</th><th>说明</th></tr></thead><tbody><tr><td>分片长度</td><td>15,000 帧（5 分钟设备时间）</td><td>§4.1</td></tr><tr><td>触发</td><td>有效 ≥30 分钟、最旧 &gt;2 小时、立即同步</td><td>§4 调度条件</td></tr><tr><td>蜂窝</td><td>仅立即同步或最旧 &gt;4 小时</td><td></td></tr><tr><td>重试</td><td>指数退避 30 秒起、上限 30 分钟，加抖动</td><td>网关拒收（如密钥服务不可用）同样退避</td></tr><tr><td>暂存期限</td><td>7 天</td><td>隐私上限，到期即删，不因积压放宽</td></tr><tr><td>暂存容量</td><td>2 GB</td><td>背压：到达时停发回执，不删未到期数据</td></tr></tbody></table></div>
 <h3>失败、降级与恢复</h3>
 <div class="tbl"><table><thead><tr><th>崩溃点</th><th>恢复</th></tr></thead><tbody><tr><td>封口后、载荷写完前</td><td>原始帧还在；重跑 L1 与载荷生成（新 K），结果相同（K 不同无妨，尚未上传）</td></tr><tr><td>载荷已写、原始帧未删</td><td>启动时发现 PAYLOAD 状态仍有 raw 文件，直接删</td></tr><tr><td>PUT 完成、commit 前</td><td>重新 prepare：网关见对象已存在但未 commit，返回新地址或直接允许 commit；重放 commit 幂等</td></tr><tr><td>commit 已成功、响应丢失</td><td>再次 prepare 返回 stored，转 COMMITTED</td></tr><tr><td>回执丢失</td><td>回执按游标拉取，可重复；收到“已删除”的分片不再上传；游标失效时按未终结的 chunk_id 批量查状态</td></tr><tr><td>回执已处理、载荷未删</td><td>启动时清理 DONE 状态的残留文件</td></tr><tr><td>手机换机或重装</td><td>暂存随 App 数据一起丢；领夹中未回执的数据由新手机接收；丢失部分由云端按“序号空洞且无缺口记录”在 48 / 72 小时后登记</td></tr></tbody></table></div>
 <h3>测试与验收</h3>

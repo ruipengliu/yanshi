@@ -224,7 +224,7 @@
         <tr><td class="mono">t_utc</td><td class="mono">int64 ms</td><td>状态变化时刻</td></tr>
         <tr><td class="mono">coverage</td><td class="mono">observed | unknown</td><td>App 是否观测到该时段</td></tr>
         <tr><td class="mono">media.active</td><td class="mono">bool</td><td>手机自身是否在播放</td></tr>
-        <tr><td class="mono">media.route</td><td class="mono">speaker | receiver | wired | bt_a2dp | bt_hfp | airplay | unknown</td><td>只有 <code>speaker</code> 会被领夹录到</td></tr>
+        <tr><td class="mono">media.route</td><td class="mono">speaker | receiver | wired | bt_a2dp | bt_hfp | airplay | unknown</td><td><code>speaker</code>（本机扬声器）是会被领夹录到的正证据；其余路由不能证明没有外放：<code>bt_a2dp</code>、<code>airplay</code> 可能连着房间音箱，只有能确认是耳机类设备时才当作不外放，否则按 <code>unknown</code></td></tr>
         <tr><td class="mono">call.state</td><td class="mono">none | ringing | active</td><td>通话状态</td></tr>
         <tr><td class="mono">call.route</td><td class="mono">同上</td><td><code>speaker</code> 即免提</td></tr>
         <tr><td class="mono">call.kind</td><td class="mono">cellular | voip | unknown</td><td>通话类型</td></tr>
