@@ -1,8 +1,10 @@
 ---
-status: accepted（存放位置由 ADR-0050 修订：原文存放在业务线；正文与后果中"注入判断不依赖说话人标签"的表述与现行实现不符，见 ADR-0050 的补记）
+status: superseded by ADR-0052
 ---
 
 # 旁听只收文字，信任按说话人区分
+
+> **历史记录（2026-11-14）。** 本文已被 [ADR-0052](0052-attested-results-and-provenance.md) 取代，正文不再修改。其中"读过 Capture 的 Run 一律经过注入判断"与后果第 1 条"注入判断与高风险审批不依赖标签"**与现行实现不符**；各条款的现状见 ADR-0052 附录的对照表。
 
 全天佩戴的录音外设（领夹）经手机上的 HostApp 接入，把 EndUser 与他人的日常对话交给 yanshi 做整理、项目归集与复盘。yanshi 只接收转写后的文字片段（Capture），每段带 HostApp 给出的说话人标签（佩戴者、他人）；音频、转写与声纹识别都在 yanshi 之外完成。外设本身不是 Device，也不是 Node：yanshi 只看到那个 HostApp。
 

@@ -1,8 +1,10 @@
 ---
-status: accepted（由 ADR-0050 修订：原文保留期由业务线担保，内核担保自己的副本）
+status: superseded by ADR-0052 (kernel part); business part moved to xinli ADR-0001
 ---
 
 # 以每日旁听 Session 实现分级保留
+
+> **历史记录（2026-11-14）。** 内核部分（Retention 按 AgentDef 覆盖、到期删除保留 Memory）已并入 [ADR-0052](0052-attested-results-and-provenance.md) 第 7 条；业务部分（每日工作 Session、归集到 Project）迁至 [xinli ADR-0001](../../apps/xinli/docs/adr/0001-daily-work-sessions-and-projects.md)。正文不再修改，各条款的现状见 ADR-0052 附录的对照表。
 
 他人的原话只应短期保留，而项目的来龙去脉要长期可查。Event 只追加（ADR-0004），删除只按整个 Session 进行（ADR-0015），因此不在一个 Session 内删除部分 Event，而是按保留期把数据分进不同的 Session：每个 EndUser 在当地每天一个旁听 Session，当天的 Capture 都写在这里，原文随它删除；每晚整理成摘要后，按主题归集到长期存在的 Project（每个项目一个 Session）；关于 EndUser 本人的稳定结论（偏好、沟通习惯）写入 Memory。
 
