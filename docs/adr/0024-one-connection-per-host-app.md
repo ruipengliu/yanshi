@@ -4,7 +4,7 @@ status: accepted
 
 # 每个 HostApp 实例一条 Connection，兼任 Node 与会话客户端
 
-HostApp 与网关之间只保持一条 WebSocket（Connection）。它既可以作为 Node 声明 Capability、执行调用，也可以作为会话客户端订阅 Session、提交输入与审批。会话客户端角色复用 HTTP API 背后的 `service` 与事件流（`feed`），HTTP 与 SSE 保留。
+HostApp 与网关之间只保持一条 WebSocket（Connection）。（2026-11-14 修订："一条 Connection"约束的是控制面与事件流——Node 角色、会话客户端、订阅与输入。Call 的实时媒体可以另开通道，其鉴权与生命周期须从这条 Connection 派生；这只是放开口子，在另立 ADR 设计媒体通道之前，现有实现照旧经这条 Connection 传送媒体（ADR-0027）。）它既可以作为 Node 声明 Capability、执行调用，也可以作为会话客户端订阅 Session、提交输入与审批。会话客户端角色复用 HTTP API 背后的 `service` 与事件流（`feed`），HTTP 与 SSE 保留。
 
 我们没有为会话客户端另开一条连接，原因有两点：
 
@@ -17,3 +17,10 @@ HostApp 与网关之间只保持一条 WebSocket（Connection）。它既可以�
 - 会话客户端的慢操作（内容安全检查）不能阻塞同一连接上的设备结果，所以请求并发执行，并按连接限流。
 - 协议向后兼容：只新增消息与字段，旧 SDK 不受影响。
 - 帧编码跟随 Hello（protobuf 或 protojson），网关要同时支持两种编码。
+
+## 重审条件
+
+（2026-11-14 补充）任一出现即重新评估：
+
+- 除 Call 的实时媒体之外，仍需要第二条长连接（例如推送唤醒后的连接恢复成本不再是主要约束，或某类流量与控制面互相阻塞）；
+- 为弱网另开媒体通道时：在设计它的 ADR 中写明它与这条 Connection 的鉴权、生命周期关系。

@@ -22,7 +22,7 @@ xinli 落地需要内核补上的原语。每一项都按[整体架构](./person
 | 9 | 重答（Redo） | 只有平台能让 Transcript 略去被重做的 Run | P3 |
 | 10 | 说话人引用（`speaker_ref`） | 契约字段 | P3 |
 
-触发（ADR-0040）按 [m5](./m5-inputs-triggers-loops.md) §6 实现，放在 P2，本文不重复。
+触发（ADR-0040）已由 ADR-0050 取消，没有实施（2026-11-14 修订：原写"按 m5 §6 实现，放在 P2"）。
 
 ## 2. Capture 正文存储
 
