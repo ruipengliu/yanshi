@@ -27,7 +27,7 @@ status: accepted
   - 路由调用目前按顺序执行：同一个父 Run 同时未完成的委托至多一个，`delegation.max_fanout` 为将来的并行派发预留。
   - 工件只对其所属 Session 可见（m2-artifacts），父子之间只传文字：任务的 `context` 与子 Run 最后一条回复。
 
-  有界并行委托与授权的工件交接是已认可的演进方向，尚无设计（[ADR 评审](../review/2026-11-14-adr-review.md) §3.3）。演进时保留：权限交集（第 4 条）、幂等派生（第 2 条）、取消与删除的传播（第 5 条）；结果的持久化、队列唤醒与模型何时继续执行分别定义，不预先规定"全部返回后才唤醒"。
+  有界并行委托与授权的工件交接是已认可的演进方向，见提案 [ADR-0055](0055-bounded-parallel-delegation-and-artifact-handoff.md)。演进时保留：权限交集（第 4 条）、幂等派生（第 2 条）、取消与删除的传播（第 5 条）；结果的持久化、队列唤醒与模型何时继续执行分别定义，不预先规定"全部返回后才唤醒"。
 - 删除父 Session 级联删除子 Session；关闭父 Session 只经中断结束进行中的子 Run，子 Session 本身保留。
 - （2026-10-11 补充，[评审](../review/2026-10-11-scalability-review.md) §11）子 Session 的任务由父 Run 的模型写成，Memory 写入闸门把子 Session 一律视为受外部内容影响，任务不算用户原话。委托 Run 记在子 Session 投影的固定位置（`State.Delegated`），不依赖输入去重窗口。撤回委托是尽力而为的，子 Worker 每次调用模型之前确认父调用仍在等待，作为兜底。
 
