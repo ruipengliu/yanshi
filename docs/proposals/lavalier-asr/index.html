@@ -19,7 +19,7 @@
 
 <header class="hero">
   <h1>领夹式 AI 录音设备的 ASR 整体处理方案</h1>
-  <div class="meta"><span>独立方案（提案）</span><span>2026-11-07</span><span>不约束本仓库的现有实现：现行实现仍以 <code>docs/design</code> 为准</span></div>
+  <div class="meta"><span>独立方案（提案）</span><span>2026-11-07</span><span>2026-11-14 起并入 <code>docs/design/xinli-transcription.md</code>：逐条取舍见 <code>docs/review/2026-11-14-lavalier-asr-reconciliation.md</code>，冲突处以 <code>docs/design</code> 为准</span></div>
   <p class="lede">机主全天佩戴，录音经手机批量上云。方案要回答三件事：哪些声音不该进转写和记忆，转写准不准（尤其专名），以及每句话是不是机主说的。原则是<b>宁可漏记，不可错记</b>。</p>
   <figure class="day">
     <div class="scroll"><svg viewBox="0 0 1000 214" role="img" aria-label="示意：机主一天 24 小时的录音波形，每 2 分钟一根，按接受（机主、他人）、隔离、拒绝着色；会议和午饭时段以接受为主，晚上看电视时段以隔离为主">
@@ -92,7 +92,7 @@
       <tr><td>记录不出现、长期“正在整理”</td><td class="num">28</td><td>两级队列目标；单元显示处理状态与不出纪要的原因；等缺口最多 2 小时</td><td>—</td></tr>
       <tr><td>记录无法转为行动（日历、笔记、IM）</td><td class="num">57</td><td>只提供依据：待办核实状态、承担人、溯源</td><td>与日历、IM 的联动</td></tr>
       <tr><td>计时与费用不透明</td><td class="num">48</td><td>清单已有佩戴、有效、过滤三种时长，可直接做计量</td><td>计费口径（§13 待决策）</td></tr>
-      <tr><td>外部 AI 读不全原文</td><td class="num">30</td><td>转写片段带说话人、单元与时刻，结构上可导出</td><td>是否开放给第三方（§13 待决策）</td></tr>
+      <tr><td>外部 AI 读不全原文</td><td class="num">30</td><td>转写片段带说话人、单元与时刻，结构上可导出</td><td>不开放给第三方（ADR-0048 已裁决）</td></tr>
     </tbody>
   </table></div>
   <details class="more"><summary>术语表</summary><div>
@@ -599,7 +599,7 @@
       <tr><td>iOS/Android 场景 API 的后台可用性与权限</td><td><span class="tg ask">待确认</span></td><td>场景覆盖率</td></tr>
       <tr><td>iOS 在 BLE 后台唤醒时间内增量跑 VAD 是否可行（每个 5 分钟分片约数秒 CPU）</td><td><span class="tg ask">待确认</span></td><td>L1 运行方式与上传新鲜度</td></tr>
       <tr><td>计费口径：按佩戴、有效还是接受档时长计；被隔离的播放声是否计费</td><td><span class="tg ask">待决策</span>（产品）</td><td>用户可见的用量与套餐（问卷 48 人）</td></tr>
-      <tr><td>是否向外部 AI 开放转写原文、开放到什么粒度（只给纪要，或给带说话人的片段）；与本仓库 ADR-0048“旁听原文不给任何三方”的关系</td><td><span class="tg ask">待决策</span>（产品）</td><td>导出接口与授权（问卷 30 人）</td></tr>
+      <tr><td>是否向外部 AI 开放转写原文：不开放，按 ADR-0048“旁听原文不给任何三方”；纪要转述按用户授权的范围提供</td><td><span class="tg ok">已裁决</span></td><td>导出接口与授权（问卷 30 人）</td></tr>
       <tr><td>旁观者告知、通话录音、声纹处理、未成年人语音的合规意见；他人簇质心的留存期；§7 对外承诺的最终措辞</td><td><span class="tg ask">待确认</span>（法务）</td><td>产品形态与默认设置</td></tr>
     </tbody>
   </table></div>
