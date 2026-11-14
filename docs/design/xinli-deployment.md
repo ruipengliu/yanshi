@@ -126,4 +126,4 @@ dev 默认每业务线生成一把 256-bit 随机凭据，有效期 24 小时，
 
 `internal/eval/capture_pages_test.go` 的直连 SDK 路径也传递登记 headers。`TestXinliFixtureMCPHeadersAcrossBusinessLines` 通过真实 dev 子进程、原就绪解析与运行器同一装配，轮流发现并调用两条业务线的工具；无凭据请求必须返回 401。Persona 的 fixture、Captures 和 Parity 测试均配置测试凭据，Parity 保留原始工具文字、Meta 比较和 golden，不过滤或改写差异。不改内核执行路径、工具说明、AgentDef 或评测基线。
 
-现有内核 `mcpcap.LoadDir` 要求 Server 名称唯一，Connector 缓存也按名称索引；因此不能把多个名为 `xinli` 的业务线登记加载到同一个内核 Connector。生产按现有“一业务线一单元”部署，每个内核目录只放所属业务线的登记；多业务线 Persona 可服务多个这样的内核。A11 不更改该内核限制。全账号注销、产品 BFF 与用户登录态仍待 A12/B1；Persona 清理完成不代表逐库注销完成。
+现有内核 `mcpcap.LoadDir` 要求 Server 名称唯一，Connector 缓存也按名称索引；因此不能把多个名为 `xinli` 的业务线登记加载到同一个内核 Connector。因此登记同名 Server 的业务线须分属不同单元（单元的定义见[部署设计](./deployment.md) §1，2026-11-14 修订：原写"生产按现有一业务线一单元部署"），每个内核目录只放所属单元中业务线的登记；多业务线 Persona 可服务多个这样的内核。A11 不更改该内核限制。全账号注销、产品 BFF 与用户登录态仍待 A12/B1；Persona 清理完成不代表逐库注销完成。

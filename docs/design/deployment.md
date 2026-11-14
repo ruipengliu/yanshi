@@ -8,7 +8,10 @@
 
 - **进程边界沿扩缩容维度、权限与故障域划分；包边界沿领域划分。** 同一个镜像、同一套包，按角色裁剪后以不同的 Deployment 运行。不按领域拆服务（Session、Memory、用量……），理由见 §5。
 - **单进程形态长期保留**（ADR-0001、章程原则 9）：开发、模拟测试与小规模私有化部署都运行全部角色；生产形态只是把角色分到不同进程，执行语义不变，`internal/sim` 仍然覆盖它。
-- **一条业务线一个单元（cell）。** Token、配额、AgentDef、内容安全、保留策略都以 BusinessLine 为单位，一条业务线落一个单元不需要改代码；单元内按 Session 与 EndUser 两类键分片 PostgreSQL（ADR-0028、ADR-0051），EndUser 键不加业务线。一个 Session 只属于一个单元，入口按业务线路由，不做跨单元双活。
+- **单元（cell）是一组共享 EndUser 身份与 Memory 的业务线**（2026-11-14 修订，原为"一条业务线一个单元"）。Token、配额、AgentDef、内容安全、保留策略都以 BusinessLine 为单位，所以一个单元承载几条业务线都不需要改代码；单元内按 Session 与 EndUser 两类键分片 PostgreSQL（ADR-0028、ADR-0051），EndUser 键不加业务线，同一 EndUser 的跨业务线 Memory / Grant 因此在同一个库（章程 G4、ADR-0003）。一个 Session 只属于一个单元，入口按业务线路由到它所在的单元，不做跨单元双活。
+  - **默认所有业务线在同一个单元。** 只有不与其他业务线共享 EndUser 的业务线（例如私有化客户的独立部署）才单独成为一个单元。
+  - **按业务线拆单元可以作为扩容手段**，代价是分属不同单元的业务线之间不能共享 Memory / Grant：内核没有跨单元的召回与授权路径。需要共享 Memory 的业务线被迫拆开时，重审 ADR-0028、ADR-0051。
+  - **现有限制**：`mcpcap.LoadDir` 要求 MCP Server 名称在一个内核中唯一，两条业务线登记同名的 Server（如评测中的 `eval` 与 `eval-nohealth` 都登记 `xinli`）时须分属不同单元（[xinli 部署](./xinli-deployment.md)）。
 
 ## 2. 单元内的拓扑
 
@@ -44,7 +47,7 @@ worker        worker-bg     sandbox-ctl        janitor
 | gateway | HTTP API、Connection、SSE、Call 中转、peer 服务 | 连接数、握手速率、Call 并发 | headless Service 使 `-peer-advertise` 得到稳定的 Pod IP；PodDisruptionBudget 限制同时下线数；终止宽限期 > `-drain-timeout`；通知分片归属路由（评审 §8.3）落地后，Session 按分片固定到少数网关副本，进程只 LISTEN 自己分片的频道 |
 | worker（交互池） | 只认领 Interactive 工作（ADR-0029） | 交互队列的等待时长 | 实例小而多，保证首字延迟；长任务在两步之间移交给后台池 |
 | worker-bg（后台池） | 认领任意工作，承接长任务 | 后台队列深度、模型并发余量 | Worker 数可以很大（goroutine 便宜），实际受 `-model-concurrency` 与提供商账号上限约束；`-drain-timeout` 内完成当前步后以 handoff 移交 |
-| sandbox-ctl | 沙箱控制器 | 沙箱队列深度 | 单独节点池 + gVisor RuntimeClass（ADR-0010）；只有这个角色持有容器或 K8s API 权限（ADR-0008：受信控制器与不可信沙箱不同 Pod，网关与 Worker 不碰沙箱） |
+| sandbox-ctl | 沙箱控制器 | 沙箱队列深度 | 单独节点池 + 按 ADR-0053 选定的隔离运行时（选型前不预设 gVisor，2026-11-14 修订）；只有这个角色持有容器或 K8s API 权限（ADR-0008：受信控制器与不可信沙箱不同 Pod，网关与 Worker 不碰沙箱） |
 | janitor | 关闭、删除、保留策略、清理、远期停放迁移 | 固定 1～2 个 | 靠租约互斥；小规模部署可并入 worker-bg |
 | Call 中转 | 音频中转、转写、run_task | 并发通话数（每路网关收发约 160KB/s） | 初期留在 gateway；带宽或 CPU 挤占 SSE 时拆成同镜像的独立角色，客户端由 CallStart 的应答指向它 |
 | migrate | 应用迁移 | 一次性 Job | 发布流水线中先于滚动更新；含 `CREATE INDEX CONCURRENTLY` 的迁移以 `-- yanshi:no-transaction` 单独执行 |
@@ -96,7 +99,7 @@ Janitor 的 Sweep 同时把 Horizon 内的远期停放移回工作队列（[M7 �
 
 `internal/app.Sharded` 在装配层把每库一整套 `Stores` 组合起来；每库由 `PostgresShard` 构造自己的 Log、三类 Queue、Waking、Snapshots、Outbox 与其他存储。在线方法以参数中的真实键经 `Locator` 选唯一分片，不逐库探测。PG 工件与索引的 `Select` 只断言目标就是本库，不再另选连接。内存分片沿用同一包装，serve、sim、eval、e2e 仍经 `app.Stores` / `app.NewCore` 装配。
 
-**P4 只支持新建单元，或全部槽位留在库 0 的既有单元。把旧数据迁离库 0 不在 P4 支持范围。** 静态映射无法覆盖旧 Session 之后生成的旧式工件与派生 ID；支持这种迁移需要另行设计在线目录。多库新单元必须关闭旧数据回退且兼容条目为空；既有单元允许使用兼容清单，但全部槽与条目必须仍指向库 0。不能添加一条无关映射绕过启用前提。历史预检与兼容条目的语义仍见 [ADR-0051](../adr/0051-shard-slots-and-id-location.md) §5。
+**P4 只支持新建单元，或全部槽位留在库 0 的既有单元。把旧数据迁离库 0 不在 P4 支持范围。**（阶段缺口，见 ADR-0051 §5；2026-11-14 补充） 静态映射无法覆盖旧 Session 之后生成的旧式工件与派生 ID；支持这种迁移需要另行设计在线目录。多库新单元必须关闭旧数据回退且兼容条目为空；既有单元允许使用兼容清单，但全部槽与条目必须仍指向库 0。不能添加一条无关映射绕过启用前提。历史预检与兼容条目的语义仍见 [ADR-0051](../adr/0051-shard-slots-and-id-location.md) §5。
 
 #### 配置与迁移
 
@@ -178,7 +181,7 @@ xinli 多片消费从该枚举启动每片独立的长轮询、退避和恢复�
 
 - 通知分片的归属路由（评审 §8.3）；在此之前每个网关进程监听全部分片，单元内的进程数受通知投递上限约束。
 - 跨单元的业务线迁移与 Session 导出。
-- 多地域部署与灾备切换：Session 数据只在一个单元内，异地只能冷备或按业务线整体切换。
+- 多地域部署与灾备切换：Session 数据只在一个单元内，异地只能冷备或按单元整体切换。
 
 ## 9. 单次调用部署参数
 

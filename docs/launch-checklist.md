@@ -11,7 +11,7 @@
   - 上线配置中 `yanshi_moderation_mock` 必须为 0；
   - 容灾：与合规确认一个故障域独立的等价提供商，配置为 `-moderation 主,备`（`moderation.Failover`，备用方只在主方超时或出错时使用）；全部不可用时是否允许暂存输出、恢复后重试检查。
 - [ ] **价格表填入合同价**（[设计](./design/m4-quota-usage.md)）。`pricing.yaml` 中 ark、tokenhub 的价格与沙箱单价是占位值。
-- [ ] **生产沙箱**（ADR-0010，[设计](./design/m2-sandbox.md)）。当前只有 Docker 实现；选定云厂商服务或自托管隔离方案后实现生产 Provider。
+- [ ] **生产沙箱**（ADR-0053，[设计](./design/m2-sandbox.md)）。当前只有 Docker 实现。自托管隔离是基线（私有化部署须有能在无外网 IDC 中运行的实现），先按 ADR-0053 的四项依据（安全边界、IDC 可部署性、运维成本、压测）选定隔离技术，再实现生产 Provider；云厂商沙箱只作为公有云部署可选的 Provider。
 - [ ] **业务线配置**：每条业务线的密钥、保留策略与配额已按约定填写（`businesslines/*.yaml`）。
 - [ ] **健康信息的单独同意**（ADR-0022）：开启 `memory.health` 的业务线须在产品中取得用户的单独同意，并能出示同意记录；未取得的不得开启。
 - [ ] **Call 的语音输出审核**（ADR-0027，[设计](./design/m3-call.md) §6）：播出的语音边生成边播放，我们的检查（助手整句生成时）只能中止剩余的播放，之前的部分依赖厂商的严格审核（`strict_audit`）。须与合规确认这一方式可接受；不可接受时改为按句缓冲、检查后再下发（增加数百毫秒延迟）。
@@ -24,7 +24,7 @@
   - 就绪探针检查数据库可达、LISTEN 已生效、迁移已全部应用，而不是只返回 200；
   - 发布前以独立任务运行 `yanshi migrate`，serve 以 `-migrate=false` 启动（缺迁移时拒绝启动）；
   - `-drain-timeout` 小于编排系统的终止宽限期，滚动发布时进行中的 Run 移交而不是等租约过期（ADR-0029）；PodDisruptionBudget 限制同时下线的网关数；
-  - 沙箱控制器运行在独立节点池，使用 gVisor RuntimeClass，只有它持有容器或 K8s API 权限（ADR-0008、ADR-0010）；
+  - 沙箱控制器运行在独立节点池，使用按 ADR-0053 选定的隔离运行时，只有它持有容器或 K8s API 权限（ADR-0008、ADR-0053）；
   - `-model-concurrency`、`-model-rps` 按提供商的账号上限除以进程数配置（[模型调用](./design/model-calls.md)），弹性扩容时随副本数联动；
   - 所有进程的 `-notify-shards` 一致（ADR-0028）；
   - 生产进程不带 `-faults`（服务端故障注入与 `/v1/debug/*` 只用于调试部署，ADR-0033），也不带 `-insecure-remote`（`-auth none` 监听非回环地址）；`xinli dev` 的夹具与页面只用于开发，不作生产服务；
