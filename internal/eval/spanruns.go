@@ -251,6 +251,7 @@ func (o *observation) appendRun(r *observation) {
 	o.status = r.status
 	o.calls = append(o.calls, r.calls...)
 	o.callArgs = append(o.callArgs, r.callArgs...)
+	o.callResults = append(o.callResults, r.callResults...)
 	o.steps = append(o.steps, r.steps...)
 	o.approvals += r.approvals
 	o.questions += r.questions

@@ -21,14 +21,12 @@ const judgeInstructions = `你是 AI 助手的评测员。根据评分标准，�
 var jsonObject = regexp.MustCompile(`(?s)\{.*\}`)
 
 // judge 请评分模型按标准打分。评分模型与被评测模型属于不同系列（ADR-0018）。
-func judge(ctx context.Context, gw *model.Gateway, judgeModel, rubric string, o *observation) (int, string, error) {
-	var b strings.Builder
-	fmt.Fprintf(&b, "评分标准：%s\n\n用户输入：%s\n\n助手的过程：\n", rubric, o.input)
-	for _, s := range o.steps {
-		fmt.Fprintf(&b, "- %s\n", s)
+func judge(ctx context.Context, gw *model.Gateway, judgeModel, rubric string, o *observation, includeState bool) (int, string, error) {
+	input, err := judgeInput(rubric, o, includeState)
+	if err != nil {
+		return 0, "", err
 	}
-	fmt.Fprintf(&b, "\n助手本轮的回复（全部文本）：\n%s\n", o.reply)
-	req := &model.Request{Model: judgeModel, System: judgeInstructions, Messages: []model.Message{{Role: model.RoleUser, Content: model.TextBlocks(b.String())}}}
+	req := &model.Request{Model: judgeModel, System: judgeInstructions, Messages: []model.Message{{Role: model.RoleUser, Content: model.TextBlocks(input)}}}
 	var lastErr error
 	for range 2 {
 		resp, err := gw.Generate(ctx, req, nil)
@@ -48,6 +46,55 @@ func judge(ctx context.Context, gw *model.Gateway, judgeModel, rubric string, o 
 		return out.Score, out.Reason, nil
 	}
 	return 0, "", lastErr
+}
+
+func judgeInput(rubric string, o *observation, includeState bool) (string, error) {
+	var b strings.Builder
+	fmt.Fprintf(&b, "评分标准：%s\n\n用户输入：%s\n\n助手的过程：\n", rubric, o.input)
+	for _, s := range o.steps {
+		fmt.Fprintf(&b, "- %s\n", s)
+	}
+	fmt.Fprintf(&b, "\n助手本轮的回复（全部文本）：\n%s\n", o.reply)
+	if includeState {
+		if o.xinli == nil {
+			return "", fmt.Errorf("judge_state requires a final xinli state")
+		}
+		type commitmentSummary struct {
+			ID          string `json:"id"`
+			Kind        string `json:"kind"`
+			Content     string `json:"content"`
+			Counterpart string `json:"counterpart,omitempty"`
+			DueDate     string `json:"due_date,omitempty"`
+			DueText     string `json:"due_text,omitempty"`
+			Status      string `json:"status"`
+			Unverified  string `json:"unverified,omitempty"`
+			Rev         int    `json:"rev"`
+		}
+		state := struct {
+			Exchanges   []xinlifixture.Exchange `json:"exchanges"`
+			Days        []xinlifixture.Day      `json:"days"`
+			Commitments []commitmentSummary     `json:"commitments"`
+		}{Days: o.xinli.Days}
+		for _, exchange := range o.xinli.Exchanges {
+			if exchange.Live() {
+				state.Exchanges = append(state.Exchanges, exchange)
+			}
+		}
+		for _, m := range o.xinli.Commitments {
+			if m.MergedInto == "" {
+				state.Commitments = append(state.Commitments, commitmentSummary{
+					ID: m.ID, Kind: m.Kind, Content: m.Content, Counterpart: m.Counterpart, DueDate: m.DueDate, DueText: m.DueText,
+					Status: m.Status, Unverified: m.Unverified, Rev: m.Rev(),
+				})
+			}
+		}
+		data, err := json.Marshal(state)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "\n本 EndUser 的最终有效业务状态（已排除被合并项；以此核对最终纪要，早期调用参数可能已被重交取代）：\n%s\n", data)
+	}
+	return b.String(), nil
 }
 
 const coverageInstructions = `你是摘要的评测员。给你一组要点和一份整理结果（JSON），逐条判断要点的意思是否出现在整理结果中（措辞不同、意思相同即算出现；只出现一部分不算）。

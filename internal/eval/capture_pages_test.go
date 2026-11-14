@@ -485,6 +485,73 @@ func TestPersonaCaptureSpeakerRefBudgets(t *testing.T) {
 	}
 }
 
+// 走真实夹具、MCP 与平台渲染，验证业务侧过滤和投影而不改冻结的旧分页样本。
+func TestPersonaCaptureMetadataPages(t *testing.T) {
+	e := newCaptureParityEnv(t)
+	e.append(t, []xinlifixture.CaptureSegment{
+		{Speaker: "other", SpeakerKey: "other-1", Text: "隔离的播放内容", Disposition: "quarantine", DispositionReason: "playback"},
+		{Speaker: "unknown", Text: "身份未知的原话"},
+		{Speaker: "other", SpeakerKey: "other-2", SpeakerRef: "P-background", Text: "背景中的闲聊", Background: true},
+		{Speaker: "wearer", SpeakerGrade: "timeline", Text: "时间线级的原话"},
+		{Speaker: "wearer", SpeakerGrade: "evidence", Text: "可靠佩戴者周五提交", LowSupportSpans: []xinlifixture.LowSupportSpan{{Start: 5, End: 7, CriticalKinds: []string{"date"}}}},
+		{Speaker: "other", SpeakerKey: "other-3", SpeakerRef: "P-0012", Text: "可靠他人的原话"},
+	})
+	var refs, anonymousKeys []string
+	var rendered strings.Builder
+	after := "0"
+	for range 4 {
+		_, raw := e.page(t, after, true, 1, captureGoldenOptions(8000))
+		p, err := capture.ParsePage(raw, captureGoldenOptions(8000))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Kind != "page" || len(p.Segments) != 1 {
+			t.Fatalf("metadata page = %+v", p)
+		}
+		g := p.Segments[0]
+		refs = append(refs, g.GetRef())
+		switch g.GetRef() {
+		case "1.1", "1.3":
+			if g.GetSpeaker() != v1.Speaker_SPEAKER_OTHER || !strings.HasPrefix(g.GetSpeakerKey(), "u-") || g.GetSpeakerRef() != "" {
+				t.Fatalf("anonymous projection = %+v", g)
+			}
+			anonymousKeys = append(anonymousKeys, g.GetSpeakerKey())
+		case "1.4":
+			if g.GetSpeaker() != v1.Speaker_SPEAKER_WEARER {
+				t.Fatal("evidence wearer lost identity")
+			}
+		case "1.5":
+			if g.GetSpeaker() != v1.Speaker_SPEAKER_OTHER || g.GetSpeakerKey() != "other-3" || g.GetSpeakerRef() != "P-0012" {
+				t.Fatal("qualified other lost identity")
+			}
+		default:
+			t.Fatalf("hidden reference leaked: %s", g.GetRef())
+		}
+		blocks, _, err := capture.Render(p, 8000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rendered.WriteString(captureParityText(blocks))
+		after = g.GetRef()
+		if len(refs) == 4 && !p.Done {
+			t.Fatal("hidden segments affected pagination end")
+		}
+	}
+	if !reflect.DeepEqual(refs, []string{"1.1", "1.3", "1.4", "1.5"}) || len(anonymousKeys) != 2 || anonymousKeys[0] == anonymousKeys[1] {
+		t.Fatalf("visible refs=%v, anonymous keys=%v", refs, anonymousKeys)
+	}
+	for _, hidden := range []string{"隔离的播放内容", "背景中的闲聊", "P-background", "#1.0 ", "#1.2 "} {
+		if strings.Contains(rendered.String(), hidden) {
+			t.Fatalf("rendered hidden content %q", hidden)
+		}
+	}
+	for _, visible := range []string{"身份未知的原话", "时间线级的原话", "可靠佩戴者周五提交", "可靠他人的原话", "[他人 u-", "@P-0012"} {
+		if !strings.Contains(rendered.String(), visible) {
+			t.Fatalf("rendered page lost %q: %s", visible, rendered.String())
+		}
+	}
+}
+
 // 此夹具直接使用 SDK，仍须携带 dev 就绪登记里的凭据，与 Connector 的请求一致。
 type captureFixtureTransport map[string]string
 

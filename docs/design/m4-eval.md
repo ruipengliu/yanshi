@@ -48,9 +48,10 @@ turns:
     new_session: false        # true 表示开一个新 Session（跨 Session 的 Memory 用例）
     crash_after_calls: 0      # >0：Run 发起这么多次调用后"杀掉"执行它的 Worker，检验接管（长 Run 用例）
     captures:                 # 本轮输入之前提交旁听；经夹具写入已绑定的 Persona 业务日
-      - {speaker: other, key: wang, text: "…"}   # speaker: wearer（佩戴者）| other（他人，key 区分不同的人）
+      - {speaker: other, key: wang, text: "…"}   # speaker: wearer（佩戴者）| other（他人，key 区分不同的人）| unknown
       - {speaker: wearer, text: "…", at: "2026-10-23 10:15", topic: reno}   # at：当地时间（Asia/Shanghai），省略时不带时间；topic：主题标签，只用于评测
     captures_file: data/long-day.yaml   # 追加用例目录下数据文件中的旁听（长的一天不写在用例里）
+    judge_state: false        # true：为本轮 judge 追加本 EndUser 的最终有效交谈、每日结果与承诺摘要
     expect:
       status: completed
       calls: ["macbook__read_file"]        # 必须出现的调用（glob）
@@ -63,6 +64,8 @@ turns:
       no_memories: [{contains: "1101"}, {category: "!health", contains: "焦虑"}]   # 不应存在的 Memory；"!" 表示其他类别
       call_args: {"*send_message": "lilei@example.com"}        # 某个名称匹配的调用的参数须包含
       no_call_args: {"mcp_xinli__file_day": "合同"}            # 名称匹配的调用的参数都不得包含
+      call_results:                                           # 按 call_id 关联能力名称，匹配完整结果文本
+        - {capability: mcp_xinli__file_changes, contains: 识别不可靠, count: {min: 1, max: 1}}
       xinli:                                                    # 本轮之后 xinli 业务线中本 EndUser 的数据（xinli-captures.md §10）
         exchanges: {min: 2}                                     # 整理交出、仍然有效的交谈数（不含预置的与被合并的）；pending：待确认数；projects：项目数
         in_project: {P-0001: {max: 0}}                          # 关联到某项目的交谈数（一段交谈可以关联几个项目）
@@ -91,6 +94,10 @@ turns:
 - **评分断言**（`judge`）：由评分模型（默认 `codex/gpt-6.1-sol:high`，经本机已登录的 Codex CLI 调用，ADR-0018 修订）按标准打 1～5 分，≥ 4 分为通过。评分模型与被评测模型不是同一系列，以避免偏袒自己的回答。
 
 评分模型看到的内容包括：本轮的用户输入、模型发起的调用及结果摘要、最终回复。
+
+**结果回执断言。** `expect.call_results` 的每项包含 `capability`（支持 glob）、`contains`（子串）与可选 `count: {min, max}`。按 `call_id` 关联调用名称和结果，在完整结果文字上匹配，不复用截到 3000 字节的评分过程；普通结果与错误结果都参与。一条结果中多次出现子串仍只计一条，不匹配调用参数或回复。`min` 缺省为 1，`max` 缺省不限；检查零条须显式写 `min: 0`。计数须非负，且 max 不小于 min。失败报告包含能力名称、目标子串、实际匹配条数与期望范围；旧报告结构不变。
+
+**最终状态评分。** turn 层的 `judge_state: true` 为该轮 `expect.judge` 追加本 EndUser 在该业务线的最终有效 `exchanges`、`days` 与承诺账本摘要。摘要含内容、对方、期限、状态、未核实原因与修订数，排除被合并的交谈和承诺，不提供变更历史。这样可按重交后的有效纪要评分，而不会把已被取代的早期调用参数误当最终结果。不开启时评分输入逐字不变；开启但没有 xinli 快照时记为评分设施错误。单次调用用例不接受此开关。
 
 **项目归集的碎片率与纯度**（`expect.xinli.grouping`，`internal/eval` 的 `checkGrouping`）：数据文件给每段旁听标上主题（`topic`，闲聊不标）。交谈由模型划定范围（ADR-0042），每段交谈的主题是范围内标了主题的旁听中最多的那个（相同时取先出现的），全是闲聊的没有主题；预置的与被并入别处的交谈不计。一段交谈关联几个项目时，对每个项目各算一次，算作的主题是这段交谈中出现过、且是那个项目在只关联一个项目的交谈中占多数的主题，没有这样的主题时算作交谈自己的主题：老板一次谈了 OKR、客户与团队三件事，分别归入三个项目不算杂质。碎片率是每个主题分散在几个项目中（没有归入项目的交谈每段各算一个），按主题平均；纯度是每个项目中占多数的主题所占的比例（闲聊算作杂质），按交谈与项目的关联数加权。理想值都是 1。
 
@@ -143,6 +150,25 @@ turns:
 新增 `evals/schedule-weekly-report.yaml` 覆盖助手创建周期定时、下次当地时间的确认、拨钟后查询 Persona 与产出周报；`evals/schedule-cancel.yaml` 覆盖先列出再取消、取消后有效数为零。它们与已有 `schedule-reminder`、`schedule-memory-gate` 一起覆盖能力说明、助手新增指令与平台到点标记；不新增 Persona 周报工具。版本 2 尚须按 ADR-0020 与基线及当天 main 对照，确认后更新基线，不能将用例已编写视为评测已通过。
 
 **旁听的分批。** 评测运行器按说话时间约每分钟提交一批（一批至多 100 段），每批的他人按第一次出现的顺序重新编号为 `other-1`、`other-2`：与真实的 HostApp 一样，`speaker_key` 只在一批之内有意义，用例中全天不变的 `key` 只用来区分同一批中的人。片段可另填 `speaker_ref`，经夹具原样交给 Persona，不随批内编号重编；`evals/capture-speaker-ref.yaml` 用同一引用跨批换键及另一位不同引用的人，检验回答合并与排除。
+
+**旁听元数据。** 内联 `captures` 与 `captures_file` 共用片段及低支持区间的严格字段校验，拒绝未知键；用例其他 YAML 结构仍沿用原解析方式。片段支持领域原名 `speaker_grade`（仅 wearer 的 evidence/timeline）、`disposition`（accept/quarantine）、`disposition_reason`、`background`、`low_support_spans`，`speaker` 与噪声版本的 `heard` 都接受 unknown。quarantine 的原因限 playback、suspected_replay、hallucination_disagreement；accept 不带原因，wearer 不能是 background。缺省等级、处置及关键种类不回填，线上新增字段全部可省略，旧提交内容与去重身份保持原样。
+
+```yaml
+captures:
+  - speaker: wearer
+    text: 王总，报价单周五发您。
+    low_support_spans: [{text: 周五, critical_kinds: [date]}]
+  - {speaker: wearer, speaker_grade: timeline, text: 我明天交清单。}
+  - {speaker: unknown, text: 我明天交预算。}
+  - {speaker: other, key: tv, text: 播放内容, disposition: quarantine, disposition_reason: playback}
+  - {speaker: other, key: neighbor, text: 邻座闲聊, background: true}
+```
+
+`low_support_spans` 的每项用唯一子串 `{text: 周五, critical_kinds: [date]}` 或显式 `{start: 6, end: 8, critical_kinds: [date]}` 定位，二者互斥。子串零匹配、多匹配（含重叠匹配）均在加载时报错；不修剪或规范化原文，换算为原始 Unicode rune 半开区间，再检查非空、边界、升序和不重叠。关键种类可为 person、date、number、negation、modality、correction、unknown 或 none，不得重复，none 只能独占；省略按领域的 unknown 解释。上例原话的“周五”对应 `[6, 8)`，线上只发送 start/end/critical_kinds。
+
+ASR 改了文字的片段不能同时标 `low_support_spans`，本轮不提供另一套噪声区间语法。`heard()` 改变说话人时，非 wearer 清掉等级，非 other 清掉键和实体引用；background 保留并重新按领域规则校验。无论是否启用 noise，加载时都校验 clean/noisy 两种结果；派生区间与关键种类深拷贝，避免 trial 共享。运行器完整提交隐藏片段，不预先过滤或重排引用；真实 Persona 的 MCP 可见性与匿名投影规则见 [xinli-captures.md §13](./xinli-captures.md#说话人三态处置档位与可信页)。
+
+新增 `capture-metadata-unverified`、`capture-metadata-reschedule-rejected`、`capture-metadata-close-rejected`、`capture-metadata-qualified-ref`、`capture-metadata-anonymous-speakers`，覆盖未核实回执、拒收后的恢复、合格引用选择与匿名个人信息隔离。每例都包含可靠事项的正向任务，优先使用账本、结果回执和 Memory 断言，最终状态评分只要求模型从投影后的原话与实际回执可知的信息。隐藏过滤、匿名键及全字段传输由真实夹具的确定性测试覆盖，不扩 gold、不改冻结 golden；真实模型评测与基线由远端验收后生成，不能把用例已编写视为通过。
 
 ### 单次调用用例
 

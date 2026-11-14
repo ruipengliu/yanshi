@@ -237,12 +237,24 @@ func (c *Client) Edit(ctx context.Context, bl, eu, id, status, due string) error
 
 // CaptureSegment 是夹具的线上输入，不依赖 Persona 的 Go 模块。
 type CaptureSegment struct {
-	Speaker    string `json:"speaker"`
-	SpeakerKey string `json:"speaker_key,omitempty"`
-	SpeakerRef string `json:"speaker_ref,omitempty"`
-	Text       string `json:"text"`
-	SpokenAt   string `json:"spoken_at,omitempty"`
-	TimeZone   string `json:"time_zone,omitempty"`
+	Speaker           string           `json:"speaker"`
+	SpeakerKey        string           `json:"speaker_key,omitempty"`
+	SpeakerRef        string           `json:"speaker_ref,omitempty"`
+	Text              string           `json:"text"`
+	SpokenAt          string           `json:"spoken_at,omitempty"`
+	TimeZone          string           `json:"time_zone,omitempty"`
+	SpeakerGrade      string           `json:"speaker_grade,omitempty"`
+	Disposition       string           `json:"disposition,omitempty"`
+	DispositionReason string           `json:"disposition_reason,omitempty"`
+	Background        bool             `json:"background,omitempty"`
+	LowSupportSpans   []LowSupportSpan `json:"low_support_spans,omitempty"`
+}
+
+// LowSupportSpan 镜像 Persona 的原始文字 rune 区间，不携带评测 YAML 的子串标注。
+type LowSupportSpan struct {
+	Start         int      `json:"start"`
+	End           int      `json:"end"`
+	CriticalKinds []string `json:"critical_kinds,omitempty"`
 }
 
 func (c *Client) AppendCaptures(ctx context.Context, bl, eu, date, captureID string, segments []CaptureSegment) ([]string, error) {

@@ -17,7 +17,6 @@ import (
 	"unicode/utf8"
 
 	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
@@ -728,15 +727,16 @@ type observation struct {
 	compacted bool // 到本轮结束时 Session 是否发生过上下文压缩
 	// compactions 是本轮的上下文压缩次数，takeovers 是本轮 Run 的接管次数。
 	compactions, takeovers int
-	tickets                []string            // CRM 中本 EndUser 的工单
-	xinli                  *xinlifixture.State // xinli MCP Server 中本 EndUser 的数据
-	topics                 map[string]string   // 旁听 Session 与业务日中的引用编号（"ses/57.3"）→ 那段旁听的主题
-	labels                 map[string]string   // 同上 → 那段旁听标的金标（CaptureSegment.Gold）
-	gold                   *goldBook           // 本轮之后金标的状态
-	goldDetail             string              // 金标指标的诊断（check 填写）
-	inTokens, cachedTokens uint64              // 本轮模型调用的输入 token 与其中命中前缀缓存的部分
-	callArgs               []string            // 与 calls 一一对应的调用参数
-	tasks                  []string            // Call 中派生的任务（run_task 的 task）
+	tickets                []string             // CRM 中本 EndUser 的工单
+	xinli                  *xinlifixture.State  // xinli MCP Server 中本 EndUser 的数据
+	topics                 map[string]string    // 旁听 Session 与业务日中的引用编号（"ses/57.3"）→ 那段旁听的主题
+	labels                 map[string]string    // 同上 → 那段旁听标的金标（CaptureSegment.Gold）
+	gold                   *goldBook            // 本轮之后金标的状态
+	goldDetail             string               // 金标指标的诊断（check 填写）
+	inTokens, cachedTokens uint64               // 本轮模型调用的输入 token 与其中命中前缀缓存的部分
+	callArgs               []string             // 与 calls 一一对应的调用参数
+	callResults            []observedCallResult // 完整结果另存，不能复用截断的评分过程。
+	tasks                  []string             // Call 中派生的任务（run_task 的 task）
 }
 
 // turn 提交一轮输入，按 approve 自动作出审批决定，等待 Run 结束并收集本轮的事件。
@@ -1263,18 +1263,28 @@ func inheritCaptureMarks(marks map[string]string, sid, day string, days map[stri
 
 // submitCaptures 向 Persona 提交原文，按说话时间分批并重编他人编号。
 func (in *instance) submitCaptures(ctx context.Context, sid, businessDay string, turn int, segs []CaptureSegment) ([]string, error) {
-	out := make([]*v1.CaptureSegment, 0, len(segs))
+	out := make([]xinlifixture.CaptureSegment, 0, len(segs))
 	for _, g := range segs {
-		seg := &v1.CaptureSegment{Speaker: v1.Speaker_SPEAKER_WEARER, SpeakerRef: g.SpeakerRef, Text: g.Text}
+		seg := xinlifixture.CaptureSegment{
+			Speaker: g.Speaker, SpeakerRef: g.SpeakerRef, Text: g.Text,
+			SpeakerGrade: g.SpeakerGrade, Disposition: g.Disposition, DispositionReason: g.DispositionReason, Background: g.Background,
+		}
+		if g.LowSupportSpans != nil {
+			seg.LowSupportSpans = make([]xinlifixture.LowSupportSpan, len(g.LowSupportSpans))
+			for i, span := range g.LowSupportSpans {
+				seg.LowSupportSpans[i] = xinlifixture.LowSupportSpan{Start: span.Start, End: span.End, CriticalKinds: slices.Clone(span.CriticalKinds)}
+			}
+		}
 		if g.At != "" {
 			at, err := captureTime(g.At)
 			if err != nil {
 				return nil, fmt.Errorf("capture at %q: %w", g.At, err)
 			}
-			seg.SpokenAt, seg.TimeZone = timestamppb.New(at), captureZone.String()
+			// 旧 proto 往返会规范为 UTC；沿用该线上值，避免同 ID 重交和旧用例内容漂移。
+			seg.SpokenAt, seg.TimeZone = at.UTC().Format(time.RFC3339Nano), captureZone.String()
 		}
 		if g.Speaker == "other" {
-			seg.Speaker, seg.SpeakerKey = v1.Speaker_SPEAKER_OTHER, g.Key
+			seg.SpeakerKey = g.Key
 			if seg.SpeakerKey == "" {
 				seg.SpeakerKey = "s1"
 			}
@@ -1295,17 +1305,7 @@ func (in *instance) submitCaptures(ctx context.Context, sid, businessDay string,
 	for i, batch := range captureBatches(out) {
 		// 同一轮的同一批重投递时沿用 ID，由业务日内的幂等检查拒绝内容漂移。
 		captureID := fmt.Sprintf("cap_%s_%d_%d", sid, turn, i)
-		segments := make([]xinlifixture.CaptureSegment, len(batch))
-		for i, g := range batch {
-			segments[i] = xinlifixture.CaptureSegment{Speaker: "wearer", Text: g.GetText(), SpeakerKey: g.GetSpeakerKey(), SpeakerRef: g.GetSpeakerRef(), TimeZone: g.GetTimeZone()}
-			if g.GetSpeaker() == v1.Speaker_SPEAKER_OTHER {
-				segments[i].Speaker = "other"
-			}
-			if g.GetSpokenAt() != nil {
-				segments[i].SpokenAt = g.GetSpokenAt().AsTime().Format(time.RFC3339Nano)
-			}
-		}
-		batchRefs, err := in.xinli.AppendCaptures(ctx, st.Created.GetBusinessLine(), st.Created.GetEndUser(), businessDay, captureID, segments)
+		batchRefs, err := in.xinli.AppendCaptures(ctx, st.Created.GetBusinessLine(), st.Created.GetEndUser(), businessDay, captureID, batch)
 		if err != nil {
 			return nil, err
 		}
@@ -1320,33 +1320,34 @@ func (in *instance) submitCaptures(ctx context.Context, sid, businessDay string,
 // captureBatches 把旁听按说话时间分批，与真实的 HostApp 一样约每分钟一批（一批至多 maxBatch 段；没有时间的只按段数），
 // 并把每批中的他人按第一次出现的顺序重新编号为 other-1、other-2……：speaker_key 只在一批之内有意义，
 // 用例中全天不变的 key 会掩盖跨批无法比较的问题（docs/review/2026-10-25-xinli-workday.md §8.1）。
-func captureBatches(segs []*v1.CaptureSegment) [][]*v1.CaptureSegment {
+func captureBatches(segs []xinlifixture.CaptureSegment) [][]xinlifixture.CaptureSegment {
 	const maxBatch = 100
-	var out [][]*v1.CaptureSegment
+	var out [][]xinlifixture.CaptureSegment
 	var start time.Time
 	for _, g := range segs {
-		at := g.GetSpokenAt().AsTime()
+		at, _ := time.Parse(time.RFC3339Nano, g.SpokenAt)
 		n := len(out)
-		if n == 0 || len(out[n-1]) >= maxBatch || (g.GetSpokenAt() != nil && !start.IsZero() && at.Sub(start) >= time.Minute) {
+		if n == 0 || len(out[n-1]) >= maxBatch || (g.SpokenAt != "" && !start.IsZero() && at.Sub(start) >= time.Minute) {
 			out = append(out, nil)
 			n++
 			start = time.Time{}
 		}
-		if start.IsZero() && g.GetSpokenAt() != nil {
+		if start.IsZero() && g.SpokenAt != "" {
 			start = at
 		}
 		out[n-1] = append(out[n-1], g)
 	}
 	for _, batch := range out {
 		keys := map[string]string{}
-		for _, g := range batch {
-			if g.GetSpeaker() != v1.Speaker_SPEAKER_OTHER {
+		for i := range batch {
+			g := &batch[i]
+			if g.Speaker != "other" {
 				continue
 			}
-			k, ok := keys[g.GetSpeakerKey()]
+			k, ok := keys[g.SpeakerKey]
 			if !ok {
 				k = fmt.Sprintf("other-%d", len(keys)+1)
-				keys[g.GetSpeakerKey()] = k
+				keys[g.SpeakerKey] = k
 			}
 			g.SpeakerKey = k
 		}
@@ -1409,7 +1410,12 @@ func (in *instance) attendChild(ctx context.Context, child string, turn Turn, ap
 
 // collect 从本轮的事件中收集调用、审批、回复与用量。
 func collect(events []*v1.Event, obs *observation) {
-	results := map[string]string{}
+	capabilities := map[string]string{}
+	for _, e := range events {
+		for _, tc := range e.GetAssistantMessage().GetToolCalls() {
+			capabilities[tc.GetCallId()] = tc.GetCapability()
+		}
+	}
 	for _, e := range events {
 		switch p := e.GetPayload().(type) {
 		case *v1.Event_AssistantMessage:
@@ -1445,7 +1451,7 @@ func collect(events []*v1.Event, obs *observation) {
 			if r.GetIsError() {
 				prefix = "错误"
 			}
-			results[r.GetCallId()] = prefix
+			obs.callResults = append(obs.callResults, observedCallResult{callID: r.GetCallId(), capability: capabilities[r.GetCallId()], text: model.Text(r.GetContent())})
 			obs.steps = append(obs.steps, fmt.Sprintf("%s %s", prefix, clip(model.Text(r.GetContent()), judgeStepBytes)))
 		case *v1.Event_ApprovalRequested:
 			obs.approvals++
@@ -1562,6 +1568,7 @@ func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation)
 	metrics := map[string]float64{}
 	e := t.Expect
 	checkSchedules(add, e, o)
+	checkCallResults(add, e.CallResults, o.callResults)
 	want := e.Status
 	if want == "" {
 		want = "completed"
@@ -1702,7 +1709,7 @@ func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation)
 	}
 	score := 0
 	if e.Judge != "" {
-		s, reason, err := judge(ctx, in.cfg.Model, in.cfg.Judge, e.Judge, o)
+		s, reason, err := judge(ctx, in.cfg.Model, in.cfg.Judge, e.Judge, o, t.JudgeState)
 		if err != nil {
 			out = append(out, Assertion{Turn: turn, Name: "judge", Detail: "judge error: " + err.Error(), Infra: true})
 		} else {

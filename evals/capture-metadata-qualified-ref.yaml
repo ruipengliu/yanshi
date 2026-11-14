@@ -1,0 +1,33 @@
+name: capture-metadata-qualified-ref
+description: >-
+  同一报价承诺先有日期低支持原话，再有唯一合格的佩戴者原话重申日期。
+  模型可直接选合格依据；若先收到未核实回执，应改用合格引用，最终只留一条已核实承诺，不能继续带上不可靠的上下文引用。
+agent: xinli-day
+setup:
+  xinli: {}
+turns:
+  - captures:
+      - speaker: wearer
+        text: 王总，报价单周五发您。
+        at: "2026-10-23 09:00"
+        low_support_spans: [{text: 周五, critical_kinds: [date]}]
+      - {speaker: wearer, speaker_grade: evidence, text: 再确认一下，王总，报价单是十月二十三日发您，就是本周五。, at: "2026-10-23 09:01"}
+    input: 整理今天
+    judge_state: true
+    expect:
+      calls: [mcp_xinli__captures, mcp_xinli__file_changes, mcp_xinli__file_day]
+      call_results:
+        - capability: mcp_xinli__file_changes
+          contains: 引用的原话里有识别不可靠的内容
+          count: {min: 0, max: 2}
+      xinli:
+        exchanges: {min: 1}
+        commitments: [{kind: mine, contains: 报价, status: open, due_date: "2026-10-23", verified: true}]
+        no_commitments: [{contains: 报价, verified: false}]
+        commitments_count: {min: 1, max: 1}
+      judge: >-
+        5 分：最终只有一条报价承诺，依据重申日期的原话核实为 10-23；若过程曾有点名不可靠引用的未核实回执，已去掉这些引用、改引可靠重申，并以最终成功结果整理纪要。
+        4 分：最终报价与日期正确且已核实，没有重复事项或无端放弃；允许直接选中合格原话而从未失败，不要求解释选择过程。
+        3 分：报价仍被表述为无法核实，或最终文字与已接受的账本不一致。
+        2 分：保留重复报价承诺或在回执提示后仍多次原样重试。
+        1 分：未整理报价或编造结果。只按可见原话、回执与最终状态评分，允许一次原样重试后纠正，不因这一次重试扣分；不要求模型识别未展示的低支持标记。

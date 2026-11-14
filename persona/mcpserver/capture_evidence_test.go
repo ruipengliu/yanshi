@@ -154,6 +154,11 @@ func TestCaptureCommitmentEvidence(t *testing.T) {
 						if want != "" {
 							contains(t, "unverified receipt", out, "未核实："+want, "不会按期限提醒")
 						}
+						if tc.unreliable {
+							contains(t, "unreliable reference", out, "\n  引用 #1.1 识别不可靠；", "改引那段、去掉这些引用后重交", "纪要、交谈摘要与每日总览不要把这些原话的内容写成已确认事实")
+						} else {
+							excludes(t, "unchanged speaker receipt", out, "识别不可靠；", "改引那段")
+						}
 					})
 				}
 			}
@@ -185,6 +190,7 @@ func TestCaptureCommitmentRevisionEvidence(t *testing.T) {
 					after := x.State("bl", "u")
 					if tc.kind == "" || tc.unreliable {
 						contains(t, "rejected revision", out, "变更集没有被接受", "引用的原话说话人不确定或识别不可靠，不能据此"+verb+"承诺")
+						contains(t, "rejected reference", out, "（引用：#1.1）", "这条"+verb+"不会生效", "纪要、交谈摘要与每日总览不要写成")
 						if !reflect.DeepEqual(before, after) {
 							t.Fatal("rejected revision changed ledger")
 						}
@@ -196,6 +202,58 @@ func TestCaptureCommitmentRevisionEvidence(t *testing.T) {
 					}
 				})
 			}
+		}
+	})
+}
+
+func TestCaptureCommitmentReceiptReferences(t *testing.T) {
+	eachEvidenceStore(t, func(t *testing.T, x *testServer) {
+		for _, op := range []string{"create", "revise", "postpone", "close"} {
+			t.Run(op, func(t *testing.T) {
+				bad := domain.CaptureSegment{Speaker: "wearer", Text: "甲🙂明天交稿", LowSupportSpans: []domain.LowSupportSpan{{Start: 1, End: 4}}}
+				good := bad.Clone()
+				good.LowSupportSpans[0].CriticalKinds = []string{"none"}
+				otherBad := bad.Clone()
+				otherBad.LowSupportSpans[0].CriticalKinds = []string{"date"}
+				cites := prepareEvidence(t, x, []domain.CaptureSegment{bad, good, otherBad})
+				cites = append(cites, Citation{Ref: "#01.0", Speaker: "wearer"})
+				refs := []string{"#1.2", "#1.1", "#01.0", "#1.2"}
+				if op == "create" {
+					out := invoke(x, "day", "file_changes", evidenceCreate("mine", refs...), cites...)
+					want := "\n  引用 #1.2、#01.0 识别不可靠；同一时段如有可靠原话支撑，改引那段、去掉这些引用后重交；没有就保留这条未核实承诺，不要删掉。纪要、交谈摘要与每日总览不要把这些原话的内容写成已确认事实。\n"
+					contains(t, "only unreliable references", out, want)
+					st := x.State("bl", "u")
+					if len(st.Commitments) != 1 || st.Commitments[0].Unverified != "引用的原话里有识别不可靠的内容" || len(st.Reminders()) != 0 {
+						t.Fatal("receipt changed stored verification")
+					}
+					out = invoke(x, "day", "file_changes", evidenceCreate("mine", "#1.1"), cites...)
+					contains(t, "reliable replacement", out, "已核实")
+					st = x.State("bl", "u")
+					if len(st.Commitments) != 1 || st.Commitments[0].Unverified != "" || len(st.Reminders()) != 1 {
+						t.Fatal("reliable replacement did not verify commitment")
+					}
+					excludes(t, "corrected receipt", out, "识别不可靠", "改引那段")
+					return
+				}
+				x.Seed("bl", "u", SeedData{Commitments: []SeedCommitment{{ID: "C-0001", Kind: "mine", Content: "交初稿", DueDate: "2026-10-29"}}})
+				before := x.State("bl", "u")
+				change := M{"id": "C-0001", "rev": 1, "refs": refs}
+				key, verb, effect := "revise", "修订", "已修订或已改期"
+				switch op {
+				case "revise":
+					change["content"] = "交终稿"
+				case "postpone":
+					change["due_date"] = "2026-10-30"
+				case "close":
+					key, verb, effect = "close", "关闭", "已完成或已取消"
+					change["status"] = "done"
+				}
+				out := invoke(x, "day", "file_changes", changes(M{"day": true}, nil, M{key: []M{change}}), cites...)
+				contains(t, "only rejected references", out, "不能据此"+verb+"承诺（引用：#1.2、#01.0）。这条"+verb+"不会生效；纪要、交谈摘要与每日总览不要写成"+effect+"。")
+				if !reflect.DeepEqual(before, x.State("bl", "u")) {
+					t.Fatal("rejected change affected ledger")
+				}
+			})
 		}
 	})
 }

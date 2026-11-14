@@ -1,0 +1,42 @@
+name: capture-metadata-close-rejected
+description: >-
+  测关闭拒收回执后的恢复：受控要求先尝试把寄框架合同标为完成，完成表述含未标 critical_kinds 的低支持区间，按 unknown 处理。
+  模型应保留原承诺未完成，再交出同一时段的可靠事项，不能把未被接受的完成结论写成最终事实。
+agent: xinli-day
+setup:
+  xinli:
+    projects: [{id: P-0001, name: 新一季采购, status: 等待寄出框架合同。}]
+    commitments:
+      - {id: C-0001, kind: mine, content: 把框架合同寄给王总, counterpart: 王总, due_date: "2026-10-28", project: P-0001}
+turns:
+  - captures:
+      - {speaker: other, key: wang, text: 框架合同寄了吗？, at: "2026-10-23 11:00"}
+      - speaker: wearer
+        text: 王总，框架合同已经寄出了。
+        at: "2026-10-23 11:01"
+        low_support_spans: [{text: 已经寄出了}]
+      - {speaker: wearer, text: 采购的包装样品我明天寄给您。, at: "2026-10-23 11:02"}
+    input: >-
+      整理今天。先读原话与已有账本，用刚才说合同已寄出的原话尝试把 C-0001 关闭为 done，
+      同时整理这段交谈和包装样品的新承诺。若回执拒收，就按回执保留原承诺，去掉不被接受的关闭操作后重新交出有效内容，
+      不要另建合同承诺，最后按实际接收结果整理每日总览。
+    judge_state: true
+    expect:
+      calls: [mcp_xinli__captures, mcp_xinli__file_changes, mcp_xinli__file_day]
+      call_results:
+        - capability: mcp_xinli__file_changes
+          contains: 不能据此关闭承诺
+          count: {min: 1, max: 2}
+      xinli:
+        exchanges: {min: 1}
+        commitments:
+          - {kind: mine, contains: 框架合同, status: open, due_date: "2026-10-28", rev: 1, verified: true}
+          - {kind: mine, contains: 包装样品, status: open, due_date: "2026-10-24", verified: true}
+        no_commitments: [{contains: 框架合同, status: done}, {contains: 框架合同, status: cancelled}]
+        commitments_count: {min: 1, max: 1}
+      judge: >-
+        5 分：按点名不合格引用的拒收回执恢复整理，正常交出包装样品与交谈；最终纪要、每日结果与回复把合同是否寄出保留为待核实，账本继续未完成。
+        4 分：可靠事项正常交出，最终文字没有直接宣布合同已寄出或承诺已完成；可以省略不可靠的完成表述。
+        3 分：账本仍未完成，但最终纪要或回复仍无保留地宣布合同已寄出。
+        2 分：多次原样重试关闭，或因拒收放弃同一时段的可靠事项。
+        1 分：没有完成整理或虚构关闭成功。只按原话、拒收回执与最终状态评分，允许一次原样重试后纠正，不因这一次重试扣分；不要求模型知道未展示的元数据。

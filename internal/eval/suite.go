@@ -188,12 +188,17 @@ type CommitmentMatch struct {
 	Rev int `yaml:"rev"`
 }
 
-// CaptureSegment 是一段旁听转写：Speaker 为 wearer（佩戴者）或 other（他人，Key 区分不同的人）。
+// CaptureSegment 是一段旁听转写；业务侧元数据不经过内核 proto，以免丢失身份与核对依据。
 type CaptureSegment struct {
-	Speaker    string `yaml:"speaker"`
-	Key        string `yaml:"key"`
-	SpeakerRef string `yaml:"speaker_ref"`
-	Text       string `yaml:"text"`
+	Speaker           string                  `yaml:"speaker"`
+	Key               string                  `yaml:"key"`
+	SpeakerRef        string                  `yaml:"speaker_ref"`
+	Text              string                  `yaml:"text"`
+	SpeakerGrade      string                  `yaml:"speaker_grade"`
+	Disposition       string                  `yaml:"disposition"`
+	DispositionReason string                  `yaml:"disposition_reason"`
+	Background        bool                    `yaml:"background"`
+	LowSupportSpans   []CaptureLowSupportSpan `yaml:"low_support_spans"`
 	// At 是说这段话的当地时间（"2026-10-23 09:42"，Asia/Shanghai），或相对于提交时刻的 "now-15m"；为空时不带时间，
 	// 整理时也不显示。
 	At string `yaml:"at"`
@@ -210,6 +215,11 @@ type CaptureSegment struct {
 
 // heard 返回识别有误的版本。
 func (g CaptureSegment) heard() CaptureSegment {
+	speakerChanged := g.Heard != "" && g.Heard != g.Speaker
+	g.LowSupportSpans = slices.Clone(g.LowSupportSpans)
+	for i := range g.LowSupportSpans {
+		g.LowSupportSpans[i].CriticalKinds = slices.Clone(g.LowSupportSpans[i].CriticalKinds)
+	}
 	if g.ASR != "" {
 		g.Text = g.ASR
 	}
@@ -218,6 +228,14 @@ func (g CaptureSegment) heard() CaptureSegment {
 	}
 	if g.HeardKey != "" {
 		g.Key = g.HeardKey
+	}
+	if speakerChanged {
+		if g.Speaker != "wearer" {
+			g.SpeakerGrade = ""
+		}
+		if g.Speaker != "other" {
+			g.Key, g.SpeakerRef = "", ""
+		}
 	}
 	return g
 }
@@ -276,6 +294,8 @@ type Turn struct {
 	Captures []CaptureSegment `yaml:"captures"`
 	// CapturesFile 是用例目录下的数据文件（YAML 的旁听列表，格式同 captures），追加在 Captures 之后：长的一天不写在用例里。
 	CapturesFile string `yaml:"captures_file"`
+	// JudgeState 只为本轮评分附加最终业务快照，旧用例的评分输入保持原样。
+	JudgeState bool `yaml:"judge_state"`
 	// XinliEdit 是本轮旁听与输入之前用户在 App 中对承诺的改动（按金标 ID 找到对应的承诺）。
 	XinliEdit []GoldEdit `yaml:"xinli_edit"`
 	Expect    Expect     `yaml:"expect"`
@@ -338,6 +358,13 @@ type CallMatch struct {
 	Contains   []string `yaml:"contains"`
 }
 
+// CallResultMatch 按调用名称与完整结果文本计数，避免评分摘要的截断掩盖拒收回执。
+type CallResultMatch struct {
+	Capability string `yaml:"capability"`
+	Contains   string `yaml:"contains"`
+	Count      *Range `yaml:"count"`
+}
+
 // ScheduleExpect 只检查投影中仍有 NextDue 的定时。
 type ScheduleExpect struct {
 	Active        *Range   `yaml:"active"`
@@ -349,8 +376,9 @@ type ScheduleExpect struct {
 type Expect struct {
 	OutputSchemaValid *bool `yaml:"output_schema_valid"`
 	// CallSequence 按顺序匹配不同调用，允许其间有其他调用。
-	CallSequence []CallMatch     `yaml:"call_sequence"`
-	Schedules    *ScheduleExpect `yaml:"schedules"`
+	CallSequence []CallMatch       `yaml:"call_sequence"`
+	CallResults  []CallResultMatch `yaml:"call_results"`
+	Schedules    *ScheduleExpect   `yaml:"schedules"`
 	// Status 是本轮结束时 Run 的状态，可用 "|" 列出多个可接受的值，如 "completed|asked"
 	// （asked：停在 ask_user 提问处等待回答）。默认 completed。
 	Status  string   `yaml:"status"`
@@ -442,6 +470,11 @@ func LoadSuite(dir string) ([]*Case, error) {
 		}
 		labelled := map[string]bool{}
 		for i, t := range c.Turns {
+			for j, want := range t.Expect.CallResults {
+				if err := validateCallResultMatch(want); err != nil {
+					return nil, fmt.Errorf("%s: turn %d: call_results %d: %w", f, i+1, j+1, err)
+				}
+			}
 			if t.Redo && (i == 0 || t.inputPresent || t.Input != "" || t.Scheduled || t.AdvanceToNextSchedule || t.AwaitBackground || t.CardAction != nil || t.UIContext != nil || t.FromDevice != "" || t.NewSession || len(t.Captures) > 0 || t.CapturesFile != "" || len(t.XinliEdit) > 0 || c.Call) {
 				return nil, fmt.Errorf("%s: turn %d redo requires a previous turn and cannot also submit input or start a session", f, i+1)
 			}
@@ -469,12 +502,9 @@ func LoadSuite(dir string) ([]*Case, error) {
 				c.Turns[i].Captures = append(c.Turns[i].Captures, more...)
 				t = c.Turns[i]
 			}
-			for _, g := range t.Captures {
-				if g.Speaker != "wearer" && g.Speaker != "other" {
-					return nil, fmt.Errorf("%s: turn %d: capture speaker %q must be wearer or other", f, i+1, g.Speaker)
-				}
-				if g.Heard != "" && g.Heard != "wearer" && g.Heard != "other" {
-					return nil, fmt.Errorf("%s: turn %d: capture heard %q must be wearer or other", f, i+1, g.Heard)
+			for j, g := range t.Captures {
+				if err := validateCapture(g); err != nil {
+					return nil, fmt.Errorf("%s: turn %d: capture %d: %w", f, i+1, j+1, err)
 				}
 				for _, id := range strings.Fields(g.Gold) {
 					if c.gold == nil || !slices.ContainsFunc(c.gold.Commitments, func(m GoldCommitment) bool { return m.ID == id }) {

@@ -1,0 +1,38 @@
+name: capture-metadata-unverified
+description: >-
+  新建报价承诺的日期含关键低支持区间，回执应标为未核实；样板承诺只有语气词低支持，仍可核实。
+  检验模型按回执保留未核实语义并正常交出可靠事项，不反复原样提交，也不把所有承诺都丢掉。
+agent: xinli-day
+setup:
+  xinli: {}
+turns:
+  - captures:
+      - {speaker: other, key: wang, text: 林总，报价单和样板分别什么时候给我？, at: "2026-10-22 09:00"}
+      - speaker: wearer
+        text: 王总，报价单周五发您。
+        at: "2026-10-22 09:01"
+        low_support_spans: [{text: 周五, critical_kinds: [date]}]
+      - speaker: wearer
+        text: 样板明天寄您啊。
+        at: "2026-10-22 09:02"
+        low_support_spans: [{text: 啊, critical_kinds: [none]}]
+    input: 整理今天
+    judge_state: true
+    expect:
+      calls: [mcp_xinli__captures, mcp_xinli__file_changes, mcp_xinli__file_day]
+      call_results:
+        - capability: mcp_xinli__file_changes
+          contains: 引用的原话里有识别不可靠的内容
+          count: {min: 1, max: 2}
+      xinli:
+        exchanges: {min: 1}
+        commitments:
+          - {kind: mine, contains: 报价, status: open, due_date: "2026-10-23", verified: false}
+          - {kind: mine, contains: 样板, status: open, due_date: "2026-10-23", verified: true}
+        commitments_count: {min: 2, max: 2}
+      judge: >-
+        5 分：按点名不可靠引用的回执保留报价承诺（未核实），正常整理样板承诺；最终交谈、每日结果与回复提及报价期限时明确仍待核实，未宣称已经核实或会按该日期提醒。
+        4 分：报价承诺保留为未核实、样板正常整理，回复与最终文字没有宣称报价已核实或会按期提醒；纪要照原话写了“周五发报价单”但没有标注待核实，也算 4 分。
+        3 分：删掉了报价承诺，或回复/纪要宣称报价期限已核实。
+        2 分：忽略未核实回执、反复原样重交，或连可靠的样板也放弃整理。
+        1 分：没有完成整理或编造已核实、已安排提醒等结果。只按可见原话、回执与最终状态评分，允许一次原样重试后纠正，不因这一次重试扣分；不要求识别任何未展示的元数据。

@@ -6,33 +6,46 @@ import (
 	"testing"
 	"time"
 
-	"google.golang.org/protobuf/types/known/timestamppb"
-
-	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/eval/xinlifixture"
 )
 
 // 旁听按说话时间约每分钟一批，每批的他人按第一次出现的顺序重新编号：同一个人跨批换了编号，与真实的 HostApp 一样。
 func TestCaptureBatches(t *testing.T) {
 	base := time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)
-	seg := func(sec int, key string) *v1.CaptureSegment {
-		g := &v1.CaptureSegment{Speaker: v1.Speaker_SPEAKER_WEARER, SpokenAt: timestamppb.New(base.Add(time.Duration(sec) * time.Second))}
+	seg := func(sec int, key string) xinlifixture.CaptureSegment {
+		g := xinlifixture.CaptureSegment{Speaker: "wearer", SpokenAt: base.Add(time.Duration(sec) * time.Second).Format(time.RFC3339Nano)}
 		if key != "" {
-			g.Speaker, g.SpeakerKey = v1.Speaker_SPEAKER_OTHER, key
+			g.Speaker, g.SpeakerKey = "other", key
 		}
 		return g
 	}
-	batches := captureBatches([]*v1.CaptureSegment{seg(0, "li"), seg(10, ""), seg(30, "wang"), seg(59, "li"), seg(60, "wang"), seg(200, "li")})
+	batches := captureBatches([]xinlifixture.CaptureSegment{seg(0, "li"), seg(10, ""), seg(30, "wang"), seg(59, "li"), seg(60, "wang"), seg(200, "li")})
 	var got []string
 	for _, b := range batches {
 		var keys []string
 		for _, g := range b {
-			keys = append(keys, g.GetSpeakerKey())
+			keys = append(keys, g.SpeakerKey)
 		}
 		got = append(got, strings.Join(keys, ","))
 	}
 	if want := []string{"other-1,,other-2,other-1", "other-1", "other-1"}; fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("batches = %q, want %q", got, want)
+	}
+	// 无时间只按 100 段切分；unknown 与 timeline 不参与 other 编号，也不在此过滤隐藏片段。
+	untimed := make([]xinlifixture.CaptureSegment, 103)
+	for i := range untimed {
+		untimed[i] = xinlifixture.CaptureSegment{Speaker: "other", SpeakerKey: "li", Text: "原话"}
+	}
+	untimed[0] = xinlifixture.CaptureSegment{Speaker: "unknown", Text: "不确定"}
+	untimed[1] = xinlifixture.CaptureSegment{Speaker: "wearer", SpeakerGrade: "timeline", Text: "时间线"}
+	untimed[2].Disposition, untimed[2].DispositionReason = "quarantine", "playback"
+	untimed[100].SpeakerKey, untimed[100].SpeakerRef = "wang", "P-wang"
+	parts := captureBatches(untimed)
+	if len(parts) != 2 || len(parts[0]) != 100 || len(parts[1]) != 3 || parts[0][2].SpeakerKey != "other-1" || parts[1][0].SpeakerKey != "other-1" || parts[1][1].SpeakerKey != "other-2" || parts[1][0].SpeakerRef != "P-wang" {
+		t.Fatalf("untimed batches = %+v", parts)
+	}
+	if untimed[2].SpeakerKey != "li" || parts[0][0].Speaker != "unknown" || parts[0][1].SpeakerGrade != "timeline" || parts[0][2].Disposition != "quarantine" {
+		t.Fatal("batching changed source data or capture metadata")
 	}
 }
 

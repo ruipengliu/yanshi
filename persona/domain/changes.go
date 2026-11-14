@@ -356,15 +356,25 @@ func (k *review) change(in changeIn, closing bool, inProject string) (Commitment
 	if k.author != AuthorProject {
 		date, _ = k.c.u.boundDay(k.c.session)
 	}
+	var invalid []string
 	for _, ref := range in.Refs {
 		g, found := k.c.captureRef(date, ref)
 		if k.c.err != nil {
 			return out, false
 		}
 		if found && (!g.commitmentEvidence() || g.criticalLowSupport()) {
-			k.fail("%s：引用的原话说话人不确定或识别不可靠，不能据此%s承诺", what, verb)
-			return out, false
+			if !slices.Contains(invalid, ref) {
+				invalid = append(invalid, ref)
+			}
 		}
+	}
+	if len(invalid) > 0 {
+		effect := "已修订或已改期"
+		if closing {
+			effect = "已完成或已取消"
+		}
+		k.fail("%s：引用的原话说话人不确定或识别不可靠，不能据此%s承诺（引用：%s）。这条%s不会生效；纪要、交谈摘要与每日总览不要写成%s。", what, verb, strings.Join(invalid, "、"), verb, effect)
+		return out, false
 	}
 	locked := func(f string) bool {
 		if slices.Contains(m.Locked, f) {
@@ -807,12 +817,15 @@ func (u *Book) commit(cs *Changeset, old int, news []string) {
 			cs.MergeExchanges[i].Projects[j].Project = resolve(cs.MergeExchanges[i].Projects[j].Project)
 		}
 	}
+	reserved := map[string]bool{}
+	for _, m := range cs.CreateCommitments {
+		reserved[m.ID] = true
+	}
 	for i := range cs.CreateCommitments {
 		m := &cs.CreateCommitments[i]
 		m.Project = resolve(m.Project)
 		if m.ID == "" || strings.HasPrefix(m.ID, "#") {
-			u.nextC++
-			m.ID = fmt.Sprintf("C-%04d", u.nextC)
+			m.ID = u.newCommitmentID(reserved)
 		}
 	}
 	u.nextCS++
@@ -858,6 +871,22 @@ func (c *Call) receipt(cs *Changeset, notes []string) string {
 			state = "未核实：" + m.Unverified + "，不会按期限提醒"
 		}
 		fmt.Fprintf(&b, "- 承诺 %s（%s）%s\n", m.ID, state, commitmentText(&m))
+		if m.Unverified == unreliableEvidence {
+			var refs []string
+			date, _ := u.boundDay(c.session)
+			for _, ref := range m.Refs {
+				g, found := c.captureRef(date, ref)
+				if c.err != nil {
+					return ""
+				}
+				if found && g.criticalLowSupport() && !slices.Contains(refs, ref) {
+					refs = append(refs, ref)
+				}
+			}
+			if len(refs) > 0 {
+				fmt.Fprintf(&b, "  引用 %s 识别不可靠；同一时段如有可靠原话支撑，改引那段、去掉这些引用后重交；没有就保留这条未核实承诺，不要删掉。纪要、交谈摘要与每日总览不要把这些原话的内容写成已确认事实。\n", strings.Join(refs, "、"))
+			}
+		}
 	}
 	for _, ch := range cs.ReviseCommitments {
 		if m := u.commitment(ch.ID); m != nil {

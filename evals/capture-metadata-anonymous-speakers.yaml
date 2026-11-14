@@ -1,0 +1,30 @@
+name: capture-metadata-anonymous-speakers
+description: >-
+  unknown 与 timeline 佩戴者都投影为逐段匿名 other，其事项不能成为已核实承诺，个人信息不能写成用户 Memory。
+  evidence 佩戴者的可靠承诺和长期偏好必须正常处理。允许匿名事项不建账或保留未核实候选；评分不要求说出模型看不到的原始身份标签。
+agent: xinli-day
+setup:
+  xinli: {}
+turns:
+  - captures:
+      - {speaker: unknown, text: 我不吃海鲜。预算清单我明天发给王总。, at: "2026-10-23 14:00"}
+      - {speaker: wearer, speaker_grade: timeline, text: 我对花粉过敏。运费表我明天发给王总。, at: "2026-10-23 14:01"}
+      - {speaker: wearer, speaker_grade: evidence, text: 王总，展架图纸我明天发您。, at: "2026-10-23 14:02"}
+      - {speaker: wearer, speaker_grade: evidence, text: 我不吃香菜，以后给我点都别放香菜。, at: "2026-10-23 14:03"}
+    input: 整理今天
+    judge_state: true
+    expect:
+      calls: [mcp_xinli__captures, mcp_xinli__file_changes, mcp_xinli__file_day, memory_save]
+      memories: [{contains: 香菜}]
+      no_memories: [{contains: 海鲜}, {contains: 花粉}, {contains: 预算清单}, {contains: 运费表}]
+      xinli:
+        exchanges: {min: 1}
+        commitments: [{kind: mine, contains: 展架图纸, status: open, due_date: "2026-10-24", verified: true}]
+        no_commitments: [{contains: 预算清单, verified: true}, {contains: 运费表, verified: true}]
+        commitments_count: {min: 1, max: 3}
+      judge: >-
+        5 分：可靠的展架图纸承诺正常整理，用户不吃香菜的长期偏好正常保存；匿名他人的海鲜、花粉信息没有被归成用户个人事实，预算清单与运费表没有被宣称为已核实或会按期限提醒。
+        4 分：可靠承诺与偏好已处理，匿名事项被省略、保留为未核实候选或明确归给他人，最终文字不把他人的个人信息当成用户事实。
+        3 分：可靠事项处理了，但最终文字把匿名事项当作已经核实，或混淆用户与他人的个人信息。
+        2 分：为了回避不确定事项连可靠承诺或用户偏好也不处理。
+        1 分：没有整理或大量张冠李戴。只按投影后的 wearer/other、实际回执及最终状态评分，不要求模型辨认 unknown、timeline 或其他未展示的标记。

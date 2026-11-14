@@ -98,6 +98,9 @@ const (
 	relatedTopic = 0.15
 )
 
+// unreliableEvidence 是因关键低支持区间而未核实的原因；回执据此点名不可靠的引用。
+const unreliableEvidence = "引用的原话里有识别不可靠的内容"
+
 // verify 保留平台引用资格，并用事务内原片段核对，不能把可信页匿名投影的 other 当作对方。
 func (c *Call) verify(kind string, refs []string) string {
 	want, who := "wearer", "用户本人"
@@ -121,7 +124,7 @@ func (c *Call) verify(kind string, refs []string) string {
 		}
 	}
 	if unreliable {
-		return "引用的原话里有识别不可靠的内容"
+		return unreliableEvidence
 	}
 	if qualified {
 		return ""
@@ -497,6 +500,18 @@ type SeedExchange struct {
 // seedDays 是预置的按日期摘要所在的（虚构的）Session。
 const seedDays = "seed_days"
 
+// newCommitmentID 不因高位预置跳号；本次尚未叠加的创建项也须预留，避免与显式 ID 或同批分配碰撞。
+func (u *Book) newCommitmentID(reserved map[string]bool) string {
+	for {
+		u.nextC++
+		id := fmt.Sprintf("C-%04d", u.nextC)
+		if u.commitment(id) == nil && !reserved[id] {
+			reserved[id] = true
+			return id
+		}
+	}
+}
+
 // Seed 为业务线中的 endUser 预置数据：交谈与承诺记为一个预置的变更集。
 func (u *Book) Seed(d SeedData, now time.Time) {
 	u.projects = append(u.projects, d.Projects...)
@@ -520,11 +535,14 @@ func (u *Book) Seed(d SeedData, now time.Time) {
 		cs.CreateExchanges = append(cs.CreateExchanges, ex)
 	}
 	d.Commitments = slices.Clone(d.Commitments)
+	reserved := map[string]bool{}
+	for _, m := range d.Commitments {
+		reserved[m.ID] = true
+	}
 	for i := range d.Commitments {
 		m := &d.Commitments[i]
 		if m.ID == "" {
-			u.nextC++
-			m.ID = fmt.Sprintf("C-%04d", u.nextC)
+			m.ID = u.newCommitmentID(reserved)
 		}
 		cs.CreateCommitments = append(cs.CreateCommitments, Commitment{ID: m.ID, Kind: m.Kind, Content: m.Content, Counterpart: m.Counterpart,
 			DueDate: m.DueDate, DueText: m.DueText, Project: m.Project, Status: m.Status, SpokenAt: m.SpokenAt, Refs: m.Refs, Unverified: m.Unverified})

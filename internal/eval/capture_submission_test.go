@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -73,6 +74,16 @@ func TestCaptureSubmissionPathsAndReferences(t *testing.T) {
 	retry, err := in.submitCaptures(ctx, sid, day, 1, segs)
 	if err != nil || !reflect.DeepEqual(retry, refs) {
 		t.Fatalf("retry references = %v, %v", retry, err)
+	}
+	legacyBatches := [][]xinlifixture.CaptureSegment{
+		{{Speaker: "other", SpeakerKey: "other-1", Text: "先确认。", SpokenAt: "2026-10-23T15:59:00Z", TimeZone: "Asia/Shanghai"}},
+		{{Speaker: "wearer", Text: "我来办。", SpokenAt: "2026-10-23T16:01:00Z", TimeZone: "Asia/Shanghai"}},
+	}
+	for i, batch := range legacyBatches {
+		got, err := in.xinli.AppendCaptures(ctx, BusinessLine, "submission", day, fmt.Sprintf("cap_%s_1_%d", sid, i), batch)
+		if err != nil || !reflect.DeepEqual(got, refs[i:i+1]) {
+			t.Fatalf("legacy wire batch %d = %v, %v", i, got, err)
+		}
 	}
 	events, err := eventlog.ReadAll(ctx, in.svc.Store.Log, sid, 0)
 	if err != nil {
@@ -149,6 +160,58 @@ func TestCaptureSubmissionPathsAndReferences(t *testing.T) {
 	run(file)
 	if got, err := in.xinli.CapturePosition(ctx, BusinessLine, "submission", nextSID); err != nil || got != to {
 		t.Fatalf("actual read did not authorize processing: position=%q, err=%v; want %q", got, err, to)
+	}
+	// 同 ID 用手写的线上值重交，确保 runner 没有丢字段、回填缺省值或过滤隐藏片段。
+	metadata := []CaptureSegment{
+		{Speaker: "wearer", SpeakerGrade: "timeline", Text: "明天🙂发报价。", At: "2026-10-25 10:00", LowSupportSpans: []CaptureLowSupportSpan{{Start: 0, End: 2, CriticalKinds: []string{"date"}}, {Start: 2, End: 3, CriticalKinds: []string{"none"}}}},
+		{Speaker: "other", Key: "wang", SpeakerRef: "P-0012", Text: "背景中的原话", At: "2026-10-25 10:00", Disposition: "quarantine", DispositionReason: "playback", Background: true, LowSupportSpans: []CaptureLowSupportSpan{{Start: 0, End: 2, CriticalKinds: []string{"person", "number"}}}},
+		{Speaker: "unknown", Text: "身份不明", At: "2026-10-25 10:00"},
+		{Speaker: "wearer", SpeakerGrade: "evidence", Text: "明确的原话", At: "2026-10-25 10:00", Disposition: "accept"},
+	}
+	metadataRefs, err := in.submitCaptures(ctx, nextSID, day, 4, metadata)
+	if err != nil || !reflect.DeepEqual(metadataRefs, []string{"5.0", "5.1", "5.2", "5.3"}) {
+		t.Fatalf("metadata references = %v, %v", metadataRefs, err)
+	}
+	wire := []xinlifixture.CaptureSegment{
+		{Speaker: "wearer", SpeakerGrade: "timeline", Text: "明天🙂发报价。", SpokenAt: "2026-10-25T02:00:00Z", TimeZone: "Asia/Shanghai", LowSupportSpans: []xinlifixture.LowSupportSpan{{Start: 0, End: 2, CriticalKinds: []string{"date"}}, {Start: 2, End: 3, CriticalKinds: []string{"none"}}}},
+		{Speaker: "other", SpeakerKey: "other-1", SpeakerRef: "P-0012", Text: "背景中的原话", SpokenAt: "2026-10-25T02:00:00Z", TimeZone: "Asia/Shanghai", Disposition: "quarantine", DispositionReason: "playback", Background: true, LowSupportSpans: []xinlifixture.LowSupportSpan{{Start: 0, End: 2, CriticalKinds: []string{"person", "number"}}}},
+		{Speaker: "unknown", Text: "身份不明", SpokenAt: "2026-10-25T02:00:00Z", TimeZone: "Asia/Shanghai"},
+		{Speaker: "wearer", SpeakerGrade: "evidence", Text: "明确的原话", SpokenAt: "2026-10-25T02:00:00Z", TimeZone: "Asia/Shanghai", Disposition: "accept"},
+	}
+	captureID := fmt.Sprintf("cap_%s_4_0", nextSID)
+	if got, err := in.xinli.AppendCaptures(ctx, BusinessLine, "submission", day, captureID, wire); err != nil || !reflect.DeepEqual(got, metadataRefs) {
+		t.Fatalf("metadata round trip = %v, %v", got, err)
+	}
+	for _, change := range []struct {
+		name   string
+		mutate func([]xinlifixture.CaptureSegment)
+	}{
+		{"speaker", func(gs []xinlifixture.CaptureSegment) { gs[2].Speaker = "wearer" }},
+		{"grade", func(gs []xinlifixture.CaptureSegment) { gs[0].SpeakerGrade = "evidence" }},
+		{"disposition", func(gs []xinlifixture.CaptureSegment) { gs[3].Disposition = "" }},
+		{"reason", func(gs []xinlifixture.CaptureSegment) { gs[1].DispositionReason = "suspected_replay" }},
+		{"background", func(gs []xinlifixture.CaptureSegment) { gs[1].Background = false }},
+		{"start", func(gs []xinlifixture.CaptureSegment) { gs[1].LowSupportSpans[0].Start = 1 }},
+		{"end", func(gs []xinlifixture.CaptureSegment) { gs[1].LowSupportSpans[0].End = 3 }},
+		{"kinds", func(gs []xinlifixture.CaptureSegment) { gs[1].LowSupportSpans[0].CriticalKinds[0] = "date" }},
+		{"spans", func(gs []xinlifixture.CaptureSegment) { gs[1].LowSupportSpans = nil }},
+	} {
+		t.Run("metadata identity/"+change.name, func(t *testing.T) {
+			changed := slices.Clone(wire)
+			for i := range changed {
+				changed[i].LowSupportSpans = slices.Clone(changed[i].LowSupportSpans)
+				for j := range changed[i].LowSupportSpans {
+					changed[i].LowSupportSpans[j].CriticalKinds = slices.Clone(changed[i].LowSupportSpans[j].CriticalKinds)
+				}
+			}
+			change.mutate(changed)
+			if _, err := in.xinli.AppendCaptures(ctx, BusinessLine, "submission", day, captureID, changed); err == nil {
+				t.Fatal("Persona accepted changed metadata under the same capture_id")
+			}
+		})
+	}
+	if got, err := in.submitCaptures(ctx, nextSID, day, 4, metadata); err != nil || !reflect.DeepEqual(got, metadataRefs) {
+		t.Fatalf("metadata retry = %v, %v", got, err)
 	}
 }
 

@@ -119,7 +119,7 @@ func TestOneshotCaseRejectsSessionFields(t *testing.T) {
 			t.Fatal("accepted", extra)
 		}
 	}
-	for _, extra := range []string{"new_session: true", "captures: [{speaker: wearer, text: hi}]", "expect: {calls: [clock_now]}"} {
+	for _, extra := range []string{"new_session: true", "captures: [{speaker: wearer, text: hi}]", "expect: {calls: [clock_now]}", "judge_state: true", "expect: {call_results: [{capability: x, contains: y}]}"} {
 		dir := t.TempDir()
 		writeCase(t, dir, "bad", "name: bad\noneshot: brief\nturns:\n  - input: hi\n    "+extra+"\n")
 		if _, err := LoadSuite(dir); err == nil {

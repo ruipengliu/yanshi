@@ -1,0 +1,42 @@
+name: capture-metadata-reschedule-rejected
+description: >-
+  测改期拒收回执后的恢复：受控要求先尝试把验收从 10-28 改至 10-29，日期含关键低支持，业务侧拒收整个变更集。
+  模型应保留原承诺，再交出同一时段内可靠的新承诺与交谈，不另建验收替代项。
+agent: xinli-day
+setup:
+  xinli:
+    projects: [{id: P-0001, name: 展厅验收, status: 等待十月二十八日提交验收资料。}]
+    commitments:
+      - {id: C-0001, kind: mine, content: 把验收资料发给王总, counterpart: 王总, due_date: "2026-10-28", project: P-0001}
+turns:
+  - captures:
+      - {speaker: other, key: wang, text: 验收资料还是十月二十八日发我吗？, at: "2026-10-23 10:00"}
+      - speaker: wearer
+        text: 王总，验收资料改到十月二十九日发您。
+        at: "2026-10-23 10:01"
+        low_support_spans: [{text: 十月二十九日, critical_kinds: [date]}]
+      - {speaker: wearer, text: 展厅的灯具清单我明天发您。, at: "2026-10-23 10:02"}
+    input: >-
+      整理今天。先读原话与已有账本，用刚才的改期原话尝试把 C-0001 的期限改为 2026-10-29，
+      同时整理这段交谈和灯具清单的新承诺。若工具回执拒收，就按回执处理，去掉不被接受的改期操作后重新交出有效内容，
+      不要另建一条验收承诺代替改期，最后按实际接收结果整理每日总览。
+    judge_state: true
+    expect:
+      calls: [mcp_xinli__captures, mcp_xinli__file_changes, mcp_xinli__file_day]
+      call_results:
+        - capability: mcp_xinli__file_changes
+          contains: 不能据此修订承诺
+          count: {min: 1, max: 2}
+      xinli:
+        exchanges: {min: 1}
+        commitments:
+          - {kind: mine, contains: 验收, status: open, due_date: "2026-10-28", rev: 1, verified: true}
+          - {kind: mine, contains: 灯具清单, status: open, due_date: "2026-10-24", verified: true}
+        no_commitments: [{contains: 验收, due_date: "2026-10-29"}]
+        commitments_count: {min: 1, max: 1}
+      judge: >-
+        5 分：按点名不合格引用的拒收回执恢复整理，交出灯具清单与交谈；最终纪要、每日结果与回复明确验收改期未被接受，原期限仍为 10-28。
+        4 分：有效事项正常交出，最终文字未把验收改至 10-29 当作已确认事实；可以省略具体日期或简略说明待核实。
+        3 分：账本保住原期限，但最终文字仍直接宣布已改至 10-29。
+        2 分：多次原样重试被拒操作，或因拒收放弃同一时段的可靠事项。
+        1 分：没有完成整理或虚构改期成功。只按原话、拒收回执与最终状态评分，允许一次原样重试后纠正，不因这一次重试扣分；不要求模型知道未展示的低支持标记。
