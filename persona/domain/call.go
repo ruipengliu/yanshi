@@ -29,6 +29,7 @@ type Call struct {
 	session     string
 	args        json.RawMessage
 	cites       map[string]Citation
+	captureRefs map[captureRefKey]captureRefValue
 	now         time.Time
 	Filed       *DayFiled
 	WeekFiled   bool

@@ -82,8 +82,15 @@ func Open(path string, id Identity) (*Sender, error) {
 		}
 		if err == nil {
 			for _, entry := range s.state.Entries {
-				if domain.ValidateLegacyCaptureSegments(entry.Batch.Ordered().Segments) != nil {
-					err = domain.ErrCaptureInvalid
+				// 恢复只复查身份与新增元数据，不能借入口开放收紧时间等旧字段的恢复口径。
+				// 已确认条目的正文已清除，空切片无需再做批次校验。
+				for _, segment := range entry.Batch.Ordered().Segments {
+					if segment.ValidateMetadata() != nil {
+						err = domain.ErrCaptureInvalid
+						break
+					}
+				}
+				if err != nil {
 					break
 				}
 			}
@@ -136,9 +143,6 @@ func (s *Sender) Enqueue(day, zone string, generation uint64, segments []capture
 	}
 	b := capture.Batch{SessionID: s.state.Identity.SessionID, Seq: s.state.Next, CaptureID: hex.EncodeToString(id[:]), BusinessDay: day, TimeZone: zone, Generation: generation, Segments: capture.CloneSegments(segments)}
 	ordered := b.Ordered()
-	if err := domain.ValidateLegacyCaptureSegments(ordered.Segments); err != nil {
-		return capture.Batch{}, domain.ErrCaptureInvalid
-	}
 	normalized, err := domain.NormalizeOrderedCapture(ordered)
 	if err != nil {
 		return capture.Batch{}, err

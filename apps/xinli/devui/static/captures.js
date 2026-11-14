@@ -26,6 +26,7 @@ export class CaptureView {
     this.root = h("section", { class: "xinli-card capture-entry" },
       h("div", { class: "xinli-card-head" }, h("b", {}, "提交旁听、原文与删除"), h("label", {}, "业务日 ", this.date)),
       h("p", { class: "muted" }, "逐行输入「佩戴者|文字」或「他人 key|文字」，他人未填 key 时使用 other；可在 key 后加 @说话人引用，如「他人 colleague @P-0012|文字」。"),
+      h("p", { class: "muted" }, '也可输入片段 JSON 数组，例如 [{"speaker":"unknown","text":"待核对原话","low_support_spans":[{"start":0,"end":2}]}]；支持等级、处置与背景等字段，省略时间时使用所选业务日与本机时区。'),
       this.lines,
       h("div", { class: "xinli-actions" },
         button("提交旁听", () => this.append()),
@@ -137,7 +138,10 @@ export class CaptureView {
     const spoken = new Date();
     const [year, month, day] = this.date.value.split("-").map(Number);
     spoken.setFullYear(year, month - 1, day);
-    const segments = this.lines.value.split("\n").filter((line) => line.trim()).map((line) => {
+    const input = this.lines.value.trim();
+    const segments = input.startsWith("[")
+      ? JSON.parse(input).map((segment) => ({ spoken_at: spoken.toISOString(), time_zone: zone, ...segment }))
+      : input.split("\n").filter((line) => line.trim()).map((line) => {
       const sep = line.indexOf("|");
       if (sep < 0) throw new Error("invalid line");
       const who = line.slice(0, sep).trim();

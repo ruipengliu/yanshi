@@ -161,13 +161,11 @@ func (k *review) existingDayRefs(date string, what string, refs []string) bool {
 	}
 	valid := true
 	for _, r := range refs {
-		ref, ok := parseRef(r)
+		_, ok := parseRef(r)
 		found := false
 		if ok {
-			var err error
-			found, err = k.c.u.containsRef(date, ref)
-			if err != nil {
-				k.c.err = err
+			_, found = k.c.captureRef(date, r)
+			if k.c.err != nil {
 				return false
 			}
 		}
@@ -354,6 +352,20 @@ func (k *review) change(in changeIn, closing bool, inProject string) (Commitment
 	} else {
 		k.refs(what, in.Refs, true)
 	}
+	date := k.date
+	if k.author != AuthorProject {
+		date, _ = k.c.u.boundDay(k.c.session)
+	}
+	for _, ref := range in.Refs {
+		g, found := k.c.captureRef(date, ref)
+		if k.c.err != nil {
+			return out, false
+		}
+		if found && (!g.commitmentEvidence() || g.criticalLowSupport()) {
+			k.fail("%s：引用的原话说话人不确定或识别不可靠，不能据此%s承诺", what, verb)
+			return out, false
+		}
+	}
 	locked := func(f string) bool {
 		if slices.Contains(m.Locked, f) {
 			k.notes = append(k.notes, fmt.Sprintf("%s：用户在 App 中改过%s，这一项以用户的为准，没有改动", in.ID, fieldNames[f]))
@@ -466,15 +478,9 @@ func (c *Call) FileChanges() string {
 			return rejected(k.problems)
 		}
 		if date, day := u.boundDay(c.session); day != nil {
-			access, err := u.captureAccess()
-			if err != nil {
-				c.err = err
-				return ""
-			}
 			for _, ref := range []Ref{k.from, k.to} {
-				g, _, err := access.Lookup(date, ref)
-				if err != nil {
-					c.err = err
+				g, _ := c.captureRef(date, "#"+ref.String())
+				if c.err != nil {
 					return ""
 				}
 				if !g.Visible() {

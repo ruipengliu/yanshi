@@ -3,7 +3,6 @@ package domain
 import (
 	"encoding/json"
 	"reflect"
-	"strings"
 	"testing"
 )
 
@@ -142,30 +141,6 @@ func TestCaptureLegacyJSONAndDigest(t *testing.T) {
 				t.Fatal("metadata not in digest", err)
 			}
 		})
-	}
-}
-
-func TestLegacyCaptureJSONRejectsFieldPresence(t *testing.T) {
-	for _, field := range []string{`"speaker_grade":""`, `"disposition":""`, `"disposition_reason":""`, `"background":false`, `"low_support_spans":[]`, `"low_support_spans":null`, `"BACKGROUND":false`, `"unexpected":0`} {
-		var segments LegacyCaptureSegments
-		err := json.Unmarshal([]byte(`[{"speaker":"wearer","text":"原文",`+field+`}]`), &segments)
-		if err == nil {
-			t.Fatalf("accepted %s", field)
-		}
-	}
-	var segments LegacyCaptureSegments
-	if err := json.Unmarshal([]byte(`[{"speaker":"unknown","text":"原文"}]`), &segments); err != nil {
-		t.Fatal(err)
-	}
-	if err := ValidateLegacyCaptureSegments(segments); err == nil {
-		t.Fatal("accepted unknown")
-	}
-	if err := json.Unmarshal([]byte(`[{"speaker":"wearer","text":"原文"}]`), &segments); err != nil {
-		t.Fatal(err)
-	}
-	raw, _ := json.Marshal(segments)
-	if strings.Contains(string(raw), "speaker_grade") {
-		t.Fatal("default leaked")
 	}
 }
 

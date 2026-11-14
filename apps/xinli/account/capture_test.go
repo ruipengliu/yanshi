@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -36,6 +37,12 @@ func (f captureSend) Send(ctx context.Context, b capture.Batch) (capture.Receipt
 }
 
 func TestPersistentCaptureDelivery(t *testing.T) {
+	t.Run("legacy", func(t *testing.T) { persistentCaptureDelivery(t, false) })
+	t.Run("metadata", func(t *testing.T) { persistentCaptureDelivery(t, true) })
+}
+
+func persistentCaptureDelivery(t *testing.T, metadata bool) {
+	t.Helper()
 	each(t, func(t *testing.T, b *backend) {
 		now := time.Date(2026, 10, 29, 10, 0, 0, 0, time.UTC)
 		ctx := context.Background()
@@ -50,9 +57,22 @@ func TestPersistentCaptureDelivery(t *testing.T) {
 		host, err := sender.Open(path, id)
 		require(t, err)
 		defer func() { host.Close() }()
-		first, err := host.Enqueue("2026-10-27", "UTC", 0, []capture.Segment{{Speaker: "wearer", Text: "午夜前积压", At: "2026-10-27T23:59:00Z"}})
+		segments := []capture.Segment{{Speaker: "wearer", Text: "午夜前积压", At: "2026-10-27T23:59:00Z"}}
+		if metadata {
+			segments[0].SpeakerGrade = "timeline"
+			segments[0].Disposition = "accept"
+			segments[0].Text = "甲🙂明天交稿"
+			segments[0].LowSupportSpans = []domain.LowSupportSpan{{Start: 1, End: 2, CriticalKinds: []string{"none"}}, {Start: 2, End: 4}}
+		}
+		first, err := host.Enqueue("2026-10-27", "UTC", 0, segments)
 		require(t, err)
-		second, err := host.Enqueue("2026-10-28", "UTC", 0, []capture.Segment{{Speaker: "other-1", SpeakerRef: "P-1", Text: "午夜后积压", At: "2026-10-28T00:01:00Z"}})
+		segments = []capture.Segment{{Speaker: "other-1", SpeakerRef: "P-1", Text: "午夜后积压", At: "2026-10-28T00:01:00Z"}}
+		if metadata {
+			segments[0].Speaker, segments[0].SpeakerRef = "unknown", ""
+			segments[0].Disposition, segments[0].DispositionReason = "quarantine", "suspected_replay"
+			segments[0].Background = true
+		}
+		second, err := host.Enqueue("2026-10-28", "UTC", 0, segments)
 		require(t, err)
 		offline := errors.New("offline")
 		err = host.Flush(ctx, captureSend(func(context.Context, capture.Batch) (capture.Receipt, error) { return capture.Receipt{}, offline }))
@@ -87,8 +107,8 @@ func TestPersistentCaptureDelivery(t *testing.T) {
 			if calls == 2 {
 				expected = second
 			}
-			if in.CaptureID != expected.CaptureID || in.Seq != expected.Seq || in.BusinessDay != expected.BusinessDay {
-				t.Fatal("request identity changed")
+			if !reflect.DeepEqual(in, expected) {
+				t.Fatal("request identity or metadata changed")
 			}
 			return client.Send(ctx, in)
 		})))
@@ -104,14 +124,25 @@ func TestPersistentCaptureDelivery(t *testing.T) {
 			t.Fatal("confirmed batch resent")
 			return capture.Receipt{}, nil
 		})))
-		for _, date := range []string{"2026-10-27", "2026-10-28"} {
+		require(t, host.Close())
+		host, err = sender.Open(path, id)
+		require(t, err)
+		for _, batch := range []capture.Batch{first, second} {
 			require(t, books().View(ctx, id.BusinessLine, id.EndUser, func(book *domain.Book) error {
-				segments, err := book.DayCaptures(date)
-				if err == nil && len(segments) != 1 {
-					t.Fatal("duplicate or lost batch")
+				segments, err := book.CaptureAccess().Batch(batch.BusinessDay, 1)
+				if err == nil && (len(segments) != 1 || !segments[0].Equal(batch.Ordered().Segments[0])) {
+					t.Fatal("duplicate, lost batch or metadata")
 				}
 				return err
 			}))
+		}
+		if metadata {
+			changed := first
+			changed.Segments = capture.CloneSegments(first.Segments)
+			changed.Segments[0].LowSupportSpans[0].CriticalKinds[0] = "number"
+			if _, err := client.Send(ctx, changed); !errors.Is(err, capture.ErrRejected) {
+				t.Fatal("metadata missing from duplicate digest", err)
+			}
 		}
 	})
 }
@@ -217,7 +248,54 @@ func TestCaptureDoesNotReturnUncommittedReferences(t *testing.T) {
 	})
 }
 
-func TestCaptureMetadataRejected(t *testing.T) {
+func TestCaptureHTTPMetadataRoundtrip(t *testing.T) {
+	each(t, func(t *testing.T, b *backend) {
+		now := time.Date(2026, 10, 29, 10, 0, 0, 0, time.UTC)
+		accounts := service(b, &now)
+		credentials := login(t, accounts, "phone")
+		books := captureClockStore{b.persona, now}
+		h := capture.Handler(books, accounts)
+		batch := capture.Batch{SessionID: "metadata", CaptureID: "metadata", Seq: 1, BusinessDay: "2026-10-28", TimeZone: "UTC", Segments: []capture.Segment{
+			{Speaker: "wearer", SpeakerGrade: "evidence", Disposition: "accept", Text: "甲🙂明天交稿", At: "2026-10-28T10:00:00Z", LowSupportSpans: []domain.LowSupportSpan{{Start: 1, End: 2, CriticalKinds: []string{"none"}}, {Start: 2, End: 4, CriticalKinds: []string{"date"}}}},
+			{Speaker: "other", Text: "他人原话", At: "2026-10-28T10:01:00Z"},
+			{Speaker: "other-1", SpeakerRef: "P-1", Background: true, Text: "背景原话", At: "2026-10-28T10:02:00Z"},
+			{Speaker: "unknown", Disposition: "quarantine", DispositionReason: "hallucination_disagreement", Text: "隔离原话", At: "2026-10-28T10:03:00Z"},
+		}}
+		raw, err := json.Marshal(batch)
+		require(t, err)
+		var first capture.Receipt
+		for range 2 {
+			r := httptest.NewRequest("POST", "/v1/captures/batches", strings.NewReader(string(raw)))
+			r.Header.Set("Authorization", "Bearer "+credentials.AccessToken)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			var out capture.Receipt
+			require(t, json.Unmarshal(w.Body.Bytes(), &out))
+			if w.Code != 200 || len(out.Refs) != len(batch.Segments) || first.Status != "" && !reflect.DeepEqual(first, out) {
+				t.Fatalf("metadata write/retry: %d %s", w.Code, w.Body.String())
+			}
+			first = out
+		}
+		require(t, books.View(context.Background(), credentials.Owner.BusinessLine, credentials.Owner.EndUser, func(book *domain.Book) error {
+			got, err := book.CaptureAccess().Batch(batch.BusinessDay, 1)
+			if err != nil {
+				return err
+			}
+			want := batch.Ordered().Segments
+			if len(got) != len(want) || book.BusinessDay(batch.BusinessDay).CaptureRevision != 1 {
+				t.Fatal("metadata lost or duplicate appended")
+			}
+			for i := range want {
+				if !got[i].Equal(want[i]) {
+					t.Fatal("metadata changed")
+				}
+			}
+			return nil
+		}))
+	})
+}
+
+func TestInvalidCaptureMetadataRejected(t *testing.T) {
 	each(t, func(t *testing.T, b *backend) {
 		now := time.Date(2026, 10, 29, 10, 0, 0, 0, time.UTC)
 		accounts := service(b, &now)
@@ -225,15 +303,18 @@ func TestCaptureMetadataRejected(t *testing.T) {
 		books := captureClockStore{b.persona, now}
 		h := capture.Handler(books, accounts)
 		for _, fields := range []string{
-			`"speaker":"unknown"`,
-			`"speaker":"wearer","speaker_grade":"evidence"`,
-			`"speaker":"wearer","disposition":"accept"`,
+			`"speaker":"invalid"`,
+			`"speaker":"wearer","speaker_grade":"invalid"`,
+			`"speaker":"wearer","disposition":"invalid"`,
 			`"speaker":"wearer","disposition_reason":"playback"`,
-			`"speaker":"other-1","background":true`,
-			`"speaker":"wearer","low_support_spans":[{"start":0,"end":1}]`,
-			`"speaker":"wearer","background":false`,
-			`"speaker":"wearer","speaker_grade":""`,
-			`"speaker":"wearer","low_support_spans":null`,
+			`"speaker":"wearer","background":true`,
+			`"speaker":"wearer","low_support_spans":[{"start":0,"end":3}]`,
+			`"speaker":"wearer","unexpected":false`,
+			`"speaker":"wearer","disposition":"quarantine"`,
+			`"speaker":"wearer","low_support_spans":[{"start":0,"end":1,"critical_kinds":["bad"]}]`,
+			`"speaker":"wearer","low_support_spans":[{"start":0,"end":1,"unexpected":0}]`,
+			`"speaker":"unknown","speaker_ref":"P-1"`,
+			`"speaker":"other","speaker_grade":"evidence"`,
 		} {
 			body := `{"session_id":"blocked","seq":2,"capture_id":"blocked","business_day":"2026-10-27","time_zone":"UTC","generation":0,"segments":[{"speaker":"wearer","text":"合法前段","at":"2026-10-27T12:00:00Z"},{"text":"原文","at":"2026-10-27T12:01:00Z",` + fields + `}]}`
 			r := httptest.NewRequest("POST", "/v1/captures/batches", strings.NewReader(body))

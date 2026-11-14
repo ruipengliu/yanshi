@@ -61,7 +61,10 @@ func TestDelayCancellation(t *testing.T) {
 }
 
 func TestMetadataCopies(t *testing.T) {
-	segments := []capture.Segment{{Speaker: "wearer", Text: "原文", LowSupportSpans: []domain.LowSupportSpan{{Start: 0, End: 1, CriticalKinds: []string{"person"}}}}}
+	segments := []capture.Segment{
+		{Speaker: "wearer", SpeakerGrade: "timeline", Disposition: "accept", Text: "甲🙂", LowSupportSpans: []domain.LowSupportSpan{{Start: 0, End: 1, CriticalKinds: []string{"person"}}}},
+		{Speaker: "unknown", Text: "背景原文", Disposition: "quarantine", DispositionReason: "playback", Background: true},
+	}
 	fake := recognition.NewFake(map[string]recognition.Result{"chunk": {Segments: segments}}, nil)
 	segments[0].LowSupportSpans[0].CriticalKinds[0] = "date"
 	segments[0].LowSupportSpans[0].End = 2
@@ -80,5 +83,9 @@ func TestMetadataCopies(t *testing.T) {
 	}
 	if second[0].LowSupportSpans[0].CriticalKinds[0] != "person" || second[0].LowSupportSpans[0].End != 1 {
 		t.Fatal("result aliased")
+	}
+	if second[0].SpeakerGrade != "timeline" || second[0].Disposition != "accept" || second[1].Speaker != "unknown" ||
+		second[1].Disposition != "quarantine" || second[1].DispositionReason != "playback" || !second[1].Background {
+		t.Fatal("scripted metadata lost")
 	}
 }

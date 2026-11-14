@@ -2,6 +2,7 @@
 package capture
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -29,7 +30,9 @@ type Segment struct {
 func (s *Segment) UnmarshalJSON(data []byte) error {
 	type wire Segment
 	var out wire
-	if err := domain.DecodeLegacyCaptureSegment(data, &out); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&out); err != nil {
 		return err
 	}
 	*s = Segment(out)
@@ -127,10 +130,6 @@ func Handler(books store.Store, accounts *account.Service) http.Handler {
 		}
 		in.Batch.Generation = *in.Generation
 		ordered := in.Batch.Ordered()
-		if err := domain.ValidateLegacyCaptureSegments(ordered.Segments); err != nil {
-			failure(w, Receipt{}, domain.ErrCaptureInvalid)
-			return
-		}
 		p, _ := account.FromContext(r.Context())
 		var out Receipt
 		err := books.Update(r.Context(), p.Owner.BusinessLine, p.Owner.EndUser, func(b *domain.Book) error {

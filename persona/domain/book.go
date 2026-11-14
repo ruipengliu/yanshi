@@ -98,22 +98,33 @@ const (
 	relatedTopic = 0.15
 )
 
-// verify 按平台给出的被引用原话的说话人核对承诺人（xinli-captures.md §6）：mine 须引用佩戴者的话，theirs 须引用
-// 他人的话。返回未通过的原因，通过时为空。
+// verify 保留平台引用资格，并用事务内原片段核对，不能把可信页匿名投影的 other 当作对方。
 func (c *Call) verify(kind string, refs []string) string {
 	want, who := "wearer", "用户本人"
 	if kind == "theirs" {
 		want, who = "other", "对方"
 	}
-	found := false
+	found, qualified, unreliable := false, false, false
+	date, _ := c.u.boundDay(c.session)
 	for _, r := range refs {
+		g, exists := c.captureRef(date, r)
+		if c.err != nil {
+			return ""
+		}
+		unreliable = unreliable || exists && g.criticalLowSupport()
 		ct, ok := c.cites[r]
 		if ok && !ct.Missing {
 			found = true
-			if ct.Speaker == want {
-				return ""
+			if ct.Speaker == want && (c.u.captureDays[date] == nil || exists && g.commitmentEvidence() && g.Speaker == want) {
+				qualified = true
 			}
 		}
+	}
+	if unreliable {
+		return "引用的原话里有识别不可靠的内容"
+	}
+	if qualified {
+		return ""
 	}
 	if !found {
 		return "引用的原话不存在"

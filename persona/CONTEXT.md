@@ -101,7 +101,7 @@ _Avoid_: 原文版本、租约代数
 _Avoid_: 处理进度、已接受批次
 
 **Capture segment metadata（原文片段元数据）**:
-业务侧原文片段保存说话人三态（`wearer` / `other` / `unknown`）、佩戴者等级（`speaker_grade`）、处置与原因（`disposition` / `disposition_reason`）、背景标记及低支持区间（`low_support_spans`）。低支持区间以原始文字的 rune 半开区间定位，`critical_kinds` 标明涉及的关键内容种类；空种类解释为 `unknown`。缺省等级与处置分别解释为 `evidence`（仅佩戴者）与 `accept`，不回填存储。入口开放及承诺核对留待后续步骤（[设计](../docs/design/xinli-captures.md#说话人三态处置档位与可信页设计未实现)）。
+业务侧原文片段保存说话人三态（`wearer` / `other` / `unknown`）、佩戴者等级（`speaker_grade`）、处置与原因（`disposition` / `disposition_reason`）、背景标记及低支持区间（`low_support_spans`）。低支持区间以原始文字的 rune 半开区间定位，`critical_kinds` 标明涉及的关键内容种类；空种类解释为 `unknown`。缺省等级与处置分别解释为 `evidence`（仅佩戴者）与 `accept`，不回填存储。采集入口、保存、可信页投影与新建承诺核对已接入；原话驱动的修订/关闭拒收不合格片段，完整修订核对状态模型、放回及其重新整理与跨来源身份仍未实现（[设计](../docs/design/xinli-captures.md#说话人三态处置档位与可信页)）。
 
 **Visible captures（整理可见集合）**:
 尚存原文中有效处置为接受且不是背景的片段。整理的时段、进度和静默只看此集合；隐藏不是擦除。可信页仅把证据级佩戴者表示为佩戴者，未知与时间线级佩戴者按逐段的匿名他人表示。

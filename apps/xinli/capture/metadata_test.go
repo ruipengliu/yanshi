@@ -26,9 +26,14 @@ func TestSegmentCopiesAndLegacyJSON(t *testing.T) {
 	if err != nil || string(raw) != legacy {
 		t.Fatalf("legacy JSON changed: %s %v", raw, err)
 	}
-	for _, field := range []string{`"speaker_grade":""`, `"disposition":""`, `"disposition_reason":null`, `"background":false`, `"low_support_spans":[]`, `"low_support_spans":null`, `"unexpected":0`} {
+	for _, field := range []string{`"speaker_grade":""`, `"disposition":""`, `"disposition_reason":null`, `"background":false`, `"low_support_spans":[]`, `"low_support_spans":null`} {
+		if err := json.Unmarshal([]byte(`{"speaker":"wearer","text":"原文",`+field+`}`), &g); err != nil {
+			t.Fatalf("rejected %s: %v", field, err)
+		}
+	}
+	for _, field := range []string{`"unexpected":0`, `"low_support_spans":[{"start":0,"end":1,"unexpected":0}]`} {
 		if err := json.Unmarshal([]byte(`{"speaker":"wearer","text":"原文",`+field+`}`), &g); err == nil {
-			t.Fatalf("accepted %s", field)
+			t.Fatalf("accepted unknown field %s", field)
 		}
 	}
 }

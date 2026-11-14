@@ -164,26 +164,55 @@ func (d *devActions) OneshotForBusinessLine(context.Context, string, string, str
 	return kernel.OneshotResult{Output: json.RawMessage(`{"brief":"简述"}`)}, nil
 }
 
-func TestCaptureMetadataRejected(t *testing.T) {
+func TestCaptureMetadataInput(t *testing.T) {
+	books := memstore.New(captureClock)
+	h := Handler(Config{}, Options{Store: books, Now: captureClock})
+	const segments = `[{"speaker":"wearer","speaker_grade":"timeline","text":"甲🙂明天交稿","low_support_spans":[{"start":1,"end":2,"critical_kinds":["none"]},{"start":2,"end":4}]},{"speaker":"unknown","text":"隔离原文","disposition":"quarantine","disposition_reason":"playback"},{"speaker":"other","speaker_key":"x","text":"背景原文","background":true}]`
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("POST", "/v1/dev/bl/u/captures", strings.NewReader(`{"date":"2026-10-27","segments":`+segments+`}`)))
+	if w.Code != 200 {
+		t.Fatalf("metadata write: %d %s", w.Code, w.Body.String())
+	}
+	var want []domain.CaptureSegment
+	if err := json.Unmarshal([]byte(segments), &want); err != nil {
+		t.Fatal(err)
+	}
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/v1/dev/bl/u/captures?date=2026-10-27", nil))
+	var out struct {
+		Segments []domain.CaptureView `json:"segments"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || w.Code != 200 || len(out.Segments) != len(want) {
+		t.Fatalf("metadata read: %d %s %v", w.Code, w.Body.String(), err)
+	}
+	for i := range want {
+		if !out.Segments[i].CaptureSegment.Equal(want[i]) {
+			t.Fatal("metadata changed")
+		}
+	}
+}
+
+func TestInvalidCaptureMetadataRejected(t *testing.T) {
 	books := memstore.New(captureClock)
 	h := Handler(Config{}, Options{Store: books, Now: captureClock})
 	for _, segment := range []string{
-		`{"speaker":"unknown","text":"原文"}`,
-		`{"speaker":"wearer","text":"原文","speaker_grade":"timeline"}`,
-		`{"speaker":"wearer","text":"原文","disposition":"accept"}`,
+		`{"speaker":"invalid","text":"原文"}`,
+		`{"speaker":"wearer","text":"原文","speaker_grade":"invalid"}`,
+		`{"speaker":"wearer","text":"原文","disposition":"invalid"}`,
 		`{"speaker":"wearer","text":"原文","disposition_reason":"playback"}`,
-		`{"speaker":"other","speaker_key":"x","text":"原文","background":true}`,
-		`{"speaker":"wearer","text":"原文","low_support_spans":[{"start":0,"end":1}]}`,
-		`{"speaker":"wearer","text":"原文","background":false}`,
-		`{"speaker":"wearer","text":"原文","speaker_grade":""}`,
-		`{"speaker":"wearer","text":"原文","low_support_spans":[]}`,
+		`{"speaker":"wearer","text":"原文","background":true}`,
+		`{"speaker":"wearer","text":"原文","low_support_spans":[{"start":0,"end":3}]}`,
+		`{"speaker":"wearer","text":"原文","unexpected":false}`,
+		`{"speaker":"wearer","text":"原文","disposition":"quarantine"}`,
+		`{"speaker":"wearer","text":"原文","low_support_spans":[{"start":0,"end":1,"critical_kinds":["bad"]}]}`,
+		`{"speaker":"wearer","text":"原文","low_support_spans":[{"start":0,"end":1,"unexpected":0}]}`,
 	} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("POST", "/v1/dev/bl/u/captures", strings.NewReader(`{"date":"2026-10-27","segments":[{"speaker":"wearer","text":"合法前段"},`+segment+`]}`)))
 		if w.Code != 400 {
 			t.Fatalf("status=%d: %s", w.Code, w.Body.String())
 		}
-		if strings.Contains(segment, `"speaker":"unknown"`) && !strings.Contains(w.Body.String(), "capture_rejected") {
+		if strings.Contains(segment, `"speaker":"invalid"`) && !strings.Contains(w.Body.String(), "capture_rejected") {
 			t.Fatal("speaker rejection changed", w.Body.String())
 		}
 		if err := books.View(context.Background(), "bl", "u", func(b *domain.Book) error {

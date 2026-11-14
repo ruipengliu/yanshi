@@ -278,27 +278,73 @@ func (token fixtureBearer) RoundTrip(r *http.Request) (*http.Response, error) {
 	return http.DefaultTransport.RoundTrip(r)
 }
 
-func TestCaptureMetadataRejected(t *testing.T) {
+func TestCaptureMetadataAccepted(t *testing.T) {
+	fixtureStores(t, func(t *testing.T, s store.Store) {
+		now := func() time.Time { return time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC) }
+		h := fixture.Handler(s, fixture.Options{Now: now})
+		const segments = `[{"speaker":"wearer","text":"甲🙂明天交稿","speaker_grade":"timeline","disposition":"accept","low_support_spans":[{"start":1,"end":2,"critical_kinds":["none"]},{"start":2,"end":4}]},{"speaker":"unknown","text":"隔离原文","disposition":"quarantine","disposition_reason":"playback"},{"speaker":"other","speaker_key":"x","text":"背景原文","background":true}]`
+		body := `{"date":"2026-10-27","capture_id":"metadata","segments":` + segments + `}`
+		var first string
+		for range 2 {
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, httptest.NewRequest("POST", "/v1/fixture/bl/u/captures", strings.NewReader(body)))
+			if w.Code != 200 || first != "" && first != w.Body.String() {
+				t.Fatalf("metadata write/retry: %d %s", w.Code, w.Body.String())
+			}
+			first = w.Body.String()
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("POST", "/v1/fixture/bl/u/captures", strings.NewReader(strings.Replace(body, `"timeline"`, `"evidence"`, 1))))
+		if w.Code != 400 {
+			t.Fatal("metadata conflict accepted")
+		}
+		var want []domain.CaptureSegment
+		if err := json.Unmarshal([]byte(segments), &want); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.View(context.Background(), "bl", "u", func(b *domain.Book) error {
+			b.SetCaptureClock(now)
+			got, err := b.CaptureAccess().Batch("2026-10-27", 1)
+			if err != nil {
+				return err
+			}
+			if len(got) != len(want) || b.BusinessDay("2026-10-27").CaptureRevision != 1 {
+				t.Fatal("metadata lost or duplicate appended")
+			}
+			for i := range want {
+				if !got[i].Equal(want[i]) {
+					t.Fatal("metadata changed")
+				}
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestInvalidCaptureMetadataRejected(t *testing.T) {
 	fixtureStores(t, func(t *testing.T, s store.Store) {
 		now := func() time.Time { return time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC) }
 		h := fixture.Handler(s, fixture.Options{Now: now})
 		for _, segment := range []string{
-			`{"speaker":"unknown","text":"原文"}`,
-			`{"speaker":"wearer","text":"原文","speaker_grade":"evidence"}`,
-			`{"speaker":"wearer","text":"原文","disposition":"accept"}`,
+			`{"speaker":"invalid","text":"原文"}`,
+			`{"speaker":"wearer","text":"原文","speaker_grade":"invalid"}`,
+			`{"speaker":"wearer","text":"原文","disposition":"invalid"}`,
 			`{"speaker":"wearer","text":"原文","disposition_reason":"playback"}`,
-			`{"speaker":"other","speaker_key":"x","text":"原文","background":true}`,
-			`{"speaker":"wearer","text":"原文","low_support_spans":[{"start":0,"end":1}]}`,
-			`{"speaker":"wearer","text":"原文","background":false}`,
-			`{"speaker":"wearer","text":"原文","speaker_grade":""}`,
-			`{"speaker":"wearer","text":"原文","low_support_spans":null}`,
+			`{"speaker":"wearer","text":"原文","background":true}`,
+			`{"speaker":"wearer","text":"原文","low_support_spans":[{"start":0,"end":3}]}`,
+			`{"speaker":"wearer","text":"原文","unexpected":false}`,
+			`{"speaker":"wearer","text":"原文","disposition":"quarantine"}`,
+			`{"speaker":"wearer","text":"原文","low_support_spans":[{"start":0,"end":1,"critical_kinds":["bad"]}]}`,
+			`{"speaker":"wearer","text":"原文","low_support_spans":[{"start":0,"end":1,"unexpected":0}]}`,
 		} {
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, httptest.NewRequest("POST", "/v1/fixture/bl/u/captures", strings.NewReader(`{"date":"2026-10-27","capture_id":"blocked","segments":[{"speaker":"wearer","text":"合法前段"},`+segment+`]}`)))
 			if w.Code != 400 {
 				t.Fatalf("status=%d: %s", w.Code, w.Body.String())
 			}
-			if strings.Contains(segment, `"speaker":"unknown"`) && !strings.Contains(w.Body.String(), "invalid capture speaker") {
+			if strings.Contains(segment, `"speaker":"invalid"`) && !strings.Contains(w.Body.String(), "invalid capture speaker") {
 				t.Fatal("speaker rejection changed", w.Body.String())
 			}
 			if err := s.View(context.Background(), "bl", "u", func(b *domain.Book) error {
