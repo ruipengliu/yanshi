@@ -45,6 +45,7 @@ func (r roles) names() []string {
 
 type config struct {
 	test             testHooks
+	fixtureClock     *fixtureClock
 	mode             string
 	addr             string
 	healthAddr       string
@@ -94,8 +95,10 @@ func parseConfig(args []string, stderr io.Writer) (config, error) {
 	}
 	validateTest := testFlags(flags, &cfg)
 	addr, kind := ":8081", "pg"
+	var fixtureOffset string
 	if cfg.mode == "dev" {
 		addr, kind = "127.0.0.1:0", "memory"
+		flags.StringVar(&fixtureOffset, "fixture-clock-offset", "", "独立评测夹具的场景时钟偏移")
 	}
 	flags.StringVar(&cfg.addr, "addr", envDefault("XINLI_ADDR", addr), "Persona/BFF 监听地址")
 	flags.StringVar(&cfg.healthAddr, "health-addr", envDefault("XINLI_HEALTH_ADDR", ":9091"), "serve 健康探针监听地址")
@@ -139,6 +142,13 @@ func parseConfig(args []string, stderr io.Writer) (config, error) {
 	}
 	if flags.NArg() != 0 {
 		return cfg, errors.New("xinli: unexpected arguments")
+	}
+	if fixtureOffset != "" {
+		offset, err := time.ParseDuration(fixtureOffset)
+		if err != nil || cfg.kernelURL != "" {
+			return cfg, errors.New("xinli dev: fixture-clock-offset requires a duration and no kernel-url")
+		}
+		cfg.fixtureClock = &fixtureClock{offset: offset}
 	}
 	if err := validateTest(); err != nil {
 		return cfg, err

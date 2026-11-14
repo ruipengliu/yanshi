@@ -224,7 +224,7 @@ P4 自动调度以固定业务日时区、原文与处理进度为依据，抖�
 
 `evals/capture-*.yaml`。xinli-day 每轮的 `captures` 在输入之前经夹具提交到 Persona，并在创建工作 Session 后以业务线身份 `bind_day`（时间可写相对于提交时刻的 `now-Nm`；长的转写放在数据文件中，`captures_file`）；`setup.xinli` 登记模拟的 xinli MCP Server 并预置项目、摘要与承诺账本（日期可写 `today-N`）；`setup.no_health` 改在未开启健康信息的业务线中运行。评测中不归集：用例直接预置 `day_summary` 的内容。
 
-评测的业务日统一取本次 trial 开始时在 Asia/Shanghai 的运行当天，不取片段 `at` 的历史日期，以保留切换前按运行当天归集的口径。多日用例中的 xinli-day Session 依次换绑同一业务日，前一个用完后不再读取原文；片段时间仍用于页内日期与期限换算。生产业务日仍由采集侧按用户当地日期指定。
+未声明场景时间的评测，业务日仍取本次 trial 开始时在 Asia/Shanghai 的运行当天，不取片段 `at` 的历史日期；各 xinli-day Session 依次换绑同一业务日，片段时间仍用于页内日期与期限换算。显式 `now` 与逐轮 `business_day` 可复现历史场景，内核、Memory 与 Persona 共用场景时钟，跨日新建工作 Session，同日复用；字段与兼容规则见 [m4-eval.md §2](./m4-eval.md#2-评测集)。生产业务日仍由采集侧按用户当地日期指定。
 
 评测运行器按说话时间约每分钟提交一批旁听，每批的他人重新编号，与真实的 HostApp 一致（[m4-eval.md](./m4-eval.md) §2）。断言检查业务线的数据（`expect.xinli`：交谈数、待确认数、项目数、各项目的交谈数、承诺账本（含状态与修订数）、承诺数、过时的未完成承诺、合并提议、每周习惯、项目现状），而不是调用参数的文字。另有三项指标：
 
@@ -250,7 +250,7 @@ P4 自动调度以固定业务日时区、原文与处理进度为依据，抖�
 | `capture-daytime` | 同一 Session 三轮："整理交谈"只交出已结束的交谈；再次"整理交谈"不重复交出、不读进行中的那段；"整理今天"交出余下的并写总览。 |
 | `capture-project-reconcile` | `xinli-project` 按 ID 与 `rev` 依据交谈对账：已完成的标为完成，改了期限的改期限，并更新现状。 |
 | `capture-project-reconcile-settled` | 白天已依据原话改了期限：项目 Run 不再改动那一条（rev 不变）。 |
-| `capture-workday`、`capture-workday-oneshot` | 一个完整工作日的整体回归（[评审](../review/2026-10-25-xinli-workday.md)）：过时的未完成承诺为 0、承诺不超过 35 条、纯度、覆盖率与金标分项指标等；已有基线，耗时长、按需运行。 |
+| `capture-workday`、`capture-workday-oneshot` | 一个完整工作日的整体回归（[评审](../review/2026-10-25-xinli-workday.md)）：场景固定为 10/23 晚间，过时未完成承诺为 0，金标精确率、召回率与提醒精确率作门禁，最终摘要排除健康信息；数量、碎片率与纯度保留诊断，覆盖率与项目归属断言照常检查；已有基线，耗时长、按需运行。 |
 | `capture-multiday`、`capture-multiday-noisy` | 四个工作日中的改期、完成、取消、隔天重提、用户改动与助手问答；同一份金标比较转写与说话人错误的影响（[m4-eval.md](./m4-eval.md) §13）。 |
 | `capture-span-runs` | 每个完整时段一个 Run 的实验：两个时段各自保留交谈，同一承诺原位改期，日终依据账本对账；机制见 [m4-eval.md](./m4-eval.md) §14。 |
 | `capture-project-rewrite` | 预置过时的现状（仍写着"等报价"）和完整的时间线（报价已确认、合同已签）：重写后不再提"等报价"。 |

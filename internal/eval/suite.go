@@ -25,6 +25,8 @@ type Case struct {
 	Trials      int    `yaml:"trials"`
 	// TimeZone 覆盖 Session 时区；xinli 用例默认上海，其他用例保留无时区。
 	TimeZone string `yaml:"time_zone"`
+	// Now 显式启用独立的场景时钟，避免历史旁听被现实日期判为过期；省略时沿用现实运行日。
+	Now string `yaml:"now"`
 	// Timeout 是每个原轮次的等待上限，拆 Run 时共享，默认取 Config.TurnTimeout（长 Run 用例需要更长）。
 	Timeout time.Duration `yaml:"timeout"`
 	// Requires 列出所需的环境，如 "sandbox"；不满足时跳过。
@@ -109,6 +111,8 @@ type (
 
 // XinliExpect 是对 xinli 业务线数据的断言。
 type XinliExpect struct {
+	// NoText 检查最终有效的交谈、每日结果与项目文本，避免把拒收草稿误当落库内容。
+	NoText []string `yaml:"no_text"`
 	// Exchanges 是整理交出、仍然有效的交谈数的范围（不含预置的，被并入别处的不算）；Pending 是"待确认"中交谈数的范围；
 	// Projects 是项目数（含预置的）的范围。
 	Exchanges *Range `yaml:"exchanges"`
@@ -119,7 +123,7 @@ type XinliExpect struct {
 	// Commitments 中每项须匹配账本中的某条承诺；NoCommitments 中每项都不得匹配任何一条。
 	Commitments   []CommitmentMatch `yaml:"commitments"`
 	NoCommitments []CommitmentMatch `yaml:"no_commitments"`
-	// CommitmentsCount 是整理交出的承诺数（不含预置的与被合并的）的范围：承诺过多时提醒会被淹没（F5）。
+	// CommitmentsCount 是整理交出的承诺数（不含预置的与被合并的）的范围；空范围只报告数量指标，不按总数判断质量。
 	CommitmentsCount *Range `yaml:"commitments_count"`
 	// StaleOpen 是过时的未完成承诺：Of 中每项描述一条改期、作废或转交之前的旧版本，仍未完成且匹配其中某项的至多 Max 条（F1）。
 	StaleOpen *StaleExpect `yaml:"stale_open"`
@@ -254,6 +258,8 @@ type DeviceSetup struct {
 }
 
 type Turn struct {
+	// BusinessDay 在场景时钟下指定本轮业务日；跨日须新建 Session，同日不重置时间。
+	BusinessDay string `yaml:"business_day"`
 	// Redo 复制上一轮的输入，以那一轮的 Run ID 作比较并替换。
 	Redo         bool `yaml:"redo"`
 	inputPresent bool
@@ -290,7 +296,7 @@ type Turn struct {
 	// 作为一条输入开启新 Run（或并入进行中的 Run），本轮检查的是那个 Run。须与 Input 二选一。
 	AwaitBackground bool `yaml:"await_background"`
 	// Captures 是本轮输入之前提交的一批旁听：交给已绑定的 Persona 业务日；
-	// 跨天的用例在 new_session 的一轮提交新一天的旁听；历史 at 保留，业务日仍共用本次运行当天。
+	// 显式场景按 business_day 换日；未声明 now 时，历史 at 保留，业务日仍共用本次运行当天。
 	Captures []CaptureSegment `yaml:"captures"`
 	// CapturesFile 是用例目录下的数据文件（YAML 的旁听列表，格式同 captures），追加在 Captures 之后：长的一天不写在用例里。
 	CapturesFile string `yaml:"captures_file"`
@@ -436,6 +442,9 @@ func LoadSuite(dir string) ([]*Case, error) {
 			return nil, fmt.Errorf("%s: %w", f, err)
 		}
 		if err := validateOneshotCase(c); err != nil {
+			return nil, fmt.Errorf("%s: %w", f, err)
+		}
+		if err := validateScenarioTime(c); err != nil {
 			return nil, fmt.Errorf("%s: %w", f, err)
 		}
 		if !caseNameRE.MatchString(c.Name) || seen[c.Name] {

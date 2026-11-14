@@ -35,6 +35,8 @@ type Client struct {
 type Options struct {
 	Store      string
 	PersonaDSN string
+	// ClockOffset 仅由独立场景 trial 设置；nil 保留旧夹具的启动参数与现实时间。
+	ClockOffset *time.Duration
 }
 
 func Start(ctx context.Context, bin string, businessLines ...string) (*Client, []mcpcap.Server, error) {
@@ -55,6 +57,9 @@ func StartWithOptions(ctx context.Context, bin string, opts Options, businessLin
 		return nil, nil, fmt.Errorf("xinli fixture: pg requires -xinli-persona-dsn or YANSHI_PERSONA_PG_DSN (a separate database)")
 	}
 	cmd := exec.Command(bin, "dev", "-business-lines", strings.Join(businessLines, ","), "-store", opts.Store, "-exit-on-stdin-eof")
+	if opts.ClockOffset != nil {
+		cmd.Args = append(cmd.Args, "-fixture-clock-offset", opts.ClockOffset.String())
+	}
 	// DSN 通过子进程环境传递，避免把凭据放进进程参数与启动错误。
 	cmd.Env = append(os.Environ(), "YANSHI_PERSONA_PG_DSN="+opts.PersonaDSN)
 	stdin, err := cmd.StdinPipe()
@@ -175,6 +180,11 @@ func (c *Client) Close() error {
 }
 
 func (c *Client) request(ctx context.Context, bl, eu, op string, input, output any) error {
+	endpoint := c.base + "/v1/fixture/" + url.PathEscape(bl) + "/" + url.PathEscape(eu) + "/" + op
+	return c.requestURL(ctx, endpoint, op, input, output)
+}
+
+func (c *Client) requestURL(ctx context.Context, endpoint, op string, input, output any) error {
 	var body io.Reader
 	method := http.MethodGet
 	if input != nil {
@@ -184,7 +194,6 @@ func (c *Client) request(ctx context.Context, bl, eu, op string, input, output a
 		}
 		body, method = bytes.NewReader(raw), http.MethodPost
 	}
-	endpoint := c.base + "/v1/fixture/" + url.PathEscape(bl) + "/" + url.PathEscape(eu) + "/" + op
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, body)
 	if err != nil {
 		return err
@@ -207,6 +216,10 @@ func (c *Client) request(ctx context.Context, bl, eu, op string, input, output a
 	}
 	_, err = io.Copy(io.Discard, resp.Body)
 	return err
+}
+
+func (c *Client) SetClockOffset(ctx context.Context, offset time.Duration) error {
+	return c.requestURL(ctx, c.base+"/v1/fixture/clock", "clock", map[string]string{"offset": offset.String()}, nil)
 }
 
 func (c *Client) Reset(ctx context.Context, bl, eu string) error {

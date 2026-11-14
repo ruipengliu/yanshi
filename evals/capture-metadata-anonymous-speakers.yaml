@@ -3,6 +3,7 @@ description: >-
   unknown 与 timeline 佩戴者都投影为逐段匿名 other，其事项不能成为已核实承诺，个人信息不能写成用户 Memory。
   evidence 佩戴者的可靠承诺和长期偏好必须正常处理。允许匿名事项不建账或保留未核实候选；评分不要求说出模型看不到的原始身份标签。
 agent: xinli-day
+now: "2026-10-23T18:30:00+08:00"
 setup:
   xinli: {}
 turns:

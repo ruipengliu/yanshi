@@ -209,6 +209,10 @@ var lowerIsBetter = map[string]bool{"fragmentation": true}
 
 // worse 报告 cur 是否比基线 base 明显变差：变差的幅度至少为 MetricDrop，且超过两倍的标准误（多次运行的波动）。
 func worse(name string, base, cur Metric) bool {
+	if _, short, _ := strings.Cut(name, ": "); short == "commitments_count" {
+		// 总数没有统一的好坏方向，质量由金标检查，不能把诊断变成新的隐性门槛。
+		return false
+	}
 	drop := base.Mean - cur.Mean
 	if _, short, _ := strings.Cut(name, ": "); lowerIsBetter[short] {
 		drop = -drop

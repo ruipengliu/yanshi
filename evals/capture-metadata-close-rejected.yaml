@@ -3,6 +3,7 @@ description: >-
   测关闭拒收回执后的恢复：受控要求先尝试把寄框架合同标为完成，完成表述含未标 critical_kinds 的低支持区间，按 unknown 处理。
   模型应保留原承诺未完成，再交出同一时段的可靠事项，不能把未被接受的完成结论写成最终事实。
 agent: xinli-day
+now: "2026-10-23T18:30:00+08:00"
 setup:
   xinli:
     projects: [{id: P-0001, name: 新一季采购, status: 等待寄出框架合同。}]

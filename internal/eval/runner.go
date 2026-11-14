@@ -93,6 +93,7 @@ type Config struct {
 
 type instance struct {
 	clock    *offsetClock
+	scenario bool
 	queue    workqueue.Queue
 	cfg      Config
 	svc      *service.Service
@@ -177,7 +178,7 @@ func Run(ctx context.Context, cfg Config, cases []*Case) (*Report, error) {
 		cfg.Sandbox = used
 	}
 	// 拨钟会影响租约与停放，不能让并行 trial 共用偏移。
-	shared := slices.DeleteFunc(slices.Clone(cases), advancesSchedule)
+	shared := slices.DeleteFunc(slices.Clone(cases), isolatedClock)
 	var in *instance
 	if len(shared) > 0 {
 		var err error
@@ -227,7 +228,7 @@ func Run(ctx context.Context, cfg Config, cases []*Case) (*Report, error) {
 			defer wg.Done()
 			defer func() { <-sem }()
 			var tr TrialResult
-			if advancesSchedule(cases[j.c]) {
+			if isolatedClock(cases[j.c]) {
 				tr = isolatedTrial(runCtx, cfg, cases[j.c], j.trial)
 			} else {
 				tr = in.trial(ctx, cases[j.c], j.trial)
@@ -288,7 +289,10 @@ func (p *usedSandboxes) destroyAll(ctx context.Context, logger *slog.Logger) []s
 }
 
 func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
-	clk := &offsetClock{}
+	clk, scenario, err := scenarioClock(cases)
+	if err != nil {
+		return nil, err
+	}
 	st := app.Memory(clk)
 	agents, versions, err := derive(cfg, cases)
 	if err != nil {
@@ -314,7 +318,7 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 		return core.WorkerConfig(id, workqueue.Pool{}, idle)
 	}}
 	controllerDone := make(chan struct{})
-	in := &instance{clock: clk, queue: st.Queue, cfg: cfg, svc: core.Service, oneshots: core.Oneshots, hub: core.Hub, mems: core.Memory, agents: agents, version: versions, workers: pool, arts: core.Artifacts,
+	in := &instance{clock: clk, scenario: scenario, queue: st.Queue, cfg: cfg, svc: core.Service, oneshots: core.Oneshots, hub: core.Hub, mems: core.Memory, agents: agents, version: versions, workers: pool, arts: core.Artifacts,
 		calls: &call.Manager{Service: core.Service, Realtime: cfg.Realtime, Feed: feed.Source{Log: st.Log, Live: opts.Live}, Logger: cfg.Logger}}
 	in.controllerDone = controllerDone
 	var servers []mcpcap.Server
@@ -326,7 +330,12 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 	}
 	if needsXinli(agents, cases, versions) {
 		var registrations []mcpcap.Server
-		if in.xinli, registrations, err = xinlifixture.StartWithOptions(ctx, cfg.XinliBin, cfg.XinliFixture, BusinessLine, NoHealthBusinessLine); err != nil {
+		fixtureOpts := cfg.XinliFixture
+		if scenario {
+			offset := clk.Offset()
+			fixtureOpts.ClockOffset = &offset
+		}
+		if in.xinli, registrations, err = xinlifixture.StartWithOptions(ctx, cfg.XinliBin, fixtureOpts, BusinessLine, NoHealthBusinessLine); err != nil {
 			return nil, err
 		}
 		servers = append(servers, registrations...)
@@ -462,9 +471,15 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		filed, exchanges := slices.Clone(x.Filed), slices.Clone(x.Exchanges)
 		for i := range filed {
 			filed[i].Date = relativeDate(filed[i].Date)
+			if in.scenario {
+				filed[i].Date = relativeDate(x.Filed[i].Date, in.clock.Now())
+			}
 		}
 		for i := range exchanges {
 			exchanges[i].Date = relativeDate(exchanges[i].Date)
+			if in.scenario {
+				exchanges[i].Date = relativeDate(x.Exchanges[i].Date, in.clock.Now())
+			}
 		}
 		if err := in.xinli.Seed(tctx, bl, endUser, xinlifixture.SeedData{Projects: x.Projects, Days: x.Days, Commitments: x.Commitments, Filed: filed, Exchanges: exchanges}); err != nil {
 			tr.Err = err.Error()
@@ -542,8 +557,12 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		devs = append(devs, dev)
 	}
 	var sid, sessionAgent, businessDay, previousRunID string
-	// 一次 trial 共用运行当天；长用例跨午夜也不因新建 Session 换业务日。
+	// 默认业务日固定在 trial 起点；跨午夜或启动耗时不应隐式换日，场景只按显式 business_day 推进。
 	runDay := captureBusinessDay(start)
+	if in.scenario {
+		initial, _ := time.Parse(time.RFC3339Nano, c.Now)
+		runDay = captureBusinessDay(initial)
+	}
 	captureDays := map[string]string{}
 	var sessions []string
 	// topics 与 labels 按 Session 与提交返回的引用保存主题与金标，用于计算项目归集的
@@ -573,6 +592,13 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 		}
 	}()
 	for ti, turn := range c.Turns {
+		if turn.BusinessDay != "" && turn.BusinessDay != runDay {
+			if err := in.advanceBusinessDay(tctx, c.Now, turn.BusinessDay); err != nil {
+				tr.Err = fmt.Sprintf("turn %d: business_day: %v", ti+1, err)
+				return tr
+			}
+			runDay = turn.BusinessDay
+		}
 		if sid == "" || turn.NewSession {
 			if c.Call && sid != "" {
 				tr.Err = "call cases do not support new_session"
@@ -635,7 +661,11 @@ func (in *instance) trial(ctx context.Context, c *Case, trial int) (tr TrialResu
 			}
 		}
 		if gold != nil {
-			gold.hear(turn.Captures, c.Noise)
+			if in.scenario {
+				gold.hear(turn.Captures, c.Noise, in.clock.Now())
+			} else {
+				gold.hear(turn.Captures, c.Noise)
+			}
 		}
 		refs, err := in.submitCaptures(tctx, sid, businessDay, ti+1, segs)
 		if err != nil {
@@ -940,13 +970,17 @@ func (in *instance) submitTurn(ctx context.Context, sid string, turn Turn, previ
 
 // captureTime 解读旁听的 at："2026-10-23 09:42"（Asia/Shanghai），或相对于提交时刻的 "now-15m"（白天整理的用例需要
 // "刚说完"的交谈，xinli-captures.md §10）。
-func captureTime(at string) (time.Time, error) {
+func captureTime(at string, scenarioNow ...time.Time) (time.Time, error) {
 	if rest, ok := strings.CutPrefix(at, "now-"); ok {
 		d, err := time.ParseDuration(rest)
 		if err != nil {
 			return time.Time{}, err
 		}
-		return time.Now().Add(-d).Truncate(time.Minute), nil
+		now := time.Now()
+		if len(scenarioNow) > 0 {
+			now = scenarioNow[0]
+		}
+		return now.Add(-d).Truncate(time.Minute), nil
 	}
 	return time.ParseInLocation(time.DateTime, at+":00", captureZone)
 }
@@ -956,6 +990,13 @@ func (in *instance) checkXinli(add func(string, bool, string), e *XinliExpect, s
 	if st == nil {
 		add("xinli", false, "the case has no setup.xinli")
 		return
+	}
+	if len(e.NoText) > 0 {
+		texts := xinliTexts(st)
+		for _, sub := range e.NoText {
+			found := slices.ContainsFunc(texts, func(s string) bool { return strings.Contains(s, sub) })
+			add("xinli no_text "+sub, !found, fmt.Sprintf("final exchange/day/project text contains %q: %v", sub, found))
+		}
 	}
 	inRange := func(r *Range, n int) bool {
 		return r == nil || ((r.Min == nil || n >= *r.Min) && (r.Max == nil || n <= *r.Max))
@@ -986,16 +1027,13 @@ func (in *instance) checkXinli(add func(string, bool, string), e *XinliExpect, s
 		add("xinli in_project "+id, inRange(&r, byProject[id]), fmt.Sprintf("%d exchanges in %s", byProject[id], id))
 	}
 	var all []string
-	made := 0
+	made := xinliCommitmentCount(st)
 	for _, m := range st.Commitments {
 		status := m.Status
 		if m.MergedInto != "" {
 			status = "merged"
 		}
 		all = append(all, fmt.Sprintf("[%s %s %s %s r%d] %s %s", m.Kind, status, m.DueDate, m.Project, m.Rev(), m.Content, m.Unverified))
-		if m.Session != "" && m.MergedInto == "" {
-			made++
-		}
 	}
 	detail := "commitments: " + clip(strings.Join(all, "; "), 400)
 	add("xinli commitments_count", inRange(e.CommitmentsCount, made), fmt.Sprintf("%d commitments from the day's organizing (merged ones not counted)", made))
@@ -1057,8 +1095,18 @@ func (in *instance) checkXinli(add func(string, bool, string), e *XinliExpect, s
 	}
 }
 
+func xinliCommitmentCount(st *xinlifixture.State) int {
+	n := 0
+	for _, m := range st.Commitments {
+		if m.Session != "" && m.MergedInto == "" {
+			n++
+		}
+	}
+	return n
+}
+
 // relativeDate 把 "today-N" 换成运行当天之前第 N 天的日期（Asia/Shanghai），其余原样返回。
-func relativeDate(s string) string {
+func relativeDate(s string, scenarioNow ...time.Time) string {
 	rest, ok := strings.CutPrefix(s, "today")
 	if !ok {
 		return s
@@ -1069,7 +1117,11 @@ func relativeDate(s string) string {
 			return s
 		}
 	}
-	return time.Now().In(captureZone).AddDate(0, 0, -n).Format(time.DateOnly)
+	now := time.Now()
+	if len(scenarioNow) > 0 {
+		now = scenarioNow[0]
+	}
+	return now.In(captureZone).AddDate(0, 0, -n).Format(time.DateOnly)
 }
 
 // checkGrouping 计算项目归集的碎片率与纯度（xinli-captures.md §10、m4-eval.md）。交谈由模型划定范围，每段交谈的主题是
@@ -1277,6 +1329,9 @@ func (in *instance) submitCaptures(ctx context.Context, sid, businessDay string,
 		}
 		if g.At != "" {
 			at, err := captureTime(g.At)
+			if in.scenario {
+				at, err = captureTime(g.At, in.clock.Now())
+			}
 			if err != nil {
 				return nil, fmt.Errorf("capture at %q: %w", g.At, err)
 			}
@@ -1653,6 +1708,10 @@ func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation)
 	}
 	if x := e.Xinli; x != nil {
 		in.checkXinli(add, x, o.xinli)
+		if r := x.CommitmentsCount; r != nil && r.Min == nil && r.Max == nil && o.xinli != nil {
+			// 空范围显式要求诊断；旧用例的指标集合与报告不变。
+			metrics["commitments_count"] = float64(xinliCommitmentCount(o.xinli))
+		}
 		if x.Grouping != nil && o.xinli != nil {
 			frag, purity := checkGrouping(add, x.Grouping, o.xinli, o.topics)
 			metrics["fragmentation"], metrics["purity"] = frag, purity

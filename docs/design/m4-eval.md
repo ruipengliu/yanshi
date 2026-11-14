@@ -18,6 +18,7 @@ description: 读电脑上的会议记录整理纪要，写回电脑前需要审�
 agent: assistant              # 使用的 AgentDef（可被 -agent 覆盖）
 trials: 3                     # 同一用例运行次数，衡量模型输出的波动
 time_zone: Asia/Shanghai      # 可选：Session 时区；xinli 默认上海，其他用例不设置
+now: "2026-10-23T18:30:00+08:00" # 可选：显式场景起始时间；省略仍按现实运行日
 requires: []                  # 如 [sandbox]：环境不满足时跳过
 timeout: 4m                   # 每轮等待 Run 结束的上限（长 Run 用例调大）
 context: {window: 6000}       # 可选：覆盖 AgentDef 的上下文配置（压缩类用例）
@@ -46,6 +47,7 @@ turns:
     scheduled: false         # true：经 service 创建一次性定时，等 Worker 到点开启 Run（只收文字）
     approve: true             # 本轮遇到审批时的决定（默认批准）
     new_session: false        # true 表示开一个新 Session（跨 Session 的 Memory 用例）
+    business_day: "2026-10-23" # 可选：仅在声明 now 时可用；跨日须 new_session，省略沿用前轮业务日
     crash_after_calls: 0      # >0：Run 发起这么多次调用后"杀掉"执行它的 Worker，检验接管（长 Run 用例）
     captures:                 # 本轮输入之前提交旁听；经夹具写入已绑定的 Persona 业务日
       - {speaker: other, key: wang, text: "…"}   # speaker: wearer（佩戴者）| other（他人，key 区分不同的人）| unknown
@@ -71,6 +73,7 @@ turns:
         in_project: {P-0001: {max: 0}}                          # 关联到某项目的交谈数（一段交谈可以关联几个项目）
         commitments: [{kind: mine, contains: 报价, due_date: "2026-10-24", verified: true}]   # 账本中须有的承诺；还可按 status（open 不含被合并的、done、cancelled、merged）、project、rev（修订数）匹配
         no_commitments: [{kind: mine, contains: 合同}]          # 账本中不得有的承诺
+        no_text: [失眠]                                         # 最终有效交谈、每日结果与项目文本均不得包含
         commitments_count: {max: 35}                            # 整理交出的承诺数（不含预置的与被合并的）
         stale_open: {of: [{contains: 验收, due_date: "2026-10-28"}], max: 0}   # 改期、作废之前的旧版本仍未完成的至多几条
         grouping: {topics: 3, fragmentation: {max: 1.0}, purity: 0.9}   # 项目归集的碎片率与纯度（按 topic 计算，见下）
@@ -99,9 +102,17 @@ turns:
 
 **最终状态评分。** turn 层的 `judge_state: true` 为该轮 `expect.judge` 追加本 EndUser 在该业务线的最终有效 `exchanges`、`days` 与承诺账本摘要。摘要含内容、对方、期限、状态、未核实原因与修订数，排除被合并的交谈和承诺，不提供变更历史。这样可按重交后的有效纪要评分，而不会把已被取代的早期调用参数误当最终结果。不开启时评分输入逐字不变；开启但没有 xinli 快照时记为评分设施错误。单次调用用例不接受此开关。
 
+**最终文本排除。** `expect.xinli.no_text` 逐项按子串检查最终有效交谈的标题、摘要、决定、风险、觉察与候选项目名，每日总览、要点与觉察，以及项目名、现状、下一步与待解决问题；已合并交谈和项目不计，归档项目仍检查。不扫描历史变更集、调用参数或承诺文本（健康相关承诺另有边界）。被拒收或整体取代的草稿不因此失败；`no_call_args` 仍表示禁止尝试，原语义不变。未声明时不增加断言。
+
 **项目归集的碎片率与纯度**（`expect.xinli.grouping`，`internal/eval` 的 `checkGrouping`）：数据文件给每段旁听标上主题（`topic`，闲聊不标）。交谈由模型划定范围（ADR-0042），每段交谈的主题是范围内标了主题的旁听中最多的那个（相同时取先出现的），全是闲聊的没有主题；预置的与被并入别处的交谈不计。一段交谈关联几个项目时，对每个项目各算一次，算作的主题是这段交谈中出现过、且是那个项目在只关联一个项目的交谈中占多数的主题，没有这样的主题时算作交谈自己的主题：老板一次谈了 OKR、客户与团队三件事，分别归入三个项目不算杂质。碎片率是每个主题分散在几个项目中（没有归入项目的交谈每段各算一个），按主题平均；纯度是每个项目中占多数的主题所占的比例（闲聊算作杂质），按交谈与项目的关联数加权。理想值都是 1。
 
-**xinli 的提交与业务日（ADR-0050）。** xinli-day 版本 2 不再向内核提交原文。运行器创建工作 Session 后，以业务线身份经夹具 `bind_day` 绑定业务日，再经 `AppendCaptures` 提交原文；返回的引用用于主题归集与金标对应，不再把引用的批次解释成日志位置。业务日取本次 trial 开始时 `time.Now()` 在 `captureZone`（Asia/Shanghai）的运行当天，不取旁听 `at` 的历史日期，以保持切换前交谈与总览按运行当天归集的评测口径。同一 trial 的 xinli-day Session 依次换绑这一个业务日，共享原文、引用与处理进度，已用完的旧 Session 不再读取旁听；片段自己的说话时间仍用于“明天”等期限计算。声明已退役 captures 能力的 AgentDef 在加载时拒绝；分页测试只与冻结 golden 比较。
+`grouping: {topics: 8}` 只检查主题覆盖数，碎片率与纯度照常进入指标和基线比较；省略 `fragmentation`、`purity` 不再以它们判定整例通过。`commitments_count: {}` 显式把数量写进现有报告的指标表，不按总数判定通过或回归；带上下限时沿用原断言，省略时也保留原来的断言行为和指标集合。计数包含整理交出的 open、done、cancelled，排除预置与已合并项。
+
+**xinli 的提交与业务日（ADR-0050）。** xinli-day 版本 2 不再向内核提交原文。运行器创建工作 Session 后，以业务线身份经夹具 `bind_day` 绑定业务日，再经 `AppendCaptures` 提交原文；返回的引用用于主题归集与金标对应，不再把引用的批次解释成日志位置。未声明 `now` 时，业务日仍取本次 trial 开始时 `time.Now()` 在 `captureZone`（Asia/Shanghai）的运行当天，不取旁听 `at` 的历史日期；同一 trial 的 xinli-day Session 依次换绑这一个业务日，共享原文、引用与处理进度，已用完的旧 Session 不再读取旁听。声明 `now` 时按下述场景时间与 `business_day` 绑定。片段自己的说话时间仍用于“明天”等期限计算。声明已退役 captures 能力的 AgentDef 在加载时拒绝；分页测试只与冻结 golden 比较。
+
+**场景时间。** Case 的 `now` 须是带时区的 RFC3339 时间；首次按它设置真实时间偏移，允许初始化到历史日期，之后保持真实时间流逝且只前拨。首轮默认业务日为 `now` 的上海日期；Turn 的 `business_day` 须为 YYYY-MM-DD，省略沿用前轮，同日不重置时钟，跨日保留 `now` 的上海钟点并向前推进，然后创建新 Session、绑定新业务日。日期不得倒退，首轮之后跨日须 `new_session: true`，也不能与重答、等待后台结果或 `advance_to_next_schedule` 同轮使用。助手问答不声明新业务日时留在最后整理之后。单次调用用例不接受场景字段。
+
+内核、Memory 和 Persona 共用同一真实时间偏移；预置的 `today-N`、旁听 `now-Nm` 与相对金标时间也按场景时钟解释。Persona 的独立 `xinli dev` 进程仅在显式 `-fixture-clock-offset` 下启用场景时钟，启动时继承父进程偏移，前拨后由 `/v1/fixture/clock` 同步；存储、MCP 与夹具接口使用相同偏移，不改变原文期限或 Memory 有效期规则。这个参数只在 dev 注册、要求无 `-kernel-url`，端点仅在显式启用时挂载；MCP 凭据校验仍按现实时间。等待超时、报告开始时间与耗时仍用现实时间，报告格式不变。
 
 调用断言与输入中提到的旁听工具名直接改为 `mcp_xinli__captures`，匹配器不提供旧名称别名；其余断言与用例内容不变。
 
@@ -119,7 +130,7 @@ turns:
 
 **定时与评测时钟（P2）。** `internal/eval/schedule.go` 的时钟为真实时间加偏移，只能前拨，并发读写由互斥锁保护；内存存储、队列、Worker 与核心对象图共用同一个时钟，Memory 断言也按它判断有效期。等待超时与报告耗时仍取真实时间，不能因前拨一周而立即超时。评测没有启动 Janitor；核心装配保留同一时钟，未来启动时也应使用它。
 
-用例的 `time_zone` 传给每个新建的 Session；未写时，有 `setup.xinli` 或当前 Agent 名以 `xinli-` 开头的 Session 默认 `Asia/Shanghai`，其他用例保留无时区，避免改变无关评测。业务日仍取 trial 开始时真实的上海日期。Persona（`xinli dev` 子进程）的时钟独立，查询“最近几天”仍按真实日期计算；拨钟周报用预置项目现状与无期限承诺，不依赖拨钟之后的“今天”。
+用例的 `time_zone` 传给每个新建的 Session；未写时，有 `setup.xinli` 或当前 Agent 名以 `xinli-` 开头的 Session 默认 `Asia/Shanghai`，其他用例保留无时区，避免改变无关评测。未声明 `now` 的业务日仍取 trial 开始时真实的上海日期，Persona 时钟独立、查询“最近几天”仍按真实日期计算；原拨钟周报用预置项目现状与无期限承诺，不依赖拨钟之后的“今天”。显式场景下，定时前拨也同步 Persona。
 
 ```yaml
 turns:
@@ -143,7 +154,7 @@ turns:
 
 `advance_to_next_schedule` 与 `input`、`scheduled`、后台等待、卡片动作、界面上下文、设备来源、新建 Session、旁听及业务编辑互斥，不用于 Call。运行器读本 Session 最早的有效 `NextDue`（同刻按 ID 排序），没有有效定时或仍有活跃 Run 时报用例错误；拨到该时刻，已过则不拨，再经队列 `Enqueue` 唤醒。只匹配本次唤醒之后、该定时的 `RunRequested.schedule`，等待它的 Run，复用普通轮次的审批、回答、超时与断言；评分输入注明平台定时并带上原定时文字。`scheduled: true` 仍创建一次性定时并等待真实时间到点，不受影响。
 
-含拨钟回合的每个 trial 单独创建实例、存储、时钟与 Persona 夹具；其余 trial 沿用共享实例。独立实例结束时取消控制器并回收夹具，所有控制器停止后统一销毁使用过的沙箱。不能在共享实例中重置偏移，否则会扰动并行 trial 的租约与定时。
+声明 `now` 或含拨钟回合的每个 trial 单独创建实例、存储、时钟与 Persona 夹具；其余 trial 沿用共享实例。独立实例结束时取消控制器并回收夹具，所有控制器停止后统一销毁使用过的沙箱。不能在共享实例中重置偏移，否则会扰动并行 trial 的租约与定时。
 
 `call_args` 保持原有语法与含义；新增 `call_sequence` 的 `capability` 支持 glob，`contains` 中的全部子串须出现在同一次调用的压紧 JSON 参数中（仅移除 JSON 空白，不改变字符串内容），下一项必须匹配之后的另一次调用。`schedules.active` 检查有效数；`rrule_contains` 与 `time_zone` 要求同一条有效声明满足，不检查取消后保留的历史声明。
 
@@ -447,6 +458,19 @@ commitments:
 - **噪声的影响在这个噪声水平下测不出来**：带噪声的与不带噪声的各项相差都在一个标准差之内；约一成的同音字与五处说话人错误还不够，要衡量识别错误的影响需要更高的噪声比例或更多运行。
 - **问答**：`xinli-assistant` 回答"还有哪些没办完"与"期限怎么变的"都只有 2 分（三次）：把已办完、已取消或他人负责的也当作未完成，说不清改期的先后——它只能看项目的未完成承诺与已汇总的日期，是第 5 项"助手的查询工具"要补的。
 - **成本**：多日一次约 188 万 tokens、14 分钟（带噪声的约 20 分钟）。
+
+### 场景夹具修正与待办（2026-11-14）
+
+`capture-multiday` 两例的五轮旁听显式绑定 10/12、10/13、10/13、10/14、10/15，场景起始钟点为 18:30，助手问答在最后整理之后；`capture-workday` 两例固定为 10/23 18:30（数据终止于 17:53）。五个 `capture-metadata-*` 也使用各自原话日期的 18:30：unverified 为 10/22，其余为 10/23。未声明场景时间的其他用例保持旧行为，冻结 golden 与现有基线不改。
+
+workday 两例的金标门禁为 `commitment_precision: 0.90`、`commitment_recall: 0.85`、`reminder_precision: 0.90`，保留 `stale_open` 与项目归属断言；承诺总数、碎片率和纯度继续诊断与比较。健康信息按 `no_text` 检查最终有效摘要；邮箱要求改为开启 `judge_state` 的语义评分，允许已答应的发群替代方案。multiday 问答区分原订位取消与另行退订，可选事项不计正确项数量，也不因列出扣分，只有与原话或当前状态冲突才算错列；noisy 中已知 `heard` 改换说话人产生的额外事项不计对错，其余严格检查。history 不要求主动复述“预置”或保留期，把新建算作改期、把确认记录日当实际交付日、期限错误或混淆原话与摘要仍至多 3 分。实际效果须由远端评测验收，不能把夹具修正等同于能力通过。
+
+其他历史夹具暂只登记：`capture-week-grouping`（10/19–10/23）、`capture-project-grouping`（10/22–10/23）也有跨日换绑到同日的风险；固定历史旁听的 `capture-day-digest`（10/21），`capture-commitment-extraction`、`capture-exchange-split`、`capture-project-unsure`、`capture-speaker-ref`、`capture-long-day`（10/22），`capture-commitment-edit-kept`、`capture-commitment-handover`、`capture-commitment-reschedule`、`capture-commitment-done-later`、`capture-commitment-refile`、`capture-meeting-split`、`capture-span-runs`、`capture-third-party`、`capture-relative-date`、`capture-two-calls`（10/23），以及 `capture-health-commitment`（10/27）仍有业务日与原话日期漂移，是否实际失分需逐例确认，本轮不改。
+
+- 待办：DayLedger 展示交谈起止时间，并调整“相邻且归属相同”的合并候选规则，消除 span-runs 把相隔六小时的交谈合并的产品诱因。
+- 待办：修正 `persona/domain/commitment_queries.go` 以 7×24h 判断原话保留期、偏离业务日当地日历期限的问题。
+- 待办：拆出期限链、改期次数、完成记录日与依据类型、官网/App 区分、第三方承诺和部分完成等独立能力小例。
+- 待办：建立项目关系金标，区分允许的多项目关联与错误归属，再恢复归集质量的硬门禁。
 
 ## 14. 按完整时段拆 Run 的实验
 

@@ -149,7 +149,7 @@ func newGoldBook(g *Gold) *goldBook {
 
 // hear 记下本轮提交的旁听：标了的承诺计为已经听到；说话时间不晚于已听到的最晚时刻的改动生效。noisy 为 true 时
 // 提交的是识别有误的版本（Case.Noise）。
-func (b *goldBook) hear(segs []CaptureSegment, noisy bool) {
+func (b *goldBook) hear(segs []CaptureSegment, noisy bool, scenarioNow ...time.Time) {
 	for _, g := range segs {
 		for _, id := range strings.Fields(g.Gold) {
 			if it := b.byID[id]; it != nil {
@@ -157,14 +157,14 @@ func (b *goldBook) hear(segs []CaptureSegment, noisy bool) {
 				it.unjudgeable = it.unjudgeable || (noisy && g.Heard != "" && g.Heard != g.Speaker)
 			}
 		}
-		if at, err := captureTime(g.At); g.At != "" && err == nil && at.After(b.heardUntil) {
+		if at, err := captureTime(g.At, scenarioNow...); g.At != "" && err == nil && at.After(b.heardUntil) {
 			b.heardUntil = at
 		}
 	}
 	for _, it := range b.items {
 		for it.applied < len(it.Revisions) {
 			r := it.Revisions[it.applied]
-			if at, _ := captureTime(r.At); at.After(b.heardUntil) {
+			if at, _ := captureTime(r.At, scenarioNow...); at.After(b.heardUntil) {
 				break
 			}
 			it.set(r.Due, r.Status)

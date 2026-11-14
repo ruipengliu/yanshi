@@ -4,6 +4,7 @@ description: >-
   说话人识别错了（佩戴者的话识别成他人的、他人的话识别成佩戴者的，包括一段邻座的电话）。
   说话人识别错了的承诺无从判断，不计入指标；与 capture-multiday 的指标对照，衡量识别错误的影响（m4-eval.md §13）。
 agent: xinli-day
+now: "2026-10-12T18:30:00+08:00"
 timeout: 25m
 gold: data/multiday/gold.yaml
 noise: true
@@ -17,17 +18,20 @@ setup:
       - {id: P-0005, name: 区域服务员招聘, status: 城西、滨江共缺六名服务员。}
 turns:
   - captures_file: data/multiday/2026-10-12.yaml
+    business_day: "2026-10-12"
     input: 整理今天
     expect:
       calls: ["mcp_xinli__file_day"]
       xinli: {gold: {}}
   - captures_file: data/multiday/2026-10-13-morning.yaml
+    business_day: "2026-10-13"
     new_session: true
     input: 整理交谈
     expect:
       no_calls: ["mcp_xinli__file_day"]
       xinli: {gold: {}}
   - captures_file: data/multiday/2026-10-13-afternoon.yaml
+    business_day: "2026-10-13"
     input: 整理今天
     expect:
       calls: ["mcp_xinli__file_day"]
@@ -37,12 +41,14 @@ turns:
       - {gold: send-checklist, status: done}
       - {gold: compressor, due: "2026-10-20"}
     captures_file: data/multiday/2026-10-14.yaml
+    business_day: "2026-10-14"
     new_session: true
     input: 整理今天
     expect:
       calls: ["mcp_xinli__file_day"]
       xinli: {gold: {}}
   - captures_file: data/multiday/2026-10-15.yaml
+    business_day: "2026-10-15"
     new_session: true
     input: 整理今天
     expect:
@@ -59,7 +65,9 @@ turns:
         10 月 17 日（周六）去车站接婆婆；10 月 19 日（周一）给宋总看滨江店开业的接待方案；10 月 19 日交乐乐的秋游回执；10 月 19 日
         之前通知面试的何亮；10 月 21 日（周三）城西店复查到场。已经办完或已不是佩戴者要做的：成本核算表（已发）、团建聚餐订位
         （聚餐取消）、周六的设备验收（改由小林盯）、城西店的整改清单（已发）、营业执照副本（已寄）、去滨江店看进度、家长会、
-        报销单、周四的两场面试。评分：列出未完成的至少五项，且没有把已办完或已不是佩戴者要做的事当作未完成，5 分；列出三到四项
+        报销单、周四的两场面试。原订位承诺已取消；另行答应的退订可以列为未完成。金标 optional 事项可列可不列，不计入正确项数量，只有与原话或当前状态冲突才算错列。
+        已知说话人识别错（数据中 heard 改变说话人）的片段产生的额外事项不计对错，包括邻座电话中的周末回去看人、带水果；其余事项仍严格检查。
+        评分：列出未完成的至少五项，且没有把已办完或已不是佩戴者要做的事当作未完成，5 分；列出三到四项
         且没有错列，4 分；列出三项以上但错列了一项，3 分；只列出一两项，或错列两项以上，2 分；没有回答或答非所问，1 分。
   - input: 成本核算表的期限前后是怎么变的？
     expect:

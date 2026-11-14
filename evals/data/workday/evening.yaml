@@ -69,9 +69,9 @@
 - {speaker: "other", key: "he", text: "你说。", at: "2026-10-23 17:33", topic: "family"}
 - {speaker: "wearer", text: "周六上午我得去装修现场，工长周日不开工。钢琴课还是你送吧。", at: "2026-10-23 17:34", topic: "family", gold: "piano-send piano-he"}
 - {speaker: "other", key: "he", text: "行，那我送朵朵，你忙你的。", at: "2026-10-23 17:35", topic: "family", gold: "piano-he"}
-- {speaker: "wearer", text: "还有，卫生间那个管子要换，追加三千块，你觉得行吗？", at: "2026-10-23 17:36", topic: "family", gold: "discuss-pipe"}
-- {speaker: "other", key: "he", text: "管子锈了肯定得换啊，换吧，你定。", at: "2026-10-23 17:37", topic: "family", gold: "discuss-pipe"}
-- {speaker: "wearer", text: "好，那我周六跟老周说可以。", at: "2026-10-23 17:38", topic: "family", gold: "tell-zhou"}
+- {speaker: "wearer", text: "还有，卫生间那个管子要换，追加三千块，你觉得行吗？", at: "2026-10-23 17:36", topic: "renovation", gold: "discuss-pipe"}
+- {speaker: "other", key: "he", text: "管子锈了肯定得换啊，换吧，你定。", at: "2026-10-23 17:37", topic: "renovation", gold: "discuss-pipe"}
+- {speaker: "wearer", text: "好，那我周六跟老周说可以。", at: "2026-10-23 17:38", topic: "renovation", gold: "tell-zhou"}
 - {speaker: "other", key: "he", text: "朵朵的生日蛋糕我来订吧，她说要那个独角兽的。", at: "2026-10-23 17:39", topic: "family", gold: "cake"}
 - {speaker: "wearer", text: "好，你订吧。派对的事我们周末再商量。", at: "2026-10-23 17:40", topic: "family", gold: "cake party"}
 - {speaker: "other", key: "he", text: "好，你早点回来。", at: "2026-10-23 17:41", topic: "family"}

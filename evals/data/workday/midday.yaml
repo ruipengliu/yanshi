@@ -174,14 +174,14 @@
 - {speaker: "wearer", text: "好，大概讲多久？", at: "2026-10-23 15:31", topic: "okr"}
 - {speaker: "other", key: "huang", text: "二十分钟吧，重点讲康宁和首页改版，还有 3.2 的质量问题。", at: "2026-10-23 15:32", topic: "okr"}
 - {speaker: "wearer", text: "行，材料周一上午给你，我先发你过一下。", at: "2026-10-23 15:33", topic: "okr", gold: "okr-material"}
-- {speaker: "other", key: "huang", text: "好。康宁那边最近怎么样？", at: "2026-10-23 15:34", topic: "okr"}
-- {speaker: "wearer", text: "上线时间定了，十一月十六号首批二十家。不过张总提了一个要求，要我们给源码。", at: "2026-10-23 15:35", topic: "okr"}
-- {speaker: "other", key: "huang", text: "源码？不行，源码绝对不能给。", at: "2026-10-23 15:36", topic: "okr"}
-- {speaker: "wearer", text: "我也是这么想的。我想提一个第三方代码托管的方案，您看可以吗？", at: "2026-10-23 15:37", topic: "okr"}
-- {speaker: "other", key: "huang", text: "托管可以谈，但费用他们出，而且要法务看过。", at: "2026-10-23 15:38", topic: "okr"}
-- {speaker: "wearer", text: "好，那我下周跟法务对一下托管协议。", at: "2026-10-23 15:39", topic: "okr", gold: "legal-sync"}
-- {speaker: "other", key: "huang", text: "嗯。还有一个事，老陈最近是不是有点情绪？", at: "2026-10-23 15:40", topic: "okr"}
-- {speaker: "wearer", text: "有一点，他下午约了我聊，可能是职业发展的事。", at: "2026-10-23 15:41", topic: "okr"}
-- {speaker: "other", key: "huang", text: "你先稳住他，他是核心，别让他走了。有什么需要我支持的你跟我说。", at: "2026-10-23 15:42", topic: "okr"}
-- {speaker: "wearer", text: "好的，聊完我跟您同步。", at: "2026-10-23 15:43", topic: "okr", gold: "sync-huang"}
+- {speaker: "other", key: "huang", text: "好。康宁那边最近怎么样？", at: "2026-10-23 15:34", topic: "kangning"}
+- {speaker: "wearer", text: "上线时间定了，十一月十六号首批二十家。不过张总提了一个要求，要我们给源码。", at: "2026-10-23 15:35", topic: "kangning"}
+- {speaker: "other", key: "huang", text: "源码？不行，源码绝对不能给。", at: "2026-10-23 15:36", topic: "kangning"}
+- {speaker: "wearer", text: "我也是这么想的。我想提一个第三方代码托管的方案，您看可以吗？", at: "2026-10-23 15:37", topic: "kangning"}
+- {speaker: "other", key: "huang", text: "托管可以谈，但费用他们出，而且要法务看过。", at: "2026-10-23 15:38", topic: "kangning"}
+- {speaker: "wearer", text: "好，那我下周跟法务对一下托管协议。", at: "2026-10-23 15:39", topic: "kangning", gold: "legal-sync"}
+- {speaker: "other", key: "huang", text: "嗯。还有一个事，老陈最近是不是有点情绪？", at: "2026-10-23 15:40", topic: "career"}
+- {speaker: "wearer", text: "有一点，他下午约了我聊，可能是职业发展的事。", at: "2026-10-23 15:41", topic: "career"}
+- {speaker: "other", key: "huang", text: "你先稳住他，他是核心，别让他走了。有什么需要我支持的你跟我说。", at: "2026-10-23 15:42", topic: "career"}
+- {speaker: "wearer", text: "好的，聊完我跟您同步。", at: "2026-10-23 15:43", topic: "career", gold: "sync-huang"}
 - {speaker: "other", key: "huang", text: "行，去忙吧。", at: "2026-10-23 15:44", topic: "okr"}

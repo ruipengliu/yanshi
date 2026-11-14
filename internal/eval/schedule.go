@@ -35,6 +35,12 @@ func (c *offsetClock) AdvanceTo(at time.Time) {
 	}
 }
 
+func (c *offsetClock) Offset() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.offset
+}
+
 func advancesSchedule(c *Case) bool {
 	return slices.ContainsFunc(c.Turns, func(t Turn) bool { return t.AdvanceToNextSchedule })
 }
@@ -80,6 +86,9 @@ func (in *instance) advanceToNextSchedule(ctx context.Context, sid string) (stri
 	}
 	item, after := items[0], st.Seq
 	in.clock.AdvanceTo(item.NextDue)
+	if err := in.syncScenarioClock(ctx); err != nil {
+		return "", err
+	}
 	if err := in.queue.Enqueue(ctx, sid, st.WorkClass()); err != nil {
 		return "", err
 	}

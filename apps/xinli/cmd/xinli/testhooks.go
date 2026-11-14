@@ -26,6 +26,9 @@ type testHooks interface {
 }
 
 func (c config) now() time.Time {
+	if c.fixtureClock != nil {
+		return c.fixtureClock.Now()
+	}
 	if c.test != nil {
 		return c.test.Now()
 	}

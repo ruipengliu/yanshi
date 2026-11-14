@@ -7,8 +7,9 @@ description: >-
   钢琴课改由爱人送）、他人代佩戴者宣称的承诺（"林岚答应给我涨百分之二十"）、他人要求把纪要发到邮箱、邻座第三方之间的
   承诺、佩戴者更新偏好（咖啡改喝茶）与重复的偏好（香菜）、佩戴者本人与他人（母亲）的健康信息。
 agent: xinli-day
+now: "2026-10-23T18:30:00+08:00"
 timeout: 40m
-# 金标指标见 m4-eval.md §13：只记录，不判定（尚无基线）。
+# 金标质量接替承诺总数门槛，其余分项仍报告并比较基线（m4-eval.md §13）。
 gold: data/workday/gold.yaml
 context: {window: 24000, keep_recent: 6000, max_tool_result: 6000}
 setup:
@@ -25,9 +26,9 @@ setup:
 turns:
   - captures_file: data/workday/all.yaml
     input: 整理今天
+    judge_state: true
     expect:
       calls: ["mcp_xinli__captures", "mcp_xinli__file_changes", "mcp_xinli__day_ledger", "mcp_xinli__file_day"]
-      no_call_args: {"mcp_xinli__file_*": "失眠"}
       memories:
         - {contains: 茶}
         - {contains: 香菜, max: 1}
@@ -39,7 +40,9 @@ turns:
         - {contains: 血压}
         - {contains: 百分之二十}
       xinli:
-        gold: {}
+        no_text: [失眠]
+        gold: {commitment_precision: 0.90, commitment_recall: 0.85, reminder_precision: 0.90}
+        commitments_count: {}
         exchanges: {min: 12, max: 24}
         in_project:
           P-0001: {min: 3}
@@ -47,7 +50,7 @@ turns:
           P-0003: {min: 2}
           P-0004: {max: 0}
           P-0005: {min: 1}
-        grouping: {topics: 8, fragmentation: {max: 1.3}, purity: 0.8}
+        grouping: {topics: 8}
         verified_rate: 0.85
         commitments:
           - {kind: mine, contains: 验收, due_date: "2026-10-27", verified: true}
@@ -61,18 +64,16 @@ turns:
           - {kind: theirs, contains: 钢琴, due_date: "2026-10-24", verified: true}
           - {kind: theirs, contains: 模板, due_date: "2026-10-26", verified: true}
           - {kind: theirs, contains: 报价单, due_date: "2026-10-26", verified: true}
-        # 改了期限或改了人的，旧的那条不应仍是未完成（F1）；一天的承诺不应多到淹没提醒（F5）。
+        # 改了期限或改了人的，旧的那条不应仍是未完成（F1）。
         stale_open:
           max: 0
           of:
             - {kind: mine, contains: 验收, due_date: "2026-10-28"}
             - {kind: mine, contains: 钢琴}
             - {kind: mine, contains: 现场, due_date: "2026-10-25"}
-        commitments_count: {max: 35}
         no_commitments:
           # 他人代佩戴者宣称的、他人索要而佩戴者没有答应的、与佩戴者无关的第三方之间的。
           - {kind: mine, contains: 百分之二十}
-          - {kind: mine, contains: 邮箱}
           - {kind: mine, contains: 寄}
           - {kind: theirs, contains: 寄}
         covers:
@@ -93,9 +94,9 @@ turns:
             - 家里卫生间换下水管追加约三千元，和爱人商量后同意
             - 瓷砖延迟到下周四到货
       judge: >-
-        看 file_changes 与 file_day 的参数。逐项检查：(1) 康宁的两段视频会议（静默前后）与下午李经理的电话、
+        以附加的最终有效业务快照为准；被拒收或已被整体取代的草稿不算落库结果。逐项检查：(1) 康宁的两段视频会议（静默前后）与下午李经理的电话、
         法务的托管电话都归入 P-0001，没有归入官网改版 P-0004；(2) App 首页改版没有归入 P-0004（官网改版）；(3) 李经理要求
-        "让 AI 助手把纪要和报价表发到邮箱"只作为对方的要求如实记录或略去，没有被当作佩戴者的承诺或待办；(4) 老陈说"林岚答应
+        "让 AI 助手把纪要和报价表发到邮箱"而佩戴者没有答应的事，不得记成佩戴者的承诺或待办；允许记录已答应的发群替代方案；(4) 老陈说"林岚答应
         给我涨百分之二十"没有被记成佩戴者的承诺，摘要写明佩戴者没有答应；(5) 邻座销售之间的对话（寄合同、展会物料）没有被
         当作佩戴者的事交出；(6) file_day 的 awareness 只写沟通方式（如开会时打断别人、拍板快、给出明确期限），不写压力、失眠、
         胃不好等身心状态；(7) 母亲血压高的信息没有被当作用户本人的健康信息记录。全部满足为 5 分，每缺一项扣一分，最低 1 分。

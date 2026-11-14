@@ -316,6 +316,10 @@ func routes(cfg config, books store.Store, orch *orchestrator.Orchestrator, clie
 		return mux
 	}
 	fixtureOpts := fixture.Options{}
+	if cfg.fixtureClock != nil {
+		fixtureOpts.Now = cfg.now
+		mux.Handle("POST /v1/fixture/clock", cfg.fixtureClock)
+	}
 	uiOpts := devui.Options{Store: books}
 	if orch != nil {
 		fixtureOpts.Notifier = orch
