@@ -1,6 +1,8 @@
 # Session 生命周期与数据删除
 
 > 状态：已实现 · 依赖：[M0 核心原语](./m0-core-primitives.md)、[沙箱](./m2-sandbox.md)、[工件](./m2-artifacts.md)、[鉴权](./auth.md) · ADR-0015
+>
+> 2026-11-14：ADR-0036、ADR-0039、ADR-0050 与 ADR-0037 的内核部分已整合进 [ADR-0052](../adr/0052-attested-results-and-provenance.md)，ADR-0040 已取消，ADR-0010 已被 [ADR-0053](../adr/0053-self-hosted-sandbox-isolation-baseline.md) 取代。本文引用这些 ADR 之处，现行规则以 ADR-0052、ADR-0053 为准（[ADR 索引](../adr/README.md)）。
 
 ## 1. 要解决的问题
 

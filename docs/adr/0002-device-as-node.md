@@ -10,3 +10,10 @@ status: accepted
 
 - 一台 Device 上多个 HostApp 是多个 Node；Capability 的可见性受 BusinessLine 边界约束。
 - Node 必然会频繁离线（移动端后台限制、电脑休眠），离线是一等语义：调用 Device Capability 的 Run 必须能挂起等待，并可经推送唤醒。
+
+## 重审条件
+
+（2026-11-14 补充）任一出现即重新评估：
+
+- 需要接入无法嵌入 HostApp 的端，例如独立的可穿戴设备、车机或其他硬件（目前录音外设经 HostApp 接入，见 ADR-0052 第 1 条）；
+- 同一台 Device 上多个 HostApp 各自为 Node 的成本（重复连接、重复登记）成为用户可感知的问题。

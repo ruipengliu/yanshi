@@ -127,10 +127,10 @@ Session 中只追加、不可修改的一条记录；Run 的全部状态都可�
 _Avoid_: 消息、日志条目
 
 **Capture（旁听）**:
-EndUser 与他人的日常对话转写，带结构化说话人标签，不是对 Agent 说的话。原文由业务线保存，内核只接收可信结构化页并在写日志前审核；佩戴者的话可作用户原话，他人的话按外部内容处理。原文副本随工作 Session 删除。旧 CaptureAppended 只为解码日志保留，不再写入或投影（ADR-0050）。
+EndUser 与他人的日常对话转写，带结构化说话人标签，不是对 Agent 说的话。原文由业务线保存，内核只接收可信结构化页并在写日志前审核；佩戴者的话可作用户原话，他人的话按外部内容处理。原文副本随工作 Session 删除。旧 CaptureAppended 只为解码日志保留，不再写入或投影（ADR-0052）。
 _Avoid_: 录音、输入（指它时）、CallTranscript（那是 Call 的转写）
 
-**Erasure（擦除）**（内核原语已实现，业务侧流程另行实施，ADR-0050）:
+**Erasure（擦除）**（内核原语已实现，业务侧流程另行实施，ADR-0052）:
 EndUser 删除一天中的部分谈话：业务线删除原文、按依据级联派生对象，再删除当天的工作 Session，删除原因为 Erasure（`erasure`）：保留该 Session 的既有 Memory，撤回迟到的新写入，清理后列出依据可能落在被删范围内的有效 Memory 由用户决定。内核不按范围清除日志中的文字（ADR-0044 已取代）。
 _Avoid_: 删除（指整个 Session 时）、屏蔽、隐藏
 
@@ -142,7 +142,7 @@ _Avoid_: 回执（指给模型看的结果文字时）、ACK（指传输层时�
 EndUser 对一段旁听文字的纠正。原文存放在业务线，纠正是业务库中原文的修订，内核没有对应的 Event；纠正前的文字在日志中仍可作为依据，要撤回只能删除工作 Session。
 _Avoid_: 编辑、覆盖、Revision（见 [Persona 术语](persona/CONTEXT.md)）
 
-**Attested result（可信结构化片段）**（已实现，ADR-0050）:
+**Attested result（可信结构化片段）**（已实现，ADR-0052）:
 `attests_speakers: true` 登记的同业务线 MCP Server 返回的结构化旁听页（片段的引用、说话人、时间、文字与页的元数据）。由平台用旁听渲染器渲染并在 ToolResult 上记下 attested 标记，按结构化说话人推导来源；写日志前经内容安全检查。
 _Avoid_: 业务线返回的旁听文字、可信结果（不指明结构化时）
 
@@ -286,7 +286,7 @@ _Avoid_: 费率、定价策略
 对 EndUser 输入与模型输出的合规检查，在写日志之前进行；违规输入被拒绝、违规输出被替换为拒答文本。由可替换的提供商完成。
 _Avoid_: 审核（泛指时）、过滤、风控
 
-**Provenance（来源）**（[设计](docs/design/m5-inputs-triggers-loops.md)、ADR-0039）:
+**Provenance（来源）**（[设计](docs/design/m5-inputs-triggers-loops.md)、ADR-0052）:
 一段内容由谁产生、是否对 Agent 说：本人、他人、外部、平台（含平台定时）或模型。平台定时不是用户原话，也不是外部内容。由平台从 Event 推导，不由写入方填写；Memory 写入闸门与注入判断都依据它。
 _Avoid_: 出处、标签、说话人（那只是旁听中区分本人与他人的字段）
 

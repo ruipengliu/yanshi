@@ -1,6 +1,8 @@
 # xinli 与 persona agent 的整体架构
 
 > 状态：P0–P4 已实现；P4（§11、§13 Q91–Q124）于 2026-10-30 完成最终回归（[一天验收](./day-acceptance.md#p4-关闭前的最终回归)），真实硬件、识别供应商与渠道接入另列阶段。原设计（2026-10-27）经逐题讨论确认（§13），再经 Codex 两轮评审修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)）· ADR-0043（三层）、ADR-0044（已由 ADR-0050 取代）、ADR-0045（定时）、ADR-0046（出站流）、ADR-0047（单次调用）、ADR-0048（三方 Agent）、ADR-0049（已由 ADR-0050 取代）、ADR-0050（原文在业务线）· 内核的新增原语见 [M7 内核补充](./m7-kernel-primitives.md)，三方 Agent 见 [M7 Agent 生态](./m7-agent-ecosystem.md) · 承接：[旁听](./captures.md)、[旁听业务线 xinli](./xinli-captures.md)、[xinli 的建模](./xinli-model.md)、[评审：xinli 与内核的下一步](../review/2026-10-27-xinli-kernel-next.md) · 已由 ADR-0050 裁决：[Capture 与流该不该在内核](../review/2026-10-27-capture-boundary-review.md)、[带图示的评估页面](../review/2026-10-27-persona-plan.html) · 内核术语见 [CONTEXT.md](../../CONTEXT.md)，Persona 与应用层术语分别见 [Persona 术语](../../persona/CONTEXT.md)、[xinli 术语](../../apps/xinli/CONTEXT.md)（§3.1）
+>
+> 2026-11-14：ADR-0036、ADR-0039、ADR-0050 与 ADR-0037 的内核部分已整合进 [ADR-0052](../adr/0052-attested-results-and-provenance.md)，ADR-0040 已取消，ADR-0010 已被 [ADR-0053](../adr/0053-self-hosted-sandbox-isolation-baseline.md) 取代。本文引用这些 ADR 之处，现行规则以 ADR-0052、ADR-0053 为准（[ADR 索引](../adr/README.md)）。
 
 心力球是以录音为入口的个人助手：记录、回忆、跟进事务、反思成长。本文回答三个问题：现在的 yanshi 能不能承载它；不能承载的部分补在哪一层；以后它演进成更完整的 persona agent、接入三方 Agent 时，扩展的范式是什么。
 

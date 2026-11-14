@@ -1,6 +1,8 @@
 # 旁听业务线 xinli
 
 > 状态：原有功能已实现；P4-A5 的固定期限、原文版本与自然到期已实现，其他标注 P4 的生产补充按后续步骤接入，以[整体架构](./persona-architecture.md) §13 Q91–Q124 为准。原有功能已用真实模型验证（2026-10-25，评测结果见 [m4-eval.md](./m4-eval.md) §12）；2026-10-25 按 [xinli 的建模](./xinli-model.md)（ADR-0042）改为变更集 · 依赖：[旁听](./captures.md)（ADR-0036、ADR-0037、ADR-0039）、[Memory 与 Grant](./m4-memory-grant.md)、[MCP 适配](./m5-mcp.md)、[长 Run](./m2-long-runs.md)（`context.scope: run`）· 术语：[内核术语](../../CONTEXT.md) 的 Span；[Persona 术语](../../persona/CONTEXT.md) 的 Exchange、Changeset、Revision、Project、Commitment、Awareness
+>
+> 2026-11-14：ADR-0036、ADR-0039、ADR-0050 与 ADR-0037 的内核部分已整合进 [ADR-0052](../adr/0052-attested-results-and-provenance.md)，ADR-0040 已取消，ADR-0010 已被 [ADR-0053](../adr/0053-self-hosted-sandbox-isolation-baseline.md) 取代。本文引用这些 ADR 之处，现行规则以 ADR-0052、ADR-0053 为准（[ADR 索引](../adr/README.md)）。
 
 xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理成交谈的摘要，按主题归集到 Project，记下双方的承诺、随新说出的话修订它们并按期限提醒，每周回顾沟通习惯，供用户随时提问。编排在业务线服务端（ADR-0037）；Persona 保存与分页读取旁听原文，yanshi 提供四个 AgentDef 的运行、可信页的渲染与审核，以及引用的说话人与说话时间（[captures.md](./captures.md) §6）。实体、变更集与修订的模型（为什么这样建、取舍）见 [xinli 的建模](./xinli-model.md)；本文写流程、工具与评测。
 

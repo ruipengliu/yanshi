@@ -38,3 +38,11 @@ status: accepted
 - **恢复名额。** 用户做出审批或回答（`ApprovalDecided`、对 ask_user 的外部结果）后，Run 得到一个不可叠加的恢复名额（`session.Run.Resume`），由下一个 `AttemptStarted` 消费，按事件重放。有名额的长任务以 `Resumed` 优先级入队：介于 `Background` 与 `Interactive` 之间，只提高它在后台池中的认领次序，交互 Worker 不认领它，因此"每个长任务至多移交一次"不变。用户刚做出决定，多半还在等结果。
 - 优先级的取值随之改为 Background 0、Resumed 1、Interactive 2（迁移 `0014_resumed_priority.sql` 把已有的交互项从 1 改为 2）。
 - **Submit 准入**（`service.QueueAdmission`，`serve -admission-max-wait`）。业务线中等得最久的交互工作超过阈值时，拒绝该业务线的新 Run（HTTP 503 与 `Retry-After`；Connection 上为 `unavailable` 与 `retry_at`），回落到恢复阈值以下才恢复（滞回）。只拦新 Run：插话、同一输入 ID 的重试、中断、审批与回答属于进行中的工作，照常接受，积压时的容量由此留出。等待取自队列的积压统计（`workqueue.Stats`，新增 `ready_at` 记录工作变为可认领的时刻），是排队时长的直接测量，不必另行估计处理速率。默认不启用：阈值依据 `yanshi_queue_wait_seconds` 的线上分布确定。
+
+## 重审条件
+
+（2026-11-14 补充）任一出现即重新评估：
+
+- 认领类别多到需要动态权重或公平调度，静态的业务线与优先级不够用；
+- 长任务的判定阈值（`LongRunTurns` 等）在压测或线上被观察到误判，交互工作被长任务挤占；
+- Submit 准入的拒绝率在压测或线上成为用户可感知的问题。

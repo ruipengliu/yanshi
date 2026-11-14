@@ -1,6 +1,8 @@
 # M7 Agent 生态：对接三方 Agent
 
 > 状态：设计（2026-10-27），经 Codex 两轮评审后修订（[评审记录](../review/2026-10-27-persona-architecture-review.md)），未实现 · ADR-0048 · 来由：[xinli 与 persona agent 的整体架构](./persona-architecture.md) §9 · 依赖：[MCP 适配](./m5-mcp.md)（ADR-0017）、[委托](./m5-multi-agent.md)（ADR-0031）、[输入、触发与外部循环](./m5-inputs-triggers-loops.md)（ADR-0039、ADR-0041）、[后台调用](./m1-device-nodes.md)（ADR-0035）、[Memory 与 Grant](./m4-memory-grant.md)（ADR-0003、ADR-0016）、[鉴权](./auth.md)（ADR-0014）
+>
+> 2026-11-14：ADR-0036、ADR-0039、ADR-0050 与 ADR-0037 的内核部分已整合进 [ADR-0052](../adr/0052-attested-results-and-provenance.md)，ADR-0040 已取消，ADR-0010 已被 [ADR-0053](../adr/0053-self-hosted-sandbox-isolation-baseline.md) 取代。本文引用这些 ADR 之处，现行规则以 ADR-0052、ADR-0053 为准（[ADR 索引](../adr/README.md)）。
 
 persona agent 要走进更大的生态：调用三方 Agent 办事（订票、报销），让三方 Agent 来问"他这周答应过什么"，让三方开发的 Agent 运行在 yanshi 上。三个方向的信任问题各不相同，本文分开设计，共用一条原则：**三方给的一切都是外部内容，三方拿到的一切都经用户逐项同意，旁听原文不给任何三方。**
 

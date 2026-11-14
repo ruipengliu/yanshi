@@ -1,6 +1,8 @@
 # xinli 的声音转写方案
 
 > 状态：设计（未实现），2026-11-01；2026-11-14 并入[领夹 ASR 提案](../proposals/lavalier-asr/index.html)，逐条取舍见[对照记录](../review/2026-11-14-lavalier-asr-reconciliation.md) · 取代原“语音识别选型与评测”系列：选型对象从 ASR 扩大为整条转写链路 · 配套：[评测](./xinli-transcription-eval.md)、[评分表](./xinli-transcription-scorecard.md)、[领夹与 HostApp](./xinli-transcription-hardware.md) · 调研：[链路组件](../research/2026-11-xinli-transcription-components.md)、[ASR 厂商](../research/2026-11-xinli-asr-vendors.md) · 依赖：ADR-0036、ADR-0050；[Persona 架构](./persona-architecture.md) §4.1；[旁听业务线 xinli](./xinli-captures.md) 的有序文字采集 · 术语见 [xinli 应用层术语](../../apps/xinli/CONTEXT.md)
+>
+> 2026-11-14：ADR-0036、ADR-0039、ADR-0050 与 ADR-0037 的内核部分已整合进 [ADR-0052](../adr/0052-attested-results-and-provenance.md)，ADR-0040 已取消，ADR-0010 已被 [ADR-0053](../adr/0053-self-hosted-sandbox-isolation-baseline.md) 取代。本文引用这些 ADR 之处，现行规则以 ADR-0052、ADR-0053 为准（[ADR 索引](../adr/README.md)）。
 
 本文回答：从领夹录下的声音，到交给 Persona 的带说话人的文字片段，中间每一环做什么、放在哪里、哪些要通过评测来选。怎么评、怎么选见[评测](./xinli-transcription-eval.md)；本文可独立阅读，背景在 §1。
 

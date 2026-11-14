@@ -1,6 +1,8 @@
 # 旁听：attested 页与渲染器
 
 > 状态：已实现。按 [ADR-0050](../adr/0050-capture-text-in-the-business-line.md)，旁听原文在业务线，内核 Capture 提交、流、读取位置与交付确认已退役。本文只描述内核仍负责的可信页、渲染、审核、来源推导与引用。
+>
+> 2026-11-14：ADR-0036、ADR-0039、ADR-0050 与 ADR-0037 的内核部分已整合进 [ADR-0052](../adr/0052-attested-results-and-provenance.md)，ADR-0040 已取消，ADR-0010 已被 [ADR-0053](../adr/0053-self-hosted-sandbox-isolation-baseline.md) 取代。本文引用这些 ADR 之处，现行规则以 ADR-0052、ADR-0053 为准（[ADR 索引](../adr/README.md)）。
 
 ## 1. 边界
 

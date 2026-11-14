@@ -1,6 +1,8 @@
 # xinli 的建模：实体、变更集与交谈
 
 > 状态：已实现（2026-10-25；实现见 `persona/domain`，流程与工具见 [xinli-captures.md](./xinli-captures.md)） · ADR-0042 · 来由：[评审：用一个完整工作日模拟验证 xinli](../review/2026-10-25-xinli-workday.md) §6–§8 · 依赖：[旁听业务线 xinli](./xinli-captures.md)、[旁听](./captures.md)（ADR-0036、ADR-0037）、[Memory 与 Grant](./m4-memory-grant.md)（ADR-0038）· 实现时：改写 xinli-captures.md 的 §2–§6、§12 与 captures.md §5，按 §3 改交谈的定义（现见 [Persona 术语](../../persona/CONTEXT.md)）
+>
+> 2026-11-14：ADR-0036、ADR-0039、ADR-0050 与 ADR-0037 的内核部分已整合进 [ADR-0052](../adr/0052-attested-results-and-provenance.md)，ADR-0040 已取消，ADR-0010 已被 [ADR-0053](../adr/0053-self-hosted-sandbox-isolation-baseline.md) 取代。本文引用这些 ADR 之处，现行规则以 ADR-0052、ADR-0053 为准（[ADR 索引](../adr/README.md)）。
 
 ## 1. 为什么改
 

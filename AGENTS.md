@@ -9,18 +9,19 @@
 - 本机开发与 Mac mini 环境：开始开发、构建或测试前，若本工作树或主工作树存在 `.local/macmini/README.md`，必须先读并遵循。本机主要编码与 Git 操作，优先通过本地 `dev` 入口同步当前工作区并在 Mac mini 构建、测试或启动服务，中间件使用其 OrbStack；可用命令以文档中的当前实现状态为准，不得把历史源码快照当作当前代码。该文档及辅助配置不提交 Git；文档缺失时先检查本地配置，不假定远程环境已就绪。
 - 术语：内核的代码、注释、文档只用 `CONTEXT.md` 的名词；`persona/`、`apps/` 另有各自的 `CONTEXT.md`。出现新概念时先在所属层的术语表中定义。
 - 目标与原则：`docs/charter.md`。
+- ADR 的现状：先看索引 `docs/adr/README.md`（状态、是否实施、重审条件）。被取代或已迁出的 ADR 是历史记录，以索引指向的现行 ADR 为准。
 - 改动执行语义（Session / Run / Event / Attempt / Worker）之前：`docs/design/m0-core-primitives.md`。改动上下文组装、压缩或 AgentDef 的 `context`（含 `scope: run`）之前：`docs/design/m2-long-runs.md`。
 - 改动 Node、能力路由、审批或挂起之前：`docs/design/m1-device-nodes.md`。
-- 改动云端沙箱之前：`docs/design/m2-sandbox.md`。沙箱内只运行不可信代码，受信逻辑一律放在控制器（ADR-0008）。
+- 改动云端沙箱之前：`docs/design/m2-sandbox.md`。沙箱内只运行不可信代码，受信逻辑一律放在控制器（ADR-0008）。生产沙箱以自托管隔离为基线，隔离技术待选型，不要把 gVisor 等写成定论（ADR-0053）。
 - 改动 Connection 协议（`node.proto`）、会话客户端或事件流（`feed`）之前：`docs/design/m3-duplex-channel.md`。一条 Connection 兼任 Node 与会话客户端（ADR-0024）；会话客户端的请求必须经 `service`，与 HTTP API 走同一条路径。`ask_user` 是路由到用户本人的调用，不经 Inbox（ADR-0025）。
 - 改动端侧 SDK（`sdk/`）之前：`docs/design/m3-client-sdks.md`。三个 SDK 语义一致，消息类型一律从 `proto/` 生成（ADR-0026）；改动 `sdk/nodesdk`、`sdk/mobile` 或 `node.proto` 后运行 `make mobile`（需要 Xcode 与 JDK），在 macOS 与 iOS 模拟器上实测 gomobile 绑定。
 - 改动调试控制台（`internal/webui/static/console`）或脚本化模型（`internal/model/script`）之前：`docs/design/console.md`。新增多端语义时，在控制台的验证场景（`scenarios.js`）中增加覆盖，它们在 `make check` 中运行（`TestConsoleScenarios`）。
 - 改动卡片（`internal/card`、`show_card`、`Card` / `CardAction`）之前：`docs/design/cards.md`。卡片只由平台校验后写入 `show_card` 的结果，卡片动作是一条输入、按 `call_id` 与动作去重（ADR-0032）。
-- 改动旁听在内核中的部分（attested 页的线上契约与渲染器 `internal/capture`、`ContentBlock.capture`、MCP 登记的 `attests_speakers` 与 `cite_captures`）或按 AgentDef 覆盖的 Retention 之前：`docs/design/captures.md`。旁听只收文字，佩戴者的话算用户原话、他人的话算外部内容，判断依据是结构化的说话人字段（ADR-0036）；原文、分页与处理进度在业务线，内核只采信同一业务线登记的结构化页，由平台渲染、写日志前审核（ADR-0050）。改动 `agents/xinli-*.yaml`、xinli 的工具与编排（`persona/`、`apps/xinli`）、旁听原文的保存、分页、擦除与删除待办、每日整理与每周回顾的流程、承诺账本或 `capture-*` 评测之前，另读 `docs/design/xinli-captures.md`。
+- 改动旁听在内核中的部分（attested 页的线上契约与渲染器 `internal/capture`、`ContentBlock.capture`、MCP 登记的 `attests_speakers` 与 `cite_captures`）或按 AgentDef 覆盖的 Retention 之前：`docs/design/captures.md`。旁听只收文字，佩戴者的话算用户原话、他人的话算外部内容，判断依据是结构化的说话人字段；原文、分页与处理进度在业务线，内核只采信同一业务线登记的结构化页，由平台渲染、写日志前审核（ADR-0052）。改动 `agents/xinli-*.yaml`、xinli 的工具与编排（`persona/`、`apps/xinli`）、旁听原文的保存、分页、擦除与删除待办、每日整理与每周回顾的流程、承诺账本或 `capture-*` 评测之前，另读 `docs/design/xinli-captures.md`。
 - 新增产品功能、改动 Persona（`persona/`）或应用层（`apps/`），或判断一项能力该放进内核还是业务侧之前：`docs/design/persona-architecture.md`。功能默认只改 Persona 与应用层（§9 的五步清单）；内核只在"第二条业务线也需要，且业务侧做不到或做了不安全"时改，并写 ADR（ADR-0043）。`persona/`、`apps/` 不 import `internal/`，内核不认识业务实体。
-- 改动旁听原文的存放、擦除、原文修订、可信结构化片段（`attests_speakers`、attested 标记）或 Session 的绝对删除期限之前：`docs/adr/0050-capture-text-in-the-business-line.md`。原文存放在业务线；内核只采信同一业务线登记的结构化页，由平台渲染、写日志前审核；擦除是业务库删除后再删除当天的工作 Session（ADR-0050）。改动交付确认、定时、出站流、单次调用、档位、重答、EndUser 删除屏障或 `speaker_ref` 之前：`docs/design/m7-kernel-primitives.md`（§2–§4、§11 已由 ADR-0050 取代，交付确认已删除）。定时与触发写入的输入来源是平台（ADR-0045）。
+- 改动旁听原文的存放、擦除、原文修订、可信结构化片段（`attests_speakers`、attested 标记）或 Session 的绝对删除期限之前：`docs/adr/0052-attested-results-and-provenance.md`。原文存放在业务线；内核只采信同一业务线登记的结构化页，由平台渲染、写日志前审核；擦除是业务库删除后再删除当天的工作 Session。说话人标错时没有平台兜底（注入判断只在影子模式），现行安全边界见该 ADR 第 8 条。改动交付确认、定时、出站流、单次调用、档位、重答、EndUser 删除屏障或 `speaker_ref` 之前：`docs/design/m7-kernel-primitives.md`（§2–§4、§11 已由 ADR-0050 取代，交付确认已删除）。定时与触发写入的输入来源是平台（ADR-0045）。
 - 改动 A2A（新增的 `a2acap` 包、A2A 入口、`origin`）或三方 Agent 的授权之前：`docs/design/m7-agent-ecosystem.md`。三方给的一切是外部内容，三方拿到的一切经用户逐项同意，旁听原文不给任何三方，听过他人旁听的 Session 不能调用三方（ADR-0048）。
-- 改动来源推导（`session.Provenance`：写入闸门与注入判断只看它）、统一检查点（`internal/service/checkpoint.go`）、触发或外部循环之前：`docs/design/m5-inputs-triggers-loops.md`。来源由平台从事件推导，不由写入方填写；只能由平台写入的内容块与字段，在 service 中拒绝、在 `Apply` 中再校验一次（ADR-0039）。
+- 改动来源推导（`session.Provenance`：写入闸门与注入判断只看它）、统一检查点（`internal/service/checkpoint.go`）或外部循环（ADR-0041，尚未实现）之前：`docs/design/m5-inputs-triggers-loops.md`。来源由平台从事件推导，不由写入方填写；只能由平台写入的内容块与字段，在 service 中拒绝、在 `Apply` 中再校验一次（ADR-0052）。
 - 改动按住说话的语音识别与播报（`internal/speech`、`/transcriptions`、`/speech`）之前：`docs/design/speech.md`。录音识别成文字后作为普通输入提交，音频不交给模型、不进日志或工件；播报只读 Run 已写入日志的回复。
 - 改动服务端故障注入（`internal/faults`、`/v1/debug/*`）之前：`docs/design/console.md` §7。只在 `serve -faults` 时装配，没有规则时不改变任何行为（ADR-0033）。
 - 改动 Call（`internal/call`、`internal/realtime`、控制台的通话 `internal/webui/static/console`）之前：`docs/design/m3-call.md`。音频经网关中转，语音模型只通过 `run_task` 派生 Run 做事（ADR-0027）；转写在写日志之前做内容安全检查。实测需要 `VOLC_SPEECH_API_KEY`（`YANSHI_TEST_VOLC=1 go test ./internal/realtime/volc`），`make eval` 的 `call-*` 用例同样需要它。
@@ -35,7 +36,7 @@
 - 改动 AgentDef 的版本选择或发布配置之前：`docs/design/m4-agent-rollout.md`。Session 当前使用的版本读 `State.Agent`（投影），不读 `Created.Agent`；新版本进入灰度或成为 stable 之前，须用 `make eval EVAL_FLAGS="-sandbox docker -agent-version <版本>"` 评测且与基线相比没有回归（ADR-0020）。
 - 改动内容安全的检查点或提供商之前：`docs/design/m4-moderation.md`。输入与输出都在写日志之前检查，失败即拒绝（ADR-0021）。上线前须完成 `docs/launch-checklist.md`。
 - 改动计量、配额或价格表之前：`docs/design/m4-quota-usage.md`。用量独立于 Event 日志保存，不含 Session 与内容；在模型调用返回后、写日志前计量（ADR-0019）。
-- 做出难以逆转的架构决策时：在 `docs/adr/` 新增一条 ADR。
+- 做出难以逆转的架构决策时：在 `docs/adr/` 新增一条 ADR，并更新索引 `docs/adr/README.md`（其中有修订、取代与重审条件的规则）。业务层的决定放在所属层：`persona/docs/adr`、`apps/<业务线>/docs/adr`。
 
 ## 不变量
 

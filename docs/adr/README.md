@@ -1,0 +1,86 @@
+# ADR 索引
+
+> 建立于 2026-11-14（[ADR 评审](../review/2026-11-14-adr-review.md)）。新增、修订或取代 ADR 时同步更新本表。
+
+## 怎样使用
+
+- **先看本表，再读正文。** "状态"一列说明正文是否仍有效；被取代或已迁出的 ADR 是历史记录，现行规则在"取代关系"一列指向的 ADR 中。
+- **"实施状态"** 依据 ADR 自述与代码：已实现、部分实现、未实现，或"未核对"（只读过决定，没有核对代码）。
+- **"分级"** 按推翻代价 × 被依赖程度：一级是推翻即重写，二级是结构性约束，三级是局部决定。一、二级 ADR 都有"重审条件"小节。
+- **"单线"** 标为"是"的，是按通用设计、需求与使用却都来自 xinli 的机制，第二条业务线接入时复核（ADR-0043 的修订）。
+
+## 管理规则
+
+- **按层存放。** 内核 ADR 在本目录；Persona 的在 [`persona/docs/adr`](../../persona/docs/adr/)，应用层的在 `apps/<业务线>/docs/adr`（xinli：[`apps/xinli/docs/adr`](../../apps/xinli/docs/adr/)）。业务 ADR 不占内核编号，各目录自己编号；引用时写"Persona ADR-0001""xinli ADR-0001"。
+- **纠正事实**（进度、已过时的后果）：直接修改正文，在改动处注明日期。
+- **标明边界**（当前能力边界、尚未实现、现行技术选择）：直接在正文中标明，注明日期。
+- **架构改变**：写新 ADR，与旧 ADR 双向链接。
+- **部分失效**：在页首（标题之下）逐条说明哪些有效、哪些已修订、哪些失效，以及现行规则在哪里。不能只在文末补记，也不能只写"见某某 ADR"。
+- **正文与现行规则矛盾时**：用整合后的新 ADR 取代，并附逐条对照表（例如 ADR-0052）。
+- **取代之前**：先把被取代 ADR 中仍然有效的保证迁入现行决定（例如 ADR-0040 → ADR-0045）。
+- **重审条件**：一、二级 ADR 必须有，写成可观测的触发条件，任一出现即重新评估。
+
+## 内核 ADR
+
+| ADR | 标题 | 状态 | 实施 | 分级 | 重审条件（摘要） | 取代关系 | 单线 |
+|---|---|---|---|---|---|---|---|
+| [0001](0001-private-deployment.md) | 私有化部署，不依赖公有云托管服务 | accepted | 已实现 | 一 | 不再承接私有化；某项必需能力无法自托管 | — | |
+| [0002](0002-device-as-node.md) | 设备即节点 | accepted | 已实现 | 二 | 需接入无法嵌入 HostApp 的端 | — | |
+| [0003](0003-memory-owned-by-business-line-shared-by-grant.md) | Memory 归属业务线，经 Grant 共享 | accepted | 已实现 | 二 | 新的分类或以 EndUser 为单位的授权；共享 Memory 的业务线分属不同单元 | — | |
+| [0004](0004-event-log-as-source-of-truth.md) | Event 日志是唯一事实源 | accepted | 已实现 | 一 | 重放超出恢复目标；Session 内部分删除的法定要求 | — | |
+| [0005](0005-realtime-and-async-split.md) | Call 与 Run 分离 | accepted | 已实现 | 二 | 实时模型能安全地直接调用能力；回注延迟成瓶颈；弱网 | — | |
+| [0006](0006-protobuf-as-contract-idl.md) | Protobuf 作跨端与存储契约 | accepted | 已实现 | 一 | 新端无代码生成；破坏性变更反复出现 | — | |
+| [0007](0007-postgresql-as-storage-baseline.md) | PostgreSQL 作存储基线 | 已修订（2026-11-14） | 已实现 | 一 | 单分片写入接近压测上限 70%；停写超预算 | — | |
+| [0008](0008-sandbox-trust-boundary.md) | 沙箱内无受信组件 | accepted | 已实现 | 一 | 命令通道成瓶颈；隔离技术不支持该结构 | — | |
+| [0009](0009-session-scoped-sandbox-workspace.md) | 每个 Session 一个沙箱工作区 | accepted | 已实现 | 三 | — | — | |
+| [0010](0010-k8s-gvisor-for-production-sandboxes.md) | 生产沙箱用 K8s + gVisor | 被取代 | 未实现 | — | — | 被 0053 取代 | |
+| [0011](0011-s3-api-as-artifact-storage-contract.md) | S3 API 作工件存储契约 | accepted | 已实现 | 三 | — | — | |
+| [0012](0012-context-compaction-as-event.md) | 上下文压缩记为 Event | accepted | 已实现 | 三 | — | — | |
+| [0013](0013-live-deltas-pulled-from-executing-process.md) | 实时增量从执行进程拉取 | accepted（现行技术选择） | 已实现 | 二 | 进程间无法直连；连接数超线性 | — | |
+| [0014](0014-business-line-signed-tokens.md) | 业务线签发令牌 | accepted | 已实现 | 二 | 客户要求统一身份；需要即时吊销 | — | |
+| [0015](0015-session-deletion-by-physical-removal.md) | Session 物理删除 | 已修订（ADR-0050） | 已实现 | 一 | 备份须即时失效；Session 内部分删除的法定要求 | — | |
+| [0016](0016-memory-recall-as-event-and-category-grants.md) | 召回记为 Event，按类别授权 | 已修订（ADR-0022） | 已实现 | 二 | 新分类；以 EndUser 为单位的授权 | — | |
+| [0017](0017-mcp-servers-as-capability-providers.md) | MCP Server 作能力提供者 | accepted | 已实现 | 三 | — | — | |
+| [0018](0018-evaluation-with-fixed-suites-and-cross-family-judge.md) | 固定用例集与跨系列评分 | 已修订（2026-10-11） | 已实现 | 三 | — | — | |
+| [0019](0019-usage-metered-outside-the-log-with-soft-quotas.md) | 用量在日志之外计量，软配额 | accepted | 已实现 | 二 | 对账差额超容忍度；硬配额需求 | — | |
+| [0020](0020-agent-rollout-by-end-user-with-switch-events.md) | AgentDef 按 EndUser 灰度 | accepted | 已实现 | 三 | — | — | |
+| [0021](0021-moderation-before-the-log-fail-closed.md) | 内容安全在写日志前，失败即拒 | 已修订（ADR-0050） | 部分实现（提供商为模拟） | 二 | 审核故障导致 Run 失败；流式草稿的监管要求 | — | |
+| [0022](0022-health-memories-behind-business-line-consent.md) | 健康类 Memory 须业务线单独同意 | accepted | 已实现 | 二 | 以 EndUser 为单位的同意；新的敏感类别 | — | |
+| [0023](0023-memory-write-gate.md) | Memory 写入闸门 | 已修订（2026-11-14，**已知缺陷**） | 部分实现（文字覆盖缺陷） | 二 | 多语言业务线；误报漏报越过阈值 | — | |
+| [0024](0024-one-connection-per-host-app.md) | 每个 HostApp 一条 Connection | 已修订（2026-11-14） | 已实现 | 二 | 媒体之外仍需第二条长连接 | — | |
+| [0025](0025-questions-as-calls-routed-to-the-user.md) | 提问是路由到用户的调用 | accepted | 已实现 | 二 | 需他人回答；需富交互 | — | |
+| [0026](0026-client-sdks-share-the-contract.md) | 端侧 SDK 共享契约 | accepted（现行技术选择） | 已实现 | 二 | 网页需 Node 角色；gomobile 成主要成本 | — | |
+| [0027](0027-call-relayed-through-the-gateway.md) | Call 经网关中转，语音模型只经 `run_task` | 已修订（2026-11-14） | 已实现 | 二 | 同 0005；厂商提供设备短期凭证 | — | |
+| [0028](0028-shard-keys.md) | 按 Session 或 EndUser 分片 | 已修订（2026-11-14） | 已实现 | 一 | 跨 EndUser 原子需求；停写超预算；热点槽位 | — | |
+| [0029](0029-work-classes.md) | 工作队列按类别认领 | 已修订（2026-10-11） | 已实现 | 二 | 需动态调度；长任务误判；准入拒绝率 | — | |
+| [0030](0030-decisions-as-events.md) | 判断记为 Event，只收紧不放宽 | accepted | 部分实现 | 三 | — | — | |
+| [0031](0031-delegation-as-routed-calls.md) | 委托是路由到子 Session 的调用 | 已修订（2026-11-14，标明当前边界） | 已实现 | 二 | 有界并行；工件交接；异步委托 | — | |
+| [0032](0032-cards-as-show-card-results.md) | 卡片是 `show_card` 的结果 | accepted | 已实现 | 三 | — | — | |
+| [0033](0033-server-side-fault-injection.md) | 服务端故障注入只在调试部署 | accepted | 已实现 | 三 | — | — | |
+| [0034](0034-reasoning-streamed-and-recorded.md) | 思考过程流式推送并写日志 | accepted | 已实现 | 三 | — | — | |
+| [0035](0035-background-calls-for-offline-devices.md) | 离线设备的调用转入后台 | accepted | 已实现 | 三 | — | — | |
+| [0036](0036-captures-are-text-only.md) | 旁听只收文字，信任按说话人区分 | 被取代（正文与现行实现不符） | — | — | — | 被 0052 取代 | |
+| [0037](0037-tiered-retention-by-daily-capture-sessions.md) | 以每日旁听 Session 分级保留 | 被取代 / 已迁出 | — | — | — | 内核部分被 0052 取代；业务部分迁至 xinli ADR-0001 | |
+| [0038](0038-superseded-memories-are-kept.md) | 被取代的 Memory 保留历史 | accepted | 已实现 | 三 | — | — | |
+| [0039](0039-captures-by-stream-provenance-derived.md) | 采集按流登记，来源由平台推导 | 被取代 | — | — | — | 被 0052 取代 | |
+| [0040](0040-platform-triggers-declared-in-agentdef.md) | 平台按 AgentDef 的声明触发 Run | 被取代，不实施 | 未实现 | — | — | 被 0045、0050（现 0052）取代 | |
+| [0041](0041-external-loops-decide-platform-acts.md) | 外部循环只做决定，平台执行 | accepted（设计已认可） | 未实现 | 二 | 上下文策略不够用；需要流式；开始实现 | — | |
+| [0042](0042-xinli-entities-by-changeset.md) | xinli 的知识按实体维护、以变更集写入 | 已迁出 | — | — | — | 迁至 Persona ADR-0001 | |
+| [0043](0043-kernel-persona-app-layers.md) | 内核、Persona 与应用分三层 | 已修订（2026-11-14） | 已实现 | 一 | 第二条业务线接入；业务侧连续两次绕开内核 | — | |
+| [0044](0044-capture-text-store-and-erasure.md) | Capture 正文移出日志，按引用擦除 | 被取代 | 未实施 | — | — | 被 0050（现 0052）取代 | |
+| [0045](0045-schedules-in-the-kernel.md) | 定时是内核的原语 | 已修订（ADR-0050、P2、2026-11-14） | 已实现 | 二 | 第二条业务线接入；xinli 需求超出现有语义 | 承接 0040 的有效保证 | 是 |
+| [0046](0046-business-line-outbox.md) | 拉取式出站流 | 已修订（ADR-0050、P4） | 已实现 | 二 | 同上 | — | 是 |
+| [0047](0047-oneshot-model-calls.md) | 无会话的单次调用 | 已修订（2026-10-28） | 已实现 | 二 | 同上 | — | 是 |
+| [0048](0048-third-party-agents.md) | 三方 Agent | accepted | 未实现 | 二 | 三方托管实施前；"听过他人旁听"开始实现 | — | |
+| [0049](0049-read-positions-advance-on-business-acks.md) | 交付确认，读取位置按回执推进 | 被取代 | 已删除 | — | — | 被 0050（现 0052）取代 | |
+| [0050](0050-capture-text-in-the-business-line.md) | 旁听原文存放在业务线 | 被取代 | — | — | — | 被 0052 整合并取代 | |
+| [0051](0051-shard-slots-and-id-location.md) | 固定槽位、裸 ID 定位与停写迁移 | 已修订（2026-11-14，标明阶段缺口） | 已实现（旧数据迁出为阶段缺口） | 一 | 同 0028；上线前评估删除旧 ID 兼容 | — | |
+| [0052](0052-attested-results-and-provenance.md) | 旁听原文在业务线，内核只采信结构化片段 | accepted | 已实现（"听过他人旁听"未实现） | 二 | 第二类可信结构化内容；说话人角色扩展；注入判断改为阻断；容量 | 整合并取代 0036、0039、0050 与 0037 的内核部分 | |
+| [0053](0053-self-hosted-sandbox-isolation-baseline.md) | 生产沙箱以自托管隔离为基线 | accepted（隔离技术待选型） | 未实现（只有 Docker 开发实现） | 二 | 选型完成；不再承接私有化；候选方案都无法部署 | 取代 0010 | |
+
+## 业务层 ADR
+
+| ADR | 标题 | 来源 |
+|---|---|---|
+| [Persona ADR-0001](../../persona/docs/adr/0001-entities-by-changeset.md) | xinli 的知识按实体维护、以变更集写入，交谈由模型划定 | 原内核 ADR-0042（2026-11-14 迁入，修订"人不建模"） |
+| [xinli ADR-0001](../../apps/xinli/docs/adr/0001-daily-work-sessions-and-projects.md) | 按业务日分工作 Session，摘要归集到长期的 Project | 拆自内核 ADR-0037 的业务部分 |
