@@ -216,3 +216,47 @@ func TestCaptureDoesNotReturnUncommittedReferences(t *testing.T) {
 		}
 	})
 }
+
+func TestCaptureMetadataRejected(t *testing.T) {
+	each(t, func(t *testing.T, b *backend) {
+		now := time.Date(2026, 10, 29, 10, 0, 0, 0, time.UTC)
+		accounts := service(b, &now)
+		credentials := login(t, accounts, "phone")
+		books := captureClockStore{b.persona, now}
+		h := capture.Handler(books, accounts)
+		for _, fields := range []string{
+			`"speaker":"unknown"`,
+			`"speaker":"wearer","speaker_grade":"evidence"`,
+			`"speaker":"wearer","disposition":"accept"`,
+			`"speaker":"wearer","disposition_reason":"playback"`,
+			`"speaker":"other-1","background":true`,
+			`"speaker":"wearer","low_support_spans":[{"start":0,"end":1}]`,
+			`"speaker":"wearer","background":false`,
+			`"speaker":"wearer","speaker_grade":""`,
+			`"speaker":"wearer","low_support_spans":null`,
+		} {
+			body := `{"session_id":"blocked","seq":2,"capture_id":"blocked","business_day":"2026-10-27","time_zone":"UTC","generation":0,"segments":[{"speaker":"wearer","text":"合法前段","at":"2026-10-27T12:00:00Z"},{"text":"原文","at":"2026-10-27T12:01:00Z",` + fields + `}]}`
+			r := httptest.NewRequest("POST", "/v1/captures/batches", strings.NewReader(body))
+			r.Header.Set("Authorization", "Bearer "+credentials.AccessToken)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != 400 || !strings.Contains(w.Body.String(), "invalid_batch") {
+				t.Fatalf("status=%d: %s", w.Code, w.Body.String())
+			}
+			require(t, books.View(context.Background(), credentials.Owner.BusinessLine, credentials.Owner.EndUser, func(book *domain.Book) error {
+				segments, err := book.DayCaptures("2026-10-27")
+				if err != nil {
+					return err
+				}
+				if len(segments) != 0 || !book.BusinessDay("2026-10-27").ExpiresAt.IsZero() {
+					t.Fatal("invalid batch stored")
+				}
+				pending, err := book.CaptureAccess().Pending("2026-10-27", "blocked", 2, 0)
+				if len(pending) != 0 {
+					t.Fatal("invalid batch staged")
+				}
+				return err
+			}))
+		}
+	})
+}

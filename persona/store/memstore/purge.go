@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"persona/domain"
 	"persona/store"
 )
 
@@ -107,7 +108,7 @@ func (s *Store) Purge(ctx context.Context, bl, eu string, limit int, now time.Ti
 		if n == len(segments) {
 			delete(e.captures, key)
 		} else {
-			e.captures[key] = slices.Clone(segments[n:])
+			e.captures[key] = domain.CloneCaptureSegments(segments[n:])
 		}
 		left -= n
 	}

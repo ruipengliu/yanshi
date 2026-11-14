@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 
 	"persona/domain"
@@ -14,10 +15,34 @@ import (
 )
 
 type Segment struct {
-	Speaker    string `json:"speaker"`
-	Text       string `json:"text"`
-	At         string `json:"at"`
-	SpeakerRef string `json:"speaker_ref,omitempty"`
+	Speaker           string                  `json:"speaker"`
+	Text              string                  `json:"text"`
+	At                string                  `json:"at"`
+	SpeakerRef        string                  `json:"speaker_ref,omitempty"`
+	SpeakerGrade      string                  `json:"speaker_grade,omitempty"`
+	Disposition       string                  `json:"disposition,omitempty"`
+	DispositionReason string                  `json:"disposition_reason,omitempty"`
+	Background        bool                    `json:"background,omitempty"`
+	LowSupportSpans   []domain.LowSupportSpan `json:"low_support_spans,omitempty"`
+}
+
+func (s *Segment) UnmarshalJSON(data []byte) error {
+	type wire Segment
+	var out wire
+	if err := domain.DecodeLegacyCaptureSegment(data, &out); err != nil {
+		return err
+	}
+	*s = Segment(out)
+	return nil
+}
+
+func CloneSegments(segments []Segment) []Segment {
+	out := slices.Clone(segments)
+	for i := range out {
+		g := domain.CaptureSegment{LowSupportSpans: out[i].LowSupportSpans}.Clone()
+		out[i].LowSupportSpans = g.LowSupportSpans
+	}
+	return out
 }
 
 type Batch struct {
@@ -45,7 +70,9 @@ func (b Batch) Ordered() domain.OrderedCapture {
 		if speaker == "other" || strings.HasPrefix(speaker, "other-") {
 			key, speaker = speaker, "other"
 		}
-		out.Segments = append(out.Segments, domain.CaptureSegment{Speaker: speaker, SpeakerKey: key, SpeakerRef: segment.SpeakerRef, Text: segment.Text, SpokenAt: segment.At, TimeZone: b.TimeZone})
+		out.Segments = append(out.Segments, domain.CaptureSegment{Speaker: speaker, SpeakerKey: key, SpeakerRef: segment.SpeakerRef, Text: segment.Text, SpokenAt: segment.At, TimeZone: b.TimeZone,
+			SpeakerGrade: segment.SpeakerGrade, Disposition: segment.Disposition, DispositionReason: segment.DispositionReason,
+			Background: segment.Background, LowSupportSpans: segment.LowSupportSpans}.Clone())
 	}
 	return out
 }
@@ -99,11 +126,16 @@ func Handler(books store.Store, accounts *account.Service) http.Handler {
 			return
 		}
 		in.Batch.Generation = *in.Generation
+		ordered := in.Batch.Ordered()
+		if err := domain.ValidateLegacyCaptureSegments(ordered.Segments); err != nil {
+			failure(w, Receipt{}, domain.ErrCaptureInvalid)
+			return
+		}
 		p, _ := account.FromContext(r.Context())
 		var out Receipt
 		err := books.Update(r.Context(), p.Owner.BusinessLine, p.Owner.EndUser, func(b *domain.Book) error {
 			var err error
-			out, err = b.ReceiveCaptures(p.DeviceID, in.Batch.Ordered())
+			out, err = b.ReceiveCaptures(p.DeviceID, ordered)
 			return err
 		})
 		if err != nil {

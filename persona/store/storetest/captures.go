@@ -488,7 +488,7 @@ func captureAccessRanges(t *testing.T, factory func() store.Store) {
 		if err != nil {
 			return err
 		}
-		if len(batch) != 3 || batch[1] != (domain.CaptureSegment{}) {
+		if len(batch) != 3 || !batch[1].Equal(domain.CaptureSegment{}) {
 			t.Fatal("erasure lost numbering or retained metadata")
 		}
 		var refs []domain.Ref

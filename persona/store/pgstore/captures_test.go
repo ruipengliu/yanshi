@@ -62,7 +62,7 @@ func TestViewOverlay(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			if len(batch) != 1 || batch[0] != (domain.CaptureSegment{}) {
+			if len(batch) != 1 || !batch[0].Equal(domain.CaptureSegment{}) {
 				return errors.New("View erasure retained segment")
 			}
 			if _, found, err := a.Lookup(date, domain.Ref{Seq: seq}); err != nil || found {

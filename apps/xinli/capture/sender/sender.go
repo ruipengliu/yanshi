@@ -80,6 +80,14 @@ func Open(path string, id Identity) (*Sender, error) {
 		if err == nil && (s.state.Version != 1 || s.state.Identity != id || s.state.Next != uint64(len(s.state.Entries))+1) {
 			err = errors.New("sender state or identity mismatch")
 		}
+		if err == nil {
+			for _, entry := range s.state.Entries {
+				if domain.ValidateLegacyCaptureSegments(entry.Batch.Ordered().Segments) != nil {
+					err = domain.ErrCaptureInvalid
+					break
+				}
+			}
+		}
 	}
 	if err != nil {
 		s.Close()
@@ -103,7 +111,7 @@ func (s *Sender) snapshot() State {
 	out := s.state
 	out.Entries = slices.Clone(out.Entries)
 	for i := range out.Entries {
-		out.Entries[i].Batch.Segments = slices.Clone(out.Entries[i].Batch.Segments)
+		out.Entries[i].Batch.Segments = capture.CloneSegments(out.Entries[i].Batch.Segments)
 		out.Entries[i].Receipt.Refs = slices.Clone(out.Entries[i].Receipt.Refs)
 	}
 	return out
@@ -126,8 +134,12 @@ func (s *Sender) Enqueue(day, zone string, generation uint64, segments []capture
 	if _, err := rand.Read(id[:]); err != nil {
 		return capture.Batch{}, err
 	}
-	b := capture.Batch{SessionID: s.state.Identity.SessionID, Seq: s.state.Next, CaptureID: hex.EncodeToString(id[:]), BusinessDay: day, TimeZone: zone, Generation: generation, Segments: slices.Clone(segments)}
-	normalized, err := domain.NormalizeOrderedCapture(b.Ordered())
+	b := capture.Batch{SessionID: s.state.Identity.SessionID, Seq: s.state.Next, CaptureID: hex.EncodeToString(id[:]), BusinessDay: day, TimeZone: zone, Generation: generation, Segments: capture.CloneSegments(segments)}
+	ordered := b.Ordered()
+	if err := domain.ValidateLegacyCaptureSegments(ordered.Segments); err != nil {
+		return capture.Batch{}, domain.ErrCaptureInvalid
+	}
+	normalized, err := domain.NormalizeOrderedCapture(ordered)
 	if err != nil {
 		return capture.Batch{}, err
 	}
@@ -138,7 +150,7 @@ func (s *Sender) Enqueue(day, zone string, generation uint64, segments []capture
 	if err := s.persist(next); err != nil {
 		return capture.Batch{}, err
 	}
-	b.Segments = slices.Clone(b.Segments)
+	b.Segments = capture.CloneSegments(b.Segments)
 	return b, nil
 }
 
@@ -161,7 +173,7 @@ func (s *Sender) Flush(ctx context.Context, transport Transport) error {
 		if entry.Status == "accepted" {
 			continue
 		}
-		entry.Batch.Segments = slices.Clone(entry.Batch.Segments)
+		entry.Batch.Segments = capture.CloneSegments(entry.Batch.Segments)
 		receipt, err := transport.Send(ctx, entry.Batch)
 		if errors.Is(err, capture.ErrResync) || errors.Is(err, capture.ErrRejected) {
 			next := s.snapshot()

@@ -88,7 +88,7 @@ func (t *captureTx) Lookup(date string, ref domain.Ref) (domain.CaptureSegment, 
 		if ref.Index < 0 || ref.Index >= len(v) || v[ref.Index].Text == "" {
 			return domain.CaptureSegment{}, false, nil
 		}
-		return v[ref.Index], true, nil
+		return v[ref.Index].Clone(), true, nil
 	}
 	if t.isErased(date, ref) {
 		return domain.CaptureSegment{}, false, nil
@@ -117,7 +117,7 @@ func (t *captureTx) Batch(date string, seq uint64) ([]domain.CaptureSegment, err
 		return nil, err
 	}
 	if v, ok := t.appended[batchKey{date, seq}]; ok {
-		return slices.Clone(v), nil
+		return domain.CloneCaptureSegments(v), nil
 	}
 	if t.purged[date] {
 		return nil, fmt.Errorf("capture batch does not exist")
@@ -236,7 +236,7 @@ func (t *captureTx) overlay(date string, from, to domain.Ref) []domain.CaptureRe
 		for i, segment := range segments {
 			ref := domain.Ref{Seq: key.number, Index: i}
 			if segment.Text != "" && inRange(ref, from, to) {
-				result = append(result, domain.CaptureRecord{Ref: ref, Segment: segment})
+				result = append(result, domain.CaptureRecord{Ref: ref, Segment: segment.Clone()})
 			}
 		}
 	}
@@ -350,7 +350,7 @@ func (t *captureTx) Append(date string, seq uint64, segments []domain.CaptureSeg
 		return fmt.Errorf("capture batch already exists")
 	}
 	if t.readOnly {
-		t.appended[key] = slices.Clone(segments)
+		t.appended[key] = domain.CloneCaptureSegments(segments)
 		return nil
 	}
 	for i, segment := range segments {

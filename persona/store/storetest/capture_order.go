@@ -121,7 +121,8 @@ func captureNumericOrder(t *testing.T, factory func() store.Store) {
 		for seq := 1; seq <= 120; seq++ {
 			segments := make([]domain.CaptureSegment, 1+(seq-1)%3)
 			for i := range segments {
-				segments[i] = domain.CaptureSegment{Speaker: "wearer", Text: fmt.Sprintf("批次 %d 段 %d", seq, i)}
+				segments[i] = metadataSegments()[(seq+i)%3].Clone()
+				segments[i].Text += fmt.Sprintf("批次 %d 段 %d", seq, i)
 				want = append(want, domain.CaptureRecord{Ref: domain.Ref{Seq: uint64(seq), Index: i}, Segment: segments[i]})
 			}
 			if _, err := b.AppendCaptures(captureDate, fmt.Sprintf("batch-%d", seq), segments); err != nil {

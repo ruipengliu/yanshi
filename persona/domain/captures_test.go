@@ -55,7 +55,7 @@ func TestAppendCaptures(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(first, again) {
 		t.Fatalf("duplicate %v: %v", again, err)
 	}
-	changed := append([]CaptureSegment(nil), segs...)
+	changed := CloneCaptureSegments(segs)
 	changed[0].Text = "different"
 	if _, err := b.AppendCaptures("2026-10-27", "a", changed); err == nil {
 		t.Fatal("different duplicate accepted")
@@ -91,7 +91,7 @@ func TestAppendCaptures(t *testing.T) {
 func TestCaptureValidation(t *testing.T) {
 	valid := captureTestSegment(captureTestNow)
 	for name, change := range map[string]func(*CaptureSegment){
-		"speaker":           func(g *CaptureSegment) { g.Speaker = "unknown" },
+		"speaker":           func(g *CaptureSegment) { g.Speaker = "invalid" },
 		"wearer key":        func(g *CaptureSegment) { g.SpeakerKey = "x" },
 		"other key missing": func(g *CaptureSegment) { g.Speaker = "other" },
 		"other key invalid": func(g *CaptureSegment) { g.Speaker = "other"; g.SpeakerKey = "bad key" },

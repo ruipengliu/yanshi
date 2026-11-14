@@ -68,7 +68,7 @@ func NormalizeOrderedCapture(in OrderedCapture) (OrderedCapture, error) {
 	if !ok || in.TimeZone == "" {
 		return in, ErrCaptureInvalid
 	}
-	in.Segments = slices.Clone(in.Segments)
+	in.Segments = CloneCaptureSegments(in.Segments)
 	for i := range in.Segments {
 		g := &in.Segments[i]
 		at, err := time.Parse(time.RFC3339Nano, g.SpokenAt)

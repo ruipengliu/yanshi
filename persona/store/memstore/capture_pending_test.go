@@ -24,7 +24,7 @@ func TestPendingPhysicalLifecycle(t *testing.T) {
 					}
 					_, err := b.ReceiveCaptures("phone", domain.OrderedCapture{
 						SessionID: "s", Seq: seq, CaptureID: id, BusinessDay: "2026-10-27", TimeZone: "UTC",
-						Segments: []domain.CaptureSegment{{Speaker: "wearer", Text: "待清除正文", SpokenAt: "2026-10-27T12:00:00Z"}},
+						Segments: []domain.CaptureSegment{{Speaker: "wearer", SpeakerGrade: "timeline", Disposition: "quarantine", DispositionReason: "playback", Text: "待清除\x00正文", SpokenAt: "2026-10-27T12:00:00Z", LowSupportSpans: []domain.LowSupportSpan{{Start: 0, End: 1, CriticalKinds: []string{"unknown"}}}}},
 					})
 					if err != nil {
 						return err
@@ -101,6 +101,13 @@ func TestPendingPhysicalLifecycle(t *testing.T) {
 			}
 			if count() != 0 {
 				t.Fatal("pending survived lifecycle cleanup")
+			}
+			for _, batch := range s.entry("bl", "u").captures {
+				for _, g := range batch {
+					if !g.Equal(domain.CaptureSegment{}) {
+						t.Fatal("segment metadata survived lifecycle cleanup")
+					}
+				}
 			}
 		})
 	}

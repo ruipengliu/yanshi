@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"persona/domain"
 	"xinli/capture"
 	"xinli/recognition"
 )
@@ -56,5 +57,28 @@ func TestDelayCancellation(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("delay ignored cancellation")
+	}
+}
+
+func TestMetadataCopies(t *testing.T) {
+	segments := []capture.Segment{{Speaker: "wearer", Text: "原文", LowSupportSpans: []domain.LowSupportSpan{{Start: 0, End: 1, CriticalKinds: []string{"person"}}}}}
+	fake := recognition.NewFake(map[string]recognition.Result{"chunk": {Segments: segments}}, nil)
+	segments[0].LowSupportSpans[0].CriticalKinds[0] = "date"
+	segments[0].LowSupportSpans[0].End = 2
+	first, err := fake.Recognize(context.Background(), recognition.ChunkRef{ID: "chunk"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first[0].LowSupportSpans[0].CriticalKinds[0] != "person" || first[0].LowSupportSpans[0].End != 1 {
+		t.Fatal("script aliased")
+	}
+	first[0].LowSupportSpans[0].CriticalKinds[0] = "number"
+	first[0].LowSupportSpans[0].End = 2
+	second, err := fake.Recognize(context.Background(), recognition.ChunkRef{ID: "chunk"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second[0].LowSupportSpans[0].CriticalKinds[0] != "person" || second[0].LowSupportSpans[0].End != 1 {
+		t.Fatal("result aliased")
 	}
 }

@@ -163,3 +163,37 @@ func TestCaptureRoutesWithoutKernel(t *testing.T) {
 func (d *devActions) OneshotForBusinessLine(context.Context, string, string, string, string) (kernel.OneshotResult, error) {
 	return kernel.OneshotResult{Output: json.RawMessage(`{"brief":"简述"}`)}, nil
 }
+
+func TestCaptureMetadataRejected(t *testing.T) {
+	books := memstore.New(captureClock)
+	h := Handler(Config{}, Options{Store: books, Now: captureClock})
+	for _, segment := range []string{
+		`{"speaker":"unknown","text":"原文"}`,
+		`{"speaker":"wearer","text":"原文","speaker_grade":"timeline"}`,
+		`{"speaker":"wearer","text":"原文","disposition":"accept"}`,
+		`{"speaker":"wearer","text":"原文","disposition_reason":"playback"}`,
+		`{"speaker":"other","speaker_key":"x","text":"原文","background":true}`,
+		`{"speaker":"wearer","text":"原文","low_support_spans":[{"start":0,"end":1}]}`,
+		`{"speaker":"wearer","text":"原文","background":false}`,
+		`{"speaker":"wearer","text":"原文","speaker_grade":""}`,
+		`{"speaker":"wearer","text":"原文","low_support_spans":[]}`,
+	} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("POST", "/v1/dev/bl/u/captures", strings.NewReader(`{"date":"2026-10-27","segments":[{"speaker":"wearer","text":"合法前段"},`+segment+`]}`)))
+		if w.Code != 400 {
+			t.Fatalf("status=%d: %s", w.Code, w.Body.String())
+		}
+		if strings.Contains(segment, `"speaker":"unknown"`) && !strings.Contains(w.Body.String(), "capture_rejected") {
+			t.Fatal("speaker rejection changed", w.Body.String())
+		}
+		if err := books.View(context.Background(), "bl", "u", func(b *domain.Book) error {
+			segments, err := b.DayCaptures("2026-10-27")
+			if len(segments) != 0 || b.BusinessDay("2026-10-27").CaptureRevision != 0 {
+				t.Fatal("invalid batch stored")
+			}
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

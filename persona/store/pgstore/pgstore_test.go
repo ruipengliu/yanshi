@@ -219,7 +219,7 @@ func TestCaptureUint64AndScanPages(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if len(batch) != 260 || batch[128] != (domain.CaptureSegment{}) {
+		if len(batch) != 260 || !batch[128].Equal(domain.CaptureSegment{}) {
 			return errors.New("erasure lost batch slots")
 		}
 		return nil

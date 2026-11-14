@@ -12,12 +12,17 @@ import (
 
 // CaptureSegment 是提交方交给 Persona 的原文；审核在平台读取结构化页时进行。
 type CaptureSegment struct {
-	Speaker    string `json:"speaker"`
-	SpeakerKey string `json:"speaker_key,omitempty"`
-	SpeakerRef string `json:"speaker_ref,omitempty"`
-	Text       string `json:"text"`
-	SpokenAt   string `json:"spoken_at,omitempty"`
-	TimeZone   string `json:"time_zone,omitempty"`
+	Speaker           string           `json:"speaker"`
+	SpeakerKey        string           `json:"speaker_key,omitempty"`
+	SpeakerRef        string           `json:"speaker_ref,omitempty"`
+	Text              string           `json:"text"`
+	SpokenAt          string           `json:"spoken_at,omitempty"`
+	TimeZone          string           `json:"time_zone,omitempty"`
+	SpeakerGrade      string           `json:"speaker_grade,omitempty"`
+	Disposition       string           `json:"disposition,omitempty"`
+	DispositionReason string           `json:"disposition_reason,omitempty"`
+	Background        bool             `json:"background,omitempty"`
+	LowSupportSpans   []LowSupportSpan `json:"low_support_spans,omitempty"`
 }
 
 // captureDay 独立于 file_day 的总览，换绑工作 Session 不改变引用与处理进度。
@@ -151,7 +156,7 @@ func (u *Book) AppendCaptures(date, captureID string, segments []CaptureSegment)
 			}) {
 				return nil, fmt.Errorf("capture_id contains erased segments")
 			}
-			if !slices.Equal(segmentsBefore, segments) {
+			if !slices.EqualFunc(segmentsBefore, segments, CaptureSegment.Equal) {
 				return nil, fmt.Errorf("capture_id already has different content")
 			}
 			return batchRefs(number, len(segments)), nil
@@ -331,10 +336,10 @@ func validateCaptureBatch(captureID string, segments []CaptureSegment) error {
 		return fmt.Errorf("captures must contain 1 to 200 segments")
 	}
 	for _, g := range segments {
-		if g.Speaker != "wearer" && g.Speaker != "other" {
+		if g.Speaker != "wearer" && g.Speaker != "other" && g.Speaker != "unknown" {
 			return fmt.Errorf("invalid capture speaker")
 		}
-		if g.Speaker == "wearer" && g.SpeakerKey != "" || g.Speaker == "other" && !captureSpeakerKey.MatchString(g.SpeakerKey) {
+		if g.Speaker != "other" && g.SpeakerKey != "" || g.Speaker == "other" && !captureSpeakerKey.MatchString(g.SpeakerKey) {
 			return fmt.Errorf("invalid capture speaker_key")
 		}
 		if g.SpeakerRef != "" && (g.Speaker != "other" || !captureSpeakerRef.MatchString(g.SpeakerRef)) {
@@ -353,6 +358,9 @@ func validateCaptureBatch(captureID string, segments []CaptureSegment) error {
 			if _, ok := captureZone(g.TimeZone); !ok {
 				return fmt.Errorf("invalid capture time_zone")
 			}
+		}
+		if err := g.ValidateMetadata(); err != nil {
+			return err
 		}
 	}
 	return nil

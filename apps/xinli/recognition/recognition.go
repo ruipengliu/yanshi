@@ -4,7 +4,6 @@ package recognition
 import (
 	"context"
 	"errors"
-	"slices"
 	"time"
 
 	"xinli/capture"
@@ -42,7 +41,7 @@ func NewFake(results map[string]Result, wait Wait) *Fake {
 		f.wait = waitTimer
 	}
 	for id, result := range results {
-		result.Segments = slices.Clone(result.Segments)
+		result.Segments = capture.CloneSegments(result.Segments)
 		for i, speaker := range result.SpeakerOverrides {
 			if i >= 0 && i < len(result.Segments) {
 				result.Segments[i].Speaker = speaker
@@ -76,7 +75,7 @@ func (f *Fake) Recognize(ctx context.Context, ref ChunkRef) ([]capture.Segment, 
 	if result.Fail {
 		return nil, ErrRecognition
 	}
-	return slices.Clone(result.Segments), nil
+	return capture.CloneSegments(result.Segments), nil
 }
 
 func waitTimer(ctx context.Context, d time.Duration) error {

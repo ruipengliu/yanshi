@@ -131,11 +131,14 @@ func Handler(s store.Store, opts Options) http.Handler {
 	})
 	register("POST", "/captures", false, func(b *domain.Book, r *http.Request) (any, error) {
 		var in struct {
-			Date      string                  `json:"date"`
-			CaptureID string                  `json:"capture_id"`
-			Segments  []domain.CaptureSegment `json:"segments"`
+			Date      string                       `json:"date"`
+			CaptureID string                       `json:"capture_id"`
+			Segments  domain.LegacyCaptureSegments `json:"segments"`
 		}
 		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		if err := domain.ValidateLegacyCaptureSegments(in.Segments); err != nil {
 			return nil, err
 		}
 		refs, err := b.AppendCaptures(in.Date, in.CaptureID, in.Segments)

@@ -31,7 +31,7 @@ func cloneCaptureTestBook(b *Book) (*Book, error) {
 	for date, batches := range b.captures.(testCaptures) {
 		data[date] = map[uint64][]CaptureSegment{}
 		for n, segments := range batches {
-			data[date][n] = slices.Clone(segments)
+			data[date][n] = CloneCaptureSegments(segments)
 		}
 	}
 	out.SetCaptureAccess(data)
@@ -62,7 +62,7 @@ func (m testCaptures) Batch(date string, number uint64) ([]CaptureSegment, error
 	if !ok {
 		return nil, fmt.Errorf("missing batch")
 	}
-	return slices.Clone(v), nil
+	return CloneCaptureSegments(v), nil
 }
 
 func (m testCaptures) Lookup(date string, ref Ref) (CaptureSegment, bool, error) {
@@ -70,7 +70,7 @@ func (m testCaptures) Lookup(date string, ref Ref) (CaptureSegment, bool, error)
 	if ref.Index < 0 || ref.Index >= len(v) || v[ref.Index].Text == "" {
 		return CaptureSegment{}, false, nil
 	}
-	return v[ref.Index], true, nil
+	return v[ref.Index].Clone(), true, nil
 }
 
 func (m testCaptures) Scan(date string, from, to Ref) iter.Seq2[CaptureRecord, error] {
@@ -81,7 +81,7 @@ func (m testCaptures) Scan(date string, from, to Ref) iter.Seq2[CaptureRecord, e
 				if g.Text == "" || from.Seq != 0 && !refLE(from, r) || to.Seq != 0 && !refLE(r, to) {
 					continue
 				}
-				if !yield(CaptureRecord{Ref: r, Segment: g}, nil) {
+				if !yield(CaptureRecord{Ref: r, Segment: g.Clone()}, nil) {
 					return
 				}
 			}
@@ -111,7 +111,7 @@ func (m testCaptures) Append(date string, number uint64, segments []CaptureSegme
 	if _, exists := m[date][number]; exists {
 		return fmt.Errorf("duplicate batch")
 	}
-	m[date][number] = slices.Clone(segments)
+	m[date][number] = CloneCaptureSegments(segments)
 	return nil
 }
 
@@ -137,7 +137,7 @@ func testPendingDate(date, session string, generation uint64) string {
 }
 
 func (m testCaptures) Pending(date, session string, seq, generation uint64) ([]CaptureSegment, error) {
-	return slices.Clone(m[testPendingDate(date, session, generation)][seq]), nil
+	return CloneCaptureSegments(m[testPendingDate(date, session, generation)][seq]), nil
 }
 
 func (m testCaptures) PutPending(date, session string, seq, generation uint64, segments []CaptureSegment) error {
@@ -149,7 +149,7 @@ func (m testCaptures) PutPending(date, session string, seq, generation uint64, s
 	if m[key] == nil {
 		m[key] = map[uint64][]CaptureSegment{}
 	}
-	m[key][seq] = slices.Clone(segments)
+	m[key][seq] = CloneCaptureSegments(segments)
 	return nil
 }
 

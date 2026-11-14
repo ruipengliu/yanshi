@@ -98,8 +98,8 @@ func registerRoutes(mux *http.ServeMux, opts Options) {
 	})
 	mux.HandleFunc("POST "+prefix+"/captures", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
-			Date     string                  `json:"date"`
-			Segments []domain.CaptureSegment `json:"segments"`
+			Date     string                       `json:"date"`
+			Segments domain.LegacyCaptureSegments `json:"segments"`
 		}
 		if !decode(w, r, &in) {
 			return
@@ -112,6 +112,9 @@ func registerRoutes(mux *http.ServeMux, opts Options) {
 		var refs []string
 		err = opts.Store.Update(r.Context(), r.PathValue("businessLine"), r.PathValue("endUser"), func(b *domain.Book) error {
 			b.SetCaptureClock(opts.Now)
+			if err := domain.ValidateLegacyCaptureSegments(in.Segments); err != nil {
+				return err
+			}
 			var err error
 			refs, err = b.AppendCaptures(in.Date, id, in.Segments)
 			return err

@@ -88,7 +88,7 @@ func TestCaptureSpeakerRefPersistence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if book.captures.(testCaptures)["2026-10-27"][1][0] != (CaptureSegment{}) {
+		if !book.captures.(testCaptures)["2026-10-27"][1][0].Equal(CaptureSegment{}) {
 			t.Fatal("erasure left segment metadata")
 		}
 		raw, err := json.Marshal(book)

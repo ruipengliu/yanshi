@@ -349,7 +349,7 @@ func runSample(t *testing.T, b backend, results map[string][]sample) {
 	view(t, b.store, func(book *domain.Book) {
 		segment, found, err := book.CaptureAccess().Lookup(date, domain.Ref{Seq: 1201})
 		must(t, err)
-		if !found || segment != batch(day, batchesPerDay+1)[0] || book.BusinessDay(date).CaptureRevision != batchesPerDay+1 {
+		if !found || !segment.Equal(batch(day, batchesPerDay+1)[0]) || book.BusinessDay(date).CaptureRevision != batchesPerDay+1 {
 			t.Fatal("append did not persist batch and revision")
 		}
 	})

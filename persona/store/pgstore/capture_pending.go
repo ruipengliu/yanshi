@@ -3,7 +3,6 @@ package pgstore
 import (
 	"encoding/json"
 	"errors"
-	"slices"
 
 	"github.com/jackc/pgx/v5"
 
@@ -21,7 +20,7 @@ func (t *captureTx) Pending(date, session string, seq, generation uint64) ([]dom
 	}
 	k := pendingKey{date, session, seq, generation}
 	if v, ok := t.pendingWrites[k]; ok {
-		return slices.Clone(v), nil
+		return domain.CloneCaptureSegments(v), nil
 	}
 	if t.pendingCleared[date] {
 		return nil, nil
@@ -52,7 +51,7 @@ func (t *captureTx) PutPending(date, session string, seq, generation uint64, seg
 		if t.pendingWrites == nil {
 			t.pendingWrites = map[pendingKey][]domain.CaptureSegment{}
 		}
-		t.pendingWrites[pendingKey{date, session, seq, generation}] = slices.Clone(segments)
+		t.pendingWrites[pendingKey{date, session, seq, generation}] = domain.CloneCaptureSegments(segments)
 		return nil
 	}
 	args := []any{t.bl, t.eu, date, []byte(session), number(seq), number(generation)}

@@ -67,7 +67,7 @@ func (t *captureTx) Batch(date string, number uint64) ([]domain.CaptureSegment, 
 		return nil, fmt.Errorf("capture batch does not exist")
 	}
 	store.RecordLoad(t.ctx, 0, len(v))
-	return slices.Clone(v), nil
+	return domain.CloneCaptureSegments(v), nil
 }
 
 func (t *captureTx) Lookup(date string, ref domain.Ref) (domain.CaptureSegment, bool, error) {
@@ -79,7 +79,7 @@ func (t *captureTx) Lookup(date string, ref domain.Ref) (domain.CaptureSegment, 
 		return domain.CaptureSegment{}, false, nil
 	}
 	store.RecordLoad(t.ctx, 0, 1)
-	return v[ref.Index], true, nil
+	return v[ref.Index].Clone(), true, nil
 }
 
 func refLess(a, b domain.Ref) bool {
@@ -116,7 +116,7 @@ func (t *captureTx) Scan(date string, from, to domain.Ref) iter.Seq2[domain.Capt
 					continue
 				}
 				store.RecordLoad(t.ctx, 0, 1)
-				if !yield(domain.CaptureRecord{Ref: r, Segment: g}, nil) {
+				if !yield(domain.CaptureRecord{Ref: r, Segment: g.Clone()}, nil) {
 					return
 				}
 				// Pull2 可把迭代暂停在最后一次 yield；恢复时也须先检查事务寿命。
@@ -155,7 +155,7 @@ func (t *captureTx) Adjacent(date string, ref domain.Ref, before bool) (domain.C
 				continue
 			}
 			store.RecordLoad(t.ctx, 0, 1)
-			return domain.CaptureRecord{Ref: r, Segment: v[i]}, true, nil
+			return domain.CaptureRecord{Ref: r, Segment: v[i].Clone()}, true, nil
 		}
 	}
 	return domain.CaptureRecord{}, false, nil
@@ -172,7 +172,7 @@ func (t *captureTx) Append(date string, number uint64, segments []domain.Capture
 	if number == 0 || len(segments) == 0 {
 		return fmt.Errorf("invalid capture batch")
 	}
-	t.writes[k] = slices.Clone(segments)
+	t.writes[k] = domain.CloneCaptureSegments(segments)
 	return nil
 }
 
@@ -186,11 +186,11 @@ func (t *captureTx) Erase(date string, from, to domain.Ref) error {
 		var changed []domain.CaptureSegment
 		for i, g := range v {
 			r := domain.Ref{Seq: number, Index: i}
-			if g == (domain.CaptureSegment{}) || from.Seq != 0 && refLess(r, from) || to.Seq != 0 && refLess(to, r) {
+			if g.Equal(domain.CaptureSegment{}) || from.Seq != 0 && refLess(r, from) || to.Seq != 0 && refLess(to, r) {
 				continue
 			}
 			if changed == nil {
-				changed = slices.Clone(v)
+				changed = domain.CloneCaptureSegments(v)
 			}
 			changed[i] = domain.CaptureSegment{}
 		}

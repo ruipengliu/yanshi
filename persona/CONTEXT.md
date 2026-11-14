@@ -99,3 +99,6 @@ _Avoid_: 原文版本、租约代数
 **Capture staging（缺口暂存）**:
 原文库中尚未正式追加的文字批次，带业务日、采集会话、序号与采集世代；不分配引用、不计作接受、不供模型读页。正文与业务日删除同 owner 事务清理，去重元数据不含正文。
 _Avoid_: 处理进度、已接受批次
+
+**Capture segment metadata（原文片段元数据）**:
+业务侧原文片段保存说话人三态（`wearer` / `other` / `unknown`）、佩戴者等级（`speaker_grade`）、处置与原因（`disposition` / `disposition_reason`）、背景标记及低支持区间（`low_support_spans`）。低支持区间以原始文字的 rune 半开区间定位，`critical_kinds` 标明涉及的关键内容种类；空种类解释为 `unknown`。缺省等级与处置分别解释为 `evidence`（仅佩戴者）与 `accept`，不回填存储。数据与存储已支持；入口开放及下游语义留待后续步骤（[设计](../docs/design/xinli-captures.md#说话人三态处置档位与可信页设计未实现)）。
