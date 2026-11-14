@@ -27,24 +27,27 @@ type CaptureSegment struct {
 
 // captureDay 独立于 file_day 的总览，换绑工作 Session 不改变引用与处理进度。
 type captureDay struct {
-	CaptureGeneration uint64
-	LastBatchAt       time.Time
-	Tail              Ref
-	Session           string
-	Sessions          []string
-	DeleteAt          time.Time
-	Deleted           bool
-	Tombstones        []Source
-	BatchIDs          map[string]uint64
-	TimeZone          string
-	ExpiresAt         time.Time
-	Expired           bool
-	CaptureRevision   uint64
-	Next              uint64
-	Progress          string
-	ReadThrough       Ref
-	GapMS             int64
-	GapSet            bool
+	CaptureGeneration  uint64
+	LastBatchAt        time.Time
+	Tail               Ref
+	LastVisibleBatchAt time.Time
+	// nil 表示旧日尚未建立可见末尾；零引用表示已确认没有可见原文。
+	VisibleTail     *Ref
+	Session         string
+	Sessions        []string
+	DeleteAt        time.Time
+	Deleted         bool
+	Tombstones      []Source
+	BatchIDs        map[string]uint64
+	TimeZone        string
+	ExpiresAt       time.Time
+	Expired         bool
+	CaptureRevision uint64
+	Next            uint64
+	Progress        string
+	ReadThrough     Ref
+	GapMS           int64
+	GapSet          bool
 }
 
 func (u *Book) captureDay(date string) *captureDay {
@@ -172,6 +175,9 @@ func (u *Book) AppendCaptures(date, captureID string, segments []CaptureSegment)
 	if day != nil {
 		number = day.Next + 1
 	}
+	if err := u.prepareVisibleCaptures(date); err != nil {
+		return nil, err
+	}
 	if err := access.Append(date, number, segments); err != nil {
 		return nil, err
 	}
@@ -185,6 +191,15 @@ func (u *Book) AppendCaptures(date, captureID string, segments []CaptureSegment)
 	// 静默从服务端正式接收算起；补传不能借历史说话时间立刻触发整理。
 	day.LastBatchAt = u.captureNow().UTC()
 	day.Tail = Ref{Seq: number, Index: len(segments) - 1}
+	if day.VisibleTail == nil {
+		day.VisibleTail = &Ref{}
+	}
+	for i, g := range segments {
+		if g.Visible() {
+			*day.VisibleTail = Ref{Seq: number, Index: i}
+			day.LastVisibleBatchAt = day.LastBatchAt
+		}
+	}
 	return batchRefs(number, len(segments)), nil
 }
 
@@ -224,7 +239,7 @@ func (c *Call) advanceCaptures(from, to Ref) error {
 	gap := time.Duration(day.GapMS) * time.Millisecond
 	// 只保留时段边界，整日检查不把正文装进账本或临时切片。
 	segs := func(yield func(captureSegment, error) bool) {
-		for s, err := range c.u.captureSegments(date, at.Last, Ref{}) {
+		for s, err := range c.u.visibleCaptureSegments(date, at.Last, Ref{}) {
 			if err != nil {
 				yield(captureSegment{}, err)
 				return
@@ -316,14 +331,13 @@ func (u *Book) BusinessDay(date string) BusinessDay {
 }
 
 // DayCaptures 供本人开发页面读取；返回副本，不登记模型读页或固定时段间隔。
-func (u *Book) DayCaptures(date string) ([]PageSegment, error) {
-	out := []PageSegment{}
+func (u *Book) DayCaptures(date string) ([]CaptureView, error) {
+	out := []CaptureView{}
 	for s, err := range u.captureSegments(date, Ref{}, Ref{}) {
 		if err != nil {
 			return nil, err
 		}
-		g := s.g
-		out = append(out, PageSegment{Ref: s.ref.String(), Speaker: g.Speaker, SpeakerKey: g.SpeakerKey, SpeakerRef: g.SpeakerRef, Text: g.Text, SpokenAt: g.SpokenAt, TimeZone: g.TimeZone})
+		out = append(out, CaptureView{Ref: s.ref.String(), CaptureSegment: s.g.Clone()})
 	}
 	return out, nil
 }

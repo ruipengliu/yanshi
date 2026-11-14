@@ -155,13 +155,14 @@ func (c *dayControl) Diagnostics() http.Handler {
 						if err != nil {
 							return err
 						}
-						daytime, final, err := schedule.DayTimes(day.Date, zone, day.LastBatchAt, schedule.Jitter(owner.BusinessLine, owner.EndUser, day.Date))
+						daytime, final, err := schedule.DayTimes(day.Date, zone, day.LastVisibleBatchAt, schedule.Jitter(owner.BusinessLine, owner.EndUser, day.Date))
 						if err != nil {
 							return err
 						}
 						days = append(days, map[string]any{"business_line": owner.BusinessLine, "end_user": owner.EndUser, "date": day.Date,
 							"last_batch_at": day.LastBatchAt, "time_zone": day.TimeZone, "daytime_due_at": daytime, "final_due_at": final,
-							"processed": day.Processed, "progress": b.CaptureProgress(day.Date), "capture_revision": day.Revision,
+							"last_visible_batch_at": day.LastVisibleBatchAt,
+							"processed":             day.Processed, "progress": b.CaptureProgress(day.Date), "capture_revision": day.Revision,
 							"expires_at": day.ExpiresAt, "session": day.Session})
 					}
 					return nil

@@ -465,6 +465,26 @@ func (c *Call) FileChanges() string {
 			}
 			return rejected(k.problems)
 		}
+		if date, day := u.boundDay(c.session); day != nil {
+			access, err := u.captureAccess()
+			if err != nil {
+				c.err = err
+				return ""
+			}
+			for _, ref := range []Ref{k.from, k.to} {
+				g, _, err := access.Lookup(date, ref)
+				if err != nil {
+					c.err = err
+					return ""
+				}
+				if !g.Visible() {
+					k.fail("source 的端点 #%s 不在整理可见集合中：用旁听每行开头的编号", ref)
+				}
+			}
+			if len(k.problems) > 0 {
+				return rejected(k.problems)
+			}
+		}
 	}
 	old := slices.IndexFunc(u.changesets, func(cs Changeset) bool {
 		return u.sameDay(cs.Session, c.session) && cs.Key == key && cs.Author == AuthorDay

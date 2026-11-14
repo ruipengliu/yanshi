@@ -39,7 +39,7 @@ func cloneCaptureTestBook(b *Book) (*Book, error) {
 	return out, nil
 }
 
-func dayCapturesTest(t *testing.T, b *Book, date string) []PageSegment {
+func dayCapturesTest(t *testing.T, b *Book, date string) []CaptureView {
 	t.Helper()
 	out, err := b.DayCaptures(date)
 	if err != nil {

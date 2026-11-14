@@ -196,13 +196,13 @@ func readBook(book *domain.Book, q Request, after, scope string) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		page := paging.Page[domain.PageSegment]{Items: items}
+		page := paging.Page[domain.CaptureView]{Items: items}
 		if more {
 			page.NextCursor = paging.Encode(scope, items[len(items)-1].Ref)
 		}
 		return struct {
 			CaptureRevision uint64 `json:"capture_revision"`
-			paging.Page[domain.PageSegment]
+			paging.Page[domain.CaptureView]
 		}{CaptureRevision: book.BusinessDay(q.Date).CaptureRevision, Page: page}, nil
 	case "deletions":
 		items := book.DeletionTasks()

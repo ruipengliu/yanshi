@@ -67,7 +67,7 @@ func registerRoutes(mux *http.ServeMux, opts Options) {
 		}
 		var out struct {
 			Day      domain.BusinessDay    `json:"day"`
-			Segments []domain.PageSegment  `json:"segments"`
+			Segments []domain.CaptureView  `json:"segments"`
 			Tasks    []domain.DeletionTask `json:"tasks"`
 		}
 		err := opts.Store.View(r.Context(), r.PathValue("businessLine"), r.PathValue("endUser"), func(b *domain.Book) error {
@@ -186,7 +186,7 @@ func registerRoutes(mux *http.ServeMux, opts Options) {
 				return err
 			}
 			before = captureRevision(b, in.Date)
-			input = briefInput(segments)
+			input = briefCaptureInput(segments)
 			return nil
 		})
 		if err != nil {

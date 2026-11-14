@@ -96,10 +96,10 @@ func (o *Orchestrator) scheduleOwnerActive(ctx context.Context, owner store.Owne
 			if err != nil {
 				return err
 			}
-			if day.Deleted || day.Revision == 0 {
+			if day.Deleted || day.Revision == 0 || day.Processed && day.LastVisibleBatchAt.IsZero() {
 				continue
 			}
-			daytime, final, err := schedule.DayTimes(day.Date, z, day.LastBatchAt, schedule.Jitter(owner.BusinessLine, owner.EndUser, day.Date))
+			daytime, final, err := schedule.DayTimes(day.Date, z, day.LastVisibleBatchAt, schedule.Jitter(owner.BusinessLine, owner.EndUser, day.Date))
 			if err != nil {
 				return err
 			}
@@ -110,7 +110,7 @@ func (o *Orchestrator) scheduleOwnerActive(ctx context.Context, owner store.Owne
 				continue
 			}
 			fact, accepted := b.AcceptedFact(domain.FactDay, day.Date)
-			if accepted && day.Processed && !fact.AcceptedAt.Before(day.LastBatchAt) && (kind == "day" || !fact.AcceptedAt.Before(final)) {
+			if accepted && day.Processed && !fact.AcceptedAt.Before(day.LastVisibleBatchAt) && (kind == "day" || !fact.AcceptedAt.Before(final)) {
 				continue
 			}
 			inputs = append(inputs, scheduled(key, kind, day.Date, day.Revision))

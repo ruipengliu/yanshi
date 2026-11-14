@@ -102,7 +102,7 @@ func (u *Book) QueryWeek(from string) (Week, error) {
 
 // QueryCaptures 直接分页结构化原文，不登记模型读页，不改变整理位置。
 // 读后再次检查期限；调用方还必须等 Store.View 的注销复查成功才交付。
-func (u *Book) QueryCaptures(date, after string, limit int) ([]PageSegment, bool, error) {
+func (u *Book) QueryCaptures(date, after string, limit int) ([]CaptureView, bool, error) {
 	if limit < 1 || limit > 100 {
 		return nil, false, ErrQueryInvalid
 	}
@@ -120,7 +120,7 @@ func (u *Book) QueryCaptures(date, after string, limit int) ([]PageSegment, bool
 			return nil, false, ErrQueryInvalid
 		}
 	}
-	out := []PageSegment{}
+	out := []CaptureView{}
 	more := false
 	for record, err := range u.captureSegments(date, from, Ref{}) {
 		if err != nil {
@@ -133,8 +133,7 @@ func (u *Book) QueryCaptures(date, after string, limit int) ([]PageSegment, bool
 			more = true
 			break
 		}
-		g := record.g
-		out = append(out, PageSegment{Ref: record.ref.String(), Speaker: g.Speaker, SpeakerKey: g.SpeakerKey, SpeakerRef: g.SpeakerRef, Text: g.Text, SpokenAt: g.SpokenAt, TimeZone: g.TimeZone})
+		out = append(out, CaptureView{Ref: record.ref.String(), CaptureSegment: record.g.Clone()})
 	}
 	if err := u.CheckCaptures(date); err != nil {
 		return nil, false, err

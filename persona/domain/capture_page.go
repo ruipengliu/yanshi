@@ -38,7 +38,7 @@ type StructuredPage struct {
 	TimeZone string        `json:"time_zone,omitempty"`
 }
 
-// PageSegment 在提交片段上附业务日中的引用，不允许调用方填写审核标记。
+// PageSegment 只用于投影后的可信页，不携带业务侧的原始信任元数据或审核标记。
 type PageSegment struct {
 	Ref        string `json:"ref"`
 	Speaker    string `json:"speaker"`
@@ -248,7 +248,7 @@ func (c *Call) Captures(o PageOptions) (StructuredPage, error) {
 	}
 	o.GapMS = day.GapMS
 	page, err := capturePage(func(from Ref) iter.Seq2[captureSegment, error] {
-		return c.u.captureSegments(date, from, Ref{})
+		return c.u.visibleCaptureSegments(date, from, Ref{})
 	}, at, o, c.now, in.All)
 	if err == nil && page.Kind == "page" && len(page.Segments) > 0 {
 		last, _ := parseCaptureRef(page.Segments[len(page.Segments)-1].Ref)

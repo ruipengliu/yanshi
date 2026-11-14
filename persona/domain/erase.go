@@ -134,7 +134,7 @@ func (u *Book) erase(date string, from, to Ref, whole bool, now time.Time) (Dele
 	var spans []captureRange
 	if !whole {
 		var err error
-		spans, err = captureRanges(u.captureSegments(date, Ref{}, Ref{}), gap)
+		spans, err = captureRanges(u.visibleCaptureSegments(date, Ref{}, Ref{}), gap)
 		if err != nil {
 			return DeletionTask{}, err
 		}
@@ -169,12 +169,23 @@ func (u *Book) erase(date string, from, to Ref, whole bool, now time.Time) (Dele
 	}
 	if whole {
 		day.Tail = Ref{}
+		// 未建立可见末尾的旧日保持 nil，完成判断沿用旧规则，留给 prepareVisibleCaptures 从存储补齐。
+		if day.VisibleTail != nil {
+			day.VisibleTail = &Ref{}
+		}
 	} else {
 		last, _, err := access.Adjacent(date, Ref{}, true)
 		if err != nil {
 			return DeletionTask{}, err
 		}
 		day.Tail = last.Ref
+		if day.VisibleTail != nil {
+			visible, _, err := u.visibleCaptureAdjacent(date, Ref{}, true)
+			if err != nil {
+				return DeletionTask{}, err
+			}
+			day.VisibleTail = &visible.Ref
+		}
 	}
 	if !whole {
 		if err := u.rewindCaptures(date, affected, gap); err != nil {
@@ -227,7 +238,7 @@ func (u *Book) rewindCaptures(date string, affected []captureRange, gap time.Dur
 			first = r.from
 		}
 	}
-	spans, err := captureRanges(u.captureSegments(date, Ref{}, Ref{}), gap)
+	spans, err := captureRanges(u.visibleCaptureSegments(date, Ref{}, Ref{}), gap)
 	if err != nil {
 		return err
 	}
@@ -236,11 +247,7 @@ func (u *Book) rewindCaptures(date string, affected []captureRange, gap time.Dur
 			first = span.from
 		}
 	}
-	access, err := u.captureAccess()
-	if err != nil {
-		return err
-	}
-	previous, _, err := access.Adjacent(date, first, true)
+	previous, _, err := u.visibleCaptureAdjacent(date, first, true)
 	if err != nil {
 		return err
 	}

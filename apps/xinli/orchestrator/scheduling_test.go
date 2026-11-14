@@ -526,6 +526,8 @@ func TestScheduleMetadataAndDuplicateBatch(t *testing.T) {
 				}
 				delete(days["2026-10-28"], "LastBatchAt")
 				delete(days["2026-10-28"], "Tail")
+				delete(days["2026-10-28"], "LastVisibleBatchAt")
+				delete(days["2026-10-28"], "VisibleTail")
 				data["CaptureDays"], _ = json.Marshal(days)
 				raw, _ = json.Marshal(data)
 				if err := json.Unmarshal(raw, b); err != nil {

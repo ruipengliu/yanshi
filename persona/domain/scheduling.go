@@ -9,10 +9,11 @@ import (
 // CaptureSchedule 只交出编排所需的日期、版本与进度，不把原文带出事务。
 type CaptureSchedule struct {
 	BusinessDay
-	Date        string
-	LastBatchAt time.Time
-	Revision    uint64
-	Processed   bool
+	Date               string
+	LastBatchAt        time.Time
+	LastVisibleBatchAt time.Time
+	Revision           uint64
+	Processed          bool
 }
 
 func (u *Book) SchedulingDays() []CaptureSchedule {
@@ -29,7 +30,8 @@ func (u *Book) SchedulingDays() []CaptureSchedule {
 		}
 		out = append(out, CaptureSchedule{BusinessDay: u.BusinessDay(date), Date: date,
 			LastBatchAt: d.LastBatchAt, Revision: revision,
-			Processed: d.processed()})
+			LastVisibleBatchAt: d.lastVisibleBatchAt(),
+			Processed:          d.processed()})
 	}
 	return out
 }
@@ -65,18 +67,23 @@ func (u *Book) WeekProjects(from string) []string {
 // 首次发现保守地从当前时刻等待静默；已经到期的原文绝不为补元数据而读取。
 func (u *Book) PrepareScheduling() error {
 	for date, d := range u.captureDays {
-		if !d.LastBatchAt.IsZero() || d.Deleted || d.Expired || d.ExpiresAt.IsZero() || !u.captureNow().Before(d.ExpiresAt) {
+		if d.Deleted || d.Expired || d.ExpiresAt.IsZero() || !u.captureNow().Before(d.ExpiresAt) {
 			continue
 		}
-		access, err := u.captureAccess()
-		if err != nil {
+		if d.LastBatchAt.IsZero() {
+			access, err := u.captureAccess()
+			if err != nil {
+				return err
+			}
+			last, _, err := access.Adjacent(date, Ref{}, true)
+			if err != nil {
+				return err
+			}
+			d.Tail, d.LastBatchAt = last.Ref, u.captureNow().UTC()
+		}
+		if err := u.prepareVisibleCaptures(date); err != nil {
 			return err
 		}
-		last, _, err := access.Adjacent(date, Ref{}, true)
-		if err != nil {
-			return err
-		}
-		d.Tail, d.LastBatchAt = last.Ref, u.captureNow().UTC()
 	}
 	return nil
 }
@@ -84,5 +91,15 @@ func (u *Book) PrepareScheduling() error {
 // 调度与产品页面使用同一处理完成判定，不能把 Run 终态当成整理完成。
 func (d *captureDay) processed() bool {
 	progress, _ := parseCaptureCursor(d.Progress)
+	if d.VisibleTail != nil {
+		return d.VisibleTail.Seq == 0 || refLE(*d.VisibleTail, progress.Last)
+	}
 	return d.Tail.Seq == 0 && (d.Next == 0 || !d.LastBatchAt.IsZero()) || d.Tail.Seq != 0 && refLE(d.Tail, progress.Last)
+}
+
+func (d *captureDay) lastVisibleBatchAt() time.Time {
+	if d.VisibleTail == nil {
+		return d.LastBatchAt
+	}
+	return d.LastVisibleBatchAt
 }

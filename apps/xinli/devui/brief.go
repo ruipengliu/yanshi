@@ -24,6 +24,20 @@ func captureRevision(b *domain.Book, date string) briefRevision {
 	return briefRevision{date: date, revision: day.CaptureRevision, deleted: day.Deleted}
 }
 
+func briefCaptureInput(segments []domain.CaptureView) string {
+	visible := make([]domain.PageSegment, 0, len(segments))
+	for _, s := range segments {
+		ref, ok := domain.ParseRef(s.Ref)
+		if !ok {
+			continue
+		}
+		if p, ok := domain.ProjectCapture(ref, s.CaptureSegment); ok {
+			visible = append(visible, p)
+		}
+	}
+	return briefInput(visible)
+}
+
 func briefInput(segments []domain.PageSegment) string {
 	var lines []string
 	remaining := briefMaxChars

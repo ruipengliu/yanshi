@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -151,5 +152,60 @@ func TestBriefEmptyAndInvalidDay(t *testing.T) {
 	Handler(Config{}, Options{Store: memstore.New(captureClock)}).ServeHTTP(w, httptest.NewRequest("POST", "/v1/dev/bl/u/brief", strings.NewReader(`{"date":"2026-10-28"}`)))
 	if w.Code != 503 {
 		t.Fatal(w.Code)
+	}
+}
+
+func TestBriefVisibleProjectionRoutes(t *testing.T) {
+	for _, allHidden := range []bool{false, true} {
+		t.Run(fmt.Sprint(allHidden), func(t *testing.T) {
+			books := memstore.New(captureClock)
+			if err := books.Update(context.Background(), "bl", "u", func(b *domain.Book) error {
+				if !allHidden {
+					_, err := b.AppendCaptures("2026-10-28", "visible", []domain.CaptureSegment{
+						{Speaker: "wearer", Text: "证据"},
+						{Speaker: "wearer", SpeakerGrade: "timeline", Text: "时间线"},
+						{Speaker: "unknown", Text: "未知"},
+						{Speaker: "other", SpeakerKey: "o", SpeakerRef: "P-1", Text: "他人"},
+					})
+					if err != nil {
+						return err
+					}
+				}
+				// 隐藏尾批不得挤掉简述的 200 段可见预算。
+				hidden := make([]domain.CaptureSegment, 200)
+				for i := range hidden {
+					hidden[i] = domain.CaptureSegment{Speaker: "unknown", Text: "不应交给模型", Background: true}
+				}
+				_, err := b.AppendCaptures("2026-10-28", "hidden", hidden)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			a := &briefActions{call: func(_ context.Context, _, _, _, input string) (kernel.OneshotResult, error) {
+				calls++
+				if allHidden || input != "[佩戴者] 证据\n[他人 u-1-1] 时间线\n[他人 u-1-2] 未知\n[他人 o @P-1] 他人" {
+					t.Fatalf("untrusted brief input: %q", input)
+				}
+				return kernel.OneshotResult{Output: json.RawMessage(`{"brief":"简述"}`)}, nil
+			}}
+			h := Handler(Config{}, Options{Store: books, Kernel: a, Now: captureClock})
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, httptest.NewRequest("POST", "/v1/dev/bl/u/brief", strings.NewReader(`{"date":"2026-10-28"}`)))
+			if allHidden && (w.Code != 409 || calls != 0) || !allHidden && (w.Code != 200 || calls != 1) {
+				t.Fatal(w.Code, calls, w.Body.String())
+			}
+			w = httptest.NewRecorder()
+			h.ServeHTTP(w, httptest.NewRequest("GET", "/v1/dev/bl/u/captures?date=2026-10-28", nil))
+			var out struct {
+				Segments []domain.CaptureView `json:"segments"`
+			}
+			if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &out) != nil || len(out.Segments) < 200 || !out.Segments[len(out.Segments)-1].Background {
+				t.Fatal("dev view hid raw segments", w.Code)
+			}
+			if !allHidden && (out.Segments[1].Speaker != "wearer" || out.Segments[1].SpeakerGrade != "timeline" || out.Segments[2].Speaker != "unknown") {
+				t.Fatal("dev view projected raw identity")
+			}
+		})
 	}
 }
