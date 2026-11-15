@@ -754,8 +754,9 @@ func (w *World) answer(sid string, c *session.Call, valid bool) error {
 		return fmt.Errorf("invariant: question %s was asked with invalid arguments: %w", c.Call.GetCallId(), err)
 	}
 	// 有时点卡片上的按钮：Run 等回答时，卡片动作就是回答（docs/design/cards.md §4）。同一动作已生效过时得到
-	// duplicate，提问仍在等。
-	if !valid && w.chance(0.7) {
+	// duplicate，提问仍在等。点按钮是合法的回答，收尾阶段（valid）也点：多数提问在收尾时才得到回答，只在
+	// 前段点时这条路径在数百个种子中只出现一两次。
+	if w.chance(0.5) {
 		if in := w.pickCardAction(sid); in != nil {
 			return w.submitInput(sid, in)
 		}
@@ -1818,10 +1819,20 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 				devices = append(devices, t.Name)
 			}
 		}
+		// 提问同样偏向：回答、打字回答、点卡片回答、通话任务回答与提问超时都以一个待回答的提问为前提，按均匀
+		// 选择时这些路径在数百个种子中只出现一两次，执行路径稍有变化就可能一次也不出现。
+		canAsk := slices.ContainsFunc(tools, func(t model.ToolSpec) bool { return t.Name == askuser.Capability })
+		// 分片差分只跑几个短种子，要求其中出现跨库委托（子 Session 落在另一个库上，约一半的委托如此）：按均匀
+		// 选择时一个种子平均不到一次委托，偏向委托。比较的各次运行用同一 Options，偏向不影响差分。
+		canDelegate := w.opts.CompareShards && slices.ContainsFunc(tools, func(t model.ToolSpec) bool { return t.Name == "agent__sim" })
 		for i := range 1 + w.rng.IntN(2) {
 			name := tools[w.rng.IntN(len(tools))].Name
 			if len(devices) > 0 && w.chance(0.3) {
 				name = devices[w.rng.IntN(len(devices))]
+			} else if canAsk && w.chance(0.05) {
+				name = askuser.Capability
+			} else if canDelegate && w.chance(0.5) {
+				name = "agent__sim"
 			}
 			id := fmt.Sprintf("call_%d", i) // 故意跨轮重复，检验运行时的 ID 改写
 			if w.chance(0.3) {
@@ -1830,10 +1841,11 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 			resp.ToolCalls = append(resp.ToolCalls, &v1.ToolCall{CallId: id, Capability: name, ArgumentsJson: w.toolArgs(name, req.Messages...)})
 		}
 		// 提问之前有时先展示一张卡片：用户可能在等回答时点卡片上的按钮，这个动作就是回答（docs/design/cards.md §4）。
-		// 否则同一 Session 里很少既有卡片又有待回答的提问。
-		if c := resp.ToolCalls[0]; len(resp.ToolCalls) == 1 && c.GetCapability() == askuser.Capability && w.chance(0.7) &&
-			slices.ContainsFunc(tools, func(t model.ToolSpec) bool { return t.Name == card.Capability }) {
-			resp.ToolCalls = []*v1.ToolCall{{Capability: card.Capability, ArgumentsJson: w.toolArgs(card.Capability)}, c}
+		// 否则同一 Session 里很少既有卡片又有待回答的提问。提问与其他调用同批时也展示：只在单独提问时展示，
+		// 这条路径在数百个种子中只出现一两次。
+		asks := slices.ContainsFunc(resp.ToolCalls, func(c *v1.ToolCall) bool { return c.GetCapability() == askuser.Capability })
+		if asks && w.chance(0.7) && slices.ContainsFunc(tools, func(t model.ToolSpec) bool { return t.Name == card.Capability }) {
+			resp.ToolCalls = append([]*v1.ToolCall{{Capability: card.Capability, ArgumentsJson: w.toolArgs(card.Capability)}}, resp.ToolCalls...)
 		}
 		return resp, nil
 	}
