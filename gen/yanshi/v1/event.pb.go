@@ -3459,7 +3459,8 @@ type RunSuspended struct {
 	Attempt uint32                 `protobuf:"varint,2,opt,name=attempt,proto3" json:"attempt,omitempty"`
 	// reason 为空表示等待审批或设备结果（由挂起的调用可知）；"end_user_quota" / "business_line_quota"
 	// 表示配额用尽（docs/design/m4-quota-usage.md §3），until 为配额重置时间；"handoff" 表示移交给其他 Worker
-	// （交互 Worker 移交长任务、优雅停机，ADR-0029），立即可恢复。
+	// （交互 Worker 移交长任务、优雅停机，ADR-0029），立即可恢复；"moderation_unavailable" 表示输出审核不可用，
+	// 回复未写入日志，until 到期后重新生成并送检（ADR-0054）。
 	Reason        string                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
 	Until         *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=until,proto3" json:"until,omitempty"`
 	unknownFields protoimpl.UnknownFields

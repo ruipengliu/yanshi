@@ -573,8 +573,11 @@ type RunSnapshot struct {
 	Request        *RunRequested `protobuf:"bytes,22,opt,name=request,proto3" json:"request,omitempty"`
 	RequestedSeq   uint64        `protobuf:"varint,23,opt,name=requested_seq,json=requestedSeq,proto3" json:"requested_seq,omitempty"`
 	Steered        bool          `protobuf:"varint,24,opt,name=steered,proto3" json:"steered,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// 因输出审核不可用而连续挂起的次数与第一次挂起的时间（ADR-0054）。
+	ModerationWaits     int32                  `protobuf:"varint,25,opt,name=moderation_waits,json=moderationWaits,proto3" json:"moderation_waits,omitempty"`
+	ModerationWaitSince *timestamppb.Timestamp `protobuf:"bytes,26,opt,name=moderation_wait_since,json=moderationWaitSince,proto3" json:"moderation_wait_since,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *RunSnapshot) Reset() {
@@ -752,6 +755,20 @@ func (x *RunSnapshot) GetSteered() bool {
 		return x.Steered
 	}
 	return false
+}
+
+func (x *RunSnapshot) GetModerationWaits() int32 {
+	if x != nil {
+		return x.ModerationWaits
+	}
+	return 0
+}
+
+func (x *RunSnapshot) GetModerationWaitSince() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ModerationWaitSince
+	}
+	return nil
 }
 
 type CallSnapshot struct {
@@ -1048,7 +1065,7 @@ const file_yanshi_v1_snapshot_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x18\n" +
 	"\asteered\x18\x03 \x01(\bR\asteered\x12\x1a\n" +
-	"\banswered\x18\x04 \x01(\tR\banswered\"\xb9\a\n" +
+	"\banswered\x18\x04 \x01(\tR\banswered\"\xb4\b\n" +
 	"\vRunSnapshot\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\x05R\x06status\x12=\n" +
@@ -1071,7 +1088,9 @@ const file_yanshi_v1_snapshot_proto_rawDesc = "" +
 	"\x0ffrom_background\x18\x12 \x01(\tR\x0efromBackground\x121\n" +
 	"\arequest\x18\x16 \x01(\v2\x17.yanshi.v1.RunRequestedR\arequest\x12#\n" +
 	"\rrequested_seq\x18\x17 \x01(\x04R\frequestedSeq\x12\x18\n" +
-	"\asteered\x18\x18 \x01(\bR\asteered\x1a<\n" +
+	"\asteered\x18\x18 \x01(\bR\asteered\x12)\n" +
+	"\x10moderation_waits\x18\x19 \x01(\x05R\x0fmoderationWaits\x12N\n" +
+	"\x15moderation_wait_since\x18\x1a \x01(\v2\x1a.google.protobuf.TimestampR\x13moderationWaitSince\x1a<\n" +
 	"\x0eDecisionsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x13\x10\x14J\x04\b\x14\x10\x15J\x04\b\x15\x10\x16R\rcapture_readsR\rcapture_pagesR\fcapture_acks\"\x8d\x03\n" +
@@ -1154,19 +1173,20 @@ var file_yanshi_v1_snapshot_proto_depIdxs = []int32{
 	16, // 17: yanshi.v1.RunSnapshot.suspended_until:type_name -> google.protobuf.Timestamp
 	10, // 18: yanshi.v1.RunSnapshot.decisions:type_name -> yanshi.v1.RunSnapshot.DecisionsEntry
 	18, // 19: yanshi.v1.RunSnapshot.request:type_name -> yanshi.v1.RunRequested
-	19, // 20: yanshi.v1.CallSnapshot.call:type_name -> yanshi.v1.ToolCall
-	16, // 21: yanshi.v1.CallSnapshot.deadline:type_name -> google.protobuf.Timestamp
-	8,  // 22: yanshi.v1.CallSnapshot.approval:type_name -> yanshi.v1.ApprovalSnapshot
-	16, // 23: yanshi.v1.CallSnapshot.dispatched_at:type_name -> google.protobuf.Timestamp
-	16, // 24: yanshi.v1.ApprovalSnapshot.deadline:type_name -> google.protobuf.Timestamp
-	20, // 25: yanshi.v1.ScheduleSnapshot.created:type_name -> yanshi.v1.ScheduleCreated
-	16, // 26: yanshi.v1.ScheduleSnapshot.last:type_name -> google.protobuf.Timestamp
-	16, // 27: yanshi.v1.ScheduleSnapshot.next_due:type_name -> google.protobuf.Timestamp
-	28, // [28:28] is the sub-list for method output_type
-	28, // [28:28] is the sub-list for method input_type
-	28, // [28:28] is the sub-list for extension type_name
-	28, // [28:28] is the sub-list for extension extendee
-	0,  // [0:28] is the sub-list for field type_name
+	16, // 20: yanshi.v1.RunSnapshot.moderation_wait_since:type_name -> google.protobuf.Timestamp
+	19, // 21: yanshi.v1.CallSnapshot.call:type_name -> yanshi.v1.ToolCall
+	16, // 22: yanshi.v1.CallSnapshot.deadline:type_name -> google.protobuf.Timestamp
+	8,  // 23: yanshi.v1.CallSnapshot.approval:type_name -> yanshi.v1.ApprovalSnapshot
+	16, // 24: yanshi.v1.CallSnapshot.dispatched_at:type_name -> google.protobuf.Timestamp
+	16, // 25: yanshi.v1.ApprovalSnapshot.deadline:type_name -> google.protobuf.Timestamp
+	20, // 26: yanshi.v1.ScheduleSnapshot.created:type_name -> yanshi.v1.ScheduleCreated
+	16, // 27: yanshi.v1.ScheduleSnapshot.last:type_name -> google.protobuf.Timestamp
+	16, // 28: yanshi.v1.ScheduleSnapshot.next_due:type_name -> google.protobuf.Timestamp
+	29, // [29:29] is the sub-list for method output_type
+	29, // [29:29] is the sub-list for method input_type
+	29, // [29:29] is the sub-list for extension type_name
+	29, // [29:29] is the sub-list for extension extendee
+	0,  // [0:29] is the sub-list for field type_name
 }
 
 func init() { file_yanshi_v1_snapshot_proto_init() }

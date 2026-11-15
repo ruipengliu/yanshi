@@ -136,8 +136,10 @@ type Stats struct {
 	TierCrashRecoveries     int
 	// 灰度：撤回版本后在下一个 Run 切换到稳定版本的次数。
 	AgentSwitches int
-	// 内容安全：被拒绝的输入、被拦截的输出、提供商错误。
+	// 内容安全：被拒绝的输入、被拦截的输出、提供商错误；输出审核不可用时挂起等待的次数，以及等待之后完成的 Run
+	// （ADR-0054）。
 	InputBlocks, OutputBlocks, ModerationErrors int
+	ModerationWaits, ModerationResumes          int
 	// Memory 写入闸门要求的审批（ADR-0023）。
 	MemoryApprovals int
 	// 在场：写入次数，以及写入时 Session 已被删除、因"先写、后查"而撤回的次数。
@@ -1505,6 +1507,7 @@ func (w *World) CollectStats() {
 		})
 		compacted := map[string]bool{}
 		quotaSuspended := map[string]bool{}
+		moderationSuspended := map[string]bool{}
 		capOf := map[string]string{}
 		for _, e := range events {
 			switch p := e.GetPayload().(type) {
@@ -1549,6 +1552,9 @@ func (w *World) CollectStats() {
 				w.Stats.Suspensions++
 				if p.RunSuspended.GetReason() == session.SuspendHandoff {
 					w.Stats.Handoffs++
+				} else if p.RunSuspended.GetReason() == session.SuspendModeration {
+					w.Stats.ModerationWaits++
+					moderationSuspended[p.RunSuspended.GetRunId()] = true
 				} else if p.RunSuspended.GetReason() != "" {
 					w.Stats.QuotaSuspensions++
 					quotaSuspended[p.RunSuspended.GetRunId()] = true
@@ -1556,6 +1562,9 @@ func (w *World) CollectStats() {
 			case *v1.Event_RunCompleted:
 				if quotaSuspended[p.RunCompleted.GetRunId()] {
 					w.Stats.QuotaResumes++
+				}
+				if moderationSuspended[p.RunCompleted.GetRunId()] {
+					w.Stats.ModerationResumes++
 				}
 			case *v1.Event_RunFailed:
 				if strings.HasSuffix(p.RunFailed.GetReason(), " turns") {

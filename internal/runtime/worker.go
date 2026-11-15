@@ -126,6 +126,12 @@ type Config struct {
 	Moderator moderation.Moderator
 	// QuotaRecheck 是因配额挂起的 Run 重新检查的最长间隔（默认 10 分钟），使调高配额后及时恢复。
 	QuotaRecheck time.Duration
+	// 输出审核不可用时 Run 挂起等待（ADR-0054）：第一次等 ModerationRetry（默认 30 秒），之后每次翻倍，至多
+	// ModerationRetryMax（默认 10 分钟）；从第一次挂起起累计超过 ModerationWaitMax（默认 6 小时）仍不可用时，
+	// Run 以明确的原因失败，不放行。
+	ModerationRetry    time.Duration
+	ModerationRetryMax time.Duration
+	ModerationWaitMax  time.Duration
 	// Notify 非空时，写入需要 EndUser 注意的事件之后发出提醒：待审批、待回答的提问、持续超过
 	// NotifyRunsAfter（默认 2 分钟）的 Run 结束（docs/design/m3-duplex-channel.md §9）。
 	Notify          Notifier
@@ -182,6 +188,15 @@ func (c *Config) defaults() {
 	}
 	if c.QuotaRecheck == 0 {
 		c.QuotaRecheck = 10 * time.Minute
+	}
+	if c.ModerationRetry == 0 {
+		c.ModerationRetry = 30 * time.Second
+	}
+	if c.ModerationRetryMax == 0 {
+		c.ModerationRetryMax = 10 * time.Minute
+	}
+	if c.ModerationWaitMax == 0 {
+		c.ModerationWaitMax = 6 * time.Hour
 	}
 	if c.BackgroundGrace == 0 {
 		c.BackgroundGrace = DefaultBackgroundGrace
@@ -374,6 +389,11 @@ func (w *Worker) Step(ctx context.Context) (bool, error) {
 			if parked, err := w.reparkOverQuota(ctx); parked || err != nil {
 				return true, err
 			}
+		}
+		// 因审核不可用挂起、退避尚未到期时被其他事件（插话、后台调用等）唤醒：直接重新停放，不开始 Attempt、
+		// 不写事件，免得每次唤醒都重新调用模型（ADR-0054）。中断与删除使 Run 不再活跃，不会走到这里。
+		if r.ModerationSuspended() && w.now().Before(r.SuspendedUntil) {
+			return true, w.park(ctx, r.SuspendedUntil)
 		}
 		return true, w.startAttempt(ctx, r)
 	}
@@ -1167,10 +1187,13 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 	msg := newAssistantMessage(r.ID, w.attempt, resp, w.now().Sub(called), firstToken)
 	var events []*v1.Event
 	// 内容安全（ADR-0021）：检查的正是将要写入日志的消息（回复、调用与截断后的思考过程，ADR-0034）。
-	// 违规的回复替换为拒答文本、丢弃调用与思考过程，原文不写入日志。服务不可用时不放行：
-	// 返回错误使本步重试（下一步重新调用模型），持续不可用时由 StepErrorBudget 使 Run 失败。
+	// 违规的回复替换为拒答文本、丢弃调用与思考过程，原文不写入日志。服务不可用时不放行：丢弃这条回复
+	// （其中的调用从未执行），Run 挂起、退避后重新生成并送检（ADR-0054）。
 	// 用单独的变量：err 被上面的 defer 用来记录模型调用的结果。
 	v, merr := moderation.Check(ctx, w.cfg.Moderator, moderation.ForOutput(w.st.Created.GetBusinessLine(), w.st.SessionID, ModerationText(msg)))
+	if errors.Is(merr, moderation.ErrUnavailable) {
+		return w.awaitModeration(ctx, r)
+	}
 	if merr != nil {
 		return merr
 	}

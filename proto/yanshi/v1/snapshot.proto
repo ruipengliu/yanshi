@@ -103,6 +103,9 @@ message RunSnapshot {
   RunRequested request = 22;
   uint64 requested_seq = 23;
   bool steered = 24;
+  // 因输出审核不可用而连续挂起的次数与第一次挂起的时间（ADR-0054）。
+  int32 moderation_waits = 25;
+  google.protobuf.Timestamp moderation_wait_since = 26;
   reserved 19, 20, 21;
   reserved "capture_reads", "capture_pages", "capture_acks";
 }

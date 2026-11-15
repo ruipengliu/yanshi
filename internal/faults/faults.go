@@ -32,7 +32,7 @@ const (
 	ModelDelay Kind = "model_delay"
 	// WorkerCrash：Worker 写完这一步后"崩溃"——不释放租约、不移交，Run 等租约过期后被接管（新的 Attempt）。
 	WorkerCrash Kind = "worker_crash"
-	// ModerationDown：内容安全服务不可用。输入被拒绝（不写日志），模型输出的这一步重试（ADR-0021）。
+	// ModerationDown：内容安全服务不可用。输入被拒绝（不写日志）；模型输出被丢弃，Run 挂起、退避后重新生成（ADR-0054）。
 	ModerationDown Kind = "moderation_down"
 	// CatalogError：解析工具时查询设备目录失败（暂时性），这一步重试。
 	CatalogError Kind = "catalog_error"

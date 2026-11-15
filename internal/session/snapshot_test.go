@@ -101,11 +101,16 @@ func richLog() []*v1.Event {
 		ev(&v1.RunSuspended{RunId: "r1", Attempt: 2}),
 		ev(&v1.ToolResult{RunId: "r1", CallId: "c1", Content: text}),
 		ev(&v1.AttemptStarted{RunId: "r1", Attempt: 3}),
-		ev(&v1.AttemptStarted{RunId: "r1", Attempt: 4}), // 接管
-		ev(&v1.ContextCompacted{RunId: "r1", Attempt: 4, ThroughSeq: 12, Summary: text}),
-		ev(&v1.ContentModerated{RunId: "r1", Attempt: 4, Stage: "output", Labels: []string{"mock"}}),
-		ev(&v1.AssistantMessage{RunId: "r1", Attempt: 4, Content: text}),
-		ev(&v1.RunCompleted{RunId: "r1", Attempt: 4}),
+		// 输出审核不可用（ADR-0054）：两次挂起，等待计数跨 Attempt 保留，写入 AssistantMessage 时清零。
+		ev(&v1.RunSuspended{RunId: "r1", Attempt: 3, Reason: session.SuspendModeration, Until: timestamppb.New(t0.Add(30 * time.Second))}),
+		ev(&v1.AttemptStarted{RunId: "r1", Attempt: 4}),
+		ev(&v1.RunSuspended{RunId: "r1", Attempt: 4, Reason: session.SuspendModeration, Until: timestamppb.New(t0.Add(time.Minute))}),
+		ev(&v1.AttemptStarted{RunId: "r1", Attempt: 5}),
+		ev(&v1.AttemptStarted{RunId: "r1", Attempt: 6}), // 接管
+		ev(&v1.ContextCompacted{RunId: "r1", Attempt: 6, ThroughSeq: 12, Summary: text}),
+		ev(&v1.ContentModerated{RunId: "r1", Attempt: 6, Stage: "output", Labels: []string{"mock"}}),
+		ev(&v1.AssistantMessage{RunId: "r1", Attempt: 6, Content: text}),
+		ev(&v1.RunCompleted{RunId: "r1", Attempt: 6}),
 		ev(&v1.AgentSwitched{From: &v1.AgentRef{Name: "a", Version: "1"}, To: &v1.AgentRef{Name: "a", Version: "2"}, Reason: "withdrawn"}),
 		ev(&v1.CallStarted{CallId: "vc1", DeviceId: "phone", Model: "volc/x", Voice: "v"}),
 		ev(&v1.CallTranscript{CallId: "vc1", Role: "user", Text: "看看 PPT"}),
@@ -208,7 +213,7 @@ func TestSnapshotCoversEveryField(t *testing.T) {
 	covered := map[string][]string{
 		"State":          {"SessionID", "Seq", "Created", "Agent", "Closed", "Compaction", "CompactedAt", "Runs", "Past", "History", "callIDsOld", "callIDs", "Inputs", "ActiveCall", "Delegated", "Background", "Schedules", "SupersededRuns", "SupersededCardCalls"},
 		"RunSummary":     {"ID", "Status", "RequestedAt", "Attempt", "Turns", "FromBackground"},
-		"Run":            {"ID", "Status", "RequestedAt", "Attempt", "LiveEndpoint", "Takeovers", "StalledTakeovers", "Turns", "Recall", "Recalled", "Calls", "SuspendReason", "SuspendedUntil", "Compactions", "OutputTokens", "Resume", "Decisions", "FromBackground", "Request", "RequestedSeq", "Steered"},
+		"Run":            {"ID", "Status", "RequestedAt", "Attempt", "LiveEndpoint", "Takeovers", "StalledTakeovers", "Turns", "Recall", "Recalled", "Calls", "SuspendReason", "SuspendedUntil", "ModerationWaits", "ModerationWaitSince", "Compactions", "OutputTokens", "Resume", "Decisions", "FromBackground", "Request", "RequestedSeq", "Steered"},
 		"Call":           {"Call", "StartedAttempts", "StartedReadOnly", "NodeID", "Deadline", "DispatchedAt", "Done", "Background", "Approval"},
 		"Schedule":       {"Created", "Last", "NextDue"},
 		"BackgroundCall": {"CallID", "RunID", "NodeID", "Capability", "Deadline"},
@@ -231,5 +236,39 @@ func TestSnapshotCoversEveryField(t *testing.T) {
 		if !slices.Equal(got, want) {
 			t.Errorf("%s fields %v, snapshot covers %v: update snapshot.go and bump ProjectionVersion", typ.Name(), got, want)
 		}
+	}
+}
+
+// TestModerationWaits：因输出审核不可用的挂起跨 Attempt 计数，记下第一次挂起的事件时间；它不是配额挂起；
+// 写入 AssistantMessage 时清零（ADR-0054）。
+func TestModerationWaits(t *testing.T) {
+	ctx := context.Background()
+	log := memlog.New()
+	if _, err := log.Append(ctx, "s", 0, nil, richLog()...); err != nil {
+		t.Fatal(err)
+	}
+	events, _ := log.Read(ctx, "s", 0, 0)
+	var st *session.State
+	for k := range events {
+		prefix, err := session.Reduce(events[:k+1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s := events[k].GetRunSuspended(); s != nil && s.GetReason() == session.SuspendModeration {
+			st = prefix
+		}
+		if events[k].GetAssistantMessage().GetRunId() == "r1" && st != nil {
+			if r := prefix.Run("r1"); r.ModerationWaits != 0 || !r.ModerationWaitSince.IsZero() {
+				t.Fatalf("waits not reset by AssistantMessage: %d since %s", r.ModerationWaits, r.ModerationWaitSince)
+			}
+		}
+	}
+	if st == nil {
+		t.Fatal("fixture has no moderation suspension")
+	}
+	r := st.Run("r1")
+	if r.ModerationWaits != 2 || !r.ModerationWaitSince.Equal(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)) || !r.ModerationSuspended() || r.QuotaSuspended() {
+		t.Fatalf("after two moderation suspensions: waits %d since %s moderation %v quota %v",
+			r.ModerationWaits, r.ModerationWaitSince, r.ModerationSuspended(), r.QuotaSuspended())
 	}
 }

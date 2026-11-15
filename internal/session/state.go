@@ -131,6 +131,11 @@ type Run struct {
 	// SuspendedUntil 为配额重置时间（docs/design/m4-quota-usage.md §3）；SuspendHandoff 表示移交给其他 Worker。
 	SuspendReason  string
 	SuspendedUntil time.Time
+	// ModerationWaits 是本 Run 自上一条 AssistantMessage 以来，因输出审核不可用而连续挂起的次数；
+	// ModerationWaitSince 是其中第一次挂起的时间（事件时间）。二者决定退避与等待上限（ADR-0054），
+	// 跨 Attempt 保留，写入 AssistantMessage 时清零。
+	ModerationWaits     int
+	ModerationWaitSince time.Time
 	// FromBackground 非空表示 Run 由该后台调用的了结（结果或到期）开启，而不是用户的输入（ADR-0035）。
 	FromBackground string
 }
@@ -139,9 +144,19 @@ type Run struct {
 // 如交互 Worker 移交成为长任务的 Run、进程优雅停机。
 const SuspendHandoff = "handoff"
 
+// SuspendModeration 是输出审核不可用时的挂起原因（ADR-0054）：回复未写入日志，SuspendedUntil 到期后
+// 重新生成并送检。
+const SuspendModeration = "moderation_unavailable"
+
 // QuotaSuspended 报告 Run 是否因配额用尽而挂起。
 func (r *Run) QuotaSuspended() bool {
-	return r.Status == RunSuspended && r.SuspendReason != "" && r.SuspendReason != SuspendHandoff
+	return r.Status == RunSuspended && r.SuspendReason != "" && r.SuspendReason != SuspendHandoff &&
+		r.SuspendReason != SuspendModeration
+}
+
+// ModerationSuspended 报告 Run 是否因输出审核不可用而挂起（ADR-0054）。
+func (r *Run) ModerationSuspended() bool {
+	return r.Status == RunSuspended && r.SuspendReason == SuspendModeration
 }
 
 // PendingCall 返回第一个尚无结果的调用，没有则返回 nil。
@@ -770,6 +785,12 @@ func (s *State) apply(e *v1.Event) error {
 		if u := p.RunSuspended.GetUntil(); u != nil {
 			r.SuspendedUntil = u.AsTime()
 		}
+		if r.SuspendReason == SuspendModeration {
+			if r.ModerationWaits == 0 {
+				r.ModerationWaitSince = e.GetTime().AsTime()
+			}
+			r.ModerationWaits++
+		}
 
 	case *v1.Event_ApprovalRequested:
 		m := p.ApprovalRequested
@@ -819,6 +840,7 @@ func (s *State) apply(e *v1.Event) error {
 		r.Turns++
 		r.OutputTokens += int64(m.GetUsage().GetOutputTokens())
 		r.StalledTakeovers = 0
+		r.ModerationWaits, r.ModerationWaitSince = 0, time.Time{}
 		s.History = append(s.History, e)
 
 	case *v1.Event_ToolCallStarted:
