@@ -14,8 +14,8 @@ status: superseded by ADR-0050
 
 - 业务线保存成功时，在 MCP 结果中附结构化回执 `_meta["yanshi/ack"] = {stream, from, through}`；拒收与部分保存不附。回执是平台读取的字段，不是给模型看的文字。
 - AgentDef 在流上声明 `ack: true` 后，读取位置只提交到"从已提交位置起、由回执连续拼出的已确认前缀"的末端，且不超过本 Run 实际读到的位置。没有内容的时段也要交出空的变更集，前缀才连续。
-- 回执随 `ToolResult.CaptureAck` 写入日志（`proto/yanshi/v1/event.proto` 的 CaptureAck），只采信同一业务线、登记中声明了 `acks: true`（mcpcap.Server.Acks）的 MCP Server 的调用结果，session.CheckCaptureAck 与 `State.Apply` 校验；投影只从日志计算前缀，确定性不变。
-- 连续性以本 Run 读过的页拼链：`CaptureRead.Start` 记实际开始游标，`first` 记本页第一段，`ack` 记 agentdef.Stream.Ack 声明。session.Run.CapturePages 与 session.Run.CaptureAcks 随快照保存；完成时从已提交游标沿被完整覆盖的页推进，同起点取最远被覆盖页，提交真实的页尾游标（含续页的时段起点）与间隔。Ref 是日志位置，两批 Capture 之间可能夹着别的 Event，不能靠序号相邻判断范围相接。
+- 回执随 ToolResult.CaptureAck 写入日志（`proto/yanshi/v1/event.proto` 的 CaptureAck，2026-11-15 已从契约中删除），只采信同一业务线、登记中声明了 `acks: true`（mcpcap.Server.Acks）的 MCP Server 的调用结果，session.CheckCaptureAck 与 `State.Apply` 校验；投影只从日志计算前缀，确定性不变。
+- 连续性以本 Run 读过的页拼链：CaptureRead.Start 记实际开始游标，`first` 记本页第一段，`ack` 记 agentdef.Stream.Ack 声明。session.Run.CapturePages 与 session.Run.CaptureAcks 随快照保存；完成时从已提交游标沿被完整覆盖的页推进，同起点取最远被覆盖页，提交真实的页尾游标（含续页的时段起点）与间隔。Ref 是日志位置，两批 Capture 之间可能夹着别的 Event，不能靠序号相邻判断范围相接。
 - 未声明 `ack` 的流行为不变。
 
 ## Considered Options

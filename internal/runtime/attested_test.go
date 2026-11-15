@@ -116,7 +116,7 @@ func TestAttestedWorker(t *testing.T) {
 				}
 				return
 			}
-			if !result.GetAttested() || result.GetIsError() || result.GetCaptureRead() != nil {
+			if !result.GetAttested() || result.GetIsError() {
 				t.Fatal("invalid attested result")
 			}
 			p, err := capture.ParsePage(attestedRaw, capture.PageOptions{Limit: 200, MaxChars: 6000})

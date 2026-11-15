@@ -260,7 +260,7 @@ func ValidSpeakerRef(speaker v1.Speaker, ref string) bool {
 	return ref == "" || speaker == v1.Speaker_SPEAKER_OTHER && speakerRefRE.MatchString(ref)
 }
 
-// validateCaptureSegment 让可信页与旧内置结果遵守同一回放边界，不能靠 attested 绕过片段校验。
+// validateCaptureSegment 校验 attested 页中的每个片段：attested 标记只证明来源，不能绕过片段本身的边界。
 func validateCaptureSegment(g *v1.CaptureSegment) error {
 	switch g.GetSpeaker() {
 	case v1.Speaker_SPEAKER_WEARER:
@@ -662,9 +662,6 @@ func (s *State) apply(e *v1.Event) error {
 		}
 		s.ActiveCall = nil
 
-	case *v1.Event_CaptureAppended:
-		// ADR-0050：只为解码旧日志保留，不再投影或写入。
-
 	case *v1.Event_ContentModerated:
 		// 只校验归属：拦截不改变状态，替换后的 AssistantMessage 随后照常应用。
 		if _, err := s.fencedRun(p.ContentModerated.GetRunId(), p.ContentModerated.GetAttempt()); err != nil {
@@ -898,9 +895,9 @@ func (s *State) apply(e *v1.Event) error {
 		if hasCard(m.GetContent()) && (m.GetAttempt() == 0 || c.Call.GetCapability() != ShowCardCapability) {
 			return fmt.Errorf("card in the result of call %q (%s)", m.GetCallId(), c.Call.GetCapability())
 		}
-		// captures 只为重放旧内置工具的日志保留；现行写入方无法产生它：agentdef 拒绝该能力，
-		// Worker 不再注册该工具，service 拒绝客户端提交 capture 块，因此不扩大现行信任边界（ADR-0050）。
-		if hasCapture(m.GetContent()) && (m.GetAttempt() == 0 || (c.Call.GetCapability() != "captures" && !m.GetAttested())) {
+		// 旁听片段带结构化说话人，佩戴者的话会被推导为用户原话（Provenance）；它只能来自平台渲染、审核过的 attested 页
+		// （ADR-0052），设备、MCP 的普通结果或内置工具都不能写入。
+		if hasCapture(m.GetContent()) && (m.GetAttempt() == 0 || !m.GetAttested()) {
 			return fmt.Errorf("capture segment in the result of call %q (%s)", m.GetCallId(), c.Call.GetCapability())
 		}
 		if m.GetAttested() && (m.GetAttempt() == 0 || !isMCPCall(c.Call.GetCapability()) || c.NodeID != "" || m.GetIsError() || m.GetFromCall() != "" || m.GetBackgrounded() != nil) {
@@ -916,7 +913,6 @@ func (s *State) apply(e *v1.Event) error {
 				}
 			}
 		}
-		// ADR-0050：旧日志的 capture_read 与 capture_ack 不再参与校验或投影；写入入口已移除。
 		// 卡片动作同样只由平台写入：它只出现在用户等回答时点卡片而得的 ask_user 回答里，这条回答必有输入 ID
 		// （由动作推导）。其他结果带上它，客户端会把没有执行过的动作显示为已选。
 		if (m.GetCardAction() != nil || hasCardAction(m.GetContent())) && (m.GetAttempt() != 0 || c.NodeID != askuser.NodeID || m.GetInputId() == "") {

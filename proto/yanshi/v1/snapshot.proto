@@ -44,12 +44,6 @@ message SessionSnapshot {
   reserved "captures";
 }
 
-// 已退役：ADR-0050；快照只作缓存。
-message CaptureSnapshot {
-  reserved 1 to 5;
-  reserved "ids", "count", "last_seq", "last_at", "read";
-}
-
 message BackgroundCallSnapshot {
   string call_id = 1;
   string run_id = 2;

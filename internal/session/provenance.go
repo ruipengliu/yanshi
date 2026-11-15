@@ -9,7 +9,7 @@ import (
 
 // Provenance 是一段内容的来源（ADR-0039，docs/design/m5-inputs-triggers-loops.md §3）：由谁产生、是不是对 Agent 说的。
 // 它由平台从事件推导（Pieces），不由写入方填写：存储的来源字段可以被自报，推导只认平台写入的事件。唯一推导不出的
-// 旁听说话人是结构化字段，现行只由 attested 的结果写入；Apply 也接受旧 captures 结果以重放日志。Memory 写入闸门与注入判断都只看它。
+// 旁听说话人是结构化字段，只由 attested 的结果写入（Apply 拒绝其他结果中的旁听片段）。Memory 写入闸门与注入判断都只看它。
 type Provenance uint8
 
 const (
@@ -115,7 +115,7 @@ func resultPieces(m *v1.ToolResult, external, question bool) []Piece {
 			out = append(out, Piece{From: FromUser, Text: t})
 		}
 	}
-	// Apply 只接受 attested 或旧 captures 的旁听片段；两者按相同的结构化说话人推导来源，保证旧日志的闸门判断不变。
+	// Apply 只接受 attested 结果中的旁听片段，来源按结构化说话人推导。
 	// 文本中的前缀不能改变来源；拦截的片段没有内容。
 	var others []string
 	for _, c := range m.GetContent() {

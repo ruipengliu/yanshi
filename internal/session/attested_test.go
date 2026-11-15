@@ -31,7 +31,8 @@ func TestAttestedApply(t *testing.T) {
 		{"missing marker", func(es []*v1.Event) { es[5].GetToolResult().Attested = false }},
 		{"bad ref", func(es []*v1.Event) { es[5].GetToolResult().Content[0].GetCapture().Ref = "#57.0" }},
 		{"missing ref", func(es []*v1.Event) { es[5].GetToolResult().Content[0].GetCapture().Ref = "" }},
-		{"builtin ref", func(es []*v1.Event) {
+		// 内置的 captures 工具已退役（ADR-0050），它的结果不能再带旁听片段。
+		{"builtin captures", func(es []*v1.Event) {
 			es[3].GetAssistantMessage().ToolCalls[0].Capability = "captures"
 			es[5].GetToolResult().Attested = false
 		}},
@@ -71,20 +72,5 @@ func TestAttestedPieces(t *testing.T) {
 		if other && (pieces[1].From != FromOther || pieces[1].Text != "他人一句\n他人二句" || pieces[1].Result != r) {
 			t.Fatal("other speech not merged")
 		}
-	}
-}
-
-func TestRetiredCaptureEventsIgnored(t *testing.T) {
-	es := attestedEvents()
-	result := es[5].GetToolResult()
-	result.CaptureRead = &v1.CaptureRead{Stream: "retired", After: "invalid"}
-	result.CaptureAck = &v1.CaptureAck{Stream: "retired"}
-	es = append(es, &v1.Event{Payload: &v1.Event_CaptureAppended{CaptureAppended: &v1.CaptureAppended{}}})
-	st, err := Reduce(build(es...))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(st.Pieces()) != 1 {
-		t.Fatal("retired event changed content provenance")
 	}
 }

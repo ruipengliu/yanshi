@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
+
+	"google.golang.org/protobuf/encoding/protojson"
 
 	"yanshi/internal/agentdef"
 	"yanshi/internal/eval/xinlifixture"
@@ -89,9 +92,13 @@ func TestCaptureSubmissionPathsAndReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 原文只存放在业务线（ADR-0052）：提交之后，内核日志中不应出现任何一段原文。
 	for _, e := range events {
-		if e.GetCaptureAppended() != nil {
-			t.Fatal("Persona capture submission wrote raw captures to kernel")
+		raw := protojson.Format(e)
+		for _, g := range segs {
+			if strings.Contains(raw, g.Text) {
+				t.Fatal("Persona capture submission wrote raw captures to kernel")
+			}
 		}
 	}
 	from, to, err := in.nextSpan(ctx, sid, true)

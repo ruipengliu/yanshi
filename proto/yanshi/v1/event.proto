@@ -11,6 +11,9 @@ option go_package = "yanshi/gen/yanshi/v1;yanshiv1";
 
 // Event 是 Session 日志中只追加、不可修改的一条记录。
 message Event {
+  // ADR-0050 退役的旁听事件 CaptureAppended，上线前删除（ADR-0052）；编号与名称保留，不再复用。
+  reserved 33;
+  reserved "capture_appended";
   // 全局唯一 ID。
   string id = 1;
   string session_id = 2;
@@ -42,8 +45,6 @@ message Event {
     CallEnded call_ended = 30;
     DecisionMade decision_made = 31;
     BackgroundCancelled background_cancelled = 32;
-    // 已退役：ADR-0050；只为解码旧日志保留，不再写入。
-    CaptureAppended capture_appended = 33;
     ScheduleCreated schedule_created = 34;
     ScheduleCancelled schedule_cancelled = 35;
     ScheduleFired schedule_fired = 36;
@@ -357,6 +358,9 @@ message ToolCallStarted {
 }
 
 message ToolResult {
+  // ADR-0050 退役的读取位置与交付确认，上线前删除（ADR-0052）；编号与名称保留，不再复用。
+  reserved 10, 11;
+  reserved "capture_read", "capture_ack";
   string run_id = 1;
   // 0 表示由网关追加的路由调用结果，不受 Attempt fencing。
   uint32 attempt = 2;
@@ -374,35 +378,8 @@ message ToolResult {
   // 非空表示调用转入后台（ADR-0035）：路由到设备的调用已派发、设备离线超过宽限期，Worker 不再等待。content 是交给模型的
   // 占位说明，调用在 Session 级继续等待设备，结果或到期之后作为一条输入（BackgroundResult）送达。只由 Worker 写入。
   Backgrounded backgrounded = 9;
-  // 已退役：ADR-0050；只为解码旧日志保留，不再写入。
-  CaptureRead capture_read = 10;
-  // 已退役：ADR-0050；只为解码旧日志保留，不再写入。
-  CaptureAck capture_ack = 11;
   // 只由 Worker 写入可信 MCP 页；来源推导据此识别平台渲染的内容，模型看不到。
   bool attested = 12;
-}
-
-// 已退役：ADR-0050；只为解码旧日志保留，不再写入。
-message CaptureRead {
-  // 流名，如 "transcript"。
-  string stream = 1;
-  // 下一页的位置，与页尾给模型看的 after 相同（如 "57.3"、"57.3~50.0"）。
-  string after = 2;
-  // 本页切分交谈用的间隔（毫秒）：一个 Session 中沿用第一次提交的读取位置中的值，交谈 ID 因此不随 AgentDef 改变。
-  int64 exchange_gap_ms = 3;
-  // 本页开始读取的游标；after = "new" 时已解析为提交位置，从头读统一为 "0"。
-  string start = 4;
-  // 本页第一段的引用编号，不带 "#"；续页也记录本页第一段，而非时段起点。
-  string first = 5;
-  // 本次读取使用的 AgentDef 流声明，随日志保存以使投影重放不依赖外部配置。
-  bool ack = 6;
-}
-
-// 已退役：ADR-0050；只为解码旧日志保留，不再写入。
-message CaptureAck {
-  string stream = 1;
-  string from = 2;
-  string through = 3;
 }
 
 message Backgrounded {
@@ -527,15 +504,6 @@ message CallTranscript {
   string text = 3;
   // 助手的话被用户打断：text 是打断前已生成的部分（不一定都播出了）。
   bool interrupted = 4;
-}
-
-// 已退役：ADR-0050；只为解码旧日志保留，不再写入。
-message CaptureAppended {
-  // HostApp 生成，在 Session 内唯一；重试时不变，按它去重。
-  string capture_id = 1;
-  repeated CaptureSegment segments = 2;
-  // 已退役的流名，只为解码旧日志保留。
-  string stream = 3;
 }
 
 // CaptureSegment 是旁听转写中的一段话。

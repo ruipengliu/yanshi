@@ -36,7 +36,7 @@ func TestAttestedCitationsLatestAndSnapshotPrefix(t *testing.T) {
 	}
 }
 
-// 同一编号同时出现在内核 Capture 和业务线页中，用于验证登记边界。
+// 第 2 条是普通输入：引用只在 attested 页中查找，查到第 2 条为止时编号不存在。
 func citationNamespaceLog(t *testing.T) *memlog.Log {
 	t.Helper()
 	ctx := context.Background()
@@ -50,7 +50,7 @@ func citationNamespaceLog(t *testing.T) *memlog.Log {
 	}
 	events := []*v1.Event{
 		{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{BusinessLine: "bl"}}},
-		{Payload: &v1.Event_CaptureAppended{CaptureAppended: &v1.CaptureAppended{Segments: []*v1.CaptureSegment{{Speaker: v1.Speaker_SPEAKER_WEARER}, {Speaker: v1.Speaker_SPEAKER_WEARER}}}}},
+		{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r1", Input: []*v1.ContentBlock{{Kind: &v1.ContentBlock_Text{Text: &v1.Text{Text: "#2.0"}}}}}}},
 		result(v1.Speaker_SPEAKER_WEARER, false), result(v1.Speaker_SPEAKER_OTHER, true),
 	}
 	for i, e := range events {

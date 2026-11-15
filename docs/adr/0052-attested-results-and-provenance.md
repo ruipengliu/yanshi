@@ -46,7 +46,7 @@ status: accepted（2026-11-14；整合并取代 ADR-0036、ADR-0039、ADR-0050�
 ## 退役与待实现
 
 - **已退役**：内核的 Capture 提交（`SubmitCaptures`）、内置 `captures` 的读取、`transcript` 流、读取位置、交付确认（ADR-0049）、Capture 正文存储与擦除事件（ADR-0044）、按流登记与 AgentDef 的 `streams`、流上的触发（ADR-0040）。
-- **仅为解码旧日志保留**：`CaptureAppended`（`proto/yanshi/v1/event.proto`），以及 `State.Apply` 对旧内置 `captures` 结果的校验。系统尚未上线，计划在上线前删除：proto 字段保留编号，投影递增 `session.ProjectionVersion`（[ADR 评审](../review/2026-11-14-adr-review.md) §8）。
+- **已删除**（2026-11-15）：原先仅为解码旧日志保留的 `CaptureAppended`、`ToolResult` 的 `capture_read` 与 `capture_ack` 及其消息，以及 `State.Apply` 对旧内置 `captures` 结果的接受。proto 保留编号与名称，投影版本递增为 26；旁听片段只能出现在 attested 结果中，退役之前的日志不再回放（[ADR 评审](../review/2026-11-14-adr-review.md) §8）。
 - **保留、继续有效**：`captures` 渲染器（供 attested 结果使用）、定时（ADR-0045，不含 `window.stream`）、出站流的通用部分（ADR-0046）、单次调用、档位、重答、EndUser 删除屏障；`speaker_ref` 是结构化片段的字段。
 - **尚未实现**：ADR-0048 中按来源判断"听过他人旁听"。
 

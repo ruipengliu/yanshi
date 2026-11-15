@@ -563,7 +563,7 @@ control 只放开 serve 启动处“合计上限必须严格小于模型总并�
 - **评测**：`capture-*` 与基线一致（展开后模型看到的文本不变）；新增 `schedule-weekly-report`、`redo-different-answer`、`oneshot-live-brief`、`capture-erase-midrun`（整理中擦除，之后的整理与 Persona 中都没有被擦除的内容）。
 - **e2e**：擦除、修订、回执、定时、出站流、单次调用各走一次真实 HTTP。
 - **阶段**：按[整体架构](./persona-architecture.md) §11。P1 验收覆盖擦除跨库竞态；出站流消费者离线超过 72 小时后的对账在 P4b 验收（Q106、Q122）。
-- **旧日志兼容**：CaptureAppended、CaptureRead 与 CaptureAck 的协议定义保留，退役事件和位置字段在 Apply 中忽略；投影版本升级后旧快照作废。
+- **旧日志兼容**：（2026-11-15 删除）CaptureAppended、CaptureRead 与 CaptureAck 的协议定义已删除，编号与名称保留；旧日志不再回放（ADR-0052）。
 
 ## 16. 不在这一版
 
