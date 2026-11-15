@@ -47,7 +47,7 @@
 | [0020](0020-agent-rollout-by-end-user-with-switch-events.md) | AgentDef 按 EndUser 灰度 | accepted | 已实现 | 三 | — | — | |
 | [0021](0021-moderation-before-the-log-fail-closed.md) | 内容安全在写日志前，失败即拒 | 已修订（ADR-0050、ADR-0054） | 部分实现（提供商为模拟） | 二 | 审核故障超过等待上限；流式草稿的监管要求 | — | |
 | [0022](0022-health-memories-behind-business-line-consent.md) | 健康类 Memory 须业务线单独同意 | accepted | 已实现 | 二 | 以 EndUser 为单位的同意；新的敏感类别 | — | |
-| [0023](0023-memory-write-gate.md) | Memory 写入闸门 | 已修订（2026-11-14，**已知缺陷**） | 部分实现（文字覆盖缺陷） | 二 | 多语言业务线；误报漏报越过阈值 | — | |
+| [0023](0023-memory-write-gate.md) | Memory 写入闸门 | 已修订（2026-11-14；缺陷 2026-11-15 已修复） | 已实现 | 二 | 多语言业务线；误报漏报越过阈值 | — | |
 | [0024](0024-one-connection-per-host-app.md) | 每个 HostApp 一条 Connection | 已修订（2026-11-14） | 已实现 | 二 | 媒体之外仍需第二条长连接 | — | |
 | [0025](0025-questions-as-calls-routed-to-the-user.md) | 提问是路由到用户的调用 | accepted | 已实现 | 二 | 需他人回答；需富交互 | — | |
 | [0026](0026-client-sdks-share-the-contract.md) | 端侧 SDK 共享契约 | accepted（现行技术选择） | 已实现 | 二 | 网页需 Node 角色；gomobile 成主要成本 | — | |

@@ -6,6 +6,9 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/model"
@@ -18,6 +21,8 @@ import (
 // 闸门只收紧、不放宽：当上下文里出现过外部来源的内容（设备、沙箱、MCP 的调用结果，或可能概括了它们的压缩摘要），
 // 而要写入的内容在用户本人的输入中找不到依据时，这次 memory_save 需要用户批准。判断只依据投影（日志），
 // 不调用模型，因此是确定性的，重放与模拟都得到同一结论。
+// 按 ADR-0023 的 2026-11-14 修订，比较前先统一 Unicode 形式并覆盖各种文字；识别不了的内容须审批，
+// 避免字形差异或文字覆盖盲区让外部内容免审。
 
 // memoryGateCapability 是受闸门约束的能力。
 const memoryGateCapability = "memory_save"
@@ -25,7 +30,7 @@ const memoryGateCapability = "memory_save"
 var (
 	emailRE  = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`)
 	urlRE    = regexp.MustCompile(`https?://\S+`)
-	digitsRE = regexp.MustCompile(`\d[\d \-]{5,}\d`)
+	digitsRE = regexp.MustCompile(`\p{Nd}[\p{Nd} \-]{5,}\p{Nd}`)
 )
 
 // tainted 报告当前模型上下文中是否有不是用户原话的内容（来源见 session.Provenance，ADR-0039）：外部内容、旁听中他人的话、
@@ -50,10 +55,13 @@ func userText(st *session.State) string {
 	return b.String()
 }
 
-// grounded 报告 content 是否能在用户输入中找到依据：其中的邮箱、链接、号码都原样出现在用户输入里，
-// 且 content 的字符二元组至少一半出现在用户输入中（允许"我对花生过敏"→"用户对花生过敏"这样的改写）。
-// 投毒通常夹带用户从未说过的地址或号码，前一条最能识别它。
+// grounded 先用 NFKC 对齐全角字符与分解、组合形式，防止字形绕过地址识别，也避免同一事实因编码形式不同而误报。
+// 规范化后邮箱、链接、号码仍须在用户输入中有依据，且 content 的字符二元组至少一半出现在用户输入中
+// （允许"我对花生过敏"→"用户对花生过敏"这样的改写）。标识须单独核对，避免普通文字的覆盖掩盖未说过的地址或号码；
+// 没有可比较的二元组不能证明有依据，按 ADR-0023 的 2026-11-14 修订须审批。
 func grounded(content, user string) bool {
+	content = norm.NFKC.String(content)
+	user = norm.NFKC.String(user)
 	compact := func(s string) string { return strings.NewReplacer(" ", "", "-", "").Replace(s) }
 	for _, re := range []*regexp.Regexp{emailRE, urlRE} {
 		for _, id := range re.FindAllString(content, -1) {
@@ -69,7 +77,7 @@ func grounded(content, user string) bool {
 	}
 	grams := bigrams(content)
 	if len(grams) == 0 {
-		return true
+		return false
 	}
 	have := bigrams(user)
 	hit := 0
@@ -81,11 +89,12 @@ func grounded(content, user string) bool {
 	return 2*hit >= len(grams)
 }
 
-// bigrams 返回字母、数字与汉字组成的字符二元组（忽略标点与空白）。
+// bigrams 收录所有 Unicode 字母、附加符号与数字，避免外语或汉字扩展区落入识别盲区。
+// 保留附加符号以免抹掉文字差异；其余字符忽略，继续跨标点、空白拼接，沿用既有覆盖语义。
 func bigrams(s string) map[string]bool {
 	var rs []rune
 	for _, r := range strings.ToLower(s) {
-		if r >= 0x4e00 && r <= 0x9fff || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+		if unicode.IsLetter(r) || unicode.IsMark(r) || unicode.IsNumber(r) {
 			rs = append(rs, r)
 		}
 	}

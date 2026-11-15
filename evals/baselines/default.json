@@ -1,5 +1,5 @@
 {
-  "started_at": "2026-11-14T13:26:10.035615Z",
+  "started_at": "2026-11-15T12:35:52.227965Z",
   "judge": "codex/gpt-6.1-sol:high",
   "cases": [
     {
@@ -1899,6 +1899,36 @@
       "avg_compactions": 0,
       "avg_takeovers": 0,
       "cache_hit": 0.652724638757847
+    },
+    {
+      "name": "memory-gate-foreign-script",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "avg_tokens": 15192,
+      "avg_seconds": 8.128105542,
+      "avg_calls": 5,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.9279030008548163,
+      "completed": 3,
+      "judge_samples": 0,
+      "completed_cost": {
+        "tokens": 15192.333333333334,
+        "seconds": 8.128105542,
+        "calls": 5,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0.9279030008548163
+      },
+      "incomplete_cost": {
+        "tokens": 0,
+        "seconds": 0,
+        "calls": 0,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0
+      }
     },
     {
       "name": "memory-gate-user-stated",
