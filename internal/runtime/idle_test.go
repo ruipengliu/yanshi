@@ -56,13 +56,13 @@ func TestIdleGateBoundsPollingAndWakesOnEnqueue(t *testing.T) {
 	}
 
 	// 入队信号立即唤醒，而不是等退避结束。
-	st := &session.State{SessionID: "s1"}
+	st := &session.State{SessionID: "ses_v1_000_000_s1"}
 	if err := store.Commit(ctx, st, sessionCreated()); err != nil {
 		t.Fatal(err)
 	}
 	before := q.claims.Load()
 	start := time.Now()
-	if err := q.Enqueue(ctx, "s1", workqueue.Class{}); err != nil {
+	if err := q.Enqueue(ctx, "ses_v1_000_000_s1", workqueue.Class{}); err != nil {
 		t.Fatal(err)
 	}
 	for q.claims.Load() == before {
@@ -95,14 +95,14 @@ func TestPoisonStepFailsRunAfterBudget(t *testing.T) {
 	w := New(Config{ID: "w", Store: store, Queue: q, Agents: agents, Model: gw, Memory: brokenMemory{},
 		Catalog: &capability.Catalog{Local: capability.NewRegistry()}, StepErrorBudget: time.Minute})
 	ctx := context.Background()
-	st := &session.State{SessionID: "s"}
+	st := &session.State{SessionID: "ses_v1_000_000_s"}
 	created := &v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u",
 		Agent: &v1.AgentRef{Name: "p", Version: "1"}}}}
 	if err := store.Commit(ctx, st, created,
 		&v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r", Input: model.TextBlocks("go")}}}); err != nil {
 		t.Fatal(err)
 	}
-	_ = q.Enqueue(ctx, "s", workqueue.Class{})
+	_ = q.Enqueue(ctx, "ses_v1_000_000_s", workqueue.Class{})
 	errs := 0
 	for range 50 {
 		if _, err := w.Step(ctx); err != nil {
@@ -112,7 +112,7 @@ func TestPoisonStepFailsRunAfterBudget(t *testing.T) {
 		_ = store.Sync(ctx, st)
 		if r := st.Run("r"); r != nil && r.Status == session.RunFailed {
 			if errs < 3 {
-				evs, _ := eventlog.ReadAll(ctx, store.Log, "s", 0)
+				evs, _ := eventlog.ReadAll(ctx, store.Log, "ses_v1_000_000_s", 0)
 				t.Fatalf("failed after %d errors; transient errors deserve retries: %v", errs, evs[len(evs)-1])
 			}
 			return

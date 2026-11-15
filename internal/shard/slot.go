@@ -48,8 +48,9 @@ func NewTable(c Config) (Table, error) {
 		}
 		known[id] = true
 	}
+	// 库 0 是控制库：不含 EndUser 的单元控制数据（删除请求）固定在这里（ADR-0051 §2）。
 	if !known[0] {
-		return Table{}, fmt.Errorf("shard: compatibility shard 0 is required")
+		return Table{}, fmt.Errorf("shard: control shard 0 is required")
 	}
 	var assigned [SlotCount]bool
 	for _, r := range c.Ranges {
@@ -91,14 +92,10 @@ func ParseTable(data []byte) (Table, error) {
 	return NewTable(c)
 }
 
-// Shard 的 legacy 分支独立于槽位 0 的配置：旧数据在兼容库 0，不是槽位 0。
-// 搬走旧数据的部署须先在外层接入显式兼容映射，不能继续走此默认分支。
-func (t Table) Shard(slot int, legacy bool) (int, error) {
+// Shard 返回槽位所在的分片。
+func (t Table) Shard(slot int) (int, error) {
 	if !t.valid || slot < 0 || slot >= SlotCount {
 		return 0, fmt.Errorf("shard: invalid table or slot %d", slot)
-	}
-	if legacy {
-		return 0, nil
 	}
 	return t.slots[slot], nil
 }

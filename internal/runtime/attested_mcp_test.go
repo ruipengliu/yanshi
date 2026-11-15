@@ -55,13 +55,13 @@ func TestMCPPageWrittenByWorker(t *testing.T) {
 			gw := model.NewGateway()
 			gw.Register("test", toolCallOnce{tool: "mcp_ack__save", args: `{}`})
 			core := app.NewCore(app.Memory(clk), app.Options{Clock: clk, IDs: ids.Sequential, Agents: agents, Model: gw, MCP: connector})
-			st := &session.State{SessionID: "s"}
+			st := &session.State{SessionID: "ses_v1_000_000_s"}
 			if err := core.Store.Commit(ctx, st,
 				&v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u", Agent: &v1.AgentRef{Name: "test", Version: "1"}}}},
 				&v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r", Input: model.TextBlocks("整理")}}}); err != nil {
 				t.Fatal(err)
 			}
-			if err := core.Stores.Queue.Enqueue(ctx, "s", workqueue.Class{}); err != nil {
+			if err := core.Stores.Queue.Enqueue(ctx, "ses_v1_000_000_s", workqueue.Class{}); err != nil {
 				t.Fatal(err)
 			}
 			w := runtime.New(core.WorkerConfig("w", workqueue.Pool{}, nil))
@@ -70,7 +70,7 @@ func TestMCPPageWrittenByWorker(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			events, err := eventlog.ReadAll(ctx, core.Store.Log, "s", 0)
+			events, err := eventlog.ReadAll(ctx, core.Store.Log, "ses_v1_000_000_s", 0)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -48,7 +48,7 @@ func interrupted(run string) *v1.Event {
 
 func build(events ...*v1.Event) []*v1.Event {
 	for i, e := range events {
-		e.SessionId, e.Seq = "s", uint64(i+1)
+		e.SessionId, e.Seq = "ses_v1_000_000_s", uint64(i+1)
 	}
 	return events
 }
@@ -136,7 +136,7 @@ func TestCheckDoesNotMutate(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := assistant("r1", 1, "c1")
-	e.SessionId = "s"
+	e.SessionId = "ses_v1_000_000_s"
 	if err := st.Check(e); err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestCheckDoesNotMutate(t *testing.T) {
 		t.Fatalf("Check mutated state: %+v", st.Run("r1"))
 	}
 	e = completed("r1", 2)
-	e.SessionId = "s"
+	e.SessionId = "ses_v1_000_000_s"
 	if err := st.Check(e); err == nil {
 		t.Fatal("Check accepted stale attempt")
 	}
@@ -473,7 +473,7 @@ func TestBoundedProjection(t *testing.T) {
 		t.Fatalf("clone copied %d call ids", len(cp.callIDs))
 	}
 	seq := uint64(len(events))
-	reuse := func(e *v1.Event) error { e.SessionId, e.Seq = "s", seq+1; return st.Check(e) }
+	reuse := func(e *v1.Event) error { e.SessionId, e.Seq = "ses_v1_000_000_s", seq+1; return st.Check(e) }
 	if err := reuse(requested("r0")); err == nil || !strings.Contains(err.Error(), "duplicate run id") {
 		t.Fatalf("reused run id of a trimmed run: %v", err)
 	}
@@ -511,7 +511,7 @@ func TestCheckCostIndependentOfHistory(t *testing.T) {
 	// 每次校验分配的字节数：克隆复制的是指针与 ID，次数不随历史变化，字节数会。
 	bytesPerCheck := func(st *State) uint64 {
 		e := steered("live")
-		e.SessionId, e.Seq = "s", st.Seq+1
+		e.SessionId, e.Seq = "ses_v1_000_000_s", st.Seq+1
 		var before, after runtime.MemStats
 		runtime.ReadMemStats(&before)
 		for range 50 {
@@ -531,7 +531,7 @@ func TestCheckCostIndependentOfHistory(t *testing.T) {
 // 委托 Run 记在投影的固定位置，不随去重窗口淘汰；快照恢复后不变（评审 §11 问题 3）。
 func TestDelegatedRunOutlivesInputWindow(t *testing.T) {
 	child := &v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u",
-		Parent: &v1.ParentRef{SessionId: "p", RunId: "pr", CallId: "pc"}}}}
+		Parent: &v1.ParentRef{SessionId: "ses_v1_000_000_p", RunId: "pr", CallId: "pc"}}}}
 	task := &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r0", InputId: DelegatedInputID("pc")}}}
 	events := []*v1.Event{child, task, interrupted("r0")}
 	for i := range MaxRecentInputs + 8 {

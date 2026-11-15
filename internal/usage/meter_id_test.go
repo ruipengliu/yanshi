@@ -25,7 +25,11 @@ func TestMeterIDsFollowRealEndUserAndPreserveLegacyKeys(t *testing.T) {
 	ctx := context.Background()
 	store := &capturedIDs{Store: usage.NewMem()}
 	m := &usage.Meter{Store: store}
-	scope := usage.Scope{BusinessLine: "bl", EndUser: "user", SessionID: "ses_legacy"}
+	sid, err := ids.SessionID("session", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := usage.Scope{BusinessLine: "bl", EndUser: "user", SessionID: sid}
 	at := time.Unix(1000, 0)
 	u := &v1.Usage{InputTokens: 1}
 	m.Model(ctx, scope, "use_model", "agent@1", "model", u, at)
@@ -43,7 +47,7 @@ func TestMeterIDsFollowRealEndUserAndPreserveLegacyKeys(t *testing.T) {
 		if e.LegacyID != want[i] || e.DedupKey() != want[i] {
 			t.Fatalf("lost legacy identity: %+v", e)
 		}
-		if slot, legacy, err := ids.SlotOf(e.ID); err != nil || legacy || slot != shard.Hash(scope.EndUser) {
+		if slot, err := ids.SlotOf(e.ID); err != nil || slot != shard.Hash(scope.EndUser) {
 			t.Fatalf("usage followed Session instead of EndUser: %s, %v", e.ID, err)
 		}
 	}

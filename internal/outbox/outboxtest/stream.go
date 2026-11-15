@@ -68,8 +68,8 @@ func RunStream(t *testing.T, fresh func(*testing.T) Stores) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := appendRows(t, s, "bl", "s", outbox.RunCompleted, outbox.Question, outbox.RunFailed)
-		appendRows(t, s, "other", "foreign", outbox.Question)
+		want := appendRows(t, s, "bl", "ses_v1_000_000_s", outbox.RunCompleted, outbox.Question, outbox.RunFailed)
+		appendRows(t, s, "other", "ses_v1_000_000_foreign", outbox.Question)
 		Published(t, s.Outbox, outbox.Request{BusinessLine: "bl"}, 3)
 		stats, err := s.Outbox.Stats(ctx)
 		if err != nil || stats.Rows != 4 || stats.Bytes <= 0 {
@@ -107,14 +107,14 @@ func RunStream(t *testing.T, fresh func(*testing.T) Stores) {
 		s := fresh(t)
 		req := outbox.Request{BusinessLine: "bl", Kinds: []outbox.Kind{outbox.Question}}
 		first := read(t, s, req)
-		appendRows(t, s, "bl", "s", outbox.RunCompleted)
+		appendRows(t, s, "bl", "ses_v1_000_000_s", outbox.RunCompleted)
 		Published(t, s.Outbox, outbox.Request{BusinessLine: "bl"}, 1)
 		req.After = first.Next
 		page := read(t, s, req)
 		if len(page.Events) != 0 || page.Next == first.Next {
 			t.Fatal("empty filtered page did not advance")
 		}
-		appendRows(t, s, "other", "foreign", outbox.RunCompleted)
+		appendRows(t, s, "other", "ses_v1_000_000_foreign", outbox.RunCompleted)
 		Published(t, s.Outbox, outbox.Request{BusinessLine: "other"}, 1)
 		req.After = page.Next
 		foreignProgress := read(t, s, req)
@@ -150,8 +150,8 @@ func RunStream(t *testing.T, fresh func(*testing.T) Stores) {
 		if err := s.Outbox.Maintain(ctx, clock.NewFake(now), 1); err != nil {
 			t.Fatal(err)
 		}
-		appendRows(t, s, "bl", "a", outbox.RunCompleted, outbox.Question)
-		appendRows(t, s, "bl", "b", outbox.RunCompleted)
+		appendRows(t, s, "bl", "ses_v1_000_000_a", outbox.RunCompleted, outbox.Question)
+		appendRows(t, s, "bl", "ses_v1_000_000_b", outbox.RunCompleted)
 		Published(t, s.Outbox, req, 3)
 		// 旧检查点不覆盖随后才可发布的行；经过四天也不能按写入时间删。
 		if err := s.Outbox.Maintain(ctx, clock.NewFake(now.Add(96*time.Hour)), 1); err != nil {
@@ -189,9 +189,9 @@ func RunStream(t *testing.T, fresh func(*testing.T) Stores) {
 		s := fresh(t)
 		req := outbox.Request{BusinessLine: "bl"}
 		old := read(t, s, req)
-		appendRows(t, s, "bl", "s", outbox.Question)
+		appendRows(t, s, "bl", "ses_v1_000_000_s", outbox.Question)
 		Published(t, s.Outbox, req, 1)
-		if err := s.Outbox.DeleteSession(ctx, "s"); err != nil {
+		if err := s.Outbox.DeleteSession(ctx, "ses_v1_000_000_s"); err != nil {
 			t.Fatal(err)
 		}
 		req.After = old.Next
@@ -213,12 +213,12 @@ func RunDeletionRetention(t *testing.T, fresh func(*testing.T) Stores) {
 	s := fresh(t)
 	ctx := context.Background()
 	now := time.Unix(1000, 0)
-	tomb := &lifecycle.Tombstone{SessionID: "s", BusinessLine: "bl", Reason: "service", RequestedAt: now}
+	tomb := &lifecycle.Tombstone{SessionID: "ses_v1_000_000_s", BusinessLine: "bl", Reason: "service", RequestedAt: now}
 	if _, err := s.Deletions.Mark(ctx, tomb); err != nil {
 		t.Fatal(err)
 	}
 	Published(t, s.Outbox, outbox.Request{BusinessLine: "bl"}, 1)
-	if err := s.Outbox.DeleteSession(ctx, "s"); err != nil {
+	if err := s.Outbox.DeleteSession(ctx, "ses_v1_000_000_s"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Outbox.Maintain(ctx, clock.NewFake(now), 1); err != nil {

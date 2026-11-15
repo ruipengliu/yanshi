@@ -27,6 +27,7 @@ import (
 	"yanshi/internal/presence"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
+	"yanshi/internal/shard"
 	"yanshi/internal/usage"
 )
 
@@ -316,7 +317,7 @@ func (c *Conn) ended(sid, reason string) {
 func (c *Conn) stream(ctx context.Context, s *subscription, sid string, after uint64) string {
 	h := c.h
 	st, err := h.load(ctx, c.id, sid)
-	if errors.Is(err, service.ErrNotFound) {
+	if errors.Is(err, service.ErrNotFound) || errors.Is(err, shard.ErrInvalidID) {
 		return "not_found"
 	}
 	if err == nil && h.Presence != nil {
@@ -532,7 +533,8 @@ func (h *Handler) clientError(err error) *v1.ClientError {
 	var ex *usage.ExceededError
 	var ov *service.OverloadedError
 	switch {
-	case errors.Is(err, service.ErrNotFound):
+	case errors.Is(err, service.ErrNotFound), errors.Is(err, shard.ErrInvalidID):
+		// 无法解析的 ID 不可能指向任何对象，按不存在处理。
 		e.Code = "not_found"
 	case errors.Is(err, service.ErrInvalid):
 		e.Code = "invalid"

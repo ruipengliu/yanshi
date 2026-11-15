@@ -20,11 +20,11 @@ func (s mismatchedMemory) Get(context.Context, string, string) (*memory.Memory, 
 
 func TestSaveChecksOwnershipEvenOnIdempotentHit(t *testing.T) {
 	ctx := context.Background()
-	r := memory.SaveRequest{BusinessLine: "a", EndUser: "u", SessionID: "s", CallID: "external/call", Category: memory.Preference, Content: "喜欢骑车"}
+	r := memory.SaveRequest{BusinessLine: "a", EndUser: "u", SessionID: "ses_v1_000_000_s", CallID: "external/call", Category: memory.Preference, Content: "喜欢骑车"}
 	for _, change := range []func(*memory.Memory){
 		func(m *memory.Memory) { m.EndUser = "another-user" },
 		func(m *memory.Memory) { m.BusinessLine = "another-line" },
-		func(m *memory.Memory) { m.SourceSession = "another-session" },
+		func(m *memory.Memory) { m.SourceSession = "ses_v1_000_000_another-session" },
 		func(m *memory.Memory) { m.SourceCall = "another-call" },
 	} {
 		row := &memory.Memory{ID: "mem_" + r.CallID, EndUser: r.EndUser, BusinessLine: r.BusinessLine, SourceSession: r.SessionID, SourceCall: r.CallID}
@@ -39,10 +39,10 @@ func TestSaveChecksOwnershipEvenOnIdempotentHit(t *testing.T) {
 func TestCallMemoryIDPreservesFieldBoundariesAndBytes(t *testing.T) {
 	seen := map[string]bool{}
 	for _, r := range []memory.SaveRequest{
-		{EndUser: "u", BusinessLine: "a:b", SessionID: "c", CallID: "same"},
-		{EndUser: "u", BusinessLine: "a", SessionID: "b:c", CallID: "same"},
-		{EndUser: "u", BusinessLine: "a", SessionID: "s", CallID: "\xff"},
-		{EndUser: "u", BusinessLine: "a", SessionID: "s", CallID: "\xfe"},
+		{EndUser: "u", BusinessLine: "a:b", SessionID: "ses_v1_000_000_c", CallID: "same"},
+		{EndUser: "u", BusinessLine: "a", SessionID: "b:ses_v1_000_000_c", CallID: "same"},
+		{EndUser: "u", BusinessLine: "a", SessionID: "ses_v1_000_000_s", CallID: "\xff"},
+		{EndUser: "u", BusinessLine: "a", SessionID: "ses_v1_000_000_s", CallID: "\xfe"},
 	} {
 		id, err := memory.CallMemoryID(r)
 		if err != nil || seen[id] {

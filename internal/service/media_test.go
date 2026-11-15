@@ -45,11 +45,11 @@ func TestMediaMustBeOwnArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	slot, legacy, err := ids.SlotOf(forged)
+	slot, err := ids.SlotOf(forged)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if target, err := table.Shard(slot, legacy); err != nil || target != 1 {
+	if target, err := table.Shard(slot); err != nil || target != 1 {
 		t.Fatalf("forged hint = %d, %v", target, err)
 	}
 	if err := arts.Meta.Create(ctx, &artifact.Meta{ID: forged, SessionID: other, MimeType: "image/png"}); err != nil {

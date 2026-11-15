@@ -38,14 +38,14 @@ func TestQuotaSuspendsRechecksQuietlyAndResumes(t *testing.T) {
 	w := New(Config{ID: "w", Store: store, Queue: q, Agents: agents, Model: gw, Catalog: &capability.Catalog{Local: capability.NewRegistry()},
 		Meter: &usage.Meter{Store: uses}, Quotas: quotas, QuotaRecheck: time.Minute})
 
-	st := &session.State{SessionID: "s1"}
+	st := &session.State{SessionID: "ses_v1_000_000_s1"}
 	created := &v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u",
 		Agent: &v1.AgentRef{Name: "echo", Version: "1"}}}}
 	err := store.Commit(ctx, st, created, &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r1", Input: model.TextBlocks("hi")}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = q.Enqueue(ctx, "s1", workqueue.Class{})
+	_ = q.Enqueue(ctx, "ses_v1_000_000_s1", workqueue.Class{})
 	_ = uses.Record(ctx, &usage.Entry{ID: "u1", BusinessLine: "bl", EndUser: "u", Kind: usage.Model, Cost: usage.Yuan(0.001), At: clk.Now()})
 
 	steps := func(n int) {
@@ -56,7 +56,7 @@ func TestQuotaSuspendsRechecksQuietlyAndResumes(t *testing.T) {
 		}
 	}
 	load := func() *session.State {
-		st, err := store.Load(ctx, "s1")
+		st, err := store.Load(ctx, "ses_v1_000_000_s1")
 		if err != nil {
 			t.Fatal(err)
 		}

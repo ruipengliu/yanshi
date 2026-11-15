@@ -22,7 +22,7 @@ func scheduleProjection(t *testing.T) (*session.Store, *session.State, *v1.Sched
 	t.Helper()
 	clk := clock.NewFake(time.Date(2026, 10, 28, 0, 0, 0, 0, time.UTC))
 	store := &session.Store{Log: memlog.New(), Clock: clk, IDs: ids.Sequential("s")}
-	st := &session.State{SessionID: "s"}
+	st := &session.State{SessionID: "ses_v1_000_000_s"}
 	if err := store.Commit(context.Background(), st, &v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{TimeZone: "UTC"}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestScheduleCannotBeCreatedInChildOrClosedSession(t *testing.T) {
 		store, st, m, _ := scheduleProjection(t)
 		if child {
 			st.Created = proto.Clone(st.Created).(*v1.SessionCreated)
-			st.Created.Parent = &v1.ParentRef{SessionId: "parent"}
+			st.Created.Parent = &v1.ParentRef{SessionId: "ses_v1_000_000_parent"}
 		} else {
 			if err := store.Commit(context.Background(), st, &v1.Event{Payload: &v1.Event_SessionClosed{SessionClosed: &v1.SessionClosed{By: "service"}}}); err != nil {
 				t.Fatal(err)

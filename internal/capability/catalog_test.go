@@ -37,7 +37,7 @@ func TestNodeListCached(t *testing.T) {
 	}
 	register("n1", "phone")
 	c := &capability.Catalog{Local: capability.NewRegistry(), Nodes: dir, NodeCacheTTL: 10 * time.Second, Clock: clk}
-	target := capability.Target{Scope: scope, SessionID: "s"}
+	target := capability.Target{Scope: scope, SessionID: "ses_v1_000_000_s"}
 	tools := func() int {
 		t.Helper()
 		ts, err := c.Tools(ctx, target, []string{"device:*"})
@@ -79,7 +79,7 @@ func TestRoutedToolsHaveNoReadOnlyEvidence(t *testing.T) {
 		Local: capability.NewRegistry(capability.ClockNow(clk)), Nodes: dir,
 		Sandbox: &capability.SandboxTools{Specs: []*v1.CapabilitySpec{spec}, NodeID: func(string) string { return "sbx_s" }},
 	}
-	tools, err := cat.Tools(ctx, capability.Target{Scope: scope, SessionID: "s"}, []string{"clock_now", "ask_user", "device:*", "sandbox:*"})
+	tools, err := cat.Tools(ctx, capability.Target{Scope: scope, SessionID: "ses_v1_000_000_s"}, []string{"clock_now", "ask_user", "device:*", "sandbox:*"})
 	if err != nil {
 		t.Fatal(err)
 	}

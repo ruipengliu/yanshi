@@ -18,7 +18,8 @@ import (
 
 func TestDispatchUsesParentEndUserAndRetriesSameChild(t *testing.T) {
 	ctx := context.Background()
-	for _, legacy := range []bool{false, true} {
+	// 父 Session 由平台生成或由调用方指定（带版本、与 EndUser 匹配），两种情况的派生都一致。
+	for _, specified := range []bool{false, true} {
 		stores := app.Memory(clock.Real{})
 		store := &session.Store{Log: stores.Log, Waking: stores.Waking, Clock: clock.Real{}, IDs: ids.Sequential("id")}
 		agents, err := agentdef.NewRegistry(&agentdef.Def{Name: "a", Version: "1", Model: "echo/any"})
@@ -27,8 +28,10 @@ func TestDispatchUsesParentEndUserAndRetriesSameChild(t *testing.T) {
 		}
 		svc := &service.Service{Store: store, Agents: agents, Index: stores.Index, Deletions: stores.Deletions}
 		req := service.CreateRequest{BusinessLine: "bl", EndUser: "real-user", Agent: "a"}
-		if legacy {
-			req.SessionID = "ses_legacy"
+		if specified {
+			if req.SessionID, err = ids.SessionID("specified", req.EndUser); err != nil {
+				t.Fatal(err)
+			}
 		}
 		parent, err := svc.Create(ctx, req)
 		if err != nil {

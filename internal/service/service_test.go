@@ -89,7 +89,7 @@ func TestWithdrawnVersionSwitchesAtNextRun(t *testing.T) {
 func TestInvalidSwitchesAreRejected(t *testing.T) {
 	ref := func(n, v string) *v1.AgentRef { return &v1.AgentRef{Name: n, Version: v} }
 	ev := func(seq uint64, p any) *v1.Event {
-		e := &v1.Event{SessionId: "s", Seq: seq}
+		e := &v1.Event{SessionId: "ses_v1_000_000_s", Seq: seq}
 		switch p := p.(type) {
 		case *v1.SessionCreated:
 			e.Payload = &v1.Event_SessionCreated{SessionCreated: p}

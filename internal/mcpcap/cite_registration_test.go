@@ -70,7 +70,7 @@ func TestCitationNamespaceFromRegistration(t *testing.T) {
 				t.Fatalf("tools: %d, %v", len(tools), err)
 			}
 			res, err := tools[0].Local.(capability.ResultInvoker).InvokeResult(ctx, capability.Invocation{
-				BusinessLine: tc.line, SessionID: "s", State: tc.state,
+				BusinessLine: tc.line, SessionID: "ses_v1_000_000_s", State: tc.state,
 				Arguments: `{"refs":["#2.0","#2.1","#999.0","#2.0"]}`,
 			})
 			if err != nil {

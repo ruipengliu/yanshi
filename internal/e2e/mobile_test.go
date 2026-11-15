@@ -180,7 +180,7 @@ func TestMobileBinding(t *testing.T) {
 	}
 
 	// 网关拒绝的请求以响应中的 error 表示，而不是 Go error。
-	resp := request(&v1.ClientRequest{Op: &v1.ClientRequest_Decide{Decide: &v1.DecideApproval{SessionId: "nope", CallId: "x", Approve: true}}})
+	resp := request(&v1.ClientRequest{Op: &v1.ClientRequest_Decide{Decide: &v1.DecideApproval{SessionId: "ses_v1_000_000_nope", CallId: "x", Approve: true}}})
 	if resp.GetError().GetCode() != "not_found" {
 		t.Fatalf("decide on a missing session = %v", resp)
 	}

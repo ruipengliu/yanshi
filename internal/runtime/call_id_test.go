@@ -31,7 +31,7 @@ func (repeatedCallIDs) Generate(context.Context, *model.Request, func(model.Delt
 func TestWorkerRewritesCallIDs(t *testing.T) {
 	ctx := context.Background()
 	newID, _ := ids.SessionID("parent", "u")
-	for _, sid := range []string{"ses_legacy", newID} {
+	for _, sid := range []string{newID} {
 		t.Run(sid, func(t *testing.T) {
 			gen := ids.Sequential("id")
 			consumed := 0
@@ -76,10 +76,10 @@ func TestWorkerRewritesCallIDs(t *testing.T) {
 					if consumed-before != 4 {
 						t.Fatalf("model step consumed %d IDs, want 4", consumed-before)
 					}
-					wantSlot, wantLegacy, _ := ids.SessionSlotOf(sid)
+					wantSlot, _ := ids.SessionSlotOf(sid)
 					for _, c := range calls {
-						slot, legacy, err := ids.SlotOf(c.GetCallId())
-						if err != nil || legacy != wantLegacy || slot != wantSlot || !strings.HasPrefix(c.GetCallId(), "call_") {
+						slot, err := ids.SlotOf(c.GetCallId())
+						if err != nil || slot != wantSlot || !strings.HasPrefix(c.GetCallId(), "call_") {
 							t.Fatalf("call ID %s: %v", c.GetCallId(), err)
 						}
 					}

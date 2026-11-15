@@ -46,7 +46,7 @@ func TestAttestedRegistrationAndBusinessLine(t *testing.T) {
 			t.Fatalf("tools: %d, %v", len(tools), err)
 		}
 		for _, bl := range []string{"bl", "other"} {
-			res, err := tools[0].Local.(capability.ResultInvoker).InvokeResult(context.Background(), capability.Invocation{BusinessLine: bl, SessionID: "s", Arguments: `{}`})
+			res, err := tools[0].Local.(capability.ResultInvoker).InvokeResult(context.Background(), capability.Invocation{BusinessLine: bl, SessionID: "ses_v1_000_000_s", Arguments: `{}`})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -35,7 +35,7 @@ func readOnlyWorker(t *testing.T, cat *capability.Catalog, name string, log even
 	gw := model.NewGateway()
 	gw.Register("v", callOnce{tool: name, args: "{}"})
 	w := New(Config{ID: "w1", Store: store, Queue: q, Agents: agents, Model: gw, Catalog: cat})
-	st := &session.State{SessionID: "s1"}
+	st := &session.State{SessionID: "ses_v1_000_000_s1"}
 	if err := store.Commit(ctx, st,
 		&v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{
 			BusinessLine: "bl", EndUser: "u", Agent: &v1.AgentRef{Name: "v", Version: "1"},
@@ -44,12 +44,12 @@ func readOnlyWorker(t *testing.T, cat *capability.Catalog, name string, log even
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := q.Enqueue(ctx, "s1", workqueue.Class{}); err != nil {
+	if err := q.Enqueue(ctx, "ses_v1_000_000_s1", workqueue.Class{}); err != nil {
 		t.Fatal(err)
 	}
 	for range 10 {
 		stepReadOnlyWorker(t, w)
-		st, err = store.Load(ctx, "s1")
+		st, err = store.Load(ctx, "ses_v1_000_000_s1")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -80,7 +80,7 @@ func readOnlyProbe(readOnly bool, invoked *int) *capability.Func {
 
 func readOnlyEvents(t *testing.T, store *session.Store) ([]*v1.ToolCallStarted, *v1.ToolResult) {
 	t.Helper()
-	events, err := eventlog.ReadAll(context.Background(), store.Log, "s1", 0)
+	events, err := eventlog.ReadAll(context.Background(), store.Log, "ses_v1_000_000_s1", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestReadOnlyDeclarationBetweenSteps(t *testing.T) {
 			} else if res.GetIsError() || model.Text(res.GetContent()) != "ok" {
 				t.Fatalf("result = %v", res)
 			}
-			st, err := store.Load(context.Background(), "s1")
+			st, err := store.Load(context.Background(), "ses_v1_000_000_s1")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -186,7 +186,7 @@ func TestReadOnlyTakeoverEvidence(t *testing.T) {
 				starts[1].GetAttempt() != 2 || invoked != 1 || res == nil || res.GetIsError() {
 				t.Fatalf("starts=%v result=%v invoked=%d", starts, res, invoked)
 			}
-			st, err := store.Load(context.Background(), "s1")
+			st, err := store.Load(context.Background(), "ses_v1_000_000_s1")
 			if err != nil {
 				t.Fatal(err)
 			}

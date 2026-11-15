@@ -231,7 +231,7 @@ func newEnvironmentConfigured(t *testing.T, ark, multiple bool, personaBase stri
 		e.shardPools = map[int]*pgxpool.Pool{0: pool}
 	}
 	if multiple {
-		e.locator, err = shard.ParseDeployment([]byte(`{"table":{"shards":[0,1],"ranges":[{"first":0,"last":511,"shard":0},{"first":512,"last":1023,"shard":1}]},"compatibility":{"version":"day-dual"}}`))
+		e.locator, err = shard.ParseDeployment([]byte(`{"version":"day-dual","table":{"shards":[0,1],"ranges":[{"first":0,"last":511,"shard":0},{"first":512,"last":1023,"shard":1}]}}`))
 		must(t, err)
 		if len(kernelDSNs) == 0 {
 			kernelDSNs = []string{pgtest.Database(t), pgtest.Database(t)}

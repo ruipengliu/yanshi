@@ -47,8 +47,8 @@ func TestRules(t *testing.T) {
 	if _, err := in.Add(Rule{Kind: ModelDelay, Params: map[string]string{"delay_ms": "x"}}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("bad param: %v", err)
 	}
-	r, _ := in.Add(Rule{Kind: ModelError, SessionID: "s1", Count: 2})
-	ctx1, ctx2 := WithSession(context.Background(), "s1"), WithSession(context.Background(), "s2")
+	r, _ := in.Add(Rule{Kind: ModelError, SessionID: "ses_v1_000_000_s1", Count: 2})
+	ctx1, ctx2 := WithSession(context.Background(), "ses_v1_000_000_s1"), WithSession(context.Background(), "ses_v1_000_000_s2")
 	if _, ok := in.Take(ctx2, ModelError); ok {
 		t.Fatal("rule for s1 fired for s2")
 	}
@@ -61,7 +61,7 @@ func TestRules(t *testing.T) {
 		t.Fatal("rule fired after its count")
 	}
 	rules, recent := in.Snapshot()
-	if len(rules) != 0 || len(recent) != 2 || recent[0].RuleID != r.ID || recent[0].SessionID != "s1" {
+	if len(rules) != 0 || len(recent) != 2 || recent[0].RuleID != r.ID || recent[0].SessionID != "ses_v1_000_000_s1" {
 		t.Fatalf("rules %v recent %v", rules, recent)
 	}
 	in.Add(Rule{Kind: CatalogError})
@@ -79,13 +79,13 @@ func TestRules(t *testing.T) {
 // 检查点不必在 ctx 中记下 Session（Call 的转写原来就没有记，规则从不生效）。
 func TestModeratorSessionFromRequest(t *testing.T) {
 	in := &Injector{}
-	in.Add(Rule{Kind: ModerationDown, SessionID: "s1"})
+	in.Add(Rule{Kind: ModerationDown, SessionID: "ses_v1_000_000_s1"})
 	m := Moderator{Next: moderation.Mock{}, Injector: in}
 	ctx := context.Background()
-	if _, err := moderation.Check(ctx, m, moderation.ForTranscript("bl", "s2", "user", "你好")); err != nil {
+	if _, err := moderation.Check(ctx, m, moderation.ForTranscript("bl", "ses_v1_000_000_s2", "user", "你好")); err != nil {
 		t.Fatalf("rule for s1 fired for s2: %v", err)
 	}
-	if _, err := moderation.Check(ctx, m, moderation.ForTranscript("bl", "s1", "user", "你好")); !errors.Is(err, moderation.ErrUnavailable) {
+	if _, err := moderation.Check(ctx, m, moderation.ForTranscript("bl", "ses_v1_000_000_s1", "user", "你好")); !errors.Is(err, moderation.ErrUnavailable) {
 		t.Fatalf("rule for s1 did not fire: %v", err)
 	}
 }

@@ -15,11 +15,11 @@ import (
 	"yanshi/internal/shard"
 )
 
-// 使用两个隔离 schema 模拟选库 seam；即使裸 ID 确实读到另一库的行，也不能把槽位或映射当授权。
+// 使用两个隔离 schema 模拟选库 seam；即使裸 ID 确实读到另一库的行，也不能把槽位当授权。
 func TestArtifactLocationStillChecksRealOwnership(t *testing.T) {
 	pool0, _ := pgtest.Fresh(t)
 	pool1, _ := pgtest.Fresh(t)
-	for _, id := range []string{"art_v1_001_forged", "art_legacy_mapped"} {
+	for _, id := range []string{"art_v1_001_forged"} {
 		t.Run(id, func(t *testing.T) {
 			e := newAuthzEnv(t)
 			ctx := context.Background()
@@ -27,11 +27,7 @@ func TestArtifactLocationStillChecksRealOwnership(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			compat, err := shard.NewCompatibility(table, shard.CompatibilityConfig{Version: "migrated", Entries: []shard.CompatibilityEntry{{Target: shard.Target{Kind: shard.Object, Key: "art_legacy_mapped"}, Shard: 1}}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			loc, err := shard.NewLocator(table, compat)
+			loc, err := shard.NewLocator(table, "two-shards")
 			if err != nil {
 				t.Fatal(err)
 			}

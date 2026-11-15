@@ -66,20 +66,20 @@ func runCall(t *testing.T, tool, args string) (*session.State, []*v1.Event, int)
 	w := New(Config{ID: "w", Store: store, Queue: q, Agents: agents, Model: gw,
 		Catalog: &capability.Catalog{Local: capability.NewRegistry(local("note", v1.Risk_RISK_LOW), local("send", v1.Risk_RISK_HIGH)), Nodes: dir}})
 
-	st := &session.State{SessionID: "s1"}
+	st := &session.State{SessionID: "ses_v1_000_000_s1"}
 	created := &v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u", Agent: &v1.AgentRef{Name: "v", Version: "1"}}}}
 	if err := store.Commit(ctx, st, created, &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r1", Input: model.TextBlocks("做吧")}}}); err != nil {
 		t.Fatal(err)
 	}
-	_ = q.Enqueue(ctx, "s1", workqueue.Class{})
+	_ = q.Enqueue(ctx, "ses_v1_000_000_s1", workqueue.Class{})
 	for range 12 {
 		_, _ = w.Step(ctx)
 	}
-	final, err := store.Load(ctx, "s1")
+	final, err := store.Load(ctx, "ses_v1_000_000_s1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	events, err := eventlog.ReadAll(ctx, store.Log, "s1", 0)
+	events, err := eventlog.ReadAll(ctx, store.Log, "ses_v1_000_000_s1", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestMemoryPrecheckBeforeApproval(t *testing.T) {
 			clk := clock.NewFake(time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC))
 			mem := &memory.Service{Store: memory.NewMemStore(), Grants: memory.NewMemGrants(), Clock: clk,
 				IDs: ids.Sequential("mem"), HealthAllowed: func(bl string) bool { return bl == "bl" && tc.healthAllowed }}
-			checked := mem.Check(memory.SaveRequest{BusinessLine: "bl", EndUser: "u", SessionID: "s1", CallID: "c1",
+			checked := mem.Check(memory.SaveRequest{BusinessLine: "bl", EndUser: "u", SessionID: "ses_v1_000_000_s1", CallID: "c1",
 				Category: tc.category, Content: tc.content})
 			if tc.wantError == "" {
 				if checked != nil {
@@ -176,14 +176,14 @@ func TestMemoryPrecheckBeforeApproval(t *testing.T) {
 			b := (&logBuilder{}).
 				add(&v1.SessionCreated{BusinessLine: "bl", EndUser: "u", Agent: &v1.AgentRef{Name: "v", Version: "1"}}).
 				add(&v1.RunRequested{RunId: "r1", Input: append(model.TextBlocks("看看这条资料"), ui)})
-			st := &session.State{SessionID: "s1"}
+			st := &session.State{SessionID: "ses_v1_000_000_s1"}
 			if err := store.Commit(ctx, st, b.events...); err != nil {
 				t.Fatal(err)
 			}
 			if _, gated := memoryGate(st, &v1.ToolCall{Capability: "memory_save", ArgumentsJson: string(args)}); !gated {
 				t.Fatal("test content did not trigger the memory gate")
 			}
-			if err := q.Enqueue(ctx, "s1", workqueue.Class{}); err != nil {
+			if err := q.Enqueue(ctx, "ses_v1_000_000_s1", workqueue.Class{}); err != nil {
 				t.Fatal(err)
 			}
 			for range 12 {
@@ -191,11 +191,11 @@ func TestMemoryPrecheckBeforeApproval(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			final, err := store.Load(ctx, "s1")
+			final, err := store.Load(ctx, "ses_v1_000_000_s1")
 			if err != nil {
 				t.Fatal(err)
 			}
-			events, err := eventlog.ReadAll(ctx, store.Log, "s1", 0)
+			events, err := eventlog.ReadAll(ctx, store.Log, "ses_v1_000_000_s1", 0)
 			if err != nil {
 				t.Fatal(err)
 			}

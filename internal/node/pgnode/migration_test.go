@@ -37,7 +37,7 @@ func TestNodeInboxMigrationPreservesOwners(t *testing.T) {
 			}
 			clk := clock.NewFake(time.Unix(1000, 0))
 			index := pglifecycle.Index{Pool: pool}
-			if err := index.Put(ctx, &lifecycle.Session{ID: "s", BusinessLine: "bl", EndUser: "u", Agent: "a", CreatedAt: clk.Now(), LastInputAt: clk.Now()}); err != nil {
+			if err := index.Put(ctx, &lifecycle.Session{ID: "ses_v1_000_000_s", BusinessLine: "bl", EndUser: "u", Agent: "a", CreatedAt: clk.Now(), LastInputAt: clk.Now()}); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := pool.Exec(ctx, `INSERT INTO nodes (node_id, business_line, end_user, label, kind, host_app, capabilities, online, last_seen, gen)
@@ -49,12 +49,12 @@ func TestNodeInboxMigrationPreservesOwners(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			for _, id := range []string{"n", "sbx_s"} {
-				data, err := proto.Marshal(&v1.Invoke{SessionId: "s", CallId: "c", Capability: "read_file"})
+			for _, id := range []string{"n", "sbx_ses_v1_000_000_s"} {
+				data, err := proto.Marshal(&v1.Invoke{SessionId: "ses_v1_000_000_s", CallId: "c", Capability: "read_file"})
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err := pool.Exec(ctx, `INSERT INTO inbox (node_id, call_id, data, ord, session_id) VALUES ($1, 'c', $2, nextval('inbox_seq'), 's')`, id, data); err != nil {
+				if _, err := pool.Exec(ctx, `INSERT INTO inbox (node_id, call_id, data, ord, session_id) VALUES ($1, 'c', $2, nextval('inbox_seq'), 'ses_v1_000_000_s')`, id, data); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := pool.Exec(ctx, `INSERT INTO inbox_versions (node_id, version) VALUES ($1, 9)`, id); err != nil {
@@ -65,7 +65,7 @@ func TestNodeInboxMigrationPreservesOwners(t *testing.T) {
 				t.Fatal(err)
 			}
 			if mode == "missing_owner" {
-				if err := index.Delete(ctx, "u", "s"); err != nil {
+				if err := index.Delete(ctx, "u", "ses_v1_000_000_s"); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -87,9 +87,9 @@ func TestNodeInboxMigrationPreservesOwners(t *testing.T) {
 				t.Fatal(err)
 			}
 			in := pgnode.NewInbox(pool, notifier)
-			for _, id := range []string{"n", "sbx_s"} {
+			for _, id := range []string{"n", "sbx_ses_v1_000_000_s"} {
 				items, version, err := in.Pending(ctx, "u", id)
-				if err != nil || len(items) != 1 || items[0].GetSessionId() != "s" || version != 9 {
+				if err != nil || len(items) != 1 || items[0].GetSessionId() != "ses_v1_000_000_s" || version != 9 {
 					t.Fatalf("migrated %s: %v, version %d, %v", id, items, version, err)
 				}
 			}

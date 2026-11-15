@@ -43,7 +43,7 @@ func TestResultNotAcknowledgedUntilStored(t *testing.T) {
 	store := &session.Store{Log: mlog, Waking: log, IDs: ids.Sequential("e"), Clock: clk}
 	h := &node.Hub{Dir: node.NewMemDirectory(clk), Inbox: node.NewMemInbox(), Store: store, Clock: clk}
 
-	st := &session.State{SessionID: "s1"}
+	st := &session.State{SessionID: "ses_v1_000_000_s1"}
 	if err := store.Commit(ctx, st,
 		&v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u", Agent: &v1.AgentRef{Name: "a", Version: "1"}}}},
 		&v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r1", Input: model.TextBlocks("hi")}}},
@@ -54,7 +54,7 @@ func TestResultNotAcknowledgedUntilStored(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	inv := &v1.Invoke{SessionId: "s1", RunId: "r1", CallId: "c1", Capability: "read_file"}
+	inv := &v1.Invoke{SessionId: "ses_v1_000_000_s1", RunId: "r1", CallId: "c1", Capability: "read_file"}
 	if err := h.Inbox.Put(ctx, "u", "n1", inv); err != nil {
 		t.Fatal(err)
 	}
@@ -79,12 +79,12 @@ func TestResultNotAcknowledgedUntilStored(t *testing.T) {
 	if err := h.Result(ctx, "u", "n1", res); err != nil {
 		t.Fatal(err)
 	}
-	final, _ := store.Load(ctx, "s1")
+	final, _ := store.Load(ctx, "ses_v1_000_000_s1")
 	if c := final.Run("r1").Calls[0]; !c.Done {
 		t.Fatal("result not stored after redelivery")
 	}
 	// 结果与唤醒在同一事务中：Session 已在队列中，等 Worker 推进。
-	if l, err := queue.Claim(ctx, "w", time.Second, workqueue.Pool{}); err != nil || l.SessionID != "s1" {
+	if l, err := queue.Claim(ctx, "w", time.Second, workqueue.Pool{}); err != nil || l.SessionID != "ses_v1_000_000_s1" {
 		t.Fatalf("session not enqueued with the result: %+v, %v", l, err)
 	}
 	// 重复的结果（调用已有结果）作废：确认并撤下。

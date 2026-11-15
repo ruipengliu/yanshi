@@ -178,7 +178,7 @@ func (s *countedUsage) Spent(ctx context.Context, _, _ string, _, _ time.Time) (
 
 func fanoutRouter(t *testing.T) *storeRouter {
 	t.Helper()
-	l, err := shard.ParseDeployment([]byte(`{"table":{"shards":[0,1],"ranges":[{"first":0,"last":511,"shard":0},{"first":512,"last":1023,"shard":1}]},"compatibility":{"version":"test"}}`))
+	l, err := shard.ParseDeployment([]byte(`{"version":"test","table":{"shards":[0,1],"ranges":[{"first":0,"last":511,"shard":0},{"first":512,"last":1023,"shard":1}]}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +242,7 @@ func TestSpentCompleteCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 标签相同但映射不同也失效；摘要属于缓存键，不能仅比较版本标签。
-	changed, err := shard.ParseDeployment([]byte(`{"table":{"shards":[0,1],"ranges":[{"first":0,"last":255,"shard":0},{"first":256,"last":1023,"shard":1}]},"compatibility":{"version":"test"}}`))
+	changed, err := shard.ParseDeployment([]byte(`{"version":"test","table":{"shards":[0,1],"ranges":[{"first":0,"last":255,"shard":0},{"first":256,"last":1023,"shard":1}]}}`))
 	if err != nil {
 		t.Fatal(err)
 	}

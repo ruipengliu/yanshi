@@ -51,7 +51,7 @@ type fixture struct {
 
 func newFixture(t *testing.T) *fixture {
 	f := &fixture{t: t, store: &session.Store{Log: memlog.New(), IDs: ids.Sequential("e"), Clock: clock.Real{}}}
-	f.st = &session.State{SessionID: "s1"}
+	f.st = &session.State{SessionID: "ses_v1_000_000_s1"}
 	f.commit(&v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u"}}})
 	f.commit(&v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r1"}}})
 	return f
@@ -81,7 +81,7 @@ func receive(t *testing.T, from *live.MemBus, deltas <-chan live.Delta, text str
 				return
 			}
 		case <-tick.C:
-			from.Publish(live.Delta{SessionID: "s1", RunID: "r1", Text: text})
+			from.Publish(live.Delta{SessionID: "ses_v1_000_000_s1", RunID: "r1", Text: text})
 		case <-deadline:
 			t.Fatalf("delta %q never arrived", text)
 		}
@@ -103,7 +103,7 @@ func TestDeltasFollowTheExecutingProcess(t *testing.T) {
 	a, c := newProcess(t, "secret"), newProcess(t, "secret")
 	local := live.NewMemBus()
 	b := &Bus{Local: local, Log: f.store.Log, Self: "http://b.internal", Token: "secret", Retry: 20 * time.Millisecond}
-	deltas, cancel := b.Subscribe("s1")
+	deltas, cancel := b.Subscribe("ses_v1_000_000_s1")
 	defer cancel()
 
 	// 本进程发布的增量照常送达。
@@ -134,7 +134,7 @@ func TestDeltasFollowTheExecutingProcess(t *testing.T) {
 
 func TestHandlerRequiresToken(t *testing.T) {
 	p := newProcess(t, "secret")
-	resp, err := http.Get(p.srv.URL + Path + "s1")
+	resp, err := http.Get(p.srv.URL + Path + "ses_v1_000_000_s1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestSubscribeFollowingIsDrivenByCaller(t *testing.T) {
 	a, c := newProcess(t, "secret"), newProcess(t, "secret")
 	local := live.NewMemBus()
 	b := &Bus{Local: local, Log: memlog.New(), Self: "http://b.internal", Token: "secret", Retry: 20 * time.Millisecond}
-	deltas, follow, cancel := b.SubscribeFollowing("s1")
+	deltas, follow, cancel := b.SubscribeFollowing("ses_v1_000_000_s1")
 	defer cancel()
 
 	receive(t, local, deltas, "local")
@@ -187,9 +187,9 @@ func TestEndpointFollowsAttempts(t *testing.T) {
 // TestRemoteLateSubscriberGetsSnapshot：执行进程把正在生成的草稿补发给晚加入的远程订阅者。
 func TestRemoteLateSubscriberGetsSnapshot(t *testing.T) {
 	a := newProcess(t, "secret")
-	a.bus.Publish(live.Delta{SessionID: "s1", RunID: "r1", Attempt: 1, AfterSeq: 3, Text: "so far"})
+	a.bus.Publish(live.Delta{SessionID: "ses_v1_000_000_s1", RunID: "r1", Attempt: 1, AfterSeq: 3, Text: "so far"})
 	b := &Bus{Local: live.NewMemBus(), Log: memlog.New(), Self: "http://b.internal", Token: "secret", Retry: 20 * time.Millisecond}
-	deltas, follow, cancel := b.SubscribeFollowing("s1")
+	deltas, follow, cancel := b.SubscribeFollowing("ses_v1_000_000_s1")
 	defer cancel()
 	follow(a.srv.URL)
 	select {
@@ -207,8 +207,8 @@ func TestRemoteLateSubscriberGetsSnapshot(t *testing.T) {
 func TestSubscriptionsShareOnePull(t *testing.T) {
 	a := newProcess(t, "secret")
 	b := &Bus{Local: live.NewMemBus(), Log: memlog.New(), Self: "http://b.internal", Token: "secret", Retry: 20 * time.Millisecond}
-	d1, follow1, cancel1 := b.SubscribeFollowing("s1")
-	d2, follow2, cancel2 := b.SubscribeFollowing("s1")
+	d1, follow1, cancel1 := b.SubscribeFollowing("ses_v1_000_000_s1")
+	d2, follow2, cancel2 := b.SubscribeFollowing("ses_v1_000_000_s1")
 	follow1(a.srv.URL)
 	follow2(a.srv.URL)
 	receive(t, a.bus.MemBus, d1, "both")

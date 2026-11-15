@@ -223,24 +223,15 @@ func (s *Service) Save(ctx context.Context, r SaveRequest) (saved *Memory, err e
 	if err != nil {
 		return nil, err
 	}
-	// 旧派生优先：升级前已落盘的调用必须继续返回原对象；读失败不能当作不存在而另建一份。
-	candidates := []string{id}
-	if r.CallID != "" {
-		candidates = append([]string{"mem_" + r.CallID}, candidates...)
-	}
-	for _, candidate := range candidates {
-		m, err := s.Store.Get(ctx, r.EndUser, candidate)
-		if errors.Is(err, ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		// 分片键与槽位不能代替归属检查，旧派生尤其可能来自另一个业务线或 Session。
+	// 同一调用重试时返回已落盘的原对象；读失败不能当作不存在而另建一份。
+	if m, err := s.Store.Get(ctx, r.EndUser, id); err == nil {
+		// 分片键与槽位不能代替归属检查。
 		if m.EndUser != r.EndUser || m.BusinessLine != r.BusinessLine || m.SourceSession != r.SessionID || m.SourceCall != r.CallID {
-			return nil, fmt.Errorf("%w: memory %s belongs to another invocation", ErrRejected, candidate)
+			return nil, fmt.Errorf("%w: memory %s belongs to another invocation", ErrRejected, id)
 		}
 		return m, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return nil, err
 	}
 	var old *Memory
 	if r.Replaces != "" {

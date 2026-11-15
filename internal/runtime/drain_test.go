@@ -54,13 +54,13 @@ func newDrainSetup(t *testing.T, drain time.Duration) *drainSetup {
 	d.w = New(Config{ID: "w1", Store: d.store, Queue: d.q, Agents: agents, Model: gw,
 		Catalog:      &capability.Catalog{Local: capability.NewRegistry(capability.ClockNow(clk))},
 		DrainTimeout: drain, IdleWait: time.Millisecond})
-	st := &session.State{SessionID: "s1"}
+	st := &session.State{SessionID: "ses_v1_000_000_s1"}
 	if err := d.store.Commit(ctx, st,
 		&v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u", Agent: &v1.AgentRef{Name: "v", Version: "1"}}}},
 		&v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r1", Input: model.TextBlocks("几点了")}}}); err != nil {
 		t.Fatal(err)
 	}
-	_ = d.q.Enqueue(ctx, "s1", st.WorkClass())
+	_ = d.q.Enqueue(ctx, "ses_v1_000_000_s1", st.WorkClass())
 	return d
 }
 
@@ -82,7 +82,7 @@ func (d *drainSetup) run(t *testing.T) <-chan struct{} {
 // handedOff 检查 Run 以 handoff 挂起、租约已归还（立即可被其他 Worker 认领），并返回日志。
 func (d *drainSetup) handedOff(t *testing.T) []*v1.Event {
 	t.Helper()
-	events, err := eventlog.ReadAll(context.Background(), d.store.Log, "s1", 0)
+	events, err := eventlog.ReadAll(context.Background(), d.store.Log, "ses_v1_000_000_s1", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func (d *drainSetup) handedOff(t *testing.T) []*v1.Event {
 		t.Fatalf("last event %v, want a handoff suspension", events[len(events)-1])
 	}
 	l, err := d.q.Claim(context.Background(), "w2", time.Minute, workqueue.Pool{})
-	if err != nil || l.SessionID != "s1" {
+	if err != nil || l.SessionID != "ses_v1_000_000_s1" {
 		t.Fatalf("session not claimable right after the hand-off: %+v, %v", l, err)
 	}
 	return events

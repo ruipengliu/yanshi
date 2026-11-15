@@ -36,9 +36,9 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 
 	t.Run("ClaimIsExclusiveUntilExpiry", func(t *testing.T) {
 		c, q := setup(t)
-		_ = q.Enqueue(ctx, "s", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_s", interactive)
 		l, err := q.Claim(ctx, "w1", time.Second, anyWork)
-		if err != nil || l.SessionID != "s" {
+		if err != nil || l.SessionID != "ses_v1_000_000_s" {
 			t.Fatalf("claim = %+v, %v", l, err)
 		}
 		if _, err := q.Claim(ctx, "w2", time.Second, anyWork); !errors.Is(err, workqueue.ErrEmpty) {
@@ -62,7 +62,7 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 
 	t.Run("RenewExtends", func(t *testing.T) {
 		c, q := setup(t)
-		_ = q.Enqueue(ctx, "s", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_s", interactive)
 		l, _ := q.Claim(ctx, "w1", 2*time.Second, anyWork)
 		advance(t, c, q, time.Second)
 		if err := q.Renew(ctx, l, 2*time.Second); err != nil {
@@ -76,8 +76,8 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 
 	t.Run("EnqueueIsIdempotent", func(t *testing.T) {
 		_, q := setup(t)
-		_ = q.Enqueue(ctx, "s", interactive)
-		_ = q.Enqueue(ctx, "s", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_s", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_s", interactive)
 		l, _ := q.Claim(ctx, "w", time.Second, anyWork)
 		if _, err := q.Claim(ctx, "w", time.Second, anyWork); !errors.Is(err, workqueue.ErrEmpty) {
 			t.Fatalf("duplicate item: %v", err)
@@ -87,8 +87,8 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 
 	t.Run("RemoveEvenWhileLeased", func(t *testing.T) {
 		_, q := setup(t)
-		_ = q.Enqueue(ctx, "s", interactive)
-		_ = q.Enqueue(ctx, "t", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_s", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_t", interactive)
 		l, _ := q.Claim(ctx, "w1", time.Minute, anyWork)
 		if err := q.Remove(ctx, l.SessionID); err != nil {
 			t.Fatal(err)
@@ -103,14 +103,14 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 		if _, err := q.Claim(ctx, "w3", time.Minute, anyWork); !errors.Is(err, workqueue.ErrEmpty) {
 			t.Fatalf("removed item still claimable: %v", err)
 		}
-		if err := q.Remove(ctx, "missing"); err != nil {
+		if err := q.Remove(ctx, "ses_v1_000_000_missing"); err != nil {
 			t.Fatal(err)
 		}
 	})
 
 	t.Run("ReleaseDoneRemoves", func(t *testing.T) {
 		_, q := setup(t)
-		_ = q.Enqueue(ctx, "s", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_s", interactive)
 		l, _ := q.Claim(ctx, "w", time.Second, anyWork)
 		if err := q.Release(ctx, l, true); err != nil {
 			t.Fatal(err)
@@ -122,9 +122,9 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 
 	t.Run("ReleaseDoneKeepsItemEnqueuedDuringLease", func(t *testing.T) {
 		_, q := setup(t)
-		_ = q.Enqueue(ctx, "s", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_s", interactive)
 		l, _ := q.Claim(ctx, "w", time.Second, anyWork)
-		_ = q.Enqueue(ctx, "s", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_s", interactive)
 		if err := q.Release(ctx, l, true); err != nil {
 			t.Fatal(err)
 		}
@@ -135,22 +135,22 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 
 	t.Run("ReleaseNotDoneRotates", func(t *testing.T) {
 		_, q := setup(t)
-		_ = q.Enqueue(ctx, "a", interactive)
-		_ = q.Enqueue(ctx, "b", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_a", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_b", interactive)
 		l, _ := q.Claim(ctx, "w", time.Second, anyWork)
-		if l.SessionID != "a" {
+		if l.SessionID != "ses_v1_000_000_a" {
 			t.Fatalf("claimed %s first, want a", l.SessionID)
 		}
 		_ = q.Release(ctx, l, false)
 		l, _ = q.Claim(ctx, "w", time.Second, anyWork)
-		if l.SessionID != "b" {
+		if l.SessionID != "ses_v1_000_000_b" {
 			t.Fatalf("claimed %s, want b", l.SessionID)
 		}
 	})
 
 	t.Run("ParkHidesUntilDeadlineOrWake", func(t *testing.T) {
 		c, q := setup(t)
-		_ = q.Enqueue(ctx, "s", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_s", interactive)
 		l, _ := q.Claim(ctx, "w", time.Second, anyWork)
 		if err := q.Park(ctx, l, c.Now().Add(time.Minute)); err != nil {
 			t.Fatal(err)
@@ -164,7 +164,7 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 			t.Fatalf("not claimable after deadline: %v", err)
 		}
 		_ = q.Park(ctx, l, c.Now().Add(time.Hour))
-		_ = q.Enqueue(ctx, "s", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_s", interactive)
 		if _, err := q.Claim(ctx, "w", time.Second, anyWork); err != nil {
 			t.Fatalf("not claimable after wake: %v", err)
 		}
@@ -172,9 +172,9 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 
 	t.Run("ParkAfterEnqueueDuringLeaseStaysAvailable", func(t *testing.T) {
 		c, q := setup(t)
-		_ = q.Enqueue(ctx, "s", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_s", interactive)
 		l, _ := q.Claim(ctx, "w", time.Second, anyWork)
-		_ = q.Enqueue(ctx, "s", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_s", interactive)
 		_ = q.Park(ctx, l, c.Now().Add(time.Hour))
 		if _, err := q.Claim(ctx, "w", time.Second, anyWork); err != nil {
 			t.Fatalf("wake during lease lost: %v", err)
@@ -183,9 +183,9 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 
 	t.Run("ClaimPrefersHigherPriority", func(t *testing.T) {
 		_, q := setup(t)
-		_ = q.Enqueue(ctx, "long", background)
-		_ = q.Enqueue(ctx, "a", interactive)
-		_ = q.Enqueue(ctx, "b", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_long", background)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_a", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_b", interactive)
 		var got []string
 		for range 3 {
 			l, err := q.Claim(ctx, "w", time.Minute, anyWork)
@@ -194,37 +194,37 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 			}
 			got = append(got, l.SessionID)
 		}
-		if got[0] != "a" || got[1] != "b" || got[2] != "long" {
+		if got[0] != "ses_v1_000_000_a" || got[1] != "ses_v1_000_000_b" || got[2] != "ses_v1_000_000_long" {
 			t.Fatalf("claim order %v, want interactive work first, in enqueue order", got)
 		}
 	})
 
 	t.Run("ClaimOnlyFromPool", func(t *testing.T) {
 		_, q := setup(t)
-		_ = q.Enqueue(ctx, "long", background)
-		_ = q.Enqueue(ctx, "other", workqueue.Class{BusinessLine: "other", Priority: workqueue.Interactive})
+		_ = q.Enqueue(ctx, "ses_v1_000_000_long", background)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_other", workqueue.Class{BusinessLine: "other", Priority: workqueue.Interactive})
 		if _, err := q.Claim(ctx, "w", time.Minute, workqueue.Pool{BusinessLines: []string{"bl"}, MinPriority: workqueue.Interactive}); !errors.Is(err, workqueue.ErrEmpty) {
 			t.Fatalf("claimed outside the pool: %v", err)
 		}
 		l, err := q.Claim(ctx, "w", time.Minute, workqueue.Pool{BusinessLines: []string{"other"}})
-		if err != nil || l.SessionID != "other" || l.Class.BusinessLine != "other" || l.Class.Priority != workqueue.Interactive {
+		if err != nil || l.SessionID != "ses_v1_000_000_other" || l.Class.BusinessLine != "other" || l.Class.Priority != workqueue.Interactive {
 			t.Fatalf("claim by business line = %+v, %v", l, err)
 		}
 		l, err = q.Claim(ctx, "w", time.Minute, workqueue.Pool{BusinessLines: []string{"x", "bl"}})
-		if err != nil || l.SessionID != "long" || l.Class != background {
+		if err != nil || l.SessionID != "ses_v1_000_000_long" || l.Class != background {
 			t.Fatalf("claim = %+v, %v", l, err)
 		}
 	})
 
 	t.Run("EnqueueUpdatesClass", func(t *testing.T) {
 		_, q := setup(t)
-		_ = q.Enqueue(ctx, "s", interactive)
-		_ = q.Enqueue(ctx, "s", background)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_s", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_s", background)
 		interactiveOnly := workqueue.Pool{MinPriority: workqueue.Interactive}
 		if _, err := q.Claim(ctx, "w", time.Minute, interactiveOnly); !errors.Is(err, workqueue.ErrEmpty) {
 			t.Fatalf("class not updated by the second enqueue: %v", err)
 		}
-		_ = q.Enqueue(ctx, "s", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_s", interactive)
 		if l, err := q.Claim(ctx, "w", time.Minute, interactiveOnly); err != nil || l.Class != interactive {
 			t.Fatalf("claim = %+v, %v", l, err)
 		}
@@ -233,7 +233,7 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 	t.Run("HolderReclassifiesOnRelease", func(t *testing.T) {
 		c, q := setup(t)
 		interactiveOnly := workqueue.Pool{MinPriority: workqueue.Interactive}
-		_ = q.Enqueue(ctx, "s", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_s", interactive)
 		l, _ := q.Claim(ctx, "w", time.Minute, anyWork)
 		l.Class = background
 		if err := q.Release(ctx, l, false); err != nil {
@@ -262,9 +262,9 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 		resumedOnly := workqueue.Pool{MinPriority: workqueue.Resumed}
 		for _, park := range []bool{false, true} {
 			c, q := setup(t)
-			_ = q.Enqueue(ctx, "s", background)
+			_ = q.Enqueue(ctx, "ses_v1_000_000_s", background)
 			l, _ := q.Claim(ctx, "w", time.Minute, anyWork)
-			_ = q.Enqueue(ctx, "s", resumed)
+			_ = q.Enqueue(ctx, "ses_v1_000_000_s", resumed)
 			l.Class = background
 			var err error
 			if park {
@@ -292,9 +292,9 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 	// Waited 是认领前已可认领的时长：入队、挂起到期、唤醒、归还、租约过期分别从各自的时刻算起（排队等待的指标）。
 	t.Run("ClaimReportsWait", func(t *testing.T) {
 		c, q := setup(t)
-		_ = q.Enqueue(ctx, "s", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_s", interactive)
 		advance(t, c, q, 3*time.Second)
-		_ = q.Enqueue(ctx, "s", interactive) // 已在等的项再次入队不重新计时
+		_ = q.Enqueue(ctx, "ses_v1_000_000_s", interactive) // 已在等的项再次入队不重新计时
 		advance(t, c, q, time.Second)
 		l, err := q.Claim(ctx, "w", time.Minute, anyWork)
 		if err != nil || l.Waited != 4*time.Second {
@@ -311,7 +311,7 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 			t.Fatal(err)
 		}
 		advance(t, c, q, time.Minute)
-		_ = q.Enqueue(ctx, "s", interactive) // 唤醒：从现在算起
+		_ = q.Enqueue(ctx, "ses_v1_000_000_s", interactive) // 唤醒：从现在算起
 		advance(t, c, q, time.Second)
 		if l, err = q.Claim(ctx, "w", time.Second, anyWork); err != nil || l.Waited != time.Second {
 			t.Fatalf("after wake: %+v, %v", l, err)
@@ -335,15 +335,15 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 		if !ok {
 			t.Skip("queue does not implement workqueue.Stats")
 		}
-		_ = q.Enqueue(ctx, "a", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_a", interactive)
 		advance(t, c, q, 5*time.Second)
-		_ = q.Enqueue(ctx, "b", interactive)
-		_ = q.Enqueue(ctx, "c", background)
-		_ = q.Enqueue(ctx, "d", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_b", interactive)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_c", background)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_d", interactive)
 		l, _ := q.Claim(ctx, "w", time.Minute, anyWork) // a：已租出，不算
-		_ = q.Enqueue(ctx, "e", background)
+		_ = q.Enqueue(ctx, "ses_v1_000_000_e", background)
 		advance(t, c, q, time.Second)
-		if l.SessionID != "a" {
+		if l.SessionID != "ses_v1_000_000_a" {
 			t.Fatalf("claimed %s", l.SessionID)
 		}
 		parked, _ := q.Claim(ctx, "w", time.Minute, anyWork) // b：挂起中，不算
@@ -390,36 +390,36 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 				t.Fatalf("claim = %v", err)
 			}
 		}
-		for _, id := range []string{"removed", "wake", "again", "a", "b", "low"} {
+		for _, id := range []string{"ses_v1_000_000_removed", "ses_v1_000_000_wake", "ses_v1_000_000_again", "ses_v1_000_000_a", "ses_v1_000_000_b", "ses_v1_000_000_low"} {
 			must(q.Enqueue(ctx, id, interactive))
 			l := claim()
-			if id == "low" {
+			if id == "ses_v1_000_000_low" {
 				l.Class = background
 			}
 			must(q.Park(ctx, l, due))
 		}
 		empty()
-		must(q.Remove(ctx, "removed"))
-		must(q.Enqueue(ctx, "wake", interactive))
+		must(q.Remove(ctx, "ses_v1_000_000_removed"))
+		must(q.Enqueue(ctx, "ses_v1_000_000_wake", interactive))
 		l := claim()
-		if l.SessionID != "wake" {
+		if l.SessionID != "ses_v1_000_000_wake" {
 			t.Fatalf("wake = %s", l.SessionID)
 		}
 		must(q.Release(ctx, l, true))
-		must(q.Enqueue(ctx, "again", interactive))
+		must(q.Enqueue(ctx, "ses_v1_000_000_again", interactive))
 		l = claim()
 		must(q.Park(ctx, l, due.Add(time.Hour)))
 		_, err := d.Promote(ctx, due, 100)
 		must(err)
 		empty() // 搬回工作表仍须等到精确时刻
 		c.Advance(24 * time.Hour)
-		for _, id := range []string{"a", "b", "low"} {
+		for _, id := range []string{"ses_v1_000_000_a", "ses_v1_000_000_b", "ses_v1_000_000_low"} {
 			l = claim()
 			if l.SessionID != id {
 				t.Fatalf("order = %s, want %s", l.SessionID, id)
 			}
 			want := interactive
-			if id == "low" {
+			if id == "ses_v1_000_000_low" {
 				want = background
 			}
 			if l.Class != want {
@@ -430,7 +430,7 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 		empty()
 		_, err = d.Promote(ctx, due.Add(time.Hour), 100)
 		must(err)
-		must(q.Remove(ctx, "again")) // 搬移之后删除也不复活
+		must(q.Remove(ctx, "ses_v1_000_000_again")) // 搬移之后删除也不复活
 		c.Advance(time.Hour)
 		_, err = d.Promote(ctx, c.Now(), 100)
 		must(err)
@@ -451,7 +451,7 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 						t.Fatal(err)
 					}
 				}
-				must(q.Enqueue(ctx, "s", interactive))
+				must(q.Enqueue(ctx, "ses_v1_000_000_s", interactive))
 				l, err := q.Claim(ctx, "w", time.Minute, anyWork)
 				must(err)
 				until := c.Now().Add(24 * time.Hour)
@@ -466,10 +466,10 @@ func Run(t *testing.T, newQueue func(t *testing.T, c clock.Clock) workqueue.Queu
 				go func() {
 					<-start
 					if action == "remove" {
-						results <- q.Remove(ctx, "s")
+						results <- q.Remove(ctx, "ses_v1_000_000_s")
 						return
 					}
-					err := q.Enqueue(ctx, "s", interactive)
+					err := q.Enqueue(ctx, "ses_v1_000_000_s", interactive)
 					if err == nil && action == "repark" {
 						var l *workqueue.Lease
 						l, err = q.Claim(ctx, "w", time.Minute, anyWork)

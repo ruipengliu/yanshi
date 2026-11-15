@@ -41,13 +41,13 @@ func TestPutOnDeletedSessionIsWithdrawn(t *testing.T) {
 	ctx := context.Background()
 	store, dels := presence.NewMem(), lifecycle.NewMemDeletions()
 	svc := &presence.Service{Store: store, Deletions: dels, Clock: clock.NewFake(t0)}
-	if _, err := dels.Mark(ctx, &lifecycle.Tombstone{SessionID: "s1", BusinessLine: "bl", RequestedAt: t0}); err != nil {
+	if _, err := dels.Mark(ctx, &lifecycle.Tombstone{SessionID: "ses_v1_000_000_s1", BusinessLine: "bl", RequestedAt: t0}); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.Put(ctx, &presence.Entry{SessionID: "s1", ConnID: "c", Expires: t0.Add(time.Minute)}); err != nil {
+	if err := svc.Put(ctx, &presence.Entry{SessionID: "ses_v1_000_000_s1", ConnID: "c", Expires: t0.Add(time.Minute)}); err != nil {
 		t.Fatal(err)
 	}
-	if store.HasSession("s1") {
+	if store.HasSession("ses_v1_000_000_s1") {
 		t.Fatal("presence of a deleted session was kept")
 	}
 }

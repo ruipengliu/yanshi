@@ -48,7 +48,7 @@ type checkedUsage struct {
 }
 
 func (s *checkedUsage) Record(ctx context.Context, e *usage.Entry) error {
-	if slot, legacy, err := ids.SlotOf(e.ID); err != nil || legacy || slot != shard.Hash(e.EndUser) || e.LegacyID == "" {
+	if slot, err := ids.SlotOf(e.ID); err != nil || slot != shard.Hash(e.EndUser) || e.LegacyID == "" {
 		s.w.violations = append(s.w.violations, "usage ID lost real EndUser slot or legacy identity")
 	}
 	s.w.Stats.EndUserUsageIDs++

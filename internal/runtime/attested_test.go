@@ -76,11 +76,11 @@ func TestAttestedWorker(t *testing.T) {
 			gw := model.NewGateway()
 			gw.Register("test", toolCallOnce{tool: "mcp_pages__read", args: `{}`})
 			core := app.NewCore(app.Memory(clk), app.Options{Clock: clk, IDs: ids.Sequential, Agents: defs, Model: gw, MCP: attestedSource{}, Moderator: mod})
-			st := &session.State{SessionID: "s"}
+			st := &session.State{SessionID: "ses_v1_000_000_s"}
 			if err := core.Store.Commit(ctx, st, &v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u", Agent: &v1.AgentRef{Name: "test", Version: "1"}}}}, &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r", Input: model.TextBlocks("整理")}}}); err != nil {
 				t.Fatal(err)
 			}
-			if err := core.Stores.Queue.Enqueue(ctx, "s", workqueue.Class{}); err != nil {
+			if err := core.Stores.Queue.Enqueue(ctx, "ses_v1_000_000_s", workqueue.Class{}); err != nil {
 				t.Fatal(err)
 			}
 			cfg := core.WorkerConfig("w", workqueue.Pool{}, nil)
@@ -97,7 +97,7 @@ func TestAttestedWorker(t *testing.T) {
 			if failures.left != 0 {
 				t.Fatal("append faults not exercised")
 			}
-			events, err := eventlog.ReadAll(ctx, core.Store.Log, "s", 0)
+			events, err := eventlog.ReadAll(ctx, core.Store.Log, "ses_v1_000_000_s", 0)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -22,9 +22,9 @@ func TestTransactionMetadata(t *testing.T) {
 	log := pglog.New(pool, notifier)
 	queue := pgqueue.New(pool, clock.Real{}, pgqueue.Sessions).WithNotifier(notifier)
 	for _, wake := range []bool{false, true} {
-		sid := "plain"
+		sid := "ses_v1_000_000_plain"
 		if wake {
-			sid = "waking"
+			sid = "ses_v1_000_000_waking"
 		}
 		var envelopes []outbox.Envelope
 		var events []*v1.Event
@@ -57,12 +57,12 @@ func TestTransactionMetadata(t *testing.T) {
 		}
 	}
 	d := pglifecycle.Deletions{Pool: pool, Notifier: notifier}
-	if _, err := d.Mark(ctx, &lifecycle.Tombstone{SessionID: "deleted", BusinessLine: "bl", Reason: "service", RequestedAt: clock.Real{}.Now()}); err != nil {
+	if _, err := d.Mark(ctx, &lifecycle.Tombstone{SessionID: "ses_v1_000_000_deleted", BusinessLine: "bl", Reason: "service", RequestedAt: clock.Real{}.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	var same bool
 	if err := pool.QueryRow(ctx, `SELECT (o.xid::text::numeric % 4294967296)::text = t.xmin::text AND o.seq IS NULL AND o.end_user IS NULL
-		FROM outbox o JOIN session_tombstones t USING (session_id) WHERE o.session_id='deleted'`).Scan(&same); err != nil {
+		FROM outbox o JOIN session_tombstones t USING (session_id) WHERE o.session_id='ses_v1_000_000_deleted'`).Scan(&same); err != nil {
 		t.Fatal(err)
 	}
 	if !same {

@@ -39,8 +39,8 @@ func TestDelegationLimits(t *testing.T) {
 	catalog := &capability.Catalog{Local: capability.NewRegistry(namedCap("read"), namedCap("write")),
 		Agents: agentList{{Name: "child", Timeout: time.Hour}, {Name: "parent", Timeout: time.Hour}}}
 	w := New(Config{ID: "w", Agents: agents, Catalog: catalog})
-	w.st = &session.State{SessionID: "s", Created: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u",
-		Parent: &v1.ParentRef{SessionId: "p", Ancestors: []*v1.AgentRef{{Name: "parent", Version: "1"}}}}}
+	w.st = &session.State{SessionID: "ses_v1_000_000_s", Created: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u",
+		Parent: &v1.ParentRef{SessionId: "ses_v1_000_000_p", Ancestors: []*v1.AgentRef{{Name: "parent", Version: "1"}}}}}
 	def, _ := agents.Get(&v1.AgentRef{Name: "child", Version: "1"})
 	tools, err := w.tools(ctx, def)
 	if err != nil {
@@ -56,8 +56,8 @@ func TestDelegationLimits(t *testing.T) {
 
 	// 祖先的版本不在注册表中：配置错误，而不是悄悄失去全部工具。
 	orphan := New(Config{ID: "w", Agents: agents, Catalog: catalog})
-	orphan.st = &session.State{SessionID: "o", Created: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u",
-		Parent: &v1.ParentRef{SessionId: "p", Ancestors: []*v1.AgentRef{{Name: "parent", Version: "9"}}}}}
+	orphan.st = &session.State{SessionID: "ses_v1_000_000_o", Created: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u",
+		Parent: &v1.ParentRef{SessionId: "ses_v1_000_000_p", Ancestors: []*v1.AgentRef{{Name: "parent", Version: "9"}}}}}
 	if _, err := orphan.tools(ctx, def); !errors.Is(err, capability.ErrConfig) {
 		t.Fatalf("missing ancestor version: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestDelegationLimits(t *testing.T) {
 		t.Fatalf("a depth-2 child delegated under max_depth 2: %q", reason)
 	}
 	top := New(Config{ID: "w", Agents: agents, Catalog: catalog})
-	top.st = &session.State{SessionID: "t", Created: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u"}}
+	top.st = &session.State{SessionID: "ses_v1_000_000_t", Created: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u"}}
 	if reason := top.delegationRefused(&session.Run{}, &two, call); reason != "" {
 		t.Fatalf("a top-level session could not delegate under max_depth 2: %q", reason)
 	}

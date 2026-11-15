@@ -85,7 +85,7 @@ type CreateRequest struct {
 	Agent        string
 	AgentVersion string
 	// SessionID 只供内部调用指定（委托派生与测试）；HTTP / Connection 不接受指定 ID。
-	// 新格式须匹配真实 EndUser 的槽位；旧格式保留重试身份（ADR-0051）。Parent 记录委托来处。
+	// 必须带版本并匹配真实 EndUser 的槽位（ADR-0051）。Parent 记录委托来处。
 	SessionID string
 	Parent    *v1.ParentRef
 }
@@ -128,7 +128,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (sessionID stri
 			return "", err
 		}
 	}
-	if slot, legacy, err := ids.EndUserSlotOfSession(st.SessionID); err != nil || (!legacy && slot != shard.Hash(req.EndUser)) {
+	if slot, err := ids.EndUserSlotOfSession(st.SessionID); err != nil || slot != shard.Hash(req.EndUser) {
 		return "", fmt.Errorf("%w: session ID does not match EndUser or has an invalid format", ErrInvalid)
 	}
 	// 索引与日志都可能和注销交错；所有返回路径（含指定 ID 的幂等重试）统一复查。

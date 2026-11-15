@@ -20,9 +20,9 @@ import (
 func writeShardConfig(t *testing.T, first, second string) string {
 	t.Helper()
 	cfg := app.ShardConfig{
-		Table:         shard.Config{Shards: []int{0, 1}, Ranges: []shard.Range{{First: 0, Last: 511, Shard: 0}, {First: 512, Last: 1023, Shard: 1}}},
-		Compatibility: shard.CompatibilityConfig{Version: "test-new-cell"},
-		Databases:     []app.ShardDatabase{{ID: 0, SQLDSN: first, DirectDSN: first}, {ID: 1, SQLDSN: second, DirectDSN: second}},
+		Version:   "test-new-cell",
+		Table:     shard.Config{Shards: []int{0, 1}, Ranges: []shard.Range{{First: 0, Last: 511, Shard: 0}, {First: 512, Last: 1023, Shard: 1}}},
+		Databases: []app.ShardDatabase{{ID: 0, SQLDSN: first, DirectDSN: first}, {ID: 1, SQLDSN: second, DirectDSN: second}},
 	}
 	data, err := json.Marshal(cfg)
 	if err != nil {

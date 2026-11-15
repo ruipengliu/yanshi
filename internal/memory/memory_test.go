@@ -45,13 +45,13 @@ func newService(clk clock.Clock) (*memory.Service, *memory.MemStore) {
 func TestSaveValidatesAndIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	s, st := newService(clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
-	req := memory.SaveRequest{BusinessLine: "a", EndUser: "u", SessionID: "s1", CallID: "c1", Category: memory.Preference, Content: "喜欢喝咖啡"}
+	req := memory.SaveRequest{BusinessLine: "a", EndUser: "u", SessionID: "ses_v1_000_000_s1", CallID: "c1", Category: memory.Preference, Content: "喜欢喝咖啡"}
 	m1, err := s.Save(ctx, req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	m2, _ := s.Save(ctx, req) // 同一调用重复执行
-	if m1.ID != scopedMemoryID("a", "u", "s1", "c1") || m2.ID != m1.ID {
+	if m1.ID != scopedMemoryID("a", "u", "ses_v1_000_000_s1", "c1") || m2.ID != m1.ID {
 		t.Fatalf("ids = %s, %s", m1.ID, m2.ID)
 	}
 	if n, _ := st.Count(ctx, "a", "u", time.Now()); n != 1 {
@@ -218,11 +218,11 @@ func TestSaveWithdrawsWhenSessionDeleted(t *testing.T) {
 	s, st := newService(clock.Real{})
 	d := lifecycle.NewMemDeletions()
 	s.Deletions = d
-	_, _ = d.Mark(ctx, &lifecycle.Tombstone{SessionID: "gone", BusinessLine: "a", RequestedAt: time.Now()})
-	if _, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "a", EndUser: "u", SessionID: "gone", CallID: "c", Category: memory.Plan, Content: "x"}); err == nil {
+	_, _ = d.Mark(ctx, &lifecycle.Tombstone{SessionID: "ses_v1_000_000_gone", BusinessLine: "a", RequestedAt: time.Now()})
+	if _, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "a", EndUser: "u", SessionID: "ses_v1_000_000_gone", CallID: "c", Category: memory.Plan, Content: "x"}); err == nil {
 		t.Fatal("saved into a deleted session")
 	}
-	if st.HasSession("gone") {
+	if st.HasSession("ses_v1_000_000_gone") {
 		t.Fatal("write was not withdrawn")
 	}
 }
@@ -425,7 +425,7 @@ func TestReplaceRequiresSameCategory(t *testing.T) {
 	}
 }
 
-// 测试用实际调用身份引用新对象；旧格式兼容在专用用例中直接预置旧行。
+// 测试用实际调用身份引用调用派生的对象。
 func scopedMemoryID(line, endUser, sessionID, callID string) string {
 	id, err := memory.CallMemoryID(memory.SaveRequest{BusinessLine: line, EndUser: endUser, SessionID: sessionID, CallID: callID})
 	if err != nil {

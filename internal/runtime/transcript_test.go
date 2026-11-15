@@ -15,7 +15,7 @@ import (
 type logBuilder struct{ events []*v1.Event }
 
 func (b *logBuilder) add(p any) *logBuilder {
-	e := &v1.Event{SessionId: "s", Seq: uint64(len(b.events) + 1)}
+	e := &v1.Event{SessionId: "ses_v1_000_000_s", Seq: uint64(len(b.events) + 1)}
 	switch p := p.(type) {
 	case *v1.SessionCreated:
 		e.Payload = &v1.Event_SessionCreated{SessionCreated: p}

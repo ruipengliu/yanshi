@@ -70,16 +70,16 @@ func TestResultCommitFailureDoesNotReexecute(t *testing.T) {
 	w := New(Config{ID: "w", Store: store, Queue: q, Agents: agents, Model: gw,
 		Catalog: &capability.Catalog{Local: capability.NewRegistry(send)}})
 
-	st := &session.State{SessionID: "s1"}
+	st := &session.State{SessionID: "ses_v1_000_000_s1"}
 	created := &v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u", Agent: &v1.AgentRef{Name: "v", Version: "1"}}}}
 	if err := store.Commit(ctx, st, created, &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r1", Input: model.TextBlocks("发吧")}}}); err != nil {
 		t.Fatal(err)
 	}
-	_ = q.Enqueue(ctx, "s1", workqueue.Class{})
+	_ = q.Enqueue(ctx, "ses_v1_000_000_s1", workqueue.Class{})
 	for range 12 {
 		_, _ = w.Step(ctx)
 	}
-	final, err := store.Load(ctx, "s1")
+	final, err := store.Load(ctx, "ses_v1_000_000_s1")
 	if err != nil {
 		t.Fatal(err)
 	}

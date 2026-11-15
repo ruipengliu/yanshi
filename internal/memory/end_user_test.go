@@ -44,26 +44,26 @@ func TestDeletionWithdrawsLateMemory(t *testing.T) {
 			c := clock.NewFake(time.Unix(1000, 0))
 			d := lifecycle.NewMemDeletions()
 			s := &memory.Service{Store: memory.NewMemStore(), Grants: memory.NewMemGrants(), Deletions: d, Clock: c, IDs: ids.Sequential("m")}
-			before, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "bl", EndUser: "u", SessionID: "s", CallID: "before", Category: memory.Preference, Content: "喜欢骑车"})
+			before, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "bl", EndUser: "u", SessionID: "ses_v1_000_000_s", CallID: "before", Category: memory.Preference, Content: "喜欢骑车"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := d.Mark(ctx, &lifecycle.Tombstone{SessionID: "s", BusinessLine: "bl", Reason: reason, RequestedAt: c.Now()}); err != nil {
+			if _, err := d.Mark(ctx, &lifecycle.Tombstone{SessionID: "ses_v1_000_000_s", BusinessLine: "bl", Reason: reason, RequestedAt: c.Now()}); err != nil {
 				t.Fatal(err)
 			}
 			for _, complete := range []bool{false, true} {
 				if complete {
-					if err := d.Complete(ctx, "s", c.Now()); err != nil {
+					if err := d.Complete(ctx, "ses_v1_000_000_s", c.Now()); err != nil {
 						t.Fatal(err)
 					}
 				}
-				if _, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "bl", EndUser: "u", SessionID: "s", CallID: "late", Category: memory.Preference, Content: "不吃香菜"}); !errors.Is(err, memory.ErrNotFound) {
+				if _, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "bl", EndUser: "u", SessionID: "ses_v1_000_000_s", CallID: "late", Category: memory.Preference, Content: "不吃香菜"}); !errors.Is(err, memory.ErrNotFound) {
 					t.Fatalf("late save = %v", err)
 				}
-				if _, err := s.Store.Get(ctx, "u", scopedMemoryID("bl", "u", "s", "late")); !errors.Is(err, memory.ErrNotFound) {
+				if _, err := s.Store.Get(ctx, "u", scopedMemoryID("bl", "u", "ses_v1_000_000_s", "late")); !errors.Is(err, memory.ErrNotFound) {
 					t.Fatalf("late memory survived: %v", err)
 				}
-				got, err := s.Store.ListBySource(ctx, "bl", "u", []string{"s"}, c.Now())
+				got, err := s.Store.ListBySource(ctx, "bl", "u", []string{"ses_v1_000_000_s"}, c.Now())
 				if err != nil || len(got) != 1 || got[0].ID != before.ID {
 					t.Fatalf("existing memory: %+v, %v", got, err)
 				}
@@ -95,11 +95,11 @@ func TestInFlightMemoryWithdrawnOnErasure(t *testing.T) {
 			d := lifecycle.NewMemDeletions()
 			base := memory.NewMemStore()
 			s := &memory.Service{Store: deletionDuringPut{Store: base, deletions: d, reason: reason, at: c.Now()}, Deletions: d, Clock: c, IDs: ids.Sequential("m")}
-			_, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "bl", EndUser: "u", SessionID: "s", CallID: "race", Category: memory.Preference, Content: "喜欢骑车"})
+			_, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "bl", EndUser: "u", SessionID: "ses_v1_000_000_s", CallID: "race", Category: memory.Preference, Content: "喜欢骑车"})
 			if !errors.Is(err, memory.ErrNotFound) {
 				t.Fatalf("save = %v", err)
 			}
-			if base.HasSession("s") {
+			if base.HasSession("ses_v1_000_000_s") {
 				t.Fatal("in-flight memory survived deletion")
 			}
 		})

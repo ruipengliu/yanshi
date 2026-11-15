@@ -14,9 +14,20 @@ import (
 
 var t0 = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
+// sid 把测试用的短名变成带版本的 Session ID（ADR-0051）。
+func sid(tok string) string { return "ses_v1_000_000_" + tok }
+
+func sids(toks ...string) []string {
+	out := make([]string, len(toks))
+	for i, tok := range toks {
+		out[i] = sid(tok)
+	}
+	return out
+}
+
 func mem(id, bl, eu string, c memory.Category, content, session string, at time.Time) *memory.Memory {
 	return &memory.Memory{ID: id, BusinessLine: bl, EndUser: eu, Category: c, Content: content,
-		SourceSession: session, SourceCall: "call_" + id, CreatedAt: at, UpdatedAt: at}
+		SourceSession: sid(session), SourceCall: "call_" + id, CreatedAt: at, UpdatedAt: at}
 }
 
 func ids(ms []*memory.Memory) []string {
@@ -38,7 +49,7 @@ func hitIDs(hits []memory.Hit) []string {
 func RunStore(t *testing.T, newStore func(t *testing.T) memory.Store) {
 	t.Run("EndUserKeys", func(t *testing.T) { storeEndUserKeys(t, newStore(t)) })
 	t.Run("SaveEndUserIDs", func(t *testing.T) { saveEndUserIDs(t, newStore(t)) })
-	t.Run("SaveLegacyRetry", func(t *testing.T) { saveLegacyRetry(t, newStore(t)) })
+	t.Run("SaveRetry", func(t *testing.T) { saveRetry(t, newStore(t)) })
 	ctx := context.Background()
 	all := []memory.Scope{{BusinessLine: "a"}, {BusinessLine: "b"}}
 
@@ -68,7 +79,7 @@ func RunStore(t *testing.T, newStore func(t *testing.T) memory.Store) {
 			sources []string
 			want    []string
 		}{
-			{nil, nil}, {[]string{"missing"}, nil}, {[]string{"s1", "s2", "s1"}, []string{"a", "b"}},
+			{nil, nil}, {sids("missing"), nil}, {sids("s1", "s2", "s1"), []string{"a", "b"}},
 		} {
 			got, err := s.ListBySource(ctx, "a", "u", tc.sources, t0)
 			if err != nil || !slices.Equal(ids(got), tc.want) {
@@ -78,7 +89,7 @@ func RunStore(t *testing.T, newStore func(t *testing.T) memory.Store) {
 		if err := s.Delete(ctx, "u", "a"); err != nil {
 			t.Fatal(err)
 		}
-		got, err := s.ListBySource(ctx, "a", "u", []string{"s1", "s2"}, t0)
+		got, err := s.ListBySource(ctx, "a", "u", sids("s1", "s2"), t0)
 		if err != nil || !slices.Equal(ids(got), []string{"b"}) {
 			t.Fatalf("after deletion = %v, %v", ids(got), err)
 		}
@@ -90,7 +101,7 @@ func RunStore(t *testing.T, newStore func(t *testing.T) memory.Store) {
 			t.Fatal(err)
 		}
 		got, err := s.Get(ctx, "u", "m1")
-		if err != nil || got.Content != m.Content || got.Category != memory.Preference || got.SourceSession != "s1" ||
+		if err != nil || got.Content != m.Content || got.Category != memory.Preference || got.SourceSession != sid("s1") ||
 			got.SourceCall != "call_m1" || !got.CreatedAt.Equal(t0) {
 			t.Fatalf("get = %+v, %v", got, err)
 		}
@@ -218,7 +229,7 @@ func RunStore(t *testing.T, newStore func(t *testing.T) memory.Store) {
 		_ = s.Put(ctx, mem("x2", "a", "u", memory.Plan, "p", "s2", t0), nil)
 		_ = s.Put(ctx, mem("x3", "b", "u", memory.Plan, "p", "s3", t0), nil)
 		_ = s.Put(ctx, mem("x4", "a", "v", memory.Plan, "p", "s4", t0), nil)
-		_ = s.DeleteSession(ctx, "s1")
+		_ = s.DeleteSession(ctx, sid("s1"))
 		if _, err := s.Get(ctx, "u", "x1"); !errors.Is(err, memory.ErrNotFound) {
 			t.Fatal("memory of deleted session remains")
 		}
@@ -243,7 +254,7 @@ func RunAccess(t *testing.T, newStore func(t *testing.T) memory.Store) {
 		_ = s.Put(ctx, mem("m1", "a", "u", memory.Preference, "x", "s1", t0), nil)
 		_ = s.Put(ctx, mem("m2", "a", "u", memory.Preference, "y", "s1", t0), nil)
 		acc := func(id, reader string, at time.Time) memory.Access {
-			return memory.Access{MemoryID: id, Owner: "a", EndUser: "u", Reader: reader, SessionID: "sr", RunID: "r", At: at}
+			return memory.Access{MemoryID: id, Owner: "a", EndUser: "u", Reader: reader, SessionID: sid("sr"), RunID: "r", At: at}
 		}
 		err := s.RecordAccess(ctx, []memory.Access{acc("m1", "a", t0), acc("m1", "b", t0.Add(time.Minute)), acc("m2", "b", t0.Add(2*time.Minute)),
 			acc("missing", "b", t0)})
@@ -258,7 +269,7 @@ func RunAccess(t *testing.T, newStore func(t *testing.T) memory.Store) {
 		if got, _ := s.Accesses(ctx, "u", "a", t0, 10); len(got) != 1 || got[0].MemoryID != "m2" {
 			t.Fatalf("after deleting m1: %+v", got)
 		}
-		_ = s.DeleteSession(ctx, "s1")
+		_ = s.DeleteSession(ctx, sid("s1"))
 		if got, _ := s.Accesses(ctx, "u", "a", t0, 10); len(got) != 0 {
 			t.Fatalf("accesses outlived their memory: %+v", got)
 		}

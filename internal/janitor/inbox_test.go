@@ -55,7 +55,7 @@ func TestInboxDeletionWithAndWithoutSessionIndex(t *testing.T) {
 				if err := in.Put(ctx, "u", "same", &v1.Invoke{SessionId: sid, CallId: "c"}); err != nil {
 					t.Fatal(err)
 				}
-				if err := in.Put(ctx, "other", "same", &v1.Invoke{SessionId: "keep", CallId: "c"}); err != nil {
+				if err := in.Put(ctx, "other", "same", &v1.Invoke{SessionId: "ses_v1_000_000_keep", CallId: "c"}); err != nil {
 					t.Fatal(err)
 				}
 				if err := core.Service.Delete(ctx, sid, "end_user", ""); err != nil {
@@ -94,7 +94,7 @@ func TestInboxDeletionWithAndWithoutSessionIndex(t *testing.T) {
 				if items, _, err := in.Pending(ctx, "u", "same"); err != nil || len(items) != 0 {
 					t.Fatalf("deleted session inbox: %v, %v", items, err)
 				}
-				if items, _, err := in.Pending(ctx, "other", "same"); err != nil || len(items) != 1 || items[0].GetSessionId() != "keep" {
+				if items, _, err := in.Pending(ctx, "other", "same"); err != nil || len(items) != 1 || items[0].GetSessionId() != "ses_v1_000_000_keep" {
 					t.Fatalf("other end user inbox: %v, %v", items, err)
 				}
 				if tomb, err := stores.Deletions.Get(ctx, sid); err != nil || tomb.CompletedAt.IsZero() {

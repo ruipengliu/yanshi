@@ -27,21 +27,16 @@ func IsNode(id string) bool { return strings.HasPrefix(id, Prefix) }
 func ChildSession(nodeID string) string { return strings.TrimPrefix(nodeID, Prefix) }
 
 // ChildSessionID 由父 Session 与调用 ID 推导子 Session ID：重复派发（重新投递、Worker 崩溃后接管）命中同一个
-// 子 Session，派发因此幂等。旧父保持原格式，避免已在途委托重试时创建第二个子 Session。
+// 子 Session，派发因此幂等。子 Session 自身独立选槽，不继承父 Session 的数据槽（ADR-0051 §3）。
 func ChildSessionID(parentSession, callID, endUser string) (string, error) {
-	_, legacy, err := ids.SessionSlotOf(parentSession)
-	if err != nil {
+	if _, err := ids.SessionSlotOf(parentSession); err != nil {
 		return "", err
 	}
 	if endUser == "" {
 		return "", fmt.Errorf("delegation: EndUser is required")
 	}
 	h := sha256.Sum256([]byte(parentSession + "\x00" + callID))
-	token := hex.EncodeToString(h[:16])
-	if legacy {
-		return "ses_" + token, nil
-	}
-	return ids.SessionID(token, endUser)
+	return ids.SessionID(hex.EncodeToString(h[:16]), endUser)
 }
 
 // InputID 是子 Session 中委托输入的输入 ID：重复提交返回首次的结果（service.SubmitDelegated 去重），投影据此记下

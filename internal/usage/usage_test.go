@@ -115,7 +115,7 @@ func (d deletions) GetEndUser(context.Context, string, string) (*lifecycle.EndUs
 func TestMeterAnonymizesAfterDeletion(t *testing.T) {
 	ctx := context.Background()
 	store := usage.NewMem()
-	s := usage.Scope{SessionID: "s1", BusinessLine: "a", EndUser: "x"}
+	s := usage.Scope{SessionID: "ses_v1_000_000_s1", BusinessLine: "a", EndUser: "x"}
 	at := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
 	m := &usage.Meter{Store: store, Deletions: deletions{}}
 	m.Model(ctx, s, "1", "a@1", "p/m", &v1.Usage{InputTokens: 1}, at)
@@ -123,7 +123,7 @@ func TestMeterAnonymizesAfterDeletion(t *testing.T) {
 		t.Fatal("usage not recorded")
 	}
 	// Session 已删除（不论原因）后写入的用量被匿名化，之前的保留原 EndUser。
-	m.Deletions = deletions{t: &lifecycle.Tombstone{SessionID: "s1", Reason: "end_user"}}
+	m.Deletions = deletions{t: &lifecycle.Tombstone{SessionID: "ses_v1_000_000_s1", Reason: "end_user"}}
 	m.Sandbox(ctx, s, "call_1", time.Second, at)
 	rows, _ := store.Report(ctx, usage.Query{BusinessLine: "a", From: at, To: at.Add(time.Hour), GroupBy: usage.ByEndUser})
 	if len(rows) != 2 || rows[0].Key != "x" || rows[0].Calls != 1 || rows[1].Key != usage.Anonymous || rows[1].Calls != 1 {

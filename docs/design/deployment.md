@@ -93,13 +93,13 @@ worker        worker-bg     sandbox-ctl        janitor
 
 Janitor 的 Sweep 同时把 Horizon 内的远期停放移回工作队列（[M7 §5.4](./m7-kernel-primitives.md#54-语义)）。默认 Horizon 一小时、Sweep 每分钟；每批 1000 项，每批重新取当前时间，直到不足一批或时间预算用尽。一次 Sweep 的全部队列迁移共用 `Janitor.PromoteBudget`，默认 SweepEvery 的一半（30 秒），可通过字段设置；在批次边界检查预算，允许已开始的一批完成。Horizon 须覆盖多轮扫描与重试。Janitor 停摆超过 Horizon，或积压长期超过预算内的迁移能力，会导致定时晚到；恢复后继续迁移，不会提前执行。
 
-### 数据库分片与兼容定位
+### 数据库分片与定位
 
 [ADR-0051](../adr/0051-shard-slots-and-id-location.md) 固定 1024 槽：SHA-256 的前八字节按大端解释后 `% 1024`，再由部署静态表映射到稳定分片号；不能 `% 当前库数`。Session 数据读 Session ID 的自身槽位，ByEndUser 的 Session 索引读其第二个槽位；工件与调用随 Session，Memory、Grant、用量、Tier 等随 EndUser。槽位只决定查哪个库，授权仍核对真实归属。
 
 `internal/app.Sharded` 在装配层把每库一整套 `Stores` 组合起来；每库由 `PostgresShard` 构造自己的 Log、三类 Queue、Waking、Snapshots、Outbox 与其他存储。在线方法以参数中的真实键经 `Locator` 选唯一分片，不逐库探测。PG 工件与索引的 `Select` 只断言目标就是本库，不再另选连接。内存分片沿用同一包装，serve、sim、eval、e2e 仍经 `app.Stores` / `app.NewCore` 装配。
 
-**P4 只支持新建单元，或全部槽位留在库 0 的既有单元。把旧数据迁离库 0 不在 P4 支持范围。**（阶段缺口，见 ADR-0051 §5；2026-11-14 补充） 静态映射无法覆盖旧 Session 之后生成的旧式工件与派生 ID；支持这种迁移需要另行设计在线目录。多库新单元必须关闭旧数据回退且兼容条目为空；既有单元允许使用兼容清单，但全部槽与条目必须仍指向库 0。不能添加一条无关映射绕过启用前提。历史预检与兼容条目的语义仍见 [ADR-0051](../adr/0051-shard-slots-and-id-location.md) §5。
+所有 ID 都带版本与槽位；无版本或损坏的 ID 报错，不回退任何库。旧格式 ID 的兼容（兼容清单、库 0 回退、历史预检）已于上线前删除（2026-11-15，[ADR-0051](../adr/0051-shard-slots-and-id-location.md) §5），任何单元都可以把槽位分到多个库，迁槽按 ADR-0051 §5.4 停写进行。
 
 #### 配置与迁移
 
@@ -109,17 +109,13 @@ Janitor 的 Sweep 同时把 Horizon 内的远期停放移回工作队列（[M7 �
 
 ```json
 {
+  "version": "cell-v1",
   "table": {
     "shards": [0, 1],
     "ranges": [
       {"first": 0, "last": 511, "shard": 0},
       {"first": 512, "last": 1023, "shard": 1}
     ]
-  },
-  "compatibility": {
-    "version": "new-cell-v1",
-    "legacy_data_in_shard0": false,
-    "entries": []
   },
   "databases": [
     {"id": 0, "sql_dsn": "postgres://sql-proxy/kernel0", "direct_dsn": "postgres://pg0/kernel0"},
@@ -128,11 +124,11 @@ Janitor 的 Sweep 同时把 Horizon 内的远期停放移回工作队列（[M7 �
 }
 ```
 
-文件包含凭据时按 Secret 管理；DSN 和兼容清单不写日志。解析拒绝未知字段、重复字段、重复或缺失分片、遗漏 DSN，并调用 `ValidateActivation`。迁移 0041 建立固定 `public.shard_identity`（Global，每库各一行），含随机 `instance_id` 与配置中的 `shard_id`。分片迁移先应用 schema，再用 INSERT ON CONFLICT 初始化空身份，随后只读核对，绝不改绑已有分片号。固定 public 防止两个 schema 把同一个 database 伪装成两个分片。SQL/直连必须读取同一身份和业务 schema；实例 ID 不得跨片重复，DSN 互换或重复都拒绝。运行角色只需 SELECT 身份表，不再依赖 `pg_control_system()`。主备复制保留该行，切换协议与旧主隔离见 §10。
+文件包含凭据时按 Secret 管理；DSN 不写日志。解析拒绝未知字段、重复字段、缺失版本、重复或缺失分片、遗漏 DSN。迁移 0041 建立固定 `public.shard_identity`（Global，每库各一行），含随机 `instance_id` 与配置中的 `shard_id`。分片迁移先应用 schema，再用 INSERT ON CONFLICT 初始化空身份，随后只读核对，绝不改绑已有分片号。固定 public 防止两个 schema 把同一个 database 伪装成两个分片。SQL/直连必须读取同一身份和业务 schema；实例 ID 不得跨片重复，DSN 互换或重复都拒绝。运行角色只需 SELECT 身份表，不再依赖 `pg_control_system()`。主备复制保留该行，切换协议与旧主隔离见 §10。
 
 生产先运行 `yanshi migrate -shards <file>`，再让各角色以 `-migrate=false` 启动；开发可用 `-migrate=true` 逐库迁移。每库使用自己的 SQL 池、直连池与 Notifier；迁移锁只走直连，启动检查可达 SQL 入口的迁移与身份，并启动每库独立重连的 Notifier。`-migrate=false` 时暂时不可达的库保留池、等待恢复，不阻止健康片冷启动；可达库身份/迁移错误仍阻止启动。恢复目标必须再次通过身份、schema 与迁移校验。所有角色使用相同配置，全部角色合在一个进程仍可运行。`notify-shards` 只控制每库内部的通知频道数，与数据库分片数无关。
 
-`/readyz` 的 `X-Yanshi-Routing` 返回 `Locator.Identity()` 的摘要（不含 DSN）；发布时核对所有角色实例的摘要相同，不能只比兼容版本标签。就绪探针返回每片 `sql`、`migrations`、`migration_version`、`listen`、`identity`，即使失联也保留该片。探测并发 4、每片 1 秒、整轮 4 秒，结果缓存至多 1 秒。
+`/readyz` 的 `X-Yanshi-Routing` 返回 `Locator.Identity()` 的摘要（不含 DSN）；发布时核对所有角色实例的摘要相同，不能只比版本标签。就绪探针返回每片 `sql`、`migrations`、`migration_version`、`listen`、`identity`，即使失联也保留该片。探测并发 4、每片 1 秒、整轮 4 秒，结果缓存至多 1 秒。
 
 | 角色 | 就绪规则 | 理由 |
 |---|---|---|

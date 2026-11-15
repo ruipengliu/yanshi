@@ -52,7 +52,7 @@ func TestXinliFixtureMCPHeadersAcrossBusinessLines(t *testing.T) {
 		if err != nil || len(tools) != 1 || tools[0].Spec.Name != "mcp_xinli__list_projects" {
 			t.Fatalf("business line %s failed MCP discovery: %v", line, err)
 		}
-		blocks, err := tools[0].Local.Invoke(ctx, capability.Invocation{BusinessLine: line, EndUser: "u", SessionID: "test-session", CallID: "list-projects", Arguments: `{}`})
+		blocks, err := tools[0].Local.Invoke(ctx, capability.Invocation{BusinessLine: line, EndUser: "u", SessionID: "ses_v1_000_000_test-session", CallID: "list-projects", Arguments: `{}`})
 		if err != nil {
 			t.Fatal(err)
 		}

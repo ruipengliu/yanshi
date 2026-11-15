@@ -35,7 +35,7 @@ func BenchmarkCheck(b *testing.B) {
 		b.Run(fmt.Sprint(n, "runs"), func(b *testing.B) {
 			b.ReportAllocs()
 			for range b.N {
-				if err := st.Check(&v1.Event{SessionId: "s", Payload: payload}); err != nil {
+				if err := st.Check(&v1.Event{SessionId: "ses_v1_000_000_s", Payload: payload}); err != nil {
 					b.Fatal(err)
 				}
 			}

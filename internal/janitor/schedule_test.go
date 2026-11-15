@@ -75,9 +75,10 @@ func TestScheduleReconciliationPages(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	due := e.clk.Now().Add(7 * 24 * time.Hour)
-	// 显式使用有序 ID，使前 100 行始终有效，最后一行才是陈旧的豁免。
+	// 显式使用有序 ID，使前 100 行始终有效，最后一行才是陈旧的豁免。数据槽固定为 000、EndUser 槽是 "u" 的槽位
+	// （0e7），ID 的排序因此只由末尾的序号决定。
 	for i := range 101 {
-		sid, err := e.core.Service.Create(ctx, service.CreateRequest{SessionID: fmt.Sprintf("page-%03d", i), BusinessLine: "bl", EndUser: "u", Agent: "day"})
+		sid, err := e.core.Service.Create(ctx, service.CreateRequest{SessionID: fmt.Sprintf("ses_v1_000_0e7_page-%03d", i), BusinessLine: "bl", EndUser: "u", Agent: "day"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -96,7 +97,7 @@ func TestScheduleReconciliationPages(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	st, err := e.core.Service.Load(ctx, "page-100")
+	st, err := e.core.Service.Load(ctx, "ses_v1_000_0e7_page-100")
 	if err != nil || st.Closed == nil {
 		t.Fatalf("last page blocked: %v %v", st, err)
 	}

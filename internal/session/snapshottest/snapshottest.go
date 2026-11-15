@@ -17,25 +17,25 @@ func Run(t *testing.T, newStore func(t *testing.T) session.Snapshots) {
 	}
 	t.Run("PutKeepsNewestAndDelete", func(t *testing.T) {
 		s := newStore(t)
-		if got, err := s.Get(ctx, "s1"); err != nil || got != nil {
+		if got, err := s.Get(ctx, "ses_v1_000_000_s1"); err != nil || got != nil {
 			t.Fatalf("missing = %v, %v", got, err)
 		}
-		_ = s.Put(ctx, snap("s1", 10))
-		_ = s.Put(ctx, snap("s1", 5)) // 更旧：不覆盖
-		_ = s.Put(ctx, snap("s2", 3))
-		got, err := s.Get(ctx, "s1")
+		_ = s.Put(ctx, snap("ses_v1_000_000_s1", 10))
+		_ = s.Put(ctx, snap("ses_v1_000_000_s1", 5)) // 更旧：不覆盖
+		_ = s.Put(ctx, snap("ses_v1_000_000_s2", 3))
+		got, err := s.Get(ctx, "ses_v1_000_000_s1")
 		if err != nil || got.GetSeq() != 10 || got.GetCreated().GetEndUser() != "u" || len(got.GetCallIds()) != 1 {
 			t.Fatalf("get = %v, %v", got, err)
 		}
-		_ = s.Put(ctx, snap("s1", 12))
-		if got, _ := s.Get(ctx, "s1"); got.GetSeq() != 12 {
+		_ = s.Put(ctx, snap("ses_v1_000_000_s1", 12))
+		if got, _ := s.Get(ctx, "ses_v1_000_000_s1"); got.GetSeq() != 12 {
 			t.Fatalf("newer snapshot not stored: %d", got.GetSeq())
 		}
-		_ = s.Delete(ctx, "s1")
-		if got, _ := s.Get(ctx, "s1"); got != nil {
+		_ = s.Delete(ctx, "ses_v1_000_000_s1")
+		if got, _ := s.Get(ctx, "ses_v1_000_000_s1"); got != nil {
 			t.Fatal("deleted snapshot still present")
 		}
-		if got, _ := s.Get(ctx, "s2"); got.GetSeq() != 3 {
+		if got, _ := s.Get(ctx, "ses_v1_000_000_s2"); got.GetSeq() != 3 {
 			t.Fatal("delete touched another session")
 		}
 	})

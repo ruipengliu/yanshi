@@ -295,7 +295,8 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		w.Header().Set("Retry-After", "1")
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "shard_unavailable"})
 		return
-	case errors.Is(err, service.ErrNotFound), errors.Is(err, oneshot.ErrNotFound):
+	case errors.Is(err, service.ErrNotFound), errors.Is(err, oneshot.ErrNotFound), errors.Is(err, shard.ErrInvalidID):
+		// 无法解析的 ID 不可能指向任何对象，按不存在处理。
 		code = http.StatusNotFound
 	case errors.Is(err, errForbidden):
 		code = http.StatusForbidden

@@ -10,7 +10,7 @@ func TestHashVectors(t *testing.T) {
 	}
 }
 
-func TestTableAndLegacy(t *testing.T) {
+func TestTable(t *testing.T) {
 	c := Config{Shards: []int{0, 7}, Ranges: []Range{{First: 0, Last: 511, Shard: 7}, {First: 512, Last: 1023, Shard: 0}}}
 	table, err := NewTable(c)
 	if err != nil {
@@ -22,21 +22,16 @@ func TestTableAndLegacy(t *testing.T) {
 		if slot < 512 {
 			want = 7
 		}
-		if got, err := table.Shard(slot, false); err != nil || got != want {
+		if got, err := table.Shard(slot); err != nil || got != want {
 			t.Fatalf("slot %d -> %d, %v; want %d", slot, got, err, want)
-		}
-		if got, err := table.Shard(slot, true); err != nil || got != 0 {
-			t.Fatalf("legacy -> %d, %v; want compatibility shard 0", got, err)
 		}
 	}
 	for _, slot := range []int{-1, SlotCount} {
-		for _, legacy := range []bool{false, true} {
-			if _, err := table.Shard(slot, legacy); err == nil {
-				t.Errorf("accepted slot %d, legacy %v", slot, legacy)
-			}
+		if _, err := table.Shard(slot); err == nil {
+			t.Errorf("accepted slot %d", slot)
 		}
 	}
-	if _, err := (Table{}).Shard(0, true); err == nil {
+	if _, err := (Table{}).Shard(0); err == nil {
 		t.Fatal("zero table accepted")
 	}
 }
@@ -46,7 +41,7 @@ func TestParseTable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := table.Shard(1023, false); err != nil || got != 1 {
+	if got, err := table.Shard(1023); err != nil || got != 1 {
 		t.Fatalf("last slot = %d, %v", got, err)
 	}
 	for _, raw := range []string{
@@ -83,10 +78,9 @@ func TestRemapDoesNotChangeSlots(t *testing.T) {
 		t.Fatal(err)
 	}
 	slot := Hash("u")
-	a, errA := one.Shard(slot, false)
-	b, errB := two.Shard(slot, false)
-	legacy, errLegacy := two.Shard(0, true)
-	if slot != 455 || a != 0 || b != 1 || legacy != 0 || errA != nil || errB != nil || errLegacy != nil {
-		t.Fatalf("remap = slot %d, shards %d/%d, legacy %d, errors %v/%v/%v", slot, a, b, legacy, errA, errB, errLegacy)
+	a, errA := one.Shard(slot)
+	b, errB := two.Shard(slot)
+	if slot != 455 || a != 0 || b != 1 || errA != nil || errB != nil {
+		t.Fatalf("remap = slot %d, shards %d/%d, errors %v/%v", slot, a, b, errA, errB)
 	}
 }

@@ -277,7 +277,9 @@ func TestArtifacts(t *testing.T) {
 		t.Fatalf("list = %+v", list)
 	}
 
-	for path, want := range map[string]int{"/v1/artifacts/art_missing": 404, "/v1/artifacts/art_missing/meta": 404} {
+	// 无法解析的 ID（含旧格式的无版本 ID）不可能指向任何对象，按不存在返回 404，不能是 500（ADR-0051）。
+	for path, want := range map[string]int{"/v1/artifacts/art_missing": 404, "/v1/artifacts/art_missing/meta": 404,
+		"/v1/artifacts/art_v9_000_x/meta": 404, "/v1/sessions/ses_legacy": 404, "/v1/sessions/ses_v1_100_000_x": 404} {
 		r, _ := http.Get(srv.URL + path)
 		r.Body.Close()
 		if r.StatusCode != want {

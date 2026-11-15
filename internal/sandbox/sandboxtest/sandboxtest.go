@@ -15,10 +15,10 @@ func RunActivity(t *testing.T, newActivity func(t *testing.T) sandbox.Activity) 
 
 	t.Run("ClaimIdleOnlyOldAndOnce", func(t *testing.T) {
 		a := newActivity(t)
-		_ = a.Touch(ctx, "old", t0)
-		_ = a.Touch(ctx, "fresh", t0.Add(time.Hour))
+		_ = a.Touch(ctx, "ses_v1_000_000_old", t0)
+		_ = a.Touch(ctx, "ses_v1_000_000_fresh", t0.Add(time.Hour))
 		ids, err := a.ClaimIdle(ctx, t0.Add(time.Minute), 10)
-		if err != nil || len(ids) != 1 || ids[0] != "old" {
+		if err != nil || len(ids) != 1 || ids[0] != "ses_v1_000_000_old" {
 			t.Fatalf("claim = %v, %v", ids, err)
 		}
 		if ids, _ := a.ClaimIdle(ctx, t0.Add(time.Minute), 10); len(ids) != 0 {
@@ -28,8 +28,8 @@ func RunActivity(t *testing.T, newActivity func(t *testing.T) sandbox.Activity) 
 
 	t.Run("Delete", func(t *testing.T) {
 		a := newActivity(t)
-		_ = a.Touch(ctx, "x", t0)
-		if err := a.Delete(ctx, "x"); err != nil {
+		_ = a.Touch(ctx, "ses_v1_000_000_x", t0)
+		if err := a.Delete(ctx, "ses_v1_000_000_x"); err != nil {
 			t.Fatal(err)
 		}
 		if ids, _ := a.ClaimIdle(ctx, t0.Add(time.Hour), 10); len(ids) != 0 {
@@ -39,8 +39,8 @@ func RunActivity(t *testing.T, newActivity func(t *testing.T) sandbox.Activity) 
 
 	t.Run("TouchNeverMovesBackwards", func(t *testing.T) {
 		a := newActivity(t)
-		_ = a.Touch(ctx, "s", t0.Add(time.Hour))
-		_ = a.Touch(ctx, "s", t0)
+		_ = a.Touch(ctx, "ses_v1_000_000_s", t0.Add(time.Hour))
+		_ = a.Touch(ctx, "ses_v1_000_000_s", t0)
 		if ids, _ := a.ClaimIdle(ctx, t0.Add(time.Minute), 10); len(ids) != 0 {
 			t.Fatalf("older touch overrode newer: %v", ids)
 		}
@@ -48,7 +48,7 @@ func RunActivity(t *testing.T, newActivity func(t *testing.T) sandbox.Activity) 
 
 	t.Run("Limit", func(t *testing.T) {
 		a := newActivity(t)
-		for _, id := range []string{"a", "b", "c"} {
+		for _, id := range []string{"ses_v1_000_000_a", "ses_v1_000_000_b", "ses_v1_000_000_c"} {
 			_ = a.Touch(ctx, id, t0)
 		}
 		ids, _ := a.ClaimIdle(ctx, t0.Add(time.Minute), 2)

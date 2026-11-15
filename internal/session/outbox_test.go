@@ -61,7 +61,7 @@ func TestSelectEnvelope(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			tc.event.SessionId, tc.event.Seq = "s", st.Seq+1
+			tc.event.SessionId, tc.event.Seq = "ses_v1_000_000_s", st.Seq+1
 			if err := st.Check(tc.event); err != nil {
 				t.Fatal(err)
 			}
@@ -76,7 +76,7 @@ func TestSelectEnvelope(t *testing.T) {
 				}
 				return
 			}
-			want := &outbox.Envelope{EnvelopeID: outbox.ID("s", tc.event.Seq, tc.kind), BusinessLine: "bl", EndUser: "u", SessionID: "s",
+			want := &outbox.Envelope{EnvelopeID: outbox.ID("ses_v1_000_000_s", tc.event.Seq, tc.kind), BusinessLine: "bl", EndUser: "u", SessionID: "ses_v1_000_000_s",
 				Seq: tc.event.Seq, Kind: tc.kind, RunID: tc.run, CallID: tc.call, Agent: st.Agent.GetName(), AgentVersion: st.Agent.GetVersion()}
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("envelope=%+v want=%+v", got, want)
@@ -92,7 +92,7 @@ func TestCommitEnvelopeUsesPerEventAgent(t *testing.T) {
 		log := memlog.NewWithOutbox(o)
 		q := memqueue.New(clock.Real{})
 		s := &Store{Log: log, Waking: log.Waking(q), Outbox: o, Clock: clock.Real{}, IDs: ids.Sequential("e")}
-		st := &State{SessionID: "s"}
+		st := &State{SessionID: "ses_v1_000_000_s"}
 		c := created()
 		c.GetSessionCreated().Agent = &v1.AgentRef{Name: "a", Version: "1"}
 		switchAgent := &v1.Event{Payload: &v1.Event_AgentSwitched{AgentSwitched: &v1.AgentSwitched{
@@ -120,7 +120,7 @@ func TestInvalidBatchLeavesNoEnvelopes(t *testing.T) {
 	o := memoutbox.New()
 	log := memlog.NewWithOutbox(o)
 	s := &Store{Log: log, Outbox: o, Clock: clock.Real{}, IDs: ids.Sequential("e")}
-	st := &State{SessionID: "s"}
+	st := &State{SessionID: "ses_v1_000_000_s"}
 	err := s.Commit(context.Background(), st, created(), requested("r1"), attempt("r1", 1), completed("r1", 1), failed("r1", 1))
 	if err == nil {
 		t.Fatal("invalid batch accepted")

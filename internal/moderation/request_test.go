@@ -18,9 +18,9 @@ func TestForInput(t *testing.T) {
 		&v1.ContentBlock{Kind: &v1.ContentBlock_Media{Media: &v1.Media{MimeType: "audio/wav", Uri: "artifact://art_voice"}}},
 		&v1.ContentBlock{Kind: &v1.ContentBlock_Media{Media: &v1.Media{MimeType: "application/pdf", Uri: "artifact://art_doc"}}},
 	)
-	got := moderation.ForInput("bl", "s1", input)
+	got := moderation.ForInput("bl", "ses_v1_000_000_s1", input)
 	want := moderation.Request{
-		Stage: moderation.Input, BusinessLine: "bl", SessionID: "s1",
+		Stage: moderation.Input, BusinessLine: "bl", SessionID: "ses_v1_000_000_s1",
 		// 设备标签由平台填写，不是用户提交的内容，不送检。
 		Text:   "看看这个\n" + model.CardActionText(action) + "\n订单详情\norder://A1\n选中\n可见",
 		Images: []moderation.Image{{ArtifactID: "art_img", MimeType: "image/png"}},
@@ -32,12 +32,12 @@ func TestForInput(t *testing.T) {
 }
 
 func TestForOutputAndTranscript(t *testing.T) {
-	if got := moderation.ForOutput("bl", "s1", "好的"); !reflect.DeepEqual(got, moderation.Request{Stage: moderation.Output, BusinessLine: "bl", SessionID: "s1", Text: "好的"}) {
+	if got := moderation.ForOutput("bl", "ses_v1_000_000_s1", "好的"); !reflect.DeepEqual(got, moderation.Request{Stage: moderation.Output, BusinessLine: "bl", SessionID: "ses_v1_000_000_s1", Text: "好的"}) {
 		t.Fatalf("ForOutput: %+v", got)
 	}
 	for role, stage := range map[string]moderation.Stage{"assistant": moderation.Output, "user": moderation.Input} {
-		got := moderation.ForTranscript("bl", "s1", role, "你好")
-		if got.Stage != stage || got.BusinessLine != "bl" || got.SessionID != "s1" || got.Text != "你好" {
+		got := moderation.ForTranscript("bl", "ses_v1_000_000_s1", role, "你好")
+		if got.Stage != stage || got.BusinessLine != "bl" || got.SessionID != "ses_v1_000_000_s1" || got.Text != "你好" {
 			t.Fatalf("ForTranscript(%s): %+v", role, got)
 		}
 	}

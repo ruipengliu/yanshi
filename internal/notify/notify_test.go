@@ -49,7 +49,7 @@ func setup(t *testing.T) (*notify.Notifier, *fakePusher, *presence.Mem, *notify.
 	return &notify.Notifier{Registry: reg, Presence: pres, Pusher: push, Clock: clock.NewFake(t0.Add(time.Hour))}, push, pres, reg
 }
 
-var approval = notify.Notification{Kind: notify.Approval, BusinessLine: "bl", EndUser: "u", SessionID: "s1", RunID: "r1", CallID: "c1"}
+var approval = notify.Notification{Kind: notify.Approval, BusinessLine: "bl", EndUser: "u", SessionID: "ses_v1_000_000_s1", RunID: "r1", CallID: "c1"}
 
 // TestPushesMostRecentDevice：只推给最近使用的一台设备，消息只含种类与 ID。
 func TestPushesMostRecentDevice(t *testing.T) {
@@ -58,7 +58,7 @@ func TestPushesMostRecentDevice(t *testing.T) {
 	if err != nil || out != notify.Pushed || len(push.pushed) != 1 || push.pushed[0] != "phone" {
 		t.Fatalf("outcome %s err %v pushed %v", out, err, push.pushed)
 	}
-	if m := push.msgs[0]; m != (notify.Message{Kind: notify.Approval, SessionID: "s1", RunID: "r1", CallID: "c1"}) {
+	if m := push.msgs[0]; m != (notify.Message{Kind: notify.Approval, SessionID: "ses_v1_000_000_s1", RunID: "r1", CallID: "c1"}) {
 		t.Fatalf("message = %+v", m)
 	}
 }
@@ -67,7 +67,7 @@ func TestPushesMostRecentDevice(t *testing.T) {
 func TestNoPushWhileWatching(t *testing.T) {
 	n, push, pres, _ := setup(t)
 	ctx := context.Background()
-	e := &presence.Entry{SessionID: "s1", ConnID: "c", DeviceID: "pc", Expires: t0.Add(2 * time.Hour)}
+	e := &presence.Entry{SessionID: "ses_v1_000_000_s1", ConnID: "c", DeviceID: "pc", Expires: t0.Add(2 * time.Hour)}
 	_ = pres.Put(ctx, e)
 	if out, _ := n.Deliver(ctx, approval); out != notify.Pushed {
 		t.Fatalf("subscribed but not focused: %s", out)
@@ -79,7 +79,7 @@ func TestNoPushWhileWatching(t *testing.T) {
 	}
 	// 其他 Session 被聚焦不影响。
 	other := approval
-	other.SessionID = "s2"
+	other.SessionID = "ses_v1_000_000_s2"
 	if out, _ := n.Deliver(ctx, other); out != notify.Pushed {
 		t.Fatalf("another session focused: %s", out)
 	}

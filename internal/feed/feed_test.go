@@ -48,19 +48,19 @@ func TestStreamRecoversFromWaitErrors(t *testing.T) {
 	ev := func(i int) *v1.Event {
 		return &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r" + string(rune('0'+i))}}}
 	}
-	if _, err := log.Append(ctx, "s1", 0, nil, ev(1)); err != nil {
+	if _, err := log.Append(ctx, "ses_v1_000_000_s1", 0, nil, ev(1)); err != nil {
 		t.Fatal(err)
 	}
 	sink := chanSink{events: make(chan *v1.Event, 8)}
 	stopped := make(chan struct{})
 	go func() {
-		_ = Source{Log: log, Live: live.Discard{}}.Stream(ctx, &session.State{SessionID: "s1"}, 0, sink)
+		_ = Source{Log: log, Live: live.Discard{}}.Stream(ctx, &session.State{SessionID: "ses_v1_000_000_s1"}, 0, sink)
 		close(stopped)
 	}()
 	defer func() { cancel(); <-stopped }() // 先于下一个用例修改退避参数结束
 	for i := 1; i <= 3; i++ {
 		if i > 1 {
-			if _, err := log.Append(ctx, "s1", uint64(i-1), nil, ev(i)); err != nil {
+			if _, err := log.Append(ctx, "ses_v1_000_000_s1", uint64(i-1), nil, ev(i)); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -82,10 +82,10 @@ func TestStreamEndsWhenSessionDeleted(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		src := Source{Log: memlog.New(), Live: live.Discard{}, Deletions: dels, PingInterval: time.Hour}
-		done <- src.Stream(ctx, &session.State{SessionID: "s1"}, 0, chanSink{events: make(chan *v1.Event, 8)})
+		done <- src.Stream(ctx, &session.State{SessionID: "ses_v1_000_000_s1"}, 0, chanSink{events: make(chan *v1.Event, 8)})
 	}()
 	time.Sleep(20 * time.Millisecond)
-	if _, err := dels.Mark(ctx, &lifecycle.Tombstone{SessionID: "s1", BusinessLine: "bl", Reason: "user", RequestedAt: time.Now()}); err != nil {
+	if _, err := dels.Mark(ctx, &lifecycle.Tombstone{SessionID: "ses_v1_000_000_s1", BusinessLine: "bl", Reason: "user", RequestedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	select {

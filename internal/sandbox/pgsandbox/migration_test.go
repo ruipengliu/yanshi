@@ -29,7 +29,7 @@ func TestLedgerMigrationPreservesStartedAndRequiresSession(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var sid any = "ses_legacy"
+			var sid any = "ses_v1_000_000_old"
 			if missingSession {
 				sid = nil
 			}
@@ -54,14 +54,14 @@ func TestLedgerMigrationPreservesStartedAndRequiresSession(t *testing.T) {
 				t.Fatal(err)
 			}
 			l := pgsandbox.Ledger{Pool: pool}
-			r, err := l.Get("ses_legacy", "c")
+			r, err := l.Get("ses_v1_000_000_old", "c")
 			if err != nil || r.State != nodesdk.StateStarted {
 				t.Fatalf("lost in-flight identity: %+v, %v", r, err)
 			}
-			if err := l.Put("other", "c", &nodesdk.Record{SessionID: "other", State: nodesdk.StateDone}); err != nil {
+			if err := l.Put("ses_v1_000_000_other", "c", &nodesdk.Record{SessionID: "ses_v1_000_000_other", State: nodesdk.StateDone}); err != nil {
 				t.Fatal(err)
 			}
-			r, err = l.Get("ses_legacy", "c")
+			r, err = l.Get("ses_v1_000_000_old", "c")
 			if err != nil || r.State != nodesdk.StateStarted {
 				t.Fatalf("old call overwritten: %+v, %v", r, err)
 			}

@@ -66,7 +66,7 @@ func TestRunFailureAfterDeletionDropsWorker(t *testing.T) {
 			if invoked != 1 || lost && len(w.executed) != 1 {
 				t.Fatalf("invoked=%d pending results=%d", invoked, len(w.executed))
 			}
-			if _, err := deletions.Mark(ctx, &lifecycle.Tombstone{SessionID: "s1", BusinessLine: "bl", Reason: "service", RequestedAt: clk.Now()}); err != nil {
+			if _, err := deletions.Mark(ctx, &lifecycle.Tombstone{SessionID: "ses_v1_000_000_s1", BusinessLine: "bl", Reason: "service", RequestedAt: clk.Now()}); err != nil {
 				t.Fatal(err)
 			}
 			if did, err := w.Step(ctx); err != nil || !did {
@@ -75,7 +75,7 @@ func TestRunFailureAfterDeletionDropsWorker(t *testing.T) {
 			if w.lease != nil || w.st != nil || w.runID != "" || w.attempt != 0 || w.executed != nil || w.modelErrors != 0 || w.forceCompact || !w.failingSince.IsZero() {
 				t.Fatal("deleted session retained worker state")
 			}
-			events, err := log.Read(ctx, "s1", 0, 0)
+			events, err := log.Read(ctx, "ses_v1_000_000_s1", 0, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -89,7 +89,7 @@ func TestRunFailureAfterDeletionDropsWorker(t *testing.T) {
 				t.Fatalf("failure path not exercised: failures=%d invoked=%d", failures, invoked)
 			}
 			rows, err := o.List(ctx, "bl")
-			if err != nil || len(rows) != 1 || rows[0] != outbox.Deleted("bl", "s1", "service", "") {
+			if err != nil || len(rows) != 1 || rows[0] != outbox.Deleted("bl", "ses_v1_000_000_s1", "service", "") {
 				t.Fatalf("deletion envelopes=%+v err=%v", rows, err)
 			}
 		})

@@ -97,7 +97,7 @@ func TestPlanCompaction(t *testing.T) {
 		if !st.CanCut(through) || through >= st.History[len(st.History)-1].GetSeq() {
 			t.Fatalf("invalid cut %d", through)
 		}
-		e := &v1.Event{SessionId: "s", Seq: st.Seq + 1, Payload: &v1.Event_ContextCompacted{ContextCompacted: &v1.ContextCompacted{
+		e := &v1.Event{SessionId: "ses_v1_000_000_s", Seq: st.Seq + 1, Payload: &v1.Event_ContextCompacted{ContextCompacted: &v1.ContextCompacted{
 			RunId: "r1", Attempt: 1, ThroughSeq: through, Summary: model.TextBlocks(strings.Repeat("s", 60)),
 		}}}
 		if err := st.Apply(e); err != nil {

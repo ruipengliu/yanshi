@@ -204,7 +204,7 @@ func RunDirectory(t *testing.T, newDir func(t *testing.T, c clock.Clock) node.Di
 func RunInbox(t *testing.T, newInbox func(t *testing.T) node.Inbox) {
 	ctx := context.Background()
 	inv := func(id string) *v1.Invoke {
-		return &v1.Invoke{SessionId: "s", RunId: "r", CallId: id, Capability: "read_file"}
+		return &v1.Invoke{SessionId: "ses_v1_000_000_s", RunId: "r", CallId: id, Capability: "read_file"}
 	}
 	ids := func(items []*v1.Invoke) []string {
 		var out []string
@@ -218,7 +218,7 @@ func RunInbox(t *testing.T, newInbox func(t *testing.T) node.Inbox) {
 		in := newInbox(t)
 		for _, user := range []string{"alice", "bob"} {
 			i := inv("same-call")
-			i.SessionId = user + "-session"
+			i.SessionId = "ses_v1_000_000_" + user + "-session"
 			if err := in.Put(ctx, user, "same-node", i); err != nil {
 				t.Fatal(err)
 			}
@@ -234,17 +234,17 @@ func RunInbox(t *testing.T, newInbox func(t *testing.T) node.Inbox) {
 			t.Fatalf("alice: %v, %v", items, err)
 		}
 		items, version, err := in.Pending(ctx, "bob", "same-node")
-		if err != nil || len(items) != 1 || items[0].GetSessionId() != "bob-session" || version != bobVersion {
+		if err != nil || len(items) != 1 || items[0].GetSessionId() != "ses_v1_000_000_bob-session" || version != bobVersion {
 			t.Fatalf("bob: %v, version %d/%d, %v", items, version, bobVersion, err)
 		}
 		// 已知 EndUser 时仅处理该用户，即使别的用户的副本也写了同一 Session。
-		if err := in.RemoveSession(ctx, "alice", "bob-session"); err != nil {
+		if err := in.RemoveSession(ctx, "alice", "ses_v1_000_000_bob-session"); err != nil {
 			t.Fatal(err)
 		}
 		if items, _, err := in.Pending(ctx, "bob", "same-node"); err != nil || len(items) != 1 {
 			t.Fatalf("scoped sweep crossed users: %v, %v", items, err)
 		}
-		if err := in.RemoveSession(ctx, "bob", "bob-session"); err != nil {
+		if err := in.RemoveSession(ctx, "bob", "ses_v1_000_000_bob-session"); err != nil {
 			t.Fatal(err)
 		}
 		if items, _, err := in.Pending(ctx, "bob", "same-node"); err != nil || len(items) != 0 {
@@ -258,16 +258,16 @@ func RunInbox(t *testing.T, newInbox func(t *testing.T) node.Inbox) {
 			if err := in.Put(ctx, user, "n", inv("a")); err != nil {
 				t.Fatal(err)
 			}
-			if err := in.Put(ctx, user, "n", &v1.Invoke{SessionId: "keep", CallId: "b"}); err != nil {
+			if err := in.Put(ctx, user, "n", &v1.Invoke{SessionId: "ses_v1_000_000_keep", CallId: "b"}); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if err := in.RemoveSession(ctx, "", "s"); err != nil {
+		if err := in.RemoveSession(ctx, "", "ses_v1_000_000_s"); err != nil {
 			t.Fatal(err)
 		}
 		for _, user := range []string{"alice", "bob"} {
 			items, version, err := in.Pending(ctx, user, "n")
-			if err != nil || len(items) != 1 || items[0].GetSessionId() != "keep" || version != 3 {
+			if err != nil || len(items) != 1 || items[0].GetSessionId() != "ses_v1_000_000_keep" || version != 3 {
 				t.Fatalf("sweep %s: %v, version %d, %v", user, items, version, err)
 			}
 		}
@@ -314,7 +314,7 @@ func RunInbox(t *testing.T, newInbox func(t *testing.T) node.Inbox) {
 		if v1 != v2 {
 			t.Fatal("duplicate put changed version")
 		}
-		if items[0].GetCapability() != "read_file" || items[0].GetSessionId() != "s" {
+		if items[0].GetCapability() != "read_file" || items[0].GetSessionId() != "ses_v1_000_000_s" {
 			t.Fatalf("item = %v", items[0])
 		}
 	})
@@ -363,11 +363,11 @@ func RunInbox(t *testing.T, newInbox func(t *testing.T) node.Inbox) {
 	t.Run("RemoveSessionAcrossNodes", func(t *testing.T) {
 		b := newInbox(t)
 		put := func(nodeID, sid, call string) { _ = b.Put(ctx, "u", nodeID, &v1.Invoke{SessionId: sid, CallId: call}) }
-		put("n1", "s1", "c1")
-		put("n1", "s2", "c2")
-		put("n2", "s1", "c3")
+		put("n1", "ses_v1_000_000_s1", "c1")
+		put("n1", "ses_v1_000_000_s2", "c2")
+		put("n2", "ses_v1_000_000_s1", "c3")
 		_, v1Before, _ := b.Pending(ctx, "u", "n1")
-		if err := b.RemoveSession(ctx, "u", "s1"); err != nil {
+		if err := b.RemoveSession(ctx, "u", "ses_v1_000_000_s1"); err != nil {
 			t.Fatal(err)
 		}
 		p1, v1After, _ := b.Pending(ctx, "u", "n1")

@@ -16,7 +16,7 @@ import (
 )
 
 func TestShardOutageHealthySessionContinues(t *testing.T) {
-	l, err := shard.ParseDeployment([]byte(`{"table":{"shards":[0,1],"ranges":[{"first":0,"last":511,"shard":0},{"first":512,"last":1023,"shard":1}]},"compatibility":{"version":"e2e"}}`))
+	l, err := shard.ParseDeployment([]byte(`{"version":"e2e","table":{"shards":[0,1],"ranges":[{"first":0,"last":511,"shard":0},{"first":512,"last":1023,"shard":1}]}}`))
 	if err != nil {
 		t.Fatal(err)
 	}

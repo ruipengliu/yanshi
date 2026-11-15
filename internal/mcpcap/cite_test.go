@@ -23,7 +23,7 @@ func TestAttestedCitationsLatestAndSnapshotPrefix(t *testing.T) {
 	ctx := context.Background()
 	log := citationNamespaceLog(t)
 	for _, seq := range []uint64{0, 2, 3, 4} {
-		got, err := mcpcap.AttestedCitations(ctx, log, "s", seq, json.RawMessage(`["#2.0","#2.1","#999.0"]`))
+		got, err := mcpcap.AttestedCitations(ctx, log, "ses_v1_000_000_s", seq, json.RawMessage(`["#2.0","#2.1","#999.0"]`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -54,10 +54,10 @@ func citationNamespaceLog(t *testing.T) *memlog.Log {
 		result(v1.Speaker_SPEAKER_WEARER, false), result(v1.Speaker_SPEAKER_OTHER, true),
 	}
 	for i, e := range events {
-		e.SessionId = "s"
+		e.SessionId = "ses_v1_000_000_s"
 		e.Seq = uint64(i + 1)
 	}
-	if _, err := log.Append(ctx, "s", 0, nil, events...); err != nil {
+	if _, err := log.Append(ctx, "ses_v1_000_000_s", 0, nil, events...); err != nil {
 		t.Fatal(err)
 	}
 	return log

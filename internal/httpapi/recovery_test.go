@@ -16,26 +16,26 @@ func TestStableSessionList(t *testing.T) {
 	ctx := context.Background()
 	index := e.api.Service.Index
 	for _, row := range []*lifecycle.Session{
-		{ID: "a", BusinessLine: "demo", EndUser: "u2"},
-		{ID: "b", BusinessLine: "demo", EndUser: "u2"},
-		{ID: "c", BusinessLine: "demo", EndUser: "u2"},
-		{ID: "foreign", BusinessLine: "other", EndUser: "u2"},
+		{ID: "ses_v1_000_000_a", BusinessLine: "demo", EndUser: "u2"},
+		{ID: "ses_v1_000_000_b", BusinessLine: "demo", EndUser: "u2"},
+		{ID: "ses_v1_000_000_c", BusinessLine: "demo", EndUser: "u2"},
+		{ID: "ses_v1_000_000_foreign", BusinessLine: "other", EndUser: "u2"},
 	} {
 		row.CreatedAt, row.LastInputAt = time.Now(), time.Now()
 		if err := index.Put(ctx, row); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := index.MarkClosed(ctx, "u2", "b", time.Now()); err != nil {
+	if err := index.MarkClosed(ctx, "u2", "ses_v1_000_000_b", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.api.Service.Deletions.Mark(ctx, &lifecycle.Tombstone{SessionID: "c", BusinessLine: "demo", RequestedAt: time.Now()}); err != nil {
+	if _, err := e.api.Service.Deletions.Mark(ctx, &lifecycle.Tombstone{SessionID: "ses_v1_000_000_c", BusinessLine: "demo", RequestedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	serviceToken := e.token(t, "demo/", time.Hour)
 	path := "/v1/sessions?end_user=u2&order=session_id&limit=1"
 	cursor := ""
-	for _, want := range []string{"a", "b", "c"} {
+	for _, want := range []string{"ses_v1_000_000_a", "ses_v1_000_000_b", "ses_v1_000_000_c"} {
 		code, body := e.do(t, http.MethodGet, path+"&cursor="+url.QueryEscape(cursor), serviceToken, "")
 		var page struct {
 			Sessions []struct {
@@ -47,18 +47,18 @@ func TestStableSessionList(t *testing.T) {
 		if code != 200 || json.Unmarshal([]byte(body), &page) != nil || len(page.Sessions) != 1 || page.Sessions[0].ID != want {
 			t.Fatalf("page: %d %s", code, body)
 		}
-		if want == "b" && page.Sessions[0].Closed == nil {
+		if want == "ses_v1_000_000_b" && page.Sessions[0].Closed == nil {
 			t.Fatal("closed session missing")
 		}
 		cursor = page.Next
-		if want != "c" && cursor != want || want == "c" && cursor != "" {
+		if want != "ses_v1_000_000_c" && cursor != want || want == "ses_v1_000_000_c" && cursor != "" {
 			t.Fatalf("cursor: %q", cursor)
 		}
-		if err := index.Touch(ctx, "u2", "b", time.Now().Add(time.Hour)); err != nil {
+		if err := index.Touch(ctx, "u2", "ses_v1_000_000_b", time.Now().Add(time.Hour)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, id := range []string{"a", "c"} {
+	for _, id := range []string{"ses_v1_000_000_a", "ses_v1_000_000_c"} {
 		if code, body := e.do(t, http.MethodGet, "/v1/sessions/"+id+"/events", serviceToken, ""); code != 404 {
 			t.Fatalf("empty/deleted index: %d %s", code, body)
 		}
@@ -83,7 +83,7 @@ func TestStableSessionList(t *testing.T) {
 			ID string `json:"session_id"`
 		} `json:"sessions"`
 	}
-	if code != 200 || json.Unmarshal([]byte(body), &recent) != nil || len(recent.Sessions) != 1 || recent.Sessions[0].ID != "b" {
+	if code != 200 || json.Unmarshal([]byte(body), &recent) != nil || len(recent.Sessions) != 1 || recent.Sessions[0].ID != "ses_v1_000_000_b" {
 		t.Fatalf("default order changed: %d %s", code, body)
 	}
 }

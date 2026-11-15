@@ -14,9 +14,9 @@ type ShardDatabase struct {
 
 // ShardConfig 是所有角色共用的部署制品；DSN 不参与公开路由摘要，也不写日志。
 type ShardConfig struct {
-	Table         shard.Config              `json:"table"`
-	Compatibility shard.CompatibilityConfig `json:"compatibility"`
-	Databases     []ShardDatabase           `json:"databases"`
+	Version   string          `json:"version"`
+	Table     shard.Config    `json:"table"`
+	Databases []ShardDatabase `json:"databases"`
 }
 
 func ParseShardConfig(data []byte) (ShardConfig, shard.Locator, error) {
@@ -28,30 +28,9 @@ func ParseShardConfig(data []byte) (ShardConfig, shard.Locator, error) {
 	if err != nil {
 		return c, shard.Locator{}, err
 	}
-	compat, err := shard.NewCompatibility(t, c.Compatibility)
-	if err != nil {
-		return c, shard.Locator{}, err
-	}
-	if err := shard.ValidateActivation(t, compat); err != nil {
-		return c, shard.Locator{}, err
-	}
-	l, err := shard.NewLocator(t, compat)
+	l, err := shard.NewLocator(t, c.Version)
 	if err != nil {
 		return c, l, err
-	}
-	allZero := true
-	for slot := range shard.SlotCount {
-		id, _ := t.Shard(slot, false)
-		allZero = allZero && id == 0
-	}
-	// 静态兼容清单不能覆盖迁出 legacy Session 未来生成的旧 ID；P4 不提供旧数据迁出。
-	if !allZero && (c.Compatibility.LegacyDataInShard0 || len(c.Compatibility.Entries) > 0) {
-		return c, l, fmt.Errorf("app: P4 multiple shards require a new cell without legacy data or compatibility entries")
-	}
-	for _, e := range c.Compatibility.Entries {
-		if e.Shard != 0 {
-			return c, l, fmt.Errorf("app: P4 cannot move legacy data out of shard 0")
-		}
 	}
 	known := map[int]bool{}
 	for _, id := range l.Shards() {

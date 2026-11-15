@@ -69,7 +69,7 @@ func service(t *testing.T, max int64) *artifact.Service {
 func TestServicePutOpen(t *testing.T) {
 	s := service(t, 0)
 	data := []byte("周一例会纪要")
-	m, err := s.Put(context.Background(), "ses1", "../../notes.txt", "", bytes.NewReader(data))
+	m, err := s.Put(context.Background(), "ses_v1_000_000_ses1", "../../notes.txt", "", bytes.NewReader(data))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,14 +93,14 @@ func TestServicePutOpen(t *testing.T) {
 
 func TestServiceRejectsOversize(t *testing.T) {
 	s := service(t, 10)
-	_, err := s.Put(context.Background(), "ses1", "big.bin", "", bytes.NewReader(make([]byte, 11)))
+	_, err := s.Put(context.Background(), "ses_v1_000_000_ses1", "big.bin", "", bytes.NewReader(make([]byte, 11)))
 	if !errors.Is(err, artifact.ErrTooLarge) {
 		t.Fatalf("err = %v", err)
 	}
-	if list, _ := s.List(context.Background(), "ses1"); len(list) != 0 {
+	if list, _ := s.List(context.Background(), "ses_v1_000_000_ses1"); len(list) != 0 {
 		t.Fatalf("oversize artifact recorded: %+v", list)
 	}
-	if _, err := s.Put(context.Background(), "ses1", "ok.bin", "", bytes.NewReader(make([]byte, 10))); err != nil {
+	if _, err := s.Put(context.Background(), "ses_v1_000_000_ses1", "ok.bin", "", bytes.NewReader(make([]byte, 10))); err != nil {
 		t.Fatalf("exactly-at-limit err = %v", err)
 	}
 }
@@ -111,9 +111,9 @@ func TestServiceArtifactSlot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, sessionID := range []string{sid, "ses_legacy"} {
+	for _, sessionID := range []string{sid} {
 		s := service(t, 0)
-		want, legacy, err := ids.SessionSlotOf(sessionID)
+		want, err := ids.SessionSlotOf(sessionID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -122,9 +122,9 @@ func TestServiceArtifactSlot(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			slot, old, err := ids.SlotOf(m.ID)
-			if err != nil || old != legacy || slot != want || m.SessionID != sessionID {
-				t.Fatalf("artifact %s: %d, %v, %v; want %d, %v", m.ID, slot, old, err, want, legacy)
+			slot, err := ids.SlotOf(m.ID)
+			if err != nil || slot != want || m.SessionID != sessionID {
+				t.Fatalf("artifact %s: %d, %v; want %d", m.ID, slot, err, want)
 			}
 			id, ok := artifact.ParseURI(artifact.URI(m.ID))
 			if !ok || id != m.ID {

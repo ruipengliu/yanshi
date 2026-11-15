@@ -123,7 +123,7 @@ func TestBackgroundInvalid(t *testing.T) {
 // 委托派生的子 Session 不转后台：子 Run 结束后迟到的结果回不到父 Run（ADR-0035）。
 func TestDelegatedSessionDoesNotBackground(t *testing.T) {
 	child := &v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u",
-		Parent: &v1.ParentRef{SessionId: "p", RunId: "pr", CallId: "pc"}}}}
+		Parent: &v1.ParentRef{SessionId: "ses_v1_000_000_p", RunId: "pr", CallId: "pc"}}}}
 	_, err := Reduce(build(child, requested("r1"), attempt("r1", 1), assistant("r1", 1, "c1"),
 		routed("r1", 1, "c1", "phone"), backgrounded("r1", 1, "c1", "phone")))
 	if err == nil || !strings.Contains(err.Error(), "delegated session") {

@@ -198,8 +198,8 @@ func TestArkDiagnosticsDoNotChangeComparison(t *testing.T) {
 }
 func TestArkToolDiagnosticsCountErrorsOnce(t *testing.T) {
 	events := []*v1.Event{
-		{SessionId: "ses_probe", Seq: 1, Payload: &v1.Event_AssistantMessage{AssistantMessage: &v1.AssistantMessage{ToolCalls: []*v1.ToolCall{{CallId: "call_probe", Capability: "mcp_xinli__file_day"}}}}},
-		{SessionId: "ses_probe", Seq: 2, Payload: &v1.Event_ToolResult{ToolResult: &v1.ToolResult{CallId: "call_probe", IsError: true}}},
+		{SessionId: "ses_v1_000_000_ses_probe", Seq: 1, Payload: &v1.Event_AssistantMessage{AssistantMessage: &v1.AssistantMessage{ToolCalls: []*v1.ToolCall{{CallId: "call_probe", Capability: "mcp_xinli__file_day"}}}}},
+		{SessionId: "ses_v1_000_000_ses_probe", Seq: 2, Payload: &v1.Event_ToolResult{ToolResult: &v1.ToolResult{CallId: "call_probe", IsError: true}}},
 	}
 	tracker := new(arkExecutionTracker)
 	tracker.consume(events)

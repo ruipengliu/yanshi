@@ -54,16 +54,16 @@ func TestOutputModeration(t *testing.T) {
 	w := New(Config{ID: "w", Store: store, Queue: q, Agents: agents, Model: gw, Moderator: mod,
 		Catalog: &capability.Catalog{Local: capability.NewRegistry(capability.ClockNow(clk))}})
 
-	st := &session.State{SessionID: "s1"}
+	st := &session.State{SessionID: "ses_v1_000_000_s1"}
 	created := &v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u", Agent: &v1.AgentRef{Name: "v", Version: "1"}}}}
 	if err := store.Commit(ctx, st, created, &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r1", Input: model.TextBlocks("hi")}}}); err != nil {
 		t.Fatal(err)
 	}
-	_ = q.Enqueue(ctx, "s1", workqueue.Class{})
+	_ = q.Enqueue(ctx, "ses_v1_000_000_s1", workqueue.Class{})
 	for range 4 {
 		_, _ = w.Step(ctx)
 	}
-	events, _ := eventlog.ReadAll(ctx, store.Log, "s1", 0)
+	events, _ := eventlog.ReadAll(ctx, store.Log, "ses_v1_000_000_s1", 0)
 	var suspended bool
 	for _, e := range events {
 		if e.GetAssistantMessage() != nil {
@@ -84,11 +84,11 @@ func TestOutputModeration(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	final, _ := store.Load(ctx, "s1")
+	final, _ := store.Load(ctx, "ses_v1_000_000_s1")
 	if r := final.Run("r1"); r.Status != session.RunCompleted || len(r.Calls) != 0 {
 		t.Fatalf("run %s with %d calls, want completed without calls", r.Status, len(r.Calls))
 	}
-	events, _ = eventlog.ReadAll(ctx, store.Log, "s1", 0)
+	events, _ = eventlog.ReadAll(ctx, store.Log, "ses_v1_000_000_s1", 0)
 	var moderated bool
 	for _, e := range events {
 		if m := e.GetContentModerated(); m != nil {
@@ -122,12 +122,12 @@ func TestModerationWait(t *testing.T) {
 		StepErrorBudget: time.Millisecond,
 		Catalog:         &capability.Catalog{Local: capability.NewRegistry(capability.ClockNow(clk))}})
 
-	st := &session.State{SessionID: "s1"}
+	st := &session.State{SessionID: "ses_v1_000_000_s1"}
 	created := &v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u", Agent: &v1.AgentRef{Name: "v", Version: "1"}}}}
 	if err := store.Commit(ctx, st, created, &v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r1", Input: model.TextBlocks("hi")}}}); err != nil {
 		t.Fatal(err)
 	}
-	_ = q.Enqueue(ctx, "s1", workqueue.Class{})
+	_ = q.Enqueue(ctx, "ses_v1_000_000_s1", workqueue.Class{})
 	steps := func() {
 		for range 4 {
 			if _, err := w.Step(ctx); err != nil {
@@ -136,7 +136,7 @@ func TestModerationWait(t *testing.T) {
 		}
 	}
 	suspensions := func() []*v1.RunSuspended {
-		events, _ := eventlog.ReadAll(ctx, store.Log, "s1", 0)
+		events, _ := eventlog.ReadAll(ctx, store.Log, "ses_v1_000_000_s1", 0)
 		var out []*v1.RunSuspended
 		for _, e := range events {
 			if e.GetAssistantMessage() != nil {
@@ -165,10 +165,10 @@ func TestModerationWait(t *testing.T) {
 		}
 		if i == 0 {
 			// 退避未到期时被唤醒：重新停放，不写事件、不开始 Attempt。
-			before, _ := store.Load(ctx, "s1")
-			_ = q.Enqueue(ctx, "s1", workqueue.Class{})
+			before, _ := store.Load(ctx, "ses_v1_000_000_s1")
+			_ = q.Enqueue(ctx, "ses_v1_000_000_s1", workqueue.Class{})
 			steps()
-			after, _ := store.Load(ctx, "s1")
+			after, _ := store.Load(ctx, "ses_v1_000_000_s1")
 			if after.Seq != before.Seq {
 				t.Fatalf("early wake wrote %d events", after.Seq-before.Seq)
 			}
@@ -180,11 +180,11 @@ func TestModerationWait(t *testing.T) {
 	}
 	// 从第一次挂起起已过 11s，超过 10s 的上限：下一次不可用时失败。
 	steps()
-	final, _ := store.Load(ctx, "s1")
+	final, _ := store.Load(ctx, "ses_v1_000_000_s1")
 	if r := final.Run("r1"); r.Status != session.RunFailed {
 		t.Fatalf("run %s, want failed", r.Status)
 	}
-	events, _ := eventlog.ReadAll(ctx, store.Log, "s1", 0)
+	events, _ := eventlog.ReadAll(ctx, store.Log, "ses_v1_000_000_s1", 0)
 	if f := events[len(events)-1].GetRunFailed(); f == nil || f.GetReason() != "moderation unavailable" {
 		t.Fatalf("last event %v, want RunFailed(moderation unavailable)", events[len(events)-1])
 	}

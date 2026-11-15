@@ -89,7 +89,7 @@ func setup(t *testing.T) (*crm, *capability.Catalog, *artifact.Service) {
 	return c, &capability.Catalog{Local: capability.NewRegistry(), MCP: conn}, arts
 }
 
-var target = capability.Target{Scope: node.Scope{BusinessLine: "demo", EndUser: "u1"}, SessionID: "s1"}
+var target = capability.Target{Scope: node.Scope{BusinessLine: "demo", EndUser: "u1"}, SessionID: "ses_v1_000_000_s1"}
 
 func tools(t *testing.T, cat *capability.Catalog, allow ...string) map[string]capability.Tool {
 	t.Helper()
@@ -106,7 +106,7 @@ func tools(t *testing.T, cat *capability.Catalog, allow ...string) map[string]ca
 
 func invoke(t *testing.T, tool capability.Tool, args string) ([]*v1.ContentBlock, error) {
 	t.Helper()
-	return tool.Local.Invoke(context.Background(), capability.Invocation{SessionID: "s1", RunID: "r", CallID: "c",
+	return tool.Local.Invoke(context.Background(), capability.Invocation{SessionID: "ses_v1_000_000_s1", RunID: "r", CallID: "c",
 		Arguments: args, BusinessLine: "demo", EndUser: "u1"})
 }
 
@@ -150,7 +150,7 @@ func TestCallPassesIdentityAndMapsResults(t *testing.T) {
 	c.mu.Lock()
 	h, meta := c.headers, c.meta
 	c.mu.Unlock()
-	if h.Get("Authorization") != "Bearer secret" || h.Get("X-Yanshi-End-User") != "u1" || h.Get("X-Yanshi-Session") != "s1" {
+	if h.Get("Authorization") != "Bearer secret" || h.Get("X-Yanshi-End-User") != "u1" || h.Get("X-Yanshi-Session") != "ses_v1_000_000_s1" {
 		t.Fatalf("headers = %v", h)
 	}
 	if meta["yanshi/end_user"] != "u1" || meta["yanshi/business_line"] != "demo" {
@@ -161,7 +161,7 @@ func TestCallPassesIdentityAndMapsResults(t *testing.T) {
 	if err != nil || len(out) != 2 || !strings.HasPrefix(out[1].GetMedia().GetUri(), "artifact://") {
 		t.Fatalf("chart = %v, %v", out, err)
 	}
-	if list, _ := arts.List(context.Background(), "s1"); len(list) != 1 || list[0].MimeType != "image/png" {
+	if list, _ := arts.List(context.Background(), "ses_v1_000_000_s1"); len(list) != 1 || list[0].MimeType != "image/png" {
 		t.Fatalf("image not stored as an artifact of the session: %v", list)
 	}
 

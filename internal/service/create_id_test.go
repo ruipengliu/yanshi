@@ -25,7 +25,8 @@ func TestCreateSessionIDs(t *testing.T) {
 	}{
 		{name: "generated"},
 		{name: "specified", id: owned},
-		{name: "legacy", id: "ses_legacy"},
+		// 旧格式 ID 的兼容已在上线前删除（ADR-0051）。
+		{name: "unversioned", id: "ses_legacy", invalid: true},
 		{name: "foreign", id: foreign, invalid: true},
 		{name: "version", id: "ses_v2_000_000_token", invalid: true},
 		{name: "malformed", id: "ses_v1_000_token", invalid: true},
@@ -67,7 +68,7 @@ func TestCreateSessionIDs(t *testing.T) {
 			if consumed != wantCalls {
 				t.Fatalf("consumed %d IDs, want %d", consumed, wantCalls)
 			}
-			if slot, legacy, err := ids.EndUserSlotOfSession(sid); err != nil || (!legacy && slot != shard.Hash("u")) {
+			if slot, err := ids.EndUserSlotOfSession(sid); err != nil || slot != shard.Hash("u") {
 				t.Fatalf("EndUser slot: %d, %v", slot, err)
 			}
 		})

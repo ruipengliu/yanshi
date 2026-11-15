@@ -48,19 +48,19 @@ func runEndUserDeletions(t *testing.T, newDeletions func(*testing.T) lifecycle.D
 		if _, err := d.GetEndUser(ctx, "bl", "u"); err != nil {
 			t.Fatalf("unfinished barrier pruned: %v", err)
 		}
-		if err := d.AddEndUserSessions(ctx, b, []string{"s1", "s1"}); err != nil {
+		if err := d.AddEndUserSessions(ctx, b, sids("s1", "s1")); err != nil {
 			t.Fatal(err)
 		}
 		if err := d.SealEndUser(ctx, b); err != nil {
 			t.Fatal(err)
 		}
 		pending, err := d.PendingEndUsers(ctx, 10)
-		if err != nil || len(pending) != 1 || len(pending[0].Sessions) != 1 || pending[0].Sessions[0] != "s1" {
+		if err != nil || len(pending) != 1 || len(pending[0].Sessions) != 1 || pending[0].Sessions[0] != sid("s1") {
 			t.Fatalf("pending = %+v, %v", pending, err)
 		}
 		b = pending[0]
 		// 读出待完成记录之后又有撤回，旧快照不能提前开启宽限期。
-		if err := d.AddEndUserSessions(ctx, b, []string{"s2"}); err != nil {
+		if err := d.AddEndUserSessions(ctx, b, sids("s2")); err != nil {
 			t.Fatal(err)
 		}
 		done := t0.Add(time.Hour)
@@ -82,7 +82,7 @@ func runEndUserDeletions(t *testing.T, newDeletions func(*testing.T) lifecycle.D
 		if err != nil || !b.CompletedAt.Equal(done) || !b.ExpiresAt.Equal(expires) {
 			t.Fatalf("completion = %+v, %v", b, err)
 		}
-		if err := d.AddEndUserSessions(ctx, b, []string{"s2", "s1"}); err != nil {
+		if err := d.AddEndUserSessions(ctx, b, sids("s2", "s1")); err != nil {
 			t.Fatal(err)
 		}
 		b, err = d.MarkEndUser(ctx, mark)

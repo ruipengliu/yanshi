@@ -16,9 +16,9 @@ func TestSlotEncoding(t *testing.T) {
 			t.Fatalf("slot %d: %q", slot, encoded)
 		}
 		id := "art_v1_" + encoded + "_token"
-		got, legacy, err := SlotOf(id)
-		if err != nil || legacy || got != slot {
-			t.Fatalf("%s -> %d, %v, %v", id, got, legacy, err)
+		got, err := SlotOf(id)
+		if err != nil || got != slot {
+			t.Fatalf("%s -> %d, %v", id, got, err)
 		}
 	}
 	if encodeSlot(0) != "000" || encodeSlot(1023) != "0vv" {
@@ -26,24 +26,24 @@ func TestSlotEncoding(t *testing.T) {
 	}
 }
 
-func TestLegacyAndMalformedIDs(t *testing.T) {
+// 旧格式（无版本）ID 的兼容已在上线前删除（ADR-0051）：它们与损坏的 ID 一样报错，不再回退槽位 0。
+func TestUnversionedAndMalformedIDs(t *testing.T) {
 	for _, id := range []string{"ses_0123456789abcdef0123456789abcdef", "ses_id-1", "art_art-1", "mem_call_1", "grant_x-1", "id-1", "session"} {
-		for _, parse := range []func(string) (int, bool, error){SlotOf, SessionSlotOf, EndUserSlotOfSession} {
-			slot, legacy, err := parse(id)
-			if err != nil || !legacy || slot != 0 {
-				t.Fatalf("legacy %q -> %d, %v, %v", id, slot, legacy, err)
+		for _, parse := range []func(string) (int, error){SlotOf, SessionSlotOf, EndUserSlotOfSession} {
+			if slot, err := parse(id); err == nil {
+				t.Fatalf("unversioned %q accepted -> %d", id, slot)
 			}
 		}
 	}
 	for _, id := range []string{"", "art_v1", "art_v2_000_x", "art_v01_000_x", "art_v1_00_x", "art_v1_0000_x", "art_v1_100_x", "art_v1_0VV_x", "art_v1_00w_x", "art_v1_000_", "art_v1_000_a/b", "art_v1_000_a b", "ses_v1_000_x", "ses_v1_000_100_x", "ses_v1_000_000_", "_v1_000_x"} {
-		if _, legacy, err := SlotOf(id); err == nil || legacy {
-			t.Errorf("invalid %q must fail without legacy fallback: %v, %v", id, legacy, err)
+		if _, err := SlotOf(id); err == nil {
+			t.Errorf("invalid %q accepted", id)
 		}
 	}
-	if _, _, err := SessionSlotOf("mem_v1_000_x"); err == nil {
+	if _, err := SessionSlotOf("mem_v1_000_x"); err == nil {
 		t.Fatal("an object ID was accepted as a new Session ID")
 	}
-	if _, _, err := EndUserSlotOfSession("art_v1_000_x"); err == nil {
+	if _, err := EndUserSlotOfSession("art_v1_000_x"); err == nil {
 		t.Fatal("an object ID was accepted as a Session index key")
 	}
 }
@@ -57,22 +57,22 @@ func TestObjectsFollowTheirKey(t *testing.T) {
 	if sid != "ses_v1_0t7_0e7_x-1" {
 		t.Fatalf("Session wire format changed: %s", sid)
 	}
-	slot, legacy, err := SessionSlotOf(sid)
-	if err != nil || legacy || slot != shard.Hash("ses_x-1") {
-		t.Fatalf("Session = %s: %d, %v, %v", sid, slot, legacy, err)
+	slot, err := SessionSlotOf(sid)
+	if err != nil || slot != shard.Hash("ses_x-1") {
+		t.Fatalf("Session = %s: %d, %v", sid, slot, err)
 	}
-	euSlot, legacy, err := EndUserSlotOfSession(sid)
-	if err != nil || legacy || euSlot != shard.Hash("u") || euSlot == slot {
-		t.Fatalf("index slot = %d, %v, %v; Session slot = %d", euSlot, legacy, err, slot)
+	euSlot, err := EndUserSlotOfSession(sid)
+	if err != nil || euSlot != shard.Hash("u") || euSlot == slot {
+		t.Fatalf("index slot = %d, %v; Session slot = %d", euSlot, err, slot)
 	}
 	for _, prefix := range []string{"art", "call", "run"} {
 		id, err := g.ForSession(prefix, sid)
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, legacy, err := SlotOf(id)
-		if err != nil || legacy || got != slot {
-			t.Fatalf("%s follows token instead of Session: %d, %v, %v", id, got, legacy, err)
+		got, err := SlotOf(id)
+		if err != nil || got != slot {
+			t.Fatalf("%s follows token instead of Session: %d, %v", id, got, err)
 		}
 	}
 	for _, prefix := range []string{"mem", "grant", "use"} {
@@ -80,9 +80,9 @@ func TestObjectsFollowTheirKey(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, legacy, err := SlotOf(id)
-		if err != nil || legacy || got != euSlot {
-			t.Fatalf("%s follows Session instead of EndUser: %d, %v, %v", id, got, legacy, err)
+		got, err := SlotOf(id)
+		if err != nil || got != euSlot {
+			t.Fatalf("%s follows Session instead of EndUser: %d, %v", id, got, err)
 		}
 	}
 	if next := g(); next != "x-8" {
@@ -94,13 +94,12 @@ func TestObjectsFollowTheirKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, legacy, err := SlotOf(id); err != nil || legacy || got != shard.Hash(external) {
-		t.Fatalf("external EndUser was parsed as an ID: %d, %v, %v", got, legacy, err)
+	if got, err := SlotOf(id); err != nil || got != shard.Hash(external) {
+		t.Fatalf("external EndUser was parsed as an ID: %d, %v", got, err)
 	}
-	old := Sequential("x")
-	id, err = old.ForSession("art", "ses_old")
-	if err != nil || id != "art_x-1" || old() != "x-2" {
-		t.Fatalf("legacy generation changed: %s, %v", id, err)
+	// 无版本的 Session 不再派生旧格式对象。
+	if id, err := Sequential("x").ForSession("art", "ses_old"); err == nil {
+		t.Fatalf("unversioned Session produced %s", id)
 	}
 }
 
@@ -151,6 +150,6 @@ func TestInvalidGeneration(t *testing.T) {
 		t.Fatal("empty EndUser accepted")
 	}
 	if _, err := WithSession("art", "x", "ses_v1_100_000_x"); err == nil {
-		t.Fatal("malformed Session fell back to legacy")
+		t.Fatal("malformed Session accepted")
 	}
 }

@@ -34,11 +34,11 @@ import (
 	"yanshi/internal/workqueue/workqueuetest"
 )
 
-// 旧一致性夹具使用 s1/u 等 legacy 键，保留全部槽到 0；两个实际库都参与离线操作。
-// 新格式跨片隔离另由 TestShardedRouting 覆盖，不能把 legacy 夹具重命名后改变既有契约。
+// 一致性夹具的 Session ID 都固定在槽位 000，全部槽到库 0；两个实际库都参与离线操作。
+// 跨片隔离另由 TestShardedRouting 覆盖。
 func suiteLocator(t *testing.T) shard.Locator {
 	t.Helper()
-	l, err := shard.ParseDeployment([]byte(`{"table":{"shards":[0,1],"ranges":[{"first":0,"last":1023,"shard":0}]},"compatibility":{"version":"suite","legacy_data_in_shard0":true,"entries":[]}}`))
+	l, err := shard.ParseDeployment([]byte(`{"version":"suite","table":{"shards":[0,1],"ranges":[{"first":0,"last":1023,"shard":0}]}}`))
 	if err != nil {
 		t.Fatal(err)
 	}

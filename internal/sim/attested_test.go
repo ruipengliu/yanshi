@@ -22,7 +22,7 @@ func TestAttestedModelContinuesWithMemory(t *testing.T) {
 	if err != nil || len(tools) != 1 {
 		t.Fatalf("MCP tools: %d, %v", len(tools), err)
 	}
-	inv := capability.Invocation{BusinessLine: "bl", EndUser: "u", SessionID: "s", CallID: "page", Arguments: `{}`}
+	inv := capability.Invocation{BusinessLine: "bl", EndUser: "u", SessionID: "ses_v1_000_000_s", CallID: "page", Arguments: `{}`}
 	out, err := tools[0].Local.(capability.ResultInvoker).InvokeResult(ctx, inv)
 	if err != nil {
 		t.Fatal(err)

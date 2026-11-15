@@ -16,7 +16,7 @@ import (
 func TestHistoryCallScansTrimmedRuns(t *testing.T) {
 	ctx := context.Background()
 	store := &session.Store{Log: memlog.New(), IDs: ids.Sequential("e"), Clock: clock.Real{}}
-	st := &session.State{SessionID: "s"}
+	st := &session.State{SessionID: "ses_v1_000_000_s"}
 	commit := func(events ...*v1.Event) {
 		t.Helper()
 		if err := store.Commit(ctx, st, events...); err != nil {

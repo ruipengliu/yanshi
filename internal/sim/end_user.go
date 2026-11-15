@@ -75,7 +75,7 @@ type barrierMemory struct {
 }
 
 func (s barrierMemory) Put(ctx context.Context, m *memory.Memory, v *memory.Vector) error {
-	if slot, legacy, err := ids.SlotOf(m.ID); err != nil || legacy || slot != shard.Hash(m.EndUser) {
+	if slot, err := ids.SlotOf(m.ID); err != nil || slot != shard.Hash(m.EndUser) {
 		s.w.violations = append(s.w.violations, "memory ID lost real EndUser slot")
 	}
 	s.w.Stats.EndUserMemoryIDs++
@@ -88,7 +88,7 @@ type barrierGrants struct {
 }
 
 func (s barrierGrants) Create(ctx context.Context, g *memory.Grant) error {
-	if slot, legacy, err := ids.SlotOf(g.ID); err != nil || legacy || slot != shard.Hash(g.EndUser) {
+	if slot, err := ids.SlotOf(g.ID); err != nil || slot != shard.Hash(g.EndUser) {
 		s.w.violations = append(s.w.violations, "grant ID lost real EndUser slot")
 	}
 	s.w.Stats.EndUserGrantIDs++

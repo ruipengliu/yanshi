@@ -14,13 +14,24 @@ import (
 
 var t0 = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
+// sid 把测试用的短名变成带版本的 Session ID（ADR-0051）；共同前缀保持短名之间的字典序。
+func sid(tok string) string { return "ses_v1_000_000_" + tok }
+
+func sids(toks ...string) []string {
+	out := make([]string, len(toks))
+	for i, tok := range toks {
+		out[i] = sid(tok)
+	}
+	return out
+}
+
 func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 	t.Run("EndUserKeys", func(t *testing.T) { indexEndUserKeys(t, newIndex(t)) })
 	t.Run("StableRecovery", func(t *testing.T) { runStableIndex(t, newIndex(t)) })
 	ctx := context.Background()
 	put := func(t *testing.T, x lifecycle.Index, id, bl, eu string, at time.Time) {
 		t.Helper()
-		if err := x.Put(ctx, &lifecycle.Session{ID: id, BusinessLine: bl, EndUser: eu, Agent: "a", CreatedAt: at, LastInputAt: at}); err != nil {
+		if err := x.Put(ctx, &lifecycle.Session{ID: sid(id), BusinessLine: bl, EndUser: eu, Agent: "a", CreatedAt: at, LastInputAt: at}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -32,11 +43,11 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 		}
 		put(t, x, "other", "other", "u", t0)
 		for _, id := range []string{"a", "b", "other"} {
-			if err := x.SetNextDue(ctx, "u", id, t0.Add(time.Hour)); err != nil {
+			if err := x.SetNextDue(ctx, "u", sid(id), t0.Add(time.Hour)); err != nil {
 				t.Fatal(err)
 			}
 		}
-		row, err := x.Get(ctx, "u", "a")
+		row, err := x.Get(ctx, "u", sid("a"))
 		if err != nil || !row.NextDue.Equal(t0.Add(time.Hour)) {
 			t.Fatalf("next due %v %v", row, err)
 		}
@@ -45,26 +56,26 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 			t.Fatalf("list %v %q %v", page, next, err)
 		}
 		for _, row := range page {
-			if row.ID != "c" && row.NextDue.IsZero() {
+			if row.ID != sid("c") && row.NextDue.IsZero() {
 				t.Fatal("list lost next due")
 			}
 		}
 		idle, err := x.IdleBefore(ctx, "bl", lifecycle.AgentFilter{}, t0.Add(2*time.Hour), 10)
-		if err != nil || !slices.Equal(idle, []string{"c"}) {
+		if err != nil || !slices.Equal(idle, sids("c")) {
 			t.Fatalf("idle %v %v", idle, err)
 		}
 		first, err := x.ScheduledAfter(ctx, "bl", "", 1)
-		if err != nil || !slices.Equal(first, []string{"a"}) {
+		if err != nil || !slices.Equal(first, sids("a")) {
 			t.Fatalf("first %v %v", first, err)
 		}
 		second, err := x.ScheduledAfter(ctx, "bl", first[0], 1)
-		if err != nil || !slices.Equal(second, []string{"b"}) {
+		if err != nil || !slices.Equal(second, sids("b")) {
 			t.Fatalf("second %v %v", second, err)
 		}
-		if err := x.SetNextDue(ctx, "u", "a", time.Time{}); err != nil {
+		if err := x.SetNextDue(ctx, "u", sid("a"), time.Time{}); err != nil {
 			t.Fatal(err)
 		}
-		if err := x.MarkClosed(ctx, "u", "b", t0); err != nil {
+		if err := x.MarkClosed(ctx, "u", sid("b"), t0); err != nil {
 			t.Fatal(err)
 		}
 		remaining, err := x.ScheduledAfter(ctx, "bl", "", 10)
@@ -72,19 +83,19 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 			t.Fatalf("remaining %v %v", remaining, err)
 		}
 		idle, err = x.IdleBefore(ctx, "bl", lifecycle.AgentFilter{}, t0.Add(2*time.Hour), 10)
-		if err != nil || !slices.Equal(idle, []string{"a", "c"}) {
+		if err != nil || !slices.Equal(idle, sids("a", "c")) {
 			t.Fatalf("idle after clear %v %v", idle, err)
 		}
-		if err := x.SetNextDue(ctx, "u", "missing", t0); err != nil {
+		if err := x.SetNextDue(ctx, "u", sid("missing"), t0); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := x.Get(ctx, "u", "missing"); !errors.Is(err, lifecycle.ErrNotFound) {
+		if _, err := x.Get(ctx, "u", sid("missing")); !errors.Is(err, lifecycle.ErrNotFound) {
 			t.Fatalf("resurrected row: %v", err)
 		}
-		if err := x.Put(ctx, &lifecycle.Session{ID: "put-due", BusinessLine: "bl", EndUser: "u", CreatedAt: t0, LastInputAt: t0, NextDue: t0.Add(time.Hour)}); err != nil {
+		if err := x.Put(ctx, &lifecycle.Session{ID: sid("put-due"), BusinessLine: "bl", EndUser: "u", CreatedAt: t0, LastInputAt: t0, NextDue: t0.Add(time.Hour)}); err != nil {
 			t.Fatal(err)
 		}
-		row, err = x.Get(ctx, "u", "put-due")
+		row, err = x.Get(ctx, "u", sid("put-due"))
 		if err != nil || !row.NextDue.Equal(t0.Add(time.Hour)) {
 			t.Fatalf("put next due %v %v", row, err)
 		}
@@ -92,22 +103,22 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 	t.Run("AbsoluteDeadline", func(t *testing.T) {
 		x := newIndex(t)
 		for _, row := range []*lifecycle.Session{
-			{ID: "a", BusinessLine: "bl", EndUser: "u", CreatedAt: t0, LastInputAt: t0, DeleteAt: t0.Add(time.Hour)},
-			{ID: "b", BusinessLine: "bl", EndUser: "u", CreatedAt: t0, LastInputAt: t0},
-			{ID: "c", BusinessLine: "other", EndUser: "u", CreatedAt: t0, LastInputAt: t0, DeleteAt: t0.Add(time.Hour)},
+			{ID: sid("a"), BusinessLine: "bl", EndUser: "u", CreatedAt: t0, LastInputAt: t0, DeleteAt: t0.Add(time.Hour)},
+			{ID: sid("b"), BusinessLine: "bl", EndUser: "u", CreatedAt: t0, LastInputAt: t0},
+			{ID: sid("c"), BusinessLine: "other", EndUser: "u", CreatedAt: t0, LastInputAt: t0, DeleteAt: t0.Add(time.Hour)},
 		} {
 			if err := x.Put(ctx, row); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if err := x.MarkClosed(ctx, "u", "c", t0); err != nil {
+		if err := x.MarkClosed(ctx, "u", sid("c"), t0); err != nil {
 			t.Fatal(err)
 		}
 		// 幂等重试也须携带真实 EndUser，不能让单库的冲突路径掩盖分片键缺失。
-		if err := x.Put(ctx, &lifecycle.Session{ID: "a", EndUser: "u", DeleteAt: t0.Add(9 * time.Hour)}); err != nil {
+		if err := x.Put(ctx, &lifecycle.Session{ID: sid("a"), EndUser: "u", DeleteAt: t0.Add(9 * time.Hour)}); err != nil {
 			t.Fatal(err)
 		}
-		row, err := x.Get(ctx, "u", "a")
+		row, err := x.Get(ctx, "u", sid("a"))
 		if err != nil || !row.DeleteAt.Equal(t0.Add(time.Hour)) {
 			t.Fatalf("deadline = %+v, %v", row, err)
 		}
@@ -118,16 +129,16 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 			want  []string
 		}{
 			{"bl", t0.Add(time.Hour), 10, nil},
-			{"bl", t0.Add(2 * time.Hour), 10, []string{"a"}},
-			{"", t0.Add(2 * time.Hour), 10, []string{"a", "c"}},
-			{"", t0.Add(2 * time.Hour), 1, []string{"a"}},
+			{"bl", t0.Add(2 * time.Hour), 10, sids("a")},
+			{"", t0.Add(2 * time.Hour), 10, sids("a", "c")},
+			{"", t0.Add(2 * time.Hour), 1, sids("a")},
 		} {
 			got, err := x.DueBefore(ctx, tc.bl, tc.at, tc.limit)
 			if err != nil || !slices.Equal(got, tc.want) {
 				t.Fatalf("due = %v, %v\nwant %v", got, err, tc.want)
 			}
 		}
-		if err := x.Delete(ctx, "u", "a"); err != nil {
+		if err := x.Delete(ctx, "u", sid("a")); err != nil {
 			t.Fatal(err)
 		}
 		if got, err := x.DueBefore(ctx, "bl", t0.Add(2*time.Hour), 10); err != nil || len(got) != 0 {
@@ -138,13 +149,13 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 		x := newIndex(t)
 		put(t, x, "s1", "bl", "u1", t0)
 		put(t, x, "s1", "bl", "other", t0.Add(time.Hour)) // 已存在：不变
-		_ = x.Touch(ctx, "u1", "s1", t0.Add(2*time.Hour))
-		_ = x.Touch(ctx, "u1", "s1", t0.Add(time.Hour)) // 回退：忽略
-		s, err := x.Get(ctx, "u1", "s1")
+		_ = x.Touch(ctx, "u1", sid("s1"), t0.Add(2*time.Hour))
+		_ = x.Touch(ctx, "u1", sid("s1"), t0.Add(time.Hour)) // 回退：忽略
+		s, err := x.Get(ctx, "u1", sid("s1"))
 		if err != nil || s.EndUser != "u1" || !s.LastInputAt.Equal(t0.Add(2*time.Hour)) || !s.CreatedAt.Equal(t0) || !s.ClosedAt.IsZero() {
 			t.Fatalf("get = %+v, %v", s, err)
 		}
-		if _, err := x.Get(ctx, "u1", "nope"); !errors.Is(err, lifecycle.ErrNotFound) {
+		if _, err := x.Get(ctx, "u1", sid("nope")); !errors.Is(err, lifecycle.ErrNotFound) {
 			t.Fatalf("missing: %v", err)
 		}
 	})
@@ -174,12 +185,12 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 			}
 			cursor = next
 		}
-		want := []string{"same-b", "same-a", "s4", "s3", "s2", "s1", "s0"}
+		want := sids("same-b", "same-a", "s4", "s3", "s2", "s1", "s0")
 		if !slices.Equal(got, want) {
 			t.Fatalf("pages = %v, want %v", got, want)
 		}
 		all, _, _ := x.List(ctx, "bl", "", "", 100)
-		if len(all) != 8 || all[0].ID != "x" {
+		if len(all) != 8 || all[0].ID != sid("x") {
 			t.Fatalf("whole business line = %d, first %s", len(all), all[0].ID)
 		}
 		if _, _, err := x.List(ctx, "bl", "u1", "garbage", 3); err == nil {
@@ -195,15 +206,15 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 		put(t, x, "new", "bl", "u1", t0.Add(48*time.Hour))
 		put(t, x, "closed", "bl", "u2", t0)
 		put(t, x, "elsewhere", "other", "u1", t0)
-		_ = x.MarkClosed(ctx, "u2", "closed", t0.Add(time.Hour))
-		_ = x.MarkClosed(ctx, "u2", "closed", t0.Add(5*time.Hour)) // 已关闭：不变
+		_ = x.MarkClosed(ctx, "u2", sid("closed"), t0.Add(time.Hour))
+		_ = x.MarkClosed(ctx, "u2", sid("closed"), t0.Add(5*time.Hour)) // 已关闭：不变
 
 		all := lifecycle.AgentFilter{}
 		idle, _ := x.IdleBefore(ctx, "bl", all, t0.Add(24*time.Hour), 10)
-		if !slices.Equal(idle, []string{"old"}) {
+		if !slices.Equal(idle, sids("old")) {
 			t.Fatalf("idle = %v", idle)
 		}
-		if c, _ := x.ClosedBefore(ctx, "bl", all, t0.Add(2*time.Hour), 10); !slices.Equal(c, []string{"closed"}) {
+		if c, _ := x.ClosedBefore(ctx, "bl", all, t0.Add(2*time.Hour), 10); !slices.Equal(c, sids("closed")) {
 			t.Fatalf("closed before = %v", c)
 		}
 		if c, _ := x.ClosedBefore(ctx, "bl", all, t0.Add(30*time.Minute), 10); len(c) != 0 {
@@ -211,11 +222,11 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 		}
 		// 顺序也是契约：调用方按它逐个删除，内存与 PG 不同序会让模拟测试的差分分叉。
 		ids, _ := x.IDsOf(ctx, "bl", "u1")
-		if !slices.Equal(ids, []string{"new", "old"}) {
+		if !slices.Equal(ids, sids("new", "old")) {
 			t.Fatalf("ids of u1 = %v", ids)
 		}
-		_ = x.Delete(ctx, "u1", "old")
-		if _, err := x.Get(ctx, "u1", "old"); !errors.Is(err, lifecycle.ErrNotFound) {
+		_ = x.Delete(ctx, "u1", sid("old"))
+		if _, err := x.Get(ctx, "u1", sid("old")); !errors.Is(err, lifecycle.ErrNotFound) {
 			t.Fatal("deleted session still indexed")
 		}
 	})
@@ -226,7 +237,7 @@ func RunIndex(t *testing.T, newIndex func(t *testing.T) lifecycle.Index) {
 func runRetentionByAgent(t *testing.T, x lifecycle.Index) {
 	ctx := context.Background()
 	for _, s := range []*lifecycle.Session{
-		{ID: "day1", Agent: "day"}, {ID: "day2", Agent: "day"}, {ID: "proj", Agent: "project"}, {ID: "chat", Agent: "assistant"},
+		{ID: sid("day1"), Agent: "day"}, {ID: sid("day2"), Agent: "day"}, {ID: sid("proj"), Agent: "project"}, {ID: sid("chat"), Agent: "assistant"},
 	} {
 		s.BusinessLine, s.EndUser, s.CreatedAt, s.LastInputAt = "bl", "u", t0, t0
 		if err := x.Put(ctx, s); err != nil {
@@ -236,16 +247,16 @@ func runRetentionByAgent(t *testing.T, x lifecycle.Index) {
 			t.Fatal(err)
 		}
 	}
-	_ = x.Put(ctx, &lifecycle.Session{ID: "open", BusinessLine: "bl", EndUser: "u", Agent: "day", CreatedAt: t0, LastInputAt: t0})
+	_ = x.Put(ctx, &lifecycle.Session{ID: sid("open"), BusinessLine: "bl", EndUser: "u", Agent: "day", CreatedAt: t0, LastInputAt: t0})
 	later := t0.Add(48 * time.Hour)
 	cases := []struct {
 		f            lifecycle.AgentFilter
 		idle, closed []string
 	}{
-		{lifecycle.AgentFilter{Only: "day"}, []string{"open"}, []string{"day1", "day2"}},
-		{lifecycle.AgentFilter{Except: []string{"day"}}, nil, []string{"chat", "proj"}},
-		{lifecycle.AgentFilter{Except: []string{"day", "project"}}, nil, []string{"chat"}},
-		{lifecycle.AgentFilter{Except: []string{}}, []string{"open"}, []string{"chat", "day1", "day2", "proj"}},
+		{lifecycle.AgentFilter{Only: "day"}, sids("open"), sids("day1", "day2")},
+		{lifecycle.AgentFilter{Except: []string{"day"}}, nil, sids("chat", "proj")},
+		{lifecycle.AgentFilter{Except: []string{"day", "project"}}, nil, sids("chat")},
+		{lifecycle.AgentFilter{Except: []string{}}, sids("open"), sids("chat", "day1", "day2", "proj")},
 		{lifecycle.AgentFilter{Only: "missing"}, nil, nil},
 	}
 	for _, c := range cases {
@@ -265,32 +276,32 @@ func RunDeletions(t *testing.T, newDeletions func(t *testing.T) lifecycle.Deleti
 	ctx := context.Background()
 	t.Run("MarkOnceCompleteAndPending", func(t *testing.T) {
 		d := newDeletions(t)
-		first, err := d.Mark(ctx, &lifecycle.Tombstone{SessionID: "s1", BusinessLine: "bl", Reason: "end_user", RequestedAt: t0})
+		first, err := d.Mark(ctx, &lifecycle.Tombstone{SessionID: sid("s1"), BusinessLine: "bl", Reason: "end_user", RequestedAt: t0})
 		if err != nil || !first {
 			t.Fatalf("mark = %v, %v", first, err)
 		}
-		again, _ := d.Mark(ctx, &lifecycle.Tombstone{SessionID: "s1", BusinessLine: "bl", Reason: "retention", RequestedAt: t0.Add(time.Hour)})
+		again, _ := d.Mark(ctx, &lifecycle.Tombstone{SessionID: sid("s1"), BusinessLine: "bl", Reason: "retention", RequestedAt: t0.Add(time.Hour)})
 		if again {
 			t.Fatal("second mark reported as new")
 		}
-		tb, err := d.Get(ctx, "s1")
+		tb, err := d.Get(ctx, sid("s1"))
 		if err != nil || tb.Reason != "end_user" || !tb.RequestedAt.Equal(t0) || !tb.CompletedAt.IsZero() {
 			t.Fatalf("get = %+v, %v", tb, err)
 		}
-		if p, _ := d.Pending(ctx, 10); !slices.Equal(p, []string{"s1"}) {
+		if p, _ := d.Pending(ctx, 10); !slices.Equal(p, []string{sid("s1")}) {
 			t.Fatalf("pending = %v", p)
 		}
-		_ = d.Complete(ctx, "s1", t0.Add(time.Minute))
-		if tb, _ := d.Get(ctx, "s1"); !tb.CompletedAt.Equal(t0.Add(time.Minute)) {
+		_ = d.Complete(ctx, sid("s1"), t0.Add(time.Minute))
+		if tb, _ := d.Get(ctx, sid("s1")); !tb.CompletedAt.Equal(t0.Add(time.Minute)) {
 			t.Fatalf("completed at = %v", tb.CompletedAt)
 		}
 		if p, _ := d.Pending(ctx, 10); len(p) != 0 {
 			t.Fatalf("pending after completion = %v", p)
 		}
-		if ok, _ := lifecycle.Deleted(ctx, d, "s1"); !ok {
+		if ok, _ := lifecycle.Deleted(ctx, d, sid("s1")); !ok {
 			t.Fatal("Deleted = false")
 		}
-		if ok, _ := lifecycle.Deleted(ctx, d, "s2"); ok {
+		if ok, _ := lifecycle.Deleted(ctx, d, sid("s2")); ok {
 			t.Fatal("Deleted(unknown) = true")
 		}
 	})
@@ -305,10 +316,10 @@ func RunDeletions(t *testing.T, newDeletions func(t *testing.T) lifecycle.Deleti
 			t.Fatalf("empty request = %+v, %v", r, err)
 		}
 		for _, id := range []string{"a", "b", "c"} {
-			_, _ = d.Mark(ctx, &lifecycle.Tombstone{SessionID: id, BusinessLine: "bl", Reason: "account_deletion", RequestID: "r1", RequestedAt: t0})
+			_, _ = d.Mark(ctx, &lifecycle.Tombstone{SessionID: sid(id), BusinessLine: "bl", Reason: "account_deletion", RequestID: "r1", RequestedAt: t0})
 		}
-		_, _ = d.Mark(ctx, &lifecycle.Tombstone{SessionID: "z", BusinessLine: "bl", Reason: "end_user", RequestedAt: t0})
-		_ = d.Complete(ctx, "b", t0)
+		_, _ = d.Mark(ctx, &lifecycle.Tombstone{SessionID: sid("z"), BusinessLine: "bl", Reason: "end_user", RequestedAt: t0})
+		_ = d.Complete(ctx, sid("b"), t0)
 		if r, _ := d.Request(ctx, "r1"); r.Sessions != 3 || r.Completed != 1 {
 			t.Fatalf("progress = %+v", r)
 		}
@@ -325,16 +336,16 @@ func RunDeletions(t *testing.T, newDeletions func(t *testing.T) lifecycle.Deleti
 		}
 		short, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 		defer cancel()
-		if err := w.WaitDeleted(short, "s1"); !errors.Is(err, context.DeadlineExceeded) {
+		if err := w.WaitDeleted(short, sid("s1")); !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("wait on a live session = %v", err)
 		}
 		done := make(chan error, 1)
-		go func() { done <- w.WaitDeleted(ctx, "s1") }()
+		go func() { done <- w.WaitDeleted(ctx, sid("s1")) }()
 		time.Sleep(50 * time.Millisecond) // 等待者已订阅
-		if _, err := d.Mark(ctx, &lifecycle.Tombstone{SessionID: "s2", BusinessLine: "bl", Reason: "user", RequestedAt: t0}); err != nil {
+		if _, err := d.Mark(ctx, &lifecycle.Tombstone{SessionID: sid("s2"), BusinessLine: "bl", Reason: "user", RequestedAt: t0}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := d.Mark(ctx, &lifecycle.Tombstone{SessionID: "s1", BusinessLine: "bl", Reason: "user", RequestedAt: t0}); err != nil {
+		if _, err := d.Mark(ctx, &lifecycle.Tombstone{SessionID: sid("s1"), BusinessLine: "bl", Reason: "user", RequestedAt: t0}); err != nil {
 			t.Fatal(err)
 		}
 		select {
@@ -345,7 +356,7 @@ func RunDeletions(t *testing.T, newDeletions func(t *testing.T) lifecycle.Deleti
 		case <-time.After(5 * time.Second):
 			t.Fatal("waiter not woken by the deletion")
 		}
-		if err := w.WaitDeleted(ctx, "s1"); err != nil {
+		if err := w.WaitDeleted(ctx, sid("s1")); err != nil {
 			t.Fatalf("wait on an already deleted session = %v", err)
 		}
 	})

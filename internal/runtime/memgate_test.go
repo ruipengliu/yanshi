@@ -284,7 +284,7 @@ func TestDeviceOnlyUIContextDoesNotTaint(t *testing.T) {
 // 委托派生的子 Session：任务由父 Run 的模型写成，不是用户原话；即使没有读过任何外部内容，任务里的地址也要审批
 // （评审 §11 问题 1）。用户直接在子 Session 里说的话仍是原话。
 func TestDelegatedTaskIsNotUserText(t *testing.T) {
-	parent := &v1.ParentRef{SessionId: "ses_p", RunId: "pr", CallId: "pc"}
+	parent := &v1.ParentRef{SessionId: "ses_v1_000_000_p", RunId: "pr", CallId: "pc"}
 	b := (&logBuilder{}).
 		add(&v1.SessionCreated{BusinessLine: "bl", Parent: parent}).
 		add(&v1.RunRequested{RunId: "r1", InputId: delegation.InputID("pc"),

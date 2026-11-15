@@ -12,7 +12,7 @@ import (
 func indexEndUserKeys(t *testing.T, x lifecycle.Index) {
 	ctx := context.Background()
 	at := time.Unix(1000, 0).UTC()
-	row := &lifecycle.Session{ID: "same", BusinessLine: "bl", EndUser: "owner", CreatedAt: at, LastInputAt: at}
+	row := &lifecycle.Session{ID: sid("same"), BusinessLine: "bl", EndUser: "owner", CreatedAt: at, LastInputAt: at}
 	if err := x.Put(ctx, row); err != nil {
 		t.Fatal(err)
 	}

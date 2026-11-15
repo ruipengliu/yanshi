@@ -9,7 +9,6 @@ import (
 const usageText = `usage:
   yanshi serve [flags]   启动单进程服务（API + Worker）
   yanshi migrate [flags] 应用 PostgreSQL 迁移（生产中作为发布前的独立任务，serve 以 -migrate=false 启动）
-  yanshi id-preflight [flags]  只读预检历史 ID 命名空间碰撞
   yanshi chat  [flags]   命令行对话客户端
   yanshi node  [flags]   模拟电脑上的 HostApp，把共享目录作为 Node 接入
   yanshi keygen [flags]  生成开发用的业务线密钥对（serve -auth jwt）
@@ -31,8 +30,6 @@ func main() {
 		err = serve(os.Args[2:])
 	case "migrate":
 		err = migrateCmd(os.Args[2:])
-	case "id-preflight":
-		err = idPreflightCmd(os.Args[2:])
 	case "chat":
 		err = chat(os.Args[2:])
 	case "node":

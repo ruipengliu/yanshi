@@ -77,7 +77,7 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 	dir := node.NewMemDirectory(clk)
 	ctx := context.Background()
 
-	if _, err := svc.Deletions.Mark(ctx, &lifecycle.Tombstone{SessionID: "deleted-session", BusinessLine: "demo", Reason: lifecycle.ReasonErasure, RequestedAt: clk.Now()}); err != nil {
+	if _, err := svc.Deletions.Mark(ctx, &lifecycle.Tombstone{SessionID: "ses_v1_000_000_deleted-session", BusinessLine: "demo", Reason: lifecycle.ReasonErasure, RequestedAt: clk.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	e.sid, err = svc.Create(ctx, service.CreateRequest{BusinessLine: "demo", EndUser: "u1", Agent: "echo"})
@@ -252,7 +252,7 @@ func (e *authzEnv) cases() map[string]routeCase {
 		"DELETE /v1/end_users/{id}":                        {"DELETE", "/v1/end_users/u1", nil, http.StatusAccepted},
 		"PUT /v1/end_users/{id}/tier":                      {"PUT", "/v1/end_users/u1/tier", map[string]string{"tier": "pro"}, http.StatusOK},
 		"DELETE /v1/end_users/{id}/tier":                   {"DELETE", "/v1/end_users/u1/tier", nil, http.StatusOK},
-		"GET /v1/sessions/{id}/deletion":                   {"GET", "/v1/sessions/deleted-session/deletion", nil, http.StatusOK},
+		"GET /v1/sessions/{id}/deletion":                   {"GET", "/v1/sessions/ses_v1_000_000_deleted-session/deletion", nil, http.StatusOK},
 		"GET /v1/deletions/{id}":                           {"GET", "/v1/deletions/" + e.deletion, nil, http.StatusOK},
 		"GET /v1/memories":                                 {"GET", "/v1/memories?end_user=u1", nil, http.StatusOK},
 		"DELETE /v1/memories/{id}":                         {"DELETE", "/v1/memories/" + e.memory + "?end_user=u1", nil, http.StatusNoContent},

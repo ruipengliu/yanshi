@@ -23,19 +23,19 @@ func drain(ch <-chan Delta) []Delta {
 func TestLateSubscriberGetsSnapshot(t *testing.T) {
 	b := NewMemBus()
 	pub := func(after uint64, text string) {
-		b.Publish(Delta{SessionID: "s", RunID: "r", Attempt: 1, AfterSeq: after, Text: text})
+		b.Publish(Delta{SessionID: "ses_v1_000_000_s", RunID: "r", Attempt: 1, AfterSeq: after, Text: text})
 	}
 	pub(5, "hello ")
 	pub(5, "world")
-	ch, cancel := b.Subscribe("s")
+	ch, cancel := b.Subscribe("ses_v1_000_000_s")
 	defer cancel()
 	got := drain(ch)
 	if len(got) != 1 || !got[0].Snapshot || got[0].Text != "hello world" || got[0].AfterSeq != 5 {
 		t.Fatalf("late subscriber got %+v", got)
 	}
 
-	b.Publish(Delta{SessionID: "s", RunID: "r", Attempt: 1, AfterSeq: 5, End: true})
-	ch2, cancel2 := b.Subscribe("s")
+	b.Publish(Delta{SessionID: "ses_v1_000_000_s", RunID: "r", Attempt: 1, AfterSeq: 5, End: true})
+	ch2, cancel2 := b.Subscribe("ses_v1_000_000_s")
 	defer cancel2()
 	if got := drain(ch2); len(got) != 0 {
 		t.Fatalf("nothing should be replayed after the end marker, got %+v", got)
@@ -43,7 +43,7 @@ func TestLateSubscriberGetsSnapshot(t *testing.T) {
 
 	pub(7, "next")
 	pub(8, "other") // 没有结束标记就换了位置（例如被接管）：重新开始
-	ch3, cancel3 := b.Subscribe("s")
+	ch3, cancel3 := b.Subscribe("ses_v1_000_000_s")
 	defer cancel3()
 	if got := drain(ch3); len(got) != 1 || got[0].Text != "other" || got[0].AfterSeq != 8 {
 		t.Fatalf("snapshot after a new generation started = %+v", got)
@@ -52,9 +52,9 @@ func TestLateSubscriberGetsSnapshot(t *testing.T) {
 
 func TestOverflowedDraftIsNotReplayed(t *testing.T) {
 	b := NewMemBus()
-	b.Publish(Delta{SessionID: "s", AfterSeq: 1, Text: strings.Repeat("x", maxDraft)})
-	b.Publish(Delta{SessionID: "s", AfterSeq: 1, Text: "y"})
-	ch, cancel := b.Subscribe("s")
+	b.Publish(Delta{SessionID: "ses_v1_000_000_s", AfterSeq: 1, Text: strings.Repeat("x", maxDraft)})
+	b.Publish(Delta{SessionID: "ses_v1_000_000_s", AfterSeq: 1, Text: "y"})
+	ch, cancel := b.Subscribe("ses_v1_000_000_s")
 	defer cancel()
 	if got := drain(ch); len(got) != 0 {
 		t.Fatal("an incomplete draft must not be replayed as a snapshot")
@@ -71,10 +71,10 @@ func TestSnapshotAndDeltasNeitherGapNorOverlap(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := range n {
-				b.Publish(Delta{SessionID: "s", AfterSeq: 1, Text: string(rune('a' + i%26))})
+				b.Publish(Delta{SessionID: "ses_v1_000_000_s", AfterSeq: 1, Text: string(rune('a' + i%26))})
 			}
 		}()
-		ch, cancel := b.Subscribe("s")
+		ch, cancel := b.Subscribe("ses_v1_000_000_s")
 		wg.Wait()
 		var text strings.Builder
 		for _, d := range drain(ch) {
@@ -94,10 +94,10 @@ func TestSnapshotAndDeltasNeitherGapNorOverlap(t *testing.T) {
 // TestSnapshotCarriesReasoning：晚加入者补齐思考过程与正文，二者分开（ADR-0034）。
 func TestSnapshotCarriesReasoning(t *testing.T) {
 	b := NewMemBus()
-	b.Publish(Delta{SessionID: "s", RunID: "r", Attempt: 1, AfterSeq: 3, Reasoning: "先想"})
-	b.Publish(Delta{SessionID: "s", RunID: "r", Attempt: 1, AfterSeq: 3, Reasoning: "一想"})
-	b.Publish(Delta{SessionID: "s", RunID: "r", Attempt: 1, AfterSeq: 3, Text: "答案"})
-	ch, cancel := b.Subscribe("s")
+	b.Publish(Delta{SessionID: "ses_v1_000_000_s", RunID: "r", Attempt: 1, AfterSeq: 3, Reasoning: "先想"})
+	b.Publish(Delta{SessionID: "ses_v1_000_000_s", RunID: "r", Attempt: 1, AfterSeq: 3, Reasoning: "一想"})
+	b.Publish(Delta{SessionID: "ses_v1_000_000_s", RunID: "r", Attempt: 1, AfterSeq: 3, Text: "答案"})
+	ch, cancel := b.Subscribe("ses_v1_000_000_s")
 	defer cancel()
 	if got := drain(ch); len(got) != 1 || !got[0].Snapshot || got[0].Reasoning != "先想一想" || got[0].Text != "答案" {
 		t.Fatalf("late subscriber got %+v", got)

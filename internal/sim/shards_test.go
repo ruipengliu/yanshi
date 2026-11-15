@@ -25,7 +25,7 @@ var shardSeeds = flag.Int("sim.shardseeds", 3, "单库、内存双分片与 Post
 
 func simulationLocator(t *testing.T) shard.Locator {
 	t.Helper()
-	l, err := shard.ParseDeployment([]byte(`{"table":{"shards":[0,1],"ranges":[{"first":0,"last":511,"shard":0},{"first":512,"last":1023,"shard":1}]},"compatibility":{"version":"sim-dual","legacy_data_in_shard0":false,"entries":[]}}`))
+	l, err := shard.ParseDeployment([]byte(`{"version":"sim-dual","table":{"shards":[0,1],"ranges":[{"first":0,"last":511,"shard":0},{"first":512,"last":1023,"shard":1}]}}`))
 	if err != nil {
 		t.Fatal(err)
 	}

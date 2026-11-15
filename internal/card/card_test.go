@@ -109,7 +109,7 @@ func TestCapability(t *testing.T) {
 		t.Fatalf("session.ShowCardCapability = %q, want %q", session.ShowCardCapability, Capability)
 	}
 	cp := New(nil)
-	out, err := cp.Invoke(context.Background(), capability.Invocation{SessionID: "s", CallID: "call_1", Arguments: `{"title":"天气","image":"icon:weather"}`})
+	out, err := cp.Invoke(context.Background(), capability.Invocation{SessionID: "ses_v1_000_000_s", CallID: "call_1", Arguments: `{"title":"天气","image":"icon:weather"}`})
 	if err != nil || len(out) != 2 || Find(out).GetTitle() != "天气" || !strings.Contains(out[0].GetText().GetText(), "已展示卡片") {
 		t.Fatalf("out = %v, %v", out, err)
 	}

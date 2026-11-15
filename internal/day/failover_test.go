@@ -530,7 +530,7 @@ func (e *environment) verifyServeIdentity() {
 		u.RawQuery = q.Encode()
 		dbs = append(dbs, map[string]any{"id": id, "sql_dsn": u.String(), "direct_dsn": u.String()})
 	}
-	raw, err := json.Marshal(map[string]any{"table": map[string]any{"shards": []int{0, 1}, "ranges": []map[string]int{{"first": 0, "last": 511, "shard": 0}, {"first": 512, "last": 1023, "shard": 1}}}, "compatibility": map[string]string{"version": "day-dual"}, "databases": dbs})
+	raw, err := json.Marshal(map[string]any{"table": map[string]any{"shards": []int{0, 1}, "ranges": []map[string]int{{"first": 0, "last": 511, "shard": 0}, {"first": 512, "last": 1023, "shard": 1}}}, "version": "day-dual", "databases": dbs})
 	must(e.t, err)
 	must(e.t, os.WriteFile(path, raw, 0600))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

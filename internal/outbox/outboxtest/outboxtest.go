@@ -61,7 +61,7 @@ func Run(t *testing.T, fresh func(*testing.T) Stores) {
 			}
 			assertEmpty := func(t *testing.T, s Stores) {
 				t.Helper()
-				events, err := s.Log.Read(ctx, "s", 0, 0)
+				events, err := s.Log.Read(ctx, "ses_v1_000_000_s", 0, 0)
 				if err != nil || len(events) != 0 || len(list(t, s, "bl")) != 0 {
 					t.Fatalf("partial commit: events=%d err=%v", len(events), err)
 				}
@@ -71,27 +71,27 @@ func Run(t *testing.T, fresh func(*testing.T) Stores) {
 			}
 			t.Run("CommitConflictAndDuplicate", func(t *testing.T) {
 				s := fresh(t)
-				e := envelope("s", 1)
-				if err := appendEvents(ctx, s, "s", 0, []outbox.Envelope{e}, event()); err != nil {
+				e := envelope("ses_v1_000_000_s", 1)
+				if err := appendEvents(ctx, s, "ses_v1_000_000_s", 0, []outbox.Envelope{e}, event()); err != nil {
 					t.Fatal(err)
 				}
 				if got := list(t, s, "bl"); !reflect.DeepEqual(got, []outbox.Envelope{e}) {
 					t.Fatalf("envelopes = %+v", got)
 				}
 				for range 2 {
-					if err := appendEvents(ctx, s, "s", 0, []outbox.Envelope{e}, event()); !errors.Is(err, eventlog.ErrConflict) {
+					if err := appendEvents(ctx, s, "ses_v1_000_000_s", 0, []outbox.Envelope{e}, event()); !errors.Is(err, eventlog.ErrConflict) {
 						t.Fatalf("retry = %v", err)
 					}
 				}
 				if got := list(t, s, "bl"); len(got) != 1 {
 					t.Fatalf("retry duplicated envelope: %d", len(got))
 				}
-				events, err := s.Log.Read(ctx, "s", 0, 0)
+				events, err := s.Log.Read(ctx, "ses_v1_000_000_s", 0, 0)
 				if err != nil || len(events) != 1 {
 					t.Fatalf("events=%d err=%v", len(events), err)
 				}
 				lease, err := s.Queue.Claim(ctx, "worker", time.Minute, workqueue.Pool{})
-				if wake && (err != nil || lease.SessionID != "s") {
+				if wake && (err != nil || lease.SessionID != "ses_v1_000_000_s") {
 					t.Fatalf("wake=%v %v", lease, err)
 				}
 				if !wake && !errors.Is(err, workqueue.ErrEmpty) {
@@ -105,11 +105,11 @@ func Run(t *testing.T, fresh func(*testing.T) Stores) {
 				for _, run := range []string{"a", "b"} {
 					go func() {
 						<-start
-						e := envelope("s", 1)
+						e := envelope("ses_v1_000_000_s", 1)
 						e.RunID = run
 						ev := event()
 						ev.GetRunCompleted().RunId = run
-						results <- appendEvents(ctx, s, "s", 0, []outbox.Envelope{e}, ev)
+						results <- appendEvents(ctx, s, "ses_v1_000_000_s", 0, []outbox.Envelope{e}, ev)
 					}()
 				}
 				close(start)
@@ -127,7 +127,7 @@ func Run(t *testing.T, fresh func(*testing.T) Stores) {
 				if success != 1 || conflicts != 1 {
 					t.Fatalf("success=%d conflicts=%d", success, conflicts)
 				}
-				events, err := s.Log.Read(ctx, "s", 0, 0)
+				events, err := s.Log.Read(ctx, "ses_v1_000_000_s", 0, 0)
 				got := list(t, s, "bl")
 				if err != nil || len(events) != 1 || len(got) != 1 || events[0].GetRunCompleted().GetRunId() != got[0].RunID {
 					t.Fatalf("conflicting commit leaked: events=%d envelopes=%+v err=%v", len(events), got, err)
@@ -135,13 +135,13 @@ func Run(t *testing.T, fresh func(*testing.T) Stores) {
 			})
 			t.Run("RollbackWholeBatch", func(t *testing.T) {
 				s := fresh(t)
-				e := envelope("s", 1)
+				e := envelope("ses_v1_000_000_s", 1)
 				// 第二条信封违反唯一约束：PG 已插事件和第一条信封，必须一起回滚。
-				if err := appendEvents(ctx, s, "s", 0, []outbox.Envelope{e, e}, event()); err == nil {
+				if err := appendEvents(ctx, s, "ses_v1_000_000_s", 0, []outbox.Envelope{e, e}, event()); err == nil {
 					t.Fatal("duplicate accepted")
 				}
 				assertEmpty(t, s)
-				if err := appendEvents(ctx, s, "s", 0, []outbox.Envelope{e}, event()); err != nil {
+				if err := appendEvents(ctx, s, "ses_v1_000_000_s", 0, []outbox.Envelope{e}, event()); err != nil {
 					t.Fatal(err)
 				}
 			})
@@ -149,21 +149,21 @@ func Run(t *testing.T, fresh func(*testing.T) Stores) {
 				s := fresh(t)
 				cancelled, cancel := context.WithCancel(ctx)
 				cancel()
-				if err := appendEvents(cancelled, s, "s", 0, []outbox.Envelope{envelope("s", 1)}, event()); err == nil {
+				if err := appendEvents(cancelled, s, "ses_v1_000_000_s", 0, []outbox.Envelope{envelope("ses_v1_000_000_s", 1)}, event()); err == nil {
 					t.Fatal("cancelled commit accepted")
 				}
 				assertEmpty(t, s)
 				bad := event()
 				bad.Id = string([]byte{0xff})
-				if err := appendEvents(ctx, s, "s", 0, []outbox.Envelope{envelope("s", 1)}, event(), bad); err == nil {
+				if err := appendEvents(ctx, s, "ses_v1_000_000_s", 0, []outbox.Envelope{envelope("ses_v1_000_000_s", 1)}, event(), bad); err == nil {
 					t.Fatal("invalid event accepted")
 				}
 				assertEmpty(t, s)
 			})
 			t.Run("RejectWrongSessionAndSequence", func(t *testing.T) {
 				s := fresh(t)
-				for _, e := range []outbox.Envelope{envelope("other", 1), envelope("s", 2), outbox.Deleted("bl", "s", "service", "")} {
-					if err := appendEvents(ctx, s, "s", 0, []outbox.Envelope{e}, event()); err == nil {
+				for _, e := range []outbox.Envelope{envelope("ses_v1_000_000_other", 1), envelope("ses_v1_000_000_s", 2), outbox.Deleted("bl", "ses_v1_000_000_s", "service", "")} {
+					if err := appendEvents(ctx, s, "ses_v1_000_000_s", 0, []outbox.Envelope{e}, event()); err == nil {
 						t.Fatal("foreign envelope accepted")
 					}
 				}
@@ -173,7 +173,7 @@ func Run(t *testing.T, fresh func(*testing.T) Stores) {
 	}
 	t.Run("OrderIsolationAndCopies", func(t *testing.T) {
 		s := fresh(t)
-		a, b, c := envelope("a", 1), envelope("b", 1), envelope("c", 1)
+		a, b, c := envelope("ses_v1_000_000_a", 1), envelope("ses_v1_000_000_b", 1), envelope("ses_v1_000_000_c", 1)
 		b.BusinessLine = "other"
 		for _, e := range []outbox.Envelope{c, b, a} {
 			if _, err := s.Log.Append(ctx, e.SessionID, 0, []outbox.Envelope{e}, event()); err != nil {
@@ -194,18 +194,18 @@ func Run(t *testing.T, fresh func(*testing.T) Stores) {
 	})
 	t.Run("MarkAtomicIdempotentAndSurvivesDeletion", func(t *testing.T) {
 		s := fresh(t)
-		if _, err := s.Log.Append(ctx, "s", 0, []outbox.Envelope{envelope("s", 1)}, event()); err != nil {
+		if _, err := s.Log.Append(ctx, "ses_v1_000_000_s", 0, []outbox.Envelope{envelope("ses_v1_000_000_s", 1)}, event()); err != nil {
 			t.Fatal(err)
 		}
-		tomb := &lifecycle.Tombstone{SessionID: "s", BusinessLine: "bl", Reason: "account_deletion", RequestID: "request", RequestedAt: time.Unix(100, 0)}
+		tomb := &lifecycle.Tombstone{SessionID: "ses_v1_000_000_s", BusinessLine: "bl", Reason: "account_deletion", RequestID: "request", RequestedAt: time.Unix(100, 0)}
 		if err := s.Deletions.CreateRequest(ctx, &lifecycle.Request{ID: "request", BusinessLine: "bl", CreatedAt: tomb.RequestedAt}); err != nil {
 			t.Fatal(err)
 		}
 		if ok, err := s.Deletions.Mark(ctx, tomb); err != nil || !ok {
 			t.Fatalf("mark=%v %v", ok, err)
 		}
-		want := outbox.Deleted("bl", "s", "account_deletion", "request")
-		if got := list(t, s, "bl"); !reflect.DeepEqual(got, []outbox.Envelope{envelope("s", 1), want}) {
+		want := outbox.Deleted("bl", "ses_v1_000_000_s", "account_deletion", "request")
+		if got := list(t, s, "bl"); !reflect.DeepEqual(got, []outbox.Envelope{envelope("ses_v1_000_000_s", 1), want}) {
 			t.Fatalf("mark envelopes=%+v", got)
 		}
 		changed := *tomb
@@ -215,14 +215,14 @@ func Run(t *testing.T, fresh func(*testing.T) Stores) {
 			t.Fatalf("duplicate mark=%v %v", ok, err)
 		}
 		for range 2 {
-			if err := s.Outbox.DeleteSession(ctx, "s"); err != nil {
+			if err := s.Outbox.DeleteSession(ctx, "ses_v1_000_000_s"); err != nil {
 				t.Fatal(err)
 			}
-			if err := s.Log.Delete(ctx, "s"); err != nil {
+			if err := s.Log.Delete(ctx, "ses_v1_000_000_s"); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if err := s.Deletions.Complete(ctx, "s", time.Unix(101, 0)); err != nil {
+		if err := s.Deletions.Complete(ctx, "ses_v1_000_000_s", time.Unix(101, 0)); err != nil {
 			t.Fatal(err)
 		}
 		if got := list(t, s, "bl"); !reflect.DeepEqual(got, []outbox.Envelope{want}) {
@@ -241,11 +241,11 @@ func Run(t *testing.T, fresh func(*testing.T) Stores) {
 		}
 		cancelled, cancel := context.WithCancel(ctx)
 		cancel()
-		tomb.SessionID = "s"
+		tomb.SessionID = "ses_v1_000_000_s"
 		if ok, err := s.Deletions.Mark(cancelled, tomb); err == nil || ok {
 			t.Fatalf("cancelled mark=%v %v", ok, err)
 		}
-		if _, err := s.Deletions.Get(ctx, "s"); !errors.Is(err, lifecycle.ErrNotFound) {
+		if _, err := s.Deletions.Get(ctx, "ses_v1_000_000_s"); !errors.Is(err, lifecycle.ErrNotFound) {
 			t.Fatalf("cancelled mark leaked: %v", err)
 		}
 		if got := list(t, s, "bl"); len(got) != 0 {
@@ -256,7 +256,7 @@ func Run(t *testing.T, fresh func(*testing.T) Stores) {
 		s := fresh(t)
 		store := &session.Store{Log: s.Log, Waking: s.Waking, Outbox: s.Outbox, Deletions: s.Deletions,
 			IDs: ids.Sequential("e"), Clock: clock.Real{}}
-		st := &session.State{SessionID: "s"}
+		st := &session.State{SessionID: "ses_v1_000_000_s"}
 		batch := []*v1.Event{
 			{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u", Agent: &v1.AgentRef{Name: "agent", Version: "v1"}}}},
 			{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r"}}},
@@ -268,7 +268,7 @@ func Run(t *testing.T, fresh func(*testing.T) Stores) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if got := list(t, s, "bl"); !reflect.DeepEqual(got, []outbox.Envelope{envelope("s", 4)}) {
+		if got := list(t, s, "bl"); !reflect.DeepEqual(got, []outbox.Envelope{envelope("ses_v1_000_000_s", 4)}) {
 			t.Fatalf("derived=%+v", got)
 		}
 		if err := store.Commit(ctx, st, event()); !errors.Is(err, session.ErrInvalid) {
@@ -283,7 +283,7 @@ func Run(t *testing.T, fresh func(*testing.T) Stores) {
 			s := fresh(t)
 			store := &session.Store{Log: s.Log, Waking: s.Waking, Outbox: s.Outbox, Deletions: s.Deletions,
 				IDs: ids.Sequential("e"), Clock: clock.Real{}}
-			st := &session.State{SessionID: "s"}
+			st := &session.State{SessionID: "ses_v1_000_000_s"}
 			base := []*v1.Event{
 				{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u"}}},
 				{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r"}}},
@@ -293,10 +293,10 @@ func Run(t *testing.T, fresh func(*testing.T) Stores) {
 				t.Fatal(err)
 			}
 			// 模拟已通过前置检查的写入跨越 Mark 与清理，丢响应仍须撤回。
-			if _, err := s.Deletions.Mark(ctx, &lifecycle.Tombstone{SessionID: "s", BusinessLine: "bl", Reason: "service", RequestedAt: time.Unix(100, 0)}); err != nil {
+			if _, err := s.Deletions.Mark(ctx, &lifecycle.Tombstone{SessionID: "ses_v1_000_000_s", BusinessLine: "bl", Reason: "service", RequestedAt: time.Unix(100, 0)}); err != nil {
 				t.Fatal(err)
 			}
-			if err := s.Outbox.DeleteSession(ctx, "s"); err != nil {
+			if err := s.Outbox.DeleteSession(ctx, "ses_v1_000_000_s"); err != nil {
 				t.Fatal(err)
 			}
 			if lost {
@@ -308,7 +308,7 @@ func Run(t *testing.T, fresh func(*testing.T) Stores) {
 			if !errors.Is(err, session.ErrGone) {
 				t.Fatalf("late commit=%v", err)
 			}
-			if got := list(t, s, "bl"); !reflect.DeepEqual(got, []outbox.Envelope{outbox.Deleted("bl", "s", "service", "")}) {
+			if got := list(t, s, "bl"); !reflect.DeepEqual(got, []outbox.Envelope{outbox.Deleted("bl", "ses_v1_000_000_s", "service", "")}) {
 				t.Fatalf("late envelope survived=%+v", got)
 			}
 		}

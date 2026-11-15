@@ -81,7 +81,7 @@ func TestScheduleCapabilityInvalid(t *testing.T) {
 			t.Fatalf("%s: %v", args, err)
 		}
 	}
-	st.Created.Parent = &v1.ParentRef{SessionId: "parent"}
+	st.Created.Parent = &v1.ParentRef{SessionId: "ses_v1_000_000_parent"}
 	if err := check.Check(capability.Invocation{State: st, Arguments: `{"action":"create","input":"提醒","time_zone":"UTC","at":"2026-10-30T17:00"}`}); err == nil || !strings.Contains(err.Error(), "子任务中不能创建定时") {
 		t.Fatalf("child %v", err)
 	}

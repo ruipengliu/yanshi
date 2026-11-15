@@ -60,7 +60,7 @@ func TestReasoningRecorded(t *testing.T) {
 		bus := &recordingBus{}
 		w := New(Config{ID: "w", Store: store, Queue: q, Agents: agents, Model: gw, Moderator: moderation.Mock{}, Live: bus,
 			Catalog: &capability.Catalog{Local: capability.NewRegistry()}})
-		st := &session.State{SessionID: "s1"}
+		st := &session.State{SessionID: "ses_v1_000_000_s1"}
 		created := &v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{BusinessLine: "bl", EndUser: "u", Agent: &v1.AgentRef{Name: "t", Version: "1"}}}}
 		for _, in := range []string{"几点", "再问一次"} {
 			events := []*v1.Event{{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r_" + in, Input: model.TextBlocks(in)}}}}
@@ -70,7 +70,7 @@ func TestReasoningRecorded(t *testing.T) {
 			if err := store.Commit(ctx, st, events...); err != nil {
 				t.Fatal(err)
 			}
-			_ = q.Enqueue(ctx, "s1", workqueue.Class{})
+			_ = q.Enqueue(ctx, "ses_v1_000_000_s1", workqueue.Class{})
 			for range 6 {
 				if _, err := w.Step(ctx); err != nil {
 					t.Fatal(err)
@@ -78,7 +78,7 @@ func TestReasoningRecorded(t *testing.T) {
 			}
 			_ = store.Sync(ctx, st)
 		}
-		events, _ := eventlog.ReadAll(ctx, store.Log, "s1", 0)
+		events, _ := eventlog.ReadAll(ctx, store.Log, "ses_v1_000_000_s1", 0)
 		return events, m, bus
 	}
 

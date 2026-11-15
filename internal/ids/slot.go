@@ -27,17 +27,13 @@ func (g Generator) ForSession(prefix, sessionID string) (string, error) {
 }
 
 // WithSession 只继承所属 Session 的槽位，工件或调用自己的 token 不参与选槽。
-// 旧 Session 的新对象也保持旧格式，不能因槽位 0 被迁走而离开兼容库。
 func WithSession(prefix, token, sessionID string) (string, error) {
-	slot, legacy, err := SessionSlotOf(sessionID)
+	slot, err := SessionSlotOf(sessionID)
 	if err != nil {
 		return "", err
 	}
 	if !validPrefix(prefix) || prefix == "ses" || !validToken(token) {
 		return "", fmt.Errorf("ids: invalid object prefix or token")
-	}
-	if legacy {
-		return prefix + "_" + token, nil
 	}
 	return prefix + "_v1_" + encodeSlot(slot) + "_" + token, nil
 }
@@ -47,7 +43,6 @@ func (g Generator) ForEndUser(prefix, endUser string) (string, error) {
 }
 
 // WithEndUser 不接受业务线，跨业务线的 Memory 与 Grant 必须仍在同一 EndUser 的库。
-// 调用方须已完成旧 EndUser 数据的兼容安排；外部 EndUser ID 自身没有版本可供判断。
 func WithEndUser(prefix, token, endUser string) (string, error) {
 	if !validPrefix(prefix) || prefix == "ses" || !validToken(token) || endUser == "" {
 		return "", fmt.Errorf("ids: invalid object prefix, token or EndUser")
@@ -55,18 +50,18 @@ func WithEndUser(prefix, token, endUser string) (string, error) {
 	return prefix + "_v1_" + encodeSlot(shard.Hash(endUser)) + "_" + token, nil
 }
 
-// SlotOf 的 legacy 只表示没有版本标记；带标记但损坏或版本未知的 ID 必须报错，不能回退库 0。
+// SlotOf 只接受带版本的 ID，无版本、损坏或版本未知都报错（ADR-0051）。
 // 槽位仅供定位，不证明归属；读到对象后仍须核对真实 Session / EndUser 与业务线。
-func SlotOf(id string) (slot int, legacy bool, err error) {
+func SlotOf(id string) (int, error) {
 	return shard.SlotOf(id)
 }
 
-func SessionSlotOf(id string) (slot int, legacy bool, err error) {
+func SessionSlotOf(id string) (int, error) {
 	return shard.SessionSlotOf(id)
 }
 
 // EndUserSlotOfSession 定位 ByEndUser 的 Session 索引，不用于 Session 日志。
-func EndUserSlotOfSession(id string) (slot int, legacy bool, err error) {
+func EndUserSlotOfSession(id string) (int, error) {
 	return shard.EndUserSlotOfSession(id)
 }
 
