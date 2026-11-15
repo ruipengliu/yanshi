@@ -33,7 +33,7 @@ type Verdict struct {
 | 检查点 | 位置 | 违规时 | 提供商不可用时 |
 |---|---|---|---|
 | 用户输入（新 Run 与插话） | Service.Submit，写日志之前 | 拒绝，HTTP 422；输入不写入日志 | 拒绝，HTTP 503 |
-| 模型输出（回复文本、调用参数与写入日志的思考过程） | Worker，模型返回之后、写日志之前（计量之后） | 回复替换为固定的拒答文本，丢弃全部调用，并写入 `ContentModerated`；Run 正常完成 | Step 出错重试；持续不可用时按 StepErrorBudget 使 Run 失败 |
+| 模型输出（回复文本、调用参数与写入日志的思考过程） | Worker，模型返回之后、写日志之前（计量之后） | 回复替换为固定的拒答文本，丢弃全部调用，并写入 `ContentModerated`；Run 正常完成 | 丢弃回复（其中的调用从未执行），写入不含正文的 `RunSuspended{reason: "moderation_unavailable"}` 并停放，30 秒起翻倍、至多 10 分钟后重新生成并送检；从第一次挂起起超过 6 小时仍不可用时 Run 以 `moderation unavailable` 失败（ADR-0054） |
 | attested MCP 旁听页 | Worker 执行调用路径，写 ToolResult 之前 | 整页送检、逐段复核、违规段占位；组合违规整页占位，不写 ContentModerated | 固定平台错误，不写原文 |
 | Call 的转写（用户的话、助手的话） | `service.AppendTranscript`，写日志之前（[Call](./m3-call.md) §6） | 不写日志；中止进行中的回复、停止播放；用户的话违规时说出拒答 | 同违规 |
 
@@ -68,13 +68,14 @@ attested 页使用 `moderation.Request{Stage: Input, BusinessLine, SessionID, Te
 - `yanshi_moderation_checks_total{stage, result}`，result 为 allow | block | error；
 - `yanshi_moderation_duration_seconds{stage}`；
 - `yanshi_moderation_failovers_total{provider}`：该提供商超时或出错、改问下一个的次数。
+- `yanshi_moderation_waits_total{result}`：输出审核不可用时的处理，result 为 suspended（挂起等待，即本轮被丢弃、之后重新生成的次数）| failed（超过等待上限）（ADR-0054）。
 
 日志只记录 Session、Run ID 与标签，不记录内容。
 
 ## 6. 验证
 
-- 单元测试：输入拦截时日志中没有该输入；输出拦截时日志中只有拒答文本、没有调用、有 `ContentModerated`；提供商出错时输入返回不可用、输出重试。
-- 模拟测试：模拟提供商按随机源拦截或报错；不变量：被拦截的输出原文从不出现在日志中，每个 `ContentModerated` 之后的 AssistantMessage 是拒答文本且没有调用；覆盖统计包含输入拦截、输出拦截与提供商错误。不变量的镜像与检查点对写入日志的值调用同一函数（输入用 `moderation.ForInput`，输出用 `runtime.ModerationText`），送检文本因此不会与镜像分叉。
+- 单元测试：输入拦截时日志中没有该输入；输出拦截时日志中只有拒答文本、没有调用、有 `ContentModerated`；提供商出错时输入返回不可用；输出使 Run 挂起，退避逐次翻倍至上限，退避未到期时被唤醒只重新停放、不写事件，超过等待上限后失败（`TestModerationWait`，ADR-0054）。
+- 模拟测试：模拟提供商按随机源拦截或报错；不变量：被拦截的输出原文从不出现在日志中，每个 `ContentModerated` 之后的 AssistantMessage 是拒答文本且没有调用；覆盖统计包含输入拦截、输出拦截、提供商错误，以及输出审核不可用时的挂起（`ModerationWaits`）与挂起之后完成的 Run（`ModerationResumes`）。不变量的镜像与检查点对写入日志的值调用同一函数（输入用 `moderation.ForInput`，输出用 `runtime.ModerationText`），送检文本因此不会与镜像分叉。
 
 ## 7. 验证结果
 

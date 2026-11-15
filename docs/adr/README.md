@@ -7,7 +7,7 @@
 - **先看本表，再读正文。** "状态"一列说明正文是否仍有效；被取代或已迁出的 ADR 是历史记录，现行规则在"取代关系"一列指向的 ADR 中。
 - **"实施状态"** 依据 ADR 自述与代码：已实现、部分实现、未实现，或"未核对"（只读过决定，没有核对代码）。
 - **"分级"** 按推翻代价 × 被依赖程度：一级是推翻即重写，二级是结构性约束，三级是局部决定。一、二级 ADR 都有"重审条件"小节。
-- **proposed** 是已认可方向、尚待逐项批准的提案，不是现行规则；批准前照旧按它要修订的 ADR 执行。
+- **"方向，待定稿"** 是已批准方向、尚未实现的 ADR：实施前先定稿其中"待回答的问题"；实现之前照旧按它要修订的 ADR 执行。
 - **"单线"** 标为"是"的，是按通用设计、需求与使用却都来自 xinli 的机制，第二条业务线接入时复核（ADR-0043 的修订）。
 
 ## 管理规则
@@ -45,7 +45,7 @@
 | [0018](0018-evaluation-with-fixed-suites-and-cross-family-judge.md) | 固定用例集与跨系列评分 | 已修订（2026-10-11） | 已实现 | 三 | — | — | |
 | [0019](0019-usage-metered-outside-the-log-with-soft-quotas.md) | 用量在日志之外计量，软配额 | accepted | 已实现 | 二 | 对账差额超容忍度；硬配额需求 | — | |
 | [0020](0020-agent-rollout-by-end-user-with-switch-events.md) | AgentDef 按 EndUser 灰度 | accepted | 已实现 | 三 | — | — | |
-| [0021](0021-moderation-before-the-log-fail-closed.md) | 内容安全在写日志前，失败即拒 | 已修订（ADR-0050） | 部分实现（提供商为模拟） | 二 | 审核故障导致 Run 失败；流式草稿的监管要求 | — | |
+| [0021](0021-moderation-before-the-log-fail-closed.md) | 内容安全在写日志前，失败即拒 | 已修订（ADR-0050、ADR-0054） | 部分实现（提供商为模拟） | 二 | 审核故障超过等待上限；流式草稿的监管要求 | — | |
 | [0022](0022-health-memories-behind-business-line-consent.md) | 健康类 Memory 须业务线单独同意 | accepted | 已实现 | 二 | 以 EndUser 为单位的同意；新的敏感类别 | — | |
 | [0023](0023-memory-write-gate.md) | Memory 写入闸门 | 已修订（2026-11-14，**已知缺陷**） | 部分实现（文字覆盖缺陷） | 二 | 多语言业务线；误报漏报越过阈值 | — | |
 | [0024](0024-one-connection-per-host-app.md) | 每个 HostApp 一条 Connection | 已修订（2026-11-14） | 已实现 | 二 | 媒体之外仍需第二条长连接 | — | |
@@ -78,10 +78,10 @@
 | [0051](0051-shard-slots-and-id-location.md) | 固定槽位、裸 ID 定位与停写迁移 | 已修订（2026-11-14，标明阶段缺口） | 已实现（旧数据迁出为阶段缺口） | 一 | 同 0028；上线前评估删除旧 ID 兼容 | — | |
 | [0052](0052-attested-results-and-provenance.md) | 旁听原文在业务线，内核只采信结构化片段 | accepted | 已实现（"听过他人旁听"未实现） | 二 | 第二类可信结构化内容；说话人角色扩展；注入判断改为阻断；容量 | 整合并取代 0036、0039、0050 与 0037 的内核部分 | |
 | [0053](0053-self-hosted-sandbox-isolation-baseline.md) | 生产沙箱以自托管隔离为基线 | accepted（隔离技术待选型） | 未实现（只有 Docker 开发实现） | 二 | 选型完成；不再承接私有化；候选方案都无法部署 | 取代 0010 | |
-| [0054](0054-recoverable-wait-on-moderation-outage.md) | 审核基础设施故障时，Run 可恢复地等待 | **proposed** | 未实现 | 二 | 批准、实施或放弃时更新 | 批准后修订 0021 | |
-| [0055](0055-bounded-parallel-delegation-and-artifact-handoff.md) | 有界并行委托与工件交接 | **proposed** | 未实现 | 二 | 同上；设备调用也需并行时另立 | 批准后修订 0031 | |
-| [0056](0056-replaceable-context-strategy-and-streaming-loops.md) | 可替换的上下文策略与流式外部循环 | **proposed** | 未实现 | 二 | 同上；0041 开始实现时一并核对 | 批准后修订 0041 | |
-| [0057](0057-legacy-shard-migration.md) | 存量分片迁移 | **proposed（有前提）** | 未实现 | 二 | "是否删除旧 ID 兼容"评估完成时 | 只在保留旧 ID 兼容时需要；批准后修订 0051 §5 | |
+| [0054](0054-recoverable-wait-on-moderation-outage.md) | 审核基础设施故障时，Run 可恢复地等待 | accepted（2026-11-15） | 已实现 | 二 | 决定保存待审结果时另立 | 修订 0021 | |
+| [0055](0055-bounded-parallel-delegation-and-artifact-handoff.md) | 有界并行委托与工件交接 | accepted（方向，待定稿） | 未实现 | 二 | 同上；设备调用也需并行时另立 | 实现时修订 0031 | |
+| [0056](0056-replaceable-context-strategy-and-streaming-loops.md) | 可替换的上下文策略与流式外部循环 | accepted（方向，待定稿） | 未实现 | 二 | 同上；0041 开始实现时一并核对 | 实现时修订 0041 | |
+| [0057](0057-legacy-shard-migration.md) | 存量分片迁移 | accepted（方向，有前提，待定稿） | 未实现 | 二 | "是否删除旧 ID 兼容"评估完成时 | 只在保留旧 ID 兼容时需要；实现时修订 0051 §5 | |
 
 ## 业务层 ADR
 
@@ -89,4 +89,4 @@
 |---|---|---|
 | [Persona ADR-0001](../../persona/docs/adr/0001-entities-by-changeset.md) | xinli 的知识按实体维护、以变更集写入，交谈由模型划定 | 原内核 ADR-0042（2026-11-14 迁入，修订"人不建模"） |
 | [xinli ADR-0001](../../apps/xinli/docs/adr/0001-daily-work-sessions-and-projects.md) | 按业务日分工作 Session，摘要归集到长期的 Project | 拆自内核 ADR-0037 的业务部分 |
-| [Persona ADR-0002](../../persona/docs/adr/0002-on-demand-reads-and-incremental-materialization.md) | 按需读取与增量物化，变更集仍是事实源（**proposed**） | ADR 评审 §3.2；批准后修订 Persona 架构 §13 Q93 |
+| [Persona ADR-0002](../../persona/docs/adr/0002-on-demand-reads-and-incremental-materialization.md) | 按需读取与增量物化，变更集仍是事实源（accepted，方向，待定稿） | ADR 评审 §3.2；实现时修订 Persona 架构 §13 Q93 |
