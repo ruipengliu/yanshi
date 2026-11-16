@@ -80,7 +80,7 @@
 | [0053](0053-self-hosted-sandbox-isolation-baseline.md) | 生产沙箱以自托管隔离为基线 | accepted（隔离技术待选型） | 未实现（只有 Docker 开发实现） | 二 | 选型完成；不再承接私有化；候选方案都无法部署 | 取代 0010 | |
 | [0054](0054-recoverable-wait-on-moderation-outage.md) | 审核基础设施故障时，Run 可恢复地等待 | accepted（2026-11-15） | 已实现 | 二 | 决定保存待审结果时另立 | 修订 0021 | |
 | [0055](0055-bounded-parallel-delegation-and-artifact-handoff.md) | 有界并行委托与工件交接 | accepted（2026-11-16 定稿，分两期） | 已实现（两期均于 2026-11-16） | 二 | 同上；设备调用也需并行时另立 | 实现时修订 0031 | |
-| [0056](0056-replaceable-context-strategy-and-streaming-loops.md) | 可替换的上下文策略与流式外部循环 | accepted（方向，待定稿） | 未实现 | 二 | 同上；0041 开始实现时一并核对 | 实现时修订 0041 | |
+| [0056](0056-replaceable-context-strategy-and-streaming-loops.md) | 可替换的上下文策略与流式外部循环 | accepted（2026-11-16 定稿） | 未实现 | 二 | 业务线需要上下文策略（A 期）；0041 开始实现（B 期）；需要 Run 内调整、排序或非文字追加 | 实施时修订 0041 | |
 | [0057](0057-legacy-shard-migration.md) | 存量分片迁移 | 不实施（2026-11-15：旧格式 ID 兼容已删除，前提不成立） | 不实施 | 二 | — | 被 0051 的 2026-11-15 修订取代 | |
 
 ## 业务层 ADR
