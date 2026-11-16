@@ -8,8 +8,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"slices"
 	"strings"
 
+	"yanshi/internal/artifact"
 	"yanshi/internal/ids"
 	"yanshi/internal/session"
 )
@@ -47,9 +50,15 @@ func InputID(callID string) string { return session.DelegatedInputID(callID) }
 type Args struct {
 	Task    string `json:"task"`
 	Context string `json:"context"`
+	// Artifacts 是交给子 Run 的父 Session 工件（artifact://<id> 或工件 ID）：平台在派发时复制进子 Session，
+	// 子 Run 只看得到点名的工件（ADR-0055）。
+	Artifacts []string `json:"artifacts"`
 }
 
-// ParseArgs 解析并检查委托工具的参数。
+// MaxArtifacts 是一次委托在每个方向上至多复制的工件数（ADR-0055）。
+const MaxArtifacts = 8
+
+// ParseArgs 解析并检查委托工具的参数；Artifacts 规整为去重的工件 ID。
 func ParseArgs(argumentsJSON string) (Args, error) {
 	var a Args
 	if err := json.Unmarshal([]byte(argumentsJSON), &a); err != nil {
@@ -58,7 +67,38 @@ func ParseArgs(argumentsJSON string) (Args, error) {
 	if strings.TrimSpace(a.Task) == "" {
 		return a, fmt.Errorf("invalid arguments: task is required")
 	}
+	var ids []string
+	for _, ref := range a.Artifacts {
+		ref = strings.TrimSpace(ref)
+		id, ok := artifact.ParseURI(ref)
+		if !ok {
+			id = ref
+		}
+		if !artifactID.MatchString(id) {
+			return a, fmt.Errorf("invalid arguments: artifacts must be artifact://<id> references, got %q", ref)
+		}
+		if !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) > MaxArtifacts {
+		return a, fmt.Errorf("invalid arguments: at most %d artifacts per delegation, got %d", MaxArtifacts, len(ids))
+	}
+	a.Artifacts = ids
 	return a, nil
+}
+
+// artifactID 匹配带版本的工件 ID（ADR-0051）。回复中的工件引用按它识别：模型看到的是
+// "[artifact art_…: 名称, 类型, 大小]"，常常只写出 ID 而不带 artifact:// 前缀。
+var artifactID = regexp.MustCompile(`^art_v1_[0-9a-v]{3}_[A-Za-z0-9_-]{1,64}$`)
+
+var artifactRef = regexp.MustCompile(`art_v1_[0-9a-v]{3}_[A-Za-z0-9_-]{1,64}`)
+
+// CopyID 推导复制进 dstSession 的工件 ID：同一次委托、同一个来源总得到同一个 ID，重复派发与重复回写因此
+// 不产生第二份副本。
+func CopyID(dstSession, callID, srcID string) (string, error) {
+	h := sha256.Sum256([]byte(dstSession + "\x00" + callID + "\x00" + srcID))
+	return ids.WithSession("art", hex.EncodeToString(h[:16]), dstSession)
 }
 
 // Input 是交给子 Run 的输入文字。

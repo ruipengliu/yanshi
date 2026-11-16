@@ -20,6 +20,7 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/askuser"
+	"yanshi/internal/shard"
 	"yanshi/internal/workqueue"
 )
 
@@ -649,6 +650,12 @@ func (s *State) apply(e *v1.Event) error {
 	case *v1.Event_SessionCreated:
 		return fmt.Errorf("duplicate SessionCreated")
 
+	case *v1.Event_ArtifactCopied:
+		// 委托交接的复制记录（ADR-0055）：只是审计，不改变投影；副本须落在本 Session 的槽位上，来源是另一个 Session。
+		if err := checkArtifactCopied(s.SessionID, p.ArtifactCopied); err != nil {
+			return err
+		}
+
 	case *v1.Event_SessionClosed:
 		// 关闭方须先中断活跃的 Run、结束进行中的 Call（可与本事件同批提交）。
 		if a := s.Active(); a != nil {
@@ -1063,6 +1070,23 @@ func (s *State) apply(e *v1.Event) error {
 		return fmt.Errorf("unknown payload %T", p)
 	}
 	s.Seq = e.GetSeq()
+	return nil
+}
+
+func checkArtifactCopied(sessionID string, m *v1.ArtifactCopied) error {
+	if m.GetCallId() == "" || m.GetSourceArtifactId() == "" || m.GetArtifactId() == "" || m.GetSourceSessionId() == "" {
+		return fmt.Errorf("ArtifactCopied requires call, source and artifact")
+	}
+	if m.GetSourceSessionId() == sessionID {
+		return fmt.Errorf("ArtifactCopied from the same session")
+	}
+	slot, err := shard.SlotOf(m.GetArtifactId())
+	if err != nil {
+		return fmt.Errorf("ArtifactCopied artifact: %w", err)
+	}
+	if own, err := shard.SessionSlotOf(sessionID); err != nil || own != slot {
+		return fmt.Errorf("ArtifactCopied artifact %s is not in this session's slot", m.GetArtifactId())
+	}
 	return nil
 }
 

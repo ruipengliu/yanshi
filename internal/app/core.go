@@ -173,7 +173,7 @@ func NewCore(stores Stores, opts Options) *Core {
 		c.Catalog.Sandbox = &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID}
 	}
 	// 委托（docs/design/m5-multi-agent.md）：Agent 是一种 Capability，派发目标是由调用派生的子 Session。
-	c.Delegator = &delegation.Delegator{Logger: opts.Logger}
+	c.Delegator = &delegation.Delegator{Artifacts: c.Artifacts, Logger: opts.Logger}
 	c.Dispatch = &delegation.Router{Next: &sandbox.Router{Hub: c.Hub, Queue: stores.SandboxQueue}, Delegator: c.Delegator}
 	moderator := opts.Moderator
 	if opts.Injector != nil {

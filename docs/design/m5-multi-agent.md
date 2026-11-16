@@ -20,7 +20,7 @@
 
 - AgentDef 白名单新增条目 `agent:<名称>`（可用 glob，如 `agent:research-*`）。
 - 工具名 `agent__<名称>`，描述取自目标 AgentDef 的 `description`（新增字段，一两句话说明它擅长什么、不做什么）。版本由发布配置按 EndUser 分流（ADR-0020），父 Run 不指定版本。
-- 输入契约固定：`task`（必填，文字说明）、`context`（可选，父 Run 中的 `artifact://` 引用与文本片段）。输出是子 Run 最后一条 `AssistantMessage` 的内容加子 Run 产生的工件引用。
+- 输入契约固定：`task`（必填，文字说明）、`context`（可选，文字背景）、`artifacts`（可选，至多 8 个父 Session 的 `artifact://` 引用，平台复制给子 Run，见 §9）。输出是子 Run 最后一条 `AssistantMessage` 的文字，加上其中提到的、复制回父 Session 的子 Session 工件。
 - 工具列表中 Agent 工具与设备工具、沙箱工具一起按名称排序（请求前缀稳定）。
 
 ## 4. 平台侧的生命周期
@@ -70,6 +70,7 @@
 - 子 Run 终态后，父调用在有限步内有且只有一个结果。
 - 父 Run 终态（含中断）后，其所有子 Run 在有限步内终态。
 - 父 Session 删除后，子 Session 在有限步内删除；删除不变量对子 Session 同样成立。
+- 工件交接（ADR-0055，`checkArtifactCopies`）：每条复制记录连接同一次委托派生的父子，父 → 子的来源是委托参数点名的父工件，子 → 父的来源是该调用派生的子 Session；Session 未删除时副本作为它的工件存在；父 Session 删除完成后，子 Session 的工件（交来的副本与自己产出的）一并删除。覆盖统计 `ArtifactHandoffs`、`ArtifactHandbacks`。
 - 深度与扇出上限在任何交错下不被突破（扇出由 `checkFanout` 检查：同一个 Run 同时已派发的委托数，2026-11-16 起实际检查；sim Agent 的上限取 2，偶尔整轮返回两三个委托，覆盖统计 `ParallelDelegations`）。
 - 故障注入：创建子 Session 失败、回写失败、子 Worker 崩溃于回写前后。
 
@@ -82,6 +83,7 @@
 - `delegate-interrupt-cascades`：用户中断父 Run，子 Run 停止，无后续副作用。
 - `delegate-result-cited`：父 Run 转述子 Run 结果时引用其工件，不编造。
 - `delegate-parallel-independent`：互不依赖、分属两个专员的问题同一轮一起委托（`same_turn`，ADR-0055）。
+- `delegate-artifact-handoff`：用户附上文件要专员处理时，委托在 `artifacts` 中点名它，子 Run 看得到（`call_args`，ADR-0055）。
 
 "何时委托、委托给谁"的判断起步用 LLM；小模型分类器在这一点上没有证据（[判断设计](./m6-decisions.md) §3），积累评测数据后再考虑。
 
@@ -95,7 +97,11 @@
 
 代码在 `internal/delegation`（派发、撤回、写回、可委托 Agent 的目录），接入 `runtime`（工具解析、深度与扇出检查、写回）、`service`（指定 ID 与来处创建子 Session、`SubmitDelegated`）、`janitor`（级联删除）与 HTTP API（等待视图 `kind: "agent"`、Session 的 `parent`）。与 §3～§7 的差别：
 
-- **输出只有文字。** 工件只对其所属 Session 可见（m2-artifacts），子 Run 产生的工件引用父 Run 打不开；`context` 同样只传文字。父子共享工件须先定义授权，留待需要时做。
+- **工件经显式复制交接**（2026-11-16，ADR-0055 第二期；此前只传文字）。工件仍只对其所属 Session 可见，父子之间不共享，只复制：
+  - **父 → 子**：委托参数的 `artifacts` 点名父 Session 的工件（`artifact://<id>` 或工件 ID，至多 8 个，平台不从文字中扫描）。派发在创建子 Session 之前检查它们都属于父 Session（别的 Session 的工件与不存在的同样回答，调用得到错误结果，不创建子 Session），创建之后把它们复制进子 Session，副本作为媒体块附在子 Run 的输入中，复制记录 `ArtifactCopied` 与输入同批写入子日志。子 Run 只看得到点名的工件。
+  - **子 → 父**：子 Run 完成时，最后一条回复的媒体附件，以及文字中出现的、属于子 Session 的工件 ID（带或不带 `artifact://`：模型看到的是 `[artifact art_…: …]`，常只写 ID），复制进父 Session；文字中的 ID 换成副本的 ID，副本作为媒体块附在结果之后，`ArtifactCopied` 与结果同批写入父日志。至多复制 8 个，其余的引用原样留下并在文字末尾说明。父调用已不再等待时不复制。子 Run 失败或被中断时不交回工件。
+  - **幂等与删除**：副本 ID 由目标 Session、委托调用与来源推导（`delegation.CopyID`），重复派发、重复回写得到同一份；`artifact.Service.Copy` 先复制内容（`BlobStore.Copy`，S3 用服务端复制）、再建元数据、再对目标 Session 先写后查（ADR-0015）。两份工件各属于自己的 Session，按 Session 删除互不影响；结果作废时已复制的副本留在父 Session 中，随它删除。
+  - **投影不变**：`ArtifactCopied` 只是审计记录，`Apply` 校验副本在本 Session 的槽位上、来源是另一个 Session，不改变 `State`。
 - **同一轮的相邻委托并行派发**（2026-11-16，ADR-0055 第一期；此前扇出实际至多为 1）。Worker 按模型给出的顺序，把从第一个未完成调用起相邻的委托调用逐个开始（一步一个 `ToolCallStarted`），全部开始后一起派发、只写一次 `RunSuspended`，停放到其中最早的截止时间；其他调用（设备、沙箱、MCP、`ask_user`）等它之前的委托都有结果后再推进。先完成的子 Run 写回结果唤醒父 Session 时，其余委托未完成就不开始 Attempt、不写事件，按 `call_id` 幂等地重新派发（子任务丢失时由它写回错误结果）后重新停放。本轮全部有结果后才调用模型；结果在上下文中按调用顺序排列，与子 Run 的完成顺序无关（`runtime.Transcript`）。`max_fanout` 限制同时已派发的委托数，超出的调用得到错误结果。HTTP 的 Run 视图在同时等待多个调用时另给出 `waiting_all`。
 - **委托不经 Submit 准入。** 子 Run 是进行中的父 Run 的一部分；配额照常检查，用尽时父调用得到错误结果。
 - **任务被拒绝时直接告诉父调用。** 子 Session 已删除或关闭、配额用尽、任务被内容安全拒绝时，派发写回错误结果而不是等到超时；内容安全或存储不可用时父 Worker 下一步重试。

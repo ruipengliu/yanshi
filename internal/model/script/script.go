@@ -119,12 +119,16 @@ func current(msgs []model.Message) (string, []string) {
 	return "", results
 }
 
-// userText 是用户输入中的文字；卡片动作与真实提供商一样呈现为一行文字（model.CardActionText），脚本复述它。
+// userText 是用户输入中的文字；卡片动作与附件与真实提供商一样呈现为一行文字（model.CardActionText、
+// model.DescribeMedia），脚本复述它：委托交接的工件因此出现在子 Run 的回复里（ADR-0055）。
 func userText(blocks []*v1.ContentBlock) string {
 	var b strings.Builder
 	for _, c := range blocks {
 		if a := c.GetCardAction(); a != nil {
 			b.WriteString(model.CardActionText(a))
+		}
+		if m := c.GetMedia(); m != nil {
+			b.WriteString("\n" + model.DescribeMedia(m))
 		}
 		b.WriteString(c.GetText().GetText())
 	}

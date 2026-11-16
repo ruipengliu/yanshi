@@ -1,10 +1,10 @@
 ---
-status: accepted（2026-11-15 批准方向；2026-11-16 定稿实施问题；第一期并行派发已实现，第二期工件交接未实现）
+status: accepted（2026-11-15 批准方向；2026-11-16 定稿实施问题；两期均已实现）
 ---
 
 # 有界并行委托与工件交接
 
-> **第一期（同一轮的委托并行派发）已实现（2026-11-16）；第二期（工件交接）尚未实现**，在它实现之前父子之间仍只传文字。实施记录见文末。来源：[ADR 评审](../review/2026-11-14-adr-review.md) §3.3。
+> **两期均已实现（2026-11-16）**：第一期同一轮的委托并行派发，第二期工件交接。实施记录见文末。来源：[ADR 评审](../review/2026-11-14-adr-review.md) §3.3。
 
 ADR-0031 把委托做成路由到派生子 Session 的调用，送达、去重、超时、删除都复用路由调用的机制。它留下两处当前边界：
 
@@ -47,7 +47,7 @@ ADR-0031 把委托做成路由到派生子 Session 的调用，送达、去重�
    - 子 → 父：子 Run 最后一条回复的媒体附件，以及其文字中属于子 Session 的 `artifact://` 引用。
    - 复制：`BlobStore` 新增 `Copy`（S3 用服务端复制，文件与内存实现流式复制）；副本在目标 Session 的槽位中生成新的工件 ID；顺序是先复制内容、再建元数据、再"先写后查"删除记录（ADR-0015）。
    - 上限：单个工件沿用 512 MB；一次委托至多复制 8 个。复制失败时该委托调用返回错误结果，不派发。
-   - 复制写入事件（来源工件、目标工件、调用 ID），递增 `session.ProjectionVersion`。
+   - 复制写入事件（来源工件、目标工件、调用 ID）~~，递增 `session.ProjectionVersion`~~（实施时修订：事件只是审计记录，`Apply` 校验后不改变 `State`，投影快照仍然有效，不递增）。
 7. **评测命名。** 现有用例名是 `delegate-*`（原文写作 `delegation-*`），新增的并行用例为 `delegate-parallel-*`。
 
 ## 必须验证
@@ -81,3 +81,15 @@ ADR-0031 把委托做成路由到派生子 Session 的调用，送达、去重�
 - **模拟测试**：sim Agent 的 `max_fanout` 取 2，模型偶尔整轮返回两三个委托；新增不变量 `checkFanout`（同一个 Run 同时已派发的委托不超过上限）与覆盖统计 `ParallelDelegations`。另加一种故障，把时钟拨到后台调用的截止时间之后，使后台调用到期不依赖随机分布。
 - **端到端与控制台**：`TestParallelDelegation`（两个子 Run 同时运行、`waiting_all`、父日志中只有一次挂起）；控制台场景 `delegation-parallel` 用真实的两个子 Agent 同时提问，取代原先合成的第二个提问。
 - **评测**：新增 `delegate-parallel-independent` 与断言 `same_turn`（同一条助手消息中一起发出）。
+
+## 第二期实施记录（2026-11-16）
+
+- **存储**：`artifact.BlobStore` 新增 `Copy`（S3 用服务端复制，先查来源：SeaweedFS 对不存在的来源不返回 `NoSuchKey`；文件与内存实现流式复制），一致性套件 `artifacttest.RunBlob` 覆盖。`artifact.Service.Copy` 先复制内容、再建元数据、再对目标 Session 先写后查；副本 ID 由调用方给定，已存在时直接返回。
+- **事件**：新增 `ArtifactCopied{call_id, source_session_id, source_artifact_id, artifact_id}`，写在副本所在的 Session：父 → 子与委托输入同批（`service.SubmitDelegated` 的 `copies`），子 → 父与委托结果同批。`Apply` 校验字段齐全、副本在本 Session 的槽位上、来源是另一个 Session；不改变投影，`ProjectionVersion` 不变（见第 6 条的修订）。
+- **父 → 子**（`delegation.Delegator.Dispatch`）：委托参数新增 `artifacts`（`artifact://<id>` 或工件 ID，去重后至多 8 个，超出时参数不合法）。在创建子 Session 之前检查点名的工件都属于父 Session，否则调用得到错误结果、不创建子 Session；创建之后、提交任务之前复制，任务已提交时不再复制。副本作为媒体块附在子 Run 的输入中（图片照常内联给子 Run 的模型）。
+- **子 → 父**（`Delegator.Report`）：子 Run 完成时，最后一条回复的媒体附件与文字中出现的工件 ID（实施时补充：带或不带 `artifact://` 都识别，模型看到的是 `[artifact art_…: …]`，常只写 ID；只复制属于子 Session 的）复制进父 Session，文字中的 ID 换成副本的 ID，副本作为媒体块附在结果之后。超过 8 个时其余引用原样留下，文字末尾说明。父调用已不再等待时不复制；子 Run 失败或被中断时不交回工件。
+- **幂等**：副本 ID 由目标 Session、委托调用与来源工件推导（`delegation.CopyID`），落在目标 Session 的槽位上；重复派发、重复回写、并发回写都得到同一份。
+- **面向模型**：委托工具的输入契约新增 `artifacts`（"它需要用到的本会话文件……它只能看到这里列出的文件"）。
+- **测试**：单元测试覆盖参数解析、`CopyID`、点名别的 Session 的工件时不派发、`ArtifactCopied` 的校验与 `Service.Copy`（重复复制、来源归属、目标 Session 已删除时撤回）；e2e `TestDelegationArtifactHandoff` 走通往返（脚本化模型复述输入中的附件描述，子 Run 的回复因此提到交来的副本）。
+- **模拟测试**：输入偶尔带附件，sim 模型看得到工件时偏向委托并点名它（偶尔点名不存在的工件），回复偶尔提到看到的工件；新增不变量 `checkArtifactCopies`（复制只发生在同一次委托派生的父子之间、父 → 子只复制点名的工件、未删除的 Session 保有副本）与"父 Session 删除完成后子 Session 的工件一并删除"，覆盖统计 `ArtifactHandoffs`、`ArtifactHandbacks`。分片差分的种子不带附件，保持其随机流与跨库覆盖。
+- **评测**：用例的轮次可以带附件（`attachments`，上传为本 Session 的工件附在输入中）；新增 `delegate-artifact-handoff`（委托在 `artifacts` 中点名用户附上的文件，子 Run 据此答复）。

@@ -58,6 +58,15 @@ func (s Store) Get(_ context.Context, key string) (io.ReadCloser, error) {
 	return f, err
 }
 
+func (s Store) Copy(ctx context.Context, src, dst string) error {
+	rc, err := s.Get(ctx, src)
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	return s.Put(ctx, dst, rc) // 先写临时文件再改名：失败时不留下部分内容
+}
+
 func (s Store) Delete(_ context.Context, key string) error {
 	p, err := s.path(key)
 	if err != nil {

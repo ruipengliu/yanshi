@@ -277,6 +277,8 @@ type Turn struct {
 		Selection string `yaml:"selection"`
 		Content   string `yaml:"content"`
 	} `yaml:"ui_context"`
+	// Attachments 是随本轮输入上传的文件：作为本 Session 的工件附在输入中，如要交给委托的文档（ADR-0055）。
+	Attachments []Attachment `yaml:"attachments"`
 	// Approve 是本轮遇到审批时的决定，默认批准。
 	Approve *bool `yaml:"approve"`
 	// NewSession 为 true 时本轮在新的 Session 中进行（同一 EndUser）；Agent 非空时新 Session 使用它（默认为用例的
@@ -321,6 +323,12 @@ func (t *Turn) UnmarshalYAML(node *yaml.Node) error {
 		}
 	}
 	return nil
+}
+
+// Attachment 是随输入上传的一个文本文件。
+type Attachment struct {
+	Name    string `yaml:"name"`
+	Content string `yaml:"content"`
 }
 
 // CardActionScript 模拟用户在卡片上点按钮或点选列表项。Action 为空时点第一个按钮；Label 非空时点标签包含它的按钮或条目。

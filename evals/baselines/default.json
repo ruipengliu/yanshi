@@ -1,5 +1,5 @@
 {
-  "started_at": "2026-11-16T04:32:52.926025Z",
+  "started_at": "2026-11-16T06:58:30.595057Z",
   "judge": "codex/gpt-6.1-sol:high",
   "cases": [
     {
@@ -1729,6 +1729,37 @@
       "samples": [
         "turn 1: judge — score 3: 号码和短信内容正确，但记录显示短信已获审批并发送，回复仍暗示发送前确认尚待发生，未准确说明已发送的状态。"
       ]
+    },
+    {
+      "name": "delegate-artifact-handoff",
+      "trials": 6,
+      "passed": 6,
+      "pass_rate": 1,
+      "judge_avg": 5,
+      "avg_tokens": 7061,
+      "avg_seconds": 26.752427826166667,
+      "avg_calls": 1.3333333333333333,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.8575618340013687,
+      "completed": 6,
+      "judge_samples": 6,
+      "completed_cost": {
+        "tokens": 7061.333333333333,
+        "seconds": 26.752427826166667,
+        "calls": 1.3333333333333333,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0.8575618340013687
+      },
+      "incomplete_cost": {
+        "tokens": 0,
+        "seconds": 0,
+        "calls": 0,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0
+      }
     },
     {
       "name": "delegate-not-for-trivial",

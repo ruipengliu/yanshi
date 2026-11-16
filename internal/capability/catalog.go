@@ -45,9 +45,11 @@ type AgentSource interface {
 	Agents(endUser string) []AgentInfo
 }
 
-// agentSchema 是委托工具的输入契约：task 必填，context 可选（docs/design/m5-multi-agent.md §3）。
+// agentSchema 是委托工具的输入契约：task 必填，context 与 artifacts 可选（docs/design/m5-multi-agent.md §3）。
+// artifacts 是交给它的本会话文件，平台复制给子 Run（ADR-0055）；子 Run 回复中提到的它自己的文件同样复制回来。
 const agentSchema = `{"type":"object","properties":{"task":{"type":"string","description":"要交给这个 Agent 完成的任务，写清目标与交付物"},` +
-	`"context":{"type":"string","description":"它完成任务需要知道的背景（可选）"}},"required":["task"]}`
+	`"context":{"type":"string","description":"它完成任务需要知道的背景（可选）"},` +
+	`"artifacts":{"type":"array","maxItems":8,"items":{"type":"string"},"description":"它需要用到的本会话文件，写 artifact://<id>（可选）；它只能看到这里列出的文件"}},"required":["task"]}`
 
 // ErrConfig 表示 AgentDef 的能力白名单本身有误（未知能力、非法的通配）：与查询设备目录、MCP Server 的
 // 暂时性故障不同，重试不会成功。Tools 返回的此类错误满足 errors.Is(err, ErrConfig)，错误文本不变。

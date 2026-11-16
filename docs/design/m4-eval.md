@@ -49,6 +49,8 @@ turns:
     new_session: false        # true 表示开一个新 Session（跨 Session 的 Memory 用例）
     business_day: "2026-10-23" # 可选：仅在声明 now 时可用；跨日须 new_session，省略沿用前轮业务日
     crash_after_calls: 0      # >0：Run 发起这么多次调用后"杀掉"执行它的 Worker，检验接管（长 Run 用例）
+    attachments:              # 随本轮输入上传的文本文件，作为本 Session 的工件附在输入中（如交给委托的文件，ADR-0055）
+      - {name: 报销单.txt, content: "…"}
     captures:                 # 本轮输入之前提交旁听；经夹具写入已绑定的 Persona 业务日
       - {speaker: other, key: wang, text: "…"}   # speaker: wearer（佩戴者）| other（他人，key 区分不同的人）| unknown
       - {speaker: wearer, text: "…", at: "2026-10-23 10:15", topic: reno}   # at：当地时间（Asia/Shanghai），省略时不带时间；topic：主题标签，只用于评测

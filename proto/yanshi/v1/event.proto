@@ -49,6 +49,7 @@ message Event {
     ScheduleCancelled schedule_cancelled = 35;
     ScheduleFired schedule_fired = 36;
     ScheduleSkipped schedule_skipped = 37;
+    ArtifactCopied artifact_copied = 38;
   }
 }
 
@@ -565,6 +566,17 @@ message ScheduleFired {
   google.protobuf.Timestamp due_at = 2;
   google.protobuf.Timestamp next_due = 3;
   string run_id = 4;
+}
+
+// ArtifactCopied 记录委托交接时由平台复制进本 Session 的工件（ADR-0055）：父 → 子写在子 Session 中、与委托输入
+// 同批；子 → 父写在父 Session 中、与委托调用的结果同批。两份工件各属于自己的 Session，按 Session 删除互不影响。
+message ArtifactCopied {
+  // call_id 是父 Session 中委托调用的 ID。
+  string call_id = 1;
+  string source_session_id = 2;
+  string source_artifact_id = 3;
+  // artifact_id 是本 Session 中的副本。
+  string artifact_id = 4;
 }
 
 message ScheduleSkipped {

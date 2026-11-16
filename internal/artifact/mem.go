@@ -87,6 +87,17 @@ func (s *MemBlobs) Get(_ context.Context, key string) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(b)), nil
 }
 
+func (s *MemBlobs) Copy(_ context.Context, src, dst string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, ok := s.m[src]
+	if !ok {
+		return ErrNotFound
+	}
+	s.m[dst] = bytes.Clone(b)
+	return nil
+}
+
 func (s *MemBlobs) Delete(_ context.Context, key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

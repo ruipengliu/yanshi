@@ -19,6 +19,7 @@ import (
 	"yanshi/internal/artifact/s3blob"
 	"yanshi/internal/clock"
 	"yanshi/internal/ids"
+	"yanshi/internal/lifecycle"
 	"yanshi/internal/pg/pgtest"
 )
 
@@ -147,5 +148,64 @@ func TestServiceArtifactSlot(t *testing.T) {
 	}
 	if rows, err := s.List(ctx, "ses_v1_100_000_x"); err != nil || len(rows) != 0 {
 		t.Fatalf("malformed Session left metadata: %v, %v", rows, err)
+	}
+}
+
+// 委托交接的复制（ADR-0055）：副本属于目标 Session、内容相同，重复复制返回同一份；来源必须属于声称的 Session；
+// 目标 Session 已删除时撤回副本。
+func TestServiceCopy(t *testing.T) {
+	ctx := context.Background()
+	s := service(t, 0)
+	dels := lifecycle.NewMemDeletions()
+	s.Deletions = dels
+	const parent, child, other = "ses_v1_000_000_p", "ses_v1_001_000_c", "ses_v1_002_000_o"
+	src, err := s.Put(ctx, parent, "report.pdf", "application/pdf", strings.NewReader("pdf bytes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const dst = "art_v1_001_copy"
+	m, err := s.Copy(ctx, parent, src.ID, child, dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.ID != dst || m.SessionID != child || m.Name != src.Name || m.MimeType != src.MimeType || m.Size != src.Size || m.SHA256 != src.SHA256 {
+		t.Fatalf("copy meta = %+v, source %+v", m, src)
+	}
+	_, rc, err := s.Open(ctx, child, dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(rc)
+	rc.Close()
+	if string(b) != "pdf bytes" {
+		t.Fatalf("copy content = %q", b)
+	}
+	if again, err := s.Copy(ctx, parent, src.ID, child, dst); err != nil || again.ID != dst || !again.CreatedAt.Equal(m.CreatedAt) {
+		t.Fatalf("repeated copy = %+v, %v", again, err)
+	}
+	// 来源须属于声称的 Session：别的 Session 的工件与不存在的一样。
+	if _, err := s.Copy(ctx, other, src.ID, child, "art_v1_001_copy2"); !errors.Is(err, artifact.ErrNotFound) {
+		t.Fatalf("foreign source err = %v", err)
+	}
+	// 删除来源 Session 的工件不影响副本。
+	if err := s.DeleteSession(ctx, parent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Stat(ctx, child, dst); err != nil {
+		t.Fatalf("copy gone with source: %v", err)
+	}
+	// 目标 Session 已有删除记录：先写后查撤回副本。
+	src2, err := s.Put(ctx, other, "a.txt", "text/plain", strings.NewReader("a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dels.Mark(ctx, &lifecycle.Tombstone{SessionID: child, Reason: "end_user", RequestedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Copy(ctx, other, src2.ID, child, "art_v1_001_copy3"); !errors.Is(err, artifact.ErrNotFound) {
+		t.Fatalf("copy into deleted session err = %v", err)
+	}
+	if _, err := s.Stat(ctx, child, "art_v1_001_copy3"); !errors.Is(err, artifact.ErrNotFound) {
+		t.Fatalf("copy into deleted session left metadata: %v", err)
 	}
 }

@@ -10,10 +10,12 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/artifact"
 	"yanshi/internal/decision"
 	"yanshi/internal/delegation"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/lifecycle"
+	"yanshi/internal/model"
 	"yanshi/internal/service"
 )
 
@@ -77,6 +79,9 @@ func (w *World) checkDelegation(final bool) error {
 			if _, err := checkFanout(sid, events); err != nil {
 				return err
 			}
+			if _, _, err := w.checkArtifactCopies(sid, events); err != nil {
+				return err
+			}
 		}
 	}
 	for _, child := range w.children {
@@ -114,6 +119,10 @@ func (w *World) checkDelegation(final bool) error {
 				continue // 父 Run 结束前没来得及派发：子 Session 从未创建
 			}
 			return fmt.Errorf("invariant: child session %s survived the deletion of its parent %s", child, w.parentOf[child])
+		}
+		// 交来的与子 Run 自己产出的工件随子 Session 一并删除。
+		if list, _ := w.artifacts.List(ctx, child); len(list) > 0 {
+			return fmt.Errorf("invariant: deleted child session %s has %d artifacts", child, len(list))
 		}
 	}
 	return nil
@@ -269,4 +278,82 @@ func (w *World) redispatchDelegation() error {
 		}
 	}
 	return nil
+}
+
+// checkArtifactCopies 检查委托交接工件的不变量（ADR-0055），返回本 Session 中父 → 子与子 → 父的复制数：
+//   - 每条复制记录连接的是由同一次委托调用派生的父子：父 → 子的来源是父 Session，子 → 父的来源是由该调用派生的
+//     子 Session；不扩大可见范围，别的 Session 的工件进不来；
+//   - 父 → 子只复制父 Run 在这次委托的参数中点名的工件；
+//   - Session 没有删除记录时，副本作为本 Session 的工件存在。
+func (w *World) checkArtifactCopies(sid string, events []*v1.Event) (handoffs, handbacks int, err error) {
+	ctx := context.Background()
+	if len(events) == 0 {
+		return 0, 0, nil
+	}
+	created := events[0].GetSessionCreated()
+	endUser := created.GetEndUser()
+	for _, e := range events {
+		c := e.GetArtifactCopied()
+		if c == nil {
+			continue
+		}
+		if p := created.GetParent(); p != nil && c.GetSourceSessionId() == p.GetSessionId() {
+			if c.GetCallId() != p.GetCallId() {
+				return 0, 0, fmt.Errorf("invariant: session %s received artifact %s for call %s, delegated by call %s", sid, c.GetArtifactId(), c.GetCallId(), p.GetCallId())
+			}
+			if named, ok, err := w.namedArtifacts(p.GetSessionId(), c.GetCallId()); err != nil {
+				return 0, 0, err
+			} else if ok && !slices.Contains(named, c.GetSourceArtifactId()) {
+				return 0, 0, fmt.Errorf("invariant: session %s received parent artifact %s that call %s did not name (%v)", sid, c.GetSourceArtifactId(), c.GetCallId(), named)
+			}
+			handoffs++
+		} else {
+			child, err := delegation.ChildSessionID(sid, c.GetCallId(), endUser)
+			if err != nil || child != c.GetSourceSessionId() {
+				return 0, 0, fmt.Errorf("invariant: session %s copied artifact %s from %s, not from the child of call %s", sid, c.GetSourceArtifactId(), c.GetSourceSessionId(), c.GetCallId())
+			}
+			handbacks++
+		}
+		if _, err := w.deletions.Get(ctx, sid); err == nil {
+			continue // 删除中：工件可能已先于日志删除
+		}
+		if _, err := w.artifacts.Stat(ctx, sid, c.GetArtifactId()); err != nil {
+			return 0, 0, fmt.Errorf("invariant: session %s lost copied artifact %s: %v", sid, c.GetArtifactId(), err)
+		}
+	}
+	return handoffs, handbacks, nil
+}
+
+// namedArtifacts 返回父 Session 中委托调用 callID 的参数点名的工件；父日志已删除时 ok 为 false。
+func (w *World) namedArtifacts(parent, callID string) ([]string, bool, error) {
+	events, err := eventlog.ReadAll(context.Background(), w.log, parent, 0)
+	if err != nil || len(events) == 0 {
+		return nil, false, err
+	}
+	for _, e := range events {
+		for _, tc := range e.GetAssistantMessage().GetToolCalls() {
+			if tc.GetCallId() != callID {
+				continue
+			}
+			args, err := delegation.ParseArgs(tc.GetArgumentsJson())
+			if err != nil {
+				return nil, true, nil
+			}
+			return args.Artifacts, true, nil
+		}
+	}
+	return nil, true, nil
+}
+
+// simArtifacts 返回模型看到的消息中引用的工件 ID（用户上传、委托交来或交回的），按出现顺序。
+func simArtifacts(messages []model.Message) []string {
+	var out []string
+	for _, m := range messages {
+		for _, b := range m.Content {
+			if id, ok := artifact.ParseURI(b.GetMedia().GetUri()); ok && !slices.Contains(out, id) {
+				out = append(out, id)
+			}
+		}
+	}
+	return out
 }

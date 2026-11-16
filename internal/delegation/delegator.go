@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"strings"
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
+	"yanshi/internal/artifact"
 	"yanshi/internal/capability"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/model"
@@ -48,7 +51,9 @@ func (r *Router) Cancel(ctx context.Context, endUser, nodeID, callID string) err
 // Delegator 派生子 Session、撤回委托，并把子 Run 的终态写回父调用。
 type Delegator struct {
 	Service *service.Service
-	Logger  *slog.Logger
+	// Artifacts 复制委托交接的工件（ADR-0055）；nil 时委托不能带工件，子 Run 的回复也不交回工件。
+	Artifacts *artifact.Service
+	Logger    *slog.Logger
 	// BeforeCreate 非 nil 时在创建子 Session 之前调用：模拟测试在这里注入"子 Session 恰好此时被删除"。
 	BeforeCreate func(ctx context.Context, child string)
 }
@@ -94,6 +99,13 @@ func (d *Delegator) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke)
 	args, err := ParseArgs(inv.GetArgumentsJson())
 	if err != nil {
 		return d.result(ctx, inv.GetSessionId(), inv.GetRunId(), inv.GetCallId(), err.Error(), true)
+	}
+	// 点名的工件须是父 Session 的：在创建子 Session 之前检查，引用错了不留下空的子 Session。
+	if msg, err := d.checkArtifacts(ctx, parent.SessionID, args.Artifacts); err != nil || msg != "" {
+		if msg != "" {
+			return d.result(ctx, inv.GetSessionId(), inv.GetRunId(), inv.GetCallId(), msg, true)
+		}
+		return err
 	}
 	ancestors := append([]*v1.AgentRef{parent.Agent}, parent.Created.GetParent().GetAncestors()...)
 	if d.BeforeCreate != nil {
@@ -142,7 +154,15 @@ func (d *Delegator) Dispatch(ctx context.Context, nodeID string, inv *v1.Invoke)
 	}); err != nil || gone {
 		return err
 	}
-	_, err = svc.SubmitDelegated(ctx, child, InputID(inv.GetCallId()), model.TextBlocks(args.Input()))
+	input, copies, err := d.handOver(ctx, parent.SessionID, child, inv.GetCallId(), args)
+	if err != nil {
+		if errors.Is(err, artifact.ErrNotFound) {
+			// 子 Session 在复制期间被删除（先写后查撤回了副本），或来源工件刚被删除。
+			return d.result(ctx, inv.GetSessionId(), inv.GetRunId(), inv.GetCallId(), "cannot delegate: "+err.Error(), true)
+		}
+		return err
+	}
+	_, err = svc.SubmitDelegated(ctx, child, InputID(inv.GetCallId()), input, copies)
 	switch {
 	case err == nil:
 		return nil
@@ -185,6 +205,64 @@ func (d *Delegator) withdrawChild(ctx context.Context, endUser, child string) er
 		return nil // 日志与索引都已撤回：没有剩下的数据
 	}
 	return err
+}
+
+// checkArtifacts 检查委托点名的工件都属于父 Session；不属于时返回给模型的错误文字。
+func (d *Delegator) checkArtifacts(ctx context.Context, parentSession string, refs []string) (string, error) {
+	if len(refs) == 0 {
+		return "", nil
+	}
+	if d.Artifacts == nil {
+		return "cannot delegate: artifacts are not available", nil
+	}
+	for _, id := range refs {
+		if _, err := d.Artifacts.Stat(ctx, parentSession, id); errors.Is(err, artifact.ErrNotFound) {
+			// 别的 Session 的工件与不存在的同样回答，不透露它是否存在。
+			return fmt.Sprintf("cannot delegate: artifact %s not found in this session", id), nil
+		} else if err != nil {
+			return "", err
+		}
+	}
+	return "", nil
+}
+
+// handOver 组装子 Run 的输入：任务文字，加上复制进子 Session 的点名工件（父 → 子，ADR-0055）。任务已提交时
+// 不再复制：提交按输入 ID 去重，首次的输入已经确定。
+func (d *Delegator) handOver(ctx context.Context, parentSession, child, callID string, args Args) ([]*v1.ContentBlock, []*v1.ArtifactCopied, error) {
+	input := model.TextBlocks(args.Input())
+	if len(args.Artifacts) == 0 {
+		return input, nil, nil
+	}
+	st, err := d.Service.Store.Load(ctx, child)
+	if err != nil {
+		return nil, nil, err
+	}
+	if st.Delegated != "" {
+		return input, nil, nil
+	}
+	var copies []*v1.ArtifactCopied
+	for _, src := range args.Artifacts {
+		m, c, err := d.copy(ctx, parentSession, src, child, callID)
+		if err != nil {
+			return nil, nil, err
+		}
+		input = append(input, m.Block())
+		copies = append(copies, c)
+	}
+	return input, copies, nil
+}
+
+// copy 把 srcSession 的工件复制进 dstSession，ID 由委托调用推导（CopyID），重复调用得到同一份副本。
+func (d *Delegator) copy(ctx context.Context, srcSession, srcID, dstSession, callID string) (*artifact.Meta, *v1.ArtifactCopied, error) {
+	dst, err := CopyID(dstSession, callID, srcID)
+	if err != nil {
+		return nil, nil, err
+	}
+	m, err := d.Artifacts.Copy(ctx, srcSession, srcID, dstSession, dst)
+	if err != nil {
+		return nil, nil, fmt.Errorf("artifact %s: %w", srcID, err)
+	}
+	return m, &v1.ArtifactCopied{CallId: callID, SourceSessionId: srcSession, SourceArtifactId: srcID, ArtifactId: m.ID}, nil
 }
 
 // Cancel 中断子 Session 中由这次委托开始的 Run（父 Run 被中断或委托超时）。子 Run 的中断照常级联到它自己的委托。
@@ -263,13 +341,17 @@ func (d *Delegator) Report(ctx context.Context, child *session.State) error {
 	if !ok || !sum.Status.Terminal() {
 		return nil
 	}
-	text, err := d.lastMessage(ctx, child, child.Delegated)
+	text, media, err := d.lastMessage(ctx, child, child.Delegated)
 	if err != nil {
 		return err
 	}
 	switch sum.Status {
 	case session.RunCompleted:
-		return d.result(ctx, p.GetSessionId(), p.GetRunId(), p.GetCallId(), text, false)
+		content, copies, err := d.handBack(ctx, child.SessionID, p, text, media)
+		if err != nil || content == nil {
+			return err
+		}
+		return d.write(ctx, p.GetSessionId(), p.GetRunId(), p.GetCallId(), content, false, copies)
 	case session.RunFailed:
 		return d.result(ctx, p.GetSessionId(), p.GetRunId(), p.GetCallId(), "the delegated agent failed: "+text, true)
 	default:
@@ -277,36 +359,104 @@ func (d *Delegator) Report(ctx context.Context, child *session.State) error {
 	}
 }
 
-// lastMessage 是子 Run 最后一条模型回复的文字（Run 可能已移出投影，读日志）。
-func (d *Delegator) lastMessage(ctx context.Context, child *session.State, runID string) (string, error) {
+// lastMessage 是子 Run 最后一条模型回复的文字与媒体块（Run 可能已移出投影，读日志）。
+func (d *Delegator) lastMessage(ctx context.Context, child *session.State, runID string) (string, []*v1.Media, error) {
 	text := ""
+	var media []*v1.Media
 	err := session.ScanLog(ctx, d.Service.Store.Log, child.SessionID, func(e *v1.Event) bool {
 		if m := e.GetAssistantMessage(); m.GetRunId() == runID {
 			if t := model.Text(m.GetContent()); t != "" {
-				text = t
+				text, media = t, nil
+				for _, b := range m.GetContent() {
+					if x := b.GetMedia(); x != nil {
+						media = append(media, x)
+					}
+				}
 			}
 		}
 		if f := e.GetRunFailed(); f.GetRunId() == runID {
-			text = f.GetReason()
+			text, media = f.GetReason(), nil
 		}
 		return e.GetSeq() < child.Seq
 	})
 	if text == "" {
 		text = "(no reply)"
 	}
-	return text, err
+	return text, media, err
 }
 
-// result 写入父调用的外部结果并唤醒父 Session；调用已有结果、Run 已终态或 Session 已删除时静默作废。
+// handBack 组装写回父调用的结果（子 → 父，ADR-0055）：子 Run 最后一条回复的媒体附件与文字中引用的、属于子 Session
+// 的工件复制进父 Session，文字中的工件 ID 换成副本的 ID，副本作为媒体块附在文字之后。至多复制 MaxArtifacts 个，
+// 其余的引用原样留下（父 Run 打不开它们），文字末尾说明。父调用已不再等待时返回 nil 内容：不复制，结果本会作废。
+func (d *Delegator) handBack(ctx context.Context, child string, p *v1.ParentRef, text string, media []*v1.Media) ([]*v1.ContentBlock, []*v1.ArtifactCopied, error) {
+	var refs []string
+	for _, m := range media {
+		if id, ok := artifact.ParseURI(m.GetUri()); ok && !slices.Contains(refs, id) {
+			refs = append(refs, id)
+		}
+	}
+	for _, id := range artifactRef.FindAllString(text, -1) {
+		if !slices.Contains(refs, id) {
+			refs = append(refs, id)
+		}
+	}
+	if len(refs) == 0 || d.Artifacts == nil {
+		return model.TextBlocks(text), nil, nil
+	}
+	if waiting, err := d.parentWaiting(ctx, p); err != nil || !waiting {
+		return nil, nil, err
+	}
+	var blocks []*v1.ContentBlock
+	var copies []*v1.ArtifactCopied
+	skipped := 0
+	for _, src := range refs {
+		// 只交回子 Session 自己的工件：模型写错的、别的 Session 的 ID 原样留在文字里。
+		if _, err := d.Artifacts.Stat(ctx, child, src); errors.Is(err, artifact.ErrNotFound) {
+			continue
+		} else if err != nil {
+			return nil, nil, err
+		}
+		if len(copies) == MaxArtifacts {
+			skipped++
+			continue
+		}
+		m, c, err := d.copy(ctx, child, src, p.GetSessionId(), p.GetCallId())
+		if errors.Is(err, artifact.ErrNotFound) {
+			return nil, nil, nil // 父 Session 已删除（先写后查撤回了副本）：没有人等这个结果
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		text = strings.ReplaceAll(text, src, m.ID)
+		blocks = append(blocks, m.Block())
+		copies = append(copies, c)
+	}
+	if skipped > 0 {
+		text += fmt.Sprintf("\n\n[%d more artifacts were not handed over: at most %d per delegation]", skipped, MaxArtifacts)
+	}
+	return append(model.TextBlocks(text), blocks...), copies, nil
+}
+
+// result 写入父调用的文字结果，见 write。
 func (d *Delegator) result(ctx context.Context, sessionID, runID, callID, text string, isErr bool) error {
+	return d.write(ctx, sessionID, runID, callID, model.TextBlocks(text), isErr, nil)
+}
+
+// write 写入父调用的外部结果（连同复制进父 Session 的工件记录）并唤醒父 Session；调用已有结果、Run 已终态或
+// Session 已删除时静默作废（作废时已复制的工件留在父 Session 中，随它删除）。
+func (d *Delegator) write(ctx context.Context, sessionID, runID, callID string, content []*v1.ContentBlock, isErr bool, copies []*v1.ArtifactCopied) error {
 	store := d.Service.Store
 	st, err := store.Load(ctx, sessionID)
 	if err != nil {
 		return err
 	}
 	err = store.Update(ctx, st, func(*session.State) (session.Decision, error) {
-		e := session.ExternalResult(runID, callID, model.TextBlocks(text), isErr)
-		return session.Decision{Events: []*v1.Event{e}, Wake: true}, nil
+		var events []*v1.Event
+		for _, c := range copies {
+			events = append(events, &v1.Event{Payload: &v1.Event_ArtifactCopied{ArtifactCopied: c}})
+		}
+		events = append(events, session.ExternalResult(runID, callID, content, isErr))
+		return session.Decision{Events: events, Wake: true}, nil
 	})
 	switch {
 	case errors.Is(err, session.ErrInvalid):

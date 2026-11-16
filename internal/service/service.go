@@ -268,13 +268,14 @@ func (s *Service) Submit(ctx context.Context, sessionID string, input []*v1.Cont
 // SubmitWithID 与 Submit 相同，但带客户端生成的输入 ID：结果未知（连接断开）时以同一 ID 重新提交是安全的，
 // 已生效的输入返回首次的结果（Duplicate），不会重复写入。去重窗口是最近 session.MaxRecentInputs 条输入。
 func (s *Service) SubmitWithID(ctx context.Context, sessionID, inputID string, input []*v1.ContentBlock) (*SubmitResult, error) {
-	return s.submit(ctx, sessionID, inputID, "", input, false)
+	return s.submit(ctx, sessionID, inputID, "", input, false, nil)
 }
 
 // SubmitDelegated 提交委托给子 Session 的任务（docs/design/m5-multi-agent.md）：语义同 SubmitWithID，但不经 Submit
-// 准入——子 Run 是进行中的父 Run 的一部分，不是新的交互请求。配额照常检查。
-func (s *Service) SubmitDelegated(ctx context.Context, sessionID, inputID string, input []*v1.ContentBlock) (*SubmitResult, error) {
-	return s.submit(ctx, sessionID, inputID, "", input, true)
+// 准入——子 Run 是进行中的父 Run 的一部分，不是新的交互请求。配额照常检查。copies 是派发时复制进子 Session 的
+// 工件（ADR-0055），与输入同批写入；输入中引用它们的媒体块照常按本 Session 的工件校验。
+func (s *Service) SubmitDelegated(ctx context.Context, sessionID, inputID string, input []*v1.ContentBlock, copies []*v1.ArtifactCopied) (*SubmitResult, error) {
+	return s.submit(ctx, sessionID, inputID, "", input, true, copies)
 }
 
 // SubmitFromCall 提交 Call 中语音模型派生的任务（run_task，docs/design/m3-call.md §5）：语义同 SubmitWithID，
@@ -283,10 +284,10 @@ func (s *Service) SubmitFromCall(ctx context.Context, sessionID, callID, inputID
 	if callID == "" {
 		return nil, fmt.Errorf("%w: call id is required", ErrInvalid)
 	}
-	return s.submit(ctx, sessionID, inputID, callID, input, false)
+	return s.submit(ctx, sessionID, inputID, callID, input, false, nil)
 }
 
-func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall string, input []*v1.ContentBlock, delegated bool) (*SubmitResult, error) {
+func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall string, input []*v1.ContentBlock, delegated bool, copies []*v1.ArtifactCopied) (*SubmitResult, error) {
 	if len(input) == 0 {
 		return nil, fmt.Errorf("%w: empty input", ErrInvalid)
 	}
@@ -348,6 +349,9 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 			return session.Decision{}, err
 		}
 		var events []*v1.Event
+		for _, c := range copies {
+			events = append(events, &v1.Event{Payload: &v1.Event_ArtifactCopied{ArtifactCopied: c}})
+		}
 		res = &SubmitResult{}
 		if a := st.Active(); a != nil {
 			res.RunID, res.Steered = a.ID, true
@@ -364,7 +368,7 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 			}
 		} else {
 			request := &v1.RunRequested{Input: checkedInput, InputId: inputID, FromCall: fromCall}
-			events = s.newRunEvents(st, request)
+			events = append(events, s.newRunEvents(st, request)...)
 			res.RunID = request.GetRunId()
 		}
 		prev = lastRunAt(st)

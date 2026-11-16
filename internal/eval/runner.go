@@ -955,6 +955,13 @@ func (in *instance) submitTurn(ctx context.Context, sid string, turn Turn, previ
 		input = append([]*v1.ContentBlock{{Kind: &v1.ContentBlock_UiContext{UiContext: &v1.UIContext{
 			Screen: u.Screen, Ref: u.Ref, Selection: u.Selection, Content: u.Content}}}}, input...)
 	}
+	for _, a := range turn.Attachments {
+		m, err := in.arts.Put(ctx, sid, a.Name, "", strings.NewReader(a.Content))
+		if err != nil {
+			return "", fmt.Errorf("attachment %s: %w", a.Name, err)
+		}
+		input = append(input, m.Block())
+	}
 	if turn.CardAction != nil {
 		if input, err = in.cardAction(ctx, sid, turn.CardAction); err != nil {
 			return "", err

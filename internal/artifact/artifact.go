@@ -84,6 +84,9 @@ type BlobStore interface {
 	Put(ctx context.Context, key string, r io.Reader) error
 	// Get 返回内容；不存在时返回 ErrNotFound。
 	Get(ctx context.Context, key string) (io.ReadCloser, error)
+	// Copy 把 src 的内容复制到 dst（委托交接，ADR-0055）；src 不存在时返回 ErrNotFound。对象存储用服务端复制，
+	// 其余实现流式复制；失败时不留下部分写入的 dst。
+	Copy(ctx context.Context, src, dst string) error
 	Delete(ctx context.Context, key string) error
 }
 
@@ -170,6 +173,45 @@ func (s *Service) Put(ctx context.Context, sessionID, name, mimeType string, r i
 	}
 	if gone {
 		return nil, fmt.Errorf("%w: session %s", ErrNotFound, sessionID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// Copy 把 srcSession 的工件 srcID 复制为 dstSession 的新工件 dstID（委托交接，ADR-0055）：两份各属于自己的
+// Session，按 Session 删除互不影响。dstID 由调用方确定性地推导，重复调用返回已有的副本，派发与回写因此幂等。
+// 顺序同 Put：先复制内容、再建元数据、再先写后查目标 Session 的删除记录（ADR-0015）。
+func (s *Service) Copy(ctx context.Context, srcSession, srcID, dstSession, dstID string) (*Meta, error) {
+	if m, err := s.Meta.Get(ctx, dstSession, dstID); err == nil {
+		return m, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+	src, err := s.Stat(ctx, srcSession, srcID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.Blobs.Copy(ctx, src.ID, dstID); err != nil {
+		_ = s.Blobs.Delete(context.WithoutCancel(ctx), dstID)
+		return nil, err
+	}
+	m := &Meta{ID: dstID, SessionID: dstSession, Name: src.Name, MimeType: src.MimeType, Size: src.Size, SHA256: src.SHA256, CreatedAt: s.Clock.Now()}
+	if err := s.Meta.Create(ctx, m); err != nil {
+		// 并发的同一次复制（重复回写）可能刚建好元数据：内容相同，用它。
+		if got, gerr := s.Meta.Get(ctx, dstSession, dstID); gerr == nil {
+			return got, nil
+		}
+		_ = s.Blobs.Delete(context.WithoutCancel(ctx), dstID)
+		return nil, err
+	}
+	gone, err := lifecycle.Recheck(ctx, s.Deletions, dstSession, func(ctx context.Context) error { return s.delete(ctx, dstSession, dstID) })
+	if err != nil && !gone {
+		_ = s.delete(context.WithoutCancel(ctx), dstSession, dstID) // 无法确认时同样撤回：调用方重试
+	}
+	if gone {
+		return nil, fmt.Errorf("%w: session %s", ErrNotFound, dstSession)
 	}
 	if err != nil {
 		return nil, err

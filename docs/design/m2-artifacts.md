@@ -9,7 +9,7 @@ Artifact 是 Run 产出或用户、设备提供的、可独立引用的文件，
 ## 2. 模型
 
 - **Artifact 不可变**：一次写入，带有 `sha256`、大小、MIME 类型和文件名。
-- **归属**：每个 Artifact 属于一个 Session，Session 决定其 BusinessLine 与 EndUser。跨 Session 共享留待 Memory 一起设计。
+- **归属**：每个 Artifact 属于一个 Session，Session 决定其 BusinessLine 与 EndUser。不跨 Session 共享；委托的父子之间经显式复制交接（下表，ADR-0055），副本是目标 Session 的新工件。
 - **存储分两部分**：元数据存 `artifact.MetaStore`（内存或 PG），字节内容存 `artifact.BlobStore`（本地文件系统或 S3）。
 
 ## 3. 流转
@@ -20,6 +20,7 @@ Artifact 是 Run 产出或用户、设备提供的、可独立引用的文件，
 | 设备 → 云 | Capability 处理函数调用 SDK 的 `UploadArtifact`，结果中返回 Media 引用 |
 | 云 → 设备 | Capability 参数中携带 Artifact ID，处理函数调用 SDK 的 `DownloadArtifact` |
 | 沙箱 ↔ 工件 | 沙箱能力 `import_file`（工件 → 工作区）与 `export_file`（工作区 → 工件），由控制器在沙箱外完成 |
+| 委托交接 | 父 Run 在委托参数 `artifacts` 中点名的工件复制进子 Session；子 Run 最后一条回复提到的子 Session 工件复制回父 Session。`artifact.Service.Copy`（`BlobStore.Copy`，S3 服务端复制），日志记 `ArtifactCopied`（[委托设计](./m5-multi-agent.md) §9） |
 | 下载 | `GET /v1/artifacts/{id}` |
 
 沙箱本身仍然没有网络，也不持有凭证（ADR-0008）。文件由控制器经容器运行时复制进出沙箱。

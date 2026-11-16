@@ -45,6 +45,35 @@ func RunBlob(t *testing.T, newStore func(t *testing.T) artifact.BlobStore) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+	t.Run("Copy", func(t *testing.T) {
+		s := newStore(t)
+		data := bytes.Repeat([]byte("copy"), 50000)
+		if err := s.Put(ctx, "c1", bytes.NewReader(data)); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Copy(ctx, "c1", "c2"); err != nil {
+			t.Fatal(err)
+		}
+		// 两份互不影响：删除来源后副本仍在。
+		if err := s.Delete(ctx, "c1"); err != nil {
+			t.Fatal(err)
+		}
+		rc, err := s.Get(ctx, "c2")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil || !bytes.Equal(got, data) {
+			t.Fatalf("copy read back %d bytes, err %v", len(got), err)
+		}
+		if err := s.Copy(ctx, "c1", "c3"); !errors.Is(err, artifact.ErrNotFound) {
+			t.Fatalf("copy of missing err = %v", err)
+		}
+		if _, err := s.Get(ctx, "c3"); !errors.Is(err, artifact.ErrNotFound) {
+			t.Fatalf("failed copy left dst: %v", err)
+		}
+	})
 	t.Run("FailedPutLeavesNothing", func(t *testing.T) {
 		s := newStore(t)
 		err := s.Put(ctx, "k2", io.MultiReader(strings.NewReader("partial"), errReader{}))

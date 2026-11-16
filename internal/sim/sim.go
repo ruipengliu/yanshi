@@ -124,6 +124,9 @@ type Stats struct {
 	Delegations, DelegationResults, ChildDeletionRaces, CascadeFaults int
 	// ParallelDelegations 是同时在等两个以上委托的 Run 数（ADR-0055）。
 	ParallelDelegations int
+	// 工件交接（ADR-0055）：带附件的输入，复制进子 Session 的父工件（ArtifactHandoffs）与复制回父 Session 的子工件
+	// （ArtifactHandbacks）。
+	AttachedInputs, NamedArtifacts, ArtifactHandoffs, ArtifactHandbacks int
 	// 判断（docs/design/m6-decisions.md）：记录的判断，其中判断不可用、走默认路径的。
 	Decisions, DecisionFallbacks int
 	// PastRuns 是移出投影、只剩摘要的终态 Run（有界投影，延展性评审 §8.3）。
@@ -1010,6 +1013,14 @@ func (w *World) submit() error {
 	input := model.TextBlocks(fmt.Sprintf("msg %d", w.rng.IntN(1000)))
 	if a := w.cardAction(sid); a != nil {
 		input = a
+	} else if !w.opts.CompareShards && w.chance(0.15) {
+		// 带附件的输入：模型可能把附件点名交给委托，子 Run 的回复再提到它，工件因此在父子之间往返（ADR-0055）。
+		// 分片差分只跑几个短种子，跨库委托本就稀少；不带附件，使它的随机流与跨库覆盖不受影响。
+		m, err := w.artifacts.Put(context.Background(), sid, "f.txt", "text/plain", strings.NewReader(fmt.Sprintf("file %d", w.rng.IntN(100))))
+		if err == nil {
+			w.Stats.AttachedInputs++
+			input = append(input, m.Block())
+		}
 	} else if w.chance(0.1) {
 		// 界面上下文：使上下文带有外部内容（Memory 写入闸门），并经过渲染与估算。
 		w.Stats.UIContextInputs++
@@ -1496,6 +1507,10 @@ func (w *World) CollectStats() {
 		if n, err := checkFanout(sid, events); err == nil {
 			w.Stats.ParallelDelegations += n
 		}
+		if in, back, err := w.checkArtifactCopies(sid, events); err == nil {
+			w.Stats.ArtifactHandoffs += in
+			w.Stats.ArtifactHandbacks += back
+		}
 		for _, e := range events {
 			if d := e.GetDecisionMade(); d != nil {
 				w.Stats.Decisions++
@@ -1837,6 +1852,8 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 		// 分片差分只跑几个短种子，要求其中出现跨库委托（子 Session 落在另一个库上，约一半的委托如此）：按均匀
 		// 选择时一个种子平均不到一次委托，偏向委托。比较的各次运行用同一 Options，偏向不影响差分。
 		canDelegate := w.opts.CompareShards && slices.ContainsFunc(tools, func(t model.ToolSpec) bool { return t.Name == "agent__sim" })
+		// 看得到工件时偏向委托：工件交接（ADR-0055）以"带附件的上下文中发起委托"为前提，按均匀选择几乎不出现。
+		canHandOff := !canDelegate && slices.ContainsFunc(tools, func(t model.ToolSpec) bool { return t.Name == "agent__sim" }) && len(simArtifacts(req.Messages)) > 0
 		// 同一轮中相邻的多个委托并行派发（ADR-0055）：均匀选择几乎不会连续选中委托，偶尔整轮都是委托，
 		// 数量可能超过扇出上限。
 		if !w.opts.LongRuns && slices.ContainsFunc(tools, func(t model.ToolSpec) bool { return t.Name == "agent__sim" }) && w.chance(0.04) {
@@ -1851,7 +1868,7 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 				name = devices[w.rng.IntN(len(devices))]
 			} else if canAsk && w.chance(0.05) {
 				name = askuser.Capability
-			} else if canDelegate && w.chance(0.5) {
+			} else if canDelegate && w.chance(0.5) || canHandOff && w.chance(0.7) {
 				name = "agent__sim"
 			}
 			id := fmt.Sprintf("call_%d", i) // 故意跨轮重复，检验运行时的 ID 改写
@@ -1870,6 +1887,10 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 		return resp, nil
 	}
 	text := fmt.Sprintf("reply after %d messages", len(req.Messages))
+	// 提到看到的工件：在子 Run 中，这是交来的副本，回复因此把它交回父 Session（ADR-0055）。
+	if arts := simArtifacts(req.Messages); len(arts) > 0 && w.chance(0.8) {
+		text += " see artifact://" + arts[w.rng.IntN(len(arts))]
+	}
 	if onDelta != nil {
 		onDelta(model.Delta{Text: text})
 	}
@@ -1941,7 +1962,17 @@ func (w *World) toolArgs(name string, messages ...model.Message) string {
 		if w.chance(0.1) {
 			return `{}` // 没有 task：不派发，错误交还模型
 		}
-		return fmt.Sprintf(`{"task":"子任务 %d"}`, w.rng.IntN(100))
+		task := fmt.Sprintf("子任务 %d", w.rng.IntN(100))
+		// 点名看到的工件交给子 Run；偶尔点名一个不属于本 Session 的，派发返回错误结果、不创建子 Session。
+		if arts := simArtifacts(messages); len(arts) > 0 && w.chance(0.6) {
+			ref := "artifact://" + arts[w.rng.IntN(len(arts))]
+			if w.chance(0.1) {
+				ref = "art_v1_000_missing"
+			}
+			w.Stats.NamedArtifacts++
+			return fmt.Sprintf(`{"task":%q,"artifacts":[%q]}`, task, ref)
+		}
+		return fmt.Sprintf(`{"task":%q}`, task)
 	}
 	return `{"pad":"` + w.pad() + `"}`
 }

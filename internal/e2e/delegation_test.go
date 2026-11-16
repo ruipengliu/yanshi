@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
+
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/clock"
 	"yanshi/internal/delegation"
@@ -51,6 +53,94 @@ func TestDelegationRoundTrip(t *testing.T) {
 	e.do(http.MethodGet, "/v1/sessions/"+child, nil, &view)
 	if view.Parent.SessionID != sid {
 		t.Fatalf("child parent = %+v", view.Parent)
+	}
+}
+
+// 委托交接工件（ADR-0055）：父 Run 点名的工件复制进子 Session，子 Run 回复中提到的它自己的工件复制回父 Session。
+// 每份副本都是所在 Session 的新工件；未点名的父工件不进子 Session，父 Run 拿到的引用是父 Session 的副本。
+func TestDelegationArtifactHandoff(t *testing.T) {
+	e := setup(t)
+	sid := e.newSession()
+	type art struct {
+		ID        string `json:"id"`
+		SessionID string `json:"session_id"`
+		Name      string `json:"name"`
+	}
+	var shared, private art
+	if code := e.do(http.MethodPost, "/v1/sessions/"+sid+"/artifacts?name=brief.txt", "交接内容", &shared); code != http.StatusCreated {
+		t.Fatalf("upload: %d", code)
+	}
+	if code := e.do(http.MethodPost, "/v1/sessions/"+sid+"/artifacts?name=private.txt", "不交出去", &private); code != http.StatusCreated {
+		t.Fatalf("upload: %d", code)
+	}
+	e.do(http.MethodPost, "/v1/sessions/"+sid+"/inputs", map[string]string{"text": `call agent__helper {"task":"看看附件","artifacts":["artifact://` + shared.ID + `"]}`}, nil)
+	v := e.until(sid, func(v sessionView) bool { st, _ := lastRun(v); return st == "completed" })
+	list := func(session string) []art {
+		var out struct {
+			Artifacts []art `json:"artifacts"`
+		}
+		e.do(http.MethodGet, "/v1/sessions/"+session+"/artifacts", nil, &out)
+		return out.Artifacts
+	}
+	var res struct {
+		Events []json.RawMessage `json:"events"`
+	}
+	e.do(http.MethodGet, "/v1/sessions/"+sid+"/events", nil, &res)
+	callID := ""
+	for _, raw := range res.Events {
+		ev := &v1.Event{}
+		if err := protojson.Unmarshal(raw, ev); err != nil {
+			t.Fatal(err)
+		}
+		if c := ev.GetToolCallStarted(); delegation.IsNode(c.GetNodeId()) {
+			callID = c.GetCallId()
+		}
+	}
+	child, err := delegation.ChildSessionID(sid, callID, v.EndUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inChild := list(child)
+	if len(inChild) != 1 || inChild[0].ID == shared.ID || inChild[0].SessionID != child || inChild[0].Name != "brief.txt" {
+		t.Fatalf("child artifacts = %+v (shared %s)", inChild, shared.ID)
+	}
+	inParent := list(sid)
+	if len(inParent) != 3 {
+		t.Fatalf("parent artifacts = %+v", inParent)
+	}
+	back := inParent[2]
+	if back.ID == shared.ID || back.ID == private.ID || back.ID == inChild[0].ID || back.Name != "brief.txt" {
+		t.Fatalf("handed back %+v", back)
+	}
+	reply := e.lastAssistantText(sid)
+	if !strings.Contains(reply, back.ID) || strings.Contains(reply, inChild[0].ID) {
+		t.Fatalf("parent reply %q should cite the parent copy %s, not the child artifact %s", reply, back.ID, inChild[0].ID)
+	}
+	if got := e.lastToolMedia(sid); got != back.ID {
+		t.Fatalf("delegation result media = %s, want %s", got, back.ID)
+	}
+	// 每个方向各一条复制记录，写在副本所在的 Session 中。
+	for _, session := range []string{sid, child} {
+		var log struct {
+			Events []json.RawMessage `json:"events"`
+		}
+		e.do(http.MethodGet, "/v1/sessions/"+session+"/events", nil, &log)
+		copied := 0
+		for _, raw := range log.Events {
+			ev := &v1.Event{}
+			if err := protojson.Unmarshal(raw, ev); err != nil {
+				t.Fatal(err)
+			}
+			if c := ev.GetArtifactCopied(); c != nil {
+				copied++
+				if c.GetCallId() != callID {
+					t.Fatalf("copy record %+v, call %s", c, callID)
+				}
+			}
+		}
+		if copied != 1 {
+			t.Fatalf("session %s has %d artifact_copied events, want 1", session, copied)
+		}
 	}
 }
 

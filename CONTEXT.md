@@ -206,6 +206,10 @@ _Avoid_: 混沌实验、Mock 故障
 一个 Run 把任务交给另一个 AgentDef 执行：在同一 BusinessLine、同一 EndUser 下派生子 Session 与 Run，父 Run 挂起等待其终态作为调用结果。Agent 在模型眼里是一种 Capability（`agent__<名称>`），子 Run 的能力不超出任何祖先的白名单。
 _Avoid_: 编排、子 Agent（指 AgentDef 时）、多 Agent（泛指时）
 
+**Artifact Handoff（工件交接）**（ADR-0055）:
+委托的父子 Session 之间经平台复制传递 Artifact：父 Run 在委托参数中点名的工件复制进子 Session，子 Run 最后一条回复提到的子 Session 工件复制回父 Session。副本是目标 Session 的新工件，日志记 `ArtifactCopied`；工件本身从不跨 Session 共享。
+_Avoid_: 共享工件、移交（Handoff 指 Worker 交出 Run）
+
 **Decision（判断）**（[设计](docs/design/m6-decisions.md)、ADR-0030）:
 对"给定状态、有限合法选项"的问题由规则、小模型或 LLM 作出的选择，只缩小候选、追加约束或触发默认路径，从不放宽安全要求；影响后续执行的 Decision 记为 Event。
 _Avoid_: 分类、路由（指模型路由时）、System 1（指模型类型时可用）

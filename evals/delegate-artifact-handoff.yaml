@@ -1,0 +1,29 @@
+name: delegate-artifact-handoff
+description: >-
+  用户附上文件、要专员处理时，委托在 artifacts 中点名这个文件，平台把它复制给子 Run（ADR-0055）；子 Run 只看得到
+  点名的文件。报销专员收到报销单后按制度回复受理与时限，回复转述专员的答复。
+capabilities: ["agent:expense-desk"]
+setup:
+  agents:
+    - name: expense-desk
+      description: 报销专员：审核报销单、发票与差旅费用，答复报销进度。
+      instructions: |
+        你是报销专员。收到报销单文件时，回复"已受理《<文件名>》，将在 3 个工作日内完成审核，结果发到 OA 待办"。
+        没有收到任何文件时，回复"没有收到报销单，请把报销单作为附件交给我"。
+      capabilities: []
+turns:
+  - input: 附件是我这个月的差旅报销单，帮我交给报销专员审核一下。
+    attachments:
+      - name: 差旅报销单-11月.txt
+        content: |
+          报销人：张三  部门：市场部
+          2026-11-03 北京→上海 高铁 553 元
+          2026-11-03~05 上海 酒店 3 晚 1260 元
+          合计：1813 元
+    expect:
+      status: completed
+      calls: ["agent__expense-desk"]
+      call_args:
+        agent__expense-desk: '"artifacts"'
+      reply_contains: ["工作日"]
+      judge: 回复是否说明报销单已由报销专员受理、将在 3 个工作日内完成审核？

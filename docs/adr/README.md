@@ -55,7 +55,7 @@
 | [0028](0028-shard-keys.md) | 按 Session 或 EndUser 分片 | 已修订（2026-11-14） | 已实现 | 一 | 跨 EndUser 原子需求；停写超预算；热点槽位 | — | |
 | [0029](0029-work-classes.md) | 工作队列按类别认领 | 已修订（2026-10-11） | 已实现 | 二 | 需动态调度；长任务误判；准入拒绝率 | — | |
 | [0030](0030-decisions-as-events.md) | 判断记为 Event，只收紧不放宽 | accepted | 部分实现 | 三 | — | — | |
-| [0031](0031-delegation-as-routed-calls.md) | 委托是路由到子 Session 的调用 | 已修订（2026-11-14 标明当前边界；2026-11-16 串行边界由 0055 第一期取代） | 已实现 | 二 | 有界并行；工件交接；异步委托 | — | |
+| [0031](0031-delegation-as-routed-calls.md) | 委托是路由到子 Session 的调用 | 已修订（2026-11-14 标明当前边界；2026-11-16 串行与只传文字的边界由 0055 两期取代） | 已实现 | 二 | 有界并行；工件交接；异步委托 | — | |
 | [0032](0032-cards-as-show-card-results.md) | 卡片是 `show_card` 的结果 | accepted | 已实现 | 三 | — | — | |
 | [0033](0033-server-side-fault-injection.md) | 服务端故障注入只在调试部署 | accepted | 已实现 | 三 | — | — | |
 | [0034](0034-reasoning-streamed-and-recorded.md) | 思考过程流式推送并写日志 | accepted | 已实现 | 三 | — | — | |
@@ -79,7 +79,7 @@
 | [0052](0052-attested-results-and-provenance.md) | 旁听原文在业务线，内核只采信结构化片段 | accepted | 已实现（"听过他人旁听"未实现） | 二 | 第二类可信结构化内容；说话人角色扩展；注入判断改为阻断；容量 | 整合并取代 0036、0039、0050 与 0037 的内核部分 | |
 | [0053](0053-self-hosted-sandbox-isolation-baseline.md) | 生产沙箱以自托管隔离为基线 | accepted（隔离技术待选型） | 未实现（只有 Docker 开发实现） | 二 | 选型完成；不再承接私有化；候选方案都无法部署 | 取代 0010 | |
 | [0054](0054-recoverable-wait-on-moderation-outage.md) | 审核基础设施故障时，Run 可恢复地等待 | accepted（2026-11-15） | 已实现 | 二 | 决定保存待审结果时另立 | 修订 0021 | |
-| [0055](0055-bounded-parallel-delegation-and-artifact-handoff.md) | 有界并行委托与工件交接 | accepted（2026-11-16 定稿，分两期） | 第一期已实现（2026-11-16）；工件交接未实现 | 二 | 同上；设备调用也需并行时另立 | 实现时修订 0031 | |
+| [0055](0055-bounded-parallel-delegation-and-artifact-handoff.md) | 有界并行委托与工件交接 | accepted（2026-11-16 定稿，分两期） | 已实现（两期均于 2026-11-16） | 二 | 同上；设备调用也需并行时另立 | 实现时修订 0031 | |
 | [0056](0056-replaceable-context-strategy-and-streaming-loops.md) | 可替换的上下文策略与流式外部循环 | accepted（方向，待定稿） | 未实现 | 二 | 同上；0041 开始实现时一并核对 | 实现时修订 0041 | |
 | [0057](0057-legacy-shard-migration.md) | 存量分片迁移 | 不实施（2026-11-15：旧格式 ID 兼容已删除，前提不成立） | 不实施 | 二 | — | 被 0051 的 2026-11-15 修订取代 | |
 

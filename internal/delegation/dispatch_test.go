@@ -3,11 +3,13 @@ package delegation_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
 	"yanshi/internal/app"
+	"yanshi/internal/artifact"
 	"yanshi/internal/clock"
 	"yanshi/internal/delegation"
 	"yanshi/internal/eventlog"
@@ -76,5 +78,46 @@ func TestDispatchUsesParentEndUserAndRetriesSameChild(t *testing.T) {
 		if st, err := store.Load(ctx, foreign); err != nil || st.Created != nil {
 			t.Fatalf("foreign child was created: %+v, %v", st, err)
 		}
+	}
+}
+
+// 委托点名的工件须属于父 Session：别的 Session 的工件与不存在的一样，不创建子 Session，也不复制（ADR-0055）。
+func TestDispatchRejectsForeignArtifact(t *testing.T) {
+	ctx := context.Background()
+	stores := app.Memory(clock.Real{})
+	store := &session.Store{Log: stores.Log, Waking: stores.Waking, Clock: clock.Real{}, IDs: ids.Sequential("id")}
+	agents, err := agentdef.NewRegistry(&agentdef.Def{Name: "a", Version: "1", Model: "echo/any"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := &service.Service{Store: store, Agents: agents, Index: stores.Index, Deletions: stores.Deletions}
+	arts := &artifact.Service{Meta: artifact.NewMemMeta(), Blobs: artifact.NewMemBlobs(), IDs: ids.Sequential("art"), Clock: clock.Real{}}
+	parent, err := svc.Create(ctx, service.CreateRequest{BusinessLine: "bl", EndUser: "u", Agent: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := svc.Create(ctx, service.CreateRequest{BusinessLine: "bl", EndUser: "u", Agent: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := arts.Put(ctx, other, "x.txt", "text/plain", strings.NewReader("x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := delegation.ChildSessionID(parent, "call", "u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &delegation.Delegator{Service: svc, Artifacts: arts}
+	inv := &v1.Invoke{SessionId: parent, RunId: "run", CallId: "call", Capability: "a",
+		ArgumentsJson: `{"task":"work","artifacts":["artifact://` + foreign.ID + `"]}`}
+	if err := d.Dispatch(ctx, delegation.NodeID(child), inv); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := store.Load(ctx, child); err != nil || st.Created != nil {
+		t.Fatalf("child created for a foreign artifact: %+v, %v", st, err)
+	}
+	if list, _ := arts.List(ctx, child); len(list) != 0 {
+		t.Fatalf("foreign artifact copied: %+v", list)
 	}
 }
