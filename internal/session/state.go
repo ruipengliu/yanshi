@@ -169,6 +169,30 @@ func (r *Run) PendingCall() *Call {
 	return nil
 }
 
+// IsDelegation 报告调用是否是委托（ADR-0031）：工具名为 agent__<名称>，或已派发到子 Session。
+func (c *Call) IsDelegation() bool {
+	return strings.HasPrefix(c.Call.GetCapability(), "agent__") || strings.HasPrefix(c.NodeID, "@agent/")
+}
+
+// DelegationFront 是从第一个未完成的调用起、按模型给出的顺序相邻的委托调用（ADR-0055）：Worker 一起派发它们，
+// 等它们都有结果之后再推进后面的调用。第一个未完成的调用不是委托时为空。
+func (r *Run) DelegationFront() []*Call {
+	for i, c := range r.Calls {
+		if c.Done {
+			continue
+		}
+		var front []*Call
+		for _, d := range r.Calls[i:] {
+			if !d.IsDelegation() {
+				break
+			}
+			front = append(front, d)
+		}
+		return front
+	}
+	return nil
+}
+
 func (r *Run) call(id string) *Call {
 	for _, c := range r.Calls {
 		if c.Call.GetCallId() == id {

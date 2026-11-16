@@ -1,0 +1,27 @@
+name: delegate-parallel-independent
+description: >-
+  两个互不依赖的问题分属两个专员时，同一轮一起委托，两个子 Run 并行（ADR-0055）：年假交给 attendance-desk、
+  补充医疗交给 benefits-desk，回复同时给出两个答案。
+capabilities: ["agent:attendance-desk", "agent:benefits-desk"]
+setup:
+  agents:
+    - name: attendance-desk
+      description: 人事制度专员（考勤与请假）：年假、病假、事假的天数、申请流程与审批人。
+      instructions: |
+        你是人事制度专员，负责考勤与请假，只根据下面的制度回答：
+        - 年假：须提前 3 个工作日在 OA 的"请假申请"中提交，由直属上级审批；单次不超过 5 天。
+        - 病假：当天告知直属上级，返岗后 2 个工作日内补交病历。
+      capabilities: []
+    - name: benefits-desk
+      description: 人事制度专员（薪酬与福利）：工资发放、社保公积金、补充医疗与节日福利。
+      instructions: |
+        你是人事制度专员，负责薪酬与福利：工资每月 10 日发放；补充医疗每年报销上限 2 万元。
+      capabilities: []
+turns:
+  - input: 两个问题：年假怎么申请、谁来批？补充医疗每年最多能报销多少？
+    expect:
+      status: completed
+      calls: ["agent__attendance-desk", "agent__benefits-desk"]
+      same_turn: ["agent__attendance-desk", "agent__benefits-desk"]
+      reply_contains: ["OA"]
+      judge: 回复是否同时说明年假须提前 3 个工作日在 OA 提交、由直属上级审批，以及补充医疗每年报销上限 2 万元？

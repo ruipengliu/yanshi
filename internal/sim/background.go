@@ -68,6 +68,26 @@ func (w *World) cancelBackground() error {
 	return nil
 }
 
+// backgroundDeadlineEdge 把时钟拨到某个未了结的后台调用的截止时间之后，使到期了结（BackgroundTimeouts）不依赖设备
+// 恰好离线满五分钟：调用的随机分布稍有变化，这条路径就可能在数百个种子中一次也不出现。
+func (w *World) backgroundDeadlineEdge() (bool, error) {
+	ctx := context.Background()
+	for _, sid := range w.live() {
+		st, err := w.svc.Load(ctx, sid)
+		if err != nil {
+			return false, err
+		}
+		for _, b := range st.OpenBackground() {
+			if d := b.Deadline.Add(time.Second).Sub(w.clock.Now()); d > 0 {
+				w.clock.Advance(d)
+				w.tracef("clock +%s (background deadline of %s)", d, b.CallID)
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 // graceEdge 把时钟拨到某个等离线设备的调用的宽限期边界附近（前一秒、恰好、后一秒），有时让设备恰在此时上线；
 // 或让一台有调用在等它的在线设备下线（执行中途下线，宽限期从下线时起算）。
 func (w *World) graceEdge() error {

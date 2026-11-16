@@ -54,6 +54,38 @@ func TestDelegationRoundTrip(t *testing.T) {
 	}
 }
 
+// 同一轮中相邻的委托并行派发（ADR-0055）：两个子 Run 同时运行，父 Run 等它们都有结果后再调用模型；
+// 先完成的子 Run 唤醒父 Session 时直接重新停放，父日志中只有一次挂起。
+func TestParallelDelegation(t *testing.T) {
+	e := setup(t)
+	sid := e.newSession()
+	e.do(http.MethodPost, "/v1/sessions/"+sid+"/inputs", map[string]string{"text": "call agent__helper {\"task\":\"stream 40\"}\ncall agent__helper {\"task\":\"stream 60\"}\ntogether"}, nil)
+	v := e.until(sid, func(v sessionView) bool { return len(v.Runs) == 1 && len(v.Runs[0].WaitingAll) == 2 })
+	for _, w := range v.Runs[0].WaitingAll {
+		if w.Kind != "agent" || w.SessionID == "" {
+			t.Fatalf("waiting_all = %+v", v.Runs[0].WaitingAll)
+		}
+		e.until(w.SessionID, func(v sessionView) bool { st, _ := lastRun(v); return st == "running" || st == "completed" })
+	}
+	e.until(sid, func(v sessionView) bool { st, _ := lastRun(v); return st == "completed" })
+	if got := e.lastAssistantText(sid); !strings.HasPrefix(got, "done: ") {
+		t.Fatalf("parent reply %q", got)
+	}
+	var res struct {
+		Events []json.RawMessage `json:"events"`
+	}
+	e.do(http.MethodGet, "/v1/sessions/"+sid+"/events", nil, &res)
+	suspended := 0
+	for _, raw := range res.Events {
+		if strings.Contains(string(raw), `"run_suspended"`) {
+			suspended++
+		}
+	}
+	if suspended != 1 {
+		t.Fatalf("parent suspended %d times, want 1", suspended)
+	}
+}
+
 // 中断父 Run 时，委托出去的子 Run 随之中断；删除父 Session 时，子 Session 随之删除。
 func TestDelegationCascades(t *testing.T) {
 	e := setup(t)

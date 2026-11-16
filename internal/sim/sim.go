@@ -122,6 +122,8 @@ type Stats struct {
 	// 放弃时子 Run 由子 Worker 在下一次调用模型前停下（Delegator.Reconcile；模拟中的 Run 很短，这条路径由
 	// e2e 的 TestDelegationOrphanStops 覆盖）。
 	Delegations, DelegationResults, ChildDeletionRaces, CascadeFaults int
+	// ParallelDelegations 是同时在等两个以上委托的 Run 数（ADR-0055）。
+	ParallelDelegations int
 	// 判断（docs/design/m6-decisions.md）：记录的判断，其中判断不可用、走默认路径的。
 	Decisions, DecisionFallbacks int
 	// PastRuns 是移出投影、只剩摘要的终态 Run（有界投影，延展性评审 §8.3）。
@@ -458,6 +460,8 @@ func New(opts Options) (*World, error) {
 			Name: "sim", Version: v, Model: "sim/m",
 			Capabilities: []string{"echo", "send", "ask_user", "show_card", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*", "agent:sim"},
 			MaxTurns:     maxTurns, Context: ctxCfg, Memory: agentdef.MemoryConfig{Recall: 3},
+			// 扇出上限取 2：同一轮的三个委托中第三个被拒，并行派发与扇出拒绝都足够常见（ADR-0055）。
+			Delegation: agentdef.DelegationConfig{MaxFanout: simMaxFanout},
 		})
 	}
 	if opts.Attested {
@@ -896,6 +900,11 @@ func (w *World) act() error {
 	case x < 0.94:
 		if w.faults && w.chance(0.15) {
 			return w.graceEdge() // 拨动时钟同样会使租约过期，只在注入故障时
+		}
+		if w.faults && w.chance(0.05) {
+			if moved, err := w.backgroundDeadlineEdge(); moved || err != nil {
+				return err
+			}
 		}
 		// 大幅跳动时钟相当于 Worker 卡顿（GC、网络抖动）导致租约过期，属于故障。
 		maxJump := 2 * deviceTimeout
@@ -1484,6 +1493,9 @@ func (w *World) CollectStats() {
 			}
 		}
 		w.countDelegationResults(events)
+		if n, err := checkFanout(sid, events); err == nil {
+			w.Stats.ParallelDelegations += n
+		}
 		for _, e := range events {
 			if d := e.GetDecisionMade(); d != nil {
 				w.Stats.Decisions++
@@ -1825,6 +1837,14 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 		// 分片差分只跑几个短种子，要求其中出现跨库委托（子 Session 落在另一个库上，约一半的委托如此）：按均匀
 		// 选择时一个种子平均不到一次委托，偏向委托。比较的各次运行用同一 Options，偏向不影响差分。
 		canDelegate := w.opts.CompareShards && slices.ContainsFunc(tools, func(t model.ToolSpec) bool { return t.Name == "agent__sim" })
+		// 同一轮中相邻的多个委托并行派发（ADR-0055）：均匀选择几乎不会连续选中委托，偶尔整轮都是委托，
+		// 数量可能超过扇出上限。
+		if !w.opts.LongRuns && slices.ContainsFunc(tools, func(t model.ToolSpec) bool { return t.Name == "agent__sim" }) && w.chance(0.04) {
+			for i := range 2 + w.rng.IntN(2) {
+				resp.ToolCalls = append(resp.ToolCalls, &v1.ToolCall{CallId: fmt.Sprintf("call_%d", i), Capability: "agent__sim", ArgumentsJson: w.toolArgs("agent__sim", req.Messages...)})
+			}
+			return resp, nil
+		}
 		for i := range 1 + w.rng.IntN(2) {
 			name := tools[w.rng.IntN(len(tools))].Name
 			if len(devices) > 0 && w.chance(0.3) {

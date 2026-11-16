@@ -64,9 +64,21 @@ func (w *World) live() []string {
 
 // checkDelegation 检查委托的不变量：
 //   - 子 Session 的来处与父日志一致，委托链深度不超过上限；
+//   - 收敛后：同一个 Run 同时已派发的委托从未超过扇出上限（checkFanout）；
 //   - 收敛后：父 Session 删除完成，则子 Session 也已删除完成。
 func (w *World) checkDelegation(final bool) error {
 	ctx := context.Background()
+	if final {
+		for _, sid := range append(slices.Clone(w.sessions), w.children...) {
+			events, err := eventlog.ReadAll(ctx, w.log, sid, 0)
+			if err != nil {
+				return err
+			}
+			if _, err := checkFanout(sid, events); err != nil {
+				return err
+			}
+		}
+	}
 	for _, child := range w.children {
 		st, err := w.store.Load(ctx, child)
 		if err != nil {
@@ -175,6 +187,37 @@ func (f flakyCancel) Cancel(ctx context.Context, endUser, nodeID, callID string)
 
 // simMaxDepth 是 sim Agent 的委托链深度上限（AgentDef 默认值）。
 const simMaxDepth = 2
+
+// simMaxFanout 是 sim Agent 的一个 Run 同时未完成的委托数上限。
+const simMaxFanout = 2
+
+// checkFanout 检查委托扇出的不变量：任何时刻同一个 Run 已派发、尚无结果的委托不超过上限（ADR-0055）。
+// 返回同时在等两个以上委托的 Run 数，计入覆盖统计。
+func checkFanout(sid string, events []*v1.Event) (parallel int, err error) {
+	open := map[string]map[string]bool{}
+	counted := map[string]bool{}
+	for _, e := range events {
+		switch {
+		case e.GetToolCallStarted() != nil && delegation.IsNode(e.GetToolCallStarted().GetNodeId()):
+			s := e.GetToolCallStarted()
+			if open[s.GetRunId()] == nil {
+				open[s.GetRunId()] = map[string]bool{}
+			}
+			open[s.GetRunId()][s.GetCallId()] = true
+			n := len(open[s.GetRunId()])
+			if n > simMaxFanout {
+				return parallel, fmt.Errorf("invariant: session %s run %s has %d delegations in flight, limit %d", sid, s.GetRunId(), n, simMaxFanout)
+			}
+			if n >= 2 && !counted[s.GetRunId()] {
+				counted[s.GetRunId()] = true
+				parallel++
+			}
+		case e.GetToolResult() != nil:
+			delete(open[e.GetToolResult().GetRunId()], e.GetToolResult().GetCallId())
+		}
+	}
+	return parallel, nil
+}
 
 // simDecider 是模拟的判断器（docs/design/m6-decisions.md）：按随机源给出选项，故障注入时可能失败或让 Worker 崩溃。
 type simDecider struct{ w *World }

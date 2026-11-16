@@ -40,6 +40,23 @@ func transcript(st *session.State, maxToolResult int, through uint64) []model.Me
 	st = redoView(st)
 	var out, deferred []model.Message
 	var pending []string // 当前助手消息中尚无结果的调用，按顺序
+	// 当前助手消息的调用与已到的结果：结果按调用的顺序写出，与到达顺序无关。并行委托的子 Run 完成顺序不定
+	// （ADR-0055），按调用顺序使同一组结果给出同一份上下文，提供商也要求结果紧跟在调用之后。
+	var calls []string
+	results := map[string]model.Message{}
+	flush := func() {
+		for _, id := range calls {
+			if m, ok := results[id]; ok {
+				out = append(out, m)
+			} else {
+				out = append(out, model.Message{Role: model.RoleTool, ToolCallID: id,
+					Content: model.TextBlocks("[error] not executed: the run ended before this call completed")})
+			}
+		}
+		calls, pending, results = nil, nil, map[string]model.Message{}
+		out = append(out, deferred...)
+		deferred = nil
+	}
 
 	if c := st.Compaction; c != nil {
 		out = append(out, model.Message{Role: model.RoleUser, Content: append(model.TextBlocks(summaryPrefix), c.GetSummary()...)})
@@ -63,11 +80,11 @@ func transcript(st *session.State, maxToolResult int, through uint64) []model.Me
 	}
 
 	closePending := func() {
-		for _, id := range pending {
-			out = append(out, model.Message{Role: model.RoleTool, ToolCallID: id,
-				Content: model.TextBlocks("[error] not executed: the run ended before this call completed")})
+		if len(pending) > 0 || len(results) > 0 {
+			flush()
+			return
 		}
-		pending = nil
+		calls = nil
 		out = append(out, deferred...)
 		deferred = nil
 	}
@@ -93,23 +110,24 @@ func transcript(st *session.State, maxToolResult int, through uint64) []model.Me
 			deferUser(&out, &deferred, pending, model.TextBlocks(model.CallTranscriptText(p.CallTranscript)))
 		case *v1.Event_AssistantMessage:
 			closePending()
-			content, calls := modelVisible(p.AssistantMessage)
-			out = append(out, model.Message{Role: model.RoleAssistant, Content: content, ToolCalls: calls})
-			for _, tc := range calls {
+			content, tcs := modelVisible(p.AssistantMessage)
+			out = append(out, model.Message{Role: model.RoleAssistant, Content: content, ToolCalls: tcs})
+			for _, tc := range tcs {
 				pending = append(pending, tc.GetCallId())
+				calls = append(calls, tc.GetCallId())
 			}
 		case *v1.Event_ToolResult:
 			m := p.ToolResult
-			out = append(out, toolMessage(m, maxToolResult))
-			for i, id := range pending {
-				if id == m.GetCallId() {
-					pending = append(pending[:i:i], pending[i+1:]...)
-					break
-				}
+			i := slices.Index(pending, m.GetCallId())
+			if i < 0 {
+				// 不属于当前助手消息的结果（不应出现）照旧原位写出。
+				out = append(out, toolMessage(m, maxToolResult))
+				continue
 			}
+			results[m.GetCallId()] = toolMessage(m, maxToolResult)
+			pending = slices.Delete(pending, i, i+1)
 			if len(pending) == 0 {
-				out = append(out, deferred...)
-				deferred = nil
+				flush()
 			}
 		}
 	}

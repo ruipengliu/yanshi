@@ -746,6 +746,8 @@ type observation struct {
 	input     string
 	status    string
 	calls     []string
+	// turnCalls 是每条助手消息中的调用（一轮），用于 same_turn。
+	turnCalls [][]string
 	approvals int
 	questions int
 	reply     string
@@ -1477,7 +1479,9 @@ func collect(events []*v1.Event, obs *observation) {
 			m := p.AssistantMessage
 			obs.tokens += m.GetUsage().GetInputTokens() + m.GetUsage().GetOutputTokens()
 			obs.inTokens, obs.cachedTokens = obs.inTokens+m.GetUsage().GetInputTokens(), obs.cachedTokens+m.GetUsage().GetCachedInputTokens()
+			var turn []string
 			for _, tc := range m.GetToolCalls() {
+				turn = append(turn, tc.GetCapability())
 				if tc.GetCapability() == askuser.Capability {
 					obs.questions++
 					// 提问也是给用户看的回复：评分模型据此判断是否问得恰当。
@@ -1491,6 +1495,9 @@ func collect(events []*v1.Event, obs *observation) {
 				obs.calls = append(obs.calls, tc.GetCapability())
 				obs.callArgs = append(obs.callArgs, tc.GetArgumentsJson())
 				obs.steps = append(obs.steps, fmt.Sprintf("调用 %s %s", tc.GetCapability(), clip(tc.GetArgumentsJson(), judgeStepBytes)))
+			}
+			if len(turn) > 0 {
+				obs.turnCalls = append(obs.turnCalls, turn)
 			}
 			// 回复是本轮全部助手文本：模型常把结论写在带调用的消息里（如同时保存 Memory），
 			// 之后只补一句话；用户看到的是全部文本。
@@ -1640,6 +1647,21 @@ func (in *instance) check(ctx context.Context, turn int, t Turn, o *observation)
 			}
 		}
 		add("max_calls "+g, n <= max, fmt.Sprintf("%d calls matching %s, at most %d", n, g, max))
+	}
+	if len(e.SameTurn) > 0 {
+		// 每个名称都在同一条助手消息中出现（并行委托，ADR-0055）；重复的名称要求出现相应次数。
+		ok := slices.ContainsFunc(o.turnCalls, func(turn []string) bool {
+			rest := slices.Clone(turn)
+			for _, g := range e.SameTurn {
+				i := slices.IndexFunc(rest, func(c string) bool { return matches([]string{g}, c) })
+				if i < 0 {
+					return false
+				}
+				rest = slices.Delete(rest, i, i+1)
+			}
+			return true
+		})
+		add("same_turn", ok, fmt.Sprintf("turns %v", o.turnCalls))
 	}
 	for _, g := range e.NoCalls {
 		add("no_calls "+g, !slices.ContainsFunc(o.calls, func(c string) bool { return matches([]string{g}, c) }), fmt.Sprintf("calls %v", o.calls))

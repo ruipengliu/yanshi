@@ -58,6 +58,7 @@ turns:
       status: completed
       calls: ["macbook__read_file"]        # 必须出现的调用（glob）
       no_calls: ["*send_message"]          # 不得出现的调用
+      same_turn: ["agent__a", "agent__b"]  # 这些调用（glob，可重复）在同一条助手消息中一起发出（并行委托，ADR-0055）
       approvals: {min: 1}                   # 审批次数的范围
       reply_contains: ["周五"]
       reply_excludes: ["广州"]             # 回复中不得出现

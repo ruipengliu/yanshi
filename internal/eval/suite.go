@@ -390,6 +390,8 @@ type Expect struct {
 	Status  string   `yaml:"status"`
 	Calls   []string `yaml:"calls"`
 	NoCalls []string `yaml:"no_calls"`
+	// SameTurn 要求这些名称（glob，可重复）的调用出现在同一条助手消息中，即同一轮一起发出（并行委托，ADR-0055）。
+	SameTurn []string `yaml:"same_turn"`
 	// MaxCalls 限制名称匹配（glob）的调用在本轮出现的次数，如 {"macbook__read_file": 1}：调用转入后台后不应重试。
 	MaxCalls  map[string]int `yaml:"max_calls"`
 	Approvals *Range         `yaml:"approvals"`

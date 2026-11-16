@@ -395,6 +395,13 @@ func (w *Worker) Step(ctx context.Context) (bool, error) {
 		if r.ModerationSuspended() && w.now().Before(r.SuspendedUntil) {
 			return true, w.park(ctx, r.SuspendedUntil)
 		}
+		// 并行委托中的一个子 Run 写回了结果、或有插话，其余委托还没完成：不开始 Attempt、不写事件，按 call_id 幂等地
+		// 重新派发后重新停放（ADR-0055）。重新派发不能省：派发是子任务丢失时的恢复路径，子 Session 被删除、上次的
+		// 回写失败时，由它向父调用写回错误结果（模拟测试发现）。
+		if until, ok := awaitingDelegations(r, w.now()); ok {
+			_, err := w.deliverAndCommit(ctx, r, deliveries(r.DelegationFront()), nil, until)
+			return true, err
+		}
 		return true, w.startAttempt(ctx, r)
 	}
 	if w.st.WorkClass().Priority == workqueue.Background {
@@ -602,6 +609,9 @@ func (w *Worker) advance(ctx context.Context, r *session.Run) error {
 	def, err := w.cfg.Agents.Get(w.st.Agent)
 	if err != nil {
 		return w.fail(ctx, r, err.Error())
+	}
+	if front := r.DelegationFront(); len(front) > 0 {
+		return w.advanceDelegations(ctx, r, def, front)
 	}
 	if c := r.PendingCall(); c != nil {
 		return w.advanceCall(ctx, r, def, c)
@@ -919,6 +929,56 @@ func (w *Worker) awaitDispatched(ctx context.Context, r *session.Run, c *session
 	return err
 }
 
+// advanceDelegations 推进同一轮中相邻的委托调用（ADR-0055）：先逐个开始（一步一个 ToolCallStarted 或错误结果；
+// 委托的风险低，不审批），都开始之后逐个检查超时，最后把仍在等待的全部（重新）派发，写一次 RunSuspended，
+// 停放到其中最早的截止时间。之后子 Run 写回结果时唤醒父 Session，未全部完成就直接重新停放（Step）。
+func (w *Worker) advanceDelegations(ctx context.Context, r *session.Run, def *agentdef.Def, front []*session.Call) error {
+	var waiting []*session.Call
+	for _, c := range front {
+		switch {
+		case c.Done:
+		case !c.Dispatched():
+			return w.advanceCall(ctx, r, def, c)
+		default:
+			waiting = append(waiting, c)
+		}
+	}
+	for _, c := range waiting {
+		if !w.now().Before(c.Deadline) {
+			if err := w.cfg.Dispatch.Cancel(ctx, w.st.Created.GetEndUser(), c.NodeID, c.Call.GetCallId()); err != nil {
+				return err
+			}
+			return w.commit(ctx, w.toolResult(r, c.Call.GetCallId(),
+				model.TextBlocks("timed out: the delegated agent did not finish in time; its task was interrupted"), true))
+		}
+	}
+	until := waiting[0].Deadline
+	for _, c := range waiting[1:] {
+		until = minTime(until, c.Deadline)
+	}
+	_, err := w.redispatchAll(ctx, r, waiting, &v1.Event{Payload: &v1.Event_RunSuspended{RunSuspended: &v1.RunSuspended{
+		RunId: r.ID, Attempt: w.attempt}}}, until)
+	return err
+}
+
+// awaitingDelegations 报告挂起的 Run 是否只在等已派发、未到截止时间的委托，返回最早的截止时间。
+func awaitingDelegations(r *session.Run, now time.Time) (time.Time, bool) {
+	if r.Status != session.RunSuspended || r.SuspendReason != "" {
+		return time.Time{}, false
+	}
+	var until time.Time
+	for _, c := range r.DelegationFront() {
+		switch {
+		case c.Done:
+		case !c.Dispatched() || !now.Before(c.Deadline):
+			return time.Time{}, false
+		case until.IsZero() || c.Deadline.Before(until):
+			until = c.Deadline
+		}
+	}
+	return until, !until.IsZero()
+}
+
 // backgroundable 报告调用能否转入后台（ADR-0035）：只有路由到设备的调用。沙箱、用户本人与委托不是设备（Node ID 是平台
 // 保留的）；委托派生的子 Session 不转后台：子 Run 结束后，迟到的结果回不到父 Run，由委托时限兜底。
 func (w *Worker) backgroundable(c *session.Call) bool {
@@ -946,22 +1006,68 @@ func (w *Worker) background(ctx context.Context, r *session.Run, c *session.Call
 // 没有写入时（本 Attempt 已失效、调用已有结果或已了结、存储故障），刚才的派发可能把别人已经撤回的投递放了回去（中断、
 // 取消后台调用与本步交错，或本 Worker 的投影已过时）：同步后若调用既不在 Run 中等待、也不是未了结的后台调用，就撤回它。
 func (w *Worker) redispatch(ctx context.Context, r *session.Run, c *session.Call, deadline time.Time, e *v1.Event, until time.Time) (bool, error) {
-	id := c.Call.GetCallId()
-	_, capName, _ := strings.Cut(c.Call.GetCapability(), "__")
-	err := w.cfg.Dispatch.Dispatch(ctx, w.st.Created.GetEndUser(), c.NodeID, &v1.Invoke{
-		SessionId: w.st.SessionID, RunId: r.ID, CallId: id, Capability: capName,
-		ArgumentsJson: c.Call.GetArgumentsJson(), Deadline: timestamppb.New(deadline),
-	}, w.st.WorkClass())
-	if err != nil {
-		return false, err
+	return w.deliverAndCommit(ctx, r, []delivery{{c, deadline}}, e, until)
+}
+
+// redispatchAll 以各自的截止时间（重新）派发多个调用，再提交一次 e（ADR-0055 的并行委托）。
+func (w *Worker) redispatchAll(ctx context.Context, r *session.Run, calls []*session.Call, e *v1.Event, until time.Time) (bool, error) {
+	return w.deliverAndCommit(ctx, r, deliveries(calls), e, until)
+}
+
+// deliveries 是已派发、尚无结果的调用，各按自己的截止时间。
+func deliveries(calls []*session.Call) []delivery {
+	var ds []delivery
+	for _, c := range calls {
+		if c.Dispatched() {
+			ds = append(ds, delivery{c, c.Deadline})
+		}
 	}
-	nodeID, st := c.NodeID, w.st
-	ok, err := w.tryCommit(ctx, e)
+	return ds
+}
+
+type delivery struct {
+	call     *session.Call
+	deadline time.Time
+}
+
+func (w *Worker) deliverAndCommit(ctx context.Context, r *session.Run, ds []delivery, e *v1.Event, until time.Time) (bool, error) {
+	for _, d := range ds {
+		c := d.call
+		_, capName, _ := strings.Cut(c.Call.GetCapability(), "__")
+		err := w.cfg.Dispatch.Dispatch(ctx, w.st.Created.GetEndUser(), c.NodeID, &v1.Invoke{
+			SessionId: w.st.SessionID, RunId: r.ID, CallId: c.Call.GetCallId(), Capability: capName,
+			ArgumentsJson: c.Call.GetArgumentsJson(), Deadline: timestamppb.New(d.deadline),
+		}, w.st.WorkClass())
+		if err != nil {
+			return false, err
+		}
+	}
+	// 提交会更新投影；先记下派发目标，失败时据此撤回。
+	type target struct{ id, nodeID string }
+	targets := make([]target, len(ds))
+	for i, d := range ds {
+		targets[i] = target{d.call.Call.GetCallId(), d.call.NodeID}
+	}
+	st := w.st
+	// e 为 nil 时不写事件（Step 中被唤醒的父 Run 重新派发后重新停放）：派发之后照样核对，撤回已不在等待的。
+	ok, err := false, error(nil)
+	if e != nil {
+		ok, err = w.tryCommit(ctx, e)
+	}
 	if !ok {
-		if st != nil && w.cfg.Store.Sync(ctx, st) == nil && !waiting(st, r.ID, id) {
-			if cerr := w.cfg.Dispatch.Cancel(ctx, st.Created.GetEndUser(), nodeID, id); cerr != nil && err == nil {
-				err = cerr
+		if st != nil && w.cfg.Store.Sync(ctx, st) == nil {
+			for _, t := range targets {
+				id, nodeID := t.id, t.nodeID
+				if waiting(st, r.ID, id) {
+					continue
+				}
+				if cerr := w.cfg.Dispatch.Cancel(ctx, st.Created.GetEndUser(), nodeID, id); cerr != nil && err == nil {
+					err = cerr
+				}
 			}
+		}
+		if e == nil && err == nil {
+			return false, w.park(ctx, until)
 		}
 		return false, err
 	}

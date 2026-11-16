@@ -409,6 +409,8 @@ type runView struct {
 	Attempt uint32       `json:"attempt"`
 	Turns   int          `json:"turns"`
 	Waiting *waitingView `json:"waiting,omitempty"`
+	// WaitingAll 在同时等待多个已派发的调用时列出全部（并行委托，ADR-0055）；Waiting 仍是第一个未完成的调用。
+	WaitingAll []*waitingView `json:"waiting_all,omitempty"`
 	// FromBackground 非空表示 Run 由该后台调用的了结（结果或到期）开启，而不是用户的输入（ADR-0035）。
 	FromBackground string `json:"from_background,omitempty"`
 }
@@ -448,6 +450,29 @@ func (s *Server) waiting(r *http.Request, endUser string, run *session.Run) *wai
 	if run.Status.Terminal() || c == nil {
 		return nil
 	}
+	return s.waitingCall(r, endUser, c)
+}
+
+// waitingAll 列出同时在等的全部已派发调用；不多于一个时为空，由 waiting 说明。
+func (s *Server) waitingAll(r *http.Request, endUser string, run *session.Run) []*waitingView {
+	if run.Status.Terminal() || run.QuotaSuspended() {
+		return nil
+	}
+	var out []*waitingView
+	for _, c := range run.Calls {
+		if c.Dispatched() {
+			if v := s.waitingCall(r, endUser, c); v != nil {
+				out = append(out, v)
+			}
+		}
+	}
+	if len(out) < 2 {
+		return nil
+	}
+	return out
+}
+
+func (s *Server) waitingCall(r *http.Request, endUser string, c *session.Call) *waitingView {
 	switch {
 	case c.AwaitingApproval():
 		return &waitingView{Kind: "approval", CallID: c.Call.GetCallId(), Capability: c.Call.GetCapability(),
@@ -481,7 +506,8 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, run := range st.Runs {
 		runs = append(runs, runView{RunID: run.ID, Status: run.Status.String(), Attempt: run.Attempt, Turns: run.Turns,
-			Waiting: s.waiting(r, st.Created.GetEndUser(), run), FromBackground: run.FromBackground})
+			Waiting: s.waiting(r, st.Created.GetEndUser(), run), WaitingAll: s.waitingAll(r, st.Created.GetEndUser(), run),
+			FromBackground: run.FromBackground})
 	}
 	background := []backgroundView{}
 	for _, b := range st.OpenBackground() {

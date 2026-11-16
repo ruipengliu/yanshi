@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strings"
 
 	"google.golang.org/protobuf/proto"
 
@@ -53,7 +52,7 @@ func (s *State) RedoBlocker(runID string) string {
 		if c.Call.GetCapability() == askuser.Capability || c.NodeID == askuser.NodeID {
 			return "ask_user"
 		}
-		if strings.HasPrefix(c.Call.GetCapability(), "agent__") || strings.HasPrefix(c.NodeID, "@agent/") {
+		if c.IsDelegation() {
 			return "delegation"
 		}
 		if c.Background {

@@ -825,7 +825,8 @@ export const SCENARIOS = [
     description:
       "子 Agent 的提问是唯一待回答的提问时，输入框的文字（去向由对话面板与场景共用的 routeInput 决定）作为它的回答发往子 Session，" +
       "父 Run 随委托完成，父 Session 没有新增输入；另一台设备抢先回答时为 conflict，文字不改投父 Session。" +
-      "带附件、界面上下文或附件上传中时不作为回答；父 Session 自己有提问时，文字照旧提交给父 Session。",
+      "带附件、界面上下文或附件上传中时不作为回答；父 Session 自己有提问时，文字照旧提交给父 Session。" +
+      "两个子 Agent 同时提问的情形见 delegation-parallel。",
     async run(c) {
       const web = await c.device("web", { preset: "web" });
       const other = await c.device("web2", { preset: "web" });
@@ -848,13 +849,6 @@ export const SCENARIOS = [
         "带附件或界面上下文时不作为回答，照旧提交给父 Session",
       );
       c.check(routeInput({ text: "上海", uploading: 1 }, q).kind === "wait", "附件还在上传时先等它们完成，再决定去向");
-      // 规则本身：两个待回答的提问时不选中。网关上同一时刻只有一条委托链在推进（扇出至多为 1，调用按顺序进行），
-      // 脚本化模型造不出两个，这里在子 Session 的视图上多放一个提问来检查规则。
-      const twice = (s) => {
-        const real = childView(s);
-        return Object.assign(Object.create(real), { pendingQuestions: () => [...real.pendingQuestions(), { ...q, callId: "second" }] });
-      };
-      c.check(v.typedAnswerTarget(twice) === undefined, "两个待回答的提问时不选中，文字照旧提交给父 Session");
       const before = inputs(v);
       const sent = await typed(web, v, childView, "上海");
       c.check(sent.route.kind === "answer" && sent.route.question.callId === q.callId, "文字以 answer 发往子 Session：上海");
@@ -894,10 +888,59 @@ export const SCENARIOS = [
     },
   },
   {
+    id: "delegation-parallel",
+    title: "并行委托",
+    description:
+      "模型同一轮返回两个委托（脚本命令 together）：两个子 Session 一起派发、同时运行（ADR-0055）。两个子 Agent 都在提问时，" +
+      "父 Session 的界面一并展示两个提问，输入框的文字不选中任何一个；逐个回答之后父 Run 等两个结果都到齐才完成。",
+    async run(c) {
+      const web = await c.device("web", { preset: "web" });
+      const sid = await c.newSession(web);
+      const v = c.view(web, sid);
+      const childView = c.children(web);
+      const helper = c.env.helper ?? "console-helper";
+      const r = await web.submit(
+        sid,
+        `together\ncall agent__${helper} {"task":"ask 去哪个城市？| 北京 | 上海"}\ncall agent__${helper} {"task":"ask 几个人？| 1 | 2"}`,
+      );
+      const ds = await v.waitFor("two delegations", () => {
+        const open = v.delegations().filter((x) => x.runId === r.runId);
+        return open.length === 2 ? open : null;
+      });
+      const views = ds.map((d) => childView(d.childSessionId));
+      const qs = await c.until(
+        "two child questions",
+        () => {
+          const { questions } = v.pendingWithDelegations(childView);
+          return questions.length === 2 ? questions : null;
+        },
+        [v, ...views],
+      );
+      c.check(
+        new Set(qs.map((q) => q.sessionId)).size === 2 && qs.every((q) => q.sessionId !== sid && q.agent === helper),
+        "两个子 Agent 同时提问，父 Session 的界面一并展示",
+      );
+      c.check(v.typedAnswerTarget(childView) === undefined, "两个待回答的提问时不选中，文字照旧提交给父 Session");
+      const city = qs.find((q) => q.question === "去哪个城市？");
+      const people = qs.find((q) => q.question === "几个人？");
+      await web.answer(city.sessionId, city.callId, { selected: ["2"] });
+      c.step("回答第一个子 Agent：上海");
+      await c.sleep(300);
+      c.check(!v.runEnd(r.runId), "另一个委托还没有结果，父 Run 继续等待");
+      await web.answer(people.sessionId, people.callId, { selected: ["2"] });
+      c.step("回答第二个子 Agent：2");
+      const end = await c.runEnd(v, r.runId, 30_000);
+      const results = v.payloads("tool_result").filter((p) => p.run_id === r.runId);
+      c.check(end.kind === "run_completed" && results.length === 2, "两个结果都到齐后父 Run 完成");
+      return { sessionId: sid };
+    },
+  },
+  {
     id: "delegation-together",
     title: "同一轮的委托与提问",
     description:
-      "模型同一轮返回委托与 ask_user（脚本命令 together）：Worker 按顺序推进，父 Session 的提问等委托结束才派发。" +
+      "模型同一轮返回委托与 ask_user（脚本命令 together）：相邻的委托一起派发，其他调用等它之前的委托结束才推进（ADR-0055），" +
+      "所以父 Session 的提问等委托结束才派发。" +
       "在那之前它不算待回答，输入框的文字选中子 Agent 的提问；委托结束后父 Session 的提问才待回答，文字作为它的回答。",
     async run(c) {
       const web = await c.device("web", { preset: "web" });

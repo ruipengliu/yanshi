@@ -320,6 +320,10 @@ type sessionView struct {
 			Capability string `json:"capability"`
 			NodeOnline *bool  `json:"node_online"`
 		} `json:"waiting"`
+		WaitingAll []struct {
+			Kind      string `json:"kind"`
+			SessionID string `json:"session_id"`
+		} `json:"waiting_all"`
 	} `json:"runs"`
 }
 

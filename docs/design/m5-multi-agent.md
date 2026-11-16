@@ -46,7 +46,7 @@
 - **可见性**：子 Session 对 EndUser 可见、可订阅，客户端按 `parent` 字段折叠展示；子 Run 的 Approval 与提醒照常推送。
   - **客户端须跟随进行中的委托。** 子 Run 的审批与 `ask_user` 路由到用户本人，却写在子 Session 的日志里。只看父 Session 的客户端看不到它们，父 Run 就一直等着委托，直到超时。所以客户端发现委托（`ToolCallStarted{node_id: "@agent/<子 Session>"}`）即订阅子 Session，并把其中待处理的审批与提问（递归到孙 Session）一并展示，标出子 Agent。处理结果发往子 Session。委托调用出现结果、或所在 Run 结束时，退订子 Session 并收起这些待处理项。
     - Worker 先提交 `ToolCallStarted`、再创建子 Session，客户端订阅时子 Session 可能还不存在，订阅以 `not_found` 结束。委托仍在进行时，客户端退避后重订（`error` 同样处理），不能就此放弃，否则这些待处理项再也看不到。
-    - 提问在派发给用户（`ToolCallStarted{node_id: "@user"}`）之后才算待回答。Worker 按顺序一次推进一个调用：模型同一轮返回委托与 `ask_user` 时，父 Session 的提问要等委托结束才派发，在那之前既不能回答，也不挡住子 Agent 的提问。网页与 Go SDK 的 `PendingTracker`、调试控制台的 `pendingWithDelegations` 都按这条规则实现（[端侧 SDK](./m3-client-sdks.md) §2）；移动端绑定不提供，原生端按同样的规则自行实现（同上 §3）。
+    - 提问在派发给用户（`ToolCallStarted{node_id: "@user"}`）之后才算待回答。同一轮中相邻的委托一起派发，其他调用等它之前的委托结束才推进（ADR-0055）：模型同一轮返回委托与 `ask_user` 时，父 Session 的提问要等委托结束才派发，在那之前既不能回答，也不挡住子 Agent 的提问。网页与 Go SDK 的 `PendingTracker`、调试控制台的 `pendingWithDelegations` 都按这条规则实现（[端侧 SDK](./m3-client-sdks.md) §2）；移动端绑定不提供，原生端按同样的规则自行实现（同上 §3）。
   - **输入框的文字。** 父 Session 自己没有待回答的提问、而整棵委托树里恰好一个待回答的提问、且它在子 Session 中时，客户端把输入框的文字作为该提问的回答（`answer{text}`），发往子 Session。其余情况照旧提交给父 Session：多个提问时不替用户猜；父 Session 自己的提问，服务端本来就把文字当作回答。
     - 这条规则放在客户端，服务端不沿委托链转发父 Session 的输入。原因有两个：一次输入跨两个 Session，不能在一个事务中提交（ADR-0028）；父日志里也没有可以按 `input_id` 去重的输入。
     - 回答按 `call_id` 去重，不跨 Session 写入。别的设备已经回答时得到 `conflict`，客户端保留文字并提示用户，不自动改投父 Session。
@@ -70,7 +70,7 @@
 - 子 Run 终态后，父调用在有限步内有且只有一个结果。
 - 父 Run 终态（含中断）后，其所有子 Run 在有限步内终态。
 - 父 Session 删除后，子 Session 在有限步内删除；删除不变量对子 Session 同样成立。
-- 深度与扇出上限在任何交错下不被突破。
+- 深度与扇出上限在任何交错下不被突破（扇出由 `checkFanout` 检查：同一个 Run 同时已派发的委托数，2026-11-16 起实际检查；sim Agent 的上限取 2，偶尔整轮返回两三个委托，覆盖统计 `ParallelDelegations`）。
 - 故障注入：创建子 Session 失败、回写失败、子 Worker 崩溃于回写前后。
 
 ## 7. 评测用例（新增，按 ADR-0018 固定）
@@ -81,6 +81,7 @@
 - `delegate-approval-routes-to-user`：子 Run 的高风险调用在用户设备上审批，父 Run 等待。
 - `delegate-interrupt-cascades`：用户中断父 Run，子 Run 停止，无后续副作用。
 - `delegate-result-cited`：父 Run 转述子 Run 结果时引用其工件，不编造。
+- `delegate-parallel-independent`：互不依赖、分属两个专员的问题同一轮一起委托（`same_turn`，ADR-0055）。
 
 "何时委托、委托给谁"的判断起步用 LLM；小模型分类器在这一点上没有证据（[判断设计](./m6-decisions.md) §3），积累评测数据后再考虑。
 
@@ -95,7 +96,7 @@
 代码在 `internal/delegation`（派发、撤回、写回、可委托 Agent 的目录），接入 `runtime`（工具解析、深度与扇出检查、写回）、`service`（指定 ID 与来处创建子 Session、`SubmitDelegated`）、`janitor`（级联删除）与 HTTP API（等待视图 `kind: "agent"`、Session 的 `parent`）。与 §3～§7 的差别：
 
 - **输出只有文字。** 工件只对其所属 Session 可见（m2-artifacts），子 Run 产生的工件引用父 Run 打不开；`context` 同样只传文字。父子共享工件须先定义授权，留待需要时做。
-- **扇出实际至多为 1。** 路由调用按顺序推进：父 Run 等一个调用的结果之后才开始下一个。`max_fanout` 照常检查，为将来的并行派发预留。
+- **同一轮的相邻委托并行派发**（2026-11-16，ADR-0055 第一期；此前扇出实际至多为 1）。Worker 按模型给出的顺序，把从第一个未完成调用起相邻的委托调用逐个开始（一步一个 `ToolCallStarted`），全部开始后一起派发、只写一次 `RunSuspended`，停放到其中最早的截止时间；其他调用（设备、沙箱、MCP、`ask_user`）等它之前的委托都有结果后再推进。先完成的子 Run 写回结果唤醒父 Session 时，其余委托未完成就不开始 Attempt、不写事件，按 `call_id` 幂等地重新派发（子任务丢失时由它写回错误结果）后重新停放。本轮全部有结果后才调用模型；结果在上下文中按调用顺序排列，与子 Run 的完成顺序无关（`runtime.Transcript`）。`max_fanout` 限制同时已派发的委托数，超出的调用得到错误结果。HTTP 的 Run 视图在同时等待多个调用时另给出 `waiting_all`。
 - **委托不经 Submit 准入。** 子 Run 是进行中的父 Run 的一部分；配额照常检查，用尽时父调用得到错误结果。
 - **任务被拒绝时直接告诉父调用。** 子 Session 已删除或关闭、配额用尽、任务被内容安全拒绝时，派发写回错误结果而不是等到超时；内容安全或存储不可用时父 Worker 下一步重试。
 - **级联只沿删除与中断。** 关闭父 Session 中断进行中的子 Run，子 Session 本身保留。
