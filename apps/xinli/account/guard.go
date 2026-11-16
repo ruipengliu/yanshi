@@ -23,6 +23,9 @@ func (s PersonaAccess) Update(ctx context.Context, bl, eu string, fn func(*domai
 func (s PersonaAccess) View(ctx context.Context, bl, eu string, fn func(*domain.Book) error) error {
 	return s.Guard.WithActive(ctx, task.Owner{BusinessLine: bl, EndUser: eu}, func(ctx context.Context) error { return s.Store.View(ctx, bl, eu, fn) })
 }
+func (s PersonaAccess) ViewPlanned(ctx context.Context, bl, eu string, plan domain.ReadPlan, fn func(*domain.Book) error) error {
+	return s.Guard.WithActive(ctx, task.Owner{BusinessLine: bl, EndUser: eu}, func(ctx context.Context) error { return s.Store.ViewPlanned(ctx, bl, eu, plan, fn) })
+}
 
 // DevelopmentHandler 只给回环 dev 的既有夹具加状态闸门；不是生产鉴权替代品。
 func (s *Service) DevelopmentHandler(next http.Handler) http.Handler {

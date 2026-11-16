@@ -416,7 +416,7 @@ func TestCaptureEvidenceLookupCacheAndRollback(t *testing.T) {
 		runtime := newRuntime(wrapped, Options{AllowUnmanaged: true, Now: x.now})
 		meta := mcp.Meta{"yanshi/business_line": "bl", "yanshi/end_user": "u", "yanshi/session": "day", "yanshi/captures": cites}
 		before := x.State("bl", "u")
-		result, err := runtime.call(context.Background(), meta, raw, (*domain.Call).FileChanges, false)
+		result, err := runtime.call(context.Background(), meta, raw, "file_changes", (*domain.Call).FileChanges, false)
 		if result != nil || !errors.Is(err, failure) || !reflect.DeepEqual(before, x.State("bl", "u")) {
 			t.Fatalf("lookup failure escaped: result=%v error=%v", result, err)
 		}
@@ -424,7 +424,7 @@ func TestCaptureEvidenceLookupCacheAndRollback(t *testing.T) {
 			t.Fatal("failure did not follow first commitment or retried failed lookup")
 		}
 		wrapped.failRef, wrapped.counts = domain.Ref{}, map[domain.Ref]int{}
-		result, err = runtime.call(context.Background(), meta, raw, (*domain.Call).FileChanges, false)
+		result, err = runtime.call(context.Background(), meta, raw, "file_changes", (*domain.Call).FileChanges, false)
 		if err != nil || result == nil || !strings.Contains(result.Content[0].(*mcp.TextContent).Text, "均已核实") {
 			t.Fatalf("retry failed: %v %v", result, err)
 		}

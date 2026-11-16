@@ -89,4 +89,4 @@
 |---|---|---|
 | [Persona ADR-0001](../../persona/docs/adr/0001-entities-by-changeset.md) | xinli 的知识按实体维护、以变更集写入，交谈由模型划定 | 原内核 ADR-0042（2026-11-14 迁入，修订"人不建模"） |
 | [xinli ADR-0001](../../apps/xinli/docs/adr/0001-daily-work-sessions-and-projects.md) | 按业务日分工作 Session，摘要归集到长期的 Project | 拆自内核 ADR-0037 的业务部分 |
-| [Persona ADR-0002](../../persona/docs/adr/0002-on-demand-reads-and-incremental-materialization.md) | 按需读取与增量物化，变更集仍是事实源（accepted，方向，待定稿） | ADR 评审 §3.2；实现时修订 Persona 架构 §13 Q93 |
+| [Persona ADR-0002](../../persona/docs/adr/0002-on-demand-reads-and-incremental-materialization.md) | 按需读取与增量物化，变更集仍是事实源（accepted；第一期按需读取已实现 2026-11-16，第二期待复测决定） | ADR 评审 §3.2；实现时修订 Persona 架构 §13 Q93 |

@@ -89,7 +89,7 @@ func TestDomainChangesSurviveExitBeforeNotification(t *testing.T) {
 							t.Fatalf("wrong exit: %v", got)
 						}
 					}()
-					_, _ = x.call(ctx, meta, args, handler, false)
+					_, _ = x.call(ctx, meta, args, "", handler, false)
 					t.Fatal("call returned after process exit")
 				}()
 				if notified {
@@ -114,7 +114,7 @@ func TestDomainChangesSurviveExitBeforeNotification(t *testing.T) {
 				}
 				// 返回丢失后再次交付，重开的入口不得分配新版本。
 				x = newRuntime(s, Options{AllowUnmanaged: true, Now: func() time.Time { return now.Add(24 * time.Hour) }})
-				if result, err := x.call(ctx, meta, args, handler, false); err != nil || result == nil {
+				if result, err := x.call(ctx, meta, args, "", handler, false); err != nil || result == nil {
 					t.Fatal(result, err)
 				}
 				if retry, err := s.PendingDomainChanges(ctx, "bl", "u"); err != nil || !reflect.DeepEqual(retry, changes) {

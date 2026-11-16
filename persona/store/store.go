@@ -33,6 +33,12 @@ type Store interface {
 	PendingPurges(ctx context.Context) ([]Owner, error)
 	Update(ctx context.Context, businessLine, endUser string, fn func(*domain.Book) error) error
 	View(ctx context.Context, businessLine, endUser string, fn func(*domain.Book) error) error
+	// ViewPlanned 与 View 的隔离和屏障相同，但按 plan 只装载需要的账本行（Persona ADR-0002 的按需读取）；
+	// plan 为 nil、无法限定范围或物化行的叠加版本不是当前版本时整体装载。回调中的 Book 可能只含部分账本。
+	ViewPlanned(ctx context.Context, businessLine, endUser string, plan domain.ReadPlan, fn func(*domain.Book) error) error
+	// StaleOwners 只发现物化行的叠加版本（domain.FoldVersion）不是当前版本、且没有注销屏障的 owner；
+	// 对它们各做一次 Update（回调不改动）即按当前规则整体重算并写回。
+	StaleOwners(ctx context.Context) ([]Owner, error)
 	// PendingDeletions 按 BusinessLine、EndUser 的 Go 字节顺序返回去重的所有者；
 	// 只发现有删除待办或完成后仍需重新整理的所有者；P4 的 PG 实现按待办表索引查询，不扫描 Book。
 	PendingDeletions(ctx context.Context) ([]Owner, error)

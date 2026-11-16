@@ -116,7 +116,8 @@ func (s *Service) Read(ctx context.Context, owner store.Owner, q Request) (json.
 		return nil, ErrInvalid
 	}
 	var data json.RawMessage
-	err = s.Store.View(ctx, owner.BusinessLine, owner.EndUser, func(book *domain.Book) error {
+	plan := domain.QueryReadPlan(q.Resource, q.ID, q.Date, q.Filter)
+	err = s.Store.ViewPlanned(ctx, owner.BusinessLine, owner.EndUser, plan, func(book *domain.Book) error {
 		if s.Now != nil {
 			book.SetCaptureClock(s.Now)
 		}

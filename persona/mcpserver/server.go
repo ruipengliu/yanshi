@@ -119,14 +119,14 @@ func toolHandler(x *server) http.Handler {
 	srv.AddTool(capturesTool, x.captures)
 	for _, t := range tools {
 		srv.AddTool(t.tool, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			return x.call(ctx, req.Params.Meta, req.Params.Arguments, t.handler, t.tool.Annotations != nil && t.tool.Annotations.ReadOnlyHint)
+			return x.call(ctx, req.Params.Meta, req.Params.Arguments, t.tool.Name, t.handler, t.tool.Annotations != nil && t.tool.Annotations.ReadOnlyHint)
 		})
 	}
 	// 沿用已有的有状态传输与协议协商；凭据认证不应改变工具结果的元数据。
 	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
 }
 
-func (x *server) call(ctx context.Context, metadata mcp.Meta, args json.RawMessage, handler func(*domain.Call) string, readOnly bool) (*mcp.CallToolResult, error) {
+func (x *server) call(ctx context.Context, metadata mcp.Meta, args json.RawMessage, name string, handler func(*domain.Call) string, readOnly bool) (*mcp.CallToolResult, error) {
 	if err := x.authorize(metadata); err != nil {
 		return nil, err
 	}
@@ -153,7 +153,11 @@ func (x *server) call(ctx context.Context, metadata mcp.Meta, args json.RawMessa
 	}
 	transact := x.store.Update
 	if readOnly {
-		transact = x.store.View
+		// 只读工具按需装载账本（Persona ADR-0002）；没有读取计划的整体装载。
+		plan := domain.ToolReadPlan(name, session, args)
+		transact = func(ctx context.Context, bl, eu string, fn func(*domain.Book) error) error {
+			return x.store.ViewPlanned(ctx, bl, eu, plan, fn)
+		}
 	}
 	if err := transact(ctx, bl, eu, apply); err != nil {
 		return nil, err

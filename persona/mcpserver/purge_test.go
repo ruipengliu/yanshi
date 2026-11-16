@@ -31,7 +31,7 @@ func TestOwnerBarrierAllTools(t *testing.T) {
 			for range 2 {
 				for _, tool := range tools {
 					readOnly := tool.tool.Annotations != nil && tool.tool.Annotations.ReadOnlyHint
-					result, err := x.call(ctx, meta, []byte(`{}`), tool.handler, readOnly)
+					result, err := x.call(ctx, meta, []byte(`{}`), tool.tool.Name, tool.handler, readOnly)
 					if result != nil || !errors.Is(err, store.ErrOwnerDeleting) {
 						t.Fatal("tool bypassed barrier", tool.tool.Name, err)
 					}

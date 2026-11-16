@@ -299,9 +299,11 @@ func runSample(t *testing.T, b backend, results map[string][]sample) {
 	t.Helper()
 	day := ledgerDays - 1
 	date, session := dayTime(day).Format(time.DateOnly), daySession(day)
-	run := func(name string, write, wal bool, bound int64, fn func(*domain.Book) error) {
+	run := func(name string, write, wal bool, bound int64, plan domain.ReadPlan, fn func(*domain.Book) error) {
 		t.Helper()
-		op := b.store.View
+		op := func(ctx context.Context, bl, eu string, fn func(*domain.Book) error) error {
+			return b.store.ViewPlanned(ctx, bl, eu, plan, fn)
+		}
 		if write {
 			op = b.store.Update
 		}
@@ -327,7 +329,7 @@ func runSample(t *testing.T, b backend, results map[string][]sample) {
 	} {
 		var page domain.StructuredPage
 		args := encode(object{"after": position.after, "all": true})
-		run(position.name, true, false, 512, func(book *domain.Book) error {
+		run(position.name, true, false, 512, nil, func(book *domain.Book) error {
 			var err error
 			page, err = domain.NewCall(book, session, args, nil, fixtureNow).Captures(pageOptions)
 			return err
@@ -338,7 +340,7 @@ func runSample(t *testing.T, b backend, results map[string][]sample) {
 	}
 	var refs []string
 	appended := batch(day, batchesPerDay+1)
-	run("append", true, true, 16, func(book *domain.Book) error {
+	run("append", true, true, 16, nil, func(book *domain.Book) error {
 		var err error
 		refs, err = book.AppendCaptures(date, "measured-append", appended)
 		return err
@@ -363,14 +365,19 @@ func runSample(t *testing.T, b backend, results map[string][]sample) {
 		{"list_commitments", object{"status": "open"}, (*domain.Call).ListCommitments, fmt.Sprintf("共 %d 条", openCommitmentCount)},
 		{"find_related", object{"query": "交付材料", "counterparts": []string{"同事"}}, (*domain.Call).FindRelated, "C-"},
 	} {
-		var out string
+		var out, full string
 		args := encode(query.args)
-		run(query.name, false, false, 0, func(book *domain.Book) error {
-			call := domain.NewCall(book, session, args, nil, fixtureNow)
-			out = query.method(call)
-			return call.Err()
-		})
-		if !strings.Contains(out, query.contains) {
+		read := func(out *string) func(*domain.Book) error {
+			return func(book *domain.Book) error {
+				call := domain.NewCall(book, session, args, nil, fixtureNow)
+				*out = query.method(call)
+				return call.Err()
+			}
+		}
+		// 按需读取须与整体装载逐字相同（Persona ADR-0002）；对照不计入样本。
+		must(t, b.store.View(context.Background(), ownerLine, ownerUser, read(&full)))
+		run(query.name, false, false, 0, domain.ToolReadPlan(query.name, session, args), read(&out))
+		if !strings.Contains(out, query.contains) || out != full {
 			t.Fatalf("%s returned unexpected query result", query.name)
 		}
 	}
@@ -382,7 +389,7 @@ func runSample(t *testing.T, b backend, results map[string][]sample) {
 		receipt, err = checkedCall(domain.NewCall(book, session, fileArgs, fileCites, fixtureNow), (*domain.Call).FileChanges, "已收下变更集")
 		return err
 	}
-	run("file_changes", true, false, -1, file)
+	run("file_changes", true, false, -1, nil, file)
 	ids := commitmentID.FindAllStringSubmatch(receipt, -1)
 	if len(ids) != 1 {
 		t.Fatal("file_changes did not return one commitment")
@@ -408,7 +415,7 @@ func runSample(t *testing.T, b backend, results map[string][]sample) {
 	args["exchanges"].(object)["create"].([]object)[0]["summary"] = "确认修正后的材料清单"
 	args["commitments"].(object)["create"].([]object)[0]["id"] = ids[0][1]
 	fileArgs = encode(args)
-	run("replace_source", true, true, -1, file)
+	run("replace_source", true, true, -1, nil, file)
 	view(t, b.store, func(book *domain.Book) {
 		state := book.State()
 		if len(state.Changesets) != changesetCount+2 {
@@ -420,7 +427,7 @@ func runSample(t *testing.T, b backend, results map[string][]sample) {
 		}
 	})
 	var task domain.DeletionTask
-	run("erase", true, true, -1, func(book *domain.Book) error {
+	run("erase", true, true, -1, nil, func(book *domain.Book) error {
 		var err error
 		task, err = book.Erase(date, "21.0", "21.0", fixtureNow)
 		return err
@@ -442,7 +449,7 @@ func runSample(t *testing.T, b backend, results map[string][]sample) {
 		before = sha256.Sum256(encode(book.State()))
 		beforeDay = book.BusinessDay(oldest)
 	})
-	run("expire_day", true, false, -1, func(book *domain.Book) error { return book.ExpireCaptures(oldest, beforeDay.ExpiresAt) })
+	run("expire_day", true, false, -1, nil, func(book *domain.Book) error { return book.ExpireCaptures(oldest, beforeDay.ExpiresAt) })
 	view(t, b.store, func(book *domain.Book) {
 		afterDay := book.BusinessDay(oldest)
 		if sha256.Sum256(encode(book.State())) != before || !afterDay.Expired || afterDay.Deleted || afterDay.Session != beforeDay.Session || afterDay.CaptureRevision != beforeDay.CaptureRevision+1 || book.CheckCaptures(oldest) != domain.ErrCapturesExpired {

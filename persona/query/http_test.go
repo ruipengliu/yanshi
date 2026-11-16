@@ -74,6 +74,13 @@ func (s barrierStore) View(ctx context.Context, line, user string, fn func(*doma
 	return store.ErrOwnerDeleting
 }
 
+func (s barrierStore) ViewPlanned(ctx context.Context, line, user string, plan domain.ReadPlan, fn func(*domain.Book) error) error {
+	if err := s.Store.ViewPlanned(ctx, line, user, plan, fn); err != nil {
+		return err
+	}
+	return store.ErrOwnerDeleting
+}
+
 func TestViewFailureDiscardsPayload(t *testing.T) {
 	books := memstore.New()
 	if err := books.Update(context.Background(), "bl", "u", func(book *domain.Book) error {

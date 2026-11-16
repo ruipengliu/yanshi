@@ -31,6 +31,9 @@ func NewBook() *Book {
 }
 
 func (u *Book) MarshalJSON() ([]byte, error) {
+	if u.partial {
+		return nil, fmt.Errorf("persona: a partially loaded book cannot be stored")
+	}
 	return json.Marshal(bookData{
 		CaptureStreams: u.captureStreams,
 		WorkBindings:   u.workBindings, WorkSessions: u.workSessions,

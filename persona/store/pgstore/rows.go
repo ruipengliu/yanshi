@@ -72,6 +72,8 @@ type bookSnapshot map[string][]bookRow
 type storedMeta struct {
 	Counters  json.RawMessage
 	NilFields []string
+	// FoldVersion 是写入物化交谈与承诺时的叠加版本；按需读取只信任当前版本（Persona ADR-0002）。
+	FoldVersion int `json:",omitempty"`
 }
 
 type storedValue struct {
@@ -185,7 +187,8 @@ func snapshotRows(book *domain.Book, before bookSnapshot) (bookSnapshot, error) 
 		return nil, err
 	}
 	after := bookSnapshot{}
-	meta := storedMeta{Counters: parts["Meta"]}
+	// 每次提交都由整体叠加写出全部物化行，写回后它们就是当前版本。
+	meta := storedMeta{Counters: parts["Meta"], FoldVersion: domain.FoldVersion}
 	for _, c := range categories {
 		if c.kind != singleton && bytes.Equal(parts[c.field], []byte("null")) {
 			meta.NilFields = append(meta.NilFields, c.field)

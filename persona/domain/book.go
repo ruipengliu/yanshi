@@ -82,6 +82,8 @@ type Book struct {
 	submitted map[string]string
 	// next 是新建项目的编号：从 101 开始，与用例预置的项目 ID 区分；nextC 是承诺的编号，nextCS 是变更集的编号。
 	next, nextC, nextCS int
+	// partial 为真时只装载了读取计划需要的行（reads.go），不能叠加或提交。
+	partial bool
 }
 
 // NewProject 是新建的第一个项目的 ID；评测用例据此断言之后的整理归入了同一项目。
@@ -599,6 +601,9 @@ func (u *Book) Bind(project, sessionID string) {
 // State 返回供夹具和应用展示的投影，整理结果按日期从新到旧。
 // 嵌套字段仍属于本 Book；存储的 View 提供隔离快照，离开事务后不得用它修改存储。
 func (u *Book) State() State {
+	if u.partial {
+		panic("persona: State on a partially loaded book")
+	}
 	l := fold(u.changesets, u.canon, u.sessionDays()) // 重新叠加得到的是新的切片，调用方可以随意修改
 	st := State{Projects: slices.Clone(u.projects), Exchanges: l.exchanges, Commitments: l.commitments, Changesets: slices.Clone(u.changesets),
 		Days: u.sortedDays(), Weeks: slices.Clone(u.weeks), Merges: slices.Clone(u.merges)}
@@ -620,7 +625,13 @@ func orEmpty[T any](s []T) []T {
 }
 
 // refold 由变更集重新叠加出交谈与承诺。
-func (u *Book) refold() { u.ledger = fold(u.changesets, u.canon, u.sessionDays()) }
+func (u *Book) refold() {
+	if u.partial {
+		// 部分变更集叠加出的是错误的账本；只读计划不应走到这里。
+		panic("persona: refold on a partially loaded book")
+	}
+	u.ledger = fold(u.changesets, u.canon, u.sessionDays())
+}
 
 // foldWithout 是去掉第 i 个变更集（将被取代的那个）之后的状态；i < 0 时就是当前状态。新的变更集据此检查：重交时它的
 // rev 是对着没有旧变更集的账本取的。

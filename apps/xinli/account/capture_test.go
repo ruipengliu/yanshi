@@ -29,6 +29,9 @@ func (s captureClockStore) Update(ctx context.Context, bl, eu string, fn func(*d
 func (s captureClockStore) View(ctx context.Context, bl, eu string, fn func(*domain.Book) error) error {
 	return s.Store.View(ctx, bl, eu, func(b *domain.Book) error { b.SetCaptureClock(func() time.Time { return s.now }); return fn(b) })
 }
+func (s captureClockStore) ViewPlanned(ctx context.Context, bl, eu string, plan domain.ReadPlan, fn func(*domain.Book) error) error {
+	return s.Store.ViewPlanned(ctx, bl, eu, plan, func(b *domain.Book) error { b.SetCaptureClock(func() time.Time { return s.now }); return fn(b) })
+}
 
 type captureSend func(context.Context, capture.Batch) (capture.Receipt, error)
 

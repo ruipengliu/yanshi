@@ -75,7 +75,7 @@ func TestCommitFailureHasNoResultOrNotification(t *testing.T) {
 				continue
 			}
 			result, err := runtime.call(context.Background(), mcp.Meta{"yanshi/business_line": "bl", "yanshi/end_user": "u", "yanshi/session": "day"},
-				[]byte(`{"source":{"from":"#2.0","to":"#2.1"},"day":{"headline":"今日"}}`), tool.handler, false)
+				[]byte(`{"source":{"from":"#2.0","to":"#2.1"},"day":{"headline":"今日"}}`), name, tool.handler, false)
 			if result != nil || !errors.Is(err, failure) {
 				t.Fatalf("result=%+v error=%v", result, err)
 			}
@@ -177,7 +177,7 @@ func TestCaptureReadFailureHasNoReceipt(t *testing.T) {
 	failure := errors.New("capture read failed")
 	runtime := newRuntime(brokenCaptureStore{x.store, failure}, Options{AllowUnmanaged: true, Now: x.now})
 	result, err := runtime.call(ctx, mcp.Meta{"yanshi/business_line": "bl", "yanshi/end_user": "u", "yanshi/session": "day"},
-		[]byte(`{"source":{"from":"#1.0","to":"#1.0"}}`), (*domain.Call).FileChanges, false)
+		[]byte(`{"source":{"from":"#1.0","to":"#1.0"}}`), "file_changes", (*domain.Call).FileChanges, false)
 	if result != nil || !errors.Is(err, failure) {
 		t.Fatalf("result=%+v error=%v", result, err)
 	}
@@ -210,7 +210,7 @@ func TestProjectCaptureReadFailureHasNoReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := runtime.call(ctx, mcp.Meta{"yanshi/business_line": "bl", "yanshi/end_user": "u", "yanshi/session": "project"}, args, (*domain.Call).UpdateCommitments, false)
+	result, err := runtime.call(ctx, mcp.Meta{"yanshi/business_line": "bl", "yanshi/end_user": "u", "yanshi/session": "project"}, args, "update_commitments", (*domain.Call).UpdateCommitments, false)
 	if result != nil || !errors.Is(err, failure) {
 		t.Fatalf("result=%+v error=%v", result, err)
 	}

@@ -401,6 +401,10 @@ func (s dayBooks) View(ctx context.Context, bl, eu string, fn func(*domain.Book)
 	defer func() { s.control.executionError(ctx, "store.view", err) }()
 	return s.Store.View(ctx, bl, eu, fn)
 }
+func (s dayBooks) ViewPlanned(ctx context.Context, bl, eu string, plan domain.ReadPlan, fn func(*domain.Book) error) (err error) {
+	defer func() { s.control.executionError(ctx, "store.view", err) }()
+	return s.Store.ViewPlanned(ctx, bl, eu, plan, fn)
+}
 
 type dayLogHandler struct {
 	slog.Handler

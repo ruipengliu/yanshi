@@ -28,7 +28,7 @@ func TestProductionWorkQualification(t *testing.T) {
 			meta := mcp.Meta{"yanshi/business_line": "bl", "yanshi/end_user": "u", "yanshi/session": "orphan"}
 			call := func(handler func(*domain.Call) string, read bool, want string, rejected bool) {
 				t.Helper()
-				result, err := x.call(ctx, meta, []byte(`{}`), handler, read)
+				result, err := x.call(ctx, meta, []byte(`{}`), "", handler, read)
 				if err != nil {
 					t.Fatal(err)
 				}

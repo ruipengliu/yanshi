@@ -25,6 +25,9 @@ type Store struct {
 	mu    sync.Mutex
 	books map[key]*entry
 	now   func() time.Time
+	// PartialReads 让 ViewPlanned 也按读取计划只交出部分账本，供测试检查计划本身；默认整体装载，
+	// 内存实现是按需读取的参照（Persona ADR-0002）。
+	PartialReads bool
 }
 
 var _ store.Store = (*Store)(nil)
@@ -122,6 +125,28 @@ func (s *Store) View(ctx context.Context, bl, eu string, fn func(*domain.Book) e
 		return err
 	}
 	return callbackErr
+}
+
+func (s *Store) ViewPlanned(ctx context.Context, bl, eu string, plan domain.ReadPlan, fn func(*domain.Book) error) error {
+	if plan == nil || !s.PartialReads {
+		return s.View(ctx, bl, eu, fn)
+	}
+	return s.View(ctx, bl, eu, func(snapshot *domain.Book) error {
+		partial, rows := snapshot.PartialCopy()
+		ok, err := plan(partial, rows)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fn(snapshot)
+		}
+		return fn(partial)
+	})
+}
+
+// StaleOwners 总是为空：内存实现每次事务都由变更集整体叠加，没有物化行。
+func (s *Store) StaleOwners(ctx context.Context) ([]store.Owner, error) {
+	return nil, ctx.Err()
 }
 
 // PendingDeletions 先复制键再逐键查看，避免全局锁与 Book 锁嵌套。

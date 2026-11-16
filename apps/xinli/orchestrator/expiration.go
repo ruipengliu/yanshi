@@ -30,6 +30,9 @@ func (o *Orchestrator) StartExpirations(tick <-chan time.Time) {
 			if err := o.ScanExpirations(o.ctx); err != nil {
 				o.failed("expiration_scan", "", "", "", err)
 			}
+			if err := o.RebuildStale(o.ctx); err != nil {
+				o.failed("rebuild_scan", "", "", "", err)
+			}
 			select {
 			case <-o.stopRetries:
 				return
@@ -66,6 +69,24 @@ func (o *Orchestrator) ScanExpirations(ctx context.Context) error {
 			return nil
 		})
 		result = errors.Join(result, err)
+	}
+	return result
+}
+
+// RebuildStale 按当前叠加规则重建物化行不是当前版本的 owner（Persona ADR-0002）：空的 Update 会整体叠加并写回。
+// 重建之前这些 owner 的只读查询照常整体装载，所以它只影响成本，不影响结果。
+func (o *Orchestrator) RebuildStale(ctx context.Context) error {
+	if !o.begin() {
+		return errors.New("orchestrator: shutting down")
+	}
+	defer o.pending.Done()
+	owners, err := o.store.StaleOwners(ctx)
+	if err != nil {
+		return err
+	}
+	var result error
+	for _, owner := range owners {
+		result = errors.Join(result, o.store.Update(ctx, owner.BusinessLine, owner.EndUser, func(*domain.Book) error { return nil }))
 	}
 	return result
 }

@@ -121,6 +121,14 @@ func (s *Store) Update(ctx context.Context, businessLine, endUser string, fn fun
 }
 
 func (s *Store) View(ctx context.Context, businessLine, endUser string, fn func(*domain.Book) error) error {
+	return s.view(ctx, businessLine, endUser, nil, fn)
+}
+
+func (s *Store) ViewPlanned(ctx context.Context, businessLine, endUser string, plan domain.ReadPlan, fn func(*domain.Book) error) error {
+	return s.view(ctx, businessLine, endUser, plan, fn)
+}
+
+func (s *Store) view(ctx context.Context, businessLine, endUser string, plan domain.ReadPlan, fn func(*domain.Book) error) error {
 	ctx, cancel := pg.Operation(ctx)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
@@ -136,7 +144,7 @@ func (s *Store) View(ctx context.Context, businessLine, endUser string, fn func(
 	if err := checkOwner(ctx, tx, bl, eu); err != nil {
 		return err
 	}
-	book, _, err := loadBook(ctx, tx, bl, eu)
+	book, err := loadPlanned(ctx, tx, bl, eu, plan)
 	if err != nil {
 		return contextError(ctx, err)
 	}

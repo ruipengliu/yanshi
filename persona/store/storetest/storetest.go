@@ -36,6 +36,7 @@ func Run(t *testing.T, factory func() store.Store) {
 	t.Run("deletion_rebuild", func(t *testing.T) { deletionRebuild(t, factory) })
 	t.Run("deletion_owners", func(t *testing.T) { deletionOwners(t, factory) })
 	t.Run("reset_owner", func(t *testing.T) { resetOwner(t, factory) })
+	t.Run("partial_reads", func(t *testing.T) { partialReadsMatch(t, factory) })
 	ctx := context.Background()
 	at := time.Date(2026, 10, 23, 22, 0, 0, 0, time.UTC)
 	state := func(t *testing.T, s store.Store, bl, eu string) domain.State {
