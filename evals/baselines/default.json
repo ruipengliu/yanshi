@@ -1,5 +1,5 @@
 {
-  "started_at": "2026-11-15T12:35:52.227965Z",
+  "started_at": "2026-11-16T04:32:52.926025Z",
   "judge": "codex/gpt-6.1-sol:high",
   "cases": [
     {
@@ -1742,6 +1742,37 @@
       "avg_compactions": 0,
       "avg_takeovers": 0,
       "cache_hit": 0.6765847347994826
+    },
+    {
+      "name": "delegate-parallel-independent",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "judge_avg": 5,
+      "avg_tokens": 6049,
+      "avg_seconds": 19.974257458333334,
+      "avg_calls": 2,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.9326120734303965,
+      "completed": 3,
+      "judge_samples": 3,
+      "completed_cost": {
+        "tokens": 6049.333333333333,
+        "seconds": 19.974257458333334,
+        "calls": 2,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0.9326120734303965
+      },
+      "incomplete_cost": {
+        "tokens": 0,
+        "seconds": 0,
+        "calls": 0,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0
+      }
     },
     {
       "name": "delegate-pick-right-agent",
