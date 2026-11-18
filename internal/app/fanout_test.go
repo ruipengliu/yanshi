@@ -296,3 +296,60 @@ func TestDeterministicFanoutUsesStableOrder(t *testing.T) {
 		}
 	}
 }
+
+// 上线按 8 个分片部署（ADR-0051 §5.4，2026-11-18）：并发上限 4 时一次扇出分两波。
+// 第一波中失联的分片只占用各自的时限，第二波的健康分片照常交回结果；起点逐轮轮转。
+func TestFanoutEightShardsSpansTwoWaves(t *testing.T) {
+	l, err := shard.ParseDeployment([]byte(`{"version":"test","table":{"shards":[0,1,2,3,4,5,6,7],"ranges":[` +
+		`{"first":0,"last":127,"shard":0},{"first":128,"last":255,"shard":1},{"first":256,"last":383,"shard":2},{"first":384,"last":511,"shard":3},` +
+		`{"first":512,"last":639,"shard":4},{"first":640,"last":767,"shard":5},{"first":768,"last":895,"shard":6},{"first":896,"last":1023,"shard":7}]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stores := map[int]Stores{}
+	for id := range 8 {
+		u := &countedUsage{value: int64(id)}
+		u.failed.Store(id%2 == 0) // 四个失联分片分散在两波中
+		stores[id] = Stores{Usage: u}
+	}
+	r := &storeRouter{locator: l, ids: l.Shards(), stores: stores, positions: map[string]*scanPosition{},
+		fanout: FanoutOptions{Concurrency: 4, ShardTimeout: 20 * time.Millisecond, Budget: time.Second}}
+	var active, peak atomic.Int32
+	firsts := map[int]bool{}
+	for range 3 {
+		start := time.Now()
+		parts := fanout(context.Background(), r, "eight", func(ctx context.Context, s Stores, cursor string) (int64, string, error) {
+			n := active.Add(1)
+			defer active.Add(-1)
+			for old := peak.Load(); n > old && !peak.CompareAndSwap(old, n); old = peak.Load() {
+			}
+			v, err := s.Usage.Spent(ctx, "", "", time.Time{}, time.Time{})
+			return v, cursor, err
+		})
+		firsts[parts[0].ID] = true
+		healthy := 0
+		for _, part := range parts {
+			switch {
+			case part.ID%2 == 0 && !errors.Is(part.Err, shard.ErrUnavailable):
+				t.Fatalf("hung shard %d not unavailable: %v", part.ID, part.Err)
+			case part.ID%2 == 1 && (part.Err != nil || part.Value != int64(part.ID)):
+				t.Fatalf("healthy shard %d lost: %v %v", part.ID, part.Value, part.Err)
+			case part.ID%2 == 1:
+				healthy++
+			}
+		}
+		if len(parts) != 8 || healthy != 4 {
+			t.Fatalf("parts=%d healthy=%d", len(parts), healthy)
+		}
+		// 两波各至多一个分片时限，远小于整轮预算。
+		if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+			t.Fatalf("eight-shard fanout took %v", elapsed)
+		}
+	}
+	if peak.Load() > 4 || active.Load() != 0 {
+		t.Fatalf("concurrency peak=%d active=%d", peak.Load(), active.Load())
+	}
+	if len(firsts) < 2 {
+		t.Fatalf("start position did not rotate: %v", firsts)
+	}
+}

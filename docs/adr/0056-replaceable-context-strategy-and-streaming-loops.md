@@ -54,7 +54,7 @@ status: accepted（2026-11-15 批准方向，2026-11-16 定稿；未实现）
 - **Q11 发给策略服务的是摘要，不是全文。** 请求包含：本 Run 的输入文字；每个候选 Run 的 ID、时间、输入文字与最终回复文字（不含工具调用与结果）；是否有压缩摘要；每条召回的 ID、类别与文字。这仍是用户内容（输入可能含旁听中他人的话），数据义务与外部循环相同：业务线登记时确认保留与删除义务，外部地址只来自显式登记（ADR-0001）。策略也可以只按 ID 查自己的业务索引来决定。
 - **Q12 治理看完整历史。** 来源推导（`session.Provenance`）、写入闸门与注入判断照旧读取整个 Session 的历史，不看策略选了什么：策略去掉一个含外部内容的更早 Run，不能让 Session 变"干净"（与 `scope: run` 的现行做法一致）。能力白名单与审批不受策略影响。选择只能让上下文变小，不能让规则变松。
 - **Q13 与压缩、外部循环的关系。** 压缩不变：仍对本 Session 的历史做摘要，策略在压缩后的视图中选择；一个 Run 的视图超过窗口时走现有的"溢出先压缩"路径，策略不另设截断机制。AgentDef 同时声明 `loop` 与 `context.strategy` 时，发给外部循环的 `messages` 就是策略选择后的视图，组装只有一条路径。
-- **Q14 声明与登记。** AgentDef 写 `context.strategy: <name>`；策略登记在 `contexts/*.yaml`，字段与 MCP、外部循环的登记一致：`name`、`business_line`、`url`、`headers`、`timeout`（默认 2 秒）。策略属于其他业务线，或与 `scope: run` 同时声明，Run 以配置错误失败（与外部循环相同）。契约放在 `proto/context_strategy.proto`，以 HTTP+JSON 传输。
+- **Q14 声明与登记。** AgentDef 写 `context.strategy: <name>`；策略登记在 `contexts/*.yaml`，字段与 MCP、外部循环的登记一致：`name`、`business_line`、`url`、`headers`、`timeout`（默认 2 秒）。策略属于其他业务线，或与 `scope: run` 同时声明，Run 以配置错误失败（与外部循环相同）。契约放在 `proto/` 中（实施时新增 context_strategy.proto），以 HTTP+JSON 传输。
 
 ### 二、流式外部循环（B 期）
 

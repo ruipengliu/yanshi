@@ -75,7 +75,7 @@
 | [0048](0048-third-party-agents.md) | 三方 Agent | accepted | 未实现 | 二 | 三方托管实施前；"听过他人旁听"开始实现 | — | |
 | [0049](0049-read-positions-advance-on-business-acks.md) | 交付确认，读取位置按回执推进 | 被取代 | 已删除 | — | — | 被 0050（现 0052）取代 | |
 | [0050](0050-capture-text-in-the-business-line.md) | 旁听原文存放在业务线 | 被取代 | — | — | — | 被 0052 整合并取代 | |
-| [0051](0051-shard-slots-and-id-location.md) | 固定槽位、裸 ID 定位与停写迁移 | 已修订（2026-11-15，删除旧格式 ID 兼容） | 已实现 | 一 | 同 0028 | — | |
+| [0051](0051-shard-slots-and-id-location.md) | 固定槽位、裸 ID 定位与停写迁移 | 已修订（2026-11-15 删除旧格式 ID 兼容；2026-11-18 扩容默认整片搬迁） | 已实现（整片搬迁演练待目标环境） | 一 | 同 0028；停写超 15 分钟；8 片不够 | — | |
 | [0052](0052-attested-results-and-provenance.md) | 旁听原文在业务线，内核只采信结构化片段 | accepted | 已实现（"听过他人旁听"未实现） | 二 | 第二类可信结构化内容；说话人角色扩展；注入判断改为阻断；容量 | 整合并取代 0036、0039、0050 与 0037 的内核部分 | |
 | [0053](0053-self-hosted-sandbox-isolation-baseline.md) | 生产沙箱以自托管隔离为基线 | accepted（隔离技术待选型） | 未实现（只有 Docker 开发实现） | 二 | 选型完成；不再承接私有化；候选方案都无法部署 | 取代 0010 | |
 | [0054](0054-recoverable-wait-on-moderation-outage.md) | 审核基础设施故障时，Run 可恢复地等待 | accepted（2026-11-15） | 已实现 | 二 | 决定保存待审结果时另立 | 修订 0021 | |
