@@ -92,22 +92,25 @@ type Config struct {
 }
 
 type instance struct {
-	clock    *offsetClock
-	scenario bool
-	queue    workqueue.Queue
-	cfg      Config
-	svc      *service.Service
-	oneshots *oneshot.Service
-	hub      *node.Hub
-	mems     *memory.Service
-	agents   *agentdef.Registry
-	version  map[string]string // 用例名 → 派生的 AgentDef 版本
-	workers  *workerPool
-	arts     *artifact.Service
-	crm      *crmServer
-	xinli    *xinlifixture.Client
-	calls    *call.Manager
-	mcp      evalMCP
+	// awaited 是已由 await_background 的轮次检查过的后台结果输入（Session 与事件 seq）；同一用例的多次运行并发。
+	awaitedMu sync.Mutex
+	awaited   map[string]bool
+	clock     *offsetClock
+	scenario  bool
+	queue     workqueue.Queue
+	cfg       Config
+	svc       *service.Service
+	oneshots  *oneshot.Service
+	hub       *node.Hub
+	mems      *memory.Service
+	agents    *agentdef.Registry
+	version   map[string]string // 用例名 → 派生的 AgentDef 版本
+	workers   *workerPool
+	arts      *artifact.Service
+	crm       *crmServer
+	xinli     *xinlifixture.Client
+	calls     *call.Manager
+	mcp       evalMCP
 
 	// controllerDone 在沙箱控制器退出（或未启动）时关闭。
 	controllerDone chan struct{}
@@ -807,7 +810,11 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 		}
 	}()
 	if turn.AwaitBackground {
-		runID, err = in.awaitBackground(ctx, sid, after, deadline)
+		var seq uint64
+		runID, seq, err = in.awaitBackground(ctx, sid, deadline, previousRunID...)
+		if err == nil && seq <= after {
+			after = seq - 1 // 本轮开始之前就已送达：从它开始收集本轮的事件
+		}
 	} else {
 		submitCtx, cancel := context.WithDeadline(ctx, deadline)
 		runID, err = in.submitTurn(submitCtx, sid, turn, previousRunID...)
@@ -1427,26 +1434,45 @@ func captureBatches(segs []xinlifixture.CaptureSegment) [][]xinlifixture.Capture
 }
 
 // awaitBackground 等待 seq after 之后的后台调用了结（ADR-0035），返回它开启或并入的 Run。
-func (in *instance) awaitBackground(ctx context.Context, sid string, after uint64, deadline time.Time) (string, error) {
+func (in *instance) awaitBackground(ctx context.Context, sid string, deadline time.Time, previousRunID ...string) (string, uint64, error) {
+	// 从头找尚未被前面的轮次检查过的后台结果：它可能在上一轮结束之后、本轮开始之前就已送达（后台委托的子 Run
+	// 恰在上一轮收尾时完成），只从本轮开始的位置找会漏掉它。并入上一轮 Run 的已由那一轮检查过。
 	for {
-		events, err := eventlog.ReadAll(ctx, in.svc.Store.Log, sid, after)
+		events, err := eventlog.ReadAll(ctx, in.svc.Store.Log, sid, 0)
 		if err != nil {
-			return "", err
+			return "", 0, err
 		}
 		for _, e := range events {
+			key := fmt.Sprintf("%s/%d", sid, e.GetSeq())
+			runID := ""
 			if session.BackgroundInput(e.GetRunRequested().GetInput()) != nil {
-				return e.GetRunRequested().GetRunId(), nil
+				runID = e.GetRunRequested().GetRunId()
+			} else if session.BackgroundInput(e.GetSteered().GetInput()) != nil {
+				runID = e.GetSteered().GetRunId()
 			}
-			if session.BackgroundInput(e.GetSteered().GetInput()) != nil {
-				return e.GetSteered().GetRunId(), nil
+			if runID == "" || slices.Contains(previousRunID, runID) {
+				continue
 			}
+			in.awaitedMu.Lock()
+			seen := in.awaited[key]
+			if !seen {
+				if in.awaited == nil {
+					in.awaited = map[string]bool{}
+				}
+				in.awaited[key] = true
+			}
+			in.awaitedMu.Unlock()
+			if seen {
+				continue
+			}
+			return runID, e.GetSeq(), nil
 		}
 		if time.Now().After(deadline) {
-			return "", errors.New("no background result arrived in time")
+			return "", 0, errors.New("no background result arrived in time")
 		}
 		select {
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return "", 0, ctx.Err()
 		case <-time.After(200 * time.Millisecond):
 		}
 	}

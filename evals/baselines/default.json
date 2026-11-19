@@ -1762,6 +1762,37 @@
       }
     },
     {
+      "name": "delegate-background-report",
+      "trials": 6,
+      "passed": 6,
+      "pass_rate": 1,
+      "judge_avg": 5,
+      "avg_tokens": 18439,
+      "avg_seconds": 61.734977062333336,
+      "avg_calls": 2.1666666666666665,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.6707678464893836,
+      "completed": 6,
+      "judge_samples": 12,
+      "completed_cost": {
+        "tokens": 18439.666666666668,
+        "seconds": 61.734977062333336,
+        "calls": 2.1666666666666665,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0.6707678464893836
+      },
+      "incomplete_cost": {
+        "tokens": 0,
+        "seconds": 0,
+        "calls": 0,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0
+      }
+    },
+    {
       "name": "delegate-not-for-trivial",
       "trials": 3,
       "passed": 3,
