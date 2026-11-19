@@ -46,7 +46,7 @@
 | [0019](0019-usage-metered-outside-the-log-with-soft-quotas.md) | 用量在日志之外计量，软配额 | accepted | 已实现 | 二 | 对账差额超容忍度；硬配额需求 | — | |
 | [0020](0020-agent-rollout-by-end-user-with-switch-events.md) | AgentDef 按 EndUser 灰度 | accepted | 已实现 | 三 | — | — | |
 | [0021](0021-moderation-before-the-log-fail-closed.md) | 内容安全在写日志前，失败即拒 | 已修订（ADR-0050、ADR-0054） | 部分实现（提供商为模拟） | 二 | 审核故障超过等待上限；流式草稿的监管要求 | — | |
-| [0022](0022-health-memories-behind-business-line-consent.md) | 健康类 Memory 须业务线单独同意 | accepted | 已实现 | 二 | 以 EndUser 为单位的同意；新的敏感类别 | — | |
+| [0022](0022-health-memories-behind-business-line-consent.md) | 健康类 Memory 须单独同意 | 已修订（2026-11-19：按 EndUser 选择加入） | 已实现 | 二 | 健康之外的敏感类别；评测显示写入指令不可靠 | — | |
 | [0023](0023-memory-write-gate.md) | Memory 写入闸门 | 已修订（2026-11-14；缺陷 2026-11-15 已修复） | 已实现 | 二 | 多语言业务线；误报漏报越过阈值 | — | |
 | [0024](0024-one-connection-per-host-app.md) | 每个 HostApp 一条 Connection | 已修订（2026-11-14） | 已实现 | 二 | 媒体之外仍需第二条长连接 | — | |
 | [0025](0025-questions-as-calls-routed-to-the-user.md) | 提问是路由到用户的调用 | accepted | 已实现 | 二 | 需他人回答；需富交互 | — | |
@@ -59,7 +59,7 @@
 | [0032](0032-cards-as-show-card-results.md) | 卡片是 `show_card` 的结果 | accepted | 已实现 | 三 | — | — | |
 | [0033](0033-server-side-fault-injection.md) | 服务端故障注入只在调试部署 | accepted | 已实现 | 三 | — | — | |
 | [0034](0034-reasoning-streamed-and-recorded.md) | 思考过程流式推送并写日志 | accepted | 已实现 | 三 | — | — | |
-| [0035](0035-background-calls-for-offline-devices.md) | 离线设备的调用转入后台 | accepted | 已实现 | 三 | — | — | |
+| [0035](0035-background-calls-for-offline-devices.md) | 离线设备的调用转入后台 | 已修订（2026-11-19：委托调用可转后台，见 0058） | 已实现 | 三 | — | — | |
 | [0036](0036-captures-are-text-only.md) | 旁听只收文字，信任按说话人区分 | 被取代（正文与现行实现不符） | — | — | — | 被 0052 取代 | |
 | [0037](0037-tiered-retention-by-daily-capture-sessions.md) | 以每日旁听 Session 分级保留 | 被取代 / 已迁出 | — | — | — | 内核部分被 0052 取代；业务部分迁至 xinli ADR-0001 | |
 | [0038](0038-superseded-memories-are-kept.md) | 被取代的 Memory 保留历史 | accepted | 已实现 | 三 | — | — | |
@@ -82,6 +82,7 @@
 | [0055](0055-bounded-parallel-delegation-and-artifact-handoff.md) | 有界并行委托与工件交接 | accepted（2026-11-16 定稿，分两期） | 已实现（两期均于 2026-11-16） | 二 | 同上；设备调用也需并行时另立 | 实现时修订 0031 | |
 | [0056](0056-replaceable-context-strategy-and-streaming-loops.md) | 可替换的上下文策略与流式外部循环 | accepted（2026-11-16 定稿） | 未实现 | 二 | 业务线需要上下文策略（A 期）；0041 开始实现（B 期）；需要 Run 内调整、排序或非文字追加 | 实施时修订 0041 | |
 | [0057](0057-legacy-shard-migration.md) | 存量分片迁移 | 不实施（2026-11-15：旧格式 ID 兼容已删除，前提不成立） | 不实施 | 二 | — | 被 0051 的 2026-11-15 修订取代 | |
+| [0058](0058-background-delegation.md) | 委托在宽限期后转入后台 | accepted（2026-11-19 定稿） | 已实现 | 二 | 子 Session 设备调用也需转后台；需显式前台/后台选择；后台委托成主要成本 | 修订 0035 第 7 条、0031 | |
 
 ## 业务层 ADR
 

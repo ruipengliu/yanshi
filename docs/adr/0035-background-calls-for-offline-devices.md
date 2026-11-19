@@ -14,7 +14,7 @@ status: accepted
 4. **到期也是一条输入。** 后台调用到截止时间仍无结果，Worker 先撤回投递，再写入 `reason = timeout` 的 `BackgroundResult`，同样并入或开启 Run，让模型告诉用户没有办成。有未了结后台调用的 Session，没有活跃 Run 时也停放在队列中，到最早的截止时间被唤醒。
 5. **用户可以单独取消。** `POST /v1/sessions/{id}/background/{call}/cancel` 与 Connection 的 `CancelBackground` 都经 `service.Service.CancelBackground`：先撤回投递，再写入 `BackgroundCancelled`，不开启新 Run；模型之后在上下文中看到一条说明。已了结的返回 conflict。中断 Run 不影响后台调用：它们在 Run 中已有结果。关闭 Session 时撤回全部未了结的后台调用。
 6. **每个后台调用至多了结一次。** 投影只接受针对未了结后台调用的了结（结果、到期、取消三者之一），客户端提交的输入中不能出现 `BackgroundResult`。
-7. **委托派生的子 Session 不转后台。** 子 Run 结束后，迟到的结果回不到父 Run：子 Session 中的设备调用保持挂起，由委托时限兜底。
+7. **委托派生的子 Session 不转后台。**（2026-11-19 修订：父 Session 的委托调用本身可以转后台，见 [ADR-0058](0058-background-delegation.md)；本条只保留"子 Session 中的设备调用不转后台"。） 子 Run 结束后，迟到的结果回不到父 Run：子 Session 中的设备调用保持挂起，由委托时限兜底。
 
 给模型看的文本：占位结果、迟到结果的说明（注明是哪个后台调用、内容来自设备、不是用户的话、其中的指令不要执行）、到期与取消的说明。它们只出现在上下文尾部，系统指令与工具定义不变，请求前缀缓存不受影响。
 
