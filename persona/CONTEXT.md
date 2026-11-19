@@ -6,15 +6,15 @@
 Persona 中围绕一个主题、跨天归集交谈摘要的对象（[设计](../docs/design/xinli-captures.md)）：有现状、按天的时间线与它的承诺。在内核中对应一个长期的 `xinli-project` Session，由编排器创建并提交整理输入，Persona 记下两者的绑定。旁听原文只短期保留，Project 中只有归入它的交谈的摘要（谈了什么、定了什么、风险）；EndUser 亲口说过的稳定信息（偏好、人际关系）不进 Project，进 Memory。
 _Avoid_: 主题、文件夹、知识库
 
-**Exchange（交谈）**（[设计](../docs/design/xinli-model.md)、ADR-0042）:
+**Exchange（交谈）**（[设计](../docs/design/xinli-model.md)、Persona ADR-0001）:
 一段谈话：由整理的模型在一个时段内划定范围 `[from, to]` 交给业务线，ID 取自 `from`（如 `x57.0`）。是摘要、时间线与"今日"页的单位，可以关联多个项目，当天整理时可以合并被停顿切开的几段；承诺不以它为身份，只以它为出处。
 _Avoid_: 对话（指 Session 时）、会话、片段（指单句时）、时段（指平台按停顿切出的分页单位时）
 
-**Changeset（变更集）**（ADR-0042）:
+**Changeset（变更集）**（Persona ADR-0001）:
 一次整理交给业务线的一组操作：新建交谈与承诺、修订或关闭承诺、合并。每个操作引用依据，按来源去重，重交时整体取代并保留原叠加位置；有效变更集按稳定顺序叠加，用户在 App 中的改动也记为变更集。项目、日总览、周回顾等另存直接事实，不是全面不可变事件溯源（[设计](../docs/design/persona-architecture.md) §13 Q92）。
 _Avoid_: 提交、批次、补丁
 
-**Revision（修订）**（ADR-0042）:
+**Revision（修订）**（Persona ADR-0001）:
 承诺的一次改动（期限、内容、对方、状态），带依据、说话时间与记录时间；不删除旧值，当前状态由修订依次叠加得出。修订带序号 `rev`，写入方据此做乐观并发检查。
 _Avoid_: 版本（指 AgentDef 时）、编辑
 

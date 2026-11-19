@@ -90,7 +90,7 @@ _Avoid_: 对话、聊天、线程
 Session 内由一次输入触发的一段执行，可被插话与中断，终态为 completed、failed 或 interrupted。一个 Session 同一时刻至多一个未终态的 Run。
 _Avoid_: 任务、Job、Turn
 
-**Trigger（触发）**（已取消，ADR-0050）:
+**Trigger（触发）**（已取消，ADR-0050，现 ADR-0052）:
 原先设计为内核按流静默开启 Run；现由业务线判断旁听静默并提交固定整理输入。按钟点的定时见 Schedule。
 _Avoid_: 定时任务、cron、事件订阅
 
@@ -134,11 +134,11 @@ _Avoid_: 录音、输入（指它时）、CallTranscript（那是 Call 的转写
 EndUser 删除一天中的部分谈话：业务线删除原文、按依据级联派生对象，再删除当天的工作 Session，删除原因为 Erasure（`erasure`）：保留该 Session 的既有 Memory，撤回迟到的新写入，清理后列出依据可能落在被删范围内的有效 Memory 由用户决定。内核不按范围清除日志中的文字（ADR-0044 已取代）。
 _Avoid_: 删除（指整个 Session 时）、屏蔽、隐藏
 
-**Ack（交付确认）**（已退役，ADR-0050）:
+**Ack（交付确认）**（已退役，ADR-0050，现 ADR-0052）:
 原先用于按业务线回执推进内核读取位置；现由业务线在保存整理结果的同一事务中推进处理进度，内核不再登记或消费回执。
 _Avoid_: 回执（指给模型看的结果文字时）、ACK（指传输层时）、提交
 
-**CaptureCorrection（原文修订）**（不实施，ADR-0050 取代 ADR-0044）:
+**CaptureCorrection（原文修订）**（不实施，ADR-0050 取代 ADR-0044，现 ADR-0052）:
 EndUser 对一段旁听文字的纠正。原文存放在业务线，纠正是业务库中原文的修订，内核没有对应的 Event；纠正前的文字在日志中仍可作为依据，要撤回只能删除工作 Session。
 _Avoid_: 编辑、覆盖、Revision（见 [Persona 术语](persona/CONTEXT.md)）
 
@@ -146,11 +146,11 @@ _Avoid_: 编辑、覆盖、Revision（见 [Persona 术语](persona/CONTEXT.md)�
 `attests_speakers: true` 登记的同业务线 MCP Server 返回的结构化旁听页（片段的引用、说话人、时间、文字与页的元数据）。由平台用旁听渲染器渲染并在 ToolResult 上记下 attested 标记，按结构化说话人推导来源；写日志前经内容安全检查。
 _Avoid_: 业务线返回的旁听文字、可信结果（不指明结构化时）
 
-**Stream（流）**（已退役，ADR-0050）:
+**Stream（流）**（已退役，ADR-0050，现 ADR-0052）:
 原先按种类区分内核采集序列；AgentDef 的流声明、transcript 流和内核读取位置均已删除。
 _Avoid_: 频道、Topic、队列
 
-**Span（时段）**（[设计](docs/design/xinli-model.md)、ADR-0042）:
+**Span（时段）**（[设计](docs/design/xinli-model.md)、Persona ADR-0001）:
 相邻两段说话时间相隔不超过间隔的一段连续旁听，由业务线按停顿确定性地切出，是 `captures` 分页与判断"是否已结束"的单位，不承担语义。
 _Avoid_: 交谈（指它时）、窗口
 

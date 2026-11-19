@@ -30,13 +30,13 @@ tools:
   allow: ["search_*", "get_*", "create_ticket"]   # 可选：只开放这些工具
   no_approval: ["create_ticket"]                  # 可选：业务线确认无需审批的工具
 cite_captures: false           # 可选：解析参数中的旁听引用，附上说话人（docs/design/captures.md §6）
-attests_speakers: false         # 可选：采信同业务线结构化旁听页，由平台渲染与审核（ADR-0050）
+attests_speakers: false         # 可选：采信同业务线结构化旁听页，由平台渲染与审核（ADR-0052）
 ```
 
 - **模型看到的工具名**是 `mcp_<server>__<tool>`，例如 `mcp_crm__search_customer`。设备标签只含 `[a-z0-9-]`、不含下划线，所以不会与 `<label>__<capability>` 冲突。超过 64 字符的名字会截断，并附加短哈希。
 - **AgentDef 白名单**使用 `mcp:<server>/<glob>`，例如 `mcp:crm/*`，与 `device:`、`sandbox:` 的写法一致。
 - **工具发现**：启动时调用 `tools/list`，结果缓存 5 分钟。调用时发现工具不存在，会立即刷新一次缓存。
-- **旁听引用**：开启 `cite_captures` 时，调用参数中恰为引用编号的字符串（如 `"#57.3"`）由平台按发起调用的 Session 的日志解析，`_meta["yanshi/captures"]` 带上被引用片段的说话人（`wearer` 或 `other`、`speaker_key`、是否拦截），不带文字；本 Session 中没有的编号为 `missing`。业务线据此核对承诺人，而不是相信模型自报（ADR-0036）。
+- **旁听引用**：开启 `cite_captures` 时，调用参数中恰为引用编号的字符串（如 `"#57.3"`）由平台按发起调用的 Session 的日志解析，`_meta["yanshi/captures"]` 带上被引用片段的说话人（`wearer` 或 `other`、`speaker_key`、是否拦截），不带文字；本 Session 中没有的编号为 `missing`。业务线据此核对承诺人，而不是相信模型自报（ADR-0052）。
 - **可信结构化旁听页**：`attests_speakers` 只对同业务线生效。请求附 `yanshi/page_options`，结果页取 `yanshi/page`；有页时丢弃业务线 content，由 Worker 校验、审核、渲染并写 attested 标记。完整线上契约见 [旁听](./captures.md) §12。`cite_captures` 只对同业务线生效，在调用投影之前的 attested 结果中查找最近出现的业务线引用，查不到为 missing，不回退到旧内核日志位置。旧登记的 acks 字段按现有宽松 YAML 解析规则忽略，不再采信回执。
 - **出网白名单**：yanshi 只连接登记过的 URL，模型无法指定任意地址。私有化部署中，这些 URL 就是需要放通的外联项（ADR-0001）。
 
