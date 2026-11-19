@@ -892,6 +892,7 @@ function verifyEnv() {
     businessLine: S.auth === "none" ? S.bl : "",
     agent: "console",
     helper: "console-helper",
+    slowHelper: "console-slowhelper",
     users,
   };
 }

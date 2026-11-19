@@ -1,0 +1,33 @@
+name: delegate-background-report
+description: >-
+  委托超过等待时长后转入后台（ADR-0058）：父 Run 拿到"仍在进行"的占位结果，回复告诉用户已交给专员、结果稍后报告，
+  不重复委托、不编造结果；专员完成后，它的回复作为平台的消息开启新的一轮，由模型据此报告。
+timeout: 6m
+capabilities: ["agent:market-analyst"]
+setup:
+  agents:
+    - name: market-analyst
+      description: 市场分析员：整理竞品与行业数据，给出结论。
+      background_after: 1s
+      instructions: |
+        你是市场分析员。被问到智能音箱竞品时，回复以下结论（不要改动数字）：
+        "竞品整理完毕：声越 S3 售价 399 元、月销 4.2 万台；听澜 Mini 售价 299 元、月销 6.8 万台。
+        建议首发定价 349 元，主打音质。"
+      capabilities: []
+turns:
+  - input: 让市场分析员帮我整理一下智能音箱的竞品情况，给个定价建议。
+    expect:
+      status: completed
+      calls: ["agent__market-analyst"]
+      max_calls: {"agent__market-analyst": 1}
+      judge: >-
+        委托给市场分析员的任务仍在进行，已转入后台，结果尚未返回。回复是否告诉用户任务已交给市场分析员、结果稍后报告，
+        并且没有编造竞品数据或定价建议？
+  - await_background: true
+    expect:
+      status: completed
+      no_calls: ["agent__market-analyst"]
+      reply_contains: ["349"]
+      judge: >-
+        市场分析员完成了任务，结果作为平台消息送达。回复是否据此向用户报告了竞品情况（声越 S3、听澜 Mini 的售价与月销）
+        与 349 元的定价建议，且没有把它说成用户刚发来的内容？

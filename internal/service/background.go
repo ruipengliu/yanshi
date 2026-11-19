@@ -13,7 +13,7 @@ import (
 )
 
 // 后台调用（docs/design/m1-device-nodes.md §3，ADR-0035）：路由到设备的调用在设备离线超过宽限期后由 Worker 转入后台，
-// Run 不再等它。之后它以三种方式之一了结，每个后台调用至多一次：设备结果（NodeResult）、到期（ExpireBackground）、
+// Run 不再等它；委托调用超过目标 AgentDef 的 background_after 后同样转入后台（ADR-0058）。之后它以三种方式之一了结，每个后台调用至多一次：设备结果（NodeResult）、到期（ExpireBackground）、
 // 用户取消（CancelBackground）。前两种作为一条输入送达，由模型向用户报告；取消只记下一条说明，不开启新 Run。
 
 // backgroundInput 返回把后台调用的了结写成一条输入的事件：有活跃 Run 时并入它（Steered），否则开启新 Run（RunRequested，
@@ -45,6 +45,18 @@ func (s *Service) NodeResult(ctx context.Context, sessionID, runID, callID strin
 	if err := rejectPlatformOnly(content); err != nil {
 		return err
 	}
+	return s.routedResult(ctx, sessionID, runID, callID, content, isErr, nil)
+}
+
+// DelegationResult 写入委托的结果（子 Session 的 Worker 经 Delegator.Report），与 NodeResult 同样看着投影决定：父调用
+// 仍在 Run 中等待时写结果，已转入后台、尚未了结时写一条后台结果输入（ADR-0058），否则作废（session.ErrInvalid）。
+// copies 是交还给父 Session 的工件副本（ADR-0055），与结果在同一个决策中写入。内容是平台组装的子 Run 回复（含工件
+// 副本的媒体块），不经 rejectPlatformOnly。
+func (s *Service) DelegationResult(ctx context.Context, sessionID, runID, callID string, content []*v1.ContentBlock, isErr bool, copies []*v1.ArtifactCopied) error {
+	return s.routedResult(ctx, sessionID, runID, callID, content, isErr, copies)
+}
+
+func (s *Service) routedResult(ctx context.Context, sessionID, runID, callID string, content []*v1.ContentBlock, isErr bool, copies []*v1.ArtifactCopied) error {
 	st, err := s.Store.Load(ctx, sessionID)
 	if err != nil {
 		return err
@@ -56,14 +68,17 @@ func (s *Service) NodeResult(ctx context.Context, sessionID, runID, callID strin
 	settled, newRun := false, false
 	err = s.Store.Update(ctx, st, func(st *session.State) (session.Decision, error) {
 		settled, newRun = false, false
-		if bg := st.Background[callID]; bg != nil && st.Closed == nil {
-			var events []*v1.Event
-			events, newRun = s.backgroundInput(st, &v1.BackgroundResult{CallId: callID, Capability: bg.Capability,
-				Content: content, IsError: isErr, Reason: session.BackgroundReasonResult})
-			settled, prev = true, lastRunAt(st)
-			return session.Decision{Events: events, Wake: true}, nil
+		var events []*v1.Event
+		for _, c := range copies {
+			events = append(events, &v1.Event{Payload: &v1.Event_ArtifactCopied{ArtifactCopied: c}})
 		}
-		return session.Decision{Events: []*v1.Event{session.ExternalResult(runID, callID, content, isErr)}, Wake: true}, nil
+		if bg := st.Background[callID]; bg != nil && st.Closed == nil {
+			input, run := s.backgroundInput(st, &v1.BackgroundResult{CallId: callID, Capability: bg.Capability,
+				Content: content, IsError: isErr, Reason: session.BackgroundReasonResult})
+			settled, newRun, prev = true, run, lastRunAt(st)
+			return session.Decision{Events: append(events, input...), Wake: true}, nil
+		}
+		return session.Decision{Events: append(events, session.ExternalResult(runID, callID, content, isErr)), Wake: true}, nil
 	})
 	if err != nil || !settled {
 		return err

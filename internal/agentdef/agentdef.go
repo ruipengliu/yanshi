@@ -43,6 +43,10 @@ type Def struct {
 	Delegation DelegationConfig `yaml:"delegation"`
 }
 
+// DefaultBackgroundAfter 是委托转入后台前父 Run 等待的默认时长（ADR-0058）：评测中多数委托在 20–35 秒内完成，
+// 留在原 Run 中，模型不必分两轮回答。
+const DefaultBackgroundAfter = 60 * time.Second
+
 // DelegationConfig 限制委托。Timeout 属于被委托的 Agent（它多久应当做完）；MaxDepth 与 MaxFanout 属于委托方。
 type DelegationConfig struct {
 	// Timeout 是委托给本 Agent 的任务的时限，默认 1 小时；到期父调用得到超时错误，子 Run 被中断。
@@ -50,8 +54,11 @@ type DelegationConfig struct {
 	// MaxDepth 是本 Agent 作为委托方时允许的委托链深度（含本层；顶层 Session 为第 1 层），默认 2：顶层可以委托，
 	// 被委托的子 Session 不再委托。
 	MaxDepth int `yaml:"max_depth"`
-	// MaxFanout 是本 Agent 的一个 Run 同时未完成的委托数上限，默认 4。
+	// MaxFanout 是本 Agent 的一个 Session 同时未完成的委托数上限（含已转入后台、尚未了结的，ADR-0058），默认 4。
 	MaxFanout int `yaml:"max_fanout"`
+	// BackgroundAfter 属于被委托的 Agent：委托给它的任务派发后超过这么久仍未完成，父 Run 不再等待，委托转入后台，
+	// 结果之后作为一条输入送达（ADR-0058）。默认 60 秒；负数表示不转后台（父 Run 一直等到 Timeout）。
+	BackgroundAfter time.Duration `yaml:"background_after"`
 }
 
 // CallConfig 是通话中语音模型的配置。语音模型只负责对话；需要能力的工作经 run_task 交给本 AgentDef 的 Run 执行。
@@ -143,6 +150,9 @@ func (d *Def) validate() error {
 	}
 	if d.Delegation.MaxFanout <= 0 {
 		d.Delegation.MaxFanout = 4
+	}
+	if d.Delegation.BackgroundAfter == 0 {
+		d.Delegation.BackgroundAfter = DefaultBackgroundAfter
 	}
 	if err := d.Context.validate(); err != nil {
 		return fmt.Errorf("agent %s@%s: %w", d.Name, d.Version, err)

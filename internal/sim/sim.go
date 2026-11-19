@@ -169,7 +169,9 @@ type Stats struct {
 	GracefulStops, Handoffs int
 	// 后台调用（ADR-0035）：转入后台、设备结果送达、到期、用户取消的次数，以及设备下线时唤醒等它的 Session 的次数。
 	Backgrounded, BackgroundResults, BackgroundTimeouts, BackgroundCancels, DisconnectWakes int
-	SchedulesFired, SchedulesSkipped, SchedulesCancelled, SchedulesChildRejected            int
+	// 后台委托（ADR-0058）：转入后台的委托，以及子 Session 的回复作为后台结果输入送达的次数。
+	BackgroundDelegations, BackgroundDelegationResults                           int
+	SchedulesFired, SchedulesSkipped, SchedulesCancelled, SchedulesChildRejected int
 	// RetentionKeptMemories 是按保留期到期删除、写入过的 Memory 得以保留的 Session（ADR-0037）。
 	RetentionKeptMemories int
 	// 擦除覆盖在途 Run、既有 Memory 保留与删除记录之后的迟到写入撤回。
@@ -464,7 +466,9 @@ func New(opts Options) (*World, error) {
 			Capabilities: []string{"echo", "send", "ask_user", "show_card", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*", "agent:sim"},
 			MaxTurns:     maxTurns, Context: ctxCfg, Memory: agentdef.MemoryConfig{Recall: 3},
 			// 扇出上限取 2：同一轮的三个委托中第三个被拒，并行派发与扇出拒绝都足够常见（ADR-0055）。
-			Delegation: agentdef.DelegationConfig{MaxFanout: simMaxFanout},
+			// 委托 30 秒后转入后台（ADR-0058）：时钟跳动与 delegationGraceEdge 使后台委托足够常见。分片差分不转后台，
+			// 保持它的随机路径（跨分片委托的覆盖依赖它）。
+			Delegation: agentdef.DelegationConfig{MaxFanout: simMaxFanout, BackgroundAfter: delegationGrace(opts)},
 		})
 	}
 	if opts.Attested {
@@ -903,6 +907,11 @@ func (w *World) act() error {
 	case x < 0.94:
 		if w.faults && w.chance(0.15) {
 			return w.graceEdge() // 拨动时钟同样会使租约过期，只在注入故障时
+		}
+		if w.faults && !w.opts.CompareShards && w.chance(0.1) {
+			if moved, err := w.delegationGraceEdge(); moved || err != nil {
+				return err
+			}
 		}
 		if w.faults && w.chance(0.05) {
 			if moved, err := w.backgroundDeadlineEdge(); moved || err != nil {

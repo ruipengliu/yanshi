@@ -457,3 +457,42 @@ func (r *eventRecorder) seqs() []uint64 {
 	}
 	return out
 }
+
+// 委托转入后台（ADR-0058）：父 Run 拿到占位结果并结束，子 Session 中的提问仍待回答；后台结果输入送达时放下子 Session。
+// 取消同样放下。
+func TestPendingFollowsBackgroundDelegation(t *testing.T) {
+	g := newFakeGateway(t)
+	var ch changes
+	tr := NewPendingTracker(g.c, "top", ch.on)
+	defer tr.Close()
+	top, child, other := &eventLog{sid: "top"}, &eventLog{sid: "c1"}, &eventLog{sid: "c2"}
+	tr.OnEvent(top.calls("r1", [3]string{"d1", "agent__helper"}, [3]string{"d2", "agent__helper"}))
+	tr.OnEvent(top.delegate("r1", "d1", "c1"))
+	tr.OnEvent(top.delegate("r1", "d2", "c2"))
+	g.waitSubs("+c1@0", "+c2@0")
+	for _, id := range []string{"d1", "d2"} {
+		tr.OnEvent(top.ev(&v1.Event{Payload: &v1.Event_ToolResult{ToolResult: &v1.ToolResult{RunId: "r1", CallId: id,
+			Backgrounded: &v1.Backgrounded{NodeId: "@agent/c" + id[1:]}}}}))
+	}
+	tr.OnEvent(top.completed("r1"))
+	g.push(child.calls("cr1", [3]string{"q1", "ask_user", askArgs("去哪？")}))
+	g.push(child.asked("cr1", "q1"))
+	g.push(other.calls("cr2", [3]string{"q2", "ask_user", askArgs("几点？")}))
+	g.push(other.asked("cr2", "q2"))
+	for deadline := time.Now().Add(5 * time.Second); len(tr.Items()) != 2; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("background delegations no longer followed: %s", brief(tr.Items()))
+		}
+	}
+
+	input := []*v1.ContentBlock{{Kind: &v1.ContentBlock_BackgroundResult{BackgroundResult: &v1.BackgroundResult{
+		CallId: "d1", Capability: "agent__helper", Reason: "result"}}}}
+	tr.OnEvent(top.ev(&v1.Event{Payload: &v1.Event_RunRequested{RunRequested: &v1.RunRequested{RunId: "r2", Input: input}}}))
+	g.waitSubs("+c1@0", "+c2@0", "-c1")
+	tr.OnEvent(top.ev(&v1.Event{Payload: &v1.Event_BackgroundCancelled{BackgroundCancelled: &v1.BackgroundCancelled{
+		CallId: "d2", Capability: "agent__helper"}}}))
+	g.waitSubs("+c1@0", "+c2@0", "-c1", "-c2")
+	if items := tr.Items(); len(items) != 0 {
+		t.Fatalf("items after the background delegations settled: %s", brief(items))
+	}
+}

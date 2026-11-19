@@ -86,6 +86,9 @@ type AgentSetup struct {
 	Description  string   `yaml:"description"`
 	Instructions string   `yaml:"instructions"`
 	Capabilities []string `yaml:"capabilities"`
+	// BackgroundAfter 是委托给它的任务转入后台之前父 Run 等待的时长（AgentDef 的 delegation.background_after，ADR-0058）；
+	// 不写时取默认 60 秒。
+	BackgroundAfter time.Duration `yaml:"background_after"`
 }
 
 // XinliSetup 是 xinli MCP Server 中预置的数据：已有的项目、按日期的摘要（day_summary 在没有交出的交谈时返回它）与承诺账本。

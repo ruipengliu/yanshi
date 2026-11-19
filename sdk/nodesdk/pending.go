@@ -143,6 +143,7 @@ func newTracked(sid, agent, via string) *tracked {
 //   - 顶层 Session 的事件由 HostApp 交给 OnEvent（在它自己的 SessionHandler 中，从 seq 0 开始订阅）；
 //   - 被跟踪的 Session 出现委托（ToolCallStarted 的 node_id 为 "@agent/<子 Session>"）时，跟踪器经 Client 订阅子 Session
 //     的完整历史；该委托调用出现 ToolResult、或它所在的 Run 结束时，取消订阅并收起子 Session（及其后代）的待处理项；
+//     委托转入后台（带 backgrounded 的 ToolResult，ADR-0058）时继续跟踪，到它了结（后台结果输入、取消）或 Session 关闭；
 //   - 子 Session 的订阅以 not_found 或 error 结束而委托仍在进行时（子 Session 可能还没创建），退避后从已收到的位置重订
 //     （200ms 起翻倍，至多 5 秒）；以其他原因（deleted 等）结束时收起它的待处理项，不再订阅；
 //   - 提问随 AssistantMessage 出现、派发给用户（ToolCallStarted 的 node_id 为 "@user"）后才算待回答，在该调用出现
@@ -359,7 +360,17 @@ func (t *PendingTracker) update(n *tracked, e *v1.Event) {
 
 // apply 返回待处理项是否变化（持有 mu）。
 func (t *PendingTracker) apply(n *tracked, e *v1.Event) bool {
+	if r := BackgroundResultOf(e); r != nil {
+		// 转入后台的委托了结（结果或到期，ADR-0058）：放下子 Session。
+		return t.endDelegations(n, func(d trackedDelegation) bool { return d.callID == r.GetCallId() })
+	}
 	switch p := e.GetPayload().(type) {
+	case *v1.Event_BackgroundCancelled:
+		id := p.BackgroundCancelled.GetCallId()
+		return t.endDelegations(n, func(d trackedDelegation) bool { return d.callID == id })
+	case *v1.Event_SessionClosed:
+		// 关闭撤回全部后台调用，转入后台的委托随之结束（Run 中的委托随 Run 结束）。
+		return t.endDelegations(n, func(d trackedDelegation) bool { return d.runID == "" })
 	case *v1.Event_AssistantMessage:
 		m := p.AssistantMessage
 		changed := false
@@ -410,6 +421,16 @@ func (t *PendingTracker) apply(n *tracked, e *v1.Event) bool {
 		n.asked = slices.DeleteFunc(n.asked, func(x trackedQuestion) bool { return x.q.CallID == id })
 		changed := n.removeQuestion(func(x trackedQuestion) bool { return x.q.CallID == id })
 		changed = n.removeApproval(func(x trackedApproval) bool { return x.callID == id }) || changed
+		if p.ToolResult.GetBackgrounded() != nil {
+			// 委托转入后台（ADR-0058）：父 Run 不再等它，子 Session 仍在进行，其中的提问与审批照常待处理。继续跟踪，
+			// 不再随父 Run 结束（runID 置空）；后台结果输入、取消或关闭 Session 时放下。
+			for i := range n.delegations {
+				if n.delegations[i].callID == id {
+					n.delegations[i].runID = ""
+				}
+			}
+			return changed
+		}
 		return t.endDelegations(n, func(d trackedDelegation) bool { return d.callID == id }) || changed
 	case *v1.Event_RunCompleted, *v1.Event_RunFailed, *v1.Event_RunInterrupted:
 		runID := runIDOf(e)

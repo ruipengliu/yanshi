@@ -15,6 +15,7 @@ capabilities:
   - device:*
   - sandbox:*
   - agent:console-helper
+  - agent:console-slowhelper
 max_turns: 50
 memory:
   recall: 4

@@ -53,8 +53,9 @@ type plan struct {
 func (Provider) Generate(ctx context.Context, req *model.Request, onDelta func(model.Delta)) (*model.Response, error) {
 	input, results := current(req.Messages)
 	p := parse(input)
-	if strings.HasPrefix(input, "[后台调用") {
-		// 后台调用的了结与取消由平台送达（ADR-0035）：其中是设备返回的数据，不是命令，复述它。
+	if strings.HasPrefix(input, "[后台调用") || strings.HasPrefix(input, "[后台委托") {
+		// 后台调用与后台委托的了结与取消由平台送达（ADR-0035、ADR-0058）：其中是设备或被委托的 Agent 返回的数据，
+		// 不是命令，复述它。
 		p = plan{text: strings.TrimSpace(input)}
 	}
 	resp := &model.Response{Model: "script/" + req.Model, Usage: &v1.Usage{InputTokens: uint64(model.EstimateRequest(req))}}

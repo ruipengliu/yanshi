@@ -411,6 +411,7 @@ class Tracked {
  *   - 顶层 Session 的事件由应用喂给 onEvent（和 Draft、PendingQuestions 一样，从 seq 0 开始）；
  *   - 被跟踪的 Session 出现委托（ToolCallStarted 的 node_id 为 "@agent/<子 Session>"）时，经 Client 订阅子 Session
  *     的完整历史；该委托调用出现 ToolResult、或它所在的 Run 结束时，取消订阅并收起子 Session（及其后代）的待处理项；
+ *     委托转入后台（带 backgrounded 的 ToolResult，ADR-0058）时继续跟踪，到它了结（后台结果输入、取消）或 Session 关闭；
  *   - 子 Session 的订阅以 not_found 或 error 结束而委托仍在进行时（子 Session 可能还没创建），退避后从已收到的位置重订；
  *     以其他原因（deleted 等）结束时收起它的待处理项，不再订阅；
  *   - 提问随 AssistantMessage 出现、派发给用户（ToolCallStarted 的 node_id 为 "@user"）后才算待回答，在该调用出现
@@ -492,11 +493,28 @@ export class PendingTracker {
     return changed;
   }
 
+  // #endDelegation 结束一个委托，放下其子 Session；返回待处理项是否变化。
+  #endDelegation(t: Tracked, callId: string): boolean {
+    const d = t.delegations.get(callId);
+    if (!d) return false;
+    t.delegations.delete(callId);
+    return this.#drop(d.child);
+  }
+
   // #apply 把一条事件应用到被跟踪的 Session；返回待处理项是否变化。
   #apply(t: Tracked, e: Event): boolean {
     const p = e.payload;
     let changed = t.questions.apply(e);
+    const settled = backgroundResultOf(e);
+    if (settled) return this.#endDelegation(t, settled.callId) || changed; // 转入后台的委托了结（ADR-0058）
     switch (p.case) {
+      case "backgroundCancelled":
+        return this.#endDelegation(t, p.value.callId) || changed;
+      case "sessionClosed": {
+        // 关闭撤回全部后台调用，转入后台的委托随之结束（Run 中的委托随 Run 结束）。
+        for (const [id, d] of t.delegations) if (d.runId === "") changed = this.#endDelegation(t, id) || changed;
+        return changed;
+      }
       case "assistantMessage": {
         for (const c of p.value.toolCalls) t.calls.set(c.callId, { capability: c.capability, runId: p.value.runId });
         return changed;
@@ -524,11 +542,12 @@ export class PendingTracker {
         const id = p.value.callId;
         changed = t.approvals.delete(id) || changed;
         const d = t.delegations.get(id);
-        if (d) {
-          t.delegations.delete(id);
-          changed = this.#drop(d.child) || changed;
+        if (d && p.value.backgrounded) {
+          // 委托转入后台（ADR-0058）：子 Session 仍在进行，其中的提问与审批照常待处理；继续跟踪，不再随父 Run 结束。
+          d.runId = "";
+          return changed;
         }
-        return changed;
+        return this.#endDelegation(t, id) || changed;
       }
       case "runCompleted":
       case "runFailed":

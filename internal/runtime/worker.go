@@ -398,7 +398,7 @@ func (w *Worker) Step(ctx context.Context) (bool, error) {
 		// 并行委托中的一个子 Run 写回了结果、或有插话，其余委托还没完成：不开始 Attempt、不写事件，按 call_id 幂等地
 		// 重新派发后重新停放（ADR-0055）。重新派发不能省：派发是子任务丢失时的恢复路径，子 Session 被删除、上次的
 		// 回写失败时，由它向父调用写回错误结果（模拟测试发现）。
-		if until, ok := awaitingDelegations(r, w.now()); ok {
+		if until, ok := w.awaitingDelegations(r); ok && r.Status == session.RunSuspended && r.SuspendReason == "" {
 			_, err := w.deliverAndCommit(ctx, r, deliveries(r.DelegationFront()), nil, until)
 			return true, err
 		}
@@ -458,7 +458,8 @@ func (w *Worker) tryCommit(ctx context.Context, events ...*v1.Event) (bool, erro
 	// 不给事件（Attempt 已失效）则什么也没写。每次提交前都检查 Attempt，冲突后同步到的中断或接管随即生效。
 	written := false
 	err := w.cfg.Store.Update(ctx, w.st, func(st *session.State) (session.Decision, error) {
-		if r := st.Run(w.runID); r == nil || !w.owns(r) {
+		r := st.Run(w.runID)
+		if r == nil || !w.owns(r) || settledMeanwhile(r, events) {
 			written = false
 			return session.Decision{}, nil
 		}
@@ -476,6 +477,24 @@ func (w *Worker) tryCommit(ctx context.Context, events ...*v1.Event) (bool, erro
 	}
 	w.observeCommitted(events)
 	return true, nil
+}
+
+// settledMeanwhile 报告 events 中本 Worker 给出的调用结果（超时、转入后台的占位）所针对的路由调用是否已在冲突后同步到的
+// 投影中有了结果：设备或子 Session 的结果与本步的决定同时到达（ADR-0058 的转入后台与子 Run 写回结果竞争）。这时不写，
+// 与 Attempt 失效一样什么也不提交，下一步按新的投影重新决定。
+func settledMeanwhile(r *session.Run, events []*v1.Event) bool {
+	for _, e := range events {
+		res := e.GetToolResult()
+		if res == nil || res.GetAttempt() == 0 {
+			continue
+		}
+		for _, c := range r.Calls {
+			if c.Call.GetCallId() == res.GetCallId() && c.Done && c.NodeID != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // suspend 追加 events 与 RunSuspended，并把 Session 停放到 until；之后本 Worker 不再持有该 Run。
@@ -905,9 +924,15 @@ func (w *Worker) awaitDispatched(ctx context.Context, r *session.Run, c *session
 			grace = since.Add(w.cfg.BackgroundGrace)
 		}
 	}
+	if grace.IsZero() {
+		grace = w.delegationGrace(c) // 委托不是设备，宽限期从派发起算（ADR-0058）
+	}
 	// 宽限期在截止时间之前结束就转入后台，即使本步来晚了、截止时间也已过去（积压、时钟跳动）：准时醒来的 Worker 会在
 	// 宽限期结束时这样做。
 	if !grace.IsZero() && !w.now().Before(grace) && grace.Before(c.Deadline) {
+		if delegation.IsNode(c.NodeID) {
+			return w.backgroundDelegation(ctx, r, c)
+		}
 		return w.background(ctx, r, c, info)
 	}
 	if !w.now().Before(c.Deadline) {
@@ -944,6 +969,12 @@ func (w *Worker) advanceDelegations(ctx context.Context, r *session.Run, def *ag
 		}
 	}
 	for _, c := range waiting {
+		// 与 awaitDispatched 相同：宽限期在截止时间之前结束就转入后台（ADR-0058），一步一个。
+		if g := w.delegationGrace(c); !g.IsZero() && !w.now().Before(g) && g.Before(c.Deadline) {
+			return w.backgroundDelegation(ctx, r, c)
+		}
+	}
+	for _, c := range waiting {
 		if !w.now().Before(c.Deadline) {
 			if err := w.cfg.Dispatch.Cancel(ctx, w.st.Created.GetEndUser(), c.NodeID, c.Call.GetCallId()); err != nil {
 				return err
@@ -952,31 +983,70 @@ func (w *Worker) advanceDelegations(ctx context.Context, r *session.Run, def *ag
 				model.TextBlocks("timed out: the delegated agent did not finish in time; its task was interrupted"), true))
 		}
 	}
-	until := waiting[0].Deadline
-	for _, c := range waiting[1:] {
-		until = minTime(until, c.Deadline)
-	}
+	until, _ := w.awaitingDelegations(r)
 	_, err := w.redispatchAll(ctx, r, waiting, &v1.Event{Payload: &v1.Event_RunSuspended{RunSuspended: &v1.RunSuspended{
 		RunId: r.ID, Attempt: w.attempt}}}, until)
 	return err
 }
 
-// awaitingDelegations 报告挂起的 Run 是否只在等已派发、未到截止时间的委托，返回最早的截止时间。
-func awaitingDelegations(r *session.Run, now time.Time) (time.Time, bool) {
-	if r.Status != session.RunSuspended || r.SuspendReason != "" {
-		return time.Time{}, false
-	}
+// awaitingDelegations 报告 Run 是否只在等已派发、未到截止时间、也未到转入后台时刻的委托，返回其中最早的那个时刻
+// （醒来时转入后台或给出超时结果）。挂起状态由调用方判断（Step 只对挂起的 Run 用它）。
+func (w *Worker) awaitingDelegations(r *session.Run) (time.Time, bool) {
+	now := w.now()
 	var until time.Time
 	for _, c := range r.DelegationFront() {
+		if c.Done {
+			continue
+		}
+		at := c.Deadline
+		if g := w.delegationGrace(c); !g.IsZero() && g.Before(at) {
+			at = g
+		}
 		switch {
-		case c.Done:
-		case !c.Dispatched() || !now.Before(c.Deadline):
+		case !c.Dispatched() || !now.Before(at):
 			return time.Time{}, false
-		case until.IsZero() || c.Deadline.Before(until):
-			until = c.Deadline
+		case until.IsZero() || at.Before(until):
+			until = at
 		}
 	}
 	return until, !until.IsZero()
+}
+
+// delegationGrace 返回委托调用转入后台的时刻（ADR-0058）：派发后经目标 AgentDef 的 delegation.background_after。
+// 不是委托、本 Session 是委托派生的子 Session（它的委托 Run 产出回复，不能先以"已转后台"结束）、没有后台调用的了结
+// 路径或目标关闭了后台（负数）时返回零值。目标的 AgentDef 按当前发布配置解析，与目录展示给模型的一致。
+func (w *Worker) delegationGrace(c *session.Call) time.Time {
+	if w.cfg.Background == nil || w.st.Created.GetParent() != nil || !delegation.IsNode(c.NodeID) || !c.Dispatched() {
+		return time.Time{}
+	}
+	_, name, _ := strings.Cut(c.Call.GetCapability(), "__")
+	def, err := w.cfg.Agents.Resolve(name, w.st.Created.GetEndUser())
+	if err != nil || def.Delegation.BackgroundAfter <= 0 {
+		return time.Time{}
+	}
+	return c.DispatchedAt.Add(def.Delegation.BackgroundAfter)
+}
+
+// backgroundDelegation 把超过宽限期的委托调用转入后台（ADR-0058）：写入占位结果，父 Run 照常继续；子 Session 继续执行，
+// 它的回复之后作为一条后台结果输入送达（Delegator.Report）。截止时间不变，到期由 expireBackground 中断子 Run。
+// 先按 call_id 幂等地重新派发，再写入：与设备调用相同（background），写入失败时撤回不再等待的投递。
+func (w *Worker) backgroundDelegation(ctx context.Context, r *session.Run, c *session.Call) error {
+	_, name, _ := strings.Cut(c.Call.GetCapability(), "__")
+	res := w.toolResult(r, c.Call.GetCallId(), model.TextBlocks(DelegationPlaceholder(name)), false)
+	res.GetToolResult().Backgrounded = &v1.Backgrounded{NodeId: c.NodeID, Deadline: timestamppb.New(c.Deadline)}
+	if ok, err := w.redispatch(ctx, r, c, c.Deadline, res, time.Time{}); err != nil || !ok {
+		return err
+	}
+	metrics.BackgroundCalls.WithLabelValues("delegation_backgrounded").Inc()
+	w.cfg.Logger.Info("delegation backgrounded", "session", w.st.SessionID, "run", r.ID, "call", c.Call.GetCallId(), "node", c.NodeID)
+	return nil
+}
+
+// DelegationPlaceholder 是委托转入后台时交给模型的结果（ADR-0058）：任务没有失败，仍在进行；结果稍后作为单独的消息送达。
+// 明确不要重新委托：那会让另一个子 Session 再做一遍。
+func DelegationPlaceholder(agent string) string {
+	return fmt.Sprintf("in progress: agent %q is still working on this task, so you no longer wait for it in this turn. "+
+		"Its result will arrive later as a separate message. Do not delegate this task again; tell the user it is in progress and continue.", agent)
 }
 
 // backgroundable 报告调用能否转入后台（ADR-0035）：只有路由到设备的调用。沙箱、用户本人与委托不是设备（Node ID 是平台
@@ -1183,9 +1253,15 @@ func (w *Worker) delegationRefused(r *session.Run, def *agentdef.Def, c *session
 	if depth := len(w.st.Created.GetParent().GetAncestors()) + 2; depth > def.Delegation.MaxDepth {
 		return fmt.Sprintf("cannot delegate: delegation depth %d exceeds the limit of %d; do the task yourself", depth, def.Delegation.MaxDepth)
 	}
+	// 按 Session 计数（ADR-0058）：本 Run 中已派发、尚无结果的，加上已转入后台、尚未了结的。
 	open := 0
 	for _, other := range r.Calls {
 		if other.Dispatched() && delegation.IsNode(other.NodeID) {
+			open++
+		}
+	}
+	for _, b := range w.st.Background {
+		if delegation.IsNode(b.NodeID) {
 			open++
 		}
 	}

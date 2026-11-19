@@ -141,6 +141,7 @@ func TestSimulationWithFaults(t *testing.T) {
 		"CallsStarted", "CallsReplaced", "CallTranscripts", "CallTranscriptsBlocked", "CallTasks", "CallAnswers", "CallConflicts",
 		"StoreFaults", "WakeFaults", "UncertainRetries", "CatalogFaults", "ResumedClaims", "PastRuns", "Delegations", "DelegationResults", "ParallelDelegations", "ArtifactHandoffs", "ArtifactHandbacks", "ChildDeletionRaces", "CascadeFaults", "Decisions", "DecisionFallbacks", "GracefulStops", "Handoffs",
 		"Backgrounded", "BackgroundResults", "BackgroundTimeouts", "BackgroundCancels", "DisconnectWakes",
+		"BackgroundDelegations", "BackgroundDelegationResults",
 		"RetentionKeptMemories", "Erasures", "ErasuresInFlight", "ErasureLateWithdrawn", "ErasureKeptMemories", "InvalidArgs", "MemoryPrechecked", "ReadOnlyDowngrades", "AttestedResults", "AttestedRedactions", "AttestedErrors")
 }
 

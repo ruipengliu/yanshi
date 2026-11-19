@@ -38,13 +38,14 @@
 - **派发**：Worker 先提交 `ToolCallStarted`，再创建子 Session 并提交 `RunRequested`，二者以 `call_id` 幂等（子 Session ID 由 `call_id` 推导，重复派发只会命中已存在的 Session）。创建子 Session 失败时下一步重试，与 Inbox 写入失败同样处理。
 - **结果回写**：子 Run 进入终态时，由子 Run 所在的 Worker 以外部结果（`attempt = 0`）向父 Session 追加 `ToolResult`，然后 `Enqueue` 父 Session。回写失败则子 Run 保持"终态但未回写"，Janitor 与 Worker 的下一步都可重试：回写以 `call_id` 幂等，父投影只接受针对已派发、未完成调用的结果（与设备结果相同）。
 - **超时**：`deadline` 取目标 AgentDef 声明的 `delegation.timeout`（默认 1 小时）。到期父 Run 追加超时错误结果，并中断子 Run。
+- **转入后台**（ADR-0058）：子 Run 超过目标 AgentDef 的 `delegation.background_after`（默认 60 秒，负数关闭）仍未完成时，父 Run 不再等它：Worker 写入带 `backgrounded` 的占位结果（"仍在进行，结果稍后单独送达，不要重复委托"），父 Run 照常继续。子 Session 继续执行，它的回复（含交还的工件）作为一条 `BackgroundResult` 输入送达父 Session，并入活跃 Run 或开启新 Run（与 ADR-0035 的后台调用同一条路径，`service.DelegationResult`）。截止时间不延长，到期中断子 Run 并写 `reason = timeout` 的后台结果；用户的 `CancelBackground` 中断子 Run。只有顶层 Session 的委托转入后台：子 Session 的委托 Run 产出回复，不能先以"已转后台"结束。
 - **中断**：父 Run 被中断时，Service 中断其所有未完成的子 Run（级联，尽力而为，与撤回 Inbox 条目同一处）。子 Run 被用户单独中断时，父 Run 收到错误结果。
 - **插话**：父 Session 的 Steer 不自动转发给子 Run；模型若要改变子任务，应中断后重新委托。保持语义简单，后续按评测需要再放开。
-- **深度与扇出**：`SessionCreated.parent` 记录深度（顶层 Session 为第 1 层，子 Session 的深度是祖先数加一）；委托出去的子 Session 的深度超过委托方 AgentDef 的 `delegation.max_depth`（默认 2，即顶层可以委托、子 Session 不再委托）或同一父 Run 同时未完成的委托超过 `delegation.max_fanout`（默认 4）时，工具调用返回错误结果而不派发。
+- **深度与扇出**：`SessionCreated.parent` 记录深度（顶层 Session 为第 1 层，子 Session 的深度是祖先数加一）；委托出去的子 Session 的深度超过委托方 AgentDef 的 `delegation.max_depth`（默认 2，即顶层可以委托、子 Session 不再委托）或同一 Session 同时未完成的委托（含已转入后台、尚未了结的，ADR-0058）超过 `delegation.max_fanout`（默认 4）时，工具调用返回错误结果而不派发。
 - **配额与计量**：子 Run 的用量按同一 EndUser、同一业务线计量（ADR-0019），`agent` 标签为子 AgentDef；父子共用 EndUser 的日配额。
 - **删除**：子 Session 是独立的 Session，索引中带 `parent_session`；删除父 Session 时 Janitor 级联删除所有子 Session（ADR-0015，写入入口照旧"先写、后查"）。按 EndUser 删除本来就覆盖全部。
 - **可见性**：子 Session 对 EndUser 可见、可订阅，客户端按 `parent` 字段折叠展示；子 Run 的 Approval 与提醒照常推送。
-  - **客户端须跟随进行中的委托。** 子 Run 的审批与 `ask_user` 路由到用户本人，却写在子 Session 的日志里。只看父 Session 的客户端看不到它们，父 Run 就一直等着委托，直到超时。所以客户端发现委托（`ToolCallStarted{node_id: "@agent/<子 Session>"}`）即订阅子 Session，并把其中待处理的审批与提问（递归到孙 Session）一并展示，标出子 Agent。处理结果发往子 Session。委托调用出现结果、或所在 Run 结束时，退订子 Session 并收起这些待处理项。
+  - **客户端须跟随进行中的委托。** 子 Run 的审批与 `ask_user` 路由到用户本人，却写在子 Session 的日志里。只看父 Session 的客户端看不到它们，父 Run 就一直等着委托，直到超时。所以客户端发现委托（`ToolCallStarted{node_id: "@agent/<子 Session>"}`）即订阅子 Session，并把其中待处理的审批与提问（递归到孙 Session）一并展示，标出子 Agent。处理结果发往子 Session。委托调用出现结果、或所在 Run 结束时，退订子 Session 并收起这些待处理项；委托转入后台（带 `backgrounded` 的结果）时继续跟随，到它了结（后台结果输入、取消）或 Session 关闭（ADR-0058）。
     - Worker 先提交 `ToolCallStarted`、再创建子 Session，客户端订阅时子 Session 可能还不存在，订阅以 `not_found` 结束。委托仍在进行时，客户端退避后重订（`error` 同样处理），不能就此放弃，否则这些待处理项再也看不到。
     - 提问在派发给用户（`ToolCallStarted{node_id: "@user"}`）之后才算待回答。同一轮中相邻的委托一起派发，其他调用等它之前的委托结束才推进（ADR-0055）：模型同一轮返回委托与 `ask_user` 时，父 Session 的提问要等委托结束才派发，在那之前既不能回答，也不挡住子 Agent 的提问。网页与 Go SDK 的 `PendingTracker`、调试控制台的 `pendingWithDelegations` 都按这条规则实现（[端侧 SDK](./m3-client-sdks.md) §2）；移动端绑定不提供，原生端按同样的规则自行实现（同上 §3）。
   - **输入框的文字。** 父 Session 自己没有待回答的提问、而整棵委托树里恰好一个待回答的提问、且它在子 Session 中时，客户端把输入框的文字作为该提问的回答（`answer{text}`），发往子 Session。其余情况照旧提交给父 Session：多个提问时不替用户猜；父 Session 自己的提问，服务端本来就把文字当作回答。

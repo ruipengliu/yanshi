@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"strings"
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/delegation"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
 	"yanshi/internal/workqueue"
@@ -21,6 +23,8 @@ const (
 	// bgGrace 是宽限期（与默认值相同）；bgTimeout 是后台时限，取得比默认值短得多，使到期在模拟的时长内发生。
 	bgGrace   = 20 * time.Second
 	bgTimeout = 5 * time.Minute
+	// simDelegationGrace 是 sim Agent 的 delegation.background_after（ADR-0058）。
+	simDelegationGrace = 30 * time.Second
 )
 
 // wakeCounter 是 Hub 在设备下线时唤醒 Session 所用的队列：统计唤醒次数（DisconnectWakes）。
@@ -51,6 +55,11 @@ func (w *World) cancelBackground() error {
 		err = w.svc.CancelBackground(ctx, sid, b.CallID, "sim")
 		if errors.Is(err, service.ErrConflict) {
 			return nil // 与设备结果、到期竞争：已了结
+		}
+		if errors.As(err, new(cancelFault)) {
+			// 撤回后台委托时注入的故障（CascadeFaults）：取消没有写入，后台委托仍未了结，客户端之后可以重试。
+			w.Stats.CascadeFaults++
+			return nil
 		}
 		if err != nil {
 			return fmt.Errorf("cancel background %s: %w", b.CallID, err)
@@ -136,6 +145,42 @@ func (w *World) graceEdge() error {
 	return nil
 }
 
+// delegationGrace 是 sim Agent 的 delegation.background_after：分片差分（CompareShards）中关闭（负数）。
+func delegationGrace(opts Options) time.Duration {
+	if opts.CompareShards {
+		return -1
+	}
+	return simDelegationGrace
+}
+
+// delegationGraceEdge 把时钟拨到某个顶层 Session 中等子 Session 的委托调用转入后台的边界附近（前一秒、恰好、后一秒），
+// 使后台委托（ADR-0058）与"恰在边界上子 Run 写回结果"的竞争都足够常见。
+func (w *World) delegationGraceEdge() (bool, error) {
+	ctx := context.Background()
+	for _, sid := range w.live() {
+		st, err := w.svc.Load(ctx, sid)
+		if err != nil {
+			return false, err
+		}
+		a := st.Active()
+		if a == nil || st.Created.GetParent() != nil {
+			continue
+		}
+		for _, c := range a.Calls {
+			if !c.Dispatched() || !delegation.IsNode(c.NodeID) {
+				continue
+			}
+			edge := c.DispatchedAt.Add(simDelegationGrace).Add(time.Duration(w.rng.IntN(3)-1) * time.Second)
+			if d := edge.Sub(w.clock.Now()); d > 0 {
+				w.clock.Advance(d)
+				w.tracef("clock +%s (delegation grace edge of %s)", d, c.Call.GetCallId())
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 // checkNotWithdrawn 在设备执行调用时检查它没有被撤回：取消与关闭先撤回投递，之后设备收不到它；被放回 Inbox
 // （如过时的派发与取消交错）就会在用户取消之后执行。
 func (w *World) checkNotWithdrawn() {
@@ -153,8 +198,9 @@ func (w *World) nodeByID(endUser, id string) *simNode {
 	return nil
 }
 
-// checkBackground 检查后台调用的不变量（ADR-0035）：
-//   - 转入后台的只有设备调用，委托派生的子 Session 中没有；
+// checkBackground 检查后台调用的不变量（ADR-0035、ADR-0058）：
+//   - 转入后台的只有设备调用与委托调用，委托派生的子 Session 中没有；
+//   - 转入后台的委托不延长截止时间（后台截止时间等于 ToolCallStarted 的截止时间）；
 //   - 转入后台之后，该调用不再有任何 ToolResult；
 //   - 每个后台调用至多了结一次（结果、到期、取消三者之一），了结的都是转入过后台的调用；
 //   - 没有活跃 Run、但有未了结后台调用的 Session 仍在队列中（停放到截止时间），否则没有人在截止时间叫醒它。
@@ -163,7 +209,11 @@ func (w *World) nodeByID(endUser, id string) *simNode {
 func (w *World) checkBackground(sid string, events []*v1.Event, st *session.State, current bool) error {
 	bg := map[string]bool{}
 	settled := map[string]bool{}
+	deadlines := map[string]time.Time{}
 	for _, e := range events {
+		if s := e.GetToolCallStarted(); s.GetNodeId() != "" && s.GetDeadline() != nil {
+			deadlines[s.GetCallId()] = s.GetDeadline().AsTime()
+		}
 		if r := e.GetToolResult(); r != nil {
 			if bg[r.GetCallId()] {
 				return fmt.Errorf("invariant: call %s in %s has a result after it went to the background (seq %d)", r.GetCallId(), sid, e.GetSeq())
@@ -171,6 +221,10 @@ func (w *World) checkBackground(sid string, events []*v1.Event, st *session.Stat
 			if b := r.GetBackgrounded(); b != nil {
 				if st.Created.GetParent() != nil {
 					return fmt.Errorf("invariant: delegated session %s backgrounded call %s", sid, r.GetCallId())
+				}
+				if delegation.IsNode(b.GetNodeId()) && !b.GetDeadline().AsTime().Equal(deadlines[r.GetCallId()]) {
+					return fmt.Errorf("invariant: background delegation %s in %s moved its deadline from %s to %s", r.GetCallId(), sid,
+						deadlines[r.GetCallId()], b.GetDeadline().AsTime())
 				}
 				bg[r.GetCallId()] = true
 			}
@@ -219,12 +273,18 @@ func (w *World) checkBackgroundSettled() error {
 // countBackground 统计日志中的后台调用路径。
 func (w *World) countBackground(events []*v1.Event) {
 	for _, e := range events {
-		if e.GetToolResult().GetBackgrounded() != nil {
+		if b := e.GetToolResult().GetBackgrounded(); b != nil {
 			w.Stats.Backgrounded++
+			if delegation.IsNode(b.GetNodeId()) {
+				w.Stats.BackgroundDelegations++
+			}
 		}
-		switch nodesdk.BackgroundResultOf(e).GetReason() {
+		switch r := nodesdk.BackgroundResultOf(e); r.GetReason() {
 		case session.BackgroundReasonResult:
 			w.Stats.BackgroundResults++
+			if strings.HasPrefix(r.GetCapability(), "agent__") {
+				w.Stats.BackgroundDelegationResults++
+			}
 		case session.BackgroundReasonTimeout:
 			w.Stats.BackgroundTimeouts++
 		}

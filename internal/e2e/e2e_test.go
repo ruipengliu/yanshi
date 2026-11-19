@@ -135,12 +135,15 @@ func pgStores(pool *pgxpool.Pool, n *pg.Notifier) stores {
 // instance 启动一个 yanshi 实例：workers 个 Worker，serve 为 true 时提供 HTTP API 与 Node 网关。
 func instance(t *testing.T, st stores, workers int, serve bool) *httptest.Server {
 	agents, err := agentdef.NewRegistry(&agentdef.Def{Name: "dev", Version: "1", Model: "script/any",
-		Capabilities: []string{"ask_user", "show_card", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*", "mcp:*/*", "agent:helper"},
+		Capabilities: []string{"ask_user", "show_card", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*", "mcp:*/*", "agent:helper", "agent:slowhelper"},
 		Memory:       agentdef.MemoryConfig{Recall: 5},
 		Call:         agentdef.CallConfig{Model: "fake/voice", Voice: "v1", Instructions: "你是语音助手"}},
 		// helper 是委托的目标（docs/design/m5-multi-agent.md）。
 		&agentdef.Def{Name: "helper", Version: "1", Model: "script/any", Description: "把输入复述一遍的助手",
-			Capabilities: []string{"ask_user", "device:*"}})
+			Capabilities: []string{"ask_user", "device:*"}},
+		// slowhelper 与 helper 相同，只是委托 300 毫秒后就转入后台（ADR-0058）。
+		&agentdef.Def{Name: "slowhelper", Version: "1", Model: "script/any", Description: "把输入复述一遍的慢助手",
+			Capabilities: []string{"ask_user"}, Delegation: agentdef.DelegationConfig{BackgroundAfter: 300 * time.Millisecond}})
 	if err != nil {
 		t.Fatal(err)
 	}

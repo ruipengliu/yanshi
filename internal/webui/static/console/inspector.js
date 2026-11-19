@@ -1048,7 +1048,13 @@ function timelineItems(view, events, opts) {
             p.attempt,
             h("b", {}, "转入后台 "),
             h("code", {}, view.callCapability(p.call_id)),
-            h("span", { class: "muted" }, ` · 设备 ${short(p.backgrounded.node_id)} 离线，Run 继续 · 截止 ${clock(p.backgrounded.deadline)}`),
+            h(
+              "span",
+              { class: "muted" },
+              p.backgrounded.node_id?.startsWith("@agent/")
+                ? ` · 委托仍在进行，Run 继续 · 截止 ${clock(p.backgrounded.deadline)}`
+                : ` · 设备 ${short(p.backgrounded.node_id)} 离线，Run 继续 · 截止 ${clock(p.backgrounded.deadline)}`,
+            ),
           );
           break;
         }

@@ -315,6 +315,9 @@ func (d *Delegator) parentWaiting(ctx context.Context, p *v1.ParentRef) (bool, e
 	if err != nil {
 		return false, err
 	}
+	if st.Background[p.GetCallId()] != nil && st.Closed == nil {
+		return true, nil // 已转入后台、尚未了结（ADR-0058）：结果将作为一条输入送达
+	}
 	r := st.Run(p.GetRunId())
 	if r == nil || r.Status.Terminal() {
 		return false, nil // 已移出投影的 Run 都是终态
@@ -442,22 +445,11 @@ func (d *Delegator) result(ctx context.Context, sessionID, runID, callID, text s
 	return d.write(ctx, sessionID, runID, callID, model.TextBlocks(text), isErr, nil)
 }
 
-// write 写入父调用的外部结果（连同复制进父 Session 的工件记录）并唤醒父 Session；调用已有结果、Run 已终态或
-// Session 已删除时静默作废（作废时已复制的工件留在父 Session 中，随它删除）。
+// write 写入父调用的外部结果（连同复制进父 Session 的工件记录）并唤醒父 Session；父调用已转入后台时改为一条后台结果
+// 输入（ADR-0058，service.DelegationResult）。调用已有结果或已了结、Run 已终态或 Session 已删除时静默作废（作废时
+// 已复制的工件留在父 Session 中，随它删除）。
 func (d *Delegator) write(ctx context.Context, sessionID, runID, callID string, content []*v1.ContentBlock, isErr bool, copies []*v1.ArtifactCopied) error {
-	store := d.Service.Store
-	st, err := store.Load(ctx, sessionID)
-	if err != nil {
-		return err
-	}
-	err = store.Update(ctx, st, func(*session.State) (session.Decision, error) {
-		var events []*v1.Event
-		for _, c := range copies {
-			events = append(events, &v1.Event{Payload: &v1.Event_ArtifactCopied{ArtifactCopied: c}})
-		}
-		events = append(events, session.ExternalResult(runID, callID, content, isErr))
-		return session.Decision{Events: events, Wake: true}, nil
-	})
+	err := d.Service.DelegationResult(ctx, sessionID, runID, callID, content, isErr, copies)
 	switch {
 	case errors.Is(err, session.ErrInvalid):
 		d.log().Info("delegation result dropped", "session", sessionID, "call", callID, "reason", err)

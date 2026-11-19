@@ -80,7 +80,7 @@ var (
 	QueueOldestWait     = gaugeVec("queue_oldest_wait_seconds", "积压中等得最久的工作已等待的时长，由 Janitor 所在进程定期统计。", "queue", "business_line", "priority")
 	Handoffs            = counter("handoffs_total", "Worker 把 Run 移交给其他 Worker（ADR-0029）；reason = pool（交互 Worker 移交长任务）| shutdown（优雅停机）。", "reason")
 	Compactions         = counter("compactions_total", "上下文压缩次数。")
-	BackgroundCalls     = counter("background_calls_total", "后台调用（ADR-0035）；event = backgrounded（设备离线超过宽限期，转入后台）| result（设备结果送达）| timeout（到期）| cancelled（用户取消）。", "event")
+	BackgroundCalls     = counter("background_calls_total", "后台调用（ADR-0035、ADR-0058）；event = backgrounded（设备离线超过宽限期，转入后台）| delegation_backgrounded（委托超过宽限期，转入后台）| result（设备结果送达）| timeout（到期）| cancelled（用户取消）。", "event")
 	DisconnectWakes     = counter("disconnect_wakes_total", "设备下线时唤醒的、有调用在等它的 Session。")
 	HTTPRequests        = counter("http_requests_total", "对外 API 请求。", "route", "code")
 	HTTPDuration        = histogram("http_request_duration_seconds", "对外 API 请求耗时（流式接口为连接时长）。", latency, "route")

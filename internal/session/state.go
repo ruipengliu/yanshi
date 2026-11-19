@@ -1159,8 +1159,13 @@ func (s *State) fencedRun(id string, attempt uint32) (*Run, error) {
 	return r, nil
 }
 
-// checkBackgrounded 校验调用转入后台（ADR-0035）：只有 Worker 能把已派发、尚无结果的设备调用转入后台。沙箱（"sbx_"）、
-// 用户本人与委托（"@" 开头）不是设备；委托派生的子 Session 不转后台：子 Run 结束后，迟到的结果回不到父 Run。
+// delegationPrefix 是委托目标的 Node ID 前缀（delegation.Prefix；session 不能依赖 delegation 包）。
+const delegationPrefix = "@agent/"
+
+// checkBackgrounded 校验调用转入后台（ADR-0035、ADR-0058）：只有 Worker 能把已派发、尚无结果的设备调用或委托调用转入
+// 后台。沙箱（"sbx_"）与用户本人（"@user"）不能；委托（"@agent/"）的后台截止时间不能晚于原截止时间（转后台只改变父 Run
+// 是否等待，不延长子任务的时限）。委托派生的子 Session 不转后台：它的委托 Run 产出回复，转入后台的调用迟到的结果会开启
+// 一个没有父调用在等的新 Run。
 func (s *State) checkBackgrounded(m *v1.ToolResult, c *Call) error {
 	b := m.GetBackgrounded()
 	switch {
@@ -1168,8 +1173,10 @@ func (s *State) checkBackgrounded(m *v1.ToolResult, c *Call) error {
 		return fmt.Errorf("external result cannot background call %q", m.GetCallId())
 	case !c.Dispatched() || b.GetNodeId() != c.NodeID:
 		return fmt.Errorf("call %q is not dispatched to node %q", m.GetCallId(), b.GetNodeId())
-	case strings.HasPrefix(c.NodeID, "sbx_") || strings.HasPrefix(c.NodeID, "@"):
+	case strings.HasPrefix(c.NodeID, "sbx_") || (strings.HasPrefix(c.NodeID, "@") && !strings.HasPrefix(c.NodeID, delegationPrefix)):
 		return fmt.Errorf("call %q to %s cannot run in the background", m.GetCallId(), c.NodeID)
+	case strings.HasPrefix(c.NodeID, delegationPrefix) && b.GetDeadline() != nil && b.GetDeadline().AsTime().After(c.Deadline):
+		return fmt.Errorf("background delegation %q cannot extend its deadline", m.GetCallId())
 	case s.Created.GetParent() != nil:
 		return fmt.Errorf("call %q: a delegated session does not background calls", m.GetCallId())
 	case b.GetDeadline() == nil:

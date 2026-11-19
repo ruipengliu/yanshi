@@ -413,7 +413,8 @@ func derive(cfg Config, cases []*Case) (*agentdef.Registry, map[string]string, e
 		}
 		for _, a := range c.Setup.Agents {
 			defs = append(defs, &agentdef.Def{Name: a.Name, Version: "eval", Description: a.Description, Instructions: a.Instructions,
-				Model: d.Model, Capabilities: a.Capabilities, MaxTurns: base.MaxTurns, Context: base.Context})
+				Model: d.Model, Capabilities: a.Capabilities, MaxTurns: base.MaxTurns, Context: base.Context,
+				Delegation: agentdef.DelegationConfig{BackgroundAfter: a.BackgroundAfter}})
 		}
 	}
 	reg, err := agentdef.NewRegistry(defs...)
@@ -895,6 +896,12 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 	}
 	if turn.AwaitBackground {
 		input = "（用户没有输入：设备上线后，之前转入后台的调用的结果由平台送达）"
+		for _, e := range events {
+			if r := session.BackgroundInput(e.GetRunRequested().GetInput()); r != nil && strings.HasPrefix(r.GetCapability(), "agent__") {
+				input = "（用户没有输入：之前转入后台的委托完成了，它的结果由平台送达）"
+				break
+			}
+		}
 	}
 	if turn.AdvanceToNextSchedule {
 		for _, e := range events {

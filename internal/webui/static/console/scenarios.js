@@ -23,6 +23,7 @@ import {
  *   businessLine 业务线（-auth none 时自报；jwt 时以令牌为准，可为空）
  *   agent        使用脚本化模型的 Agent，默认 console
  *   helper       委托场景的目标 Agent（脚本化模型），默认 console-helper
+ *   slowHelper   后台委托场景的目标 Agent（同上，几秒后转入后台，ADR-0058），默认 console-slowhelper
  *   users        [{endUser, token}, {endUser, token}]：EndUser A 与 B（B 只用于隔离检查）
  */
 export class Context {
@@ -816,6 +817,47 @@ export const SCENARIOS = [
       const end = await c.runEnd(v, r.runId, 30_000);
       c.check(end.kind === "run_completed" && v.reply(r.runId).includes("上海"), "回答经子 Run 写回，父 Run 完成");
       c.check(v.pendingWithDelegations(childView).questions.length === 0, "提问随之收起");
+      return { sessionId: sid };
+    },
+  },
+  {
+    id: "delegation-background",
+    title: "委托转入后台",
+    description:
+      "子 Run 等用户回答超过 background_after：委托转入后台（ADR-0058），父 Run 拿到\"仍在进行\"的结果并完成；子 Agent 的提问" +
+      "仍在父 Session 的界面上待回答，回答后子 Run 的回复作为平台的消息开启新的一轮。",
+    async run(c) {
+      const web = await c.device("web", { preset: "web" });
+      const sid = await c.newSession(web);
+      const v = c.view(web, sid);
+      const childView = c.children(web);
+      const helper = c.env.slowHelper ?? "console-slowhelper";
+      const r = await web.submit(sid, `call agent__${helper} {"task":"ask 去哪个城市？| 北京 | 上海"}`);
+      const d = await v.waitFor("delegation", () => v.delegations()[0]);
+      const cv = childView(d.childSessionId);
+      const end = await c.runEnd(v, r.runId, 30_000);
+      const bg = v.payloads("tool_result").find((p) => p.call_id === d.callId && p.backgrounded);
+      c.check(end.kind === "run_completed" && bg?.backgrounded?.node_id === `@agent/${d.childSessionId}`, "委托转入后台，父 Run 照常完成");
+      const [q] = await c.until(
+        "child question",
+        () => {
+          const { questions } = v.pendingWithDelegations(childView);
+          return questions.length ? questions : null;
+        },
+        [v, cv],
+      );
+      c.check(q.sessionId === d.childSessionId && q.agent === helper, "父 Run 结束后，子 Agent 的提问仍在父 Session 的界面上");
+      await web.answer(q.sessionId, q.callId, { selected: ["2"] });
+      c.step("回答发往子 Session：上海");
+      const late = await v.waitFor("background result", () =>
+        v.payloads("run_requested").find((p) => p.input?.[0]?.background_result?.call_id === d.callId),
+      );
+      const lateEnd = await c.runEnd(v, late.run_id, 30_000);
+      c.check(
+        lateEnd.kind === "run_completed" && v.reply(late.run_id).includes("[后台委托结果]") && v.reply(late.run_id).includes("上海"),
+        "子 Run 的回复作为后台结果开启新的一轮",
+      );
+      c.check(v.pendingWithDelegations(childView).questions.length === 0 && v.activeDelegations().length === 0, "委托了结，提问收起");
       return { sessionId: sid };
     },
   },

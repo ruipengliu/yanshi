@@ -13,6 +13,7 @@ const env = {
   businessLine: process.env.YANSHI_BUSINESS_LINE ?? "",
   agent: process.env.YANSHI_AGENT ?? "console",
   helper: process.env.YANSHI_HELPER ?? "console-helper",
+  slowHelper: process.env.YANSHI_SLOW_HELPER ?? "console-slowhelper",
   users: [
     { endUser: process.env.YANSHI_USER_A, token: process.env.YANSHI_TOKEN_A ?? "" },
     { endUser: process.env.YANSHI_USER_B, token: process.env.YANSHI_TOKEN_B ?? "" },

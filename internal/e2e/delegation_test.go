@@ -327,3 +327,65 @@ func TestInjectionCheckInShadowMode(t *testing.T) {
 	}
 	t.Fatal("no decision recorded for the delegated result")
 }
+
+// 委托转入后台（ADR-0058）：子 Run 在等用户回答，超过 background_after 后父 Run 拿到占位结果并结束；用户回答后，
+// 子 Run 的回复作为一条后台结果输入送达父 Session，开启新 Run 报告。
+func TestBackgroundDelegation(t *testing.T) {
+	e := setup(t)
+	sid := e.newSession()
+	e.do(http.MethodPost, "/v1/sessions/"+sid+"/inputs", map[string]string{"text": `call agent__slowhelper {"task":"ask 要继续吗？"}`}, nil)
+	v := e.until(sid, func(v sessionView) bool { st, _ := lastRun(v); return len(v.Runs) == 1 && st == "completed" })
+	var callID string
+	events := func() []*v1.Event {
+		var res struct {
+			Events []json.RawMessage `json:"events"`
+		}
+		e.do(http.MethodGet, "/v1/sessions/"+sid+"/events", nil, &res)
+		var out []*v1.Event
+		for _, raw := range res.Events {
+			ev := &v1.Event{}
+			if err := protojson.Unmarshal(raw, ev); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, ev)
+		}
+		return out
+	}
+	for _, ev := range events() {
+		if b := ev.GetToolResult().GetBackgrounded(); b != nil {
+			if !delegation.IsNode(b.GetNodeId()) {
+				t.Fatalf("backgrounded %+v", b)
+			}
+			callID = ev.GetToolResult().GetCallId()
+		}
+	}
+	if callID == "" {
+		t.Fatal("the delegation did not go to the background")
+	}
+	child, err := delegation.ChildSessionID(sid, callID, v.EndUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cv := e.until(child, func(v sessionView) bool {
+		return len(v.Runs) == 1 && v.Runs[0].Waiting != nil && v.Runs[0].Waiting.Kind == "question"
+	})
+	if code := e.do(http.MethodPost, "/v1/sessions/"+child+"/answers/"+cv.Runs[0].Waiting.CallID, map[string]string{"text": "继续"}, nil); code >= 300 {
+		t.Fatalf("answer: %d", code)
+	}
+	e.until(sid, func(v sessionView) bool { st, _ := lastRun(v); return len(v.Runs) == 2 && st == "completed" })
+	settled := 0
+	for _, ev := range events() {
+		if r := nodesdk.BackgroundResultOf(ev); r != nil {
+			settled++
+			if r.GetCallId() != callID || r.GetReason() != session.BackgroundReasonResult || r.GetIsError() {
+				t.Fatalf("background result %+v", r)
+			}
+		}
+	}
+	if settled != 1 {
+		t.Fatalf("%d background results", settled)
+	}
+	if reply := e.lastAssistantText(sid); !strings.Contains(reply, "[后台委托结果]") || !strings.Contains(reply, "继续") {
+		t.Fatalf("report %q", reply)
+	}
+}

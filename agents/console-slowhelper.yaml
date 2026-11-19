@@ -1,0 +1,13 @@
+# 调试控制台验证场景的后台委托目标（console.md §4，ADR-0058）：与 console-helper 相同，委托 3 秒后转入后台。
+name: console-slowhelper
+version: "1"
+description: 验证用的慢助手：复述交给它的任务，或执行其中的 call 命令；委托 3 秒后转入后台。
+model: script/any
+instructions: ""
+capabilities:
+  - ask_user
+  - show_card
+  - device:*
+max_turns: 20
+delegation:
+  background_after: 3s

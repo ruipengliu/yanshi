@@ -152,6 +152,37 @@ test("pending: the delegation's result or the end of its Run unsubscribes the ch
   c.stop();
 });
 
+test("pending: a background delegation stays followed until its result or cancellation arrives (ADR-0058)", async () => {
+  const { c, s, t } = await setup();
+  const top = new Log("top");
+  const child = new Log("c1");
+  const child2 = new Log("c2");
+  t.onEvent(top.calls("r1", ["d1", "agent__helper"], ["d2", "agent__helper"]));
+  t.onEvent(top.delegate("r1", "d1", "c1"));
+  t.onEvent(top.delegate("r1", "d2", "c2"));
+  for (const [callId, sid] of [
+    ["d1", "c1"],
+    ["d2", "c2"],
+  ]) {
+    t.onEvent(top.ev({ case: "toolResult", value: { runId: "r1", callId, backgrounded: { nodeId: `@agent/${sid}` } } }));
+  }
+  t.onEvent(top.completed("r1"));
+  push(s, child.calls("cr1", ["q1", "ask_user", ask("去哪？")]));
+  push(s, child.asked("cr1", "q1"));
+  push(s, child2.calls("cr2", ["q2", "ask_user", ask("几点？")]));
+  push(s, child2.asked("cr2", "q2"));
+  assert.equal(t.items.length, 2);
+  assert.deepEqual(subs(s), ["+c1@0", "+c2@0"]);
+
+  const input = [{ kind: { case: "backgroundResult" as const, value: { callId: "d1", capability: "agent__helper", reason: "result" } } }];
+  assert.equal(t.onEvent(top.ev({ case: "runRequested", value: { runId: "r2", input } })), true);
+  assert.deepEqual(subs(s), ["+c1@0", "+c2@0", "-c1"]);
+  assert.equal(t.onEvent(top.ev({ case: "backgroundCancelled", value: { callId: "d2", capability: "agent__helper" } })), true);
+  assert.deepEqual(subs(s), ["+c1@0", "+c2@0", "-c1", "-c2"]);
+  assert.deepEqual(t.items, []);
+  c.stop();
+});
+
 test("pending: approvals close on the decision, the call's result or the end of the Run", async () => {
   const { c, t } = await setup();
   const top = new Log("top");

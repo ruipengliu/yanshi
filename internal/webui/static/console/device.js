@@ -1173,11 +1173,19 @@ export class SessionView {
       }));
   }
 
-  /** 进行中的委托：该调用还没有结果、所属 Run 也没有结束。 */
+  /**
+   * 进行中的委托：该调用还没有结果、所属 Run 也没有结束；或已转入后台（ADR-0058）、尚未了结（后台结果、到期、取消），
+   * 这时父 Run 不再等它，子 Session 中的提问与审批仍待处理。
+   */
   activeDelegations() {
-    const resulted = new Set(this.payloads("tool_result").map((p) => p.call_id));
+    const results = this.payloads("tool_result");
+    const resulted = new Set(results.filter((p) => !p.backgrounded).map((p) => p.call_id));
+    const backgrounded = new Set(results.filter((p) => p.backgrounded).map((p) => p.call_id));
+    const open = new Set(this.backgroundCalls().map((b) => b.callId));
     const ended = this.endedRuns();
-    return this.delegations().filter((d) => !resulted.has(d.callId) && !ended.has(d.runId));
+    return this.delegations().filter((d) =>
+      backgrounded.has(d.callId) ? open.has(d.callId) : !resulted.has(d.callId) && !ended.has(d.runId),
+    );
   }
 
   /** 已收到的最后一个事件的 seq：重新订阅时从这里续传。 */

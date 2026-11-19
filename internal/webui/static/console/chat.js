@@ -433,13 +433,17 @@ export class ChatPanel {
             }
           }
           if (p.backgrounded) {
-            // 转入后台（ADR-0035）：模型拿到的是占位说明，Run 照常继续；设备上线后执行，结果另作一条消息送达。
+            // 转入后台（ADR-0035、ADR-0058）：模型拿到的是占位说明，Run 照常继续；设备上线后执行（或被委托的 Agent
+            // 做完），结果另作一条消息送达。
             const l = toolLabel(calls.get(p.call_id)?.capability ?? "");
+            const delegated = p.backgrounded.node_id?.startsWith("@agent/");
             turnFor(p.run_id, e).append(
               backgroundNote(
                 "📮",
                 "queued",
-                `设备 ${l.target || "?"} 离线，${l.name} 已转入后台：设备上线后执行，结果稍后送达`,
+                delegated
+                  ? `${l.name} 仍在进行，已转入后台：完成后结果稍后送达`
+                  : `设备 ${l.target || "?"} 离线，${l.name} 已转入后台：设备上线后执行，结果稍后送达`,
                 h("small", {}, " · 截止 ", clock(p.backgrounded.deadline)),
               ),
             );

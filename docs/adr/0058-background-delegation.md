@@ -13,7 +13,7 @@ ADR-0035 为离线设备解决过同一个问题：宽限期后写占位结果�
 ## 决定
 
 1. **只让父 Session 的委托调用转后台，子 Session 内的设备调用维持不变。** 去掉排除 (a)，保留 (b)：子 Session 的委托 Run 是产出回复的那个 Run，它的设备调用若转后台，子 Run 会以"已排队"结束，迟到的结果开启的新子 Run 没有父调用在等。子 Session 等离线设备，现在就是后台委托在等，对父方只是一次更长的委托。
-2. **按时间触发，默认 60 秒，按目标 AgentDef 配置。** 委托调用派发后，子 Run 超过目标 AgentDef 的 `delegation.background_after` 仍无结果时，Worker 写入带 `ToolResult.backgrounded` 的占位结果（"已交给 <agent>，结果稍后单独报告，不要重复委托"），父 Run 照常继续。评测中多数委托在 20–35 秒内完成，留在原 Run 中，模型不必分两轮回答；`0` 关闭（现行行为），负数非法。不让模型以参数决定：那是多一个模型判断，准确率要另做评测，也不随子 Run 的实际时长调整。
+2. **按时间触发，默认 60 秒，按目标 AgentDef 配置。** 委托调用派发后，子 Run 超过目标 AgentDef 的 `delegation.background_after` 仍无结果时，Worker 写入带 `ToolResult.backgrounded` 的占位结果（"已交给 <agent>，结果稍后单独报告，不要重复委托"），父 Run 照常继续。评测中多数委托在 20–35 秒内完成，留在原 Run 中，模型不必分两轮回答；不写取默认，负数关闭（父 Run 一直等到截止时间，即现行行为；与设备调用的宽限期相同的约定，`0` 在 YAML 中与"不写"无法区分）。不让模型以参数决定：那是多一个模型判断，准确率要另做评测，也不随子 Run 的实际时长调整。
 3. **结果作为输入送达，复用 `BackgroundResult`。** 子 Session 的委托 Run 结束时，`Delegator.Report` 看父 Session 的投影：调用仍在 Run 中等待，照旧直接写结果；已转后台、尚未了结，写一条唯一内容块是 `BackgroundResult` 的输入，并入活跃 Run 或开启新 Run（ADR-0035 第 3 条：不做准入、不在入口检查配额，Worker 调用模型前检查）。ADR-0055 第二期的交还工件走同一条路：先把副本复制进父 Session，`ArtifactCopied` 与这条输入在同一个决策中写入，文字改写为副本 ID，副本作为媒体块附上。来源推导与现行委托结果相同。
 4. **截止、取消与上限。**
    - **截止不延长**：仍是 `delegation.timeout`，从派发起算；ADR-0035 的 24 小时后台时限不适用于委托。到期时中断子 Run，写 `reason = timeout` 的 `BackgroundResult`。
