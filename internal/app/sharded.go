@@ -54,7 +54,7 @@ func Sharded(ctx context.Context, locator shard.Locator, parts map[int]Stores, o
 		if !ok || s.Log == nil || s.Queue == nil || s.Waking == nil || s.Outbox == nil || s.Deletions == nil {
 			return Stores{}, fmt.Errorf("app: shard %d is incomplete", id)
 		}
-		for _, component := range []any{s.Dir, s.Inbox, s.SandboxQueue, s.Ledger, s.Activity, s.ArtifactMeta, s.Index, s.JanitorQueue, s.Memories, s.Grants, s.Snapshots, s.Usage, s.Tiers, s.Presence, s.Push} {
+		for _, component := range []any{s.Dir, s.Inbox, s.SandboxQueue, s.Ledger, s.Activity, s.ArtifactMeta, s.Index, s.JanitorQueue, s.Memories, s.Grants, s.Snapshots, s.Usage, s.Tiers, s.Consents, s.Presence, s.Push} {
 			if component == nil {
 				return Stores{}, fmt.Errorf("app: shard %d has missing stores", id)
 			}
@@ -97,7 +97,7 @@ func Sharded(ctx context.Context, locator shard.Locator, parts map[int]Stores, o
 		Outbox:       routedOutbox{r}, Dir: routedDir{r}, Inbox: routedInbox{r}, Ledger: routedLedger{r},
 		Activity: routedActivity{r}, ArtifactMeta: routedArtifactMeta{r}, Index: routedIndex{r},
 		Deletions: routedDeletions{r}, Memories: routedMemories{r}, Grants: routedGrants{r},
-		Snapshots: routedSnapshots{r}, Usage: routedUsage{r}, Tiers: routedTiers{r},
+		Snapshots: routedSnapshots{r}, Usage: routedUsage{r}, Tiers: routedTiers{r}, Consents: routedConsents{r},
 		Presence: routedPresence{r}, Push: routedPush{r}, shards: r,
 	}, nil
 }

@@ -10,6 +10,7 @@ import (
 	"yanshi/internal/capability"
 	"yanshi/internal/card"
 	"yanshi/internal/clock"
+	"yanshi/internal/consent"
 	"yanshi/internal/decision"
 	"yanshi/internal/delegation"
 	"yanshi/internal/faults"
@@ -79,10 +80,14 @@ type Options struct {
 	Quotas         *usage.Quotas
 	// Pusher 非 nil 时装配提醒（notify.Notifier）。
 	Pusher notify.Pusher
-	// HealthAllowed 报告业务线是否已取得健康信息的同意（ADR-0022）。
+	// HealthAllowed 报告业务线是否开启了健康信息（配置 memory.health，表示业务线有取得单独同意的流程，ADR-0022）。
+	// 开启的业务线中，还须业务线为 EndUser 登记同意（Stores.Consents）才可用；nil 表示一律未开启。
 	HealthAllowed func(businessLine string) bool
-	Embedder      memory.Embedder
-	EmbedModel    string
+	// HealthEveryone 视开启健康信息的业务线中所有 EndUser 都已同意：-auth none 的开发模式与评测没有业务线服务端来登记
+	// （ADR-0022 修订第 4 条）。
+	HealthEveryone bool
+	Embedder       memory.Embedder
+	EmbedModel     string
 	// Live 是本进程的增量总线，LiveEndpoint 是供其他进程拉取增量的内部地址（ADR-0013）。
 	Live         live.Bus
 	LiveEndpoint string
@@ -136,6 +141,11 @@ func NewCore(stores Stores, opts Options) *Core {
 	if opts.Quotas != nil {
 		opts.Quotas.Tiers = tiers
 	}
+	// 健康信息的同意（ADR-0022 修订）：管理接口、Memory 闸门与注销共用缓存，撤回在本进程立即生效。
+	var consents consent.Store
+	if stores.Consents != nil {
+		consents = consent.NewCache(stores.Consents, opts.Clock)
+	}
 	c := &Core{Stores: stores, opts: opts}
 	c.Store = &session.Store{Log: stores.Log, Waking: stores.Waking, IDs: opts.IDs("id"), Clock: opts.Clock,
 		Snapshots: stores.Snapshots, Deletions: stores.Deletions, Outbox: stores.Outbox}
@@ -153,7 +163,10 @@ func NewCore(stores Stores, opts Options) *Core {
 	}
 	// Memory（docs/design/m4-memory-grant.md）：Agent 通过能力读写，Run 开始时召回。
 	c.Memory = &memory.Service{Store: stores.Memories, Grants: stores.Grants, Deletions: stores.Deletions, Clock: opts.Clock,
-		IDs: opts.IDs("mem"), HealthAllowed: opts.HealthAllowed, Embedder: opts.Embedder, EmbedModel: opts.EmbedModel}
+		IDs: opts.IDs("mem"), Embedder: opts.Embedder, EmbedModel: opts.EmbedModel}
+	if opts.HealthAllowed != nil {
+		c.Memory.Health = c.healthAllowed
+	}
 	local := opts.Local
 	if local == nil {
 		local = []capability.Capability{capability.ClockNow(opts.Clock), card.New(c.Artifacts.Meta)}
@@ -180,9 +193,10 @@ func NewCore(stores Stores, opts Options) *Core {
 		moderator = faults.Moderator{Next: moderator, Injector: opts.Injector}
 	}
 	c.Service = &service.Service{Store: c.Store, Agents: opts.Agents, Nodes: c.Dispatch, Index: stores.Index,
-		Deletions: stores.Deletions, Janitor: stores.JanitorQueue, Quotas: opts.Quotas, Tiers: tiers, Moderator: moderator, Artifacts: c.Artifacts}
+		Deletions: stores.Deletions, Janitor: stores.JanitorQueue, Quotas: opts.Quotas, Tiers: tiers, Moderator: moderator, Artifacts: c.Artifacts,
+		Consents: consents, HealthEnabled: opts.HealthAllowed}
 	if tiers != nil {
-		c.EndUserData = []lifecycle.EndUserHolder{{Name: "tiers", Delete: func(ctx context.Context, bl, eu string) error {
+		c.EndUserData = append(c.EndUserData, lifecycle.EndUserHolder{Name: "tiers", Delete: func(ctx context.Context, bl, eu string) error {
 			if c.Service.Tiers == nil {
 				return nil
 			}
@@ -191,7 +205,19 @@ func NewCore(stores Stores, opts Options) *Core {
 			if cache, ok := c.Service.Tiers.(interface{ Invalidate(string, string) }); ok {
 				cache.Invalidate(bl, eu)
 			}
-		}}}
+		}})
+	}
+	if consents != nil {
+		c.EndUserData = append(c.EndUserData, lifecycle.EndUserHolder{Name: "consents", Delete: func(ctx context.Context, bl, eu string) error {
+			if c.Service.Consents == nil {
+				return nil
+			}
+			return c.Service.Consents.DeleteEndUser(ctx, bl, eu)
+		}, Invalidate: func(bl, eu string) {
+			if cache, ok := c.Service.Consents.(interface{ Invalidate(string, string) }); ok {
+				cache.Invalidate(bl, eu)
+			}
+		}})
 	}
 	if opts.Oneshots != nil {
 		maxCalls, wait, deadline := opts.OneshotMax, opts.OneshotWait, opts.OneshotDeadline
@@ -215,6 +241,22 @@ func NewCore(stores Stores, opts Options) *Core {
 	c.Hub.Results = c.Service
 	c.Hub.Queue = stores.Queue
 	return c
+}
+
+// healthAllowed 是 Memory 的健康信息闸门（ADR-0022 修订）：业务线开启，且该 EndUser 已同意（或开发模式与评测视为都已同意）。
+// 同意记录在调用时经 Service.Consents（共享缓存）读取，测试替换字段后同样生效。
+func (c *Core) healthAllowed(ctx context.Context, businessLine, endUser string) (bool, error) {
+	if c.opts.HealthAllowed == nil || !c.opts.HealthAllowed(businessLine) {
+		return false, nil
+	}
+	if c.opts.HealthEveryone {
+		return true, nil
+	}
+	if c.Service.Consents == nil || endUser == "" {
+		return false, nil
+	}
+	at, err := c.Service.Consents.Get(ctx, businessLine, endUser, consent.Health)
+	return !at.IsZero(), err
 }
 
 // WorkerConfig 返回第 id 个 Worker 的配置：pool 与 idle 是按 Worker 不同的两项（交互池与后台池各有一个空闲门控，

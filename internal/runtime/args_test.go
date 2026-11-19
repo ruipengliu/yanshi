@@ -145,8 +145,8 @@ func TestMemoryPrecheckBeforeApproval(t *testing.T) {
 			ctx := context.Background()
 			clk := clock.NewFake(time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC))
 			mem := &memory.Service{Store: memory.NewMemStore(), Grants: memory.NewMemGrants(), Clock: clk,
-				IDs: ids.Sequential("mem"), HealthAllowed: func(bl string) bool { return bl == "bl" && tc.healthAllowed }}
-			checked := mem.Check(memory.SaveRequest{BusinessLine: "bl", EndUser: "u", SessionID: "ses_v1_000_000_s1", CallID: "c1",
+				IDs: ids.Sequential("mem"), Health: func(_ context.Context, bl, _ string) (bool, error) { return bl == "bl" && tc.healthAllowed, nil }}
+			checked := mem.Check(ctx, memory.SaveRequest{BusinessLine: "bl", EndUser: "u", SessionID: "ses_v1_000_000_s1", CallID: "c1",
 				Category: tc.category, Content: tc.content})
 			if tc.wantError == "" {
 				if checked != nil {

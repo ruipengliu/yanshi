@@ -75,9 +75,9 @@
 
 1. 先写按业务线隔离、按 EndUser 分片的删除屏障，再通过 Session 索引找到全部 Session，逐个写入 Session 删除记录；
 2. 删除该 EndUser 的 Node 登记；业务线须先让该用户的令牌失效，屏障用于拦截已在途的写入与重连登记；
-3. 删除该 EndUser 的 Memory 与 Grant（M4）、推送设备登记（[多端双工通道](./m3-duplex-channel.md) §9），并匿名化用量（ADR-0019）；删除档位分配 `end_user_tiers`（[配额与用量](./m4-quota-usage.md)）。档位由 `Service.DeleteEndUser` 固定清理，清理失败不封口，不依赖调用方传入 remover。
+3. 删除该 EndUser 的 Memory 与 Grant（M4）、推送设备登记（[多端双工通道](./m3-duplex-channel.md) §9），并匿名化用量（ADR-0019）；删除档位分配 `end_user_tiers`（[配额与用量](./m4-quota-usage.md)）与单独同意 `end_user_consents`（[M4 Memory](./m4-memory-grant.md)，ADR-0022 修订）。档位与同意由 `Service.DeleteEndUser` 固定清理，清理失败不封口，不依赖调用方传入 remover。
 
-所有按 EndUser 写入的入口先写、后查屏障，查到后撤回本次写入并返回不存在（计量匿名化）。新 Session 写入删除记录，交给 Janitor 清理。屏障在全部清除完成后再保留一个宽限期，默认 24 小时，可经 `app.Options.EndUserGrace` 配置；Janitor 在删除每条到期屏障前，经 `PruneEndUsers` 的清理回调再次清除档位分配（`Core.EndUserData`），兜住宽限期内落盘、复查前崩溃的写入；清除失败保留屏障，下一轮重试。清理与屏障删除按单个 EndUser 串行，PG 使用同一事务。屏障移除后，同一 EndUser ID 可以重新使用。删除失败或未完成时不开始倒计时，重复注销复用原屏障与删除请求。
+所有按 EndUser 写入的入口先写、后查屏障，查到后撤回本次写入并返回不存在（计量匿名化）。新 Session 写入删除记录，交给 Janitor 清理。屏障在全部清除完成后再保留一个宽限期，默认 24 小时，可经 `app.Options.EndUserGrace` 配置；Janitor 在删除每条到期屏障前，经 `PruneEndUsers` 的清理回调再次清除档位分配与单独同意（`Core.EndUserData`），兜住宽限期内落盘、复查前崩溃的写入；清除失败保留屏障，下一轮重试。清理与屏障删除按单个 EndUser 串行，PG 使用同一事务。屏障移除后，同一 EndUser ID 可以重新使用。删除失败或未完成时不开始倒计时，重复注销复用原屏障与删除请求。
 
 ### 3.5 设备端数据
 

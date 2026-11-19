@@ -7,7 +7,7 @@ func TestTiersWithFaults(t *testing.T) {
 	total := parallelSeeds(t, seedList(), func(t *testing.T, s uint64) Stats {
 		return run(t, s, Options{Faults: true, Attested: true, Tiers: true}).Stats
 	})
-	requireCoverage(t, total, "TiersSet", "TiersWithdrawn", "TierWriterCrashes", "TierCrashRecoveries", "AccountDeletions")
+	requireCoverage(t, total, "TiersSet", "TiersWithdrawn", "TierWriterCrashes", "TierCrashRecoveries", "ConsentsSet", "ConsentsWithdrawn", "AccountDeletions")
 }
 
 func TestTierRandomStreamIsIndependent(t *testing.T) {

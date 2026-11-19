@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -39,13 +40,17 @@ type Service struct {
 	MaxPerUser int
 	// Location 是解读有效期与注明记录日期的时区，默认 Asia/Shanghai。
 	Location *time.Location
-	// HealthAllowed 报告业务线是否已取得用户对健康信息的单独同意（业务线配置 memory.health）；
-	// nil 表示所有业务线都未开启。未开启的业务线不能写入 health 类别，也不召回、不检索该类别（ADR-0022）。
-	HealthAllowed func(businessLine string) bool
+	// Health 报告 EndUser 在业务线中的健康信息是否可用：业务线配置了 memory.health，且业务线已为该 EndUser 登记单独同意
+	// （ADR-0022 修订，由 app.NewCore 组合）；nil 表示一律不可用。不可用时不能写入 health 类别，也不召回、不检索该类别，
+	// 其他业务线经 Grant 也读不到。
+	Health func(ctx context.Context, businessLine, endUser string) (bool, error)
 }
 
-func (s *Service) healthAllowed(businessLine string) bool {
-	return s.HealthAllowed != nil && s.HealthAllowed(businessLine)
+func (s *Service) healthAllowed(ctx context.Context, businessLine, endUser string) (bool, error) {
+	if s.Health == nil {
+		return false, nil
+	}
+	return s.Health(ctx, businessLine, endUser)
 }
 
 // withoutHealth 返回除 health 外的全部类别。
@@ -152,14 +157,18 @@ func (s *Service) status(m *Memory) string {
 // Date 是 t 在当地的日期（YYYY-MM-DD），召回与检索的结果据此注明记录日期。
 func (s *Service) Date(t time.Time) string { return t.In(s.location()).Format(time.DateOnly) }
 
-// Check 做写入之前不依赖存储、没有副作用的检查（类别、长度、敏感信息、健康许可、有效期），Save 的第一步就是它。
-// Worker 在审批与写入闸门之前调用它（capability.Checker）：注定被拒绝的写入不去打扰用户。
-func (s *Service) Check(r SaveRequest) error {
-	_, _, err := s.check(r)
+// Check 做写入之前没有副作用的检查（类别、长度、敏感信息、健康许可、有效期），Save 的第一步就是它。除健康许可读
+// 同意记录（有缓存）外不依赖存储。Worker 在审批与写入闸门之前调用它（capability.Checker）：注定被拒绝的写入不去打扰用户。
+// 读不到同意记录时不下结论（返回 nil）：Save 会再查一次，读失败时写入失败，不能把一次读失败当作拒绝交给模型。
+func (s *Service) Check(ctx context.Context, r SaveRequest) error {
+	_, _, err := s.check(ctx, r)
+	if err != nil && !errors.Is(err, ErrRejected) {
+		return nil
+	}
 	return err
 }
 
-func (s *Service) check(r SaveRequest) (content string, until time.Time, err error) {
+func (s *Service) check(ctx context.Context, r SaveRequest) (content string, until time.Time, err error) {
 	content = strings.TrimSpace(r.Content)
 	if r.ValidUntil != "" {
 		d, err := time.ParseInLocation(time.DateOnly, r.ValidUntil, s.location())
@@ -182,7 +191,18 @@ func (s *Service) check(r SaveRequest) (content string, until time.Time, err err
 		return "", time.Time{}, fmt.Errorf("%w: content longer than %d characters; store one short statement", ErrRejected, MaxContentRunes)
 	case sensitive(content):
 		return "", time.Time{}, fmt.Errorf("%w: sensitive personal information (ID or bank card numbers) must not be stored", ErrRejected)
-	case (r.Category == Health || term != "") && !s.healthAllowed(r.BusinessLine):
+	}
+	if r.Category != Health && term == "" {
+		return content, until, nil
+	}
+	// 只有健康信息才读同意记录：其他写入不因同意存储而变慢或失败。
+	allowed, err := s.healthAllowed(ctx, r.BusinessLine, r.EndUser)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	switch {
+	case !allowed:
+		// 业务线未开启与该 EndUser 未同意（或已撤回）用同一个原因：给模型看的文本不区分两者（ADR-0022 修订）。
 		what := "health information"
 		if term != "" {
 			what = fmt.Sprintf("%q is health information (about anyone, including family members), which", term)
@@ -210,7 +230,7 @@ func (s *Service) Save(ctx context.Context, r SaveRequest) (saved *Memory, err e
 			saved, err = nil, errors.Join(err, checkErr)
 		}
 	}()
-	content, until, err := s.check(r)
+	content, until, err := s.check(ctx, r)
 	if err != nil {
 		return nil, err
 	}
@@ -335,7 +355,11 @@ func literals(s string) []string {
 // 一位号码的是更新，不是重复。
 func (s *Service) duplicate(ctx context.Context, r SaveRequest, content string, old *Memory) (*Memory, error) {
 	var cats []Category
-	if !s.healthAllowed(r.BusinessLine) {
+	allowed, err := s.healthAllowed(ctx, r.BusinessLine, r.EndUser)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
 		cats = withoutHealth(nil)
 	}
 	all, err := s.Store.List(ctx, r.EndUser, []Scope{{BusinessLine: r.BusinessLine, Categories: cats}}, s.Clock.Now(), s.max())
@@ -401,7 +425,11 @@ func (s *Service) Forget(ctx context.Context, businessLine, endUser, id string) 
 // 授权在每次检索时实时读取，撤销立即生效（ADR-0016）。
 func (s *Service) Scopes(ctx context.Context, endUser, reader string, t time.Time) ([]Scope, error) {
 	scopes := []Scope{{BusinessLine: reader}}
-	if !s.healthAllowed(reader) {
+	allowed, err := s.healthAllowed(ctx, reader, endUser)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
 		scopes[0].Categories = withoutHealth(nil)
 	}
 	if s.Grants == nil {
@@ -429,9 +457,15 @@ func (s *Service) Scopes(ctx context.Context, endUser, reader string, t time.Tim
 	slices.Sort(order)
 	for _, from := range order {
 		cats := byFrom[from]
-		// 健康信息只在写入它的业务线已取得单独同意时才可被其他业务线读取（即使用户授权了该类别）。
-		if !s.healthAllowed(from) {
-			cats = withoutHealth(cats)
+		// 健康信息只在写入它的业务线已为该 EndUser 取得单独同意时才可被其他业务线读取（即使用户授权了该类别）。
+		if slices.Contains(cats, Health) {
+			allowed, err := s.healthAllowed(ctx, from, endUser)
+			if err != nil {
+				return nil, err
+			}
+			if !allowed {
+				cats = withoutHealth(cats)
+			}
 		}
 		slices.Sort(cats)
 		if len(cats) > 0 {
@@ -491,6 +525,39 @@ func (s *Service) search(ctx context.Context, endUser, reader, text string, limi
 		hits[i].Recorded = s.Date(hits[i].CreatedAt)
 	}
 	return hits, nil
+}
+
+// ForgetCategory 删除 EndUser 在业务线中某一类别的全部 Memory（含失效与过期的历史），以及被它们取代的其他类别的条目，
+// 返回删除的条数。撤回健康信息的同意时由业务线选择清除（ADR-0022 修订）：同一件健康信息之前以别的类别记下、后来
+// 改写为 health 时，旧的那条被 health 的这条取代，也是健康信息，一并删除。
+func (s *Service) ForgetCategory(ctx context.Context, businessLine, endUser string, category Category) (int, error) {
+	if !ValidCategory(category) {
+		return 0, fmt.Errorf("%w: unknown category %q", ErrRejected, category)
+	}
+	all, err := s.Store.List(ctx, endUser, []Scope{{BusinessLine: businessLine}}, Everything, 1<<20)
+	if err != nil {
+		return 0, err
+	}
+	doomed := map[string]bool{}
+	for _, m := range all {
+		if m.Category == category && m.BusinessLine == businessLine && m.EndUser == endUser {
+			doomed[m.ID] = true
+		}
+	}
+	for grew := true; grew; {
+		grew = false
+		for _, m := range all {
+			if !doomed[m.ID] && m.SupersededBy != "" && doomed[m.SupersededBy] && m.BusinessLine == businessLine && m.EndUser == endUser {
+				doomed[m.ID], grew = true, true
+			}
+		}
+	}
+	for _, id := range slices.Sorted(maps.Keys(doomed)) {
+		if err := s.Store.Delete(ctx, endUser, id); err != nil {
+			return 0, err
+		}
+	}
+	return len(doomed), nil
 }
 
 // ForgetSession 删除由某个 Session 写入的全部 Memory：发现记忆投毒后按来源撤销（ADR-0023）。

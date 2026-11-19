@@ -7,6 +7,7 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/artifact"
+	"yanshi/internal/consent"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/memory"
@@ -745,6 +746,50 @@ func (x routedTiers) Delete(ctx context.Context, businessLine, endUser string) e
 		return err
 	}
 	return s.Tiers.Delete(ctx, businessLine, endUser)
+}
+
+type routedConsents struct{ r *storeRouter }
+
+var _ consent.Store = routedConsents{}
+
+func (x routedConsents) Get(ctx context.Context, businessLine, endUser string, kind consent.Kind) (time.Time, error) {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
+	s, err := x.r.pick(ctx, shard.EndUser, endUser)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return s.Consents.Get(ctx, businessLine, endUser, kind)
+}
+
+func (x routedConsents) Put(ctx context.Context, businessLine, endUser string, kind consent.Kind, at time.Time) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
+	s, err := x.r.pick(ctx, shard.EndUser, endUser)
+	if err != nil {
+		return err
+	}
+	return s.Consents.Put(ctx, businessLine, endUser, kind, at)
+}
+
+func (x routedConsents) Delete(ctx context.Context, businessLine, endUser string, kind consent.Kind) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
+	s, err := x.r.pick(ctx, shard.EndUser, endUser)
+	if err != nil {
+		return err
+	}
+	return s.Consents.Delete(ctx, businessLine, endUser, kind)
+}
+
+func (x routedConsents) DeleteEndUser(ctx context.Context, businessLine, endUser string) error {
+	ctx, cancel := x.r.attempt(ctx)
+	defer cancel()
+	s, err := x.r.pick(ctx, shard.EndUser, endUser)
+	if err != nil {
+		return err
+	}
+	return s.Consents.DeleteEndUser(ctx, businessLine, endUser)
 }
 
 type routedPresence struct{ r *storeRouter }

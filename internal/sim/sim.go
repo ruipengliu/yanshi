@@ -28,6 +28,7 @@ import (
 	"yanshi/internal/capability"
 	"yanshi/internal/card"
 	"yanshi/internal/clock"
+	"yanshi/internal/consent"
 	"yanshi/internal/delegation"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/ids"
@@ -139,6 +140,8 @@ type Stats struct {
 	TiersWithdrawn          int
 	TierWriterCrashes       int
 	TierCrashRecoveries     int
+	// 健康信息的单独同意（ADR-0022 修订）随档位场景开启：登记次数，注销交错中登记被屏障撤回的次数。
+	ConsentsSet, ConsentsWithdrawn int
 	// 灰度：撤回版本后在下一个 Run 切换到稳定版本的次数。
 	AgentSwitches int
 	// 内容安全：被拒绝的输入、被拦截的输出、提供商错误；输出审核不可用时挂起等待的次数，以及等待之后完成的 Run
@@ -508,6 +511,12 @@ func New(opts Options) (*World, error) {
 	wrapped.Memories = barrierMemory{Store: stores.Memories, w: w}
 	wrapped.Grants = barrierGrants{Grants: stores.Grants, w: w}
 	wrapped.Tiers = barrierTiers{TierStore: stores.Tiers, w: w}
+	wrapped.Consents = barrierConsents{Store: stores.Consents, w: w}
+	// 档位场景同时开启业务线的健康信息，以登记 EndUser 的同意；健康信息的写入仍须同意，预检查不变量照常成立。
+	var healthAllowed func(string) bool
+	if opts.Tiers {
+		healthAllowed = func(bl string) bool { return bl == "bl" }
+	}
 	w.core = app.NewCore(wrapped, app.Options{
 		Clock: w.clock, IDs: ids.Sequential, Agents: agents, Model: gw, Blobs: artifact.NewMemBlobs(), NodeAuth: node.InsecureDevAuth{},
 		Local:        []capability.Capability{w.echoCap(), w.sendCap(), simCardCap()},
@@ -515,7 +524,7 @@ func New(opts Options) (*World, error) {
 		SandboxTools: true, DefaultTimeout: deviceTimeout, NodeCacheTTL: 5 * time.Second,
 		BackgroundGrace: bgGrace, BackgroundTimeout: bgTimeout,
 		Moderator: simModerator{w}, InjectionCheck: simDecider{w}, Meter: w.meter, Quotas: w.quotas, Pusher: simPusher{w},
-		LeaseTTL: leaseTTL,
+		LeaseTTL: leaseTTL, HealthAllowed: healthAllowed,
 	})
 	w.store, w.hub, w.catalog, w.memories, w.artifacts = w.core.Store, w.core.Hub, w.core.Catalog, w.core.Memory, w.core.Artifacts
 	w.delegator, w.dispatch, w.svc, w.notifier = w.core.Delegator, w.core.Dispatch, w.core.Service, w.core.Notifier
@@ -550,6 +559,10 @@ func New(opts Options) (*World, error) {
 				return nil, err
 			}
 			w.Stats.TiersSet++
+			if _, err := w.svc.PutConsent(context.Background(), "bl", w.users[i], consent.Health); err != nil {
+				return nil, err
+			}
+			w.Stats.ConsentsSet++
 		}
 		w.sessions = append(w.sessions, id)
 		n := w.newNode(i)

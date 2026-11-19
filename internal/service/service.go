@@ -18,6 +18,7 @@ import (
 	"yanshi/internal/agentdef"
 	"yanshi/internal/artifact"
 	"yanshi/internal/askuser"
+	"yanshi/internal/consent"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/ids"
 	"yanshi/internal/lifecycle"
@@ -56,6 +57,10 @@ type Service struct {
 	Quotas *usage.Quotas
 	// Tiers 与配额共用缓存，注销的固定清理路径不依赖传输层传入 remover。
 	Tiers usage.TierStore
+	// Consents 是 EndUser 的单独同意（ADR-0022 修订），与 Memory 的健康信息闸门共用缓存，撤回在本进程立即生效；
+	// 注销的固定清理路径同样删除它。HealthEnabled 报告业务线是否开启了健康信息（配置 memory.health）。
+	Consents      consent.Store
+	HealthEnabled func(businessLine string) bool
 	// Admission 非空时，交互工作积压过高的业务线暂不接受新 Run（ErrOverloaded）。
 	Admission Admission
 	// RecentDevice 非空时，没有注明来源设备的输入注明 EndUser 最近在前台使用的设备（设备歧义消解，
@@ -753,6 +758,11 @@ func (s *Service) DeleteEndUser(ctx context.Context, businessLine, endUser strin
 	}
 	if s.Tiers != nil {
 		if err := s.Tiers.Delete(ctx, businessLine, endUser); err != nil {
+			return "", err
+		}
+	}
+	if s.Consents != nil {
+		if err := s.Consents.DeleteEndUser(ctx, businessLine, endUser); err != nil {
 			return "", err
 		}
 	}
