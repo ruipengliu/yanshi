@@ -6,7 +6,7 @@
 
 - **先看本表，再读正文。** "状态"一列说明正文是否仍有效；被取代或已迁出的 ADR 是历史记录，现行规则在"取代关系"一列指向的 ADR 中。
 - **"实施状态"** 依据 ADR 自述与代码：已实现、部分实现、未实现，或"未核对"（只读过决定，没有核对代码）。
-- **"分级"** 按推翻代价 × 被依赖程度：一级是推翻即重写，二级是结构性约束，三级是局部决定。一、二级 ADR 都有"重审条件"小节。
+- **"分级"** 按推翻代价 × 被依赖程度：一级是推翻即重写，二级是结构性约束，三级是局部决定。全部现行 ADR 都有"重审条件"小节（三级的于 2026-11-19 补齐）。
 - **"方向，待定稿"** 是已批准方向、尚未实现的 ADR：实施前先定稿其中"待回答的问题"；实现之前照旧按它要修订的 ADR 执行。
 - **"单线"** 标为"是"的，是按通用设计、需求与使用却都来自 xinli 的机制，第二条业务线接入时复核（ADR-0043 的修订）。
 
@@ -19,7 +19,7 @@
 - **部分失效**：在页首（标题之下）逐条说明哪些有效、哪些已修订、哪些失效，以及现行规则在哪里。不能只在文末补记，也不能只写"见某某 ADR"。
 - **正文与现行规则矛盾时**：用整合后的新 ADR 取代，并附逐条对照表（例如 ADR-0052）。
 - **取代之前**：先把被取代 ADR 中仍然有效的保证迁入现行决定（例如 ADR-0040 → ADR-0045）。
-- **重审条件**：一、二级 ADR 必须有，写成可观测的触发条件，任一出现即重新评估。
+- **重审条件**：现行 ADR 都必须有（三级的于 2026-11-19 补齐），写成可观测的触发条件，任一出现即重新评估。
 
 ## 内核 ADR
 
@@ -33,18 +33,18 @@
 | [0006](0006-protobuf-as-contract-idl.md) | Protobuf 作跨端与存储契约 | accepted | 已实现 | 一 | 新端无代码生成；破坏性变更反复出现 | — | |
 | [0007](0007-postgresql-as-storage-baseline.md) | PostgreSQL 作存储基线 | 已修订（2026-11-14） | 已实现 | 一 | 单分片写入接近压测上限 70%；停写超预算 | — | |
 | [0008](0008-sandbox-trust-boundary.md) | 沙箱内无受信组件 | accepted | 已实现 | 一 | 命令通道成瓶颈；隔离技术不支持该结构 | — | |
-| [0009](0009-session-scoped-sandbox-workspace.md) | 每个 Session 一个沙箱工作区 | accepted | 已实现 | 三 | — | — | |
+| [0009](0009-session-scoped-sandbox-workspace.md) | 每个 Session 一个沙箱工作区 | accepted | 已实现 | 三 | 工作区间需共享大文件、工件交接不够；隔离选型无法保留工作区 | — | |
 | [0010](0010-k8s-gvisor-for-production-sandboxes.md) | 生产沙箱用 K8s + gVisor | 被取代 | 未实现 | — | — | 被 0053 取代 | |
-| [0011](0011-s3-api-as-artifact-storage-contract.md) | S3 API 作工件存储契约 | accepted | 已实现 | 三 | — | — | |
-| [0012](0012-context-compaction-as-event.md) | 上下文压缩记为 Event | accepted | 已实现 | 三 | — | — | |
+| [0011](0011-s3-api-as-artifact-storage-contract.md) | S3 API 作工件存储契约 | accepted | 已实现 | 三 | 私有化客户无 S3 兼容存储；需预签名直传 | — | |
+| [0012](0012-context-compaction-as-event.md) | 上下文压缩记为 Event | accepted | 已实现 | 三 | 压缩相关评测回归；需多级或选择性压缩 | — | |
 | [0013](0013-live-deltas-pulled-from-executing-process.md) | 实时增量从执行进程拉取 | accepted（现行技术选择） | 已实现 | 二 | 进程间无法直连；连接数超线性 | — | |
 | [0014](0014-business-line-signed-tokens.md) | 业务线签发令牌 | accepted | 已实现 | 二 | 客户要求统一身份；需要即时吊销 | — | |
 | [0015](0015-session-deletion-by-physical-removal.md) | Session 物理删除 | 已修订（ADR-0050） | 已实现 | 一 | 备份须即时失效；Session 内部分删除的法定要求 | — | |
 | [0016](0016-memory-recall-as-event-and-category-grants.md) | 召回记为 Event，按类别授权 | 已修订（ADR-0022） | 已实现 | 二 | 新分类；以 EndUser 为单位的授权 | — | |
-| [0017](0017-mcp-servers-as-capability-providers.md) | MCP Server 作能力提供者 | accepted | 已实现 | 三 | — | — | |
-| [0018](0018-evaluation-with-fixed-suites-and-cross-family-judge.md) | 固定用例集与跨系列评分 | 已修订（2026-10-11） | 已实现 | 三 | — | — | |
+| [0017](0017-mcp-servers-as-capability-providers.md) | MCP Server 作能力提供者 | accepted | 已实现 | 三 | 三方 MCP 需按用户 OAuth 且业务线无法代理；需云端 stdio | — | |
+| [0018](0018-evaluation-with-fixed-suites-and-cross-family-judge.md) | 固定用例集与跨系列评分 | 已修订（2026-10-11） | 已实现 | 三 | 评分模型或与人工一致性漂移；耗时跟不上改动 | — | |
 | [0019](0019-usage-metered-outside-the-log-with-soft-quotas.md) | 用量在日志之外计量，软配额 | accepted | 已实现 | 二 | 对账差额超容忍度；硬配额需求 | — | |
-| [0020](0020-agent-rollout-by-end-user-with-switch-events.md) | AgentDef 按 EndUser 灰度 | accepted | 已实现 | 三 | — | — | |
+| [0020](0020-agent-rollout-by-end-user-with-switch-events.md) | AgentDef 按 EndUser 灰度 | accepted | 已实现 | 三 | 需多进程即时一致；需按 EndUser 外的维度分流；需业务方自助发布 | — | |
 | [0021](0021-moderation-before-the-log-fail-closed.md) | 内容安全在写日志前，失败即拒 | 已修订（ADR-0050、ADR-0054） | 部分实现（提供商为模拟） | 二 | 审核故障超过等待上限；流式草稿的监管要求 | — | |
 | [0022](0022-health-memories-behind-business-line-consent.md) | 健康类 Memory 须单独同意 | 已修订（2026-11-19：按 EndUser 选择加入） | 已实现 | 二 | 健康之外的敏感类别；评测显示写入指令不可靠 | — | |
 | [0023](0023-memory-write-gate.md) | Memory 写入闸门 | 已修订（2026-11-14；缺陷 2026-11-15 已修复） | 已实现 | 二 | 多语言业务线；误报漏报越过阈值 | — | |
@@ -54,15 +54,15 @@
 | [0027](0027-call-relayed-through-the-gateway.md) | Call 经网关中转，语音模型只经 `run_task` | 已修订（2026-11-14） | 已实现 | 二 | 同 0005；厂商提供设备短期凭证 | — | |
 | [0028](0028-shard-keys.md) | 按 Session 或 EndUser 分片 | 已修订（2026-11-14） | 已实现 | 一 | 跨 EndUser 原子需求；停写超预算；热点槽位 | — | |
 | [0029](0029-work-classes.md) | 工作队列按类别认领 | 已修订（2026-10-11） | 已实现 | 二 | 需动态调度；长任务误判；准入拒绝率 | — | |
-| [0030](0030-decisions-as-events.md) | 判断记为 Event，只收紧不放宽 | accepted | 部分实现 | 三 | — | — | |
+| [0030](0030-decisions-as-events.md) | 判断记为 Event，只收紧不放宽 | accepted | 部分实现 | 三 | 判断需放宽才有价值；只能用托管模型；判断事件成日志主要增长 | — | |
 | [0031](0031-delegation-as-routed-calls.md) | 委托是路由到子 Session 的调用 | 已修订（2026-11-14 标明当前边界；2026-11-16 串行与只传文字的边界由 0055 两期取代） | 已实现 | 二 | 有界并行；工件交接；异步委托 | — | |
-| [0032](0032-cards-as-show-card-results.md) | 卡片是 `show_card` 的结果 | accepted | 已实现 | 三 | — | — | |
-| [0033](0033-server-side-fault-injection.md) | 服务端故障注入只在调试部署 | accepted | 已实现 | 三 | — | — | |
-| [0034](0034-reasoning-streamed-and-recorded.md) | 思考过程流式推送并写日志 | accepted | 已实现 | 三 | — | — | |
-| [0035](0035-background-calls-for-offline-devices.md) | 离线设备的调用转入后台 | 已修订（2026-11-19：委托调用可转后台，见 0058） | 已实现 | 三 | — | — | |
+| [0032](0032-cards-as-show-card-results.md) | 卡片是 `show_card` 的结果 | accepted | 已实现 | 三 | 固定组件集外的需求超过两次；需模型直出结构化内容 | — | |
+| [0033](0033-server-side-fault-injection.md) | 服务端故障注入只在调试部署 | accepted | 已实现 | 三 | 生产需演练式故障注入 | — | |
+| [0034](0034-reasoning-streamed-and-recorded.md) | 思考过程流式推送并写日志 | accepted | 已实现 | 三 | 截断妨碍排障；思考审核成主要成本 | — | |
+| [0035](0035-background-calls-for-offline-devices.md) | 离线设备的调用转入后台 | 已修订（2026-11-19：委托调用可转后台，见 0058） | 已实现 | 三 | 离线常超后台时限；子 Session 设备调用需转后台；宽限期明显不合适 | — | |
 | [0036](0036-captures-are-text-only.md) | 旁听只收文字，信任按说话人区分 | 被取代（正文与现行实现不符） | — | — | — | 被 0052 取代 | |
 | [0037](0037-tiered-retention-by-daily-capture-sessions.md) | 以每日旁听 Session 分级保留 | 被取代 / 已迁出 | — | — | — | 内核部分被 0052 取代；业务部分迁至 xinli ADR-0001 | |
-| [0038](0038-superseded-memories-are-kept.md) | 被取代的 Memory 保留历史 | accepted | 已实现 | 三 | — | — | |
+| [0038](0038-superseded-memories-are-kept.md) | 被取代的 Memory 保留历史 | accepted | 已实现 | 三 | 历史挤占存储或召回；法规要求更正即删 | — | |
 | [0039](0039-captures-by-stream-provenance-derived.md) | 采集按流登记，来源由平台推导 | 被取代 | — | — | — | 被 0052 取代 | |
 | [0040](0040-platform-triggers-declared-in-agentdef.md) | 平台按 AgentDef 的声明触发 Run | 被取代，不实施 | 未实现 | — | — | 被 0045、0050（现 0052）取代 | |
 | [0041](0041-external-loops-decide-platform-acts.md) | 外部循环只做决定，平台执行 | accepted（设计已认可） | 未实现 | 二 | 上下文策略不够用；需要流式；开始实现 | — | |
