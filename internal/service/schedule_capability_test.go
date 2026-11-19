@@ -26,7 +26,7 @@ func TestScheduleCapability(t *testing.T) {
 	if !json.Valid(cp.Spec().InputSchema) {
 		t.Fatal("invalid schema")
 	}
-	if err := cp.(capability.Checker).Check(inv); err != nil {
+	if err := cp.(capability.Checker).Check(ctx, inv); err != nil {
 		t.Fatal(err)
 	}
 	out, err := cp.Invoke(ctx, inv)
@@ -77,12 +77,12 @@ func TestScheduleCapabilityInvalid(t *testing.T) {
 		`{"action":"create","input":"提醒","time_zone":"UTC","rrule":"FREQ=DAILY"}`,
 		`{"action":"create","input":"提醒","time_zone":"UTC","at":"2026-10-30T17:00","until":"bad"}`,
 	} {
-		if err := check.Check(capability.Invocation{State: st, Arguments: args}); !errors.Is(err, schedule.ErrInvalid) {
+		if err := check.Check(context.Background(), capability.Invocation{State: st, Arguments: args}); !errors.Is(err, schedule.ErrInvalid) {
 			t.Fatalf("%s: %v", args, err)
 		}
 	}
 	st.Created.Parent = &v1.ParentRef{SessionId: "ses_v1_000_000_parent"}
-	if err := check.Check(capability.Invocation{State: st, Arguments: `{"action":"create","input":"提醒","time_zone":"UTC","at":"2026-10-30T17:00"}`}); err == nil || !strings.Contains(err.Error(), "子任务中不能创建定时") {
+	if err := check.Check(context.Background(), capability.Invocation{State: st, Arguments: `{"action":"create","input":"提醒","time_zone":"UTC","at":"2026-10-30T17:00"}`}); err == nil || !strings.Contains(err.Error(), "子任务中不能创建定时") {
 		t.Fatalf("child %v", err)
 	}
 }

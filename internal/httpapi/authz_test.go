@@ -19,6 +19,7 @@ import (
 	"yanshi/internal/artifact"
 	"yanshi/internal/auth"
 	"yanshi/internal/clock"
+	"yanshi/internal/consent"
 	"yanshi/internal/eventlog/memlog"
 	"yanshi/internal/faults"
 	"yanshi/internal/httpapi"
@@ -122,6 +123,16 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 		t.Fatal(err)
 	}
 	mems := &memory.Service{Store: memory.NewMemStore(), Grants: memory.NewMemGrants(), Clock: clk, IDs: ids.Random()}
+	// demo 开启了健康信息；EndUser 的同意经 /consents 登记（ADR-0022 修订），闸门与 app.NewCore 的组合相同。
+	svc.HealthEnabled = func(bl string) bool { return bl == "demo" }
+	svc.Consents = consent.NewCache(consent.NewMem(), clk)
+	mems.Health = func(ctx context.Context, bl, eu string) (bool, error) {
+		if !svc.HealthEnabled(bl) {
+			return false, nil
+		}
+		at, err := svc.Consents.Get(ctx, bl, eu, consent.Health)
+		return !at.IsZero(), err
+	}
 	mm, err := mems.Save(ctx, memory.SaveRequest{BusinessLine: "demo", EndUser: "u1", SessionID: e.sid, CallID: "c0",
 		Category: memory.Preference, Content: "偏好简洁的回答"})
 	if err != nil {
@@ -252,6 +263,8 @@ func (e *authzEnv) cases() map[string]routeCase {
 		"DELETE /v1/end_users/{id}":                        {"DELETE", "/v1/end_users/u1", nil, http.StatusAccepted},
 		"PUT /v1/end_users/{id}/tier":                      {"PUT", "/v1/end_users/u1/tier", map[string]string{"tier": "pro"}, http.StatusOK},
 		"DELETE /v1/end_users/{id}/tier":                   {"DELETE", "/v1/end_users/u1/tier", nil, http.StatusOK},
+		"PUT /v1/end_users/{id}/consents/{kind}":           {"PUT", "/v1/end_users/u1/consents/health", nil, http.StatusOK},
+		"DELETE /v1/end_users/{id}/consents/{kind}":        {"DELETE", "/v1/end_users/u1/consents/health?purge=true", nil, http.StatusOK},
 		"GET /v1/sessions/{id}/deletion":                   {"GET", "/v1/sessions/ses_v1_000_000_deleted-session/deletion", nil, http.StatusOK},
 		"GET /v1/deletions/{id}":                           {"GET", "/v1/deletions/" + e.deletion, nil, http.StatusOK},
 		"GET /v1/memories":                                 {"GET", "/v1/memories?end_user=u1", nil, http.StatusOK},
@@ -330,6 +343,16 @@ func TestAuthorizationMatrix(t *testing.T) {
 					}
 				case route == "PUT /v1/end_users/{id}/tier" || route == "DELETE /v1/end_users/{id}/tier":
 					want := map[string]int{"demo/u1": 403, "demo/u2": 403, "other/u1": 403, "demo/": 200, "other/": 400}[principal]
+					if code != want {
+						t.Fatalf("got %d (%s), want %d", code, body, want)
+					}
+				case route == "PUT /v1/end_users/{id}/consents/{kind}" || route == "DELETE /v1/end_users/{id}/consents/{kind}":
+					// 只接受服务令牌；other 没有开启健康信息，登记被拒绝，撤回（没有记录）照常成功。
+					other := 400
+					if c.method == "DELETE" {
+						other = 200
+					}
+					want := map[string]int{"demo/u1": 403, "demo/u2": 403, "other/u1": 403, "demo/": 200, "other/": other}[principal]
 					if code != want {
 						t.Fatalf("got %d (%s), want %d", code, body, want)
 					}

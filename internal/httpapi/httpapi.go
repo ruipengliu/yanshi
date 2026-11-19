@@ -36,6 +36,8 @@
 //	GET  /v1/artifacts/{id}/meta                   工件元数据
 //	PUT  /v1/end_users/{id}/tier                   设置档位（仅服务令牌）
 //	DELETE /v1/end_users/{id}/tier                 恢复默认档位（仅服务令牌）
+//	PUT  /v1/end_users/{id}/consents/{kind}        登记 EndUser 的单独同意，kind 目前只有 health（仅服务令牌，ADR-0022）
+//	DELETE /v1/end_users/{id}/consents/{kind}?purge= 撤回同意；purge=true 一并删除该用户在本业务线的健康 Memory（仅服务令牌）
 //	GET  /v1/quota?end_user=                       当前周期的配额与已用（docs/design/m4-quota-usage.md §5）
 //	GET  /v1/usage?from=&to=&group_by=&end_user=   用量汇总（day | end_user | model | agent | oneshot；金额单位：微元）
 //	/v1/debug/*                                    故障注入与进程指标，只在 serve -faults 时提供（debug.go）
@@ -130,6 +132,8 @@ func (s *Server) routes() map[string]http.HandlerFunc {
 		"DELETE /v1/end_users/{id}":                        s.deleteEndUser,
 		"PUT /v1/end_users/{id}/tier":                      s.putTier,
 		"DELETE /v1/end_users/{id}/tier":                   s.deleteTier,
+		"PUT /v1/end_users/{id}/consents/{kind}":           s.putConsent,
+		"DELETE /v1/end_users/{id}/consents/{kind}":        s.deleteConsent,
 		"GET /v1/sessions/{id}/deletion":                   s.sessionDeletion,
 		"GET /v1/deletions/{id}":                           s.deletion,
 		"GET /v1/memories":                                 s.listMemories,

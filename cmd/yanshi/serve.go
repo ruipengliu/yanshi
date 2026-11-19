@@ -477,7 +477,9 @@ func serve(args []string) error {
 		// 提醒（docs/design/m3-duplex-channel.md §9）：推送通道目前是日志桩，真实通道见上线检查清单。
 		Pusher:        notify.LogPusher{Logger: logger},
 		HealthAllowed: healthAllowed(*authMode, lines),
-		Live:          bus, LiveEndpoint: liveEndpoint, LeaseTTL: *leaseTTL, DrainTimeout: *drainTimeout, Logger: logger,
+		// -auth none 没有业务线服务端来登记同意，视为所有 EndUser 都已同意（ADR-0022 修订第 4 条）。
+		HealthEveryone: *authMode == "none",
+		Live:           bus, LiveEndpoint: liveEndpoint, LeaseTTL: *leaseTTL, DrainTimeout: *drainTimeout, Logger: logger,
 	}
 	if *embedModel != "" {
 		opts.Embedder, opts.EmbedModel = gw, *embedModel
@@ -834,8 +836,9 @@ func injectionDecider(kind string, gw *model.Gateway, clk clock.Clock) (decision
 		Fallback: decision.InjectionRules{}, Prompts: map[string]string{decision.ToolResultInjection: injectionPrompt}}}}, nil
 }
 
-// healthAllowed 返回各业务线是否允许健康信息（ADR-0022）：业务线配置 memory.health 声明已取得单独同意。
-// -auth none 是只监听回环地址的开发模式，没有业务线配置，一律允许，便于开发与演示。
+// healthAllowed 返回各业务线是否开启健康信息（ADR-0022）：业务线配置 memory.health 声明有取得单独同意的流程，
+// 每个 EndUser 的同意另经 PUT /v1/end_users/{id}/consents/health 登记。
+// -auth none 是只监听回环地址的开发模式，没有业务线配置，一律开启，便于开发与演示。
 func healthAllowed(authMode string, lines []auth.BusinessLine) func(string) bool {
 	if authMode == "none" {
 		return func(string) bool { return true }

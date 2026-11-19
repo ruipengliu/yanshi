@@ -47,12 +47,12 @@ func Capabilities(s *Service) []capability.Capability {
 				Idempotent: true,
 			},
 			// 写入闸门可能要求审批（ADR-0023）：注定被拒绝的写入（如未开启的健康信息）先拒绝，不让用户批准一次无用的调用。
-			Pre: func(inv capability.Invocation) error {
+			Pre: func(ctx context.Context, inv capability.Invocation) error {
 				req, err := saveRequest(inv)
 				if err != nil {
 					return err
 				}
-				return s.Check(req)
+				return s.Check(ctx, req)
 			},
 			Fn: func(ctx context.Context, inv capability.Invocation) ([]*v1.ContentBlock, error) {
 				req, err := saveRequest(inv)

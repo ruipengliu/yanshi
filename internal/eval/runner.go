@@ -305,9 +305,9 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 	opts := app.Options{
 		Clock: clk, Agents: agents, Oneshots: shots, Model: cfg.Model, Blobs: artifact.NewMemBlobs(), NodeAuth: node.InsecureDevAuth{},
 		SandboxTools: cfg.Sandbox != nil, DefaultTimeout: 10 * time.Minute,
-		// 评测业务线视为已取得健康信息的单独同意，以评测模型对健康信息的处理（ADR-0022）。
-		HealthAllowed: func(bl string) bool { return bl == BusinessLine },
-		Live:          live.NewMemBus(), LeaseTTL: cfg.LeaseTTL, Logger: cfg.Logger,
+		// 评测业务线视为已取得健康信息的单独同意（所有 EndUser 都已同意），以评测模型对健康信息的处理（ADR-0022）。
+		HealthAllowed: func(bl string) bool { return bl == BusinessLine }, HealthEveryone: true,
+		Live: live.NewMemBus(), LeaseTTL: cfg.LeaseTTL, Logger: cfg.Logger,
 	}
 	if cfg.EmbedModel != "" {
 		opts.Embedder, opts.EmbedModel = cfg.Model, cfg.EmbedModel

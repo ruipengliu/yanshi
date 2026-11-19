@@ -8,6 +8,8 @@ import (
 	"yanshi/internal/artifact"
 	"yanshi/internal/artifact/artifacttest"
 	"yanshi/internal/clock"
+	"yanshi/internal/consent"
+	"yanshi/internal/consent/consenttest"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/eventlog/eventlogtest"
 	"yanshi/internal/lifecycle"
@@ -116,6 +118,9 @@ func TestShardedConsistency(t *testing.T) {
 			})
 			t.Run("Tiers", func(t *testing.T) {
 				tiertest.Run(t, func(t *testing.T) usage.TierStore { return fresh(t, clock.Real{}).Tiers })
+			})
+			t.Run("Consents", func(t *testing.T) {
+				consenttest.Run(t, func(t *testing.T) consent.Store { return fresh(t, clock.Real{}).Consents })
 			})
 			t.Run("Presence", func(t *testing.T) {
 				presencetest.Run(t, func(t *testing.T) presence.Store { return fresh(t, clock.Real{}).Presence })

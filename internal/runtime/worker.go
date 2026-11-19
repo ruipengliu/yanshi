@@ -770,7 +770,7 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 	// 注定被能力拒绝的调用同样不审批、不执行（capability.Checker，如 Memory 的健康许可）。只在第一次处理时检查：
 	// 已请求过审批或已开始的调用照常走完。
 	if ch, ok := tool.Local.(capability.Checker); ok && c.Approval == nil && !c.Started() {
-		if err := ch.Check(w.invocation(r, def, id, c)); err != nil {
+		if err := ch.Check(ctx, w.invocation(r, def, id, c)); err != nil {
 			return w.commit(ctx, w.toolResult(r, id, model.TextBlocks(err.Error()), true))
 		}
 	}

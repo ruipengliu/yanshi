@@ -452,7 +452,7 @@ ADR-0050 的退役条件已满足。内核不再登记回执或在 Run 完成时
 
 ## 12. EndUser 删除屏障
 
-注销账号（`DELETE /v1/end_users/{id}`）期间，按 EndUser 写入的地方可能让数据复活：新建 Session、单次调用等不带 Session 的用量（`usage.Meter` 已复查 EndUser 屏障）、档位（`end_user_tiers`）。
+注销账号（`DELETE /v1/end_users/{id}`）期间，按 EndUser 写入的地方可能让数据复活：新建 Session、单次调用等不带 Session 的用量（`usage.Meter` 已复查 EndUser 屏障）、档位（`end_user_tiers`）、单独同意（`end_user_consents`，ADR-0022 修订）。
 
 - 注销先写 EndUser 删除记录（按业务线隔离，分片键为 EndUser），再清除；所有按 EndUser 的写入入口"先写、后查"这条记录（与 `lifecycle.Recheck` 同一写法）：新建 Session、计量、档位、单次调用。
 - 屏障在删除执行期保存，全部清除完成之后再保留宽限期（默认 24 小时，经 `app.Options.EndUserGrace` 配置），由 Janitor 删除到期记录；之后同一 EndUser ID 可以重新使用。失败或尚未完成的注销不开始倒计时，重复注销复用原屏障。业务线须先使用户令牌失效，宽限期用于拦截注销前已在途、注销后才落盘的请求。Session 删除记录仍不保存 EndUser，屏障只在执行期与宽限期内保存它。

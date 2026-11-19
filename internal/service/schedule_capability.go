@@ -96,7 +96,7 @@ func (c scheduleCapability) parse(inv capability.Invocation) (scheduleArguments,
 	}
 }
 
-func (c scheduleCapability) Check(inv capability.Invocation) error {
+func (c scheduleCapability) Check(_ context.Context, inv capability.Invocation) error {
 	in, req, err := c.parse(inv)
 	if err != nil || in.Action != "create" {
 		return err

@@ -304,7 +304,7 @@ func TestHealthRequiresBusinessLineConsent(t *testing.T) {
 	s, _ := newService(clock.Real{})
 	s.MaxPerUser = 10
 	enabled := map[string]bool{"clinic": true}
-	s.HealthAllowed = func(bl string) bool { return enabled[bl] }
+	s.Health = func(_ context.Context, bl, _ string) (bool, error) { return enabled[bl], nil }
 
 	if _, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "shop", EndUser: "u", CallID: "c1", Category: memory.Health, Content: "对花生过敏"}); !errors.Is(err, memory.ErrRejected) {
 		t.Fatalf("health saved without consent: %v", err)
@@ -345,6 +345,141 @@ func TestHealthRequiresBusinessLineConsent(t *testing.T) {
 	}
 }
 
+// TestHealthPerEndUserConsent：业务线开启健康信息之后，仍只对已登记单独同意的 EndUser 写入、召回、检索；经 Grant 读取时
+// 看写入方业务线对该 EndUser 的同意（ADR-0022 修订）。
+func TestHealthPerEndUserConsent(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newService(clock.Real{})
+	s.MaxPerUser = 10
+	consented := map[[2]string]bool{{"clinic", "u"}: true}
+	s.Health = func(_ context.Context, bl, eu string) (bool, error) { return consented[[2]string{bl, eu}], nil }
+	health := func(eu, call, content string) error {
+		req := memory.SaveRequest{BusinessLine: "clinic", EndUser: eu, CallID: call, Category: memory.Health, Content: content}
+		checked := s.Check(ctx, req)
+		_, err := s.Save(ctx, req)
+		if (checked == nil) != (err == nil) {
+			t.Fatalf("%s: Check %v, Save %v", content, checked, err)
+		}
+		return err
+	}
+	if err := health("v", "c1", "对花生过敏"); !errors.Is(err, memory.ErrRejected) || !strings.Contains(err.Error(), "not enabled") {
+		t.Fatalf("health saved for a user without consent: %v", err)
+	}
+	if err := health("u", "c2", "对青霉素过敏"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "clinic", EndUser: "u", CallID: "c3", Category: memory.Preference, Content: "喜欢清淡"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateGrant(ctx, "u", "clinic", "shop", []memory.Category{memory.Health, memory.Preference}, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	contents := func(reader string) []string {
+		hits, err := s.Search(ctx, "u", reader, "", 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, h := range hits {
+			out = append(out, h.Content)
+		}
+		slices.Sort(out)
+		return out
+	}
+	both, plain := []string{"喜欢清淡", "对青霉素过敏"}, []string{"喜欢清淡"}
+	if got := contents("clinic"); !slices.Equal(got, both) {
+		t.Fatalf("clinic recall %v", got)
+	}
+	// shop 自己没有该用户的同意，不影响经 Grant 读取 clinic 的健康信息：看的是写入方。
+	if got := contents("shop"); !slices.Equal(got, both) {
+		t.Fatalf("shop with grant %v", got)
+	}
+	// 撤回：不再写入、召回、检索，经 Grant 也读不到；已有的不删除，仍可列出。
+	consented[[2]string{"clinic", "u"}] = false
+	if got := contents("clinic"); !slices.Equal(got, plain) {
+		t.Fatalf("clinic after withdrawal %v", got)
+	}
+	if got := contents("shop"); !slices.Equal(got, plain) {
+		t.Fatalf("shop after withdrawal %v", got)
+	}
+	if err := health("u", "c4", "对芒果过敏"); !errors.Is(err, memory.ErrRejected) {
+		t.Fatalf("health saved after withdrawal: %v", err)
+	}
+	if listed, err := s.List(ctx, "clinic", "u", memory.Health, "", false, 10); err != nil || len(listed) != 1 {
+		t.Fatalf("withdrawal deleted existing health memories: %v, %v", listed, err)
+	}
+	// 重新同意后照常可用。
+	consented[[2]string{"clinic", "u"}] = true
+	if got := contents("clinic"); !slices.Equal(got, both) {
+		t.Fatalf("clinic after consent again %v", got)
+	}
+}
+
+// TestHealthConsentReadFailure：读不到同意记录时预检查不下结论（不把读失败当作拒绝交给模型），写入失败，召回报错。
+func TestHealthConsentReadFailure(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newService(clock.Real{})
+	failed := errors.New("consent store down")
+	s.Health = func(context.Context, string, string) (bool, error) { return false, failed }
+	req := memory.SaveRequest{BusinessLine: "clinic", EndUser: "u", CallID: "c1", Category: memory.Health, Content: "对青霉素过敏"}
+	if err := s.Check(ctx, req); err != nil {
+		t.Fatalf("Check turned a read failure into %v", err)
+	}
+	if _, err := s.Save(ctx, req); !errors.Is(err, failed) {
+		t.Fatalf("Save = %v, want the read failure", err)
+	}
+	if _, err := s.Search(ctx, "u", "clinic", "", 10); !errors.Is(err, failed) {
+		t.Fatalf("Search = %v, want the read failure", err)
+	}
+	// 与健康无关的预检查不读同意记录。
+	if err := s.Check(ctx, memory.SaveRequest{BusinessLine: "clinic", EndUser: "u", CallID: "c2", Category: memory.Preference, Content: "喜欢清淡"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestForgetCategory：撤回同意时清除该用户在本业务线的健康信息，连同被健康条目取代的旧条目（以别的类别记下的同一件事）；
+// 其他类别、其他业务线、其他用户不受影响。
+func TestForgetCategory(t *testing.T) {
+	ctx := context.Background()
+	s, st := newService(clock.Real{})
+	s.Health = func(context.Context, string, string) (bool, error) { return true, nil }
+	now := time.Now()
+	for _, m := range []*memory.Memory{
+		{ID: "mem_old", BusinessLine: "a", EndUser: "u", Category: memory.Relationship, Content: "用户的母亲血压偏高"},
+		{ID: "mem_pref", BusinessLine: "a", EndUser: "u", Category: memory.Preference, Content: "喜欢清淡"},
+		{ID: "mem_b", BusinessLine: "b", EndUser: "u", Category: memory.Health, Content: "对花生过敏"},
+		{ID: "mem_v", BusinessLine: "a", EndUser: "v", Category: memory.Health, Content: "对花生过敏"},
+	} {
+		m.CreatedAt, m.UpdatedAt = now, now
+		if err := st.Put(ctx, m, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "a", EndUser: "u", CallID: "c1", Category: memory.Health, Content: "用户的母亲血压偏高"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Save(ctx, memory.SaveRequest{BusinessLine: "a", EndUser: "u", CallID: "c2", Category: memory.Health, Content: "对青霉素过敏"}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.ForgetCategory(ctx, "a", "u", memory.Health)
+	if err != nil || n != 3 {
+		t.Fatalf("ForgetCategory = %d, %v; want 3 (two health memories and the one superseded by them)", n, err)
+	}
+	for id, kept := range map[string]bool{"mem_old": false, memoryID("c1"): false, memoryID("c2"): false} {
+		if _, err := st.Get(ctx, "u", id); (err == nil) != kept {
+			t.Fatalf("%s kept=%v: %v", id, kept, err)
+		}
+	}
+	for _, k := range [][2]string{{"u", "mem_pref"}, {"u", "mem_b"}, {"v", "mem_v"}} {
+		if _, err := st.Get(ctx, k[0], k[1]); err != nil {
+			t.Fatalf("%s was deleted: %v", k[1], err)
+		}
+	}
+	if n, err := s.ForgetCategory(ctx, "a", "u", memory.Health); err != nil || n != 0 {
+		t.Fatalf("second ForgetCategory = %d, %v", n, err)
+	}
+}
+
 // TestHealthByContent：类别是模型自报的，健康信息（包括他人的）写成其他类别时同样受业务线的同意约束：
 // 未开启的业务线一律拒绝，开启的业务线要求改用 health（工作日评审 F3：母亲的血压以 relationship 写入）。
 // Check 与 Save 的结论相同：Worker 据此在审批之前拒绝。
@@ -352,12 +487,12 @@ func TestHealthByContent(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newService(clock.Real{})
 	s.MaxPerUser = 20
-	s.HealthAllowed = func(bl string) bool { return bl == "clinic" }
+	s.Health = func(_ context.Context, bl, _ string) (bool, error) { return bl == "clinic", nil }
 	n := 0
 	save := func(bl string, c memory.Category, content string) error {
 		n++
 		req := memory.SaveRequest{BusinessLine: bl, EndUser: "u", CallID: fmt.Sprint("c", n), Category: c, Content: content}
-		checked := s.Check(req)
+		checked := s.Check(ctx, req)
 		_, err := s.Save(ctx, req)
 		if (checked == nil) != (err == nil) {
 			t.Fatalf("%s: Check %v, Save %v", content, checked, err)
@@ -391,7 +526,7 @@ func TestHealthByContent(t *testing.T) {
 func TestHealthSupersedesMiscategorized(t *testing.T) {
 	ctx := context.Background()
 	s, st := newService(clock.Real{})
-	s.HealthAllowed = func(string) bool { return true }
+	s.Health = func(context.Context, string, string) (bool, error) { return true, nil }
 	old := &memory.Memory{ID: "mem_old", BusinessLine: "a", EndUser: "u", Category: memory.Relationship, Content: "用户的母亲血压偏高",
 		CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	if err := st.Put(ctx, old, nil); err != nil {

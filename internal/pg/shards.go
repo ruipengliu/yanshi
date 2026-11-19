@@ -41,6 +41,7 @@ var Tables = map[string]TableKey{
 	"outbox": {Class: BySession, Column: "session_id",
 		Offline: []string{"List / Read / Head：业务线服务端按分片读取信封与安全起点", "Maintain：扫描候选后逐 Session 分批清理", "Stats：Janitor 统计保留空间"}},
 	"end_user_tiers":    {Class: ByEndUser, Column: "end_user"},
+	"end_user_consents": {Class: ByEndUser, Column: "end_user"},
 	"events":            {Class: BySession, Column: "session_id"},
 	"session_snapshots": {Class: BySession, Column: "session_id"},
 	"work_items": {Class: BySession, Column: "session_id",

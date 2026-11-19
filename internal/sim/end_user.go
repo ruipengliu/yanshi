@@ -9,6 +9,7 @@ import (
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/consent"
 	"yanshi/internal/ids"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/memory"
@@ -108,6 +109,15 @@ func (s barrierTiers) Put(ctx context.Context, bl, eu, tier string, at time.Time
 	return err
 }
 
+type barrierConsents struct {
+	consent.Store
+	w *World
+}
+
+func (s barrierConsents) Put(ctx context.Context, bl, eu string, kind consent.Kind, at time.Time) error {
+	return s.w.endUserWrite(func() error { return s.Store.Put(ctx, bl, eu, kind, at) })
+}
+
 type tierWriterCrash struct{}
 
 // crashTierWriter 在存储提交后直接中断调用栈，不执行 Service 的写后复查。
@@ -134,12 +144,17 @@ func (w *World) crashTierWriter(ctx context.Context, user string) (err error) {
 func (w *World) deleteWithEndUserWrite(user string) error {
 	// 新增场景只用独立随机流；原六种写入完整保留原抽样顺序及分支内部的抽样。
 	if w.opts.Tiers {
-		actions := 2
+		actions := 3
 		if w.faults {
 			actions++
 		}
-		if action := w.tierRNG.IntN(actions); action != 0 {
-			return w.deleteWithTierWrite(user, action == 2)
+		switch w.tierRNG.IntN(actions) {
+		case 1:
+			return w.deleteWithTierWrite(user, false)
+		case 2:
+			return w.deleteWithConsentWrite(user)
+		case 3:
+			return w.deleteWithTierWrite(user, true)
 		}
 	}
 	ctx := context.Background()
@@ -245,6 +260,43 @@ func (w *World) deleteWithTierWrite(user string, crash bool) error {
 	return nil
 }
 
+// deleteWithConsentWrite 让同意的登记与注销交错（ADR-0022 修订）：登记"先查、后复查"屏障，注销之后不能留下同意记录。
+func (w *World) deleteWithConsentWrite(user string) error {
+	ctx := context.Background()
+	remove := func() error {
+		_, err := w.svc.DeleteEndUser(ctx, "bl", user, w.hub, w.memories, w.usage, w.push)
+		return err
+	}
+	switch w.tierRNG.IntN(3) {
+	case 0:
+		w.endUserWriteHook, w.endUserWriteBefore = remove, true
+	case 1:
+		w.endUserWriteHook, w.endUserWriteBefore = remove, false
+	default:
+		if err := remove(); err != nil {
+			return err
+		}
+	}
+	defer func() { w.endUserWriteHook = nil }()
+	interleaved := w.endUserWriteHook != nil
+	if _, err := w.svc.PutConsent(ctx, "bl", user, consent.Health); !errors.Is(err, service.ErrNotFound) {
+		return fmt.Errorf("invariant: consent write during deletion returned %v", err)
+	}
+	if w.endUserWriteHook != nil {
+		return errors.New("invariant: account deletion did not interleave with consent write")
+	}
+	if interleaved {
+		w.Stats.ConsentsWithdrawn++
+	}
+	w.Stats.EndUserBarrierWithdrawn++
+	return nil
+}
+
+func (w *World) consented(user string) (bool, error) {
+	at, err := w.stores.Consents.Get(context.Background(), "bl", user, consent.Health)
+	return !at.IsZero(), err
+}
+
 func (w *World) checkEndUserDeleted(final bool) error {
 	ctx := context.Background()
 	for _, user := range w.deletedUsers {
@@ -253,6 +305,9 @@ func (w *World) checkEndUserDeleted(final bool) error {
 			// 模拟注销后换新 ID；原 ID 的屏障移除后不能留下崩溃写入。
 			if tier, err := w.stores.Tiers.Get(ctx, "bl", user); err != nil || tier != "" {
 				return errors.New("invariant: tier survived removal of account deletion barrier")
+			}
+			if ok, err := w.consented(user); err != nil || ok {
+				return errors.New("invariant: consent survived removal of account deletion barrier")
 			}
 			continue
 		}
@@ -269,6 +324,9 @@ func (w *World) checkEndUserDeleted(final bool) error {
 			if tier, err := w.stores.Tiers.Get(ctx, "bl", user); err != nil || tier != "" {
 				return errors.New("invariant: deleted account still has a tier")
 			}
+		}
+		if ok, err := w.consented(user); err != nil || ok {
+			return errors.New("invariant: deleted account still has a consent")
 		}
 		if ids, err := w.index.IDsOf(ctx, "bl", user); err != nil || len(ids) != 0 {
 			return errors.New("invariant: deleted account still has indexed sessions")
@@ -322,6 +380,9 @@ func (w *World) fingerprintEndUsers(h io.Writer) {
 		for _, user := range append(slices.Clone(w.users), w.deletedUsers...) {
 			tier, err := w.stores.Tiers.Get(context.Background(), "bl", user)
 			fmt.Fprintf(h, "tier:%s|%s|%v;", user, tier, err)
+			// 只比较有无：PostgreSQL 的时间精度是微秒。
+			ok, err := w.consented(user)
+			fmt.Fprintf(h, "consent:%s|%v|%v;", user, ok, err)
 		}
 	}
 	for _, user := range w.deletedUsers {

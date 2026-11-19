@@ -8,6 +8,8 @@ import (
 	"yanshi/internal/artifact"
 	"yanshi/internal/artifact/pgartifact"
 	"yanshi/internal/clock"
+	"yanshi/internal/consent"
+	"yanshi/internal/consent/pgconsent"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/eventlog/memlog"
 	"yanshi/internal/eventlog/pglog"
@@ -63,8 +65,10 @@ type Stores struct {
 	Snapshots session.Snapshots
 	Usage     usage.Store
 	Tiers     usage.TierStore
-	Presence  presence.Store
-	Push      notify.Registry
+	// Consents 是 EndUser 的单独同意（ADR-0022 修订）。
+	Consents consent.Store
+	Presence presence.Store
+	Push     notify.Registry
 }
 
 // Memory 返回进程内存储：单进程开发、模拟测试与评测。
@@ -76,7 +80,7 @@ func Memory(clk clock.Clock) Stores {
 		SandboxQueue: memqueue.New(clk), Ledger: sandbox.NewMemLedger(), Activity: sandbox.NewMemActivity(),
 		ArtifactMeta: artifact.NewMemMeta(), Index: lifecycle.NewMemIndex(), Deletions: lifecycle.NewMemDeletionsWithOutbox(o),
 		JanitorQueue: memqueue.New(clk), Memories: memory.NewMemStore(), Grants: memory.NewMemGrants(),
-		Snapshots: session.NewMemSnapshots(), Usage: usage.NewMem(), Tiers: usage.NewMemTiers(), Presence: presence.NewMem(), Push: notify.NewMemRegistry(),
+		Snapshots: session.NewMemSnapshots(), Usage: usage.NewMem(), Tiers: usage.NewMemTiers(), Consents: consent.NewMem(), Presence: presence.NewMem(), Push: notify.NewMemRegistry(),
 	}
 }
 
@@ -97,7 +101,7 @@ func PostgresShard(pool *pgxpool.Pool, n *pg.Notifier, clk clock.Clock, locator 
 		Index: pglifecycle.Index{Pool: pool, Select: selectPool}, Deletions: pglifecycle.Deletions{Pool: pool, Notifier: n},
 		JanitorQueue: pgqueue.New(pool, clk, pgqueue.Janitor).WithNotifier(n), Memories: pgmemory.Store{Pool: pool}, Grants: pgmemory.Grants{Pool: pool},
 		Snapshots: pgsnapshot.Store{Pool: pool}, Usage: pgusage.Store{Pool: pool}, Presence: pgpresence.Store{Pool: pool, Notifier: n},
-		Push: pgnotify.Registry{Pool: pool}, Tiers: pgusage.Tiers{Pool: pool},
+		Push: pgnotify.Registry{Pool: pool}, Tiers: pgusage.Tiers{Pool: pool}, Consents: pgconsent.Store{Pool: pool},
 	}
 }
 

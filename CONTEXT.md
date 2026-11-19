@@ -258,6 +258,10 @@ _Avoid_: 注入、加载（泛指时）
 EndUser 显式同意某个 BusinessLine 读取其在另一 BusinessLine 下的 Memory。
 _Avoid_: 共享、权限
 
+**Consent（单独同意）**（已实现，ADR-0022 修订）:
+EndUser 对某类敏感个人信息（目前只有健康信息）的单独同意：由 BusinessLine 在自己的产品中取得，再以服务令牌登记，内核按 EndUser 保存同意时间；撤回即删除登记。业务线开启该类信息只表示有取得同意的流程，每个 EndUser 仍须单独登记。
+_Avoid_: 授权（那是 Grant）、审批（那是 Approval）、opt-in、开关（指业务线配置时）
+
 **Approval（审批）**:
 执行高风险 Capability 前，由 EndUser 在某台 Device 上做出的单次确认。
 _Avoid_: 确认框、授权（与 Grant 区分）
