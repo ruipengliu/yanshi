@@ -203,6 +203,9 @@ func TestReasoningEffortSuffix(t *testing.T) {
 	if w := encode(&model.Request{Model: "doubao-seed-2-1-lite-260915:minimal"}); w.Model != "doubao-seed-2-1-lite-260915" || w.ReasoningEffort != "minimal" {
 		t.Fatalf("model %q effort %q", w.Model, w.ReasoningEffort)
 	}
+	if w := encode(&model.Request{Model: "qwen3-8b:none"}); w.Model != "qwen3-8b" || w.ReasoningEffort != "none" {
+		t.Fatalf("model %q effort %q", w.Model, w.ReasoningEffort)
+	}
 	if w := encode(&model.Request{Model: "qwen:7b"}); w.Model != "qwen:7b" || w.ReasoningEffort != "" {
 		t.Fatalf("model %q effort %q", w.Model, w.ReasoningEffort)
 	}

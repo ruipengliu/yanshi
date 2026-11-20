@@ -38,7 +38,7 @@ status: accepted（2026-11-14；整合并取代 ADR-0036、ADR-0039、ADR-0050�
 
 8. **现行的安全边界。** 以下是现状，不是目标；改变其中任何一项须修订本 ADR。
    - **误标的后果。** 被标为佩戴者的他人文字算用户原话：它可以为 `memory_save` 提供依据，使写入在含外部内容的 Session 中免审（`grounded`）。定时等本地写入的审批看整个 Session 是否 `tainted`，只有误标使整个 Session 都不含非用户原话时才会漏触发。
-   - **注入判断不是兜底。** 注入判断（`decision.ToolResultInjection`）只检查他人与外部来源（`internal/runtime/worker.go` 的 `unjudged`），只在配置了 `-injection-check` 时运行，且目前只以影子模式记录、不阻断（ADR-0030）。误标为佩戴者的文字不会进入判断。
+   - **注入判断不是兜底。** 注入判断（`decision.ToolResultInjection`）只检查他人与外部来源（`internal/runtime/worker.go` 的 `unjudged`），只在配置了 `-injection-check` 时运行，且目前只以影子模式记录、不阻断（ADR-0030）。误标为佩戴者的文字不会进入判断。即使注入判断改为阻断也覆盖不到误标：佩戴者对助手下指令是正常用法，判断佩戴者的话会大量误报。误标的风险由业务线的说话人识别质量承担，2026-11-20 书面接受为上线的残留风险（[上线检查清单](../launch-checklist.md)"说话人误标"）。
    - **不依赖标签的审批**，只有能力声明的高风险审批（`RequiresApproval`）；已经请求的审批须走完。
    - **Memory 写入闸门**看整个 Session 的来源：`scope: run` 只裁剪模型上下文，不裁剪闸门的判断。纠错后，旧文字在日志中仍可作为依据；要撤回旧依据，只能删除工作 Session。
    - ADR-0048 的"听过他人旁听的 Session 不能调用三方"同样由来源推导（**尚未实现**），误标的他人文字不会计入；三方出站的逐次审批是独立要求。

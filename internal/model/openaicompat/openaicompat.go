@@ -132,8 +132,9 @@ type wireRequest struct {
 }
 
 // efforts 是可以写在模型 ID 后缀上的思考强度（OpenAI 与火山方舟的 reasoning_effort 取值）。
-// 只认这几个值：其他带冒号的模型 ID 原样发送。
-var efforts = map[string]bool{"minimal": true, "low": true, "medium": true, "high": true}
+// 只认这几个值：其他带冒号的模型 ID 原样发送。none 关闭思考：Ollama 上的混合思考模型（如 Qwen3-8B）
+// 不关闭时第一个输出总是 <think>，判断（decision.Logits）读不到选项的概率（m6-decisions.md §9）。
+var efforts = map[string]bool{"none": true, "minimal": true, "low": true, "medium": true, "high": true}
 
 // SplitEffort 拆开 "doubao-seed-2-1-lite-260915:minimal" 形式的模型 ID。思考强度是 AgentDef 的选择
 // （docs/design/model-calls.md §4），按评测结果选取：强度越低首字越快，但过低时模型不按指令使用工具。

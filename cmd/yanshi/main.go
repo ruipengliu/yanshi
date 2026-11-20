@@ -16,6 +16,7 @@ const usageText = `usage:
   yanshi bench  [flags]  压测客户端（docs/design/m2-scale-test.md）
   yanshi eval   [flags]  运行评测集并与基线比较（docs/design/m4-eval.md）
   yanshi export-case [flags]  把一个 Session 导出为评测用例骨架
+  yanshi decision-eval [flags]  在固定样本集上离线评估注入判断（docs/design/m6-decisions.md §9）
 
 运行 yanshi <command> -h 查看参数。`
 
@@ -44,6 +45,8 @@ func main() {
 		err = evalCmd(os.Args[2:])
 	case "export-case":
 		err = exportCaseCmd(os.Args[2:])
+	case "decision-eval":
+		err = decisionEvalCmd(os.Args[2:])
 	default:
 		fmt.Fprintln(os.Stderr, usageText)
 		os.Exit(2)
