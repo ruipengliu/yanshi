@@ -13,6 +13,8 @@ spec:
           env:
             - name: POD_IP
               valueFrom: {fieldRef: {fieldPath: status.podIP}}
+            # 所有角色读同一份分片配置（ADR-0051）；发布时核对各实例 /readyz 的 X-Yanshi-Routing 摘要一致。
+            - {name: YANSHI_SHARDS, value: /etc/yanshi/shards/shards.json}
           envFrom:
             # YANSHI_PG_DSN（可经 PgBouncer 事务池）、YANSHI_PG_LISTEN_DSN（直连）、YANSHI_PEER_TOKEN、
             # YANSHI_S3_*、模型与内容安全提供商的密钥。
@@ -30,6 +32,7 @@ spec:
             - {name: agents, mountPath: /etc/yanshi/agents, readOnly: true}
             - {name: businesslines, mountPath: /etc/yanshi/businesslines, readOnly: true}
             - {name: pricing, mountPath: /etc/yanshi/pricing, readOnly: true}
+            - {name: shards, mountPath: /etc/yanshi/shards, readOnly: true}
       volumes:
         # 所有进程同一版本的配置（AgentDef 与发布配置、业务线公钥、价格表）；发布配置每 10 秒热加载。
         - name: agents
@@ -38,3 +41,5 @@ spec:
           configMap: {name: yanshi-businesslines}
         - name: pricing
           configMap: {name: yanshi-pricing}
+        - name: shards
+          secret: {secretName: yanshi-shards}

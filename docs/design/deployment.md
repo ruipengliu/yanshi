@@ -274,7 +274,50 @@ dev run 'cat eval-results/failover/persona.json'
 dev run 'cat eval-results/failover/capacity-1.json'
 dev run 'cat eval-results/failover/capacity-2.json'
 dev run 'docker compose -p yanshi-failover -f deploy/failover/compose.yaml ps -a'
+dev run 'make shard-move'
+dev run 'cat eval-results/failover/shard-move-1g.json'
 dev run 'make failover-down'
 ```
 
 `failover` 和 `shard-capacity` 每次运行都会删除上次隔离现场，先读取需要保留的结果。失败后保留容器/卷供检查；`failover-down` 显式删除独立卷。不得将上述命令中的项目名换成共享 `yanshi`。最终回归命令见 [一天验收](./day-acceptance.md#p4-关闭前的最终回归)。
+
+### 10.5 整片搬迁（扩容）
+
+[ADR-0051](../adr/0051-shard-slots-and-id-location.md) §5.4：上线即 8 片（示例配置 `deploy/k8s/overlays/example/shards.json`：每片 128 槽、独立 database，初期 4 片共用一个实例），扩容是把一整片搬到新主机。物理流复制保留 `shard_identity`、出站 epoch、游标与序列；槽位表与 `Identity()` 不变，只改该片的 DSN，只冻结这一片。
+
+#### 步骤（生产）
+
+| 阶段 | 操作 | 该片可用 |
+|---|---|---|
+| 1. 建新主机 | 在新主机上对该片所在实例做 `pg_basebackup -R -X stream`（`application_name` 设为新主机的名字），以流复制备库启动。基础备份与追平在线进行，耗时随数据量增长 | 是 |
+| 2. 切到同步 | 旧主设 `synchronous_standby_names = 'FIRST 1 (<新主机>)'` 并重载，等 `pg_stat_replication.sync_state = 'sync'`。此后每个已确认的提交都已落到新主机 | 是 |
+| 3. 关闭准入 | 关闭该片的固定主库端点（HAProxy 或等价代理下线该后端、断开存量连接；PgBouncer 对该库 `PAUSE` 后 `KILL`）。SQL 与 LISTEN 两个入口都要关。其余分片不受影响，依赖该片的请求返回有界 503（ADR-0051 §7） | **否（窗口开始）** |
+| 4. 核对 | 等新主机 `pg_last_wal_replay_lsn()` 不小于旧主 `pg_current_wal_lsn()`，比对两端各表行数与内容摘要（见下"报告"） | 否 |
+| 5. 提升与隔离 | 新主机 `pg_promote()`；旧主停机或网络隔离，并核实它已失去写权限（STONITH / 实例停机 / 网络隔离，见 §10.1）；不允许靠旧主恢复可达而回选 | 否 |
+| 6. 改指与开放 | 固定端点改指新主后恢复准入；只改部署配置中该片的 `sql_dsn` / `direct_dsn`（若端点名不变则无需改配置）。核对所有角色 `/readyz` 的身份与 `X-Yanshi-Routing` 摘要不变 | **是（窗口结束）** |
+| 7. 恢复冗余 | 新主机此时没有同步备库（降级）：为它建同步备库后才再次承诺容忍主库失效 | 是 |
+
+一次搬迁只冻结一片；停写预算 15 分钟（ADR-0051 §5.4），计入 3～6。第 4 步的内容摘要随数据量增长：若在目标环境估算会超出预算，窗口内只比对行数，完整摘要在开放之后对隔离的旧主（只读启动、不接入网络）离线比对。
+
+#### 回滚与旧主的数据
+
+- **回滚是反向搬迁**：在旧主机上从新主重新做基础备份、切到同步，再按同样步骤切回。不能直接把已隔离的旧主恢复为主库：它缺少切换之后的写入。
+- **旧主的数据是个人数据**：新主恢复同步冗余（第 7 步）后删除旧主的数据目录与卷，至迟在 7 天内；它不作恢复数据的来源。
+- **从备份恢复**（PITR，与搬迁不同的路径）：开放入口之前旋转出站 epoch（[M7 §6](./m7-kernel-primitives.md#6-出站流outbox)），并重放恢复点之后的删除记录（ADR-0015 的"先写后查"），否则已删除的数据会复活。
+
+#### 报告
+
+搬迁报告只含：源与目标分片号，前后的 `Identity()`（版本与摘要），`shard_identity` 与出站 epoch 是否不变，各表的行数与内容摘要（按行文本排序后的 MD5）及两端是否一致，各阶段耗时与窗口内的请求计数，失败对象的 ID。不含原始 EndUser、DSN、游标或内容（ADR-0051 §5.4）。
+
+#### 演练
+
+`make shard-move`（`TestShardMoveKernel`，不在 `make check` 中）在 `deploy/failover` 的隔离项目里演练上表的 1～6 步：分片 1 的主库起初没有备库，先在主库实例上另建一个 database 写入指定体量的数据（`YANSHI_MOVE_GB`，默认 1 与 10，每个体量一套全新集群），同时有真实 Run、工具结果、出站信封与持续的输入负载；新主机（Compose profile `move`）在线基础备份并追平，切到同步后关闭代理、比对各表摘要、提升、停旧主并核实、改指。断言：两端各表行数与摘要一致；`shard_identity`、出站 epoch 与 `Identity()` 不变；窗口内分片 0 持续完成 Run；冻结的分片返回 503；持续负载中已确认的输入不丢、未确认的按原 ID 对账；旧游标在新主上继续读到新信封；生产 `serve` 的身份核验通过；搬迁后删除正常。结果写入 `eval-results/failover/shard-move-<GB>g.json`。
+
+| Mac mini / 源码摘要 | 体量（实例总大小） | 在线基础备份 | 备份期间分片 1 完成的 Run | 切到同步 | 停写窗口（含摘要） | 摘要比对 | 窗口内分片 0 完成的 Run | 窗口内请求 | 各表一致 | 身份 / epoch / Identity() |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-11-21，`7445d58c14382d68` | 1GB（1.11GB） | 2.2 s | 52 | 3 ms | 403 ms | 28 ms | 12 | http_503=15、http_202=1 | 31/31 | 不变 |
+| 同上 | 10GB（10.78GB） | 27.5 s | 540 | 9 ms | 573 ms | 67 ms | 13 | http_503=20 | 31/31 | 不变 |
+
+数据量增加十倍，在线备份随之增长（约 2.7 s/GB：同一台机器上的容器之间，没有网络与独立磁盘的限制），停写窗口不随之增长（0.4～0.6 s），主要是提升、停旧主与核实的耗时；摘要比对只随内核表的大小增长（这里是演练中的 Run，体量数据在另一个 database）。窗口中的 `http_202` 是关闭代理前一刻已在途、在窗口开始后才返回的请求。
+
+**目标环境仍须实测**（[上线检查清单](../launch-checklist.md)）：生产的窗口还包含 HA 控制器的隔离（STONITH 或实例停机）与代理改指，摘要比对随该片 12 个月后的内核数据量增长；在线备份受网络与磁盘带宽限制，但不计入窗口。按上表的步骤在目标环境用预期最大数据量演练，窗口不超过 15 分钟。

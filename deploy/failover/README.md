@@ -7,6 +7,7 @@
 ```bash
 make failover
 make shard-capacity
+make shard-move            # 整片搬迁（部署 §10.5）；YANSHI_MOVE_GB 选体量，默认 "1 10"
 cat eval-results/failover/kernel.json
 cat eval-results/failover/persona.json
 cat eval-results/failover/capacity-1.json

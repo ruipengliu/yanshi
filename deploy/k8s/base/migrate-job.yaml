@@ -16,8 +16,16 @@ spec:
         - name: migrate
           image: yanshi
           args: ["migrate"]
+          # 与各角色同一份分片配置：逐片迁移并初始化 shard_identity，全部片成功才算完成。
+          env:
+            - {name: YANSHI_SHARDS, value: /etc/yanshi/shards/shards.json}
           envFrom:
             - secretRef:
                 name: yanshi-secrets
+          volumeMounts:
+            - {name: shards, mountPath: /etc/yanshi/shards, readOnly: true}
           resources:
             requests: {cpu: 100m, memory: 64Mi}
+      volumes:
+        - name: shards
+          secret: {secretName: yanshi-shards}

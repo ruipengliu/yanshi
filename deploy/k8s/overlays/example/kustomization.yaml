@@ -19,8 +19,15 @@ configMapGenerator:
     files:
       - ../../../../pricing.yaml
 secretGenerator:
+  # 分片部署配置（ADR-0051 §5.4）：上线即把 1024 槽均分到 8 片，每片一个独立 database，初期 4 片共用一个
+  # PostgreSQL 实例（主 + 同步备）；扩容时把整片搬到新主机，只改该片的 DSN，槽位表与 Identity() 不变（部署 §10.5）。
+  # 含凭据，按 Secret 管理；所有角色与 migrate 任务读同一份。
+  - name: yanshi-shards
+    files:
+      - shards.json
   - name: yanshi-secrets
     literals:
+      # 单库入口；设置了 YANSHI_SHARDS（base/common.yaml）时不使用，各片地址在 shards.json。
       # SQL 经 PgBouncer 事务池；LISTEN 与迁移锁直连主库。
       - YANSHI_PG_DSN=postgres://yanshi:CHANGE_ME@pgbouncer:6432/yanshi?sslmode=require
       - YANSHI_PG_LISTEN_DSN=postgres://yanshi:CHANGE_ME@postgres-primary:5432/yanshi?sslmode=require

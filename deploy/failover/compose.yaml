@@ -31,6 +31,25 @@ services:
       primary:
         condition: service_healthy
     healthcheck: *health
+  # 整片搬迁的新主机（profile move）：由演练在主库已有数据、持续服务时启动，在线做基础备份后追平。
+  newhost:
+    image: pgvector/pgvector:pg16
+    restart: "no"
+    profiles: [move]
+    environment:
+      <<: *pg-env
+      STANDBY_NAME: shard_move_target
+    entrypoint: [bash, /standby.sh]
+    ports: ["127.0.0.1:55433:5432"]
+    volumes:
+      - newhost:/var/lib/postgresql/data
+      - ./standby.sh:/standby.sh:ro
+    depends_on:
+      primary:
+        condition: service_healthy
+    healthcheck:
+      <<: *health
+      retries: 3600
   healthy:
     image: pgvector/pgvector:pg16
     restart: "no"
@@ -41,4 +60,5 @@ services:
 volumes:
   primary:
   standby:
+  newhost:
   healthy:

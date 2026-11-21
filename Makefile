@@ -138,13 +138,18 @@ day-ark: deps-up day-bin
 	YANSHI_DAY_BIN=$(CURDIR)/bin/xinli-day YANSHI_DAY_ARK=1 go test ./internal/day -run '^TestDayArk$$' -count=1 -timeout 45m -v
 
 # C6 只操作独立 yanshi-failover 项目；不能依赖 deps-up（dev 会将它指向共享项目）。
-.PHONY: failover failover-down shard-capacity day-shards
+.PHONY: failover failover-down shard-capacity shard-move day-shards
 failover: day-bin
 	go build -o bin/yanshi ./cmd/yanshi
 	scripts/failover.sh
 
 failover-down:
 	scripts/failover.sh down
+
+# 整片搬迁演练（docs/design/deployment.md §10.5）：默认 1GB 与 10GB 两个数据量，YANSHI_MOVE_GB 可改。
+shard-move: day-bin
+	go build -o bin/yanshi ./cmd/yanshi
+	scripts/failover.sh move
 
 shard-capacity: day-bin
 	scripts/shard-capacity.sh
