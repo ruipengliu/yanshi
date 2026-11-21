@@ -18,7 +18,8 @@ func provider(t *testing.T) (*docker.Provider, string) {
 	if os.Getenv("YANSHI_TEST_DOCKER") == "" {
 		t.Skip("YANSHI_TEST_DOCKER not set")
 	}
-	p := &docker.Provider{Image: testImage, MemoryMB: 256}
+	// YANSHI_TEST_DOCKER_RUNTIME 选择运行时（如 runsc），用于在隔离运行时下复核兼容性（ADR-0053）。
+	p := &docker.Provider{Image: testImage, MemoryMB: 256, Runtime: os.Getenv("YANSHI_TEST_DOCKER_RUNTIME")}
 	id := "test-" + strings.ReplaceAll(t.Name(), "/", "-") + "-" + time.Now().Format("150405.000000")
 	t.Cleanup(func() { _ = p.Destroy(context.Background(), id) })
 	if err := p.Ensure(context.Background(), id); err != nil {

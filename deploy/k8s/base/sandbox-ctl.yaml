@@ -1,6 +1,7 @@
-# 沙箱控制器：受信控制器，只有它持有容器运行时的权限（ADR-0008）；沙箱本身是不可信代码，在独立节点池上以
-# gVisor 运行（ADR-0010）。目前只有 Docker 实现（-sandbox docker -sandbox-runtime runsc），这里挂载节点上的 Docker；
-# 生产 Provider 尚待选型（上线检查清单），届时替换为调用 K8s API 或云厂商服务的实现。
+# 沙箱控制器：受信控制器，只有它持有沙箱的权限（ADR-0008）；沙箱本身是不可信代码，在独立节点池上以
+# gVisor 运行（ADR-0053 的选型结论：经 RuntimeClass，有 KVM 时可选 Kata）。目前只有 Docker 实现
+# （-sandbox docker -sandbox-runtime runsc），这里挂载节点上的 docker.sock，等于节点 root，不能上线；
+# 生产 Provider（K8s，见 docs/design/m2-sandbox.md §7）实现后替换为沙箱命名空间内的最小 K8s 权限。
 apiVersion: apps/v1
 kind: Deployment
 metadata:

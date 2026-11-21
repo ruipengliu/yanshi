@@ -50,6 +50,7 @@ func evalCmd(args []string) error {
 	embedModel := fs.String("embedding-model", os.Getenv("YANSHI_EMBEDDING_MODEL"), "Memory 检索用的嵌入模型")
 	sandboxKind := fs.String("sandbox", "none", "代码沙箱：none | docker（none 时跳过需要沙箱的用例）")
 	sandboxImage := fs.String("sandbox-image", "yanshi-sandbox:dev", "沙箱镜像")
+	sandboxRuntime := fs.String("sandbox-runtime", "", "沙箱容器运行时，如 runsc（gVisor）；用于在隔离运行时下评测（ADR-0053）")
 	parallel := fs.Int("parallel", 4, "同时运行的次数")
 	baselinePath := fs.String("baseline", "", "基线文件；默认 <suite>/baselines/<被评测模型或 default>.json")
 	update := fs.Bool("update-baseline", false, "用本次结果更新基线（有意的效果变化，随代码提交）")
@@ -108,7 +109,7 @@ func evalCmd(args []string) error {
 			fmt.Fprintf(os.Stderr, "%s %s #%d\n", mark, name, trial+1)
 		}}
 	if *sandboxKind == "docker" {
-		cfg.Sandbox = &sandboxdocker.Provider{Image: *sandboxImage}
+		cfg.Sandbox = &sandboxdocker.Provider{Image: *sandboxImage, Runtime: *sandboxRuntime}
 	}
 	// Call 用例（docs/design/m3-call.md §9）：实时语音模型与语音合成共用 VOLC_SPEECH_API_KEY，未设置时跳过。
 	if key := os.Getenv("VOLC_SPEECH_API_KEY"); key != "" {

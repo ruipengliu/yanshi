@@ -12,7 +12,7 @@
 - ADR 的现状：先看索引 `docs/adr/README.md`（状态、是否实施、重审条件）。被取代或已迁出的 ADR 是历史记录，以索引指向的现行 ADR 为准。
 - 改动执行语义（Session / Run / Event / Attempt / Worker）之前：`docs/design/m0-core-primitives.md`。改动上下文组装、压缩或 AgentDef 的 `context`（含 `scope: run`）之前：`docs/design/m2-long-runs.md`。
 - 改动 Node、能力路由、审批或挂起之前：`docs/design/m1-device-nodes.md`。
-- 改动云端沙箱之前：`docs/design/m2-sandbox.md`。沙箱内只运行不可信代码，受信逻辑一律放在控制器（ADR-0008）。生产沙箱以自托管隔离为基线，隔离技术待选型，不要把 gVisor 等写成定论（ADR-0053）。
+- 改动云端沙箱之前：`docs/design/m2-sandbox.md`。沙箱内只运行不可信代码，受信逻辑一律放在控制器（ADR-0008）。生产沙箱以自托管隔离为基线，建在 K8s 上、隔离运行时经 RuntimeClass 选择（默认 gVisor，有 KVM 时可选 Kata）；控制器不挂载节点的 `docker.sock`，沙箱 Pod 无网络、无 ServiceAccount 令牌，工作区 Stop 时打包进对象存储（ADR-0053 的 2026-11-21 选型结论）。
 - 改动 Connection 协议（`node.proto`）、会话客户端或事件流（`feed`）之前：`docs/design/m3-duplex-channel.md`。一条 Connection 兼任 Node 与会话客户端（ADR-0024）；会话客户端的请求必须经 `service`，与 HTTP API 走同一条路径。`ask_user` 是路由到用户本人的调用，不经 Inbox（ADR-0025）。
 - 改动端侧 SDK（`sdk/`）之前：`docs/design/m3-client-sdks.md`。三个 SDK 语义一致，消息类型一律从 `proto/` 生成（ADR-0026）；改动 `sdk/nodesdk`、`sdk/mobile` 或 `node.proto` 后运行 `make mobile`（需要 Xcode 与 JDK），在 macOS 与 iOS 模拟器上实测 gomobile 绑定。
 - 改动调试控制台（`internal/webui/static/console`）或脚本化模型（`internal/model/script`）之前：`docs/design/console.md`。新增多端语义时，在控制台的验证场景（`scenarios.js`）中增加覆盖，它们在 `make check` 中运行（`TestConsoleScenarios`）。

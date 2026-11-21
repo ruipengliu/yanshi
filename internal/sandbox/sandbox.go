@@ -53,7 +53,8 @@ type ExecResult struct {
 	TimedOut        bool
 }
 
-// Provider 管理沙箱的计算资源与工作区。实现见 docker 子包（开发）；生产实现为 Kubernetes + gVisor（ADR-0010）。
+// Provider 管理沙箱的计算资源与工作区。实现见 docker 子包（开发）；生产实现建在 Kubernetes 上，
+// 隔离运行时经 RuntimeClass 选择，默认 gVisor（ADR-0053 的选型结论，尚未实现）。
 type Provider interface {
 	// Ensure 确保沙箱在运行，并挂载其工作区（不存在时创建）。幂等。
 	Ensure(ctx context.Context, id string) error

@@ -47,7 +47,7 @@ worker        worker-bg     sandbox-ctl        janitor
 | gateway | HTTP API、Connection、SSE、Call 中转、peer 服务 | 连接数、握手速率、Call 并发 | headless Service 使 `-peer-advertise` 得到稳定的 Pod IP；PodDisruptionBudget 限制同时下线数；终止宽限期 > `-drain-timeout`；通知分片归属路由（评审 §8.3）落地后，Session 按分片固定到少数网关副本，进程只 LISTEN 自己分片的频道 |
 | worker（交互池） | 只认领 Interactive 工作（ADR-0029） | 交互队列的等待时长 | 实例小而多，保证首字延迟；长任务在两步之间移交给后台池 |
 | worker-bg（后台池） | 认领任意工作，承接长任务 | 后台队列深度、模型并发余量 | Worker 数可以很大（goroutine 便宜），实际受 `-model-concurrency` 与提供商账号上限约束；`-drain-timeout` 内完成当前步后以 handoff 移交 |
-| sandbox-ctl | 沙箱控制器 | 沙箱队列深度 | 单独节点池 + 按 ADR-0053 选定的隔离运行时（选型前不预设 gVisor，2026-11-14 修订）；只有这个角色持有容器或 K8s API 权限（ADR-0008：受信控制器与不可信沙箱不同 Pod，网关与 Worker 不碰沙箱） |
+| sandbox-ctl | 沙箱控制器 | 沙箱队列深度 | 单独节点池 + gVisor 的 RuntimeClass（有 KVM 的部署可改用 Kata；ADR-0053 的 2026-11-21 选型结论）；只有这个角色持有沙箱命名空间内的 K8s API 权限，不挂载节点的 `docker.sock`（ADR-0008：受信控制器与不可信沙箱不同 Pod，网关与 Worker 不碰沙箱） |
 | janitor | 关闭、删除、保留策略、清理、远期停放迁移 | 固定 1～2 个 | 靠租约互斥；小规模部署可并入 worker-bg |
 | Call 中转 | 音频中转、转写、run_task | 并发通话数（每路网关收发约 160KB/s） | 初期留在 gateway；带宽或 CPU 挤占 SSE 时拆成同镜像的独立角色，客户端由 CallStart 的应答指向它 |
 | migrate | 应用迁移 | 一次性 Job | 发布流水线中先于滚动更新；含 `CREATE INDEX CONCURRENTLY` 的迁移以 `-- yanshi:no-transaction` 单独执行 |

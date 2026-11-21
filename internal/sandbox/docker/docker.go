@@ -1,4 +1,4 @@
-// Package docker 是基于 Docker CLI 的 sandbox.Provider，用于开发环境（ADR-0010：生产为 Kubernetes + gVisor）。
+// Package docker 是基于 Docker CLI 的 sandbox.Provider，用于开发环境（生产为 K8s Provider，隔离经 RuntimeClass，默认 gVisor：ADR-0053）。
 //
 // 安全配置：默认无网络、丢弃全部 capability、no-new-privileges、非 root、只读根文件系统、
 // 限制 CPU/内存/进程数；可选 gVisor 运行时（Runtime: "runsc"）。
