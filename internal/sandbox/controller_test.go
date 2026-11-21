@@ -56,3 +56,48 @@ func TestSandboxRunsOnlyItsOwnSessionsCalls(t *testing.T) {
 		t.Fatalf("call still pending: %v", items)
 	}
 }
+
+// tooLarge 是 Stop 时报告工作区超过上限的 Provider（K8s Provider 的行为）：计算资源不释放。
+type tooLarge struct {
+	*sandbox.Fake
+	big string
+}
+
+func (p tooLarge) Stop(ctx context.Context, id string) error {
+	if id == p.big {
+		return sandbox.ErrWorkspaceTooLarge
+	}
+	return p.Fake.Stop(ctx, id)
+}
+
+// 工作区过大无法保存时，空闲回收不中断：其余沙箱照常停止，过大的沙箱重新记一次活跃，一个空闲周期后再试。
+func TestReapRetriesWorkspaceTooLarge(t *testing.T) {
+	ctx := context.Background()
+	clk := clock.NewFake(time.Unix(1000, 0))
+	fake := sandbox.NewFake()
+	act := sandbox.NewMemActivity()
+	c := &sandbox.Controller{Provider: tooLarge{Fake: fake, big: "sbx_big"}, Activity: act, Clock: clk, IdleTTL: time.Minute}
+	for _, id := range []string{"sbx_big", "sbx_small"} {
+		if err := fake.Ensure(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+		if err := act.Touch(ctx, id, clk.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	clk.Advance(2 * time.Minute)
+	if err := c.Reap(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if fake.Running("sbx_small") || !fake.Running("sbx_big") {
+		t.Fatalf("small running %v, big running %v", fake.Running("sbx_small"), fake.Running("sbx_big"))
+	}
+	// 刚重新记了活跃：立即再回收不会认领它；过了空闲期再次认领。
+	if ids, _ := act.ClaimIdle(ctx, clk.Now().Add(-time.Minute), 10); len(ids) != 0 {
+		t.Fatalf("claimed again immediately: %v", ids)
+	}
+	clk.Advance(2 * time.Minute)
+	if ids, _ := act.ClaimIdle(ctx, clk.Now().Add(-time.Minute), 10); len(ids) != 1 || ids[0] != "sbx_big" {
+		t.Fatalf("not retried after idle period: %v", ids)
+	}
+}

@@ -55,7 +55,6 @@ import (
 	"yanshi/internal/realtime/volc"
 	"yanshi/internal/runtime"
 	"yanshi/internal/sandbox"
-	sandboxdocker "yanshi/internal/sandbox/docker"
 	"yanshi/internal/service"
 	"yanshi/internal/speech"
 	"yanshi/internal/usage"
@@ -274,9 +273,7 @@ func serve(args []string) error {
 	listenDSN := fs.String("pg-listen-dsn", os.Getenv("YANSHI_PG_LISTEN_DSN"), "直连 PostgreSQL 的地址，用于 LISTEN 与迁移锁；-pg-dsn 经事务池时必须设置，为空时与 -pg-dsn 共用")
 	notifyShards := fs.Int("notify-shards", 1, "PostgreSQL 通知的分片数（ADR-0028）：进程只 LISTEN 有订阅者的分片频道；所有进程须一致")
 	migrate := fs.Bool("migrate", true, "启动时应用 PostgreSQL 迁移；生产中由 yanshi migrate 任务执行，serve 置 false 时只检查迁移都已应用")
-	sandboxKind := fs.String("sandbox", "none", "代码沙箱：none | docker")
-	sandboxImage := fs.String("sandbox-image", "yanshi-sandbox:dev", "沙箱镜像（make sandbox-image 构建）")
-	sandboxRuntime := fs.String("sandbox-runtime", "", "沙箱容器运行时，如 runsc（gVisor）")
+	sbx := addSandboxFlags(fs)
 	mcpDir := fs.String("mcp", "mcp", "远程 MCP Server 登记目录（docs/design/m5-mcp.md）；不存在时不启用")
 	embedModel := fs.String("embedding-model", os.Getenv("YANSHI_EMBEDDING_MODEL"), "Memory 检索用的嵌入模型（provider/model，如 ark/doubao-embedding-vision-251215）；为空时按文本相似度检索")
 	controllers := fs.Int("sandbox-controllers", 2, "沙箱控制器数量")
@@ -426,8 +423,8 @@ func serve(args []string) error {
 	default:
 		return fmt.Errorf("unknown blob store %q (fs | s3)", *blobKind)
 	}
-	if *sandboxKind != "none" && *sandboxKind != "docker" {
-		return fmt.Errorf("unknown sandbox %q (none | docker)", *sandboxKind)
+	if err := sbx.validate(); err != nil {
+		return err
 	}
 	queue := b.Queue
 	// 进程 ID 使 Worker 与控制器的 ID 在多进程部署中唯一，日志中的 worker_id 可以对应到进程。
@@ -471,7 +468,7 @@ func serve(args []string) error {
 		Clock: clk, Agents: agents, Model: gw, Blobs: blobs, NodeAuth: nodeAuth,
 		Oneshots: shots, OneshotMax: *oneshotMax, OneshotWait: *oneshotWait, OneshotDeadline: *oneshotDeadline,
 		OneshotBusinessLineMax: oneshotBusinessLineMax,
-		SandboxTools:           *sandboxKind == "docker", DefaultTimeout: 30 * time.Minute, NodeCacheTTL: 10 * time.Second,
+		SandboxTools:           sbx.enabled(), DefaultTimeout: 30 * time.Minute, NodeCacheTTL: 10 * time.Second,
 		BackgroundGrace: *backgroundGrace, BackgroundTimeout: *backgroundTimeout,
 		Moderator: moderator, Injector: injector, InjectionCheck: injection, Meter: meter, Quotas: quotas,
 		// 提醒（docs/design/m3-duplex-channel.md §9）：推送通道目前是日志桩，真实通道见上线检查清单。
@@ -559,9 +556,15 @@ func serve(args []string) error {
 		go func() { defer wg.Done(); w.Run(ctx) }()
 	}
 
+	// 只有执行沙箱调用（sandbox）与销毁工作区（janitor）的角色需要 Provider：其余角色只登记沙箱工具，
+	// 不持有沙箱的权限（ADR-0008；K8s 下只有这两个角色绑定沙箱命名空间的 ServiceAccount）。
 	var provider sandbox.Provider
-	if *sandboxKind == "docker" {
-		provider = &sandboxdocker.Provider{Image: *sandboxImage, Runtime: *sandboxRuntime}
+	if sbx.enabled() && (roles["sandbox"] || roles["janitor"]) {
+		if provider, err = sbx.provider(ctx, blobs); err != nil {
+			return fmt.Errorf("sandbox: %w", err)
+		}
+	}
+	if provider != nil {
 		sbxIdle := &workqueue.IdleGate{}
 		if s, ok := b.SandboxQueue.(workqueue.Signaler); ok {
 			sbxIdle.Ready = s.Ready()
@@ -574,7 +577,7 @@ func serve(args []string) error {
 			wg.Add(1)
 			go func() { defer wg.Done(); c.Run(ctx) }()
 		}
-		logger.Info("sandbox enabled", "provider", "docker", "image", *sandboxImage, "runtime", *sandboxRuntime)
+		logger.Info("sandbox enabled", sbx.describe()...)
 	}
 
 	// Janitor 回收已关闭与已删除 Session 的资源，并执行各业务线的保留策略（docs/design/m2-session-lifecycle.md）。

@@ -79,7 +79,7 @@
 | [0050](0050-capture-text-in-the-business-line.md) | 旁听原文存放在业务线 | 被取代 | — | — | — | 被 0052 整合并取代 | |
 | [0051](0051-shard-slots-and-id-location.md) | 固定槽位、裸 ID 定位与停写迁移 | 已修订（2026-11-15 删除旧格式 ID 兼容；2026-11-18 扩容默认整片搬迁） | 已实现（整片搬迁演练待目标环境） | 一 | 同 0028；停写超 15 分钟；8 片不够 | — | |
 | [0052](0052-attested-results-and-provenance.md) | 旁听原文在业务线，内核只采信结构化片段 | accepted | 已实现（"听过他人旁听"未实现） | 二 | 第二类可信结构化内容；说话人角色扩展；注入判断改为阻断；容量 | 整合并取代 0036、0039、0050 与 0037 的内核部分 | |
-| [0053](0053-self-hosted-sandbox-isolation-baseline.md) | 生产沙箱以自托管隔离为基线；默认 gVisor，经 RuntimeClass 选择 | accepted（2026-11-21 修订：选型完成） | 未实现（只有 Docker 开发实现；K8s Provider 待实现） | 二 | 不再承接私有化；gVisor 与 Kata 都无法部署；gVisor 逃逸未及时修复；进程或小文件密集负载占比显著；K8s 冷启动 p95 超过 3 秒 | 取代 0010 | |
+| [0053](0053-self-hosted-sandbox-isolation-baseline.md) | 生产沙箱以自托管隔离为基线；默认 gVisor，经 RuntimeClass 选择 | accepted（2026-11-21 修订：选型完成） | 已实现（K8s Provider `internal/sandbox/k8s`，2026-11-21；开发用 Docker） | 二 | 不再承接私有化；gVisor 与 Kata 都无法部署；gVisor 逃逸未及时修复；进程或小文件密集负载占比显著；目标集群冷启动 p95 超过 3 秒；apiserver 成为 exec 瓶颈 | 取代 0010 | |
 | [0054](0054-recoverable-wait-on-moderation-outage.md) | 审核基础设施故障时，Run 可恢复地等待 | accepted（2026-11-15） | 已实现 | 二 | 决定保存待审结果时另立 | 修订 0021 | |
 | [0055](0055-bounded-parallel-delegation-and-artifact-handoff.md) | 有界并行委托与工件交接 | accepted（2026-11-16 定稿，分两期） | 已实现（两期均于 2026-11-16） | 二 | 同上；设备调用也需并行时另立 | 实现时修订 0031 | |
 | [0056](0056-replaceable-context-strategy-and-streaming-loops.md) | 可替换的上下文策略与流式外部循环 | accepted（2026-11-16 定稿） | 未实现 | 二 | 业务线需要上下文策略（A 期）；0041 开始实现（B 期）；需要 Run 内调整、排序或非文字追加 | 实施时修订 0041 | |

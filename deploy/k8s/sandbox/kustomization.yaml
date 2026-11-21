@@ -1,0 +1,10 @@
+# 一个单元的沙箱命名空间（与单元的 overlay 分开应用：单元 overlay 的 namespace 会覆盖其中全部资源的命名空间）。
+# 多个单元共用一个集群时，每个单元一个沙箱命名空间：复制本目录为 overlay，改 namespace 与 RoleBinding 的 subjects。
+#   kubectl apply -k deploy/k8s/sandbox
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: yanshi
+resources:
+  - sandbox.yaml

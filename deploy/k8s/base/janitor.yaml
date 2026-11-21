@@ -11,11 +11,14 @@ spec:
     metadata:
       labels: {app.kubernetes.io/name: yanshi, app.kubernetes.io/component: janitor}
     spec:
+      # 销毁已关闭 Session 的沙箱与保存的工作区：与沙箱控制器共用沙箱命名空间的权限（deploy/k8s/sandbox）。
+      serviceAccountName: yanshi-sandbox-ctl
       containers:
         - name: yanshi
           image: yanshi
           args: [serve, -roles=janitor, -peer-addr=0.0.0.0:7070, -peer-advertise=http://$(POD_IP):7070, -storage=postgres,
             -migrate=false, -auth=jwt, -agents=/etc/yanshi/agents, -businesslines=/etc/yanshi/businesslines,
-            -pricing=/etc/yanshi/pricing/pricing.yaml, -blob=s3, -notify-shards=16]
+            -pricing=/etc/yanshi/pricing/pricing.yaml, -blob=s3, -notify-shards=16, -sandbox=k8s,
+            -sandbox-k8s-namespace=yanshi-sandbox]
           resources:
             requests: {cpu: 200m, memory: 256Mi}

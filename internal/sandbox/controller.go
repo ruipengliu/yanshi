@@ -272,6 +272,14 @@ func (c *Controller) Reap(ctx context.Context) error {
 	}
 	for _, id := range ids {
 		if err := c.Provider.Stop(ctx, id); err != nil {
+			if errors.Is(err, ErrWorkspaceTooLarge) {
+				// 无法保存就不能释放：重新记一次活跃，一个空闲周期后再试，其余沙箱照常回收。
+				c.Logger.Warn("sandbox not stopped: workspace too large to save", "sandbox", id)
+				if err := c.Activity.Touch(ctx, id, c.Clock.Now()); err != nil {
+					return err
+				}
+				continue
+			}
 			return err
 		}
 		c.Logger.Info("sandbox stopped (idle)", "sandbox", id)

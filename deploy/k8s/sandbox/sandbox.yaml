@@ -1,0 +1,52 @@
+# 沙箱命名空间：只运行不可信代码（ADR-0008、ADR-0053）。Pod Security 强制 restricted；沙箱 Pod 由控制器创建，
+# 不挂载 ServiceAccount 令牌。
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: yanshi-sandbox
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+# 拒绝全部入站与出站：沙箱内的代码不能访问集群网络与外网。CNI 必须执行 NetworkPolicy；
+# 控制器启动时检查这条策略存在，不存在则拒绝启动。不要在本命名空间增加放行规则。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: yanshi-sandbox
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# 控制器在沙箱命名空间内的最小权限：管理沙箱 Pod、在其中执行命令、读取网络策略以做启动检查。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: yanshi-sandbox-ctl
+  namespace: yanshi-sandbox
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, create, delete, patch]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [get, create]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [list]
+---
+# subjects 的命名空间是单元所在的命名空间（示例 overlay 为 yanshi）。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: yanshi-sandbox-ctl
+  namespace: yanshi-sandbox
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: yanshi-sandbox-ctl
+subjects:
+  - kind: ServiceAccount
+    name: yanshi-sandbox-ctl
+    namespace: yanshi

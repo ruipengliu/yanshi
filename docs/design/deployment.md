@@ -47,7 +47,7 @@ worker        worker-bg     sandbox-ctl        janitor
 | gateway | HTTP API、Connection、SSE、Call 中转、peer 服务 | 连接数、握手速率、Call 并发 | headless Service 使 `-peer-advertise` 得到稳定的 Pod IP；PodDisruptionBudget 限制同时下线数；终止宽限期 > `-drain-timeout`；通知分片归属路由（评审 §8.3）落地后，Session 按分片固定到少数网关副本，进程只 LISTEN 自己分片的频道 |
 | worker（交互池） | 只认领 Interactive 工作（ADR-0029） | 交互队列的等待时长 | 实例小而多，保证首字延迟；长任务在两步之间移交给后台池 |
 | worker-bg（后台池） | 认领任意工作，承接长任务 | 后台队列深度、模型并发余量 | Worker 数可以很大（goroutine 便宜），实际受 `-model-concurrency` 与提供商账号上限约束；`-drain-timeout` 内完成当前步后以 handoff 移交 |
-| sandbox-ctl | 沙箱控制器 | 沙箱队列深度 | 单独节点池 + gVisor 的 RuntimeClass（有 KVM 的部署可改用 Kata；ADR-0053 的 2026-11-21 选型结论）；只有这个角色持有沙箱命名空间内的 K8s API 权限，不挂载节点的 `docker.sock`（ADR-0008：受信控制器与不可信沙箱不同 Pod，网关与 Worker 不碰沙箱） |
+| sandbox-ctl | 沙箱控制器 | 沙箱队列深度 | 单独节点池 + gVisor 的 RuntimeClass（有 KVM 的部署可改用 Kata；ADR-0053 的 2026-11-21 选型结论）；只有这个角色（与 Janitor，后者销毁关闭 Session 的沙箱）持有沙箱命名空间内的 K8s API 权限，不挂载节点的 `docker.sock`（ADR-0008：受信控制器与不可信沙箱不同 Pod，网关与 Worker 不碰沙箱）。所有角色都带 `-sandbox=k8s`：没有它，Worker 不登记沙箱工具、Janitor 不销毁工作区（2026-11-21 修正：此前的清单漏了这一项）；只有 sandbox 与 janitor 角色构造 Provider |
 | janitor | 关闭、删除、保留策略、清理、远期停放迁移 | 固定 1～2 个 | 靠租约互斥；小规模部署可并入 worker-bg |
 | Call 中转 | 音频中转、转写、run_task | 并发通话数（每路网关收发约 160KB/s） | 初期留在 gateway；带宽或 CPU 挤占 SSE 时拆成同镜像的独立角色，客户端由 CallStart 的应答指向它 |
 | migrate | 应用迁移 | 一次性 Job | 发布流水线中先于滚动更新；含 `CREATE INDEX CONCURRENTLY` 的迁移以 `-- yanshi:no-transaction` 单独执行 |
@@ -83,7 +83,7 @@ worker        worker-bg     sandbox-ctl        janitor
 | 角色开关（已实现） | `serve -roles gateway,worker,sandbox,janitor`，默认全部；没有 gateway 的进程不监听 `-addr`，存活与就绪检查在 `-peer-addr` 上；没有 worker 时 Worker 数为 0；没有 sandbox 时沙箱工具照常登记、调用由其他进程的控制器执行。存储由装配包 `internal/app` 构造（评审 §9.1），核心对象图由 `app.NewCore` 构造：serve、模拟测试、评测与 e2e 测试共用同一张图，serve 只决定每个角色起多少个 Worker、控制器与 Janitor | 任一角色组合都能启动；全部角色等价于原来的 serve；已验证"只有 gateway"与"只有 worker、janitor"的两个进程共用 PostgreSQL 完成 Run |
 | 两个 DSN（已实现） | `-pg-dsn` 可经 PgBouncer 事务池；`-pg-listen-dsn`（`YANSHI_PG_LISTEN_DSN`）直连，用于 `LISTEN` 与迁移锁（`pg.OpenDirect`，小连接池）；为空时共用 `-pg-dsn` | 经事务池的部署中通知正常送达；故障切换后 LISTEN 在约定 RTO 内恢复（心跳 10 秒、超时 10 秒后重建，见 [M2 扩容压测](./m2-scale-test.md) §8） |
 | 就绪探针（已实现） | `/healthz` 只返回 200；`/readyz`：数据库可达、本进程的 LISTEN 连接已建立（`pg.Notifier.Ready`）、迁移已全部应用（每分钟复查） | 滚动发布时流量不会打到尚未监听通知的 Pod |
-| 部署清单（已写，未在集群上验证） | Kustomize：`deploy/k8s/base`（每个角色一个 Deployment、migrate Job、网关的 Service 与 PDB、网络策略、各角色共用的探针与配置挂载），`deploy/k8s/overlays/example`（以仓库中的开发配置生成 ConfigMap，密钥为占位值）；镜像 `deploy/Dockerfile`。交互池与后台池是两个 Deployment（`-worker-pool interactive` 与 `any`） | 清单可审查（`kubectl kustomize --load-restrictor LoadRestrictionsNone deploy/k8s/overlays/example`）；一套制品在无外网 K8s 完成部署（章程 §8），须在目标环境验证 |
+| 部署清单（已写，未在集群上验证） | Kustomize：`deploy/k8s/base`（每个角色一个 Deployment、migrate Job、网关的 Service 与 PDB、网络策略、各角色共用的探针与配置挂载），`deploy/k8s/overlays/example`（以仓库中的开发配置生成 ConfigMap，密钥为占位值）；沙箱另有集群级的 `deploy/k8s/cluster`（RuntimeClass）与每单元的 `deploy/k8s/sandbox`（沙箱命名空间、deny-all、控制器的 Role），单独应用（单元 overlay 的 namespace 会覆盖其中的命名空间）；镜像 `deploy/Dockerfile`。交互池与后台池是两个 Deployment（`-worker-pool interactive` 与 `any`） | 清单可审查（`kubectl kustomize --load-restrictor LoadRestrictionsNone deploy/k8s/overlays/example`）；一套制品在无外网 K8s 完成部署（章程 §8），须在目标环境验证 |
 
 ## 7. 容量与扩缩
 

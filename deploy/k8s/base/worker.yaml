@@ -19,7 +19,7 @@ spec:
           args: [serve, -roles=worker, -worker-pool=interactive, -workers=16, -peer-addr=0.0.0.0:7070,
             -peer-advertise=http://$(POD_IP):7070, -storage=postgres, -migrate=false, -auth=jwt, -agents=/etc/yanshi/agents,
             -businesslines=/etc/yanshi/businesslines, -pricing=/etc/yanshi/pricing/pricing.yaml, -blob=s3, -notify-shards=16,
-            -model-concurrency=32, -model-rps=20]
+            -model-concurrency=32, -model-rps=20, -sandbox=k8s]
           resources:
             requests: {cpu: 500m, memory: 512Mi}
 ---
@@ -41,6 +41,6 @@ spec:
           args: [serve, -roles=worker, -worker-pool=any, -workers=64, -peer-addr=0.0.0.0:7070,
             -peer-advertise=http://$(POD_IP):7070, -storage=postgres, -migrate=false, -auth=jwt, -agents=/etc/yanshi/agents,
             -businesslines=/etc/yanshi/businesslines, -pricing=/etc/yanshi/pricing/pricing.yaml, -blob=s3, -notify-shards=16,
-            -model-concurrency=32, -model-rps=20]
+            -model-concurrency=32, -model-rps=20, -sandbox=k8s]
           resources:
             requests: {cpu: "1", memory: 1Gi}

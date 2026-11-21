@@ -5,6 +5,7 @@ package sandbox
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -38,6 +39,10 @@ func WorkspacePath(rel string) (string, error) {
 	}
 	return p, nil
 }
+
+// ErrWorkspaceTooLarge 表示 Stop 时工作区超过可保存的上限：计算资源没有释放，上一次保存的工作区不变。
+// 控制器的空闲回收遇到它时重新记一次活跃，稍后再试（K8s Provider 同时在后续执行的输出中提示模型清理）。
+var ErrWorkspaceTooLarge = errors.New("sandbox: workspace exceeds the size that can be saved")
 
 type ExecRequest struct {
 	Argv    []string

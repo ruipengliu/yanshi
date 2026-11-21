@@ -1,0 +1,6 @@
+# 集群级资源，每个集群装一次（与单元无关）：沙箱的隔离运行时（ADR-0053 的选型结论）。
+# 节点须预先装好对应的运行时：gVisor 为 runsc 与 containerd-shim-runsc-v1，并在 containerd 中登记 runsc 运行时。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - runtimeclass.yaml

@@ -17,7 +17,7 @@ spec:
           image: yanshi
           args: [serve, -roles=gateway, -addr=0.0.0.0:8080, -peer-addr=0.0.0.0:7070, -peer-advertise=http://$(POD_IP):7070,
             -storage=postgres, -migrate=false, -auth=jwt, -agents=/etc/yanshi/agents, -businesslines=/etc/yanshi/businesslines,
-            -pricing=/etc/yanshi/pricing/pricing.yaml, -blob=s3, -notify-shards=16]
+            -pricing=/etc/yanshi/pricing/pricing.yaml, -blob=s3, -notify-shards=16, -sandbox=k8s]
           ports:
             - {name: http, containerPort: 8080}
           resources:

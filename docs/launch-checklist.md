@@ -13,7 +13,7 @@
 - [x] **修复 Memory 写入闸门的文字覆盖**（ADR-0023 的 2026-11-14 修订）。原先字符二元组只认汉字、ASCII 小写字母与数字，其他文字组成的内容被判为有依据而免审。2026-11-15 修复：NFKC 规范化后覆盖 Unicode 字母、附加符号与数字，识别不了的按无依据处理；测试见 `internal/runtime/memgate_test.go`，评测用例 `memory-gate-foreign-script`。
 - [ ] **审核服务故障时长 Run 的行为**（ADR-0054，2026-11-15 已实现挂起等待）。输出审核不可用时 Run 挂起、退避后重新生成，至多等 6 小时后失败。上线前须与合规确认：挂起期间只展示过已推送并随即撤回的草稿、等待上限的取值是否可接受；并按线上数据确认退避参数。
 - [ ] **价格表填入合同价**（[设计](./design/m4-quota-usage.md)）。`pricing.yaml` 中 ark、tokenhub 的价格与沙箱单价是占位值。
-- [ ] **生产沙箱**（ADR-0053，[设计](./design/m2-sandbox.md)）。当前只有 Docker 实现。隔离技术已于 2026-11-21 选定（ADR-0053 的选型结论：K8s Provider，隔离经 RuntimeClass，默认 gVisor，有 KVM 时可选 Kata）。剩下：按该结论第 6 条实现 K8s Provider（工作区打包进对象存储、拒绝全部网络、经 exec API 执行），替换 `deploy/k8s/base/sandbox-ctl.yaml` 中挂载 `docker.sock` 的写法，并在 K8s 上复测冷启动与并发 exec 对 apiserver 的负载；云厂商沙箱只作为公有云部署可选的 Provider。
+- [x] **生产沙箱**（ADR-0053，[设计](./design/m2-sandbox.md) §7）。2026-11-21：隔离技术选定（K8s Provider，隔离经 RuntimeClass，默认 gVisor，有 KVM 时可选 Kata），K8s Provider 已实现（`serve -sandbox k8s`），在单节点 k3s + gVisor 上通过一致性套件并复测（冷启动 p95 667 ms，30 路并发 exec p95 208 ms，见 ADR-0053）；部署清单改为沙箱命名空间内的最小权限，不再挂载 `docker.sock`。在目标集群上的验证见下面的"生产部署形态"。云厂商沙箱只作为公有云部署可选的 Provider。
 - [ ] **业务线配置**：每条业务线的密钥、保留策略与配额已按约定填写（`businesslines/*.yaml`）。
 - [ ] **健康信息的单独同意**（ADR-0022 及其修订）：开启 `memory.health` 的业务线须在产品中取得用户的单独同意，每个用户同意后经 `PUT /v1/end_users/{id}/consents/health` 登记（返回的 `granted_at` 是平台侧的同意记录，业务线自己也须能出示同意记录）；用户撤回时调用 `DELETE`（需要删除已有健康信息时带 `?purge=true`）。未取得同意流程的业务线不得开启；未登记的用户不写入、不召回健康信息。
 - [x] **注入判断的模式**（ADR-0030）：2026-11-20 在留出集上评估（[判断设计](./design/m6-decisions.md) §9），自托管的 Qwen3-4B 与 Qwen3-8B 都未达到判据（假阳性率 ≤ 1% 时检出率 55.4%、70.7%，判据 ≥ 80%），**保持影子模式**，书面接受残留风险：来自他人与外部来源的注入没有平台层面的阻断，安全边界仍是未声明只读的工具须审批（ADR-0017）、高风险能力须审批（`RequiresApproval`）与 Memory 写入闸门（ADR-0023）；声称已获授权的写法与委托回复中转的注入检出最低。重新评估的条件见判断设计 §9。上线时可开启 `-injection-check local/<模型>` 以影子模式记录分布（需部署自托管推理端点），不开启也不影响安全边界。
@@ -28,7 +28,7 @@
   - 就绪探针检查数据库可达、LISTEN 已生效、迁移已全部应用，而不是只返回 200；
   - 发布前以独立任务运行 `yanshi migrate`，serve 以 `-migrate=false` 启动（缺迁移时拒绝启动）；
   - `-drain-timeout` 小于编排系统的终止宽限期，滚动发布时进行中的 Run 移交而不是等租约过期（ADR-0029）；PodDisruptionBudget 限制同时下线的网关数；
-  - 沙箱控制器运行在独立节点池，使用 gVisor 的 RuntimeClass（有 KVM 时可选 Kata），只有它持有沙箱命名空间内的 K8s API 权限（ADR-0008、ADR-0053）；
+  - 沙箱：每个集群应用一次 `deploy/k8s/cluster`（RuntimeClass；节点池预装 runsc 与 containerd 的 shim），每个单元应用一次 `deploy/k8s/sandbox`（沙箱命名空间、deny-all 网络策略、控制器的 Role）；CNI 必须执行 NetworkPolicy，沙箱节点池的 kubelet 设 `podPidsLimit`（Docker 实现为 256，Pod 规格没有对应字段）；集群 1.30 或更高（exec 的 v5 流协议）。只有沙箱控制器与 Janitor 绑定沙箱命名空间的权限（ADR-0008、ADR-0053），其出站须放行 apiserver；在目标集群复测冷启动（判据 p95 ≤ 3 秒）、首次拉取沙箱镜像的耗时与并发 exec 对 apiserver 的负载；
   - `-model-concurrency`、`-model-rps` 按提供商的账号上限除以进程数配置（[模型调用](./design/model-calls.md)），弹性扩容时随副本数联动；
   - 所有进程的 `-notify-shards` 一致（ADR-0028）；
   - 生产进程不带 `-faults`（服务端故障注入与 `/v1/debug/*` 只用于调试部署，ADR-0033），也不带 `-insecure-remote`（`-auth none` 监听非回环地址）；`xinli dev` 的夹具与页面只用于开发，不作生产服务；

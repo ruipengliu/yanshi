@@ -22,13 +22,13 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
+	"yanshi/internal/artifact/fsblob"
 	"yanshi/internal/eval"
 	"yanshi/internal/eval/xinlifixture"
 	"yanshi/internal/model"
 	"yanshi/internal/model/codex"
 	"yanshi/internal/oneshot"
 	"yanshi/internal/realtime/volc"
-	sandboxdocker "yanshi/internal/sandbox/docker"
 )
 
 // evalCmd 运行评测集并与基线比较（docs/design/m4-eval.md）；出现回归时以非零状态退出。
@@ -48,9 +48,8 @@ func evalCmd(args []string) error {
 	spanRuns := fs.Bool("xinli-span-runs", false, "实验：xinli-day 每个完整时段一个 Run，当天整理另开 Run（不改用例的断言）")
 	judgeModel := fs.String("judge", envOr("YANSHI_JUDGE_MODEL", "codex/gpt-6.1-sol:high"), "评分模型（与被评测模型不同系列，ADR-0018）；codex/<模型>:<推理强度> 经本机已登录的 Codex CLI 调用")
 	embedModel := fs.String("embedding-model", os.Getenv("YANSHI_EMBEDDING_MODEL"), "Memory 检索用的嵌入模型")
-	sandboxKind := fs.String("sandbox", "none", "代码沙箱：none | docker（none 时跳过需要沙箱的用例）")
-	sandboxImage := fs.String("sandbox-image", "yanshi-sandbox:dev", "沙箱镜像")
-	sandboxRuntime := fs.String("sandbox-runtime", "", "沙箱容器运行时，如 runsc（gVisor）；用于在隔离运行时下评测（ADR-0053）")
+	// none 时跳过需要沙箱的用例；-sandbox-runtime / -sandbox k8s 用于在隔离运行时下评测（ADR-0053）。
+	sbx := addSandboxFlags(fs)
 	parallel := fs.Int("parallel", 4, "同时运行的次数")
 	baselinePath := fs.String("baseline", "", "基线文件；默认 <suite>/baselines/<被评测模型或 default>.json")
 	update := fs.Bool("update-baseline", false, "用本次结果更新基线（有意的效果变化，随代码提交）")
@@ -108,8 +107,19 @@ func evalCmd(args []string) error {
 			}
 			fmt.Fprintf(os.Stderr, "%s %s #%d\n", mark, name, trial+1)
 		}}
-	if *sandboxKind == "docker" {
-		cfg.Sandbox = &sandboxdocker.Provider{Image: *sandboxImage, Runtime: *sandboxRuntime}
+	if err := sbx.validate(); err != nil {
+		return err
+	}
+	if sbx.enabled() {
+		// k8s 打包的工作区放在评测自己的临时目录，评测结束即删除。
+		wsDir, err := os.MkdirTemp("", "yanshi-eval-ws-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(wsDir)
+		if cfg.Sandbox, err = sbx.provider(context.Background(), fsblob.Store{Dir: wsDir}); err != nil {
+			return fmt.Errorf("sandbox: %w", err)
+		}
 	}
 	// Call 用例（docs/design/m3-call.md §9）：实时语音模型与语音合成共用 VOLC_SPEECH_API_KEY，未设置时跳过。
 	if key := os.Getenv("VOLC_SPEECH_API_KEY"); key != "" {

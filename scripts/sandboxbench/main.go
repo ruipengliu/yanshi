@@ -3,7 +3,8 @@
 //
 //	go run ./scripts/sandboxbench -runtime runsc -image yanshi-sandbox:dev -out runsc.json
 //
-// 运行时为空表示 Docker 默认运行时（runc）。需要能访问 Docker 的环境；结果只含计时与内存，不含代码输出。
+// 运行时为空表示 Docker 默认运行时（runc）。-provider k8s 改测 K8s Provider（经 apiserver，-runtime 为 RuntimeClass），
+// 热启动包含工作区的打包与恢复。结果只含计时与内存，不含代码输出。
 package main
 
 import (
@@ -17,8 +18,10 @@ import (
 	"sync"
 	"time"
 
+	"yanshi/internal/artifact/fsblob"
 	"yanshi/internal/sandbox"
 	"yanshi/internal/sandbox/docker"
+	sandboxk8s "yanshi/internal/sandbox/k8s"
 )
 
 // workload 是一种典型的代码解释器负载：Argv 在工作区中执行，期望退出码 0 且 stdout 含 Want。
@@ -87,7 +90,8 @@ type report struct {
 	Image     string          `json:"image"`
 	Compat    map[string]bool `json:"compat"`
 	ColdStart stat            `json:"cold_start"` // 新工作区：建卷、改属主、启动容器
-	WarmStart stat            `json:"warm_start"` // Stop 之后重新 Ensure（工作区已存在）
+	WarmStart stat            `json:"warm_start"` // Stop 之后重新 Ensure（工作区已存在；k8s 含恢复）
+	StopTime  stat            `json:"stop"`       // Stop（k8s 含打包与上传 -ws-mb 的工作区）
 	Workloads map[string]stat `json:"workloads"`
 	// 密度：同时空闲的沙箱数与每个沙箱占用的宿主内存（MemAvailable 的差值）。
 	Density struct {
@@ -98,7 +102,15 @@ type report struct {
 }
 
 func main() {
-	runtime := flag.String("runtime", "", "Docker 运行时（空为 runc，runsc 为 gVisor）")
+	providerKind := flag.String("provider", "docker", "docker | k8s")
+	runtime := flag.String("runtime", "", "Docker 运行时（空为 runc，runsc 为 gVisor）；provider=k8s 时为 RuntimeClass")
+	k8sAPI := flag.String("k8s-api", "https://127.0.0.1:6443", "provider=k8s 的 apiserver")
+	k8sToken := flag.String("k8s-token-file", "", "provider=k8s 的令牌文件")
+	k8sCA := flag.String("k8s-ca-file", "", "provider=k8s 的 CA 证书")
+	k8sNS := flag.String("k8s-namespace", "yanshi-sandbox", "provider=k8s 的沙箱命名空间")
+	cpus := flag.Float64("cpus", 1, "每个沙箱的 CPU")
+	memMB := flag.Int("memory-mb", 1024, "每个沙箱的内存")
+	wsMB := flag.Int("ws-mb", 10, "热启动前写入工作区的数据量（MB）")
 	image := flag.String("image", "yanshi-sandbox:dev", "沙箱镜像")
 	starts := flag.Int("starts", 20, "冷启动与热启动的次数")
 	iters := flag.Int("iters", 10, "每种负载的执行次数")
@@ -107,12 +119,26 @@ func main() {
 	flag.Parse()
 
 	ctx := context.Background()
-	p := &docker.Provider{Image: *image, Runtime: *runtime}
-	rt := *runtime
-	if rt == "" {
-		rt = "runc"
+	var p sandbox.Provider = &docker.Provider{Image: *image, Runtime: *runtime, CPUs: *cpus, MemoryMB: *memMB}
+	if *providerKind == "k8s" {
+		c, err := sandboxk8s.NewClient(sandboxk8s.Config{API: *k8sAPI, TokenFile: *k8sToken, CAFile: *k8sCA, Namespace: *k8sNS})
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		dir, err := os.MkdirTemp("", "sandboxbench-ws-")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		defer os.RemoveAll(dir)
+		p = &sandboxk8s.Provider{Client: c, Image: *image, RuntimeClass: *runtime, CPUs: *cpus, MemoryMB: *memMB, Blobs: fsblob.Store{Dir: dir}}
 	}
-	prefix := fmt.Sprintf("bench-%s-%d", rt, time.Now().Unix())
+	rt := *providerKind + "/" + *runtime
+	if rt == "" {
+		rt = *providerKind + "/default"
+	}
+	prefix := fmt.Sprintf("bench-%s-%d", strings.ReplaceAll(rt, "/", "-"), time.Now().Unix())
 	var created []string
 	defer func() {
 		for _, id := range created {
@@ -134,7 +160,7 @@ func main() {
 	r := report{Runtime: rt, Image: *image, Compat: map[string]bool{}, Workloads: map[string]stat{}}
 
 	// 冷启动与热启动：每次一个新沙箱，Ensure 后执行一次 true 才算可用。
-	var cold, warm []time.Duration
+	var cold, warm, stops []time.Duration
 	for i := range *starts {
 		id := newID("start", i)
 		t0 := time.Now()
@@ -142,7 +168,11 @@ func main() {
 		_, err := p.Exec(ctx, id, sandbox.ExecRequest{Argv: []string{"true"}})
 		must(err)
 		cold = append(cold, time.Since(t0))
+		_, err = p.Exec(ctx, id, sandbox.ExecRequest{Argv: []string{"sh", "-c", fmt.Sprintf("head -c %d /dev/urandom > ws.bin", *wsMB<<20)}})
+		must(err)
+		t0 = time.Now()
 		must(p.Stop(ctx, id))
+		stops = append(stops, time.Since(t0))
 		t0 = time.Now()
 		must(p.Ensure(ctx, id))
 		_, err = p.Exec(ctx, id, sandbox.ExecRequest{Argv: []string{"true"}})
@@ -150,8 +180,8 @@ func main() {
 		warm = append(warm, time.Since(t0))
 		must(p.Destroy(ctx, id))
 	}
-	r.ColdStart, r.WarmStart = summarize(cold), summarize(warm)
-	fmt.Fprintf(os.Stderr, "starts done: cold p95 %.0f ms, warm p95 %.0f ms\n", r.ColdStart.P95, r.WarmStart.P95)
+	r.ColdStart, r.WarmStart, r.StopTime = summarize(cold), summarize(warm), summarize(stops)
+	fmt.Fprintf(os.Stderr, "starts done: cold p95 %.0f ms, warm p95 %.0f ms, stop p95 %.0f ms\n", r.ColdStart.P95, r.WarmStart.P95, r.StopTime.P95)
 
 	// 负载：同一个沙箱内先执行一次（兼容性判定，同时预热页缓存），再计时 iters 次。
 	id := newID("work", 0)

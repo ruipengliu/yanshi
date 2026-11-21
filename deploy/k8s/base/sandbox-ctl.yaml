@@ -1,7 +1,12 @@
-# 沙箱控制器：受信控制器，只有它持有沙箱的权限（ADR-0008）；沙箱本身是不可信代码，在独立节点池上以
-# gVisor 运行（ADR-0053 的选型结论：经 RuntimeClass，有 KVM 时可选 Kata）。目前只有 Docker 实现
-# （-sandbox docker -sandbox-runtime runsc），这里挂载节点上的 docker.sock，等于节点 root，不能上线；
-# 生产 Provider（K8s，见 docs/design/m2-sandbox.md §7）实现后替换为沙箱命名空间内的最小 K8s 权限。
+# 沙箱控制器：受信控制器，只有它持有沙箱的权限（ADR-0008）。沙箱本身是不可信代码，以 Pod 运行在沙箱命名空间
+# （deploy/k8s/sandbox），隔离运行时经 RuntimeClass 选择，默认 gVisor（deploy/k8s/cluster；ADR-0053 的选型结论）。
+# 控制器只持有沙箱命名空间内管理 Pod 与 exec 的权限，不挂载节点的 docker.sock；打包的工作区写入工件所用的对象存储。
+# 出站须能访问 apiserver（网络策略的 overlay 中放行 apiserver 地址）。
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: yanshi-sandbox-ctl
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -14,19 +19,13 @@ spec:
     metadata:
       labels: {app.kubernetes.io/name: yanshi, app.kubernetes.io/component: sandbox-ctl}
     spec:
-      nodeSelector: {yanshi.io/pool: sandbox}
-      tolerations:
-        - {key: yanshi.io/sandbox, operator: Exists, effect: NoSchedule}
+      serviceAccountName: yanshi-sandbox-ctl
       containers:
         - name: yanshi
           image: yanshi
-          args: [serve, -roles=sandbox, -sandbox=docker, -sandbox-runtime=runsc, -sandbox-controllers=4, -peer-addr=0.0.0.0:7070,
+          args: [serve, -roles=sandbox, -sandbox=k8s, -sandbox-k8s-namespace=yanshi-sandbox, -sandbox-runtime-class=gvisor,
+            -sandbox-image=registry.example.com/yanshi-sandbox:0.0.0, -sandbox-controllers=4, -peer-addr=0.0.0.0:7070,
             -peer-advertise=http://$(POD_IP):7070, -storage=postgres, -migrate=false, -auth=jwt, -agents=/etc/yanshi/agents,
             -businesslines=/etc/yanshi/businesslines, -pricing=/etc/yanshi/pricing/pricing.yaml, -blob=s3, -notify-shards=16]
           resources:
             requests: {cpu: 500m, memory: 512Mi}
-          volumeMounts:
-            - {name: docker, mountPath: /var/run/docker.sock}
-      volumes:
-        - name: docker
-          hostPath: {path: /var/run/docker.sock, type: Socket}

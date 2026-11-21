@@ -1,0 +1,26 @@
+# 默认的沙箱隔离运行时：gVisor，systrap 平台，不依赖 KVM（ADR-0053）。scheduling 把沙箱 Pod 放到沙箱节点池，
+# overhead 计入 Sentry 等运行时自身的开销（实测空闲时每个沙箱约 13MB，留出余量）。
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+handler: runsc
+overhead:
+  podFixed: {cpu: 50m, memory: 64Mi}
+scheduling:
+  nodeSelector: {yanshi.io/pool: sandbox}
+  tolerations:
+    - {key: yanshi.io/sandbox, operator: Exists, effect: NoSchedule}
+# 节点有 KVM（裸金属或开启嵌套虚拟化）且要求硬件虚拟化边界时，可另装 Kata 并改用它（serve -sandbox-runtime-class kata）：
+#
+# apiVersion: node.k8s.io/v1
+# kind: RuntimeClass
+# metadata:
+#   name: kata
+# handler: kata
+# overhead:
+#   podFixed: {cpu: 250m, memory: 160Mi}
+# scheduling:
+#   nodeSelector: {yanshi.io/pool: sandbox, yanshi.io/kvm: "true"}
+#   tolerations:
+#     - {key: yanshi.io/sandbox, operator: Exists, effect: NoSchedule}

@@ -1,5 +1,5 @@
 ---
-status: accepted（2026-11-14；取代 ADR-0010；2026-11-21 修订：选型完成，默认 gVisor）
+status: accepted（2026-11-14；取代 ADR-0010；2026-11-21 修订：选型完成，默认 gVisor；同日 K8s Provider 已实现）
 ---
 
 # 生产沙箱以自托管隔离为基线，隔离技术按四项依据选定
@@ -68,7 +68,24 @@ ADR-0010 选定了 Kubernetes + gVisor，随后又自行暂缓，留下一个分
 
 判据（压测之前约定，2026-11-21 修正）：兼容性全部通过；每次执行增加的耗时不超过 30% **或**绝对值不超过 100 ms；冷启动 p95 不超过 3 秒（超过则 S3 预热池成为上线前提）。原判据只写了"不超过 30%"，小文件读写（2.4 倍）与进程密集的负载按比例不达标，但绝对增量在 12～160 ms 之间，同一 Run 中一次模型调用以秒计，所以修正判据而不是否决；原始数字照录于上表。
 
-限制：冷启动是 Docker 层面的数字，不含 K8s 的调度与 Pod 创建，生产 Provider 实现后在 K8s 上复测；Kata 没有实测。
+限制：上表是 Docker 层面的数字，不含 K8s 的调度与 Pod 创建；K8s 上的复测见下；Kata 没有实测。
+
+### 实现与 K8s 复测（2026-11-21）
+
+K8s Provider 已实现（`internal/sandbox/k8s`，`serve -sandbox k8s`；设计见 [m2-sandbox](../design/m2-sandbox.md) §7），按第 6 条的约束。在同一台机器的单节点 k3s（v1.37.2，containerd 2.3.7，gVisor 经 RuntimeClass `gvisor`）上：Provider 一致性套件、超限工作区、Pod 丢失后恢复与网络策略检查全部通过；Pod 内 `dmesg` 显示 gVisor，删除 deny-all 策略后沙箱能连上 apiserver、恢复策略后连不上，确认网络阻断来自策略。
+
+| 项目（镜像已在节点上） | k3s 默认 runc | gVisor |
+|---|---|---|
+| 冷启动 p50 / p95（创建 Pod 到可执行） | 646 / 662 ms | 645 / 667 ms |
+| 热启动 p95（Stop 后创建 Pod 并恢复 10MB 工作区） | 702 ms | 734 ms |
+| Stop p95（打包上传 10MB 并删除 Pod） | 73 ms | 94 ms |
+| 经 apiserver 的一次 exec（`true`）p50 | 16 ms | 11 ms |
+| 数据分析负载（pandas、xlsx、出图）比值 | — | 0.99～1.03 |
+| 小文件、子进程、ffmpeg 比值 | — | 2.0、1.83、1.79 |
+| 30 个沙箱并发执行的 p95 | — | 208 ms |
+| 每个空闲沙箱占用的宿主内存（含 Pod 基础设施） | — | 30.8 MB |
+
+冷启动 p95 远低于 3 秒，预热池（S3）不是上线前提；30 路并发 exec 下 apiserver 不是瓶颈。限制：单节点、镜像已缓存；生产规模下 apiserver 的 exec 负载与首次拉取镜像的耗时在目标集群验证（[上线检查清单](../launch-checklist.md)的"生产部署形态"）。
 
 ## Considered Options
 
@@ -81,7 +98,7 @@ ADR-0010 选定了 Kubernetes + gVisor，随后又自行暂缓，留下一个分
 
 ## Consequences
 
-- 生产沙箱 Provider 仍是上线的阻断项（[上线检查清单](../launch-checklist.md)）：选型已完成，剩下按"选型结论"第 6 条实现 K8s Provider，并在 K8s 上复测冷启动与 exec 负载。
+- 生产沙箱 Provider 已实现并在 K8s 上复测（2026-11-21，见上）；在目标集群上的验证归入[上线检查清单](../launch-checklist.md)的"生产部署形态"。
 - 部署设计中 sandbox-ctl 的节点池使用 gVisor 的 RuntimeClass（2026-11-21）；装有 KVM 的客户可改用 Kata。
 - 开发环境继续使用 Docker 实现，可选 `-sandbox-runtime runsc`；`make eval` 也接受 `-sandbox-runtime`，改动沙箱镜像或沙箱相关的提示词时可在 runsc 下复核。
 
@@ -93,4 +110,5 @@ ADR-0010 选定了 Kubernetes + gVisor，随后又自行暂缓，留下一个分
 - 出现某个目标客户环境，gVisor 与 Kata 都无法部署；
 - gVisor 出现可利用的逃逸漏洞且修复不及时，或其 systrap 平台在目标内核上不可用；
 - 线上数据显示沙箱执行占 Run 耗时的显著比例，且以进程或小文件密集的负载为主（批量启动子进程、`pip` 一类）：在有 KVM 的节点上实测 Kata，或调整 gVisor 的文件系统配置；
-- K8s 上复测的冷启动 p95 超过 3 秒（S3 预热池成为上线前提）。
+- 目标集群上的冷启动 p95 超过 3 秒（S3 预热池成为上线前提）；
+- 并发 exec 使 apiserver 成为瓶颈（沙箱内执行代理需要另写 ADR，见第 6 条）。

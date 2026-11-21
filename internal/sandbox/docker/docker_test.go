@@ -1,108 +1,25 @@
 package docker_test
 
 import (
-	"context"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"yanshi/internal/sandbox"
 	"yanshi/internal/sandbox/docker"
+	"yanshi/internal/sandbox/sandboxtest"
 )
 
 // 需要 Docker；make test 会设置 YANSHI_TEST_DOCKER=1。镜像较小，不含 pandas 等。
 const testImage = "python:3.12-slim"
 
-func provider(t *testing.T) (*docker.Provider, string) {
+func TestProvider(t *testing.T) {
 	if os.Getenv("YANSHI_TEST_DOCKER") == "" {
 		t.Skip("YANSHI_TEST_DOCKER not set")
 	}
 	// YANSHI_TEST_DOCKER_RUNTIME 选择运行时（如 runsc），用于在隔离运行时下复核兼容性（ADR-0053）。
 	p := &docker.Provider{Image: testImage, MemoryMB: 256, Runtime: os.Getenv("YANSHI_TEST_DOCKER_RUNTIME")}
-	id := "test-" + strings.ReplaceAll(t.Name(), "/", "-") + "-" + time.Now().Format("150405.000000")
-	t.Cleanup(func() { _ = p.Destroy(context.Background(), id) })
-	if err := p.Ensure(context.Background(), id); err != nil {
-		t.Fatal(err)
-	}
-	return p, id
-}
-
-func TestExecAndWorkspacePersistsAcrossStop(t *testing.T) {
-	ctx := context.Background()
-	p, id := provider(t)
-	res, err := p.Exec(ctx, id, sandbox.ExecRequest{Argv: []string{"python3", "-"}, Stdin: []byte("open('a.txt','w').write('hi'); print(6*7)")})
-	if err != nil || res.ExitCode != 0 || strings.TrimSpace(string(res.Stdout)) != "42" {
-		t.Fatalf("exec = %+v, %v", res, err)
-	}
-	if err := p.Stop(ctx, id); err != nil {
-		t.Fatal(err)
-	}
-	if err := p.Ensure(ctx, id); err != nil {
-		t.Fatal(err)
-	}
-	data, _, err := p.ReadFile(ctx, id, "/workspace/a.txt", 100)
-	if err != nil || string(data) != "hi" {
-		t.Fatalf("workspace lost after stop: %q, %v", data, err)
-	}
-}
-
-func TestIsolation(t *testing.T) {
-	ctx := context.Background()
-	p, id := provider(t)
-	script := `
-import os, socket
-print("uid", os.getuid())
-try:
-    socket.create_connection(("1.1.1.1", 53), timeout=2); print("net ok")
-except OSError: print("net blocked")
-try:
-    open("/usr/evil", "w"); print("rootfs writable")
-except OSError: print("rootfs read-only")
-`
-	res, err := p.Exec(ctx, id, sandbox.ExecRequest{Argv: []string{"python3", "-"}, Stdin: []byte(script)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	out := string(res.Stdout)
-	for _, want := range []string{"uid 1000", "net blocked", "rootfs read-only"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in:\n%s%s", want, out, res.Stderr)
-		}
-	}
-}
-
-func TestTimeoutKills(t *testing.T) {
-	p, id := provider(t)
-	start := time.Now()
-	res, err := p.Exec(context.Background(), id, sandbox.ExecRequest{Argv: []string{"sleep", "30"}, Timeout: 2 * time.Second})
-	if err != nil || !res.TimedOut || time.Since(start) > 15*time.Second {
-		t.Fatalf("res = %+v, err %v, took %s", res, err, time.Since(start))
-	}
-}
-
-func TestOutputTruncated(t *testing.T) {
-	p, id := provider(t)
-	res, err := p.Exec(context.Background(), id, sandbox.ExecRequest{Argv: []string{"python3", "-c", "print('x'*100000)"}})
-	if err != nil || !res.StdoutTruncated || len(res.Stdout) != sandbox.OutputLimit {
-		t.Fatalf("len %d truncated %v err %v", len(res.Stdout), res.StdoutTruncated, err)
-	}
-}
-
-// TestDestroyIsIdempotent：Janitor 的删除会清扫两次，容器也可能已被空闲回收或从未创建：
-// 对不存在的容器与卷，Destroy 视为已完成，而不是报错使删除无法结束。
-func TestDestroyIsIdempotent(t *testing.T) {
-	ctx := context.Background()
-	p, id := provider(t)
-	if err := p.Stop(ctx, id); err != nil {
-		t.Fatal(err)
-	}
-	for i := range 2 {
-		if err := p.Destroy(ctx, id); err != nil {
-			t.Fatalf("destroy #%d: %v", i+1, err)
-		}
-	}
-	if err := p.Destroy(ctx, id+"-never-created"); err != nil {
-		t.Fatalf("destroy of a sandbox that never existed: %v", err)
-	}
+	sandboxtest.RunProvider(t, p, func(t *testing.T) string {
+		return "test-" + strings.ReplaceAll(t.Name(), "/", "-") + "-" + time.Now().Format("150405.000000")
+	})
 }
