@@ -1,6 +1,6 @@
 # 评审：内核架构评估（2026-11-21）
 
-> 状态：已裁决并部分实施（2026-11-22，见 §10）· 评审对象：[内核架构评估：业务支撑灵活性与边界清晰度诊断](../architecture/architecture-evaluation.html)（2026-11-21，提交 23e4dd0）· 依据：[章程](../charter.md) v0.2、[ADR 索引](../adr/README.md)、`docs/design/*.md` 与 2026-11-22 的代码 · 术语以 [CONTEXT.md](../../CONTEXT.md) 为准；原评估多处用“租户”“客户端”“消息队列”等泛称，本文统一写作 BusinessLine（业务线）、HostApp、Outbox，只在引用原文时保留
+> 状态：已裁决并实施（2026-11-22，见 §10；A2 按裁决本轮不做）· 评审对象：[内核架构评估：业务支撑灵活性与边界清晰度诊断](../architecture/architecture-evaluation.html)（2026-11-21，提交 23e4dd0）· 依据：[章程](../charter.md) v0.2、[ADR 索引](../adr/README.md)、`docs/design/*.md` 与 2026-11-22 的代码 · 术语以 [CONTEXT.md](../../CONTEXT.md) 为准；原评估多处用“租户”“客户端”“消息队列”等泛称，本文统一写作 BusinessLine（业务线）、HostApp、Outbox，只在引用原文时保留
 >
 > 本文由同日两份独立评审合并而成，两份的事实核对互相印证，分歧之处在文中注明。另一份独立复核见[内核架构评估复核](./2026-11-22-kernel-architecture-evaluation-review.md)。
 
@@ -148,6 +148,8 @@ R3（真实审核提供商、推送与唤醒、链路追踪、目标集群验收
 | A2 | 本轮不做 | 取舍与重审条件写入[多端双工通道](../design/m3-duplex-channel.md) §5 |
 | A3 | 采纳 | 已实现：先取并发名额、再等 RPS 令牌；`-model-limit` 按提供商覆盖（[模型调用](../design/model-calls.md) §5） |
 | A4 | 单元内业务线按互不信任对待 | 已实现：[ADR-0060](../adr/0060-business-line-definition-access.md)。采用"业务线配置声明可用定义"（`agents.allow`、`oneshots.allow`），不用复合键；MCP Server 改以 (业务线, 名称) 为键，取消同名须分属不同单元的限制 |
-| A5–A7 | 维持 §5 的下一步 | 未立项 |
+| A5 | 采纳"迁槽即换代" | 已写入 [ADR-0046](../adr/0046-business-line-outbox.md)“迁槽与游标”与 ADR-0051 §5.4：出站行不搬、停写后先等消费方追平、受影响分片换代后走既有的游标过期恢复；不做游标映射与固定逻辑分区（R7）。迁槽工具仍推迟，实现时须补的运维入口、消费端缺口与模拟测试列在该节 |
+| A6 | 压测后决定现在不外置 | 数据、理由与重审条件见[工件](../design/m2-artifacts.md) §6：有上限的来源（≤ 64 KiB）每条提交延迟增加不到 1 ms，主要放大点是投影快照存未压缩历史；没有独立上限的是设备、后台与委托结果。压测 `TestToolResultSizeProfile` 随代码提交，默认跳过 |
+| A7 | 采纳 | 已实现：[ADR-0061](../adr/0061-taint-gated-mcp-tools.md)，MCP 登记的 `tools.taint_gated`；评测 `mcp-crm-taint-gated-direct`、`mcp-crm-taint-gated-after-search` |
 | A8 | 采纳 | 已实现：`serve -worker-business-lines`（[部署](../design/deployment.md) §3） |
 | A9 | 采纳 | 已写入[部署](../design/deployment.md) §4 的生产基线与上线检查清单 |

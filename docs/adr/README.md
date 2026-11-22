@@ -72,7 +72,7 @@
 | [0043](0043-kernel-persona-app-layers.md) | 内核、Persona 与应用分三层 | 已修订（2026-11-14） | 已实现 | 一 | 第二条业务线接入；业务侧连续两次绕开内核 | — | |
 | [0044](0044-capture-text-store-and-erasure.md) | Capture 正文移出日志，按引用擦除 | 被取代 | 未实施 | — | — | 被 0050（现 0052）取代 | |
 | [0045](0045-schedules-in-the-kernel.md) | 定时是内核的原语 | 已修订（ADR-0050、P2、2026-11-14） | 已实现 | 二 | 第二条业务线接入；xinli 需求超出现有语义 | 承接 0040 的有效保证 | 是 |
-| [0046](0046-business-line-outbox.md) | 拉取式出站流 | 已修订（ADR-0050、P4） | 已实现 | 二 | 同上 | — | 是 |
+| [0046](0046-business-line-outbox.md) | 拉取式出站流 | 已修订（ADR-0050、P4；2026-11-22 补充迁槽与游标） | 已实现 | 二 | 同上 | — | 是 |
 | [0047](0047-oneshot-model-calls.md) | 无会话的单次调用 | 已修订（2026-10-28） | 已实现 | 二 | 同上 | — | 是 |
 | [0048](0048-third-party-agents.md) | 三方 Agent | accepted | 未实现 | 二 | 三方托管实施前；"听过他人旁听"开始实现 | — | |
 | [0049](0049-read-positions-advance-on-business-acks.md) | 交付确认，读取位置按回执推进 | 被取代 | 已删除 | — | — | 被 0050（现 0052）取代 | |
