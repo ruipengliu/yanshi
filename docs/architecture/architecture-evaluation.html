@@ -1,0 +1,1471 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>yanshi 内核架构评估：业务支撑灵活性与内核—业务边界诊断（2026-11-21）</title>
+<style>
+/*
+ * yanshi 内核架构评估报告 · 自包含无外链样式（契合 ADR-0001 离线可读精神）
+ * 聚焦内核（internal/、proto/、sdk/）对多业务线的灵活支撑度与“内核—业务线”职责边界清晰度
+ */
+:root {
+  --bg: #f4f5f2;
+  --surface: #ffffff;
+  --surface-alt: #fafaf8;
+  --sunk: #eaece7;
+  --fg: #181c23;
+  --fg-secondary: #36404e;
+  --muted: #5d6573;
+  --line: #d5d9d1;
+  --line-strong: #949c94;
+
+  --kernel: #2f45a8;
+  --biz: #9c560e;
+  --seam: #0b6e62;
+  --eco: #6a3ea1;
+
+  --ok: #237332;
+  --warn: #a66207;
+  --risk: #b5213b;
+  --info: #1b5ea8;
+
+  --shadow: 0 1px 3px rgba(18, 22, 28, 0.05);
+  --sans: "PingFang SC", "Noto Sans SC", "Hiragino Sans GB", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --serif: "Songti SC", "Noto Serif SC", "STSong", "SimSun", Georgia, serif;
+  --mono: "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, Monaco, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111317;
+    --surface: #191c22;
+    --surface-alt: #1e222a;
+    --sunk: #242933;
+    --fg: #e7e9ee;
+    --fg-secondary: #c4cad4;
+    --muted: #939ba8;
+    --line: #2c323c;
+    --line-strong: #555e6d;
+
+    --kernel: #8fa3ff;
+    --biz: #eba858;
+    --seam: #56ccb9;
+    --eco: #c19af8;
+
+    --ok: #74cf84;
+    --warn: #f0b456;
+    --risk: #f6798e;
+    --info: #78b3f5;
+
+    --shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #111317;
+  --surface: #191c22;
+  --surface-alt: #1e222a;
+  --sunk: #242933;
+  --fg: #e7e9ee;
+  --fg-secondary: #c4cad4;
+  --muted: #939ba8;
+  --line: #2c323c;
+  --line-strong: #555e6d;
+
+  --kernel: #8fa3ff;
+  --biz: #eba858;
+  --seam: #56ccb9;
+  --eco: #c19af8;
+
+  --ok: #74cf84;
+  --warn: #f0b456;
+  --risk: #f6798e;
+  --info: #78b3f5;
+
+  --shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.72;
+  padding-inline: max(18px, env(safe-area-inset-left, 0px)) max(18px, env(safe-area-inset-right, 0px));
+  padding-bottom: 84px;
+}
+
+.wrap { max-width: 1140px; margin: 0 auto; }
+.prose { max-width: 56em; }
+
+/* 顶部导航条 */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+  margin-inline: -18px;
+  padding-inline: 18px;
+}
+.topbar-inner {
+  max-width: 1140px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding-block: 6px;
+}
+.brand {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+}
+.brand span { color: var(--muted); font-weight: 400; }
+nav.toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 13px;
+}
+nav.toc a {
+  color: var(--fg-secondary);
+  text-decoration: none;
+  padding-block: 2px;
+  border-bottom: 2px solid transparent;
+  transition: color .15s, border-color .15s;
+}
+nav.toc a:hover, nav.toc a:focus-visible {
+  color: var(--kernel);
+  border-bottom-color: var(--kernel);
+}
+.theme-btn {
+  background: var(--surface);
+  color: var(--fg-secondary);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12.5px;
+  font-family: var(--sans);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.theme-btn:hover { border-color: var(--line-strong); color: var(--fg); }
+:focus-visible { outline: 2px solid var(--kernel); outline-offset: 2px; }
+
+/* 页头 */
+header.hero {
+  padding-block: 40px 28px;
+  border-bottom: 1px solid var(--line);
+}
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  letter-spacing: .04em;
+  color: var(--muted);
+}
+h1 {
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: clamp(27px, 4.2vw, 39px);
+  line-height: 1.24;
+  margin: 10px 0 14px;
+}
+h2 {
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: 24px;
+  line-height: 1.3;
+  margin: 0 0 8px;
+}
+h3 {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 22px 0 8px;
+}
+p { margin: 0 0 12px; }
+.lede {
+  font-size: 15.8px;
+  color: var(--fg-secondary);
+  max-width: 58em;
+}
+.muted { color: var(--muted); }
+code, .mono {
+  font-family: var(--mono);
+  font-size: .85em;
+  background: var(--sunk);
+  padding: 1px 5px;
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+a { color: var(--kernel); }
+
+section {
+  padding-block: 38px 14px;
+  border-bottom: 1px solid var(--line);
+  scroll-margin-top: 56px;
+}
+section:last-of-type { border-bottom: 0; }
+.sec-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.secno {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--kernel);
+}
+
+/* 标签与徽章 */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 18px;
+  font-size: 13px;
+  color: var(--muted);
+  align-items: center;
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11.5px;
+  line-height: 1;
+  padding: 4px 7px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+  font-weight: 600;
+  vertical-align: middle;
+}
+.badge.done { color: var(--ok); background: color-mix(in srgb, var(--ok) 9%, transparent); }
+.badge.part { color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+.badge.gap  { color: var(--risk); background: color-mix(in srgb, var(--risk) 10%, transparent); }
+.badge.spec { color: var(--info); border-style: dashed; background: color-mix(in srgb, var(--info) 8%, transparent); }
+
+.badge.p0 { color: var(--risk); background: color-mix(in srgb, var(--risk) 12%, transparent); }
+.badge.p1 { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.badge.p2 { color: var(--info); background: color-mix(in srgb, var(--info) 10%, transparent); }
+
+.cat-tag {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.cat-tag.tenant { color: var(--risk); background: color-mix(in srgb, var(--risk) 11%, transparent); }
+.cat-tag.leak   { color: var(--biz); background: color-mix(in srgb, var(--biz) 12%, transparent); }
+.cat-tag.plug   { color: var(--seam); background: color-mix(in srgb, var(--seam) 12%, transparent); }
+.cat-tag.scale  { color: var(--kernel); background: color-mix(in srgb, var(--kernel) 11%, transparent); }
+.cat-tag.eco    { color: var(--eco); background: color-mix(in srgb, var(--eco) 11%, transparent); }
+
+/* KPI 指标带 */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(172px, 1fr));
+  gap: 12px;
+  margin-top: 22px;
+}
+.kpi {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  box-shadow: var(--shadow);
+}
+.kpi.warn-kpi { border-top: 2.5px solid var(--risk); }
+.kpi.ok-kpi   { border-top: 2.5px solid var(--ok); }
+.kpi .val {
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--fg);
+  line-height: 1.2;
+}
+.kpi .lbl {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.kpi .sub {
+  font-size: 11.5px;
+  color: var(--fg-secondary);
+  margin-top: 3px;
+}
+
+/* 卡片网格 */
+.verdicts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px 18px;
+  box-shadow: var(--shadow);
+  min-width: 0;
+}
+.card.accent-ok { border-top: 3px solid var(--ok); }
+.card.accent-warn { border-top: 3px solid var(--warn); }
+.card.accent-risk { border-top: 3px solid var(--risk); }
+.card.accent-kernel { border-top: 3px solid var(--kernel); }
+.card h3 {
+  margin: 0 0 8px;
+  font-size: 15.5px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.card p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--fg-secondary);
+  line-height: 1.68;
+}
+.card ul {
+  margin: 8px 0 0;
+  padding-left: 1.25em;
+  font-size: 13.8px;
+  color: var(--fg-secondary);
+}
+.card li { margin-bottom: 5px; }
+.card .meta-foot {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.callout {
+  border-left: 3.5px solid var(--kernel);
+  background: var(--surface);
+  border-block: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  padding: 14px 18px;
+  margin: 16px 0;
+  border-radius: 0 8px 8px 0;
+}
+.callout.risk { border-left-color: var(--risk); }
+.callout b { color: var(--fg); }
+
+/* 表格 */
+.tbl {
+  overflow-x: auto;
+  margin: 14px 0 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13.6px;
+  line-height: 1.6;
+}
+th, td {
+  text-align: left;
+  vertical-align: top;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+th {
+  font-size: 12px;
+  letter-spacing: .03em;
+  color: var(--muted);
+  font-weight: 600;
+  background: var(--sunk);
+  white-space: nowrap;
+}
+tr:last-child td { border-bottom: 0; }
+tbody tr:hover { background: var(--surface-alt); }
+td.nowrap { white-space: nowrap; }
+
+/* 进度条 */
+.prog-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 108px;
+}
+.prog-bar {
+  flex: 1;
+  height: 7px;
+  background: var(--sunk);
+  border-radius: 99px;
+  overflow: hidden;
+}
+.prog-fill { height: 100%; border-radius: 99px; }
+.prog-fill.done { background: var(--ok); }
+.prog-fill.part { background: var(--warn); }
+.prog-fill.gap  { background: var(--risk); }
+.prog-pct {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  width: 34px;
+  text-align: right;
+}
+
+/* SVG 图表 */
+figure { margin: 20px 0; }
+.diagram-box {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: var(--shadow);
+}
+figcaption {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 8px;
+  line-height: 1.6;
+}
+svg.dg {
+  display: block;
+  width: 100%;
+  height: auto;
+  font-family: var(--sans);
+  color: var(--line-strong);
+}
+svg .band-k { fill: color-mix(in srgb, var(--kernel) 6%, var(--surface)); stroke: var(--kernel); stroke-width: 1.3; }
+svg .band-b { fill: color-mix(in srgb, var(--biz) 6%, var(--surface)); stroke: var(--biz); stroke-width: 1.3; }
+svg .band-seam { fill: color-mix(in srgb, var(--seam) 7%, var(--surface)); stroke: var(--seam); stroke-width: 1.4; }
+svg .band-s { fill: var(--sunk); stroke: var(--line-strong); stroke-width: 1.1; }
+
+svg .bx { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1.2; }
+svg .bx-k { fill: var(--surface); stroke: var(--kernel); stroke-width: 1.3; }
+svg .bx-seam { fill: var(--surface); stroke: var(--seam); stroke-width: 1.3; }
+svg .bx-warn { fill: color-mix(in srgb, var(--warn) 9%, var(--surface)); stroke: var(--warn); stroke-width: 1.3; }
+svg .bx-risk { fill: color-mix(in srgb, var(--risk) 9%, var(--surface)); stroke: var(--risk); stroke-width: 1.4; }
+
+svg .tb { fill: var(--fg); font-size: 12.5px; font-weight: 700; }
+svg .t  { fill: var(--fg-secondary); font-size: 11.4px; }
+svg .tm { fill: var(--muted); font-size: 10.8px; }
+svg .tk { fill: var(--kernel); font-size: 12.5px; font-weight: 700; }
+svg .tbiz { fill: var(--biz); font-size: 12.5px; font-weight: 700; }
+svg .tseam { fill: var(--seam); font-size: 12.5px; font-weight: 700; }
+svg .tw { fill: var(--warn); font-size: 11px; font-weight: 600; }
+svg .tr { fill: var(--risk); font-size: 11px; font-weight: 600; }
+svg .tok { fill: var(--ok); font-size: 11px; font-weight: 600; }
+
+svg .ln { stroke: var(--line-strong); stroke-width: 1.4; fill: none; }
+svg .ln-k { stroke: var(--kernel); stroke-width: 1.5; fill: none; }
+svg .ln-risk { stroke: var(--risk); stroke-width: 1.6; fill: none; }
+svg .ln-warn { stroke: var(--warn); stroke-width: 1.6; fill: none; }
+
+/* 深度剖析条目 */
+.split-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+.issue-list {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+.issue {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px 18px;
+  box-shadow: var(--shadow);
+}
+.issue-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.issue-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15.5px;
+  font-weight: 700;
+}
+.issue-id {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--sunk);
+  color: var(--fg);
+}
+.issue-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  font-size: 13.7px;
+}
+.issue-col b.col-hd {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 5px;
+  letter-spacing: .03em;
+}
+
+/* 交互筛选栏 */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 14px 0;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.filter-label {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-right: 2px;
+}
+.chip {
+  background: var(--sunk);
+  color: var(--fg-secondary);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12.5px;
+  font-family: var(--sans);
+  cursor: pointer;
+}
+.chip:hover { border-color: var(--line-strong); }
+.chip.active {
+  background: color-mix(in srgb, var(--kernel) 14%, var(--surface));
+  color: var(--kernel);
+  border-color: var(--kernel);
+  font-weight: 600;
+}
+.filter-count {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+tr.hidden-row { display: none; }
+
+/* 边界守护法则 */
+.guardrails {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.guardrail {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--seam);
+  border-radius: 6px;
+  padding: 13px 15px;
+  font-size: 13.7px;
+}
+.guardrail b { display: block; margin-bottom: 4px; color: var(--fg); }
+
+footer {
+  padding-top: 28px;
+  font-size: 12.8px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+@media (max-width: 720px) {
+  .topbar { position: static; }
+  nav.toc { display: none; }
+  body { font-size: 14.5px; }
+}
+
+@media print {
+  :root {
+    --bg: #ffffff !important;
+    --surface: #ffffff !important;
+    --surface-alt: #f8f8f8 !important;
+    --sunk: #f0f0f0 !important;
+    --fg: #000000 !important;
+    --fg-secondary: #222222 !important;
+    --muted: #555555 !important;
+    --line: #cccccc !important;
+  }
+  .topbar, .filter-bar { display: none !important; }
+  body { padding: 0; font-size: 12px; }
+  .card, .issue, .tbl, .diagram-box { box-shadow: none !important; break-inside: avoid; }
+  tr.hidden-row { display: table-row !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">yanshi <span>· 内核架构与边界专题评估 · 2026-11-21</span></div>
+    <nav class="toc" aria-label="章节导航">
+      <a href="#exec">1 核心结论</a>
+      <a href="#boundary">2 边界清晰度诊断</a>
+      <a href="#goals">3 业务支撑灵活度</a>
+      <a href="#strengths">4 内核核心优势</a>
+      <a href="#bottlenecks">5 六大扩展性隐患</a>
+      <a href="#roadmap">6 优化演进路线</a>
+      <a href="#rules">7 边界守护标尺</a>
+    </nav>
+    <button type="button" class="theme-btn" id="themeToggle" aria-label="切换明暗主题">主题：自动</button>
+  </div>
+</div>
+
+<div class="wrap">
+  <header class="hero">
+    <div class="eyebrow">KERNEL ARCHITECTURE &amp; BOUNDARY EVALUATION · 聚焦 internal/ · proto/ · sdk/</div>
+    <h1>yanshi 内核架构评估：业务支撑灵活性与边界清晰度诊断</h1>
+    <p class="lede">
+      撇开单一上层业务的实现细节，本报告纯粹站在<b>平台基座（Kernel）</b>视角回答两个核心架构问题：<br>
+      ① 对照 <code>charter.md</code> 的九大目标与“薄 Harness”原则，当前内核能否<b>零改基座、灵活支撑形态各异的多条 C 端业务线</b>？<br>
+      ② 当前<b>内核与业务线的功能边界是否清晰</b>，是否存在职责越界、泄漏或缺位，进而导致后续系统整体扩展性受阻？
+    </p>
+
+    <div class="legend" aria-label="状态图例">
+      <span><span class="badge done">基座正交完备</span> 语义通用，已压测/模拟闭环</span>
+      <span><span class="badge part">可支撑但存摩擦</span> 边界偏离或局部状态受限</span>
+      <span><span class="badge spec">契约已定未实现</span> ADR 已批准，代码尚未落地</span>
+      <span><span class="badge gap">边界失守/缺口</span> 存在越权、硬编码耦合或拓扑外泄</span>
+    </div>
+
+    <div class="kpi-grid" aria-label="内核关键技术与边界指标">
+      <div class="kpi ok-kpi">
+        <div class="val">3.67× / 0 丢单</div>
+        <div class="lbl">1→4 进程水平扩展与强杀恢复</div>
+        <div class="sub">188.8 runs/s · 6812 在途 Run 全接管</div>
+      </div>
+      <div class="kpi ok-kpi">
+        <div class="val">667 ms / 53 ms</div>
+        <div class="lbl">gVisor 冷启动 p95 / 问答 TTFT p99</div>
+        <div class="sub">K8s 无特权沙箱 · 交互/后台双池隔离</div>
+      </div>
+      <div class="kpi ok-kpi">
+        <div class="val">0.4–0.6 s</div>
+        <div class="lbl">10GB 分片在线搬迁停写窗口</div>
+        <div class="sub">1024 槽预分 8 片 · 2200+ 差分模拟种子</div>
+      </div>
+      <div class="kpi warn-kpi">
+        <div class="val">0 租户隔离</div>
+        <div class="lbl">AgentDef / Release / Oneshot 注册表</div>
+        <div class="sub">无 BusinessLine 归属校验，可跨线越权调用</div>
+      </div>
+      <div class="kpi warn-kpi">
+        <div class="val">shard=N 外泄</div>
+        <div class="lbl">Outbox 暴露 PG 物理分片与 xid8</div>
+        <div class="sub">内核未来改槽位映射将致全业务线游标失效</div>
+      </div>
+      <div class="kpi warn-kpi">
+        <div class="val">64 条上限</div>
+        <div class="lbl">Session 输入去重窗口（无建会话幂等）</div>
+        <div class="sub">迫使业务线越界全量拉取 Event 日志对账</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ==================== §1 核心评估结论 ==================== -->
+  <section id="exec">
+    <div class="sec-head"><span class="secno">§1</span><h2>核心评估结论：下层原语高度正交，上层边界存在“双向越界”</h2></div>
+
+    <div class="callout risk prose">
+      <b>核心诊断结论：</b>yanshi 内核的<b>下层执行与存储原语</b>（Event 唯一事实源、Attempt fencing、单事务原子唤醒、统一 Capability 路由、1024 槽预分片、物理删除闭环）设计极度克制且坚固，完全具备世界级 Agent 运行时的骨架；但内核与业务线交界的<b>上层接入契约与治理切面存在显著的“双向越界”</b>——既把首条业务线的领域规则硬编码进了内核，又把内核底层的物理分片拓扑与幂等补偿负担甩给了业务线。若不在第二条业务线大规模接入前完成边界收敛，将直接引发<b>每次新增业务场景都要改内核 `proto`、多业务线共池相互饥饿/越权、以及内核分片无法在线扩容</b>三大系统级扩展性瓶颈。
+    </div>
+
+    <div class="verdicts">
+      <div class="card accent-ok">
+        <h3>下层执行底座：边界清晰、无需推翻 <span class="badge done">核心资产</span></h3>
+        <p>内核严守“只管可靠执行、来源推导、审批拦截与按主键物理删除，不建模具体业务实体”。无状态 <code>Worker.Step</code> + 单二进制五角色裁剪 + 14 套一致性套件与三方差分模拟（<code>make sim</code>），使标准对话、工具调用、端云协同与长任务场景可开箱即用。</p>
+        <div class="meta-foot">对应：m0-core-primitives · m1-device-nodes · m2-sandbox · ADR-0004/0028/0051</div>
+      </div>
+
+      <div class="card accent-risk">
+        <h3>越界方向一：业务语义下沉污染内核 <span class="badge gap">假通用·真耦合</span></h3>
+        <p>可穿戴录音的二元角色（<code>SPEAKER_WEARER / OTHER</code>）、声纹引用 <code>speaker_ref</code>、中文“之后七天”相对日期头、6 个固定记忆分类、纯中文健康词表与唯一 <code>health</code> 同意项、封闭 5 类卡片元素被硬编码进内核 <code>proto</code> 与状态机 <code>Apply</code>；同时循环与上下文组装仍锁死在内核 <code>runtime</code> 中未插件化。</p>
+        <div class="meta-foot">代码实证：event.proto · internal/capture · internal/memory · internal/card · worker.go</div>
+      </div>
+
+      <div class="card accent-risk">
+        <h3>越界方向二：物理拓扑上浮与租户原语缺位 <span class="badge gap">抽象泄漏·缺位</span></h3>
+        <p><code>Outbox</code> 直接向业务线暴露内核 PG 物理分片号 <code>shard=N</code> 与本地事务号 <code>xid8</code>，反向锁死内核在线重分片；<code>AgentDef</code> / <code>Release</code> / <code>Oneshot</code> 无业务线命名空间（可跨业务线越权创建与委托），<code>MCP</code> 同名全局冲突；缺建会话幂等键、缺持久输入去重、缺跨业务线公平调度。</p>
+        <div class="meta-foot">代码实证：httpapi/outbox.go · agentdef · oneshot · mcpcap · pgqueue · model/guard.go</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== §2 内核 vs 业务线边界清晰度全景诊断 ==================== -->
+  <section id="boundary">
+    <div class="sec-head"><span class="secno">§2</span><h2>内核 vs 业务线职责边界清晰度诊断</h2></div>
+    <div class="prose">
+      <p>健康的平台架构应当满足<b>“策略与领域语义向上归业务线，租户隔离、幂等原语与物理拓扑封装向下归内核”</b>。下图与对照表展示了当前代码在八个关键切面上的实际边界偏离：</p>
+    </div>
+
+    <figure>
+      <div class="diagram-box">
+        <svg class="dg" viewBox="0 0 1040 430" role="img" aria-label="内核与业务线双向越界诊断图" style="min-width:860px">
+          <defs>
+            <marker id="mk-down" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto">
+              <path d="M0,0 L10,5 L0,10 z" style="fill:var(--risk)"/>
+            </marker>
+            <marker id="mk-up" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto">
+              <path d="M0,0 L10,5 L0,10 z" style="fill:var(--warn)"/>
+            </marker>
+          </defs>
+
+          <!-- 上层：多条异构业务线 -->
+          <rect x="18" y="16" width="1004" height="122" rx="8" class="band-b"/>
+          <text x="36" y="38" class="tbiz">业务线层（BusinessLine A / B / C：硬件助手、金融客服、企业协同、电商导购、海外多语种…）</text>
+          <text x="36" y="56" class="tm">本应专注：领域实体知识 · 业务工作流与上下文选材策略 · 行业合规分类定义 · 自定义业务卡片渲染 · 端侧宿主体验</text>
+
+          <rect x="36" y="68" width="465" height="54" rx="6" class="bx-warn"/>
+          <text x="268" y="88" class="tb" text-anchor="middle">被迫在业务侧承担的“内核级基础设施负担”（内核缺位导致）</text>
+          <text x="268" y="108" class="tw" text-anchor="middle">⚠ 绑定内核物理 shard=N 维护游标 · 自建孤儿 Session 回收 · 全量拉取 Event 日志扫 input_id 对账</text>
+
+          <rect x="520" y="68" width="484" height="54" rx="6" class="bx"/>
+          <text x="762" y="88" class="tb" text-anchor="middle">业务线想自定义却改不动的策略（被内核硬编码锁死）</text>
+          <text x="762" y="108" class="tr" text-anchor="middle">✗ 自定义上下文裁剪/外部循环未落地 · 自定义记忆/同意类别被拒 · MCP 写工具无法接入污染闸门</text>
+
+          <!-- 中间：理想标准契约带 -->
+          <rect x="18" y="172" width="1004" height="68" rx="8" class="band-seam"/>
+          <text x="520" y="196" class="tseam" text-anchor="middle">标准平台契约边界（proto/ · HTTP/WS API · AgentDef · MCP · Outbox · SDK）</text>
+          <text x="520" y="217" class="t" text-anchor="middle">目标契约属性：按 BusinessLine 严格命名空间隔离 · 声明式可插拔策略钩子 · 屏蔽底层物理分片 · 完备端到端幂等原语</text>
+
+          <!-- 下层：yanshi 内核 -->
+          <rect x="18" y="274" width="1004" height="140" rx="8" class="band-k"/>
+          <text x="36" y="296" class="tk">yanshi 内核（internal/ · 持久执行、信任推导、多租户隔离与分布式存储底座）</text>
+
+          <rect x="36" y="310" width="320" height="88" rx="6" class="bx-k"/>
+          <text x="196" y="331" class="tb" text-anchor="middle">正交稳固的核心底座（保持不动）</text>
+          <text x="196" y="350" class="tok" text-anchor="middle">✓ Event 溯源 + Attempt fencing + CommitAndWake</text>
+          <text x="196" y="368" class="tok" text-anchor="middle">✓ Device / gVisor Sandbox / MCP / 委托统一路由</text>
+          <text x="196" y="386" class="tok" text-anchor="middle">✓ Provenance 纯函数框架 + SessionData 物理删除</text>
+
+          <rect x="372" y="310" width="318" height="88" rx="6" class="bx-risk"/>
+          <text x="531" y="331" class="tb" text-anchor="middle">下沉进内核的业务线专属硬编码（须剥离/泛化）</text>
+          <text x="531" y="350" class="tr" text-anchor="middle">✗ WEARER/OTHER、speaker_ref、#57.3 回扫</text>
+          <text x="531" y="368" class="tr" text-anchor="middle">✗ 中文“之后七天”日期头、5min 交谈间隔</text>
+          <text x="531" y="386" class="tr" text-anchor="middle">✗ 中文健康词表、单一 health 同意、封闭 5 类卡片</text>
+
+          <rect x="706" y="310" width="298" height="88" rx="6" class="bx-warn"/>
+          <text x="855" y="331" class="tb" text-anchor="middle">内核缺失的多租户与公平隔离（须补齐）</text>
+          <text x="855" y="350" class="tw" text-anchor="middle">⚠ AgentDef / Release / Oneshot 无租户隔离</text>
+          <text x="855" y="368" class="tw" text-anchor="middle">⚠ MCP Server 名全局冲突 · 缺用户级 OAuth</text>
+          <text x="855" y="386" class="tw" text-anchor="middle">⚠ 队列 Claim 与 model.Guard 无业务线公平调度</text>
+
+          <!-- 越界箭头示意 -->
+          <path d="M580,122 L555,308" class="ln-risk" stroke-dasharray="5 3" marker-end="url(#mk-down)"/>
+          <text x="635" y="158" class="tr" text-anchor="middle">① 业务领域语义下沉硬编码</text>
+
+          <path d="M290,310 L275,124" class="ln-warn" stroke-dasharray="5 3" marker-end="url(#mk-up)"/>
+          <text x="210" y="158" class="tw" text-anchor="middle">② 物理分片外泄 &amp; 幂等负担上移</text>
+        </svg>
+      </div>
+      <figcaption>
+        图 1：内核与业务线“双向越界”诊断。左侧虚线向上表示内核将底层 PG 物理分片拓扑与幂等补偿推给了业务线；右侧虚线向下表示首条业务线的硬件角色、中文日历辅助词、健康词表与封闭卡片侵入了内核核心契约。
+      </figcaption>
+    </figure>
+
+    <div class="tbl">
+      <table>
+        <thead>
+          <tr>
+            <th>边界切面</th>
+            <th>理想架构边界（内核 vs 业务线）</th>
+            <th>当前内核实现偏离（代码现状）</th>
+            <th>引发的系统扩展性风险</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="nowrap"><b>1. 租户命名空间</b></td>
+            <td><b>内核</b>按 <code>BusinessLine</code> 隔离一切定义与发布；<b>业务线</b>在自有命名空间内独立命名、灰度、撤回。</td>
+            <td><code>AgentDef</code>、<code>releases.yaml</code>、<code>Oneshot</code> 全局无 <code>BusinessLine</code> 字段与访问校验；<code>mcpcap</code> 强制全局唯一名称。</td>
+            <td><span class="badge gap">高危</span> 业务线 A 可直接调用业务线 B 的 Agent/Oneshot；同名 MCP 迫使拆单元从而阻断跨线 Memory 共享。</td>
+          </tr>
+          <tr>
+            <td class="nowrap"><b>2. 循环与上下文</b></td>
+            <td><b>内核</b>守住权限、审核、日志确定性与缓存度量；<b>业务线</b>按场景插拔循环控制与上下文裁剪策略。</td>
+            <td>ADR-0041 与 ADR-0056 均未实现；步进循环、上下文拼接与工具列表全量暴露写死在 <code>runtime/worker.go</code>。</td>
+            <td><span class="badge gap">严重</span> SOP 流程型或重度工具调用型业务无法定制上下文，要么 Token 暴涨，要么绕开内核另建运行时。</td>
+          </tr>
+          <tr>
+            <td class="nowrap"><b>3. 可信内容与来源</b></td>
+            <td><b>内核</b>定义通用信任等级（本人 / 外部个体 / 外部系统 / 平台）与验签机制；<b>业务线</b>提供结构化数据并映射标准角色。</td>
+            <td><code>event.proto</code> 写死可穿戴录音 <code>CaptureSegment</code>（<code>WEARER/OTHER</code>、<code>speaker_ref</code>），<code>internal/capture</code> 硬写中文七天头与 5 分钟间隔。</td>
+            <td><span class="badge part">中度</span> 会议系统（多发言人）、企业 IM、医患问诊、邮件工单等第二类可信内容接入时必须改动内核 <code>proto</code> 与投影。</td>
+          </tr>
+          <tr>
+            <td class="nowrap"><b>4. 记忆与合规闸门</b></td>
+            <td><b>内核</b>提供可声明类别的存储、跨线 Grant 引擎与通用“外部污染写审批”算子；<b>业务线</b>声明敏感类别与需保护工具。</td>
+            <td>硬编码 6 个记忆类别、纯中文健康词表、中国身份证正则、单一 <code>health</code> Consent；<code>memgate</code> 仅保护内置 <code>memory_save</code>。</td>
+            <td><span class="badge part">中度</span> 金融/儿童/企业机密类业务无法扩展 Consent 与 Memory 类别；业务自有 MCP 写工具无法复用内核防注入写闸门。</td>
+          </tr>
+          <tr>
+            <td class="nowrap"><b>5. 结构化交互卡片</b></td>
+            <td><b>内核</b>负责卡片生命周期、版本替换与动作按钮去重；<b>业务线</b>可扩展自定义卡片类型与校验 Schema。</td>
+            <td><code>internal/card</code> 硬编码 5 种元素、6 种表单控件与 23 个图标，无任何扩展载荷字段，且仅允许内置 <code>show_card</code> 产出。</td>
+            <td><span class="badge part">中度</span> 电商商品卡、航班选座卡、图表交互卡等富 UI 需求超过两次即触发 ADR-0032 重审并被迫频繁改内核契约。</td>
+          </tr>
+          <tr>
+            <td class="nowrap"><b>6. 服务端事件消费</b></td>
+            <td><b>内核</b>提供基于逻辑分区（如虚拟桶）的稳定流游标，隐藏底层数据库拓扑；<b>业务线</b>无感按游标拉取或收 Webhook。</td>
+            <td><code>GET /v1/outbox?shard=N</code> 直接暴露物理 PG 分片号与 <code>0..1023</code> 槽位表，游标硬绑单台 PG 本地 <code>xid8</code> 与行号；全业务线共用 <code>xmin</code> 水位。</td>
+            <td><span class="badge gap">高危</span> 内核未来扩分片或拆热点槽将致全体业务线游标作废停写；任一租户慢事务会卡死同分片所有业务线出站流。</td>
+          </tr>
+          <tr>
+            <td class="nowrap"><b>7. 会话与输入幂等</b></td>
+            <td><b>内核</b>提供会话外部幂等键（<code>external_key</code>）、轻量业务标签过滤与持久输入幂等保证；<b>业务线</b>直接声明式调用。</td>
+            <td>创建 Session 无幂等键、无 <code>labels</code>；<code>input_id</code> 仅保留最近 64 条（仅给内部委托留了永久幂等例外）。</td>
+            <td><span class="badge part">中度</span> 每条需要异步编排的业务线都被迫自建映射表、孤儿回收器，并在超时后全量拉取内核 Event 日志重扫对账。</td>
+          </tr>
+          <tr>
+            <td class="nowrap"><b>8. 多租户资源调度</b></td>
+            <td><b>内核</b>在工作队列、模型并发/RPS 与数据库池上按业务线做公平隔离与配额预留；<b>业务线</b>互不干扰。</td>
+            <td><code>pgqueue.Claim</code> 同优先级按全局 FIFO 认领；<code>model.Guard</code> 单进程限流且完全不感知 <code>BusinessLine</code>，RPS 先于优先级抢令牌。</td>
+            <td><span class="badge gap">高危</span> 典型“吵闹邻居”隐患：单一业务线批量任务或流量洪峰会直接饿死同集群其他业务线的实时交互问答。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ==================== §3 对照项目目标的业务灵活支撑度评估 ==================== -->
+  <section id="goals">
+    <div class="sec-head"><span class="secno">§3</span><h2>对照章程目标（G1–G9）：内核对多样化业务线的灵活支撑度</h2></div>
+    <div class="prose">
+      <p>假设明天接入一条全新的业务线（例如：金融理财顾问、企业办公助手、智能车载/IoT 伴侣或跨境多语种客服），当前内核在各目标维度上的即插即用支撑能力如下：</p>
+    </div>
+
+    <div class="tbl">
+      <table>
+        <thead>
+          <tr>
+            <th>目标</th>
+            <th>内核支撑评级</th>
+            <th>灵活度</th>
+            <th>新业务线可直接复用的内核能力</th>
+            <th>新业务线接入时会撞上的内核限制</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="nowrap"><b>G1 多端</b></td>
+            <td><span class="badge part">良 · 缺唤醒尾项</span></td>
+            <td><div class="prog-wrap"><div class="prog-bar"><div class="prog-fill part" style="width:80%"></div></div><span class="prog-pct">80%</span></div></td>
+            <td>业务 App 嵌入 Go / iOS / Web SDK 即可获得单连接双工（Node + 会话订阅）、断线补齐、多端在场（Presence）与同设备多 HostApp 隔离。</td>
+            <td>推送提醒（<code>Pusher</code>）与离线唤醒（<code>Waker</code>）仍为桩；无法嵌入 HostApp 的纯云端Webhook/小程序渠道需业务侧自建 BFF 桥接；Android 真机包待验收。</td>
+          </tr>
+          <tr>
+            <td class="nowrap"><b>G2 多模态</b></td>
+            <td><span class="badge part">中 · 语音耦合重</span></td>
+            <td><div class="prog-wrap"><div class="prog-bar"><div class="prog-fill part" style="width:72%"></div></div><span class="prog-pct">72%</span></div></td>
+            <td>文本、图片、音频、工件引用统一进 <code>ContentBlock</code>；支持按住说话（ASR/TTS）与网关中转全双工 Call 派生后台 <code>run_task</code>。</td>
+            <td>视频块未打通模型输入；Call 仅绑火山豆包协议且仅限 Web 裸 PCM（无移动端 Call SDK 与弱网 Opus）；<code>speech.Speak</code> 无法按 AgentDef 指定独立音色。</td>
+          </tr>
+          <tr>
+            <td class="nowrap"><b>G3 长任务</b></td>
+            <td><span class="badge done">优 · 基座强项</span></td>
+            <td><div class="prog-wrap"><div class="prog-bar"><div class="prog-fill done" style="width:94%"></div></div><span class="prog-pct">94%</span></div></td>
+            <td>挂起等待审批/提问/离线设备、插话（Steer）、中断、重答（Redo）、慢调用/慢委托宽限期自动转后台、审核故障退避挂起（ADR-0054）开箱即用。</td>
+            <td>长 Run 内部工具结果累积只能靠固定比例摘要压缩，业务线尚不能按语义选择性折叠当前 Run 中已消费完的大体积工具结果。</td>
+          </tr>
+          <tr>
+            <td class="nowrap"><b>G4 个性化</b></td>
+            <td><span class="badge part">中 · 分类写死</span></td>
+            <td><div class="prog-wrap"><div class="prog-bar"><div class="prog-fill part" style="width:74%"></div></div><span class="prog-pct">74%</span></div></td>
+            <td>同单元内按 <code>EndUser</code> 分片保障跨业务线 <code>Grant</code> 召回本地化；召回留痕与防投毒闸门机制完备。</td>
+            <td>6 个记忆类别、中文健康关键词与唯一 <code>health</code> Consent 硬编码在内核；多语种业务或需“财务/未成年人/位置”等敏感同意的业务无法配置扩展。</td>
+          </tr>
+          <tr>
+            <td class="nowrap"><b>G5 执行</b></td>
+            <td><span class="badge done">优 · 抽象统一</span></td>
+            <td><div class="prog-wrap"><div class="prog-bar"><div class="prog-fill done" style="width:90%"></div></div><span class="prog-pct">90%</span></div></td>
+            <td>本地 Device 工具、K8s+gVisor 自托管沙箱（ADR-0053）、远程 HTTP MCP 统一收敛为带风险等级与 <code>call_id</code> 去重的 <code>Capability</code>。</td>
+            <td>远程 MCP 仅支持静态环境变量 Header，不支持按 <code>EndUser</code> 动态托管/刷新三方 OAuth 令牌（如用户个人飞书/Google/GitHub 授权）。</td>
+          </tr>
+          <tr>
+            <td class="nowrap"><b>G6 问答</b></td>
+            <td><span class="badge part">中 · 缺租户隔离</span></td>
+            <td><div class="prog-wrap"><div class="prog-bar"><div class="prog-fill part" style="width:75%"></div></div><span class="prog-pct">75%</span></div></td>
+            <td>单业务线内部具备交互/后台 Worker 分池与 <code>Oneshot</code> 子限额，能有效防止本业务后台任务拖慢问答首字。</td>
+            <td>多业务线共内核时，交互队列与模型并发池无按业务线的公平配额隔离，易受相邻业务线突发流量牵连；RPS 限流未区分高低优先级。</td>
+          </tr>
+          <tr>
+            <td class="nowrap"><b>G7 分布式</b></td>
+            <td><span class="badge part">良 · 扩容有锁扣</span></td>
+            <td><div class="prog-wrap"><div class="prog-bar"><div class="prog-fill part" style="width:78%"></div></div><span class="prog-pct">78%</span></div></td>
+            <td>1024 槽多库路由、部分可服务、单分片主备秒级提升、10GB 整片物理搬迁及有界并行子 Agent 委托（含 Artifact 交接）均已就绪。</td>
+            <td><code>Outbox</code> 暴露物理分片锁死超 8 片迁槽能力；网关全分片 <code>LISTEN</code> 扇出与单进程内存限流器制约大规模弹性副本数。</td>
+          </tr>
+          <tr>
+            <td class="nowrap"><b>G8 生态</b></td>
+            <td><span class="badge gap">弱 · 核心待建</span></td>
+            <td><div class="prog-wrap"><div class="prog-bar"><div class="prog-fill gap" style="width:40%"></div></div><span class="prog-pct">40%</span></div></td>
+            <td>支持静态 YAML 声明 <code>AgentDef</code>、按用户哈希灰度及同内核子 Agent 委托。</td>
+            <td>缺多租户命名空间与权限校验；无动态注册中心（增改配置须挂载重启）；外部循环（0041/0056）与三方 A2A 生态（0048）均未落地。</td>
+          </tr>
+          <tr>
+            <td class="nowrap"><b>G9 模型中立</b></td>
+            <td><span class="badge part">良 · 私有化待补</span></td>
+            <td><div class="prog-wrap"><div class="prog-bar"><div class="prog-fill part" style="width:78%"></div></div><span class="prog-pct">78%</span></div></td>
+            <td>对话与嵌入经 <code>model.Provider</code> 抽象，配合 <code>make eval</code> 固定评测集与跨系列裁判即可无代码换模型。</td>
+            <td>不同 Provider 无法独立设置并发/RPS 上限；私有化开源推理引擎（vLLM/SGLang）与实时语音模型的统一适配规范尚未收口。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ==================== §4 内核的六大核心优势 ==================== -->
+  <section id="strengths">
+    <div class="sec-head"><span class="secno">§4</span><h2>当前内核的六大核心优势（演进中必须守住的基石）</h2></div>
+    <div class="prose">
+      <p>在指出边界问题之前必须明确：yanshi 内核在分布式执行语义、安全防线与可验证性上的工程质量远超常规 Agent 框架，以下六项核心设计无需推翻：</p>
+    </div>
+
+    <div class="split-2">
+      <div class="card accent-kernel">
+        <h3>S1 · 事件溯源 + Fencing + 单事务原子唤醒</h3>
+        <ul>
+          <li><b>正确性与活性解耦</b>：<code>WorkQueue</code> 租约过期即可接管，新 Worker 递增 <code>Attempt</code> 号并经 <code>(session_id, seq)</code> 唯一索引乐观并发写日志，从根源杜绝分布式脑裂乱写。</li>
+          <li><b>恒定投影开销</b>：每 200 事件写带 <code>ProjectionVersion=27</code> 的快照，内存仅保留最近 4 个完整 Run，无论会话持续多久，每次状态校验开销恒定。</li>
+          <li><b>零窗口原子提交</b>：<code>CommitAndWake</code> 在单条 SQL 事务内完成写 Event、队列唤醒与写 Outbox 信封，每 Run SQL 从 83 条降至 34.1 条。</li>
+        </ul>
+      </div>
+
+      <div class="card accent-kernel">
+        <h3>S2 · 统一 Capability 执行网络与幂等账本</h3>
+        <ul>
+          <li><b>跨端云一致抽象</b>：手机/电脑本地工具、K8s gVisor 沙箱、远程/本地桥接 MCP、向用户提问 <code>ask_user</code> 与子 Agent 委托共享同一套派发、挂起与超时转后台语义。</li>
+          <li><b>先落盘后执行</b>：内核侧先写 <code>ToolCallStarted</code>、端与沙箱侧经 <code>nodesdk.Executor</code> 按 <code>call_id</code> 落盘账本去重，崩溃后非幂等调用明确报 <code>outcome unknown</code> 绝不重放副作用。</li>
+          <li><b>权限严格收敛</b>：子 Agent 委托白名单自动取祖先交集，工件经显式复制交接（ADR-0055），绝不因多级编排放大权限。</li>
+        </ul>
+      </div>
+
+      <div class="card accent-kernel">
+        <h3>S3 · 确定性单步 Worker 与三方差分模拟体系</h3>
+        <ul>
+          <li><b>同步单步可注入</b>：<code>Worker.Step</code> 无内部隐式并发，时间与 ID 全经接口注入，可在任意两步间精确注入崩溃、断网、限流与乱序。</li>
+          <li><b>单一对象图装配</b>：<code>app.NewCore</code> 统一支撑生产 <code>serve</code>、模拟 <code>sim</code>、评测 <code>eval</code>，2200+ 种子在单库内存、双库内存与双库真实 PG 间做状态指纹差分验证，极度适合 AI Agent 持续安全迭代。</li>
+        </ul>
+      </div>
+
+      <div class="card accent-kernel">
+        <h3>S4 · 模块化单体多角色裁剪与低成本预分片</h3>
+        <ul>
+          <li><b>不按领域拆微服务</b>：单二进制按扩缩维度与权限拆为 <code>gateway / worker / worker-bg / sandbox / janitor</code> 五角色，既保留本地一条命令零依赖启动，又避免跨服务分布式事务损耗。</li>
+          <li><b>ID 内嵌槽位</b>：持久 ID 编码 <code>0..1023</code> 槽位，在线请求一次定位唯一分片，预分 8 片配合流复制整片搬迁（10GB 停写仅 573ms），单分片故障不影响健康分片继续服务。</li>
+        </ul>
+      </div>
+
+      <div class="card accent-kernel">
+        <h3>S5 · 纯函数来源推导与物理删除闭环</h3>
+        <ul>
+          <li><b>不可伪造的 Provenance</b>：不信写入方自报标签，由事件类型与结构纯函数推导来源，驱动高危审批与防记忆投毒闸门。</li>
+          <li><b>可证明的遗忘权</b>：所有含 Session 数据的存储强制在 <code>app.SessionData</code> 登记，写入入口执行“先写后查删除屏障”（<code>lifecycle.Recheck</code>），日志与指标只记 ID 不落个人内容（ADR-0015）。</li>
+        </ul>
+      </div>
+
+      <div class="card accent-kernel">
+        <h3>S6 · 前缀缓存一等公民与快慢分离调度</h3>
+        <ul>
+          <li><b>成本杠杆内建</b>：静态系统指令、动态上下文置入 Run 位置、工具字典序固定、压缩摘要复用主请求前缀，实测长 Run 缓存命中率从 40% 提升至 70%。</li>
+          <li><b>交互体验受保护</b>：通话走低延迟流、重活交后台 <code>run_task</code>；长任务达阈值自动 <code>Handoff</code> 至后台池，配合 <code>Oneshot</code> 子限额守住即时问答低延迟。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== §5 六大内核结构性问题与扩展性瓶颈 ==================== -->
+  <section id="bottlenecks">
+    <div class="sec-head"><span class="secno">§5</span><h2>导致后续扩展性不足的六大内核问题（代码级剖析）</h2></div>
+    <div class="prose">
+      <p>聚焦 <code>internal/</code> 与 <code>proto/</code> 源码，我们将阻碍多业务线灵活接入与大规模水平扩展的根因归纳为六大结构性问题：</p>
+    </div>
+
+    <div class="issue-list">
+      <!-- B1 -->
+      <div class="issue">
+        <div class="issue-head">
+          <div class="issue-title"><span class="issue-id">B1</span>多租户命名空间与访问控制缺位，且缺乏跨业务线公平调度</div>
+          <div><span class="badge p0">P0 安全与多租户阻断</span> <span class="cat-tag tenant">租户隔离</span> <span class="cat-tag scale">吵闹邻居</span></div>
+        </div>
+        <div class="issue-grid">
+          <div class="issue-col">
+            <b class="col-hd">内核代码实证</b>
+            • <b>AgentDef / Release 无租户归属</b>：<code>internal/agentdef/agentdef.go:22-44</code> 中 <code>Def</code> 无 <code>BusinessLine</code> 字段；<code>service.Create</code>（<code>service.go:114-128</code>）不校验业务线权限，<b>业务线 A 的令牌可直接创建并运行业务线 B 的 AgentDef</b>；若开启 <code>agent:*</code> 通配委托，<code>delegation/delegator.go:464-481</code> 会把全内核所有业务线的 Agent 暴露给模型！<code>releases.yaml</code> 的灰度哈希与撤回同样全局耦合（<code>release.go:69-81</code>）。<br>
+            • <b>Oneshot 与 MCP 全局冲突</b>：<code>oneshot.Registry</code> 无业务线隔离，且并发槽锁 <code>"name:"+d.Name</code> 跨业务线争抢（<code>oneshot/service.go:119-123</code>）；<code>mcpcap.LoadDir</code>（<code>mcpcap.go:67-81</code>）强制 <code>Server.Name</code> 全局唯一，两条业务线注册同名 MCP 即报错，拆单元又会丧失跨业务线 Memory 共享。<br>
+            • <b>队列与模型准入无业务线公平性</b>：<code>pgqueue.go:126</code> 同优先级按全局 <code>ord</code> 纯 FIFO 认领；<code>model/guard.go:106-132</code> 的并发池与 RPS 桶完全不区分 <code>BusinessLine</code>，且 <code>rate.wait</code> 在优先级排队前抢令牌。
+          </div>
+          <div class="issue-col">
+            <b class="col-hd">对系统扩展性的制约</b>
+            1) <b>多业务线无法安全共池</b>：在补齐租户作用域前，同一单元内业务线之间存在定义泄漏、误撤回、命名冲突与越权调用风险。<br>
+            2) <b>跨业务线雪崩传染（Noisy Neighbor）</b>：业务线 A 突发大促流量或批量定时任务，会瞬间排满全局 FIFO 队列并耗尽共享模型并发额度，导致同单元业务线 B、C 的实时对话全面卡死。
+          </div>
+        </div>
+      </div>
+
+      <!-- B2 -->
+      <div class="issue">
+        <div class="issue-head">
+          <div class="issue-title"><span class="issue-id">B2</span>首条业务线的领域语义下沉硬编码进内核，破坏基座中立性</div>
+          <div><span class="badge p1">P1 边界侵蚀</span> <span class="cat-tag leak">领域泄漏</span></div>
+        </div>
+        <div class="issue-grid">
+          <div class="issue-col">
+            <b class="col-hd">内核代码实证</b>
+            • <b>可穿戴录音概念写进核心 IDL</b>：<code>proto/yanshi/v1/event.proto:510-536</code> 硬编码 <code>CaptureSegment</code>、<code>SPEAKER_WEARER / OTHER</code> 与声纹实体字段 <code>speaker_ref</code>；<code>internal/capture/capture.go:63-120</code> 硬写中文星期数组、<code>"之后七天：…"</code> 相对日期提示头与 5 分钟交谈间隔；<code>mcpcap/cite.go:18-114</code> 递归正则扫描任意参数中的 <code>#57.3</code> 全日志回扫说话人。<br>
+            • <b>记忆分类、健康词表与同意项写死</b>：<code>internal/memory/memory.go:26-59</code> 锁死 6 个枚举类别，<code>health.go:13-41</code> 硬编码中文健康词表（如“过敏/血压/心理咨询师”）、中国 18 位身份证正则与默认 <code>Asia/Shanghai</code> 时区；<code>internal/consent/consent.go:14-20</code> 仅支持硬编码常量 <code>"health"</code>；<code>memgate.go</code> 写死 50% 阈值且仅保护内置 <code>memory_save</code>。<br>
+            • <b>卡片 Schema 封闭无扩展槽</b>：<code>internal/card/card.go:51-368</code> 锁死 5 种元素与 23 个图标，无自定义 <code>payload</code> 扩展字段。
+          </div>
+          <div class="issue-col">
+            <b class="col-hd">对系统扩展性的制约</b>
+            1) <b>违反开放封闭原则（OCP）</b>：每当新业务线需要新的可信结构化数据源（如多方会议纪要、CRM 工单、医患角色）、新的合规单独同意类别（如金融资产、声纹、位置）、多语种支持或行业定制卡片时，都必须修改内核 <code>proto</code>、重编三端 SDK 并递增 <code>ProjectionVersion</code>。<br>
+            2) <b>安全能力无法赋能业务工具</b>：业务线通过 MCP 提供的自有高敏写接口（如写入外部业务知识库、修改日程/订单）无法声明复用内核的外部内容污染闸门（<code>tainted</code> 检查）。
+          </div>
+        </div>
+      </div>
+
+      <!-- B3 -->
+      <div class="issue">
+        <div class="issue-head">
+          <div class="issue-title"><span class="issue-id">B3</span>“薄 Harness”插件化尚未落地，循环与上下文组装锁死在内核</div>
+          <div><span class="badge p1">P1 灵活性核心缺口</span> <span class="cat-tag plug">可插拔策略</span></div>
+        </div>
+        <div class="issue-grid">
+          <div class="issue-col">
+            <b class="col-hd">内核代码实证</b>
+            • <code>internal/runtime/worker.go</code>（已膨胀至 1642 行）与 <code>transcript.go</code> 硬编码了唯一的 ReAct 式模型循环与线性尾部追加上下文视图；业务线在 <code>AgentDef</code> 中只能调窗口大小与压缩比例。<br>
+            • <b>ADR-0041（外部循环）与 ADR-0056（可替换上下文策略 + 流式外部循环）均未编码实现</b>；M6 判断层的“工具过多时 top-k 折叠”同样未实现。<br>
+            • 即便按 ADR-0056 已定稿的 A 期方案（<code>0056:49-50</code>），上下文策略也仅在每个 Run 启动时按“整 Run”粒度选择更早历史，<b>完全不允许对当前正在执行的长 Run 内部已消费的大体积工具结果做选择性折叠或归档替换</b>。
+          </div>
+          <div class="issue-col">
+            <b class="col-hd">对系统扩展性的制约</b>
+            1) <b>复杂业务流被迫二选一</b>：确定性多步 SOP 业务要么把状态机硬塞进长 Prompt 赌模型遵循度，要么脱离 yanshi 在外部自建 Agent 框架（导致平台审批、计量与删除失效）。<br>
+            2) <b>单次长 Run 成本失控</b>：在需要连续调用数十次工具读取分页数据或文件的长任务中，历史步骤的大体积中间结果在触发粗粒度全量摘要前反复随每轮请求重发，造成数量级的无效 Token 消耗。
+          </div>
+        </div>
+      </div>
+
+      <!-- B4 -->
+      <div class="issue">
+        <div class="issue-head">
+          <div class="issue-title"><span class="issue-id">B4</span>Outbox 向业务线暴露物理分片拓扑与本地 xid8，锁死未来在线扩容</div>
+          <div><span class="badge p1">P1 水平扩容死锁</span> <span class="cat-tag leak">拓扑泄漏</span> <span class="cat-tag scale">存储分片</span></div>
+        </div>
+        <div class="issue-grid">
+          <div class="issue-col">
+            <b class="col-hd">内核代码实证</b>
+            • <code>internal/httpapi/outbox.go:27-33,150-201</code> 要求业务线显式按内核物理数据库分片号请求 <code>GET /v1/outbox?shard=N</code>，并通过 <code>/v1/outbox/shards</code> 把物理 <code>shard</code> 编号与底层 <code>0..1023</code> 槽位分配表直接暴露给业务线。<br>
+            • <code>internal/outbox/stream.go:45-69</code> 与 <code>pgoutbox/stream.go:17-37</code> 将单台 PostgreSQL 实例私有的事务号 <code>xid8</code>（<code>pg_snapshot_xmin</code>）与自增行号 <code>id</code> 签入业务线持有的游标。<br>
+            • 同分片上所有业务线共用 <code>xid8 &lt; pg_snapshot_xmin(pg_current_snapshot())</code> 可见性条件。
+          </div>
+          <div class="issue-col">
+            <b class="col-hd">对系统扩展性的制约</b>
+            1) <b>重分片引发全业务线雪崩</b>：当前仅“不改槽位表的整片搬主机”能保住游标。一旦未来预分 8 片写满需扩至 16/32 片，或需拆分热点槽位，不同 PG 实例的 <code>xid8</code> 互不相通，<b>所有接入业务线的消费游标将全部报 403/410 作废</b>，必须全集群停写并让每条业务线重扫全量用户与全量 Session 对账——业务线越多，扩容停机代价越高。<br>
+            2) <b>跨业务线水位耦合</b>：分片上任一慢事务或备份长快照会冻结该分片所有业务线的 Outbox 实时投递。
+          </div>
+        </div>
+      </div>
+
+      <!-- B5 -->
+      <div class="issue">
+        <div class="issue-head">
+          <div class="issue-title"><span class="issue-id">B5</span>会话幂等、业务索引与动态配置原语缺失，推高业务线接入成本</div>
+          <div><span class="badge p1">P1 接入摩擦</span> <span class="cat-tag plug">接入原语</span> <span class="cat-tag eco">控制面</span></div>
+        </div>
+        <div class="issue-grid">
+          <div class="issue-col">
+            <b class="col-hd">内核代码实证</b>
+            • <b>建 Session 不幂等且无元数据</b>：<code>httpapi.go:371-408</code> 与 <code>node.proto:182</code> 创建会话不支持 <code>idempotency_key / external_id</code>，也不支持业务 <code>labels/metadata</code> 与按标签查询会话列表。<br>
+            • <b>输入去重窗口过浅</b>：<code>session/state.go:470</code> 仅环形保留最近 <code>MaxRecentInputs = 64</code> 条 <code>input_id</code>（内核仅给自身内部委托 <code>State.Delegated</code> 开了永久幂等后门，<code>service.go:509-512</code>），超出 64 条后重发同一 <code>input_id</code> 会重复触发新 Run。<br>
+            • <b>静态文件运维与凭证空白</b>：无注册中心 API，新增/修改 AgentDef、MCP、Oneshot 或调整并发配额均需改挂载文件重启；MCP 不支持用户级三方 OAuth 令牌托管。
+          </div>
+          <div class="issue-col">
+            <b class="col-hd">对系统扩展性的制约</b>
+            1) <b>重复造轮子</b>：每条有后台编排诉求的业务线都被迫在内核外自建“外部实体↔Session 映射表 + 孤儿会话清理 + 提交超时后分页拉取全量 Event 日志重扫 <code>input_id</code> 对账”的重型脚手架，违背“低成本声明式接入”目标。<br>
+            2) <b>运维耦合</b>：十余条业务线共用基座时，靠随内核 ConfigMap 静态发布 YAML 并重启/轮询，会使内核团队沦为业务 Prompt 变更的发布瓶颈。
+          </div>
+        </div>
+      </div>
+
+      <!-- B6 -->
+      <div class="issue">
+        <div class="issue-head">
+          <div class="issue-title"><span class="issue-id">B6</span>单进程局部协调态、大事件内嵌与生产外联桩限制集群规模上限</div>
+          <div><span class="badge p1">P1 规模与上线收口</span> <span class="cat-tag scale">弹性伸缩</span></div>
+        </div>
+        <div class="issue-grid">
+          <div class="issue-col">
+            <b class="col-hd">内核代码实证</b>
+            • <b>网关全量监听扇出</b>：<code>pg/notify.go:75-77</code> 未做网关通知分片归属路由且监听频道只增不减，最终每个网关监听全部分片，单库通知扇出随网关副本数 <code>P</code> 线性放大，且每次提交后仍需回读日志。<br>
+            • <b>限流与准入仅限单进程</b>：<code>model.Guard</code>、<code>model.Slots</code> 与软配额缓存均为单进程内存态，弹性扩缩容无法自动协调全局模型并发，且不同 Provider 共用同一套限流参数；<code>QueueAdmission</code> 默认关闭且开启后每个网关独立扫全分片统计。<br>
+            • <b>大对象内嵌与生产桩</b>：大 <code>ToolResult</code> 全文内嵌 <code>events</code> 表无自动 Artifact 外置与表分区；K8s Sandbox 全走 <code>apiserver pods/exec</code> 缺预热池；真实审核提供商、真实推送唤醒、脱敏分布式 Trace 与私有化推理/移动端 Opus 通话尚未闭环。
+          </div>
+          <div class="issue-col">
+            <b class="col-hd">对系统扩展性的制约</b>
+            1) <b>网关与 Worker 弹性受限</b>：副本数扩至数十个时，PG 通知锁竞争与静态手工均分模型并发将成为运维与吞吐瓶颈。<br>
+            2) <b>存储写放大</b>：高频工具返回大文本直接塞入 PG 主表并靠过期逐行 <code>DELETE</code>，在 10 万+ DAU 下会导致严重的 WAL 膨胀与表碎片。
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== §6 内核优化与边界重构路线图 ==================== -->
+  <section id="roadmap">
+    <div class="sec-head"><span class="secno">§6</span><h2>内核边界重构与扩展性演进路线图</h2></div>
+    <div class="prose">
+      <p>围绕<b>“补齐多租户安全与上线闭环 → 剥离下沉语义并兑现薄 Harness → 屏蔽物理拓扑并实现公平弹性伸缩 → 建成自助注册与开放生态”</b>四步走，制定 12 项内核级优化任务：</p>
+    </div>
+
+    <!-- 路线图总览 SVG -->
+    <figure>
+      <div class="diagram-box">
+        <svg class="dg" viewBox="0 0 1040 190" role="img" aria-label="内核四阶段优化演进路线图" style="min-width:840px">
+          <defs>
+            <marker id="arr-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto">
+              <path d="M0,0 L10,5 L0,10 z" style="fill:var(--kernel)"/>
+            </marker>
+          </defs>
+
+          <rect x="14" y="16" width="234" height="156" rx="8" class="bx-risk"/>
+          <text x="28" y="39" class="tr">阶段一 · P0 租户安全与上线闭环</text>
+          <text x="28" y="60" class="tb">堵住越权漏洞，清零上线阻断</text>
+          <text x="28" y="84" class="t">• R1 AgentDef/Release/Oneshot/MCP 租户隔离</text>
+          <text x="28" y="104" class="t">• R2 建会话幂等键 + 持久 input_id 去重</text>
+          <text x="28" y="124" class="t">• R3 真实审核/推送唤醒 + OTel + 集群验收</text>
+          <text x="28" y="150" class="tm">目标：安全支撑多业务线共单元投产</text>
+
+          <path d="M248,94 L272,94" class="ln-k" marker-end="url(#arr-r)"/>
+
+          <rect x="276" y="16" width="244" height="156" rx="8" class="bx-warn"/>
+          <text x="290" y="39" class="tw">阶段二 · P1 边界归位与薄 Harness</text>
+          <text x="290" y="60" class="tb">剥离领域硬编码，开放策略插件</text>
+          <text x="290" y="84" class="t">• R4 上下文策略(含 Run 内折叠) + 外循环</text>
+          <text x="290" y="104" class="t">• R5 泛化可信内容块、记忆分类与污染闸门</text>
+          <text x="290" y="124" class="t">• R6 开放 Card 扩展槽位 + 服务端公共 SDK</text>
+          <text x="290" y="150" class="tm">目标：异构新业务接入真正“零改内核契约”</text>
+
+          <path d="M520,94 L544,94" class="ln-k" marker-end="url(#arr-r)"/>
+
+          <rect x="548" y="16" width="244" height="156" rx="8" class="bx-k"/>
+          <text x="562" y="39" class="tk">阶段三 · P1/P2 拓扑解耦与弹性扩展</text>
+          <text x="562" y="60" class="tb">隐藏物理分片，消除吵闹邻居</text>
+          <text x="562" y="84" class="t">• R7 Outbox 逻辑流化 + 解耦 xmin 水位</text>
+          <text x="562" y="104" class="t">• R8 队列/模型按业务线公平调度 + 全局准入</text>
+          <text x="562" y="124" class="t">• R9 网关通知归属路由 + 大结果自动外置</text>
+          <text x="562" y="150" class="tm">目标：支持在线迁槽扩容与百万 DAU 多租户</text>
+
+          <path d="M792,94 L816,94" class="ln-k" marker-end="url(#arr-r)"/>
+
+          <rect x="820" y="16" width="206" height="156" rx="8" class="bx-seam"/>
+          <text x="834" y="39" class="tseam">阶段四 · P2 自助生态与全栈私有化</text>
+          <text x="834" y="60" class="tb">控制面 API、A2A 与离线自洽</text>
+          <text x="834" y="84" class="t">• R10 动态注册中心 + 用户级 OAuth</text>
+          <text x="834" y="104" class="t">• R11 A2A 与三方 Agent 隔离(0048)</text>
+          <text x="834" y="124" class="t">• R12 私有化推理网关 + Opus/移动 Call</text>
+          <text x="834" y="150" class="tm">目标：全面兑现 G1–G9 与离线交付</text>
+        </svg>
+      </div>
+    </figure>
+
+    <!-- 筛选控件 -->
+    <div class="filter-bar" role="region" aria-label="路线图筛选器">
+      <span class="filter-label">优先级：</span>
+      <button type="button" class="chip active" data-prio="all">全部</button>
+      <button type="button" class="chip" data-prio="p0">P0 阻断与安全</button>
+      <button type="button" class="chip" data-prio="p1">P1 边界与核心扩展</button>
+      <button type="button" class="chip" data-prio="p2">P2 规模终局与生态</button>
+      <span class="filter-label" style="margin-left:10px">问题维度：</span>
+      <button type="button" class="chip active" data-cat="all">全部维度</button>
+      <button type="button" class="chip" data-cat="tenant">租户与公平隔离</button>
+      <button type="button" class="chip" data-cat="leak">边界与拓扑解耦</button>
+      <button type="button" class="chip" data-cat="plug">薄 Harness 与接入原语</button>
+      <button type="button" class="chip" data-cat="scale">水平伸缩与上线闭环</button>
+      <span class="filter-count" id="filterCount">显示 12 / 12 项</span>
+    </div>
+
+    <div class="tbl">
+      <table id="roadmapTable">
+        <thead>
+          <tr>
+            <th>编号</th>
+            <th>优先级</th>
+            <th>维度</th>
+            <th>内核优化项（针对隐患）</th>
+            <th>具体架构调整方案</th>
+            <th>完成标志 / 架构收益</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr data-prio="p0" data-cat="tenant">
+            <td class="nowrap"><b>R1</b></td>
+            <td><span class="badge p0">P0</span></td>
+            <td><span class="cat-tag tenant">租户隔离</span></td>
+            <td><b>补齐 AgentDef / Release / Oneshot / MCP 业务线命名空间</b><br><span class="muted">针对 B1</span></td>
+            <td>为 <code>AgentDef</code> 与 <code>Oneshot</code> 增加 <code>business_line</code>（或显式 <code>shared</code> 公共标记），注册表、灰度分流哈希、<code>service.Create</code>、<code>delegation.Directory</code>、<code>oneshot.Service</code> 并发槽及 <code>mcpcap</code> 连接池一律以 <code>(business_line, name)</code> 为复合键；启动时与 <code>auth.BusinessLine</code> 配置交叉核验。</td>
+            <td>彻底阻断跨业务线越权创建/委托与同名 MCP 冲突，多条业务线可安全共处同一单元并共享 EndUser Memory Grant。</td>
+          </tr>
+
+          <tr data-prio="p0" data-cat="plug">
+            <td class="nowrap"><b>R2</b></td>
+            <td><span class="badge p0">P0</span></td>
+            <td><span class="cat-tag plug">接入原语</span></td>
+            <td><b>内置会话外部幂等键、轻量标签与持久输入判重</b><br><span class="muted">针对 B5</span></td>
+            <td>1) <code>CreateSession</code> 支持可选 <code>external_key</code>（按 <code>(business_line, end_user, external_key)</code> 唯一索引幂等返回既有 Session）及受限键值 <code>labels</code> 查询过滤；<br>2) 在 Session 分片库提供带 TTL 的持久 <code>session_inputs(session_id, input_id, run_id)</code> 去重索引与状态查询接口，突破内存 64 条环形窗口上限。</td>
+            <td>业务线无需再自建外部映射表、孤儿会话回收器与全量拉取 Event 日志重扫对账，异步编排接入代码量下降 70%+。</td>
+          </tr>
+
+          <tr data-prio="p0" data-cat="scale">
+            <td class="nowrap"><b>R3</b></td>
+            <td><span class="badge p0">P0</span></td>
+            <td><span class="cat-tag scale">上线闭环</span></td>
+            <td><b>真实审核/推送适配器、脱敏 Trace 与目标 K8s 集群实测</b><br><span class="muted">针对 B6</span></td>
+            <td>接入真实多模态 <code>Moderation</code> 主备容灾链并敲定流式草稿/实时语音合规缓冲策略；接入 APNs/厂商/WebPush 替换 <code>Pusher</code> 与 <code>Waker</code> 桩；植入仅含 ID 的 OpenTelemetry 跨进程链路追踪；在真实 K8s + Patroni + gVisor 集群跑通主备切换与整片搬迁验收。</td>
+            <td>清空 <code>launch-checklist.md</code> 全部阻断项，具备对真实 C 端用户开放生产的合规与高可用基线。</td>
+          </tr>
+
+          <tr data-prio="p1" data-cat="plug">
+            <td class="nowrap"><b>R4</b></td>
+            <td><span class="badge p1">P1</span></td>
+            <td><span class="cat-tag plug">可插拔策略</span></td>
+            <td><b>重构 Worker 并落地可替换上下文策略与流式外部循环</b><br><span class="muted">针对 B3</span></td>
+            <td>1) 先将 1642 行的 <code>runtime/worker.go</code> 拆分为清晰阶段状态机；<br>2) 实施 ADR-0056 A 期（远程上下文选择策略）与 B 期（ADR-0041 流式外部循环），并扩展支持对<b>长 Run 内已消费历史工具结果</b>做声明式摘要/引用折叠（保留完整日志与 Provenance 污染标记，仅裁剪发给模型的视图）及 M6 工具 top-k 折叠。</td>
+            <td>正式兑现章程原则 1“薄 Harness”承诺：SOP 型与重度长链路业务可自由定制循环与上下文工程，同时不绕开内核安全与删除治理。</td>
+          </tr>
+
+          <tr data-prio="p1" data-cat="leak">
+            <td class="nowrap"><b>R5</b></td>
+            <td><span class="badge p1">P1</span></td>
+            <td><span class="cat-tag leak">边界归位</span></td>
+            <td><b>泛化可信结构化内容、可配置记忆/同意分类与通用写闸门</b><br><span class="muted">针对 B2</span></td>
+            <td>1) 将 <code>internal/capture</code> 的中文七天头、5 分钟间隔与 <code>#57.3</code> 回扫下放回业务侧 MCP，内核泛化为声明式可信内容角色映射（<code>FromUser / FromExternalParty / FromSystem</code> + 可靠度标记，低可靠区间自动禁免审）；<br>2) 将 <code>Memory Category</code>、敏感词规则与 <code>Consent Kind</code> 改为业务线可声明注册（保留平台内置模板）；<br>3) 允许业务线在 MCP 工具 Schema 上声明 <code>taint_gated: true</code>，直接复用内核外部污染审批闸门。</td>
+            <td>内核彻底剥离可穿戴硬件与单一中文健康假设，金融、医疗、企业协同、多语种业务接入无需修改内核源码与 <code>proto</code>。</td>
+          </tr>
+
+          <tr data-prio="p1" data-cat="plug">
+            <td class="nowrap"><b>R6</b></td>
+            <td><span class="badge p1">P1</span></td>
+            <td><span class="cat-tag plug">接入原语</span></td>
+            <td><b>开放 Card 受控扩展槽位并发布服务端辅助 SDK</b><br><span class="muted">针对 B2 / B5</span></td>
+            <td>1) 在 <code>Card</code> 契约中保留 5 种基础元素的同时，新增受大小与 JSON Schema 校验约束的 <code>custom_component { type, version, data_json }</code> 扩展槽位，内核仍统一负责版本覆盖与按钮 <code>CardAction</code> 去重；<br>2) 提供官方轻量 Go/TS 服务端 SDK（封装服务令牌签发、MCP 身份头校验、Outbox 消费模板）。</td>
+            <td>业务线可自主扩展行业富交互卡片而不触碰内核 <code>event.proto</code>，服务端集成标准化。</td>
+          </tr>
+
+          <tr data-prio="p1" data-cat="leak">
+            <td class="nowrap"><b>R7</b></td>
+            <td><span class="badge p1">P1</span></td>
+            <td><span class="cat-tag leak">拓扑解耦</span></td>
+            <td><b>Outbox 升级为基于逻辑桶的流契约，解耦物理分片与 xmin</b><br><span class="muted">针对 B4</span></td>
+            <td>1) 对外 API 改为按<b>逻辑流分区（如固定 64/128 个虚拟 Partition，映射底层槽位段）</b>拉取，游标编码单调递增的逻辑序列号而非单机 PG 物理 <code>shard</code> 与 <code>xid8</code>，由内核网关透明路由到当前承载该槽位的物理库；<br>2) 引入按业务线分区或显式提交序号发布机制，配合读写分离将统计/备份移至备库，消除跨业务线慢事务阻塞 <code>xmin</code> 水位。</td>
+            <td>彻底切断业务线消费状态对内核物理数据库拓扑的反向绑定，打通未来 8→32+ 分片在线迁槽扩容能力（同步实现迁槽工具）。</td>
+          </tr>
+
+          <tr data-prio="p1" data-cat="tenant">
+            <td class="nowrap"><b>R8</b></td>
+            <td><span class="badge p1">P1</span></td>
+            <td><span class="cat-tag tenant">公平调度</span></td>
+            <td><b>工作队列与模型网关引入按业务线公平调度及跨副本准入</b><br><span class="muted">针对 B1 / B6</span></td>
+            <td>1) <code>workqueue.Claim</code> 与 <code>model.Guard</code> 在各优先级内部引入按 <code>BusinessLine</code> 的赤字轮询 / 加权公平队列（DRR/WFQ）与业务线保底/上限配额；<br>2) 修复 <code>model.Guard</code> 中 RPS 先于并发优先级排队取令牌的缺陷，支持按 Provider 独立配置并发与 RPS，并提供基于活跃副本租约的单元级动态配额协调与集中式 Submit 准入。</td>
+            <td>根治多业务线共池时的“吵闹邻居”饥饿问题，网关与 Worker 副本 HPA 自动扩缩容时无需人工重算模型限流参数。</td>
+          </tr>
+
+          <tr data-prio="p1" data-cat="scale">
+            <td class="nowrap"><b>R9</b></td>
+            <td><span class="badge p1">P1</span></td>
+            <td><span class="cat-tag scale">水平伸缩</span></td>
+            <td><b>网关通知分片归属路由、大结果自动外置与沙箱预热池</b><br><span class="muted">针对 B6</span></td>
+            <td>1) 实现网关按 Session 槽位归属订阅通知频道（空闲频道自动 <code>UNLISTEN</code>）及小事件序号内联，消除 <code>O(事件×P)</code> 全局广播扇出；<br>2) 超阈值大 <code>ToolResult</code> 由内核透明转存为所属 Session 的不可变 Artifact 引用（随 Session 删除），<code>events</code> 表支持冷热分区清理；<br>3) 为 K8s Sandbox 补齐预热 Pod 池与高频 exec 长连接通道评估。</td>
+            <td>突破单单元数十网关副本扩展上限，大幅降低高吞吐工具场景下的 PostgreSQL 存储写放大与 apiserver 压力。</td>
+          </tr>
+
+          <tr data-prio="p2" data-cat="plug">
+            <td class="nowrap"><b>R10</b></td>
+            <td><span class="badge p2">P2</span></td>
+            <td><span class="cat-tag plug">控制面</span></td>
+            <td><b>建设多租户动态注册中心（Registry）与用户级凭证托管</b><br><span class="muted">针对 B5 / G8</span></td>
+            <td>建设持久化控制面服务与 API，支持各业务线在各自命名空间内自助注册、评测准入、灰度发布与秒级一致撤回 <code>AgentDef / Oneshot / MCP</code>（替代静态 YAML 目录挂载）；在内核可选提供加密的 <code>EndUser</code> 级 OAuth2 Token 托管与随用户注销物理销毁闭环。</td>
+            <td>业务线日常迭代与基座部署完全解耦，打通个人办公/三方 SaaS 类工具按用户授权接入能力。</td>
+          </tr>
+
+          <tr data-prio="p2" data-cat="leak">
+            <td class="nowrap"><b>R11</b></td>
+            <td><span class="badge p2">P2</span></td>
+            <td><span class="cat-tag leak">生态安全</span></td>
+            <td><b>落地 A2A 跨生态协议与三方 Agent 授权隔离（ADR-0048）</b><br><span class="muted">针对 G8</span></td>
+            <td>实现 <code>a2acap</code> 出入站适配、外部请求统一推导为 <code>FromExternal</code>、出境数据按项征得用户显式同意，并在投影中落实敏感会话污染位（接触过受限隐私源的 Session 硬性禁止调用外部三方 Agent）。</td>
+            <td>在严守数据不出境合规边界的前提下，实现内部多业务线与外部三方 Agent 生态的安全互联。</td>
+          </tr>
+
+          <tr data-prio="p2" data-cat="scale">
+            <td class="nowrap"><b>R12</b></td>
+            <td><span class="badge p2">P2</span></td>
+            <td><span class="cat-tag scale">全栈中立</span></td>
+            <td><b>统一私有化推理/语音网关与多端弱网实时通话（Opus/RTC）</b><br><span class="muted">针对 G1 / G2 / G9</span></td>
+            <td>标准化 vLLM / SGLang 等自托管开源模型的工具调用与多模态嵌入适配；引入 Opus 编码、可选 WebRTC 媒体通道及私有化语音提供商适配，补齐 Go 与移动端 SDK 的 Call 接口；专项微调轻量中文注入分类器突破 80% 检出门槛转入高危收紧阻断。</td>
+            <td>完整兑现 G1/G2/G9 与无外网客户 IDC 零公有云依赖交付承诺。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ==================== §7 内核边界守护标尺 ==================== -->
+  <section id="rules">
+    <div class="sec-head"><span class="secno">§7</span><h2>防止边界再次侵蚀的六条内核准入标尺</h2></div>
+    <div class="prose">
+      <p>为避免后续接入第二、第三条业务线时再次发生“把业务特例写进内核”或“把内核拓扑漏给业务”，建议将以下六条判据固化为内核 PR 与新 ADR 评审的硬性门禁：</p>
+    </div>
+
+    <div class="guardrails">
+      <div class="guardrail">
+        <b>1. 领域名词零准入测试（Noun Test）</b>
+        凡是出现在 <code>proto/</code> 与 <code>internal/</code> 中的类型、枚举、提示词与配置字段，若含特定硬件形态（如“佩戴者”）、特定行业分类、特定自然语言词表或日历口语规则，一律判定为业务语义越界，必须抽象为声明式配置或退回业务线 MCP。
+      </div>
+      <div class="guardrail">
+        <b>2. 租户复合键强制测试（Tenant Key Test）</b>
+        内核中任何新增的注册表、发布灰度、限流桶、调度池或缓存键，只要不是显式声明的全局系统原语，第一维作用域必须是 <code>BusinessLine</code>，严禁再引入跨业务线共享裸名。
+      </div>
+      <div class="guardrail">
+        <b>3. 物理拓扑零暴露测试（Topology Opacity Test）</b>
+        公开 HTTP/WS API、SDK 与游标载荷绝不允许暴露底层数据库实例编号、PG <code>xid</code>、表名或物理节点地址；外部契约只能绑定稳定的逻辑 ID 或逻辑虚拟桶，确保内核可随时独立重分片。
+      </div>
+      <div class="guardrail">
+        <b>4. 治理不可绕过、策略可替换（Mechanism vs Policy）</b>
+        凡涉及“能不能做、谁说的、审没审、删没删”（白名单交集、<code>Provenance</code> 纯函数推导、写前审核、<code>SessionData</code> 删除）必须留在内核强执行；凡涉及“给模型看哪几段、分几步想、展示什么行业卡片”必须通过受控契约开放给业务线插拔。
+      </div>
+      <div class="guardrail">
+        <b>5. 外部动作完备幂等测试（Client Idempotency Test）</b>
+        内核暴露给业务线或客户端的每一个会产生状态变更的写操作（建会话、发输入、点卡片、创定时），都必须在内核侧提供覆盖重试生命周期的确定性幂等保证，绝不迫使调用方拉取全量事件日志自建对账。
+      </div>
+      <div class="guardrail">
+        <b>6. 单进程可跑与差分模拟不退化（Sim &amp; Single-Binary Test）</b>
+        任何多租户隔离、逻辑流路由或全局配额协调改造，必须同时提供零外部依赖的单进程实现，并通过 14 套存储一致性套件、`make sim` 双库差分测试与 `make eval` 前缀缓存命中核验。
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>
+      <b>报告编制说明：</b>本报告基于仓库截至 <code>2026-11-21</code> 的内核源码（<code>internal/</code>、<code>proto/</code>、<code>cmd/yanshi/</code>、<code>sdk/</code>）及架构契约文档（<code>docs/charter.md</code> v0.2、<code>CONTEXT.md</code>、<code>docs/adr/0001–0058</code>、<code>docs/design/*.md</code>）完成核查与评估，聚焦平台内核对多业务线的灵活支撑度与职责边界清晰度。
+    </p>
+  </footer>
+</div>
+
+<script>
+(function () {
+  // 1. 主题切换（自动 -> 浅色 -> 深色）
+  var root = document.documentElement;
+  var btn = document.getElementById('themeToggle');
+  var modes = ['auto', 'light', 'dark'];
+  var labels = { auto: '主题：自动', light: '主题：浅色', dark: '主题：深色' };
+  var idx = 0;
+
+  try {
+    var saved = localStorage.getItem('yanshi-kernel-eval-theme');
+    if (saved && modes.indexOf(saved) !== -1) {
+      idx = modes.indexOf(saved);
+      applyTheme(saved);
+    }
+  } catch (_) {}
+
+  function applyTheme(mode) {
+    if (mode === 'auto') {
+      root.removeAttribute('data-theme');
+    } else {
+      root.setAttribute('data-theme', mode);
+    }
+    if (btn) btn.textContent = labels[mode];
+  }
+
+  if (btn) {
+    btn.addEventListener('click', function () {
+      idx = (idx + 1) % modes.length;
+      var next = modes[idx];
+      applyTheme(next);
+      try { localStorage.setItem('yanshi-kernel-eval-theme', next); } catch (_) {}
+    });
+  }
+
+  // 2. 路线图双维筛选
+  var activePrio = 'all';
+  var activeCat = 'all';
+  var chips = document.querySelectorAll('.filter-bar .chip');
+  var rows = document.querySelectorAll('#roadmapTable tbody tr');
+  var countEl = document.getElementById('filterCount');
+
+  function updateRows() {
+    var shown = 0;
+    rows.forEach(function (row) {
+      var pMatch = (activePrio === 'all') || (row.getAttribute('data-prio') === activePrio);
+      var cMatch = (activeCat === 'all') || (row.getAttribute('data-cat') === activeCat);
+      if (pMatch && cMatch) {
+        row.classList.remove('hidden-row');
+        shown++;
+      } else {
+        row.classList.add('hidden-row');
+      }
+    });
+    if (countEl) {
+      countEl.textContent = '显示 ' + shown + ' / ' + rows.length + ' 项';
+    }
+  }
+
+  chips.forEach(function (chip) {
+    chip.addEventListener('click', function () {
+      var prio = chip.getAttribute('data-prio');
+      var cat = chip.getAttribute('data-cat');
+      if (prio !== null) {
+        activePrio = prio;
+        document.querySelectorAll('.chip[data-prio]').forEach(function (c) {
+          c.classList.toggle('active', c === chip);
+        });
+      }
+      if (cat !== null) {
+        activeCat = cat;
+        document.querySelectorAll('.chip[data-cat]').forEach(function (c) {
+          c.classList.toggle('active', c === chip);
+        });
+      }
+      updateRows();
+    });
+  });
+})();
+</script>
+</body>
+</html>
