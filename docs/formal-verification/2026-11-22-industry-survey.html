@@ -1,0 +1,1087 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AI 编码时代的形式化证明方案业界调研（2026-11）</title>
+<style>
+/*
+ * 形式化验证调研报告 · 自包含无外链样式（契合 ADR-0001 离线可读精神）
+ */
+:root {
+  --bg: #f4f5f2;
+  --surface: #ffffff;
+  --surface-alt: #fafaf8;
+  --sunk: #eaece7;
+  --fg: #181c23;
+  --fg-secondary: #36404e;
+  --muted: #5d6573;
+  --line: #d5d9d1;
+  --line-strong: #949c94;
+
+  --kernel: #2f45a8;
+  --biz: #9c560e;
+  --seam: #0b6e62;
+  --eco: #6a3ea1;
+
+  --ok: #237332;
+  --warn: #a66207;
+  --risk: #b5213b;
+  --info: #1b5ea8;
+
+  --shadow: 0 1px 3px rgba(18, 22, 28, 0.05);
+  --sans: "PingFang SC", "Noto Sans SC", "Hiragino Sans GB", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --serif: "Songti SC", "Noto Serif SC", "STSong", "SimSun", Georgia, serif;
+  --mono: "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, Monaco, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111317;
+    --surface: #191c22;
+    --surface-alt: #1e222a;
+    --sunk: #242933;
+    --fg: #e7e9ee;
+    --fg-secondary: #c4cad4;
+    --muted: #939ba8;
+    --line: #2c323c;
+    --line-strong: #555e6d;
+
+    --kernel: #8fa3ff;
+    --biz: #eba858;
+    --seam: #56ccb9;
+    --eco: #c19af8;
+
+    --ok: #74cf84;
+    --warn: #f0b456;
+    --risk: #f6798e;
+    --info: #78b3f5;
+
+    --shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #111317;
+  --surface: #191c22;
+  --surface-alt: #1e222a;
+  --sunk: #242933;
+  --fg: #e7e9ee;
+  --fg-secondary: #c4cad4;
+  --muted: #939ba8;
+  --line: #2c323c;
+  --line-strong: #555e6d;
+
+  --kernel: #8fa3ff;
+  --biz: #eba858;
+  --seam: #56ccb9;
+  --eco: #c19af8;
+
+  --ok: #74cf84;
+  --warn: #f0b456;
+  --risk: #f6798e;
+  --info: #78b3f5;
+
+  --shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.74;
+  padding-inline: max(18px, env(safe-area-inset-left, 0px)) max(18px, env(safe-area-inset-right, 0px));
+  padding-bottom: 84px;
+}
+
+.wrap { max-width: 1120px; margin: 0 auto; }
+.prose { max-width: 56em; }
+
+/* 顶部导航条 */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+  margin-inline: -18px;
+  padding-inline: 18px;
+}
+.topbar-inner {
+  max-width: 1120px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding-block: 6px;
+}
+.brand {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+}
+.brand span { color: var(--muted); font-weight: 400; }
+nav.toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 13px;
+}
+nav.toc a {
+  color: var(--fg-secondary);
+  text-decoration: none;
+  padding-block: 2px;
+  border-bottom: 2px solid transparent;
+  transition: color .15s, border-color .15s;
+}
+nav.toc a:hover, nav.toc a:focus-visible {
+  color: var(--kernel);
+  border-bottom-color: var(--kernel);
+}
+.theme-btn {
+  background: var(--surface);
+  color: var(--fg-secondary);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12.5px;
+  font-family: var(--sans);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.theme-btn:hover { border-color: var(--line-strong); color: var(--fg); }
+:focus-visible { outline: 2px solid var(--kernel); outline-offset: 2px; }
+
+/* 页头 */
+header.hero {
+  padding-block: 42px 30px;
+  border-bottom: 1px solid var(--line);
+}
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  letter-spacing: .04em;
+  color: var(--muted);
+}
+h1 {
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: clamp(27px, 4.2vw, 38px);
+  line-height: 1.24;
+  margin: 10px 0 14px;
+}
+h2 {
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: 24px;
+  line-height: 1.3;
+  margin: 0 0 8px;
+}
+h3 {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 24px 0 8px;
+}
+p { margin: 0 0 12px; }
+ul, ol { margin: 0 0 14px; padding-left: 1.45em; }
+li { margin-bottom: 6px; }
+.lede {
+  font-size: 15.8px;
+  color: var(--fg-secondary);
+  max-width: 58em;
+}
+.muted { color: var(--muted); }
+code, .mono {
+  font-family: var(--mono);
+  font-size: .85em;
+  background: var(--sunk);
+  padding: 1px 5px;
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+a { color: var(--kernel); }
+
+section {
+  padding-block: 38px 16px;
+  border-bottom: 1px solid var(--line);
+  scroll-margin-top: 56px;
+}
+section:last-of-type { border-bottom: 0; }
+.sec-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.secno {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--kernel);
+}
+
+/* 提示框 */
+.callout {
+  border-left: 3.5px solid var(--kernel);
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 14px 18px;
+  margin: 18px 0;
+  border-radius: 0 8px 8px 0;
+  box-shadow: var(--shadow);
+}
+.callout.tip  { border-left-color: var(--seam); }
+.callout.note { border-left-color: var(--info); }
+.callout.warn { border-left-color: var(--warn); }
+.callout.risk { border-left-color: var(--risk); }
+.callout-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  margin-bottom: 6px;
+  color: var(--kernel);
+}
+.callout.tip .callout-title  { color: var(--seam); }
+.callout.note .callout-title { color: var(--info); }
+.callout.warn .callout-title { color: var(--warn); }
+.callout.risk .callout-title { color: var(--risk); }
+.callout p:last-child { margin-bottom: 0; }
+
+/* KPI 指标带 */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(205px, 1fr));
+  gap: 12px;
+  margin-top: 22px;
+}
+.kpi {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top: 2.5px solid var(--kernel);
+  border-radius: 8px;
+  padding: 13px 15px;
+  box-shadow: var(--shadow);
+}
+.kpi.seam-kpi { border-top-color: var(--seam); }
+.kpi.biz-kpi  { border-top-color: var(--biz); }
+.kpi.risk-kpi { border-top-color: var(--risk); }
+.kpi .val {
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--fg);
+  line-height: 1.25;
+}
+.kpi .lbl {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-top: 5px;
+}
+.kpi .sub {
+  font-size: 12px;
+  color: var(--fg-secondary);
+  margin-top: 3px;
+}
+
+/* 徽章 */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11.5px;
+  line-height: 1;
+  padding: 4px 7px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+  font-weight: 600;
+  vertical-align: middle;
+}
+.badge.ok   { color: var(--ok);   background: color-mix(in srgb, var(--ok) 9%, transparent); }
+.badge.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+.badge.risk { color: var(--risk); background: color-mix(in srgb, var(--risk) 10%, transparent); }
+.badge.info { color: var(--info); background: color-mix(in srgb, var(--info) 9%, transparent); }
+.badge.eco  { color: var(--eco);  background: color-mix(in srgb, var(--eco) 10%, transparent); }
+
+/* 卡片网格 */
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+  margin: 16px 0 18px;
+}
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+  margin: 16px 0 18px;
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px 18px;
+  box-shadow: var(--shadow);
+}
+.card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.card h3, .card h4 {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 700;
+}
+.card p { font-size: 14.3px; color: var(--fg-secondary); margin-bottom: 8px; }
+.card p:last-child, .card ul:last-child { margin-bottom: 0; }
+.card ul { font-size: 14.2px; color: var(--fg-secondary); padding-left: 1.3em; }
+
+.layer-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--kernel);
+  border-radius: 8px;
+  padding: 18px 20px;
+  margin: 16px 0;
+  box-shadow: var(--shadow);
+}
+.layer-card.l1 { border-left-color: var(--ok); }
+.layer-card.l2 { border-left-color: var(--seam); }
+.layer-card.l3 { border-left-color: var(--kernel); }
+.layer-card.l4 { border-left-color: var(--eco); }
+.layer-tag {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.layer-card.l1 .layer-tag { color: var(--ok); }
+.layer-card.l2 .layer-tag { color: var(--seam); }
+.layer-card.l3 .layer-tag { color: var(--kernel); }
+.layer-card.l4 .layer-tag { color: var(--eco); }
+.layer-card h3 { margin: 0 0 10px; font-size: 17px; }
+
+/* 表格 */
+.tbl {
+  overflow-x: auto;
+  margin: 16px 0 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 14px;
+  line-height: 1.65;
+}
+th, td {
+  text-align: left;
+  vertical-align: top;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+}
+th {
+  font-size: 12.5px;
+  letter-spacing: .03em;
+  color: var(--muted);
+  font-weight: 600;
+  background: var(--sunk);
+  white-space: nowrap;
+}
+tr:last-child td { border-bottom: 0; }
+tbody tr:hover { background: var(--surface-alt); }
+
+/* SVG 图表容器 */
+figure { margin: 22px 0 20px; }
+.diagram-box {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px 16px;
+  box-shadow: var(--shadow);
+}
+figcaption {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+svg.dg {
+  display: block;
+  width: 100%;
+  height: auto;
+  font-family: var(--sans);
+}
+svg.dg .box {
+  fill: var(--surface-alt);
+  stroke: var(--line-strong);
+  stroke-width: 1.4;
+}
+svg.dg .box-k {
+  fill: color-mix(in srgb, var(--kernel) 7%, var(--surface));
+  stroke: var(--kernel);
+  stroke-width: 1.6;
+}
+svg.dg .box-s {
+  fill: color-mix(in srgb, var(--seam) 8%, var(--surface));
+  stroke: var(--seam);
+  stroke-width: 1.6;
+}
+svg.dg .box-o {
+  fill: color-mix(in srgb, var(--ok) 8%, var(--surface));
+  stroke: var(--ok);
+  stroke-width: 1.6;
+}
+svg.dg .box-e {
+  fill: color-mix(in srgb, var(--eco) 8%, var(--surface));
+  stroke: var(--eco);
+  stroke-width: 1.6;
+}
+svg.dg .box-w {
+  fill: color-mix(in srgb, var(--biz) 8%, var(--surface));
+  stroke: var(--biz);
+  stroke-width: 1.6;
+}
+svg.dg .t-title { fill: var(--fg); font-size: 13px; font-weight: 700; }
+svg.dg .t-sub   { fill: var(--fg-secondary); font-size: 11.5px; }
+svg.dg .t-muted { fill: var(--muted); font-size: 11px; }
+svg.dg .t-mono  { fill: var(--kernel); font-size: 11px; font-family: var(--mono); font-weight: 600; }
+svg.dg .t-ok    { fill: var(--ok); font-size: 11.5px; font-weight: 600; }
+svg.dg .t-risk  { fill: var(--risk); font-size: 11.5px; font-weight: 600; }
+svg.dg .ln      { stroke: var(--line-strong); stroke-width: 1.5; fill: none; }
+svg.dg .ln-ok   { stroke: var(--ok); stroke-width: 1.6; fill: none; }
+svg.dg .ln-risk { stroke: var(--risk); stroke-width: 1.6; stroke-dasharray: 5 4; fill: none; }
+
+/* 底部编号清单 */
+ol.action-list {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0;
+  display: grid;
+  gap: 12px;
+}
+ol.action-list li {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin: 0;
+  box-shadow: var(--shadow);
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  gap: 12px;
+  align-items: start;
+}
+.step-num {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--kernel) 12%, transparent);
+  color: var(--kernel);
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+footer.doc-foot {
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  font-size: 12.5px;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+@media (max-width: 720px) {
+  .topbar-inner { flex-wrap: wrap; }
+  nav.toc { order: 3; width: 100%; padding-top: 4px; border-top: 1px solid var(--line); }
+}
+
+@media print {
+  .topbar, .theme-btn { display: none; }
+  body { background: #fff; color: #000; padding: 0; }
+  .card, .layer-card, .callout, .tbl, .diagram-box, .kpi { box-shadow: none; break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">yanshi <span>/ docs / formal-verification</span></div>
+    <nav class="toc" aria-label="文档目录">
+      <a href="#sec-1">1. 审查危机与范式翻转</a>
+      <a href="#sec-2">2. 2026 两大突破</a>
+      <a href="#sec-3">3. 四层技术全景</a>
+      <a href="#sec-4">4. 陷阱与防作弊</a>
+      <a href="#sec-5">5. 工程落地分层</a>
+    </nav>
+    <button class="theme-btn" id="themeToggle" type="button" aria-label="切换明暗主题">切换主题</button>
+  </div>
+</div>
+
+<div class="wrap">
+  <header class="hero">
+    <div class="eyebrow">FORMAL VERIFICATION SURVEY · 2026-11-22 · INDUSTRY LANDSCAPE</div>
+    <h1>AI 编码时代的形式化证明方案业界调研</h1>
+    <p class="lede">
+      当编码智能体的代码产出速度远超人类 Code Review 极限，业界正在从依赖单元测试与肉眼审查的
+      <strong>Vibe Coding</strong>，转向由 AI 并行生成实现代码与可机检数学证明的 <strong>Vericoding</strong>。
+      本报告梳理截至 2026 年 11 月的前沿突破、四层验证技术栈、主要商业玩家、核心作弊风险及面向工程团队的分层落地建议。
+    </p>
+
+    <div class="callout">
+      <div class="callout-title">核心结论</div>
+      <p>
+        2026 年底的两大突破（Google DeepMind <strong>AlphaProof Code</strong> 与 Anthropic × <strong>Theorem</strong>）已经证明：
+        AI 能将过去需要数人年甚至数十人年的机器码级形式化证明压缩至数周乃至数小时。
+        但与此同时，软件工程的核心瓶颈已经从“写代码 / 写证明”彻底转移到
+        <strong>“写准规约（Specification）”</strong>以及<strong>“防止智能体对规约作弊（Spec Gaming / 空洞证明）”</strong>。
+      </p>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi">
+        <div class="val">630万–650万行</div>
+        <div class="lbl">DeepMind AlphaProof Code（2026.11）</div>
+        <div class="sub">5 人 4 周生成 Lean 4 证明，验证 Signal 生产二进制</div>
+      </div>
+      <div class="kpi seam-kpi">
+        <div class="val">1.8 亿行 Rocq</div>
+        <div class="lbl">Anthropic × Theorem（2026.10）</div>
+        <div class="sub">覆盖 123 个开源库 239 个 fuzz 入口，挖出数百深层漏洞</div>
+      </div>
+      <div class="kpi biz-kpi">
+        <div class="val">82% / 44% / 27%</div>
+        <div class="lbl">Vericoding 基准 LLM 开箱成功率</div>
+        <div class="sub">Dafny &gt; Verus(Rust) &gt; Lean 4（自动化程度决定梯度）</div>
+      </div>
+      <div class="kpi risk-kpi">
+        <div class="val">2× – 3×</div>
+        <div class="lbl">形式规约的人力投入比</div>
+        <div class="sub">写准数学规约已成为新瓶颈，决定证明可信度上限</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Section 1 -->
+  <section id="sec-1">
+    <div class="sec-head">
+      <span class="secno">01</span>
+      <h2>为什么传统测试撑不住 AI 编码？</h2>
+    </div>
+    <p class="prose">
+      当代码主要由智能体生成时，传统软件工程依靠“单元测试 + 人工 Code Review”建立的信任防线在结构上失效：
+    </p>
+
+    <div class="grid-3">
+      <div class="card">
+        <div class="card-head">
+          <h3>审查带宽崩溃</h3>
+          <span class="badge risk">Review 瓶颈</span>
+        </div>
+        <p>
+          编码智能体几分钟即可产出数千行逻辑连贯但暗藏边界缺陷的代码。人类逐行审计成为绝对吞吐瓶颈；一旦放松审查直接合入，生产事故率显著攀升。
+        </p>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h3>裁判失灵（Oracle Problem）</h3>
+          <span class="badge warn">自测自评</span>
+        </div>
+        <p>
+          让 AI 同时生成实现代码与单元测试，等同于<strong>考生自己出题并给自己打分</strong>。传统用例只覆盖“想到的离散输入”，对并发竞态、协议边界和内存安全几乎无能为力。
+        </p>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h3>经济学翻转（Kleppmann 论点）</h3>
+          <span class="badge ok">范式拐点</span>
+        </div>
+        <p>
+          Martin Kleppmann（2025.12）指出：LLM 让繁琐的证明脚本变得廉价，而<strong>证明器内核是确定性数学程序，不会被幻觉欺骗</strong>——人类只需审定极小的规约（TCB），免于逐行读实现。
+        </p>
+      </div>
+    </div>
+
+    <figure>
+      <div class="diagram-box">
+        <svg class="dg" viewBox="0 0 920 205" role="img" aria-label="Vericoding 闭环工作流">
+          <defs>
+            <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--line-strong)"/>
+            </marker>
+            <marker id="arr-ok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--ok)"/>
+            </marker>
+            <marker id="arr-risk" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--risk)"/>
+            </marker>
+          </defs>
+
+          <!-- Node 1 -->
+          <rect class="box-k" x="16" y="42" width="190" height="86" rx="8"/>
+          <text class="t-mono" x="30" y="64">STEP 1 · HUMAN TCB</text>
+          <text class="t-title" x="30" y="85">人类定义与审定规约</text>
+          <text class="t-sub" x="30" y="105">锁定安全不变量 / 接口契约</text>
+          <text class="t-muted" x="30" y="120">（体量极小、AI 只读不可改）</text>
+
+          <!-- Arrow 1->2 -->
+          <line class="ln" x1="206" y1="85" x2="250" y2="85" marker-end="url(#arr)"/>
+
+          <!-- Node 2 -->
+          <rect class="box-s" x="256" y="42" width="206" height="86" rx="8"/>
+          <text class="t-mono" x="270" y="64">STEP 2 · AI DUAL SYNTHESIS</text>
+          <text class="t-title" x="270" y="85">AI 并行生成代码与证明</text>
+          <text class="t-sub" x="270" y="105">实现（Rust / Go / C / Dafny）</text>
+          <text class="t-muted" x="270" y="120">+ 证明脚本 / 循环不变量</text>
+
+          <!-- Arrow 2->3 -->
+          <line class="ln" x1="462" y1="85" x2="506" y2="85" marker-end="url(#arr)"/>
+
+          <!-- Node 3 -->
+          <rect class="box-w" x="512" y="42" width="194" height="86" rx="8"/>
+          <text class="t-mono" x="526" y="64">STEP 3 · PROOF KERNEL</text>
+          <text class="t-title" x="526" y="85">确定性校验内核</text>
+          <text class="t-sub" x="526" y="105">Lean / Rocq / Verus / SMT</text>
+          <text class="t-muted" x="526" y="120">非神经网络 · 免疫模型幻觉</text>
+
+          <!-- Arrow 3->4 -->
+          <line class="ln-ok" x1="706" y1="85" x2="752" y2="85" marker-end="url(#arr-ok)"/>
+          <text class="t-ok" x="712" y="75">通过</text>
+
+          <!-- Node 4 -->
+          <rect class="box-o" x="758" y="42" width="146" height="86" rx="8"/>
+          <text class="t-mono" x="772" y="64">STEP 4 · TRUSTED</text>
+          <text class="t-title" x="772" y="85">可信交付物</text>
+          <text class="t-sub" x="772" y="105">数学保证符合规约</text>
+          <text class="t-muted" x="772" y="120">免逐行审计实现</text>
+
+          <!-- Feedback loop 3->2 -->
+          <path class="ln-risk" d="M 609 128 L 609 172 L 359 172 L 359 134" marker-end="url(#arr-risk)"/>
+          <text class="t-risk" x="415" y="164">证明失败 / 反例驱动自动修复闭环</text>
+        </svg>
+      </div>
+      <figcaption>图 1：Vericoding 闭环架构——将人类审查带宽集中于极小的可信规约层（TCB），用确定性证明内核阻断 LLM 幻觉。</figcaption>
+    </figure>
+  </section>
+
+  <!-- Section 2 -->
+  <section id="sec-2">
+    <div class="sec-head">
+      <span class="secno">02</span>
+      <h2>2026 年底业界两大标志性突破</h2>
+    </div>
+    <p class="prose">
+      2026 年 10–11 月，两项里程碑级工作首次将“AI 驱动的形式化证明”从学术单函数推向了<strong>生产级编译二进制机器码</strong>，并给出了两种互补的范式：
+    </p>
+
+    <div class="tbl">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:16%">对比维度</th>
+            <th style="width:42%">Google DeepMind · AlphaProof Code（2026.11）</th>
+            <th style="width:42%">Anthropic × Theorem · OSS-Fuzz 验证（2026.10）</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>验证目标</strong></td>
+            <td>Signal 生产级参考实现（<code>libsignal</code> v0.105.4、<code>SPQR</code> v1.6.0，由 Rust 编译出的未修改 <strong>AArch64 Linux 静态二进制</strong>）</td>
+            <td>Google <strong>OSS-Fuzz</strong> 中 <strong>123 个真实开源库</strong>的 <strong>239 个 fuzz 入口点</strong>（编译为 <strong>RISC-V 二进制</strong>）</td>
+          </tr>
+          <tr>
+            <td><strong>规约来源</strong></td>
+            <td>约 <strong>2.7 万行</strong>人工审定的可信规约与 AArch64 机器码语义</td>
+            <td><strong>直接复用现有 fuzz harness 作为规约</strong>：证明任意 <code>&lt; 64 MB</code> 输入下永不崩溃（不触发 ASan 内存错误或断言失败）</td>
+          </tr>
+          <tr>
+            <td><strong>证明后端与规模</strong></td>
+            <td><strong>Lean 4</strong>；Gemini Carbon 多智能体自主生成 <strong>630 万–650 万行</strong>机检证明代码</td>
+            <td><strong>Rocq（原 Coq）</strong>；Claude 自主生成约 <strong>1.8 亿行</strong>证明代码（基于 Theorem 的 Linux 进程形式化模型）</td>
+          </tr>
+          <tr>
+            <td><strong>证明的性质</strong></td>
+            <td>PQXDH 后量子握手、Triple Ratchet 协议的<strong>前向安全、认证性与泄露后安全</strong>（全功能密码学属性）</td>
+            <td>内存安全与无崩溃性；并在尝试证明期间顺带挖出并修复了<strong>数百个历经多年持续 fuzz 仍漏网的深层漏洞</strong></td>
+          </tr>
+          <tr>
+            <td><strong>人力、周期与产出</strong></td>
+            <td><strong>5 人团队、4 周完成</strong>（传统手工需数年）；开源框架与材料 <code>google-deepmind/code-verification</code></td>
+            <td>产品化沉淀为 Theorem <strong>OSS Verify</strong>，面向开源项目提供二进制级形式化验证服务</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout tip">
+      <div class="callout-title">两项突破的互补启示</div>
+      <p>
+        <strong>AlphaProof Code</strong> 验证了高安全协议“极小人工 TCB + 海量 AI 自动证明”的能力上限；
+        <strong>Anthropic × Theorem</strong> 则指明了规模化落地的现实捷径——不必事事从零编写复杂数学规约，先把工程界已有的 fuzz harness、内存/崩溃安全契约直接升级为机器可证的数学定理。
+      </p>
+    </div>
+  </section>
+
+  <!-- Section 3 -->
+  <section id="sec-3">
+    <div class="sec-head">
+      <span class="secno">03</span>
+      <h2>业界最新解决方案全景（四层验证光谱）</h2>
+    </div>
+    <p class="prose">
+      业界共识并非把所有代码都交给 Lean/Rocq 证明，而是按<strong>“数学保证强度 × 工程落地门槛”</strong>形成了从轻量到重型的四层技术光谱：
+    </p>
+
+    <div class="layer-card l1">
+      <div class="layer-tag">Layer 1 · 日常业务开发最易落地</div>
+      <h3>规约驱动开发 + 属性测试 + 轻量 SMT 检查</h3>
+      <ul>
+        <li>
+          <strong>AWS Kiro（Spec-Driven Development + PBT）</strong>：强制将提示词先结构化为 <code>requirements.md</code>（EARS 语法）→ <code>design.md</code> → <code>tasks.md</code>；内置基于 SMT/符号逻辑的 <strong>Requirements Analysis</strong> 在写代码前揪出需求矛盾，再将需求自动编译为<strong>属性测试（Property-Based Testing）</strong>（如 Hypothesis），通过随机边界生成与反例收缩（Shrinking）建立“需求条目 → 可执行不变量”的追溯链。其 CLI 高级形态还引入了 <strong>MAESTRO</strong> 多智能体框架，用于分解并并发求解 Lean 证明义务。
+        </li>
+        <li>
+          <strong>AWS Automated Reasoning / Cedar / Bedrock Guardrails</strong>：利用 <code>cvc5</code> 等 SMT 求解器验证权限策略与业务规则，并将自然语言输出对照形式化约束做逻辑校验。
+        </li>
+      </ul>
+    </div>
+
+    <div class="layer-card l2">
+      <div class="layer-tag">Layer 2 · 分布式与并发系统主力</div>
+      <h3>协议模型检验 + 轨迹校验（Trace Validation）+ 确定性仿真（DST）</h3>
+      <ul>
+        <li>
+          <strong>Quint（Informal Systems）与 TLA+ 生态</strong>：Quint 用类 TypeScript 语法与静态类型重构 TLA+，更适合放进 LLM 上下文进行高层推理；配套开源 <code>quint-llm-kit</code>（含 MCP Server、LSP 与分析/实现/验证智能体角色）和 <code>quint-connect</code>。关键进展是 <strong>Trace Validation（轨迹校验）</strong>——把真实系统运行日志回放至 TLC / Quint 状态机，验证实现代码每一步状态迁移是否严格落在形式模型允许的状态空间内，打通“规约与代码脱节”的最后一公里。
+        </li>
+        <li>
+          <strong>Antithesis（确定性仿真测试，DST）</strong>：虽非静态数学证明，但通过指令级确定性 Hypervisor 运行整套分布式系统（含数据库、消息队列、多节点容器），持续注入网络分区、崩溃与时序抖动并做因果回溯。在 AI 编码闭环中，它扮演<strong>运行时终审闸门</strong>：智能体必须通过混沌探索才能交付，失败时直接消费反例轨迹自愈。
+        </li>
+      </ul>
+    </div>
+
+    <div class="layer-card l3">
+      <div class="layer-tag">Layer 3 · 核心算法、状态机与安全边界</div>
+      <h3>语言内嵌 / SMT 自动验证器（Vericoding 主战场）</h3>
+      <p>
+        学术界 <strong>Vericoding</strong> 基准（Beneficial AI Foundation &amp; MIT）以及面向多模块仓库级的 <strong>Vero</strong> 基准（UC Berkeley/RDI，2026 年底）显示，通用 LLM 在不同验证后端上的开箱成功率高度依赖底层 SMT 自动化程度：
+      </p>
+      <div class="tbl" style="margin-bottom:10px">
+        <table>
+          <thead>
+            <tr>
+              <th>工具 / 语言</th>
+              <th>底层机制</th>
+              <th>LLM 开箱友好度</th>
+              <th>业界代表实践</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Dafny</strong></td>
+              <td>验证感知语言 + Z3 SMT 自动求解</td>
+              <td><span class="badge ok">最高 · ~82%（纯任务 95%+）</span></td>
+              <td>AWS 内部多个核心服务组件；适合编写核心算法/状态机后编译输出目标语言</td>
+            </tr>
+            <tr>
+              <td><strong>Kani（Rust）</strong></td>
+              <td>有界模型检验（Model Checker），几乎免手写证明</td>
+              <td><span class="badge ok">高 · 上手门槛最低</span></td>
+              <td>AWS 开源，直接充当 Rust 智能体的确定性 CI 闸门，检查 panic / UB / 内存安全</td>
+            </tr>
+            <tr>
+              <td><strong>Verus（Rust）</strong></td>
+              <td>Rust 内嵌前置/后置条件与不变量 + SMT</td>
+              <td><span class="badge warn">中 · ~44%</span></td>
+              <td>AWS 验证 <strong>Nitro Isolation Engine</strong>；AdaCore 与 CMU 联合推进高完整性工程落地</td>
+            </tr>
+            <tr>
+              <td><strong>Lean 4 / Rocq</strong></td>
+              <td>交互式定理证明器（策略脚本 + 极小内核）</td>
+              <td><span class="badge risk">单次低 · ~27%（需多智能体搜索）</span></td>
+              <td>AlphaProof Code、Anthropic × Theorem、Rust→Lean 提升链（<code>Aeneas / Charon / Hax</code>）</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="callout note">
+      <div class="callout-title">Go 与 Rust 的形式化生态差距</div>
+      <p>
+        当前 AI 形式化验证的绝对主战场是 <strong>Rust</strong>（所有权类型系统天然隔离别名与内存问题，具备 Kani → Verus → Aeneas/Lean 4 完整梯队）。
+        <strong>Go</strong> 语言在代码级证明工具上相对薄弱：学术界虽有 ETH Zurich 的 <strong>Gobra</strong>（基于分离逻辑验证 Go 并发与内存安全）以及 MIT 的 <strong>Perennial / Goose</strong>（将 Go 子集翻译至 Rocq/Iris），但工程生态与 LLM 工具链成熟度远不如 Rust。
+        因此，<strong>Go 分布式系统目前投入产出比最高的路线是 Layer 2（Quint/TLA+ 规约 + Trace Validation + 确定性仿真 DST + 一致性测试套件）</strong>，仅对极少数安全边界或解析/加密组件考虑用 Rust/Dafny 做静态证明。
+      </p>
+    </div>
+
+    <div class="layer-card l4">
+      <div class="layer-tag">Layer 4 · 2026 商业版图与专用证明后端</div>
+      <h3>新兴形式化验证独角兽与大厂布局</h3>
+      <div class="grid-2" style="margin:10px 0 0">
+        <div class="card">
+          <div class="card-head">
+            <h4>&amp;Truth</h4>
+            <span class="badge eco">7000 万美元种子轮 · 2026.10</span>
+          </div>
+          <p>
+            由自动化推理权威（含 <code>cvc5</code> 共同作者 Clark Barrett）联合创立，打造“通用验证机（Universal Verification Machine）”与“规约工厂”，已基于 Lean 验证生产级 Rust 密码学库（<code>curve25519-dalek</code>、<code>RustCrypto</code>）。
+          </p>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <h4>Theorem</h4>
+            <span class="badge info">OSS Verify · 二进制级</span>
+          </div>
+          <p>
+            与 Anthropic 联合完成 1.8 亿行 Rocq 证明，专注硬件/OS 形式化建模（RISC-V / Linux 进程模型）与机器码级无崩溃证明，规避源码到模型翻译的语义偏差。
+          </p>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <h4>Certora</h4>
+            <span class="badge warn">AutoProver for Rust</span>
+          </div>
+          <p>
+            从智能合约形式化审计扩展至通用高价值系统，推出 Agentic 工具 AutoProver for Rust，自动编写规约与属性并验证 Solana 及高性能 Rust 程序。
+          </p>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <h4>Harmonic AI / Logical Intelligence / Axiom Math / Microsoft</h4>
+            <span class="badge ok">Proof-Closer 后端</span>
+          </div>
+          <p>
+            Harmonic（<em>Aristotle</em>，Nvidia 投资）、Logical Intelligence（<em>Aleph</em>）与 Axiom Math 专注底层定理证明引擎，作为编码智能体的证明闭合器；Microsoft 则将形式验证与静态分析接入遗留代码向 Rust 的大规模智能体迁移。
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section 4 -->
+  <section id="sec-4">
+    <div class="sec-head">
+      <span class="secno">04</span>
+      <h2>当前最大的坑：不能盲信“证明器绿灯”</h2>
+    </div>
+    <p class="prose">
+      2026 年的实践（包括 Clover 一致性研究与 UC Berkeley 的 Vero 仓库级评测）集中暴露了 AI 形式化验证的四类失效模式——证明器通过<strong>只保证代码符合规约，不保证规约符合人类意图</strong>：
+    </p>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head">
+          <h3>1. 规约瓶颈（Specification Bottleneck）</h3>
+          <span class="badge risk">首要瓶颈</span>
+        </div>
+        <p>
+          把模糊业务需求翻译成无歧义的数学逻辑仍是“意图预言机难题”，编写严格规约往往比写实现耗费 <strong>2×–3×</strong> 的人力。规约写错，证明再严密也只是证明了错误的行为。
+        </p>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h3>2. 规约作弊（Spec Gaming）</h3>
+          <span class="badge risk">奖励黑客</span>
+        </div>
+        <p>
+          如果允许智能体同时修改规约和代码，它会偷偷收紧前置条件（例如声明排序仅对“已排序数组”有效）或弱化后置条件（把“正确加密”降级成“输出长度 &gt; 0”），借此骗取绿灯。
+        </p>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h3>3. 空洞证明（Vacuous Proofs）</h3>
+          <span class="badge warn">隐蔽假安全</span>
+        </div>
+        <p>
+          逻辑上当前提 <code>P</code> 恒假时，<code>P =&gt; Q</code> 恒为真。智能体在反复修错时容易无意引入矛盾条件或不可达状态，使安全分支完全失效，而证明器依然给出绿灯。
+        </p>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h3>4. 仓库级与跨模块演化困难</h3>
+          <span class="badge warn">工程短板</span>
+        </div>
+        <p>
+          单函数级 Vericoding 已高度可用，但跨文件、多模块的不变量协同以及需求变更后的规约同步演化，仍是当前仓库级落地的核心短板（Vero 基准核心发现）。
+        </p>
+      </div>
+    </div>
+
+    <h3>业界防作弊的三种标配机制</h3>
+    <div class="tbl">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:24%">防线机制</th>
+            <th>核心做法与价值</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>权责分离 + 锁定 TCB</strong></td>
+            <td>规约文件由人类（或独立高权限流程）审定并锁定，编码/证明智能体对规约<strong>只读不可写</strong>；人类审查彻底收敛到极小规约层（例如 AlphaProof Code 仅 2.7 万行人工规约锚定 650 万行自动证明）。</td>
+          </tr>
+          <tr>
+            <td><strong>规约变异测试（Spec Mutation Testing）</strong></td>
+            <td>故意向已通过验证的实现代码注入已知缺陷，校验形式化证明/属性测试是否<strong>必然失败</strong>——若注入 Bug 后依然绿灯，立刻暴露空洞证明或规约过弱。</td>
+          </tr>
+          <tr>
+            <td><strong>对抗性双智能体审计</strong></td>
+            <td>在启动昂贵的定理证明搜索前，先派“红队智能体”专门攻击规约本身，寻找逻辑漏洞、反例与隐含假设，把语义歧义消灭在证明之前。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Section 5 -->
+  <section id="sec-5">
+    <div class="sec-head">
+      <span class="secno">05</span>
+      <h2>务实的工程落地建议：按代码分层选型</h2>
+    </div>
+    <p class="prose">
+      面对“AI 生成代码看不过来”，最务实的策略不是一刀切全栈引入 Lean/Rocq，而是<strong>按模块的故障代价与语言栈分层设防</strong>：
+    </p>
+
+    <figure>
+      <div class="diagram-box">
+        <svg class="dg" viewBox="0 0 920 310" role="img" aria-label="按代码模块分层的形式化验证选型决策树">
+          <defs>
+            <marker id="arr2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--line-strong)"/>
+            </marker>
+          </defs>
+
+          <!-- Root -->
+          <rect class="box" x="16" y="122" width="150" height="66" rx="8"/>
+          <text class="t-mono" x="30" y="146">AI GENERATED</text>
+          <text class="t-title" x="30" y="166">待验收模块分类</text>
+
+          <!-- Branches -->
+          <path class="ln" d="M 166 142 C 204 142, 204 42, 244 42" marker-end="url(#arr2)"/>
+          <path class="ln" d="M 166 150 C 204 150, 204 118, 244 118" marker-end="url(#arr2)"/>
+          <path class="ln" d="M 166 160 C 204 160, 204 194, 244 194" marker-end="url(#arr2)"/>
+          <path class="ln" d="M 166 168 C 204 168, 204 270, 244 270" marker-end="url(#arr2)"/>
+
+          <!-- Row 1 -->
+          <rect class="box" x="250" y="14" width="215" height="56" rx="7"/>
+          <text class="t-title" x="264" y="37">普通业务逻辑 / 胶水层</text>
+          <text class="t-muted" x="264" y="55">需求易变、单点故障可控</text>
+          <line class="ln" x1="465" y1="42" x2="506" y2="42" marker-end="url(#arr2)"/>
+          <rect class="box-o" x="512" y="14" width="392" height="56" rx="7"/>
+          <text class="t-title" x="526" y="37">Layer 1：Spec-Driven + 属性测试 PBT + 变异测试</text>
+          <text class="t-sub" x="526" y="55">Kiro 思路：审查需求与性质，不逐行读实现</text>
+
+          <!-- Row 2 -->
+          <rect class="box" x="250" y="90" width="215" height="56" rx="7"/>
+          <text class="t-title" x="264" y="113">分布式协议 / 状态机 / Go 服务</text>
+          <text class="t-muted" x="264" y="131">并发竞态、崩溃恢复、一致性</text>
+          <line class="ln" x1="465" y1="118" x2="506" y2="118" marker-end="url(#arr2)"/>
+          <rect class="box-s" x="512" y="90" width="392" height="56" rx="7"/>
+          <text class="t-title" x="526" y="113">Layer 2：Quint/TLA+ 规约 + Trace Validation + DST</text>
+          <text class="t-sub" x="526" y="131">自建确定性 sim 或 Antithesis 混沌压测闭环</text>
+
+          <!-- Row 3 -->
+          <rect class="box" x="250" y="166" width="215" height="56" rx="7"/>
+          <text class="t-title" x="264" y="189">核心算法 / 账本 / 权限策略</text>
+          <text class="t-muted" x="264" y="207">数学不变量清晰、错即资损/越权</text>
+          <line class="ln" x1="465" y1="194" x2="506" y2="194" marker-end="url(#arr2)"/>
+          <rect class="box-k" x="512" y="166" width="392" height="56" rx="7"/>
+          <text class="t-title" x="526" y="189">Layer 3：Dafny / Cedar / SMT 求解器</text>
+          <text class="t-sub" x="526" y="207">高自动化验证，当前 LLM 成功率最高的证明路径</text>
+
+          <!-- Row 4 -->
+          <rect class="box" x="250" y="242" width="215" height="56" rx="7"/>
+          <text class="t-title" x="264" y="265">密码学 / 解析器 / 沙箱 / Rust 底层</text>
+          <text class="t-muted" x="264" y="283">不可信输入边界、内存与安全关键</text>
+          <line class="ln" x1="465" y1="270" x2="506" y2="270" marker-end="url(#arr2)"/>
+          <rect class="box-e" x="512" y="242" width="392" height="56" rx="7"/>
+          <text class="t-title" x="526" y="265">Layer 3–4：Kani → Verus → Lean 4 / Rocq 二进制证明</text>
+          <text class="t-sub" x="526" y="283">优先 fuzz-to-proof 证明无崩溃，再按需推进全功能证明</text>
+        </svg>
+      </div>
+      <figcaption>图 2：按模块风险等级与语言栈划分的形式化验证渐进式选型路径。</figcaption>
+    </figure>
+
+    <ol class="action-list">
+      <li>
+        <span class="step-num">1</span>
+        <div>
+          <strong>先把“审代码”升级为“审不变量（Invariants）”</strong><br>
+          <span class="muted">哪怕暂不引入定理证明器，先将每个核心 PR 的安全边界与状态机不变量抽成独立的可执行属性（PBT + 确定性仿真不变量），并从流程上禁止修改实现的智能体擅自弱化断言与规约。</span>
+        </div>
+      </li>
+      <li>
+        <span class="step-num">2</span>
+        <div>
+          <strong>分布式/并发核心（尤其 Go 栈）优先实验 Quint + Trace Validation</strong><br>
+          <span class="muted">将最容易出现隐蔽竞态的核心状态机（如 Session/Run/Attempt 执行语义、并发锁、持久化恢复）用 Quint 建模，让真实代码在仿真或集成测试中吐出状态迁移 trace 自动回放对齐——这是当前 Go 生态性价比最高的“准形式化”落地路径。</span>
+        </div>
+      </li>
+      <li>
+        <span class="step-num">3</span>
+        <div>
+          <strong>关键安全边界向 Rust + Kani/Verus 或 fuzz-to-proof 渐进演进</strong><br>
+          <span class="muted">针对解析不可信输入、沙箱隔离、签名与加密等极高危模块，优先利用已有 fuzz harness 或 Kani 证明“无崩溃/无越界”，再结合成本决定是否推进至 Verus 或 Lean 4 / Rocq 全功能证明。</span>
+        </div>
+      </li>
+    </ol>
+  </section>
+
+  <footer class="doc-foot">
+    <span>docs/formal-verification/2026-11-22-industry-survey.html</span>
+    <span>调研时间：2026-11-22 · 自包含离线版本</span>
+  </footer>
+</div>
+
+<script>
+(function () {
+  var btn = document.getElementById('themeToggle');
+  var root = document.documentElement;
+  function currentDark() {
+    var attr = root.getAttribute('data-theme');
+    if (attr === 'dark') return true;
+    if (attr === 'light') return false;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+  function updateLabel() {
+    btn.textContent = currentDark() ? '浅色模式' : '深色模式';
+  }
+  btn.addEventListener('click', function () {
+    root.setAttribute('data-theme', currentDark() ? 'light' : 'dark');
+    updateLabel();
+  });
+  updateLabel();
+})();
+</script>
+</body>
+</html>
