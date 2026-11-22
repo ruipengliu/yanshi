@@ -107,8 +107,11 @@ check(connected.ready.wait(timeout: .now() + 5) == .success, "not connected")
 
 var create = Yanshi_V1_ClientRequest()
 create.createSession.agent = "dev"
+create.createSession.idempotencyKey = UUID().uuidString
 let sid = try request(client, create).sessionID
 check(!sid.isEmpty, "no session")
+let replay = try request(client, create).sessionID
+check(replay == sid, "same creation key returned another session")
 
 let view = View()
 let sub = try client.subscribe(sid, afterSeq: 0, handler: view)

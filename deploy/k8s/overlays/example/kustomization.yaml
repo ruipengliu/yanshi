@@ -35,6 +35,9 @@ secretGenerator:
       - YANSHI_S3_ENDPOINT=s3.internal:443
       - YANSHI_S3_ACCESS_KEY=CHANGE_ME
       - YANSHI_S3_SECRET_KEY=CHANGE_ME
+  - name: yanshi-session-key
+    literals:
+      - YANSHI_SESSION_KEY_SECRET=CHANGE_ME_TO_A_RANDOM_SESSION_KEY
 images:
   - name: yanshi
     newName: registry.example.com/yanshi

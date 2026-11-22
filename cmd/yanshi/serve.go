@@ -67,6 +67,8 @@ import (
 // devPGDSN 对应 docker-compose.yml 中的开发数据库。
 const devPGDSN = "postgres://yanshi:yanshi@127.0.0.1:54329/yanshi?sslmode=disable"
 
+const devSessionKeySecret = "yanshi-dev-session-key-secret-v1"
+
 // storage 是 serve 打开的存储及其运行状态（就绪检查用）。
 type storage struct {
 	shardConnections []*shardConnection
@@ -356,6 +358,7 @@ func serve(args []string) error {
 	peerAdvertise := fs.String("peer-advertise", "", "其他进程访问本进程内部地址所用的 URL，如 http://$POD_IP:7070；默认取监听地址")
 	leaseTTL := fs.Duration("lease-ttl", 10*time.Second, "工作队列租约时长：进程崩溃后，其进行中的 Run 约在此时长后被接管（心跳为其 1/3）")
 	authMode := fs.String("auth", "none", "鉴权：none（信任自报身份，仅允许监听回环地址）| jwt（业务线签发的令牌，docs/design/auth.md）")
+	sessionKeySecretFile := fs.String("session-key-secret-file", "", "建会话幂等密钥文件（至少 32 字节）；为空时读取 YANSHI_SESSION_KEY_SECRET")
 	insecureRemote := fs.Bool("insecure-remote", false, "允许 -auth none 监听非回环地址（局域网调试）：同一网络中的任何人都能冒充任意用户、读写任意 Session。不得用于生产")
 	blDir := fs.String("businesslines", "businesslines", "业务线公钥配置目录（auth=jwt；yanshi keygen 生成开发配置）")
 	audience := fs.String("auth-audience", "yanshi", "本部署的标识，令牌的 aud 须包含它")
@@ -410,6 +413,28 @@ func serve(args []string) error {
 	roles, err := parseRoles(*rolesFlag)
 	if err != nil {
 		return err
+	}
+	var sessionKeySecret []byte
+	if roles["gateway"] {
+		sessionKeySecret = []byte(os.Getenv("YANSHI_SESSION_KEY_SECRET"))
+		if *sessionKeySecretFile != "" {
+			sessionKeySecret, err = os.ReadFile(*sessionKeySecretFile)
+			if err != nil {
+				return fmt.Errorf("read session key secret file: %w", err)
+			}
+		}
+		if (len(sessionKeySecret) != 0 || *sessionKeySecretFile != "") && len(sessionKeySecret) < 32 {
+			return fmt.Errorf("session key secret must contain at least 32 bytes")
+		}
+		// SDK 每次创建都带幂等键：网关缺少密钥时创建会全部失败，所以启动时就拒绝，而不是运行时才暴露。
+		// -auth none 只用于开发且信任自报身份，各进程取同一个固定值，拆分角色的本地部署也一致。
+		if len(sessionKeySecret) == 0 {
+			if *authMode != "none" {
+				return fmt.Errorf("gateway requires YANSHI_SESSION_KEY_SECRET or -session-key-secret-file (ADR-0059)")
+			}
+			sessionKeySecret = []byte(devSessionKeySecret)
+			logger.Warn("using a development session key secret; set YANSHI_SESSION_KEY_SECRET for production")
+		}
 	}
 	if !roles["worker"] {
 		*workers, *interactiveWorkers = 0, 0
@@ -474,6 +499,14 @@ func serve(args []string) error {
 	verifier, nodeAuth, lines, err := authenticator(*authMode, *addr, *blDir, *audience, *insecureRemote, clk)
 	if err != nil {
 		return err
+	}
+	var definitionAccess app.DefinitionAccess
+	if *authMode == "jwt" {
+		access, err := auth.NewDefinitionAccess(lines)
+		if err != nil {
+			return err
+		}
+		definitionAccess = access
 	}
 	if *authMode == "none" && !loopback(*addr) {
 		logger.Warn("-auth none on a non-loopback address (-insecure-remote): anyone on this network can act as any user; debugging only", "addr", *addr)
@@ -552,7 +585,9 @@ func serve(args []string) error {
 	}
 	opts := app.Options{
 		Clock: clk, Agents: agents, Model: gw, Blobs: blobs, NodeAuth: nodeAuth,
-		Oneshots: shots, OneshotMax: *oneshotMax, OneshotWait: *oneshotWait, OneshotDeadline: *oneshotDeadline,
+		DefinitionAccess: definitionAccess,
+		SessionKeySecret: sessionKeySecret,
+		Oneshots:         shots, OneshotMax: *oneshotMax, OneshotWait: *oneshotWait, OneshotDeadline: *oneshotDeadline,
 		OneshotBusinessLineMax: oneshotBusinessLineMax,
 		SandboxTools:           sbx.enabled(), DefaultTimeout: 30 * time.Minute, NodeCacheTTL: 10 * time.Second,
 		BackgroundGrace: *backgroundGrace, BackgroundTimeout: *backgroundTimeout,

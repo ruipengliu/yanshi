@@ -22,7 +22,7 @@ func (namedCap) Invoke(context.Context, capability.Invocation) ([]*v1.ContentBlo
 
 type agentList []capability.AgentInfo
 
-func (l agentList) Agents(string) []capability.AgentInfo { return l }
+func (l agentList) Agents(string, string) []capability.AgentInfo { return l }
 
 // 委托派生的子 Run 只能用自身白名单与每个祖先白名单都允许的工具；委托链深度与未完成的委托数受委托方的上限约束
 // （docs/design/m5-multi-agent.md §2、§4）。

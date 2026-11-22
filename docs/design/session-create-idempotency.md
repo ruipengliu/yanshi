@@ -1,6 +1,6 @@
 # 建会话幂等
 
-> 状态：设计已定稿（2026-11-22，Q1–Q4 按提议定），待实现· 立项：[架构评估评审](../review/2026-11-22-architecture-evaluation-review.md) §5 A1 · 依赖：[Session 生命周期与数据删除](./m2-session-lifecycle.md)、[多端双工通道](./m3-duplex-channel.md)、[端侧 SDK](./m3-client-sdks.md) · 相关 ADR：0015、0028、0043、0051 · 实施前写 ADR-0059
+> 状态：已实现（2026-11-22，ADR-0059）· 立项：[架构评估评审](../review/2026-11-22-architecture-evaluation-review.md) §5 A1 · 依赖：[Session 生命周期与数据删除](./m2-session-lifecycle.md)、[多端双工通道](./m3-duplex-channel.md)、[端侧 SDK](./m3-client-sdks.md) · 相关 ADR：0015、0028、0043、0051 · [ADR-0059](../adr/0059-idempotent-session-creation-by-derived-id.md)
 
 ## 1. 问题
 
@@ -52,7 +52,7 @@ Session ID 出现在日志、指标、URL 与出站流信封中。键可能是�
 ### 3.2 密钥
 
 - 配置：`YANSHI_SESSION_KEY_SECRET`（至少 32 字节；也可用 `-session-key-secret-file` 从文件读取），经 `app.Options.SessionKeySecret` 进入 `NewCore`，再交给 `service.Service`。只有调用 `service.Create` 的角色（gateway；单进程模式即全部）需要它；同一单元内所有这类进程必须相同。
-- 未配置时：带键的请求返回 `invalid`（`idempotency keys are not configured`），不退化为不幂等的创建。单进程开发模式使用固定的开发密钥并在启动时提示，与 S3 的开发凭据同一做法；模拟测试、评测与 e2e 经 `app.Options` 取固定值。
+- 未配置时：`-auth jwt` 下网关启动失败（2026-11-22 实现时修订：SDK 每次创建都带键，缺少密钥会让创建全部失败，所以在启动时暴露）；`service` 层仍对带键的请求返回 `invalid`（`idempotency keys are not configured`），不退化为不幂等的创建。`-auth none` 的开发模式使用固定的开发密钥并在启动时提示，与 S3 的开发凭据同一做法；模拟测试、评测与 e2e 经 `app.Options` 取固定值。
 - 部署：K8s overlay 从 Secret 注入；`docs/launch-checklist.md` 增加一项“生产密钥已配置，且不是开发值”。
 - 轮换：换密钥后旧键派生出新 ID，跨越轮换的重试会再创建一个 Session。因此不做例行轮换；泄露时轮换，接受这一代价（见 Q2）。
 
@@ -72,8 +72,10 @@ Session ID 出现在日志、指标、URL 与出站流信封中。键可能是�
 |---|---|---|
 | 首次创建 | 201 | `{"session_id": ...}`（与现在相同） |
 | 重放：已有 Session，参数一致 | 200 | 同上，同一个 ID |
-| 同一键、参数不一致 | 409 | `conflict` |
-| 该键对应的 Session 已删除，或 EndUser 正在注销 | 404 | `not_found` |
+| 同一键、参数不一致 | 409 | 通用错误体 `{"error": ...}` |
+| 该键对应的 Session 已删除，或 EndUser 正在注销 | 404 | 同上 |
+
+错误响应沿用 HTTP API 的通用错误体，以状态码区分；Connection 的错误码见 §4.2。
 
 不带键的请求行为不变。
 
@@ -104,16 +106,16 @@ message CreateSession {
 | `delete_at` | 都为空，或相等（秒精度） |
 | `time_zone` | 相等 |
 
-只写了索引、日志尚未写入的半成品（首次尝试在 `Index.Put` 之后失败）：`Index.Put` 是“不存在才插入”（`pglifecycle.go` 的 `ON CONFLICT DO NOTHING`），若后续尝试换了参数，索引与日志会不一致。所以没有日志时还要读索引行，`agent` 与 `delete_at` 不一致同样返回 409；用原参数重试即可完成创建。
+只写了索引、日志尚未写入的半成品（首次尝试在 `Index.Put` 之后失败）：`Index.Put` 是“不存在才插入”（`pglifecycle.go` 的 `ON CONFLICT DO NOTHING`），若后续尝试换了参数，索引与日志会不一致。并发的两次请求参数不同时也会出现同样的不一致。所以写索引之后读回索引行再写日志（§5 第 4 步），`agent` 与 `delete_at` 不一致同样返回 409；用原参数重试即可完成创建。
 
 ## 5. 服务端流程
 
 `service.CreateRequest` 增加 `IdempotencyKey`，与 `SessionID`（内部指定 ID）互斥，同时给出返回 `invalid`。带键时：
 
-1. 校验格式与已有字段（业务线、EndUser、`delete_at`、时区），派生 ID。
+1. 校验格式与已有字段（业务线、EndUser、时区；`delete_at` 只校验格式），派生 ID。“`delete_at` 必须晚于当前时间”只在第 4 步首次创建时检查：重放的期限以首次为准，期限过后的重放应得到第 2 步的 `not_found`，而不是 `invalid`。
 2. **先查删除记录**：`Deletions.Get(id)` 存在即返回 `not_found`。这只是快速路径，避免对已消耗的键反复“写入—复查—撤回”，正确性仍由第 6 步的复查保证。
 3. **再查日志**：已有 `SessionCreated` 时按 §4.3 比较，一致即返回该 ID，不解析 AgentDef。所以首次创建之后即使该版本被撤回，重放仍然成功。
-4. 没有日志时读索引行，按 §4.3 检查半成品；然后照现有顺序解析 AgentDef、写索引、写日志（先索引后日志的理由不变）。
+4. 没有日志时检查 `delete_at` 晚于当前时间、解析 AgentDef、写索引；**写索引之后读回索引行（`Index.Get`）按 §4.3 比较**，不一致返回 `conflict`，一致才写日志（先索引后日志的理由不变）。`Put` 是“不存在才插入”，读回的行就是这个键的绑定：它同时覆盖首次尝试留下的半成品，以及两次参数不同的并发请求都读到空索引、后写索引的一方先追加日志的交错。
 5. 写日志遇到 `ErrConflict`（并发的同键创建）时读回并按 §4.3 比较，与委托的冲突处理合为同一段代码。
 6. 所有返回路径照常经 `defer` 做 EndUser 屏障与 Session 删除记录的复查（`lifecycle.RecheckEndUser`、`lifecycle.Recheck`）。
 
@@ -121,7 +123,7 @@ message CreateSession {
 
 现有规则：无法读到屏障时撤回本次新建的 Session，指定 ID 的幂等重试不撤回已有的。带键时同样区分：
 
-- 本次尝试写入了 `SessionCreated`：读不到屏障就撤回。安全优先：被撤回的 Session 可能属于正在注销的 EndUser。代价是这个键随之被消耗，本次返回 `unavailable`，之后的重试得到 `not_found`，业务线须换键（见 Q3）。
+- 本次尝试写入了 `SessionCreated`：读不到屏障就撤回。安全优先：被撤回的 Session 可能属于正在注销的 EndUser。代价是这个键随之被消耗；撤回写入了删除记录，本次与之后的重试都得到 `not_found`（与不带键时撤回的返回相同），业务线须换键（见 Q3）。
 - 本次是重放：不撤回，返回错误，由调用方重试。
 
 ### 5.2 并发

@@ -149,6 +149,24 @@ test("a submit whose response was lost is retried with the same input ID", async
   c.stop();
 });
 
+test("a session creation whose response was lost is retried with the same key", async (t) => {
+  const net = new FakeNetwork();
+  const c = client(net);
+  t.after(() => c.stop());
+  let s = await net.connect(1);
+  const p = c.createSession("assistant", "v1");
+  const first = await s.next("request");
+  assert.ok(first.op.case === "createSession");
+  assert.ok(first.op.value.idempotencyKey);
+  s.drop();
+
+  s = await net.connect(2);
+  const second = await s.next("request");
+  assert.deepEqual(second.op, first.op);
+  s.push({ msg: { case: "response", value: { requestId: second.requestId, sessionId: "s1" } } });
+  assert.equal(await p, "s1");
+});
+
 test("other requests report an unknown outcome when the connection drops", async () => {
   const net = new FakeNetwork();
   const c = client(net);

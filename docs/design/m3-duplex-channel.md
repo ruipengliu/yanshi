@@ -71,9 +71,9 @@ HostApp 实例与网关之间只保持一条 **Connection**（WebSocket，路径
   - 投影记下最近 64 条带 ID 的输入及其结果（`State.Inputs`，进快照，`ProjectionVersion` 5）。窗口内重复的 ID 是不合法的写入，所以同一输入最多生效一次；
   - `service.SubmitWithID` 在任何检查之前先查窗口：命中就返回首次的结果（`duplicate = true`，以及原来的 `run_id`、`steered`、`answered`），不写日志；乐观并发冲突后重读时再查一次，并发的同 ID 提交也只生效一个；
   - 首次因内容安全或配额被拒绝的输入没有生效，重试时照常检查；
-  - 窗口有界：客户端通常在几秒内重试，超出 64 条之后的旧 ID 不再去重；
+  - 窗口有界：客户端通常在几秒内重试，超出 64 条之后的旧 ID 不再去重。这是有意的取舍（2026-11-22，[架构评估评审](../review/2026-11-22-architecture-evaluation-review.md) §5 A2）：窗口是投影的一部分，加长它会让每个快照变大，换成持久去重表则是新的 Session 数据存放处（分片登记、Janitor 删除、先写后查与一致性套件）。超时后才重提的服务端编排（如 xinli）不把窗口当作永久幂等，结果未知时按 `input_id` 补读日志确认（[Persona 架构](./persona-architecture.md) Q100）。重审条件：线上观察到窗口之外的重复输入生效，或第二条业务线的编排也需要补读日志才能确认提交；
   - Go SDK 的 `Submit` 为每次提交生成 ID，`ErrDisconnected` 时重连后以同一 ID 自动重试，直到得到结果或 ctx 结束。需要跨进程重启继续重试的 HostApp，自己生成并持久保存 ID，调用 `SubmitInput`；
-  - 其余请求：中断、关闭重复执行是无操作，审批、回答、取消后台调用重复执行返回 `conflict`，都不会产生重复效果；重试创建 Session 会再创建一个。
+  - 其余请求：中断、关闭重复执行是无操作，审批、回答、取消后台调用重复执行返回 `conflict`，都不会产生重复效果；创建 Session 带 `idempotency_key` 时以同一键重试返回同一个 Session（[建会话幂等](./session-create-idempotency.md)，ADR-0059），不带键时重试会再创建一个。
 
 SDK（`sdk/nodesdk`）：`Executor` 为 nil 时连接只作会话客户端。主要方法有 `Subscribe(sessionID, after, handler)`、`CreateSession`、`Submit` / `SubmitText`、`Interrupt`、`Decide`、`CancelBackground`、`CloseSession`。回调在接收 goroutine 中按到达顺序串行调用，不应阻塞。网页（TypeScript）与移动端（gomobile）SDK 语义相同，见[端侧 SDK](./m3-client-sdks.md)。
 

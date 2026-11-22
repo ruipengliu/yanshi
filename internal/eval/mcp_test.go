@@ -9,6 +9,7 @@ import (
 
 	"yanshi/internal/capability"
 	"yanshi/internal/eval/xinlifixture"
+	"yanshi/internal/mcpcap"
 )
 
 // 走真实 dev 子进程、就绪解析与运行器同一装配；单改直连分页测试无法覆盖凭据丢失或连接串线。
@@ -45,10 +46,10 @@ func TestXinliFixtureMCPHeadersAcrossBusinessLines(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	connectors := newEvalMCP(servers, nil, nil, nil)
-	defer connectors.Close()
+	connector := &mcpcap.Connector{Servers: servers}
+	defer connector.Close()
 	for _, line := range []string{BusinessLine, NoHealthBusinessLine, BusinessLine, NoHealthBusinessLine} {
-		tools, err := connectors.Tools(ctx, line, []string{"xinli/list_projects"})
+		tools, err := connector.Tools(ctx, line, []string{"xinli/list_projects"})
 		if err != nil || len(tools) != 1 || tools[0].Spec.Name != "mcp_xinli__list_projects" {
 			t.Fatalf("business line %s failed MCP discovery: %v", line, err)
 		}
@@ -68,7 +69,7 @@ func TestXinliFixtureMCPHeadersAcrossBusinessLines(t *testing.T) {
 			t.Fatal("MCP credentials or results crossed business lines")
 		}
 	}
-	if tools, err := connectors.Tools(ctx, "unknown", []string{"xinli/*"}); err != nil || len(tools) != 0 {
+	if tools, err := connector.Tools(ctx, "unknown", []string{"xinli/*"}); err != nil || len(tools) != 0 {
 		t.Fatal("unknown business line inherited MCP registration")
 	}
 }

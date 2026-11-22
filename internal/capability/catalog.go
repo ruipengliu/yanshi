@@ -40,9 +40,9 @@ type AgentInfo struct {
 	Timeout time.Duration
 }
 
-// AgentSource 列出可委托的 AgentDef；版本按发布配置对 endUser 分流（ADR-0020）。
+// AgentSource 列出业务线可委托的 AgentDef；版本按发布配置对 EndUser 分流（ADR-0020）。
 type AgentSource interface {
-	Agents(endUser string) []AgentInfo
+	Agents(businessLine, endUser string) []AgentInfo
 }
 
 // agentSchema 是委托工具的输入契约：task 必填，context 与 artifacts 可选（docs/design/m5-multi-agent.md §3）。
@@ -197,7 +197,7 @@ func (c *Catalog) Tools(ctx context.Context, target Target, allow []string) ([]T
 	}
 	if c.Agents != nil && len(agentGlobs) > 0 {
 		var agents []Tool
-		for _, a := range c.Agents.Agents(target.Scope.EndUser) {
+		for _, a := range c.Agents.Agents(target.Scope.BusinessLine, target.Scope.EndUser) {
 			if !matchAny(agentGlobs, a.Name) {
 				continue
 			}

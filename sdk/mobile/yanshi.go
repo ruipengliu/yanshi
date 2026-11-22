@@ -304,6 +304,7 @@ func (c *Client) SetActivity(sessionID string, focused, typing bool) {
 // 网关拒绝请求时，响应的 error 字段给出原因（code 与 HTTP 状态码对应），不返回 error；
 // 返回 error 表示没有得到响应：超时（timeoutMillis > 0）、客户端停止，或连接断开导致结果未知。
 // 带 input_id 的提交在连接断开后自动以同一 ID 重试（按 ID 去重，恰好生效一次）。
+// 创建 Session 时可指定 idempotency_key，留空则生成一个键。断线后自动以同一键重试。
 func (c *Client) Request(request []byte, timeoutMillis int64) ([]byte, error) {
 	nc, ctx, err := c.client()
 	if err != nil {
@@ -322,6 +323,9 @@ func (c *Client) Request(request []byte, timeoutMillis int64) ([]byte, error) {
 	if in := req.GetSubmit(); in != nil {
 		resp, err = nc.SubmitInput(ctx, in)
 	} else {
+		if create := req.GetCreateSession(); create != nil && create.GetIdempotencyKey() == "" {
+			create.IdempotencyKey = NewInputID()
+		}
 		resp, err = nc.Request(ctx, req)
 	}
 	var re *nodesdk.RequestError

@@ -127,12 +127,13 @@ func requireCoverage(t *testing.T, total Stats, names ...string) {
 
 func TestSimulationWithFaults(t *testing.T) {
 	total := parallelSeeds(t, seedList(), func(t *testing.T, s uint64) Stats {
-		return run(t, s, Options{Faults: true, Attested: true}).Stats
+		return run(t, s, Options{Faults: true, Attested: true, KeyedCreates: true}).Stats
 	})
 	requireCoverage(t, total, "EndUserUsageIDs", "EndUserMemoryIDs", "EndUserGrantIDs", "OutboxReads", "OutboxConsumerCrashes", "OutboxRedeliveries", "OutboxConsumed", "OutboxRunCompleted", "OutboxRunFailed", "OutboxQuestions", "OutboxApprovals",
 		"OutboxBackgroundSettled", "OutboxSessionClosed", "OutboxSessionDeleted", "Runs", "Steers", "Interrupts", "Crashes", "Takeovers", "OutcomeUnknown", "Retried",
 		"NodeCrashes", "Redeliveries", "Approvals", "Denials", "Suspensions", "DeviceResults", "Timeouts",
 		"ControllerCrashes", "SandboxExecs", "Reaps", "EnqueueInterleavings", "Closes", "Deletions", "JanitorCrashes", "DeletionsCompleted", "Recalls", "MemorySaves", "Compactions", "SummaryFaults", "Overflows", "AttemptsAfterCompaction",
+		"CreateRepliesLost", "CreateReplays", "CreateDeletionRaces", "CreateEndUserDeletionRaces",
 		"QuotaSuspensions", "QuotaRejections", "QuotaResumes", "AccountDeletions", "EndUserBarrierWithdrawn", "AgentSwitches",
 		"InputBlocks", "OutputBlocks", "ModerationErrors", "ModerationWaits", "ModerationResumes", "MemoryApprovals", "PresenceWrites", "PresenceWithdrawn",
 		"Questions", "Answers", "TypedAnswers", "InvalidAnswers", "QuestionTimeouts", "UIContextInputs", "DuplicateInputs",
@@ -189,7 +190,7 @@ func checkSimulationDeterminism(t *testing.T, schedules bool) {
 			for j := range prints[i] {
 				t.Run(fmt.Sprintf("seed%d-%d", s, j), func(t *testing.T) {
 					t.Parallel()
-					prints[i][j] = run(t, s, Options{Faults: true, Attested: true, LongRuns: s == 7, Schedules: schedules}).Fingerprint()
+					prints[i][j] = run(t, s, Options{Faults: true, Attested: true, LongRuns: s == 7, Schedules: schedules, KeyedCreates: !schedules}).Fingerprint()
 				})
 			}
 		}

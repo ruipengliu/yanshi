@@ -400,7 +400,8 @@ func (h *Handler) do(ctx context.Context, id Identity, req *v1.ClientRequest, re
 	switch op := req.GetOp().(type) {
 	case *v1.ClientRequest_CreateSession:
 		sid, err := h.Service.Create(ctx, service.CreateRequest{BusinessLine: id.BusinessLine, EndUser: id.EndUser,
-			Agent: op.CreateSession.GetAgent(), AgentVersion: op.CreateSession.GetAgentVersion()})
+			Agent: op.CreateSession.GetAgent(), AgentVersion: op.CreateSession.GetAgentVersion(),
+			IdempotencyKey: op.CreateSession.GetIdempotencyKey()})
 		resp.SessionId = sid
 		return err
 	case *v1.ClientRequest_Submit:

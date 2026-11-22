@@ -50,6 +50,10 @@ type Server struct {
 	AttestsSpeakers bool `yaml:"attests_speakers"`
 }
 
+type serverKey struct{ businessLine, name string }
+
+func (s Server) key() serverKey { return serverKey{s.BusinessLine, s.Name} }
+
 var (
 	nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,23}$`)
 	varRE  = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
@@ -64,7 +68,7 @@ func LoadDir(dir string) ([]Server, error) {
 	}
 	sort.Strings(files)
 	var out []Server
-	names := map[string]bool{}
+	seen := map[serverKey]bool{}
 	for _, f := range files {
 		b, err := os.ReadFile(f)
 		if err != nil {
@@ -74,10 +78,11 @@ func LoadDir(dir string) ([]Server, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", f, err)
 		}
-		if names[s.Name] {
+		key := s.key()
+		if seen[key] {
 			return nil, fmt.Errorf("%s: MCP server %q registered twice", f, s.Name)
 		}
-		names[s.Name] = true
+		seen[key] = true
 		out = append(out, s)
 	}
 	return out, nil
@@ -155,7 +160,7 @@ type Connector struct {
 	CacheTTL time.Duration
 
 	mu    sync.Mutex
-	conns map[string]*conn
+	conns map[serverKey]*conn
 }
 
 type conn struct {
@@ -211,15 +216,16 @@ func (c *Connector) connect(ctx context.Context, s Server) (*mcp.ClientSession, 
 
 // state 返回 Server 的连接与工具列表；refresh 为 true 时强制重新列出工具。
 func (c *Connector) state(ctx context.Context, s Server, refresh bool) (*conn, error) {
+	key := s.key()
 	ttl := c.CacheTTL
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
 	}
 	c.mu.Lock()
 	if c.conns == nil {
-		c.conns = map[string]*conn{}
+		c.conns = map[serverKey]*conn{}
 	}
-	cur := c.conns[s.Name]
+	cur := c.conns[key]
 	c.mu.Unlock()
 	if cur != nil && !refresh && time.Since(cur.listed) < ttl {
 		return cur, nil
@@ -257,7 +263,7 @@ func (c *Connector) state(ctx context.Context, s Server, refresh bool) (*conn, e
 	}
 	next := &conn{session: session, tools: tools, listed: time.Now()}
 	c.mu.Lock()
-	c.conns[s.Name] = next
+	c.conns[key] = next
 	c.mu.Unlock()
 	return next, nil
 }
@@ -369,7 +375,7 @@ func (c *Connector) call(ctx context.Context, s Server, tool string, inv capabil
 		if ctx.Err() == nil && cctx.Err() == nil {
 			// 连接或协议错误：下次调用前重新连接并刷新工具列表。
 			c.mu.Lock()
-			delete(c.conns, s.Name)
+			delete(c.conns, s.key())
 			c.mu.Unlock()
 		}
 		return capability.Result{}, fmt.Errorf("MCP %s/%s: %w", s.Name, tool, err)

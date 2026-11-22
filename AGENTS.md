@@ -13,7 +13,7 @@
 - 改动执行语义（Session / Run / Event / Attempt / Worker）之前：`docs/design/m0-core-primitives.md`。改动上下文组装、压缩或 AgentDef 的 `context`（含 `scope: run`）之前：`docs/design/m2-long-runs.md`。
 - 改动 Node、能力路由、审批或挂起之前：`docs/design/m1-device-nodes.md`。
 - 改动云端沙箱之前：`docs/design/m2-sandbox.md`。沙箱内只运行不可信代码，受信逻辑一律放在控制器（ADR-0008）。生产沙箱以自托管隔离为基线，建在 K8s 上、隔离运行时经 RuntimeClass 选择（默认 gVisor，有 KVM 时可选 Kata）；控制器不挂载节点的 `docker.sock`，沙箱 Pod 无网络、无 ServiceAccount 令牌，工作区 Stop 时打包进对象存储（ADR-0053 的 2026-11-21 选型结论）。生产实现是 `internal/sandbox/k8s`；新的 Provider 须通过 `sandboxtest.RunProvider`（K8s 的集成测试由 `YANSHI_TEST_K8S` 启用，见设计 §7）。
-- 改动 Connection 协议（`node.proto`）、会话客户端或事件流（`feed`）之前：`docs/design/m3-duplex-channel.md`。一条 Connection 兼任 Node 与会话客户端（ADR-0024）；会话客户端的请求必须经 `service`，与 HTTP API 走同一条路径。`ask_user` 是路由到用户本人的调用，不经 Inbox（ADR-0025）。
+- 改动 Connection 协议（`node.proto`）、会话客户端或事件流（`feed`）之前：`docs/design/m3-duplex-channel.md`。一条 Connection 兼任 Node 与会话客户端（ADR-0024）；会话客户端的请求必须经 `service`，与 HTTP API 走同一条路径；创建 Session 以幂等键去重（派生 Session ID，ADR-0059）。`ask_user` 是路由到用户本人的调用，不经 Inbox（ADR-0025）。
 - 改动端侧 SDK（`sdk/`）之前：`docs/design/m3-client-sdks.md`。三个 SDK 语义一致，消息类型一律从 `proto/` 生成（ADR-0026）；改动 `sdk/nodesdk`、`sdk/mobile` 或 `node.proto` 后运行 `make mobile`（需要 Xcode 与 JDK），在 macOS 与 iOS 模拟器上实测 gomobile 绑定。
 - 改动调试控制台（`internal/webui/static/console`）或脚本化模型（`internal/model/script`）之前：`docs/design/console.md`。新增多端语义时，在控制台的验证场景（`scenarios.js`）中增加覆盖，它们在 `make check` 中运行（`TestConsoleScenarios`）。
 - 改动卡片（`internal/card`、`show_card`、`Card` / `CardAction`）之前：`docs/design/cards.md`。卡片只由平台校验后写入 `show_card` 的结果，卡片动作是一条输入、按 `call_id` 与动作去重（ADR-0032）。
@@ -27,7 +27,7 @@
 - 改动 Call（`internal/call`、`internal/realtime`、控制台的通话 `internal/webui/static/console`）之前：`docs/design/m3-call.md`。音频经网关中转，语音模型只通过 `run_task` 派生 Run 做事（ADR-0027）；转写在写日志之前做内容安全检查。实测需要 `VOLC_SPEECH_API_KEY`（`YANSHI_TEST_VOLC=1 go test ./internal/realtime/volc`），`make eval` 的 `call-*` 用例同样需要它。
 - 改动模型提供商的接入、调用时限、重试或准入之前：`docs/design/model-calls.md`。已输出过增量的调用不在提供商层重试。
 - 改动进程角色、启动参数或部署形态之前：`docs/design/deployment.md`。进程边界只沿扩缩容维度、权限与故障域划分，不按领域拆服务；全部角色合在一个进程里必须仍能运行。
-- 改动委托（`internal/delegation`、`agent:` 白名单、`SessionCreated.parent`）之前：`docs/design/m5-multi-agent.md`。委托是路由到派生子 Session 的调用，结果由子 Session 的 Worker 写回（ADR-0031）；子 Run 的能力是自身与每个祖先白名单的交集，委托不扩大权限。父 Run 不一定等到结果：同一轮相邻的委托并行派发、受 `max_fanout` 限制，文件经工件交接（ADR-0055）；顶层 Session 的委托超过 `delegation.background_after` 转入后台，结果作为 `BackgroundResult` 输入经 `service.DelegationResult` 送达（ADR-0058）。
+- 改动委托（`internal/delegation`、`agent:` 白名单、`SessionCreated.parent`）之前：`docs/design/m5-multi-agent.md`。委托是路由到派生子 Session 的调用，结果由子 Session 的 Worker 写回（ADR-0031）；子 Run 的能力是自身与每个祖先白名单的交集，委托不扩大权限；业务线只能使用其配置 `agents.allow`、`oneshots.allow` 列出的 AgentDef 与 Oneshot，只在入口（建 Session、委托目录、单次调用）检查（ADR-0060）。父 Run 不一定等到结果：同一轮相邻的委托并行派发、受 `max_fanout` 限制，文件经工件交接（ADR-0055）；顶层 Session 的委托超过 `delegation.background_after` 转入后台，结果作为 `BackgroundResult` 输入经 `service.DelegationResult` 送达（ADR-0058）。
 - 改动判断（`internal/decision`、`DecisionMade`、`-injection-check`）或设备歧义消解之前：`docs/design/m6-decisions.md`。判断先记为 Event 再据此行动，只收紧不放宽，失败走默认路径（ADR-0030）；阈值只在评测留出集上确定。
 - 改动 MCP 适配之前：`docs/design/m5-mcp.md`。云端不运行 stdio 型 MCP Server；未声明只读的工具默认需要审批（ADR-0017）。
 - 改动工件之前：`docs/design/m2-artifacts.md`。Event 中只放 `artifact://` 引用，不放文件内容；工件只对其所属 Session 可见。

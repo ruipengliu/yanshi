@@ -44,6 +44,11 @@ func ValidateLimits(max, providerMax int, wait, deadline time.Duration) error {
 
 type Request struct{ BusinessLine, EndUser, Name, Input string }
 
+// Access 决定业务线可以使用哪些 Oneshot。
+type Access interface {
+	AllowsOneshot(businessLine, name string) bool
+}
+
 type Result struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
@@ -56,6 +61,7 @@ type Result struct {
 // Service 由 app.NewCore 装配；Model、Clock、IDs 与正的 Max 必填，注册表在服务期间只热换发布选择。
 type Service struct {
 	Registry        *Registry
+	Access          Access
 	Model           model.Provider
 	Moderator       moderation.Moderator
 	Quotas          *usage.Quotas
@@ -91,6 +97,9 @@ func (s *Service) Call(ctx context.Context, req Request) (result *Result, err er
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if s.Access != nil && !s.Access.AllowsOneshot(req.BusinessLine, req.Name) {
+		return nil, ErrNotFound
+	}
 	d, err := s.Registry.Resolve(req.Name, req.EndUser)
 	if err != nil {
 		return nil, ErrNotFound
@@ -119,7 +128,7 @@ func (s *Service) Call(ctx context.Context, req Request) (result *Result, err er
 	release, err := s.Slots.AcquireAll(ctx, []model.SlotReq{
 		{Key: "total", Limit: s.Max, Wait: s.Wait},
 		{Key: "business_line:" + req.BusinessLine, Limit: s.BusinessLineMax[req.BusinessLine], Wait: s.Wait},
-		{Key: "name:" + d.Name, Limit: d.Concurrency, Wait: s.Wait},
+		{Key: "name:" + req.BusinessLine + ":" + d.Name, Limit: d.Concurrency, Wait: s.Wait},
 	})
 	if err != nil {
 		return nil, err

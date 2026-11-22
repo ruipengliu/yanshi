@@ -547,9 +547,18 @@ export class Client {
     return abortable(c._ready, opts.signal, () => c.hangup());
   }
 
-  /** 为连接的 EndUser 创建 Session；version 为空时按发布配置分流。返回 Session ID。 */
-  async createSession(agent: string, version = "", opts?: RequestOptions): Promise<string> {
-    const r = await this.request({ op: { case: "createSession", value: { agent, agentVersion: version } } }, opts);
+  /**
+   * 为连接的 EndUser 创建 Session；version 为空时按发布配置分流。返回 Session ID。
+   * 默认生成幂等键，断线后以同一键重试。需要跨页面刷新继续重试时，持久保存 opts.idempotencyKey 的值。
+   * 显式传入空键时创建不去重，断线后由调用方处理。
+   */
+  async createSession(agent: string, version = "", opts?: RequestOptions & { idempotencyKey?: string }): Promise<string> {
+    const idempotencyKey = opts?.idempotencyKey ?? newInputId();
+    const r = await this.#requestWithRetry(
+      { op: { case: "createSession", value: { agent, agentVersion: version, idempotencyKey } } },
+      idempotencyKey !== "",
+      opts,
+    );
     return r.sessionId;
   }
 
@@ -573,12 +582,16 @@ export class Client {
    * inputId 为空时不去重、断线不重试。
    */
   async submitInput(sessionId: string, input: ContentBlockInit[], inputId: string, opts?: RequestOptions): Promise<SubmitResult> {
+    const r = await this.#requestWithRetry({ op: { case: "submit", value: { sessionId, input, inputId } } }, inputId !== "", opts);
+    return { runId: r.runId, steered: r.steered, answered: r.answered, duplicate: r.duplicate };
+  }
+
+  async #requestWithRetry(req: ClientRequestInit, idempotent: boolean, opts?: RequestOptions): Promise<ClientResponse> {
     for (;;) {
       try {
-        const r = await this.request({ op: { case: "submit", value: { sessionId, input, inputId } } }, opts);
-        return { runId: r.runId, steered: r.steered, answered: r.answered, duplicate: r.duplicate };
+        return await this.request(req, opts);
       } catch (e) {
-        if (e instanceof DisconnectedError && inputId !== "") continue; // request 会等到重新连接
+        if (e instanceof DisconnectedError && idempotent) continue; // request 会等到重新连接
         throw e;
       }
     }

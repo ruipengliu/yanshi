@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -41,10 +42,18 @@ type Canceler interface {
 	Cancel(ctx context.Context, endUser, nodeID, callID string) error
 }
 
+// AgentAccess 决定业务线可以用哪些 AgentDef 创建 Session。
+type AgentAccess interface {
+	AllowsAgent(businessLine, name string) bool
+}
+
 type Service struct {
 	// Store 须配置 Waking：输入、审批与回答在写日志的同一事务中唤醒 Session（CommitAndWake）。
-	Store  *session.Store
-	Agents *agentdef.Registry
+	Store       *session.Store
+	Agents      *agentdef.Registry
+	AgentAccess AgentAccess
+	// SessionKeySecret 为空时禁用带键的创建，避免调用方误以为可以安全重试。
+	SessionKeySecret []byte
 	// Nodes 为 nil 时中断不撤回设备调用。
 	Nodes Canceler
 
@@ -89,22 +98,33 @@ type CreateRequest struct {
 	// Agent 是 AgentDef 名称；AgentVersion 为空时取默认版本。
 	Agent        string
 	AgentVersion string
+	// IdempotencyKey 在业务线与 EndUser 内标识一次创建，与 SessionID 互斥。
+	IdempotencyKey string
 	// SessionID 只供内部调用指定（委托派生与测试）；HTTP / Connection 不接受指定 ID。
 	// 必须带版本并匹配真实 EndUser 的槽位（ADR-0051）。Parent 记录委托来处。
 	SessionID string
 	Parent    *v1.ParentRef
 }
 
-func (s *Service) Create(ctx context.Context, req CreateRequest) (sessionID string, err error) {
+var createKeyFormat = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+
+func (s *Service) Create(ctx context.Context, req CreateRequest) (string, error) {
+	id, _, err := s.CreateWithReplay(ctx, req)
+	return id, err
+}
+
+// CreateWithReplay 另外返回本次是否重放已有的 Session，供 HTTP 区分 201 与 200。
+func (s *Service) CreateWithReplay(ctx context.Context, req CreateRequest) (sessionID string, replay bool, err error) {
+	keyed := req.IdempotencyKey != ""
 	if req.BusinessLine == "" || req.EndUser == "" {
-		return "", fmt.Errorf("%w: business_line and end_user are required", ErrInvalid)
+		return "", false, fmt.Errorf("%w: business_line and end_user are required", ErrInvalid)
 	}
-	if !req.DeleteAt.IsZero() && (!req.DeleteAt.After(s.Store.Clock.Now()) || timestamppb.New(req.DeleteAt).CheckValid() != nil) {
-		return "", fmt.Errorf("%w: delete_at must be a future timestamp", ErrInvalid)
+	if !req.DeleteAt.IsZero() && ((!keyed && !req.DeleteAt.After(s.Store.Clock.Now())) || timestamppb.New(req.DeleteAt).CheckValid() != nil) {
+		return "", false, fmt.Errorf("%w: delete_at must be a future timestamp", ErrInvalid)
 	}
 	if req.TimeZone != "" {
 		if _, err := time.LoadLocation(req.TimeZone); err != nil || req.TimeZone == "Local" {
-			return "", fmt.Errorf("%w: invalid IANA time_zone", ErrInvalid)
+			return "", false, fmt.Errorf("%w: invalid IANA time_zone", ErrInvalid)
 		}
 	}
 	var deadline *timestamppb.Timestamp
@@ -112,33 +132,74 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (sessionID stri
 		deadline = timestamppb.New(req.DeleteAt)
 	}
 	var def *agentdef.Def
-	// 未指定版本时按发布配置分流（docs/design/m4-agent-rollout.md §3）；撤回的版本不能指定。
-	if req.AgentVersion == "" {
-		def, err = s.Agents.Resolve(req.Agent, req.EndUser)
+	var deniedDelegation error
+	st := &session.State{SessionID: req.SessionID}
+	if keyed {
+		if req.SessionID != "" {
+			return "", false, fmt.Errorf("%w: session ID and idempotency key are mutually exclusive", ErrInvalid)
+		}
+		if !createKeyFormat.MatchString(req.IdempotencyKey) {
+			return "", false, fmt.Errorf("%w: invalid idempotency_key", ErrInvalid)
+		}
+		if len(s.SessionKeySecret) == 0 {
+			return "", false, fmt.Errorf("%w: idempotency keys are not configured", ErrInvalid)
+		}
+		st.SessionID, err = ids.KeyedSessionID(s.SessionKeySecret, req.BusinessLine, req.EndUser, req.IdempotencyKey)
 	} else {
-		ref := &v1.AgentRef{Name: req.Agent, Version: req.AgentVersion}
-		if def, err = s.Agents.Get(ref); err == nil {
-			if _, withdrawn := s.Agents.Withdrawn(ref); withdrawn {
-				err = fmt.Errorf("agent %s@%s is withdrawn", req.Agent, req.AgentVersion)
-			}
+		def, err = s.resolveCreateAgent(req)
+		if err != nil && req.Parent != nil && req.SessionID != "" && !s.allowsCreateAgent(req) {
+			deniedDelegation, err = err, nil
 		}
 	}
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrInvalid, err)
+		return "", false, err
 	}
-	st := &session.State{SessionID: req.SessionID}
 	if st.SessionID == "" {
 		st.SessionID, err = s.Store.IDs.Session(req.EndUser)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 	}
 	if slot, err := ids.EndUserSlotOfSession(st.SessionID); err != nil || slot != shard.Hash(req.EndUser) {
-		return "", fmt.Errorf("%w: session ID does not match EndUser or has an invalid format", ErrInvalid)
+		if deniedDelegation != nil {
+			return "", false, deniedDelegation
+		}
+		return "", false, fmt.Errorf("%w: session ID does not match EndUser or has an invalid format", ErrInvalid)
 	}
+	if deniedDelegation != nil {
+		// 重投递可能发生在配置重启之后。只重放同一次委托已经写入日志的 Session。
+		existing, err := s.Store.Load(ctx, st.SessionID)
+		if err != nil {
+			return "", false, err
+		}
+		if existing.Created == nil && s.Deletions != nil {
+			// 子 Session 已被删除并清理：与允许的委托一样报告"已删除"，而不是"定义不存在"。
+			if deleted, err := lifecycle.Deleted(ctx, s.Deletions, st.SessionID); err != nil {
+				return "", false, err
+			} else if deleted {
+				return "", false, ErrNotFound
+			}
+		}
+		if _, _, err := replayCreate(req, existing); err != nil ||
+			existing.Created.GetAgent().GetName() != req.Agent {
+			return "", false, deniedDelegation
+		}
+	}
+	writeAttempted := false
+	commitAttempted := false
+	ownedExisting := false
 	// 索引与日志都可能和注销交错；所有返回路径（含指定 ID 的幂等重试）统一复查。
 	defer func() {
+		checkCtx := ctx
+		if keyed && writeAttempted {
+			// 连接可能在写入之后、回包之前断开；仍须读屏障，断线重试才能取得已写入的 Session。
+			checkCtx = context.WithoutCancel(ctx)
+		}
 		withdraw := func(ctx context.Context, b *lifecycle.EndUserTombstone) error {
+			// 首次创建可能在复查前崩溃，重放确认归属后也须把 Session 纳入已发现的注销。
+			if keyed && !writeAttempted && !ownedExisting {
+				return nil
+			}
 			var trackErr error
 			requestID := ""
 			if b != nil {
@@ -147,48 +208,165 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (sessionID stri
 			}
 			return errors.Join(trackErr, s.markDeletion(ctx, st.SessionID, req.BusinessLine, "account_deletion", requestID))
 		}
-		gone, checkErr := lifecycle.RecheckEndUser(ctx, s.Deletions, req.BusinessLine, req.EndUser, withdraw)
-		if checkErr != nil && !gone && (req.SessionID == "" || st.Created != nil) {
+		gone, checkErr := lifecycle.RecheckEndUser(checkCtx, s.Deletions, req.BusinessLine, req.EndUser, withdraw)
+		// 带键创建追加日志时出错（可能已经提交），st.Created 无法确认本次是否写入：按写入处理，安全优先（设计 §5.1）。
+		// 冲突后的重放不算本次写入，由写入方自己的复查负责。
+		if checkErr != nil && !gone && ((!keyed && req.SessionID == "") || st.Created != nil || (keyed && commitAttempted && !replay)) {
 			// 无法确认屏障时撤回本次新建；指定 ID 的幂等重试不因一次读取故障删除已有 Session。
 			checkErr = errors.Join(checkErr, withdraw(context.WithoutCancel(ctx), nil))
 		}
-		sessionGone, sessionErr := lifecycle.Recheck(ctx, s.Deletions, st.SessionID, func(ctx context.Context) error {
+		sessionGone, sessionErr := lifecycle.Recheck(checkCtx, s.Deletions, st.SessionID, func(ctx context.Context) error {
+			if keyed && !writeAttempted {
+				return nil
+			}
 			return s.withdrawCreatedSession(ctx, req.EndUser, st.SessionID)
 		})
 		gone, checkErr = gone || sessionGone, errors.Join(checkErr, sessionErr)
 		if gone {
-			sessionID = ""
+			sessionID, replay = "", false
 			err = errors.Join(ErrNotFound, checkErr)
 		} else if checkErr != nil {
-			sessionID = ""
+			sessionID, replay = "", false
 			err = errors.Join(err, checkErr)
 		}
 	}()
+	if deniedDelegation != nil {
+		return st.SessionID, true, nil
+	}
+	if keyed {
+		if s.Deletions != nil {
+			deleted, err := lifecycle.Deleted(ctx, s.Deletions, st.SessionID)
+			if err != nil {
+				return "", false, err
+			}
+			if deleted {
+				return "", false, ErrNotFound
+			}
+		}
+		existing, err := s.Store.Load(ctx, st.SessionID)
+		if err != nil {
+			return "", false, err
+		}
+		if existing.Created != nil {
+			ownedExisting = createOwnerMatches(req, existing.Created)
+			return replayCreate(req, existing)
+		}
+		// 重放沿用日志里的期限与版本；新建才要求期限在未来且版本可用。
+		if !req.DeleteAt.IsZero() && !req.DeleteAt.After(s.Store.Clock.Now()) {
+			return "", false, fmt.Errorf("%w: delete_at must be a future timestamp", ErrInvalid)
+		}
+		def, err = s.resolveCreateAgent(req)
+		if err != nil {
+			return "", false, err
+		}
+	}
 	// 先写索引、再写日志：日志写入失败只会留下一条找不到日志的索引（列表与删除都能处理），
 	// 反过来则会出现索引之外的 Session，按 EndUser 删除时会被遗漏。
 	if s.Index != nil {
 		now := s.Store.Clock.Now()
+		writeAttempted = true
 		if err := s.Index.Put(ctx, &lifecycle.Session{ID: st.SessionID, BusinessLine: req.BusinessLine, EndUser: req.EndUser,
 			Agent: def.Name, CreatedAt: now, LastInputAt: now, DeleteAt: req.DeleteAt}); err != nil {
-			return "", err
+			return "", false, err
+		}
+		if keyed {
+			// Put 可能沿用半成品或并发请求写入的索引；以读回的绑定为准。
+			indexed, err := s.Index.Get(ctx, req.EndUser, st.SessionID)
+			if errors.Is(err, lifecycle.ErrNotFound) {
+				// 索引按真实 EndUser 读取。Put 后仍不可见的行可能已被别的 EndUser 占用；
+				// 若是删除刚清掉了索引，defer 中的复查会返回 not_found。
+				return "", false, ErrConflict
+			}
+			if err != nil {
+				return "", false, err
+			}
+			if indexed.BusinessLine != req.BusinessLine || indexed.EndUser != req.EndUser ||
+				indexed.Agent != req.Agent || !sameCreateDeadline(indexed.DeleteAt, req.DeleteAt) {
+				return "", false, ErrConflict
+			}
 		}
 	}
+	writeAttempted, commitAttempted = true, true
 	err = s.Store.Commit(ctx, st, &v1.Event{Payload: &v1.Event_SessionCreated{SessionCreated: &v1.SessionCreated{
 		BusinessLine: req.BusinessLine, EndUser: req.EndUser, Agent: def.Ref(), Parent: req.Parent, DeleteAt: deadline, TimeZone: req.TimeZone,
 	}}})
-	if errors.Is(err, eventlog.ErrConflict) && req.SessionID != "" {
-		// 指定 ID 的 Session 已存在：是同一次委托的重复创建时返回它。
-		if existing, lerr := s.Store.Load(ctx, req.SessionID); lerr == nil && existing.Created != nil &&
-			existing.Created.GetBusinessLine() == req.BusinessLine && existing.Created.GetEndUser() == req.EndUser &&
-			existing.Created.GetParent().GetCallId() == req.Parent.GetCallId() && existing.Created.GetParent().GetSessionId() == req.Parent.GetSessionId() {
-			return req.SessionID, nil
+	if errors.Is(err, eventlog.ErrConflict) && (keyed || req.SessionID != "") {
+		existing, loadErr := s.Store.Load(ctx, st.SessionID)
+		if loadErr == nil {
+			return replayCreate(req, existing)
 		}
-		return "", fmt.Errorf("%w: session %s already exists", ErrConflict, req.SessionID)
+		if keyed {
+			return "", false, loadErr
+		}
+		return "", false, fmt.Errorf("%w: session %s already exists", ErrConflict, req.SessionID)
 	}
 	if err != nil {
-		return "", err
+		if keyed {
+			err = gone(st.SessionID, err)
+		}
+		return "", false, err
 	}
-	return st.SessionID, nil
+	return st.SessionID, false, nil
+}
+
+func (s *Service) allowsCreateAgent(req CreateRequest) bool {
+	return s.AgentAccess == nil || s.AgentAccess.AllowsAgent(req.BusinessLine, req.Agent)
+}
+
+func (s *Service) resolveCreateAgent(req CreateRequest) (*agentdef.Def, error) {
+	registry := s.Agents
+	if !s.allowsCreateAgent(req) {
+		// 走空注册表的解析路径，使错误与定义不存在时完全一致。
+		registry = &agentdef.Registry{}
+	}
+	var def *agentdef.Def
+	var err error
+	// 未指定版本时按发布配置分流（docs/design/m4-agent-rollout.md §3）；撤回的版本不能指定。
+	if req.AgentVersion == "" {
+		def, err = registry.Resolve(req.Agent, req.EndUser)
+	} else {
+		ref := &v1.AgentRef{Name: req.Agent, Version: req.AgentVersion}
+		if def, err = registry.Get(ref); err == nil {
+			if _, withdrawn := registry.Withdrawn(ref); withdrawn {
+				err = fmt.Errorf("agent %s@%s is withdrawn", req.Agent, req.AgentVersion)
+			}
+		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
+	return def, nil
+}
+
+func replayCreate(req CreateRequest, existing *session.State) (string, bool, error) {
+	created := existing.Created
+	owned := createOwnerMatches(req, created)
+	if req.IdempotencyKey != "" {
+		if owned && created.GetAgent().GetName() == req.Agent && created.GetTimeZone() == req.TimeZone &&
+			(req.AgentVersion == "" || created.GetAgent().GetVersion() == req.AgentVersion) {
+			var deadline time.Time
+			if at := created.GetDeleteAt(); at != nil {
+				deadline = at.AsTime()
+			}
+			if sameCreateDeadline(deadline, req.DeleteAt) {
+				return existing.SessionID, true, nil
+			}
+		}
+		return "", false, ErrConflict
+	}
+	// 指定 ID 的 Session 已存在：是同一次委托的重复创建时返回它。
+	if owned && created.GetParent().GetCallId() == req.Parent.GetCallId() && created.GetParent().GetSessionId() == req.Parent.GetSessionId() {
+		return req.SessionID, true, nil
+	}
+	return "", false, fmt.Errorf("%w: session %s already exists", ErrConflict, req.SessionID)
+}
+
+func createOwnerMatches(req CreateRequest, created *v1.SessionCreated) bool {
+	return created != nil && created.GetBusinessLine() == req.BusinessLine && created.GetEndUser() == req.EndUser
+}
+
+func sameCreateDeadline(a, b time.Time) bool {
+	return a.IsZero() == b.IsZero() && a.Unix() == b.Unix()
 }
 
 // withdrawCreatedSession 兜住“索引已列入注销并清理、创建随后才追加日志”的窗口。

@@ -246,11 +246,11 @@ func (s recordHook) Record(ctx context.Context, e *usage.Entry) error {
 }
 
 func TestBusyAndCancellationReleaseAllLayers(t *testing.T) {
-	for _, layer := range []string{"total", "business_line:bl", "name:brief"} {
+	for _, layer := range []string{"total", "business_line:bl", "name:bl:brief"} {
 		t.Run(layer, func(t *testing.T) {
 			s, _ := serviceFor(t)
 			s.BusinessLineMax = map[string]int{"bl": 2}
-			limits := map[string]int{"total": 4, "business_line:bl": 2, "name:brief": 2}
+			limits := map[string]int{"total": 4, "business_line:bl": 2, "name:bl:brief": 2}
 			var held []func()
 			for range limits[layer] {
 				release, err := s.Slots.Acquire(context.Background(), layer, limits[layer], 0)
@@ -410,7 +410,7 @@ func TestCancelAfterModelStillMetersWithinDeadlineAndReleases(t *testing.T) {
 	}
 }
 
-func TestDeclarationLimitSharedAcrossVersionsAndBusinessLines(t *testing.T) {
+func TestDeclarationLimitSharedAcrossVersionsWithinBusinessLine(t *testing.T) {
 	a, b := definition(), definition()
 	a.Concurrency, b.Concurrency, b.Version = 1, 1, "2"
 	s, _ := serviceFor(t, a, b)
@@ -424,7 +424,12 @@ func TestDeclarationLimitSharedAcrossVersionsAndBusinessLines(t *testing.T) {
 	set("1")
 	entered := make(chan struct{})
 	done := make(chan error, 1)
+	first := true
 	s.Model = providerFunc(func(ctx context.Context, _ *model.Request) (*model.Response, error) {
+		if !first {
+			return response("好"), nil
+		}
+		first = false
 		close(entered)
 		<-ctx.Done()
 		return nil, ctx.Err()
@@ -438,10 +443,13 @@ func TestDeclarationLimitSharedAcrossVersionsAndBusinessLines(t *testing.T) {
 		t.Fatal("model not entered")
 	}
 	set("2")
+	if _, err := s.Call(context.Background(), request()); !errors.Is(err, model.ErrBusy) {
+		t.Fatal("version bypassed declaration limit", err)
+	}
 	req := request()
 	req.BusinessLine = "other"
-	if _, err := s.Call(context.Background(), req); !errors.Is(err, model.ErrBusy) {
-		t.Fatal("version/tenant bypassed declaration limit", err)
+	if got, err := s.Call(context.Background(), req); err != nil || got.Version != "2" {
+		t.Fatalf("other business line lost its declaration slot: %+v, %v", got, err)
 	}
 	cancel()
 	select {

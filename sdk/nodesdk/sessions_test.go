@@ -15,6 +15,57 @@ func (nopHandler) OnEvent(*v1.Event)     {}
 func (nopHandler) OnDelta(*v1.LiveDelta) {}
 func (nopHandler) OnEnded(string)        {}
 
+func TestCreateSessionRetriesWithSameKey(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  string
+	}{
+		{name: "generated key"},
+		{name: "caller key", key: "create-intent-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := NewClient(Config{})
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			const sessionID = "s1"
+			var firstKey string
+			reconnected := func(_ context.Context, m *v1.NodeMessage) error {
+				req := m.GetRequest()
+				create := req.GetCreateSession()
+				if create.GetIdempotencyKey() != firstKey || create.GetAgent() != "a" || create.GetAgentVersion() != "v1" {
+					t.Fatalf("retry changed the creation request: %v", create)
+				}
+				c.sessions.handle(&v1.GatewayMessage{Msg: &v1.GatewayMessage_Response{Response: &v1.ClientResponse{
+					RequestId: req.GetRequestId(), SessionId: sessionID}}})
+				return nil
+			}
+			if err := c.sessions.attach(func(_ context.Context, m *v1.NodeMessage) error {
+				firstKey = m.GetRequest().GetCreateSession().GetIdempotencyKey()
+				if firstKey == "" || (tc.key != "" && firstKey != tc.key) {
+					t.Fatalf("unexpected first creation key %q", firstKey)
+				}
+				// 网关已为这个键创建 Session，连接在响应送达前断开。
+				c.sessions.detach()
+				return c.sessions.attach(reconnected)
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			var got string
+			var err error
+			if tc.key == "" {
+				got, err = c.CreateSession(ctx, "a", "v1")
+			} else {
+				got, err = c.CreateSessionWithKey(ctx, "a", "v1", tc.key)
+			}
+			if err != nil || got != sessionID {
+				t.Fatalf("create returned %q, %v; want %q", got, err, sessionID)
+			}
+		})
+	}
+}
+
 // 请求的写入卡住（网络黑洞）时：请求在自己的期限到时返回，其他会话操作不被挡住。
 func TestBlockedWriteDoesNotBlockTheClient(t *testing.T) {
 	c := NewClient(Config{})

@@ -83,12 +83,19 @@ type BusinessLine struct {
 	Quota usage.Limits `yaml:"quota,omitempty"`
 	// Memory 是该业务线的 Memory 设置（docs/design/m4-memory-grant.md §3）。
 	Memory   MemorySettings  `yaml:"memory,omitempty"`
+	Agents   AgentSettings   `yaml:"agents,omitempty"`
 	Oneshots OneshotSettings `yaml:"oneshots,omitempty"`
 }
 
-// OneshotSettings 在合计上限内限制本业务线；零值不再施加额外上限。
+// AgentSettings 声明业务线可用的 AgentDef 名称。
+type AgentSettings struct {
+	Allow []string `yaml:"allow"`
+}
+
+// OneshotSettings 声明业务线可用的 Oneshot 名称与业务线并发上限。
 type OneshotSettings struct {
-	MaxConcurrency int `yaml:"max_concurrency"`
+	Allow          []string `yaml:"allow,omitempty"`
+	MaxConcurrency int      `yaml:"max_concurrency,omitempty"`
 }
 
 // MemorySettings 是业务线的 Memory 设置。

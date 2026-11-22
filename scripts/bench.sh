@@ -43,6 +43,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# 网关须配置建会话幂等密钥（ADR-0059）；压测用固定值。
+export YANSHI_SESSION_KEY_SECRET=${YANSHI_SESSION_KEY_SECRET:-yanshi-bench-session-key-secret-0001}
 for i in $(seq 0 $((P - 1))); do
   ./bin/yanshi serve -storage postgres -pg-dsn "$DSN" -auth jwt -businesslines "$KEYDIR/businesslines" \
     -addr 127.0.0.1:$((18300 + i)) -peer-addr 127.0.0.1:$((18400 + i)) -workers "$W" >"$OUT/serve-$i.log" 2>&1 &

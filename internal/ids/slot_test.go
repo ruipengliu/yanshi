@@ -131,6 +131,38 @@ func TestDeterministicIDFormat(t *testing.T) {
 	}
 }
 
+func TestKeyedSessionID(t *testing.T) {
+	secret := []byte("secret")
+	id, err := KeyedSessionID(secret, "bl", "u", "intent")
+	const token = "fd6a59a288f336d3f0d8cdaada957c7c"
+	want, _ := SessionID(token, "u")
+	if err != nil || id != want {
+		t.Fatalf("keyed Session = %q, %v; want %q", id, err, want)
+	}
+	if again, err := KeyedSessionID(secret, "bl", "u", "intent"); err != nil || again != id {
+		t.Fatalf("retry = %q, %v; want %q", again, err, id)
+	}
+	if slot, err := SessionSlotOf(id); err != nil || slot != shard.Hash("ses_"+token) {
+		t.Fatalf("Session slot = %d, %v", slot, err)
+	}
+	if slot, err := EndUserSlotOfSession(id); err != nil || slot != shard.Hash("u") {
+		t.Fatalf("EndUser slot = %d, %v", slot, err)
+	}
+	for _, tc := range []struct{ secret, businessLine, endUser, key string }{
+		{"other", "bl", "u", "intent"},
+		{"secret", "other", "u", "intent"},
+		{"secret", "bl", "other", "intent"},
+		{"secret", "bl", "u", "other"},
+	} {
+		if other, err := KeyedSessionID([]byte(tc.secret), tc.businessLine, tc.endUser, tc.key); err != nil || other == id {
+			t.Fatalf("changed input: ID = %q, %v", other, err)
+		}
+	}
+	if _, err := KeyedSessionID(nil, "bl", "u", "intent"); err == nil {
+		t.Fatal("empty secret accepted")
+	}
+}
+
 func TestInvalidGeneration(t *testing.T) {
 	for _, test := range []struct{ prefix, token, owner string }{
 		{"ses", "x", "u"}, {"bad_prefix", "x", "u"}, {"", "x", "u"},

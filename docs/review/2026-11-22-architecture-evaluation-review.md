@@ -1,6 +1,6 @@
 # 评审：内核架构评估（2026-11-21）
 
-> 状态：待裁决（2026-11-22）· 评审对象：[内核架构评估：业务支撑灵活性与边界清晰度诊断](../architecture/architecture-evaluation.html)（2026-11-21，提交 23e4dd0）· 依据：[章程](../charter.md) v0.2、[ADR 索引](../adr/README.md)、`docs/design/*.md` 与 2026-11-22 的代码 · 术语以 [CONTEXT.md](../../CONTEXT.md) 为准；原评估多处用“租户”“客户端”“消息队列”等泛称，本文统一写作 BusinessLine（业务线）、HostApp、Outbox，只在引用原文时保留
+> 状态：已裁决并部分实施（2026-11-22，见 §10）· 评审对象：[内核架构评估：业务支撑灵活性与边界清晰度诊断](../architecture/architecture-evaluation.html)（2026-11-21，提交 23e4dd0）· 依据：[章程](../charter.md) v0.2、[ADR 索引](../adr/README.md)、`docs/design/*.md` 与 2026-11-22 的代码 · 术语以 [CONTEXT.md](../../CONTEXT.md) 为准；原评估多处用“租户”“客户端”“消息队列”等泛称，本文统一写作 BusinessLine（业务线）、HostApp、Outbox，只在引用原文时保留
 >
 > 本文由同日两份独立评审合并而成，两份的事实核对互相印证，分歧之处在文中注明。另一份独立复核见[内核架构评估复核](./2026-11-22-kernel-architecture-evaluation-review.md)。
 
@@ -139,3 +139,15 @@ R3（真实审核提供商、推送与唤醒、链路追踪、目标集群验收
 ## 9. 对评估原文的处理
 
 评估文档保留为 2026-11-21 的历史记录，不改正文；其页首已加一行（2026-11-22），指向本文，并说明“路线图与定级以本文 §5、§6 为准”。§5 各项是否立项，待裁决（A1 已立项）。
+
+## 10. 裁决与实施（2026-11-22）
+
+| # | 裁决 | 状态 |
+|---|---|---|
+| A1 | 采纳 | 已实现：[ADR-0059](../adr/0059-idempotent-session-creation-by-derived-id.md)、[设计](../design/session-create-idempotency.md)；实现中补了三处设计漏洞（并发请求以写索引后读回的绑定为准；期限过后的重放返回 404 而非 400；撤回当次即返回 404），并改为 `-auth jwt` 的网关缺少密钥即拒绝启动（SDK 每次创建都带键） |
+| A2 | 本轮不做 | 取舍与重审条件写入[多端双工通道](../design/m3-duplex-channel.md) §5 |
+| A3 | 采纳 | 已实现：先取并发名额、再等 RPS 令牌；`-model-limit` 按提供商覆盖（[模型调用](../design/model-calls.md) §5） |
+| A4 | 单元内业务线按互不信任对待 | 已实现：[ADR-0060](../adr/0060-business-line-definition-access.md)。采用"业务线配置声明可用定义"（`agents.allow`、`oneshots.allow`），不用复合键；MCP Server 改以 (业务线, 名称) 为键，取消同名须分属不同单元的限制 |
+| A5–A7 | 维持 §5 的下一步 | 未立项 |
+| A8 | 采纳 | 已实现：`serve -worker-business-lines`（[部署](../design/deployment.md) §3） |
+| A9 | 采纳 | 已写入[部署](../design/deployment.md) §4 的生产基线与上线检查清单 |

@@ -110,7 +110,7 @@ type instance struct {
 	crm       *crmServer
 	xinli     *xinlifixture.Client
 	calls     *call.Manager
-	mcp       evalMCP
+	mcp       *mcpcap.Connector
 
 	// controllerDone 在沙箱控制器退出（或未启动）时关闭。
 	controllerDone chan struct{}
@@ -307,7 +307,8 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 	}
 	opts := app.Options{
 		Clock: clk, Agents: agents, Oneshots: shots, Model: cfg.Model, Blobs: artifact.NewMemBlobs(), NodeAuth: node.InsecureDevAuth{},
-		SandboxTools: cfg.Sandbox != nil, DefaultTimeout: 10 * time.Minute,
+		SessionKeySecret: []byte("yanshi-eval-session-key-secret-v1"),
+		SandboxTools:     cfg.Sandbox != nil, DefaultTimeout: 10 * time.Minute,
 		// 评测业务线视为已取得健康信息的单独同意（所有 EndUser 都已同意），以评测模型对健康信息的处理（ADR-0022）。
 		HealthAllowed: func(bl string) bool { return bl == BusinessLine }, HealthEveryone: true,
 		Live: live.NewMemBus(), LeaseTTL: cfg.LeaseTTL, Logger: cfg.Logger,
@@ -344,7 +345,7 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 		servers = append(servers, registrations...)
 	}
 	if len(servers) > 0 {
-		in.mcp = newEvalMCP(servers, core.Artifacts, st.Log, cfg.Logger)
+		in.mcp = &mcpcap.Connector{Servers: servers, Artifacts: core.Artifacts, Log: st.Log, Logger: cfg.Logger}
 		core.Catalog.MCP = in.mcp
 	}
 	for range 2 * cfg.Parallel {

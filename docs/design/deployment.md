@@ -8,10 +8,10 @@
 
 - **进程边界沿扩缩容维度、权限与故障域划分；包边界沿领域划分。** 同一个镜像、同一套包，按角色裁剪后以不同的 Deployment 运行。不按领域拆服务（Session、Memory、用量……），理由见 §5。
 - **单进程形态长期保留**（ADR-0001、章程原则 9）：开发、模拟测试与小规模私有化部署都运行全部角色；生产形态只是把角色分到不同进程，执行语义不变，`internal/sim` 仍然覆盖它。
-- **单元（cell）是一组共享 EndUser 身份与 Memory 的业务线**（2026-11-14 修订，原为"一条业务线一个单元"）。Token、配额、AgentDef、内容安全、保留策略都以 BusinessLine 为单位，所以一个单元承载几条业务线都不需要改代码；单元内按 Session 与 EndUser 两类键分片 PostgreSQL（ADR-0028、ADR-0051），EndUser 键不加业务线，同一 EndUser 的跨业务线 Memory / Grant 因此在同一个库（章程 G4、ADR-0003）。一个 Session 只属于一个单元，入口按业务线路由到它所在的单元，不做跨单元双活。
+- **单元（cell）是一组共享 EndUser 身份与 Memory 的业务线**（2026-11-14 修订，原为"一条业务线一个单元"）。Token、配额、内容安全、保留策略都以 BusinessLine 为单位，AgentDef 与 Oneshot 由业务线配置的 `agents.allow`、`oneshots.allow` 声明可用范围、MCP Server 以 (业务线, 名称) 为键（ADR-0060，同一单元内的业务线互不信任），所以一个单元承载几条业务线都不需要改代码；单元内按 Session 与 EndUser 两类键分片 PostgreSQL（ADR-0028、ADR-0051），EndUser 键不加业务线，同一 EndUser 的跨业务线 Memory / Grant 因此在同一个库（章程 G4、ADR-0003）。一个 Session 只属于一个单元，入口按业务线路由到它所在的单元，不做跨单元双活。
   - **默认所有业务线在同一个单元。** 只有不与其他业务线共享 EndUser 的业务线（例如私有化客户的独立部署）才单独成为一个单元。
   - **按业务线拆单元可以作为扩容手段**，代价是分属不同单元的业务线之间不能共享 Memory / Grant：内核没有跨单元的召回与授权路径。需要共享 Memory 的业务线被迫拆开时，重审 ADR-0028、ADR-0051。
-  - **现有限制**：`mcpcap.LoadDir` 要求 MCP Server 名称在一个内核中唯一，两条业务线登记同名的 Server（如评测中的 `eval` 与 `eval-nohealth` 都登记 `xinli`）时须分属不同单元（[xinli 部署](./xinli-deployment.md)）。
+  - **定义名称**：AgentDef 与 Oneshot 的名称在一个内核中唯一（定义文件不写业务线），两条业务线各自的私有定义以名称前缀区分；MCP Server 名称只需在业务线内唯一（2026-11-22，ADR-0060；此前须分属不同单元）。
 
 ## 2. 单元内的拓扑
 
@@ -59,10 +59,12 @@ worker        worker-bg     sandbox-ctl        janitor
 ## 4. 基础设施
 
 - **PostgreSQL。** 每个分片一个主库加同步备库；已确认的 Event 不能因故障切换丢失或 seq 倒退，所以同步复制是硬要求，旧主须被隔离（fencing）后才允许新主接受写入。连接分两类：SQL 经 PgBouncer 事务模式复用；`LISTEN` 与迁移锁必须直连（事务池不保留会话状态），因此 serve 需要两个 DSN（§6）。故障切换后 `pg.Notifier` 重连、清空缓存并唤醒全部等待者，日志末尾对账补上期间的事件。
+  - **长事务约束（生产基线，2026-11-22）。** 同库的长事务会推迟所有业务线的出站水位（ADR-0046，[M7 §6](./m7-kernel-primitives.md#6-出站流outbox)）。在线角色的数据库角色设 `statement_timeout = 5s`、`idle_in_transaction_session_timeout = 5s`（`ALTER ROLE … SET`），整个事务的时长由应用 context 限制；实例设 `max_prepared_transactions = 0`；迁移、备份与报表使用独立角色与各自的超时，只读分析与备份优先走备库。上线前用出站水位滞后与最老事务指标确认这些设置生效。
 - **对象存储。** 任何 S3 兼容实现（ADR-0011）；私有化环境用 SeaweedFS、MinIO 或 Ceph RGW。
 - **入口。** 支持 WebSocket 升级与小时级空闲连接；SSE 与 WebSocket 不经过会缓冲响应的中间层。握手限速与带抖动的 `Retry-After` 由网关自身处理。
 - **可观测性。** 指标在 peer-addr 的 `/metrics`，只记录 ID（ADR-0015）。`yanshi_db_pool_*` 由一个进程级收集器汇总活动分片的 SQL 池，沿用单库的无标签指标，不含独立直连池；来源随存储关闭注销，详见 [M2 扩容压测](./m2-scale-test.md) §3。链路追踪按 `run_id`、`attempt`、`call_id` 关联，列入上线检查清单。
 - **配置分发。** AgentDef、发布配置、业务线公钥、价格表、MCP 登记以挂载卷（ConfigMap/Secret）分发，所有进程同一版本；发布配置的热加载（10 秒）保持不变。
+- **建会话幂等密钥。** 网关（单进程模式即全部角色）从 Secret 注入 `YANSHI_SESSION_KEY_SECRET`（或 `-session-key-secret-file`，至少 32 字节），同一单元内的网关必须相同；`-auth jwt` 下网关缺少密钥即启动失败（SDK 每次创建都带键）；`-auth none` 时使用固定的开发密钥。不做例行轮换：轮换后跨越轮换的重试会再创建一个 Session（ADR-0059）。
 - **外联。** 模型提供商、内容安全提供商、推送通道是仅有的出网依赖，按 ADR-0001 在部署清单中显式列出、可关闭或替换；网络策略默认禁止其他出网。
 
 ## 5. 为什么不按领域拆微服务

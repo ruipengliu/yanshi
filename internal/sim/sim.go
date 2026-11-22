@@ -76,6 +76,8 @@ type Options struct {
 	Tiers bool
 	// Redo 使用独立随机流穿插重答，不改变关闭时的既有轨迹。
 	Redo bool
+	// KeyedCreates 在常规动作之后注入创建回包丢失、删除与注销交错，保留既有种子的抽样顺序。
+	KeyedCreates bool
 	// MaintainDues 在差分中保证短 Horizon 的维护不受随机 Sweep 稀疏性影响。
 	MaintainDues bool
 }
@@ -102,6 +104,8 @@ type Stats struct {
 	TurnLimited int
 	// Session 生命周期：关闭、删除、Janitor 清理中途崩溃、完成的删除。
 	Closes, Deletions, JanitorCrashes, DeletionsCompleted int
+	// 带键的创建：丢失回包、成功重放，以及两种写入后的删除复查。
+	CreateRepliesLost, CreateReplays, CreateDeletionRaces, CreateEndUserDeletionRaces int
 	// Memory：带有结果的召回次数、成功写入次数。
 	Recalls, MemorySaves int
 	// 上下文压缩：压缩次数、摘要调用中的故障、模型报告的上下文超长、
@@ -382,10 +386,11 @@ type World struct {
 	janitors     []*janitor.Janitor
 	nextJ        int
 	// deleted 与 closed 是已删除、已关闭（已从 sessions 中替换掉）的 Session。
-	deleted []string
-	closed  []string
-	workers []*runtime.Worker
-	nextW   int
+	deleted      []string
+	closed       []string
+	keyedCreates []keyedCreateCheck
+	workers      []*runtime.Worker
+	nextW        int
 
 	sessions []string
 	// observedRuns 保留各 Session 已见的请求数，避免重复检查或删除日志改变累计覆盖。
@@ -523,9 +528,10 @@ func New(opts Options) (*World, error) {
 	}
 	w.core = app.NewCore(wrapped, app.Options{
 		Clock: w.clock, IDs: ids.Sequential, Agents: agents, Model: gw, Blobs: artifact.NewMemBlobs(), NodeAuth: node.InsecureDevAuth{},
-		Local:        []capability.Capability{w.echoCap(), w.sendCap(), simCardCap()},
-		MCP:          simAttestedSource{w},
-		SandboxTools: true, DefaultTimeout: deviceTimeout, NodeCacheTTL: 5 * time.Second,
+		SessionKeySecret: []byte("yanshi-sim-session-key-secret-v1"),
+		Local:            []capability.Capability{w.echoCap(), w.sendCap(), simCardCap()},
+		MCP:              simAttestedSource{w},
+		SandboxTools:     true, DefaultTimeout: deviceTimeout, NodeCacheTTL: 5 * time.Second,
 		BackgroundGrace: bgGrace, BackgroundTimeout: bgTimeout,
 		Moderator: simModerator{w}, InjectionCheck: simDecider{w}, Meter: w.meter, Quotas: w.quotas, Pusher: simPusher{w},
 		LeaseTTL: leaseTTL, HealthAllowed: healthAllowed,
@@ -843,7 +849,15 @@ func (w *World) Run() error {
 			return fmt.Errorf("tick %d: %w", i, err)
 		}
 	}
-	return w.quiesce()
+	if w.opts.KeyedCreates && w.faults {
+		if err := w.exerciseKeyedCreates(); err != nil {
+			return err
+		}
+	}
+	if err := w.quiesce(); err != nil {
+		return err
+	}
+	return w.checkDeletedKeyedCreates()
 }
 
 func (w *World) tick() error {
@@ -1223,7 +1237,7 @@ func (w *World) quiesce() error {
 	// idleRounds 是所有 Janitor 连续无事可做的轮数。须超过一个租约 TTL（每轮 1 秒）才算清理队列已空：
 	// 崩溃的 Janitor 持有的租约到期前，其他 Janitor 认领不到它的任务。
 	idleRounds := 0
-	endUsersExpired := !w.opts.Tiers || len(w.deletedUsers) == 0
+	endUsersExpired := (!w.opts.Tiers && len(w.keyedCreates) == 0) || len(w.deletedUsers) == 0
 	for round := range 2000 {
 		active := false
 		if err := w.discoverChildren(); err != nil {

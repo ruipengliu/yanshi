@@ -85,6 +85,8 @@
 | [0056](0056-replaceable-context-strategy-and-streaming-loops.md) | 可替换的上下文策略与流式外部循环 | accepted（2026-11-16 定稿） | 未实现 | 二 | 业务线需要上下文策略（A 期）；0041 开始实现（B 期）；需要 Run 内调整、排序或非文字追加 | 实施时修订 0041 | |
 | [0057](0057-legacy-shard-migration.md) | 存量分片迁移 | 不实施（2026-11-15：旧格式 ID 兼容已删除，前提不成立） | 不实施 | 二 | — | 被 0051 的 2026-11-15 修订取代 | |
 | [0058](0058-background-delegation.md) | 委托在宽限期后转入后台 | accepted（2026-11-19 定稿） | 已实现 | 二 | 子 Session 设备调用也需转后台；需显式前台/后台选择；后台委托成主要成本 | 修订 0035 第 7 条、0031 | |
+| [0059](0059-idempotent-session-creation-by-derived-id.md) | 建会话以幂等键派生 Session ID | accepted（2026-11-22 定稿） | 已实现 | 三 | 需按键查询或键过期；需平滑轮换密钥；线上观察到复查失败消耗键 | — | |
+| [0060](0060-business-line-definition-access.md) | 业务线声明可用的定义；MCP Server 以 (业务线, 名称) 为键 | accepted（2026-11-22 定稿） | 已实现 | 二 | 需同名而内容不同的定义；需自助或分别发布共享定义；需撤销已有 Session 的使用权 | 修订 M4 灰度发布 §1 与部署 §1 | |
 
 ## 业务层 ADR
 

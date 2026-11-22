@@ -32,7 +32,7 @@ type PresenceHandler interface {
 }
 
 // ErrDisconnected 表示请求已发出，但连接在收到响应之前断开：结果未知。
-// 提交输入不是幂等的，应先从订阅中确认输入是否已生效，再决定是否重试。
+// 带幂等键的创建由 Request 自动重试，带输入 ID 的提交由 SubmitInput 自动重试。
 var ErrDisconnected = errors.New("nodesdk: connection lost before response; outcome unknown")
 
 // RequestError 是网关拒绝请求的原因，Code 见 v1.ClientError。
@@ -300,7 +300,22 @@ func (c *Client) SetActivity(sessionID string, focused, typing bool) {
 
 // Request 发出一个客户端请求并等待响应；未连接时等待连接建立。request_id 由 SDK 填写。
 // ctx 结束时立即返回，包括写入卡住时（此时连接随之关闭、重连）；ctx 已结束的请求不发出。
+// 带幂等键的创建在断线后自动以同一键重试。
 func (c *Client) Request(ctx context.Context, req *v1.ClientRequest) (*v1.ClientResponse, error) {
+	return c.requestWithRetry(ctx, req, req.GetCreateSession().GetIdempotencyKey() != "")
+}
+
+func (c *Client) requestWithRetry(ctx context.Context, req *v1.ClientRequest, idempotent bool) (*v1.ClientResponse, error) {
+	for {
+		resp, err := c.request(ctx, req)
+		if errors.Is(err, ErrDisconnected) && idempotent {
+			continue // request 会等到重新连接
+		}
+		return resp, err
+	}
+}
+
+func (c *Client) request(ctx context.Context, req *v1.ClientRequest) (*v1.ClientResponse, error) {
 	s := &c.sessions
 	var ch chan *v1.ClientResponse
 	for ch == nil {
@@ -332,7 +347,7 @@ func (c *Client) Request(ctx context.Context, req *v1.ClientRequest) (*v1.Client
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			// 写入失败时连接已断开，请求可能已经到达：与断开在响应之前相同，结果未知（提交输入会以同一 ID 重试）。
+			// 写入失败时连接已断开，请求可能已经到达：与断开在响应之前相同，结果未知。
 			return nil, fmt.Errorf("%w: %v", ErrDisconnected, err)
 		}
 	}
@@ -357,10 +372,17 @@ func (c *Client) Request(ctx context.Context, req *v1.ClientRequest) (*v1.Client
 	}
 }
 
-// CreateSession 为连接的 EndUser 创建 Session；version 为空时按发布配置分流。
+// CreateSession 为连接的 EndUser 创建 Session，每次调用生成一个幂等键，断线后以同一键重试。
+// version 为空时按发布配置分流。
 func (c *Client) CreateSession(ctx context.Context, agent, version string) (string, error) {
+	return c.CreateSessionWithKey(ctx, agent, version, NewInputID())
+}
+
+// CreateSessionWithKey 以给定的幂等键创建 Session。需要跨进程重启继续重试的 HostApp 应持久保存键。
+// key 为空时创建不去重，断线后由调用方处理。
+func (c *Client) CreateSessionWithKey(ctx context.Context, agent, version, key string) (string, error) {
 	resp, err := c.Request(ctx, &v1.ClientRequest{Op: &v1.ClientRequest_CreateSession{CreateSession: &v1.CreateSession{
-		Agent: agent, AgentVersion: version}}})
+		Agent: agent, AgentVersion: version, IdempotencyKey: key}}})
 	if err != nil {
 		return "", err
 	}
@@ -382,13 +404,7 @@ func (c *Client) Submit(ctx context.Context, sessionID string, input ...*v1.Cont
 // SubmitInput 提交输入并返回完整的响应（answered、duplicate 等）。in.InputId 为空时不去重、断线不重试；
 // 需要在进程重启后继续重试的 HostApp 应自己生成并持久保存 ID。
 func (c *Client) SubmitInput(ctx context.Context, in *v1.SubmitInput) (*v1.ClientResponse, error) {
-	for {
-		resp, err := c.Request(ctx, &v1.ClientRequest{Op: &v1.ClientRequest_Submit{Submit: in}})
-		if errors.Is(err, ErrDisconnected) && in.GetInputId() != "" {
-			continue // Request 会等到重新连接
-		}
-		return resp, err
-	}
+	return c.requestWithRetry(ctx, &v1.ClientRequest{Op: &v1.ClientRequest_Submit{Submit: in}}, in.GetInputId() != "")
 }
 
 // NewInputID 生成一个随机的输入 ID。

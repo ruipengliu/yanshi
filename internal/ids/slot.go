@@ -1,6 +1,9 @@
 package ids
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 
 	"yanshi/internal/shard"
@@ -20,6 +23,16 @@ func SessionID(token, endUser string) (string, error) {
 		return "", fmt.Errorf("ids: session needs a token and EndUser")
 	}
 	return "ses_v1_" + encodeSlot(shard.Hash("ses_"+token)) + "_" + encodeSlot(shard.Hash(endUser)) + "_" + token, nil
+}
+
+// KeyedSessionID 用密钥派生 Session ID，避免从公开的 ID 验证猜测的幂等键。
+func KeyedSessionID(secret []byte, businessLine, endUser, key string) (string, error) {
+	if len(secret) == 0 {
+		return "", fmt.Errorf("ids: session key secret is required")
+	}
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write([]byte("yanshi.session-key.v1\x00" + businessLine + "\x00" + endUser + "\x00" + key))
+	return SessionID(hex.EncodeToString(mac.Sum(nil)[:16]), endUser)
 }
 
 func (g Generator) ForSession(prefix, sessionID string) (string, error) {

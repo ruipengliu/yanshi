@@ -8,11 +8,14 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
+	"yanshi/internal/auth"
 	"yanshi/internal/channel"
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog/memlog"
 	"yanshi/internal/ids"
+	"yanshi/internal/lifecycle"
 	"yanshi/internal/live"
+	"yanshi/internal/node"
 	"yanshi/internal/presence"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
@@ -80,6 +83,72 @@ var me = channel.Identity{BusinessLine: "bl", EndUser: "u", DeviceID: "d1", Labe
 
 func subscribe(sid string) *v1.NodeMessage {
 	return &v1.NodeMessage{Msg: &v1.NodeMessage_Subscribe{Subscribe: &v1.Subscribe{SessionId: sid}}}
+}
+
+func TestKeyedCreateConnection(t *testing.T) {
+	ctx := context.Background()
+	h, _, _ := setup(t)
+	h.Service.Index = lifecycle.NewMemIndex()
+	h.Service.Deletions = lifecycle.NewMemDeletions()
+	h.Service.SessionKeySecret = []byte("yanshi-test-session-key-secret-v1")
+	keys := map[string]*auth.SigningKey{}
+	var lines []auth.BusinessLine
+	for _, bl := range []string{"bl", "other"} {
+		key, err := auth.GenerateDevKey(bl, bl+"-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		line, err := key.Public()
+		if err != nil {
+			t.Fatal(err)
+		}
+		keys[bl], lines = key, append(lines, line)
+	}
+	verifier, err := auth.NewJWT("yanshi", clock.Real{}, lines...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authenticator := node.TokenAuth{Verifier: verifier}
+	identity := func(bl, eu string) channel.Identity {
+		t.Helper()
+		token, err := keys[bl].Sign("yanshi", eu, time.Minute, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, err := authenticator.Authenticate(ctx, &v1.Hello{Token: token})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return channel.Identity{BusinessLine: id.BusinessLine, EndUser: id.EndUser}
+	}
+	create := func(id channel.Identity, key, version, wantCode string) string {
+		t.Helper()
+		resp := h.Request(ctx, id, &v1.ClientRequest{RequestId: "create", Op: &v1.ClientRequest_CreateSession{
+			CreateSession: &v1.CreateSession{Agent: "a", AgentVersion: version, IdempotencyKey: key},
+		}})
+		if resp.GetError().GetCode() != wantCode || (resp.GetSessionId() != "") != (wantCode == "") {
+			t.Fatalf("create response = %v; want error code %q", resp, wantCode)
+		}
+		return resp.GetSessionId()
+	}
+	owner := identity("bl", "u")
+	id := create(owner, "intent", "", "")
+	if replay := create(owner, "intent", "1", ""); replay != id {
+		t.Fatalf("replay = %q; want %q", replay, id)
+	}
+	otherUser := create(identity("bl", "other"), "intent", "", "")
+	otherLine := create(identity("other", "u"), "intent", "", "")
+	if otherUser == id || otherLine == id || otherUser == otherLine {
+		t.Fatal("idempotency key crossed an identity boundary")
+	}
+	create(owner, "intent", "2", "conflict")
+	create(owner, "invalid key", "", "invalid")
+	if err := h.Service.Delete(ctx, id, "end_user", ""); err != nil {
+		t.Fatal(err)
+	}
+	create(owner, "intent", "", "not_found")
+	h.Service.SessionKeySecret = nil
+	create(owner, "unconfigured", "", "invalid")
 }
 
 // TestResubscribeKeepsPresence：重复订阅时旧订阅撤下记录在前、新订阅写入在后，记录不会被旧订阅误删；

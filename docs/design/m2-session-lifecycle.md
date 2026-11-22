@@ -118,7 +118,7 @@ retention:
 
 ### 5.1 绝对删除期限（ADR-0050）
 
-`POST /v1/sessions` 可带 RFC3339 格式的 `delete_at`，只有服务令牌可以设置；用户令牌带此字段返回 403。非空期限必须晚于 `service.Service` 使用的时钟当前时间，否则返回 400。未设置时没有绝对期限。内核不推算业务日，擦除后重建时由业务线传回原来的期限。
+`POST /v1/sessions` 可带 RFC3339 格式的 `delete_at`，只有服务令牌可以设置；用户令牌带此字段返回 403。非空期限必须晚于 `service.Service` 使用的时钟当前时间，否则返回 400。未设置时没有绝对期限。内核不推算业务日，擦除后重建时由业务线传回原来的期限。重建是一个新的 Session：带幂等键创建的，重建须换一个新键，原键随删除永久消耗（[建会话幂等](./session-create-idempotency.md) §5.3）。
 
 期限同时记入 `SessionCreated.delete_at` 与 Session 索引，投影通过 `State.Created` 读取。委托派生的子 Session 从父日志继承期限，不延长原文副本的寿命。Janitor 在保留策略扫描中通过 `lifecycle.Index.DueBefore` 扫描期限早于当前时间的 Session；即使业务线没有配置 Retention，也会扫描。到期以 `retention` 删除，保留既有 Memory。与保留策略取较早者，期限不要求 Session 已关闭；实际清理由周期扫描与清理队列推进。
 

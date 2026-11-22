@@ -69,7 +69,11 @@ function connect(deviceId: string, tok: string): Promise<Client> {
 async function main(): Promise<void> {
   const a = await connect("web-a", token);
   const b = await connect("web-b", token);
-  const sid = await a.createSession("dev");
+  // 同一 EndUser 的两台设备以同一键创建，得到同一个 Session。
+  const creation = { idempotencyKey: newInputId() };
+  const sid = await a.createSession("dev", "", creation);
+  assert.ok(sid);
+  assert.equal(await b.createSession("dev", "", creation), sid);
   const onA = new View();
   a.subscribe(sid, 0n, onA);
   a.setActivity(sid, true);

@@ -461,9 +461,12 @@ func (d *Delegator) write(ctx context.Context, sessionID, runID, callID string, 
 }
 
 // Directory 是可委托的 AgentDef（capability.AgentSource），取自 AgentDef 注册表与发布配置。
-type Directory struct{ Registry *agentdef.Registry }
+type Directory struct {
+	Registry *agentdef.Registry
+	Access   service.AgentAccess
+}
 
-func (d Directory) Agents(endUser string) []capability.AgentInfo {
+func (d Directory) Agents(businessLine, endUser string) []capability.AgentInfo {
 	seen := map[string]bool{}
 	var out []capability.AgentInfo
 	for _, def := range d.Registry.All() {
@@ -471,6 +474,9 @@ func (d Directory) Agents(endUser string) []capability.AgentInfo {
 			continue
 		}
 		seen[def.Name] = true
+		if d.Access != nil && !d.Access.AllowsAgent(businessLine, def.Name) {
+			continue
+		}
 		cur, err := d.Registry.Resolve(def.Name, endUser)
 		if err != nil {
 			continue

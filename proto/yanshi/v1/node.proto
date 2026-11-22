@@ -183,6 +183,8 @@ message CreateSession {
   string agent = 1;
   // 为空时按发布配置分流。
   string agent_version = 2;
+  // 非空时创建幂等：同一 EndUser 以同一键重复创建，返回同一个 Session（docs/design/session-create-idempotency.md）。
+  string idempotency_key = 3;
 }
 
 // SubmitInput 有活跃 Run 时作为插话，否则开启新 Run。

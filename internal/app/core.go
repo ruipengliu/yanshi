@@ -32,6 +32,12 @@ import (
 	"yanshi/internal/workqueue"
 )
 
+// DefinitionAccess 提供各入口所需的定义访问检查。
+type DefinitionAccess interface {
+	service.AgentAccess
+	oneshot.Access
+}
+
 // Options 是装配核心对象图所需的、存储之外的全部输入：时钟与 ID、模型与各项策略。serve 从命令行参数解析出它们，
 // 模拟测试、评测与 e2e 测试给出各自的替身。可失败的工作（打开存储、加载 MCP 服务器、解析参数）都在调用方完成后再
 // 传入，因此 NewCore 不返回错误。
@@ -42,6 +48,10 @@ type Options struct {
 	// 随机生成器忽略它，模拟测试用它得到可读的顺序 ID。
 	IDs    func(prefix string) ids.Generator
 	Agents *agentdef.Registry
+	// DefinitionAccess 只用于新建 Session、委托与单次调用；nil 时开放全部定义。
+	DefinitionAccess DefinitionAccess
+	// SessionKeySecret 须在同一单元内的网关间一致；空值禁用带键的创建。
+	SessionKeySecret []byte
 	// Oneshots 非 nil 时提供单次调用；并发与总时限零值取默认。
 	// 同时省略并发与等待时，等待取默认；显式并发配零等待表示只尝试立即获取。
 	Oneshots               *oneshot.Registry
@@ -179,7 +189,7 @@ func NewCore(stores Stores, opts Options) *Core {
 		Local:          capability.NewRegistry(),
 		Nodes:          dir,
 		MCP:            opts.MCP,
-		Agents:         delegation.Directory{Registry: opts.Agents},
+		Agents:         delegation.Directory{Registry: opts.Agents, Access: opts.DefinitionAccess},
 		DefaultTimeout: opts.DefaultTimeout, NodeCacheTTL: opts.NodeCacheTTL, Clock: opts.Clock,
 	}
 	if opts.SandboxTools {
@@ -192,9 +202,9 @@ func NewCore(stores Stores, opts Options) *Core {
 	if opts.Injector != nil {
 		moderator = faults.Moderator{Next: moderator, Injector: opts.Injector}
 	}
-	c.Service = &service.Service{Store: c.Store, Agents: opts.Agents, Nodes: c.Dispatch, Index: stores.Index,
+	c.Service = &service.Service{Store: c.Store, Agents: opts.Agents, AgentAccess: opts.DefinitionAccess, Nodes: c.Dispatch, Index: stores.Index,
 		Deletions: stores.Deletions, Janitor: stores.JanitorQueue, Quotas: opts.Quotas, Tiers: tiers, Moderator: moderator, Artifacts: c.Artifacts,
-		Consents: consents, HealthEnabled: opts.HealthAllowed}
+		Consents: consents, HealthEnabled: opts.HealthAllowed, SessionKeySecret: opts.SessionKeySecret}
 	if tiers != nil {
 		c.EndUserData = append(c.EndUserData, lifecycle.EndUserHolder{Name: "tiers", Delete: func(ctx context.Context, bl, eu string) error {
 			if c.Service.Tiers == nil {
@@ -230,7 +240,7 @@ func NewCore(stores Stores, opts Options) *Core {
 		if deadline == 0 {
 			deadline = oneshot.DefaultDeadline
 		}
-		c.Oneshots = &oneshot.Service{Registry: opts.Oneshots, Model: opts.Model, Moderator: moderator,
+		c.Oneshots = &oneshot.Service{Registry: opts.Oneshots, Access: opts.DefinitionAccess, Model: opts.Model, Moderator: moderator,
 			Quotas: opts.Quotas, Meter: opts.Meter, Deletions: stores.Deletions, Clock: opts.Clock, IDs: opts.IDs("use"),
 			Max: maxCalls, BusinessLineMax: opts.OneshotBusinessLineMax, Wait: wait, Deadline: deadline}
 	}

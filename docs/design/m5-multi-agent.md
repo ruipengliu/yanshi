@@ -18,7 +18,7 @@
 
 ## 3. 面向模型的形态
 
-- AgentDef 白名单新增条目 `agent:<名称>`（可用 glob，如 `agent:research-*`）。
+- AgentDef 白名单新增条目 `agent:<名称>`（可用 glob，如 `agent:research-*`）。只匹配本业务线可用的 AgentDef（业务线配置的 `agents.allow`，ADR-0060）：`agent:*` 不会列出其他业务线的私有定义。
 - 工具名 `agent__<名称>`，描述取自目标 AgentDef 的 `description`（新增字段，一两句话说明它擅长什么、不做什么）。版本由发布配置按 EndUser 分流（ADR-0020），父 Run 不指定版本。
 - 输入契约固定：`task`（必填，文字说明）、`context`（可选，文字背景）、`artifacts`（可选，至多 8 个父 Session 的 `artifact://` 引用，平台复制给子 Run，见 §9）。输出是子 Run 最后一条 `AssistantMessage` 的文字，加上其中提到的、复制回父 Session 的子 Session 工件。
 - 工具列表中 Agent 工具与设备工具、沙箱工具一起按名称排序（请求前缀稳定）。

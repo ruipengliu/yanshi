@@ -122,8 +122,8 @@ dev 默认每业务线生成一把 256-bit 随机凭据，有效期 24 小时，
 
 新增测试覆盖：生产无开发路由；合并/分离角色、后台不占 MCP 端口；PG 就绪、独立迁移与未迁移拒绝；正确/错误/过期/跨业务线/轮换凭据、连接建立后的凭据切换和到期；静态来源重读、三种签名、并发刷新、私钥轮换、刷新失败与 Client 业务线隔离。既有 dev 跨进程 fixture/MCP/EOF 测试继续使用生成的凭据。
 
-真实评测由 `xinlifixture.StartWithOptions` 启动 `xinli dev`，开发入口为每条业务线生成临时凭据，放入 stdout 就绪协议的每条 `registrations[].headers.Authorization`。父进程经 `mcpcap.ParseServer` 保留完整 headers；开发秘密是直接值，不依赖父进程里不存在的环境变量。运行器用 `newEvalMCP` 按业务线分别装配 Connector，各自持有原登记、工件服务、日志和 logger；工具发现与执行仍使用内核原 Connector，其 HTTP transport 每次注入对应 headers。这样 `eval` 与 `eval-nohealth` 的同名 `xinli` 登记不会复用另一条业务线的缓存连接，工具名仍相同。
+真实评测由 `xinlifixture.StartWithOptions` 启动 `xinli dev`，开发入口为每条业务线生成临时凭据，放入 stdout 就绪协议的每条 `registrations[].headers.Authorization`。父进程经 `mcpcap.ParseServer` 保留完整 headers；开发秘密是直接值，不依赖父进程里不存在的环境变量。运行器把两条业务线的登记装进同一个 Connector：自 2026-11-22（ADR-0060）起 Connector 以 (业务线, 名称) 缓存连接与工具，`eval` 与 `eval-nohealth` 的同名 `xinli` 登记不会复用另一条业务线的连接，工具名仍相同。
 
 `internal/eval/capture_pages_test.go` 的直连 SDK 路径也传递登记 headers。`TestXinliFixtureMCPHeadersAcrossBusinessLines` 通过真实 dev 子进程、原就绪解析与运行器同一装配，轮流发现并调用两条业务线的工具；无凭据请求必须返回 401。Persona 的 fixture、Captures 和 Parity 测试均配置测试凭据，Parity 保留原始工具文字、Meta 比较和 golden，不过滤或改写差异。不改内核执行路径、工具说明、AgentDef 或评测基线。
 
-现有内核 `mcpcap.LoadDir` 要求 Server 名称唯一，Connector 缓存也按名称索引；因此不能把多个名为 `xinli` 的业务线登记加载到同一个内核 Connector。因此登记同名 Server 的业务线须分属不同单元（单元的定义见[部署设计](./deployment.md) §1，2026-11-14 修订：原写"生产按现有一业务线一单元部署"），每个内核目录只放所属单元中业务线的登记；多业务线 Persona 可服务多个这样的内核。A11 不更改该内核限制。全账号注销、产品 BFF 与用户登录态仍待 A12/B1；Persona 清理完成不代表逐库注销完成。
+自 2026-11-22（ADR-0060）起 `mcpcap.LoadDir` 只要求 Server 名称在业务线内唯一，Connector 按 (业务线, 名称) 缓存，多条业务线的 `xinli` 登记可以放在同一个内核（此前须分属不同单元）。全账号注销、产品 BFF 与用户登录态仍待 A12/B1；Persona 清理完成不代表逐库注销完成。

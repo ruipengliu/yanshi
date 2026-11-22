@@ -370,12 +370,13 @@ func decode(r *http.Request, v any) error {
 
 func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		BusinessLine string          `json:"business_line"`
-		EndUser      string          `json:"end_user"`
-		Agent        string          `json:"agent"`
-		AgentVersion string          `json:"agent_version"`
-		DeleteAt     json.RawMessage `json:"delete_at"`
-		TimeZone     string          `json:"time_zone"`
+		BusinessLine   string          `json:"business_line"`
+		EndUser        string          `json:"end_user"`
+		Agent          string          `json:"agent"`
+		AgentVersion   string          `json:"agent_version"`
+		DeleteAt       json.RawMessage `json:"delete_at"`
+		TimeZone       string          `json:"time_zone"`
+		IdempotencyKey json.RawMessage `json:"idempotency_key"`
 	}
 	if err := decode(r, &req); err != nil {
 		s.fail(w, err)
@@ -397,14 +398,26 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	id, err := s.Service.Create(r.Context(), service.CreateRequest{
+	var key string
+	if len(req.IdempotencyKey) > 0 {
+		if err := json.Unmarshal(req.IdempotencyKey, &key); err != nil || key == "" {
+			s.fail(w, fmt.Errorf("%w: invalid idempotency_key", service.ErrInvalid))
+			return
+		}
+	}
+	id, replay, err := s.Service.CreateWithReplay(r.Context(), service.CreateRequest{
 		BusinessLine: bl, EndUser: eu, Agent: req.Agent, AgentVersion: req.AgentVersion, DeleteAt: deleteAt, TimeZone: req.TimeZone,
+		IdempotencyKey: key,
 	})
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]string{"session_id": id})
+	status := http.StatusCreated
+	if replay {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, map[string]string{"session_id": id})
 }
 
 type runView struct {

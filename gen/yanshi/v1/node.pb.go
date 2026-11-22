@@ -1540,9 +1540,11 @@ type CreateSession struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Agent string                 `protobuf:"bytes,1,opt,name=agent,proto3" json:"agent,omitempty"`
 	// 为空时按发布配置分流。
-	AgentVersion  string `protobuf:"bytes,2,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	AgentVersion string `protobuf:"bytes,2,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
+	// 非空时创建幂等：同一 EndUser 以同一键重复创建，返回同一个 Session（docs/design/session-create-idempotency.md）。
+	IdempotencyKey string `protobuf:"bytes,3,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *CreateSession) Reset() {
@@ -1585,6 +1587,13 @@ func (x *CreateSession) GetAgent() string {
 func (x *CreateSession) GetAgentVersion() string {
 	if x != nil {
 		return x.AgentVersion
+	}
+	return ""
+}
+
+func (x *CreateSession) GetIdempotencyKey() string {
+	if x != nil {
+		return x.IdempotencyKey
 	}
 	return ""
 }
@@ -3099,10 +3108,11 @@ const file_yanshi_v1_node_proto_rawDesc = "" +
 	"\x06answer\x18\a \x01(\v2\x19.yanshi.v1.AnswerQuestionH\x00R\x06answer\x12J\n" +
 	"\x11cancel_background\x18\b \x01(\v2\x1b.yanshi.v1.CancelBackgroundH\x00R\x10cancelBackgroundB\x04\n" +
 	"\x02opJ\x04\b\t\x10\n" +
-	"R\x0fsubmit_captures\"J\n" +
+	"R\x0fsubmit_captures\"s\n" +
 	"\rCreateSession\x12\x14\n" +
 	"\x05agent\x18\x01 \x01(\tR\x05agent\x12#\n" +
-	"\ragent_version\x18\x02 \x01(\tR\fagentVersion\"v\n" +
+	"\ragent_version\x18\x02 \x01(\tR\fagentVersion\x12'\n" +
+	"\x0fidempotency_key\x18\x03 \x01(\tR\x0eidempotencyKey\"v\n" +
 	"\vSubmitInput\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12-\n" +

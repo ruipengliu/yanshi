@@ -89,6 +89,8 @@ func keygen(args []string) error {
 	if err != nil {
 		return err
 	}
+	pub.Agents.Allow = []string{"*"}
+	pub.Oneshots.Allow = []string{"*"}
 	conf, err := yaml.Marshal(pub)
 	if err != nil {
 		return err

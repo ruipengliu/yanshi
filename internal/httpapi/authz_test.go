@@ -73,7 +73,8 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 	mlog, mq := memlog.New(), memqueue.New(clk)
 	store := &session.Store{Log: mlog, Waking: mlog.Waking(mq), IDs: ids.Random(), Clock: clk}
 	svc := &service.Service{Store: store, Agents: agents,
-		Index: lifecycle.NewMemIndex(), Deletions: lifecycle.NewMemDeletions(), Janitor: memqueue.New(clk)}
+		Index: lifecycle.NewMemIndex(), Deletions: lifecycle.NewMemDeletions(), Janitor: memqueue.New(clk),
+		SessionKeySecret: []byte("yanshi-test-session-key-secret-v1")}
 	arts := &artifact.Service{Meta: artifact.NewMemMeta(), Blobs: artifact.NewMemBlobs(), IDs: ids.Random(), Clock: clk}
 	dir := node.NewMemDirectory(clk)
 	ctx := context.Background()
@@ -221,6 +222,60 @@ func (e *authzEnv) do(t *testing.T, method, path, token string, body any) (int, 
 	var buf bytes.Buffer
 	_, _ = buf.ReadFrom(resp.Body)
 	return resp.StatusCode, buf.String()
+}
+
+func TestKeyedCreateHTTP(t *testing.T) {
+	e := newAuthzEnv(t)
+	user := e.token(t, "demo/u1", time.Minute)
+	svc := e.token(t, "demo/", time.Minute)
+	otherLine := e.token(t, "other/u1", time.Minute)
+	create := func(token, body string, want int) string {
+		t.Helper()
+		code, raw := e.do(t, http.MethodPost, "/v1/sessions", token, body)
+		if code != want {
+			t.Fatalf("create = %d %s; want %d", code, raw, want)
+		}
+		if want != http.StatusOK && want != http.StatusCreated {
+			return ""
+		}
+		var out map[string]string
+		if err := json.Unmarshal([]byte(raw), &out); err != nil || out["session_id"] == "" || len(out) != 1 {
+			t.Fatalf("create body = %s, %v", raw, err)
+		}
+		return out["session_id"]
+	}
+	const request = `{"agent":"echo","idempotency_key":"intent"}`
+	id := create(user, request, http.StatusCreated)
+	if got := create(user, request, http.StatusOK); got != id {
+		t.Fatalf("user replay = %q; want %q", got, id)
+	}
+	if got := create(svc, `{"agent":"echo","end_user":"u1","idempotency_key":"intent"}`, http.StatusOK); got != id {
+		t.Fatalf("service replay = %q; want %q", got, id)
+	}
+	otherUserID := create(svc, `{"agent":"echo","end_user":"u2","idempotency_key":"intent"}`, http.StatusCreated)
+	otherLineID := create(otherLine, request, http.StatusCreated)
+	if otherUserID == id || otherLineID == id || otherUserID == otherLineID {
+		t.Fatal("idempotency key crossed an identity boundary")
+	}
+	create(user, `{"agent":"echo","end_user":"u2","idempotency_key":"intent"}`, http.StatusForbidden)
+	create(svc, `{"agent":"echo","business_line":"other","end_user":"u1","idempotency_key":"intent"}`, http.StatusForbidden)
+	create(svc, request, http.StatusBadRequest)
+	create(user, `{"agent":"echo","idempotency_key":"intent","time_zone":"UTC"}`, http.StatusConflict)
+	create(user, `{"agent":"echo","idempotency_key":"invalid key"}`, http.StatusBadRequest)
+	create(user, `{"agent":"echo","idempotency_key":""}`, http.StatusBadRequest)
+	create(user, `{"agent":"echo","idempotency_key":null}`, http.StatusBadRequest)
+	if code, body := e.do(t, http.MethodDelete, "/v1/sessions/"+id, user, nil); code != http.StatusAccepted {
+		t.Fatalf("delete = %d %s", code, body)
+	}
+	create(user, request, http.StatusNotFound)
+	if code, body := e.do(t, http.MethodDelete, "/v1/end_users/u2", svc, nil); code != http.StatusAccepted {
+		t.Fatalf("delete EndUser = %d %s", code, body)
+	}
+	create(svc, `{"agent":"echo","end_user":"u2","idempotency_key":"intent"}`, http.StatusNotFound)
+	first := create(user, `{"agent":"echo"}`, http.StatusCreated)
+	if second := create(user, `{"agent":"echo"}`, http.StatusCreated); first == second {
+		t.Fatal("unkeyed creates returned the same Session")
+	}
 }
 
 type routeCase struct {
