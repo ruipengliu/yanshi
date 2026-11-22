@@ -101,7 +101,7 @@ func (k *deletionKernel) CreateSessionWithOptions(ctx context.Context, bl, eu, a
 	k.muDelete.Lock()
 	k.deadline = opts.DeleteAt
 	k.muDelete.Unlock()
-	return k.fakeKernel.CreateSession(ctx, bl, eu, agent)
+	return k.fakeKernel.CreateSessionWithOptions(ctx, bl, eu, agent, opts)
 }
 func (k *deletionKernel) Submit(ctx context.Context, sid, id, text string) error {
 	if err := k.record("submit"); err != nil {

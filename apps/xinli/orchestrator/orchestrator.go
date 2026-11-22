@@ -12,6 +12,7 @@ import (
 	"persona/mcpserver"
 	"persona/store"
 	"xinli/account"
+	"xinli/kernel"
 	"xinli/task"
 	taskmem "xinli/task/memstore"
 )
@@ -20,7 +21,7 @@ const ProjectAgent = "xinli-project"
 const WeekAgent = "xinli-week"
 
 type Kernel interface {
-	CreateSession(context.Context, string, string, string) (string, error)
+	CreateSessionWithOptions(context.Context, string, string, string, kernel.SessionOptions) (string, error)
 	Submit(context.Context, string, string, string) error
 }
 

@@ -49,22 +49,21 @@ func workStores(t *testing.T, backend string, now func() time.Time) (store.Store
 
 type workKernel struct {
 	deletionKernel
-	createdAt time.Time
-	terminal  string
-	lost      bool
-	readFail  bool
-	unsafe    bool
-	deleted   []string
+	loseCreateResponse bool
+	terminal           string
+	lost               bool
+	readFail           bool
+	unsafe             bool
+	deleted            []string
 }
 
-func (k *workKernel) Sessions(_ context.Context, bl, eu string) ([]kernel.SessionInfo, error) {
-	out := []kernel.SessionInfo{}
-	for _, s := range k.sessions {
-		if s.bl == bl && s.eu == eu {
-			out = append(out, kernel.SessionInfo{ID: s.sid, EndUser: eu, Agent: s.agent, CreatedAt: k.createdAt})
-		}
+func (k *workKernel) CreateSessionWithOptions(ctx context.Context, bl, eu, agent string, opts kernel.SessionOptions) (string, error) {
+	sid, err := k.deletionKernel.CreateSessionWithOptions(ctx, bl, eu, agent, opts)
+	if err == nil && k.loseCreateResponse {
+		k.loseCreateResponse = false
+		return "", errors.New("lost create response")
 	}
-	return out, nil
+	return sid, err
 }
 func (k *workKernel) EmptySession(_ context.Context, sid string) (bool, error) {
 	for _, input := range k.inputs {
@@ -78,8 +77,16 @@ func (k *workKernel) DeleteSession(_ context.Context, sid, reason string) error 
 	if reason != "" {
 		return errors.New("wrong orphan reason")
 	}
-	k.deleted = append(k.deleted, sid)
-	return nil
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	for i := range k.sessions {
+		if k.sessions[i].sid == sid && !k.sessions[i].deleted {
+			k.sessions[i].deleted = true
+			k.deleted = append(k.deleted, sid)
+			return nil
+		}
+	}
+	return kernel.ErrNotFound
 }
 func (k *workKernel) SubmitInput(ctx context.Context, sid, id, text string) (kernel.InputReceipt, error) {
 	if err := k.fakeKernel.Submit(ctx, sid, id, text); err != nil {
@@ -117,19 +124,6 @@ func (s *failBinding) Update(ctx context.Context, bl, eu string, fn func(*domain
 	})
 }
 
-type loseCreated struct {
-	task.Store
-	fail bool
-}
-
-func (s *loseCreated) RecordCreated(ctx context.Context, id, sid string) error {
-	if s.fail {
-		s.fail = false
-		return errors.New("exit before recording response")
-	}
-	return s.Store.RecordCreated(ctx, id, sid)
-}
-
 func seedWorkDay(t *testing.T, s store.Store) {
 	t.Helper()
 	if err := s.Update(context.Background(), "bl", "u", func(b *domain.Book) error {
@@ -140,29 +134,45 @@ func seedWorkDay(t *testing.T, s store.Store) {
 	}
 }
 
+func TestCreationKey(t *testing.T) {
+	const want = "xc-ca325eadd974bf8c7a41f31f346d0f9dec99b2d119a1738f3bb7a83d72f3dff3"
+	if got := creationKey("work/task/1"); got != want {
+		t.Fatalf("creation key = %q, want %q", got, want)
+	}
+	if creationKey("work/task/2") == want {
+		t.Fatal("new lease generation reused the creation key")
+	}
+}
+
 func TestWorkCreationRecovery(t *testing.T) {
 	for _, backend := range []string{"memory", "pg"} {
 		for _, lostID := range []bool{false, true} {
-			t.Run(backend+map[bool]string{false: "/before_bind", true: "/before_record"}[lostID], func(t *testing.T) {
+			t.Run(backend+map[bool]string{false: "/before_bind", true: "/lost_response"}[lostID], func(t *testing.T) {
 				ctx := context.Background()
 				clock := newDeletionClock()
 				books, jobs, reopen := workStores(t, backend, clock.now)
 				seedWorkDay(t, books)
-				k := &workKernel{createdAt: clock.now(), terminal: "completed"}
+				k := &workKernel{loseCreateResponse: lostID, terminal: "completed"}
 				var firstBooks store.Store = books
-				var firstJobs task.Store = jobs
-				if lostID {
-					firstJobs = &loseCreated{Store: jobs, fail: true}
-				} else {
+				if !lostID {
 					firstBooks = &failBinding{Store: books, fail: true}
 				}
-				first := New(ctx, firstBooks, k, Options{Now: clock.now, Tasks: firstJobs})
+				first := New(ctx, firstBooks, k, Options{Now: clock.now, Tasks: jobs})
 				if _, err := first.DayInput(ctx, "bl", "u", "2026-10-28", "day", "one"); err == nil {
 					t.Fatal("failure hidden")
 				}
 				finish(t, first)
 				if len(k.inputs) != 0 || len(k.sessions) != 1 {
 					t.Fatal("content before binding")
+				}
+				original := k.sessions[0]
+				intents, err := jobs.Creations(ctx, clock.now(), 256)
+				if err != nil || len(intents) != 1 {
+					t.Fatal(intents, err)
+				}
+				intent := intents[0]
+				if (intent.Session == "") != lostID || original.opts.IdempotencyKey != creationKey(intent.ID) || !original.opts.DeleteAt.Equal(intent.DeleteAt) {
+					t.Fatal("unexpected creation intent or request", intent, original)
 				}
 				clock.advance()
 				books, jobs = reopen()
@@ -171,8 +181,23 @@ func TestWorkCreationRecovery(t *testing.T) {
 				if err := second.ScanOrphans(ctx); err != nil {
 					t.Fatal(err)
 				}
-				if len(k.deleted) != 1 || k.deleted[0] != "ses_1" {
-					t.Fatal("orphan not deleted", k.deleted)
+				wantCreates := 1
+				if lostID {
+					wantCreates++
+				}
+				if len(k.calls) != wantCreates {
+					t.Fatal("unexpected create requests", k.calls)
+				}
+				if len(k.sessions) != 1 || len(k.deleted) != 1 || k.deleted[0] != original.sid {
+					t.Fatal("original orphan not deleted", k.sessions, k.deleted)
+				}
+				if intents, err := jobs.Creations(ctx, clock.now().Add(time.Hour), 256); err != nil || len(intents) != 0 {
+					t.Fatal("creation intent remains after cleanup", intents, err)
+				}
+				if lostID {
+					if _, err := k.CreateSessionWithOptions(ctx, original.bl, original.eu, original.agent, original.opts); !errors.Is(err, kernel.ErrNotFound) {
+						t.Fatal("deleted creation key was reusable", err)
+					}
 				}
 				if sid, err := second.DayInput(ctx, "bl", "u", "2026-10-28", "day", "one"); err != nil || sid != "ses_2" {
 					t.Fatal(sid, err)
@@ -185,19 +210,86 @@ func TestWorkCreationRecovery(t *testing.T) {
 				}); err != nil {
 					t.Fatal(err)
 				}
-				intents, err := jobs.Creations(ctx, clock.now().Add(time.Hour), 256)
-				if err != nil {
-					t.Fatal(err)
-				}
-				want := 0
-				if lostID {
-					want = 1
-				}
-				if len(intents) != want {
-					t.Fatal("creation recovery record", len(intents))
-				}
 			})
 		}
+	}
+}
+
+func TestScanOrphansWithoutSession(t *testing.T) {
+	for _, mode := range []string{"expired", "deleted", "missing", "retry"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := context.Background()
+			clock := newDeletionClock()
+			books, jobs, _ := workStores(t, "memory", clock.now)
+			seedWorkDay(t, books)
+			k := &workKernel{loseCreateResponse: mode != "missing"}
+			if mode == "missing" {
+				k.fail = "create"
+			}
+			o := New(ctx, books, k, Options{Now: clock.now, Tasks: jobs})
+			defer finish(t, o)
+			if _, err := o.DayInput(ctx, "bl", "u", "2026-10-28", "day", "one"); err == nil {
+				t.Fatal("expected a failed create request")
+			}
+			intents, err := jobs.Creations(ctx, clock.now(), 256)
+			if err != nil || len(intents) != 1 || intents[0].Session != "" {
+				t.Fatal("expected a creation intent without a session", intents, err)
+			}
+			intent := intents[0]
+			if intent.DeleteAt.IsZero() {
+				t.Fatal("expected a day creation deadline")
+			}
+			k.fail = ""
+			clock.advance()
+
+			wantCalls := 2
+			wantFence := mode == "missing" || mode == "retry"
+			wantDeletes := 1
+			switch mode {
+			case "expired":
+				clock.mu.Lock()
+				clock.at = intent.DeleteAt
+				clock.mu.Unlock()
+				wantCalls, wantDeletes = 1, 0
+			case "deleted":
+				if err := k.DeleteSession(ctx, "ses_1", ""); err != nil {
+					t.Fatal(err)
+				}
+			case "retry":
+				k.fail = "create"
+				if err := o.ScanOrphans(ctx); err == nil {
+					t.Fatal("expected the scan to return the create error")
+				}
+				pending, err := jobs.Creations(ctx, clock.now(), 256)
+				if err != nil || len(pending) != 1 || pending[0].Session != "" || !pending[0].CheckedAt.Equal(clock.now()) {
+					t.Fatal("creation intent was not deferred", pending, err)
+				}
+				k.fail = ""
+				if err := o.ScanOrphans(ctx); err != nil || len(k.calls) != 2 {
+					t.Fatal("scan retried during backoff", k.calls, err)
+				}
+				clock.advance()
+				wantCalls = 3
+			}
+
+			if err := o.ScanOrphans(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if len(k.calls) != wantCalls || len(k.deleted) != wantDeletes || len(k.sessions) != 1 {
+				t.Fatal("unexpected kernel calls or sessions", k.calls, k.deleted, k.sessions)
+			}
+			if pending, err := jobs.Creations(ctx, clock.now().Add(time.Hour), 256); err != nil || len(pending) != 0 {
+				t.Fatal("creation intent remains after scan", pending, err)
+			}
+			if err := books.View(ctx, "bl", "u", func(b *domain.Book) error {
+				if b.SessionKnown("ses_1") != wantFence || b.BusinessDay("2026-10-28").Session != "" {
+					t.Fatal("unexpected Persona fence or binding")
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
@@ -209,7 +301,7 @@ func TestWorkCommandRetirement(t *testing.T) {
 				clock := newDeletionClock()
 				books, jobs, reopen := workStores(t, backend, clock.now)
 				seedWorkDay(t, books)
-				k := &workKernel{createdAt: clock.now()}
+				k := &workKernel{}
 				first := New(ctx, books, k, Options{Now: clock.now, Tasks: jobs})
 				old, err := first.DayInput(ctx, "bl", "u", "2026-10-28", "exchange", "one")
 				if err != nil {

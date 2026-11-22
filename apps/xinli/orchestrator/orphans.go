@@ -11,7 +11,6 @@ import (
 )
 
 type orphanKernel interface {
-	Sessions(context.Context, string, string) ([]kernel.SessionInfo, error)
 	EmptySession(context.Context, string) (bool, error)
 	DeleteSession(context.Context, string, string) error
 	Deletion(context.Context, string, string) (kernel.Deletion, error)
@@ -39,27 +38,28 @@ func (o *Orchestrator) ScanOrphans(ctx context.Context) error {
 }
 
 func (o *Orchestrator) cleanCreation(ctx context.Context, k orphanKernel, intent task.Creation) error {
-	if intent.Session != "" {
-		done, err := o.cleanOrphan(ctx, k, intent, intent.Session)
-		if err == nil && done {
+	if intent.Session == "" {
+		// 带原绝对期限创建的 Session 由内核到期删除。
+		if !intent.DeleteAt.IsZero() && !intent.DeleteAt.After(o.now()) {
 			return o.tasks.ForgetCreation(ctx, intent.ID)
 		}
-		return err
-	}
-	list, err := k.Sessions(ctx, intent.BusinessLine, intent.EndUser)
-	if err != nil {
-		return err
-	}
-	for _, candidate := range list {
-		if candidate.Agent != intent.Agent || candidate.CreatedAt.After(o.now().Add(-o.orphanGrace)) {
-			continue
+		sid, err := o.createWorkSession(ctx, intent)
+		if errors.Is(err, kernel.ErrNotFound) {
+			return o.tasks.ForgetCreation(ctx, intent.ID)
 		}
-		if _, err := o.cleanOrphan(ctx, k, intent, candidate.ID); err != nil {
+		if err != nil {
 			return err
 		}
+		if err := o.tasks.RecordCreated(ctx, intent.ID, sid); err != nil {
+			return err
+		}
+		intent.Session = sid
 	}
-	// 无回包的创建没有可证明的最终结束时刻。保留无正文扫描凭据，防止迟到提交产生永久孤儿。
-	return nil
+	done, err := o.cleanOrphan(ctx, k, intent, intent.Session)
+	if err == nil && done {
+		return o.tasks.ForgetCreation(ctx, intent.ID)
+	}
+	return err
 }
 
 func (o *Orchestrator) cleanOrphan(ctx context.Context, k orphanKernel, intent task.Creation, sid string) (bool, error) {

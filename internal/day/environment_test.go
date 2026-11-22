@@ -261,7 +261,8 @@ func newEnvironmentConfigured(t *testing.T, ark, multiple bool, personaBase stri
 		},
 	}}
 	e.core = app.NewCore(stores, app.Options{Clock: e.control, IDs: ids.Sequential, Agents: agents, Model: gateway, MCP: connector,
-		Blobs: artifact.NewMemBlobs(), NodeAuth: node.TokenAuth{Verifier: verifier}, Local: local, LeaseTTL: 5 * time.Second, DefaultTimeout: time.Minute})
+		Blobs: artifact.NewMemBlobs(), NodeAuth: node.TokenAuth{Verifier: verifier}, Local: local, LeaseTTL: 5 * time.Second, DefaultTimeout: time.Minute,
+		SessionKeySecret: []byte("yanshi-day-session-key-secret-v1")})
 	connector.Artifacts = e.core.Artifacts
 	e.kernelHTTP = &httpTrace{}
 	e.kernel = httptest.NewServer(e.kernelHTTP.handler((&httpapi.Server{Auth: verifier, Service: e.core.Service, Outbox: stores.Outbox, OutboxWait: 100 * time.Millisecond,

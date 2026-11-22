@@ -3,12 +3,14 @@ package kernel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHTTPContract(t *testing.T) {
@@ -79,6 +81,45 @@ func TestHTTPContract(t *testing.T) {
 			}
 			if calls != 4 {
 				t.Fatalf("calls: %d", calls)
+			}
+		})
+	}
+}
+
+func TestIdempotentSessionCreation(t *testing.T) {
+	deadline := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	opts := SessionOptions{IdempotencyKey: "xc-example", DeleteAt: deadline}
+	for _, status := range []int{http.StatusCreated, http.StatusOK, http.StatusNotFound} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/v1/sessions" {
+					t.Errorf("request: %s %s", r.Method, r.URL.Path)
+				}
+				var body map[string]string
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				want := map[string]string{"business_line": "bl", "end_user": "u", "agent": "xinli-day",
+					"delete_at": deadline.Format(time.RFC3339), "idempotency_key": opts.IdempotencyKey}
+				if !reflect.DeepEqual(body, want) {
+					t.Errorf("create fields: %v", body)
+				}
+				w.WriteHeader(status)
+				if status == http.StatusNotFound {
+					_, _ = fmt.Fprint(w, `{"error":"not found"}`)
+					return
+				}
+				_, _ = fmt.Fprint(w, `{"session_id":"ses_1"}`)
+			}))
+			defer server.Close()
+			c := &Client{BaseURL: server.URL}
+			sid, err := c.CreateSessionWithOptions(context.Background(), "bl", "u", "xinli-day", opts)
+			if status == http.StatusNotFound {
+				if sid != "" || !errors.Is(err, ErrNotFound) {
+					t.Fatalf("deleted key: %q %v", sid, err)
+				}
+			} else if sid != "ses_1" || err != nil {
+				t.Fatalf("create: %q %v", sid, err)
 			}
 		})
 	}

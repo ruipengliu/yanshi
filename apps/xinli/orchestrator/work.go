@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"time"
 
@@ -13,6 +15,19 @@ import (
 
 func workLease(t task.Task) domain.WorkLease {
 	return domain.WorkLease{Task: t.TaskID, Sequence: t.Sequence, Generation: t.LeaseGeneration, Until: t.LeaseUntil}
+}
+
+// 意图 ID 含有内核幂等键不接受的字符，编码摘要也能限制键长。
+func creationKey(id string) string {
+	sum := sha256.Sum256([]byte(id))
+	return "xc-" + hex.EncodeToString(sum[:])
+}
+
+func (o *Orchestrator) createWorkSession(ctx context.Context, intent task.Creation) (string, error) {
+	return o.kernel.CreateSessionWithOptions(ctx, intent.BusinessLine, intent.EndUser, intent.Agent, kernel.SessionOptions{
+		DeleteAt:       intent.DeleteAt,
+		IdempotencyKey: creationKey(intent.ID),
+	})
 }
 
 func (o *Orchestrator) ensureWork(ctx context.Context, t task.Task, agent string) (string, error) {
@@ -61,16 +76,7 @@ func (o *Orchestrator) ensureWork(ctx context.Context, t task.Task, agent string
 	if err := o.tasks.BeginCreation(ctx, t, intent, now); err != nil {
 		return "", err
 	}
-	var sid string
-	if expected.DeleteAt.IsZero() {
-		sid, err = o.kernel.CreateSession(ctx, t.BusinessLine, t.EndUser, agent)
-	} else if k, ok := o.kernel.(interface {
-		CreateSessionWithOptions(context.Context, string, string, string, kernel.SessionOptions) (string, error)
-	}); ok {
-		sid, err = k.CreateSessionWithOptions(ctx, t.BusinessLine, t.EndUser, agent, kernel.SessionOptions{DeleteAt: expected.DeleteAt})
-	} else {
-		return "", task.ErrConfiguration
-	}
+	sid, err := o.createWorkSession(ctx, intent)
 	if err != nil {
 		return "", err
 	}

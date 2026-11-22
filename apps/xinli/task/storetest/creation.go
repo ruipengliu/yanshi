@@ -43,6 +43,9 @@ func creationTests(t *testing.T, factory Factory) {
 	if err := s.RecordCreated(ctx, intent.ID, "orphan"); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.RecordCreated(ctx, intent.ID, "orphan"); err != nil {
+		t.Fatal("same session rejected on replay", err)
+	}
 	if err := s.RecordCreated(ctx, intent.ID, "different"); !errors.Is(err, task.ErrInvalid) {
 		t.Fatal(err)
 	}

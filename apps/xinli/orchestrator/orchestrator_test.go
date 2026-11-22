@@ -17,7 +17,11 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-type created struct{ bl, eu, agent, sid string }
+type created struct {
+	bl, eu, agent, sid string
+	opts               kernel.SessionOptions
+	deleted            bool
+}
 type submission struct{ sid, id, text string }
 type fakeKernel struct {
 	mu       sync.Mutex
@@ -29,7 +33,10 @@ type fakeKernel struct {
 	failText string
 }
 
-func (k *fakeKernel) CreateSession(ctx context.Context, bl, eu, agent string) (string, error) {
+func (k *fakeKernel) CreateSessionWithOptions(ctx context.Context, bl, eu, agent string, opts kernel.SessionOptions) (string, error) {
+	if opts.IdempotencyKey == "" {
+		return "", errors.New("missing creation key")
+	}
 	if k.started != nil {
 		select {
 		case k.started <- struct{}{}:
@@ -45,8 +52,20 @@ func (k *fakeKernel) CreateSession(ctx context.Context, bl, eu, agent string) (s
 	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	for _, s := range k.sessions {
+		if s.bl != bl || s.eu != eu || s.opts.IdempotencyKey != opts.IdempotencyKey {
+			continue
+		}
+		if s.deleted {
+			return "", kernel.ErrNotFound
+		}
+		if s.agent != agent || !s.opts.DeleteAt.Equal(opts.DeleteAt) || s.opts.TimeZone != opts.TimeZone {
+			return "", errors.New("different creation parameters")
+		}
+		return s.sid, nil
+	}
 	sid := fmt.Sprintf("ses_%d", len(k.sessions)+1)
-	k.sessions = append(k.sessions, created{bl, eu, agent, sid})
+	k.sessions = append(k.sessions, created{bl: bl, eu: eu, agent: agent, sid: sid, opts: opts})
 	return sid, nil
 }
 
@@ -129,7 +148,7 @@ func TestChangesetsAndCollect(t *testing.T) {
 		"exchanges": map[string]any{"create": []any{map[string]any{"from": "#2.0", "to": "#2.1", "title": "报价", "summary": "约好报价", "projects": []any{map[string]string{"match": "new", "name": "装修"}}}}},
 	})
 	call("file_day", map[string]any{"day": map[string]string{"headline": "装修定稿"}})
-	// CreateSession 仍被阻塞时 MCP 已返回，证明通知不等待归集网络请求。
+	// 创建 Session 仍被阻塞时 MCP 已返回，证明通知不等待归集网络请求。
 	select {
 	case <-k.started:
 	case <-ctx.Done():

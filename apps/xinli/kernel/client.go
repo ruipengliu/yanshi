@@ -25,19 +25,21 @@ func (c *Client) CreateSession(ctx context.Context, businessLine, endUser, agent
 }
 
 type SessionOptions struct {
-	TimeZone string
-	DeleteAt time.Time
+	TimeZone       string
+	DeleteAt       time.Time
+	IdempotencyKey string
 }
 
 func (c *Client) CreateSessionWithOptions(ctx context.Context, businessLine, endUser, agent string, opts SessionOptions) (string, error) {
 	ctx = WithBusinessLine(ctx, businessLine)
 	in := struct {
-		TimeZone     string     `json:"time_zone,omitempty"`
-		BusinessLine string     `json:"business_line"`
-		EndUser      string     `json:"end_user"`
-		Agent        string     `json:"agent"`
-		DeleteAt     *time.Time `json:"delete_at,omitempty"`
-	}{BusinessLine: businessLine, EndUser: endUser, Agent: agent, TimeZone: opts.TimeZone}
+		TimeZone       string     `json:"time_zone,omitempty"`
+		BusinessLine   string     `json:"business_line"`
+		EndUser        string     `json:"end_user"`
+		Agent          string     `json:"agent"`
+		DeleteAt       *time.Time `json:"delete_at,omitempty"`
+		IdempotencyKey string     `json:"idempotency_key,omitempty"`
+	}{BusinessLine: businessLine, EndUser: endUser, Agent: agent, TimeZone: opts.TimeZone, IdempotencyKey: opts.IdempotencyKey}
 	if !opts.DeleteAt.IsZero() {
 		in.DeleteAt = &opts.DeleteAt
 	}
