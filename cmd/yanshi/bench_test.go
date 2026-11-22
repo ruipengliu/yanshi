@@ -153,7 +153,7 @@ func TestBenchConcurrentArrivalsDoNotWaitForCompletion(t *testing.T) {
 }
 
 func TestGatewayBenchUsesGuard(t *testing.T) {
-	gw := gateway(slog.New(slog.NewTextHandler(io.Discard, nil)), model.Limits{MaxConcurrency: 1}, nil)
+	gw := gateway(slog.New(slog.NewTextHandler(io.Discard, nil)), model.Limits{MaxConcurrency: 1}, nil, nil)
 	started := make(chan struct{})
 	release := make(chan struct{})
 	done := make(chan struct{})

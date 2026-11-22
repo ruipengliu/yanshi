@@ -79,7 +79,7 @@ func (g *Guard) init() {
 			g.gate = &admission{limit: g.Limits.MaxConcurrency, minBackground: g.Limits.MinBackground}
 		}
 		if g.Limits.RPS > 0 {
-			g.rate = &tokenBucket{rate: g.Limits.RPS, burst: max(g.Limits.RPS, 1)}
+			g.rate = &tokenBucket{rate: g.Limits.RPS, burst: max(g.Limits.RPS, 1), now: time.Now}
 		}
 		if g.sleep == nil {
 			g.sleep = sleepCtx
@@ -203,18 +203,19 @@ func (g *Guard) retry(ctx context.Context, modelID string, call func(context.Con
 
 func (g *Guard) attempt(ctx context.Context, modelID string, call func(context.Context) (bool, error)) (bool, error) {
 	start := time.Now()
-	if g.rate != nil {
-		if err := g.rate.wait(ctx, g.sleep); err != nil {
-			return false, err
-		}
-	}
 	class := classOf(ctx)
+	// 先按类别交付并发名额，避免仍在并发门外排队的调用先消耗 RPS 令牌。
 	if g.gate != nil {
 		release, err := g.gate.acquire(ctx, class)
 		if err != nil {
 			return false, err
 		}
 		defer release()
+	}
+	if g.rate != nil {
+		if err := g.rate.wait(ctx, g.sleep); err != nil {
+			return false, err
+		}
 	}
 	metrics.ModelAdmissionWait.WithLabelValues(g.Name, class.String()).Observe(metrics.Since(start))
 	actx := ctx
@@ -371,12 +372,13 @@ type tokenBucket struct {
 	rate, burst float64
 	tokens      float64
 	last        time.Time
+	now         func() time.Time
 }
 
 func (b *tokenBucket) wait(ctx context.Context, sleep func(context.Context, time.Duration) error) error {
 	for {
 		b.mu.Lock()
-		now := time.Now()
+		now := b.now()
 		if b.last.IsZero() {
 			b.tokens = b.burst
 		} else {

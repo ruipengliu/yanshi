@@ -54,6 +54,8 @@ worker        worker-bg     sandbox-ctl        janitor
 
 每个角色只是 `serve` 的一个子集：模拟测试与单进程部署运行全部角色，角色之间不新增任何契约。
 
+`serve -worker-business-lines a,b` 让本进程的全部 Worker 只认领业务线 `a` 和 `b` 的工作。列表以逗号分隔，默认空表示不限业务线。该参数与 `-worker-pool`、`-interactive-workers` 一起使用，交互 Worker 同时按业务线和优先级筛选。部署时每条业务线须至少有一个进程认领它的工作，并有能承接长任务的 Worker。
+
 ## 4. 基础设施
 
 - **PostgreSQL。** 每个分片一个主库加同步备库；已确认的 Event 不能因故障切换丢失或 seq 倒退，所以同步复制是硬要求，旧主须被隔离（fencing）后才允许新主接受写入。连接分两类：SQL 经 PgBouncer 事务模式复用；`LISTEN` 与迁移锁必须直连（事务池不保留会话状态），因此 serve 需要两个 DSN（§6）。故障切换后 `pg.Notifier` 重连、清空缓存并唤醒全部等待者，日志末尾对账补上期间的事件。
@@ -89,7 +91,7 @@ worker        worker-bg     sandbox-ctl        janitor
 
 - 扩缩信号：模型准入等待（`yanshi_model_admission_wait_seconds`）、连接数（`yanshi_nodes_connected`、`yanshi_live_peer_streams`）、握手拒绝（`yanshi_handshakes_rejected_total`）、认领结果（`yanshi_queue_claims_total`）。队列等待与积压：`yanshi_queue_wait_seconds{queue, priority}`（认领时观察，工作变为可认领到被认领的时长），`yanshi_queue_ready{queue, business_line, priority}` 与 `yanshi_queue_oldest_wait_seconds`（Janitor 所在进程每 15 秒统计）。它们也是 Submit 准入阈值的依据（`-admission-max-wait`，评审 §8.4 第 5 项）。
 - 单元容量上限由 PostgreSQL 分片数与通知投递次数决定（评审 §8.3）。生产单元上线即分 8 片（每片 128 槽、一个独立 PostgreSQL 实例，初期可多片共用主机）；扩容是把整片搬到新主机，即为该片在新主机建同步备库后按 §10 的步骤提升，槽位表不变，只冻结该片（[ADR-0051](../adr/0051-shard-slots-and-id-location.md) §5.4）。8 片都已独占实例仍不够时，才需要按槽位搬行的迁槽工具；容量矩阵与准入阈值由评审 §8.4 第 4 项的压测给出，在目标环境实测后填入部署清单。
-- 模型并发是全局约束：`-model-concurrency`、`-model-rps` 按账号上限除以持有该提供商的进程数配置（[模型调用](./model-calls.md) §4）；弹性扩容时须随副本数联动，或实现共享令牌服务。
+- 模型账号的并发与 RPS 在进程间静态分摊。`-model-concurrency`、`-model-rps` 按账号上限除以持有该提供商的进程数配置，可用 `-model-limit` 按提供商覆盖（[模型调用](./model-calls.md) §5）。弹性扩容时须随副本数联动。
 
 Janitor 的 Sweep 同时把 Horizon 内的远期停放移回工作队列（[M7 §5.4](./m7-kernel-primitives.md#54-语义)）。默认 Horizon 一小时、Sweep 每分钟；每批 1000 项，每批重新取当前时间，直到不足一批或时间预算用尽。一次 Sweep 的全部队列迁移共用 `Janitor.PromoteBudget`，默认 SweepEvery 的一半（30 秒），可通过字段设置；在批次边界检查预算，允许已开始的一批完成。Horizon 须覆盖多轮扫描与重试。Janitor 停摆超过 Horizon，或积压长期超过预算内的迁移能力，会导致定时晚到；恢复后继续迁移，不会提前执行。
 

@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"yanshi/internal/clock"
 )
 
 // scripted 依次返回 errs 中的错误（nil 表示成功）；emit 为真时失败前先输出一段增量。
@@ -211,8 +213,65 @@ func TestGuardLimitsConcurrency(t *testing.T) {
 	assertAdmissionEmpty(t, g.gate)
 }
 
+func TestGuardQueuesByClassBeforeWaitingForRate(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	defer func() {
+		cancel()
+		wg.Wait()
+	}()
+	clk := clock.NewFake(time.Unix(0, 0))
+	waitingForToken := make(chan admissionClass, 2)
+	called := make(chan admissionClass, 2)
+	g := &Guard{
+		Name:   "rate-after-admission",
+		Limits: Limits{MaxConcurrency: 1, RPS: 1},
+		Provider: providerFunc(func(ctx context.Context, _ *Request, _ func(Delta)) (*Response, error) {
+			called <- classOf(ctx)
+			return &Response{}, nil
+		}),
+		sleep: func(ctx context.Context, d time.Duration) error {
+			waitingForToken <- classOf(ctx)
+			clk.Advance(d)
+			return ctx.Err()
+		},
+	}
+	g.init()
+	g.rate.now = clk.Now
+	// 模拟一个已经用掉令牌、仍占着唯一并发名额的调用。
+	held := holdAdmission(t, g.gate, interactive)
+	defer held()
+	if err := g.rate.wait(ctx, g.sleep); err != nil {
+		t.Fatal(err)
+	}
+	for i, callCtx := range []context.Context{WithBackground(ctx), ctx} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := g.Generate(callCtx, &Request{}, nil); err != nil && ctx.Err() == nil {
+				t.Error(err)
+			}
+		}()
+		waitQueued(t, g.gate, i+1)
+		if len(waitingForToken) > 0 {
+			t.Fatal("a queued call reached the rate limiter before admission")
+		}
+	}
+	held()
+	wg.Wait()
+	if len(waitingForToken) != 2 || len(called) != 2 {
+		t.Fatalf("got %d token waits and %d calls, want two of each", len(waitingForToken), len(called))
+	}
+	for _, want := range []admissionClass{interactive, backgroundRun} {
+		if waiting, started := <-waitingForToken, <-called; waiting != want || started != want {
+			t.Fatalf("token wait from %v, call from %v, want both from %v", waiting, started, want)
+		}
+	}
+	assertAdmissionEmpty(t, g.gate)
+}
+
 func TestTokenBucketPacesCalls(t *testing.T) {
-	b := &tokenBucket{rate: 100, burst: 5}
+	b := &tokenBucket{rate: 100, burst: 5, now: time.Now}
 	start := time.Now()
 	for range 15 {
 		if err := b.wait(context.Background(), sleepCtx); err != nil {

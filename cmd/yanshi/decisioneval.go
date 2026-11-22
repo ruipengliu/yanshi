@@ -62,7 +62,7 @@ func decisionEvalCmd(args []string) error {
 		d = decision.InjectionRules{}
 	case strings.Contains(*check, "/"):
 		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-		gw := gateway(logger, model.Limits{}, nil)
+		gw := gateway(logger, model.Limits{}, nil, nil)
 		d = decision.Guarded{Timeout: *timeout, Decider: &decision.Logits{Provider: gw, Model: *check,
 			Prompts: map[string]string{decision.ToolResultInjection: injectionPrompt}}}
 	default:

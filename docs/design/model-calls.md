@@ -10,7 +10,7 @@
 
 ## 2. 做法
 
-每个真实提供商及压测用的 `bench` 提供商在网关中由 `model.Guard` 包装，各自计数，使用同一组 `serve -model-*` 参数；`echo`、`script` 保持原路径：
+每个真实提供商及压测用的 `bench` 提供商在网关中由 `model.Guard` 包装，各自计数。下表列出 `serve -model-*` 的全局默认配置，提供商可以覆盖自己的准入参数（§5）。`echo`、`script` 直接由网关路由。
 
 | 约束 | 默认 | 配置 |
 |---|---|---|
@@ -48,8 +48,9 @@
 - **多模态嵌入**（`doubao-embedding-vision-*`）只提供 `/embeddings/multimodal`：一次请求的全部输入合成一个向量，所以每段文本单独请求（并发 4）。2048 维。Memory 目前只嵌入文本。
 - 流式输出中的思考过程（`reasoning_content`）以单独的增量推送给订阅者，随回复写入 `AssistantMessage.reasoning`（ADR-0034）。它不发回给模型。思考的 token 计入输出用量，另记在 `Usage.reasoning_tokens` 中。
 
-## 5. 遗留
+## 5. 提供商准入配置与边界
 
-- 上限目前对每个提供商取同一组值。提供商之间的容量差别大时（如 TokenHub 与私有化 vLLM），改为按提供商配置。
-- RPS 令牌桶仍由四类调用共享，取令牌在并发准入之前：RPS 成为瓶颈时，低优先级调用可能先取走令牌。优先级与最低份额只保证并发名额的交付，验收结论要求 RPS 有余量。
+- `serve -model-limit <provider>:<key>=<value>[,<key>=<value>…]` 可重复，支持 `ark`、`tokenhub`、`local`、`bench`。例如 `-model-limit ark:concurrency=16,rps=8 -model-limit local:concurrency=1,min-background=0`。键为 `concurrency`、`min-background`、`rps`。未覆盖的值取全局参数，同一提供商的同一键以最后一次为准。全局和提供商均未显式设置 `min-background` 时，按该提供商的并发上限推导默认份额。
+- 同时限制并发和 RPS 时，调用先按类别取得并发名额，再持有名额等待令牌。并发门外的调用尚不能消耗令牌，已有名额的调用共用提供商的令牌桶。RPS 成为瓶颈时，部分名额会用在等待令牌上。只限制 RPS 时，四类调用直接竞争令牌，令牌桶无类别优先级。
+- 单次调用的启动校验读取全局 `-model-concurrency`。部署按提供商覆盖并发时，仍须满足 §2 的单次调用容量约束。
 - 准入与单次调用的按键上限仍是单进程的。多进程须按持有提供商的进程数静态分摊账号并发与 RPS，并分摊单次调用上限；扩缩容时联动配置，不能把每个进程的最低份额当成全局保证。共享令牌服务尚未实现。

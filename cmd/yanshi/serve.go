@@ -6,12 +6,14 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -185,16 +187,75 @@ func configureModelLimits(l model.Limits, minBackgroundSet bool) (model.Limits, 
 	return l, l.Validate()
 }
 
+func configureProviderModelLimits(defaults model.Limits, minBackgroundSet bool, specs []string) (map[string]model.Limits, error) {
+	guarded := []string{"bench", "ark", "tokenhub", "local"}
+	limits := make(map[string]model.Limits)
+	providerMinSet := make(map[string]bool)
+	for _, spec := range specs {
+		name, fields, ok := strings.Cut(spec, ":")
+		if !ok {
+			return nil, fmt.Errorf("-model-limit %q: want provider:key=value[,key=value...]", spec)
+		}
+		if !slices.Contains(guarded, name) {
+			return nil, fmt.Errorf("-model-limit: unknown guarded provider %q (bench | ark | tokenhub | local)", name)
+		}
+		l, exists := limits[name]
+		if !exists {
+			l = defaults
+		}
+		for _, field := range strings.Split(fields, ",") {
+			key, value, ok := strings.Cut(field, "=")
+			if !ok || value == "" {
+				return nil, fmt.Errorf("-model-limit %s: want key=value, got %q", name, field)
+			}
+			var err error
+			switch key {
+			case "concurrency":
+				l.MaxConcurrency, err = strconv.Atoi(value)
+				if err != nil || l.MaxConcurrency < 0 {
+					return nil, fmt.Errorf("-model-limit %s: concurrency must be a non-negative integer, got %q", name, value)
+				}
+			case "min-background":
+				l.MinBackground, err = strconv.Atoi(value)
+				if err != nil {
+					return nil, fmt.Errorf("-model-limit %s: min-background must be an integer, got %q", name, value)
+				}
+				providerMinSet[name] = true
+			case "rps":
+				l.RPS, err = strconv.ParseFloat(value, 64)
+				if err != nil || l.RPS < 0 || math.IsNaN(l.RPS) || math.IsInf(l.RPS, 0) {
+					return nil, fmt.Errorf("-model-limit %s: rps must be a finite non-negative number, got %q", name, value)
+				}
+			default:
+				return nil, fmt.Errorf("-model-limit %s: unknown key %q", name, key)
+			}
+		}
+		limits[name] = l
+	}
+	for _, name := range guarded {
+		if l, ok := limits[name]; ok {
+			// 合并完同一提供商的所有参数后，才按最终并发推导默认份额。
+			resolved, err := configureModelLimits(l, minBackgroundSet || providerMinSet[name])
+			if err != nil {
+				return nil, fmt.Errorf("-model-limit %s: %w", name, err)
+			}
+			limits[name] = resolved
+		}
+	}
+	return limits, nil
+}
+
 // gateway 按环境变量配置模型供应商；真实提供商与 bench 经 model.Guard 施加 limits（每个提供商各自计数）：
 //
 //	echo   始终可用
+//	bench  始终可用：压测用的脚本化延迟
 //	script 始终可用：按输入中的命令调用工具（调试控制台与测试，internal/model/script）
 //	ark       ARK_API_KEY（可选 ARK_BASE_URL）
 //	tokenhub  TOKENHUB_API_KEY（可选 TOKENHUB_BASE_URL），腾讯云 TokenHub 的 OpenAI 兼容接口
 //	local  YANSHI_LOCAL_BASE_URL（可选 YANSHI_LOCAL_API_KEY），私有化 OpenAI 兼容推理服务
 //
 // injector 非 nil 时（serve -faults）每个提供商都包上故障注入；真实提供商的注入点在 Guard 之内，注入的错误同样经过退避重试。
-func gateway(logger *slog.Logger, limits model.Limits, injector *faults.Injector) *model.Gateway {
+func gateway(logger *slog.Logger, defaults model.Limits, providerLimits map[string]model.Limits, injector *faults.Injector) *model.Gateway {
 	wrap := func(p model.Provider) model.Provider {
 		if injector == nil {
 			return p
@@ -202,11 +263,19 @@ func gateway(logger *slog.Logger, limits model.Limits, injector *faults.Injector
 		return faults.Model{Next: p, Injector: injector}
 	}
 	gw := model.NewGateway()
+	registerGuard := func(name string, p model.Provider) model.Limits {
+		limits, ok := providerLimits[name]
+		if !ok {
+			limits = defaults
+		}
+		gw.Register(name, &model.Guard{Name: name, Provider: wrap(p), Limits: limits})
+		return limits
+	}
 	gw.Register("echo", wrap(echo.Provider{}))
-	gw.Register("bench", &model.Guard{Name: "bench", Provider: wrap(bench.Provider{}), Limits: limits})
+	registerGuard("bench", bench.Provider{})
 	gw.Register("script", wrap(script.Provider{}))
 	register := func(name, base, key string) {
-		gw.Register(name, &model.Guard{Name: name, Provider: wrap(&openaicompat.Provider{BaseURL: base, APIKey: key}), Limits: limits})
+		limits := registerGuard(name, &openaicompat.Provider{BaseURL: base, APIKey: key})
 		logger.Info("model provider configured", "provider", name, "base_url", base,
 			"max_concurrency", limits.MaxConcurrency, "min_background", limits.MinBackground, "rps", limits.RPS, "timeout", limits.Timeout)
 	}
@@ -267,6 +336,7 @@ func serve(args []string) error {
 	workers := fs.Int("workers", 4, "Worker 数量")
 	interactiveWorkers := fs.Int("interactive-workers", -1, "其中只认领交互工作的 Worker 数（ADR-0029）：长任务占满其余 Worker 时问答仍有 Worker 可用；默认为 Worker 数的四分之一")
 	workerPool := fs.String("worker-pool", "mixed", "本进程 Worker 的池（ADR-0029）：mixed（按 -interactive-workers 划分）| interactive（全部只认领交互工作，长任务移交给其他进程）| any（全部认领任意工作）")
+	workerBusinessLines := fs.String("worker-business-lines", "", "本进程全部 Worker 认领的业务线，逗号分隔；为空时不限")
 	drainTimeout := fs.Duration("drain-timeout", 20*time.Second, "优雅停机时等待进行中的这一步（如模型调用）完成的上限，之后移交 Run；应小于编排系统的终止宽限期")
 	storageKind := fs.String("storage", "memory", "存储：memory | postgres")
 	dsn := fs.String("pg-dsn", envOr("YANSHI_PG_DSN", devPGDSN), "PostgreSQL 地址（storage=postgres）；可以是 PgBouncer 的事务池")
@@ -307,6 +377,8 @@ func serve(args []string) error {
 	fs.IntVar(&modelLimits.MaxConcurrency, "model-concurrency", 0, "本进程对每个模型提供商的并发调用上限，0 表示不限；排队时交互调用优先（ADR-0029）")
 	fs.IntVar(&modelLimits.MinBackground, "model-min-background", 0, "后台 Run 的最低在途份额，默认 ceil(model-concurrency/8)，不限并发时为 0；须小于总并发，只在释放时回填")
 	fs.Float64Var(&modelLimits.RPS, "model-rps", 0, "本进程对每个模型提供商每秒发起调用的上限，0 表示不限")
+	var modelLimitSpecs multiFlag
+	fs.Var(&modelLimitSpecs, "model-limit", "覆盖指定提供商的准入参数，格式 provider:key=value[,key=value...]（可重复）；键为 concurrency、min-background、rps")
 	_ = fs.Parse(args)
 	minBackgroundSet := false
 	fs.Visit(func(f *flag.Flag) {
@@ -318,6 +390,20 @@ func serve(args []string) error {
 	modelLimits, err = configureModelLimits(modelLimits, minBackgroundSet)
 	if err != nil {
 		return err
+	}
+	providerLimits, err := configureProviderModelLimits(modelLimits, minBackgroundSet, modelLimitSpecs)
+	if err != nil {
+		return err
+	}
+	var workerLines []string
+	if *workerBusinessLines != "" {
+		workerLines = strings.Split(*workerBusinessLines, ",")
+		for i, line := range workerLines {
+			workerLines[i] = strings.TrimSpace(line)
+			if workerLines[i] == "" {
+				return fmt.Errorf("-worker-business-lines: empty business line")
+			}
+		}
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -447,7 +533,7 @@ func serve(args []string) error {
 		injector = &faults.Injector{}
 		logger.Warn("fault injection enabled (-faults): debug deployments only")
 	}
-	gw := gateway(logger, modelLimits, injector)
+	gw := gateway(logger, modelLimits, providerLimits, injector)
 	meter, quotas, err := metering(*pricing, lines, agents, b, logger, shots)
 	if err != nil {
 		return err
@@ -547,7 +633,7 @@ func serve(args []string) error {
 	}
 	for i := range *workers {
 		// 前 interactiveWorkers 个只认领交互工作：长任务移交给其余 Worker（ADR-0029）。
-		pool, gate := workqueue.Pool{}, idle
+		pool, gate := workqueue.Pool{BusinessLines: workerLines}, idle
 		if i < *interactiveWorkers {
 			pool.MinPriority, gate = workqueue.Interactive, interactiveIdle
 		}

@@ -95,7 +95,7 @@ func evalCmd(args []string) error {
 		return fmt.Errorf("no cases match %q in %s", *caseGlob, *suite)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	gw := gateway(logger, defaultModelLimits, nil)
+	gw := gateway(logger, defaultModelLimits, nil, nil)
 	// 评分模型经本机的 Codex CLI 调用（只用于评测，serve 不注册）。
 	gw.Register("codex", codex.Provider{})
 	cfg := eval.Config{XinliBin: *xinliBin, XinliFixture: xinlifixture.Options{Store: *xinliStore, PersonaDSN: *xinliPersonaDSN}, Agents: agents, Oneshots: shots, OneshotVersion: *oneshotVersion, Model: gw, Judge: *judgeModel, EmbedModel: *embedModel,
