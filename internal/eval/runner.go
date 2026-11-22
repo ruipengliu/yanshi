@@ -326,11 +326,18 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 		calls: &call.Manager{Service: core.Service, Realtime: cfg.Realtime, Feed: feed.Source{Log: st.Log, Live: opts.Live}, Logger: cfg.Logger}}
 	in.controllerDone = controllerDone
 	var servers []mcpcap.Server
-	if slices.ContainsFunc(cases, func(c *Case) bool { return c.Setup.CRM }) {
+	crm := slices.ContainsFunc(cases, func(c *Case) bool { return c.Setup.CRM })
+	crmTaintGated := slices.ContainsFunc(cases, func(c *Case) bool { return c.Setup.CRMTaintGated })
+	if crm || crmTaintGated {
 		if in.crm, err = startCRM(ctx); err != nil {
 			return nil, err
 		}
-		servers = append(servers, in.crm.server)
+		if crm {
+			servers = append(servers, in.crm.server)
+		}
+		if crmTaintGated {
+			servers = append(servers, in.crm.taintGatedRegistration())
+		}
 	}
 	if needsXinli(agents, cases, versions) {
 		var registrations []mcpcap.Server

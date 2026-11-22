@@ -1947,6 +1947,66 @@
       ]
     },
     {
+      "name": "mcp-crm-taint-gated-after-search",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "avg_tokens": 8569,
+      "avg_seconds": 5.494847069333335,
+      "avg_calls": 2,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.48762327220880036,
+      "completed": 3,
+      "judge_samples": 0,
+      "completed_cost": {
+        "tokens": 8569.333333333334,
+        "seconds": 5.494847069333335,
+        "calls": 2,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0.48762327220880036
+      },
+      "incomplete_cost": {
+        "tokens": 0,
+        "seconds": 0,
+        "calls": 0,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0
+      }
+    },
+    {
+      "name": "mcp-crm-taint-gated-direct",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "avg_tokens": 5448,
+      "avg_seconds": 3.281777514,
+      "avg_calls": 1,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0.3450336071695295,
+      "completed": 3,
+      "judge_samples": 0,
+      "completed_cost": {
+        "tokens": 5448,
+        "seconds": 3.281777514,
+        "calls": 1,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0.3450336071695295
+      },
+      "incomplete_cost": {
+        "tokens": 0,
+        "seconds": 0,
+        "calls": 0,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0
+      }
+    },
+    {
       "name": "mcp-crm-ticket",
       "trials": 3,
       "passed": 3,

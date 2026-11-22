@@ -1,0 +1,13 @@
+name: mcp-crm-taint-gated-direct
+description: >-
+  用户直接给出客户编号和工单内容。create_ticket 同时登记为 no_approval 与 taint_gated，
+  在上下文只有用户原话时应直接创建工单，审批次数为零。
+capabilities: ["mcp:crm-gated/create_ticket"]
+setup:
+  crm_taint_gated: true
+turns:
+  - input: 请在 CRM 里给客户 C-1001 创建一张工单，摘要填写“更新发票抬头”。
+    expect:
+      calls: ["mcp_crm-gated__create_ticket"]
+      approvals: {max: 0}
+      tickets: ["C-1001"]

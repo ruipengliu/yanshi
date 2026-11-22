@@ -16,7 +16,7 @@ import (
 )
 
 // crmServer 是评测内置的 CRM MCP Server（docs/design/m5-mcp.md）：search_customer 只读，
-// create_ticket 有副作用（未声明只读，需要审批）。工单按调用方的 EndUser 记录，供断言（expect.tickets）。
+// create_ticket 有副作用，审批策略由登记决定。工单按调用方的 EndUser 记录，供断言（expect.tickets）。
 type crmServer struct {
 	server  mcpcap.Server
 	mu      sync.Mutex
@@ -77,6 +77,15 @@ func startCRM(ctx context.Context) (*crmServer, error) {
 	go func() { <-ctx.Done(); _ = hs.Close() }()
 	c.server = mcpcap.Server{Name: "crm", BusinessLine: BusinessLine, URL: "http://" + ln.Addr().String(), Timeout: 30 * time.Second}
 	return c, nil
+}
+
+func (c *crmServer) taintGatedRegistration() mcpcap.Server {
+	// 评测并行运行，两种策略需要各自的登记，才能同时使用同一个夹具。
+	s := c.server
+	s.Name = "crm-gated"
+	s.Tools.NoApproval = []string{"create_ticket"}
+	s.Tools.TaintGated = []string{"create_ticket"}
+	return s
 }
 
 func (c *crmServer) ticketsOf(endUser string) []string {

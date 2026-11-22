@@ -782,11 +782,13 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 	gateSummary, gated := "", false
 	if !c.Started() {
 		gateSummary, gated = memoryGate(w.st, c.Call)
-		// 实现了 ApprovalSummarizer 的本地写入能力（目前是 schedule）与 memory_save 受同一来源判断约束：
-		// 上下文中有不是用户原话的内容时，写入须用户批准（M7 §5.3）。空摘要是只读动作，不审批。
-		if summarizer, ok := tool.Local.(capability.ApprovalSummarizer); ok && tainted(w.st) {
-			gateSummary = summarizer.ApprovalSummary(w.invocation(r, def, id, c))
-			gated = gateSummary != ""
+		// schedule 与 taint_gated 的 MCP 写工具经 ApprovalSummarizer 复用 memory_save 的来源判断（ADR-0061）：
+		// 上下文含非用户原话且摘要非空时，写入须用户批准；空摘要不审批。先取摘要，未受约束的工具（多数 MCP 工具）
+		// 不必遍历历史判断来源。
+		if summarizer, ok := tool.Local.(capability.ApprovalSummarizer); ok {
+			if s := summarizer.ApprovalSummary(w.invocation(r, def, id, c)); s != "" && tainted(w.st) {
+				gateSummary, gated = s, true
+			}
 		}
 	}
 	if gated {

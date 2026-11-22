@@ -66,6 +66,8 @@ type Case struct {
 		Devices []DeviceSetup `yaml:"devices"`
 		// CRM 为 true 时为评测业务线登记内置的 CRM MCP Server（工具 search_customer、create_ticket）。
 		CRM bool `yaml:"crm"`
+		// CRMTaintGated 为 true 时登记 crm-gated，其中 create_ticket 使用按来源审批。
+		CRMTaintGated bool `yaml:"crm_taint_gated"`
 		// Agents 是本用例可委托的 Agent（docs/design/m5-multi-agent.md）：与被评测的 Agent 使用同一模型；
 		// 名称在整个评测集中唯一，被评测的 Agent 须在 capabilities 中以 "agent:<名称>" 允许委托。
 		Agents []AgentSetup `yaml:"agents"`

@@ -1,6 +1,7 @@
 package mcpcap
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -32,5 +33,19 @@ func TestParseServer(t *testing.T) {
 	got, err := ParseServer([]byte(`{"name":"xinli","business_line":"eval","url":"http://localhost/mcp","timeout":"12s"}`))
 	if err != nil || got.Timeout != 12*time.Second {
 		t.Fatalf("timeout: %v %v", got.Timeout, err)
+	}
+}
+
+func TestParseTaintGatedGlobs(t *testing.T) {
+	const registration = "name: crm\nbusiness_line: eval\nurl: http://localhost/mcp\ntools:\n  taint_gated: "
+	got, err := ParseServer([]byte(registration + "\n    - \"create_*\"\n    - \"update_?\""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if globs := got.Tools.TaintGated; len(globs) != 2 || globs[0] != "create_*" || globs[1] != "update_?" {
+		t.Fatalf("taint_gated = %v", globs)
+	}
+	if _, err := ParseServer([]byte(registration + "\n    - \"[\"")); err == nil || !strings.Contains(err.Error(), "bad tool pattern") {
+		t.Fatalf("invalid taint_gated glob: %v", err)
 	}
 }

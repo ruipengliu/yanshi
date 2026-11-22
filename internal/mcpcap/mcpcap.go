@@ -27,6 +27,7 @@ import (
 	"yanshi/internal/capability"
 	"yanshi/internal/capture"
 	"yanshi/internal/eventlog"
+	"yanshi/internal/model"
 	"yanshi/sdk/nodesdk"
 )
 
@@ -42,6 +43,8 @@ type Server struct {
 		Allow []string `yaml:"allow"`
 		// NoApproval 是业务线确认无需审批的工具；明确声明 destructiveHint 的工具不受影响。
 		NoApproval []string `yaml:"no_approval"`
+		// TaintGated 为经 NoApproval 放宽的写工具恢复按来源审批。
+		TaintGated []string `yaml:"taint_gated"`
 	} `yaml:"tools"`
 	// CiteCaptures 为 true 时，调用参数中的旁听引用编号（"#57.3"）由平台按发起调用的 Session 解析，被引用片段的说话人
 	// 放在 _meta["yanshi/captures"] 中交给业务线（docs/design/captures.md §6）。
@@ -124,9 +127,11 @@ func (s *Server) validate(getenv func(string) string) error {
 			return fmt.Errorf("header %s: environment variables %v are not set", k, missing)
 		}
 	}
-	for _, g := range append(append([]string{}, s.Tools.Allow...), s.Tools.NoApproval...) {
-		if _, err := path.Match(g, ""); err != nil {
-			return fmt.Errorf("bad tool pattern %q: %w", g, err)
+	for _, globs := range [][]string{s.Tools.Allow, s.Tools.NoApproval, s.Tools.TaintGated} {
+		for _, g := range globs {
+			if _, err := path.Match(g, ""); err != nil {
+				return fmt.Errorf("bad tool pattern %q: %w", g, err)
+			}
 		}
 	}
 	return nil
@@ -307,8 +312,10 @@ func (c *Connector) Tools(ctx context.Context, businessLine string, patterns []s
 // tool 把 MCP 工具映射为 Capability：只读免审批；业务线可用 no_approval 放宽，但明确声明 destructiveHint 的不行。
 func (c *Connector) tool(s Server, t *mcp.Tool) capability.Tool {
 	risk, idem := nodesdk.MCPRisk(t)
+	taintGated := false
 	if risk == v1.Risk_RISK_HIGH && matchAny(s.Tools.NoApproval, t.Name) && !nodesdk.MCPDestructive(t) {
 		risk = v1.Risk_RISK_LOW
+		taintGated = matchAny(s.Tools.TaintGated, t.Name)
 	}
 	schema, err := json.Marshal(t.InputSchema)
 	if err != nil || string(schema) == "null" {
@@ -319,18 +326,33 @@ func (c *Connector) tool(s Server, t *mcp.Tool) capability.Tool {
 		// no_approval 只放宽审批，不把写入变成只读。
 		ReadOnly: t.Annotations != nil && t.Annotations.ReadOnlyHint,
 	}
-	return capability.Tool{Spec: spec, Local: remoteTool{spec: spec, connector: c, server: s, name: t.Name}}
+	return capability.Tool{Spec: spec, Local: remoteTool{spec: spec, connector: c, server: s, name: t.Name, taintGated: taintGated}}
 }
 
 // remoteTool 沿用进程内结果接缝，把模型内容与平台元数据分别交给 Worker。
 type remoteTool struct {
-	spec      capability.Spec
-	connector *Connector
-	server    Server
-	name      string
+	spec       capability.Spec
+	connector  *Connector
+	server     Server
+	name       string
+	taintGated bool
 }
 
 func (t remoteTool) Spec() capability.Spec { return t.spec }
+
+const taintGatedSuffix = "（这次对话包含不是你直接说的内容，需要你确认）"
+
+func (t remoteTool) ApprovalSummary(inv capability.Invocation) string {
+	if !t.taintGated {
+		return ""
+	}
+	args, cut := model.Truncate(inv.Arguments, 200)
+	if cut {
+		args += "…"
+	}
+	// 与 schedule 的摘要一样说明为什么这次需要确认：干净的上下文中同一调用不审批（ADR-0061）。
+	return fmt.Sprintf("在云端上执行 %s，参数 %s%s", t.spec.Name, args, taintGatedSuffix)
+}
 
 func (t remoteTool) Invoke(ctx context.Context, inv capability.Invocation) ([]*v1.ContentBlock, error) {
 	out, err := t.InvokeResult(ctx, inv)

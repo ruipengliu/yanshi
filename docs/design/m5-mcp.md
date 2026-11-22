@@ -29,6 +29,7 @@ timeout: 30s
 tools:
   allow: ["search_*", "get_*", "create_ticket"]   # 可选：只开放这些工具
   no_approval: ["create_ticket"]                  # 可选：业务线确认无需审批的工具
+  taint_gated: ["create_ticket"]                  # 可选：上述工具在上下文含外部内容时仍须审批（ADR-0061）
 cite_captures: false           # 可选：解析参数中的旁听引用，附上说话人（docs/design/captures.md §6）
 attests_speakers: false         # 可选：采信同业务线结构化旁听页，由平台渲染与审核（ADR-0052）
 ```
@@ -62,6 +63,8 @@ attests_speakers: false         # 可选：采信同业务线结构化旁听页�
 只读证据只取 `readOnlyHint`，未声明或为 false 时 `capability.Spec.ReadOnly` 为 false；不从风险、`idempotentHint`、`no_approval` 或 `destructiveHint` 推导。`no_approval` 放宽后的写工具仍不只读。平台在每次执行前把该判定写入 `ToolCallStarted.read_only`，跨 Attempt 取与，供后续重答资格使用；执行前声明降级则拒绝执行（[M0 §4](./m0-core-primitives.md#4-agent-循环一步--一次-step)、[M7 §9](./m7-kernel-primitives.md#9-重答redo)）。
 
 第三方 Server 的注解只当作提示：放宽审批必须经过业务线的明确登记。
+
+**按来源条件审批（`taint_gated`，ADR-0061）**：被 `no_approval` 放宽的写工具若同时匹配 `taint_gated`，在上下文含非用户原话时（与 `memory_save`、`schedule` 的写入闸门同一判断：外部内容、他人的话、压缩过的上下文、委托的子 Session）仍请求审批，干净的上下文中免审批。它只收紧：本来就需要审批的工具照旧，只读工具不受影响。MCP 与设备工具的结果本身是外部内容，所以同一 Session 先调过这类工具后，之后的 `taint_gated` 调用都要审批。判定在调用开始前做一次，已请求审批的调用一律走完。
 
 参数不是合法的 JSON 对象的调用不请求审批、不发给 Server：Worker 在审批之前就把错误作为结果交还模型（[M0](./m0-core-primitives.md) §4），用户不会被要求批准一次注定失败的调用。
 

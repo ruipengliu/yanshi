@@ -48,6 +48,83 @@ func TestRemoteMCPToolNeedsApproval(t *testing.T) {
 	}
 }
 
+func TestRemoteMCPTaintGatedApproval(t *testing.T) {
+	var searches, tickets atomic.Int32
+	srv := mcp.NewServer(&mcp.Implementation{Name: "crm", Version: "1"}, nil)
+	schema := json.RawMessage(`{"type":"object"}`)
+	srv.AddTool(&mcp.Tool{Name: "search_customer", InputSchema: schema, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}},
+		func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			searches.Add(1)
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "客户 C-1001"}}}, nil
+		})
+	srv.AddTool(&mcp.Tool{Name: "create_ticket", InputSchema: schema},
+		func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			tickets.Add(1)
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "工单 T-1"}}}, nil
+		})
+	hs := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil))
+	t.Cleanup(hs.Close)
+
+	st := memStores()
+	reg := mcpcap.Server{Name: "crm", BusinessLine: "bl", URL: hs.URL, Timeout: 5 * time.Second}
+	reg.Tools.NoApproval = []string{"create_ticket"}
+	reg.Tools.TaintGated = []string{"create_ticket"}
+	conn := &mcpcap.Connector{Servers: []mcpcap.Server{reg}}
+	t.Cleanup(conn.Close)
+	st.mcp = conn
+	api := instance(t, st, 2, true)
+
+	for _, tc := range []struct {
+		name        string
+		searchFirst bool
+		approve     bool
+		wantTickets int32
+		replyPrefix string
+	}{
+		{"clean", false, false, 1, "done: 工单 T-1"},
+		{"approve after search", true, true, 1, "done: 工单 T-1"},
+		{"deny after search", true, false, 0, "done: [error] denied:"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := &env{t: t, srv: api}
+			sid := e.newSession()
+			path := "/v1/sessions/" + sid
+			beforeSearches, beforeTickets := searches.Load(), tickets.Load()
+			input := `call mcp_crm__create_ticket {"customer_id":"C-1001"}`
+			if tc.searchFirst {
+				input = "call mcp_crm__search_customer\n" + input
+			}
+			if status := e.do(http.MethodPost, path+"/inputs", map[string]string{"text": input}, nil); status != http.StatusAccepted {
+				t.Fatalf("submit input: HTTP %d", status)
+			}
+			v := e.until(sid, func(v sessionView) bool {
+				return len(v.Runs) == 1 && (v.Runs[0].Waiting != nil || v.Runs[0].Status == "completed")
+			})
+			waiting := v.Runs[0].Waiting
+			if tc.searchFirst {
+				if waiting == nil || waiting.Kind != "approval" || waiting.Capability != "mcp_crm__create_ticket" {
+					t.Fatalf("expected approval for create_ticket, got %+v", v.Runs[0])
+				}
+				if searches.Load() != beforeSearches+1 || tickets.Load() != beforeTickets {
+					t.Fatal("expected only the search to execute before approval")
+				}
+				if status := e.do(http.MethodPost, path+"/approvals/"+waiting.CallID, map[string]bool{"approve": tc.approve}, nil); status != http.StatusNoContent {
+					t.Fatalf("decide approval: HTTP %d", status)
+				}
+				e.until(sid, func(v sessionView) bool { st, _ := lastRun(v); return st == "completed" })
+			} else if waiting != nil {
+				t.Fatalf("clean context should not wait for approval: %+v", waiting)
+			}
+			if got := tickets.Load() - beforeTickets; got != tc.wantTickets {
+				t.Errorf("create_ticket executed %d times, want %d", got, tc.wantTickets)
+			}
+			if got := e.lastAssistantText(sid); !strings.HasPrefix(got, tc.replyPrefix) {
+				t.Errorf("assistant = %q, want prefix %q", got, tc.replyPrefix)
+			}
+		})
+	}
+}
+
 // TestDeviceMCPBridge：电脑端 SDK 把本机 MCP Server 桥接为设备能力，经 Inbox 路由执行（§5）。
 func TestDeviceMCPBridge(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

@@ -87,6 +87,7 @@
 | [0058](0058-background-delegation.md) | 委托在宽限期后转入后台 | accepted（2026-11-19 定稿） | 已实现 | 二 | 子 Session 设备调用也需转后台；需显式前台/后台选择；后台委托成主要成本 | 修订 0035 第 7 条、0031 | |
 | [0059](0059-idempotent-session-creation-by-derived-id.md) | 建会话以幂等键派生 Session ID | accepted（2026-11-22 定稿） | 已实现 | 三 | 需按键查询或键过期；需平滑轮换密钥；线上观察到复查失败消耗键 | — | |
 | [0060](0060-business-line-definition-access.md) | 业务线声明可用的定义；MCP Server 以 (业务线, 名称) 为键 | accepted（2026-11-22 定稿） | 已实现 | 二 | 需同名而内容不同的定义；需自助或分别发布共享定义；需撤销已有 Session 的使用权 | 修订 M4 灰度发布 §1 与部署 §1 | |
+| [0061](0061-taint-gated-mcp-tools.md) | MCP 写工具按来源条件审批（`taint_gated`） | accepted（2026-11-22 定稿） | 已实现 | 二 | 业务线反馈先查后写审批过多且有可信结果判据；注入判断退出影子模式 | 补充 ADR-0017、ADR-0023；修订 MCP 适配 §2、§3 | |
 
 ## 业务层 ADR
 
