@@ -77,7 +77,7 @@
 
 | # | 条目 | 现状 | 为什么值得做 | 下一步 |
 |---|---|---|---|---|
-| A1 | 建会话幂等 | 创建 Session 不接受幂等键（`httpapi.go:371-408`、`node.proto:182-186`）；`docs/` 中没有找到取舍说明 | 输入早有 `input_id` 去重，建会话却没有，客户端重试会产生孤儿 Session，业务线须自建映射表与回收 | 设计 `external_key` 的唯一范围（业务线 + EndUser）与存放位置；须登记分片键并接入删除路径（`app.SessionData`），按 m2-session-lifecycle 的要求处理 |
+| A1 | 建会话幂等 | 创建 Session 不接受幂等键（`httpapi.go:371-408`、`node.proto:182-186`）；`docs/` 中没有找到取舍说明 | 输入早有 `input_id` 去重，建会话却没有，客户端重试会产生孤儿 Session，业务线须自建映射表与回收 | 已立项（2026-11-22），设计见[建会话幂等](../design/session-create-idempotency.md)：由幂等键派生 Session ID，不新增存储 |
 | A2 | 输入去重窗口 | `MaxRecentInputs = 64`（`session/state.go:468-470`），注释的前提是“重提通常在几秒内” | 业务线的异步编排在超时后重提，可能晚于窗口，前提不成立；委托已有不受窗口限制的例外（`State.Delegated`） | 与 A1 一起评估：持久去重表或延长窗口，注意投影有界与 `ProjectionVersion` |
 | A3 | Guard 取令牌顺序 | `guard.go:206-212` 先取 RPS 令牌再进并发门排队；RPS 层不区分类别 | 令牌在排队前被消耗；RPS 紧张时交互类与后台类同等竞争，与 ADR-0029 的分类意图不一致；没有文档说明这一顺序 | 局部修改，改动 `model-calls.md` 的准入一节；需 `make sim` 与 TTFT 压测对照 |
 | A4 | AgentDef 的业务线归属 | 代码中 AgentDef 不分业务线，`m4-agent-rollout.md:9` 也这样写；但 `deployment.md:11` 写“Token、配额、AgentDef……都以 BusinessLine 为单位” | 两份设计文档互相矛盾；MCP 工具按业务线过滤而 AgentDef 目录（含 `agent:*`）不过滤，口径不一 | 先裁决单元内业务线之间的信任假设并写入 `deployment.md`；若要求隔离，按 ADR 流程修订 m4-agent-rollout |
