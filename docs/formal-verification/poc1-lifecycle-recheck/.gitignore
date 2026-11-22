@@ -1,0 +1,5 @@
+node_modules/
+generated/
+*.itf.json
+_apalache-out/
+

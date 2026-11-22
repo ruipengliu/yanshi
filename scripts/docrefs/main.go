@@ -245,7 +245,7 @@ func docFiles() ([]string, error) {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() && path == filepath.Join("docs", "review") {
+		if d.IsDir() && (path == filepath.Join("docs", "review") || skipDirs[d.Name()]) {
 			return filepath.SkipDir
 		}
 		if !d.IsDir() && strings.HasSuffix(path, ".md") {

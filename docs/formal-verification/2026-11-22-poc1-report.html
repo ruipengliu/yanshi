@@ -1,0 +1,877 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PoC #1 实验报告：lifecycle.Recheck 删除屏障形式化验证（2026-11-22）</title>
+<style>
+/*
+ * yanshi PoC #1 实验报告 · 自包含无外链样式（契合 ADR-0001 离线可读精神）
+ */
+:root {
+  --bg: #f4f5f2;
+  --surface: #ffffff;
+  --surface-alt: #fafaf8;
+  --sunk: #eaece7;
+  --fg: #181c23;
+  --fg-secondary: #36404e;
+  --muted: #5d6573;
+  --line: #d5d9d1;
+  --line-strong: #949c94;
+
+  --kernel: #2f45a8;
+  --biz: #9c560e;
+  --seam: #0b6e62;
+  --eco: #6a3ea1;
+
+  --ok: #237332;
+  --warn: #a66207;
+  --risk: #b5213b;
+  --info: #1b5ea8;
+
+  --shadow: 0 1px 3px rgba(18, 22, 28, 0.05);
+  --sans: "PingFang SC", "Noto Sans SC", "Hiragino Sans GB", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --serif: "Songti SC", "Noto Serif SC", "STSong", "SimSun", Georgia, serif;
+  --mono: "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, Monaco, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111317;
+    --surface: #191c22;
+    --surface-alt: #1e222a;
+    --sunk: #242933;
+    --fg: #e7e9ee;
+    --fg-secondary: #c4cad4;
+    --muted: #939ba8;
+    --line: #2c323c;
+    --line-strong: #555e6d;
+
+    --kernel: #8fa3ff;
+    --biz: #eba858;
+    --seam: #56ccb9;
+    --eco: #c19af8;
+
+    --ok: #74cf84;
+    --warn: #f0b456;
+    --risk: #f6798e;
+    --info: #78b3f5;
+
+    --shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #111317;
+  --surface: #191c22;
+  --surface-alt: #1e222a;
+  --sunk: #242933;
+  --fg: #e7e9ee;
+  --fg-secondary: #c4cad4;
+  --muted: #939ba8;
+  --line: #2c323c;
+  --line-strong: #555e6d;
+
+  --kernel: #8fa3ff;
+  --biz: #eba858;
+  --seam: #56ccb9;
+  --eco: #c19af8;
+
+  --ok: #74cf84;
+  --warn: #f0b456;
+  --risk: #f6798e;
+  --info: #78b3f5;
+
+  --shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.74;
+  padding-inline: max(18px, env(safe-area-inset-left, 0px)) max(18px, env(safe-area-inset-right, 0px));
+  padding-bottom: 84px;
+}
+
+.wrap { max-width: 1120px; margin: 0 auto; }
+.prose { max-width: 58em; }
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+  margin-inline: -18px;
+  padding-inline: 18px;
+}
+.topbar-inner {
+  max-width: 1120px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding-block: 6px;
+}
+.brand {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+}
+.brand span { color: var(--muted); font-weight: 400; }
+nav.toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 13px;
+}
+nav.toc a {
+  color: var(--fg-secondary);
+  text-decoration: none;
+  padding-block: 2px;
+  border-bottom: 2px solid transparent;
+  transition: color .15s, border-color .15s;
+}
+nav.toc a:hover, nav.toc a:focus-visible {
+  color: var(--kernel);
+  border-bottom-color: var(--kernel);
+}
+.theme-btn {
+  background: var(--surface);
+  color: var(--fg-secondary);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12.5px;
+  font-family: var(--sans);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.theme-btn:hover { border-color: var(--line-strong); color: var(--fg); }
+:focus-visible { outline: 2px solid var(--kernel); outline-offset: 2px; }
+
+header.hero {
+  padding-block: 42px 30px;
+  border-bottom: 1px solid var(--line);
+}
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  letter-spacing: .04em;
+  color: var(--muted);
+}
+h1 {
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: clamp(27px, 4.2vw, 38px);
+  line-height: 1.24;
+  margin: 10px 0 14px;
+}
+h2 {
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: 24px;
+  line-height: 1.3;
+  margin: 0 0 8px;
+}
+h3 {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 24px 0 8px;
+}
+p { margin: 0 0 12px; }
+ul, ol { margin: 0 0 14px; padding-left: 1.45em; }
+li { margin-bottom: 6px; }
+.lede {
+  font-size: 15.8px;
+  color: var(--fg-secondary);
+  max-width: 60em;
+}
+.muted { color: var(--muted); }
+code, .mono {
+  font-family: var(--mono);
+  font-size: .85em;
+  background: var(--sunk);
+  padding: 1px 5px;
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+pre.trace-box {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 10px 0 0;
+}
+a { color: var(--kernel); }
+
+section {
+  padding-block: 38px 16px;
+  border-bottom: 1px solid var(--line);
+  scroll-margin-top: 56px;
+}
+section:last-of-type { border-bottom: 0; }
+.sec-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.secno {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--kernel);
+}
+
+.callout {
+  border-left: 3.5px solid var(--kernel);
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 14px 18px;
+  margin: 18px 0;
+  border-radius: 0 8px 8px 0;
+  box-shadow: var(--shadow);
+}
+.callout.tip  { border-left-color: var(--seam); }
+.callout.note { border-left-color: var(--info); }
+.callout.warn { border-left-color: var(--warn); }
+.callout.risk { border-left-color: var(--risk); }
+.callout-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  margin-bottom: 6px;
+  color: var(--kernel);
+}
+.callout.tip .callout-title  { color: var(--seam); }
+.callout.note .callout-title { color: var(--info); }
+.callout.warn .callout-title { color: var(--warn); }
+.callout.risk .callout-title { color: var(--risk); }
+.callout p:last-child { margin-bottom: 0; }
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+  margin-top: 22px;
+}
+.kpi {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top: 2.5px solid var(--kernel);
+  border-radius: 8px;
+  padding: 13px 15px;
+  box-shadow: var(--shadow);
+}
+.kpi.seam-kpi { border-top-color: var(--seam); }
+.kpi.biz-kpi  { border-top-color: var(--biz); }
+.kpi.ok-kpi   { border-top-color: var(--ok); }
+.kpi .val {
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--fg);
+  line-height: 1.25;
+}
+.kpi .lbl {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-top: 5px;
+}
+.kpi .sub {
+  font-size: 12px;
+  color: var(--fg-secondary);
+  margin-top: 3px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11.5px;
+  line-height: 1;
+  padding: 4px 7px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+  font-weight: 600;
+  vertical-align: middle;
+}
+.badge.ok   { color: var(--ok);   background: color-mix(in srgb, var(--ok) 9%, transparent); }
+.badge.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+.badge.risk { color: var(--risk); background: color-mix(in srgb, var(--risk) 10%, transparent); }
+.badge.info { color: var(--info); background: color-mix(in srgb, var(--info) 9%, transparent); }
+.badge.eco  { color: var(--eco);  background: color-mix(in srgb, var(--eco) 10%, transparent); }
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+  margin: 16px 0 18px;
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px 18px;
+  box-shadow: var(--shadow);
+}
+.card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.card h3, .card h4 {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 700;
+}
+.card p { font-size: 14.3px; color: var(--fg-secondary); margin-bottom: 8px; }
+.card p:last-child, .card ul:last-child { margin-bottom: 0; }
+.card ul { font-size: 14.2px; color: var(--fg-secondary); padding-left: 1.3em; }
+
+.tbl {
+  overflow-x: auto;
+  margin: 16px 0 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 14px;
+  line-height: 1.65;
+}
+th, td {
+  text-align: left;
+  vertical-align: top;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+}
+th {
+  font-size: 12.5px;
+  letter-spacing: .03em;
+  color: var(--muted);
+  font-weight: 600;
+  background: var(--sunk);
+  white-space: nowrap;
+}
+tr:last-child td { border-bottom: 0; }
+tbody tr:hover { background: var(--surface-alt); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+figure { margin: 22px 0 20px; }
+.diagram-box {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px 16px;
+  box-shadow: var(--shadow);
+}
+figcaption {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+svg.dg {
+  display: block;
+  width: 100%;
+  height: auto;
+  font-family: var(--sans);
+}
+svg.dg .box {
+  fill: var(--surface-alt);
+  stroke: var(--line-strong);
+  stroke-width: 1.4;
+}
+svg.dg .box-k {
+  fill: color-mix(in srgb, var(--kernel) 7%, var(--surface));
+  stroke: var(--kernel);
+  stroke-width: 1.6;
+}
+svg.dg .box-s {
+  fill: color-mix(in srgb, var(--seam) 8%, var(--surface));
+  stroke: var(--seam);
+  stroke-width: 1.6;
+}
+svg.dg .box-o {
+  fill: color-mix(in srgb, var(--ok) 8%, var(--surface));
+  stroke: var(--ok);
+  stroke-width: 1.6;
+}
+svg.dg .box-w {
+  fill: color-mix(in srgb, var(--biz) 8%, var(--surface));
+  stroke: var(--biz);
+  stroke-width: 1.6;
+}
+svg.dg .t-title { fill: var(--fg); font-size: 13px; font-weight: 700; }
+svg.dg .t-sub   { fill: var(--fg-secondary); font-size: 11.5px; }
+svg.dg .t-muted { fill: var(--muted); font-size: 11px; }
+svg.dg .t-mono  { fill: var(--kernel); font-size: 11px; font-family: var(--mono); font-weight: 600; }
+svg.dg .t-seam  { fill: var(--seam); font-size: 11px; font-family: var(--mono); font-weight: 600; }
+svg.dg .t-ok    { fill: var(--ok); font-size: 11px; font-family: var(--mono); font-weight: 600; }
+svg.dg .t-warn  { fill: var(--biz); font-size: 11px; font-family: var(--mono); font-weight: 600; }
+svg.dg .ln      { stroke: var(--line-strong); stroke-width: 1.5; fill: none; }
+svg.dg .ln-seam { stroke: var(--seam); stroke-width: 1.6; fill: none; }
+
+footer.doc-foot {
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  font-size: 12.5px;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+@media (max-width: 720px) {
+  .topbar-inner { flex-wrap: wrap; }
+  nav.toc { order: 3; width: 100%; padding-top: 4px; border-top: 1px solid var(--line); }
+}
+
+@media print {
+  .topbar, .theme-btn { display: none; }
+  body { background: #fff; color: #000; padding: 0; }
+  .card, .callout, .tbl, .diagram-box, .kpi { box-shadow: none; break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">yanshi <span>/ docs / formal-verification / poc1</span></div>
+    <nav class="toc" aria-label="文档目录">
+      <a href="#sec-1">1. 协议范围与边界</a>
+      <a href="#sec-2">2. 实测耗时与结果</a>
+      <a href="#sec-3">3. 变异测试反例</a>
+      <a href="#sec-4">4. Trace Validation 发现</a>
+      <a href="#sec-5">5. PoC #2 建议</a>
+    </nav>
+    <button class="theme-btn" id="themeToggle" type="button" aria-label="切换明暗主题">切换主题</button>
+  </div>
+</div>
+
+<div class="wrap">
+  <header class="hero">
+    <div class="eyebrow">POC #1 EXPERIMENT REPORT · 2026-11-22 · LIFECYCLE RECHECK (ADR-0015 / ADR-0050)</div>
+    <h1>PoC #1 实验报告：<code>lifecycle.Recheck</code> 删除屏障形式化验证</h1>
+    <p class="lede">
+      对照 <a href="./2026-11-22-yanshi-verification-plan.html">落地方案（PoC #1）</a>，在不改动任何 Go 生产代码的前提下，我们在
+      <code>docs/formal-verification/poc1-lifecycle-recheck/</code> 与 <code>internal/sim/lifecycle_trace_test.go</code> 落地了首个形式化闭环实验：
+      包含 <strong>Quint 形式规约</strong>、<strong>Apalache SMT 符号模型检验</strong>、<strong>两项协议变异测试（防空洞证明）</strong>与
+      <strong>Go 真实存储 Trace Validation 回放</strong>。
+    </p>
+
+    <div class="callout tip">
+      <div class="callout-title">实验总结论</div>
+      <p>
+        1. <strong>零 Docker 闭环全绿跑通</strong>：<code>run.sh</code> 串行跑完“静态类型检查 + 内置单元测试 + 2000 样本模拟 + 12 步 Apalache SMT 符号检验 + 两项变异检出 + Go <code>-race</code> 轨迹导出 + Quint 回放检验”共耗时 <strong>56.78 秒</strong>；若日常内循环仅跑 Quint 模拟与 Trace 回放，耗时仅 <strong>~4.3 秒</strong>。<br>
+        2. <strong>变异击杀率 100%</strong>：Apalache 在 <strong>~3.8 秒</strong>内自动构造出“先查后写”与“<code>erasure</code> 跳过 Recheck”的最短 9 步反例。<br>
+        3. <strong>Trace Validation 当场抓出“模型与代码偏差”</strong>：首轮回放即在 <strong>164ms</strong> 内报出 <code>ordWithdraw</code> 抽象偏差，证实 Trace Validation 能有效堵住“规约与实现两张皮”。
+      </p>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi ok-kpi">
+        <div class="val">5 / 5 不变量</div>
+        <div class="lbl">Apalache SMT 12 步穷举通过</div>
+        <div class="sub">热缓存全阶段验证 39.86s；零反例</div>
+      </div>
+      <div class="kpi seam-kpi">
+        <div class="val">~4.3 秒</div>
+        <div class="lbl">无 Apalache 日常内循环耗时</div>
+        <div class="sub">类型检查 + 模拟(53ms) + Go 导出 + Trace 回放</div>
+      </div>
+      <div class="kpi biz-kpi">
+        <div class="val">2 / 2 击杀</div>
+        <div class="lbl">规约变异测试检出率</div>
+        <div class="sub">CheckThenWrite (3.81s) &amp; ErasureSkip (3.75s)</div>
+      </div>
+      <div class="kpi">
+        <div class="val">4 条真实轨迹</div>
+        <div class="lbl">Go -race → Quint 回放全绿</div>
+        <div class="sub">硬删 / 擦除 / Janitor 阶段崩溃与迟到写入</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Section 1 -->
+  <section id="sec-1">
+    <div class="sec-head">
+      <span class="secno">01</span>
+      <h2>实验架构、建模范围与显式假设边界</h2>
+    </div>
+    <p class="prose">
+      PoC #1 聚焦 <code>internal/lifecycle/lifecycle.go</code>（<code>Recheck</code> / <code>KeepsMemory</code>）、
+      <code>internal/janitor/janitor.go</code>（<code>Janitor.delete</code> 六阶段与崩溃接管）、
+      <code>internal/memory/service.go</code>（<code>Save</code> 写后复查）与
+      <code>internal/presence/presence.go</code>（<code>Put</code> 写后撤回），形成如下闭环交付物：
+    </p>
+
+    <figure>
+      <div class="diagram-box">
+        <svg class="dg" viewBox="0 0 920 210" role="img" aria-label="PoC #1 四重验证闭环">
+          <defs>
+            <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--line-strong)"/>
+            </marker>
+            <marker id="arr-s" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--seam)"/>
+            </marker>
+          </defs>
+
+          <rect class="box-k" x="16" y="20" width="210" height="84" rx="8"/>
+          <text class="t-mono" x="30" y="42">1. FORMAL SPEC (TCB)</text>
+          <text class="t-title" x="30" y="63">lifecycle_recheck.qnt</text>
+          <text class="t-sub" x="30" y="83">5 条核心安全不变量 · 15 迁移</text>
+
+          <line class="ln" x1="226" y1="62" x2="262" y2="62" marker-end="url(#arr)"/>
+
+          <rect class="box-o" x="268" y="20" width="200" height="84" rx="8"/>
+          <text class="t-ok" x="282" y="42">2. MODEL CHECKING</text>
+          <text class="t-title" x="282" y="63">Apalache SMT + Rust</text>
+          <text class="t-sub" x="282" y="83">12 步符号穷举 + 2000 随机</text>
+
+          <line class="ln" x1="468" y1="62" x2="504" y2="62" marker-end="url(#arr)"/>
+
+          <rect class="box-w" x="510" y="20" width="192" height="84" rx="8"/>
+          <text class="t-warn" x="524" y="42">3. MUTATION TEST</text>
+          <text class="t-title" x="524" y="63">lifecycle_recheck_mutant</text>
+          <text class="t-sub" x="524" y="83">故意破环协议 · 须出反例</text>
+
+          <line class="ln-seam" x1="121" y1="104" x2="121" y2="146" marker-end="url(#arr-s)"/>
+
+          <rect class="box-s" x="16" y="150" width="452" height="48" rx="8"/>
+          <text class="t-seam" x="30" y="170">4a. GO REAL EXECUTION (-race)</text>
+          <text class="t-sub" x="255" y="170">internal/sim/lifecycle_trace_test.go</text>
+          <text class="t-muted" x="30" y="187">驱动真实 app.Core + Janitor + Memory + Presence，零生产代码侵入</text>
+
+          <line class="ln-seam" x1="468" y1="174" x2="504" y2="174" marker-end="url(#arr-s)"/>
+
+          <rect class="box-s" x="510" y="150" width="392" height="48" rx="8"/>
+          <text class="t-seam" x="524" y="170">4b. QUINT TRACE REPLAY VALIDATION</text>
+          <text class="t-muted" x="524" y="187">导出 generated/trace_replay_test.qnt 逐帧 assert 状态完全同构</text>
+        </svg>
+      </div>
+      <figcaption>图 1：PoC #1 四重验证链路，由 <code>docs/formal-verification/poc1-lifecycle-recheck/run.sh</code> 一键串联。</figcaption>
+    </figure>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head">
+          <h3>已证明的 5 条核心安全不变量</h3>
+          <span class="badge ok">allInvariants</span>
+        </div>
+        <ul>
+          <li><code>invCompletedHasTombstone</code>：清理完成（<code>completed</code>）前必然已写入删除记录。</li>
+          <li><code>invNoOrdinaryDataAfterComplete</code>：清理完成且在途 <code>Recheck</code> 收敛后，普通存储、日志（<code>hasLog</code>）与索引（<code>hasIndex</code>）绝无残留。</li>
+          <li><code>invNoMemoryOnHardDelete</code>：普通硬删除（<code>end_user</code>）完成后，<code>memories</code> 同样绝无残留。</li>
+          <li><code>invNoLateMemorySurvived</code>：<code>retention</code> / <code>erasure</code> 虽保留既有 Memory，但删除标记之后发生的迟到写入（<code>memAfterDel</code>）绝不残留。</li>
+          <li><code>invPreMemoryPreserved</code>：<code>retention</code> / <code>erasure</code> 下，删除前已确认完成的既有 Memory 绝不会被误删。</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h3>显式模型假设与协议边界（诚实声明）</h3>
+          <span class="badge warn">TCB 边界</span>
+        </div>
+        <ul>
+          <li><strong>活写入方收敛假设</strong>：对应代码中 <code>lifecycle.Recheck</code> 内 <code>withdraw(context.WithoutCancel(ctx))</code> 的保障——模型假设写入存储后若进程未永久断电，会继续执行复查与撤回。</li>
+          <li><strong>极限崩溃窗口边界</strong>：若外部写入方在 Janitor <code>sweep2</code>（第二遍清扫）结束之后落盘数据，并在执行 <code>Recheck</code> 之前进程自身发生硬崩溃（未执行撤回），则单次进程内 <code>Recheck</code> 无法拦截；该风险在生产中由接口层前置检查、<code>service.Delete</code> 先写删除记录以及租约/上下文隔离把窗口压至极窄。</li>
+          <li><strong>抽象粒度</strong>：PoC #1 抽取“普通 <code>SessionData</code>”与“<code>KeepOnRetention</code> Memory”两类代表存储并叠加多阶段 Janitor 崩溃；未涵盖多节点设备离线 Inbox 与级联子 Session（留待后续扩展）。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section 2 -->
+  <section id="sec-2">
+    <div class="sec-head">
+      <span class="secno">02</span>
+      <h2>实测耗时与工具链表现（无 Docker 依赖）</h2>
+    </div>
+    <p class="prose">
+      以下数据均来自本机 Mac 环境运行 <code>./docs/formal-verification/poc1-lifecycle-recheck/run.sh</code> 的真实实测输出（<code>@informalsystems/quint</code> 0.33.1、Rust evaluator v0.7.1、Apalache 0.62.4 + OpenJDK 27）：
+    </p>
+
+    <div class="tbl">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:28%">验证阶段</th>
+            <th style="width:30%">执行内容</th>
+            <th class="num" style="width:14%">内核耗时</th>
+            <th class="num" style="width:14%">脚本总耗时</th>
+            <th style="width:14%">实测结论</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>1. Quint 静态类型检查</strong></td>
+            <td><code>quint typecheck</code>（主规约 + 变异文件）</td>
+            <td class="num">—</td>
+            <td class="num">1,492 ms</td>
+            <td><span class="badge ok">PASS</span></td>
+          </tr>
+          <tr>
+            <td><strong>2. Quint 内置单元测试</strong></td>
+            <td><code>hardDeleteRun</code> / <code>erasureLateMemory</code> / <code>janitorCrashRecovery</code>（3 passing）</td>
+            <td class="num">46 ms</td>
+            <td class="num">807 ms</td>
+            <td><span class="badge ok">PASS</span></td>
+          </tr>
+          <tr>
+            <td><strong>3. Quint 随机状态模拟</strong></td>
+            <td>2,000 samples × 25 steps，Rust 后端（37,736 traces/s）</td>
+            <td class="num">53 ms</td>
+            <td class="num">820 ms</td>
+            <td><span class="badge ok">PASS</span></td>
+          </tr>
+          <tr>
+            <td><strong>4. Apalache SMT 符号检验</strong></td>
+            <td><code>quint verify --max-steps=12</code>，15 个迁移动作、5 条不变量穷举</td>
+            <td class="num">39,861 ms</td>
+            <td class="num">40,663 ms</td>
+            <td><span class="badge ok">PASS（热缓存）</span></td>
+          </tr>
+          <tr>
+            <td><strong>5a. 变异测试 #1：CheckThenWrite</strong></td>
+            <td>Apalache SMT（<code>max-steps=10</code>）检验违背 <code>invNoOrdinaryDataAfterComplete</code></td>
+            <td class="num">3,814 ms</td>
+            <td class="num">4,484 ms</td>
+            <td><span class="badge ok">检出反例 (exit 1)</span></td>
+          </tr>
+          <tr>
+            <td><strong>5b. 变异测试 #2：ErasureSkipsRecheck</strong></td>
+            <td>Apalache SMT（<code>max-steps=10</code>）检验违背 <code>invNoLateMemorySurvived</code></td>
+            <td class="num">3,747 ms</td>
+            <td class="num">4,352 ms</td>
+            <td><span class="badge ok">检出反例 (exit 1)</span></td>
+          </tr>
+          <tr>
+            <td><strong>6a. Go 真实实现轨迹导出</strong></td>
+            <td><code>go test -race -run TestLifecycleRecheckTraceValidation</code>（4 条轨迹）</td>
+            <td class="num">1,280 ms</td>
+            <td class="num">2,460 ms</td>
+            <td><span class="badge ok">PASS</span></td>
+          </tr>
+          <tr>
+            <td><strong>6b. Quint Trace 回放检验</strong></td>
+            <td><code>quint test generated/trace_replay_test.qnt</code>（7 passing）</td>
+            <td class="num">135 ms</td>
+            <td class="num">993 ms</td>
+            <td><span class="badge ok">PASS</span></td>
+          </tr>
+          <tr>
+            <td><strong>全流程合计（<code>run.sh</code>）</strong></td>
+            <td>完整 8 步含全套 Apalache SMT 符号证明与变异门禁</td>
+            <td class="num">—</td>
+            <td class="num"><strong>56,784 ms</strong></td>
+            <td><span class="badge ok">全绿 (56.8s)</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout note">
+      <div class="callout-title">首次运行与高频内循环区分</div>
+      <p>
+        首次触发 <code>quint verify</code> 会自动拉取 <code>apalache-dist-0.62.4</code>（含 117MB <code>apalache.jar</code>），首次运行记录为 <code>326,967 ms</code>；缓存落盘后热运行降为 <strong>40.7 秒</strong>。
+        更关键的是：在日常改代码的高频内循环中，跳过重型 SMT（或只留给提交前/CI），仅运行<strong>类型检查 + 2000 样本 Rust 模拟 + Go <code>-race</code> Trace Validation</strong>，总墙钟时间仅约 <strong>4.3 秒</strong>，且全程无需启动 Docker、PG 或 S3。
+      </p>
+    </div>
+  </section>
+
+  <!-- Section 3 -->
+  <section id="sec-3">
+    <div class="sec-head">
+      <span class="secno">03</span>
+      <h2>变异测试实测：自动构造最短 9 步反例（防空洞证明）</h2>
+    </div>
+    <p class="prose">
+      为了证明 <code>allInvariants</code> 并非“永真假命题”，我们在 <code>lifecycle_recheck_mutant.qnt</code> 中构造了两个常见工程误改，Apalache SMT 与 <code>quint run</code>（32ms / 16ms）均立即命中致命竞态：
+    </p>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head">
+          <h3>变异 #1：先查后写（<code>mutant_check_then_write</code>）</h3>
+          <span class="badge risk">3,814 ms 捕获</span>
+        </div>
+        <p>
+          把普通写入方改成直观但错误的“先检查未删除 → 再写入落盘且不做 <code>Recheck</code>”。Apalache 在 State 9 精确构造出导致僵尸数据残留的 9 步调度序列：
+        </p>
+<pre class="trace-box">[State 0] init (tombstone="none", data=Set())
+[State 1] ordCheckBeforeWrite("d1") -> ordPC["d1"]="checked_ok"
+[State 2] markDeleted("end_user")   -> tombstone="end_user"
+[State 3..7] Janitor 完成 interrupt -> sweep1 -> delete_log -> sweep2 -> delete_index
+[State 8] ordWriteWithoutRecheck("d1") -> data=Set("d1"), ordPC["d1"]="done"
+[State 9] janitorComplete -> completed=true, hasLog=false, hasIndex=false, data=Set("d1")
+[violation] invNoOrdinaryDataAfterComplete 失败：删除完成但 data 残留 "d1"！</pre>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3>变异 #2：<code>erasure</code> 跳过 Recheck（<code>mutant_erasure_skips_recheck</code>）</h3>
+          <span class="badge risk">3,747 ms 捕获</span>
+        </div>
+        <p>
+          模拟工程师误以为 <code>KeepOnRetention</code> 代表在 <code>erasure</code> 模式下不需要复查 <code>Recheck</code>（与 ADR-0050 第 5.2 节规定直接冲突）。Apalache 在 State 9 构造出迟到记忆污染：
+        </p>
+<pre class="trace-box">[State 0] init (tombstone="none", memories=Set())
+[State 1] markDeleted("erasure")   -> tombstone="erasure"
+[State 2] janitorClaim             -> janitorStage="interrupt"
+[State 3] memWrite("m1")           -> memories=Set("m1"), memAfterDel=Set("m1")
+[State 4..5] Janitor 推进至 delete_log
+[State 6] memRecheckBuggy("m1")    -> 因 tombstone=="erasure" 错误跳过撤回, pc="done"
+[State 7..8] Janitor 跳过 KeepOnRetention memories 完成 sweep2 -> delete_index
+[State 9] janitorComplete          -> completed=true, memories=Set("m1") ∩ memAfterDel ≠ ∅
+[violation] invNoLateMemorySurvived 失败：擦除后写入的新 Memory 逃逸留存！</pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section 4 -->
+  <section id="sec-4">
+    <div class="sec-head">
+      <span class="secno">04</span>
+      <h2>Go 真实实现 Trace Validation 与真实收获</h2>
+    </div>
+    <p class="prose">
+      在 <code>internal/sim/lifecycle_trace_test.go</code> 中，我们没有写死任何 mock 逻辑，而是直接装配了真实的 <code>app.Memory</code> + <code>app.NewCore</code> + <code>service.Service</code> + <code>presence.Service</code> + <code>memory.Service</code> + <code>janitor.Janitor</code>（仅利用其已有的 <code>BeforeStage</code> 测试钩子观测内部清理阶段与注入崩溃），运行以下 4 条场景并逐帧导回 Quint 校验：
+    </p>
+
+    <div class="tbl">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:28%">Go 真实场景名</th>
+            <th style="width:48%">真实 Go 调用链与并发交错</th>
+            <th style="width:24%">校验结果</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>traceHardDeleteWithLateWrites</code></td>
+            <td>写 <code>presence(d1)</code>、<code>memory(m1)</code> → <code>Service.Delete("end_user")</code> → 迟到 <code>presence.Put(d2)</code> 与 <code>Memory.Save(m2)</code> 经真实 <code>Recheck</code> 撤回 → <code>Janitor.Step</code> 全程完成</td>
+            <td><span class="badge ok">Go + Quint 同构通过</span></td>
+          </tr>
+          <tr>
+            <td><code>traceErasureKeepsPreWithdrawsLate</code></td>
+            <td>写 <code>d1</code>、<code>m1</code> → <code>Service.Delete("erasure")</code> → 迟到 <code>Memory.Save(m2)</code> 被真实 <code>Recheck</code> 撤回并返回 <code>ErrNotFound</code> → Janitor 完成后 <code>m1</code> 留存且 <code>d1/m2/log/index</code> 全清</td>
+            <td><span class="badge ok">Go + Quint 同构通过</span></td>
+          </tr>
+          <tr>
+            <td><code>traceRetentionJanitorCrashRecovery</code></td>
+            <td>写 <code>d1</code>、<code>m1</code> → <code>Service.Delete("retention")</code> → Janitor 在 <code>"log"</code> 阶段被 <code>cancel()</code> 中断模拟崩溃 → 时钟推进越过租约后新 Janitor 接管重跑完成</td>
+            <td><span class="badge ok">Go + Quint 同构通过</span></td>
+          </tr>
+          <tr>
+            <td><code>traceJanitorCrashAfterLogDeleteAndLateWrite</code></td>
+            <td>写 <code>d1</code> → 硬删 → Janitor 删完日志、进入第二遍 <code>"sweep"</code> 前崩溃 → 崩溃窗口内注入迟到 <code>presence.Put(d2)</code> → 新 Janitor 重扫完成清理</td>
+            <td><span class="badge ok">Go + Quint 同构通过</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      <div class="callout-title">工程实证亮点：Trace Validation 如何在 164ms 内抓出“规约假设偏差”</div>
+      <p>
+        在初次把 Go 真实轨迹导回 Quint 执行 <code>quint test generated/trace_replay_test.qnt</code> 时，测试在 <strong>164ms</strong> 内立刻在第 54 行报错：
+        <code>Error [QNT508]: Assertion failed — assert(data == Set())</code>（预期在延迟写入 <code>d2</code> 被撤回后 <code>data</code> 清空，但模型仍留有 <code>d1</code>）。
+      </p>
+      <p>
+        回查 <code>internal/presence/presence.go</code> 第 78–80 行发现：<code>lifecycle_recheck.qnt</code> 最初想当然地假设所有普通存储的 <code>withdraw</code> 回调都是按单条 ID 删除（<code>data.exclude(Set(id))</code>）；但真实代码中，<code>presence.Service.Put</code> 的撤回回调直接调用了 <code>s.Store.DeleteSession(ctx, e.SessionID)</code>——即<strong>一旦复查发现删除记录，整条会话的在场记录全部清空</strong>！
+        我们在规约中同步修正 <code>ordWithdraw</code> 语义后，全部 7 项测试与 12 步 Apalache 符号检验重新全绿通过。这直接证明了“Trace Validation 把代码真实语义反向钉死在形式模型上”的独特价值。
+      </p>
+    </div>
+  </section>
+
+  <!-- Section 5 -->
+  <section id="sec-5">
+    <div class="sec-head">
+      <span class="secno">05</span>
+      <h2>经验沉淀与推进 PoC #2 建议</h2>
+    </div>
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head">
+          <h3>PoC #1 核心工程结论</h3>
+          <span class="badge ok">可行性已证实</span>
+        </div>
+        <ul>
+          <li><strong>工具链完全可行</strong>：Quint 0.33 + Rust evaluator（50ms 级随机探索）+ Apalache SMT（数十秒级符号穷举）在 macOS 本机运行流畅，且零 Docker 依赖。</li>
+          <li><strong>与现有 <code>internal/sim</code> 高度互补</strong>：无需改动生产代码即可通过测试钩子实现 Trace 导出对齐。</li>
+          <li><strong>CI 注意点</strong>：仓库已有门禁 <code>scripts/docrefs/main.go</code> 会扫描 <code>docs/</code> 下所有 Markdown 链接，需保持忽略 <code>node_modules</code>（已在本次实验顺带修补）。</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h3>下一步推进 PoC #2 的具体调整</h3>
+          <span class="badge info">Run / Worker 状态机</span>
+        </div>
+        <ul>
+          <li><strong>将 Trace 导出接入随机高覆盖种子</strong>：PoC #1 先用了 4 条定向情景轨迹；进入 PoC #2（<code>session.State</code> + <code>Worker.Step</code>）时，直接从 <code>internal/sim</code> 精选 20–50 个高覆盖随机种子把 <code>v1.Event</code> 序列导出为标准 ITF / Quint trace 批量回放。</li>
+          <li><strong>把时间拆进分级门禁</strong>：日常开发内循环用 <code>quint test</code> + <code>quint run</code> + Go PBT/Trace 回放（控制在不超 15 秒）；较重的 Apalache SMT 符号检验放进按需命令或合并前检查，从而真正解决高频反馈耗时痛点。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer class="doc-foot">
+    <span>docs/formal-verification/2026-11-22-poc1-report.html</span>
+    <span>系列文档：<a href="./2026-11-22-industry-survey.html">业界调研</a> · <a href="./2026-11-22-yanshi-verification-plan.html">落地方案</a> · <code>poc1-lifecycle-recheck/run.sh</code></span>
+  </footer>
+</div>
+
+<script>
+(function () {
+  var btn = document.getElementById('themeToggle');
+  var root = document.documentElement;
+  function currentDark() {
+    var attr = root.getAttribute('data-theme');
+    if (attr === 'dark') return true;
+    if (attr === 'light') return false;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+  function updateLabel() {
+    btn.textContent = currentDark() ? '浅色模式' : '深色模式';
+  }
+  btn.addEventListener('click', function () {
+    root.setAttribute('data-theme', currentDark() ? 'light' : 'dark');
+    updateLabel();
+  });
+  updateLabel();
+})();
+</script>
+</body>
+</html>
