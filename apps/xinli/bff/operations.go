@@ -2,6 +2,8 @@ package bff
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -200,13 +202,31 @@ func (o Options) forward(w http.ResponseWriter, r *http.Request, method, suffix 
 	query.WriteJSON(w, status, out)
 }
 
+// threadKey 把 App 给的键映射为内核幂等键：摘要限制了键长与字符，前缀与编排器的创建意图键分开。
+// 内核按 (业务线, EndUser, 键) 派生 Session ID，不同用户的同一个键互不影响。
+func threadKey(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return "xt-" + hex.EncodeToString(sum[:])
+}
+
 func (o Options) createThread(w http.ResponseWriter, r *http.Request) {
-	var in struct{}
-	if !decodeBody(w, r, &in, true) {
+	var in struct {
+		IdempotencyKey string `json:"idempotency_key"`
+	}
+	if !decodeBody(w, r, &in, false) {
 		return
 	}
 	if err := o.accessible(r); err != nil {
 		fail(w, err)
+		return
+	}
+	// 回包丢失时 App 以同一个键重试，得到同一个线程，不会多出空线程（ADR-0059）。
+	if in.IdempotencyKey == "" {
+		fail(w, &query.Error{Status: 400, Code: "idempotency_key_required"})
+		return
+	}
+	if len(in.IdempotencyKey) > 128 {
+		fail(w, &query.Error{Status: 400, Code: "invalid_request"})
 		return
 	}
 	ops, err := o.operations()
@@ -221,7 +241,7 @@ func (o Options) createThread(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	id, err := ops.CreateSessionWithOptions(r.Context(), owner.BusinessLine, owner.EndUser, "xinli-assistant", kernel.SessionOptions{TimeZone: record.Account.TimeZone})
+	id, err := ops.CreateSessionWithOptions(r.Context(), owner.BusinessLine, owner.EndUser, "xinli-assistant", kernel.SessionOptions{TimeZone: record.Account.TimeZone, IdempotencyKey: threadKey(in.IdempotencyKey)})
 	if err != nil {
 		fail(w, err)
 		return

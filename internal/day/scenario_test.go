@@ -463,9 +463,18 @@ func (e *environment) newThread() string {
 	var out struct {
 		ID string `json:"id"`
 	}
-	e.bffRequest("POST", "/v1/threads", map[string]any{}, 201, &out)
+	key := randomID(e.t)
+	e.bffRequest("POST", "/v1/threads", map[string]string{"idempotency_key": key}, 201, &out)
 	if out.ID == "" {
 		e.t.Fatal("thread ID missing")
+	}
+	// 回包丢失后 App 以同一个键重试，得到同一个线程（ADR-0059）。
+	var retry struct {
+		ID string `json:"id"`
+	}
+	e.bffRequest("POST", "/v1/threads", map[string]string{"idempotency_key": key}, 201, &retry)
+	if retry.ID != out.ID {
+		e.t.Fatalf("thread retry created %q, want %q", retry.ID, out.ID)
 	}
 	return out.ID
 }

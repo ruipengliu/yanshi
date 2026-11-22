@@ -2,6 +2,8 @@ package bff_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -179,7 +181,10 @@ func TestThreadOperations(t *testing.T) {
 	h := operationsFixture(t, "memory")
 	token := h.a.AccessToken
 	h.request(token, "POST", "/v1/threads", `{"agent":"xinli-day"}`, 400)
-	h.request(token, "POST", "/v1/threads", `{}`, 201)
+	h.request(token, "POST", "/v1/threads", ``, 400)
+	h.request(token, "POST", "/v1/threads", `{}`, 400)
+	h.request(token, "POST", "/v1/threads", fmt.Sprintf(`{"idempotency_key":%q}`, strings.Repeat("k", 129)), 400)
+	h.request(token, "POST", "/v1/threads", `{"idempotency_key":"client-thread"}`, 201)
 	h.request(token, "POST", "/v1/threads/s-1/inputs", `{"input_id":"client-id","text":"hello"}`, 202)
 	h.request(token, "POST", "/v1/threads/s-1/inputs", `{"text":"hello"}`, 400)
 	h.request(token, "POST", "/v1/threads/s-1/inputs", `{"input_id":"i","redo":true}`, 400)
@@ -214,6 +219,11 @@ func TestThreadOperations(t *testing.T) {
 	defer h.lock.Unlock()
 	if string(h.calls[0].Body["time_zone"]) != `"Asia/Shanghai"` || string(h.calls[0].Body["agent"]) != `"xinli-assistant"` || string(h.calls[0].Body["end_user"]) != fmt.Sprintf("%q", h.a.Owner.EndUser) || string(h.calls[1].Body["input_id"]) != `"client-id"` {
 		t.Fatal("creation identity or input ID changed")
+	}
+	// 客户端键经摘要并加前缀后交给内核，与编排器创建意图的 xc- 键分开。
+	sum := sha256.Sum256([]byte("client-thread"))
+	if string(h.calls[0].Body["idempotency_key"]) != fmt.Sprintf("%q", "xt-"+hex.EncodeToString(sum[:])) {
+		t.Fatalf("thread idempotency key: %s", h.calls[0].Body["idempotency_key"])
 	}
 	var content []struct {
 		Action map[string]json.RawMessage `json:"card_action"`
@@ -387,7 +397,7 @@ func TestAccountOperations(t *testing.T) {
 			if err := h.accounts.Disable(h.ctx, h.b.Owner); err != nil {
 				t.Fatal(err)
 			}
-			h.request(h.b.AccessToken, "POST", "/v1/threads", `{}`, 401)
+			h.request(h.b.AccessToken, "POST", "/v1/threads", `{"idempotency_key":"client-thread"}`, 401)
 		})
 	}
 }
