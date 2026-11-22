@@ -126,6 +126,7 @@ func requireCoverage(t *testing.T, total Stats, names ...string) {
 }
 
 func TestSimulationWithFaults(t *testing.T) {
+	t.Parallel()
 	total := parallelSeeds(t, seedList(), func(t *testing.T, s uint64) Stats {
 		return run(t, s, Options{Faults: true, Attested: true, KeyedCreates: true}).Stats
 	})
@@ -148,6 +149,7 @@ func TestSimulationWithFaults(t *testing.T) {
 
 // TestLongRunsWithFaults 让 Run 持续上百轮，检验压缩在故障下保持上下文有界、调用配对完整，且长 Run 能跑完。
 func TestLongRunsWithFaults(t *testing.T) {
+	t.Parallel()
 	list := seedList()
 	if *seed == 0 {
 		list = list[:max(len(list)/5, 1)]
@@ -162,6 +164,7 @@ func TestLongRunsWithFaults(t *testing.T) {
 // TestSimulationWithoutFaultsNeverFails：没有故障时 Run 不失败、不被接管。没有故障就没有停机，移交都来自交互 Worker
 // 移交长任务：它正常结束 Attempt，不算接管（ADR-0029）。
 func TestSimulationWithoutFaultsNeverFails(t *testing.T) {
+	t.Parallel()
 	total := parallelSeeds(t, seedList(), func(t *testing.T, s uint64) Stats {
 		st := run(t, s, Options{}).Stats
 		if st.Failed != 0 || st.Takeovers != 0 || st.OutcomeUnknown != 0 || st.ReadOnlyDowngrades != 0 {
@@ -207,6 +210,7 @@ func checkSimulationDeterminism(t *testing.T, schedules bool) {
 
 // 与任意 Step 间的重启、追加前失败、追加后结果未知交错；每步 Reduce 与快照恢复比较也覆盖 attested。
 func TestAttestedPagesWithFaults(t *testing.T) {
+	t.Parallel()
 	total := parallelSeeds(t, seedList(), func(t *testing.T, s uint64) Stats {
 		return run(t, s, Options{Faults: true, Attested: true, Ticks: 1000}).Stats
 	})

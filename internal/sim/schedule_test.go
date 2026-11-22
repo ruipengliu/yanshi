@@ -48,6 +48,7 @@ func TestScheduleCatchupAndClosedQuiesce(t *testing.T) {
 
 // 保留原有综合覆盖的随机轨迹；定时故障覆盖在独立选项下仍逐项要求发生。
 func TestSchedulesWithFaults(t *testing.T) {
+	t.Parallel()
 	total := parallelSeeds(t, seedList(), func(t *testing.T, s uint64) Stats {
 		return run(t, s, Options{Faults: true, Attested: true, Schedules: true}).Stats
 	})
@@ -56,6 +57,7 @@ func TestSchedulesWithFaults(t *testing.T) {
 
 // 包含旧失败种子 13/20，继续覆盖长 Run 阻塞定时后的追赶，预算仍为 2000 轮。
 func TestScheduledLongRunsWithFaults(t *testing.T) {
+	t.Parallel()
 	list := seedList()
 	if *seed == 0 {
 		list = list[:max(len(list)/5, 1)]

@@ -7,7 +7,7 @@ export YANSHI_TEST_S3 ?= 127.0.0.1:58333
 # TypeScript SDK 与真实网关的互通测试（internal/e2e TestWebSDK）；需要 Node.js 与 pnpm。
 export YANSHI_TEST_NODE ?= 1
 
-.PHONY: check gen lint check-deps test sim build tools deps-up deps-down sandbox-image web web-deps mobile
+.PHONY: check gen lint check-deps test sim sim-quick build tools deps-up deps-down sandbox-image web web-deps mobile
 
 check: lint test
 
@@ -96,11 +96,20 @@ mobile: build/swift-protobuf/Package.swift
 	YANSHI_TEST_MOBILE_SMOKE=$(CURDIR)/sdk/mobile/smoke/.build/release/Smoke go test ./internal/e2e -run TestMobileSwift -count=1 -v
 	scripts/mobile-smoke-ios.sh
 
-# 更多种子的确定性模拟测试，含 PostgreSQL 差分测试
-# 种子并行模拟：10 核上约 4 分钟（PostgreSQL 差分测试占六成，受连接数所限至多 8 个种子同时运行）。
-# 核数少时接近串行的约 10 分钟，会碰到 go test 默认的 10 分钟时限，加入双库差分后放宽到 30 分钟；双库种子至多四对并行。
+# 更多种子的确定性模拟测试，含 PostgreSQL 单库与双库差分测试。
+# 2026-11-22 在 Mac mini（12 核）上实测 623 秒（此前 1092 秒）：PG 差分主要在等数据库往返，与吃 CPU 的内存模拟
+# 在顶层并行、重叠运行；PG 种子至多 16 个、双库至多 16 对同时运行（开发库 max_connections 300）；GOGC=400 让内存
+# 模拟的 CPU 时间少约三分之一，峰值内存约 1.5 GB。关键路径仍是双库差分（每对 10–80 秒）。
+SIM_SEEDS ?= 2000
+SIM_PGSEEDS ?= 100
+SIM_SHARDSEEDS ?= 100
 sim: deps-up
-	go test ./internal/sim -sim.seeds=2000 -sim.pgseeds=100 -sim.shardseeds=100 -timeout 30m
+	GOGC=400 go test ./internal/sim -sim.seeds=$(SIM_SEEDS) -sim.pgseeds=$(SIM_PGSEEDS) -sim.shardseeds=$(SIM_SHARDSEEDS) -timeout 30m
+
+# 中途验收：改动执行语义的过程中快速回归，种子数为 make sim 的五分之一（实测约 2.5 分钟）。罕见路径在这个规模下只命中
+# 个位数次，合入前仍须跑完整的 make sim。
+sim-quick:
+	$(MAKE) sim SIM_SEEDS=400 SIM_PGSEEDS=20 SIM_SHARDSEEDS=20
 
 # 评测（docs/design/m4-eval.md）：消耗真实 token，不在 check 中；需要 ARK_API_KEY（火山方舟）。
 # 改动模型、提示词、AgentDef 或召回、压缩、Memory、MCP 中给模型的文本时必须运行。

@@ -4,6 +4,7 @@ import "testing"
 
 // 档位会改变额度与执行路径，覆盖独立开启，旧综合场景继续要求包括 CardAnswers 的全部既有覆盖。
 func TestTiersWithFaults(t *testing.T) {
+	t.Parallel()
 	total := parallelSeeds(t, seedList(), func(t *testing.T, s uint64) Stats {
 		return run(t, s, Options{Faults: true, Attested: true, Tiers: true}).Stats
 	})

@@ -17,6 +17,7 @@ import (
 )
 
 func TestRedoWithFaults(t *testing.T) {
+	t.Parallel()
 	total := parallelSeeds(t, seedList(), func(t *testing.T, s uint64) Stats {
 		return run(t, s, Options{Faults: true, Redo: true, Schedules: true}).Stats
 	})

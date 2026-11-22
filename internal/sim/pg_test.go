@@ -22,13 +22,15 @@ import (
 var pgSeeds = flag.Int("sim.pgseeds", 15, "number of seeds to simulate on PostgreSQL")
 
 // pgSlots 限制同时连接 PostgreSQL 的种子数。每个种子有自己的 schema、连接池与 Notifier，实测并发时每个种子约占
-// 4 条连接；开发数据库的 max_connections 为 100，且由各 worktree 与 make check 中其他用到 PostgreSQL 的包共用。
-// 种子的模拟主要在等数据库往返，并行能缩短墙钟时间；限为 8 个（约 32 条连接），核数再多也不越过这个余量。
-var pgSlots = make(chan struct{}, 8)
+// 4 条连接；开发数据库的 max_connections 为 300（docker-compose.yml），由各 worktree 与双库差分测试共用。
+// 种子的模拟主要在等数据库往返（实测此阶段测试进程只用约半个核），并行能缩短墙钟时间；限为 16 个（约 64 条连接）。
+var pgSlots = make(chan struct{}, 16)
 
 // TestPostgresMatchesMemory 是差分测试：同一种子在 PostgreSQL 与内存实现上必须产生逐字节相同的日志，
 // 从而证明两套存储实现语义等价，内存模拟的全部结论同样适用于 PostgreSQL。
 func TestPostgresMatchesMemory(t *testing.T) {
+	// 顶层并行（make sim 的耗时）：PG 差分主要在等数据库往返，内存模拟主要用 CPU，二者重叠运行，总耗时接近较长的一方。
+	t.Parallel()
 	pgtest.DSN(t)
 	var parked, promoted, completed atomic.Int64
 	t.Cleanup(func() {

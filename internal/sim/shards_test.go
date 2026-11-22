@@ -34,6 +34,7 @@ func simulationLocator(t *testing.T) shard.Locator {
 
 // TestShardedMemoryMatchesSingle 不需要 PostgreSQL；现有单库 Fingerprint 路径与随机流保持原样。
 func TestShardedMemoryMatchesSingle(t *testing.T) {
+	t.Parallel()
 	for seed := uint64(1); seed <= uint64(*shardSeeds); seed++ {
 		t.Run(fmt.Sprintf("seed%d", seed), func(t *testing.T) { t.Parallel(); runShardSeed(t, seed, nil) })
 	}
@@ -41,6 +42,7 @@ func TestShardedMemoryMatchesSingle(t *testing.T) {
 
 // 两个 database 独立拥有通知、迁移、序列与事务；schema 只用于同一 database 内的测试隔离。
 func TestShardedPostgresMatchesMemory(t *testing.T) {
+	t.Parallel()
 	pgtest.DSN(t)
 	dsns := []string{pgtest.Database(t), pgtest.Database(t)}
 	var delegations, users, parked, promoted, completed atomic.Int64
@@ -63,8 +65,9 @@ func TestShardedPostgresMatchesMemory(t *testing.T) {
 	}
 }
 
-// 每个种子占两个 database 的连接，至多四对；单库 PG 种子组在另一个顶层测试中运行。
-var shardPGSlots = make(chan struct{}, 4)
+// 每个种子占两个 database 的连接，至多十六对（约 128 条连接）；单库 PG 种子组在另一个顶层测试中并行运行。
+// 全量 make sim 中双库差分是关键路径（每对种子 10–80 秒，主要在等数据库往返），名额决定要排几批。
+var shardPGSlots = make(chan struct{}, 16)
 
 func runShardSeed(t *testing.T, seed uint64, dsns []string) Stats {
 	t.Helper()
