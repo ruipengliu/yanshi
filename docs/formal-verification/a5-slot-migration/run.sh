@@ -53,7 +53,8 @@ for main in correct correct_without_identity; do
     pnpm exec quint run --main=$main --seed=0x5a5 --max-samples=100000 --max-steps=40 --invariant=allInvariants slot_migration.qnt
 done
 
-for w in witnessNoSettledRollback witnessNoUndrainedLoss; do
+# 后两个见证证明模拟走到了分片被移除、以及移除后重新加入的追平状态。
+for w in witnessNoSettledRollback witnessNoUndrainedLoss witnessNoSettledRemoval witnessNoSettledReadd; do
   expect_violation "4. Reachability $w" \
     pnpm exec quint run --main=correct --seed=0x5a5 --max-samples=100000 --max-steps=40 --invariant="$w" slot_migration.qnt
 done
@@ -83,6 +84,10 @@ for main in no_target_rotation_identity rotate_before_switch_identity rotate_dur
   expect_violation "7. Reachability witnessNoSettledMigration in $main" \
     pnpm exec quint run --main=$main --seed=0x5a5 --max-samples=100000 --max-steps=40 --invariant=witnessNoSettledMigration slot_migration.qnt
 done
+
+# 摘要不是单调的：回滚恢复原部署制品时与移除前相同。被移除的源分片也不换代时，核对兜不住，须找到反例。
+expect_violation "8. Identity ABA no_target_rotation_skip_removed_identity (invConverged)" \
+  pnpm exec quint run --main=no_target_rotation_skip_removed_identity --seed=0x5a5 --max-samples=100000 --max-steps=40 --invariant=invConverged slot_migration.qnt
 
 echo ""
 echo "All A5 slot migration checks passed in $(($(ms_now) - total_t0))ms."
