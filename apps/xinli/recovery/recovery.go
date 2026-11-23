@@ -33,7 +33,10 @@ type Position struct {
 type Progress struct {
 	BusinessLine string
 	Slots        []int
-	Version      uint64
+	// Identity 是取 H 时槽位表的摘要。迁槽后某个受影响分片漏了换代，旧游标仍然有效、迁入的 Session 不会被补读；
+	// 发现循环看到摘要变化即重新对账，作为换代之外的第二道防线（ADR-0046“迁槽与游标”）。
+	Identity string
+	Version  uint64
 	// Revision 只由恢复步骤和重置推进，区分并发收页与另一位恢复执行者。
 	Revision     uint64
 	Round        uint64
@@ -130,7 +133,7 @@ func (r *Recoverer) Step(ctx context.Context, line string) (Progress, error) {
 		if len(heads) == 0 {
 			return p, errors.New("recovery: missing heads")
 		}
-		next := Progress{BusinessLine: line, Round: p.Round + 1, Phase: Owners}
+		next := Progress{BusinessLine: line, Round: p.Round + 1, Phase: Owners, Identity: heads[0].Identity}
 		seen := map[int]bool{}
 		for _, h := range heads {
 			if id := Shard(ctx); id >= 0 && h.Shard != id {

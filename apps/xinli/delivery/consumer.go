@@ -206,10 +206,13 @@ func Start(ctx context.Context, lines []string, consumer *Consumer, worker *Work
 					started[-1] = true
 					loop("consume", line, 0, func(ctx context.Context) error { return consumer.Poll(ctx, line) }, 10*time.Millisecond)
 				}
-				return nil
+				return consumer.ReconcileIdentity(ctx, line, heads[0].Identity)
 			}
+			// 某片核对失败不妨碍登记其余分片，错误汇总后交给退避。
+			var result error
 			for _, head := range heads {
 				id := head.Shard
+				result = errors.Join(result, consumer.ReconcileIdentity(recovery.WithShard(ctx, id), line, head.Identity))
 				if started[id] {
 					continue
 				}
@@ -232,7 +235,7 @@ func Start(ctx context.Context, lines []string, consumer *Consumer, worker *Work
 					return consumer.pollPages(ctx, line, p)
 				}, 10*time.Millisecond)
 			}
-			return nil
+			return result
 		}, time.Second)
 		loop("process", line, -1, func(ctx context.Context) error { return consumer.Process(ctx, line) }, time.Second)
 		// 稳定枚举每轮只取一页，持久任务重启后可再次发现；不依赖进程内定时回调去重。
@@ -256,6 +259,27 @@ func Start(ctx context.Context, lines []string, consumer *Consumer, worker *Work
 		}, time.Second)
 	}
 	return func() { cancel(); wg.Wait() }
+}
+
+// ReconcileIdentity 在槽位表摘要与取 H 时不同时把进度重置回 Heads，开始新一轮对账；还在 Heads 或尚无进度时不动。
+// 滚动部署期间新旧进程交替回答，可能连续重置几次，部署完成后收敛；重置只重做对账，不丢已收的信封。
+// 冲突说明进度刚被别的步骤推进，留给下一轮发现再查。
+func (c *Consumer) ReconcileIdentity(ctx context.Context, line, identity string) error {
+	p, err := c.Progress.Load(ctx, line)
+	if err != nil {
+		return err
+	}
+	if p.Phase == "" || p.Phase == recovery.Heads || p.Identity == identity {
+		return nil
+	}
+	next := recovery.Progress{BusinessLine: line, Round: p.Round, Phase: recovery.Heads, Version: p.Version + 1, Revision: p.Revision}
+	if recovery.Shard(ctx) >= 0 {
+		next.Revision++
+	}
+	if err := c.Progress.Commit(ctx, p.Version, next, recovery.Batch{}); err != nil && !errors.Is(err, recovery.ErrConflict) {
+		return err
+	}
+	return nil
 }
 
 // B5 的全种类游标升级到 B6 选定集合时，显式重新对账，不复用旧过滤位置。

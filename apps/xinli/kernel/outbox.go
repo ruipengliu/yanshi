@@ -30,6 +30,8 @@ type OutboxShard struct {
 	Slots  []int  `json:"slots,omitempty"`
 	Status string `json:"status"`
 	Next   string `json:"next"`
+	// Identity 是同一响应顶层的槽位表摘要（各项相同），槽位表变化时随之变化；单库部署为空。
+	Identity string `json:"-"`
 }
 
 type OutboxPage struct {
@@ -49,7 +51,8 @@ func (c *Client) OutboxHeads(ctx context.Context, line string) ([]OutboxShard, e
 
 func (c *Client) OutboxHeadsKinds(ctx context.Context, line string, kinds []string) ([]OutboxShard, error) {
 	var out struct {
-		Shards []OutboxShard `json:"shards"`
+		Shards   []OutboxShard `json:"shards"`
+		Identity string        `json:"identity"`
 	}
 	q := url.Values{"business_line": {line}}
 	if len(kinds) > 0 {
@@ -67,6 +70,9 @@ func (c *Client) OutboxHeadsKinds(ctx context.Context, line string, kinds []stri
 			return nil, errors.New("kernel: unavailable outbox shard")
 		}
 		seen[s.Shard] = true
+	}
+	for i := range out.Shards {
+		out.Shards[i].Identity = out.Identity
 	}
 	return out.Shards, nil
 }

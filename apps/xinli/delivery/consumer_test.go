@@ -156,7 +156,8 @@ func TestMultiShardServiceOutboxHeads(t *testing.T) {
 	defer server.Close()
 	source := delivery.Source{Client: &kernel.Client{BaseURL: server.URL, Tokens: tokens{}}}
 	heads, err := source.OutboxHeads(context.Background(), "bl")
-	if err != nil || len(heads) != 2 || heads[0].Shard != 0 || heads[0].Next != "H0" || len(heads[0].Slots) != 2 || heads[1].Shard != 1 || heads[1].Status != "unavailable" || len(heads[1].Slots) != 2 {
+	if err != nil || len(heads) != 2 || heads[0].Shard != 0 || heads[0].Next != "H0" || len(heads[0].Slots) != 2 || heads[1].Shard != 1 || heads[1].Status != "unavailable" || len(heads[1].Slots) != 2 ||
+		heads[0].Identity != "digest" || heads[1].Identity != "digest" {
 		t.Fatalf("configured shard list was lost: %+v %v", heads, err)
 	}
 }

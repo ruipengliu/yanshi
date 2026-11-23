@@ -45,10 +45,13 @@ run_step "1. Quint typecheck" \
   pnpm exec quint typecheck slot_migration.qnt
 
 run_step "2. Scenario tests" \
-  pnpm exec quint test --main=scenarios slot_migration.qnt
+  bash -c 'pnpm exec quint test --main=scenarios slot_migration.qnt && pnpm exec quint test --main=rotate_during_rollout_identity slot_migration.qnt'
 
-run_step "3. Random simulation (100000 samples x 40 steps)" \
-  pnpm exec quint run --main=correct --seed=0x5a5 --max-samples=100000 --max-steps=40 --invariant=allInvariants slot_migration.qnt
+# correct 是 xinli 的现状（换代加消费端 identity 核对）；correct_without_identity 检验 ADR 的换代本身也成立。
+for main in correct correct_without_identity; do
+  run_step "3. Random simulation $main (100000 samples x 40 steps)" \
+    pnpm exec quint run --main=$main --seed=0x5a5 --max-samples=100000 --max-steps=40 --invariant=allInvariants slot_migration.qnt
+done
 
 for w in witnessNoSettledRollback witnessNoUndrainedLoss; do
   expect_violation "4. Reachability $w" \
@@ -60,7 +63,7 @@ done
 run_step "5. Apalache bounded check (max-steps=5)" \
   pnpm exec quint verify --main=correct --max-steps=5 --invariant=allInvariants slot_migration.qnt
 
-# 每个变体违反 ADR 的一处顺序，随机模拟须找到反例。
+# 每个变体违反 ADR 的一处顺序，消费端没有 identity 核对时，随机模拟须找到反例。
 for spec in \
   keep_source_rows:invNoResidue \
   keep_source_copy:invNoResidue \
@@ -71,6 +74,14 @@ for spec in \
   drain_before_stop:invDrainKeepsReasons; do
   expect_violation "6. Mutant ${spec%%:*} (${spec##*:})" \
     pnpm exec quint run --main="${spec%%:*}" --seed=0x5a5 --max-samples=100000 --max-steps=40 --invariant="${spec##*:}" slot_migration.qnt
+done
+
+# 有 identity 核对时，三个换代顺序的变体信封仍须收齐，且模拟确实走到了迁移后追平的状态。
+for main in no_target_rotation_identity rotate_before_switch_identity rotate_during_rollout_identity; do
+  run_step "7. Identity check covers $main" \
+    pnpm exec quint run --main=$main --seed=0x5a5 --max-samples=100000 --max-steps=40 --invariant=invConverged slot_migration.qnt
+  expect_violation "7. Reachability witnessNoSettledMigration in $main" \
+    pnpm exec quint run --main=$main --seed=0x5a5 --max-samples=100000 --max-steps=40 --invariant=witnessNoSettledMigration slot_migration.qnt
 done
 
 echo ""
