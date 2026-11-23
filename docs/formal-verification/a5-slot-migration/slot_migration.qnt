@@ -23,6 +23,10 @@
  *     B_HOME = 0 时合并只剩分片 0，走这条切换；B_HOME = 1 时合并只剩分片 1，不切换。
  *   - 每个进度键各自数轮次；单库的确认阶段跳过 SeenRound 等于本轮的 Session（本轮已访问），分片的进度确认全部已知 Session。
  *     分片的轮次记 SeenRound = 0（apps/xinli/recovery/recovery.go Events）。
+ *   - 过期的单库进度（B_HOME = 0 的初始状态）：此前是单库（全部槽位在分片 0），xinli 停机期间扩成多分片，
+ *     A 迁出分片 0、分片 0 作为源分片换代过。单库的记录留在停机时的阶段，世代是旧的；它的轮次与 SeenRound 是旧单库的，
+ *     摘要是旧单库的表，合回单库后与当时相同（ABA）。重启后的 xinli 只重置本进程启动过的循环，多分片期间不会动它；
+ *     模型的 read 与 retire 不区分这一点，也允许那时读到 410 或被重置（过近似），不动它的轨迹同样在内。
  *   - 事务提交即可见：xid8 的可见性屏障由 pgoutbox 负责，不在本模型的问题范围内。
  *   - Session 的日志内容不随分片变化（停写期间不变），模型只记录哪些分片上有它的副本（logAt）和删除记录（tombAt）。
  *   - 每个事件都产生一条普通信封；删除产生一条删除信封（只有它带删除原因）。
@@ -33,6 +37,8 @@
  * 确认阶段跳过迁移中被删除的 Session，它的删除得不到确认（2026-11-23 修复的 xinli 缺陷）。
  * no_target_rotation_skip_removed 在漏换代之外还跳过被移出配置的源分片：回滚恢复原部署制品时摘要与移除前相同（ABA），
  * 没看到中间槽位表的消费方（例如 xinli 当时停机）核对不出变化，有核对也须被抓到。
+ * keep_single_epoch 从不对分片 0 换代（扩成多分片时它是源，合回单库时它是目标）：过期的单库游标仍然有效，
+ * 合回单库后摘要也与当时相同，有核对也须被抓到。
  */
 module slot_migration {
   const MUTANT: str
@@ -98,6 +104,7 @@ module slot_migration {
     gone: str -> bool,
     reason: str -> bool,  // 收到删除信封（删除原因只在其中）
     seen: str -> int,     // Checkpoint.SeenRound
+    staleSingle: bool,    // 幽灵字段：初始时单库有过期的进度（供可达性见证使用）
   }
 
   var k: Kernel
@@ -152,17 +159,28 @@ module slot_migration {
   def affected: Set[int] =
     if (MUTANT == "no_target_rotation") Set(m.src)
     else if (MUTANT == "no_target_rotation_skip_removed") Set(m.src).intersect(k.listed)
+    else if (MUTANT == "keep_single_epoch") Set(m.src, m.dst).exclude(Set(0))
     else Set(m.src, m.dst)
+
+  // 旧单库时的槽位表与分片列表：合回单库后的摘要与它相同。
+  pure val SINGLE_IDENT: Ident = { table: SLOTS.mapBy(_ => 0), listed: Set(0) }
 
   // ---- 初始化 ----
 
-  // 消费方的每个分片可能已在 Follow（已完成一轮），也可能刚启动、先对账；起初是多分片，单库的进度尚未开始。
+  // 消费方的每个分片可能已在 Follow（已完成一轮），也可能刚启动、先对账。起初是多分片；
+  // B_HOME = 0 时单库可能留有过期的进度（stale 是它停下时的阶段，"none" 表示没有），旧单库第 1 轮访问过的 Session 记 SeenRound = 1。
   action init = {
     nondet starts = SHARDS.setOfMaps(Set("follow", "heads")).oneOf()
-    initFrom(starts)
+    nondet stale = (if (B_HOME == 0) Set("none", "heads", "recover", "follow") else Set("none")).oneOf()
+    nondet seen = SESSIONS.setOfMaps(Set(0, 1)).oneOf()
+    initWith(starts, stale, if (stale == "none") SESSIONS.mapBy(_ => 0) else seen)
   }
 
-  action initFrom(starts: int -> str): bool = {
+  action initFrom(starts: int -> str): bool = initWith(starts, "none", SESSIONS.mapBy(_ => 0))
+
+  // 过期单库进度的世代早于当前（分片 0 扩容时作为源分片换代过）；keep_single_epoch 下分片 0 从未换代，世代仍是当前的。
+  action initWith(starts: int -> str, stale: str, seen: str -> int): bool = {
+    val old = stale != "none"
     all {
       k' = {
         table: INIT_TABLE,
@@ -181,17 +199,18 @@ module slot_migration {
       },
       m' = { phase: "open", src: 0, dst: 1, rotated: false, drained: false, count: 0, removed: false },
       c' = {
-        phase: starts.put(-1, "heads"),
-        round: KEYS.mapBy(key => if (key >= 0 and starts.get(key) == "follow") 1 else 0),
-        epoch: KEYS.mapBy(_ => 0),
+        phase: starts.put(-1, if (old) stale else "heads"),
+        round: KEYS.mapBy(key => if (key < 0) (if (old) 1 else 0) else if (starts.get(key) == "follow") 1 else 0),
+        epoch: KEYS.mapBy(key => if (key < 0 and old and MUTANT != "keep_single_epoch") -1 else 0),
         pos: KEYS.mapBy(_ => 0),
-        slots: KEYS.mapBy(key => SLOTS.filter(sl => key >= 0 and INIT_TABLE.get(sl) == key)),
-        ident: KEYS.mapBy(_ => { table: INIT_TABLE, listed: SHARDS }),
+        slots: KEYS.mapBy(key => if (key < 0) (if (old) SLOTS else Set()) else SLOTS.filter(sl => INIT_TABLE.get(sl) == key)),
+        ident: KEYS.mapBy(key => if (key < 0 and old) SINGLE_IDENT else { table: INIT_TABLE, listed: SHARDS }),
         seq: SESSIONS.mapBy(_ => 0),
         got: SESSIONS.mapBy(_ => Set()),
         gone: SESSIONS.mapBy(_ => false),
         reason: SESSIONS.mapBy(_ => false),
-        seen: SESSIONS.mapBy(_ => 0),
+        seen: seen,
+        staleSingle: old,
       },
       lost' = Set(),
     }
@@ -537,6 +556,9 @@ module slot_migration {
   // 分片 0 被移除又以同一编号重新加入（回滚）后，s1 有事件，消费方已追平。
   val witnessNoSettledReadd: bool = not(m.removed and m.count == 2 and settled and k.seq.get("s1") > 0)
 
+  // 初始时单库有过期的进度，合回单库后 s1 有事件，消费方已追平（B_HOME = 0）。
+  val witnessNoStaleSingleSettled: bool = not(c.staleSingle and k.listed == Set(0) and settled and k.seq.get("s1") > 0)
+
   val allInvariants: bool = and {
     invConverged,
     invNoFalseGone,
@@ -592,6 +614,37 @@ module single_scenarios {
         assert(k.listed == SHARDS),
         assert(settled),
         assert(c.phase.get(-1) == "heads"),
+        assert(allInvariants),
+        stutter,
+      })
+
+  // 单库第 1 轮访问过 s1 后 xinli 停机，期间扩成多分片（A 在分片 1）；重启后分片 1 尚未对账，单库的记录仍在 Follow。
+  // s1 有事件后被删除，未追平就合回单库，删除信封随源出站行删除。单库的摘要与停机前相同，核对不出变化；
+  // 旧游标因分片 0 换代得到 410，新一轮编号大于旧的 SeenRound，确认阶段经 404 确认 s1 的删除，按 seq 补读 s2。
+  run staleSingleRecordTest =
+    initWith(Map(0 -> "follow", 1 -> "heads"), "follow", SESSIONS.mapBy(_ => 1))
+      .then(write("s1")).then(write("s2"))
+      .then(deleteSession("s1"))
+      .then(stop).then(copy).then(switchTable(true)).then(rolloutDone).then(rotate).then(resume)
+      .then(all {
+        assert(k.listed == Set(0)),
+        assert(c.phase.get(-1) == "follow"),
+        assert(c.ident.get(-1) == currentIdent),
+        retire(0, "new"),
+      })
+      .then(read(-1, k.nextPos.get(0)))
+      .then(all {
+        assert(c.phase.get(-1) == "heads"),
+        assert(not(c.gone.get("s1"))),
+        heads(-1, "new"),
+      })
+      .then(recover(-1, "new")).then(read(-1, k.nextPos.get(0)))
+      .then(all {
+        assert(c.round.get(-1) == 2),
+        assert(settled),
+        assert(c.gone.get("s1")),
+        assert(not(c.reason.get("s1"))),
+        assert(c.seq.get("s2") == 1),
         assert(allInvariants),
         stutter,
       })
@@ -731,6 +784,8 @@ module rotate_before_switch { import slot_migration(MUTANT = "rotate_before_swit
 module rotate_during_rollout { import slot_migration(MUTANT = "rotate_during_rollout", IDENTITY_CHECK = false, RETIRE = true, B_HOME = 1).* }
 // 分片的轮次照旧记入 SeenRound（修复前的 xinli）：切到单库后确认阶段跳过迁移中被删除的 Session。
 module shard_seen_round { import slot_migration(MUTANT = "shard_seen_round", IDENTITY_CHECK = true, RETIRE = true, B_HOME = 0).* }
+// 分片 0 从不换代：过期的单库游标在合回单库后仍有效，摘要也与当时相同，有核对仍丢信封。
+module keep_single_epoch { import slot_migration(MUTANT = "keep_single_epoch", IDENTITY_CHECK = true, RETIRE = true, B_HOME = 0).* }
 module drain_before_stop { import slot_migration(MUTANT = "drain_before_stop", IDENTITY_CHECK = false, RETIRE = true, B_HOME = 1).* }
 
 // 同样的变体，消费端有 identity 核对（xinli 的现状）：核对是换代之外的第二道防线。

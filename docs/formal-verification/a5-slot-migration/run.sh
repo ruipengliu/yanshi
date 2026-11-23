@@ -59,8 +59,8 @@ for w in witnessNoSettledRollback witnessNoUndrainedLoss witnessNoSettledRemoval
   expect_violation "4. Reachability $w" \
     pnpm exec quint run --main=correct --seed=0x5a5 --max-samples=100000 --max-steps=40 --invariant="$w" slot_migration.qnt
 done
-# 切到单库后追平、经 404 确认合并中被删除的 Session，以及切回多分片后追平。
-for w in witnessNoSettledSingle witnessNoSingleConfirm witnessNoSettledReadd; do
+# 切到单库后追平、经 404 确认合并中被删除的 Session、切回多分片后追平，以及从过期的单库进度出发合回单库后追平。
+for w in witnessNoSettledSingle witnessNoSingleConfirm witnessNoSettledReadd witnessNoStaleSingleSettled; do
   expect_violation "4. Reachability $w in correct_single" \
     pnpm exec quint run --main=correct_single --seed=0x5a5 --max-samples=100000 --max-steps=40 --invariant="$w" slot_migration.qnt
 done
@@ -71,6 +71,7 @@ run_step "5. Apalache bounded check (max-steps=5)" \
   pnpm exec quint verify --main=correct --max-steps=5 --invariant=allInvariants slot_migration.qnt
 
 # 每个变体违反 ADR 的一处顺序，消费端没有 identity 核对时，随机模拟须找到反例；shard_seen_round 是消费端的缺陷，有核对。
+# keep_single_epoch 从不对分片 0 换代，有核对：过期的单库进度合回单库时摘要与当时相同，只能靠分片 0 的世代失效。
 for spec in \
   keep_source_rows:invNoResidue \
   keep_source_copy:invNoResidue \
@@ -79,7 +80,8 @@ for spec in \
   rotate_before_switch:invConverged \
   rotate_during_rollout:invConverged \
   drain_before_stop:invDrainKeepsReasons \
-  shard_seen_round:invConverged; do
+  shard_seen_round:invConverged \
+  keep_single_epoch:invConverged; do
   expect_violation "6. Mutant ${spec%%:*} (${spec##*:})" \
     pnpm exec quint run --main="${spec%%:*}" --seed=0x5a5 --max-samples=100000 --max-steps=40 --invariant="${spec##*:}" slot_migration.qnt
 done

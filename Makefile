@@ -113,10 +113,10 @@ sim-quick:
 
 # 形式化验证（docs/formal-verification）：lifecycle.Recheck 的 Quint 规约做类型检查、单元测试、随机模拟与 Apalache
 # 有界验证，两个变异规约须被查出违例，再导出真实 Go 实现的删查交错轨迹在规约上回放；A5 迁槽即换代的规约检验
-# ADR-0046 的步骤顺序（工具未实现，暂无轨迹对照，含分片合并、以同一编号重新加入与 xinli 切单库），七个违反顺序的变体
-# 与 xinli 的 SeenRound 缺陷须被查出，xinli 的 identity 核对须兜住其中三个，摘要 ABA 的变体须被查出。不在 check 中：
+# ADR-0046 的步骤顺序（工具未实现，暂无轨迹对照，含分片合并、以同一编号重新加入、xinli 切单库与过期的单库进度），八个违反
+# 顺序的变体与 xinli 的 SeenRound 缺陷须被查出，xinli 的 identity 核对须兜住其中三个，摘要 ABA 的变体须被查出。不在 check 中：
 # 需要 Node.js、pnpm 与 JDK 17 或更新（Apalache，首次运行时 Quint 下载约 117 MB 到 ~/.quint），且只覆盖已建模的协议。
-# 2026-11-23 在 Mac mini 上实测约 340 秒（两部分各约 42 秒、297 秒）。
+# 2026-11-23 在 Mac mini 上实测约 350 秒（两部分各约 42 秒、306 秒）。
 verify:
 	@java -version >/dev/null 2>&1 || { echo 'make verify 需要 JDK 17 或更新（Apalache）：java -version 失败'; exit 1; }
 	# 构建脚本的放行以各目录的 pnpm-workspace.yaml 为准；环境变量会整体覆盖它，pnpm exec 运行前的依赖检查也读它，整段去掉。
