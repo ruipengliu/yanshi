@@ -15,15 +15,22 @@
  *     发现循环看到某分片不再列出，停掉它的循环并把进度重置回 Heads：delivery.Consumer.Retire（RETIRE）
  *
  * 抽象：
- *   - 两个分片、两个 Session。s1 在迁移的槽位 A 上，s2 的槽位 B 始终在分片 1；迁槽在 0 与 1 之间来回最多两次（迁移与回滚）。
- *   - 分片移除：A 迁到分片 1 后分片 0 没有槽位，切换槽位表时运维可以把它移出配置（合并）；回滚时重新加入，编号不变。
- *     xinli 只剩分片 0 时改按单库消费，这里的合并只剩分片 1，不涉及该切换。
+ *   - 两个分片、两个 Session。s1 在迁移的槽位 A 上，s2 的槽位 B 始终在分片 B_HOME，A 起初在另一片；
+ *     迁槽在 0 与 1 之间来回最多两次（迁移与回滚）。
+ *   - 分片移除：A 迁走后原分片没有槽位，切换槽位表时运维可以把它移出配置（合并）；回滚时重新加入，编号不变。
+ *   - 切单库：/v1/outbox/shards 只列出分片 0 时，xinli 改用单库的进度（键 -1）消费分片 0、补读全部槽位，
+ *     各分片的进度由 Retire 重置；重新出现多个分片时反过来（apps/xinli/delivery/consumer.go Start）。
+ *     B_HOME = 0 时合并只剩分片 0，走这条切换；B_HOME = 1 时合并只剩分片 1，不切换。
+ *   - 每个进度键各自数轮次；单库的确认阶段跳过 SeenRound 等于本轮的 Session（本轮已访问），分片的进度确认全部已知 Session。
+ *     分片的轮次记 SeenRound = 0（apps/xinli/recovery/recovery.go Events）。
  *   - 事务提交即可见：xid8 的可见性屏障由 pgoutbox 负责，不在本模型的问题范围内。
  *   - Session 的日志内容不随分片变化（停写期间不变），模型只记录哪些分片上有它的副本（logAt）和删除记录（tombAt）。
  *   - 每个事件都产生一条普通信封；删除产生一条删除信封（只有它带删除原因）。
  *
  * MUTANT 选择一种违反 ADR 顺序的做法；"none" 是 ADR 的协议。没有 identity 核对时，每个变体都必须被某条不变量抓到；
  * 有核对时，漏换代、先换代后切表、部署未完成就换代这三个变体的信封仍须收齐（见 run.sh）。
+ * shard_seen_round 让分片的轮次照旧记入 SeenRound：切到单库后，单库一轮的编号与分片的轮次相同时，
+ * 确认阶段跳过迁移中被删除的 Session，它的删除得不到确认（2026-11-23 修复的 xinli 缺陷）。
  * no_target_rotation_skip_removed 在漏换代之外还跳过被移出配置的源分片：回滚恢复原部署制品时摘要与移除前相同（ABA），
  * 没看到中间槽位表的消费方（例如 xinli 当时停机）核对不出变化，有核对也须被抓到。
  */
@@ -31,13 +38,17 @@ module slot_migration {
   const MUTANT: str
   const IDENTITY_CHECK: bool
   const RETIRE: bool
+  const B_HOME: int
 
   pure val SHARDS: Set[int] = Set(0, 1)
   pure val SESSIONS: Set[str] = Set("s1", "s2")
   pure val SLOTS: Set[str] = Set("A", "B")
   pure val MOVING_SLOT: str = "A"
   pure val SLOT: str -> str = Map("s1" -> "A", "s2" -> "B")
-  pure val INIT_TABLE: str -> int = Map("A" -> 0, "B" -> 1)
+  pure val INIT_TABLE: str -> int = Map("A" -> 1 - B_HOME, "B" -> B_HOME)
+  // 消费方的进度键：-1 是单库，其余是分片编号。
+  pure val KEYS: Set[int] = Set(-1, 0, 1)
+  pure def shardOf(key: int): int = if (key < 0) 0 else key
   pure val MAX_SEQ: int = 2
   pure val SEQS: Set[int] = 1.to(MAX_SEQ)
   pure val MAX_MIGRATIONS: int = 2
@@ -74,9 +85,10 @@ module slot_migration {
   // removed 是幽灵字段：曾经有分片被移出配置（供可达性见证使用）。
   type Migration = { phase: str, src: int, dst: int, rotated: bool, drained: bool, count: int, removed: bool }
 
-  // 业务线消费方：每个分片一份进度（phase/epoch/pos/slots），信封与补读结果按 Session 记录。
+  // 业务线消费方：每个进度键一份进度（phase/epoch/pos/slots/round），信封与补读结果按 Session 记录。
   type Consumer = {
     phase: int -> str,   // "heads" | "recover" | "follow"
+    round: int -> int,   // 每个进度键各自的轮次，取 H 时加一
     epoch: int -> int,
     pos: int -> int,
     slots: int -> Set[str],
@@ -85,6 +97,7 @@ module slot_migration {
     got: str -> Set[int], // 收到的普通信封
     gone: str -> bool,
     reason: str -> bool,  // 收到删除信封（删除原因只在其中）
+    seen: str -> int,     // Checkpoint.SeenRound
   }
 
   var k: Kernel
@@ -109,6 +122,13 @@ module slot_migration {
 
   def currentIdent: Ident = { table: k.table, listed: k.listed }
 
+  // 只列出分片 0 时 xinli 按单库消费（apps/xinli/delivery/consumer.go Start 的判断）。
+  def single(view: str): bool = viewListed(view) == Set(0)
+
+  // 该进程的回答下，发现循环为这个进度键运行循环。
+  def active(view: str, key: int): bool =
+    if (key < 0) single(view) else viewListed(view).contains(key) and not(single(view))
+
   // 读取请求可能落到任一服务进程：配置中有该分片的进程才能读，否则 404。
   def servable(x: int): bool = k.listed.contains(x) or (k.apiStale and k.prevListed.contains(x))
 
@@ -118,10 +138,10 @@ module slot_migration {
     k.logAt.get(s).contains(x) and not(k.tombAt.get(s).contains(x))
   }
 
-  def caughtUp(x: int): bool = and {
-    c.phase.get(x) != "heads",
-    c.epoch.get(x) == k.epoch.get(x),
-    c.pos.get(x) >= k.nextPos.get(x),
+  def caughtUp(key: int): bool = and {
+    c.phase.get(key) != "heads",
+    c.epoch.get(key) == k.epoch.get(shardOf(key)),
+    c.pos.get(key) >= k.nextPos.get(shardOf(key)),
   }
 
   def knows(s: str): bool = c.seq.get(s) > 0 or c.got.get(s) != Set()
@@ -136,7 +156,7 @@ module slot_migration {
 
   // ---- 初始化 ----
 
-  // 消费方的每个分片可能已在 Follow，也可能刚启动、先对账。
+  // 消费方的每个分片可能已在 Follow（已完成一轮），也可能刚启动、先对账；起初是多分片，单库的进度尚未开始。
   action init = {
     nondet starts = SHARDS.setOfMaps(Set("follow", "heads")).oneOf()
     initFrom(starts)
@@ -161,15 +181,17 @@ module slot_migration {
       },
       m' = { phase: "open", src: 0, dst: 1, rotated: false, drained: false, count: 0, removed: false },
       c' = {
-        phase: starts,
-        epoch: SHARDS.mapBy(_ => 0),
-        pos: SHARDS.mapBy(_ => 0),
-        slots: SHARDS.mapBy(x => SLOTS.filter(sl => INIT_TABLE.get(sl) == x)),
-        ident: SHARDS.mapBy(_ => { table: INIT_TABLE, listed: SHARDS }),
+        phase: starts.put(-1, "heads"),
+        round: KEYS.mapBy(key => if (key >= 0 and starts.get(key) == "follow") 1 else 0),
+        epoch: KEYS.mapBy(_ => 0),
+        pos: KEYS.mapBy(_ => 0),
+        slots: KEYS.mapBy(key => SLOTS.filter(sl => key >= 0 and INIT_TABLE.get(sl) == key)),
+        ident: KEYS.mapBy(_ => { table: INIT_TABLE, listed: SHARDS }),
         seq: SESSIONS.mapBy(_ => 0),
         got: SESSIONS.mapBy(_ => Set()),
         gone: SESSIONS.mapBy(_ => false),
         reason: SESSIONS.mapBy(_ => false),
+        seen: SESSIONS.mapBy(_ => 0),
       },
       lost' = Set(),
     }
@@ -248,7 +270,7 @@ module slot_migration {
   action drain: bool = all {
     m.phase == "stopped" or (MUTANT == "drain_before_stop" and m.phase == "open"),
     not(m.drained),
-    k.listed.forall(x => caughtUp(x)),
+    KEYS.forall(key => active("new", key) implies caughtUp(key)),
     m' = { ...m, drained: true },
     k' = k, c' = c, lost' = lost,
   }
@@ -258,7 +280,10 @@ module slot_migration {
     val src = m.src
     val dst = m.dst
     val removed = if (MUTANT == "keep_source_rows") Set() else k.outbox.get(src).filter(r => migrating(r.sid))
-    val unread = removed.filter(r => r.del and c.phase.get(src) != "heads" and c.epoch.get(src) == k.epoch.get(src) and r.pos >= c.pos.get(src))
+    // 还会被某个进度键读到的删除信封：它在读源分片、游标有效且尚未读过该行。
+    val unread = removed.filter(r => r.del and KEYS.exists(key => and {
+      shardOf(key) == src, c.phase.get(key) != "heads", c.epoch.get(key) == k.epoch.get(src), r.pos >= c.pos.get(key),
+    }))
     all {
       m.phase == "stopped",
       k' = { ...k,
@@ -330,82 +355,98 @@ module slot_migration {
     c' = c, lost' = lost,
   }
 
-  // ---- 消费方（xinli，每个分片一份进度） ----
+  // ---- 消费方（xinli，每个进度键一份进度：分片编号，或单库的 -1） ----
 
-  // Heads：H 取该分片当前的安全水位，槽位取自回答请求的那个进程的槽位表；该进程没有列出本片时取不到 H。
-  action heads(x: int, view: str): bool = {
+  // Heads：开始新一轮，H 取所读分片当前的安全水位；槽位取自回答请求的那个进程的槽位表，单库补读全部槽位。
+  // 该进程的回答下这个键没有循环（分片未列出，或单库与多分片不符）时取不到 H。
+  action heads(key: int, view: str): bool = {
     val t = viewTable(view)
+    val x = shardOf(key)
     all {
-      c.phase.get(x) == "heads",
+      c.phase.get(key) == "heads",
       view == "new" or k.apiStale,
-      viewListed(view).contains(x),
+      active(view, key),
       c' = { ...c,
-        phase: c.phase.set(x, "recover"),
-        epoch: c.epoch.set(x, k.epoch.get(x)),
-        pos: c.pos.set(x, k.nextPos.get(x)),
-        slots: c.slots.set(x, SLOTS.filter(sl => t.get(sl) == x)),
-        ident: c.ident.set(x, viewIdent(view)),
+        phase: c.phase.set(key, "recover"),
+        round: c.round.set(key, c.round.get(key) + 1),
+        epoch: c.epoch.set(key, k.epoch.get(x)),
+        pos: c.pos.set(key, k.nextPos.get(x)),
+        slots: c.slots.set(key, SLOTS.filter(sl => key < 0 or t.get(sl) == key)),
+        ident: c.ident.set(key, viewIdent(view)),
       },
       k' = k, m' = m, lost' = lost,
     }
   }
 
-  // 枚举并按 seq 补读本片槽位上的 Session；逐 ID 读取 404 记为 Gone，已 Gone 的不再读取。
-  action recover(x: int, view: str): bool = {
+  // 枚举并按 seq 补读本键槽位上的 Session，访问过的记下 SeenRound；逐 ID 读取 404 记为 Gone，已 Gone 的不再读取。
+  // 删除了的 Session 不会被枚举到，只能在确认阶段读到 404：单库跳过 SeenRound 等于本轮的，分片确认全部已知的。
+  action recover(key: int, view: str): bool = {
     val t = viewTable(view)
+    val sl = c.slots.get(key)
+    val r = c.round.get(key)
     all {
-      c.phase.get(x) == "recover",
+      c.phase.get(key) == "recover",
       view == "new" or k.apiStale,
       c' = { ...c,
-        phase: c.phase.set(x, "follow"),
+        phase: c.phase.set(key, "follow"),
         seq: SESSIONS.mapBy(s =>
-          if (c.slots.get(x).contains(SLOT.get(s)) and not(c.gone.get(s)) and visibleVia(t, s)) k.seq.get(s)
+          if (sl.contains(SLOT.get(s)) and not(c.gone.get(s)) and visibleVia(t, s)) k.seq.get(s)
           else c.seq.get(s)),
+        seen: SESSIONS.mapBy(s =>
+          if (sl.contains(SLOT.get(s)) and not(c.gone.get(s)) and visibleVia(t, s))
+            (if (key < 0 or MUTANT == "shard_seen_round") r else 0)
+          else c.seen.get(s)),
         gone: SESSIONS.mapBy(s =>
-          c.gone.get(s) or (c.slots.get(x).contains(SLOT.get(s)) and not(visibleVia(t, s)))),
+          c.gone.get(s) or and {
+            sl.contains(SLOT.get(s)),
+            not(visibleVia(t, s)),
+            key >= 0 or c.seen.get(s) != r,
+          }),
       },
       k' = k, m' = m, lost' = lost,
     }
   }
 
-  // 发现循环：回答 /v1/outbox/shards 的进程的摘要与取 H 时不同，就把列出的分片重置回 Heads；在 Heads 时不动。
-  action reconcile(x: int, view: str): bool = all {
+  // 发现循环：回答 /v1/outbox/shards 的进程的摘要与取 H 时不同，就把有循环的键重置回 Heads；在 Heads 时不动。
+  action reconcile(key: int, view: str): bool = all {
     IDENTITY_CHECK,
-    c.phase.get(x) != "heads",
+    c.phase.get(key) != "heads",
     view == "new" or k.apiStale,
-    viewListed(view).contains(x),
-    c.ident.get(x) != viewIdent(view),
-    c' = { ...c, phase: c.phase.set(x, "heads") },
+    active(view, key),
+    c.ident.get(key) != viewIdent(view),
+    c' = { ...c, phase: c.phase.set(key, "heads") },
     k' = k, m' = m, lost' = lost,
   }
 
-  // 发现循环：回答的进程没有列出该分片，停掉它的循环并把进度重置回 Heads（不再读取，直到它重新列出）。
-  action retire(x: int, view: str): bool = all {
+  // 发现循环：该进程的回答下这个键不再有循环（分片未列出，或切换了单库与多分片），停掉循环并把进度重置回 Heads。
+  action retire(key: int, view: str): bool = all {
     RETIRE,
-    c.phase.get(x) != "heads",
+    c.phase.get(key) != "heads",
     view == "new" or k.apiStale,
-    not(viewListed(view).contains(x)),
-    c' = { ...c, phase: c.phase.set(x, "heads") },
+    not(active(view, key)),
+    c' = { ...c, phase: c.phase.set(key, "heads") },
     k' = k, m' = m, lost' = lost,
   }
 
-  // 读一页：分片不在配置中时得到 404，什么都不变；游标世代不符或低于地板时得到 410，整片进度回到 Heads；
-  // 否则收下 [pos, upto) 的行。
-  action read(x: int, upto: int): bool = all {
-    c.phase.get(x) != "heads",
+  // 读一页：分片不在配置中时得到 404，什么都不变；游标世代不符或低于地板时得到 410，进度回到 Heads；
+  // 否则收下 [pos, upto) 的行。尚未停下的循环也可能读（发现循环每秒一次）。
+  action read(key: int, upto: int): bool = {
+    val x = shardOf(key)
+    all {
+    c.phase.get(key) != "heads",
     servable(x),
-    if (c.epoch.get(x) != k.epoch.get(x) or c.pos.get(x) < k.floor.get(x))
+    if (c.epoch.get(key) != k.epoch.get(x) or c.pos.get(key) < k.floor.get(x))
       all {
-        c' = { ...c, phase: c.phase.set(x, "heads") },
+        c' = { ...c, phase: c.phase.set(key, "heads") },
         k' = k, m' = m, lost' = lost,
       }
     else {
-      val batch = k.outbox.get(x).filter(r => r.pos >= c.pos.get(x) and r.pos < upto)
+      val batch = k.outbox.get(x).filter(r => r.pos >= c.pos.get(key) and r.pos < upto)
       all {
-        upto >= c.pos.get(x),
+        upto >= c.pos.get(key),
         upto <= k.nextPos.get(x),
         c' = { ...c,
-          pos: c.pos.set(x, upto),
+          pos: c.pos.set(key, upto),
           got: SESSIONS.mapBy(s => c.got.get(s).union(batch.filter(r => r.sid == s and not(r.del)).map(r => r.seq))),
           reason: SESSIONS.mapBy(s => c.reason.get(s) or batch.exists(r => r.sid == s and r.del)),
           gone: SESSIONS.mapBy(s => c.gone.get(s) or batch.exists(r => r.sid == s and r.del)),
@@ -413,6 +454,7 @@ module slot_migration {
         k' = k, m' = m, lost' = lost,
       }
     },
+    }
   }
 
   action stutter: bool = all { k' = k, m' = m, c' = c, lost' = lost }
@@ -427,23 +469,23 @@ module slot_migration {
     rolloutDone,
     rotate,
     resume,
-    { nondet x = SHARDS.oneOf() nondet v = VIEWS.oneOf() any { heads(x, v), recover(x, v), reconcile(x, v), retire(x, v) } },
-    { nondet x = SHARDS.oneOf() nondet u = POS.oneOf() read(x, u) },
+    { nondet key = KEYS.oneOf() nondet v = VIEWS.oneOf() any { heads(key, v), recover(key, v), reconcile(key, v), retire(key, v) } },
+    { nondet key = KEYS.oneOf() nondet u = POS.oneOf() read(key, u) },
     stutter,
   }
 
   // ---- 安全性质 ----
 
-  // 迁槽结束、消费方在配置中的每个分片都以当前世代追到水位：
-  // 有 identity 核对时，还须各分片都已看到当前的槽位表：否则发现循环还会触发新一轮对账，消费方没有停下。
-  // 移出配置的分片不再要求任何进度；有 Retire 时须已重置回 Heads，否则发现循环还会去重置它。
-  val settled: bool = m.phase == "open" and SHARDS.forall(x =>
-    if (k.listed.contains(x)) and {
-      c.phase.get(x) == "follow",
-      caughtUp(x),
-      IDENTITY_CHECK implies c.ident.get(x) == currentIdent,
+  // 迁槽结束、消费方在当前有循环的每个进度键上都以当前世代追到水位：
+  // 有 identity 核对时，还须都已看到当前的槽位表：否则发现循环还会触发新一轮对账，消费方没有停下。
+  // 没有循环的键（移出配置的分片、切换后不用的单库或分片进度）不再要求任何进度；有 Retire 时须已重置回 Heads。
+  val settled: bool = m.phase == "open" and KEYS.forall(key =>
+    if (active("new", key)) and {
+      c.phase.get(key) == "follow",
+      caughtUp(key),
+      IDENTITY_CHECK implies c.ident.get(key) == currentIdent,
     }
-    else RETIRE implies c.phase.get(x) == "heads")
+    else RETIRE implies c.phase.get(key) == "heads")
 
   // 1. 信封不丢：此时每个未删除 Session 的每个事件都已收到（信封或按 seq 补读）；
   //    消费方知道的已删除 Session 都已确认删除（删除信封或 404）。
@@ -486,6 +528,12 @@ module slot_migration {
   // 分片 0 被移出配置后，s1 有事件，消费方已追平（收齐靠接收分片，不靠被移除分片的旧进度）。
   val witnessNoSettledRemoval: bool = not(not(k.listed.contains(0)) and settled and k.seq.get("s1") > 0)
 
+  // 切到单库后 s1 有事件，消费方已追平（B_HOME = 0）。
+  val witnessNoSettledSingle: bool = not(k.listed == Set(0) and settled and k.seq.get("s1") > 0)
+
+  // 切到单库后，s1 在合并时被删除、删除信封丢失，单库一轮经 404 确认删除（shard_seen_round 抓的正是这条路径）。
+  val witnessNoSingleConfirm: bool = not(k.listed == Set(0) and settled and c.gone.get("s1") and not(c.reason.get("s1")))
+
   // 分片 0 被移除又以同一编号重新加入（回滚）后，s1 有事件，消费方已追平。
   val witnessNoSettledReadd: bool = not(m.removed and m.count == 2 and settled and k.seq.get("s1") > 0)
 
@@ -501,14 +549,57 @@ module slot_migration {
 }
 
 // ADR 的协议。
-module correct { import slot_migration(MUTANT = "none", IDENTITY_CHECK = true, RETIRE = true).* }
+module correct { import slot_migration(MUTANT = "none", IDENTITY_CHECK = true, RETIRE = true, B_HOME = 1).* }
 
 // 只有 ADR 的换代、没有消费端核对：协议本身也须成立。
-module correct_without_identity { import slot_migration(MUTANT = "none", IDENTITY_CHECK = false, RETIRE = true).* }
+module correct_without_identity { import slot_migration(MUTANT = "none", IDENTITY_CHECK = false, RETIRE = true, B_HOME = 1).* }
+
+// 合并只剩分片 0，xinli 切到单库（A 起初在分片 1，B 在分片 0）。
+module correct_single { import slot_migration(MUTANT = "none", IDENTITY_CHECK = true, RETIRE = true, B_HOME = 0).* }
+
+module single_scenarios {
+  import slot_migration(MUTANT = "none", IDENTITY_CHECK = true, RETIRE = true, B_HOME = 0).*
+
+  // 分片 1 第 1 轮访问过 s1；s1 随后被删除，未追平就把 A 并入分片 0，删除信封随源出站行删除。
+  // 只剩分片 0，xinli 重置两个分片的进度、开始单库的第 1 轮：轮次与分片 1 相同，但分片的轮次不记入 SeenRound，
+  // 确认阶段仍经 404 确认 s1 的删除。回滚后重新出现两个分片，单库的进度重置，各分片从新的 H 对账。
+  run mergeToSingleConfirmsDeletionTest =
+    initFrom(Map(0 -> "follow", 1 -> "heads"))
+      .then(write("s1"))
+      .then(heads(1, "new")).then(recover(1, "new"))
+      .then(deleteSession("s1"))
+      .then(stop).then(copy).then(switchTable(true)).then(rolloutDone).then(rotate).then(resume)
+      .then(all {
+        assert(k.listed == Set(0)),
+        assert(c.round.get(1) == 1),
+        retire(0, "new"),
+      })
+      .then(retire(1, "new"))
+      .then(heads(-1, "new")).then(recover(-1, "new")).then(read(-1, k.nextPos.get(0)))
+      .then(all {
+        assert(c.round.get(-1) == 1),
+        assert(settled),
+        assert(c.gone.get("s1")),
+        assert(not(c.reason.get("s1"))),
+        assert(allInvariants),
+        stutter,
+      })
+      .then(stop).then(copy).then(switchTable(false)).then(rolloutDone).then(rotate).then(resume)
+      .then(retire(-1, "new"))
+      .then(heads(0, "new")).then(recover(0, "new")).then(read(0, k.nextPos.get(0)))
+      .then(heads(1, "new")).then(recover(1, "new")).then(read(1, k.nextPos.get(1)))
+      .then(all {
+        assert(k.listed == SHARDS),
+        assert(settled),
+        assert(c.phase.get(-1) == "heads"),
+        assert(allInvariants),
+        stutter,
+      })
+}
 
 // 场景测试另成一个模块：测试把 initFrom 当作普通一步使用，TLC 的转换要求 init 不出现在 step 里。
 module scenarios {
-  import slot_migration(MUTANT = "none", IDENTITY_CHECK = true, RETIRE = true).*
+  import slot_migration(MUTANT = "none", IDENTITY_CHECK = true, RETIRE = true, B_HOME = 1).*
 
   action initFollow = initFrom(SHARDS.mapBy(_ => "follow"))
 
@@ -632,21 +723,23 @@ module scenarios {
 }
 
 // 变体：各违反 ADR 的一处顺序，消费端没有 identity 核对（有分片移除的处理）。
-module keep_source_rows { import slot_migration(MUTANT = "keep_source_rows", IDENTITY_CHECK = false, RETIRE = true).* }
-module keep_source_copy { import slot_migration(MUTANT = "keep_source_copy", IDENTITY_CHECK = false, RETIRE = true).* }
-module drop_source_at_copy { import slot_migration(MUTANT = "drop_source_at_copy", IDENTITY_CHECK = false, RETIRE = true).* }
-module no_target_rotation { import slot_migration(MUTANT = "no_target_rotation", IDENTITY_CHECK = false, RETIRE = true).* }
-module rotate_before_switch { import slot_migration(MUTANT = "rotate_before_switch", IDENTITY_CHECK = false, RETIRE = true).* }
-module rotate_during_rollout { import slot_migration(MUTANT = "rotate_during_rollout", IDENTITY_CHECK = false, RETIRE = true).* }
-module drain_before_stop { import slot_migration(MUTANT = "drain_before_stop", IDENTITY_CHECK = false, RETIRE = true).* }
+module keep_source_rows { import slot_migration(MUTANT = "keep_source_rows", IDENTITY_CHECK = false, RETIRE = true, B_HOME = 1).* }
+module keep_source_copy { import slot_migration(MUTANT = "keep_source_copy", IDENTITY_CHECK = false, RETIRE = true, B_HOME = 1).* }
+module drop_source_at_copy { import slot_migration(MUTANT = "drop_source_at_copy", IDENTITY_CHECK = false, RETIRE = true, B_HOME = 1).* }
+module no_target_rotation { import slot_migration(MUTANT = "no_target_rotation", IDENTITY_CHECK = false, RETIRE = true, B_HOME = 1).* }
+module rotate_before_switch { import slot_migration(MUTANT = "rotate_before_switch", IDENTITY_CHECK = false, RETIRE = true, B_HOME = 1).* }
+module rotate_during_rollout { import slot_migration(MUTANT = "rotate_during_rollout", IDENTITY_CHECK = false, RETIRE = true, B_HOME = 1).* }
+// 分片的轮次照旧记入 SeenRound（修复前的 xinli）：切到单库后确认阶段跳过迁移中被删除的 Session。
+module shard_seen_round { import slot_migration(MUTANT = "shard_seen_round", IDENTITY_CHECK = true, RETIRE = true, B_HOME = 0).* }
+module drain_before_stop { import slot_migration(MUTANT = "drain_before_stop", IDENTITY_CHECK = false, RETIRE = true, B_HOME = 1).* }
 
 // 同样的变体，消费端有 identity 核对（xinli 的现状）：核对是换代之外的第二道防线。
-module no_target_rotation_identity { import slot_migration(MUTANT = "no_target_rotation", IDENTITY_CHECK = true, RETIRE = true).* }
-module rotate_before_switch_identity { import slot_migration(MUTANT = "rotate_before_switch", IDENTITY_CHECK = true, RETIRE = true).* }
+module no_target_rotation_identity { import slot_migration(MUTANT = "no_target_rotation", IDENTITY_CHECK = true, RETIRE = true, B_HOME = 1).* }
+module rotate_before_switch_identity { import slot_migration(MUTANT = "rotate_before_switch", IDENTITY_CHECK = true, RETIRE = true, B_HOME = 1).* }
 // 摘要 ABA：回滚到与移除前相同的槽位表，核对看不出变化，被移除的源分片没有换代时信封丢失。
-module no_target_rotation_skip_removed_identity { import slot_migration(MUTANT = "no_target_rotation_skip_removed", IDENTITY_CHECK = true, RETIRE = true).* }
+module no_target_rotation_skip_removed_identity { import slot_migration(MUTANT = "no_target_rotation_skip_removed", IDENTITY_CHECK = true, RETIRE = true, B_HOME = 1).* }
 module rotate_during_rollout_identity {
-  import slot_migration(MUTANT = "rotate_during_rollout", IDENTITY_CHECK = true, RETIRE = true).*
+  import slot_migration(MUTANT = "rotate_during_rollout", IDENTITY_CHECK = true, RETIRE = true, B_HOME = 1).*
 
   // 部署未完成就换代：分片 1 按旧槽位完成对账、带着新世代的游标进入 Follow，s1 迁移前的事件没有送达；
   // 部署完成后摘要变化把它带回对账，按 seq 补读。

@@ -45,10 +45,11 @@ run_step "1. Quint typecheck" \
   pnpm exec quint typecheck slot_migration.qnt
 
 run_step "2. Scenario tests" \
-  bash -c 'pnpm exec quint test --main=scenarios slot_migration.qnt && pnpm exec quint test --main=rotate_during_rollout_identity slot_migration.qnt'
+  bash -c 'for main in scenarios single_scenarios rotate_during_rollout_identity; do pnpm exec quint test --main=$main slot_migration.qnt || exit 1; done'
 
-# correct 是 xinli 的现状（换代加消费端 identity 核对）；correct_without_identity 检验 ADR 的换代本身也成立。
-for main in correct correct_without_identity; do
+# correct 是 xinli 的现状（换代加消费端 identity 核对）；correct_without_identity 检验 ADR 的换代本身也成立；
+# correct_single 的合并只剩分片 0，xinli 在单库与多分片的进度之间切换。
+for main in correct correct_without_identity correct_single; do
   run_step "3. Random simulation $main (100000 samples x 40 steps)" \
     pnpm exec quint run --main=$main --seed=0x5a5 --max-samples=100000 --max-steps=40 --invariant=allInvariants slot_migration.qnt
 done
@@ -58,13 +59,18 @@ for w in witnessNoSettledRollback witnessNoUndrainedLoss witnessNoSettledRemoval
   expect_violation "4. Reachability $w" \
     pnpm exec quint run --main=correct --seed=0x5a5 --max-samples=100000 --max-steps=40 --invariant="$w" slot_migration.qnt
 done
+# 切到单库后追平、经 404 确认合并中被删除的 Session，以及切回多分片后追平。
+for w in witnessNoSettledSingle witnessNoSingleConfirm witnessNoSettledReadd; do
+  expect_violation "4. Reachability $w in correct_single" \
+    pnpm exec quint run --main=correct_single --seed=0x5a5 --max-samples=100000 --max-steps=40 --invariant="$w" slot_migration.qnt
+done
 
 # 符号检查的代价随步数约三倍增长（Mac mini：5 步 22 秒、6 步 78 秒），只做浅层穷尽；深层交错靠第 3 步。
 # TLC 穷尽全状态空间不可行（15 分钟后状态文件已达 17 GB）。
 run_step "5. Apalache bounded check (max-steps=5)" \
   pnpm exec quint verify --main=correct --max-steps=5 --invariant=allInvariants slot_migration.qnt
 
-# 每个变体违反 ADR 的一处顺序，消费端没有 identity 核对时，随机模拟须找到反例。
+# 每个变体违反 ADR 的一处顺序，消费端没有 identity 核对时，随机模拟须找到反例；shard_seen_round 是消费端的缺陷，有核对。
 for spec in \
   keep_source_rows:invNoResidue \
   keep_source_copy:invNoResidue \
@@ -72,7 +78,8 @@ for spec in \
   no_target_rotation:invConverged \
   rotate_before_switch:invConverged \
   rotate_during_rollout:invConverged \
-  drain_before_stop:invDrainKeepsReasons; do
+  drain_before_stop:invDrainKeepsReasons \
+  shard_seen_round:invConverged; do
   expect_violation "6. Mutant ${spec%%:*} (${spec##*:})" \
     pnpm exec quint run --main="${spec%%:*}" --seed=0x5a5 --max-samples=100000 --max-steps=40 --invariant="${spec##*:}" slot_migration.qnt
 done
