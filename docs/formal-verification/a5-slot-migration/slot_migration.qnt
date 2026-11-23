@@ -27,6 +27,11 @@
  *     A 迁出分片 0、分片 0 作为源分片换代过。单库的记录留在停机时的阶段，世代是旧的；它的轮次与 SeenRound 是旧单库的，
  *     摘要是旧单库的表，合回单库后与当时相同（ABA）。重启后的 xinli 只重置本进程启动过的循环，多分片期间不会动它；
  *     模型的 read 与 retire 不区分这一点，也允许那时读到 410 或被重置（过近似），不动它的轨迹同样在内。
+ *   - 非分片内核（没有槽位表配置，单库默认装配）：/v1/outbox/shards 只回答分片 0，不带槽位，摘要为空
+ *     （internal/httpapi/outbox.go outboxShards）；读其他分片得到 404。全部槽位在分片 0、只配置分片 0 时，运维可以在
+ *     分片的单库配置与非分片之间切换，槽位不变、不换代，部署同样是滚动的；从非分片也可以直接迁槽扩成多分片。
+ *     xinli 两种回答下都按单库消费，单库补读全部 Session、不看回答里的槽位（apps/xinli/recovery/shard.go ownsSession）；
+ *     空摘要与非分片的槽位表一一对应，模型把它表示为 sharded = false 的那张单库表。
  *   - 事务提交即可见：xid8 的可见性屏障由 pgoutbox 负责，不在本模型的问题范围内。
  *   - Session 的日志内容不随分片变化（停写期间不变），模型只记录哪些分片上有它的副本（logAt）和删除记录（tombAt）。
  *   - 每个事件都产生一条普通信封；删除产生一条删除信封（只有它带删除原因）。
@@ -39,6 +44,8 @@
  * 没看到中间槽位表的消费方（例如 xinli 当时停机）核对不出变化，有核对也须被抓到。
  * keep_single_epoch 从不对分片 0 换代（扩成多分片时它是源，合回单库时它是目标）：过期的单库游标仍然有效，
  * 合回单库后摘要也与当时相同，有核对也须被抓到。
+ * single_uses_slots 让单库只补读回答里列出的槽位：分片的单库配置列出全部槽位，与正确做法没有区别；
+ * 非分片内核不带槽位，单库一个 Session 也不补读，须被抓到。
  */
 module slot_migration {
   const MUTANT: str
@@ -65,8 +72,8 @@ module slot_migration {
 
   type Row = { sid: str, seq: int, del: bool, pos: int }
 
-  // 槽位表摘要所覆盖的内容（internal/shard/config.go digest）：槽位与配置中的分片。
-  type Ident = { table: str -> int, listed: Set[int] }
+  // 槽位表摘要所覆盖的内容（internal/shard/config.go digest）：槽位与配置中的分片；非分片内核的摘要为空（sharded = false）。
+  type Ident = { table: str -> int, listed: Set[int], sharded: bool }
 
   type Kernel = {
     // 写入者与已完成部署的进程使用的槽位表
@@ -76,6 +83,9 @@ module slot_migration {
     // 配置中的分片（/v1/outbox/shards 列出的全部分片，失联的也列出）；prevListed 对应 prevTable
     listed: Set[int],
     prevListed: Set[int],
+    // 是否有槽位表配置；false 时是非分片内核，只有分片 0、全部槽位在它上面。prevSharded 对应 prevTable
+    sharded: bool,
+    prevSharded: bool,
     apiStale: bool,
     seq: str -> int,
     logAt: str -> Set[int],
@@ -88,8 +98,8 @@ module slot_migration {
   }
 
   // phase: open → stopped → copied → rollout → switched → open
-  // removed 是幽灵字段：曾经有分片被移出配置（供可达性见证使用）。
-  type Migration = { phase: str, src: int, dst: int, rotated: bool, drained: bool, count: int, removed: bool }
+  // removed 是幽灵字段：曾经有分片被移出配置（供可达性见证使用）。toggles 是在分片的单库配置与非分片之间切换的次数。
+  type Migration = { phase: str, src: int, dst: int, rotated: bool, drained: bool, count: int, removed: bool, toggles: int }
 
   // 业务线消费方：每个进度键一份进度（phase/epoch/pos/slots/round），信封与补读结果按 Session 记录。
   type Consumer = {
@@ -125,9 +135,15 @@ module slot_migration {
 
   def viewListed(view: str): Set[int] = if (view == "old") k.prevListed else k.listed
 
-  def viewIdent(view: str): Ident = { table: viewTable(view), listed: viewListed(view) }
+  def viewSharded(view: str): bool = if (view == "old") k.prevSharded else k.sharded
 
-  def currentIdent: Ident = { table: k.table, listed: k.listed }
+  def viewIdent(view: str): Ident = { table: viewTable(view), listed: viewListed(view), sharded: viewSharded(view) }
+
+  def currentIdent: Ident = { table: k.table, listed: k.listed, sharded: k.sharded }
+
+  // 回答里某分片列出的槽位；非分片内核不带槽位。
+  def viewSlots(view: str, x: int): Set[str] =
+    if (viewSharded(view)) SLOTS.filter(sl => viewTable(view).get(sl) == x) else Set()
 
   // 只列出分片 0 时 xinli 按单库消费（apps/xinli/delivery/consumer.go Start 的判断）。
   def single(view: str): bool = viewListed(view) == Set(0)
@@ -162,8 +178,10 @@ module slot_migration {
     else if (MUTANT == "keep_single_epoch") Set(m.src, m.dst).exclude(Set(0))
     else Set(m.src, m.dst)
 
-  // 旧单库时的槽位表与分片列表：合回单库后的摘要与它相同。
-  pure val SINGLE_IDENT: Ident = { table: SLOTS.mapBy(_ => 0), listed: Set(0) }
+  // 旧单库时的槽位表与分片列表：合回单库后的摘要与它相同。旧单库可能是分片的单库配置，也可能是非分片内核（摘要为空）。
+  pure def singleIdent(sharded: bool): Ident = { table: SLOTS.mapBy(_ => 0), listed: Set(0), sharded: sharded }
+
+  pure val MAX_TOGGLES: int = 2
 
   // ---- 初始化 ----
 
@@ -173,20 +191,25 @@ module slot_migration {
     nondet starts = SHARDS.setOfMaps(Set("follow", "heads")).oneOf()
     nondet stale = (if (B_HOME == 0) Set("none", "heads", "recover", "follow") else Set("none")).oneOf()
     nondet seen = SESSIONS.setOfMaps(Set(0, 1)).oneOf()
-    initWith(starts, stale, if (stale == "none") SESSIONS.mapBy(_ => 0) else seen)
+    nondet staleSharded = Set(true, false).oneOf()
+    initWith(starts, stale, staleSharded, if (stale == "none") SESSIONS.mapBy(_ => 0) else seen)
   }
 
-  action initFrom(starts: int -> str): bool = initWith(starts, "none", SESSIONS.mapBy(_ => 0))
+  action initFrom(starts: int -> str): bool = initWith(starts, "none", true, SESSIONS.mapBy(_ => 0))
 
   // 过期单库进度的世代早于当前（分片 0 扩容时作为源分片换代过）；keep_single_epoch 下分片 0 从未换代，世代仍是当前的。
-  action initWith(starts: int -> str, stale: str, seen: str -> int): bool = {
+  // staleSharded：旧单库是分片的单库配置，还是非分片内核。
+  action initWith(starts: int -> str, stale: str, staleSharded: bool, seen: str -> int): bool = {
     val old = stale != "none"
+    val staleSlots = if (MUTANT == "single_uses_slots" and not(staleSharded)) Set() else SLOTS
     all {
       k' = {
         table: INIT_TABLE,
         prevTable: INIT_TABLE,
         listed: SHARDS,
         prevListed: SHARDS,
+        sharded: true,
+        prevSharded: true,
         apiStale: false,
         seq: SESSIONS.mapBy(_ => 0),
         logAt: SESSIONS.mapBy(s => Set(INIT_TABLE.get(SLOT.get(s)))),
@@ -197,14 +220,14 @@ module slot_migration {
         epoch: SHARDS.mapBy(_ => 0),
         floor: SHARDS.mapBy(_ => 0),
       },
-      m' = { phase: "open", src: 0, dst: 1, rotated: false, drained: false, count: 0, removed: false },
+      m' = { phase: "open", src: 0, dst: 1, rotated: false, drained: false, count: 0, removed: false, toggles: 0 },
       c' = {
         phase: starts.put(-1, if (old) stale else "heads"),
         round: KEYS.mapBy(key => if (key < 0) (if (old) 1 else 0) else if (starts.get(key) == "follow") 1 else 0),
         epoch: KEYS.mapBy(key => if (key < 0 and old and MUTANT != "keep_single_epoch") -1 else 0),
         pos: KEYS.mapBy(_ => 0),
-        slots: KEYS.mapBy(key => if (key < 0) (if (old) SLOTS else Set()) else SLOTS.filter(sl => INIT_TABLE.get(sl) == key)),
-        ident: KEYS.mapBy(key => if (key < 0 and old) SINGLE_IDENT else { table: INIT_TABLE, listed: SHARDS }),
+        slots: KEYS.mapBy(key => if (key < 0) (if (old) staleSlots else Set()) else SLOTS.filter(sl => INIT_TABLE.get(sl) == key)),
+        ident: KEYS.mapBy(key => if (key < 0 and old) singleIdent(staleSharded) else { table: INIT_TABLE, listed: SHARDS, sharded: true }),
         seq: SESSIONS.mapBy(_ => 0),
         got: SESSIONS.mapBy(_ => Set()),
         gone: SESSIONS.mapBy(_ => false),
@@ -280,6 +303,7 @@ module slot_migration {
 
   action stop: bool = all {
     m.phase == "open",
+    not(k.apiStale),
     m.count < MAX_MIGRATIONS,
     m' = { ...m, phase: "stopped", src: k.table.get(MOVING_SLOT), dst: 1 - k.table.get(MOVING_SLOT) },
     k' = k, c' = c, lost' = lost,
@@ -323,6 +347,7 @@ module slot_migration {
 
   // 部署新槽位表是滚动的：完成之前，部分服务进程仍按旧表定位并回答 /v1/outbox/shards。
   // 源分片因此没有槽位时，可以同时把它移出配置（drop）；目标分片若已被移出，随之重新加入。
+  // 新槽位表一定是分片的配置；从非分片内核迁槽时，旧进程仍是非分片的。
   action switchTable(drop: bool): bool = {
     val t = k.table.set(MOVING_SLOT, m.dst)
     all {
@@ -333,6 +358,8 @@ module slot_migration {
         prevTable: k.table, table: t,
         prevListed: k.listed,
         listed: (if (drop) k.listed.exclude(Set(m.src)) else k.listed).union(Set(m.dst)),
+        prevSharded: k.sharded,
+        sharded: true,
         apiStale: true,
       },
       m' = { ...m, phase: "rollout", removed: m.removed or drop },
@@ -374,9 +401,29 @@ module slot_migration {
     c' = c, lost' = lost,
   }
 
+  // 只配置分片 0、全部槽位在它上面时，在分片的单库配置与非分片之间切换：槽位与数据不变，不停写、不换代；
+  // 部署是滚动的，完成之前两种进程交替回答，只有摘要不同。
+  action toggleSharding: bool = all {
+    m.phase == "open",
+    not(k.apiStale),
+    k.listed == Set(0),
+    m.toggles < MAX_TOGGLES,
+    k' = { ...k, prevTable: k.table, prevListed: k.listed, prevSharded: k.sharded, sharded: not(k.sharded), apiStale: true },
+    m' = { ...m, toggles: m.toggles + 1 },
+    c' = c, lost' = lost,
+  }
+
+  action toggleDone: bool = all {
+    m.phase == "open",
+    k.apiStale,
+    k' = { ...k, apiStale: false },
+    m' = m, c' = c, lost' = lost,
+  }
+
   // ---- 消费方（xinli，每个进度键一份进度：分片编号，或单库的 -1） ----
 
-  // Heads：开始新一轮，H 取所读分片当前的安全水位；槽位取自回答请求的那个进程的槽位表，单库补读全部槽位。
+  // Heads：开始新一轮，H 取所读分片当前的安全水位；槽位取自回答请求的那个进程的槽位表，单库补读全部槽位
+  // （single_uses_slots 只取回答里分片 0 列出的槽位）。
   // 该进程的回答下这个键没有循环（分片未列出，或单库与多分片不符）时取不到 H。
   action heads(key: int, view: str): bool = {
     val t = viewTable(view)
@@ -390,7 +437,10 @@ module slot_migration {
         round: c.round.set(key, c.round.get(key) + 1),
         epoch: c.epoch.set(key, k.epoch.get(x)),
         pos: c.pos.set(key, k.nextPos.get(x)),
-        slots: c.slots.set(key, SLOTS.filter(sl => key < 0 or t.get(sl) == key)),
+        slots: c.slots.set(key,
+          if (key >= 0) SLOTS.filter(sl => t.get(sl) == key)
+          else if (MUTANT == "single_uses_slots") viewSlots(view, 0)
+          else SLOTS),
         ident: c.ident.set(key, viewIdent(view)),
       },
       k' = k, m' = m, lost' = lost,
@@ -486,6 +536,8 @@ module slot_migration {
     copy,
     { nondet drop = Set(true, false).oneOf() switchTable(drop) },
     rolloutDone,
+    toggleSharding,
+    toggleDone,
     rotate,
     resume,
     { nondet key = KEYS.oneOf() nondet v = VIEWS.oneOf() any { heads(key, v), recover(key, v), reconcile(key, v), retire(key, v) } },
@@ -533,6 +585,9 @@ module slot_migration {
   // 7. 只移除没有槽位的分片：槽位表只指向配置中的分片。
   val invTableListed: bool = SLOTS.forall(sl => k.listed.contains(k.table.get(sl)))
 
+  // 8. 非分片内核只有分片 0。
+  val invUnshardedSingle: bool = (not(k.sharded) implies k.listed == Set(0)) and (not(k.prevSharded) implies k.prevListed == Set(0))
+
   // ---- 可达性见证：run.sh 要求随机模拟违反它们，证明模拟真的走到了这些状态，上面的不变量不是空洞地成立 ----
 
   // 迁移并回滚之后，s1 有事件，消费方各分片都已回到当前世代的 Follow。
@@ -556,6 +611,12 @@ module slot_migration {
   // 分片 0 被移除又以同一编号重新加入（回滚）后，s1 有事件，消费方已追平。
   val witnessNoSettledReadd: bool = not(m.removed and m.count == 2 and settled and k.seq.get("s1") > 0)
 
+  // 非分片内核下 s1 有事件，消费方已追平（B_HOME = 0）。
+  val witnessNoSettledUnsharded: bool = not(not(k.sharded) and settled and k.seq.get("s1") > 0)
+
+  // 切到过非分片内核之后又迁槽扩回多分片，s1 有事件，消费方已追平。
+  val witnessNoSettledAfterUnsharded: bool = not(m.toggles >= 1 and k.listed == SHARDS and settled and k.seq.get("s1") > 0)
+
   // 初始时单库有过期的进度，合回单库后 s1 有事件，消费方已追平（B_HOME = 0）。
   val witnessNoStaleSingleSettled: bool = not(c.staleSingle and k.listed == Set(0) and settled and k.seq.get("s1") > 0)
 
@@ -567,6 +628,7 @@ module slot_migration {
     invNoResurrection,
     invDrainKeepsReasons,
     invTableListed,
+    invUnshardedSingle,
   }
 }
 
@@ -622,7 +684,7 @@ module single_scenarios {
   // s1 有事件后被删除，未追平就合回单库，删除信封随源出站行删除。单库的摘要与停机前相同，核对不出变化；
   // 旧游标因分片 0 换代得到 410，新一轮编号大于旧的 SeenRound，确认阶段经 404 确认 s1 的删除，按 seq 补读 s2。
   run staleSingleRecordTest =
-    initWith(Map(0 -> "follow", 1 -> "heads"), "follow", SESSIONS.mapBy(_ => 1))
+    initWith(Map(0 -> "follow", 1 -> "heads"), "follow", true, SESSIONS.mapBy(_ => 1))
       .then(write("s1")).then(write("s2"))
       .then(deleteSession("s1"))
       .then(stop).then(copy).then(switchTable(true)).then(rolloutDone).then(rotate).then(resume)
@@ -645,6 +707,52 @@ module single_scenarios {
         assert(c.gone.get("s1")),
         assert(not(c.reason.get("s1"))),
         assert(c.seq.get("s2") == 1),
+        assert(allInvariants),
+        stutter,
+      })
+
+  // 合并只剩分片 0 后改成非分片内核：滚动部署期间两种进程交替回答，摘要不同使单库重新对账；
+  // 非分片的回答不带槽位，单库仍补读全部 Session。随后从非分片直接迁槽扩回两个分片，旧进程仍按非分片回答。
+  run unshardedKernelTest =
+    initFrom(Map(0 -> "follow", 1 -> "follow"))
+      .then(write("s1")).then(write("s2"))
+      .then(stop).then(copy).then(switchTable(true)).then(rolloutDone).then(rotate).then(resume)
+      .then(retire(0, "new")).then(retire(1, "new"))
+      .then(heads(-1, "new")).then(recover(-1, "new")).then(read(-1, k.nextPos.get(0)))
+      .then(all { assert(settled), toggleSharding })
+      .then(all {
+        assert(not(k.sharded) and k.prevSharded),
+        assert(not(settled)),
+        reconcile(-1, "new"),
+      })
+      // 仍是分片配置的进程回答：取到的是分片的摘要，部署完成后再对账一次。
+      .then(heads(-1, "old")).then(recover(-1, "old"))
+      .then(toggleDone)
+      .then(reconcile(-1, "new"))
+      .then(write("s1"))
+      .then(heads(-1, "new")).then(recover(-1, "new")).then(read(-1, k.nextPos.get(0)))
+      .then(all {
+        assert(settled),
+        assert(viewSlots("new", 0) == Set()),
+        assert(c.slots.get(-1) == SLOTS),
+        assert(c.ident.get(-1) == singleIdent(false)),
+        assert(c.seq.get("s1") == 2),
+        assert(allInvariants),
+        stutter,
+      })
+      .then(stop).then(copy).then(switchTable(false))
+      .then(all {
+        assert(k.sharded and not(k.prevSharded)),
+        assert(k.listed == SHARDS),
+        retire(-1, "new"),
+      })
+      .then(rolloutDone).then(rotate).then(resume)
+      .then(heads(0, "new")).then(recover(0, "new")).then(read(0, k.nextPos.get(0)))
+      .then(heads(1, "new")).then(recover(1, "new")).then(read(1, k.nextPos.get(1)))
+      .then(all {
+        assert(settled),
+        assert(c.phase.get(-1) == "heads"),
+        assert(c.seq.get("s1") == 2),
         assert(allInvariants),
         stutter,
       })
@@ -786,6 +894,8 @@ module rotate_during_rollout { import slot_migration(MUTANT = "rotate_during_rol
 module shard_seen_round { import slot_migration(MUTANT = "shard_seen_round", IDENTITY_CHECK = true, RETIRE = true, B_HOME = 0).* }
 // 分片 0 从不换代：过期的单库游标在合回单库后仍有效，摘要也与当时相同，有核对仍丢信封。
 module keep_single_epoch { import slot_migration(MUTANT = "keep_single_epoch", IDENTITY_CHECK = true, RETIRE = true, B_HOME = 0).* }
+// 单库只补读回答里列出的槽位：非分片内核不带槽位，单库什么也不补读。
+module single_uses_slots { import slot_migration(MUTANT = "single_uses_slots", IDENTITY_CHECK = true, RETIRE = true, B_HOME = 0).* }
 module drain_before_stop { import slot_migration(MUTANT = "drain_before_stop", IDENTITY_CHECK = false, RETIRE = true, B_HOME = 1).* }
 
 // 同样的变体，消费端有 identity 核对（xinli 的现状）：核对是换代之外的第二道防线。
