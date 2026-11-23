@@ -83,7 +83,7 @@ type Batch struct {
 
 // Consumer 是 B6 的事务接入点。Commit 必须原子校验 Version、去重接收记录、保存 Checkpoint 与 Progress。
 // 消费者只能在提交后安排副作用，发送前另读当前可访问内容；404 要撤销已有发送。
-// Known 返回 SeenRound != round 且未确认 Gone 的 Session，按 ID 升序，不能以未列出判删。
+// Known 返回 SeenRound != round 且未确认 Gone 的 Session，按 ID 升序，不能以未列出判删；分片的进度不看 SeenRound，全部返回。
 // 普通信封按 envelope_id 和 (session_id,seq) 去重；恢复等价物没有 envelope_id。
 type Consumer interface {
 	Load(context.Context, string) (Progress, error)
@@ -229,7 +229,13 @@ func (r *Recoverer) Step(ctx context.Context, line string) (Progress, error) {
 		if err != nil {
 			return p, err
 		}
-		cp.SeenRound = p.Round
+		// 轮次按进度键各自计数，只有单库的键（-1）单调且被 Known 读取。分片的轮次记 0（不属于任何单库轮次）：
+		// 只剩分片 0 改按单库消费后，单库一轮的编号可能与某个分片的轮次相同，记下分片轮次会让确认阶段跳过
+		// 迁移中被删除的 Session，它的删除再也得不到确认。
+		cp.SeenRound = 0
+		if Shard(ctx) < 0 {
+			cp.SeenRound = p.Round
+		}
 		batch.Checkpoint = &cp
 		if len(page.Events) < limit {
 			finishSession(&p)

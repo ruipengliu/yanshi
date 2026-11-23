@@ -21,6 +21,31 @@ type tableKernel struct {
 	table    map[int][]int
 	reads    [3]atomic.Int32
 	failed   [3]atomic.Int32
+	deleted  map[string]bool
+}
+
+// StableSessions 与 SessionView 不再列出、读取已删除的 Session（逐 ID 读取 404）。
+func (k *tableKernel) StableSessions(ctx context.Context, line, user, after string, limit int) ([]kernel.SessionInfo, error) {
+	page, err := k.coldShardKernel.StableSessions(ctx, line, user, after, limit)
+	k.tmu.Lock()
+	defer k.tmu.Unlock()
+	out := []kernel.SessionInfo{}
+	for _, s := range page {
+		if !k.deleted[s.ID] {
+			out = append(out, s)
+		}
+	}
+	return out, err
+}
+
+func (k *tableKernel) SessionView(ctx context.Context, line, id string) (kernel.SessionView, error) {
+	k.tmu.Lock()
+	gone := k.deleted[id]
+	k.tmu.Unlock()
+	if gone {
+		return kernel.SessionView{}, kernel.ErrNotFound
+	}
+	return k.coldShardKernel.SessionView(ctx, line, id)
 }
 
 // fail 统计分片循环报告的失败；被移除的分片若仍在运行，恢复会反复报告缺少分片。
@@ -74,7 +99,7 @@ func (c *conflictOnce) Commit(ctx context.Context, expected uint64, p recovery.P
 
 func newTableKernel(f *fixture, identity string, table map[int][]int) *tableKernel {
 	moved := &movedKernel{coldShardKernel: &coldShardKernel{recoveringKernel: &recoveringKernel{fakeKernel: f.kernel}}, last: map[string]uint64{}}
-	return &tableKernel{movedKernel: moved, identity: identity, table: table}
+	return &tableKernel{movedKernel: moved, identity: identity, table: table, deleted: map[string]bool{}}
 }
 
 // waitProgress 等某个进度键满足条件；shard 为 -1 时是单库的进度。
@@ -181,5 +206,35 @@ func TestMergeToSingleShardRetiresShardProgress(t *testing.T) {
 			t.Fatalf("moved session was not replayed after the merge: %+v %v", cp, err)
 		}
 		quiet(t, k, 1)
+	})
+}
+
+// 分片的轮次与单库的轮次各自计数：分片 1 第 1 轮访问过的 Session，不能因为单库也在第 1 轮就被确认阶段跳过。
+// 它在合并期间被删除、删除信封随源出站行删除（未追平时 ADR 允许），只能靠单库一轮的确认阶段经 404 记为 Gone。
+func TestMergeToSingleShardConfirmsSessionsSeenByShardRounds(t *testing.T) {
+	each(t, func(t *testing.T, f *fixture) {
+		moved := coldSessions[1]
+		k := newTableKernel(f, "two", map[int][]int{0: {0}, 1: {512}})
+		consumer := &delivery.Consumer{Progress: f.store, Store: f.store, Kernel: k, Accounts: f.store}
+		ctx, cancel := context.WithCancel(f.ctx)
+		stop := delivery.Start(ctx, []string{"bl"}, consumer, f.worker, k.fail)
+		defer stop()
+		defer cancel()
+		waitProgress(t, f, ctx, 0, "followed", following("two"))
+		shard := waitProgress(t, f, ctx, 1, "followed", following("two"))
+		if cp, err := f.reopen().Session(ctx, "bl", moved); err != nil || cp.Seq != 1 {
+			t.Fatalf("shard 1 did not replay the session: %+v %v", cp, err)
+		}
+		k.tmu.Lock()
+		k.deleted[moved] = true
+		k.tmu.Unlock()
+		k.set("one", map[int][]int{0: {0, 512}})
+		single := waitProgress(t, f, ctx, -1, "followed", following("one"))
+		if single.Round != shard.Round {
+			t.Fatalf("test needs colliding rounds: single %d, shard %d", single.Round, shard.Round)
+		}
+		if cp, err := f.reopen().Session(ctx, "bl", moved); err != nil || !cp.Gone {
+			t.Fatalf("deleted session was not confirmed after switching to the single store: %+v %v", cp, err)
+		}
 	})
 }
