@@ -1,0 +1,3 @@
+node_modules/
+*.itf.json
+_apalache-out/
