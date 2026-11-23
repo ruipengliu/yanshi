@@ -7,7 +7,7 @@ export YANSHI_TEST_S3 ?= 127.0.0.1:58333
 # TypeScript SDK 与真实网关的互通测试（internal/e2e TestWebSDK）；需要 Node.js 与 pnpm。
 export YANSHI_TEST_NODE ?= 1
 
-.PHONY: check gen lint check-deps test sim sim-quick build tools deps-up deps-down sandbox-image web web-deps mobile
+.PHONY: check gen lint check-deps test sim sim-quick verify build tools deps-up deps-down sandbox-image web web-deps mobile
 
 check: lint test
 
@@ -110,6 +110,15 @@ sim: deps-up
 # 个位数次，合入前仍须跑完整的 make sim。
 sim-quick:
 	$(MAKE) sim SIM_SEEDS=400 SIM_PGSEEDS=20 SIM_SHARDSEEDS=20
+
+# 形式化验证（docs/formal-verification）：lifecycle.Recheck 的 Quint 规约做类型检查、单元测试、随机模拟与 Apalache
+# 有界验证，两个变异规约须被查出违例，再导出真实 Go 实现的删查交错轨迹在规约上回放。不在 check 中：需要 Node.js、
+# pnpm 与 JDK 17 或更新（Apalache，首次运行时 Quint 下载约 117 MB 到 ~/.quint），且只覆盖已建模的协议。
+# 2026-11-23 在 Mac mini 上实测约 47 秒。
+verify:
+	@java -version >/dev/null 2>&1 || { echo 'make verify 需要 JDK 17 或更新（Apalache）：java -version 失败'; exit 1; }
+	# 构建脚本的放行以该目录的 pnpm-workspace.yaml 为准；环境变量会整体覆盖它，先去掉。
+	cd docs/formal-verification/poc1-lifecycle-recheck && env -u PNPM_CONFIG_ALLOW_BUILDS pnpm install --frozen-lockfile --silent && bash run.sh
 
 # 评测（docs/design/m4-eval.md）：消耗真实 token，不在 check 中；需要 ARK_API_KEY（火山方舟）。
 # 改动模型、提示词、AgentDef 或召回、压缩、Memory、MCP 中给模型的文本时必须运行。
