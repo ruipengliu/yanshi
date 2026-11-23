@@ -9,6 +9,7 @@ import (
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/askuser"
 	"yanshi/internal/delegation"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
@@ -90,6 +91,33 @@ func (w *World) backgroundDeadlineEdge() (bool, error) {
 			if d := b.Deadline.Add(time.Second).Sub(w.clock.Now()); d > 0 {
 				w.clock.Advance(d)
 				w.tracef("clock +%s (background deadline of %s)", d, b.CallID)
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// questionDeadlineEdge 把时钟拨到某个待回答提问的截止时间之后，使提问超时（QuestionTimeouts）不依赖 decide 恰好
+// 一直没轮到它：回答来得早，按随机的时钟跳动 300 个种子中只超时约 4 次。拨过截止时间的提问由 Worker 写入超时结果。
+func (w *World) questionDeadlineEdge() (bool, error) {
+	ctx := context.Background()
+	for _, sid := range w.live() {
+		st, err := w.svc.Load(ctx, sid)
+		if err != nil {
+			return false, err
+		}
+		a := st.Active()
+		if a == nil {
+			continue
+		}
+		for _, c := range a.Calls {
+			if !c.Dispatched() || c.NodeID != askuser.NodeID {
+				continue
+			}
+			if d := c.Deadline.Add(time.Second).Sub(w.clock.Now()); d > 0 {
+				w.clock.Advance(d)
+				w.tracef("clock +%s (question deadline of %s)", d, c.Call.GetCallId())
 				return true, nil
 			}
 		}

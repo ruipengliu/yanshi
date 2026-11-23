@@ -98,7 +98,8 @@ func (w *World) attestedPageResult() map[string]any {
 		p.Segments = append(p.Segments, capture.PageSegment{Ref: fmt.Sprintf("57.%d", i), Speaker: who, SpeakerKey: g.GetSpeakerKey(), SpeakerRef: g.GetSpeakerRef(), Text: g.GetText(), SpokenAt: g.GetSpokenAt().AsTime().Format(time.RFC3339), TimeZone: g.GetTimeZone()})
 	}
 	failed := w.faults && w.chance(0.1)
-	if w.faults && w.chance(0.05) {
+	// 无效页一半是错误的说话人引用：5% 时这条路径在 300 个种子中只出现几次。
+	if w.faults && w.chance(0.15) {
 		if w.chance(0.5) {
 			p.Kind = "invalid"
 		} else {

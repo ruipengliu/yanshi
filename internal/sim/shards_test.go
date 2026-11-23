@@ -21,7 +21,9 @@ import (
 	"yanshi/internal/shard"
 )
 
-var shardSeeds = flag.Int("sim.shardseeds", 3, "单库、内存双分片与 PostgreSQL 双库差分种子数")
+// 默认 6 个：每 3 个种子中有 1 个是不委托的长 Run，短种子每个只有一两轮调用工具，约一半的种子出现跨库委托。只跑 3 个
+// 时覆盖检查要靠前两个种子碰巧委托到另一个库上，模拟的随机分布稍有变化就落空。
+var shardSeeds = flag.Int("sim.shardseeds", 6, "单库、内存双分片与 PostgreSQL 双库差分种子数")
 
 func simulationLocator(t *testing.T) shard.Locator {
 	t.Helper()

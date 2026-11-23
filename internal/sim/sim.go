@@ -630,10 +630,12 @@ func (w *World) newNode(i int) *simNode {
 	n := &simNode{id: "node"}
 	n.hello = &v1.Hello{NodeId: n.id, BusinessLine: "bl", EndUser: fmt.Sprintf("u%d", i), Label: "pc", Kind: "desktop",
 		PushPlatform: "sim", PushToken: "tok-" + n.id}
+	// 设备真正执行到调用的机会不多（多数调用在设备离线时转入后台、超时或被拒绝，300 个种子中约 50 次），执行中
+	// 崩溃与重复投递的概率因此偏高，否则这两条路径在 300 个种子中只出现几次。
 	effect := func(ctx context.Context, _ string) ([]*v1.ContentBlock, error) {
 		w.effects[n.id+"/"+w.currentCall]++
 		w.checkNotWithdrawn()
-		if w.faults && w.chance(0.2) {
+		if w.faults && w.chance(0.3) {
 			w.crash() // App 在产生副作用后、记录结果前被杀
 			return nil, ctx.Err()
 		}
@@ -641,7 +643,7 @@ func (w *World) newNode(i int) *simNode {
 	}
 	read := func(ctx context.Context, _ string) ([]*v1.ContentBlock, error) {
 		w.checkNotWithdrawn()
-		if w.faults && w.chance(0.1) {
+		if w.faults && w.chance(0.25) {
 			w.crash()
 			return nil, ctx.Err()
 		}
@@ -709,8 +711,8 @@ func (w *World) stepNode(n *simNode) error {
 		}
 	}
 	repeat := 1
-	if w.faults && w.chance(0.2) {
-		repeat = 2 // 重复投递
+	if w.faults && w.chance(0.3) {
+		repeat = 2 // 重复投递（概率偏高的原因见 newNode）
 		w.Stats.Redeliveries++
 	}
 	for range repeat {
@@ -940,8 +942,17 @@ func (w *World) act() error {
 				return err
 			}
 		}
-		if w.faults && w.chance(0.05) {
+		// 没有未了结的后台调用时不拨动，照常走下面的时钟跳动，偏高的概率只作用于有后台调用的时候：5% 时 300 个
+		// 种子中到期了结只有约 4 次；20% 时设备结果来不及送达，后台结果少了约三成。
+		if w.faults && w.chance(0.1) {
 			if moved, err := w.backgroundDeadlineEdge(); moved || err != nil {
+				return err
+			}
+		}
+		// 拨过提问的截止时间同样会使租约过期，只在注入故障时。概率取低：提问超时得早，通话任务恰好回答提问
+		// （CallAnswers）的机会随之变少。
+		if w.faults && w.chance(0.05) {
+			if moved, err := w.questionDeadlineEdge(); moved || err != nil {
 				return err
 			}
 		}
@@ -1531,7 +1542,9 @@ func (w *World) CollectStats() {
 		w.countSchedules(events)
 		w.countAttestedResults(events)
 	}
-	for _, sid := range append(slices.Clone(w.sessions), w.children...) {
+	// 已关闭的 Session 同样统计：长种子结束时多数 Session 已关闭，只看当前的会漏掉它们走过的路径（例如 1000 步的
+	// attested 种子里，Memory 预检查在 300 个种子中只计到一次）。
+	for _, sid := range w.known() {
 		events, _ := eventlog.ReadAll(context.Background(), w.log, sid, 0)
 		if st, err := session.Reduce(events); err == nil {
 			w.Stats.PastRuns += len(st.Past)
@@ -1726,13 +1739,14 @@ func (w *World) echoCap() capability.Capability {
 	return w.echo
 }
 
-// sendCap 模拟有副作用的调用：先产生效果，再可能在返回结果前崩溃。
+// sendCap 模拟有副作用的调用：先产生效果，再可能在返回结果前崩溃。崩溃概率偏高：结果未知要等接管的 Worker
+// 看到这次调用已开始，20% 时 300 个种子中只出现约 7 次。
 func (w *World) sendCap() capability.Capability {
 	return capability.Func{
 		S: capability.Spec{Name: "send", Idempotent: false, InputSchema: json.RawMessage(`{"type":"object"}`)},
 		Fn: func(ctx context.Context, inv capability.Invocation) ([]*v1.ContentBlock, error) {
 			w.effects[inv.SessionID+"/"+inv.CallID]++
-			if w.faults && w.chance(0.2) {
+			if w.faults && w.chance(0.4) {
 				w.crash()
 				return nil, ctx.Err()
 			}
@@ -1883,8 +1897,15 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 			}
 		}
 		// 提问同样偏向：回答、打字回答、点卡片回答、通话任务回答与提问超时都以一个待回答的提问为前提，按均匀
-		// 选择时这些路径在数百个种子中只出现一两次，执行路径稍有变化就可能一次也不出现。
+		// 选择时这些路径在数百个种子中只出现一两次，执行路径稍有变化就可能一次也不出现。偏向 5% 时 300 个种子
+		// 仍只有约 60 次提问、3 次超时，短 Run 调到 12%。长 Run 保持 5%：等回答的 Run 停着不动，提问一多，
+		// 长 Run 里的设备调用、审批与 Memory 写入都少了约三成。分片差分也保持 5%：提问排在委托的偏向之前，
+		// 它只有几个种子，提问一多便可能一次跨库委托也没有。
 		canAsk := slices.ContainsFunc(tools, func(t model.ToolSpec) bool { return t.Name == askuser.Capability })
+		askBias := 0.12
+		if w.opts.LongRuns || w.opts.CompareShards {
+			askBias = 0.05
+		}
 		// 分片差分只跑几个短种子，要求其中出现跨库委托（子 Session 落在另一个库上，约一半的委托如此）：按均匀
 		// 选择时一个种子平均不到一次委托，偏向委托。比较的各次运行用同一 Options，偏向不影响差分。
 		canDelegate := w.opts.CompareShards && slices.ContainsFunc(tools, func(t model.ToolSpec) bool { return t.Name == "agent__sim" })
@@ -1902,7 +1923,7 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 			name := tools[w.rng.IntN(len(tools))].Name
 			if len(devices) > 0 && w.chance(0.3) {
 				name = devices[w.rng.IntN(len(devices))]
-			} else if canAsk && w.chance(0.05) {
+			} else if canAsk && w.chance(askBias) {
 				name = askuser.Capability
 			} else if canDelegate && w.chance(0.5) || canHandOff && w.chance(0.7) {
 				name = "agent__sim"
@@ -1923,8 +1944,9 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 		return resp, nil
 	}
 	text := fmt.Sprintf("reply after %d messages", len(req.Messages))
-	// 提到看到的工件：在子 Run 中，这是交来的副本，回复因此把它交回父 Session（ADR-0055）。
-	if arts := simArtifacts(req.Messages); len(arts) > 0 && w.chance(0.8) {
+	// 提到看到的工件：在子 Run 中，这是交来的副本，回复因此把它交回父 Session（ADR-0055）。概率偏高的原因见
+	// toolArgs 的 agent__sim。
+	if arts := simArtifacts(req.Messages); len(arts) > 0 && w.chance(0.95) {
 		text += " see artifact://" + arts[w.rng.IntN(len(arts))]
 	}
 	if onDelta != nil {
@@ -1999,8 +2021,9 @@ func (w *World) toolArgs(name string, messages ...model.Message) string {
 			return `{}` // 没有 task：不派发，错误交还模型
 		}
 		task := fmt.Sprintf("子任务 %d", w.rng.IntN(100))
-		// 点名看到的工件交给子 Run；偶尔点名一个不属于本 Session 的，派发返回错误结果、不创建子 Session。
-		if arts := simArtifacts(messages); len(arts) > 0 && w.chance(0.6) {
+		// 点名看到的工件交给子 Run；偶尔点名一个不属于本 Session 的，派发返回错误结果、不创建子 Session。交回要走完
+		// "点名、派发、子 Run 完成、回复提到副本、父调用仍在等"整条链，300 个种子中只有一两次，点名的概率因此偏高。
+		if arts := simArtifacts(messages); len(arts) > 0 && w.chance(0.9) {
 			ref := "artifact://" + arts[w.rng.IntN(len(arts))]
 			if w.chance(0.1) {
 				ref = "art_v1_000_missing"
