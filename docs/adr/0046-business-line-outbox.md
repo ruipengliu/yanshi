@@ -57,7 +57,7 @@ status: accepted（由 ADR-0050 及 P4 的 Q105、Q106 修订；2026-11-22 补�
 **迁槽工具实现时须一并完成**（现在不做）：
 
 - 运维入口：换代目前只有存储层的 `RotateEpoch`（`internal/outbox/pgoutbox/stream.go`），没有命令行入口；
-- 消费端：xinli 不处理分片被移除（`404 outbox_unknown_shard`）与分片合并后旧分片的恢复记录（`apps/xinli/delivery/consumer.go`、`apps/xinli/recovery/recovery.go`）。`identity` 的核对已补上（2026-11-23）：取 H 时记下槽位表摘要，每秒一次的发现循环看到摘要变化即把该分片的进度重置回 Heads（`delivery.Consumer.ReconcileIdentity`）。漏换代时，或滚动部署未完成就换代、恢复取到旧槽位时，它是第二道防线：部署完成后摘要统一，消费方按新槽位重新对账（Quint 模型中，有这道核对时漏换代、先换代后切表、部署未完成就换代三种错误下信封仍收齐；它不弥补源数据删早、残留或追平顺序的错误）；
+- 消费端：已补上（2026-11-23）。分片被移除或合并时（`/v1/outbox/shards` 列出全部配置分片、失联的也列出，不再列出即已移出槽位表），xinli 的发现循环停掉该片的恢复与出站循环，不再对 `404 outbox_unknown_shard` 重试，并把该片的恢复记录重置回 Heads；同一编号以后再加入时从新的 H 对账。只剩分片 0 时按单库消费，原各分片的记录同样重置（`delivery.Consumer.Retire`）。迁出的 Session 由接收槽位的分片覆盖：它换代，或下面的摘要核对使它重新对账。xinli 停机期间被移除的分片，记录留在原阶段、不再被读取；编号再加入时摘要已变，同样重置。`identity` 的核对：取 H 时记下槽位表摘要，每秒一次的发现循环看到摘要变化即把该分片的进度重置回 Heads（`delivery.Consumer.ReconcileIdentity`）。漏换代时，或滚动部署未完成就换代、恢复取到旧槽位时，它是第二道防线：部署完成后摘要统一，消费方按新槽位重新对账（Quint 模型中，有这道核对时漏换代、先换代后切表、部署未完成就换代三种错误下信封仍收齐；它不弥补源数据删早、残留或追平顺序的错误）；
 - 验证：迁槽加双边换代的集成测试，以及在 `internal/sim` 中注入迁槽后检查"信封不丢、删除后不复活、源分片无残留"。步骤顺序已有 Quint 模型（[`docs/formal-verification/a5-slot-migration`](../formal-verification/a5-slot-migration/slot_migration.qnt)，在 `make verify` 中运行），工具实现时再补上实现轨迹与模型的对照。
 
 ## 重审条件

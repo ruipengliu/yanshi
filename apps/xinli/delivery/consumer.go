@@ -161,21 +161,22 @@ func (c *Consumer) Process(ctx context.Context, line string) error {
 func Start(ctx context.Context, lines []string, consumer *Consumer, worker *Worker, failed func(Failure)) func() {
 	life, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
-	loop := func(stage, line string, shard int, fn func(context.Context) error, delay time.Duration) {
+	// parent 是循环的寿命：分片循环在该片被移出槽位表时单独停止，其余随 Start 的返回函数一起停止。
+	loop := func(parent context.Context, stage, line string, shard int, fn func(context.Context) error, delay time.Duration) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			attempt := 0
-			for life.Err() == nil {
+			for parent.Err() == nil {
 				pause := delay
-				if err := fn(life); err != nil {
+				if err := fn(parent); err != nil {
 					if errors.Is(err, recovery.ErrConflict) {
 						attempt = 0
 					} else {
 						attempt++
 						pause = task.Backoff("delivery", attempt, time.Second, time.Minute)
 					}
-					if failed != nil && life.Err() == nil {
+					if failed != nil && parent.Err() == nil {
 						for _, info := range failureInfos(stage, line, shard, err) {
 							failed(info)
 						}
@@ -185,7 +186,7 @@ func Start(ctx context.Context, lines []string, consumer *Consumer, worker *Work
 				}
 				timer := time.NewTimer(pause)
 				select {
-				case <-life.Done():
+				case <-parent.Done():
 					timer.Stop()
 					return
 				case <-timer.C:
@@ -194,31 +195,60 @@ func Start(ctx context.Context, lines []string, consumer *Consumer, worker *Work
 		}()
 	}
 	for _, line := range lines {
-		// 发现循环只负责登记；每个分片有自己的长轮询与退避，不等待整轮。
-		started := map[int]bool{}
-		loop("discovery", line, -1, func(ctx context.Context) error {
+		// 发现循环登记与注销分片；每个分片有自己的长轮询与退避，不等待整轮。键 -1 是单库的进度。
+		started := map[int]context.CancelFunc{}
+		// retiring 是已停止、进度尚未重置成功的分片；冲突或存储错误时下一轮发现再试。
+		retiring := map[int]bool{}
+		loop(life, "discovery", line, -1, func(ctx context.Context) error {
 			heads, err := consumer.Kernel.OutboxHeads(ctx, line)
 			if err != nil {
 				return err
 			}
+			want := map[int]string{}
 			if len(heads) == 1 && heads[0].Shard == 0 {
-				if !started[-1] {
-					started[-1] = true
-					loop("consume", line, 0, func(ctx context.Context) error { return consumer.Poll(ctx, line) }, 10*time.Millisecond)
+				want[-1] = heads[0].Identity
+			} else {
+				for _, head := range heads {
+					want[head.Shard] = head.Identity
 				}
-				return consumer.ReconcileIdentity(ctx, line, heads[0].Identity)
 			}
 			// 某片核对失败不妨碍登记其余分片，错误汇总后交给退避。
 			var result error
-			for _, head := range heads {
-				id := head.Shard
-				result = errors.Join(result, consumer.ReconcileIdentity(recovery.WithShard(ctx, id), line, head.Identity))
-				if started[id] {
+			// 失联的分片仍会列出，未列出说明它已移出槽位表（合并或下线）：停掉它的循环，否则对 404 无限重试；
+			// 进度重置回 Heads，同一编号以后再加入时从新的 H 对账，不沿用旧游标。迁出的 Session 由接收槽位的
+			// 分片覆盖：它换代或槽位表摘要变化后重新对账（ADR-0046“迁槽与游标”）。
+			for id, stop := range started {
+				if _, ok := want[id]; ok {
 					continue
 				}
-				started[id] = true
+				stop()
+				delete(started, id)
+				retiring[id] = true
+			}
+			for id := range retiring {
+				if _, ok := want[id]; ok {
+					delete(retiring, id)
+					continue
+				}
+				err := consumer.Retire(scope(ctx, id), line)
+				if err == nil {
+					delete(retiring, id)
+				}
+				result = errors.Join(result, err)
+			}
+			for id, identity := range want {
+				result = errors.Join(result, consumer.ReconcileIdentity(scope(ctx, id), line, identity))
+				if started[id] != nil {
+					continue
+				}
+				shard, stop := context.WithCancel(life)
+				started[id] = stop
+				if id < 0 {
+					loop(shard, "consume", line, 0, func(ctx context.Context) error { return consumer.Poll(ctx, line) }, 10*time.Millisecond)
+					continue
+				}
 				// 恢复枚举可能等待另一个 EndUser 分片；已取得 H 的本片仍独立接收出站。
-				loop("recovery", line, id, func(ctx context.Context) error {
+				loop(shard, "recovery", line, id, func(ctx context.Context) error {
 					ctx = recovery.WithShard(ctx, id)
 					p, err := consumer.Progress.Load(ctx, line)
 					if err != nil || p.Phase == recovery.Follow {
@@ -226,7 +256,7 @@ func Start(ctx context.Context, lines []string, consumer *Consumer, worker *Work
 					}
 					return consumer.Poll(ctx, line)
 				}, 100*time.Millisecond)
-				loop("outbox", line, id, func(ctx context.Context) error {
+				loop(shard, "outbox", line, id, func(ctx context.Context) error {
 					ctx = recovery.WithShard(ctx, id)
 					p, err := consumer.Progress.Load(ctx, line)
 					if err != nil || len(p.Positions) == 0 {
@@ -237,10 +267,10 @@ func Start(ctx context.Context, lines []string, consumer *Consumer, worker *Work
 			}
 			return result
 		}, time.Second)
-		loop("process", line, -1, func(ctx context.Context) error { return consumer.Process(ctx, line) }, time.Second)
+		loop(life, "process", line, -1, func(ctx context.Context) error { return consumer.Process(ctx, line) }, time.Second)
 		// 稳定枚举每轮只取一页，持久任务重启后可再次发现；不依赖进程内定时回调去重。
 		after := ""
-		loop("owner_scan", line, -1, func(ctx context.Context) error {
+		loop(life, "owner_scan", line, -1, func(ctx context.Context) error {
 			owners, err := consumer.Accounts.AccountOwners(ctx, line, after, 20)
 			if err != nil {
 				return err
@@ -269,17 +299,42 @@ func (c *Consumer) ReconcileIdentity(ctx context.Context, line, identity string)
 	if err != nil {
 		return err
 	}
-	if p.Phase == "" || p.Phase == recovery.Heads || p.Identity == identity {
+	if p.Identity == identity {
+		return nil
+	}
+	if err := c.restart(ctx, line, p); err != nil && !errors.Is(err, recovery.ErrConflict) {
+		return err
+	}
+	return nil
+}
+
+// Retire 把已移出槽位表的分片的进度重置回 Heads，丢掉旧游标与本轮位置；Round 保留，Checkpoint 按 Session 保存、不受影响。
+// 冲突原样返回：调用方须在下一轮重试，不能把未重置的记录当作已退役。
+func (c *Consumer) Retire(ctx context.Context, line string) error {
+	p, err := c.Progress.Load(ctx, line)
+	if err != nil {
+		return err
+	}
+	return c.restart(ctx, line, p)
+}
+
+func (c *Consumer) restart(ctx context.Context, line string, p recovery.Progress) error {
+	if p.Phase == "" || p.Phase == recovery.Heads {
 		return nil
 	}
 	next := recovery.Progress{BusinessLine: line, Round: p.Round, Phase: recovery.Heads, Version: p.Version + 1, Revision: p.Revision}
 	if recovery.Shard(ctx) >= 0 {
 		next.Revision++
 	}
-	if err := c.Progress.Commit(ctx, p.Version, next, recovery.Batch{}); err != nil && !errors.Is(err, recovery.ErrConflict) {
-		return err
+	return c.Progress.Commit(ctx, p.Version, next, recovery.Batch{})
+}
+
+// scope 选择发现循环中键 id 的进度：-1 是单库，其余是分片编号。
+func scope(ctx context.Context, id int) context.Context {
+	if id < 0 {
+		return ctx
 	}
-	return nil
+	return recovery.WithShard(ctx, id)
 }
 
 // B5 的全种类游标升级到 B6 选定集合时，显式重新对账，不复用旧过滤位置。
