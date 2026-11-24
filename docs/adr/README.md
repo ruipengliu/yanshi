@@ -67,7 +67,7 @@
 | [0038](0038-superseded-memories-are-kept.md) | 被取代的 Memory 保留历史 | accepted | 已实现 | 三 | 历史挤占存储或召回；法规要求更正即删 | — | |
 | [0039](0039-captures-by-stream-provenance-derived.md) | 采集按流登记，来源由平台推导 | 被取代 | — | — | — | 被 0052 取代 | |
 | [0040](0040-platform-triggers-declared-in-agentdef.md) | 平台按 AgentDef 的声明触发 Run | 被取代，不实施 | 未实现 | — | — | 被 0045、0050（现 0052）取代 | |
-| [0041](0041-external-loops-decide-platform-acts.md) | 外部循环只做决定，平台执行 | accepted（设计已认可） | 未实现 | 二 | 上下文策略不够用；需要流式；开始实现 | — | |
+| [0041](0041-external-loops-decide-platform-acts.md) | 外部循环只做决定，平台执行 | accepted（设计已认可；2026-11-24 契约由 0062 修订） | 未实现 | 二 | 上下文策略不够用；需要流式；开始实现 | 契约被 0062 修订 | |
 | [0042](0042-xinli-entities-by-changeset.md) | xinli 的知识按实体维护、以变更集写入 | 已迁出 | — | — | — | 迁至 Persona ADR-0001 | |
 | [0043](0043-kernel-persona-app-layers.md) | 内核、Persona 与应用分三层 | 已修订（2026-11-14） | 已实现 | 一 | 第二条业务线接入；业务侧连续两次绕开内核 | — | |
 | [0044](0044-capture-text-store-and-erasure.md) | Capture 正文移出日志，按引用擦除 | 被取代 | 未实施 | — | — | 被 0050（现 0052）取代 | |
@@ -82,12 +82,13 @@
 | [0053](0053-self-hosted-sandbox-isolation-baseline.md) | 生产沙箱以自托管隔离为基线；默认 gVisor，经 RuntimeClass 选择 | accepted（2026-11-21 修订：选型完成） | 已实现（K8s Provider `internal/sandbox/k8s`，2026-11-21；开发用 Docker） | 二 | 不再承接私有化；gVisor 与 Kata 都无法部署；gVisor 逃逸未及时修复；进程或小文件密集负载占比显著；目标集群冷启动 p95 超过 3 秒；apiserver 成为 exec 瓶颈 | 取代 0010 | |
 | [0054](0054-recoverable-wait-on-moderation-outage.md) | 审核基础设施故障时，Run 可恢复地等待 | accepted（2026-11-15） | 已实现 | 二 | 决定保存待审结果时另立 | 修订 0021 | |
 | [0055](0055-bounded-parallel-delegation-and-artifact-handoff.md) | 有界并行委托与工件交接 | accepted（2026-11-16 定稿，分两期） | 已实现（两期均于 2026-11-16） | 二 | 同上；设备调用也需并行时另立 | 实现时修订 0031 | |
-| [0056](0056-replaceable-context-strategy-and-streaming-loops.md) | 可替换的上下文策略与流式外部循环 | accepted（2026-11-16 定稿） | 未实现 | 二 | 业务线需要上下文策略（A 期）；0041 开始实现（B 期）；需要 Run 内调整、排序或非文字追加 | 实施时修订 0041 | |
+| [0056](0056-replaceable-context-strategy-and-streaming-loops.md) | 可替换的上下文策略与流式外部循环 | accepted（2026-11-16 定稿） | 未实现 | 二 | 业务线需要上下文策略（A 期）；0041 开始实现（B 期）；需要 Run 内调整、排序或非文字追加 | 实施时修订 0041；外部循环契约见 0062 | |
 | [0057](0057-legacy-shard-migration.md) | 存量分片迁移 | 不实施（2026-11-15：旧格式 ID 兼容已删除，前提不成立） | 不实施 | 二 | — | 被 0051 的 2026-11-15 修订取代 | |
 | [0058](0058-background-delegation.md) | 委托在宽限期后转入后台 | accepted（2026-11-19 定稿） | 已实现 | 二 | 子 Session 设备调用也需转后台；需显式前台/后台选择；后台委托成主要成本 | 修订 0035 第 7 条、0031 | |
 | [0059](0059-idempotent-session-creation-by-derived-id.md) | 建会话以幂等键派生 Session ID | accepted（2026-11-22 定稿） | 已实现 | 三 | 需按键查询或键过期；需平滑轮换密钥；线上观察到复查失败消耗键 | — | |
 | [0060](0060-business-line-definition-access.md) | 业务线声明可用的定义；MCP Server 以 (业务线, 名称) 为键 | accepted（2026-11-22 定稿） | 已实现 | 二 | 需同名而内容不同的定义；需自助或分别发布共享定义；需撤销已有 Session 的使用权 | 修订 M4 灰度发布 §1 与部署 §1 | |
 | [0061](0061-taint-gated-mcp-tools.md) | MCP 写工具按来源条件审批（`taint_gated`） | accepted（2026-11-22 定稿） | 已实现 | 二 | 业务线反馈先查后写审批过多且有可信结果判据；注入判断退出影子模式 | 补充 ADR-0017、ADR-0023；修订 MCP 适配 §2、§3 | |
+| [0062](0062-external-loop-contract.md) | 外部循环的契约：自定义协议、无状态单步与一致性套件 | accepted（2026-11-24 定稿） | 未实现 | 二 | AG-UI 等协议稳定且被目标框架普遍原生支持；状态超 64 KiB 或需跨 Run；三方 Agent 需作外部循环；开始实施 | 修订 0041（契约）；补充 0056 B 期 | |
 
 ## 业务层 ADR
 
