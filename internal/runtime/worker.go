@@ -77,6 +77,8 @@ type Config struct {
 	Queue  workqueue.Queue
 	Agents *agentdef.Registry
 	Model  model.Provider
+	// Loop 决定每一步的回复与调用请求；nil 时使用以 Model 为后端的 ModelLoop。
+	Loop Loop
 	// Compactor 生成上下文压缩摘要；nil 时使用以 Model 为后端的 ModelCompactor。
 	Compactor Compactor
 	Catalog   *capability.Catalog
@@ -206,6 +208,9 @@ func (c *Config) defaults() {
 	}
 	if c.Live == nil {
 		c.Live = live.Discard{}
+	}
+	if c.Loop == nil {
+		c.Loop = ModelLoop{Model: c.Model}
 	}
 	if c.Compactor == nil {
 		c.Compactor = ModelCompactor{Model: c.Model}
@@ -1341,7 +1346,7 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 	err = w.during(ctx, r, func(ctx context.Context) error {
 		var err error
 		draft := live.Delta{SessionID: w.st.SessionID, RunID: r.ID, Attempt: w.attempt, AfterSeq: w.st.Seq}
-		resp, err = w.cfg.Model.Generate(ctx, req, func(d model.Delta) {
+		resp, err = w.cfg.Loop.Decide(ctx, LoopStep{Request: req}, func(d model.Delta) {
 			if firstToken == 0 {
 				firstToken = max(w.now().Sub(called), time.Millisecond)
 			}
