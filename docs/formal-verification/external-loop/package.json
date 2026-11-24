@@ -1,0 +1,8 @@
+{
+  "name": "yanshi-external-loop",
+  "version": "0.1.0",
+  "private": true,
+  "devDependencies": {
+    "@informalsystems/quint": "^0.33.1"
+  }
+}
