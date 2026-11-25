@@ -4,7 +4,7 @@ status: accepted（2026-11-24 定稿；部分实现）
 
 # 外部循环的契约：自定义协议、无状态单步与一致性套件
 
-> **实施进度（2026-11-24）**：第 9 条的接缝（`runtime.Loop`）、`loop.proto`、AgentDef 的 `loop`、`loops/*.yaml` 登记与 HTTP 客户端（`internal/extloop`，含 NDJSON 流式）、状态写入日志与投影、事件流剥离状态、"上一步"、回答校验、按步计量、外部循环的压缩上限、评测不覆盖模型已实现；模拟测试中的外部循环与故障注入已实现（2026-11-25，`internal/sim/loop.go`，`TestExternalLoopWithFaults`）；一致性套件已实现（2026-11-25，`internal/extloop/looptest`、`yanshi looptest`，在 `make check` 中对进程内的 Go 参考循环及出错变体运行），LangGraph 与 Pydantic AI 的参考适配待做。外部服务的模型调用经内核端点、每步请求带步令牌，由 [ADR-0063](0063-loop-model-gateway-and-step-token.md) 补充（2026-11-25 实现）。自报用量（ADR-0056 Q6）已在协议中、平台暂不记录：用量报表还不能按 Kind 分开，混入会把自报的 token 算进模型调用。
+> **实施进度（2026-11-24）**：第 9 条的接缝（`runtime.Loop`）、`loop.proto`、AgentDef 的 `loop`、`loops/*.yaml` 登记与 HTTP 客户端（`internal/extloop`，含 NDJSON 流式）、状态写入日志与投影、事件流剥离状态、"上一步"、回答校验、按步计量、外部循环的压缩上限、评测不覆盖模型已实现；模拟测试中的外部循环与故障注入已实现（2026-11-25，`internal/sim/loop.go`，`TestExternalLoopWithFaults`）；一致性套件已实现（2026-11-25，`internal/extloop/looptest`、`yanshi looptest`，在 `make check` 中对进程内的 Go 参考循环及出错变体运行），LangGraph 与 Pydantic AI 的参考适配已实现（2026-11-25，`sdk/python`，`make looptest-adapters`：两个适配都通过 `looptest -step-token` 的全部场景，都不用 `state`）。外部服务的模型调用经内核端点、每步请求带步令牌，由 [ADR-0063](0063-loop-model-gateway-and-step-token.md) 补充（2026-11-25 实现）。自报用量（ADR-0056 Q6）已在协议中、平台暂不记录：用量报表还不能按 Kind 分开，混入会把自报的 token 算进模型调用。
 >
 > **已定稿（2026-11-24）。** 来源：AgentDef 接入方式的讨论（Codex、Gemini 各自独立出方案后互评，2026-11-23）、两轮原型（本地分支 `prototype/langgraph-loop`，2026-11-24）与 Gemini 对本文初稿的评审。修订 [ADR-0041](0041-external-loops-decide-platform-acts.md) 的契约细节，补充 [ADR-0056](0056-replaceable-context-strategy-and-streaming-loops.md) B 期（流式协议沿用其 Q7，不改），修订 [m5 设计](../design/m5-inputs-triggers-loops.md) §7。ADR-0041 的治理原则（只做决定、平台执行，回答写入日志后才生效，只能用本业务线的循环）不变。
 
@@ -36,7 +36,7 @@ ADR-0041 让业务线的外部服务决定 Run 的每一步，契约只有一份
 7. **只接同一信任域。** 外部循环的登记（`loops/*.yaml`）以 `(业务线, 名称)` 为键（与 MCP Server 相同，ADR-0060 第 5 条），只属于一条业务线，且只能是该业务线自己运营的服务：请求携带完整的上下文视图（含他人旁听中的话与设备的结果，ADR-0041 Consequences）。三方开发的 Agent 不作为外部循环接入：经出站能力接入（ADR-0048）；将来托管阶段三方开发者成为独立业务线时，也不能登记外部循环，只能用内置循环（重审条件）。循环按 Session 的业务线解析，启动时核对登记（2026-11-25，`cmd/yanshi/loops.go`）：AgentDef 指向的循环在任何业务线都没有登记，或业务线的 `agents.allow` 按名称列出了它却没有登记，启动失败；只经通配允许的只记警告。
 
 8. **一致性套件是对接标准。** 内核提供黑盒的一致性套件（拟名 `looptest`），经 HTTP 驱动一个外部循环服务，覆盖：换进程恢复、同一步重复请求、attempt 递增、同一步多个并行调用、被拒与失败的结果、调用 ID 按位置映射、`messages` 不以工具结果结尾（插话、后台结果）、新 Run 与重答时 `state` 为空、中途压缩、状态上限、超时与不合法的回答、流式的最后一行。业务线的循环服务须通过它才能登记上线，与存储实现须通过一致性套件同理。内核同时提供 LangGraph 与 Pydantic AI 的参考适配（原型中的坑由适配处理：LangGraph 的并行调用不能用普通边直连 `ToolNode`，须用 `Send` 扇出或一次交出整组调用；Pydantic AI 的 AG-UI 或消息转换须保留平台的系统指令），位置与语言在实施时确定。
-   2026-11-25 确定：套件是 Go 包 `internal/extloop/looptest`，以 `yanshi looptest -url <服务>` 运行，在 `make check` 中对一个进程内的 Go 参考循环运行（另有一组故意出错的变体，证明套件能查出它们）。黑盒的套件不掌握被测服务用的模型，只查格式就查不出上面那类框架转换错误，所以套件同时托管一个脚本化的 OpenAI 兼容模型，被测服务须能配置模型地址、在测试时指向它：套件据此既检查服务的回答，也检查框架交给模型的内容（系统指令、按位置配对的结果、插话）。参考适配是 sdk/python 下（待建）的 Python 包（uv 管理、锁定版本），由单独的 `make looptest-adapters` 启动适配并运行 `yanshi looptest`；它需要 Python 与联网安装依赖，与 `make verify` 一样不在 `make check` 中。
+   2026-11-25 确定：套件是 Go 包 `internal/extloop/looptest`，以 `yanshi looptest -url <服务>` 运行，在 `make check` 中对一个进程内的 Go 参考循环运行（另有一组故意出错的变体，证明套件能查出它们）。黑盒的套件不掌握被测服务用的模型，只查格式就查不出上面那类框架转换错误，所以套件同时托管一个脚本化的 OpenAI 兼容模型，被测服务须能配置模型地址、在测试时指向它：套件据此既检查服务的回答，也检查框架交给模型的内容（系统指令、按位置配对的结果、插话）。参考适配是 `sdk/python` 下的 Python 包（uv 管理、锁定版本），由单独的 `make looptest-adapters` 启动适配并运行 `yanshi looptest`；它需要 Python 与联网安装依赖，与 `make verify` 一样不在 `make check` 中。
 
 9. **内核内部的接缝。** `Worker.callModel` 中"调用模型"的部分抽成决策者接口：外层照旧负责上下文组装、工具解析与祖先交集、配额、调用 ID、内容安全与写日志；内置实现生成的请求逐字节不变，前缀缓存不退化。先做不改变行为的重构，再接外部循环。
 
@@ -66,7 +66,7 @@ ADR-0041 让业务线的外部服务决定 Run 的每一步，契约只有一份
 
 - m5 §7 的契约草案按本 ADR 修订；`loop.proto` 在实施时新增（含 `state_version`、自报用量与"上一步"）。`AssistantMessage` 增加状态字段，改动 `State` 与 `Apply` 时递增 `ProjectionVersion`。
 - **计量与配额须补齐。** 外部循环按步计量（ADR-0056 Q6 的 `Kind="loop"`），价格表须有按步的单价，启动时的计量校验（`cmd/yanshi/serve.go` 的 `metering`）对 `loop` 的 AgentDef 检查它，而不是检查 `model`；否则外部循环的步数不计费、绕过金额配额。
-- **评测须适配。** 评测运行器的派生（`internal/eval/runner.go`）对 `loop` 的 AgentDef 不覆盖模型、不要求 `model`，并以回放式的假循环固定；外部循环的效果仍由 `make eval` 裁判。
+- **评测须适配。** 评测运行器的派生（`internal/eval/runner.go`）对 `loop` 的 AgentDef 不覆盖模型、不要求 `model`，并以回放式的假循环固定；外部循环的效果仍由 `make eval` 裁判。（2026-11-25：评测改为驱动正在运行的外部服务，`yanshi eval -loop 名称=URL`，经内核模型端点换模型，见 ADR-0063；回放式的假循环没有做。）
 - 内核多一个一致性套件与参考适配要维护。平台不计量外部服务自己的模型用量（自报用量只用于报表）；前缀缓存由外部服务负责。（2026-11-25 修订：声明了 `loop.models` 的 AgentDef，外部服务经内核模型端点调用模型，平台照常计量与执行配额，见 ADR-0063；没有声明的仍按本条。）
 
 ## 必须验证

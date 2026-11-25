@@ -7,7 +7,7 @@ export YANSHI_TEST_S3 ?= 127.0.0.1:58333
 # TypeScript SDK 与真实网关的互通测试（internal/e2e TestWebSDK）；需要 Node.js 与 pnpm。
 export YANSHI_TEST_NODE ?= 1
 
-.PHONY: check gen lint check-deps test sim sim-quick verify build tools deps-up deps-down sandbox-image web web-deps mobile
+.PHONY: check gen lint check-deps test sim sim-quick verify looptest-adapters build tools deps-up deps-down sandbox-image web web-deps mobile
 
 check: lint test
 
@@ -125,6 +125,11 @@ verify:
 	cd docs/formal-verification/poc1-lifecycle-recheck && env -u PNPM_CONFIG_ALLOW_BUILDS sh -c 'pnpm install --frozen-lockfile --silent && bash run.sh'
 	cd docs/formal-verification/a5-slot-migration && env -u PNPM_CONFIG_ALLOW_BUILDS sh -c 'pnpm install --frozen-lockfile --silent && bash run.sh'
 	cd docs/formal-verification/external-loop && env -u PNPM_CONFIG_ALLOW_BUILDS sh -c 'pnpm install --frozen-lockfile --silent && bash run.sh'
+
+# 外部循环的参考适配（sdk/python，ADR-0062 第 8 条）跑一致性套件：需要 uv 与联网安装锁定的依赖，不在 check 中。
+# 改动 loop.proto、回答校验或 looptest 的场景之后运行。
+looptest-adapters:
+	bash sdk/python/scripts/looptest-adapters.sh
 
 # 评测（docs/design/m4-eval.md）：消耗真实 token，不在 check 中；需要 ARK_API_KEY（火山方舟）。
 # 改动模型、提示词、AgentDef 或召回、压缩、Memory、MCP 中给模型的文本时必须运行。

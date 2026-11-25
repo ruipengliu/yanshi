@@ -38,6 +38,10 @@ message LoopStepRequest {
   // 外部服务把它当作 API key 调用内核的模型端点；也可以用同一把密钥验证，转交给业务线自己的接口。
   // 登记没有配置密钥时为空。令牌只在这一步有效，不要保存或在之后的步中复用。
   string step_token = 13;
+  // 经内核模型端点可以使用的模型（"provider/model"，AgentDef 的 loop.models；ADR-0063 第 3 条）。外部服务应从中选择、
+  // 默认用第一个，不要写死自己的模型：评测换模型时这里是评测指定的模型，端点不接受列表以外的。为空表示这个 AgentDef
+  // 没有声明，外部服务自带模型。
+  repeated string models = 14;
 }
 
 message LoopMessage {

@@ -54,7 +54,11 @@ type LoopStepRequest struct {
 	// 步令牌（ADR-0063 第 2 条）：平台以这个循环登记的 HMAC 密钥签发的 JWT（HS256，头中带 kid），有效期与这一步的时限相同。
 	// 外部服务把它当作 API key 调用内核的模型端点；也可以用同一把密钥验证，转交给业务线自己的接口。
 	// 登记没有配置密钥时为空。令牌只在这一步有效，不要保存或在之后的步中复用。
-	StepToken     string `protobuf:"bytes,13,opt,name=step_token,json=stepToken,proto3" json:"step_token,omitempty"`
+	StepToken string `protobuf:"bytes,13,opt,name=step_token,json=stepToken,proto3" json:"step_token,omitempty"`
+	// 经内核模型端点可以使用的模型（"provider/model"，AgentDef 的 loop.models；ADR-0063 第 3 条）。外部服务应从中选择、
+	// 默认用第一个，不要写死自己的模型：评测换模型时这里是评测指定的模型，端点不接受列表以外的。为空表示这个 AgentDef
+	// 没有声明，外部服务自带模型。
+	Models        []string `protobuf:"bytes,14,rep,name=models,proto3" json:"models,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -178,6 +182,13 @@ func (x *LoopStepRequest) GetStepToken() string {
 		return x.StepToken
 	}
 	return ""
+}
+
+func (x *LoopStepRequest) GetModels() []string {
+	if x != nil {
+		return x.Models
+	}
+	return nil
 }
 
 type LoopMessage struct {
@@ -719,7 +730,7 @@ var File_yanshi_v1_loop_proto protoreflect.FileDescriptor
 
 const file_yanshi_v1_loop_proto_rawDesc = "" +
 	"\n" +
-	"\x14yanshi/v1/loop.proto\x12\tyanshi.v1\x1a\x15yanshi/v1/event.proto\"\xc5\x03\n" +
+	"\x14yanshi/v1/loop.proto\x12\tyanshi.v1\x1a\x15yanshi/v1/event.proto\"\xdd\x03\n" +
 	"\x0fLoopStepRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x15\n" +
@@ -736,7 +747,8 @@ const file_yanshi_v1_loop_proto_rawDesc = "" +
 	"\rstate_version\x18\v \x01(\tR\fstateVersion\x127\n" +
 	"\bprevious\x18\f \x01(\v2\x1b.yanshi.v1.LoopPreviousStepR\bprevious\x12\x1d\n" +
 	"\n" +
-	"step_token\x18\r \x01(\tR\tstepToken\"\xaa\x01\n" +
+	"step_token\x18\r \x01(\tR\tstepToken\x12\x16\n" +
+	"\x06models\x18\x0e \x03(\tR\x06models\"\xaa\x01\n" +
 	"\vLoopMessage\x12\x12\n" +
 	"\x04role\x18\x01 \x01(\tR\x04role\x121\n" +
 	"\acontent\x18\x02 \x03(\v2\x17.yanshi.v1.ContentBlockR\acontent\x122\n" +

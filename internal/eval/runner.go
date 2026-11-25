@@ -29,6 +29,7 @@ import (
 	"yanshi/internal/delegation"
 	"yanshi/internal/eval/xinlifixture"
 	"yanshi/internal/eventlog"
+	"yanshi/internal/extloop"
 	"yanshi/internal/feed"
 	"yanshi/internal/ids"
 	"yanshi/internal/live"
@@ -89,6 +90,12 @@ type Config struct {
 	Logger   *slog.Logger
 	// Progress 在每次运行结束时调用，用于显示进度。
 	Progress func(caseName string, trial int, passed bool)
+	// Loops 把外部循环的名称接到正在运行的服务（URL）；AgentDef 指向未接上的循环的用例跳过（loops.go）。
+	Loops map[string]string
+	// LoopEndpointAddr 是评测模型端点的监听地址，默认 DefaultLoopEndpointAddr；只在 Loops 非空时监听。
+	LoopEndpointAddr string
+
+	loops *loopState
 }
 
 type instance struct {
@@ -180,6 +187,19 @@ func Run(ctx context.Context, cfg Config, cases []*Case) (*Report, error) {
 		used = &usedSandboxes{Provider: cfg.Sandbox, ids: map[string]bool{}}
 		cfg.Sandbox = used
 	}
+	// 外部循环的模型端点在实例之前开：实例的 Worker 签发步令牌用同一把密钥。
+	// 派生失败的用例照旧在各自的实例中报错；这里只用于跳过未接上循环的用例。
+	derived, versions, err := derive(cfg, cases)
+	if err != nil && len(cfg.Loops) > 0 {
+		return nil, err
+	}
+	if err == nil && len(cfg.Loops) > 0 {
+		stop, err := startLoops(runCtx, &cfg, derived)
+		if err != nil {
+			return nil, err
+		}
+		defer stop()
+	}
 	// 拨钟会影响租约与停放，不能让并行 trial 共用偏移。
 	shared := slices.DeleteFunc(slices.Clone(cases), isolatedClock)
 	var in *instance
@@ -211,6 +231,10 @@ func Run(ctx context.Context, cfg Config, cases []*Case) (*Report, error) {
 		}
 		if c.Call && (cfg.Realtime == nil || cfg.Speak == nil) {
 			res.Skipped = "requires a realtime model and speech synthesis"
+			continue
+		}
+		if loop := missingLoop(cfg, derived, versions[c.Name], c); loop != "" {
+			res.Skipped = "requires external loop " + loop + " (-loop " + loop + "=<url>)"
 			continue
 		}
 		res.Trials = c.Trials
@@ -305,7 +329,12 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 	if err != nil {
 		return nil, err
 	}
+	var loops runtime.Loops
+	if len(cfg.Loops) > 0 {
+		loops = extloop.NewRegistry(loopServers(cfg), nil)
+	}
 	opts := app.Options{
+		Loops: loops,
 		Clock: clk, Agents: agents, Oneshots: shots, Model: cfg.Model, Blobs: artifact.NewMemBlobs(), NodeAuth: node.InsecureDevAuth{},
 		SessionKeySecret: []byte("yanshi-eval-session-key-secret-v1"),
 		SandboxTools:     cfg.Sandbox != nil, DefaultTimeout: 10 * time.Minute,
@@ -822,6 +851,7 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 					events = scheduledRunEvents(events, runID)
 				}
 				collect(events, obs)
+				in.addLoopUsage(sid, obs)
 			} else {
 				err = errors.Join(err, fmt.Errorf("collect failed eval run: %w", readErr))
 			}
@@ -941,6 +971,7 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 		obs.status = "asked"
 	}
 	collect(events, obs)
+	in.addLoopUsage(sid, obs)
 	// 子 Session 中发生的事计入本轮（审批、给评分模型看的步骤）；子 Run 的调用不计入本轮的调用，
 	// 父 Run 只看到一次 agent__ 调用。
 	for _, e := range events {

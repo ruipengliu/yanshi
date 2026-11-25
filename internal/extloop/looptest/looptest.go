@@ -172,7 +172,10 @@ type stepOutcome struct {
 	deltas   int
 }
 
-// sign 在请求中放入步令牌，并登记到假模型：模型据此检查被测服务转交了这一步的令牌。
+// ModelRef 是 TokenKey 非 nil 时请求 models 中唯一的模型：被测服务须用它，而不是写死自己的模型（ADR-0063 第 3 条）。
+const ModelRef = "looptest/model"
+
+// sign 在请求中放入步令牌与可用的模型，并把令牌登记到假模型：模型据此检查被测服务转交了这一步的令牌、用了给定的模型。
 func (r *runner) sign(req *v1.LoopStepRequest) error {
 	if r.cfg.TokenKey == nil {
 		return nil
@@ -184,7 +187,7 @@ func (r *runner) sign(req *v1.LoopStepRequest) error {
 	if err != nil {
 		return fmt.Errorf("sign step token: %w", err)
 	}
-	req.StepToken = tok
+	req.StepToken, req.Models = tok, []string{ModelRef}
 	r.cfg.Model.issueToken(extractScenario(req.GetSystem()), tok)
 	return nil
 }

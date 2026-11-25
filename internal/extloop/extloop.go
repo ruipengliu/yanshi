@@ -334,7 +334,7 @@ func readStream(r io.Reader, onDelta func(model.Delta)) (*v1.LoopStepResponse, e
 func Request(step runtime.LoopStep) *v1.LoopStepRequest {
 	out := &v1.LoopStepRequest{
 		SessionId: step.SessionID, RunId: step.RunID, Attempt: step.Attempt, Turn: step.Turn, EndUser: step.EndUser,
-		Agent: step.Agent, State: step.State, StateVersion: step.StateVersion,
+		Agent: step.Agent, State: step.State, StateVersion: step.StateVersion, Models: step.Models,
 	}
 	if r := step.Request; r != nil {
 		out.System = r.System

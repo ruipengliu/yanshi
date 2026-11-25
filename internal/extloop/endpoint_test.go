@@ -98,11 +98,12 @@ func TestParseTokenKeys(t *testing.T) {
 func TestDecideSendsStepToken(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	var got string
+	var models []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		var req v1.LoopStepRequest
 		_ = protojson.Unmarshal(b, &req)
-		got = req.GetStepToken()
+		got, models = req.GetStepToken(), req.GetModels()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{}`))
 	}))
@@ -111,7 +112,7 @@ func TestDecideSendsStepToken(t *testing.T) {
 	l, _ := r.Loop("bl", "plan")
 	l.(*Client).Now = func() time.Time { return now }
 	st := step()
-	st.EndUser, st.Agent = "u", &v1.AgentRef{Name: "planner", Version: "1"}
+	st.EndUser, st.Agent, st.Models = "u", &v1.AgentRef{Name: "planner", Version: "1"}, []string{"p/good"}
 	if _, err := l.Decide(model.WithBackground(context.Background()), st, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -122,6 +123,9 @@ func TestDecideSendsStepToken(t *testing.T) {
 	if c.SessionID != "s" || c.RunID != "r" || c.Attempt != 2 || c.Turn != 3 || c.AgentName != "planner" || !c.Background ||
 		!c.ExpiresAt.Time.Equal(now.Add(20*time.Second)) {
 		t.Fatalf("claims %+v", c)
+	}
+	if len(models) != 1 || models[0] != "p/good" {
+		t.Fatalf("models %v", models)
 	}
 }
 
@@ -148,7 +152,7 @@ func newEndpoint(t *testing.T) *endpointFixture {
 		t.Fatal(err)
 	}
 	f := &endpointFixture{clock: clock.NewFake(time.Now()), uses: usage.NewMem(), del: lifecycle.NewMemDeletions()}
-	f.e = &Endpoint{Keys: keysFor, Agents: agents, Clock: f.clock, IDs: ids.Random(), Deletions: f.del,
+	f.e = &Endpoint{Keys: keysFor, Agents: agents, Clock: f.clock, Now: f.clock.Now, IDs: ids.Random(), Deletions: f.del,
 		Meter: &usage.Meter{Store: f.uses, Prices: &usage.PriceList{Models: map[string]usage.Price{"p/good": {Input: 1, Output: 1}}}},
 		Model: providerFunc(func(_ context.Context, req *model.Request, onDelta func(model.Delta)) (*model.Response, error) {
 			f.calls = append(f.calls, req)
@@ -292,6 +296,40 @@ func TestEndpointStream(t *testing.T) {
 	}
 	if text != "你好" || calls != 1 || finish != "tool_calls" || usageChunks != 1 || !done {
 		t.Fatalf("text %q calls %d finish %q usage %d done %v", text, calls, finish, usageChunks, done)
+	}
+}
+
+// 提供商不流式输出时（或只输出了一部分），流结束前补发其余的文字。
+func TestEndpointStreamWithoutDeltas(t *testing.T) {
+	f := newEndpoint(t)
+	f.e.Model = providerFunc(func(_ context.Context, _ *model.Request, onDelta func(model.Delta)) (*model.Response, error) {
+		onDelta(model.Delta{Text: "你"})
+		return &model.Response{Content: model.TextBlocks("你好"), Usage: &v1.Usage{}}, nil
+	})
+	resp := f.post(t, f.token(t), strings.Replace(chatBody, `"temperature":0.2`, `"stream":true`, 1))
+	var text string
+	sc := bufio.NewScanner(resp.Body)
+	for sc.Scan() {
+		data, ok := strings.CutPrefix(sc.Text(), "data: ")
+		if !ok || data == "[DONE]" {
+			continue
+		}
+		var c struct {
+			Choices []struct {
+				Delta struct {
+					Content *string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		_ = json.Unmarshal([]byte(data), &c)
+		for _, ch := range c.Choices {
+			if ch.Delta.Content != nil {
+				text += *ch.Delta.Content
+			}
+		}
+	}
+	if text != "你好" {
+		t.Fatalf("streamed text %q", text)
 	}
 }
 

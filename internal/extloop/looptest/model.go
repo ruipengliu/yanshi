@@ -188,6 +188,9 @@ func (m *Model) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if bearer, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); m.withTokens && !m.tokens[scenario][bearer] {
 		m.violations[scenario] = append(m.violations[scenario], "模型调用没有以这一步的步令牌为 API key（ADR-0063 第 6 条）")
 	}
+	if m.withTokens && raw.Model != ModelRef {
+		m.violations[scenario] = append(m.violations[scenario], "模型调用没有使用请求 models 中的模型（ADR-0063 第 3 条）")
+	}
 	m.calls[scenario] = append(m.calls[scenario], call)
 	fn := m.scripts[scenario]
 	m.mu.Unlock()

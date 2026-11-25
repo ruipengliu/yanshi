@@ -38,6 +38,7 @@ type refLoopOptions struct {
 	messagesInState    bool
 	sessionScopedState bool
 	dropStepToken      bool
+	ignoreModels       bool
 }
 
 type refLoopState struct {
@@ -262,8 +263,13 @@ func buildModelRequest(req *v1.LoopStepRequest, opts refLoopOptions) *model.Requ
 			InputSchema: json.RawMessage(t.GetInputSchemaJson()),
 		})
 	}
+	// 用请求给出的第一个模型，不写死（ADR-0063 第 3 条）；没有给出时自带模型。
+	ref := "looptest-ref"
+	if ms := req.GetModels(); len(ms) > 0 && !opts.ignoreModels {
+		ref = ms[0]
+	}
 	return &model.Request{
-		Model:    "looptest-ref",
+		Model:    ref,
 		System:   sys,
 		Messages: msgs,
 		Tools:    tools,
@@ -413,6 +419,12 @@ func TestBadVariantsFailExpectedScenarios(t *testing.T) {
 			mutate:    func(o *refLoopOptions) { o.dropStepToken = true },
 			wantFail:  []string{"single-step", "streaming"},
 			runFilter: []string{"single-step", "streaming"},
+		},
+		{
+			name:      "ignore-models",
+			mutate:    func(o *refLoopOptions) { o.ignoreModels = true },
+			wantFail:  []string{"single-step"},
+			runFilter: []string{"single-step"},
 		},
 		{
 			name:      "session-scoped-state",

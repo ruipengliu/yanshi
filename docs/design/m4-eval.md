@@ -201,6 +201,7 @@ expect 复用 reply_contains、reply_excludes、reply_max_chars、status 与 jud
 - **进程内运行**：内存存储、真实的模型网关；虚拟设备是一个进程内的 Node，与 e2e 一样经由 Hub、Inbox 路由。沙箱可选（`-sandbox docker`），不可用时跳过 `requires: [sandbox]` 的用例。存储在内存中，进程退出后没有 Janitor 回收沙箱，所以运行结束时停下实例、销毁本次创建过的全部沙箱（含委托的子 Session 的）；销毁失败的沙箱 ID 打印为警告。
 - **用例隔离**：每个用例的每次运行都使用新的 EndUser，互不影响。
 - **`-model`**：覆盖 AgentDef 的模型，用来在同一评测集上比较不同模型。
+- **外部循环**（2026-11-25，ADR-0063）：`-loop 名称=URL`（可重复）把 AgentDef 的 `loop.server` 接到正在运行的服务，评测为两条评测业务线登记它、生成步令牌密钥，并在 `-loop-endpoint-addr`（默认 `127.0.0.1:18472`）上开内核的模型端点；服务把模型的 base URL 配成 `http://<地址>/v1/loop`、以步令牌为 API key、用请求 `models` 中的模型。`-model` 替换 `loop.models`，服务因此换用评测的模型。经端点的调用按 Session 计入 token 与缓存命中。指向未接上的循环的用例跳过；没有声明 `loop.models` 的外部循环自带模型，`-model` 对它不起作用。业务线的外部循环 AgentDef 与用例放在业务线自己的目录，用 `-agents` 与 `-suite` 指定（内核的 `agents/` 里放外部循环的 AgentDef，`serve` 的启动检查会要求它有登记）。
 
 `make eval` 读取环境中的 `ARK_API_KEY`（2026-10-11 起被评测模型为火山方舟 `doubao-seed-2-1-lite`；此前为 TokenHub `deepseek-v4.1-flash`），Memory 的嵌入模型默认 `ark/doubao-embedding-vision-251215`（与基线一致）。评测消耗真实 token，不放进 `make check`；但**改动模型、提示词、AgentDef，或召回、压缩、Memory、MCP 的给模型的文本时必须运行**，并与基线比较（写入 AGENTS.md）。
 

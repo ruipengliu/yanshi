@@ -1,6 +1,6 @@
 # 输入、触发与外部循环
 
-> 状态：已确认（2026-10-25）；第 1 步已实现，第 2 步（流上的触发）由 ADR-0050 取消，第 3 步（外部循环）部分实现（2026-11-24，进度见 ADR-0062） · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[旁听业务线 xinli](./xinli-captures.md)、[Memory 与 Grant](./m4-memory-grant.md)、[模型调用](./model-calls.md) · ADR-0039、ADR-0040、ADR-0041 · 术语：`CONTEXT.md` 的 Provenance、Stream、Trigger、Loop
+> 状态：已确认（2026-10-25）；第 1 步已实现，第 2 步（流上的触发）由 ADR-0050 取消，第 3 步（外部循环）已实现（2026-11-25，见 ADR-0062、ADR-0063） · 依赖：[M0 核心原语](./m0-core-primitives.md)、[旁听](./captures.md)、[旁听业务线 xinli](./xinli-captures.md)、[Memory 与 Grant](./m4-memory-grant.md)、[模型调用](./model-calls.md) · ADR-0039、ADR-0040、ADR-0041 · 术语：`CONTEXT.md` 的 Provenance、Stream、Trigger、Loop
 >
 > 2026-11-14：ADR-0036、ADR-0039、ADR-0050 与 ADR-0037 的内核部分已整合进 [ADR-0052](../adr/0052-attested-results-and-provenance.md)，ADR-0040 已取消，ADR-0010 已被 [ADR-0053](../adr/0053-self-hosted-sandbox-isolation-baseline.md) 取代。本文引用这些 ADR 之处，现行规则以 ADR-0052、ADR-0053 为准（[ADR 索引](../adr/README.md)）。
 
@@ -114,9 +114,12 @@ message LoopStepResponse {
   - 调用前检查配额，超出时 429 `quota_exceeded`（与提供商限流的 `rate_limit_exceeded` 区分，外部服务不应在这一步内重试）；下一步之前 Worker 的检查让 Run 挂起。调用返回后按模型计量（`Kind="model"`，记在令牌声明的业务线、EndUser 与 AgentDef 下，含缓存命中），价格表须有 `loop.models` 中模型的价格。
   - 不做内容安全检查：模型的输出只经这一步的回答到达用户与日志，回答照旧在写日志前检查。
   - 媒体只接受内联数据（data: URL 与 base64），不转发远程地址；`temperature` 等采样参数忽略。
-  - `looptest -step-token`（`looptest.Config.TokenKey`）在每步请求中签发步令牌，检查服务把它转给了模型调用；声明了 `loop.models` 的服务须这样通过套件（ADR-0063 第 6 条）。
+  - 每步请求的 `models` 是 `loop.models`（评测时是评测的模型）：外部服务从中选择、默认用第一个，不要写死。
+  - `looptest -step-token`（`looptest.Config.TokenKey`）在每步请求中签发步令牌、给出 `models`，检查服务把令牌转给了模型调用、用的是给出的模型；声明了 `loop.models` 的服务须这样通过套件（ADR-0063 第 6 条）。
+  - 评测以 `yanshi eval -loop 名称=URL` 驱动正在运行的外部服务（[评测](./m4-eval.md) §3）。
+  - 参考适配：`sdk/python`（LangGraph 与 Pydantic AI，无状态、按上面的方式调用模型），`make looptest-adapters` 对它们运行 `looptest -step-token`。
 - **数据离开平台。** 请求带着完整的上下文，包括旁听中他人的话与设备的结果，会到达业务线的服务。MCP 调用只带参数，外部循环看到的范围大得多：业务线要承担保留与删除的义务，不应保存超出 `state` 的副本。这一点写进接入文档，由业务线在登记时确认。外部地址只来自显式的登记，私有化部署时可以不登记（ADR-0001）。
-- **不变的部分。** 前缀缓存由外部服务的框架负责：经内核端点的调用上报缓存命中，评测报告的"缓存命中"列如实反映，但平台不保证前缀稳定（ADR-0063 第 4 条）。实时增量随 NDJSON 流式一并提供（ADR-0056 Q7），草稿不进日志，整条回复写日志前审核。
+- **不变的部分。** 前缀缓存由外部服务的框架负责：经内核端点的调用上报缓存命中，评测按 Session 计入报告的"缓存命中"列，但平台不保证前缀稳定（ADR-0063 第 4 条）。实时增量随 NDJSON 流式一并提供（ADR-0056 Q7），草稿不进日志，整条回复写日志前审核。
 
 **为什么是"每步一问"，而不是把整个 Run 交出去。** 把整个 Run 交给外部（A2A 式），外部 Agent 自带工具、自己执行，平台的审批、写入闸门、内容安全与删除都管不到它的内部，平台只能把最终结果当作外部内容。每步一问让外部服务只决定"下一步做什么"，而所有动作仍经过统一检查点（§4）。代价是每一步往返一次，延迟比内置循环高，适合复杂流程，不适合闲聊。A2A 作为另一种能力，以后另行设计（§12）。
 

@@ -36,6 +36,8 @@ type LoopStep struct {
 	StateVersion string
 	// Previous 是上一步回答中每个调用的结果，按回答中的原顺序（ADR-0062 第 5 条）。
 	Previous []PreviousCall
+	// Models 是外部服务经内核模型端点可用的模型（AgentDef 的 loop.models，评测时已被覆盖；ADR-0063 第 3 条）。
+	Models []string
 }
 
 // PreviousCall 是上一步回答中的一个调用及其结果。

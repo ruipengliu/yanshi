@@ -1381,6 +1381,7 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 		step.EndUser, step.Agent = w.st.Created.GetEndUser(), w.st.Agent
 		step.State, step.StateVersion = r.LoopState, r.LoopStateVersion
 		step.Previous = previousStep(view, r.ID, def.Context.MaxToolResult)
+		step.Models = def.Loop.Models
 	}
 
 	var reply *LoopReply

@@ -38,13 +38,20 @@ type Endpoint struct {
 	Agents interface {
 		Get(*v1.AgentRef) (*agentdef.Def, error)
 	}
-	Model     model.Provider
-	Quotas    *usage.Quotas
-	Meter     *usage.Meter
+	Model  model.Provider
+	Quotas *usage.Quotas
+	Meter  *usage.Meter
+	// Deletions 为 nil 时不查删除记录（评测）。
 	Deletions lifecycle.Deletions
-	Clock     clock.Clock
-	IDs       ids.Generator
-	Logger    *slog.Logger
+	// Clock 是计量与配额的时间；Now 是验证步令牌的时间，nil 时取 time.Now：令牌由 Client 按真实时间签发，
+	// 评测拨过的 Clock 会把它判为过期。
+	Clock  clock.Clock
+	Now    func() time.Time
+	IDs    ids.Generator
+	Logger *slog.Logger
+	// OnUsage 非 nil 时在每次调用返回后得到用量：评测据此把经端点的调用计入 Run 的 token 与缓存命中
+	// （评测报告读日志中 AssistantMessage 的用量，外部循环的那一步没有）。
+	OnUsage func(c *StepClaims, model string, u *v1.Usage)
 }
 
 func (e *Endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -54,7 +61,11 @@ func (e *Endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid_api_key", "a step token is required")
 		return
 	}
-	c, err := VerifyStep(token, e.Keys, e.Clock.Now())
+	now := time.Now
+	if e.Now != nil {
+		now = e.Now
+	}
+	c, err := VerifyStep(token, e.Keys, now())
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid_api_key", "invalid or expired step token")
 		return
@@ -114,6 +125,9 @@ func (e *Endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		e.Meter.Model(meterCtx, usage.Scope{SessionID: c.SessionID, BusinessLine: c.BusinessLine, EndUser: c.EndUser},
 			"use_"+e.IDs(), agentdef.Label(&v1.AgentRef{Name: c.AgentName, Version: c.AgentVersion}), req.Model, resp.Usage, e.Clock.Now())
 		cancelMeter()
+		if e.OnUsage != nil {
+			e.OnUsage(c, req.Model, resp.Usage)
+		}
 	}
 	if callErr != nil || resp == nil {
 		status, code := modelStatus(ctx, callErr)
@@ -124,6 +138,9 @@ func (e *Endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (e *Endpoint) deleted(ctx context.Context, c *StepClaims) (bool, error) {
+	if e.Deletions == nil {
+		return false, nil
+	}
 	gone, err := lifecycle.Deleted(ctx, e.Deletions, c.SessionID)
 	if err != nil || gone {
 		return gone, err
@@ -316,6 +333,8 @@ type responder struct {
 	stream  bool
 	usage   bool
 	started bool
+	// text 与 reasoning 是已经以增量发出的内容：提供商不流式输出（或只输出了一部分）时，结束前补发其余部分。
+	text, reasoning string
 }
 
 type outMessage struct {
@@ -365,6 +384,8 @@ func (o *responder) chunk(choices []outChoice, u *outUsage) {
 }
 
 func (o *responder) delta(d model.Delta) {
+	o.text += d.Text
+	o.reasoning += d.Reasoning
 	m := &outMessage{ReasoningContent: d.Reasoning}
 	if !o.started {
 		m.Role = "assistant"
@@ -405,6 +426,16 @@ func (o *responder) finish(resp *model.Response) {
 			Choices: []outChoice{{Message: m, FinishReason: &reason}}, Usage: u})
 		return
 	}
+	if rest, rr := remainder(model.Text(resp.Content), o.text), remainder(resp.Reasoning, o.reasoning); rest != "" || rr != "" {
+		m := &outMessage{ReasoningContent: rr}
+		if rest != "" {
+			m.Content = &rest
+		}
+		if !o.started {
+			m.Role = "assistant"
+		}
+		o.chunk([]outChoice{{Delta: m}}, nil)
+	}
 	if len(calls) > 0 {
 		m := &outMessage{ToolCalls: calls}
 		if !o.started {
@@ -417,6 +448,15 @@ func (o *responder) finish(resp *model.Response) {
 		o.chunk([]outChoice{}, u)
 	}
 	fmt.Fprint(o.w, "data: [DONE]\n\n")
+}
+
+// remainder 是完整内容中尚未以增量发出的部分。增量与完整内容对不上时（提供商的异常）补发全部：
+// 客户端拼出的文字可能重复，但不会少。
+func remainder(full, sent string) string {
+	if rest, ok := strings.CutPrefix(full, sent); ok {
+		return rest
+	}
+	return full
 }
 
 // fail 报告调用失败。流已经开始时状态码已发出，以一个错误事件结束流。

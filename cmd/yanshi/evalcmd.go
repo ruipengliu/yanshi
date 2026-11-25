@@ -39,6 +39,10 @@ func evalCmd(args []string) error {
 	xinliPersonaDSN := fs.String("xinli-persona-dsn", os.Getenv("YANSHI_PERSONA_PG_DSN"), "Persona 独立数据库 DSN（YANSHI_PERSONA_PG_DSN；pg 必填）")
 	suite := fs.String("suite", "evals", "评测用例目录")
 	agentsDir := fs.String("agents", "agents", "AgentDef 目录")
+	var loops headerFlags
+	fs.Var(&loops, "loop", "把外部循环接到正在运行的服务（名称=URL，可重复；ADR-0063）。AgentDef 指向未接上的循环的用例跳过")
+	loopEndpoint := fs.String("loop-endpoint-addr", eval.DefaultLoopEndpointAddr,
+		"评测模型端点的监听地址：外部服务把模型的 base URL 配成 http://<地址>/v1/loop、以每步请求的 step_token 为 API key")
 	oneshotsDir := fs.String("oneshots", "oneshots", "单次调用声明目录")
 	oneshotVersion := fs.String("oneshot-version", "", "评测该单次调用版本而不是稳定版本")
 	caseGlob := fs.String("case", "*", "只运行名称匹配的用例")
@@ -100,6 +104,7 @@ func evalCmd(args []string) error {
 	gw.Register("codex", codex.Provider{})
 	cfg := eval.Config{XinliBin: *xinliBin, XinliFixture: xinlifixture.Options{Store: *xinliStore, PersonaDSN: *xinliPersonaDSN}, Agents: agents, Oneshots: shots, OneshotVersion: *oneshotVersion, Model: gw, Judge: *judgeModel, EmbedModel: *embedModel,
 		ModelOverride: *modelOverride, AgentVersion: *agentVersion, Trials: *trials, Parallel: *parallel, Logger: logger,
+		Loops: loops, LoopEndpointAddr: *loopEndpoint,
 		Progress: func(name string, trial int, passed bool) {
 			mark := "✓"
 			if !passed {
