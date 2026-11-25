@@ -59,7 +59,7 @@ test: deps-up web day-bin
 	# 缩短版一天与双分片断连恢复一起守住跨进程装配；双分片用例记录实际耗时，完整版在 make day。
 	YANSHI_DAY_BIN=$(CURDIR)/bin/xinli-day go test -race ./internal/day -run '^TestDay(Short|Shards)$$' -count=1
 	go test ./internal/sim
-	go test -race ./internal/sim -run TestSimulationIsDeterministic
+	go test -race ./internal/sim -run '^Test(Simulation|ExternalLoop)IsDeterministic$$'
 
 web-deps:
 	cd sdk/web && pnpm install --frozen-lockfile --silent

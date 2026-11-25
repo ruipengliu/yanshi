@@ -20,7 +20,9 @@ import (
 // 挂起的 Run 须经定期复查恢复并结束。
 
 // simPrices：模拟模型每 token 1 微元；沙箱每秒执行 1000 微元（模拟中每次执行占 1 秒）。
-var simPrices = &usage.PriceList{Models: map[string]usage.Price{"sim/m": {Input: 1, Output: 1}}}
+// 外部循环每步 2000 微元，与一次模型调用相当（loop.go）。
+var simPrices = &usage.PriceList{Models: map[string]usage.Price{"sim/m": {Input: 1, Output: 1}},
+	Loops: map[string]usage.LoopPrice{"bl/" + simLoopServer: {PerStep: 0.002}}}
 
 func init() { simPrices.Sandbox.PerHour = 3.6 }
 

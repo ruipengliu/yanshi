@@ -80,6 +80,8 @@ type Options struct {
 	KeyedCreates bool
 	// MaintainDues 在差分中保证短 Horizon 的维护不受随机 Sweep 稀疏性影响。
 	MaintainDues bool
+	// ExternalLoop 让 AgentDef 由外部循环驱动（ADR-0062，loop.go），循环自己的故障用独立随机流抽样。
+	ExternalLoop bool
 }
 
 // Stats 统计模拟中被覆盖到的路径，防止模拟"空转"。
@@ -191,6 +193,11 @@ type Stats struct {
 	MemoryPrechecked int
 	// ReadOnlyDowngrades 是 Started 后声明降级、未执行且写入固定错误结果的次数。
 	ReadOnlyDowngrades int
+	// 外部循环（ADR-0062，loop.go）：发出的请求、同一步的重复请求、流式回答；注入的超时、5xx、不合法的回答、
+	// 收到回答后写日志途中的崩溃、旧 Attempt 的回答迟到（租约在请求途中过期、另一个 Worker 接管）；
+	// 以及来自已被取代的 Attempt、已删除的 Session 的请求。
+	LoopSteps, LoopRepeats, LoopStreamed, LoopTimeouts, LoopServerErrors, LoopInvalidReplies int
+	LoopCrashesAfterAnswer, LoopLateReplies, LoopStaleRequests, LoopRequestsAfterDeletion    int
 }
 
 // storeFault 是注入的存储故障（数据库超时、连接中断）：written 表示追加其实已经生效，调用方却只看到错误。
@@ -430,7 +437,14 @@ type World struct {
 	// poolViolation 记录 Worker 认领到不属于其池的工作（ADR-0029）。
 	poolViolation error
 	attested      *mcpcap.Connector
-	Stats         Stats
+	// 外部循环（loop.go）：独立随机流；loopFault 表示本步注入了循环故障，Worker 报告的错误是预期的；
+	// loopDepth 防止迟到回答的注入在嵌套的步骤中重入；loopSeen 按步记录请求次数；current 是正在步进的 Worker。
+	loopRNG   *rand.Rand
+	loopFault bool
+	loopDepth int
+	loopSeen  map[string]int
+	current   int
+	Stats     Stats
 	// Trace 记录每一步的动作，失败时用于定位。
 	Trace []string
 }
@@ -449,6 +463,8 @@ func New(opts Options) (*World, error) {
 	w.redoRetries = map[string]redoRetry{}
 	w.readOnlyRNG = rand.New(rand.NewPCG(opts.Seed^0x726561646f6e6c79, opts.Seed^0x94d049bb133111eb))
 	w.readOnlyStarts = map[string]readOnlyStart{}
+	w.loopRNG = rand.New(rand.NewPCG(opts.Seed^0x6c6f6f70, opts.Seed^0xbf58476d1ce4e5b9))
+	w.loopSeen = map[string]int{}
 	w.echoInvoked = map[string]int{}
 	stores := app.Memory(w.clock)
 	if opts.NewStores != nil {
@@ -469,7 +485,7 @@ func New(opts Options) (*World, error) {
 		if v == "2" {
 			ctxCfg.Scope = agentdef.ScopeRun
 		}
-		defs = append(defs, &agentdef.Def{
+		def := &agentdef.Def{
 			Name: "sim", Version: v, Model: "sim/m",
 			Capabilities: []string{"echo", "send", "ask_user", "show_card", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*", "agent:sim"},
 			MaxTurns:     maxTurns, Context: ctxCfg, Memory: agentdef.MemoryConfig{Recall: 3},
@@ -477,7 +493,15 @@ func New(opts Options) (*World, error) {
 			// 委托 30 秒后转入后台（ADR-0058）：时钟跳动与 delegationGraceEdge 使后台委托足够常见。分片差分不转后台，
 			// 保持它的随机路径（跨分片委托的覆盖依赖它）。
 			Delegation: agentdef.DelegationConfig{MaxFanout: simMaxFanout, BackgroundAfter: delegationGrace(opts)},
-		})
+		}
+		if opts.ExternalLoop {
+			// 版本 1 看整个 Session，必须有摘要模型；版本 2 只看本轮、没有摘要模型，超出窗口即失败（ADR-0062 第 6 条）。
+			def.Model, def.Loop = "", &agentdef.LoopRef{Server: simLoopServer}
+			if v == "1" {
+				def.Context.SummaryModel = "sim/m"
+			}
+		}
+		defs = append(defs, def)
 	}
 	if opts.Attested {
 		w.attested = newSimAttestedConnector(w)
@@ -509,6 +533,10 @@ func New(opts Options) (*World, error) {
 	w.provider.ExecFunc = w.sandboxExec
 	gw := model.NewGateway()
 	gw.Register("sim", &simModel{w: w})
+	var loops runtime.Loops
+	if opts.ExternalLoop {
+		loops = w.loopRegistry()
+	}
 	// 对象图与 serve 相同（app.NewCore）；存储故障在 Stores 的 seam 上注入，其余替身在构造之后替换对应字段。
 	// 外部写入（输入、审批、回答、Node 结果）经 flakyWaking；Worker 的追加另经 flakyLog（newWorker）。
 	wrapped := stores
@@ -534,7 +562,7 @@ func New(opts Options) (*World, error) {
 		SandboxTools:     true, DefaultTimeout: deviceTimeout, NodeCacheTTL: 5 * time.Second,
 		BackgroundGrace: bgGrace, BackgroundTimeout: bgTimeout,
 		Moderator: simModerator{w}, InjectionCheck: simDecider{w}, Meter: w.meter, Quotas: w.quotas, Pusher: simPusher{w},
-		LeaseTTL: leaseTTL, HealthAllowed: healthAllowed,
+		LeaseTTL: leaseTTL, HealthAllowed: healthAllowed, Loops: loops,
 	})
 	w.store, w.hub, w.catalog, w.memories, w.artifacts = w.core.Store, w.core.Hub, w.core.Catalog, w.core.Memory, w.core.Artifacts
 	w.delegator, w.dispatch, w.svc, w.notifier = w.core.Delegator, w.core.Dispatch, w.core.Service, w.core.Notifier
@@ -1023,6 +1051,7 @@ func (w *World) stepWorker(i int) error {
 	defer func() { w.crash = nil; cancel() }()
 
 	wk := w.workers[i]
+	w.current, w.loopFault = i, false
 	finishDowngrade, err := w.beginReadOnlyDowngrade(wk.ID())
 	if err != nil {
 		return err
@@ -1047,7 +1076,7 @@ func (w *World) stepWorker(i int) error {
 		w.tracef("step %s: %v", wk.ID(), err)
 		var me *modelError
 		var sf *storeFault
-		if errors.As(err, &me) || errors.Is(err, moderation.ErrUnavailable) || errors.As(err, &sf) || errors.Is(err, errDirectoryDown) {
+		if w.loopFault || errors.As(err, &me) || errors.Is(err, moderation.ErrUnavailable) || errors.As(err, &sf) || errors.Is(err, errDirectoryDown) {
 			return nil
 		}
 		return fmt.Errorf("worker %s step: %w", wk.ID(), err)
@@ -1342,6 +1371,7 @@ func (w *World) CheckInvariants() error {
 	if err := w.checkDelegation(false); err != nil {
 		return err
 	}
+	loopSteps := w.Stats.LoopSteps
 	for _, sid := range w.known() {
 		events, err := eventlog.ReadAll(context.Background(), w.log, sid, 0)
 		if err != nil {
@@ -1361,6 +1391,10 @@ func (w *World) CheckInvariants() error {
 		}
 		if !session.Equal(loaded, st) {
 			return fmt.Errorf("invariant: snapshot-based load of %s diverges from full replay at seq %d", sid, st.Seq)
+		}
+		// 回放日志与由快照恢复都不请求外部循环：状态来自日志（ADR-0062 第 2 条）。
+		if w.Stats.LoopSteps != loopSteps {
+			return fmt.Errorf("invariant: replaying %s requested the external loop", sid)
 		}
 		var pending error
 		eachRun(events, func(r *session.Run) {
@@ -1427,6 +1461,11 @@ func (w *World) CheckInvariants() error {
 		}
 		if err := checkMemoryPrecheck(sid, events); err != nil {
 			return err
+		}
+		if w.opts.ExternalLoop {
+			if err := checkLoopLog(sid, events); err != nil {
+				return err
+			}
 		}
 	}
 	if w.poolViolation != nil {

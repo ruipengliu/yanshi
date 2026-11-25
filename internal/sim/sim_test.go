@@ -178,14 +178,18 @@ func TestSimulationWithoutFaultsNeverFails(t *testing.T) {
 // TestSimulationIsDeterministic：同一种子跑两遍，日志逐字节相同。各种子的两份 World 同时运行：并行时结果也不能变，
 // 且 make check 以 -race 运行本测试，竞争检测器借此检查 World 之间是否共享了可变状态。
 func TestSimulationIsDeterministic(t *testing.T) {
-	checkSimulationDeterminism(t, false)
+	checkSimulationDeterminism(t, func(s uint64) Options {
+		return Options{Faults: true, Attested: true, LongRuns: s == 7, KeyedCreates: true}
+	})
 }
 
 func TestScheduleSimulationIsDeterministic(t *testing.T) {
-	checkSimulationDeterminism(t, true)
+	checkSimulationDeterminism(t, func(s uint64) Options {
+		return Options{Faults: true, Attested: true, LongRuns: s == 7, Schedules: true}
+	})
 }
 
-func checkSimulationDeterminism(t *testing.T, schedules bool) {
+func checkSimulationDeterminism(t *testing.T, options func(s uint64) Options) {
 	seeds := []uint64{1, 7, 42}
 	prints := make([][2]string, len(seeds))
 	ok := t.Run("worlds", func(t *testing.T) {
@@ -193,7 +197,7 @@ func checkSimulationDeterminism(t *testing.T, schedules bool) {
 			for j := range prints[i] {
 				t.Run(fmt.Sprintf("seed%d-%d", s, j), func(t *testing.T) {
 					t.Parallel()
-					prints[i][j] = run(t, s, Options{Faults: true, Attested: true, LongRuns: s == 7, Schedules: schedules, KeyedCreates: !schedules}).Fingerprint()
+					prints[i][j] = run(t, s, options(s)).Fingerprint()
 				})
 			}
 		}

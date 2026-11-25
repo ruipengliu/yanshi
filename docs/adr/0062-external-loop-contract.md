@@ -4,7 +4,7 @@ status: accepted（2026-11-24 定稿；部分实现）
 
 # 外部循环的契约：自定义协议、无状态单步与一致性套件
 
-> **实施进度（2026-11-24）**：第 9 条的接缝（`runtime.Loop`）、`loop.proto`、AgentDef 的 `loop`、`loops/*.yaml` 登记与 HTTP 客户端（`internal/extloop`，含 NDJSON 流式）、状态写入日志与投影、事件流剥离状态、"上一步"、回答校验、按步计量、外部循环的压缩上限、评测不覆盖模型已实现；模拟测试中的外部循环与故障注入、一致性套件 `looptest` 与参考适配待做。自报用量（ADR-0056 Q6）已在协议中、平台暂不记录：用量报表还不能按 Kind 分开，混入会把自报的 token 算进模型调用。
+> **实施进度（2026-11-24）**：第 9 条的接缝（`runtime.Loop`）、`loop.proto`、AgentDef 的 `loop`、`loops/*.yaml` 登记与 HTTP 客户端（`internal/extloop`，含 NDJSON 流式）、状态写入日志与投影、事件流剥离状态、"上一步"、回答校验、按步计量、外部循环的压缩上限、评测不覆盖模型已实现；模拟测试中的外部循环与故障注入已实现（2026-11-25，`internal/sim/loop.go`，`TestExternalLoopWithFaults`），一致性套件 `looptest` 与参考适配待做。自报用量（ADR-0056 Q6）已在协议中、平台暂不记录：用量报表还不能按 Kind 分开，混入会把自报的 token 算进模型调用。
 >
 > **已定稿（2026-11-24）。** 来源：AgentDef 接入方式的讨论（Codex、Gemini 各自独立出方案后互评，2026-11-23）、两轮原型（本地分支 `prototype/langgraph-loop`，2026-11-24）与 Gemini 对本文初稿的评审。修订 [ADR-0041](0041-external-loops-decide-platform-acts.md) 的契约细节，补充 [ADR-0056](0056-replaceable-context-strategy-and-streaming-loops.md) B 期（流式协议沿用其 Q7，不改），修订 [m5 设计](../design/m5-inputs-triggers-loops.md) §7。ADR-0041 的治理原则（只做决定、平台执行，回答写入日志后才生效，只能用本业务线的循环）不变。
 
@@ -70,7 +70,7 @@ ADR-0041 让业务线的外部服务决定 Run 的每一步，契约只有一份
 
 ## 必须验证
 
-- 模拟测试：外部循环的超时、不合法的回答、写入前崩溃、重复请求、旧 attempt 的回答迟到、内容安全等待与拦截；回放时对外部服务的请求数为 0；状态随 Session 删除、不出现在对外事件流中；由外部循环驱动的 Run 压缩后最近一步仍是原文。实施前按[验证方案](../formal-verification/2026-11-23-verification-plan.md)先为"提交、重试与接管"建模：已完成（2026-11-24，`docs/formal-verification/external-loop/`，随 `make verify` 运行），覆盖本文第 2–5 条的状态链、Attempt 隔离、调用与结果一一对应、不合法与被拦截的回答、压缩不越过最近一步，八个违反本文的变体均被查出；实现后补由模型调度驱动的 Go 场景。
+- 模拟测试：外部循环的超时、不合法的回答、写入前崩溃、重复请求、旧 attempt 的回答迟到、内容安全等待与拦截；回放时对外部服务的请求数为 0；状态随 Session 删除、不出现在对外事件流中；由外部循环驱动的 Run 压缩后最近一步仍是原文。实施前按[验证方案](../formal-verification/2026-11-23-verification-plan.md)先为"提交、重试与接管"建模：已完成（2026-11-24，`docs/formal-verification/external-loop/`，随 `make verify` 运行），覆盖本文第 2–5 条的状态链、Attempt 隔离、调用与结果一一对应、不合法与被拦截的回答、压缩不越过最近一步，八个违反本文的变体均被查出；实现后补由模型调度驱动的 Go 场景：已完成（2026-11-25，`internal/sim/loop.go`）。模拟中的请求经真实的 `extloop.Client` 由进程内传输应答，回答由脚本化模型给出，循环的故障用独立随机流注入：超时、5xx、五种不合法的回答、收到回答后写日志途中崩溃、租约在请求途中过期并被另一个 Worker 接管（旧 Attempt 的回答迟到）；Worker 崩溃、存储故障、压缩与内容安全的等待和拦截沿用既有注入。每一步请求对照日志检查状态、步序与"上一步"（含压缩后最近一步仍是原文、结果按位置对应），回放与快照恢复不请求外部服务；日志中每个 Run 的第 k 条回答必须带第 k 步的状态，被拦截的回答不带状态且结束 Run，对外事件流不含状态；状态只在日志与快照中，随 Session 删除由既有的删除不变量检查。去掉压缩上限、`refuse` 保留状态、不校验回答、不带回状态、去掉 Attempt 隔离，五个变体均被查出。模拟同时观察到：Session 被删除后，持有租约的 Worker 在两步之间沿用本地投影，仍会发出下一步请求、写入时才发现删除（`TestExternalLoopWithFaults` 的 `LoopRequestsAfterDeletion`）；内置模型调用同样如此，回答不会写入。
 - 决策者接口重构后：`make check`、`make sim` 通过，`make eval` 无回归且"缓存命中"不退化。
 - 参考适配通过 `looptest`；原型分支中的场景全部进入套件，并补上原型未覆盖的：LangGraph 的被拒与失败结果、调用 ID 改写后的按位置映射、`messages` 不以工具结果结尾。
 
