@@ -35,6 +35,9 @@ type Server struct {
 	Headers      map[string]string `yaml:"headers"`
 	// Timeout 是一步的时限（含流式输出），默认 60 秒。
 	Timeout time.Duration `yaml:"timeout"`
+	// TokenKeys 是签发步令牌的 HMAC 密钥（ADR-0063 第 2 条），密钥与请求头一样以 ${VAR} 从环境变量注入。
+	// 为空时请求不带步令牌，这个循环不能调用内核的模型端点。
+	TokenKeys []TokenKey `yaml:"token_keys"`
 }
 
 type key struct{ businessLine, name string }
@@ -91,18 +94,32 @@ func parse(b []byte, getenv func(string) string) (Server, error) {
 	if s.Timeout <= 0 {
 		s.Timeout = DefaultTimeout
 	}
-	for k, v := range s.Headers {
+	expand := func(v string) (string, []string) {
 		var missing []string
-		s.Headers[k] = varRE.ReplaceAllStringFunc(v, func(m string) string {
+		return varRE.ReplaceAllStringFunc(v, func(m string) string {
 			val := getenv(varRE.FindStringSubmatch(m)[1])
 			if val == "" {
 				missing = append(missing, m)
 			}
 			return val
-		})
+		}), missing
+	}
+	for k, v := range s.Headers {
+		val, missing := expand(v)
 		if len(missing) > 0 {
 			return Server{}, fmt.Errorf("header %s: environment variables %v are not set", k, missing)
 		}
+		s.Headers[k] = val
+	}
+	for i, k := range s.TokenKeys {
+		val, missing := expand(k.Secret)
+		if len(missing) > 0 {
+			return Server{}, fmt.Errorf("token_keys %s: environment variables %v are not set", k.KID, missing)
+		}
+		s.TokenKeys[i].Secret = val
+	}
+	if err := validateKeys(s.TokenKeys); err != nil {
+		return Server{}, err
 	}
 	return s, nil
 }
@@ -125,6 +142,14 @@ func NewRegistry(servers []Server, hc *http.Client) *Registry {
 		r.clients[key{s.BusinessLine, s.Name}] = &Client{Server: s, HTTP: hc}
 	}
 	return r
+}
+
+// Keys 返回登记的步令牌密钥；没有这个登记时为空（模型端点据此验证步令牌）。
+func (r *Registry) Keys(businessLine, name string) []TokenKey {
+	if c, ok := r.clients[key{businessLine, name}]; ok {
+		return c.Server.TokenKeys
+	}
+	return nil
 }
 
 func (r *Registry) Loop(businessLine, name string) (runtime.Loop, error) {
@@ -151,6 +176,9 @@ func (r *Registry) Servers() []Server {
 type Client struct {
 	Server Server
 	HTTP   *http.Client
+	// Now 是签发步令牌的时间，nil 时取 time.Now。令牌不写日志，不影响 Worker.Step 的确定性；它的有效期由
+	// 模型端点按真实时间核对，所以这里也用真实时间。
+	Now func() time.Time
 }
 
 // maxResponse 是一步回答（含流式的全部行）的上限：64 KiB 状态经 base64 约 88 KB，回复与调用参数另计。
@@ -169,8 +197,21 @@ var (
 
 // Decide 请求外部服务决定一步。连接层不重试：已输出过增量的步重试会让订阅者看到两份，失败交给 Worker
 // 下一步重新请求（ADR-0056 第 6 条）。错误信息只含状态码与结构错误，不含回答内容（日志只记 ID）。
-func (c *Client) Decide(ctx context.Context, step runtime.LoopStep, onDelta func(model.Delta)) (*runtime.LoopReply, error) {
-	body, err := marshal.Marshal(Request(step))
+func (c *Client) Decide(ctx context.Context, step runtime.LoopStep, onDelta func(model.Delta)) (_ *runtime.LoopReply, err error) {
+	wire := Request(step)
+	now := time.Now
+	if c.Now != nil {
+		now = c.Now
+	}
+	wire.StepToken, err = SignStep(c.Server.TokenKeys, StepClaims{
+		BusinessLine: c.Server.BusinessLine, Loop: c.Server.Name, SessionID: step.SessionID, RunID: step.RunID,
+		Attempt: step.Attempt, Turn: step.Turn, EndUser: step.EndUser,
+		AgentName: step.Agent.GetName(), AgentVersion: step.Agent.GetVersion(), Background: model.IsBackground(ctx),
+	}, now(), c.Server.Timeout)
+	if err != nil {
+		return nil, fmt.Errorf("loop %s: sign step token: %w", c.Server.Name, err)
+	}
+	body, err := marshal.Marshal(wire)
 	if err != nil {
 		return nil, err
 	}

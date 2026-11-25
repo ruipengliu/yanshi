@@ -370,6 +370,20 @@ func start(ctx context.Context, cfg Config, cases []*Case) (*instance, error) {
 }
 
 // derive 为每个用例派生 AgentDef：应用用例的上下文覆盖与 ModelOverride，版本号带上用例名以免冲突。
+// overrideModel 换用评测指定的模型。外部循环的 AgentDef 声明了经内核端点可用的模型时，以它替换整个列表
+// （ADR-0063 第 3 条）；没有声明的自带模型，没有模型可换（ADR-0062 Consequences）。
+func overrideModel(d *agentdef.Def, ref string) {
+	switch {
+	case ref == "":
+	case d.Loop == nil:
+		d.Model = ref
+	case len(d.Loop.Models) > 0:
+		l := *d.Loop
+		l.Models = []string{ref}
+		d.Loop = &l
+	}
+}
+
 func derive(cfg Config, cases []*Case) (*agentdef.Registry, map[string]string, error) {
 	var defs []*agentdef.Def
 	if cfg.Agents != nil {
@@ -397,10 +411,7 @@ func derive(cfg Config, cases []*Case) (*agentdef.Registry, map[string]string, e
 			d.Instructions += xinliSpanInstructions
 			d.Context.Scope = agentdef.ScopeRun
 		}
-		// 外部循环的 AgentDef 没有模型可换（ADR-0062 Consequences）。
-		if cfg.ModelOverride != "" && d.Loop == nil {
-			d.Model = cfg.ModelOverride
-		}
+		overrideModel(&d, cfg.ModelOverride)
 		if w := c.Context.Window; w > 0 {
 			d.Context.Window, d.Context.KeepRecent, d.Context.MaxToolResult = w, c.Context.KeepRecent, c.Context.MaxToolResult
 		}
@@ -417,9 +428,7 @@ func derive(cfg Config, cases []*Case) (*agentdef.Registry, map[string]string, e
 			}
 			o := *other
 			o.Version = other.Version + "+eval-" + c.Name
-			if cfg.ModelOverride != "" && o.Loop == nil {
-				o.Model = cfg.ModelOverride
-			}
+			overrideModel(&o, cfg.ModelOverride)
 			defs = append(defs, &o)
 			versions[c.Name+"/"+t.Agent] = o.Version
 		}

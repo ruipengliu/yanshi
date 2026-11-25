@@ -54,6 +54,9 @@ type Config struct {
 	HTTP *http.Client
 	// Run 可选：只运行列出的场景名；为空时运行全部场景。
 	Run []string
+	// TokenKey 非 nil 时，套件以它在每步请求中签发步令牌，假模型检查被测服务把令牌当作 API key 转给了模型调用
+	// （ADR-0063 第 6 条）。AgentDef 声明了 loop.models 的服务必须以这种方式通过套件。
+	TokenKey *extloop.TokenKey
 }
 
 var requestMarshal = protojson.MarshalOptions{EmitUnpopulated: true}
@@ -95,6 +98,7 @@ func Run(ctx context.Context, cfg Config) []Result {
 	}
 
 	r := &runner{cfg: cfg, hc: hc}
+	cfg.Model.requireTokens(cfg.TokenKey != nil)
 	for _, sc := range selected {
 		start := time.Now()
 		status, reason := sc.run(ctx, r)
@@ -168,9 +172,29 @@ type stepOutcome struct {
 	deltas   int
 }
 
+// sign 在请求中放入步令牌，并登记到假模型：模型据此检查被测服务转交了这一步的令牌。
+func (r *runner) sign(req *v1.LoopStepRequest) error {
+	if r.cfg.TokenKey == nil {
+		return nil
+	}
+	tok, err := extloop.SignStep([]extloop.TokenKey{*r.cfg.TokenKey}, extloop.StepClaims{
+		BusinessLine: "looptest", Loop: "looptest", SessionID: req.GetSessionId(), RunID: req.GetRunId(), Attempt: req.GetAttempt(),
+		Turn: req.GetTurn(), EndUser: req.GetEndUser(), AgentName: req.GetAgent().GetName(), AgentVersion: req.GetAgent().GetVersion(),
+	}, time.Now(), r.cfg.Timeout)
+	if err != nil {
+		return fmt.Errorf("sign step token: %w", err)
+	}
+	req.StepToken = tok
+	r.cfg.Model.issueToken(extractScenario(req.GetSystem()), tok)
+	return nil
+}
+
 // sendStep 发出一次 LoopStepRequest 并执行全部通用契约校验：
 // 状态码 200、extloop.ReadResponse 解析、工具白名单、纯文本回复、state 上限、时限与系统指令转发检查。
 func (r *runner) sendStep(ctx context.Context, req *v1.LoopStepRequest) (*stepOutcome, error) {
+	if err := r.sign(req); err != nil {
+		return nil, err
+	}
 	body, err := marshalWithUnknownFields(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -214,6 +238,9 @@ func (r *runner) sendStep(ctx context.Context, req *v1.LoopStepRequest) (*stepOu
 // sendRaw 发送一步请求但不做通用契约校验，供 model-failure 场景检查服务是否给出了回答：返回状态码，
 // 状态码为 200 时另返回能否解析出一个回答（流式缺少最后一行、无法解析都算没有回答，平台按失败处理，ADR-0062 第 4 条）。
 func (r *runner) sendRaw(ctx context.Context, req *v1.LoopStepRequest) (status int, answered bool, err error) {
+	if err := r.sign(req); err != nil {
+		return 0, false, err
+	}
 	body, err := marshalWithUnknownFields(req)
 	if err != nil {
 		return 0, false, fmt.Errorf("marshal request: %w", err)

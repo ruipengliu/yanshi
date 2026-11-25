@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/agentdef"
@@ -14,6 +15,7 @@ import (
 	"yanshi/internal/eventlog"
 	"yanshi/internal/eventlog/memlog"
 	"yanshi/internal/ids"
+	"yanshi/internal/lifecycle"
 	"yanshi/internal/model"
 	"yanshi/internal/session"
 	"yanshi/internal/workqueue"
@@ -261,4 +263,36 @@ func TestExternalLoopWithoutSummaryModelFailsOnOverflow(t *testing.T) {
 		}
 	}
 	t.Fatal("run did not fail")
+}
+
+// Session 有了删除记录（清理尚未完成、日志还在）之后，Worker 不再把上下文视图发给外部循环（ADR-0062 第 7 条）：
+// 第一步照常请求，标记删除后的第二步不发出。
+func TestExternalLoopStopsAfterDeletion(t *testing.T) {
+	ctx := context.Background()
+	loop := &scriptLoop{replies: []*LoopReply{reply("先查", "s1", "note"), reply("好了", "s2")}}
+	w, store, sid := externalWorker(t, loopsMap{"bl/plan": loop})
+	deletions := lifecycle.NewMemDeletions()
+	store.Deletions = deletions
+	for range 10 {
+		if _, err := w.Step(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if len(loop.steps) == 1 {
+			break
+		}
+	}
+	if len(loop.steps) != 1 {
+		t.Fatalf("loop steps %d before deletion", len(loop.steps))
+	}
+	if _, err := deletions.Mark(ctx, &lifecycle.Tombstone{SessionID: sid, BusinessLine: "bl", Reason: "end_user", RequestedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	for range 10 {
+		if _, err := w.Step(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(loop.steps) != 1 {
+		t.Fatalf("loop was asked %d times; want no step after the session was deleted", len(loop.steps))
+	}
 }

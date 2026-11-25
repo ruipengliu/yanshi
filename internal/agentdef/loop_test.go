@@ -8,13 +8,16 @@ func TestLoopValidation(t *testing.T) {
 		def Def
 		ok  bool
 	}{
-		"model":                   {Def{Name: "a", Version: "1", Model: "p/m"}, true},
-		"neither":                 {Def{Name: "a", Version: "1"}, false},
-		"both":                    {Def{Name: "a", Version: "1", Model: "p/m", Loop: &LoopRef{Server: "plan"}}, false},
-		"loop without server":     {Def{Name: "a", Version: "1", Loop: &LoopRef{}, Context: Context{Scope: ScopeRun}}, false},
-		"loop without summary":    {Def{Name: "a", Version: "1", Loop: &LoopRef{Server: "plan"}}, false},
-		"loop with summary model": {Def{Name: "a", Version: "1", Loop: &LoopRef{Server: "plan"}, Context: Context{SummaryModel: "p/m"}}, true},
-		"loop scoped to run":      {Def{Name: "a", Version: "1", Loop: &LoopRef{Server: "plan"}, Context: Context{Scope: ScopeRun}}, true},
+		"model":                       {Def{Name: "a", Version: "1", Model: "p/m"}, true},
+		"neither":                     {Def{Name: "a", Version: "1"}, false},
+		"both":                        {Def{Name: "a", Version: "1", Model: "p/m", Loop: &LoopRef{Server: "plan"}}, false},
+		"loop without server":         {Def{Name: "a", Version: "1", Loop: &LoopRef{}, Context: Context{Scope: ScopeRun}}, false},
+		"loop without summary":        {Def{Name: "a", Version: "1", Loop: &LoopRef{Server: "plan"}}, false},
+		"loop with summary model":     {Def{Name: "a", Version: "1", Loop: &LoopRef{Server: "plan"}, Context: Context{SummaryModel: "p/m"}}, true},
+		"loop scoped to run":          {Def{Name: "a", Version: "1", Loop: &LoopRef{Server: "plan"}, Context: Context{Scope: ScopeRun}}, true},
+		"loop models":                 {Def{Name: "a", Version: "1", Loop: &LoopRef{Server: "plan", Models: []string{"p/m", "p/n"}}, Context: Context{Scope: ScopeRun}}, true},
+		"loop model without provider": {Def{Name: "a", Version: "1", Loop: &LoopRef{Server: "plan", Models: []string{"m"}}, Context: Context{Scope: ScopeRun}}, false},
+		"loop model twice":            {Def{Name: "a", Version: "1", Loop: &LoopRef{Server: "plan", Models: []string{"p/m", "p/m"}}, Context: Context{Scope: ScopeRun}}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			d := tc.def

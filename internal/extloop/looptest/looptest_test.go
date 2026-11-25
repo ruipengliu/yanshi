@@ -18,6 +18,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/extloop"
 	"yanshi/internal/model"
 	"yanshi/internal/model/openaicompat"
 )
@@ -36,6 +37,7 @@ type refLoopOptions struct {
 	okOnModelFailure   bool
 	messagesInState    bool
 	sessionScopedState bool
+	dropStepToken      bool
 }
 
 type refLoopState struct {
@@ -106,7 +108,10 @@ func (l *refLoop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mreq := buildModelRequest(&req, l.opts)
-	prov := &openaicompat.Provider{BaseURL: l.opts.modelURL}
+	prov := &openaicompat.Provider{BaseURL: l.opts.modelURL, APIKey: req.GetStepToken()}
+	if l.opts.dropStepToken {
+		prov.APIKey = "static-key"
+	}
 
 	// NDJSON 模式下先缓存流式增量或延迟写响应头，保证模型返回 500 时仍能返回非 200 状态码。
 	headersWritten := false
@@ -275,6 +280,8 @@ func (h *restartableHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	(*h.cur.Load()).ServeHTTP(w, r)
 }
 
+var testTokenKey = &extloop.TokenKey{KID: "looptest", Secret: strings.Repeat("k", 32)}
+
 func TestReferenceLoopPassesAllScenarios(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
@@ -301,9 +308,10 @@ func TestReferenceLoopPassesAllScenarios(t *testing.T) {
 
 			restarted := 0
 			cfg := Config{
-				URL:     loopSrv.URL,
-				Timeout: 10 * time.Second,
-				Model:   fm,
+				URL:      loopSrv.URL,
+				Timeout:  10 * time.Second,
+				Model:    fm,
+				TokenKey: testTokenKey,
 				Restart: func(context.Context) error {
 					restarted++
 					rh.set(makeLoop())
@@ -401,6 +409,12 @@ func TestBadVariantsFailExpectedScenarios(t *testing.T) {
 			runFilter: []string{"state-limit"},
 		},
 		{
+			name:      "drop-step-token",
+			mutate:    func(o *refLoopOptions) { o.dropStepToken = true },
+			wantFail:  []string{"single-step", "streaming"},
+			runFilter: []string{"single-step", "streaming"},
+		},
+		{
 			name:      "session-scoped-state",
 			mutate:    func(o *refLoopOptions) { o.sessionScopedState = true },
 			wantFail:  []string{"new-run-empty-state"},
@@ -425,10 +439,11 @@ func TestBadVariantsFailExpectedScenarios(t *testing.T) {
 			t.Cleanup(loopSrv.Close)
 
 			results := Run(t.Context(), Config{
-				URL:     loopSrv.URL,
-				Timeout: 10 * time.Second,
-				Model:   fm,
-				Run:     tc.runFilter,
+				URL:      loopSrv.URL,
+				Timeout:  10 * time.Second,
+				Model:    fm,
+				Run:      tc.runFilter,
+				TokenKey: testTokenKey,
 				Restart: func(context.Context) error {
 					rh.set(makeLoop())
 					return nil

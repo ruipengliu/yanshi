@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -49,7 +51,13 @@ type Def struct {
 // 其他业务线的 Session 用这个 AgentDef 时 Run 以配置错误失败（ADR-0062 第 7 条）。
 type LoopRef struct {
 	Server string `yaml:"server"`
+	// Models 是外部服务经内核模型端点可以使用的模型（"provider/model"，ADR-0063 第 3 条）；评测的模型覆盖替换它。
+	// 为空时外部服务自带模型、按步计价（ADR-0062）；非空时它须只经端点调用模型，这是登记的要求。
+	Models []string `yaml:"models"`
 }
+
+// AllowsModel 报告外部服务能否经内核模型端点使用 ref。
+func (l *LoopRef) AllowsModel(ref string) bool { return l != nil && slices.Contains(l.Models, ref) }
 
 // DefaultBackgroundAfter 是委托转入后台前父 Run 等待的默认时长（ADR-0058）：评测中多数委托在 20–35 秒内完成，
 // 留在原 Run 中，模型不必分两轮回答。
@@ -150,6 +158,11 @@ func (d *Def) validate() error {
 	if d.Loop != nil {
 		if d.Loop.Server == "" {
 			return fmt.Errorf("agent %s@%s: loop.server is required", d.Name, d.Version)
+		}
+		for i, m := range d.Loop.Models {
+			if p, id, ok := strings.Cut(m, "/"); !ok || p == "" || id == "" || slices.Contains(d.Loop.Models[:i], m) {
+				return fmt.Errorf("agent %s@%s: loop.models must be distinct provider/model refs (%q)", d.Name, d.Version, m)
+			}
 		}
 		// 外部循环没有模型可以写摘要：按 Session 组装上下文时须配摘要模型，平台照常压缩；只看本轮时可以不配，
 		// Run 内超出窗口时 Run 失败（ADR-0062 第 6 条）。

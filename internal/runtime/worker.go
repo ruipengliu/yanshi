@@ -30,6 +30,7 @@ import (
 	"yanshi/internal/delegation"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/faults"
+	"yanshi/internal/lifecycle"
 	"yanshi/internal/live"
 	"yanshi/internal/metrics"
 	"yanshi/internal/model"
@@ -1362,6 +1363,20 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 	}
 	step := LoopStep{Request: req}
 	if external {
+		// 外部循环收到完整的上下文视图（含他人旁听中的话与设备的结果，ADR-0062 第 7 条）。Worker 在两步之间沿用本地
+		// 投影，Session 被删除后要到写入时才发现（模拟测试的 LoopRequestsAfterDeletion）；每步请求之前查一次删除记录，
+		// 已删除就不再发出。删除记录先于清理写入（ADR-0015），查到时日志可能还在。内置的模型调用不查：请求只交给
+		// 模型提供商，多一次存储读取不划算。
+		if d := w.cfg.Store.Deletions; d != nil {
+			gone, err := lifecycle.Deleted(ctx, d, w.st.SessionID)
+			if err != nil {
+				return err
+			}
+			if gone {
+				w.drop()
+				return nil
+			}
+		}
 		step.SessionID, step.RunID, step.Attempt, step.Turn = w.st.SessionID, r.ID, w.attempt, uint32(r.Turns+1)
 		step.EndUser, step.Agent = w.st.Created.GetEndUser(), w.st.Agent
 		step.State, step.StateVersion = r.LoopState, r.LoopStateVersion

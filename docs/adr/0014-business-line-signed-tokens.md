@@ -4,6 +4,8 @@ status: accepted
 
 # 由业务线签发短期令牌，yanshi 只验证
 
+> **部分修订（2026-11-25，[ADR-0063](0063-loop-model-gateway-and-step-token.md)，已实现）。** 访问 yanshi 的令牌仍全部由业务线签发、yanshi 只验证，本文其余部分有效。修订的是 Consequences 第一条：yanshi 保存按外部循环登记的 HMAC 密钥，用来签发只给外部循环与内核模型端点使用的步令牌；它仍不保存能签发用户令牌或服务令牌的密钥，步令牌也不被 yanshi 的其他接口接受。
+
 端侧 SDK 与业务线服务端都使用 JWT 访问 yanshi。令牌由业务线用自己的私钥签发：用户令牌的有效期较短，标明 BusinessLine 与 EndUser；服务令牌只标明 BusinessLine。yanshi 按业务线配置的公钥验签，并据此决定可访问的 Session、Node 与 Artifact。
 
 我们没有选择"业务线服务端调用 yanshi 换取令牌"：那样客户端启动要多一次往返，yanshi 还要持有签名私钥，成为高价值目标。也没有选择接入某个统一身份服务（OIDC）：各业务线的登录体系不同，而且私有化环境不一定有这样的服务（ADR-0001）。

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -18,6 +20,9 @@ import (
 	"yanshi/internal/extloop"
 	"yanshi/internal/extloop/looptest"
 )
+
+// looptestSecretEnv 是 -step-token 的密钥：被测服务要验证步令牌时，与它配置同一把。
+const looptestSecretEnv = "LOOPTEST_STEP_TOKEN_SECRET"
 
 type headerFlags map[string]string
 
@@ -62,6 +67,8 @@ func runLooptest(ctx context.Context, args []string, stdout io.Writer) error {
 	restartCmd := fs.String("restart", "", "可选：用于 restart 场景重启被测服务的 shell 命令")
 	runFilter := fs.String("run", "", "可选：只运行指定场景（逗号分隔），可选值："+strings.Join(looptest.ScenarioNames(), ","))
 	waitDur := fs.Duration("wait", 0, "可选：启动前等待 -url 可连接的最长时长（如 10s）")
+	stepToken := fs.Bool("step-token", false, "在每步请求中签发步令牌，并检查服务把它当作 API key 转给模型调用（ADR-0063；AgentDef 声明了 loop.models 时必须打开）。"+
+		"密钥取自环境变量 "+looptestSecretEnv+"（kid 为 looptest），未设置时随机生成")
 	var headers headerFlags
 	fs.Var(&headers, "header", "附加到每个请求的 HTTP 头（K=V，可重复）")
 
@@ -129,13 +136,30 @@ func runLooptest(ctx context.Context, args []string, stdout io.Writer) error {
 		}
 	}
 
+	var tokenKey *extloop.TokenKey
+	if *stepToken {
+		secret := os.Getenv(looptestSecretEnv)
+		if secret == "" {
+			b := make([]byte, 32)
+			if _, err := rand.Read(b); err != nil {
+				return err
+			}
+			secret = hex.EncodeToString(b)
+		}
+		if len(secret) < 32 {
+			return fmt.Errorf("%s must be at least 32 bytes", looptestSecretEnv)
+		}
+		tokenKey = &extloop.TokenKey{KID: "looptest", Secret: secret}
+	}
+
 	results := looptest.Run(ctx, looptest.Config{
-		URL:     *targetURL,
-		Headers: headers,
-		Timeout: *timeout,
-		Model:   fm,
-		Restart: restart,
-		Run:     filter,
+		URL:      *targetURL,
+		Headers:  headers,
+		Timeout:  *timeout,
+		Model:    fm,
+		Restart:  restart,
+		Run:      filter,
+		TokenKey: tokenKey,
 	})
 
 	var passed, failed, skipped int

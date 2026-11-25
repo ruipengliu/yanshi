@@ -13,6 +13,7 @@ import (
 	"yanshi/internal/consent"
 	"yanshi/internal/decision"
 	"yanshi/internal/delegation"
+	"yanshi/internal/extloop"
 	"yanshi/internal/faults"
 	"yanshi/internal/ids"
 	"yanshi/internal/janitor"
@@ -126,6 +127,8 @@ type Core struct {
 	Dispatch *delegation.Router
 	Service  *service.Service
 	Oneshots *oneshot.Service
+	// LoopModels 是外部循环调用模型的端点（ADR-0063）；Loops 是 *extloop.Registry 时装配，否则为 nil。
+	LoopModels *extloop.Endpoint
 	// EndUserData 与首次注销共用清理入口，宽限期结束前由 Janitor 再清一遍。
 	EndUserData []lifecycle.EndUserHolder
 	// Notifier 为 nil 表示没有配置推送通道。
@@ -245,6 +248,10 @@ func NewCore(stores Stores, opts Options) *Core {
 		c.Oneshots = &oneshot.Service{Registry: opts.Oneshots, Access: opts.DefinitionAccess, Model: opts.Model, Moderator: moderator,
 			Quotas: opts.Quotas, Meter: opts.Meter, Deletions: stores.Deletions, Clock: opts.Clock, IDs: opts.IDs("use"),
 			Max: maxCalls, BusinessLineMax: opts.OneshotBusinessLineMax, Wait: wait, Deadline: deadline}
+	}
+	if reg, ok := opts.Loops.(*extloop.Registry); ok && reg != nil {
+		c.LoopModels = &extloop.Endpoint{Keys: reg.Keys, Agents: opts.Agents, Model: opts.Model, Quotas: opts.Quotas, Meter: opts.Meter,
+			Deletions: stores.Deletions, Clock: opts.Clock, IDs: opts.IDs("use"), Logger: opts.Logger}
 	}
 	local = append(append([]capability.Capability{}, local...), memory.Capabilities(c.Memory)...)
 	c.Catalog.Local = capability.NewRegistry(append(local, c.Service.ScheduleCapability())...)

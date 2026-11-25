@@ -50,7 +50,11 @@ type LoopStepRequest struct {
 	State        []byte `protobuf:"bytes,10,opt,name=state,proto3" json:"state,omitempty"`
 	StateVersion string `protobuf:"bytes,11,opt,name=state_version,json=stateVersion,proto3" json:"state_version,omitempty"`
 	// 上一步回答中每个调用的结果，按回答中的原顺序；Run 的第一步为空。
-	Previous      *LoopPreviousStep `protobuf:"bytes,12,opt,name=previous,proto3" json:"previous,omitempty"`
+	Previous *LoopPreviousStep `protobuf:"bytes,12,opt,name=previous,proto3" json:"previous,omitempty"`
+	// 步令牌（ADR-0063 第 2 条）：平台以这个循环登记的 HMAC 密钥签发的 JWT（HS256，头中带 kid），有效期与这一步的时限相同。
+	// 外部服务把它当作 API key 调用内核的模型端点；也可以用同一把密钥验证，转交给业务线自己的接口。
+	// 登记没有配置密钥时为空。令牌只在这一步有效，不要保存或在之后的步中复用。
+	StepToken     string `protobuf:"bytes,13,opt,name=step_token,json=stepToken,proto3" json:"step_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -167,6 +171,13 @@ func (x *LoopStepRequest) GetPrevious() *LoopPreviousStep {
 		return x.Previous
 	}
 	return nil
+}
+
+func (x *LoopStepRequest) GetStepToken() string {
+	if x != nil {
+		return x.StepToken
+	}
+	return ""
 }
 
 type LoopMessage struct {
@@ -708,7 +719,7 @@ var File_yanshi_v1_loop_proto protoreflect.FileDescriptor
 
 const file_yanshi_v1_loop_proto_rawDesc = "" +
 	"\n" +
-	"\x14yanshi/v1/loop.proto\x12\tyanshi.v1\x1a\x15yanshi/v1/event.proto\"\xa6\x03\n" +
+	"\x14yanshi/v1/loop.proto\x12\tyanshi.v1\x1a\x15yanshi/v1/event.proto\"\xc5\x03\n" +
 	"\x0fLoopStepRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x15\n" +
@@ -723,7 +734,9 @@ const file_yanshi_v1_loop_proto_rawDesc = "" +
 	"\x05state\x18\n" +
 	" \x01(\fR\x05state\x12#\n" +
 	"\rstate_version\x18\v \x01(\tR\fstateVersion\x127\n" +
-	"\bprevious\x18\f \x01(\v2\x1b.yanshi.v1.LoopPreviousStepR\bprevious\"\xaa\x01\n" +
+	"\bprevious\x18\f \x01(\v2\x1b.yanshi.v1.LoopPreviousStepR\bprevious\x12\x1d\n" +
+	"\n" +
+	"step_token\x18\r \x01(\tR\tstepToken\"\xaa\x01\n" +
 	"\vLoopMessage\x12\x12\n" +
 	"\x04role\x18\x01 \x01(\tR\x04role\x121\n" +
 	"\acontent\x18\x02 \x03(\v2\x17.yanshi.v1.ContentBlockR\acontent\x122\n" +

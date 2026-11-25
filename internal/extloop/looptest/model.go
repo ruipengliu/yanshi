@@ -70,6 +70,9 @@ type Model struct {
 	violations map[string][]string
 	active     string
 	seq        int
+	// tokens 是套件在各场景中签发的步令牌；withTokens 时模型调用必须以其中之一为 API key（ADR-0063 第 6 条）。
+	tokens     map[string]map[string]bool
+	withTokens bool
 }
 
 // NewModel 构造一个新的假模型。
@@ -78,7 +81,23 @@ func NewModel() *Model {
 		scripts:    map[string]ScriptFunc{},
 		calls:      map[string][]ModelCall{},
 		violations: map[string][]string{},
+		tokens:     map[string]map[string]bool{},
 	}
+}
+
+func (m *Model) requireTokens(on bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.withTokens = on
+}
+
+func (m *Model) issueToken(scenario, tok string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.tokens[scenario] == nil {
+		m.tokens[scenario] = map[string]bool{}
+	}
+	m.tokens[scenario][tok] = true
 }
 
 // beginScenario 为一个场景注册脚本、清空该场景的历史记录并置为当前活跃场景。
@@ -88,6 +107,7 @@ func (m *Model) beginScenario(name string, fn ScriptFunc) {
 	m.scripts[name] = fn
 	delete(m.calls, name)
 	delete(m.violations, name)
+	delete(m.tokens, name)
 	m.active = name
 }
 
@@ -165,6 +185,9 @@ func (m *Model) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	call.Scenario = scenario
+	if bearer, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); m.withTokens && !m.tokens[scenario][bearer] {
+		m.violations[scenario] = append(m.violations[scenario], "模型调用没有以这一步的步令牌为 API key（ADR-0063 第 6 条）")
+	}
 	m.calls[scenario] = append(m.calls[scenario], call)
 	fn := m.scripts[scenario]
 	m.mu.Unlock()

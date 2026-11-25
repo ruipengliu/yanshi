@@ -40,7 +40,7 @@
 | [0011](0011-s3-api-as-artifact-storage-contract.md) | S3 API 作工件存储契约 | accepted | 已实现 | 三 | 私有化客户无 S3 兼容存储；需预签名直传 | — | |
 | [0012](0012-context-compaction-as-event.md) | 上下文压缩记为 Event | accepted | 已实现 | 三 | 压缩相关评测回归；需多级或选择性压缩 | — | |
 | [0013](0013-live-deltas-pulled-from-executing-process.md) | 实时增量从执行进程拉取 | accepted（现行技术选择） | 已实现 | 二 | 进程间无法直连；连接数超线性 | — | |
-| [0014](0014-business-line-signed-tokens.md) | 业务线签发令牌 | accepted | 已实现 | 二 | 客户要求统一身份；需要即时吊销 | — | |
+| [0014](0014-business-line-signed-tokens.md) | 业务线签发令牌 | accepted（2026-11-25 部分修订：0063 的步令牌） | 已实现 | 二 | 客户要求统一身份；需要即时吊销 | Consequences 第一条由 0063 修订 | |
 | [0015](0015-session-deletion-by-physical-removal.md) | Session 物理删除 | 已修订（ADR-0050） | 已实现 | 一 | 备份须即时失效；Session 内部分删除的法定要求 | — | |
 | [0016](0016-memory-recall-as-event-and-category-grants.md) | 召回记为 Event，按类别授权 | 已修订（ADR-0022） | 已实现 | 二 | 新分类；以 EndUser 为单位的授权 | — | |
 | [0017](0017-mcp-servers-as-capability-providers.md) | MCP Server 作能力提供者 | accepted | 已实现 | 三 | 三方 MCP 需按用户 OAuth 且业务线无法代理；需云端 stdio | — | |
@@ -89,6 +89,7 @@
 | [0060](0060-business-line-definition-access.md) | 业务线声明可用的定义；MCP Server 以 (业务线, 名称) 为键 | accepted（2026-11-22 定稿） | 已实现 | 二 | 需同名而内容不同的定义；需自助或分别发布共享定义；需撤销已有 Session 的使用权 | 修订 M4 灰度发布 §1 与部署 §1 | |
 | [0061](0061-taint-gated-mcp-tools.md) | MCP 写工具按来源条件审批（`taint_gated`） | accepted（2026-11-22 定稿） | 已实现 | 二 | 业务线反馈先查后写审批过多且有可信结果判据；注入判断退出影子模式 | 补充 ADR-0017、ADR-0023；修订 MCP 适配 §2、§3 | |
 | [0062](0062-external-loop-contract.md) | 外部循环的契约：自定义协议、无状态单步与一致性套件 | accepted（2026-11-24 定稿） | 部分实现（接缝、契约、客户端、计量与压缩上限，2026-11-24；模拟测试与 `looptest`，2026-11-25；参考适配待做） | 二 | AG-UI 等协议稳定且被目标框架普遍原生支持；状态超 64 KiB 或需跨 Run；三方 Agent 需作外部循环；开始实施 | 修订 0041（契约）；补充 0056 B 期 | |
+| [0063](0063-loop-model-gateway-and-step-token.md) | 外部循环经内核调用模型，每步请求携带平台签发的步令牌 | accepted（2026-11-25 定稿） | 部分实现（步令牌、模型端点、`loop.models`、启动检查、looptest 检查，2026-11-25；评测运行外部循环与参考适配待做） | 二 | 外部服务普遍需要内核未接入的提供商；端点成为步时延的主要来源；托管三方需要外部循环；业务线须区分平台签发与共享密钥持有方 | 补充 0062，修订其 Consequences（外部模型用量）；修订 0014 Consequences（yanshi 保存循环的 HMAC 密钥） | |
 
 ## 业务层 ADR
 

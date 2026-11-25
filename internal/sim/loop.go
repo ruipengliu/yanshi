@@ -18,6 +18,7 @@ import (
 	"yanshi/internal/eventlog"
 	"yanshi/internal/extloop"
 	"yanshi/internal/feed"
+	"yanshi/internal/lifecycle"
 	"yanshi/internal/model"
 	"yanshi/internal/moderation"
 	"yanshi/internal/session"
@@ -208,6 +209,12 @@ func (w *World) checkLoopRequest(ctx context.Context, req *v1.LoopStepRequest) u
 	fail := func(format string, args ...any) {
 		w.violations = append(w.violations, fmt.Sprintf("loop request %s turn %d: ", req.GetRunId(), req.GetTurn())+fmt.Sprintf(format, args...))
 	}
+	// Worker 每步请求之前查删除记录（ADR-0062 第 7 条）；删除记录先于清理写入，且模拟中查与请求在同一步里，
+	// 之间没有别的写入，所以请求时 Session 不应已有删除记录。查删除记录的存储故障不作判断。
+	if gone, err := lifecycle.Deleted(ctx, w.deletions, req.GetSessionId()); err == nil && gone {
+		fail("requested after the session was deleted")
+		return 0
+	}
 	events, err := eventlog.ReadAll(ctx, w.log, req.GetSessionId(), 0)
 	if err != nil {
 		fail("read log: %v", err)
@@ -219,9 +226,7 @@ func (w *World) checkLoopRequest(ctx context.Context, req *v1.LoopStepRequest) u
 		return 0
 	}
 	if len(events) == 0 {
-		// Session 已删除：Worker 在两步之间沿用本地投影（upToDate 看不出日志被清空），写入时才发现（ErrGone），
-		// 模型调用同样如此。这一步的回答不会写入。
-		w.Stats.LoopRequestsAfterDeletion++
+		fail("requested for a session whose log is gone")
 		return 0
 	}
 	r := st.Run(req.GetRunId())

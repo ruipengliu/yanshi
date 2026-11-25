@@ -96,6 +96,9 @@ func WithBackground(ctx context.Context) context.Context {
 
 func background(ctx context.Context) bool { b, _ := ctx.Value(backgroundKey{}).(bool); return b }
 
+// IsBackground 报告 ctx 是否标记了后台调用：外部循环把它写进步令牌，经内核模型端点的调用沿用这一步的类别（ADR-0063）。
+func IsBackground(ctx context.Context) bool { return background(ctx) }
+
 type oneshotKey struct{}
 
 // WithOneshot 区分单次调用与 Run；可与 WithBackground 组合，避免后台单次调用占用后台 Run 的最低份额。

@@ -197,7 +197,7 @@ type Stats struct {
 	// 收到回答后写日志途中的崩溃、旧 Attempt 的回答迟到（租约在请求途中过期、另一个 Worker 接管）；
 	// 以及来自已被取代的 Attempt、已删除的 Session 的请求。
 	LoopSteps, LoopRepeats, LoopStreamed, LoopTimeouts, LoopServerErrors, LoopInvalidReplies int
-	LoopCrashesAfterAnswer, LoopLateReplies, LoopStaleRequests, LoopRequestsAfterDeletion    int
+	LoopCrashesAfterAnswer, LoopLateReplies, LoopStaleRequests                               int
 }
 
 // storeFault 是注入的存储故障（数据库超时、连接中断）：written 表示追加其实已经生效，调用方却只看到错误。

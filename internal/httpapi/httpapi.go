@@ -3,6 +3,7 @@
 //	GET /v1/outbox?shard=0&after=&kinds=&limit=        本业务线的出站流（仅服务令牌，长轮询）
 //	GET /v1/outbox/shards                            分片与安全起点 H（仅服务令牌）
 //	POST /v1/oneshots/{name}                       无 Session 的单次调用（含 end_user 与 input）
+//	POST /v1/loop/chat/completions                 外部循环的模型端点（OpenAI 兼容，只认步令牌，不经令牌中间件；ADR-0063）
 //	POST /v1/sessions                              创建 Session（可设 IANA time_zone；delete_at 为 RFC3339，仅服务令牌）
 //	GET  /v1/sessions?end_user=&cursor=&limit=     列出 Session（按最近输入倒序）
 //	GET  /v1/sessions/{id}                         Session 投影
@@ -68,6 +69,7 @@ import (
 	"yanshi/internal/askuser"
 	"yanshi/internal/auth"
 	"yanshi/internal/delegation"
+	"yanshi/internal/extloop"
 	"yanshi/internal/faults"
 	"yanshi/internal/feed"
 	"yanshi/internal/lifecycle"
@@ -96,7 +98,9 @@ type Server struct {
 	Auth     auth.Verifier
 	Service  *service.Service
 	Oneshots *oneshot.Service
-	Live     live.Bus
+	// LoopModels 非 nil 时提供外部循环的模型端点（ADR-0063）。它不经令牌中间件，只接受步令牌。
+	LoopModels http.Handler
+	Live       live.Bus
 	// Nodes 为 nil 时不提供 Node 相关信息。
 	Nodes node.Directory
 	// Artifacts 为 nil 时不提供工件接口。
@@ -189,6 +193,10 @@ func (s *Server) Handler() http.Handler {
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/v1/", auth.Middleware(v, api))
+	if s.LoopModels != nil {
+		p := "POST " + extloop.EndpointPath
+		mux.Handle(p, instrument(p, s.LoopModels.ServeHTTP))
+	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	return mux
 }

@@ -34,6 +34,10 @@ message LoopStepRequest {
   string state_version = 11;
   // 上一步回答中每个调用的结果，按回答中的原顺序；Run 的第一步为空。
   LoopPreviousStep previous = 12;
+  // 步令牌（ADR-0063 第 2 条）：平台以这个循环登记的 HMAC 密钥签发的 JWT（HS256，头中带 kid），有效期与这一步的时限相同。
+  // 外部服务把它当作 API key 调用内核的模型端点；也可以用同一把密钥验证，转交给业务线自己的接口。
+  // 登记没有配置密钥时为空。令牌只在这一步有效，不要保存或在之后的步中复用。
+  string step_token = 13;
 }
 
 message LoopMessage {

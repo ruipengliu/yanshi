@@ -573,6 +573,9 @@ func serve(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load loops: %w", err)
 	}
+	if err := checkLoopAgents(lines, agents, loopServers, logger); err != nil {
+		return fmt.Errorf("loops: %w", err)
+	}
 	meter, quotas, err := metering(*pricing, lines, agents, loopServers, b, logger, shots)
 	if err != nil {
 		return err
@@ -742,8 +745,12 @@ func serve(args []string) error {
 	mux.Handle("/console/", webui.Handler())
 	mux.Handle("/sdk/yanshi.js", webui.Handler())
 	mux.Handle("GET /readyz", ready)
-	mux.Handle("/", (&httpapi.Server{Auth: verifier, Service: svc, Outbox: core.Stores.Outbox, Oneshots: core.Oneshots, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.Usage, Push: b.Push, Feeds: feeds, Faults: injector,
-		Speech: speechService(svc, meter, logger), Logger: logger}).Handler())
+	api := &httpapi.Server{Auth: verifier, Service: svc, Outbox: core.Stores.Outbox, Oneshots: core.Oneshots, Live: bus, Nodes: dir, Artifacts: arts, Memory: mems, Usage: b.Usage, Push: b.Push, Feeds: feeds, Faults: injector,
+		Speech: speechService(svc, meter, logger), Logger: logger}
+	if core.LoopModels != nil {
+		api.LoopModels = core.LoopModels
+	}
+	mux.Handle("/", api.Handler())
 	srv := &http.Server{
 		Addr:              *addr,
 		Handler:           mux,
@@ -863,7 +870,7 @@ func loopback(addr string) bool {
 }
 
 // metering 加载价格表并汇总各业务线的配额（docs/design/m4-quota-usage.md）。任一业务线配置了配额时，
-// 所有 AgentDef 与单次调用声明引用的模型、所有登记的外部循环都必须有价格：没有价格的等于不受配额约束。
+// 所有 AgentDef（含外部循环经内核端点可用的模型）与单次调用声明引用的模型、所有登记的外部循环都必须有价格：没有价格的等于不受配额约束。
 func metering(path string, lines []auth.BusinessLine, agents *agentdef.Registry, loops []extloop.Server, b *storage, logger *slog.Logger, registries ...*oneshot.Registry) (*usage.Meter, *usage.Quotas, error) {
 	prices, err := usage.LoadPriceList(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -880,7 +887,11 @@ func metering(path string, lines []auth.BusinessLine, agents *agentdef.Registry,
 	}
 	var missing []string
 	for _, d := range agents.All() {
-		for _, m := range []string{d.Model, d.Context.SummaryModel, d.Call.Model} {
+		models := []string{d.Model, d.Context.SummaryModel, d.Call.Model}
+		if d.Loop != nil {
+			models = append(models, d.Loop.Models...) // 经内核模型端点的调用（ADR-0063 第 4 条）
+		}
+		for _, m := range models {
 			if m != "" && !prices.Has(m) && !slices.Contains(missing, m) {
 				missing = append(missing, m)
 			}
