@@ -397,7 +397,8 @@ func derive(cfg Config, cases []*Case) (*agentdef.Registry, map[string]string, e
 			d.Instructions += xinliSpanInstructions
 			d.Context.Scope = agentdef.ScopeRun
 		}
-		if cfg.ModelOverride != "" {
+		// 外部循环的 AgentDef 没有模型可换（ADR-0062 Consequences）。
+		if cfg.ModelOverride != "" && d.Loop == nil {
 			d.Model = cfg.ModelOverride
 		}
 		if w := c.Context.Window; w > 0 {
@@ -416,7 +417,7 @@ func derive(cfg Config, cases []*Case) (*agentdef.Registry, map[string]string, e
 			}
 			o := *other
 			o.Version = other.Version + "+eval-" + c.Name
-			if cfg.ModelOverride != "" {
+			if cfg.ModelOverride != "" && o.Loop == nil {
 				o.Model = cfg.ModelOverride
 			}
 			defs = append(defs, &o)

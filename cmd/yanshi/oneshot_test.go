@@ -10,6 +10,7 @@ import (
 
 	"yanshi/internal/agentdef"
 	"yanshi/internal/auth"
+	"yanshi/internal/extloop"
 	"yanshi/internal/oneshot"
 	"yanshi/internal/usage"
 )
@@ -55,13 +56,38 @@ func TestMeteringRequiresOneshotPrices(t *testing.T) {
 	lines := []auth.BusinessLine{{Name: "bl", Quota: usage.Limits{EndUserDaily: 1}}}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	b := &storage{}
-	if _, _, err := metering(path, lines, agents, b, logger, shots); err == nil {
+	if _, _, err := metering(path, lines, agents, nil, b, logger, shots); err == nil {
 		t.Fatal("unpriced oneshot bypassed quota")
 	}
 	if err := os.WriteFile(path, []byte("models:\n  fake/model: {input: 1, output: 2}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := metering(path, lines, agents, b, logger, shots); err != nil {
+	if _, _, err := metering(path, lines, agents, nil, b, logger, shots); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// 外部循环按步计价（ADR-0062 Consequences）：配置了配额时，登记的每个循环都须有价格，否则它的步数绕过金额配额。
+func TestMeteringRequiresLoopPrices(t *testing.T) {
+	agents, err := agentdef.NewRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	loops := []extloop.Server{{Name: "plan", BusinessLine: "bl", URL: "https://loop.example"}}
+	path := filepath.Join(t.TempDir(), "pricing.yaml")
+	lines := []auth.BusinessLine{{Name: "bl", Quota: usage.Limits{EndUserDaily: 1}}}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	b := &storage{}
+	if err := os.WriteFile(path, []byte("loops:\n  other/plan: {per_step: 0.01}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := metering(path, lines, agents, loops, b, logger); err == nil || !strings.Contains(err.Error(), "loop bl/plan") {
+		t.Fatalf("unpriced loop bypassed quota: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("loops:\n  bl/plan: {per_step: 0.01}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := metering(path, lines, agents, loops, b, logger); err != nil {
 		t.Fatal(err)
 	}
 }

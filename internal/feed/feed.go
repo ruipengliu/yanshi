@@ -183,14 +183,20 @@ func (s Source) Stream(ctx context.Context, st *session.State, after uint64, sin
 	}
 }
 
-// Public 返回可以发给客户端的事件：清除进程内部地址（ADR-0013）。事件不可修改，因此按需复制。
+// Public 返回可以发给客户端的事件：清除进程内部地址（ADR-0013）与外部循环的状态（ADR-0062 第 2 条：它只用于下一步请求）。
+// 事件不可修改，因此按需复制。
 func Public(e *v1.Event) *v1.Event {
-	a := e.GetAttemptStarted()
-	if a.GetLiveEndpoint() == "" {
+	a, m := e.GetAttemptStarted(), e.GetAssistantMessage()
+	if a.GetLiveEndpoint() == "" && len(m.GetLoopState()) == 0 && m.GetLoopStateVersion() == "" {
 		return e
 	}
 	cp := proto.Clone(e).(*v1.Event)
-	cp.GetAttemptStarted().LiveEndpoint = ""
+	if a := cp.GetAttemptStarted(); a != nil {
+		a.LiveEndpoint = ""
+	}
+	if m := cp.GetAssistantMessage(); m != nil {
+		m.LoopState, m.LoopStateVersion = nil, ""
+	}
 	return cp
 }
 

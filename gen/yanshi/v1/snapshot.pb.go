@@ -539,8 +539,11 @@ type RunSnapshot struct {
 	// 因输出审核不可用而连续挂起的次数与第一次挂起的时间（ADR-0054）。
 	ModerationWaits     int32                  `protobuf:"varint,25,opt,name=moderation_waits,json=moderationWaits,proto3" json:"moderation_waits,omitempty"`
 	ModerationWaitSince *timestamppb.Timestamp `protobuf:"bytes,26,opt,name=moderation_wait_since,json=moderationWaitSince,proto3" json:"moderation_wait_since,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// 本 Run 最近一条 AssistantMessage 带的外部循环状态与版本（ADR-0062 第 2 条）。
+	LoopState        []byte `protobuf:"bytes,27,opt,name=loop_state,json=loopState,proto3" json:"loop_state,omitempty"`
+	LoopStateVersion string `protobuf:"bytes,28,opt,name=loop_state_version,json=loopStateVersion,proto3" json:"loop_state_version,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *RunSnapshot) Reset() {
@@ -732,6 +735,20 @@ func (x *RunSnapshot) GetModerationWaitSince() *timestamppb.Timestamp {
 		return x.ModerationWaitSince
 	}
 	return nil
+}
+
+func (x *RunSnapshot) GetLoopState() []byte {
+	if x != nil {
+		return x.LoopState
+	}
+	return nil
+}
+
+func (x *RunSnapshot) GetLoopStateVersion() string {
+	if x != nil {
+		return x.LoopStateVersion
+	}
+	return ""
 }
 
 type CallSnapshot struct {
@@ -1027,7 +1044,7 @@ const file_yanshi_v1_snapshot_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x18\n" +
 	"\asteered\x18\x03 \x01(\bR\asteered\x12\x1a\n" +
-	"\banswered\x18\x04 \x01(\tR\banswered\"\xb4\b\n" +
+	"\banswered\x18\x04 \x01(\tR\banswered\"\x81\t\n" +
 	"\vRunSnapshot\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\x05R\x06status\x12=\n" +
@@ -1052,7 +1069,10 @@ const file_yanshi_v1_snapshot_proto_rawDesc = "" +
 	"\rrequested_seq\x18\x17 \x01(\x04R\frequestedSeq\x12\x18\n" +
 	"\asteered\x18\x18 \x01(\bR\asteered\x12)\n" +
 	"\x10moderation_waits\x18\x19 \x01(\x05R\x0fmoderationWaits\x12N\n" +
-	"\x15moderation_wait_since\x18\x1a \x01(\v2\x1a.google.protobuf.TimestampR\x13moderationWaitSince\x1a<\n" +
+	"\x15moderation_wait_since\x18\x1a \x01(\v2\x1a.google.protobuf.TimestampR\x13moderationWaitSince\x12\x1d\n" +
+	"\n" +
+	"loop_state\x18\x1b \x01(\fR\tloopState\x12,\n" +
+	"\x12loop_state_version\x18\x1c \x01(\tR\x10loopStateVersion\x1a<\n" +
 	"\x0eDecisionsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x13\x10\x14J\x04\b\x14\x10\x15J\x04\b\x15\x10\x16R\rcapture_readsR\rcapture_pagesR\fcapture_acks\"\x8d\x03\n" +

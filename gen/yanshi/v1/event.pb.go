@@ -11,13 +11,12 @@
 package yanshiv1
 
 import (
-	reflect "reflect"
-	sync "sync"
-	unsafe "unsafe"
-
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
+	reflect "reflect"
+	sync "sync"
+	unsafe "unsafe"
 )
 
 const (
@@ -2682,9 +2681,13 @@ type AssistantMessage struct {
 	DurationMs   uint32 `protobuf:"varint,8,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
 	FirstTokenMs uint32 `protobuf:"varint,9,opt,name=first_token_ms,json=firstTokenMs,proto3" json:"first_token_ms,omitempty"`
 	// finish_reason 是提供商给出的结束原因，如 "stop"、"tool_calls"、"length"。
-	FinishReason  string `protobuf:"bytes,10,opt,name=finish_reason,json=finishReason,proto3" json:"finish_reason,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	FinishReason string `protobuf:"bytes,10,opt,name=finish_reason,json=finishReason,proto3" json:"finish_reason,omitempty"`
+	// 外部循环给自己的不透明状态与版本（ADR-0062 第 2 条）：同一 Run 的下一步原样带回；不交给模型，也不发给客户端
+	// （feed.Public）。内置循环与被内容安全拦截的回答为空。
+	LoopState        []byte `protobuf:"bytes,11,opt,name=loop_state,json=loopState,proto3" json:"loop_state,omitempty"`
+	LoopStateVersion string `protobuf:"bytes,12,opt,name=loop_state_version,json=loopStateVersion,proto3" json:"loop_state_version,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *AssistantMessage) Reset() {
@@ -2783,6 +2786,20 @@ func (x *AssistantMessage) GetFirstTokenMs() uint32 {
 func (x *AssistantMessage) GetFinishReason() string {
 	if x != nil {
 		return x.FinishReason
+	}
+	return ""
+}
+
+func (x *AssistantMessage) GetLoopState() []byte {
+	if x != nil {
+		return x.LoopState
+	}
+	return nil
+}
+
+func (x *AssistantMessage) GetLoopStateVersion() string {
+	if x != nil {
+		return x.LoopStateVersion
 	}
 	return ""
 }
@@ -4727,7 +4744,7 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"\finput_tokens\x18\x01 \x01(\x04R\vinputTokens\x12#\n" +
 	"\routput_tokens\x18\x02 \x01(\x04R\foutputTokens\x12.\n" +
 	"\x13cached_input_tokens\x18\x03 \x01(\x04R\x11cachedInputTokens\x12)\n" +
-	"\x10reasoning_tokens\x18\x04 \x01(\x04R\x0freasoningTokens\"\xf2\x02\n" +
+	"\x10reasoning_tokens\x18\x04 \x01(\x04R\x0freasoningTokens\"\xbf\x03\n" +
 	"\x10AssistantMessage\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x121\n" +
@@ -4741,7 +4758,10 @@ const file_yanshi_v1_event_proto_rawDesc = "" +
 	"durationMs\x12$\n" +
 	"\x0efirst_token_ms\x18\t \x01(\rR\ffirstTokenMs\x12#\n" +
 	"\rfinish_reason\x18\n" +
-	" \x01(\tR\ffinishReason\"\xc9\x01\n" +
+	" \x01(\tR\ffinishReason\x12\x1d\n" +
+	"\n" +
+	"loop_state\x18\v \x01(\fR\tloopState\x12,\n" +
+	"\x12loop_state_version\x18\f \x01(\tR\x10loopStateVersion\"\xc9\x01\n" +
 	"\x0fToolCallStarted\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x12\x17\n" +

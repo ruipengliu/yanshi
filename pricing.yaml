@@ -18,3 +18,6 @@ models:                                   # 元 / 百万 token（数值等于微
   script/any: {input: 0, output: 0}       # 脚本化模型（调试控制台）
 sandbox:
   per_hour: 0.36                          # 元 / 小时执行时间（示例值）
+# 外部循环按步计价（ADR-0062），键是 loops/*.yaml 登记的 "<业务线>/<名称>"；登记了的循环在配置配额时都必须有价格。
+# loops:
+#   xinli/planner: {per_step: 0.01}         # 元 / 步（示例）

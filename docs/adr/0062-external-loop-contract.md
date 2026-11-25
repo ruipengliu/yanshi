@@ -1,10 +1,12 @@
 ---
-status: accepted（2026-11-24 定稿；未实现）
+status: accepted（2026-11-24 定稿；部分实现）
 ---
 
 # 外部循环的契约：自定义协议、无状态单步与一致性套件
 
-> **已定稿（2026-11-24），尚未实现。** 来源：AgentDef 接入方式的讨论（Codex、Gemini 各自独立出方案后互评，2026-11-23）、两轮原型（本地分支 `prototype/langgraph-loop`，2026-11-24）与 Gemini 对本文初稿的评审。修订 [ADR-0041](0041-external-loops-decide-platform-acts.md) 的契约细节，补充 [ADR-0056](0056-replaceable-context-strategy-and-streaming-loops.md) B 期（流式协议沿用其 Q7，不改），修订 [m5 设计](../design/m5-inputs-triggers-loops.md) §7。ADR-0041 的治理原则（只做决定、平台执行，回答写入日志后才生效，只能用本业务线的循环）不变。
+> **实施进度（2026-11-24）**：第 9 条的接缝（`runtime.Loop`）、`loop.proto`、AgentDef 的 `loop`、`loops/*.yaml` 登记与 HTTP 客户端（`internal/extloop`，含 NDJSON 流式）、状态写入日志与投影、事件流剥离状态、"上一步"、回答校验、按步计量、外部循环的压缩上限、评测不覆盖模型已实现；模拟测试中的外部循环与故障注入、一致性套件 `looptest` 与参考适配待做。自报用量（ADR-0056 Q6）已在协议中、平台暂不记录：用量报表还不能按 Kind 分开，混入会把自报的 token 算进模型调用。
+>
+> **已定稿（2026-11-24）。** 来源：AgentDef 接入方式的讨论（Codex、Gemini 各自独立出方案后互评，2026-11-23）、两轮原型（本地分支 `prototype/langgraph-loop`，2026-11-24）与 Gemini 对本文初稿的评审。修订 [ADR-0041](0041-external-loops-decide-platform-acts.md) 的契约细节，补充 [ADR-0056](0056-replaceable-context-strategy-and-streaming-loops.md) B 期（流式协议沿用其 Q7，不改），修订 [m5 设计](../design/m5-inputs-triggers-loops.md) §7。ADR-0041 的治理原则（只做决定、平台执行，回答写入日志后才生效，只能用本业务线的循环）不变。
 
 ADR-0041 让业务线的外部服务决定 Run 的每一步，契约只有一份草案（m5 §7）。业务线团队会用不同的框架写 Agent（LangGraph、Pydantic AI、自研循环），需要一份与框架无关、可以逐项验收的对接标准。原型回答了三个问题：
 

@@ -55,6 +55,15 @@ func (m *Meter) Oneshot(ctx context.Context, s Scope, id, name, model string, u 
 		Cost: m.Prices.ModelCost(model, u.GetInputTokens(), u.GetCachedInputTokens(), u.GetOutputTokens()), At: at})
 }
 
+// Loop 记录外部循环的一步（ADR-0062）。key 是登记的 "<业务线>/<名称>"，agent 是 name@version。
+func (m *Meter) Loop(ctx context.Context, s Scope, id, agent, key string, at time.Time) {
+	if m == nil {
+		return
+	}
+	m.record(ctx, s, &Entry{ID: id, BusinessLine: s.BusinessLine, EndUser: s.EndUser, Kind: Loop, Model: key, Agent: agent,
+		Cost: m.Prices.LoopCost(key), At: at})
+}
+
 // Call 记录 Call 中实时语音模型的一轮交互。id 是该轮的唯一 ID（Call ID 加轮次），agent 是 name@version。
 func (m *Meter) Call(ctx context.Context, s Scope, id, agent, model string, t CallTokens, at time.Time) {
 	if m == nil {

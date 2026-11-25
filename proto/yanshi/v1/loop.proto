@@ -1,0 +1,105 @@
+syntax = "proto3";
+
+// 外部循环的一步（ADR-0041、ADR-0062）：业务线登记的服务替代内置循环中"调用模型"的那一步。
+// 平台以 HTTP POST 发送 LoopStepRequest 的 JSON（protojson），外部服务回答 LoopStepResponse 的 JSON；
+// 响应的 Content-Type 为 application/x-ndjson 时逐行给出 LoopStreamLine，最后一行必须是 response（ADR-0056 Q7）。
+// JSON 按 protojson 的规则：字段名为 lowerCamelCase（解析时也接受原名），bytes 为 base64，64 位整数为字符串；
+// 平台发出的请求含零值字段，回答中未知的字段被忽略。语义刻意与 AG-UI 1.0 对齐，对应关系见 ADR-0062。
+// 修改须保持向后兼容（buf breaking）。
+package yanshi.v1;
+
+import "yanshi/v1/event.proto";
+
+option go_package = "yanshi/gen/yanshi/v1;yanshiv1";
+
+message LoopStepRequest {
+  string session_id = 1;
+  // 框架内部按 Run 区分会话时用 run_id，不拼入 attempt（ADR-0062 第 3 条）。
+  string run_id = 2;
+  // attempt 与 turn 只用于观察：同一步可能以相同或递增的 attempt 被请求多次、回答以写入日志的那次为准，
+  // 外部服务不得按 (run_id, attempt, turn) 去重或缓存回答（ADR-0062 第 3 条）。turn 从 1 开始。
+  uint32 attempt = 3;
+  uint32 turn = 4;
+  string end_user = 5;
+  AgentRef agent = 6;
+  // AgentDef 的指令，外部服务可以不用。
+  string system = 7;
+  // 与给模型的请求相同的上下文视图（经召回与压缩）。内容块只有文本与媒体：卡片动作、界面上下文、后台结果等已呈现为文本。
+  // 不能假定最后一条是调用结果：两步之间到达的插话、后台结果与通话转写排在结果之后（ADR-0062 第 5 条）。
+  repeated LoopMessage messages = 8;
+  // 本 Run 可用的工具，按名称排序。回答中的调用只能指向它们。
+  repeated LoopTool tools = 9;
+  // 本 Run 上一条写入日志的回答带的状态与版本；Run 的第一步（含重答）为空（ADR-0062 第 2 条）。
+  bytes state = 10;
+  string state_version = 11;
+  // 上一步回答中每个调用的结果，按回答中的原顺序；Run 的第一步为空。
+  LoopPreviousStep previous = 12;
+}
+
+message LoopMessage {
+  // "user"、"assistant" 或 "tool"。
+  string role = 1;
+  repeated ContentBlock content = 2;
+  // assistant 消息中的调用，ID 是平台改写后的。
+  repeated ToolCall tool_calls = 3;
+  // tool 消息对应的调用 ID。
+  string tool_call_id = 4;
+}
+
+message LoopTool {
+  string name = 1;
+  string description = 2;
+  // JSON Schema。
+  string input_schema_json = 3;
+}
+
+message LoopPreviousStep {
+  repeated LoopCallResult results = 1;
+}
+
+// 上一步回答中一个调用的结果。平台把回答中的调用 ID 改写为全局唯一 ID：依赖自身调用 ID 的框架按 index 映射。
+// 审批被拒、能力拒绝与执行失败同样恰有一条结果，以 is_error 标记，content 是平台写的说明（ADR-0062 第 5 条）。
+message LoopCallResult {
+  // 调用在上一步回答 tool_calls 中的位置，从 0 开始。
+  uint32 index = 1;
+  string call_id = 2;
+  string capability = 3;
+  repeated ContentBlock content = 4;
+  bool is_error = 5;
+}
+
+message LoopStepResponse {
+  // 回复，只能是文本块。
+  repeated ContentBlock content = 1;
+  // 为空表示 Run 完成。call_id 可以为空，平台一律改写；capability 必须是请求 tools 中的名称。
+  // 协议中没有"调用结果"：调用一律由平台执行（ADR-0062 第 4 条）。
+  repeated ToolCall tool_calls = 2;
+  // 外部服务给自己的不透明状态（解码后至多 64 KiB）与版本，随这一步的 AssistantMessage 写入日志，
+  // 同一 Run 的下一步原样带回；不交给模型，也不发给客户端（ADR-0062 第 2 条、ADR-0056 第 7 条）。
+  bytes state = 3;
+  string state_version = 4;
+  // 思考过程，只给人看，与回复一样在写日志之前审核（ADR-0034）。
+  string reasoning = 5;
+  // 外部服务自己调用模型的用量（ADR-0056 Q6）：费用为 0、不计入配额，只用于报表；报表能按 Kind 分开之前平台不记录它。
+  repeated LoopReportedUsage reported_usage = 6;
+}
+
+message LoopReportedUsage {
+  string model = 1;
+  Usage usage = 2;
+}
+
+// 流式响应（application/x-ndjson）的一行。
+message LoopStreamLine {
+  oneof line {
+    LoopDelta delta = 1;
+    // 最后一行：完整的回答。缺少它时这一步失败（ADR-0056 Q7）。
+    LoopStepResponse response = 2;
+  }
+}
+
+// 增量只用于实时推送，不写日志；整条回答以最后一行为准。
+message LoopDelta {
+  string text = 1;
+  string reasoning = 2;
+}

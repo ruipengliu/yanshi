@@ -29,9 +29,9 @@ func (m *recordingModel) Generate(_ context.Context, req *model.Request, _ func(
 // recordingLoop 记录收到的请求，回复一个带模型自拟 ID 的调用。
 type recordingLoop struct{ got []*model.Request }
 
-func (l *recordingLoop) Decide(_ context.Context, step LoopStep, _ func(model.Delta)) (*model.Response, error) {
+func (l *recordingLoop) Decide(_ context.Context, step LoopStep, _ func(model.Delta)) (*LoopReply, error) {
 	l.got = append(l.got, step.Request)
-	return &model.Response{ToolCalls: []*v1.ToolCall{{CallId: "call_0", Capability: "note", ArgumentsJson: `{}`}}}, nil
+	return &LoopReply{Response: &model.Response{ToolCalls: []*v1.ToolCall{{CallId: "call_0", Capability: "note", ArgumentsJson: `{}`}}}}, nil
 }
 
 func loopWorker(t *testing.T, m model.Provider, loop Loop) (*Worker, *session.Store, string) {

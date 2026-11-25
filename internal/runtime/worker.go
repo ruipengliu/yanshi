@@ -77,8 +77,10 @@ type Config struct {
 	Queue  workqueue.Queue
 	Agents *agentdef.Registry
 	Model  model.Provider
-	// Loop 决定每一步的回复与调用请求；nil 时使用以 Model 为后端的 ModelLoop。
+	// Loop 是内置循环，决定每一步的回复与调用请求；nil 时使用以 Model 为后端的 ModelLoop。
 	Loop Loop
+	// Loops 解析 AgentDef 指向的外部循环登记（ADR-0062）；nil 时这样的 AgentDef 的 Run 以配置错误失败。
+	Loops Loops
 	// Compactor 生成上下文压缩摘要；nil 时使用以 Model 为后端的 ModelCompactor。
 	Compactor Compactor
 	Catalog   *capability.Catalog
@@ -1315,6 +1317,20 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 		return w.suspendWith(ctx, &v1.RunSuspended{RunId: r.ID, Attempt: w.attempt, Reason: p.Reason(), Until: timestamppb.New(p.ResetAt)},
 			w.quotaPark(p))
 	}
+	// 外部循环（ADR-0062）：按 Session 的业务线解析登记，没有登记是配置错误。
+	loop, external := w.cfg.Loop, def.Loop != nil
+	bl := w.st.Created.GetBusinessLine()
+	if external {
+		var err error
+		if w.cfg.Loops == nil {
+			err = ErrLoopNotRegistered
+		} else {
+			loop, err = w.cfg.Loops.Loop(bl, def.Loop.Server)
+		}
+		if err != nil {
+			return w.fail(ctx, r, fmt.Sprintf("loop %s: %v", def.Loop.Server, err))
+		}
+	}
 	tools, err := w.tools(ctx, def)
 	if errors.Is(err, capability.ErrConfig) {
 		return w.fail(ctx, r, err.Error())
@@ -1330,23 +1346,43 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 	for _, t := range tools {
 		req.Tools = append(req.Tools, model.ToolSpec{Name: t.Spec.Name, Description: t.Spec.Description, InputSchema: t.Spec.InputSchema})
 	}
-	if through, usePrefix := planCompaction(view, req, def.Context, w.forceCompact); through > 0 {
+	var limit uint64
+	if external {
+		// 只看本轮、没有摘要模型的外部循环（ADR-0062 第 6 条）：超出窗口时 Run 失败，不论能否找到截断点。
+		if def.Context.SummaryModel == "" && (w.forceCompact || estimate(view, req, def.Context.MaxToolResult) > def.Context.Threshold()) {
+			return w.fail(ctx, r, "context exceeds the window and the loop agent has no context.summary_model")
+		}
+		limit = loopCutLimit(view, r.ID)
+	}
+	if through, usePrefix := planCompactionBefore(view, req, def.Context, w.forceCompact, limit); through > 0 {
 		if !usePrefix {
 			req = nil
 		}
 		return w.compact(ctx, r, def, view, through, req)
 	}
+	step := LoopStep{Request: req}
+	if external {
+		step.SessionID, step.RunID, step.Attempt, step.Turn = w.st.SessionID, r.ID, w.attempt, uint32(r.Turns+1)
+		step.EndUser, step.Agent = w.st.Created.GetEndUser(), w.st.Agent
+		step.State, step.StateVersion = r.LoopState, r.LoopStateVersion
+		step.Previous = previousStep(view, r.ID, def.Context.MaxToolResult)
+	}
 
+	var reply *LoopReply
 	var resp *model.Response
 	start := time.Now()
-	defer func() { observeModel("turn", start, resp, err) }()
+	kind := "turn"
+	if external {
+		kind = "loop"
+	}
+	defer func() { observeModel(kind, start, resp, err) }()
 	// 耗时与首字延迟只用于观察，但写入日志：按 clock.Clock 计时，模拟测试中确定（ADR-0034）。
 	called := w.now()
 	var firstToken time.Duration
 	err = w.during(ctx, r, func(ctx context.Context) error {
 		var err error
 		draft := live.Delta{SessionID: w.st.SessionID, RunID: r.ID, Attempt: w.attempt, AfterSeq: w.st.Seq}
-		resp, err = w.cfg.Loop.Decide(ctx, LoopStep{Request: req}, func(d model.Delta) {
+		reply, err = loop.Decide(ctx, step, func(d model.Delta) {
 			if firstToken == 0 {
 				firstToken = max(w.now().Sub(called), time.Millisecond)
 			}
@@ -1356,14 +1392,29 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 		draft.Reasoning = ""
 		draft.Text, draft.End = "", true
 		w.cfg.Live.Publish(draft)
+		if err == nil && external {
+			err = checkReply(reply, req)
+		}
 		return err
 	})
 	if err != nil {
-		return w.modelFailed(ctx, r, "model", err)
+		what := "model"
+		if external {
+			what = "loop"
+		}
+		return w.modelFailed(ctx, r, what, err)
 	}
+	resp = reply.Response
 	w.modelErrors = 0
 	// 在写日志之前计量：token 已经消耗，之后写日志失败（被接管、Session 被删除）也应计费（ADR-0019）。
-	w.cfg.Meter.Model(ctx, w.usageScope(), "use_"+w.cfg.Store.IDs(), agentdef.Label(w.st.Agent), def.Model, resp.Usage, w.now())
+	// 外部循环按步计量。它自报的模型用量（ADR-0056 Q6）暂不记录：用量报表还不能按 Kind 分开，混入会把自报的 token
+	// 算进模型调用；且自报的模型名是外部服务填写的任意文本，用量记录不随 Session 删除。
+	agent := agentdef.Label(w.st.Agent)
+	if external {
+		w.cfg.Meter.Loop(ctx, w.usageScope(), "use_"+w.cfg.Store.IDs(), agent, bl+"/"+def.Loop.Server, w.now())
+	} else {
+		w.cfg.Meter.Model(ctx, w.usageScope(), "use_"+w.cfg.Store.IDs(), agent, def.Model, resp.Usage, w.now())
+	}
 
 	// 模型给出的调用 ID 可能为空或跨轮、跨 Run 重复；一律改写为全局唯一 ID，
 	// 使其可作为下游幂等键。改写后的 ID 随事件落盘，后续上下文都使用它。
@@ -1374,12 +1425,15 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 		}
 	}
 	msg := newAssistantMessage(r.ID, w.attempt, resp, w.now().Sub(called), firstToken)
+	if external {
+		msg.Model, msg.LoopState, msg.LoopStateVersion = "loop/"+def.Loop.Server, reply.State, reply.StateVersion
+	}
 	var events []*v1.Event
 	// 内容安全（ADR-0021）：检查的正是将要写入日志的消息（回复、调用与截断后的思考过程，ADR-0034）。
 	// 违规的回复替换为拒答文本、丢弃调用与思考过程，原文不写入日志。服务不可用时不放行：丢弃这条回复
 	// （其中的调用从未执行），Run 挂起、退避后重新生成并送检（ADR-0054）。
 	// 用单独的变量：err 被上面的 defer 用来记录模型调用的结果。
-	v, merr := moderation.Check(ctx, w.cfg.Moderator, moderation.ForOutput(w.st.Created.GetBusinessLine(), w.st.SessionID, ModerationText(msg)))
+	v, merr := moderation.Check(ctx, w.cfg.Moderator, moderation.ForOutput(bl, w.st.SessionID, ModerationText(msg)))
 	if errors.Is(merr, moderation.ErrUnavailable) {
 		return w.awaitModeration(ctx, r)
 	}
@@ -1630,8 +1684,10 @@ func ModerationText(m *v1.AssistantMessage) string {
 
 // refuse 把被内容安全拦截的回复改为写入日志的形式：拒答文本，丢弃全部调用与思考过程，违规原文不进入日志；
 // 模型、用量、耗时与结束原因只用于观察与计费，保留。
+// 外部循环的状态同样不写入：Run 随即结束，不会有下一步（ADR-0062 第 5 条）。
 func refuse(m *v1.AssistantMessage) {
 	m.Content, m.ToolCalls, m.Reasoning = model.TextBlocks(moderation.Refusal), nil, ""
+	m.LoopState, m.LoopStateVersion = nil, ""
 }
 
 // maxReasoning 是写入日志的思考过程上限：思考常比回复长得多，事件过大会拖慢每一次读取与推送。

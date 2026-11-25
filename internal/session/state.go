@@ -139,7 +139,14 @@ type Run struct {
 	ModerationWaitSince time.Time
 	// FromBackground 非空表示 Run 由该后台调用的了结（结果或到期）开启，而不是用户的输入（ADR-0035）。
 	FromBackground string
+	// LoopState 与 LoopStateVersion 是本 Run 最近一条 AssistantMessage 带的外部循环状态（ADR-0062 第 2 条）：
+	// 下一步原样带回。存在投影中而不是从 History 读取，压缩不会影响它。
+	LoopState        []byte
+	LoopStateVersion string
 }
+
+// MaxLoopState 是外部循环状态的上限（解码后的字节数，ADR-0062 第 2 条）。Worker 在写日志之前校验回答，这里再查一次。
+const MaxLoopState = 64 << 10
 
 // SuspendHandoff 是移交的挂起原因（ADR-0029）：Worker 正常结束 Attempt 并立即归还 Session，由其他 Worker 恢复，
 // 如交互 Worker 移交成为长任务的 Run、进程优雅停机。
@@ -854,6 +861,9 @@ func (s *State) apply(e *v1.Event) error {
 		if c := r.PendingCall(); c != nil {
 			return fmt.Errorf("assistant message while call %s is pending", c.Call.GetCallId())
 		}
+		if len(m.GetLoopState()) > MaxLoopState {
+			return fmt.Errorf("loop state of %d bytes exceeds %d", len(m.GetLoopState()), MaxLoopState)
+		}
 		seen := map[string]bool{}
 		for _, tc := range m.GetToolCalls() {
 			if tc.GetCallId() == "" || seen[tc.GetCallId()] || s.hasCallID(tc.GetCallId()) {
@@ -866,6 +876,7 @@ func (s *State) apply(e *v1.Event) error {
 			s.addCallID(tc.GetCallId())
 		}
 		r.Turns++
+		r.LoopState, r.LoopStateVersion = m.GetLoopState(), m.GetLoopStateVersion()
 		r.OutputTokens += int64(m.GetUsage().GetOutputTokens())
 		r.StalledTakeovers = 0
 		r.ModerationWaits, r.ModerationWaitSince = 0, time.Time{}

@@ -131,7 +131,7 @@ func richLog() []*v1.Event {
 		ev(backgrounded("c3")),
 		ev(&v1.ToolCallStarted{RunId: "r3", Attempt: 1, CallId: "c4", NodeId: "n1", Deadline: timestamppb.New(t0.Add(time.Minute))}),
 		ev(backgrounded("c4")),
-		ev(&v1.AssistantMessage{RunId: "r3", Attempt: 1, Content: text}),
+		ev(&v1.AssistantMessage{RunId: "r3", Attempt: 1, Content: text, LoopState: []byte{0, 1}, LoopStateVersion: "v1"}),
 		ev(&v1.RunCompleted{RunId: "r3", Attempt: 1}),
 		ev(&v1.RunRequested{RunId: "r4", Input: []*v1.ContentBlock{bgResult}}),
 		ev(&v1.BackgroundCancelled{CallId: "c3", Capability: "pc__send", By: "phone"}),
@@ -213,7 +213,7 @@ func TestSnapshotCoversEveryField(t *testing.T) {
 	covered := map[string][]string{
 		"State":          {"SessionID", "Seq", "Created", "Agent", "Closed", "Compaction", "CompactedAt", "Runs", "Past", "History", "callIDsOld", "callIDs", "Inputs", "ActiveCall", "Delegated", "Background", "Schedules", "SupersededRuns", "SupersededCardCalls"},
 		"RunSummary":     {"ID", "Status", "RequestedAt", "Attempt", "Turns", "FromBackground"},
-		"Run":            {"ID", "Status", "RequestedAt", "Attempt", "LiveEndpoint", "Takeovers", "StalledTakeovers", "Turns", "Recall", "Recalled", "Calls", "SuspendReason", "SuspendedUntil", "ModerationWaits", "ModerationWaitSince", "Compactions", "OutputTokens", "Resume", "Decisions", "FromBackground", "Request", "RequestedSeq", "Steered"},
+		"Run":            {"ID", "Status", "RequestedAt", "Attempt", "LiveEndpoint", "Takeovers", "StalledTakeovers", "Turns", "Recall", "Recalled", "Calls", "SuspendReason", "SuspendedUntil", "ModerationWaits", "ModerationWaitSince", "Compactions", "OutputTokens", "Resume", "Decisions", "FromBackground", "Request", "RequestedSeq", "Steered", "LoopState", "LoopStateVersion"},
 		"Call":           {"Call", "StartedAttempts", "StartedReadOnly", "NodeID", "Deadline", "DispatchedAt", "Done", "Background", "Approval"},
 		"Schedule":       {"Created", "Last", "NextDue"},
 		"BackgroundCall": {"CallID", "RunID", "NodeID", "Capability", "Deadline"},

@@ -100,6 +100,9 @@ message RunSnapshot {
   // 因输出审核不可用而连续挂起的次数与第一次挂起的时间（ADR-0054）。
   int32 moderation_waits = 25;
   google.protobuf.Timestamp moderation_wait_since = 26;
+  // 本 Run 最近一条 AssistantMessage 带的外部循环状态与版本（ADR-0062 第 2 条）。
+  bytes loop_state = 27;
+  string loop_state_version = 28;
   reserved 19, 20, 21;
   reserved "capture_reads", "capture_pages", "capture_acks";
 }

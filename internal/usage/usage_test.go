@@ -148,3 +148,18 @@ func TestCallCost(t *testing.T) {
 		t.Fatalf("fallback cost = %d", got)
 	}
 }
+
+// 外部循环按步计价，键是登记的 "<业务线>/<名称>"（ADR-0062）；没有价格时为 0 且 HasLoop 为假。
+func TestLoopPrices(t *testing.T) {
+	p := &usage.PriceList{Loops: map[string]usage.LoopPrice{"bl/plan": {PerStep: 0.01}}}
+	if got := p.LoopCost("bl/plan"); got != 10000 || !p.HasLoop("bl/plan") {
+		t.Fatalf("loop cost %d", got)
+	}
+	if p.LoopCost("other/plan") != 0 || p.HasLoop("other/plan") {
+		t.Fatal("unregistered key priced")
+	}
+	var none *usage.PriceList
+	if none.LoopCost("bl/plan") != 0 || none.HasLoop("bl/plan") {
+		t.Fatal("nil price list priced a loop")
+	}
+}

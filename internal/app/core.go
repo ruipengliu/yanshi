@@ -69,6 +69,8 @@ type Options struct {
 	// SandboxTools 为 true 时登记沙箱工具；是否有控制器执行它们由调用方按进程角色决定（ControllerConfig）。
 	SandboxTools bool
 	MCP          capability.MCPSource
+	// Loops 解析 AgentDef 指向的外部循环登记（ADR-0062，extloop.Registry）；nil 时这样的 Run 以配置错误失败。
+	Loops runtime.Loops
 	// DefaultTimeout 用于未声明超时的设备能力；NodeCacheTTL > 0 时缓存每个 EndUser 的 Node 列表（capability.Catalog）。
 	DefaultTimeout time.Duration
 	NodeCacheTTL   time.Duration
@@ -273,7 +275,7 @@ func (c *Core) healthAllowed(ctx context.Context, businessLine, endUser string) 
 // ADR-0029），其余来自对象图。返回值可以在 runtime.New 之前修改。
 func (c *Core) WorkerConfig(id string, pool workqueue.Pool, idle *workqueue.IdleGate) runtime.Config {
 	cfg := runtime.Config{
-		ID: id, Store: c.Store, Queue: c.Stores.Queue, Agents: c.opts.Agents, Model: c.opts.Model,
+		ID: id, Store: c.Store, Queue: c.Stores.Queue, Agents: c.opts.Agents, Model: c.opts.Model, Loops: c.opts.Loops,
 		Catalog: c.Catalog, Dispatch: c.Dispatch, Delegation: c.Delegator, InjectionCheck: c.opts.InjectionCheck,
 		Artifacts: c.Artifacts, Memory: c.Memory, Live: c.opts.Live, LiveEndpoint: c.opts.LiveEndpoint, Logger: c.opts.Logger,
 		LeaseTTL: c.opts.LeaseTTL, Heartbeat: c.opts.LeaseTTL / 3, Idle: idle, Pool: pool,

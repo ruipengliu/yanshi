@@ -230,6 +230,12 @@ func estimate(st *session.State, req *model.Request, maxToolResult int) int {
 // 摘要请求优先以主请求的前缀开头（命中前缀缓存），此时系统指令与工具定义也占用它的预算；按此预算找不到
 // 截断点时（窗口相对工具定义很小），退回不带前缀的文本模式与原预算，usePrefix 为 false。
 func planCompaction(st *session.State, req *model.Request, cfg agentdef.Context, force bool) (through uint64, usePrefix bool) {
+	return planCompactionBefore(st, req, cfg, force, 0)
+}
+
+// planCompactionBefore 同 planCompaction，截断点另须小于 limit（0 表示不限）：由外部循环驱动的 Run 不越过最近一条回答
+// （loopCutLimit）。
+func planCompactionBefore(st *session.State, req *model.Request, cfg agentdef.Context, force bool, limit uint64) (through uint64, usePrefix bool) {
 	st = redoView(st)
 	if !force && estimate(st, req, cfg.MaxToolResult) <= cfg.Threshold() {
 		return 0, false
@@ -246,14 +252,15 @@ func planCompaction(st *session.State, req *model.Request, cfg agentdef.Context,
 	}
 	text := cfg.Threshold() - model.EstimateTokens(st.Compaction.GetSummary()) - model.EstimateText(summaryInstructions)
 	overhead := model.EstimateRequest(&model.Request{System: req.System, Tools: req.Tools})
-	if cut := pickCut(st, sizes, total, text-overhead, cfg.KeepRecent, force); cut > 0 {
+	if cut := pickCut(st, sizes, total, text-overhead, cfg.KeepRecent, force, limit); cut > 0 {
 		return cut, true
 	}
-	return pickCut(st, sizes, total, text, cfg.KeepRecent, force), false
+	return pickCut(st, sizes, total, text, cfg.KeepRecent, force, limit), false
 }
 
 // pickCut 在摘要请求预算 budget 内选择截断点：尽量保留 keep 的原文，做不到时退到最晚的可行截断点。
-func pickCut(st *session.State, sizes []int, total, budget, keep int, force bool) uint64 {
+// limit 非 0 时截断点须小于它。
+func pickCut(st *session.State, sizes []int, total, budget, keep int, force bool, limit uint64) uint64 {
 	h := st.History
 	if force {
 		keep = 0
@@ -262,7 +269,7 @@ func pickCut(st *session.State, sizes []int, total, budget, keep int, force bool
 	prefix := 0
 	for i, e := range h[:len(h)-1] {
 		prefix += sizes[i]
-		if prefix > budget {
+		if prefix > budget || (limit > 0 && e.GetSeq() >= limit) {
 			break
 		}
 		if !st.CanCut(e.GetSeq()) {

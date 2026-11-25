@@ -15,7 +15,7 @@ import (
 
 // ProjectionVersion 是投影语义的版本。改动 Apply 或 State 的字段时必须递增：旧快照随之作废，
 // 加载退回完整回放，因此快照永远不会与当前代码的投影结果不一致。
-const ProjectionVersion = 27
+const ProjectionVersion = 28
 
 // Snapshots 存放每个 Session 最新的投影快照。快照只是加速加载的缓存，删除或丢失都不影响正确性。
 type Snapshots interface {
@@ -72,6 +72,7 @@ func (s *State) Snapshot() *v1.SessionSnapshot {
 			ModerationWaits: int32(r.ModerationWaits), ModerationWaitSince: ts(r.ModerationWaitSince),
 			Compactions: int32(r.Compactions), OutputTokens: r.OutputTokens, Resume: r.Resume, Decisions: r.Decisions,
 			FromBackground: r.FromBackground, Request: r.Request, RequestedSeq: r.RequestedSeq, Steered: r.Steered,
+			LoopState: r.LoopState, LoopStateVersion: r.LoopStateVersion,
 		}
 		for _, c := range r.Calls {
 			cs := &v1.CallSnapshot{Call: c.Call, StartedAttempts: c.StartedAttempts, NodeId: c.NodeID, Deadline: ts(c.Deadline), Done: c.Done,
@@ -157,6 +158,7 @@ func FromSnapshot(snap *v1.SessionSnapshot) (*State, error) {
 			Compactions: int(rs.GetCompactions()), OutputTokens: rs.GetOutputTokens(), Resume: rs.GetResume(),
 			Decisions: rs.GetDecisions(), FromBackground: rs.GetFromBackground(),
 			Request: rs.GetRequest(), RequestedSeq: rs.GetRequestedSeq(), Steered: rs.GetSteered(),
+			LoopState: rs.GetLoopState(), LoopStateVersion: rs.GetLoopStateVersion(),
 		}
 		for _, cs := range rs.GetCalls() {
 			c := &Call{Call: cs.GetCall(), StartedAttempts: cs.GetStartedAttempts(), NodeID: cs.GetNodeId(), Deadline: fromTS(cs.GetDeadline()), Done: cs.GetDone(),

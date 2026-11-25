@@ -32,6 +32,7 @@ import (
 	"yanshi/internal/clock"
 	"yanshi/internal/decision"
 	"yanshi/internal/eventlog"
+	"yanshi/internal/extloop"
 	"yanshi/internal/faults"
 	"yanshi/internal/feed"
 	"yanshi/internal/httpapi"
@@ -347,6 +348,7 @@ func serve(args []string) error {
 	migrate := fs.Bool("migrate", true, "启动时应用 PostgreSQL 迁移；生产中由 yanshi migrate 任务执行，serve 置 false 时只检查迁移都已应用")
 	sbx := addSandboxFlags(fs)
 	mcpDir := fs.String("mcp", "mcp", "远程 MCP Server 登记目录（docs/design/m5-mcp.md）；不存在时不启用")
+	loopsDir := fs.String("loops", "loops", "外部循环登记目录（ADR-0062）；不存在时不启用")
 	embedModel := fs.String("embedding-model", os.Getenv("YANSHI_EMBEDDING_MODEL"), "Memory 检索用的嵌入模型（provider/model，如 ark/doubao-embedding-vision-251215）；为空时按文本相似度检索")
 	controllers := fs.Int("sandbox-controllers", 2, "沙箱控制器数量")
 	blobKind := fs.String("blob", "fs", "工件内容存储：fs | s3")
@@ -567,7 +569,11 @@ func serve(args []string) error {
 		logger.Warn("fault injection enabled (-faults): debug deployments only")
 	}
 	gw := gateway(logger, modelLimits, providerLimits, injector)
-	meter, quotas, err := metering(*pricing, lines, agents, b, logger, shots)
+	loopServers, err := extloop.LoadDir(*loopsDir)
+	if err != nil {
+		return fmt.Errorf("load loops: %w", err)
+	}
+	meter, quotas, err := metering(*pricing, lines, agents, loopServers, b, logger, shots)
 	if err != nil {
 		return err
 	}
@@ -601,6 +607,12 @@ func serve(args []string) error {
 	}
 	if *embedModel != "" {
 		opts.Embedder, opts.EmbedModel = gw, *embedModel
+	}
+	if len(loopServers) > 0 {
+		opts.Loops = extloop.NewRegistry(loopServers, nil)
+		for _, s := range loopServers {
+			logger.Info("loop registered", "name", s.Name, "business_line", s.BusinessLine, "url", s.URL)
+		}
 	}
 	mcpServers, err := mcpcap.LoadDir(*mcpDir)
 	if err != nil {
@@ -851,8 +863,8 @@ func loopback(addr string) bool {
 }
 
 // metering 加载价格表并汇总各业务线的配额（docs/design/m4-quota-usage.md）。任一业务线配置了配额时，
-// 所有 AgentDef 与单次调用声明引用的模型都必须有价格：没有价格的模型等于不受配额约束。
-func metering(path string, lines []auth.BusinessLine, agents *agentdef.Registry, b *storage, logger *slog.Logger, registries ...*oneshot.Registry) (*usage.Meter, *usage.Quotas, error) {
+// 所有 AgentDef 与单次调用声明引用的模型、所有登记的外部循环都必须有价格：没有价格的等于不受配额约束。
+func metering(path string, lines []auth.BusinessLine, agents *agentdef.Registry, loops []extloop.Server, b *storage, logger *slog.Logger, registries ...*oneshot.Registry) (*usage.Meter, *usage.Quotas, error) {
 	prices, err := usage.LoadPriceList(path)
 	if errors.Is(err, os.ErrNotExist) {
 		prices, err = nil, nil
@@ -872,6 +884,12 @@ func metering(path string, lines []auth.BusinessLine, agents *agentdef.Registry,
 			if m != "" && !prices.Has(m) && !slices.Contains(missing, m) {
 				missing = append(missing, m)
 			}
+		}
+	}
+	// 外部循环按步计价（ADR-0062 Consequences），键是登记的 "<业务线>/<名称>"。
+	for _, s := range loops {
+		if k := s.BusinessLine + "/" + s.Name; !prices.HasLoop(k) {
+			missing = append(missing, "loop "+k)
 		}
 	}
 	for _, registry := range registries {

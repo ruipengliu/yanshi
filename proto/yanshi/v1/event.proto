@@ -343,6 +343,10 @@ message AssistantMessage {
   uint32 first_token_ms = 9;
   // finish_reason 是提供商给出的结束原因，如 "stop"、"tool_calls"、"length"。
   string finish_reason = 10;
+  // 外部循环给自己的不透明状态与版本（ADR-0062 第 2 条）：同一 Run 的下一步原样带回；不交给模型，也不发给客户端
+  // （feed.Public）。内置循环与被内容安全拦截的回答为空。
+  bytes loop_state = 11;
+  string loop_state_version = 12;
 }
 
 // ToolCallStarted 在执行 Capability 之前落盘，用于故障恢复时判断调用是否可能已产生副作用。

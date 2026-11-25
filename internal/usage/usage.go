@@ -28,6 +28,9 @@ const (
 	// Speech 是按住说话的语音识别与播报（docs/design/speech.md）：识别的输入"token"是音频秒数，播报的输出"token"
 	// 是字数，价格表按每百万秒、每百万字配置。
 	Speech Kind = "speech"
+	// Loop 是外部循环的一步（ADR-0062）：按步计价，计入配额与计费；Model 是登记的键 "<业务线>/<名称>"。
+	// 外部服务自报的用量（ADR-0056 Q6 的 loop_reported）等报表能按 Kind 分开后再记录。
+	Loop Kind = "loop"
 )
 
 // Anonymous 是注销后的 EndUser：其用量仍计入业务线合计，但不再留存个人标识。
@@ -137,6 +140,14 @@ type PriceList struct {
 		// PerHour 是沙箱每小时执行时间的价格（元）。
 		PerHour float64 `yaml:"per_hour"`
 	} `yaml:"sandbox"`
+	// Loops 是外部循环每一步的价格，键是登记的 "<业务线>/<名称>"（ADR-0062）。
+	Loops map[string]LoopPrice `yaml:"loops"`
+}
+
+// LoopPrice 是外部循环的单价。
+type LoopPrice struct {
+	// PerStep 是每一步的价格（元）。外部服务自己调用模型的费用由业务线承担，不在这里。
+	PerStep float64 `yaml:"per_step"`
 }
 
 func LoadPriceList(path string) (*PriceList, error) {
@@ -155,6 +166,11 @@ func LoadPriceList(path string) (*PriceList, error) {
 	}
 	if p.Sandbox.PerHour < 0 {
 		return nil, fmt.Errorf("%s: negative sandbox price", path)
+	}
+	for k, pr := range p.Loops {
+		if pr.PerStep < 0 {
+			return nil, fmt.Errorf("%s: negative price for loop %s", path, k)
+		}
 	}
 	return p, nil
 }
@@ -193,6 +209,23 @@ func (p *PriceList) ModelCost(model string, input, cached, output uint64) int64 
 		cachedPrice = *pr.CachedInput
 	}
 	return int64(math.Round(float64(input-cached)*pr.Input + float64(cached)*cachedPrice + float64(output)*pr.Output))
+}
+
+// HasLoop 报告外部循环 "<业务线>/<名称>" 是否有价格。
+func (p *PriceList) HasLoop(key string) bool {
+	if p == nil {
+		return false
+	}
+	_, ok := p.Loops[key]
+	return ok
+}
+
+// LoopCost 返回外部循环一步的金额（微元）；没有价格时为 0。
+func (p *PriceList) LoopCost(key string) int64 {
+	if p == nil {
+		return 0
+	}
+	return int64(math.Round(p.Loops[key].PerStep * 1e6))
 }
 
 // SandboxCost 返回沙箱执行 d 的金额（微元）。

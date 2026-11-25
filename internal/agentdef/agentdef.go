@@ -27,8 +27,10 @@ type Def struct {
 	Description string `yaml:"description"`
 	// Instructions 是系统指令。
 	Instructions string `yaml:"instructions"`
-	// Model 是 "provider/model" 形式的模型引用。
-	Model        string   `yaml:"model"`
+	// Model 是 "provider/model" 形式的模型引用；与 Loop 互斥。
+	Model string `yaml:"model"`
+	// Loop 非空时，由业务线登记的外部循环决定每一步，而不是调用模型（ADR-0041、ADR-0062）。
+	Loop         *LoopRef `yaml:"loop"`
 	Capabilities []string `yaml:"capabilities"`
 	// MaxTurns 限制一个 Run 内模型调用的次数。
 	MaxTurns int `yaml:"max_turns"`
@@ -41,6 +43,12 @@ type Def struct {
 	Call CallConfig `yaml:"call"`
 	// Delegation 是委托的限制（docs/design/m5-multi-agent.md §4）。
 	Delegation DelegationConfig `yaml:"delegation"`
+}
+
+// LoopRef 指向 loops/*.yaml 中的一个外部循环登记。登记以 (业务线, 名称) 为键：按 Session 的业务线解析，
+// 其他业务线的 Session 用这个 AgentDef 时 Run 以配置错误失败（ADR-0062 第 7 条）。
+type LoopRef struct {
+	Server string `yaml:"server"`
 }
 
 // DefaultBackgroundAfter 是委托转入后台前父 Run 等待的默认时长（ADR-0058）：评测中多数委托在 20–35 秒内完成，
@@ -86,7 +94,7 @@ type Context struct {
 	KeepRecent int `yaml:"keep_recent"`
 	// MaxToolResult 是单条调用结果在上下文中的上限，超出部分截断（日志中保留全文）。
 	MaxToolResult int `yaml:"max_tool_result"`
-	// SummaryModel 是生成摘要的模型引用，留空表示与 Def.Model 相同。
+	// SummaryModel 是生成摘要的模型引用，留空表示与 Def.Model 相同；外部循环的 AgentDef 没有 Model，见 Def.validate。
 	SummaryModel string `yaml:"summary_model"`
 	// Scope 是模型上下文的范围：ScopeSession（默认）含整个 Session 的历史；ScopeRun 只含当前 Run 的事件，供每次输入
 	// 彼此独立、靠外部状态衔接的 Agent（docs/design/m2-long-runs.md §2）。
@@ -136,8 +144,18 @@ func (c *Context) validate() error {
 func (d *Def) Ref() *v1.AgentRef { return &v1.AgentRef{Name: d.Name, Version: d.Version} }
 
 func (d *Def) validate() error {
-	if !release.ValidIdentity(d.Name, d.Version) || d.Model == "" {
-		return fmt.Errorf("agent %q@%q: name, version and model are required", d.Name, d.Version)
+	if !release.ValidIdentity(d.Name, d.Version) || (d.Model == "") == (d.Loop == nil) {
+		return fmt.Errorf("agent %q@%q: name, version and exactly one of model and loop are required", d.Name, d.Version)
+	}
+	if d.Loop != nil {
+		if d.Loop.Server == "" {
+			return fmt.Errorf("agent %s@%s: loop.server is required", d.Name, d.Version)
+		}
+		// 外部循环没有模型可以写摘要：按 Session 组装上下文时须配摘要模型，平台照常压缩；只看本轮时可以不配，
+		// Run 内超出窗口时 Run 失败（ADR-0062 第 6 条）。
+		if d.Context.Scope != ScopeRun && d.Context.SummaryModel == "" {
+			return fmt.Errorf("agent %s@%s: a loop agent needs context.summary_model unless context.scope is run", d.Name, d.Version)
+		}
 	}
 	if d.MaxTurns <= 0 {
 		d.MaxTurns = 16
