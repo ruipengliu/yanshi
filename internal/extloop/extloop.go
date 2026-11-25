@@ -198,26 +198,31 @@ func (c *Client) Decide(ctx context.Context, step runtime.LoopStep, onDelta func
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("loop %s: status %d", c.Server.Name, resp.StatusCode)
 	}
-	var out *v1.LoopStepResponse
-	if mt, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type")); mt == ndjson {
-		out, err = readStream(&capped{r: resp.Body, n: maxResponse}, onDelta)
-	} else {
-		var b []byte
-		if b, err = io.ReadAll(io.LimitReader(resp.Body, maxResponse+1)); err == nil {
-			if len(b) > maxResponse {
-				err = errTooLarge
-			} else {
-				out = &v1.LoopStepResponse{}
-				if unmarshal.Unmarshal(b, out) != nil {
-					err = errUnparsable
-				}
-			}
-		}
-	}
+	out, err := ReadResponse(resp, onDelta)
 	if err != nil {
 		return nil, fmt.Errorf("loop %s: %w", c.Server.Name, err)
 	}
 	return Reply(out), nil
+}
+
+// ReadResponse 按 Content-Type 读取并解析外部循环的回答：application/x-ndjson 逐行读取流式增量，最后一行
+// 必须是完整的回答（ADR-0056 Q7）；其余按单个 protojson 解析。错误信息只含结构错误，不含回答内容。
+func ReadResponse(resp *http.Response, onDelta func(model.Delta)) (*v1.LoopStepResponse, error) {
+	if mt, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type")); mt == ndjson {
+		return readStream(&capped{r: resp.Body, n: maxResponse}, onDelta)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > maxResponse {
+		return nil, errTooLarge
+	}
+	out := &v1.LoopStepResponse{}
+	if unmarshal.Unmarshal(b, out) != nil {
+		return nil, errUnparsable
+	}
+	return out, nil
 }
 
 // capped 读到超过 n 字节时报错，而不是像 io.LimitReader 那样静默截断：截断处恰好是一行的结尾时，后面的内容会被漏看。
