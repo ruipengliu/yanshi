@@ -3,6 +3,8 @@ description: >-
   跨天归集（xinli-captures.md §5）：第一天谈新办公室装修，新建项目（模拟服务给出 P-0101）；第二天上午接着谈装修，
   find_related 召回它、归入同一项目；下午的无关话题（孩子运动会）是另一段交谈，不并入。已有项目"年度预算"是干扰项。
 agent: xinli-day
+# 两天各是一个业务日：第二天的整理只看到第二天的交谈，前一天的只能经 find_related 召回。
+now: "2026-10-22T18:30:00+08:00"
 setup:
   xinli:
     projects: [{id: P-0001, name: 年度预算, status: 财务部正在汇总明年各部门预算}]
@@ -18,6 +20,7 @@ turns:
         projects: {min: 2, max: 2}
         in_project: {P-0101: {min: 1, max: 1}, P-0001: {max: 0}}
   - new_session: true
+    business_day: "2026-10-23"
     captures:
       - {speaker: other, key: liu, text: 样板带来了，浅色木纹这款你看行吗？, at: "2026-10-23 10:00"}
       - {speaker: wearer, text: 就这款。家具的报价也一起给我。, at: "2026-10-23 10:01"}

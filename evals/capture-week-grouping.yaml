@@ -4,6 +4,8 @@ description: >-
   （"装修""新办公室""搬家的事"），夹着闲聊；每天一次整理。断言碎片率（每个主题只在一个项目中）、纯度、承诺的引用准确率，
   以及摘要对要点的覆盖率。
 agent: xinli-day
+# 每天一个业务日（10-19 星期一至 10-23 星期五）：每次整理只看到当天的交谈。
+now: "2026-10-19T18:30:00+08:00"
 setup:
   xinli: {}
 turns:
@@ -13,21 +15,25 @@ turns:
       calls: ["mcp_xinli__file_day"]
   - captures_file: data/week/2026-10-20.yaml
     new_session: true
+    business_day: "2026-10-20"
     input: 整理今天
     expect:
       calls: ["mcp_xinli__file_day"]
   - captures_file: data/week/2026-10-21.yaml
     new_session: true
+    business_day: "2026-10-21"
     input: 整理今天
     expect:
       calls: ["mcp_xinli__file_day"]
   - captures_file: data/week/2026-10-22.yaml
     new_session: true
+    business_day: "2026-10-22"
     input: 整理今天
     expect:
       calls: ["mcp_xinli__file_day"]
   - captures_file: data/week/2026-10-23.yaml
     new_session: true
+    business_day: "2026-10-23"
     input: 整理今天
     expect:
       calls: ["mcp_xinli__file_day"]
