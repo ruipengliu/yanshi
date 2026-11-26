@@ -4,6 +4,8 @@ status: accepted
 
 # Memory 默认归属业务线，经 EndUser Grant 跨业务线共享
 
+> **补充约束（2026-11-26，[ADR-0064](0064-identity-domains-for-cross-line-grants.md)，已实现）。** 原决定不变；跨业务线的 Grant 只能在声明了相同非空身份域（`identity_domain`）的两条已登记业务线之间创建与生效，未声明身份域的业务线默认独占，不能与其他业务线互相 Grant。
+
 EndUser 的 Memory 默认只对产生它的 BusinessLine 可见；其他 BusinessLine 读取它必须有 EndUser 显式给出的 Grant。我们没有选择"全局统一画像"（合规风险高，用户不可控），也没有选择"完全隔离"（无法发挥多业务线的个性化价值）。
 
 ## Consequences

@@ -13,7 +13,7 @@
 
 不做：模型训练与微调；面向业务线的用户画像分析接口（Memory 只供 Agent 在对话中使用）。
 
-**前提：EndUser ID 跨业务线统一**（公司统一账号）。跨业务线的 Grant 依赖"业务线 A 的 u1 与业务线 B 的 u1 是同一个人"；如果各业务线的用户 ID 不统一，需要先有账号关联，这不在本设计范围内。
+**前提：同身份域的 EndUser ID 跨业务线统一**（2026-11-26，[ADR-0064](../adr/0064-identity-domains-for-cross-line-grants.md)）。跨业务线的 Grant 依赖"业务线 A 的 u1 与业务线 B 的 u1 是同一个人"；需要共享 Memory 的业务线必须在配置中声明相同的非空 `identity_domain`（并确认使用同一套账号体系），未声明的业务线默认独占，不能与其他业务线互相 Grant。如果各业务线的用户 ID 不统一，需要先有账号关联，这不在本设计范围内。
 
 ## 2. 数据模型
 
@@ -102,6 +102,7 @@ Grant { id, end_user, from_business_line, to_business_line, categories[], create
 ```
 
 - 授权粒度是**业务线对加类别**：EndUser 允许业务线 B 读取自己在业务线 A 中某些类别的 Memory。
+- **只在同身份域内创建与生效（ADR-0064）**：`from` 与 `to` 必须都已在业务线配置中登记，且声明了相同的非空 `identity_domain`；未声明身份域的业务线默认独占，不与任何其他业务线同域（即便另一方把 `identity_domain` 显式写成前者的业务线名）。判定放在 `memory.Service`，所有入口统一经过它；不满足时创建返回 400（错误只含业务线名），`Scopes`（召回与 `memory_search`）与 `ListGrants` 实时跳过配置变更后不再同域或未登记的旧授权，撤销（`RevokeGrant`）不受影响。`-auth none` 开发模式、评测与模拟测试不做身份域检查。
 - **只能由 EndUser 本人创建**：需要用户令牌，并且令牌的业务线是 A 或 B 之一。具体由哪一侧的 App 发起授权界面，属于产品层的问题。
 - **撤销立即生效**：检索时实时检查 Grant，不做缓存。已经写入 B 侧日志的召回记录（`MemoryRecalled`）不会被删除，因为它们是 B 侧对话历史的一部分，随 B 侧 Session 的删除而删除。但它们不会进入之后的 Run：每个 Run 都重新召回，而之前 Run 的召回本来就不进入上下文（§3）。所以撤销最晚从下一个 Run 起生效，这一点会写进用户协议。
 - 授权只能读，不能写：B 写下的 Memory 永远归属 B。

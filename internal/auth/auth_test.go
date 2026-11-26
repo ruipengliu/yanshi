@@ -149,6 +149,47 @@ func TestConfigRejectsMismatchedKeys(t *testing.T) {
 	if _, err := NewJWT("yanshi", clock.Real{}, bl); err == nil {
 		t.Fatal("accepted max_ttl above limit")
 	}
+	bl.MaxTTL = time.Hour
+	bl.IdentityDomain = " corp "
+	if _, err := NewJWT("yanshi", clock.Real{}, bl); err == nil {
+		t.Fatal("accepted identity_domain with surrounding spaces")
+	}
+}
+
+func TestLoadDirIdentityDomainValidation(t *testing.T) {
+	cases := []struct {
+		name  string
+		yaml  string
+		want  string
+		valid bool
+	}{
+		{name: "omitted", yaml: "name: a\n", want: "", valid: true},
+		{name: "empty", yaml: "name: a\nidentity_domain: \"\"\n", want: "", valid: true},
+		{name: "simple", yaml: "name: a\nidentity_domain: corp-main\n", want: "corp-main", valid: true},
+		{name: "dotted", yaml: "name: a\nidentity_domain: acme.example_1\n", want: "acme.example_1", valid: true},
+		{name: "spaces only", yaml: "name: a\nidentity_domain: \"   \"\n", valid: false},
+		{name: "leading space", yaml: "name: a\nidentity_domain: \" corp\"\n", valid: false},
+		{name: "trailing space", yaml: "name: a\nidentity_domain: \"corp \"\n", valid: false},
+		{name: "inner space", yaml: "name: a\nidentity_domain: \"corp main\"\n", valid: false},
+		{name: "tab", yaml: "name: a\nidentity_domain: \"corp\\tmain\"\n", valid: false},
+		{name: "newline", yaml: "name: a\nidentity_domain: \"corp\\nmain\"\n", valid: false},
+		{name: "control char", yaml: "name: a\nidentity_domain: \"corp\\x00\"\n", valid: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "a.yaml"), []byte(tc.yaml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			lines, err := LoadDir(dir)
+			if (err == nil) != tc.valid {
+				t.Fatalf("LoadDir err = %v, want valid=%v", err, tc.valid)
+			}
+			if tc.valid && (len(lines) != 1 || lines[0].IdentityDomain != tc.want) {
+				t.Fatalf("loaded = %+v, want domain %q", lines, tc.want)
+			}
+		})
+	}
 }
 
 func TestSigningKeyRoundTrip(t *testing.T) {

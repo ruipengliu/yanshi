@@ -19,6 +19,7 @@
 ```yaml
 # businesslines/demo.yaml
 name: demo
+identity_domain: corp     # 可选；声明相同的非空身份域后才能与其他业务线互相创建与生效 Memory Grant（ADR-0064）；留空表示独占
 keys:
   - kid: demo-2026-10
     alg: EdDSA            # EdDSA | ES256 | RS256
@@ -27,6 +28,8 @@ keys:
       ...
 max_ttl: 1h               # 拒绝有效期更长的令牌
 ```
+
+`identity_domain` 声明该业务线所属的 EndUser 身份域（[ADR-0064](../adr/0064-identity-domains-for-cross-line-grants.md)）：为空表示独占，不与任何其他业务线共享 Memory；非空时不得包含空白或控制字符（在加载配置与构造 JWT 校验器时校验）。只有在配置中声明了相同非空 `identity_domain` 的两条已登记业务线才能互相创建与生效 Memory Grant。
 
 | 声明 | 要求 |
 |---|---|

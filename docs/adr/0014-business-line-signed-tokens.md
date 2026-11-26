@@ -5,6 +5,8 @@ status: accepted
 # 由业务线签发短期令牌，yanshi 只验证
 
 > **部分修订（2026-11-25，[ADR-0063](0063-loop-model-gateway-and-step-token.md)，已实现）。** 访问 yanshi 的令牌仍全部由业务线签发、yanshi 只验证，本文其余部分有效。修订的是 Consequences 第一条：yanshi 保存按外部循环登记的 HMAC 密钥，用来签发只给外部循环与内核模型端点使用的步令牌；它仍不保存能签发用户令牌或服务令牌的密钥，步令牌也不被 yanshi 的其他接口接受。
+>
+> **补充说明（2026-11-26，[ADR-0064](0064-identity-domains-for-cross-line-grants.md)，已实现）。** 原决定不变，令牌仍由各业务线分别签发、不引入统一身份服务；为防止不同账号体系的 `sub` 撞号导致跨业务线 Memory 串人，业务线须在配置中显式声明相同的非空身份域（`identity_domain`）才能互相创建与生效 Memory Grant。
 
 端侧 SDK 与业务线服务端都使用 JWT 访问 yanshi。令牌由业务线用自己的私钥签发：用户令牌的有效期较短，标明 BusinessLine 与 EndUser；服务令牌只标明 BusinessLine。yanshi 按业务线配置的公钥验签，并据此决定可访问的 Session、Node 与 Artifact。
 

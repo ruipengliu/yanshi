@@ -576,3 +576,59 @@ func TestStreamEndsWhenTokenExpires(t *testing.T) {
 		t.Fatalf("stream ended without token_expired: %q", buf.String())
 	}
 }
+
+func TestGrantsIdentityDomainHTTP(t *testing.T) {
+	e := newAuthzEnv(t)
+	domains := map[string]string{"demo": "corp-a", "other": "corp-b"}
+	e.api.Memory.IdentityDomain = func(bl string) (string, bool) {
+		d, ok := domains[bl]
+		return d, ok
+	}
+	tok := e.token(t, "demo/u1", time.Hour)
+
+	// 跨域创建被拒（400），错误只含业务线名，不泄露身份域名。
+	code, body := e.do(t, http.MethodPost, "/v1/grants", tok, map[string]any{
+		"from": "demo", "to": "other", "categories": []string{"preference"},
+	})
+	if code != http.StatusBadRequest || !strings.Contains(body, "identity domain") || strings.Contains(body, "corp-a") || strings.Contains(body, "corp-b") {
+		t.Fatalf("cross-domain POST /v1/grants = %d %s", code, body)
+	}
+	// 未登记业务线同样返回 400。
+	code, body = e.do(t, http.MethodPost, "/v1/grants", tok, map[string]any{
+		"from": "demo", "to": "ghost", "categories": []string{"preference"},
+	})
+	if code != http.StatusBadRequest || !strings.Contains(body, "ghost") {
+		t.Fatalf("unknown line POST /v1/grants = %d %s", code, body)
+	}
+	// 原先在未配置身份域时建好的 demo -> other 授权，跨域后不再出现在 GET /v1/grants。
+	code, body = e.do(t, http.MethodGet, "/v1/grants", tok, nil)
+	if code != http.StatusOK || strings.Contains(body, e.grant) {
+		t.Fatalf("cross-domain GET /v1/grants = %d %s", code, body)
+	}
+	// 但仍可通过 DELETE 撤销，便于清理。
+	if code, body := e.do(t, http.MethodDelete, "/v1/grants/"+e.grant, tok, nil); code != http.StatusNoContent {
+		t.Fatalf("cross-domain DELETE /v1/grants = %d %s", code, body)
+	}
+
+	// 同域后可创建（201）并出现在列表中。
+	domains["other"] = "corp-a"
+	code, body = e.do(t, http.MethodPost, "/v1/grants", tok, map[string]any{
+		"from": "demo", "to": "other", "categories": []string{"preference"},
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("same-domain POST /v1/grants = %d %s", code, body)
+	}
+
+	// 即便在 Unrestricted 模式下（跳过 httpapi 的业务线归属检查），仍经 memory.Service 拦截跨域创建。
+	domains["other"] = "corp-b"
+	e.api.Auth = auth.Insecure{}
+	unrestricted := httptest.NewServer(e.api.Handler())
+	defer unrestricted.Close()
+	e.srv = unrestricted
+	code, body = e.do(t, http.MethodPost, "/v1/grants?business_line=demo&end_user=u1", "", map[string]any{
+		"from": "demo", "to": "other", "categories": []string{"preference"},
+	})
+	if code != http.StatusBadRequest || !strings.Contains(body, "identity domain") {
+		t.Fatalf("unrestricted cross-domain POST /v1/grants = %d %s", code, body)
+	}
+}

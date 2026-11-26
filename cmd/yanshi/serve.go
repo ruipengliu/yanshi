@@ -608,6 +608,7 @@ func serve(args []string) error {
 		HealthAllowed: healthAllowed(*authMode, lines),
 		// -auth none 没有业务线服务端来登记同意，视为所有 EndUser 都已同意（ADR-0022 修订第 4 条）。
 		HealthEveryone: *authMode == "none",
+		IdentityDomain: identityDomain(*authMode, lines),
 		Live:           bus, LiveEndpoint: liveEndpoint, LeaseTTL: *leaseTTL, DrainTimeout: *drainTimeout, Logger: logger,
 	}
 	if *embedModel != "" {
@@ -1015,4 +1016,21 @@ func healthAllowed(authMode string, lines []auth.BusinessLine) func(string) bool
 		enabled[bl.Name] = bl.Memory.Health
 	}
 	return func(bl string) bool { return enabled[bl] }
+}
+
+// identityDomain 返回各业务线声明的 EndUser 身份域（ADR-0064）：跨业务线 Memory Grant 只在声明了相同非空身份域的
+// 两条业务线之间创建与生效；为空表示独占身份域，不与任何其他业务线共享。
+// -auth none 是只监听回环地址的开发模式，没有业务线配置，返回 nil（不做身份域检查）。
+func identityDomain(authMode string, lines []auth.BusinessLine) func(string) (string, bool) {
+	if authMode == "none" {
+		return nil
+	}
+	domains := make(map[string]string, len(lines))
+	for _, bl := range lines {
+		domains[bl.Name] = bl.IdentityDomain
+	}
+	return func(bl string) (string, bool) {
+		d, ok := domains[bl]
+		return d, ok
+	}
 }

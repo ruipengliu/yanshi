@@ -44,6 +44,9 @@ type Service struct {
 	// （ADR-0022 修订，由 app.NewCore 组合）；nil 表示一律不可用。不可用时不能写入 health 类别，也不召回、不检索该类别，
 	// 其他业务线经 Grant 也读不到。
 	Health func(ctx context.Context, businessLine, endUser string) (bool, error)
+	// IdentityDomain 返回业务线声明的 EndUser 身份域与是否已登记（ADR-0064）；domain 为空表示独占身份域，
+	// 不与任何其他业务线共享。为 nil 时不做身份域检查（开发模式、评测与模拟测试）。
+	IdentityDomain func(businessLine string) (domain string, known bool)
 }
 
 func (s *Service) healthAllowed(ctx context.Context, businessLine, endUser string) (bool, error) {
@@ -51,6 +54,18 @@ func (s *Service) healthAllowed(ctx context.Context, businessLine, endUser strin
 		return false, nil
 	}
 	return s.Health(ctx, businessLine, endUser)
+}
+
+// sameIdentityDomain 报告两条业务线能否互相创建或生效 Memory Grant（ADR-0064）。
+// 未配置 IdentityDomain 时不限制；配置后双方都须已登记，且声明了相同的非空身份域。
+// 身份域为空表示独占，不与任何其他业务线同域（即便另一方把 identity_domain 写成前者的名称）。
+func (s *Service) sameIdentityDomain(a, b string) bool {
+	if s.IdentityDomain == nil {
+		return true
+	}
+	da, okA := s.IdentityDomain(a)
+	db, okB := s.IdentityDomain(b)
+	return okA && okB && da != "" && da == db
 }
 
 // withoutHealth 返回除 health 外的全部类别。
@@ -442,7 +457,7 @@ func (s *Service) Scopes(ctx context.Context, endUser, reader string, t time.Tim
 	byFrom := map[string][]Category{}
 	var order []string
 	for _, g := range grants {
-		if !g.ActiveAt(t) || g.From == reader {
+		if !g.ActiveAt(t) || g.From == reader || !s.sameIdentityDomain(g.From, reader) {
 			continue
 		}
 		if _, ok := byFrom[g.From]; !ok {
@@ -571,6 +586,19 @@ func (s *Service) CreateGrant(ctx context.Context, endUser, from, to string, cat
 	if from == "" || to == "" || from == to {
 		return nil, fmt.Errorf("%w: a grant needs two different business lines", ErrRejected)
 	}
+	if s.IdentityDomain != nil {
+		fromDomain, fromKnown := s.IdentityDomain(from)
+		if !fromKnown {
+			return nil, fmt.Errorf("%w: unknown business line %q", ErrRejected, from)
+		}
+		toDomain, toKnown := s.IdentityDomain(to)
+		if !toKnown {
+			return nil, fmt.Errorf("%w: unknown business line %q", ErrRejected, to)
+		}
+		if fromDomain == "" || fromDomain != toDomain {
+			return nil, fmt.Errorf("%w: business lines %q and %q must share an identity domain", ErrRejected, from, to)
+		}
+	}
 	if len(categories) == 0 {
 		return nil, fmt.Errorf("%w: at least one category is required", ErrRejected)
 	}
@@ -665,8 +693,19 @@ func (s *Service) Accesses(ctx context.Context, endUser, owner string, since tim
 }
 
 // ListGrants 返回 EndUser 涉及业务线 businessLine 的全部授权（含已撤销）。
+// 配置了 IdentityDomain 时，跳过任一方未登记或不在同一身份域的授权（ADR-0064）。
 func (s *Service) ListGrants(ctx context.Context, endUser, businessLine string) ([]*Grant, error) {
-	return s.Grants.List(ctx, endUser, businessLine)
+	list, err := s.Grants.List(ctx, endUser, businessLine)
+	if err != nil || s.IdentityDomain == nil {
+		return list, err
+	}
+	out := make([]*Grant, 0, len(list))
+	for _, g := range list {
+		if s.sameIdentityDomain(g.From, g.To) {
+			out = append(out, g)
+		}
+	}
+	return out, nil
 }
 
 // RevokeGrant 撤销 EndUser 的一条授权；调用方所在的业务线须是授权的一方。撤销立即生效（ADR-0016）。

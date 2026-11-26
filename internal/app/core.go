@@ -101,6 +101,9 @@ type Options struct {
 	// HealthEveryone 视开启健康信息的业务线中所有 EndUser 都已同意：-auth none 的开发模式与评测没有业务线服务端来登记
 	// （ADR-0022 修订第 4 条）。
 	HealthEveryone bool
+	// IdentityDomain 返回业务线声明的 EndUser 身份域与是否已登记（ADR-0064）；domain 为空表示独占身份域。
+	// nil 表示不做身份域检查（-auth none 开发模式、评测与模拟测试）。
+	IdentityDomain func(businessLine string) (domain string, known bool)
 	Embedder       memory.Embedder
 	EmbedModel     string
 	// Live 是本进程的增量总线，LiveEndpoint 是供其他进程拉取增量的内部地址（ADR-0013）。
@@ -180,7 +183,7 @@ func NewCore(stores Stores, opts Options) *Core {
 	}
 	// Memory（docs/design/m4-memory-grant.md）：Agent 通过能力读写，Run 开始时召回。
 	c.Memory = &memory.Service{Store: stores.Memories, Grants: stores.Grants, Deletions: stores.Deletions, Clock: opts.Clock,
-		IDs: opts.IDs("mem"), Embedder: opts.Embedder, EmbedModel: opts.EmbedModel}
+		IDs: opts.IDs("mem"), Embedder: opts.Embedder, EmbedModel: opts.EmbedModel, IdentityDomain: opts.IdentityDomain}
 	if opts.HealthAllowed != nil {
 		c.Memory.Health = c.healthAllowed
 	}

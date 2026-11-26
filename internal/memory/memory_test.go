@@ -560,6 +560,148 @@ func TestReplaceRequiresSameCategory(t *testing.T) {
 	}
 }
 
+// TestGrantsIdentityDomain 验证跨业务线 Memory Grant 的身份域约束（ADR-0064）：
+// 同域可建且召回与列举生效；跨域、任一方未登记、任一方身份域为空（包括另一方显式写前者名称）均拒绝；
+// 配置改为跨域后 Scopes 与 ListGrants 立即跳过旧授权，RevokeGrant 仍可用；IdentityDomain 为 nil 时维持现状。
+func TestGrantsIdentityDomain(t *testing.T) {
+	ctx := context.Background()
+	t0 := time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC)
+	clk := clock.NewFake(t0)
+	s, _ := newService(clk)
+	s.MaxPerUser = 100
+
+	domains := map[string]string{
+		"a":     "corp-secret-domain",
+		"b":     "corp-secret-domain",
+		"c":     "other-domain",
+		"solo1": "",
+		"solo2": "",
+		"mimic": "solo1", // 显式把身份域写成 solo1 的业务线名，仍不得与未声明身份域的 solo1 同域
+	}
+	s.IdentityDomain = func(bl string) (string, bool) {
+		d, ok := domains[bl]
+		return d, ok
+	}
+
+	for call, r := range map[string]memory.SaveRequest{
+		"a1": {BusinessLine: "a", Category: memory.Preference, Content: "A 的偏好"},
+		"b1": {BusinessLine: "b", Category: memory.Plan, Content: "B 自己的计划"},
+	} {
+		r.EndUser, r.CallID = "u", call
+		if _, err := s.Save(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	prefs := []memory.Category{memory.Preference}
+
+	// 同域可建，召回与 ListGrants 均生效。
+	g1, err := s.CreateGrant(ctx, "u", "a", "b", prefs, time.Time{})
+	if err != nil {
+		t.Fatalf("same-domain CreateGrant failed: %v", err)
+	}
+	g2, err := s.CreateGrant(ctx, "u", "a", "b", []memory.Category{memory.Relationship}, time.Time{})
+	if err != nil {
+		t.Fatalf("second same-domain CreateGrant failed: %v", err)
+	}
+	scopes, err := s.Scopes(ctx, "u", "b", t0)
+	if err != nil || len(scopes) != 2 || scopes[1].BusinessLine != "a" {
+		t.Fatalf("same-domain Scopes = %+v, %v", scopes, err)
+	}
+	hits, err := s.Search(ctx, "u", "b", "", 10)
+	if err != nil || len(hits) != 2 {
+		t.Fatalf("same-domain Search = %+v, %v", hits, err)
+	}
+	listed, err := s.ListGrants(ctx, "u", "b")
+	if err != nil || len(listed) != 2 {
+		t.Fatalf("same-domain ListGrants = %+v, %v", listed, err)
+	}
+
+	// 跨域、未登记、双空、单空+同名伪造均被拒绝，且错误只含业务线名、不含身份域名。
+	rejected := []struct {
+		name     string
+		from, to string
+		wantSubs []string
+	}{
+		{"cross domain", "a", "c", []string{"identity domain", "a", "c"}},
+		{"unknown to", "a", "ghost", []string{"ghost"}},
+		{"unknown from", "ghost", "a", []string{"ghost"}},
+		{"both empty", "solo1", "solo2", []string{"identity domain", "solo1", "solo2"}},
+		{"empty vs explicit business line name (from empty)", "solo1", "mimic", []string{"identity domain", "solo1", "mimic"}},
+		{"empty vs explicit business line name (to empty)", "mimic", "solo1", []string{"identity domain", "mimic", "solo1"}},
+	}
+	for _, tc := range rejected {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := s.CreateGrant(ctx, "u", tc.from, tc.to, prefs, time.Time{})
+			if !errors.Is(err, memory.ErrRejected) {
+				t.Fatalf("CreateGrant(%s, %s) err = %v, want ErrRejected", tc.from, tc.to, err)
+			}
+			for _, sub := range tc.wantSubs {
+				if !strings.Contains(err.Error(), sub) {
+					t.Errorf("err %q missing %q", err.Error(), sub)
+				}
+			}
+			if strings.Contains(err.Error(), "corp-secret-domain") || strings.Contains(err.Error(), "other-domain") {
+				t.Errorf("err %q leaked identity domain name", err.Error())
+			}
+		})
+	}
+
+	// 配置变更：把 b 移到另一个身份域后，Scopes 与 ListGrants 不再返回旧授权，但 RevokeGrant 仍可用。
+	domains["b"] = "split-domain"
+	scopes, err = s.Scopes(ctx, "u", "b", t0)
+	if err != nil || len(scopes) != 1 || scopes[0].BusinessLine != "b" {
+		t.Fatalf("after split Scopes = %+v, %v; want only b", scopes, err)
+	}
+	hits, err = s.Search(ctx, "u", "b", "", 10)
+	if err != nil || len(hits) != 1 || hits[0].BusinessLine != "b" {
+		t.Fatalf("after split Search = %+v, %v; want only b", hits, err)
+	}
+	if listed, err := s.ListGrants(ctx, "u", "b"); err != nil || len(listed) != 0 {
+		t.Fatalf("after split ListGrants(b) = %+v, %v; want empty", listed, err)
+	}
+	if listed, err := s.ListGrants(ctx, "u", "a"); err != nil || len(listed) != 0 {
+		t.Fatalf("after split ListGrants(a) = %+v, %v; want empty", listed, err)
+	}
+	// 撤销不受身份域变化影响，便于清理。
+	if err := s.RevokeGrant(ctx, "u", "b", g1.ID); err != nil {
+		t.Fatalf("RevokeGrant after split failed: %v", err)
+	}
+	// 若从配置中移除 a（未登记），同样跳过旧授权。
+	delete(domains, "a")
+	if scopes, err := s.Scopes(ctx, "u", "b", t0); err != nil || len(scopes) != 1 {
+		t.Fatalf("after unregistering a Scopes = %+v, %v", scopes, err)
+	}
+	// 若配置改回同域：已撤销的 g1 仍不生效，未撤销的 g2 恢复可见（ADR-0064 Consequences）。
+	domains["a"] = "corp-secret-domain"
+	domains["b"] = "corp-secret-domain"
+	scopes, err = s.Scopes(ctx, "u", "b", t0)
+	if err != nil || len(scopes) != 2 || !slices.Equal(scopes[1].Categories, []memory.Category{memory.Relationship}) {
+		t.Fatalf("after rejoin Scopes = %+v, %v; want only unrevoked g2", scopes, err)
+	}
+	if listed, err := s.ListGrants(ctx, "u", "b"); err != nil || len(listed) != 2 {
+		t.Fatalf("after rejoin ListGrants = %+v, %v; want 2 (including revoked g1)", listed, err)
+	}
+	if err := s.RevokeGrant(ctx, "u", "a", g2.ID); err != nil {
+		t.Fatalf("RevokeGrant g2 failed: %v", err)
+	}
+
+	// IdentityDomain 为 nil 时不做检查（开发模式、评测与模拟测试维持现状）。
+	unrestricted, _ := newService(clk)
+	if _, err := unrestricted.Save(ctx, memory.SaveRequest{BusinessLine: "x", EndUser: "u", CallID: "x1", Category: memory.Preference, Content: "X 的偏好"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := unrestricted.CreateGrant(ctx, "u", "x", "y", prefs, time.Time{}); err != nil {
+		t.Fatalf("nil IdentityDomain CreateGrant failed: %v", err)
+	}
+	if scopes, err := unrestricted.Scopes(ctx, "u", "y", t0); err != nil || len(scopes) != 2 {
+		t.Fatalf("nil IdentityDomain Scopes = %+v, %v", scopes, err)
+	}
+	if listed, err := unrestricted.ListGrants(ctx, "u", "y"); err != nil || len(listed) != 1 {
+		t.Fatalf("nil IdentityDomain ListGrants = %+v, %v", listed, err)
+	}
+}
+
 // 测试用实际调用身份引用调用派生的对象。
 func scopedMemoryID(line, endUser, sessionID, callID string) string {
 	id, err := memory.CallMemoryID(memory.SaveRequest{BusinessLine: line, EndUser: endUser, SessionID: sessionID, CallID: callID})

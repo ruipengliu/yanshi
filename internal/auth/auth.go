@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/golang-jwt/jwt/v5"
 	"gopkg.in/yaml.v3"
@@ -74,7 +75,10 @@ type Key struct {
 // BusinessLine 是一条业务线的鉴权配置（businesslines/*.yaml）。
 type BusinessLine struct {
 	Name string `yaml:"name"`
-	Keys []Key  `yaml:"keys"`
+	// IdentityDomain 声明该业务线所属的 EndUser 身份域（ADR-0064）：跨业务线的 Memory Grant
+	// 只在声明了相同非空身份域的两条业务线之间创建与生效；为空表示独占，不与任何其他业务线共享。
+	IdentityDomain string `yaml:"identity_domain,omitempty"`
+	Keys           []Key  `yaml:"keys"`
 	// MaxTTL 是令牌允许的最长有效期，默认 1 小时。
 	MaxTTL time.Duration `yaml:"max_ttl"`
 	// Retention 是该业务线 Session 的保留策略（docs/design/m2-session-lifecycle.md §5）。
@@ -121,6 +125,9 @@ func LoadDir(dir string) ([]BusinessLine, error) {
 		if err := yaml.Unmarshal(b, &bl); err != nil {
 			return nil, fmt.Errorf("%s: %w", f, err)
 		}
+		if err := validateIdentityDomain(bl.IdentityDomain); err != nil {
+			return nil, fmt.Errorf("%s: %w", f, err)
+		}
 		if bl.Oneshots.MaxConcurrency < 0 {
 			return nil, fmt.Errorf("%s: oneshots.max_concurrency must be nonnegative", f)
 		}
@@ -133,6 +140,15 @@ func LoadDir(dir string) ([]BusinessLine, error) {
 		out = append(out, bl)
 	}
 	return out, nil
+}
+
+// validateIdentityDomain 校验业务线的身份域声明（ADR-0064）：为空表示独占身份域；
+// 非空时不得含空白或控制字符，避免前后空格或不可见字符导致意外隔离或误配。
+func validateIdentityDomain(domain string) error {
+	if strings.ContainsFunc(domain, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+		return fmt.Errorf("identity_domain %q must not contain whitespace or control characters", domain)
+	}
+	return nil
 }
 
 // MaxTTLLimit 是任何业务线可配置的 max_ttl 上限：令牌不可吊销，有效期必须短。
@@ -165,6 +181,9 @@ func NewJWT(audience string, c clock.Clock, lines ...BusinessLine) (*JWT, error)
 	for _, bl := range lines {
 		if bl.Name == "" || names[bl.Name] {
 			return nil, fmt.Errorf("auth: business line name %q missing or duplicated", bl.Name)
+		}
+		if err := validateIdentityDomain(bl.IdentityDomain); err != nil {
+			return nil, fmt.Errorf("auth: business line %s: %w", bl.Name, err)
 		}
 		names[bl.Name] = true
 		ttl := bl.MaxTTL

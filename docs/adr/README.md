@@ -29,7 +29,7 @@
 |---|---|---|---|---|---|---|---|
 | [0001](0001-private-deployment.md) | 私有化部署，不依赖公有云托管服务 | accepted | 已实现 | 一 | 不再承接私有化；某项必需能力无法自托管 | — | |
 | [0002](0002-device-as-node.md) | 设备即节点 | accepted | 已实现 | 二 | 需接入无法嵌入 HostApp 的端 | — | |
-| [0003](0003-memory-owned-by-business-line-shared-by-grant.md) | Memory 归属业务线，经 Grant 共享 | accepted | 已实现 | 二 | 新的分类或以 EndUser 为单位的授权；共享 Memory 的业务线分属不同单元 | — | |
+| [0003](0003-memory-owned-by-business-line-shared-by-grant.md) | Memory 归属业务线，经 Grant 共享 | accepted | 已实现 | 二 | 新的分类或以 EndUser 为单位的授权；共享 Memory 的业务线分属不同单元 | 补充约束见 0064 | |
 | [0004](0004-event-log-as-source-of-truth.md) | Event 日志是唯一事实源 | accepted | 已实现 | 一 | 重放超出恢复目标；Session 内部分删除的法定要求 | — | |
 | [0005](0005-realtime-and-async-split.md) | Call 与 Run 分离 | accepted | 已实现 | 二 | 实时模型能安全地直接调用能力；回注延迟成瓶颈；弱网 | — | |
 | [0006](0006-protobuf-as-contract-idl.md) | Protobuf 作跨端与存储契约 | accepted | 已实现 | 一 | 新端无代码生成；破坏性变更反复出现 | — | |
@@ -40,7 +40,7 @@
 | [0011](0011-s3-api-as-artifact-storage-contract.md) | S3 API 作工件存储契约 | accepted | 已实现 | 三 | 私有化客户无 S3 兼容存储；需预签名直传 | — | |
 | [0012](0012-context-compaction-as-event.md) | 上下文压缩记为 Event | accepted | 已实现 | 三 | 压缩相关评测回归；需多级或选择性压缩 | — | |
 | [0013](0013-live-deltas-pulled-from-executing-process.md) | 实时增量从执行进程拉取 | accepted（现行技术选择） | 已实现 | 二 | 进程间无法直连；连接数超线性 | — | |
-| [0014](0014-business-line-signed-tokens.md) | 业务线签发令牌 | accepted（2026-11-25 部分修订：0063 的步令牌） | 已实现 | 二 | 客户要求统一身份；需要即时吊销 | Consequences 第一条由 0063 修订 | |
+| [0014](0014-business-line-signed-tokens.md) | 业务线签发令牌 | accepted（2026-11-25 部分修订：0063 的步令牌） | 已实现 | 二 | 客户要求统一身份；需要即时吊销 | Consequences 第一条由 0063 修订；跨线 Grant 身份域见 0064 | |
 | [0015](0015-session-deletion-by-physical-removal.md) | Session 物理删除 | 已修订（ADR-0050） | 已实现 | 一 | 备份须即时失效；Session 内部分删除的法定要求 | — | |
 | [0016](0016-memory-recall-as-event-and-category-grants.md) | 召回记为 Event，按类别授权 | 已修订（ADR-0022） | 已实现 | 二 | 新分类；以 EndUser 为单位的授权 | — | |
 | [0017](0017-mcp-servers-as-capability-providers.md) | MCP Server 作能力提供者 | accepted | 已实现 | 三 | 三方 MCP 需按用户 OAuth 且业务线无法代理；需云端 stdio | — | |
@@ -90,6 +90,7 @@
 | [0061](0061-taint-gated-mcp-tools.md) | MCP 写工具按来源条件审批（`taint_gated`） | accepted（2026-11-22 定稿） | 已实现 | 二 | 业务线反馈先查后写审批过多且有可信结果判据；注入判断退出影子模式 | 补充 ADR-0017、ADR-0023；修订 MCP 适配 §2、§3 | |
 | [0062](0062-external-loop-contract.md) | 外部循环的契约：自定义协议、无状态单步与一致性套件 | accepted（2026-11-24 定稿） | 已实现（接缝、契约、客户端、计量与压缩上限，2026-11-24；模拟测试、`looptest` 与参考适配 `sdk/python`，2026-11-25） | 二 | AG-UI 等协议稳定且被目标框架普遍原生支持；状态超 64 KiB 或需跨 Run；三方 Agent 需作外部循环；开始实施 | 修订 0041（契约）；补充 0056 B 期 | |
 | [0063](0063-loop-model-gateway-and-step-token.md) | 外部循环经内核调用模型，每步请求携带平台签发的步令牌 | accepted（2026-11-25 定稿） | 已实现（步令牌、模型端点、`loop.models`、启动检查、looptest 检查、评测驱动外部循环、参考适配，2026-11-25） | 二 | 外部服务普遍需要内核未接入的提供商；端点成为步时延的主要来源；托管三方需要外部循环；业务线须区分平台签发与共享密钥持有方 | 补充 0062，修订其 Consequences（外部模型用量）；修订 0014 Consequences（yanshi 保存循环的 HMAC 密钥） | |
+| [0064](0064-identity-domains-for-cross-line-grants.md) | 业务线声明身份域，限制跨业务线 Memory Grant | accepted（2026-11-26 定稿） | 已实现 | 二 | 不同域出现节点 ID 碰撞；需跨不同账号体系映射共享；客户要求统一身份；拆域需不可逆清除旧授权 | 补充约束 0003、0014 | |
 
 ## 业务层 ADR
 

@@ -15,6 +15,7 @@
 - [ ] **价格表填入合同价**（[设计](./design/m4-quota-usage.md)）。`pricing.yaml` 中 ark、tokenhub 的价格与沙箱单价是占位值。
 - [x] **生产沙箱**（ADR-0053，[设计](./design/m2-sandbox.md) §7）。2026-11-21：隔离技术选定（K8s Provider，隔离经 RuntimeClass，默认 gVisor，有 KVM 时可选 Kata），K8s Provider 已实现（`serve -sandbox k8s`），在单节点 k3s + gVisor 上通过一致性套件并复测（冷启动 p95 667 ms，30 路并发 exec p95 208 ms，见 ADR-0053）；部署清单改为沙箱命名空间内的最小权限，不再挂载 `docker.sock`。在目标集群上的验证见下面的"生产部署形态"。云厂商沙箱只作为公有云部署可选的 Provider。
 - [ ] **业务线配置**：每条业务线的密钥、保留策略与配额已按约定填写（`businesslines/*.yaml`）。
+- [ ] **身份域声明**（[ADR-0064](./adr/0064-identity-domains-for-cross-line-grants.md)）：需要共享 Memory 的业务线已在 `businesslines/*.yaml` 中声明相同的 `identity_domain`，并已确认它们使用同一套 EndUser 账号体系；不共享的业务线留空（默认独占）。
 - [ ] **数据库长事务约束**（[部署](./design/deployment.md) §4）：在线角色已设 `statement_timeout`、`idle_in_transaction_session_timeout`，`max_prepared_transactions = 0`，迁移、备份与报表使用独立角色；出站水位滞后与最老事务指标已接入告警。
 - [ ] **定义访问**（ADR-0060）：每条业务线按约定声明 `agents.allow` 和 `oneshots.allow`，其他业务线的列表及 glob 均未覆盖私有定义。
 - [ ] **外部循环的步令牌与模型端点**（ADR-0063，[部署](./design/deployment.md) §9a）：登记了外部循环的部署，worker 与 gateway 挂载同一份 `loops/` 并从密钥存储注入相同的 `token_keys`（每把至少 32 个随机字节）；`/v1/loop/` 只对业务线网络开放；`-loop-model-concurrency` 按提供商账号容量分摊；轮换按两次发布执行；这个路由的 401 与 503 已接入告警。
