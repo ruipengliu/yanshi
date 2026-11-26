@@ -88,11 +88,11 @@ func startLoops(ctx context.Context, cfg *Config, agents *agentdef.Registry) (st
 	cfg.loops = &loopState{key: extloop.TokenKey{KID: "eval", Secret: hex.EncodeToString(secret)}, usage: map[string]*v1.Usage{}}
 	keys := []extloop.TokenKey{cfg.loops.key}
 	endpoint := &extloop.Endpoint{
-		Keys: func(bl, name string) []extloop.TokenKey {
+		Keys: func(bl, name string) ([]extloop.TokenKey, time.Duration) {
 			if _, ok := cfg.Loops[name]; ok && (bl == BusinessLine || bl == NoHealthBusinessLine) {
-				return keys
+				return keys, extloop.DefaultTimeout
 			}
-			return nil
+			return nil, 0
 		},
 		Agents: agents, Model: cfg.Model, Clock: clock.Real{}, IDs: ids.Random(), Logger: cfg.Logger, OnUsage: cfg.loops.add,
 	}

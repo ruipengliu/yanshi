@@ -334,6 +334,8 @@ func serve(args []string) error {
 	oneshotsDir := fs.String("oneshots", "oneshots", "单次调用声明目录；不存在时不提供接口")
 	benchUnreserved := fs.Bool("bench-oneshot-unreserved", false, "仅压测：允许 bench 单次调用占满模型并发；需 YANSHI_BENCH_TTFT=1、memory 存储")
 	oneshotMax := fs.Int("oneshot-concurrency", oneshot.DefaultMax, "单次调用合计并发上限，须小于受限的模型并发上限")
+	loopModelMax := fs.Int("loop-model-concurrency", extloop.DefaultEndpointMax,
+		"外部循环经内核模型端点调用的合计并发上限，须小于受限的模型并发上限（ADR-0063）")
 	oneshotWait := fs.Duration("oneshot-wait", oneshot.DefaultWait, "单次调用每层并发名额的最长等待")
 	oneshotDeadline := fs.Duration("oneshot-deadline", oneshot.DefaultDeadline, "单次调用总时限，含排队、审核与修复调用")
 	workers := fs.Int("workers", 4, "Worker 数量")
@@ -612,6 +614,11 @@ func serve(args []string) error {
 		opts.Embedder, opts.EmbedModel = gw, *embedModel
 	}
 	if len(loopServers) > 0 {
+		// 端点的调用与 Run 的交互调用同类准入：合计上限须给内置循环留出提供商的名额。
+		if *loopModelMax <= 0 || (modelLimits.MaxConcurrency > 0 && *loopModelMax >= modelLimits.MaxConcurrency) {
+			return errors.New("-loop-model-concurrency must be positive and below -model-concurrency")
+		}
+		opts.LoopModelMax = *loopModelMax
 		opts.Loops = extloop.NewRegistry(loopServers, nil)
 		for _, s := range loopServers {
 			logger.Info("loop registered", "name", s.Name, "business_line", s.BusinessLine, "url", s.URL)

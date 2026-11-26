@@ -21,8 +21,9 @@ const (
 	clockLeeway = 5 * time.Second
 )
 
-// TokenKey 是签发步令牌的一把 HMAC 密钥。登记可列多把：签发用第一把，验证接受全部。轮换是"加新钥、置首、
-// 等旧令牌过期（一步的时限）、删旧钥"。
+// TokenKey 是签发步令牌的一把 HMAC 密钥（至少 32 个随机字节的编码，如 openssl rand -base64 32）。登记可列多把：
+// 签发用第一把，验证接受全部。签发（worker 角色）与验证（gateway 角色）各读自己的登记，所以轮换分两次发布：
+// 先在所有进程加上新钥（排在后面），再把它置首；等旧令牌过期（一步的时限）后删旧钥。
 type TokenKey struct {
 	KID    string `yaml:"kid"`
 	Secret string `yaml:"secret"`
@@ -62,13 +63,21 @@ func SignStep(keys []TokenKey, c StepClaims, now time.Time, ttl time.Duration) (
 // ErrStepToken 是步令牌无效（签名、有效期、密钥或声明）。不区分原因：错误会回给外部服务。
 var ErrStepToken = errors.New("invalid step token")
 
-// VerifyStep 验证步令牌：keys 按声明中的 (业务线, 循环) 取出登记的密钥，按头中的 kid 选一把。
-func VerifyStep(token string, keys func(businessLine, loop string) []TokenKey, now time.Time) (*StepClaims, error) {
+// KeyLookup 按 (业务线, 循环) 取出登记的密钥与一步的时限；没有这个登记时 keys 为空。
+type KeyLookup func(businessLine, loop string) (keys []TokenKey, stepTimeout time.Duration)
+
+// VerifyStep 验证步令牌：按声明中的 (业务线, 循环) 取出登记的密钥，按头中的 kid 选一把；有效期不得长于登记的
+// 一步时限。持有密钥的一方（业务线，或从外部服务处窃得密钥者）能签发任意声明的令牌，验证方因此不信令牌自报的
+// 有效期：否则一张令牌可以用到 2099 年，"至多一步"与"等旧令牌过期再删旧钥"都不成立。
+func VerifyStep(token string, keys KeyLookup, now time.Time) (*StepClaims, error) {
 	c := &StepClaims{}
+	var ttl time.Duration
 	_, err := jwt.ParseWithClaims(token, c, func(t *jwt.Token) (any, error) {
 		kid, _ := t.Header["kid"].(string)
 		// 解析阶段的声明尚未验证，只用来找密钥：伪造的业务线或循环名找到的是别人的密钥，签名验不过。
-		for _, k := range keys(c.BusinessLine, c.Loop) {
+		var ks []TokenKey
+		ks, ttl = keys(c.BusinessLine, c.Loop)
+		for _, k := range ks {
 			if k.KID == kid {
 				return []byte(k.Secret), nil
 			}
@@ -77,7 +86,11 @@ func VerifyStep(token string, keys func(businessLine, loop string) []TokenKey, n
 	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}), jwt.WithIssuer(stepIssuer),
 		jwt.WithAudience(stepAudience), jwt.WithExpirationRequired(), jwt.WithIssuedAt(), jwt.WithLeeway(clockLeeway),
 		jwt.WithTimeFunc(func() time.Time { return now }))
-	if err != nil || c.BusinessLine == "" || c.Loop == "" || c.SessionID == "" || c.RunID == "" || c.AgentName == "" {
+	if err != nil || c.BusinessLine == "" || c.Loop == "" || c.SessionID == "" || c.RunID == "" || c.AgentName == "" || c.EndUser == "" {
+		return nil, ErrStepToken
+	}
+	// iat 必填：有效期按 exp - iat 核对。秒级精度的取整由 leeway 吸收。
+	if c.IssuedAt == nil || c.ExpiresAt.Sub(c.IssuedAt.Time) > ttl+clockLeeway {
 		return nil, ErrStepToken
 	}
 	return c, nil

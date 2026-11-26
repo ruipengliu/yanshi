@@ -70,6 +70,8 @@ type Options struct {
 	// SandboxTools 为 true 时登记沙箱工具；是否有控制器执行它们由调用方按进程角色决定（ControllerConfig）。
 	SandboxTools bool
 	MCP          capability.MCPSource
+	// LoopModelMax 是外部循环经内核模型端点调用的合计并发上限，0 取 extloop.DefaultEndpointMax（ADR-0063）。
+	LoopModelMax int
 	// Loops 解析 AgentDef 指向的外部循环登记（ADR-0062，extloop.Registry）；nil 时这样的 Run 以配置错误失败。
 	Loops runtime.Loops
 	// DefaultTimeout 用于未声明超时的设备能力；NodeCacheTTL > 0 时缓存每个 EndUser 的 Node 列表（capability.Catalog）。
@@ -250,8 +252,11 @@ func NewCore(stores Stores, opts Options) *Core {
 			Max: maxCalls, BusinessLineMax: opts.OneshotBusinessLineMax, Wait: wait, Deadline: deadline}
 	}
 	if reg, ok := opts.Loops.(*extloop.Registry); ok && reg != nil {
-		c.LoopModels = &extloop.Endpoint{Keys: reg.Keys, Agents: opts.Agents, Model: opts.Model, Quotas: opts.Quotas, Meter: opts.Meter,
+		c.LoopModels = &extloop.Endpoint{Keys: reg.Keys, Agents: opts.Agents, Model: opts.Model, Quotas: opts.Quotas, Meter: opts.Meter, Max: opts.LoopModelMax,
 			Deletions: stores.Deletions, Clock: opts.Clock, IDs: opts.IDs("use"), Logger: opts.Logger}
+		if opts.DefinitionAccess != nil {
+			c.LoopModels.Access = opts.DefinitionAccess
+		}
 	}
 	local = append(append([]capability.Capability{}, local...), memory.Capabilities(c.Memory)...)
 	c.Catalog.Local = capability.NewRegistry(append(local, c.Service.ScheduleCapability())...)

@@ -208,6 +208,9 @@ type statusWriter struct {
 }
 
 func (w *statusWriter) WriteHeader(code int) { w.code = code; w.ResponseWriter.WriteHeader(code) }
+
+// Unwrap 让 http.ResponseController 找到底层连接（外部循环的模型端点据此设置读请求体的时限）。
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 func (w *statusWriter) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()

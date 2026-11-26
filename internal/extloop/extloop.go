@@ -43,8 +43,9 @@ type Server struct {
 type key struct{ businessLine, name string }
 
 var (
-	nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,23}$`)
-	varRE  = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+	nameRE   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,23}$`)
+	varRE    = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+	secretRE = regexp.MustCompile(`^\$\{[A-Za-z_][A-Za-z0-9_]*\}$`)
 )
 
 // DefaultTimeout 是一步的默认时限。
@@ -112,6 +113,10 @@ func parse(b []byte, getenv func(string) string) (Server, error) {
 		s.Headers[k] = val
 	}
 	for i, k := range s.TokenKeys {
+		// 密钥只能来自环境变量（部署时放在密钥存储中），不能以明文写在登记里。
+		if !secretRE.MatchString(k.Secret) {
+			return Server{}, fmt.Errorf("token_keys %s: secret must be a single ${VAR} reference", k.KID)
+		}
 		val, missing := expand(k.Secret)
 		if len(missing) > 0 {
 			return Server{}, fmt.Errorf("token_keys %s: environment variables %v are not set", k.KID, missing)
@@ -144,12 +149,12 @@ func NewRegistry(servers []Server, hc *http.Client) *Registry {
 	return r
 }
 
-// Keys 返回登记的步令牌密钥；没有这个登记时为空（模型端点据此验证步令牌）。
-func (r *Registry) Keys(businessLine, name string) []TokenKey {
+// Keys 返回登记的步令牌密钥与一步的时限；没有这个登记时为空（KeyLookup，模型端点据此验证步令牌）。
+func (r *Registry) Keys(businessLine, name string) ([]TokenKey, time.Duration) {
 	if c, ok := r.clients[key{businessLine, name}]; ok {
-		return c.Server.TokenKeys
+		return c.Server.TokenKeys, c.Server.Timeout
 	}
-	return nil
+	return nil, 0
 }
 
 func (r *Registry) Loop(businessLine, name string) (runtime.Loop, error) {

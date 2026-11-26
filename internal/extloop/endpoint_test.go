@@ -29,11 +29,11 @@ func testClaims() StepClaims {
 		AgentName: "planner", AgentVersion: "1"}
 }
 
-func keysFor(bl, loop string) []TokenKey {
+func keysFor(bl, loop string) ([]TokenKey, time.Duration) {
 	if bl == "bl" && loop == "plan" {
-		return testKeys
+		return testKeys, time.Minute
 	}
-	return nil
+	return nil, 0
 }
 
 // 步令牌以第一把密钥签发，验证接受登记的任一把；过期、换了声明、别的循环的密钥、无签名算法都被拒绝。
@@ -408,5 +408,127 @@ func TestEndpointModelErrors(t *testing.T) {
 	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(b), "context_length_exceeded") {
 		t.Fatalf("status %d: %s", resp.StatusCode, b)
+	}
+}
+
+// 持有密钥的一方能签发任意声明：有效期长于登记的一步时限、没有 EndUser 的令牌一律拒绝。
+func TestStepTokenBounds(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	long, _ := SignStep(testKeys, testClaims(), now, time.Hour)
+	if _, err := VerifyStep(long, keysFor, now); err == nil {
+		t.Fatal("token outliving the step timeout accepted")
+	}
+	anon := testClaims()
+	anon.EndUser = ""
+	tok, _ := SignStep(testKeys, anon, now, time.Minute)
+	if _, err := VerifyStep(tok, keysFor, now); err == nil {
+		t.Fatal("token without an end user accepted")
+	}
+}
+
+func TestParseRejectsLiteralSecret(t *testing.T) {
+	_, err := parse([]byte("name: plan\nbusiness_line: bl\nurl: https://x\ntoken_keys: [{kid: k1, secret: \""+strings.Repeat("x", 40)+"\"}]\n"),
+		func(string) string { return "" })
+	if err == nil {
+		t.Fatal("literal secret accepted")
+	}
+}
+
+type denyAll struct{}
+
+func (denyAll) AllowsAgent(string, string) bool { return false }
+
+// 令牌里的 AgentDef 须属于令牌的循环、且业务线允许它；不支持的音频格式拒绝。都不调用模型。
+func TestEndpointRejectsForeignAgent(t *testing.T) {
+	for name, setup := range map[string]func(*endpointFixture) string{
+		"agent of another loop": func(f *endpointFixture) string {
+			c := testClaims()
+			c.Loop = "plan"
+			c.AgentName = "other-loop-agent"
+			tok, _ := SignStep(testKeys, c, f.clock.Now(), time.Minute)
+			return tok
+		},
+		"agent not allowed for the business line": func(f *endpointFixture) string {
+			f.e.Access = denyAll{}
+			tok, _ := SignStep(testKeys, testClaims(), f.clock.Now(), time.Minute)
+			return tok
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newEndpoint(t)
+			agents, err := agentdef.NewRegistry(
+				&agentdef.Def{Name: "planner", Version: "1", Context: agentdef.Context{Scope: agentdef.ScopeRun},
+					Loop: &agentdef.LoopRef{Server: "plan", Models: []string{"p/good"}}},
+				&agentdef.Def{Name: "other-loop-agent", Version: "1", Context: agentdef.Context{Scope: agentdef.ScopeRun},
+					Loop: &agentdef.LoopRef{Server: "other", Models: []string{"p/good"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.e.Agents = agents
+			resp := f.post(t, setup(f), chatBody)
+			if resp.StatusCode != http.StatusBadRequest || len(f.calls) != 0 {
+				t.Fatalf("status %d calls %d", resp.StatusCode, len(f.calls))
+			}
+		})
+	}
+	f := newEndpoint(t)
+	body := strings.Replace(chatBody, `{"type":"image_url","image_url":{"url":"data:image/png;base64,AQI="}}`,
+		`{"type":"input_audio","input_audio":{"data":"AQI=","format":"x-unknown"}}`, 1)
+	if resp := f.post(t, f.token(t), body); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unknown audio format: %d", resp.StatusCode)
+	}
+}
+
+// 合计并发上限：名额被占满时，下一次调用排队后返回 503 busy，而不是挤进提供商的准入。
+func TestEndpointConcurrencyCap(t *testing.T) {
+	f := newEndpoint(t)
+	f.e.Max = 1
+	entered, unblock := make(chan struct{}), make(chan struct{})
+	f.e.Model = providerFunc(func(context.Context, *model.Request, func(model.Delta)) (*model.Response, error) {
+		close(entered)
+		<-unblock
+		return &model.Response{Content: model.TextBlocks("ok"), Usage: &v1.Usage{}}, nil
+	})
+	tok := f.token(t)
+	done := make(chan int)
+	go func() {
+		req, _ := http.NewRequest(http.MethodPost, f.srv.URL+EndpointPath, strings.NewReader(chatBody))
+		req.Header.Set("Authorization", "Bearer "+tok)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			done <- 0
+			return
+		}
+		resp.Body.Close()
+		done <- resp.StatusCode
+	}()
+	<-entered
+	resp := f.post(t, tok, chatBody)
+	var e struct {
+		Error struct{ Code string } `json:"error"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&e)
+	close(unblock)
+	if resp.StatusCode != http.StatusServiceUnavailable || e.Error.Code != "busy" {
+		t.Fatalf("second call: %d %q", resp.StatusCode, e.Error.Code)
+	}
+	if got := <-done; got != http.StatusOK {
+		t.Fatalf("first call: %d", got)
+	}
+}
+
+// 调用期间 Session 被删除：输出不交给外部服务。
+func TestEndpointDeletedDuringCall(t *testing.T) {
+	f := newEndpoint(t)
+	f.e.Model = providerFunc(func(ctx context.Context, _ *model.Request, _ func(model.Delta)) (*model.Response, error) {
+		if _, err := f.del.Mark(ctx, &lifecycle.Tombstone{SessionID: "s", BusinessLine: "bl", Reason: "end_user", RequestedAt: f.clock.Now()}); err != nil {
+			t.Error(err)
+		}
+		return &model.Response{Content: model.TextBlocks("秘密"), Usage: &v1.Usage{}}, nil
+	})
+	resp := f.post(t, f.token(t), chatBody)
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusNotFound || strings.Contains(string(b), "秘密") {
+		t.Fatalf("status %d body %s", resp.StatusCode, b)
 	}
 }

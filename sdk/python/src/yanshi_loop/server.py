@@ -49,8 +49,27 @@ def app(decide: Decide, cfg: ModelConfig) -> Starlette:
             reply = await decide(step, cfg)
         except Exception as e:  # noqa: BLE001
             # 模型或框架失败：返回非 200，平台按模型错误处理（ADR-0062 第 4 条）。日志只记 ID，不记内容。
-            log.warning("step failed: session=%s run=%s turn=%s error=%s", step.session_id, step.run_id, step.turn, type(e).__name__)
+            status, code = _error_shape(e)
+            log.warning("step failed: session=%s run=%s turn=%s error=%s status=%s code=%s",
+                        step.session_id, step.run_id, step.turn, type(e).__name__, status, code)
             return JSONResponse({"error": "step failed"}, status_code=502)
         return Response(encode_response(reply), media_type="application/json")
 
     return Starlette(routes=[Route("/", handle, methods=["POST"])])
+
+
+def _error_shape(e: BaseException) -> tuple[object, object]:
+    """取错误的 HTTP 状态与错误码（内核端点的 error.code，如 quota_exceeded、model_not_allowed）。只取结构，
+    不取消息原文：消息可能回显内容。框架常把客户端的错误包一层，沿 __cause__ 找。"""
+    seen: BaseException | None = e
+    while seen is not None:
+        status = getattr(seen, "status_code", None)
+        if status is not None:
+            body = getattr(seen, "body", None)
+            code = None
+            if isinstance(body, dict):
+                err = body.get("error", body)
+                code = err.get("code") if isinstance(err, dict) else None
+            return status, code if isinstance(code, str) and code.isascii() and len(code) <= 64 else None
+        seen = seen.__cause__ or seen.__context__
+    return None, None

@@ -109,11 +109,12 @@ message LoopStepResponse {
 - **失败与时限。** 按模型调用的规则处理（[模型调用](./model-calls.md)）：暂时性失败本步重试，同一 Attempt 连续失败超过 `MaxModelErrors` 使 Run 失败；不合法的回答（调用指向请求以外的工具、状态超限、无法解析）同样计入，且不写日志（2026-11-24，ADR-0062 第 4 条）。流式按 ADR-0056 B 期与外部循环一并实施，已输出增量的步不在连接层重试（原"第一版不流式"不再成立）。
 - **内容安全与计量。** 回复在写日志之前检查，与模型输出相同。用量按"步"计（`Kind="loop"`，价格表 `loops:` 以 `<业务线>/<名称>` 为键）；`max_turns` 照常限制步数。外部服务经内核模型端点的调用另按模型计量（2026-11-25，ADR-0063 第 4 条，见下一条）；不经端点的调用平台看不到，自报的用量不记录（ADR-0062）。
 - **内核模型端点与步令牌（2026-11-25，ADR-0063）。** 登记配置了 `token_keys` 时，每步请求带 `step_token`：以登记的第一把密钥签发的 HS256 JWT，声明业务线、循环、Session、Run、Attempt、Turn、EndUser 与 AgentDef，有效期是这一步的时限（`extloop.SignStep`）。外部服务把 base URL 配成 `<yanshi>/v1/loop`、以步令牌为 API key，按 OpenAI Chat Completions 调用模型（`extloop.Endpoint`）：
-  - 只接受有效的步令牌（不经业务线令牌的中间件），只看签名、有效期与删除记录（Session 或 EndUser 已删除时 404 `session_deleted`），不核对 Attempt 是否当前；调用不超过令牌的有效期。
+  - 只接受有效的步令牌（不经业务线令牌的中间件），只看签名、有效期与删除记录（Session 或 EndUser 已删除时 404 `session_deleted`，调用返回后再查一次），不核对 Attempt 是否当前；调用与读请求体都不超过令牌的有效期。有效期不得长于登记的一步时限，EndUser 不得为空，令牌中的 AgentDef 须属于令牌的循环、且业务线允许它（2026-11-25 评审补充）。
+  - 合计并发上限 `-loop-model-concurrency`（默认 8，须小于提供商并发上限），每步至多 2 个并发调用，排队超过 2 秒返回 503 `busy`；部署要点见[部署](./deployment.md) §9a。
   - 只接受 AgentDef 的 `loop.models` 中的模型；经模型网关调用，准入（后台 Run 的步沿用后台类别）、限流、重试与内置循环相同。
   - 调用前检查配额，超出时 429 `quota_exceeded`（与提供商限流的 `rate_limit_exceeded` 区分，外部服务不应在这一步内重试）；下一步之前 Worker 的检查让 Run 挂起。调用返回后按模型计量（`Kind="model"`，记在令牌声明的业务线、EndUser 与 AgentDef 下，含缓存命中），价格表须有 `loop.models` 中模型的价格。
   - 不做内容安全检查：模型的输出只经这一步的回答到达用户与日志，回答照旧在写日志前检查。
-  - 媒体只接受内联数据（data: URL 与 base64），不转发远程地址；`temperature` 等采样参数忽略。
+  - 媒体只接受内联数据（data: URL 与 base64；图片 png、jpeg、webp、gif，音频 wav、mp3、m4a），不转发远程地址；`temperature` 等采样参数与 `max_tokens` 之外的输出控制忽略。`max_tokens` 由外部服务给出，平台不另设上限：配额在调用前检查，并发上限约束同时进行的调用能超出多少。
   - 每步请求的 `models` 是 `loop.models`（评测时是评测的模型）：外部服务从中选择、默认用第一个，不要写死。
   - `looptest -step-token`（`looptest.Config.TokenKey`）在每步请求中签发步令牌、给出 `models`，检查服务把令牌转给了模型调用、用的是给出的模型；声明了 `loop.models` 的服务须这样通过套件（ADR-0063 第 6 条）。
   - 评测以 `yanshi eval -loop 名称=URL` 驱动正在运行的外部服务（[评测](./m4-eval.md) §3）。

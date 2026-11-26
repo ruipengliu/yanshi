@@ -29,15 +29,33 @@ const EndpointPath = "/v1/loop/chat/completions"
 // maxEndpointRequest 是一次请求的上限：上下文视图与每步请求相同（含内联的图片与音频）。
 const maxEndpointRequest = 32 << 20
 
+const (
+	// DefaultEndpointMax 是经端点的调用的合计并发上限（serve -loop-model-concurrency）。须小于受限的提供商并发：
+	// 端点的调用与 Run 的交互调用同类准入，没有这个上限，一个外部服务凭一张令牌就能占满提供商、让其他业务线排队。
+	DefaultEndpointMax = 8
+	// stepMax 是同一步（同一张令牌）同时进行的调用上限：框架在一步内通常顺序调用模型，留一点并行的余地。
+	stepMax = 2
+	// endpointWait 是在并发上限处排队的最长时间，超过返回 503 busy。
+	endpointWait = 2 * time.Second
+)
+
 // Endpoint 是外部循环调用模型的 OpenAI 兼容端点（ADR-0063）：以步令牌为 API key，只接受 AgentDef 的
 // loop.models 中的模型，经 Model（模型网关与准入）调用，照常计量、执行配额。不做内容安全检查：上下文在进入
 // 外部服务之前已经检查过，模型的输出只经这一步的回答到达用户与日志，回答在写日志之前检查（第 5 条）。
 type Endpoint struct {
-	// Keys 按 (业务线, 循环) 取出登记的步令牌密钥（Registry.Keys）。
-	Keys   func(businessLine, loop string) []TokenKey
+	// Keys 按 (业务线, 循环) 取出登记的步令牌密钥与一步的时限（Registry.Keys）。
+	Keys   KeyLookup
 	Agents interface {
 		Get(*v1.AgentRef) (*agentdef.Def, error)
 	}
+	// Access 非 nil 时，令牌中的 AgentDef 须是业务线的 agents.allow 允许的（ADR-0060）：持有密钥的一方能在令牌里
+	// 写任意 AgentDef，不能借此用到业务线不该用的 AgentDef 及其模型。
+	Access interface {
+		AllowsAgent(businessLine, name string) bool
+	}
+	// Max 是合计并发上限，0 取 DefaultEndpointMax。
+	Max    int
+	Slots  model.Slots
 	Model  model.Provider
 	Quotas *usage.Quotas
 	Meter  *usage.Meter
@@ -70,9 +88,10 @@ func (e *Endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid_api_key", "invalid or expired step token")
 		return
 	}
-	// 调用不超出这一步的时限：步已经超时，回答不会被采用，继续调用只是浪费。
+	// 调用不超出这一步的时限：步已经超时，回答不会被采用，继续调用只是浪费。读请求体同样（慢速上传不能拖过令牌的有效期）。
 	ctx, cancel := context.WithDeadline(ctx, c.ExpiresAt.Time)
 	defer cancel()
+	_ = http.NewResponseController(w).SetReadDeadline(c.ExpiresAt.Time)
 	if c.Background {
 		ctx = model.WithBackground(ctx)
 	}
@@ -93,7 +112,12 @@ func (e *Endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	def, err := e.Agents.Get(&v1.AgentRef{Name: c.AgentName, Version: c.AgentVersion})
-	if err != nil || !def.Loop.AllowsModel(req.Model) {
+	// AgentDef 须指向令牌所属的循环、且业务线允许它：密钥只能为自己这个循环的 AgentDef 调用模型。
+	if err != nil || def.Loop == nil || def.Loop.Server != c.Loop || (e.Access != nil && !e.Access.AllowsAgent(c.BusinessLine, c.AgentName)) {
+		writeError(w, http.StatusBadRequest, "model_not_allowed", "the agent does not belong to this loop")
+		return
+	}
+	if !def.Loop.AllowsModel(req.Model) {
 		writeError(w, http.StatusBadRequest, "model_not_allowed", "the model is not in the agent's loop.models")
 		return
 	}
@@ -112,6 +136,20 @@ func (e *Endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "quota_exceeded", "the quota is exhausted; do not retry within this step")
 		return
 	}
+	maxCalls := e.Max
+	if maxCalls <= 0 {
+		maxCalls = DefaultEndpointMax
+	}
+	release, err := e.Slots.AcquireAll(ctx, []model.SlotReq{
+		{Key: "loop:total", Limit: maxCalls, Wait: endpointWait},
+		{Key: "loop:step:" + c.SessionID + "/" + c.RunID + "/" + fmt.Sprint(c.Attempt, "/", c.Turn), Limit: stepMax, Wait: endpointWait},
+	})
+	if err != nil {
+		status, code := modelStatus(ctx, err)
+		writeError(w, status, code, "the loop endpoint is busy")
+		return
+	}
+	defer release()
 	out := &responder{w: w, model: req.Model, id: "chatcmpl-" + e.IDs(), created: e.Clock.Now().Unix(), stream: req.Stream,
 		usage: req.StreamOptions != nil && req.StreamOptions.IncludeUsage}
 	var onDelta func(model.Delta)
@@ -125,13 +163,28 @@ func (e *Endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		e.Meter.Model(meterCtx, usage.Scope{SessionID: c.SessionID, BusinessLine: c.BusinessLine, EndUser: c.EndUser},
 			"use_"+e.IDs(), agentdef.Label(&v1.AgentRef{Name: c.AgentName, Version: c.AgentVersion}), req.Model, resp.Usage, e.Clock.Now())
 		cancelMeter()
+		metrics.ModelTokens.WithLabelValues("input").Add(float64(resp.Usage.GetInputTokens()))
+		metrics.ModelTokens.WithLabelValues("output").Add(float64(resp.Usage.GetOutputTokens()))
+		metrics.ModelTokens.WithLabelValues("cached_input").Add(float64(resp.Usage.GetCachedInputTokens()))
 		if e.OnUsage != nil {
 			e.OnUsage(c, req.Model, resp.Usage)
 		}
 	}
 	if callErr != nil || resp == nil {
+		// 错误不回给外部服务原文，但要能排查：ProviderError 只含模型、状态码、提供商的错误码与请求 ID（日志只记 ID）。
+		e.log(ctx, "loop endpoint: model call failed", c, callErr)
 		status, code := modelStatus(ctx, callErr)
 		out.fail(status, code)
+		return
+	}
+	// 调用期间 Session 可能被删除：不再把输出交给外部服务（流式时已发出的增量收不回，以错误结束流）。
+	if gone, err := e.deleted(context.WithoutCancel(ctx), c); err != nil || gone {
+		if err != nil {
+			e.log(ctx, "loop endpoint: deletion check failed", c, err)
+			out.fail(http.StatusServiceUnavailable, "unavailable")
+			return
+		}
+		out.fail(http.StatusNotFound, "session_deleted")
 		return
 	}
 	out.finish(resp)
@@ -289,18 +342,15 @@ func contentBlocks(raw json.RawMessage, allowMedia bool) ([]*v1.ContentBlock, er
 			out = append(out, model.TextBlocks(p.Text)...)
 		case p.Type == "image_url" && allowMedia && p.ImageURL != nil:
 			mt, data, ok := dataURL(p.ImageURL.URL)
-			if !ok || !strings.HasPrefix(mt, "image/") {
-				return nil, errors.New("image_url must be a base64 data: URL of an image")
+			if !ok || !imageTypes[mt] {
+				return nil, errors.New("image_url must be a base64 data: URL of a png, jpeg, webp or gif image")
 			}
 			out = append(out, &v1.ContentBlock{Kind: &v1.ContentBlock_Media{Media: &v1.Media{MimeType: mt, Data: data}}})
 		case p.Type == "input_audio" && allowMedia && p.InputAudio != nil:
 			data, err := base64.StdEncoding.DecodeString(p.InputAudio.Data)
-			if err != nil || p.InputAudio.Format == "" {
-				return nil, errors.New("input_audio must carry base64 data and a format")
-			}
-			mt := "audio/" + p.InputAudio.Format
-			if p.InputAudio.Format == "mp3" {
-				mt = "audio/mpeg"
+			mt := audioTypes[p.InputAudio.Format]
+			if err != nil || mt == "" {
+				return nil, errors.New("input_audio must carry base64 data in wav, mp3 or m4a")
 			}
 			out = append(out, &v1.ContentBlock{Kind: &v1.ContentBlock_Media{Media: &v1.Media{MimeType: mt, Data: data}}})
 		default:
@@ -309,6 +359,12 @@ func contentBlocks(raw json.RawMessage, allowMedia bool) ([]*v1.ContentBlock, er
 	}
 	return out, nil
 }
+
+// 媒体类型只收提供商接口支持的（与 internal/model/openaicompat 发出的一致）。
+var (
+	imageTypes = map[string]bool{"image/png": true, "image/jpeg": true, "image/webp": true, "image/gif": true}
+	audioTypes = map[string]string{"wav": "audio/wav", "mp3": "audio/mpeg", "m4a": "audio/mp4"}
+)
 
 func dataURL(u string) (mimeType string, data []byte, ok bool) {
 	rest, ok := strings.CutPrefix(u, "data:")
