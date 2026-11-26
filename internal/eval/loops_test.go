@@ -134,3 +134,27 @@ turns:
 		})
 	}
 }
+
+// make eval-loop 的用例与 AgentDef（evals/loop）在 check 中就要能加载：真实运行要花 token。
+func TestLoopSuiteLoads(t *testing.T) {
+	cases, err := LoadSuite("../../evals/loop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agents, err := agentdef.LoadDir("../../evals/loop/agents")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cases) == 0 {
+		t.Fatal("no loop cases")
+	}
+	for _, c := range cases {
+		d, err := agents.Default(c.Agent)
+		if err != nil {
+			t.Fatalf("case %s: %v", c.Name, err)
+		}
+		if d.Loop == nil || len(d.Loop.Models) == 0 {
+			t.Fatalf("case %s: agent %s is not a loop agent with loop.models", c.Name, c.Agent)
+		}
+	}
+}

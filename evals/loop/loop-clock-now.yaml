@@ -1,0 +1,8 @@
+name: loop-clock-now
+description: 外部循环：涉及当前时间的问题调用 clock_now（一步调用、一步回答）
+agent: loop-assistant
+turns:
+  - input: "现在几点了？今天星期几？"
+    expect:
+      status: completed
+      calls: ["clock_now"]

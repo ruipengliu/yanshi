@@ -17,6 +17,8 @@ uv sync --frozen
 
 在 `loops/*.yaml` 登记这个地址，配上 `token_keys`；AgentDef 的 `loop` 写 `server` 与 `models`。评测：`yanshi eval -loop <名称>=http://127.0.0.1:8001`，此时 `--model-base-url` 用评测的端点 `http://127.0.0.1:18472/v1/loop`（`docs/design/m4-eval.md` §3）。
 
+真实模型的冒烟评测：`make eval-loop`（`LOOP_FRAMEWORK=pydantic|langgraph`，消耗真实 token），用例在 `evals/loop`。
+
 一致性：`make looptest-adapters`（需要 uv 与联网安装 `uv.lock` 锁定的依赖，不在 `make check` 中）。它对两个适配依次运行 `yanshi looptest -step-token`，假模型在 `127.0.0.1:18471`。改动 `loop.proto`、回答校验或 looptest 的场景之后运行。
 
 ## 适配必须做到的

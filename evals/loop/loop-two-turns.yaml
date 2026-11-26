@@ -1,0 +1,11 @@
+name: loop-two-turns
+description: 外部循环：第二个 Run 看得到第一个 Run 的对话（平台按 Session 组装上下文，外部服务不保存状态）
+agent: loop-assistant
+turns:
+  - input: "我下周三要去广州出差，先跟你说一声。"
+    expect:
+      status: completed
+  - input: "我刚才说哪天出差、去哪？"
+    expect:
+      status: completed
+      reply_contains: ["周三", "广州"]

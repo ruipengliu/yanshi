@@ -7,7 +7,7 @@ export YANSHI_TEST_S3 ?= 127.0.0.1:58333
 # TypeScript SDK 与真实网关的互通测试（internal/e2e TestWebSDK）；需要 Node.js 与 pnpm。
 export YANSHI_TEST_NODE ?= 1
 
-.PHONY: check gen lint check-deps test sim sim-quick verify looptest-adapters build tools deps-up deps-down sandbox-image web web-deps mobile
+.PHONY: check gen lint check-deps test sim sim-quick verify looptest-adapters eval-loop build tools deps-up deps-down sandbox-image web web-deps mobile
 
 check: lint test
 
@@ -138,6 +138,12 @@ EVAL_FLAGS ?= -sandbox docker
 YANSHI_EMBEDDING_MODEL ?= ark/doubao-embedding-vision-251215
 eval: build
 	./bin/yanshi eval -xinli-bin ./bin/xinli -suite evals -embedding-model $(YANSHI_EMBEDDING_MODEL) $(EVAL_FLAGS)
+
+# 外部循环的冒烟评测（evals/loop，ADR-0063）：参考适配经内核模型端点调用真实模型，消耗真实 token。
+# LOOP_FRAMEWORK 选 pydantic 或 langgraph；需要 uv。改动内核模型端点或外部循环的上下文组装后运行。
+LOOP_FRAMEWORK ?= pydantic
+eval-loop: build
+	bash sdk/python/scripts/eval-loop.sh $(LOOP_FRAMEWORK) $(EVAL_LOOP_FLAGS)
 
 build:
 	cd apps/xinli && go build -o ../../bin/xinli ./cmd/xinli

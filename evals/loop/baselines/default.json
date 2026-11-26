@@ -1,0 +1,126 @@
+{
+  "started_at": "2026-11-26T06:14:55.742072Z",
+  "judge": "codex/gpt-6.1-sol:high",
+  "cases": [
+    {
+      "name": "loop-clock-now",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "avg_tokens": 1196,
+      "avg_seconds": 2.4247863610000002,
+      "avg_calls": 1,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0,
+      "completed": 3,
+      "judge_samples": 0,
+      "completed_cost": {
+        "tokens": 1196.6666666666667,
+        "seconds": 2.4247863610000002,
+        "calls": 1,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0
+      },
+      "incomplete_cost": {
+        "tokens": 0,
+        "seconds": 0,
+        "calls": 0,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0
+      }
+    },
+    {
+      "name": "loop-device-read",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "avg_tokens": 3016,
+      "avg_seconds": 3.896103764,
+      "avg_calls": 2.6666666666666665,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0,
+      "completed": 3,
+      "judge_samples": 0,
+      "completed_cost": {
+        "tokens": 3016,
+        "seconds": 3.896103764,
+        "calls": 2.6666666666666665,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0
+      },
+      "incomplete_cost": {
+        "tokens": 0,
+        "seconds": 0,
+        "calls": 0,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0
+      }
+    },
+    {
+      "name": "loop-device-write",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "avg_tokens": 1935,
+      "avg_seconds": 2.5514601806666666,
+      "avg_calls": 1,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0,
+      "completed": 3,
+      "judge_samples": 0,
+      "completed_cost": {
+        "tokens": 1935,
+        "seconds": 2.5514601806666666,
+        "calls": 1,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0
+      },
+      "incomplete_cost": {
+        "tokens": 0,
+        "seconds": 0,
+        "calls": 0,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0
+      }
+    },
+    {
+      "name": "loop-two-turns",
+      "trials": 3,
+      "passed": 3,
+      "pass_rate": 1,
+      "avg_tokens": 1946,
+      "avg_seconds": 4.167806416666667,
+      "avg_calls": 1,
+      "avg_compactions": 0,
+      "avg_takeovers": 0,
+      "cache_hit": 0,
+      "completed": 3,
+      "judge_samples": 0,
+      "completed_cost": {
+        "tokens": 1946.6666666666667,
+        "seconds": 4.167806416666667,
+        "calls": 1,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0
+      },
+      "incomplete_cost": {
+        "tokens": 0,
+        "seconds": 0,
+        "calls": 0,
+        "compactions": 0,
+        "takeovers": 0,
+        "cache_hit": 0
+      }
+    }
+  ]
+}

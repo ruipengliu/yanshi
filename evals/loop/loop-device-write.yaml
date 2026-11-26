@@ -1,0 +1,15 @@
+name: loop-device-write
+description: 外部循环：写设备上的文件需要审批（评测自动批准），审批之后结果照常带回
+agent: loop-assistant
+setup:
+  device:
+    label: macbook
+    files:
+      readme.txt: "工作目录"
+turns:
+  - input: "在电脑上新建 todo.md，写上一行：周五前提交预算表"
+    expect:
+      status: completed
+      calls: ["macbook__write_file"]
+      approvals: {min: 1}
+      device_writes: {"todo.md": "预算"}

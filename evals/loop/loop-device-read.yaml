@@ -1,0 +1,17 @@
+name: loop-device-read
+description: 外部循环：读设备上的文件并据此回答（结果在下一步以改写后的调用 ID 带回）
+agent: loop-assistant
+setup:
+  device:
+    label: macbook
+    files:
+      会议纪要.md: |
+        # 周会纪要
+        - 下周五之前提交第三季度预算表。
+        - 华南办事处选址下周一定。
+turns:
+  - input: "看看电脑上的会议纪要，下周五之前要交什么？"
+    expect:
+      status: completed
+      calls: ["macbook__read_file"]
+      reply_contains: ["预算"]
