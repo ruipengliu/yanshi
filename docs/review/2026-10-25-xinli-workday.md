@@ -17,7 +17,7 @@
 
 ## 1. 模拟数据与用例
 
-`evals/data/workday/{morning,midday,evening}.yaml`：2026-10-23（星期五）08:40–17:53，465 段、约 9200 字，佩戴者林岚是排班 SaaS 公司的产品总监。剧本覆盖十个主题（家事、v3.2 发版、康宁交付、后端招聘、老房翻新、App 首页改版、OKR 汇报、测试平台采购、绿源新客户、老陈的职业发展）与闲聊，每段标了主题，供计算纯度与碎片率。预置 5 个项目，其中"官网改版"与"App 首页改版"名称相近、实为两件事；另预置 2 条 Memory（不吃香菜、早上喝咖啡）。
+`apps/xinli/evals/data/workday/{morning,midday,evening}.yaml`：2026-10-23（星期五）08:40–17:53，465 段、约 9200 字，佩戴者林岚是排班 SaaS 公司的产品总监。剧本覆盖十个主题（家事、v3.2 发版、康宁交付、后端招聘、老房翻新、App 首页改版、OKR 汇报、测试平台采购、绿源新客户、老陈的职业发展）与闲聊，每段标了主题，供计算纯度与碎片率。预置 5 个项目，其中"官网改版"与"App 首页改版"名称相近、实为两件事；另预置 2 条 Memory（不吃香菜、早上喝咖啡）。
 
 刻意放进去的情形：
 
@@ -170,7 +170,7 @@
 ## 5. 复现
 
 ```bash
-dev eval EVAL_FLAGS="-case 'capture-workday*' -trials 2 -logs"
+dev run 'make eval-xinli EVAL_FLAGS="-case capture-workday* -trials 2 -logs"'
 dev evaltrace capture-workday
 ```
 

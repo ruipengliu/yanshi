@@ -11,7 +11,7 @@ import (
 )
 
 func TestCaptureScenarioDates(t *testing.T) {
-	cases, err := LoadSuite("../../evals")
+	cases, err := LoadSuite("../../apps/xinli/evals")
 	if err != nil {
 		t.Fatal(err)
 	}

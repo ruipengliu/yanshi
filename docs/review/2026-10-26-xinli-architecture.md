@@ -18,7 +18,7 @@
 > 1. xinli 业务与内核的架构划分是否合理？哪些该在内核、哪些该在业务线，现在有没有放错位置的东西（双向都看）？
 > 2. 后续要提升 xinli 的实际效果（每日整理、项目归集、承诺与提醒、助手问答），发力点应该在哪里？按优先级给出依据、预期收益、代价，以及放在内核还是业务线；也说明哪些方向不值得投入。
 >
-> 先读 AGENTS.md、CONTEXT.md、charter、captures*.md、ADR-0036/0037/0039–0042、agents/xinli-*.yaml、internal/xinlimock、internal/capture、internal/mcpcap/cite.go、internal/runtime/memgate.go、工作日评审 §0–§9、m4-eval §12、evals/capture-*.yaml、internal/eval。结论要有仓库内的证据，区分事实与推断；对评测数据保持怀疑；给出最有把握的 3 个判断与最没把握的 1–2 个。
+> 先读 AGENTS.md、CONTEXT.md、charter、captures*.md、ADR-0036/0037/0039–0042、agents/xinli-*.yaml、internal/xinlimock、internal/capture、internal/mcpcap/cite.go、internal/runtime/memgate.go、工作日评审 §0–§9、m4-eval §12、apps/xinli/evals/capture-*.yaml、internal/eval。结论要有仓库内的证据，区分事实与推断；对评测数据保持怀疑；给出最有把握的 3 个判断与最没把握的 1–2 个。
 
 ### 第一轮：Codex 的回答
 

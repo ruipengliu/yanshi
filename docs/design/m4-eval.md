@@ -10,7 +10,9 @@
 
 ## 2. 评测集
 
-评测集放在仓库的 `evals/*.yaml`，每个文件是一个用例：
+内核用例放在 `evals/*.yaml`，xinli 用例放在 `apps/xinli/evals/*.yaml`。顶层 `agent` 或 `oneshot` 为 `xinli-*`，或带有 `setup.xinli` 预置的用例归 xinli。数据放在所属用例集的 `data/`，文件引用以用例集目录为起点（见 [LoadSuite](../../internal/eval/suite.go#L443)）。外部循环冒烟用例单独放在 `evals/loop`。
+
+每个 YAML 文件是一个用例：
 
 ```yaml
 name: scenario-a-minutes
@@ -161,9 +163,9 @@ turns:
 
 `call_args` 保持原有语法与含义；新增 `call_sequence` 的 `capability` 支持 glob，`contains` 中的全部子串须出现在同一次调用的压紧 JSON 参数中（仅移除 JSON 空白，不改变字符串内容），下一项必须匹配之后的另一次调用。`schedules.active` 检查有效数；`rrule_contains` 与 `time_zone` 要求同一条有效声明满足，不检查取消后保留的历史声明。
 
-新增 `evals/schedule-weekly-report.yaml` 覆盖助手创建周期定时、下次当地时间的确认、拨钟后查询 Persona 与产出周报；`evals/schedule-cancel.yaml` 覆盖先列出再取消、取消后有效数为零。它们与已有 `schedule-reminder`、`schedule-memory-gate` 一起覆盖能力说明、助手新增指令与平台到点标记；不新增 Persona 周报工具。版本 2 尚须按 ADR-0020 与基线及当天 main 对照，确认后更新基线，不能将用例已编写视为评测已通过。
+新增 `apps/xinli/evals/schedule-weekly-report.yaml` 覆盖助手创建周期定时、下次当地时间的确认、拨钟后查询 Persona 与产出周报；`apps/xinli/evals/schedule-cancel.yaml` 覆盖先列出再取消、取消后有效数为零。它们与已有 `schedule-reminder`、`schedule-memory-gate` 一起覆盖能力说明、助手新增指令与平台到点标记；不新增 Persona 周报工具。版本 2 尚须按 ADR-0020 与基线及当天 main 对照，确认后更新基线，不能将用例已编写视为评测已通过。
 
-**旁听的分批。** 评测运行器按说话时间约每分钟提交一批（一批至多 100 段），每批的他人按第一次出现的顺序重新编号为 `other-1`、`other-2`：与真实的 HostApp 一样，`speaker_key` 只在一批之内有意义，用例中全天不变的 `key` 只用来区分同一批中的人。片段可另填 `speaker_ref`，经夹具原样交给 Persona，不随批内编号重编；`evals/capture-speaker-ref.yaml` 用同一引用跨批换键及另一位不同引用的人，检验回答合并与排除。
+**旁听的分批。** 评测运行器按说话时间约每分钟提交一批（一批至多 100 段），每批的他人按第一次出现的顺序重新编号为 `other-1`、`other-2`：与真实的 HostApp 一样，`speaker_key` 只在一批之内有意义，用例中全天不变的 `key` 只用来区分同一批中的人。片段可另填 `speaker_ref`，经夹具原样交给 Persona，不随批内编号重编；`apps/xinli/evals/capture-speaker-ref.yaml` 用同一引用跨批换键及另一位不同引用的人，检验回答合并与排除。
 
 **旁听元数据。** 内联 `captures` 与 `captures_file` 共用片段及低支持区间的严格字段校验，拒绝未知键；用例其他 YAML 结构仍沿用原解析方式。片段支持领域原名 `speaker_grade`（仅 wearer 的 evidence/timeline）、`disposition`（accept/quarantine）、`disposition_reason`、`background`、`low_support_spans`，`speaker` 与噪声版本的 `heard` 都接受 unknown。quarantine 的原因限 playback、suspected_replay、hallucination_disagreement；accept 不带原因，wearer 不能是 background。缺省等级、处置及关键种类不回填，线上新增字段全部可省略，旧提交内容与去重身份保持原样。
 
@@ -186,7 +188,7 @@ ASR 改了文字的片段不能同时标 `low_support_spans`，本轮不提供�
 
 ### 单次调用用例
 
-`oneshot: xinli-live-brief` 与 agent 互斥；只支持 name、description、trials、timeout、oneshot 与 turns。每轮只接受 input 与 expect，不建 Session，不接受设备、旁听夹具、Memory、Call 或定时操作。示例见 `evals/oneshot-live-brief.yaml`：三个独立输入每次 trial 都运行，trials 为 3，共九次逻辑调用。
+`oneshot: xinli-live-brief` 与 agent 互斥；只支持 name、description、trials、timeout、oneshot 与 turns。每轮只接受 input 与 expect，不建 Session，不接受设备、旁听夹具、Memory、Call 或定时操作。示例见 `apps/xinli/evals/oneshot-live-brief.yaml`：三个独立输入每次 trial 都运行，trials 为 3，共九次逻辑调用。
 
 每轮 input 直接交给 `oneshot.Service.Call`，服务由 `app.NewCore` 装配；与 HTTP 共用审核、配额检查、并发、计量入口、修复及屏障路径。评测与既有 Run 用例一致，不配置真实业务线配额与账单计量；使用服务返回的汇总 Usage 统计实际消耗，包括被拒绝输出、Schema 修复失败及其第二次调用。成功与未完成的成本分别进入原报告列，工具调用、压缩、接管、缓存命中列为 0，不产生 Session 日志。
 
@@ -196,14 +198,16 @@ expect 复用 reply_contains、reply_excludes、reply_max_chars、status 与 jud
 
 ## 3. 运行
 
-`yanshi eval -suite evals [-model ark/…] [-case glob] [-trials N] [-judge …] [-sandbox docker] [-baseline …] [-update-baseline]`：
+`make eval` 依次运行内核与 xinli 用例集，任一套件回归即失败。也可以用 `make eval-kernel` 或 `make eval-xinli` 单独运行。两套共用 `EVAL_FLAGS`，默认 `-sandbox docker`。指定单套件的 `-case` 或 `-baseline` 时，使用对应的目标。
+
+`yanshi eval -suite <目录> [-model ark/…] [-case glob] [-trials N] [-judge …] [-sandbox docker] [-baseline …] [-update-baseline]` 的入口见 [evalcmd.go](../../cmd/yanshi/evalcmd.go#L36)。两套评测沿用仓库根目录的 `agents/` 与 `oneshots/`。
 
 - **进程内运行**：内存存储、真实的模型网关；虚拟设备是一个进程内的 Node，与 e2e 一样经由 Hub、Inbox 路由。沙箱可选（`-sandbox docker`），不可用时跳过 `requires: [sandbox]` 的用例。存储在内存中，进程退出后没有 Janitor 回收沙箱，所以运行结束时停下实例、销毁本次创建过的全部沙箱（含委托的子 Session 的）；销毁失败的沙箱 ID 打印为警告。
 - **用例隔离**：每个用例的每次运行都使用新的 EndUser，互不影响。
 - **`-model`**：覆盖 AgentDef 的模型，用来在同一评测集上比较不同模型。
 - **外部循环**（2026-11-25，ADR-0063）：`-loop 名称=URL`（可重复）把 AgentDef 的 `loop.server` 接到正在运行的服务，评测为两条评测业务线登记它、生成步令牌密钥，并在 `-loop-endpoint-addr`（默认 `127.0.0.1:18472`）上开内核的模型端点；服务把模型的 base URL 配成 `http://<地址>/v1/loop`、以步令牌为 API key、用请求 `models` 中的模型。`-model` 替换 `loop.models`，服务因此换用评测的模型。经端点的调用按 Session 计入 token 与缓存命中。指向未接上的循环的用例跳过；没有声明 `loop.models` 的外部循环自带模型，`-model` 对它不起作用。业务线的外部循环 AgentDef 与用例放在业务线自己的目录，用 `-agents` 与 `-suite` 指定（内核的 `agents/` 里放外部循环的 AgentDef，`serve` 的启动检查会要求它有登记）。`make eval-loop`（`LOOP_FRAMEWORK=pydantic|langgraph`）是内核自己的冒烟评测：`evals/loop` 的四个用例（一步调用、读设备文件、写文件须审批、跨 Run 的对话）由 `sdk/python` 的参考适配经端点调用真实模型；改动内核模型端点或外部循环的上下文组装后运行。
 
-`make eval` 读取环境中的 `ARK_API_KEY`（2026-10-11 起被评测模型为火山方舟 `doubao-seed-2-1-lite`；此前为 TokenHub `deepseek-v4.1-flash`），Memory 的嵌入模型默认 `ark/doubao-embedding-vision-251215`（与基线一致）。评测消耗真实 token，不放进 `make check`；但**改动模型、提示词、AgentDef，或召回、压缩、Memory、MCP 的给模型的文本时必须运行**，并与基线比较（写入 AGENTS.md）。
+评测读取环境中的 `ARK_API_KEY`（2026-10-11 起被评测模型为火山方舟 `doubao-seed-2-1-lite`，此前为 TokenHub `deepseek-v4.1-flash`），Memory 的嵌入模型默认 `ark/doubao-embedding-vision-251215`（与基线一致）。真实模型评测独立于 `make check`。改动模型、提示词、AgentDef，或召回、压缩、Memory、MCP 给模型看的文本时，运行 `make eval` 并与各自基线比较。只改 xinli 提示词时可运行 `make eval-xinli`（见 AGENTS.md）。
 
 ## 4. 报告与基线
 
@@ -217,7 +221,7 @@ expect 复用 reply_contains、reply_excludes、reply_max_chars、status 与 jud
 
 旧字段 `avg_tokens`、`avg_seconds`、`avg_calls`、`avg_compactions`、`avg_takeovers`、`cache_hit` 保留全部 trial 的原口径，供旧工具读取。新增字段缺失表示未知，不推算完成数，也不据此报告样本回归；旧基线仍可读，已有数值不手工改写。旧报告的 `judge_avg: 0` 无法判断是否曾有评分样本，读取时保留原值。
 
-基线放在 `evals/baselines/default.json`（使用 `-model` 时为 `<模型>.json`，每个模型一份），随仓库提交。与基线比较时，出现以下情况标为**回归**，并以非零退出码结束：
+内核与 xinli 分别维护 `evals/baselines/default.json` 和 `apps/xinli/evals/baselines/default.json`，随仓库提交。使用 `-model` 时，按 [evalcmd.go 中的基线命名规则](../../cmd/yanshi/evalcmd.go#L150) 在所属用例集的 `baselines/` 下查找对应模型的基线。整日验收使用独立的 `apps/xinli/evals/baselines/day-ark.json`，运行方式见 [单库完整一天验收](./day-acceptance.md#运行)。以下情况标为**回归**，并以非零退出码结束。
 
 - 某用例的通过率比基线下降 0.34 以上（3 次运行中多失败 1 次以上）；
 - 评分平均值下降 0.5 以上，或基线有正评分而本次评分缺失；
@@ -350,9 +354,9 @@ expect 复用 reply_contains、reply_excludes、reply_max_chars、status 与 jud
 
 `capture-*` 用例评测旁听业务线的三个 AgentDef（`agents/xinli-*.yaml`，docs/design/xinli-captures.md §1、§10）。每轮的 `captures` 经夹具提交到本轮 Session 绑定的 Persona 业务日；`setup.xinli` 经外部夹具预置本次运行 EndUser 的项目与每日摘要；`setup.no_health` 改在未开启健康信息的业务线 `eval-nohealth` 中运行。
 
-`make eval` 先构建 `bin/xinli`，命令的 `-xinli-bin` 可指定其他二进制。只有用例配置了 `setup.xinli` 或所用 Agent 白名单包含 `mcp:xinli/*` 时，运行器才启动 `xinli dev -exit-on-stdin-eof`（不带 `-kernel-url`，不自动归集）。运行器读第一行就绪 JSON，以 `mcpcap.ParseServer` 逐项校验 `registrations` 并登记 MCP，经 `fixture_url` 下的 HTTP 做 Seed、State、绑定与用户操作；Seed JSON 字段为 snake_case，用例 YAML 不变。结束时关闭 stdin 并等待退出，超时则终止并回收进程。
+`make eval-xinli` 先构建 `bin/xinli`，命令的 `-xinli-bin` 可指定其他二进制。只有用例配置了 `setup.xinli` 或所用 Agent 白名单包含 `mcp:xinli/*` 时，运行器才启动 `xinli dev -exit-on-stdin-eof`（不带 `-kernel-url`，不自动归集）。运行器读第一行就绪 JSON，以 `mcpcap.ParseServer` 逐项校验 `registrations` 并登记 MCP，经 `fixture_url` 下的 HTTP 做 Seed、State、绑定与用户操作；Seed JSON 字段为 snake_case，用例 YAML 不变。结束时关闭 stdin 并等待退出，超时则终止并回收进程。
 
-**PG 夹具（P4 A4）。** `-xinli-store memory|pg` 默认 `memory`，不改变默认 `make eval`。`-xinli-persona-dsn` 默认读 `YANSHI_PERSONA_PG_DSN`，未设置时为空；选 `pg` 必填，不读取 `YANSHI_PG_DSN` 或 `YANSHI_TEST_PG`。运行器通过子进程环境传 DSN，启动 `xinli dev -store pg`；开发入口也支持 `-persona-dsn`，显式参数优先于环境。启动时执行 Persona 迁移，成功后才输出就绪行。DSN 必须直连一个预先创建的、**独立于内核的 database**（例如 `persona_eval`）；不同 schema 不能替代 database 隔离，启动角色须有该库的 DDL 权限。程序不自动建库。
+**PG 夹具（P4 A4）。** `-xinli-store memory|pg` 默认 `memory`。`-xinli-persona-dsn` 默认读 `YANSHI_PERSONA_PG_DSN`，未设置时为空；选 `pg` 必填，不读取 `YANSHI_PG_DSN` 或 `YANSHI_TEST_PG`。运行器通过子进程环境传 DSN，启动 `xinli dev -store pg`；开发入口也支持 `-persona-dsn`，显式参数优先于环境。启动时执行 Persona 迁移，成功后才输出就绪行。DSN 必须直连一个预先创建的、**独立于内核的 database**（例如 `persona_eval`）；不同 schema 不能替代 database 隔离，启动角色须有该库的 DDL 权限。程序不自动建库。
 
 每个 case 的每个 trial 仍使用新的 `eval-<case>-<trial>-<随机后缀>` EndUser，`Seed` 保持追加预置语义，不需要在 trial 间重置。PG 数据在夹具退出后保留，便于复查；关闭夹具不会删除 database。回收某个 owner 使用 `POST /v1/fixture/{businessLine}/{endUser}/reset {}`（`xinlifixture.Client.Reset`）。reset 是开发/评测专用接口，**须先停下该 owner 的工作**；trial 返回并不保证所有在途 MCP 请求已经排空，因此运行器不在 trial 末尾自动 reset。PG 删除 `owners` 的单键行，由外键级联删除全部账本、原文、绑定、进度、墓碑和删除待办；内存实现清空同键内容。重复 reset 幂等，不影响其他 owner。一次评测整体回收可在相关进程停止后重建该次专用 database，不能对共享内核库执行清理。
 
@@ -362,11 +366,11 @@ expect 复用 reply_contains、reply_excludes、reply_max_chars、status 与 jud
 # 仅首次创建；已存在时跳过此命令。不要把库名换成内核的 yanshi。
 PGPASSWORD=yanshi createdb -h 127.0.0.1 -p 54329 -U yanshi persona_eval
 export YANSHI_PERSONA_PG_DSN='postgres://yanshi:yanshi@127.0.0.1:54329/persona_eval?sslmode=disable'
-make eval EVAL_FLAGS="-sandbox docker -case 'capture-*' -xinli-store memory -logs -out eval-results/a4-memory"
-make eval EVAL_FLAGS="-sandbox docker -case 'capture-*' -xinli-store pg -logs -out eval-results/a4-pg"
+make eval-xinli EVAL_FLAGS="-sandbox docker -case 'capture-*' -xinli-store memory -logs -out eval-results/a4-memory"
+make eval-xinli EVAL_FLAGS="-sandbox docker -case 'capture-*' -xinli-store pg -logs -out eval-results/a4-pg"
 ```
 
-两次运行使用相同用例、模型、次数与现有 `evals/baselines/`，比较通过率、金标指标和缓存命中；真实模型不要求逐字一致，不以更新基线掩盖存储回归。
+两次运行使用相同用例、模型、次数与现有 `apps/xinli/evals/baselines/`，比较通过率、金标指标和缓存命中；真实模型不要求逐字一致，不以更新基线掩盖存储回归。
 
 确定性契约由 `persona/mcpserver` 的 `TestStoreParity` 对冻结账本脚本与旁听脚本逐步比较 MCP 文字、结构化页、错误、HTTP State、处理进度与删除待办；`restart_true` 在序列中点关闭 Store/连接池并重建 HTTP/MCP 会话，复用同一 database/schema。旁听中点已有 pending 待办及剩余原文。`TestParity` 继续检查冻结 golden；`TestCaptureParitySequence` 在无 PG 时也检查脚本确实推进进度。夹具的 Seed/工具/State、错误、预览不写入、处理进度与擦除通知测试均跑 memory/pg 两种存储。PG 测试由 `YANSHI_TEST_PG` 启用，复用 `persona/pg/pgtest`：该变量仅作建库入口，连接到独立的 `persona_test` database，每测试随机 schema，结束删除 schema；测试角色需要 CREATEDB。第一层 `storetest` 另覆盖 pending owner 排序/去重与完整重置。`apps/xinli/cmd/xinli` 的 `TestDevReadinessFixtureMCPAndEOF` 还以独立子进程分别验证 memory/pg 的就绪、Seed、MCP 与 stdin EOF 退出；运行器侧测试验证参数/环境透传和无效配置。这些测试不调用真实模型，评分仍属于运行器。
 
@@ -445,7 +449,7 @@ commitments:
 
 **噪声。** 识别错误由数据中的平行字段给出：`asr` 是转写的文字，`heard` 与 `heard_key` 是识别成的说话人与他人的 key。用例写 `noise: true` 时提交这些版本，金标不变，与不带噪声的同一份数据对照，衡量识别错误的影响。说话人识别错了的承诺无从判断：平台以说话人字段为准（ADR-0052），这样的金标不计入任何指标。
 
-**用例。** `capture-workday` 与 `capture-workday-oneshot` 的金标见 `evals/data/workday/gold.yaml`（31 条计入、37 条可选，计入的有 5 条当天改动）。`capture-multiday` 与 `capture-multiday-noisy` 是四个工作日（另一位佩戴者、另一个行业）：每天一个旁听 Session，跨天的改期、完成、取消与改由他人去做，同一件事隔天再提，用户在 App 中的改动，最后在 xinli-assistant 中问"还有哪些没办完""期限怎么变的"（评分模型判断）；27 条计入、23 条可选。数据由剧本 `evals/data/multiday/script.txt` 经 `scripts/gen-multiday.py` 生成（段内的行在起止时刻之间均匀分布），金标的改动时间取自说那句话的时间；改了剧本之后重新生成，生成的 YAML 一并提交。
+**用例。** `capture-workday` 与 `capture-workday-oneshot` 的金标见 `apps/xinli/evals/data/workday/gold.yaml`（31 条计入、37 条可选，计入的有 5 条当天改动）。`capture-multiday` 与 `capture-multiday-noisy` 是四个工作日（另一位佩戴者、另一个行业）：每天一个旁听 Session，跨天的改期、完成、取消与改由他人去做，同一件事隔天再提，用户在 App 中的改动，最后在 xinli-assistant 中问"还有哪些没办完""期限怎么变的"（评分模型判断）；27 条计入、23 条可选。数据由剧本 `apps/xinli/evals/data/multiday/script.txt` 经 `scripts/gen-multiday.py` 生成（段内的行在起止时刻之间均匀分布），金标的改动时间取自说那句话的时间；改了剧本之后重新生成，生成的 YAML 一并提交。
 
 **首次结果（2026-10-26，`doubao-seed-2-1-lite-260915:minimal`，各 3 次，`eval-results/20261026-164217`，已写入基线）。** 四个用例都是 0/3（断言与评分本来就不过），指标给出了差距在哪里（最后一轮，均值 ± 标准差）：
 
@@ -490,16 +494,16 @@ workday 两例的金标门禁为 `commitment_precision: 0.90`、`commitment_reca
 新增 `capture-span-runs` 覆盖两个时段中的答应与改期，最后对账；同时检查两段交谈都保留、同一承诺原位修订与七项金标。续页、拒收重交、无进展退出、空／进行中时段、超时清理、换 Agent 与用量聚合由 `internal/eval` 的确定性测试覆盖。
 
 ```bash
-dev eval EVAL_FLAGS="-case 'capture-workday*' -trials 3 -logs -xinli-span-runs -baseline evals/baselines/default.json"
-dev eval EVAL_FLAGS="-case 'capture-multiday*' -trials 3 -logs -xinli-span-runs -baseline evals/baselines/default.json"
+dev run 'make eval-xinli EVAL_FLAGS="-case capture-workday* -trials 3 -logs -xinli-span-runs"'
+dev run 'make eval-xinli EVAL_FLAGS="-case capture-multiday* -trials 3 -logs -xinli-span-runs"'
 python3 scripts/xinli-cost.py <原报告目录> <实验报告目录>
 ```
 
 GLM 的对照基线单独写在 Mac mini 的临时目录，先评测原流程，再对同一批用例拆 Run：
 
 ```bash
-dev eval EVAL_FLAGS="-case 'capture-workday*' -trials 3 -logs -model ark/glm-5-3-flash-260828 -baseline /tmp/yanshi-span-glm-control.json -update-baseline"
-dev eval EVAL_FLAGS="-case 'capture-workday*' -trials 3 -logs -model ark/glm-5-3-flash-260828 -baseline /tmp/yanshi-span-glm-control.json -xinli-span-runs"
+dev run 'make eval-xinli EVAL_FLAGS="-case capture-workday* -trials 3 -logs -model ark/glm-5-3-flash-260828 -baseline /tmp/yanshi-span-glm-control.json -update-baseline"'
+dev run 'make eval-xinli EVAL_FLAGS="-case capture-workday* -trials 3 -logs -model ark/glm-5-3-flash-260828 -baseline /tmp/yanshi-span-glm-control.json -xinli-span-runs"'
 ```
 
 报告逐用例标明是否拆 Run。CLI 临时启用实验时，`-update-baseline` 必须同时显式指定实验的 `-baseline`，避免误写默认基线；专门的 `capture-span-runs` 用例有自己的基线条目。成本脚本从日志拆出 Run、模型与工具调用、首调输入、之后的输入增长、压缩用量与拒收次数，并与报告的总用量交叉核对；不输出对话内容。「相对首调增长」包含结果与历史，不是重复历史的精确 token 归因，压缩用量已计入总用量。实验结果与是否采用见 [按时段拆 Run 评审](../review/2026-10-26-xinli-span-runs.md)。

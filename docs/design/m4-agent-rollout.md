@@ -57,7 +57,7 @@ assistant:
 
 ## 6. 评测门槛
 
-`yanshi eval -agent-version <v>` 评测尚未成为默认的版本（各用例的 Agent 使用该版本）。AGENTS.md 规定：进入灰度或成为稳定版本之前，该版本必须通过 `make eval` 且与基线相比没有回归；评审时检查。运行时不强制。
+`yanshi eval -agent-version <v>` 评测尚未成为默认的版本（各用例的 Agent 使用该版本）。AGENTS.md 规定：进入灰度或成为稳定版本之前，该版本必须通过 `make eval`，内核与 xinli 两套评测各自与基线比较。只改 xinli 提示词时可运行 `make eval-xinli`。评审时检查。运行时不强制。
 
 ## 7. 验证
 
@@ -74,4 +74,4 @@ assistant:
 
 `oneshots/*.yaml` 与 `oneshots/releases.yaml` 沿用同一结构，stable、canary（version、percent、end_users）与 withdrawn 的校验、散列分流、文件热加载共用 `internal/release`。按声明名与 EndUser 稳定分流，未配置发布时使用按文件名排序最后加载的版本。声明的全部版本只在启动时加载；每 10 秒热加载发布选择，错误配置保留原值，使用既有发布错误指标。
 
-单次调用没有 Session：每次请求独立选择一次版本，修复调用保留本次选择。撤回只影响后续请求，不中断在途调用。同名各版本 concurrency 须一致，因为它们共享声明并发名额。发布前用 `make eval EVAL_FLAGS="-case oneshot-live-brief -oneshot-version <版本>"` 与基线比较，无回归后才能进入灰度或 stable；`-agent-version` 不影响单次调用。用量按 oneshot 的 name@version 汇总，和 AgentDef 归属分开。
+单次调用没有 Session：每次请求独立选择一次版本，修复调用保留本次选择。撤回只影响后续请求，不中断在途调用。同名各版本 concurrency 须一致，因为它们共享声明并发名额。发布前用 `make eval-xinli EVAL_FLAGS="-case oneshot-live-brief -oneshot-version <版本>"` 与基线比较，无回归后才能进入灰度或 stable；`-agent-version` 不影响单次调用。用量按 oneshot 的 name@version 汇总，和 AgentDef 归属分开。

@@ -224,7 +224,7 @@ P4 自动调度以固定业务日时区、原文与处理进度为依据，抖�
 
 ## 10. 评测
 
-`evals/capture-*.yaml`。xinli-day 每轮的 `captures` 在输入之前经夹具提交到 Persona，并在创建工作 Session 后以业务线身份 `bind_day`（时间可写相对于提交时刻的 `now-Nm`；长的转写放在数据文件中，`captures_file`）；`setup.xinli` 登记模拟的 xinli MCP Server 并预置项目、摘要与承诺账本（日期可写 `today-N`）；`setup.no_health` 改在未开启健康信息的业务线中运行。评测中不归集：用例直接预置 `day_summary` 的内容。
+用 `make eval-xinli` 运行 `apps/xinli/evals/capture-*.yaml` 所在的 xinli 用例集，基线在 `apps/xinli/evals/baselines/`。xinli-day 每轮的 `captures` 在输入之前经夹具提交到 Persona，并在创建工作 Session 后以业务线身份 `bind_day`（时间可写相对于提交时刻的 `now-Nm`；长的转写放在数据文件中，`captures_file`）；`setup.xinli` 登记模拟的 xinli MCP Server 并预置项目、摘要与承诺账本（日期可写 `today-N`）；`setup.no_health` 改在未开启健康信息的业务线中运行。评测中不归集：用例直接预置 `day_summary` 的内容。
 
 未声明场景时间的评测，业务日仍取本次 trial 开始时在 Asia/Shanghai 的运行当天，不取片段 `at` 的历史日期；各 xinli-day Session 依次换绑同一业务日，片段时间仍用于页内日期与期限换算。显式 `now` 与逐轮 `business_day` 可复现历史场景，内核、Memory 与 Persona 共用场景时钟，跨日新建工作 Session，同日复用；字段与兼容规则见 [m4-eval.md §2](./m4-eval.md#2-评测集)。生产业务日仍由采集侧按用户当地日期指定。
 
@@ -248,7 +248,7 @@ P4 自动调度以固定业务日时区、原文与处理进度为依据，抖�
 | `capture-commitment-extraction` | 佩戴者的承诺引用佩戴者的片段，他人的承诺引用他人的片段；核对通过，期限写成日期；他人索要而佩戴者没答应的不是承诺。 |
 | `capture-day-digest` | 当天总览、定下的事、风险与觉察（评分模型判断）；觉察不写情绪。 |
 | `capture-relative-date` | "明天""下周一"写成具体日期。 |
-| `capture-long-day` | 第一段交谈中有一个承诺，之后是十几段闲聊；上下文窗口调小到 24000，整理途中必然压缩：承诺仍进账本，总览提到它（`evals/data/long-day.yaml`，由模板生成）。 |
+| `capture-long-day` | 第一段交谈中有一个承诺，之后是十几段闲聊；上下文窗口调小到 24000，整理途中必然压缩：承诺仍进账本，总览提到它（`apps/xinli/evals/data/long-day.yaml`，由模板生成）。 |
 | `capture-daytime` | 同一 Session 三轮："整理交谈"只交出已结束的交谈；再次"整理交谈"不重复交出、不读进行中的那段；"整理今天"交出余下的并写总览。 |
 | `capture-project-reconcile` | `xinli-project` 按 ID 与 `rev` 依据交谈对账：已完成的标为完成，改了期限的改期限，并更新现状。 |
 | `capture-project-reconcile-settled` | 白天已依据原话改了期限：项目 Run 不再改动那一条（rev 不变）。 |

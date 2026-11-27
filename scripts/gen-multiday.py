@@ -1,5 +1,5 @@
 # 由剧本生成 capture-multiday 的旁听与金标（docs/design/m4-eval.md §13）。改了剧本之后重新生成，生成的 YAML 随剧本一并提交：
-#   python3 scripts/gen-multiday.py evals/data/multiday/script.txt evals/data/multiday
+#   python3 scripts/gen-multiday.py apps/xinli/evals/data/multiday/script.txt apps/xinli/evals/data/multiday
 #
 # 剧本格式：
 #   !gold <id> <mine|theirs> <YYYY-MM-DD|-> <说明>      金标承诺（!opt 为可选的）

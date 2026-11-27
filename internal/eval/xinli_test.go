@@ -80,9 +80,20 @@ func TestCheckGroupingByRange(t *testing.T) {
 	}
 }
 
-// 仓库中的评测用例都能解析：用例的字段写错时在 make check 里就发现，而不是等到花钱的 make eval。
+// 在 make check 中检查用例和数据引用，避免等到真实模型评测时才发现错误。
 func TestShippedSuiteLoads(t *testing.T) {
-	if _, err := LoadSuite("../../evals"); err != nil {
-		t.Fatal(err)
+	for name, dir := range map[string]string{
+		"kernel": "../../evals",
+		"xinli":  "../../apps/xinli/evals",
+	} {
+		t.Run(name, func(t *testing.T) {
+			cases, err := LoadSuite(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(cases) == 0 {
+				t.Fatalf("no cases in %s", dir)
+			}
+		})
 	}
 }

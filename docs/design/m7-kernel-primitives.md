@@ -381,7 +381,7 @@ work_class: interactive        # interactive | background
 - **三层配置**：合计用 `app.Options.OneshotMax`（默认 8），业务线用配置 oneshots.max_concurrency（默认 0，只受其他层约束），声明用 concurrency。按合计、业务线、声明名依次获取；声明键不含版本或业务线。`app.Options.OneshotWait` 为每层最长等待（默认 2 秒），失败时逆序释放已获取的名额；成功时持有到函数返回。`app.Options.OneshotDeadline` 为整个请求的时限。
 - **错误**：未知声明或删除屏障 404；空输入、缺 EndUser、Unicode 字符超限 400；冒充其他用户 403；内容安全拒绝 422、不可用 503；配额 429（携带 quota 与 Retry-After）；并发等待超时 429；总时限或模型超时 504；两次 Schema 都不合格或模型失败 502。错误不携带输入输出。
 - **指标**：`yanshi_oneshot_calls_total{name, version, outcome}` 每个逻辑调用一次；未知名称使用空标签，防止用户任意名称成为指标维度。outcome 仅使用固定结果类别；模型 token 同时计入既有 token 指标。
-- **评测**：用例写 oneshot 而非 agent，每轮直接经同一个 Service 调用。`evals/oneshot-live-brief.yaml` 的三个独立输入每个 trial 都运行，三次 trial 检查波动；JSON 按完整 JSON 文本做 reply 与 judge 断言，声明有 Schema 默认检查 output_schema_valid。`-oneshot-version` 指定发布前版本，`-agent-version` 不影响它；改指令与模型须与基线比较。
+- **评测**：用例写 oneshot 而非 agent，每轮直接经同一个 Service 调用。`apps/xinli/evals/oneshot-live-brief.yaml` 的三个独立输入每个 trial 都运行，三次 trial 检查波动；JSON 按完整 JSON 文本做 reply 与 judge 断言，声明有 Schema 默认检查 output_schema_valid。`-oneshot-version` 指定发布前版本，`-agent-version` 不影响它；改指令与模型须与基线比较。
 - **删除交错验证**：`internal/oneshot/service_test.go` 覆盖模型返回、计量写入、输出审核时注销，复用无 Session 的 Meter 屏障复查，最终不返回内容且用量匿名化；没有为单次调用新增 Session 或 sim 步进状态。
 
 ## 8. 档位（Tier）
