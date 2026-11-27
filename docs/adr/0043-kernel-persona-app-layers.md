@@ -14,7 +14,7 @@ xinli 要从评测中的模拟业务线（原内核内存实现，现已迁至 `
 - **Persona 层**（`persona/`）：关于一个人的结构化知识（实体、时间线、交谈、承诺、项目、笔记），以变更集日志为事实源（ADR-0042 的推广），独立的 PostgreSQL，按 (BusinessLine, EndUser) 分片，数据归业务线。经 MCP 向内核提供工具，向应用层提供查询 API。
 - **应用层**（`apps/xinli/`）：采集识别、账号设备、权益、渠道、推送、跨 Session 编排、BFF。
 
-依赖方向只有一个：应用层 → Persona → 内核的公开契约。`persona/` 与 `apps/` 是独立的 Go module，模块路径不以 `yanshi/` 开头，不能 import `yanshi/internal/`（`make check` 另做依赖检查）；内核不 import 它们。评测经 Persona 的夹具契约（Seed、State、Check）准备与检查数据。
+依赖方向只有一个：应用层 → Persona → 内核的公开契约。`persona/` 与 `apps/` 是独立的 Go module，模块路径不以 `yanshi/` 开头，不能 import `yanshi/internal/`（`make check` 另做依赖检查）；内核不 import 它们。评测经 Persona 的夹具契约（Seed、State 与用户操作）准备与读取数据；评分留在内核的评测运行器，夹具不提供 Check（2026-11-27 更正：原文列出的 Check 与 [Persona 架构](../design/persona-architecture.md) §3.4 及实现不符；重审条件见[解耦调研](../review/2026-11-27-eval-xinli-decoupling-study.md)）。
 
 接入 Persona 的业务线中，内核的 Memory 只存 EndUser **本人**的陈述；关于他人与外部世界的知识只在 Persona，由 Agent 按需拉取，不自动注入。Memory 的类别不变，没有 Persona 的业务线照常使用 `relationship`。
 

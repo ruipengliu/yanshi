@@ -374,7 +374,7 @@ make eval-xinli EVAL_FLAGS="-sandbox docker -case 'capture-*' -xinli-store pg -l
 
 确定性契约由 `persona/mcpserver` 的 `TestStoreParity` 对冻结账本脚本与旁听脚本逐步比较 MCP 文字、结构化页、错误、HTTP State、处理进度与删除待办；`restart_true` 在序列中点关闭 Store/连接池并重建 HTTP/MCP 会话，复用同一 database/schema。旁听中点已有 pending 待办及剩余原文。`TestParity` 继续检查冻结 golden；`TestCaptureParitySequence` 在无 PG 时也检查脚本确实推进进度。夹具的 Seed/工具/State、错误、预览不写入、处理进度与擦除通知测试均跑 memory/pg 两种存储。PG 测试由 `YANSHI_TEST_PG` 启用，复用 `persona/pg/pgtest`：该变量仅作建库入口，连接到独立的 `persona_test` database，每测试随机 schema，结束删除 schema；测试角色需要 CREATEDB。第一层 `storetest` 另覆盖 pending owner 排序/去重与完整重置。`apps/xinli/cmd/xinli` 的 `TestDevReadinessFixtureMCPAndEOF` 还以独立子进程分别验证 memory/pg 的就绪、Seed、MCP 与 stdin EOF 退出；运行器侧测试验证参数/环境透传和无效配置。这些测试不调用真实模型，评分仍属于运行器。
 
-`internal/eval/xinlifixture` 镜像 Persona 的数据形状与评分所需只读规则，避免内核反向 import 业务模块（ADR-0043）；类型以 `persona/domain` 为准。评分仍留在评测运行器，夹具不提供 Check。单元测试在 `TestMain` 中将应用构建一次到临时目录，各测试启动隔离的夹具进程并同步回收。
+`internal/eval/xinlifixture` 镜像 Persona 的数据形状与评分所需只读规则，避免内核反向 import 业务模块（ADR-0043）；类型以 `persona/domain` 为准。评分仍留在评测运行器，夹具不提供 Check：这是有意的取舍（被测方不做自己的裁判），第二条业务线需要自己的业务断言时重审，候选方案见[解耦调研](../review/2026-11-27-eval-xinli-decoupling-study.md)。单元测试在 `TestMain` 中将应用构建一次到临时目录，各测试启动隔离的夹具进程并同步回收。
 
 基线（`doubao-seed-2-1-lite-260915:minimal`）中全部用例都是 3/3。
 
