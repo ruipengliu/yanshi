@@ -4,6 +4,8 @@ status: accepted
 
 # 委托是路由到派生子 Session 的调用
 
+> 2026-11-28：[ADR-0069](0069-cross-line-delegation.md)（方向，待定稿）拟取代本 ADR 中"委托不跨业务线"的限制，允许同一身份域内调用其他业务线导出的 Agent；其余决定不变。ADR-0069 定稿并实现之前，本 ADR 全部有效。
+
 章程 G7 要求多 Agent 协作。一个 Agent 把任务交给另一个 Agent 时，平台要保证送达、只执行一次、结果一定回来、父子生命周期一致——这与设备路由（M1）是同一个问题（[委托设计](../design/m5-multi-agent.md)）。
 
 ## 决定

@@ -5,6 +5,8 @@ status: accepted（2026-11-22 定稿）
 # 业务线声明可用的定义
 
 > **已定稿（2026-11-22），随本次提交实施。** 来源：[架构评估评审](../review/2026-11-22-architecture-evaluation-review.md) §5 A4；裁决：同一单元内的业务线按互不信任对待（2026-11-22）。修订 [M4 灰度发布](../design/m4-agent-rollout.md) §1 的"AgentDef 本身不分业务线"，统一 [部署](../design/deployment.md) §1 的表述，取消该节"MCP Server 名称在一个内核中唯一"的限制。
+>
+> 2026-11-28：[ADR-0067](0067-business-line-model.md)（方向，待定稿）拟以"目录即归属 + 规范名 `<业务线>/<名>`"逐步取代 `allow` 列表，入口检查的位置不变。ADR-0067 定稿并实现之前，本 ADR 全部有效。
 
 单元是一组共享 EndUser 身份与 Memory 的业务线（[部署](../design/deployment.md) §1）。令牌、Session、配额、MCP 工具已按业务线隔离（`httpapi` 的 `claim`、`service.WithAccess`、`mcpcap.Server.BusinessLine`），但 AgentDef 与 Oneshot 按全局名称解析：业务线 A 可以用业务线 B 的指令、模型策略与能力声明建 Session、委托（`agent:*` 列出全库定义）或调用单次调用，Oneshot 声明名一层的并发槽跨业务线共享。MCP Server 名称全局唯一，两条业务线不能各自登记同名的 Server。
 
