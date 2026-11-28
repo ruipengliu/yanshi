@@ -22,11 +22,12 @@ import (
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/artifact"
 	"yanshi/internal/capability"
+	"yanshi/internal/capability/capname"
 	"yanshi/internal/model"
 )
 
 // Capability 是面向模型的工具名。
-const Capability = "show_card"
+const Capability = capname.ShowCardCapability
 
 // 卡片的上限：卡片随结果写入日志并推送给每台设备，也会被模型在后续请求中看到摘要。
 const (

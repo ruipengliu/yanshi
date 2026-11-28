@@ -11,6 +11,7 @@ import (
 	"golang.org/x/text/unicode/norm"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/capability/capname"
 	"yanshi/internal/model"
 	"yanshi/internal/session"
 )
@@ -23,9 +24,6 @@ import (
 // 不调用模型，因此是确定性的，重放与模拟都得到同一结论。
 // 按 ADR-0023 的 2026-11-14 修订，比较前先统一 Unicode 形式并覆盖各种文字；识别不了的内容须审批，
 // 避免字形差异或文字覆盖盲区让外部内容免审。
-
-// memoryGateCapability 是受闸门约束的能力。
-const memoryGateCapability = "memory_save"
 
 var (
 	emailRE  = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`)
@@ -107,7 +105,7 @@ func bigrams(s string) map[string]bool {
 
 // memoryGate 返回这次调用是否需要因写入闸门而审批，以及给用户看的说明。
 func memoryGate(st *session.State, call *v1.ToolCall) (string, bool) {
-	if call.GetCapability() != memoryGateCapability || !tainted(st) {
+	if call.GetCapability() != capname.MemorySaveCapability || !tainted(st) {
 		return "", false
 	}
 	var in struct {

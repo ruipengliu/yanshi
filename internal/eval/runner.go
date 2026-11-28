@@ -24,6 +24,7 @@ import (
 	"yanshi/internal/artifact"
 	"yanshi/internal/askuser"
 	"yanshi/internal/call"
+	"yanshi/internal/capability/capname"
 	"yanshi/internal/capture"
 	"yanshi/internal/card"
 	"yanshi/internal/delegation"
@@ -952,7 +953,7 @@ func (in *instance) turn(ctx context.Context, sid string, turn Turn, timeout tim
 	if turn.AwaitBackground {
 		input = "（用户没有输入：设备上线后，之前转入后台的调用的结果由平台送达）"
 		for _, e := range events {
-			if r := session.BackgroundInput(e.GetRunRequested().GetInput()); r != nil && strings.HasPrefix(r.GetCapability(), "agent__") {
+			if r := session.BackgroundInput(e.GetRunRequested().GetInput()); r != nil && capname.IsDelegation(r.GetCapability()) {
 				input = "（用户没有输入：之前转入后台的委托完成了，它的结果由平台送达）"
 				break
 			}

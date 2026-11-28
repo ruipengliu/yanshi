@@ -5,6 +5,7 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/askuser"
+	"yanshi/internal/capability/capname"
 )
 
 // Provenance 是一段内容的来源（ADR-0039，docs/design/m5-inputs-triggers-loops.md §3）：由谁产生、是不是对 Agent 说的。
@@ -40,8 +41,7 @@ type Piece struct {
 func (s *State) Pieces() []Piece {
 	external, questions := map[string]bool{}, map[string]bool{}
 	mark := func(tc *v1.ToolCall) {
-		// 路由到设备、沙箱的能力、MCP 工具与委托的名称都含 "__"（"<label>__<能力>"、"mcp_<server>__<工具>"），进程内能力不含。
-		if strings.Contains(tc.GetCapability(), "__") {
+		if capname.IsRouted(tc.GetCapability()) {
 			external[tc.GetCallId()] = true
 		}
 		if tc.GetCapability() == askuser.Capability {

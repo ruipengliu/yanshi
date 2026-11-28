@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/capability/capname"
 	"yanshi/internal/moderation"
 	"yanshi/internal/session"
 )
@@ -65,7 +66,7 @@ func CheckClientInput(input []*v1.ContentBlock, mark *v1.ScheduleMark, redoOf ..
 
 // checkInputID 与普通输入共享去重键的边界；空 ID 沿用无去重的既有语义。
 func checkInputID(inputID string) error {
-	if strings.HasPrefix(inputID, "schedule_") {
+	if capname.IsScheduleInput(inputID) {
 		return fmt.Errorf("%w: schedule input_id is reserved for the platform", ErrInvalid)
 	}
 	if len(inputID) > MaxInputIDLen {

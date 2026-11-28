@@ -26,6 +26,7 @@ import (
 	"yanshi/internal/artifact"
 	"yanshi/internal/askuser"
 	"yanshi/internal/capability"
+	"yanshi/internal/capability/capname"
 	"yanshi/internal/decision"
 	"yanshi/internal/delegation"
 	"yanshi/internal/eventlog"
@@ -1088,7 +1089,7 @@ func (w *Worker) delegationGrace(c *session.Call) time.Time {
 	if w.cfg.Background == nil || w.st.Created.GetParent() != nil || !delegation.IsNode(c.NodeID) || !c.Dispatched() {
 		return time.Time{}
 	}
-	_, name, _ := strings.Cut(c.Call.GetCapability(), "__")
+	_, name, _ := capname.CutRouted(c.Call.GetCapability())
 	def, err := w.cfg.Agents.Resolve(name, w.st.Created.GetEndUser())
 	if err != nil || def.Delegation.BackgroundAfter <= 0 {
 		return time.Time{}
@@ -1100,7 +1101,7 @@ func (w *Worker) delegationGrace(c *session.Call) time.Time {
 // 它的回复之后作为一条后台结果输入送达（Delegator.Report）。截止时间不变，到期由 expireBackground 中断子 Run。
 // 先按 call_id 幂等地重新派发，再写入：与设备调用相同（background），写入失败时撤回不再等待的投递。
 func (w *Worker) backgroundDelegation(ctx context.Context, r *session.Run, c *session.Call) error {
-	_, name, _ := strings.Cut(c.Call.GetCapability(), "__")
+	_, name, _ := capname.CutRouted(c.Call.GetCapability())
 	res := w.toolResult(r, c.Call.GetCallId(), model.TextBlocks(DelegationPlaceholder(name)), false)
 	res.GetToolResult().Backgrounded = &v1.Backgrounded{NodeId: c.NodeID, Deadline: timestamppb.New(c.Deadline)}
 	if ok, err := w.redispatch(ctx, r, c, c.Deadline, res, time.Time{}); err != nil || !ok {
@@ -1172,7 +1173,7 @@ type delivery struct {
 func (w *Worker) deliverAndCommit(ctx context.Context, r *session.Run, ds []delivery, e *v1.Event, until time.Time) (bool, error) {
 	for _, d := range ds {
 		c := d.call
-		_, capName, _ := strings.Cut(c.Call.GetCapability(), "__")
+		_, capName, _ := capname.CutRouted(c.Call.GetCapability())
 		err := w.cfg.Dispatch.Dispatch(ctx, w.st.Created.GetEndUser(), c.NodeID, &v1.Invoke{
 			SessionId: w.st.SessionID, RunId: r.ID, CallId: c.Call.GetCallId(), Capability: capName,
 			ArgumentsJson: c.Call.GetArgumentsJson(), Deadline: timestamppb.New(d.deadline),
@@ -1359,8 +1360,9 @@ func checkArguments(args string) error {
 
 func approvalSummary(t *capability.Tool, c *v1.ToolCall) string {
 	where := "云端"
-	if t.NodeID != "" && !strings.HasPrefix(t.Spec.Name, capability.SandboxLabel+"__") {
-		where = "设备 " + strings.SplitN(t.Spec.Name, "__", 2)[0]
+	if t.NodeID != "" && !capname.IsSandboxTool(t.Spec.Name) {
+		label, _, _ := capname.CutRouted(t.Spec.Name)
+		where = "设备 " + label
 	}
 	args, cut := model.Truncate(c.GetArgumentsJson(), 200)
 	if cut {

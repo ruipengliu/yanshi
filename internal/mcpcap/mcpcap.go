@@ -25,6 +25,7 @@ import (
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/artifact"
 	"yanshi/internal/capability"
+	"yanshi/internal/capability/capname"
 	"yanshi/internal/capture"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/model"
@@ -57,10 +58,7 @@ type serverKey struct{ businessLine, name string }
 
 func (s Server) key() serverKey { return serverKey{s.BusinessLine, s.Name} }
 
-var (
-	nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,23}$`)
-	varRE  = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
-)
+var varRE = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 
 // LoadDir 读取 dir 下所有 *.yaml 登记；目录不存在时返回空。请求头中的 ${VAR} 从环境变量注入，
 // 使凭证不以明文出现在登记文件中。
@@ -104,8 +102,8 @@ func ParseServer(b []byte) (Server, error) {
 }
 
 func (s *Server) validate(getenv func(string) string) error {
-	if !nameRE.MatchString(s.Name) {
-		return fmt.Errorf("name %q must match %s", s.Name, nameRE)
+	if !capname.IsMCPServer(s.Name) {
+		return fmt.Errorf("name %q must match %s", s.Name, capname.MCPServerPattern)
 	}
 	if s.BusinessLine == "" || !(strings.HasPrefix(s.URL, "https://") || strings.HasPrefix(s.URL, "http://")) {
 		return fmt.Errorf("business_line and an http(s) url are required")
@@ -148,7 +146,7 @@ func matchAny(globs []string, name string) bool {
 
 // ToolName 是模型看到的工具名 "mcp_<server>__<tool>"。设备标签不含下划线，不会与 "<label>__<capability>" 冲突。
 func ToolName(server, tool string) string {
-	return "mcp_" + server + "__" + nodesdk.SafeName(tool, 64-len("mcp_")-len(server)-len("__"))
+	return capname.Routed(capname.MCPToolPrefix+server, nodesdk.SafeName(tool, 64-len(capname.MCPToolPrefix)-len(server)-len(capname.Separator)))
 }
 
 // Connector 管理到各远程 MCP Server 的连接与工具缓存，实现 capability.MCPSource。

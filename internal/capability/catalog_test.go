@@ -2,14 +2,26 @@ package capability_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/capability"
+	"yanshi/internal/capability/capname"
+	"yanshi/internal/card"
 	"yanshi/internal/clock"
+	"yanshi/internal/mcpcap"
+	"yanshi/internal/memory"
+	"yanshi/internal/model"
 	"yanshi/internal/node"
+	"yanshi/internal/sandbox"
+	"yanshi/internal/session"
 )
+
+type staticAgents []capability.AgentInfo
+
+func (a staticAgents) Agents(_, _ string) []capability.AgentInfo { return a }
 
 // countingDir 统计 List 的次数。
 type countingDir struct {
@@ -90,5 +102,71 @@ func TestRoutedToolsHaveNoReadOnlyEvidence(t *testing.T) {
 		if want := tool.Spec.Name == "clock_now"; tool.Spec.ReadOnly != want {
 			t.Errorf("%s ReadOnly = %v, want %v", tool.Spec.Name, tool.Spec.ReadOnly, want)
 		}
+	}
+}
+
+// Catalog 与 MCP 的工具名会写进 Event，来源推导也必须能识别这些名称。
+func TestToolNamesAndProvenance(t *testing.T) {
+	ctx := context.Background()
+	clk := clock.NewFake(time.Unix(0, 0))
+	dir := node.NewMemDirectory(clk)
+	scope := node.Scope{BusinessLine: "bl", EndUser: "u"}
+	spec := &v1.CapabilitySpec{Name: "read_file"}
+	if _, _, err := dir.Register(ctx, node.Info{NodeID: "n1", Scope: scope, Label: "phone", Capabilities: []*v1.CapabilitySpec{spec}}); err != nil {
+		t.Fatal(err)
+	}
+	cat := capability.Catalog{
+		Local:   capability.NewRegistry(append(memory.Capabilities(nil), card.New(nil), capability.ClockNow(clk))...),
+		Nodes:   dir,
+		Sandbox: &capability.SandboxTools{Specs: []*v1.CapabilitySpec{spec}, NodeID: sandbox.NodeID},
+		Agents:  staticAgents{{Name: "helper"}},
+	}
+	tools, err := cat.Tools(ctx, capability.Target{Scope: scope, SessionID: "ses_v1_000_000_s"},
+		[]string{"device:*", "sandbox:*", "agent:*", "ask_user", "show_card", "clock_now", "memory_save", "memory_forget", "memory_search"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	longMCP := "mcp_crm__" + strings.Repeat("long_name_", 4) + "long_nam_14e9fc"
+	want := map[string]struct {
+		from       session.Provenance
+		delegation bool
+	}{
+		"phone__read_file":   {from: session.FromExternal},
+		"sandbox__read_file": {from: session.FromExternal},
+		"agent__helper":      {from: session.FromExternal, delegation: true},
+		"mcp_crm__Lookup":    {from: session.FromExternal},
+		longMCP:              {from: session.FromExternal},
+		"ask_user":           {from: session.FromUser},
+		"show_card":          {},
+		"clock_now":          {},
+		"memory_save":        {},
+		"memory_forget":      {},
+		"memory_search":      {},
+	}
+	names := []string{mcpcap.ToolName("crm", "Lookup"), mcpcap.ToolName("crm", strings.Repeat("long.name.", 8))}
+	for _, tool := range tools {
+		names = append(names, tool.Spec.Name)
+	}
+	for _, name := range names {
+		w, ok := want[name]
+		if !ok {
+			t.Errorf("unexpected tool name %q", name)
+			continue
+		}
+		delete(want, name)
+		if capname.IsRouted(name) != (w.from == session.FromExternal) || capname.IsDelegation(name) != w.delegation {
+			t.Errorf("%q: routed=%t, delegation=%t", name, capname.IsRouted(name), capname.IsDelegation(name))
+		}
+		call := &v1.ToolCall{CallId: "c", Capability: name}
+		st := &session.State{History: []*v1.Event{
+			{Payload: &v1.Event_AssistantMessage{AssistantMessage: &v1.AssistantMessage{ToolCalls: []*v1.ToolCall{call}}}},
+			{Payload: &v1.Event_ToolResult{ToolResult: &v1.ToolResult{CallId: "c", Content: model.TextBlocks("结果")}}},
+		}}
+		if got := st.Pieces(); (w.from == 0 && len(got) != 0) || (w.from != 0 && (len(got) != 1 || got[0].From != w.from)) {
+			t.Errorf("%q: pieces=%+v, want source %v", name, got, w.from)
+		}
+	}
+	if len(want) != 0 {
+		t.Errorf("missing tool names: %v", want)
 	}
 }

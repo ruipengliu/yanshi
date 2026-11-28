@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"hash"
-	"strings"
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/askuser"
+	"yanshi/internal/capability/capname"
 	"yanshi/internal/delegation"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
@@ -310,7 +310,7 @@ func (w *World) countBackground(events []*v1.Event) {
 		switch r := nodesdk.BackgroundResultOf(e); r.GetReason() {
 		case session.BackgroundReasonResult:
 			w.Stats.BackgroundResults++
-			if strings.HasPrefix(r.GetCapability(), "agent__") {
+			if capname.IsDelegation(r.GetCapability()) {
 				w.Stats.BackgroundDelegationResults++
 			}
 		case session.BackgroundReasonTimeout:

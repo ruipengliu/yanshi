@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/capability/capname"
 	"yanshi/internal/schedule"
 )
 
@@ -29,7 +30,7 @@ func (s *Schedule) Plan() (*schedule.Plan, error) {
 
 // ScheduleInputID 不依赖 Worker 或重试次数，且不允许定时 ID 中的分隔符造成碰撞。
 func ScheduleInputID(id string, due time.Time) string {
-	return fmt.Sprintf("schedule_%x", sha256.Sum256([]byte(id+"\x00"+due.UTC().Format(time.RFC3339Nano))))
+	return fmt.Sprintf(capname.ScheduleInputPrefix+"%x", sha256.Sum256([]byte(id+"\x00"+due.UTC().Format(time.RFC3339Nano))))
 }
 
 func ScheduleText(input []*v1.ContentBlock) bool {
@@ -151,7 +152,7 @@ func (s *State) checkScheduleInput(e *v1.Event) error {
 	mark := m.GetSchedule()
 	f := s.pendingSchedule.GetScheduleFired()
 	if mark == nil && f == nil {
-		if strings.HasPrefix(m.GetInputId(), "schedule_") {
+		if capname.IsScheduleInput(m.GetInputId()) {
 			return fmt.Errorf("reserved schedule input_id")
 		}
 		return nil

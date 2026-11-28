@@ -26,6 +26,7 @@ import (
 	"yanshi/internal/artifact"
 	"yanshi/internal/askuser"
 	"yanshi/internal/capability"
+	"yanshi/internal/capability/capname"
 	"yanshi/internal/card"
 	"yanshi/internal/clock"
 	"yanshi/internal/consent"
@@ -311,6 +312,8 @@ func (q poolQueue) Claim(ctx context.Context, holder string, ttl time.Duration, 
 // interactiveWorker 是只认领交互工作的 Worker 的 ID 前缀：模拟中 0 号 Worker 是交互 Worker。
 const interactiveWorker = "wi"
 
+const simDelegationTool = capname.DelegationToolPrefix + "sim"
+
 // simWindow 是模拟模型的实际窗口，也是主请求与摘要请求的不变量；不随 AgentDef 的加载预算扩大。
 const simWindow = 3200
 
@@ -490,7 +493,7 @@ func New(opts Options) (*World, error) {
 		}
 		def := &agentdef.Def{
 			Name: "sim", Version: v, Model: "sim/m",
-			Capabilities: []string{"echo", "send", "ask_user", "show_card", "memory_save", "memory_forget", "memory_search", "device:*", "sandbox:*", "agent:sim"},
+			Capabilities: []string{"echo", "send", askuser.Capability, card.Capability, capname.MemorySaveCapability, "memory_forget", "memory_search", "device:*", "sandbox:*", "agent:sim"},
 			MaxTurns:     maxTurns, Context: ctxCfg, Memory: agentdef.MemoryConfig{Recall: 3},
 			// 扇出上限取 2：同一轮的三个委托中第三个被拒，并行派发与扇出拒绝都足够常见（ADR-0055）。
 			// 委托 30 秒后转入后台（ADR-0058）：时钟跳动与 delegationGraceEdge 使后台委托足够常见。分片差分不转后台，
@@ -1665,7 +1668,7 @@ func (w *World) CollectStats() {
 					capOf[tc.GetCallId()] = tc.GetCapability()
 				}
 			case *v1.Event_ApprovalRequested:
-				if capOf[p.ApprovalRequested.GetCallId()] == "memory_save" {
+				if capOf[p.ApprovalRequested.GetCallId()] == capname.MemorySaveCapability {
 					w.Stats.MemoryApprovals++
 				}
 			case *v1.Event_RunSuspended:
@@ -1919,8 +1922,8 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 		}
 	}
 	// 页中的他人原话触发外部影响路径；健康样例必须先被预检查拒绝，不能进入审批或执行。
-	if w.opts.Attested && !scheduleComplete && attestedMemoryPrecheck(req.Messages) && slices.ContainsFunc(req.Tools, func(t model.ToolSpec) bool { return t.Name == "memory_save" }) {
-		resp.ToolCalls = []*v1.ToolCall{{Capability: "memory_save", ArgumentsJson: rejectedMemoryArgs}}
+	if w.opts.Attested && !scheduleComplete && attestedMemoryPrecheck(req.Messages) && slices.ContainsFunc(req.Tools, func(t model.ToolSpec) bool { return t.Name == capname.MemorySaveCapability }) {
+		resp.ToolCalls = []*v1.ToolCall{{Capability: capname.MemorySaveCapability, ArgumentsJson: rejectedMemoryArgs}}
 		return resp, nil
 	}
 	if w.opts.Attested && more && w.chance(0.25) && slices.ContainsFunc(req.Tools, func(t model.ToolSpec) bool { return t.Name == simAttestedName }) {
@@ -1930,12 +1933,12 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 		tools := req.Tools
 		if w.opts.LongRuns {
 			// 长 Run 模式下不委托：子 Run 同样要跑上百轮，层层委托使收敛远超模拟的时长。
-			tools = slices.DeleteFunc(slices.Clone(tools), func(t model.ToolSpec) bool { return strings.HasPrefix(t.Name, "agent__") })
+			tools = slices.DeleteFunc(slices.Clone(tools), func(t model.ToolSpec) bool { return capname.IsDelegation(t.Name) })
 		}
 		// 设备上的能力只是十几个工具中的两个：偏向它们，使调用离线设备、转入后台（ADR-0035）足够常见。
 		var devices []string
 		for _, t := range tools {
-			if strings.HasPrefix(t.Name, "pc__") {
+			if strings.HasPrefix(t.Name, capname.Routed("pc", "")) {
 				devices = append(devices, t.Name)
 			}
 		}
@@ -1951,14 +1954,14 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 		}
 		// 分片差分只跑几个短种子，要求其中出现跨库委托（子 Session 落在另一个库上，约一半的委托如此）：按均匀
 		// 选择时一个种子平均不到一次委托，偏向委托。比较的各次运行用同一 Options，偏向不影响差分。
-		canDelegate := w.opts.CompareShards && slices.ContainsFunc(tools, func(t model.ToolSpec) bool { return t.Name == "agent__sim" })
+		canDelegate := w.opts.CompareShards && slices.ContainsFunc(tools, func(t model.ToolSpec) bool { return t.Name == simDelegationTool })
 		// 看得到工件时偏向委托：工件交接（ADR-0055）以"带附件的上下文中发起委托"为前提，按均匀选择几乎不出现。
-		canHandOff := !canDelegate && slices.ContainsFunc(tools, func(t model.ToolSpec) bool { return t.Name == "agent__sim" }) && len(simArtifacts(req.Messages)) > 0
+		canHandOff := !canDelegate && slices.ContainsFunc(tools, func(t model.ToolSpec) bool { return t.Name == simDelegationTool }) && len(simArtifacts(req.Messages)) > 0
 		// 同一轮中相邻的多个委托并行派发（ADR-0055）：均匀选择几乎不会连续选中委托，偶尔整轮都是委托，
 		// 数量可能超过扇出上限。
-		if !w.opts.LongRuns && slices.ContainsFunc(tools, func(t model.ToolSpec) bool { return t.Name == "agent__sim" }) && w.chance(0.04) {
+		if !w.opts.LongRuns && slices.ContainsFunc(tools, func(t model.ToolSpec) bool { return t.Name == simDelegationTool }) && w.chance(0.04) {
 			for i := range 2 + w.rng.IntN(2) {
-				resp.ToolCalls = append(resp.ToolCalls, &v1.ToolCall{CallId: fmt.Sprintf("call_%d", i), Capability: "agent__sim", ArgumentsJson: w.toolArgs("agent__sim", req.Messages...)})
+				resp.ToolCalls = append(resp.ToolCalls, &v1.ToolCall{CallId: fmt.Sprintf("call_%d", i), Capability: simDelegationTool, ArgumentsJson: w.toolArgs(simDelegationTool, req.Messages...)})
 			}
 			return resp, nil
 		}
@@ -1969,7 +1972,7 @@ func (m *simModel) Generate(ctx context.Context, req *model.Request, onDelta fun
 			} else if canAsk && w.chance(askBias) {
 				name = askuser.Capability
 			} else if canDelegate && w.chance(0.5) || canHandOff && w.chance(0.7) {
-				name = "agent__sim"
+				name = simDelegationTool
 			}
 			id := fmt.Sprintf("call_%d", i) // 故意跨轮重复，检验运行时的 ID 改写
 			if w.chance(0.3) {
@@ -2034,7 +2037,7 @@ func (w *World) toolArgs(name string, messages ...model.Message) string {
 	switch name {
 	case simAttestedName:
 		return `{}`
-	case "memory_save":
+	case capname.MemorySaveCapability:
 		if w.chance(0.02) {
 			return rejectedMemoryArgs
 		}
@@ -2059,7 +2062,7 @@ func (w *World) toolArgs(name string, messages ...model.Message) string {
 		// 标题有长度上限，放在标题里时多数卡片不合法，就很少有卡片可点。
 		return fmt.Sprintf(`{"card_id":"c%d","title":"卡片","body":[{"type":"markdown","text":"%s"}],"buttons":[{"id":"ok","label":"好"},{"id":"no","label":"不"}]}`,
 			w.rng.IntN(3), "p"+w.pad())
-	case "agent__sim":
+	case simDelegationTool:
 		if w.chance(0.1) {
 			return `{}` // 没有 task：不派发，错误交还模型
 		}

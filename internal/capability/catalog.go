@@ -13,6 +13,7 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/askuser"
+	"yanshi/internal/capability/capname"
 	"yanshi/internal/clock"
 	"yanshi/internal/node"
 )
@@ -27,10 +28,10 @@ const (
 	DevicePrefix  = "device:"
 	SandboxPrefix = "sandbox:"
 	// SandboxLabel 是沙箱工具名的前缀部分："sandbox__<capability>"。
-	SandboxLabel = "sandbox"
+	SandboxLabel = capname.SandboxLabel
 	// AgentPrefix 标记可委托的 Agent："agent:<glob>"（docs/design/m5-multi-agent.md §3）；工具名为 "agent__<名称>"。
 	AgentPrefix = "agent:"
-	AgentLabel  = "agent"
+	AgentLabel  = capname.AgentLabel
 )
 
 // AgentInfo 是一个可委托的 AgentDef 对某个 EndUser 生效版本的说明。
@@ -206,7 +207,7 @@ func (c *Catalog) Tools(ctx context.Context, target Target, allow []string) ([]T
 				desc = "把任务委托给 Agent " + a.Name
 			}
 			agents = append(agents, Tool{
-				Spec:  Spec{Name: AgentLabel + "__" + a.Name, Description: desc, InputSchema: json.RawMessage(agentSchema), Risk: v1.Risk_RISK_LOW},
+				Spec:  Spec{Name: capname.Routed(capname.AgentLabel, a.Name), Description: desc, InputSchema: json.RawMessage(agentSchema), Risk: v1.Risk_RISK_LOW},
 				Agent: a.Name, Capability: a.Name, Timeout: a.Timeout,
 			})
 		}
@@ -216,7 +217,7 @@ func (c *Catalog) Tools(ctx context.Context, target Target, allow []string) ([]T
 		for _, cs := range c.Sandbox.Specs {
 			if matchAny(sandboxGlobs, cs.GetName()) {
 				out = append(out, Tool{
-					Spec:   Spec{Name: SandboxLabel + "__" + cs.GetName(), Description: cs.GetDescription(), InputSchema: json.RawMessage(cs.GetInputSchemaJson()), Idempotent: cs.GetIdempotent(), Risk: cs.GetRisk()},
+					Spec:   Spec{Name: capname.Routed(capname.SandboxLabel, cs.GetName()), Description: cs.GetDescription(), InputSchema: json.RawMessage(cs.GetInputSchemaJson()), Idempotent: cs.GetIdempotent(), Risk: cs.GetRisk()},
 					NodeID: c.Sandbox.NodeID(target.SessionID), Capability: cs.GetName(),
 					Timeout: time.Duration(cs.GetTimeoutSeconds()) * time.Second,
 				})
@@ -232,7 +233,7 @@ func (c *Catalog) Tools(ctx context.Context, target Target, allow []string) ([]T
 	}
 	var devices []Tool
 	for _, n := range nodes {
-		if node.Reserved(n.NodeID) || n.Label == SandboxLabel || n.Label == AgentLabel {
+		if node.Reserved(n.NodeID) || capname.IsReservedLabel(n.Label) {
 			continue // 平台的 ID 与标签不属于设备（node.Hub.Connect 已拒绝，这里防御此前写入的登记）
 		}
 		for _, cs := range n.Capabilities {
@@ -301,7 +302,7 @@ func (c *Catalog) deviceTool(n *node.Info, cs *v1.CapabilitySpec) Tool {
 	}
 	return Tool{
 		Spec: Spec{
-			Name:        n.Label + "__" + cs.GetName(),
+			Name:        capname.Routed(n.Label, cs.GetName()),
 			Description: fmt.Sprintf("[设备 %s（%s）] %s", n.Label, n.Kind, cs.GetDescription()),
 			InputSchema: schema,
 			Idempotent:  cs.GetIdempotent(),

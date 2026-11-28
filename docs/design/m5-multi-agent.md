@@ -63,7 +63,7 @@
 | 结果 | 网关追加 `ToolResult(attempt=0)` | 子 Worker 追加 `ToolResult(attempt=0)` |
 | 超时与中断 | deadline、Cancel | deadline、级联中断 |
 
-`@agent/` 是新的保留 Node ID 前缀（`node.Reserved`），设备不能以它接入。
+`@agent/` 是新的保留 Node ID 前缀（`node.Reserved`），设备不能以它接入。委托工具名与 Node ID 的约定定义在 `internal/capability/capname`。
 
 ## 6. 模拟测试新增不变量
 

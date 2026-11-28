@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
@@ -135,7 +134,7 @@ func (c *Controller) Step(ctx context.Context) (bool, error) {
 	}
 
 	id := c.lease.SessionID
-	st, err := c.Hub.Store.Load(ctx, strings.TrimPrefix(id, NodePrefix))
+	st, err := c.Hub.Store.Load(ctx, SessionOf(id))
 	if err != nil {
 		return false, err
 	}

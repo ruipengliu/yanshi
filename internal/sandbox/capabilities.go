@@ -12,6 +12,7 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/artifact"
+	"yanshi/internal/capability/capname"
 	"yanshi/sdk/nodesdk"
 )
 
@@ -124,7 +125,7 @@ func FormatExec(r *ExecResult) string {
 }
 
 // SessionOf 返回沙箱所属的 Session。
-func SessionOf(sandboxID string) string { return strings.TrimPrefix(sandboxID, NodePrefix) }
+func SessionOf(sandboxID string) string { return capname.SandboxSession(sandboxID) }
 
 // Capabilities 把沙箱能力绑定到 Provider 与工件存储，供控制器的 Executor 使用。
 func Capabilities(p Provider, arts *artifact.Service) []nodesdk.Capability {

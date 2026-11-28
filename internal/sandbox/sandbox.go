@@ -11,16 +11,18 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"yanshi/internal/capability/capname"
 )
 
 // NodePrefix 是沙箱虚拟 Node ID 的前缀。
-const NodePrefix = "sbx_"
+const NodePrefix = capname.SandboxNodePrefix
 
 // NodeID 返回 Session 的沙箱 Node ID。
-func NodeID(sessionID string) string { return NodePrefix + sessionID }
+func NodeID(sessionID string) string { return capname.SandboxNodeID(sessionID) }
 
 // IsNode 判断 Node ID 是否属于沙箱。
-func IsNode(nodeID string) bool { return strings.HasPrefix(nodeID, NodePrefix) }
+func IsNode(nodeID string) bool { return capname.IsSandboxNode(nodeID) }
 
 // Workspace 是沙箱内工作区的挂载点。
 const Workspace = "/workspace"

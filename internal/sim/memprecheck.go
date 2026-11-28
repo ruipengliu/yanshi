@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/capability/capname"
 )
 
 // sim 未开启业务线的健康信息许可（New 中未设置 HealthAllowed）：合法 JSON 里的健康信息也须在审批与执行前拒绝。
@@ -12,7 +13,7 @@ import (
 const rejectedMemoryArgs = `{"category":"relationship","content":"用户的母亲血压较高"}`
 
 func memoryPrecheckCall(c *v1.ToolCall) bool {
-	return c.GetCapability() == "memory_save" && c.GetArgumentsJson() == rejectedMemoryArgs
+	return c.GetCapability() == capname.MemorySaveCapability && c.GetArgumentsJson() == rejectedMemoryArgs
 }
 
 // checkMemoryPrecheck 检查注定被 Memory 预检查拒绝的调用：不请求审批、不开始，有结果时只能是错误。

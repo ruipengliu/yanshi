@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/artifact"
+	"yanshi/internal/capability/capname"
 	"yanshi/internal/decision"
 	"yanshi/internal/delegation"
 	"yanshi/internal/eventlog"
@@ -266,7 +266,7 @@ func (w *World) redispatchDelegation() error {
 			if c.Done || !c.Dispatched() || !delegation.IsNode(c.NodeID) {
 				continue
 			}
-			_, agent, _ := strings.Cut(c.Call.GetCapability(), "__")
+			_, agent, _ := capname.CutRouted(c.Call.GetCapability())
 			err := w.delegator.Dispatch(ctx, c.NodeID, &v1.Invoke{SessionId: sid, RunId: a.ID, CallId: c.Call.GetCallId(),
 				Capability: agent, ArgumentsJson: c.Call.GetArgumentsJson(), Deadline: timestamppb.New(c.Deadline)})
 			w.tracef("redispatch %s %s: %v", sid, c.Call.GetCallId(), err)

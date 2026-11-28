@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/capability/capname"
 	"yanshi/internal/clock"
 	"yanshi/internal/eventlog"
 	"yanshi/internal/eventlog/memlog"
@@ -79,6 +80,15 @@ func TestScheduleDeclarationProjection(t *testing.T) {
 	restored, err := session.FromSnapshot(st.Snapshot())
 	if err != nil || !session.Equal(st, restored) {
 		t.Fatalf("snapshot: %v", err)
+	}
+}
+
+// 用已有格式的 ID 守住重放与重试，时区只影响时间的表示。
+func TestScheduleInputIDNaming(t *testing.T) {
+	due := time.Date(2026, 10, 28, 9, 0, 0, 0, time.FixedZone("UTC+8", 8*60*60))
+	const want = "schedule_c4b6d0152c5c0325e217f4fbb450c11378c77b9d7edaf41c8033fedc1fe641ff"
+	if got := session.ScheduleInputID("one", due); got != want || !capname.IsScheduleInput(got) {
+		t.Fatalf("schedule input ID = %q, want %q with reserved prefix", got, want)
 	}
 }
 

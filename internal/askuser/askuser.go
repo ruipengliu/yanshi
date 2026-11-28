@@ -17,13 +17,14 @@ import (
 	"unicode/utf8"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/capability/capname"
 )
 
 const (
 	// Capability 是面向模型的工具名。
-	Capability = "ask_user"
+	Capability = capname.AskUserCapability
 	// NodeID 是 ask_user 调用的路由目标：用户本人。不是 Node，不经 Inbox 投递。
-	NodeID = "@user"
+	NodeID = capname.UserNodeID
 	// DefaultTimeout 是等待回答的上限：用户可能过很久才回来，挂起的 Run 不占用 Worker。
 	DefaultTimeout = 24 * time.Hour
 

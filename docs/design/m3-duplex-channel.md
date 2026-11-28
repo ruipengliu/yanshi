@@ -116,7 +116,7 @@ Agent 需要用户在几个明确的候选中选择，或补充少量结构化�
 **执行。** 它是一次路由到用户本人的调用（`NodeID = "@user"`），沿用路由调用的生命周期，不新增事件类型：
 
 - 参数不合法（例如只有一个选项、选项 ID 重复）时，不去打扰用户：错误直接作为结果交还模型，由它改正。
-- 合法时，Worker 记下 `ToolCallStarted{node_id: "@user", deadline}`（默认 24 小时）后挂起 Run，不经任何 Inbox。
+- 合法时，Worker 记下 `ToolCallStarted{node_id: "@user", deadline}`（默认 24 小时）后挂起 Run，不经任何 Inbox。工具名和路由目标的约定定义在 `internal/capability/capname`。
 - 截止时间到了仍没有回答时，调用以 `timed out: the user did not answer the question in time` 结束。
 - 中断 Run 时，提问随之作废，没有要撤回的投递。
 

@@ -20,7 +20,7 @@ import (
 	"yanshi/internal/model"
 )
 
-const simAttestedName = "mcp_sim__pages"
+var simAttestedName = mcpcap.ToolName("sim", "pages")
 
 // 用同步内存 HTTP 传输替代网络，仍经真实 Connector 校验登记与页元数据。
 // 随机页只在 tools/call 请求内生成，Worker 等待响应后才推进下一步，不引入后台随机动作。

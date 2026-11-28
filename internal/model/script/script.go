@@ -24,6 +24,7 @@ import (
 	"unicode/utf8"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/capability/capname"
 	"yanshi/internal/model"
 )
 
@@ -152,7 +153,7 @@ func parse(input string) plan {
 				p.calls = append(p.calls, command{tool: tool, args: args})
 			}
 		case "ask":
-			p.calls = append(p.calls, command{tool: "ask_user", args: askArgs(rest)})
+			p.calls = append(p.calls, command{tool: capname.AskUserCapability, args: askArgs(rest)})
 		case "stream":
 			if n, err := strconv.Atoi(rest); err == nil && n > 0 {
 				p.stream = min(n, MaxStream)

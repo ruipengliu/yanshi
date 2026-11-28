@@ -13,21 +13,22 @@ import (
 	"strings"
 
 	"yanshi/internal/artifact"
+	"yanshi/internal/capability/capname"
 	"yanshi/internal/ids"
 	"yanshi/internal/session"
 )
 
 // Prefix 是委托目标的保留 Node ID 前缀：完整 ID 为 "@agent/<子 Session ID>"（node.Reserved 拒绝设备以它接入）。
-const Prefix = "@agent/"
+const Prefix = capname.DelegationNodePrefix
 
 // NodeID 返回子 Session 对应的路由目标。
-func NodeID(childSession string) string { return Prefix + childSession }
+func NodeID(childSession string) string { return capname.DelegationNodeID(childSession) }
 
 // IsNode 报告 id 是否是委托目标。
-func IsNode(id string) bool { return strings.HasPrefix(id, Prefix) }
+func IsNode(id string) bool { return capname.IsDelegationNode(id) }
 
 // ChildSession 返回委托目标对应的子 Session ID。
-func ChildSession(nodeID string) string { return strings.TrimPrefix(nodeID, Prefix) }
+func ChildSession(nodeID string) string { return capname.DelegationSession(nodeID) }
 
 // ChildSessionID 由父 Session 与调用 ID 推导子 Session ID：重复派发（重新投递、Worker 崩溃后接管）命中同一个
 // 子 Session，派发因此幂等。子 Session 自身独立选槽，不继承父 Session 的数据槽（ADR-0051 §3）。

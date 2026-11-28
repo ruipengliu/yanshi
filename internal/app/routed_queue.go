@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -63,10 +62,10 @@ func newRoutedQueue(ctx context.Context, r *storeRouter, get func(Stores) workqu
 
 func (q *routedQueue) target(key string) (int, error) {
 	if q.sandbox {
-		if !strings.HasPrefix(key, sandbox.NodePrefix) {
+		if !sandbox.IsNode(key) {
 			return 0, fmt.Errorf("app: sandbox queue requires a sandbox Node ID")
 		}
-		key = strings.TrimPrefix(key, sandbox.NodePrefix)
+		key = sandbox.SessionOf(key)
 	}
 	return q.r.locator.Locate(shard.Target{Kind: shard.SessionData, Key: key})
 }

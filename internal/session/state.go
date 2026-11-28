@@ -20,6 +20,7 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/askuser"
+	"yanshi/internal/capability/capname"
 	"yanshi/internal/shard"
 	"yanshi/internal/workqueue"
 )
@@ -179,7 +180,7 @@ func (r *Run) PendingCall() *Call {
 
 // IsDelegation 报告调用是否是委托（ADR-0031）：工具名为 agent__<名称>，或已派发到子 Session。
 func (c *Call) IsDelegation() bool {
-	return strings.HasPrefix(c.Call.GetCapability(), "agent__") || strings.HasPrefix(c.NodeID, "@agent/")
+	return capname.IsDelegation(c.Call.GetCapability()) || capname.IsDelegationNode(c.NodeID)
 }
 
 // DelegationFront 是从第一个未完成的调用起、按模型给出的顺序相邻的委托调用（ADR-0055）：Worker 一起派发它们，
@@ -500,7 +501,7 @@ func (s *State) Input(id string) *InputRef {
 
 // recordInput 记下带 ID 的输入；窗口内重复的 ID 不合法（写入方应先去重）。
 func (s *State) recordInput(ref InputRef) error {
-	if strings.HasPrefix(ref.ID, "schedule_") && s.pendingSchedule == nil {
+	if capname.IsScheduleInput(ref.ID) && s.pendingSchedule == nil {
 		return fmt.Errorf("reserved schedule input_id")
 	}
 	if ref.ID == "" {
@@ -942,7 +943,7 @@ func (s *State) apply(e *v1.Event) error {
 		if hasCapture(m.GetContent()) && (m.GetAttempt() == 0 || !m.GetAttested()) {
 			return fmt.Errorf("capture segment in the result of call %q (%s)", m.GetCallId(), c.Call.GetCapability())
 		}
-		if m.GetAttested() && (m.GetAttempt() == 0 || !isMCPCall(c.Call.GetCapability()) || c.NodeID != "" || m.GetIsError() || m.GetFromCall() != "" || m.GetBackgrounded() != nil) {
+		if m.GetAttested() && (m.GetAttempt() == 0 || !capname.IsMCP(c.Call.GetCapability()) || c.NodeID != "" || m.GetIsError() || m.GetFromCall() != "" || m.GetBackgrounded() != nil) {
 			return fmt.Errorf("invalid attested result")
 		}
 		for _, b := range m.GetContent() {
@@ -1170,11 +1171,8 @@ func (s *State) fencedRun(id string, attempt uint32) (*Run, error) {
 	return r, nil
 }
 
-// delegationPrefix 是委托目标的 Node ID 前缀（delegation.Prefix；session 不能依赖 delegation 包）。
-const delegationPrefix = "@agent/"
-
 // checkBackgrounded 校验调用转入后台（ADR-0035、ADR-0058）：只有 Worker 能把已派发、尚无结果的设备调用或委托调用转入
-// 后台。沙箱（"sbx_"）与用户本人（"@user"）不能；委托（"@agent/"）的后台截止时间不能晚于原截止时间（转后台只改变父 Run
+// 后台。平台保留的 Node ID 只有委托能转入后台，且截止时间不能晚于原截止时间（转后台只改变父 Run
 // 是否等待，不延长子任务的时限）。委托派生的子 Session 不转后台：它的委托 Run 产出回复，转入后台的调用迟到的结果会开启
 // 一个没有父调用在等的新 Run。
 func (s *State) checkBackgrounded(m *v1.ToolResult, c *Call) error {
@@ -1184,9 +1182,9 @@ func (s *State) checkBackgrounded(m *v1.ToolResult, c *Call) error {
 		return fmt.Errorf("external result cannot background call %q", m.GetCallId())
 	case !c.Dispatched() || b.GetNodeId() != c.NodeID:
 		return fmt.Errorf("call %q is not dispatched to node %q", m.GetCallId(), b.GetNodeId())
-	case strings.HasPrefix(c.NodeID, "sbx_") || (strings.HasPrefix(c.NodeID, "@") && !strings.HasPrefix(c.NodeID, delegationPrefix)):
+	case capname.IsReservedNode(c.NodeID) && !capname.IsDelegationNode(c.NodeID):
 		return fmt.Errorf("call %q to %s cannot run in the background", m.GetCallId(), c.NodeID)
-	case strings.HasPrefix(c.NodeID, delegationPrefix) && b.GetDeadline() != nil && b.GetDeadline().AsTime().After(c.Deadline):
+	case capname.IsDelegationNode(c.NodeID) && b.GetDeadline() != nil && b.GetDeadline().AsTime().After(c.Deadline):
 		return fmt.Errorf("background delegation %q cannot extend its deadline", m.GetCallId())
 	case s.Created.GetParent() != nil:
 		return fmt.Errorf("call %q: a delegated session does not background calls", m.GetCallId())
@@ -1245,7 +1243,7 @@ func (s *State) settleBackground(callID string) {
 }
 
 // ShowCardCapability 是 show_card 的工具名（card.Capability；session 不依赖 card 包）。
-const ShowCardCapability = "show_card"
+const ShowCardCapability = capname.ShowCardCapability
 
 func hasCard(blocks []*v1.ContentBlock) bool {
 	for _, b := range blocks {
@@ -1255,8 +1253,3 @@ func hasCard(blocks []*v1.ContentBlock) bool {
 	}
 	return false
 }
-
-// mcpCallName 匹配调用日志中的模型工具名；mcp: 是 AgentDef 白名单的写法，不写入 ToolCall。
-var mcpCallName = regexp.MustCompile(`^mcp_[a-z0-9][a-z0-9-]{0,23}__[a-zA-Z0-9_-]+$`)
-
-func isMCPCall(name string) bool { return mcpCallName.MatchString(name) }

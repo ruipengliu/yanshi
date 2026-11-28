@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
@@ -205,7 +204,7 @@ var _ sandbox.Activity = routedActivity{}
 func (x routedActivity) Touch(ctx context.Context, sessionID string, at time.Time) error {
 	ctx, cancel := x.r.attempt(ctx)
 	defer cancel()
-	s, err := x.r.pick(ctx, shard.SessionData, strings.TrimPrefix(sessionID, sandbox.NodePrefix))
+	s, err := x.r.pick(ctx, shard.SessionData, sandbox.SessionOf(sessionID))
 	if err != nil {
 		return err
 	}
@@ -215,7 +214,7 @@ func (x routedActivity) Touch(ctx context.Context, sessionID string, at time.Tim
 func (x routedActivity) Delete(ctx context.Context, sessionID string) error {
 	ctx, cancel := x.r.attempt(ctx)
 	defer cancel()
-	s, err := x.r.pick(ctx, shard.SessionData, strings.TrimPrefix(sessionID, sandbox.NodePrefix))
+	s, err := x.r.pick(ctx, shard.SessionData, sandbox.SessionOf(sessionID))
 	if err != nil {
 		return err
 	}

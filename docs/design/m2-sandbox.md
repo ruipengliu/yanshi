@@ -8,7 +8,7 @@ S1 的定位是"代码解释器"：Agent 编写并运行 Python 来处理数据�
 
 ## 2. 沙箱即 Node
 
-每个 Session 的沙箱是一个虚拟 Node，ID 为 `sbx_<session_id>`。对模型暴露的工具名是 `sandbox__<capability>`，由 AgentDef 白名单中的 `sandbox:<glob>` 启用。
+每个 Session 的沙箱是一个虚拟 Node，ID 为 `sbx_<session_id>`。对模型暴露的工具名是 `sandbox__<capability>`，由 AgentDef 白名单中的 `sandbox:<glob>` 启用。沙箱 Node ID 与工具名的约定定义在 `internal/capability/capname`。
 
 | 能力 | 幂等 | 说明 |
 |---|---|---|

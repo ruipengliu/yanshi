@@ -154,7 +154,7 @@ Schedule {
 ### 5.4 语义
 
 - **事件**：`ScheduleCreated{schedule_id, input, time_zone, at, rrule, until, start, next_due, by}`、`ScheduleCancelled`、`ScheduleFired{schedule_id, due_at, next_due, run_id}`、`ScheduleSkipped{schedule_id, first_due, last_due, count, reason, next_due}`。`next_due` 是解析好的 UTC。投影中的定时（`State.Schedules`）只从事件读取下次到期，递增 `ProjectionVersion`。Apply 只校验 ID、字段形状、UTC 顺序、有效状态与输入配对，不重新解析规则或加载时区；规则校验与到期计算仅在 service 写入决策中进行。
-- **执行是原子的**：`ScheduleFired` 与带定时标记（`RunRequested.schedule {schedule_id, due_at}`）的 `RunRequested` 在同一次追加中写入；输入 ID 由 `schedule_id` 与 `due_at` 的 SHA-256 派生，保留 `schedule_` 前缀，普通输入不能占用它，两个 Worker 同时判断也只生效一次。时间取自 `clock.Clock`，判断在 `Worker.Step` 的同步路径中。
+- **执行是原子的**：`ScheduleFired` 与带定时标记（`RunRequested.schedule {schedule_id, due_at}`）的 `RunRequested` 在同一次追加中写入；输入 ID 由 `schedule_id` 与 `due_at` 的 SHA-256 派生，保留 `schedule_` 前缀，普通输入不能占用它，两个 Worker 同时判断也只生效一次。时间取自 `clock.Clock`，判断在 `Worker.Step` 的同步路径中。定时输入 ID 的前缀约定定义在 `internal/capability/capname`。
 - **有活跃 Run 或排队的输入时**：等它们结束再执行，不插话。`State.Active()` 包含排队状态；多个定时按下次到期、再按 ID 排序，每步只处理一个。
 - **来源是平台定时**（Q57）：对写入闸门不是用户原话（只凭它写 Memory 须审批），对注入判断不是外部内容；客户端提交的输入不能带定时标记（统一检查点拒绝，`Apply` 再校验）。模型看到的输入前有平台渲染的一行"【定时 <ID> 到点：10月30日星期五 17:00】"（Q67），在 Run 的位置上，不进系统指令。
 - **已保存的到期**：Fire 以投影的 NextDue 为第一点，当前规则仅推算它之后的到期；一次性直接消费已保存的 UTC。tzdata 更新只能影响尚未写入日志的将来到期，不能改写已定的时刻。
