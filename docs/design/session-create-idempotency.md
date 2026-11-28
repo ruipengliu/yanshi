@@ -6,7 +6,7 @@
 
 创建 Session 是内核唯一不能安全重试的写操作：
 
-- `POST /v1/sessions`（`internal/httpapi/httpapi.go` 的 `create`）与 Connection 的 `CreateSession`（`node.proto`，经 `internal/channel` 的同一个 `service.Create`）都不接受幂等键，每次调用都用 `ids.Generator.Session` 生成新 ID。
+- `POST /v1/sessions`（`internal/httpapi/httpapi_sessions.go` 的 `create`）与 Connection 的 `CreateSession`（`node.proto`，经 `internal/channel` 的同一个 `service.Create`）都不接受幂等键，每次调用都用 `ids.Generator.Session` 生成新 ID。
 - 现行文档把它列为例外：“重试创建 Session 会再创建一个”（[多端双工通道](./m3-duplex-channel.md) §5、[端侧 SDK](./m3-client-sdks.md) §1）。其余写操作或以 `input_id` 去重，或重复执行无副作用。
 - 回包丢失时，调用方既不知道 Session 是否已创建，也无法证明它不存在。xinli 为此在编排器中维护“Session 创建意图”与空孤儿扫描（`apps/xinli/orchestrator/orphans.go`）：没有回包的意图只能按 EndUser 列出 Session、以 AgentDef 名称与创建时间猜测候选，并且“没有可证明的最终结束时刻”，意图须一直保留（`orphans.go` 的 `cleanCreation`）。
 

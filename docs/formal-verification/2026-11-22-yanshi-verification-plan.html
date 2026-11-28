@@ -924,7 +924,7 @@ footer.doc-foot {
           <span class="badge info">最高核心价值 · 3–5 天</span>
         </div>
         <p>
-          <strong>选择理由</strong>：<code>internal/session/state.go</code> 与 <code>internal/runtime/worker.go</code> 是整个分布式运行时的心脏，涵盖 <code>RunStatus</code> 迁移、<code>Attempt</code> 崩溃接管（Takeover）、<code>Call</code> 审批/派发/转后台（ADR-0035/0058）与重答（Redo）并发冲突，也是 AI 改动最频繁的高危区域。
+          <strong>选择理由</strong>：<code>internal/session/state_apply.go</code> 与 <code>internal/runtime/worker.go</code> 是整个分布式运行时的心脏，涵盖 <code>RunStatus</code> 迁移、<code>Attempt</code> 崩溃接管（Takeover）、<code>Call</code> 审批/派发/转后台（ADR-0035/0058）与重答（Redo）并发冲突，也是 AI 改动最频繁的高危区域。
         </p>
         <div class="poc-meta">
           <div><strong>核心不变量</strong>：同一 Session 任意时刻至多一个活跃 Run；非终态 Run 在故障恢复后不丢失、不双活；Call 审批/结果/后台转入严格保序且去重。</div>

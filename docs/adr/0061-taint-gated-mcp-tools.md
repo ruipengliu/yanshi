@@ -12,7 +12,7 @@ status: accepted（2026-11-22 定稿）
 
 1. **登记增加 `tools.taint_gated`**：名称 glob 列表，语法与 `allow`、`no_approval` 相同。匹配且已被 `no_approval` 放宽的写工具，在上下文含非用户原话时请求审批，在干净的上下文中照常免审批。
 2. **只收紧不放宽。** `taint_gated` 不单独放宽任何工具：未列入 `no_approval`、或明确声明 `destructiveHint` 的工具照旧总是审批；只读工具不受影响。
-3. **复用现有判断，不新增机制。** 远程 MCP 工具实现 `capability.ApprovalSummarizer`：受约束的工具返回非空的动作摘要，其余返回空（Worker 把空摘要视为不审批）。判定时机、已请求审批的调用一律走完、调用开始后不再回头请求审批，都与 `schedule` 相同（`internal/runtime/worker.go` 的审批段）。
+3. **复用现有判断，不新增机制。** 远程 MCP 工具实现 `capability.ApprovalSummarizer`：受约束的工具返回非空的动作摘要，其余返回空（Worker 把空摘要视为不审批）。判定时机、已请求审批的调用一律走完、调用开始后不再回头请求审批，都与 `schedule` 相同（`internal/runtime/worker_calls.go` 的审批段）。
 4. **工具结果算外部内容。** 来源推导把 MCP 与设备工具的结果计为外部内容（`session.State.Pieces`），所以同一 Session 里先调过这类工具，之后的 `taint_gated` 调用都要审批。业务线若需要"先查后写"也免审批，应把查询做成不经工具结果的形式，或接受审批；内核不按工具区分结果的可信度。
 
 ## Considered Options

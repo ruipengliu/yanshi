@@ -48,7 +48,7 @@
 
 ### 近期三件事
 
-1. **安全判定的属性测试与 fuzz（2–3 天，约 300–550 行 Go）。** 对象：`internal/session/provenance.go`、`internal/runtime/memgate.go`、`internal/mcpcap/mcpcap.go`、`internal/runtime/worker.go` 中的能力交集、`internal/service/checkpoint.go`、`internal/memory/service.go` 的健康类同意检查。用独立的判定表作为期望值，不复用被测代码。验收：来源污点只增不减、NFKC 变体不绕过闸门、任意祖先链下子 Run 能力不超过交集、客户端无法写入平台字段；每条性质各配一个"坏补丁"（去掉规范化、漏查一层祖先、跳过平台字段检查等），坏补丁下对应测试必须失败；固定语料随 `make check` 运行并记录增时。为什么先做：直接验证生产代码，没有抽象漂移，不依赖 JDK 或 Docker，sim 在这块只有固定模板与只读 MCP 工具（`internal/sim/attested.go`）。
+1. **安全判定的属性测试与 fuzz（2–3 天，约 300–550 行 Go）。** 对象：`internal/session/provenance.go`、`internal/runtime/memgate.go`、`internal/mcpcap/mcpcap.go`、`internal/runtime/worker_calls.go` 中的能力交集、`internal/service/checkpoint.go`、`internal/memory/service.go` 的健康类同意检查。用独立的判定表作为期望值，不复用被测代码。验收：来源污点只增不减、NFKC 变体不绕过闸门、任意祖先链下子 Run 能力不超过交集、客户端无法写入平台字段；每条性质各配一个"坏补丁"（去掉规范化、漏查一层祖先、跳过平台字段检查等），坏补丁下对应测试必须失败；固定语料随 `make check` 运行并记录增时。为什么先做：直接验证生产代码，没有抽象漂移，不依赖 JDK 或 Docker，sim 在这块只有固定模板与只读 MCP 工具（`internal/sim/attested.go`）。
 
 2. **验证基座整顿（2–3 天）。** (a) PoC #1 的变体检查改为要求违反指定的不变量（照 A5 `run.sh` 的 `expect_violation`），工具崩溃或类型错误不再算"抓到"；(b) `internal/sim/lifecycle_trace_test.go` 中补写的中间帧（写入、复查、第二遍清扫）改为经测试侧存储包装观测真实中间状态（参照 `internal/sim/end_user.go` 的拦截器），并用一条故意颠倒顺序的轨迹证明适配器会拒绝；(c) 两个模型共享一份 Quint 依赖与锁文件，目录按协议名命名（去掉 poc1、a5 编号）；(d) 增加单协议快速入口，按并发度实测 `make verify` 并据此定预算；(e) 用 A5 的场景驱动真实的 xinli 消费者（复用 `apps/xinli/delivery/removal_test.go` 的可控内核替身），为 SeenRound、退役与 identity 核对补回归。为什么第二：之后每加一个模型都依赖它，而且 (e) 保护的是已经上线、出过三处问题的代码。
 

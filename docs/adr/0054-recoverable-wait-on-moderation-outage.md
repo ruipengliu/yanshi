@@ -8,7 +8,7 @@ status: accepted（2026-11-15 批准并实现；修订 ADR-0021 的失败方式�
 
 ADR-0021 规定内容安全在写日志之前检查、失败即拒绝；"内容安全服务不可用时一律不放行：输入返回 503，输出重试直到 Run 因持续出错而失败"。不放行是对的，但"失败"的方式与章程 G3（小时级 Run、节点故障不丢进度）和 §8 的"故障透明"冲突。现行行为（2026-11-14 核对代码）：
 
-- **输出**：模型回复与调用参数合在一起送检（`internal/runtime/worker.go` 中 `callModel` 的 `moderation.Check`）。提供商出错时 `Check` 返回 `moderation.ErrUnavailable`，Worker 不写任何事件，直接把错误交回 `Step`。
+- **输出**：模型回复与调用参数合在一起送检（`internal/runtime/worker_model.go` 中 `callModel` 的 `moderation.Check`）。提供商出错时 `Check` 返回 `moderation.ErrUnavailable`，Worker 不写任何事件，直接把错误交回 `Step`。
 - **失败方式**：这条错误不计入 `MaxModelErrors`，而是走通用的 Step 出错路径：同一 Run 的 Step 连续出错满 `StepErrorBudget`（默认 2 分钟）后，写 `RunFailed{reason: "internal error: moderation unavailable: …"}`。
 - **重试的代价**：两次出错之间只等 `IdleWait`（默认 100 ms），没有退避。每次重试都重新调用模型；而用量在模型返回后、审核之前就已计量（ADR-0019），所以审核服务故障的 2 分钟里，同一轮会被反复生成、反复计费，最后 Run 仍然失败。
 - **输入**：`service` 的检查点在审核不可用时返回 `ErrUnavailable`，HTTP 映射为 503，不写日志；ask_user 的回答、通话转写、定时的创建同样如此。

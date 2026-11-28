@@ -6,7 +6,7 @@ status: accepted（2026-11-28 定稿）
 
 > **已定稿（2026-11-28），首版已实现。** 回应[内核架构评估评审](../review/2026-11-22-kernel-architecture-evaluation-review.md) §1.2 中的异步提交对账成本。按 [ADR-0043](0043-kernel-persona-app-layers.md) 归入内核既有执行职责的完善。首版只在 xinli 验证。
 
-异步提交丢失响应后，调用方需要把输入接受的事实与业务完成分开。现有对账路径见 [xinli 的 Events 回放](../../apps/xinli/kernel/inputs.go)，输入去重窗口见 [Session 投影](../../internal/session/state.go)。
+异步提交丢失响应后，调用方需要把输入接受的事实与业务完成分开。现有对账路径见 [xinli 的 Events 回放](../../apps/xinli/kernel/inputs.go)，输入去重窗口见 [Session 投影](../../internal/session/state_inputs.go)。
 
 ## 决定
 

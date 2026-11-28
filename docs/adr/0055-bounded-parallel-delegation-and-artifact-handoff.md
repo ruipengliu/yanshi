@@ -75,7 +75,7 @@ ADR-0031 把委托做成路由到派生子 Session 的调用，送达、去重�
 
 ## 第一期实施记录（2026-11-16）
 
-- **Worker**（`internal/runtime/worker.go`）：`advanceDelegations` 推进 `session.Run.DelegationFront`（从第一个未完成调用起相邻的委托）：逐个开始，都开始后检查各自的超时，再全部派发、写一次 `RunSuspended`，停放到最早的截止时间。挂起中的 Run 只在等未到期的已派发委托时（`awaitingDelegations`），被唤醒后幂等地重新派发、不写事件，再重新停放。投影的字段没有变，没有新事件，`ProjectionVersion` 不变。
+- **Worker**（`internal/runtime/worker_delegation.go`）：`advanceDelegations` 推进 `session.Run.DelegationFront`（从第一个未完成调用起相邻的委托）：逐个开始，都开始后检查各自的超时，再全部派发、写一次 `RunSuspended`，停放到最早的截止时间。挂起中的 Run 只在等未到期的已派发委托时（`awaitingDelegations`），被唤醒后幂等地重新派发、不写事件，再重新停放。投影的字段没有变，没有新事件，`ProjectionVersion` 不变。
 - **上下文**：`runtime.Transcript` 把一条助手消息的调用结果按调用顺序写出，与完成顺序无关；结果按顺序到达时（此前的全部情形）输出不变。
 - **HTTP**：Run 视图的 `waiting` 仍是第一个未完成的调用；同时等待多个已派发调用时另给出 `waiting_all`。
 - **模拟测试**：sim Agent 的 `max_fanout` 取 2，模型偶尔整轮返回两三个委托；新增不变量 `checkFanout`（同一个 Run 同时已派发的委托不超过上限）与覆盖统计 `ParallelDelegations`。另加一种故障，把时钟拨到后台调用的截止时间之后，使后台调用到期不依赖随机分布。

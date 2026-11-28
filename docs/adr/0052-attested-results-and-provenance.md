@@ -15,7 +15,7 @@ status: accepted（2026-11-14；整合并取代 ADR-0036、ADR-0039、ADR-0050�
 2. **原文存放在业务线。** 业务线（xinli 中是 Persona 的库）保存原文，负责分页、时段、进行中判断、处理进度、纠错与擦除，保存变更集与推进处理进度在同一个本地事务中。内核不保存原文本体；内核日志中只有 Run 读过的页的副本（见第 6 条）。
 
 3. **内核只采信同一业务线登记的结构化页。** MCP 登记 `attests_speakers: true` 的 Server（`internal/mcpcap`），只在与 Session 同一业务线时被采信。它返回**结构化的页**：片段的引用、说话人、说话时间、文字、可选的 `speaker_ref`，以及时段边界、是否进行中、下一页游标等元数据；**不返回给模型看的文字**。Worker 用内核的 `captures` 渲染器（`internal/capture`）把页渲染成文字与 `ContentBlock.capture`，并在 ToolResult 上记下平台写入的 attested 标记。
-   - 写入限制在 service 中拒绝、在 `State.Apply` 中再校验一次（ADR-0039 的做法）：capture 块只能出现在带 attested 标记的 MCP 结果中，客户端提交的输入不能带 capture 块。旧日志中内置 `captures` 工具的结果仍可通过校验，只为重放保留（`internal/session/state.go` 中 `hasCapture` 一处的注释）。
+   - 写入限制在 service 中拒绝、在 `State.Apply` 中再校验一次（ADR-0039 的做法）：capture 块只能出现在带 attested 标记的 MCP 结果中，客户端提交的输入不能带 capture 块。旧日志中内置 `captures` 工具的结果仍可通过校验，只为重放保留（`internal/session/state_apply.go` 中 `hasCapture` 一处的注释）。
    - 页由平台渲染，结果中没有业务线写的文字。所以页头不会被算作外部内容而收紧来源，业务线写的文字也不会被洗成可信内容；模型看到的文字由同一个渲染器生成。
    - 渲染与分页依赖的平台参数（结果预算等）经 `_meta` 交给业务线。
    - `cite_captures` 只认 attested 结果中的片段，用于引用与说话人核对。
@@ -38,7 +38,7 @@ status: accepted（2026-11-14；整合并取代 ADR-0036、ADR-0039、ADR-0050�
 
 8. **现行的安全边界。** 以下是现状，不是目标；改变其中任何一项须修订本 ADR。
    - **误标的后果。** 被标为佩戴者的他人文字算用户原话：它可以为 `memory_save` 提供依据，使写入在含外部内容的 Session 中免审（`grounded`）。定时等本地写入的审批看整个 Session 是否 `tainted`，只有误标使整个 Session 都不含非用户原话时才会漏触发。
-   - **注入判断不是兜底。** 注入判断（`decision.ToolResultInjection`）只检查他人与外部来源（`internal/runtime/worker.go` 的 `unjudged`），只在配置了 `-injection-check` 时运行，且目前只以影子模式记录、不阻断（ADR-0030）。误标为佩戴者的文字不会进入判断。即使注入判断改为阻断也覆盖不到误标：佩戴者对助手下指令是正常用法，判断佩戴者的话会大量误报。误标的风险由业务线的说话人识别质量承担，2026-11-20 书面接受为上线的残留风险（[上线检查清单](../launch-checklist.md)"说话人误标"）。
+   - **注入判断不是兜底。** 注入判断（`decision.ToolResultInjection`）只检查他人与外部来源（`internal/runtime/worker_decisions.go` 的 `unjudged`），只在配置了 `-injection-check` 时运行，且目前只以影子模式记录、不阻断（ADR-0030）。误标为佩戴者的文字不会进入判断。即使注入判断改为阻断也覆盖不到误标：佩戴者对助手下指令是正常用法，判断佩戴者的话会大量误报。误标的风险由业务线的说话人识别质量承担，2026-11-20 书面接受为上线的残留风险（[上线检查清单](../launch-checklist.md)"说话人误标"）。
    - **不依赖标签的审批**，只有能力声明的高风险审批（`RequiresApproval`）；已经请求的审批须走完。
    - **Memory 写入闸门**看整个 Session 的来源：`scope: run` 只裁剪模型上下文，不裁剪闸门的判断。纠错后，旧文字在日志中仍可作为依据；要撤回旧依据，只能删除工作 Session。
    - ADR-0048 的"听过他人旁听的 Session 不能调用三方"同样由来源推导（**尚未实现**），误标的他人文字不会计入；三方出站的逐次审批是独立要求。
