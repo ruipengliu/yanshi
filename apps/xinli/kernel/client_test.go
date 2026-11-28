@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -141,6 +142,50 @@ func TestErrorsDoNotExposeContent(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), fmt.Sprint(status)) || strings.Contains(err.Error(), "private-input") {
 					t.Fatalf("unsafe error: %v", err)
 				}
+			}
+		})
+	}
+}
+
+type errorResponseTransport struct {
+	status int
+	body   string
+}
+
+func (r errorResponseTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: r.status, Body: io.NopCloser(strings.NewReader(r.body))}, nil
+}
+
+func TestHTTPErrorClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name, body  string
+		status      int
+		code        string
+		reason      string
+		outboxReset bool
+	}{
+		{"结构化重答优先", `{"error":"conflict: redo: not_last_run","code":"conflict","reason":"session_closed"}`, 409, "conflict", "session_closed", false},
+		{"旧内核重答", `{"error":"conflict: redo: not_last_run"}`, 409, "", "not_last_run", false},
+		{"未知原因", `{"error":"conflict: redo: not_last_run","code":"conflict","reason":"private-input"}`, 409, "conflict", "", false},
+		{"未知分类", `{"error":"private-input","code":"private_input","reason":"not_last_run"}`, 409, "", "", false},
+		{"分类不符", `{"error":"private-input","code":"memory_limit","reason":"not_last_run"}`, 409, "memory_limit", "", false},
+		{"结构化过滤变化", `{"error":"private-input","code":"conflict","reason":"outbox_filter_changed"}`, 409, "conflict", "outbox_filter_changed", false},
+		{"旧内核过滤变化", `{"error":"outbox_filter_changed"}`, 409, "", "outbox_filter_changed", false},
+		{"结构化游标过期", `{"error":"private-input","code":"gone","reason":"outbox_cursor_expired"}`, 410, "gone", "outbox_cursor_expired", true},
+		{"旧内核游标过期", `{"error":"outbox_cursor_expired"}`, 410, "", "outbox_cursor_expired", true},
+		{"结构化世代变化", `{"error":"private-input","code":"gone","reason":"outbox_epoch_changed"}`, 410, "gone", "outbox_epoch_changed", true},
+		{"旧内核世代变化", `{"error":"outbox_epoch_changed"}`, 410, "", "outbox_epoch_changed", true},
+		{"其他状态", `{"error":"private-input","code":"not_found"}`, 404, "not_found", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Client{BaseURL: "http://kernel", HTTP: &http.Client{Transport: errorResponseTransport{tc.status, tc.body}}}
+			_, err := c.ThreadRequest(t.Context(), "bl", "sid", http.MethodPost, "/inputs", nil)
+			var remote *HTTPError
+			if !errors.As(err, &remote) || remote.StatusCode != tc.status || remote.Code != tc.code || remote.Reason != tc.reason {
+				t.Fatalf("error = %#v, want status=%d code=%q reason=%q", err, tc.status, tc.code, tc.reason)
+			}
+			if OutboxResetRequired(err) != tc.outboxReset || err.Error() != fmt.Sprintf("kernel: HTTP status %d", tc.status) {
+				t.Fatalf("error = %v, outbox reset = %v", err, OutboxResetRequired(err))
 			}
 		})
 	}

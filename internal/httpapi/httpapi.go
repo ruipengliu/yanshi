@@ -304,72 +304,76 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 func (s *Server) fail(w http.ResponseWriter, err error) {
-	code := http.StatusInternalServerError
+	status := http.StatusInternalServerError
+	body := errorResponse{Code: codeInternal}
 	switch {
 	case errors.Is(err, shard.ErrUnavailable):
-		w.Header().Set("Retry-After", "1")
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "shard_unavailable"})
-		return
+		status, body.Code = http.StatusServiceUnavailable, codeShardUnavailable
 	case errors.Is(err, service.ErrNotFound), errors.Is(err, oneshot.ErrNotFound), errors.Is(err, shard.ErrInvalidID):
 		// 无法解析的 ID 不可能指向任何对象，按不存在处理。
-		code = http.StatusNotFound
+		status, body.Code = http.StatusNotFound, codeNotFound
 	case errors.Is(err, errForbidden):
-		code = http.StatusForbidden
+		status, body.Code = http.StatusForbidden, codeForbidden
 	case errors.Is(err, service.ErrInvalid), errors.Is(err, oneshot.ErrInvalid):
-		code = http.StatusBadRequest
+		status, body.Code = http.StatusBadRequest, codeInvalidArgument
 	case errors.Is(err, service.ErrConflict):
-		code = http.StatusConflict
+		status, body.Code = http.StatusConflict, codeConflict
 	case errors.Is(err, artifact.ErrNotFound):
-		code = http.StatusNotFound
+		status, body.Code = http.StatusNotFound, codeNotFound
 	case errors.Is(err, memory.ErrNotFound):
-		code = http.StatusNotFound
+		status, body.Code = http.StatusNotFound, codeNotFound
 	case errors.Is(err, memory.ErrRejected):
-		code = http.StatusBadRequest
+		status, body.Code = http.StatusBadRequest, codeMemoryRejected
 	case errors.Is(err, memory.ErrLimit):
-		code = http.StatusConflict
+		status, body.Code = http.StatusConflict, codeMemoryLimit
 	case errors.Is(err, artifact.ErrTooLarge):
-		code = http.StatusRequestEntityTooLarge
+		status, body.Code = http.StatusRequestEntityTooLarge, codeTooLarge
 	case errors.Is(err, moderation.ErrRejected):
-		code = http.StatusUnprocessableEntity
+		status, body.Code = http.StatusUnprocessableEntity, codeModerationRejected
 	case errors.Is(err, speech.ErrNotConfigured):
-		code = http.StatusNotImplemented
+		status, body.Code = http.StatusNotImplemented, codeNotImplemented
 	case errors.Is(err, speech.ErrProvider):
-		code = http.StatusBadGateway
+		status, body.Code = http.StatusBadGateway, codeProviderError
 	case errors.Is(err, moderation.ErrUnavailable):
-		code = http.StatusServiceUnavailable
+		status, body.Code = http.StatusServiceUnavailable, codeModerationUnavailable
 	case errors.Is(err, model.ErrBusy):
-		code = http.StatusTooManyRequests
+		status, body.Code = http.StatusTooManyRequests, codeRateLimited
 	case errors.Is(err, context.DeadlineExceeded):
-		code = http.StatusGatewayTimeout
+		status, body.Code = http.StatusGatewayTimeout, codeTimeout
 	case errors.Is(err, oneshot.ErrProvider), errors.Is(err, oneshot.ErrSchema):
-		code = http.StatusBadGateway
+		status, body.Code = http.StatusBadGateway, codeProviderError
 	case errors.Is(err, oneshot.ErrInternal):
-		code = http.StatusServiceUnavailable
+		status, body.Code = http.StatusServiceUnavailable, codeOneshotUnavailable
 	case errors.Is(err, service.ErrOverloaded):
-		code = http.StatusServiceUnavailable
+		status, body.Code = http.StatusServiceUnavailable, codeOverloaded
 		var ov *service.OverloadedError
 		if errors.As(err, &ov) {
 			w.Header().Set("Retry-After", strconv.Itoa(max(int(math.Ceil(time.Until(ov.RetryAt).Seconds())), 1)))
 		}
 	case errors.Is(err, usage.ErrExceeded):
-		code = http.StatusTooManyRequests
+		status, body.Code = http.StatusTooManyRequests, codeQuotaExceeded
 		var ex *usage.ExceededError
 		if errors.As(err, &ex) {
 			secs := int(math.Ceil(time.Until(ex.Period.ResetAt).Seconds()))
 			w.Header().Set("Retry-After", strconv.Itoa(max(secs, 1)))
-			writeJSON(w, code, map[string]any{"error": err.Error(), "quota": ex.Period})
-			return
+			body.Quota = ex.Period
 		}
 	}
-	if _, sharded := s.Outbox.(outbox.Shards); sharded && (code == http.StatusInternalServerError || code == http.StatusGatewayTimeout) {
+	_, sharded := s.Outbox.(outbox.Shards)
+	if body.Code == codeShardUnavailable || sharded && (status == http.StatusInternalServerError || status == http.StatusGatewayTimeout) {
 		w.Header().Set("Retry-After", "1")
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "shard_unavailable"})
+		writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "shard_unavailable", Code: codeShardUnavailable})
 		return
 	}
-	if code == http.StatusInternalServerError && s.Logger != nil {
+	if status == http.StatusInternalServerError && s.Logger != nil {
 		s.Logger.Error("request failed", "err", err)
 	}
-	writeJSON(w, code, map[string]string{"error": err.Error()})
+	body.Error = err.Error()
+	var reason *service.ReasonError
+	if errors.As(err, &reason) {
+		body.Reason = reason.Reason
+	}
+	writeJSON(w, status, body)
 }
 
 func decode(r *http.Request, v any) error {
@@ -790,7 +794,7 @@ func viewArtifact(m *artifact.Meta) artifactView {
 
 func (s *Server) artifacts(w http.ResponseWriter) bool {
 	if s.Artifacts == nil {
-		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "artifacts are not configured"})
+		writeJSON(w, http.StatusNotImplemented, errorResponse{Error: "artifacts are not configured", Code: codeNotImplemented})
 		return false
 	}
 	return true
@@ -999,7 +1003,7 @@ type sessionSummary struct {
 
 func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	if s.Service.Index == nil {
-		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "session index is not configured"})
+		writeJSON(w, http.StatusNotImplemented, errorResponse{Error: "session index is not configured", Code: codeNotImplemented})
 		return
 	}
 	q := r.URL.Query()
@@ -1158,7 +1162,7 @@ func (s *Server) sessionDeletion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.Service.Deletions == nil {
-		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "deletion is not configured"})
+		writeJSON(w, http.StatusNotImplemented, errorResponse{Error: "deletion is not configured", Code: codeNotImplemented})
 		return
 	}
 	tomb, err := s.Service.Deletions.Get(r.Context(), r.PathValue("id"))
@@ -1185,7 +1189,7 @@ func (s *Server) deletion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.Service.Deletions == nil {
-		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "deletion is not configured"})
+		writeJSON(w, http.StatusNotImplemented, errorResponse{Error: "deletion is not configured", Code: codeNotImplemented})
 		return
 	}
 	req, err := s.Service.DeletionRequest(r.Context(), bl, r.PathValue("id"))
@@ -1204,7 +1208,7 @@ func (s *Server) deletion(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) memoryEnabled(w http.ResponseWriter) bool {
 	if s.Memory == nil {
-		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "memory is not configured"})
+		writeJSON(w, http.StatusNotImplemented, errorResponse{Error: "memory is not configured", Code: codeNotImplemented})
 		return false
 	}
 	return true

@@ -234,16 +234,14 @@ func (outboxExpiringToken) Verify(string) (auth.Principal, error) {
 }
 
 func TestOutboxLongPollStopsAtTokenExpiry(t *testing.T) {
-	srv := httptest.NewServer((&httpapi.Server{Auth: outboxExpiringToken{}, Outbox: memoutbox.New(), OutboxWait: time.Second}).Handler())
-	defer srv.Close()
-	req, _ := http.NewRequest("GET", srv.URL+"/v1/outbox", nil)
+	handler := (&httpapi.Server{Auth: outboxExpiringToken{}, Outbox: memoutbox.New(), OutboxWait: time.Second}).Handler()
+	req := httptest.NewRequestWithContext(t.Context(), "GET", "/v1/outbox", nil)
 	req.Header.Set("Authorization", "Bearer service")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != 401 {
-		t.Fatalf("expired token got %d", resp.StatusCode)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	var body map[string]string
+	if w.Code != http.StatusUnauthorized || json.Unmarshal(w.Body.Bytes(), &body) != nil ||
+		body["code"] != "unauthenticated" || body["error"] != "unauthenticated" || w.Header().Get("WWW-Authenticate") != `Bearer error="invalid_token"` {
+		t.Fatalf("expired token got %d %s %v", w.Code, w.Body, w.Header())
 	}
 }

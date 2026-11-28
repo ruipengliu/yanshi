@@ -157,6 +157,15 @@ func TestRedoRechecksEveryDecision(t *testing.T) {
 				}
 			} else if !errors.Is(err, service.ErrConflict) {
 				t.Fatalf("stale expected run accepted: %+v %v", res, err)
+			} else {
+				want := "not_last_run"
+				if competitor == "close" {
+					want = "session_closed"
+				}
+				var reason *service.ReasonError
+				if !errors.As(err, &reason) || reason.Reason != want || err.Error() != "conflict: redo: "+want {
+					t.Fatalf("redo reason: %v, want %s", err, want)
+				}
 			}
 		})
 	}

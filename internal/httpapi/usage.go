@@ -50,7 +50,7 @@ func (s *Server) quota(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 	if s.Usage == nil {
-		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "usage is not configured"})
+		writeJSON(w, http.StatusNotImplemented, errorResponse{Error: "usage is not configured", Code: codeNotImplemented})
 		return
 	}
 	bl, eu, ok := usageOwner(w, r, s)

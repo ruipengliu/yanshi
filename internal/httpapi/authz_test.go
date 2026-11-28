@@ -53,6 +53,14 @@ type authzEnv struct {
 
 func newAuthzEnv(t *testing.T) *authzEnv {
 	t.Helper()
+	e := newAuthzFixture(t)
+	e.srv = httptest.NewServer(e.api.Handler())
+	t.Cleanup(e.srv.Close)
+	return e
+}
+
+func newAuthzFixture(t *testing.T) *authzEnv {
+	t.Helper()
 	e := &authzEnv{keys: map[string]*auth.SigningKey{}}
 	var lines []auth.BusinessLine
 	for _, bl := range []string{"demo", "other"} {
@@ -166,8 +174,6 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 	e.api.Oneshots.Quotas = svc.Quotas
 	e.api.Oneshots.Meter.Deletions = svc.Deletions
 	e.api.Oneshots.Meter.Store = uses
-	e.srv = httptest.NewServer(e.api.Handler())
-	t.Cleanup(e.srv.Close)
 	return e
 }
 

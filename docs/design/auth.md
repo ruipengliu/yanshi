@@ -87,3 +87,55 @@ max_ttl: 1h               # 拒绝有效期更长的令牌
 - **授权矩阵测试**（`internal/httpapi/authz_test.go`）：每个 HTTP 接口 × {本人、同业务线的其他用户、其他业务线、本业务线服务令牌、其他业务线服务令牌、无令牌}，断言 2xx 或 404/401。新增接口时必须加入这张表，否则测试失败（路由表与矩阵对照）。
 - Node 接入：令牌身份与 Hello 自报身份不一致时拒绝；令牌到期时断开连接。
 - e2e：全部场景在开启鉴权的情况下运行；另测 Node 令牌到期后断开、取新令牌重连，以及身份不符时拒绝接入。
+
+## 8. 错误响应
+
+HTTP API 路由返回的 JSON 错误包含 `error`（供人阅读的现有文本）、`code`（稳定的错误类别）与可选的 `reason`（该类别下的稳定子原因）。配额错误仍可带 `quota`，已有的 `Retry-After` 响应头继续有效。
+
+`code` 和 `reason` 使用 ASCII snake_case。发布后只增不改，客户端须容许未知值与缺省的 `reason`。客户端不得解析 `error` 文本。
+
+| code | HTTP 状态 | 来源 |
+|---|---|---|
+| `invalid_argument` | 400 | `service.ErrInvalid`、`oneshot.ErrInvalid`、`outbox.ErrInvalid`、`outbox.ErrCursor` |
+| `memory_rejected` | 400 | `memory.ErrRejected` |
+| `unauthenticated` | 401 | 出站长轮询期间令牌到期 |
+| `forbidden` | 403 | `errForbidden`、`outbox.ErrScope` |
+| `not_found` | 404 | `service.ErrNotFound`、`oneshot.ErrNotFound`、`shard.ErrInvalidID`、`artifact.ErrNotFound`、`memory.ErrNotFound`、`outbox.ErrShard` |
+| `conflict` | 409 | `service.ErrConflict`、`outbox.ErrFilter` |
+| `memory_limit` | 409 | `memory.ErrLimit` |
+| `gone` | 410 | `outbox.ErrEpoch`、`outbox.ErrExpired` |
+| `too_large` | 413 | `artifact.ErrTooLarge` |
+| `moderation_rejected` | 422 | `moderation.ErrRejected` |
+| `rate_limited` | 429 | `model.ErrBusy` |
+| `quota_exceeded` | 429 | `usage.ErrExceeded` |
+| `internal` | 500 | 未归类的路由错误 |
+| `not_implemented` | 501 | `speech.ErrNotConfigured` 或工件、索引、删除进度、Memory、用量接口未装配 |
+| `provider_error` | 502 | `speech.ErrProvider`、`oneshot.ErrProvider`、`oneshot.ErrSchema` |
+| `moderation_unavailable` | 503 | `moderation.ErrUnavailable` |
+| `oneshot_unavailable` | 503 | `oneshot.ErrInternal` |
+| `outbox_unavailable` | 503 | 出站流未装配或读取失败 |
+| `overloaded` | 503 | `service.ErrOverloaded` |
+| `shard_unavailable` | 503 | `shard.ErrUnavailable`，或分片模式下原为 500、504 的路由错误 |
+| `timeout` | 504 | `context.DeadlineExceeded` |
+
+重答（`POST /v1/sessions/{id}/inputs`）因资格检查被拒时，`code` 为 `conflict`，`reason` 取自 `session.State.RedoBlocker`。
+
+| reason | 拒绝条件 |
+|---|---|
+| `session_closed` | Session 已关闭 |
+| `not_last_run` | 目标已非最后一个 Run，或 Session 中没有 Run |
+| `not_completed` | 最后一个 Run 的状态不是 completed |
+| `delegated_session` | Session 由委托派生 |
+| `platform_input` | 输入来自平台，或缺少原请求记录 |
+| `card_action_input` | 输入包含 CardAction |
+| `compacted` | 输入之后发生过压缩 |
+| `steered` | Run 已接收插话 |
+| `approval_requested` | Run 请求过审批 |
+| `ask_user` | Run 调用过 `ask_user` |
+| `delegation` | Run 发起过委托 |
+| `background_call` | Run 有后台调用 |
+| `not_read_only` | 除 `show_card` 外的调用缺少只读证据 |
+
+出站流的 `conflict` 带 `outbox_filter_changed`，`gone` 带 `outbox_epoch_changed` 或 `outbox_cursor_expired`。恢复规则见[出站流](./m7-kernel-primitives.md#b4-的-http-与存储契约)。
+
+令牌中间件直接返回的 401、路由未匹配时的响应、已建立的 SSE 流与外部循环的 OpenAI 兼容模型端点各自沿用现有契约。Connection 使用 `ClientError`，见[多端双工通道](./m3-duplex-channel.md#5-请求)。

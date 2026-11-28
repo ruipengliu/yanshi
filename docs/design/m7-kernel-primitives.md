@@ -228,14 +228,16 @@ session_deleted 不是已有 Event。它在 `pglifecycle.Deletions.Mark` 写删�
 
 游标为 `base64url(JSON).base64url(HMAC-SHA256)`，JSON 含 `v=1`、`business_line`、`shard`、`stream_epoch`、`filter_version`、`xid8`、`id`。调用方必须将它作为不透明字符串保存，不能自行构造。过滤版本是版本前缀 `1:` 与排序去重后的种类集合的 SHA-256；密钥与 epoch 存在各分片元数据中，普通进程重启保持不变。跨片游标先明确返回 scope mismatch，不能被另一片的 epoch 差异误当成正常过期恢复。内存存储重建生成新世代。
 
-| HTTP 状态 | error | 处理 |
-|---|---|---|
-| 400 | outbox_invalid_request / outbox_invalid_cursor | 修正参数或损坏的游标 |
-| 403 | outbox_cursor_scope_mismatch | 游标不属于令牌业务线或请求分片 |
-| 404 | outbox_unknown_shard | 修正分片 |
-| 409 | outbox_filter_changed | 使用新过滤集合重新建立消费位置 |
-| 410 | outbox_epoch_changed / outbox_cursor_expired | 按 §6.5 重建位置；B5 实现应用恢复 |
-| 503 | outbox_unavailable | 保留已有进度，稍后重试 |
+出站流使用 [HTTP 错误响应](./auth.md#8-错误响应)。
+
+| HTTP 状态 | code | reason | 处理 |
+|---|---|---|---|
+| 400 | `invalid_argument` | — | 修正参数或损坏的游标 |
+| 403 | `forbidden` | — | 游标不属于令牌业务线或请求分片 |
+| 404 | `not_found` | — | 修正分片 |
+| 409 | `conflict` | `outbox_filter_changed` | 使用新过滤集合重新建立消费位置 |
+| 410 | `gone` | `outbox_epoch_changed` / `outbox_cursor_expired` | 按 §6.5 重建位置 |
+| 503 | `outbox_unavailable` | — | 保留已有进度，稍后重试 |
 
 PG 每次读取使用一个短的 `REPEATABLE READ READ ONLY` 事务，先在该快照读 `outbox_stream` 及 `pg_snapshot_xmin(pg_current_snapshot())`，随后执行：
 

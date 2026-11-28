@@ -58,25 +58,29 @@ func (s *Server) outboxRequest(w http.ResponseWriter, r *http.Request) (outbox.R
 }
 
 func (s *Server) outboxError(w http.ResponseWriter, err error) {
-	code := http.StatusServiceUnavailable
-	message := "outbox_unavailable"
+	var status int
+	var body errorResponse
 	switch {
 	case errors.Is(err, outbox.ErrInvalid), errors.Is(err, outbox.ErrCursor):
-		code, message = http.StatusBadRequest, err.Error()
+		status, body.Code = http.StatusBadRequest, codeInvalidArgument
 	case errors.Is(err, outbox.ErrScope):
-		code, message = http.StatusForbidden, err.Error()
+		status, body.Code = http.StatusForbidden, codeForbidden
 	case errors.Is(err, outbox.ErrShard):
-		code, message = http.StatusNotFound, err.Error()
+		status, body.Code = http.StatusNotFound, codeNotFound
 	case errors.Is(err, outbox.ErrFilter):
-		code, message = http.StatusConflict, err.Error()
-	case errors.Is(err, outbox.ErrEpoch), errors.Is(err, outbox.ErrExpired):
-		code, message = http.StatusGone, err.Error()
-	}
-	if code == http.StatusServiceUnavailable {
+		status, body.Code, body.Reason = http.StatusConflict, codeConflict, reasonOutboxFilterChanged
+	case errors.Is(err, outbox.ErrEpoch):
+		status, body.Code, body.Reason = http.StatusGone, codeGone, reasonOutboxEpochChanged
+	case errors.Is(err, outbox.ErrExpired):
+		status, body.Code, body.Reason = http.StatusGone, codeGone, reasonOutboxCursorExpired
+	default:
+		// 数据库错误不回传 SQL 或参数，消费者只需知道本分片不可用。
 		w.Header().Set("Retry-After", "1")
+		writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "outbox_unavailable", Code: codeOutboxUnavailable})
+		return
 	}
-	// 数据库错误不回传 SQL 或参数，消费者只需知道本分片不可用。
-	writeJSON(w, code, map[string]string{"error": message})
+	body.Error = err.Error()
+	writeJSON(w, status, body)
 }
 
 func (s *Server) readOutbox(w http.ResponseWriter, r *http.Request) {
@@ -137,7 +141,7 @@ func (s *Server) readOutbox(w http.ResponseWriter, r *http.Request) {
 	}
 	if expires := principal(r).Expires; !expires.IsZero() && !time.Now().Before(expires) {
 		w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthenticated"})
+		writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "unauthenticated", Code: codeUnauthenticated})
 		return
 	}
 	if last.Next == "" {

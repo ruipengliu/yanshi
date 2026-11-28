@@ -63,32 +63,50 @@ func (c *Client) Stream(ctx context.Context, line, id string, after uint64) (io.
 	return resp.Body, nil
 }
 
-// 只提取重答与出站恢复的固定分类，不让任意下游正文进入错误或日志。
+// 只保留已知分类，避免把任意下游正文带进错误或日志。
 func responseError(resp *http.Response) error {
 	err := &HTTPError{StatusCode: resp.StatusCode}
-	if resp.StatusCode != http.StatusConflict && resp.StatusCode != http.StatusGone {
-		return err
-	}
 	var body struct {
-		Error string `json:"error"`
+		Error  string `json:"error"`
+		Code   string `json:"code"`
+		Reason string `json:"reason"`
 	}
 	if json.NewDecoder(io.LimitReader(resp.Body, 2048)).Decode(&body) != nil {
 		return err
 	}
-	if resp.StatusCode == http.StatusGone {
-		if body.Error == "outbox_cursor_expired" || body.Error == "outbox_epoch_changed" {
-			err.Reason = body.Error
+	switch body.Code {
+	case "invalid_argument", "unauthenticated", "forbidden", "not_found", "conflict", "gone",
+		"too_large", "moderation_rejected", "memory_rejected", "memory_limit", "quota_exceeded",
+		"rate_limited", "internal", "not_implemented", "provider_error", "shard_unavailable",
+		"moderation_unavailable", "oneshot_unavailable", "outbox_unavailable", "overloaded", "timeout":
+		err.Code = body.Code
+	}
+
+	reason := body.Reason
+	// 内核和 xinli 的部署版本都包含结构化错误后，可删除旧内核的文本回退。
+	switch {
+	case resp.StatusCode == http.StatusGone && (body.Code == "gone" || body.Code == ""):
+		if reason == "" {
+			reason = body.Error
 		}
-		return err
-	}
-	if body.Error == "outbox_filter_changed" {
-		err.Reason = body.Error
-		return err
-	}
-	for _, reason := range []string{"session_closed", "not_last_run", "not_completed", "delegated_session", "platform_input", "card_action_input", "compacted", "steered", "approval_requested", "ask_user", "delegation", "background_call", "not_read_only"} {
-		if body.Error == "conflict: redo: "+reason {
+		if reason == "outbox_cursor_expired" || reason == "outbox_epoch_changed" {
 			err.Reason = reason
-			break
+		}
+	case resp.StatusCode == http.StatusConflict && (body.Code == "conflict" || body.Code == ""):
+		if reason == "outbox_filter_changed" || (reason == "" && body.Error == "outbox_filter_changed") {
+			err.Reason = "outbox_filter_changed"
+			return err
+		}
+		if reason == "" {
+			if legacy, ok := strings.CutPrefix(body.Error, "conflict: redo: "); ok {
+				reason = legacy
+			}
+		}
+		switch reason {
+		case "session_closed", "not_last_run", "not_completed", "delegated_session",
+			"platform_input", "card_action_input", "compacted", "steered", "approval_requested", "ask_user",
+			"delegation", "background_call", "not_read_only":
+			err.Reason = reason
 		}
 	}
 	return err

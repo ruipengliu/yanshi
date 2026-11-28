@@ -130,6 +130,7 @@ func (c *Client) requestJSON(ctx context.Context, method, path string, in, out a
 // HTTPError 只保留状态码与白名单分类，不保存响应正文。
 type HTTPError struct {
 	StatusCode int
+	Code       string
 	Reason     string
 }
 

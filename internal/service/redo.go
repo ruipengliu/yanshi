@@ -33,7 +33,7 @@ func (s *Service) Redo(ctx context.Context, sessionID, inputID, expectedRunID st
 			return session.Decision{}, nil
 		}
 		if reason := st.RedoBlocker(expectedRunID); reason != "" {
-			return session.Decision{}, fmt.Errorf("%w: redo: %s", ErrConflict, reason)
+			return session.Decision{}, &ReasonError{Err: fmt.Errorf("%w: redo: %s", ErrConflict, reason), Reason: reason}
 		}
 		original := st.Run(expectedRunID).Request
 		input := make([]*v1.ContentBlock, len(original.GetInput()))

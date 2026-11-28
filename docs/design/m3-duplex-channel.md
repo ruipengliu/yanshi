@@ -64,7 +64,7 @@ HostApp 实例与网关之间只保持一条 **Connection**（WebSocket，路径
 
 取消后台调用（`CancelBackground{session_id, call_id}`，ADR-0035）与 `POST /v1/sessions/{id}/background/{call}/cancel` 走同一条路径（`service.Service.CancelBackground`）：撤回投递，写入 `BackgroundCancelled`，不开启新 Run；调用已了结时返回 `conflict`，不是后台调用时返回 `not_found`。
 
-- **与 HTTP 走同一条路径。** 请求直接调用 `service.Service`，内容安全、配额、发布配置、删除记录检查都与 HTTP 相同。错误码与 HTTP 状态码一一对应：`invalid` 400、`not_found` 404、`conflict` 409、`rejected` 422、`quota_exceeded` 429（带 `retry_at`）、`unavailable` 503、`internal` 500。
+- **与 HTTP 走同一条路径。** 请求直接调用 `service.Service`，内容安全、配额、发布配置、删除记录检查都与 HTTP 相同。Connection 的 `ClientError.code` 按 HTTP 状态类解释（`invalid` 400、`not_found` 404、`conflict` 409、`rejected` 422、`quota_exceeded` 429、`unavailable` 503、`internal` 500）。`ClientError.message` 供人阅读，配额错误携带 `retry_at`。HTTP JSON 的字段与枚举见[错误响应](./auth.md#8-错误响应)。
 - **不阻塞 Node 角色。** 每个请求在独立的 goroutine 中执行（内容安全检查可能较慢），每条连接最多 8 个并发请求，超出时在读循环中等待，以此对客户端施加背压。
 - **结果未知与重试。** 手机网络上，"请求已发出、响应没回来"很常见。提交输入因此带一个客户端生成的 `input_id`（Connection 的 `SubmitInput.input_id`，HTTP 的 `input_id`，最长 128 字节）：
   - ID 随输入写进日志：`RunRequested.input_id`、`Steered.input_id`，打字回答提问时写在 `ToolResult.input_id`；

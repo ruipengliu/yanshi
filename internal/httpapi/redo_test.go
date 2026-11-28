@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +16,7 @@ import (
 
 func httpRedoFixture(t *testing.T) (*authzEnv, string, string) {
 	t.Helper()
-	e := newAuthzEnv(t)
+	e := newAuthzFixture(t)
 	s := e.api.Service
 	s.Quotas = nil
 	sid, err := s.Create(t.Context(), service.CreateRequest{BusinessLine: "demo", EndUser: "u1", Agent: "echo"})
@@ -38,8 +39,20 @@ func httpRedoFixture(t *testing.T) (*authzEnv, string, string) {
 	return e, sid, res.RunID
 }
 
+func postRedo(t *testing.T, handler http.Handler, path, token, body string) (int, string) {
+	t.Helper()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	return w.Code, w.Body.String()
+}
+
 func TestHTTPRedoValidationAndConflict(t *testing.T) {
 	e, sid, run := httpRedoFixture(t)
+	handler := e.api.Handler()
 	token := e.token(t, "demo/u1", time.Hour)
 	path := "/v1/sessions/" + sid + "/inputs"
 	for _, body := range []string{
@@ -57,12 +70,12 @@ func TestHTTPRedoValidationAndConflict(t *testing.T) {
 		`{"text":"hi","expected_run_id":"r"}`,
 		fmt.Sprintf(`{"redo":true,"expected_run_id":%q,"input_id":%q}`, run, strings.Repeat("x", service.MaxInputIDLen+1)),
 	} {
-		if code, reply := e.do(t, http.MethodPost, path, token, body); code != http.StatusBadRequest {
+		if code, reply := postRedo(t, handler, path, token, body); code != http.StatusBadRequest {
 			t.Fatalf("%s: %d %s", body, code, reply)
 		}
 	}
 	body := fmt.Sprintf(`{"redo":true,"input_id":"redo","expected_run_id":%q}`, run)
-	code, reply := e.do(t, http.MethodPost, path, token, body)
+	code, reply := postRedo(t, handler, path, token, body)
 	if code != http.StatusAccepted {
 		t.Fatalf("redo: %d %s", code, reply)
 	}
@@ -70,7 +83,7 @@ func TestHTTPRedoValidationAndConflict(t *testing.T) {
 	if err := json.Unmarshal([]byte(reply), &first); err != nil {
 		t.Fatal(err)
 	}
-	code, reply = e.do(t, http.MethodPost, path, token, body)
+	code, reply = postRedo(t, handler, path, token, body)
 	var again map[string]any
 	if err := json.Unmarshal([]byte(reply), &again); err != nil {
 		t.Fatal(err)
@@ -78,8 +91,10 @@ func TestHTTPRedoValidationAndConflict(t *testing.T) {
 	if code != http.StatusAccepted || again["duplicate"] != true || again["run_id"] != first["run_id"] || again["steered"] != false {
 		t.Fatalf("duplicate: %d %s", code, reply)
 	}
-	code, reply = e.do(t, http.MethodPost, path, token, fmt.Sprintf(`{"redo":true,"input_id":"other-device","expected_run_id":%q}`, run))
-	if code != http.StatusConflict || !strings.Contains(reply, "not_last_run") {
+	code, reply = postRedo(t, handler, path, token, fmt.Sprintf(`{"redo":true,"input_id":"other-device","expected_run_id":%q}`, run))
+	var failure map[string]string
+	if code != http.StatusConflict || json.Unmarshal([]byte(reply), &failure) != nil ||
+		failure["code"] != "conflict" || failure["reason"] != "not_last_run" || failure["error"] != "conflict: redo: not_last_run" {
 		t.Fatalf("stale expected run: %d %s", code, reply)
 	}
 }
@@ -95,7 +110,7 @@ func TestHTTPRedoAuthorization(t *testing.T) {
 	} {
 		t.Run(principal, func(t *testing.T) {
 			e, sid, run := httpRedoFixture(t)
-			code, body := e.do(t, http.MethodPost, "/v1/sessions/"+sid+"/inputs", e.token(t, principal, time.Hour),
+			code, body := postRedo(t, e.api.Handler(), "/v1/sessions/"+sid+"/inputs", e.token(t, principal, time.Hour),
 				fmt.Sprintf(`{"redo":true,"input_id":"redo","expected_run_id":%q}`, run))
 			if code != want {
 				t.Fatalf("got %d %s, want %d", code, body, want)
