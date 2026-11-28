@@ -194,13 +194,13 @@ ASR 改了文字的片段不能同时标 `low_support_spans`，本轮不提供�
 
 expect 复用 reply_contains、reply_excludes、reply_max_chars、status 与 judge；JSON 输出按**整个 JSON 文本**断言与评分，不拼接 brief 等业务字段。新增 output_schema_valid：有 Schema 时默认检查，true 要求有声明且输出合法，false 只关闭额外的评测断言，不能绕过 Service 的强制校验。judge 的 1–5 分规则与通过线不变。
 
-`eval -oneshots oneshots -oneshot-version 2` 指定待发布的单次调用版本；默认选稳定版本，不按评测 EndUser 进入线上灰度。`-agent-version` 只影响 AgentDef，`-model` 同时覆盖两种声明的模型。报告 JSON 增加可选 oneshot 与 oneshot_version，旧基线兼容。此形态的失败也记消耗；`-logs` 不会为它保存输入、输出或伪造 Event 日志。新增用例的基线由真实模型评测生成，不手写。
+`eval -oneshots oneshots,apps/xinli/oneshots -oneshot-version 2` 指定待发布的单次调用版本；默认选稳定版本，不按评测 EndUser 进入线上灰度。`-agent-version` 只影响 AgentDef，`-model` 同时覆盖两种声明的模型。报告 JSON 增加可选 oneshot 与 oneshot_version，旧基线兼容。此形态的失败也记消耗；`-logs` 不会为它保存输入、输出或伪造 Event 日志。新增用例的基线由真实模型评测生成，不手写。
 
 ## 3. 运行
 
 `make eval` 依次运行内核与 xinli 用例集，任一套件回归即失败。也可以用 `make eval-kernel` 或 `make eval-xinli` 单独运行。两套共用 `EVAL_FLAGS`，默认 `-sandbox docker`。指定单套件的 `-case` 或 `-baseline` 时，使用对应的目标。
 
-`yanshi eval -suite <目录> [-model ark/…] [-case glob] [-trials N] [-judge …] [-sandbox docker] [-baseline …] [-update-baseline]` 的入口见 [evalcmd.go](../../cmd/yanshi/evalcmd.go#L36)。两套评测沿用仓库根目录的 `agents/` 与 `oneshots/`。
+`yanshi eval -suite <目录> [-model ark/…] [-case glob] [-trials N] [-judge …] [-sandbox docker] [-baseline …] [-update-baseline]` 的入口见 [evalcmd.go](../../cmd/yanshi/evalcmd.go#L36)。内核评测使用根目录的 `agents/` 与 `oneshots/`。xinli 评测通过 `-agents agents,apps/xinli/agents -oneshots oneshots,apps/xinli/oneshots` 加载两组目录。
 
 - **进程内运行**：内存存储、真实的模型网关；虚拟设备是一个进程内的 Node，与 e2e 一样经由 Hub、Inbox 路由。沙箱可选（`-sandbox docker`），不可用时跳过 `requires: [sandbox]` 的用例。存储在内存中，进程退出后没有 Janitor 回收沙箱，所以运行结束时停下实例、销毁本次创建过的全部沙箱（含委托的子 Session 的）；销毁失败的沙箱 ID 打印为警告。
 - **用例隔离**：每个用例的每次运行都使用新的 EndUser，互不影响。
@@ -352,7 +352,7 @@ expect 复用 reply_contains、reply_excludes、reply_max_chars、status 与 jud
 
 ## 12. 旁听用例（2026-10-23）
 
-`capture-*` 用例评测旁听业务线的三个 AgentDef（`agents/xinli-*.yaml`，docs/design/xinli-captures.md §1、§10）。每轮的 `captures` 经夹具提交到本轮 Session 绑定的 Persona 业务日；`setup.xinli` 经外部夹具预置本次运行 EndUser 的项目与每日摘要；`setup.no_health` 改在未开启健康信息的业务线 `eval-nohealth` 中运行。
+`capture-*` 用例评测旁听业务线的三个 AgentDef（`apps/xinli/agents/xinli-*.yaml`，docs/design/xinli-captures.md §1、§10）。每轮的 `captures` 经夹具提交到本轮 Session 绑定的 Persona 业务日；`setup.xinli` 经外部夹具预置本次运行 EndUser 的项目与每日摘要；`setup.no_health` 改在未开启健康信息的业务线 `eval-nohealth` 中运行。
 
 `make eval-xinli` 先构建 `bin/xinli`，命令的 `-xinli-bin` 可指定其他二进制。只有用例配置了 `setup.xinli` 或所用 Agent 白名单包含 `mcp:xinli/*` 时，运行器才启动 `xinli dev -exit-on-stdin-eof`（不带 `-kernel-url`，不自动归集）。运行器读第一行就绪 JSON，以 `mcpcap.ParseServer` 逐项校验 `registrations` 并登记 MCP，经 `fixture_url` 下的 HTTP 做 Seed、State、绑定与用户操作；Seed JSON 字段为 snake_case，用例 YAML 不变。结束时关闭 stdin 并等待退出，超时则终止并回收进程。
 

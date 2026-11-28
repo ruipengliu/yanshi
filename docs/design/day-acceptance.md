@@ -125,7 +125,7 @@ dev run 'make day DAY_RUN=TestDayScheduleHTTP'
 dev run 'cd persona && go test -race ./mcpserver -run TestProductionWork -count=1'
 ```
 
-Ark 使用相同三库、HTTP、角色、录音夹具与主要阶段（断网补传、自动整理、改期和用户修改、跨午夜、助手查询/重答、定时收件箱、重启、擦除、到期）。真实模型提问/审批选择不是固定的，精确屏障与问答/审批契约由脚本版验证。需在远端配置 `ARK_API_KEY`，可选 `ARK_BASE_URL`；模型沿用仓库 `agents/xinli-*.yaml`。
+Ark 使用相同三库、HTTP、角色、录音夹具与主要阶段（断网补传、自动整理、改期和用户修改、跨午夜、助手查询/重答、定时收件箱、重启、擦除、到期）。真实模型提问/审批选择不是固定的，精确屏障与问答/审批契约由脚本版验证。需在远端配置 `ARK_API_KEY`，可选 `ARK_BASE_URL`；模型沿用仓库 `apps/xinli/agents/xinli-*.yaml`。
 
 ```bash
 dev run 'make day-ark'

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -147,5 +148,57 @@ func TestWatchReleasesKeepsPreviousOnInvalidFile(t *testing.T) {
 			t.Fatal("valid reload not applied")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestLoadDirs(t *testing.T) {
+	first, second := t.TempDir(), t.TempDir()
+	write := func(dir, file, contents string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, dir := range []string{first, second} {
+		name := []string{"a", "b"}[i]
+		write(dir, "first.yaml", fmt.Sprintf("name: %s\nversion: '2'\nmodel: echo/any\n", name))
+		write(dir, "last.yaml", fmt.Sprintf("name: %s\nversion: '1'\nmodel: echo/any\n", name))
+		write(dir, ReleasesFile, name+": {stable: '2'}\n")
+	}
+	for _, dirs := range [][]string{{first}, {first, second}} {
+		r, files, err := LoadDirs(dirs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rel, _, err := files.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.SetReleases(rel)
+		if got := len(r.All()); got != 2*len(dirs) {
+			t.Fatalf("loaded %d definitions from %v", got, dirs)
+		}
+		for _, name := range []string{"a", "b"}[:len(dirs)] {
+			latest, err := r.Latest(name)
+			if err != nil || latest.Version != "1" {
+				t.Fatalf("latest %s = %v, %v", name, latest, err)
+			}
+			stable, err := r.Default(name)
+			if err != nil || stable.Version != "2" {
+				t.Fatalf("stable %s = %v, %v", name, stable, err)
+			}
+		}
+	}
+	write(first, ReleasesFile, "b: {stable: '2'}\n")
+	_, files, err := LoadDirs([]string{first, second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := files.Load(); err == nil || !strings.Contains(err.Error(), filepath.Join(first, ReleasesFile)) {
+		t.Fatalf("expected misplaced release to be rejected: %v", err)
+	}
+	write(second, "duplicate.yaml", "name: a\nversion: '3'\nmodel: echo/any\n")
+	if _, _, err := LoadDirs([]string{first, second}); err == nil || !strings.Contains(err.Error(), "defined in both") {
+		t.Fatalf("expected duplicate name to be rejected: %v", err)
 	}
 }

@@ -262,6 +262,29 @@ func LoadDir(dir string) (*Registry, error) {
 	return r, nil
 }
 
+// LoadDirs 合并各目录的定义，并保留发布配置和其定义目录的对应关系。
+func LoadDirs(dirs []string) (*Registry, release.Files, error) {
+	r, _ := NewRegistry()
+	owners := make(map[string]string)
+	files := make(release.Files, 0, len(dirs))
+	for _, dir := range dirs {
+		local, err := LoadDir(dir)
+		if err != nil {
+			return nil, nil, err
+		}
+		for name, versions := range local.defs {
+			if previous, exists := owners[name]; exists {
+				return nil, nil, fmt.Errorf("agent %q defined in both %q and %q", name, previous, dir)
+			}
+			owners[name] = dir
+			r.defs[name] = versions
+			r.latest[name] = local.latest[name]
+		}
+		files = append(files, release.File{Path: filepath.Join(dir, ReleasesFile), Parse: local.ParseReleases})
+	}
+	return r, files, nil
+}
+
 func (r *Registry) Get(ref *v1.AgentRef) (*Def, error) {
 	d, ok := r.defs[ref.GetName()][ref.GetVersion()]
 	if !ok {

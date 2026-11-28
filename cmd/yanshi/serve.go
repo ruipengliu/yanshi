@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -343,8 +342,8 @@ func serve(args []string) error {
 	shards := fs.String("shards", os.Getenv("YANSHI_SHARDS"), "所有角色共用的分片部署配置 JSON（要求 storage=postgres）")
 	addr := fs.String("addr", "127.0.0.1:8080", "HTTP 监听地址")
 	rolesFlag := fs.String("roles", strings.Join(allRoles, ","), "本进程承担的角色（docs/design/deployment.md §3）：gateway（HTTP API、Connection、Call）、worker、sandbox（沙箱控制器）、janitor；全部角色等价于单进程部署")
-	agentsDir := fs.String("agents", "agents", "AgentDef 目录")
-	oneshotsDir := fs.String("oneshots", "oneshots", "单次调用声明目录；不存在时不提供接口")
+	agentDirs := fs.String("agents", "agents", "AgentDef 目录，多个目录以逗号分隔")
+	oneshotDirs := fs.String("oneshots", "oneshots", "单次调用声明目录，多个目录以逗号分隔；没有声明时不提供接口")
 	benchUnreserved := fs.Bool("bench-oneshot-unreserved", false, "仅压测：允许 bench 单次调用占满模型并发；需 YANSHI_BENCH_TTFT=1、memory 存储")
 	oneshotMax := fs.Int("oneshot-concurrency", oneshot.DefaultMax, "单次调用合计并发上限，须小于受限的模型并发上限")
 	loopModelMax := fs.Int("loop-model-concurrency", extloop.DefaultEndpointMax,
@@ -465,13 +464,12 @@ func serve(args []string) error {
 	if !roles["worker"] {
 		*workers, *interactiveWorkers = 0, 0
 	}
-	agents, err := agentdef.LoadDir(*agentsDir)
+	agents, agentFiles, err := agentdef.LoadDirs(strings.Split(*agentDirs, ","))
 	if err != nil {
 		return fmt.Errorf("load agents: %w", err)
 	}
 	// 发布配置（docs/design/m4-agent-rollout.md）：启动时必须合法；运行中定期重新加载，回滚无需重启。
-	releasesPath := filepath.Join(*agentsDir, agentdef.ReleasesFile)
-	rel, releasesLoaded, err := agents.LoadReleases(releasesPath)
+	rel, releasesLoaded, err := agentFiles.Load()
 	if err != nil {
 		return fmt.Errorf("load releases: %w", err)
 	}
@@ -479,43 +477,50 @@ func serve(args []string) error {
 	if *benchUnreserved && (os.Getenv("YANSHI_BENCH_TTFT") != "1" || *storageKind != "memory") {
 		return fmt.Errorf("bench-oneshot-unreserved requires YANSHI_BENCH_TTFT=1 and memory storage")
 	}
-	var shots *oneshot.Registry
-	var shotsLoaded []byte
-	shotsPath := filepath.Join(*oneshotsDir, oneshot.ReleasesFile)
-	if info, statErr := os.Stat(*oneshotsDir); statErr == nil {
-		if !info.IsDir() {
+	shotDirs := strings.Split(*oneshotDirs, ",")
+	if len(shotDirs) == 1 {
+		info, statErr := os.Stat(shotDirs[0])
+		switch {
+		case errors.Is(statErr, os.ErrNotExist):
+			shotDirs = nil
+		case statErr != nil:
+			return statErr
+		case !info.IsDir():
 			return fmt.Errorf("oneshots path must be a directory")
 		}
-		shots, err = oneshot.LoadDir(*oneshotsDir)
-		if err != nil {
-			return fmt.Errorf("load oneshots: %w", err)
-		}
-		if len(shots.All()) == 0 {
-			shots = nil
-		} else {
-			// 没有声明时不装配单次调用，也不让未使用的限额阻止 Run 服务启动。
-			providerMax := modelLimits.MaxConcurrency
-			if *benchUnreserved {
-				// 对照只放开启动处的保留量校验；Service 的三层上限与 Guard 优先级照常执行。
-				for _, def := range shots.All() {
-					if !strings.HasPrefix(def.Model, "bench/") {
-						return fmt.Errorf("bench-oneshot-unreserved only accepts bench models")
-					}
+	}
+	shots, shotFiles, err := oneshot.LoadDirs(shotDirs)
+	if err != nil {
+		return fmt.Errorf("load oneshots: %w", err)
+	}
+	shotDefs := shots.All()
+	if len(shotDefs) > 0 {
+		// 没有声明时不装配单次调用，也不让未使用的限额阻止 Run 服务启动。
+		providerMax := modelLimits.MaxConcurrency
+		if *benchUnreserved {
+			// 对照只放开启动处的保留量校验；Service 的三层上限与 Guard 优先级照常执行。
+			for _, def := range shotDefs {
+				if !strings.HasPrefix(def.Model, "bench/") {
+					return fmt.Errorf("bench-oneshot-unreserved only accepts bench models")
 				}
-				providerMax = 0
 			}
-			if err := oneshot.ValidateLimits(*oneshotMax, providerMax, *oneshotWait, *oneshotDeadline); err != nil {
-				return err
-			}
-			releases, loaded, loadErr := shots.LoadReleases(shotsPath)
-			if loadErr != nil {
-				return fmt.Errorf("load oneshot releases: %w", loadErr)
-			}
-			shots.SetReleases(releases)
-			shotsLoaded = loaded
+			providerMax = 0
 		}
-	} else if !errors.Is(statErr, os.ErrNotExist) {
-		return statErr
+		if err := oneshot.ValidateLimits(*oneshotMax, providerMax, *oneshotWait, *oneshotDeadline); err != nil {
+			return err
+		}
+	}
+	var shotsLoaded [][]byte
+	if len(shotDefs) > 0 || len(shotDirs) > 1 {
+		releases, loaded, err := shotFiles.Load()
+		if err != nil {
+			return fmt.Errorf("load oneshot releases: %w", err)
+		}
+		shots.SetReleases(releases)
+		shotsLoaded = loaded
+	}
+	if len(shotDefs) == 0 {
+		shots = nil
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -683,12 +688,15 @@ func serve(args []string) error {
 	var wg sync.WaitGroup
 	if shots != nil {
 		wg.Add(1)
-		go func() { defer wg.Done(); shots.WatchReleases(ctx, shotsPath, shotsLoaded, 10*time.Second, logger) }()
+		go func() {
+			defer wg.Done()
+			shotFiles.Watch(ctx, shotsLoaded, 10*time.Second, logger, shots.SetReleases)
+		}()
 	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		agents.WatchReleases(ctx, releasesPath, releasesLoaded, 10*time.Second, logger)
+		agentFiles.Watch(ctx, releasesLoaded, 10*time.Second, logger, agents.SetReleases)
 	}()
 	// 本进程同一池的 Worker 共享空闲门控：空闲时只有一个 Worker 轮询队列，入队信号到达时立即认领。
 	// 交互 Worker 与其余 Worker 各用一个门控（workqueue.Fanout）。

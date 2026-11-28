@@ -359,7 +359,7 @@ PERSONA_BENCH=1 PERSONA_BENCH_N=200 go test ./store/costtest -run '^TestLargeWor
 
 1. **Persona**：新的实体类型或变更集操作，及其检查与回执；
 2. **工具**：Persona 的 MCP 工具，声明是否只读；
-3. **AgentDef**：新增或修改，写明能力白名单；
+3. **AgentDef**：在 `apps/<业务线>/agents` 中新增或修改定义，写明能力白名单；
 4. **编排**：区分领域事实接受与运行事件，选择领域变化、应用调度或内核触发、定时、出站流；
 5. **评测**：用例，以及 Persona 夹具的一致性测试。
 
@@ -381,7 +381,8 @@ persona/                  Persona 层（独立 Go module，模块路径 persona�
   CONTEXT.md              Persona 术语
 apps/xinli/               xinli 应用层（独立 Go module，模块路径 xinli）：采集、账号、渠道、推送、编排器、BFF
   CONTEXT.md
-agents/xinli-*.yaml       AgentDef（随应用层发布，仍由内核加载）
+apps/xinli/agents/        AgentDef（随应用层发布，由内核加载）
+apps/xinli/oneshots/      Oneshot 与发布配置（随应用层发布，由内核加载）
 evals/                    评测用例；夹具经契约指向 Persona
 ```
 

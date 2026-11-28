@@ -30,6 +30,8 @@ spec:
             periodSeconds: 5
           volumeMounts:
             - {name: agents, mountPath: /etc/yanshi/agents, readOnly: true}
+            - {name: xinli-agents, mountPath: /etc/yanshi/xinli-agents, readOnly: true}
+            - {name: xinli-oneshots, mountPath: /etc/yanshi/xinli-oneshots, readOnly: true}
             - {name: businesslines, mountPath: /etc/yanshi/businesslines, readOnly: true}
             - {name: pricing, mountPath: /etc/yanshi/pricing, readOnly: true}
             - {name: shards, mountPath: /etc/yanshi/shards, readOnly: true}
@@ -37,6 +39,11 @@ spec:
         # 所有进程同一版本的配置（AgentDef 与发布配置、业务线公钥、价格表）；发布配置每 10 秒热加载。
         - name: agents
           configMap: {name: yanshi-agents}
+        # 未部署 xinli 的单元仍可使用同一基础清单。
+        - name: xinli-agents
+          configMap: {name: yanshi-xinli-agents, optional: true}
+        - name: xinli-oneshots
+          configMap: {name: yanshi-xinli-oneshots, optional: true}
         - name: businesslines
           configMap: {name: yanshi-businesslines}
         - name: pricing

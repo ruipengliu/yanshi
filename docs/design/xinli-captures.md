@@ -15,7 +15,7 @@ xinli 是第一条使用旁听的业务线：把 EndUser 一天的对话整理�
 | `xinli-week` | 每个 EndUser 每周一个 | `mcp_xinli__similar_projects`、`propose_merge`、`week_overview`、`file_week` |
 | `xinli-assistant`（版本 2，召回 8 条 Memory） | 每个 EndUser 一个，长期 | `mcp_xinli__list_projects`、`project_digest`、`recent_days`、`memory_save`、`memory_search`、`memory_forget`、`ask_user`、`show_card`、`schedule`、`clock_now` |
 
-- 定义在 `agents/xinli-*.yaml`。白名单都不含高风险 Capability：`xinli-day` 只能读旁听、写 Memory、召回候选项目、把结果交给业务线；项目与每周回顾只读写业务线的数据；助手还可按用户要求创建、列出和取消本 Session 的定时（[M7](./m7-kernel-primitives.md) §5）。评测中的助手 Session 默认上海时区（当前应用尚无创建助手 Session 的路径），到点收到平台定时输入后用现有 Persona 查询回答，回复留在日志与事件流，推送在 P4；当天整理与每周回顾仍由业务线编排器提交。
+- 定义在 `apps/xinli/agents/xinli-*.yaml`。白名单都不含高风险 Capability：`xinli-day` 只能读旁听、写 Memory、召回候选项目、把结果交给业务线；项目与每周回顾只读写业务线的数据；助手还可按用户要求创建、列出和取消本 Session 的定时（[M7](./m7-kernel-primitives.md) §5）。评测中的助手 Session 默认上海时区（当前应用尚无创建助手 Session 的路径），到点收到平台定时输入后用现有 Persona 查询回答，回复留在日志与事件流，推送在 P4；当天整理与每周回顾仍由业务线编排器提交。
 - 业务线的工具由 xinli MCP Server 提供（§4），开发与评测中由 `persona/mcpserver` 提供，`apps/xinli` 装配。只读的工具（`captures`、`find_related`、`day_ledger`、`day_summary`、`project_digest`、`list_projects`、`recent_days`、`week_overview`、`similar_projects`）在登记中声明只读；交出结果的工具（`file_changes`、`file_day`、`set_status`、`update_commitments`、`propose_merge`、`file_week`）由业务线在登记中以 `no_approval` 放宽（ADR-0017）：它们只把结果交给业务线自己。登记开启 `attests_speakers` 与 `cite_captures`，承诺人与期限据此核对（§6）。
 - 业务线返回的内容（`find_related`、`day_ledger`、`day_summary`、`project_digest`、`week_overview` 等）是调用结果，属于外部内容（ADR-0037）。项目现状由 `xinli-project` 依据它们写成，是业务线的数据，不写入 Memory。
 - **Memory 要能读回来。** `xinli-day` 写下的偏好与人际关系，由助手在每个 Run 开始时召回（`memory.recall`）。`xinli-day` 不召回（输入总是"整理交谈"或"整理今天"，按它检索没有意义），写入之前用 `memory_search` 查已有的记忆：记过的不再记，变了的用 `replaces` 替换。平台另外合并几乎相同的表述（[Memory 设计](./m4-memory-grant.md) §3）。
@@ -212,7 +212,7 @@ P4 自动调度以固定业务日时区、原文与处理进度为依据，抖�
 
 ## 9. 开发部署
 
-独立启动 `xinli dev`（`apps/xinli/cmd/xinli`），以 `-business-lines` 指定业务线、`-mcp-dir` 写出登记，再让内核 `serve -mcp` 读取该目录。`-kernel-url` 指向内核时，应用层编排器同时扮演业务线服务端：
+独立启动 `xinli dev`（`apps/xinli/cmd/xinli`），以 `-business-lines` 指定业务线、`-mcp-dir` 写出登记，再让内核 `serve -mcp` 读取该目录，同时传入 `-agents agents,apps/xinli/agents -oneshots oneshots,apps/xinli/oneshots` 加载定义。`-kernel-url` 指向内核时，应用层编排器同时扮演业务线服务端：
 
 - **归集**（§2 第 4 步）：`file_day` 之后为涉及的项目创建（或复用）`xinli-project` Session，以由整理所在 Session 与项目派生的 `input_id` 提交"整理 <日期>"，并绑定项目 Session。
 - **每周回顾**：开发页面按钮经夹具的 `week_review` 做 §7 的三步，同一周复用回顾 Session 与输入 ID。

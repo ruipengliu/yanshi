@@ -41,12 +41,20 @@ lint: web-deps check-deps
 # ADR-0043：独立模块守住 internal 边界，传递依赖检查同时阻止内核反向依赖业务层。
 # 先检查 go list 的退出码，避免包加载失败被管道吞掉。
 check-deps:
-	@for dir in persona apps/xinli; do \
+	@modules=; \
+	for mod in persona/go.mod apps/*/go.mod; do \
+		[ -f "$$mod" ] || continue; \
+		dir=$${mod%/go.mod}; \
+		module=$$(go -C "$$dir" list -m) || exit 1; \
+		modules="$$modules $$module"; \
 		deps=$$(go -C "$$dir" list -deps ./...) || exit 1; \
 		printf '%s\n' "$$deps" | awk '/^yanshi\/internal\// { print "依赖方向违规: " $$0; bad = 1 } END { exit bad }' || exit 1; \
-	done
-	@deps=$$(go list -deps ./...) || exit 1; \
-		printf '%s\n' "$$deps" | awk '/^(persona|xinli)(\/|$$)/ { print "依赖方向违规: " $$0; bad = 1 } END { exit bad }'
+	done; \
+	deps=$$(go list -deps ./...) || exit 1; \
+	printf '%s\n' "$$deps" | awk -v modules="$$modules" '\
+		BEGIN { n = split(modules, names) } \
+		{ for (i = 1; i <= n; i++) if ($$0 == names[i] || index($$0, names[i] "/") == 1) { print "依赖方向违规: " $$0; bad = 1; break } } \
+		END { exit bad }'
 
 # internal/sim 的全部种子不在竞争检测下跑：World 由测试确定性地逐步推进，其中的并发部分（如 Worker 操作期间的监视
 # goroutine）由所在包的单元测试与 e2e 在 -race 下覆盖；竞争检测在这里却让它慢十几倍（种子并行后仍需约 2.5 分钟，
@@ -137,7 +145,7 @@ looptest-adapters:
 EVAL_FLAGS ?= -sandbox docker
 YANSHI_EMBEDDING_MODEL ?= ark/doubao-embedding-vision-251215
 EVAL_KERNEL_CMD = ./bin/yanshi eval -suite evals -embedding-model $(YANSHI_EMBEDDING_MODEL) $(EVAL_FLAGS)
-EVAL_XINLI_CMD = ./bin/yanshi eval -suite apps/xinli/evals -xinli-bin ./bin/xinli -embedding-model $(YANSHI_EMBEDDING_MODEL) $(EVAL_FLAGS)
+EVAL_XINLI_CMD = ./bin/yanshi eval -suite apps/xinli/evals -xinli-bin ./bin/xinli -agents agents,apps/xinli/agents -oneshots oneshots,apps/xinli/oneshots -embedding-model $(YANSHI_EMBEDDING_MODEL) $(EVAL_FLAGS)
 
 eval: build
 	@status=0; \

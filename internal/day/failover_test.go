@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -539,7 +540,8 @@ func (e *environment) verifyServeIdentity() {
 	must(e.t, listener.Close())
 	ctx, cancel := context.WithCancel(e.ctx)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, filepath.Join(e.root, "bin/yanshi"), "serve", "-storage", "postgres", "-shards", path, "-migrate=false", "-roles", "gateway", "-addr", address, "-auth", "none", "-agents", filepath.Join(e.root, "agents"), "-oneshots", filepath.Join(e.t.TempDir(), "absent"), "-mcp", filepath.Join(e.t.TempDir(), "absent"))
+	agentDirs := strings.Join([]string{filepath.Join(e.root, "agents"), filepath.Join(e.root, "apps", "xinli", "agents")}, ",")
+	cmd := exec.CommandContext(ctx, filepath.Join(e.root, "bin/yanshi"), "serve", "-storage", "postgres", "-shards", path, "-migrate=false", "-roles", "gateway", "-addr", address, "-auth", "none", "-agents", agentDirs, "-oneshots", filepath.Join(e.t.TempDir(), "absent"), "-mcp", filepath.Join(e.t.TempDir(), "absent"))
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	must(e.t, cmd.Start())
 	done := make(chan struct{})

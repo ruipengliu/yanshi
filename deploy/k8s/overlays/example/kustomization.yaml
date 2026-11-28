@@ -1,6 +1,6 @@
 # 示例 overlay：用仓库中的开发配置生成 ConfigMap，密钥为占位值。生产 overlay 以同样的方式提供：
 #   kubectl kustomize --load-restrictor LoadRestrictionsNone deploy/k8s/overlays/example
-# （ConfigMap 取自仓库根目录的 agents/、businesslines/ 与 pricing.yaml，须放开加载限制。）
+# （ConfigMap 引用了 overlay 目录之外的仓库文件，须放开加载限制。）
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: yanshi
@@ -12,6 +12,16 @@ configMapGenerator:
       - ../../../../agents/assistant.yaml
       - ../../../../agents/console.yaml
       - ../../../../agents/releases.yaml
+  - name: yanshi-xinli-agents
+    files:
+      - ../../../../apps/xinli/agents/xinli-assistant.yaml
+      - ../../../../apps/xinli/agents/xinli-day.yaml
+      - ../../../../apps/xinli/agents/xinli-project.yaml
+      - ../../../../apps/xinli/agents/xinli-week.yaml
+  - name: yanshi-xinli-oneshots
+    files:
+      - ../../../../apps/xinli/oneshots/xinli-live-brief.yaml
+      - ../../../../apps/xinli/oneshots/releases.yaml
   - name: yanshi-businesslines
     files:
       - businesslines/example.yaml

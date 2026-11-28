@@ -76,7 +76,7 @@
 
 业务实体的今日、项目、承诺、待确认与觉察已移到 `xinli dev` 自带的页面（`apps/xinli/devui`），内核控制台只展示通用的 Session、Run、事件与调用结果。
 
-先启动 `bin/xinli dev -business-lines demo -kernel-url http://127.0.0.1:8080 -mcp-dir mcp -console-url http://127.0.0.1:8080/console`，再启动读取该目录的 `yanshi serve -mcp mcp`。开发进程的就绪行中 `page_url` 是业务页面，`registrations` 是内核 MCP 登记。页面经夹具 HTTP 读取数据、确认交谈归属与合并提议、改承诺并触发每周回顾；数据只在内存中。卡片上的 Session 链接可打开内核控制台查看日志（[旁听业务线 xinli](./xinli-captures.md) §9）。
+先启动 `bin/xinli dev -business-lines demo -kernel-url http://127.0.0.1:8080 -mcp-dir mcp -console-url http://127.0.0.1:8080/console`，再启动读取该目录的 `yanshi serve -mcp mcp -agents agents,apps/xinli/agents -oneshots oneshots,apps/xinli/oneshots`。开发进程的就绪行中 `page_url` 是业务页面，`registrations` 是内核 MCP 登记。页面经夹具 HTTP 读取数据、确认交谈归属与合并提议、改承诺并触发每周回顾；数据只在内存中。卡片上的 Session 链接可打开内核控制台查看日志（[旁听业务线 xinli](./xinli-captures.md) §9）。
 
 ## 3. 设备
 

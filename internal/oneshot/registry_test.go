@@ -198,6 +198,54 @@ func TestLoadDirAndSharedReleases(t *testing.T) {
 	}
 }
 
+func TestLoadDirs(t *testing.T) {
+	first, second := t.TempDir(), t.TempDir()
+	base := "name: %s\nversion: %q\nmodel: fake/model\ninstructions: 概括\ninput: {max_chars: 10}\nmax_output_tokens: 20\nconcurrency: 2\n"
+	write := func(dir, file, contents string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(first, "first.yaml", fmt.Sprintf(base, "brief", "2"))
+	write(first, "last.yaml", fmt.Sprintf(base, "brief", "1"))
+	write(first, ReleasesFile, "brief: {stable: '2'}\n")
+	write(second, "summary.yaml", fmt.Sprintf(base, "summary", "1"))
+	write(second, ReleasesFile, "summary: {stable: '1'}\n")
+	for _, dirs := range [][]string{{first}, {first, second}} {
+		r, files, err := LoadDirs(dirs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d, err := r.Default("brief"); err != nil || d.Version != "1" {
+			t.Fatalf("latest brief = %v, %v", d, err)
+		}
+		rel, _, err := files.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.SetReleases(rel)
+		if len(r.All()) != len(dirs)+1 || len(rel) != len(dirs) {
+			t.Fatalf("incomplete merge: %v", rel)
+		}
+		if d, err := r.Default("brief"); err != nil || d.Version != "2" {
+			t.Fatalf("stable brief = %v, %v", d, err)
+		}
+	}
+	write(second, ReleasesFile, "brief: {stable: '2'}\n")
+	_, files, err := LoadDirs([]string{first, second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := files.Load(); err == nil || !strings.Contains(err.Error(), filepath.Join(second, ReleasesFile)) {
+		t.Fatalf("expected misplaced release to be rejected: %v", err)
+	}
+	write(second, "duplicate.yaml", fmt.Sprintf(base, "brief", "3"))
+	if _, _, err := LoadDirs([]string{first, second}); err == nil || !strings.Contains(err.Error(), "defined in both") {
+		t.Fatalf("expected duplicate name to be rejected: %v", err)
+	}
+}
+
 func TestSchemaPropertyNamedRefIsData(t *testing.T) {
 	d := definition()
 	d.Output = map[string]any{"type": "object", "properties": map[string]any{"$ref": map[string]any{"type": "string"}}, "required": []string{"$ref"}}

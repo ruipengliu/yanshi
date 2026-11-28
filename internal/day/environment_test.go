@@ -186,7 +186,7 @@ func newEnvironmentConfigured(t *testing.T, ark, multiple bool, personaBase stri
 
 	var defs []*agentdef.Def
 	for _, name := range []string{"xinli-day", "xinli-project", "xinli-week", "xinli-assistant"} {
-		raw, err := os.ReadFile(filepath.Join(root, "agents", name+".yaml"))
+		raw, err := os.ReadFile(filepath.Join(root, "apps", "xinli", "agents", name+".yaml"))
 		must(t, err)
 		var def agentdef.Def
 		must(t, yaml.Unmarshal(raw, &def))

@@ -25,7 +25,7 @@ spec:
           image: yanshi
           args: [serve, -roles=sandbox, -sandbox=k8s, -sandbox-k8s-namespace=yanshi-sandbox, -sandbox-runtime-class=gvisor,
             -sandbox-image=registry.example.com/yanshi-sandbox:0.0.0, -sandbox-controllers=4, -peer-addr=0.0.0.0:7070,
-            -peer-advertise=http://$(POD_IP):7070, -storage=postgres, -migrate=false, -auth=jwt, -agents=/etc/yanshi/agents,
-            -businesslines=/etc/yanshi/businesslines, -pricing=/etc/yanshi/pricing/pricing.yaml, -blob=s3, -notify-shards=16]
+            -peer-advertise=http://$(POD_IP):7070, -storage=postgres, -migrate=false, -auth=jwt, "-agents=/etc/yanshi/agents,/etc/yanshi/xinli-agents",
+            -oneshots=/etc/yanshi/xinli-oneshots, -businesslines=/etc/yanshi/businesslines, -pricing=/etc/yanshi/pricing/pricing.yaml, -blob=s3, -notify-shards=16]
           resources:
             requests: {cpu: 500m, memory: 512Mi}

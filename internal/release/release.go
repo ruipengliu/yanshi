@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"time"
@@ -82,23 +83,89 @@ func InCanary(name, endUser string, c *Canary) bool {
 
 // Load 读取发布配置文件；文件不存在时返回空配置。
 func Load(path string, parse func([]byte) (Releases, error)) (Releases, []byte, error) {
-	b, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return Releases{}, nil, nil
-	}
+	rel, loaded, err := (Files{{Path: path, Parse: parse}}).Load()
 	if err != nil {
 		return nil, nil, err
 	}
-	rel, err := parse(b)
-	if err != nil {
-		return nil, nil, fmt.Errorf("%s: %w", path, err)
-	}
-	return rel, b, nil
+	return rel, loaded[0], nil
 }
 
 // Watch 每隔 every 检查一次发布配置文件，内容变化时校验并替换；校验失败时保留原配置
 // （回滚不需要重启，docs/design/m4-agent-rollout.md §2）。loaded 是启动时已加载的文件内容。
 func Watch(ctx context.Context, path string, loaded []byte, every time.Duration, logger *slog.Logger, parse func([]byte) (Releases, error), set func(Releases)) {
+	(Files{{Path: path, Parse: parse}}).Watch(ctx, [][]byte{loaded}, every, logger, set)
+}
+
+// File 用同一目录的定义校验发布配置，避免发布条目跨目录引用定义。
+type File struct {
+	Path  string
+	Parse func([]byte) (Releases, error)
+}
+
+// Files 合并来自不同定义目录的发布配置，目录之间的定义名已去重。
+type Files []File
+
+// Load 读取并合并整组发布配置，返回供 Watch 比较的文件内容。
+func (files Files) Load() (Releases, [][]byte, error) {
+	contents, err := files.read()
+	if err != nil {
+		return nil, nil, err
+	}
+	rel, err := files.parse(contents)
+	if err != nil {
+		return nil, nil, err
+	}
+	return rel, contents, nil
+}
+
+func (files Files) read() ([][]byte, error) {
+	contents := make([][]byte, len(files))
+	for i, file := range files {
+		b, err := os.ReadFile(file.Path)
+		if errors.Is(err, os.ErrNotExist) {
+			// 多目录部署中，挂载丢失时保留发布选择，单个发布文件移除时恢复默认选择。
+			err = nil
+			if len(files) > 1 {
+				_, err = os.ReadDir(filepath.Dir(file.Path))
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", file.Path, err)
+		}
+		contents[i] = b
+	}
+	return contents, nil
+}
+
+func (files Files) parse(contents [][]byte) (Releases, error) {
+	merged := Releases{}
+	for i, file := range files {
+		if contents[i] == nil {
+			continue
+		}
+		rel, err := file.Parse(contents[i])
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", file.Path, err)
+		}
+		for name, entry := range rel {
+			merged[name] = entry
+		}
+	}
+	return merged, nil
+}
+
+// Watch 只在所有发布配置均可读取并通过校验后替换整组选择。
+func (files Files) Watch(ctx context.Context, loaded [][]byte, every time.Duration, logger *slog.Logger, set func(Releases)) {
+	if len(files) == 1 {
+		logger = logger.With("path", files[0].Path)
+	} else {
+		paths := make([]string, 0, len(files))
+		for _, file := range files {
+			paths = append(paths, file.Path)
+		}
+		logger = logger.With("paths", paths)
+	}
+	var lastReadError string
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
@@ -107,23 +174,28 @@ func Watch(ctx context.Context, path string, loaded []byte, every time.Duration,
 			return
 		case <-t.C:
 		}
-		b, err := os.ReadFile(path)
-		if errors.Is(err, os.ErrNotExist) {
-			b, err = nil, nil
-		}
-		if err != nil || bytes.Equal(b, loaded) {
+		contents, err := files.read()
+		if err != nil {
+			if message := err.Error(); len(files) > 1 && message != lastReadError {
+				lastReadError = message
+				metrics.ReleaseReloadErrors.WithLabelValues().Inc()
+				logger.Error("releases reload rejected; keeping the previous configuration", "err", err)
+			}
 			continue
 		}
-		rel, err := parse(b)
+		lastReadError = ""
+		if slices.EqualFunc(contents, loaded, bytes.Equal) {
+			continue
+		}
+		rel, err := files.parse(contents)
+		loaded = contents // 同一份错误内容不重复报错
 		if err != nil {
 			metrics.ReleaseReloadErrors.WithLabelValues().Inc()
-			logger.Error("releases reload rejected; keeping the previous configuration", "path", path, "err", err)
-			loaded = b // 同一份错误内容不重复报错
+			logger.Error("releases reload rejected; keeping the previous configuration", "err", err)
 			continue
 		}
 		set(rel)
-		loaded = b
-		logger.Info("releases reloaded", "path", path, "declarations", len(rel))
+		logger.Info("releases reloaded", "declarations", len(rel))
 	}
 }
 

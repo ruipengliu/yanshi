@@ -18,7 +18,7 @@
 > 1. xinli 业务与内核的架构划分是否合理？哪些该在内核、哪些该在业务线，现在有没有放错位置的东西（双向都看）？
 > 2. 后续要提升 xinli 的实际效果（每日整理、项目归集、承诺与提醒、助手问答），发力点应该在哪里？按优先级给出依据、预期收益、代价，以及放在内核还是业务线；也说明哪些方向不值得投入。
 >
-> 先读 AGENTS.md、CONTEXT.md、charter、captures*.md、ADR-0036/0037/0039–0042、agents/xinli-*.yaml、internal/xinlimock、internal/capture、internal/mcpcap/cite.go、internal/runtime/memgate.go、工作日评审 §0–§9、m4-eval §12、apps/xinli/evals/capture-*.yaml、internal/eval。结论要有仓库内的证据，区分事实与推断；对评测数据保持怀疑；给出最有把握的 3 个判断与最没把握的 1–2 个。
+> 先读 AGENTS.md、CONTEXT.md、charter、captures*.md、ADR-0036/0037/0039–0042、apps/xinli/agents/xinli-*.yaml、internal/xinlimock、internal/capture、internal/mcpcap/cite.go、internal/runtime/memgate.go、工作日评审 §0–§9、m4-eval §12、apps/xinli/evals/capture-*.yaml、internal/eval。结论要有仓库内的证据，区分事实与推断；对评测数据保持怀疑；给出最有把握的 3 个判断与最没把握的 1–2 个。
 
 ### 第一轮：Codex 的回答
 
@@ -79,7 +79,7 @@
 - **调整2、3：部分同意。** 可抽评测扩展点、区分业务术语；但开发适配与文档同仓库不等于runtime污染。exchange_gap已明确只管分页，span_gap别名优先级低。[captures§5](../../docs/design/captures.md:109)
 - **调整4：保留为开放问题。** 摘要禁健康是xinli政策，不能仅据章程推成全平台禁令；Memory健康许可防改类别绕过才是平台缺口，当前仅检查自报类别。[service:178](../../internal/memory/service.go:178)
 - **效果1：同意。** 但96/96与0/6来自不同版本、用例及断言，只证明小例不能预测整日效果，不能直接算作回归率。[m4-eval§12](../../docs/design/m4-eval.md:263)
-- **效果2：接受并修正自己。** 先用现有原语对已结束的完整Span做拆Run试验，暂不先改内核上下文。须处理续页、拒收、串行补读及无进展退出；日终仍须file_changes对账。[每日流程](../../agents/xinli-day.yaml:17) 但GLM并非只剩延迟：仍有过时承诺1/2、纯度失败2/2；token翻倍也未经消融，不能全归因上下文。[评审§9](../../docs/review/2026-10-25-xinli-workday.md:280)
+- **效果2：接受并修正自己。** 先用现有原语对已结束的完整Span做拆Run试验，暂不先改内核上下文。须处理续页、拒收、串行补读及无进展退出；日终仍须file_changes对账。[每日流程](../../apps/xinli/agents/xinli-day.yaml:17) 但GLM并非只剩延迟：仍有过时承诺1/2、纯度失败2/2；token翻倍也未经消融，不能全归因上下文。[评审§9](../../docs/review/2026-10-25-xinli-workday.md:280)
 - **效果3、4：方向同意，方案待测。** 不预定嵌入必胜或全部延迟归属；已有“白天初归、当天改正”。引用文字重合也不等于承诺语义，判断对象和提醒规则仍属业务。[建模§6](../../docs/design/xinli-model.md:114)
 - **“不建议”：反对无依据堆提示词，不反对修改规格与回执。** 第三方承诺修正后小例6次成功就是反例，整日尚未复跑。注入检测默认off、开启也只是shadow，不能称防护已验证完备。[评审:283](../../docs/review/2026-10-25-xinli-workday.md:283)、[判断§8](../../docs/design/m6-decisions.md:72)
 

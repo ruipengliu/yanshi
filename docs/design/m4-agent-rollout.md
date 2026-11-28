@@ -10,7 +10,7 @@
 
 ## 2. 发布配置
 
-AgentDef 文件保持不变：一个文件一个 (name, version)，随部署上线。发布状态单独放在 `agents/releases.yaml`：
+每个 AgentDef 文件定义一个 (name, version)，随部署上线。发布配置放在定义所在目录的 `releases.yaml`，如内核的 `agents/releases.yaml`。业务线也在自己的 AgentDef 目录维护发布配置。
 
 ```yaml
 assistant:
@@ -23,8 +23,8 @@ assistant:
 ```
 
 - 没有出现在 `releases.yaml` 中的 Agent 沿用原规则：默认版本为最后加载的版本。
-- 引用的版本必须已加载；`stable` 与 `canary.version` 不能是撤回的版本。
-- `serve` 每 10 秒检查一次文件内容，变化时校验并替换；校验失败则保留原配置，记录日志与指标 `yanshi_release_reload_errors_total`。各进程独立加载，最多约 10 秒不一致；版本在 Session 创建时固定，这种不一致只影响那 10 秒内新建的 Session 分到哪个版本。
+- 发布条目只能引用同一目录的定义及其已加载版本。`stable` 与 `canary.version` 必须是未撤回的版本。
+- `serve` 每 10 秒检查各目录的发布配置。读取与校验全部成功后一次性替换合并结果。校验失败或多目录部署中读取失败时，保留上一版并记录日志与指标 `yanshi_release_reload_errors_total`。在目录仍可读取时，移除其中的配置文件会恢复该目录下定义的默认选择。各进程独立加载，最多约 10 秒不一致；版本在 Session 创建时固定，这种不一致只影响那 10 秒内新建的 Session 分到哪个版本。
 
 ## 3. 分流
 
@@ -72,6 +72,6 @@ assistant:
 
 ## 9. 单次调用的发布
 
-`oneshots/*.yaml` 与 `oneshots/releases.yaml` 沿用同一结构，stable、canary（version、percent、end_users）与 withdrawn 的校验、散列分流、文件热加载共用 `internal/release`。按声明名与 EndUser 稳定分流，未配置发布时使用按文件名排序最后加载的版本。声明的全部版本只在启动时加载；每 10 秒热加载发布选择，错误配置保留原值，使用既有发布错误指标。
+Oneshot 定义与同目录的 `releases.yaml` 沿用同一结构，例如 `apps/xinli/oneshots/releases.yaml`。stable、canary（version、percent、end_users）与 withdrawn 的校验、散列分流、文件热加载共用 `internal/release`。按声明名与 EndUser 稳定分流，未配置发布时使用按文件名排序最后加载的版本。声明的全部版本只在启动时加载；每 10 秒热加载发布选择，错误配置保留原值，使用既有发布错误指标。
 
 单次调用没有 Session：每次请求独立选择一次版本，修复调用保留本次选择。撤回只影响后续请求，不中断在途调用。同名各版本 concurrency 须一致，因为它们共享声明并发名额。发布前用 `make eval-xinli EVAL_FLAGS="-case oneshot-live-brief -oneshot-version <版本>"` 与基线比较，无回归后才能进入灰度或 stable；`-agent-version` 不影响单次调用。用量按 oneshot 的 name@version 汇总，和 AgentDef 归属分开。

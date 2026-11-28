@@ -63,7 +63,7 @@ worker        worker-bg     sandbox-ctl        janitor
 - **对象存储。** 任何 S3 兼容实现（ADR-0011）；私有化环境用 SeaweedFS、MinIO 或 Ceph RGW。
 - **入口。** 支持 WebSocket 升级与小时级空闲连接；SSE 与 WebSocket 不经过会缓冲响应的中间层。握手限速与带抖动的 `Retry-After` 由网关自身处理。
 - **可观测性。** 指标在 peer-addr 的 `/metrics`，只记录 ID（ADR-0015）。`yanshi_db_pool_*` 由一个进程级收集器汇总活动分片的 SQL 池，沿用单库的无标签指标，不含独立直连池；来源随存储关闭注销，详见 [M2 扩容压测](./m2-scale-test.md) §3。开启 Run 主链追踪时，各进程用 `serve -log-format json -trace` 向 stderr 输出 JSON 行。日志格式默认 `text`，追踪默认关闭。部署自己的日志采集器按 `msg=span`、`run=<run_id>` 查询；`queue.claim` 以 `session` 与同一时间段关联。span 结束时写入 `name`、`trace_id`（已知 Run 时）、`span_id`、`parent_span_id`（可空）、`start`（RFC3339Nano）、`duration_ms`、`outcome` 与该环节已有的 ID、计数和额外耗时。工具与跨角色环节待第 2 阶段。见 [ADR-0065](../adr/0065-run-tracing-as-structured-span-logs.md)。
-- **配置分发。** AgentDef、发布配置、业务线公钥、价格表、MCP 登记以挂载卷（ConfigMap/Secret）分发，所有进程同一版本；发布配置的热加载（10 秒）保持不变。
+- **配置分发。** AgentDef、Oneshot、发布配置、业务线公钥、价格表、MCP 登记以挂载卷（ConfigMap/Secret）分发，所有进程使用同一套配置。`-agents` 与 `-oneshots` 各接受逗号分隔的目录，默认分别为 `agents` 与 `oneshots`。多目录部署须挂载所列目录。同一类定义的同名版本必须集中在同一目录，跨目录重名时启动报错。每个目录的 `releases.yaml` 只列本目录的定义。进程每 10 秒合并发布配置，任一目录的配置读取或校验失败时保留整组上一版配置。
 - **建会话幂等密钥。** 网关（单进程模式即全部角色）从 Secret 注入 `YANSHI_SESSION_KEY_SECRET`（或 `-session-key-secret-file`，至少 32 字节），同一单元内的网关必须相同；`-auth jwt` 下网关缺少密钥即启动失败（SDK 每次创建都带键）；`-auth none` 时使用固定的开发密钥。不做例行轮换：轮换后跨越轮换的重试会再创建一个 Session（ADR-0059）。
 - **外联。** 模型提供商、内容安全提供商、推送通道是仅有的出网依赖，按 ADR-0001 在部署清单中显式列出、可关闭或替换；网络策略默认禁止其他出网。
 
@@ -189,7 +189,7 @@ xinli 多片消费从该枚举启动每片独立的长轮询、退避和恢复�
 
 | serve 参数 | 默认 | 语义 |
 |---|---|---|
-| -oneshots | oneshots | 声明目录；不存在或没有声明时不提供单次调用（请求返回 404），跳过单次调用限额校验 |
+| -oneshots | oneshots | 声明目录，多个目录以逗号分隔。未加载任何声明时单次调用返回 404，并跳过单次调用限额校验 |
 | -oneshot-concurrency | 8 | 本进程全部单次调用的并发上限，必须为正；model-concurrency 大于 0 时必须严格小于它 |
 | -oneshot-wait | 2s | 每一层并发名额独立的等待上限，0 为只尝试立即获取，负值拒绝 |
 | -oneshot-deadline | 60s | 从声明校验之前开始的总时限，含审核、排队与一次 Schema 修复；必须为正 |

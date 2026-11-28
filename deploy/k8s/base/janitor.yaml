@@ -17,7 +17,8 @@ spec:
         - name: yanshi
           image: yanshi
           args: [serve, -roles=janitor, -peer-addr=0.0.0.0:7070, -peer-advertise=http://$(POD_IP):7070, -storage=postgres,
-            -migrate=false, -auth=jwt, -agents=/etc/yanshi/agents, -businesslines=/etc/yanshi/businesslines,
+            -migrate=false, -auth=jwt, "-agents=/etc/yanshi/agents,/etc/yanshi/xinli-agents",
+            -oneshots=/etc/yanshi/xinli-oneshots, -businesslines=/etc/yanshi/businesslines,
             -pricing=/etc/yanshi/pricing/pricing.yaml, -blob=s3, -notify-shards=16, -sandbox=k8s,
             -sandbox-k8s-namespace=yanshi-sandbox]
           resources:

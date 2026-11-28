@@ -38,12 +38,12 @@ func evalCmd(args []string) error {
 	xinliStore := fs.String("xinli-store", "memory", "Persona 夹具存储：memory | pg")
 	xinliPersonaDSN := fs.String("xinli-persona-dsn", os.Getenv("YANSHI_PERSONA_PG_DSN"), "Persona 独立数据库 DSN（YANSHI_PERSONA_PG_DSN；pg 必填）")
 	suite := fs.String("suite", "evals", "评测用例目录")
-	agentsDir := fs.String("agents", "agents", "AgentDef 目录")
+	agentDirs := fs.String("agents", "agents", "AgentDef 目录，多个目录以逗号分隔")
 	var loops headerFlags
 	fs.Var(&loops, "loop", "把外部循环接到正在运行的服务（名称=URL，可重复；ADR-0063）。AgentDef 指向未接上的循环的用例跳过")
 	loopEndpoint := fs.String("loop-endpoint-addr", eval.DefaultLoopEndpointAddr,
 		"评测模型端点的监听地址：外部服务把模型的 base URL 配成 http://<地址>/v1/loop、以每步请求的 step_token 为 API key")
-	oneshotsDir := fs.String("oneshots", "oneshots", "单次调用声明目录")
+	oneshotDirs := fs.String("oneshots", "oneshots", "单次调用声明目录，多个目录以逗号分隔")
 	oneshotVersion := fs.String("oneshot-version", "", "评测该单次调用版本而不是稳定版本")
 	caseGlob := fs.String("case", "*", "只运行名称匹配的用例")
 	trials := fs.Int("trials", 0, "覆盖每个用例的运行次数")
@@ -64,20 +64,20 @@ func evalCmd(args []string) error {
 		return errors.New("-xinli-span-runs with -update-baseline needs an explicit -baseline for the experiment")
 	}
 
-	agents, err := agentdef.LoadDir(*agentsDir)
+	agents, agentFiles, err := agentdef.LoadDirs(strings.Split(*agentDirs, ","))
 	if err != nil {
 		return err
 	}
-	rel, _, err := agents.LoadReleases(filepath.Join(*agentsDir, agentdef.ReleasesFile))
+	rel, _, err := agentFiles.Load()
 	if err != nil {
 		return err
 	}
 	agents.SetReleases(rel)
-	shots, err := oneshot.LoadDir(*oneshotsDir)
+	shots, shotFiles, err := oneshot.LoadDirs(strings.Split(*oneshotDirs, ","))
 	if err != nil {
 		return err
 	}
-	shotReleases, _, err := shots.LoadReleases(filepath.Join(*oneshotsDir, oneshot.ReleasesFile))
+	shotReleases, _, err := shotFiles.Load()
 	if err != nil {
 		return err
 	}
