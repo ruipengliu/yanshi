@@ -29,6 +29,7 @@ import (
 	"yanshi/internal/sandbox"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
+	"yanshi/internal/tracing"
 	"yanshi/internal/usage"
 	"yanshi/internal/workqueue"
 )
@@ -113,6 +114,7 @@ type Options struct {
 	LeaseTTL     time.Duration
 	DrainTimeout time.Duration
 	Logger       *slog.Logger
+	Tracer       *tracing.Tracer
 }
 
 // Core 是核心对象图：Event 日志之上、传输层之下的全部平台对象。四个装配点（serve、模拟测试、评测、e2e 测试）
@@ -214,7 +216,7 @@ func NewCore(stores Stores, opts Options) *Core {
 	}
 	c.Service = &service.Service{Store: c.Store, Agents: opts.Agents, AgentAccess: opts.DefinitionAccess, Nodes: c.Dispatch, Index: stores.Index,
 		Deletions: stores.Deletions, Janitor: stores.JanitorQueue, Quotas: opts.Quotas, Tiers: tiers, Moderator: moderator, Artifacts: c.Artifacts,
-		Consents: consents, HealthEnabled: opts.HealthAllowed, SessionKeySecret: opts.SessionKeySecret}
+		Consents: consents, HealthEnabled: opts.HealthAllowed, SessionKeySecret: opts.SessionKeySecret, Tracer: opts.Tracer}
 	if tiers != nil {
 		c.EndUserData = append(c.EndUserData, lifecycle.EndUserHolder{Name: "tiers", Delete: func(ctx context.Context, bl, eu string) error {
 			if c.Service.Tiers == nil {
@@ -293,6 +295,7 @@ func (c *Core) WorkerConfig(id string, pool workqueue.Pool, idle *workqueue.Idle
 		ID: id, Store: c.Store, Queue: c.Stores.Queue, Agents: c.opts.Agents, Model: c.opts.Model, Loops: c.opts.Loops,
 		Catalog: c.Catalog, Dispatch: c.Dispatch, Delegation: c.Delegator, InjectionCheck: c.opts.InjectionCheck,
 		Artifacts: c.Artifacts, Memory: c.Memory, Live: c.opts.Live, LiveEndpoint: c.opts.LiveEndpoint, Logger: c.opts.Logger,
+		Tracer:   c.opts.Tracer,
 		LeaseTTL: c.opts.LeaseTTL, Heartbeat: c.opts.LeaseTTL / 3, Idle: idle, Pool: pool,
 		Meter: c.opts.Meter, Quotas: c.opts.Quotas, Moderator: c.Service.Moderator,
 		DrainTimeout: c.opts.DrainTimeout, Faults: c.opts.Injector,

@@ -54,3 +54,5 @@
 注释与文档使用中文，标识符使用英文。注释说明"为什么"。TypeScript 由 prettier 格式化（`cd sdk/web && pnpm format`）。
 
 日志与指标中只记录 ID（Session、Run、调用、工件），不记录用户输入、模型输出、调用参数或结果：这些是个人数据，只能存放在可被删除的地方（ADR-0015）。
+
+追踪记录同样只含 ID、枚举、计数与耗时，经 `internal/tracing` 的类型化属性写入（ADR-0065）。

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"yanshi/internal/metrics"
+	"yanshi/internal/tracing"
 )
 
 // 调用提供商的约束（延展性评审 §4.2）：每次调用有时限；可重试的失败（限流、服务端错误、连接中断）以带抖动的
@@ -188,7 +189,12 @@ func (g *Guard) do(ctx context.Context, modelID string, call func(context.Contex
 }
 
 func (g *Guard) retry(ctx context.Context, modelID string, call func(context.Context) (bool, error)) error {
-	for attempt := 0; ; attempt++ {
+	parent := tracing.FromContext(ctx)
+	attempt := 0
+	if parent != nil {
+		defer func() { parent.Set(tracing.Count(tracing.Retries, attempt)) }()
+	}
+	for ; ; attempt++ {
 		safe, err := g.attempt(ctx, modelID, call)
 		if err == nil || ctx.Err() != nil || !safe || attempt >= g.Limits.Retries || !Retryable(err) {
 			return err
@@ -207,20 +213,24 @@ func (g *Guard) retry(ctx context.Context, modelID string, call func(context.Con
 func (g *Guard) attempt(ctx context.Context, modelID string, call func(context.Context) (bool, error)) (bool, error) {
 	start := time.Now()
 	class := classOf(ctx)
+	span := tracing.FromContext(ctx).Child(tracing.ModelAdmission)
 	// 先按类别交付并发名额，避免仍在并发门外排队的调用先消耗 RPS 令牌。
 	if g.gate != nil {
 		release, err := g.gate.acquire(ctx, class)
 		if err != nil {
+			span.End(TraceOutcome(err))
 			return false, err
 		}
 		defer release()
 	}
 	if g.rate != nil {
 		if err := g.rate.wait(ctx, g.sleep); err != nil {
+			span.End(TraceOutcome(err))
 			return false, err
 		}
 	}
 	metrics.ModelAdmissionWait.WithLabelValues(g.Name, class.String()).Observe(metrics.Since(start))
+	span.End(tracing.OK)
 	actx := ctx
 	if g.Limits.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -232,6 +242,20 @@ func (g *Guard) attempt(ctx context.Context, modelID string, call func(context.C
 		err = fmt.Errorf("model %s: %w after %s", modelID, ErrTimeout, g.Limits.Timeout)
 	}
 	return safe, err
+}
+
+// TraceOutcome 只按现有的错误类别记录结果。
+func TraceOutcome(err error) tracing.Outcome {
+	switch {
+	case err == nil:
+		return tracing.OK
+	case errors.Is(err, ErrTimeout), errors.Is(err, context.DeadlineExceeded):
+		return tracing.Timeout
+	case errors.Is(err, context.Canceled):
+		return tracing.Canceled
+	default:
+		return tracing.Error
+	}
 }
 
 // backoff 是第 attempt 次失败后的等待：指数退避加抖动（避免同时失败的调用一齐重试）；提供商给出的 Retry-After

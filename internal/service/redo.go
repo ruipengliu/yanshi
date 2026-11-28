@@ -9,10 +9,12 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/session"
+	"yanshi/internal/tracing"
 )
 
 // Redo 以最后一个已完成 Run 的原输入开启新 Run，接受即替代；绝不转成插话。
 func (s *Service) Redo(ctx context.Context, sessionID, inputID, expectedRunID string) (*SubmitResult, error) {
+	span := s.Tracer.Start(tracing.RunSubmit, tracing.Session(sessionID))
 	if expectedRunID == "" {
 		return nil, fmt.Errorf("%w: expected_run_id is required", ErrInvalid)
 	}
@@ -50,5 +52,5 @@ func (s *Service) Redo(ctx context.Context, sessionID, inputID, expectedRunID st
 		prev = lastRunAt(st)
 		return session.Decision{Events: events, Wake: true}, nil
 	})
-	return s.finishSubmit(ctx, st.Created.GetEndUser(), sessionID, prev, res, err)
+	return s.finishSubmit(ctx, st.Created.GetEndUser(), sessionID, prev, res, err, span)
 }

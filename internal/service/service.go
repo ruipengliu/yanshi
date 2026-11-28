@@ -28,6 +28,7 @@ import (
 	"yanshi/internal/moderation"
 	"yanshi/internal/session"
 	"yanshi/internal/shard"
+	"yanshi/internal/tracing"
 	"yanshi/internal/usage"
 	"yanshi/internal/workqueue"
 )
@@ -48,6 +49,7 @@ type AgentAccess interface {
 }
 
 type Service struct {
+	Tracer *tracing.Tracer
 	// Store 须配置 Waking：输入、审批与回答在写日志的同一事务中唤醒 Session（CommitAndWake）。
 	Store       *session.Store
 	Agents      *agentdef.Registry
@@ -471,6 +473,10 @@ func (s *Service) SubmitFromCall(ctx context.Context, sessionID, callID, inputID
 }
 
 func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall string, input []*v1.ContentBlock, delegated bool, copies []*v1.ArtifactCopied) (*SubmitResult, error) {
+	var span *tracing.Span
+	if !delegated {
+		span = s.Tracer.Start(tracing.RunSubmit, tracing.Session(sessionID))
+	}
 	if len(input) == 0 {
 		return nil, fmt.Errorf("%w: empty input", ErrInvalid)
 	}
@@ -558,17 +564,20 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 		// 写日志与入队在同一事务中（CommitAndWake）：二者之间没有可以崩溃的窗口，Run 不会停在 queued。
 		return session.Decision{Events: events, Wake: true}, nil
 	})
-	return s.finishSubmit(ctx, st.Created.GetEndUser(), sessionID, prev, res, err)
+	return s.finishSubmit(ctx, st.Created.GetEndUser(), sessionID, prev, res, err, span)
 }
 
 // finishSubmit 共用写入后的 touch；丢响应重试只返回首次结果，不重复更新索引。
-func (s *Service) finishSubmit(ctx context.Context, endUser, sessionID string, prev time.Time, res *SubmitResult, err error) (*SubmitResult, error) {
+func (s *Service) finishSubmit(ctx context.Context, endUser, sessionID string, prev time.Time, res *SubmitResult, err error, span *tracing.Span) (*SubmitResult, error) {
 	if err != nil {
 		return nil, gone(sessionID, err)
 	}
 	if res.Duplicate {
 		return res, nil
 	}
+	// 此时提交及唤醒已生效，索引更新有独立的失败路径。
+	span.Set(tracing.Run(res.RunID))
+	span.End(tracing.OK)
 	// 按 TouchEvery 分段：输入与上一个 Run 落在不同段时更新。每段的第一个输入都会写入，索引中的时间因此与
 	// 最近的输入在同一段内，滞后不到 TouchEvery；只比较间隔的话，间隔始终短于 TouchEvery 的连续对话永远不会更新。
 	if err := s.touch(ctx, endUser, sessionID, prev); err != nil {
@@ -593,9 +602,9 @@ func (s *Service) InterruptBy(ctx context.Context, sessionID, runID, by string) 
 	// cancel 是要撤回已派发调用的 Run：本次中断的，或此前已被中断的（重试的请求再撤回一次）；
 	// interrupted 表示本次写入了中断。
 	var cancel *session.Run
-	interrupted := false
+	var interrupted *v1.Event
 	err = s.Store.Update(ctx, st, func(st *session.State) (session.Decision, error) {
-		cancel, interrupted = nil, false
+		cancel, interrupted = nil, nil
 		r := st.Run(runID)
 		if r == nil {
 			if _, ok := st.RunSummary(runID); ok {
@@ -609,21 +618,32 @@ func (s *Service) InterruptBy(ctx context.Context, sessionID, runID, by string) 
 			}
 			return session.Decision{}, nil
 		}
-		cancel, interrupted = r, true
-		return session.Decision{Events: []*v1.Event{{Payload: &v1.Event_RunInterrupted{
+		cancel = r
+		interrupted = &v1.Event{Payload: &v1.Event_RunInterrupted{
 			RunInterrupted: &v1.RunInterrupted{RunId: runID, By: by},
-		}}}, Wake: wakeOnEnding(st)}, nil
+		}}
+		return session.Decision{Events: []*v1.Event{interrupted}, Wake: wakeOnEnding(st)}, nil
 	})
 	if err != nil {
 		return gone(sessionID, err)
 	}
-	if interrupted {
+	if interrupted != nil {
+		s.traceInterrupted(st, interrupted)
 		metrics.RunsFinished.WithLabelValues("interrupted", agentdef.Label(st.Agent)).Inc()
 	}
 	if cancel != nil {
 		return s.cancelDispatched(ctx, st.Created.GetEndUser(), cancel)
 	}
 	return nil
+}
+
+func (s *Service) traceInterrupted(st *session.State, e *v1.Event) {
+	if s.Tracer.Enabled() {
+		if r := st.Run(e.GetRunInterrupted().GetRunId()); r != nil {
+			s.Tracer.Record(tracing.RunEnd, r.RequestedAt, e.GetTime().AsTime(), tracing.Interrupted,
+				tracing.Session(st.SessionID), tracing.Run(r.ID), tracing.Attempt(r.Attempt))
+		}
+	}
 }
 
 // wakeOnEnding 报告结束 Run 的写入是否同时唤醒 Session：委托派生的子 Session 需要它的 Worker 把终态写回父调用
@@ -830,9 +850,9 @@ func (s *Service) Close(ctx context.Context, sessionID, by, reason string) error
 	if err != nil {
 		return err
 	}
-	interrupted := false
+	var interrupted *v1.Event
 	err = s.Store.Update(ctx, st, func(st *session.State) (session.Decision, error) {
-		interrupted = false
+		interrupted = nil
 		if st.Closed != nil {
 			return session.Decision{}, nil // 已关闭（如重试的 Close）：仍做一遍关闭之后的步骤
 		}
@@ -845,14 +865,14 @@ func (s *Service) Close(ctx context.Context, sessionID, by, reason string) error
 		var events []*v1.Event
 		a := st.Active()
 		if a != nil {
-			events = append(events, &v1.Event{Payload: &v1.Event_RunInterrupted{RunInterrupted: &v1.RunInterrupted{RunId: a.ID, By: by}}})
+			interrupted = &v1.Event{Payload: &v1.Event_RunInterrupted{RunInterrupted: &v1.RunInterrupted{RunId: a.ID, By: by}}}
+			events = append(events, interrupted)
 		}
 		// 进行中的 Call 随之结束；中转它的进程下一次写入时发现并挂断。
 		if c := st.ActiveCall; c != nil {
 			events = append(events, callEnded(c.ID, CallEndSessionClosed))
 		}
 		events = append(events, &v1.Event{Payload: &v1.Event_SessionClosed{SessionClosed: &v1.SessionClosed{By: by, Reason: reason}}})
-		interrupted = a != nil
 		return session.Decision{Events: events, Wake: wakeOnEnding(st)}, nil
 	})
 	if err != nil {
@@ -861,7 +881,8 @@ func (s *Service) Close(ctx context.Context, sessionID, by, reason string) error
 	if st.Closed == nil {
 		return s.SyncScheduleIndex(ctx, st)
 	}
-	if interrupted {
+	if interrupted != nil {
+		s.traceInterrupted(st, interrupted)
 		metrics.RunsFinished.WithLabelValues("interrupted", agentdef.Label(st.Agent)).Inc()
 	}
 	return s.afterClose(ctx, st)

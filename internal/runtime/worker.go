@@ -38,6 +38,7 @@ import (
 	"yanshi/internal/node"
 	"yanshi/internal/notify"
 	"yanshi/internal/session"
+	"yanshi/internal/tracing"
 	"yanshi/internal/usage"
 	"yanshi/internal/workqueue"
 )
@@ -99,6 +100,7 @@ type Config struct {
 	// LiveEndpoint 是本进程的内部地址，写入 AttemptStarted，供其他进程拉取增量（ADR-0013）。
 	LiveEndpoint string
 	Logger       *slog.Logger
+	Tracer       *tracing.Tracer
 
 	LeaseTTL time.Duration
 	// Heartbeat > 0 时，在模型调用与 Capability 执行期间按此间隔续约（真实时间）。
@@ -232,6 +234,7 @@ type Worker struct {
 	renewed     time.Time
 	runID       string
 	attempt     uint32
+	attemptSpan *tracing.Span
 	modelErrors int
 	// forceCompact 在模型报告上下文超长后置位：下一步无论估算如何都先压缩。
 	forceCompact bool
@@ -267,6 +270,7 @@ func (w *Worker) Run(ctx context.Context) {
 	defer drain()
 	defer func() {
 		if w.killed.Load() {
+			w.endAttempt(tracing.Lost)
 			return
 		}
 		hctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -311,13 +315,18 @@ func (w *Worker) Kill() {
 }
 
 func (w *Worker) drop() {
+	w.endAttempt(tracing.Lost)
 	w.lease, w.st, w.runID, w.attempt, w.modelErrors, w.forceCompact, w.failingSince = nil, nil, "", 0, 0, false, time.Time{}
 	w.executed = nil
 }
 
 // Step 推进一件工作；返回 false 表示当前无事可做。
 func (w *Worker) Step(ctx context.Context) (bool, error) {
+	var claimStart time.Time
 	if w.lease == nil {
+		if w.cfg.Tracer.Enabled() {
+			claimStart = time.Now()
+		}
 		l, err := w.cfg.Queue.Claim(ctx, w.cfg.ID, w.cfg.LeaseTTL, w.cfg.Pool)
 		if errors.Is(err, workqueue.ErrEmpty) {
 			metrics.QueueClaims.WithLabelValues("empty").Inc()
@@ -346,16 +355,27 @@ func (w *Worker) Step(ctx context.Context) (bool, error) {
 	if w.st == nil {
 		start := time.Now()
 		st, err := w.cfg.Store.Load(ctx, w.lease.SessionID)
+		if err == nil {
+			metrics.SessionLoad.WithLabelValues().Observe(metrics.Since(start))
+			w.st = st
+		}
+		if !claimStart.IsZero() {
+			outcome := tracing.OK
+			if err != nil {
+				outcome = tracing.Error
+			}
+			w.cfg.Tracer.Record(tracing.QueueClaim, claimStart, time.Now(), outcome,
+				tracing.Session(w.lease.SessionID), tracing.Worker(w.cfg.ID), tracing.QueueWait(w.lease.Waited))
+		}
 		if err != nil {
 			return false, err
 		}
-		metrics.SessionLoad.WithLabelValues().Observe(metrics.Since(start))
-		w.st = st
 	} else if !w.upToDate() {
 		if err := w.cfg.Store.Sync(ctx, w.st); err != nil {
 			return false, err
 		}
 	}
+	w.observeAttempt()
 
 	// 到期的后台调用先了结（ADR-0035）：它作为一条输入并入活跃 Run 或开启新 Run，随后照常推进。
 	if b := w.dueBackground(); b != nil {
@@ -480,8 +500,12 @@ func (w *Worker) tryCommit(ctx context.Context, events ...*v1.Event) (bool, erro
 		w.drop()
 		return false, nil
 	}
-	if err != nil || !written {
+	if err != nil {
 		return false, err
+	}
+	if !written {
+		w.observeAttempt()
+		return false, nil
 	}
 	w.observeCommitted(events)
 	return true, nil
@@ -581,6 +605,7 @@ func (w *Worker) Stop(ctx context.Context) error {
 	}
 	// 先同步：移交依据的状态必须是最新的，否则可能为已经有结果的调用再写一次结果。同步失败时只归还租约。
 	if w.st != nil && w.cfg.Store.Sync(ctx, w.st) == nil {
+		w.observeAttempt()
 		if r := w.st.Active(); r != nil {
 			return w.handOff(ctx, r, "shutdown")
 		}
@@ -595,6 +620,8 @@ func (w *Worker) startAttempt(ctx context.Context, r *session.Run) error {
 		return w.fail(ctx, r, fmt.Sprintf("exceeded %d takeovers without progress", w.cfg.MaxTakeovers))
 	}
 	next := r.Attempt + 1
+	span := w.cfg.Tracer.Start(tracing.RunAttempt,
+		tracing.Session(w.st.SessionID), tracing.Run(r.ID), tracing.Attempt(next), tracing.Worker(w.cfg.ID))
 	// 提交前确定 Attempt 的类型：提交后投影中的状态已是 running。
 	kind := map[session.RunStatus]string{session.RunQueued: "start", session.RunRunning: "takeover", session.RunSuspended: "resume"}[r.Status]
 	err := w.cfg.Store.Commit(ctx, w.st, &v1.Event{Payload: &v1.Event_AttemptStarted{
@@ -607,10 +634,42 @@ func (w *Worker) startAttempt(ctx context.Context, r *session.Run) error {
 		return err
 	}
 	w.runID, w.attempt, w.modelErrors, w.forceCompact = r.ID, next, 0, false
+	w.attemptSpan = span
 	w.executed = nil
 	metrics.Attempts.WithLabelValues(kind).Inc()
 	w.cfg.Logger.Info("attempt started", "worker", w.cfg.ID, "session", w.st.SessionID, "run", r.ID, "attempt", next)
 	return nil
+}
+
+func (w *Worker) endAttempt(outcome tracing.Outcome) {
+	w.attemptSpan.End(outcome)
+	w.attemptSpan = nil
+}
+
+// observeAttempt 以提交或同步后的投影结束本地记录。若投影已进入下一次 Attempt，旧 Worker 只知道自己失去了所有权。
+func (w *Worker) observeAttempt() {
+	if w.attemptSpan == nil {
+		return
+	}
+	r := w.st.Run(w.runID)
+	if r == nil || r.Attempt != w.attempt {
+		w.endAttempt(tracing.Lost)
+		return
+	}
+	switch r.Status {
+	case session.RunCompleted:
+		w.endAttempt(tracing.Done)
+	case session.RunFailed:
+		w.endAttempt(tracing.Failed)
+	case session.RunInterrupted:
+		w.endAttempt(tracing.Interrupted)
+	case session.RunSuspended:
+		if r.SuspendReason == session.SuspendHandoff {
+			w.endAttempt(tracing.Handoff)
+		} else {
+			w.endAttempt(tracing.Suspended)
+		}
+	}
 }
 
 func (w *Worker) fail(ctx context.Context, r *session.Run, reason string) error {
@@ -1392,15 +1451,20 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 		kind = "loop"
 	}
 	defer func() { observeModel(kind, start, resp, err) }()
+	var span *tracing.Span
+	if !external {
+		span = w.attemptSpan.Child(tracing.ModelCall)
+	}
 	// 耗时与首字延迟只用于观察，但写入日志：按 clock.Clock 计时，模拟测试中确定（ADR-0034）。
 	called := w.now()
 	var firstToken time.Duration
 	err = w.during(ctx, r, func(ctx context.Context) error {
 		var err error
 		draft := live.Delta{SessionID: w.st.SessionID, RunID: r.ID, Attempt: w.attempt, AfterSeq: w.st.Seq}
-		reply, err = loop.Decide(ctx, step, func(d model.Delta) {
+		reply, err = loop.Decide(span.Context(ctx), step, func(d model.Delta) {
 			if firstToken == 0 {
 				firstToken = max(w.now().Sub(called), time.Millisecond)
+				span.FirstToken()
 			}
 			draft.Text, draft.Reasoning = d.Text, d.Reasoning
 			w.cfg.Live.Publish(draft)
@@ -1413,6 +1477,13 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 		}
 		return err
 	})
+	if span != nil {
+		outcome := model.TraceOutcome(err)
+		if errors.Is(err, errSuperseded) {
+			outcome = tracing.Lost
+		}
+		span.End(outcome)
+	}
 	if err != nil {
 		what := "model"
 		if external {
@@ -1558,13 +1629,17 @@ func observeModel(kind string, start time.Time, resp *model.Response, err error)
 // observeCommitted 为刚提交的事件记录指标：Run 终态（时长按事件时间计算）与上下文压缩。
 func (w *Worker) observeCommitted(events []*v1.Event) {
 	w.notifyCommitted(events)
+	w.observeAttempt()
 	for _, e := range events {
 		var runID, status string
+		var outcome tracing.Outcome
 		switch p := e.GetPayload().(type) {
 		case *v1.Event_RunCompleted:
 			runID, status = p.RunCompleted.GetRunId(), "completed"
+			outcome = tracing.Done
 		case *v1.Event_RunFailed:
 			runID, status = p.RunFailed.GetRunId(), "failed"
+			outcome = tracing.Failed
 		case *v1.Event_ContextCompacted:
 			metrics.Compactions.WithLabelValues().Inc()
 			continue
@@ -1575,6 +1650,8 @@ func (w *Worker) observeCommitted(events []*v1.Event) {
 		metrics.RunsFinished.WithLabelValues(status, agent).Inc()
 		if r := w.st.Run(runID); r != nil {
 			metrics.RunDuration.WithLabelValues(status, agent).Observe(e.GetTime().AsTime().Sub(r.RequestedAt).Seconds())
+			w.cfg.Tracer.Record(tracing.RunEnd, r.RequestedAt, e.GetTime().AsTime(), outcome,
+				tracing.Session(w.st.SessionID), tracing.Run(r.ID), tracing.Attempt(r.Attempt), tracing.Worker(w.cfg.ID))
 		}
 	}
 }

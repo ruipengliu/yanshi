@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"net"
@@ -60,6 +61,7 @@ import (
 	"yanshi/internal/sandbox"
 	"yanshi/internal/service"
 	"yanshi/internal/speech"
+	"yanshi/internal/tracing"
 	"yanshi/internal/usage"
 	"yanshi/internal/webui"
 	"yanshi/internal/workqueue"
@@ -294,6 +296,17 @@ func gateway(logger *slog.Logger, defaults model.Limits, providerLimits map[stri
 	return gw
 }
 
+func serveLogger(out io.Writer, format string) (*slog.Logger, error) {
+	switch format {
+	case "text":
+		return slog.New(slog.NewTextHandler(out, nil)), nil
+	case "json":
+		return slog.New(slog.NewJSONHandler(out, nil)), nil
+	default:
+		return nil, fmt.Errorf("-log-format: use text or json, got %q", format)
+	}
+}
+
 // realtimeGateway 按环境变量配置实时语音模型（Call，docs/design/m3-call.md）：
 //
 //	volc  VOLC_SPEECH_API_KEY（可选 VOLC_SPEECH_URL），豆包实时语音 Seeduplex
@@ -343,6 +356,8 @@ func serve(args []string) error {
 	workerPool := fs.String("worker-pool", "mixed", "本进程 Worker 的池（ADR-0029）：mixed（按 -interactive-workers 划分）| interactive（全部只认领交互工作，长任务移交给其他进程）| any（全部认领任意工作）")
 	workerBusinessLines := fs.String("worker-business-lines", "", "本进程全部 Worker 认领的业务线，逗号分隔；为空时不限")
 	drainTimeout := fs.Duration("drain-timeout", 20*time.Second, "优雅停机时等待进行中的这一步（如模型调用）完成的上限，之后移交 Run；应小于编排系统的终止宽限期")
+	logFormat := fs.String("log-format", "text", "stderr 日志格式：text | json")
+	trace := fs.Bool("trace", false, "记录 Run 主链的追踪记录（ADR-0065）")
 	storageKind := fs.String("storage", "memory", "存储：memory | postgres")
 	dsn := fs.String("pg-dsn", envOr("YANSHI_PG_DSN", devPGDSN), "PostgreSQL 地址（storage=postgres）；可以是 PgBouncer 的事务池")
 	listenDSN := fs.String("pg-listen-dsn", os.Getenv("YANSHI_PG_LISTEN_DSN"), "直连 PostgreSQL 的地址，用于 LISTEN 与迁移锁；-pg-dsn 经事务池时必须设置，为空时与 -pg-dsn 共用")
@@ -413,7 +428,14 @@ func serve(args []string) error {
 		}
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	logger, err := serveLogger(os.Stderr, *logFormat)
+	if err != nil {
+		return err
+	}
+	var tracer *tracing.Tracer
+	if *trace {
+		tracer = tracing.New(logger)
+	}
 	roles, err := parseRoles(*rolesFlag)
 	if err != nil {
 		return err
@@ -610,6 +632,7 @@ func serve(args []string) error {
 		HealthEveryone: *authMode == "none",
 		IdentityDomain: identityDomain(*authMode, lines),
 		Live:           bus, LiveEndpoint: liveEndpoint, LeaseTTL: *leaseTTL, DrainTimeout: *drainTimeout, Logger: logger,
+		Tracer: tracer,
 	}
 	if *embedModel != "" {
 		opts.Embedder, opts.EmbedModel = gw, *embedModel

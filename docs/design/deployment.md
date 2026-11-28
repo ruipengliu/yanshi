@@ -62,7 +62,7 @@ worker        worker-bg     sandbox-ctl        janitor
   - **长事务约束（生产基线，2026-11-22）。** 同库的长事务会推迟所有业务线的出站水位（ADR-0046，[M7 §6](./m7-kernel-primitives.md#6-出站流outbox)）。在线角色的数据库角色设 `statement_timeout = 5s`、`idle_in_transaction_session_timeout = 5s`（`ALTER ROLE … SET`），整个事务的时长由应用 context 限制；实例设 `max_prepared_transactions = 0`；迁移、备份与报表使用独立角色与各自的超时，只读分析与备份优先走备库。上线前用出站水位滞后与最老事务指标确认这些设置生效。
 - **对象存储。** 任何 S3 兼容实现（ADR-0011）；私有化环境用 SeaweedFS、MinIO 或 Ceph RGW。
 - **入口。** 支持 WebSocket 升级与小时级空闲连接；SSE 与 WebSocket 不经过会缓冲响应的中间层。握手限速与带抖动的 `Retry-After` 由网关自身处理。
-- **可观测性。** 指标在 peer-addr 的 `/metrics`，只记录 ID（ADR-0015）。`yanshi_db_pool_*` 由一个进程级收集器汇总活动分片的 SQL 池，沿用单库的无标签指标，不含独立直连池；来源随存储关闭注销，详见 [M2 扩容压测](./m2-scale-test.md) §3。链路追踪按 `run_id`、`attempt`、`call_id` 关联，列入上线检查清单。
+- **可观测性。** 指标在 peer-addr 的 `/metrics`，只记录 ID（ADR-0015）。`yanshi_db_pool_*` 由一个进程级收集器汇总活动分片的 SQL 池，沿用单库的无标签指标，不含独立直连池；来源随存储关闭注销，详见 [M2 扩容压测](./m2-scale-test.md) §3。开启 Run 主链追踪时，各进程用 `serve -log-format json -trace` 向 stderr 输出 JSON 行。日志格式默认 `text`，追踪默认关闭。部署自己的日志采集器按 `msg=span`、`run=<run_id>` 查询；`queue.claim` 以 `session` 与同一时间段关联。span 结束时写入 `name`、`trace_id`（已知 Run 时）、`span_id`、`parent_span_id`（可空）、`start`（RFC3339Nano）、`duration_ms`、`outcome` 与该环节已有的 ID、计数和额外耗时。工具与跨角色环节待第 2 阶段。见 [ADR-0065](../adr/0065-run-tracing-as-structured-span-logs.md)。
 - **配置分发。** AgentDef、发布配置、业务线公钥、价格表、MCP 登记以挂载卷（ConfigMap/Secret）分发，所有进程同一版本；发布配置的热加载（10 秒）保持不变。
 - **建会话幂等密钥。** 网关（单进程模式即全部角色）从 Secret 注入 `YANSHI_SESSION_KEY_SECRET`（或 `-session-key-secret-file`，至少 32 字节），同一单元内的网关必须相同；`-auth jwt` 下网关缺少密钥即启动失败（SDK 每次创建都带键）；`-auth none` 时使用固定的开发密钥。不做例行轮换：轮换后跨越轮换的重试会再创建一个 Session（ADR-0059）。
 - **外联。** 模型提供商、内容安全提供商、推送通道是仅有的出网依赖，按 ADR-0001 在部署清单中显式列出、可关闭或替换；网络策略默认禁止其他出网。

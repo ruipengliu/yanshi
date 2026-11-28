@@ -126,6 +126,10 @@ _Avoid_: API key（它只在一步内有效，不是长期凭证）、会话令�
 某个 Worker 对一个 Run 的一次执行；故障接管即开启新的 Attempt。Attempt 号是写入日志的 fencing 令牌。
 _Avoid_: 重试、执行实例
 
+**追踪记录（span 记录）**（[ADR-0065](docs/adr/0065-run-tracing-as-structured-span-logs.md)）:
+内核运行环节结束时发出的结构化运行日志，记录环节、结果与耗时。已定位到 Run 的记录共享由 Run ID 派生的 trace ID；同步调用以父子 span ID 关联。
+_Avoid_: Event、Event 日志
+
 **Call（通话）**:
 Session 内的一段全双工实时音视频交互；耗时工作由 Call 派生 Run 完成（run_task，ADR-0027）。音频不进日志，双方每句话的转写（CallTranscript）进日志。代码中"调用"（call_id、ToolCall、`session.Call`）指一次 Capability 调用，与 Call 无关：表示通话的标识符一律带 Call 前缀（`CallStarted`、`CallEvent`、`State.ActiveCall`、`from_call`）。
 _Avoid_: 实时会话、语音模式、Live

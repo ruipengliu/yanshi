@@ -45,6 +45,7 @@ import (
 	"yanshi/internal/sandbox"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
+	"yanshi/internal/tracing"
 	"yanshi/internal/usage"
 	"yanshi/internal/workqueue"
 	"yanshi/sdk/nodesdk"
@@ -82,6 +83,8 @@ type Options struct {
 	MaintainDues bool
 	// ExternalLoop 让 AgentDef 由外部循环驱动（ADR-0062，loop.go），循环自己的故障用独立随机流抽样。
 	ExternalLoop bool
+	// tracer 仅由确定性对照测试设置。
+	tracer *tracing.Tracer
 }
 
 // Stats 统计模拟中被覆盖到的路径，防止模拟"空转"。
@@ -563,6 +566,7 @@ func New(opts Options) (*World, error) {
 		BackgroundGrace: bgGrace, BackgroundTimeout: bgTimeout,
 		Moderator: simModerator{w}, InjectionCheck: simDecider{w}, Meter: w.meter, Quotas: w.quotas, Pusher: simPusher{w},
 		LeaseTTL: leaseTTL, HealthAllowed: healthAllowed, Loops: loops,
+		Tracer: opts.tracer,
 	})
 	w.store, w.hub, w.catalog, w.memories, w.artifacts = w.core.Store, w.core.Hub, w.core.Catalog, w.core.Memory, w.core.Artifacts
 	w.delegator, w.dispatch, w.svc, w.notifier = w.core.Delegator, w.core.Dispatch, w.core.Service, w.core.Notifier
