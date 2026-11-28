@@ -64,6 +64,9 @@ func TestCallLifecycle(t *testing.T) {
 	if err != nil || res.Steered {
 		t.Fatalf("run from call: %+v %v", res, err)
 	}
+	if status, err := svc.InputStatus(ctx, sid, "a/t1"); err != nil || status.Found {
+		t.Fatalf("derived Call input status: %+v, %v", status, err)
+	}
 	if again, err := svc.SubmitFromCall(ctx, sid, "a", "a/t1", model.TextBlocks("读取 PPT 第三页")); err != nil || !again.Duplicate || again.RunID != res.RunID {
 		t.Fatalf("retried task: %+v %v", again, err)
 	}

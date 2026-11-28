@@ -106,6 +106,7 @@ HTTP API 路由返回的 JSON 错误包含 `error`（供人阅读的现有文本
 | `gone` | 410 | `outbox.ErrEpoch`、`outbox.ErrExpired` |
 | `too_large` | 413 | `artifact.ErrTooLarge` |
 | `moderation_rejected` | 422 | `moderation.ErrRejected` |
+| `scan_budget_exceeded` | 422 | `service.ErrScanBudgetExceeded`，输入状态查询超出扫描预算，不可重试 |
 | `rate_limited` | 429 | `model.ErrBusy` |
 | `quota_exceeded` | 429 | `usage.ErrExceeded` |
 | `internal` | 500 | 未归类的路由错误 |
@@ -139,3 +140,24 @@ HTTP API 路由返回的 JSON 错误包含 `error`（供人阅读的现有文本
 出站流的 `conflict` 带 `outbox_filter_changed`，`gone` 带 `outbox_epoch_changed` 或 `outbox_cursor_expired`。恢复规则见[出站流](./m7-kernel-primitives.md#b4-的-http-与存储契约)。
 
 令牌中间件直接返回的 401、路由未匹配时的响应、已建立的 SSE 流与外部循环的 OpenAI 兼容模型端点各自沿用现有契约。Connection 使用 `ClientError`，见[多端双工通道](./m3-duplex-channel.md#5-请求)。
+
+## 9. 输入状态
+
+`GET /v1/sessions/{id}/inputs?input_id=…` 与 `GET /v1/sessions/{id}/events` 接受相同的令牌。客户端提供写入日志的 `input_id`，长度为 1 至 128 字节。缺少 ID 或长度无效返回 `400 invalid_argument`。Session 不存在、归属不符或已标记删除均返回 `404 not_found`，关闭的 Session 仍可查询。
+
+查询覆盖至本次投影的日志位置 `as_of_seq`。未命中返回 `200 {"found":false,"as_of_seq":"…"}`。命中返回 200，含 `found: true`、`as_of_seq`、`input_id`、`run_id`、`event_id`、`accepted_seq` 及 `acceptance_kind`。序号与 Events 的 `seq` 一样用十进制字符串。接受类型为 `requested`（含重答）、`steered` 或 `answered`（另有 `answered_call_id`）。同一 ID 多次公开接受时返回 `409 conflict`，`reason` 为 `input_accepted_more_than_once`。首版仅支持按 `input_id` 查询。
+
+命中同时返回 `run_status`（`queued`、`running`、`suspended`、`completed`、`failed`、`interrupted`）、`attempt_count` 与 `takeover_count`。后者只计 Run 在 `running` 时开始的 Attempt。`calls` 对整个 Run 按 `call_id` 统计至少一次以 `read_only=false` 开始的调用，旧记录缺字段也按 false 解释：
+
+| 字段 | 含义 |
+|---|---|
+| `writes_without_result` | 到查询上界仍无 `ToolResult` 的调用数 |
+| `writes_with_error` | 结果带 `is_error=true` 的调用数，含内核合成的错误结果 |
+| `writes_backgrounded` | 结果带 `backgrounded` 的调用数，后台占位也是 `ToolResult` |
+| `resumes_with_pending_writes` | 从挂起恢复时仍有任一上述调用缺结果的恢复次数 |
+
+`steered` 另外返回 `since_acceptance`，其中 `calls` 仅基于此次接受之后开始的调用和此后可见的挂起、恢复与结果。`attempts_without_prior_suspend` 统计该范围中 Attempt 编号大于 1、且自上次 Attempt 或接受位置以来未见 `RunSuspended` 的开始次数。
+
+平台派生的接受事件视为未命中。定时 ID 按 `capname.IsScheduleInput` 判定，委托 ID 按当前 Session 的父调用和 `session.DelegatedInputID` 匹配，卡片动作按 `card.InputID` 或回答的 `ToolResult.card_action` 识别，Call 派生输入按事件的 `from_call` 识别。后台结果投递没有 `input_id`。
+
+超过扫描预算时返回不可重试的 `422 scan_budget_exceeded`，省略 `Retry-After`。调用方改用 Events 接口分页读取并自行归约，见 [ADR-0066](../adr/0066-input-status-by-server-side-scan.md)。`as_of_seq` 之后仍可接受同一输入。调用方依据自身的业务证据决定如何处理提交结果未知的情形。

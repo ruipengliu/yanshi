@@ -132,6 +132,7 @@ type HTTPError struct {
 	StatusCode int
 	Code       string
 	Reason     string
+	allowsPost bool
 }
 
 func (e *HTTPError) Error() string { return fmt.Sprintf("kernel: HTTP status %d", e.StatusCode) }

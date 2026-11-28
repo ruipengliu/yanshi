@@ -37,6 +37,92 @@ func (c *Client) SubmitInput(ctx context.Context, sessionID, inputID, text strin
 	return out, nil
 }
 
+type inputCallEvidence struct {
+	WritesWithoutResult      uint `json:"writes_without_result"`
+	WritesWithError          uint `json:"writes_with_error"`
+	ResumesWithPendingWrites uint `json:"resumes_with_pending_writes"`
+}
+
+type inputStatus struct {
+	Found           *bool              `json:"found"`
+	AsOfSeq         uint64             `json:"as_of_seq,string"`
+	InputID         string             `json:"input_id"`
+	RunID           string             `json:"run_id"`
+	EventID         string             `json:"event_id"`
+	AcceptedSeq     uint64             `json:"accepted_seq,string"`
+	AcceptanceKind  string             `json:"acceptance_kind"`
+	AnsweredCallID  string             `json:"answered_call_id"`
+	RunStatus       string             `json:"run_status"`
+	TakeoverCount   uint               `json:"takeover_count"`
+	Calls           *inputCallEvidence `json:"calls"`
+	SinceAcceptance *struct {
+		AttemptsWithoutPriorSuspend uint               `json:"attempts_without_prior_suspend"`
+		Calls                       *inputCallEvidence `json:"calls"`
+	} `json:"since_acceptance"`
+}
+
+func (c *Client) inputStatus(ctx context.Context, sessionID, inputID string) (inputStatus, error) {
+	query := url.Values{"input_id": {inputID}}
+	var out inputStatus
+	err := c.request(ctx, http.MethodGet, sessionPath(sessionID)+"/inputs?"+query.Encode(), nil, &out)
+	return out, err
+}
+
+func (c *Client) FindInput(ctx context.Context, sessionID, inputID string) (InputReceipt, bool, error) {
+	status, err := c.inputStatus(ctx, sessionID, inputID)
+	if err != nil {
+		var httpErr *HTTPError
+		if errors.As(err, &httpErr) {
+			// 旧路由只注册了 POST，Go mux 会返回 405。部署支持的最旧内核有查询路由后移除此判定。
+			legacyRoute := httpErr.Code == "" && (httpErr.StatusCode == http.StatusNotFound || httpErr.allowsPost)
+			// Session 日志只会增长。超预算后改走 Events，才能继续对账长 Session。
+			if httpErr.Code == "scan_budget_exceeded" || legacyRoute {
+				return c.findInputByEvents(ctx, sessionID, inputID)
+			}
+		}
+		return InputReceipt{}, false, err
+	}
+	if status.Found == nil || status.AsOfSeq == 0 {
+		return InputReceipt{}, false, errors.New("kernel: invalid input status")
+	}
+	if !*status.Found {
+		return InputReceipt{}, false, nil
+	}
+	if status.InputID != inputID || status.RunID == "" || status.EventID == "" ||
+		status.AcceptedSeq == 0 || status.AcceptedSeq > status.AsOfSeq || status.Calls == nil {
+		return InputReceipt{}, false, errors.New("kernel: invalid input acceptance")
+	}
+	receipt := InputReceipt{InputID: inputID, RunID: status.RunID, EventID: status.EventID, Sequence: status.AcceptedSeq}
+	switch status.RunStatus {
+	case "queued", "running", "suspended":
+	case "completed", "failed", "interrupted":
+		receipt.Terminal = status.RunStatus
+	default:
+		return InputReceipt{}, false, errors.New("kernel: invalid input run status")
+	}
+	attempts, calls := status.TakeoverCount, status.Calls
+	switch status.AcceptanceKind {
+	case "requested":
+	case "steered":
+		if status.SinceAcceptance == nil || status.SinceAcceptance.Calls == nil {
+			return InputReceipt{}, false, errors.New("kernel: missing evidence since input acceptance")
+		}
+		receipt.Steered = true
+		attempts, calls = status.SinceAcceptance.AttemptsWithoutPriorSuspend, status.SinceAcceptance.Calls
+	case "answered":
+		if status.AnsweredCallID == "" {
+			return InputReceipt{}, false, errors.New("kernel: missing answered call")
+		}
+		// 回答沿用提交回执的 Steered 语义。它推进的是既有 Run，不能据此确认后台命令可安全重做。
+		receipt.Steered, receipt.Unsafe = true, true
+	default:
+		return InputReceipt{}, false, errors.New("kernel: invalid input acceptance kind")
+	}
+	receipt.Unsafe = receipt.Unsafe || attempts > 0 || calls.ResumesWithPendingWrites > 0 ||
+		calls.WritesWithError > 0 || (receipt.Terminal != "" && calls.WritesWithoutResult > 0)
+	return receipt, true, nil
+}
+
 type inputEvent struct {
 	RunID   string `json:"run_id"`
 	InputID string `json:"input_id"`
@@ -65,9 +151,9 @@ type event struct {
 	Interrupted *inputEvent   `json:"run_interrupted"`
 }
 
-// FindInput 从头读到空页；短页不是结束标记，最近 64 个输入也不是永久去重证据。
+// findInputByEvents 从头读到空页；短页不是结束标记，最近 64 个输入也不是永久去重证据。
 // 即使前页找到输入，后续页失败也不返回半份结果，避免漏掉终态或混淆删除竞态。
-func (c *Client) FindInput(ctx context.Context, sessionID, inputID string) (InputReceipt, bool, error) {
+func (c *Client) findInputByEvents(ctx context.Context, sessionID, inputID string) (InputReceipt, bool, error) {
 	var after uint64
 	var receipt InputReceipt
 	writes := map[string]bool{}

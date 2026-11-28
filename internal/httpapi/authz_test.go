@@ -302,6 +302,7 @@ func (e *authzEnv) cases() map[string]routeCase {
 		"POST /v1/sessions":                                {"POST", "/v1/sessions", map[string]string{"agent": "echo", "end_user": "u1", "time_zone": "Asia/Shanghai"}, http.StatusCreated},
 		"GET /v1/sessions/{id}":                            {"GET", s, nil, http.StatusOK},
 		"POST /v1/sessions/{id}/inputs":                    {"POST", s + "/inputs", map[string]string{"text": "more"}, http.StatusAccepted},
+		"GET /v1/sessions/{id}/inputs":                     {"GET", s + "/inputs?input_id=missing", nil, http.StatusOK},
 		"POST /v1/sessions/{id}/runs/{run}/interrupt":      {"POST", s + "/runs/" + run + "RUN/interrupt", nil, http.StatusNoContent},
 		"POST /v1/sessions/{id}/transcriptions":            {"POST", s + "/transcriptions", "RIFF", http.StatusOK},
 		"POST /v1/sessions/{id}/runs/{run}/speech":         {"POST", s + "/runs/RUN/speech", nil, http.StatusOK},

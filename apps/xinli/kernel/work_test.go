@@ -40,7 +40,11 @@ func TestReceiptUnsafeWrites(t *testing.T) {
 				e["session_id"] = "s"
 				e["id"] = "event" + strconv.Itoa(i+1)
 			}
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			c := inputStatusTestClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/sessions/s/inputs" {
+					http.NotFound(w, r)
+					return
+				}
 				after, _ := strconv.Atoi(r.URL.Query().Get("after"))
 				page := []map[string]any{}
 				if after < len(events) {
@@ -48,8 +52,6 @@ func TestReceiptUnsafeWrites(t *testing.T) {
 				}
 				_ = json.NewEncoder(w).Encode(map[string]any{"events": page})
 			}))
-			defer server.Close()
-			c := &Client{BaseURL: server.URL}
 			receipt, found, err := c.FindInput(context.Background(), "s", "i")
 			want := mode != "ok" && mode != "readonly_error" && mode != "clean_resume" && mode != "confirmed_resume"
 			if err != nil || !found || receipt.Terminal != "completed" || receipt.Unsafe != want {

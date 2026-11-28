@@ -23,6 +23,7 @@
 //	GET /v1/sessions/{id}/schedules                  列出有效定时
 //	DELETE /v1/sessions/{id}/schedules/{schedule_id}  取消定时
 //	POST /v1/sessions/{id}/inputs                  提交输入（新 Run 或 Steer；带 input_id 可安全重试；内容安全拒绝 422、不可用 503）
+//	GET  /v1/sessions/{id}/inputs?input_id=         查询输入接受、Run 状态与调用证据
 //	POST /v1/sessions/{id}/runs/{run}/interrupt    中断 Run
 //	POST /v1/sessions/{id}/transcriptions          识别一段录音（请求体为音频）→ {"text"}；不写日志，文字由调用方作为输入提交（docs/design/speech.md）
 //	POST /v1/sessions/{id}/runs/{run}/speech       把 Run 的回复合成为语音（audio/wav）；未配置语音提供商时 501
@@ -148,6 +149,7 @@ func (s *Server) routes() map[string]http.HandlerFunc {
 		"POST /v1/grants":                                  s.createGrant,
 		"DELETE /v1/grants/{id}":                           s.revokeGrant,
 		"POST /v1/sessions/{id}/inputs":                    s.submit,
+		"GET /v1/sessions/{id}/inputs":                     s.inputStatus,
 		"POST /v1/sessions/{id}/runs/{run}/interrupt":      s.interrupt,
 		"POST /v1/sessions/{id}/transcriptions":            s.transcribe,
 		"POST /v1/sessions/{id}/runs/{run}/speech":         s.speak,
@@ -318,6 +320,8 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		status, body.Code = http.StatusBadRequest, codeInvalidArgument
 	case errors.Is(err, service.ErrConflict):
 		status, body.Code = http.StatusConflict, codeConflict
+	case errors.Is(err, service.ErrScanBudgetExceeded):
+		status, body.Code = http.StatusUnprocessableEntity, codeScanBudgetExceeded
 	case errors.Is(err, artifact.ErrNotFound):
 		status, body.Code = http.StatusNotFound, codeNotFound
 	case errors.Is(err, memory.ErrNotFound):

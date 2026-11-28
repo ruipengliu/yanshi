@@ -24,6 +24,8 @@ xinli 已有创建意图、孤儿回收和日志对账。提交结果未知时�
 
 建议先明确 `external_key` 的作用域、同键不同请求的结果、删除后的重试语义，以及日志与索引分属不同键时的恢复办法。持久输入索引须能返回首次结果并与 Event 追加和唤醒一致，明确保留期、过期后的行为，以及 Session 删除时的清理。`labels` 可按独立查询需求评估。业务对象与 Session 的绑定仍由业务线负责。原报告的「接入代码下降 70%+」缺少改造前后的测量。 [分片键 ADR](../adr/0028-shard-keys.md) [Session 删除 ADR](../adr/0015-session-deletion-by-physical-removal.md) [评估 R2](../architecture/architecture-evaluation.html#roadmap)
 
+2026-11-28，[ADR-0066](../adr/0066-input-status-by-server-side-scan.md) 部分处理了服务端异步提交的对账成本。内核通过输入状态查询给出截至固定日志上界的接受和 Run 事实，xinli 优先调用该接口。持久提交去重及其保留期仍是独立议题。
+
 ### 1.3 B1 / R8 — 共用队列与模型
 
 同一分片内，队列按优先级和入队顺序认领。模型准入先获取进程内的速率令牌，再按调用类型排队等待并发名额。队列已有按业务线过滤的能力，Oneshot 也有进程内的业务线并发上限。两条业务线共用资源时存在尾延迟相互影响的机制依据，实际影响取决于到达率、调用时长和模型额度。 [队列认领](../../internal/workqueue/pgqueue/pgqueue.go) [模型准入](../../internal/model/guard.go) [Oneshot 限额](../design/deployment.md#9-单次调用部署参数)

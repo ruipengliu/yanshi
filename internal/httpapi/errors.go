@@ -24,6 +24,7 @@ const (
 	codeOneshotUnavailable    = "oneshot_unavailable"
 	codeOutboxUnavailable     = "outbox_unavailable"
 	codeOverloaded            = "overloaded"
+	codeScanBudgetExceeded    = "scan_budget_exceeded"
 	codeTimeout               = "timeout"
 )
 

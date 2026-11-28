@@ -66,6 +66,9 @@ func (c *Client) Stream(ctx context.Context, line, id string, after uint64) (io.
 // 只保留已知分类，避免把任意下游正文带进错误或日志。
 func responseError(resp *http.Response) error {
 	err := &HTTPError{StatusCode: resp.StatusCode}
+	if resp.StatusCode == http.StatusMethodNotAllowed && resp.Header.Get("Allow") == http.MethodPost {
+		err.allowsPost = true
+	}
 	var body struct {
 		Error  string `json:"error"`
 		Code   string `json:"code"`
@@ -78,7 +81,7 @@ func responseError(resp *http.Response) error {
 	case "invalid_argument", "unauthenticated", "forbidden", "not_found", "conflict", "gone",
 		"too_large", "moderation_rejected", "memory_rejected", "memory_limit", "quota_exceeded",
 		"rate_limited", "internal", "not_implemented", "provider_error", "shard_unavailable",
-		"moderation_unavailable", "oneshot_unavailable", "outbox_unavailable", "overloaded", "timeout":
+		"moderation_unavailable", "oneshot_unavailable", "outbox_unavailable", "overloaded", "scan_budget_exceeded", "timeout":
 		err.Code = body.Code
 	}
 
@@ -105,7 +108,7 @@ func responseError(resp *http.Response) error {
 		switch reason {
 		case "session_closed", "not_last_run", "not_completed", "delegated_session",
 			"platform_input", "card_action_input", "compacted", "steered", "approval_requested", "ask_user",
-			"delegation", "background_call", "not_read_only":
+			"delegation", "background_call", "not_read_only", "input_accepted_more_than_once":
 			err.Reason = reason
 		}
 	}

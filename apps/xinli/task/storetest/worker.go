@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -82,6 +83,12 @@ func (b *backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(202)
 		_ = json.NewEncoder(w).Encode(map[string]any{"run_id": run, "steered": false})
+		return
+	}
+	// 这个假内核模拟没有输入状态查询的旧内核：路由不存在时回 404，客户端回退到 Events 回放。
+	// 新接口的行为由 kernel 包的测试覆盖；这里不计入 reads，保持各用例对回放读取次数的断言。
+	if strings.HasSuffix(r.URL.Path, "/inputs") {
+		w.WriteHeader(404)
 		return
 	}
 	b.reads++

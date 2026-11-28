@@ -224,6 +224,11 @@ func TestAnswer(t *testing.T) {
 	if r := st.History[len(st.History)-1].GetToolResult(); r.GetCallId() != "q2" || model.Text(r.GetContent()) != `{"text":"下周一吧"}` {
 		t.Fatalf("typed answer recorded as %v", st.History[len(st.History)-1])
 	}
+	status, err := svc.InputStatus(ctx, sid, "typed-1")
+	if e := st.History[len(st.History)-1]; err != nil || !status.Found || status.AcceptanceKind != "answered" ||
+		status.AnsweredCallID != "q2" || status.RunID != res.RunID || status.AcceptedSeq != e.GetSeq() || status.EventID != e.GetId() {
+		t.Fatalf("typed answer status: %+v, %v", status, err)
+	}
 	// 没有待回答的提问时，输入照常是插话。
 	sub, err = svc.Submit(ctx, sid, model.TextBlocks("另外记得订会议室"))
 	if err != nil || sub.Answered != "" || !sub.Steered {

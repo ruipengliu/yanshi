@@ -105,6 +105,9 @@ func TestCardActions(t *testing.T) {
 	if got.GetLabel() != "好的" || got.GetValues()["repeat"] != "工作日" {
 		t.Fatalf("recorded action %v", got)
 	}
+	if status, err := svc.InputStatus(ctx, sid, card.InputID(got)); err != nil || status.Found {
+		t.Fatalf("derived card input status: %+v, %v", status, err)
+	}
 	if again, err := svc.Submit(ctx, sid, action("ok", 0, nil)); err != nil || !again.Duplicate {
 		t.Fatalf("second click: %+v %v", again, err)
 	}
