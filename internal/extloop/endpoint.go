@@ -19,6 +19,7 @@ import (
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/metrics"
 	"yanshi/internal/model"
+	"yanshi/internal/tracing"
 	"yanshi/internal/usage"
 )
 
@@ -43,6 +44,7 @@ const (
 // loop.models 中的模型，经 Model（模型网关与准入）调用，照常计量、执行配额。不做内容安全检查：上下文在进入
 // 外部服务之前已经检查过，模型的输出只经这一步的回答到达用户与日志，回答在写日志之前检查（第 5 条）。
 type Endpoint struct {
+	Tracer *tracing.Tracer
 	// Keys 按 (业务线, 循环) 取出登记的步令牌密钥与一步的时限（Registry.Keys）。
 	Keys   KeyLookup
 	Agents interface {
@@ -88,6 +90,11 @@ func (e *Endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid_api_key", "invalid or expired step token")
 		return
 	}
+	span := e.Tracer.Start(tracing.LoopModel, tracing.Session(c.SessionID), tracing.Run(c.RunID), tracing.Attempt(c.Attempt),
+		tracing.Count(tracing.Turn, int(c.Turn)))
+	outcome := tracing.Error
+	defer func() { span.End(outcome) }()
+	ctx = span.Context(ctx)
 	// 调用不超出这一步的时限：步已经超时，回答不会被采用，继续调用只是浪费。读请求体同样（慢速上传不能拖过令牌的有效期）。
 	ctx, cancel := context.WithDeadline(ctx, c.ExpiresAt.Time)
 	defer cancel()
@@ -145,6 +152,7 @@ func (e *Endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		{Key: "loop:step:" + c.SessionID + "/" + c.RunID + "/" + fmt.Sprint(c.Attempt, "/", c.Turn), Limit: stepMax, Wait: endpointWait},
 	})
 	if err != nil {
+		outcome = model.TraceOutcome(err)
 		status, code := modelStatus(ctx, err)
 		writeError(w, status, code, "the loop endpoint is busy")
 		return
@@ -171,6 +179,9 @@ func (e *Endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if callErr != nil || resp == nil {
+		if callErr != nil {
+			outcome = model.TraceOutcome(callErr)
+		}
 		// 错误不回给外部服务原文，但要能排查：ProviderError 只含模型、状态码、提供商的错误码与请求 ID（日志只记 ID）。
 		e.log(ctx, "loop endpoint: model call failed", c, callErr)
 		status, code := modelStatus(ctx, callErr)
@@ -188,6 +199,7 @@ func (e *Endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out.finish(resp)
+	outcome = tracing.OK
 }
 
 func (e *Endpoint) deleted(ctx context.Context, c *StepClaims) (bool, error) {

@@ -28,6 +28,10 @@ const (
 	FieldRetries      = "retries"
 	FieldFirstToken   = "first_token_ms"
 	FieldQueueWait    = "queue_wait_ms"
+	FieldKind         = "kind"
+	FieldTurn         = "turn"
+	FieldDeltas       = "deltas"
+	FieldFirstDelta   = "first_delta_ms"
 )
 
 type Name uint8
@@ -39,9 +43,22 @@ const (
 	ModelCall
 	ModelAdmission
 	RunEnd
+	ToolCall
+	NodeDeliver
+	ToolResult
+	SandboxExec
+	SandboxPrepare
+	SandboxRun
+	LoopStep
+	LoopModel
+	LiveStream
 )
 
-var names = [...]string{"run.submit", "queue.claim", "run.attempt", "model.call", "model.admission", "run.end"}
+var names = [...]string{
+	"run.submit", "queue.claim", "run.attempt", "model.call", "model.admission", "run.end",
+	"tool.call", "node.deliver", "tool.result", "sandbox.exec", "sandbox.prepare", "sandbox.run",
+	"loop.step", "loop.model", "live.stream",
+}
 
 type Outcome uint8
 
@@ -56,15 +73,37 @@ const (
 	Error
 	Canceled
 	Timeout
+	Dispatched
+	Backgrounded
 )
 
 var outcomes = [...]string{
 	"ok", "done", "failed", "handoff", "suspended", "lost", "interrupted", "error", "canceled", "timeout",
+	"dispatched", "backgrounded",
 }
+
+type ToolKind uint8
+
+const (
+	Local ToolKind = iota
+	MCP
+	Node
+	Sandbox
+	Delegation
+	AskUser
+)
+
+var kinds = [...]string{"local", "mcp", "node", "sandbox", "delegation", "ask_user"}
 
 type CountName uint8
 
-const Retries CountName = 0
+const (
+	Retries CountName = iota
+	Turn
+	Deltas
+)
+
+var counts = [...]string{FieldRetries, FieldTurn, FieldDeltas}
 
 // Attribute 只经本包的构造函数生成，调用方只能在指定字段传入对应的 ID 或数值。
 type Attribute struct{ attr slog.Attr }
@@ -76,8 +115,15 @@ func Worker(id string) Attribute  { return Attribute{slog.String(FieldWorker, id
 func Attempt(n uint32) Attribute  { return Attribute{slog.Uint64(FieldAttempt, uint64(n))} }
 
 func Count(name CountName, n int) Attribute {
-	if name == Retries {
-		return Attribute{slog.Int(FieldRetries, n)}
+	if int(name) < len(counts) {
+		return Attribute{slog.Int(counts[name], n)}
+	}
+	return Attribute{}
+}
+
+func Kind(kind ToolKind) Attribute {
+	if int(kind) < len(kinds) {
+		return Attribute{slog.String(FieldKind, kinds[kind])}
 	}
 	return Attribute{}
 }
@@ -140,6 +186,14 @@ func (t *Tracer) Start(name Name, attrs ...Attribute) *Span {
 	return t.start(name, time.Now(), attrs)
 }
 
+// StartAt 用于认领在前、取得 Run ID 在后的路径。
+func (t *Tracer) StartAt(name Name, start time.Time, attrs ...Attribute) *Span {
+	if !t.Enabled() {
+		return nil
+	}
+	return t.start(name, start, attrs)
+}
+
 // Record 使用已提交 Event 的时间记录跨 Attempt 的 Run 总时长。
 func (t *Tracer) Record(name Name, start, end time.Time, outcome Outcome, attrs ...Attribute) {
 	if !t.Enabled() {
@@ -170,7 +224,7 @@ func (s *Span) Child(name Name) *Span {
 	child.traceID, child.parent = s.traceID, nonzeroHex(s.id[:])
 	for _, attr := range s.attrs {
 		switch attr.Key {
-		case FieldSession, FieldRun, FieldAttempt, FieldCall, FieldWorker:
+		case FieldSession, FieldRun, FieldAttempt, FieldCall, FieldWorker, FieldKind:
 			child.attrs = append(child.attrs, attr)
 		}
 	}
@@ -203,14 +257,31 @@ func (s *Span) set(a slog.Attr) {
 }
 
 func (s *Span) FirstToken() {
-	if s == nil || slices.ContainsFunc(s.attrs, func(a slog.Attr) bool { return a.Key == FieldFirstToken }) {
-		return
-	}
-	s.attrs = append(s.attrs, slog.Float64(FieldFirstToken, milliseconds(time.Since(s.start))))
+	s.first(FieldFirstToken)
 }
 
+func (s *Span) FirstDelta() {
+	s.first(FieldFirstDelta)
+}
+
+func (s *Span) first(key string) {
+	if s == nil || slices.ContainsFunc(s.attrs, func(a slog.Attr) bool { return a.Key == key }) {
+		return
+	}
+	s.attrs = append(s.attrs, slog.Float64(key, milliseconds(time.Since(s.start))))
+}
+
+// ExtendStart 补录已持久化的派发时间。缺失或时钟偏差时保留本地观察到的开始时间。
+func (s *Span) ExtendStart(start time.Time) {
+	if s != nil && !start.IsZero() && start.Before(s.start) {
+		s.start = start
+	}
+}
+
+func (s *Span) Is(name Name) bool { return s != nil && s.name == name }
+
 func (s *Span) End(outcome Outcome) {
-	if s != nil {
+	if s != nil && s.tracer != nil {
 		s.end(time.Now(), outcome)
 	}
 }

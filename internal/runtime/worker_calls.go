@@ -19,6 +19,7 @@ import (
 	"yanshi/internal/model"
 	"yanshi/internal/node"
 	"yanshi/internal/session"
+	"yanshi/internal/tracing"
 )
 
 func (w *Worker) toolResult(r *session.Run, callID string, content []*v1.ContentBlock, isErr bool) *v1.Event {
@@ -125,9 +126,25 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 			nodeID = delegation.NodeID(child)
 		}
 		deadline := w.now().Add(tool.Timeout)
-		return w.commit(ctx, &v1.Event{Payload: &v1.Event_ToolCallStarted{ToolCallStarted: &v1.ToolCallStarted{
+		started := &v1.Event{Payload: &v1.Event_ToolCallStarted{ToolCallStarted: &v1.ToolCallStarted{
 			RunId: r.ID, Attempt: w.attempt, CallId: id, NodeId: nodeID, Deadline: timestamppb.New(deadline), ReadOnly: tool.Spec.ReadOnly,
-		}}})
+		}}}
+		if nodeID != askuser.NodeID {
+			return w.commit(ctx, started)
+		}
+		// 提问随 Started 提交生效，之后由另一步等待用户。
+		span := w.attemptSpan.Child(tracing.ToolCall)
+		span.Set(tracing.Call(id), tracing.Kind(tracing.AskUser))
+		written, err := w.tryCommit(ctx, started)
+		switch {
+		case written:
+			span.End(tracing.Dispatched)
+		case err != nil:
+			span.End(model.TraceOutcome(err))
+		default:
+			span.End(tracing.Lost)
+		}
+		return err
 	}
 
 	cp := tool.Local
@@ -141,6 +158,14 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 		}}})
 	}
 
+	span := w.attemptSpan.Child(tracing.ToolCall)
+	if span != nil {
+		kind := tracing.Local
+		if capname.IsMCP(name) {
+			kind = tracing.MCP
+		}
+		span.Set(tracing.Call(id), tracing.Kind(kind))
+	}
 	var out capability.Result
 	err = w.during(ctx, r, func(ctx context.Context) error {
 		inv := w.invocation(r, def, id, c)
@@ -155,6 +180,13 @@ func (w *Worker) advanceCall(ctx context.Context, r *session.Run, def *agentdef.
 		}
 		return err
 	})
+	if span != nil {
+		outcome := model.TraceOutcome(err)
+		if errors.Is(err, errSuperseded) {
+			outcome = tracing.Lost
+		}
+		span.End(outcome)
+	}
 	var res *v1.Event
 	switch {
 	case err == nil:

@@ -15,6 +15,7 @@ import (
 	"yanshi/internal/delegation"
 	"yanshi/internal/extloop"
 	"yanshi/internal/faults"
+	"yanshi/internal/feed"
 	"yanshi/internal/ids"
 	"yanshi/internal/janitor"
 	"yanshi/internal/lifecycle"
@@ -174,7 +175,7 @@ func NewCore(stores Stores, opts Options) *Core {
 	c.Artifacts = &artifact.Service{Meta: stores.ArtifactMeta, Blobs: opts.Blobs, IDs: opts.IDs("art"), Clock: opts.Clock,
 		Deletions: stores.Deletions}
 	c.Hub = &node.Hub{Dir: stores.Dir, Inbox: stores.Inbox, Store: c.Store, Auth: opts.NodeAuth, Push: stores.Push,
-		Deletions: stores.Deletions, Clock: opts.Clock, Logger: opts.Logger}
+		Deletions: stores.Deletions, Clock: opts.Clock, Logger: opts.Logger, Tracer: opts.Tracer}
 	if opts.Logger != nil {
 		c.Hub.Waker = node.LogWaker{Logger: opts.Logger}
 	}
@@ -208,7 +209,7 @@ func NewCore(stores Stores, opts Options) *Core {
 		c.Catalog.Sandbox = &capability.SandboxTools{Specs: sandbox.Specs(), NodeID: sandbox.NodeID}
 	}
 	// 委托（docs/design/m5-multi-agent.md）：Agent 是一种 Capability，派发目标是由调用派生的子 Session。
-	c.Delegator = &delegation.Delegator{Artifacts: c.Artifacts, Logger: opts.Logger}
+	c.Delegator = &delegation.Delegator{Artifacts: c.Artifacts, Logger: opts.Logger, Tracer: opts.Tracer}
 	c.Dispatch = &delegation.Router{Next: &sandbox.Router{Hub: c.Hub, Queue: stores.SandboxQueue}, Delegator: c.Delegator}
 	moderator := opts.Moderator
 	if opts.Injector != nil {
@@ -258,7 +259,7 @@ func NewCore(stores Stores, opts Options) *Core {
 	}
 	if reg, ok := opts.Loops.(*extloop.Registry); ok && reg != nil {
 		c.LoopModels = &extloop.Endpoint{Keys: reg.Keys, Agents: opts.Agents, Model: opts.Model, Quotas: opts.Quotas, Meter: opts.Meter, Max: opts.LoopModelMax,
-			Deletions: stores.Deletions, Clock: opts.Clock, IDs: opts.IDs("use"), Logger: opts.Logger}
+			Deletions: stores.Deletions, Clock: opts.Clock, IDs: opts.IDs("use"), Logger: opts.Logger, Tracer: opts.Tracer}
 		if opts.DefinitionAccess != nil {
 			c.LoopModels.Access = opts.DefinitionAccess
 		}
@@ -318,7 +319,14 @@ func (c *Core) ControllerConfig(id string, provider sandbox.Provider, idle *work
 		Activity: c.Stores.Activity, Ledger: c.Stores.Ledger, Artifacts: c.Artifacts, Clock: c.opts.Clock, Logger: c.opts.Logger,
 		Lifecycle: &lifecycle.Guard{Index: c.Stores.Index, Deletions: c.Stores.Deletions}, Idle: idle, Meter: c.opts.Meter,
 		LeaseTTL: c.opts.LeaseTTL, Heartbeat: c.opts.LeaseTTL / 3,
+		Tracer: c.opts.Tracer,
 	}
+}
+
+// FeedSource 为网关装配共享读者，使 HTTP、Connection 与 Call 的订阅使用同一追踪配置。
+func (c *Core) FeedSource() feed.Source {
+	return feed.Source{Log: c.Stores.Log, Live: c.opts.Live, Deletions: c.Stores.Deletions,
+		Hub: &feed.Hub{Log: c.Stores.Log, Tracer: c.opts.Tracer}, Tracer: c.opts.Tracer}
 }
 
 // Janitor 返回 Janitor：回收已关闭与已删除 Session 的资源，执行各业务线的保留策略（docs/design/m2-session-lifecycle.md）。

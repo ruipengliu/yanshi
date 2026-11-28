@@ -8,11 +8,13 @@ import (
 	"time"
 
 	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/capability/capname"
 	"yanshi/internal/clock"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/metrics"
 	"yanshi/internal/notify"
 	"yanshi/internal/session"
+	"yanshi/internal/tracing"
 	"yanshi/internal/workqueue"
 )
 
@@ -36,6 +38,7 @@ type Hub struct {
 	Push   notify.Registry
 	Clock  clock.Clock
 	Logger *slog.Logger
+	Tracer *tracing.Tracer
 }
 
 // registerPush 登记连接的推送令牌（如有）。
@@ -252,7 +255,7 @@ func (h *Hub) Result(ctx context.Context, endUser, nodeID string, res *v1.Invoke
 		// 不属于任何 Session 的平台调用（如清除本地记录），没有结果要写入日志。
 		return h.Inbox.Remove(ctx, endUser, nodeID, inv.GetCallId())
 	}
-	if err := h.commitResult(ctx, inv, res); err != nil {
+	if err := h.commitResult(ctx, nodeID, inv, res); err != nil {
 		return err
 	}
 	return h.Inbox.Remove(ctx, endUser, nodeID, inv.GetCallId())
@@ -260,7 +263,18 @@ func (h *Hub) Result(ctx context.Context, endUser, nodeID string, res *v1.Invoke
 
 // commitResult 写入结果，并在同一事务中唤醒 Session（CommitAndWake）：写入之后、撤下 Inbox 之前崩溃时，
 // 设备重发的结果因调用已完成而作废，Session 已经在队列中。
-func (h *Hub) commitResult(ctx context.Context, inv *v1.Invoke, res *v1.InvokeResult) error {
+func (h *Hub) commitResult(ctx context.Context, nodeID string, inv *v1.Invoke, res *v1.InvokeResult) error {
+	var span *tracing.Span
+	if h.Tracer.Enabled() {
+		kind := tracing.Node
+		if capname.IsSandboxNode(nodeID) {
+			kind = tracing.Sandbox
+		}
+		span = h.Tracer.Start(tracing.ToolResult, tracing.Session(inv.GetSessionId()), tracing.Run(inv.GetRunId()),
+			tracing.Call(inv.GetCallId()), tracing.Kind(kind))
+		ctx = span.Context(ctx)
+		defer span.End(tracing.Error)
+	}
 	var err error
 	if h.Results != nil {
 		err = h.Results.NodeResult(ctx, inv.GetSessionId(), inv.GetRunId(), inv.GetCallId(), res.GetContent(), res.GetIsError())
@@ -273,19 +287,43 @@ func (h *Hub) commitResult(ctx context.Context, inv *v1.Invoke, res *v1.InvokeRe
 			e := session.ExternalResult(inv.GetRunId(), inv.GetCallId(), res.GetContent(), res.GetIsError())
 			return session.Decision{Events: []*v1.Event{e}, Wake: true}, nil
 		})
+		if span != nil {
+			span.ExtendStart(ResultDispatchTime(st, inv.GetRunId(), inv.GetCallId()))
+		}
 	}
 	switch {
 	case errors.Is(err, session.ErrGone):
+		span.End(tracing.Lost)
 		h.log().Info("node result dropped", "session", inv.GetSessionId(), "call", inv.GetCallId(), "reason", "session deleted")
 		return nil
 	case errors.Is(err, session.ErrInvalid):
+		span.End(tracing.Lost)
 		// 校验失败：Run 已终态或调用已完成（超时、重复结果），或后台调用已了结（到期、取消），结果作废。
 		h.log().Info("node result dropped", "session", inv.GetSessionId(), "call", inv.GetCallId(), "reason", err)
 		return nil
 	}
+	if err == nil {
+		if res.GetIsError() {
+			span.End(tracing.Failed)
+		} else {
+			span.End(tracing.OK)
+		}
+	}
 	// 存储故障：结果没有写入，或写入了而回包丢失。返回错误，调用方不确认、不撤下 Inbox，重连后设备从账本
 	// 重新返回结果：没写入的这次写入，写入了的这次作废。
 	return err
+}
+
+// ResultDispatchTime 用仍在投影中的设备派发时间计量；沙箱有独立的执行记录，后台 Run 可能已被裁剪。
+func ResultDispatchTime(st *session.State, runID, callID string) time.Time {
+	if r := st.Run(runID); r != nil {
+		for _, c := range r.Calls {
+			if c.Call.GetCallId() == callID && !capname.IsSandboxNode(c.NodeID) {
+				return c.DispatchedAt
+			}
+		}
+	}
+	return time.Time{}
 }
 
 // LogWaker 只记录唤醒请求；真实推送通道见 ADR-0001。

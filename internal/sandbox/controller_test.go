@@ -2,6 +2,8 @@ package sandbox_test
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -12,9 +14,77 @@ import (
 	"yanshi/internal/node"
 	"yanshi/internal/sandbox"
 	"yanshi/internal/session"
+	"yanshi/internal/tracing"
 	"yanshi/internal/workqueue"
 	"yanshi/internal/workqueue/memqueue"
 )
+
+func TestControllerTrace(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		name, outcome := "ok", "ok"
+		if fail {
+			name, outcome = "execution error", "failed"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := t.Context()
+			tracer, recorder := tracing.NewRecorder()
+			clk := clock.Real{}
+			const sid, run, call = "ses_v1_000_000_test", "run_1", "call_1"
+			store := &session.Store{Log: memlog.New(), Clock: clk, IDs: ids.Sequential("e")}
+			if err := store.Commit(ctx, &session.State{SessionID: sid}, &v1.Event{Payload: &v1.Event_SessionCreated{
+				SessionCreated: &v1.SessionCreated{BusinessLine: "bl", EndUser: "user", Agent: &v1.AgentRef{Name: "a", Version: "1"}},
+			}}); err != nil {
+				t.Fatal(err)
+			}
+			inbox, queue := node.NewMemInbox(), memqueue.New(clk)
+			hub := &node.Hub{Inbox: inbox, Store: store, Results: traceResultWriter{}, Tracer: tracer}
+			router := &sandbox.Router{Hub: hub, Queue: queue}
+			inv := &v1.Invoke{SessionId: sid, RunId: run, CallId: call, Capability: "run_python", ArgumentsJson: `{"code":"private"}`}
+			if err := router.Dispatch(ctx, "user", sandbox.NodeID(sid), inv, workqueue.Class{}); err != nil {
+				t.Fatal(err)
+			}
+			provider := sandbox.NewFake()
+			if fail {
+				provider.ExecFunc = func(context.Context, string, sandbox.ExecRequest) (*sandbox.ExecResult, error) {
+					return nil, errors.New("private failure")
+				}
+			}
+			controller := &sandbox.Controller{ID: "c", Queue: queue, Hub: hub, Provider: provider, Clock: clk,
+				Activity: sandbox.NewMemActivity(), Ledger: sandbox.NewMemLedger(), Tracer: tracer}
+			if did, err := controller.Step(ctx); !did || err != nil {
+				t.Fatalf("controller Step = %v, %v", did, err)
+			}
+			records := recorder.Records()
+			expectedNames := []string{"sandbox.prepare", "sandbox.run", "sandbox.exec", "tool.result"}
+			if len(records) != len(expectedNames) {
+				t.Fatalf("controller recorded %v", records)
+			}
+			var fields []map[string]slog.Value
+			for i, rec := range records {
+				f := make(map[string]slog.Value)
+				rec.Attrs(func(a slog.Attr) bool { f[a.Key] = a.Value; return true })
+				fields = append(fields, f)
+				if f[tracing.FieldName].String() != expectedNames[i] || f[tracing.FieldTraceID].String() != tracing.TraceID(run) ||
+					f[tracing.FieldSession].String() != sid || f[tracing.FieldRun].String() != run ||
+					f[tracing.FieldCall].String() != call || f[tracing.FieldKind].String() != "sandbox" ||
+					f[tracing.FieldOutcome].String() != []string{"ok", outcome, outcome, outcome}[i] {
+					t.Errorf("controller span = %v", f)
+				}
+			}
+			for _, child := range fields[:2] {
+				if child[tracing.FieldParentSpanID].String() != fields[2][tracing.FieldSpanID].String() {
+					t.Errorf("sandbox exec did not parent %v", child)
+				}
+			}
+		})
+	}
+}
+
+type traceResultWriter struct{}
+
+func (traceResultWriter) NodeResult(context.Context, string, string, string, []*v1.ContentBlock, bool) error {
+	return nil
+}
 
 // 沙箱只执行本 Session 的调用：工作区按 Node ID 打开，别的 Session 的调用即使进了它的 Inbox 也不执行。
 func TestSandboxRunsOnlyItsOwnSessionsCalls(t *testing.T) {

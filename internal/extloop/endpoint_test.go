@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"yanshi/internal/ids"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/model"
+	"yanshi/internal/tracing"
 	"yanshi/internal/usage"
 )
 
@@ -198,6 +200,60 @@ const chatBody = `{"model":"p/good","temperature":0.2,"max_completion_tokens":50
  {"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"note","arguments":"{}"}}]},
  {"role":"tool","tool_call_id":"call_1","content":"已记"}],
  "tools":[{"type":"function","function":{"name":"note","description":"记一笔","parameters":{"type":"object"}}}]}`
+
+func TestEndpointTracingUsesStepClaims(t *testing.T) {
+	agents, err := agentdef.NewRegistry(&agentdef.Def{Name: "planner", Version: "1", Context: agentdef.Context{Scope: agentdef.ScopeRun},
+		Loop: &agentdef.LoopRef{Server: "plan", Models: []string{"p/good"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracer, recorder := tracing.NewRecorder()
+	e := &Endpoint{Tracer: tracer, Keys: keysFor, Agents: agents, Clock: clock.Real{}, IDs: ids.Random(),
+		Model: &model.Guard{Name: "p", Limits: model.Limits{MaxConcurrency: 1},
+			Provider: providerFunc(func(context.Context, *model.Request, func(model.Delta)) (*model.Response, error) {
+				return &model.Response{Content: model.TextBlocks("reply")}, nil
+			})}}
+	body := `{"model":"p/good","run_id":"untrusted","session_id":"untrusted","attempt":99,"messages":[{"role":"user","content":"private"}]}`
+	post := func(token string) int {
+		req := httptest.NewRequest(http.MethodPost, EndpointPath, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		e.ServeHTTP(w, req)
+		return w.Code
+	}
+	if status := post("invalid"); status != http.StatusUnauthorized || len(recorder.Records()) != 0 {
+		t.Fatalf("invalid token returned %d and recorded spans", status)
+	}
+	claims := testClaims()
+	token, err := SignStep(testKeys, claims, time.Now(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status := post(token); status != http.StatusOK {
+		t.Fatalf("authorized model call returned %d", status)
+	}
+	recs := recorder.Records()
+	if len(recs) != 2 {
+		t.Fatalf("expected model and admission spans, got %v", recs)
+	}
+	fields := func(i int) map[string]slog.Value {
+		f := make(map[string]slog.Value)
+		recs[i].Attrs(func(a slog.Attr) bool { f[a.Key] = a.Value; return true })
+		return f
+	}
+	admission, call := fields(0), fields(1)
+	for _, f := range []map[string]slog.Value{admission, call} {
+		if f[tracing.FieldTraceID].String() != tracing.TraceID(claims.RunID) || f[tracing.FieldSession].String() != claims.SessionID ||
+			f[tracing.FieldRun].String() != claims.RunID || f[tracing.FieldAttempt].Uint64() != uint64(claims.Attempt) ||
+			f[tracing.FieldOutcome].String() != "ok" {
+			t.Errorf("span identity or outcome = %v", f)
+		}
+	}
+	if call[tracing.FieldName].String() != "loop.model" || call[tracing.FieldTurn].Int64() != int64(claims.Turn) ||
+		admission[tracing.FieldName].String() != "model.admission" || admission[tracing.FieldParentSpanID].String() != call[tracing.FieldSpanID].String() {
+		t.Fatalf("model span %v, admission span %v", call, admission)
+	}
+}
 
 // 非流式：请求按 OpenAI 的形状转给网关，回答按 chat.completion 返回；用量按令牌中的业务线、EndUser 与 AgentDef 计量。
 func TestEndpointJSON(t *testing.T) {

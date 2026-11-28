@@ -20,6 +20,7 @@ import (
 	"yanshi/internal/channel"
 	"yanshi/internal/metrics"
 	"yanshi/internal/node"
+	"yanshi/internal/tracing"
 )
 
 type Gateway struct {
@@ -210,7 +211,7 @@ func (g *Gateway) deliver(ctx context.Context, c *conn, endUser, nodeID string) 
 			if sent[inv.GetCallId()] {
 				continue
 			}
-			if err := c.send(ctx, &v1.GatewayMessage{Msg: &v1.GatewayMessage_Invoke{Invoke: inv}}); err != nil {
+			if err := g.sendInvoke(ctx, c.send, inv); err != nil {
 				return err
 			}
 			sent[inv.GetCallId()] = true
@@ -227,6 +228,26 @@ func (g *Gateway) deliver(ctx context.Context, c *conn, endUser, nodeID string) 
 			return err
 		}
 	}
+}
+
+func (g *Gateway) sendInvoke(ctx context.Context, send func(context.Context, *v1.GatewayMessage) error, inv *v1.Invoke) error {
+	var span *tracing.Span
+	if inv.GetRunId() != "" {
+		span = g.Hub.Tracer.Start(tracing.NodeDeliver, tracing.Session(inv.GetSessionId()), tracing.Run(inv.GetRunId()),
+			tracing.Call(inv.GetCallId()))
+	}
+	err := send(ctx, &v1.GatewayMessage{Msg: &v1.GatewayMessage_Invoke{Invoke: inv}})
+	switch {
+	case err == nil:
+		span.End(tracing.OK)
+	case errors.Is(err, context.Canceled):
+		span.End(tracing.Canceled)
+	case errors.Is(err, context.DeadlineExceeded):
+		span.End(tracing.Timeout)
+	default:
+		span.End(tracing.Error)
+	}
+	return err
 }
 
 func (g *Gateway) receive(ctx context.Context, c *conn, nc *node.Conn, cc *channel.Conn) error {

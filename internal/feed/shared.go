@@ -7,13 +7,15 @@ import (
 
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/eventlog"
+	"yanshi/internal/tracing"
 )
 
 // Hub 是本进程各 Session 的共享事件流（延展性评审 §8.2）：同一 Session 的本地订阅者共用一个读者，它等待日志
 // 前进、读一次新事件，再分发给每个订阅者。订阅数增加不增加日志的等待与读取；读者随第一个订阅者开始、随最后
 // 一个离开而结束。
 type Hub struct {
-	Log eventlog.Log
+	Log    eventlog.Log
+	Tracer *tracing.Tracer
 
 	mu       sync.Mutex
 	sessions map[string]*shared

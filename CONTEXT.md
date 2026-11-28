@@ -127,7 +127,7 @@ _Avoid_: API key（它只在一步内有效，不是长期凭证）、会话令�
 _Avoid_: 重试、执行实例
 
 **追踪记录（span 记录）**（[ADR-0065](docs/adr/0065-run-tracing-as-structured-span-logs.md)）:
-内核运行环节结束时发出的结构化运行日志，记录环节、结果与耗时。已定位到 Run 的记录共享由 Run ID 派生的 trace ID；同步调用以父子 span ID 关联。
+内核运行环节结束时发出的结构化运行日志，记录环节、结果与耗时。网关、Worker 与沙箱控制器中已定位到同一 Run 的记录共享由 Run ID 派生的 trace ID，同步调用以父子 span ID 关联，委托的父子 Run 之间以 `link_trace_id` 关联。
 _Avoid_: Event、Event 日志
 
 **Call（通话）**:

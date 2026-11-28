@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/model"
 	"yanshi/internal/session"
+	"yanshi/internal/tracing"
 	"yanshi/internal/workqueue"
 	"yanshi/internal/workqueue/memqueue"
 )
@@ -112,6 +114,8 @@ func TestExternalLoopCarriesStateAndPreviousStep(t *testing.T) {
 	loop := &scriptLoop{replies: []*LoopReply{reply("先查", "s1", "note", "fail"), reply("好了", "s2")}}
 	m := &recordingModel{}
 	w, store, sid := externalWorker(t, loopsMap{"bl/plan": loop})
+	tracer, recorder := tracing.NewRecorder()
+	w.cfg.Tracer = tracer
 	w.cfg.Model, w.cfg.Loop = m, ModelLoop{Model: m}
 	events := runToEnd(t, w, store, sid)
 
@@ -144,6 +148,41 @@ func TestExternalLoopCarriesStateAndPreviousStep(t *testing.T) {
 	}
 	if strings.Join(states, ",") != "s1,s2" || !completed {
 		t.Fatalf("states %v completed %v", states, completed)
+	}
+	var steps, calls []map[string]slog.Value
+	var attempt string
+	for _, rec := range recorder.Records() {
+		f := map[string]slog.Value{}
+		rec.Attrs(func(a slog.Attr) bool { f[a.Key] = a.Value; return true })
+		switch f[tracing.FieldName].String() {
+		case "model.call":
+			t.Fatal("external loop recorded model.call")
+		case "loop.step":
+			steps = append(steps, f)
+		case "tool.call":
+			calls = append(calls, f)
+		case "run.attempt":
+			attempt = f[tracing.FieldSpanID].String()
+		}
+	}
+	if len(steps) != 2 || len(calls) != 2 || attempt == "" {
+		t.Fatalf("expected two steps and two calls under the Attempt, got %v, %v", steps, calls)
+	}
+	for i, f := range steps {
+		if f[tracing.FieldTraceID].String() != tracing.TraceID("r") || f[tracing.FieldSession].String() != sid ||
+			f[tracing.FieldRun].String() != "r" || f[tracing.FieldAttempt].Uint64() != 1 ||
+			f[tracing.FieldTurn].Int64() != int64(i+1) || f[tracing.FieldOutcome].String() != "ok" ||
+			f[tracing.FieldParentSpanID].String() != attempt {
+			t.Errorf("step span = %v", f)
+		}
+	}
+	for i, f := range calls {
+		if f[tracing.FieldTraceID].String() != tracing.TraceID("r") || f[tracing.FieldSession].String() != sid ||
+			f[tracing.FieldRun].String() != "r" || f[tracing.FieldAttempt].Uint64() != 1 ||
+			f[tracing.FieldKind].String() != "local" || f[tracing.FieldCall].String() != second.Previous[i].Call.GetCallId() ||
+			f[tracing.FieldOutcome].String() != []string{"ok", "error"}[i] || f[tracing.FieldParentSpanID].String() != attempt {
+			t.Errorf("local call span = %v", f)
+		}
 	}
 }
 

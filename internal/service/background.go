@@ -9,7 +9,9 @@ import (
 	v1 "yanshi/gen/yanshi/v1"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/metrics"
+	"yanshi/internal/node"
 	"yanshi/internal/session"
+	"yanshi/internal/tracing"
 )
 
 // 后台调用（docs/design/m1-device-nodes.md §3，ADR-0035）：路由到设备的调用在设备离线超过宽限期后由 Worker 转入后台，
@@ -45,7 +47,7 @@ func (s *Service) NodeResult(ctx context.Context, sessionID, runID, callID strin
 	if err := rejectPlatformOnly(content); err != nil {
 		return err
 	}
-	return s.routedResult(ctx, sessionID, runID, callID, content, isErr, nil)
+	return s.routedResult(ctx, sessionID, runID, callID, content, isErr, nil, true)
 }
 
 // DelegationResult 写入委托的结果（子 Session 的 Worker 经 Delegator.Report），与 NodeResult 同样看着投影决定：父调用
@@ -53,10 +55,15 @@ func (s *Service) NodeResult(ctx context.Context, sessionID, runID, callID strin
 // copies 是交还给父 Session 的工件副本（ADR-0055），与结果在同一个决策中写入。内容是平台组装的子 Run 回复（含工件
 // 副本的媒体块），不经 rejectPlatformOnly。
 func (s *Service) DelegationResult(ctx context.Context, sessionID, runID, callID string, content []*v1.ContentBlock, isErr bool, copies []*v1.ArtifactCopied) error {
-	return s.routedResult(ctx, sessionID, runID, callID, content, isErr, copies)
+	return s.routedResult(ctx, sessionID, runID, callID, content, isErr, copies, false)
 }
 
-func (s *Service) routedResult(ctx context.Context, sessionID, runID, callID string, content []*v1.ContentBlock, isErr bool, copies []*v1.ArtifactCopied) error {
+func (s *Service) routedResult(ctx context.Context, sessionID, runID, callID string, content []*v1.ContentBlock, isErr bool, copies []*v1.ArtifactCopied, deviceTiming bool) error {
+	// 调用方持有跨度，只有提交成功的决策知道结果是写回 Run 还是作为后台输入送达。
+	span := tracing.FromContext(ctx)
+	if !span.Is(tracing.ToolResult) {
+		span = nil
+	}
 	st, err := s.Store.Load(ctx, sessionID)
 	if err != nil {
 		return err
@@ -64,10 +71,13 @@ func (s *Service) routedResult(ctx context.Context, sessionID, runID, callID str
 	if st.Created == nil {
 		return session.ErrGone
 	}
-	var prev time.Time
+	var prev, dispatched time.Time
 	settled, newRun := false, false
 	err = s.Store.Update(ctx, st, func(st *session.State) (session.Decision, error) {
 		settled, newRun = false, false
+		if span != nil && deviceTiming {
+			dispatched = node.ResultDispatchTime(st, runID, callID)
+		}
 		var events []*v1.Event
 		for _, c := range copies {
 			events = append(events, &v1.Event{Payload: &v1.Event_ArtifactCopied{ArtifactCopied: c}})
@@ -80,6 +90,19 @@ func (s *Service) routedResult(ctx context.Context, sessionID, runID, callID str
 		}
 		return session.Decision{Events: append(events, session.ExternalResult(runID, callID, content, isErr)), Wake: true}, nil
 	})
+	if span != nil {
+		span.ExtendStart(dispatched)
+		if err == nil {
+			switch {
+			case settled:
+				span.End(tracing.Backgrounded)
+			case isErr:
+				span.End(tracing.Failed)
+			default:
+				span.End(tracing.OK)
+			}
+		}
+	}
 	if err != nil || !settled {
 		return err
 	}

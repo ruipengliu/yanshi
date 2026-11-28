@@ -15,6 +15,7 @@ import (
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/live"
 	"yanshi/internal/session"
+	"yanshi/internal/tracing"
 )
 
 // waitRetryMin 与 waitRetryMax 是日志等待出错后重试的退避范围。
@@ -43,12 +44,27 @@ type Source struct {
 	PingInterval time.Duration
 	// Hub 非 nil 时，本进程同一 Session 的流共用一个读者（Hub）；否则每个流各自等待并读取日志。
 	Hub *Hub
+	// Tracer 为 nil 时可沿用共享 Hub 的追踪配置。
+	Tracer *tracing.Tracer
 }
 
 // Stream 推送 seq 大于 after 的已提交事件，之后持续推送新事件与增量，直到 ctx 结束、
 // Sink 返回错误或 Session 被删除（ErrDeleted）。st 是调用方已读到的投影，用来确定当前的执行进程。
-func (s Source) Stream(ctx context.Context, st *session.State, after uint64, sink Sink) error {
+func (s Source) Stream(ctx context.Context, st *session.State, after uint64, sink Sink) (streamErr error) {
 	id := st.SessionID
+	tracer := s.Tracer
+	if tracer == nil && s.Hub != nil {
+		tracer = s.Hub.Tracer
+	}
+	observing := tracer.Enabled()
+	var trace streamTrace
+	if observing {
+		trace = streamTrace{tracer: tracer, session: id, seen: st.Seq}
+		if a := st.Active(); a != nil && a.Status == session.RunRunning {
+			trace.start(a.ID, a.Attempt, st.Seq)
+		}
+		defer func() { trace.finish(streamErr) }()
+	}
 	// 先订阅增量再读日志，避免两者之间的增量丢失。增量总线支持跟随时，由本流告知当前执行进程
 	// （投影中活跃 Run 的当前 Attempt，之后按读到的事件推进），总线不必再读一遍日志。
 	var deltas <-chan live.Delta
@@ -125,6 +141,9 @@ func (s Source) Stream(ctx context.Context, st *session.State, after uint64, sin
 			if err := sink.Event(Public(e)); err != nil {
 				return err
 			}
+			if observing {
+				trace.event(e)
+			}
 			after = e.GetSeq()
 			fresh = append(fresh, e)
 		}
@@ -176,8 +195,12 @@ func (s Source) Stream(ctx context.Context, st *session.State, after uint64, sin
 		case <-lagged:
 			read = true
 		case d := <-deltas:
+			counted := observing && trace.arrive(d)
 			if err := sink.Delta(d); err != nil {
 				return err
+			}
+			if counted {
+				trace.count++
 			}
 		}
 	}

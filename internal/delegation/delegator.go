@@ -18,6 +18,7 @@ import (
 	"yanshi/internal/moderation"
 	"yanshi/internal/service"
 	"yanshi/internal/session"
+	"yanshi/internal/tracing"
 	"yanshi/internal/usage"
 	"yanshi/internal/workqueue"
 )
@@ -51,6 +52,7 @@ func (r *Router) Cancel(ctx context.Context, endUser, nodeID, callID string) err
 // Delegator 派生子 Session、撤回委托，并把子 Run 的终态写回父调用。
 type Delegator struct {
 	Service *service.Service
+	Tracer  *tracing.Tracer
 	// Artifacts 复制委托交接的工件（ADR-0055）；nil 时委托不能带工件，子 Run 的回复也不交回工件。
 	Artifacts *artifact.Service
 	Logger    *slog.Logger
@@ -354,11 +356,13 @@ func (d *Delegator) Report(ctx context.Context, child *session.State) error {
 		if err != nil || content == nil {
 			return err
 		}
-		return d.write(ctx, p.GetSessionId(), p.GetRunId(), p.GetCallId(), content, false, copies)
+		return d.write(ctx, p.GetSessionId(), p.GetRunId(), p.GetCallId(), child.Delegated, content, false, copies)
 	case session.RunFailed:
-		return d.result(ctx, p.GetSessionId(), p.GetRunId(), p.GetCallId(), "the delegated agent failed: "+text, true)
+		return d.write(ctx, p.GetSessionId(), p.GetRunId(), p.GetCallId(), child.Delegated,
+			model.TextBlocks("the delegated agent failed: "+text), true, nil)
 	default:
-		return d.result(ctx, p.GetSessionId(), p.GetRunId(), p.GetCallId(), "the delegated task was interrupted", true)
+		return d.write(ctx, p.GetSessionId(), p.GetRunId(), p.GetCallId(), child.Delegated,
+			model.TextBlocks("the delegated task was interrupted"), true, nil)
 	}
 }
 
@@ -442,19 +446,28 @@ func (d *Delegator) handBack(ctx context.Context, child string, p *v1.ParentRef,
 
 // result 写入父调用的文字结果，见 write。
 func (d *Delegator) result(ctx context.Context, sessionID, runID, callID, text string, isErr bool) error {
-	return d.write(ctx, sessionID, runID, callID, model.TextBlocks(text), isErr, nil)
+	return d.write(ctx, sessionID, runID, callID, "", model.TextBlocks(text), isErr, nil)
 }
 
 // write 写入父调用的外部结果（连同复制进父 Session 的工件记录）并唤醒父 Session；父调用已转入后台时改为一条后台结果
 // 输入（ADR-0058，service.DelegationResult）。调用已有结果或已了结、Run 已终态或 Session 已删除时静默作废（作废时
 // 已复制的工件留在父 Session 中，随它删除）。
-func (d *Delegator) write(ctx context.Context, sessionID, runID, callID string, content []*v1.ContentBlock, isErr bool, copies []*v1.ArtifactCopied) error {
+func (d *Delegator) write(ctx context.Context, sessionID, runID, callID, childRunID string, content []*v1.ContentBlock, isErr bool, copies []*v1.ArtifactCopied) error {
+	var span *tracing.Span
+	if d.Tracer.Enabled() {
+		span = d.Tracer.Start(tracing.ToolResult, tracing.Session(sessionID), tracing.Run(runID), tracing.Call(callID),
+			tracing.Kind(tracing.Delegation), tracing.LinkRun(childRunID))
+		ctx = span.Context(ctx)
+		defer span.End(tracing.Error)
+	}
 	err := d.Service.DelegationResult(ctx, sessionID, runID, callID, content, isErr, copies)
 	switch {
 	case errors.Is(err, session.ErrInvalid):
+		span.End(tracing.Lost)
 		d.log().Info("delegation result dropped", "session", sessionID, "call", callID, "reason", err)
 		return nil
 	case errors.Is(err, session.ErrGone):
+		span.End(tracing.Lost)
 		return nil
 	}
 	return err

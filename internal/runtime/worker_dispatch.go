@@ -14,6 +14,7 @@ import (
 	"yanshi/internal/model"
 	"yanshi/internal/node"
 	"yanshi/internal/session"
+	"yanshi/internal/tracing"
 )
 
 // awaitDispatched 处理已派发的路由调用：超时则给出错误结果，否则（重新）投递并挂起等待。
@@ -111,13 +112,31 @@ func (w *Worker) deliverAndCommit(ctx context.Context, r *session.Run, ds []deli
 	for _, d := range ds {
 		c := d.call
 		_, capName, _ := capname.CutRouted(c.Call.GetCapability())
+		span := w.attemptSpan.Child(tracing.ToolCall)
+		if span == nil && w.cfg.Tracer.Enabled() {
+			// 挂起的并行委托可在没有新 Attempt 的情况下重投，按投影的 Attempt 号关联。
+			span = w.cfg.Tracer.Start(tracing.ToolCall, tracing.Session(w.st.SessionID), tracing.Run(r.ID),
+				tracing.Attempt(r.Attempt), tracing.Worker(w.cfg.ID))
+		}
+		if span != nil {
+			kind := tracing.Node
+			switch {
+			case delegation.IsNode(c.NodeID):
+				kind = tracing.Delegation
+			case capname.IsSandboxNode(c.NodeID):
+				kind = tracing.Sandbox
+			}
+			span.Set(tracing.Call(c.Call.GetCallId()), tracing.Kind(kind))
+		}
 		err := w.cfg.Dispatch.Dispatch(ctx, w.st.Created.GetEndUser(), c.NodeID, &v1.Invoke{
 			SessionId: w.st.SessionID, RunId: r.ID, CallId: c.Call.GetCallId(), Capability: capName,
 			ArgumentsJson: c.Call.GetArgumentsJson(), Deadline: timestamppb.New(d.deadline),
 		}, w.st.WorkClass())
 		if err != nil {
+			span.End(model.TraceOutcome(err))
 			return false, err
 		}
+		span.End(tracing.Dispatched)
 	}
 	// 提交会更新投影；先记下派发目标，失败时据此撤回。
 	type target struct{ id, nodeID string }

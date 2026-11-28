@@ -32,7 +32,9 @@ func TestJSONSpan(t *testing.T) {
 	parent.Set(Run("r"))
 	span := parent.Child(ModelCall)
 	span.FirstToken()
-	span.Set(Call("c"), Count(Retries, 1), LinkRun("r2"))
+	span.FirstDelta()
+	span.Set(Call("c"), Count(Retries, 1), LinkRun("r2"), Kind(MCP), Count(Turn, 2), Count(Deltas, 3))
+	span.Set(Kind(ToolKind(255)), Count(CountName(255), 42))
 	span.End(OK)
 	span.End(Error)
 	parent.End(Done)
@@ -52,6 +54,7 @@ func TestJSONSpan(t *testing.T) {
 		"msg": "span", "level": "INFO", FieldTraceID: TraceID("r"), FieldParentSpanID: attempt[FieldSpanID],
 		FieldName: "model.call", FieldOutcome: "ok", FieldSession: "s", FieldRun: "r", FieldAttempt: float64(2),
 		FieldCall: "c", FieldWorker: "w", FieldRetries: float64(1), FieldLinkTraceID: TraceID("r2"),
+		FieldKind: "mcp", FieldTurn: float64(2), FieldDeltas: float64(3),
 	}
 	spanID := regexp.MustCompile(`^[0-9a-f]{16}$`)
 	for _, id := range []any{child[FieldSpanID], attempt[FieldSpanID]} {
@@ -72,7 +75,7 @@ func TestJSONSpan(t *testing.T) {
 			t.Errorf("%s: %v", key, err)
 		}
 	}
-	for _, key := range []string{FieldDuration, FieldFirstToken} {
+	for _, key := range []string{FieldDuration, FieldFirstToken, FieldFirstDelta} {
 		if v, ok := child[key].(float64); !ok || v < 0 {
 			t.Errorf("%s = %v, expected a nonnegative number", key, child[key])
 		}
@@ -82,7 +85,7 @@ func TestJSONSpan(t *testing.T) {
 			t.Errorf("%s = %v (%T), want %v (%T)", key, got, got, v, v)
 		}
 	}
-	if len(child) != len(want)+5 {
+	if len(child) != len(want)+6 {
 		t.Errorf("unexpected fields in %v", child)
 	}
 }
@@ -96,7 +99,12 @@ func TestDisabledTracer(t *testing.T) {
 		}
 		span.Set(Count(Retries, 1))
 		span.FirstToken()
+		span.FirstDelta()
+		span.ExtendStart(time.Time{})
 		span.End(OK)
+		if tr.StartAt(SandboxExec, time.Time{}, Kind(Sandbox)) != nil {
+			t.Fatal("disabled tracing opened a sandbox span")
+		}
 		tr.Record(RunEnd, time.Time{}, time.Time{}, Done, Run("r"))
 	}
 }
@@ -115,6 +123,11 @@ func BenchmarkDisabledTracer(b *testing.B) {
 				_ = child.Context(ctx)
 				child.FirstToken()
 				child.End(OK)
+				tool := span.Child(ToolCall)
+				tool.Set(Call("c"), Kind(MCP), Count(Turn, 2))
+				tool.FirstDelta()
+				tool.End(Dispatched)
+				tc.tracer.StartAt(SandboxExec, time.Time{}, Kind(Sandbox)).End(Done)
 				span.End(Done)
 			}
 		})

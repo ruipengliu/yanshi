@@ -12,6 +12,7 @@ import (
 	"yanshi/internal/clock"
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/node"
+	"yanshi/internal/tracing"
 	"yanshi/internal/usage"
 	"yanshi/internal/workqueue"
 	"yanshi/sdk/nodesdk"
@@ -34,6 +35,7 @@ type Controller struct {
 	Meter  *usage.Meter
 	Clock  clock.Clock
 	Logger *slog.Logger
+	Tracer *tracing.Tracer
 
 	LeaseTTL time.Duration
 	// Heartbeat > 0 时在执行期间续约（真实时间）；模拟测试置 0。
@@ -116,6 +118,10 @@ func (c *Controller) release(ctx context.Context) {
 // Step 推进一件工作；返回 false 表示无事可做。
 func (c *Controller) Step(ctx context.Context) (bool, error) {
 	c.init()
+	var claimed time.Time
+	if c.Tracer.Enabled() {
+		claimed = time.Now()
+	}
 	if c.lease == nil {
 		l, err := c.Queue.Claim(ctx, c.ID, c.LeaseTTL, workqueue.Pool{})
 		if errors.Is(err, workqueue.ErrEmpty) {
@@ -167,29 +173,64 @@ func (c *Controller) Step(ctx context.Context) (bool, error) {
 		return true, c.Hub.Inbox.Remove(ctx, endUser, id, inv.GetCallId())
 	}
 
+	span := c.Tracer.StartAt(tracing.SandboxExec, claimed, tracing.Session(inv.GetSessionId()),
+		tracing.Run(inv.GetRunId()), tracing.Call(inv.GetCallId()), tracing.Kind(tracing.Sandbox))
+	defer span.End(tracing.Error)
+	prepare := span.Child(tracing.SandboxPrepare)
 	if err := c.Activity.Touch(ctx, id, c.Clock.Now()); err != nil {
+		prepare.End(tracing.Error)
 		return false, err
 	}
 	if err := c.Provider.Ensure(ctx, id); err != nil {
+		prepare.End(tracing.Error)
 		return false, err
 	}
 	// 先创建、后复查：Session 已关闭或删除时销毁刚创建（或恢复）的沙箱，不执行调用（ADR-0015）。
 	// 关闭方先记关闭、再让 Janitor 销毁沙箱，因此二者无论如何交错，工作区都不会残留。
 	if gone, err := c.ended(ctx, endUser, inv.GetSessionId()); err != nil || gone {
 		if gone {
+			prepare.End(tracing.Lost)
+			span.End(tracing.Lost)
+		} else {
+			prepare.End(tracing.Error)
+		}
+		if gone {
 			err = c.destroy(ctx, id)
 			_ = c.Hub.Inbox.Remove(ctx, endUser, id, inv.GetCallId())
 		}
 		return false, err
 	}
+	prepare.End(tracing.OK)
 	start := c.Clock.Now()
 	// 已核对沙箱 Node 与调用的 Session；每次执行绑定账本，共享持久记录承担接管去重。
 	exec := nodesdk.NewExecutor(BindLedger(c.Ledger, inv.GetSessionId()), Capabilities(c.Provider, c.Artifacts)...)
+	run := span.Child(tracing.SandboxRun)
 	res, err := c.during(ctx, endUser, id, inv.GetCallId(), func(ctx context.Context) (*v1.InvokeResult, error) {
 		return exec.Execute(WithSandbox(ctx, id, inv.GetCallId()), inv)
 	})
+	var duration time.Duration
 	if err == nil && res != nil {
-		c.meter(ctx, endUser, inv, c.Clock.Now().Sub(start))
+		duration = c.Clock.Now().Sub(start) // 计量在追踪输出之前取样。
+	}
+	if run != nil {
+		outcome := tracing.OK
+		switch {
+		case errors.Is(err, errWithdrawn), errors.Is(err, context.Canceled):
+			outcome = tracing.Canceled
+		case errors.Is(err, context.DeadlineExceeded):
+			outcome = tracing.Timeout
+		case err != nil:
+			outcome = tracing.Error
+		case res == nil:
+			outcome = tracing.Lost
+		case res.GetIsError():
+			outcome = tracing.Failed
+		}
+		run.End(outcome)
+		span.End(outcome)
+	}
+	if err == nil && res != nil {
+		c.meter(ctx, endUser, inv, duration)
 	}
 	if errors.Is(err, errWithdrawn) {
 		return true, nil

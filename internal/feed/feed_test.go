@@ -3,6 +3,7 @@ package feed
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"yanshi/internal/lifecycle"
 	"yanshi/internal/live"
 	"yanshi/internal/session"
+	"yanshi/internal/tracing"
 )
 
 // flakyWait 的前 n 次 Wait 立即失败（数据库短暂不可用）。
@@ -97,3 +99,82 @@ func TestStreamEndsWhenSessionDeleted(t *testing.T) {
 		t.Fatal("stream still open after the session was deleted")
 	}
 }
+
+func TestLiveStreamTrace(t *testing.T) {
+	for _, outcome := range []string{"done", "canceled", "error"} {
+		t.Run(outcome, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			tracer, recorder := tracing.NewRecorder()
+			const sid, run = "ses_v1_000_000_s1", "run_1"
+			log := memlog.New()
+			bus := bufferedLive{deltas: make(chan live.Delta, 3)}
+			bus.deltas <- live.Delta{SessionID: sid, RunID: run, Attempt: 2, Text: "private"}
+			bus.deltas <- live.Delta{SessionID: sid, RunID: run, Attempt: 2, End: true}
+			bus.deltas <- live.Delta{SessionID: sid, RunID: run, Attempt: 2, Reasoning: "private"}
+			failed := errors.New("sink write failed")
+			frames := 0
+			sink := traceSink{
+				delta: func(live.Delta) error {
+					frames++
+					if frames < 3 {
+						return nil
+					}
+					switch outcome {
+					case "error":
+						return failed
+					case "canceled":
+						cancel()
+					case "done":
+						_, err := log.Append(ctx, sid, 0, nil, &v1.Event{Payload: &v1.Event_RunCompleted{
+							RunCompleted: &v1.RunCompleted{RunId: run, Attempt: 2},
+						}})
+						return err
+					}
+					return nil
+				},
+				event: func(*v1.Event) error { cancel(); return nil },
+			}
+			src := Source{Log: log, Live: bus, Tracer: tracer}
+			st := &session.State{SessionID: sid, Runs: []*session.Run{{ID: run, Attempt: 2, Status: session.RunRunning}}}
+			err := src.Stream(ctx, st, 0, sink)
+			wantErr, wantCount := error(context.Canceled), int64(2)
+			if outcome == "error" {
+				wantErr, wantCount = failed, 1
+			}
+			if !errors.Is(err, wantErr) || frames != 3 {
+				t.Fatalf("Stream = %v, sent %d frames", err, frames)
+			}
+			recs := recorder.Records()
+			if len(recs) != 1 {
+				t.Fatalf("expected a single Attempt stream span, got %v", recs)
+			}
+			f := make(map[string]slog.Value)
+			recs[0].Attrs(func(a slog.Attr) bool { f[a.Key] = a.Value; return true })
+			first := f[tracing.FieldFirstDelta]
+			if f[tracing.FieldName].String() != "live.stream" || f[tracing.FieldOutcome].String() != outcome ||
+				f[tracing.FieldTraceID].String() != tracing.TraceID(run) || f[tracing.FieldRun].String() != run ||
+				f[tracing.FieldSession].String() != sid || f[tracing.FieldAttempt].Uint64() != 2 ||
+				f[tracing.FieldDeltas].Int64() != wantCount || first.Kind() != slog.KindFloat64 ||
+				first.Float64() < 0 || first.Float64() > f[tracing.FieldDuration].Float64() {
+				t.Errorf("live stream span = %v", f)
+			}
+		})
+	}
+}
+
+type bufferedLive struct{ deltas chan live.Delta }
+
+func (bufferedLive) Publish(live.Delta) {}
+func (b bufferedLive) Subscribe(string) (<-chan live.Delta, func()) {
+	return b.deltas, func() {}
+}
+
+type traceSink struct {
+	chanSink
+	delta func(live.Delta) error
+	event func(*v1.Event) error
+}
+
+func (s traceSink) Delta(d live.Delta) error { return s.delta(d) }
+func (s traceSink) Event(e *v1.Event) error  { return s.event(e) }

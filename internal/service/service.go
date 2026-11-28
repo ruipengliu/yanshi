@@ -473,10 +473,7 @@ func (s *Service) SubmitFromCall(ctx context.Context, sessionID, callID, inputID
 }
 
 func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall string, input []*v1.ContentBlock, delegated bool, copies []*v1.ArtifactCopied) (*SubmitResult, error) {
-	var span *tracing.Span
-	if !delegated {
-		span = s.Tracer.Start(tracing.RunSubmit, tracing.Session(sessionID))
-	}
+	span := s.Tracer.Start(tracing.RunSubmit, tracing.Session(sessionID))
 	if len(input) == 0 {
 		return nil, fmt.Errorf("%w: empty input", ErrInvalid)
 	}
@@ -489,6 +486,9 @@ func (s *Service) submit(ctx context.Context, sessionID, inputID, fromCall strin
 	st, err := s.Load(ctx, sessionID)
 	if err != nil {
 		return nil, err
+	}
+	if span != nil && delegated {
+		span.Set(tracing.LinkRun(st.Created.GetParent().GetRunId()))
 	}
 	// 卡片动作的输入 ID 由平台推导：同一版卡片上的同一动作只生效一次，与客户端是否带 ID 无关。
 	if id, _, err := cardActionID(input); err != nil {

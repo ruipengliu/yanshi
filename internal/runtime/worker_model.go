@@ -107,7 +107,10 @@ func (w *Worker) callModel(ctx context.Context, r *session.Run, def *agentdef.De
 	}
 	defer func() { observeModel(kind, start, resp, err) }()
 	var span *tracing.Span
-	if !external {
+	if external {
+		span = w.attemptSpan.Child(tracing.LoopStep)
+		span.Set(tracing.Count(tracing.Turn, int(step.Turn)))
+	} else {
 		span = w.attemptSpan.Child(tracing.ModelCall)
 	}
 	// 耗时与首字延迟只用于观察，但写入日志：按 clock.Clock 计时，模拟测试中确定（ADR-0034）。

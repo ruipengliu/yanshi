@@ -34,7 +34,6 @@ import (
 	"yanshi/internal/eventlog"
 	"yanshi/internal/extloop"
 	"yanshi/internal/faults"
-	"yanshi/internal/feed"
 	"yanshi/internal/httpapi"
 	"yanshi/internal/ids"
 	"yanshi/internal/lifecycle"
@@ -770,9 +769,10 @@ func serve(args []string) error {
 
 	mux := http.NewServeMux()
 	// 本进程同一 Session 的事件流（SSE、Connection 订阅、Call）共用一个读者（延展性评审 §8.2）。
-	feeds := &feed.Hub{Log: b.Log}
+	source := core.FeedSource()
+	feeds := source.Hub
 	calls := &call.Manager{Service: svc, Realtime: realtimeGateway(logger), Meter: meter, Logger: logger,
-		Feed: feed.Source{Log: b.Log, Live: bus, Deletions: b.Deletions, Hub: feeds}}
+		Feed: source}
 	connGW := &wsgateway.Gateway{Hub: hub, Channel: &channel.Handler{Service: svc, Live: bus, Feeds: feeds,
 		Presence: &presence.Service{Store: b.Presence, Deletions: b.Deletions, Clock: clk}, Push: b.Push, Calls: calls, Clock: clk, Logger: logger}, Logger: logger}
 	// 同一条连接兼任 Node 与会话客户端（ADR-0024）；/v1/nodes/connect 是早期路径，保留兼容。

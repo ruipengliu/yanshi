@@ -4,14 +4,18 @@ status: accepted（2026-11-27 定稿）
 
 # 按 Run ID 关联的结构化追踪记录
 
-> **已定稿（2026-11-27），第 1 阶段已实现。** 来源为[上线检查清单](../launch-checklist.md)和[部署设计](../design/deployment.md) §4 的可观测性要求。日志字段遵循 [ADR-0015](0015-session-deletion-by-physical-removal.md) 的内容边界。
+> **已定稿（2026-11-27），第 1、2 阶段已实现（2026-11-28）。** 来源为[上线检查清单](../launch-checklist.md)和[部署设计](../design/deployment.md) §4 的可观测性要求。日志字段遵循 [ADR-0015](0015-session-deletion-by-physical-removal.md) 的内容边界。
 
 ## 决定
 
 1. **追踪记录写入进程日志。** `serve` 默认用文本日志且关闭追踪。用 `-log-format json -trace` 启用 stderr JSON 行与 Run 主链追踪。每个 span 结束时以固定消息 `span` 写一行，包含名称、开始时间（RFC3339Nano）、耗时（毫秒）、结果、span ID 及可选的父 span ID。部署沿用自己的日志采集器，以 `run=<run_id>` 查询记录。每次认领在确认 Session 后记录排队等待以及认领和初次加载的耗时，按 Session 与同一时间段关联。
 2. **Run ID 决定 trace ID。** 对字节串 `yanshi/trace/v1\x00` 拼接 Run ID 求 SHA-256，取前 16 字节。span ID 由加密随机源生成，取 8 字节。两者均以小写十六进制表示，全零时将最低位置一，以兼容 W3C Trace Context 的 ID 格式。进程使用已有的 Run ID 重建 trace ID，无需更改队列、Inbox 或 peer 契约。未知 Run 时省略 trace ID。同步环节可带 `parent_span_id`，预留 `link_trace_id` 关联另一 Run。
 3. **追踪只观察执行。** `internal/tracing` 只接受固定的名称与结果枚举，以及对应字段的 ID、计数与耗时。失败使用枚举，错误原文和用户、模型、调用内容留在原有路径。span ID 与耗时使用观测侧的随机源与单调时间，保持 Event 的 ID 和时间来源。Run 总时长用投影中的 `RequestedAt` 与已提交的终态 Event 时间计算。追踪记录是进程日志的一部分，沿用其保留策略，无须登记 `app.SessionData` 或执行删除复查。
-4. **第 1 阶段覆盖启用追踪的内核进程中的 Run 主链，不抽样。** 记录提交与原子唤醒、认领、Attempt、内置循环的模型调用、提供商准入和 Run 终态。首个流式增量到达时记录 `first_token_ms`；Guard 记录实际进入下一轮准入的重试次数。工具、跨角色环节、外部循环服务、Node SDK、单次调用、增量拉取与 Janitor 留待后续阶段。外部边界继续使用已有 ID，暂不传递 `traceparent`。
+4. **追踪覆盖启用追踪的内核进程，不抽样。**
+   - 第 1 阶段记录提交与原子唤醒、认领、Attempt、内置循环的模型调用、提供商准入和 Run 终态。模型调用记录 `first_token_ms`，Guard 记录实际进入下一轮准入的重试次数。
+   - 第 2 阶段记录进程内和 MCP 工具的执行，以及设备、沙箱、委托和向用户提问的派发。审批与提问等待沿用已有 Event。Worker 实际重派发时也记录，挂起期间重投的并行委托按 Attempt 号关联。网关记录每次设备投递，沙箱控制器记录认领至执行完成及其中的准备、执行。设备、沙箱与委托的结果写回各有记录，后台结果用 `backgrounded` 标识。设备结果可从投影仍保留的首次派发时间计时，缺少该时间时计量写回环节。子 Run 有独立 trace，子提交与父结果写回以 `link_trace_id` 双向关联。
+   - 外部循环的 Worker 步与内核模型端点调用各有记录，端点从已校验的步令牌取 ID。网关逐订阅、按 Run 和 Attempt 汇总增量，记录首个增量到达耗时与转发条数。外部循环服务与 Node SDK 在内核进程边界之外，沿用已有协议，不传递 `traceparent`。
+   - 未覆盖的环节包括 Janitor（按 Session 与保留期限清理）、Oneshot（没有 Run ID）、提醒推送（独立的尽力投递）与出站流（独立游标，可跨多个 Run）。
 
 ## Considered Options
 

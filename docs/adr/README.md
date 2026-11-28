@@ -91,7 +91,7 @@
 | [0062](0062-external-loop-contract.md) | 外部循环的契约：自定义协议、无状态单步与一致性套件 | accepted（2026-11-24 定稿） | 已实现（接缝、契约、客户端、计量与压缩上限，2026-11-24；模拟测试、`looptest` 与参考适配 `sdk/python`，2026-11-25） | 二 | AG-UI 等协议稳定且被目标框架普遍原生支持；状态超 64 KiB 或需跨 Run；三方 Agent 需作外部循环；开始实施 | 修订 0041（契约）；补充 0056 B 期 | |
 | [0063](0063-loop-model-gateway-and-step-token.md) | 外部循环经内核调用模型，每步请求携带平台签发的步令牌 | accepted（2026-11-25 定稿） | 已实现（步令牌、模型端点、`loop.models`、启动检查、looptest 检查、评测驱动外部循环、参考适配，2026-11-25） | 二 | 外部服务普遍需要内核未接入的提供商；端点成为步时延的主要来源；托管三方需要外部循环；业务线须区分平台签发与共享密钥持有方 | 补充 0062，修订其 Consequences（外部模型用量）；修订 0014 Consequences（yanshi 保存循环的 HMAC 密钥） | |
 | [0064](0064-identity-domains-for-cross-line-grants.md) | 业务线声明身份域，限制跨业务线 Memory Grant | accepted（2026-11-26 定稿） | 已实现 | 二 | 不同域出现节点 ID 碰撞；需跨不同账号体系映射共享；客户要求统一身份；拆域需不可逆清除旧授权 | 补充约束 0003、0014 | |
-| [0065](0065-run-tracing-as-structured-span-logs.md) | 按 Run ID 关联的结构化追踪记录 | accepted（2026-11-27 定稿） | 第 1 阶段已实现 | 二 | 需接入 OTLP；采集量超预算；需外部上下文传播；合规要求按 Session 删除 | — | |
+| [0065](0065-run-tracing-as-structured-span-logs.md) | 按 Run ID 关联的结构化追踪记录 | accepted（2026-11-27 定稿） | 第 1、2 阶段已实现 | 二 | 需接入 OTLP；采集量超预算；需外部上下文传播；合规要求按 Session 删除 | — | |
 | [0066](0066-input-status-by-server-side-scan.md) | 在服务端扫描日志查询输入状态 | accepted（2026-11-28 定稿） | 已实现 | 二 | 线上出现 `scan_budget_exceeded`；查询 p99 超过 250 ms 或扫描读量 p99 超过 2048 条 Event；第二条业务线需要；需按接受序号查询；需长期提交去重 | — | 是 |
 
 ## 业务层 ADR

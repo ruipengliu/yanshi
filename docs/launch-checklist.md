@@ -38,7 +38,8 @@
   - 所有进程的 `-notify-shards` 一致（ADR-0028）；
   - 生产进程不带 `-faults`（服务端故障注入与 `/v1/debug/*` 只用于调试部署，ADR-0033），也不带 `-insecure-remote`（`-auth none` 监听非回环地址）；`xinli dev` 的夹具与页面只用于开发，不作生产服务；
   - 部署清单（Helm 或 Kustomize）进仓库，含网络策略：出网只允许模型、内容安全、推送三类外联（ADR-0001）；
-  - 配置分发（AgentDef、发布配置、业务线公钥、价格表在所有进程一致）与按 `run_id` 的链路追踪（第 1 阶段已实现，2026-11-27，[ADR-0065](adr/0065-run-tracing-as-structured-span-logs.md)，工具与跨角色环节待第 2 阶段）；
+  - 配置分发（AgentDef、发布配置、业务线公钥、价格表在所有进程一致）；
+  - [ ] 按 `run_id` 的链路追踪代码已完成（[ADR-0065](adr/0065-run-tracing-as-structured-span-logs.md) 第 1、2 阶段）。部署时须为各角色开启 `-trace -log-format json`、接入日志采集，并在目标环境验证跨角色查询。
   - 容量矩阵与准入阈值在目标环境实测后填入（评审 §8.4 第 4、6 项）。
 - [ ] **数据库预分片与扩容演练**（[ADR-0051](./adr/0051-shard-slots-and-id-location.md) §5.4，[部署设计](./design/deployment.md) §10.5）：
   - [x] 部署配置把 1024 槽均分到 8 个分片，每片一个独立 database（2026-11-21：示例 `deploy/k8s/overlays/example/shards.json`，所有角色与 migrate 任务经 `YANSHI_SHARDS` 读取同一份，`TestExampleDeploymentShards` 校验）；上线后改片数需要尚未实现的迁槽工具；生产配置按实例分布改写 DSN，每片主 + 同步备；

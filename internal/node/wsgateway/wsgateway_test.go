@@ -2,6 +2,8 @@ package wsgateway
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -10,7 +12,42 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	v1 "yanshi/gen/yanshi/v1"
+	"yanshi/internal/node"
+	"yanshi/internal/tracing"
 )
+
+func TestInvokeDeliveryTrace(t *testing.T) {
+	tracer, recorder := tracing.NewRecorder()
+	gw := &Gateway{Hub: &node.Hub{Tracer: tracer}}
+	inv := &v1.Invoke{SessionId: "session", RunId: "run", CallId: "call", ArgumentsJson: `{"private":true}`}
+	for _, sendErr := range []error{nil, context.Canceled} {
+		err := gw.sendInvoke(t.Context(), func(_ context.Context, msg *v1.GatewayMessage) error {
+			if msg.GetInvoke() != inv {
+				t.Fatal("gateway changed the invocation")
+			}
+			return sendErr
+		}, inv)
+		if !errors.Is(err, sendErr) {
+			t.Fatalf("sendInvoke returned %v, want %v", err, sendErr)
+		}
+	}
+	records := recorder.Records()
+	if len(records) != 2 {
+		t.Fatalf("expected two deliveries, got %v", records)
+	}
+	for i, rec := range records {
+		f := make(map[string]slog.Value)
+		rec.Attrs(func(a slog.Attr) bool { f[a.Key] = a.Value; return true })
+		if f[tracing.FieldName].String() != "node.deliver" || f[tracing.FieldTraceID].String() != tracing.TraceID("run") ||
+			f[tracing.FieldSession].String() != "session" || f[tracing.FieldRun].String() != "run" ||
+			f[tracing.FieldCall].String() != "call" || f[tracing.FieldOutcome].String() != []string{"ok", "canceled"}[i] ||
+			f[tracing.FieldAttempt].Kind() != slog.KindAny {
+			t.Errorf("delivery span = %v", f)
+		}
+	}
+}
 
 // TestHandshakesAreLimited：同时进行的握手达到上限时，新的接入在排队 HandshakeWait 后以 503 拒绝，并给出
 // Retry-After；握手名额在连接完成握手或放弃后归还。
